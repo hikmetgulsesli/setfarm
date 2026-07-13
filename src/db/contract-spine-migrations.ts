@@ -1,0 +1,519 @@
+import { createHash } from "node:crypto";
+
+import type postgres from "postgres";
+
+type Sql = postgres.Sql;
+type TransactionSql = postgres.TransactionSql;
+
+export const contractSpineMigrationLockKey = 1_397_117_251;
+
+export type ContractSpineMigrationErrorCode =
+  | "MIGRATION_ADOPTION_MISMATCH"
+  | "MIGRATION_CHECKSUM_MISMATCH"
+  | "MIGRATION_INCOMPLETE"
+  | "MIGRATION_LOCK_TIMEOUT"
+  | "MIGRATION_UNKNOWN_VERSION";
+
+export class ContractSpineMigrationError extends Error {
+  readonly code: ContractSpineMigrationErrorCode;
+  override readonly cause?: unknown;
+
+  constructor(
+    code: ContractSpineMigrationErrorCode,
+    message: string,
+    options: Readonly<{ cause?: unknown }> = {},
+  ) {
+    super(message);
+    this.name = "ContractSpineMigrationError";
+    this.code = code;
+    this.cause = options.cause;
+  }
+}
+
+const EXECUTION_ATTEMPTS_TABLE_SQL = `
+  CREATE TABLE execution_attempts (
+    attempt_id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL,
+    step_id TEXT NOT NULL,
+    story_id TEXT NOT NULL DEFAULT '',
+    generation INTEGER NOT NULL CHECK (generation > 0),
+    fence_token TEXT NOT NULL,
+    attempt_class TEXT NOT NULL CHECK (attempt_class IN (
+      'product_implementation', 'evidence_only', 'infrastructure_retry', 'supervisor_repair'
+    )),
+    packet_hash TEXT,
+    compilation_report_hash TEXT NOT NULL,
+    slice_hash TEXT,
+    source_before_sha TEXT NOT NULL,
+    source_before_tree_hash TEXT NOT NULL,
+    source_after_sha TEXT,
+    source_after_tree_hash TEXT,
+    finding_set_hash TEXT,
+    dedupe_key TEXT,
+    role TEXT NOT NULL,
+    agent_id TEXT,
+    branch TEXT,
+    worktree TEXT,
+    lease_acquired_at TIMESTAMPTZ NOT NULL,
+    lease_expires_at TIMESTAMPTZ NOT NULL,
+    heartbeat_at TIMESTAMPTZ NOT NULL,
+    disposition TEXT NOT NULL CHECK (disposition IN (
+      'claimed', 'running', 'produced_delta', 'already_satisfied', 'no_progress',
+      'inconclusive', 'failed', 'verified', 'superseded'
+    )),
+    output_hash TEXT,
+    evidence_refs TEXT NOT NULL DEFAULT '[]',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CHECK (lease_expires_at >= lease_acquired_at),
+    CHECK ((source_after_sha IS NULL) = (source_after_tree_hash IS NULL)),
+    CHECK (slice_hash IS NULL OR packet_hash IS NOT NULL),
+    CHECK (
+      (dedupe_key IS NOT NULL) = (
+        attempt_class = 'product_implementation'
+        AND packet_hash IS NOT NULL
+        AND finding_set_hash IS NOT NULL
+      )
+    )
+  )
+`;
+
+const EXECUTION_ATTEMPT_INDEX_SQL = [
+  "CREATE UNIQUE INDEX idx_execution_attempts_active_fence ON execution_attempts(run_id, step_id, story_id) WHERE disposition IN ('claimed', 'running')",
+  "CREATE UNIQUE INDEX idx_execution_attempts_dedupe ON execution_attempts(dedupe_key) WHERE dedupe_key IS NOT NULL",
+  "CREATE INDEX idx_execution_attempts_run_story ON execution_attempts(run_id, story_id, created_at DESC)",
+  "CREATE INDEX idx_execution_attempts_lease_expiration ON execution_attempts(lease_expires_at) WHERE disposition IN ('claimed', 'running')",
+  "CREATE INDEX idx_execution_attempts_packet_source_finding ON execution_attempts(packet_hash, source_before_sha, finding_set_hash) WHERE packet_hash IS NOT NULL",
+] as const;
+
+type Migration = Readonly<{
+  version: number;
+  name: string;
+  statements: readonly string[];
+  relation?: string;
+}>;
+
+const migrations: readonly Migration[] = [
+  {
+    version: 1,
+    name: "001_execution_attempts",
+    relation: "execution_attempts",
+    statements: [EXECUTION_ATTEMPTS_TABLE_SQL, ...EXECUTION_ATTEMPT_INDEX_SQL],
+  },
+];
+
+function checksum(migration: Migration): string {
+  return createHash("sha256")
+    .update(JSON.stringify({
+      version: migration.version,
+      name: migration.name,
+      statements: migration.statements,
+    }))
+    .digest("hex");
+}
+
+type JournalRow = {
+  version: number;
+  name: string;
+  checksum: string;
+  state: string;
+};
+
+export type ContractSpineMigrationPlan = Readonly<{
+  schema: "setfarm.contract-spine-migration-plan.v1";
+  status: "current" | "pending" | "drift";
+  migrations: ReadonlyArray<Readonly<{
+    version: number;
+    name: string;
+    checksum: string;
+    state:
+      | "pending"
+      | "adoptable"
+      | "applied"
+      | "adopted"
+      | "checksum_mismatch"
+      | "adoption_mismatch"
+      | "unexpected";
+  }>>;
+}>;
+
+export type ContractSpineMigrationApplyResult = Readonly<{
+  schema: "setfarm.contract-spine-migration-apply.v1";
+  applied: string[];
+  adopted: string[];
+  alreadyApplied: string[];
+}>;
+
+function normalizeSql(value: string): string {
+  return value.replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+async function relationExists(sql: Sql | TransactionSql, relation: string): Promise<boolean> {
+  const rows = await sql.unsafe<{ relation: string | null }[]>(
+    "SELECT to_regclass($1)::text AS relation",
+    [`public.${relation}`],
+  );
+  return rows[0]?.relation === relation || rows[0]?.relation === `public.${relation}`;
+}
+
+const expectedAttemptColumns = new Map<string, Readonly<{
+  dataType: string;
+  nullable: "YES" | "NO";
+}>>([
+  ["attempt_id", { dataType: "text", nullable: "NO" }],
+  ["run_id", { dataType: "text", nullable: "NO" }],
+  ["step_id", { dataType: "text", nullable: "NO" }],
+  ["story_id", { dataType: "text", nullable: "NO" }],
+  ["generation", { dataType: "integer", nullable: "NO" }],
+  ["fence_token", { dataType: "text", nullable: "NO" }],
+  ["attempt_class", { dataType: "text", nullable: "NO" }],
+  ["packet_hash", { dataType: "text", nullable: "YES" }],
+  ["compilation_report_hash", { dataType: "text", nullable: "NO" }],
+  ["slice_hash", { dataType: "text", nullable: "YES" }],
+  ["source_before_sha", { dataType: "text", nullable: "NO" }],
+  ["source_before_tree_hash", { dataType: "text", nullable: "NO" }],
+  ["source_after_sha", { dataType: "text", nullable: "YES" }],
+  ["source_after_tree_hash", { dataType: "text", nullable: "YES" }],
+  ["finding_set_hash", { dataType: "text", nullable: "YES" }],
+  ["dedupe_key", { dataType: "text", nullable: "YES" }],
+  ["role", { dataType: "text", nullable: "NO" }],
+  ["agent_id", { dataType: "text", nullable: "YES" }],
+  ["branch", { dataType: "text", nullable: "YES" }],
+  ["worktree", { dataType: "text", nullable: "YES" }],
+  ["lease_acquired_at", { dataType: "timestamp with time zone", nullable: "NO" }],
+  ["lease_expires_at", { dataType: "timestamp with time zone", nullable: "NO" }],
+  ["heartbeat_at", { dataType: "timestamp with time zone", nullable: "NO" }],
+  ["disposition", { dataType: "text", nullable: "NO" }],
+  ["output_hash", { dataType: "text", nullable: "YES" }],
+  ["evidence_refs", { dataType: "text", nullable: "NO" }],
+  ["created_at", { dataType: "timestamp with time zone", nullable: "NO" }],
+  ["updated_at", { dataType: "timestamp with time zone", nullable: "NO" }],
+]);
+
+const expectedAttemptIndexes = new Map<string, string>([
+  ["execution_attempts_pkey", "create unique index execution_attempts_pkey on public.execution_attempts using btree (attempt_id)"],
+  ["idx_execution_attempts_active_fence", "create unique index idx_execution_attempts_active_fence on public.execution_attempts using btree (run_id, step_id, story_id) where (disposition = any (array['claimed'::text, 'running'::text]))"],
+  ["idx_execution_attempts_dedupe", "create unique index idx_execution_attempts_dedupe on public.execution_attempts using btree (dedupe_key) where (dedupe_key is not null)"],
+  ["idx_execution_attempts_lease_expiration", "create index idx_execution_attempts_lease_expiration on public.execution_attempts using btree (lease_expires_at) where (disposition = any (array['claimed'::text, 'running'::text]))"],
+  ["idx_execution_attempts_packet_source_finding", "create index idx_execution_attempts_packet_source_finding on public.execution_attempts using btree (packet_hash, source_before_sha, finding_set_hash) where (packet_hash is not null)"],
+  ["idx_execution_attempts_run_story", "create index idx_execution_attempts_run_story on public.execution_attempts using btree (run_id, story_id, created_at desc)"],
+]);
+
+const requiredConstraintFragments = [
+  "primary key (attempt_id)",
+  "generation > 0",
+  "attempt_class = any",
+  "lease_expires_at >= lease_acquired_at",
+  "(source_after_sha is null) = (source_after_tree_hash is null)",
+  "slice_hash is null or packet_hash is not null",
+  "(dedupe_key is not null) =",
+  "disposition = any",
+] as const;
+
+async function verifyExecutionAttemptsShape(sql: Sql | TransactionSql): Promise<void> {
+  const columns = await sql.unsafe<Array<{
+    column_name: string;
+    data_type: string;
+    is_nullable: "YES" | "NO";
+  }>>(
+    `SELECT column_name, data_type, is_nullable
+       FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'execution_attempts'
+      ORDER BY ordinal_position`,
+  );
+  const actualColumns = new Map(columns.map((column) => [column.column_name, column]));
+  if (actualColumns.size !== expectedAttemptColumns.size) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_ADOPTION_MISMATCH",
+      `execution_attempts column count mismatch: expected ${expectedAttemptColumns.size}, got ${actualColumns.size}`,
+    );
+  }
+  for (const [name, expected] of expectedAttemptColumns) {
+    const actual = actualColumns.get(name);
+    if (!actual || actual.data_type !== expected.dataType || actual.is_nullable !== expected.nullable) {
+      throw new ContractSpineMigrationError(
+        "MIGRATION_ADOPTION_MISMATCH",
+        `execution_attempts column mismatch: ${name}`,
+      );
+    }
+  }
+
+  const indexes = await sql.unsafe<Array<{ indexname: string; indexdef: string }>>(
+    `SELECT indexname, indexdef
+       FROM pg_indexes
+      WHERE schemaname = 'public' AND tablename = 'execution_attempts'
+      ORDER BY indexname`,
+  );
+  const actualIndexes = new Map(indexes.map((index) => [index.indexname, normalizeSql(index.indexdef)]));
+  if (actualIndexes.size !== expectedAttemptIndexes.size) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_ADOPTION_MISMATCH",
+      `execution_attempts index count mismatch: expected ${expectedAttemptIndexes.size}, got ${actualIndexes.size}`,
+    );
+  }
+  for (const [name, expected] of expectedAttemptIndexes) {
+    if (actualIndexes.get(name) !== expected) {
+      throw new ContractSpineMigrationError(
+        "MIGRATION_ADOPTION_MISMATCH",
+        `execution_attempts index mismatch: ${name}`,
+      );
+    }
+  }
+
+  const constraints = await sql.unsafe<Array<{ definition: string }>>(
+    `SELECT pg_get_constraintdef(oid, true) AS definition
+       FROM pg_constraint
+      WHERE conrelid = 'public.execution_attempts'::regclass
+      ORDER BY conname`,
+  );
+  const normalizedConstraints = constraints.map((item) => normalizeSql(item.definition));
+  if (normalizedConstraints.length !== requiredConstraintFragments.length) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_ADOPTION_MISMATCH",
+      `execution_attempts constraint count mismatch: expected ${requiredConstraintFragments.length}, got ${normalizedConstraints.length}`,
+    );
+  }
+  for (const fragment of requiredConstraintFragments) {
+    if (!normalizedConstraints.some((definition) => definition.includes(fragment))) {
+      throw new ContractSpineMigrationError(
+        "MIGRATION_ADOPTION_MISMATCH",
+        `execution_attempts constraint mismatch: ${fragment}`,
+      );
+    }
+  }
+}
+
+async function verifyMigrationShape(
+  sql: Sql | TransactionSql,
+  migration: Migration,
+): Promise<void> {
+  if (migration.version === 1) await verifyExecutionAttemptsShape(sql);
+}
+
+async function journalRows(sql: Sql | TransactionSql): Promise<JournalRow[]> {
+  if (!await relationExists(sql, "setfarm_schema_migrations")) return [];
+  return sql.unsafe<JournalRow[]>(
+    "SELECT version, name, checksum, state FROM setfarm_schema_migrations ORDER BY version",
+  );
+}
+
+export async function planContractSpineMigrations(sql: Sql): Promise<ContractSpineMigrationPlan> {
+  const journal = await journalRows(sql);
+  const rows = new Map(journal.map((row) => [row.version, row]));
+  const knownVersions = new Set(migrations.map((migration) => migration.version));
+  const planned: ContractSpineMigrationPlan["migrations"][number][] = [];
+  for (const migration of migrations) {
+    const expectedChecksum = checksum(migration);
+    const row = rows.get(migration.version);
+    let state: ContractSpineMigrationPlan["migrations"][number]["state"];
+    if (!row) {
+      const exists = migration.relation
+        ? await relationExists(sql, migration.relation)
+        : false;
+      if (!exists) {
+        state = "pending";
+      } else {
+        try {
+          await verifyMigrationShape(sql, migration);
+          state = "adoptable";
+        } catch (error) {
+          if (
+            error instanceof ContractSpineMigrationError
+            && error.code === "MIGRATION_ADOPTION_MISMATCH"
+          ) {
+            state = "adoption_mismatch";
+          } else {
+            throw error;
+          }
+        }
+      }
+    } else {
+      state = row.name !== migration.name || row.checksum !== expectedChecksum
+        ? "checksum_mismatch" as const
+        : row.state === "adopted"
+          ? "adopted" as const
+          : "applied" as const;
+    }
+    planned.push({
+      version: migration.version,
+      name: migration.name,
+      checksum: expectedChecksum,
+      state,
+    });
+  }
+  for (const row of journal) {
+    if (knownVersions.has(row.version)) continue;
+    planned.push({
+      version: row.version,
+      name: row.name,
+      checksum: row.checksum,
+      state: "unexpected",
+    });
+  }
+  planned.sort((left, right) => left.version - right.version);
+  const status = planned.some((item) =>
+    item.state === "checksum_mismatch"
+      || item.state === "adoption_mismatch"
+      || item.state === "unexpected")
+    ? "drift" as const
+    : planned.some((item) => item.state === "pending" || item.state === "adoptable")
+      ? "pending" as const
+      : "current" as const;
+  return {
+    schema: "setfarm.contract-spine-migration-plan.v1",
+    status,
+    migrations: planned,
+  };
+}
+
+function isLockTimeout(error: unknown): boolean {
+  return error instanceof Error
+    && "code" in error
+    && error.code === "55P03";
+}
+
+export async function applyContractSpineMigrations(
+  sql: Sql,
+  options: Readonly<{ lockTimeoutMs?: number; statementTimeoutMs?: number; releaseSha?: string }> = {},
+): Promise<ContractSpineMigrationApplyResult> {
+  const lockTimeoutMs = Math.max(1, Math.min(options.lockTimeoutMs ?? 5_000, 60_000));
+  const statementTimeoutMs = Math.max(lockTimeoutMs, Math.min(options.statementTimeoutMs ?? 30_000, 300_000));
+  try {
+    return await sql.begin(async (transaction) => {
+      await transaction.unsafe("SELECT set_config('lock_timeout', $1, true)", [`${lockTimeoutMs}ms`]);
+      await transaction.unsafe("SELECT set_config('statement_timeout', $1, true)", [`${statementTimeoutMs}ms`]);
+      await transaction.unsafe("SELECT pg_advisory_xact_lock($1)", [contractSpineMigrationLockKey]);
+
+      await transaction.unsafe(`
+        CREATE TABLE IF NOT EXISTS setfarm_schema_migrations (
+          version INTEGER PRIMARY KEY CHECK (version > 0),
+          name TEXT NOT NULL UNIQUE,
+          checksum TEXT NOT NULL CHECK (checksum ~ '^[a-f0-9]{64}$'),
+          state TEXT NOT NULL CHECK (state IN ('applied', 'adopted')),
+          release_sha TEXT,
+          applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `);
+
+      const applied: string[] = [];
+      const adopted: string[] = [];
+      const alreadyApplied: string[] = [];
+      const journal = await journalRows(transaction);
+      const knownVersions = new Set(migrations.map((migration) => migration.version));
+      const unexpected = journal.find((row) => !knownVersions.has(row.version));
+      if (unexpected) {
+        throw new ContractSpineMigrationError(
+          "MIGRATION_UNKNOWN_VERSION",
+          `Migration journal contains unknown version ${unexpected.version}`,
+        );
+      }
+      const rows = new Map(journal.map((row) => [row.version, row]));
+
+      for (const migration of migrations) {
+        const expectedChecksum = checksum(migration);
+        const row = rows.get(migration.version);
+        if (row) {
+          if (row.name !== migration.name || row.checksum !== expectedChecksum) {
+            throw new ContractSpineMigrationError(
+              "MIGRATION_CHECKSUM_MISMATCH",
+              `Migration ${migration.version} journal checksum or name differs from source`,
+            );
+          }
+          await verifyMigrationShape(transaction, migration);
+          alreadyApplied.push(migration.name);
+          continue;
+        }
+
+        const exists = migration.relation
+          ? await relationExists(transaction, migration.relation)
+          : false;
+        let state: "applied" | "adopted" = "applied";
+        if (exists) {
+          await verifyMigrationShape(transaction, migration);
+          state = "adopted";
+          adopted.push(migration.name);
+        } else {
+          for (const statement of migration.statements) {
+            await transaction.unsafe(statement);
+          }
+          await verifyMigrationShape(transaction, migration);
+          applied.push(migration.name);
+        }
+        await transaction.unsafe(
+          `INSERT INTO setfarm_schema_migrations
+             (version, name, checksum, state, release_sha)
+           VALUES ($1, $2, $3, $4, $5)`,
+          [
+            migration.version,
+            migration.name,
+            expectedChecksum,
+            state,
+            options.releaseSha ?? null,
+          ],
+        );
+      }
+
+      return {
+        schema: "setfarm.contract-spine-migration-apply.v1" as const,
+        applied,
+        adopted,
+        alreadyApplied,
+      };
+    }) as ContractSpineMigrationApplyResult;
+  } catch (error) {
+    if (error instanceof ContractSpineMigrationError) throw error;
+    if (isLockTimeout(error)) {
+      throw new ContractSpineMigrationError(
+        "MIGRATION_LOCK_TIMEOUT",
+        `Contract spine migration lock was not acquired within ${lockTimeoutMs}ms`,
+        { cause: error },
+      );
+    }
+    throw error;
+  }
+}
+
+export async function verifyContractSpineMigrations(
+  sql: Sql,
+): Promise<Readonly<{
+  schema: "setfarm.contract-spine-migration-verify.v1";
+  status: "verified";
+  migrations: ContractSpineMigrationPlan["migrations"];
+}>> {
+  const plan = await planContractSpineMigrations(sql);
+  const unexpected = plan.migrations.find((migration) => migration.state === "unexpected");
+  if (unexpected) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_UNKNOWN_VERSION",
+      `Migration journal contains unknown version ${unexpected.version}`,
+    );
+  }
+  const mismatch = plan.migrations.find((migration) => migration.state === "checksum_mismatch");
+  if (mismatch) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_CHECKSUM_MISMATCH",
+      `Migration ${mismatch.version} journal checksum or name differs from source`,
+    );
+  }
+  const adoptionMismatch = plan.migrations.find((migration) => migration.state === "adoption_mismatch");
+  if (adoptionMismatch) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_ADOPTION_MISMATCH",
+      `Migration ${adoptionMismatch.version} existing relation does not match the expected shape`,
+    );
+  }
+  const pending = plan.migrations.find((migration) =>
+    migration.state === "pending" || migration.state === "adoptable");
+  if (pending) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_INCOMPLETE",
+      `Migration ${pending.version} is pending`,
+    );
+  }
+  for (const migration of migrations) await verifyMigrationShape(sql, migration);
+  return {
+    schema: "setfarm.contract-spine-migration-verify.v1",
+    status: "verified",
+    migrations: plan.migrations,
+  };
+}

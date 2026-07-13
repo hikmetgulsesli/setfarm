@@ -5,6 +5,10 @@
  */
 import postgres from "postgres";
 import { runtimeConfig } from "./runtime-config.js";
+import {
+  applyContractSpineMigrations,
+  verifyContractSpineMigrations,
+} from "./db/contract-spine-migrations.js";
 
 let _sql: ReturnType<typeof postgres> | null = null;
 let _schemaReady = false;
@@ -113,13 +117,26 @@ export async function pgBegin<T>(fn: (sql: ReturnType<typeof postgres>) => Promi
   return s.begin(fn as any) as any;
 }
 
-export async function pgMigrate(): Promise<void> {
+export type PgMigrationOptions = Readonly<{
+  contractSpineMode?: "verify" | "apply";
+}>;
+
+export async function pgMigrate(options: PgMigrationOptions = {}): Promise<void> {
   if (_isMigrating) return;
   _isMigrating = true;
   const url = resolvePgUrl();
   try {
     await ensureDatabaseExists(url);
     const s = getSql();
+
+    // Contract-spine migrations are release operations. Runtime startup fails
+    // closed on a missing or drifted journal; only the explicit migration CLI
+    // and isolated test fixtures opt into applying them.
+    if (options.contractSpineMode === "apply") {
+      await applyContractSpineMigrations(s);
+    } else {
+      await verifyContractSpineMigrations(s);
+    }
 
     await s`CREATE SEQUENCE IF NOT EXISTS runs_run_number_seq`;
     await s`
@@ -260,54 +277,6 @@ export async function pgMigrate(): Promise<void> {
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )
     `;
-    await s`
-      CREATE TABLE IF NOT EXISTS execution_attempts (
-        attempt_id TEXT PRIMARY KEY,
-        run_id TEXT NOT NULL,
-        step_id TEXT NOT NULL,
-        story_id TEXT NOT NULL DEFAULT '',
-        generation INTEGER NOT NULL CHECK (generation > 0),
-        fence_token TEXT NOT NULL,
-        attempt_class TEXT NOT NULL CHECK (attempt_class IN (
-          'product_implementation', 'evidence_only', 'infrastructure_retry', 'supervisor_repair'
-        )),
-        packet_hash TEXT,
-        compilation_report_hash TEXT NOT NULL,
-        slice_hash TEXT,
-        source_before_sha TEXT NOT NULL,
-        source_before_tree_hash TEXT NOT NULL,
-        source_after_sha TEXT,
-        source_after_tree_hash TEXT,
-        finding_set_hash TEXT,
-        dedupe_key TEXT,
-        role TEXT NOT NULL,
-        agent_id TEXT,
-        branch TEXT,
-        worktree TEXT,
-        lease_acquired_at TIMESTAMPTZ NOT NULL,
-        lease_expires_at TIMESTAMPTZ NOT NULL,
-        heartbeat_at TIMESTAMPTZ NOT NULL,
-        disposition TEXT NOT NULL CHECK (disposition IN (
-          'claimed', 'running', 'produced_delta', 'already_satisfied', 'no_progress',
-          'inconclusive', 'failed', 'verified', 'superseded'
-        )),
-        output_hash TEXT,
-        evidence_refs TEXT NOT NULL DEFAULT '[]',
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        CHECK (lease_expires_at >= lease_acquired_at),
-        CHECK ((source_after_sha IS NULL) = (source_after_tree_hash IS NULL)),
-        CHECK (slice_hash IS NULL OR packet_hash IS NOT NULL),
-        CHECK (
-          (dedupe_key IS NOT NULL) = (
-            attempt_class = 'product_implementation'
-            AND packet_hash IS NOT NULL
-            AND finding_set_hash IS NOT NULL
-          )
-        )
-      )
-    `;
-
     await s`ALTER TABLE runs ADD COLUMN IF NOT EXISTS run_number INTEGER DEFAULT nextval('runs_run_number_seq'::regclass)`;
     await s`ALTER TABLE runs ADD COLUMN IF NOT EXISTS meta TEXT`;
     await s`ALTER TABLE runs ADD COLUMN IF NOT EXISTS assigned_developer TEXT`;
@@ -349,11 +318,6 @@ export async function pgMigrate(): Promise<void> {
     await s`CREATE INDEX IF NOT EXISTS idx_run_observations_run_created ON run_observations(run_id, created_at DESC)`;
     await s`CREATE INDEX IF NOT EXISTS idx_run_observations_step_story ON run_observations(run_id, step_id, story_id, created_at DESC)`;
     await s`CREATE INDEX IF NOT EXISTS idx_run_observations_status ON run_observations(run_id, status, created_at DESC)`;
-    await s`CREATE UNIQUE INDEX IF NOT EXISTS idx_execution_attempts_active_fence ON execution_attempts(run_id, step_id, story_id) WHERE disposition IN ('claimed', 'running')`;
-    await s`CREATE UNIQUE INDEX IF NOT EXISTS idx_execution_attempts_dedupe ON execution_attempts(dedupe_key) WHERE dedupe_key IS NOT NULL`;
-    await s`CREATE INDEX IF NOT EXISTS idx_execution_attempts_run_story ON execution_attempts(run_id, story_id, created_at DESC)`;
-    await s`CREATE INDEX IF NOT EXISTS idx_execution_attempts_lease_expiration ON execution_attempts(lease_expires_at) WHERE disposition IN ('claimed', 'running')`;
-    await s`CREATE INDEX IF NOT EXISTS idx_execution_attempts_packet_source_finding ON execution_attempts(packet_hash, source_before_sha, finding_set_hash) WHERE packet_hash IS NOT NULL`;
 
     await s`
       UPDATE claim_log cl

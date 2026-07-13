@@ -14,7 +14,9 @@ function adminUrl(): URL {
   return parsed;
 }
 
-export async function createIsolatedTestDatabase() {
+export async function createIsolatedTestDatabase(
+  options: Readonly<{ migrate?: boolean }> = {},
+) {
   const database = `setfarm_contract_spine_test_${process.pid}_${randomBytes(6).toString("hex")}`;
   assert.match(database, TEST_DATABASE_PATTERN);
   const admin = postgres(adminUrl().toString(), {
@@ -40,7 +42,9 @@ export async function createIsolatedTestDatabase() {
   let db: typeof import("../../src/db-pg.js");
   try {
     db = await import(`../../src/db-pg.ts?execution-test=${database}`);
-    await db.pgMigrate();
+    if (options.migrate !== false) {
+      await db.pgMigrate({ contractSpineMode: "apply" });
+    }
   } catch (error) {
     await admin`SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = ${database} AND pid <> pg_backend_pid()`;
     await admin.unsafe(`DROP DATABASE "${database}"`);
