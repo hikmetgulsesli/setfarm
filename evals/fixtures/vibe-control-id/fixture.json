@@ -1,0 +1,36 @@
+{
+  "schema": "setfarm.contract-replay-fixture.v1",
+  "caseId": "vibe-control-id",
+  "productClass": "game",
+  "provenance": [
+    {
+      "authority": "github",
+      "locator": "github:hikmetgulsesli/vibe-breaker/compare/1e14342...d8af372",
+      "revision": "d8af372a4c08c16b0f0e2015bde88cc483144287",
+      "statement": "The design button has no stable ID; five minutes after integration-complete, the corrective commit changes both assigned DOM and handler IDs and adds the missing HUD."
+    }
+  ],
+  "sources": [
+    {
+      "locator": "sources/control-id-fix.patch",
+      "sha256": "9034f6923815fa7c65b58a57ce95b64625a842d4e5e3c2366a407da354e9d468",
+      "mediaType": "text/x-diff",
+      "redaction": "minimal_excerpt"
+    },
+    {
+      "locator": "sources/design-control-excerpt.html",
+      "sha256": "68b7f6dd02df1e1f46928823f09420f69eff40b5b9d36e52c74d08b6d7964586",
+      "mediaType": "text/html",
+      "redaction": "minimal_excerpt"
+    }
+  ],
+  "redaction": {
+    "containsCredentials": false,
+    "containsPrivateTranscripts": false,
+    "notes": "Only the exact control ID correction and immutable commit identities are retained."
+  },
+  "expected": {
+    "packetStatus": "rejected",
+    "compilationResult": "expected/compilation-result.json"
+  }
+}

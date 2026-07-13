@@ -1,0 +1,31 @@
+{
+  "schema": "setfarm.contract-replay-fixture.v1",
+  "caseId": "1887-action-state",
+  "productClass": "utility",
+  "provenance": [
+    {
+      "authority": "local_git",
+      "locator": "local-git:compact-one-page-task-chip-utility-7aab14d8@a1b237a:src/screens",
+      "revision": "a1b237af15339ad81c028c25fe848416e9663867",
+      "statement": "Generated inputs and selectable rows carry semantic actions without local control/value handlers."
+    }
+  ],
+  "sources": [
+    {
+      "locator": "sources/unbound-controls.tsx",
+      "sha256": "f50f5f7fc24bec9ac0357043a9b3d92d6ab2556110273a0c716cba8d4f9622ab",
+      "mediaType": "text/typescript",
+      "redaction": "minimal_excerpt"
+    }
+  ],
+  "redaction": {
+    "containsCredentials": false,
+    "containsPrivateTranscripts": false,
+    "notes": "Only the generated controls needed to reproduce missing value/state bindings are retained."
+  },
+  "expected": {
+    "packetStatus": "rejected",
+    "compilationResult": "expected/compilation-result.json",
+    "attemptResult": "expected/attempt-result.json"
+  }
+}

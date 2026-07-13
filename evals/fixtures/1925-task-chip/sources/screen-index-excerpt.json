@@ -1,0 +1,14 @@
+{
+  "screenId": "9660e3e8a7484f6badc018801f61b1b8",
+  "title": "Short Editor - Compact One Page Task Chip Utility",
+  "componentName": "ShortEditorCompactOnePageTaskChipUtility",
+  "actions": [
+    { "id": "close-panel-1", "kind": "button", "label": "Close Panel", "index": 0 },
+    { "id": "in-progress-2", "kind": "button", "label": "In Progress", "index": 1 },
+    { "id": "to-do-3", "kind": "button", "label": "To Do", "index": 2 },
+    { "id": "done-4", "kind": "button", "label": "Done", "index": 3 },
+    { "id": "close-5", "kind": "button", "label": "Close", "index": 4 },
+    { "id": "cancel-6", "kind": "button", "label": "Cancel", "index": 5 },
+    { "id": "save-changes-7", "kind": "button", "label": "Save Changes", "index": 6 }
+  ]
+}

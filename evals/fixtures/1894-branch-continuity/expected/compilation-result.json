@@ -1,0 +1,8 @@
+{
+  "schema": "setfarm.expected-compilation-result.v1",
+  "status": "rejected",
+  "diagnosticCodes": [
+    "ATTEMPT_SOURCE_REVISION_CHANGED"
+  ],
+  "exactBindings": []
+}

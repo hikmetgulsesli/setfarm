@@ -26,6 +26,10 @@ import { cleanupProjectEphemera, scheduleRunCronTeardown } from "./cleanup-ops.j
 import { refreshRunContractSafe } from "./contract-ledger.js";
 import { maybeRunPlatformSelfHeal } from "./platform-self-heal/runner.js";
 import { preserveActionableStoryRetryOutput } from "./retry-output.js";
+import {
+  finalizeShadowAttemptFailure,
+  prepareShadowAttemptFailure,
+} from "../execution/shadow-attempt-recorder.js";
 
 // ── failStep ─────────────────────────────────────────────────────────
 
@@ -103,6 +107,12 @@ async function handleLoopStepFailurePG(
   error: string,
 ): Promise<{ retrying: boolean; runFailed: boolean }> {
   const workflowStepId = step.step_id || stepId;
+  const shadowFailure = await prepareShadowAttemptFailure({
+    runId: step.run_id,
+    stepId: workflowStepId,
+    storyDbId: step.current_story_id!,
+    agentId: step.agent_id,
+  });
   const story = await pgGet<{ id: string; retry_count: number; max_retries: number; output: string | null }>(
     "SELECT id, retry_count, max_retries, output FROM stories WHERE id = $1", [step.current_story_id!]
   );
@@ -120,6 +130,7 @@ async function handleLoopStepFailurePG(
     await recordStepTransition(stepId, step.run_id, "running", "pending", step.agent_id, "failStep:loopInfraRetry", { storyId: storyRow?.story_id, error: error.slice(0, 300) });
     logger.warn(`[failStep] Transient agent/model failure for ${storyRow?.story_id}; requeued without consuming story retry`, { runId: step.run_id });
     await refreshRunContractSafe(step.run_id, "story.infra_retry");
+    await finalizeShadowAttemptFailure(shadowFailure, "inconclusive");
     return { retrying: true, runFailed: false };
   }
 
@@ -156,6 +167,7 @@ async function handleLoopStepFailurePG(
     scheduleRunCronTeardown(step.run_id);
     logger.warn(`[failStep] Story ${storyRow?.story_id} retries exhausted — failing run (policy: fail-fast on unrecoverable story)`, { runId: step.run_id });
     await refreshRunContractSafe(step.run_id, "story.failed");
+    await finalizeShadowAttemptFailure(shadowFailure, "failed");
     return { retrying: false, runFailed: true };
   }
 
@@ -172,6 +184,7 @@ async function handleLoopStepFailurePG(
   }
 
   await refreshRunContractSafe(step.run_id, "story.retry");
+  await finalizeShadowAttemptFailure(shadowFailure, "failed");
   return { retrying: true, runFailed: false };
 }
 

@@ -1,0 +1,8 @@
+{
+  "schema": "setfarm.expected-compilation-result.v1",
+  "status": "rejected",
+  "diagnosticCodes": [
+    "LINK_CONTROL_ID_UNSPECIFIED"
+  ],
+  "exactBindings": []
+}

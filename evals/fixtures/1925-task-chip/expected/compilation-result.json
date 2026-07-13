@@ -1,0 +1,15 @@
+{
+  "schema": "setfarm.expected-compilation-result.v1",
+  "status": "rejected",
+  "diagnosticCodes": [
+    "CONTRACT_ACTION_RENAMED",
+    "LINK_UNRESOLVED_SURFACE"
+  ],
+  "exactBindings": [
+    {
+      "actionRef": "ACT_SAVE_RECORD",
+      "generatedLocalId": "save-changes-7",
+      "provenance": "same_element"
+    }
+  ]
+}

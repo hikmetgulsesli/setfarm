@@ -1,0 +1,18 @@
+{
+  "correctHead": {
+    "sha": "42ec4ebff979bda4519e56965cd60e5d19af8039",
+    "treeHash": "51db1ab94191fd7637d0173a048458193abcbd34",
+    "committedAt": "2026-07-12T16:07:42+03:00",
+    "containsIntegratedActions": true
+  },
+  "laterBase": {
+    "sha": "e7c9f31b51b58dd85c6b089fb1383af9fcc3fc51",
+    "treeHash": "a5516a41f0585e537486ee41ea936412ebd3d53c",
+    "committedAt": "2026-07-12T15:12:42+03:00",
+    "containsIntegratedActions": false
+  },
+  "observedLifecycle": {
+    "correctHeadBranchDeletedBeforeNextClaim": true,
+    "nextClaimStartedFromLaterBase": true
+  }
+}

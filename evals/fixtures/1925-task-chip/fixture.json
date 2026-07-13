@@ -1,0 +1,72 @@
+{
+  "schema": "setfarm.contract-replay-fixture.v1",
+  "caseId": "1925-task-chip",
+  "productClass": "utility",
+  "provenance": [
+    {
+      "authority": "local_git",
+      "locator": "local-git:compact-one-page-task-chip-utility-ac8cea43@13f9cf2:generated-editor",
+      "revision": "13f9cf25579c108c627d6c4a069293134cdea897",
+      "statement": "The generated control contains ACT_SAVE_RECORD and save-changes-7 on the same element."
+    },
+    {
+      "authority": "postgresql",
+      "locator": "postgresql:runs/1925/steps/plan",
+      "statement": "The plan binds ACT_FILTER_INSIGHTS and ACT_EXPORT_SUMMARY to nonexistent SURF_INSIGHTS."
+    },
+    {
+      "authority": "github",
+      "locator": "github:hikmetgulsesli/compact-one-page-task-chip-utility-ac8cea43/pull/2/thread/PRRT_kwDOTWLD1c6QNQs0",
+      "revision": "13f9cf25579c108c627d6c4a069293134cdea897",
+      "statement": "The unresolved review prose contains non-DOM tokens mixed with actual DOM IDs."
+    }
+  ],
+  "sources": [
+    {
+      "locator": "sources/contract-relations.json",
+      "sha256": "f09843ceac612adce5f4669a471a176ae93ecdbf91d44fa0ea559d73ce20fa38",
+      "mediaType": "application/json",
+      "redaction": "minimal_excerpt"
+    },
+    {
+      "locator": "sources/generated-control.tsx",
+      "sha256": "b75fdeb84e15ae7cb9c162d29e4bbaaaf792b04c85a3b87ee757e1df1c9e7f44",
+      "mediaType": "text/typescript",
+      "redaction": "minimal_excerpt"
+    },
+    {
+      "locator": "sources/implement-context-excerpt.json",
+      "sha256": "1ac847477ec304cb1b23e6bdb4693bea4307ce3c44991d4425de3b70da8ee916",
+      "mediaType": "application/json",
+      "redaction": "minimal_excerpt"
+    },
+    {
+      "locator": "sources/plan-gap.md",
+      "sha256": "dbb9937bd900146b2d4b65c3b0e28296bdce3d77d21f17078ad57e67ba30734f",
+      "mediaType": "text/markdown",
+      "redaction": "minimal_excerpt"
+    },
+    {
+      "locator": "sources/review-thread-excerpt.json",
+      "sha256": "cb08b19fbfcd30ae8dc5c5cc069918e16c67f63be74fb20d3bf1f0c5f97b090a",
+      "mediaType": "application/json",
+      "redaction": "minimal_excerpt"
+    },
+    {
+      "locator": "sources/screen-index-excerpt.json",
+      "sha256": "080052f262d4c1a3f71a9a2a43ca9bedb7d27b2263e60271a3fb6c0921f415c8",
+      "mediaType": "application/json",
+      "redaction": "minimal_excerpt"
+    }
+  ],
+  "redaction": {
+    "containsCredentials": false,
+    "containsPrivateTranscripts": false,
+    "notes": "Only exact contract, index, source, plan, and review fragments are retained; operational paths and transcript text are omitted."
+  },
+  "expected": {
+    "packetStatus": "rejected",
+    "compilationResult": "expected/compilation-result.json",
+    "attemptResult": "expected/attempt-result.json"
+  }
+}

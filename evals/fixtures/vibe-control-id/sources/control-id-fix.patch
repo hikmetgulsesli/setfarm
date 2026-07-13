@@ -1,0 +1,19 @@
+integration-complete commit: 1e14342be3743702d29ceeb181576d742b413e42
+corrective commit: d8af372a4c08c16b0f0e2015bde88cc483144287
+
+--- a/game.js
++++ b/game.js
+@@
+-const menuBtn = document.getElementById('menu-btn');
++const mainMenuBtn = document.getElementById('main-menu-btn');
+@@
+-    if (menuBtn) {
+-        menuBtn.addEventListener('click', () => {
++    if (mainMenuBtn) {
++        mainMenuBtn.addEventListener('click', () => {
+
+--- a/index.html
++++ b/index.html
+@@
+-<button id="menu-btn" class="secondary-btn">
++<button id="main-menu-btn" class="secondary-btn">

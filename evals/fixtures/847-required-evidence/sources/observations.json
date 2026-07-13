@@ -1,0 +1,34 @@
+[
+  {
+    "id": "b3631abe-cc3c-483d-8765-033a07a55fb3",
+    "checkId": "implement.runtime.interaction.2",
+    "status": "fail",
+    "summary": "availableActionIds=pause-1 | missingTargetActionId=close-1",
+    "detail": "The target is not present in the current runtime surface."
+  },
+  {
+    "id": "3808ff0c-ee7f-41e7-bf32-3334987bcc2a",
+    "checkId": "implement.evidence.artifact",
+    "status": "fail",
+    "summary": "Wrote failing implementation evidence."
+  },
+  {
+    "id": "8212c496-9bbb-45ff-b299-5287f2246ea5",
+    "checkId": "implement.evidence_runner",
+    "status": "fail",
+    "summary": "IMPLEMENT_INTERACTION_FAILED"
+  },
+  {
+    "id": "1e6f7bd2-5005-4929-a6cd-a07f9890e4cb",
+    "checkId": "implement.evidence",
+    "status": "pass",
+    "summary": "Implement evidence gate passed",
+    "detail": "implementEvidence=advisory issues=IMPLEMENT_EVIDENCE_VERDICT_NOT_PASSED"
+  },
+  {
+    "id": "adaca67c-dd2b-4c98-820b-f4e86c7877d4",
+    "checkId": "implement.product_supervisor",
+    "status": "pass",
+    "summary": "Product supervisor passed"
+  }
+]

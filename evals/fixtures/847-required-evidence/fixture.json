@@ -1,0 +1,35 @@
+{
+  "schema": "setfarm.contract-replay-fixture.v1",
+  "caseId": "847-required-evidence",
+  "productClass": "game",
+  "provenance": [
+    {
+      "authority": "postgresql",
+      "locator": "postgresql:runs/847/run_observations/US-003",
+      "statement": "Required close-1 interaction and evidence rows fail immediately before advisory and supervisor pass rows."
+    },
+    {
+      "authority": "local_git",
+      "locator": "local-git:relayswitch-lite-b34c12b6@ddbdfdc",
+      "revision": "ddbdfdcdfdf7e6c8e0d959ca5200a0dff2642e93",
+      "statement": "Run 847 completed at the US-003 source revision despite the failed required interaction evidence."
+    }
+  ],
+  "sources": [
+    {
+      "locator": "sources/observations.json",
+      "sha256": "65491adec53e2066f2fcd544c60aec6457b5df007e7979bce4b5aa9936cc6d4b",
+      "mediaType": "application/json",
+      "redaction": "operational_paths_removed"
+    }
+  ],
+  "redaction": {
+    "containsCredentials": false,
+    "containsPrivateTranscripts": false,
+    "notes": "Absolute screenshot/worktree paths and runtime state payloads are removed; observation IDs, checks, statuses, and causal summaries remain."
+  },
+  "expected": {
+    "packetStatus": "rejected",
+    "compilationResult": "expected/compilation-result.json"
+  }
+}

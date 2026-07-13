@@ -1347,6 +1347,11 @@ function attrValue(attrs, attrName) {
   return match ? String(match[1] ?? match[2] ?? match[3] ?? "").trim() : "";
 }
 
+function semanticActionRef(attrs) {
+  const value = attrValue(attrs, "data-action");
+  return /^ACT_[A-Z0-9]+(?:_[A-Z0-9]+)*$/.test(value) ? value : "";
+}
+
 function escapeHtmlAttr(value) {
   return String(value || "")
     .replace(/&/g, "&amp;")
@@ -1364,7 +1369,8 @@ function annotateInteractiveElements(html) {
     const label = labelFromInteractive(attrs, inner, `Button ${index + 1}`);
     const base = slugifyActionId(label, "button");
     const id = uniqueActionId(actions, base, index);
-    actions.push({ id, kind: "button", label, index });
+    const actionRef = semanticActionRef(attrs);
+    actions.push({ id, kind: "button", label, index, ...(actionRef ? { actionRef } : {}) });
 
     let cleanAttrs = String(attrs || "")
       .replace(/\sdata-action-id=(?:"[^"]*"|'[^']*')/gi, "")
@@ -1383,7 +1389,8 @@ function annotateInteractiveElements(html) {
     const label = labelFromInteractive(attrs, inner, href || `Link ${index + 1}`);
     const base = slugifyActionId(label, "link");
     const id = uniqueActionId(actions, base, index);
-    actions.push({ id, kind: "link", label, href, index });
+    const actionRef = semanticActionRef(attrs);
+    actions.push({ id, kind: "link", label, href, index, ...(actionRef ? { actionRef } : {}) });
 
     const cleanAttrs = String(attrs || "")
       .replace(/\sdata-action-id=(?:"[^"]*"|'[^']*')/gi, "")
@@ -1436,6 +1443,14 @@ for (const screen of manifest) {
   const renderableBody = stripNonRenderedHtmlBlocks(body);
   const classNormalizedBody = normalizeDesignClassAttributes(renderableBody);
   const { html: interactiveBody, actions } = annotateInteractiveElements(classNormalizedBody);
+  const sourceLocator = path.relative(repoPath, htmlFile).split(path.sep).join("/");
+  const indexedActions = actions.map((action) => action.actionRef ? {
+    ...action,
+    generatedLocalId: action.id,
+    semanticSource: "data-action",
+    sourceLocator,
+    selector: `[data-action-id="${action.id}"]`,
+  } : action);
   const normalizedBody = replaceMaterialSymbolSpans(interactiveBody, lucideImports, unknownMaterialIcons);
   collectClassTokens(normalizedBody, usedClassTokens);
   const jsx = restoreGeneratedLinkActionHandlers(htmlToJsx(normalizedBody));
@@ -1483,7 +1498,7 @@ ${jsx.split("\n").map(l => "      " + l).join("\n")}
 }
 `;
   fs.writeFileSync(path.join(screensDir, name + ".tsx"), code);
-  screenIndex.push({ screenId: screen.screenId, title: screen.title, componentName: name, file: "src/screens/" + name + ".tsx", buttons, inputs, links, actions });
+  screenIndex.push({ screenId: screen.screenId, title: screen.title, componentName: name, file: "src/screens/" + name + ".tsx", buttons, inputs, links, actions: indexedActions });
   console.log("  OK:", screen.title, "->", name + ".tsx", "(" + buttons + "btn," + inputs + "inp," + links + "lnk)");
 }
 
