@@ -3,6 +3,7 @@ import { teardownWorkflowCronsIfIdle } from "./agent-cron.js";
 import { emitEvent } from "./events.js";
 import { recordStepTransition } from "./repo.js";
 import { missionControlApi, runtimeConfig } from "../runtime-config.js";
+import type { SetfarmProtocolMode } from "../product-compiler/protocol.js";
 
 export type RunInfo = {
   id: string;
@@ -11,6 +12,11 @@ export type RunInfo = {
   task: string;
   status: string;
   context: string;
+  protocol: SetfarmProtocolMode;
+  protocol_version: number;
+  compiler_release_sha: string | null;
+  packet_hash: string | null;
+  activation_preflight_hash: string | null;
   created_at: string;
   updated_at: string;
 };

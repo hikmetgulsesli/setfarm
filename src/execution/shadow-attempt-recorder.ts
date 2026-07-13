@@ -10,7 +10,6 @@ import { fileURLToPath } from "node:url";
 import { z } from "zod";
 
 import { hashCanonicalJson } from "../product-compiler/canonical-json.js";
-import { readSetfarmProtocol } from "../product-compiler/protocol.js";
 import {
   GitObjectHashSchema,
   Sha256Schema,
@@ -20,12 +19,27 @@ import type {
   FenceUpdateResult,
 } from "./attempt-repository.js";
 import {
+  createRunProtocolRepository,
+  type StoredRunProtocolIdentity,
+} from "./run-protocol.js";
+import {
+  legacyClaimEvidenceRef,
+  legacyClaimIdsFromEvidenceRefs,
+} from "./shadow-parity.js";
+import {
   SourceRevisionV1Schema,
   type ExecutionAttemptReservationV1,
   type ExecutionAttemptV1,
   type SourceRevisionV1,
   type TerminalAttemptDispositionV1,
 } from "./schemas/execution-attempt-v1.js";
+
+const SHADOW_OBSERVATION_FAILURE_CODES = new Set([
+  "ATTEMPT_ACTIVE_CONFLICT",
+  "ATTEMPT_ACTIVE_NOT_FOUND",
+  "ATTEMPT_DUPLICATE",
+  "ATTEMPT_STALE_FENCE",
+]);
 
 const MAX_GIT_BUFFER = 64 * 1024 * 1024;
 
@@ -55,7 +69,14 @@ const RuntimeIdentityV1Schema = z.object({
 }).strict();
 
 const ShadowClaimInputV1Schema = RuntimeIdentityV1Schema.extend({
+  legacyClaimId: z.number().int().positive(),
   legacyClaimGeneration: z.number().int().nonnegative(),
+  attemptClass: z.enum([
+    "product_implementation",
+    "evidence_only",
+    "infrastructure_retry",
+    "supervisor_repair",
+  ]).default("product_implementation"),
   role: z.string().min(1).max(500),
   agentId: z.string().min(1).max(500).optional(),
   branch: z.string().min(1).max(1_000),
@@ -89,6 +110,9 @@ export type ShadowDiagnostic = Readonly<{
   stepId?: string;
   storyId?: string;
   attemptId?: string;
+  legacyClaimId?: number;
+  attemptLegacyClaimId?: number;
+  attemptDisposition?: string;
 }>;
 
 type ShadowAttemptRepository = Readonly<{
@@ -110,7 +134,8 @@ export type ShadowRecorderDependencies = Readonly<{
   resolveCompilationReportHash(
     input: z.infer<typeof ShadowClaimInputV1Schema>,
   ): Promise<string>;
-  emit(event: ShadowDiagnostic): void;
+  emit(event: ShadowDiagnostic): void | Promise<void>;
+  emitTimeoutMs?: number;
 }>;
 
 export type ShadowObservationResult =
@@ -128,6 +153,8 @@ export type ShadowFailurePreparation =
       stepId: string;
       storyId: string;
       sourceAtFailure: SourceRevisionV1;
+      legacyClaimId?: number;
+      evidenceRefs: string[];
     };
   }>
   | Readonly<{ status: "observed"; code: string }>
@@ -136,11 +163,36 @@ export type ShadowFailurePreparation =
 
 function errorMessage(error: unknown): string {
   const raw = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
-  return raw.replace(/[\r\n\t]+/g, " ").slice(0, 500) || "Unknown shadow recorder error";
+  return raw
+    .replace(/[\r\n\t]+/g, " ")
+    .replace(/\b(?:postgres(?:ql)?|https?):\/\/\S+/gi, "[redacted-url]")
+    .replace(/\/(?:Users|home)\/\S+/g, "[redacted-path]")
+    .replace(/\b(password|token|secret)=\S+/gi, "$1=[redacted]")
+    .slice(0, 500) || "Unknown shadow recorder error";
 }
 
-function safeEmit(emit: (event: ShadowDiagnostic) => void, event: ShadowDiagnostic): void {
-  try { emit(event); } catch { /* observation sink cannot own legacy control flow */ }
+async function safeEmit(
+  emit: (event: ShadowDiagnostic) => void | Promise<void>,
+  event: ShadowDiagnostic,
+  timeoutMs = 1_000,
+): Promise<void> {
+  const boundedTimeoutMs = Number.isFinite(timeoutMs)
+    ? Math.max(1, Math.min(Math.trunc(timeoutMs), 30_000))
+    : 1_000;
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const pending = Promise.resolve()
+    .then(() => emit(event))
+    .catch(() => undefined);
+  try {
+    await Promise.race([
+      pending,
+      new Promise<void>((resolve) => {
+        timeout = setTimeout(resolve, boundedTimeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
 }
 
 function identityEvent(
@@ -154,12 +206,71 @@ function identityEvent(
     ...(event.stepId ? { stepId: event.stepId } : {}),
     ...(event.storyId ? { storyId: event.storyId } : {}),
     ...(event.attemptId ? { attemptId: event.attemptId } : {}),
+    ...(event.legacyClaimId ? { legacyClaimId: event.legacyClaimId } : {}),
+    ...(event.attemptLegacyClaimId
+      ? { attemptLegacyClaimId: event.attemptLegacyClaimId }
+      : {}),
+    ...(event.attemptDisposition ? { attemptDisposition: event.attemptDisposition } : {}),
   };
 }
 
+export function toShadowStructuredObservation(
+  event: ShadowDiagnostic,
+  observedAt: Date = new Date(),
+) {
+  const status = event.event === "product_compiler.shadow_error"
+    ? "fail"
+    : SHADOW_OBSERVATION_FAILURE_CODES.has(event.code)
+      ? "fail"
+      : ["ATTEMPT_RESERVED", "ATTEMPT_COMPLETED", "ATTEMPT_FAILED_OBSERVED"].includes(event.code)
+        ? "pass"
+        : "info";
+  return Object.freeze({
+    runId: event.runId ?? "",
+    stepId: event.stepId ?? "product-compiler",
+    storyId: event.storyId ?? "",
+    phase: "product-compiler-shadow",
+    checkId: [
+      "product_compiler.shadow",
+      event.code.toLowerCase(),
+      event.attemptId ?? event.legacyClaimId ?? event.storyId ?? "runtime",
+    ].join(":"),
+    label: "Product Compiler shadow attempt",
+    status,
+    summary: event.code,
+    detail: event.message,
+    evidence: {
+      schema: "setfarm.shadow-attempt-observation.v1",
+      code: event.code,
+      ...(event.attemptId ? { attemptId: event.attemptId } : {}),
+      ...(event.legacyClaimId ? { legacyClaimId: event.legacyClaimId } : {}),
+      ...(event.attemptLegacyClaimId
+        ? { attemptLegacyClaimId: event.attemptLegacyClaimId }
+        : {}),
+      ...(event.attemptDisposition
+        ? { attemptDisposition: event.attemptDisposition }
+        : {}),
+    },
+    metadata: {
+      protocol: "shadow",
+      authoritative: false,
+    },
+    eventType: event.event,
+    completedAt: status === "pass" || status === "fail" ? observedAt.toISOString() : null,
+  });
+}
+
 export function createShadowAttemptRecorder(dependencies: ShadowRecorderDependencies) {
-  const shadowError = (error: unknown, identity: Partial<z.infer<typeof RuntimeIdentityV1Schema>> = {}): ShadowObservationResult => {
-    safeEmit(dependencies.emit, identityEvent({
+  const emit = (event: ShadowDiagnostic): Promise<void> => safeEmit(
+    dependencies.emit,
+    event,
+    dependencies.emitTimeoutMs,
+  );
+  const shadowError = async (
+    error: unknown,
+    identity: Partial<z.infer<typeof RuntimeIdentityV1Schema>> = {},
+  ): Promise<ShadowObservationResult> => {
+    await emit(identityEvent({
       event: "product_compiler.shadow_error",
       code: "SHADOW_RECORDER_ERROR",
       message: errorMessage(error),
@@ -180,7 +291,7 @@ export function createShadowAttemptRecorder(dependencies: ShadowRecorderDependen
           runId: value.runId,
           stepId: value.stepId,
           storyId: value.storyId,
-          attemptClass: "product_implementation",
+          attemptClass: value.attemptClass,
           ...(value.packetHash ? { packetHash: value.packetHash } : {}),
           compilationReportHash,
           ...(value.sliceHash ? { sliceHash: value.sliceHash } : {}),
@@ -190,24 +301,33 @@ export function createShadowAttemptRecorder(dependencies: ShadowRecorderDependen
           ...(value.agentId ? { agentId: value.agentId } : {}),
           branch: value.branch,
           worktree: value.worktree,
-          evidenceRefs: [],
+          evidenceRefs: [
+            legacyClaimEvidenceRef(value.legacyClaimId),
+            `setfarm://claim-generation/${value.legacyClaimGeneration}`,
+          ],
         });
         const code = result.status === "reserved"
           ? "ATTEMPT_RESERVED"
           : result.status === "duplicate"
             ? "ATTEMPT_DUPLICATE"
             : "ATTEMPT_ACTIVE_CONFLICT";
-        safeEmit(dependencies.emit, identityEvent({
+        const attemptLegacyClaimId = legacyClaimIdsFromEvidenceRefs(
+          result.attempt.evidenceRefs,
+        )[0];
+        await emit(identityEvent({
           code,
           message: `Shadow claim observation: ${result.status}`,
           runId: value.runId,
           stepId: value.stepId,
           storyId: value.storyId,
           attemptId: result.attempt.attemptId,
+          legacyClaimId: value.legacyClaimId,
+          ...(attemptLegacyClaimId ? { attemptLegacyClaimId } : {}),
+          attemptDisposition: result.attempt.disposition,
         }));
         return { status: "observed", code, attempt: result.attempt };
       } catch (error) {
-        return shadowError(error, identity);
+        return await shadowError(error, identity);
       }
     },
 
@@ -219,7 +339,7 @@ export function createShadowAttemptRecorder(dependencies: ShadowRecorderDependen
         const attempt = await dependencies.repository.findActive(value);
         if (!attempt) {
           const code = "ATTEMPT_ACTIVE_NOT_FOUND";
-          safeEmit(dependencies.emit, identityEvent({
+          await emit(identityEvent({
             code,
             message: "No active shadow attempt exists for successful legacy completion",
             ...value,
@@ -235,20 +355,25 @@ export function createShadowAttemptRecorder(dependencies: ShadowRecorderDependen
           disposition: changed ? "produced_delta" : "already_satisfied",
           sourceAfter: value.sourceAfter,
           ...(value.outputHash ? { outputHash: value.outputHash } : {}),
-          evidenceRefs: value.evidenceRefs,
+          evidenceRefs: [...new Set([...attempt.evidenceRefs, ...value.evidenceRefs])].sort(),
         });
         const code = result.status === "stale_fence" ? "ATTEMPT_STALE_FENCE" : "ATTEMPT_COMPLETED";
-        safeEmit(dependencies.emit, identityEvent({
+        const legacyClaimId = legacyClaimIdsFromEvidenceRefs(attempt.evidenceRefs)[0];
+        await emit(identityEvent({
           code,
           message: `Shadow success observation: ${result.status}`,
           ...value,
           attemptId: attempt.attemptId,
+          ...(legacyClaimId ? { legacyClaimId } : {}),
+          attemptDisposition: result.status === "stale_fence"
+            ? attempt.disposition
+            : result.attempt.disposition,
         }));
         return result.status === "stale_fence"
           ? { status: "observed", code }
           : { status: "observed", code, attempt: result.attempt };
       } catch (error) {
-        return shadowError(error, identity);
+        return await shadowError(error, identity);
       }
     },
 
@@ -258,7 +383,15 @@ export function createShadowAttemptRecorder(dependencies: ShadowRecorderDependen
         const value = ShadowFailureInputV1Schema.parse(input);
         identity = value;
         const attempt = await dependencies.repository.findActive(value);
-        if (!attempt) return { status: "observed", code: "ATTEMPT_ACTIVE_NOT_FOUND" };
+        if (!attempt) {
+          await emit(identityEvent({
+            code: "ATTEMPT_ACTIVE_NOT_FOUND",
+            message: "No active shadow attempt exists for failed legacy completion",
+            ...value,
+          }));
+          return { status: "observed", code: "ATTEMPT_ACTIVE_NOT_FOUND" };
+        }
+        const legacyClaimId = legacyClaimIdsFromEvidenceRefs(attempt.evidenceRefs)[0];
         return {
           status: "prepared",
           capture: {
@@ -269,10 +402,12 @@ export function createShadowAttemptRecorder(dependencies: ShadowRecorderDependen
             stepId: value.stepId,
             storyId: value.storyId,
             sourceAtFailure: value.sourceAtFailure,
+            ...(legacyClaimId ? { legacyClaimId } : {}),
+            evidenceRefs: attempt.evidenceRefs,
           },
         };
       } catch (error) {
-        shadowError(error, identity);
+        await shadowError(error, identity);
         return { status: "shadow_error", code: "SHADOW_RECORDER_ERROR" };
       }
     },
@@ -294,22 +429,26 @@ export function createShadowAttemptRecorder(dependencies: ShadowRecorderDependen
           fenceToken: capture.fenceToken,
           disposition,
           sourceAfter: capture.sourceAtFailure,
-          evidenceRefs: [],
+          evidenceRefs: capture.evidenceRefs,
         });
         const code = result.status === "stale_fence" ? "ATTEMPT_STALE_FENCE" : "ATTEMPT_FAILED_OBSERVED";
-        safeEmit(dependencies.emit, identityEvent({
+        await emit(identityEvent({
           code,
           message: `Shadow failure observation: ${result.status}`,
           runId: capture.runId,
           stepId: capture.stepId,
           storyId: capture.storyId,
           attemptId: capture.attemptId,
+          ...(capture.legacyClaimId ? { legacyClaimId: capture.legacyClaimId } : {}),
+          attemptDisposition: result.status === "stale_fence"
+            ? disposition
+            : result.attempt.disposition,
         }));
         return result.status === "stale_fence"
           ? { status: "observed", code }
           : { status: "observed", code, attempt: result.attempt };
       } catch (error) {
-        return shadowError(error, capture);
+        return await shadowError(error, capture);
       }
     },
   };
@@ -400,10 +539,20 @@ type ShadowRuntime = Readonly<{
 }>;
 
 export type ShadowRuntimeOptions = Readonly<{
-  env?: NodeJS.ProcessEnv;
+  readProtocol?: (runId: string) => Promise<StoredRunProtocolIdentity>;
   createRuntime?: () => Promise<ShadowRuntime>;
-  onDiagnostic?: (event: ShadowDiagnostic) => void;
+  onDiagnostic?: (event: ShadowDiagnostic) => void | Promise<void>;
+  diagnosticTimeoutMs?: number;
 }>;
+
+export class ShadowRuntimeProtocolError extends Error {
+  readonly code = "SHADOW_RUNTIME_V3_UNAVAILABLE";
+
+  constructor(runId: string) {
+    super(`Shadow recorder cannot execute Product Compiler v3 run ${runId}`);
+    this.name = "ShadowRuntimeProtocolError";
+  }
+}
 
 let defaultRuntimePromise: Promise<ShadowRuntime> | undefined;
 
@@ -419,7 +568,16 @@ function runtimeCodeSha(): string {
 }
 
 async function createDefaultShadowRuntime(): Promise<ShadowRuntime> {
-  const [db, artifactModule, repositoryModule, reportModule, diagnosticsModule, configModule, loggerModule] = await Promise.all([
+  const [
+    db,
+    artifactModule,
+    repositoryModule,
+    reportModule,
+    diagnosticsModule,
+    configModule,
+    loggerModule,
+    observationsModule,
+  ] = await Promise.all([
     import("../db-pg.js"),
     import("../product-compiler/artifact-store.js"),
     import("./attempt-repository.js"),
@@ -427,19 +585,22 @@ async function createDefaultShadowRuntime(): Promise<ShadowRuntime> {
     import("../product-compiler/diagnostics.js"),
     import("../runtime-config.js"),
     import("../lib/logger.js"),
+    import("../installer/observations.js"),
   ]);
   const codeSha = runtimeCodeSha();
   const artifactStore = new artifactModule.ContentAddressedArtifactStore(
     configModule.resolveProductArtifactDir(),
+    { limits: configModule.resolveProductArtifactCapacity() },
   );
   const repository = repositoryModule.createAttemptRepository(db.getSql());
-  const emit = (event: ShadowDiagnostic) => {
+  const emit = async (event: ShadowDiagnostic) => {
     const message = `[${event.event}] ${event.code}: ${event.message}`;
     if (event.event === "product_compiler.shadow_error") {
       loggerModule.logger.warn(message, { runId: event.runId, stepId: event.stepId });
     } else {
       loggerModule.logger.info(message, { runId: event.runId, stepId: event.stepId });
     }
+    await observationsModule.recordObservation(toShadowStructuredObservation(event));
   };
   const recorder = createShadowAttemptRecorder({
     repository,
@@ -519,10 +680,17 @@ function getDefaultShadowRuntime(): Promise<ShadowRuntime> {
 }
 
 export async function initializeShadowAttemptRuntime(
+  runId: string,
   options: ShadowRuntimeOptions = {},
 ): Promise<Readonly<{ mode: "legacy" }> | Readonly<{ mode: "shadow"; runtime: ShadowRuntime }>> {
-  const protocol = readSetfarmProtocol(options.env ?? process.env);
+  const protocol = options.readProtocol
+    ? await options.readProtocol(runId)
+    : await (async () => {
+      const db = await import("../db-pg.js");
+      return createRunProtocolRepository(db.getSql()).read(runId);
+    })();
   if (protocol.mode === "legacy") return { mode: "legacy" };
+  if (protocol.mode === "v3") throw new ShadowRuntimeProtocolError(runId);
   return {
     mode: "shadow",
     runtime: await (options.createRuntime ? options.createRuntime() : getDefaultShadowRuntime()),
@@ -540,15 +708,20 @@ async function publishRuntimeError(
     message: errorMessage(error),
     ...identity,
   });
-  if (options.onDiagnostic) safeEmit(options.onDiagnostic, event);
-  else {
-    try {
-      const { logger } = await import("../lib/logger.js");
+  if (options.onDiagnostic) {
+    await safeEmit(options.onDiagnostic, event, options.diagnosticTimeoutMs);
+  } else {
+    await safeEmit(async () => {
+      const [{ logger }, { recordObservation }] = await Promise.all([
+        import("../lib/logger.js"),
+        import("../installer/observations.js"),
+      ]);
       logger.warn(`[${event.event}] ${event.code}: ${event.message}`, {
         runId: event.runId,
         stepId: event.stepId,
       });
-    } catch { /* shadow diagnostics never own legacy decisions */ }
+      await recordObservation(toShadowStructuredObservation(event));
+    }, event, options.diagnosticTimeoutMs);
   }
   return { status: "shadow_error", code: "SHADOW_RECORDER_ERROR" };
 }
@@ -558,7 +731,7 @@ export async function observeShadowAttemptClaim(
   options: ShadowRuntimeOptions = {},
 ): Promise<ShadowObservationResult | Readonly<{ status: "legacy" }>> {
   try {
-    const initialized = await initializeShadowAttemptRuntime(options);
+    const initialized = await initializeShadowAttemptRuntime(input.runId, options);
     if (initialized.mode === "legacy") return { status: "legacy" };
     const sourceBefore = await captureShadowSourceRevision(input.worktree);
     return initialized.runtime.recorder.observeClaim({ ...input, sourceBefore });
@@ -576,7 +749,7 @@ export async function observeShadowAttemptSuccess(
   options: ShadowRuntimeOptions = {},
 ): Promise<ShadowObservationResult | Readonly<{ status: "legacy" }>> {
   try {
-    const initialized = await initializeShadowAttemptRuntime(options);
+    const initialized = await initializeShadowAttemptRuntime(input.runId, options);
     if (initialized.mode === "legacy") return { status: "legacy" };
     const sourceAfter = await captureShadowSourceRevision(input.worktree);
     const outputHash = input.output === undefined
@@ -605,7 +778,7 @@ export async function prepareShadowAttemptFailure(
   options: ShadowRuntimeOptions = {},
 ): Promise<ShadowFailurePreparation> {
   try {
-    const initialized = await initializeShadowAttemptRuntime(options);
+    const initialized = await initializeShadowAttemptRuntime(input.runId, options);
     if (initialized.mode === "legacy") return { status: "legacy" };
     const identity = await initialized.runtime.resolveFailureIdentity(input);
     return initialized.runtime.recorder.prepareFailure({
@@ -626,8 +799,13 @@ export async function finalizeShadowAttemptFailure(
   options: ShadowRuntimeOptions = {},
 ): Promise<ShadowObservationResult | Readonly<{ status: "legacy" }>> {
   if (preparation.status === "legacy") return { status: "legacy" };
+  if (preparation.status !== "prepared") {
+    return preparation.status === "shadow_error"
+      ? preparation
+      : { status: "observed", code: preparation.code };
+  }
   try {
-    const initialized = await initializeShadowAttemptRuntime(options);
+    const initialized = await initializeShadowAttemptRuntime(preparation.capture.runId, options);
     if (initialized.mode === "legacy") return { status: "legacy" };
     return initialized.runtime.recorder.finalizeFailure(preparation, disposition);
   } catch (error) {

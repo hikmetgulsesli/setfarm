@@ -9,12 +9,44 @@ import { cleanAgentWorkspace } from "./worktree-ops.js";
 import { emitEvent } from "./events.js";
 import { refreshRunContractSafe } from "./contract-ledger.js";
 import { parseStackPrefix } from "./stack-contract/prefix.js";
+import {
+  resolveNewRunProtocol,
+  type RunProtocolIdentity,
+} from "../execution/run-protocol.js";
+import {
+  persistWorkflowRun,
+  type PersistedWorkflowStep,
+} from "../execution/run-persistence.js";
 
 export async function runWorkflow(params: {
   workflowId: string;
   taskTitle: string;
   notifyUrl?: string;
-}): Promise<{ id: string; runNumber: number; workflowId: string; task: string; status: string }> {
+  requestedProtocol?: string;
+  compilerReleaseSha: string;
+  activationPreflight?: Readonly<{
+    status: "pass" | "fail";
+    hash: string;
+    stored: boolean;
+  }>;
+}): Promise<{
+  id: string;
+  runNumber: number;
+  workflowId: string;
+  task: string;
+  status: string;
+  protocol: RunProtocolIdentity["mode"];
+  protocolVersion: RunProtocolIdentity["version"];
+}> {
+  const protocol = resolveNewRunProtocol({
+    ...(params.requestedProtocol !== undefined
+      ? { requestedMode: params.requestedProtocol }
+      : {}),
+    compilerReleaseSha: params.compilerReleaseSha,
+    ...(params.activationPreflight
+      ? { activationPreflight: params.activationPreflight }
+      : {}),
+  });
   const workflowDir = resolveWorkflowDir(params.workflowId);
   const workflow = await loadWorkflowSpec(workflowDir);
   const ts = now();
@@ -77,26 +109,31 @@ export async function runWorkflow(params: {
     }
   }
 
-  await pgBegin(async (sql) => {
-    await sql.unsafe(
-      "INSERT INTO runs (id, run_number, workflow_id, task, status, context, notify_url, created_at, updated_at) VALUES ($1, $2, $3, $4, 'running', $5, $6, $7, $8)",
-      [runId, runNumber, workflow.id, params.taskTitle, JSON.stringify(initialContext), notifyUrl, ts, ts]
-    );
-
-    for (let i = 0; i < workflow.steps.length; i++) {
-      const step = workflow.steps[i];
-      const stepUuid = crypto.randomUUID();
-      const agentId = `${workflow.id}_${step.agent}`;
-      const status = i === 0 ? "pending" : "waiting";
-      const maxRetries = step.max_retries ?? step.on_fail?.max_retries ?? 2;
-      const stepType = step.type ?? "single";
-      const loopConfig = step.loop ? JSON.stringify(step.loop) : null;
-      await sql.unsafe(
-        "INSERT INTO steps (id, run_id, step_id, agent_id, step_index, input_template, expects, status, max_retries, type, loop_config, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
-        [stepUuid, runId, step.id, agentId, i, step.input, step.expects, status, maxRetries, stepType, loopConfig, ts, ts]
-      );
-    }
-  });
+  const persistedSteps: PersistedWorkflowStep[] = workflow.steps.map((step, index) => ({
+    id: crypto.randomUUID(),
+    stepId: step.id,
+    agentId: `${workflow.id}_${step.agent}`,
+    stepIndex: index,
+    inputTemplate: step.input,
+    expects: step.expects,
+    status: index === 0 ? "pending" : "waiting",
+    maxRetries: step.max_retries ?? step.on_fail?.max_retries ?? 2,
+    type: step.type ?? "single",
+    loopConfig: step.loop ? JSON.stringify(step.loop) : null,
+  }));
+  await pgBegin((sql) => persistWorkflowRun(sql, {
+    run: {
+      id: runId,
+      runNumber,
+      workflowId: workflow.id,
+      task: params.taskTitle,
+      context: JSON.stringify(initialContext),
+      notifyUrl,
+      createdAt: ts,
+      protocol,
+    },
+    steps: persistedSteps,
+  }));
 
   await refreshRunContractSafe(runId, "run.started");
 
@@ -141,5 +178,13 @@ export async function runWorkflow(params: {
     stepId: workflow.steps[0]?.id,
   });
 
-  return { id: runId, runNumber, workflowId: workflow.id, task: params.taskTitle, status: "running" };
+  return {
+    id: runId,
+    runNumber,
+    workflowId: workflow.id,
+    task: params.taskTitle,
+    status: "running",
+    protocol: protocol.mode,
+    protocolVersion: protocol.version,
+  };
 }

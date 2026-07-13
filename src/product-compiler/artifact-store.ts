@@ -14,6 +14,18 @@ import {
   SemanticArtifactProducerV1Schema,
   Sha256Schema,
 } from "./schemas/common-v1.js";
+import {
+  ArtifactCapacityError,
+  DEFAULT_ARTIFACT_CAPACITY_LIMITS,
+  assessArtifactCapacity,
+  measureArtifactCapacity,
+  normalizeArtifactCapacityLimits,
+  throwForArtifactCapacity,
+  type ArtifactCapacityLimits,
+  type ArtifactCapacitySnapshot,
+} from "./artifact-capacity.js";
+
+export { ArtifactCapacityError } from "./artifact-capacity.js";
 
 export const SemanticArtifactEnvelopeV1Schema = z
   .object({
@@ -100,12 +112,64 @@ async function syncDirectory(directory: string): Promise<void> {
 
 export class ContentAddressedArtifactStore {
   readonly root: string;
+  readonly limits: ArtifactCapacityLimits;
+  private readonly measure: () => Promise<ArtifactCapacitySnapshot>;
 
-  constructor(root: string) {
+  constructor(
+    root: string,
+    options: Readonly<{
+      limits?: ArtifactCapacityLimits;
+      measure?: () => Promise<ArtifactCapacitySnapshot>;
+      lockTimeoutMs?: number;
+    }> = {},
+  ) {
     if (!root.trim()) {
       throw new TypeError("Artifact store root must not be empty");
     }
     this.root = path.resolve(root);
+    this.limits = normalizeArtifactCapacityLimits(
+      options.limits ?? DEFAULT_ARTIFACT_CAPACITY_LIMITS,
+    );
+    this.measure = options.measure ?? (() => measureArtifactCapacity(this.root));
+    this.lockTimeoutMs = Math.max(1, Math.min(options.lockTimeoutMs ?? 5_000, 30_000));
+  }
+
+  private readonly lockTimeoutMs: number;
+
+  private async withCapacityLock<T>(work: () => Promise<T>): Promise<T> {
+    const lockPath = path.join(this.root, ".capacity.lock");
+    const token = randomUUID();
+    const deadline = Date.now() + this.lockTimeoutMs;
+    let handle;
+    while (!handle) {
+      try {
+        handle = await open(lockPath, "wx", 0o600);
+        await handle.writeFile(token, "utf8");
+        await handle.sync();
+      } catch (error) {
+        await handle?.close();
+        handle = undefined;
+        if (!isNodeError(error, "EEXIST")) throw error;
+        if (Date.now() >= deadline) {
+          throw new ArtifactCapacityError(
+            "ARTIFACT_CAPACITY_LOCK_TIMEOUT",
+            "Artifact capacity lock was not acquired within the bounded timeout",
+          );
+        }
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+    }
+    try {
+      return await work();
+    } finally {
+      await handle.close();
+      try {
+        const current = await readFile(lockPath, "utf8");
+        if (current === token) await unlink(lockPath);
+      } catch (error) {
+        if (!isNodeError(error, "ENOENT")) throw error;
+      }
+    }
   }
 
   pathFor(hash: string): string {
@@ -154,6 +218,12 @@ export class ContentAddressedArtifactStore {
   async put(value: unknown): Promise<ArtifactPutResult> {
     const envelope = SemanticArtifactEnvelopeV1Schema.parse(value);
     const bytes = canonicalJsonBytes(envelope);
+    throwForArtifactCapacity(assessArtifactCapacity({
+      payloadBytes: bytes.length,
+      rootBytes: 0,
+      freeBytes: Number.MAX_SAFE_INTEGER,
+      limits: this.limits,
+    }));
     const hash = sha256(bytes);
     const target = this.pathFor(hash);
 
@@ -161,43 +231,55 @@ export class ContentAddressedArtifactStore {
     if (existing) return { hash, path: target, created: false };
 
     await mkdir(this.root, { recursive: true });
-    const temp = path.join(this.root, `.${hash}.${process.pid}.${randomUUID()}.tmp`);
-    let published = false;
-    let handle;
-    try {
-      handle = await open(temp, "wx", 0o600);
-      await handle.writeFile(bytes);
-      await handle.sync();
-      await handle.close();
-      handle = undefined;
+    return this.withCapacityLock(async () => {
+      const racedExisting = await this.verifyExisting(target, hash, bytes);
+      if (racedExisting) return { hash, path: target, created: false };
+      const capacity = await this.measure();
+      throwForArtifactCapacity(assessArtifactCapacity({
+        payloadBytes: bytes.length,
+        rootBytes: capacity.rootBytes,
+        freeBytes: capacity.freeBytes,
+        limits: this.limits,
+      }));
 
+      const temp = path.join(this.root, `.${hash}.${process.pid}.${randomUUID()}.tmp`);
+      let published = false;
+      let handle;
       try {
-        // A same-directory hard link is an atomic no-replace publish. Node's
-        // rename API can overwrite an existing immutable hash target, so link
-        // preserves the stronger never-overwrite invariant during races.
-        await link(temp, target);
-        published = true;
-      } catch (error) {
-        if (!isNodeError(error, "EEXIST")) throw error;
-        const racedTarget = await this.verifyExisting(target, hash, bytes);
-        if (!racedTarget) {
-          throw new ArtifactStoreError(
-            "ARTIFACT_HASH_COLLISION_OR_CORRUPTION",
-            `Artifact target ${hash} disappeared during atomic publication`,
-            { artifactHash: hash },
-          );
+        handle = await open(temp, "wx", 0o600);
+        await handle.writeFile(bytes);
+        await handle.sync();
+        await handle.close();
+        handle = undefined;
+
+        try {
+          // A same-directory hard link is an atomic no-replace publish. Node's
+          // rename API can overwrite an existing immutable hash target, so link
+          // preserves the stronger never-overwrite invariant during races.
+          await link(temp, target);
+          published = true;
+        } catch (error) {
+          if (!isNodeError(error, "EEXIST")) throw error;
+          const racedTarget = await this.verifyExisting(target, hash, bytes);
+          if (!racedTarget) {
+            throw new ArtifactStoreError(
+              "ARTIFACT_HASH_COLLISION_OR_CORRUPTION",
+              `Artifact target ${hash} disappeared during atomic publication`,
+              { artifactHash: hash },
+            );
+          }
+        }
+        await syncDirectory(this.root);
+        return { hash, path: target, created: published };
+      } finally {
+        await handle?.close();
+        try {
+          await unlink(temp);
+        } catch (error) {
+          if (!isNodeError(error, "ENOENT")) throw error;
         }
       }
-      await syncDirectory(this.root);
-      return { hash, path: target, created: published };
-    } finally {
-      await handle?.close();
-      try {
-        await unlink(temp);
-      } catch (error) {
-        if (!isNodeError(error, "ENOENT")) throw error;
-      }
-    }
+    });
   }
 
   async get(hash: string): Promise<ArtifactGetResult> {

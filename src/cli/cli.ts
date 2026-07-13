@@ -15,9 +15,16 @@ import { recordStepTransition } from "../installer/repo.js";
 import { refreshRunContractSafe } from "../installer/contract-ledger.js";
 import { ensureCliSymlink } from "../installer/symlink.js";
 import { runMedicCheck, getMedicStatus, getRecentMedicChecks } from "../medic/medic.js";
-import { pgQuery, pgGet, pgRun, pgClose, now } from "../db-pg.js";
+import { getSql, pgQuery, pgGet, pgRun, pgClose, now } from "../db-pg.js";
 import { installMedicCron, uninstallMedicCron, isMedicCronInstalled } from "../medic/medic-cron.js";
 import { missionControlApi } from "../runtime-config.js";
+import {
+  createRunProtocolRepository,
+  extractProtocolArgument,
+  resolveNewRunProtocol,
+  selectNewRunProtocolMode,
+} from "../execution/run-protocol.js";
+import { runDefaultActivationPreflight } from "../execution/activation-preflight.js";
 import { execFileSync, execSync } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -44,6 +51,18 @@ function getVersion(): string {
   } catch {
     return "unknown";
   }
+}
+
+function getCompilerReleaseSha(): string {
+  if (!existsSync(buildInfoPath)) {
+    throw new Error("BUILD_INFO.json is required to start a workflow run");
+  }
+  const buildInfo = JSON.parse(readFileSync(buildInfoPath, "utf-8"));
+  const sha = String(buildInfo.sha || "").trim().toLowerCase();
+  if (!/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/.test(sha)) {
+    throw new Error("BUILD_INFO.json does not contain a full compiler release SHA");
+  }
+  return sha;
 }
 
 function commandUsable(name: string): boolean {
@@ -195,7 +214,7 @@ function printUsage() {
       "setfarm workflow install <name>      Install a workflow",
       "setfarm workflow uninstall <name>    Uninstall a workflow (blocked if runs active)",
       "setfarm workflow uninstall --all     Uninstall all workflows (--force to override)",
-      "setfarm workflow run <name> <task>   Start a workflow run",
+      "setfarm workflow run <name> <task> [--protocol legacy|shadow|v3]",
       "setfarm workflow status <query>      Check run status (task substring, run ID prefix)",
       "setfarm workflow runs                List all workflow runs",
       "setfarm workflow resume <run-id>     Resume a failed run from where it left off",
@@ -783,6 +802,7 @@ async function main() {
     const lines = [
       `Run: ${runLabel}`,
       `Workflow: ${run.workflow_id}`,
+      `Protocol: ${run.protocol}/v${run.protocol_version}`,
       `Task: ${run.task.slice(0, 120)}${run.task.length > 120 ? "..." : ""}`,
       `Status: ${run.status}`,
       `Created: ${run.created_at}`,
@@ -826,6 +846,9 @@ async function main() {
       process.stderr.write(`Run ${run.id.slice(0, 8)} is "${run.status}", not "failed". Nothing to resume.\n`);
       process.exit(1);
     }
+    // Resume always preserves the immutable protocol identity selected when
+    // the run was created; current process defaults cannot reinterpret it.
+    await createRunProtocolRepository(getSql()).read(run.id);
 
     // Find the failed step (or first non-done step)
     const failedStep = await pgGet<{ id: string; step_id: string; type: string; current_story_id: string | null }>("SELECT id, step_id, type, current_story_id FROM steps WHERE run_id = $1 AND status = 'failed' ORDER BY step_index ASC LIMIT 1", [run.id]);
@@ -960,7 +983,9 @@ async function main() {
   if (action === "run") {
     let notifyUrl: string | undefined;
     let forceQuota = false;
-    const runArgs = args.slice(3);
+    const extractedProtocol = extractProtocolArgument(args.slice(3));
+    const requestedProtocol = extractedProtocol.requestedMode;
+    const runArgs = extractedProtocol.remainingArgs;
     const nuIdx = runArgs.indexOf("--notify-url");
     if (nuIdx !== -1) {
       notifyUrl = runArgs[nuIdx + 1];
@@ -978,6 +1003,37 @@ async function main() {
       taskTitle = readFileSync(taskTitle.slice(1), "utf8").trim();
     }
     if (!taskTitle) { process.stderr.write("Missing task title.\n"); printUsage(); process.exit(1); }
+
+    const compilerReleaseSha = getCompilerReleaseSha();
+    const selectedProtocol = selectNewRunProtocolMode(requestedProtocol);
+    let activationPreflight: Readonly<{
+      status: "pass" | "fail";
+      hash: string;
+      stored: boolean;
+    }> | undefined;
+    if (selectedProtocol === "shadow" || selectedProtocol === "v3") {
+      const preflight = await runDefaultActivationPreflight({
+        protocol: selectedProtocol,
+        compilerReleaseSha,
+      });
+      if (preflight.status !== "pass") {
+        const failures = preflight.report.checks
+          .filter((check) => check.status === "fail")
+          .map((check) => check.code)
+          .join(",");
+        throw new Error(
+          `ACTIVATION_PREFLIGHT_FAILED: ${failures || "UNKNOWN"} report=${preflight.hash}`,
+        );
+      }
+      activationPreflight = preflight;
+    }
+    // Validate the fully bound identity before spawner/quota checks or any run
+    // DB mutation.
+    resolveNewRunProtocol({
+      ...(requestedProtocol !== undefined ? { requestedMode: requestedProtocol } : {}),
+      compilerReleaseSha,
+      ...(activationPreflight ? { activationPreflight } : {}),
+    });
 
     if (process.env.SETFARM_DISABLE_SPAWNER_AUTOSTART !== "1" && !isSpawnerRunning().running) {
       try {
@@ -1056,9 +1112,22 @@ async function main() {
       }
     }
 
-    const run = await runWorkflow({ workflowId: target, taskTitle, notifyUrl });
+    const run = await runWorkflow({
+      workflowId: target,
+      taskTitle,
+      notifyUrl,
+      ...(requestedProtocol !== undefined ? { requestedProtocol } : {}),
+      compilerReleaseSha,
+      ...(activationPreflight ? { activationPreflight } : {}),
+    });
     process.stdout.write(
-      [`Run: #${run.runNumber} (${run.id})`, `Workflow: ${run.workflowId}`, `Task: ${run.task}`, `Status: ${run.status}`].join("\n") + "\n",
+      [
+        `Run: #${run.runNumber} (${run.id})`,
+        `Workflow: ${run.workflowId}`,
+        `Protocol: ${run.protocol}/v${run.protocolVersion}`,
+        `Task: ${run.task}`,
+        `Status: ${run.status}`,
+      ].join("\n") + "\n",
     );
     return;
   }

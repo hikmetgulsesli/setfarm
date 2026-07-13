@@ -2,6 +2,11 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  DEFAULT_ARTIFACT_CAPACITY_LIMITS,
+  normalizeArtifactCapacityLimits,
+  type ArtifactCapacityLimits,
+} from "./product-compiler/artifact-capacity.js";
 
 const loadedEnvKeys = new Set<string>();
 
@@ -109,6 +114,41 @@ export function resolveProductArtifactDir(
   return explicit
     ? expandRuntimePath(explicit)
     : join(runtimeConfig.setfarmDir, "product-compiler", "artifacts", "sha256");
+}
+
+function capacityEnvInteger(
+  env: NodeJS.ProcessEnv,
+  key: string,
+  fallback: number,
+): number {
+  const raw = env[key]?.trim();
+  if (!raw) return fallback;
+  if (!/^[0-9]+$/.test(raw)) throw new Error(`${key}_INVALID`);
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value)) throw new Error(`${key}_INVALID`);
+  return value;
+}
+
+export function resolveProductArtifactCapacity(
+  env: NodeJS.ProcessEnv = process.env,
+): ArtifactCapacityLimits {
+  return normalizeArtifactCapacityLimits({
+    maxPayloadBytes: capacityEnvInteger(
+      env,
+      "SETFARM_ARTIFACT_MAX_PAYLOAD_BYTES",
+      DEFAULT_ARTIFACT_CAPACITY_LIMITS.maxPayloadBytes,
+    ),
+    rootQuotaBytes: capacityEnvInteger(
+      env,
+      "SETFARM_ARTIFACT_ROOT_QUOTA_BYTES",
+      DEFAULT_ARTIFACT_CAPACITY_LIMITS.rootQuotaBytes,
+    ),
+    minFreeBytes: capacityEnvInteger(
+      env,
+      "SETFARM_ARTIFACT_MIN_FREE_BYTES",
+      DEFAULT_ARTIFACT_CAPACITY_LIMITS.minFreeBytes,
+    ),
+  });
 }
 
 export function missionControlApi(pathname: string): string {
