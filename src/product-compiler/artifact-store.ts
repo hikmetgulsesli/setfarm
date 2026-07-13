@@ -82,10 +82,14 @@ async function syncDirectory(directory: string): Promise<void> {
     handle = await open(directory, "r");
     await handle.sync();
   } catch (error) {
+    // These codes mean directory fsync is unsupported by the platform. Access
+    // failures such as EACCES still propagate: publication must not claim
+    // durability when the configured artifact root cannot be synchronized.
     if (
       !isNodeError(error, "EINVAL")
       && !isNodeError(error, "ENOTSUP")
       && !isNodeError(error, "EPERM")
+      && !isNodeError(error, "EISDIR")
     ) {
       throw error;
     }

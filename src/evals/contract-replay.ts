@@ -126,6 +126,18 @@ async function readJson(file: string): Promise<unknown> {
   return JSON.parse(await readFile(file, "utf8"));
 }
 
+async function resolveFixtureFile(root: string, locator: string): Promise<string> {
+  const candidate = path.resolve(root, locator);
+  assertWithin(root, candidate);
+  const canonical = await realpath(candidate);
+  assertWithin(root, canonical);
+  const info = await lstat(candidate);
+  if (!info.isFile() || info.isSymbolicLink()) {
+    throw new Error(`FIXTURE_FILE_NOT_REGULAR:${locator}`);
+  }
+  return canonical;
+}
+
 async function listRelativeFiles(root: string, current = root): Promise<string[]> {
   const entries = await readdir(current, { withFileTypes: true });
   const files: string[] = [];
@@ -386,15 +398,16 @@ export async function runContractReplay(options: Readonly<{
   const entries = await readdir(fixtureRootReal, { withFileTypes: true });
   const directories = entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name).sort(compare);
   if (directories.length === 0) throw new Error("FIXTURE_ROOT_EMPTY");
-  const artifactRoot = await mkdtemp(path.join(tmpdir(), "setfarm-contract-replay-artifacts-"));
   const codeSha = compilerCodeSha();
+  const artifactRoot = await mkdtemp(path.join(tmpdir(), "setfarm-contract-replay-artifacts-"));
   const artifactStore = new ContentAddressedArtifactStore(path.join(artifactRoot, "sha256"));
   const results: ContractReplayFixtureResultV1[] = [];
   try {
     for (const directory of directories) {
       const root = path.resolve(fixtureRootReal, directory);
       assertWithin(fixtureRootReal, root);
-      const fixture = ContractReplayFixtureV1Schema.parse(await readJson(path.join(root, "fixture.json")));
+      const fixturePath = await resolveFixtureFile(root, "fixture.json");
+      const fixture = ContractReplayFixtureV1Schema.parse(await readJson(fixturePath));
       if (fixture.caseId !== directory) throw new Error(`FIXTURE_CASE_DIRECTORY_MISMATCH:${directory}`);
       const sources = await loadFixtureSources(root, fixture);
       const sourceAggregateHash = hashCanonicalJson({
@@ -409,8 +422,10 @@ export async function runContractReplay(options: Readonly<{
         throw new Error(`NONDETERMINISTIC_COMPILATION_RESULT:${fixture.caseId}`);
       }
       const compilation = expectedProjection(analysis);
-      const expectedCompilationPath = path.resolve(root, fixture.expected.compilationResult);
-      assertWithin(root, expectedCompilationPath);
+      const expectedCompilationPath = await resolveFixtureFile(
+        root,
+        fixture.expected.compilationResult,
+      );
       const expectedCompilation = ExpectedCompilationResultV1Schema.parse(await readJson(expectedCompilationPath));
       if (hashCanonicalJson(compilation) !== hashCanonicalJson(expectedCompilation)) {
         throw new Error(`EXPECTED_COMPILATION_MISMATCH:${fixture.caseId}`);
@@ -432,8 +447,10 @@ export async function runContractReplay(options: Readonly<{
         compilationArtifact.hash,
       );
       if (fixture.expected.attemptResult) {
-        const expectedAttemptPath = path.resolve(root, fixture.expected.attemptResult);
-        assertWithin(root, expectedAttemptPath);
+        const expectedAttemptPath = await resolveFixtureFile(
+          root,
+          fixture.expected.attemptResult,
+        );
         const expectedAttempt = ExpectedAttemptResultV1Schema.parse(await readJson(expectedAttemptPath));
         if (!attempt || hashCanonicalJson(attempt) !== hashCanonicalJson(expectedAttempt)) {
           throw new Error(`EXPECTED_ATTEMPT_MISMATCH:${fixture.caseId}`);

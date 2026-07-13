@@ -186,46 +186,48 @@ function controlsFromGeneratedSource(
   input: z.infer<typeof GeneratedSourceInputSchema>,
 ): ProjectionControl[] {
   const controls: ProjectionControl[] = [];
-  const lines = input.text.split(/\r?\n/);
-  lines.forEach((line, lineIndex) => {
-    const tagPattern = /<(button|a|input|textarea|select)\b[^>]*>/g;
-    for (const match of line.matchAll(tagPattern)) {
-      const tag = match[0];
-      const generatedLocalId = attribute(tag, "data-action-id");
-      if (!generatedLocalId) continue;
-      const actionRef = attribute(tag, "data-action");
-      const kind = normalizedKind(match[1]);
-      const selector = `[data-action-id="${generatedLocalId.replaceAll('"', '\\"')}"]`;
-      const exact = provenanceFromSource(input.source, "exact", {
-        lineStart: lineIndex + 1,
-        lineEnd: lineIndex + 1,
-      });
-      controls.push(StitchProjectionControlV1Schema.parse({
-        id: derivedControlId(input.source.hash, selector, kind),
-        designSurfaceId: input.designSurfaceId,
-        surfaceRef: input.surfaceRef,
-        generatedLocalId,
-        generatedSourceLocator: input.source.locator,
-        kind,
-        source: {
-          artifactHash: input.source.hash,
-          locator: input.source.locator,
-          selector,
-          line: lineIndex + 1,
-        },
-        identityConfidence: "derived_with_provenance",
-        semanticCandidates: actionRef && ActionIdSchema.safeParse(actionRef).success
-          ? [{
-              actionRef,
-              sourceKind: "same_element",
-              confidence: "exact",
-              provenance: [exact],
-            }]
-          : [],
-        provenance: [exact],
-      }));
-    }
-  });
+  const tagPattern = /<(button|a|input|textarea|select)\b[^>]*>/gi;
+  let scannedThrough = 0;
+  let currentLine = 1;
+  for (const match of input.text.matchAll(tagPattern)) {
+    const matchIndex = match.index ?? 0;
+    currentLine += (input.text.slice(scannedThrough, matchIndex).match(/\n/g) ?? []).length;
+    const tag = match[0];
+    const lineStart = currentLine;
+    const lineEnd = lineStart + (tag.match(/\n/g) ?? []).length;
+    scannedThrough = matchIndex + tag.length;
+    currentLine = lineEnd;
+    const generatedLocalId = attribute(tag, "data-action-id");
+    if (!generatedLocalId) continue;
+    const actionRef = attribute(tag, "data-action");
+    const kind = normalizedKind(match[1]);
+    const selector = `[data-action-id="${generatedLocalId.replaceAll('"', '\\"')}"]`;
+    const exact = provenanceFromSource(input.source, "exact", { lineStart, lineEnd });
+    controls.push(StitchProjectionControlV1Schema.parse({
+      id: derivedControlId(input.source.hash, selector, kind),
+      designSurfaceId: input.designSurfaceId,
+      surfaceRef: input.surfaceRef,
+      generatedLocalId,
+      generatedSourceLocator: input.source.locator,
+      kind,
+      source: {
+        artifactHash: input.source.hash,
+        locator: input.source.locator,
+        selector,
+        line: lineStart,
+      },
+      identityConfidence: "derived_with_provenance",
+      semanticCandidates: actionRef && ActionIdSchema.safeParse(actionRef).success
+        ? [{
+            actionRef,
+            sourceKind: "same_element",
+            confidence: "exact",
+            provenance: [exact],
+          }]
+        : [],
+      provenance: [exact],
+    }));
+  }
   return controls;
 }
 

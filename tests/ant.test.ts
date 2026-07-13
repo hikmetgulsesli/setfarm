@@ -2,7 +2,7 @@
  * Tests for the `setfarm ant` easter egg command.
  * Verifies CLI integration and output format.
  */
-import { after, describe, it } from "node:test";
+import { after, before, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -10,9 +10,15 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 const CLI = path.resolve(import.meta.dirname, "..", "dist", "cli", "cli.js");
-const PACKAGED_ROOT = mkdtempSync(path.join(tmpdir(), "setfarm-ant-packaged-"));
+let PACKAGED_ROOT = "";
 
-after(() => rmSync(PACKAGED_ROOT, { recursive: true, force: true }));
+before(() => {
+  PACKAGED_ROOT = mkdtempSync(path.join(tmpdir(), "setfarm-ant-packaged-"));
+});
+
+after(() => {
+  if (PACKAGED_ROOT) rmSync(PACKAGED_ROOT, { recursive: true, force: true });
+});
 
 function runCli(command: string): string {
   return execFileSync("node", [CLI, command], {
