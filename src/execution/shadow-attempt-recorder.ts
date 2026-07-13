@@ -10,7 +10,6 @@ import { fileURLToPath } from "node:url";
 import { z } from "zod";
 
 import { hashCanonicalJson } from "../product-compiler/canonical-json.js";
-import { readSetfarmProtocol } from "../product-compiler/protocol.js";
 import {
   GitObjectHashSchema,
   Sha256Schema,
@@ -19,6 +18,10 @@ import type {
   AttemptReservationResult,
   FenceUpdateResult,
 } from "./attempt-repository.js";
+import {
+  createRunProtocolRepository,
+  type StoredRunProtocolIdentity,
+} from "./run-protocol.js";
 import {
   SourceRevisionV1Schema,
   type ExecutionAttemptReservationV1,
@@ -400,10 +403,19 @@ type ShadowRuntime = Readonly<{
 }>;
 
 export type ShadowRuntimeOptions = Readonly<{
-  env?: NodeJS.ProcessEnv;
+  readProtocol?: (runId: string) => Promise<StoredRunProtocolIdentity>;
   createRuntime?: () => Promise<ShadowRuntime>;
   onDiagnostic?: (event: ShadowDiagnostic) => void;
 }>;
+
+export class ShadowRuntimeProtocolError extends Error {
+  readonly code = "SHADOW_RUNTIME_V3_UNAVAILABLE";
+
+  constructor(runId: string) {
+    super(`Shadow recorder cannot execute Product Compiler v3 run ${runId}`);
+    this.name = "ShadowRuntimeProtocolError";
+  }
+}
 
 let defaultRuntimePromise: Promise<ShadowRuntime> | undefined;
 
@@ -519,10 +531,17 @@ function getDefaultShadowRuntime(): Promise<ShadowRuntime> {
 }
 
 export async function initializeShadowAttemptRuntime(
+  runId: string,
   options: ShadowRuntimeOptions = {},
 ): Promise<Readonly<{ mode: "legacy" }> | Readonly<{ mode: "shadow"; runtime: ShadowRuntime }>> {
-  const protocol = readSetfarmProtocol(options.env ?? process.env);
+  const protocol = options.readProtocol
+    ? await options.readProtocol(runId)
+    : await (async () => {
+      const db = await import("../db-pg.js");
+      return createRunProtocolRepository(db.getSql()).read(runId);
+    })();
   if (protocol.mode === "legacy") return { mode: "legacy" };
+  if (protocol.mode === "v3") throw new ShadowRuntimeProtocolError(runId);
   return {
     mode: "shadow",
     runtime: await (options.createRuntime ? options.createRuntime() : getDefaultShadowRuntime()),
@@ -558,7 +577,7 @@ export async function observeShadowAttemptClaim(
   options: ShadowRuntimeOptions = {},
 ): Promise<ShadowObservationResult | Readonly<{ status: "legacy" }>> {
   try {
-    const initialized = await initializeShadowAttemptRuntime(options);
+    const initialized = await initializeShadowAttemptRuntime(input.runId, options);
     if (initialized.mode === "legacy") return { status: "legacy" };
     const sourceBefore = captureShadowSourceRevision(input.worktree);
     return initialized.runtime.recorder.observeClaim({ ...input, sourceBefore });
@@ -576,7 +595,7 @@ export async function observeShadowAttemptSuccess(
   options: ShadowRuntimeOptions = {},
 ): Promise<ShadowObservationResult | Readonly<{ status: "legacy" }>> {
   try {
-    const initialized = await initializeShadowAttemptRuntime(options);
+    const initialized = await initializeShadowAttemptRuntime(input.runId, options);
     if (initialized.mode === "legacy") return { status: "legacy" };
     const sourceAfter = captureShadowSourceRevision(input.worktree);
     const outputHash = input.output === undefined
@@ -605,7 +624,7 @@ export async function prepareShadowAttemptFailure(
   options: ShadowRuntimeOptions = {},
 ): Promise<ShadowFailurePreparation> {
   try {
-    const initialized = await initializeShadowAttemptRuntime(options);
+    const initialized = await initializeShadowAttemptRuntime(input.runId, options);
     if (initialized.mode === "legacy") return { status: "legacy" };
     const identity = await initialized.runtime.resolveFailureIdentity(input);
     return initialized.runtime.recorder.prepareFailure({
@@ -626,8 +645,13 @@ export async function finalizeShadowAttemptFailure(
   options: ShadowRuntimeOptions = {},
 ): Promise<ShadowObservationResult | Readonly<{ status: "legacy" }>> {
   if (preparation.status === "legacy") return { status: "legacy" };
+  if (preparation.status !== "prepared") {
+    return preparation.status === "shadow_error"
+      ? preparation
+      : { status: "observed", code: preparation.code };
+  }
   try {
-    const initialized = await initializeShadowAttemptRuntime(options);
+    const initialized = await initializeShadowAttemptRuntime(preparation.capture.runId, options);
     if (initialized.mode === "legacy") return { status: "legacy" };
     return initialized.runtime.recorder.finalizeFailure(preparation, disposition);
   } catch (error) {

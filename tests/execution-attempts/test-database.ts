@@ -42,9 +42,14 @@ export async function createIsolatedTestDatabase(
   let db: typeof import("../../src/db-pg.js");
   try {
     db = await import(`../../src/db-pg.ts?execution-test=${database}`);
+    db.pgConfigureIsolatedTestDatabase(target.toString());
     if (options.migrate !== false) {
       await db.pgMigrate({ contractSpineMode: "apply" });
     }
+    const connected = await db.getSql()<Array<{ current_database: string }>>`
+      SELECT current_database() AS current_database
+    `;
+    assert.equal(connected[0]?.current_database, database);
   } catch (error) {
     await admin`SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = ${database} AND pid <> pg_backend_pid()`;
     await admin.unsafe(`DROP DATABASE "${database}"`);

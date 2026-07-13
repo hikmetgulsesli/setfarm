@@ -56,9 +56,15 @@ describe("shadow attempt recorder", () => {
     roots.push(root);
     const artifactDir = path.join(root, "artifacts", "sha256");
     let constructions = 0;
-    for (const env of [{}, { SETFARM_PROTOCOL: "legacy" }]) {
-      const initialized = await initializeShadowAttemptRuntime({
-        env,
+    for (const runId of ["legacy-old", "legacy-new"]) {
+      const initialized = await initializeShadowAttemptRuntime(runId, {
+        readProtocol: async () => ({
+          mode: "legacy",
+          version: 1,
+          compilerReleaseSha: null,
+          packetHash: null,
+          activationPreflightHash: null,
+        }),
         createRuntime: async () => {
           constructions += 1;
           throw new Error("must not construct");
@@ -73,13 +79,41 @@ describe("shadow attempt recorder", () => {
 
   it("fails closed at explicit initialization for unknown and v3 modes", async () => {
     await assert.rejects(
-      initializeShadowAttemptRuntime({ env: { SETFARM_PROTOCOL: "v3" } }),
-      (error: any) => error?.code === "PROTOCOL_NOT_IMPLEMENTED",
+      initializeShadowAttemptRuntime("run-v3", {
+        readProtocol: async () => ({
+          mode: "v3",
+          version: 1,
+          compilerReleaseSha: "a".repeat(40),
+          packetHash: null,
+          activationPreflightHash: "b".repeat(64),
+        }),
+      }),
+      (error: any) => error?.code === "SHADOW_RUNTIME_V3_UNAVAILABLE",
     );
-    await assert.rejects(
-      initializeShadowAttemptRuntime({ env: { SETFARM_PROTOCOL: "observe" } }),
-      (error: any) => error?.code === "PROTOCOL_INVALID_MODE",
-    );
+  });
+
+  it("uses the stored run protocol even when the process default changes", async () => {
+    let constructions = 0;
+    process.env.SETFARM_PROTOCOL = "legacy";
+    try {
+      const initialized = await initializeShadowAttemptRuntime("run-shadow", {
+        readProtocol: async () => ({
+          mode: "shadow",
+          version: 1,
+          compilerReleaseSha: "a".repeat(40),
+          packetHash: null,
+          activationPreflightHash: null,
+        }),
+        createRuntime: async () => {
+          constructions += 1;
+          return {} as never;
+        },
+      });
+      assert.equal(initialized.mode, "shadow");
+      assert.equal(constructions, 1);
+    } finally {
+      delete process.env.SETFARM_PROTOCOL;
+    }
   });
 
   it("reserves exact branch, worktree, and source-before identity without prose", async () => {
@@ -200,7 +234,13 @@ describe("shadow attempt recorder", () => {
       branch: "story/us-001",
       worktree: ".worktrees/us-001",
     }, {
-      env: { SETFARM_PROTOCOL: "shadow" },
+      readProtocol: async () => ({
+        mode: "shadow",
+        version: 1,
+        compilerReleaseSha: "a".repeat(40),
+        packetHash: null,
+        activationPreflightHash: null,
+      }),
       createRuntime: async () => { throw new Error("compiler failed"); },
       onDiagnostic: (event) => diagnostics.push(event),
     });

@@ -90,17 +90,9 @@ type Migration = Readonly<{
   version: number;
   name: string;
   statements: readonly string[];
-  relation?: string;
+  detect(sql: Sql | TransactionSql): Promise<"absent" | "present" | "partial">;
+  verify(sql: Sql | TransactionSql): Promise<void>;
 }>;
-
-const migrations: readonly Migration[] = [
-  {
-    version: 1,
-    name: "001_execution_attempts",
-    relation: "execution_attempts",
-    statements: [EXECUTION_ATTEMPTS_TABLE_SQL, ...EXECUTION_ATTEMPT_INDEX_SQL],
-  },
-];
 
 function checksum(migration: Migration): string {
   return createHash("sha256")
@@ -283,12 +275,195 @@ async function verifyExecutionAttemptsShape(sql: Sql | TransactionSql): Promise<
   }
 }
 
-async function verifyMigrationShape(
+const RUN_PROTOCOL_STATEMENTS = [
+  "CREATE SEQUENCE IF NOT EXISTS runs_run_number_seq",
+  `CREATE TABLE IF NOT EXISTS runs (
+    id TEXT PRIMARY KEY,
+    run_number INTEGER NOT NULL DEFAULT nextval('runs_run_number_seq'::regclass),
+    workflow_id TEXT NOT NULL,
+    task TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'running',
+    context TEXT NOT NULL DEFAULT '{}',
+    meta TEXT,
+    notify_url TEXT,
+    assigned_developer TEXT,
+    protocol TEXT NOT NULL DEFAULT 'legacy',
+    protocol_version INTEGER NOT NULL DEFAULT 1,
+    compiler_release_sha TEXT,
+    packet_hash TEXT,
+    activation_preflight_hash TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`,
+  "ALTER TABLE runs ADD COLUMN IF NOT EXISTS protocol TEXT NOT NULL DEFAULT 'legacy'",
+  "ALTER TABLE runs ADD COLUMN IF NOT EXISTS protocol_version INTEGER NOT NULL DEFAULT 1",
+  "ALTER TABLE runs ADD COLUMN IF NOT EXISTS compiler_release_sha TEXT",
+  "ALTER TABLE runs ADD COLUMN IF NOT EXISTS packet_hash TEXT",
+  "ALTER TABLE runs ADD COLUMN IF NOT EXISTS activation_preflight_hash TEXT",
+  "ALTER TABLE runs ADD CONSTRAINT runs_protocol_mode_check CHECK (protocol IN ('legacy', 'shadow', 'v3'))",
+  "ALTER TABLE runs ADD CONSTRAINT runs_protocol_version_check CHECK (protocol_version = 1)",
+  "ALTER TABLE runs ADD CONSTRAINT runs_compiler_release_sha_check CHECK (compiler_release_sha IS NULL OR compiler_release_sha ~ '^[a-f0-9]{40}([a-f0-9]{24})?$')",
+  "ALTER TABLE runs ADD CONSTRAINT runs_packet_hash_check CHECK (packet_hash IS NULL OR packet_hash ~ '^[a-f0-9]{64}$')",
+  "ALTER TABLE runs ADD CONSTRAINT runs_activation_preflight_hash_check CHECK (activation_preflight_hash IS NULL OR activation_preflight_hash ~ '^[a-f0-9]{64}$')",
+  "ALTER TABLE runs ADD CONSTRAINT runs_protocol_release_check CHECK (protocol = 'legacy' OR compiler_release_sha IS NOT NULL)",
+  "ALTER TABLE runs ADD CONSTRAINT runs_v3_preflight_check CHECK (protocol <> 'v3' OR activation_preflight_hash IS NOT NULL)",
+  `CREATE FUNCTION setfarm_enforce_run_protocol_identity() RETURNS trigger
+   LANGUAGE plpgsql AS $$
+   BEGIN
+     IF OLD.protocol IS DISTINCT FROM NEW.protocol
+        OR OLD.protocol_version IS DISTINCT FROM NEW.protocol_version
+        OR OLD.compiler_release_sha IS DISTINCT FROM NEW.compiler_release_sha THEN
+       RAISE EXCEPTION 'RUN_PROTOCOL_IMMUTABLE' USING ERRCODE = '23514';
+     END IF;
+     IF OLD.packet_hash IS NOT NULL
+        AND OLD.packet_hash IS DISTINCT FROM NEW.packet_hash THEN
+       RAISE EXCEPTION 'RUN_PACKET_HASH_IMMUTABLE' USING ERRCODE = '23514';
+     END IF;
+     IF OLD.activation_preflight_hash IS NOT NULL
+        AND OLD.activation_preflight_hash IS DISTINCT FROM NEW.activation_preflight_hash THEN
+       RAISE EXCEPTION 'RUN_PREFLIGHT_HASH_IMMUTABLE' USING ERRCODE = '23514';
+     END IF;
+     RETURN NEW;
+   END;
+   $$`,
+  `CREATE TRIGGER trg_runs_protocol_identity_immutable
+   BEFORE UPDATE OF protocol, protocol_version, compiler_release_sha,
+                    packet_hash, activation_preflight_hash
+   ON runs FOR EACH ROW
+   EXECUTE FUNCTION setfarm_enforce_run_protocol_identity()`,
+] as const;
+
+const expectedRunProtocolColumns = new Map<string, Readonly<{
+  dataType: string;
+  nullable: "YES" | "NO";
+  defaultFragment?: string;
+}>>([
+  ["protocol", { dataType: "text", nullable: "NO", defaultFragment: "'legacy'::text" }],
+  ["protocol_version", { dataType: "integer", nullable: "NO", defaultFragment: "1" }],
+  ["compiler_release_sha", { dataType: "text", nullable: "YES" }],
+  ["packet_hash", { dataType: "text", nullable: "YES" }],
+  ["activation_preflight_hash", { dataType: "text", nullable: "YES" }],
+]);
+
+const expectedRunProtocolConstraints = new Map<string, string>([
+  ["runs_protocol_mode_check", "protocol = any"],
+  ["runs_protocol_version_check", "protocol_version = 1"],
+  ["runs_compiler_release_sha_check", "compiler_release_sha is null or"],
+  ["runs_packet_hash_check", "packet_hash is null or"],
+  ["runs_activation_preflight_hash_check", "activation_preflight_hash is null or"],
+  ["runs_protocol_release_check", "protocol = 'legacy'::text or compiler_release_sha is not null"],
+  ["runs_v3_preflight_check", "protocol <> 'v3'::text or activation_preflight_hash is not null"],
+]);
+
+async function detectRunProtocolShape(
   sql: Sql | TransactionSql,
-  migration: Migration,
-): Promise<void> {
-  if (migration.version === 1) await verifyExecutionAttemptsShape(sql);
+): Promise<"absent" | "present" | "partial"> {
+  if (!await relationExists(sql, "runs")) return "absent";
+  const rows = await sql.unsafe<Array<{ column_name: string }>>(
+    `SELECT column_name
+       FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'runs'
+        AND column_name = ANY($1::text[])`,
+    [[...expectedRunProtocolColumns.keys()]],
+  );
+  if (rows.length === 0) return "absent";
+  if (rows.length === expectedRunProtocolColumns.size) return "present";
+  return "partial";
 }
+
+async function verifyRunProtocolShape(sql: Sql | TransactionSql): Promise<void> {
+  const columns = await sql.unsafe<Array<{
+    column_name: string;
+    data_type: string;
+    is_nullable: "YES" | "NO";
+    column_default: string | null;
+  }>>(
+    `SELECT column_name, data_type, is_nullable, column_default
+       FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'runs'
+        AND column_name = ANY($1::text[])`,
+    [[...expectedRunProtocolColumns.keys()]],
+  );
+  const actualColumns = new Map(columns.map((column) => [column.column_name, column]));
+  if (actualColumns.size !== expectedRunProtocolColumns.size) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_ADOPTION_MISMATCH",
+      `runs protocol column count mismatch: expected ${expectedRunProtocolColumns.size}, got ${actualColumns.size}`,
+    );
+  }
+  for (const [name, expected] of expectedRunProtocolColumns) {
+    const actual = actualColumns.get(name);
+    if (
+      !actual
+      || actual.data_type !== expected.dataType
+      || actual.is_nullable !== expected.nullable
+      || (expected.defaultFragment !== undefined
+        && normalizeSql(actual.column_default ?? "") !== expected.defaultFragment)
+    ) {
+      throw new ContractSpineMigrationError(
+        "MIGRATION_ADOPTION_MISMATCH",
+        `runs protocol column mismatch: ${name}`,
+      );
+    }
+  }
+
+  const constraints = await sql.unsafe<Array<{ conname: string; definition: string }>>(
+    `SELECT conname, pg_get_constraintdef(oid, true) AS definition
+       FROM pg_constraint
+      WHERE conrelid = 'public.runs'::regclass
+        AND conname = ANY($1::text[])`,
+    [[...expectedRunProtocolConstraints.keys()]],
+  );
+  const actualConstraints = new Map(
+    constraints.map((constraint) => [constraint.conname, normalizeSql(constraint.definition)]),
+  );
+  for (const [name, fragment] of expectedRunProtocolConstraints) {
+    if (!actualConstraints.get(name)?.includes(fragment)) {
+      throw new ContractSpineMigrationError(
+        "MIGRATION_ADOPTION_MISMATCH",
+        `runs protocol constraint mismatch: ${name}`,
+      );
+    }
+  }
+
+  const triggers = await sql.unsafe<Array<{ enabled: string; definition: string }>>(
+    `SELECT t.tgenabled AS enabled, pg_get_triggerdef(t.oid, true) AS definition
+       FROM pg_trigger t
+      WHERE t.tgrelid = 'public.runs'::regclass
+        AND NOT t.tgisinternal
+        AND t.tgname = 'trg_runs_protocol_identity_immutable'`,
+  );
+  const trigger = triggers[0];
+  if (
+    triggers.length !== 1
+    || trigger?.enabled !== "O"
+    || !normalizeSql(trigger.definition).includes("setfarm_enforce_run_protocol_identity()")
+  ) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_ADOPTION_MISMATCH",
+      "runs protocol immutability trigger mismatch",
+    );
+  }
+}
+
+const migrations: readonly Migration[] = [
+  {
+    version: 1,
+    name: "001_execution_attempts",
+    statements: [EXECUTION_ATTEMPTS_TABLE_SQL, ...EXECUTION_ATTEMPT_INDEX_SQL],
+    detect: async (sql) => await relationExists(sql, "execution_attempts") ? "present" : "absent",
+    verify: verifyExecutionAttemptsShape,
+  },
+  {
+    version: 2,
+    name: "002_run_protocol_identity",
+    statements: RUN_PROTOCOL_STATEMENTS,
+    detect: detectRunProtocolShape,
+    verify: verifyRunProtocolShape,
+  },
+];
 
 async function journalRows(sql: Sql | TransactionSql): Promise<JournalRow[]> {
   if (!await relationExists(sql, "setfarm_schema_migrations")) return [];
@@ -307,14 +482,14 @@ export async function planContractSpineMigrations(sql: Sql): Promise<ContractSpi
     const row = rows.get(migration.version);
     let state: ContractSpineMigrationPlan["migrations"][number]["state"];
     if (!row) {
-      const exists = migration.relation
-        ? await relationExists(sql, migration.relation)
-        : false;
-      if (!exists) {
+      const detected = await migration.detect(sql);
+      if (detected === "absent") {
         state = "pending";
+      } else if (detected === "partial") {
+        state = "adoption_mismatch";
       } else {
         try {
-          await verifyMigrationShape(sql, migration);
+          await migration.verify(sql);
           state = "adoptable";
         } catch (error) {
           if (
@@ -419,24 +594,28 @@ export async function applyContractSpineMigrations(
               `Migration ${migration.version} journal checksum or name differs from source`,
             );
           }
-          await verifyMigrationShape(transaction, migration);
+          await migration.verify(transaction);
           alreadyApplied.push(migration.name);
           continue;
         }
 
-        const exists = migration.relation
-          ? await relationExists(transaction, migration.relation)
-          : false;
+        const detected = await migration.detect(transaction);
         let state: "applied" | "adopted" = "applied";
-        if (exists) {
-          await verifyMigrationShape(transaction, migration);
+        if (detected === "partial") {
+          throw new ContractSpineMigrationError(
+            "MIGRATION_ADOPTION_MISMATCH",
+            `Migration ${migration.version} is partially present`,
+          );
+        }
+        if (detected === "present") {
+          await migration.verify(transaction);
           state = "adopted";
           adopted.push(migration.name);
         } else {
           for (const statement of migration.statements) {
             await transaction.unsafe(statement);
           }
-          await verifyMigrationShape(transaction, migration);
+          await migration.verify(transaction);
           applied.push(migration.name);
         }
         await transaction.unsafe(
@@ -510,7 +689,7 @@ export async function verifyContractSpineMigrations(
       `Migration ${pending.version} is pending`,
     );
   }
-  for (const migration of migrations) await verifyMigrationShape(sql, migration);
+  for (const migration of migrations) await migration.verify(sql);
   return {
     schema: "setfarm.contract-spine-migration-verify.v1",
     status: "verified",

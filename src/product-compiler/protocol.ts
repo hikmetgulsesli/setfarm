@@ -1,4 +1,4 @@
-export type SetfarmProtocolMode = "legacy" | "shadow";
+export type SetfarmProtocolMode = "legacy" | "shadow" | "v3";
 
 export type SetfarmProtocol = Readonly<{
   mode: SetfarmProtocolMode;
@@ -20,7 +20,10 @@ export class ProtocolConfigurationError extends Error {
   }
 }
 
-export function parseSetfarmProtocol(value: string | undefined): SetfarmProtocol {
+export function parseSetfarmProtocol(
+  value: string | undefined,
+  options: Readonly<{ allowV3?: boolean }> = {},
+): SetfarmProtocol {
   if (value === undefined || value === "legacy") {
     return Object.freeze({ mode: "legacy" });
   }
@@ -28,6 +31,7 @@ export function parseSetfarmProtocol(value: string | undefined): SetfarmProtocol
     return Object.freeze({ mode: "shadow" });
   }
   if (value === "v3") {
+    if (options.allowV3) return Object.freeze({ mode: "v3" });
     throw new ProtocolConfigurationError(
       "PROTOCOL_NOT_IMPLEMENTED",
       value,

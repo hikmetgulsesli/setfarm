@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { execFileSync } from "node:child_process";
 import postgres from "postgres";
 
 import {
@@ -10,6 +11,35 @@ import {
 import { runtimeConfig } from "../src/runtime-config.js";
 
 type Mode = "plan" | "apply" | "verify";
+
+function resolveReleaseSha(env: NodeJS.ProcessEnv = process.env): string {
+  const configured = String(env.SETFARM_RELEASE_SHA || "").trim().toLowerCase();
+  if (configured) {
+    if (!/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/.test(configured)) {
+      throw new Error("SETFARM_RELEASE_SHA must be a full Git object hash");
+    }
+    return configured;
+  }
+  const status = execFileSync("git", ["status", "--porcelain"], {
+    cwd: process.cwd(),
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    timeout: 5_000,
+  }).trim();
+  if (status) {
+    throw new Error("Migration apply requires a clean release worktree");
+  }
+  const sha = execFileSync("git", ["rev-parse", "HEAD"], {
+    cwd: process.cwd(),
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    timeout: 5_000,
+  }).trim().toLowerCase();
+  if (!/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/.test(sha)) {
+    throw new Error("Cannot resolve migration release SHA from Git");
+  }
+  return sha;
+}
 
 function parseArgs(argv: string[]): Readonly<{ mode: Mode; databaseUrl: string }> {
   const mode = argv[0];
@@ -45,7 +75,9 @@ async function main(): Promise<void> {
       process.stdout.write(`${JSON.stringify(await verifyContractSpineMigrations(sql), null, 2)}\n`);
       return;
     }
-    const applied = await applyContractSpineMigrations(sql);
+    const applied = await applyContractSpineMigrations(sql, {
+      releaseSha: resolveReleaseSha(),
+    });
     const verified = await verifyContractSpineMigrations(sql);
     process.stdout.write(`${JSON.stringify({ applied, verified }, null, 2)}\n`);
   } finally {

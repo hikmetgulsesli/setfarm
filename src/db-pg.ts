@@ -14,9 +14,27 @@ let _sql: ReturnType<typeof postgres> | null = null;
 let _schemaReady = false;
 let _schemaReadyPromise: Promise<void> | null = null;
 let _isMigrating = false;
+let _isolatedTestPgUrl: string | null = null;
+
+const ISOLATED_TEST_DATABASE = /^setfarm_contract_spine_test_[0-9]+_[a-f0-9]{12}$/;
+
+export function pgConfigureIsolatedTestDatabase(rawUrl: string): void {
+  if (_sql || _schemaReady || _schemaReadyPromise || _isMigrating) {
+    throw new Error("ISOLATED_TEST_DATABASE_ALREADY_CONNECTED");
+  }
+  const parsed = new URL(rawUrl);
+  const database = decodeURIComponent(parsed.pathname.replace(/^\/+/, ""));
+  if (
+    !["localhost", "127.0.0.1", "::1"].includes(parsed.hostname)
+    || !ISOLATED_TEST_DATABASE.test(database)
+  ) {
+    throw new Error("ISOLATED_TEST_DATABASE_URL_REJECTED");
+  }
+  _isolatedTestPgUrl = parsed.toString();
+}
 
 function resolvePgUrl(): string {
-  return runtimeConfig.setfarmPgUrl;
+  return _isolatedTestPgUrl ?? runtimeConfig.setfarmPgUrl;
 }
 
 function quoteIdent(value: string): string {
@@ -408,6 +426,7 @@ export async function pgClose(): Promise<void> {
     _sql = null;
     _schemaReady = false;
     _schemaReadyPromise = null;
+    _isolatedTestPgUrl = null;
   }
 }
 
