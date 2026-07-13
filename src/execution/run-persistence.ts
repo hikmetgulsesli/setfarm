@@ -2,6 +2,17 @@ import type postgres from "postgres";
 
 import type { RunProtocolIdentity } from "./run-protocol.js";
 
+export const runAdmissionLockKey = 1_397_117_252;
+
+export class RunActivationConflictError extends Error {
+  readonly code = "RUN_ACTIVATION_CONFLICT";
+
+  constructor() {
+    super("RUN_ACTIVATION_CONFLICT: another run or claim owns compiler activation");
+    this.name = "RunActivationConflictError";
+  }
+}
+
 export type PersistedWorkflowStep = Readonly<{
   id: string;
   stepId: string;
@@ -32,6 +43,28 @@ export async function persistWorkflowRun(
   }>,
 ): Promise<void> {
   const { run } = input;
+  await sql.unsafe("SELECT pg_advisory_xact_lock($1)", [runAdmissionLockKey]);
+  const activity = await sql.unsafe<Array<{
+    active_runs: number;
+    active_compiler_runs: number;
+    open_claims: number;
+  }>>(
+    `SELECT
+       (SELECT COUNT(*)::integer FROM runs
+         WHERE status IN ('running', 'resuming')) AS active_runs,
+       (SELECT COUNT(*)::integer FROM runs
+         WHERE status IN ('running', 'resuming')
+           AND protocol IN ('shadow', 'v3')) AS active_compiler_runs,
+       (SELECT COUNT(*)::integer FROM claim_log WHERE outcome IS NULL) AS open_claims`,
+  );
+  const current = activity[0] ?? { active_runs: 0, active_compiler_runs: 0, open_claims: 0 };
+  const conflicts = run.protocol.mode === "legacy"
+    ? current.active_compiler_runs > 0
+    : current.active_runs > 0 || current.open_claims > 0;
+  if (conflicts) throw new RunActivationConflictError();
+  if (run.protocol.mode !== "legacy" && !run.protocol.activationPreflightHash) {
+    throw new Error("RUN_ACTIVATION_PREFLIGHT_IDENTITY_MISSING");
+  }
   await sql.unsafe(
     `INSERT INTO runs
        (id, run_number, workflow_id, task, status, context, notify_url,

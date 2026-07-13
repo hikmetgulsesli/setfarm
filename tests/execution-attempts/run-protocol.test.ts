@@ -9,11 +9,19 @@ import {
   extractProtocolArgument,
   resolveNewRunProtocol,
 } from "../../src/execution/run-protocol.js";
-import { persistWorkflowRun } from "../../src/execution/run-persistence.js";
+import {
+  RunActivationConflictError,
+  persistWorkflowRun,
+} from "../../src/execution/run-persistence.js";
 import { createIsolatedTestDatabase, type TestDatabase } from "./test-database.js";
 
 const RELEASE_SHA = "a".repeat(40);
 const PREFLIGHT_HASH = "b".repeat(64);
+const PASS_PREFLIGHT = {
+  status: "pass" as const,
+  hash: PREFLIGHT_HASH,
+  stored: true,
+};
 
 describe("run-pinned product compiler protocol", () => {
   let database: TestDatabase;
@@ -39,6 +47,7 @@ describe("run-pinned product compiler protocol", () => {
         requestedMode: "shadow",
         compilerReleaseSha: RELEASE_SHA,
         env: { SETFARM_PROTOCOL: "legacy" },
+        activationPreflight: PASS_PREFLIGHT,
       }).mode,
       "shadow",
     );
@@ -69,7 +78,7 @@ describe("run-pinned product compiler protocol", () => {
         requestedMode: "v3",
         compilerReleaseSha: RELEASE_SHA,
         env: {},
-        activationPreflight: { status: "pass", hash: PREFLIGHT_HASH },
+        activationPreflight: PASS_PREFLIGHT,
       }),
       (error: unknown) =>
         error instanceof RunProtocolError
@@ -90,7 +99,7 @@ describe("run-pinned product compiler protocol", () => {
         requestedMode: "v3",
         compilerReleaseSha: RELEASE_SHA,
         env: { SETFARM_V3_ACTIVATION: "enabled" },
-        activationPreflight: { status: "pass", hash: PREFLIGHT_HASH },
+        activationPreflight: PASS_PREFLIGHT,
       }),
       {
         mode: "v3",
@@ -124,11 +133,82 @@ describe("run-pinned product compiler protocol", () => {
     );
   });
 
+  it("serializes concurrent compiler-run admission and accepts one owner", async () => {
+    const protocol = resolveNewRunProtocol({
+      requestedMode: "shadow",
+      compilerReleaseSha: RELEASE_SHA,
+      env: {},
+      activationPreflight: PASS_PREFLIGHT,
+    });
+    const create = (id: string, runNumber: number) => database.sql.begin((sql) =>
+      persistWorkflowRun(sql, {
+        run: {
+          id,
+          runNumber,
+          workflowId: "feature-dev",
+          task: `concurrent ${id}`,
+          context: "{}",
+          notifyUrl: null,
+          createdAt: "2026-07-13T00:00:00.000Z",
+          protocol,
+        },
+        steps: [],
+      }));
+    const results = await Promise.allSettled([
+      create("run-protocol-concurrent-a", 89),
+      create("run-protocol-concurrent-b", 90),
+    ]);
+    assert.equal(results.filter((result) => result.status === "fulfilled").length, 1);
+    const rejected = results.find((result) => result.status === "rejected");
+    assert.ok(rejected?.status === "rejected");
+    assert.equal(rejected.reason?.code, "RUN_ACTIVATION_CONFLICT");
+    await database.sql`
+      UPDATE runs SET status = 'completed'
+      WHERE id IN ('run-protocol-concurrent-a', 'run-protocol-concurrent-b')
+    `;
+  });
+
+  it("treats a resuming run as active during compiler admission", async () => {
+    await database.sql`
+      INSERT INTO runs (id, run_number, workflow_id, task, status)
+      VALUES ('run-protocol-resuming-owner', 95, 'feature-dev', 'resuming owner', 'resuming')
+    `;
+    const protocol = resolveNewRunProtocol({
+      requestedMode: "shadow",
+      compilerReleaseSha: RELEASE_SHA,
+      env: {},
+      activationPreflight: PASS_PREFLIGHT,
+    });
+    try {
+      await assert.rejects(
+        database.sql.begin((sql) => persistWorkflowRun(sql, {
+          run: {
+            id: "run-protocol-after-resuming",
+            runNumber: 96,
+            workflowId: "feature-dev",
+            task: "must wait for resume",
+            context: "{}",
+            notifyUrl: null,
+            createdAt: "2026-07-13T00:00:00.000Z",
+            protocol,
+          },
+          steps: [],
+        })),
+        (error: unknown) =>
+          error instanceof RunActivationConflictError
+          && error.code === "RUN_ACTIVATION_CONFLICT",
+      );
+    } finally {
+      await database.sql`DELETE FROM runs WHERE id = 'run-protocol-resuming-owner'`;
+    }
+  });
+
   it("persists protocol identity atomically with the run and steps", async () => {
     const protocol = resolveNewRunProtocol({
       requestedMode: "shadow",
       compilerReleaseSha: RELEASE_SHA,
       env: {},
+      activationPreflight: PASS_PREFLIGHT,
     });
     await database.sql.begin((sql) => persistWorkflowRun(sql, {
       run: {
@@ -172,15 +252,35 @@ describe("run-pinned product compiler protocol", () => {
       protocol: "shadow",
       protocol_version: 1,
       compiler_release_sha: RELEASE_SHA,
-      activation_preflight_hash: null,
+      activation_preflight_hash: PREFLIGHT_HASH,
       steps: 1,
     });
 
     await assert.rejects(
       database.sql.begin((sql) => persistWorkflowRun(sql, {
         run: {
-          id: "run-protocol-rollback",
+          id: "run-protocol-conflict",
           runNumber: 92,
+          workflowId: "feature-dev",
+          task: "must conflict",
+          context: "{}",
+          notifyUrl: null,
+          createdAt: "2026-07-13T00:00:00.000Z",
+          protocol,
+        },
+        steps: [],
+      })),
+      (error: unknown) =>
+        error instanceof RunActivationConflictError
+        && error.code === "RUN_ACTIVATION_CONFLICT",
+    );
+    await database.sql`UPDATE runs SET status = 'completed' WHERE id = 'run-protocol-atomic'`;
+
+    await assert.rejects(
+      database.sql.begin((sql) => persistWorkflowRun(sql, {
+        run: {
+          id: "run-protocol-rollback",
+          runNumber: 93,
           workflowId: "feature-dev",
           task: "must roll back",
           context: "{}",
@@ -238,5 +338,15 @@ describe("run-pinned product compiler protocol", () => {
       /RUN_PROTOCOL_IMMUTABLE/,
     );
     assert.equal((await repository.read("run-protocol-atomic")).mode, "shadow");
+    await assert.rejects(
+      database.sql`
+        INSERT INTO runs
+          (id, run_number, workflow_id, task, protocol, protocol_version, compiler_release_sha)
+        VALUES
+          ('run-shadow-without-preflight', 94, 'feature-dev', 'invalid shadow',
+           'shadow', 1, ${RELEASE_SHA})
+      `,
+      /runs_compiler_preflight_check/,
+    );
   });
 });

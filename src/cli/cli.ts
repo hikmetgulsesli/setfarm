@@ -22,7 +22,9 @@ import {
   createRunProtocolRepository,
   extractProtocolArgument,
   resolveNewRunProtocol,
+  selectNewRunProtocolMode,
 } from "../execution/run-protocol.js";
+import { runDefaultActivationPreflight } from "../execution/activation-preflight.js";
 import { execFileSync, execSync } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -1003,11 +1005,34 @@ async function main() {
     if (!taskTitle) { process.stderr.write("Missing task title.\n"); printUsage(); process.exit(1); }
 
     const compilerReleaseSha = getCompilerReleaseSha();
-    // Validate protocol selection before spawner/quota checks or any run DB
-    // mutation. A3 will supply the canonical preflight when v3 is activated.
+    const selectedProtocol = selectNewRunProtocolMode(requestedProtocol);
+    let activationPreflight: Readonly<{
+      status: "pass" | "fail";
+      hash: string;
+      stored: boolean;
+    }> | undefined;
+    if (selectedProtocol === "shadow" || selectedProtocol === "v3") {
+      const preflight = await runDefaultActivationPreflight({
+        protocol: selectedProtocol,
+        compilerReleaseSha,
+      });
+      if (preflight.status !== "pass") {
+        const failures = preflight.report.checks
+          .filter((check) => check.status === "fail")
+          .map((check) => check.code)
+          .join(",");
+        throw new Error(
+          `ACTIVATION_PREFLIGHT_FAILED: ${failures || "UNKNOWN"} report=${preflight.hash}`,
+        );
+      }
+      activationPreflight = preflight;
+    }
+    // Validate the fully bound identity before spawner/quota checks or any run
+    // DB mutation.
     resolveNewRunProtocol({
       ...(requestedProtocol !== undefined ? { requestedMode: requestedProtocol } : {}),
       compilerReleaseSha,
+      ...(activationPreflight ? { activationPreflight } : {}),
     });
 
     if (process.env.SETFARM_DISABLE_SPAWNER_AUTOSTART !== "1" && !isSpawnerRunning().running) {
@@ -1093,6 +1118,7 @@ async function main() {
       notifyUrl,
       ...(requestedProtocol !== undefined ? { requestedProtocol } : {}),
       compilerReleaseSha,
+      ...(activationPreflight ? { activationPreflight } : {}),
     });
     process.stdout.write(
       [

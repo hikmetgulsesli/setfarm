@@ -12,6 +12,7 @@ export type ContractSpineMigrationErrorCode =
   | "MIGRATION_CHECKSUM_MISMATCH"
   | "MIGRATION_INCOMPLETE"
   | "MIGRATION_LOCK_TIMEOUT"
+  | "MIGRATION_RELEASE_INVALID"
   | "MIGRATION_UNKNOWN_VERSION";
 
 export class ContractSpineMigrationError extends Error {
@@ -355,6 +356,122 @@ const expectedRunProtocolConstraints = new Map<string, string>([
   ["runs_v3_preflight_check", "protocol <> 'v3'::text or activation_preflight_hash is not null"],
 ]);
 
+const MIGRATION_ATTESTATION_STATEMENTS = [
+  "ALTER TABLE setfarm_schema_migrations ADD COLUMN verified_release_sha TEXT",
+  "ALTER TABLE setfarm_schema_migrations ADD COLUMN verified_at TIMESTAMPTZ",
+  "ALTER TABLE setfarm_schema_migrations ADD CONSTRAINT setfarm_schema_migrations_verified_release_check CHECK (verified_release_sha IS NULL OR verified_release_sha ~ '^[a-f0-9]{40}([a-f0-9]{24})?$')",
+  "ALTER TABLE setfarm_schema_migrations ADD CONSTRAINT setfarm_schema_migrations_verified_pair_check CHECK ((verified_release_sha IS NULL) = (verified_at IS NULL))",
+] as const;
+
+async function detectMigrationAttestationShape(
+  sql: Sql | TransactionSql,
+): Promise<"absent" | "present" | "partial"> {
+  if (!await relationExists(sql, "setfarm_schema_migrations")) return "absent";
+  const rows = await sql.unsafe<Array<{ column_name: string }>>(
+    `SELECT column_name
+       FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'setfarm_schema_migrations'
+        AND column_name = ANY($1::text[])`,
+    [["verified_release_sha", "verified_at"]],
+  );
+  if (rows.length === 0) return "absent";
+  if (rows.length === 2) return "present";
+  return "partial";
+}
+
+async function verifyMigrationAttestationShape(sql: Sql | TransactionSql): Promise<void> {
+  const columns = await sql.unsafe<Array<{
+    column_name: string;
+    data_type: string;
+    is_nullable: "YES" | "NO";
+  }>>(
+    `SELECT column_name, data_type, is_nullable
+       FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'setfarm_schema_migrations'
+        AND column_name = ANY($1::text[])`,
+    [["verified_release_sha", "verified_at"]],
+  );
+  const actual = new Map(columns.map((column) => [column.column_name, column]));
+  if (
+    actual.get("verified_release_sha")?.data_type !== "text"
+    || actual.get("verified_release_sha")?.is_nullable !== "YES"
+    || actual.get("verified_at")?.data_type !== "timestamp with time zone"
+    || actual.get("verified_at")?.is_nullable !== "YES"
+  ) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_ADOPTION_MISMATCH",
+      "migration attestation columns do not match the expected shape",
+    );
+  }
+  const constraints = await sql.unsafe<Array<{ conname: string; definition: string }>>(
+    `SELECT conname, pg_get_constraintdef(oid, true) AS definition
+       FROM pg_constraint
+      WHERE conrelid = 'public.setfarm_schema_migrations'::regclass
+        AND conname = ANY($1::text[])`,
+    [[
+      "setfarm_schema_migrations_verified_release_check",
+      "setfarm_schema_migrations_verified_pair_check",
+    ]],
+  );
+  const actualConstraints = new Map(constraints.map((constraint) => [
+    constraint.conname,
+    normalizeSql(constraint.definition),
+  ]));
+  if (
+    !actualConstraints.get("setfarm_schema_migrations_verified_release_check")?.includes(
+      "verified_release_sha is null or verified_release_sha ~ '^[a-f0-9]{40}([a-f0-9]{24})?$'::text",
+    )
+    || !actualConstraints.get("setfarm_schema_migrations_verified_pair_check")?.includes(
+      "(verified_release_sha is null) = (verified_at is null)",
+    )
+  ) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_ADOPTION_MISMATCH",
+      "migration attestation constraints do not match the expected shape",
+    );
+  }
+}
+
+const COMPILER_PREFLIGHT_IDENTITY_STATEMENTS = [
+  "ALTER TABLE runs ADD CONSTRAINT runs_compiler_preflight_check CHECK (protocol = 'legacy' OR activation_preflight_hash IS NOT NULL)",
+] as const;
+
+async function detectCompilerPreflightIdentity(
+  sql: Sql | TransactionSql,
+): Promise<"absent" | "present" | "partial"> {
+  if (!await relationExists(sql, "runs")) return "absent";
+  const rows = await sql.unsafe<Array<{ exists: boolean }>>(
+    `SELECT EXISTS (
+       SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'public.runs'::regclass
+          AND conname = 'runs_compiler_preflight_check'
+     ) AS exists`,
+  );
+  return rows[0]?.exists ? "present" : "absent";
+}
+
+async function verifyCompilerPreflightIdentity(sql: Sql | TransactionSql): Promise<void> {
+  const rows = await sql.unsafe<Array<{ definition: string }>>(
+    `SELECT pg_get_constraintdef(oid, true) AS definition
+       FROM pg_constraint
+      WHERE conrelid = 'public.runs'::regclass
+        AND conname = 'runs_compiler_preflight_check'`,
+  );
+  if (
+    rows.length !== 1
+    || !normalizeSql(rows[0]!.definition).includes(
+      "protocol = 'legacy'::text or activation_preflight_hash is not null",
+    )
+  ) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_ADOPTION_MISMATCH",
+      "compiler run preflight identity constraint does not match the expected shape",
+    );
+  }
+}
+
 async function detectRunProtocolShape(
   sql: Sql | TransactionSql,
 ): Promise<"absent" | "present" | "partial"> {
@@ -463,7 +580,55 @@ const migrations: readonly Migration[] = [
     detect: detectRunProtocolShape,
     verify: verifyRunProtocolShape,
   },
+  {
+    version: 3,
+    name: "003_migration_release_attestation",
+    statements: MIGRATION_ATTESTATION_STATEMENTS,
+    detect: detectMigrationAttestationShape,
+    verify: verifyMigrationAttestationShape,
+  },
+  {
+    version: 4,
+    name: "004_compiler_preflight_identity",
+    statements: COMPILER_PREFLIGHT_IDENTITY_STATEMENTS,
+    detect: detectCompilerPreflightIdentity,
+    verify: verifyCompilerPreflightIdentity,
+  },
 ];
+
+export async function readContractSpineMigrationAttestation(
+  sql: Sql,
+): Promise<Readonly<{
+  status: "missing" | "unattested" | "attested";
+  versions: number[];
+  verifiedReleaseSha: string | null;
+}>> {
+  if (await detectMigrationAttestationShape(sql) !== "present") {
+    return { status: "missing", versions: [], verifiedReleaseSha: null };
+  }
+  await verifyMigrationAttestationShape(sql);
+  const rows = await sql.unsafe<Array<{
+    version: number;
+    verified_release_sha: string | null;
+    verified_at: string | null;
+  }>>(
+    `SELECT version, verified_release_sha, verified_at
+       FROM setfarm_schema_migrations
+      ORDER BY version`,
+  );
+  const versions = rows.map((row) => row.version);
+  const releases = new Set(rows.map((row) => row.verified_release_sha).filter(
+    (value): value is string => value !== null,
+  ));
+  const attested = rows.length > 0
+    && rows.every((row) => row.verified_release_sha !== null && row.verified_at !== null)
+    && releases.size === 1;
+  return {
+    status: attested ? "attested" : "unattested",
+    versions,
+    verifiedReleaseSha: attested ? [...releases][0]! : null,
+  };
+}
 
 async function journalRows(sql: Sql | TransactionSql): Promise<JournalRow[]> {
   if (!await relationExists(sql, "setfarm_schema_migrations")) return [];
@@ -551,6 +716,15 @@ export async function applyContractSpineMigrations(
   sql: Sql,
   options: Readonly<{ lockTimeoutMs?: number; statementTimeoutMs?: number; releaseSha?: string }> = {},
 ): Promise<ContractSpineMigrationApplyResult> {
+  if (
+    options.releaseSha !== undefined
+    && !/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/.test(options.releaseSha)
+  ) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_RELEASE_INVALID",
+      "Migration release SHA must be a full lowercase Git object hash",
+    );
+  }
   const lockTimeoutMs = Math.max(1, Math.min(options.lockTimeoutMs ?? 5_000, 60_000));
   const statementTimeoutMs = Math.max(lockTimeoutMs, Math.min(options.statementTimeoutMs ?? 30_000, 300_000));
   try {
@@ -629,6 +803,15 @@ export async function applyContractSpineMigrations(
             state,
             options.releaseSha ?? null,
           ],
+        );
+      }
+
+      if (options.releaseSha) {
+        await transaction.unsafe(
+          `UPDATE setfarm_schema_migrations
+              SET verified_release_sha = $1,
+                  verified_at = NOW()`,
+          [options.releaseSha],
         );
       }
 

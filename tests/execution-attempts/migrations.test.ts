@@ -5,6 +5,7 @@ import {
   ContractSpineMigrationError,
   applyContractSpineMigrations,
   contractSpineMigrationLockKey,
+  readContractSpineMigrationAttestation,
   planContractSpineMigrations,
   verifyContractSpineMigrations,
 } from "../../src/db/contract-spine-migrations.js";
@@ -97,15 +98,34 @@ describe("contract spine migration journal", () => {
     const verified = await verifyContractSpineMigrations(database.sql);
     assert.equal(verified.status, "verified");
     assert.equal(verified.migrations.every((item) => item.state === "applied"), true);
-    const journal = await database.sql<{ release_sha: string | null }[]>`
-      SELECT release_sha FROM setfarm_schema_migrations ORDER BY version
+    const journal = await database.sql<{
+      release_sha: string | null;
+      verified_release_sha: string | null;
+    }[]>`
+      SELECT release_sha, verified_release_sha
+      FROM setfarm_schema_migrations
+      ORDER BY version
     `;
     assert.equal(journal.every((row) => row.release_sha === releaseSha), true);
+    assert.equal(journal.every((row) => row.verified_release_sha === releaseSha), true);
 
-    const second = await applyContractSpineMigrations(database.sql);
+    const nextReleaseSha = "d".repeat(40);
+    const second = await applyContractSpineMigrations(database.sql, {
+      releaseSha: nextReleaseSha,
+    });
     assert.deepEqual(second.applied, []);
     assert.deepEqual(second.adopted, []);
     assert.equal(second.alreadyApplied.length, verified.migrations.length);
+    const attestation = await readContractSpineMigrationAttestation(database.sql);
+    assert.deepEqual(attestation, {
+      status: "attested",
+      versions: verified.migrations.map((item) => item.version),
+      verifiedReleaseSha: nextReleaseSha,
+    });
+    const originalReleases = await database.sql<{ release_sha: string | null }[]>`
+      SELECT release_sha FROM setfarm_schema_migrations ORDER BY version
+    `;
+    assert.equal(originalReleases.every((row) => row.release_sha === releaseSha), true);
   });
 
   it("adopts an exact existing attempt table only after catalog verification", async () => {
@@ -115,10 +135,11 @@ describe("contract spine migration journal", () => {
     assert.equal(plan.status, "pending");
     assert.equal(plan.migrations[0]?.state, "adoptable");
     const adopted = await applyContractSpineMigrations(database.sql);
-    assert.deepEqual(adopted.applied, []);
+    assert.deepEqual(adopted.applied, ["003_migration_release_attestation"]);
     assert.deepEqual(adopted.adopted, [
       "001_execution_attempts",
       "002_run_protocol_identity",
+      "004_compiler_preflight_identity",
     ]);
     assert.equal((await verifyContractSpineMigrations(database.sql)).status, "verified");
   });
@@ -204,6 +225,22 @@ describe("contract spine migration journal", () => {
       SELECT checksum FROM setfarm_schema_migrations WHERE version = 1
     `;
     assert.equal(row[0]?.checksum, "0".repeat(64));
+  });
+
+  it("rejects an attestation constraint with the expected name but wrong semantics", async () => {
+    await applyContractSpineMigrations(database.sql, { releaseSha: "c".repeat(40) });
+    await database.sql.unsafe(
+      "ALTER TABLE setfarm_schema_migrations DROP CONSTRAINT setfarm_schema_migrations_verified_pair_check",
+    );
+    await database.sql.unsafe(
+      "ALTER TABLE setfarm_schema_migrations ADD CONSTRAINT setfarm_schema_migrations_verified_pair_check CHECK (TRUE)",
+    );
+    await assert.rejects(
+      verifyContractSpineMigrations(database.sql),
+      (error: unknown) =>
+        error instanceof ContractSpineMigrationError
+        && error.code === "MIGRATION_ADOPTION_MISMATCH",
+    );
   });
 
   it("rejects a journal version newer than the running source", async () => {

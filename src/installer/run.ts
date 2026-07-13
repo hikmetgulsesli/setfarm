@@ -24,7 +24,11 @@ export async function runWorkflow(params: {
   notifyUrl?: string;
   requestedProtocol?: string;
   compilerReleaseSha: string;
-  activationPreflight?: Readonly<{ status: "pass" | "fail"; hash: string }>;
+  activationPreflight?: Readonly<{
+    status: "pass" | "fail";
+    hash: string;
+    stored: boolean;
+  }>;
 }): Promise<{
   id: string;
   runNumber: number;

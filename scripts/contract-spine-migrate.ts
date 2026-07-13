@@ -6,6 +6,7 @@ import postgres from "postgres";
 import {
   applyContractSpineMigrations,
   planContractSpineMigrations,
+  readContractSpineMigrationAttestation,
   verifyContractSpineMigrations,
 } from "../src/db/contract-spine-migrations.js";
 import { runtimeConfig } from "../src/runtime-config.js";
@@ -79,7 +80,8 @@ async function main(): Promise<void> {
       releaseSha: resolveReleaseSha(),
     });
     const verified = await verifyContractSpineMigrations(sql);
-    process.stdout.write(`${JSON.stringify({ applied, verified }, null, 2)}\n`);
+    const attestation = await readContractSpineMigrationAttestation(sql);
+    process.stdout.write(`${JSON.stringify({ applied, verified, attestation }, null, 2)}\n`);
   } finally {
     await sql.end({ timeout: 5 });
   }

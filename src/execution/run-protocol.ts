@@ -75,10 +75,56 @@ export function resolveNewRunProtocol(input: Readonly<{
   requestedMode?: string;
   compilerReleaseSha: string;
   env?: NodeJS.ProcessEnv;
-  activationPreflight?: Readonly<{ status: "pass" | "fail"; hash: string }>;
+  activationPreflight?: Readonly<{
+    status: "pass" | "fail";
+    hash: string;
+    stored: boolean;
+  }>;
 }>): RunProtocolIdentity {
   const env = input.env ?? process.env;
-  const selected = input.requestedMode ?? env.SETFARM_PROTOCOL;
+  const mode = selectNewRunProtocolMode(input.requestedMode, env);
+  const compilerReleaseSha = input.compilerReleaseSha.trim().toLowerCase();
+  if (!GIT_RELEASE_SHA.test(compilerReleaseSha)) {
+    throw new RunProtocolError(
+      "RUN_PROTOCOL_INVALID_RELEASE",
+      "Compiler release SHA must be a full Git object hash",
+    );
+  }
+
+  let activationPreflightHash: string | null = null;
+  if (mode === "shadow" || mode === "v3") {
+    if (
+      input.activationPreflight?.status !== "pass"
+      || input.activationPreflight.stored !== true
+      || !SHA256.test(input.activationPreflight.hash)
+    ) {
+      throw new RunProtocolError(
+        "RUN_PROTOCOL_PREFLIGHT_REQUIRED",
+        `${mode} requires a stored passing activation preflight`,
+      );
+    }
+    activationPreflightHash = input.activationPreflight.hash;
+  }
+  if (mode === "v3" && env.SETFARM_V3_ACTIVATION !== "enabled") {
+    throw new RunProtocolError(
+      "RUN_PROTOCOL_V3_DISABLED",
+      "Product Compiler v3 run creation is not activated",
+    );
+  }
+
+  return Object.freeze({
+    mode,
+    version: 1,
+    compilerReleaseSha,
+    activationPreflightHash,
+  });
+}
+
+export function selectNewRunProtocolMode(
+  requestedMode: string | undefined,
+  env: NodeJS.ProcessEnv = process.env,
+): SetfarmProtocolMode {
+  const selected = requestedMode ?? env.SETFARM_PROTOCOL;
   let mode: SetfarmProtocolMode;
   try {
     mode = parseSetfarmProtocol(selected, { allowV3: true }).mode;
@@ -91,41 +137,7 @@ export function resolveNewRunProtocol(input: Readonly<{
     }
     throw error;
   }
-
-  const compilerReleaseSha = input.compilerReleaseSha.trim().toLowerCase();
-  if (!GIT_RELEASE_SHA.test(compilerReleaseSha)) {
-    throw new RunProtocolError(
-      "RUN_PROTOCOL_INVALID_RELEASE",
-      "Compiler release SHA must be a full Git object hash",
-    );
-  }
-
-  let activationPreflightHash: string | null = null;
-  if (mode === "v3") {
-    if (env.SETFARM_V3_ACTIVATION !== "enabled") {
-      throw new RunProtocolError(
-        "RUN_PROTOCOL_V3_DISABLED",
-        "Product Compiler v3 run creation is not activated",
-      );
-    }
-    if (
-      input.activationPreflight?.status !== "pass"
-      || !SHA256.test(input.activationPreflight.hash)
-    ) {
-      throw new RunProtocolError(
-        "RUN_PROTOCOL_PREFLIGHT_REQUIRED",
-        "Product Compiler v3 requires a passing activation preflight",
-      );
-    }
-    activationPreflightHash = input.activationPreflight.hash;
-  }
-
-  return Object.freeze({
-    mode,
-    version: 1,
-    compilerReleaseSha,
-    activationPreflightHash,
-  });
+  return mode;
 }
 
 type RunProtocolRow = {
@@ -174,7 +186,7 @@ export function createRunProtocolRepository(sql: postgres.Sql) {
         || (mode !== "legacy" && row.compiler_release_sha === null)
         || (row.packet_hash !== null && !SHA256.test(row.packet_hash))
         || (row.activation_preflight_hash !== null && !SHA256.test(row.activation_preflight_hash))
-        || (mode === "v3" && row.activation_preflight_hash === null)
+        || (mode !== "legacy" && row.activation_preflight_hash === null)
       ) {
         throw new RunProtocolError(
           "RUN_PROTOCOL_STORED_INVALID",

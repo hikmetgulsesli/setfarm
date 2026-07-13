@@ -443,6 +443,7 @@ async function createDefaultShadowRuntime(): Promise<ShadowRuntime> {
   const codeSha = runtimeCodeSha();
   const artifactStore = new artifactModule.ContentAddressedArtifactStore(
     configModule.resolveProductArtifactDir(),
+    { limits: configModule.resolveProductArtifactCapacity() },
   );
   const repository = repositoryModule.createAttemptRepository(db.getSql());
   const emit = (event: ShadowDiagnostic) => {

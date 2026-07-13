@@ -102,7 +102,7 @@ describe("shadow attempt recorder", () => {
           version: 1,
           compilerReleaseSha: "a".repeat(40),
           packetHash: null,
-          activationPreflightHash: null,
+          activationPreflightHash: "b".repeat(64),
         }),
         createRuntime: async () => {
           constructions += 1;
@@ -239,7 +239,7 @@ describe("shadow attempt recorder", () => {
         version: 1,
         compilerReleaseSha: "a".repeat(40),
         packetHash: null,
-        activationPreflightHash: null,
+        activationPreflightHash: "b".repeat(64),
       }),
       createRuntime: async () => { throw new Error("compiler failed"); },
       onDiagnostic: (event) => diagnostics.push(event),
