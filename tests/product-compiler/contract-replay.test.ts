@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, it } from "node:test";
@@ -105,6 +105,22 @@ describe("offline Product Compiler contract replay", () => {
       /FIXTURE_SOURCE_HASH_DRIFT/,
     );
     assert.equal(await readFile(expectedPath, "utf8"), expectedBefore);
+  });
+
+  it("rejects expected-result symlinks before reading outside fixture roots", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "setfarm-contract-replay-symlink-"));
+    const outside = await mkdtemp(path.join(tmpdir(), "setfarm-contract-replay-outside-"));
+    roots.push(root, outside);
+    await cp(FIXTURE_ROOT, root, { recursive: true });
+    const expectedPath = path.join(root, "1887-action-state", "expected", "compilation-result.json");
+    const outsidePath = path.join(outside, "outside.json");
+    await writeFile(outsidePath, await readFile(expectedPath));
+    await rm(expectedPath);
+    await symlink(outsidePath, expectedPath);
+    await assert.rejects(
+      runContractReplay({ fixtureRoot: root }),
+      /FIXTURE_PATH_ESCAPE/,
+    );
   });
 
   it("keeps product-specific fixture identifiers out of generic replay code", async () => {

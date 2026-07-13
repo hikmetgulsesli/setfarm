@@ -1,10 +1,10 @@
 import { createHash } from "node:crypto";
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import {
-  lstatSync,
-  readFileSync,
-  readlinkSync,
-} from "node:fs";
+  lstat,
+  readFile,
+  readlink,
+} from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
@@ -42,6 +42,25 @@ const SHADOW_OBSERVATION_FAILURE_CODES = new Set([
 ]);
 
 const MAX_GIT_BUFFER = 64 * 1024 * 1024;
+
+function execGitText(
+  cwd: string,
+  args: readonly string[],
+  timeout: number,
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFile("git", [...args], {
+      cwd,
+      encoding: "utf8",
+      timeout,
+      maxBuffer: MAX_GIT_BUFFER,
+      windowsHide: true,
+    }, (error, stdout) => {
+      if (error) reject(error);
+      else resolve(stdout);
+    });
+  });
+}
 
 const RuntimeIdentityV1Schema = z.object({
   runId: z.string().min(1).max(500),
@@ -435,30 +454,16 @@ export function createShadowAttemptRecorder(dependencies: ShadowRecorderDependen
   };
 }
 
-export function captureShadowSourceRevision(worktree: string): SourceRevisionV1 {
+export async function captureShadowSourceRevision(worktree: string): Promise<SourceRevisionV1> {
   const root = path.resolve(worktree);
-  const sha = execFileSync("git", ["rev-parse", "HEAD"], {
-    cwd: root,
-    encoding: "utf8",
-    timeout: 10_000,
-    maxBuffer: MAX_GIT_BUFFER,
-    stdio: ["ignore", "pipe", "pipe"],
-  }).trim().toLowerCase();
+  const sha = (await execGitText(root, ["rev-parse", "HEAD"], 10_000)).trim().toLowerCase();
   GitObjectHashSchema.parse(sha);
-  const trackedRaw = execFileSync("git", ["ls-files", "-s", "-z"], {
-    cwd: root,
-    encoding: "utf8",
-    timeout: 30_000,
-    maxBuffer: MAX_GIT_BUFFER,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  const untrackedRaw = execFileSync("git", ["ls-files", "--others", "--exclude-standard", "-z"], {
-    cwd: root,
-    encoding: "utf8",
-    timeout: 30_000,
-    maxBuffer: MAX_GIT_BUFFER,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
+  const trackedRaw = await execGitText(root, ["ls-files", "-s", "-z"], 30_000);
+  const untrackedRaw = await execGitText(
+    root,
+    ["ls-files", "--others", "--exclude-standard", "-z"],
+    30_000,
+  );
   const tracked = trackedRaw.split("\0").filter(Boolean).map((entry) => {
     const separator = entry.indexOf("\t");
     if (separator <= 0) throw new Error("SHADOW_SOURCE_INDEX_INVALID");
@@ -475,7 +480,7 @@ export function captureShadowSourceRevision(worktree: string): SourceRevisionV1 
 
   const digest = createHash("sha256");
   digest.update("setfarm.shadow-worktree-fingerprint.v1\0");
-  const updateEntry = (relative: string, identity: string): void => {
+  const updateEntry = async (relative: string, identity: string): Promise<void> => {
     const absolute = path.resolve(root, relative);
     if (absolute !== root && !absolute.startsWith(`${root}${path.sep}`)) {
       throw new Error("SHADOW_SOURCE_PATH_ESCAPE");
@@ -484,7 +489,7 @@ export function captureShadowSourceRevision(worktree: string): SourceRevisionV1 
     digest.update(relative);
     digest.update(`\0identity:${identity}\0`);
     let stat;
-    try { stat = lstatSync(absolute); } catch (error) {
+    try { stat = await lstat(absolute); } catch (error) {
       if (error instanceof Error && "code" in error && error.code === "ENOENT") {
         digest.update("missing");
         return;
@@ -494,19 +499,14 @@ export function captureShadowSourceRevision(worktree: string): SourceRevisionV1 
     digest.update(`actual-executable:${(stat.mode & 0o111) !== 0}\0`);
     if (stat.isSymbolicLink()) {
       digest.update("symlink\0");
-      digest.update(readlinkSync(absolute));
+      digest.update(await readlink(absolute));
     } else if (stat.isFile()) {
       digest.update("file\0");
-      digest.update(readFileSync(absolute));
+      digest.update(await readFile(absolute));
     } else if (identity.startsWith("160000:")) {
       digest.update("gitlink\0");
       try {
-        digest.update(execFileSync("git", ["rev-parse", "HEAD"], {
-          cwd: absolute,
-          encoding: "utf8",
-          timeout: 5_000,
-          stdio: ["ignore", "pipe", "pipe"],
-        }).trim());
+        digest.update((await execGitText(absolute, ["rev-parse", "HEAD"], 5_000)).trim());
       } catch {
         digest.update("unavailable");
       }
@@ -515,10 +515,10 @@ export function captureShadowSourceRevision(worktree: string): SourceRevisionV1 
     }
   };
   for (const entry of tracked) {
-    updateEntry(entry.relative, `${entry.mode}:${entry.objectHash}:${entry.stage}`);
+    await updateEntry(entry.relative, `${entry.mode}:${entry.objectHash}:${entry.stage}`);
   }
   for (const relative of untracked) {
-    updateEntry(relative, "untracked");
+    await updateEntry(relative, "untracked");
   }
   return SourceRevisionV1Schema.parse({ sha, treeHash: digest.digest("hex") });
 }
@@ -733,7 +733,7 @@ export async function observeShadowAttemptClaim(
   try {
     const initialized = await initializeShadowAttemptRuntime(input.runId, options);
     if (initialized.mode === "legacy") return { status: "legacy" };
-    const sourceBefore = captureShadowSourceRevision(input.worktree);
+    const sourceBefore = await captureShadowSourceRevision(input.worktree);
     return initialized.runtime.recorder.observeClaim({ ...input, sourceBefore });
   } catch (error) {
     return publishRuntimeError(error, options, input);
@@ -751,7 +751,7 @@ export async function observeShadowAttemptSuccess(
   try {
     const initialized = await initializeShadowAttemptRuntime(input.runId, options);
     if (initialized.mode === "legacy") return { status: "legacy" };
-    const sourceAfter = captureShadowSourceRevision(input.worktree);
+    const sourceAfter = await captureShadowSourceRevision(input.worktree);
     const outputHash = input.output === undefined
       ? undefined
       : createHash("sha256").update(input.output, "utf8").digest("hex");
@@ -785,7 +785,7 @@ export async function prepareShadowAttemptFailure(
       runId: identity.runId,
       stepId: identity.stepId,
       storyId: identity.storyId,
-      sourceAtFailure: captureShadowSourceRevision(identity.worktree),
+      sourceAtFailure: await captureShadowSourceRevision(identity.worktree),
     });
   } catch (error) {
     await publishRuntimeError(error, options, input);

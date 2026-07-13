@@ -161,6 +161,32 @@ describe("provenance-preserving legacy adapters", () => {
     );
   });
 
+  it("projects exact controls from multiline generated JSX with source lines", () => {
+    const result = adaptStitchSources({
+      rawArtifactHashes: [HASH_A],
+      generatedSources: [{
+        source: { ...sourceRef("generated/Editor.tsx"), mediaType: "text/typescript" },
+        designSurfaceId: "DSURF_EDITOR",
+        surfaceRef: "SURF_EDITOR",
+        text: [
+          "<section>",
+          "  <button",
+          '    data-action="ACT_SAVE_RECORD"',
+          '    data-action-id="save-multiline-1"',
+          "  >Save</button>",
+          "</section>",
+        ].join("\n"),
+      }],
+    });
+    const control = result.candidate?.controls[0];
+    assert.equal(result.diagnostics.length, 0);
+    assert.equal(control?.generatedLocalId, "save-multiline-1");
+    assert.equal(control?.source.line, 2);
+    assert.equal(control?.provenance[0]?.range?.startLine, 2);
+    assert.equal(control?.provenance[0]?.range?.endLine, 5);
+    assert.equal(control?.semanticCandidates[0]?.actionRef, "ACT_SAVE_RECORD");
+  });
+
   it("returns a typed diagnostic instead of throwing on an invalid projection", () => {
     const result = adaptStitchSources({
       rawArtifactHashes: [HASH_A],

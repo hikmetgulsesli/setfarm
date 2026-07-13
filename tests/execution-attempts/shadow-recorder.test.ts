@@ -286,17 +286,17 @@ describe("shadow attempt recorder", () => {
     await writeFile(path.join(root, "app.txt"), "one\n", "utf8");
     execFileSync("git", ["add", "app.txt"], { cwd: root });
     execFileSync("git", ["commit", "-qm", "init"], { cwd: root });
-    const clean = captureShadowSourceRevision(root);
+    const clean = await captureShadowSourceRevision(root);
     assert.match(clean.sha, /^[a-f0-9]{40}$/);
     assert.match(clean.treeHash, /^[a-f0-9]{64}$/);
 
     execFileSync("git", ["update-index", "--assume-unchanged", "app.txt"], { cwd: root });
     await writeFile(path.join(root, "app.txt"), "two\n", "utf8");
-    const assumedChanged = captureShadowSourceRevision(root);
+    const assumedChanged = await captureShadowSourceRevision(root);
     assert.notEqual(assumedChanged.treeHash, clean.treeHash);
 
     await writeFile(path.join(root, "new.txt"), "untracked\n", "utf8");
-    const dirty = captureShadowSourceRevision(root);
+    const dirty = await captureShadowSourceRevision(root);
     assert.equal(dirty.sha, clean.sha);
     assert.match(dirty.treeHash, /^[a-f0-9]{64}$/);
     assert.notEqual(dirty.treeHash, clean.treeHash);
