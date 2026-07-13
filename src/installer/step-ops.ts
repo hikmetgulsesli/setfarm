@@ -5934,11 +5934,18 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
 
       // v1.5.50: Record claim in claim_log + update story claim metadata
       const claimNow = now();
-      let legacyClaimRecorded = false;
+      let legacyClaimId: number | null = null;
       try {
-        await pgRun("INSERT INTO claim_log (run_id, step_id, story_id, agent_id, claimed_at) VALUES ($1, $2, $3, $4, $5)", [step.run_id, step.step_id, nextStory.story_id, agentId, claimNow]);
+        const claimRow = await pgGet<{ id: string }>(
+          "INSERT INTO claim_log (run_id, step_id, story_id, agent_id, claimed_at) VALUES ($1, $2, $3, $4, $5) RETURNING id::text AS id",
+          [step.run_id, step.step_id, nextStory.story_id, agentId, claimNow],
+        );
         await pgRun("UPDATE stories SET claimed_at = $1, claimed_by = $2 WHERE id = $3", [claimNow, agentId, nextStory.id]);
-        legacyClaimRecorded = true;
+        const parsedClaimId = Number(claimRow?.id);
+        if (!Number.isSafeInteger(parsedClaimId) || parsedClaimId <= 0) {
+          throw new Error("CLAIM_LOG_ID_INVALID");
+        }
+        legacyClaimId = parsedClaimId;
       } catch (e) { logger.warn(`[claim-log] Failed to record claim: ${String(e)}`, { runId: step.run_id }); }
       // v2026.4.12: Merge dependency branches into worktree for integration stories.
       // Stories with depends_on start from implement_base_commit (empty project).
@@ -6147,12 +6154,16 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
         return { found: false };
       }
 
-      if (legacyClaimRecorded) {
+      if (legacyClaimId !== null) {
         await observeShadowAttemptClaim({
           runId: step.run_id,
           stepId: step.step_id,
           storyId: nextStory.story_id,
+          legacyClaimId,
           legacyClaimGeneration: Number(nextStory.claim_generation ?? 0),
+          attemptClass: step.step_id === "implement"
+            ? "product_implementation"
+            : "evidence_only",
           role: agentId,
           agentId,
           branch: String(context["story_branch"] || storyBranch),

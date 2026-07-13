@@ -5,7 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFile } from "node:child_process";
 import crypto from "node:crypto";
-import { pgQuery, pgGet, pgRun, now } from "../db-pg.js";
+import { getSql, pgQuery, pgGet, pgRun, now } from "../db-pg.js";
 import { resolveBundledWorkflowsDir } from "../installer/paths.js";
 import YAML from "yaml";
 
@@ -14,6 +14,7 @@ import { getRunEvents } from "../installer/events.js";
 import { getMedicStatus, getRecentMedicChecks } from "../medic/medic.js";
 import { readSupervisorArtifactSummary } from "./supervisor-summary.js";
 import { getRunOperationalModel } from "./run-operational-model.js";
+import { readShadowParityReport } from "../execution/shadow-parity.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -525,6 +526,12 @@ export function startDashboard(port = 3333): http.Server {
     if (operationalModelMatch) {
       const model = await getRunOperationalModel(operationalModelMatch[1]);
       return model ? json(res, model) : json(res, { error: "not found" }, 404);
+    }
+
+    const shadowParityMatch = p.match(/^\/api\/runs\/([^/]+)\/shadow-parity$/);
+    if (shadowParityMatch) {
+      const report = await readShadowParityReport(getSql(), shadowParityMatch[1]);
+      return report ? json(res, report) : json(res, { error: "not found" }, 404);
     }
 
     const storiesMatch = p.match(/^\/api\/runs\/([^/]+)\/stories$/);

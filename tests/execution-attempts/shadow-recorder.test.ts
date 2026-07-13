@@ -10,6 +10,7 @@ import {
   createShadowAttemptRecorder,
   initializeShadowAttemptRuntime,
   observeShadowAttemptClaim,
+  toShadowStructuredObservation,
 } from "../../src/execution/shadow-attempt-recorder.js";
 import type { ExecutionAttemptV1 } from "../../src/execution/schemas/execution-attempt-v1.js";
 import { resolveProductArtifactDir } from "../../src/runtime-config.js";
@@ -39,7 +40,7 @@ function attempt(overrides: Partial<ExecutionAttemptV1> = {}): ExecutionAttemptV
       heartbeatAt: "2026-07-12T00:00:00.000Z",
     },
     disposition: "claimed",
-    evidenceRefs: [],
+    evidenceRefs: ["setfarm://claim-log/41"],
     createdAt: "2026-07-12T00:00:00.000Z",
     updatedAt: "2026-07-12T00:00:00.000Z",
     ...overrides,
@@ -136,6 +137,7 @@ describe("shadow attempt recorder", () => {
       runId: "run-shadow",
       stepId: "implement",
       storyId: "US-001",
+      legacyClaimId: 41,
       legacyClaimGeneration: 7,
       role: "developer",
       agentId: "feature-dev",
@@ -155,17 +157,25 @@ describe("shadow attempt recorder", () => {
       agentId: "feature-dev",
       branch: "story/us-001",
       worktree: ".worktrees/us-001",
-      evidenceRefs: [],
+      evidenceRefs: [
+        "setfarm://claim-log/41",
+        "setfarm://claim-generation/7",
+      ],
     });
     assert.equal(JSON.stringify(reservations).includes("prose"), false);
     assert.equal(events[0]?.code, "ATTEMPT_RESERVED");
+    assert.equal(events[0]?.legacyClaimId, 41);
   });
 
   it("turns repository failures and duplicate/stale outcomes into bounded observations", async () => {
     const events: any[] = [];
     const recorder = createShadowAttemptRecorder({
       repository: {
-        reserve: async () => { throw new Error("database exploded with private detail"); },
+        reserve: async () => {
+          throw new Error(
+            "database exploded postgresql://private:secret@host/db /Users/private/payload token=abc123",
+          );
+        },
         findActive: async () => attempt(),
         complete: async () => ({ status: "stale_fence" as const }),
       },
@@ -176,6 +186,7 @@ describe("shadow attempt recorder", () => {
       runId: "run-shadow",
       stepId: "implement",
       storyId: "US-001",
+      legacyClaimId: 42,
       legacyClaimGeneration: 1,
       role: "developer",
       branch: "story/us-001",
@@ -185,6 +196,10 @@ describe("shadow attempt recorder", () => {
     assert.equal(failed.status, "shadow_error");
     assert.equal(events.at(-1)?.event, "product_compiler.shadow_error");
     assert.ok((events.at(-1)?.message.length ?? 0) <= 500);
+    assert.doesNotMatch(
+      events.at(-1)?.message ?? "",
+      /private:secret|\/Users\/private|abc123/,
+    );
 
     const success = await recorder.observeSuccess({
       runId: "run-shadow",
@@ -194,6 +209,72 @@ describe("shadow attempt recorder", () => {
       evidenceRefs: [],
     });
     assert.deepEqual(success, { status: "observed", code: "ATTEMPT_STALE_FENCE" });
+  });
+
+  it("projects machine-readable observation evidence without making shadow authoritative", () => {
+    const projected = toShadowStructuredObservation({
+      event: "product_compiler.shadow_observation",
+      code: "ATTEMPT_RESERVED",
+      message: "Shadow claim observation: reserved",
+      runId: "run-shadow",
+      stepId: "implement",
+      storyId: "US-001",
+      attemptId: "ATT_018f0000-0000-7000-8000-000000000001",
+      legacyClaimId: 41,
+      attemptLegacyClaimId: 41,
+      attemptDisposition: "claimed",
+    }, new Date("2026-07-13T00:00:00.000Z"));
+    assert.equal(projected.status, "pass");
+    assert.deepEqual(projected.evidence, {
+      schema: "setfarm.shadow-attempt-observation.v1",
+      code: "ATTEMPT_RESERVED",
+      attemptId: "ATT_018f0000-0000-7000-8000-000000000001",
+      legacyClaimId: 41,
+      attemptLegacyClaimId: 41,
+      attemptDisposition: "claimed",
+    });
+    assert.deepEqual(projected.metadata, { protocol: "shadow", authoritative: false });
+    assert.equal(projected.completedAt, "2026-07-13T00:00:00.000Z");
+
+    const anomaly = toShadowStructuredObservation({
+      event: "product_compiler.shadow_observation",
+      code: "ATTEMPT_ACTIVE_CONFLICT",
+      message: "Shadow claim observation: active_conflict",
+      runId: "run-shadow",
+      stepId: "implement",
+      storyId: "US-001",
+    }, new Date("2026-07-13T00:00:00.000Z"));
+    assert.equal(anomaly.status, "fail");
+  });
+
+  it("bounds a hanging observation sink without changing the shadow result", async () => {
+    const recorder = createShadowAttemptRecorder({
+      repository: {
+        reserve: async () => ({
+          status: "reserved" as const,
+          attempt: attempt({ evidenceRefs: ["setfarm://claim-log/44"] }),
+        }),
+        findActive: async () => undefined,
+        complete: async () => ({ status: "stale_fence" as const }),
+      },
+      resolveCompilationReportHash: async () => HASH_B,
+      emit: async () => await new Promise<void>(() => {}),
+      emitTimeoutMs: 10,
+    });
+    const startedAt = Date.now();
+    const result = await recorder.observeClaim({
+      runId: "run-shadow",
+      stepId: "implement",
+      storyId: "US-001",
+      legacyClaimId: 44,
+      legacyClaimGeneration: 1,
+      role: "developer",
+      branch: "story/us-001",
+      worktree: ".worktrees/us-001",
+      sourceBefore: { sha: SHA_A, treeHash: TREE_A },
+    });
+    assert.equal(result.status, "observed");
+    assert.ok(Date.now() - startedAt < 250);
   });
 
   it("captures clean Git tree identity and changes the fingerprint for dirty source", async () => {
@@ -229,6 +310,7 @@ describe("shadow attempt recorder", () => {
       runId: "run-shadow",
       stepId: "implement",
       storyId: "US-001",
+      legacyClaimId: 43,
       legacyClaimGeneration: 1,
       role: "developer",
       branch: "story/us-001",
