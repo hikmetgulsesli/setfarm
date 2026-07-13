@@ -278,6 +278,10 @@ Files:
 Requirements:
 
 - all child artifacts are stored/indexed;
+- the artifact index owns a durable byte total and conservative pending
+  reservations under the publication fence, bootstraps by exact reconciliation,
+  and recovers interrupted reservations without scanning every artifact on each
+  write;
 - compiler seals exactly one packet revision or stores rejection report;
 - run packet pointer updates by CAS;
 - packet cannot change after first v3 attempt;

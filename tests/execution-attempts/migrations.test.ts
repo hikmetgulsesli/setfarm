@@ -206,6 +206,36 @@ describe("contract spine migration journal", () => {
     assert.equal(journal[0]?.count, 0);
   });
 
+  it("does not replace a pre-existing protocol identity function", async () => {
+    await database.sql.unsafe(`
+      CREATE FUNCTION setfarm_enforce_run_protocol_identity() RETURNS trigger
+      LANGUAGE plpgsql AS $$
+      BEGIN
+        RETURN OLD;
+      END;
+      $$
+    `);
+
+    await assert.rejects(
+      applyContractSpineMigrations(database.sql),
+      (error: unknown) =>
+        error instanceof Error
+        && "code" in error
+        && error.code === "42723",
+    );
+
+    const definitions = await database.sql<{ definition: string }[]>`
+      SELECT pg_get_functiondef('setfarm_enforce_run_protocol_identity()'::regprocedure) AS definition
+    `;
+    assert.match(definitions[0]?.definition ?? "", /RETURN OLD/);
+    const journal = await database.sql<{ count: number }[]>`
+      SELECT COUNT(*)::integer AS count
+      FROM pg_tables
+      WHERE schemaname = 'public' AND tablename = 'setfarm_schema_migrations'
+    `;
+    assert.equal(journal[0]?.count, 0);
+  });
+
   it("rejects a checksum mismatch without repairing journal history", async () => {
     await applyContractSpineMigrations(database.sql);
     await database.sql`

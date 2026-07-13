@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { access, mkdtemp, readdir, rm, utimes, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readdir, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, it } from "node:test";
@@ -7,6 +7,7 @@ import { afterEach, describe, it } from "node:test";
 import {
   ArtifactCapacityError,
   assessArtifactCapacity,
+  resolveArtifactCapacityVolumeDirectory,
 } from "../../src/product-compiler/artifact-capacity.js";
 import {
   ContentAddressedArtifactStore,
@@ -33,6 +34,20 @@ afterEach(async () => {
 });
 
 describe("artifact capacity admission", () => {
+  it("measures the target volume when the configured root is a directory symlink", async () => {
+    const parent = await mkdtemp(path.join(tmpdir(), "setfarm-capacity-symlink-"));
+    roots.push(parent);
+    const target = path.join(parent, "target");
+    const linkedRoot = path.join(parent, "linked-root");
+    await symlink(target, linkedRoot, "dir");
+
+    // A dangling target is skipped while finding the closest existing volume.
+    assert.equal(await resolveArtifactCapacityVolumeDirectory(linkedRoot), parent);
+
+    await mkdir(target);
+    assert.equal(await resolveArtifactCapacityVolumeDirectory(linkedRoot), path.resolve(linkedRoot));
+  });
+
   it("uses bounded production defaults and rejects malformed environment limits", () => {
     assert.deepEqual(resolveProductArtifactCapacity({}), {
       maxPayloadBytes: 4 * 1024 * 1024,

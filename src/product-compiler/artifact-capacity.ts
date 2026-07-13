@@ -1,4 +1,4 @@
-import { lstat, readdir, statfs } from "node:fs/promises";
+import { lstat, readdir, stat, statfs } from "node:fs/promises";
 import path from "node:path";
 
 export const DEFAULT_ARTIFACT_CAPACITY_LIMITS = Object.freeze({
@@ -98,11 +98,14 @@ export function assessArtifactCapacity(input: Readonly<{
   });
 }
 
-async function closestExistingDirectory(target: string): Promise<string> {
+export async function resolveArtifactCapacityVolumeDirectory(target: string): Promise<string> {
   let current = path.resolve(target);
   while (true) {
     try {
-      const info = await lstat(current);
+      // The artifact root may itself be a configured symlink. Follow it here so
+      // statfs measures the volume that will actually receive artifact bytes,
+      // rather than the volume containing the symlink entry.
+      const info = await stat(current);
       if (info.isDirectory()) return current;
     } catch (error) {
       if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
@@ -133,7 +136,7 @@ async function immutableRootBytes(root: string): Promise<number> {
 
 export async function measureArtifactCapacity(root: string): Promise<ArtifactCapacitySnapshot> {
   const resolved = path.resolve(root);
-  const volumeDirectory = await closestExistingDirectory(resolved);
+  const volumeDirectory = await resolveArtifactCapacityVolumeDirectory(resolved);
   const filesystem = await statfs(volumeDirectory);
   const freeBytes = Number(filesystem.bavail) * Number(filesystem.bsize);
   if (!Number.isSafeInteger(freeBytes) || freeBytes < 0) {
