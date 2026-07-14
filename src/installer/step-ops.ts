@@ -1,10 +1,11 @@
-import { pgQuery, pgGet, pgRun, pgExec, pgBegin, now } from "../db-pg.js";
+import { getSql, pgQuery, pgGet, pgRun, pgExec, pgBegin, now } from "../db-pg.js";
 import type { LoopConfig, Story } from "./types.js";
 import { execFileSync } from "node:child_process";
 import crypto from "node:crypto";
 import os from "node:os";
 import fs from "node:fs";
 import path from "node:path";
+import type postgres from "postgres";
 import { emitEvent } from "./events.js";
 import { recordObservation } from "./observations.js";
 import { recordGateObservation, recordStackEvidencePlanObservation, recordStepOutputObservation } from "./operation-observability.js";
@@ -20,14 +21,119 @@ import {
   PR_REVIEW_DELAY_MS,
 } from "./constants.js";
 import { getPRState, invalidatePRStateCache, tryReopenPR, tryAutoMergePR, findPrByBranch, resolveClosedPR, getPRHeadBranch } from "./pr-state.js";
-import { failStep } from "./step-fail.js";
+import { failStep, terminalizeLoopClaimAndState } from "./step-fail.js";
 import { advancePipeline, checkLoopContinuation } from "./step-advance.js";
-import { mergeStoryIntoFeature, runMergeQueue } from "./merge-queue-ops.js";
+import {
+  mergeExactSourceIntoFeature,
+  mergeStoryIntoFeature,
+  proveExactCommitAncestor,
+  runMergeQueue,
+} from "./merge-queue-ops.js";
 import { refreshRunContractSafe } from "./contract-ledger.js";
 import {
   observeShadowAttemptClaim,
-  observeShadowAttemptSuccess,
+  captureShadowSourceRevision,
 } from "../execution/shadow-attempt-recorder.js";
+import {
+  loadV3ImplementationAttemptContext,
+  reserveV3ImplementationAttempt,
+  type V3ImplementationAttemptResult,
+} from "../execution/v3-implementation-attempt.js";
+import { canonicalJsonStringify } from "../product-compiler/canonical-json.js";
+import { ensureCompilerClaimFence } from "../execution/compiler-claim-fence.js";
+import type { ClaimAttemptFenceV1 } from "../execution/schemas/claim-envelope-v1.js";
+import type { ClaimEnvelopeV1 } from "../execution/schemas/claim-envelope-v1.js";
+import { assertClaimAuthority } from "../execution/claim-authority.js";
+import { requestRunTerminationInTransaction } from "../execution/run-termination.js";
+import { markRuntimeCompletionOwnerCommittedInTransaction } from "../execution/runtime-completion.js";
+import {
+  createSingleEffectCompletionPlanDescriptorV1,
+  type RuntimeCompletionPlanV1,
+  type RuntimeCompletionSubjectV1,
+} from "../execution/schemas/runtime-completion-plan-v1.js";
+import {
+  closeExactSingleStepClaimInTransaction,
+  closeUniqueSingleStepClaimForRecoveryInTransaction,
+  completeSingleStepClaimAndState,
+  completeStoryClaimAndBoundAttempt,
+} from "../execution/claim-attempt-transition.js";
+import {
+  bindRuntimeSessionAttemptInTransaction,
+  parseRuntimeClaimIntentV1,
+  releaseReservedRuntimeSessionInTransaction,
+  reserveRuntimeSessionInTransaction,
+  type RuntimeClaimIntentV1,
+} from "../execution/runtime-session-repository.js";
+import {
+  publishLoopClaimRuntime,
+  publishSingleClaimRuntime,
+  type LoopClaimAuthorityPublication,
+} from "../execution/claim-runtime-publication.js";
+import type { V3PreparationClaimAuthorityV1 } from "../execution/v3-preparation-claim-authority.js";
+import { createV3PreparationBlockRepository } from "../execution/v3-preparation-block-repository.js";
+import {
+  createPostgresTerminalDependencyAttemptReader,
+} from "../execution/v3-preparation-eligibility.js";
+import {
+  createPostgresV3PendingStoryReader,
+  createV3NormalImplementationPreclaim,
+} from "../execution/v3-normal-implementation-preclaim.js";
+import { resolveV3GitRevision } from "../execution/v3-git-revision.js";
+import { createRuntimeArtifactReader } from "../product-compiler/runtime-artifact-reader.js";
+import type { EvidenceBundleV2 } from "../evidence/evidence-bundle-v2.js";
+import type { FindingSetV1 } from "../findings/finding-set.js";
+import { createFindingSetFromEvidenceBundleV2 } from "../findings/evidence-finding-set.js";
+import { readDefaultGithubReview } from "../findings/github-review-source.js";
+import {
+  routeV3GithubReview,
+  type V3GithubReviewRouteResult,
+} from "../findings/v3-github-review-router.js";
+import {
+  classifyV3EvidenceFailure,
+  createV3RecoveryCompletionPlanDescriptor,
+} from "../recovery/v3-recovery-effect.js";
+import {
+  createV3RecoveryWorkRouter,
+  type V3RecoveryRoutedWork,
+} from "../recovery/v3-recovery-work-router.js";
+import { createFindingRecoveryRepository } from "../recovery/finding-recovery-repository.js";
+import { createRecoveryDeliveryRepository } from "../recovery/recovery-delivery-repository.js";
+import type { V3RecoveryClaimHandoffV1 } from "../recovery/v3-recovery-claim-authority.js";
+import {
+  createV3ImplementationClaimHandoffV1,
+  createV3ImplementationContextV1,
+  type V3ImplementationContextV1,
+  type V3ImplementationClaimHandoffV1,
+} from "../execution/v3-implementation-handoff.js";
+import {
+  parseV3ImplementationAgentOutputV1,
+  type V3ImplementationAgentOutputV1,
+} from "../execution/v3-implementation-output.js";
+import {
+  resolveV3PlanOutputAuthorityV1,
+  shouldRunLegacyProductSupervisorV1,
+  type V3PlanOutputAuthorityV1,
+} from "../execution/v3-plan-output-authority.js";
+import { completeV3PlanProductSpecRefusal } from "../execution/v3-plan-refusal.js";
+import {
+  completeV3DeployAuthorityRefusal,
+  V3DeployRefusalLifecycleError,
+} from "../execution/v3-deploy-refusal.js";
+import { V3DeployAuthorityError } from "../execution/v3-deploy-authority.js";
+import { V3DeployPublicationPendingError } from "../execution/v3-deploy-publication.js";
+import {
+  V3DeployReceiptV1Schema,
+  type V3DeployReceiptV1,
+} from "../execution/schemas/v3-deploy-receipt-v1.js";
+import { createV3DeployReceiptRepository } from "../execution/v3-deploy-receipt-repository.js";
+import { handleV3ImplementationRefusal } from "../recovery/v3-implementation-refusal.js";
+import { createPostgresV3DownstreamEvidenceRouter } from "../recovery/v3-downstream-evidence-router.js";
+import { commitV3DownstreamEvidenceDecision } from "../recovery/v3-downstream-recovery-transition.js";
+import { createAcceptedCandidateRepository } from "../evidence/accepted-candidate-repository.js";
+import {
+  shouldMaterializeRepoDeployEnvironment,
+  shouldRunLegacyDeployCompletionGuard,
+} from "./steps/11-deploy/env-policy.js";
 
 // ── Re-exports from extracted modules (backwards compat for cli.ts, medic.ts) ──
 export { resolveTemplate, parseOutputKeyValues } from "./context-ops.js";
@@ -47,7 +153,11 @@ import { markSupervisorInterventions, readSupervisorState, readSupervisorVisualR
 import { resolveStoryVisualScope } from "./supervisor/visual-qa.js";
 import { cleanupOutOfScopeWorktreeFiles, mergeRetryFailureTexts } from "./steps/06-implement/context.js";
 import { assembleImplementContext } from "./setup-handoff.js";
-import { missionControlApi } from "../runtime-config.js";
+import {
+  missionControlApi,
+  resolveProductArtifactCapacity,
+  resolveProductArtifactDir,
+} from "../runtime-config.js";
 import { sanitizeDesignMismatchFeedback } from "./error-taxonomy.js";
 import { sanitizeAgentPromptContracts } from "./prompt-contracts.js";
 import { routeDownstreamQualityFailure } from "./failure-router.js";
@@ -59,7 +169,7 @@ import {
   getWorkflowId as _getWorkflowId,
   verifyStory, skipFailedStories, countAllStories, countStoriesByStatus,
   findStoryByStatus, getStoryInfo,
-  setStepStatus, failStepWithOutput,
+  setStepStatus,
   findLoopStep, findActiveLoop,
   recordStepTransition,
 } from "./repo.js";
@@ -67,6 +177,88 @@ import {
 const STITCH_HTML_EXCERPT_CHARS = 12000;
 const STITCH_HTML_TOTAL_CHARS = 50000;
 const DESIGN_DOM_EXCERPT_CHARS = 30000;
+
+function applyV3ImplementationSliceContext(
+  context: Record<string, string>,
+  compiled: V3ImplementationAttemptResult,
+): void {
+  // The structured handoff carries the exact CAS-backed objects to the
+  // spawner. Generic run context keeps locators only so it cannot become a
+  // second, stale copy of the implementation authority.
+  context["implementation_context_protocol"] = "v3";
+  delete context["implementation_slice_v1"];
+  delete context["evidence_plan_v1"];
+  delete context["finding_set_v1"];
+  delete context["review_evidence_artifacts_v1"];
+  context["implementation_slice_hash"] = compiled.sliceHash;
+  context["implementation_slice_ref"] = compiled.sliceRefKey;
+  context["evidence_plan_hash"] = compiled.evidencePlan.planHash;
+  context["evidence_plan_artifact_hash"] = compiled.evidencePlanArtifactHash;
+  context["evidence_plan_ref"] = compiled.evidencePlanRefKey;
+  context["product_build_packet_hash"] = compiled.packetHash;
+  context["product_compilation_report_hash"] = compiled.compilationReportHash;
+  if (compiled.recovery) {
+    context["finding_set_hash"] = compiled.recovery.findingSet.findingSetHash;
+    context["recovery_case_revision_id"] = compiled.recovery.revision.revisionId;
+    context["recovery_dispatch_id"] = compiled.recovery.dispatch.dispatchId;
+    context["recovery_dispatch_class"] = compiled.recovery.dispatch.dispatchClass;
+  } else {
+    delete context["finding_set_hash"];
+    delete context["recovery_case_revision_id"];
+    delete context["recovery_dispatch_id"];
+    delete context["recovery_dispatch_class"];
+  }
+}
+
+function structuredV3ImplementationHandoff(input: Readonly<{
+  stepDbId: string;
+  storyDbId: string;
+  claimId: number;
+  branch: string;
+  workdir: string;
+  compiled: V3ImplementationAttemptResult;
+}>): V3ImplementationClaimHandoffV1 {
+  const compiled = input.compiled;
+  const executionAuthority = compiled.attempt.attemptClass === "supervisor_repair"
+    ? { role: "supervisor" as const, attemptClass: "supervisor_repair" as const }
+    : compiled.attempt.attemptClass === "product_implementation"
+      ? { role: "developer" as const, attemptClass: "product_implementation" as const }
+      : undefined;
+  if (!executionAuthority) {
+    throw new Error("V3_IMPLEMENTATION_HANDOFF_MODEL_AUTHORITY_REQUIRED");
+  }
+  return createV3ImplementationClaimHandoffV1({
+    schema: "setfarm.v3-implementation-claim-handoff.v1",
+    protocol: "v3",
+    runId: compiled.attempt.runId,
+    stepId: input.stepDbId,
+    storyId: compiled.attempt.storyId,
+    storyDbId: input.storyDbId,
+    claimId: input.claimId,
+    attemptId: compiled.attempt.attemptId,
+    attemptGeneration: compiled.attempt.generation,
+    branch: input.branch,
+    workdir: input.workdir,
+    packetHash: compiled.packetHash,
+    compilationReportHash: compiled.compilationReportHash,
+    sliceHash: compiled.sliceHash,
+    sliceRef: compiled.sliceRefKey,
+    evidencePlanHash: compiled.evidencePlan.planHash,
+    evidencePlanArtifactHash: compiled.evidencePlanArtifactHash,
+    evidencePlanRef: compiled.evidencePlanRefKey,
+    executionAuthority,
+    sourceBefore: compiled.sourceBefore,
+    artifactProducer: compiled.artifactProducer,
+    implementationSlice: compiled.slice,
+    evidencePlan: compiled.evidencePlan,
+    ...(compiled.recovery
+      ? {
+          findingSet: compiled.recovery.findingSet,
+          reviewEvidenceArtifacts: [...compiled.recovery.reviewEvidenceArtifacts],
+        }
+      : {}),
+  });
+}
 
 const QUALITY_FIX_STEPS = new Set(["supervise", "security-gate", "qa-test", "final-test"]);
 const HARD_PRECLAIM_STEPS = new Set(["setup-build", "security-gate", "qa-test", "final-test"]);
@@ -998,6 +1190,7 @@ export function commitStoryWorktreeScopeIfNeeded(
   storyTitle: string,
   declaredScopeFiles: string[] = [],
   commitType = "feat",
+  strictDeclaredScope = false,
 ): { committed: boolean; sha: string; stagedFiles: string[]; error: string } {
   if (!workdir || !fs.existsSync(workdir)) {
     return { committed: false, sha: "", stagedFiles: [], error: "PLATFORM_STORY_COMMIT_MISSING_WORKDIR" };
@@ -1038,7 +1231,9 @@ export function commitStoryWorktreeScopeIfNeeded(
     };
   }
 
-  const blocked = touched.filter((file) => !isPlatformStoryCommitAllowed(file, scopeFiles));
+  const blocked = touched.filter((file) => strictDeclaredScope
+    ? !scopeFiles.has(file)
+    : !isPlatformStoryCommitAllowed(file, scopeFiles));
   if (blocked.length > 0) {
     return {
       committed: false,
@@ -1075,7 +1270,7 @@ export function commitStoryWorktreeScopeIfNeeded(
         GIT_COMMITTER_EMAIL: "setfarm-supervisor@example.invalid",
       },
     });
-    const sha = String(execPlatformGit(["rev-parse", "--short", "HEAD"], {
+    const sha = String(execPlatformGit(["rev-parse", "HEAD"], {
       cwd: workdir,
       encoding: "utf-8",
       timeout: 10_000,
@@ -1379,11 +1574,14 @@ async function resolveLoopClaimInput(
         context: renderContext,
       });
       if (_modulePrompt && _modulePrompt.length > 0) {
-        if (_modulePrompt.length > _stepModuleP.maxPromptSize) {
-          logger.warn("[step-module] " + _stepModuleP.id + " loop prompt " + _modulePrompt.length + " > budget " + _stepModuleP.maxPromptSize + " - using anyway, investigate", { runId: step.run_id });
+        const _modulePromptBytes = Buffer.byteLength(_modulePrompt, "utf8");
+        if (_modulePromptBytes > _stepModuleP.maxPromptSize) {
+          logger.warn("[step-module] " + _stepModuleP.id + " loop prompt " + _modulePromptBytes + " bytes > budget " + _stepModuleP.maxPromptSize + " - using anyway, investigate", { runId: step.run_id });
         }
-        resolvedInput = sanitizeAgentPromptContracts(prependScopeReminderIfMissing(resolveTemplate(_modulePrompt, renderContext), context));
-        logger.info("[step-module] " + _stepModuleP.id + " loop buildPrompt override (" + _modulePrompt.length + "b)", { runId: step.run_id });
+        resolvedInput = renderContext["implementation_context_protocol"] === "v3"
+          ? _modulePrompt
+          : sanitizeAgentPromptContracts(prependScopeReminderIfMissing(resolveTemplate(_modulePrompt, renderContext), context));
+        logger.info("[step-module] " + _stepModuleP.id + " loop buildPrompt override (" + _modulePromptBytes + "b)", { runId: step.run_id });
       }
     }
   } catch (_pe) {
@@ -1560,6 +1758,80 @@ async function shouldDeferVerifyRetryExhaustionForResolvedEvidence(
     logger.warn(`[verify] Could not inspect resolved retry evidence for ${storyId}: ${String(e).slice(0, 160)}`, { runId });
     return false;
   }
+}
+
+type V3VerifyReviewRouteDisposition = Readonly<{
+  blockAgent: boolean;
+  result: V3GithubReviewRouteResult;
+}>;
+
+function v3ReviewErrorCode(error: unknown): string {
+  if (error && typeof error === "object" && "code" in error) {
+    const code = (error as { code?: unknown }).code;
+    if (typeof code === "string" && code.trim()) return code.trim();
+  }
+  return "V3_GITHUB_REVIEW_SOURCE_UNAVAILABLE";
+}
+
+function v3ReviewErrorRetryable(code: string): boolean {
+  return code === "GITHUB_REVIEW_HEAD_CHANGED_DURING_FETCH"
+    || code === "GITHUB_REVIEW_GRAPHQL_INCOMPLETE"
+    || code === "V3_GITHUB_REVIEW_SOURCE_UNAVAILABLE";
+}
+
+async function routeExactV3GithubReviewBeforeVerifyAgent(input: Readonly<{
+  runId: string;
+  verifyStepDbId: string;
+  verifyClaimId: number;
+  storyId: string;
+  prUrl: string;
+  repositoryPath: string;
+  context: Record<string, string>;
+}>): Promise<V3VerifyReviewRouteDisposition> {
+  const result = await routeV3GithubReview({
+    runId: input.runId,
+    verifyStepDbId: input.verifyStepDbId,
+    verifyClaimId: input.verifyClaimId,
+    storyId: input.storyId,
+    prUrl: input.prUrl,
+    repositoryPath: input.repositoryPath,
+  });
+  if (!("recoveryCaseId" in result)) {
+    delete input.context["v3_review_recovery_case_id"];
+    delete input.context["v3_review_dispatch_id"];
+    delete input.context["v3_review_finding_set_hash"];
+    delete input.context["v3_review_evidence_artifact_hashes"];
+    delete input.context["v3_review_route_status"];
+    return { blockAgent: false, result };
+  }
+  input.context["v3_review_route_status"] = result.status;
+  input.context["v3_review_recovery_case_id"] = result.recoveryCaseId;
+  input.context["v3_review_finding_set_hash"] = result.findingSetHash;
+  input.context["v3_review_evidence_artifact_hashes"] = JSON.stringify(result.evidenceArtifactHashes);
+  if (result.dispatchId) input.context["v3_review_dispatch_id"] = result.dispatchId;
+  await updateRunContext(input.runId, input.context);
+  await recordObservation({
+    runId: input.runId,
+    stepId: "verify",
+    storyId: input.storyId,
+    phase: "verify",
+    checkId: `v3.github-review.route:${result.findingSetHash}`,
+    label: "V3 exact GitHub review routing",
+    status: result.status === "unchanged_terminal" ? "blocked" : "retry",
+    summary: `${result.status}:${result.recoveryCaseId}`,
+    detail: result.dispatchId
+      ? `Exact actionable GitHub review evidence authorized dispatch ${result.dispatchId}`
+      : "Exact actionable GitHub review evidence already has canonical recovery ownership",
+    evidence: {
+      schema: "setfarm.v3-github-review-route-observation.v1",
+      headSha: result.headSha,
+      findingSetHash: result.findingSetHash,
+      recoveryCaseId: result.recoveryCaseId,
+      dispatchId: result.dispatchId ?? null,
+      evidenceArtifactHashes: result.evidenceArtifactHashes,
+    },
+  });
+  return { blockAgent: true, result };
 }
 
 async function detectOpenPrReviewCommentFailure(
@@ -1929,6 +2201,96 @@ async function fetchFreshPrStateName(
   return getPRState(prUrl);
 }
 
+async function publishVerifyRetryToImplement(input: Readonly<{
+  verifyStep: StepRow;
+  retryStoryId: string;
+  retryCount: number;
+  failure: string;
+  retryStoryBranch: string;
+  context: Record<string, string>;
+  loopStepId?: string;
+  superviseStepName: string;
+  category: string;
+}>): Promise<void> {
+  const transitionTime = now();
+  await pgBegin(async (sql) => {
+    const supervisorSteps = await sql.unsafe<Array<{ id: string }>>(
+      `SELECT id
+         FROM steps
+        WHERE run_id = $1 AND step_id = $2
+        FOR UPDATE`,
+      [input.verifyStep.run_id, input.superviseStepName],
+    );
+    const supervisorStep = supervisorSteps[0];
+    if (!supervisorStep) throw new Error("VERIFY_RETRY_SUPERVISOR_STEP_NOT_FOUND");
+
+    await closeUniqueSingleStepClaimForRecoveryInTransaction(sql, {
+      runId: input.verifyStep.run_id,
+      stepDbId: supervisorStep.id,
+      workflowStepId: input.superviseStepName,
+      outcome: "infra_retry",
+      diagnostic: `${input.category} routed story back to implement; exact supervisor owner recovered`,
+      runtimeAgentId: "verify-retry-recovery-owner",
+      now: new Date(transitionTime),
+    });
+
+    const stories = await sql.unsafe<Array<{ id: string }>>(
+      `UPDATE stories
+          SET status = 'pending',
+              claimed_by = NULL,
+              claimed_at = NULL,
+              retry_count = $2,
+              output = $3,
+              story_branch = COALESCE(NULLIF($4, ''), story_branch),
+              updated_at = $5
+        WHERE id = $1
+          AND run_id = $6
+          AND status = 'done'
+        RETURNING id`,
+      [
+        input.retryStoryId,
+        input.retryCount,
+        input.failure,
+        input.retryStoryBranch,
+        transitionTime,
+        input.verifyStep.run_id,
+      ],
+    );
+    if (stories.length !== 1) throw new Error("VERIFY_RETRY_STORY_CAS_LOST");
+
+    const runs = await sql.unsafe<Array<{ id: string }>>(
+      `UPDATE runs
+          SET context = $2, updated_at = $3
+        WHERE id = $1 AND status IN ('running', 'resuming')
+        RETURNING id`,
+      [input.verifyStep.run_id, JSON.stringify(input.context), transitionTime],
+    );
+    if (runs.length !== 1) throw new Error("VERIFY_RETRY_RUN_CAS_LOST");
+
+    if (input.loopStepId) {
+      const loopSteps = await sql.unsafe<Array<{ id: string }>>(
+        `UPDATE steps
+            SET status = 'pending', updated_at = $2
+          WHERE id = $1 AND run_id = $3
+          RETURNING id`,
+        [input.loopStepId, transitionTime, input.verifyStep.run_id],
+      );
+      if (loopSteps.length !== 1) throw new Error("VERIFY_RETRY_LOOP_STEP_CAS_LOST");
+    }
+
+    const supervisorUpdated = await sql.unsafe<Array<{ id: string }>>(
+      `UPDATE steps
+          SET status = 'waiting', current_story_id = NULL, updated_at = $3
+        WHERE id = $1
+          AND run_id = $2
+          AND status IN ('waiting', 'pending', 'running', 'done')
+        RETURNING id`,
+      [supervisorStep.id, input.verifyStep.run_id, transitionTime],
+    );
+    if (supervisorUpdated.length !== 1) throw new Error("VERIFY_RETRY_SUPERVISOR_STEP_CAS_LOST");
+  });
+}
+
 async function routeVerifyScopeFailureToImplement(
   verifyStep: StepRow,
   context: Record<string, string>,
@@ -1973,23 +2335,20 @@ async function routeVerifyScopeFailureToImplement(
     if (madeReviewProgress) delete context["pr_review_supervisor_escalated_story_id"];
 
     if (!reviewRetryExhausted) {
-      await pgRun(
-        "UPDATE stories SET status = 'pending', claimed_by = NULL, claimed_at = NULL, retry_count = $1, output = $2, story_branch = COALESCE(NULLIF($5, ''), story_branch), updated_at = $3 WHERE id = $4",
-        [storyRetryForReview, failure, now(), retryStory.id, retryStoryBranch],
-      );
-      await updateRunContext(verifyStep.run_id, context);
       const loopStep = await findLoopStep(verifyStep.run_id);
-      if (loopStep?.id) await setStepStatus(loopStep.id, "pending");
       const loopConfig = parseLoopConfigSafe(loopStep?.loop_config || "", verifyStep.run_id);
       const superviseStepName = loopConfig?.superviseStep || "supervise";
-      await pgRun(
-        "UPDATE steps SET status = 'waiting', current_story_id = NULL, updated_at = $1 WHERE run_id = $2 AND step_id = $3 AND status IN ('pending','running')",
-        [now(), verifyStep.run_id, superviseStepName],
-      );
-      await pgRun(
-        "UPDATE claim_log SET outcome = 'infra_retry', abandoned_at = COALESCE(abandoned_at, NOW()), duration_ms = EXTRACT(EPOCH FROM NOW() - claimed_at::timestamptz) * 1000, diagnostic = COALESCE(NULLIF(diagnostic, ''), $1) WHERE run_id = $2 AND step_id = $3 AND story_id IS NULL AND outcome IS NULL",
-        [`${options.category || "VERIFY_SCOPE_FAILURE"} routed story back to implement; stale supervisor claim invalidated`, verifyStep.run_id, superviseStepName],
-      );
+      await publishVerifyRetryToImplement({
+        verifyStep,
+        retryStoryId: retryStory.id,
+        retryCount: storyRetryForReview,
+        failure,
+        retryStoryBranch,
+        context,
+        loopStepId: loopStep?.id,
+        superviseStepName,
+        category: options.category || "VERIFY_SCOPE_FAILURE",
+      });
       emitEvent({ ts: now(), event: "story.retry", runId: verifyStep.run_id, workflowId: await getWorkflowId(verifyStep.run_id), stepId: verifyStep.step_id, storyId, detail: failure });
       return;
     }
@@ -2049,23 +2408,20 @@ async function routeVerifyScopeFailureToImplement(
     return;
   }
 
-  await pgRun(
-    "UPDATE stories SET status = 'pending', claimed_by = NULL, claimed_at = NULL, retry_count = $1, output = $2, story_branch = COALESCE(NULLIF($5, ''), story_branch), updated_at = $3 WHERE id = $4",
-    [newRetry, failure, now(), retryStory.id, retryStoryBranch],
-  );
-  await updateRunContext(verifyStep.run_id, context);
   const loopStep = await findLoopStep(verifyStep.run_id);
-  if (loopStep?.id) await setStepStatus(loopStep.id, "pending");
   const loopConfig = parseLoopConfigSafe(loopStep?.loop_config || "", verifyStep.run_id);
   const superviseStepName = loopConfig?.superviseStep || "supervise";
-  await pgRun(
-    "UPDATE steps SET status = 'waiting', current_story_id = NULL, updated_at = $1 WHERE run_id = $2 AND step_id = $3 AND status IN ('pending','running')",
-    [now(), verifyStep.run_id, superviseStepName],
-  );
-  await pgRun(
-    "UPDATE claim_log SET outcome = 'infra_retry', abandoned_at = COALESCE(abandoned_at, NOW()), duration_ms = EXTRACT(EPOCH FROM NOW() - claimed_at::timestamptz) * 1000, diagnostic = COALESCE(NULLIF(diagnostic, ''), $1) WHERE run_id = $2 AND step_id = $3 AND story_id IS NULL AND outcome IS NULL",
-    [`${options.category || "VERIFY_SCOPE_FAILURE"} routed story back to implement; stale supervisor claim invalidated`, verifyStep.run_id, superviseStepName],
-  );
+  await publishVerifyRetryToImplement({
+    verifyStep,
+    retryStoryId: retryStory.id,
+    retryCount: newRetry,
+    failure,
+    retryStoryBranch,
+    context,
+    loopStepId: loopStep?.id,
+    superviseStepName,
+    category: options.category || "VERIFY_SCOPE_FAILURE",
+  });
   emitEvent({ ts: now(), event: "story.retry", runId: verifyStep.run_id, workflowId: await getWorkflowId(verifyStep.run_id), stepId: verifyStep.step_id, storyId, detail: failure });
 }
 
@@ -2348,14 +2704,133 @@ async function resolveQualityFailureStoryId(runId: string, context: Record<strin
   return latest?.story_id || "";
 }
 
+async function closeRoutedQualityClaimInTransaction(
+  sql: postgres.Sql | postgres.TransactionSql,
+  step: { id: string; run_id: string; step_id: string },
+  diagnostic: string,
+  claimEnvelope?: ClaimEnvelopeV1,
+): Promise<void> {
+  if (claimEnvelope) {
+    await closeExactSingleStepClaimInTransaction(sql, {
+      envelope: claimEnvelope,
+      outcome: "completed",
+      diagnostic,
+    });
+    return;
+  }
+
+  // Only old legacy workers are allowed to resolve a claim without a claim
+  // capability. Automation that runs after a shadow claim was already closed
+  // simply updates no rows here; it can never broad-close another owner.
+  await sql.unsafe(
+    `UPDATE claim_log AS cl
+        SET outcome = 'completed',
+            duration_ms = LEAST(
+              CAST(EXTRACT(EPOCH FROM (NOW() - cl.claimed_at::timestamptz)) * 1000 AS BIGINT),
+              2147483647
+            )::INTEGER,
+            diagnostic = $1
+       FROM runs r
+      WHERE r.id = cl.run_id
+        AND r.protocol = 'legacy'
+        AND cl.run_id = $2
+        AND cl.step_id = $3
+        AND cl.story_id IS NULL
+        AND cl.outcome IS NULL`,
+    [diagnostic.slice(0, 1_000), step.run_id, step.step_id],
+  );
+}
+
+async function markRoutedQualityOwnerCommittedInTransaction(
+  sql: postgres.Sql | postgres.TransactionSql,
+  claimEnvelope?: ClaimEnvelopeV1,
+): Promise<void> {
+  if (!claimEnvelope) return;
+  await markRuntimeCompletionOwnerCommittedInTransaction(sql, {
+    claimId: claimEnvelope.claimId,
+    claimOutcome: "completed",
+    plan: createSingleEffectCompletionPlanDescriptorV1({
+      kind: "quality_route",
+      continuation: { type: "quality_route_finalize" },
+      effectPayload: { workflowStepId: claimEnvelope.workflowStepId },
+    }),
+  });
+}
+
+function resolveV3DownstreamSourceContext(context: Record<string, string>): Readonly<{
+  worktree: string;
+  branch: string;
+}> {
+  const worktree = String(context["repo"] || "").trim();
+  if (!worktree) throw new Error("V3_DOWNSTREAM_EVIDENCE_WORKTREE_REQUIRED");
+  let branch = String(context["branch"] || "").trim();
+  if (!branch) {
+    try {
+      branch = execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
+        cwd: worktree,
+        encoding: "utf8",
+        timeout: 10_000,
+        stdio: ["ignore", "pipe", "pipe"],
+      }).trim();
+    } catch {
+      throw new Error("V3_DOWNSTREAM_EVIDENCE_BRANCH_REQUIRED");
+    }
+  }
+  if (!branch || branch === "HEAD") throw new Error("V3_DOWNSTREAM_EVIDENCE_BRANCH_REQUIRED");
+  return { worktree, branch };
+}
+
 export async function routeQualityFailureToImplement(
   step: { id: string; run_id: string; step_id: string; step_index: number; agent_id: string },
   output: string,
   context: Record<string, string>,
+  claimEnvelope?: ClaimEnvelopeV1,
 ): Promise<boolean> {
   const isVerifySystemSmokeFailure = step.step_id === "verify" && output.startsWith("SYSTEM_SMOKE_FAILURE:");
   const isVerifyRetryFailure = step.step_id === "verify" && isVerifyRetryQualityFailure(output);
   if (!QUALITY_FIX_STEPS.has(step.step_id) && !isVerifySystemSmokeFailure && !isVerifyRetryFailure) return false;
+
+  // Protocol v3 never interprets downstream agent prose, expands a story's
+  // scope, or creates a QA-FIX story. Recompile every sealed StoryPlan slice
+  // against the exact integrated tree, publish canonical bundle/findings, and
+  // route only a durable typed recovery dispatch. Legacy/shadow remains below.
+  if (
+    claimEnvelope?.protocol === "v3"
+    && (step.step_id === "qa-test" || step.step_id === "final-test")
+  ) {
+    const { worktree, branch } = resolveV3DownstreamSourceContext(context);
+    const route = await createPostgresV3DownstreamEvidenceRouter(getSql()).route({
+      runId: step.run_id,
+      stepDbId: step.id,
+      workflowStepId: step.step_id,
+      phase: step.step_id === "qa-test" ? "qa" : "final",
+      parentClaimId: claimEnvelope.claimId,
+      worktree,
+      branch,
+    });
+    const committed = await commitV3DownstreamEvidenceDecision(getSql(), {
+      envelope: claimEnvelope,
+      route,
+    });
+    await recordStepTransition(
+      step.id,
+      step.run_id,
+      "running",
+      committed.decision.outcome === "recovery_routed" ? "waiting" : "failed",
+      step.agent_id,
+      "v3DownstreamEvidence:canonicalDecision",
+      {
+        routeHash: committed.decision.routeHash,
+        outcome: committed.decision.outcome,
+        routedStoryIds: committed.decision.recoveryRoutes.map((item) => item.storyId),
+      },
+    );
+    logger.warn(
+      `[v3-downstream] ${step.step_id} canonical decision ${committed.decision.outcome} (${committed.decision.routeHash})`,
+      { runId: step.run_id },
+    );
+    return true;
+  }
 
   const loopStep = await pgGet<{ id: string; step_index: number; status: string; loop_config: string | null }>(
     "SELECT id, step_index, status, loop_config FROM steps WHERE run_id = $1 AND step_id = 'implement' AND type = 'loop' LIMIT 1",
@@ -2382,8 +2857,7 @@ export async function routeQualityFailureToImplement(
     context["failure_category"] = "VERIFY_MERGE_BLOCKER";
     context["failure_suggestion"] = "Resolve the conflicting PR/story branch state; do not route this to QA-FIX.";
     await updateRunContext(step.run_id, context);
-    await failStepWithOutput(step.id, reason);
-    await failRun(step.run_id, true);
+    await failRun(step.run_id, true, reason);
     const wfId = await _getWorkflowId(step.run_id);
     emitEvent({ ts: now(), event: "step.failed", runId: step.run_id, workflowId: wfId, stepId: step.step_id, detail: reason.slice(0, 500) });
     emitEvent({ ts: now(), event: "run.failed", runId: step.run_id, workflowId: wfId, detail: "VERIFY_MERGE_BLOCKER" });
@@ -2440,7 +2914,7 @@ export async function routeQualityFailureToImplement(
       context["failure_category"] = routeDecision.category;
       context["failure_suggestion"] = "Retry platform/tooling infrastructure for this stack; do not consume product story retry budget.";
       await updateRunContext(step.run_id, context);
-      await failStep(step.id, reason);
+      await failStep(step.id, reason, claimEnvelope);
       return true;
     }
 
@@ -2452,6 +2926,7 @@ export async function routeQualityFailureToImplement(
         failure,
         routeDecision.category,
         routeDecision.reason,
+        claimEnvelope,
       );
       if (routed) return true;
     }
@@ -2471,8 +2946,7 @@ export async function routeQualityFailureToImplement(
       ? "Retry the original implementation story with orchestrator-owned evidence instead of creating QA-FIX."
       : "Treat this as a platform/setup failure and inspect Setfarm gates before retrying.";
     await updateRunContext(step.run_id, context);
-    await failStepWithOutput(step.id, reason);
-    await failRun(step.run_id, true);
+    await failRun(step.run_id, true, reason);
     const wfId = await _getWorkflowId(step.run_id);
     emitEvent({ ts: now(), event: "step.failed", runId: step.run_id, workflowId: wfId, stepId: step.step_id, detail: reason.slice(0, 500) });
     emitEvent({ ts: now(), event: "run.failed", runId: step.run_id, workflowId: wfId, detail: routeDecision.category });
@@ -2493,8 +2967,7 @@ export async function routeQualityFailureToImplement(
     context["failure_category"] = "QUALITY_FIX_LOOP_GUARD";
     context["failure_suggestion"] = "Inspect the app and Setfarm guards; do not create another QA-FIX story for this same failure.";
     await updateRunContext(step.run_id, context);
-    await failStepWithOutput(step.id, reason);
-    await failRun(step.run_id, true);
+    await failRun(step.run_id, true, reason);
     const wfId = await _getWorkflowId(step.run_id);
     emitEvent({ ts: now(), event: "step.failed", runId: step.run_id, workflowId: wfId, stepId: step.step_id, detail: reason.slice(0, 500) });
     emitEvent({ ts: now(), event: "run.failed", runId: step.run_id, workflowId: wfId, detail: "QUALITY_FIX_LOOP_GUARD" });
@@ -2617,6 +3090,12 @@ export async function routeQualityFailureToImplement(
   await updateRunContext(step.run_id, context);
 
   await pgBegin(async (sql) => {
+    await closeRoutedQualityClaimInTransaction(
+      sql,
+      step,
+      `quality failure routed to ${fixStoryId}`,
+      claimEnvelope,
+    );
     await sql.unsafe(
       "UPDATE steps SET status = 'pending', current_story_id = NULL, updated_at = $1 WHERE id = $2",
       [now(), loopStep.id],
@@ -2625,16 +3104,11 @@ export async function routeQualityFailureToImplement(
       "UPDATE steps SET status = 'waiting', retry_count = 0, current_story_id = NULL, updated_at = $1 WHERE run_id = $2 AND step_index > $3",
       [now(), step.run_id, loopStep.step_index],
     );
+    await markRoutedQualityOwnerCommittedInTransaction(sql, claimEnvelope);
   });
 
   await recordStepTransition(loopStep.id, step.run_id, loopStep.status, "pending", undefined, "qualityFailure:routeToImplement", { storyId: fixStoryId, fromStep: step.step_id });
   await recordStepTransition(step.id, step.run_id, "running", "waiting", step.agent_id, "qualityFailure:routeToImplement", { storyId: fixStoryId });
-  try {
-    await pgRun(
-      "UPDATE claim_log SET outcome = 'completed', duration_ms = EXTRACT(EPOCH FROM NOW() - claimed_at::timestamptz) * 1000, diagnostic = $1 WHERE run_id = $2 AND step_id = $3 AND story_id IS NULL AND outcome IS NULL",
-      [`quality failure routed to ${fixStoryId}`, step.run_id, step.step_id],
-    );
-  } catch (e) { logger.warn(`[claim-log] Failed to close routed quality claim: ${String(e)}`, { runId: step.run_id }); }
   const wfId = await _getWorkflowId(step.run_id);
   emitEvent({ ts: now(), event: "story.retry", runId: step.run_id, workflowId: wfId, stepId: "implement", storyId: fixStoryId, detail: `Created ${fixStoryId} from ${step.step_id} failure` });
   emitEvent({ ts: now(), event: "step.pending", runId: step.run_id, workflowId: wfId, stepId: "implement", detail: `Downstream quality failure routed to ${fixStoryId}` });
@@ -2649,6 +3123,7 @@ async function routeOriginalStoryQualityFailureToImplement(
   failure: string,
   category: string,
   routeReason: string,
+  claimEnvelope?: ClaimEnvelopeV1,
 ): Promise<boolean> {
   const normalizedStoryId = String(storyId || "").trim();
   if (!normalizedStoryId) return false;
@@ -2710,8 +3185,7 @@ async function routeOriginalStoryQualityFailureToImplement(
       context["post_merge_quality_regression_pr_url"] = retryStory.pr_url;
       await updateRunContext(step.run_id, context);
       await setStepStatus(loopStep.id, "failed");
-      await failStepWithOutput(step.id, exhaustedRetryFailure);
-      await failRun(step.run_id, true);
+      await failRun(step.run_id, true, exhaustedRetryFailure);
       scheduleRunCronTeardown(step.run_id);
       const wfId = await _getWorkflowId(step.run_id);
       emitEvent({ ts: now(), event: "story.failed", runId: step.run_id, workflowId: wfId, stepId: "implement", storyId: retryStory.story_id, detail: exhaustedRetryFailure.slice(0, 500) });
@@ -2738,6 +3212,12 @@ async function routeOriginalStoryQualityFailureToImplement(
     const postMergeMaxRetries = postMergeRepairMaxRetries(retryStory.retry_count, retryStory.max_retries, matchingQualityRetry);
     await updateRunContext(step.run_id, context);
     await pgBegin(async (sql) => {
+      await closeRoutedQualityClaimInTransaction(
+        sql,
+        step,
+        `post-merge quality failure routed to original story ${retryStory.story_id} on current main`,
+        claimEnvelope,
+      );
       await sql.unsafe(
         "UPDATE stories SET status = 'pending', claimed_by = NULL, claimed_at = NULL, retry_count = $1, output = $2, pr_url = NULL, story_branch = NULL, merge_status = NULL, scope_files = $3, resolved_scope_files = $3, updated_at = $4, max_retries = $6 WHERE id = $5",
         [newRetry, mergedRetryFailure, repairScope.json, now(), retryStory.id, postMergeMaxRetries],
@@ -2750,17 +3230,10 @@ async function routeOriginalStoryQualityFailureToImplement(
         "UPDATE steps SET status = 'waiting', retry_count = 0, current_story_id = NULL, updated_at = $1 WHERE run_id = $2 AND step_index > $3",
         [now(), step.run_id, loopStep.step_index],
       );
+      await markRoutedQualityOwnerCommittedInTransaction(sql, claimEnvelope);
     });
     await recordStepTransition(loopStep.id, step.run_id, loopStep.status, "pending", undefined, "qualityFailure:routeMergedStoryMainRepair", { storyId: retryStory.story_id, fromStep: step.step_id });
     await recordStepTransition(step.id, step.run_id, "running", "waiting", step.agent_id, "qualityFailure:routeMergedStoryMainRepair", { storyId: retryStory.story_id });
-    try {
-      await pgRun(
-        "UPDATE claim_log SET outcome = 'completed', duration_ms = EXTRACT(EPOCH FROM NOW() - claimed_at::timestamptz) * 1000, diagnostic = $1 WHERE run_id = $2 AND step_id = $3 AND story_id IS NULL AND outcome IS NULL",
-        [`post-merge quality failure routed to original story ${retryStory.story_id} on current main`, step.run_id, step.step_id],
-      );
-    } catch (e) {
-      logger.warn(`[claim-log] Failed to close routed post-merge quality claim: ${String(e)}`, { runId: step.run_id });
-    }
     const wfId = await _getWorkflowId(step.run_id);
     emitEvent({ ts: now(), event: "story.retry", runId: step.run_id, workflowId: wfId, stepId: "implement", storyId: retryStory.story_id, detail: `Post-merge downstream ${step.step_id} failure routed to current-main story retry` });
     emitEvent({ ts: now(), event: "step.pending", runId: step.run_id, workflowId: wfId, stepId: "implement", detail: `Post-merge quality failure routed to original story ${retryStory.story_id} on current main` });
@@ -2773,6 +3246,12 @@ async function routeOriginalStoryQualityFailureToImplement(
   if (retryStory.status === "pending" || retryStory.status === "running") {
     await updateRunContext(step.run_id, context);
     await pgBegin(async (sql) => {
+      await closeRoutedQualityClaimInTransaction(
+        sql,
+        step,
+        `quality failure already routed to original story ${retryStory.story_id}`,
+        claimEnvelope,
+      );
       await sql.unsafe(
         "UPDATE steps SET status = 'waiting', current_story_id = NULL, updated_at = $1 WHERE id = $2",
         [now(), step.id],
@@ -2781,16 +3260,9 @@ async function routeOriginalStoryQualityFailureToImplement(
         "UPDATE steps SET status = CASE WHEN status = 'waiting' THEN 'pending' ELSE status END, current_story_id = COALESCE(current_story_id, $1), updated_at = $2 WHERE id = $3",
         [retryStory.story_id, now(), loopStep.id],
       );
+      await markRoutedQualityOwnerCommittedInTransaction(sql, claimEnvelope);
     });
     await recordStepTransition(step.id, step.run_id, "running", "waiting", step.agent_id, "qualityFailure:originalStoryAlreadyRouted", { storyId: retryStory.story_id, fromStep: step.step_id });
-    try {
-      await pgRun(
-        "UPDATE claim_log SET outcome = 'completed', duration_ms = EXTRACT(EPOCH FROM NOW() - claimed_at::timestamptz) * 1000, diagnostic = $1 WHERE run_id = $2 AND step_id = $3 AND story_id IS NULL AND outcome IS NULL",
-        [`quality failure already routed to original story ${retryStory.story_id}`, step.run_id, step.step_id],
-      );
-    } catch (e) {
-      logger.warn(`[claim-log] Failed to close duplicate original-story quality claim: ${String(e)}`, { runId: step.run_id });
-    }
     const wfId = await _getWorkflowId(step.run_id);
     emitEvent({ ts: now(), event: "story.retry", runId: step.run_id, workflowId: wfId, stepId: "implement", storyId: retryStory.story_id, detail: `Duplicate downstream ${step.step_id} failure observed while original story was already ${retryStory.status}` });
     emitEvent({ ts: now(), event: "step.pending", runId: step.run_id, workflowId: wfId, stepId: "implement", detail: `Original story ${retryStory.story_id} already routed for downstream quality failure` });
@@ -2803,8 +3275,7 @@ async function routeOriginalStoryQualityFailureToImplement(
     await pgRun("UPDATE stories SET status = 'failed', retry_count = $1, output = $2, updated_at = $3 WHERE id = $4", [terminalRetry, retryFailure, now(), retryStory.id]);
     await updateRunContext(step.run_id, context);
     await setStepStatus(loopStep.id, "failed");
-    await failStepWithOutput(step.id, retryFailure);
-    await failRun(step.run_id, true);
+    await failRun(step.run_id, true, retryFailure);
     scheduleRunCronTeardown(step.run_id);
     const wfId = await _getWorkflowId(step.run_id);
     emitEvent({ ts: now(), event: "story.failed", runId: step.run_id, workflowId: wfId, stepId: "implement", storyId: retryStory.story_id, detail: retryFailure.slice(0, 500) });
@@ -2815,6 +3286,12 @@ async function routeOriginalStoryQualityFailureToImplement(
 
   await updateRunContext(step.run_id, context);
   await pgBegin(async (sql) => {
+    await closeRoutedQualityClaimInTransaction(
+      sql,
+      step,
+      `quality failure routed to original story ${retryStory.story_id}`,
+      claimEnvelope,
+    );
     await sql.unsafe(
       "UPDATE stories SET status = 'pending', claimed_by = NULL, claimed_at = NULL, retry_count = $1, output = $2, pr_url = NULL, merge_status = NULL, scope_files = $3, resolved_scope_files = $3, updated_at = $4 WHERE id = $5",
       [newRetry, retryFailure, repairScope.json, now(), retryStory.id],
@@ -2827,18 +3304,11 @@ async function routeOriginalStoryQualityFailureToImplement(
       "UPDATE steps SET status = 'waiting', retry_count = 0, current_story_id = NULL, updated_at = $1 WHERE run_id = $2 AND step_index > $3",
       [now(), step.run_id, loopStep.step_index],
     );
+    await markRoutedQualityOwnerCommittedInTransaction(sql, claimEnvelope);
   });
 
   await recordStepTransition(loopStep.id, step.run_id, loopStep.status, "pending", undefined, "qualityFailure:routeOriginalStory", { storyId: retryStory.story_id, fromStep: step.step_id });
   await recordStepTransition(step.id, step.run_id, "running", "waiting", step.agent_id, "qualityFailure:routeOriginalStory", { storyId: retryStory.story_id });
-  try {
-    await pgRun(
-      "UPDATE claim_log SET outcome = 'completed', duration_ms = EXTRACT(EPOCH FROM NOW() - claimed_at::timestamptz) * 1000, diagnostic = $1 WHERE run_id = $2 AND step_id = $3 AND story_id IS NULL AND outcome IS NULL",
-      [`quality failure routed to original story ${retryStory.story_id}`, step.run_id, step.step_id],
-    );
-  } catch (e) {
-    logger.warn(`[claim-log] Failed to close routed original-story quality claim: ${String(e)}`, { runId: step.run_id });
-  }
   const wfId = await _getWorkflowId(step.run_id);
   emitEvent({ ts: now(), event: "story.retry", runId: step.run_id, workflowId: wfId, stepId: "implement", storyId: retryStory.story_id, detail: `Downstream ${step.step_id} failure routed to original story` });
   emitEvent({ ts: now(), event: "step.pending", runId: step.run_id, workflowId: wfId, stepId: "implement", detail: `Downstream quality failure routed to original story ${retryStory.story_id}` });
@@ -3698,10 +4168,93 @@ export async function peekStep(agentId: string, callerGatewayAgent?: string): Pr
 interface ClaimResult {
   found: boolean;
   stepId?: string;
+  workflowStepId?: string;
   runId?: string;
+  protocol?: "legacy" | "shadow" | "v3";
   storyId?: string;
   storyDbId?: string;
+  claimGeneration?: number;
+  attempt?: ClaimAttemptFenceV1;
+  claimId?: number;
+  claimAgentId?: string;
+  runtimeSessionId?: string;
+  runtimeOwnerInstanceId?: string;
+  recoveryDispatchId?: string;
+  recoveryRevisionId?: string;
+  recoveryLeaseToken?: string;
+  v3ImplementationHandoff?: V3ImplementationClaimHandoffV1;
   resolvedInput?: string;
+}
+
+export type ClaimStepRecoveryDispatchClass = "product_implementation" | "supervisor_repair";
+
+export type ClaimStepWorkIntent = Readonly<{
+  workflowId: string;
+  recoveryDispatchClass: ClaimStepRecoveryDispatchClass;
+}>;
+
+type RuntimeClaimOwnership = Readonly<{
+  sessionId: string;
+  ownerInstanceId: string;
+}>;
+
+async function closeReservedClaimRuntimeInTransaction(
+  sql: postgres.Sql | postgres.TransactionSql,
+  input: Readonly<{
+    claimId: number;
+    outcome: string;
+    diagnostic: string;
+    runtime?: RuntimeClaimOwnership;
+  }>,
+): Promise<void> {
+  const rows = await sql.unsafe<Array<{ id: string }>>(
+    `UPDATE claim_log
+        SET outcome = $2,
+            abandoned_at = NOW(),
+            duration_ms = LEAST(CAST(EXTRACT(EPOCH FROM (NOW() - claimed_at::timestamptz)) * 1000 AS BIGINT), 2147483647)::INTEGER,
+            diagnostic = $3
+      WHERE id = $1 AND outcome IS NULL
+      RETURNING id::text AS id`,
+    [input.claimId, input.outcome, input.diagnostic.slice(0, 1000)],
+  );
+  if (rows.length !== 1) {
+    const existing = await sql.unsafe<Array<{ outcome: string | null }>>(
+      "SELECT outcome FROM claim_log WHERE id = $1 FOR UPDATE",
+      [input.claimId],
+    );
+    if (!existing[0] || existing[0].outcome === null) {
+      throw new Error("UNSTARTED_CLAIM_CAS_LOST");
+    }
+  }
+  await sql.unsafe(
+    `UPDATE execution_attempts
+        SET disposition = 'inconclusive', updated_at = NOW()
+      WHERE claim_id = $1 AND disposition IN ('claimed', 'running')`,
+    [input.claimId],
+  );
+  if (input.runtime) {
+    await releaseReservedRuntimeSessionInTransaction(sql, {
+      sessionId: input.runtime.sessionId,
+      claimId: input.claimId,
+      ownerInstanceId: input.runtime.ownerInstanceId,
+      diagnostic: input.diagnostic,
+    });
+  }
+}
+
+async function closeUnstartedStoryClaimExact(
+  claimId: number | null,
+  diagnostic: string,
+  outcome: "failed" | "infra_retry" = "failed",
+  runtime?: RuntimeClaimOwnership,
+): Promise<void> {
+  if (claimId === null) return;
+  await pgBegin((sql) => closeReservedClaimRuntimeInTransaction(sql, {
+    claimId,
+    outcome,
+    diagnostic,
+    runtime,
+  }));
 }
 
 /** Step row as returned by the step selection query in claimStep. */
@@ -3717,6 +4270,7 @@ type StepRow = {
   current_story_id: string | null;
   retry_count: number;
   output: string | null;
+  protocol?: "legacy" | "shadow" | "v3";
 };
 
 
@@ -4086,7 +4640,10 @@ async function handleDesignDedup(step: StepRow, db: any): Promise<boolean> {
  * Mutates the filesystem only (no return value needed).
  */
 async function handleDeployEnvGuard(step: StepRow): Promise<void> {
-  if (step.step_id !== "deploy") return;
+  if (!shouldMaterializeRepoDeployEnvironment({
+    stepId: step.step_id,
+    protocol: step.protocol,
+  })) return;
 
   const dCtx = await getRunContext(step.run_id);
   const repoPath = dCtx["repo"] || "";
@@ -4800,14 +5357,355 @@ async function injectSuperviseEachContext(
  * progress/stories injection, and missing-input guard.
  * Returns a ClaimResult.
  */
+async function publishSingleClaimAndRuntime(
+  step: StepRow,
+  claimAgentId: string,
+  rawRuntimeIntent?: RuntimeClaimIntentV1,
+): Promise<Readonly<{
+  claimId: number;
+  protocol: "legacy" | "shadow" | "v3";
+  runtime?: RuntimeClaimOwnership;
+}> | undefined> {
+  return publishSingleClaimRuntime(getSql(), {
+    runId: step.run_id,
+    stepDbId: step.id,
+    workflowStepId: step.step_id,
+    claimAgentId,
+    runtimeIntent: rawRuntimeIntent,
+  });
+}
+
+async function publishLoopClaimAndRuntime(
+  step: StepRow,
+  story: any,
+  claimAgentId: string,
+  callerGatewayAgent: string | undefined,
+  parallelLimit: number,
+  rawRuntimeIntent?: RuntimeClaimIntentV1,
+  recoveryHandoff?: V3RecoveryClaimHandoffV1,
+  preparationAuthority?: V3PreparationClaimAuthorityV1,
+): Promise<Readonly<{
+  claimId: number;
+  claimGeneration: number;
+  protocol: "legacy" | "shadow" | "v3";
+  runtime?: RuntimeClaimOwnership;
+  baseRevision?: V3PreparationClaimAuthorityV1["baseRevision"];
+  claimAuthority?: LoopClaimAuthorityPublication;
+}> | undefined> {
+  return publishLoopClaimRuntime(getSql(), {
+    runId: step.run_id,
+    stepDbId: step.id,
+    workflowStepId: step.step_id,
+    storyDbId: story.id,
+    storyId: story.story_id,
+    claimAgentId,
+    callerGatewayAgent,
+    parallelLimit,
+    runtimeIntent: rawRuntimeIntent,
+    recoveryHandoff,
+    preparationAuthority,
+  });
+}
+
+function recoveryBranchName(work: V3RecoveryRoutedWork): string {
+  const dispatchToken = work.handoff.dispatchId.replace(/^RDISP_/, "").slice(0, 16);
+  return `recovery-${work.step.run_id.slice(0, 8)}-${dispatchToken}`.toLowerCase();
+}
+
+function sameRecoverySource(
+  observed: Readonly<{ sha: string; treeHash: string }>,
+  expected: Readonly<{ sha: string; treeHash: string }>,
+): boolean {
+  return observed.sha.toLowerCase() === expected.sha.toLowerCase()
+    && observed.treeHash.toLowerCase() === expected.treeHash.toLowerCase();
+}
+
+async function recordRecoveryPreparationFailure(
+  work: V3RecoveryRoutedWork,
+  code: string,
+  detail: string,
+): Promise<void> {
+  await recordObservation({
+    runId: work.step.run_id,
+    stepId: work.step.step_id,
+    storyId: work.story.story_id,
+    phase: "v3-recovery-claim",
+    checkId: `v3_recovery.claim_preparation:${work.handoff.dispatchId}`,
+    label: "V3 recovery claim preparation",
+    status: "blocked",
+    summary: code,
+    detail: detail.slice(0, 4_000),
+    evidence: {
+      schema: "setfarm.v3-recovery-claim-preparation-failure.v1",
+      code,
+      recoveryCaseId: work.handoff.recoveryCaseId,
+      revisionId: work.handoff.revisionId,
+      dispatchId: work.handoff.dispatchId,
+      dispatchClass: work.handoff.dispatchClass,
+      findingSetHash: work.handoff.directive.findingSetHash,
+      sourceRevision: work.handoff.directive.sourceRevision,
+      leaseOwner: work.handoff.lease.ownerInstanceId,
+    },
+  });
+}
+
+/**
+ * Canonical v3 recovery never re-enters the legacy pending-story/retry path.
+ * The durable delivery lease selects one exact failed story and source revision;
+ * this function turns that lease into one bound claim/runtime/attempt handoff.
+ */
+async function claimV3RecoveryWork(
+  work: V3RecoveryRoutedWork,
+  agentId: string,
+  callerGatewayAgent: string | undefined,
+  runtimeIntent: RuntimeClaimIntentV1,
+  executionRole: "developer" | "supervisor",
+): Promise<ClaimResult> {
+  const step: StepRow = work.step;
+  const story: any = { ...work.story };
+  const handoff = work.handoff;
+  if (step.step_id !== "implement" || step.type !== "loop" || story.status !== "failed") {
+    throw new Error("V3_RECOVERY_ROUTED_WORK_INVALID");
+  }
+  if (runtimeIntent.ownerInstanceId !== handoff.lease.ownerInstanceId) {
+    throw new Error("V3_RECOVERY_RUNTIME_LEASE_OWNER_MISMATCH");
+  }
+  const expectedDispatchClass = executionRole === "supervisor"
+    ? "supervisor_repair"
+    : "product_implementation";
+  const expectedRecoveryOwner = executionRole === "supervisor" ? "supervisor" : "implement";
+  if (
+    handoff.dispatchClass !== expectedDispatchClass
+    || handoff.recoveryOwner !== expectedRecoveryOwner
+  ) {
+    throw new Error("V3_RECOVERY_EXECUTION_ROLE_MISMATCH");
+  }
+
+  const context: Record<string, string> = await getRunContext(step.run_id);
+  context["run_id"] = step.run_id;
+  if (context["repo"] && step.step_index >= 4) {
+    normalizeRunBranchContext(context, step.run_id, context["repo"]);
+  }
+  const repo = String(context["repo"] || "").trim();
+  if (!repo || !fs.existsSync(repo) || !fs.existsSync(path.join(repo, ".git"))) {
+    await recordRecoveryPreparationFailure(
+      work,
+      "V3_RECOVERY_REPO_UNAVAILABLE",
+      "Canonical recovery source repository is absent; the leased delivery was not published as a model claim",
+    );
+    return { found: false };
+  }
+
+  const baseRef = handoff.directive.sourceRevision.sha.toLowerCase();
+  try {
+    const resolved = execFileSync("git", ["rev-parse", "--verify", `${baseRef}^{commit}`], {
+      cwd: repo,
+      encoding: "utf-8",
+      timeout: 10_000,
+      stdio: ["ignore", "pipe", "pipe"],
+    }).trim().toLowerCase();
+    if (resolved !== baseRef) throw new Error(`resolved ${resolved || "empty"}`);
+  } catch (error) {
+    await recordRecoveryPreparationFailure(
+      work,
+      "V3_RECOVERY_SOURCE_COMMIT_UNAVAILABLE",
+      `Dispatch source commit ${baseRef} is not available in the canonical repository: ${String(error).slice(0, 500)}`,
+    );
+    return { found: false };
+  }
+
+  const storyBranch = recoveryBranchName(work);
+  const storyWorkdir = createStoryWorktree(repo, storyBranch, baseRef, agentId);
+  if (!storyWorkdir) {
+    await recordRecoveryPreparationFailure(
+      work,
+      "V3_RECOVERY_WORKTREE_PREPARATION_FAILED",
+      `Could not create an isolated worktree at dispatch source ${baseRef}`,
+    );
+    return { found: false };
+  }
+  let observedSource: Awaited<ReturnType<typeof captureShadowSourceRevision>>;
+  try {
+    observedSource = await captureShadowSourceRevision(storyWorkdir);
+  } catch (error) {
+    removeStoryWorktree(repo, storyBranch, agentId);
+    await recordRecoveryPreparationFailure(
+      work,
+      "V3_RECOVERY_SOURCE_CAPTURE_FAILED",
+      `Could not fingerprint the prepared recovery worktree: ${String(error).slice(0, 500)}`,
+    );
+    return { found: false };
+  }
+  if (!sameRecoverySource(observedSource, handoff.directive.sourceRevision)) {
+    removeStoryWorktree(repo, storyBranch, agentId);
+    await recordRecoveryPreparationFailure(
+      work,
+      "V3_RECOVERY_SOURCE_REVISION_MISMATCH",
+      `Prepared source ${observedSource.sha}/${observedSource.treeHash} differs from dispatch ${baseRef}/${handoff.directive.sourceRevision.treeHash}`,
+    );
+    return { found: false };
+  }
+
+  const publication = await publishLoopClaimAndRuntime(
+    step,
+    story,
+    agentId,
+    callerGatewayAgent,
+    1,
+    runtimeIntent,
+    handoff,
+  );
+  if (!publication) {
+    removeStoryWorktree(repo, storyBranch, agentId);
+    return { found: false };
+  }
+  if (
+    publication.protocol !== "v3"
+    || publication.claimAuthority?.mode !== "recovery"
+    || publication.claimAuthority.handoff.dispatchId !== handoff.dispatchId
+    || publication.claimAuthority.handoff.revisionId !== handoff.revisionId
+  ) {
+    throw new Error("V3_RECOVERY_PUBLICATION_AUTHORITY_MISMATCH");
+  }
+
+  const legacyClaimId = publication.claimId;
+  const claimRuntime = publication.runtime;
+  story.claim_generation = publication.claimGeneration;
+  story.status = "running";
+  story.claimed_by = agentId;
+  context["story_branch"] = storyBranch;
+  context["story_workdir"] = storyWorkdir;
+  context["story_base_ref"] = baseRef;
+  context["claim_generation"] = String(publication.claimGeneration);
+  await pgRun(
+    "UPDATE stories SET story_branch = $1, updated_at = $2 WHERE id = $3 AND status = 'running'",
+    [storyBranch, now(), story.id],
+  );
+  await recordStepTransition(
+    step.id,
+    step.run_id,
+    step.step_status,
+    "running",
+    agentId,
+    "claimV3RecoveryWork",
+    { storyId: story.story_id, dispatchId: handoff.dispatchId },
+  );
+
+  await injectStoryContext(story, step, context);
+  let compiled: V3ImplementationAttemptResult;
+  try {
+    compiled = await reserveV3ImplementationAttempt({
+      runId: step.run_id,
+      stepId: step.step_id,
+      storyId: story.story_id,
+      claimId: legacyClaimId,
+      role: executionRole,
+      agentId,
+      branch: storyBranch,
+      worktree: storyWorkdir,
+      findingSetHash: handoff.directive.findingSetHash,
+      recoveryDelivery: {
+        dispatchId: handoff.dispatchId,
+        revisionId: handoff.revisionId,
+        ownerInstanceId: handoff.lease.ownerInstanceId,
+        leaseToken: handoff.lease.leaseToken,
+      },
+    });
+  } catch (error) {
+    await recordRecoveryPreparationFailure(
+      work,
+      "V3_RECOVERY_ATTEMPT_RESERVATION_FAILED",
+      String((error as Error)?.message || error),
+    );
+    // The lifecycle reconciler owns this exact post-publication/pre-attempt
+    // crash window. Never turn the failed story back into generic pending work.
+    return { found: false };
+  }
+  applyV3ImplementationSliceContext(context, compiled);
+  const v3ImplementationHandoff = structuredV3ImplementationHandoff({
+    stepDbId: step.id,
+    storyDbId: story.id,
+    claimId: legacyClaimId,
+    branch: storyBranch,
+    workdir: storyWorkdir,
+    compiled,
+  });
+  const prunedContext = pruneContextForStep(context, step.step_id);
+  const resolvedInput = await resolveLoopClaimInput(step, prunedContext, context);
+  const missing = [...new Set(
+    [...resolvedInput.matchAll(/\[missing:\s*(\w+)\]/gi)].map((match) => match[1]!.toLowerCase()),
+  )];
+  if (missing.length > 0) {
+    await recordRecoveryPreparationFailure(
+      work,
+      "V3_RECOVERY_CONTEXT_INCOMPLETE",
+      `Sealed recovery input still has unresolved variables: ${missing.join(", ")}`,
+    );
+    throw new Error(`V3_RECOVERY_CONTEXT_INCOMPLETE:${missing.join(",")}`);
+  }
+  if (!claimRuntime) throw new Error("V3_RECOVERY_RUNTIME_PUBLICATION_MISSING");
+  await pgBegin((sql) => bindRuntimeSessionAttemptInTransaction(sql, {
+    sessionId: claimRuntime.sessionId,
+    attemptId: compiled.attempt.attemptId,
+    ownerInstanceId: claimRuntime.ownerInstanceId,
+  }));
+
+  emitEvent({
+    ts: now(),
+    event: "story.started",
+    runId: step.run_id,
+    workflowId: await getWorkflowId(step.run_id),
+    stepId: step.step_id,
+    agentId,
+    storyId: story.story_id,
+    storyTitle: story.title,
+    detail: `canonical recovery ${handoff.dispatchClass} ${handoff.dispatchId}`,
+  });
+  logger.info(`[v3-recovery] Bound ${handoff.dispatchClass} ${handoff.dispatchId} to ${compiled.attempt.attemptId}`, {
+    runId: step.run_id,
+    stepId: step.step_id,
+  });
+  return {
+    found: true,
+    stepId: step.id,
+    workflowStepId: step.step_id,
+    runId: step.run_id,
+    protocol: "v3",
+    storyId: story.story_id,
+    storyDbId: story.id,
+    claimGeneration: publication.claimGeneration,
+    attempt: {
+      attemptId: compiled.attempt.attemptId,
+      generation: compiled.attempt.generation,
+      fenceToken: compiled.attempt.fenceToken,
+    },
+    claimId: legacyClaimId,
+    claimAgentId: agentId,
+    runtimeSessionId: claimRuntime.sessionId,
+    runtimeOwnerInstanceId: claimRuntime.ownerInstanceId,
+    recoveryDispatchId: handoff.dispatchId,
+    recoveryRevisionId: handoff.revisionId,
+    recoveryLeaseToken: handoff.lease.leaseToken,
+    v3ImplementationHandoff,
+    resolvedInput,
+  };
+}
+
 async function claimSingleStep(
   step: StepRow,
   agentId: string,
   context: Record<string, string>,
   db: any,
+  runtimeIntent?: RuntimeClaimIntentV1,
 ): Promise<ClaimResult> {
-  let shouldRecordSingleStepClaim = false;
+  const runProtocol = await pgGet<{ protocol: "legacy" | "shadow" | "v3" }>(
+    "SELECT protocol FROM runs WHERE id = $1",
+    [step.run_id],
+  );
   let shouldRecordSingleStepTransition = false;
+  let singleStepClaimId: number | null = null;
+  let singleStepClaimEnvelope: ClaimEnvelopeV1 | undefined;
+  let singleStepRuntime: RuntimeClaimOwnership | undefined;
 
   async function recordSingleStepHandoff(reason: string): Promise<void> {
     if (shouldRecordSingleStepTransition) {
@@ -4815,27 +5713,29 @@ async function claimSingleStep(
       emitEvent({ ts: now(), event: "step.running", runId: step.run_id, workflowId: await getWorkflowId(step.run_id), stepId: step.step_id, agentId: agentId });
       shouldRecordSingleStepTransition = false;
     }
-    if (shouldRecordSingleStepClaim) {
-      try {
-        await pgRun("INSERT INTO claim_log (run_id, step_id, story_id, agent_id, claimed_at) VALUES ($1, $2, NULL, $3, $4)", [step.run_id, step.step_id, agentId, now()]);
-      } catch (e) { logger.warn(`[claim-log] Failed to record claim: ${String(e)}`, { runId: step.run_id }); }
-      shouldRecordSingleStepClaim = false;
-    }
   }
 
   async function closeSingleStepHandoff(outcome: string, diagnostic: string): Promise<void> {
-    await pgRun(
-      "UPDATE claim_log SET outcome = $1, abandoned_at = NOW(), duration_ms = LEAST(CAST(EXTRACT(EPOCH FROM (NOW() - claimed_at::timestamptz)) * 1000 AS BIGINT), 2147483647)::INTEGER, diagnostic = $2 WHERE run_id = $3 AND step_id = $4 AND story_id IS NULL AND agent_id = $5 AND outcome IS NULL",
-      [outcome, diagnostic.slice(0, 1000), step.run_id, step.step_id, agentId],
-    );
+    if (singleStepClaimId === null) return;
+    await pgBegin((sql) => closeReservedClaimRuntimeInTransaction(sql, {
+      claimId: singleStepClaimId!,
+      outcome,
+      diagnostic,
+      runtime: singleStepRuntime,
+    }));
   }
 
   // Single-step idempotency: some models run `step claim` twice and overwrite
   // their claim file. If this role already owns a running non-loop step, reissue
   // the same claim instead of returning NO_WORK and orphaning the step.
   if (step.step_status === "running") {
-    const existingOpenClaim = await pgGet<{ id: number }>(
-      "SELECT id FROM claim_log WHERE run_id = $1 AND step_id = $2 AND story_id IS NULL AND agent_id = $3 AND outcome IS NULL LIMIT 1",
+    const existingOpenClaim = await pgGet<{ id: number; session_id: string | null; owner_instance_id: string | null }>(
+      `SELECT cl.id, rs.session_id, rs.owner_instance_id
+         FROM claim_log cl
+         LEFT JOIN runtime_sessions rs ON rs.claim_id = cl.id
+        WHERE cl.run_id = $1 AND cl.step_id = $2 AND cl.story_id IS NULL
+          AND cl.agent_id = $3 AND cl.outcome IS NULL
+        LIMIT 1`,
       [step.run_id, step.step_id, agentId],
     );
     if (!existingOpenClaim) {
@@ -4853,20 +5753,41 @@ async function claimSingleStep(
       logger.warn(`[claim-idempotent] Requeued orphaned running step ${step.step_id}; no open claim exists for ${agentId}`, { runId: step.run_id, stepId: step.step_id });
       return { found: false };
     }
+    singleStepClaimId = Number(existingOpenClaim.id);
+    if (!Number.isSafeInteger(singleStepClaimId) || singleStepClaimId <= 0) {
+      throw new Error("SINGLE_STEP_CLAIM_ID_INVALID");
+    }
+    if (existingOpenClaim.session_id) {
+      if (!runtimeIntent || existingOpenClaim.session_id !== runtimeIntent.sessionId) {
+        logger.warn(`[claim-idempotent] Existing runtime ${existingOpenClaim.session_id} still owns ${step.step_id}; refusing a second runtime`, { runId: step.run_id, stepId: step.step_id });
+        return { found: false };
+      }
+      singleStepRuntime = {
+        sessionId: existingOpenClaim.session_id,
+        ownerInstanceId: existingOpenClaim.owner_instance_id!,
+      };
+    }
     logger.info(`[claim-idempotent] Re-issued running step ${step.step_id} to ${agentId}`, { runId: step.run_id, stepId: step.step_id });
   } else {
-    // Item 6: Single step — atomic claim with changes check to prevent race condition
-    let _claimChanges: number;
-    const _cr = await pgRun("UPDATE steps SET status = 'running', started_at = NOW(), updated_at = $1 WHERE id = $2 AND status = 'pending'", [now(), step.id]);
-    _claimChanges = _cr.changes;
-    if (_claimChanges === 0) {
-      // Already claimed by another cron — return no work
-      return { found: false };
-    }
+    const publication = await publishSingleClaimAndRuntime(step, agentId, runtimeIntent);
+    if (!publication) return { found: false };
+    singleStepClaimId = publication.claimId;
+    singleStepRuntime = publication.runtime;
     logger.info(`Step claimed by ${agentId}`, { runId: step.run_id, stepId: step.step_id });
-    shouldRecordSingleStepClaim = true;
     shouldRecordSingleStepTransition = true;
   }
+
+  singleStepClaimEnvelope = {
+    schema: "setfarm.claim-envelope.v1",
+    protocol: runProtocol?.protocol || "legacy",
+    issuedAt: new Date().toISOString(),
+    stepId: step.id,
+    workflowStepId: step.step_id,
+    runId: step.run_id,
+    claimId: singleStepClaimId,
+    claimAgentId: agentId,
+    runtimeAgentId: runtimeIntent?.runtimeAgentId || agentId,
+  };
 
   // Publish a LiveDB handoff immediately after the atomic DB claim. Claim-side
   // deferrals below must close this row if no agent is spawned, otherwise a
@@ -5060,24 +5981,118 @@ async function claimSingleStep(
     context["pr_check_state"] = "";
     context["pr_mergeable"] = "";
     context["pr_merge_state_status"] = "";
-    try {
-      const { fetchPrState, formatPrCommentsForAgent } = await import("./steps/07-verify/pr-comments.js");
-      const state = await fetchPrState(reviewPrUrl, context["repo_full"] || "");
-      if (state) {
-        const formatted = formatPrCommentsForAgent(state);
-        context["pr_comments"] = formatted || "";
-        context["pr_check_state"] = state.checksStatus || "";
-        context["pr_created_at"] = state.createdAt || "";
-        context["pr_mergeable"] = state.mergeable || "";
-        context["pr_merge_state_status"] = state.mergeStateStatus || "";
-        hasReviewSignal =
-          state.comments.length > 0 ||
-          state.checksStatus === "failing" ||
-          state.mergeable === "CONFLICTING" ||
-          ["DIRTY", "BLOCKED"].includes(state.mergeStateStatus || "");
+    if (runProtocol?.protocol === "v3") {
+      try {
+        const storyId = context["current_story_id"] || "";
+        const repositoryPath = context["repo"] || "";
+        if (!storyId || !repositoryPath || singleStepClaimId === null) {
+          const identityError = new Error("Exact story, repository and verify claim identity are required");
+          Object.assign(identityError, { code: "V3_GITHUB_REVIEW_ROUTE_IDENTITY_MISSING" });
+          throw identityError;
+        }
+        const routed = await routeExactV3GithubReviewBeforeVerifyAgent({
+          runId: step.run_id,
+          verifyStepDbId: step.id,
+          verifyClaimId: singleStepClaimId,
+          storyId,
+          prUrl: reviewPrUrl,
+          repositoryPath,
+          context,
+        });
+        if (routed.blockAgent) {
+          await pgRun(
+            "UPDATE steps SET status = 'waiting', updated_at = $1 WHERE id = $2 AND status = 'running'",
+            [now(), step.id],
+          );
+          await recordStepTransition(step.id, step.run_id, "running", "waiting", agentId, "v3-exact-github-review-route");
+          await closeSingleStepHandoff("completed", `exact GitHub review evidence ${routed.result.status}; canonical recovery owns the story`);
+          logger.warn(`[v3-review] ${storyId} routed from exact GitHub thread evidence before reviewer spawn`, { runId: step.run_id });
+          return { found: false };
+        }
+
+        // Check/merge state is operational metadata only. V3 never formats
+        // comment prose and never derives actionability from this adapter.
+        const { fetchPrState } = await import("./steps/07-verify/pr-comments.js");
+        const state = await fetchPrState(reviewPrUrl, context["repo_full"] || "");
+        if (state) {
+          context["pr_check_state"] = state.checksStatus || "";
+          context["pr_created_at"] = state.createdAt || "";
+          context["pr_mergeable"] = state.mergeable || "";
+          context["pr_merge_state_status"] = state.mergeStateStatus || "";
+          hasReviewSignal =
+            routed.result.status === "pr_not_open" ||
+            state.checksStatus === "failing" ||
+            state.mergeable === "CONFLICTING" ||
+            ["DIRTY", "BLOCKED"].includes(state.mergeStateStatus || "");
+        }
+        delete context["v3_review_read_failure_fingerprint"];
+        delete context["v3_review_read_failure_count"];
+      } catch (e) {
+        const code = v3ReviewErrorCode(e);
+        const fingerprint = crypto.createHash("sha256")
+          .update(`${step.run_id}\n${step.id}\n${context["current_story_id"] || ""}\n${reviewPrUrl}\n${code}\n${String(e)}`)
+          .digest("hex");
+        const previousFingerprint = context["v3_review_read_failure_fingerprint"] || "";
+        const previousCount = Number.parseInt(context["v3_review_read_failure_count"] || "0", 10);
+        const failureCount = previousFingerprint === fingerprint && Number.isFinite(previousCount)
+          ? previousCount + 1
+          : 1;
+        const retry = v3ReviewErrorRetryable(code) && failureCount <= 3;
+        context["v3_review_read_failure_fingerprint"] = fingerprint;
+        context["v3_review_read_failure_count"] = String(failureCount);
+        context["previous_failure"] = `${code}: exact GitHub review evidence could not be established`;
+        context["failure_category"] = "V3_GITHUB_REVIEW_EVIDENCE_UNAVAILABLE";
+        context["failure_suggestion"] = retry
+          ? "Retry the bounded exact GitHub evidence read; do not spawn a reviewer from stale or prose-derived comments."
+          : "Platform operator must restore exact GitHub review evidence authority before verification can continue.";
+        await updateRunContext(step.run_id, context);
+        await recordObservation({
+          runId: step.run_id,
+          stepId: step.step_id,
+          storyId: context["current_story_id"] || undefined,
+          phase: "verify",
+          checkId: `v3.github-review.read:${fingerprint}`,
+          label: "V3 exact GitHub review evidence read",
+          status: retry ? "retry" : "blocked",
+          summary: `${code}:attempt-${failureCount}`,
+          detail: String(e).slice(0, 4_000),
+          evidence: {
+            schema: "setfarm.v3-github-review-read-failure.v1",
+            code,
+            fingerprint,
+            attempt: failureCount,
+            retryBound: 3,
+          },
+        });
+        await pgRun(
+          `UPDATE steps SET status = $1, updated_at = $2 WHERE id = $3 AND status = 'running'`,
+          [retry ? "pending" : "waiting", now(), step.id],
+        );
+        await recordStepTransition(step.id, step.run_id, "running", retry ? "pending" : "waiting", agentId, "v3-github-review-evidence-failure");
+        await closeSingleStepHandoff(retry ? "infra_retry" : "failed", `${code}: exact GitHub review evidence unavailable`);
+        logger.warn(`[v3-review] ${code} (${failureCount}/3); reviewer spawn blocked`, { runId: step.run_id, stepId: step.step_id });
+        return { found: false };
       }
-    } catch (e) {
-      logger.warn(`[review-delay] PR signal check failed: ${String(e).slice(0, 160)}`, { runId: step.run_id, stepId: step.step_id });
+    } else {
+      try {
+        const { fetchPrState, formatPrCommentsForAgent } = await import("./steps/07-verify/pr-comments.js");
+        const state = await fetchPrState(reviewPrUrl, context["repo_full"] || "");
+        if (state) {
+          const formatted = formatPrCommentsForAgent(state);
+          context["pr_comments"] = formatted || "";
+          context["pr_check_state"] = state.checksStatus || "";
+          context["pr_created_at"] = state.createdAt || "";
+          context["pr_mergeable"] = state.mergeable || "";
+          context["pr_merge_state_status"] = state.mergeStateStatus || "";
+          hasReviewSignal =
+            state.comments.length > 0 ||
+            state.checksStatus === "failing" ||
+            state.mergeable === "CONFLICTING" ||
+            ["DIRTY", "BLOCKED"].includes(state.mergeStateStatus || "");
+        }
+      } catch (e) {
+        logger.warn(`[review-delay] PR signal check failed: ${String(e).slice(0, 160)}`, { runId: step.run_id, stepId: step.step_id });
+      }
     }
     if (context["verify_pending_pr_url"] !== reviewPrUrl) {
       context["verify_pending_pr_url"] = reviewPrUrl;
@@ -5101,7 +6116,7 @@ async function claimSingleStep(
       logger.info(`[review-delay] PR already has review/check signal — skipping wait`, { runId: step.run_id, stepId: step.step_id });
     }
     const storyIdForReviewSignal = context["current_story_id"] || "";
-    if (storyIdForReviewSignal && context["pr_comments"]) {
+    if (runProtocol?.protocol !== "v3" && storyIdForReviewSignal && context["pr_comments"]) {
       const prReviewCommentsFailure = await detectOpenPrReviewCommentFailure(
         reviewPrUrl,
         storyIdForReviewSignal,
@@ -5165,6 +6180,7 @@ async function claimSingleStep(
         task: prunedContextSingle["task"] || prunedContextSingle["TASK"] || "",
         retryCount: step.retry_count,
         context: prunedContextSingle,
+        claimEnvelope: singleStepClaimEnvelope,
       };
       if (_stepModule.preClaim) {
         try {
@@ -5195,9 +6211,45 @@ async function claimSingleStep(
           }
         } catch (_pce) {
           const preClaimError = `PRECLAIM_BLOCKED [${_stepModule.id}]: ${String(_pce).slice(0, 1200)}`;
+          if (
+            _pce instanceof V3DeployPublicationPendingError
+            && step.step_id === "deploy"
+            && singleStepClaimEnvelope?.protocol === "v3"
+          ) {
+            // The deploy service is healthy but the exact DB commit outcome
+            // could not be read. Leave the claim/effect ledger untouched for
+            // canonical recovery; never terminalize or dispatch a model from
+            // an ambiguous publication result.
+            logger.warn(
+              `[step-module] deploy publication pending canonical reconciliation: ${_pce.receiptHash}`,
+              { runId: step.run_id, stepId: step.step_id },
+            );
+            return { found: false };
+          }
+          if (
+            _pce instanceof V3DeployAuthorityError
+            && step.step_id === "deploy"
+            && singleStepClaimEnvelope?.protocol === "v3"
+          ) {
+            let refusal;
+            try {
+              refusal = await completeV3DeployAuthorityRefusal({
+                sql: getSql(),
+                envelope: singleStepClaimEnvelope,
+                error: _pce,
+              });
+            } catch (transitionError) {
+              throw new V3DeployRefusalLifecycleError(_pce, transitionError);
+            }
+            logger.error(
+              `[step-module] deploy preClaim terminally refused by compiler authority: ${_pce.code}:${refusal.refusalHash}`,
+              { runId: step.run_id, stepId: step.step_id },
+            );
+            return { found: false };
+          }
           if (HARD_PRECLAIM_STEPS.has(step.step_id)) {
             logger.warn(`[step-module] ${_stepModule.id} preClaim failed as hard gate: ${String(_pce).slice(0, 200)}`, { runId: step.run_id });
-            await failStep(step.id, preClaimError);
+            await failStep(step.id, preClaimError, singleStepClaimEnvelope);
             await closeSingleStepHandoff("failed", preClaimError);
             return { found: false };
           }
@@ -5207,6 +6259,13 @@ async function claimSingleStep(
       await _stepModule.injectContext(_modCtx);
     }
   } catch (_ie) {
+    if (_ie instanceof V3DeployRefusalLifecycleError || _ie instanceof V3DeployAuthorityError) {
+      logger.error(`[step-module] terminal preClaim lifecycle failed closed: ${String(_ie).slice(0, 500)}`, {
+        runId: step.run_id,
+        stepId: step.step_id,
+      });
+      throw _ie;
+    }
     logger.warn(`[step-module] injectContext failed: ${String(_ie).slice(0, 200)}`, { runId: step.run_id });
   }
   let resolvedInput = resolveTemplate(step.input_template, prunedContextSingle);
@@ -5226,11 +6285,12 @@ async function claimSingleStep(
         context: prunedContextSingle,
       });
       if (_modulePrompt && _modulePrompt.length > 0) {
-        if (_modulePrompt.length > _stepModuleP.maxPromptSize) {
-          logger.warn(`[step-module] ${_stepModuleP.id} prompt ${_modulePrompt.length} > budget ${_stepModuleP.maxPromptSize} — using anyway, investigate`, { runId: step.run_id });
+        const _modulePromptBytes = Buffer.byteLength(_modulePrompt, "utf8");
+        if (_modulePromptBytes > _stepModuleP.maxPromptSize) {
+          logger.warn(`[step-module] ${_stepModuleP.id} prompt ${_modulePromptBytes} bytes > budget ${_stepModuleP.maxPromptSize} — using anyway, investigate`, { runId: step.run_id });
         }
         resolvedInput = _modulePrompt;
-        logger.info(`[step-module] ${_stepModuleP.id} buildPrompt override (${_modulePrompt.length}b)`, { runId: step.run_id });
+        logger.info(`[step-module] ${_stepModuleP.id} buildPrompt override (${_modulePromptBytes}b)`, { runId: step.run_id });
       }
     }
   } catch (_pe) {
@@ -5269,10 +6329,19 @@ async function claimSingleStep(
   // Usually this is a no-op because heavy preClaim already opened the handoff.
   await recordSingleStepHandoff("claimSingleStep");
 
+  if (singleStepClaimId === null) throw new Error("SINGLE_STEP_CLAIM_HANDOFF_MISSING");
   return {
     found: true,
     stepId: step.id,
+    workflowStepId: step.step_id,
     runId: step.run_id,
+    protocol: runProtocol?.protocol || "legacy",
+    claimId: singleStepClaimId,
+    claimAgentId: agentId,
+    ...(singleStepRuntime ? {
+      runtimeSessionId: singleStepRuntime.sessionId,
+      runtimeOwnerInstanceId: singleStepRuntime.ownerInstanceId,
+    } : {}),
     resolvedInput,
   };
 }
@@ -5287,7 +6356,38 @@ let lastCleanupTime = 0;
 /**
  * Find and claim a pending step for an agent, returning the resolved input.
  */
-export async function claimStep(agentId: string, callerGatewayAgent?: string): Promise<ClaimResult> {
+export async function claimStep(
+  agentId: string,
+  callerGatewayAgent?: string,
+  rawRuntimeIntent?: RuntimeClaimIntentV1,
+  workIntent?: ClaimStepWorkIntent,
+): Promise<ClaimResult> {
+  const runtimeIntent = rawRuntimeIntent
+    ? parseRuntimeClaimIntentV1(rawRuntimeIntent)
+    : undefined;
+  if (workIntent) {
+    if (!runtimeIntent) throw new Error("V3_RECOVERY_RUNTIME_CLAIM_INTENT_REQUIRED");
+    const executionRole = workIntent.recoveryDispatchClass === "supervisor_repair"
+      ? "supervisor"
+      : "developer";
+    if (agentId !== `${workIntent.workflowId}_${executionRole}`) {
+      throw new Error("V3_RECOVERY_CLAIM_ROLE_MISMATCH");
+    }
+    const recoveryWork = await createV3RecoveryWorkRouter(getSql()).acquireNext({
+      workflowId: workIntent.workflowId,
+      dispatchClass: workIntent.recoveryDispatchClass,
+      ownerInstanceId: runtimeIntent.ownerInstanceId,
+    });
+    if (recoveryWork) {
+      return claimV3RecoveryWork(
+        recoveryWork,
+        agentId,
+        callerGatewayAgent,
+        runtimeIntent,
+        executionRole,
+      );
+    }
+  }
   // Throttle cleanup: run at most once every 5 minutes across all agents
   const epochMs = Date.now();
   if (epochMs - lastCleanupTime >= CLEANUP_THROTTLE_MS) {
@@ -5347,7 +6447,7 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
   // Also prefer own-run (0), then unassigned (1), so an already-reserved
   // developer resumes their own work before picking up a new one.
   const step = await pgGet<StepRow>(
-        `SELECT s.id, s.step_id, s.run_id, s.step_index, s.input_template, s.type, s.loop_config, s.status as step_status, s.current_story_id, s.retry_count, s.output
+        `SELECT s.id, s.step_id, s.run_id, s.step_index, s.input_template, s.type, s.loop_config, s.status as step_status, s.current_story_id, s.retry_count, s.output, r.protocol
          FROM steps s
          JOIN runs r ON r.id = s.run_id
          WHERE s.agent_id = $1
@@ -5355,7 +6455,7 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
              s.status = 'pending'
              OR s.status = 'running'
            )
-           AND r.status NOT IN ('failed', 'cancelled')
+           AND r.status IN ('running', 'resuming')
            AND NOT ${PR_EACH_DELIVERY_BLOCKED_STEP_SQL}
            AND (
              $2::text IS NULL
@@ -5450,8 +6550,10 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
 
   if (!step) return { found: false };
 
-  // Guard: don't claim work for a failed run
-  if (await getRunStatus(step.run_id) === RUN_STATUS.FAILED) return { found: false };
+  // Cheap pre-guard. The publication transaction locks and revalidates the run.
+  if (![RUN_STATUS.RUNNING, "resuming"].includes((await getRunStatus(step.run_id)) as any)) {
+    return { found: false };
+  }
 
   // DESIGN STEP DEDUP
   if (await handleDesignDedup(step, null)) return { found: false };
@@ -5483,6 +6585,10 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
     const loopConfig: LoopConfig | null = parseLoopConfigSafe(step.loop_config, step.run_id);
     if (loopConfig?.over === "stories") {
       const isPrEach = loopConfig?.mergeStrategy === "pr-each" || !!loopConfig?.verifyEach;
+      const runProtocol = await pgGet<{ protocol: string }>(
+        "SELECT protocol FROM runs WHERE id = $1",
+        [step.run_id],
+      );
       // Bug C fix (plan: reactive-frolicking-cupcake.md, run #342 postmortem):
       // Capture the base branch's commit SHA on the FIRST claim of the implement
       // loop and store it in context. All story worktrees in this loop must be
@@ -5500,7 +6606,13 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
         await updateRunContext(step.run_id, context);
         logger.info(`[implement] Cleared pinned base commit because pr-each uses main after each merge`, { runId: step.run_id });
       }
-      if (!isPrEach && context["repo"] && context["branch"] && !context["implement_base_commit"]) {
+      if (
+        runProtocol?.protocol !== "v3"
+        && !isPrEach
+        && context["repo"]
+        && context["branch"]
+        && !context["implement_base_commit"]
+      ) {
         try {
           const sha = execFileSync("git", ["rev-parse", context["branch"]], {
             cwd: context["repo"], encoding: "utf-8", timeout: 5000, stdio: ["pipe", "pipe", "pipe"],
@@ -5522,6 +6634,42 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
       if (step.current_story_id) {
         const runningStory = await pgGet<any>("SELECT * FROM stories WHERE id = $1 AND run_id = $2 AND status = 'running'", [step.current_story_id, step.run_id]);
         if (runningStory && (!runningStory.claimed_by || runningStory.claimed_by === agentId)) {
+          const idempotentProtocol = await pgGet<{ protocol: "legacy" | "shadow" | "v3" }>(
+            "SELECT protocol FROM runs WHERE id = $1",
+            [step.run_id],
+          );
+          const existingClaim = await pgGet<{
+            id: string;
+            session_id: string | null;
+            owner_instance_id: string | null;
+            attempt_id: string | null;
+          }>(
+            `SELECT cl.id::text, rs.session_id, rs.owner_instance_id, rs.attempt_id
+               FROM claim_log cl
+               LEFT JOIN runtime_sessions rs ON rs.claim_id = cl.id
+              WHERE cl.run_id = $1
+                AND cl.step_id = $2
+                AND cl.story_id = $3
+                AND cl.agent_id = $4
+                AND cl.outcome IS NULL
+              ORDER BY cl.id DESC
+              LIMIT 1`,
+            [step.run_id, step.step_id, runningStory.story_id, agentId],
+          );
+          const claimId = Number(existingClaim?.id);
+          if (!Number.isSafeInteger(claimId) || claimId <= 0) {
+            logger.warn(`[claim-idempotent] Refusing to re-issue ${runningStory.story_id} without its exact open claim`, { runId: step.run_id, stepId: step.step_id });
+            return { found: false };
+          }
+          if (existingClaim?.session_id) {
+            if (!runtimeIntent || existingClaim.session_id !== runtimeIntent.sessionId) {
+              logger.warn(`[claim-idempotent] Durable runtime ${existingClaim.session_id} still owns ${runningStory.story_id}; refusing a second runtime`, { runId: step.run_id, stepId: step.step_id });
+              return { found: false };
+            }
+          } else if ((idempotentProtocol?.protocol || "legacy") !== "legacy") {
+            logger.warn(`[claim-idempotent] Compiler claim ${claimId} has no durable runtime owner`, { runId: step.run_id, stepId: step.step_id });
+            return { found: false };
+          }
           const storyBranch = (runningStory.story_branch || `${step.run_id.slice(0, 8)}-${runningStory.story_id}`).toLowerCase();
           context["story_branch"] = storyBranch;
           if (context["repo"]) {
@@ -5539,17 +6687,73 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
             } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); }
           }
           const prunedContextLoop = pruneContextForStep(context, step.step_id);
-          const resolvedInput = await resolveLoopClaimInput(step, prunedContextLoop, context);
+          let resolvedInput = await resolveLoopClaimInput(step, prunedContextLoop, context);
+          let attempt: ClaimAttemptFenceV1 | undefined;
+          if ((idempotentProtocol?.protocol || "legacy") !== "legacy") {
+            const fence = await ensureCompilerClaimFence(getSql(), {
+              claimId,
+              runId: step.run_id,
+              stepId: step.step_id,
+              storyId: runningStory.story_id,
+              storyDbId: runningStory.id,
+              claimAgentId: agentId,
+              diagnostic: "COMPILER_IDEMPOTENT_CLAIM_FENCE_REQUIRED",
+            });
+            if (fence.status !== "fenced") {
+              logger.warn(`[claim-idempotent] Compiler fence unavailable for ${runningStory.story_id}: ${fence.status === "blocked" ? fence.reason : fence.status}`, { runId: step.run_id, stepId: step.step_id });
+              return { found: false };
+            }
+            attempt = fence.attempt;
+            if (idempotentProtocol?.protocol === "v3") {
+              const compiled = await loadV3ImplementationAttemptContext({
+                runId: step.run_id,
+                storyId: runningStory.story_id,
+                attemptId: attempt.attemptId,
+              });
+              applyV3ImplementationSliceContext(context, compiled);
+              resolvedInput = await resolveLoopClaimInput(
+                step,
+                pruneContextForStep(context, step.step_id),
+                context,
+              );
+            }
+            if (existingClaim?.session_id && !existingClaim.attempt_id) {
+              await pgBegin((sql) => bindRuntimeSessionAttemptInTransaction(sql, {
+                sessionId: existingClaim.session_id!,
+                attemptId: attempt!.attemptId,
+                ownerInstanceId: existingClaim.owner_instance_id!,
+              }));
+            }
+          }
           logger.info(`[claim-idempotent] Re-issued running story ${runningStory.story_id} to ${agentId}`, { runId: step.run_id, stepId: step.step_id });
-          return { found: true, stepId: step.id, runId: step.run_id, storyId: runningStory.story_id, storyDbId: runningStory.id, resolvedInput };
+          return {
+            found: true,
+            stepId: step.id,
+            workflowStepId: step.step_id,
+            runId: step.run_id,
+            protocol: idempotentProtocol?.protocol || "legacy",
+            storyId: runningStory.story_id,
+            storyDbId: runningStory.id,
+            claimGeneration: Number(runningStory.claim_generation ?? 0),
+            claimId,
+            claimAgentId: agentId,
+            ...(existingClaim?.session_id ? {
+              runtimeSessionId: existingClaim.session_id,
+              runtimeOwnerInstanceId: existingClaim.owner_instance_id!,
+            } : {}),
+            ...(attempt ? { attempt } : {}),
+            resolvedInput,
+          };
         }
       }
 
       // Auto-complete stories that already have a PR (open or merged)
       const runIdPrefix = step.run_id.slice(0, 8);
-      await autoCompleteStoriesWithPRs(step, runIdPrefix, context, null);
+      if (runProtocol?.protocol !== "v3") {
+        await autoCompleteStoriesWithPRs(step, runIdPrefix, context, null);
+      }
 
-      if (isPrEach && isOpenPrDeliveryBlockerContext(context)) {
+      if (runProtocol?.protocol !== "v3" && isPrEach && isOpenPrDeliveryBlockerContext(context)) {
         const blockedStoryId = prDeliveryBlockerStoryId(context);
         if (blockedStoryId) {
           const blockedStory = await pgGet<{ status: string }>(
@@ -5569,7 +6773,7 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
         }
       }
 
-      if (isPrEach && isOpenPrDeliveryBlockerContext(context)) {
+      if (runProtocol?.protocol !== "v3" && isPrEach && isOpenPrDeliveryBlockerContext(context)) {
         const activeRetriedForDeliveryBlocker = await pgGet<{ cnt: string }>(
           `SELECT COUNT(*) as cnt FROM stories WHERE run_id = $1 AND status IN ('pending', 'running') AND ${ACTIVE_RETRY_STORY_SQL}`,
           [step.run_id],
@@ -5607,7 +6811,7 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
       // reviewed, fixed, merged into main, and marked verified before the next
       // story can be claimed. This prevents US-002/US-003 from branching from a
       // stale baseline while US-001's PR is still open.
-      if (loopConfig?.superviseEach && loopConfig.superviseStep) {
+      if (runProtocol?.protocol !== "v3" && loopConfig?.superviseEach && loopConfig.superviseStep) {
         const superviseActiveRetriedStory = await pgGet<{ cnt: string }>(
           `SELECT COUNT(*) as cnt FROM stories WHERE run_id = $1 AND status IN ('pending', 'running') AND ${ACTIVE_RETRY_STORY_SQL}`,
           [step.run_id],
@@ -5671,35 +6875,121 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
       // two parallel crons from selecting the same story (race condition fix #4)
       // P2-01: Fake transaction removed — claim uses RETURNING for atomicity
 
-      // Find next pending story with dependency check
-      const pendingStories = await pgQuery<any>(
-        `SELECT * FROM stories
-         WHERE run_id = $1 AND status = 'pending'
-         ORDER BY CASE WHEN story_id LIKE 'QA-FIX-%' THEN 0 ELSE 1 END, story_index ASC`,
-        [step.run_id],
-      );
-
+      let pendingStories: any[] = [];
       let nextStory: any | undefined;
-      for (const candidate of pendingStories) {
-        if (candidate.depends_on) {
-          try {
-            const deps: string[] = JSON.parse(candidate.depends_on);
-            if (deps.length > 0) {
-              const completedIds = (await pgQuery<{ story_id: string }>("SELECT story_id FROM stories WHERE run_id = $1 AND status IN ('done', 'failed', 'verified', 'skipped')", [step.run_id])
-              ).map((r: any) => r.story_id);
-              const completedSet = new Set(completedIds);
-              const unmet = deps.filter(d => !completedSet.has(d));
-              if (unmet.length > 0) {
-                logger.info(`Story ${candidate.story_id} blocked by unmet dependencies: ${unmet.join(', ')}`, { runId: step.run_id });
-                continue; // Skip this story, try next one
+      let v3PreparationAuthority: V3PreparationClaimAuthorityV1 | undefined;
+      let v3PreparedBaseRevision: V3PreparationClaimAuthorityV1["baseRevision"] | undefined;
+
+      if (runProtocol?.protocol === "v3") {
+        if (step.step_id !== "implement") {
+          logger.error("[v3-preclaim] Story loop is not the canonical implement step", {
+            runId: step.run_id,
+            stepId: step.step_id,
+          });
+          return { found: false };
+        }
+        const sql = getSql();
+        const artifactReader = createRuntimeArtifactReader({
+          sql,
+          artifactRoot: resolveProductArtifactDir(),
+          artifactLimits: resolveProductArtifactCapacity(),
+        });
+        const blockRepository = createV3PreparationBlockRepository(sql);
+        const preclaim = createV3NormalImplementationPreclaim({
+          readPacket: (runId) => artifactReader.readSealedPacket(runId),
+          readPendingStories: createPostgresV3PendingStoryReader(sql),
+          readTerminalDependencyAttempts: createPostgresTerminalDependencyAttemptReader(sql),
+          blockRepository,
+          ...(isPrEach
+            ? {
+                syncBeforePin: ({ repo }: { repo: string }) => {
+                  if (!syncBaseBranch(repo, "main")) {
+                    throw new Error("V3_NORMAL_PRECLAIM_PR_EACH_SYNC_FAILED");
+                  }
+                },
               }
-            }
-          } catch (e) {
-            logger.warn(`Failed to parse depends_on for story ${candidate.story_id}: ${String(e)}`, { runId: step.run_id });
+            : {}),
+        });
+        const requestedBaseRef = isPrEach
+          ? "main"
+          : (context["implement_base_commit"] || context["branch"] || "master");
+        const prepared = await preclaim.prepare({
+          runId: step.run_id,
+          stepId: step.step_id,
+          repo: context["repo"] || "",
+          requestedBaseRef,
+          ...(!isPrEach && context["implement_base_commit"]
+            ? { expectedSha: context["implement_base_commit"] }
+            : {}),
+        });
+        if (prepared.status === "blocked") {
+          if (prepared.block && prepared.ledgerStatus !== "unchanged") {
+            await recordObservation({
+              runId: step.run_id,
+              stepId: step.step_id,
+              storyId: prepared.story?.story_id,
+              phase: "v3-normal-preclaim",
+              checkId: `v3_preparation.block:${prepared.block.blockId}`,
+              label: "V3 implementation preparation",
+              status: "blocked",
+              summary: prepared.error.code,
+              detail: prepared.error.message.slice(0, 4_000),
+              evidence: prepared.block,
+            });
+          }
+          logger.warn(`[v3-preclaim] ${prepared.error.code}: ${prepared.error.message}`, {
+            runId: step.run_id,
+            stepId: step.step_id,
+          });
+          return { found: false };
+        }
+        if (prepared.status === "ready") {
+          const exactStory = await pgGet<any>(
+            `SELECT * FROM stories
+              WHERE id = $1 AND run_id = $2 AND story_id = $3 AND status = 'pending'
+              LIMIT 1`,
+            [prepared.story.id, step.run_id, prepared.story.story_id],
+          );
+          if (!exactStory) return { found: false };
+          nextStory = exactStory;
+          pendingStories = [exactStory];
+          v3PreparationAuthority = prepared.authority;
+          v3PreparedBaseRevision = prepared.baseRevision;
+          if (!isPrEach && context["implement_base_commit"] !== prepared.baseRevision.sha) {
+            context["implement_base_commit"] = prepared.baseRevision.sha;
+            await updateRunContext(step.run_id, context);
           }
         }
-        nextStory = candidate;
-        break;
+      } else {
+        // Legacy/shadow keep the historical dependency/status semantics byte-for-byte.
+        pendingStories = await pgQuery<any>(
+          `SELECT * FROM stories
+           WHERE run_id = $1 AND status = 'pending'
+           ORDER BY CASE WHEN story_id LIKE 'QA-FIX-%' THEN 0 ELSE 1 END, story_index ASC`,
+          [step.run_id],
+        );
+
+        for (const candidate of pendingStories) {
+          if (candidate.depends_on) {
+            try {
+              const deps: string[] = JSON.parse(candidate.depends_on);
+              if (deps.length > 0) {
+                const completedIds = (await pgQuery<{ story_id: string }>("SELECT story_id FROM stories WHERE run_id = $1 AND status IN ('done', 'failed', 'verified', 'skipped')", [step.run_id])
+                ).map((r: any) => r.story_id);
+                const completedSet = new Set(completedIds);
+                const unmet = deps.filter(d => !completedSet.has(d));
+                if (unmet.length > 0) {
+                  logger.info(`Story ${candidate.story_id} blocked by unmet dependencies: ${unmet.join(', ')}`, { runId: step.run_id });
+                  continue;
+                }
+              }
+            } catch (e) {
+              logger.warn(`Failed to parse depends_on for story ${candidate.story_id}: ${String(e)}`, { runId: step.run_id });
+            }
+          }
+          nextStory = candidate;
+          break;
+        }
       }
 
       if (!nextStory) {
@@ -5713,13 +7003,87 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
         // loop runs out of pending work while holding a failed story. We now leave failed
         // stories in 'failed' status so the run-level guardrail in checkLoopContinuation
         // fails the run instead of silently marching on.
-        const failedStory = await findStoryByStatus(step.run_id, "failed") as { id: string } | undefined;
+        const failedStory = await pgGet<{ id: string; story_id: string }>(
+          "SELECT id, story_id FROM stories WHERE run_id = $1 AND status = 'failed' ORDER BY story_index, id LIMIT 1",
+          [step.run_id],
+        );
 
         // Check if other stories are still running in parallel
         const runningStory = await pgGet<{ id: string }>("SELECT id FROM stories WHERE run_id = $1 AND status = 'running'", [step.run_id]);
         if (runningStory) {
           // (removed: fake transaction cleanup)
         return { found: false }; // Other stories still running, wait for them
+        }
+
+        if (failedStory) {
+          const pendingCompletionOwner = await pgGet<{ count: number }>(
+            `SELECT COUNT(*)::integer AS count
+               FROM runtime_completion_requests rcr
+              WHERE rcr.run_id = $1
+                AND rcr.story_db_id = $2
+                AND (
+                  rcr.state IN ('requested', 'draining', 'processing')
+                  OR EXISTS (
+                    SELECT 1 FROM runtime_completion_effects rce
+                     WHERE rce.request_id = rcr.request_id
+                       AND rce.mandatory
+                       AND rce.state NOT IN ('applied', 'reconciled')
+                  )
+                )`,
+            [step.run_id, failedStory.id],
+          );
+          if ((pendingCompletionOwner?.count ?? 0) > 0) {
+            logger.info("[loop-guard] Failed story is still owned by its durable completion effect", {
+              runId: step.run_id,
+              stepId: step.step_id,
+            });
+            return { found: false };
+          }
+
+          const failedRunProtocol = await pgGet<{ protocol: string }>(
+            "SELECT protocol FROM runs WHERE id = $1",
+            [step.run_id],
+          );
+          let failureDiagnostic = `LOOP_FAILED_STORY_TERMINAL: story ${failedStory.story_id || failedStory.id} is failed and has no durable recovery owner`;
+          if (failedRunProtocol?.protocol === "v3") {
+            const recovery = await pgGet<{
+              recovery_status: string | null;
+              active_deliveries: number;
+            }>(
+              `SELECT rc.status AS recovery_status,
+                      (SELECT COUNT(*)::integer
+                         FROM recovery_dispatch_deliveries delivery
+                        WHERE delivery.run_id = $1
+                          AND delivery.story_id = $2
+                          AND delivery.state IN ('authorized', 'leased', 'attempt_reserved', 'running')) AS active_deliveries
+                 FROM recovery_cases rc
+                WHERE rc.run_id = $1 AND rc.story_id = $2
+                ORDER BY rc.updated_at DESC, rc.recovery_case_id
+                LIMIT 1`,
+              [step.run_id, failedStory.story_id || ""],
+            );
+            if ((recovery?.active_deliveries ?? 0) > 0) {
+              logger.info("[loop-guard] Canonical recovery delivery owns the failed v3 story", {
+                runId: step.run_id,
+                stepId: step.step_id,
+              });
+              return { found: false };
+            }
+            failureDiagnostic = recovery?.recovery_status === "blocked"
+              ? `V3_RECOVERY_BUDGET_EXHAUSTED: story ${failedStory.story_id || failedStory.id} reached canonical blocked state`
+              : `V3_RECOVERY_OWNER_MISSING: failed story ${failedStory.story_id || failedStory.id} has no active delivery or mandatory completion effect (case=${recovery?.recovery_status || "missing"})`;
+          }
+          logger.error(failureDiagnostic, { runId: step.run_id, stepId: step.step_id });
+          await pgRun(
+            "UPDATE steps SET status = 'failed', current_story_id = NULL, output = $1, updated_at = $2 WHERE id = $3 AND status IN ('pending', 'running')",
+            [failureDiagnostic, now(), step.id],
+          );
+          await failRun(step.run_id, true, failureDiagnostic);
+          const failedWfId = await getWorkflowId(step.run_id);
+          emitEvent({ ts: now(), event: "step.failed", runId: step.run_id, workflowId: failedWfId, stepId: step.step_id, detail: failureDiagnostic });
+          emitEvent({ ts: now(), event: "run.failed", runId: step.run_id, workflowId: failedWfId, detail: failureDiagnostic });
+          scheduleRunCronTeardown(step.run_id);
+          return { found: false };
         }
 
         // DEPENDENCY DEADLOCK GUARD: pending stories exist but all blocked by deps — FAIL RUN (v1.5.53)
@@ -5761,71 +7125,75 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
           return { found: false };
         }
 
-        // No pending, running, or failed stories — mark step done and advance
+        const durableCompletionOwner = await pgGet<{ count: number }>(
+          `SELECT COUNT(*)::integer AS count
+             FROM runtime_completion_requests rcr
+            WHERE rcr.run_id = $1 AND rcr.step_db_id = $2
+              AND (
+                rcr.state IN ('requested', 'draining', 'processing')
+                OR EXISTS (
+                  SELECT 1 FROM runtime_completion_effects rce
+                   WHERE rce.request_id = rcr.request_id
+                     AND rce.mandatory
+                     AND rce.state NOT IN ('applied', 'reconciled')
+                )
+              )`,
+          [step.run_id, step.id],
+        );
+        if ((durableCompletionOwner?.count ?? 0) > 0) {
+          logger.info("[loop-guard] Durable completion/effect owner still controls loop finalization", {
+            runId: step.run_id,
+            stepId: step.step_id,
+          });
+          return { found: false };
+        }
+
+        const finalLoopConfig = parseLoopConfigSafe(step.loop_config, step.run_id);
+        if (finalLoopConfig?.mergeStrategy === "direct-merge") {
+          const diagnostic = "DIRECT_MERGE_COMPLETION_RECEIPT_MISSING: all stories are terminal but no durable merge/final-PR effect owns loop finalization";
+          await pgRun(
+            "UPDATE steps SET status = 'failed', output = $1, updated_at = $2 WHERE id = $3",
+            [diagnostic, now(), step.id],
+          );
+          await failRun(step.run_id, true, diagnostic);
+          emitEvent({
+            ts: now(),
+            event: "step.failed",
+            runId: step.run_id,
+            workflowId: await getWorkflowId(step.run_id),
+            stepId: step.step_id,
+            detail: diagnostic,
+          });
+          return { found: false };
+        }
+
+        // No pending, running, failed, or durable completion-owned stories.
+        // Only a non-direct-merge loop may publish done from this claim path.
         await pgRun("UPDATE steps SET status = 'done', updated_at = $1 WHERE id = $2", [now(), step.id]);
         emitEvent({ ts: now(), event: "step.done", runId: step.run_id, workflowId: await getWorkflowId(step.run_id), stepId: step.step_id, agentId: agentId });
         await advancePipeline(step.run_id);
         return { found: false };
       }
 
-      if (await fastForwardMechanicallySatisfiedPrReviewRetry(step, nextStory, context)) {
+      if (
+        runProtocol?.protocol !== "v3"
+        && await fastForwardMechanicallySatisfiedPrReviewRetry(step, nextStory, context)
+      ) {
         logger.info(`[claim] Fast-forwarded satisfied PR review retry for ${nextStory.story_id}; verify will re-check PR state`, { runId: step.run_id });
         return { found: false };
       }
 
-      // ── DEVELOPER RESERVATION: one developer per project (atomic CAS) ──
-      // When a developer agent claims an implement step, the system locks that
-      // developer to this run. Other developers skip this run, and this developer
-      // skips other runs. Developers are released when the run completes/fails
-      // (query-based: WHERE status='running' filters out finished runs).
-      //
-      // Uses atomic UPDATE ... WHERE ... RETURNING to prevent TOCTOU race:
-      // two agents polling simultaneously cannot both assign themselves.
-      if (callerGatewayAgent) {
-        // Atomic CAS: assign developer only if slot is empty AND developer is free
-        const claimed = await pgGet<{ assigned_developer: string }>(
-          `UPDATE runs SET assigned_developer = $1
-           WHERE id = $2 AND assigned_developer IS NULL
-           AND NOT EXISTS (
-             SELECT 1 FROM runs WHERE status = 'running' AND assigned_developer = $1 AND id != $2
-           )
-           RETURNING assigned_developer`,
-          [callerGatewayAgent, step.run_id]
-        );
-        if (!claimed) {
-          // CAS failed — either someone else got it, or this agent is busy elsewhere
-          const existing = await pgGet<{ assigned_developer: string | null }>(
-            "SELECT assigned_developer FROM runs WHERE id = $1", [step.run_id]
-          );
-          if (existing?.assigned_developer === callerGatewayAgent) {
-            // This agent is already assigned to this run — proceed (re-claim after retry)
-          } else {
-            return { found: false };
-          }
-        } else {
-          logger.info(`[developer-reservation] Assigned ${callerGatewayAgent} to run ${step.run_id.slice(0, 8)}`, { runId: step.run_id });
-        }
-      }
-
       // PARALLEL LIMIT: Don't exceed max concurrent running stories
       const runningStoryCount = { cnt: await countStoriesByStatus(step.run_id, "running") };
-      const parallelLimit = loopConfig?.parallelCount ?? 3;
+      // Compatibility fence: legacy completion APIs identify only the shared
+      // loop step. Compiler runs stay serial until the immutable completion
+      // token replaces steps.current_story_id as lifecycle authority.
+      const parallelLimit = runProtocol?.protocol === "legacy" ? (loopConfig?.parallelCount ?? 3) : 1;
       if (runningStoryCount.cnt >= parallelLimit) {
         // (removed: fake transaction cleanup)
         return { found: false }; // At capacity, wait for running stories to finish
       }
 
-      // Atomic story claim with FOR UPDATE SKIP LOCKED — prevents double-claim race condition
-      // Pass dependency-checked story ID to respect story ordering
-      const { claimNextStory } = await import("./repo.js");
-      const claimedStory = await claimNextStory(step.run_id, agentId, nextStory?.id);
-      if (!claimedStory) {
-        // No pending stories available (all locked or done)
-        logger.info(`[claim] No pending stories available to claim — all locked or done`, { runId: step.run_id });
-        return { found: false };
-      }
-      // Use the atomically claimed story for all subsequent operations
-      nextStory = claimedStory;
       // ISSUE-1 FIX: Use {runIdPrefix}-{storyId} for branch name to prevent collisions across runs
       const storyRunPrefix = step.run_id.slice(0, 8);
       const isPostMergeQualityRepair =
@@ -5839,52 +7207,138 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
           : (existingStoryBranch || `${storyRunPrefix}-${nextStory.story_id}`)
       ).toLowerCase();
 
-      // Wave 4 fix #10 (plan: reactive-frolicking-cupcake): previously we updated
-      // `steps.current_story_id` BEFORE creating the worktree. If the process died
-      // between the DB update and the worktree creation (gateway restart, OOM kill,
-      // agent crash), the DB pointed at a claimed story with no working directory
-      // and the only recovery was a medic reset. Now we create the worktree first —
-      // a pure filesystem operation with no DB side-effects — and only update
-      // `current_story_id` once we have a valid `storyWorkdir`. A crash in the
-      // filesystem phase leaves the step in its previous state and the next claim
-      // loop re-picks the story cleanly.
-
       // GUARD: Repo path MUST exist — without it, agent works in wrong directory
       if (!context["repo"]) {
         const noRepoReason = "MISSING_REPO: context['repo'] is empty — cannot implement story without project path";
         logger.error(`[claim] ${noRepoReason} (story=${nextStory.story_id})`, { runId: step.run_id });
         await pgRun("UPDATE stories SET status = 'failed', output = $1, updated_at = $2 WHERE id = $3",
           [noRepoReason, now(), nextStory.id]);
-        try { await pgRun("UPDATE claim_log SET outcome = 'failed', diagnostic = $1 WHERE story_id = $2 AND outcome IS NULL", [noRepoReason, nextStory.story_id]); } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); }
         emitEvent({ ts: now(), event: "story.failed", runId: step.run_id, workflowId: await getWorkflowId(step.run_id), stepId: step.step_id, detail: noRepoReason });
         return { found: false };
       }
 
-      // GIT WORKTREE ISOLATION: Create OUTSIDE transaction to avoid holding DB
-      // lock during slow git operations. Done BEFORE the DB update so the DB
-      // never references a worktree that does not exist.
+      const requestedBaseRef = isPrEach ? "main" : (context["implement_base_commit"] || context["branch"] || "master");
+      const publication = await publishLoopClaimAndRuntime(
+        step,
+        nextStory,
+        agentId,
+        callerGatewayAgent,
+        parallelLimit,
+        runtimeIntent,
+        undefined,
+        v3PreparationAuthority,
+      );
+      if (!publication) {
+        logger.info(`[claim] Story publication lost a concurrency or termination race`, { runId: step.run_id, stepId: step.step_id });
+        return { found: false };
+      }
+      const legacyClaimId = publication.claimId;
+      const claimRuntime = publication.runtime;
+      if (
+        runProtocol?.protocol === "v3"
+        && (
+          !v3PreparationAuthority
+          || !v3PreparedBaseRevision
+          || publication.claimAuthority?.mode !== "preparation"
+          || publication.claimAuthority.authority.authorityHash !== v3PreparationAuthority.authorityHash
+          || publication.baseRevision?.sha !== v3PreparedBaseRevision.sha
+          || publication.baseRevision.treeHash !== v3PreparedBaseRevision.treeHash
+        )
+      ) {
+        const authorityReason = "V3_PREPARATION_PUBLICATION_RESULT_MISMATCH";
+        await pgBegin(async (sql) => {
+          await closeReservedClaimRuntimeInTransaction(sql, {
+            claimId: legacyClaimId,
+            outcome: "infra_retry",
+            diagnostic: authorityReason,
+            runtime: claimRuntime,
+          });
+          await sql.unsafe(
+            `UPDATE stories
+                SET status = 'pending', claimed_at = NULL, claimed_by = NULL, updated_at = $2
+              WHERE id = $1 AND status = 'running'`,
+            [nextStory.id, now()],
+          );
+          await sql.unsafe(
+            `UPDATE steps
+                SET status = 'pending', current_story_id = NULL, updated_at = $2
+              WHERE id = $1`,
+            [step.id, now()],
+          );
+        });
+        logger.error(authorityReason, { runId: step.run_id, stepId: step.step_id });
+        return { found: false };
+      }
+      const baseRef = runProtocol?.protocol === "v3"
+        ? publication.baseRevision!.sha
+        : requestedBaseRef;
+      nextStory.claim_generation = publication.claimGeneration;
+      nextStory.status = "running";
+      nextStory.claimed_by = agentId;
+      await recordStepTransition(step.id, step.run_id, step.step_status, "running", agentId, "claimLoopStep", { storyId: nextStory.story_id });
+
+      // Provision after durable ownership publication. A crash here leaves a
+      // recoverable reserved runtime, never an ownerless running story.
       //
       // direct-merge pins all sibling stories to one feature-branch commit.
       // pr-each is different: each story starts from the latest main after the
       // previous story PR was merged and local main was synced.
-      const baseRef = isPrEach ? "main" : (context["implement_base_commit"] || context["branch"] || "master");
-      if (isPrEach && context["repo"]) syncBaseBranch(context["repo"], "main");
-      const storyWorkdir = createStoryWorktree(context["repo"], storyBranch, baseRef, agentId);
+      if (runProtocol?.protocol !== "v3" && isPrEach && context["repo"]) {
+        syncBaseBranch(context["repo"], "main");
+      }
+      let storyWorkdir = createStoryWorktree(context["repo"], storyBranch, baseRef, agentId);
+      let worktreeFailureDetail = "";
+      if (storyWorkdir && runProtocol?.protocol === "v3") {
+        try {
+          const observed = resolveV3GitRevision({
+            repo: storyWorkdir,
+            requestedRef: "HEAD",
+            expectedSha: baseRef,
+          });
+          if (
+            observed.treeHash !== publication.baseRevision!.treeHash
+            || observed.treeHash !== v3PreparedBaseRevision!.treeHash
+          ) {
+            throw new Error("V3_PREPARATION_WORKTREE_TREE_MISMATCH");
+          }
+        } catch (error) {
+          worktreeFailureDetail = String((error as Error)?.message || error).slice(0, 1_000);
+          removeStoryWorktree(context["repo"], storyBranch, agentId);
+          storyWorkdir = "";
+        }
+      }
       if (!storyWorkdir) {
-        // Worktree creation failed — revert story claim, do not touch step state
-        const wtReason = `Worktree creation failed for story ${nextStory.story_id} — cannot isolate parallel work`;
+        const wtReason = `Worktree creation failed for story ${nextStory.story_id} — cannot isolate exact prepared source${worktreeFailureDetail ? `: ${worktreeFailureDetail}` : ""}`;
         logger.error(wtReason, { runId: step.run_id, stepId: step.step_id });
-        // Revert story to pending so the next claim loop can retry with a fresh worktree
-        // (not 'failed' — the story's own implementation was never attempted)
-        await pgRun("UPDATE stories SET status = 'pending', claimed_at = NULL, claimed_by = NULL, updated_at = $1 WHERE id = $2", [now(), nextStory.id]);
-        try { await pgRun("UPDATE claim_log SET outcome = 'failed', diagnostic = $1 WHERE story_id = $2 AND outcome IS NULL", [wtReason, nextStory.story_id]); } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); }
+        await pgBegin(async (sql) => {
+          await closeReservedClaimRuntimeInTransaction(sql, {
+            claimId: legacyClaimId,
+            outcome: "infra_retry",
+            diagnostic: wtReason,
+            runtime: claimRuntime,
+          });
+          await sql.unsafe(
+            `UPDATE stories
+                SET status = 'pending', claimed_at = NULL, claimed_by = NULL, updated_at = $2
+              WHERE id = $1 AND status = 'running'`,
+            [nextStory.id, now()],
+          );
+          await sql.unsafe(
+            `UPDATE steps
+                SET status = CASE
+                      WHEN EXISTS (
+                        SELECT 1 FROM stories
+                         WHERE run_id = $2 AND status = 'running' AND id <> $3
+                      ) THEN 'running' ELSE 'pending' END,
+                    current_story_id = CASE WHEN current_story_id = $3 THEN NULL ELSE current_story_id END,
+                    updated_at = $4
+              WHERE id = $1`,
+            [step.id, step.run_id, nextStory.id, now()],
+          );
+        });
         emitEvent({ ts: now(), event: "story.retry", runId: step.run_id, workflowId: await getWorkflowId(step.run_id), stepId: step.step_id, storyId: nextStory.story_id, storyTitle: nextStory.title, detail: wtReason });
         return { found: false };
       }
-
-      // Worktree is ready — NOW update the step to point at the story.
-      await pgRun("UPDATE steps SET status = 'running', current_story_id = $1, started_at = COALESCE(started_at, NOW()), updated_at = $2 WHERE id = $3", [nextStory.id, now(), step.id]);
-      await recordStepTransition(step.id, step.run_id, "pending", "running", agentId, "claimLoopStep", { storyId: nextStory.story_id });
 
       context["story_workdir"] = storyWorkdir;
       context["story_base_ref"] = baseRef;
@@ -5932,21 +7386,6 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
         logger.warn(`[story-branch] Could not read branch from worktree, using computed: ${storyBranch}`, { runId: step.run_id });
       }
 
-      // v1.5.50: Record claim in claim_log + update story claim metadata
-      const claimNow = now();
-      let legacyClaimId: number | null = null;
-      try {
-        const claimRow = await pgGet<{ id: string }>(
-          "INSERT INTO claim_log (run_id, step_id, story_id, agent_id, claimed_at) VALUES ($1, $2, $3, $4, $5) RETURNING id::text AS id",
-          [step.run_id, step.step_id, nextStory.story_id, agentId, claimNow],
-        );
-        await pgRun("UPDATE stories SET claimed_at = $1, claimed_by = $2 WHERE id = $3", [claimNow, agentId, nextStory.id]);
-        const parsedClaimId = Number(claimRow?.id);
-        if (!Number.isSafeInteger(parsedClaimId) || parsedClaimId <= 0) {
-          throw new Error("CLAIM_LOG_ID_INVALID");
-        }
-        legacyClaimId = parsedClaimId;
-      } catch (e) { logger.warn(`[claim-log] Failed to record claim: ${String(e)}`, { runId: step.run_id }); }
       // v2026.4.12: Merge dependency branches into worktree for integration stories.
       // Stories with depends_on start from implement_base_commit (empty project).
       // Without this, the agent sees no code from prior stories and reimplements
@@ -6098,6 +7537,83 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
         } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); }
       }
 
+      let nativeV3Attempt: ClaimAttemptFenceV1 | undefined;
+      let nativeV3ImplementationHandoff: V3ImplementationClaimHandoffV1 | undefined;
+      if (runProtocol?.protocol === "v3") {
+        try {
+          const compiled = await reserveV3ImplementationAttempt({
+            runId: step.run_id,
+            stepId: step.step_id,
+            storyId: nextStory.story_id,
+            claimId: legacyClaimId,
+            role: agentId,
+            agentId,
+            branch: String(context["story_branch"] || storyBranch),
+            worktree: storyWorkdir,
+          });
+          applyV3ImplementationSliceContext(context, compiled);
+          nativeV3Attempt = {
+            attemptId: compiled.attempt.attemptId,
+            generation: compiled.attempt.generation,
+            fenceToken: compiled.attempt.fenceToken,
+          };
+          nativeV3ImplementationHandoff = structuredV3ImplementationHandoff({
+            stepDbId: step.id,
+            storyDbId: nextStory.id,
+            claimId: legacyClaimId,
+            branch: String(context["story_branch"] || storyBranch),
+            workdir: storyWorkdir,
+            compiled,
+          });
+        } catch (error) {
+          const reason = `V3_IMPLEMENTATION_SLICE_RESERVATION_FAILED:${String((error as Error)?.message || error)}`.slice(0, 4_000);
+          await pgBegin(async (sql) => {
+            await closeReservedClaimRuntimeInTransaction(sql, {
+              claimId: legacyClaimId,
+              outcome: "infra_retry",
+              diagnostic: reason,
+              runtime: claimRuntime,
+            });
+            await sql.unsafe(
+              `UPDATE stories
+                  SET status = 'pending', claimed_at = NULL, claimed_by = NULL,
+                      output = $2, updated_at = $3
+                WHERE id = $1 AND status = 'running'`,
+              [nextStory.id, reason, now()],
+            );
+            await sql.unsafe(
+              `UPDATE steps
+                  SET status = CASE
+                        WHEN EXISTS (
+                          SELECT 1 FROM stories
+                           WHERE run_id = $2 AND status = 'running' AND id <> $3
+                        ) THEN 'running' ELSE 'pending' END,
+                      current_story_id = CASE WHEN current_story_id = $3 THEN NULL ELSE current_story_id END,
+                      updated_at = $4
+                WHERE id = $1`,
+              [step.id, step.run_id, nextStory.id, now()],
+            );
+          });
+          removeStoryWorktree(context["repo"], storyBranch, agentId);
+          await recordObservation({
+            runId: step.run_id,
+            stepId: step.step_id,
+            storyId: nextStory.story_id,
+            phase: "product-compiler-v3",
+            checkId: `product_compiler.v3.slice_reservation:${legacyClaimId}`,
+            label: "V3 implementation slice reservation",
+            status: "blocked",
+            summary: "Claim was withdrawn before agent spawn because its sealed slice could not be reserved",
+            detail: reason,
+            evidence: {
+              schema: "setfarm.v3-slice-reservation-failure.v1",
+              claimId: legacyClaimId,
+            },
+          });
+          return { found: false };
+        }
+      }
+
       // Wave 14 Bug K: per-step context allowlist for loop (story-each) claims.
       // Loop steps inject heavy design context (stitch_html, design_dom, etc.)
       // which only implement needs. Downstream loop steps (verify-each if used,
@@ -6117,6 +7633,7 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
         const storyRetry = await pgGet<{ retry_count: number }>("SELECT retry_count FROM stories WHERE id = $1", [nextStory.id]);
         const retryCount = storyRetry?.retry_count ?? 0;
         logger.warn(`${reason} (story=${nextStory.story_id}, retry=${retryCount})`, { runId: step.run_id, stepId: step.step_id });
+        await closeUnstartedStoryClaimExact(legacyClaimId, reason, "failed", claimRuntime);
         // Reset the claimed story
         if (retryCount > 0) {
           // Second occurrence — fail everything (Wave 13 J-2: terminal flag)
@@ -6133,7 +7650,6 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
           await pgRun("UPDATE stories SET status = 'pending', claimed_by = NULL, claimed_at = NULL, retry_count = retry_count + 1, output = $1, updated_at = $2 WHERE id = $3", [reason + " — retrying once", now(), nextStory.id]);
           await pgRun("UPDATE steps SET current_story_id = NULL, updated_at = $1 WHERE id = $2", [now(), step.id]);
           if (context["repo"]) removeStoryWorktree(context["repo"], storyBranch, agentId);
-          try { await pgRun("UPDATE claim_log SET outcome = 'failed', diagnostic = $1 WHERE story_id = $2 AND outcome IS NULL", [reason, nextStory.story_id]); } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); }
           logger.info(`[missing-input] Story ${nextStory.story_id} will retry — possible WAL lag`, { runId: step.run_id });
         }
         return { found: false };
@@ -6146,16 +7662,17 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
       if (emptyVars.length > 0) {
         const emptyReason = `EMPTY_CRITICAL_VARS: [${emptyVars.join(", ")}] are empty — cannot implement story`;
         logger.warn(`[claim] ${emptyReason} (story=${nextStory.story_id})`, { runId: step.run_id });
+        await closeUnstartedStoryClaimExact(legacyClaimId, emptyReason, "failed", claimRuntime);
         await pgRun("UPDATE stories SET status = 'failed', output = $1, updated_at = $2 WHERE id = $3",
           [emptyReason, now(), nextStory.id]);
         await pgRun("UPDATE steps SET current_story_id = NULL, updated_at = $1 WHERE id = $2", [now(), step.id]);
-        try { await pgRun("UPDATE claim_log SET outcome = 'failed', diagnostic = $1 WHERE story_id = $2 AND outcome IS NULL", [emptyReason, nextStory.story_id]); } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); }
         if (context["repo"]) removeStoryWorktree(context["repo"], storyBranch, agentId);
         return { found: false };
       }
 
-      if (legacyClaimId !== null) {
-        await observeShadowAttemptClaim({
+      let shadowAttempt: ClaimAttemptFenceV1 | undefined = nativeV3Attempt;
+      if (runProtocol?.protocol === "shadow") {
+        const shadowClaim = await observeShadowAttemptClaim({
           runId: step.run_id,
           stepId: step.step_id,
           storyId: nextStory.story_id,
@@ -6169,14 +7686,80 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
           branch: String(context["story_branch"] || storyBranch),
           worktree: storyWorkdir,
         });
+        if (
+          shadowClaim.status === "observed"
+          && shadowClaim.code === "ATTEMPT_RESERVED"
+          && shadowClaim.attempt?.evidenceRefs.includes(`setfarm://claim-log/${legacyClaimId}`)
+        ) {
+          shadowAttempt = {
+            attemptId: shadowClaim.attempt.attemptId,
+            generation: shadowClaim.attempt.generation,
+            fenceToken: shadowClaim.attempt.fenceToken,
+          };
+        }
       }
 
-      return { found: true, stepId: step.id, runId: step.run_id, storyId: nextStory.story_id, storyDbId: nextStory.id, resolvedInput };
+      if (runProtocol?.protocol && runProtocol.protocol !== "legacy") {
+        if (!shadowAttempt) {
+          const fence = await ensureCompilerClaimFence(getSql(), {
+            claimId: legacyClaimId,
+            runId: step.run_id,
+            stepId: step.step_id,
+            storyId: nextStory.story_id,
+            storyDbId: nextStory.id,
+            claimAgentId: agentId,
+            diagnostic: "COMPILER_ATTEMPT_RESERVATION_REQUIRED: claim withdrawn before runtime spawn",
+          });
+          if (fence.status === "fenced") {
+            shadowAttempt = fence.attempt;
+          } else {
+            if (fence.status === "reverted" && context["repo"]) {
+              removeStoryWorktree(context["repo"], storyBranch, agentId);
+            }
+            await pgBegin((sql) => closeReservedClaimRuntimeInTransaction(sql, {
+              claimId: legacyClaimId,
+              outcome: "infra_retry",
+              diagnostic: `Compiler fence unavailable: ${fence.status === "blocked" ? fence.reason : fence.status}`,
+              runtime: claimRuntime,
+            }));
+            logger.warn(`[claim] compiler claim not handed off: ${fence.status === "blocked" ? fence.reason : fence.status}`, { runId: step.run_id, stepId: step.step_id });
+            return { found: false };
+          }
+        }
+      }
+
+      if (shadowAttempt && claimRuntime) {
+        await pgBegin((sql) => bindRuntimeSessionAttemptInTransaction(sql, {
+          sessionId: claimRuntime.sessionId,
+          attemptId: shadowAttempt!.attemptId,
+          ownerInstanceId: claimRuntime.ownerInstanceId,
+        }));
+      }
+
+      return {
+        found: true,
+        stepId: step.id,
+        workflowStepId: step.step_id,
+        runId: step.run_id,
+        protocol: (runProtocol?.protocol || "legacy") as "legacy" | "shadow" | "v3",
+        storyId: nextStory.story_id,
+        storyDbId: nextStory.id,
+        claimGeneration: Number(nextStory.claim_generation ?? 0),
+        ...(shadowAttempt ? { attempt: shadowAttempt } : {}),
+        claimId: legacyClaimId,
+        claimAgentId: agentId,
+        ...(claimRuntime ? {
+          runtimeSessionId: claimRuntime.sessionId,
+          runtimeOwnerInstanceId: claimRuntime.ownerInstanceId,
+        } : {}),
+        ...(nativeV3ImplementationHandoff ? { v3ImplementationHandoff: nativeV3ImplementationHandoff } : {}),
+        resolvedInput,
+      };
     }
   }
 
   // Single (non-loop) step claim path
-  return await claimSingleStep(step, agentId, context, null);
+  return await claimSingleStep(step, agentId, context, null, runtimeIntent);
 }
 
 // ── Complete ────────────────────────────────────────────────────────
@@ -6184,7 +7767,12 @@ export async function claimStep(agentId: string, callerGatewayAgent?: string): P
 /**
  * Complete a step: save output, merge context, advance pipeline.
  */
-export async function completeStep(stepId: string, output: string): Promise<{ advanced: boolean; runCompleted: boolean }> {
+export async function completeStep(
+  stepId: string,
+  output: string,
+  claimEnvelope?: ClaimEnvelopeV1,
+  options: Readonly<{ deferContinuationToEffectLedger?: boolean }> = {},
+): Promise<{ advanced: boolean; runCompleted: boolean }> {
   sanitizePlatformProcessPath();
 
   type StepRow = { id: string; run_id: string; step_id: string; step_index: number; type: string; loop_config: string | null; current_story_id: string | null; agent_id: string; retry_count: number; max_retries: number };
@@ -6214,6 +7802,17 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
     }
   }
 
+  const completionAuthority = claimEnvelope
+    ? await assertClaimAuthority(getSql(), claimEnvelope, step.id)
+    : undefined;
+  const runProtocol = await pgGet<{ protocol: string }>("SELECT protocol FROM runs WHERE id = $1", [step.run_id]);
+  if (runProtocol?.protocol !== "legacy" && !completionAuthority) {
+    throw new Error("CLAIM_ENVELOPE_REQUIRED");
+  }
+  if (completionAuthority?.storyDbId) {
+    step.current_story_id = completionAuthority.storyDbId;
+  }
+
   // Guard: don't process late completions for terminal runs. Agents can keep
   // running after a user cancellation until their OpenClaw session is reaped;
   // accepting their output would mutate context/stories after the run is dead.
@@ -6223,18 +7822,93 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
     return { advanced: false, runCompleted: false };
   }
 
-  // Merge KEY: value lines into run context
+  const isNativeV3ImplementCompletion = completionAuthority?.protocol === "v3"
+    && step.step_id === "implement"
+    && step.type === "loop"
+    && Boolean(completionAuthority.storyId && completionAuthority.storyDbId);
+  const isNativeV3PlanCompletion = completionAuthority?.protocol === "v3"
+    && step.step_id === "plan"
+    && step.type === "single";
+  let nativeV3AgentOutput: V3ImplementationAgentOutputV1 | undefined;
+  let nativeV3AgentContext: V3ImplementationContextV1 | undefined;
+  let nativeV3AttemptContext: V3ImplementationAttemptResult | undefined;
+  let nativeV3PlanAuthority: V3PlanOutputAuthorityV1 | undefined;
+
+  // Native v3 forks before legacy KEY:value merging and every prose classifier.
+  // The only accepted agent influence is the strict, handoff-bound JSON
+  // protocol. Platform worktree/process policy and canonical evidence still run
+  // below; summary prose is inert data and cannot mutate operational context.
+  if (isNativeV3ImplementCompletion) {
+    const envelope = completionAuthority.envelope;
+    const attemptId = envelope.attempt?.attemptId;
+    if (!attemptId || !envelope.storyId || !envelope.storyDbId) {
+      throw new Error("V3_IMPLEMENTATION_COMPLETION_IDENTITY_REQUIRED");
+    }
+    const compiled = await loadV3ImplementationAttemptContext({
+      runId: envelope.runId,
+      storyId: envelope.storyId,
+      attemptId,
+    });
+    nativeV3AttemptContext = compiled;
+    if (!compiled.attempt.branch || !compiled.attempt.worktree) {
+      throw new Error("V3_IMPLEMENTATION_ATTEMPT_WORKSPACE_IDENTITY_REQUIRED");
+    }
+    const handoff = structuredV3ImplementationHandoff({
+      stepDbId: step.id,
+      storyDbId: envelope.storyDbId,
+      claimId: envelope.claimId,
+      branch: compiled.attempt.branch,
+      workdir: compiled.attempt.worktree,
+      compiled,
+    });
+    nativeV3AgentContext = createV3ImplementationContextV1({ handoff });
+    nativeV3AgentOutput = parseV3ImplementationAgentOutputV1(output, nativeV3AgentContext);
+    if (nativeV3AgentOutput.disposition === "refused") {
+      await handleV3ImplementationRefusal({
+        envelope,
+        context: nativeV3AgentContext,
+        output: nativeV3AgentOutput,
+        rawOutput: output,
+      });
+      return { advanced: false, runCompleted: false };
+    }
+  }
+
+  // Merge KEY: value lines into run context (legacy/shadow only).
   const context: Record<string, string> = await getRunContext(step.run_id);
 
   // Parse KEY: value lines and merge into context
   // #197: Protect seed context keys from being overwritten by step output
-  const parsed = parseOutputKeyValues(output);
-  for (const [key, value] of Object.entries(parsed)) {
-    if (PROTECTED_CONTEXT_KEYS.has(key) && context[key]) {
-      logger.warn(`[context] Blocked overwrite of protected key "${key}" (current: "${context[key]}", attempted: "${value}")`, { runId: step.run_id });
-      continue;
+  const parsed: Record<string, string> = isNativeV3ImplementCompletion
+    ? {
+        status: "done",
+        changes: nativeV3AgentOutput?.disposition === "ready_for_evidence"
+          ? nativeV3AgentOutput.summary
+          : "",
+      }
+    : parseOutputKeyValues(output);
+  if (isNativeV3PlanCompletion) {
+    nativeV3PlanAuthority = resolveV3PlanOutputAuthorityV1({
+      task: context["task"] || "",
+      parsed,
+    });
+    if (nativeV3PlanAuthority.status === "rejection") {
+      await completeV3PlanProductSpecRefusal({
+        envelope: completionAuthority!.envelope,
+        task: context["task"] || "",
+        rejection: nativeV3PlanAuthority.rejection,
+      });
+      return { advanced: false, runCompleted: false };
     }
-    context[key] = value;
+  }
+  if (!isNativeV3ImplementCompletion) {
+    for (const [key, value] of Object.entries(parsed)) {
+      if (PROTECTED_CONTEXT_KEYS.has(key) && context[key]) {
+        logger.warn(`[context] Blocked overwrite of protected key "${key}" (current: "${context[key]}", attempted: "${value}")`, { runId: step.run_id });
+        continue;
+      }
+      context[key] = value;
+    }
   }
 
   // Wave 13 Bug N (run #344 postmortem): dangerous command guard. In run #344
@@ -6251,13 +7925,15 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
     { rx: /\bgit\s+push\s+--force\b/, label: "git push --force" },
     { rx: /\bgit\s+reset\s+--hard\s+origin\/(main|master)\b/, label: "git reset --hard origin/main" },
   ];
-  for (const { rx, label } of DANGEROUS_CMDS) {
-    const m = output.match(rx);
-    if (m) {
-      const snippet = m[0].slice(0, 120);
-      logger.error(`[dangerous-cmd] Blocked command pattern "${label}" in ${step.step_id} output: ${snippet}`, { runId: step.run_id });
-      await failStep(stepId, `DANGEROUS_COMMAND_DETECTED: "${snippet}". The "${label}" pattern is banned — node_modules is a symlink to the main repo so rm -rf breaks sibling worktrees, and force-push / hard-reset destroy history. Use 'git clean -fdx' for build artifacts, 'npm ci' for dependency reset, or push a revert commit instead. Re-implement the story without running that command.`);
-      return { advanced: false, runCompleted: false };
+  if (!isNativeV3ImplementCompletion) {
+    for (const { rx, label } of DANGEROUS_CMDS) {
+      const m = output.match(rx);
+      if (m) {
+        const snippet = m[0].slice(0, 120);
+        logger.error(`[dangerous-cmd] Blocked command pattern "${label}" in ${step.step_id} output: ${snippet}`, { runId: step.run_id });
+        await failStep(stepId, `DANGEROUS_COMMAND_DETECTED: "${snippet}". The "${label}" pattern is banned — node_modules is a symlink to the main repo so rm -rf breaks sibling worktrees, and force-push / hard-reset destroy history. Use 'git clean -fdx' for build artifacts, 'npm ci' for dependency reset, or push a revert commit instead. Re-implement the story without running that command.`, completionAuthority?.envelope);
+        return { advanced: false, runCompleted: false };
+      }
     }
   }
 
@@ -6342,8 +8018,14 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
   // Fix: trim and extract only the first word from the status value.
   const rawStatus = (parsed["status"] || "").trim();
   const statusVal = (rawStatus.indexOf("\n") >= 0 ? rawStatus.slice(0, rawStatus.indexOf("\n")).trim() : rawStatus).split(/\s/)[0].toLowerCase() || undefined;
-  await recordStepOutputObservation(step, parsed, output, context);
-  await recordStackEvidencePlanObservation(step, context);
+  const isV3DownstreamCompletion = completionAuthority?.envelope.protocol === "v3"
+    && (step.step_id === "qa-test" || step.step_id === "final-test");
+  const isV3DeterministicDeployCompletion = completionAuthority?.envelope.protocol === "v3"
+    && step.step_id === "deploy";
+  if (!isNativeV3ImplementCompletion) {
+    await recordStepOutputObservation(step, parsed, output, context);
+    await recordStackEvidencePlanObservation(step, context);
+  }
   const superviseEachConfigForStep = await getSuperviseEachConfigForStep(step);
   const supervisorDecisionVal = firstOutputWord(parsed["supervisor_decision"]);
   if (superviseEachConfigForStep && (statusVal === "retry" || supervisorDecisionVal === "block")) {
@@ -6353,9 +8035,10 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
       superviseEachConfigForStep.verifyStep,
       output,
       context,
+      completionAuthority?.envelope,
     );
   }
-  if (step.step_id === "qa-test") {
+  if (step.step_id === "qa-test" && !isV3DownstreamCompletion) {
     const _modRegistry = await import("./steps/registry.js");
     const _stepModule = _modRegistry.get(step.step_id);
     if (_stepModule) {
@@ -6364,14 +8047,20 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
       if (!_result.ok) {
         const _modErr = `GUARDRAIL [module:${_stepModule.id}]: ${_result.errors.join("; ")}`;
         logger.warn(`[step-module] ${_modErr}`, { runId: step.run_id });
-        await failStep(stepId, _modErr);
+        await failStep(stepId, _modErr, completionAuthority?.envelope);
         return { advanced: false, runCompleted: false };
       }
     }
   }
   if (statusVal === "fail" || statusVal === "failed" || statusVal === "error") {
+    if (
+      isV3DownstreamCompletion
+      && await routeQualityFailureToImplement(step, output, context, completionAuthority?.envelope)
+    ) {
+      return { advanced: false, runCompleted: false };
+    }
     logger.warn(`Agent reported STATUS: ${parsed["status"]} — failing step`, { runId: step.run_id, stepId: step.step_id });
-    await failStep(stepId, `Agent reported failure: ${parsed["status"]}. Output: ${output.slice(0, 500)}`);
+    await failStep(stepId, `Agent reported failure: ${parsed["status"]}. Output: ${output.slice(0, 500)}`, completionAuthority?.envelope);
     return { advanced: false, runCompleted: false };
   }
   let verifyEachRetryHandledLater = false;
@@ -6383,16 +8072,22 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
     // the gap for single-step verify (direct-merge workflows).
     verifyEachRetryHandledLater = await isVerifyEachVerifyStep(step);
     if (!verifyEachRetryHandledLater) {
-      if ((step.step_id === "qa-test" || step.step_id === "final-test" || step.step_id === "verify") && isSmokeInfrastructureFailure(output)) {
-        logger.warn(`[status-parser] Smoke/browser infra retry for ${step.step_id}; retrying step without QA-FIX routing`, { runId: step.run_id, stepId: step.step_id });
-        await failStep(stepId, `INFRA: smoke browser infrastructure failed; retry ${step.step_id}, do not modify app code.\n${output.slice(0, 2000)}`);
+      if (
+        isV3DownstreamCompletion
+        && await routeQualityFailureToImplement(step, output, context, completionAuthority?.envelope)
+      ) {
         return { advanced: false, runCompleted: false };
       }
-      if (await routeQualityFailureToImplement(step, output, context)) {
+      if ((step.step_id === "qa-test" || step.step_id === "final-test" || step.step_id === "verify") && isSmokeInfrastructureFailure(output)) {
+        logger.warn(`[status-parser] Smoke/browser infra retry for ${step.step_id}; retrying step without QA-FIX routing`, { runId: step.run_id, stepId: step.step_id });
+        await failStep(stepId, `INFRA: smoke browser infrastructure failed; retry ${step.step_id}, do not modify app code.\n${output.slice(0, 2000)}`, completionAuthority?.envelope);
+        return { advanced: false, runCompleted: false };
+      }
+      if (await routeQualityFailureToImplement(step, output, context, completionAuthority?.envelope)) {
         return { advanced: false, runCompleted: false };
       }
       logger.warn(`[status-parser] Agent reported STATUS: retry — bouncing step to pending`, { runId: step.run_id, stepId: step.step_id });
-      await failStep(stepId, `Agent requested retry: ${output.slice(0, 500)}`);
+      await failStep(stepId, `Agent requested retry: ${output.slice(0, 500)}`, completionAuthority?.envelope);
       return { advanced: false, runCompleted: false };
     }
     logger.info(`[status-parser] Verify-each retry will be handled by story retry path`, { runId: step.run_id, stepId: step.step_id });
@@ -6402,7 +8097,7 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
     // and must fail loudly. This catches typos, hallucinations ("STATUS: ok"),
     // and future agents that invent new status words without platform support.
     logger.warn(`[status-parser] Agent reported unknown STATUS: "${parsed["status"]}" — treating as failure`, { runId: step.run_id, stepId: step.step_id });
-    await failStep(stepId, `Unknown STATUS: "${parsed["status"]}". Expected one of: done, skip, retry, fail.`);
+    await failStep(stepId, `Unknown STATUS: "${parsed["status"]}". Expected one of: done, skip, retry, fail.`, completionAuthority?.envelope);
     return { advanced: false, runCompleted: false };
   }
   if (!statusVal) {
@@ -6422,13 +8117,15 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
   // which previously skipped the context save — losing parsed output keys.
   // v1.5.47: Snapshot context before save so guardrail failures can rollback bad values.
   const prevContextJson = await pgGet<{ context: string }>("SELECT context FROM runs WHERE id = $1", [step.run_id]);
-  await pgRun("UPDATE runs SET context = $1, updated_at = $2 WHERE id = $3", [JSON.stringify(context), now(), step.run_id]);
+  if (!isNativeV3ImplementCompletion) {
+    await pgRun("UPDATE runs SET context = $1, updated_at = $2 WHERE id = $3", [JSON.stringify(context), now(), step.run_id]);
+  }
 
   // Step module delegation (v2026-04-14).
   // Registered modules OWN their step's validation and side effects.
   // Order: normalize (mutate parsed) → validateOutput (reject on fail) → onComplete (side effects).
   // Unregistered steps fall through to legacy guardrails below.
-  {
+  if (!isNativeV3ImplementCompletion) {
     const _modRegistry = await import("./steps/registry.js");
     const _stepModule = _modRegistry.get(step.step_id);
     if (_stepModule) {
@@ -6438,7 +8135,7 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
         const _modErr = `GUARDRAIL [module:${_stepModule.id}]: ${_result.errors.join("; ")}`;
         logger.warn(`[step-module] ${_modErr}`, { runId: step.run_id });
         if (prevContextJson) { await pgRun("UPDATE runs SET context = $1 WHERE id = $2", [prevContextJson.context, step.run_id]); }
-        await failStep(stepId, _modErr);
+        await failStep(stepId, _modErr, completionAuthority?.envelope);
         return { advanced: false, runCompleted: false };
       }
       if (_stepModule.onComplete) {
@@ -6475,7 +8172,7 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
             }
             await pgRun("UPDATE runs SET context = $1 WHERE id = $2", [restoredContext, step.run_id]);
           }
-          await failStep(stepId, _msg);
+          await failStep(stepId, _msg, completionAuthority?.envelope);
           return { advanced: false, runCompleted: false };
         }
       }
@@ -6485,7 +8182,12 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
         step.step_id === "design" ? "design" :
         step.step_id === "deploy" ? "deploy" :
         "";
-      if (supervisorPhase && (parsed["status"] || "").toLowerCase() === "done") {
+      const runLegacyProductSupervisor = shouldRunLegacyProductSupervisorV1({
+        protocol: completionAuthority?.protocol ?? "legacy",
+        stepId: step.step_id,
+        ...(nativeV3PlanAuthority ? { planAuthority: nativeV3PlanAuthority } : {}),
+      });
+      if (supervisorPhase && runLegacyProductSupervisor && (parsed["status"] || "").toLowerCase() === "done") {
         const { runProductSupervisorGate, updateSupervisorMemory } = await import("./product-supervisor.js");
         const supervisor = runProductSupervisorGate({
           phase: supervisorPhase as any,
@@ -6502,7 +8204,7 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
           context["failure_category"] = supervisor.code;
           context["failure_suggestion"] = "Treat this as product-manager feedback: preserve the original task/PRD, remove untraceable modules, and re-output a coherent result before coding continues.";
           await pgRun("UPDATE runs SET context = $1, updated_at = $2 WHERE id = $3", [JSON.stringify(context), now(), step.run_id]);
-          await failStep(stepId, `GUARDRAIL [product-supervisor:${supervisorPhase}]: ${supervisor.reason}`);
+          await failStep(stepId, `GUARDRAIL [product-supervisor:${supervisorPhase}]: ${supervisor.reason}`, completionAuthority?.envelope);
           return { advanced: false, runCompleted: false };
         }
         await pgRun("UPDATE runs SET context = $1, updated_at = $2 WHERE id = $3", [JSON.stringify(context), now(), step.run_id]);
@@ -6525,7 +8227,7 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
   // the agent forwarded only STATUS: done. The derivation is conservative —
   // only fills when a reliable source exists, otherwise the guardrail still
   // fires and the agent gets a chance to correct.
-  if (parsed["status"]?.toLowerCase() === "done") {
+  if (!isNativeV3ImplementCompletion && parsed["status"]?.toLowerCase() === "done") {
     // (setup-repo EXISTING_CODE + setup-build BUILD_CMD auto-derive moved to
     //  04-setup-repo/preclaim.ts and 05-setup-build/preclaim.ts — modules
     //  expose *_hint context vars that their onComplete stamp into the final fields.)
@@ -6544,13 +8246,13 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
         detail: missingFieldsMsg,
       });
       if (prevContextJson) { await pgRun("UPDATE runs SET context = $1 WHERE id = $2", [prevContextJson.context, step.run_id]); }
-      await failStep(stepId, missingFieldsMsg);
+      await failStep(stepId, missingFieldsMsg, completionAuthority?.envelope);
       return { advanced: false, runCompleted: false };
     }
   }
 
   // TEST FAILURE GUARDRAIL — soft retry with fix instructions instead of hard fail
-  if (parsed["status"]?.toLowerCase() === "done") {
+  if (!isNativeV3ImplementCompletion && parsed["status"]?.toLowerCase() === "done") {
     const testFailMsg = checkTestFailures(output);
     if (testFailMsg && step.retry_count < step.max_retries) {
       logger.warn(`Test guardrail triggered — soft retry with fix instructions`, { runId: step.run_id, stepId: step.step_id });
@@ -6569,7 +8271,7 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
       const _cl1 = _ce1(testFailMsg);
       applyRetryFailureContext(context, `TEST GUARDRAIL: ${testFailMsg}`, _cl1.category, _cl1.suggestion);
       await pgRun("UPDATE runs SET context = $1, updated_at = $2 WHERE id = $3", [JSON.stringify(context), now(), step.run_id]);
-      await failStep(stepId, testFailMsg);
+      await failStep(stepId, testFailMsg, completionAuthority?.envelope);
       return { advanced: false, runCompleted: false };
     } else if (testFailMsg) {
       // Max retries reached — hard fail
@@ -6585,13 +8287,13 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
         detail: testFailMsg,
       });
       if (prevContextJson) { await pgRun("UPDATE runs SET context = $1 WHERE id = $2", [prevContextJson.context, step.run_id]); }
-      await failStep(stepId, testFailMsg);
+      await failStep(stepId, testFailMsg, completionAuthority?.envelope);
       return { advanced: false, runCompleted: false };
     }
   }
 
   // QUALITY GATE GUARDRAIL — soft retry with fix context
-  if (parsed["status"]?.toLowerCase() === "done") {
+  if (!isNativeV3ImplementCompletion && parsed["status"]?.toLowerCase() === "done") {
     const qgPath = (step.step_id === "implement" && context["story_workdir"])
       ? context["story_workdir"]
       : (context["repo"] || context["REPO"] || "");
@@ -6617,7 +8319,7 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
       const _cl2 = _ce2(qgMsg);
       applyRetryFailureContext(context, `QUALITY GATE: ${qgMsg}`, _cl2.category, _cl2.suggestion);
       await pgRun("UPDATE runs SET context = $1, updated_at = $2 WHERE id = $3", [JSON.stringify(context), now(), step.run_id]);
-      await failStep(stepId, qgMsg);
+      await failStep(stepId, qgMsg, completionAuthority?.envelope);
       return { advanced: false, runCompleted: false };
     } else if (qgMsg) {
       logger.warn(`[quality-gate] Max retries — hard fail`, { runId: step.run_id, stepId: step.step_id });
@@ -6633,7 +8335,7 @@ export async function completeStep(stepId: string, output: string): Promise<{ ad
         metadata: { repoPath: qgPath },
       });
       if (prevContextJson) { await pgRun("UPDATE runs SET context = $1 WHERE id = $2", [prevContextJson.context, step.run_id]); }
-      await failStep(stepId, qgMsg);
+      await failStep(stepId, qgMsg, completionAuthority?.envelope);
       return { advanced: false, runCompleted: false };
     }
   }
@@ -6769,7 +8471,7 @@ ${prd}`;
           // Remove stale .stitch so retry creates fresh project
           const staleStitch = path.join(dRepo, ".stitch");
           if (fs.existsSync(staleStitch)) { try { fs.unlinkSync(staleStitch); } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); } }
-          await failStep(stepId, failMsg);
+          await failStep(stepId, failMsg, completionAuthority?.envelope);
           return { advanced: false, runCompleted: false };
         }
       }
@@ -6853,13 +8555,53 @@ ${prd}`;
     const baselinePublished = publishSetupBaselineToMain(context["repo"] || "", setupBranch, step.run_id);
     if (!baselinePublished) {
       const reason = "SETUP_BASELINE_MAIN_SYNC_FAILED: setup-build could not publish the baseline to main. pr-each implement cannot start safely until main contains the scaffold/build baseline.";
-      await failStep(stepId, reason);
+      await failStep(stepId, reason, completionAuthority?.envelope);
       return { advanced: false, runCompleted: false };
     }
   }
 
-  // DEPLOY HEALTH CHECK GUARDRAIL (v1.5.53): Verify service is actually running after deploy
-  if (step.step_id === "deploy" && parsed["status"]?.toLowerCase() === "done") {
+  let v3DeployReceipt: V3DeployReceiptV1 | undefined;
+  if (isV3DeterministicDeployCompletion && parsed["status"]?.toLowerCase() === "done") {
+    let rawReceipt: unknown;
+    try {
+      rawReceipt = JSON.parse(parsed["deploy_receipt_json"] || "");
+    } catch {
+      throw new V3DeployAuthorityError(
+        "V3_DEPLOY_PACKET_INVALID",
+        "deterministic deploy completion is missing a parseable typed receipt",
+        { runId: step.run_id },
+      );
+    }
+    const receipt = V3DeployReceiptV1Schema.safeParse(rawReceipt);
+    if (
+      !receipt.success
+      || receipt.data.runId !== step.run_id
+      || receipt.data.receiptHash !== parsed["deploy_receipt_hash"]
+      || receipt.data.candidateHash !== parsed["accepted_candidate_hash"]
+      || receipt.data.sourceAfter.sha !== parsed["accepted_source_sha"]
+      || receipt.data.sourceAfter.treeHash !== parsed["accepted_source_tree_hash"]
+    ) {
+      throw new V3DeployAuthorityError(
+        "V3_DEPLOY_PACKET_INVALID",
+        "deterministic deploy output does not bind its typed receipt and AcceptedCandidate source",
+        { runId: step.run_id, receiptHash: parsed["deploy_receipt_hash"] || null },
+      );
+    }
+    v3DeployReceipt = receipt.data;
+    logger.info("[deploy-v3] typed runtime, health and exact-source receipt accepted; legacy deploy guardrails bypassed", {
+      runId: step.run_id,
+      stepId: step.step_id,
+    });
+  }
+
+  // Legacy deploy remains agent-owned and keeps its historical health/MC/DNS
+  // guardrails. V3 was already health-checked by the typed executor; running
+  // these again would reintroduce pre-terminal Projects registration and
+  // post-acceptance tunnel/source side effects.
+  if (shouldRunLegacyDeployCompletionGuard({
+    stepId: step.step_id,
+    protocol: completionAuthority?.envelope.protocol,
+  }) && parsed["status"]?.toLowerCase() === "done") {
     const port = context["port"] || parsed["port"] || "";
     const serviceName = context["service_name"] || parsed["service_name"] || "";
     let deployErr = "";
@@ -6890,7 +8632,7 @@ ${prd}`;
     if (deployErr) {
       logger.warn(`[deploy-guardrail] ${deployErr}`, { runId: step.run_id, stepId: step.step_id });
       if (prevContextJson) { await pgRun("UPDATE runs SET context = $1 WHERE id = $2", [prevContextJson.context, step.run_id]); }
-      await failStep(stepId, deployErr);
+      await failStep(stepId, deployErr, completionAuthority?.envelope);
       return { advanced: false, runCompleted: false };
     }
 
@@ -6953,7 +8695,7 @@ ${prd}`;
         if (deployErr) {
           logger.warn(`[deploy-guardrail] ${deployErr}`, { runId: step.run_id, stepId: step.step_id });
           if (prevContextJson) { await pgRun("UPDATE runs SET context = $1 WHERE id = $2", [prevContextJson.context, step.run_id]); }
-          await failStep(stepId, deployErr);
+          await failStep(stepId, deployErr, completionAuthority?.envelope);
           return { advanced: false, runCompleted: false };
         }
       }
@@ -7047,7 +8789,7 @@ ${prd}`;
     }
     if (screenMapErr) {
       logger.warn(`[screen-map-guardrail] SCREEN_MAP validation failed: ${screenMapErr}`, { runId: step.run_id, stepId: step.step_id });
-      await failStep(stepId, screenMapErr);
+      await failStep(stepId, screenMapErr, completionAuthority?.envelope);
       return { advanced: false, runCompleted: false };
     }
     }
@@ -7055,7 +8797,7 @@ ${prd}`;
 
   // Browser DOM Gate (implement step — advisory)
   // Use story_workdir for implement — story code lives in worktree, not main repo.
-  if (step.step_id === "implement" && parsed["status"]?.toLowerCase() === "done") {
+  if (!isNativeV3ImplementCompletion && step.step_id === "implement" && parsed["status"]?.toLowerCase() === "done") {
     const browserCtx = context["story_workdir"]
       ? { ...context, repo: context["story_workdir"] }
       : context;
@@ -7068,7 +8810,7 @@ ${prd}`;
     if (fidelityErr) {
       logger.warn(`[design-fidelity-gate] Blocking: ${fidelityErr}`, { runId: step.run_id, stepId: step.step_id });
       if (prevContextJson) { await pgRun("UPDATE runs SET context = $1 WHERE id = $2", [prevContextJson.context, step.run_id]); }
-      await failStep(stepId, fidelityErr);
+      await failStep(stepId, fidelityErr, completionAuthority?.envelope);
       return { advanced: false, runCompleted: false };
     }
   }
@@ -7081,7 +8823,7 @@ ${prd}`;
       if (importErr) {
         logger.warn(`[import-consistency-gate] Blocking: ${importErr}`, { runId: step.run_id, stepId: step.step_id });
         if (prevContextJson) { await pgRun("UPDATE runs SET context = $1 WHERE id = $2", [prevContextJson.context, step.run_id]); }
-        await failStep(stepId, importErr);
+        await failStep(stepId, importErr, completionAuthority?.envelope);
         return { advanced: false, runCompleted: false };
       }
     }
@@ -7166,23 +8908,29 @@ ${prd}`;
       }
     }
     if (smokeFailure) {
+      if (
+        isV3DownstreamCompletion
+        && await routeQualityFailureToImplement(step, `SYSTEM_SMOKE_FAILURE:\n${smokeFailure}`, context, completionAuthority?.envelope)
+      ) {
+        return { advanced: false, runCompleted: false };
+      }
       if (isSmokeInfrastructureFailure(smokeFailure)) {
         logger.warn(`[final-test-smoke-gate] smoke infra failure; retrying final-test instead of creating QA-FIX: ${smokeFailure.slice(0, 200)}`, { runId: step.run_id });
         if (prevContextJson) { await pgRun("UPDATE runs SET context = $1 WHERE id = $2", [prevContextJson.context, step.run_id]); }
-        await failStep(stepId, `INFRA: final-test smoke browser infrastructure failed; retry final-test, do not modify app code.\n${smokeFailure}`);
+        await failStep(stepId, `INFRA: final-test smoke browser infrastructure failed; retry final-test, do not modify app code.\n${smokeFailure}`, completionAuthority?.envelope);
         return { advanced: false, runCompleted: false };
       }
-      if (await routeQualityFailureToImplement(step, `SYSTEM_SMOKE_FAILURE:\n${smokeFailure}`, context)) {
+      if (await routeQualityFailureToImplement(step, `SYSTEM_SMOKE_FAILURE:\n${smokeFailure}`, context, completionAuthority?.envelope)) {
         return { advanced: false, runCompleted: false };
       }
       if (prevContextJson) { await pgRun("UPDATE runs SET context = $1 WHERE id = $2", [prevContextJson.context, step.run_id]); }
-      await failStep(stepId, `GUARDRAIL: final-test system smoke test failed. Fix runtime issues and retry.\n${smokeFailure}`);
+      await failStep(stepId, `GUARDRAIL: final-test system smoke test failed. Fix runtime issues and retry.\n${smokeFailure}`, completionAuthority?.envelope);
       return { advanced: false, runCompleted: false };
     }
     if (!smokeResult) {
       logger.warn(`[final-test-guardrail] SMOKE_TEST_RESULT missing from final-test output — agent likely skipped smoke test. Retrying.`, { runId: step.run_id, stepId: step.step_id });
       if (prevContextJson) { await pgRun("UPDATE runs SET context = $1 WHERE id = $2", [prevContextJson.context, step.run_id]); }
-      await failStep(stepId, "GUARDRAIL: final-test completed without SMOKE_TEST_RESULT. You MUST run smoke-test.mjs and include SMOKE_TEST_RESULT in your output.");
+      await failStep(stepId, "GUARDRAIL: final-test completed without SMOKE_TEST_RESULT. You MUST run smoke-test.mjs and include SMOKE_TEST_RESULT in your output.", completionAuthority?.envelope);
       return { advanced: false, runCompleted: false };
     }
     }
@@ -7271,7 +9019,7 @@ ${prd}`;
           ? "pr-each flow should already have story PRs merged; sync origin/main or inspect missing project source files"
           : "Merge feature branch into main manually or resolve conflicts";
         await updateRunContext(step.run_id, context);
-        await failStep(stepId, "Feature branch not merged into main — source code missing");
+        await failStep(stepId, "Feature branch not merged into main — source code missing", completionAuthority?.envelope);
         return { advanced: false, runCompleted: false };
       }
     }
@@ -7348,8 +9096,39 @@ ${prd}`;
       if (storyCount.cnt === 0) {
         const noStoriesMsg = "Step completed but produced no STORIES_JSON — downstream loop would run with 0 stories";
         logger.warn(noStoriesMsg, { runId: step.run_id, stepId: step.step_id });
-        await failStepWithOutput(step.id, noStoriesMsg);
-        await failRun(step.run_id, true);
+        await pgBegin(async (sql) => {
+          if (completionAuthority?.envelope) {
+            await closeExactSingleStepClaimInTransaction(sql, {
+              envelope: completionAuthority.envelope,
+              outcome: "failed",
+              diagnostic: noStoriesMsg,
+            });
+          } else {
+            await closeUniqueSingleStepClaimForRecoveryInTransaction(sql, {
+              runId: step.run_id,
+              stepDbId: step.id,
+              workflowStepId: step.step_id,
+              outcome: "failed",
+              diagnostic: noStoriesMsg,
+              runtimeAgentId: "stories-completeness-terminal-owner",
+            });
+          }
+          const failedStep = await sql.unsafe<Array<{ id: string }>>(
+            `UPDATE steps
+                SET status = 'failed', output = $2, updated_at = NOW()
+              WHERE id = $1 AND status IN ('running', 'pending')
+              RETURNING id`,
+            [step.id, noStoriesMsg],
+          );
+          if (failedStep.length !== 1) throw new Error("STORIES_COMPLETENESS_STEP_CAS_LOST");
+          await requestRunTerminationInTransaction(sql, {
+            runId: step.run_id,
+            targetStatus: "failed",
+            requestedBy: "setfarm.step-ops.stories-completeness",
+            diagnostic: noStoriesMsg,
+            evidence: { source: "completeStep.stories-completeness" },
+          });
+        });
         const wfId157b = await getWorkflowId(step.run_id);
         emitEvent({ ts: now(), event: "step.failed", runId: step.run_id, workflowId: wfId157b, stepId: step.step_id, detail: noStoriesMsg });
         emitEvent({ ts: now(), event: "run.failed", runId: step.run_id, workflowId: wfId157b, detail: noStoriesMsg });
@@ -7420,7 +9199,7 @@ ${prd}`;
               context["previous_failure"] = `PHASE GATE (${currentPhase}): ${gateResult}`;
               context["failure_category"] = "GUARDRAIL_FAIL";
               await updateRunContext(step.run_id, context);
-              await failStep(stepId, gateResult);
+              await failStep(stepId, gateResult, completionAuthority?.envelope);
               logger.info(`[phased-dev] Phase gate failed for ${currentPhase}, retrying`, { runId: step.run_id });
               return { advanced: false, runCompleted: false };
             }
@@ -7429,11 +9208,34 @@ ${prd}`;
             const nextPhase = phases[phaseIdx + 1];
             context["implement_phase"] = nextPhase;
             context["previous_failure"] = "";
-            await updateRunContext(step.run_id, context);
-
-            // Re-queue story as pending for next phase
-            await pgRun("UPDATE stories SET status = 'pending', claimed_by = NULL, claimed_at = NULL, updated_at = $1 WHERE id = $2",
-              [now(), step.current_story_id]);
+            if (completionAuthority?.envelope) {
+              const workdir = context["story_workdir"] || context["repo"] || "";
+              const sourceAfter = completionAuthority.envelope.protocol !== "legacy"
+                ? await captureShadowSourceRevision(workdir)
+                : undefined;
+              await completeStoryClaimAndBoundAttempt(getSql(), {
+                envelope: completionAuthority.envelope,
+                ...(sourceAfter ? { sourceAfter } : {}),
+                outputHash: crypto.createHash("sha256").update(output, "utf8").digest("hex"),
+                evidenceRefs: [`setfarm://implement-phase/${currentPhase}`],
+                storyStatus: "pending",
+                storyOutput: output,
+                storyBranch: context["story_branch"] || "",
+                stepStatus: "pending",
+                stepOutput: output,
+                runContextJson: JSON.stringify(context),
+                diagnostic: `Implement phase ${currentPhase} completed; next phase ${nextPhase}`,
+              });
+            } else {
+              // Compatibility path for legacy workers that predate claim
+              // envelopes. Close their claim before publishing retryable state.
+              await pgBegin(async (sql) => {
+                await sql`UPDATE claim_log SET outcome = 'completed', duration_ms = LEAST(CAST(EXTRACT(EPOCH FROM (NOW() - claimed_at::timestamptz)) * 1000 AS BIGINT), 2147483647)::INTEGER, diagnostic = ${`Implement phase ${currentPhase} completed`} WHERE run_id = ${step.run_id} AND step_id = ${step.step_id} AND story_id = ${storyRow?.story_id || ""} AND outcome IS NULL`;
+                await sql`UPDATE runs SET context = ${JSON.stringify(context)}, updated_at = ${now()} WHERE id = ${step.run_id}`;
+                await sql`UPDATE stories SET status = 'pending', output = ${output}, claimed_by = NULL, claimed_at = NULL, updated_at = ${now()} WHERE id = ${step.current_story_id}`;
+                await sql`UPDATE steps SET status = 'pending', current_story_id = NULL, output = ${output}, updated_at = ${now()} WHERE id = ${step.id}`;
+              });
+            }
 
             logger.info(`[phased-dev] Phase ${currentPhase} complete, advancing to ${nextPhase}`, { runId: step.run_id });
             return { advanced: false, runCompleted: false };
@@ -7446,7 +9248,7 @@ ${prd}`;
     }
 
     // Design compliance check — only for implement step, done stories
-    if (step.step_id === "implement" && storyStatus === STORY_STATUS.DONE) {
+    if (step.step_id === "implement" && storyStatus === STORY_STATUS.DONE && completionAuthority?.protocol !== "v3") {
       const designIssue = checkStoryDesignCompliance(context);
       const isCriticalDesignIssue = !!designIssue && /CRITICAL DESIGN CONTRACT/i.test(designIssue);
       await recordLiveObservation({
@@ -7469,7 +9271,7 @@ ${prd}`;
         context["failure_category"] = _cl3.category;
         context["failure_suggestion"] = _cl3.suggestion;
         await pgRun("UPDATE runs SET context = $1, updated_at = $2 WHERE id = $3", [JSON.stringify(context), now(), step.run_id]);
-        await failStep(stepId, designIssue);
+        await failStep(stepId, designIssue, completionAuthority?.envelope);
         return { advanced: false, runCompleted: false };
       } else if (designIssue && step.retry_count < 2) {
         // First 1-2 attempts: warn only (advisory), let story pass
@@ -7481,7 +9283,7 @@ ${prd}`;
     }
 
     // TEST RUNNER — run project tests on implement story completion
-    if (step.step_id === "implement" && storyStatus === STORY_STATUS.DONE) {
+    if (step.step_id === "implement" && storyStatus === STORY_STATUS.DONE && completionAuthority?.protocol !== "v3") {
       try {
         const { detectTestFramework, runTests, buildTestFixPrompt } = await import("./test-generation.js");
         const testRepo = context["story_workdir"] || context["repo"] || "";
@@ -7521,6 +9323,13 @@ ${prd}`;
     // (Wave 6 fix A, Wave 10 Bug D, Wave 13 Bug P9, Wave 14 Bug Q)
     let implementSupervisorWorkdir = "";
     let implementSupervisorBaseRef = "";
+    const isNativeV3Completion = completionAuthority?.protocol === "v3";
+    let v3CompletionContext: V3ImplementationAttemptResult | undefined = nativeV3AttemptContext;
+    let v3CandidateSource: Awaited<ReturnType<typeof captureShadowSourceRevision>> | undefined;
+    let v3EvidenceRefs: string[] = [];
+    let v3EvidenceBundle: EvidenceBundleV2 | undefined;
+    let v3FindingSet: FindingSetV1 | undefined;
+    let v3FailureClass: "product" | "infrastructure" | undefined;
     if (step.step_id === "implement" && storyStatus === STORY_STATUS.DONE && storyRow?.story_id) {
       try {
         const {
@@ -7545,13 +9354,25 @@ ${prd}`;
         const baseBr = context["story_base_ref"] || ((scopeLoopConfig?.mergeStrategy === "pr-each" || scopeLoopConfig?.verifyEach) ? "main" : (context["branch"] || ""));
         implementSupervisorWorkdir = wd || "";
         implementSupervisorBaseRef = baseBr || "";
+        if (isNativeV3Completion) {
+          const attemptId = completionAuthority?.envelope.attempt?.attemptId;
+          if (!attemptId) throw new Error("V3_COMPLETION_ATTEMPT_FENCE_REQUIRED");
+          v3CompletionContext ??= await loadV3ImplementationAttemptContext({
+            runId: step.run_id,
+            storyId: storyRow.story_id,
+            attemptId,
+          });
+          if (path.resolve(v3CompletionContext.attempt.worktree || "") !== path.resolve(wd || "")) {
+            throw new Error("V3_COMPLETION_WORKTREE_IDENTITY_MISMATCH");
+          }
+        }
 
         // 2026-04-22: setup stories also go through scope checks. Broad
         // configuration files are already covered by SCOPE_IGNORE, so setup
         // can still initialize the project without bypassing ownership checks.
         if (wd && baseBr && fs.existsSync(wd)) {
           // Scope files existence gate (declared files must exist in worktree)
-          if (step.retry_count < step.max_retries) {
+          if (!isNativeV3Completion && step.retry_count < step.max_retries) {
             const sfGate = await checkScopeFilesGate(storyRow.story_id, step.current_story_id, storyRow.title, wd);
             await recordImplementGateObservation(step, storyRow, "implement.scope_files", "Scope files gate", sfGate);
             if (!sfGate.passed) {
@@ -7559,16 +9380,18 @@ ${prd}`;
               context["failure_category"] = sfGate.category!;
               context["failure_suggestion"] = sfGate.suggestion!;
               await updateRunContext(step.run_id, context);
-              await failStep(stepId, sfGate.reason!);
+              await failStep(stepId, sfGate.reason!, completionAuthority?.envelope);
               return { advanced: false, runCompleted: false };
             }
           }
 
           // Zero-work, stub, scope bleed, scope overflow checks
-          let scopeResult = await checkScopeEnforcement(
-            storyRow.story_id, step.current_story_id, storyRow.title,
-            wd, baseBr, step.retry_count, step.max_retries,
-          );
+          let scopeResult: Awaited<ReturnType<typeof checkScopeEnforcement>> = isNativeV3Completion
+            ? { passed: true, reason: "V3 scope is enforced by the sealed slice and strict platform candidate commit." }
+            : await checkScopeEnforcement(
+                storyRow.story_id, step.current_story_id, storyRow.title,
+                wd, baseBr, step.retry_count, step.max_retries,
+              );
           if (!scopeResult.passed && scopeResult.category === "NO_WORK_DETECTED") {
             const integration = await storyAlreadyIntegratedInBase({
               runId: step.run_id,
@@ -7710,7 +9533,7 @@ ${prd}`;
             }
             applyRetryFailureContext(context, scopeResult.reason!, scopeResult.category, scopeResult.suggestion!);
             await updateRunContext(step.run_id, context);
-            await failStep(stepId, scopeResult.reason!);
+            await failStep(stepId, scopeResult.reason!, completionAuthority?.envelope);
             return { advanced: false, runCompleted: false };
           }
           // Soft warning (scope creep flag for verify step)
@@ -7718,6 +9541,7 @@ ${prd}`;
             context["scope_creep_warning"] = scopeResult.reason;
           }
 
+          if (!isNativeV3Completion) {
           // Runtime bridge gate: if a story contract explicitly requires
           // window.app, block "done" output that only documents it or exposes a
           // different ad-hoc bridge such as window.game.
@@ -7728,7 +9552,7 @@ ${prd}`;
           if (!bridgeResult.passed && bridgeResult.category) {
             applyRetryFailureContext(context, bridgeResult.reason!, bridgeResult.category, bridgeResult.suggestion!);
             await updateRunContext(step.run_id, context);
-            await failStep(stepId, bridgeResult.reason!);
+            await failStep(stepId, bridgeResult.reason!, completionAuthority?.envelope);
             return { advanced: false, runCompleted: false };
           }
 
@@ -7744,7 +9568,7 @@ ${prd}`;
           if (!buildResult.passed && buildResult.category) {
             applyRetryFailureContext(context, buildResult.reason!, buildResult.category, buildResult.suggestion!);
             await updateRunContext(step.run_id, context);
-            await failStep(stepId, buildResult.reason!);
+            await failStep(stepId, buildResult.reason!, completionAuthority?.envelope);
             return { advanced: false, runCompleted: false };
           }
 
@@ -7759,7 +9583,7 @@ ${prd}`;
           if (!testResult.passed && testResult.category) {
             applyRetryFailureContext(context, testResult.reason!, testResult.category, testResult.suggestion!);
             await updateRunContext(step.run_id, context);
-            await failStep(stepId, testResult.reason!);
+            await failStep(stepId, testResult.reason!, completionAuthority?.envelope);
             return { advanced: false, runCompleted: false };
           }
 
@@ -7773,7 +9597,7 @@ ${prd}`;
           if (!generatedScreenResult.passed && generatedScreenResult.category) {
             applyRetryFailureContext(context, generatedScreenResult.reason!, generatedScreenResult.category, generatedScreenResult.suggestion!);
             await updateRunContext(step.run_id, context);
-            await failStep(stepId, generatedScreenResult.reason!);
+            await failStep(stepId, generatedScreenResult.reason!, completionAuthority?.envelope);
             return { advanced: false, runCompleted: false };
           }
 
@@ -7788,7 +9612,7 @@ ${prd}`;
           if (!generatedScreenRegressionResult.passed && generatedScreenRegressionResult.category) {
             applyRetryFailureContext(context, generatedScreenRegressionResult.reason!, generatedScreenRegressionResult.category, generatedScreenRegressionResult.suggestion!);
             await updateRunContext(step.run_id, context);
-            await failStep(stepId, generatedScreenRegressionResult.reason!);
+            await failStep(stepId, generatedScreenRegressionResult.reason!, completionAuthority?.envelope);
             return { advanced: false, runCompleted: false };
           }
 
@@ -7804,7 +9628,7 @@ ${prd}`;
           if (!generatedScreenShellChromeResult.passed && generatedScreenShellChromeResult.category) {
             applyRetryFailureContext(context, generatedScreenShellChromeResult.reason!, generatedScreenShellChromeResult.category, generatedScreenShellChromeResult.suggestion!);
             await updateRunContext(step.run_id, context);
-            await failStep(stepId, generatedScreenShellChromeResult.reason!);
+            await failStep(stepId, generatedScreenShellChromeResult.reason!, completionAuthority?.envelope);
             return { advanced: false, runCompleted: false };
           }
 
@@ -7819,7 +9643,7 @@ ${prd}`;
           if (!generatedScreenPropsResult.passed && generatedScreenPropsResult.category) {
             applyRetryFailureContext(context, generatedScreenPropsResult.reason!, generatedScreenPropsResult.category, generatedScreenPropsResult.suggestion!);
             await updateRunContext(step.run_id, context);
-            await failStep(stepId, generatedScreenPropsResult.reason!);
+            await failStep(stepId, generatedScreenPropsResult.reason!, completionAuthority?.envelope);
             return { advanced: false, runCompleted: false };
           }
 
@@ -7835,8 +9659,9 @@ ${prd}`;
           if (!generatedRuntimeSemanticResult.passed && generatedRuntimeSemanticResult.category) {
             applyRetryFailureContext(context, generatedRuntimeSemanticResult.reason!, generatedRuntimeSemanticResult.category, generatedRuntimeSemanticResult.suggestion!);
             await updateRunContext(step.run_id, context);
-            await failStep(stepId, generatedRuntimeSemanticResult.reason!);
+            await failStep(stepId, generatedRuntimeSemanticResult.reason!, completionAuthority?.envelope);
             return { advanced: false, runCompleted: false };
+          }
           }
 
           // Platform helper contamination gate: generated products must not
@@ -7849,7 +9674,7 @@ ${prd}`;
           if (!platformHelperContaminationResult.passed && platformHelperContaminationResult.category) {
             applyRetryFailureContext(context, platformHelperContaminationResult.reason!, platformHelperContaminationResult.category, platformHelperContaminationResult.suggestion!);
             await updateRunContext(step.run_id, context);
-            await failStep(stepId, platformHelperContaminationResult.reason!);
+            await failStep(stepId, platformHelperContaminationResult.reason!, completionAuthority?.envelope);
             return { advanced: false, runCompleted: false };
           }
 
@@ -7859,13 +9684,67 @@ ${prd}`;
           // otherwise the run burns verify cycles and eventually fails with
           // retry exhaustion instead of giving the developer the exact failing
           // controls to patch.
-          const qaSmokeResult = checkQaFixSmokeGate(storyRow.story_id, storyRow.title, wd);
-          await recordImplementGateObservation(step, storyRow, "implement.qa_fix_smoke", "QA-FIX smoke gate", qaSmokeResult);
-          if (!qaSmokeResult.passed && qaSmokeResult.category) {
-            applyRetryFailureContext(context, qaSmokeResult.reason!, qaSmokeResult.category, qaSmokeResult.suggestion!);
-            await updateRunContext(step.run_id, context);
-            await failStep(stepId, qaSmokeResult.reason!);
-            return { advanced: false, runCompleted: false };
+          if (!isNativeV3Completion) {
+            const qaSmokeResult = checkQaFixSmokeGate(storyRow.story_id, storyRow.title, wd);
+            await recordImplementGateObservation(step, storyRow, "implement.qa_fix_smoke", "QA-FIX smoke gate", qaSmokeResult);
+            if (!qaSmokeResult.passed && qaSmokeResult.category) {
+              applyRetryFailureContext(context, qaSmokeResult.reason!, qaSmokeResult.category, qaSmokeResult.suggestion!);
+              await updateRunContext(step.run_id, context);
+              await failStep(stepId, qaSmokeResult.reason!, completionAuthority?.envelope);
+              return { advanced: false, runCompleted: false };
+            }
+          }
+
+          if (isNativeV3Completion) {
+            if (!v3CompletionContext || !completionAuthority?.envelope.attempt) {
+              throw new Error("V3_COMPLETION_CONTEXT_REQUIRED_BEFORE_EVIDENCE");
+            }
+            const declaredWritablePaths = v3CompletionContext.slice.recovery?.allowedPaths
+              ?? v3CompletionContext.slice.files
+                .filter((file) => file.role === "owned" || file.role === "shared_writable")
+                .map((file) => file.path);
+            const candidateCommit = commitStoryWorktreeScopeIfNeeded(
+              wd,
+              storyRow.story_id,
+              storyRow.title || "",
+              [...declaredWritablePaths],
+              v3CompletionContext.recovery ? "fix" : "feat",
+              true,
+            );
+            if (candidateCommit.error) {
+              throw new Error(`V3_CANDIDATE_COMMIT_REJECTED:${candidateCommit.error}`);
+            }
+            v3CandidateSource = await captureShadowSourceRevision(wd);
+            if (candidateCommit.committed && candidateCommit.sha !== v3CandidateSource.sha) {
+              throw new Error("V3_CANDIDATE_COMMIT_SOURCE_IDENTITY_MISMATCH");
+            }
+            const { createAttemptRepository } = await import("../execution/attempt-repository.js");
+            const candidateAttestation = await createAttemptRepository(getSql()).recordCandidateSource({
+              attemptId: completionAuthority.envelope.attempt.attemptId,
+              generation: completionAuthority.envelope.attempt.generation,
+              fenceToken: completionAuthority.envelope.attempt.fenceToken,
+              sourceAfter: v3CandidateSource,
+            });
+            if (candidateAttestation.status !== "candidate") {
+              throw new Error("V3_CANDIDATE_SOURCE_FENCE_LOST");
+            }
+            await recordLiveObservation({
+              runId: step.run_id,
+              stepId: step.step_id,
+              storyId: storyRow.story_id,
+              agentId: step.agent_id || "",
+              checkId: "implement.v3_candidate_attested",
+              label: "V3 candidate source attestation",
+              status: "pass",
+              summary: `${candidateCommit.committed ? "Committed" : "Attested unchanged"} candidate ${v3CandidateSource.sha}`,
+              detail: candidateCommit.stagedFiles.join("\n"),
+              filePaths: candidateCommit.stagedFiles,
+              metadata: {
+                sourceSha: v3CandidateSource.sha,
+                sourceTreeHash: v3CandidateSource.treeHash,
+                sliceHash: v3CompletionContext.sliceHash,
+              },
+            });
           }
 
           const { runImplementEvidenceIfRequested } = await import("./implement-evidence-runner.js");
@@ -7873,7 +9752,21 @@ ${prd}`;
             runId: step.run_id,
             storyId: storyRow.story_id,
             workdir: wd,
-            stackPackId: context["stack_pack_id"] || context["detected_stack"] || "",
+            stackPackId: isNativeV3Completion
+              ? (v3CompletionContext?.evidencePlan.runtime?.stackPackId
+                ?? v3CompletionContext?.slice.runtimeEvidence?.stackPackId
+                ?? "")
+              : (context["stack_pack_id"] || context["detected_stack"] || ""),
+            ...(isNativeV3Completion && v3CompletionContext && v3CandidateSource
+              ? {
+                  v3: {
+                    slice: v3CompletionContext.slice,
+                    sliceHash: v3CompletionContext.sliceHash,
+                    attemptId: v3CompletionContext.attempt.attemptId,
+                    sourceRevision: v3CandidateSource,
+                  },
+                }
+              : {}),
             observe: async (observation) => {
               await recordLiveObservation({
                 runId: step.run_id,
@@ -7891,6 +9784,55 @@ ${prd}`;
               });
             },
           });
+          if (isNativeV3Completion) {
+            const canonicalEvidence = implementEvidenceRun.canonicalEvidence;
+            if (!canonicalEvidence || !v3CandidateSource || !v3CompletionContext) {
+              throw new Error("V3_CANONICAL_EVIDENCE_BUNDLE_REQUIRED");
+            }
+            const { createFindingRecoveryRepository } = await import("../recovery/finding-recovery-repository.js");
+            const findingRecovery = createFindingRecoveryRepository(getSql());
+            const persistedEvidence = await findingRecovery.putEvidenceBundle(canonicalEvidence.bundle);
+            if (persistedEvidence.bundleHash !== canonicalEvidence.bundleHash) {
+              throw new Error("V3_CANONICAL_EVIDENCE_PERSISTENCE_HASH_MISMATCH");
+            }
+            v3EvidenceBundle = canonicalEvidence.bundle;
+            const evidenceRef = `setfarm://evidence-bundle/${canonicalEvidence.bundleHash}`;
+            v3EvidenceRefs = [evidenceRef];
+            context["canonical_evidence_bundle_hash"] = canonicalEvidence.bundleHash;
+            context["canonical_evidence_id"] = canonicalEvidence.bundle.evidenceId;
+            context["canonical_evidence_verdict"] = canonicalEvidence.bundle.aggregateVerdict;
+            if (canonicalEvidence.bundle.aggregateVerdict !== "pass") {
+              v3FailureClass = classifyV3EvidenceFailure(canonicalEvidence.bundle);
+              v3FindingSet = createFindingSetFromEvidenceBundleV2({
+                workdir: wd,
+                slice: v3CompletionContext.slice,
+                sliceHash: v3CompletionContext.sliceHash,
+                bundle: canonicalEvidence.bundle,
+              });
+              if (!v3FailureClass || !v3FindingSet) {
+                throw new Error("V3_CANONICAL_FINDING_SET_REQUIRED");
+              }
+              const persistedFindingSet = await findingRecovery.putFindingSet(v3FindingSet);
+              if (persistedFindingSet.value.findingSetHash !== v3FindingSet.findingSetHash) {
+                throw new Error("V3_CANONICAL_FINDING_SET_PERSISTENCE_HASH_MISMATCH");
+              }
+              v3EvidenceRefs = [...v3EvidenceRefs, `setfarm://finding-set/${v3FindingSet.findingSetHash}`];
+              context["canonical_finding_set_hash"] = v3FindingSet.findingSetHash;
+              context["canonical_failure_class"] = v3FailureClass;
+              const reason = `V3_CANONICAL_EVIDENCE_${canonicalEvidence.bundle.aggregateVerdict.toUpperCase()}: ${canonicalEvidence.bundle.predicates
+                .filter((predicate) => predicate.required && predicate.verdict !== "pass")
+                .map((predicate) => `${predicate.predicateRef}=${predicate.verdict}`)
+                .join(", ")}`;
+              context["canonical_recovery_reason"] = reason;
+              storyStatus = STORY_STATUS.FAILED;
+              storyEvent = "story.failed";
+            } else {
+              delete context["canonical_finding_set_hash"];
+              delete context["canonical_failure_class"];
+              delete context["canonical_recovery_reason"];
+            }
+            await updateRunContext(step.run_id, context);
+          }
           await recordLiveObservation({
             runId: step.run_id,
             stepId: step.step_id,
@@ -7909,7 +9851,7 @@ ${prd}`;
               failureCategory: implementEvidenceRun.failureCategory || "",
             },
           });
-          if (implementEvidenceRun.failureAction === "infra_retry") {
+          if (!isNativeV3Completion && implementEvidenceRun.failureAction === "infra_retry") {
             const infraReason = [
               "SETFARM_INFRA_RETRY:",
               implementEvidenceRun.reason,
@@ -7919,16 +9861,18 @@ ${prd}`;
             ].join("\n");
             applyRetryFailureContext(context, infraReason, implementEvidenceRun.failureCategory || "stack_tooling_infra_failure", "Retry stack tooling infrastructure; do not consume product story retry budget.");
             await updateRunContext(step.run_id, context);
-            await failStep(stepId, infraReason);
+            await failStep(stepId, infraReason, completionAuthority?.envelope);
             return { advanced: false, runCompleted: false };
           }
 
-          const implementEvidenceResult = checkImplementEvidenceGate(storyRow.story_id, storyRow.title, wd);
+          const implementEvidenceResult: ReturnType<typeof checkImplementEvidenceGate> = isNativeV3Completion
+            ? { passed: true, reason: "V3 canonical EvidenceBundleV2 passed." }
+            : checkImplementEvidenceGate(storyRow.story_id, storyRow.title, wd);
           await recordImplementGateObservation(step, storyRow, "implement.evidence", "Implement evidence gate", implementEvidenceResult);
           if (!implementEvidenceResult.passed && implementEvidenceResult.category) {
             applyRetryFailureContext(context, implementEvidenceResult.reason!, implementEvidenceResult.category, implementEvidenceResult.suggestion!);
             await updateRunContext(step.run_id, context);
-            await failStep(stepId, implementEvidenceResult.reason!);
+            await failStep(stepId, implementEvidenceResult.reason!, completionAuthority?.envelope);
             return { advanced: false, runCompleted: false };
           }
 
@@ -7936,23 +9880,26 @@ ${prd}`;
           // with static controls, missing hrefs, or wrong icons that are
           // already declared in Stitch/DESIGN_DOM. Catch these before verify
           // consumes story retries with review comments about the same contract.
-          const designDomResult = await checkDesignDomImplementationGate(
+          const designDomResult: Awaited<ReturnType<typeof checkDesignDomImplementationGate>> = isNativeV3Completion
+            ? { passed: true, reason: "V3 behavior is owned by sealed predicates and canonical evidence." }
+            : await checkDesignDomImplementationGate(
             step.run_id, storyRow.story_id, step.current_story_id, storyRow.title, wd, context["repo"] || "",
           );
           await recordImplementGateObservation(step, storyRow, "implement.design_dom", "DESIGN_DOM implementation gate", designDomResult);
           if (!designDomResult.passed && designDomResult.category) {
             applyRetryFailureContext(context, designDomResult.reason!, designDomResult.category, designDomResult.suggestion!);
             await updateRunContext(step.run_id, context);
-            await failStep(stepId, designDomResult.reason!);
+            await failStep(stepId, designDomResult.reason!, completionAuthority?.envelope);
             return { advanced: false, runCompleted: false };
           }
         }
       } catch (scopeErr) {
+        if (isNativeV3Completion) throw scopeErr;
         logger.warn(`[scope-check] Skipped for story ${storyRow.story_id}: ${String(scopeErr).slice(0, 150)}`, { runId: step.run_id });
       }
     }
 
-    if (step.step_id === "implement" && storyStatus === STORY_STATUS.DONE && storyRow?.story_id) {
+    if (step.step_id === "implement" && storyStatus === STORY_STATUS.DONE && storyRow?.story_id && !isNativeV3Completion) {
       const { runProductSupervisorGate, updateSupervisorMemory } = await import("./product-supervisor.js");
       const supervisor = runProductSupervisorGate({
         phase: "implement",
@@ -7987,7 +9934,7 @@ ${prd}`;
         context["failure_category"] = supervisor.code;
         context["failure_suggestion"] = "Treat this as supervisor feedback: finish the actual story, remove placeholder/unfinished work, and report done only with real code behavior.";
         await updateRunContext(step.run_id, context);
-        await failStep(stepId, `GUARDRAIL [product-supervisor:implement]: ${supervisor.reason}`);
+        await failStep(stepId, `GUARDRAIL [product-supervisor:implement]: ${supervisor.reason}`, completionAuthority?.envelope);
         return { advanced: false, runCompleted: false };
       }
     }
@@ -7995,7 +9942,7 @@ ${prd}`;
     // PLATFORM STORY COMMIT: developer agents write code only. After all
     // build/scope/product-supervisor gates pass, Setfarm stages exactly the
     // allowed story scope and creates the final story commit before push/PR.
-    if (step.step_id === "implement" && storyStatus === STORY_STATUS.DONE && storyRow?.story_id) {
+    if (step.step_id === "implement" && storyStatus === STORY_STATUS.DONE && storyRow?.story_id && !isNativeV3Completion) {
       await recordLiveObservation({
         runId: step.run_id,
         stepId: step.step_id,
@@ -8042,7 +9989,7 @@ ${prd}`;
         context["failure_category"] = "PLATFORM_STORY_COMMIT_FAILED";
         context["failure_suggestion"] = "This is a Setfarm commit ownership failure. Do not ask the developer agent to run git commands; fix the platform scoped commit path or story scope.";
         await updateRunContext(step.run_id, context);
-        await failStep(stepId, commitResult.error);
+        await failStep(stepId, commitResult.error, completionAuthority?.envelope);
         return { advanced: false, runCompleted: false };
       }
       if (commitResult.committed) {
@@ -8080,6 +10027,7 @@ ${prd}`;
     // Mark current story done or skipped + persist PR context for verify_each
     // FIX: Remove context fallback to prevent cross-contamination between parallel stories
     let storyPrUrl = GH_PR_URL_REGEX.test(parsed["pr_url"] || "") ? parsed["pr_url"] : "";
+    if (isNativeV3Completion) storyPrUrl = "";
     let storyMergeStatus: string | null = null;
     const storyIsQaFix = isQaFixStoryId(storyRow?.story_id);
 
@@ -8119,7 +10067,7 @@ ${prd}`;
     // DB-overwritten values. Also runs for ALL statuses except SKIPPED (not just DONE)
     // so it still catches a cross-project commit even when the story reported failed
     // (e.g. run #344 US-002 hit 'test(s) failed' first which masked the branch mismatch).
-    if (storyStatus !== STORY_STATUS.SKIPPED) {
+    if (storyStatus !== STORY_STATUS.SKIPPED && !isNativeV3Completion) {
       const expectedRunPrefix = step.run_id.slice(0, 8);
       const expectedRepoName = (context["repo"] || "").split("/").pop() || "";
       const branchMismatch = agentOriginalBranch && expectedRunPrefix && !agentOriginalBranch.toLowerCase().startsWith(expectedRunPrefix.toLowerCase()) && !agentOriginalBranch.toLowerCase().includes(expectedRunPrefix.toLowerCase());
@@ -8153,7 +10101,7 @@ ${prd}`;
           // Retry feedback above is sufficient even if supervisor memory cannot be updated.
         }
         await updateRunContext(step.run_id, restoredContext);
-        await failStep(stepId, correctiveMsg);
+        await failStep(stepId, correctiveMsg, completionAuthority?.envelope);
         return { advanced: false, runCompleted: false };
       }
     }
@@ -8201,14 +10149,27 @@ ${prd}`;
         context["failure_category"] = "PLATFORM_STORY_PUSH_FAILED";
         context["failure_suggestion"] = "This is a Setfarm git transport failure. Do not ask the developer agent to push; fix platform git/remote access, then restart or retry the run.";
         await updateRunContext(step.run_id, context);
-        await pgBegin(async (sql) => {
-          if (step.current_story_id) {
-            await sql`UPDATE stories SET status = 'failed', output = ${pushFailure}, updated_at = ${now()} WHERE id = ${step.current_story_id}`;
-          }
-          await sql`UPDATE steps SET status = 'failed', output = ${pushFailure}, current_story_id = NULL, updated_at = ${now()} WHERE id = ${stepId}`;
-          await sql`UPDATE claim_log SET outcome = 'failed', duration_ms = CAST(EXTRACT(EPOCH FROM (NOW() - claimed_at)) * 1000 AS INTEGER), diagnostic = ${pushFailure} WHERE run_id = ${step.run_id} AND step_id = ${step.step_id} AND story_id = ${storyRow?.story_id || ""} AND outcome IS NULL`;
+        if (!storyRow?.story_id) throw new Error("LOOP_STORY_ID_MISSING");
+        await terminalizeLoopClaimAndState({
+          runId: step.run_id,
+          stepDbId: step.id,
+          stepId: step.step_id,
+          storyId: storyRow.story_id,
+          storyDbId: step.current_story_id!,
+          agentId: step.agent_id,
+          error: pushFailure,
+          outcome: "failed",
+          attemptDisposition: "failed",
+          ...(completionAuthority?.envelope ? { claimEnvelope: completionAuthority.envelope } : {}),
+          state: {
+            storyStatus: "failed",
+            storyOutput: pushFailure,
+            clearStoryClaim: false,
+            stepStatus: "failed",
+            stepOutput: pushFailure,
+            runFailureDiagnostic: pushFailure,
+          },
         });
-        await failRun(step.run_id, true);
         await recordStepTransition(stepId, step.run_id, "running", "failed", step.agent_id, "completeStep:platformStoryPushFailed", { storyId: storyRow?.story_id, error: pushFailure.slice(0, 300) });
         const wfId = await _getWorkflowId(step.run_id);
         emitEvent({ ts: now(), event: "story.failed", runId: step.run_id, workflowId: wfId, stepId: step.step_id, storyId: storyRow?.story_id, storyTitle: storyRow?.title, detail: "Platform story branch push failed; story retry was not consumed." });
@@ -8255,7 +10216,11 @@ ${prd}`;
     // They must land on main before final verification reruns; opening a PR and
     // leaving it unmerged makes final verify test stale main and route the same
     // fixed failures back into another QA-FIX loop.
-    if (storyStatus === STORY_STATUS.DONE && storyIsQaFix) {
+    if (
+      storyStatus === STORY_STATUS.DONE
+      && storyIsQaFix
+      && !completionAuthority?.envelope
+    ) {
       const repoPath = context["repo"] || "";
       if (!repoPath || !storyBranchName) {
         const mergeMsg = `QA_FIX_MERGE_BLOCKED: ${storyRow?.story_id || "QA-FIX"} completed but repo/story_branch is missing, so its fixes cannot be applied to main.`;
@@ -8263,7 +10228,7 @@ ${prd}`;
         context["failure_category"] = "QA_FIX_MERGE_BLOCKED";
         context["failure_suggestion"] = "Complete the QA-FIX in the assigned story branch so Setfarm can merge it into main before final verification.";
         await updateRunContext(step.run_id, context);
-        await failStep(stepId, mergeMsg);
+        await failStep(stepId, mergeMsg, completionAuthority?.envelope);
         return { advanced: false, runCompleted: false };
       }
 
@@ -8289,7 +10254,7 @@ ${prd}`;
           context["failure_category"] = "QA_FIX_MERGE_BLOCKED";
           context["failure_suggestion"] = "Clean the project repo git state or preserve the changes in a commit, then retry the QA-FIX story.";
           await updateRunContext(step.run_id, context);
-          await failStep(stepId, mergeMsg);
+          await failStep(stepId, mergeMsg, completionAuthority?.envelope);
           return { advanced: false, runCompleted: false };
         }
         if (dirty) {
@@ -8331,7 +10296,7 @@ ${prd}`;
           context["failure_category"] = "QA_FIX_MERGE_FAILED";
           context["failure_suggestion"] = "Resolve the merge conflict in the QA-FIX branch against main, then report STATUS: done again.";
           await updateRunContext(step.run_id, context);
-          await failStep(stepId, mergeMsg);
+          await failStep(stepId, mergeMsg, completionAuthority?.envelope);
           return { advanced: false, runCompleted: false };
         }
 
@@ -8382,7 +10347,7 @@ ${prd}`;
         context["failure_category"] = "QA_FIX_MERGE_ERROR";
         context["failure_suggestion"] = "Inspect the QA-FIX branch and main repo git state, then retry the same QA-FIX story.";
         await updateRunContext(step.run_id, context);
-        await failStep(stepId, mergeMsg);
+        await failStep(stepId, mergeMsg, completionAuthority?.envelope);
         return { advanced: false, runCompleted: false };
       }
     }
@@ -8393,14 +10358,14 @@ ${prd}`;
     // the next story starts from stale local main.
     const storyLoopConfig = parseLoopConfigSafe(step.loop_config, step.run_id);
     const requiredPrBase = (storyLoopConfig?.mergeStrategy === "pr-each" || storyLoopConfig?.verifyEach) ? "main" : "";
-    if (storyStatus === STORY_STATUS.DONE && storyPrUrl && context["auto_pr_create_failed"]) {
+    if (!isNativeV3Completion && storyStatus === STORY_STATUS.DONE && storyPrUrl && context["auto_pr_create_failed"]) {
       delete context["auto_pr_create_failed"];
       if (context["failure_category"] === "AUTO_PR_CREATE_FAILED") {
         delete context["failure_category"];
         delete context["failure_suggestion"];
       }
     }
-    if (storyStatus === STORY_STATUS.DONE && storyPrUrl && requiredPrBase && context["repo"]) {
+    if (!isNativeV3Completion && storyStatus === STORY_STATUS.DONE && storyPrUrl && requiredPrBase && context["repo"]) {
       try {
         const infoRaw = execFileSync("gh", ["pr", "view", storyPrUrl, "--json", "baseRefName,url"], {
           cwd: context["repo"], timeout: 15_000, stdio: ["pipe", "pipe", "pipe"], encoding: "utf-8",
@@ -8423,6 +10388,7 @@ ${prd}`;
     // If story is DONE and has a pushed branch but no PR URL, system opens PR on main.
     // Runs per-story so each logical unit gets its own PR for isolated review.
     if (
+      !isNativeV3Completion &&
       storyStatus === STORY_STATUS.DONE &&
       !storyPrUrl &&
       storyBranchName &&
@@ -8493,30 +10459,158 @@ ${prd}`;
       }
     }
 
-    await pgRun("UPDATE stories SET status = $1, output = $2, pr_url = $3, story_branch = $4, updated_at = $5, merge_status = COALESCE($7, merge_status) WHERE id = $6", [storyStatus, output, storyPrUrl, storyBranchName, now(), step.current_story_id, storyMergeStatus]);
+    const exactCompletionEnvelope = completionAuthority?.envelope;
+    if (exactCompletionEnvelope) {
+      const supportedStoryStatus = ["done", "verified", "skipped", "failed"].includes(storyStatus)
+        ? storyStatus as "done" | "verified" | "skipped" | "failed"
+        : undefined;
+      if (!supportedStoryStatus) throw new Error(`STORY_COMPLETION_STATUS_INVALID: ${storyStatus}`);
+      const shadowCompletionWorktree = context["story_workdir"] || context["repo"] || "";
+      const sourceAfter = exactCompletionEnvelope.protocol === "v3"
+        ? v3CandidateSource
+        : exactCompletionEnvelope.protocol !== "legacy" || storyIsQaFix
+          ? await captureShadowSourceRevision(shadowCompletionWorktree)
+          : undefined;
+      if (exactCompletionEnvelope.protocol === "v3" && !sourceAfter) {
+        throw new Error("V3_COMPLETION_CANDIDATE_SOURCE_REQUIRED");
+      }
+      const outputHash = crypto.createHash("sha256").update(output, "utf8").digest("hex");
+      const completionLoopConfig = parseLoopConfigSafe(step.loop_config, step.run_id);
+      let continuation: {
+        type: "story_loop_continue" | "story_direct_merge" | "story_qa_fix_merge" | "story_route_supervise" | "story_route_verify";
+        targetStepDbId?: string;
+        targetStepId?: string;
+      } = { type: "story_loop_continue" };
+      if (exactCompletionEnvelope.protocol === "v3") {
+        continuation = { type: "story_direct_merge" };
+      } else if (storyIsQaFix && supportedStoryStatus === "done") {
+        if (!sourceAfter) throw new Error("QA_FIX_EXACT_SOURCE_REVISION_REQUIRED");
+        continuation = { type: "story_qa_fix_merge" };
+      } else if (completionLoopConfig?.mergeStrategy === "direct-merge") {
+        continuation = { type: "story_direct_merge" };
+      } else if (completionLoopConfig?.superviseEach && completionLoopConfig.superviseStep) {
+        const target = await pgGet<{ id: string }>(
+          "SELECT id FROM steps WHERE run_id = $1 AND step_id = $2 LIMIT 1",
+          [step.run_id, completionLoopConfig.superviseStep],
+        );
+        if (!target) throw new Error("STORY_COMPLETION_SUPERVISE_TARGET_MISSING");
+        continuation = {
+          type: "story_route_supervise",
+          targetStepDbId: target.id,
+          targetStepId: completionLoopConfig.superviseStep,
+        };
+      } else if (completionLoopConfig?.verifyEach && completionLoopConfig.verifyStep) {
+        const target = await pgGet<{ id: string }>(
+          "SELECT id FROM steps WHERE run_id = $1 AND step_id = $2 LIMIT 1",
+          [step.run_id, completionLoopConfig.verifyStep],
+        );
+        if (!target) throw new Error("STORY_COMPLETION_VERIFY_TARGET_MISSING");
+        continuation = {
+          type: "story_route_verify",
+          targetStepDbId: target.id,
+          targetStepId: completionLoopConfig.verifyStep,
+        };
+      }
+      const completionSubject: RuntimeCompletionSubjectV1 = {
+        storyDbId: exactCompletionEnvelope.storyDbId!,
+        storyId: exactCompletionEnvelope.storyId!,
+        ...(storyPrUrl && /^https?:\/\//.test(storyPrUrl) ? { prUrl: storyPrUrl } : {}),
+        ...(sourceAfter ? { sourceSha: sourceAfter.sha } : {}),
+      };
+      const completionPlan = exactCompletionEnvelope.protocol === "v3"
+        ? (() => {
+            if (!v3CompletionContext || !v3EvidenceBundle) {
+              throw new Error("V3_COMPLETION_RECOVERY_EFFECT_CONTEXT_REQUIRED");
+            }
+            return createV3RecoveryCompletionPlanDescriptor({
+              context: v3CompletionContext,
+              evidenceBundle: v3EvidenceBundle,
+              ...(v3FindingSet ? { findingSet: v3FindingSet } : {}),
+              ...(v3FailureClass ? { failureClass: v3FailureClass } : {}),
+              continuation,
+              subject: completionSubject,
+            });
+          })()
+        : createSingleEffectCompletionPlanDescriptorV1({
+            kind: "story_completion",
+            continuation,
+            subject: completionSubject,
+            effectPayload: {
+              storyStatus: supportedStoryStatus,
+              storyBranch: storyBranchName || null,
+              mergeStatus: storyMergeStatus || null,
+            },
+          });
+      const v3AttemptDisposition = exactCompletionEnvelope.protocol === "v3"
+        ? v3EvidenceBundle?.aggregateVerdict === "pass"
+          ? "verified" as const
+          : v3EvidenceBundle?.aggregateVerdict === "fail"
+            ? "failed" as const
+            : "inconclusive" as const
+        : undefined;
+      const canonicalStoryOutput = exactCompletionEnvelope.protocol === "v3"
+        ? canonicalJsonStringify({
+            schema: "setfarm.v3-story-acceptance-record.v1",
+            storyId: exactCompletionEnvelope.storyId,
+            attemptId: exactCompletionEnvelope.attempt?.attemptId,
+            packetHash: v3CompletionContext?.packetHash,
+            sliceHash: v3CompletionContext?.sliceHash,
+            sourceRevision: sourceAfter,
+            evidenceBundleRef: v3EvidenceRefs.find((ref) => ref.startsWith("setfarm://evidence-bundle/")) || null,
+            findingSetRef: v3FindingSet ? `setfarm://finding-set/${v3FindingSet.findingSetHash}` : null,
+            aggregateVerdict: v3EvidenceBundle?.aggregateVerdict || "missing",
+            failureClass: v3FailureClass || null,
+            agentOutputHash: outputHash,
+          })
+        : output;
+      await completeStoryClaimAndBoundAttempt(getSql(), {
+        envelope: exactCompletionEnvelope,
+        ...(sourceAfter ? { sourceAfter } : {}),
+        outputHash,
+        evidenceRefs: exactCompletionEnvelope.protocol === "v3" ? v3EvidenceRefs : [],
+        ...(v3AttemptDisposition ? { attemptDisposition: v3AttemptDisposition } : {}),
+        storyStatus: supportedStoryStatus,
+        storyOutput: canonicalStoryOutput,
+        storyPrUrl,
+        storyBranch: storyBranchName,
+        storyMergeStatus,
+        stepStatus: "running",
+        stepOutput: exactCompletionEnvelope.protocol === "v3" ? canonicalStoryOutput : output,
+        completionPlan,
+        diagnostic: exactCompletionEnvelope.protocol === "v3"
+          ? `V3 story ${storyRow?.story_id || exactCompletionEnvelope.storyId || "unknown"} terminalized with ${v3EvidenceBundle?.aggregateVerdict || "missing"} canonical evidence`
+          : `Story ${storyRow?.story_id || exactCompletionEnvelope.storyId || "unknown"} completed through exact claim authority`,
+      });
+    } else {
+      // Compatibility path for pre-envelope legacy runtimes. Compiler runs
+      // never reach this branch because completeStep rejects them above.
+      await pgRun("UPDATE stories SET status = $1, output = $2, pr_url = $3, story_branch = $4, updated_at = $5, merge_status = COALESCE($7, merge_status) WHERE id = $6", [storyStatus, output, storyPrUrl, storyBranchName, now(), step.current_story_id, storyMergeStatus]);
+    }
+    if (exactCompletionEnvelope && options.deferContinuationToEffectLedger) {
+      // The owner transaction above is the first durable product-state commit.
+      // Everything below is a projection/continuation and must run from the
+      // effect ledger so a crash cannot replay metrics, memory, context, or
+      // routing work through the completion owner.
+      return { advanced: false, runCompleted: false };
+    }
     emitEvent({ ts: now(), event: storyEvent as import("./events.js").EventType, runId: step.run_id, workflowId: await getWorkflowId(step.run_id), stepId: step.step_id, storyId: storyRow?.story_id, storyTitle: storyRow?.title });
     logger.info(`Story ${storyStatus}: ${storyRow?.story_id} — ${storyRow?.title}`, { runId: step.run_id, stepId: step.step_id });
 
-    const shadowCompletionWorktree = context["story_workdir"] || context["repo"] || "";
-    if (storyRow?.story_id && shadowCompletionWorktree) {
-      await observeShadowAttemptSuccess({
-        runId: step.run_id,
-        stepId: step.step_id,
-        storyId: storyRow.story_id,
-        worktree: shadowCompletionWorktree,
-        output,
-        evidenceRefs: [],
-      });
+    if (!exactCompletionEnvelope) {
+      // v1.5.50 compatibility: old legacy workers do not carry a claim id.
+      try {
+        await pgRun(
+          "UPDATE claim_log SET outcome = 'completed', duration_ms = EXTRACT(EPOCH FROM NOW() - claimed_at::timestamptz) * 1000 WHERE run_id = $1 AND step_id = $2 AND story_id = $3 AND outcome IS NULL",
+          [step.run_id, step.step_id, storyRow?.story_id || ""],
+        );
+      } catch (e) { logger.warn(`[claim-log] Failed to resolve completion: ${String(e)}`, { runId: step.run_id }); }
     }
-
-    // v1.5.50: Resolve claim_log outcome
-    try {
-      await pgRun("UPDATE claim_log SET outcome = 'completed', duration_ms = EXTRACT(EPOCH FROM NOW() - claimed_at::timestamptz) * 1000 WHERE story_id = $1 AND outcome IS NULL", [storyRow?.story_id || ""]);
-    } catch (e) { logger.warn(`[claim-log] Failed to resolve completion: ${String(e)}`, { runId: step.run_id }); }
 
     // B2: Record step_metrics for SLA tracking
     try {
-      const claimTs = await pgGet<{ claimed_at: string }>("SELECT claimed_at FROM claim_log WHERE step_id = $1 AND outcome IS NULL ORDER BY claimed_at DESC LIMIT 1", [step.step_id]);
+      const claimTs = exactCompletionEnvelope
+        ? await pgGet<{ claimed_at: string }>("SELECT claimed_at FROM claim_log WHERE id = $1 LIMIT 1", [exactCompletionEnvelope.claimId])
+        : await pgGet<{ claimed_at: string }>("SELECT claimed_at FROM claim_log WHERE step_id = $1 ORDER BY claimed_at DESC LIMIT 1", [step.step_id]);
       const actualClaimedAt = claimTs?.claimed_at || now();
       await pgRun("INSERT INTO step_metrics (run_id, step_name, agent_id, claimed_at, completed_at, duration_ms, outcome, created_at) VALUES ($1, $2, $3, $4, NOW(), EXTRACT(EPOCH FROM NOW() - $5::timestamptz) * 1000, 'completed', NOW())", [step.run_id, step.step_id, step.agent_id || "", actualClaimedAt, actualClaimedAt]);
     } catch (e) { logger.warn(`[step-metrics] insert failed: ${String(e)}`, { runId: step.run_id }); }
@@ -8524,14 +10618,11 @@ ${prd}`;
 
 
     // Update PROJECT_MEMORY.md with completed story info
-    if (storyRow && storyStatus !== STORY_STATUS.SKIPPED) {
+    if (storyRow && storyStatus !== STORY_STATUS.SKIPPED && !isNativeV3Completion) {
       await updateProjectMemory(context, storyRow.story_id, storyRow.title, storyStatus, output);
     }
-    await cleanupProjectEphemera(step.run_id, `story-complete:${storyRow?.story_id || "unknown"}`, context);
-    // Clean up: remove worktree (auto-saves uncommitted changes before removal)
-    if (storyRow?.story_id && context["repo"]) {
-      removeStoryWorktree(context["repo"], storyBranchName || storyRow.story_id, step.agent_id);
-    }
+    // The spawner owns runtime quiescence. It removes story ephemera/worktrees
+    // only after the exact agent process and any OpenClaw fallback are terminal.
 
     // FIX: Clear story-specific context to prevent cross-contamination between parallel stories
     delete context["pr_url"];
@@ -8551,8 +10642,11 @@ ${prd}`;
     delete context["previous_failure"];
     await updateRunContext(step.run_id, context);
 
-    // Clear current_story_id, save output
-    await pgRun("UPDATE steps SET current_story_id = NULL, output = $1, updated_at = $2 WHERE id = $3", [output, now(), step.id]);
+    // Exact-envelope completion already cleared the pointer in the same
+    // transaction as claim/attempt/story publication.
+    if (!exactCompletionEnvelope) {
+      await pgRun("UPDATE steps SET current_story_id = NULL, output = $1, updated_at = $2 WHERE id = $3", [output, now(), step.id]);
+    }
     await refreshRunContractSafe(step.run_id, `story.${storyStatus}`);
 
     const loopConfig: LoopConfig | null = parseLoopConfigSafe(step.loop_config, step.run_id);
@@ -8569,7 +10663,7 @@ ${prd}`;
     // fall-through, not silently plumbed through.
 
     // DIRECT-MERGE: No per-story PRs — merge queue runs after all stories complete
-    if (loopConfig?.mergeStrategy === "direct-merge") {
+    if (isNativeV3Completion || loopConfig?.mergeStrategy === "direct-merge") {
       // Check if all stories are done (no pending/running left)
       const activeCount = await pgGet<{ count: string }>(
         "SELECT COUNT(*) as count FROM stories WHERE run_id = $1 AND status IN ('pending', 'running')",
@@ -8737,27 +10831,146 @@ ${prd}`;
           superviseEachConfigForStep.verifyStep,
           output,
           context,
+          completionAuthority?.envelope,
+          false,
+          undefined,
+          options.deferContinuationToEffectLedger ?? false,
         );
       }
       logger.info(`[supervise-each] ${step.step_id} completion has no done story awaiting story supervision; treating it as final supervisor`, { runId: step.run_id });
     }
     if (lc.verifyEach && lc.verifyStep === step.step_id) {
-      return await handleVerifyEachCompletion(step, loopStepRow.id, output, context);
+      return await handleVerifyEachCompletion(
+        step,
+        loopStepRow.id,
+        output,
+        context,
+        completionAuthority?.envelope,
+        false,
+        undefined,
+        options.deferContinuationToEffectLedger ?? false,
+      );
     }
+  }
+
+  let acceptedCandidateHash: string | undefined;
+  if (
+    completionAuthority?.envelope.protocol === "v3"
+    && step.step_id === "final-test"
+  ) {
+    // AcceptedCandidate must describe the last product fingerprint. Remove
+    // mutable QA/smoke artifacts and stop transient writers before capturing
+    // the final-source matrix; no repo cleanup is allowed after publication.
+    await cleanupProjectEphemera(step.run_id, "pre-acceptance:final-test", context);
+    const { worktree, branch } = resolveV3DownstreamSourceContext(context);
+    const route = await createPostgresV3DownstreamEvidenceRouter(getSql()).route({
+      runId: step.run_id,
+      stepDbId: step.id,
+      workflowStepId: "final-test",
+      phase: "final",
+      parentClaimId: completionAuthority.envelope.claimId,
+      worktree,
+      branch,
+      intent: "final_acceptance",
+    });
+    if (route.status !== "accepted_candidate_ready") {
+      const committed = await commitV3DownstreamEvidenceDecision(getSql(), {
+        envelope: completionAuthority.envelope,
+        route,
+      });
+      await recordStepTransition(
+        step.id,
+        step.run_id,
+        "running",
+        committed.decision.outcome === "recovery_routed" ? "waiting" : "failed",
+        step.agent_id,
+        "v3FinalAcceptance:canonicalDecision",
+        { routeHash: committed.decision.routeHash, outcome: committed.decision.outcome },
+      );
+      return { advanced: false, runCompleted: false };
+    }
+    const accepted = await createAcceptedCandidateRepository({
+      sql: getSql(),
+      artifactRoot: resolveProductArtifactDir(),
+      artifactLimits: resolveProductArtifactCapacity(),
+    }).publish({
+      runId: step.run_id,
+      sourceRevision: route.sourceRevision,
+      storyEvidence: route.stories.map((story) => ({
+        storyId: story.storyId,
+        attemptId: story.attemptId,
+        evidencePlanArtifactHash: story.evidencePlanArtifactHash,
+        evidenceBundleHash: story.evidenceBundleHash,
+      })),
+    });
+    acceptedCandidateHash = accepted.candidate.candidateHash;
   }
 
   // Single step: mark done (accept both running and pending — medic may have reset a slow step to pending
   // while the agent was still finishing its work, so we should still accept the completion)
   let _updateChanges: number;
-  const _ur = await pgRun("UPDATE steps SET status = 'done', output = $1, updated_at = $2 WHERE id = $3 AND status IN ('running', 'pending')", [output, now(), stepId]);
-  _updateChanges = _ur.changes;
+  if (completionAuthority?.envelope) {
+    const completionPlan = createSingleEffectCompletionPlanDescriptorV1({
+      kind: "single_completion",
+      continuation: { type: "single_pipeline_advance" },
+      effectPayload: {
+        stepId: step.step_id,
+        ...(acceptedCandidateHash ? { acceptedCandidateHash } : {}),
+        ...(v3DeployReceipt ? {
+          acceptedCandidateHash: v3DeployReceipt.candidateHash,
+          deployReceiptHash: v3DeployReceipt.receiptHash,
+          terminalProjectProjectionRef: v3DeployReceipt.terminalProjectProjection.evidenceRef,
+          terminalProjectProjectionOwner: v3DeployReceipt.terminalProjectProjection.owner,
+        } : {}),
+      },
+    });
+    const completionInput = {
+      envelope: completionAuthority.envelope,
+      stepStatus: "done" as const,
+      stepOutput: output,
+      completionPlan,
+      diagnostic: `Step ${step.step_id} completed through exact claim authority`,
+    };
+    if (v3DeployReceipt) {
+      const committed = await createV3DeployReceiptRepository(getSql()).publishAndComplete({
+        receipt: v3DeployReceipt,
+        completion: completionInput,
+      });
+      if (committed.status === "existing") {
+        logger.info("[deploy-v3] canonical deploy receipt already committed; refusing duplicate pipeline advancement", {
+          runId: step.run_id,
+          stepId: step.step_id,
+        });
+        return { advanced: false, runCompleted: false };
+      }
+    } else {
+      await completeSingleStepClaimAndState(getSql(), completionInput);
+    }
+    _updateChanges = 1;
+  } else {
+    const _ur = await pgRun("UPDATE steps SET status = 'done', output = $1, updated_at = $2 WHERE id = $3 AND status IN ('running', 'pending')", [output, now(), stepId]);
+    _updateChanges = _ur.changes;
+  }
   if (_updateChanges === 0) {
     // Already completed by another session — skip to prevent double pipeline advancement
     logger.info(`Step already completed, skipping duplicate`, { runId: step.run_id, stepId: step.step_id });
     return { advanced: false, runCompleted: false };
   }
+  if (completionAuthority?.envelope && options.deferContinuationToEffectLedger) {
+    return { advanced: false, runCompleted: false };
+  }
   await recordStepTransition(stepId, step.run_id, "running", "done", step.agent_id, "completeStep");
-  await refreshRunContractSafe(step.run_id, `step.${step.step_id}.done`, context);
+  const immutableAcceptedCandidate = completionAuthority?.envelope.protocol === "v3"
+    && (
+      (step.step_id === "final-test" && !!acceptedCandidateHash)
+      || isV3DeterministicDeployCompletion
+    );
+  await refreshRunContractSafe(
+    step.run_id,
+    `step.${step.step_id}.done`,
+    context,
+    immutableAcceptedCandidate ? { writeRepoFiles: false } : {},
+  );
   emitEvent({ ts: now(), event: "step.done", runId: step.run_id, workflowId: await getWorkflowId(step.run_id), stepId: step.step_id });
   logger.info(`Step completed: ${step.step_id}`, { runId: step.run_id, stepId: step.step_id });
 
@@ -8767,12 +10980,16 @@ ${prd}`;
     for (const _f of _tmpFiles) { try { fs.unlinkSync("/tmp/" + _f); } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); } }
   } catch (e) { logger.debug(`[cleanup] ${String(e).slice(0, 80)}`); }
 
-  await cleanupProjectEphemera(step.run_id, `step-complete:${step.step_id}`, context);
+  if (!immutableAcceptedCandidate) {
+    await cleanupProjectEphemera(step.run_id, `step-complete:${step.step_id}`, context);
+  }
 
   // v1.5.50: Resolve claim_log outcome for single step
-  try {
-    await pgRun("UPDATE claim_log SET outcome = 'completed', duration_ms = EXTRACT(EPOCH FROM NOW() - claimed_at::timestamptz) * 1000 WHERE run_id = $1 AND step_id = $2 AND story_id IS NULL AND outcome IS NULL", [step.run_id, step.step_id]);
-  } catch (e) { logger.warn(`[claim-log] Failed to resolve completion: ${String(e)}`, { runId: step.run_id }); }
+  if (!completionAuthority?.envelope) {
+    try {
+      await pgRun("UPDATE claim_log SET outcome = 'completed', duration_ms = EXTRACT(EPOCH FROM NOW() - claimed_at::timestamptz) * 1000 WHERE run_id = $1 AND step_id = $2 AND story_id IS NULL AND outcome IS NULL", [step.run_id, step.step_id]);
+    } catch (e) { logger.warn(`[claim-log] Failed to resolve completion: ${String(e)}`, { runId: step.run_id }); }
+  }
 
     // B2: Record step_metrics for single step
     try {
@@ -8792,6 +11009,655 @@ ${prd}`;
   return advancePipeline(step.run_id);
 }
 
+export type RuntimeCompletionEffectsResumeInput = Readonly<{
+  runId: string;
+  stepDbId: string;
+  workflowStepId: string;
+  output: string;
+  storyDbId?: string;
+  storyId?: string;
+  completionPlan?: RuntimeCompletionPlanV1;
+}>;
+
+function acceptedCandidateHashFromCompletionPlan(
+  plan?: RuntimeCompletionPlanV1,
+): string | undefined {
+  if (plan?.continuation.type !== "single_pipeline_advance") return undefined;
+  const hashes = plan.effects
+    .map((effect) => effect.payload.acceptedCandidateHash)
+    .filter((value): value is string => typeof value === "string");
+  if (hashes.length === 0) return undefined;
+  if (hashes.length !== 1 || !/^[a-f0-9]{64}$/.test(hashes[0]!)) {
+    throw new Error("V3_ACCEPTED_CANDIDATE_COMPLETION_EFFECT_INVALID");
+  }
+  return hashes[0]!;
+}
+
+type V3RefusalCompletionEffect = Readonly<{
+  refusalHash: string;
+  refusalCode: "SOURCE_SNAPSHOT_MISMATCH" | "CONTRACT_SCOPE_CONFLICT";
+  attemptId: string;
+  findingSetHash: string;
+  recoveryCaseId: string;
+  priorRecoveryDispatchId?: string;
+  priorRecoveryRevisionId?: string;
+}>;
+
+function v3RefusalCompletionEffect(plan?: RuntimeCompletionPlanV1): V3RefusalCompletionEffect | undefined {
+  const effects = plan?.effects.filter((effect) => effect.effectType === "v3.refusal.recorded") ?? [];
+  if (effects.length === 0) return undefined;
+  if (effects.length !== 1) throw new Error("V3_REFUSAL_COMPLETION_EFFECT_AMBIGUOUS");
+  const payload = effects[0]!.payload;
+  const refusalCode = payload.refusalCode;
+  const refusalHash = payload.refusalHash;
+  const attemptId = payload.attemptId;
+  const findingSetHash = payload.findingSetHash;
+  const recoveryCaseId = payload.recoveryCaseId;
+  const priorRecoveryDispatchId = payload.priorRecoveryDispatchId;
+  const priorRecoveryRevisionId = payload.priorRecoveryRevisionId;
+  if (
+    plan?.continuation.type !== "failure_finalize"
+    || !["SOURCE_SNAPSHOT_MISMATCH", "CONTRACT_SCOPE_CONFLICT"].includes(String(refusalCode))
+    || typeof refusalHash !== "string" || !/^[a-f0-9]{64}$/.test(refusalHash)
+    || typeof attemptId !== "string" || !/^ATT_[A-Za-z0-9-]{16,160}$/.test(attemptId)
+    || typeof findingSetHash !== "string" || !/^[a-f0-9]{64}$/.test(findingSetHash)
+    || typeof recoveryCaseId !== "string" || !/^RCV_[a-f0-9]{64}$/.test(recoveryCaseId)
+    || ((priorRecoveryDispatchId === undefined) !== (priorRecoveryRevisionId === undefined))
+    || (priorRecoveryDispatchId !== undefined && (typeof priorRecoveryDispatchId !== "string" || !/^RDISP_[a-f0-9]{64}$/.test(priorRecoveryDispatchId)))
+    || (priorRecoveryRevisionId !== undefined && (typeof priorRecoveryRevisionId !== "string" || !/^RREV_[a-f0-9]{64}$/.test(priorRecoveryRevisionId)))
+  ) {
+    throw new Error("V3_REFUSAL_COMPLETION_EFFECT_INVALID");
+  }
+  return {
+    refusalHash,
+    refusalCode: refusalCode as V3RefusalCompletionEffect["refusalCode"],
+    attemptId,
+    findingSetHash,
+    recoveryCaseId,
+    ...(priorRecoveryDispatchId ? { priorRecoveryDispatchId } : {}),
+    ...(priorRecoveryRevisionId ? { priorRecoveryRevisionId } : {}),
+  };
+}
+
+async function v3RefusalRecoveryLineageIsSettled(
+  effect: V3RefusalCompletionEffect,
+): Promise<boolean> {
+  const findings = createFindingRecoveryRepository(getSql());
+  const terminal = await findings.findRecoveryCase(effect.recoveryCaseId);
+  const target = effect.refusalCode === "SOURCE_SNAPSHOT_MISMATCH" ? "superseded" : "blocked";
+  if (!terminal || terminal.status !== target || terminal.findingSetHash !== effect.findingSetHash) {
+    throw new Error("V3_REFUSAL_TERMINAL_CASE_IDENTITY_MISMATCH");
+  }
+  if (!effect.priorRecoveryDispatchId || !effect.priorRecoveryRevisionId) return true;
+  const deliveries = createRecoveryDeliveryRepository(getSql());
+  const dispatch = await deliveries.findDispatch(effect.priorRecoveryDispatchId);
+  const delivery = await deliveries.findDelivery(effect.priorRecoveryDispatchId);
+  if (
+    !dispatch
+    || !delivery
+    || dispatch.revisionId !== effect.priorRecoveryRevisionId
+    || delivery.revisionId !== effect.priorRecoveryRevisionId
+    || delivery.attemptId !== effect.attemptId
+  ) {
+    throw new Error("V3_REFUSAL_PRIOR_RECOVERY_IDENTITY_MISMATCH");
+  }
+  const priorCase = await findings.findRecoveryCase(dispatch.recoveryCaseId);
+  if (!priorCase) throw new Error("V3_REFUSAL_PRIOR_RECOVERY_CASE_MISSING");
+  return delivery.state === target && priorCase.status === target;
+}
+
+async function settleV3RefusalRecoveryLineage(effect: V3RefusalCompletionEffect): Promise<void> {
+  if (await v3RefusalRecoveryLineageIsSettled(effect)) return;
+  if (!effect.priorRecoveryDispatchId || !effect.priorRecoveryRevisionId) return;
+  const findings = createFindingRecoveryRepository(getSql());
+  const deliveries = createRecoveryDeliveryRepository(getSql());
+  const dispatch = await deliveries.findDispatch(effect.priorRecoveryDispatchId);
+  const delivery = await deliveries.findDelivery(effect.priorRecoveryDispatchId);
+  if (!dispatch || !delivery) throw new Error("V3_REFUSAL_PRIOR_RECOVERY_IDENTITY_MISSING");
+  const target = effect.refusalCode === "SOURCE_SNAPSHOT_MISMATCH" ? "superseded" : "blocked";
+  const reasonCode = effect.refusalCode === "SOURCE_SNAPSHOT_MISMATCH"
+    ? "source_superseded"
+    : "upstream_recompile_required";
+  if (!["succeeded", "failed", "blocked", "superseded"].includes(delivery.state)) {
+    const completed = await deliveries.completeDelivery({
+      dispatchId: effect.priorRecoveryDispatchId,
+      revisionId: effect.priorRecoveryRevisionId,
+      attemptId: effect.attemptId,
+      state: target,
+      terminalResult: {
+        schema: "setfarm.v3-refusal-recovery-delivery-result.v1",
+        refusalHash: effect.refusalHash,
+        findingSetHash: effect.findingSetHash,
+        recoveryCaseId: effect.recoveryCaseId,
+        outcome: target,
+      },
+      diagnostic: `${effect.refusalCode} transferred recovery ownership to ${effect.recoveryCaseId}`,
+    });
+    if (!completed || completed.state !== target) {
+      throw new Error("V3_REFUSAL_PRIOR_RECOVERY_DELIVERY_SETTLEMENT_LOST");
+    }
+  } else if (delivery.state !== target) {
+    throw new Error("V3_REFUSAL_PRIOR_RECOVERY_DELIVERY_TERMINAL_CONFLICT");
+  }
+  const priorCase = await findings.findRecoveryCase(dispatch.recoveryCaseId);
+  if (!priorCase) throw new Error("V3_REFUSAL_PRIOR_RECOVERY_CASE_MISSING");
+  if (["resolved", "blocked", "superseded"].includes(priorCase.status)) {
+    if (priorCase.status !== target) throw new Error("V3_REFUSAL_PRIOR_RECOVERY_CASE_TERMINAL_CONFLICT");
+    return;
+  }
+  const transitioned = await findings.transitionRecoveryCase({
+    recoveryCaseId: priorCase.recoveryCaseId,
+    expectedStateVersion: priorCase.stateVersion,
+    status: target,
+    terminal: {
+      owner: priorCase.owner,
+      outcome: target,
+      reasonCode,
+      evidenceBundleHashes: [],
+    },
+    decisionRef: effect.refusalHash,
+  });
+  if (transitioned.status === "stale_version") {
+    const replay = await findings.findRecoveryCase(priorCase.recoveryCaseId);
+    if (replay?.status !== target) throw new Error("V3_REFUSAL_PRIOR_RECOVERY_CASE_SETTLEMENT_LOST");
+  } else if (transitioned.recoveryCase.status !== target) {
+    throw new Error("V3_REFUSAL_PRIOR_RECOVERY_CASE_SETTLEMENT_LOST");
+  }
+}
+
+export async function reconcileRuntimeCompletionEffects(
+  input: RuntimeCompletionEffectsResumeInput,
+): Promise<Readonly<{
+  result: { advanced: boolean; runCompleted: boolean };
+  evidence: Record<string, unknown>;
+}> | undefined> {
+  const plan = input.completionPlan;
+  if (!plan) throw new Error("RUNTIME_COMPLETION_EFFECT_PLAN_REQUIRED");
+  const run = await pgGet<{ status: string }>("SELECT status FROM runs WHERE id = $1", [input.runId]);
+  if (!run) throw new Error("RUNTIME_COMPLETION_EFFECT_RUN_NOT_FOUND");
+  const terminal = ["completed", "done", "failed", "cancelled"].includes(run.status);
+  if (terminal) {
+    return {
+      result: { advanced: false, runCompleted: ["completed", "done"].includes(run.status) },
+      evidence: {
+        schema: "setfarm.runtime-completion-effect-reconcile.v1",
+        reason: "run-terminal",
+        runStatus: run.status,
+        evidenceRefs: [`setfarm://run/${input.runId}`],
+      },
+    };
+  }
+
+  const step = await pgGet<{
+    id: string;
+    step_index: number;
+    status: string;
+    current_story_id: string | null;
+  }>(
+    "SELECT id, step_index, status, current_story_id FROM steps WHERE id = $1 AND run_id = $2",
+    [input.stepDbId, input.runId],
+  );
+  if (!step) throw new Error("RUNTIME_COMPLETION_EFFECT_STEP_NOT_FOUND");
+  const continuation = plan.continuation.type;
+  const refusalEffect = v3RefusalCompletionEffect(plan);
+  const subject = plan.subject;
+  const baseEvidence = {
+    schema: "setfarm.runtime-completion-effect-reconcile.v1",
+    continuation,
+    evidenceRefs: [
+      `setfarm://run/${input.runId}`,
+      `setfarm://step/${input.stepDbId}`,
+      ...(subject ? [`setfarm://story/${subject.storyDbId}`] : []),
+    ],
+  };
+
+  if (["failure_finalize", "quality_route_finalize", "terminal_finalize"].includes(continuation)) {
+    if (refusalEffect?.priorRecoveryDispatchId) {
+      if (!(await v3RefusalRecoveryLineageIsSettled(refusalEffect))) return undefined;
+    }
+    return {
+      result: { advanced: false, runCompleted: false },
+      evidence: { ...baseEvidence, reason: "owner-transaction-published-final-state" },
+    };
+  }
+
+  if (continuation === "story_route_verify" || continuation === "story_route_supervise") {
+    if (!subject || !plan.continuation.targetStepDbId) {
+      throw new Error("RUNTIME_COMPLETION_EFFECT_ROUTE_IDENTITY_MISSING");
+    }
+    const target = await pgGet<{ status: string; current_story_id: string | null }>(
+      "SELECT status, current_story_id FROM steps WHERE id = $1 AND run_id = $2",
+      [plan.continuation.targetStepDbId, input.runId],
+    );
+    const story = await pgGet<{ status: string }>(
+      "SELECT status FROM stories WHERE id = $1 AND run_id = $2 AND story_id = $3",
+      [subject.storyDbId, input.runId, subject.storyId],
+    );
+    const progressed = continuation === "story_route_supervise"
+      ? Boolean(
+        target
+        && ["pending", "running"].includes(target.status)
+        && target.current_story_id === subject.storyDbId,
+      )
+      : Boolean(target && ["pending", "running"].includes(target.status));
+    if (progressed || ["verified", "skipped"].includes(story?.status ?? "")) {
+      return {
+        result: { advanced: false, runCompleted: false },
+        evidence: {
+          ...baseEvidence,
+          reason: progressed ? "exact-target-already-routed" : "story-already-progressed",
+          targetStepDbId: plan.continuation.targetStepDbId,
+          targetStatus: target?.status ?? "missing",
+          storyStatus: story?.status ?? "missing",
+        },
+      };
+    }
+    return undefined;
+  }
+
+  if (continuation === "story_loop_continue" && subject) {
+    const active = await pgGet<{ count: string }>(
+      "SELECT COUNT(*) AS count FROM stories WHERE run_id = $1 AND status IN ('pending', 'running')",
+      [input.runId],
+    );
+    const activeCount = Number(active?.count ?? 0);
+    if (activeCount > 0 && step.status === "running" && step.current_story_id === null) {
+      return {
+        result: { advanced: false, runCompleted: false },
+        evidence: { ...baseEvidence, reason: "loop-ready-for-next-story", activeStoryCount: activeCount },
+      };
+    }
+    if (step.status === "done") {
+      return {
+        result: { advanced: true, runCompleted: false },
+        evidence: { ...baseEvidence, reason: "loop-already-finalized" },
+      };
+    }
+    return undefined;
+  }
+
+  if (continuation === "story_direct_merge" && subject) {
+    const counts = await pgGet<{ active: string; failed: string; unpublished: string }>(
+      `SELECT
+         COUNT(*) FILTER (WHERE status IN ('pending', 'running')) AS active,
+         COUNT(*) FILTER (WHERE status = 'failed') AS failed,
+         COUNT(*) FILTER (WHERE status NOT IN ('verified', 'skipped')) AS unpublished
+       FROM stories WHERE run_id = $1`,
+      [input.runId],
+    );
+    if (
+      step.status === "done"
+      && Number(counts?.active ?? 0) === 0
+      && Number(counts?.failed ?? 0) === 0
+      && Number(counts?.unpublished ?? 0) === 0
+    ) {
+      return {
+        result: { advanced: true, runCompleted: false },
+        evidence: { ...baseEvidence, reason: "direct-merge-canonical-state-published" },
+      };
+    }
+    return undefined;
+  }
+
+  if (continuation === "story_qa_fix_merge") {
+    if (!subject?.sourceSha) {
+      throw new Error("RUNTIME_COMPLETION_EFFECT_QA_FIX_SOURCE_IDENTITY_MISSING");
+    }
+    const story = await pgGet<{
+      status: string;
+      merge_status: string | null;
+    }>(
+      "SELECT status, merge_status FROM stories WHERE id = $1 AND run_id = $2 AND story_id = $3",
+      [subject.storyDbId, input.runId, subject.storyId],
+    );
+    if (story?.status !== STORY_STATUS.VERIFIED || story.merge_status !== "merged") {
+      return undefined;
+    }
+    const context = await getRunContext(input.runId);
+    const repoPath = context["repo"] || "";
+    if (!repoPath) return undefined;
+    const proof = proveExactCommitAncestor(repoPath, subject.sourceSha, "origin/main");
+    if (proof.outcome !== "ancestor") return undefined;
+    return {
+      result: { advanced: false, runCompleted: false },
+      evidence: {
+        ...baseEvidence,
+        reason: "qa-fix-exact-source-already-published",
+        sourceSha: subject.sourceSha,
+        targetRef: proof.targetRef,
+        targetCommitSha: proof.targetCommitSha,
+      },
+    };
+  }
+
+  if (continuation === "single_pipeline_advance") {
+    const activeLoop = await pgGet<{ id: string }>(
+      "SELECT id FROM steps WHERE run_id = $1 AND type = 'loop' AND status IN ('pending', 'running') LIMIT 1",
+      [input.runId],
+    );
+    if (activeLoop) {
+      return {
+        result: { advanced: false, runCompleted: false },
+        evidence: { ...baseEvidence, reason: "active-loop-intentionally-blocks-pipeline-advance" },
+      };
+    }
+    const later = await pgGet<{ id: string; status: string }>(
+      `SELECT id, status FROM steps
+        WHERE run_id = $1 AND step_index > $2 AND status <> 'waiting'
+        ORDER BY step_index LIMIT 1`,
+      [input.runId, step.step_index],
+    );
+    if (later) {
+      return {
+        result: { advanced: true, runCompleted: false },
+        evidence: { ...baseEvidence, reason: "later-step-already-visible", laterStepDbId: later.id, laterStatus: later.status },
+      };
+    }
+    return undefined;
+  }
+
+  if ((continuation === "verify_each_decision" || continuation === "supervise_each_decision") && subject) {
+    const story = await pgGet<{ status: string }>(
+      "SELECT status FROM stories WHERE id = $1 AND run_id = $2 AND story_id = $3",
+      [subject.storyDbId, input.runId, subject.storyId],
+    );
+    const parsed = parseOutputKeyValues(input.output);
+    const decision = firstOutputWord(parsed["decision"] || parsed["status"] || "");
+    const retryDecision = ["retry", "blocked", "failed", "fail"].includes(decision);
+    const applied = retryDecision
+      ? Boolean(story && story.status !== "done")
+      : Boolean(story && ["verified", "skipped"].includes(story.status));
+    if (applied) {
+      return {
+        result: { advanced: false, runCompleted: false },
+        evidence: { ...baseEvidence, reason: "story-decision-already-published", decision, storyStatus: story!.status },
+      };
+    }
+    return undefined;
+  }
+
+  return undefined;
+}
+
+/**
+ * Resume only the deterministic continuation after the exact claim/product
+ * owner transaction committed. This function never closes a claim. Every
+ * mutation is an idempotent projection of canonical story/step/run state, so
+ * a coordinator crash can replay it without rerunning agent gates or source
+ * publication.
+ */
+export async function resumeRuntimeCompletionEffects(
+  input: RuntimeCompletionEffectsResumeInput,
+): Promise<{ advanced: boolean; runCompleted: boolean }> {
+  const run = await pgGet<{ status: string }>("SELECT status FROM runs WHERE id = $1", [input.runId]);
+  if (!run) throw new Error("RUNTIME_COMPLETION_EFFECT_RUN_NOT_FOUND");
+  if (![RUN_STATUS.RUNNING, "resuming"].includes(run.status as any)) {
+    return { advanced: false, runCompleted: ["completed", RUN_STATUS.DONE].includes(run.status) };
+  }
+
+  const step = await pgGet<{
+    id: string;
+    run_id: string;
+    step_id: string;
+    step_index: number;
+    type: string;
+    loop_config: string | null;
+    current_story_id: string | null;
+    agent_id: string;
+    status: string;
+  }>(
+    `SELECT id, run_id, step_id, step_index, type, loop_config,
+            current_story_id, agent_id, status
+       FROM steps WHERE id = $1 AND run_id = $2 AND step_id = $3`,
+    [input.stepDbId, input.runId, input.workflowStepId],
+  );
+  if (!step) throw new Error("RUNTIME_COMPLETION_EFFECT_STEP_NOT_FOUND");
+
+  const context = await getRunContext(input.runId);
+  const isCanonicalV3StoryCompletion = input.completionPlan?.effects.some(
+    (effect) => effect.effectType === "v3.recovery.coordinate",
+  ) ?? false;
+  const refusalEffect = v3RefusalCompletionEffect(input.completionPlan);
+  if (refusalEffect) {
+    await settleV3RefusalRecoveryLineage(refusalEffect);
+    return { advanced: false, runCompleted: false };
+  }
+  if (input.storyId && input.storyDbId) {
+    const story = await pgGet<{
+      id: string;
+      story_id: string;
+      title: string;
+      status: string;
+      pr_url: string | null;
+      story_branch: string | null;
+    }>(
+      `SELECT id, story_id, title, status, pr_url, story_branch
+         FROM stories WHERE id = $1 AND run_id = $2 AND story_id = $3`,
+      [input.storyDbId, input.runId, input.storyId],
+    );
+    if (!story || ![STORY_STATUS.DONE, STORY_STATUS.VERIFIED, STORY_STATUS.SKIPPED].includes(story.status as any)) {
+      throw new Error(`RUNTIME_COMPLETION_EFFECT_STORY_STATE_INVALID:${story?.status ?? "missing"}`);
+    }
+    if (step.current_story_id !== null) {
+      throw new Error(`RUNTIME_COMPLETION_EFFECT_LOOP_POINTER_NOT_CLEARED:${step.current_story_id}`);
+    }
+
+    if (input.completionPlan?.continuation.type === "story_qa_fix_merge") {
+      const subject = input.completionPlan.subject;
+      if (
+        !subject?.sourceSha
+        || subject.storyDbId !== story.id
+        || subject.storyId !== story.story_id
+      ) {
+        throw new Error("RUNTIME_COMPLETION_EFFECT_QA_FIX_IDENTITY_MISMATCH");
+      }
+      const repoPath = context["repo"] || "";
+      const storyBranch = story.story_branch || "";
+      if (!repoPath || !storyBranch) {
+        throw new Error("RUNTIME_COMPLETION_EFFECT_QA_FIX_CONTEXT_MISSING");
+      }
+      const merge = mergeExactSourceIntoFeature({
+        repoPath,
+        sourceSha: subject.sourceSha,
+        featureBranch: "main",
+        commitMessage: `merge: ${story.story_id} exact QA-FIX source`,
+      });
+      if (!merge.success) {
+        throw new Error(`RUNTIME_COMPLETION_EFFECT_QA_FIX_MERGE_FAILED:${merge.error}`);
+      }
+      const published = await pgRun(
+        `UPDATE stories
+            SET status = 'verified', merge_status = 'merged', updated_at = $4
+          WHERE id = $1 AND run_id = $2 AND story_id = $3
+            AND status IN ('done', 'verified')`,
+        [story.id, input.runId, story.story_id, now()],
+      );
+      if (published.changes !== 1) {
+        throw new Error("RUNTIME_COMPLETION_EFFECT_QA_FIX_STATE_CAS_LOST");
+      }
+      story.status = STORY_STATUS.VERIFIED;
+      context["qa_fix_merged_to_main"] = `${story.story_id}:${storyBranch}:${subject.sourceSha}`;
+    }
+
+    const contextStory = context["current_story_id"] || "";
+    if (!contextStory || contextStory === story.story_id || contextStory === story.id) {
+      delete context["pr_url"];
+      delete context["story_branch"];
+      delete context["current_story_id"];
+      delete context["current_story_title"];
+      delete context["current_story"];
+      delete context["story_base_ref"];
+      delete context["verify_feedback"];
+      delete context["previous_failure"];
+      await updateRunContext(input.runId, context);
+    }
+    if (story.status !== STORY_STATUS.SKIPPED && !isCanonicalV3StoryCompletion) {
+      updateProjectMemory(context, story.story_id, story.title, story.status, input.output);
+    }
+    await refreshRunContractSafe(input.runId, `story.${story.status}`);
+
+    const loopConfig = parseLoopConfigSafe(step.loop_config, input.runId);
+    if (
+      input.completionPlan?.continuation.type === "story_direct_merge"
+      || loopConfig?.mergeStrategy === "direct-merge"
+    ) {
+      const activeCount = await pgGet<{ count: string }>(
+        "SELECT COUNT(*) AS count FROM stories WHERE run_id = $1 AND status IN ('pending', 'running')",
+        [input.runId],
+      );
+      if (parseInt(activeCount?.count || "0", 10) > 0) {
+        return { advanced: false, runCompleted: false };
+      }
+      if (step.status === "done") return advancePipeline(input.runId);
+      const repoPath = context["repo"] || "";
+      const featureBranch = context["branch"] || "";
+      if (!repoPath || !featureBranch) {
+        throw new Error("RUNTIME_COMPLETION_EFFECT_DIRECT_MERGE_CONTEXT_MISSING");
+      }
+      try {
+        const merge = await runMergeQueue(input.runId, repoPath, featureBranch);
+        const failedStories = await pgQuery<{ story_id: string; title: string }>(
+          "SELECT story_id, title FROM stories WHERE run_id = $1 AND status = 'failed' ORDER BY story_index",
+          [input.runId],
+        );
+        if (failedStories.length > 0) {
+          const detail = failedStories.map((item) => `${item.story_id} (${item.title})`).join(", ");
+          const diagnostic = `Direct-merge continuation found failed stories: ${detail}`;
+          await pgRun(
+            "UPDATE steps SET status = 'failed', output = $1, updated_at = $2 WHERE id = $3",
+            [diagnostic, now(), step.id],
+          );
+          await failRun(input.runId, true, diagnostic);
+          return { advanced: false, runCompleted: false };
+        }
+        await pgRun(
+          "UPDATE steps SET status = 'done', output = $1, updated_at = $2 WHERE id = $3 AND status <> 'done'",
+          [
+            `STATUS: done\nMERGED: ${merge.merged.join(", ")}\nCONFLICTS: ${merge.conflicted.join(", ")}\nFINAL_PR: ${merge.prUrl || "none"}`,
+            now(),
+            step.id,
+          ],
+        );
+        if (merge.prUrl) {
+          context["final_pr"] = merge.prUrl;
+          await updateRunContext(input.runId, context);
+        }
+        await refreshRunContractSafe(input.runId, "implement.direct_merge.done");
+        return advancePipeline(input.runId);
+      } catch (error) {
+        const diagnostic = `Merge queue continuation failed: ${String(error)}`;
+        await pgRun(
+          "UPDATE steps SET status = 'failed', output = $1, updated_at = $2 WHERE id = $3",
+          [diagnostic, now(), step.id],
+        );
+        await failRun(input.runId, true, diagnostic);
+        return { advanced: false, runCompleted: false };
+      }
+    }
+
+    if (
+      loopConfig?.superviseEach
+      && loopConfig.superviseStep
+      && story.status === STORY_STATUS.DONE
+    ) {
+      const superviseStep = await pgGet<{ id: string }>(
+        "SELECT id FROM steps WHERE run_id = $1 AND step_id = $2 LIMIT 1",
+        [input.runId, loopConfig.superviseStep],
+      );
+      if (!superviseStep) throw new Error("RUNTIME_COMPLETION_EFFECT_SUPERVISE_STEP_MISSING");
+      context["supervisor_scope"] = "story";
+      context["current_story_id"] = story.story_id;
+      context["current_story_title"] = story.title;
+      if (story.pr_url) context["pr_url"] = story.pr_url;
+      if (story.story_branch) context["story_branch"] = story.story_branch;
+      clearStorySupervised(context, story.story_id);
+      await updateRunContext(input.runId, context);
+      await pgBegin(async (sql) => {
+        await sql.unsafe(
+          "UPDATE steps SET status = 'pending', current_story_id = $1, updated_at = $2 WHERE id = $3 AND status IN ('waiting', 'done', 'pending')",
+          [story.id, now(), superviseStep.id],
+        );
+        await sql.unsafe(
+          "UPDATE steps SET status = 'running', started_at = COALESCE(started_at, NOW()), updated_at = $1 WHERE id = $2",
+          [now(), step.id],
+        );
+      });
+      return { advanced: false, runCompleted: false };
+    }
+
+    if (
+      loopConfig?.verifyEach
+      && loopConfig.verifyStep
+      && story.status !== STORY_STATUS.VERIFIED
+    ) {
+      const verifyStep = await pgGet<{ id: string }>(
+        "SELECT id FROM steps WHERE run_id = $1 AND step_id = $2 LIMIT 1",
+        [input.runId, loopConfig.verifyStep],
+      );
+      if (!verifyStep) throw new Error("RUNTIME_COMPLETION_EFFECT_VERIFY_STEP_MISSING");
+      await pgBegin(async (sql) => {
+        await sql.unsafe(
+          "UPDATE steps SET status = 'pending', updated_at = $1 WHERE id = $2 AND status IN ('waiting', 'done')",
+          [now(), verifyStep.id],
+        );
+        await sql.unsafe(
+          "UPDATE steps SET status = 'running', started_at = COALESCE(started_at, NOW()), updated_at = $1 WHERE id = $2",
+          [now(), step.id],
+        );
+      });
+      return { advanced: false, runCompleted: false };
+    }
+
+    return checkLoopContinuation(input.runId, step.id);
+  }
+
+  const loopStep = await pgGet<{ id: string; loop_config: string | null }>(
+    "SELECT id, loop_config FROM steps WHERE run_id = $1 AND type = 'loop' LIMIT 1",
+    [input.runId],
+  );
+  if (loopStep?.loop_config) {
+    const loopConfig = parseLoopConfigSafe(loopStep.loop_config, input.runId);
+    if (loopConfig?.superviseEach && (loopConfig.superviseStep || "supervise") === step.step_id) {
+      return handleSuperviseEachCompletion(
+        step,
+        loopStep.id,
+        loopConfig.verifyStep || "verify",
+        input.output,
+        context,
+        undefined,
+        true,
+        input.completionPlan?.subject,
+      );
+    }
+    if (loopConfig?.verifyEach && loopConfig.verifyStep === step.step_id) {
+      return handleVerifyEachCompletion(
+        step,
+        loopStep.id,
+        input.output,
+        context,
+        undefined,
+        true,
+        input.completionPlan?.subject,
+      );
+    }
+  }
+
+  const acceptedCandidateHash = step.step_id === "final-test"
+    ? acceptedCandidateHashFromCompletionPlan(input.completionPlan)
+    : undefined;
+  await refreshRunContractSafe(
+    input.runId,
+    `step.${step.step_id}.done`,
+    context,
+    acceptedCandidateHash ? { writeRepoFiles: false } : {},
+  );
+  if (!acceptedCandidateHash) {
+    await cleanupProjectEphemera(input.runId, `step-complete-resume:${step.step_id}`, context);
+  }
+  if (await findActiveLoop(input.runId)) return { advanced: false, runCompleted: false };
+  return advancePipeline(input.runId);
+}
+
 /**
  * Handle supervise-each completion: manager gate between implement and verify.
  */
@@ -8801,6 +11667,10 @@ async function handleSuperviseEachCompletion(
   verifyStepName: string,
   output: string,
   context: Record<string, string>,
+  claimEnvelope?: ClaimEnvelopeV1,
+  ownerAlreadyCommitted = false,
+  boundSubject?: RuntimeCompletionSubjectV1,
+  deferContinuationToEffectLedger = false,
 ): Promise<{ advanced: boolean; runCompleted: boolean }> {
   const parsedOutput = parseOutputKeyValues(output);
   for (const key of PROTECTED_CONTEXT_KEYS) {
@@ -8811,7 +11681,14 @@ async function handleSuperviseEachCompletion(
   }
 
   let story = undefined as Awaited<ReturnType<typeof findUnsupervisedDoneStory>>;
-  if (superviseStep.current_story_id) {
+  if (boundSubject) {
+    story = await pgGet<any>(
+      "SELECT id, story_id, title, retry_count, max_retries, pr_url, story_branch, scope_files FROM stories WHERE run_id = $1 AND id = $2 AND story_id = $3 LIMIT 1",
+      [superviseStep.run_id, boundSubject.storyDbId, boundSubject.storyId],
+    );
+    if (!story) throw new Error("SUPERVISE_EFFECT_BOUND_STORY_MISSING");
+  }
+  if (!story && superviseStep.current_story_id) {
     story = await pgGet<any>(
       "SELECT id, story_id, title, retry_count, max_retries, pr_url, story_branch, scope_files FROM stories WHERE run_id = $1 AND id = $2 AND status = 'done' LIMIT 1",
       [superviseStep.run_id, superviseStep.current_story_id],
@@ -8828,18 +11705,61 @@ async function handleSuperviseEachCompletion(
     story = await findUnsupervisedDoneStory(superviseStep.run_id, context);
   }
 
-  const changed = await pgRun(
-    "UPDATE steps SET status = 'waiting', output = $1, current_story_id = NULL, updated_at = $2 WHERE id = $3 AND status IN ('running', 'pending')",
-    [output, now(), superviseStep.id],
-  );
-  if (changed.changes === 0) return { advanced: false, runCompleted: false };
-  await recordStepTransition(superviseStep.id, superviseStep.run_id, "running", "waiting", undefined, "handleSuperviseEachCompletion");
-  try {
-    await pgRun(
-      "UPDATE claim_log SET outcome = 'completed', duration_ms = EXTRACT(EPOCH FROM NOW() - claimed_at::timestamptz) * 1000 WHERE run_id = $1 AND step_id = $2 AND story_id IS NULL AND outcome IS NULL",
-      [superviseStep.run_id, superviseStep.step_id],
+  if (ownerAlreadyCommitted) {
+    const committed = await pgGet<{ status: string }>(
+      "SELECT status FROM steps WHERE id = $1 AND run_id = $2",
+      [superviseStep.id, superviseStep.run_id],
     );
-  } catch (e) { logger.warn(`[claim-log] Failed to resolve supervise_each completion: ${String(e)}`, { runId: superviseStep.run_id }); }
+    if (committed?.status !== "waiting") {
+      throw new Error(`SUPERVISE_EFFECT_RESUME_STATE_INVALID:${committed?.status ?? "missing"}`);
+    }
+  } else if (claimEnvelope) {
+    if (!story) throw new Error("SUPERVISE_COMPLETION_TARGET_STORY_MISSING");
+    const verifyTarget = await pgGet<{ id: string }>(
+      "SELECT id FROM steps WHERE run_id = $1 AND step_id = $2 LIMIT 1",
+      [superviseStep.run_id, verifyStepName],
+    );
+    if (!verifyTarget) throw new Error("SUPERVISE_COMPLETION_VERIFY_TARGET_MISSING");
+    await completeSingleStepClaimAndState(getSql(), {
+      envelope: claimEnvelope,
+      stepStatus: "waiting",
+      stepOutput: output,
+      clearCurrentStory: true,
+      completionPlan: createSingleEffectCompletionPlanDescriptorV1({
+        kind: "single_completion",
+        continuation: {
+          type: "supervise_each_decision",
+          targetStepDbId: verifyTarget.id,
+          targetStepId: verifyStepName,
+        },
+        subject: {
+          storyDbId: story.id,
+          storyId: story.story_id,
+          ...(story.pr_url && /^https?:\/\//.test(story.pr_url) ? { prUrl: story.pr_url } : {}),
+        },
+        effectPayload: { supervisorStepDbId: superviseStep.id },
+      }),
+      diagnostic: "Supervise-each claim completed through exact authority",
+    });
+    if (deferContinuationToEffectLedger) {
+      return { advanced: false, runCompleted: false };
+    }
+  } else {
+    const changed = await pgRun(
+      "UPDATE steps SET status = 'waiting', output = $1, current_story_id = NULL, updated_at = $2 WHERE id = $3 AND status IN ('running', 'pending')",
+      [output, now(), superviseStep.id],
+    );
+    if (changed.changes === 0) return { advanced: false, runCompleted: false };
+  }
+  await recordStepTransition(superviseStep.id, superviseStep.run_id, "running", "waiting", undefined, "handleSuperviseEachCompletion");
+  if (!claimEnvelope && !ownerAlreadyCommitted) {
+    try {
+      await pgRun(
+        "UPDATE claim_log SET outcome = 'completed', duration_ms = EXTRACT(EPOCH FROM NOW() - claimed_at::timestamptz) * 1000 WHERE run_id = $1 AND step_id = $2 AND story_id IS NULL AND outcome IS NULL",
+        [superviseStep.run_id, superviseStep.step_id],
+      );
+    } catch (e) { logger.warn(`[claim-log] Failed to resolve supervise_each completion: ${String(e)}`, { runId: superviseStep.run_id }); }
+  }
 
   if (!story) {
     const finalSupervise = await shouldAutoCompleteFinalSuperviseEachStep(superviseStep.run_id, context);
@@ -9228,9 +12148,17 @@ async function handleVerifyEachCompletion(
   verifyStep: { id: string; run_id: string; step_id: string; step_index: number },
   loopStepId: string,
   output: string,
-  context: Record<string, string>
+  context: Record<string, string>,
+  claimEnvelope?: ClaimEnvelopeV1,
+  ownerAlreadyCommitted = false,
+  boundSubject?: RuntimeCompletionSubjectV1,
+  deferContinuationToEffectLedger = false,
 ): Promise<{ advanced: boolean; runCompleted: boolean }> {
   const parsedOutput = parseOutputKeyValues(output);
+  const verifyRunProtocol = await pgGet<{ protocol: "legacy" | "shadow" | "v3" }>(
+    "SELECT protocol FROM runs WHERE id = $1",
+    [verifyStep.run_id],
+  );
 
   // Guard: strip protected keys from parsed output to prevent seed value corruption
   for (const key of PROTECTED_CONTEXT_KEYS) {
@@ -9247,32 +12175,25 @@ async function handleVerifyEachCompletion(
     context["pr_url"] = reportedMergedPrUrl;
   }
 
-  // Atomic guard: prevent parallel crons from double-completing the same verify step.
-  // Only proceed if we are the one that transitions it from running → waiting.
-  const _pgChanged = await pgRun("UPDATE steps SET status = 'waiting', output = $1, updated_at = $2 WHERE id = $3 AND status = 'running'", [output, now(), verifyStep.id]);
-  if (_pgChanged.changes === 0) { return { advanced: false, runCompleted: false }; }
-  await recordStepTransition(verifyStep.id, verifyStep.run_id, "running", "waiting", undefined, "handleVerifyEachCompletion");
-  try {
-    await pgRun(
-      "UPDATE claim_log SET outcome = 'completed', duration_ms = EXTRACT(EPOCH FROM NOW() - claimed_at::timestamptz) * 1000 WHERE run_id = $1 AND step_id = $2 AND story_id IS NULL AND outcome IS NULL",
-      [verifyStep.run_id, verifyStep.step_id],
+  // Identify the story being verified. An effect-bound subject is
+  // authoritative; PR URL and explicit output follow. Context is weakest and
+  // may select only a story that is still in the exact done state.
+  // Recovery consumes the immutable subject from the completion plan and
+  // never re-selects a mutable "latest done" story.
+  let verifiedStoryId = boundSubject?.storyId ?? "";
+  if (boundSubject) {
+    const bound = await pgGet<{ story_id: string }>(
+      "SELECT story_id FROM stories WHERE id = $1 AND run_id = $2 AND story_id = $3 LIMIT 1",
+      [boundSubject.storyDbId, verifyStep.run_id, boundSubject.storyId],
     );
-  } catch (e) { logger.warn(`[claim-log] Failed to resolve verify_each completion: ${String(e)}`, { runId: verifyStep.run_id }); }
-
-  // Identify the story being verified. PR URL is strongest, then an explicitly
-  // reported/current story only if it is still a done story. Context can be
-  // stale after QA-FIX routing, so never let it point verify back at an already
-  // verified story.
-  let verifiedStoryId = "";
-  if (reportedMergedPrUrl) {
+    if (!bound) throw new Error("VERIFY_EFFECT_BOUND_STORY_MISSING");
+  }
+  if (!verifiedStoryId && reportedMergedPrUrl) {
     const byPr = await pgGet<{ story_id: string }>(
       "SELECT story_id FROM stories WHERE run_id = $1 AND pr_url = $2 AND status = 'done' LIMIT 1",
       [verifyStep.run_id, reportedMergedPrUrl],
     );
-    if (byPr) {
-      verifiedStoryId = byPr.story_id;
-      logger.info(`[verify] current_story_id missing, matched merged PR to story: ${byPr.story_id}`, { runId: verifyStep.run_id });
-    }
+    if (byPr) verifiedStoryId = byPr.story_id;
   }
   const reportedStoryId = parsedOutput["current_story_id"] || "";
   if (!verifiedStoryId && reportedStoryId) {
@@ -9298,14 +12219,70 @@ async function handleVerifyEachCompletion(
       logger.warn(`[verify] Ignoring stale context current_story_id ${contextStoryId}; story is not status=done`, { runId: verifyStep.run_id });
     }
   }
-
   if (!verifiedStoryId) {
-    // Fallback: find the most recent 'done' story
-    const lastDone = await pgGet<{ story_id: string }>("SELECT story_id FROM stories WHERE run_id = $1 AND status = 'done' ORDER BY updated_at DESC LIMIT 1", [verifyStep.run_id]);
-    if (lastDone) {
-      verifiedStoryId = lastDone.story_id;
-      logger.warn(`[verify] current_story_id missing from output+context, using fallback: ${lastDone.story_id}`, { runId: verifyStep.run_id });
+    const candidates = await pgQuery<{ story_id: string }>(
+      "SELECT story_id FROM stories WHERE run_id = $1 AND status = 'done' ORDER BY updated_at DESC LIMIT 2",
+      [verifyStep.run_id],
+    );
+    if (candidates.length !== 1) {
+      throw new Error(`VERIFY_COMPLETION_TARGET_AMBIGUOUS:${candidates.length}`);
     }
+    verifiedStoryId = candidates[0]!.story_id;
+  }
+  const verifiedTarget = await pgGet<{ id: string; story_id: string; pr_url: string | null }>(
+    "SELECT id, story_id, pr_url FROM stories WHERE run_id = $1 AND story_id = $2 LIMIT 1",
+    [verifyStep.run_id, verifiedStoryId],
+  );
+  if (!verifiedTarget) throw new Error("VERIFY_COMPLETION_TARGET_STORY_MISSING");
+
+  // Atomic guard: prevent parallel crons from double-completing the same verify step.
+  // Only proceed if we are the one that transitions it from running → waiting.
+  if (ownerAlreadyCommitted) {
+    const committed = await pgGet<{ status: string }>(
+      "SELECT status FROM steps WHERE id = $1 AND run_id = $2",
+      [verifyStep.id, verifyStep.run_id],
+    );
+    if (committed?.status !== "waiting") {
+      throw new Error(`VERIFY_EFFECT_RESUME_STATE_INVALID:${committed?.status ?? "missing"}`);
+    }
+  } else if (claimEnvelope) {
+    await completeSingleStepClaimAndState(getSql(), {
+      envelope: claimEnvelope,
+      stepStatus: "waiting",
+      stepOutput: output,
+      completionPlan: createSingleEffectCompletionPlanDescriptorV1({
+        kind: "single_completion",
+        continuation: {
+          type: "verify_each_decision",
+          targetStepDbId: loopStepId,
+          targetStepId: "implement",
+        },
+        subject: {
+          storyDbId: verifiedTarget.id,
+          storyId: verifiedTarget.story_id,
+          ...((reportedMergedPrUrl || verifiedTarget.pr_url) && /^https?:\/\//.test(reportedMergedPrUrl || verifiedTarget.pr_url || "")
+            ? { prUrl: reportedMergedPrUrl || verifiedTarget.pr_url! }
+            : {}),
+        },
+        effectPayload: { verifyStepDbId: verifyStep.id },
+      }),
+      diagnostic: "Verify-each claim completed through exact authority",
+    });
+    if (deferContinuationToEffectLedger) {
+      return { advanced: false, runCompleted: false };
+    }
+  } else {
+    const _pgChanged = await pgRun("UPDATE steps SET status = 'waiting', output = $1, updated_at = $2 WHERE id = $3 AND status = 'running'", [output, now(), verifyStep.id]);
+    if (_pgChanged.changes === 0) { return { advanced: false, runCompleted: false }; }
+  }
+  await recordStepTransition(verifyStep.id, verifyStep.run_id, "running", "waiting", undefined, "handleVerifyEachCompletion");
+  if (!claimEnvelope && !ownerAlreadyCommitted) {
+    try {
+      await pgRun(
+        "UPDATE claim_log SET outcome = 'completed', duration_ms = EXTRACT(EPOCH FROM NOW() - claimed_at::timestamptz) * 1000 WHERE run_id = $1 AND step_id = $2 AND story_id IS NULL AND outcome IS NULL",
+        [verifyStep.run_id, verifyStep.step_id],
+      );
+    } catch (e) { logger.warn(`[claim-log] Failed to resolve verify_each completion: ${String(e)}`, { runId: verifyStep.run_id }); }
   }
 
   if (status === "retry" && verifiedStoryId && isPlatformMetadataOnlyVerifyRetry(output)) {
@@ -9472,24 +12449,73 @@ async function handleVerifyEachCompletion(
         logger.warn(`[verify] ${verifiedStoryId} reported done but has no PR URL — keeping verify pending`, { runId: verifyStep.run_id });
         return { advanced: false, runCompleted: false };
       }
-      const prReviewCommentsFailure = await detectOpenPrReviewCommentFailure(
-        verifiedRow.pr_url,
-        verifiedStoryId,
-        context,
-        verifyStep.run_id,
-        verifyStep.step_id,
-      );
-      if (prReviewCommentsFailure) {
-        if (verifiedRow.story_branch) context["story_branch"] = verifiedRow.story_branch;
-        context["pr_url"] = verifiedRow.pr_url;
-        context["current_story_id"] = verifiedStoryId;
-        await routeVerifyScopeFailureToImplement(verifyStep as StepRow, context, verifiedStoryId, prReviewCommentsFailure, {
-          category: "PR_REVIEW_COMMENTS_OPEN",
-          suggestion: "Address every actionable PR review comment in the same story branch. Setfarm must not resolve current actionable review threads; verify only passes after the comments are no longer actionable from a real code change or reviewer action.",
-        });
-        await setStepStatus(verifyStep.id, "waiting");
-        logger.warn(`[verify-pr-comments] ${verifiedStoryId} has actionable PR review comments — routed back to implement before merge`, { runId: verifyStep.run_id });
-        return { advanced: false, runCompleted: false };
+      if (verifyRunProtocol?.protocol === "v3") {
+        try {
+          const exactReview = await readDefaultGithubReview({
+            prUrl: verifiedRow.pr_url,
+            repositoryPath: context["repo"] || context["REPO"] || "",
+          });
+          if (exactReview.actionableThreads.length > 0) {
+            context["v3_review_late_head_sha"] = exactReview.headSha;
+            context["v3_review_late_thread_ids"] = JSON.stringify(
+              exactReview.actionableThreads.map((thread) => thread.threadId).sort(),
+            );
+            context["pr_url"] = verifiedRow.pr_url;
+            context["current_story_id"] = verifiedStoryId;
+            if (verifiedRow.story_branch) context["story_branch"] = verifiedRow.story_branch;
+            await updateRunContext(verifyStep.run_id, context);
+            await setStepStatus(verifyStep.id, "pending");
+            await recordObservation({
+              runId: verifyStep.run_id,
+              stepId: verifyStep.step_id,
+              storyId: verifiedStoryId,
+              phase: "verify",
+              checkId: `v3.github-review.late:${exactReview.headSha}`,
+              label: "V3 late exact GitHub review evidence",
+              status: "retry",
+              summary: `${exactReview.actionableThreads.length} exact actionable thread(s) arrived before merge`,
+              detail: "Verification claim completed without merging; the next exact verify claim will authorize canonical recovery.",
+              evidence: {
+                schema: "setfarm.v3-github-review-late-evidence.v1",
+                headSha: exactReview.headSha,
+                threadIds: exactReview.actionableThreads.map((thread) => thread.threadId).sort(),
+              },
+            });
+            logger.warn(`[v3-review] ${verifiedStoryId} received exact actionable review evidence before merge; queued typed routing`, { runId: verifyStep.run_id });
+            return { advanced: false, runCompleted: false };
+          }
+        } catch (error) {
+          const code = v3ReviewErrorCode(error);
+          context["previous_failure"] = `${code}: exact GitHub review state could not be re-read before merge`;
+          context["failure_category"] = "V3_GITHUB_REVIEW_EVIDENCE_UNAVAILABLE";
+          context["failure_suggestion"] = "Retry through a new exact verify claim; never merge from stale or prose-derived review state.";
+          context["pr_url"] = verifiedRow.pr_url;
+          context["current_story_id"] = verifiedStoryId;
+          await updateRunContext(verifyStep.run_id, context);
+          await setStepStatus(verifyStep.id, "pending");
+          logger.warn(`[v3-review] ${code}; merge blocked until exact review state can be re-read`, { runId: verifyStep.run_id });
+          return { advanced: false, runCompleted: false };
+        }
+      } else {
+        const prReviewCommentsFailure = await detectOpenPrReviewCommentFailure(
+          verifiedRow.pr_url,
+          verifiedStoryId,
+          context,
+          verifyStep.run_id,
+          verifyStep.step_id,
+        );
+        if (prReviewCommentsFailure) {
+          if (verifiedRow.story_branch) context["story_branch"] = verifiedRow.story_branch;
+          context["pr_url"] = verifiedRow.pr_url;
+          context["current_story_id"] = verifiedStoryId;
+          await routeVerifyScopeFailureToImplement(verifyStep as StepRow, context, verifiedStoryId, prReviewCommentsFailure, {
+            category: "PR_REVIEW_COMMENTS_OPEN",
+            suggestion: "Address every actionable PR review comment in the same story branch. Setfarm must not resolve current actionable review threads; verify only passes after the comments are no longer actionable from a real code change or reviewer action.",
+          });
+          await setStepStatus(verifyStep.id, "waiting");
+          logger.warn(`[verify-pr-comments] ${verifiedStoryId} has actionable PR review comments — routed back to implement before merge`, { runId: verifyStep.run_id });
+          return { advanced: false, runCompleted: false };
+        }
       }
       let prState = await fetchFreshPrStateName(verifiedRow.pr_url, verifiedStoryId, context, verifyStep.run_id, verifyStep.step_id);
       if (prState === "OPEN") {
@@ -9691,6 +12717,10 @@ export async function autoVerifyDoneStories(
   logPrefix: string,
   options?: { autoMergeOpen?: boolean },
 ): Promise<any | null> {
+  const runProtocol = await pgGet<{ protocol: "legacy" | "shadow" | "v3" }>(
+    "SELECT protocol FROM runs WHERE id = $1",
+    [runId],
+  );
   let count = 0;
   while (true) {
     if (++count > MAX_AUTO_VERIFY_ITERATIONS) {
@@ -9871,6 +12901,14 @@ ${failure}`,
       }
 
       if (prState === "OPEN") {
+        if (runProtocol?.protocol === "v3") {
+          // A background auto-verifier has no exact open verify-claim
+          // capability and therefore cannot authorize review recovery. Return
+          // the story to claimSingleStep, where the typed GitHub evidence
+          // router owns actionability, dedupe and bounded supervisor dispatch.
+          logger.info(`[${logPrefix}] V3 story ${story.story_id} has an OPEN PR; deferring to exact verify-claim review routing`, { runId });
+          return story;
+        }
         const prReviewCommentsFailure = await detectOpenPrReviewCommentFailure(
           prUrl,
           story.story_id,

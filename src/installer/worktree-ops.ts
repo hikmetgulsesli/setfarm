@@ -982,7 +982,7 @@ export function createStoryWorktree(repo: string, storyId: string, baseBranch: s
   // P2-03: Prune orphaned worktrees before creating new ones
   try { execFileSync("git", ["worktree", "prune"], { cwd: repo, timeout: 5000, stdio: ["pipe", "pipe", "pipe"] }); } catch {}
   stashDirtyMainRepo(repo, storyId);
-  const baseIsSha = /^[0-9a-f]{40}$/i.test(baseBranch);
+  const baseIsSha = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(baseBranch);
 
   const worktreeBase = resolveWorktreeBaseDir(repo, agentId);
   const worktreeDir = path.join(worktreeBase, storyId.toLowerCase());

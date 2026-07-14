@@ -61,7 +61,7 @@ describe("spawner prompt bootstrap", () => {
     assert.doesNotMatch(prompt, /jq -r/);
     assert.doesNotMatch(prompt, /case "\$WORKDIR" in/);
     assert.doesNotMatch(prompt, /\/usr\/bin\/node/);
-    assert.match(prompt, /step complete "\$STEP_ID" --file '\/tmp\/setfarm-output-feature-dev_developer-spawner-test\.txt'/);
+    assert.match(prompt, /step complete "\$STEP_ID" --claim-file '\/tmp\/claim-feature-dev_developer-spawner-test\.json' --file '\/tmp\/setfarm-output-feature-dev_developer-spawner-test\.txt'/);
   });
 
   it("bootstrap script resolves workdir and step id without shell syntax hazards", () => {

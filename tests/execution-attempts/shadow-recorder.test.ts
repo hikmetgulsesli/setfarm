@@ -147,6 +147,7 @@ describe("shadow attempt recorder", () => {
     });
     assert.equal(result.status, "observed");
     assert.deepEqual(reservations[0], {
+      claimId: 41,
       runId: "run-shadow",
       stepId: "implement",
       storyId: "US-001",

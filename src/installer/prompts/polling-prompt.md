@@ -57,8 +57,8 @@ cat <<'SETFARM_EOF' > /tmp/setfarm-output-{{OUTPUT_FILE_ID}}.txt
 STATUS: done
 <other keys as specified in step input>
 SETFARM_EOF
-node {{CLI}} step complete "<the stepId from claim JSON>" --file /tmp/setfarm-output-{{OUTPUT_FILE_ID}}.txt
-On failure: node {{CLI}} step fail "<the stepId from claim JSON>" "reason"
+node {{CLI}} step complete "<the stepId from claim JSON>" --claim-file /tmp/claim-{{OUTPUT_FILE_ID}}.json --file /tmp/setfarm-output-{{OUTPUT_FILE_ID}}.txt
+On failure: node {{CLI}} step fail "<the stepId from claim JSON>" --claim-file /tmp/claim-{{OUTPUT_FILE_ID}}.json "reason"
 
 6. STOP. Reply "HEARTBEAT_OK". No more tool calls.
 

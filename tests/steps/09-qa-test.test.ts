@@ -180,7 +180,7 @@ describe("09-qa-test step module", () => {
     assert.match(decision.result.failures.join("\n"), /structured JSON/);
   });
 
-  it("routes unstructured system smoke output as infrastructure retry instead of QA-FIX", () => {
+  it("keeps legacy unstructured smoke infra retry below the v3 canonical fork and above legacy QA-FIX", () => {
     assert.match(sourceStepOps, /SMOKE_INFRA_FAILURE\s*=\s*\/[\s\S]*structured JSON/);
 
     const retryBranchStart = sourceStepOps.indexOf('if (statusVal === "retry")');
@@ -189,9 +189,17 @@ describe("09-qa-test step module", () => {
     assert.notEqual(retryBranchEnd, -1);
 
     const retryBranch = sourceStepOps.slice(retryBranchStart, retryBranchEnd);
+    const canonicalV3Route = retryBranch.indexOf("routeQualityFailureToImplement");
+    const infrastructureClassifier = retryBranch.indexOf("isSmokeInfrastructureFailure(output)");
+    const legacyQualityRoute = retryBranch.indexOf(
+      "routeQualityFailureToImplement",
+      canonicalV3Route + 1,
+    );
     assert.ok(
-      retryBranch.indexOf("isSmokeInfrastructureFailure(output)") < retryBranch.indexOf("routeQualityFailureToImplement"),
-      "smoke infrastructure failures must retry the QA/final/verify step before QA-FIX routing",
+      canonicalV3Route >= 0
+        && canonicalV3Route < infrastructureClassifier
+        && infrastructureClassifier < legacyQualityRoute,
+      "v3 must use canonical evidence first; only legacy smoke prose may classify infra before legacy QA-FIX routing",
     );
   });
 

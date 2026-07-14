@@ -12,11 +12,13 @@ import { parseStackPrefix } from "./stack-contract/prefix.js";
 import {
   resolveNewRunProtocol,
   type RunProtocolIdentity,
+  type RunReleaseAdmissionSelection,
 } from "../execution/run-protocol.js";
 import {
   persistWorkflowRun,
   type PersistedWorkflowStep,
 } from "../execution/run-persistence.js";
+import { transitionRunToTerminalInTransaction } from "../execution/run-terminal-transition.js";
 
 export async function runWorkflow(params: {
   workflowId: string;
@@ -29,6 +31,7 @@ export async function runWorkflow(params: {
     hash: string;
     stored: boolean;
   }>;
+  releaseAdmission?: RunReleaseAdmissionSelection;
 }): Promise<{
   id: string;
   runNumber: number;
@@ -45,6 +48,9 @@ export async function runWorkflow(params: {
     compilerReleaseSha: params.compilerReleaseSha,
     ...(params.activationPreflight
       ? { activationPreflight: params.activationPreflight }
+      : {}),
+    ...(params.releaseAdmission
+      ? { releaseAdmission: params.releaseAdmission }
       : {}),
   });
   const workflowDir = resolveWorkflowDir(params.workflowId);
@@ -151,9 +157,20 @@ export async function runWorkflow(params: {
   try {
     await ensureWorkflowCrons(workflow);
   } catch (err) {
-    // Roll back the run since it can't advance without crons
-    await pgRun("UPDATE runs SET status = 'failed', updated_at = $1 WHERE id = $2", [now(), runId]);
     const message = err instanceof Error ? err.message : String(err);
+    // No worker can have claimed this run before cron publication succeeds.
+    // Prove that invariant and terminalize the whole persisted bootstrap state
+    // atomically. This explicit pre-claim bootstrap exception is valid for
+    // either protocol; every post-publication failure uses durable termination.
+    await pgBegin(async (sql) => {
+      await transitionRunToTerminalInTransaction(sql, {
+        runId,
+        status: "failed",
+        diagnostic: `Cron setup failed before claim publication: ${message}`,
+        terminalFailure: true,
+        unclaimedBootstrapFailure: true,
+      });
+    });
     throw new Error(`Cannot start workflow run: cron setup failed. ${message}`);
   }
 

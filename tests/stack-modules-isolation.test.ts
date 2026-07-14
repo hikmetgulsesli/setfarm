@@ -66,7 +66,7 @@ test("stack module integration prevents infra evidence from reaching product gat
   assert.match(source, /stackPackId: context\["stack_pack_id"\] \|\| context\["detected_stack"\]/);
   assert.match(source, /implementEvidenceRun\.failureAction === "infra_retry"/);
   assert.match(source, /SETFARM_INFRA_RETRY/);
-  assert.match(source, /await failStep\(stepId, infraReason\)/);
+  assert.match(source, /await failStep\(stepId, infraReason, completionAuthority\?\.envelope\)/);
 });
 
 test("QA and final preclaims use stack execution plans instead of generic browser checks", () => {

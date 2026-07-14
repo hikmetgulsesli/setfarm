@@ -608,7 +608,12 @@ export function buildRunContract(input: BuildRunContractInput): RunContract {
   };
 }
 
-export async function refreshRunContract(runId: string, reason = "refresh", contextOverride?: Record<string, any>): Promise<RunContract | null> {
+export async function refreshRunContract(
+  runId: string,
+  reason = "refresh",
+  contextOverride?: Record<string, any>,
+  options: Readonly<{ writeRepoFiles?: boolean }> = {},
+): Promise<RunContract | null> {
   const run = await pgGet<DbRun>("SELECT id, run_number, workflow_id, task, status, context, meta, created_at, updated_at FROM runs WHERE id = $1", [runId]);
   if (!run) return null;
   const steps = await pgQuery<DbStep>(
@@ -624,13 +629,18 @@ export async function refreshRunContract(runId: string, reason = "refresh", cont
   const context = contextOverride || parseContext(run.context);
   const contract = buildRunContract({ run, steps, stories, context, reason });
   await persistRunContract(runId, contract);
-  writeRepoContractFiles(contract);
+  if (options.writeRepoFiles !== false) writeRepoContractFiles(contract);
   return contract;
 }
 
-export async function refreshRunContractSafe(runId: string, reason = "refresh", contextOverride?: Record<string, any>): Promise<void> {
+export async function refreshRunContractSafe(
+  runId: string,
+  reason = "refresh",
+  contextOverride?: Record<string, any>,
+  options: Readonly<{ writeRepoFiles?: boolean }> = {},
+): Promise<void> {
   try {
-    await refreshRunContract(runId, reason, contextOverride);
+    await refreshRunContract(runId, reason, contextOverride, options);
   } catch (error) {
     logger.warn(`[contract-ledger] refresh failed: ${String(error).slice(0, 400)}`, { runId });
   }

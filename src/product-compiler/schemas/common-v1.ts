@@ -37,6 +37,11 @@ export const SurfaceIdSchema = prefixedReference("SURF");
 export const DesignSurfaceIdSchema = prefixedReference("DSURF");
 export const ActionIdSchema = prefixedReference("ACT");
 export const EvidenceIdSchema = prefixedReference("EVID");
+export const RequirementIdSchema = z.union([
+  prefixedReference("REQ"),
+  z.string().regex(/^REQ_[A-F0-9]{16}$/, "Expected a content-derived REQ_ reference"),
+]);
+export const ObservableIdSchema = prefixedReference("OBS");
 export const AssumptionIdSchema = prefixedReference("ASSUMPTION");
 export const ControlIdSchema = z.union([
   prefixedReference("CTRL"),

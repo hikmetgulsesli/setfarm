@@ -6,6 +6,9 @@ import { hasExplicitNoDatabaseIntent } from "../../task-intent.js";
 import { hasBrowserGameIntent } from "../../stack-contract/detector.js";
 import { parseStackPrefix, stripStackPrefix } from "../../stack-contract/prefix.js";
 import { getStackModule } from "../../stack-modules/registry.js";
+import { produceProductSpecV1 } from "../../../product-compiler/producers/product-spec.js";
+import { hashCanonicalJson } from "../../../product-compiler/canonical-json.js";
+import { recordObservation } from "../../observations.js";
 
 const DEFAULT_STACK = "vite-react";
 const PLAN_CONTRACT_SCHEMA_VERSION = "setfarm.plan.v2.2";
@@ -787,15 +790,84 @@ export function buildAutoPlanOutput(task: string, options: AutoPlanOptions = {})
 export async function preClaim(ctx: ClaimContext): Promise<void> {
   if (process.env.SETFARM_DISABLE_AUTO_PLAN === "1") return;
 
-  const output = buildAutoPlanOutput(ctx.task || ctx.context["task"] || "", { runId: ctx.runId, context: ctx.context });
   const step = await pgGet<{ id: string }>(
     "SELECT id FROM steps WHERE run_id = $1 AND step_id = $2 LIMIT 1",
     [ctx.runId, ctx.stepId],
   );
   if (!step?.id) throw new Error(`plan preclaim could not resolve step id for ${ctx.runId}/${ctx.stepId}`);
-
+  const task = ctx.task || ctx.context["task"] || "";
+  const protocol = ctx.claimEnvelope?.protocol
+    ?? (await pgGet<{ protocol: "legacy" | "shadow" | "v3" }>(
+      "SELECT protocol FROM runs WHERE id = $1",
+      [ctx.runId],
+    ))?.protocol
+    ?? "legacy";
+  if (protocol === "v3") {
+    await recordObservation({
+      runId: ctx.runId,
+      stepId: ctx.stepId,
+      phase: "planning",
+      checkId: "product_compiler.planner_proposal_required",
+      label: "Planner ProductSpec proposal required",
+      status: "pass",
+      summary: "V3 PLAN remains claimable so the planner can propose the exact typed ProductSpec; deterministic legacy profiles are not execution authority.",
+      evidence: {
+        schema: "setfarm.product-spec-planner-authority-evidence.v1",
+        protocol,
+        producerAuthority: "planner_proposal",
+      },
+    });
+    return;
+  }
+  const legacyOutput = buildAutoPlanOutput(task, { runId: ctx.runId, context: ctx.context });
+  let output = legacyOutput;
+  if (protocol === "shadow") {
+    const normalizedTask = stripStackPrefix(task);
+    const rawProjectName = extractProjectName(normalizedTask);
+    const typed = produceProductSpecV1({
+      task: normalizedTask,
+      productName: extractProjectDisplayName(normalizedTask, rawProjectName),
+    });
+    if (typed.status === "produced") {
+      const artifactHash = hashCanonicalJson(typed.productSpec);
+      await recordObservation({
+        runId: ctx.runId,
+        stepId: ctx.stepId,
+        phase: "planning",
+        checkId: "product_compiler.product_spec_candidate",
+        label: "Typed ProductSpec candidate",
+        status: "pass",
+        summary: `${typed.productClass} ProductSpec candidate produced`,
+        evidence: {
+          schema: "setfarm.product-spec-candidate-evidence.v1",
+          artifactHash,
+          productSpecSchema: typed.productSpec.schema,
+          productClass: typed.productClass,
+        },
+      });
+      output = legacyOutput;
+    } else {
+      const diagnostic = typed.diagnostics
+        .map((item) => `${item.code}:${item.reference ?? "task"}`)
+        .join(", ");
+      await recordObservation({
+        runId: ctx.runId,
+        stepId: ctx.stepId,
+        phase: "planning",
+        checkId: "product_compiler.product_spec_rejected",
+        label: "Typed ProductSpec candidate rejected",
+        status: "info",
+        summary: "Typed ProductSpec candidate rejected without guessing missing semantics",
+        detail: diagnostic,
+        evidence: {
+          schema: "setfarm.product-spec-rejection-evidence.v1",
+          rejectionCodes: typed.diagnostics.map((item) => item.code),
+        },
+      });
+    }
+  }
   const { completeStep } = await import("../../step-ops.js");
-  await completeStep(step.id, output);
+  await completeStep(step.id, output, ctx.claimEnvelope);
   logger.info(`[module:plan preclaim] AUTO-COMPLETED plan without planner agent (${Buffer.byteLength(output, "utf-8")} bytes)`, {
     runId: ctx.runId,
     stepId: ctx.stepId,

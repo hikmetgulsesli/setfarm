@@ -289,7 +289,7 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
         "FAILURE_CATEGORY: tooling_contract_missing",
         "TEST_FAILURES:",
         `- ${tool.tool} preflight failed before final-test. ${result.output.replace(/\n/g, " ")}`,
-      ].join("\n"));
+      ].join("\n"), ctx.claimEnvelope);
       return;
     }
   }
@@ -428,6 +428,6 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
   }
 
   const { completeStep } = await import("../../step-ops.js");
-  await completeStep(step.id, lines.join("\n"));
+  await completeStep(step.id, lines.join("\n"), ctx.claimEnvelope);
   logger.info(`[module:final-test preclaim] AUTO-COMPLETED final-test via system smoke (${status})`, { runId: ctx.runId, stepId: ctx.stepId });
 }

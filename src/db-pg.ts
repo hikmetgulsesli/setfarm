@@ -337,64 +337,34 @@ export async function pgMigrate(options: PgMigrationOptions = {}): Promise<void>
     await s`CREATE INDEX IF NOT EXISTS idx_run_observations_step_story ON run_observations(run_id, step_id, story_id, created_at DESC)`;
     await s`CREATE INDEX IF NOT EXISTS idx_run_observations_status ON run_observations(run_id, status, created_at DESC)`;
 
-    await s`
-      UPDATE claim_log cl
-      SET outcome = 'abandoned',
-          abandoned_at = NOW(),
-          duration_ms = LEAST(CAST(EXTRACT(EPOCH FROM (NOW() - cl.claimed_at::timestamptz)) * 1000 AS BIGINT), 2147483647)::INTEGER,
-          diagnostic = 'pgMigrate closed orphan open claim without parent run'
-      WHERE cl.outcome IS NULL
-        AND NOT EXISTS (SELECT 1 FROM runs r WHERE r.id = cl.run_id)
-    `;
-    await s`
-      UPDATE claim_log cl
-      SET outcome = CASE WHEN r.status = 'cancelled' THEN 'cancelled' ELSE 'abandoned' END,
-          abandoned_at = NOW(),
-          duration_ms = LEAST(CAST(EXTRACT(EPOCH FROM (NOW() - cl.claimed_at::timestamptz)) * 1000 AS BIGINT), 2147483647)::INTEGER,
-          diagnostic = 'pgMigrate closed open claim for terminal run ' || r.status
-      FROM runs r
-      WHERE cl.run_id = r.id
-        AND cl.outcome IS NULL
-        AND r.status NOT IN ('running', 'resuming')
-    `;
-    await s`
-      WITH ranked AS (
-        SELECT id,
-               ROW_NUMBER() OVER (
-                 PARTITION BY run_id, step_id, agent_id
-                 ORDER BY claimed_at DESC, id DESC
-               ) AS rn
+    // Runtime schema bootstrap is intentionally read-only with respect to
+    // lifecycle rows. Duplicate owners require an explicit, quiesced recovery
+    // operation; a process that merely opens the database must never choose a
+    // winner or close a claim behind the spawner's back.
+    const duplicateOpenSingle = await s<Array<{ run_id: string; step_id: string }>>`
+      SELECT run_id, step_id
         FROM claim_log
-        WHERE outcome IS NULL AND story_id IS NULL
-      )
-      UPDATE claim_log cl
-      SET outcome = 'infra_retry',
-          abandoned_at = NOW(),
-          duration_ms = LEAST(CAST(EXTRACT(EPOCH FROM (NOW() - cl.claimed_at::timestamptz)) * 1000 AS BIGINT), 2147483647)::INTEGER,
-          diagnostic = 'pgMigrate deduped duplicate open single-step claim'
-      FROM ranked r
-      WHERE cl.id = r.id AND r.rn > 1
+       WHERE outcome IS NULL AND story_id IS NULL
+       GROUP BY run_id, step_id
+      HAVING COUNT(*) > 1
+       LIMIT 1
     `;
-    await s`
-      WITH ranked AS (
-        SELECT id,
-               ROW_NUMBER() OVER (
-                 PARTITION BY run_id, step_id, story_id, agent_id
-                 ORDER BY claimed_at DESC, id DESC
-               ) AS rn
+    if (duplicateOpenSingle.length > 0) {
+      throw new Error("CLAIM_LOG_OPEN_SINGLE_DUPLICATE_REQUIRES_RECOVERY");
+    }
+    const duplicateOpenStory = await s<Array<{ run_id: string; step_id: string; story_id: string }>>`
+      SELECT run_id, step_id, story_id
         FROM claim_log
-        WHERE outcome IS NULL AND story_id IS NOT NULL
-      )
-      UPDATE claim_log cl
-      SET outcome = 'infra_retry',
-          abandoned_at = NOW(),
-          duration_ms = LEAST(CAST(EXTRACT(EPOCH FROM (NOW() - cl.claimed_at::timestamptz)) * 1000 AS BIGINT), 2147483647)::INTEGER,
-          diagnostic = 'pgMigrate deduped duplicate open story claim'
-      FROM ranked r
-      WHERE cl.id = r.id AND r.rn > 1
+       WHERE outcome IS NULL AND story_id IS NOT NULL
+       GROUP BY run_id, step_id, story_id
+      HAVING COUNT(*) > 1
+       LIMIT 1
     `;
-    await s`CREATE UNIQUE INDEX IF NOT EXISTS idx_claim_log_open_single_unique ON claim_log(run_id, step_id, agent_id) WHERE outcome IS NULL AND story_id IS NULL`;
-    await s`CREATE UNIQUE INDEX IF NOT EXISTS idx_claim_log_open_story_unique ON claim_log(run_id, step_id, story_id, agent_id) WHERE outcome IS NULL AND story_id IS NOT NULL`;
+    if (duplicateOpenStory.length > 0) {
+      throw new Error("CLAIM_LOG_OPEN_STORY_DUPLICATE_REQUIRES_RECOVERY");
+    }
+    await s`CREATE UNIQUE INDEX IF NOT EXISTS idx_claim_log_open_single_unique ON claim_log(run_id, step_id) WHERE outcome IS NULL AND story_id IS NULL`;
+    await s`CREATE UNIQUE INDEX IF NOT EXISTS idx_claim_log_open_story_unique ON claim_log(run_id, step_id, story_id) WHERE outcome IS NULL AND story_id IS NOT NULL`;
     _schemaReady = true;
   } finally {
     _isMigrating = false;

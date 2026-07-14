@@ -3,6 +3,17 @@ import { resolveRuntimeIdentity, slugifyIdentity } from "../../runtime-identity.
 import { parseStackPrefix } from "../../stack-contract/prefix.js";
 import { getStackPack } from "../../stack-contract/packs.js";
 import type { StackPackId } from "../../stack-contract/types.js";
+import {
+  ProductSpecV1Schema,
+  ProductSpecV3ProposalSchema,
+} from "../../../product-compiler/schemas/product-spec-v1.js";
+import { canonicalJsonStringify, hashCanonicalJson } from "../../../product-compiler/canonical-json.js";
+import {
+  ProductSpecRejectionV1Schema,
+  canonicalizeProductSpecV3Proposal,
+} from "../../../product-compiler/producers/plan-product-spec-proposal.js";
+import { renderLegacyPrd } from "../../../product-compiler/renderers/legacy-prd.js";
+import { recordObservation } from "../../observations.js";
 
 const VALID_TECH_STACKS = new Set([
   "vite-react",
@@ -25,6 +36,26 @@ const VALID_UI_LANGUAGES = new Set(["english", "turkish"]);
 const VALID_BOOLEAN = new Set(["true", "false"]);
 const PLAN_CONTRACT_SCHEMA_VERSION = "setfarm.plan.v2.2";
 const MIN_PRD_LENGTH = 2000;
+const PRODUCT_SPEC_BLOCK_RE = /```product-spec-v1\s*\n([\s\S]*?)\n```/g;
+const PRODUCT_SPEC_REJECTION_BLOCK_RE = /```product-spec-rejection-v1\s*\n([\s\S]*?)\n```/g;
+
+function productSpecBlocks(prd: string): RegExpMatchArray[] {
+  return [...prd.matchAll(PRODUCT_SPEC_BLOCK_RE)];
+}
+
+function productSpecRejectionBlocks(prd: string): RegExpMatchArray[] {
+  return [...prd.matchAll(PRODUCT_SPEC_REJECTION_BLOCK_RE)];
+}
+
+function parsedProductSpec(prd: string): ReturnType<typeof ProductSpecV1Schema.safeParse> | undefined {
+  const blocks = productSpecBlocks(prd);
+  if (blocks.length !== 1) return undefined;
+  try {
+    return ProductSpecV1Schema.safeParse(JSON.parse(blocks[0]![1]!));
+  } catch {
+    return undefined;
+  }
+}
 
 function canonicalExplicitStackContext(context: Record<string, string>): { platform: string; techStack: string } | null {
   const prefix = context["requested_stack_prefix"] || "";
@@ -118,10 +149,78 @@ export function normalize(parsed: ParsedOutput): void {
   if (parsed.platform) parsed.platform = parsed.platform.toLowerCase().trim();
   if (parsed.db_required) parsed.db_required = parsed.db_required.toLowerCase().trim();
   if (parsed.design_required) parsed.design_required = parsed.design_required.toLowerCase().trim();
+  const prd = String(parsed.prd || "");
+  const proposalBlocks = productSpecBlocks(prd);
+  const rejectionBlocks = productSpecRejectionBlocks(prd);
+  if (proposalBlocks.length === 1 && rejectionBlocks.length === 0) {
+    try {
+      const candidate = ProductSpecV1Schema.parse(JSON.parse(proposalBlocks[0]![1]!));
+      parsed.prd = prd.replace(
+        proposalBlocks[0]![0],
+        `\`\`\`product-spec-v1\n${canonicalJsonStringify(candidate)}\n\`\`\``,
+      );
+    } catch {
+      // Validation reports the exact typed proposal error.
+    }
+  } else if (rejectionBlocks.length === 1 && proposalBlocks.length === 0) {
+    try {
+      const rejection = ProductSpecRejectionV1Schema.parse(JSON.parse(rejectionBlocks[0]![1]!));
+      parsed.prd = prd.replace(
+        rejectionBlocks[0]![0],
+        `\`\`\`product-spec-rejection-v1\n${canonicalJsonStringify(rejection)}\n\`\`\``,
+      );
+    } catch {
+      // Validation reports the exact typed rejection error.
+    }
+  }
 }
 
 export function validateOutput(parsed: ParsedOutput): ValidationResult {
   const errors: string[] = [];
+  const prd = String(parsed.prd || "");
+  const typedProductSpecBlocks = productSpecBlocks(prd);
+  const typedRejectionBlocks = productSpecRejectionBlocks(prd);
+  if (typedProductSpecBlocks.length + typedRejectionBlocks.length > 1) {
+    return {
+      ok: false,
+      errors: [`PLAN must emit exactly one typed ProductSpec proposal or rejection block (got: ${typedProductSpecBlocks.length + typedRejectionBlocks.length})`],
+    };
+  }
+  if (typedRejectionBlocks.length === 1) {
+    try {
+      ProductSpecRejectionV1Schema.parse(JSON.parse(typedRejectionBlocks[0]![1]!));
+      errors.push("Typed ProductSpec rejection requires upstream specification clarification; Setfarm will not guess product semantics");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      errors.push(`Typed PLAN ProductSpec rejection is invalid: ${message.slice(0, 1_000)}`);
+    }
+    return { ok: false, errors };
+  }
+  if (typedProductSpecBlocks.length === 1) {
+    try {
+      const candidate = JSON.parse(typedProductSpecBlocks[0]![1]!);
+      const base = ProductSpecV1Schema.safeParse(candidate);
+      const isV3Proposal = base.success
+        && Boolean(base.data.delivery || base.data.requirements || base.data.traceability);
+      if (isV3Proposal) {
+        const result = ProductSpecV3ProposalSchema.safeParse(candidate);
+        if (!result.success) {
+          errors.push(`Typed PLAN ProductSpec proposal is invalid: ${result.error.issues[0]?.message || "schema mismatch"}`);
+        } else if (canonicalJsonStringify(result.data) !== typedProductSpecBlocks[0]![1]!.trim()) {
+          errors.push("Typed PLAN ProductSpec proposal was not canonicalized by Setfarm");
+        }
+        if ((parsed.status || "").toLowerCase() !== "done") {
+          errors.push(`STATUS must be 'done' for a ProductSpec proposal (got: '${parsed.status || ""}')`);
+        }
+        if (parsed.product_spec_schema && parsed.product_spec_schema !== "setfarm.product-spec.v1") {
+          errors.push(`PRODUCT_SPEC_SCHEMA must match the typed proposal (got: '${parsed.product_spec_schema}')`);
+        }
+        return { ok: errors.length === 0, errors };
+      }
+    } catch {
+      // Legacy validation below reports malformed typed compatibility blocks.
+    }
+  }
 
   if ((parsed.contract_schema_version || "").trim() !== PLAN_CONTRACT_SCHEMA_VERSION) {
     errors.push(`CONTRACT_SCHEMA_VERSION must be '${PLAN_CONTRACT_SCHEMA_VERSION}' (got: '${parsed.contract_schema_version || ""}')`);
@@ -171,13 +270,32 @@ export function validateOutput(parsed: ParsedOutput): ValidationResult {
     errors.push(`UI_LANGUAGE must be one of ${[...VALID_UI_LANGUAGES].join(", ")} (got: '${parsed.ui_language || ""}')`);
   }
 
-  const prd = parsed.prd || "";
   if (prd.length < MIN_PRD_LENGTH) {
     errors.push(`PRD must be >=${MIN_PRD_LENGTH} chars (got: ${prd.length})`);
   }
 
   for (const section of REQUIRED_PRD_SECTIONS) {
     if (!hasSection(prd, section)) errors.push(`PRD missing section: ${section}`);
+  }
+
+  if (typedProductSpecBlocks.length > 0 || parsed.product_spec_schema) {
+    if (typedProductSpecBlocks.length !== 1) {
+      errors.push(`Typed PLAN must contain exactly one canonical product-spec-v1 projection (got: ${typedProductSpecBlocks.length})`);
+    } else {
+      try {
+        const candidate = JSON.parse(typedProductSpecBlocks[0]![1]!);
+        const result = ProductSpecV1Schema.safeParse(candidate);
+        if (!result.success) {
+          errors.push(`Typed PLAN ProductSpec is invalid: ${result.error.issues[0]?.message || "schema mismatch"}`);
+        } else if (canonicalJsonStringify(result.data) !== typedProductSpecBlocks[0]![1]!.trim()) {
+          errors.push("Typed PLAN ProductSpec projection must use Setfarm Canonical JSON v1 bytes");
+        } else if (parsed.product_spec_schema && parsed.product_spec_schema !== result.data.schema) {
+          errors.push(`PRODUCT_SPEC_SCHEMA must match the typed projection (got: '${parsed.product_spec_schema}')`);
+        }
+      } catch {
+        errors.push("Typed PLAN ProductSpec projection must be valid canonical JSON");
+      }
+    }
   }
 
   if (boolValue(designRequired)) {
@@ -235,6 +353,57 @@ export function validateOutput(parsed: ParsedOutput): ValidationResult {
 export async function onComplete(ctx: CompleteContext): Promise<void> {
   const { parsed, context, runId } = ctx;
   normalize(parsed);
+  const typed = parsedProductSpec(String(parsed.prd || ""));
+  if (typed?.success && (typed.data.delivery || typed.data.requirements || typed.data.traceability)) {
+    const authoritativeDelivery = canonicalExplicitStackContext(context);
+    const canonical = canonicalizeProductSpecV3Proposal({
+      task: context["task"] || "",
+      proposal: typed.data,
+      ...(authoritativeDelivery ? { authoritativeDelivery } : {}),
+    });
+    if (canonical.status !== "canonicalized") {
+      throw new Error(`PRODUCT_SPEC_PROPOSAL_REJECTED:${canonical.diagnostics
+        .slice(0, 20)
+        .map((item) => `${item.code}:${item.path}:${item.message}`)
+        .join(";")}`);
+    }
+    const spec = canonical.productSpec;
+    const rendered = renderLegacyPrd(spec);
+    const bodyMarker = "\nPRD:\n";
+    const bodyIndex = rendered.indexOf(bodyMarker);
+    if (bodyIndex < 0) throw new Error("PRODUCT_SPEC_COMPATIBILITY_PROJECTION_INVALID");
+    const header = rendered.slice(0, bodyIndex);
+    const headerValue = (key: string): string => header.match(new RegExp(`^${key}:\\s*(.+)$`, "m"))?.[1]?.trim() || "";
+    parsed.contract_schema_version = PLAN_CONTRACT_SCHEMA_VERSION;
+    parsed.status = "done";
+    parsed.project_name = spec.product.name;
+    parsed.project_slug = headerValue("PROJECT_SLUG");
+    parsed.platform = spec.delivery!.platform;
+    parsed.tech_stack = spec.delivery!.techStack;
+    parsed.ui_language = spec.delivery!.uiLanguage;
+    parsed.db_required = spec.delivery!.database;
+    parsed.design_required = String(spec.delivery!.designRequired);
+    parsed.ui_vision_summary = spec.delivery!.uiVisionSummary;
+    parsed.product_spec_schema = spec.schema;
+    parsed.prd = rendered.slice(bodyIndex + bodyMarker.length);
+    context["product_spec_hash"] = hashCanonicalJson(spec);
+    context["product_spec_source_task_hash"] = canonical.sourceTaskHash;
+    await recordObservation({
+      runId,
+      stepId: ctx.stepId,
+      phase: "planning",
+      checkId: "product_compiler.product_spec_proposal_canonicalized",
+      label: "Planner ProductSpec canonicalized",
+      status: "pass",
+      summary: `Canonicalized ${spec.requirements!.length} source requirements into ${spec.traceability!.bindings.length} exact semantic bindings.`,
+      evidence: {
+        schema: "setfarm.product-spec-proposal-evidence.v1",
+        productSpecHash: context["product_spec_hash"],
+        sourceTaskHash: canonical.sourceTaskHash,
+        requirementRefs: spec.requirements!.map((requirement) => requirement.id),
+      },
+    });
+  }
 
   const identity = resolveRuntimeIdentity({
     runId,

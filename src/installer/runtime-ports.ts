@@ -11,6 +11,19 @@ const PORT_BANDS: Record<RuntimePortBand, { base: number; size: number }> = {
   preview: { base: 6100, size: 900 },
 };
 
+// Fetch and Chromium reject these ports before opening a socket. A port can
+// therefore be free at the TCP layer while remaining unusable by every
+// browser-backed evidence driver. Keep the full Fetch bad-port table here so
+// all runtime bands share one allocation invariant.
+const FETCH_BAD_PORTS = new Set([
+  1, 7, 9, 11, 13, 15, 17, 19, 20, 21, 22, 23, 25, 37, 42, 43, 53, 69, 77, 79,
+  87, 95, 101, 102, 103, 104, 109, 110, 111, 113, 115, 117, 119, 123, 135, 137,
+  139, 143, 161, 179, 389, 427, 465, 512, 513, 514, 515, 526, 530, 531, 532,
+  540, 548, 554, 556, 563, 587, 601, 636, 989, 990, 993, 995, 1719, 1720,
+  1723, 2049, 3659, 4045, 4190, 5060, 5061, 6000, 6566, 6665, 6666, 6667,
+  6668, 6669, 6697, 10080,
+]);
+
 export interface RuntimeAllocationInput {
   runId: string;
   runNumber?: number | null;
@@ -44,6 +57,13 @@ export function portBandRange(band: RuntimePortBand): { base: number; max: numbe
 export function runtimeUrl(host: string, port: number, path = "/"): string {
   const suffix = path.startsWith("/") ? path : `/${path}`;
   return `http://${host}:${port}${suffix === "/" ? "" : suffix}`;
+}
+
+export function isFetchSafeRuntimePort(port: number): boolean {
+  return Number.isInteger(port)
+    && port >= 1
+    && port <= 65_535
+    && !FETCH_BAD_PORTS.has(port);
 }
 
 function deterministicOffset(runId: string, runNumber: number | null | undefined, size: number): number {
@@ -80,6 +100,7 @@ export async function allocateRuntimePort(input: RuntimeAllocationInput): Promis
   for (const port of candidates) {
     if (seen.has(port)) continue;
     seen.add(port);
+    if (!isFetchSafeRuntimePort(port)) continue;
     if (await isPortFree(port, host)) {
       return {
         band: input.band,

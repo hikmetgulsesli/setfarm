@@ -12,6 +12,8 @@ import {
 } from "../../src/execution/activation-preflight.js";
 import { applyContractSpineMigrations } from "../../src/db/contract-spine-migrations.js";
 import { ContentAddressedArtifactStore } from "../../src/product-compiler/artifact-store.js";
+import { createArtifactIndex } from "../../src/product-compiler/artifact-index.js";
+import { bootstrapArtifactIndex } from "../../src/product-compiler/indexed-artifact-publisher.js";
 import { createIsolatedTestDatabase } from "./test-database.js";
 
 const RELEASE_SHA = "d".repeat(40);
@@ -23,7 +25,7 @@ function dependencies(
   return {
     verifyMigrations: async () => ({
       status: "verified",
-      versions: [1, 2, 3, 4],
+      versions: [1, 2, 3, 4, 5],
       verifiedReleaseSha: RELEASE_SHA,
     }),
     probeDatabase: async () => ({ ok: true }),
@@ -32,8 +34,11 @@ function dependencies(
       rootQuotaBytes: 1_000,
       freeBytes: 10_000,
       minFreeBytes: 100,
+      indexState: "ready",
+      indexedBytes: 100,
+      reservedBytes: 0,
     }),
-    readActivity: async () => ({ activeRuns: 0, openClaims: 0 }),
+    readActivity: async () => ({ activeRuns: 0, openClaims: 0, activeAttempts: 0 }),
     storeReport: async () => ({ hash: REPORT_HASH }),
     ...overrides,
   };
@@ -57,7 +62,7 @@ describe("Product Compiler activation preflight", () => {
     const unattested = dependencies({
       verifyMigrations: async () => ({
         status: "verified",
-        versions: [1, 2, 3, 4],
+        versions: [1, 2, 3, 4, 5],
         verifiedReleaseSha: null,
       }),
     });
@@ -97,8 +102,11 @@ describe("Product Compiler activation preflight", () => {
         rootQuotaBytes: 1_000,
         freeBytes: 99,
         minFreeBytes: 100,
+        indexState: "ready",
+        indexedBytes: 100,
+        reservedBytes: 0,
       }),
-      readActivity: async () => ({ activeRuns: 1, openClaims: 2 }),
+      readActivity: async () => ({ activeRuns: 1, openClaims: 2, activeAttempts: 3 }),
     }));
     assert.equal(result.status, "fail");
     const serialized = JSON.stringify(result);
@@ -122,6 +130,82 @@ describe("Product Compiler activation preflight", () => {
     );
   });
 
+  it("blocks activation when a terminal legacy lifecycle leaked an active attempt", async () => {
+    const result = await runActivationPreflight({
+      protocol: "shadow",
+      compilerReleaseSha: RELEASE_SHA,
+      v3ActivationEnabled: false,
+    }, dependencies({
+      readActivity: async () => ({ activeRuns: 0, openClaims: 0, activeAttempts: 1 }),
+    }));
+    assert.equal(result.status, "fail");
+    const activity = result.report.checks.find((check) => check.id === "activity");
+    assert.equal(activity?.code, "ACTIVATION_ACTIVITY_CONFLICT");
+    assert.deepEqual(activity?.metrics, {
+      activeRuns: 0,
+      openClaims: 0,
+      activeAttempts: 1,
+      activeAttemptBindingConflicts: 0,
+      activeRuntimes: 0,
+      activeRuntimeCompletions: 0,
+      activeRecoveryCases: 0,
+      activeRecoveryDeliveries: 0,
+      activeTerminationRequests: 0,
+    });
+  });
+
+  it("blocks activation on orphaned runtime, completion, recovery, or termination ownership", async () => {
+    const result = await runActivationPreflight({
+      protocol: "v3",
+      compilerReleaseSha: RELEASE_SHA,
+      v3ActivationEnabled: true,
+    }, dependencies({
+      readActivity: async () => ({
+        activeRuns: 0,
+        openClaims: 0,
+        activeAttempts: 0,
+        activeRuntimes: 1,
+        activeRuntimeCompletions: 1,
+        activeRecoveryCases: 1,
+        activeRecoveryDeliveries: 1,
+        activeTerminationRequests: 1,
+      }),
+    }));
+    assert.equal(result.status, "fail");
+    const activity = result.report.checks.find((check) => check.id === "activity");
+    assert.equal(activity?.code, "ACTIVATION_ACTIVITY_CONFLICT");
+    assert.deepEqual(activity?.metrics, {
+      activeRuns: 0,
+      openClaims: 0,
+      activeAttempts: 0,
+      activeAttemptBindingConflicts: 0,
+      activeRuntimes: 1,
+      activeRuntimeCompletions: 1,
+      activeRecoveryCases: 1,
+      activeRecoveryDeliveries: 1,
+      activeTerminationRequests: 1,
+    });
+  });
+
+  it("reports an active attempt without its exact open relational claim as ownership drift", async () => {
+    const result = await runActivationPreflight({
+      protocol: "shadow",
+      compilerReleaseSha: RELEASE_SHA,
+      v3ActivationEnabled: false,
+    }, dependencies({
+      readActivity: async () => ({
+        activeRuns: 0,
+        openClaims: 0,
+        activeAttempts: 1,
+        activeAttemptBindingConflicts: 1,
+      }),
+    }));
+    const activity = result.report.checks.find((check) => check.id === "activity");
+    assert.equal(result.status, "fail");
+    assert.equal(activity?.code, "ACTIVATION_ATTEMPT_CLAIM_BINDING_CONFLICT");
+    assert.equal(activity?.metrics?.activeAttemptBindingConflicts, 1);
+  });
+
   it("verifies an isolated DB and stores the exact report envelope", async () => {
     const database = await createIsolatedTestDatabase();
     const temp = await mkdtemp(path.join(tmpdir(), "setfarm-preflight-integration-"));
@@ -133,6 +217,13 @@ describe("Product Compiler activation preflight", () => {
     };
     try {
       await applyContractSpineMigrations(database.sql, { releaseSha: RELEASE_SHA });
+      const artifactStore = new ContentAddressedArtifactStore(root, { limits });
+      await bootstrapArtifactIndex({
+        index: createArtifactIndex(database.sql),
+        store: artifactStore,
+        quotaBytes: limits.rootQuotaBytes,
+        maxPayloadBytes: limits.maxPayloadBytes,
+      });
       const result = await runActivationPreflight({
         protocol: "v3",
         compilerReleaseSha: RELEASE_SHA,
@@ -144,7 +235,7 @@ describe("Product Compiler activation preflight", () => {
         compilerReleaseSha: RELEASE_SHA,
       }));
       assert.equal(result.status, "pass");
-      const stored = await new ContentAddressedArtifactStore(root, { limits }).get(result.hash);
+      const stored = await artifactStore.get(result.hash);
       assert.deepEqual(stored.envelope.payload, result.report);
       assert.equal(stored.envelope.producer.codeSha, RELEASE_SHA);
 

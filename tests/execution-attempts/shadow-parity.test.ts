@@ -22,6 +22,7 @@ function attempt(
 ) {
   return {
     attempt_id: attemptId,
+    claim_id: claimId,
     generation: 1,
     attempt_class: "product_implementation",
     disposition,
@@ -123,12 +124,12 @@ describe("shadow claim/attempt parity", () => {
     const claimId = Number(claims[0]?.id);
     await database.sql`
       INSERT INTO execution_attempts
-        (attempt_id, run_id, step_id, story_id, generation, fence_token,
+        (attempt_id, claim_id, run_id, step_id, story_id, generation, fence_token,
          attempt_class, compilation_report_hash,
          source_before_sha, source_before_tree_hash, role, agent_id,
          lease_acquired_at, lease_expires_at, heartbeat_at, disposition, evidence_refs)
       VALUES
-        ('ATT_shadow-parity-clean', 'shadow-parity-clean', 'implement', 'US-001', 1,
+        ('ATT_shadow-parity-clean', ${claimId}, 'shadow-parity-clean', 'implement', 'US-001', 1,
          ${HASH}, 'product_implementation', ${HASH}, ${RELEASE_SHA}, ${TREE},
          'developer', 'developer', '2026-07-13T00:00:00.000Z',
          '2026-07-14T00:00:00.000Z', '2026-07-13T00:00:00.000Z', 'running',

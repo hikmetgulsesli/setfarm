@@ -1,3 +1,6 @@
+import { extractTaskRequirementLedgerV1 } from "../../../src/product-compiler/requirements/task-requirements-v1.js";
+import { produceRuntimeDataContractV1 } from "../../../src/product-compiler/producers/runtime-data-contract.js";
+
 const HASH_A = "a".repeat(64);
 const HASH_B = "b".repeat(64);
 const HASH_C = "c".repeat(64);
@@ -52,6 +55,7 @@ export function buildMinimalValidContracts() {
         entityRefs: ["ENTITY_TASK"],
         durability: "reload" as const,
         key: "task-editor-v1",
+        rehydration: { kind: "initialization" as const },
       },
     ],
     routes: [
@@ -88,6 +92,7 @@ export function buildMinimalValidContracts() {
           ],
         },
         preconditions: [],
+        evidenceScenario: { targetInputValues: { title: "Task from state" }, prerequisiteSteps: [] },
         stateDeltas: [
           {
             stateRef: "STATE_EDITOR",
@@ -103,6 +108,7 @@ export function buildMinimalValidContracts() {
             operation: "write" as const,
             entityRef: "ENTITY_TASK",
             payloadFields: ["title"],
+            statePaths: [{ stateRef: "STATE_EDITOR", path: "/title" }],
           },
         ],
         success: {
@@ -196,7 +202,7 @@ export function buildMinimalValidContracts() {
     schema: "setfarm.build-topology.v1" as const,
     stackPack: {
       id: "vite-react-web-app",
-      version: "1.0.0",
+      version: "1.1.0",
       contentHash: HASH_B,
     },
     repo: {
@@ -217,6 +223,8 @@ export function buildMinimalValidContracts() {
         path: "src/App.tsx",
         role: "source" as const,
         ownerRef: "OWNER_US_001",
+        presence: "present" as const,
+        knownContentHash: HASH_A,
       },
     ],
     sharedGrants: [],
@@ -242,6 +250,14 @@ export function buildMinimalValidContracts() {
         id: "CMD_TEST",
         kind: "test" as const,
         argv: ["npm", "test"],
+        cwd: ".",
+        timeoutMs: 120_000,
+        capabilityRefs: [],
+      },
+      {
+        id: "CMD_PREVIEW",
+        kind: "preview" as const,
+        argv: ["npm", "run", "preview", "--", "--host", "{{HOST}}", "--port", "{{PORT}}", "--strictPort"],
         cwd: ".",
         timeoutMs: 120_000,
         capabilityRefs: [],
@@ -313,6 +329,7 @@ export function buildMinimalValidContracts() {
         pathRef: "PATH_APP",
         path: "src/App.tsx",
         role: "owned" as const,
+        presence: "present" as const,
         knownContentHash: HASH_A,
       },
     ],
@@ -341,4 +358,91 @@ export function buildMinimalValidContracts() {
     packet,
     implementationSlice,
   };
+}
+
+export function buildMinimalValidV3ProductSpec(): any {
+  const task = "Let a user edit and save a task, keep it after reload, and show visible confirmation.";
+  const value: any = structuredClone(buildMinimalValidContracts().productSpec);
+  const action = value.actions[0];
+  action.observableEffects = [{
+    id: "OBS_SAVE_CONFIRMATION",
+    selector: { kind: "control", actionRef: action.id },
+    assertions: [
+      { phase: "after", property: "visible_text", operator: "equals", expected: "Saved" },
+      { phase: "reload", property: "visible_text", operator: "equals", expected: "Saved" },
+    ],
+    evidenceRef: "EVID_SAVE_CONFIRMATION",
+  }];
+  action.evidenceRefs.push("EVID_SAVE_CONFIRMATION");
+  action.success.evidenceRefs.push("EVID_SAVE_CONFIRMATION");
+  value.evidencePredicates.push({
+    id: "EVID_SAVE_CONFIRMATION",
+    kind: "observable_outcome",
+    required: true,
+    subjectRef: "OBS_SAVE_CONFIRMATION",
+    capabilityRefs: ["CAP_BROWSER_INTERACTION"],
+    assertion: { operator: "passes" },
+  });
+  value.delivery = {
+    platform: "web",
+    techStack: "vite-react",
+    uiLanguage: "English",
+    database: "none",
+    designRequired: true,
+    uiVisionSummary: "A focused task editor with exact save and reload evidence.",
+  };
+  const ledger = extractTaskRequirementLedgerV1(task);
+  value.requirements = ledger.requirements.map((requirement) => ({
+    ...requirement,
+    classification: "functional",
+    expectedSemanticKinds: ["action"],
+  }));
+  const requirementRefs = ledger.requirements.map((requirement) => requirement.id);
+  const semanticRefs = [
+    ...value.product.goals.map((item: any) => ["goal", item.id]),
+    ...value.product.nonGoals.map((item: any) => ["non_goal", item.id]),
+    ...value.entities.map((item: any) => ["entity", item.id]),
+    ...value.states.map((item: any) => ["state", item.id]),
+    ...value.persistencePolicies.map((item: any) => ["persistence", item.id]),
+    ...value.routes.map((item: any) => ["route", item.id]),
+    ...value.surfaces.map((item: any) => ["surface", item.id]),
+    ...value.actions.map((item: any) => ["action", item.id]),
+    ...value.evidencePredicates.map((item: any) => ["evidence", item.id]),
+    ...value.actions.flatMap((candidate: any) =>
+      candidate.observableEffects.map((item: any) => ["observable", item.id])),
+  ];
+  value.traceability = {
+    schema: "setfarm.product-requirement-traceability.v1",
+    sourceTaskHash: ledger.sourceHash,
+    bindings: semanticRefs.map(([semanticKind, semanticRef]) => ({
+      semanticKind,
+      semanticRef,
+      requirementRefs,
+    })),
+  };
+  return value;
+}
+
+export function buildMinimalValidV3Contracts(): ReturnType<typeof buildMinimalValidContracts> {
+  const values = buildMinimalValidContracts();
+  values.productSpec = buildMinimalValidV3ProductSpec();
+  values.designGraph.bindings[0]!.evidenceRefs.push("EVID_SAVE_CONFIRMATION");
+  values.storyPlan.stories[0]!.evidenceRefs.push("EVID_SAVE_CONFIRMATION");
+  const runtimeData = produceRuntimeDataContractV1({
+    productSpec: values.productSpec,
+    commands: values.buildTopology.commands,
+  });
+  if (runtimeData.status !== "produced") {
+    throw new Error(`Minimal v3 runtime-data fixture rejected: ${JSON.stringify(runtimeData.diagnostics)}`);
+  }
+  Object.assign(values.buildTopology, {
+    runtimeDataContract: runtimeData.contract,
+    runtimeDataContractHash: runtimeData.contractHash,
+  });
+  Object.assign(values.packet, { runtimeDataContractHash: runtimeData.contractHash });
+  Object.assign(values.implementationSlice, {
+    runtimeDataContract: runtimeData.contract,
+    runtimeDataContractHash: runtimeData.contractHash,
+  });
+  return values;
 }

@@ -146,7 +146,7 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
       "",
     ].join("\n");
     const { completeStep } = await import("../../step-ops.js");
-    await completeStep(step.id, output);
+    await completeStep(step.id, output, ctx.claimEnvelope);
     logger.info(`[module:setup-repo preclaim] AUTO-COMPLETED setup-repo without setup-repo agent`, {
       runId: ctx.runId,
       stepId: ctx.stepId,

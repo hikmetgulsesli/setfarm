@@ -1,5 +1,5 @@
 export type RuntimeKind = "browser" | "emulator" | "simulator" | "process" | "none";
-export type InteractionAction = "click" | "fill" | "press" | "wait" | "navigate" | "snapshot";
+export type InteractionAction = "click" | "fill" | "press" | "select" | "wait" | "navigate" | "snapshot" | "invoke" | "reset";
 
 export interface StoryRuntimeContext {
   runId: string;
@@ -25,6 +25,7 @@ export interface InteractionRequest {
   action: InteractionAction;
   target?: string;
   value?: string;
+  inputValues?: Readonly<Record<string, unknown>>;
   waitCondition?: "load" | "network_idle" | "dom_idle" | "timeout";
   timeoutMs?: number;
 }
@@ -40,9 +41,11 @@ export interface InteractionResult {
 
 export interface CapturedRuntimeState {
   capturedAt: string;
+  url?: string;
   screenshotPath?: string;
   domSnapshotPath?: string;
   accessibilitySnapshotPath?: string;
+  runtimeSnapshotPath?: string;
   stateBridge?: Record<string, unknown> | null;
 }
 

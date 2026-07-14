@@ -34,12 +34,14 @@ import {
   type ProductSpecV1,
 } from "./schemas/product-spec-v1.js";
 import { StoryPlanV1Schema, type StoryPlanV1 } from "./schemas/story-plan-v1.js";
+import { validateRuntimeDataContractClosureV1 } from "./producers/runtime-data-contract.js";
 
 const VALIDATION_IDS = [
   "VALIDATE_ACTION_REACHABILITY",
   "VALIDATE_CONTROL_DISPOSITIONS",
   "VALIDATE_EVIDENCE_COVERAGE",
   "VALIDATE_REFERENCE_COMPLETENESS",
+  "VALIDATE_RUNTIME_DATA_CLOSURE",
   "VALIDATE_SCHEMA_STRICT",
   "VALIDATE_STORY_PARTITIONS",
   "VALIDATE_TOPOLOGY_CAPABILITIES",
@@ -57,6 +59,7 @@ export type ProductPacketCompilerInput = Readonly<{
   compiler: unknown;
   producer: unknown;
   parentPacketHashes?: unknown;
+  protocol?: "legacy-shadow" | "v3";
   artifactStore: ArtifactWriter;
 }>;
 
@@ -575,6 +578,47 @@ function validateTopologyAndEvidence(
   return diagnostics;
 }
 
+function validateRuntimeDataClosure(
+  product: ProductSpecV1,
+  topology: BuildTopologyV1,
+  artifactHash: string,
+  requireV3: boolean,
+): CompilationDiagnosticV1[] {
+  const hasContract = Boolean(topology.runtimeDataContract);
+  const hasHash = Boolean(topology.runtimeDataContractHash);
+  if (requireV3 && !product.delivery) {
+    return [diagnostic({
+      code: "CONTRACT_V3_PRODUCT_DELIVERY_MISSING",
+      message: "V3 packet compilation requires ProductSpec delivery authority; historical ProductSpec cannot be upgraded by inference",
+      artifactHash,
+      reference: "delivery",
+    })];
+  }
+  if (product.delivery && (!hasContract || !hasHash)) {
+    return [diagnostic({
+      code: "CONTRACT_RUNTIME_DATA_MISSING",
+      message: "V3 ProductSpec delivery requires an exact runtime-data contract and canonical hash before implementation",
+      artifactHash,
+      reference: "runtimeDataContract",
+    })];
+  }
+  if (!product.delivery && (hasContract || hasHash)) {
+    return [diagnostic({
+      code: "CONTRACT_RUNTIME_DATA_PROTOCOL_AUTHORITY_MISSING",
+      message: "Historical ProductSpec without v3 delivery cannot be reinterpreted as runtime-data authority",
+      artifactHash,
+      reference: "delivery",
+    })];
+  }
+  if (!product.delivery) return [];
+  return validateRuntimeDataContractClosureV1({
+    productSpec: product,
+    commands: topology.commands,
+    contract: topology.runtimeDataContract,
+    contractHash: topology.runtimeDataContractHash,
+  }).map((item) => ({ ...item, artifactHash }));
+}
+
 async function storeChild(
   store: ArtifactWriter,
   artifactType: string,
@@ -651,6 +695,12 @@ export async function compileProductBuildPacket(
       topologyResult.data,
       rawHashes.buildTopology,
     ));
+    diagnostics.push(...validateRuntimeDataClosure(
+      productResult.data,
+      topologyResult.data,
+      rawHashes.buildTopology,
+      input.protocol === "v3",
+    ));
   }
 
   const sortedDiagnostics = sortCompilationDiagnostics(diagnostics);
@@ -660,6 +710,9 @@ export async function compileProductBuildPacket(
   const inputHashes = uniqueSorted(Object.values(rawHashes));
   let packet: ProductBuildPacketV1 | undefined;
   let packetHash: string | undefined;
+  const runtimeDataContractHash = topologyResult.success
+    ? topologyResult.data.runtimeDataContractHash
+    : undefined;
 
   if (rejectionCodes.length === 0) {
     packet = ProductBuildPacketV1Schema.parse({
@@ -670,6 +723,9 @@ export async function compileProductBuildPacket(
       designGraphHash: artifactHashes.designGraph,
       buildTopologyHash: artifactHashes.buildTopology,
       storyPlanHash: artifactHashes.storyPlan,
+      ...(runtimeDataContractHash
+        ? { runtimeDataContractHash }
+        : {}),
       compiler,
       validationIds: [...VALIDATION_IDS],
     });

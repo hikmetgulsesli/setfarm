@@ -26,3 +26,57 @@ export function exactProductReservation(overrides: Record<string, unknown> = {})
     ...overrides,
   };
 }
+
+export async function insertOpenClaim(
+  sql: Readonly<{ unsafe<T extends readonly unknown[] = readonly unknown[]>(query: string, params?: readonly unknown[]): Promise<T> }>,
+  overrides: Readonly<{
+    runId?: string;
+    stepId?: string;
+    storyId?: string;
+    agentId?: string;
+  }> = {},
+): Promise<number> {
+  const runId = overrides.runId ?? "run-contract-1";
+  const stepId = overrides.stepId ?? "implement";
+  const storyId = overrides.storyId ?? "US-002";
+  const agentId = overrides.agentId ?? "feature-dev";
+  const rows = await sql.unsafe<Array<{ id: string }>>(
+    `INSERT INTO claim_log (run_id, step_id, story_id, agent_id)
+     VALUES ($1, $2, $3, $4)
+     RETURNING id::text AS id`,
+    [runId, stepId, storyId, agentId],
+  );
+  const claimId = Number(rows[0]?.id);
+  if (!Number.isSafeInteger(claimId) || claimId <= 0) throw new Error("TEST_CLAIM_ID_INVALID");
+  return claimId;
+}
+
+export function bindReservationToClaim(
+  reservation: Record<string, unknown>,
+  claimId: number,
+): Record<string, unknown> {
+  const refs = Array.isArray(reservation.evidenceRefs)
+    ? reservation.evidenceRefs.filter(
+      (ref): ref is string => typeof ref === "string" && !/^setfarm:\/\/claim-log\//.test(ref),
+    )
+    : [];
+  return {
+    ...reservation,
+    claimId,
+    evidenceRefs: [...refs, `setfarm://claim-log/${claimId}`],
+  };
+}
+
+export async function exactBoundProductReservation(
+  sql: Parameters<typeof insertOpenClaim>[0],
+  overrides: Record<string, unknown> = {},
+): Promise<Record<string, unknown>> {
+  const reservation = exactProductReservation(overrides);
+  const claimId = await insertOpenClaim(sql, {
+    runId: String(reservation.runId),
+    stepId: String(reservation.stepId),
+    storyId: String(reservation.storyId),
+    agentId: String(reservation.agentId),
+  });
+  return bindReservationToClaim(reservation, claimId);
+}

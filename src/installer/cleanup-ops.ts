@@ -449,10 +449,22 @@ export async function cleanupAbandonedSteps(advancePipeline: (runId: string) => 
       type: string; current_story_id: string | null; loop_config: string | null;
       abandoned_count: number; agent_id: string; updated_at: string;
     }>(
-      `SELECT id, step_id, run_id, retry_count, max_retries, type, current_story_id, loop_config, abandoned_count, agent_id, updated_at FROM steps
-       WHERE status = 'running' AND (
-         (abandoned_count = 0 AND EXTRACT(EPOCH FROM NOW() - updated_at::timestamptz) * 1000 > $1)
-         OR (abandoned_count > 0 AND EXTRACT(EPOCH FROM NOW() - updated_at::timestamptz) * 1000 > $2)
+      `SELECT s.id, s.step_id, s.run_id, s.retry_count, s.max_retries, s.type, s.current_story_id, s.loop_config, s.abandoned_count, s.agent_id, s.updated_at
+       FROM steps s
+       JOIN runs r ON r.id = s.run_id
+       WHERE s.status = 'running'
+         AND r.protocol = 'legacy'
+         AND NOT EXISTS (
+           SELECT 1 FROM runtime_sessions rs
+            WHERE rs.step_db_id = s.id AND rs.state <> 'released'
+         )
+         AND NOT EXISTS (
+           SELECT 1 FROM run_termination_requests rtr
+            WHERE rtr.run_id = s.run_id AND rtr.state <> 'terminalized'
+         )
+         AND (
+         (s.abandoned_count = 0 AND EXTRACT(EPOCH FROM NOW() - s.updated_at::timestamptz) * 1000 > $1)
+         OR (s.abandoned_count > 0 AND EXTRACT(EPOCH FROM NOW() - s.updated_at::timestamptz) * 1000 > $2)
        )`,
       [FAST_STEP_ABANDONED_THRESHOLD_MS, FAST_STEP_FAST_ABANDONED_THRESHOLD_MS]
     );
@@ -574,7 +586,20 @@ export async function cleanupAbandonedSteps(advancePipeline: (runId: string) => 
 
     // Reset running stories that are abandoned
     const abandonedStories = await pgQuery<{ id: string; retry_count: number; max_retries: number; run_id: string }>(
-      "SELECT id, retry_count, max_retries, run_id FROM stories WHERE status = 'running' AND EXTRACT(EPOCH FROM NOW() - updated_at::timestamptz) * 1000 > $1",
+      `SELECT st.id, st.retry_count, st.max_retries, st.run_id
+         FROM stories st
+         JOIN runs r ON r.id = st.run_id
+        WHERE st.status = 'running'
+          AND r.protocol = 'legacy'
+          AND NOT EXISTS (
+            SELECT 1 FROM runtime_sessions rs
+             WHERE rs.story_db_id = st.id AND rs.state <> 'released'
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM run_termination_requests rtr
+             WHERE rtr.run_id = st.run_id AND rtr.state <> 'terminalized'
+          )
+          AND EXTRACT(EPOCH FROM NOW() - st.updated_at::timestamptz) * 1000 > $1`,
       [BASE_ABANDONED_THRESHOLD_MS]
     );
 
@@ -588,6 +613,15 @@ export async function cleanupAbandonedSteps(advancePipeline: (runId: string) => 
       `SELECT s.id, s.run_id, s.step_index FROM steps s
        JOIN runs r ON r.id = s.run_id
        WHERE s.type = 'loop' AND s.status = 'done' AND r.status = 'running'
+       AND r.protocol = 'legacy'
+       AND NOT EXISTS (
+         SELECT 1 FROM runtime_sessions rs
+          WHERE rs.run_id = s.run_id AND rs.state <> 'released'
+       )
+       AND NOT EXISTS (
+         SELECT 1 FROM run_termination_requests rtr
+          WHERE rtr.run_id = s.run_id AND rtr.state <> 'terminalized'
+       )
        AND NOT EXISTS (
          SELECT 1 FROM steps s2 WHERE s2.run_id = s.run_id
          AND s2.step_index > s.step_index
@@ -611,6 +645,15 @@ export async function cleanupAbandonedSteps(advancePipeline: (runId: string) => 
        JOIN runs r ON r.id = s.run_id
        JOIN steps ls ON ls.run_id = s.run_id AND ls.type = 'loop'
        WHERE r.status = 'running'
+       AND r.protocol = 'legacy'
+       AND NOT EXISTS (
+         SELECT 1 FROM runtime_sessions rs
+          WHERE rs.run_id = s.run_id AND rs.state <> 'released'
+       )
+       AND NOT EXISTS (
+         SELECT 1 FROM run_termination_requests rtr
+          WHERE rtr.run_id = s.run_id AND rtr.state <> 'terminalized'
+       )
        AND s.status = 'waiting'
        AND ls.loop_config IS NOT NULL
        AND EXISTS (

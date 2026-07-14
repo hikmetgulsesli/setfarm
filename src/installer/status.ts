@@ -1,9 +1,10 @@
-import { pgQuery, pgGet, pgRun, now } from "../db-pg.js";
-import { teardownWorkflowCronsIfIdle } from "./agent-cron.js";
+import { getSql, pgQuery, pgGet, pgRun, now } from "../db-pg.js";
 import { emitEvent } from "./events.js";
-import { recordStepTransition } from "./repo.js";
-import { missionControlApi, runtimeConfig } from "../runtime-config.js";
 import type { SetfarmProtocolMode } from "../product-compiler/protocol.js";
+import {
+  executeRunOperationalAction,
+  resolveRunOperationalActionTarget,
+} from "../execution/run-operational-action.js";
 
 export type RunInfo = {
   id: string;
@@ -79,104 +80,68 @@ export async function listRuns(): Promise<RunInfo[]> {
 }
 
 export type StopWorkflowResult =
-  | { status: "ok"; runId: string; workflowId: string; cancelledSteps: number }
-  | { status: "not_found"; message: string }
-  | { status: "already_done"; message: string };
+  {
+    status: "ok";
+    runId: string;
+    workflowId: string;
+    cancelledSteps: 0;
+    terminationRequestId: string;
+    requestState: "requested";
+    expectedSnapshotHash: string;
+    actionStateHash: string;
+  };
 
-async function notifyRunCancelled(run: RunInfo): Promise<void> {
+async function notifyRunTerminationRequested(
+  run: Readonly<{ id: string; workflow_id: string }>,
+  terminationRequestId: string,
+): Promise<void> {
   try {
-    await pgRun("SELECT pg_notify('run_cancelled', $1)", [
-      JSON.stringify({ runId: run.id, workflowId: run.workflow_id }),
+    await pgRun("SELECT pg_notify('run_termination_requested', $1)", [
+      JSON.stringify({
+        runId: run.id,
+        workflowId: run.workflow_id,
+        terminationRequestId,
+      }),
     ]);
   } catch {
-    // best effort; DB state remains authoritative
+    // Wake-up only. The durable request is recovered by startup/polling.
   }
 }
 
-async function cancelActiveRunState(run: RunInfo): Promise<{ cancelledSteps: number; closedClaims: number }> {
-  const activeStepsForCancel = await pgQuery<{ id: string; status: string }>(
-    "SELECT id, status FROM steps WHERE run_id = $1 AND status IN ('waiting', 'pending', 'running')",
-    [run.id]
-  );
-
-  await pgRun("UPDATE runs SET status = 'cancelled', updated_at = $1 WHERE id = $2", [now(), run.id]);
-  const result = await pgRun(
-    "UPDATE steps SET status = 'cancelled', output = COALESCE(output, 'Cancelled by user'), current_story_id = NULL, updated_at = $1 WHERE run_id = $2 AND status IN ('waiting', 'pending', 'running')",
-    [now(), run.id]
-  );
-  await pgRun(
-    "UPDATE stories SET status = 'skipped', output = COALESCE(output, 'Cancelled by user'), updated_at = $1 WHERE run_id = $2 AND status IN ('pending', 'running')",
-    [now(), run.id]
-  );
-  const claimResult = await pgRun(
-    "UPDATE claim_log SET outcome = 'cancelled', abandoned_at = $1, duration_ms = LEAST(CAST(EXTRACT(EPOCH FROM ($1::timestamptz - claimed_at::timestamptz)) * 1000 AS BIGINT), 2147483647)::INTEGER, diagnostic = 'Workflow cancelled by user' WHERE run_id = $2 AND outcome IS NULL",
-    [now(), run.id]
-  );
-  for (const s of activeStepsForCancel) {
-    await recordStepTransition(s.id, run.id, s.status, "cancelled", undefined, "stopWorkflow:cancelled");
-  }
-
-  await teardownWorkflowCronsIfIdle(run.workflow_id, { graceMs: 0 });
-  await notifyRunCancelled(run);
-  return { cancelledSteps: result.changes, closedClaims: claimResult.changes };
-}
-
-export async function stopWorkflow(query: string): Promise<StopWorkflowResult> {
-  let run: RunInfo | undefined;
-  if (/^\d+$/.test(query)) {
-    run = await pgGet<RunInfo>("SELECT * FROM runs WHERE run_number = $1 LIMIT 1", [parseInt(query, 10)]);
-  }
-  if (!run) {
-    run = await pgGet<RunInfo>("SELECT * FROM runs WHERE id = $1", [query]);
-  }
-  if (!run) {
-    run = await pgGet<RunInfo>("SELECT * FROM runs WHERE id LIKE $1 || '%' ORDER BY created_at DESC LIMIT 1", [query]);
-  }
-  if (!run) {
-    const allRuns = await pgQuery<{ id: string; task: string; status: string; created_at: string }>(
-      "SELECT id, task, status, created_at FROM runs ORDER BY created_at DESC LIMIT 20"
-    );
-    const available = allRuns.map((r) => `  [${r.status}] ${r.id.slice(0, 8)} ${r.task.slice(0, 60)}`);
-    return {
-      status: "not_found",
-      message: available.length
-        ? `No run matching "${query}". Recent runs:\n${available.join("\n")}`
-        : "No workflow runs found.",
-    };
-  }
-  if (run.status === "completed") {
-    return { status: "already_done", message: `Run ${run.id.slice(0, 8)} is already "${run.status}".` };
-  }
-  const { cancelledSteps, closedClaims } = await cancelActiveRunState(run);
-  if (run.status === "cancelled" && cancelledSteps === 0 && closedClaims === 0) {
-    return { status: "already_done", message: `Run ${run.id.slice(0, 8)} is already "${run.status}".` };
-  }
-
-  // Clean up MC project + tunnel if deploy didn't complete
+export async function stopWorkflow(
+  query: string,
+  expectedSnapshotHash: string,
+): Promise<StopWorkflowResult> {
+  const sql = getSql();
+  const runId = await resolveRunOperationalActionTarget(sql, query);
+  const result = await executeRunOperationalAction(sql, {
+    action: "stop",
+    runId,
+    expectedSnapshotHash,
+  });
+  if (result.action !== "stop") throw new Error("RUN_OPERATIONAL_ACTION_RESULT_KIND_MISMATCH");
+  const run = { id: result.runId, workflow_id: result.workflowId };
+  await notifyRunTerminationRequested(run, result.terminationRequest.requestId);
   try {
-    const planStep = await pgGet<{ output: string }>("SELECT output FROM steps WHERE run_id = $1 AND step_id = 'plan'", [run.id]);
-    const repoMatch = planStep?.output?.match(/^REPO:\s*(.+)$/m);
-    if (repoMatch) {
-      const projectName = repoMatch[1].trim().split("/").filter(Boolean).pop();
-      if (projectName) {
-        // Remove from MC projects.json
-        try {
-          const { execFileSync } = await import("child_process");
-          execFileSync("curl", ["-sf", "-X", "DELETE", missionControlApi(`/api/projects/${projectName}`),
-            "-H", "Content-Type: application/json", "-d", JSON.stringify({ confirmName: projectName })],
-            { timeout: 10000, stdio: "pipe" });
-        } catch { /* MC might not have it */ }
-        // Remove tunnel entry
-        try {
-          const { execFileSync } = await import("child_process");
-          const tunnelScript = `${runtimeConfig.scriptsDir}/tunnel-remove.sh`;
-          execFileSync("sudo", ["bash", tunnelScript, `${projectName}.setrox.com.tr`],
-            { timeout: 15000, stdio: "pipe" });
-        } catch { /* tunnel might not exist */ }
-      }
-    }
-  } catch { /* best effort cleanup */ }
-
-  emitEvent({ ts: now(), event: "run.cancelled", runId: run.id, workflowId: run.workflow_id, detail: "Cancelled by user" });
-  return { status: "ok", runId: run.id, workflowId: run.workflow_id, cancelledSteps };
+    emitEvent({
+      ts: now(),
+      event: "run.cancel_requested",
+      runId: run.id,
+      workflowId: run.workflow_id,
+      detail: `Cancellation request ${result.terminationRequest.requestId} is awaiting proven runtime drain`,
+    });
+  } catch {
+    // Projection-only JSONL/observation failure must not report the committed
+    // canonical termination request as failed.
+  }
+  return {
+    status: "ok",
+    runId: run.id,
+    workflowId: run.workflow_id,
+    cancelledSteps: 0,
+    terminationRequestId: result.terminationRequest.requestId,
+    requestState: "requested",
+    expectedSnapshotHash: result.expectedSnapshotHash,
+    actionStateHash: result.actionStateHash,
+  };
 }

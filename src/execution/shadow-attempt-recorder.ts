@@ -288,6 +288,7 @@ export function createShadowAttemptRecorder(dependencies: ShadowRecorderDependen
         const compilationReportHash = value.compilationReportHash
           ?? await dependencies.resolveCompilationReportHash(value);
         const result = await dependencies.repository.reserve({
+          claimId: value.legacyClaimId,
           runId: value.runId,
           stepId: value.stepId,
           storyId: value.storyId,
@@ -571,6 +572,8 @@ async function createDefaultShadowRuntime(): Promise<ShadowRuntime> {
   const [
     db,
     artifactModule,
+    artifactIndexModule,
+    artifactPublisherModule,
     repositoryModule,
     reportModule,
     diagnosticsModule,
@@ -580,6 +583,8 @@ async function createDefaultShadowRuntime(): Promise<ShadowRuntime> {
   ] = await Promise.all([
     import("../db-pg.js"),
     import("../product-compiler/artifact-store.js"),
+    import("../product-compiler/artifact-index.js"),
+    import("../product-compiler/indexed-artifact-publisher.js"),
     import("./attempt-repository.js"),
     import("../product-compiler/schemas/compilation-report-v1.js"),
     import("../product-compiler/diagnostics.js"),
@@ -592,7 +597,14 @@ async function createDefaultShadowRuntime(): Promise<ShadowRuntime> {
     configModule.resolveProductArtifactDir(),
     { limits: configModule.resolveProductArtifactCapacity() },
   );
-  const repository = repositoryModule.createAttemptRepository(db.getSql());
+  const sql = db.getSql();
+  const artifactIndex = artifactIndexModule.createArtifactIndex(sql);
+  const artifactPublisher = new artifactPublisherModule.IndexedArtifactPublisher({
+    index: artifactIndex,
+    store: artifactStore,
+    ownerInstanceId: `legacy-shadow-observation:${process.pid}`,
+  });
+  const repository = repositoryModule.createAttemptRepository(sql);
   const emit = async (event: ShadowDiagnostic) => {
     const message = `[${event.event}] ${event.code}: ${event.message}`;
     if (event.event === "product_compiler.shadow_error") {
@@ -629,7 +641,7 @@ async function createDefaultShadowRuntime(): Promise<ShadowRuntime> {
         validationIds: ["VALIDATE_LEGACY_SHADOW_PACKET"],
         rejectionCodes: ["LEGACY_BUILD_PACKET_UNAVAILABLE"],
       });
-      const stored = await artifactStore.put({
+      const stored = await artifactPublisher.put({
         schema: "setfarm.semantic-artifact-envelope.v1",
         artifactType: "setfarm.product-compilation-report.v1",
         producer: {
@@ -638,6 +650,11 @@ async function createDefaultShadowRuntime(): Promise<ShadowRuntime> {
           toolVersions: {},
         },
         payload: report,
+      });
+      await artifactIndex.addRunArtifactRef({
+        runId: input.runId,
+        refKey: `SHADOW_LEGACY_REPORT_${stored.hash.slice(0, 16).toUpperCase()}`,
+        artifactHash: stored.hash,
       });
       return stored.hash;
     },

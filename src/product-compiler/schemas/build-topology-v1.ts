@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { createHash } from "node:crypto";
 
 import {
   CapabilityIdSchema,
@@ -15,6 +16,10 @@ import {
   StoryIdSchema,
   hasUniqueStrings,
 } from "./common-v1.js";
+import {
+  RuntimeDataContractV1Schema,
+  hashRuntimeDataContractV1,
+} from "./runtime-data-contract-v1.js";
 
 const StackPackV1Schema = z
   .object({
@@ -54,15 +59,31 @@ export const TopologyOwnerV1Schema = z.discriminatedUnion("kind", [
 
 export type TopologyOwnerV1 = z.infer<typeof TopologyOwnerV1Schema>;
 
+const ABSENT_PATH_HASH_DOMAIN = "setfarm.path-absence.v1\0";
+
+export function topologyPathAbsenceHash(path: string): string {
+  return createHash("sha256").update(`${ABSENT_PATH_HASH_DOMAIN}${path}`, "utf8").digest("hex");
+}
+
 export const TopologyPathBindingV1Schema = z
   .object({
     id: PathBindingIdSchema,
     path: NormalizedRelativeLocatorSchema,
     role: z.enum(["source", "test", "config", "asset", "entrypoint", "generated", "dependency"]),
     ownerRef: OwnerIdSchema,
-    knownContentHash: Sha256Schema.optional(),
+    presence: z.enum(["present", "absent"]),
+    knownContentHash: Sha256Schema,
   })
-  .strict();
+  .strict()
+  .superRefine((value, context) => {
+    if (value.presence === "absent" && value.knownContentHash !== topologyPathAbsenceHash(value.path)) {
+      context.addIssue({
+        code: "custom",
+        path: ["knownContentHash"],
+        message: "Absent paths must use the canonical path-specific absence hash",
+      });
+    }
+  });
 
 export type TopologyPathBindingV1 = z.infer<typeof TopologyPathBindingV1Schema>;
 
@@ -108,8 +129,8 @@ export type BuildEntrypointV1 = z.infer<typeof BuildEntrypointV1Schema>;
 export const BuildCommandV1Schema = z
   .object({
     id: CommandIdSchema,
-    kind: z.enum(["install", "build", "test", "dev", "preview", "lint", "evidence"]),
-    argv: z.array(z.string().min(1).max(1_000)).min(1).max(100),
+    kind: z.enum(["install", "build", "test", "dev", "preview", "lint", "evidence", "migrate"]),
+    argv: z.array(z.string().min(1).max(12_000)).min(1).max(100),
     cwd: RepoRelativePathSchema,
     timeoutMs: z.number().int().positive().max(86_400_000),
     capabilityRefs: z.array(CapabilityIdSchema).max(500).refine(hasUniqueStrings, {
@@ -121,7 +142,20 @@ export const BuildCommandV1Schema = z
       message: "Command environment refs must be unique",
     }).optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((value, context) => {
+    const totalArgumentBytes = value.argv.reduce(
+      (total, argument) => total + Buffer.byteLength(argument, "utf8"),
+      0,
+    );
+    if (totalArgumentBytes > 64 * 1024) {
+      context.addIssue({
+        code: "custom",
+        path: ["argv"],
+        message: "Command arguments exceed the bounded command contract",
+      });
+    }
+  });
 
 export type BuildCommandV1 = z.infer<typeof BuildCommandV1Schema>;
 
@@ -175,6 +209,8 @@ export const BuildTopologyV1Schema = z
     commands: z.array(BuildCommandV1Schema).min(1).max(1_000),
     capabilities: z.array(BuildCapabilityV1Schema).max(1_000),
     policies: BuildPoliciesV1Schema,
+    runtimeDataContract: RuntimeDataContractV1Schema.optional(),
+    runtimeDataContractHash: Sha256Schema.optional(),
   })
   .strict()
   .superRefine((value, context) => {
@@ -253,6 +289,26 @@ export const BuildTopologyV1Schema = z
         code: "custom",
         path: ["commands"],
         message: "Build topology requires a typed build command",
+      });
+    }
+    const runtimeDataPresence = [value.runtimeDataContract, value.runtimeDataContractHash]
+      .filter((item) => item !== undefined).length;
+    if (runtimeDataPresence === 1) {
+      context.addIssue({
+        code: "custom",
+        path: ["runtimeDataContract"],
+        message: "Legacy compatibility permits runtime-data contract and hash only together or both absent",
+      });
+    }
+    if (
+      value.runtimeDataContract
+      && value.runtimeDataContractHash
+      && hashRuntimeDataContractV1(value.runtimeDataContract) !== value.runtimeDataContractHash
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["runtimeDataContractHash"],
+        message: "Runtime-data contract hash must equal the exact canonical embedded contract",
       });
     }
   });

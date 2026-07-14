@@ -1,11 +1,48 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
+import { cleanupProjectEphemera } from "../src/installer/cleanup-ops.js";
+import { captureShadowSourceRevision } from "../src/execution/shadow-attempt-recorder.js";
 
 const root = process.cwd();
 
 describe("project cleanup operations", () => {
+  it("stabilizes the exact source fingerprint only when cleanup runs before acceptance", async () => {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-pre-acceptance-cleanup-"));
+    try {
+      execFileSync("git", ["init", "-q"], { cwd: repo });
+      execFileSync("git", ["config", "user.name", "Setfarm Test"], { cwd: repo });
+      execFileSync("git", ["config", "user.email", "setfarm-test@example.invalid"], { cwd: repo });
+      fs.writeFileSync(path.join(repo, "package.json"), '{"name":"cleanup-source-test"}\n');
+      execFileSync("git", ["add", "package.json"], { cwd: repo });
+      execFileSync("git", ["commit", "-qm", "fixture"], { cwd: repo });
+      fs.writeFileSync(path.join(repo, "QA_REPORT.md"), "transient QA output\n");
+
+      const before = await captureShadowSourceRevision(repo);
+      await cleanupProjectEphemera(
+        "run-pre-acceptance-cleanup",
+        "pre-acceptance:test",
+        { repo },
+      );
+      const acceptedSource = await captureShadowSourceRevision(repo);
+      await cleanupProjectEphemera(
+        "run-pre-acceptance-cleanup",
+        "post-cleanup-idempotency:test",
+        { repo },
+      );
+      const replaySource = await captureShadowSourceRevision(repo);
+
+      assert.notEqual(before.treeHash, acceptedSource.treeHash, "transient untracked QA output participates in source identity");
+      assert.deepEqual(replaySource, acceptedSource, "the source is stable only after cleanup has completed");
+      assert.equal(fs.existsSync(path.join(repo, "QA_REPORT.md")), false);
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
   it("can resolve scoped project tool cwd on macOS without systemd cgroups", () => {
     const source = fs.readFileSync(path.join(root, "src", "installer", "cleanup-ops.ts"), "utf-8");
     assert.match(source, /function readDarwinProcessCwd\(pid: number\): string \| undefined/);

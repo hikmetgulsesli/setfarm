@@ -7,6 +7,15 @@ import { readSupervisorState, supervisorStatePath } from "./installer/supervisor
 import { implementEvidenceArtifactPaths, readImplementEvidenceConfig } from "./installer/implement-evidence.js";
 import { getStackModule } from "./installer/stack-modules/registry.js";
 import type { StackPackId } from "./installer/stack-contract/types.js";
+import {
+  createV3ImplementationContextV1,
+  V3ImplementationClaimHandoffV1Schema,
+  type V3ImplementationClaimHandoffV1,
+} from "./execution/v3-implementation-handoff.js";
+import {
+  ClaimEnvelopeV1Schema,
+  type ClaimEnvelopeV1,
+} from "./execution/schemas/claim-envelope-v1.js";
 
 function shellQuote(value: string): string {
   return `'${String(value).replace(/'/g, `'\\''`)}'`;
@@ -1456,8 +1465,106 @@ export function buildClaimSummary(params: {
   workdir: string;
   repo: string;
   storyId?: string;
+  claimEnvelope?: ClaimEnvelopeV1;
+  v3ImplementationHandoff?: V3ImplementationClaimHandoffV1;
   input: unknown;
 }): Record<string, unknown> {
+  const claimEnvelope = params.claimEnvelope
+    ? ClaimEnvelopeV1Schema.parse(params.claimEnvelope)
+    : undefined;
+  const v3Handoff = params.v3ImplementationHandoff
+    ? V3ImplementationClaimHandoffV1Schema.parse(params.v3ImplementationHandoff)
+    : undefined;
+  if (v3Handoff) {
+    if (!claimEnvelope || claimEnvelope.protocol !== "v3") {
+      throw new Error("V3_IMPLEMENTATION_HANDOFF_CLAIM_ENVELOPE_REQUIRED");
+    }
+    if (params.role !== v3Handoff.executionAuthority.role) {
+      throw new Error("V3_IMPLEMENTATION_HANDOFF_ROLE_MISMATCH");
+    }
+    if (claimEnvelope.claimAgentId !== `${params.wfId}_${params.role}`) {
+      throw new Error("V3_IMPLEMENTATION_HANDOFF_CLAIM_ROLE_MISMATCH");
+    }
+    if (
+      params.runId !== v3Handoff.runId
+      || params.stepId !== v3Handoff.stepId
+      || params.storyId !== v3Handoff.storyId
+      || claimEnvelope.runId !== v3Handoff.runId
+      || claimEnvelope.stepId !== v3Handoff.stepId
+      || claimEnvelope.storyId !== v3Handoff.storyId
+      || claimEnvelope.storyDbId !== v3Handoff.storyDbId
+      || claimEnvelope.claimId !== v3Handoff.claimId
+      || claimEnvelope.attempt?.attemptId !== v3Handoff.attemptId
+      || claimEnvelope.attempt?.generation !== v3Handoff.attemptGeneration
+    ) {
+      throw new Error("V3_IMPLEMENTATION_HANDOFF_CLAIM_IDENTITY_MISMATCH");
+    }
+    if (
+      path.resolve(params.workdir) !== path.resolve(v3Handoff.workdir)
+      || (claimEnvelope.workdir && path.resolve(claimEnvelope.workdir) !== path.resolve(v3Handoff.workdir))
+    ) {
+      throw new Error("V3_IMPLEMENTATION_HANDOFF_WORKDIR_MISMATCH");
+    }
+    const canonicalImplementationContext = createV3ImplementationContextV1({
+      handoff: v3Handoff,
+    });
+    const outputContract = canonicalImplementationContext.outputContract;
+    const scopeFiles = canonicalImplementationContext.writeAuthority.allowedPaths;
+    const scopeFileStates = buildScopeFileStates(v3Handoff.workdir, scopeFiles);
+    const missingScopeFiles = scopeFileStates
+      .filter((file) => file.kind === "missing")
+      .map((file) => String(file.path));
+    const existingScopeFiles = scopeFileStates
+      .filter((file) => file.kind === "existing")
+      .map((file) => String(file.path));
+    return {
+      schema: "setfarm.claim-summary.v2",
+      protocol: "v3",
+      workflow: params.wfId,
+      role: params.role,
+      stepId: params.stepId,
+      runId: params.runId,
+      storyId: v3Handoff.storyId,
+      storyTitle: v3Handoff.implementationSlice.story.title,
+      task: v3Handoff.implementationSlice.story.description,
+      taskBrief: v3Handoff.implementationSlice.story.title,
+      workdir: v3Handoff.workdir,
+      repo: v3Handoff.workdir,
+      mainRepo: v3Handoff.workdir,
+      storyWorkdir: v3Handoff.workdir,
+      verifyWorkdir: v3Handoff.workdir,
+      storyBranch: v3Handoff.branch,
+      storyDiffBase: v3Handoff.sourceBefore.sha,
+      buildCommand: "",
+      testCommand: "",
+      lintCommand: "",
+      buildCmd: "",
+      testCmd: "",
+      lintCmd: "",
+      scopeFiles,
+      scopeFileStates,
+      existingScopeFiles,
+      missingScopeFiles,
+      scopeFileInstruction: "writeAuthority.allowedPaths in canonicalImplementationContext is the complete write set; every other path is read-only.",
+      outputContract,
+      canonicalImplementationContext,
+      handoff: {
+        claimFile: params.claimFile,
+        outputFile: params.outputFile,
+        bootstrapFile: params.bootstrapFile,
+        fullClaimUsage: "Audit metadata only. Product/build authority is canonicalImplementationContext.",
+      },
+    };
+  }
+  if (
+    claimEnvelope?.protocol === "v3"
+    && (
+      params.role === "supervisor"
+      || (params.role === "developer" && (params.storyId || claimEnvelope.storyId))
+    )
+  ) {
+    throw new Error("V3_IMPLEMENTATION_HANDOFF_MISSING");
+  }
   const input = String(params.input || "");
   const projectRoot = projectRootFromClaimText(input);
   const currentStory = extractCurrentStory(input);
@@ -1881,6 +1988,7 @@ try {
     "  return text && text !== 'true' ? text : '';",
     "}",
     "function implementContext(s) {",
+    "  if (s.canonicalImplementationContext) return s.canonicalImplementationContext;",
     "  return {",
     "    mode: 'implement-context',",
     "    rules: [",
@@ -1960,6 +2068,10 @@ SETFARM_SUMMARY_TOOL_NODE
     echo "SUMMARY_IMPLEMENT_CONTEXT_CMD=CLAIM_SUMMARY_FILE='$CLAIM_SUMMARY_FILE' node '$WORKDIR/.setfarm-bin/setfarm-summary' implement-context"
     echo "SUMMARY_HELPER_RULE=Use SUMMARY_IMPLEMENT_CONTEXT_CMD only because IMPLEMENT_CONTEXT_FILE is unavailable. Do not guess setfarm-summary topics, append pipes/redirection/chaining, cat helper scripts, or parse raw /tmp/claim JSON."
   fi
+  V3_CANONICAL_CONTEXT="$(node -e 'const fs=require("fs"); const s=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); process.stdout.write(s.canonicalImplementationContext ? "1" : "0")' "$CLAIM_SUMMARY_FILE")"
+  if [ "$V3_CANONICAL_CONTEXT" = "1" ]; then
+    echo "CANONICAL_EVIDENCE_PLAN=handoff.evidencePlan; Setfarm owns execution, capture, and verdicts"
+  else
   node - "$CLAIM_SUMMARY_FILE" "$WORKDIR/.setfarm-bin/setfarm-evidence" <<'SETFARM_EVIDENCE_TOOL_NODE'
 const fs = require("fs");
 const path = require("path");
@@ -2101,6 +2213,7 @@ SETFARM_EVIDENCE_TOOL_NODE
   else
     echo "IMPLEMENT_EVIDENCE_SEED_FAILED=Setfarm could not seed default evidence request; create valid IMPLEMENT_INTENT.json and IMPLEMENT_VERIFICATION_REQUEST.json before STATUS: done"
   fi
+  fi
 fi
 SUMMARY_PRINTED=0
 if [ -n "$CLAIM_SUMMARY_FILE" ] && [ -f "$CLAIM_SUMMARY_FILE" ]; then
@@ -2114,6 +2227,28 @@ if [ -n "$CLAIM_SUMMARY_FILE" ] && [ -f "$CLAIM_SUMMARY_FILE" ]; then
 	const activeWorkdir = String(process.env.WORKDIR || s.workdir || s.storyWorkdir || s.verifyWorkdir || s.mainRepo || s.repo || "").replace(/\\/+$/, "");
 	const helperPath = (activeWorkdir ? activeWorkdir + "/" : "") + ".setfarm-bin/setfarm-summary";
 const summaryCommandPrefix = "CLAIM_SUMMARY_FILE=" + shq(process.argv[2]) + " node " + shq(helperPath) + " ";
+if (s.canonicalImplementationContext) {
+  const c = s.canonicalImplementationContext;
+  const h = c.handoff || {};
+  const implementContextFile = activeWorkdir ? activeWorkdir + "/.setfarm/implement-context.json" : "";
+  lines.push("IMPLEMENTATION_CONTEXT_SCHEMA=" + String(c.schema || ""));
+  lines.push("IMPLEMENTATION_HANDOFF_HASH=" + String(c.handoffHash || ""));
+  lines.push("STORY=" + [h.storyId, h.implementationSlice && h.implementationSlice.story && h.implementationSlice.story.title].filter(Boolean).join(" "));
+  lines.push("STORY_BRANCH=" + String(h.branch || ""));
+  lines.push("STORY_WORKDIR=" + String(h.workdir || ""));
+  lines.push("WRITE_AUTHORITY=" + String(c.writeAuthority && c.writeAuthority.mode || "") + " " + String(c.writeAuthority && c.writeAuthority.allowedPaths && c.writeAuthority.allowedPaths.length || 0) + " path(s)");
+  if (implementContextFile) lines.push("IMPLEMENT_CONTEXT_FILE=" + implementContextFile);
+  lines.push("CANONICAL_AUTHORITY_RULE=Read IMPLEMENT_CONTEXT_FILE. Its exact structured handoff is the sole product/build authority; do not parse raw claim prose or use legacy summary/retry/design classifiers.");
+  const oc = c.outputContract || {};
+  if (Array.isArray(oc.requiredFields)) lines.push("OUTPUT_REQUIRED_FIELDS=" + oc.requiredFields.join(", "));
+  if (oc.format) {
+    lines.push("OUTPUT_CONTRACT_BEGIN");
+    for (const line of String(oc.format).split(/\\r?\\n/).slice(0, 24)) if (line.trim()) lines.push("OUTPUT_CONTRACT " + line.slice(0, 240));
+    lines.push("OUTPUT_CONTRACT_END");
+  }
+  process.stdout.write(lines.join("\\n") + "\\n");
+  process.exit(0);
+}
 if (s.storyId || s.storyTitle) lines.push(("STORY=" + (s.storyId || "") + " " + (s.storyTitle || "")).trim());
 if (s.storyBranch) lines.push("STORY_BRANCH=" + String(s.storyBranch));
 if (s.storyDiffBase) lines.push("STORY_DIFF_BASE=" + String(s.storyDiffBase));
@@ -2267,6 +2402,7 @@ fi
 export function buildPreclaimedPrompt(params: {
   wfId: string;
   role: string;
+  protocol?: "legacy" | "shadow" | "v3";
   outputFile: string;
   claimFile: string;
   claimSummaryFile: string;
@@ -2275,6 +2411,25 @@ export function buildPreclaimedPrompt(params: {
   const cli = resolveSetfarmCli();
   const cliCommand = "node " + shellQuote(cli);
   const stepIdCommand = `STEP_ID=$(node -e 'const fs=require("fs"); process.stdout.write(JSON.parse(fs.readFileSync(process.argv[1],"utf8")).stepId||"")' ${shellQuote(params.claimFile)})`;
+  if (params.protocol === "v3" && (params.role === "developer" || params.role === "supervisor")) {
+    const claimKind = params.role === "supervisor" ? "supervisor repair" : "implementation";
+    return `Setfarm Product Compiler v3 ${claimKind} claim ready. First action MUST be the exact bootstrap exec below; send no prose first.
+
+BOOTSTRAP_FILE=${params.bootstrapFile}
+OUTPUT_FILE=${params.outputFile}
+
+First exec command (copy exactly, with no wrapper, pipe, redirection, or chaining):
+bash ${shellQuote(params.bootstrapFile)}
+
+The bootstrap writes IMPLEMENT_CONTEXT_FILE. Read that file once with the file read tool. Its setfarm.implementation-context.v3 object is the sole product, design, topology, ownership, command, state, persistence, recovery, and acceptance authority. Do not parse raw claim input, claim-summary JSON, GitHub prose, old retry prose, Stitch labels, or legacy summary helpers as another contract.
+
+Work only in handoff.workdir. Modify only writeAuthority.allowedPaths. Execute relevant implementationSlice.commands from their exact typed argv/cwd values. Implement the exact implementationSlice and make the exact evidencePlan executable; Setfarm owns evidence execution and verdicts. Do not stage, commit, push, create branches/PRs, install dependencies, start unmanaged servers, delegate, or broaden scope. On source mismatch return the typed SOURCE_SNAPSHOT_MISMATCH JSON refusal; on insufficient write authority return the typed CONTRACT_SCOPE_CONFLICT JSON refusal.
+
+Write exactly one JSON object matching outputContract to ${params.outputFile}; do not wrap it in markdown and do not add STATUS/KEY:value lines. For both ready_for_evidence and refused dispositions, complete with the exact claim capability so Setfarm can validate the refusal and transfer recovery ownership:
+${stepIdCommand}; ${cliCommand} step complete "$STEP_ID" --claim-file ${shellQuote(params.claimFile)} --file ${shellQuote(params.outputFile)}
+
+Never call step fail for a typed v3 refusal: that legacy path cannot carry source/slice/finding identity. After step complete, reply HEARTBEAT_OK and stop.`;
+  }
   return `Setfarm claim ready. The project planning, design, and story approval gates already happened inside Setfarm. Do not invoke separate brainstorming, design-approval, or planning workflows. First action MUST be exec. No prose or HEARTBEAT before exec.
 
 CLAIM_FILE=${params.claimFile}
@@ -2298,9 +2453,9 @@ cat > ${shellQuote(params.outputFile)} <<'SETFARM_EOF'
 STATUS: done
 <all required outputContract fields from ${params.claimSummaryFile}>
 SETFARM_EOF
-${stepIdCommand}; ${cliCommand} step complete "$STEP_ID" --file ${shellQuote(params.outputFile)}
+${stepIdCommand}; ${cliCommand} step complete "$STEP_ID" --claim-file ${shellQuote(params.claimFile)} --file ${shellQuote(params.outputFile)}
 
-Fail with: ${stepIdCommand}; ${cliCommand} step fail "$STEP_ID" "specific reason"
+Fail with: ${stepIdCommand}; ${cliCommand} step fail "$STEP_ID" --claim-file ${shellQuote(params.claimFile)} "specific reason"
 After complete/fail, reply HEARTBEAT_OK and stop.`;
 }
 

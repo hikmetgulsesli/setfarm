@@ -117,6 +117,19 @@ export async function checkStalledRuns(): Promise<MedicFinding[]> {
     FROM runs r
     JOIN steps s ON s.run_id = r.id
     WHERE r.status IN ('running', 'resuming')
+      AND r.protocol = 'legacy'
+      AND NOT EXISTS (
+        SELECT 1 FROM runtime_sessions rs
+         WHERE rs.run_id = r.id AND rs.state <> 'released'
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM run_termination_requests rtr
+         WHERE rtr.run_id = r.id AND rtr.state <> 'terminalized'
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM runtime_completion_requests rcr
+         WHERE rcr.run_id = r.id AND rcr.state IN ('requested', 'draining', 'processing')
+      )
     GROUP BY r.id, r.workflow_id, r.task, r.updated_at
     HAVING EXTRACT(EPOCH FROM NOW() - MAX(s.updated_at)::timestamptz) * 1000 > $1
   `, [STALL_THRESHOLD_MS]);
@@ -159,6 +172,19 @@ export async function checkStalledRuns(): Promise<MedicFinding[]> {
   stuckResuming = await pgQuery(`
     SELECT id, workflow_id, task FROM runs
     WHERE status = 'resuming'
+    AND protocol = 'legacy'
+    AND NOT EXISTS (
+      SELECT 1 FROM runtime_sessions rs
+       WHERE rs.run_id = runs.id AND rs.state <> 'released'
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM run_termination_requests rtr
+       WHERE rtr.run_id = runs.id AND rtr.state <> 'terminalized'
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM runtime_completion_requests rcr
+       WHERE rcr.run_id = runs.id AND rcr.state IN ('requested', 'draining', 'processing')
+    )
     AND EXTRACT(EPOCH FROM NOW() - updated_at::timestamptz) * 1000 > 120000
   `);
 
@@ -718,6 +744,7 @@ export async function checkOrphanedInTerminalRuns(): Promise<MedicFinding[]> {
     SELECT s.id, s.step_id, s.run_id, s.status, r.status as run_status
     FROM steps s JOIN runs r ON s.run_id = r.id
     WHERE r.status IN ('cancelled', 'failed')
+    AND r.protocol = 'legacy'
     AND s.status NOT IN ('done', 'failed', 'skipped')
   `);
 
@@ -743,6 +770,11 @@ export async function checkOrphanedInTerminalRuns(): Promise<MedicFinding[]> {
     SELECT s.id, s.story_id, s.run_id, s.status, r.status as run_status
     FROM stories s JOIN runs r ON s.run_id = r.id
     WHERE r.status IN ('cancelled', 'failed')
+    AND r.protocol = 'legacy'
+    AND NOT EXISTS (
+      SELECT 1 FROM runtime_sessions rs
+       WHERE rs.run_id = r.id AND rs.state <> 'released'
+    )
     AND s.status NOT IN ('done', 'verified', 'failed', 'skipped')
   `);
 
@@ -994,7 +1026,8 @@ export async function checkStaleClaims(db: any, logger: any): Promise<{ found: n
   try {
     const stale = await pgQuery(
       "SELECT cl.ctid, cl.run_id, cl.step_id, cl.story_id, cl.agent_id, cl.claimed_at " +
-      "FROM claim_log cl WHERE cl.outcome IS NULL AND cl.claimed_at IS NOT NULL " +
+      "FROM claim_log cl JOIN runs r ON r.id = cl.run_id WHERE cl.outcome IS NULL AND cl.claimed_at IS NOT NULL " +
+      "AND r.protocol = 'legacy' " +
       "AND EXTRACT(EPOCH FROM NOW() - cl.claimed_at::timestamptz) / 60 > $1",
       [STALE_THRESHOLD_MIN]
     );

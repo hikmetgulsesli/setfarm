@@ -19,6 +19,13 @@ import {
 import { contextPrdText, parsePrdContract, type PrdSurfaceAction } from "./prd-contract-parser.js";
 import { hasBrowserGameIntent } from "../../stack-contract/detector.js";
 import { isBrowserGameStackPack, stackPackFromContext } from "../../stack-contract/identity.js";
+import { canonicalJsonStringify } from "../../../product-compiler/canonical-json.js";
+import { compileV3CompatibilityStoryProjection } from "../../../product-compiler/compatibility/story-projection-v3.js";
+import { resolveCanonicalProductSpecFromPlan } from "../../../product-compiler/runtime-plan-source.js";
+import {
+  DesignGenerationTargetsV1Schema,
+  StitchTargetResponseBindingsV1Schema,
+} from "../../../product-compiler/schemas/design-generation-targets-v1.js";
 
 type PredictedScreen = ReturnType<typeof computePredictedScreenFiles>[number];
 type ProjectKind = "game" | "product";
@@ -743,16 +750,114 @@ export function buildAutoStoriesOutput(params: {
   ].join("\n");
 }
 
+function readCanonicalV3Json<T>(params: {
+  filePath: string;
+  label: string;
+  parse: (value: unknown) => T;
+}): T {
+  let text: string;
+  try {
+    text = fs.readFileSync(params.filePath, "utf8");
+  } catch {
+    throw new Error(`V3_STORY_${params.label}_MISSING:${params.filePath}`);
+  }
+  let raw: unknown;
+  try {
+    raw = JSON.parse(text);
+  } catch {
+    throw new Error(`V3_STORY_${params.label}_JSON_INVALID:${params.filePath}`);
+  }
+  const parsed = params.parse(raw);
+  if (canonicalJsonStringify(parsed) !== text.trim()) {
+    throw new Error(`V3_STORY_${params.label}_NON_CANONICAL:${params.filePath}`);
+  }
+  return parsed;
+}
+
+/**
+ * DB stories remain a compatibility projection for existing loop scheduling.
+ * ProductSpec plus exact Stitch target/response bindings are the sole semantic
+ * source; legacy PRD parsing, title matching and DESIGN_DOM classifiers are not
+ * consulted on the v3 path.
+ */
+export function buildV3AutoStoriesOutput(params: {
+  repo: string;
+  prd: string;
+  maxStories?: number | null;
+}): string {
+  const plan = resolveCanonicalProductSpecFromPlan({
+    text: params.prd,
+    locator: "pipeline/plan.md",
+  });
+  if (plan.status !== "resolved") {
+    throw new Error(`V3_STORY_PRODUCT_SPEC_REJECTED:${plan.rejectionCodes.join(",")}`);
+  }
+  const stitchDir = path.join(params.repo, "stitch");
+  const generationTargets = readCanonicalV3Json({
+    filePath: path.join(stitchDir, "GENERATION_TARGETS.json"),
+    label: "GENERATION_TARGETS",
+    parse: (value) => DesignGenerationTargetsV1Schema.parse(value),
+  });
+  const responseBindings = readCanonicalV3Json({
+    filePath: path.join(stitchDir, "STITCH_RESPONSE_BINDINGS.json"),
+    label: "RESPONSE_BINDINGS",
+    parse: (value) => StitchTargetResponseBindingsV1Schema.parse(value),
+  });
+  const projection = compileV3CompatibilityStoryProjection({
+    productSpec: plan.productSpec,
+    generationTargets,
+    responseBindings,
+    maxStories: params.maxStories,
+  });
+  return [
+    "STATUS: done",
+    "V3_STORY_PROJECTION_SCHEMA: setfarm.story-compatibility-projection.v3",
+    `PRODUCT_SPEC_SOURCE_HASH: ${plan.sourceHash}`,
+    `STORIES_JSON: ${canonicalJsonStringify(projection.stories)}`,
+    `SCREEN_MAP: ${canonicalJsonStringify(projection.screenMap)}`,
+    "",
+  ].join("\n");
+}
+
 export async function preClaim(ctx: ClaimContext): Promise<void> {
   if (process.env.SETFARM_DISABLE_AUTO_STORIES === "1") return;
 
   const maxStories = extractExplicitMaxStories(`${ctx.task || ""}\n${ctx.context["task"] || ""}\n${ctx.context["prd"] || ""}`);
 
   const existing = await pgGet<{ cnt: string }>("SELECT COUNT(*)::text as cnt FROM stories WHERE run_id = $1", [ctx.runId]);
-  if (Number(existing?.cnt || 0) > 0) return;
-
   const repo = ctx.context["repo"] || ctx.context["REPO"] || "";
   if (!repo) return;
+  const protocol = ctx.claimEnvelope?.protocol
+    ?? (await pgGet<{ protocol: "legacy" | "shadow" | "v3" }>(
+      "SELECT protocol FROM runs WHERE id = $1",
+      [ctx.runId],
+    ))?.protocol
+    ?? "legacy";
+  if (Number(existing?.cnt || 0) > 0 && protocol !== "v3") return;
+  if (protocol === "v3") {
+    const step = await pgGet<{ id: string }>("SELECT id FROM steps WHERE run_id = $1 AND step_id = $2 LIMIT 1", [ctx.runId, ctx.stepId]);
+    if (!step?.id) return;
+    let output: string;
+    try {
+      output = buildV3AutoStoriesOutput({
+        repo,
+        prd: ctx.context["prd"] || ctx.context["PRD"] || "",
+        maxStories,
+      });
+    } catch (error) {
+      if (!ctx.claimEnvelope) throw error;
+      const { failStep } = await import("../../step-fail.js");
+      await failStep(step.id, String((error as Error)?.message || error), ctx.claimEnvelope);
+      return;
+    }
+    const { completeStep } = await import("../../step-ops.js");
+    await completeStep(step.id, output, ctx.claimEnvelope);
+    logger.info("[module:stories preclaim] AUTO-COMPLETED v3 compatibility stories from ProductSpec and exact Stitch bindings", {
+      runId: ctx.runId,
+      stepId: ctx.stepId,
+    });
+    return;
+  }
   const predicted = computePredictedScreenFiles(repo);
   if (predicted.length === 0) return;
 
@@ -770,7 +875,7 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
   if (!step?.id) return;
 
   const { completeStep } = await import("../../step-ops.js");
-  await completeStep(step.id, output);
+  await completeStep(step.id, output, ctx.claimEnvelope);
   logger.info(`[module:stories preclaim] AUTO-COMPLETED stories without planner agent (${predicted.length} screen(s), ${Buffer.byteLength(output, "utf-8")} bytes)`, {
     runId: ctx.runId,
     stepId: ctx.stepId,

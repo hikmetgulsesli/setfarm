@@ -2,12 +2,21 @@ import path from "node:path";
 import fs from "node:fs";
 import { execFileSync } from "node:child_process";
 import type { ClaimContext } from "../types.js";
-import { pgGet } from "../../../db-pg.js";
+import { getSql, pgGet } from "../../../db-pg.js";
 import { logger } from "../../../lib/logger.js";
+import {
+  resolveProductArtifactCapacity,
+  resolveProductArtifactDir,
+} from "../../../runtime-config.js";
+import {
+  orchestrateSetupBuildProductPacket,
+  SetupBuildPacketError,
+} from "../../../product-compiler/setup-build-packet-orchestrator.js";
 import { resolvePlatformScript } from "../../paths.js";
 import { materializeSetupBuildContracts } from "../../setup-handoff.js";
 import { getStackPack } from "../../stack-contract/packs.js";
 import type { StackPackId } from "../../stack-contract/types.js";
+import { recordObservation } from "../../observations.js";
 
 const MIN_STITCH_HTML_BYTES = 1000;
 const DESIGN_IMPORT_REPORT_REL = ".setfarm/setup/DESIGN_IMPORT_VALIDATE.json";
@@ -339,6 +348,124 @@ async function writeSetupHandoff(ctx: ClaimContext, repo: string, buildCmd: stri
   }
 }
 
+async function resolveSetupBuildProtocol(ctx: ClaimContext): Promise<"legacy" | "shadow" | "v3"> {
+  return ctx.claimEnvelope?.protocol
+    ?? (await pgGet<{ protocol: "legacy" | "shadow" | "v3" }>(
+      "SELECT protocol FROM runs WHERE id = $1",
+      [ctx.runId],
+    ))?.protocol
+    ?? "legacy";
+}
+
+function packetFailureDetail(error: unknown): string {
+  if (error instanceof SetupBuildPacketError) {
+    const evidence = Object.keys(error.evidence).length > 0
+      ? `\nevidence=${JSON.stringify(error.evidence).slice(0, 3_000)}`
+      : "";
+    return `${error.code}: ${error.message}${evidence}`.slice(0, 4_000);
+  }
+  return `SETUP_PACKET_UNEXPECTED: ${String((error as Error)?.message || error)}`.slice(0, 4_000);
+}
+
+async function compileSetupBuildProductPacket(
+  ctx: ClaimContext,
+  repo: string,
+  protocol: "legacy" | "shadow" | "v3",
+): Promise<void> {
+  if (protocol === "legacy") return;
+  try {
+    const orchestrated = await orchestrateSetupBuildProductPacket({
+      sql: getSql(),
+      artifactRoot: resolveProductArtifactDir(),
+      artifactLimits: resolveProductArtifactCapacity(),
+      runId: ctx.runId,
+      expectedMode: protocol,
+      repo,
+      planText: ctx.context["prd"] || ctx.context["PRD"] || "",
+      ownerInstanceId: `setup-build:${ctx.runId}:${process.pid}`,
+    });
+    const runtime = orchestrated.compilation;
+    const compiled = runtime.compilation;
+    const packetHash = compiled.packetHash || "";
+    const evidence = {
+      schema: "setfarm.setup-build-packet-evidence.v1",
+      protocol,
+      activation: runtime.activation,
+      activationCreated: runtime.activationCreated,
+      compilationStatus: compiled.status,
+      packetHash,
+      reportHash: compiled.reportHash,
+      artifactHashes: compiled.artifactHashes,
+      sourceHashes: orchestrated.contracts.sourceHashes,
+    };
+    if (protocol === "shadow") {
+      await recordObservation({
+        runId: ctx.runId,
+        stepId: ctx.stepId,
+        phase: "building",
+        checkId: "product_compiler.setup_build_shadow_packet",
+        label: "Product Build Packet shadow compilation",
+        status: compiled.status === "sealed" ? "pass" : "blocked",
+        summary: compiled.status === "sealed"
+          ? "Shadow Product Build Packet sealed without runtime activation"
+          : "Shadow Product Build Packet was rejected",
+        evidence,
+      });
+      return;
+    }
+    if (runtime.activation !== "activated" || compiled.status !== "sealed" || !packetHash) {
+      throw new SetupBuildPacketError(
+        "SETUP_PACKET_ACTIVATION_REJECTED",
+        "V3 setup-build did not atomically activate a sealed Product Build Packet",
+        evidence,
+      );
+    }
+    ctx.context["product_build_packet_hash"] = packetHash;
+    ctx.context["product_compilation_report_hash"] = compiled.reportHash;
+    await recordObservation({
+      runId: ctx.runId,
+      stepId: ctx.stepId,
+      phase: "building",
+      checkId: "product_compiler.setup_build_packet_activated",
+      label: "Product Build Packet activation",
+      status: "pass",
+      summary: "Six canonical Product Build Packet refs were atomically activated",
+      evidence,
+      completedAt: new Date().toISOString(),
+    });
+  } catch (error) {
+    const detail = packetFailureDetail(error);
+    await recordObservation({
+      runId: ctx.runId,
+      stepId: ctx.stepId,
+      phase: "building",
+      checkId: protocol === "v3"
+        ? "product_compiler.setup_build_packet_blocked"
+        : "product_compiler.setup_build_shadow_rejected",
+      label: protocol === "v3"
+        ? "Product Build Packet activation blocker"
+        : "Product Build Packet shadow diagnostic",
+      status: protocol === "v3" ? "blocked" : "info",
+      summary: detail.split("\n", 1)[0],
+      detail,
+      evidence: error instanceof SetupBuildPacketError ? { code: error.code, ...error.evidence } : {},
+      completedAt: new Date().toISOString(),
+    });
+    if (protocol === "shadow") {
+      logger.warn(`[module:setup-build preclaim] Product Build Packet shadow compile rejected: ${detail.slice(0, 600)}`, {
+        runId: ctx.runId,
+      });
+      return;
+    }
+    throwPreclaimFailure(
+      ctx,
+      `PRODUCT_BUILD_PACKET_V3_BLOCKED:\n${detail}`,
+      "product_packet_compilation_failure",
+      "Repair the exact PLAN/design/setup producer contract that rejected the packet; do not send incomplete semantics to IMPLEMENT.",
+    );
+  }
+}
+
 // Heavy work before agent:
 // 1. npm install (idempotent — skip if node_modules exists)
 // 2. npm run build — baseline verification
@@ -347,6 +474,8 @@ async function writeSetupHandoff(ctx: ClaimContext, repo: string, buildCmd: stri
 // 5. stitch-to-jsx -> src/screens/<PredictedScreenName>.tsx + commit
 export async function preClaim(ctx: ClaimContext): Promise<void> {
   if (process.env.SETFARM_DISABLE_AUTO_SETUP_BUILD === "1") return;
+
+  const protocol = await resolveSetupBuildProtocol(ctx);
 
   const repo = ctx.context["repo"] || ctx.context["REPO"] || "";
   if (!repo) {
@@ -371,6 +500,7 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
     const buildCmd = "true";
     ctx.context["build_cmd_hint"] = buildCmd;
     await writeSetupHandoff(ctx, repo, buildCmd);
+    await compileSetupBuildProductPacket(ctx, repo, protocol);
     const step = await pgGet<{ id: string }>(
       "SELECT id FROM steps WHERE run_id = $1 AND step_id = $2 LIMIT 1",
       [ctx.runId, ctx.stepId],
@@ -384,7 +514,7 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
       "",
     ].join("\n");
     const { completeStep } = await import("../../step-ops.js");
-    await completeStep(step.id, output);
+    await completeStep(step.id, output, ctx.claimEnvelope);
     logger.info(`[module:setup-build preclaim] AUTO-COMPLETED static-html setup-build without package baseline`, {
       runId: ctx.runId,
       stepId: ctx.stepId,
@@ -629,6 +759,10 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
   }
 
   if (!ctx.context["baseline_fail"] && !ctx.context["compat_fail"]) {
+    await compileSetupBuildProductPacket(ctx, repo, protocol);
+  }
+
+  if (!ctx.context["baseline_fail"] && !ctx.context["compat_fail"]) {
     const step = await pgGet<{ id: string }>(
       "SELECT id FROM steps WHERE run_id = $1 AND step_id = $2 LIMIT 1",
       [ctx.runId, ctx.stepId],
@@ -641,7 +775,7 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
       "",
     ].join("\n");
     const { completeStep } = await import("../../step-ops.js");
-    await completeStep(step.id, output);
+    await completeStep(step.id, output, ctx.claimEnvelope);
     logger.info(`[module:setup-build preclaim] AUTO-COMPLETED setup-build without setup-build agent`, {
       runId: ctx.runId,
       stepId: ctx.stepId,

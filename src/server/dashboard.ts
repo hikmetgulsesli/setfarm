@@ -14,9 +14,20 @@ import { getRunEvents } from "../installer/events.js";
 import { getMedicStatus, getRecentMedicChecks } from "../medic/medic.js";
 import { readSupervisorArtifactSummary } from "./supervisor-summary.js";
 import { getRunOperationalModel } from "./run-operational-model.js";
+import { buildRunOperationalSnapshot } from "./run-operational-snapshot.js";
 import { readShadowParityReport } from "../execution/shadow-parity.js";
+import {
+  createV3ProjectTransferAckRepository,
+  V3ProjectTransferAckRepositoryError,
+} from "../execution/v3-project-transfer-ack-repository.js";
+import { createV3DeployReceiptRepository } from "../execution/v3-deploy-receipt-repository.js";
+import { observeLocalV3Deployment } from "../execution/v3-deploy-executor.js";
+import type { V3DeployReceiptV1 } from "../execution/schemas/v3-deploy-receipt-v1.js";
+import type { V3DeploymentObservationV1 } from "../execution/schemas/v3-deployment-observation-v1.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const MAX_CONCURRENT_DEPLOYMENT_OBSERVATIONS = 4;
+let activeDeploymentObservations = 0;
 
 interface WorkflowDef {
   id: string;
@@ -175,6 +186,31 @@ function readBody(req: http.IncomingMessage): Promise<string> {
     req.on("end", () => resolve(Buffer.concat(chunks).toString("utf-8")));
     req.on("error", reject);
   });
+}
+
+function readBoundedBody(req: http.IncomingMessage, maxBytes: number): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let bytes = 0;
+    req.on("data", (chunk: Buffer) => {
+      bytes += chunk.byteLength;
+      if (bytes > maxBytes) {
+        reject(new Error("REQUEST_BODY_TOO_LARGE"));
+        req.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on("end", () => resolve(Buffer.concat(chunks).toString("utf-8")));
+    req.on("error", reject);
+  });
+}
+
+function hasOperationalWriteAuthority(req: http.IncomingMessage, expectedOverride?: string): boolean {
+  const expected = String(expectedOverride ?? process.env.SETFARM_OPERATIONAL_WRITE_TOKEN ?? "");
+  const provided = String(req.headers["x-setfarm-operational-token"] || "");
+  if (expected.length < 32 || provided.length !== expected.length) return false;
+  return crypto.timingSafeEqual(Buffer.from(provided, "utf8"), Buffer.from(expected, "utf8"));
 }
 
 function runScrape(input: string): Promise<{ stdout: string; stderr: string }> {
@@ -353,7 +389,13 @@ async function getAllRules(query: URLSearchParams): Promise<any[]> {
   return all;
 }
 
-export function startDashboard(port = 3333): http.Server {
+export function startDashboard(port = 3333, options: Readonly<{
+  deploymentObservation?: Readonly<{
+    operationalToken: string;
+    findReceipt(runId: string): Promise<V3DeployReceiptV1 | undefined>;
+    observe(receipt: V3DeployReceiptV1): Promise<V3DeploymentObservationV1>;
+  }>;
+}> = {}): http.Server {
   const server = http.createServer(async (req, res) => {
    try {
     const url = new URL(req.url ?? "/", `http://localhost:${port}`);
@@ -526,6 +568,94 @@ export function startDashboard(port = 3333): http.Server {
     if (operationalModelMatch) {
       const model = await getRunOperationalModel(operationalModelMatch[1]);
       return model ? json(res, model) : json(res, { error: "not found" }, 404);
+    }
+
+    const operationalSnapshotMatch = p.match(/^\/api\/runs\/([^/]+)\/operational-snapshot$/);
+    if (operationalSnapshotMatch) {
+      const snapshot = await buildRunOperationalSnapshot(getSql(), operationalSnapshotMatch[1]);
+      return snapshot ? json(res, snapshot) : json(res, { error: "not found" }, 404);
+    }
+
+    const deploymentObservationMatch = p.match(/^\/api\/runs\/([^/]+)\/deployment-observation$/);
+    if (deploymentObservationMatch && req.method === "GET") {
+      const observationToken = options.deploymentObservation?.operationalToken
+        ?? String(process.env.SETFARM_OPERATIONAL_WRITE_TOKEN || "");
+      if (observationToken.length < 32) {
+        return json(res, { error: "operational observation authority unavailable" }, 503);
+      }
+      if (!hasOperationalWriteAuthority(req, observationToken)) {
+        return json(res, { error: "unauthorized" }, 401);
+      }
+      const receiptHash = url.searchParams.get("receiptHash");
+      if (!receiptHash || !/^[a-f0-9]{64}$/.test(receiptHash) || [...url.searchParams.keys()].some((key) => key !== "receiptHash")) {
+        return json(res, { error: "invalid observation identity" }, 400);
+      }
+      if (activeDeploymentObservations >= MAX_CONCURRENT_DEPLOYMENT_OBSERVATIONS) {
+        return json(res, { error: "observation capacity exhausted" }, 429);
+      }
+      activeDeploymentObservations += 1;
+      const operation = (async () => {
+        try {
+          const repository = options.deploymentObservation
+            ? undefined
+            : createV3DeployReceiptRepository(getSql());
+          const receipt = options.deploymentObservation
+            ? await options.deploymentObservation.findReceipt(deploymentObservationMatch[1])
+            : await repository!.findCanonicalByRunIdAndHash(deploymentObservationMatch[1], receiptHash);
+          if (!receipt) return { status: 404, body: { error: "deployment receipt not found" } };
+          if (receipt.receiptHash !== receiptHash) {
+            return { status: 409, body: { error: "deployment receipt identity mismatch" } };
+          }
+          const observation = options.deploymentObservation
+            ? await options.deploymentObservation.observe(receipt)
+            : await observeLocalV3Deployment({ receipt, httpTimeoutMs: 3_000 });
+          const receiptAfter = options.deploymentObservation
+            ? await options.deploymentObservation.findReceipt(deploymentObservationMatch[1])
+            : await repository!.findCanonicalByRunIdAndHash(deploymentObservationMatch[1], receiptHash);
+          if (!receiptAfter || JSON.stringify(receiptAfter) !== JSON.stringify(receipt)) {
+            return { status: 409, body: { error: "deployment receipt authority changed" } };
+          }
+          return { status: 200, body: observation };
+        } catch {
+          return { status: 409, body: { error: "deployment observation unavailable" } };
+        } finally {
+          activeDeploymentObservations -= 1;
+        }
+      })();
+      const bounded = await Promise.race([
+        operation,
+        new Promise<{ status: number; body: { error: string } }>((resolve) => {
+          setTimeout(() => resolve({ status: 504, body: { error: "deployment observation timed out" } }), 12_000).unref();
+        }),
+      ]);
+      return json(res, bounded.body, bounded.status);
+    }
+
+    const projectTransferAckMatch = p.match(/^\/api\/runs\/([^/]+)\/project-transfer-ack$/);
+    if (projectTransferAckMatch && req.method === "POST") {
+      if (String(process.env.SETFARM_OPERATIONAL_WRITE_TOKEN || "").length < 32) {
+        return json(res, { error: "operational write authority unavailable" }, 503);
+      }
+      if (!hasOperationalWriteAuthority(req)) {
+        return json(res, { error: "unauthorized" }, 401);
+      }
+      try {
+        const body = JSON.parse(await readBoundedBody(req, 256 * 1024));
+        if (body?.runId !== projectTransferAckMatch[1]) {
+          return json(res, { error: "run identity mismatch" }, 409);
+        }
+        const result = await createV3ProjectTransferAckRepository(getSql()).publish(body);
+        return json(res, {
+          schema: "setfarm.v3-project-transfer-ack-result.v1",
+          status: result.status,
+          acknowledgement: result.acknowledgement,
+        }, result.status === "committed" ? 201 : 200);
+      } catch (error) {
+        if (error instanceof V3ProjectTransferAckRepositoryError) {
+          return json(res, { error: error.code }, 409);
+        }
+        return json(res, { error: "invalid project transfer acknowledgement" }, 400);
+      }
     }
 
     const shadowParityMatch = p.match(/^\/api\/runs\/([^/]+)\/shadow-parity$/);

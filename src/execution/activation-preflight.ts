@@ -7,6 +7,11 @@ import {
   type ArtifactCapacityLimits,
 } from "../product-compiler/artifact-capacity.js";
 import { ContentAddressedArtifactStore } from "../product-compiler/artifact-store.js";
+import { createArtifactIndex } from "../product-compiler/artifact-index.js";
+import {
+  IndexedArtifactPublisher,
+  scanArtifactInventory,
+} from "../product-compiler/indexed-artifact-publisher.js";
 import {
   readContractSpineMigrationAttestation,
   verifyContractSpineMigrations,
@@ -49,8 +54,21 @@ export type ActivationPreflightDependencies = Readonly<{
     rootQuotaBytes: number;
     freeBytes: number;
     minFreeBytes: number;
+    indexState: "bootstrap_required" | "ready" | "quarantined";
+    indexedBytes: number;
+    reservedBytes: number;
   }>>;
-  readActivity(): Promise<Readonly<{ activeRuns: number; openClaims: number }>>;
+  readActivity(): Promise<Readonly<{
+    activeRuns: number;
+    openClaims: number;
+    activeAttempts: number;
+    activeAttemptBindingConflicts?: number;
+    activeRuntimes?: number;
+    activeRuntimeCompletions?: number;
+    activeRecoveryCases?: number;
+    activeRecoveryDeliveries?: number;
+    activeTerminationRequests?: number;
+  }>>;
   storeReport(report: ActivationPreflightReportV1): Promise<Readonly<{ hash: string }>>;
 }>;
 
@@ -141,15 +159,34 @@ export async function runActivationPreflight(
     const capacity = await dependencies.inspectArtifactCapacity();
     const withinQuota = capacity.rootBytes <= capacity.rootQuotaBytes;
     const enoughFree = capacity.freeBytes >= capacity.minFreeBytes;
+    const indexReady = capacity.indexState === "ready";
+    const indexExact = capacity.rootBytes === capacity.indexedBytes;
+    const reservationsIdle = capacity.reservedBytes === 0;
     checks.push(check(
       "artifact_capacity",
-      withinQuota && enoughFree ? "pass" : "fail",
-      !withinQuota
+      withinQuota && enoughFree && indexReady && indexExact && reservationsIdle ? "pass" : "fail",
+      capacity.indexState === "bootstrap_required"
+        ? "ARTIFACT_INDEX_BOOTSTRAP_REQUIRED"
+        : capacity.indexState === "quarantined"
+          ? "ARTIFACT_INDEX_QUARANTINED"
+          : !indexExact
+            ? "ARTIFACT_INDEX_FILESYSTEM_DRIFT"
+            : !reservationsIdle
+              ? "ARTIFACT_PUBLICATION_ACTIVE"
+              : !withinQuota
         ? "ARTIFACT_ROOT_QUOTA_EXCEEDED"
         : !enoughFree
           ? "ARTIFACT_FREE_SPACE_LOW"
           : "ARTIFACT_CAPACITY_READY",
-      nonNegativeMetrics(capacity),
+      nonNegativeMetrics({
+        rootBytes: capacity.rootBytes,
+        rootQuotaBytes: capacity.rootQuotaBytes,
+        freeBytes: capacity.freeBytes,
+        minFreeBytes: capacity.minFreeBytes,
+        indexedBytes: capacity.indexedBytes,
+        reservedBytes: capacity.reservedBytes,
+        artifactIndexReady: indexReady ? 1 : 0,
+      }),
     ));
   } catch {
     checks.push(check("artifact_capacity", "fail", "ARTIFACT_CAPACITY_UNAVAILABLE"));
@@ -157,12 +194,40 @@ export async function runActivationPreflight(
 
   try {
     const activity = await dependencies.readActivity();
-    const idle = activity.activeRuns === 0 && activity.openClaims === 0;
+    const activeAttemptBindingConflicts = activity.activeAttemptBindingConflicts ?? 0;
+    const activeRuntimes = activity.activeRuntimes ?? 0;
+    const activeRuntimeCompletions = activity.activeRuntimeCompletions ?? 0;
+    const activeRecoveryCases = activity.activeRecoveryCases ?? 0;
+    const activeRecoveryDeliveries = activity.activeRecoveryDeliveries ?? 0;
+    const activeTerminationRequests = activity.activeTerminationRequests ?? 0;
+    const idle = activity.activeRuns === 0
+      && activity.openClaims === 0
+      && activity.activeAttempts === 0
+      && activeAttemptBindingConflicts === 0
+      && activeRuntimes === 0
+      && activeRuntimeCompletions === 0
+      && activeRecoveryCases === 0
+      && activeRecoveryDeliveries === 0
+      && activeTerminationRequests === 0;
     checks.push(check(
       "activity",
       idle ? "pass" : "fail",
-      idle ? "ACTIVATION_ACTIVITY_IDLE" : "ACTIVATION_ACTIVITY_CONFLICT",
-      nonNegativeMetrics(activity),
+      idle
+        ? "ACTIVATION_ACTIVITY_IDLE"
+        : activeAttemptBindingConflicts > 0
+          ? "ACTIVATION_ATTEMPT_CLAIM_BINDING_CONFLICT"
+          : "ACTIVATION_ACTIVITY_CONFLICT",
+      nonNegativeMetrics({
+        activeRuns: activity.activeRuns,
+        openClaims: activity.openClaims,
+        activeAttempts: activity.activeAttempts,
+        activeAttemptBindingConflicts,
+        activeRuntimes,
+        activeRuntimeCompletions,
+        activeRecoveryCases,
+        activeRecoveryDeliveries,
+        activeTerminationRequests,
+      }),
     ));
   } catch {
     checks.push(check("activity", "fail", "ACTIVATION_ACTIVITY_UNAVAILABLE"));
@@ -205,6 +270,15 @@ export function createActivationPreflightDependencies(input: Readonly<{
   artifactLimits: ArtifactCapacityLimits;
   compilerReleaseSha: string;
 }>): ActivationPreflightDependencies {
+  const store = new ContentAddressedArtifactStore(input.artifactRoot, {
+    limits: input.artifactLimits,
+  });
+  const index = createArtifactIndex(input.sql);
+  const publisher = new IndexedArtifactPublisher({
+    index,
+    store,
+    ownerInstanceId: `activation-preflight:${process.pid}`,
+  });
   return Object.freeze({
     verifyMigrations: async () => {
       const verified = await verifyContractSpineMigrations(input.sql);
@@ -222,31 +296,75 @@ export function createActivationPreflightDependencies(input: Readonly<{
       return { ok: rows[0]?.ok === 1 };
     },
     inspectArtifactCapacity: async () => {
-      const snapshot = await measureArtifactCapacity(input.artifactRoot);
+      const artifacts = await scanArtifactInventory(store);
+      const [snapshot, indexed] = await Promise.all([
+        measureArtifactCapacity(input.artifactRoot),
+        index.verifyInventory({ artifacts }),
+      ]);
       return {
         rootBytes: snapshot.rootBytes,
         rootQuotaBytes: input.artifactLimits.rootQuotaBytes,
         freeBytes: snapshot.freeBytes,
         minFreeBytes: input.artifactLimits.minFreeBytes,
+        indexState: indexed.state,
+        indexedBytes: indexed.totalBytes,
+        reservedBytes: indexed.reservedBytes,
       };
     },
     readActivity: async () => {
-      const rows = await input.sql.unsafe<Array<{ active_runs: number; open_claims: number }>>(
+      const rows = await input.sql.unsafe<Array<{
+        active_runs: number;
+        open_claims: number;
+        active_attempts: number;
+        active_attempt_binding_conflicts: number;
+        active_runtimes: number;
+        active_runtime_completions: number;
+        active_recovery_cases: number;
+        active_recovery_deliveries: number;
+        active_termination_requests: number;
+      }>>(
         `SELECT
            (SELECT COUNT(*)::integer FROM runs
              WHERE status IN ('running', 'resuming')) AS active_runs,
-           (SELECT COUNT(*)::integer FROM claim_log WHERE outcome IS NULL) AS open_claims`,
+           (SELECT COUNT(*)::integer FROM claim_log WHERE outcome IS NULL) AS open_claims,
+           (SELECT COUNT(*)::integer FROM execution_attempts
+             WHERE disposition IN ('claimed', 'running')) AS active_attempts,
+           (SELECT COUNT(*)::integer
+              FROM execution_attempts ea
+              LEFT JOIN claim_log cl
+                ON cl.id = ea.claim_id
+               AND cl.run_id = ea.run_id
+               AND cl.step_id = ea.step_id
+               AND COALESCE(cl.story_id, '') = ea.story_id
+               AND (ea.agent_id IS NULL OR cl.agent_id = ea.agent_id)
+               AND cl.outcome IS NULL
+             WHERE ea.disposition IN ('claimed', 'running')
+               AND cl.id IS NULL) AS active_attempt_binding_conflicts,
+           (SELECT COUNT(*)::integer FROM runtime_sessions
+             WHERE state NOT IN ('released', 'quarantined')) AS active_runtimes,
+           (SELECT COUNT(*)::integer FROM runtime_completion_requests
+             WHERE state NOT IN ('accepted', 'rejected', 'quarantined')) AS active_runtime_completions,
+           (SELECT COUNT(*)::integer FROM recovery_cases
+             WHERE status IN ('open', 'repairing', 'evidencing')) AS active_recovery_cases,
+           (SELECT COUNT(*)::integer FROM recovery_dispatch_deliveries
+             WHERE state IN ('authorized', 'leased', 'attempt_reserved', 'running')) AS active_recovery_deliveries,
+           (SELECT COUNT(*)::integer FROM run_termination_requests
+             WHERE state <> 'terminalized') AS active_termination_requests`,
       );
       return {
         activeRuns: rows[0]?.active_runs ?? 0,
         openClaims: rows[0]?.open_claims ?? 0,
+        activeAttempts: rows[0]?.active_attempts ?? 0,
+        activeAttemptBindingConflicts: rows[0]?.active_attempt_binding_conflicts ?? 0,
+        activeRuntimes: rows[0]?.active_runtimes ?? 0,
+        activeRuntimeCompletions: rows[0]?.active_runtime_completions ?? 0,
+        activeRecoveryCases: rows[0]?.active_recovery_cases ?? 0,
+        activeRecoveryDeliveries: rows[0]?.active_recovery_deliveries ?? 0,
+        activeTerminationRequests: rows[0]?.active_termination_requests ?? 0,
       };
     },
     storeReport: async (report) => {
-      const store = new ContentAddressedArtifactStore(input.artifactRoot, {
-        limits: input.artifactLimits,
-      });
-      const stored = await store.put({
+      const stored = await publisher.put({
         schema: "setfarm.semantic-artifact-envelope.v1",
         artifactType: "setfarm.activation-preflight.v1",
         producer: {

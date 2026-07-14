@@ -9,6 +9,8 @@ export interface ClaimContext {
   task: string;
   retryCount: number;
   context: Record<string, string>;
+  /** Exact immutable claim capability for preClaim-owned completion/failure. */
+  claimEnvelope?: ClaimEnvelopeV1;
 }
 
 export interface PromptContext {
@@ -56,3 +58,4 @@ export interface StepModule {
   requiredOutputFields: string[];
   maxPromptSize: number;
 }
+import type { ClaimEnvelopeV1 } from "../../execution/schemas/claim-envelope-v1.js";

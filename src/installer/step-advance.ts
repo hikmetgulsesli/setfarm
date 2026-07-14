@@ -15,10 +15,12 @@ import { logger } from "../lib/logger.js";
 import type { LoopConfig } from "./types.js";
 import { emitEvent } from "./events.js";
 import {
-  getRunStatus, getWorkflowId, completeRun,
+  getRunStatus, getWorkflowId,
   findStoryByStatus,
   recordStepTransition,
 } from "./repo.js";
+import { transitionRunToTerminalInTransaction } from "../execution/run-terminal-transition.js";
+import { requestRunTerminationInTransaction } from "../execution/run-termination.js";
 import { archiveRunProgress, scheduleRunCronTeardown, cleanupLocalBranches } from "./cleanup-ops.js";
 import { cleanupWorktrees, cleanAgentWorkspace, syncBaseBranch } from "./worktree-ops.js";
 import { RUN_STATUS, STEP_STATUS, STORY_STATUS } from "./constants.js";
@@ -71,13 +73,26 @@ function clearPrEachDownstreamContext(context: Record<string, any>): Record<stri
  * Respects terminal run states — a failed run cannot be advanced or completed.
  */
 export async function advancePipeline(runId: string): Promise<{ advanced: boolean; runCompleted: boolean }> {
-  // Guard: don't advance or complete a run that's already failed/cancelled
-  const runSt = await getRunStatus(runId);
-  if (runSt === RUN_STATUS.FAILED || runSt === RUN_STATUS.CANCELLED) {
-    return { advanced: false, runCompleted: false };
-  }
-
   const _txResult: any = await pgBegin(async (sql) => {
+    // Serialize advancement with termination requests and claim publication.
+    // A cancelling/failing run must never expose another pending step.
+    const runRows = await sql.unsafe<Array<{ status: string; workflow_id: string }>>(
+      "SELECT status, workflow_id FROM runs WHERE id = $1 FOR UPDATE",
+      [runId],
+    );
+    const run = runRows[0];
+    if (!run || ![RUN_STATUS.RUNNING, "resuming"].includes(run.status as any)) {
+      return { advanced: false, runCompleted: false };
+    }
+    const terminationRows = await sql.unsafe<Array<{ request_id: string }>>(
+      `SELECT request_id FROM run_termination_requests
+        WHERE run_id = $1 AND state <> 'terminalized'
+        LIMIT 1 FOR UPDATE`,
+      [runId],
+    );
+    if (terminationRows.length > 0) {
+      return { advanced: false, runCompleted: false };
+    }
     const nextRows = await sql.unsafe(
       "SELECT id, step_id, step_index FROM steps WHERE run_id = $1 AND status = 'waiting' ORDER BY step_index ASC LIMIT 1",
       [runId]
@@ -94,7 +109,7 @@ export async function advancePipeline(runId: string): Promise<{ advanced: boolea
       return { advanced: false, runCompleted: false };
     }
 
-    const wfId = await getWorkflowId(runId);
+    const wfId = run.workflow_id;
     if (next) {
       // Guard: don't advance past steps that are still running or pending
       const priorRows = await sql.unsafe(
@@ -119,20 +134,15 @@ export async function advancePipeline(runId: string): Promise<{ advanced: boolea
       const terminalFailed = terminalFailedRows[0] as unknown as { id: string; step_id: string } | undefined;
       if (terminalFailed) {
         logger.error(`[advance] Refusing to advance run ${runId} — prior step ${terminalFailed.step_id} is terminally failed`);
-        await sql.unsafe("UPDATE runs SET status = 'failed', updated_at = $1 WHERE id = $2", [now(), runId]);
-        // Mark terminal so medic does not revive it
-        try {
-          const metaRow = await sql.unsafe("SELECT meta FROM runs WHERE id = $1", [runId]);
-          const metaStr = (metaRow[0] as any)?.meta as string | null | undefined;
-          const meta = metaStr ? JSON.parse(metaStr) : {};
-          meta.terminal_failure = true;
-          meta.terminal_marked_at = now();
-          meta.terminal_reason = `advancePipeline detected prior step ${terminalFailed.step_id} failed terminally`;
-          await sql.unsafe("UPDATE runs SET meta = $1 WHERE id = $2", [JSON.stringify(meta), runId]);
-        } catch { /* meta persistence is best-effort */ }
-        emitEvent({ ts: now(), event: "run.failed" as any, runId, workflowId: wfId, detail: `advancePipeline: prior step ${terminalFailed.step_id} terminally failed` });
-        scheduleRunCronTeardown(runId);
-        return { advanced: false, runCompleted: false };
+        const diagnostic = `advancePipeline detected prior step ${terminalFailed.step_id} failed terminally`;
+        await requestRunTerminationInTransaction(sql, {
+          runId,
+          targetStatus: "failed",
+          requestedBy: "setfarm.step-advance.prior-terminal-step",
+          diagnostic,
+          evidence: { source: "advancePipeline" },
+        });
+        return { advanced: false, runCompleted: false, _postCommit: { kind: "failed", wfId: wfId || "", diagnostic } } as any;
       }
       await sql.unsafe(
         "UPDATE steps SET status = 'pending', updated_at = $1 WHERE id = $2",
@@ -148,21 +158,21 @@ export async function advancePipeline(runId: string): Promise<{ advanced: boolea
       // caller runs them AFTER the transaction commits.
       return { advanced: true, runCompleted: false, _postCommit: { kind: "sync", nextStepId: next.id, nextAgentId: next.step_id, wfId: wfId || "" } } as any;
     } else {
-      await completeRun(runId);
-      emitEvent({ ts: now(), event: "run.completed", runId, workflowId: wfId });
-      logger.info("Run completed", { runId, workflowId: wfId });
-      await archiveRunProgress(runId);
-      await cleanupWorktrees(runId);
-      await cleanupLocalBranches(runId);
-      // Clean agent workspaces of project files from this run
-      try {
-        const agentRows = await sql.unsafe("SELECT DISTINCT agent_id FROM steps WHERE run_id = $1", [runId]);
-        for (const row of agentRows) {
-          cleanAgentWorkspace((row as any).agent_id);
-        }
-      } catch (e) { logger.warn(`[advance] Workspace cleanup failed: ${String(e)}`, {}); }
-      scheduleRunCronTeardown(runId);
-      return { advanced: false, runCompleted: true };
+      await transitionRunToTerminalInTransaction(sql, {
+        runId,
+        status: "completed",
+        diagnostic: "Pipeline completed with no open claim or attempt owners.",
+      });
+      const agentRows = await sql.unsafe("SELECT DISTINCT agent_id FROM steps WHERE run_id = $1", [runId]);
+      return {
+        advanced: false,
+        runCompleted: true,
+        _postCommit: {
+          kind: "completed",
+          wfId: wfId || "",
+          agentIds: agentRows.map((row: any) => String(row.agent_id || "")).filter(Boolean),
+        },
+      } as any;
     }
   });
 
@@ -180,6 +190,19 @@ export async function advancePipeline(runId: string): Promise<{ advanced: boolea
         const stepAgent = await pgGet<{ agent_id: string }>("SELECT agent_id FROM steps WHERE id = $1", [pc.nextStepId]);
         await _pgRun("SELECT pg_notify('step_pending', $1)", [JSON.stringify({ agentId: stepAgent?.agent_id || pc.nextAgentId, runId, stepId: pc.nextAgentId })]);
       } catch {}
+    } else if (pc.kind === "failed") {
+      emitEvent({ ts: now(), event: "run.failed" as any, runId, workflowId: pc.wfId, detail: pc.diagnostic });
+      scheduleRunCronTeardown(runId);
+    } else if (pc.kind === "completed") {
+      emitEvent({ ts: now(), event: "run.completed", runId, workflowId: pc.wfId });
+      logger.info("Run completed", { runId, workflowId: pc.wfId });
+      await archiveRunProgress(runId);
+      await cleanupWorktrees(runId);
+      await cleanupLocalBranches(runId);
+      try {
+        for (const agentId of pc.agentIds as string[]) cleanAgentWorkspace(agentId);
+      } catch (e) { logger.warn(`[advance] Workspace cleanup failed: ${String(e)}`, {}); }
+      scheduleRunCronTeardown(runId);
     }
     delete (_txResult as any)._postCommit;
   }
@@ -209,14 +232,19 @@ export async function checkLoopContinuation(runId: string, loopStepId: string): 
     const failReason = `Loop step failed — ${originalFailedCount} story/stories failed: ${failedList}`;
     logger.error(`[checkLoopContinuation] ${failReason}`, { runId });
 
-    await pgRun(
-      "UPDATE steps SET status = 'failed', output = $1, updated_at = $2 WHERE id = $3",
-      [failReason, now(), loopStepId]
-    );
-    await pgRun(
-      "UPDATE runs SET status = 'failed', updated_at = $1 WHERE id = $2",
-      [now(), runId]
-    );
+    await pgBegin(async (sql) => {
+      await sql.unsafe(
+        "UPDATE steps SET status = 'failed', output = $1, updated_at = $2 WHERE id = $3",
+        [failReason, now(), loopStepId],
+      );
+      await requestRunTerminationInTransaction(sql, {
+        runId,
+        targetStatus: "failed",
+        requestedBy: "setfarm.step-advance.loop-failure",
+        diagnostic: failReason,
+        evidence: { source: "checkLoopContinuation" },
+      });
+    });
     const wfId = await getWorkflowId(runId);
     emitEvent({ ts: now(), event: "step.failed" as any, runId, workflowId: wfId, stepId: loopStepId, detail: failReason });
     emitEvent({ ts: now(), event: "run.failed" as any, runId, workflowId: wfId, detail: failReason });

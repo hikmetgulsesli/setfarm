@@ -1,5 +1,5 @@
 import type { ParsedOutput, ValidationResult, CompleteContext } from "../types.js";
-import { pgQuery, pgRun, now } from "../../../db-pg.js";
+import { pgGet, pgQuery, pgRun, now } from "../../../db-pg.js";
 import { logger } from "../../../lib/logger.js";
 import { parseAndInsertStories } from "../../story-ops.js";
 import {
@@ -11,6 +11,7 @@ import {
 import { runProductSupervisorGate, updateSupervisorMemory } from "../../product-supervisor.js";
 import { isReopenableAppIntegrationFile } from "../../story-scope.js";
 import { detectPrdActionCoverageGaps, planPrdActionOwnershipDedupes } from "./story-coverage-gates.js";
+import { buildV3AutoStoriesOutput } from "./preclaim.js";
 
 // validateOutput is intentionally minimal at the field level — STORIES_JSON
 // arrives as multi-line raw text (not in parsed[]) and is ingested by
@@ -461,6 +462,29 @@ export async function onComplete(ctx: CompleteContext): Promise<void> {
     const msg = "GUARDRAIL: Stories step completed with STATUS: done but produced 0 stories — STORIES_JSON missing or empty";
     logger.warn(`[module:stories] ${msg}`, { runId });
     throw new Error(msg);
+  }
+
+  const protocol = (await pgGet<{ protocol: "legacy" | "shadow" | "v3" }>(
+    "SELECT protocol FROM runs WHERE id = $1",
+    [runId],
+  ))?.protocol ?? "legacy";
+  if (protocol === "v3") {
+    let expected: string;
+    try {
+      expected = buildV3AutoStoriesOutput({
+        repo: context["repo"] || context["REPO"] || "",
+        prd: context["prd"] || context["PRD"] || "",
+      });
+    } catch (error) {
+      await pgRun("DELETE FROM stories WHERE run_id = $1", [runId]);
+      throw new Error(`V3_STORY_PROJECTION_SOURCE_INVALID:${String((error as Error)?.message || error)}`);
+    }
+    if (!rawOutput || rawOutput.trim() !== expected.trim()) {
+      await pgRun("DELETE FROM stories WHERE run_id = $1", [runId]);
+      throw new Error("V3_STORY_PROJECTION_MISMATCH: stories must equal the canonical ProductSpec/Stitch compatibility projection");
+    }
+    logger.info("[module:stories] accepted exact v3 compatibility projection; legacy prose/classifier gates bypassed", { runId });
+    return;
   }
 
   const explicitMaxStories = getExplicitMaxStories(context);

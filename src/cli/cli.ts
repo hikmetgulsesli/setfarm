@@ -7,24 +7,37 @@ import { getWorkflowStatus, listRuns, stopWorkflow } from "../installer/status.j
 import { runWorkflow } from "../installer/run.js";
 import { listBundledWorkflows } from "../installer/workflow-fetch.js";
 import { readRecentLogs } from "../lib/logger.js";
-import { getRecentEvents, getRunEvents, type SetfarmEvent } from "../installer/events.js";
+import { emitEvent, getRecentEvents, getRunEvents, type SetfarmEvent } from "../installer/events.js";
 import { startDaemon, stopDaemon, getDaemonStatus, isRunning } from "../server/daemonctl.js";
 import { startSpawner, stopSpawner, getSpawnerStatus, isSpawnerRunning } from "../server/spawnerctl.js";
 import { claimStep, completeStep, failStep, getStories, peekStep } from "../installer/step-ops.js";
-import { recordStepTransition } from "../installer/repo.js";
 import { refreshRunContractSafe } from "../installer/contract-ledger.js";
 import { ensureCliSymlink } from "../installer/symlink.js";
 import { runMedicCheck, getMedicStatus, getRecentMedicChecks } from "../medic/medic.js";
 import { getSql, pgQuery, pgGet, pgRun, pgClose, now } from "../db-pg.js";
 import { installMedicCron, uninstallMedicCron, isMedicCronInstalled } from "../medic/medic-cron.js";
 import { missionControlApi } from "../runtime-config.js";
+import { resolveConvergenceEvalResultDir } from "../runtime-config.js";
 import {
-  createRunProtocolRepository,
   extractProtocolArgument,
   resolveNewRunProtocol,
   selectNewRunProtocolMode,
 } from "../execution/run-protocol.js";
+import {
+  executeRunOperationalAction,
+  resolveRunOperationalActionTarget,
+} from "../execution/run-operational-action.js";
+import { parseOperationalActionArguments } from "./operational-action-arguments.js";
 import { runDefaultActivationPreflight } from "../execution/activation-preflight.js";
+import { ContentAddressedEvalResultStore } from "../evals/report.js";
+import { hashCanonicalJson } from "../product-compiler/canonical-json.js";
+import {
+  createV3ReleaseAdmissionRepository,
+  readAndClearInternalCanaryAdmissionEnvironment,
+} from "../execution/v3-release-admission-repository.js";
+import { parseInternalCanaryAdmissionContext } from "../execution/v3-release-admission.js";
+import { readClaimEnvelopeFile } from "../execution/claim-authority.js";
+import { requestRuntimeCompletion } from "../execution/runtime-completion.js";
 import { execFileSync, execSync } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -50,6 +63,26 @@ function getVersion(): string {
     return pkg.version ?? "unknown";
   } catch {
     return "unknown";
+  }
+}
+
+async function requireClaimEnvelopeForCompilerCliStep(
+  target: string,
+  hasEnvelope: boolean,
+): Promise<void> {
+  if (hasEnvelope) return;
+  const rows = await pgQuery<{ protocol: string }>(
+    `SELECT r.protocol
+       FROM steps s
+       JOIN runs r ON r.id = s.run_id
+      WHERE s.id = $1
+         OR (s.run_id = $1 AND s.status IN ('running', 'pending'))
+      ORDER BY s.step_index ASC
+      LIMIT 2`,
+    [target],
+  );
+  if (rows.some((row) => row.protocol !== "legacy")) {
+    throw new Error("COMPILER_CLAIM_ENVELOPE_REQUIRED: pass the immutable --claim-file from this runtime handoff");
   }
 }
 
@@ -217,8 +250,8 @@ function printUsage() {
       "setfarm workflow run <name> <task> [--protocol legacy|shadow|v3]",
       "setfarm workflow status <query>      Check run status (task substring, run ID prefix)",
       "setfarm workflow runs                List all workflow runs",
-      "setfarm workflow resume <run-id>     Resume a failed run from where it left off",
-      "setfarm workflow stop <run-id>        Stop/cancel a running workflow",
+      "setfarm workflow resume <run-id> --expected-snapshot-hash <sha256>  Resume a failed run",
+      "setfarm workflow stop <run-id> --expected-snapshot-hash <sha256> [--force]  Stop/cancel a running workflow",
       "setfarm workflow ensure-crons <name>  Ensure workflow scheduler for a workflow",
       "",
       "setfarm dashboard [start] [--port N]   Start dashboard daemon (default: 3333)",
@@ -232,8 +265,8 @@ function printUsage() {
       "",
       "setfarm step peek <agent-id>        Lightweight check for pending work (HAS_WORK or NO_WORK)",
       "setfarm step claim <agent-id>       Claim pending step, output resolved input as JSON",
-      "setfarm step complete <step-id> [--file <path>|<path>]  Complete step from file, args, or stdin",
-      "setfarm step fail <step-id> <error>  Fail step with retry logic",
+      "setfarm step complete <step-id> [--claim-file <path>] [--file <path>|<path>]  Complete exact claimed step",
+      "setfarm step fail <step-id> [--claim-file <path>] <error>  Fail exact claimed step with retry logic",
       "setfarm step stories <run-id>       List stories for a run",
       "",
       "setfarm medic install                Install medic watchdog cron",
@@ -248,60 +281,6 @@ function printUsage() {
       "setfarm version                      Show installed version",
       "setfarm update                       Pull latest, rebuild, and reinstall workflows",
     ].join("\n") + "\n",
-  );
-}
-
-function parseJsonObject(value: string | null | undefined): Record<string, any> {
-  if (!value) return {};
-  try {
-    const parsed = JSON.parse(value);
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
-  } catch {
-    return {};
-  }
-}
-
-async function clearManualResumeState(runId: string): Promise<void> {
-  const row = await pgGet<{ context: string | null; meta: string | null }>(
-    "SELECT context, meta FROM runs WHERE id = $1",
-    [runId],
-  );
-  const context = parseJsonObject(row?.context);
-  const meta = parseJsonObject(row?.meta);
-
-  for (const key of [
-    "previous_failure",
-    "failure_category",
-    "failure_suggestion",
-    "verify_feedback",
-    "current_story_id",
-    "current_story_title",
-    "current_story",
-    "story_workdir",
-    "story_branch",
-    "pr_url",
-    "quality_failure_fingerprint",
-    "quality_failure_repeat_count",
-    "failure_route_action",
-    "failure_route_category",
-    "failure_route_policy",
-    "failure_route_reason",
-    "post_merge_quality_regression_story_id",
-    "post_merge_quality_regression_pr_url",
-  ]) {
-    delete context[key];
-  }
-
-  if (meta.terminal_failure === true) {
-    meta.resume_cleared_terminal_failure_at = now();
-  }
-  delete meta.terminal_failure;
-  delete meta.terminal_marked_at;
-  delete meta.terminal_reason;
-
-  await pgRun(
-    "UPDATE runs SET context = $1, meta = $2, updated_at = $3 WHERE id = $4",
-    [JSON.stringify(context), JSON.stringify(meta), now(), runId],
   );
 }
 
@@ -628,19 +607,44 @@ async function main() {
       if (!result.found) {
         process.stdout.write("NO_WORK\n");
       } else {
-        process.stdout.write(JSON.stringify({ stepId: result.stepId, runId: result.runId, input: result.resolvedInput }) + "\n");
+        process.stdout.write(JSON.stringify({
+          schema: "setfarm.claim-envelope.v1",
+          protocol: result.protocol || "legacy",
+          issuedAt: new Date().toISOString(),
+          stepId: result.stepId,
+          workflowStepId: result.workflowStepId,
+          runId: result.runId,
+          storyId: result.storyId,
+          storyDbId: result.storyDbId,
+          claimId: result.claimId,
+          claimAgentId: result.claimAgentId,
+          runtimeAgentId: callerAgent || target,
+          claimGeneration: result.claimGeneration,
+          attempt: result.attempt,
+          input: result.resolvedInput,
+        }) + "\n");
       }
       return;
     }
     if (action === "complete") {
       if (!target) { process.stderr.write("Missing step-id.\n"); process.exit(1); }
+      const claimFileIdx = args.indexOf("--claim-file");
+      const claimEnvelope = claimFileIdx !== -1 && args[claimFileIdx + 1]
+        ? readClaimEnvelopeFile(args[claimFileIdx + 1])
+        : undefined;
+      await requireClaimEnvelopeForCompilerCliStep(target, Boolean(claimEnvelope));
       // Read output from --file flag, a positional file path, args, or stdin.
       let output = "";
       const fileIdx = args.indexOf("--file");
       if (fileIdx !== -1 && args[fileIdx + 1]) {
         output = await readFreshStepOutputFile(target, args[fileIdx + 1]);
       } else {
-        const outputArgs = args.slice(3).filter(a => a !== "--file");
+        const outputArgs = args.slice(3).filter((_, index, values) => {
+          const absoluteIndex = index + 3;
+          if (values[index] === "--file" || values[index] === "--claim-file") return false;
+          if (absoluteIndex > 0 && ["--file", "--claim-file"].includes(args[absoluteIndex - 1] || "")) return false;
+          return true;
+        });
         if (outputArgs.length === 1 && isLikelyOutputFileArg(outputArgs[0])) {
           if (!existsSync(outputArgs[0])) {
             process.stderr.write(`Cannot read file ${outputArgs[0]}: file does not exist. Use stdin for literal one-argument output.\n`);
@@ -659,15 +663,86 @@ async function main() {
         }
         output = Buffer.concat(chunks).toString("utf-8").trim();
       }
-      const result = await completeStep(target, output);
+      if (claimEnvelope) {
+        const submission = await requestRuntimeCompletion(getSql(), {
+          envelope: claimEnvelope,
+          output,
+        });
+        if (submission.status !== "direct") {
+          emitEvent({
+            ts: new Date().toISOString(),
+            event: "runtime.completion_requested",
+            runId: submission.request.runId,
+            stepId: submission.request.workflowStepId,
+            storyId: submission.request.storyId,
+            agentId: submission.request.claimEnvelope.runtimeAgentId,
+            detail: `Completion ${submission.request.requestId} awaits proven runtime drain`,
+          });
+          await pgRun("SELECT pg_notify('runtime_completion_requested', $1)", [JSON.stringify({
+            completionRequestId: submission.request.requestId,
+            runId: submission.request.runId,
+            runtimeSessionId: submission.request.runtimeSessionId,
+          })]);
+          process.stdout.write(JSON.stringify({
+            advanced: false,
+            runCompleted: false,
+            completionRequested: true,
+            completionRequestId: submission.request.requestId,
+            requestState: submission.request.state,
+          }) + "\n");
+          process.stdout.write("\n===== SESSION_DONE =====\nCompletion was durably requested. Setfarm now owns runtime drain and fenced acceptance.\nDo NOT attempt any further work. Reply HEARTBEAT_OK and stop.\n");
+          return;
+        }
+      }
+      const result = await completeStep(target, output, claimEnvelope);
       process.stdout.write(JSON.stringify(result) + "\n");
       process.stdout.write("\n===== SESSION_DONE =====\nStep completed successfully. This session's work is FINISHED.\nDo NOT attempt any further work. Reply HEARTBEAT_OK and stop.\n");
       return;
     }
     if (action === "fail") {
       if (!target) { process.stderr.write("Missing step-id.\n"); process.exit(1); }
-      const error = args.slice(3).join(" ").trim() || "Unknown error";
-      const result = await failStep(target, error);
+      const claimFileIdx = args.indexOf("--claim-file");
+      const claimEnvelope = claimFileIdx !== -1 && args[claimFileIdx + 1]
+        ? readClaimEnvelopeFile(args[claimFileIdx + 1])
+        : undefined;
+      await requireClaimEnvelopeForCompilerCliStep(target, Boolean(claimEnvelope));
+      const error = args.slice(3).filter((value, index) => {
+        const absoluteIndex = index + 3;
+        if (value === "--claim-file") return false;
+        if (absoluteIndex > 0 && args[absoluteIndex - 1] === "--claim-file") return false;
+        return true;
+      }).join(" ").trim() || "Unknown error";
+      if (claimEnvelope) {
+        const submission = await requestRuntimeCompletion(getSql(), {
+          envelope: claimEnvelope,
+          output: `STATUS: fail\nERROR: ${error}`,
+        });
+        if (submission.status !== "direct") {
+          emitEvent({
+            ts: new Date().toISOString(),
+            event: "runtime.completion_requested",
+            runId: submission.request.runId,
+            stepId: submission.request.workflowStepId,
+            storyId: submission.request.storyId,
+            agentId: submission.request.claimEnvelope.runtimeAgentId,
+            detail: `Failure disposition ${submission.request.requestId} awaits proven runtime drain`,
+          });
+          await pgRun("SELECT pg_notify('runtime_completion_requested', $1)", [JSON.stringify({
+            completionRequestId: submission.request.requestId,
+            runId: submission.request.runId,
+            runtimeSessionId: submission.request.runtimeSessionId,
+          })]);
+          process.stdout.write(JSON.stringify({
+            failed: false,
+            failureRequested: true,
+            completionRequestId: submission.request.requestId,
+            requestState: submission.request.state,
+          }) + "\n");
+          process.stdout.write("\n===== SESSION_DONE =====\nFailure disposition was durably requested. Setfarm now owns runtime drain and fenced transition.\nDo NOT attempt any further work. Reply HEARTBEAT_OK and stop.\n");
+          return;
+        }
+      }
+      const result = await failStep(target, error, claimEnvelope);
       process.stdout.write(JSON.stringify(result) + "\n");
       process.stdout.write("\n===== SESSION_DONE =====\nStep failed and recorded. This session's work is FINISHED.\nDo NOT attempt any further work. Reply HEARTBEAT_OK and stop.\n");
       return;
@@ -751,15 +826,17 @@ async function main() {
   }
 
   if (action === "stop") {
-    if (!process.stdin.isTTY && !args.includes("--force")) {
+    if (!target) { process.stderr.write("Missing run-id.\n"); printUsage(); process.exit(1); }
+    const operationalArguments = parseOperationalActionArguments(args);
+    if (!process.stdin.isTTY && !operationalArguments.forceConsent) {
       process.stderr.write("Error: 'workflow stop' is blocked in non-interactive (agent) sessions.\nUse --force from a terminal to override.\n");
       process.exit(1);
     }
-    if (!target) { process.stderr.write("Missing run-id.\n"); printUsage(); process.exit(1); }
-    const result = await stopWorkflow(target);
-    if (result.status === "not_found") { process.stderr.write(result.message + "\n"); process.exit(1); }
-    if (result.status === "already_done") { process.stderr.write(result.message + "\n"); process.exit(1); }
-    console.log(`Cancelled run ${result.runId.slice(0, 8)} (${result.workflowId}). ${result.cancelledSteps} step(s) cancelled.`);
+    const result = await stopWorkflow(target, operationalArguments.expectedSnapshotHash);
+    console.log(
+      `Cancellation ${result.requestState} for run ${result.runId.slice(0, 8)} (${result.workflowId}); ` +
+      `request ${result.terminationRequestId}. Runtime ownership remains active until proven drained.`,
+    );
     return;
   }
 
@@ -830,134 +907,41 @@ async function main() {
 
   if (action === "resume") {
     if (!target) { process.stderr.write("Missing run-id.\n"); printUsage(); process.exit(1); }
+    const operationalArguments = parseOperationalActionArguments(args);
+    const runId = await resolveRunOperationalActionTarget(getSql(), target);
+    const result = await executeRunOperationalAction(getSql(), {
+      action: "resume",
+      runId,
+      expectedSnapshotHash: operationalArguments.expectedSnapshotHash,
+    });
+    if (result.action !== "resume") throw new Error("RUN_OPERATIONAL_ACTION_RESULT_KIND_MISMATCH");
 
-    // Find the run (support prefix match)
-    // Support run number lookup in addition to UUID prefix
-    let run: { id: string; run_number: number | null; workflow_id: string; status: string } | undefined;
-    if (/^\d+$/.test(target)) {
-      run = await pgGet("SELECT id, run_number, workflow_id, status FROM runs WHERE run_number = $1", [parseInt(target, 10)]);
-    }
-    if (!run) {
-      run = await pgGet("SELECT id, run_number, workflow_id, status FROM runs WHERE id = $1 OR id LIKE $2", [target, `${target}%`]);
-    }
-
-    if (!run) { process.stderr.write(`Run not found: ${target}\n`); process.exit(1); }
-    if (run.status !== "failed" && run.status !== "cancelled") {
-      process.stderr.write(`Run ${run.id.slice(0, 8)} is "${run.status}", not "failed". Nothing to resume.\n`);
-      process.exit(1);
-    }
-    // Resume always preserves the immutable protocol identity selected when
-    // the run was created; current process defaults cannot reinterpret it.
-    await createRunProtocolRepository(getSql()).read(run.id);
-
-    // Find the failed step (or first non-done step)
-    const failedStep = await pgGet<{ id: string; step_id: string; type: string; current_story_id: string | null }>("SELECT id, step_id, type, current_story_id FROM steps WHERE run_id = $1 AND status = 'failed' ORDER BY step_index ASC LIMIT 1", [run.id]);
-
-    if (!failedStep) {
-      process.stderr.write(`No failed step found in run ${run.id.slice(0, 8)}.\n`);
-      process.exit(1);
-    }
-
-    await clearManualResumeState(run.id);
-
-    // If it's a loop step with a failed story, reset that story to pending
-    if (failedStep.type === "loop") {
-      const failedStory = await pgGet<{ id: string }>("SELECT id FROM stories WHERE run_id = $1 AND status = 'failed' ORDER BY story_index ASC LIMIT 1", [run.id]);
-      if (failedStory) {
-        await pgRun(
-          "UPDATE stories SET status = 'pending', retry_count = 0, claimed_by = NULL, updated_at = $1 WHERE id = $2",
-          [now(), failedStory.id]
-        );
-      }
-      await pgRun(
-        "UPDATE stories SET status = 'pending', retry_count = 0, claimed_by = NULL, updated_at = $1 WHERE run_id = $2 AND status IN ('failed', 'skipped') AND pr_url IS NULL",
-        [now(), run.id]
-      );
-      await pgRun("UPDATE steps SET retry_count = 0 WHERE run_id = $1 AND type = 'loop'", [run.id]);
-    }
-
-    // Check if the failed step is a verify step linked to a loop step's verify_each
-    const loopStep = await pgGet<{ id: string; loop_config: string | null }>("SELECT id, loop_config FROM steps WHERE run_id = $1 AND type = 'loop' AND status IN ('running', 'failed') LIMIT 1", [run.id]);
-
-    if (loopStep?.loop_config) {
-      const lc = JSON.parse(loopStep.loop_config);
-      if (lc.verifyEach && lc.verifyStep === failedStep.step_id) {
-        // Reset the loop step (developer) to pending so it re-claims the story and populates context
-        await pgRun(
-          "UPDATE steps SET status = 'pending', current_story_id = NULL, retry_count = 0, updated_at = $1 WHERE id = $2",
-          [now(), loopStep.id]
-        );
-        await recordStepTransition(loopStep.id, run.id, "failed", "pending", undefined, "cli:resume:verifyEach");
-        // Reset verify step to waiting (fires after developer completes)
-        await pgRun(
-          "UPDATE steps SET status = 'waiting', current_story_id = NULL, retry_count = 0, updated_at = $1 WHERE id = $2",
-          [now(), failedStep.id]
-        );
-        await recordStepTransition(failedStep.id, run.id, "failed", "waiting", undefined, "cli:resume:verifyEach");
-        // Reset any failed stories to pending
-        await pgRun(
-          "UPDATE stories SET status = 'pending', updated_at = $1 WHERE run_id = $2 AND status = 'failed'",
-          [now(), run.id]
-        );
-
-        // Reset downstream failed steps to waiting
-        const verifyStepIndex = await pgGet<{ step_index: number }>("SELECT step_index FROM steps WHERE id = $1", [failedStep.id]);
-        if (verifyStepIndex) {
-          await pgRun(
-            "UPDATE steps SET status = 'waiting', retry_count = 0, abandoned_count = 0, output = NULL, updated_at = $1 WHERE run_id = $2 AND step_index > $3 AND status = 'failed'",
-            [now(), run.id, verifyStepIndex.step_index]
-          );
-        }
-
-        // Reset run to running
-        await pgRun(
-          "UPDATE runs SET status = 'running', updated_at = $1 WHERE id = $2",
-          [now(), run.id]
-        );
-        await refreshRunContractSafe(run.id, "cli.resume.verify_each");
-
-        try {
-          await ensureWorkflowExecutionBackend(run.workflow_id);
-        } catch (err) {
-          process.stderr.write(`Warning: Could not start workflow execution backend: ${err instanceof Error ? err.message : String(err)}\n`);
-        }
-
-        console.log(`Resumed run ${run.id.slice(0, 8)} — reset loop step "${loopStep.id.slice(0, 8)}" to pending, verify step "${failedStep.step_id}" to waiting`);
-        process.exit(0);
-      }
-    }
-
-    // Reset step to pending
-    await pgRun(
-      "UPDATE steps SET status = 'pending', current_story_id = NULL, retry_count = 0, abandoned_count = 0, updated_at = $1 WHERE id = $2",
-      [now(), failedStep.id]
-    );
-    await recordStepTransition(failedStep.id, run.id, "failed", "pending", undefined, "cli:resume");
-
-    // Reset downstream terminal steps to waiting (so pipeline can advance after this step completes).
-    // Failed runs often cascade non-run steps to skipped/failed; leaving those terminal blocks resume.
-    const failedStepIndex = await pgGet<{ step_index: number }>("SELECT step_index FROM steps WHERE id = $1", [failedStep.id]);
-    if (failedStepIndex) {
-      await pgRun(
-        "UPDATE steps SET status = 'waiting', retry_count = 0, abandoned_count = 0, output = NULL, updated_at = $1 WHERE run_id = $2 AND step_index > $3 AND status IN ('failed', 'skipped')",
-        [now(), run.id, failedStepIndex.step_index]
-      );
-    }
-
-    // Reset run to running
-    await pgRun(
-      "UPDATE runs SET status = 'running', updated_at = $1 WHERE id = $2",
-      [now(), run.id]
-    );
-    await refreshRunContractSafe(run.id, "cli.resume");
-
+    // These are post-commit wakeups/projections only. The durable resume plan,
+    // lifecycle rows, and operational outbox event already committed atomically.
     try {
-      await ensureWorkflowExecutionBackend(run.workflow_id);
+      await refreshRunContractSafe(result.runId, "cli.resume.canonical_action");
+    } catch (err) {
+      process.stderr.write(`Warning: Could not refresh post-commit run contract: ${err instanceof Error ? err.message : String(err)}\n`);
+    }
+    try {
+      emitEvent({
+        ts: now(),
+        event: "run.resumed" as SetfarmEvent["event"],
+        runId: result.runId,
+        workflowId: result.workflowId,
+        stepId: result.targetWorkflowStepId,
+        detail: `Canonical resume plan ${result.planHash}`,
+      });
+    } catch (err) {
+      process.stderr.write(`Warning: Could not publish post-commit resume projection: ${err instanceof Error ? err.message : String(err)}\n`);
+    }
+    try {
+      await ensureWorkflowExecutionBackend(result.workflowId);
     } catch (err) {
       process.stderr.write(`Warning: Could not start workflow execution backend: ${err instanceof Error ? err.message : String(err)}\n`);
     }
 
-    console.log(`Resumed run ${run.id.slice(0, 8)} from step "${failedStep.step_id}"`);
+    console.log(`Resumed run ${result.runId.slice(0, 8)} from step "${result.targetWorkflowStepId}" (plan ${result.planHash.slice(0, 12)})`);
     return;
   }
 
@@ -1006,6 +990,12 @@ async function main() {
 
     const compilerReleaseSha = getCompilerReleaseSha();
     const selectedProtocol = selectNewRunProtocolMode(requestedProtocol);
+    const internalCanaryAdmission = parseInternalCanaryAdmissionContext(
+      readAndClearInternalCanaryAdmissionEnvironment(),
+    );
+    if (selectedProtocol !== "v3" && internalCanaryAdmission !== null) {
+      throw new Error("V3_INTERNAL_CANARY_CONTEXT_FORBIDDEN");
+    }
     let activationPreflight: Readonly<{
       status: "pass" | "fail";
       hash: string;
@@ -1027,12 +1017,28 @@ async function main() {
       }
       activationPreflight = preflight;
     }
+    const releaseAdmission = selectedProtocol === "v3"
+      ? internalCanaryAdmission
+        ? await createV3ReleaseAdmissionRepository(
+            getSql(),
+            new ContentAddressedEvalResultStore(resolveConvergenceEvalResultDir()),
+          ).verifyCanarySelection({
+            releaseSha: compilerReleaseSha,
+            taskHash: hashCanonicalJson(taskTitle),
+            context: internalCanaryAdmission,
+          })
+        : await createV3ReleaseAdmissionRepository(
+            getSql(),
+            new ContentAddressedEvalResultStore(resolveConvergenceEvalResultDir()),
+          ).requireReleaseGo(compilerReleaseSha)
+      : undefined;
     // Validate the fully bound identity before spawner/quota checks or any run
     // DB mutation.
     resolveNewRunProtocol({
       ...(requestedProtocol !== undefined ? { requestedMode: requestedProtocol } : {}),
       compilerReleaseSha,
       ...(activationPreflight ? { activationPreflight } : {}),
+      ...(releaseAdmission ? { releaseAdmission } : {}),
     });
 
     if (process.env.SETFARM_DISABLE_SPAWNER_AUTOSTART !== "1" && !isSpawnerRunning().running) {
@@ -1119,6 +1125,7 @@ async function main() {
       ...(requestedProtocol !== undefined ? { requestedProtocol } : {}),
       compilerReleaseSha,
       ...(activationPreflight ? { activationPreflight } : {}),
+      ...(releaseAdmission ? { releaseAdmission } : {}),
     });
     process.stdout.write(
       [

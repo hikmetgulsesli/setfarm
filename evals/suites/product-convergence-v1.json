@@ -1,0 +1,394 @@
+{
+  "schema": "setfarm.product-convergence-suite.v1",
+  "suiteId": "product-convergence-v1",
+  "suiteVersion": 1,
+  "workflowId": "feature-dev",
+  "protocol": "v3",
+  "repetitionsPerCase": 1,
+  "rootCauseRepeatLimit": 3,
+  "timeout": { "runMs": 21600000, "pollMs": 15000 },
+  "cases": [
+    {
+      "caseId": "utility-status-baseline",
+      "productClass": "utility",
+      "task": "Build a single-page status utility at /status with a Refresh button that sets application state to refreshed, writes the status to local storage across reloads, shows the text Status refreshed and value refreshed, keeps the button visible and enabled, and remains on /status",
+      "oracle": {
+        "schema": "setfarm.task-intent-oracle.v1",
+        "oracleId": "utility-status-baseline",
+        "oracleVersion": 1,
+        "locale": "en",
+        "cohort": "baseline",
+        "variant": "direct",
+        "expectedDecision": {
+          "kind": "accepted_candidate",
+          "productClass": "utility",
+          "delivery": { "platform": "web", "techStack": "vite-react" },
+          "stackPackId": "vite-react-web-app",
+          "runtimeAdapter": "browser"
+        },
+        "clauses": [{
+          "clauseId": "status-refresh-contract",
+          "source": {
+            "startOffset": 0,
+            "endOffset": 274,
+            "normalizedClause": "Build a single-page status utility at /status with a Refresh button that sets application state to refreshed, writes the status to local storage across reloads, shows the text Status refreshed and value refreshed, keeps the button visible and enabled, and remains on /status"
+          },
+          "requiredSemanticKinds": ["state", "persistence", "route", "surface", "action", "observable"]
+        }],
+        "expectations": [
+          { "intentId": "status-state", "kind": "state", "clauseRefs": ["status-refresh-contract"], "stateKind": "application" },
+          { "intentId": "status-storage", "kind": "persistence", "clauseRefs": ["status-refresh-contract"], "policyKind": "local_storage", "durability": "reload" },
+          { "intentId": "status-route", "kind": "route", "clauseRefs": ["status-refresh-contract"], "path": "/status" },
+          { "intentId": "status-surface", "kind": "surface", "clauseRefs": ["status-refresh-contract"], "surfaceKind": "page", "routePath": "/status" },
+          {
+            "intentId": "status-refresh-action",
+            "kind": "action",
+            "clauseRefs": ["status-refresh-contract"],
+            "triggerKind": "user",
+            "surfaceKinds": ["page"],
+            "stateEffects": [{ "operation": "set", "stateKind": "application" }],
+            "persistenceEffects": [{ "operation": "write", "policyKind": "local_storage", "durability": "reload" }],
+            "navigation": { "kind": "stay" },
+            "control": { "kinds": ["button"], "label": { "operator": "equals", "expected": "Refresh" } },
+            "observableAssertions": [
+              { "phase": "after", "property": "visible_text", "operator": "equals", "expected": "Status refreshed" },
+              { "phase": "after", "property": "value", "operator": "equals", "expected": "refreshed" },
+              { "phase": "after", "property": "visibility", "operator": "equals", "expected": true },
+              { "phase": "after", "property": "enabled", "operator": "equals", "expected": true },
+              { "phase": "after", "property": "route", "operator": "equals", "expected": "/status" },
+              { "phase": "reload", "property": "value", "operator": "equals", "expected": "refreshed" }
+            ]
+          }
+        ]
+      },
+      "executionProfile": { "providerId": "minimax", "modelId": "minimax/MiniMax-M3" }
+    },
+    {
+      "caseId": "utility-preference-multilingual",
+      "productClass": "utility",
+      "task": "Tek sayfalık bir tercih aracı oluştur ve /tercih yolundaki Hazır düğmesi uygulama durumunu hazır olarak ayarlasın, değeri sayfa yenilendiğinde korumak için yerel depolamaya yazsın, Durum hazır metnini ve hazır değerini göstersin, düğme görünür ve etkin kalsın ve /tercih yolunda kalınsın",
+      "oracle": {
+        "schema": "setfarm.task-intent-oracle.v1",
+        "oracleId": "utility-preference-multilingual",
+        "oracleVersion": 1,
+        "locale": "tr",
+        "cohort": "holdout",
+        "variant": "multilingual",
+        "expectedDecision": {
+          "kind": "accepted_candidate",
+          "productClass": "utility",
+          "delivery": { "platform": "web", "techStack": "vite-react" },
+          "stackPackId": "vite-react-web-app",
+          "runtimeAdapter": "browser"
+        },
+        "clauses": [{
+          "clauseId": "tercih-hazir-kontrati",
+          "source": {
+            "startOffset": 0,
+            "endOffset": 287,
+            "normalizedClause": "Tek sayfalık bir tercih aracı oluştur ve /tercih yolundaki Hazır düğmesi uygulama durumunu hazır olarak ayarlasın, değeri sayfa yenilendiğinde korumak için yerel depolamaya yazsın, Durum hazır metnini ve hazır değerini göstersin, düğme görünür ve etkin kalsın ve /tercih yolunda kalınsın"
+          },
+          "requiredSemanticKinds": ["state", "persistence", "route", "surface", "action", "observable"]
+        }],
+        "expectations": [
+          { "intentId": "tercih-durumu", "kind": "state", "clauseRefs": ["tercih-hazir-kontrati"], "stateKind": "application" },
+          { "intentId": "tercih-depolama", "kind": "persistence", "clauseRefs": ["tercih-hazir-kontrati"], "policyKind": "local_storage", "durability": "reload" },
+          { "intentId": "tercih-yolu", "kind": "route", "clauseRefs": ["tercih-hazir-kontrati"], "path": "/tercih" },
+          { "intentId": "tercih-yuzeyi", "kind": "surface", "clauseRefs": ["tercih-hazir-kontrati"], "surfaceKind": "page", "routePath": "/tercih" },
+          {
+            "intentId": "hazir-eylemi",
+            "kind": "action",
+            "clauseRefs": ["tercih-hazir-kontrati"],
+            "triggerKind": "user",
+            "surfaceKinds": ["page"],
+            "stateEffects": [{ "operation": "set", "stateKind": "application" }],
+            "persistenceEffects": [{ "operation": "write", "policyKind": "local_storage", "durability": "reload" }],
+            "navigation": { "kind": "stay" },
+            "control": { "kinds": ["button"], "label": { "operator": "equals", "expected": "Hazır" } },
+            "observableAssertions": [
+              { "phase": "after", "property": "visible_text", "operator": "equals", "expected": "Durum hazır" },
+              { "phase": "after", "property": "value", "operator": "equals", "expected": "hazır" },
+              { "phase": "after", "property": "visibility", "operator": "equals", "expected": true },
+              { "phase": "after", "property": "enabled", "operator": "equals", "expected": true },
+              { "phase": "after", "property": "route", "operator": "equals", "expected": "/tercih" },
+              { "phase": "reload", "property": "value", "operator": "equals", "expected": "hazır" }
+            ]
+          }
+        ]
+      },
+      "executionProfile": { "providerId": "minimax", "modelId": "minimax/MiniMax-M3" }
+    },
+    {
+      "caseId": "operations-work-baseline",
+      "productClass": "operations",
+      "task": "Build a single-page operations board at /work with an Add item button that appends a work item to domain state, writes records to local storage across reloads, shows the text Item added and value Open, keeps the button visible and enabled, and remains on /work",
+      "oracle": {
+        "schema": "setfarm.task-intent-oracle.v1",
+        "oracleId": "operations-work-baseline",
+        "oracleVersion": 1,
+        "locale": "en",
+        "cohort": "baseline",
+        "variant": "direct",
+        "expectedDecision": {
+          "kind": "accepted_candidate",
+          "productClass": "operations",
+          "delivery": { "platform": "web", "techStack": "vite-react" },
+          "stackPackId": "vite-react-web-app",
+          "runtimeAdapter": "browser"
+        },
+        "clauses": [{
+          "clauseId": "work-add-contract",
+          "source": {
+            "startOffset": 0,
+            "endOffset": 260,
+            "normalizedClause": "Build a single-page operations board at /work with an Add item button that appends a work item to domain state, writes records to local storage across reloads, shows the text Item added and value Open, keeps the button visible and enabled, and remains on /work"
+          },
+          "requiredSemanticKinds": ["entity", "state", "persistence", "route", "surface", "action", "observable"]
+        }],
+        "expectations": [
+          { "intentId": "work-item", "kind": "entity", "clauseRefs": ["work-add-contract"], "minimumFields": 1 },
+          { "intentId": "work-state", "kind": "state", "clauseRefs": ["work-add-contract"], "stateKind": "domain" },
+          { "intentId": "work-storage", "kind": "persistence", "clauseRefs": ["work-add-contract"], "policyKind": "local_storage", "durability": "reload" },
+          { "intentId": "work-route", "kind": "route", "clauseRefs": ["work-add-contract"], "path": "/work" },
+          { "intentId": "work-surface", "kind": "surface", "clauseRefs": ["work-add-contract"], "surfaceKind": "page", "routePath": "/work" },
+          {
+            "intentId": "add-work-action",
+            "kind": "action",
+            "clauseRefs": ["work-add-contract"],
+            "triggerKind": "user",
+            "surfaceKinds": ["page"],
+            "stateEffects": [{ "operation": "append", "stateKind": "domain" }],
+            "persistenceEffects": [{ "operation": "write", "policyKind": "local_storage", "durability": "reload" }],
+            "navigation": { "kind": "stay" },
+            "control": { "kinds": ["button"], "label": { "operator": "equals", "expected": "Add item" } },
+            "observableAssertions": [
+              { "phase": "after", "property": "visible_text", "operator": "equals", "expected": "Item added" },
+              { "phase": "after", "property": "value", "operator": "equals", "expected": "Open" },
+              { "phase": "after", "property": "visibility", "operator": "equals", "expected": true },
+              { "phase": "after", "property": "enabled", "operator": "equals", "expected": true },
+              { "phase": "after", "property": "route", "operator": "equals", "expected": "/work" },
+              { "phase": "reload", "property": "value", "operator": "equals", "expected": "Open" }
+            ]
+          }
+        ]
+      },
+      "executionProfile": { "providerId": "minimax", "modelId": "minimax/MiniMax-M3" }
+    },
+    {
+      "caseId": "operations-queue-paraphrase",
+      "productClass": "operations",
+      "task": "Create a compact queue console at /queue where the Triage button merges the selected ticket into domain state, updates local storage across reloads, displays the text Queue triaged and value Ready, leaves the button visible and enabled, and stays on /queue",
+      "oracle": {
+        "schema": "setfarm.task-intent-oracle.v1",
+        "oracleId": "operations-queue-paraphrase",
+        "oracleVersion": 1,
+        "locale": "en",
+        "cohort": "holdout",
+        "variant": "paraphrase",
+        "expectedDecision": {
+          "kind": "accepted_candidate",
+          "productClass": "operations",
+          "delivery": { "platform": "web", "techStack": "vite-react" },
+          "stackPackId": "vite-react-web-app",
+          "runtimeAdapter": "browser"
+        },
+        "clauses": [{
+          "clauseId": "queue-triage-contract",
+          "source": {
+            "startOffset": 0,
+            "endOffset": 256,
+            "normalizedClause": "Create a compact queue console at /queue where the Triage button merges the selected ticket into domain state, updates local storage across reloads, displays the text Queue triaged and value Ready, leaves the button visible and enabled, and stays on /queue"
+          },
+          "requiredSemanticKinds": ["entity", "state", "persistence", "route", "surface", "action", "observable"]
+        }],
+        "expectations": [
+          { "intentId": "queue-ticket", "kind": "entity", "clauseRefs": ["queue-triage-contract"], "minimumFields": 1 },
+          { "intentId": "queue-state", "kind": "state", "clauseRefs": ["queue-triage-contract"], "stateKind": "domain" },
+          { "intentId": "queue-storage", "kind": "persistence", "clauseRefs": ["queue-triage-contract"], "policyKind": "local_storage", "durability": "reload" },
+          { "intentId": "queue-route", "kind": "route", "clauseRefs": ["queue-triage-contract"], "path": "/queue" },
+          { "intentId": "queue-surface", "kind": "surface", "clauseRefs": ["queue-triage-contract"], "surfaceKind": "page", "routePath": "/queue" },
+          {
+            "intentId": "triage-action",
+            "kind": "action",
+            "clauseRefs": ["queue-triage-contract"],
+            "triggerKind": "user",
+            "surfaceKinds": ["page"],
+            "stateEffects": [{ "operation": "merge", "stateKind": "domain" }],
+            "persistenceEffects": [{ "operation": "update", "policyKind": "local_storage", "durability": "reload" }],
+            "navigation": { "kind": "stay" },
+            "control": { "kinds": ["button"], "label": { "operator": "equals", "expected": "Triage" } },
+            "observableAssertions": [
+              { "phase": "after", "property": "visible_text", "operator": "equals", "expected": "Queue triaged" },
+              { "phase": "after", "property": "value", "operator": "equals", "expected": "Ready" },
+              { "phase": "after", "property": "visibility", "operator": "equals", "expected": true },
+              { "phase": "after", "property": "enabled", "operator": "equals", "expected": true },
+              { "phase": "after", "property": "route", "operator": "equals", "expected": "/queue" },
+              { "phase": "reload", "property": "value", "operator": "equals", "expected": "Ready" }
+            ]
+          }
+        ]
+      },
+      "executionProfile": { "providerId": "minimax", "modelId": "minimax/MiniMax-M3" }
+    },
+    {
+      "caseId": "game-start-baseline",
+      "productClass": "game",
+      "task": "Build a browser canvas game at /play with a Start button that sets application state to playing, writes the current high score to local storage across reloads, shows the text Game started and value 0, keeps the button visible and enabled, and remains on /play",
+      "oracle": {
+        "schema": "setfarm.task-intent-oracle.v1",
+        "oracleId": "game-start-baseline",
+        "oracleVersion": 1,
+        "locale": "en",
+        "cohort": "baseline",
+        "variant": "direct",
+        "expectedDecision": {
+          "kind": "accepted_candidate",
+          "productClass": "game",
+          "delivery": { "platform": "game", "techStack": "browser-game" },
+          "stackPackId": "browser-game-canvas",
+          "runtimeAdapter": "browser"
+        },
+        "clauses": [{
+          "clauseId": "game-start-contract",
+          "source": {
+            "startOffset": 0,
+            "endOffset": 259,
+            "normalizedClause": "Build a browser canvas game at /play with a Start button that sets application state to playing, writes the current high score to local storage across reloads, shows the text Game started and value 0, keeps the button visible and enabled, and remains on /play"
+          },
+          "requiredSemanticKinds": ["state", "persistence", "route", "surface", "action", "observable"]
+        }],
+        "expectations": [
+          { "intentId": "game-state", "kind": "state", "clauseRefs": ["game-start-contract"], "stateKind": "application" },
+          { "intentId": "game-storage", "kind": "persistence", "clauseRefs": ["game-start-contract"], "policyKind": "local_storage", "durability": "reload" },
+          { "intentId": "game-route", "kind": "route", "clauseRefs": ["game-start-contract"], "path": "/play" },
+          { "intentId": "game-canvas", "kind": "surface", "clauseRefs": ["game-start-contract"], "surfaceKind": "canvas", "routePath": "/play" },
+          {
+            "intentId": "game-start-action",
+            "kind": "action",
+            "clauseRefs": ["game-start-contract"],
+            "triggerKind": "user",
+            "surfaceKinds": ["canvas"],
+            "stateEffects": [{ "operation": "set", "stateKind": "application" }],
+            "persistenceEffects": [{ "operation": "write", "policyKind": "local_storage", "durability": "reload" }],
+            "navigation": { "kind": "stay" },
+            "control": { "kinds": ["button"], "label": { "operator": "equals", "expected": "Start" } },
+            "observableAssertions": [
+              { "phase": "after", "property": "visible_text", "operator": "equals", "expected": "Game started" },
+              { "phase": "after", "property": "value", "operator": "equals", "expected": 0 },
+              { "phase": "after", "property": "visibility", "operator": "equals", "expected": true },
+              { "phase": "after", "property": "enabled", "operator": "equals", "expected": true },
+              { "phase": "after", "property": "route", "operator": "equals", "expected": "/play" },
+              { "phase": "reload", "property": "value", "operator": "equals", "expected": 0 }
+            ]
+          }
+        ]
+      },
+      "executionProfile": { "providerId": "minimax", "modelId": "minimax/MiniMax-M3" }
+    },
+    {
+      "caseId": "game-restart-multilingual",
+      "productClass": "game",
+      "task": "Tarayıcıda çalışan bir kanvas oyunu /oyun yolunda oluştur ve Yeniden Başlat düğmesi uygulama durumunu oynuyor olarak ayarlasın, yüksek skoru sayfa yenilendiğinde korumak için yerel depolamaya yazsın, Oyun yeniden başladı metnini ve 0 değerini göstersin, düğme görünür ve etkin kalsın ve /oyun yolunda kalınsın",
+      "oracle": {
+        "schema": "setfarm.task-intent-oracle.v1",
+        "oracleId": "game-restart-multilingual",
+        "oracleVersion": 1,
+        "locale": "tr",
+        "cohort": "holdout",
+        "variant": "multilingual",
+        "expectedDecision": {
+          "kind": "accepted_candidate",
+          "productClass": "game",
+          "delivery": { "platform": "game", "techStack": "browser-game" },
+          "stackPackId": "browser-game-canvas",
+          "runtimeAdapter": "browser"
+        },
+        "clauses": [{
+          "clauseId": "oyun-yeniden-baslat-kontrati",
+          "source": {
+            "startOffset": 0,
+            "endOffset": 309,
+            "normalizedClause": "Tarayıcıda çalışan bir kanvas oyunu /oyun yolunda oluştur ve Yeniden Başlat düğmesi uygulama durumunu oynuyor olarak ayarlasın, yüksek skoru sayfa yenilendiğinde korumak için yerel depolamaya yazsın, Oyun yeniden başladı metnini ve 0 değerini göstersin, düğme görünür ve etkin kalsın ve /oyun yolunda kalınsın"
+          },
+          "requiredSemanticKinds": ["state", "persistence", "route", "surface", "action", "observable"]
+        }],
+        "expectations": [
+          { "intentId": "oyun-durumu", "kind": "state", "clauseRefs": ["oyun-yeniden-baslat-kontrati"], "stateKind": "application" },
+          { "intentId": "oyun-depolama", "kind": "persistence", "clauseRefs": ["oyun-yeniden-baslat-kontrati"], "policyKind": "local_storage", "durability": "reload" },
+          { "intentId": "oyun-yolu", "kind": "route", "clauseRefs": ["oyun-yeniden-baslat-kontrati"], "path": "/oyun" },
+          { "intentId": "oyun-kanvasi", "kind": "surface", "clauseRefs": ["oyun-yeniden-baslat-kontrati"], "surfaceKind": "canvas", "routePath": "/oyun" },
+          {
+            "intentId": "yeniden-baslat-eylemi",
+            "kind": "action",
+            "clauseRefs": ["oyun-yeniden-baslat-kontrati"],
+            "triggerKind": "user",
+            "surfaceKinds": ["canvas"],
+            "stateEffects": [{ "operation": "set", "stateKind": "application" }],
+            "persistenceEffects": [{ "operation": "write", "policyKind": "local_storage", "durability": "reload" }],
+            "navigation": { "kind": "stay" },
+            "control": { "kinds": ["button"], "label": { "operator": "equals", "expected": "Yeniden Başlat" } },
+            "observableAssertions": [
+              { "phase": "after", "property": "visible_text", "operator": "equals", "expected": "Oyun yeniden başladı" },
+              { "phase": "after", "property": "value", "operator": "equals", "expected": 0 },
+              { "phase": "after", "property": "visibility", "operator": "equals", "expected": true },
+              { "phase": "after", "property": "enabled", "operator": "equals", "expected": true },
+              { "phase": "after", "property": "route", "operator": "equals", "expected": "/oyun" },
+              { "phase": "reload", "property": "value", "operator": "equals", "expected": 0 }
+            ]
+          }
+        ]
+      },
+      "executionProfile": { "providerId": "minimax", "modelId": "minimax/MiniMax-M3" }
+    },
+    {
+      "caseId": "negative-ambiguous-product",
+      "productClass": "negative",
+      "task": "Build a tracker that may either be a private personal journal or a shared team incident board, with no preference between those incompatible users and workflows",
+      "oracle": {
+        "schema": "setfarm.task-intent-oracle.v1",
+        "oracleId": "negative-ambiguous-product",
+        "oracleVersion": 1,
+        "locale": "en",
+        "cohort": "negative",
+        "variant": "ambiguous",
+        "expectedDecision": { "kind": "typed_rejection", "reasonCodes": ["PRODUCT_SPEC_TASK_AMBIGUOUS"] },
+        "clauses": [{
+          "clauseId": "ambiguous-product-clause",
+          "source": {
+            "startOffset": 0,
+            "endOffset": 160,
+            "normalizedClause": "Build a tracker that may either be a private personal journal or a shared team incident board, with no preference between those incompatible users and workflows"
+          },
+          "requiredSemanticKinds": []
+        }],
+        "expectations": []
+      },
+      "executionProfile": { "providerId": "minimax", "modelId": "minimax/MiniMax-M3" }
+    },
+    {
+      "caseId": "negative-unsupported-kernel",
+      "productClass": "negative",
+      "task": "Build a kernel-mode hardware device driver that directly controls a proprietary PCI card and ships as a signed operating-system kernel module",
+      "oracle": {
+        "schema": "setfarm.task-intent-oracle.v1",
+        "oracleId": "negative-unsupported-kernel",
+        "oracleVersion": 1,
+        "locale": "en",
+        "cohort": "negative",
+        "variant": "unsupported",
+        "expectedDecision": { "kind": "typed_rejection", "reasonCodes": ["PRODUCT_SPEC_SEMANTIC_UNSUPPORTED"] },
+        "clauses": [{
+          "clauseId": "unsupported-kernel-clause",
+          "source": {
+            "startOffset": 0,
+            "endOffset": 141,
+            "normalizedClause": "Build a kernel-mode hardware device driver that directly controls a proprietary PCI card and ships as a signed operating-system kernel module"
+          },
+          "requiredSemanticKinds": []
+        }],
+        "expectations": []
+      },
+      "executionProfile": { "providerId": "minimax", "modelId": "minimax/MiniMax-M3" }
+    }
+  ]
+}

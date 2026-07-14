@@ -219,6 +219,19 @@ describe("02-design step module", () => {
     assert.match(source, /screenTargetsForSurfaces/);
   });
 
+  it("isolates Product Compiler v3 exact binding from legacy fuzzy reconciliation", () => {
+    const source = designPreclaimSource();
+    assert.match(source, /protocol === "v3"/);
+    assert.match(source, /prepareV3DesignContract/);
+    assert.match(source, /GENERATION_TARGETS\.json/);
+    assert.match(source, /STITCH_RESPONSE_BINDINGS\.json/);
+    assert.match(source, /bindExactStitchTargetResponsesV1/);
+    assert.match(source, /screenSource !== "direct"/);
+    assert.match(source, /if \(v3Contract\)[\s\S]*exactV3ScreenMap/);
+    assert.match(source, /if \(!v3Contract && screenMap\.length > 0\)[\s\S]*verifyScreenMapToSurfaces/);
+    assert.match(source, /manifest\/title reconciliation is forbidden/);
+  });
+
   it("auto-completed reusable design screens preserve Product Surface ids for downstream guards", () => {
     const source = stepOpsSource();
     assert.match(source, /surfaceIds\?: string\[\]/);
