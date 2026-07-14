@@ -22,7 +22,10 @@ import {
   type EvidenceBundleV2,
 } from "../evidence/evidence-bundle-v2.js";
 import { AcceptedCandidateV1Schema } from "../evidence/accepted-candidate-v1.js";
+import { createArtifactIndex } from "../product-compiler/artifact-index.js";
+import { ContentAddressedArtifactStore } from "../product-compiler/artifact-store.js";
 import { hashCanonicalJson } from "../product-compiler/canonical-json.js";
+import { scanArtifactInventory } from "../product-compiler/indexed-artifact-publisher.js";
 import {
   RuntimeArtifactReaderError,
   createRuntimeArtifactReader,
@@ -117,6 +120,7 @@ export type ConvergenceReleaseInspection = Readonly<{
 export type ConvergencePlatformInspection = Readonly<{
   migrationVerified: boolean;
   attestedReleaseSha: string | null;
+  artifactIndexReady: boolean;
   activeRuns: number;
   openClaims: number;
   activeAttempts: number;
@@ -319,6 +323,7 @@ async function buildPreflight(
     : {
         migrationVerified: false,
         attestedReleaseSha: null,
+        artifactIndexReady: false,
         activeRuns: 1,
         openClaims: 1,
         activeAttempts: 1,
@@ -396,10 +401,15 @@ async function buildPreflight(
     ),
     preflightCheck(
       "result_store",
-      storeRead.ok,
-      "EVAL_RESULT_STORE_APPEND_ONLY_READY",
-      "EVAL_RESULT_STORE_UNAVAILABLE",
-      { ready: storeRead.ok },
+      storeRead.ok && platformRead.ok && platform.artifactIndexReady,
+      "EVAL_RESULT_STORES_READY",
+      !storeRead.ok
+        ? "EVAL_RESULT_STORE_UNAVAILABLE"
+        : "EVAL_PRODUCT_ARTIFACT_INDEX_UNREADY",
+      {
+        evalResultStoreReady: storeRead.ok,
+        productArtifactIndexReady: platformRead.ok && platform.artifactIndexReady,
+      },
     ),
   ];
   return { preflight: createConvergencePreflight({ checks }), release };
@@ -678,6 +688,10 @@ export async function runConvergenceSuite(
         break;
       }
       const platformRead = await settle(() => ports.sql.inspectPlatform());
+      if (!platformRead.ok || !platformRead.value.artifactIndexReady) {
+        blockers.add("EVAL_PRODUCT_ARTIFACT_INDEX_UNREADY");
+        break;
+      }
       const idle = platformRead.ok
         && platformRead.value.activeRuns === 0
         && platformRead.value.openClaims === 0
@@ -1239,15 +1253,20 @@ export function createPostgresConvergencePort(
     artifactLimits?: ArtifactCapacityLimits;
   }> = {},
 ): ConvergenceSqlPort {
+  const artifactRoot = options.artifactRoot ?? resolveProductArtifactDir();
+  const artifactLimits = options.artifactLimits ?? resolveProductArtifactCapacity();
   const artifactReader = createRuntimeArtifactReader({
     sql,
-    artifactRoot: options.artifactRoot ?? resolveProductArtifactDir(),
-    artifactLimits: options.artifactLimits ?? resolveProductArtifactCapacity(),
+    artifactRoot,
+    artifactLimits,
   });
+  const artifactStore = new ContentAddressedArtifactStore(artifactRoot, { limits: artifactLimits });
+  const artifactIndex = createArtifactIndex(sql);
   return {
     async inspectPlatform() {
       let migrationVerified = false;
       let attestedReleaseSha: string | null = null;
+      let artifactIndexReady = false;
       try {
         await verifyContractSpineMigrations(sql);
         migrationVerified = true;
@@ -1255,6 +1274,13 @@ export function createPostgresConvergencePort(
         attestedReleaseSha = attestation.status === "attested" ? attestation.verifiedReleaseSha : null;
       } catch {
         migrationVerified = false;
+      }
+      try {
+        const artifacts = await scanArtifactInventory(artifactStore);
+        const capacity = await artifactIndex.verifyInventory({ artifacts });
+        artifactIndexReady = capacity.state === "ready";
+      } catch {
+        artifactIndexReady = false;
       }
       const rows = await sql.unsafe<Array<Record<string, unknown>>>(
         `SELECT
@@ -1268,6 +1294,7 @@ export function createPostgresConvergencePort(
       return {
         migrationVerified,
         attestedReleaseSha,
+        artifactIndexReady,
         activeRuns: integer(row["active_runs"]),
         openClaims: integer(row["open_claims"]),
         activeAttempts: integer(row["active_attempts"]),
