@@ -13,6 +13,9 @@ import {
   type V3ImplementationClaimHandoffV1,
 } from "./execution/v3-implementation-handoff.js";
 import {
+  createV3StageClaimHandoffV1,
+} from "./execution/v3-stage-execution-context.js";
+import {
   ClaimEnvelopeV1Schema,
   type ClaimEnvelopeV1,
 } from "./execution/schemas/claim-envelope-v1.js";
@@ -1565,6 +1568,61 @@ export function buildClaimSummary(params: {
   ) {
     throw new Error("V3_IMPLEMENTATION_HANDOFF_MISSING");
   }
+  if (claimEnvelope?.protocol === "v3") {
+    if (
+      claimEnvelope.runId !== params.runId
+      || claimEnvelope.stepId !== params.stepId
+      || claimEnvelope.claimAgentId !== `${params.wfId}_${params.role}`
+    ) {
+      throw new Error("V3_STAGE_CONTEXT_CLAIM_IDENTITY_MISMATCH");
+    }
+    if (
+      claimEnvelope.workdir
+      && path.resolve(claimEnvelope.workdir) !== path.resolve(params.workdir)
+    ) {
+      throw new Error("V3_STAGE_CONTEXT_WORKDIR_MISMATCH");
+    }
+    if (
+      typeof claimEnvelope.input !== "string"
+      || claimEnvelope.input !== params.input
+    ) {
+      throw new Error("V3_STAGE_CONTEXT_INSTRUCTION_MISMATCH");
+    }
+    const canonicalStageClaimHandoff = createV3StageClaimHandoffV1({
+      claimEnvelope,
+      workflow: params.wfId,
+      role: params.role,
+      workdir: params.workdir,
+      outputFile: params.outputFile,
+      instructionContent: claimEnvelope.input,
+    });
+    return {
+      schema: "setfarm.claim-summary.v2",
+      protocol: "v3",
+      workflow: params.wfId,
+      role: params.role,
+      stepId: params.stepId,
+      workflowStepId: claimEnvelope.workflowStepId,
+      runId: params.runId,
+      storyId: claimEnvelope.storyId,
+      taskBrief: `${claimEnvelope.workflowStepId} v3 stage instruction`,
+      workdir: canonicalStageClaimHandoff.context.workdir,
+      repo: canonicalStageClaimHandoff.context.workdir,
+      mainRepo: canonicalStageClaimHandoff.context.workdir,
+      storyWorkdir: canonicalStageClaimHandoff.context.workdir,
+      verifyWorkdir: canonicalStageClaimHandoff.context.workdir,
+      buildCommand: "",
+      testCommand: "",
+      lintCommand: "",
+      canonicalStageClaimHandoff,
+      handoff: {
+        claimFile: params.claimFile,
+        outputFile: params.outputFile,
+        bootstrapFile: params.bootstrapFile,
+        fullClaimUsage: "Audit metadata only. Stage authority is the hash-bound canonicalStageClaimHandoff.",
+      },
+    };
+  }
   const input = String(params.input || "");
   const projectRoot = projectRootFromClaimText(input);
   const currentStory = extractCurrentStory(input);
@@ -2057,19 +2115,73 @@ try {
   process.stderr.write("SETFARM_SUMMARY_INSTALL_FAILED: " + String(err).slice(0, 240) + "\\n");
 }
 SETFARM_SUMMARY_TOOL_NODE
-  IMPLEMENT_CONTEXT_FILE="$WORKDIR/.setfarm/implement-context.json"
   mkdir -p "$WORKDIR/.setfarm"
-  if CLAIM_SUMMARY_FILE="$CLAIM_SUMMARY_FILE" node "$WORKDIR/.setfarm-bin/setfarm-summary" implement-context > "$IMPLEMENT_CONTEXT_FILE"; then
-    echo "IMPLEMENT_CONTEXT_FILE=$IMPLEMENT_CONTEXT_FILE"
-    echo "SUMMARY_HELPER_RULE=IMPLEMENT_CONTEXT_FILE is ready; do not run setfarm-summary or retry helper commands for this claim."
+  V3_STAGE_CONTEXT="$(node -e 'const fs=require("fs"); const s=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); process.stdout.write(s.canonicalStageClaimHandoff ? "1" : "0")' "$CLAIM_SUMMARY_FILE")"
+  if [ "$V3_STAGE_CONTEXT" = "1" ]; then
+    STAGE_CLAIM_ID="$(node -e 'const fs=require("fs"); const s=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); process.stdout.write(String(s.canonicalStageClaimHandoff.context.claim.claimId))' "$CLAIM_SUMMARY_FILE")"
+    if ! [[ "$STAGE_CLAIM_ID" =~ ^[1-9][0-9]*$ ]]; then
+      echo "V3_STAGE_CLAIM_ID_INVALID" >&2
+      exit 1
+    fi
+    STAGE_EXECUTION_DIR="$WORKDIR/.setfarm/stage-executions/claim-$STAGE_CLAIM_ID"
+    STAGE_EXECUTION_CONTEXT_FILE="$STAGE_EXECUTION_DIR/stage-execution-context.json"
+    STAGE_INSTRUCTION_FILE="$STAGE_EXECUTION_DIR/stage-instruction.md"
+    mkdir -p "$STAGE_EXECUTION_DIR"
+    rm -f "$WORKDIR/.setfarm/implement-context.json"
+    node - "$CLAIM_SUMMARY_FILE" "$STAGE_EXECUTION_CONTEXT_FILE" "$STAGE_INSTRUCTION_FILE" <<'SETFARM_STAGE_CONTEXT_NODE'
+const crypto = require("crypto");
+const fs = require("fs");
+const path = require("path");
+function canonical(value) {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return "[" + value.map(canonical).join(",") + "]";
+  return "{" + Object.keys(value).sort().map((key) => JSON.stringify(key) + ":" + canonical(value[key])).join(",") + "}";
+}
+const summary = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+const handoff = summary.canonicalStageClaimHandoff;
+if (!handoff || handoff.schema !== "setfarm.v3-stage-claim-handoff.v1") throw new Error("V3_STAGE_HANDOFF_MISSING");
+const context = handoff.context;
+const content = String(handoff.instructionContent || "");
+const contextFile = path.resolve(process.argv[3]);
+const instructionFile = path.resolve(process.argv[4]);
+if (context.schema !== "setfarm.v3-stage-execution-context.v1") throw new Error("V3_STAGE_CONTEXT_SCHEMA_INVALID");
+if (fs.realpathSync(context.workdir) !== fs.realpathSync(process.cwd())) throw new Error("V3_STAGE_CONTEXT_WORKDIR_MISMATCH");
+if (path.resolve(context.instruction.path) !== instructionFile) throw new Error("V3_STAGE_INSTRUCTION_PATH_MISMATCH");
+if (path.resolve(context.completion.outputFile) !== path.resolve(summary.handoff.outputFile)) throw new Error("V3_STAGE_OUTPUT_PATH_MISMATCH");
+const bytes = Buffer.from(content, "utf8");
+const instructionHash = crypto.createHash("sha256").update(bytes).digest("hex");
+if (bytes.length !== context.instruction.byteLength || instructionHash !== context.instruction.artifactHash) {
+  throw new Error("V3_STAGE_INSTRUCTION_IDENTITY_MISMATCH");
+}
+const { contextHash, ...contextPayload } = context;
+const calculatedContextHash = crypto.createHash("sha256").update(Buffer.from(canonical(contextPayload), "utf8")).digest("hex");
+if (calculatedContextHash !== contextHash) throw new Error("V3_STAGE_CONTEXT_HASH_MISMATCH");
+for (const [target, data] of [[instructionFile, bytes], [contextFile, Buffer.from(JSON.stringify(context, null, 2) + "\\n", "utf8")]]) {
+  const temporary = target + ".tmp-" + process.pid;
+  fs.writeFileSync(temporary, data, { mode: 0o600 });
+  fs.renameSync(temporary, target);
+}
+SETFARM_STAGE_CONTEXT_NODE
+    echo "STAGE_EXECUTION_CONTEXT_FILE=$STAGE_EXECUTION_CONTEXT_FILE"
+    echo "STAGE_INSTRUCTION_FILE=$STAGE_INSTRUCTION_FILE"
+    echo "STAGE_INSTRUCTION_HASH=$(node -e 'const fs=require("fs"); const s=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); process.stdout.write(s.canonicalStageClaimHandoff.context.instruction.artifactHash)' "$CLAIM_SUMMARY_FILE")"
+    echo "STAGE_AUTHORITY_RULE=Read STAGE_EXECUTION_CONTEXT_FILE, then read the exact STAGE_INSTRUCTION_FILE it binds. Do not infer the task from the workdir or raw claim input."
   else
-    rm -f "$IMPLEMENT_CONTEXT_FILE"
-    echo "IMPLEMENT_CONTEXT_FILE_UNAVAILABLE=run SUMMARY_IMPLEMENT_CONTEXT_CMD exactly once without redirection"
-    echo "SUMMARY_IMPLEMENT_CONTEXT_CMD=CLAIM_SUMMARY_FILE='$CLAIM_SUMMARY_FILE' node '$WORKDIR/.setfarm-bin/setfarm-summary' implement-context"
-    echo "SUMMARY_HELPER_RULE=Use SUMMARY_IMPLEMENT_CONTEXT_CMD only because IMPLEMENT_CONTEXT_FILE is unavailable. Do not guess setfarm-summary topics, append pipes/redirection/chaining, cat helper scripts, or parse raw /tmp/claim JSON."
+    IMPLEMENT_CONTEXT_FILE="$WORKDIR/.setfarm/implement-context.json"
+    if CLAIM_SUMMARY_FILE="$CLAIM_SUMMARY_FILE" node "$WORKDIR/.setfarm-bin/setfarm-summary" implement-context > "$IMPLEMENT_CONTEXT_FILE"; then
+      echo "IMPLEMENT_CONTEXT_FILE=$IMPLEMENT_CONTEXT_FILE"
+      echo "SUMMARY_HELPER_RULE=IMPLEMENT_CONTEXT_FILE is ready; do not run setfarm-summary or retry helper commands for this claim."
+    else
+      rm -f "$IMPLEMENT_CONTEXT_FILE"
+      echo "IMPLEMENT_CONTEXT_FILE_UNAVAILABLE=run SUMMARY_IMPLEMENT_CONTEXT_CMD exactly once without redirection"
+      echo "SUMMARY_IMPLEMENT_CONTEXT_CMD=CLAIM_SUMMARY_FILE='$CLAIM_SUMMARY_FILE' node '$WORKDIR/.setfarm-bin/setfarm-summary' implement-context"
+      echo "SUMMARY_HELPER_RULE=Use SUMMARY_IMPLEMENT_CONTEXT_CMD only because IMPLEMENT_CONTEXT_FILE is unavailable. Do not guess setfarm-summary topics, append pipes/redirection/chaining, cat helper scripts, or parse raw /tmp/claim JSON."
+    fi
   fi
-  V3_CANONICAL_CONTEXT="$(node -e 'const fs=require("fs"); const s=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); process.stdout.write(s.canonicalImplementationContext ? "1" : "0")' "$CLAIM_SUMMARY_FILE")"
-  if [ "$V3_CANONICAL_CONTEXT" = "1" ]; then
+  V3_CANONICAL_CONTEXT="$(node -e 'const fs=require("fs"); const s=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); process.stdout.write(s.canonicalImplementationContext || s.canonicalStageClaimHandoff ? "1" : "0")' "$CLAIM_SUMMARY_FILE")"
+  if [ "$V3_STAGE_CONTEXT" = "1" ]; then
+    echo "CANONICAL_STAGE_INSTRUCTION=hash-bound stage artifact ready; no implementation evidence is seeded for this role"
+  elif [ "$V3_CANONICAL_CONTEXT" = "1" ]; then
     echo "CANONICAL_EVIDENCE_PLAN=handoff.evidencePlan; Setfarm owns execution, capture, and verdicts"
   else
   node - "$CLAIM_SUMMARY_FILE" "$WORKDIR/.setfarm-bin/setfarm-evidence" <<'SETFARM_EVIDENCE_TOOL_NODE'
@@ -2429,6 +2541,26 @@ Write exactly one JSON object matching outputContract to ${params.outputFile}; d
 ${stepIdCommand}; ${cliCommand} step complete "$STEP_ID" --claim-file ${shellQuote(params.claimFile)} --file ${shellQuote(params.outputFile)}
 
 Never call step fail for a typed v3 refusal: that legacy path cannot carry source/slice/finding identity. After step complete, reply HEARTBEAT_OK and stop.`;
+  }
+  if (params.protocol === "v3") {
+    return `Setfarm Product Compiler v3 stage claim ready for ${params.wfId}/${params.role}. First action MUST be the exact bootstrap exec below; send no prose first.
+
+CLAIM_FILE=${params.claimFile}
+OUTPUT_FILE=${params.outputFile}
+BOOTSTRAP_FILE=${params.bootstrapFile}
+
+First exec command (copy exactly, with no wrapper, pipe, redirection, or chaining):
+bash ${shellQuote(params.bootstrapFile)}
+
+The bootstrap must print STAGE_EXECUTION_CONTEXT_FILE and STAGE_INSTRUCTION_FILE. Read STAGE_EXECUTION_CONTEXT_FILE once, then read the exact instruction.path it binds. The context manifest and instruction artifact are the sole task, role, output, and completion authority for this claim. Do not infer product requirements from WORKDIR, old projects, session memory, raw claim.input, claim-summary prose, or filesystem searches.
+
+Execute the stage instruction exactly. Do not substitute the generic implement loop, do not create implementation-evidence files, and do not edit product source unless the stage instruction explicitly owns source changes. Write the response required by the stage instruction to ${params.outputFile}. For a valid stage response, including a typed rejection owned by that instruction, complete with the exact claim capability:
+${stepIdCommand}; ${cliCommand} step complete "$STEP_ID" --claim-file ${shellQuote(params.claimFile)} --file ${shellQuote(params.outputFile)}
+
+Use step fail only when the execution infrastructure makes the stage instruction unavailable or unexecutable:
+${stepIdCommand}; ${cliCommand} step fail "$STEP_ID" --claim-file ${shellQuote(params.claimFile)} "specific infrastructure reason"
+
+After complete/fail, reply HEARTBEAT_OK and stop.`;
   }
   return `Setfarm claim ready. The project planning, design, and story approval gates already happened inside Setfarm. Do not invoke separate brainstorming, design-approval, or planning workflows. First action MUST be exec. No prose or HEARTBEAT before exec.
 
