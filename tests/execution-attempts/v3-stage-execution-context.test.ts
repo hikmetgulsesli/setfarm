@@ -7,6 +7,15 @@ import {
   createV3StageClaimHandoffV1,
   V3StageClaimHandoffV1Schema,
 } from "../../src/execution/v3-stage-execution-context.js";
+import {
+  createV3StageFailureV1,
+  createV3StageRetrySourceV1,
+  recoverV3StageFailureV1,
+  serializeV3StageFailureDiagnostic,
+  V3_STAGE_FAILURE_MAX_BYTES,
+  V3_STAGE_FAILURE_TRANSPORT_MAX_BYTES,
+  V3StageRetryDirectiveV1Schema,
+} from "../../src/execution/v3-stage-retry-authority.js";
 
 function envelope(overrides: Partial<ClaimEnvelopeV1> = {}): ClaimEnvelopeV1 {
   return {
@@ -119,5 +128,119 @@ describe("v3 stage execution context", () => {
       attemptGeneration: 2,
     });
     assert.doesNotMatch(JSON.stringify(handoff.context), /fenceToken/);
+  });
+
+  it("binds exact previous output, typed diagnostics, source state, and expected delta on retry", () => {
+    const instructionContent = "PLAN v3 - typed ProductSpec proposal\n\nReturn exact typed output.";
+    const previousOutputContent = [
+      "STATUS: done",
+      "PRD:",
+      "```product-spec-v1",
+      "{\"schema\":\"setfarm.product-spec.v1\",\"actions\":[{\"stateDeltas\":[{\"path\":\"value\"}]}]}",
+      "```",
+    ].join("\n");
+    const failure = createV3StageFailureV1({
+      workflowStepId: "plan",
+      kind: "output_contract_invalid",
+      diagnostics: [{
+        code: "PRODUCT_SPEC_PROPOSAL_SCHEMA_INVALID",
+        path: "/actions/0/stateDeltas/0/path",
+        message: "Invalid input: expected array, received string",
+      }],
+    });
+    const retrySource = createV3StageRetrySourceV1({
+      workflowStepId: "plan",
+      retryOrdinal: 1,
+      maxRetries: 2,
+      previousClaimId: 40,
+      previousInstructionContent: instructionContent,
+      previousOutputContent,
+      diagnostic: serializeV3StageFailureDiagnostic("V3_PLAN_OUTPUT_REJECTED", failure),
+    });
+    const handoff = createV3StageClaimHandoffV1({
+      claimEnvelope: envelope(),
+      workflow: "feature-dev",
+      role: "planner",
+      workdir: "/tmp/setfarm-stage-workdir",
+      outputFile: "/tmp/setfarm-stage-output.txt",
+      instructionContent,
+      retrySource,
+    });
+
+    assert.equal(handoff.context.retry?.schema, "setfarm.v3-stage-retry-directive.v1");
+    assert.equal(handoff.context.retry?.previousClaimId, 40);
+    assert.equal(handoff.context.retry?.sourceState.disposition, "instruction_unchanged");
+    assert.equal(handoff.context.retry?.failure.failureHash, failure.failureHash);
+    assert.equal(
+      handoff.context.retry?.failure.diagnostics[0]?.message,
+      "Invalid input: expected array, received string",
+    );
+    assert.equal(
+      handoff.context.retry?.previousOutput.path,
+      "/tmp/setfarm-stage-workdir/.setfarm/stage-executions/claim-41/previous-output.txt",
+    );
+    assert.equal(
+      handoff.context.retry?.expectedDelta.baseOutputHash,
+      createHash("sha256").update(Buffer.from(previousOutputContent, "utf8")).digest("hex"),
+    );
+    assert.equal(handoff.context.retry?.expectedDelta.mustChangeOutputHash, true);
+    assert.equal(handoff.previousOutputContent, previousOutputContent);
+    assert.equal(V3StageRetryDirectiveV1Schema.safeParse(handoff.context.retry).success, true);
+    assert.equal(V3StageClaimHandoffV1Schema.safeParse(handoff).success, true);
+
+    const repeatedSource = createV3StageRetrySourceV1({
+      workflowStepId: "plan",
+      retryOrdinal: 2,
+      maxRetries: 2,
+      previousClaimId: 41,
+      previousInstructionContent: instructionContent,
+      previousOutputContent,
+      diagnostic: serializeV3StageFailureDiagnostic("V3_PLAN_OUTPUT_REJECTED", failure),
+    });
+    const repeatedHandoff = createV3StageClaimHandoffV1({
+      claimEnvelope: envelope({ claimId: 42 }),
+      workflow: "feature-dev",
+      role: "planner",
+      workdir: "/tmp/setfarm-stage-workdir",
+      outputFile: "/tmp/setfarm-stage-output-2.txt",
+      instructionContent,
+      retrySource: repeatedSource,
+    });
+    assert.equal(
+      repeatedHandoff.context.retry?.dedupeKey,
+      handoff.context.retry?.dedupeKey,
+      "claim IDs and retry ordinals must not disguise an unchanged retry tuple",
+    );
+
+    const changedPreviousOutput = structuredClone(handoff);
+    changedPreviousOutput.previousOutputContent += "\nchanged";
+    assert.equal(V3StageClaimHandoffV1Schema.safeParse(changedPreviousOutput).success, false);
+
+    const malformedLongTransport = recoverV3StageFailureV1({
+      workflowStepId: "plan",
+      diagnostic: `${"x".repeat(8_000)}V3_STAGE_FAILURE_V1:{broken`,
+    });
+    assert.equal(malformedLongTransport.kind, "unstructured_legacy_failure");
+    assert.equal(malformedLongTransport.diagnostics[0]?.message.length, 4_000);
+
+    const oversizedFailure = createV3StageFailureV1({
+      workflowStepId: "plan",
+      kind: "output_contract_invalid",
+      diagnostics: Array.from({ length: 20 }, (_, index) => ({
+        code: `DIAGNOSTIC_${index}_${"c".repeat(480)}`,
+        path: `/${index}/${"p".repeat(3_900)}`,
+        message: `message-${index}-${"m".repeat(3_900)}`,
+      })),
+    });
+    const oversizedTransport = serializeV3StageFailureDiagnostic(
+      "V3_PLAN_OUTPUT_REJECTED",
+      oversizedFailure,
+    );
+    assert.ok(Buffer.byteLength(JSON.stringify(oversizedFailure), "utf8") <= V3_STAGE_FAILURE_MAX_BYTES);
+    assert.ok(Buffer.byteLength(oversizedTransport, "utf8") <= V3_STAGE_FAILURE_TRANSPORT_MAX_BYTES);
+    assert.equal(
+      recoverV3StageFailureV1({ workflowStepId: "plan", diagnostic: oversizedTransport }).failureHash,
+      oversizedFailure.failureHash,
+    );
   });
 });

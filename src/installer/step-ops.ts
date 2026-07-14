@@ -112,8 +112,16 @@ import {
 import {
   resolveV3PlanOutputAuthorityV1,
   shouldRunLegacyProductSupervisorV1,
+  V3PlanOutputRejectedError,
   type V3PlanOutputAuthorityV1,
 } from "../execution/v3-plan-output-authority.js";
+import {
+  createV3StageFailureV1,
+  createV3StageRetryDedupeKeyV1,
+  createV3StageRetrySourceV1,
+  serializeV3StageFailureDiagnostic,
+  type V3StageRetrySourceV1,
+} from "../execution/v3-stage-retry-authority.js";
 import { completeV3PlanProductSpecRefusal } from "../execution/v3-plan-refusal.js";
 import {
   completeV3DeployAuthorityRefusal,
@@ -4183,6 +4191,7 @@ interface ClaimResult {
   recoveryRevisionId?: string;
   recoveryLeaseToken?: string;
   v3ImplementationHandoff?: V3ImplementationClaimHandoffV1;
+  v3StageRetrySource?: V3StageRetrySourceV1;
   resolvedInput?: string;
 }
 
@@ -5702,6 +5711,125 @@ async function claimSingleStep(
     "SELECT protocol FROM runs WHERE id = $1",
     [step.run_id],
   );
+  let v3StageRetrySource: V3StageRetrySourceV1 | undefined;
+  let v3PriorStageRetryDedupeKeys: ReadonlySet<string> | undefined;
+  if (runProtocol?.protocol === "v3" && step.retry_count > 0) {
+    const unsettledFailure = await pgGet<{ count: string }>(
+      `SELECT COUNT(DISTINCT cl.id)::text AS count
+         FROM claim_log cl
+         JOIN runtime_completion_requests completion ON completion.claim_id = cl.id
+        WHERE cl.run_id = $1
+          AND cl.step_id = $2
+          AND cl.story_id IS NULL
+          AND cl.outcome = 'failed'
+          AND completion.state IN ('requested', 'draining', 'processing')`,
+      [step.run_id, step.step_id],
+    );
+    if (Number(unsettledFailure?.count || 0) > 0) {
+      // The prior claim has committed its owner transition, but its mandatory
+      // effects and runtime release still own continuation. A poll here is a
+      // normal wait, not evidence that retry authority is missing.
+      return { found: false };
+    }
+    type PreviousStageFailureRow = {
+      claim_id: number;
+      diagnostic: string | null;
+      output: string;
+      output_hash: string;
+      instruction: string | null;
+      max_retries: number;
+    };
+    const previousRows = await pgQuery<PreviousStageFailureRow>(
+      `SELECT cl.id::integer AS claim_id,
+              cl.diagnostic,
+              completion.output,
+              completion.output_hash,
+              completion.claim_envelope ->> 'input' AS instruction,
+              current_step.max_retries
+         FROM claim_log cl
+         JOIN runtime_completion_requests completion ON completion.claim_id = cl.id
+         JOIN steps current_step ON current_step.id = $1
+        WHERE cl.run_id = $2
+          AND cl.step_id = $3
+          AND cl.story_id IS NULL
+          AND cl.outcome = 'failed'
+          AND completion.state = 'accepted'
+          AND completion.apply_phase = 'effects_committed'
+        ORDER BY cl.claimed_at ASC, cl.id ASC
+        LIMIT 101`,
+      [step.id, step.run_id, step.step_id],
+    );
+    const previous = previousRows[previousRows.length - 1];
+    const retryHistoryInvalid = previousRows.length !== step.retry_count
+      || previousRows.length > 100
+      || previousRows.some((row) => !row.instruction || !row.output || !row.diagnostic);
+    if (retryHistoryInvalid || !previous?.instruction || !previous.output || !previous.diagnostic) {
+      const diagnostic = "V3_STAGE_RETRY_SOURCE_UNAVAILABLE: bounded stage retry requires the exact prior instruction, output, and validator failure; blind model redispatch is forbidden";
+      await pgRun(
+        "UPDATE steps SET status = 'failed', output = $1, updated_at = $2 WHERE id = $3 AND status IN ('pending', 'running')",
+        [diagnostic, now(), step.id],
+      );
+      await recordObservation({
+        runId: step.run_id,
+        stepId: step.step_id,
+        phase: "recovery",
+        checkId: `v3.stage-retry.source-unavailable:${step.retry_count}`,
+        label: "V3 stage retry source authority",
+        status: "blocked",
+        summary: diagnostic,
+        evidence: {
+          schema: "setfarm.v3-stage-retry-source-unavailable.v1",
+          retryOrdinal: step.retry_count,
+          modelRedispatchBudget: 0,
+        },
+      });
+      await failRun(step.run_id, true, diagnostic);
+      return { found: false };
+    }
+    const retryHistory: V3StageRetrySourceV1[] = [];
+    let historyHashMismatch = false;
+    for (const [index, row] of previousRows.entries()) {
+      const source = createV3StageRetrySourceV1({
+        workflowStepId: step.step_id,
+        retryOrdinal: index + 1,
+        maxRetries: row.max_retries,
+        previousClaimId: row.claim_id,
+        previousInstructionContent: row.instruction!,
+        previousOutputContent: row.output,
+        diagnostic: row.diagnostic!,
+      });
+      if (source.previousOutput.artifactHash !== row.output_hash) {
+        historyHashMismatch = true;
+        break;
+      }
+      retryHistory.push(source);
+    }
+    if (historyHashMismatch) {
+      const diagnostic = "V3_STAGE_RETRY_HISTORY_HASH_MISMATCH: retry history no longer matches its canonical completion hash";
+      await pgRun(
+        "UPDATE steps SET status = 'failed', output = $1, updated_at = $2 WHERE id = $3 AND status IN ('pending', 'running')",
+        [diagnostic, now(), step.id],
+      );
+      await failRun(step.run_id, true, diagnostic);
+      return { found: false };
+    }
+    v3StageRetrySource = retryHistory[retryHistory.length - 1];
+    const dispatchedDedupeKeys = new Set<string>();
+    for (let index = 1; index < retryHistory.length; index += 1) {
+      const priorSource = retryHistory[index - 1]!;
+      const dispatchedInstruction = previousRows[index]!.instruction!;
+      dispatchedDedupeKeys.add(createV3StageRetryDedupeKeyV1({
+        workflowStepId: step.step_id,
+        previousInstructionHash: priorSource.previousInstruction.artifactHash,
+        currentInstructionHash: crypto.createHash("sha256")
+          .update(Buffer.from(dispatchedInstruction, "utf8"))
+          .digest("hex"),
+        previousOutputHash: priorSource.previousOutput.artifactHash,
+        failureHash: priorSource.failure.failureHash,
+      }));
+    }
+    v3PriorStageRetryDedupeKeys = dispatchedDedupeKeys;
+  }
   let shouldRecordSingleStepTransition = false;
   let singleStepClaimId: number | null = null;
   let singleStepClaimEnvelope: ClaimEnvelopeV1 | undefined;
@@ -6325,6 +6453,64 @@ async function claimSingleStep(
     return { found: false };
   }
 
+  if (v3StageRetrySource && v3PriorStageRetryDedupeKeys) {
+    const currentInstructionHash = crypto.createHash("sha256")
+      .update(Buffer.from(resolvedInput, "utf8"))
+      .digest("hex");
+    const currentDedupeKey = createV3StageRetryDedupeKeyV1({
+      workflowStepId: step.step_id,
+      previousInstructionHash: v3StageRetrySource.previousInstruction.artifactHash,
+      currentInstructionHash,
+      previousOutputHash: v3StageRetrySource.previousOutput.artifactHash,
+      failureHash: v3StageRetrySource.failure.failureHash,
+    });
+    if (v3PriorStageRetryDedupeKeys.has(currentDedupeKey)) {
+      if (singleStepClaimId === null || !singleStepClaimEnvelope) {
+        throw new Error("V3_STAGE_RETRY_DUPLICATE_CLAIM_AUTHORITY_MISSING");
+      }
+      const diagnostic = `V3_STAGE_RETRY_DUPLICATE_UNCHANGED_TUPLE: ${currentDedupeKey}; the same instruction/output/failure tuple cannot be sent to a model twice`;
+      await pgBegin(async (sql) => {
+        await closeReservedClaimRuntimeInTransaction(sql, {
+          claimId: singleStepClaimId!,
+          outcome: "failed",
+          diagnostic,
+          runtime: singleStepRuntime,
+        });
+        await sql.unsafe(
+          "UPDATE steps SET status = 'failed', output = $1, updated_at = $2 WHERE id = $3 AND status IN ('pending', 'running')",
+          [diagnostic, now(), step.id],
+        );
+        await requestRunTerminationInTransaction(sql, {
+          runId: step.run_id,
+          targetStatus: "failed",
+          requestedBy: "setfarm.v3-stage-retry-authority",
+          diagnostic,
+          evidence: {
+            schema: "setfarm.v3-stage-retry-dedupe-block.v1",
+            dedupeKey: currentDedupeKey,
+            modelRedispatchBudget: 0,
+          },
+        });
+      });
+      await recordObservation({
+        runId: step.run_id,
+        stepId: step.step_id,
+        phase: "recovery",
+        checkId: `v3.stage-retry.duplicate:${currentDedupeKey}`,
+        label: "V3 stage retry dedupe",
+        status: "blocked",
+        summary: diagnostic,
+        evidence: {
+          schema: "setfarm.v3-stage-retry-dedupe-block.v1",
+          dedupeKey: currentDedupeKey,
+          modelRedispatchBudget: 0,
+        },
+      });
+      await refreshRunContractSafe(step.run_id, "v3.stage-retry.duplicate");
+      return { found: false };
+    }
+  }
+
   // Ensure observability has been recorded before returning an agent handoff.
   // Usually this is a no-op because heavy preClaim already opened the handoff.
   await recordSingleStepHandoff("claimSingleStep");
@@ -6342,6 +6528,7 @@ async function claimSingleStep(
       runtimeSessionId: singleStepRuntime.sessionId,
       runtimeOwnerInstanceId: singleStepRuntime.ownerInstanceId,
     } : {}),
+    ...(v3StageRetrySource ? { v3StageRetrySource } : {}),
     resolvedInput,
   };
 }
@@ -7834,6 +8021,49 @@ export async function completeStep(
   let nativeV3AttemptContext: V3ImplementationAttemptResult | undefined;
   let nativeV3PlanAuthority: V3PlanOutputAuthorityV1 | undefined;
 
+  if (
+    completionAuthority?.protocol === "v3"
+    && step.type === "single"
+    && step.retry_count > 0
+  ) {
+    const priorFailure = await pgGet<{ output_hash: string; diagnostic: string | null }>(
+      `SELECT completion.output_hash, cl.diagnostic
+         FROM claim_log cl
+         JOIN runtime_completion_requests completion ON completion.claim_id = cl.id
+        WHERE cl.run_id = $1
+          AND cl.step_id = $2
+          AND cl.story_id IS NULL
+          AND cl.id <> $3
+          AND cl.outcome = 'failed'
+          AND completion.state = 'accepted'
+          AND completion.apply_phase = 'effects_committed'
+        ORDER BY cl.claimed_at DESC, cl.id DESC
+        LIMIT 1`,
+      [step.run_id, step.step_id, completionAuthority.envelope.claimId],
+    );
+    const currentOutputHash = crypto.createHash("sha256")
+      .update(Buffer.from(output, "utf8"))
+      .digest("hex");
+    if (priorFailure?.diagnostic && priorFailure.output_hash === currentOutputHash) {
+      await recordObservation({
+        runId: step.run_id,
+        stepId: step.step_id,
+        phase: "recovery",
+        checkId: `v3.stage-retry.output-unchanged:${currentOutputHash}`,
+        label: "V3 stage retry expected delta",
+        status: "fail",
+        summary: "Retry returned the exact previous output bytes; preserving the prior typed failure tuple so redispatch dedupe can block another model.",
+        evidence: {
+          schema: "setfarm.v3-stage-retry-output-unchanged.v1",
+          outputHash: currentOutputHash,
+          previousFailurePreserved: true,
+        },
+      });
+      await failStep(step.id, priorFailure.diagnostic, completionAuthority.envelope);
+      return { advanced: false, runCompleted: false };
+    }
+  }
+
   // Native v3 forks before legacy KEY:value merging and every prose classifier.
   // The only accepted agent influence is the strict, handoff-bound JSON
   // protocol. Platform worktree/process policy and canonical evidence still run
@@ -7900,9 +8130,23 @@ export async function completeStep(
       // bounded retry plan, and let the drained completion settle normally.
       // Throwing here would make the completion coordinator quarantine a
       // healthy, already-drained runtime and strand the run without a retry.
-      const diagnostic = `V3_PLAN_OUTPUT_REJECTED: ${String(
-        error instanceof Error ? error.message : error,
-      ).slice(0, 4_000)}`;
+      const failure = createV3StageFailureV1({
+        workflowStepId: "plan",
+        kind: "output_contract_invalid",
+        diagnostics: error instanceof V3PlanOutputRejectedError
+          ? error.diagnostics
+          : [{
+              code: "V3_PLAN_OUTPUT_REJECTED",
+              path: "",
+              message: String(error instanceof Error ? error.message : error).slice(0, 4_000),
+            }],
+      });
+      const diagnostic = serializeV3StageFailureDiagnostic(
+        error instanceof V3PlanOutputRejectedError
+          ? `V3_PLAN_OUTPUT_REJECTED: ${error.message}`
+          : "V3_PLAN_OUTPUT_REJECTED",
+        failure,
+      );
       await failStep(step.id, diagnostic, completionAuthority!.envelope);
       return { advanced: false, runCompleted: false };
     }

@@ -9,6 +9,11 @@ import {
   buildResolvedClaimBootstrapScript,
   buildPreclaimedPrompt,
 } from "../dist/spawner-prompt.js";
+import {
+  createV3StageFailureV1,
+  createV3StageRetrySourceV1,
+  serializeV3StageFailureDiagnostic,
+} from "../dist/execution/v3-stage-retry-authority.js";
 
 describe("spawner prompt bootstrap", () => {
   it("emits a copy-safe first exec command instead of an inline jq shell blob", () => {
@@ -166,6 +171,7 @@ describe("spawner prompt bootstrap", () => {
       assert.match(bootstrapOutput, /CANONICAL_STAGE_INSTRUCTION=hash-bound stage artifact ready/);
       assert.doesNotMatch(bootstrapOutput, /IMPLEMENT_CONTEXT_FILE=/);
       assert.doesNotMatch(bootstrapOutput, /IMPLEMENT_EVIDENCE_SEEDED=/);
+      assert.doesNotMatch(bootstrapOutput, /DETAILS_RULE=/);
       assert.equal(fs.readFileSync(stageInstructionFile, "utf8"), instruction);
       assert.deepEqual(JSON.parse(fs.readFileSync(stageContextFile, "utf8")), stageHandoff.context);
       assert.equal(fs.existsSync(path.join(workdir, ".setfarm", "implement-context.json")), false);
@@ -182,11 +188,120 @@ describe("spawner prompt bootstrap", () => {
       });
       assert.match(prompt, /Product Compiler v3 stage claim ready for feature-dev\/planner/);
       assert.match(prompt, /read the exact instruction\.path it binds/);
-      assert.match(prompt, /sole task, role, output, and completion authority/);
-      assert.match(prompt, /Do not infer product requirements from WORKDIR, old projects/);
+      assert.match(prompt, /sole task, role, output, recovery, and completion authority/);
+      assert.match(prompt, /Do not infer product requirements or retry work from WORKDIR, old projects/);
       assert.doesNotMatch(prompt, /The project planning, design, and story approval gates already happened/);
       assert.doesNotMatch(prompt, /normal implement loop/);
       assert.doesNotMatch(prompt, /IMPLEMENT_CONTEXT_FILE/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("materializes a typed, hash-bound previous-output delta packet for v3 stage retries", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-v3-stage-retry-"));
+    try {
+      const workdir = path.join(tmp, "stage-workdir");
+      fs.mkdirSync(workdir, { recursive: true });
+      const claimFile = path.join(tmp, "claim.json");
+      const claimSummaryFile = path.join(tmp, "claim-summary.json");
+      const outputFile = path.join(tmp, "output.txt");
+      const bootstrapFile = path.join(tmp, "bootstrap.sh");
+      const instruction = "PLAN v3 - typed ProductSpec proposal\n\nReturn exact typed output.";
+      const previousOutput = "STATUS: done\nPRD:\n```product-spec-v1\n{\"actions\":[{\"stateDeltas\":[{\"path\":\"value\"}]}]}\n```";
+      const failure = createV3StageFailureV1({
+        workflowStepId: "plan",
+        kind: "output_contract_invalid",
+        diagnostics: [{
+          code: "PRODUCT_SPEC_PROPOSAL_SCHEMA_INVALID",
+          path: "/actions/0/stateDeltas/0/path",
+          message: "Invalid input: expected array, received string",
+        }],
+      });
+      const retrySource = createV3StageRetrySourceV1({
+        workflowStepId: "plan",
+        retryOrdinal: 1,
+        maxRetries: 2,
+        previousClaimId: 77,
+        previousInstructionContent: instruction,
+        previousOutputContent: previousOutput,
+        diagnostic: serializeV3StageFailureDiagnostic("V3_PLAN_OUTPUT_REJECTED", failure),
+      });
+      const claimEnvelope = {
+        schema: "setfarm.claim-envelope.v1",
+        protocol: "v3",
+        issuedAt: "2026-07-15T00:00:00.000Z",
+        stepId: "step-plan-v3",
+        workflowStepId: "plan",
+        runId: "run-plan-v3",
+        claimId: 78,
+        claimAgentId: "feature-dev_planner",
+        runtimeAgentId: "feature-dev_planner",
+        workdir,
+        repo: workdir,
+        input: instruction,
+      } as const;
+      fs.writeFileSync(claimFile, `${JSON.stringify(claimEnvelope)}\n`);
+      const summary = buildClaimSummary({
+        wfId: "feature-dev",
+        role: "planner",
+        claimFile,
+        outputFile,
+        bootstrapFile,
+        stepId: "step-plan-v3",
+        runId: "run-plan-v3",
+        workdir,
+        repo: workdir,
+        claimEnvelope,
+        v3StageRetrySource: retrySource,
+        input: instruction,
+      });
+      fs.writeFileSync(claimSummaryFile, `${JSON.stringify(summary, null, 2)}\n`);
+      fs.writeFileSync(bootstrapFile, buildResolvedClaimBootstrapScript({
+        claimFile,
+        claimSummaryFile,
+        outputFile,
+        stepId: "step-plan-v3",
+        workdir,
+        taskPreview: instruction,
+      }), { mode: 0o700 });
+
+      const bootstrapOutput = execFileSync("bash", [bootstrapFile], {
+        cwd: workdir,
+        encoding: "utf8",
+        timeout: 10_000,
+      });
+      const handoff = summary.canonicalStageClaimHandoff as any;
+      const previousOutputFile = path.join(
+        workdir,
+        ".setfarm",
+        "stage-executions",
+        "claim-78",
+        "previous-output.txt",
+      );
+      assert.equal(handoff.context.retry.schema, "setfarm.v3-stage-retry-directive.v1");
+      assert.equal(handoff.context.retry.sourceState.disposition, "instruction_unchanged");
+      assert.equal(handoff.context.retry.failure.failureHash, failure.failureHash);
+      assert.equal(handoff.previousOutputContent, previousOutput);
+      assert.equal(fs.readFileSync(previousOutputFile, "utf8"), previousOutput);
+      assert.match(bootstrapOutput, new RegExp(`STAGE_RETRY_PREVIOUS_OUTPUT_FILE=${previousOutputFile.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+      assert.match(bootstrapOutput, /STAGE_RETRY_FAILURE_HASH=/);
+      assert.match(bootstrapOutput, /STAGE_RETRY_DEDUPE_KEY=/);
+      assert.match(bootstrapOutput, /STAGE_RETRY_RULE=Read context\.retry/);
+      assert.doesNotMatch(bootstrapOutput, /DETAILS_RULE=/);
+
+      const prompt = buildPreclaimedPrompt({
+        wfId: "feature-dev",
+        role: "planner",
+        protocol: "v3",
+        claimFile,
+        claimSummaryFile,
+        outputFile,
+        bootstrapFile,
+      });
+      assert.match(prompt, /read retry\.previousOutput\.path next/);
+      assert.match(prompt, /repair the exact previous output/);
+      assert.match(prompt, /never recreate blindly from the base instruction/);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

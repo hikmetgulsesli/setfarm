@@ -180,7 +180,12 @@ export async function closeExactSingleStepClaimInTransaction(
             diagnostic = $4
       WHERE id = $1 AND outcome IS NULL
       RETURNING id::text`,
-    [envelope.claimId, input.outcome, transitionTime, input.diagnostic.slice(0, 1_000)],
+    [
+      envelope.claimId,
+      input.outcome,
+      transitionTime,
+      input.diagnostic.slice(0, envelope.protocol === "v3" ? 64_000 : 1_000),
+    ],
   );
   if (closed.length !== 1) throw new Error("SINGLE_STEP_CLAIM_CAS_LOST");
 }
