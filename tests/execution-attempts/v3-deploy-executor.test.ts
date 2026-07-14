@@ -54,8 +54,8 @@ import { V3_STATIC_SPA_PREVIEW_SOURCE } from "../../src/product-compiler/stack-t
 const execFileAsync = promisify(execFile);
 const testIsolationConfigRoots = {
   setfarmConfigRoot: path.resolve("."),
-  // Keep the adapter test hermetic in a standalone Setfarm clone. Production
-  // passes the real Mission Control authority root through explicit config.
+  // Keep the adapter test hermetic in a standalone clone while proving that
+  // configured sensitive roots outside HOME are denied by the exact profile.
   missionControlConfigRoot: path.resolve(".."),
 };
 

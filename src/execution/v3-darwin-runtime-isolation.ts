@@ -292,6 +292,7 @@ function sbplString(value: string): string {
 
 function canonicalProfile(input: Readonly<{
   homeAuthorityRoot: string;
+  deniedReadSubpaths: readonly string[];
   readExceptionSubpaths: readonly string[];
   readExceptionLiterals: readonly string[];
   readTraversalLiterals: readonly string[];
@@ -303,7 +304,7 @@ function canonicalProfile(input: Readonly<{
   return [
     "(version 1)",
     "(allow default)",
-    `(deny file-read* (subpath ${sbplString(input.homeAuthorityRoot)}))`,
+    `(deny file-read* (subpath ${sbplString(input.homeAuthorityRoot)}) ${subpaths(input.deniedReadSubpaths)})`,
     `(allow file-read-metadata file-test-existence ${literals(input.readTraversalLiterals)})`,
     `(allow file-read* file-test-existence file-map-executable ${subpaths(input.readExceptionSubpaths)} ${literals(input.readExceptionLiterals)})`,
     "(deny file-write*)",
@@ -409,6 +410,7 @@ export function createWriteFreeDarwinIsolationBundle(input: Readonly<{
   const allowedWritePaths = [logPath, "/dev/null"];
   const profile = canonicalProfile({
     homeAuthorityRoot,
+    deniedReadSubpaths: sensitiveReadRoots.map((entry) => entry.path),
     readExceptionSubpaths,
     readExceptionLiterals,
     readTraversalLiterals,

@@ -25,8 +25,9 @@ const reservedServers = new Set<ReturnType<typeof createServer>>();
 const execFileAsync = promisify(execFile);
 const isolationConfigRoots = {
   setfarmConfigRoot: path.resolve("."),
-  // The isolation contract only requires two existing canonical denied-read
-  // roots. Do not make this test depend on a sibling Mission Control checkout.
+  // The production profile must deny explicitly configured roots even when a
+  // standalone clone lives outside HOME. The parent is an existing hermetic
+  // sentinel, not an assumed sibling Mission Control checkout.
   missionControlConfigRoot: path.resolve(".."),
 };
 
