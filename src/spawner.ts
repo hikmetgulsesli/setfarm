@@ -7238,7 +7238,7 @@ function activeRuntimeEntry(runtimeSessionId: string): { key: string; active: Ac
 
 async function drainDurableRuntimeSession(
   session: ClaimRuntimeSession,
-  request: Readonly<{ requestId: string }>,
+  request: Readonly<{ requestId: string; terminationOwnerInstanceId?: string }>,
 ): Promise<void> {
   const runtimeSessions = createRuntimeSessionRepository(getSql());
   const tracked = activeRuntimeEntry(session.sessionId);
@@ -7289,26 +7289,41 @@ async function drainDurableRuntimeSession(
     if (localProcessAbsent && openClawTaskAbsent && workspaceProcessAbsent) {
       stableObservations += 1;
       if (stableObservations >= 2) {
-        await runtimeSessions.markDrained({
-          sessionId: session.sessionId,
-          ownerInstanceId: session.ownerInstanceId,
-          evidence: {
-            schema: "setfarm.runtime-drain-evidence.v1",
-            observedAt: new Date().toISOString(),
-            localProcessAbsent,
-            openClawTaskAbsent,
-            workspaceProcessAbsent,
-            stableObservations,
-            evidenceRefs: [
-              `setfarm://run-termination/${request.requestId}`,
-              `setfarm://runtime-session/${session.sessionId}`,
-            ],
-            ...(expectedProcessIdentity ? { expectedProcessIdentity } : {}),
-            ...(observedProcessIdentity ? { observedProcessIdentity } : {}),
-            ...(expectedProcessIdentity ? { processIdentityMatched } : {}),
-            ...(tracked ? { trackedChildTerminal } : {}),
-          },
-        });
+        const evidence = {
+          schema: "setfarm.runtime-drain-evidence.v1" as const,
+          observedAt: new Date().toISOString(),
+          localProcessAbsent,
+          openClawTaskAbsent,
+          workspaceProcessAbsent,
+          stableObservations,
+          evidenceRefs: [
+            `setfarm://run-termination/${request.requestId}`,
+            `setfarm://runtime-session/${session.sessionId}`,
+          ],
+          ...(expectedProcessIdentity ? { expectedProcessIdentity } : {}),
+          ...(observedProcessIdentity ? { observedProcessIdentity } : {}),
+          ...(expectedProcessIdentity ? { processIdentityMatched } : {}),
+          ...(tracked ? { trackedChildTerminal } : {}),
+        };
+        if (session.state === "quarantined") {
+          if (!request.terminationOwnerInstanceId) {
+            throw new Error("RUNTIME_QUARANTINE_RECOVERY_REQUIRES_TERMINATION_OWNER");
+          }
+          await runtimeSessions.recoverQuarantinedForTermination({
+            sessionId: session.sessionId,
+            expectedStateVersion: session.stateVersion,
+            terminationRequestId: request.requestId,
+            terminationOwnerInstanceId: request.terminationOwnerInstanceId,
+            evidence,
+            diagnostic: `Run termination ${request.requestId} re-proved absence for quarantined runtime`,
+          });
+        } else {
+          await runtimeSessions.markDrained({
+            sessionId: session.sessionId,
+            ownerInstanceId: session.ownerInstanceId,
+            evidence,
+          });
+        }
         drainingProcesses.delete(session.sessionId);
         emitEvent({
           ts: new Date().toISOString(),
@@ -7840,11 +7855,13 @@ async function runRunTerminationProcessor(requestId?: string): Promise<number> {
         detail: `Termination ${owned.requestId} claimed by ${SPAWNER_INSTANCE_ID}`,
       });
       const sessions = await runtimeSessions.listRecoverable({ runId: owned.runId, limit: 500 });
-      const quarantined = sessions.find((session) => session.state === "quarantined");
-      if (quarantined) throw new Error(`RUNTIME_ALREADY_QUARANTINED:${quarantined.sessionId}`);
+      if (!owned.ownerInstanceId) throw new Error("RUN_TERMINATION_OWNER_IDENTITY_MISSING");
       for (const session of sessions) {
         if (["drained", "released"].includes(session.state)) continue;
-        await drainDurableRuntimeSession(session, owned);
+        await drainDurableRuntimeSession(session, {
+          requestId: owned.requestId,
+          terminationOwnerInstanceId: owned.ownerInstanceId,
+        });
         await terminations.heartbeat({
           requestId: owned.requestId,
           ownerInstanceId: SPAWNER_INSTANCE_ID,

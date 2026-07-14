@@ -14,6 +14,10 @@ import {
   releaseDrainedRuntimeSessionsInTransaction,
   releaseReservedRuntimeSessionInTransaction,
 } from "../../src/execution/runtime-session-repository.js";
+import {
+  createRunTerminationRepository,
+  requestRunTermination,
+} from "../../src/execution/run-termination.js";
 import { HASH_A, HASH_B, HASH_C, HASH_D, SHA_A, TREE_A, exactProductReservation } from "./fixtures.js";
 import { createIsolatedTestDatabase } from "./test-database.js";
 
@@ -526,6 +530,120 @@ describe("durable runtime session ownership", () => {
       assert.equal(replay.state, "quarantined");
       assert.equal(replay.stateVersion, quarantined.stateVersion);
       assert.equal(replay.diagnostic, quarantined.diagnostic);
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("preserves drain proof through quarantine and re-proves it only for the exact termination owner", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const runId = "run-runtime-quarantine-stop";
+      const { stepDbId, storyDbId, claimId } = await seedStory(database, runId);
+      const sessions = createRuntimeSessionRepository(database.sql);
+      const reserved = await sessions.reserve({
+        sessionId: "RTS_runtime-quarantine-stop1",
+        runId,
+        stepDbId,
+        workflowStepId: "implement",
+        storyDbId,
+        storyId: "US-001",
+        claimId,
+        claimAgentId: "feature-dev_developer",
+        runtimeAgentId: "prism",
+        runtimeKind: "openclaw_session",
+        ownerInstanceId: "spawner-runtime",
+      });
+      await sessions.markStarting({
+        sessionId: reserved.sessionId,
+        ownerInstanceId: reserved.ownerInstanceId,
+      });
+      const running = await sessions.markRunning({
+        sessionId: reserved.sessionId,
+        ownerInstanceId: reserved.ownerInstanceId,
+        sessionKey: "runtime-quarantine-stop-key",
+      });
+      assert.equal(running.status, "running");
+      const draining = await sessions.requestDrain({
+        sessionId: reserved.sessionId,
+        ownerInstanceId: reserved.ownerInstanceId,
+        diagnostic: "completion requested drain",
+      });
+      const drained = await sessions.markDrained({
+        sessionId: reserved.sessionId,
+        ownerInstanceId: reserved.ownerInstanceId,
+        evidence: DRAIN_EVIDENCE,
+      });
+      const quarantined = await sessions.quarantine({
+        sessionId: reserved.sessionId,
+        expectedOwnerInstanceId: drained.ownerInstanceId,
+        expectedStateVersion: drained.stateVersion,
+        diagnostic: "completion owner rejected an invalid proposal",
+        evidence: { completionRequestId: "RCR_runtime-quarantine-stop1" },
+      });
+      assert.equal(draining.state, "drain_requested");
+      assert.equal(quarantined.state, "quarantined");
+      assert.deepEqual(quarantined.drainEvidence, DRAIN_EVIDENCE);
+
+      const requested = await requestRunTermination(database.sql, {
+        runId,
+        targetStatus: "cancelled",
+        requestedBy: "test.operator.stop",
+        diagnostic: "operator requested cancellation against quarantine",
+        requestId: "RTR_runtime-quarantine-stop1",
+      });
+      assert.equal(requested.status, "requested");
+      if (requested.status === "already_terminal") throw new Error("termination request missing");
+      const terminations = createRunTerminationRepository(database.sql);
+      const termination = await terminations.claim({
+        requestId: requested.request.requestId,
+        ownerInstanceId: "spawner-termination",
+      });
+      assert.equal(termination?.state, "draining");
+      assert.ok(termination?.ownerInstanceId);
+
+      const freshEvidence = {
+        ...DRAIN_EVIDENCE,
+        observedAt: "2026-07-13T12:05:00.000Z",
+        evidenceRefs: [
+          `setfarm://run-termination/${termination!.requestId}`,
+          `setfarm://runtime-session/${quarantined.sessionId}`,
+        ],
+      };
+      await assert.rejects(
+        sessions.recoverQuarantinedForTermination({
+          sessionId: quarantined.sessionId,
+          expectedStateVersion: quarantined.stateVersion,
+          terminationRequestId: termination!.requestId,
+          terminationOwnerInstanceId: "wrong-owner",
+          evidence: freshEvidence,
+          diagnostic: "wrong owner must not recover quarantine",
+        }),
+        /RUNTIME_SESSION_TERMINATION_RECOVERY_CAS_LOST:quarantined/,
+      );
+      const recovered = await sessions.recoverQuarantinedForTermination({
+        sessionId: quarantined.sessionId,
+        expectedStateVersion: quarantined.stateVersion,
+        terminationRequestId: termination!.requestId,
+        terminationOwnerInstanceId: termination!.ownerInstanceId!,
+        evidence: freshEvidence,
+        diagnostic: "termination owner re-proved process, task, and workspace absence",
+      });
+      assert.equal(recovered.state, "drained");
+      assert.deepEqual(recovered.drainEvidence, freshEvidence);
+      assert.match(recovered.diagnostic || "", /completion owner rejected an invalid proposal/);
+      assert.match(recovered.diagnostic || "", /termination owner re-proved/);
+
+      const replay = await sessions.recoverQuarantinedForTermination({
+        sessionId: quarantined.sessionId,
+        expectedStateVersion: quarantined.stateVersion,
+        terminationRequestId: termination!.requestId,
+        terminationOwnerInstanceId: termination!.ownerInstanceId!,
+        evidence: freshEvidence,
+        diagnostic: "lost response replay",
+      });
+      assert.equal(replay.state, "drained");
+      assert.deepEqual(replay.drainEvidence, freshEvidence);
     } finally {
       await database.cleanup();
     }

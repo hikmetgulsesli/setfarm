@@ -188,4 +188,25 @@ describe("durable recovery coordinator source boundaries", () => {
     assert.match(processor, /async quarantine\(candidate, diagnostic\)/);
     assert.match(processor, /candidate\.state === "drained"[\s\S]*terminations\.terminalize/);
   });
+
+  it("re-proves quarantined runtime absence only under the exact termination owner", () => {
+    const drain = sourceBlock(
+      "async function drainDurableRuntimeSession(",
+      "async function quarantineRuntimeCompletion(",
+    );
+    assert.match(
+      drain,
+      /session\.state === "quarantined"[\s\S]*terminationOwnerInstanceId[\s\S]*recoverQuarantinedForTermination/,
+    );
+    const processor = sourceBlock(
+      "async function runRunTerminationProcessor(",
+      "async function runOperationalOutboxProcessor(",
+    );
+    assert.doesNotMatch(processor, /RUNTIME_ALREADY_QUARANTINED/);
+    assert.match(
+      processor,
+      /terminationOwnerInstanceId:\s*owned\.ownerInstanceId/,
+      "termination recovery must carry the exact durable owner into the re-proof CAS",
+    );
+  });
 });

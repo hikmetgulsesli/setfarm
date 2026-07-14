@@ -7888,10 +7888,24 @@ export async function completeStep(
       }
     : parseOutputKeyValues(output);
   if (isNativeV3PlanCompletion) {
-    nativeV3PlanAuthority = resolveV3PlanOutputAuthorityV1({
-      task: context["task"] || "",
-      parsed,
-    });
+    try {
+      nativeV3PlanAuthority = resolveV3PlanOutputAuthorityV1({
+        task: context["task"] || "",
+        parsed,
+      });
+    } catch (error) {
+      // A malformed or semantically invalid typed PLAN proposal is an agent
+      // output rejection, not a runtime-manager failure.  Keep it inside the
+      // exact claim lifecycle so failStep can close the claim, publish the
+      // bounded retry plan, and let the drained completion settle normally.
+      // Throwing here would make the completion coordinator quarantine a
+      // healthy, already-drained runtime and strand the run without a retry.
+      const diagnostic = `V3_PLAN_OUTPUT_REJECTED: ${String(
+        error instanceof Error ? error.message : error,
+      ).slice(0, 4_000)}`;
+      await failStep(step.id, diagnostic, completionAuthority!.envelope);
+      return { advanced: false, runCompleted: false };
+    }
     if (nativeV3PlanAuthority.status === "rejection") {
       await completeV3PlanProductSpecRefusal({
         envelope: completionAuthority!.envelope,
