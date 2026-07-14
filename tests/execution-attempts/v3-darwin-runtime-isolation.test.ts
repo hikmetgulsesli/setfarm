@@ -21,10 +21,13 @@ import {
 
 const temporaryRoots = new Set<string>();
 const processGroups = new Set<number>();
+const reservedServers = new Set<ReturnType<typeof createServer>>();
 const execFileAsync = promisify(execFile);
 const isolationConfigRoots = {
   setfarmConfigRoot: path.resolve("."),
-  missionControlConfigRoot: path.resolve("..", "mission-control"),
+  // The isolation contract only requires two existing canonical denied-read
+  // roots. Do not make this test depend on a sibling Mission Control checkout.
+  missionControlConfigRoot: path.resolve(".."),
 };
 
 afterEach(async () => {
@@ -32,6 +35,11 @@ afterEach(async () => {
     try { process.kill(-pid, "SIGKILL"); } catch { /* already stopped */ }
   }
   processGroups.clear();
+  await Promise.all([...reservedServers].map(async (server) => {
+    if (!server.listening) return;
+    await closeServer(server).catch(() => undefined);
+  }));
+  reservedServers.clear();
   await Promise.all([...temporaryRoots].map((root) => rm(root, { recursive: true, force: true })));
   temporaryRoots.clear();
 });
@@ -44,6 +52,7 @@ async function temporaryRoot(): Promise<string> {
 
 async function reservePort() {
   const server = createServer();
+  reservedServers.add(server);
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
     server.listen(0, "127.0.0.1", resolve);
@@ -55,6 +64,7 @@ async function reservePort() {
 
 async function closeServer(server: ReturnType<typeof createServer>): Promise<void> {
   await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  reservedServers.delete(server);
 }
 
 async function waitForHealth(port: number): Promise<void> {

@@ -54,7 +54,9 @@ import { V3_STATIC_SPA_PREVIEW_SOURCE } from "../../src/product-compiler/stack-t
 const execFileAsync = promisify(execFile);
 const testIsolationConfigRoots = {
   setfarmConfigRoot: path.resolve("."),
-  missionControlConfigRoot: path.resolve("..", "mission-control"),
+  // Keep the adapter test hermetic in a standalone Setfarm clone. Production
+  // passes the real Mission Control authority root through explicit config.
+  missionControlConfigRoot: path.resolve(".."),
 };
 
 function createLocalProcessV3DeploymentAdapter(
