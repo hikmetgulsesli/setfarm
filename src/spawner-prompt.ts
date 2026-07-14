@@ -15,6 +15,7 @@ import {
 import {
   createV3StageClaimHandoffV1,
 } from "./execution/v3-stage-execution-context.js";
+import type { V3StageRetrySourceV1 } from "./execution/v3-stage-retry-authority.js";
 import {
   ClaimEnvelopeV1Schema,
   type ClaimEnvelopeV1,
@@ -1470,6 +1471,7 @@ export function buildClaimSummary(params: {
   storyId?: string;
   claimEnvelope?: ClaimEnvelopeV1;
   v3ImplementationHandoff?: V3ImplementationClaimHandoffV1;
+  v3StageRetrySource?: V3StageRetrySourceV1;
   input: unknown;
 }): Record<string, unknown> {
   const claimEnvelope = params.claimEnvelope
@@ -1595,6 +1597,7 @@ export function buildClaimSummary(params: {
       workdir: params.workdir,
       outputFile: params.outputFile,
       instructionContent: claimEnvelope.input,
+      retrySource: params.v3StageRetrySource,
     });
     return {
       schema: "setfarm.claim-summary.v2",
@@ -2142,6 +2145,9 @@ const handoff = summary.canonicalStageClaimHandoff;
 if (!handoff || handoff.schema !== "setfarm.v3-stage-claim-handoff.v1") throw new Error("V3_STAGE_HANDOFF_MISSING");
 const context = handoff.context;
 const content = String(handoff.instructionContent || "");
+const previousOutputContent = handoff.previousOutputContent === undefined
+  ? undefined
+  : String(handoff.previousOutputContent);
 const contextFile = path.resolve(process.argv[3]);
 const instructionFile = path.resolve(process.argv[4]);
 if (context.schema !== "setfarm.v3-stage-execution-context.v1") throw new Error("V3_STAGE_CONTEXT_SCHEMA_INVALID");
@@ -2153,10 +2159,50 @@ const instructionHash = crypto.createHash("sha256").update(bytes).digest("hex");
 if (bytes.length !== context.instruction.byteLength || instructionHash !== context.instruction.artifactHash) {
   throw new Error("V3_STAGE_INSTRUCTION_IDENTITY_MISMATCH");
 }
+if (Boolean(context.retry) !== (previousOutputContent !== undefined)) {
+  throw new Error("V3_STAGE_RETRY_ARTIFACT_PAIR_MISMATCH");
+}
+let previousOutputFile;
+let previousOutputBytes;
+if (context.retry) {
+  if (context.retry.schema !== "setfarm.v3-stage-retry-directive.v1") throw new Error("V3_STAGE_RETRY_SCHEMA_INVALID");
+  previousOutputFile = path.resolve(context.retry.previousOutput.path);
+  const expectedPreviousOutputFile = path.join(path.dirname(instructionFile), "previous-output.txt");
+  if (previousOutputFile !== expectedPreviousOutputFile) throw new Error("V3_STAGE_RETRY_OUTPUT_PATH_MISMATCH");
+  previousOutputBytes = Buffer.from(previousOutputContent, "utf8");
+  const previousOutputHash = crypto.createHash("sha256").update(previousOutputBytes).digest("hex");
+  if (previousOutputBytes.length !== context.retry.previousOutput.byteLength || previousOutputHash !== context.retry.previousOutput.artifactHash) {
+    throw new Error("V3_STAGE_RETRY_OUTPUT_IDENTITY_MISMATCH");
+  }
+  if (context.retry.sourceState.currentInstructionHash !== instructionHash) throw new Error("V3_STAGE_RETRY_INSTRUCTION_MISMATCH");
+  const { failureHash, ...failurePayload } = context.retry.failure;
+  if (crypto.createHash("sha256").update(Buffer.from(canonical(failurePayload), "utf8")).digest("hex") !== failureHash) {
+    throw new Error("V3_STAGE_RETRY_FAILURE_HASH_MISMATCH");
+  }
+  if (
+    context.retry.expectedDelta.baseOutputHash !== previousOutputHash
+    || context.retry.expectedDelta.resolveFailureHash !== failureHash
+    || context.retry.expectedDelta.preserveInstructionHash !== instructionHash
+    || context.retry.expectedDelta.mustChangeOutputHash !== true
+  ) throw new Error("V3_STAGE_RETRY_EXPECTED_DELTA_MISMATCH");
+  const retryDedupeTuple = {
+    schema: "setfarm.v3-stage-retry-dedupe-tuple.v1",
+    workflowStepId: context.retry.failure.workflowStepId,
+    previousInstructionHash: context.retry.sourceState.previousInstructionHash,
+    currentInstructionHash: context.retry.sourceState.currentInstructionHash,
+    previousOutputHash: context.retry.previousOutput.artifactHash,
+    failureHash: context.retry.failure.failureHash,
+  };
+  if (crypto.createHash("sha256").update(Buffer.from(canonical(retryDedupeTuple), "utf8")).digest("hex") !== context.retry.dedupeKey) {
+    throw new Error("V3_STAGE_RETRY_DEDUPE_KEY_MISMATCH");
+  }
+}
 const { contextHash, ...contextPayload } = context;
 const calculatedContextHash = crypto.createHash("sha256").update(Buffer.from(canonical(contextPayload), "utf8")).digest("hex");
 if (calculatedContextHash !== contextHash) throw new Error("V3_STAGE_CONTEXT_HASH_MISMATCH");
-for (const [target, data] of [[instructionFile, bytes], [contextFile, Buffer.from(JSON.stringify(context, null, 2) + "\\n", "utf8")]]) {
+const artifacts = [[instructionFile, bytes], [contextFile, Buffer.from(JSON.stringify(context, null, 2) + "\\n", "utf8")]];
+if (previousOutputFile && previousOutputBytes) artifacts.push([previousOutputFile, previousOutputBytes]);
+for (const [target, data] of artifacts) {
   const temporary = target + ".tmp-" + process.pid;
   fs.writeFileSync(temporary, data, { mode: 0o600 });
   fs.renameSync(temporary, target);
@@ -2166,6 +2212,13 @@ SETFARM_STAGE_CONTEXT_NODE
     echo "STAGE_INSTRUCTION_FILE=$STAGE_INSTRUCTION_FILE"
     echo "STAGE_INSTRUCTION_HASH=$(node -e 'const fs=require("fs"); const s=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); process.stdout.write(s.canonicalStageClaimHandoff.context.instruction.artifactHash)' "$CLAIM_SUMMARY_FILE")"
     echo "STAGE_AUTHORITY_RULE=Read STAGE_EXECUTION_CONTEXT_FILE, then read the exact STAGE_INSTRUCTION_FILE it binds. Do not infer the task from the workdir or raw claim input."
+    STAGE_RETRY_PRESENT="$(node -e 'const fs=require("fs"); const s=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); process.stdout.write(s.canonicalStageClaimHandoff.context.retry ? "1" : "0")' "$CLAIM_SUMMARY_FILE")"
+    if [ "$STAGE_RETRY_PRESENT" = "1" ]; then
+      echo "STAGE_RETRY_PREVIOUS_OUTPUT_FILE=$(node -e 'const fs=require("fs"); const s=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); process.stdout.write(s.canonicalStageClaimHandoff.context.retry.previousOutput.path)' "$CLAIM_SUMMARY_FILE")"
+      echo "STAGE_RETRY_FAILURE_HASH=$(node -e 'const fs=require("fs"); const s=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); process.stdout.write(s.canonicalStageClaimHandoff.context.retry.failure.failureHash)' "$CLAIM_SUMMARY_FILE")"
+      echo "STAGE_RETRY_DEDUPE_KEY=$(node -e 'const fs=require("fs"); const s=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); process.stdout.write(s.canonicalStageClaimHandoff.context.retry.dedupeKey)' "$CLAIM_SUMMARY_FILE")"
+      echo "STAGE_RETRY_RULE=Read context.retry and its previousOutput.path before the stage instruction. Repair that exact output against the bound diagnostics and expectedDelta; an unchanged output hash is forbidden."
+    fi
   else
     IMPLEMENT_CONTEXT_FILE="$WORKDIR/.setfarm/implement-context.json"
     if CLAIM_SUMMARY_FILE="$CLAIM_SUMMARY_FILE" node "$WORKDIR/.setfarm-bin/setfarm-summary" implement-context > "$IMPLEMENT_CONTEXT_FILE"; then
@@ -2339,6 +2392,24 @@ if [ -n "$CLAIM_SUMMARY_FILE" ] && [ -f "$CLAIM_SUMMARY_FILE" ]; then
 	const activeWorkdir = String(process.env.WORKDIR || s.workdir || s.storyWorkdir || s.verifyWorkdir || s.mainRepo || s.repo || "").replace(/\\/+$/, "");
 	const helperPath = (activeWorkdir ? activeWorkdir + "/" : "") + ".setfarm-bin/setfarm-summary";
 const summaryCommandPrefix = "CLAIM_SUMMARY_FILE=" + shq(process.argv[2]) + " node " + shq(helperPath) + " ";
+if (s.canonicalStageClaimHandoff) {
+  const h = s.canonicalStageClaimHandoff;
+  const c = h.context || {};
+  lines.push("STAGE_EXECUTION_CONTEXT_SCHEMA=" + String(c.schema || ""));
+  lines.push("STAGE_EXECUTION_CONTEXT_HASH=" + String(c.contextHash || ""));
+  lines.push("STAGE_INSTRUCTION_HASH=" + String(c.instruction && c.instruction.artifactHash || ""));
+  lines.push("STAGE_AUTHORITY_RULE=Read STAGE_EXECUTION_CONTEXT_FILE and its exact instruction.path. These hash-bound artifacts are the sole stage authority.");
+  if (c.retry) {
+    lines.push("STAGE_RETRY_SCHEMA=" + String(c.retry.schema || ""));
+    lines.push("STAGE_RETRY_ORDINAL=" + String(c.retry.retryOrdinal || "") + "/" + String(c.retry.maxRetries || ""));
+    lines.push("STAGE_RETRY_SOURCE_STATE=" + String(c.retry.sourceState && c.retry.sourceState.disposition || ""));
+    lines.push("STAGE_RETRY_FAILURE_HASH=" + String(c.retry.failure && c.retry.failure.failureHash || ""));
+    lines.push("STAGE_RETRY_PREVIOUS_OUTPUT_FILE=" + String(c.retry.previousOutput && c.retry.previousOutput.path || ""));
+    lines.push("STAGE_RETRY_RULE=Read the exact previous output before the instruction; resolve every typed diagnostic and produce the bound expected delta. Blind recreation and unchanged output are forbidden.");
+  }
+  process.stdout.write(lines.join("\\n") + "\\n");
+  process.exit(0);
+}
 if (s.canonicalImplementationContext) {
   const c = s.canonicalImplementationContext;
   const h = c.handoff || {};
@@ -2552,9 +2623,9 @@ BOOTSTRAP_FILE=${params.bootstrapFile}
 First exec command (copy exactly, with no wrapper, pipe, redirection, or chaining):
 bash ${shellQuote(params.bootstrapFile)}
 
-The bootstrap must print STAGE_EXECUTION_CONTEXT_FILE and STAGE_INSTRUCTION_FILE. Read STAGE_EXECUTION_CONTEXT_FILE once, then read the exact instruction.path it binds. The context manifest and instruction artifact are the sole task, role, output, and completion authority for this claim. Do not infer product requirements from WORKDIR, old projects, session memory, raw claim.input, claim-summary prose, or filesystem searches.
+The bootstrap must print STAGE_EXECUTION_CONTEXT_FILE and STAGE_INSTRUCTION_FILE. Read STAGE_EXECUTION_CONTEXT_FILE once. If its exact manifest contains retry, read retry.previousOutput.path next and treat retry.failure plus retry.expectedDelta as the sole recovery authority. Then read the exact instruction.path it binds. The context manifest, optional retry artifact, and instruction artifact are the sole task, role, output, recovery, and completion authority for this claim. Do not infer product requirements or retry work from WORKDIR, old projects, session memory, raw claim.input, claim-summary prose, or filesystem searches.
 
-Execute the stage instruction exactly. Do not substitute the generic implement loop, do not create implementation-evidence files, and do not edit product source unless the stage instruction explicitly owns source changes. Write the response required by the stage instruction to ${params.outputFile}. For a valid stage response, including a typed rejection owned by that instruction, complete with the exact claim capability:
+Execute the stage instruction exactly. On retry, repair the exact previous output so every bound diagnostic is resolved and the output hash changes; never recreate blindly from the base instruction. Do not substitute the generic implement loop, do not create implementation-evidence files, and do not edit product source unless the stage instruction explicitly owns source changes. Write the response required by the stage instruction to ${params.outputFile}. For a valid stage response, including a typed rejection owned by that instruction, complete with the exact claim capability:
 ${stepIdCommand}; ${cliCommand} step complete "$STEP_ID" --claim-file ${shellQuote(params.claimFile)} --file ${shellQuote(params.outputFile)}
 
 Use step fail only when the execution infrastructure makes the stage instruction unavailable or unexecutable:

@@ -3,6 +3,7 @@ import {
   ProductSpecRejectionV1Schema,
   canonicalizeProductSpecRejectionV1,
   canonicalizeProductSpecV3Proposal,
+  type ProductSpecProposalDiagnosticV1,
   type ProductSpecRejectionV1,
 } from "../product-compiler/producers/plan-product-spec-proposal.js";
 import type { ProductSpecV3Proposal } from "../product-compiler/schemas/product-spec-v1.js";
@@ -22,6 +23,24 @@ export type V3PlanOutputAuthorityV1 =
       rejection: ProductSpecRejectionV1;
     }>;
 
+export class V3PlanOutputRejectedError extends Error {
+  readonly diagnostics: readonly ProductSpecProposalDiagnosticV1[];
+
+  constructor(code: string, diagnostics: readonly ProductSpecProposalDiagnosticV1[]) {
+    super(code);
+    this.name = "V3PlanOutputRejectedError";
+    this.diagnostics = diagnostics.map((diagnostic) => ({ ...diagnostic }));
+  }
+}
+
+function rejection(
+  code: string,
+  path: string,
+  message: string,
+): V3PlanOutputRejectedError {
+  return new V3PlanOutputRejectedError(code, [{ code, path, message }]);
+}
+
 function exactBlock(text: string, pattern: RegExp): string[] {
   return [...text.matchAll(pattern)].map((match) => match[1]!);
 }
@@ -30,7 +49,7 @@ function decodedBlock(raw: string, code: string): unknown {
   try {
     return JSON.parse(raw);
   } catch {
-    throw new Error(code);
+    throw rejection(code, "", "PLAN typed artifact is not valid JSON");
   }
 }
 
@@ -46,7 +65,12 @@ export function resolveV3PlanOutputAuthorityV1(input: Readonly<{
   const proposals = exactBlock(prd, PRODUCT_SPEC_BLOCK_RE);
   const rejections = exactBlock(prd, PRODUCT_SPEC_REJECTION_BLOCK_RE);
   if (proposals.length + rejections.length !== 1) {
-    throw new Error(`V3_PLAN_TYPED_PRODUCT_SPEC_REQUIRED:${proposals.length}:${rejections.length}`);
+    const code = `V3_PLAN_TYPED_PRODUCT_SPEC_REQUIRED:${proposals.length}:${rejections.length}`;
+    throw rejection(
+      code,
+      "/prd",
+      `PLAN must emit exactly one typed ProductSpec or rejection fence; observed ${proposals.length} proposal(s) and ${rejections.length} rejection(s)`,
+    );
   }
 
   if (rejections.length === 1) {
@@ -68,10 +92,10 @@ export function resolveV3PlanOutputAuthorityV1(input: Readonly<{
     proposal: decodedBlock(proposals[0]!, "V3_PLAN_PRODUCT_SPEC_PROPOSAL_JSON_INVALID"),
   });
   if (canonical.status !== "canonicalized") {
-    throw new Error(`V3_PLAN_PRODUCT_SPEC_PROPOSAL_INVALID:${canonical.diagnostics
-      .slice(0, 20)
-      .map((item) => `${item.code}:${item.path}`)
-      .join(";")}`);
+    throw new V3PlanOutputRejectedError(
+      "V3_PLAN_PRODUCT_SPEC_PROPOSAL_INVALID",
+      canonical.diagnostics.slice(0, 20),
+    );
   }
   return {
     status: "proposal",

@@ -6552,7 +6552,7 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
   let claimSummary: Record<string, unknown>;
   let preparedScopeParentDirs: string[] = [];
   try {
-    fs.writeFileSync(claimFile, JSON.stringify(claimEnvelope) + "\n");
+    fs.writeFileSync(claimFile, JSON.stringify(claimEnvelope) + "\n", { mode: 0o600 });
     claimSummary = buildClaimSummary({
       wfId,
       role,
@@ -6566,9 +6566,10 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
       storyId: claim.storyId,
       claimEnvelope,
       v3ImplementationHandoff: claim.v3ImplementationHandoff,
+      v3StageRetrySource: claim.v3StageRetrySource,
       input: claim.resolvedInput,
     }) as Record<string, unknown>;
-    fs.writeFileSync(claimSummaryFile, JSON.stringify(claimSummary, null, 2) + "\n");
+    fs.writeFileSync(claimSummaryFile, JSON.stringify(claimSummary, null, 2) + "\n", { mode: 0o600 });
     preparedScopeParentDirs = claim.storyId
       ? ensureClaimScopeParentDirs(spawnCwd, claimSummary)
       : [];

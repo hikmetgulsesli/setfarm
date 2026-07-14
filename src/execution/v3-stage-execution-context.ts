@@ -9,6 +9,13 @@ import {
   ClaimEnvelopeV1Schema,
   type ClaimEnvelopeV1,
 } from "./schemas/claim-envelope-v1.js";
+import {
+  createV3StageRetryDirectiveV1,
+  V3_STAGE_PREVIOUS_OUTPUT_MAX_BYTES,
+  V3StageRetryDirectiveV1Schema,
+  V3StageRetrySourceV1Schema,
+  type V3StageRetrySourceV1,
+} from "./v3-stage-retry-authority.js";
 
 export const V3_STAGE_INSTRUCTION_MAX_BYTES = 192 * 1024;
 export const V3_STAGE_EXECUTION_CONTEXT_MAX_BYTES = 64 * 1024;
@@ -65,6 +72,7 @@ const V3StageExecutionContextShapeV1Schema = z.object({
   }).strict(),
   story: V3StageStoryIdentityV1Schema.optional(),
   instruction: V3StageInstructionRefV1Schema,
+  retry: V3StageRetryDirectiveV1Schema.optional(),
   completion: V3StageCompletionContractV1Schema,
   contextHash: Sha256Schema,
 }).strict();
@@ -97,6 +105,43 @@ export const V3StageExecutionContextV1Schema = V3StageExecutionContextShapeV1Sch
         message: "Stage instruction path must be owned by the exact execution workdir",
       });
     }
+    if (value.retry) {
+      const expectedPreviousOutputPath = path.join(
+        value.workdir,
+        ".setfarm",
+        "stage-executions",
+        `claim-${value.claim.claimId}`,
+        "previous-output.txt",
+      );
+      if (path.resolve(value.retry.previousOutput.path) !== path.resolve(expectedPreviousOutputPath)) {
+        context.addIssue({
+          code: "custom",
+          path: ["retry", "previousOutput", "path"],
+          message: "Stage retry output path must be owned by the exact claim execution directory",
+        });
+      }
+      if (value.retry.sourceState.currentInstructionHash !== value.instruction.artifactHash) {
+        context.addIssue({
+          code: "custom",
+          path: ["retry", "sourceState", "currentInstructionHash"],
+          message: "Stage retry must bind the current instruction artifact hash",
+        });
+      }
+      if (value.retry.failure.workflowStepId !== value.workflowStepId) {
+        context.addIssue({
+          code: "custom",
+          path: ["retry", "failure", "workflowStepId"],
+          message: "Stage retry failure must belong to the exact workflow step",
+        });
+      }
+      if (value.retry.previousClaimId >= value.claim.claimId) {
+        context.addIssue({
+          code: "custom",
+          path: ["retry", "previousClaimId"],
+          message: "Stage retry must refer to an earlier claim authority",
+        });
+      }
+    }
     if (hashCanonicalJson(executionContextPayload(value)) !== value.contextHash) {
       context.addIssue({
         code: "custom",
@@ -118,6 +163,7 @@ export const V3StageClaimHandoffV1Schema = z.object({
   schema: z.literal("setfarm.v3-stage-claim-handoff.v1"),
   context: V3StageExecutionContextV1Schema,
   instructionContent: z.string().min(1).max(V3_STAGE_INSTRUCTION_MAX_BYTES),
+  previousOutputContent: z.string().min(1).max(V3_STAGE_PREVIOUS_OUTPUT_MAX_BYTES).optional(),
 }).strict().superRefine((value, context) => {
   const byteLength = Buffer.byteLength(value.instructionContent, "utf8");
   if (byteLength > V3_STAGE_INSTRUCTION_MAX_BYTES) {
@@ -141,6 +187,30 @@ export const V3StageClaimHandoffV1Schema = z.object({
       message: "Stage instruction hash differs from the exact artifact bytes",
     });
   }
+  if (Boolean(value.context.retry) !== Boolean(value.previousOutputContent)) {
+    context.addIssue({
+      code: "custom",
+      path: ["previousOutputContent"],
+      message: "Stage retry context and previous output artifact must be present together",
+    });
+  }
+  if (value.context.retry && value.previousOutputContent) {
+    const previousOutputBytes = Buffer.from(value.previousOutputContent, "utf8");
+    if (previousOutputBytes.length !== value.context.retry.previousOutput.byteLength) {
+      context.addIssue({
+        code: "custom",
+        path: ["context", "retry", "previousOutput", "byteLength"],
+        message: "Previous stage output byte length differs from the exact handoff artifact",
+      });
+    }
+    if (exactInstructionHash(value.previousOutputContent) !== value.context.retry.previousOutput.artifactHash) {
+      context.addIssue({
+        code: "custom",
+        path: ["context", "retry", "previousOutput", "artifactHash"],
+        message: "Previous stage output hash differs from the exact handoff artifact bytes",
+      });
+    }
+  }
 });
 
 export type V3StageExecutionContextV1 = z.infer<typeof V3StageExecutionContextV1Schema>;
@@ -153,6 +223,7 @@ export function createV3StageClaimHandoffV1(input: Readonly<{
   workdir: string;
   outputFile: string;
   instructionContent: string;
+  retrySource?: V3StageRetrySourceV1;
 }>): V3StageClaimHandoffV1 {
   const envelope = ClaimEnvelopeV1Schema.parse(input.claimEnvelope);
   if (envelope.protocol !== "v3") throw new Error("V3_STAGE_CLAIM_ENVELOPE_REQUIRED");
@@ -183,6 +254,17 @@ export function createV3StageClaimHandoffV1(input: Readonly<{
         attemptGeneration: envelope.attempt.generation,
       }
     : undefined;
+  const retrySource = input.retrySource
+    ? V3StageRetrySourceV1Schema.parse(input.retrySource)
+    : undefined;
+  const retry = retrySource
+    ? createV3StageRetryDirectiveV1({
+        source: retrySource,
+        currentInstructionContent: instructionContent,
+        workdir,
+        currentClaimId: envelope.claimId,
+      })
+    : undefined;
   const payload = {
     schema: "setfarm.v3-stage-execution-context.v1" as const,
     protocol: "v3" as const,
@@ -210,6 +292,7 @@ export function createV3StageClaimHandoffV1(input: Readonly<{
       mediaType: "text/markdown; charset=utf-8" as const,
       path: instructionPath,
     },
+    ...(retry ? { retry } : {}),
     completion: {
       schema: "setfarm.v3-stage-completion-contract.v1" as const,
       outputFile: path.resolve(input.outputFile),
@@ -225,5 +308,6 @@ export function createV3StageClaimHandoffV1(input: Readonly<{
       contextHash: hashCanonicalJson(payload),
     },
     instructionContent,
+    ...(retrySource ? { previousOutputContent: retrySource.previousOutput.content } : {}),
   });
 }
