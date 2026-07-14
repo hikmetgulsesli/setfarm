@@ -732,6 +732,43 @@ describe("convergence runner", () => {
     assert.equal(output.gate.decision, "no_go");
   });
 
+  it("binds both service health checks and result-store preparation independently", async () => {
+    const loaded = await suite();
+    const missionControlDown = harness(loaded);
+    const healthCalls: string[] = [];
+    const unavailable = await runConvergenceSuite(loaded, { releaseSha: SHA }, {
+      ...missionControlDown.ports,
+      http: {
+        ...missionControlDown.ports.http,
+        async health(service) {
+          healthCalls.push(service);
+          return {
+            ok: service === "setfarm",
+            evidenceHash: hashCanonicalJson({ service, ok: service === "setfarm" }),
+          };
+        },
+      },
+    });
+    assert.deepEqual(healthCalls, ["setfarm", "mission_control"]);
+    assert.equal(unavailable.result.preflight.checks.find((check) => check.id === "setfarm_health")?.status, "pass");
+    assert.equal(unavailable.result.preflight.checks.find((check) => check.id === "mission_control_health")?.status, "fail");
+    assert.equal(unavailable.result.preflight.checks.find((check) => check.id === "result_store")?.status, "pass");
+    assert.equal(unavailable.result.status, "blocked");
+
+    const storeDown = harness(loaded);
+    const unprepared = await runConvergenceSuite(loaded, { releaseSha: SHA }, {
+      ...storeDown.ports,
+      artifacts: {
+        ...storeDown.ports.artifacts,
+        async prepare() { throw new Error("store unavailable"); },
+      },
+    });
+    assert.equal(unprepared.result.preflight.checks.find((check) => check.id === "setfarm_health")?.status, "pass");
+    assert.equal(unprepared.result.preflight.checks.find((check) => check.id === "mission_control_health")?.status, "pass");
+    assert.equal(unprepared.result.preflight.checks.find((check) => check.id === "result_store")?.status, "fail");
+    assert.equal(unprepared.result.status, "blocked");
+  });
+
   it("executes eight clean positive and typed-rejection cases sequentially on one exact release", async () => {
     const loaded = await suite();
     const fake = harness(loaded);
