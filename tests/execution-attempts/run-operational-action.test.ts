@@ -5,6 +5,11 @@ import {
   executeRunOperationalAction,
   RunOperationalActionError,
 } from "../../src/execution/run-operational-action.js";
+import {
+  createRuntimeCompletionRepository,
+  requestRuntimeCompletion,
+} from "../../src/execution/runtime-completion.js";
+import { createRuntimeSessionRepository } from "../../src/execution/runtime-session-repository.js";
 import { buildRunOperationalSnapshot } from "../../src/server/run-operational-snapshot.js";
 import { createIsolatedTestDatabase } from "./test-database.js";
 
@@ -239,6 +244,132 @@ describe("Setfarm-owned operational action CAS", () => {
         SELECT COUNT(*)::integer AS count FROM run_termination_requests WHERE run_id = ${runId}
       `;
       assert.equal(rows[0]?.count, 1);
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("allows snapshot-fenced stop when runtime and completion quarantine are the only invariants", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const runId = "RUN_action-stop-quarantine-0001";
+      const stepDbId = `STEP_${runId}_plan`;
+      await seedLegacyRun(database, { runId, status: "running" });
+      const claims = await database.sql<Array<{ id: number }>>`
+        INSERT INTO claim_log (run_id, step_id, story_id, agent_id)
+        VALUES (${runId}, 'plan', NULL, 'planner')
+        RETURNING id::integer AS id
+      `;
+      const claimId = claims[0]!.id;
+      const sessions = createRuntimeSessionRepository(database.sql);
+      const session = await sessions.reserve({
+        sessionId: "RTS_action-stop-quarantine1",
+        runId,
+        stepDbId,
+        workflowStepId: "plan",
+        claimId,
+        claimAgentId: "planner",
+        runtimeAgentId: "planner-runtime",
+        runtimeKind: "openclaw_session",
+        ownerInstanceId: "spawner-test",
+      });
+      await sessions.markStarting({ sessionId: session.sessionId, ownerInstanceId: "spawner-test" });
+      await sessions.markRunning({
+        sessionId: session.sessionId,
+        ownerInstanceId: "spawner-test",
+        sessionKey: "action-stop-quarantine-key",
+      });
+      const requested = await requestRuntimeCompletion(database.sql, {
+        envelope: {
+          schema: "setfarm.claim-envelope.v1",
+          protocol: "legacy",
+          issuedAt: "2026-07-14T22:00:00.000Z",
+          stepId: stepDbId,
+          workflowStepId: "plan",
+          runId,
+          claimId,
+          claimAgentId: "planner",
+          runtimeAgentId: "planner-runtime",
+        },
+        output: "STATUS: done",
+        requestId: "RCR_action-stop-quarantine1",
+      });
+      assert.equal(requested.status, "requested");
+      if (requested.status !== "requested") throw new Error("completion request missing");
+      const completions = createRuntimeCompletionRepository(database.sql);
+      await completions.claim({
+        requestId: requested.request.requestId,
+        ownerInstanceId: "spawner-test",
+      });
+      const drained = await sessions.markDrained({
+        sessionId: session.sessionId,
+        ownerInstanceId: "spawner-test",
+        evidence: {
+          schema: "setfarm.runtime-drain-evidence.v1",
+          observedAt: "2026-07-14T22:01:00.000Z",
+          localProcessAbsent: true,
+          openClawTaskAbsent: true,
+          workspaceProcessAbsent: true,
+          stableObservations: 2,
+          evidenceRefs: ["setfarm://test/action-stop-quarantine"],
+        },
+      });
+      const processing = await completions.markProcessing({
+        requestId: requested.request.requestId,
+        ownerInstanceId: "spawner-test",
+      });
+      assert.ok(processing.leaseExpiresAt);
+      await completions.quarantine({
+        requestId: processing.requestId,
+        ownerInstanceId: "spawner-test",
+        expectedState: "processing",
+        expectedLeaseExpiresAt: processing.leaseExpiresAt!,
+        expectedUpdatedAt: processing.updatedAt,
+        diagnostic: "invalid planner proposal escaped the output boundary",
+      });
+      await sessions.quarantine({
+        sessionId: drained.sessionId,
+        expectedOwnerInstanceId: drained.ownerInstanceId,
+        expectedStateVersion: drained.stateVersion,
+        diagnostic: "completion request quarantined after proven runtime drain",
+        evidence: { completionRequestId: processing.requestId },
+      });
+
+      const snapshot = await buildRunOperationalSnapshot(database.sql, runId);
+      assert.ok(snapshot);
+      assert.deepEqual(snapshot.invariants.map((item) => item.code).sort(), [
+        "COMPLETION_REQUEST_QUARANTINED",
+        "RUNTIME_SESSION_QUARANTINED",
+      ]);
+      assert.deepEqual(snapshot.summary.operatorActions.stop, {
+        allowed: true,
+        reasonCode: "RUN_CAN_BE_STOPPED_WITH_QUARANTINE_RECOVERY",
+        stateHash: snapshot.summary.operatorActions.stop.stateHash,
+      });
+
+      const result = await executeRunOperationalAction(database.sql, {
+        action: "stop",
+        runId,
+        expectedSnapshotHash: snapshot.snapshotHash,
+      });
+      assert.equal(result.action, "stop");
+      const rows = await database.sql<Array<{
+        run_status: string;
+        termination_state: string;
+        request_count: number;
+      }>>`
+        SELECT run.status AS run_status,
+               termination.state AS termination_state,
+               (SELECT COUNT(*)::integer FROM run_termination_requests WHERE run_id = run.id) AS request_count
+          FROM runs run
+          JOIN run_termination_requests termination ON termination.run_id = run.id
+         WHERE run.id = ${runId}
+      `;
+      assert.deepEqual({ ...rows[0] }, {
+        run_status: "cancelling",
+        termination_state: "requested",
+        request_count: 1,
+      });
     } finally {
       await database.cleanup();
     }

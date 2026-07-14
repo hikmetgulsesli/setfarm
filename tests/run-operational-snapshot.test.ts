@@ -243,6 +243,40 @@ describe("canonical run operational snapshot", () => {
     }
   });
 
+  it("keeps resume blocked but exposes bounded stop for quarantine-only invariants", () => {
+    const base = reducerInput({ protocol: "v3", status: "running", terminal: false });
+    const quarantineOnly = reduceRunOperationalLifecycle({
+      ...base,
+      invariants: [
+        { code: "COMPLETION_REQUEST_QUARANTINED", severity: "error" },
+        { code: "RUNTIME_SESSION_QUARANTINED", severity: "error" },
+      ] as Parameters<typeof reduceRunOperationalLifecycle>[0]["invariants"],
+    });
+    assert.deepEqual(quarantineOnly.operatorActions.stop, {
+      allowed: true,
+      reasonCode: "RUN_CAN_BE_STOPPED_WITH_QUARANTINE_RECOVERY",
+      stateHash: HASH,
+    });
+    assert.deepEqual(quarantineOnly.operatorActions.resume, {
+      allowed: false,
+      reasonCode: "COMPILER_PROTOCOL_RESUME_FORBIDDEN",
+      stateHash: HASH,
+    });
+
+    const mixed = reduceRunOperationalLifecycle({
+      ...base,
+      invariants: [
+        { code: "RUNTIME_SESSION_QUARANTINED", severity: "error" },
+        { code: "ATTEMPT_CLAIM_BINDING_MISMATCH", severity: "error" },
+      ] as Parameters<typeof reduceRunOperationalLifecycle>[0]["invariants"],
+    });
+    assert.deepEqual(mixed.operatorActions.stop, {
+      allowed: false,
+      reasonCode: "INVARIANT_VIOLATION_BLOCKS_ACTION",
+      stateHash: HASH,
+    });
+  });
+
   it("denies legacy resume until ownership, every effect, outbox, and invariants are settled", () => {
     const base = reducerInput({ protocol: "legacy", status: "failed", terminal: true });
     const activeClaim = reduceRunOperationalLifecycle({

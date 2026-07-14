@@ -742,6 +742,67 @@ export function createRuntimeSessionRepository(sql: Sql) {
         return mapRuntimeSession(rows[0]!);
       }) as Promise<ClaimRuntimeSession>;
     },
+    async recoverQuarantinedForTermination(input: Readonly<{
+      sessionId: string;
+      expectedStateVersion: number;
+      terminationRequestId: string;
+      terminationOwnerInstanceId: string;
+      evidence: unknown;
+      diagnostic: string;
+      now?: Date;
+    }>): Promise<ClaimRuntimeSession> {
+      const evidence = RuntimeDrainEvidenceV1Schema.parse(input.evidence);
+      if (!Number.isSafeInteger(input.expectedStateVersion) || input.expectedStateVersion < 0) {
+        throw new Error("RUNTIME_SESSION_TERMINATION_RECOVERY_VERSION_INVALID");
+      }
+      if (!/^RTR_[A-Za-z0-9-]{16,160}$/.test(input.terminationRequestId)) {
+        throw new Error("RUNTIME_SESSION_TERMINATION_RECOVERY_REQUEST_INVALID");
+      }
+      if (!input.terminationOwnerInstanceId.trim()) {
+        throw new Error("RUNTIME_SESSION_TERMINATION_RECOVERY_OWNER_REQUIRED");
+      }
+      if (!input.diagnostic.trim()) {
+        throw new Error("RUNTIME_SESSION_TERMINATION_RECOVERY_DIAGNOSTIC_REQUIRED");
+      }
+      const now = validTime(input.now);
+      const rows = await sql.unsafe<RuntimeSessionRow[]>(
+        `UPDATE runtime_sessions AS rs
+            SET state = 'drained',
+                drained_at = COALESCE(rs.drained_at, $6),
+                drain_evidence = $5::text::jsonb,
+                heartbeat_at = $6,
+                diagnostic = LEFT(CONCAT_WS(E'\\n', NULLIF(rs.diagnostic, ''), $7::text), 4000),
+                state_version = rs.state_version + 1,
+                updated_at = $6
+           FROM run_termination_requests AS rr
+          WHERE rs.session_id = $1
+            AND rs.state = 'quarantined'
+            AND rs.state_version = $2
+            AND rr.request_id = $3
+            AND rr.run_id = rs.run_id
+            AND rr.owner_instance_id = $4
+            AND rr.state = 'draining'
+          RETURNING rs.*`,
+        [
+          RuntimeSessionIdSchema.parse(input.sessionId),
+          input.expectedStateVersion,
+          input.terminationRequestId,
+          input.terminationOwnerInstanceId,
+          JSON.stringify(evidence),
+          now,
+          input.diagnostic.slice(0, 4_000),
+        ],
+      );
+      if (rows.length === 1) return mapRuntimeSession(rows[0]!);
+
+      const current = await findById(input.sessionId);
+      if (!current) throw new Error("RUNTIME_SESSION_NOT_FOUND");
+      if (["drained", "released"].includes(current.state)) {
+        RuntimeDrainEvidenceV1Schema.parse(current.drainEvidence);
+        return current;
+      }
+      throw new Error(`RUNTIME_SESSION_TERMINATION_RECOVERY_CAS_LOST:${current.state}`);
+    },
     async quarantine(input: Readonly<{
       sessionId: string;
       expectedOwnerInstanceId: string;
@@ -761,7 +822,12 @@ export function createRuntimeSessionRepository(sql: Sql) {
       const rows = await sql.unsafe<RuntimeSessionRow[]>(
         `UPDATE runtime_sessions
             SET state = 'quarantined', diagnostic = $2,
-                drain_evidence = $3::text::jsonb,
+                drain_evidence = CASE
+                  WHEN state = 'drained'
+                   AND drain_evidence->>'schema' = 'setfarm.runtime-drain-evidence.v1'
+                    THEN drain_evidence
+                  ELSE $3::text::jsonb
+                END,
                 state_version = state_version + 1, updated_at = $4
           WHERE session_id = $1
             AND owner_instance_id = $5

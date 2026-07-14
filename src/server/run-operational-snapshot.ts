@@ -36,6 +36,7 @@ import {
   type OperationalTerminationRequestV1,
   type RunOperationalSnapshotV1,
 } from "./schemas/run-operational-snapshot-v1.js";
+import { hasStopBlockingInvariant } from "../execution/run-operational-invariant-policy.js";
 
 type Sql = postgres.Sql;
 type TransactionSql = postgres.TransactionSql;
@@ -1153,6 +1154,7 @@ export function reduceRunOperationalLifecycle(input: ReducerInput): OperationalS
     0,
   );
   const hasErrors = input.invariants.some((invariant) => invariant.severity === "error");
+  const stopBlockedByInvariant = hasStopBlockingInvariant(input.invariants);
   const openTermination = input.terminationRequests.some((request) => request.state !== "terminalized");
   const trackedCount = input.claims.length
     + input.attempts.length
@@ -1202,10 +1204,12 @@ export function reduceRunOperationalLifecycle(input: ReducerInput): OperationalS
     stop = { allowed: false, reasonCode: "RUN_ALREADY_TERMINAL", stateHash: actionStateHash };
   } else if (!stoppableStatus) {
     stop = { allowed: false, reasonCode: "RUN_STATUS_NOT_STOPPABLE", stateHash: actionStateHash };
-  } else if (hasErrors) {
+  } else if (stopBlockedByInvariant) {
     stop = { allowed: false, reasonCode: "INVARIANT_VIOLATION_BLOCKS_ACTION", stateHash: actionStateHash };
   } else if (openTermination) {
     stop = { allowed: false, reasonCode: "TERMINATION_ALREADY_REQUESTED", stateHash: actionStateHash };
+  } else if (hasErrors) {
+    stop = { allowed: true, reasonCode: "RUN_CAN_BE_STOPPED_WITH_QUARANTINE_RECOVERY", stateHash: actionStateHash };
   } else {
     stop = { allowed: true, reasonCode: "RUN_CAN_BE_STOPPED", stateHash: actionStateHash };
   }

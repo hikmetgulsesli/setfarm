@@ -11,6 +11,7 @@ import {
 } from "./run-termination.js";
 import { hashCanonicalJson } from "../product-compiler/canonical-json.js";
 import { buildRunOperationalSnapshotInTransaction } from "../server/run-operational-snapshot.js";
+import { hasStopBlockingInvariant } from "./run-operational-invariant-policy.js";
 
 type Sql = postgres.Sql;
 type TransactionSql = postgres.TransactionSql;
@@ -312,7 +313,10 @@ async function executeInTransaction(
   if (snapshot.source.projection !== "complete" || !Object.values(snapshot.source.capabilities).every(Boolean)) {
     throw new RunOperationalActionError("RUN_OPERATIONAL_ACTION_PROJECTION_INCOMPLETE");
   }
-  if (snapshot.invariants.length > 0) {
+  if (
+    snapshot.invariants.length > 0
+    && (input.action !== "stop" || hasStopBlockingInvariant(snapshot.invariants))
+  ) {
     throw new RunOperationalActionError("RUN_OPERATIONAL_ACTION_INVARIANT_BLOCKED");
   }
 
