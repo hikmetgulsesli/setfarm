@@ -474,6 +474,7 @@ function snapshot(runId: string, rejected: boolean, snapshotHash?: string) {
 
 type HarnessOptions = Readonly<{
   activeAtPreflight?: boolean;
+  artifactIndexUnready?: boolean;
   pass?: boolean;
   repeatedRoot?: boolean;
   manualMutation?: boolean;
@@ -500,6 +501,7 @@ function harness(loaded: Awaited<ReturnType<typeof suite>>, options: HarnessOpti
     inspectPlatform: async () => ({
       migrationVerified: true,
       attestedReleaseSha: SHA,
+      artifactIndexReady: options.artifactIndexUnready !== true,
       activeRuns: options.activeAtPreflight ? 1 : 0,
       openClaims: 0,
       activeAttempts: 0,
@@ -767,6 +769,19 @@ describe("convergence runner", () => {
     assert.equal(unprepared.result.preflight.checks.find((check) => check.id === "mission_control_health")?.status, "pass");
     assert.equal(unprepared.result.preflight.checks.find((check) => check.id === "result_store")?.status, "fail");
     assert.equal(unprepared.result.status, "blocked");
+
+    const artifactIndexDown = harness(loaded, { artifactIndexUnready: true });
+    const indexBlocked = await runConvergenceSuite(
+      loaded,
+      { releaseSha: SHA, execute: true },
+      artifactIndexDown.ports,
+    );
+    const indexCheck = indexBlocked.result.preflight.checks.find((check) => check.id === "result_store");
+    assert.equal(indexCheck?.status, "fail");
+    assert.equal(indexCheck?.code, "EVAL_PRODUCT_ARTIFACT_INDEX_UNREADY");
+    assert.equal(indexBlocked.result.status, "blocked");
+    assert.equal(artifactIndexDown.starts(), 0);
+    assert.equal(artifactIndexDown.canaryCreations.length, 0);
   });
 
   it("executes eight clean positive and typed-rejection cases sequentially on one exact release", async () => {

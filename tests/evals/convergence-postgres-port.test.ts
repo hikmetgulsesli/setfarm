@@ -60,6 +60,24 @@ describe("convergence PostgreSQL port", () => {
     });
   });
 
+  it("reports product artifact readiness only after the exact inventory is bootstrapped", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "setfarm-eval-preflight-artifacts-"));
+    roots.push(root);
+    const artifactRoot = path.join(root, "sha256");
+    const port = createPostgresConvergencePort(database.sql, { artifactRoot, artifactLimits });
+
+    assert.equal((await port.inspectPlatform()).artifactIndexReady, false);
+
+    await bootstrapArtifactIndex({
+      index: createArtifactIndex(database.sql),
+      store: new ContentAddressedArtifactStore(artifactRoot, { limits: artifactLimits }),
+      quotaBytes: artifactLimits.rootQuotaBytes,
+      maxPayloadBytes: artifactLimits.maxPayloadBytes,
+    });
+
+    assert.equal((await port.inspectPlatform()).artifactIndexReady, true);
+  });
+
   it("accepts a compiler-owned typed rejection only with zero downstream product side effects", async () => {
     const runId = "eval-postgres-typed-rejection";
     const releaseSha = "e".repeat(40);
