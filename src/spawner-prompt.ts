@@ -2119,6 +2119,10 @@ SETFARM_SUMMARY_TOOL_NODE
   V3_STAGE_CONTEXT="$(node -e 'const fs=require("fs"); const s=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); process.stdout.write(s.canonicalStageClaimHandoff ? "1" : "0")' "$CLAIM_SUMMARY_FILE")"
   if [ "$V3_STAGE_CONTEXT" = "1" ]; then
     STAGE_CLAIM_ID="$(node -e 'const fs=require("fs"); const s=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); process.stdout.write(String(s.canonicalStageClaimHandoff.context.claim.claimId))' "$CLAIM_SUMMARY_FILE")"
+    if ! [[ "$STAGE_CLAIM_ID" =~ ^[1-9][0-9]*$ ]]; then
+      echo "V3_STAGE_CLAIM_ID_INVALID" >&2
+      exit 1
+    fi
     STAGE_EXECUTION_DIR="$WORKDIR/.setfarm/stage-executions/claim-$STAGE_CLAIM_ID"
     STAGE_EXECUTION_CONTEXT_FILE="$STAGE_EXECUTION_DIR/stage-execution-context.json"
     STAGE_INSTRUCTION_FILE="$STAGE_EXECUTION_DIR/stage-instruction.md"

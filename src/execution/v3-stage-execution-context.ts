@@ -58,6 +58,7 @@ const V3StageExecutionContextShapeV1Schema = z.object({
   workdir: AbsolutePathSchema,
   claim: z.object({
     claimId: z.number().int().positive(),
+    claimGeneration: z.number().int().nonnegative().optional(),
     claimAgentId: BoundedIdentitySchema,
     runtimeAgentId: BoundedIdentitySchema,
     issuedAt: z.string().datetime({ offset: true }),
@@ -194,6 +195,9 @@ export function createV3StageClaimHandoffV1(input: Readonly<{
     workdir,
     claim: {
       claimId: envelope.claimId,
+      ...(envelope.claimGeneration !== undefined
+        ? { claimGeneration: envelope.claimGeneration }
+        : {}),
       claimAgentId: envelope.claimAgentId,
       runtimeAgentId: envelope.runtimeAgentId,
       issuedAt: envelope.issuedAt,

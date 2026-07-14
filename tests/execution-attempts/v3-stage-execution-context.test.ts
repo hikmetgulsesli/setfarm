@@ -17,6 +17,7 @@ function envelope(overrides: Partial<ClaimEnvelopeV1> = {}): ClaimEnvelopeV1 {
     workflowStepId: "plan",
     runId: "run-stage-1",
     claimId: 41,
+    claimGeneration: 3,
     claimAgentId: "feature-dev_planner",
     runtimeAgentId: "feature-dev_planner",
     workdir: "/tmp/setfarm-stage-workdir",
@@ -46,6 +47,7 @@ describe("v3 stage execution context", () => {
     assert.equal(handoff.context.schema, "setfarm.v3-stage-execution-context.v1");
     assert.equal(handoff.context.workflowStepId, "plan");
     assert.equal(handoff.context.claim.claimId, 41);
+    assert.equal(handoff.context.claim.claimGeneration, 3);
     assert.equal(
       handoff.context.instruction.path,
       "/tmp/setfarm-stage-workdir/.setfarm/stage-executions/claim-41/stage-instruction.md",
