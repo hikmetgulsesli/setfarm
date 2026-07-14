@@ -64,6 +64,134 @@ describe("spawner prompt bootstrap", () => {
     assert.match(prompt, /step complete "\$STEP_ID" --claim-file '\/tmp\/claim-feature-dev_developer-spawner-test\.json' --file '\/tmp\/setfarm-output-feature-dev_developer-spawner-test\.txt'/);
   });
 
+  it("hands every v3 non-implementation role one hash-bound stage context and exact instruction artifact", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-v3-stage-context-"));
+    try {
+      const workdir = path.join(tmp, "stage-workdir");
+      fs.mkdirSync(workdir, { recursive: true });
+      const claimFile = path.join(tmp, "claim.json");
+      const claimSummaryFile = path.join(tmp, "claim-summary.json");
+      const outputFile = path.join(tmp, "output.txt");
+      const bootstrapFile = path.join(tmp, "bootstrap.sh");
+      const instruction = [
+        "PLAN v3 - typed ProductSpec proposal",
+        "",
+        "## Exact task",
+        "Build a status utility at /status.",
+        "",
+        "## Setfarm-owned requirement ledger",
+        "```task-requirement-ledger-v1",
+        '{"schema":"setfarm.task-requirement-ledger.v1","requirements":[]}',
+        "```",
+        "",
+        "## Success output",
+        "STATUS: done",
+        "PRD:",
+        "```product-spec-v1",
+        "{ ... }",
+        "```",
+        "",
+        "## Large exact contract fixture",
+        "This section mirrors the 56 KB PLAN authority observed in canary #2018.",
+        "x".repeat(55_000),
+      ].join("\n");
+      const claimEnvelope = {
+        schema: "setfarm.claim-envelope.v1",
+        protocol: "v3",
+        issuedAt: "2026-07-15T00:00:00.000Z",
+        stepId: "step-plan-v3",
+        workflowStepId: "plan",
+        runId: "run-plan-v3",
+        claimId: 77,
+        claimAgentId: "feature-dev_planner",
+        runtimeAgentId: "feature-dev_planner",
+        workdir,
+        repo: workdir,
+        input: instruction,
+      } as const;
+      fs.writeFileSync(claimFile, `${JSON.stringify(claimEnvelope)}\n`);
+      const summary = buildClaimSummary({
+        wfId: "feature-dev",
+        role: "planner",
+        claimFile,
+        outputFile,
+        bootstrapFile,
+        stepId: "step-plan-v3",
+        runId: "run-plan-v3",
+        workdir,
+        repo: workdir,
+        claimEnvelope,
+        input: instruction,
+      });
+      assert.throws(() => buildClaimSummary({
+        wfId: "feature-dev",
+        role: "planner",
+        claimFile,
+        outputFile,
+        bootstrapFile,
+        stepId: "step-plan-v3",
+        runId: "run-plan-v3",
+        workdir,
+        repo: workdir,
+        claimEnvelope,
+        input: `${instruction}\nDRIFT`,
+      }), /V3_STAGE_CONTEXT_INSTRUCTION_MISMATCH/);
+      fs.writeFileSync(claimSummaryFile, `${JSON.stringify(summary, null, 2)}\n`);
+      fs.writeFileSync(bootstrapFile, buildResolvedClaimBootstrapScript({
+        claimFile,
+        claimSummaryFile,
+        outputFile,
+        stepId: "step-plan-v3",
+        workdir,
+        taskPreview: instruction.slice(0, 1200),
+      }), { mode: 0o700 });
+
+      const stageHandoff = summary.canonicalStageClaimHandoff as any;
+      assert.equal(summary.protocol, "v3");
+      assert.equal(stageHandoff.schema, "setfarm.v3-stage-claim-handoff.v1");
+      assert.equal(stageHandoff.context.schema, "setfarm.v3-stage-execution-context.v1");
+      assert.equal(stageHandoff.context.workflowStepId, "plan");
+      assert.equal(stageHandoff.instructionContent, instruction);
+
+      const bootstrapOutput = execFileSync("bash", [bootstrapFile], {
+        cwd: workdir,
+        encoding: "utf8",
+        timeout: 10_000,
+      });
+      const stageExecutionDir = path.join(workdir, ".setfarm", "stage-executions", "claim-77");
+      const stageContextFile = path.join(stageExecutionDir, "stage-execution-context.json");
+      const stageInstructionFile = path.join(stageExecutionDir, "stage-instruction.md");
+      assert.match(bootstrapOutput, new RegExp(`STAGE_EXECUTION_CONTEXT_FILE=${stageContextFile.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+      assert.match(bootstrapOutput, new RegExp(`STAGE_INSTRUCTION_FILE=${stageInstructionFile.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+      assert.match(bootstrapOutput, /CANONICAL_STAGE_INSTRUCTION=hash-bound stage artifact ready/);
+      assert.doesNotMatch(bootstrapOutput, /IMPLEMENT_CONTEXT_FILE=/);
+      assert.doesNotMatch(bootstrapOutput, /IMPLEMENT_EVIDENCE_SEEDED=/);
+      assert.equal(fs.readFileSync(stageInstructionFile, "utf8"), instruction);
+      assert.deepEqual(JSON.parse(fs.readFileSync(stageContextFile, "utf8")), stageHandoff.context);
+      assert.equal(fs.existsSync(path.join(workdir, ".setfarm", "implement-context.json")), false);
+      assert.equal(fs.existsSync(path.join(workdir, ".setfarm", "implement")), false);
+
+      const prompt = buildPreclaimedPrompt({
+        wfId: "feature-dev",
+        role: "planner",
+        protocol: "v3",
+        claimFile,
+        claimSummaryFile,
+        outputFile,
+        bootstrapFile,
+      });
+      assert.match(prompt, /Product Compiler v3 stage claim ready for feature-dev\/planner/);
+      assert.match(prompt, /read the exact instruction\.path it binds/);
+      assert.match(prompt, /sole task, role, output, and completion authority/);
+      assert.match(prompt, /Do not infer product requirements from WORKDIR, old projects/);
+      assert.doesNotMatch(prompt, /The project planning, design, and story approval gates already happened/);
+      assert.doesNotMatch(prompt, /normal implement loop/);
+      assert.doesNotMatch(prompt, /IMPLEMENT_CONTEXT_FILE/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("bootstrap script resolves workdir and step id without shell syntax hazards", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-bootstrap-"));
     try {
