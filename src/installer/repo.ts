@@ -5,8 +5,10 @@
  * Each function wraps a single query call — no business logic.
  */
 
-import { pgGet, pgQuery, pgRun, pgBegin, now } from "../db-pg.js";
+import { getSql, pgGet, pgQuery, pgRun, pgBegin, now } from "../db-pg.js";
 import { logger } from "../lib/logger.js";
+import { transitionRunToTerminal } from "../execution/run-terminal-transition.js";
+import { requestRunTermination } from "../execution/run-termination.js";
 import { OPTIONAL_TEMPLATE_VARS } from "./constants.js";
 
 
@@ -48,53 +50,41 @@ export async function updateRunContext(runId: string, context: Record<string, st
 }
 
 /**
- * Fail a run. When `terminal` is true the failure is marked in runs.meta so
- * medic's resume_run action skips it. Wave 13 Bug J-2 (run #344 postmortem):
+ * Request a failed run terminal transition. When `terminal` is true the intent
+ * is carried in the durable request and written to runs.meta only after proven
+ * runtime drain, so medic's resume_run action skips it. Wave 13 Bug J-2 (run #344 postmortem):
  * previously any failed run — including intentional merge-queue aborts and
  * retry-exhausted guards — could be revived by medic, which then re-advanced
  * the pipeline past a dead implement step into verify/security-gate/qa-test.
  * Intentional callers (step-ops.ts direct-merge failure paths, retry exhaust,
  * missing-context guards) must pass terminal=true so the failure sticks.
  */
-export async function failRun(runId: string, terminal = false): Promise<void> {
-  await pgRun("UPDATE runs SET status = 'failed', updated_at = $1 WHERE id = $2",
-    [now(), runId]);
-  if (terminal) {
-    await pgBegin(async (sql) => {
-      await sql`
-        UPDATE stories
-        SET status = 'failed',
-            claimed_by = NULL,
-            claimed_at = NULL,
-            output = COALESCE(NULLIF(output, ''), 'RUN_TERMINAL_FAILURE: run failed before the active story completed.'),
-            updated_at = ${now()}
-        WHERE run_id = ${runId}
-          AND status = 'running'
-      `;
-      await sql`
-        UPDATE claim_log
-        SET outcome = 'failed',
-            abandoned_at = COALESCE(abandoned_at, NOW()),
-            duration_ms = LEAST(CAST(EXTRACT(EPOCH FROM (NOW() - claimed_at::timestamptz)) * 1000 AS BIGINT), 2147483647)::INTEGER,
-            diagnostic = COALESCE(NULLIF(diagnostic, ''), 'RUN_TERMINAL_FAILURE: run failed while claim was open.')
-        WHERE run_id = ${runId}
-          AND outcome IS NULL
-      `;
-    });
+export async function failRun(runId: string, terminal = false, diagnostic?: string): Promise<void> {
+  const requested = await requestRunTermination(getSql(), {
+    runId,
+    targetStatus: "failed",
+    requestedBy: "setfarm.installer.fail-run",
+    diagnostic: diagnostic || (terminal
+      ? "RUN_TERMINAL_FAILURE: run failed through the canonical lifecycle owner."
+      : "RUN_FAILED: recoverable run failure closed through the canonical lifecycle owner."),
+    evidence: { source: "installer.repo.failRun", terminalFailure: terminal },
+  });
+  if (requested.status !== "already_terminal") {
     try {
-      const row = await pgGet<{ meta: string | null }>("SELECT meta FROM runs WHERE id = $1", [runId]);
-      const meta = row?.meta ? JSON.parse(row.meta) : {};
-      meta.terminal_failure = true;
-      meta.terminal_marked_at = now();
-      await pgRun("UPDATE runs SET meta = $1 WHERE id = $2", [JSON.stringify(meta), runId]);
-    } catch (e) {
-      logger.warn(`[failRun] Could not persist terminal_failure flag for ${runId}: ${String(e)}`);
+      await pgRun("SELECT pg_notify($1, $2)", [
+        "run_termination_requested",
+        JSON.stringify({ runId, terminationRequestId: requested.request.requestId }),
+      ]);
+    } catch {
+      // Wake-up only; startup and polling recover the durable request.
     }
+  }
+  if (terminal) {
     await recordTerminalPlatformSelfHealPlanFromRun(runId);
   }
   try {
     const { refreshRunContractSafe } = await import("./contract-ledger.js");
-    await refreshRunContractSafe(runId, "run.failed");
+    await refreshRunContractSafe(runId, "run.fail_requested");
   } catch (e) {
     logger.warn(`[failRun] Contract refresh failed for ${runId}: ${String(e)}`);
   }
@@ -128,8 +118,11 @@ async function recordTerminalPlatformSelfHealPlanFromRun(runId: string): Promise
 }
 
 export async function completeRun(runId: string): Promise<void> {
-  await pgRun("UPDATE runs SET status = 'completed', updated_at = $1 WHERE id = $2",
-    [now(), runId]);
+  await transitionRunToTerminal(getSql(), {
+    runId,
+    status: "completed",
+    diagnostic: "Pipeline completed with no open claim or attempt owners.",
+  });
   try {
     const { refreshRunContractSafe } = await import("./contract-ledger.js");
     await refreshRunContractSafe(runId, "run.completed");
@@ -220,10 +213,22 @@ export async function claimNextStory(runId: string, agentId: string, eligibleSto
     // Otherwise fall back to first pending story by index.
     const query = eligibleStoryId
       ? `SELECT id, story_id, title, story_index, output, retry_count, max_retries, abandoned_count, depends_on, scope_files, shared_files, scope_description, file_skeletons, story_branch, pr_url
-         FROM stories WHERE run_id = $1 AND id = $2 AND status = 'pending'
+         FROM stories st WHERE run_id = $1 AND id = $2 AND status = 'pending'
+           AND NOT EXISTS (
+             SELECT 1 FROM claim_log cl
+              WHERE cl.run_id = st.run_id
+                AND cl.story_id = st.story_id
+                AND cl.outcome IS NULL
+           )
          FOR UPDATE SKIP LOCKED`
       : `SELECT id, story_id, title, story_index, output, retry_count, max_retries, abandoned_count, depends_on, scope_files, shared_files, scope_description, file_skeletons, story_branch, pr_url
-         FROM stories WHERE run_id = $1 AND status = 'pending'
+         FROM stories st WHERE run_id = $1 AND status = 'pending'
+           AND NOT EXISTS (
+             SELECT 1 FROM claim_log cl
+              WHERE cl.run_id = st.run_id
+                AND cl.story_id = st.story_id
+                AND cl.outcome IS NULL
+           )
          ORDER BY CASE WHEN story_id LIKE 'QA-FIX-%' THEN 0 ELSE 1 END, story_index ASC LIMIT 1 FOR UPDATE SKIP LOCKED`;
     const params = eligibleStoryId ? [runId, eligibleStoryId] : [runId];
     const rows = await sql.unsafe(query, params);
@@ -287,29 +292,6 @@ export async function setStepStatusConditional(stepId: string, newStatus: string
   const result = await pgRun("UPDATE steps SET status = $1, updated_at = $2 WHERE id = $3 AND status = $4",
     [newStatus, now(), stepId, requiredStatus]);
   return result.changes;
-}
-
-export async function failStepWithOutput(stepId: string, output: string): Promise<void> {
-  const step = await pgGet<{ run_id: string; step_id: string }>(
-    "SELECT run_id, step_id FROM steps WHERE id = $1 LIMIT 1",
-    [stepId],
-  );
-  await pgBegin(async (sql) => {
-    await sql`UPDATE steps SET status = 'failed', output = ${output}, updated_at = ${now()} WHERE id = ${stepId}`;
-    if (step) {
-      await sql`
-        UPDATE claim_log
-        SET outcome = 'failed',
-            abandoned_at = NOW(),
-            duration_ms = LEAST(CAST(EXTRACT(EPOCH FROM (NOW() - claimed_at::timestamptz)) * 1000 AS BIGINT), 2147483647)::INTEGER,
-            diagnostic = ${output.slice(0, 1000)}
-        WHERE run_id = ${step.run_id}
-          AND step_id = ${step.step_id}
-          AND story_id IS NULL
-          AND outcome IS NULL
-      `;
-    }
-  });
 }
 
 export async function clearStepStory(stepId: string, output: string): Promise<void> {

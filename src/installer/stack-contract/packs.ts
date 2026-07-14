@@ -309,6 +309,7 @@ export const STACK_PACKS: Record<StackPackId, StackPack> = {
       dev: "npm run dev",
       build: "npm run build",
       test: "npm test",
+      preview: "npm run start",
       smoke: "npm run build",
     },
     fileContract: {
@@ -556,6 +557,7 @@ export const STACK_PACKS: Record<StackPackId, StackPack> = {
       dev: "npm run dev",
       build: "npm run build",
       test: "npm test",
+      preview: "npm run start",
       smoke: "npm run build",
     },
     fileContract: {
@@ -578,7 +580,7 @@ export const STACK_PACKS: Record<StackPackId, StackPack> = {
       tests: ["npm test when present"],
     },
     requiredFiles: ["package.json"],
-    artifactChecks: ["build command exit 0"],
+    artifactChecks: ["dist/ exists after build", "build command exit 0"],
     targetResolutionRules: NODE_API_TARGET_RULES,
     mockInjectionPolicy: { fixtureRoot: "src/__fixtures__", bootstrapFile: "src/test/bridge.ts", productionIsolation: "test_only" },
     dataAccessPolicy: { defaultClientState: "none", defaultServerState: "Express route/service/repository", allowedLibraries: ["zod"] },

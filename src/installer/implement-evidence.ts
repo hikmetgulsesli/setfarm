@@ -89,7 +89,7 @@ function isExecutableInteractionRequest(value: Record<string, any>): boolean {
   return !!action || !!actionId;
 }
 
-const SUPPORTED_INTERACTION_ACTIONS = new Set(["click", "fill", "press", "wait", "navigate", "snapshot"]);
+const SUPPORTED_INTERACTION_ACTIONS = new Set(["click", "fill", "press", "select", "wait", "navigate", "snapshot", "invoke", "reset"]);
 const SNAPSHOT_ALIAS_ACTIONS = new Set(["read", "inspect", "observe"]);
 
 function isSnapshotAliasInteraction(action: string, target: string, valueText = ""): boolean {
@@ -107,20 +107,32 @@ function interactionActionIssue(value: Record<string, any>, index: number): Arti
   if (action && !SUPPORTED_INTERACTION_ACTIONS.has(action) && !isSnapshotAliasInteraction(action, target, valueText)) {
     return {
       code: "IMPLEMENT_VERIFICATION_REQUEST_INTERACTIONS_INVALID",
-      message: `request.interactionRequests[${index}].action must be one of click, fill, press, wait, navigate, or snapshot. For read/inspect requests against window.app, DOM, or document state, use action:"snapshot". Use actionId without a custom action, or use action:"click" with a data-action-id selector.`,
+      message: `request.interactionRequests[${index}].action must be one of click, fill, press, select, wait, navigate, snapshot, sealed invoke, or sealed reset. For read/inspect requests against window.app, DOM, or document state, use action:"snapshot". Use actionId without a custom action, or use action:"click" with a data-action-id selector.`,
     };
   }
   if (actionId && !action) return null;
-  if (["click", "fill", "press"].includes(action) && !target && !actionId) {
+  if (["click", "fill", "press", "select"].includes(action) && !target && !actionId) {
     return {
       code: "IMPLEMENT_VERIFICATION_REQUEST_INTERACTIONS_INVALID",
       message: `request.interactionRequests[${index}] ${action} actions must include target or actionId.`,
+    };
+  }
+  if (action === "select" && !valueText) {
+    return {
+      code: "IMPLEMENT_VERIFICATION_REQUEST_INTERACTIONS_INVALID",
+      message: `request.interactionRequests[${index}] select actions must include an exact option value.`,
     };
   }
   if (action === "navigate" && !valueText) {
     return {
       code: "IMPLEMENT_VERIFICATION_REQUEST_INTERACTIONS_INVALID",
       message: `request.interactionRequests[${index}] navigate actions must include value.`,
+    };
+  }
+  if (action === "invoke" && (!/^ACT_[A-Z0-9]+(?:_[A-Z0-9]+)*$/.test(target) || !["action", "reload"].includes(valueText))) {
+    return {
+      code: "IMPLEMENT_VERIFICATION_REQUEST_INTERACTIONS_INVALID",
+      message: `request.interactionRequests[${index}] invoke actions require an exact ACT_ target and action/reload phase from the sealed evidence plan.`,
     };
   }
   return null;

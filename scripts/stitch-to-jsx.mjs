@@ -1352,6 +1352,24 @@ function semanticActionRef(attrs) {
   return /^ACT_[A-Z0-9]+(?:_[A-Z0-9]+)*$/.test(value) ? value : "";
 }
 
+function semanticActionInputs(attrs) {
+  const value = attrValue(attrs, "data-action-input");
+  if (!value) return [];
+  const seen = new Set();
+  return value
+    .split(/[;,\s]+/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .flatMap((item) => {
+      const match = item.match(/^(ACT_[A-Z0-9]+(?:_[A-Z0-9]+)*)\.([A-Za-z][A-Za-z0-9_]*)$/);
+      if (!match) return [];
+      const key = `${match[1]}\0${match[2]}`;
+      if (seen.has(key)) return [];
+      seen.add(key);
+      return [{ actionRef: match[1], inputField: match[2] }];
+    });
+}
+
 function escapeHtmlAttr(value) {
   return String(value || "")
     .replace(/&/g, "&amp;")
@@ -1362,15 +1380,20 @@ function escapeHtmlAttr(value) {
 
 function annotateInteractiveElements(html) {
   const actions = [];
+  const valueControls = [];
   let buttonIndex = 0;
   let linkIndex = 0;
+  let inputIndex = 0;
+  let textareaIndex = 0;
+  let selectIndex = 0;
   const withButtons = String(html || "").replace(/<button\b([^>]*)>([\s\S]*?)<\/button>/gi, (match, attrs, inner) => {
     const index = buttonIndex++;
     const label = labelFromInteractive(attrs, inner, `Button ${index + 1}`);
     const base = slugifyActionId(label, "button");
     const id = uniqueActionId(actions, base, index);
     const actionRef = semanticActionRef(attrs);
-    actions.push({ id, kind: "button", label, index, ...(actionRef ? { actionRef } : {}) });
+    const inputBindings = semanticActionInputs(attrs);
+    actions.push({ id, kind: "button", label, index, ...(actionRef ? { actionRef } : {}), ...(inputBindings.length ? { inputBindings } : {}) });
 
     let cleanAttrs = String(attrs || "")
       .replace(/\sdata-action-id=(?:"[^"]*"|'[^']*')/gi, "")
@@ -1390,7 +1413,8 @@ function annotateInteractiveElements(html) {
     const base = slugifyActionId(label, "link");
     const id = uniqueActionId(actions, base, index);
     const actionRef = semanticActionRef(attrs);
-    actions.push({ id, kind: "link", label, href, index, ...(actionRef ? { actionRef } : {}) });
+    const inputBindings = semanticActionInputs(attrs);
+    actions.push({ id, kind: "link", label, href, index, ...(actionRef ? { actionRef } : {}), ...(inputBindings.length ? { inputBindings } : {}) });
 
     const cleanAttrs = String(attrs || "")
       .replace(/\sdata-action-id=(?:"[^"]*"|'[^']*')/gi, "")
@@ -1402,7 +1426,42 @@ function annotateInteractiveElements(html) {
 
     return `<a${accessibleAttrs} data-action-id="${id}" data-setfarm-link-action="${id}">${inner}</a>`;
   });
-  return { html: annotated, actions };
+  const annotateValueTag = (tagName, attrs, fallback, index) => {
+    const label = attrValue(attrs, "aria-label")
+      || attrValue(attrs, "name")
+      || attrValue(attrs, "placeholder")
+      || attrValue(attrs, "id")
+      || fallback;
+    const actionRef = semanticActionRef(attrs);
+    const inputBindings = semanticActionInputs(attrs);
+    const cleanAttrs = String(attrs || "")
+      .replace(/\sdata-action-id=(?:"[^"]*"|'[^']*')/gi, "")
+      .replace(/\sdata-control-id=(?:"[^"]*"|'[^']*')/gi, "")
+      .replace(/\sonchange=(?:"[^"]*"|'[^']*')/gi, "")
+      .replace(/\sonChange=\{[^}]*\}/g, "");
+    if (actionRef) {
+      const id = uniqueActionId(actions, slugifyActionId(label, tagName), actions.length);
+      actions.push({ id, kind: tagName, label, index, actionRef, ...(inputBindings.length ? { inputBindings } : {}) });
+      return `${cleanAttrs} data-action-id="${id}" onChange={() => actions?.["${id}"]?.()}`;
+    }
+    if (inputBindings.length === 0) return String(attrs || "");
+    const id = uniqueActionId([...actions, ...valueControls], slugifyActionId(label, tagName), valueControls.length);
+    valueControls.push({ id, kind: tagName, label, index, inputBindings });
+    return `${cleanAttrs} data-control-id="${id}"`;
+  };
+  const withInputs = annotated.replace(/<input\b([^>]*)>/gi, (_match, attrs) => {
+    const index = inputIndex++;
+    return `<input${annotateValueTag("input", attrs, `Input ${index + 1}`, index)}>`;
+  });
+  const withTextareas = withInputs.replace(/<textarea\b([^>]*)>/gi, (_match, attrs) => {
+    const index = textareaIndex++;
+    return `<textarea${annotateValueTag("textarea", attrs, `Textarea ${index + 1}`, index)}>`;
+  });
+  const withSelects = withTextareas.replace(/<select\b([^>]*)>/gi, (_match, attrs) => {
+    const index = selectIndex++;
+    return `<select${annotateValueTag("select", attrs, `Select ${index + 1}`, index)}>`;
+  });
+  return { html: withSelects, actions, valueControls };
 }
 
 function restoreGeneratedLinkActionHandlers(jsx) {
@@ -1442,7 +1501,7 @@ for (const screen of manifest) {
   const lucideImports = new Set();
   const renderableBody = stripNonRenderedHtmlBlocks(body);
   const classNormalizedBody = normalizeDesignClassAttributes(renderableBody);
-  const { html: interactiveBody, actions } = annotateInteractiveElements(classNormalizedBody);
+  const { html: interactiveBody, actions, valueControls } = annotateInteractiveElements(classNormalizedBody);
   const sourceLocator = path.relative(repoPath, htmlFile).split(path.sep).join("/");
   const indexedActions = actions.map((action) => action.actionRef ? {
     ...action,
@@ -1451,6 +1510,13 @@ for (const screen of manifest) {
     sourceLocator,
     selector: `[data-action-id="${action.id}"]`,
   } : action);
+  const indexedValueControls = valueControls.map((control) => ({
+    ...control,
+    generatedLocalId: control.id,
+    semanticSource: "data-action-input",
+    sourceLocator,
+    selector: `[data-control-id="${control.id}"]`,
+  }));
   const normalizedBody = replaceMaterialSymbolSpans(interactiveBody, lucideImports, unknownMaterialIcons);
   collectClassTokens(normalizedBody, usedClassTokens);
   const jsx = restoreGeneratedLinkActionHandlers(htmlToJsx(normalizedBody));
@@ -1458,6 +1524,8 @@ for (const screen of manifest) {
   if (!name) { console.warn("  SKIP empty component name:", screen.title); continue; }
   const buttons = [...renderableBody.matchAll(/<button[^>]*>/gi)].length;
   const inputs = [...renderableBody.matchAll(/<input[^>]*>/gi)].length;
+  const textareas = [...renderableBody.matchAll(/<textarea[^>]*>/gi)].length;
+  const selects = [...renderableBody.matchAll(/<select[^>]*>/gi)].length;
   const links = [...renderableBody.matchAll(/<a\s[^>]*>/gi)].length;
   const actionType = actions.length > 0 ? actions.map((action) => JSON.stringify(action.id)).join(" | ") : "never";
   const needsRuntime = isGameplayScreen(screen);
@@ -1497,8 +1565,24 @@ ${jsx.split("\n").map(l => "      " + l).join("\n")}
   );
 }
 `;
+  const generatedSourceLocator = "src/screens/" + name + ".tsx";
   fs.writeFileSync(path.join(screensDir, name + ".tsx"), code);
-  screenIndex.push({ screenId: screen.screenId, title: screen.title, componentName: name, file: "src/screens/" + name + ".tsx", buttons, inputs, links, actions: indexedActions });
+  screenIndex.push({
+    screenId: screen.screenId,
+    title: screen.title,
+    componentName: name,
+    file: generatedSourceLocator,
+    buttons,
+    inputs,
+    textareas,
+    selects,
+    links,
+    actions: indexedActions,
+    controls: [...indexedActions, ...indexedValueControls].map((control) => ({
+      ...control,
+      generatedSourceLocator,
+    })),
+  });
   console.log("  OK:", screen.title, "->", name + ".tsx", "(" + buttons + "btn," + inputs + "inp," + links + "lnk)");
 }
 

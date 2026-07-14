@@ -19,6 +19,10 @@ function stepOpsSource(): string {
   return fs.readFileSync(path.join(root, "src", "installer", "step-ops.ts"), "utf-8");
 }
 
+function claimRuntimePublicationSource(): string {
+  return fs.readFileSync(path.join(root, "src", "execution", "claim-runtime-publication.ts"), "utf-8");
+}
+
 function stepAdvanceSource(): string {
   return fs.readFileSync(path.join(root, "src", "installer", "step-advance.ts"), "utf-8");
 }
@@ -127,7 +131,8 @@ function previousStepSelectionBypassSource(source: string): string {
 describe("single-step claim_log lifecycle", () => {
   it("records single-step handoff before claim-side gates and closes no-spawn exits", () => {
     const source = claimSingleStepSource();
-    const claimInsert = source.indexOf("INSERT INTO claim_log");
+    const publication = claimRuntimePublicationSource();
+    const publicationCall = source.indexOf("publishSingleClaimAndRuntime(step, agentId, runtimeIntent)");
     const transitionRecord = source.indexOf("recordStepTransition(step.id, step.run_id, \"pending\", \"running\"");
     const runningEvent = source.indexOf("event: \"step.running\"");
     const atomicHandoff = source.indexOf("recordSingleStepHandoff(\"claimSingleStep:atomic\")");
@@ -144,7 +149,10 @@ describe("single-step claim_log lifecycle", () => {
     const missingInputFailClose = source.indexOf("closeSingleStepHandoff(\"failed\"");
     const handoffReturn = source.indexOf("return {\n    found: true");
 
-    assert.notEqual(claimInsert, -1, "recordSingleStepHandoff must insert claim_log rows");
+    assert.match(publication, /publishSingleClaimRuntime[\s\S]*INSERT INTO claim_log/);
+    assert.match(publication, /INSERT INTO claim_log[\s\S]*reserveRuntimeSessionInTransaction/);
+    assert.notEqual(publicationCall, -1, "single claim must use canonical claim/runtime publication");
+    assert.doesNotMatch(source, /INSERT INTO claim_log/);
     assert.notEqual(transitionRecord, -1, "recordSingleStepHandoff must record a step transition");
     assert.notEqual(runningEvent, -1, "recordSingleStepHandoff must emit step.running");
     assert.notEqual(atomicHandoff, -1, "atomic handoff must be recorded immediately after DB claim");
@@ -159,19 +167,41 @@ describe("single-step claim_log lifecycle", () => {
     assert.ok(missingInputFailClose > missingInputGate, "missing-input failure path must close the preClaim handoff");
     assert.ok(finalHandoff < handoffReturn, "final handoff must run before handoff return");
     assert.match(source, /preClaim changed step status[\s\S]*closeSingleStepHandoff\(outcome/);
-    assert.match(source, /shouldRecordSingleStepClaim = false/);
     assert.match(source, /shouldRecordSingleStepTransition = false/);
+  });
+
+  it("propagates immutable single-step claim authority through every preclaim owner", () => {
+    const source = stepOpsSource();
+    const types = fs.readFileSync(path.join(root, "src", "installer", "steps", "types.ts"), "utf-8");
+    assert.match(types, /claimEnvelope\?: ClaimEnvelopeV1/);
+    assert.match(source, /singleStepClaimEnvelope = \{/);
+    assert.match(source, /claimId: singleStepClaimId,[\s\S]*claimAgentId: agentId,[\s\S]*runtimeAgentId: runtimeIntent\?\.runtimeAgentId \|\| agentId/);
+    assert.match(source, /claimEnvelope: singleStepClaimEnvelope/);
+    assert.match(source, /failStep\(step\.id, preClaimError, singleStepClaimEnvelope\)/);
+
+    const preclaims = [
+      "01-plan", "02-design", "03-stories", "04-setup-repo", "05-setup-build",
+      "09-qa-test", "10-final-test", "11-deploy",
+    ];
+    for (const step of preclaims) {
+      const preclaim = fs.readFileSync(path.join(root, "src", "installer", "steps", step, "preclaim.ts"), "utf-8");
+      for (const call of preclaim.matchAll(/(?:completeStep|failStep)\([\s\S]*?\);/g)) {
+        assert.match(call[0], /ctx\.claimEnvelope/, `${step} preclaim must complete or fail through exact claim authority`);
+      }
+    }
   });
 
   it("does not duplicate idempotent running single-step claims", () => {
     const source = claimSingleStepSource();
-    assert.match(source, /let shouldRecordSingleStepClaim = false/);
-    assert.match(source, /SELECT id FROM claim_log WHERE run_id = \$1 AND step_id = \$2 AND story_id IS NULL AND agent_id = \$3 AND outcome IS NULL LIMIT 1/);
+    assert.match(source, /SELECT cl\.id, rs\.session_id, rs\.owner_instance_id/);
+    assert.match(source, /LEFT JOIN runtime_sessions rs ON rs\.claim_id = cl\.id/);
+    assert.match(source, /cl\.run_id = \$1 AND cl\.step_id = \$2 AND cl\.story_id IS NULL/);
     assert.match(source, /Requeued orphaned running step/);
     assert.match(source, /NOT EXISTS \(\s*SELECT 1 FROM claim_log/);
     assert.match(source, /return \{ found: false \}/);
-    assert.doesNotMatch(source, /shouldRecordSingleStepClaim = !existingOpenClaim/);
-    assert.match(source, /shouldRecordSingleStepClaim = true/);
+    assert.match(source, /Existing runtime \$\{existingOpenClaim\.session_id\} still owns/);
+    assert.match(source, /existingOpenClaim\.session_id !== runtimeIntent\.sessionId/);
+    assert.doesNotMatch(source, /INSERT INTO claim_log/);
   });
 
   it("does not repeatedly claim verify during the PR review delay window", () => {
@@ -362,20 +392,128 @@ describe("single-step claim_log lifecycle", () => {
 
   it("closes downstream quality gate claims when routing back to implement", () => {
     const source = stepOpsSource();
+    const claimOwnerStart = source.indexOf("async function closeRoutedQualityClaimInTransaction(");
     const start = source.indexOf("export async function routeQualityFailureToImplement(");
     const end = source.indexOf("// Predicted screen file helpers", start);
     assert.notEqual(start, -1, "routeQualityFailureToImplement source not found");
     assert.notEqual(end, -1, "routeQualityFailureToImplement end marker not found");
     const routeSource = source.slice(start, end);
+    const claimOwnerSource = source.slice(claimOwnerStart, start);
 
+    const transaction = routeSource.indexOf("await pgBegin(async (sql) => {");
+    const claimUpdate = routeSource.indexOf("await closeRoutedQualityClaimInTransaction(", transaction);
+    const stateUpdate = routeSource.indexOf("UPDATE steps SET status = 'pending'", claimUpdate);
     const routeTransition = routeSource.indexOf("qualityFailure:routeToImplement");
-    const claimUpdate = routeSource.indexOf("UPDATE claim_log SET outcome = 'completed'");
     const emitEvent = routeSource.indexOf("event: \"story.retry\"");
 
-    assert.ok(claimUpdate > routeTransition, "claim_log closes after route transition is recorded");
+    assert.ok(transaction > 0, "quality routing must publish through one transaction");
+    assert.ok(claimUpdate > transaction, "claim capability must close inside the route transaction");
+    assert.ok(stateUpdate > claimUpdate, "old claim must close before retryable state is exposed");
+    assert.ok(routeTransition > stateUpdate, "transition audit is recorded after commit");
     assert.ok(claimUpdate < emitEvent, "claim_log closes before route event returns control to spawner");
     assert.match(routeSource, /quality failure routed to \$\{fixStoryId\}/);
-    assert.match(routeSource, /WHERE run_id = \$2 AND step_id = \$3 AND story_id IS NULL AND outcome IS NULL/);
+    assert.match(claimOwnerSource, /closeExactSingleStepClaimInTransaction/);
+    assert.match(claimOwnerSource, /r\.protocol = 'legacy'/);
+  });
+
+  it("forks v3 QA and final recovery before every legacy prose classifier and QA-FIX path", () => {
+    const source = stepOpsSource();
+    const routeStart = source.indexOf("export async function routeQualityFailureToImplement(");
+    const routeEnd = source.indexOf("// Predicted screen file helpers", routeStart);
+    assert.notEqual(routeStart, -1, "routeQualityFailureToImplement source not found");
+    assert.notEqual(routeEnd, -1, "routeQualityFailureToImplement end marker not found");
+    const routeSource = source.slice(routeStart, routeEnd);
+
+    const protocolFork = routeSource.indexOf('claimEnvelope?.protocol === "v3"');
+    const canonicalMatrix = routeSource.indexOf("createPostgresV3DownstreamEvidenceRouter", protocolFork);
+    const canonicalCommit = routeSource.indexOf("commitV3DownstreamEvidenceDecision", canonicalMatrix);
+    const legacyLoopLookup = routeSource.indexOf("const loopStep = await pgGet", protocolFork);
+    const legacyFailureProse = routeSource.indexOf("const failure = output.slice", protocolFork);
+    const legacyFingerprint = routeSource.indexOf("qualityFailureFingerprint(failure)", protocolFork);
+    const legacyQaFixLookup = routeSource.indexOf("story_id LIKE 'QA-FIX-%'", protocolFork);
+
+    assert.ok(protocolFork > 0, "v3 protocol fork must be explicit");
+    assert.ok(canonicalMatrix > protocolFork, "v3 must execute the canonical downstream evidence matrix");
+    assert.ok(canonicalCommit > canonicalMatrix, "v3 must durably commit the typed matrix decision");
+    for (const [label, legacyBoundary] of [
+      ["loop lookup", legacyLoopLookup],
+      ["failure prose", legacyFailureProse],
+      ["failure fingerprint", legacyFingerprint],
+      ["QA-FIX lookup", legacyQaFixLookup],
+    ] as const) {
+      assert.ok(legacyBoundary > canonicalCommit, `v3 canonical return must precede legacy ${label}`);
+    }
+    assert.match(routeSource.slice(protocolFork, legacyLoopLookup), /return true;/);
+
+    const statusStart = source.indexOf("const isV3DownstreamCompletion =");
+    const statusEnd = source.indexOf("// FIX 6: Status is ephemeral", statusStart);
+    assert.notEqual(statusStart, -1, "v3 downstream status boundary not found");
+    assert.notEqual(statusEnd, -1, "status boundary end not found");
+    const statusSource = source.slice(statusStart, statusEnd);
+    const failBranch = statusSource.indexOf('statusVal === "fail"');
+    const failCanonicalRoute = statusSource.indexOf("routeQualityFailureToImplement(step, output", failBranch);
+    const failStep = statusSource.indexOf("await failStep(stepId", failCanonicalRoute);
+    const retryBranch = statusSource.indexOf('if (statusVal === "retry")');
+    const retryCanonicalRoute = statusSource.indexOf("routeQualityFailureToImplement(step, output", retryBranch);
+    const retryInfraClassifier = statusSource.indexOf("isSmokeInfrastructureFailure(output)", retryCanonicalRoute);
+
+    assert.match(statusSource, /step\.step_id === "qa-test" && !isV3DownstreamCompletion/);
+    assert.ok(failCanonicalRoute > failBranch && failCanonicalRoute < failStep, "v3 failure must route canonically before failStep");
+    assert.ok(retryCanonicalRoute > retryBranch && retryCanonicalRoute < retryInfraClassifier, "v3 retry must route canonically before prose infra classification");
+
+    const smokeStart = source.indexOf("if (smokeFailure) {");
+    const smokeEnd = source.indexOf("if (!smokeResult)", smokeStart);
+    assert.notEqual(smokeStart, -1, "final smoke failure boundary not found");
+    assert.notEqual(smokeEnd, -1, "final smoke failure end not found");
+    const smokeSource = source.slice(smokeStart, smokeEnd);
+    const smokeCanonicalRoute = smokeSource.indexOf("isV3DownstreamCompletion");
+    const smokeInfraClassifier = smokeSource.indexOf("isSmokeInfrastructureFailure(smokeFailure)");
+    const smokeLegacyRoute = smokeSource.lastIndexOf("routeQualityFailureToImplement(");
+    assert.ok(smokeCanonicalRoute >= 0 && smokeCanonicalRoute < smokeInfraClassifier, "v3 final smoke failure must bypass the prose infra classifier");
+    assert.ok(smokeInfraClassifier < smokeLegacyRoute, "legacy smoke classifier and QA-FIX route must remain below the v3 fork");
+  });
+
+  it("publishes exact v3 final acceptance evidence before completing final-test", () => {
+    const source = stepOpsSource();
+    const acceptanceStart = source.indexOf("let acceptedCandidateHash: string | undefined;");
+    const completionStart = source.indexOf("// Single step: mark done", acceptanceStart);
+    assert.notEqual(acceptanceStart, -1, "v3 final acceptance boundary not found");
+    assert.notEqual(completionStart, -1, "single-step completion boundary not found");
+    const acceptanceSource = source.slice(acceptanceStart, completionStart);
+
+    const finalGuard = acceptanceSource.indexOf('step.step_id === "final-test"');
+    const preAcceptanceCleanup = acceptanceSource.indexOf('cleanupProjectEphemera(step.run_id, "pre-acceptance:final-test"', finalGuard);
+    const matrix = acceptanceSource.indexOf("createPostgresV3DownstreamEvidenceRouter", finalGuard);
+    const finalIntent = acceptanceSource.indexOf('intent: "final_acceptance"', matrix);
+    const readyFence = acceptanceSource.indexOf('route.status !== "accepted_candidate_ready"', finalIntent);
+    const candidatePublish = acceptanceSource.indexOf("createAcceptedCandidateRepository", readyFence);
+    const exactEvidenceRefs = acceptanceSource.indexOf("evidencePlanArtifactHash: story.evidencePlanArtifactHash", candidatePublish);
+
+    assert.ok(finalGuard >= 0, "final-test must have an explicit v3 acceptance fence");
+    assert.ok(preAcceptanceCleanup > finalGuard && matrix > preAcceptanceCleanup, "all repo cleanup must precede the final-source evidence matrix");
+    assert.ok(finalIntent > matrix, "final-test must rerun the canonical final-source evidence matrix");
+    assert.ok(readyFence > finalIntent && candidatePublish > readyFence, "non-passing evidence must route before candidate publication");
+    assert.ok(exactEvidenceRefs > candidatePublish, "AcceptedCandidate must bind the exact story attempt, plan and bundle refs");
+    assert.match(acceptanceSource, /return \{ advanced: false, runCompleted: false \};/);
+
+    const completionSource = source.slice(completionStart, source.indexOf("// Post-complete:", completionStart));
+    assert.match(completionSource, /completeSingleStepClaimAndState/);
+    assert.match(completionSource, /acceptedCandidateHash/);
+
+    const postCompletionSource = source.slice(completionStart, source.indexOf("return advancePipeline(step.run_id);", completionStart));
+    const immutableFence = postCompletionSource.indexOf("const immutableAcceptedCandidate =");
+    const dbOnlyRefresh = postCompletionSource.indexOf("{ writeRepoFiles: false }", immutableFence);
+    const cleanupGuard = postCompletionSource.indexOf("if (!immutableAcceptedCandidate)", dbOnlyRefresh);
+    const postAcceptanceCleanup = postCompletionSource.indexOf("cleanupProjectEphemera(step.run_id", cleanupGuard);
+    assert.ok(immutableFence > 0 && dbOnlyRefresh > immutableFence, "accepted final completion must refresh MC state without writing repo contract files");
+    assert.ok(cleanupGuard > dbOnlyRefresh && postAcceptanceCleanup > cleanupGuard, "post-step repo cleanup must be impossible after candidate publication");
+
+    const resumeStart = source.indexOf("export async function resumeRuntimeCompletionEffects(");
+    const resumeEnd = source.indexOf("/**\n * Handle supervise-each completion", resumeStart);
+    const resumeSource = source.slice(resumeStart, resumeEnd);
+    assert.match(resumeSource, /acceptedCandidateHashFromCompletionPlan\(input\.completionPlan\)/);
+    assert.match(resumeSource, /acceptedCandidateHash \? \{ writeRepoFiles: false \} : \{\}/);
+    assert.match(resumeSource, /if \(!acceptedCandidateHash\) \{[\s\S]*cleanupProjectEphemera/);
   });
 
   it("persists actionable QA-FIX context when reusing an active fix story", () => {
@@ -437,7 +575,7 @@ describe("single-step claim_log lifecycle", () => {
 
     const pendingRunningQuery = helperSource.indexOf("status IN ('pending','running','done','verified','skipped')");
     const duplicateGuard = helperSource.indexOf('retryStory.status === "pending" || retryStory.status === "running"');
-    const terminalFail = helperSource.indexOf("await failRun(step.run_id, true)", duplicateGuard);
+    const terminalFail = helperSource.indexOf("await failRun(step.run_id, true,", duplicateGuard);
 
     assert.ok(pendingRunningQuery > 0, "original story lookup must include already-routed pending/running stories");
     assert.ok(duplicateGuard > pendingRunningQuery, "pending/running stories must be handled as idempotent duplicate routes");
@@ -488,17 +626,21 @@ describe("single-step claim_log lifecycle", () => {
   });
 
   it("manual resume clears stale quality failure repeat context", () => {
-    const source = cliSource();
-    const start = source.indexOf("async function clearManualResumeState(");
-    const end = source.indexOf("async function main(", start);
-    assert.notEqual(start, -1, "clearManualResumeState source not found");
-    assert.notEqual(end, -1, "clearManualResumeState end marker not found");
+    const source = fs.readFileSync(
+      path.join(root, "src", "execution", "legacy-resume-plan.ts"),
+      "utf-8",
+    );
+    const start = source.indexOf("const CONTEXT_KEYS_TO_SCRUB");
+    const end = source.indexOf("const META_KEYS_TO_SCRUB", start);
+    assert.notEqual(start, -1, "canonical resume scrub source not found");
+    assert.notEqual(end, -1, "canonical resume scrub end marker not found");
     const clearSource = source.slice(start, end);
 
     assert.match(clearSource, /quality_failure_fingerprint/);
     assert.match(clearSource, /quality_failure_repeat_count/);
     assert.match(clearSource, /post_merge_quality_regression_story_id/);
     assert.match(clearSource, /failure_route_action/);
+    assert.match(cliSource(), /executeRunOperationalAction/);
   });
 
   it("extracts downstream quality file paths for story repair scope expansion", () => {
@@ -555,7 +697,7 @@ describe("single-step claim_log lifecycle", () => {
     assert.ok(blockerGuard < qaFixLookup, "merge blockers must fail before QA-FIX lookup/creation");
     assert.match(routeSource, /VERIFY_MERGE_BLOCKER/);
     assert.match(routeSource, /do not route this to QA-FIX/);
-    assert.match(routeSource, /await failRun\(step\.run_id, true\)/);
+    assert.match(routeSource, /await failRun\(step\.run_id, true, reason\)/);
   });
 
   it("lets verify-each retry output use the story retry path instead of QA-FIX", () => {
@@ -579,7 +721,7 @@ describe("single-step claim_log lifecycle", () => {
     assert.match(helperSource, /\(loopConfig\.verifyStep \|\| "verify"\) === step\.step_id/);
     assert.match(retrySource, /verifyEachRetryHandledLater = await isVerifyEachVerifyStep\(step\)/);
     assert.match(retrySource, /if \(!verifyEachRetryHandledLater\)/);
-    assert.match(retrySource, /routeQualityFailureToImplement\(step, output, context\)/);
+    assert.match(retrySource, /routeQualityFailureToImplement\(step, output, context, completionAuthority\?\.envelope\)/);
     assert.match(unknownSource, /!\(statusVal === "retry" && verifyEachRetryHandledLater\)/);
   });
 
@@ -686,7 +828,7 @@ describe("single-step claim_log lifecycle", () => {
     const source = stepOpsSource();
     const blockerHelper = source.indexOf("function isOpenPrDeliveryBlockerContext");
     const autoComplete = source.indexOf("await autoCompleteStoriesWithPRs(step, runIdPrefix, context, null)");
-    const pendingSelection = source.indexOf("const pendingStories = await pgQuery<any>", autoComplete);
+    const pendingSelection = source.indexOf("let pendingStories: any[] = [];", autoComplete);
     assert.ok(blockerHelper >= 0, "PR delivery blocker helper must exist");
     assert.ok(autoComplete >= 0, "implement loop auto-complete point must exist");
     assert.ok(pendingSelection > autoComplete, "pending story selection must happen after auto-complete");
@@ -696,6 +838,7 @@ describe("single-step claim_log lifecycle", () => {
     assert.match(source, /AND NOT \$\{PR_EACH_DELIVERY_BLOCKED_STEP_SQL\}/);
     assert.match(source, /active_st\.status IN \('pending', 'running'\)\)/);
     assert.match(selectionPrelude, /isPrEach && isOpenPrDeliveryBlockerContext\(context\)/);
+    assert.match(selectionPrelude, /runProtocol\?\.protocol !== "v3"/);
     assert.match(selectionPrelude, /implement\.pr_each_delivery_blocker/);
     assert.match(selectionPrelude, /Blocking new story claim while verify delivery blocker is open/);
     assert.match(selectionPrelude, /return \{ found: false \}/);
@@ -704,7 +847,7 @@ describe("single-step claim_log lifecycle", () => {
   it("does not block later pr-each stories with stale PR context from a verified story", () => {
     const source = stepOpsSource();
     const autoComplete = source.indexOf("await autoCompleteStoriesWithPRs(step, runIdPrefix, context, null)");
-    const pendingSelection = source.indexOf("const pendingStories = await pgQuery<any>", autoComplete);
+    const pendingSelection = source.indexOf("let pendingStories: any[] = [];", autoComplete);
     assert.ok(autoComplete >= 0, "implement loop auto-complete point must exist");
     assert.ok(pendingSelection > autoComplete, "pending story selection must happen after PR blocker cleanup");
 
@@ -715,6 +858,7 @@ describe("single-step claim_log lifecycle", () => {
     assert.match(selectionPrelude, /blockedStory\?\.status === "verified"/);
     assert.match(selectionPrelude, /const blockedStoryId = prDeliveryBlockerStoryId\(context\)/);
     assert.match(selectionPrelude, /clearVerifiedStoryFailureContext\(context\)/);
+    assert.match(selectionPrelude, /runProtocol\?\.protocol !== "v3"/);
     assert.match(selectionPrelude, /Cleared stale PR delivery blocker for verified story/);
   });
 
@@ -913,11 +1057,14 @@ describe("single-step claim_log lifecycle", () => {
     assert.notEqual(retryStart, -1, "verify retry branch not found");
     const identifySource = handleSource.slice(identifyStart, retryStart);
 
+    const byBoundSubject = identifySource.indexOf("let verifiedStoryId = boundSubject?.storyId");
     const byPr = identifySource.indexOf("SELECT story_id FROM stories WHERE run_id = $1 AND pr_url = $2 AND status = 'done' LIMIT 1");
     const byReported = identifySource.indexOf("SELECT story_id FROM stories WHERE run_id = $1 AND story_id = $2 AND status = 'done' LIMIT 1");
     const byContext = identifySource.indexOf("Ignoring stale context current_story_id");
 
-    assert.ok(byPr >= 0, "verify should first match a reported merged PR to a done story");
+    assert.ok(byBoundSubject >= 0, "verify must prefer the immutable completion subject");
+    assert.ok(byPr > byBoundSubject, "reported PR lookup must follow an effect-bound subject");
+    assert.ok(byPr >= 0, "verify should match a reported merged PR to a done story");
     assert.ok(byReported > byPr, "reported current_story_id should be checked after PR URL");
     assert.ok(byContext > byReported, "context current_story_id should be treated as the weakest/stale source");
     assert.doesNotMatch(identifySource, /parsedOutput\["current_story_id"\] \|\| context\["current_story_id"\]/);
@@ -1014,7 +1161,7 @@ describe("single-step claim_log lifecycle", () => {
     assert.notEqual(helperEnd, -1, "routeVerifyScopeFailureToImplement source end not found");
     const helper = source.slice(helperStart, helperEnd);
     const claimStart = source.indexOf("const storyRunPrefix = step.run_id.slice(0, 8);");
-    const claimEnd = source.indexOf("// Wave 4 fix #10", claimStart);
+    const claimEnd = source.indexOf("const publication = await publishLoopClaimAndRuntime", claimStart);
     assert.notEqual(claimStart, -1, "claim story branch block not found");
     assert.notEqual(claimEnd, -1, "claim story branch block end not found");
     const claim = source.slice(claimStart, claimEnd);
@@ -1023,24 +1170,27 @@ describe("single-step claim_log lifecycle", () => {
     assert.match(helper, /SELECT id, retry_count, max_retries, pr_url, story_branch FROM stories/);
     assert.match(helper, /const prHeadBranch = retryStory\.pr_url \? getPRHeadBranch\(retryStory\.pr_url, context\["repo"\] \|\| ""\) : null/);
     assert.match(helper, /const retryStoryBranch = \(prHeadBranch \|\| retryStory\.story_branch \|\| ""\)\.trim\(\)\.toLowerCase\(\)/);
-    assert.match(helper, /story_branch = COALESCE\(NULLIF\(\$5, ''\), story_branch\)/);
+    assert.match(source, /story_branch = COALESCE\(NULLIF\(\$4, ''\), story_branch\)/);
     assert.match(claim, /const existingStoryBranch = String\(nextStory\.story_branch \|\| ""\)\.trim\(\)\.toLowerCase\(\)/);
     assert.match(claim, /existingStoryBranch \|\| `\$\{storyRunPrefix\}-\$\{nextStory\.story_id\}`/);
   });
 
-  it("invalidates stale supervisor claims when verify routes a story back to implement", () => {
+  it("recovers the exact supervisor owner when verify routes a story back to implement", () => {
     const source = stepOpsSource();
-    const helperStart = source.indexOf("async function routeVerifyScopeFailureToImplement");
+    const helperStart = source.indexOf("async function publishVerifyRetryToImplement");
     const helperEnd = source.indexOf("function getImplicitScopeFiles", helperStart);
-    assert.notEqual(helperStart, -1, "routeVerifyScopeFailureToImplement source not found");
-    assert.notEqual(helperEnd, -1, "routeVerifyScopeFailureToImplement source end not found");
+    assert.notEqual(helperStart, -1, "publishVerifyRetryToImplement source not found");
+    assert.notEqual(helperEnd, -1, "verify retry recovery source end not found");
     const helper = source.slice(helperStart, helperEnd);
 
     assert.match(helper, /const loopConfig = parseLoopConfigSafe\(loopStep\?\.loop_config \|\| "", verifyStep\.run_id\)/);
     assert.match(helper, /const superviseStepName = loopConfig\?\.superviseStep \|\| "supervise"/);
-    assert.match(helper, /UPDATE steps SET status = 'waiting', current_story_id = NULL/);
-    assert.match(helper, /UPDATE claim_log SET outcome = 'infra_retry'/);
-    assert.match(helper, /stale supervisor claim invalidated/);
+    assert.match(helper, /await pgBegin\(async \(sql\) =>/);
+    assert.match(helper, /closeUniqueSingleStepClaimForRecoveryInTransaction\(sql/);
+    assert.match(helper, /runtimeAgentId: "verify-retry-recovery-owner"/);
+    assert.match(helper, /SET status = 'waiting', current_story_id = NULL/);
+    assert.match(helper, /exact supervisor owner recovered/);
+    assert.doesNotMatch(helper, /UPDATE claim_log/);
   });
 
   it("loads story branch metadata during atomic pending story claims", () => {
@@ -1052,22 +1202,23 @@ describe("single-step claim_log lifecycle", () => {
     const helper = source.slice(start, end);
 
     assert.match(helper, /file_skeletons, story_branch, pr_url/);
-    assert.match(helper, /FROM stories WHERE run_id = \$1 AND id = \$2 AND status = 'pending'/);
-    assert.match(helper, /FROM stories WHERE run_id = \$1 AND status = 'pending'/);
+    assert.match(helper, /FROM stories st WHERE run_id = \$1 AND id = \$2 AND status = 'pending'/);
+    assert.match(helper, /FROM stories st WHERE run_id = \$1 AND status = 'pending'/);
+    assert.match(helper, /NOT EXISTS \([\s\S]*FROM claim_log cl[\s\S]*cl\.outcome IS NULL/);
   });
 
   it("fast-forwards mechanically satisfied PR review retries before developer claim", () => {
     const source = stepOpsSource();
     const helper = source.indexOf("async function fastForwardMechanicallySatisfiedPrReviewRetry");
     const call = source.indexOf("fastForwardMechanicallySatisfiedPrReviewRetry(step, nextStory, context)");
-    const reservation = source.indexOf("// ── DEVELOPER RESERVATION", call);
-    const claim = source.indexOf("const claimedStory = await claimNextStory", call);
+    const publication = source.indexOf("const publication = await publishLoopClaimAndRuntime", call);
+    const worktree = source.indexOf("let storyWorkdir = createStoryWorktree", call);
 
     assert.notEqual(helper, -1, "PR review retry fast-forward helper missing");
     assert.notEqual(call, -1, "PR review retry fast-forward call missing");
     assert.ok(call > helper, "claim path should call the helper");
-    assert.ok(reservation > call, "fast-forward must run before developer reservation");
-    assert.ok(claim > call, "fast-forward must run before atomic story claim");
+    assert.ok(publication > call, "fast-forward must run before atomic claim/runtime publication");
+    assert.ok(worktree > publication, "worktree provisioning must remain after durable publication");
     assert.match(source.slice(helper, call), /resolveMechanicallySatisfiedInlineReviewThreads/);
     assert.match(source.slice(helper, call), /mechanically_satisfied_current_thread_preclaim/);
   });
@@ -1356,8 +1507,8 @@ describe("single-step claim_log lifecycle", () => {
     const nextPendingStart = source.indexOf("export async function getNextPendingStory(");
     const claimNextStart = source.indexOf("export async function claimNextStory(");
     const claimNextEnd = source.indexOf("// Wave 14 Bug L", claimNextStart);
-    const implementSelectionStart = stepOps.indexOf("// Find next pending story with dependency check");
-    const implementSelectionEnd = stepOps.indexOf("let nextStory: any | undefined;", implementSelectionStart);
+    const implementSelectionStart = stepOps.indexOf("// Legacy/shadow keep the historical dependency/status semantics byte-for-byte.");
+    const implementSelectionEnd = stepOps.indexOf("if (!nextStory)", implementSelectionStart);
     assert.notEqual(nextPendingStart, -1, "getNextPendingStory source not found");
     assert.notEqual(claimNextStart, -1, "claimNextStory source not found");
     assert.notEqual(claimNextEnd, -1, "claimNextStory query block not found");
@@ -1371,6 +1522,8 @@ describe("single-step claim_log lifecycle", () => {
     assert.match(nextPendingSource, qaFixOrder);
     assert.match(claimNextSource, qaFixOrder);
     assert.match(implementSelectionSource, qaFixOrder);
+    assert.match(stepOps, /createV3NormalImplementationPreclaim/);
+    assert.match(stepOps, /if \(runProtocol\?\.protocol === "v3"\)/);
   });
 
   it("does not hide pending stories after manager guard abandons", () => {
@@ -1387,6 +1540,7 @@ describe("single-step claim_log lifecycle", () => {
 
   it("closes single-step failure claims by workflow step id, not step UUID", () => {
     const source = fs.readFileSync(path.join(root, "src", "installer", "step-fail.ts"), "utf-8");
+    const owner = fs.readFileSync(path.join(root, "src", "execution", "claim-attempt-transition.ts"), "utf-8");
     const singleFailureStart = source.indexOf("async function handleSingleStepFailurePG(");
     const singleFailureEnd = source.indexOf("// Post-transaction side effects", singleFailureStart);
     assert.notEqual(singleFailureStart, -1, "handleSingleStepFailurePG source not found");
@@ -1394,8 +1548,11 @@ describe("single-step claim_log lifecycle", () => {
     const singleFailureSource = source.slice(singleFailureStart, singleFailureEnd);
 
     assert.match(singleFailureSource, /const workflowStepId = step\.step_id \|\| ""/);
-    assert.match(singleFailureSource, /step_id = \$\{workflowStepId\}/);
-    assert.doesNotMatch(singleFailureSource, /claim_log[\s\S]*step_id = \$\{stepId\}/);
+    assert.match(singleFailureSource, /closeSingleStepClaimForFailure\(sql/);
+    assert.match(source, /cl\.step_id = \$4/);
+    assert.match(source, /r\.protocol = 'legacy'/);
+    assert.match(owner, /claim\.step_id !== envelope\.workflowStepId/);
+    assert.doesNotMatch(singleFailureSource, /UPDATE claim_log[\s\S]*step_id = \$\{stepId\}/);
   });
 
   it("emits workflow step ids instead of internal UUIDs for failStep terminal events", () => {
@@ -1442,7 +1599,7 @@ describe("single-step claim_log lifecycle", () => {
     assert.match(routeSource, /status = 'done'/);
     assert.match(routeSource, /formatVerifyFailureAsRetryOutput\(error\)/);
     assert.match(routeSource, /routeQualityFailureToImplement/);
-    assert.match(singleFailureSource, /routeVerifyEachFailureToImplement\(stepId, step, workflowStepId, error\)/);
+    assert.match(singleFailureSource, /routeVerifyEachFailureToImplement\(stepId, step, workflowStepId, error, claimEnvelope\)/);
   });
 
   it("does not route exhausted PR review product loops into platform self-heal", () => {
@@ -1493,22 +1650,23 @@ describe("single-step claim_log lifecycle", () => {
     assert.match(onCompleteSource, /AC_COVERAGE must use the exact current story acceptance-criteria count/);
   });
 
-  it("closes terminal failStepWithOutput claims by workflow step id", () => {
-    const source = repoSource();
-    const start = source.indexOf("export async function failStepWithOutput(");
-    const end = source.indexOf("export async function clearStepStory(", start);
-    assert.notEqual(start, -1, "failStepWithOutput source not found");
-    assert.notEqual(end, -1, "failStepWithOutput end not found");
-    const failSource = source.slice(start, end);
+  it("removes broad failStepWithOutput ownership and requests zero-story termination atomically", () => {
+    const repo = repoSource();
+    const source = stepOpsSource();
+    const start = source.indexOf("const noStoriesMsg =");
+    const end = source.indexOf("// T7: Loop step completion", start);
+    assert.equal(repo.includes("export async function failStepWithOutput("), false);
+    assert.notEqual(start, -1, "zero-story completeness guard not found");
+    assert.notEqual(end, -1, "zero-story completeness guard end not found");
+    const guard = source.slice(start, end);
 
-    assert.match(failSource, /SELECT run_id, step_id FROM steps WHERE id = \$1 LIMIT 1/);
-    assert.match(failSource, /UPDATE steps SET status = 'failed'/);
-    assert.match(failSource, /UPDATE claim_log/);
-    assert.match(failSource, /outcome = 'failed'/);
-    assert.match(failSource, /step_id = \$\{step\.step_id\}/);
-    assert.match(failSource, /story_id IS NULL/);
-    assert.match(failSource, /outcome IS NULL/);
-    assert.doesNotMatch(failSource, /claim_log[\s\S]*step_id = \$\{stepId\}/);
+    assert.match(guard, /await pgBegin\(async \(sql\) =>/);
+    assert.match(guard, /closeExactSingleStepClaimInTransaction\(sql/);
+    assert.match(guard, /closeUniqueSingleStepClaimForRecoveryInTransaction\(sql/);
+    assert.match(guard, /requestRunTerminationInTransaction\(sql/);
+    assert.match(guard, /targetStatus: "failed"/);
+    assert.match(guard, /STORIES_COMPLETENESS_STEP_CAS_LOST/);
+    assert.doesNotMatch(guard, /UPDATE claim_log/);
   });
 
   it("caps terminal failStep retry counters at configured max retries", () => {
@@ -1526,8 +1684,8 @@ describe("single-step claim_log lifecycle", () => {
     const singleSource = source.slice(singleStart, singleEnd);
     const singleTerminalSource = singleSource.slice(0, singleSource.indexOf("    } else {"));
     assert.match(loopSource, /const terminalRetry = Math\.max\(0, story\.max_retries \|\| 0\)/);
-    assert.match(loopSource, /retry_count = \$\{terminalRetry\}/);
-    assert.doesNotMatch(loopSource, /retry_count = \$\{newRetry\}/);
+    assert.match(loopSource, /storyRetryCount: terminalRetry/);
+    assert.match(source, /retry_count = COALESCE\(\$4, retry_count\)/);
     assert.match(singleSource, /const terminalRetry = Math\.max\(0, step\.max_retries \|\| 0\)/);
     assert.match(singleTerminalSource, /retry_count = \$\{terminalRetry\}/);
     assert.doesNotMatch(singleTerminalSource, /retry_count = \$\{newRetryCount\}/);
@@ -1539,23 +1697,26 @@ describe("single-step claim_log lifecycle", () => {
     assert.match(source, /SELECT id, retry_count, max_retries, output FROM stories WHERE id = \$1/);
     assert.match(source, /const storyOutput = preserveActionableStoryRetryOutput\(story\.output,\s*error\)/);
     assert.match(source, /Story \$\{storyRow\?\.story_id\} retries exhausted \(\$\{terminalRetry\}\/\$\{story\.max_retries\}\): \$\{storyOutput\}/);
-    assert.match(source, /UPDATE stories SET status = 'failed', retry_count = \$\{terminalRetry\}, output = \$\{storyOutput\}/);
-    assert.match(source, /UPDATE stories SET status = 'pending', claimed_by = NULL, claimed_at = NULL, retry_count = \$\{newRetry\}, output = \$\{storyOutput\}/);
+    assert.match(source, /storyStatus: "failed",[\s\S]{0,180}storyOutput,[\s\S]{0,180}storyRetryCount: terminalRetry/);
+    assert.match(source, /storyStatus: "pending",[\s\S]{0,180}storyOutput,[\s\S]{0,180}storyRetryCount: newRetry/);
+    assert.match(source, /retry_count = COALESCE\(\$4, retry_count\)/);
   });
 
-  it("terminal failRun clears active stories and open claims", () => {
-    const source = fs.readFileSync(path.join(root, "src", "installer", "repo.ts"), "utf-8");
-    const start = source.indexOf("export async function failRun(");
-    const end = source.indexOf("async function recordTerminalPlatformSelfHealPlanFromRun", start);
-    assert.notEqual(start, -1, "failRun source not found");
-    assert.notEqual(end, -1, "failRun end not found");
-    const failRunSource = source.slice(start, end);
-
-    assert.match(failRunSource, /if \(terminal\) \{/);
-    assert.match(failRunSource, /UPDATE stories[\s\S]*status = 'failed'[\s\S]*WHERE run_id = \$\{runId\}[\s\S]*AND status = 'running'/);
-    assert.match(failRunSource, /claimed_by = NULL/);
-    assert.match(failRunSource, /UPDATE claim_log[\s\S]*outcome = 'failed'[\s\S]*WHERE run_id = \$\{runId\}[\s\S]*AND outcome IS NULL/);
-    assert.match(failRunSource, /RUN_TERMINAL_FAILURE/);
+  it("terminal failRun delegates active-owner cleanup to the drained termination owner", () => {
+    const repo = fs.readFileSync(path.join(root, "src", "installer", "repo.ts"), "utf-8");
+    const owner = fs.readFileSync(path.join(root, "src", "execution", "run-terminal-transition.ts"), "utf-8");
+    const failRun = repo.slice(repo.indexOf("export async function failRun("), repo.indexOf("async function recordTerminalPlatformSelfHealPlanFromRun"));
+    assert.match(failRun, /requestRunTermination\(getSql\(\), \{/);
+    assert.match(failRun, /targetStatus: "failed"/);
+    assert.match(repo, /terminalFailure: terminal/);
+    assert.doesNotMatch(failRun, /transitionRunToTerminal/);
+    assert.match(owner, /RUN_TERMINAL_FAIL_DRAIN_PROOF_REQUIRED/);
+    assert.match(owner, /UPDATE execution_attempts[\s\S]*disposition = \$4/);
+    assert.match(owner, /UPDATE claim_log[\s\S]*outcome = \$2[\s\S]*WHERE run_id = \$1[\s\S]*AND outcome IS NULL/);
+    assert.match(owner, /UPDATE stories[\s\S]*claimed_by = NULL[\s\S]*status IN \('pending', 'running'\)/);
+    assert.match(owner, /UPDATE steps[\s\S]*current_story_id = NULL[\s\S]*status IN \('waiting', 'pending', 'running'\)/);
+    assert.ok(owner.indexOf("UPDATE execution_attempts") < owner.indexOf("UPDATE claim_log"), "attempt fences close before claims");
+    assert.ok(owner.indexOf("UPDATE claim_log") < owner.indexOf("UPDATE runs"), "claims close before terminal run publication");
   });
 
   it("fails loop runs on failed stories before pending siblings can keep the loop alive", () => {
@@ -1571,7 +1732,9 @@ describe("single-step claim_log lifecycle", () => {
     assert.ok(failedCheck >= 0, "failed-story terminal guard must exist");
     assert.ok(pendingCheck >= 0, "pending-story continuation guard must exist");
     assert.ok(failedCheck < pendingCheck, "failed stories must terminally fail the loop before pending siblings are considered");
-    assert.match(loopSource, /UPDATE runs SET status = 'failed'/);
+    assert.match(loopSource, /requestRunTerminationInTransaction\(sql, \{/);
+    assert.match(loopSource, /targetStatus: "failed"/);
+    assert.doesNotMatch(loopSource, /UPDATE runs SET status = 'failed'/);
   });
 
   it("preserves multiple actionable retry targets instead of replacing earlier quality feedback", () => {

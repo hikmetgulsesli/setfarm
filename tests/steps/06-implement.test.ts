@@ -1745,7 +1745,7 @@ describe("06-implement step module", () => {
     const stepOps = fs.readFileSync(path.join(process.cwd(), "dist/installer/step-ops.js"), "utf-8");
     assert.match(stepOps, /scope-bleed-cleanup/);
     assert.match(stepOps, /failing story for retry/);
-    assert.match(stepOps, /await failStep\(stepId, scopeResult\.reason\)/);
+    assert.match(stepOps, /await failStep\(stepId, scopeResult\.reason, completionAuthority\?\.envelope\)/);
     assert.doesNotMatch(stepOps, /scope-bleed-silent/);
     assert.doesNotMatch(stepOps, /story kept DONE/);
     assert.doesNotMatch(stepOps, /kept DONE despite scope bleed/);
@@ -1894,7 +1894,7 @@ describe("06-implement step module", () => {
   it("allows zero-work retries when the story branch is already integrated in the base branch", () => {
     const source = fs.readFileSync(path.join(process.cwd(), "src/installer/step-ops.ts"), "utf-8");
     const helper = source.indexOf("async function storyAlreadyIntegratedInBase");
-    const scopeCheck = source.indexOf("let scopeResult = await checkScopeEnforcement");
+    const scopeCheck = source.indexOf("let scopeResult: Awaited<ReturnType<typeof checkScopeEnforcement>>");
     const integratedCheck = source.indexOf("storyAlreadyIntegratedInBase({", scopeCheck);
     const observation = source.indexOf("recordImplementGateObservation(step, storyRow, \"implement.scope_enforcement\"", scopeCheck);
 
@@ -3112,17 +3112,17 @@ describe("06-implement step module", () => {
   it("wires runtime bridge and touched-test gates into implement completion", () => {
     const stepOps = fs.readFileSync(path.join(process.cwd(), "dist/installer/step-ops.js"), "utf-8");
     assert.match(stepOps, /const bridgeResult = await checkRuntimeBridgeGate/);
-    assert.match(stepOps, /await failStep\(stepId, bridgeResult\.reason\)/);
+    assert.match(stepOps, /await failStep\(stepId, bridgeResult\.reason, completionAuthority\?\.envelope\)/);
     assert.match(stepOps, /const testResult = checkTestGate/);
-    assert.match(stepOps, /await failStep\(stepId, testResult\.reason\)/);
+    assert.match(stepOps, /await failStep\(stepId, testResult\.reason, completionAuthority\?\.envelope\)/);
     assert.match(stepOps, /const generatedScreenResult = await checkGeneratedScreenIntegrationGate/);
-    assert.match(stepOps, /await failStep\(stepId, generatedScreenResult\.reason\)/);
+    assert.match(stepOps, /await failStep\(stepId, generatedScreenResult\.reason, completionAuthority\?\.envelope\)/);
     assert.match(stepOps, /const generatedScreenRegressionResult = await checkGeneratedScreenRegressionGate/);
-    assert.match(stepOps, /await failStep\(stepId, generatedScreenRegressionResult\.reason\)/);
+    assert.match(stepOps, /await failStep\(stepId, generatedScreenRegressionResult\.reason, completionAuthority\?\.envelope\)/);
     assert.match(stepOps, /const generatedScreenShellChromeResult = checkGeneratedScreenShellChromeGate/);
-    assert.match(stepOps, /await failStep\(stepId, generatedScreenShellChromeResult\.reason\)/);
+    assert.match(stepOps, /await failStep\(stepId, generatedScreenShellChromeResult\.reason, completionAuthority\?\.envelope\)/);
     assert.match(stepOps, /const generatedScreenPropsResult = checkGeneratedScreenRequiredPropsGate/);
-    assert.match(stepOps, /await failStep\(stepId, generatedScreenPropsResult\.reason\)/);
+    assert.match(stepOps, /await failStep\(stepId, generatedScreenPropsResult\.reason, completionAuthority\?\.envelope\)/);
     assert.match(stepOps, /detectVerifyGeneratedScreenRegressionFailure/);
     assert.match(stepOps, /verify-generated-screen-regression-preflight/);
   });

@@ -8,7 +8,8 @@
 import { execFileSync } from "node:child_process";
 import { homedir } from "node:os";
 import path from "node:path";
-import { pgGet, pgQuery, pgRun, pgExec, pgBegin, now } from "../db-pg.js";
+import type postgres from "postgres";
+import { getSql, pgGet, pgQuery, pgRun, pgExec, pgBegin, now } from "../db-pg.js";
 import { logger } from "../lib/logger.js";
 import { emitEvent } from "./events.js";
 import { buildPollingPrompt } from "./agent-cron.js";
@@ -29,14 +30,29 @@ import { preserveActionableStoryRetryOutput } from "./retry-output.js";
 import {
   finalizeShadowAttemptFailure,
   prepareShadowAttemptFailure,
+  type ShadowFailurePreparation,
 } from "../execution/shadow-attempt-recorder.js";
+import {
+  closeClaimAndBoundAttemptInTransaction,
+  closeExactSingleStepClaimInTransaction,
+  type SingleStepClaimOutcome,
+} from "../execution/claim-attempt-transition.js";
+import { markRuntimeCompletionOwnerCommittedInTransaction } from "../execution/runtime-completion.js";
+import { assertClaimAuthority } from "../execution/claim-authority.js";
+import type { ClaimEnvelopeV1 } from "../execution/schemas/claim-envelope-v1.js";
+import { createSingleEffectCompletionPlanDescriptorV1 } from "../execution/schemas/runtime-completion-plan-v1.js";
+import { requestRunTerminationInTransaction } from "../execution/run-termination.js";
 
 // ── failStep ─────────────────────────────────────────────────────────
 
 /**
  * Fail a step, with retry logic. For loop steps, applies per-story retry.
  */
-export async function failStep(stepId: string, error: string): Promise<{ retrying: boolean; runFailed: boolean }> {
+export async function failStep(
+  stepId: string,
+  error: string,
+  claimEnvelope?: ClaimEnvelopeV1,
+): Promise<{ retrying: boolean; runFailed: boolean }> {
   type FailStepRow = { id: string; run_id: string; step_id: string; step_index: number; retry_count: number; max_retries: number; type: string; current_story_id: string | null; agent_id: string };
   let step = await pgGet<FailStepRow>(
     "SELECT id, run_id, step_id, step_index, retry_count, max_retries, type, current_story_id, agent_id FROM steps WHERE id = $1", [stepId]
@@ -61,10 +77,19 @@ export async function failStep(stepId: string, error: string): Promise<{ retryin
     }
   }
 
-  if (step.type === "loop" && step.current_story_id) {
-    return handleLoopStepFailurePG(stepId, step, error);
+  const failureAuthority = claimEnvelope
+    ? await assertClaimAuthority(getSql(), claimEnvelope, step.id)
+    : undefined;
+  const runProtocol = await pgGet<{ protocol: string }>("SELECT protocol FROM runs WHERE id = $1", [step.run_id]);
+  if (runProtocol?.protocol !== "legacy" && !failureAuthority) {
+    throw new Error("CLAIM_ENVELOPE_REQUIRED");
   }
-  return handleSingleStepFailurePG(stepId, step, error);
+  if (failureAuthority?.storyDbId) step.current_story_id = failureAuthority.storyDbId;
+
+  if (step.type === "loop" && step.current_story_id) {
+    return handleLoopStepFailurePG(stepId, step, error, failureAuthority?.envelope);
+  }
+  return handleSingleStepFailurePG(stepId, step, error, failureAuthority?.envelope);
 }
 
 // ── Loop step failure (PG) ───────────────────────────────────────────
@@ -101,10 +126,173 @@ function isProductManualReviewTerminalFailure(error: string): boolean {
     !/\bDESIGN_IMPORT|stitch-to-jsx|generated-screen-validator|SCOPE_BLEED|VERIFY_MERGE_BLOCKER|MERGE_CONFLICT|SYSTEM_SMOKE_FAILURE|VERIFY_SYSTEM_SMOKE_FAILURE|AGENT_RUNTIME_AUTH_FAILED|CLAIM_PARSE_LOOP\b/i.test(error);
 }
 
+export type LoopClaimStateTransition = Readonly<{
+  storyStatus: "pending" | "failed";
+  storyOutput: string;
+  storyRetryCount?: number;
+  clearStoryClaim: boolean;
+  stepStatus: "pending" | "failed";
+  stepOutput: string;
+  runFailureDiagnostic?: string;
+}>;
+
+export async function terminalizeLoopClaimAndState(input: Readonly<{
+  runId: string;
+  stepDbId: string;
+  stepId: string;
+  storyId: string;
+  storyDbId: string;
+  agentId: string;
+  error: string;
+  outcome: "infra_retry" | "failed";
+  shadowFailure?: ShadowFailurePreparation;
+  attemptDisposition: "inconclusive" | "failed";
+  claimEnvelope?: ClaimEnvelopeV1;
+  state: LoopClaimStateTransition;
+}>): Promise<void> {
+  // Preserve the source-at-failure observation when its exact fence still
+  // owns the attempt. The transactional owner below is the fail-safe: if this
+  // hook missed or raced, it closes the active bound fence as inconclusive or
+  // failed in the same transaction as the exact claim CAS.
+  const shadowFailure = input.shadowFailure ?? await prepareShadowAttemptFailure({
+    runId: input.runId,
+    stepId: input.stepId,
+    storyDbId: input.storyDbId,
+    agentId: input.agentId,
+  });
+  await finalizeShadowAttemptFailure(shadowFailure, input.attemptDisposition);
+  const claim = await pgGet<{ id: string; run_id: string; step_id: string; story_id: string; agent_id: string; outcome: string | null }>(
+    `SELECT id::text, run_id, step_id, story_id, agent_id, outcome
+       FROM claim_log
+      WHERE (
+          $5::bigint IS NOT NULL
+          AND id = $5
+        ) OR (
+          $5::bigint IS NULL
+          AND run_id = $1
+          AND step_id = $2
+          AND story_id = $3
+          AND agent_id = $4
+        )
+      ORDER BY id DESC
+      LIMIT 1`,
+    [input.runId, input.stepId, input.storyId, input.agentId, input.claimEnvelope?.claimId ?? null],
+  );
+  if (!claim) throw new Error("LOOP_CLAIM_LIFECYCLE_NOT_FOUND");
+  if (
+    input.claimEnvelope
+    && (
+      Number(claim.id) !== input.claimEnvelope.claimId
+      || claim.run_id !== input.runId
+      || claim.step_id !== input.stepId
+      || claim.story_id !== input.storyId
+      || claim.agent_id !== input.agentId
+    )
+  ) {
+    throw new Error("LOOP_CLAIM_LIFECYCLE_IDENTITY_MISMATCH");
+  }
+  if (claim.outcome !== null) {
+    const active = await pgGet<{ count: string }>(
+      `SELECT COUNT(*)::text AS count
+         FROM execution_attempts
+        WHERE run_id = $1
+          AND step_id = $2
+          AND story_id = $3
+          AND disposition IN ('claimed', 'running')`,
+      [input.runId, input.stepId, input.storyId],
+    );
+    if (active?.count !== "0") throw new Error("LOOP_CLAIM_TERMINAL_ATTEMPT_ACTIVE");
+    return;
+  }
+  const claimId = Number(claim.id);
+  if (!Number.isSafeInteger(claimId) || claimId <= 0) {
+    throw new Error("LOOP_CLAIM_LIFECYCLE_ID_INVALID");
+  }
+  const transitionTime = now();
+  await pgBegin(async (sql) => {
+    const closed = await closeClaimAndBoundAttemptInTransaction(sql, {
+      claimId,
+      runId: input.runId,
+      stepId: input.stepId,
+      storyId: input.storyId,
+      agentId: claim.agent_id,
+      outcome: input.outcome,
+      diagnostic: input.error,
+    });
+    if (closed.status !== "closed") throw new Error("LOOP_CLAIM_LIFECYCLE_CAS_LOST");
+
+    const storyUpdated = await sql.unsafe<Array<{ id: string }>>(
+      `UPDATE stories
+          SET status = $2,
+              output = $3,
+              retry_count = COALESCE($4, retry_count),
+              claimed_by = CASE WHEN $5 THEN NULL ELSE claimed_by END,
+              claimed_at = CASE WHEN $5 THEN NULL ELSE claimed_at END,
+              updated_at = $6
+        WHERE id = $1 AND run_id = $7 AND story_id = $8
+        RETURNING id`,
+      [
+        input.storyDbId,
+        input.state.storyStatus,
+        input.state.storyOutput,
+        input.state.storyRetryCount ?? null,
+        input.state.clearStoryClaim,
+        transitionTime,
+        input.runId,
+        input.storyId,
+      ],
+    );
+    if (storyUpdated.length !== 1) throw new Error("LOOP_CLAIM_STORY_STATE_CAS_LOST");
+
+    const stepUpdated = await sql.unsafe<Array<{ id: string }>>(
+      `UPDATE steps
+          SET status = $2, output = $3, current_story_id = NULL, updated_at = $4
+        WHERE id = $1 AND run_id = $5 AND step_id = $6
+        RETURNING id`,
+      [
+        input.stepDbId,
+        input.state.stepStatus,
+        input.state.stepOutput,
+        transitionTime,
+        input.runId,
+        input.stepId,
+      ],
+    );
+    if (stepUpdated.length !== 1) throw new Error("LOOP_CLAIM_STEP_STATE_CAS_LOST");
+
+    await markRuntimeCompletionOwnerCommittedInTransaction(sql, {
+      claimId,
+      claimOutcome: input.outcome,
+      plan: createSingleEffectCompletionPlanDescriptorV1({
+        kind: "loop_failure",
+        continuation: { type: "failure_finalize" },
+        subject: { storyDbId: input.storyDbId, storyId: input.storyId },
+        effectPayload: {
+          storyStatus: input.state.storyStatus,
+          stepStatus: input.state.stepStatus,
+          runTerminal: Boolean(input.state.runFailureDiagnostic),
+        },
+      }),
+      now: new Date(transitionTime),
+    });
+    if (input.state.runFailureDiagnostic) {
+      await requestRunTerminationInTransaction(sql, {
+        runId: input.runId,
+        targetStatus: "failed",
+        requestedBy: "setfarm.step-fail.loop",
+        diagnostic: input.state.runFailureDiagnostic,
+        evidence: { source: "terminalizeLoopClaimAndState" },
+        now: new Date(transitionTime),
+      });
+    }
+  });
+}
+
 async function handleLoopStepFailurePG(
   stepId: string,
   step: { run_id: string; step_id?: string; step_index: number; retry_count: number; max_retries: number; type: string; current_story_id: string | null; agent_id: string },
   error: string,
+  claimEnvelope?: ClaimEnvelopeV1,
 ): Promise<{ retrying: boolean; runFailed: boolean }> {
   const workflowStepId = step.step_id || stepId;
   const shadowFailure = await prepareShadowAttemptFailure({
@@ -117,30 +305,42 @@ async function handleLoopStepFailurePG(
     "SELECT id, retry_count, max_retries, output FROM stories WHERE id = $1", [step.current_story_id!]
   );
 
-  if (!story) return handleSingleStepFailurePG(stepId, step, error);
+  if (!story) return handleSingleStepFailurePG(stepId, step, error, claimEnvelope);
 
   const storyRow = await getStoryInfo(step.current_story_id!);
   if (isTransientAgentInfrastructureFailure(error)) {
     const storyOutput = preserveActionableStoryRetryOutput(story.output, error);
-    await pgBegin(async (sql) => {
-      await sql`UPDATE stories SET status = 'pending', output = ${storyOutput}, claimed_by = NULL, claimed_at = NULL, updated_at = ${now()} WHERE id = ${story.id}`;
-      await sql`UPDATE steps SET status = 'pending', current_story_id = NULL, output = ${error}, updated_at = ${now()} WHERE id = ${stepId}`;
-      try { await sql`UPDATE claim_log SET outcome = 'infra_retry', duration_ms = CAST(EXTRACT(EPOCH FROM (NOW() - claimed_at)) * 1000 AS INTEGER), diagnostic = ${error} WHERE story_id = ${storyRow?.story_id || ""} AND outcome IS NULL`; } catch (e) { logger.warn("[claim-log] update failed: " + String(e), {}); }
+    if (!storyRow?.story_id) throw new Error("LOOP_STORY_ID_MISSING");
+    await terminalizeLoopClaimAndState({
+      runId: step.run_id,
+      stepDbId: stepId,
+      stepId: workflowStepId,
+      storyId: storyRow.story_id,
+      storyDbId: story.id,
+      agentId: step.agent_id,
+      error,
+      outcome: "infra_retry",
+      shadowFailure,
+      attemptDisposition: "inconclusive",
+      ...(claimEnvelope ? { claimEnvelope } : {}),
+      state: {
+        storyStatus: "pending",
+        storyOutput,
+        clearStoryClaim: true,
+        stepStatus: "pending",
+        stepOutput: error,
+      },
     });
     await recordStepTransition(stepId, step.run_id, "running", "pending", step.agent_id, "failStep:loopInfraRetry", { storyId: storyRow?.story_id, error: error.slice(0, 300) });
     logger.warn(`[failStep] Transient agent/model failure for ${storyRow?.story_id}; requeued without consuming story retry`, { runId: step.run_id });
     await refreshRunContractSafe(step.run_id, "story.infra_retry");
-    await finalizeShadowAttemptFailure(shadowFailure, "inconclusive");
     return { retrying: true, runFailed: false };
   }
 
   const newRetry = story.retry_count + 1;
 
-  if (storyRow?.story_id) {
-    const ctx = await getRunContext(step.run_id);
-    await cleanupProjectEphemera(step.run_id, `story-fail:${storyRow.story_id}`, ctx);
-    if (ctx.repo) removeStoryWorktree(ctx.repo, storyRow.story_id, step.agent_id);
-  }
+  // Runtime cleanup is deferred to the spawner's quiescence owner. Removing a
+  // story worktree here can race a still-live OpenClaw embedded fallback.
 
   if (newRetry > story.max_retries) {
     // 2026-04-22 policy change: any story retry-exhaust fails the entire run immediately.
@@ -150,11 +350,28 @@ async function handleLoopStepFailurePG(
     const terminalRetry = Math.max(0, story.max_retries || 0);
     const storyOutput = preserveActionableStoryRetryOutput(story.output, error);
     const runFailReason = `Story ${storyRow?.story_id} retries exhausted (${terminalRetry}/${story.max_retries}): ${storyOutput}`;
-    await pgBegin(async (sql) => {
-      await sql`UPDATE stories SET status = 'failed', retry_count = ${terminalRetry}, output = ${storyOutput}, updated_at = ${now()} WHERE id = ${story.id}`;
-      await sql`UPDATE steps SET status = 'failed', output = ${runFailReason}, current_story_id = NULL, updated_at = ${now()} WHERE id = ${stepId}`;
-      await sql`UPDATE runs SET status = 'failed', updated_at = ${now()} WHERE id = ${step.run_id}`;
-      try { await sql`UPDATE claim_log SET outcome = 'failed', duration_ms = CAST(EXTRACT(EPOCH FROM (NOW() - claimed_at)) * 1000 AS INTEGER), diagnostic = ${error} WHERE story_id = ${storyRow?.story_id || ""} AND outcome IS NULL`; } catch (e) { logger.warn("[claim-log] update failed: " + String(e), {}); }
+    if (!storyRow?.story_id) throw new Error("LOOP_STORY_ID_MISSING");
+    await terminalizeLoopClaimAndState({
+      runId: step.run_id,
+      stepDbId: stepId,
+      stepId: workflowStepId,
+      storyId: storyRow.story_id,
+      storyDbId: story.id,
+      agentId: step.agent_id,
+      error,
+      outcome: "failed",
+      shadowFailure,
+      attemptDisposition: "failed",
+      ...(claimEnvelope ? { claimEnvelope } : {}),
+      state: {
+        storyStatus: "failed",
+        storyOutput,
+        storyRetryCount: terminalRetry,
+        clearStoryClaim: false,
+        stepStatus: "failed",
+        stepOutput: runFailReason,
+        runFailureDiagnostic: runFailReason,
+      },
     });
     await recordStepTransition(stepId, step.run_id, "running", "failed", step.agent_id, "failStep:loopStoryExhausted", { storyId: storyRow?.story_id, retry: terminalRetry });
     const wfId = await getWorkflowId(step.run_id);
@@ -167,15 +384,31 @@ async function handleLoopStepFailurePG(
     scheduleRunCronTeardown(step.run_id);
     logger.warn(`[failStep] Story ${storyRow?.story_id} retries exhausted — failing run (policy: fail-fast on unrecoverable story)`, { runId: step.run_id });
     await refreshRunContractSafe(step.run_id, "story.failed");
-    await finalizeShadowAttemptFailure(shadowFailure, "failed");
     return { retrying: false, runFailed: true };
   }
 
   const storyOutput = preserveActionableStoryRetryOutput(story.output, error);
-  await pgBegin(async (sql) => {
-    await sql`UPDATE stories SET status = 'pending', claimed_by = NULL, claimed_at = NULL, retry_count = ${newRetry}, output = ${storyOutput}, updated_at = ${now()} WHERE id = ${story.id}`;
-    await sql`UPDATE steps SET status = 'pending', current_story_id = NULL, updated_at = ${now()} WHERE id = ${stepId}`;
-    try { await sql`UPDATE claim_log SET outcome = 'failed', duration_ms = CAST(EXTRACT(EPOCH FROM (NOW() - claimed_at)) * 1000 AS INTEGER), diagnostic = ${error} WHERE story_id = ${storyRow?.story_id || ""} AND outcome IS NULL`; } catch (e) { logger.warn("[claim-log] update failed: " + String(e), {}); }
+  if (!storyRow?.story_id) throw new Error("LOOP_STORY_ID_MISSING");
+  await terminalizeLoopClaimAndState({
+    runId: step.run_id,
+    stepDbId: stepId,
+    stepId: workflowStepId,
+    storyId: storyRow.story_id,
+    storyDbId: story.id,
+    agentId: step.agent_id,
+    error,
+    outcome: "failed",
+    shadowFailure,
+    attemptDisposition: "failed",
+    ...(claimEnvelope ? { claimEnvelope } : {}),
+    state: {
+      storyStatus: "pending",
+      storyOutput,
+      storyRetryCount: newRetry,
+      clearStoryClaim: true,
+      stepStatus: "pending",
+      stepOutput: error,
+    },
   });
   await recordStepTransition(stepId, step.run_id, "running", "pending", step.agent_id, "failStep:loopStoryRetry", { storyId: storyRow?.story_id, retry: newRetry });
 
@@ -184,7 +417,6 @@ async function handleLoopStepFailurePG(
   }
 
   await refreshRunContractSafe(step.run_id, "story.retry");
-  await finalizeShadowAttemptFailure(shadowFailure, "failed");
   return { retrying: true, runFailed: false };
 }
 
@@ -228,6 +460,7 @@ async function routeVerifyEachFailureToImplement(
   step: { run_id: string; step_index: number; agent_id: string },
   workflowStepId: string,
   error: string,
+  claimEnvelope?: ClaimEnvelopeV1,
 ): Promise<boolean> {
   if (workflowStepId !== "verify") return false;
   if (isTransientAgentInfrastructureFailure(error)) return false;
@@ -255,6 +488,49 @@ async function routeVerifyEachFailureToImplement(
     { id: stepId, run_id: step.run_id, step_id: workflowStepId, step_index: step.step_index, agent_id: step.agent_id },
     retryOutput,
     context,
+    claimEnvelope,
+  );
+}
+
+async function closeSingleStepClaimForFailure(
+  sql: postgres.Sql | postgres.TransactionSql,
+  input: Readonly<{
+    runId: string;
+    stepId: string;
+    workflowStepId: string;
+    outcome: SingleStepClaimOutcome;
+    diagnostic: string;
+    claimEnvelope?: ClaimEnvelopeV1;
+  }>,
+): Promise<void> {
+  if (input.claimEnvelope) {
+    await closeExactSingleStepClaimInTransaction(sql, {
+      envelope: input.claimEnvelope,
+      outcome: input.outcome,
+      diagnostic: input.diagnostic,
+    });
+    return;
+  }
+
+  // Compatibility is deliberately restricted to legacy runs. Shadow/v3 must
+  // carry an immutable claim capability and can never broad-close by run/step.
+  await sql.unsafe(
+    `UPDATE claim_log AS cl
+        SET outcome = $1,
+            abandoned_at = CASE WHEN $1 = 'infra_retry' THEN COALESCE(cl.abandoned_at, NOW()) ELSE cl.abandoned_at END,
+            duration_ms = LEAST(
+              CAST(EXTRACT(EPOCH FROM (NOW() - cl.claimed_at::timestamptz)) * 1000 AS BIGINT),
+              2147483647
+            )::INTEGER,
+            diagnostic = $2
+       FROM runs r
+      WHERE r.id = cl.run_id
+        AND r.protocol = 'legacy'
+        AND cl.run_id = $3
+        AND cl.step_id = $4
+        AND cl.story_id IS NULL
+        AND cl.outcome IS NULL`,
+    [input.outcome, input.diagnostic.slice(0, 1_000), input.runId, input.workflowStepId],
   );
 }
 
@@ -262,22 +538,37 @@ async function handleSingleStepFailurePG(
   stepId: string,
   step: { run_id: string; step_id?: string; step_index: number; retry_count: number; max_retries: number; type: string; current_story_id: string | null; agent_id: string },
   error: string,
+  claimEnvelope?: ClaimEnvelopeV1,
 ): Promise<{ retrying: boolean; runFailed: boolean }> {
   const newRetryCount = step.retry_count + 1;
 
   const workflowStepId = step.step_id || "";
 
-  if (await routeVerifyEachFailureToImplement(stepId, step, workflowStepId, error)) {
+  if (await routeVerifyEachFailureToImplement(stepId, step, workflowStepId, error, claimEnvelope)) {
     return { retrying: true, runFailed: false };
   }
 
   if (isTransientAgentInfrastructureFailure(error)) {
     await pgBegin(async (sql) => {
+      await closeSingleStepClaimForFailure(sql, {
+        runId: step.run_id,
+        stepId,
+        workflowStepId,
+        outcome: "infra_retry",
+        diagnostic: error,
+        ...(claimEnvelope ? { claimEnvelope } : {}),
+      });
       await sql`UPDATE steps SET status = 'pending', output = ${error}, updated_at = ${now()} WHERE id = ${stepId}`;
-      try {
-        await sql`UPDATE claim_log SET outcome = 'infra_retry', duration_ms = CAST(EXTRACT(EPOCH FROM (NOW() - claimed_at)) * 1000 AS INTEGER), diagnostic = ${error} WHERE run_id = ${step.run_id} AND step_id = ${workflowStepId} AND story_id IS NULL AND outcome IS NULL`;
-      } catch (e) {
-        logger.warn("[claim-log] update failed: " + String(e), {});
+      if (claimEnvelope) {
+        await markRuntimeCompletionOwnerCommittedInTransaction(sql, {
+          claimId: claimEnvelope.claimId,
+          claimOutcome: "infra_retry",
+          plan: createSingleEffectCompletionPlanDescriptorV1({
+            kind: "single_failure",
+            continuation: { type: "failure_finalize" },
+            effectPayload: { stepStatus: "pending", outcome: "infra_retry" },
+          }),
+        });
       }
     });
     await recordStepTransition(stepId, step.run_id, "running", "pending", step.agent_id, "failStep:singleInfraRetry", { error: error.slice(0, 300) });
@@ -294,21 +585,68 @@ async function handleSingleStepFailurePG(
   }
 
   await pgBegin(async (sql) => {
+    let claimOutcome: SingleStepClaimOutcome;
     if (newRetryCount > step.max_retries) {
       const isCritical = CRITICAL_STEPS.has(workflowStepId);
       const terminalRetry = Math.max(0, step.max_retries || 0);
 
       if (isCritical) {
+        claimOutcome = "failed";
+        await closeSingleStepClaimForFailure(sql, {
+          runId: step.run_id,
+          stepId,
+          workflowStepId,
+          outcome: "failed",
+          diagnostic: error,
+          ...(claimEnvelope ? { claimEnvelope } : {}),
+        });
         await sql`UPDATE steps SET status = 'failed', output = ${error}, retry_count = ${terminalRetry}, updated_at = ${now()} WHERE id = ${stepId}`;
-        await sql`UPDATE runs SET status = 'failed', updated_at = ${now()} WHERE id = ${step.run_id}`;
-        try { await sql`UPDATE claim_log SET outcome = 'failed', duration_ms = CAST(EXTRACT(EPOCH FROM (NOW() - claimed_at)) * 1000 AS INTEGER), diagnostic = ${error} WHERE run_id = ${step.run_id} AND step_id = ${workflowStepId} AND story_id IS NULL AND outcome IS NULL`; } catch (e) { logger.warn("[claim-log] update failed: " + String(e), {}); }
+        await requestRunTerminationInTransaction(sql, {
+          runId: step.run_id,
+          targetStatus: "failed",
+          requestedBy: "setfarm.step-fail.single",
+          diagnostic: error,
+          evidence: { source: "handleSingleStepFailurePG" },
+        });
       } else {
+        claimOutcome = "skipped";
+        await closeSingleStepClaimForFailure(sql, {
+          runId: step.run_id,
+          stepId,
+          workflowStepId,
+          outcome: "skipped",
+          diagnostic: error,
+          ...(claimEnvelope ? { claimEnvelope } : {}),
+        });
         await sql`UPDATE steps SET status = 'skipped', output = ${"SKIPPED: " + error}, retry_count = ${terminalRetry}, updated_at = ${now()} WHERE id = ${stepId}`;
-        try { await sql`UPDATE claim_log SET outcome = 'skipped', duration_ms = CAST(EXTRACT(EPOCH FROM (NOW() - claimed_at)) * 1000 AS INTEGER), diagnostic = ${error} WHERE run_id = ${step.run_id} AND step_id = ${workflowStepId} AND story_id IS NULL AND outcome IS NULL`; } catch (e) { logger.warn("[claim-log] update failed: " + String(e), {}); }
       }
     } else {
+      claimOutcome = "failed";
+      await closeSingleStepClaimForFailure(sql, {
+        runId: step.run_id,
+        stepId,
+        workflowStepId,
+        outcome: "failed",
+        diagnostic: error,
+        ...(claimEnvelope ? { claimEnvelope } : {}),
+      });
       await sql`UPDATE steps SET status = 'pending', retry_count = ${newRetryCount}, output = ${error}, updated_at = ${now()} WHERE id = ${stepId}`;
-      try { await sql`UPDATE claim_log SET outcome = 'failed', duration_ms = CAST(EXTRACT(EPOCH FROM (NOW() - claimed_at)) * 1000 AS INTEGER), diagnostic = ${error} WHERE run_id = ${step.run_id} AND step_id = ${workflowStepId} AND story_id IS NULL AND outcome IS NULL`; } catch (e) { logger.warn("[claim-log] update failed: " + String(e), {}); }
+    }
+    if (claimEnvelope) {
+      await markRuntimeCompletionOwnerCommittedInTransaction(sql, {
+        claimId: claimEnvelope.claimId,
+        claimOutcome,
+        plan: createSingleEffectCompletionPlanDescriptorV1({
+          kind: "single_failure",
+          continuation: { type: "failure_finalize" },
+          effectPayload: {
+            stepStatus: newRetryCount > step.max_retries
+              ? (CRITICAL_STEPS.has(workflowStepId) ? "failed" : "skipped")
+              : "pending",
+            outcome: claimOutcome,
+          },
+        }),
+      });
     }
   });
 

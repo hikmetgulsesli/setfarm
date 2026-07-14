@@ -238,7 +238,10 @@ describe("implement evidence contract", () => {
 
       assert.equal(result.ok, false);
       assert.equal(result.issues.some((issue) => issue.code === "IMPLEMENT_VERIFICATION_REQUEST_INTERACTIONS_INVALID"), true);
-      assert.match(result.issues.map((issue) => issue.message).join("\n"), /click, fill, press, wait, navigate, or snapshot/);
+      assert.match(
+        result.issues.map((issue) => issue.message).join("\n"),
+        /click, fill, press, select, wait, navigate, snapshot, sealed invoke, or sealed reset/,
+      );
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

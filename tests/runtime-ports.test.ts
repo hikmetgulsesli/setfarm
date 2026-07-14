@@ -4,6 +4,10 @@ import { mkdtempSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { allocateRuntimePort, portBandRange, runtimeUrl, writeRunRuntimeArtifact } from "../dist/installer/runtime-ports.js";
+import {
+  allocateRuntimePort as allocateRuntimePortFromSource,
+  isFetchSafeRuntimePort,
+} from "../src/installer/runtime-ports.js";
 
 test("runtime port bands use separate deterministic local ranges", () => {
   assert.deepEqual(portBandRange("backend"), { base: 4100, max: 4999, size: 900 });
@@ -49,4 +53,25 @@ test("runtime artifact records the local URL operators should open", () => {
   assert.equal(json.localUrl, "http://127.0.0.1:6123");
   assert.equal(json.port, 6123);
   assert.equal(json.status, "passed");
+});
+
+test("runtime allocator rejects TCP-free ports that Fetch and Chromium forbid", () => {
+  for (const port of [4045, 4190, 5060, 5061, 6000, 6566, 6665, 6666, 6667, 6668, 6669, 6697]) {
+    assert.equal(isFetchSafeRuntimePort(port), false, `${port} must never back runtime evidence`);
+  }
+  assert.equal(isFetchSafeRuntimePort(6567), true);
+});
+
+test("runtime allocator skips a forbidden preferred and deterministic preview port", async () => {
+  const allocation = await allocateRuntimePortFromSource({
+    runId: "run-fetch-bad-port-regression",
+    runNumber: 466,
+    band: "preview",
+    preferredPort: 6566,
+  });
+
+  assert.ok(allocation.port >= 6100 && allocation.port <= 6999);
+  assert.equal(isFetchSafeRuntimePort(allocation.port), true);
+  assert.notEqual(allocation.port, 6566);
+  assert.equal(allocation.preferred, false);
 });

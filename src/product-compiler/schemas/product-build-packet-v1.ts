@@ -18,6 +18,7 @@ export const ProductBuildPacketV1Schema = z
     designGraphHash: Sha256Schema,
     buildTopologyHash: Sha256Schema,
     storyPlanHash: Sha256Schema,
+    runtimeDataContractHash: Sha256Schema.optional(),
     compiler: CompilerIdentityV1Schema,
     validationIds: z.array(StableReferenceSchema).min(1).max(1_000).refine(hasUniqueStrings, {
       message: "Packet validation IDs must be unique",

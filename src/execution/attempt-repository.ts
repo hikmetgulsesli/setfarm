@@ -23,6 +23,7 @@ type TransactionSql = postgres.TransactionSql;
 
 type AttemptRow = {
   attempt_id: string;
+  claim_id: string | null;
   run_id: string;
   step_id: string;
   story_id: string;
@@ -37,6 +38,8 @@ type AttemptRow = {
   source_after_sha: string | null;
   source_after_tree_hash: string | null;
   finding_set_hash: string | null;
+  recovery_case_revision_id: string | null;
+  recovery_dispatch_id: string | null;
   dedupe_key: string | null;
   role: string;
   agent_id: string | null;
@@ -50,6 +53,22 @@ type AttemptRow = {
   evidence_refs: string;
   created_at: Date | string;
   updated_at: Date | string;
+};
+
+type RecoveryDeliveryBindingRow = {
+  state: string;
+  owner_instance_id: string | null;
+  lease_token: string | null;
+  lease_expires_at: Date | string | null;
+  attempt_id: string | null;
+  run_id: string;
+  story_id: string;
+  dispatch_class: string;
+  revision_id: string;
+  packet_hash: string;
+  finding_set_hash: string;
+  source_sha: string;
+  source_tree_hash: string;
 };
 
 const FenceIdentityV1Schema = z.object({
@@ -69,6 +88,10 @@ const CompletionInputV1Schema = FenceIdentityV1Schema.extend({
   }
 });
 
+const CandidateSourceInputV1Schema = FenceIdentityV1Schema.extend({
+  sourceAfter: SourceRevisionV1Schema,
+}).strict();
+
 function timestamp(value: Date | string): string {
   const parsed = value instanceof Date ? value : new Date(value);
   return parsed.toISOString();
@@ -87,6 +110,7 @@ function mapAttempt(row: AttemptRow): ExecutionAttemptV1 {
   return ExecutionAttemptV1Schema.parse({
     schema: "setfarm.execution-attempt.v1",
     attemptId: row.attempt_id,
+    claimId: optional(row.claim_id === null ? null : Number(row.claim_id)),
     runId: row.run_id,
     stepId: row.step_id,
     storyId: row.story_id,
@@ -101,6 +125,8 @@ function mapAttempt(row: AttemptRow): ExecutionAttemptV1 {
       ? { sourceAfter: { sha: row.source_after_sha, treeHash: row.source_after_tree_hash } }
       : {}),
     findingSetHash: optional(row.finding_set_hash),
+    recoveryCaseRevisionId: optional(row.recovery_case_revision_id),
+    recoveryDispatchId: optional(row.recovery_dispatch_id),
     dedupeKey: optional(row.dedupe_key),
     role: row.role,
     agentId: optional(row.agent_id),
@@ -119,7 +145,7 @@ function mapAttempt(row: AttemptRow): ExecutionAttemptV1 {
   });
 }
 
-async function one(sql: Sql | TransactionSql, query: string, params: any[]): Promise<AttemptRow | undefined> {
+async function one(sql: Pick<Sql, "unsafe">, query: string, params: any[]): Promise<AttemptRow | undefined> {
   const rows = await sql.unsafe<AttemptRow[]>(query, params);
   return rows[0];
 }
@@ -131,9 +157,224 @@ export type AttemptReservationResult =
 
 export type FenceUpdateResult =
   | Readonly<{ status: "completed"; attempt: ExecutionAttemptV1 }>
+  | Readonly<{ status: "candidate"; attempt: ExecutionAttemptV1 }>
   | Readonly<{ status: "heartbeat"; attempt: ExecutionAttemptV1 }>
   | Readonly<{ status: "running"; attempt: ExecutionAttemptV1 }>
   | Readonly<{ status: "stale_fence" }>;
+
+/**
+ * Reserve an attempt inside a caller-owned transaction. This is the single
+ * insertion/binding implementation used by both ordinary claim publication
+ * and non-model evidence-only publication, so claim + attempt + recovery
+ * delivery can share one commit boundary.
+ */
+export async function reserveAttemptInTransaction(
+  transaction: TransactionSql,
+  input: unknown,
+  options: Readonly<{
+    now?: Date;
+    leaseMs?: number;
+    identityFactory?: AttemptIdentityFactory;
+  }> = {},
+): Promise<AttemptReservationResult> {
+  const reservation = parseAttemptReservation(input);
+  const dedupeKey = computeAttemptDedupeKey(reservation);
+  const now = options.now ? new Date(options.now) : new Date();
+  const lease = leaseWindow(now, options.leaseMs ?? DEFAULT_ATTEMPT_LEASE_MS);
+  const identityFactory = options.identityFactory ?? defaultAttemptIdentityFactory;
+  const lockIdentity = hashCanonicalJson({
+    schema: "setfarm.execution-attempt-lock.v1",
+    runId: reservation.runId,
+    stepId: reservation.stepId,
+    storyId: reservation.storyId,
+  });
+  await transaction.unsafe("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [lockIdentity]);
+
+  const runRows = await transaction.unsafe<{ status: string; protocol: string }[]>(
+    "SELECT status, protocol FROM runs WHERE id = $1 LIMIT 1 FOR KEY SHARE",
+    [reservation.runId],
+  );
+  if (runRows.length !== 1) throw new Error("ATTEMPT_RUN_NOT_FOUND");
+  if (
+    !["running", "resuming"].includes(runRows[0]!.status)
+    || !["shadow", "v3"].includes(runRows[0]!.protocol)
+  ) {
+    throw new Error("ATTEMPT_RUN_NOT_ACTIVE_COMPILER_OWNER");
+  }
+  if (reservation.claimId === undefined) throw new Error("ATTEMPT_CLAIM_ID_REQUIRED");
+  const boundClaims = await transaction.unsafe<Array<{ id: string }>>(
+    `SELECT id::text
+       FROM claim_log
+      WHERE id = $1
+        AND run_id = $2
+        AND step_id = $3
+        AND COALESCE(story_id, '') = $4
+        AND outcome IS NULL
+        AND ($5::text IS NULL OR agent_id = $5)
+      FOR KEY SHARE`,
+    [
+      reservation.claimId,
+      reservation.runId,
+      reservation.stepId,
+      reservation.storyId,
+      reservation.agentId ?? null,
+    ],
+  );
+  if (boundClaims.length !== 1) throw new Error("ATTEMPT_CLAIM_BINDING_INVALID");
+
+  if (reservation.recoveryDispatchId) {
+    const existingRecoveryAttempt = await one(
+      transaction,
+      "SELECT * FROM execution_attempts WHERE recovery_dispatch_id = $1 LIMIT 1",
+      [reservation.recoveryDispatchId],
+    );
+    if (existingRecoveryAttempt) {
+      return { status: "duplicate" as const, attempt: mapAttempt(existingRecoveryAttempt) };
+    }
+    const deliveryRows = await transaction.unsafe<RecoveryDeliveryBindingRow[]>(
+      `SELECT delivery.state, delivery.owner_instance_id, delivery.lease_token,
+              delivery.lease_expires_at, delivery.attempt_id,
+              delivery.run_id, delivery.story_id,
+              dispatch.dispatch_class, dispatch.revision_id,
+              dispatch.packet_hash, dispatch.finding_set_hash,
+              dispatch.source_sha, dispatch.source_tree_hash
+         FROM recovery_dispatch_deliveries delivery
+         JOIN recovery_revision_dispatches dispatch
+           ON dispatch.dispatch_id = delivery.dispatch_id
+        WHERE delivery.dispatch_id = $1
+          AND delivery.revision_id = $2
+        FOR UPDATE OF delivery`,
+      [reservation.recoveryDispatchId, reservation.recoveryCaseRevisionId!],
+    );
+    const delivery = deliveryRows[0];
+    const leaseIdentity = reservation.recoveryDeliveryLease!;
+    if (!delivery) throw new Error("RECOVERY_DELIVERY_NOT_FOUND");
+    if (
+      delivery.state !== "leased"
+      || delivery.owner_instance_id !== leaseIdentity.ownerInstanceId
+      || delivery.lease_token !== leaseIdentity.leaseToken
+      || !delivery.lease_expires_at
+      || new Date(delivery.lease_expires_at).getTime() <= now.getTime()
+    ) {
+      throw new Error("RECOVERY_DELIVERY_LEASE_INVALID");
+    }
+    if (
+      delivery.attempt_id !== null
+      || delivery.run_id !== reservation.runId
+      || delivery.story_id !== reservation.storyId
+      || delivery.dispatch_class !== reservation.attemptClass
+      || delivery.revision_id !== reservation.recoveryCaseRevisionId
+      || delivery.packet_hash !== reservation.packetHash
+      || delivery.finding_set_hash !== reservation.findingSetHash
+      || delivery.source_sha !== reservation.sourceBefore.sha
+      || delivery.source_tree_hash !== reservation.sourceBefore.treeHash
+    ) {
+      throw new Error("RECOVERY_DELIVERY_ATTEMPT_IDENTITY_MISMATCH");
+    }
+  }
+
+  if (dedupeKey) {
+    const duplicate = await one(
+      transaction,
+      "SELECT * FROM execution_attempts WHERE dedupe_key = $1 LIMIT 1",
+      [dedupeKey],
+    );
+    if (duplicate) return { status: "duplicate" as const, attempt: mapAttempt(duplicate) };
+  }
+  const active = await one(
+    transaction,
+    `SELECT * FROM execution_attempts
+      WHERE run_id = $1 AND step_id = $2 AND story_id = $3
+        AND disposition IN ('claimed', 'running')
+      LIMIT 1`,
+    [reservation.runId, reservation.stepId, reservation.storyId],
+  );
+  if (active) return { status: "active_conflict" as const, attempt: mapAttempt(active) };
+
+  const generations = await transaction.unsafe<{ generation: number }[]>(
+    "SELECT COALESCE(MAX(generation), 0)::integer + 1 AS generation FROM execution_attempts WHERE run_id = $1 AND step_id = $2 AND story_id = $3",
+    [reservation.runId, reservation.stepId, reservation.storyId],
+  );
+  const generation = generations[0]?.generation ?? 1;
+  const attemptId = identityFactory.attemptId();
+  const fenceToken = identityFactory.fenceToken();
+  const inserted = await one(
+    transaction,
+    `INSERT INTO execution_attempts (
+       attempt_id, claim_id, run_id, step_id, story_id, generation, fence_token,
+       attempt_class, packet_hash, compilation_report_hash, slice_hash,
+       source_before_sha, source_before_tree_hash, finding_set_hash, dedupe_key,
+       recovery_case_revision_id, recovery_dispatch_id,
+       role, agent_id, branch, worktree,
+       lease_acquired_at, lease_expires_at, heartbeat_at,
+       disposition, evidence_refs, created_at, updated_at
+     ) VALUES (
+       $1, $2, $3, $4, $5, $6, $7,
+       $8, $9, $10, $11,
+       $12, $13, $14, $15,
+       $16, $17,
+       $18, $19, $20, $21,
+       $22, $23, $24,
+       'claimed', $25, $22, $22
+     ) RETURNING *`,
+    [
+      attemptId,
+      reservation.claimId,
+      reservation.runId,
+      reservation.stepId,
+      reservation.storyId,
+      generation,
+      fenceToken,
+      reservation.attemptClass,
+      reservation.packetHash ?? null,
+      reservation.compilationReportHash,
+      reservation.sliceHash ?? null,
+      reservation.sourceBefore.sha,
+      reservation.sourceBefore.treeHash,
+      reservation.findingSetHash ?? null,
+      dedupeKey,
+      reservation.recoveryCaseRevisionId ?? null,
+      reservation.recoveryDispatchId ?? null,
+      reservation.role,
+      reservation.agentId ?? null,
+      reservation.branch ?? null,
+      reservation.worktree ?? null,
+      lease.acquiredAt,
+      lease.expiresAt,
+      lease.heartbeatAt,
+      JSON.stringify(reservation.evidenceRefs),
+    ],
+  );
+  if (!inserted) throw new Error("ATTEMPT_INSERT_FAILED");
+  if (reservation.recoveryDispatchId) {
+    const deliveryRows = await transaction.unsafe<Array<{ dispatch_id: string }>>(
+      `UPDATE recovery_dispatch_deliveries
+          SET state = 'attempt_reserved',
+              attempt_id = $4,
+              claim_id = $5,
+              execution_slice_hash = $6,
+              attempt_count = attempt_count + 1,
+              started_at = COALESCE(started_at, $7),
+              updated_at = $7
+        WHERE dispatch_id = $1
+          AND revision_id = $2
+          AND state = 'leased'
+          AND lease_token = $3
+        RETURNING dispatch_id`,
+      [
+        reservation.recoveryDispatchId,
+        reservation.recoveryCaseRevisionId!,
+        reservation.recoveryDeliveryLease!.leaseToken,
+        inserted.attempt_id,
+        reservation.claimId,
+        reservation.sliceHash!,
+        now,
+      ],
+    );
+    if (deliveryRows.length !== 1) throw new Error("RECOVERY_DELIVERY_BIND_CAS_LOST");
+  }
+  return { status: "reserved" as const, attempt: mapAttempt(inserted) };
+}
 
 export function createAttemptRepository(
   sql: Sql,
@@ -144,103 +385,12 @@ export function createAttemptRepository(
       input: unknown,
       options: Readonly<{ now?: Date; leaseMs?: number }> = {},
     ): Promise<AttemptReservationResult> {
-      const reservation = parseAttemptReservation(input);
-      const dedupeKey = computeAttemptDedupeKey(reservation);
       const now = options.now ? new Date(options.now) : new Date();
-      const lease = leaseWindow(now, options.leaseMs ?? DEFAULT_ATTEMPT_LEASE_MS);
-      return sql.begin(async (transaction) => {
-        const lockIdentity = hashCanonicalJson({
-          schema: "setfarm.execution-attempt-lock.v1",
-          runId: reservation.runId,
-          stepId: reservation.stepId,
-          storyId: reservation.storyId,
-        });
-        await transaction.unsafe("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [lockIdentity]);
-
-        const runRows = await transaction.unsafe<{ exists: number }[]>(
-          "SELECT 1 AS exists FROM runs WHERE id = $1 LIMIT 1 FOR KEY SHARE",
-          [reservation.runId],
-        );
-        if (runRows.length !== 1) throw new Error("ATTEMPT_RUN_NOT_FOUND");
-
-        await transaction.unsafe(
-          `UPDATE execution_attempts
-             SET disposition = 'superseded', updated_at = $4
-           WHERE run_id = $1 AND step_id = $2 AND story_id = $3
-             AND disposition IN ('claimed', 'running')
-             AND lease_expires_at <= $4`,
-          [reservation.runId, reservation.stepId, reservation.storyId, now],
-        );
-        if (dedupeKey) {
-          const duplicate = await one(
-            transaction,
-            "SELECT * FROM execution_attempts WHERE dedupe_key = $1 LIMIT 1",
-            [dedupeKey],
-          );
-          if (duplicate) return { status: "duplicate" as const, attempt: mapAttempt(duplicate) };
-        }
-        const active = await one(
-          transaction,
-          `SELECT * FROM execution_attempts
-            WHERE run_id = $1 AND step_id = $2 AND story_id = $3
-              AND disposition IN ('claimed', 'running')
-            LIMIT 1`,
-          [reservation.runId, reservation.stepId, reservation.storyId],
-        );
-        if (active) return { status: "active_conflict" as const, attempt: mapAttempt(active) };
-
-        const generations = await transaction.unsafe<{ generation: number }[]>(
-          "SELECT COALESCE(MAX(generation), 0)::integer + 1 AS generation FROM execution_attempts WHERE run_id = $1 AND step_id = $2 AND story_id = $3",
-          [reservation.runId, reservation.stepId, reservation.storyId],
-        );
-        const generation = generations[0]?.generation ?? 1;
-        const attemptId = identityFactory.attemptId();
-        const fenceToken = identityFactory.fenceToken();
-        const inserted = await one(
-          transaction,
-          `INSERT INTO execution_attempts (
-             attempt_id, run_id, step_id, story_id, generation, fence_token,
-             attempt_class, packet_hash, compilation_report_hash, slice_hash,
-             source_before_sha, source_before_tree_hash, finding_set_hash, dedupe_key,
-             role, agent_id, branch, worktree,
-             lease_acquired_at, lease_expires_at, heartbeat_at,
-             disposition, evidence_refs, created_at, updated_at
-           ) VALUES (
-             $1, $2, $3, $4, $5, $6,
-             $7, $8, $9, $10,
-             $11, $12, $13, $14,
-             $15, $16, $17, $18,
-             $19, $20, $21,
-             'claimed', $22, $19, $19
-           ) RETURNING *`,
-          [
-            attemptId,
-            reservation.runId,
-            reservation.stepId,
-            reservation.storyId,
-            generation,
-            fenceToken,
-            reservation.attemptClass,
-            reservation.packetHash ?? null,
-            reservation.compilationReportHash,
-            reservation.sliceHash ?? null,
-            reservation.sourceBefore.sha,
-            reservation.sourceBefore.treeHash,
-            reservation.findingSetHash ?? null,
-            dedupeKey,
-            reservation.role,
-            reservation.agentId ?? null,
-            reservation.branch ?? null,
-            reservation.worktree ?? null,
-            lease.acquiredAt,
-            lease.expiresAt,
-            lease.heartbeatAt,
-            JSON.stringify(reservation.evidenceRefs),
-          ],
-        );
-        if (!inserted) throw new Error("ATTEMPT_INSERT_FAILED");
-        return { status: "reserved" as const, attempt: mapAttempt(inserted) };
-      }) as Promise<AttemptReservationResult>;
+      return sql.begin((transaction) => reserveAttemptInTransaction(transaction, input, {
+        now,
+        ...(options.leaseMs === undefined ? {} : { leaseMs: options.leaseMs }),
+        identityFactory,
+      })) as Promise<AttemptReservationResult>;
     },
 
     async findById(attemptId: string): Promise<ExecutionAttemptV1 | undefined> {
@@ -298,6 +448,44 @@ export function createAttemptRepository(
       return row ? { status: "running", attempt: mapAttempt(row) } : { status: "stale_fence" };
     },
 
+    /**
+     * Attest the exact platform-owned candidate commit while the attempt fence
+     * is still active. Canonical evidence is only valid after this succeeds.
+     * Replays of the same source are idempotent; a different source can never
+     * replace an already-attested candidate under the same attempt.
+     */
+    async recordCandidateSource(
+      input: unknown,
+      options: Readonly<{ now?: Date }> = {},
+    ): Promise<FenceUpdateResult> {
+      const candidate = CandidateSourceInputV1Schema.parse(input);
+      const now = options.now ? new Date(options.now) : new Date();
+      const row = await one(
+        sql,
+        `UPDATE execution_attempts
+            SET source_after_sha = $4,
+                source_after_tree_hash = $5,
+                heartbeat_at = $6,
+                updated_at = $6
+          WHERE attempt_id = $1 AND generation = $2 AND fence_token = $3
+            AND disposition IN ('claimed', 'running')
+            AND (
+              source_after_sha IS NULL
+              OR (source_after_sha = $4 AND source_after_tree_hash = $5)
+            )
+          RETURNING *`,
+        [
+          candidate.attemptId,
+          candidate.generation,
+          candidate.fenceToken,
+          candidate.sourceAfter.sha,
+          candidate.sourceAfter.treeHash,
+          now,
+        ],
+      );
+      return row ? { status: "candidate", attempt: mapAttempt(row) } : { status: "stale_fence" };
+    },
+
     async complete(input: unknown, options: Readonly<{ now?: Date }> = {}): Promise<FenceUpdateResult> {
       const completion = CompletionInputV1Schema.parse(input);
       const now = options.now ? new Date(options.now) : new Date();
@@ -305,14 +493,26 @@ export function createAttemptRepository(
         sql,
         `UPDATE execution_attempts
             SET disposition = $4,
-                source_after_sha = $5,
-                source_after_tree_hash = $6,
+                source_after_sha = COALESCE(execution_attempts.source_after_sha, $5),
+                source_after_tree_hash = COALESCE(execution_attempts.source_after_tree_hash, $6),
                 output_hash = $7,
-                evidence_refs = $8,
+                evidence_refs = (
+                  SELECT jsonb_agg(ref.value ORDER BY ref.value)::text
+                    FROM (
+                      SELECT DISTINCT value
+                        FROM jsonb_array_elements_text(
+                          execution_attempts.evidence_refs::jsonb || $8::text::jsonb
+                        ) AS item(value)
+                    ) AS ref
+                ),
                 heartbeat_at = $9,
                 updated_at = $9
           WHERE attempt_id = $1 AND generation = $2 AND fence_token = $3
             AND disposition IN ('claimed', 'running')
+            AND (
+              source_after_sha IS NULL
+              OR ($5::text IS NOT NULL AND source_after_sha = $5 AND source_after_tree_hash = $6)
+            )
           RETURNING *`,
         [
           completion.attemptId,

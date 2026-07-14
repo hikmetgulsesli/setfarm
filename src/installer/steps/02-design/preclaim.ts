@@ -8,6 +8,22 @@ import { logger } from "../../../lib/logger.js";
 import { now, pgGet, pgRun } from "../../../db-pg.js";
 import { emitEvent } from "../../events.js";
 import { resolvePlatformScript } from "../../paths.js";
+import { canonicalJsonStringify, hashCanonicalJson } from "../../../product-compiler/canonical-json.js";
+import {
+  bindExactStitchTargetResponsesV1,
+  produceDesignGenerationTargetsV1,
+} from "../../../product-compiler/producers/design-targets.js";
+import {
+  DesignGenerationTargetsV1Schema,
+  StitchTargetResponseBindingsV1Schema,
+  type DesignGenerationTargetsV1,
+  type StitchBatchResponseV1,
+  type StitchTargetResponseBindingsV1,
+} from "../../../product-compiler/schemas/design-generation-targets-v1.js";
+import {
+  ProductSpecV1Schema,
+  type ProductSpecV1,
+} from "../../../product-compiler/schemas/product-spec-v1.js";
 
 const MIN_STITCH_HTML_BYTES = 1000;
 const PRECLAIM_CANCELLED = "DESIGN_PRECLAIM_CANCELLED";
@@ -356,10 +372,25 @@ async function recordPreClaimProgress(ctx: ClaimContext, detail: string): Promis
   try {
     const stepUpdate = await pgRun("UPDATE steps SET updated_at = $1 WHERE run_id = $2 AND step_id = $3 AND status = 'running'", [now(), ctx.runId, ctx.stepId]);
     if (stepUpdate.changes === 0) return false;
-    await pgRun(
-      "UPDATE claim_log SET diagnostic = $1 WHERE run_id = $2 AND step_id = $3 AND story_id IS NULL AND outcome IS NULL",
-      [safeDetail, ctx.runId, ctx.stepId],
-    );
+    if (ctx.claimEnvelope) {
+      await pgRun(
+        "UPDATE claim_log SET diagnostic = $1 WHERE id = $2 AND outcome IS NULL",
+        [safeDetail, ctx.claimEnvelope.claimId],
+      );
+    } else {
+      await pgRun(
+        `UPDATE claim_log AS cl
+            SET diagnostic = $1
+           FROM runs r
+          WHERE r.id = cl.run_id
+            AND r.protocol = 'legacy'
+            AND cl.run_id = $2
+            AND cl.step_id = $3
+            AND cl.story_id IS NULL
+            AND cl.outcome IS NULL`,
+        [safeDetail, ctx.runId, ctx.stepId],
+      );
+    }
   } catch (e) {
     logger.debug(`[module:design preclaim] progress heartbeat failed: ${String(e).slice(0, 120)}`);
     return true;
@@ -390,7 +421,7 @@ async function failDesignPreclaim(ctx: ClaimContext, error: string, options: { t
   }
 
   const { failStep } = await import("../../step-fail.js");
-  await failStep(step.id, safeError);
+  await failStep(step.id, safeError, ctx.claimEnvelope);
 }
 
 function isValidStitchHtml(filePath: string): boolean {
@@ -601,6 +632,90 @@ type ProductSurface = {
   authRequired: string;
   designGuidance: string;
 };
+
+type V3DesignContract = Readonly<{
+  productSpec: ProductSpecV1;
+  generationTargets: DesignGenerationTargetsV1;
+}>;
+
+export function extractCanonicalProductSpecFromPrd(prd: string): ProductSpecV1 {
+  const blocks = [...String(prd || "").matchAll(/```product-spec-v1\s*\n([\s\S]*?)\n```/g)];
+  if (blocks.length !== 1) {
+    throw new Error(`DESIGN_V3_PRODUCT_SPEC_PROJECTION_INVALID: expected exactly one product-spec-v1 block, got ${blocks.length}`);
+  }
+  let raw: unknown;
+  try {
+    raw = JSON.parse(blocks[0]![1]!);
+  } catch {
+    throw new Error("DESIGN_V3_PRODUCT_SPEC_PROJECTION_INVALID: product-spec-v1 block is not JSON");
+  }
+  const parsed = ProductSpecV1Schema.safeParse(raw);
+  if (!parsed.success) {
+    throw new Error(`DESIGN_V3_PRODUCT_SPEC_PROJECTION_INVALID: ${parsed.error.issues[0]?.message || "schema mismatch"}`);
+  }
+  if (canonicalJsonStringify(parsed.data) !== blocks[0]![1]!.trim()) {
+    throw new Error("DESIGN_V3_PRODUCT_SPEC_PROJECTION_INVALID: ProductSpec bytes are not Setfarm Canonical JSON v1");
+  }
+  return parsed.data;
+}
+
+function writeCanonicalJson(filePath: string, value: unknown): void {
+  fs.writeFileSync(filePath, `${canonicalJsonStringify(value)}\n`, "utf8");
+}
+
+function prepareV3DesignContract(prd: string, stitchDir: string): V3DesignContract {
+  const productSpec = extractCanonicalProductSpecFromPrd(prd);
+  const produced = produceDesignGenerationTargetsV1(productSpec);
+  if (produced.status !== "produced") {
+    throw new Error(`DESIGN_V3_GENERATION_TARGETS_REJECTED: ${produced.rejectionCodes.join(",")}`);
+  }
+  fs.mkdirSync(stitchDir, { recursive: true });
+  writeCanonicalJson(path.join(stitchDir, "GENERATION_TARGETS.json"), produced.generationTargets);
+  return { productSpec, generationTargets: produced.generationTargets };
+}
+
+function exactV3ScreenMap(
+  contract: V3DesignContract,
+  bindings: StitchTargetResponseBindingsV1,
+  stitchDir: string,
+): ScreenMapEntry[] {
+  if (bindings.generationTargetsHash !== hashCanonicalJson(contract.generationTargets)) {
+    throw new Error("DESIGN_V3_RESPONSE_TARGET_HASH_MISMATCH");
+  }
+  const bindingByTarget = new Map(bindings.bindings.map((binding) => [binding.targetRef, binding]));
+  const screens = contract.generationTargets.targets.map((target) => {
+    const binding = bindingByTarget.get(target.targetId);
+    if (!binding || binding.responseTitle !== target.expectedScreenTitle) {
+      throw new Error(`DESIGN_V3_RESPONSE_BINDING_MISSING: ${target.targetId}`);
+    }
+    const htmlFile = path.join(stitchDir, `${binding.responseScreenId}.html`);
+    if (!isValidStitchHtml(htmlFile)) {
+      throw new Error(`DESIGN_V3_RESPONSE_HTML_MISSING: ${binding.responseScreenId}`);
+    }
+    const surface = contract.productSpec.surfaces.find((item) => item.id === target.surfaceRef);
+    if (!surface) throw new Error(`DESIGN_V3_TARGET_SURFACE_UNRESOLVED: ${target.surfaceRef}`);
+    return {
+      screenId: binding.responseScreenId,
+      name: target.expectedScreenTitle,
+      type: classifyScreenType(surface.name),
+      description: `${surface.name} ProductSpec surface`,
+      surfaceIds: [target.surfaceRef],
+    };
+  });
+  if (bindings.bindings.length !== screens.length) {
+    throw new Error("DESIGN_V3_RESPONSE_BINDING_UNEXPECTED");
+  }
+  return screens;
+}
+
+function readExactV3Bindings(stitchDir: string): StitchTargetResponseBindingsV1 | undefined {
+  try {
+    const raw = JSON.parse(fs.readFileSync(path.join(stitchDir, "STITCH_RESPONSE_BINDINGS.json"), "utf8"));
+    return StitchTargetResponseBindingsV1Schema.parse(raw);
+  } catch {
+    return undefined;
+  }
+}
 
 function truncateForPrompt(value: string, max = 420): string {
   const text = String(value || "").replace(/\s+/g, " ").trim();
@@ -1146,6 +1261,85 @@ function buildBatchStitchPrompt(repo: string, prd: string, deviceType: string, u
   ].join("\n");
 }
 
+export function buildV3BatchStitchPrompt(
+  productSpec: ProductSpecV1,
+  generationTargets: DesignGenerationTargetsV1,
+  targetRefs: readonly string[],
+  deviceType: string,
+  uiLanguage: string,
+  stageId: string,
+): string {
+  const targetById = new Map(generationTargets.targets.map((target) => [target.targetId, target]));
+  const targets = targetRefs.map((targetRef) => {
+    const target = targetById.get(targetRef);
+    if (!target) throw new Error(`DESIGN_V3_BATCH_TARGET_UNRESOLVED: ${targetRef}`);
+    return target;
+  });
+  const specs = targets.map((target, index) => {
+    const surface = productSpec.surfaces.find((item) => item.id === target.surfaceRef);
+    if (!surface) throw new Error(`DESIGN_V3_TARGET_SURFACE_UNRESOLVED: ${target.surfaceRef}`);
+    const actions = target.requiredActionRefs.map((actionRef) => {
+      const action = productSpec.actions.find((item) => item.id === actionRef);
+      if (!action) throw new Error(`DESIGN_V3_TARGET_ACTION_UNRESOLVED: ${actionRef}`);
+      const inputContract = action.input.fields.length > 0
+        ? action.input.fields.map((field) => `${action.id}.${field.name}`).join(", ")
+        : "none";
+      const observableSelectors = (target.requiredObservableSelectors ?? [])
+        .filter((observable) => observable.actionRef === action.id)
+        .map((observable) => ({
+          observableRef: observable.observableRef,
+          selector: observable.selector,
+        }));
+      return [
+        `  - action_ref: ${action.id}`,
+        `    visible_intent: ${action.name}`,
+        `    exact_action_attribute: data-action="${action.id}"`,
+        `    exact_input_mappings: ${inputContract}`,
+        `    exact_observable_selectors: ${canonicalJsonStringify(observableSelectors)}`,
+      ].join("\n");
+    }).join("\n");
+    return [
+      `SCREEN_TARGET_${index + 1}:`,
+      `- target_ref: ${target.targetId}`,
+      `- surface_ref: ${target.surfaceRef}`,
+      `- exact_screen_title: ${target.expectedScreenTitle}`,
+      `- surface_kind: ${surface.kind}`,
+      `- exact_actions:`,
+      actions || "  - none",
+    ].join("\n");
+  }).join("\n\n");
+
+  return [
+    "# SETFARM_STITCH_V3_GENERATION_CONTRACT",
+    "",
+    `contract_schema: ${generationTargets.schema}`,
+    `product_spec_hash: ${generationTargets.productSpecHash}`,
+    `stage_id: ${stageId}`,
+    `Generate exactly ${targets.length} screens and no others in this response.`,
+    `Target device type: ${deviceType}.`,
+    `All visible user-facing text must be in ${uiLanguage}.`,
+    "",
+    "## EXACT_SCREEN_TARGETS",
+    specs,
+    "",
+    "## MACHINE_READABLE_COMPLETENESS_RULES",
+    "- The returned screen title must equal exact_screen_title byte-for-byte. Do not abbreviate, translate, normalize, decorate, or rename it.",
+    "- Return exactly one screen for each SCREEN_TARGET and no style-guide, assistant, summary, moodboard, PRD, or extra canvas.",
+    "- For every exact_actions entry, render exactly one actionable HTML element and preserve the exact data-action=\"ACT_*\" attribute on that same button, link, or input element.",
+    "- Do not put ACT_* only in prose, labels, nearby wrappers, comments, scripts, or a different DOM element; the actionable element itself owns data-action.",
+    "- For every exact_input_mappings entry, exactly one value-providing element must preserve data-action-input=\"ACT_*.field\". A checkbox/action element may carry both data-action and data-action-input when it supplies its own value.",
+    "- For every exact_observable_selectors entry, preserve the exact selector contract: control selectors bind the same data-action element, surface selectors require one wrapper with data-surface-id equal to the exact SURF_* ref, and accessibility selectors require the exact role and accessible name on one element.",
+    "- Do not emit any button, link, input, textarea, select, checkbox, tab, menu item, or other actionable control that is not declared by exact_actions or exact_input_mappings.",
+    "- Disabled-looking, placeholder, icon-only, overflow, breadcrumb, navigation, and decorative controls are still controls and are forbidden unless declared above.",
+    "- Custom data-action and data-action-input attributes are contractual source, not visual copy. Preserve their exact case and spelling in exported HTML.",
+    "",
+    "## PRODUCT_SCOPE",
+    `Product: ${productSpec.product.name}`,
+    `Goals: ${productSpec.product.goals.map((goal) => goal.statement).join(" | ")}`,
+    "Do not invent product behavior outside the typed targets above.",
+  ].join("\n");
+}
+
 function buildPerScreenStitchPrompt(prd: string, screen: ScreenMapEntry, uiLanguage: string): string {
   return [
     `Create exactly one production-quality UI screen for this Product Surface target.`,
@@ -1174,9 +1368,25 @@ async function generateStitchScreensInSingleBatch(
   prd: string,
   deviceType: string,
   uiLanguage: string,
-): Promise<{ completed: boolean; providerUnavailable: boolean; diagnostic: string }> {
-  const surfaces = parseProductSurfaces(prd);
-  if (surfaces.length === 0) return { completed: false, providerUnavailable: false, diagnostic: "No Product Surfaces declared" };
+  v3Contract?: V3DesignContract,
+): Promise<{ completed: boolean; providerUnavailable: boolean; diagnostic: string; batches: StitchBatchResponseV1[] }> {
+  const parsedSurfaces = parseProductSurfaces(prd);
+  const parsedSurfaceById = new Map(parsedSurfaces.map((surface) => [surface.surfaceId, surface]));
+  const surfaces = v3Contract
+    ? v3Contract.generationTargets.targets.flatMap((target) => {
+        const surface = parsedSurfaceById.get(target.surfaceRef);
+        return surface ? [surface] : [];
+      })
+    : parsedSurfaces;
+  if (surfaces.length === 0) return { completed: false, providerUnavailable: false, diagnostic: "No Product Surfaces declared", batches: [] };
+  if (v3Contract && surfaces.length !== v3Contract.generationTargets.targets.length) {
+    return {
+      completed: false,
+      providerUnavailable: false,
+      diagnostic: "V3 ProductSpec surfaces do not exactly match the legacy design projection",
+      batches: [],
+    };
+  }
   const retryAttempts = boundedIntEnv("SETFARM_STITCH_BATCH_RETRY_ATTEMPTS", 3, 1, 5);
   const retryBaseDelayMs = boundedIntEnv("SETFARM_STITCH_BATCH_RETRY_BASE_DELAY_MS", 45000, 5000, 180000);
   const scriptRetryAttempts = boundedIntEnv("SETFARM_STITCH_SCRIPT_RETRY_ATTEMPTS", 1, 1, 3);
@@ -1187,13 +1397,25 @@ async function generateStitchScreensInSingleBatch(
   }
   let providerUnavailable = false;
   let diagnostic = "";
+  const batches: StitchBatchResponseV1[] = [];
 
   await recordPreClaimProgress(ctx, `Design preclaim: generating ${surfaces.length} Product Surfaces in ${stages.length} Stitch batch stage(s) of up to ${stageSize}`);
   for (let stageIndex = 0; stageIndex < stages.length; stageIndex++) {
     const stageSurfaces = stages[stageIndex];
     const stageLabel = `stage ${stageIndex + 1}/${stages.length} (${stageSurfaces.map((surface) => surface.surfaceId).join(", ")})`;
+    const stageId = `stage-${String(stageIndex + 1).padStart(3, "0")}`;
+    const stageTargetRefs = v3Contract
+      ? stageSurfaces.map((surface) => v3Contract.generationTargets.targets.find((target) => target.surfaceRef === surface.surfaceId)?.targetId || "")
+          .filter(Boolean)
+      : [];
     const promptFile = path.join(stitchDir, ".generate-prompt.txt");
-    fs.writeFileSync(promptFile, buildBatchStitchPrompt(repo, prd, deviceType, uiLanguage, stageSurfaces, stageLabel), "utf-8");
+    fs.writeFileSync(
+      promptFile,
+      v3Contract
+        ? buildV3BatchStitchPrompt(v3Contract.productSpec, v3Contract.generationTargets, stageTargetRefs, deviceType, uiLanguage, stageId)
+        : buildBatchStitchPrompt(repo, prd, deviceType, uiLanguage, stageSurfaces, stageLabel),
+      "utf-8",
+    );
     await recordPreClaimProgress(ctx, `Design preclaim: generating Stitch batch ${stageLabel}`);
     let stageCompleted = false;
 
@@ -1238,7 +1460,23 @@ async function generateStitchScreensInSingleBatch(
             await sleep(delayMs);
             continue;
           }
-          return { completed: false, providerUnavailable, diagnostic };
+          return { completed: false, providerUnavailable, diagnostic, batches };
+        }
+        if (v3Contract) {
+          if (genResult.screenSource !== "direct") {
+            diagnostic = `V3 Stitch response source must be direct, got ${String(genResult.screenSource || "unknown")}`;
+            return { completed: false, providerUnavailable: false, diagnostic, batches };
+          }
+          batches.push({
+            stageId,
+            targetRefs: stageTargetRefs,
+            screens: Array.isArray(genResult.screens)
+              ? genResult.screens.map((screen: any) => ({
+                  screenId: String(screen?.screenId || ""),
+                  title: String(screen?.title || ""),
+                }))
+              : [],
+          });
         }
         await recordPreClaimProgress(ctx, `Design preclaim: Stitch batch ${stageIndex + 1}/${stages.length} generated ${generatedTotal} screen(s)`);
         stageCompleted = true;
@@ -1272,12 +1510,12 @@ async function generateStitchScreensInSingleBatch(
           await sleep(delayMs);
           continue;
         }
-        return { completed: false, providerUnavailable, diagnostic };
+        return { completed: false, providerUnavailable, diagnostic, batches };
       }
     }
-    if (!stageCompleted) return { completed: false, providerUnavailable, diagnostic };
+    if (!stageCompleted) return { completed: false, providerUnavailable, diagnostic, batches };
   }
-  return { completed: true, providerUnavailable: false, diagnostic };
+  return { completed: true, providerUnavailable: false, diagnostic, batches };
 }
 
 function retitleTrackedStitchScreens(repo: string, projId: string, screenIds: string[], title: string): void {
@@ -1555,6 +1793,22 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
   const prd = ctx.context["prd"] || ctx.context["PRD"] || "";
   const stitchDir = repo ? path.join(repo, "stitch") : "";
   if (!repo || !prd || !stitchDir) return;
+  const protocol = ctx.claimEnvelope?.protocol
+    ?? (await pgGet<{ protocol: "legacy" | "shadow" | "v3" }>(
+      "SELECT protocol FROM runs WHERE id = $1",
+      [ctx.runId],
+    ))?.protocol
+    ?? "legacy";
+  let v3Contract: V3DesignContract | undefined;
+  if (protocol === "v3") {
+    try {
+      v3Contract = prepareV3DesignContract(prd, stitchDir);
+      ctx.context["generation_targets"] = canonicalJsonStringify(v3Contract.generationTargets);
+    } catch (error) {
+      await failDesignPreclaim(ctx, String((error as Error)?.message || error), { terminal: true });
+      return;
+    }
+  }
   const designRequired = String(ctx.context["design_required"] || ctx.context["DESIGN_REQUIRED"] || "true").toLowerCase() !== "false";
   if (!designRequired) {
     const stepRow = await pgGet<{ id: string }>("SELECT id FROM steps WHERE run_id = $1 AND step_id = $2 LIMIT 1", [ctx.runId, ctx.stepId]);
@@ -1571,7 +1825,7 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
       "SCREEN_MAP: []",
       "SCREENS_GENERATED: 0",
       "AUTO_COMPLETED: design-bypass (DESIGN_REQUIRED=false)",
-    ].join("\n"));
+    ].join("\n"), ctx.claimEnvelope);
     logger.info("[module:design preclaim] AUTO-COMPLETED design bypass (DESIGN_REQUIRED=false)", { runId: ctx.runId });
     return;
   }
@@ -1618,6 +1872,27 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
       logger.warn(`[module:design preclaim] stale fallback cleanup failed: ${String(e).slice(0, 200)}`, { runId: ctx.runId });
     }
   } else if (existingHtml > 0 && existingCounts.valid > 0 && (existingCounts.total === 0 || existingCounts.valid >= existingCounts.total)) {
+    if (v3Contract) {
+      const bindings = readExactV3Bindings(stitchDir);
+      if (!bindings) {
+        await failDesignPreclaim(ctx, "DESIGN_V3_RESPONSE_BINDINGS_MISSING: cached Stitch HTML cannot be rebound from manifest prose or title similarity.", { terminal: true });
+        return;
+      }
+      try {
+        const exactScreenMap = exactV3ScreenMap(v3Contract, bindings, stitchDir);
+        rewriteScreenArtifactsForScreenMap(stitchDir, exactScreenMap, ctx.context["device_type"] || "DESKTOP");
+        ctx.context["stitch_response_bindings"] = canonicalJsonStringify(bindings);
+        ctx.context["screen_map"] = JSON.stringify(exactScreenMap);
+        if (hasValidStitchDesignMarkdown(stitchDir)) {
+          logger.info(`[module:design preclaim] V3 skip — ${exactScreenMap.length} exact target/response bindings are complete`, { runId: ctx.runId });
+          return;
+        }
+        recoverDesignMdOnly = true;
+      } catch (error) {
+        await failDesignPreclaim(ctx, String((error as Error)?.message || error), { terminal: true });
+        return;
+      }
+    } else {
     const cachedScreenMap = readScreenMapFromStitchArtifacts(stitchDir, ctx.context["device_type"] || "DESKTOP", ctx.runId);
     const cachedReconciliation = verifyScreenMapToSurfaces(cachedScreenMap, prd, { stitchDir });
     if (hasValidStitchDesignMarkdown(stitchDir)) {
@@ -1637,6 +1912,7 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
         await recordPreClaimProgress(ctx, `Design preclaim: cached Stitch HTML missing Product Surface coverage (${cachedReconciliation.missing.slice(0, 5).join(", ")}), regenerating`);
         logger.warn(`[module:design preclaim] cached Stitch HTML missing Product Surface coverage; regenerating`, { runId: ctx.runId });
       }
+    }
     }
   } else if (existingHtml > 0) {
     logger.warn(`[module:design preclaim] Existing stitch HTML incomplete/invalid (${existingCounts.valid}/${existingCounts.total || existingHtml} valid), regenerating`, { runId: ctx.runId });
@@ -1770,7 +2046,16 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
   const designBriefPath = path.join(stitchDir, "DESIGN_BRIEF.md");
   const deviceType = ctx.context["device_type"] || "DESKTOP";
   const uiLanguage = ctx.context["ui_language"] || ctx.context["UI_LANGUAGE"] || "English";
-  const designBrief = buildBatchStitchPrompt(repo, prd, deviceType, uiLanguage);
+  const designBrief = v3Contract
+    ? buildV3BatchStitchPrompt(
+        v3Contract.productSpec,
+        v3Contract.generationTargets,
+        v3Contract.generationTargets.targets.map((target) => target.targetId),
+        deviceType,
+        uiLanguage,
+        "all-targets-preview",
+      )
+    : buildBatchStitchPrompt(repo, prd, deviceType, uiLanguage);
   fs.writeFileSync(designBriefPath, designBrief, "utf-8");
   fs.writeFileSync(promptFile, designBrief, "utf-8");
   logger.info(`[module:design preclaim] Generating screens (project ${projId}, device ${deviceType})`, { runId: ctx.runId });
@@ -1781,10 +2066,22 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
   let lastStitchDiagnostic = "";
   let stitchProviderUnavailable = false;
   try {
-    const batchResult = await generateStitchScreensInSingleBatch(ctx, stitchScript, repo, stitchDir, projId, prd, deviceType, uiLanguage);
+    const batchResult = await generateStitchScreensInSingleBatch(ctx, stitchScript, repo, stitchDir, projId, prd, deviceType, uiLanguage, v3Contract);
     batchGenerationCompleted = batchResult.completed;
     stitchProviderUnavailable = batchResult.providerUnavailable;
     lastStitchDiagnostic = batchResult.diagnostic || lastStitchDiagnostic;
+    if (v3Contract && batchResult.completed) {
+      const bound = bindExactStitchTargetResponsesV1({
+        generationTargets: v3Contract.generationTargets,
+        batches: batchResult.batches,
+      });
+      if (bound.status !== "produced") {
+        const evidence = bound.diagnostics.map((item) => `${item.code}:${item.reference || "batch"}`).join(", ");
+        throw new Error(`DESIGN_V3_EXACT_RESPONSE_BINDING_REJECTED: ${evidence}`);
+      }
+      writeCanonicalJson(path.join(stitchDir, "STITCH_RESPONSE_BINDINGS.json"), bound.responseBindings);
+      ctx.context["stitch_response_bindings"] = canonicalJsonStringify(bound.responseBindings);
+    }
   } catch (e) {
     if (isPreclaimCancelledError(e)) return;
     const failureDetail = redactDiagnosticText(e).slice(0, 500);
@@ -1881,7 +2178,7 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
 
   // 4c. Optional manual recovery path. Disabled by default: Setfarm's normal
   // design mode must stay whole-batch Stitch generation, not per-screen calls.
-  if (htmlCount === 0 && hasStitchKey && process.env.SETFARM_STITCH_PER_SCREEN_RECOVERY === "1") {
+  if (!v3Contract && htmlCount === 0 && hasStitchKey && process.env.SETFARM_STITCH_PER_SCREEN_RECOVERY === "1") {
     try {
       htmlCount = await generateStitchScreensIndividually(ctx, stitchScript, repo, stitchDir, projId, prd, deviceType, uiLanguage);
       ctx.context["screens_generated"] = String(htmlCount);
@@ -1959,8 +2256,29 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
   //    download-all sometimes returns HTML without writing manifest — observed
   //    in run #449). Either way the agent gets a populated SCREEN_MAP and only
   //    has to emit DESIGN_SYSTEM.
-  let screenMap = readScreenMapFromStitchArtifacts(stitchDir, deviceType, ctx.runId);
-  if (screenMap.length > 0) {
+  let screenMap: ScreenMapEntry[] = [];
+  if (v3Contract) {
+    const bindings = readExactV3Bindings(stitchDir);
+    if (!bindings) {
+      const error = "DESIGN_V3_RESPONSE_BINDINGS_MISSING: direct batch response identity was not sealed; manifest/title reconciliation is forbidden.";
+      await failDesignPreclaim(ctx, error, { terminal: true });
+      return;
+    }
+    try {
+      screenMap = exactV3ScreenMap(v3Contract, bindings, stitchDir);
+      rewriteScreenArtifactsForScreenMap(stitchDir, screenMap, deviceType);
+      ctx.context["stitch_response_bindings"] = canonicalJsonStringify(bindings);
+      ctx.context["screen_map"] = JSON.stringify(screenMap);
+      logger.info(`[module:design preclaim] V3 SCREEN_MAP injected from ${screenMap.length} exact target/response bindings`, { runId: ctx.runId });
+      await recordPreClaimProgress(ctx, `Design preclaim: V3 exact SCREEN_MAP ready with ${screenMap.length} entries`);
+    } catch (error) {
+      await failDesignPreclaim(ctx, String((error as Error)?.message || error), { terminal: true });
+      return;
+    }
+  } else {
+    screenMap = readScreenMapFromStitchArtifacts(stitchDir, deviceType, ctx.runId);
+  }
+  if (!v3Contract && screenMap.length > 0) {
     let reconciliation = verifyScreenMapToSurfaces(screenMap, prd, { stitchDir });
     if (reconciliation.inlineCovered.length > 0) {
       await recordPreClaimProgress(ctx, `Design preclaim: inline-covered state surfaces (${reconciliation.inlineCovered.slice(0, 5).join("; ")})`);
@@ -2023,7 +2341,7 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
     ctx.context["screen_map"] = JSON.stringify(screenMap);
     logger.info(`[module:design preclaim] SCREEN_MAP injected (${screenMap.length} entries)`, { runId: ctx.runId });
     await recordPreClaimProgress(ctx, `Design preclaim: SCREEN_MAP ready with ${screenMap.length} entries`);
-  } else {
+  } else if (screenMap.length === 0) {
     const error = "DESIGN_ASSET_GENERATION_FAILED: Stitch generation/download produced 0 valid HTML screens; SCREEN_MAP unavailable. Do not continue to implementation without design assets.";
     logger.warn(`[module:design preclaim] ${error}`, { runId: ctx.runId });
     writeDesignFailureReport(ctx, repo, {
@@ -2093,7 +2411,7 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
     const stepRow = await pgGet<{ id: string }>("SELECT id FROM steps WHERE run_id = $1 AND step_id = $2 LIMIT 1", [ctx.runId, ctx.stepId]);
     const stepDbId = stepRow?.id || ctx.stepId;
     await recordPreClaimProgress(ctx, `Design preclaim: auto-completing design with ${screenMap.length} screens`);
-    await completeStep(stepDbId, output);
+    await completeStep(stepDbId, output, ctx.claimEnvelope);
     logger.info(`[module:design preclaim] AUTO-COMPLETED step ${ctx.stepId} (${screenMap.length} screens, ${htmlOkCount} HTMLs, agent bypassed)`, { runId: ctx.runId, stepId: stepDbId });
   } catch (e) {
     logger.warn(`[module:design preclaim] auto-complete failed (falling back to agent): ${String(e).slice(0, 200)}`, { runId: ctx.runId });

@@ -75,7 +75,10 @@ describe("04-setup-repo step module", () => {
     const preclaim = fs.readFileSync("src/installer/steps/04-setup-repo/preclaim.ts", "utf-8");
     assert.ok(preclaim.includes("SETFARM_DISABLE_AUTO_SETUP_REPO"), "auto-complete should have an opt-out env guard");
     assert.ok(preclaim.includes("AUTO-COMPLETED setup-repo"), "setup-repo should complete in preClaim when the repo is ready");
-    assert.ok(preclaim.includes("completeStep(step.id, output)"), "preClaim should use the normal completeStep path");
+    assert.ok(
+      preclaim.includes("completeStep(step.id, output, ctx.claimEnvelope)"),
+      "preClaim should complete through the immutable claim capability",
+    );
     assert.ok(preclaim.includes("repoReady"), "auto-complete must require a real prepared repo");
     assert.ok(preclaim.includes('resolvePlatformScript("setup-repo.sh")'), "setup-repo preClaim should use the active platform script path");
     assert.equal(preclaim.includes(".openclaw/setfarm-repo/scripts/setup-repo.sh"), false, "setup-repo preClaim must not hard-code the legacy install path");

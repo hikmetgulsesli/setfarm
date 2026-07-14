@@ -116,7 +116,9 @@ describe("spawner gateway recovery wiring", () => {
   it("restarts gateway after prolonged prespawn readiness failures only when idle", () => {
     const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
     assert.match(source, /GATEWAY_PRESPAWN_RESTART_AFTER_MS/);
-    assert.match(source, /activeProcesses\.size > 0\)\s*return/);
+    assert.match(source, /function trackedRuntimeCount\(\): number/);
+    assert.match(source, /if \(trackedRuntimeCount\(\) > 0\) return/);
+    assert.match(source, /\.\.\.\[\.\.\.drainingProcesses\.values\(\)\]/);
     assert.match(source, /execFile\("systemctl",\s*\["--user",\s*"restart",\s*"openclaw-gateway"\]/);
     assert.match(source, /maybeRestartGatewayForReadiness\(gatewayReadiness\.reason,\s*key\)/);
   });
@@ -214,7 +216,7 @@ describe("spawner gateway recovery wiring", () => {
     const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
     assert.doesNotMatch(source, /isVerifyReviewDelayActive/);
     assert.doesNotMatch(source, /Verify review delay active/);
-    assert.match(source, /claim = await claimStep\(fullAgentId,\s*agentId\)/);
+    assert.match(source, /claim = await claimStep\(\s*fullAgentId,\s*agentId,\s*runtimeIntent,\s*recoveryDispatchClass/);
   });
 
   it("selects only usable agent runtimes instead of the first PATH hit", () => {
@@ -239,7 +241,7 @@ describe("spawner gateway recovery wiring", () => {
     const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
     assert.match(source, /const DEFAULT_MAX_CONCURRENT = AGENT_RUNTIME === "openclaw" \? 8 : 2/);
     assert.match(source, /const MAX_CONCURRENT = parsePositiveInt\(process\.env\.SETFARM_MAX_CONCURRENT,\s*DEFAULT_MAX_CONCURRENT\)/);
-    assert.match(source, /activeProcesses\.size >= MAX_CONCURRENT/);
+    assert.match(source, /trackedRuntimeCount\(\) >= MAX_CONCURRENT/);
   });
 
   it("prefers OpenClaw and Kimi before Codex to avoid Codex quota as the first fallback", () => {
@@ -283,7 +285,9 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /e\.HOME = kimiHome/);
     assert.match(source, /e\.KIMI_HOME = path\.join\(kimiHome, "\.kimi"\)/);
     assert.match(source, /buildAgentChildEnv\(pathPrefix, \{/);
-    assert.match(source, /openClawWorkspaceDir: spawnCwd/);
+    assert.match(source, /openClawWorkspaceDir: runtimeWorkspaceDir/);
+    assert.match(source, /prepareAttemptRuntimeWorkspace\(\{/);
+    assert.doesNotMatch(source, /openClawWorkspaceDir: spawnCwd/);
   });
 
   it("isolates OpenClaw agent config from Codex plugin session middleware", () => {
@@ -366,7 +370,10 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(spawnerSource, /fs\.openSync\(LOCK_FILE,\s*"wx"\)/);
     assert.match(spawnerSource, /Another spawner is already running/);
     assert.match(spawnerSource, /acquireSpawnerSingletonLock\(\);\s*fs\.mkdirSync\(path\.dirname\(PID_FILE\)/);
-    assert.match(spawnerSource, /releaseSpawnerSingletonLock\(\);\s*setTimeout\(\(\) => process\.exit\(0\),\s*5000\)/);
+    assert.match(spawnerSource, /let shutdownPromise: Promise<number> \| undefined/);
+    assert.match(spawnerSource, /if \(shutdownPromise\) return shutdownPromise/);
+    assert.match(spawnerSource, /process\.exitCode = exitCode;[\s\S]*releaseSpawnerSingletonLock\(\)/);
+    assert.doesNotMatch(spawnerSource, /setTimeout\(\(\) => process\.exit\(0\)/);
   });
 
   it("starts dashboard daemon with the current Node executable instead of PATH lookup", () => {
@@ -420,7 +427,8 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(authSource, /authLines\.length === 0/);
     assert.match(claimPreamble, /const authFailure = detectRuntimeAuthFailure\(transcriptPath\)/);
     assert.match(claimPreamble, /AGENT_RUNTIME_AUTH_FAILED/);
-    assert.match(claimPreamble, /UPDATE runs SET status = 'failed'/);
+    assert.match(claimPreamble, /await failRun\(row\.run_id, true, reason\)/);
+    assert.doesNotMatch(claimPreamble, /UPDATE runs SET status = 'failed'/);
     assert.match(claimPreamble, /emitEvent\(\{ ts: nowIso, event: "run\.failed"/);
     assert.match(claimPreamble, /scheduleRunCronTeardown\(row\.run_id\)/);
     assert.doesNotMatch(claimPreamble, /AGENT_PROCESS_EXITED/);
@@ -482,8 +490,13 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(helperSource, /blocker_obs\.status IN \('fail', 'blocked'\)/);
     assert.match(helperSource, /markSupervisedStoryInSpawnerContext\(context, row\.story_id\)/);
     assert.match(helperSource, /clearVerifyFailureContextInSpawner\(context\)/);
-    assert.match(helperSource, /label:\s*"Supervisor decision"/);
+    assert.match(helperSource, /'Supervisor decision', 'pass'/);
     assert.match(helperSource, /terminateActiveProcess\(active, "supervise-each-deterministic-auto-pass"\)/);
+    assert.match(helperSource, /await waitForClaimRuntimeQuiescence\(active\.runId, active\.storyId, active\.claimAgentId\)/);
+    assert.match(helperSource, /closeUniqueSingleStepClaimForRecoveryInTransaction\(sql/);
+    assert.match(helperSource, /await pgBegin\(async \(sql\) =>/);
+    assert.match(helperSource, /INSERT INTO run_observations/);
+    assert.doesNotMatch(helperSource, /UPDATE claim_log/);
     assert.match(helperSource, /reviewer no longer waits for LLM supervisor/);
     assert.ok(
       pollSource.indexOf("await autoPassEvidenceReadySuperviseEachSteps()") > pollSource.indexOf("await autoVerifyMergedPrEachStories()"),
@@ -557,7 +570,7 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /function isSecurityGateRole\(role: string,\s*agentId: string\)/);
     assert.match(source, /function runInlineSecurityScan\(repo: string\)/);
     assert.match(source, /const stepId = claim\.stepId/);
-    assert.match(source, /await completeStep\(stepId,\s*output\)/);
+    assert.match(source, /await completeStep\(stepId,\s*output,\s*claimEnvelope\)/);
   });
 
   it("excludes generated design artifacts from inline security scanning", () => {
@@ -591,7 +604,13 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /claimRoleRequiresProjectCwd\(role,\s*agentId\) && spawnCwd === AGENT_SAFE_CWD/);
     assert.match(source, /resolved === SETFARM_SRC \|\| resolved\.startsWith\(SETFARM_SRC \+ path\.sep\)/);
     assert.match(source, /const spawnCwd = safeAgentCwdFromClaimInput\(claim\.resolvedInput\)/);
-    assert.match(source, /JSON\.stringify\(\{ stepId: claim\.stepId, runId: claim\.runId, workdir: spawnCwd, repo: spawnCwd, input: claim\.resolvedInput \}\)/);
+    assert.match(source, /schema: "setfarm\.claim-envelope\.v1"/);
+    assert.match(source, /claimId: claim\.claimId/);
+    assert.match(source, /claimAgentId: claim\.claimAgentId/);
+    assert.match(source, /runtimeAgentId,/);
+    assert.match(source, /attempt:\s*claim\.attempt/);
+    assert.match(source, /workdir: spawnCwd/);
+    assert.match(source, /input: claim\.resolvedInput/);
     assert.match(source, /const claimSummaryFile = path\.join\("\/tmp", "claim-summary-" \+ outputFileId \+ "\.json"\)/);
     assert.match(source, /let claimSummary: Record<string, unknown>/);
     assert.match(source, /claimSummary = buildClaimSummary\(\{/);
@@ -624,6 +643,34 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /task\.childSessionKey === lookup/);
     assert.match(source, /cancelOpenClawTaskId\(taskId,\s*context,\s*lookup\)/);
     assert.match(source, /setTimeout\(\(\) => cancelLingeringOpenClawTasksForLookup\(lookup,\s*context\),\s*1500\)/);
+  });
+
+  it("drains runtime before claim transition, cleanup, and gateway restart", () => {
+    const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
+    const terminateStart = source.indexOf("function terminateActiveProcess(");
+    const terminateEnd = source.indexOf("function runtimeActivitySignature", terminateStart);
+    const terminate = source.slice(terminateStart, terminateEnd);
+    assert.ok(terminate.indexOf('killProcessTree(active.child.pid, "SIGTERM")') < terminate.indexOf("cancelRuntimeTask(active.sessionKey, context)"));
+    assert.doesNotMatch(terminate, /restartOpenClawGatewayAfterGuardSync/);
+    assert.doesNotMatch(terminate, /forceCancelOpenClawLookupSync/);
+
+    const quiescenceStart = source.indexOf("async function waitForClaimRuntimeQuiescence(");
+    const quiescenceEnd = source.indexOf("async function retryActiveSingleStepClaim", quiescenceStart);
+    const quiescence = source.slice(quiescenceStart, quiescenceEnd);
+    assert.match(quiescence, /childProcessTerminalReason\(active\.child\)/);
+    assert.match(quiescence, /forceCancelOpenClawLookupSync\(active\.sessionKey, "runtime-quiescence"\)/);
+    assert.match(quiescence, /openClawTaskIdsForLookupSync\(active\.sessionKey\)\.length > 0/);
+    assert.match(quiescence, /processReferencesRuntimePath\(active\)/);
+    assert.match(quiescence, /Date\.now\(\) - stableSince >= 500/);
+    assert.match(quiescence, /RUNTIME_QUIESCENCE_TIMEOUT/);
+    assert.ok(quiescence.indexOf("drainingProcesses.delete") < quiescence.indexOf("restartOpenClawGatewayAfterGuardSync"));
+
+    const requeueStart = source.indexOf("async function requeueOpenStoryClaim(");
+    const requeueEnd = source.indexOf("async function discardRuntimeGuardRetryWorktree", requeueStart);
+    const requeue = source.slice(requeueStart, requeueEnd);
+    assert.ok(requeue.indexOf("waitForClaimRuntimeQuiescence") < requeue.indexOf("closeClaimAndBoundAttempt"));
+    assert.ok(requeue.indexOf("closeClaimAndBoundAttempt") < requeue.indexOf("discardRuntimeGuardRetryWorktree"));
+    assert.ok(requeue.indexOf("discardRuntimeGuardRetryWorktree") < requeue.lastIndexOf("UPDATE stories SET status = 'pending'"));
   });
 
   it("sweeps stale Setfarm-owned OpenClaw CLI task records when runtime cancel does not close the registry", () => {
@@ -681,9 +728,10 @@ describe("spawner gateway recovery wiring", () => {
     const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
     assert.match(source, /const currentProcess = activeProcesses\.get\(key\)/);
     assert.match(source, /const hasReplacementProcess = Boolean\(currentProcess && currentProcess\.child !== child\)/);
-    assert.match(source, /if \(!hasReplacementProcess && !shuttingDown && claim\.stepId\)/);
+    assert.match(source, /if \(!hasReplacementProcess && !shuttingDown && claim\.stepId && !activeProcess\.claimRecoveryOwned\)/);
     assert.match(source, /new Error\("agent exited with code 0 without calling setfarm step complete\/fail"\)/);
-    assert.match(source, /\.finally\(\(\) => cleanupSpawnerDetachedToolChildren\("spawn-clean-exit"\)\)/);
+    assert.match(source, /activeProcess\.runtimeDrainRequested = true;\s*drainingProcesses\.set\(runtimeSessionId, activeProcess\)/);
+    assert.match(source, /\.finally\(async \(\) => \{\s*await finalizeExitedStoryRuntime\(activeProcess\);\s*cleanupSpawnerDetachedToolChildren\("spawn-clean-exit"\)/);
   });
 
   it("hardens isolated OpenClaw workflow config for unattended exec", () => {
@@ -718,8 +766,23 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(helper, /finalAssistant\(\?:Visible\|Raw\)Text/);
     assert.match(claimPreamble, /const approvalPending = detectRuntimeApprovalPending\(transcriptPath\)/);
     assert.match(claimPreamble, /AGENT_RUNTIME_APPROVAL_PENDING/);
-    assert.match(claimPreamble, /requeueOpenStoryClaim\(row\.run_id,\s*row\.step_id,\s*row\.current_story_id,\s*agentId,\s*reason\)/);
-    assert.match(claimPreamble, /outcome = 'infra_retry'/);
+    assert.match(claimPreamble, /requeueOpenStoryClaim\(row\.run_id,\s*row\.step_id,\s*active\.storyId,\s*agentId,\s*reason,\s*active\.agentId\)/);
+    assert.match(claimPreamble, /APPROVAL_LOOP_LIFECYCLE_OWNER_FAILED/);
+    assert.match(claimPreamble, /retryActiveSingleStepClaim\(active, row\.step_id, reason\)/);
+  });
+
+  it("routes loop usage-limit and auth exits through the claim-attempt lifecycle owner", () => {
+    const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
+    const claimStart = source.indexOf("async function failClaimIfStillRunning(");
+    const genericExit = source.indexOf("const reason = `AGENT_PROCESS_EXITED:", claimStart);
+    const block = source.slice(claimStart, genericExit);
+    assert.match(block, /USAGE_LIMIT_LOOP_LIFECYCLE_OWNER_FAILED/);
+    assert.match(block, /waitForClaimRuntimeQuiescence\(row\.run_id, active\.storyId, agentId\)/);
+    const authLifecycle = block.indexOf("await failRun(row.run_id, true, reason)");
+    assert.ok(authLifecycle >= 0, "auth failure must use the canonical run-terminal owner");
+    assert.doesNotMatch(block, /UPDATE stories SET status = 'failed'/);
+    assert.doesNotMatch(block, /UPDATE claim_log SET outcome = 'failed'/);
+    assert.match(block, /AUTH_FAILURE_LOOP_STORY_ID_MISSING/);
   });
 
   it("cleans detached preview and Playwright children after agent exit or reap", () => {
@@ -745,16 +808,20 @@ describe("spawner gateway recovery wiring", () => {
 
   it("runs PostgreSQL migration guards before startup recovery", () => {
     const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
-    assert.match(source, /import \{ pgClose, pgGet, pgMigrate, pgQuery, pgRun \} from "\.\/db-pg\.js"/);
-    assert.match(source, /await pgMigrate\(\);\s*killStartupOrphanSpawnerAgents\(\);\s*await failStaleRunningClaimsFromPreviousSpawner\(\);/);
+    assert.match(source, /import \{ getSql, pgBegin, pgClose, pgGet, pgMigrate, pgQuery, pgRun \} from "\.\/db-pg\.js"/);
+    const migrate = source.indexOf("await pgMigrate();");
+    const reconciler = source.indexOf("terminalAttemptReconciler = createPostgresTerminalAttemptReconciler", migrate);
+    const kill = source.indexOf("killStartupOrphanSpawnerAgents();", reconciler);
+    const recover = source.indexOf("await failStaleRunningClaimsFromPreviousSpawner();", kill);
+    assert.ok(migrate >= 0 && reconciler > migrate && kill > reconciler && recover > kill);
   });
 
   it("keeps PostgreSQL shutdown ordering under spawner control", () => {
     const dbSource = fs.readFileSync(path.join(root, "src", "db-pg.ts"), "utf-8");
     const spawnerSource = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
-    const shutdownStart = spawnerSource.indexOf("const shutdown = async () =>");
+    const shutdownStart = spawnerSource.indexOf("const shutdown = (): Promise<number> =>");
     const shutdownEnd = spawnerSource.indexOf("process.on(\"SIGTERM\"", shutdownStart);
-    assert.notEqual(shutdownStart, -1, "async shutdown handler not found");
+    assert.notEqual(shutdownStart, -1, "manager-owned shutdown handler not found");
     assert.notEqual(shutdownEnd, -1, "shutdown block end not found");
     const shutdownSource = spawnerSource.slice(shutdownStart, shutdownEnd);
 
@@ -762,25 +829,97 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(dbSource, /process\.on\("SIGTERM", \(\) => \{/);
     assert.doesNotMatch(dbSource, /\/\/ P4-05: Graceful shutdown\nprocess\.on\("SIGTERM"/);
     assert.match(shutdownSource, /await releaseActiveProcessForShutdown\(active\)/);
+    assert.match(shutdownSource, /await runRecoveryCoordinator\.join\(\)/);
+    assert.match(shutdownSource, /await runRecoveryCoordinator\.close\(\)/);
+    assert.match(shutdownSource, /await Promise\.allSettled\(\[\.\.\.inFlightSpawnPromises\]\)/);
+    assert.match(shutdownSource, /SHUTDOWN_UNTRACKED_DURABLE_RUNTIME/);
     assert.match(shutdownSource, /await pgClose\(\)/);
     assert.ok(shutdownSource.indexOf("await releaseActiveProcessForShutdown(active)") < shutdownSource.indexOf("await pgClose()"));
+    assert.doesNotMatch(shutdownSource, /process\.exit\(/);
+  });
+
+  it("keeps normal completion manager-owned until the exact runtime is drained", () => {
+    const cliSource = fs.readFileSync(path.join(root, "src", "cli", "cli.ts"), "utf-8");
+    const completeStart = cliSource.indexOf('if (action === "complete")');
+    const completeEnd = cliSource.indexOf('if (action === "fail")', completeStart);
+    assert.notEqual(completeStart, -1, "CLI complete handler not found");
+    assert.notEqual(completeEnd, -1, "CLI complete handler end not found");
+    const completeSource = cliSource.slice(completeStart, completeEnd);
+    assert.match(completeSource, /await requestRuntimeCompletion\(getSql\(\), \{/);
+    assert.match(completeSource, /pg_notify\('runtime_completion_requested'/);
+    assert.match(completeSource, /completionRequested: true/);
+    assert.ok(
+      completeSource.indexOf("await requestRuntimeCompletion") < completeSource.indexOf("await completeStep"),
+      "the agent must publish a durable completion proposal before any legacy direct completion fallback",
+    );
+
+    const spawnerSource = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
+    const processorStart = spawnerSource.indexOf("async function runRuntimeCompletionProcessor(");
+    const processorEnd = spawnerSource.indexOf("function processRuntimeCompletionRequests(", processorStart);
+    assert.notEqual(processorStart, -1, "runtime completion processor not found");
+    assert.notEqual(processorEnd, -1, "runtime completion processor end not found");
+    const processorSource = spawnerSource.slice(processorStart, processorEnd);
+    const requestDrain = processorSource.indexOf("runtimeSessions.requestDrain(");
+    const drain = processorSource.indexOf("await drainDurableRuntimeSession(");
+    const processing = processorSource.indexOf("await completions.markProcessing(");
+    const executeOwner = processorSource.indexOf("await executeRuntimeCompletionOwner(processing)");
+    assert.ok(
+      requestDrain >= 0 && drain > requestDrain && processing > drain && executeOwner > processing,
+      "manager must drain, fence, and hand the exact runtime to the canonical completion owner in order",
+    );
+    const ownerStart = spawnerSource.indexOf("async function executeRuntimeCompletionOwner(");
+    const ownerEnd = spawnerSource.indexOf("async function resumeRuntimeCompletionOwnerEffects(", ownerStart);
+    const ownerSource = spawnerSource.slice(ownerStart, ownerEnd);
+    assert.match(ownerSource, /completeStep\(/);
+    assert.match(ownerSource, /deferContinuationToEffectLedger: true/);
+    assert.match(ownerSource, /await applyAndAcceptRuntimeCompletionEffects\(request\)/);
+    assert.match(spawnerSource, /runRuntimeCompletionEffectLedger\(/);
+    assert.match(spawnerSource, /await listener\.listen\("runtime_completion_requested"/);
+    assert.match(
+      spawnerSource,
+      /await processRuntimeCompletionRequests\(\);\s*await reconcileV3RecoveryLifecycle\(\);\s*await runV3EvidenceOnlyRecovery\(\);\s*await failStaleRunningClaimsFromPreviousSpawner\(\)/,
+    );
+    const pollStart = spawnerSource.indexOf("async function pollForPendingWork()");
+    const pollEnd = spawnerSource.indexOf("async function main()", pollStart);
+    const pollSource = spawnerSource.slice(pollStart, pollEnd);
+    assert.ok(
+      pollSource.indexOf("await reconcileV3RecoveryLifecycle()")
+        < pollSource.indexOf("await runV3EvidenceOnlyRecovery()"),
+      "lifecycle crash repair must precede non-model evidence acquisition",
+    );
+    assert.ok(
+      pollSource.indexOf("await runV3EvidenceOnlyRecovery()")
+        < pollSource.indexOf("await spawnPendingV3RecoveryWork()"),
+      "evidence-only recovery must be owned before any model recovery dispatch",
+    );
+    const evidenceOwnerStart = spawnerSource.indexOf("async function runV3EvidenceOnlyRecovery()");
+    const evidenceOwnerEnd = spawnerSource.indexOf("const runRecoveryCoordinator", evidenceOwnerStart);
+    const evidenceOwnerSource = spawnerSource.slice(evidenceOwnerStart, evidenceOwnerEnd);
+    assert.match(evidenceOwnerSource, /processed >= 5/);
+    assert.match(evidenceOwnerSource, /createV3EvidenceOnlyRecoveryWorker/);
+    assert.doesNotMatch(evidenceOwnerSource, /spawnAgentSession|buildPreclaimedPrompt|openclaw|codex/);
   });
 
   it("closes active claim_log rows when shutdown releases a running step", () => {
     const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
     const releaseStart = source.indexOf("async function releaseActiveProcessForShutdown(");
-    const releaseEnd = source.indexOf("function cancelRunAgents", releaseStart);
+    const releaseEnd = source.indexOf("function processReferencesPaths", releaseStart);
     assert.notEqual(releaseStart, -1, "releaseActiveProcessForShutdown source not found");
     assert.notEqual(releaseEnd, -1, "releaseActiveProcessForShutdown end not found");
     const releaseSource = source.slice(releaseStart, releaseEnd);
 
-    assert.match(releaseSource, /LEFT JOIN stories st ON st\.id = s\.current_story_id/);
-    assert.match(releaseSource, /UPDATE claim_log SET outcome = 'infra_retry'/);
-    assert.match(releaseSource, /Spawner shutdown released active single-step claim/);
-    assert.match(releaseSource, /step_id = \$3 AND story_id IS NULL AND agent_id = \$4 AND outcome IS NULL/);
-    assert.match(releaseSource, /Spawner shutdown released active loop claim/);
-    assert.match(releaseSource, /step_id = \$3 AND story_id = \$4 AND agent_id = \$5 AND outcome IS NULL/);
-    assert.doesNotMatch(releaseSource, /story_id = \$3 AND agent_id = \$4 AND outcome IS NULL/);
+    assert.match(releaseSource, /runtimeSessions\.requestDrain\(/);
+    assert.match(releaseSource, /await drainDurableRuntimeSession\(/);
+    assert.match(releaseSource, /createRuntimeCompletionRepository\(getSql\(\)\)\.findByClaimId\(claimId\)/);
+    assert.match(releaseSource, /await processRuntimeCompletionRequests\(completionRequest\.requestId\)/);
+    assert.match(releaseSource, /retrySingleStepClaimWithAuthority\(\{/);
+    assert.match(releaseSource, /Spawner shutdown released active single-step claim after proven drain/);
+    assert.match(releaseSource, /envelope:\s*activeClaimEnvelope\(active\)/);
+    assert.match(releaseSource, /Spawner shutdown released active loop claim after proven drain/);
+    assert.match(releaseSource, /await requeueOpenStoryClaim\(/);
+    assert.match(releaseSource, /SHUTDOWN_CLAIM_REMAINED_ACTIVE/);
+    assert.match(releaseSource, /releaseDrainedRuntimeSessionsInTransaction/);
+    assert.doesNotMatch(releaseSource, /UPDATE claim_log[\s\S]*story_id = \$4 AND agent_id = \$5/);
   });
 
   it("requeues startup orphan running claims as infra retry instead of product failure", () => {
@@ -793,9 +932,9 @@ describe("spawner gateway recovery wiring", () => {
 
     assert.match(recoverySource, /LEFT JOIN stories st ON st\.id = s\.current_story_id/);
     assert.match(recoverySource, /await requeueStaleRunningClaimFromPreviousSpawner\(row,\s*reason\)/);
-    assert.match(recoverySource, /UPDATE steps SET status = 'pending', current_story_id = NULL/);
-    assert.match(recoverySource, /UPDATE claim_log SET outcome = 'infra_retry'/);
-    assert.doesNotMatch(recoverySource, /await failStep\(row\.id,\s*reason\)/);
+    assert.match(recoverySource, /retrySingleStepClaimWithAuthority\(\{/);
+    assert.match(source, /async function recoverClaimEnvelopeFromDatabase/);
+    assert.doesNotMatch(recoverySource, /UPDATE claim_log SET outcome = 'infra_retry'/);
   });
 
   it("does not consume single-step retry budgets for transient agent infrastructure exits", () => {
@@ -813,7 +952,8 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /normalized\.includes\("masked_check_command"\)/);
     assert.match(singlePreamble, /if \(isTransientAgentInfrastructureFailure\(error\)\)/);
     assert.match(singlePreamble, /UPDATE steps SET status = 'pending', output = \$\{error\}, updated_at = \$\{now\(\)\} WHERE id = \$\{stepId\}/);
-    assert.match(singlePreamble, /outcome = 'infra_retry'/);
+    assert.match(singlePreamble, /outcome:\s*"infra_retry"/);
+    assert.match(source, /closeExactSingleStepClaimInTransaction/);
     assert.match(singlePreamble, /failStep:singleInfraRetry/);
     assert.match(singlePreamble, /without consuming step retry/);
     assert.doesNotMatch(singlePreamble, /retry_count = \$\{newRetryCount\}/);
@@ -845,7 +985,7 @@ describe("spawner gateway recovery wiring", () => {
   it("does not block QA-FIX main merges on platform metadata-only dirty status", () => {
     const source = fs.readFileSync(path.join(root, "src", "installer", "step-ops.ts"), "utf-8");
     const helperStart = source.indexOf("function gitPorcelainPath(");
-    const qaFixStart = source.indexOf("if (storyStatus === STORY_STATUS.DONE && storyIsQaFix)");
+    const qaFixStart = source.indexOf("storyStatus === STORY_STATUS.DONE\n      && storyIsQaFix");
     const qaFixEnd = source.indexOf("const requiredPrBase", qaFixStart);
     assert.notEqual(helperStart, -1, "platform metadata dirty parser not found");
     assert.notEqual(qaFixStart, -1, "QA-FIX merge block not found");
@@ -865,21 +1005,20 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(qaFixMergeBlock, /Ignoring platform metadata-only dirty status before merging/);
   });
 
-  it("enforces one open claim per run step story and agent at the database layer", () => {
+  it("keeps schema bootstrap lifecycle-read-only and enforces one owner per run step story", () => {
     const source = fs.readFileSync(path.join(root, "src", "db-pg.ts"), "utf-8");
-    assert.match(source, /LEAST\(CAST\(EXTRACT\(EPOCH FROM \(NOW\(\) - cl\.claimed_at::timestamptz\)\) \* 1000 AS BIGINT\), 2147483647\)::INTEGER/);
-    assert.match(source, /pgMigrate closed orphan open claim without parent run/);
-    assert.match(source, /NOT EXISTS \(SELECT 1 FROM runs r WHERE r\.id = cl\.run_id\)/);
-    assert.match(source, /pgMigrate closed open claim for terminal run/);
-    assert.match(source, /r\.status NOT IN \('running', 'resuming'\)/);
-    assert.match(source, /pgMigrate deduped duplicate open single-step claim/);
-    assert.match(source, /PARTITION BY run_id, step_id, agent_id/);
-    assert.match(source, /pgMigrate deduped duplicate open story claim/);
-    assert.match(source, /PARTITION BY run_id, step_id, story_id, agent_id/);
+    const lifecycleBoundaryStart = source.indexOf("// Runtime schema bootstrap is intentionally read-only");
+    const lifecycleBoundaryEnd = source.indexOf("_schemaReady = true", lifecycleBoundaryStart);
+    assert.notEqual(lifecycleBoundaryStart, -1, "read-only lifecycle bootstrap boundary not found");
+    assert.notEqual(lifecycleBoundaryEnd, -1, "read-only lifecycle bootstrap end not found");
+    const lifecycleBoundary = source.slice(lifecycleBoundaryStart, lifecycleBoundaryEnd);
+    assert.match(lifecycleBoundary, /CLAIM_LOG_OPEN_SINGLE_DUPLICATE_REQUIRES_RECOVERY/);
+    assert.match(lifecycleBoundary, /CLAIM_LOG_OPEN_STORY_DUPLICATE_REQUIRES_RECOVERY/);
+    assert.doesNotMatch(lifecycleBoundary, /UPDATE claim_log|DELETE FROM claim_log|INSERT INTO claim_log/);
     assert.match(source, /idx_claim_log_open_single_unique/);
-    assert.match(source, /ON claim_log\(run_id, step_id, agent_id\) WHERE outcome IS NULL AND story_id IS NULL/);
+    assert.match(source, /ON claim_log\(run_id, step_id\) WHERE outcome IS NULL AND story_id IS NULL/);
     assert.match(source, /idx_claim_log_open_story_unique/);
-    assert.match(source, /ON claim_log\(run_id, step_id, story_id, agent_id\) WHERE outcome IS NULL AND story_id IS NOT NULL/);
+    assert.match(source, /ON claim_log\(run_id, step_id, story_id\) WHERE outcome IS NULL AND story_id IS NOT NULL/);
   });
 
   it("recovers build-passing implement work when an agent exits without step completion", () => {
@@ -900,10 +1039,31 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /PLATFORM_STORY_RECOVERY_NO_SCOPED_COMMIT/);
     assert.match(source, /RECOVERY: agent-exit-build-and-scope-passing/);
     assert.match(source, /RECOVERY_COMMIT:/);
-    assert.match(source, /await completeStep\(stepDbId,\s*recoveryOutput\)/);
+    assert.match(source, /await publishRuntimeCompletionProposal\(active\.stepId,\s*recoveryOutput,\s*recoveryEnvelope\)/);
     assert.match(source, /exitReason\.includes\("AGENT_STARTUP_SILENT"\)/);
     assert.match(source, /exitReason\.includes\("AGENT_PROCESS_STUCK"\)/);
-    assert.match(source, /failClaimIfStillRunning\(active\.stepId,\s*active\.agentId,\s*active\.wfId,\s*active\.role,\s*active\.transcriptPath,\s*new Error\(reason\),\s*active\.startedAtMs,\s*active\.spawnCwd,\s*active\.outputPath\)/);
+    assert.match(source, /failClaimIfStillRunning\(active,\s*new Error\(reason\)\)/);
+  });
+
+  it("fences durable runtime signals with exact OS process identity", () => {
+    const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
+    const repository = fs.readFileSync(
+      path.join(root, "src", "execution", "runtime-session-repository.ts"),
+      "utf-8",
+    );
+    assert.match(source, /const processIdentity = child\.pid \? observeProcessIdentity\(child\.pid\) : undefined/);
+    assert.match(source, /RUNTIME_SESSION_PROCESS_IDENTITY_UNOBSERVED/);
+    assert.match(source, /processIdentity,/);
+    assert.match(source, /signalProcessIfIdentityMatches\(expectedProcessIdentity, "SIGKILL"/);
+    assert.doesNotMatch(
+      source.slice(
+        source.indexOf("async function drainDurableRuntimeSession("),
+        source.indexOf("let runTerminationProcessPromise", source.indexOf("async function drainDurableRuntimeSession(")),
+      ),
+      /setTimeout\(\(\) => killProcessTree\(session\.pid/,
+    );
+    assert.match(repository, /RUNTIME_SESSION_PROCESS_IDENTITY_REQUIRED/);
+    assert.match(repository, /process_identity = \$8::text::jsonb/);
   });
 
   it("recovers build-passing implement work before requeueing startup-stale running stories", () => {
@@ -918,7 +1078,7 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(block, /AGENT_PROCESS_ORPHANED: spawner restarted or lost the tracked implement agent before step completion/);
     assert.match(block, /if \(recovered\) continue/);
     assert.ok(
-      block.indexOf("const recovered = await tryRecoverExitedImplementWork(") < block.indexOf("UPDATE stories SET status = 'pending'"),
+      block.indexOf("const recovered = await tryRecoverExitedImplementWork(") < block.indexOf("await requeueOpenStoryClaim("),
       "startup-stale implement recovery must run before falling back to pending requeue",
     );
   });
@@ -1050,7 +1210,7 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /IMPLEMENT_NO_DELTA_STALL/);
     assert.match(source, /recordRuntimeSupervisorSignal\(active,\s*row\.step_id,\s*effectiveStoryDbId \|\| null,\s*"implement-no-delta-stall"/);
     assert.match(source, /terminateActiveProcess\(active,\s*"implement-no-delta-stall"\)/);
-    assert.match(source, /requeueOpenStoryClaim\(active\.runId,\s*row\.step_id,\s*effectiveStoryId,\s*active\.agentId,\s*reason\)/);
+    assert.match(source, /requeueOpenStoryClaim\(active\.runId,\s*row\.step_id,\s*effectiveStoryId,\s*active\.claimAgentId,\s*reason,\s*active\.agentId\)/);
     assert.ok(
       source.indexOf("implementNoDeltaStallGuard(active, ageMs)") < source.indexOf("const terminalReason = childProcessTerminalReason(active.child)"),
       "no-delta stall guard must run before terminal-process recovery",
@@ -1211,7 +1371,7 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /RUNTIME_GUARD_REQUEUE_SETTLE_MS/);
     assert.match(source, /function setRuntimeGuardRequeueCooldown\(agentId: string, reason: string\)/);
     assert.match(source, /agentCooldownUntil\.set\(agentId/);
-    assert.match(source, /setRuntimeGuardRequeueCooldown\(agentId,\s*diagnostic\)/);
+    assert.match(source, /setRuntimeGuardRequeueCooldown\(runtimeAgentId,\s*diagnostic\)/);
     assert.match(source, /function discardRuntimeGuardSiblingArtifacts\(storyBranch: string, diagnostic: string\)/);
     assert.match(source, /discardRuntimeGuardSiblingArtifacts\(storyBranch,\s*diagnostic\)/);
     assert.match(source, /runStoryPrefix/);
@@ -1294,7 +1454,7 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /Repeated deletions:/);
     assert.match(source, /RETRY_PATCH_REAPPLIED_RUNTIME_GUARD/);
     assert.match(source, /terminateActiveProcess\(active,\s*"retry-patch-runtime-guard"\)/);
-    assert.match(source, /await requeueOpenStoryClaim\(active\.runId,\s*row\.step_id,\s*effectiveStoryId,\s*active\.agentId,\s*reason\)/);
+    assert.match(source, /await requeueOpenStoryClaim\(active\.runId,\s*row\.step_id,\s*effectiveStoryId,\s*active\.claimAgentId,\s*reason,\s*active\.agentId\)/);
 
     const guardStart = source.indexOf("const retryPatchReapplied = implementRejectedRetryPatchRuntimeGuard(active)");
     const gitStart = source.indexOf("const gitDiscipline = implementGitDisciplineGuard(active)", guardStart);
@@ -1371,7 +1531,7 @@ describe("spawner gateway recovery wiring", () => {
     const requeueOpen = source.slice(requeueOpenStart, source.indexOf("async function requeueOrphanedRunningStories", requeueOpenStart));
     const requeueOrphan = source.slice(requeueOrphanStart, source.indexOf("async function requeueOpenStoryClaim", requeueOrphanStart));
 
-    assert.match(requeueOpen, /await discardRuntimeGuardRetryWorktree\(runId, storyId, agentId, diagnostic\)/);
+    assert.match(requeueOpen, /await discardRuntimeGuardRetryWorktree\(runId, storyId, claimAgentId, diagnostic\)/);
     assert.match(source, /RUNTIME_GUARD_REPEAT_LIMIT/);
     assert.match(source, /SETFARM_RUNTIME_GUARD_REPEAT_LIMIT/);
     assert.match(source, /function runtimeGuardDiagnosticKey\(diagnostic: string\)/);
@@ -1381,16 +1541,15 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /blocking the story instead of requeueing indefinitely/);
     assert.match(source, /UPDATE stories SET status = 'failed'/);
     assert.ok(
-      requeueOpen.indexOf("await discardRuntimeGuardRetryWorktree(runId, storyId, agentId, diagnostic)") < requeueOpen.indexOf("UPDATE stories SET status = 'pending'"),
+      requeueOpen.indexOf("await discardRuntimeGuardRetryWorktree(runId, storyId, claimAgentId, diagnostic)") < requeueOpen.indexOf("UPDATE stories SET status = 'pending'"),
       "runtime guard requeue must discard contaminated worktree before the story can be claimed again",
     );
 
-    for (const block of [requeueOpen, requeueOrphan]) {
-      assert.doesNotMatch(block, /abandoned_count = COALESCE\(abandoned_count, 0\) \+ 1/);
-      assert.doesNotMatch(block, /retry_count = retry_count \+ 1/);
-      assert.match(block, /output = \$2/);
-      assert.match(block, /\[.*diagnostic.*\]/s);
-    }
+    assert.match(requeueOrphan, /return requeueOpenStoryClaim\(runId, stepId, row\.story_id, agentId, diagnostic\)/);
+    assert.doesNotMatch(requeueOpen, /abandoned_count = COALESCE\(abandoned_count, 0\) \+ 1/);
+    assert.doesNotMatch(requeueOpen, /retry_count = retry_count \+ 1/);
+    assert.match(requeueOpen, /output = \$2/);
+    assert.match(requeueOpen, /closeClaimAndBoundAttempt\(getSql\(\), \{/);
   });
 
   it("records self-loop diagnostics in supervisor memory before retrying claims", () => {
@@ -1461,7 +1620,7 @@ describe("spawner gateway recovery wiring", () => {
     const block = source.slice(guardStart, guardEnd);
     assert.match(block, /recordSupervisorRuntimeEvent\(active\.runId,\s*row\.step_id,\s*effectiveStoryDbId \|\| null,\s*"PRODUCT_SUPERVISOR_RUNTIME_GUARD"/);
     assert.match(block, /terminateActiveProcess\(active,\s*"process-cleanup-guard"\)/);
-    assert.match(block, /await requeueOpenStoryClaim\(active\.runId,\s*row\.step_id,\s*effectiveStoryId,\s*active\.agentId,\s*reason\)/);
+    assert.match(block, /await requeueOpenStoryClaim\(active\.runId,\s*row\.step_id,\s*effectiveStoryId,\s*active\.claimAgentId,\s*reason,\s*active\.agentId\)/);
   });
 
   it("retries implement agents that mask build and test pipeline exit codes", () => {
@@ -1485,7 +1644,7 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(block, /recordSupervisorRuntimeEvent\(active\.runId,\s*row\.step_id,\s*effectiveStoryDbId \|\| null,\s*"PRODUCT_SUPERVISOR_RUNTIME_GUARD"/);
     assert.match(block, /PRODUCT_SUPERVISOR_RUNTIME_GUARD/);
     assert.match(block, /terminateActiveProcess\(active,\s*"masked-check-command-guard"\)/);
-    assert.match(block, /await requeueOpenStoryClaim\(active\.runId,\s*row\.step_id,\s*effectiveStoryId,\s*active\.agentId,\s*reason\)/);
+    assert.match(block, /await requeueOpenStoryClaim\(active\.runId,\s*row\.step_id,\s*effectiveStoryId,\s*active\.claimAgentId,\s*reason,\s*active\.agentId\)/);
     assert.match(source, /exitReason\.includes\("MASKED_CHECK_COMMAND"\)/);
     assert.ok(
       source.indexOf("const processCleanup = implementProcessCleanupGuard(active)") < guardStart,
@@ -1511,8 +1670,8 @@ describe("spawner gateway recovery wiring", () => {
     const block = source.slice(guardStart, retryStart);
     assert.match(block, /recordSupervisorRuntimeEvent\(active\.runId,\s*row\.step_id,\s*effectiveStoryDbId \|\| null,\s*"IMPLEMENT_POST_CHECK_OUTPUT_STALL"/);
     assert.match(block, /terminateActiveProcess\(active,\s*"implement-post-check-output-stall"\)/);
-    assert.match(block, /tryRecoverExitedImplementWork\(active\.stepId,\s*recoveryRow,\s*active\.agentId,\s*active\.transcriptPath,\s*new Error\(reason\),\s*active\.spawnCwd\)/);
-    assert.match(block, /await requeueOpenStoryClaim\(active\.runId,\s*row\.step_id,\s*effectiveStoryId,\s*active\.agentId,\s*reason\)/);
+    assert.match(block, /tryRecoverExitedImplementWork\(active,\s*recoveryRow,\s*new Error\(reason\)\)/);
+    assert.match(block, /await requeueOpenStoryClaim\(active\.runId,\s*row\.step_id,\s*effectiveStoryId,\s*active\.claimAgentId,\s*reason,\s*active\.agentId\)/);
     assert.ok(
       source.indexOf("const noDeltaStall = implementNoDeltaStallGuard(active, ageMs)") < guardStart,
       "post-check guard should run after no-delta guard",
@@ -1534,7 +1693,7 @@ describe("spawner gateway recovery wiring", () => {
     const block = source.slice(guardStart, maskedStart);
     assert.match(block, /recordSupervisorRuntimeEvent\(active\.runId,\s*row\.step_id,\s*effectiveStoryDbId \|\| null,\s*"PRODUCT_SUPERVISOR_RUNTIME_GUARD"/);
     assert.match(block, /terminateActiveProcess\(active,\s*"bootstrap-command-guard"\)/);
-    assert.match(block, /await requeueOpenStoryClaim\(active\.runId,\s*row\.step_id,\s*effectiveStoryId,\s*active\.agentId,\s*reason\)/);
+    assert.match(block, /await requeueOpenStoryClaim\(active\.runId,\s*row\.step_id,\s*effectiveStoryId,\s*active\.claimAgentId,\s*reason,\s*active\.agentId\)/);
   });
 
   it("retries implement agents that inspect Setfarm helper scripts", () => {
@@ -1550,7 +1709,7 @@ describe("spawner gateway recovery wiring", () => {
     const block = source.slice(helperStart, maskedStart);
     assert.match(block, /recordSupervisorRuntimeEvent\(active\.runId,\s*row\.step_id,\s*effectiveStoryDbId \|\| null,\s*"PRODUCT_SUPERVISOR_RUNTIME_GUARD"/);
     assert.match(block, /terminateActiveProcess\(active,\s*"setfarm-helper-script-read-guard"\)/);
-    assert.match(block, /await requeueOpenStoryClaim\(active\.runId,\s*row\.step_id,\s*effectiveStoryId,\s*active\.agentId,\s*reason\)/);
+    assert.match(block, /await requeueOpenStoryClaim\(active\.runId,\s*row\.step_id,\s*effectiveStoryId,\s*active\.claimAgentId,\s*reason,\s*active\.agentId\)/);
   });
 
   it("retries implement agents that guess or wrap summary helper commands", () => {
@@ -1566,7 +1725,7 @@ describe("spawner gateway recovery wiring", () => {
     const block = source.slice(summaryStart, helperStart);
     assert.match(block, /recordSupervisorRuntimeEvent\(active\.runId,\s*row\.step_id,\s*effectiveStoryDbId \|\| null,\s*"PRODUCT_SUPERVISOR_RUNTIME_GUARD"/);
     assert.match(block, /terminateActiveProcess\(active,\s*"setfarm-summary-command-guard"\)/);
-    assert.match(block, /await requeueOpenStoryClaim\(active\.runId,\s*row\.step_id,\s*effectiveStoryId,\s*active\.agentId,\s*reason\)/);
+    assert.match(block, /await requeueOpenStoryClaim\(active\.runId,\s*row\.step_id,\s*effectiveStoryId,\s*active\.claimAgentId,\s*reason,\s*active\.agentId\)/);
   });
 
   it("treats project-tree write probe artifacts as forbidden scratch files", () => {
@@ -1595,8 +1754,9 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /row\.step_id === "verify" && ageMs >= VERIFY_AGENT_HARD_TIMEOUT_MS/);
     assert.match(source, /terminateActiveProcess\(active,\s*"verify-hard-timeout"\)/);
     assert.match(source, /await retryActiveSingleStepClaim\(active,\s*row\.step_id,\s*reason\)/);
-    assert.match(source, /UPDATE steps SET status = 'pending', current_story_id = NULL, retry_count = retry_count \+ 1/);
-    assert.match(source, /UPDATE claim_log SET outcome = 'infra_retry'/);
+    assert.match(source, /retrySingleStepClaimWithAuthority/);
+    assert.match(source, /SETFARM_INFRA_RETRY/);
+    assert.match(source, /activeClaimEnvelope\(active\)/);
     assert.match(source, /pg_notify\('step_pending'/);
     assert.match(source, /recordObservation\(\{/);
     assert.match(source, /RUNTIME_GUARD_REPEAT_LIMIT/);
@@ -1621,8 +1781,8 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(block, /step-state-closed-claim/);
     assert.match(block, /terminateActiveProcess\(active,\s*"step-state-mismatch"\)/);
     assert.match(block, /activeProcesses\.delete\(key\)/);
-    assert.match(block, /completeRunningClaimFromOutputFile\(active\.stepId,\s*active\.agentId,\s*active\.outputPath,\s*active\.startedAtMs\)/);
-    assert.match(block, /requeueOpenStoryClaim\(active\.runId,\s*row\.step_id,\s*active\.storyId,\s*active\.agentId,\s*reason\)/);
+    assert.match(block, /completeActiveClaimFromOutputFile\(active\)/);
+    assert.match(block, /requeueOpenStoryClaim\(active\.runId,\s*row\.step_id,\s*active\.storyId,\s*active\.claimAgentId,\s*reason,\s*active\.agentId\)/);
     assert.match(block, /retryActiveSingleStepClaim\(active,\s*row\.step_id,\s*reason\)/);
     assert.ok(
       block.indexOf("activeProcessHasOpenClaim") < block.indexOf("AGENT_STEP_STATE_MISMATCH"),
@@ -1668,8 +1828,8 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /terminateActiveProcess\(active,\s*"implement-retry-hard-timeout"\)/);
     assert.match(source, /exitReason\.includes\("IMPLEMENT_RETRY_HARD_TIMEOUT"\)/);
     assert.match(source, /const recoveryRow: RunningStepRow = \{/);
-    assert.match(source, /tryRecoverExitedImplementWork\(active\.stepId,\s*recoveryRow,\s*active\.agentId,\s*active\.transcriptPath,\s*new Error\(reason\),\s*active\.spawnCwd\)/);
-    assert.match(source, /await requeueOpenStoryClaim\(active\.runId,\s*row\.step_id,\s*effectiveStoryId,\s*active\.agentId,\s*reason\)/);
+    assert.match(source, /tryRecoverExitedImplementWork\(active,\s*recoveryRow,\s*new Error\(reason\)\)/);
+    assert.match(source, /await requeueOpenStoryClaim\(active\.runId,\s*row\.step_id,\s*effectiveStoryId,\s*active\.claimAgentId,\s*reason,\s*active\.agentId\)/);
 
     const timeoutStart = source.indexOf("const retryHardTimeout = implementRetryHardTimeoutGuard(active, ageMs)");
     const terminalStart = source.indexOf("const terminalReason = childProcessTerminalReason(active.child)", timeoutStart);
@@ -1677,11 +1837,11 @@ describe("spawner gateway recovery wiring", () => {
     assert.notEqual(terminalStart, -1, "terminal recovery block missing after retry timeout");
     const block = source.slice(timeoutStart, terminalStart);
     assert.ok(
-      block.indexOf("completeRunningClaimFromOutputFile(active.stepId") < block.indexOf("tryRecoverExitedImplementWork(active.stepId"),
+      block.indexOf("completeActiveClaimFromOutputFile(active)") < block.indexOf("tryRecoverExitedImplementWork(active"),
       "retry timeout must first honor explicit output files, then recover build-passing scoped work",
     );
     assert.ok(
-      block.indexOf("tryRecoverExitedImplementWork(active.stepId") < block.indexOf("await requeueOpenStoryClaim(active.runId"),
+      block.indexOf("tryRecoverExitedImplementWork(active") < block.indexOf("await requeueOpenStoryClaim(active.runId"),
       "retry timeout must attempt build/scope recovery before requeueing the story",
     );
   });
@@ -1786,10 +1946,15 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /s\.type <> 'loop'/);
     assert.match(source, /cl\.story_id IS NULL/);
     assert.match(source, /s\.updated_at <= NOW\(\) - \(\$1::int \* interval '1 millisecond'\)/);
-    assert.match(source, /Array\.from\(activeProcesses\.values\(\)\)\.some/);
+    assert.match(source, /hasTrackedClaimRuntime\(\(active\) =>/);
     assert.match(source, /UNTRACKED_RUNNING_SINGLE_STEP/);
-    assert.match(source, /UPDATE steps SET status = 'pending', current_story_id = NULL, retry_count = retry_count \+ 1/);
-    assert.match(source, /UPDATE claim_log SET outcome = 'infra_retry'/);
+    assert.match(source, /waitForClaimRuntimeQuiescence\(row\.run_id, undefined, row\.agent_id\)/);
+    assert.match(source, /retrySingleStepClaimWithAuthority\(\{/);
+    assert.match(source, /runtimeAgentId:\s*"spawner-untracked-recovery"/);
+    assert.doesNotMatch(source.slice(
+      source.indexOf("async function requeueUntrackedRunningSingleStepClaims"),
+      source.indexOf("async function runClaimMaintenance"),
+    ), /UPDATE claim_log SET outcome = 'infra_retry'/);
     assert.match(source, /setInterval\(\(\) => \{ void runClaimMaintenance\(\); \}, Math\.min\(POLL_INTERVAL_MS, 10_000\)\)/);
   });
 
@@ -1808,13 +1973,13 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(block, /cl\.story_id = st\.story_id/);
     assert.match(block, /cl\.outcome IS NULL/);
     assert.match(block, /cl\.claimed_at <= NOW\(\) - \(\$1::int \* interval '1 millisecond'\)/);
-    assert.match(block, /Array\.from\(activeProcesses\.values\(\)\)\.some/);
+    assert.match(block, /hasTrackedClaimRuntime\(\(active\) =>/);
     assert.match(block, /active\.storyDbId === row\.story_db_id \|\| active\.storyId === row\.story_id/);
-    assert.match(block, /!childProcessTerminalReason\(active\.child\)/);
+    assert.match(block, /waitForClaimRuntimeQuiescence\(row\.run_id, row\.story_id, row\.agent_id\)/);
     assert.match(block, /tryRecoverOrphanedRunningImplementWork\(row\)/);
     assert.match(block, /UNTRACKED_RUNNING_LOOP_STORY/);
-    assert.match(block, /UPDATE stories SET status = 'pending'/);
-    assert.match(block, /UPDATE claim_log SET outcome = 'infra_retry'/);
+    assert.match(block, /requeueOpenStoryClaim\(row\.run_id, row\.step_id, row\.story_id, row\.agent_id, diagnostic\)/);
+    assert.doesNotMatch(block, /UPDATE claim_log SET outcome = 'infra_retry'/);
     assert.match(source, /await requeueOrphanedRunningStories\(\);\s*await requeueUntrackedRunningLoopStoryClaims\(\);\s*await requeueUntrackedRunningSingleStepClaims\(\);/);
   });
 
@@ -1827,10 +1992,12 @@ describe("spawner gateway recovery wiring", () => {
 
     const block = source.slice(start, end);
     assert.match(block, /trackedByActiveProcess/);
-    assert.match(block, /Array\.from\(activeProcesses\.values\(\)\)\.some/);
+    assert.match(block, /hasTrackedClaimRuntime\(\(active\) =>/);
     assert.match(block, /active\.runId === row\.run_id/);
     assert.match(block, /active\.storyDbId === row\.story_db_id \|\| active\.storyId === row\.story_id/);
-    assert.match(block, /!childProcessTerminalReason\(active\.child\)/);
+    assert.match(block, /waitForClaimRuntimeQuiescence\(row\.run_id, row\.story_id, row\.agent_id\)/);
+    assert.match(block, /SELECT COUNT\(\*\) FROM runtime_sessions/);
+    assert.match(block, /SELECT COUNT\(\*\) FROM execution_attempts/);
     assert.match(block, /OR cl\.agent_id IS NULL/);
     assert.match(block, /was running without an open claim/);
     assert.match(block, /UPDATE stories SET status = 'pending', claimed_by = NULL, claimed_at = NULL/);
@@ -1845,7 +2012,9 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /async function tryRecoverOrphanedRunningImplementWork/);
     assert.match(source, /RECOVERY: orphaned-running-story-build-and-scope-passing/);
     assert.match(source, /commitRecoveredImplementWorkThroughScopeGate\(workdir,\s*row\.story_id,\s*row\.story_title\)/);
-    assert.match(source, /await completeStep\(row\.step_db_id,\s*recoveryOutput\)/);
+    assert.match(source, /async function recoverClaimEnvelopeFromDatabase/);
+    assert.match(source, /RECOVERY_CLAIM_ATTEMPT_BINDING_MISMATCH/);
+    assert.match(source, /await completeStep\(row\.step_db_id,\s*recoveryOutput,\s*recoveryEnvelope\)/);
 
     const start = source.indexOf("async function requeueOrphanedRunningStories");
     const end = source.indexOf("async function requeueUntrackedRunningSingleStepClaims", start);

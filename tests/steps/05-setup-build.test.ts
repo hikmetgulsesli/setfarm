@@ -19,7 +19,10 @@ describe("05-setup-build step module", () => {
     const preclaim = fs.readFileSync("src/installer/steps/05-setup-build/preclaim.ts", "utf-8");
     assert.ok(preclaim.includes("SETFARM_DISABLE_AUTO_SETUP_BUILD"), "auto-complete should have an opt-out env guard");
     assert.ok(preclaim.includes("AUTO-COMPLETED setup-build"), "setup-build should complete in preClaim when baseline checks pass");
-    assert.ok(preclaim.includes("completeStep(step.id, output)"), "preClaim should use the normal completeStep path");
+    assert.ok(
+      preclaim.includes("completeStep(step.id, output, ctx.claimEnvelope)"),
+      "preClaim should complete through the immutable claim capability",
+    );
   });
 
   it("preClaim recovers missing package.json by rerunning setup-repo scaffold", () => {

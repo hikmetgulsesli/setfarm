@@ -29,12 +29,22 @@ export async function injectContext(ctx: ClaimContext): Promise<void> {
     try {
       const state = await fetchPrState(prUrl, repoFull);
       if (state) {
-        const formatted = formatPrCommentsForAgent(state);
-        ctx.context["pr_comments"] = formatted || "";
+        // Compiler v3 actionability is owned exclusively by immutable GitHub
+        // thread evidence and the typed recovery router. The legacy formatted
+        // prose remains available only to legacy/shadow reviewer prompts.
+        if (ctx.claimEnvelope?.protocol !== "v3") {
+          const formatted = formatPrCommentsForAgent(state);
+          ctx.context["pr_comments"] = formatted || "";
+        }
         ctx.context["pr_check_state"] = state.checksStatus || "";
         ctx.context["pr_mergeable"] = state.mergeable || "";
         ctx.context["pr_merge_state_status"] = state.mergeStateStatus || "";
-        logger.info(`[verify] PR comments injected (${state.comments.length} total, checks=${state.checksStatus})`, { runId: ctx.runId });
+        logger.info(
+          ctx.claimEnvelope?.protocol === "v3"
+            ? `[verify] V3 PR operational state injected without comment prose (checks=${state.checksStatus})`
+            : `[verify] PR comments injected (${state.comments.length} total, checks=${state.checksStatus})`,
+          { runId: ctx.runId },
+        );
       }
     } catch (e) {
       logger.warn(`[verify] PR comment fetch failed (non-fatal): ${String(e).slice(0, 160)}`, { runId: ctx.runId });

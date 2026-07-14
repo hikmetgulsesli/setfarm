@@ -85,6 +85,7 @@ type ClaimRow = {
 
 type AttemptRow = {
   attempt_id: string;
+  claim_id: number | string | null;
   generation: number;
   attempt_class: string;
   disposition: string;
@@ -188,14 +189,18 @@ export function buildShadowParityReport(input: Readonly<{
   }
 
   for (const attempt of input.attempts) {
-    const refs = parseEvidenceRefs(attempt.evidence_refs);
-    const claimIds = refs ? legacyClaimIdsFromEvidenceRefs(refs) : [];
-    if (claimIds.length !== 1) {
+    const relationalClaimId = attempt.claim_id === null ? NaN : Number(attempt.claim_id);
+    if (!Number.isSafeInteger(relationalClaimId) || relationalClaimId <= 0) {
       findings.push({ code: "SHADOW_ATTEMPT_CLAIM_REF_INVALID", attemptId: attempt.attempt_id });
       unboundAttemptIds.push(attempt.attempt_id);
       continue;
     }
-    const claimId = claimIds[0]!;
+    const refs = parseEvidenceRefs(attempt.evidence_refs);
+    const claimIds = refs ? legacyClaimIdsFromEvidenceRefs(refs) : [];
+    if (claimIds.length !== 1 || claimIds[0] !== relationalClaimId) {
+      findings.push({ code: "SHADOW_ATTEMPT_CLAIM_REF_INVALID", attemptId: attempt.attempt_id });
+    }
+    const claimId = relationalClaimId;
     if (!claimById.has(claimId)) {
       findings.push({
         code: "SHADOW_ATTEMPT_CLAIM_ORPHAN",
@@ -337,7 +342,7 @@ export async function readShadowParityReport(
       [runId],
     ),
     sql.unsafe<AttemptRow[]>(
-      `SELECT attempt_id, generation, attempt_class, disposition, lease_expires_at, evidence_refs
+      `SELECT attempt_id, claim_id, generation, attempt_class, disposition, lease_expires_at, evidence_refs
          FROM execution_attempts WHERE run_id = $1 ORDER BY created_at, attempt_id`,
       [runId],
     ),

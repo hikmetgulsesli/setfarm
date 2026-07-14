@@ -20,17 +20,37 @@ import {
 } from "./schemas/common-v1.js";
 import { DesignInteractionGraphV1Schema } from "./schemas/design-interaction-graph-v1.js";
 import {
+  type ImplementationFileV1,
+  ImplementationRecoveryDirectiveV1Schema,
   ImplementationSliceV1Schema,
   type ImplementationSliceV1,
 } from "./schemas/implementation-slice-v1.js";
 import { ProductBuildPacketV1Schema } from "./schemas/product-build-packet-v1.js";
 import { ProductSpecV1Schema } from "./schemas/product-spec-v1.js";
 import { StoryPlanV1Schema } from "./schemas/story-plan-v1.js";
+import { RuntimeEvidenceContractV1Schema } from "../evidence/runtime-evidence-contract-v1.js";
+import { validateRuntimeDataContractClosureV1 } from "./producers/runtime-data-contract.js";
 
 const DependencySignatureInputV1Schema = z
   .object({
     sliceHash: Sha256Schema,
     outputHash: Sha256Schema.optional(),
+    sourceAfter: z.object({
+      baseSha: GitObjectHashSchema,
+      treeHash: GitObjectHashSchema,
+    }).strict(),
+    fileSignatures: z.array(z.object({
+      pathRef: PathBindingIdSchema,
+      presence: z.enum(["present", "absent"]),
+      contentHash: Sha256Schema,
+    }).strict()).max(20_000),
+  })
+  .strict();
+
+const SourceFileSnapshotV1Schema = z
+  .object({
+    presence: z.enum(["present", "absent"]),
+    contentHash: Sha256Schema,
   })
   .strict();
 
@@ -48,8 +68,10 @@ const SliceCompilerInputV1Schema = z
       treeHash: GitObjectHashSchema,
     }).strict(),
     producer: SemanticArtifactProducerV1Schema,
-    fileContentHashes: z.record(PathBindingIdSchema, Sha256Schema),
+    fileSnapshots: z.record(PathBindingIdSchema, SourceFileSnapshotV1Schema),
     dependencySignatures: z.record(StoryIdSchema, DependencySignatureInputV1Schema),
+    runtimeEvidence: RuntimeEvidenceContractV1Schema.optional(),
+    recovery: ImplementationRecoveryDirectiveV1Schema.optional(),
   })
   .strict();
 
@@ -148,6 +170,68 @@ export function compileImplementationSlice(input: unknown): ImplementationSliceC
       }));
     }
   });
+  const runtimeDataFields = [
+    value.buildTopology.runtimeDataContract,
+    value.buildTopology.runtimeDataContractHash,
+    value.packet.runtimeDataContractHash,
+  ];
+  if (value.productSpec.delivery) {
+    if (runtimeDataFields.some((item) => item === undefined)) {
+      diagnostics.push(diagnostic({
+        code: "SLICE_RUNTIME_DATA_CONTRACT_MISSING",
+        message: "V3 implementation slice requires topology contract plus matching topology/packet hashes",
+        reference: "runtimeDataContract",
+      }));
+    } else if (
+      value.buildTopology.runtimeDataContractHash !== value.packet.runtimeDataContractHash
+    ) {
+      diagnostics.push(diagnostic({
+        code: "SLICE_RUNTIME_DATA_PACKET_HASH_MISMATCH",
+        message: "Packet runtime-data hash differs from sealed BuildTopology",
+        reference: value.packet.runtimeDataContractHash,
+      }));
+    } else {
+      diagnostics.push(...validateRuntimeDataContractClosureV1({
+        productSpec: value.productSpec,
+        commands: value.buildTopology.commands,
+        contract: value.buildTopology.runtimeDataContract,
+        contractHash: value.buildTopology.runtimeDataContractHash,
+      }));
+    }
+  } else if (runtimeDataFields.some((item) => item !== undefined)) {
+    diagnostics.push(diagnostic({
+      code: "SLICE_RUNTIME_DATA_PROTOCOL_AUTHORITY_MISSING",
+      message: "Historical ProductSpec without v3 delivery cannot be reinterpreted as runtime-data authority",
+      reference: "delivery",
+    }));
+  }
+  if (value.runtimeEvidence && value.runtimeEvidence.stackPackId !== value.buildTopology.stackPack.id) {
+    diagnostics.push(diagnostic({
+      code: "SLICE_RUNTIME_STACK_MISMATCH",
+      message: `Runtime evidence stack ${value.runtimeEvidence.stackPackId} differs from sealed topology ${value.buildTopology.stackPack.id}`,
+      reference: value.runtimeEvidence.stackPackId,
+    }));
+  }
+  if (value.runtimeEvidence?.adapter === "browser-service") {
+    const previewCommands = value.buildTopology.commands.filter((command) => command.kind === "preview");
+    const preview = previewCommands[0];
+    const server = value.runtimeEvidence.server;
+    if (
+      previewCommands.length !== 1
+      || !preview
+      || server.cwd !== preview.cwd
+      || server.timeoutMs !== preview.timeoutMs
+      || server.env !== undefined
+      || server.argv.length !== preview.argv.length
+      || server.argv.some((argument, index) => argument !== preview.argv[index])
+    ) {
+      diagnostics.push(diagnostic({
+        code: "SLICE_BROWSER_RUNTIME_COMMAND_MISMATCH",
+        message: "Browser runtime launcher must equal the one exact preview argv sealed in BuildTopology",
+        reference: value.runtimeEvidence.stackPackId,
+      }));
+    }
+  }
   if (diagnostics.length > 0) {
     return { status: "rejected", diagnostics: sortCompilationDiagnostics(diagnostics) };
   }
@@ -165,7 +249,7 @@ export function compileImplementationSlice(input: unknown): ImplementationSliceC
   }
 
   const pathById = new Map(value.buildTopology.pathBindings.map((item) => [item.id, item]));
-  const files = story.ownedPathRefs.flatMap((pathRef) => {
+  const files: ImplementationFileV1[] = story.ownedPathRefs.flatMap((pathRef): ImplementationFileV1[] => {
     const binding = pathById.get(pathRef);
     if (!binding) {
       diagnostics.push(diagnostic({
@@ -183,20 +267,27 @@ export function compileImplementationSlice(input: unknown): ImplementationSliceC
       }));
       return [];
     }
-    const suppliedHash = value.fileContentHashes[pathRef];
-    if (binding.knownContentHash && suppliedHash && binding.knownContentHash !== suppliedHash) {
+    const snapshot = value.fileSnapshots[pathRef];
+    if (!snapshot) {
       diagnostics.push(diagnostic({
-        code: "SLICE_FILE_HASH_CONFLICT",
-        message: `Topology and source snapshot disagree for ${pathRef}`,
+        code: "SLICE_OWNED_FILE_SNAPSHOT_MISSING",
+        message: `Owned file ${pathRef} has no exact source presence/hash snapshot`,
         reference: pathRef,
       }));
       return [];
     }
-    const knownContentHash = suppliedHash ?? binding.knownContentHash;
-    if (!knownContentHash) {
+    if (!value.recovery && binding.presence !== snapshot.presence) {
       diagnostics.push(diagnostic({
-        code: "SLICE_OWNED_FILE_HASH_MISSING",
-        message: `Owned file ${pathRef} has no current content hash`,
+        code: "SLICE_FILE_PRESENCE_CONFLICT",
+        message: `Topology and source snapshot disagree on presence for ${pathRef}`,
+        reference: pathRef,
+      }));
+      return [];
+    }
+    if (!value.recovery && binding.knownContentHash !== snapshot.contentHash) {
+      diagnostics.push(diagnostic({
+        code: "SLICE_FILE_HASH_CONFLICT",
+        message: `Topology and source snapshot disagree for ${pathRef}`,
         reference: pathRef,
       }));
       return [];
@@ -205,7 +296,8 @@ export function compileImplementationSlice(input: unknown): ImplementationSliceC
       pathRef,
       path: binding.path,
       role: "owned" as const,
-      knownContentHash,
+      presence: snapshot.presence,
+      knownContentHash: snapshot.contentHash,
     }];
   });
 
@@ -232,6 +324,9 @@ export function compileImplementationSlice(input: unknown): ImplementationSliceC
   });
 
   const grantById = new Map(value.buildTopology.sharedGrants.map((item) => [item.id, item]));
+  const ownerById = new Map(value.buildTopology.owners.map((item) => [item.id, item]));
+  const sharedPathRefs = new Set<string>();
+  const sharedFiles: ImplementationFileV1[] = [];
   const sharedGrants = story.sharedGrantRefs.flatMap((grantRef) => {
     const grant = grantById.get(grantRef);
     if (!grant) {
@@ -241,6 +336,83 @@ export function compileImplementationSlice(input: unknown): ImplementationSliceC
         reference: grantRef,
       }));
       return [];
+    }
+    if (grant.toOwnerRef !== story.ownerRef) {
+      diagnostics.push(diagnostic({
+        code: "SLICE_SHARED_GRANT_OWNER_MISMATCH",
+        message: `Shared grant ${grantRef} is not addressed to story ${story.id}`,
+        reference: grantRef,
+      }));
+      return [];
+    }
+    for (const pathRef of grant.pathRefs) {
+      if (sharedPathRefs.has(pathRef) || story.ownedPathRefs.includes(pathRef)) {
+        diagnostics.push(diagnostic({
+          code: "SLICE_SHARED_PATH_GRANT_DUPLICATE",
+          message: `Story ${story.id} receives path ${pathRef} more than once`,
+          reference: pathRef,
+        }));
+        continue;
+      }
+      sharedPathRefs.add(pathRef);
+      const binding = pathById.get(pathRef);
+      if (!binding) {
+        diagnostics.push(diagnostic({
+          code: "SLICE_SHARED_PATH_NOT_FOUND",
+          message: `Shared grant ${grantRef} path ${pathRef} is absent from topology`,
+          reference: pathRef,
+        }));
+        continue;
+      }
+      if (binding.ownerRef !== grant.fromOwnerRef) {
+        diagnostics.push(diagnostic({
+          code: "SLICE_SHARED_PATH_OWNER_MISMATCH",
+          message: `Shared path ${pathRef} is not owned by grant source ${grant.fromOwnerRef}`,
+          reference: pathRef,
+        }));
+        continue;
+      }
+      const snapshot = value.fileSnapshots[pathRef];
+      if (!snapshot) {
+        diagnostics.push(diagnostic({
+          code: "SLICE_SHARED_FILE_SNAPSHOT_MISSING",
+          message: `Shared file ${pathRef} has no exact source presence/hash snapshot`,
+          reference: pathRef,
+        }));
+        continue;
+      }
+      const differsFromSetupSnapshot = binding.presence !== snapshot.presence
+        || binding.knownContentHash !== snapshot.contentHash;
+      const sourceOwner = ownerById.get(grant.fromOwnerRef);
+      const dependencySignature = sourceOwner?.kind === "story"
+        ? value.dependencySignatures[sourceOwner.storyRef]
+        : undefined;
+      const dependencyFile = dependencySignature?.fileSignatures.find((item) => item.pathRef === pathRef);
+      const dependencyProvesCurrentSource = Boolean(
+        sourceOwner?.kind === "story"
+        && story.dependsOn.includes(sourceOwner.storyRef)
+        && dependencySignature?.outputHash
+        && dependencyFile?.presence === snapshot.presence
+        && dependencyFile.contentHash === snapshot.contentHash,
+      );
+      const recoveryOwnsCurrentBaseline = Boolean(
+        value.recovery && grant.permissions.includes("write"),
+      );
+      if (differsFromSetupSnapshot && !dependencyProvesCurrentSource && !recoveryOwnsCurrentBaseline) {
+        diagnostics.push(diagnostic({
+          code: "SLICE_SHARED_FILE_REVISION_UNATTESTED",
+          message: `Shared path ${pathRef} differs from setup without an exact terminal dependency source revision`,
+          reference: pathRef,
+        }));
+        continue;
+      }
+      sharedFiles.push({
+        pathRef,
+        path: binding.path,
+        role: grant.permissions.includes("write") ? "shared_writable" : "shared_readonly",
+        presence: snapshot.presence,
+        knownContentHash: snapshot.contentHash,
+      });
     }
     return [grant];
   });
@@ -281,7 +453,7 @@ export function compileImplementationSlice(input: unknown): ImplementationSliceC
       treeHash: value.sourceRevision.treeHash,
     },
     story,
-    files,
+    files: [...files, ...sharedFiles],
     dependencySignatures,
     sharedGrants,
     contract: {
@@ -296,6 +468,12 @@ export function compileImplementationSlice(input: unknown): ImplementationSliceC
     },
     commands: value.buildTopology.commands,
     requiredEvidence,
+    ...(value.buildTopology.runtimeDataContract && value.buildTopology.runtimeDataContractHash ? {
+      runtimeDataContract: value.buildTopology.runtimeDataContract,
+      runtimeDataContractHash: value.buildTopology.runtimeDataContractHash,
+    } : {}),
+    ...(value.runtimeEvidence ? { runtimeEvidence: value.runtimeEvidence } : {}),
+    ...(value.recovery ? { recovery: value.recovery } : {}),
   });
   if (!sliceResult.success) {
     return {

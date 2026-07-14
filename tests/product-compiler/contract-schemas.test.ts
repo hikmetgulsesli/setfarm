@@ -90,6 +90,28 @@ describe("versioned Product Build Packet contract schemas", () => {
     assert.equal(ProductSpecV1Schema.safeParse(missingActionSurface).success, false);
   });
 
+  it("requires an exact persistence rehydration owner and write-state mapping", () => {
+    const values = buildMinimalValidContracts();
+
+    const missingRehydration = clone(values.productSpec);
+    missingRehydration.persistencePolicies[0]!.rehydration = { kind: "none" };
+    assert.equal(ProductSpecV1Schema.safeParse(missingRehydration).success, false);
+
+    const wrongLayerRehydration = clone(values.productSpec);
+    wrongLayerRehydration.persistencePolicies[0]!.rehydration = {
+      kind: "action",
+      actionRef: "ACT_SAVE_TASK",
+    };
+    assert.equal(ProductSpecV1Schema.safeParse(wrongLayerRehydration).success, false);
+
+    const unmappedWrite = clone(values.productSpec);
+    unmappedWrite.actions[0]!.persistenceEffects[0]!.statePaths = [{
+      stateRef: "STATE_EDITOR",
+      path: "/uncontracted",
+    }];
+    assert.equal(ProductSpecV1Schema.safeParse(unmappedWrite).success, false);
+  });
+
   it("requires exactly one binding or unresolved record per interactive control", () => {
     const values = buildMinimalValidContracts();
     const noDisposition = clone(values.designGraph);
@@ -177,5 +199,23 @@ describe("versioned Product Build Packet contract schemas", () => {
     const noSource = clone(values.implementationSlice) as Record<string, unknown>;
     delete noSource.sourceRevision;
     assert.equal(ImplementationSliceV1Schema.safeParse(noSource).success, false);
+  });
+
+  it("keeps prerequisite and rehydration action closure inside each implementation slice", () => {
+    const values = buildMinimalValidContracts();
+
+    const missingPrerequisite = clone(values.implementationSlice);
+    missingPrerequisite.contract.actions[0]!.evidenceScenario.prerequisiteSteps = [{
+      actionRef: "ACT_PREPARE_TASK",
+      inputValues: {},
+    }];
+    assert.equal(ImplementationSliceV1Schema.safeParse(missingPrerequisite).success, false);
+
+    const missingRehydration = clone(values.implementationSlice);
+    missingRehydration.contract.persistencePolicies[0]!.rehydration = {
+      kind: "action",
+      actionRef: "ACT_LOAD_TASK",
+    };
+    assert.equal(ImplementationSliceV1Schema.safeParse(missingRehydration).success, false);
   });
 });

@@ -5,6 +5,7 @@ import {
   parseSetfarmProtocol,
   type SetfarmProtocolMode,
 } from "../product-compiler/protocol.js";
+import type { InternalCanaryAdmissionContextV1 } from "./v3-release-admission.js";
 
 const GIT_RELEASE_SHA = /^[a-f0-9]{40}(?:[a-f0-9]{24})?$/;
 const SHA256 = /^[a-f0-9]{64}$/;
@@ -15,6 +16,8 @@ export type RunProtocolErrorCode =
   | "RUN_PROTOCOL_INVALID_RELEASE"
   | "RUN_PROTOCOL_NOT_FOUND"
   | "RUN_PROTOCOL_PREFLIGHT_REQUIRED"
+  | "RUN_PROTOCOL_RELEASE_ADMISSION_MISMATCH"
+  | "RUN_PROTOCOL_RELEASE_ADMISSION_REQUIRED"
   | "RUN_PROTOCOL_STORED_INVALID"
   | "RUN_PROTOCOL_UNSUPPORTED_VERSION"
   | "RUN_PROTOCOL_V3_DISABLED";
@@ -34,6 +37,9 @@ export type RunProtocolIdentity = Readonly<{
   version: 1;
   compilerReleaseSha: string;
   activationPreflightHash: string | null;
+  releaseAdmissionHash: string | null;
+  releaseAdmissionKind: "convergence_canary" | "release_go" | null;
+  canaryAdmission: InternalCanaryAdmissionContextV1 | null;
 }>;
 
 export type StoredRunProtocolIdentity = Readonly<{
@@ -42,6 +48,15 @@ export type StoredRunProtocolIdentity = Readonly<{
   compilerReleaseSha: string | null;
   packetHash: string | null;
   activationPreflightHash: string | null;
+  releaseAdmissionHash: string | null;
+  releaseAdmissionKind: "convergence_canary" | "release_go" | null;
+}>;
+
+export type RunReleaseAdmissionSelection = Readonly<{
+  admissionHash: string;
+  kind: "convergence_canary" | "release_go";
+  releaseSha: string;
+  canary: InternalCanaryAdmissionContextV1 | null;
 }>;
 
 export function extractProtocolArgument(args: readonly string[]): Readonly<{
@@ -80,6 +95,7 @@ export function resolveNewRunProtocol(input: Readonly<{
     hash: string;
     stored: boolean;
   }>;
+  releaseAdmission?: RunReleaseAdmissionSelection;
 }>): RunProtocolIdentity {
   const env = input.env ?? process.env;
   const mode = selectNewRunProtocolMode(input.requestedMode, env);
@@ -112,11 +128,48 @@ export function resolveNewRunProtocol(input: Readonly<{
     );
   }
 
+  let releaseAdmissionHash: string | null = null;
+  let releaseAdmissionKind: "convergence_canary" | "release_go" | null = null;
+  let canaryAdmission: InternalCanaryAdmissionContextV1 | null = null;
+  if (mode === "v3") {
+    const admission = input.releaseAdmission;
+    if (!admission || !SHA256.test(admission.admissionHash)) {
+      throw new RunProtocolError(
+        "RUN_PROTOCOL_RELEASE_ADMISSION_REQUIRED",
+        "Product Compiler v3 requires an immutable release admission",
+      );
+    }
+    const exactCanary = admission.kind === "convergence_canary"
+      && admission.canary !== null
+      && admission.canary.admissionHash === admission.admissionHash;
+    const exactReleaseGo = admission.kind === "release_go" && admission.canary === null;
+    if (
+      admission.releaseSha !== compilerReleaseSha
+      || (!exactCanary && !exactReleaseGo)
+    ) {
+      throw new RunProtocolError(
+        "RUN_PROTOCOL_RELEASE_ADMISSION_MISMATCH",
+        "Release admission does not match the exact compiler release and admission kind",
+      );
+    }
+    releaseAdmissionHash = admission.admissionHash;
+    releaseAdmissionKind = admission.kind;
+    canaryAdmission = admission.canary;
+  } else if (input.releaseAdmission !== undefined) {
+    throw new RunProtocolError(
+      "RUN_PROTOCOL_RELEASE_ADMISSION_MISMATCH",
+      "Only Product Compiler v3 runs may carry a release admission",
+    );
+  }
+
   return Object.freeze({
     mode,
     version: 1,
     compilerReleaseSha,
     activationPreflightHash,
+    releaseAdmissionHash,
+    releaseAdmissionKind,
+    canaryAdmission,
   });
 }
 
@@ -146,16 +199,22 @@ type RunProtocolRow = {
   compiler_release_sha: string | null;
   packet_hash: string | null;
   activation_preflight_hash: string | null;
+  release_admission_hash: string | null;
+  release_admission_kind: string | null;
 };
 
 export function createRunProtocolRepository(sql: postgres.Sql) {
   return Object.freeze({
     async read(runId: string): Promise<StoredRunProtocolIdentity> {
       const rows = await sql.unsafe<RunProtocolRow[]>(
-        `SELECT protocol, protocol_version, compiler_release_sha,
-                packet_hash, activation_preflight_hash
-           FROM runs
-          WHERE id = $1
+        `SELECT r.protocol, r.protocol_version, r.compiler_release_sha,
+                r.packet_hash, r.activation_preflight_hash,
+                r.release_admission_hash,
+                admission.kind AS release_admission_kind
+           FROM runs r
+           LEFT JOIN v3_release_admissions admission
+             ON admission.admission_hash = r.release_admission_hash
+          WHERE r.id = $1
           LIMIT 1`,
         [runId],
       );
@@ -187,6 +246,15 @@ export function createRunProtocolRepository(sql: postgres.Sql) {
         || (row.packet_hash !== null && !SHA256.test(row.packet_hash))
         || (row.activation_preflight_hash !== null && !SHA256.test(row.activation_preflight_hash))
         || (mode !== "legacy" && row.activation_preflight_hash === null)
+        || (row.release_admission_hash !== null && !SHA256.test(row.release_admission_hash))
+        || (mode === "v3" && (
+          row.release_admission_hash === null
+          || !["convergence_canary", "release_go"].includes(row.release_admission_kind ?? "")
+        ))
+        || (mode !== "v3" && (
+          row.release_admission_hash !== null
+          || row.release_admission_kind !== null
+        ))
       ) {
         throw new RunProtocolError(
           "RUN_PROTOCOL_STORED_INVALID",
@@ -199,6 +267,8 @@ export function createRunProtocolRepository(sql: postgres.Sql) {
         compilerReleaseSha: row.compiler_release_sha,
         packetHash: row.packet_hash,
         activationPreflightHash: row.activation_preflight_hash,
+        releaseAdmissionHash: row.release_admission_hash,
+        releaseAdmissionKind: row.release_admission_kind as "convergence_canary" | "release_go" | null,
       });
     },
   });

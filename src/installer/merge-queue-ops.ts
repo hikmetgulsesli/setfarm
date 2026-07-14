@@ -27,6 +27,602 @@ export interface MergeQueueResult {
   prUrl: string | null;
 }
 
+export interface GitAncestryProof {
+  schema: "setfarm.git-ancestry-proof.v1";
+  sourceSha: string;
+  sourceCommitSha: string | null;
+  targetRef: string;
+  targetCommitSha: string | null;
+  outcome: "ancestor" | "not_ancestor" | "unresolvable";
+  reason: string;
+}
+
+export interface StoryMergeReconciliation {
+  schema: "setfarm.story-merge-reconciliation.v1";
+  status: "reconciled" | "not_applied" | "indeterminate";
+  success: boolean;
+  proof: GitAncestryProof;
+}
+
+export interface ExactSourceMergeResult extends MergeResult {
+  schema: "setfarm.exact-source-merge-result.v1";
+  resolution: "applied" | "reconciled" | "failed";
+  proof: GitAncestryProof;
+  error: string;
+}
+
+export interface FinalPullRequestIdentity {
+  repository: string;
+  headBranch: string;
+  baseBranch: string;
+}
+
+export interface FinalPullRequestMatch extends FinalPullRequestIdentity {
+  url: string;
+  number: number;
+  state: "OPEN" | "MERGED" | "CLOSED" | "UNKNOWN";
+}
+
+export interface FinalPullRequestLookupResult {
+  schema: "setfarm.final-pull-request-lookup.v1";
+  status: "found" | "not_found" | "ambiguous" | "error";
+  identity: FinalPullRequestIdentity;
+  pullRequest: FinalPullRequestMatch | null;
+  candidates: FinalPullRequestMatch[];
+  error: string;
+}
+
+export interface FinalPullRequestEnsureResult {
+  schema: "setfarm.final-pull-request-ensure.v1";
+  success: boolean;
+  action: "existing" | "created" | "reconciled_after_create_error" | "failed";
+  identity: FinalPullRequestIdentity;
+  pullRequest: FinalPullRequestMatch | null;
+  error: string;
+}
+
+function compactCommandError(error: unknown): string {
+  const candidate = error as { message?: unknown; stderr?: unknown };
+  const stderr = Buffer.isBuffer(candidate?.stderr)
+    ? candidate.stderr.toString("utf8")
+    : String(candidate?.stderr ?? "");
+  return (stderr || String(candidate?.message ?? error ?? "unknown command error"))
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 1_000);
+}
+
+function commandExitStatus(error: unknown): number | undefined {
+  if (!error || typeof error !== "object" || !("status" in error)) return undefined;
+  const status = (error as { status?: unknown }).status;
+  return typeof status === "number" ? status : undefined;
+}
+
+function resolveCommitSha(repoPath: string, revision: string): string | null {
+  try {
+    const sha = execFileSync(
+      "git",
+      ["rev-parse", "--verify", "--end-of-options", `${revision}^{commit}`],
+      { cwd: repoPath, timeout: 5_000, stdio: "pipe", encoding: "utf8" },
+    ).trim().toLowerCase();
+    return /^[a-f0-9]{40,64}$/.test(sha) ? sha : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Resolve both sides to immutable commit ids and prove whether the exact source
+ * commit is contained by the requested target. This never fetches or mutates
+ * the repository; callers choose the authoritative target ref explicitly.
+ */
+export function proveExactCommitAncestor(
+  repoPath: string,
+  sourceSha: string,
+  targetRef: string,
+): GitAncestryProof {
+  const normalizedSource = sourceSha.trim().toLowerCase();
+  const normalizedTarget = targetRef.trim();
+  const base = {
+    schema: "setfarm.git-ancestry-proof.v1" as const,
+    sourceSha: normalizedSource,
+    sourceCommitSha: null,
+    targetRef: normalizedTarget,
+    targetCommitSha: null,
+  };
+  if (!/^[a-f0-9]{40,64}$/.test(normalizedSource)) {
+    return { ...base, outcome: "unresolvable", reason: "source-sha-invalid" };
+  }
+  if (!normalizedTarget) {
+    return { ...base, outcome: "unresolvable", reason: "target-ref-missing" };
+  }
+  const sourceCommitSha = resolveCommitSha(repoPath, normalizedSource);
+  if (!sourceCommitSha) {
+    return { ...base, outcome: "unresolvable", reason: "source-commit-unresolvable" };
+  }
+  const targetCommitSha = resolveCommitSha(repoPath, normalizedTarget);
+  if (!targetCommitSha) {
+    return {
+      ...base,
+      sourceCommitSha,
+      outcome: "unresolvable",
+      reason: "target-commit-unresolvable",
+    };
+  }
+  try {
+    execFileSync("git", ["merge-base", "--is-ancestor", sourceCommitSha, targetCommitSha], {
+      cwd: repoPath,
+      timeout: 10_000,
+      stdio: "pipe",
+    });
+    return {
+      ...base,
+      sourceCommitSha,
+      targetCommitSha,
+      outcome: "ancestor",
+      reason: "exact-source-is-ancestor",
+    };
+  } catch (error) {
+    if (commandExitStatus(error) === 1) {
+      return {
+        ...base,
+        sourceCommitSha,
+        targetCommitSha,
+        outcome: "not_ancestor",
+        reason: "exact-source-is-not-ancestor",
+      };
+    }
+    return {
+      ...base,
+      sourceCommitSha,
+      targetCommitSha,
+      outcome: "unresolvable",
+      reason: `ancestry-check-failed:${compactCommandError(error)}`,
+    };
+  }
+}
+
+/**
+ * Crash-safe reconciliation for a single story merge effect. An exact source
+ * commit already reachable from the target is success, even when replaying the
+ * merge command itself would now report an empty/no-op branch.
+ */
+export function reconcileStoryMerge(input: Readonly<{
+  repoPath: string;
+  sourceSha: string;
+  targetRef: string;
+}>): StoryMergeReconciliation {
+  const proof = proveExactCommitAncestor(input.repoPath, input.sourceSha, input.targetRef);
+  if (proof.outcome === "ancestor") {
+    return {
+      schema: "setfarm.story-merge-reconciliation.v1",
+      status: "reconciled",
+      success: true,
+      proof,
+    };
+  }
+  if (proof.outcome === "not_ancestor") {
+    return {
+      schema: "setfarm.story-merge-reconciliation.v1",
+      status: "not_applied",
+      success: false,
+      proof,
+    };
+  }
+  return {
+    schema: "setfarm.story-merge-reconciliation.v1",
+    status: "indeterminate",
+    success: false,
+    proof,
+  };
+}
+
+/**
+ * Merge one immutable source commit into a feature branch and prove that the
+ * exact commit is published to origin. The source branch is never rebased or
+ * force-pushed, so completion evidence remains bound to the reviewed SHA.
+ */
+export function mergeExactSourceIntoFeature(input: Readonly<{
+  repoPath: string;
+  sourceSha: string;
+  featureBranch: string;
+  commitMessage: string;
+}>): ExactSourceMergeResult {
+  const featureBranch = input.featureBranch.trim();
+  const sourceSha = input.sourceSha.trim().toLowerCase();
+  const unresolved = proveExactCommitAncestor(input.repoPath, sourceSha, `origin/${featureBranch}`);
+  const failed = (error: string, conflicts: string[] = [], proof = unresolved): ExactSourceMergeResult => ({
+    schema: "setfarm.exact-source-merge-result.v1",
+    success: false,
+    resolution: "failed",
+    conflicts,
+    proof,
+    error,
+  });
+  if (!/^[a-f0-9]{40,64}$/.test(sourceSha)) {
+    return failed("EXACT_SOURCE_MERGE_SOURCE_INVALID");
+  }
+  if (!featureBranch) return failed("EXACT_SOURCE_MERGE_FEATURE_BRANCH_MISSING");
+  try {
+    execFileSync("git", ["check-ref-format", "--branch", featureBranch], {
+      cwd: input.repoPath,
+      timeout: 5_000,
+      stdio: "pipe",
+    });
+  } catch (error) {
+    return failed(`EXACT_SOURCE_MERGE_FEATURE_BRANCH_INVALID:${compactCommandError(error)}`);
+  }
+  if (!resolveCommitSha(input.repoPath, sourceSha)) {
+    return failed("EXACT_SOURCE_MERGE_SOURCE_UNRESOLVABLE");
+  }
+
+  try {
+    execFileSync("git", ["fetch", "origin", featureBranch], {
+      cwd: input.repoPath,
+      timeout: GIT_LONG_TIMEOUT,
+      stdio: "pipe",
+    });
+  } catch (error) {
+    return failed(`EXACT_SOURCE_MERGE_FETCH_FAILED:${compactCommandError(error)}`);
+  }
+  const publishedBefore = reconcileStoryMerge({
+    repoPath: input.repoPath,
+    sourceSha,
+    targetRef: `origin/${featureBranch}`,
+  });
+  if (publishedBefore.status === "reconciled") {
+    return {
+      schema: "setfarm.exact-source-merge-result.v1",
+      success: true,
+      resolution: "reconciled",
+      conflicts: [],
+      proof: publishedBefore.proof,
+      error: "",
+    };
+  }
+  if (publishedBefore.status === "indeterminate") {
+    return failed("EXACT_SOURCE_MERGE_REMOTE_PROOF_INDETERMINATE", [], publishedBefore.proof);
+  }
+
+  try {
+    execFileSync("git", ["checkout", featureBranch], {
+      cwd: input.repoPath,
+      timeout: GIT_LONG_TIMEOUT,
+      stdio: "pipe",
+    });
+    execFileSync("git", ["pull", "origin", featureBranch, "--ff-only"], {
+      cwd: input.repoPath,
+      timeout: GIT_LONG_TIMEOUT,
+      stdio: "pipe",
+    });
+    const localProof = reconcileStoryMerge({
+      repoPath: input.repoPath,
+      sourceSha,
+      targetRef: featureBranch,
+    });
+    if (localProof.status === "indeterminate") {
+      return failed("EXACT_SOURCE_MERGE_LOCAL_PROOF_INDETERMINATE", [], localProof.proof);
+    }
+    if (localProof.status === "not_applied") {
+      try {
+        execFileSync("git", ["merge", "--no-ff", sourceSha, "-m", input.commitMessage], {
+          cwd: input.repoPath,
+          timeout: GIT_LONG_TIMEOUT,
+          stdio: "pipe",
+        });
+      } catch (mergeError) {
+        let conflicts: string[] = [];
+        try {
+          conflicts = execFileSync("git", ["diff", "--name-only", "--diff-filter=U"], {
+            cwd: input.repoPath,
+            timeout: 5_000,
+            stdio: "pipe",
+            encoding: "utf8",
+          }).trim().split("\n").filter(Boolean);
+        } catch {
+          // The command diagnostic remains sufficient when conflict enumeration fails.
+        }
+        try {
+          execFileSync("git", ["merge", "--abort"], {
+            cwd: input.repoPath,
+            timeout: 5_000,
+            stdio: "pipe",
+          });
+        } catch {
+          // No merge state may exist when git rejected before starting.
+        }
+        return failed(
+          `EXACT_SOURCE_MERGE_CONFLICT:${compactCommandError(mergeError)}`,
+          conflicts,
+          localProof.proof,
+        );
+      }
+    }
+
+    try {
+      execFileSync("git", ["push", "origin", `${featureBranch}:${featureBranch}`], {
+        cwd: input.repoPath,
+        timeout: GIT_LONG_TIMEOUT,
+        stdio: "pipe",
+      });
+    } catch (pushError) {
+      // The remote can accept the update before transport failure is reported;
+      // exact remote ancestry below is the only success authority.
+      logger.warn(`[merge-queue] exact source push returned an error; reconciling remote: ${compactCommandError(pushError)}`);
+    }
+    try {
+      execFileSync("git", ["fetch", "origin", featureBranch], {
+        cwd: input.repoPath,
+        timeout: GIT_LONG_TIMEOUT,
+        stdio: "pipe",
+      });
+    } catch (fetchError) {
+      return failed(`EXACT_SOURCE_MERGE_POST_PUSH_FETCH_FAILED:${compactCommandError(fetchError)}`);
+    }
+    const published = reconcileStoryMerge({
+      repoPath: input.repoPath,
+      sourceSha,
+      targetRef: `origin/${featureBranch}`,
+    });
+    if (published.status !== "reconciled") {
+      return failed(
+        `EXACT_SOURCE_MERGE_REMOTE_PUBLICATION_${published.status.toUpperCase()}`,
+        [],
+        published.proof,
+      );
+    }
+    return {
+      schema: "setfarm.exact-source-merge-result.v1",
+      success: true,
+      resolution: "applied",
+      conflicts: [],
+      proof: published.proof,
+      error: "",
+    };
+  } catch (error) {
+    return failed(`EXACT_SOURCE_MERGE_FAILED:${compactCommandError(error)}`);
+  }
+}
+
+function resolveGithubRepository(repoPath: string): string | null {
+  try {
+    const repository = execFileSync(
+      "gh",
+      ["repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"],
+      { cwd: repoPath, timeout: GH_CLI_TIMEOUT, stdio: "pipe", encoding: "utf8" },
+    ).trim();
+    return /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository) ? repository : null;
+  } catch {
+    return null;
+  }
+}
+
+function normalizePullRequestState(value: unknown): FinalPullRequestMatch["state"] {
+  const state = String(value ?? "").toUpperCase();
+  return state === "OPEN" || state === "MERGED" || state === "CLOSED" ? state : "UNKNOWN";
+}
+
+function pullRequestStateRank(state: FinalPullRequestMatch["state"]): number {
+  if (state === "OPEN") return 0;
+  if (state === "MERGED") return 1;
+  if (state === "CLOSED") return 2;
+  return 3;
+}
+
+function pullRequestFromUrl(
+  identity: FinalPullRequestIdentity,
+  url: string,
+): FinalPullRequestMatch | null {
+  try {
+    const parsed = new URL(url);
+    const expectedPath = `/${identity.repository.toLowerCase()}/pull/`;
+    if (parsed.hostname.toLowerCase() !== "github.com") return null;
+    if (!parsed.pathname.toLowerCase().startsWith(expectedPath)) return null;
+    const number = Number(parsed.pathname.slice(expectedPath.length).split("/")[0]);
+    if (!Number.isInteger(number) || number <= 0) return null;
+    return { ...identity, url: parsed.toString(), number, state: "OPEN" };
+  } catch {
+    return null;
+  }
+}
+
+/** Find a usable final PR by exact repository, head branch, and base branch. */
+export function findFinalPullRequestByIdentity(input: Readonly<{
+  repoPath: string;
+  headBranch: string;
+  baseBranch: string;
+}>): FinalPullRequestLookupResult {
+  const headBranch = input.headBranch.trim();
+  const baseBranch = input.baseBranch.trim();
+  const unresolvedIdentity: FinalPullRequestIdentity = {
+    repository: "",
+    headBranch,
+    baseBranch,
+  };
+  if (!headBranch || !baseBranch) {
+    return {
+      schema: "setfarm.final-pull-request-lookup.v1",
+      status: "error",
+      identity: unresolvedIdentity,
+      pullRequest: null,
+      candidates: [],
+      error: "FINAL_PR_IDENTITY_INCOMPLETE",
+    };
+  }
+  const repository = resolveGithubRepository(input.repoPath);
+  const identity = { repository: repository ?? "", headBranch, baseBranch };
+  if (!repository) {
+    return {
+      schema: "setfarm.final-pull-request-lookup.v1",
+      status: "error",
+      identity,
+      pullRequest: null,
+      candidates: [],
+      error: "FINAL_PR_REPOSITORY_UNRESOLVABLE",
+    };
+  }
+  try {
+    const raw = execFileSync("gh", [
+      "pr", "list",
+      "--repo", repository,
+      "--head", headBranch,
+      "--base", baseBranch,
+      "--state", "all",
+      "--limit", "100",
+      "--json", "url,number,state,headRefName,baseRefName,isCrossRepository",
+    ], {
+      cwd: input.repoPath,
+      timeout: GH_CLI_TIMEOUT,
+      stdio: "pipe",
+      encoding: "utf8",
+    });
+    const rows = JSON.parse(raw) as Array<{
+      url?: unknown;
+      number?: unknown;
+      state?: unknown;
+      headRefName?: unknown;
+      baseRefName?: unknown;
+      isCrossRepository?: unknown;
+    }>;
+    const candidates = (Array.isArray(rows) ? rows : [])
+      .flatMap((row): FinalPullRequestMatch[] => {
+        if (
+          row.isCrossRepository === true
+          || row.headRefName !== headBranch
+          || row.baseRefName !== baseBranch
+          || typeof row.url !== "string"
+          || !Number.isInteger(Number(row.number))
+          || Number(row.number) <= 0
+        ) return [];
+        const parsed = pullRequestFromUrl(identity, row.url);
+        if (!parsed || parsed.number !== Number(row.number)) return [];
+        return [{ ...parsed, state: normalizePullRequestState(row.state) }];
+      })
+      .sort((left, right) => (
+        pullRequestStateRank(left.state) - pullRequestStateRank(right.state)
+        || right.number - left.number
+      ));
+    const open = candidates.filter((candidate) => candidate.state === "OPEN");
+    if (open.length > 1) {
+      return {
+        schema: "setfarm.final-pull-request-lookup.v1",
+        status: "ambiguous",
+        identity,
+        pullRequest: null,
+        candidates,
+        error: "FINAL_PR_IDENTITY_AMBIGUOUS",
+      };
+    }
+    const usable = open[0] ?? candidates.find((candidate) => candidate.state === "MERGED") ?? null;
+    return {
+      schema: "setfarm.final-pull-request-lookup.v1",
+      status: usable ? "found" : "not_found",
+      identity,
+      pullRequest: usable,
+      candidates,
+      error: "",
+    };
+  } catch (error) {
+    return {
+      schema: "setfarm.final-pull-request-lookup.v1",
+      status: "error",
+      identity,
+      pullRequest: null,
+      candidates: [],
+      error: `FINAL_PR_LOOKUP_FAILED:${compactCommandError(error)}`,
+    };
+  }
+}
+
+/**
+ * Ensure the final PR without interpreting command prose. The exact identity is
+ * reconciled before creation and again after any create result, including an
+ * error that may have happened after GitHub accepted the request.
+ */
+export function ensureFinalPullRequest(input: Readonly<{
+  repoPath: string;
+  headBranch: string;
+  baseBranch: string;
+  title: string;
+  body: string;
+}>): FinalPullRequestEnsureResult {
+  const before = findFinalPullRequestByIdentity(input);
+  if (before.status === "found" && before.pullRequest) {
+    return {
+      schema: "setfarm.final-pull-request-ensure.v1",
+      success: true,
+      action: "existing",
+      identity: before.identity,
+      pullRequest: before.pullRequest,
+      error: "",
+    };
+  }
+  if (before.status === "error" || before.status === "ambiguous") {
+    return {
+      schema: "setfarm.final-pull-request-ensure.v1",
+      success: false,
+      action: "failed",
+      identity: before.identity,
+      pullRequest: null,
+      error: before.error,
+    };
+  }
+
+  let createError = "";
+  let createdFromOutput: FinalPullRequestMatch | null = null;
+  try {
+    const output = execFileSync("gh", [
+      "pr", "create",
+      "--repo", before.identity.repository,
+      "--base", before.identity.baseBranch,
+      "--head", before.identity.headBranch,
+      "--title", input.title,
+      "--body", input.body,
+    ], {
+      cwd: input.repoPath,
+      timeout: GH_MERGE_TIMEOUT,
+      stdio: "pipe",
+      encoding: "utf8",
+    }).trim();
+    const url = output.match(/https?:\/\/[^\s]+/)?.[0] ?? "";
+    createdFromOutput = pullRequestFromUrl(before.identity, url);
+  } catch (error) {
+    createError = compactCommandError(error);
+  }
+
+  const after = findFinalPullRequestByIdentity(input);
+  if (after.status === "found" && after.pullRequest) {
+    return {
+      schema: "setfarm.final-pull-request-ensure.v1",
+      success: true,
+      action: createError ? "reconciled_after_create_error" : "created",
+      identity: after.identity,
+      pullRequest: after.pullRequest,
+      error: "",
+    };
+  }
+  if (!createError && createdFromOutput) {
+    return {
+      schema: "setfarm.final-pull-request-ensure.v1",
+      success: true,
+      action: "created",
+      identity: before.identity,
+      pullRequest: createdFromOutput,
+      error: "",
+    };
+  }
+  return {
+    schema: "setfarm.final-pull-request-ensure.v1",
+    success: false,
+    action: "failed",
+    identity: after.identity.repository ? after.identity : before.identity,
+    pullRequest: null,
+    error: createError
+      ? `FINAL_PR_CREATE_FAILED:${createError}`
+      : (after.error || "FINAL_PR_CREATE_RETURNED_NO_MATCH"),
+  };
+}
+
 // ── Fuzzy Story-Branch Probe (Wave 15 Bug J / Wave 16 generalization) ───
 
 /**
@@ -341,9 +937,23 @@ export async function runMergeQueue(
   // Get all stories ordered by index
   const stories = await pgQuery<{
     id: string; story_id: string; title: string; status: string;
-    story_branch: string; merge_status: string;
+    story_branch: string; merge_status: string; source_after_sha: string | null;
   }>(
-    "SELECT id, story_id, title, status, story_branch, COALESCE(merge_status, 'pending') as merge_status FROM stories WHERE run_id = $1 ORDER BY story_index ASC",
+    `SELECT s.id, s.story_id, s.title, s.status, s.story_branch,
+            COALESCE(s.merge_status, 'pending') AS merge_status,
+            (
+              SELECT ea.source_after_sha
+                FROM execution_attempts ea
+               WHERE ea.run_id = s.run_id
+                 AND ea.story_id = s.story_id
+                 AND ea.source_after_sha IS NOT NULL
+                 AND ea.disposition IN ('produced_delta', 'already_satisfied', 'verified')
+               ORDER BY ea.generation DESC, ea.updated_at DESC
+               LIMIT 1
+            ) AS source_after_sha
+       FROM stories s
+      WHERE s.run_id = $1
+      ORDER BY s.story_index ASC`,
     [runId],
   );
 
@@ -366,7 +976,24 @@ export async function runMergeQueue(
 
     logger.info(`[merge-queue] Merging ${story.story_id} (${storyBranch} → ${featureBranch})`, { runId });
 
-    const mergeResult = mergeStoryIntoFeature(repoPath, storyBranch, featureBranch, commitMsg);
+    const exactMerge = story.source_after_sha
+      ? mergeExactSourceIntoFeature({
+          repoPath,
+          sourceSha: story.source_after_sha,
+          featureBranch,
+          commitMessage: commitMsg,
+        })
+      : undefined;
+    const mergeResult: MergeResult = exactMerge
+      ? {
+          success: exactMerge.success,
+          conflicts: exactMerge.conflicts.length > 0
+            ? exactMerge.conflicts
+            : exactMerge.success
+              ? []
+              : [exactMerge.error],
+        }
+      : mergeStoryIntoFeature(repoPath, storyBranch, featureBranch, commitMsg);
 
     if (mergeResult.success) {
       result.merged.push(story.story_id);
@@ -379,7 +1006,10 @@ export async function runMergeQueue(
         storyId: story.story_id, storyTitle: story.title,
         detail: `Direct-merged into ${featureBranch}`,
       });
-      logger.info(`[merge-queue] Merged: ${story.story_id}`, { runId });
+      logger.info(
+        `[merge-queue] ${exactMerge?.resolution === "reconciled" ? "Reconciled" : "Merged"}: ${story.story_id}`,
+        { runId },
+      );
     } else {
       // Run #338 fix: previously conflict only set merge_status, leaving story.status='done'.
       // That let the pipeline silently proceed to deploy with partial work. Now mark the
@@ -426,46 +1056,27 @@ export async function runMergeQueue(
         ] : []),
       ].join("\n");
 
-      const prUrl = execFileSync("gh", [
-        "pr", "create",
-        "--base", "main",
-        "--head", featureBranch,
-        "--title", `feat: ${projectName}`,
-        "--body", prBody,
-      ], {
-        cwd: repoPath, timeout: GH_MERGE_TIMEOUT, stdio: "pipe",
-      }).toString().trim();
+      const ensured = ensureFinalPullRequest({
+        repoPath,
+        headBranch: featureBranch,
+        baseBranch: "main",
+        title: `feat: ${projectName}`,
+        body: prBody,
+      });
+      if (ensured.success && ensured.pullRequest) {
+        const prUrl = ensured.pullRequest.url;
+        result.prUrl = prUrl;
+        logger.info(`[merge-queue] Final PR ${ensured.action}: ${prUrl}`, { runId });
 
-      result.prUrl = prUrl;
-      logger.info(`[merge-queue] Created PR: ${prUrl}`, { runId });
-
-      // Save PR URL in run context
-      const context = await getRunContext(runId);
-      context["final_pr"] = prUrl;
-      await updateRunContext(runId, context);
-
-    } catch (prErr) {
-      // PR may already exist
-      const errStr = String(prErr);
-      if (errStr.includes("already exists")) {
-        try {
-          const existingPr = execFileSync("gh", [
-            "pr", "list", "--head", featureBranch, "--base", "main",
-            "--state", "open", "--json", "url", "--jq", ".[0].url",
-          ], {
-            cwd: repoPath, timeout: GH_CLI_TIMEOUT, stdio: "pipe",
-          }).toString().trim();
-          if (existingPr) {
-            result.prUrl = existingPr;
-            const context = await getRunContext(runId);
-            context["final_pr"] = existingPr;
-            await updateRunContext(runId, context);
-            logger.info(`[merge-queue] Using existing PR: ${existingPr}`, { runId });
-          }
-        } catch (e) { logger.warn(`[merge-queue] Could not find existing PR: ${String(e).slice(0, 100)}`, { runId }); }
+        // Save PR URL in run context
+        const context = await getRunContext(runId);
+        context["final_pr"] = prUrl;
+        await updateRunContext(runId, context);
       } else {
-        logger.error(`[merge-queue] Failed to create PR: ${errStr}`, { runId });
+        logger.error(`[merge-queue] Failed to ensure final PR: ${ensured.error}`, { runId });
       }
+    } catch (prErr) {
+      logger.error(`[merge-queue] Failed to prepare final PR: ${compactCommandError(prErr)}`, { runId });
     }
   }
 

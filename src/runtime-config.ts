@@ -7,6 +7,11 @@ import {
   normalizeArtifactCapacityLimits,
   type ArtifactCapacityLimits,
 } from "./product-compiler/artifact-capacity.js";
+import {
+  DEFAULT_V3_SEAL_CAPACITY_LIMITS,
+  normalizeV3SealCapacityLimits,
+  type V3SealCapacityLimits,
+} from "./execution/v3-seal-capacity.js";
 
 const loadedEnvKeys = new Set<string>();
 
@@ -116,6 +121,15 @@ export function resolveProductArtifactDir(
     : join(runtimeConfig.setfarmDir, "product-compiler", "artifacts", "sha256");
 }
 
+export function resolveConvergenceEvalResultDir(
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  const explicit = env.SETFARM_CONVERGENCE_RESULT_DIR?.trim();
+  return explicit
+    ? expandRuntimePath(explicit)
+    : join(resolvePackageRoot(), ".setfarm", "evals", "results");
+}
+
 function capacityEnvInteger(
   env: NodeJS.ProcessEnv,
   key: string,
@@ -147,6 +161,28 @@ export function resolveProductArtifactCapacity(
       env,
       "SETFARM_ARTIFACT_MIN_FREE_BYTES",
       DEFAULT_ARTIFACT_CAPACITY_LIMITS.minFreeBytes,
+    ),
+  });
+}
+
+export function resolveV3SealCapacity(
+  env: NodeJS.ProcessEnv = process.env,
+): V3SealCapacityLimits {
+  return normalizeV3SealCapacityLimits({
+    rootQuotaBytes: capacityEnvInteger(
+      env,
+      "SETFARM_V3_SEAL_ROOT_QUOTA_BYTES",
+      DEFAULT_V3_SEAL_CAPACITY_LIMITS.rootQuotaBytes,
+    ),
+    maxSealCount: capacityEnvInteger(
+      env,
+      "SETFARM_V3_SEAL_MAX_COUNT",
+      DEFAULT_V3_SEAL_CAPACITY_LIMITS.maxSealCount,
+    ),
+    minFreeBytes: capacityEnvInteger(
+      env,
+      "SETFARM_V3_SEAL_MIN_FREE_BYTES",
+      DEFAULT_V3_SEAL_CAPACITY_LIMITS.minFreeBytes,
     ),
   });
 }

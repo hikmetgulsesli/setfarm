@@ -1507,6 +1507,7 @@ const commands = {
     const retryBaseDelayMs = intEnv("STITCH_GENERATE_ALL_RETRY_BASE_DELAY_MS", 45000, 5000, 180000);
     let result = null;
     let screens = [];
+    let screenSource = "direct";
     for (let attempt = 1; attempt <= retryAttempts; attempt++) {
       try {
         const generated = await generateScreenFromText({ projectId, prompt, deviceType, modelId });
@@ -1601,6 +1602,7 @@ const commands = {
             screenshotUrl: screenshotUrlOf(s),
           })).filter(s => s.screenId);
           if (listedScreens.length > 0) {
+            screenSource = "fallback_list";
             process.stderr.write("Found " + listedScreens.length + " screens via list-screens (retry " + (retry + 1) + ")\n");
             // Download them
             const { mkdirSync } = await import("fs");
@@ -1626,6 +1628,7 @@ const commands = {
     console.log(JSON.stringify({
       total: screens.length,
       screens: screens.map(s => ({ screenId: s.screenId, title: s.title })),
+      screenSource,
       elapsedSeconds: Math.round((Date.now() - startTime) / 1000),
       diagnostic: screens.length === 0 ? zeroScreenDiagnostic : undefined
     }, null, 2));

@@ -86,6 +86,42 @@ function checkMergedPR(repoUrl: string, storyId: string, runId: string): string 
 // ── Remediation ─────────────────────────────────────────────────────
 
 async function remediate(finding: MedicFinding): Promise<boolean> {
+  const compilerUnsafeActions = new Set([
+    "reset_step",
+    "fail_run",
+    "resume_run",
+    "reset_story",
+    "advance_pipeline",
+    "auto_complete_step",
+  ]);
+  if (finding.runId && compilerUnsafeActions.has(finding.action)) {
+    const run = await pgGet<{ protocol: string }>("SELECT protocol FROM runs WHERE id = $1", [finding.runId]);
+    if (run?.protocol && run.protocol !== "legacy") {
+      logger.info(`[medic] ${finding.action} skipped — ${run.protocol} lifecycle is owned by the compiler recovery state machine for ${finding.runId}`);
+      return false;
+    }
+    const durableOwner = await pgGet<{ present: boolean }>(
+      `SELECT (
+         EXISTS (
+           SELECT 1 FROM runtime_sessions rs
+            WHERE rs.run_id = $1 AND rs.state <> 'released'
+         )
+         OR EXISTS (
+           SELECT 1 FROM run_termination_requests rtr
+            WHERE rtr.run_id = $1 AND rtr.state <> 'terminalized'
+         )
+         OR EXISTS (
+           SELECT 1 FROM runtime_completion_requests rcr
+            WHERE rcr.run_id = $1 AND rcr.state IN ('requested', 'draining', 'processing')
+         )
+       ) AS present`,
+      [finding.runId],
+    );
+    if (durableOwner?.present) {
+      logger.info(`[medic] ${finding.action} skipped — durable runtime/recovery ownership is active for ${finding.runId}`);
+      return false;
+    }
+  }
   switch (finding.action) {
     case "reset_step": {
       if (!finding.stepId) return false;
@@ -229,6 +265,28 @@ async function remediate(finding: MedicFinding): Promise<boolean> {
       // (they use execFileSync/system calls, not DB)
       // For restart_gateway we need the DB query for activeWfs
       if (finding.action === "restart_gateway") {
+        const compilerOwner = await pgGet<{ run_id: string | null; active_attempts: string }>(
+          `SELECT
+             (
+               SELECT id
+                 FROM runs
+                WHERE protocol IN ('shadow', 'v3')
+                  AND status IN ('running', 'resuming')
+                ORDER BY created_at ASC
+                LIMIT 1
+             ) AS run_id,
+             (
+               SELECT COUNT(*)::text
+                 FROM execution_attempts
+                WHERE disposition IN ('claimed', 'running')
+             ) AS active_attempts`,
+        );
+        if (compilerOwner?.run_id || Number(compilerOwner?.active_attempts || "0") > 0) {
+          logger.info(
+            `[medic] restart_gateway skipped — compiler lifecycle owner is active (run=${compilerOwner?.run_id || "none"}, attempts=${compilerOwner?.active_attempts || "0"})`,
+          );
+          return false;
+        }
         try {
           const uptimeOut = systemctlUser("show", "openclaw-gateway", "--property=ActiveEnterTimestamp").trim();
           const tsMatch = uptimeOut.match(/ActiveEnterTimestamp=(.+)/);
@@ -313,7 +371,11 @@ async function remediate(finding: MedicFinding): Promise<boolean> {
       // but a race between finding generation and action application can leak through
       // if failRun(runId, true) ran after the finding was queued. Re-read meta before
       // claiming the run to make sure we never revive an intentionally-failed run.
-      const preCheck = await pgGet<{ meta: string | null }>("SELECT meta FROM runs WHERE id = $1", [finding.runId]);
+      const preCheck = await pgGet<{ meta: string | null; protocol: string }>("SELECT meta, protocol FROM runs WHERE id = $1", [finding.runId]);
+      if (preCheck?.protocol && preCheck.protocol !== "legacy") {
+        logger.info(`[medic] resume_run skipped — ${preCheck.protocol} lifecycle is owned by the compiler recovery state machine for ${finding.runId}`);
+        return false;
+      }
       if (preCheck?.meta) {
         try {
           const preMeta = JSON.parse(preCheck.meta);
@@ -361,8 +423,19 @@ async function remediate(finding: MedicFinding): Promise<boolean> {
 
     case "reset_story": {
       if (!finding.storyId) return false;
-      const story = await pgGet<{ abandoned_count: number; run_id: string }>("SELECT abandoned_count, run_id FROM stories WHERE id = $1 AND status = 'running'", [finding.storyId]);
+      const story = await pgGet<{ abandoned_count: number; run_id: string; protocol: string }>(
+        `SELECT st.abandoned_count, st.run_id, r.protocol
+           FROM stories st
+           JOIN runs r ON r.id = st.run_id
+          WHERE st.id = $1
+            AND st.status = 'running'`,
+        [finding.storyId],
+      );
       if (!story) return false;
+      if (story.protocol !== "legacy") {
+        logger.info(`[medic] reset_story skipped — ${story.protocol} lifecycle is owned by the compiler recovery state machine for ${story.run_id}`);
+        return false;
+      }
 
       const storyMeta = await pgGet<{ story_id: string }>("SELECT story_id FROM stories WHERE id = $1", [finding.storyId]);
       const runMeta = await pgGet<{ task: string }>("SELECT task FROM runs WHERE id = $1", [story.run_id]);

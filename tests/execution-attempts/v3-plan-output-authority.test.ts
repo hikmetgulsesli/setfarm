@@ -1,0 +1,153 @@
+import assert from "node:assert/strict";
+import { describe, it } from "node:test";
+
+import {
+  resolveV3PlanOutputAuthorityV1,
+  shouldRunLegacyProductSupervisorV1,
+} from "../../src/execution/v3-plan-output-authority.js";
+import { canonicalJsonStringify } from "../../src/product-compiler/canonical-json.js";
+import { extractTaskRequirementLedgerV1 } from "../../src/product-compiler/requirements/task-requirements-v1.js";
+import { buildMinimalValidContracts } from "../product-compiler/fixtures/minimal-valid-contract.js";
+
+const TASK = "Let a user edit and save a task, keep the saved title after reload, and show visible confirmation.";
+
+function proposal(): any {
+  const ledger = extractTaskRequirementLedgerV1(TASK);
+  const value: any = structuredClone(buildMinimalValidContracts().productSpec);
+  const action = value.actions[0];
+  action.observableEffects = [{
+    id: "OBS_SAVE_CONFIRMATION",
+    selector: { kind: "control", actionRef: action.id },
+    assertions: [
+      { phase: "before", property: "visible_text", operator: "equals", expected: "Save" },
+      { phase: "after", property: "visible_text", operator: "equals", expected: "Saved" },
+      { phase: "reload", property: "visible_text", operator: "equals", expected: "Saved" },
+    ],
+    evidenceRef: "EVID_SAVE_CONFIRMATION",
+  }];
+  action.evidenceRefs.push("EVID_SAVE_CONFIRMATION");
+  action.success.evidenceRefs.push("EVID_SAVE_CONFIRMATION");
+  value.evidencePredicates.push({
+    id: "EVID_SAVE_CONFIRMATION",
+    kind: "observable_outcome",
+    required: true,
+    subjectRef: "OBS_SAVE_CONFIRMATION",
+    capabilityRefs: ["CAP_BROWSER_INTERACTION"],
+    assertion: { operator: "passes" },
+  });
+  value.delivery = {
+    platform: "web",
+    techStack: "vite-react",
+    uiLanguage: "English",
+    database: "none",
+    designRequired: true,
+    uiVisionSummary: "A focused editor exposes the save control and visible saved state without unrelated product modules.",
+  };
+  value.requirements = ledger.requirements.map((requirement) => ({
+    ...requirement,
+    classification: "functional",
+    expectedSemanticKinds: ["action", "persistence", "observable"],
+  }));
+  const requirementRefs = ledger.requirements.map((requirement) => requirement.id);
+  const semantics = [
+    ...value.product.goals.map((entry: any) => ["goal", entry.id]),
+    ...value.product.nonGoals.map((entry: any) => ["non_goal", entry.id]),
+    ...value.entities.map((entry: any) => ["entity", entry.id]),
+    ...value.states.map((entry: any) => ["state", entry.id]),
+    ...value.persistencePolicies.map((entry: any) => ["persistence", entry.id]),
+    ...value.routes.map((entry: any) => ["route", entry.id]),
+    ...value.surfaces.map((entry: any) => ["surface", entry.id]),
+    ...value.actions.map((entry: any) => ["action", entry.id]),
+    ...value.evidencePredicates.map((entry: any) => ["evidence", entry.id]),
+    ["observable", "OBS_SAVE_CONFIRMATION"],
+  ];
+  value.traceability = {
+    schema: "setfarm.product-requirement-traceability.v1",
+    sourceTaskHash: ledger.sourceHash,
+    bindings: semantics.map(([semanticKind, semanticRef]) => ({
+      semanticKind,
+      semanticRef,
+      requirementRefs,
+    })),
+  };
+  return value;
+}
+
+function rejection(overrides: Record<string, unknown> = {}): any {
+  const ledger = extractTaskRequirementLedgerV1(TASK);
+  return {
+    schema: "setfarm.product-spec-rejection.v1",
+    sourceTaskHash: ledger.sourceHash,
+    reasons: [{
+      code: "PRODUCT_SPEC_REQUIRED_INFORMATION_MISSING",
+      requirementRefs: ledger.requirements.map((requirement) => requirement.id),
+      message: "The external persistence owner is not specified.",
+    }],
+    ...overrides,
+  };
+}
+
+describe("PLAN v3 output authority", () => {
+  it("bypasses the legacy Product Supervisor only for a canonical typed v3 proposal", () => {
+    const authority = resolveV3PlanOutputAuthorityV1({
+      task: TASK,
+      parsed: {
+        status: "done",
+        prd: `\`\`\`product-spec-v1\n${JSON.stringify(proposal(), null, 2)}\n\`\`\``,
+      },
+    });
+    assert.equal(authority.status, "proposal");
+    if (authority.status !== "proposal") return;
+    assert.equal(authority.canonicalBytes, canonicalJsonStringify(authority.productSpec));
+    assert.equal(shouldRunLegacyProductSupervisorV1({
+      protocol: "v3",
+      stepId: "plan",
+      planAuthority: authority,
+    }), false);
+  });
+
+  it("fails forged task hashes and requirement refs closed before retry routing", () => {
+    assert.throws(
+      () => resolveV3PlanOutputAuthorityV1({
+        task: TASK,
+        parsed: {
+          prd: `\`\`\`product-spec-rejection-v1\n${JSON.stringify(rejection({ sourceTaskHash: "0".repeat(64) }))}\n\`\`\``,
+        },
+      }),
+      /PRODUCT_SPEC_REJECTION_TASK_HASH_MISMATCH/,
+    );
+    const unknown = rejection();
+    unknown.reasons[0].requirementRefs = ["REQ_0000000000000000"];
+    assert.throws(
+      () => resolveV3PlanOutputAuthorityV1({
+        task: TASK,
+        parsed: {
+          prd: `\`\`\`product-spec-rejection-v1\n${JSON.stringify(unknown)}\n\`\`\``,
+        },
+      }),
+      /PRODUCT_SPEC_REJECTION_REQUIREMENT_UNKNOWN/,
+    );
+  });
+
+  it("leaves legacy and shadow PLAN supervisor behavior unchanged", () => {
+    const authority = resolveV3PlanOutputAuthorityV1({
+      task: TASK,
+      parsed: { prd: `\`\`\`product-spec-v1\n${JSON.stringify(proposal())}\n\`\`\`` },
+    });
+    assert.equal(shouldRunLegacyProductSupervisorV1({
+      protocol: "legacy",
+      stepId: "plan",
+      planAuthority: authority,
+    }), true);
+    assert.equal(shouldRunLegacyProductSupervisorV1({
+      protocol: "shadow",
+      stepId: "plan",
+      planAuthority: authority,
+    }), true);
+    assert.equal(shouldRunLegacyProductSupervisorV1({
+      protocol: "v3",
+      stepId: "design",
+      planAuthority: authority,
+    }), true);
+  });
+});

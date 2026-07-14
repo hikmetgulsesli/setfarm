@@ -169,11 +169,32 @@ export const InformationalControlBindingV1Schema = z
   })
   .strict();
 
+export const ValueInputControlBindingV1Schema = z
+  .object({
+    controlRef: ControlIdSchema,
+    disposition: z.literal("value_input"),
+    fields: z.array(z.object({
+      actionRef: ActionIdSchema,
+      inputField: z.string().min(1).max(160),
+    }).strict()).min(1).max(500),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    if (!hasUniqueStrings(value.fields.map((field) => `${field.actionRef}\0${field.inputField}`))) {
+      context.addIssue({
+        code: "custom",
+        path: ["fields"],
+        message: "Value input action/field mappings must be unique",
+      });
+    }
+  });
+
 export const DesignControlBindingV1Schema = z.discriminatedUnion("disposition", [
   ActionControlBindingV1Schema,
   ExternalControlBindingV1Schema,
   DisabledControlBindingV1Schema,
   InformationalControlBindingV1Schema,
+  ValueInputControlBindingV1Schema,
 ]);
 
 export type DesignControlBindingV1 = z.infer<typeof DesignControlBindingV1Schema>;
@@ -283,6 +304,16 @@ export const DesignInteractionGraphV1Schema = z
           }
         });
       }
+      if (binding.disposition === "value_input") {
+        const control = value.controls.find((item) => item.id === binding.controlRef);
+        if (control && !["input", "textarea", "select", "checkbox", "radio"].includes(control.kind)) {
+          context.addIssue({
+            code: "custom",
+            path: ["bindings", index, "disposition"],
+            message: "Value input disposition requires an input-like control kind",
+          });
+        }
+      }
     });
     value.unresolvedBindings.forEach((unresolved, index) => {
       if (!controlIds.has(unresolved.controlRef)) {
@@ -305,6 +336,24 @@ export const DesignInteractionGraphV1Schema = z
           message: `Control ${control.id} requires exactly one binding or unresolved record`,
         });
       }
+    });
+    const bindingByControl = new Map(value.bindings.map((binding) => [binding.controlRef, binding]));
+    value.bindings.forEach((binding, bindingIndex) => {
+      if (binding.disposition !== "action") return;
+      binding.inputBindings.forEach((input, inputIndex) => {
+        if (input.valueFrom.kind !== "control_value" || input.valueFrom.controlRef === binding.controlRef) return;
+        const provider = bindingByControl.get(input.valueFrom.controlRef);
+        const declared = provider?.disposition === "value_input"
+          && provider.fields.some((field) =>
+            field.actionRef === binding.actionRef && field.inputField === input.inputField);
+        if (!declared) {
+          context.addIssue({
+            code: "custom",
+            path: ["bindings", bindingIndex, "inputBindings", inputIndex],
+            message: `Input provider ${input.valueFrom.controlRef} does not declare ${binding.actionRef}.${input.inputField}`,
+          });
+        }
+      });
     });
   });
 

@@ -1,9 +1,24 @@
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
+import { canonicalJsonStringify } from "../product-compiler/canonical-json.js";
+import type { ImplementationSliceV1 } from "../product-compiler/schemas/implementation-slice-v1.js";
+import type { SourceRevisionV1 } from "../execution/schemas/execution-attempt-v1.js";
+import {
+  createCanonicalEvidenceBundleV2,
+  type CanonicalCommandTraceV1,
+  type CanonicalEvidenceResultV1,
+  type CanonicalInteractionTraceV1,
+} from "../evidence/canonical-evidence-runner.js";
+import {
+  compileEvidencePlanV1,
+  flattenEvidencePlanInteractions,
+  type EvidencePlanV1,
+} from "../evidence/evidence-plan-v1.js";
 import { implementEvidenceArtifactPaths, readImplementEvidenceConfig } from "./implement-evidence.js";
 import { writeImplementEvidenceArtifact } from "./implement-evidence-writer.js";
-import type { InteractionRequest } from "./runtime-driver.js";
+import type { CapturedRuntimeState, InteractionRequest, RuntimeDriver, RuntimeSession } from "./runtime-driver.js";
+import { createStackRuntimeEvidenceDriver } from "./stack-runtime-evidence-driver.js";
 import { WebPreviewRuntimeDriver } from "./web-runtime-driver.js";
 import { classifyStackFailure } from "./stack-modules/registry.js";
 import type { StackFailureAction, StackFailureOwner } from "./stack-modules/types.js";
@@ -19,6 +34,8 @@ export interface ImplementEvidenceRunResult {
   failureOwner?: StackFailureOwner;
   failureAction?: StackFailureAction;
   failureCategory?: string;
+  evidencePlan?: EvidencePlanV1;
+  canonicalEvidence?: CanonicalEvidenceResultV1;
 }
 
 export interface ImplementEvidenceObservation {
@@ -57,7 +74,7 @@ function numberOrUndefined(value: unknown): number | undefined {
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
-const SUPPORTED_INTERACTION_ACTIONS = new Set(["click", "fill", "press", "wait", "navigate", "snapshot"]);
+const SUPPORTED_INTERACTION_ACTIONS = new Set(["click", "fill", "press", "select", "wait", "navigate", "snapshot", "invoke", "reset"]);
 const SNAPSHOT_ALIAS_ACTIONS = new Set(["read", "inspect", "observe"]);
 
 function isSnapshotAliasInteraction(action: string, target: string, value = ""): boolean {
@@ -89,10 +106,13 @@ export function normalizeInteractionRequests(value: unknown): InteractionRequest
       interactions.push({
         id: typeof raw.id === "string" && raw.id.trim() ? raw.id.trim() : `flow-${index + 1}`,
         action: "snapshot",
-        target: target || undefined,
-        value: rawValue || undefined,
-        waitCondition: typeof raw.waitCondition === "string" ? raw.waitCondition as InteractionRequest["waitCondition"] : undefined,
-        timeoutMs: numberOrUndefined(raw.timeoutMs),
+        ...(target ? { target } : {}),
+        ...(rawValue ? { value: rawValue } : {}),
+        ...(isObject(raw.inputValues) ? { inputValues: raw.inputValues } : {}),
+        ...(typeof raw.waitCondition === "string"
+          ? { waitCondition: raw.waitCondition as InteractionRequest["waitCondition"] }
+          : {}),
+        ...(numberOrUndefined(raw.timeoutMs) !== undefined ? { timeoutMs: numberOrUndefined(raw.timeoutMs) } : {}),
       });
       continue;
     }
@@ -100,10 +120,13 @@ export function normalizeInteractionRequests(value: unknown): InteractionRequest
       interactions.push({
         id: typeof raw.id === "string" && raw.id.trim() ? raw.id.trim() : `flow-${index + 1}`,
         action: action as InteractionRequest["action"],
-        target: target || undefined,
-        value: rawValue || undefined,
-        waitCondition: typeof raw.waitCondition === "string" ? raw.waitCondition as InteractionRequest["waitCondition"] : undefined,
-        timeoutMs: numberOrUndefined(raw.timeoutMs),
+        ...(target ? { target } : {}),
+        ...(rawValue ? { value: rawValue } : {}),
+        ...(isObject(raw.inputValues) ? { inputValues: raw.inputValues } : {}),
+        ...(typeof raw.waitCondition === "string"
+          ? { waitCondition: raw.waitCondition as InteractionRequest["waitCondition"] }
+          : {}),
+        ...(numberOrUndefined(raw.timeoutMs) !== undefined ? { timeoutMs: numberOrUndefined(raw.timeoutMs) } : {}),
       });
       continue;
     }
@@ -227,6 +250,63 @@ function writeJsonIfMissing(filePath: string, value: Record<string, unknown>): b
   return true;
 }
 
+function writeV3EvidenceArtifacts(input: {
+  workdir: string;
+  storyId: string;
+  paths: Record<string, string>;
+  plan: EvidencePlanV1;
+}): string[] {
+  const now = new Date().toISOString();
+  const planPath = path.join(input.workdir, ".setfarm", "evidence-v2", input.storyId, "EVIDENCE_PLAN.json");
+  fs.mkdirSync(path.dirname(planPath), { recursive: true });
+  fs.writeFileSync(planPath, `${canonicalJsonStringify(input.plan)}\n`);
+  const actionByInteraction = new Map(input.plan.flows.flatMap((flow) =>
+    flow.interactions.map((interaction) => [
+      interaction.id,
+      interaction.action === "invoke" && interaction.target ? interaction.target : flow.actionRef,
+    ] as const)));
+  fs.mkdirSync(path.dirname(input.paths.intent), { recursive: true });
+  const adapter = input.plan.runtime?.adapter;
+  const browserRuntime = !adapter || adapter === "browser-service";
+  fs.writeFileSync(input.paths.intent, `${JSON.stringify({
+    schema: "setfarm.implement-intent.v1",
+    storyId: input.storyId,
+    storyType: adapter === "cli-process" ? "cli" : adapter === "http-service" ? "api" : "ui_interactive",
+    acceptanceCriteria: input.plan.predicateRefs.map((predicateRef) => ({
+      id: predicateRef,
+      description: "Exact required predicate from the sealed implementation slice",
+    })),
+    boundSurfaces: [],
+    boundActions: [...new Set(input.plan.flows.map((flow) => flow.actionRef))].sort(),
+    boundDataEntities: [],
+    runtimeEvidenceRequired: {
+      minFlowCount: input.plan.flows.length,
+      requiredArtifactTypes: browserRuntime
+        ? ["screenshot_per_flow", "dom_snapshot", "typed_command_evidence"]
+        : ["runtime_snapshot_per_flow", "typed_command_evidence"],
+      testBridgeRequired: false,
+    },
+    evidencePlanHash: input.plan.planHash,
+    generatedBy: "setfarm-evidence-planner-v1",
+    generatedAt: now,
+  }, null, 2)}\n`);
+  fs.writeFileSync(input.paths.request, `${JSON.stringify({
+    schema: "setfarm.implement-verification-request.v1",
+    storyId: input.storyId,
+    status: "ready_for_orchestrator_verification",
+    interactionRequests: flattenEvidencePlanInteractions(input.plan).map((interaction) => ({
+      ...interaction,
+      actionRef: actionByInteraction.get(interaction.id),
+    })),
+    uncoveredCriteria: [],
+    knownGaps: [],
+    evidencePlanHash: input.plan.planHash,
+    generatedBy: "setfarm-evidence-planner-v1",
+    generatedAt: now,
+  }, null, 2)}\n`);
+  return [planPath, input.paths.intent, input.paths.request];
+}
+
 function synthesizeDefaultEvidenceArtifacts(input: {
   workdir: string;
   storyId: string;
@@ -297,24 +377,104 @@ function runBuildCommand(workdir: string): { cmd: string; exitCode: number; summ
   }
 }
 
+function runDeclaredCommand(
+  workdir: string,
+  command: EvidencePlanV1["commands"][number],
+): { cmd: string; commandRef: string; exitCode: number; summary?: string; stdout: string; stderr: string; startedAt: string; completedAt: string } {
+  const startedAt = new Date().toISOString();
+  const cwd = path.resolve(workdir, command.cwd);
+  const root = path.resolve(workdir);
+  if (cwd !== root && !cwd.startsWith(`${root}${path.sep}`)) {
+    return {
+      cmd: command.argv.join(" "),
+      commandRef: command.commandRef,
+      exitCode: 1,
+      summary: "Declared command cwd escapes the exact story worktree.",
+      stdout: "",
+      stderr: "Declared command cwd escapes the exact story worktree.",
+      startedAt,
+      completedAt: new Date().toISOString(),
+    };
+  }
+  try {
+    const stdout = execFileSync(command.argv[0]!, command.argv.slice(1), {
+      cwd,
+      timeout: command.timeoutMs,
+      stdio: ["ignore", "pipe", "pipe"],
+      encoding: "utf-8",
+      env: { ...process.env, CI: "true" },
+    });
+    return {
+      cmd: command.argv.join(" "),
+      commandRef: command.commandRef,
+      exitCode: 0,
+      stdout,
+      stderr: "",
+      startedAt,
+      completedAt: new Date().toISOString(),
+      ...(stdout.trim() ? { summary: stdout.slice(-3_000) } : {}),
+    };
+  } catch (error: any) {
+    const stdout = String(error?.stdout || "");
+    const stderr = String(error?.stderr || error?.message || "");
+    return {
+      cmd: command.argv.join(" "),
+      commandRef: command.commandRef,
+      exitCode: typeof error?.status === "number" ? error.status : 1,
+      summary: `${stdout}\n${stderr}\n${error?.message || ""}`
+        .split("\n").slice(-80).join("\n").slice(0, 6_000),
+      stdout,
+      stderr,
+      startedAt,
+      completedAt: new Date().toISOString(),
+    };
+  }
+}
+
 export async function runImplementEvidenceIfRequested(input: {
   runId: string;
   runNumber?: number | null;
   storyId: string;
   workdir: string;
   stackPackId?: StackPackId | string | null;
+  v3?: Readonly<{
+    slice: ImplementationSliceV1;
+    sliceHash: string;
+    attemptId: string;
+    sourceRevision: SourceRevisionV1;
+  }>;
   observe?: ImplementEvidenceObserver;
 }): Promise<ImplementEvidenceRunResult> {
+  const evidenceStartedAt = new Date().toISOString();
   async function observe(observation: ImplementEvidenceObservation): Promise<void> {
     if (!input.observe) return;
     await Promise.resolve(input.observe(observation)).catch(() => undefined);
   }
 
   const config = readImplementEvidenceConfig();
-  if (config.mode === "off") return { attempted: false, ok: true, reason: "Implement evidence gate is off." };
+  if (config.mode === "off" && !input.v3) return { attempted: false, ok: true, reason: "Implement evidence gate is off." };
 
   const paths = implementEvidenceArtifactPaths(input.workdir, input.storyId);
-  if (!fs.existsSync(paths.request)) {
+  const evidencePlan = input.v3
+    ? compileEvidencePlanV1({ slice: input.v3.slice, sliceHash: input.v3.sliceHash })
+    : undefined;
+  if (evidencePlan) {
+    const written = writeV3EvidenceArtifacts({
+      workdir: input.workdir,
+      storyId: input.storyId,
+      paths,
+      plan: evidencePlan,
+    });
+    await observe({
+      checkId: "implement.evidence.plan.v1",
+      label: "Sealed implementation evidence plan",
+      status: "pass",
+      summary: `Compiled ${evidencePlan.predicateRefs.length} exact predicates into ${evidencePlan.flows.length} flow(s).`,
+      filePaths: written,
+      metadata: { planHash: evidencePlan.planHash, predicateRefs: evidencePlan.predicateRefs },
+      eventType: "implement.evidence.plan.compiled",
+    });
+  } else if (!fs.existsSync(paths.request)) {
     if (!hasPackageScript(input.workdir, "preview")) {
       return { attempted: false, ok: config.mode !== "blocking", reason: "No implementation verification request artifact found." };
     }
@@ -329,12 +489,14 @@ export async function runImplementEvidenceIfRequested(input: {
       eventType: "implement.evidence.request.auto_generated",
     });
   }
-  if (!hasPackageScript(input.workdir, "preview")) {
+  if (!hasPackageScript(input.workdir, "preview") && !input.v3) {
     return { attempted: false, ok: config.mode !== "blocking", reason: "No package preview script available for runtime evidence." };
   }
 
   const request = readJson(paths.request);
-  const interactions = normalizeInteractionRequests(request?.interactionRequests);
+  const interactions = evidencePlan
+    ? flattenEvidencePlanInteractions(evidencePlan)
+    : normalizeInteractionRequests(request?.interactionRequests);
   await observe({
     checkId: "implement.runtime.build",
     label: "Implement runtime build",
@@ -342,7 +504,44 @@ export async function runImplementEvidenceIfRequested(input: {
     summary: "Running build before runtime evidence capture.",
     eventType: "implement.runtime.build.started",
   });
-  const commands = [runBuildCommand(input.workdir)];
+  const commands = evidencePlan?.commands.length
+    ? evidencePlan.commands.map((command) => runDeclaredCommand(input.workdir, command))
+    : [runBuildCommand(input.workdir)];
+  const canonicalCommands: CanonicalCommandTraceV1[] = evidencePlan
+    ? (commands as ReturnType<typeof runDeclaredCommand>[]).map((command) => ({
+      commandRef: command.commandRef,
+      exitCode: command.exitCode,
+      stdout: command.stdout,
+      stderr: command.stderr,
+      startedAt: command.startedAt,
+      completedAt: command.completedAt,
+    }))
+    : [];
+  const canonicalize = (execution: Readonly<{
+    runtimeSessionId?: string;
+    initialCapture?: CapturedRuntimeState;
+    interactions?: readonly CanonicalInteractionTraceV1[];
+    runtimeError?: string;
+  }> = {}): CanonicalEvidenceResultV1 | undefined => input.v3 && evidencePlan
+    ? createCanonicalEvidenceBundleV2({
+        runId: input.runId,
+        storyId: input.storyId,
+        workdir: input.workdir,
+        attemptId: input.v3.attemptId,
+        sourceRevision: input.v3.sourceRevision,
+        slice: input.v3.slice,
+        plan: evidencePlan,
+        execution: {
+          commands: canonicalCommands,
+          interactions: execution.interactions ?? [],
+          ...(execution.runtimeSessionId ? { runtimeSessionId: execution.runtimeSessionId } : {}),
+          ...(execution.initialCapture ? { initialCapture: execution.initialCapture } : {}),
+          ...(execution.runtimeError ? { runtimeError: execution.runtimeError } : {}),
+        },
+        startedAt: evidenceStartedAt,
+        completedAt: new Date().toISOString(),
+      })
+    : undefined;
   await observe({
     checkId: "implement.runtime.build",
     label: "Implement runtime build",
@@ -371,13 +570,51 @@ export async function runImplementEvidenceIfRequested(input: {
       filePaths: [evidencePath],
       eventType: "implement.evidence.artifact.failed",
     });
-    return { attempted: true, evidencePath, ok: false, reason: "Build failed before runtime evidence." };
+    const canonicalEvidence = canonicalize({ runtimeError: "Typed command execution failed before runtime evidence." });
+    return {
+      attempted: true,
+      evidencePath,
+      ok: false,
+      reason: "Build failed before runtime evidence.",
+      ...(evidencePlan ? { evidencePlan } : {}),
+      ...(canonicalEvidence ? { canonicalEvidence } : {}),
+    };
   }
 
-  const driver = new WebPreviewRuntimeDriver();
-  let session = null as Awaited<ReturnType<WebPreviewRuntimeDriver["start"]>> | null;
+  if (evidencePlan?.runtime && input.stackPackId && evidencePlan.runtime.stackPackId !== input.stackPackId) {
+    const reason = `Sealed runtime adapter ${evidencePlan.runtime.stackPackId} does not match claimed stack ${input.stackPackId}.`;
+    const canonicalEvidence = canonicalize({ runtimeError: reason });
+    return {
+      attempted: true,
+      ok: false,
+      reason,
+      evidencePlan,
+      ...(canonicalEvidence ? { canonicalEvidence } : {}),
+    };
+  }
+  if (evidencePlan && !evidencePlan.runtime) {
+    const reason = input.stackPackId
+      ? `Claimed stack ${input.stackPackId} requires a sealed runtime evidence contract.`
+      : "V3 runtime evidence requires a sealed stack-owned adapter contract.";
+    const canonicalEvidence = canonicalize({ runtimeError: reason });
+    return {
+      attempted: true,
+      ok: false,
+      reason,
+      ...(evidencePlan ? { evidencePlan } : {}),
+      ...(canonicalEvidence ? { canonicalEvidence } : {}),
+    };
+  }
+
+  const driver: RuntimeDriver = evidencePlan?.runtime
+    ? createStackRuntimeEvidenceDriver(evidencePlan.runtime)
+    : new WebPreviewRuntimeDriver();
+  let session: RuntimeSession | null = null;
   const flows: Array<{ flowId: string; description?: string; interactions: any[]; captures: any[] }> = [];
   const issues: Array<{ code: string; message: string }> = [];
+  const canonicalInteractions: CanonicalInteractionTraceV1[] = [];
+  let canonicalInitialCapture: CapturedRuntimeState | undefined;
+  let canonicalRuntimeError: string | undefined;
   try {
     await observe({
       checkId: "implement.runtime.start",
@@ -411,14 +648,26 @@ export async function runImplementEvidenceIfRequested(input: {
       eventType: "implement.runtime.ready",
     });
     const initialCapture = await driver.captureState(session);
+    canonicalInitialCapture = initialCapture;
+    let previousCapture = initialCapture;
     flows.push({ flowId: "initial", description: "Initial runtime capture", interactions: [], captures: [initialCapture] });
     await observe({
       checkId: "implement.runtime.capture.initial",
       label: "Initial runtime capture",
       status: "pass",
-      summary: "Initial screenshot and DOM state captured.",
-      evidence: { screenshotPath: initialCapture.screenshotPath, domSnapshotPath: initialCapture.domSnapshotPath, stateBridge: initialCapture.stateBridge || null },
-      filePaths: [initialCapture.screenshotPath, initialCapture.domSnapshotPath, initialCapture.accessibilitySnapshotPath].filter(Boolean) as string[],
+      summary: "Initial orchestrator-owned runtime state captured.",
+      evidence: {
+        screenshotPath: initialCapture.screenshotPath,
+        domSnapshotPath: initialCapture.domSnapshotPath,
+        runtimeSnapshotPath: initialCapture.runtimeSnapshotPath,
+        stateBridge: initialCapture.stateBridge || null,
+      },
+      filePaths: [
+        initialCapture.screenshotPath,
+        initialCapture.domSnapshotPath,
+        initialCapture.accessibilitySnapshotPath,
+        initialCapture.runtimeSnapshotPath,
+      ].filter(Boolean) as string[],
       eventType: "implement.runtime.capture.completed",
     });
 
@@ -434,6 +683,8 @@ export async function runImplementEvidenceIfRequested(input: {
       });
       const result = await driver.interact(session, interaction);
       const capture = await driver.captureState(session);
+      canonicalInteractions.push({ request: interaction, result, before: previousCapture, after: capture });
+      previousCapture = capture;
       flows.push({
         flowId: interaction.id || `flow-${i + 1}`,
         description: describeInteraction(interaction),
@@ -452,13 +703,24 @@ export async function runImplementEvidenceIfRequested(input: {
         summary: failureContext || result.detail || `${result.action} ${result.status}`,
         detail: result.status === "pass" ? undefined : (result.detail || ""),
         metadata: { interaction, result, failureContext: failureContext || undefined },
-        evidence: { screenshotPath: capture.screenshotPath, domSnapshotPath: capture.domSnapshotPath, stateBridge: capture.stateBridge || null },
-        filePaths: [capture.screenshotPath, capture.domSnapshotPath, capture.accessibilitySnapshotPath].filter(Boolean) as string[],
+        evidence: {
+          screenshotPath: capture.screenshotPath,
+          domSnapshotPath: capture.domSnapshotPath,
+          runtimeSnapshotPath: capture.runtimeSnapshotPath,
+          stateBridge: capture.stateBridge || null,
+        },
+        filePaths: [
+          capture.screenshotPath,
+          capture.domSnapshotPath,
+          capture.accessibilitySnapshotPath,
+          capture.runtimeSnapshotPath,
+        ].filter(Boolean) as string[],
         eventType: result.status === "pass" ? "implement.runtime.interaction.completed" : "implement.runtime.interaction.failed",
       });
     }
   } catch (err: any) {
-    issues.push({ code: "IMPLEMENT_EVIDENCE_RUNTIME_FAILED", message: String(err?.message || err).slice(0, 1000) });
+    canonicalRuntimeError = String(err?.message || err).slice(0, 1000);
+    issues.push({ code: "IMPLEMENT_EVIDENCE_RUNTIME_FAILED", message: canonicalRuntimeError });
     await observe({
       checkId: "implement.runtime.failure",
       label: "Implement runtime failure",
@@ -491,14 +753,36 @@ export async function runImplementEvidenceIfRequested(input: {
   const evidencePath = writeImplementEvidenceArtifact({
     workdir: input.workdir,
     storyId: input.storyId,
-    runtime: session || { kind: "browser", status: "not_started" },
+    runtime: session || {
+      kind: evidencePlan?.runtime?.adapter === "browser-service"
+        ? "browser"
+        : evidencePlan?.runtime
+          ? "process"
+          : "browser",
+      status: "not_started",
+    },
     commands,
     flows,
     verdict: issues.length === 0 ? "pass" : "fail",
     issues,
   });
-  const failureText = issues.map((issue) => `${issue.code}: ${issue.message}`).join("\n");
-  const failureClassification = issues.length > 0
+  const canonicalEvidence = canonicalize({
+    ...(session?.sessionId ? { runtimeSessionId: session.sessionId } : {}),
+    ...(canonicalInitialCapture ? { initialCapture: canonicalInitialCapture } : {}),
+    interactions: canonicalInteractions,
+    ...(canonicalRuntimeError ? { runtimeError: canonicalRuntimeError } : {}),
+  });
+  const canonicalOk = canonicalEvidence ? canonicalEvidence.bundle.aggregateVerdict === "pass" : issues.length === 0;
+  const predicateFailureText = canonicalEvidence
+    ? canonicalEvidence.bundle.predicates
+        .filter((predicate) => predicate.required && predicate.verdict !== "pass")
+        .map((predicate) => `${predicate.predicateRef}:${predicate.verdict}`)
+        .join("\n")
+    : "";
+  const failureText = [issues.map((issue) => `${issue.code}: ${issue.message}`).join("\n"), predicateFailureText]
+    .filter(Boolean)
+    .join("\n");
+  const failureClassification = !canonicalOk
     ? classifyStackFailure(isStackPackId(input.stackPackId) ? input.stackPackId : "vite-react-web-app", {
       stepId: "implement",
       failure: failureText,
@@ -508,26 +792,34 @@ export async function runImplementEvidenceIfRequested(input: {
   await observe({
     checkId: "implement.evidence.artifact",
     label: "Implement evidence artifact",
-    status: issues.length === 0 ? "pass" : "fail",
-    summary: issues.length === 0 ? "Wrote passing implementation evidence." : "Wrote failing implementation evidence.",
+    status: canonicalOk ? "pass" : "fail",
+    summary: canonicalOk ? "Wrote passing implementation evidence." : "Wrote failing implementation evidence.",
     metadata: {
       evidencePath,
       flowCount: flows.length,
       issueCount: issues.length,
+      canonicalAggregateVerdict: canonicalEvidence?.bundle.aggregateVerdict,
+      canonicalEvidenceBundleHash: canonicalEvidence?.bundleHash,
       failureOwner: failureClassification?.owner,
       failureAction: failureClassification?.action,
       failureCategory: failureClassification?.category,
     },
     filePaths: [evidencePath],
-    eventType: issues.length === 0 ? "implement.evidence.artifact.completed" : "implement.evidence.artifact.failed",
+    eventType: canonicalOk ? "implement.evidence.artifact.completed" : "implement.evidence.artifact.failed",
   });
   return {
     attempted: true,
     evidencePath,
-    ok: issues.length === 0,
-    reason: issues.length === 0 ? "Implementation evidence captured." : issues.map((issue) => issue.code).join(", "),
+    ok: canonicalOk,
+    reason: canonicalOk
+      ? "Implementation evidence captured."
+      : canonicalEvidence
+        ? `Canonical evidence verdict: ${canonicalEvidence.bundle.aggregateVerdict}.`
+        : issues.map((issue) => issue.code).join(", "),
     failureOwner: failureClassification?.owner,
     failureAction: failureClassification?.action,
     failureCategory: failureClassification?.category,
+    ...(evidencePlan ? { evidencePlan } : {}),
+    ...(canonicalEvidence ? { canonicalEvidence } : {}),
   };
 }

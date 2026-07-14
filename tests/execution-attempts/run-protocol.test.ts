@@ -13,6 +13,8 @@ import {
   RunActivationConflictError,
   persistWorkflowRun,
 } from "../../src/execution/run-persistence.js";
+import { createAttemptRepository } from "../../src/execution/attempt-repository.js";
+import { exactBoundProductReservation } from "./fixtures.js";
 import { createIsolatedTestDatabase, type TestDatabase } from "./test-database.js";
 
 const RELEASE_SHA = "a".repeat(40);
@@ -21,6 +23,13 @@ const PASS_PREFLIGHT = {
   status: "pass" as const,
   hash: PREFLIGHT_HASH,
   stored: true,
+};
+const RELEASE_ADMISSION_HASH = "c".repeat(64);
+const RELEASE_GO_ADMISSION = {
+  admissionHash: RELEASE_ADMISSION_HASH,
+  kind: "release_go" as const,
+  releaseSha: RELEASE_SHA,
+  canary: null,
 };
 
 describe("run-pinned product compiler protocol", () => {
@@ -40,6 +49,9 @@ describe("run-pinned product compiler protocol", () => {
         version: 1,
         compilerReleaseSha: RELEASE_SHA,
         activationPreflightHash: null,
+        releaseAdmissionHash: null,
+        releaseAdmissionKind: null,
+        canaryAdmission: null,
       },
     );
     assert.equal(
@@ -72,7 +84,7 @@ describe("run-pinned product compiler protocol", () => {
     assert.ok(resolveIndex >= 0 && sequenceIndex > resolveIndex);
   });
 
-  it("requires both explicit activation and a passing preflight for v3", () => {
+  it("treats activation as a kill switch and also requires exact release authority for v3", () => {
     assert.throws(
       () => resolveNewRunProtocol({
         requestedMode: "v3",
@@ -95,17 +107,33 @@ describe("run-pinned product compiler protocol", () => {
         && error.code === "RUN_PROTOCOL_PREFLIGHT_REQUIRED",
     );
     assert.deepEqual(
-      resolveNewRunProtocol({
-        requestedMode: "v3",
-        compilerReleaseSha: RELEASE_SHA,
-        env: { SETFARM_V3_ACTIVATION: "enabled" },
-        activationPreflight: PASS_PREFLIGHT,
-      }),
+      (() => {
+        assert.throws(
+          () => resolveNewRunProtocol({
+            requestedMode: "v3",
+            compilerReleaseSha: RELEASE_SHA,
+            env: { SETFARM_V3_ACTIVATION: "enabled" },
+            activationPreflight: PASS_PREFLIGHT,
+          }),
+          (error: unknown) => error instanceof RunProtocolError
+            && error.code === "RUN_PROTOCOL_RELEASE_ADMISSION_REQUIRED",
+        );
+        return resolveNewRunProtocol({
+          requestedMode: "v3",
+          compilerReleaseSha: RELEASE_SHA,
+          env: { SETFARM_V3_ACTIVATION: "enabled" },
+          activationPreflight: PASS_PREFLIGHT,
+          releaseAdmission: RELEASE_GO_ADMISSION,
+        });
+      })(),
       {
         mode: "v3",
         version: 1,
         compilerReleaseSha: RELEASE_SHA,
         activationPreflightHash: PREFLIGHT_HASH,
+        releaseAdmissionHash: RELEASE_ADMISSION_HASH,
+        releaseAdmissionKind: "release_go",
+        canaryAdmission: null,
       },
     );
   });
@@ -200,6 +228,56 @@ describe("run-pinned product compiler protocol", () => {
       );
     } finally {
       await database.sql`DELETE FROM runs WHERE id = 'run-protocol-resuming-owner'`;
+    }
+  });
+
+  it("rechecks active attempt ownership inside the admission lock", async () => {
+    await database.insertRun("run-protocol-leaked-attempt-owner");
+    const attempts = createAttemptRepository(database.sql);
+    const reserved = await attempts.reserve(await exactBoundProductReservation(database.sql, {
+      runId: "run-protocol-leaked-attempt-owner",
+      storyId: "US-ADMISSION-FENCE",
+    }));
+    assert.equal(reserved.status, "reserved");
+    await database.sql`
+      UPDATE runs SET status = 'cancelled'
+      WHERE id = 'run-protocol-leaked-attempt-owner'
+    `;
+    const protocol = resolveNewRunProtocol({
+      requestedMode: "shadow",
+      compilerReleaseSha: RELEASE_SHA,
+      env: {},
+      activationPreflight: PASS_PREFLIGHT,
+    });
+    try {
+      await assert.rejects(
+        database.sql.begin((sql) => persistWorkflowRun(sql, {
+          run: {
+            id: "run-protocol-after-leaked-attempt",
+            runNumber: 97,
+            workflowId: "feature-dev",
+            task: "must not pass stale preflight",
+            context: "{}",
+            notifyUrl: null,
+            createdAt: "2026-07-13T00:00:00.000Z",
+            protocol,
+          },
+          steps: [],
+        })),
+        (error: unknown) =>
+          error instanceof RunActivationConflictError
+          && error.code === "RUN_ACTIVATION_CONFLICT",
+      );
+    } finally {
+      await database.sql`
+        UPDATE execution_attempts SET disposition = 'inconclusive'
+        WHERE attempt_id = ${reserved.attempt.attemptId}
+      `;
+      await database.sql`
+        UPDATE claim_log SET outcome = 'test_cleanup'
+        WHERE id = ${reserved.attempt.claimId!}
+      `;
+      await database.sql`DELETE FROM runs WHERE id = 'run-protocol-leaked-attempt-owner'`;
     }
   });
 

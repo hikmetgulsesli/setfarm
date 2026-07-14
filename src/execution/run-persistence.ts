@@ -1,6 +1,11 @@
 import type postgres from "postgres";
 
+import { hashCanonicalJson } from "../product-compiler/canonical-json.js";
 import type { RunProtocolIdentity } from "./run-protocol.js";
+import {
+  V3ReleaseAdmissionV1Schema,
+  canarySelectorHash,
+} from "./v3-release-admission.js";
 
 export const runAdmissionLockKey = 1_397_117_252;
 
@@ -26,6 +31,100 @@ export type PersistedWorkflowStep = Readonly<{
   loopConfig: string | null;
 }>;
 
+type AdmissionPersistenceRow = Readonly<{
+  admission_hash: string;
+  kind: string;
+  release_sha: string;
+  expires_at: Date | string | null;
+  payload: unknown;
+}>;
+
+async function lockAndVerifyReleaseAdmission(
+  sql: postgres.Sql | postgres.TransactionSql,
+  run: Readonly<{
+    id: string;
+    task: string;
+    createdAt: string;
+    protocol: RunProtocolIdentity;
+  }>,
+): Promise<void> {
+  if (run.protocol.mode !== "v3") {
+    if (
+      run.protocol.releaseAdmissionHash !== null
+      || run.protocol.releaseAdmissionKind !== null
+      || run.protocol.canaryAdmission !== null
+    ) throw new Error("RUN_RELEASE_ADMISSION_FORBIDDEN");
+    return;
+  }
+  if (!run.protocol.releaseAdmissionHash || !run.protocol.releaseAdmissionKind) {
+    throw new Error("RUN_RELEASE_ADMISSION_REQUIRED");
+  }
+  const admissionRows = await sql.unsafe<AdmissionPersistenceRow[]>(
+    `SELECT admission_hash, kind, release_sha, expires_at, payload
+       FROM v3_release_admissions
+      WHERE admission_hash = $1
+      FOR SHARE`,
+    [run.protocol.releaseAdmissionHash],
+  );
+  const row = admissionRows[0];
+  const parsed = row ? V3ReleaseAdmissionV1Schema.safeParse(row.payload) : null;
+  if (
+    !row
+    || !parsed?.success
+    || parsed.data.admissionHash !== row.admission_hash
+    || parsed.data.kind !== row.kind
+    || parsed.data.releaseSha !== row.release_sha
+    || parsed.data.admissionHash !== run.protocol.releaseAdmissionHash
+    || parsed.data.kind !== run.protocol.releaseAdmissionKind
+    || parsed.data.releaseSha !== run.protocol.compilerReleaseSha
+  ) throw new Error("RUN_RELEASE_ADMISSION_IDENTITY_INVALID");
+
+  if (parsed.data.kind === "release_go") {
+    if (run.protocol.canaryAdmission !== null) {
+      throw new Error("RUN_RELEASE_ADMISSION_KIND_INVALID");
+    }
+    return;
+  }
+
+  const context = run.protocol.canaryAdmission;
+  if (
+    !context
+    || context.admissionHash !== parsed.data.admissionHash
+    || context.taskHash !== hashCanonicalJson(run.task)
+    || row.expires_at === null
+    || new Date(row.expires_at).getTime() <= Date.now()
+  ) throw new Error("RUN_CANARY_ADMISSION_INVALID");
+  const claims = await sql.unsafe<Array<{
+    slot_hash: string;
+    admission_hash: string;
+    case_hash: string;
+    task_hash: string;
+    repetition: number;
+    selector_hash: string;
+    run_id: string | null;
+    consumed_at: Date | string | null;
+  }>>(
+    `SELECT slot_hash, admission_hash, case_hash, task_hash, repetition,
+            selector_hash, run_id, consumed_at
+       FROM v3_canary_admission_claims
+      WHERE slot_hash = $1
+      FOR UPDATE`,
+    [context.slotHash],
+  );
+  const claim = claims[0];
+  if (
+    !claim
+    || claim.slot_hash !== context.slotHash
+    || claim.admission_hash !== context.admissionHash
+    || claim.case_hash !== context.caseHash
+    || claim.task_hash !== context.taskHash
+    || claim.repetition !== context.repetition
+    || claim.selector_hash !== canarySelectorHash(context.slotToken)
+    || claim.run_id !== null
+    || claim.consumed_at !== null
+  ) throw new Error("RUN_CANARY_ADMISSION_SLOT_UNAVAILABLE");
+}
+
 export async function persistWorkflowRun(
   sql: postgres.Sql | postgres.TransactionSql,
   input: Readonly<{
@@ -48,6 +147,7 @@ export async function persistWorkflowRun(
     active_runs: number;
     active_compiler_runs: number;
     open_claims: number;
+    active_attempts: number;
   }>>(
     `SELECT
        (SELECT COUNT(*)::integer FROM runs
@@ -55,23 +155,32 @@ export async function persistWorkflowRun(
        (SELECT COUNT(*)::integer FROM runs
          WHERE status IN ('running', 'resuming')
            AND protocol IN ('shadow', 'v3')) AS active_compiler_runs,
-       (SELECT COUNT(*)::integer FROM claim_log WHERE outcome IS NULL) AS open_claims`,
+       (SELECT COUNT(*)::integer FROM claim_log WHERE outcome IS NULL) AS open_claims,
+       (SELECT COUNT(*)::integer FROM execution_attempts
+         WHERE disposition IN ('claimed', 'running')) AS active_attempts`,
   );
-  const current = activity[0] ?? { active_runs: 0, active_compiler_runs: 0, open_claims: 0 };
+  const current = activity[0] ?? {
+    active_runs: 0,
+    active_compiler_runs: 0,
+    open_claims: 0,
+    active_attempts: 0,
+  };
   const conflicts = run.protocol.mode === "legacy"
-    ? current.active_compiler_runs > 0
-    : current.active_runs > 0 || current.open_claims > 0;
+    ? current.active_compiler_runs > 0 || current.active_attempts > 0
+    : current.active_runs > 0 || current.open_claims > 0 || current.active_attempts > 0;
   if (conflicts) throw new RunActivationConflictError();
   if (run.protocol.mode !== "legacy" && !run.protocol.activationPreflightHash) {
     throw new Error("RUN_ACTIVATION_PREFLIGHT_IDENTITY_MISSING");
   }
+  await lockAndVerifyReleaseAdmission(sql, run);
   await sql.unsafe(
     `INSERT INTO runs
        (id, run_number, workflow_id, task, status, context, notify_url,
         protocol, protocol_version, compiler_release_sha,
-        activation_preflight_hash, created_at, updated_at)
+        activation_preflight_hash, release_admission_hash,
+        created_at, updated_at)
      VALUES
-       ($1, $2, $3, $4, 'running', $5, $6, $7, $8, $9, $10, $11, $12)`,
+       ($1, $2, $3, $4, 'running', $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
     [
       run.id,
       run.runNumber,
@@ -83,10 +192,30 @@ export async function persistWorkflowRun(
       run.protocol.version,
       run.protocol.compilerReleaseSha,
       run.protocol.activationPreflightHash,
+      run.protocol.releaseAdmissionHash,
       run.createdAt,
       run.createdAt,
     ],
   );
+
+  if (run.protocol.canaryAdmission) {
+    const consumed = await sql.unsafe<Array<{ slot_hash: string }>>(
+      `UPDATE v3_canary_admission_claims
+          SET run_id = $1, consumed_at = $2
+        WHERE slot_hash = $3
+          AND admission_hash = $4
+          AND run_id IS NULL
+          AND consumed_at IS NULL
+      RETURNING slot_hash`,
+      [
+        run.id,
+        run.createdAt,
+        run.protocol.canaryAdmission.slotHash,
+        run.protocol.releaseAdmissionHash,
+      ],
+    );
+    if (consumed.length !== 1) throw new Error("RUN_CANARY_ADMISSION_CONSUMPTION_CONFLICT");
+  }
 
   for (const step of input.steps) {
     await sql.unsafe(

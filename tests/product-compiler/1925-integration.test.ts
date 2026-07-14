@@ -55,6 +55,7 @@ describe("#1925 contract-spine integration", () => {
     filterAction.id = "ACT_FILTER_INSIGHTS";
     filterAction.name = "Filter insights";
     filterAction.input.fields = [];
+    filterAction.evidenceScenario.targetInputValues = {};
     filterAction.stateDeltas = [];
     filterAction.persistenceEffects = [];
     const exportAction = structuredClone(filterAction);
