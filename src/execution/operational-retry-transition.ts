@@ -9,8 +9,9 @@ import {
   closeClaimAndBoundAttemptInTransaction,
   type TerminalClaimTransitionResult,
 } from "./claim-attempt-transition.js";
+import { readDatabaseWallClock } from "../db/database-wall-clock.js";
 
-type TransactionSql = postgres.Sql | postgres.TransactionSql;
+type TransactionSql = postgres.TransactionSql;
 
 type OperationalRetryTransitionIdentity = Readonly<{
   claimId: number;
@@ -155,7 +156,8 @@ export async function publishOperationalRetryDirectiveInTransaction(
 ): Promise<TerminalClaimTransitionResult> {
   const directive = OperationalRetryDirectiveV1Schema.parse(input.directive);
   assertDirectiveIdentity(input, directive);
-  const now = input.now ? new Date(input.now) : new Date();
+  const callerTime = input.now ? new Date(input.now) : new Date();
+  if (!Number.isFinite(callerTime.getTime())) throw new Error("OPERATIONAL_RETRY_TIME_INVALID");
   const closed = await closeClaimAndBoundAttemptInTransaction(transaction, {
     claimId: input.claimId,
     runId: input.runId,
@@ -165,7 +167,7 @@ export async function publishOperationalRetryDirectiveInTransaction(
     outcome: "infra_retry",
     diagnostic: input.diagnostic,
     recoveryAuthority: "orphan_recovery",
-    now,
+    now: callerTime,
   });
   if (closed.status !== "closed") return closed;
   const attempt = await loadClosedBoundAttempt(transaction, input);
@@ -183,6 +185,10 @@ export async function publishOperationalRetryDirectiveInTransaction(
   ) {
     throw new Error("OPERATIONAL_RETRY_TERMINAL_ATTEMPT_MISMATCH");
   }
+  const now = await readDatabaseWallClock(
+    transaction,
+    "OPERATIONAL_RETRY_DATABASE_TIME_UNAVAILABLE",
+  );
   await publishStoryAndStepState(transaction, {
     ...input,
     storyStatus: "pending",
@@ -213,7 +219,10 @@ export async function terminalizeOperationalRetryExhaustionInTransaction(
   ) {
     throw new Error("OPERATIONAL_RETRY_EXHAUSTION_IDENTITY_MISMATCH");
   }
-  const now = input.now ? new Date(input.now) : new Date();
+  const callerTime = input.now ? new Date(input.now) : new Date();
+  if (!Number.isFinite(callerTime.getTime())) {
+    throw new Error("OPERATIONAL_RETRY_EXHAUSTION_TIME_INVALID");
+  }
   const closed = await closeClaimAndBoundAttemptInTransaction(transaction, {
     claimId: input.claimId,
     runId: input.runId,
@@ -223,7 +232,7 @@ export async function terminalizeOperationalRetryExhaustionInTransaction(
     outcome: "failed",
     diagnostic: input.diagnostic,
     recoveryAuthority: "orphan_recovery",
-    now,
+    now: callerTime,
   });
   if (closed.status !== "closed") return closed;
   const attempt = await loadClosedBoundAttempt(transaction, input);
@@ -247,6 +256,10 @@ export async function terminalizeOperationalRetryExhaustionInTransaction(
   ) {
     throw new Error("OPERATIONAL_RETRY_EXHAUSTION_ATTEMPT_MISMATCH");
   }
+  const now = await readDatabaseWallClock(
+    transaction,
+    "OPERATIONAL_RETRY_EXHAUSTION_DATABASE_TIME_UNAVAILABLE",
+  );
   await publishStoryAndStepState(transaction, {
     ...input,
     storyStatus: "failed",

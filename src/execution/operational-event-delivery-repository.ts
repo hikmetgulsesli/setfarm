@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import type postgres from "postgres";
 import { z } from "zod";
 
+import { readDatabaseWallClock } from "../db/database-wall-clock.js";
 import {
   CanonicalOperationalEventV1Schema,
   OperationalEventDeliveryConsumerV1Schema,
@@ -233,42 +234,68 @@ export function createOperationalEventDeliveryRepository(sql: Sql) {
         input.ownerInstanceId,
         "OPERATIONAL_EVENT_DELIVERY_OWNER_INVALID",
       );
-      const now = validTime(input.now);
+      validTime(input.now);
       const leaseMs = leaseDuration(input.leaseMs);
       return sql.begin(async (transaction) => {
         // A process may die after taking its final bounded attempt. Converge that
         // expired owner to quarantine before selecting new work; never increment
-        // the database-bounded attempt counter past three.
+        // the database-bounded attempt counter past three. SKIP LOCKED prevents
+        // this sweep from racing a live owner that is settling or heartbeating.
         await transaction.unsafe(
-          `UPDATE operational_event_deliveries
+          `WITH expired AS (
+             SELECT event_key, consumer
+               FROM operational_event_deliveries
+              WHERE consumer = $1 AND state = 'leased'
+                AND lease_expires_at <= clock_timestamp() AND attempt_count >= 3
+              ORDER BY created_at, event_key
+              FOR UPDATE SKIP LOCKED
+           )
+           UPDATE operational_event_deliveries AS delivery
               SET state = 'quarantined', owner_instance_id = NULL,
                   lease_token = NULL, lease_expires_at = NULL,
                   diagnostic = 'OPERATIONAL_EVENT_DELIVERY_FINAL_LEASE_EXPIRED',
-                  updated_at = $2
-            WHERE consumer = $1 AND state = 'leased'
-              AND lease_expires_at <= $2 AND attempt_count >= 3`,
-          [consumer, now],
+                  updated_at = clock_timestamp()
+             FROM expired
+            WHERE delivery.event_key = expired.event_key
+              AND delivery.consumer = expired.consumer`,
+          [consumer],
         );
-        const candidates = await transaction.unsafe<Array<{ event_key: string }>>(
-          `SELECT event_key
+        const candidates = await transaction.unsafe<DeliveryRow[]>(
+          `SELECT *
              FROM operational_event_deliveries
             WHERE consumer = $1
               AND attempt_count < 3
-              AND (state = 'pending' OR (state = 'leased' AND lease_expires_at <= $2))
+              AND (state = 'pending'
+                OR (state = 'leased' AND lease_expires_at <= clock_timestamp()))
             ORDER BY created_at, event_key
             LIMIT 1
             FOR UPDATE SKIP LOCKED`,
-          [consumer, now],
+          [consumer],
         );
         const candidate = candidates[0];
         if (!candidate) return undefined;
+        const now = await readDatabaseWallClock(
+          transaction,
+          "OPERATIONAL_EVENT_DELIVERY_DATABASE_TIME_UNAVAILABLE",
+        );
+        if (
+          candidate.state === "leased"
+          && (
+            !candidate.lease_expires_at
+            || new Date(candidate.lease_expires_at).getTime() > now.getTime()
+          )
+        ) return undefined;
         const leaseToken = `OEL_${randomUUID()}`;
-        await transaction.unsafe(
+        const rows = await transaction.unsafe<Array<{ event_key: string }>>(
           `UPDATE operational_event_deliveries
               SET state = 'leased', owner_instance_id = $3, lease_token = $4,
                   lease_expires_at = $5, attempt_count = attempt_count + 1,
                   updated_at = $2
-            WHERE event_key = $1 AND consumer = $6`,
+            WHERE event_key = $1 AND consumer = $6
+              AND attempt_count < 3
+              AND (state = 'pending'
+                OR (state = 'leased' AND lease_expires_at <= $2))
+            RETURNING event_key`,
           [
             candidate.event_key,
             now,
@@ -278,6 +305,7 @@ export function createOperationalEventDeliveryRepository(sql: Sql) {
             consumer,
           ],
         );
+        if (!rows[0]) throw new Error("OPERATIONAL_EVENT_DELIVERY_CLAIM_CAS_LOST");
         return loadDelivery(transaction, candidate.event_key, consumer);
       }) as Promise<OperationalEventDelivery | undefined>;
     },
@@ -290,24 +318,56 @@ export function createOperationalEventDeliveryRepository(sql: Sql) {
       leaseMs?: number;
       now?: Date;
     }>): Promise<boolean> {
-      const now = validTime(input.now);
-      const rows = await sql.unsafe<Array<{ event_key: string }>>(
-        `UPDATE operational_event_deliveries
-            SET lease_expires_at = $6, updated_at = $5
-          WHERE event_key = $1 AND consumer = $2 AND state = 'leased'
-            AND owner_instance_id = $3 AND lease_token = $4
-            AND lease_expires_at > $5
-          RETURNING event_key`,
-        [
-          requiredString(input.eventKey, "OPERATIONAL_EVENT_KEY_INVALID"),
-          OperationalEventDeliveryConsumerV1Schema.parse(input.consumer),
-          requiredString(input.ownerInstanceId, "OPERATIONAL_EVENT_DELIVERY_OWNER_INVALID"),
-          requiredString(input.leaseToken, "OPERATIONAL_EVENT_DELIVERY_LEASE_TOKEN_INVALID"),
-          now,
-          new Date(now.getTime() + leaseDuration(input.leaseMs)),
-        ],
+      validTime(input.now);
+      const eventKey = requiredString(input.eventKey, "OPERATIONAL_EVENT_KEY_INVALID");
+      const consumer = OperationalEventDeliveryConsumerV1Schema.parse(input.consumer);
+      const ownerInstanceId = requiredString(
+        input.ownerInstanceId,
+        "OPERATIONAL_EVENT_DELIVERY_OWNER_INVALID",
       );
-      return rows.length === 1;
+      const leaseToken = requiredString(
+        input.leaseToken,
+        "OPERATIONAL_EVENT_DELIVERY_LEASE_TOKEN_INVALID",
+      );
+      const leaseMs = leaseDuration(input.leaseMs);
+      return sql.begin(async (transaction) => {
+        const locked = await transaction.unsafe<DeliveryRow[]>(
+          `SELECT * FROM operational_event_deliveries
+            WHERE event_key = $1 AND consumer = $2
+            FOR UPDATE`,
+          [eventKey, consumer],
+        );
+        const current = locked[0];
+        const now = await readDatabaseWallClock(
+          transaction,
+          "OPERATIONAL_EVENT_DELIVERY_DATABASE_TIME_UNAVAILABLE",
+        );
+        if (
+          !current
+          || current.state !== "leased"
+          || current.owner_instance_id !== ownerInstanceId
+          || current.lease_token !== leaseToken
+          || !current.lease_expires_at
+          || new Date(current.lease_expires_at).getTime() <= now.getTime()
+        ) return false;
+        const rows = await transaction.unsafe<Array<{ event_key: string }>>(
+          `UPDATE operational_event_deliveries
+              SET lease_expires_at = $5, updated_at = $6
+            WHERE event_key = $1 AND consumer = $2 AND state = 'leased'
+              AND owner_instance_id = $3 AND lease_token = $4
+              AND lease_expires_at > $6
+            RETURNING event_key`,
+          [
+            eventKey,
+            consumer,
+            ownerInstanceId,
+            leaseToken,
+            new Date(now.getTime() + leaseMs),
+            now,
+          ],
+        );
+        return rows.length === 1;
+      }) as Promise<boolean>;
     },
 
     async settle(input: Readonly<{
@@ -319,30 +379,52 @@ export function createOperationalEventDeliveryRepository(sql: Sql) {
       result: Readonly<Record<string, unknown>>;
       now?: Date;
     }>): Promise<OperationalEventDelivery> {
-      const now = validTime(input.now);
+      validTime(input.now);
       const eventKey = requiredString(input.eventKey, "OPERATIONAL_EVENT_KEY_INVALID");
       const consumer = OperationalEventDeliveryConsumerV1Schema.parse(input.consumer);
-      const rows = await sql.unsafe<Array<{ event_key: string }>>(
-        `UPDATE operational_event_deliveries
-            SET state = $5, owner_instance_id = NULL, lease_token = NULL,
-                lease_expires_at = NULL, delivered_at = $6, diagnostic = NULL,
-                result = $7::text::jsonb, updated_at = $6
-          WHERE event_key = $1 AND consumer = $2 AND state = 'leased'
-            AND owner_instance_id = $3 AND lease_token = $4
-            AND lease_expires_at > $6
-          RETURNING event_key`,
-        [
-          eventKey,
-          consumer,
-          requiredString(input.ownerInstanceId, "OPERATIONAL_EVENT_DELIVERY_OWNER_INVALID"),
-          requiredString(input.leaseToken, "OPERATIONAL_EVENT_DELIVERY_LEASE_TOKEN_INVALID"),
-          input.outcome,
-          now,
-          resultObject(input.result),
-        ],
+      const ownerInstanceId = requiredString(
+        input.ownerInstanceId,
+        "OPERATIONAL_EVENT_DELIVERY_OWNER_INVALID",
       );
-      if (!rows[0]) throw new Error("OPERATIONAL_EVENT_DELIVERY_SETTLE_FENCE_LOST");
-      return (await loadDelivery(sql, eventKey, consumer))!;
+      const leaseToken = requiredString(
+        input.leaseToken,
+        "OPERATIONAL_EVENT_DELIVERY_LEASE_TOKEN_INVALID",
+      );
+      const result = resultObject(input.result);
+      return sql.begin(async (transaction) => {
+        const locked = await transaction.unsafe<DeliveryRow[]>(
+          `SELECT * FROM operational_event_deliveries
+            WHERE event_key = $1 AND consumer = $2
+            FOR UPDATE`,
+          [eventKey, consumer],
+        );
+        const current = locked[0];
+        const now = await readDatabaseWallClock(
+          transaction,
+          "OPERATIONAL_EVENT_DELIVERY_DATABASE_TIME_UNAVAILABLE",
+        );
+        if (
+          !current
+          || current.state !== "leased"
+          || current.owner_instance_id !== ownerInstanceId
+          || current.lease_token !== leaseToken
+          || !current.lease_expires_at
+          || new Date(current.lease_expires_at).getTime() <= now.getTime()
+        ) throw new Error("OPERATIONAL_EVENT_DELIVERY_SETTLE_FENCE_LOST");
+        const rows = await transaction.unsafe<Array<{ event_key: string }>>(
+          `UPDATE operational_event_deliveries
+              SET state = $5, owner_instance_id = NULL, lease_token = NULL,
+                  lease_expires_at = NULL, delivered_at = $6, diagnostic = NULL,
+                  result = $7::text::jsonb, updated_at = $6
+            WHERE event_key = $1 AND consumer = $2 AND state = 'leased'
+              AND owner_instance_id = $3 AND lease_token = $4
+              AND lease_expires_at > $6
+            RETURNING event_key`,
+          [eventKey, consumer, ownerInstanceId, leaseToken, input.outcome, now, result],
+        );
+        if (!rows[0]) throw new Error("OPERATIONAL_EVENT_DELIVERY_SETTLE_FENCE_LOST");
+        return (await loadDelivery(transaction, eventKey, consumer))!;
+      }) as Promise<OperationalEventDelivery>;
     },
 
     async releaseForRetry(input: Readonly<{
@@ -353,28 +435,51 @@ export function createOperationalEventDeliveryRepository(sql: Sql) {
       diagnostic: string;
       now?: Date;
     }>): Promise<OperationalEventDelivery> {
-      const now = validTime(input.now);
+      validTime(input.now);
       const eventKey = requiredString(input.eventKey, "OPERATIONAL_EVENT_KEY_INVALID");
       const consumer = OperationalEventDeliveryConsumerV1Schema.parse(input.consumer);
-      const rows = await sql.unsafe<Array<{ event_key: string }>>(
-        `UPDATE operational_event_deliveries
-            SET state = 'pending', owner_instance_id = NULL, lease_token = NULL,
-                lease_expires_at = NULL, diagnostic = $5, updated_at = $6
-          WHERE event_key = $1 AND consumer = $2 AND state = 'leased'
-            AND owner_instance_id = $3 AND lease_token = $4
-            AND lease_expires_at > $6
-          RETURNING event_key`,
-        [
-          eventKey,
-          consumer,
-          requiredString(input.ownerInstanceId, "OPERATIONAL_EVENT_DELIVERY_OWNER_INVALID"),
-          requiredString(input.leaseToken, "OPERATIONAL_EVENT_DELIVERY_LEASE_TOKEN_INVALID"),
-          safeDiagnostic(input.diagnostic),
-          now,
-        ],
+      const ownerInstanceId = requiredString(
+        input.ownerInstanceId,
+        "OPERATIONAL_EVENT_DELIVERY_OWNER_INVALID",
       );
-      if (!rows[0]) throw new Error("OPERATIONAL_EVENT_DELIVERY_RETRY_FENCE_LOST");
-      return (await loadDelivery(sql, eventKey, consumer))!;
+      const leaseToken = requiredString(
+        input.leaseToken,
+        "OPERATIONAL_EVENT_DELIVERY_LEASE_TOKEN_INVALID",
+      );
+      const diagnostic = safeDiagnostic(input.diagnostic);
+      return sql.begin(async (transaction) => {
+        const locked = await transaction.unsafe<DeliveryRow[]>(
+          `SELECT * FROM operational_event_deliveries
+            WHERE event_key = $1 AND consumer = $2
+            FOR UPDATE`,
+          [eventKey, consumer],
+        );
+        const current = locked[0];
+        const now = await readDatabaseWallClock(
+          transaction,
+          "OPERATIONAL_EVENT_DELIVERY_DATABASE_TIME_UNAVAILABLE",
+        );
+        if (
+          !current
+          || current.state !== "leased"
+          || current.owner_instance_id !== ownerInstanceId
+          || current.lease_token !== leaseToken
+          || !current.lease_expires_at
+          || new Date(current.lease_expires_at).getTime() <= now.getTime()
+        ) throw new Error("OPERATIONAL_EVENT_DELIVERY_RETRY_FENCE_LOST");
+        const rows = await transaction.unsafe<Array<{ event_key: string }>>(
+          `UPDATE operational_event_deliveries
+              SET state = 'pending', owner_instance_id = NULL, lease_token = NULL,
+                  lease_expires_at = NULL, diagnostic = $5, updated_at = $6
+            WHERE event_key = $1 AND consumer = $2 AND state = 'leased'
+              AND owner_instance_id = $3 AND lease_token = $4
+              AND lease_expires_at > $6
+            RETURNING event_key`,
+          [eventKey, consumer, ownerInstanceId, leaseToken, diagnostic, now],
+        );
+        if (!rows[0]) throw new Error("OPERATIONAL_EVENT_DELIVERY_RETRY_FENCE_LOST");
+        return (await loadDelivery(transaction, eventKey, consumer))!;
+      }) as Promise<OperationalEventDelivery>;
     },
 
     async quarantine(input: Readonly<{
@@ -389,29 +494,60 @@ export function createOperationalEventDeliveryRepository(sql: Sql) {
       if (!Number.isInteger(input.maxAttempts) || input.maxAttempts < 1 || input.maxAttempts > 3) {
         throw new Error("OPERATIONAL_EVENT_DELIVERY_ATTEMPT_LIMIT_INVALID");
       }
-      const now = validTime(input.now);
+      validTime(input.now);
       const eventKey = requiredString(input.eventKey, "OPERATIONAL_EVENT_KEY_INVALID");
       const consumer = OperationalEventDeliveryConsumerV1Schema.parse(input.consumer);
-      const rows = await sql.unsafe<Array<{ event_key: string }>>(
-        `UPDATE operational_event_deliveries
-            SET state = 'quarantined', owner_instance_id = NULL, lease_token = NULL,
-                lease_expires_at = NULL, diagnostic = $6, updated_at = $7
-          WHERE event_key = $1 AND consumer = $2 AND state = 'leased'
-            AND owner_instance_id = $3 AND lease_token = $4
-            AND lease_expires_at > $7 AND attempt_count >= $5
-          RETURNING event_key`,
-        [
-          eventKey,
-          consumer,
-          requiredString(input.ownerInstanceId, "OPERATIONAL_EVENT_DELIVERY_OWNER_INVALID"),
-          requiredString(input.leaseToken, "OPERATIONAL_EVENT_DELIVERY_LEASE_TOKEN_INVALID"),
-          input.maxAttempts,
-          safeDiagnostic(input.diagnostic),
-          now,
-        ],
+      const ownerInstanceId = requiredString(
+        input.ownerInstanceId,
+        "OPERATIONAL_EVENT_DELIVERY_OWNER_INVALID",
       );
-      if (!rows[0]) throw new Error("OPERATIONAL_EVENT_DELIVERY_QUARANTINE_FENCE_LOST");
-      return (await loadDelivery(sql, eventKey, consumer))!;
+      const leaseToken = requiredString(
+        input.leaseToken,
+        "OPERATIONAL_EVENT_DELIVERY_LEASE_TOKEN_INVALID",
+      );
+      const diagnostic = safeDiagnostic(input.diagnostic);
+      return sql.begin(async (transaction) => {
+        const locked = await transaction.unsafe<DeliveryRow[]>(
+          `SELECT * FROM operational_event_deliveries
+            WHERE event_key = $1 AND consumer = $2
+            FOR UPDATE`,
+          [eventKey, consumer],
+        );
+        const current = locked[0];
+        const now = await readDatabaseWallClock(
+          transaction,
+          "OPERATIONAL_EVENT_DELIVERY_DATABASE_TIME_UNAVAILABLE",
+        );
+        if (
+          !current
+          || current.state !== "leased"
+          || current.owner_instance_id !== ownerInstanceId
+          || current.lease_token !== leaseToken
+          || !current.lease_expires_at
+          || new Date(current.lease_expires_at).getTime() <= now.getTime()
+          || current.attempt_count < input.maxAttempts
+        ) throw new Error("OPERATIONAL_EVENT_DELIVERY_QUARANTINE_FENCE_LOST");
+        const rows = await transaction.unsafe<Array<{ event_key: string }>>(
+          `UPDATE operational_event_deliveries
+              SET state = 'quarantined', owner_instance_id = NULL, lease_token = NULL,
+                  lease_expires_at = NULL, diagnostic = $6, updated_at = $7
+            WHERE event_key = $1 AND consumer = $2 AND state = 'leased'
+              AND owner_instance_id = $3 AND lease_token = $4
+              AND lease_expires_at > $7 AND attempt_count >= $5
+            RETURNING event_key`,
+          [
+            eventKey,
+            consumer,
+            ownerInstanceId,
+            leaseToken,
+            input.maxAttempts,
+            diagnostic,
+            now,
+          ],
+        );
+        if (!rows[0]) throw new Error("OPERATIONAL_EVENT_DELIVERY_QUARANTINE_FENCE_LOST");
+        return (await loadDelivery(transaction, eventKey, consumer))!;
+      }) as Promise<OperationalEventDelivery>;
     },
   });
 }

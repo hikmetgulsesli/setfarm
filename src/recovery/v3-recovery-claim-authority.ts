@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import type postgres from "postgres";
 import { z } from "zod";
 
+import { readDatabaseWallClock } from "../db/database-wall-clock.js";
 import { FindingSetV1Schema, type FindingSetV1 } from "../findings/finding-set.js";
 import { hashCanonicalJson } from "../product-compiler/canonical-json.js";
 import {
@@ -244,6 +245,7 @@ type AttemptBindingRow = {
   recovery_case_revision_id: string | null;
   recovery_dispatch_id: string | null;
   disposition: string;
+  lease_expires_at: Date | string;
 };
 
 export class V3RecoveryClaimAuthorityError extends Error {
@@ -410,11 +412,27 @@ async function assertV3Run(
 ): Promise<RunRow> {
   const run = await one<RunRow>(
     sql,
-    "SELECT protocol, status, packet_hash FROM runs WHERE id = $1 FOR KEY SHARE",
+    "SELECT protocol, status, packet_hash FROM runs WHERE id = $1 FOR UPDATE",
     [input.runId],
   );
   if (!run) fail("V3_RECOVERY_AUTHORITY_RUN_NOT_FOUND", `run ${input.runId} does not exist`);
-  if (run.protocol !== "v3" || !["running", "resuming"].includes(run.status)) {
+  if (run.protocol !== "v3") {
+    fail("V3_RECOVERY_AUTHORITY_RUN_NOT_ACTIVE_V3", `run ${input.runId} is not active v3`);
+  }
+  const terminations = await sql.unsafe<Array<{ request_id: string }>>(
+    `SELECT request_id FROM run_termination_requests
+      WHERE run_id = $1 AND state <> 'terminalized'
+      ORDER BY requested_at, request_id
+      LIMIT 1 FOR UPDATE`,
+    [input.runId],
+  );
+  if (terminations[0]) {
+    fail(
+      "V3_RECOVERY_AUTHORITY_TERMINATION_PENDING",
+      `run termination ${terminations[0].request_id} owns the lifecycle`,
+    );
+  }
+  if (!["running", "resuming"].includes(run.status)) {
     fail("V3_RECOVERY_AUTHORITY_RUN_NOT_ACTIVE_V3", `run ${input.runId} is not active v3`);
   }
   return run;
@@ -598,8 +616,9 @@ export function createV3RecoveryClaimAuthority(sql: Sql) {
       options: Readonly<{ now?: Date }> = {},
     ): Promise<V3RecoveryClaimHandoffV1> {
       const input = RecoveryAuthorityInputSchema.parse(raw);
-      const now = new Date(options.now ?? new Date());
-      if (!Number.isFinite(now.getTime())) fail("V3_RECOVERY_AUTHORITY_TIME_INVALID", "claim time is invalid");
+      if (options.now && !Number.isFinite(new Date(options.now).getTime())) {
+        fail("V3_RECOVERY_AUTHORITY_TIME_INVALID", "claim time is invalid");
+      }
       return sql.begin(async (transaction) => {
         await lockStory(transaction, input);
         const run = await assertV3Run(transaction, input);
@@ -607,6 +626,10 @@ export function createV3RecoveryClaimAuthority(sql: Sql) {
         if (active.length === 0) fail("V3_RECOVERY_AUTHORITY_DELIVERY_NOT_FOUND", "story has no active recovery delivery");
         if (active.length !== 1) fail("V3_RECOVERY_AUTHORITY_MULTIPLE_ACTIVE", "story has multiple active recovery deliveries");
         const chain = await loadExactChain(transaction, run, active[0]!);
+        const now = await readDatabaseWallClock(
+          transaction,
+          "V3_RECOVERY_AUTHORITY_DATABASE_TIME_UNAVAILABLE",
+        );
         if (chain.dispatch.dispatchClass === "evidence_only") {
           fail("V3_RECOVERY_EVIDENCE_ONLY_NO_MODEL_CLAIM", "evidence-only delivery cannot create a model claim");
         }
@@ -642,6 +665,11 @@ export function createV3RecoveryClaimAuthority(sql: Sql) {
             || attempt.source_before_sha !== dispatch.sourceRevision.sha
             || attempt.source_before_tree_hash !== dispatch.sourceRevision.treeHash
             || !["claimed", "running"].includes(attempt.disposition)
+            || !delivery.leaseExpiresAt
+            || !Number.isFinite(Date.parse(delivery.leaseExpiresAt))
+            || Date.parse(delivery.leaseExpiresAt) <= now.getTime()
+            || !Number.isFinite(new Date(attempt.lease_expires_at).getTime())
+            || new Date(attempt.lease_expires_at).getTime() <= now.getTime()
           ) {
             fail("V3_RECOVERY_ATTEMPT_BOUND_IDENTITY_MISMATCH", "delivery attempt binding is not exact");
           }

@@ -399,12 +399,12 @@ describe("v3 preparation claim authority", () => {
         `UPDATE claim_log SET outcome = 'infra_retry' WHERE id = $1`,
         [first!.claimId],
       );
-      await releaseReservedRuntimeSessionInTransaction(database.sql, {
+      await database.sql.begin((transaction) => releaseReservedRuntimeSessionInTransaction(transaction, {
         sessionId: first!.runtime!.sessionId,
         claimId: first!.claimId,
         ownerInstanceId: first!.runtime!.ownerInstanceId,
         diagnostic: "test terminal infra retry before worktree/runtime start",
-      });
+      }));
 
       const secondAuthority = await prepare(database, fixture);
       assert.equal(secondAuthority.stateVersion, firstAuthority.stateVersion + 1);

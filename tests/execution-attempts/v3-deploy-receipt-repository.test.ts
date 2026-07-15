@@ -337,6 +337,47 @@ describe("v3 deploy receipt ledger", () => {
     assert.deepEqual(await repository.findByRunId(test.runId), test.receipt);
   });
 
+  it("uses the database clock for receipt, run, claim, step, and outbox lifecycle timestamps", async () => {
+    const test = await seed("run-deploy-ledger-database-clock");
+    const hostileCallerTime = new Date("2999-01-01T00:00:00.000Z");
+    await createV3DeployReceiptRepository(database.sql).publishAndComplete({
+      receipt: test.receipt,
+      completion: { ...test.completion, now: hostileCallerTime },
+    });
+    const rows = await database.sql<Array<{
+      receipt_created_at: Date;
+      run_updated_at: Date;
+      step_updated_at: Date;
+      claim_duration_ms: number;
+      outbox_created_at: Date;
+    }>>`
+      SELECT receipt.created_at AS receipt_created_at,
+             run.updated_at AS run_updated_at,
+             step.updated_at AS step_updated_at,
+             claim.duration_ms AS claim_duration_ms,
+             event.created_at AS outbox_created_at
+        FROM v3_deploy_receipts receipt
+        JOIN runs run ON run.id = receipt.run_id
+        JOIN steps step ON step.run_id = run.id AND step.step_id = 'deploy'
+        JOIN claim_log claim ON claim.run_id = run.id AND claim.step_id = 'deploy'
+        JOIN operational_outbox event
+          ON event.aggregate_id = run.id
+         AND event.event_type = 'v3.deploy_receipt_committed'
+       WHERE receipt.run_id = ${test.runId}
+    `;
+    assert.equal(rows.length, 1);
+    assert.ok(rows[0]!.claim_duration_ms >= 0);
+    assert.ok(rows[0]!.claim_duration_ms < 86_400_000);
+    for (const value of [
+      rows[0]!.receipt_created_at,
+      rows[0]!.run_updated_at,
+      rows[0]!.step_updated_at,
+      rows[0]!.outbox_created_at,
+    ]) {
+      assert.ok(new Date(value).getTime() < hostileCallerTime.getTime());
+    }
+  });
+
   it("is idempotent under concurrent identical publication and rejects a changed receipt", async () => {
     const test = await seed("run-deploy-ledger-idempotent");
     const repository = createV3DeployReceiptRepository(database.sql);

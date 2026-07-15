@@ -7,6 +7,7 @@ import {
   type GithubReviewResolutionEvidenceV1,
 } from "./github-review-resolution-evidence.js";
 import { hashCanonicalJson } from "../product-compiler/canonical-json.js";
+import { lockV3RecoveryRunMutationAuthorityInTransaction } from "../recovery/v3-recovery-run-mutation-authority.js";
 
 type Sql = postgres.Sql;
 type TransactionSql = postgres.TransactionSql;
@@ -429,11 +430,25 @@ export function createGithubReviewResolutionEvidenceRepository(sql: Sql) {
       status: "resolved" | "duplicate";
       evidence: GithubReviewResolutionEvidenceV1;
     }>> {
-      const now = new Date(options.now ?? new Date());
-      if (!Number.isFinite(now.getTime())) {
+      const requestedTime = new Date(options.now ?? new Date());
+      if (!Number.isFinite(requestedTime.getTime())) {
         fail("GITHUB_REVIEW_RESOLUTION_TIME_INVALID", "Resolution commit time is invalid");
       }
       return sql.begin(async (transaction) => {
+        const discoveredRow = await one<ResolutionRow>(
+          transaction,
+          "SELECT * FROM github_review_resolution_evidence WHERE evidence_hash = $1",
+          [evidenceHash],
+        );
+        if (!discoveredRow) {
+          fail("GITHUB_REVIEW_RESOLUTION_EVIDENCE_NOT_FOUND", "Durable resolution evidence does not exist");
+        }
+        const discovered = assertRowIdentity(discoveredRow);
+        const authority = await lockV3RecoveryRunMutationAuthorityInTransaction(transaction, {
+          runId: discovered.runId,
+          storyId: discovered.storyId,
+        });
+        const now = authority.observedAt;
         const evidenceRow = await one<ResolutionRow>(
           transaction,
           "SELECT * FROM github_review_resolution_evidence WHERE evidence_hash = $1 FOR KEY SHARE",
@@ -443,6 +458,9 @@ export function createGithubReviewResolutionEvidenceRepository(sql: Sql) {
           fail("GITHUB_REVIEW_RESOLUTION_EVIDENCE_NOT_FOUND", "Durable resolution evidence does not exist");
         }
         const evidence = assertRowIdentity(evidenceRow);
+        if (evidence.evidenceHash !== discovered.evidenceHash) {
+          fail("GITHUB_REVIEW_RESOLUTION_EVIDENCE_CHANGED", "Resolution evidence identity changed after discovery");
+        }
         await transaction.unsafe("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [
           `setfarm:github-review-resolution:${evidence.recoveryCaseId}`,
         ]);

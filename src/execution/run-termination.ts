@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import type postgres from "postgres";
 import { z } from "zod";
 
+import { readDatabaseWallClock } from "../db/database-wall-clock.js";
 import {
   transitionRunToTerminal,
   type RunTerminalTransitionResult,
@@ -111,7 +112,7 @@ export type RequestRunTerminationInput = Readonly<{
 }>;
 
 export async function requestRunTerminationInTransaction(
-  sql: postgres.Sql | postgres.TransactionSql,
+  sql: postgres.TransactionSql,
   rawInput: RequestRunTerminationInput,
 ): Promise<RequestRunTerminationResult> {
   const input = z.object({
@@ -123,7 +124,7 @@ export async function requestRunTerminationInTransaction(
     requestId: TerminationRequestIdSchema.optional(),
     now: z.date().optional(),
   }).strict().parse(rawInput);
-  const now = time(input.now);
+  time(input.now);
   const runs = await sql.unsafe<Array<{ status: string }>>(
     "SELECT status FROM runs WHERE id = $1 FOR UPDATE",
     [input.runId],
@@ -153,9 +154,10 @@ export async function requestRunTerminationInTransaction(
   const activeCompletionOwner = await sql.unsafe<Array<{ request_id: string }>>(
     `SELECT request_id FROM runtime_completion_requests
       WHERE run_id = $1 AND state IN ('draining', 'processing')
-      LIMIT 1`,
+      LIMIT 1 FOR UPDATE`,
     [input.runId],
   );
+  const now = await readDatabaseWallClock(sql, "RUN_TERMINATION_DATABASE_TIME_UNAVAILABLE");
   const deferredForCompletion = activeCompletionOwner.length > 0;
   if (!deferredForCompletion) {
     const updated = await sql.unsafe<Array<{ id: string }>>(
@@ -241,20 +243,19 @@ export function createRunTerminationRepository(sql: postgres.Sql) {
       leaseMs?: number;
       now?: Date;
     }>): Promise<RunTerminationRequest | undefined> {
-      const now = time(input.now);
+      time(input.now);
       const leaseMs = Math.max(5_000, Math.min(300_000, Math.trunc(input.leaseMs ?? 30_000)));
-      const leaseExpiresAt = new Date(now.getTime() + leaseMs);
       return sql.begin(async (transaction) => {
         const candidates = await transaction.unsafe<Array<{ request_id: string; run_id: string }>>(
           `SELECT request_id, run_id FROM run_termination_requests
             WHERE ($1::text IS NULL OR request_id = $1)
               AND (
                 state = 'requested'
-                OR (state = 'draining' AND (lease_expires_at IS NULL OR lease_expires_at <= $2))
+                OR (state = 'draining' AND (lease_expires_at IS NULL OR lease_expires_at <= clock_timestamp()))
               )
             ORDER BY requested_at, request_id
             LIMIT 1`,
-          [input.requestId ?? null, now],
+          [input.requestId ?? null],
         );
         const candidate = candidates[0];
         if (!candidate) return undefined;
@@ -277,13 +278,23 @@ export function createRunTerminationRepository(sql: postgres.Sql) {
             WHERE request_id = $1
               AND (
                 state = 'requested'
-                OR (state = 'draining' AND (lease_expires_at IS NULL OR lease_expires_at <= $2))
+                OR (state = 'draining' AND (lease_expires_at IS NULL OR lease_expires_at <= clock_timestamp()))
               )
             FOR UPDATE SKIP LOCKED`,
-          [candidate.request_id, now],
+          [candidate.request_id],
         );
         const request = rows[0];
         if (!request) return undefined;
+        const now = await readDatabaseWallClock(
+          transaction,
+          "RUN_TERMINATION_DATABASE_TIME_UNAVAILABLE",
+        );
+        if (
+          request.state === "draining"
+          && request.lease_expires_at
+          && new Date(request.lease_expires_at).getTime() > now.getTime()
+        ) return undefined;
+        const leaseExpiresAt = new Date(now.getTime() + leaseMs);
         const sourceStatus = request.target_status === "cancelled" ? "cancelling" : "failing";
         const runStatus = runs[0]?.status;
         if (['running', 'resuming'].includes(runStatus ?? "")) {
@@ -330,21 +341,42 @@ export function createRunTerminationRepository(sql: postgres.Sql) {
       leaseMs?: number;
       now?: Date;
     }>): Promise<boolean> {
-      const now = time(input.now);
+      time(input.now);
       const leaseMs = Math.max(5_000, Math.min(300_000, Math.trunc(input.leaseMs ?? 30_000)));
-      const rows = await sql.unsafe<Array<{ request_id: string }>>(
-        `UPDATE run_termination_requests
-            SET heartbeat_at = $3, lease_expires_at = $4, updated_at = $3
-          WHERE request_id = $1 AND owner_instance_id = $2 AND state = 'draining'
-          RETURNING request_id`,
-        [
-          TerminationRequestIdSchema.parse(input.requestId),
-          input.ownerInstanceId,
-          now,
-          new Date(now.getTime() + leaseMs),
-        ],
+      const requestId = TerminationRequestIdSchema.parse(input.requestId);
+      const identity = await sql.unsafe<Array<{ run_id: string }>>(
+        "SELECT run_id FROM run_termination_requests WHERE request_id = $1",
+        [requestId],
       );
-      return rows.length === 1;
+      if (!identity[0]) return false;
+      return sql.begin(async (transaction) => {
+        await transaction.unsafe("SELECT id FROM runs WHERE id = $1 FOR UPDATE", [identity[0]!.run_id]);
+        const locked = await transaction.unsafe<RequestRow[]>(
+          "SELECT * FROM run_termination_requests WHERE request_id = $1 FOR UPDATE",
+          [requestId],
+        );
+        const current = locked[0];
+        const now = await readDatabaseWallClock(
+          transaction,
+          "RUN_TERMINATION_DATABASE_TIME_UNAVAILABLE",
+        );
+        if (
+          !current
+          || current.state !== "draining"
+          || current.owner_instance_id !== input.ownerInstanceId
+          || !current.lease_expires_at
+          || new Date(current.lease_expires_at).getTime() <= now.getTime()
+        ) return false;
+        const rows = await transaction.unsafe<Array<{ request_id: string }>>(
+          `UPDATE run_termination_requests
+              SET heartbeat_at = $3, lease_expires_at = $4, updated_at = $3
+            WHERE request_id = $1 AND owner_instance_id = $2 AND state = 'draining'
+              AND lease_expires_at > $3
+            RETURNING request_id`,
+          [requestId, input.ownerInstanceId, now, new Date(now.getTime() + leaseMs)],
+        );
+        return rows.length === 1;
+      }) as Promise<boolean>;
     },
     async markDrained(input: Readonly<{
       requestId: string;
@@ -352,12 +384,19 @@ export function createRunTerminationRepository(sql: postgres.Sql) {
       evidence?: Record<string, unknown>;
       now?: Date;
     }>): Promise<RunTerminationRequest> {
-      const now = time(input.now);
+      time(input.now);
+      const requestId = TerminationRequestIdSchema.parse(input.requestId);
+      const identity = await sql.unsafe<Array<{ run_id: string }>>(
+        "SELECT run_id FROM run_termination_requests WHERE request_id = $1",
+        [requestId],
+      );
+      if (!identity[0]) throw new Error("RUN_TERMINATION_REQUEST_NOT_FOUND");
       return sql.begin(async (transaction) => {
+        await transaction.unsafe("SELECT id FROM runs WHERE id = $1 FOR UPDATE", [identity[0]!.run_id]);
         const rows = await transaction.unsafe<RequestRow[]>(
           `SELECT * FROM run_termination_requests
             WHERE request_id = $1 FOR UPDATE`,
-          [TerminationRequestIdSchema.parse(input.requestId)],
+          [requestId],
         );
         const request = rows[0];
         if (!request) throw new Error("RUN_TERMINATION_REQUEST_NOT_FOUND");
@@ -365,29 +404,46 @@ export function createRunTerminationRepository(sql: postgres.Sql) {
         if (request.state !== "draining" || request.owner_instance_id !== input.ownerInstanceId) {
           throw new Error("RUN_TERMINATION_DRAIN_OWNER_MISMATCH");
         }
-        const undrained = await transaction.unsafe<Array<{ count: number }>>(
-          `SELECT COUNT(*)::integer AS count FROM runtime_sessions
-            WHERE run_id = $1 AND state NOT IN ('drained', 'released')`,
+        const runtimes = await transaction.unsafe<Array<{
+          session_id: string;
+          state: string;
+          claim_id: string | number;
+        }>>(
+          `SELECT session_id, state, claim_id FROM runtime_sessions
+            WHERE run_id = $1 ORDER BY session_id FOR UPDATE`,
           [request.run_id],
         );
-        if ((undrained[0]?.count ?? 0) > 0) {
-          throw new Error(`RUN_TERMINATION_RUNTIME_NOT_DRAINED:${undrained[0]!.count}`);
+        const claims = await transaction.unsafe<Array<{ id: string; outcome: string | null }>>(
+          `SELECT id::text, outcome FROM claim_log
+            WHERE run_id = $1 ORDER BY id FOR UPDATE`,
+          [request.run_id],
+        );
+        const now = await readDatabaseWallClock(
+          transaction,
+          "RUN_TERMINATION_DATABASE_TIME_UNAVAILABLE",
+        );
+        if (
+          !request.lease_expires_at
+          || new Date(request.lease_expires_at).getTime() <= now.getTime()
+        ) {
+          throw new Error("RUN_TERMINATION_DRAIN_LEASE_EXPIRED");
         }
-        const missingSessions = await transaction.unsafe<Array<{ count: number }>>(
-          `SELECT COUNT(*)::integer AS count
-             FROM claim_log cl
-             LEFT JOIN runtime_sessions rs ON rs.claim_id = cl.id
-            WHERE cl.run_id = $1 AND cl.outcome IS NULL AND rs.session_id IS NULL`,
-          [request.run_id],
-        );
-        if ((missingSessions[0]?.count ?? 0) > 0) {
-          throw new Error(`RUN_TERMINATION_OPEN_CLAIM_SESSION_MISSING:${missingSessions[0]!.count}`);
+        const undrained = runtimes.filter((runtime) => !["drained", "released"].includes(runtime.state));
+        if (undrained.length > 0) {
+          throw new Error(`RUN_TERMINATION_RUNTIME_NOT_DRAINED:${undrained.length}`);
+        }
+        const runtimeClaimIds = new Set(runtimes.map((runtime) => String(runtime.claim_id)));
+        const missingSessions = claims.filter((claim) =>
+          claim.outcome === null && !runtimeClaimIds.has(claim.id));
+        if (missingSessions.length > 0) {
+          throw new Error(`RUN_TERMINATION_OPEN_CLAIM_SESSION_MISSING:${missingSessions.length}`);
         }
         const updated = await transaction.unsafe<RequestRow[]>(
           `UPDATE run_termination_requests
               SET state = 'drained', drained_at = $3, heartbeat_at = $3,
                   evidence = (evidence || $4::text::jsonb), updated_at = $3
             WHERE request_id = $1 AND owner_instance_id = $2 AND state = 'draining'
+              AND lease_expires_at > $3
             RETURNING *`,
           [request.request_id, input.ownerInstanceId, now, JSON.stringify(input.evidence ?? {})],
         );
@@ -403,32 +459,56 @@ export function createRunTerminationRepository(sql: postgres.Sql) {
       now?: Date;
     }>): Promise<RunTerminationRequest> {
       if (!input.diagnostic.trim()) throw new Error("RUN_TERMINATION_QUARANTINE_DIAGNOSTIC_REQUIRED");
-      const now = time(input.now);
-      const rows = await sql.unsafe<RequestRow[]>(
-        `UPDATE run_termination_requests
-            SET state = 'quarantined', diagnostic = $3,
-                evidence = (evidence || $4::text::jsonb), updated_at = $5
-          WHERE request_id = $1
-            AND ($2::text IS NULL OR owner_instance_id = $2)
-            AND state <> 'terminalized'
-          RETURNING *`,
-        [
-          TerminationRequestIdSchema.parse(input.requestId),
-          input.ownerInstanceId ?? null,
-          input.diagnostic.slice(0, 4_000),
-          JSON.stringify(input.evidence ?? {}),
-          now,
-        ],
+      time(input.now);
+      const requestId = TerminationRequestIdSchema.parse(input.requestId);
+      const identity = await sql.unsafe<Array<{ run_id: string }>>(
+        "SELECT run_id FROM run_termination_requests WHERE request_id = $1",
+        [requestId],
       );
-      if (rows.length !== 1) throw new Error("RUN_TERMINATION_QUARANTINE_FAILED");
-      return mapRequest(rows[0]!);
+      if (!identity[0]) throw new Error("RUN_TERMINATION_QUARANTINE_FAILED");
+      return sql.begin(async (transaction) => {
+        await transaction.unsafe("SELECT id FROM runs WHERE id = $1 FOR UPDATE", [identity[0]!.run_id]);
+        const locked = await transaction.unsafe<RequestRow[]>(
+          "SELECT * FROM run_termination_requests WHERE request_id = $1 FOR UPDATE",
+          [requestId],
+        );
+        const current = locked[0];
+        if (
+          !current
+          || current.state === "terminalized"
+          || (input.ownerInstanceId !== undefined
+            && current.owner_instance_id !== input.ownerInstanceId)
+        ) throw new Error("RUN_TERMINATION_QUARANTINE_FAILED");
+        const now = await readDatabaseWallClock(
+          transaction,
+          "RUN_TERMINATION_DATABASE_TIME_UNAVAILABLE",
+        );
+        const rows = await transaction.unsafe<RequestRow[]>(
+          `UPDATE run_termination_requests
+              SET state = 'quarantined', diagnostic = $3,
+                  evidence = (evidence || $4::text::jsonb), updated_at = $5
+            WHERE request_id = $1
+              AND ($2::text IS NULL OR owner_instance_id = $2)
+              AND state <> 'terminalized'
+            RETURNING *`,
+          [
+            requestId,
+            input.ownerInstanceId ?? null,
+            input.diagnostic.slice(0, 4_000),
+            JSON.stringify(input.evidence ?? {}),
+            now,
+          ],
+        );
+        if (rows.length !== 1) throw new Error("RUN_TERMINATION_QUARANTINE_FAILED");
+        return mapRequest(rows[0]!);
+      }) as Promise<RunTerminationRequest>;
     },
     async listPending(limit = 100): Promise<RunTerminationRequest[]> {
       const bounded = Math.max(1, Math.min(500, Math.trunc(limit)));
       const rows = await sql.unsafe<RequestRow[]>(
         `SELECT * FROM run_termination_requests
           WHERE state IN ('requested', 'drained')
-             OR (state = 'draining' AND (lease_expires_at IS NULL OR lease_expires_at <= NOW()))
+             OR (state = 'draining' AND (lease_expires_at IS NULL OR lease_expires_at <= clock_timestamp()))
           ORDER BY requested_at, request_id LIMIT $1`,
         [bounded],
       );
@@ -447,14 +527,15 @@ export function createRunTerminationRepository(sql: postgres.Sql) {
           [request.runId],
         );
         if (rows[0]?.status !== request.targetStatus) throw new Error("RUN_TERMINATION_TERMINAL_STATE_DRIFT");
-        return {
+        // Re-enter the canonical terminal owner so historical residue from a
+        // pre-fence release (attempt, recovery delivery/case, or claim) is
+        // reconciled under the same run lock instead of being declared clean.
+        return transitionRunToTerminal(sql, {
+          runId: request.runId,
           status: request.targetStatus,
-          previousStatus: request.targetStatus,
-          closedClaims: 0,
-          closedAttempts: 0,
-          changedSteps: 0,
-          changedStories: 0,
-        };
+          diagnostic: input.diagnostic ?? request.diagnostic,
+          now: input.now,
+        });
       }
       if (request.state !== "drained") throw new Error("RUN_TERMINATION_REQUEST_NOT_DRAINED");
       return transitionRunToTerminal(sql, {

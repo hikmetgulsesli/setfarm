@@ -297,7 +297,7 @@ describe("v3 downstream recovery transition", () => {
     const committed = await commitV3DownstreamEvidenceDecision(database.sql, {
       envelope: value.envelope,
       route,
-      now: new Date("2026-07-13T10:00:11.000Z"),
+      now: new Date("2999-01-01T00:00:00.000Z"),
     });
     assert.equal(committed.decision.outcome, "recovery_routed");
     assert.equal(committed.decision.storyEvidence[0]!.evidencePlanArtifactHash, value.planArtifactHash);
@@ -361,6 +361,24 @@ describe("v3 downstream recovery transition", () => {
       qa_fix_count: 0,
       delivery_state: "authorized",
     });
+    const clocks = await database.sql.unsafe<Array<{
+      story_updated_at: Date | string;
+      implement_updated_at: Date | string;
+      qa_updated_at: Date | string;
+    }>>(
+      `SELECT story.updated_at AS story_updated_at,
+              implement.updated_at AS implement_updated_at,
+              qa.updated_at AS qa_updated_at
+         FROM stories story
+         JOIN steps implement ON implement.id = $2
+         JOIN steps qa ON qa.id = $3
+        WHERE story.id = $1`,
+      [value.storyDbId, value.implementStepDbId, value.qaStepDbId],
+    );
+    const hostileClock = new Date("2999-01-01T00:00:00.000Z").getTime();
+    assert.ok(new Date(clocks[0]!.story_updated_at).getTime() < hostileClock);
+    assert.ok(new Date(clocks[0]!.implement_updated_at).getTime() < hostileClock);
+    assert.ok(new Date(clocks[0]!.qa_updated_at).getTime() < hostileClock);
 
     const routed = await createV3RecoveryWorkRouter(database.sql).acquireNext({
       workflowId: "feature-dev",

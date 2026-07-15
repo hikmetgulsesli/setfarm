@@ -1,6 +1,7 @@
 import type postgres from "postgres";
 import { z } from "zod";
 
+import { readDatabaseWallClock } from "../db/database-wall-clock.js";
 import {
   reserveAttemptInTransaction,
   createAttemptRepository,
@@ -100,6 +101,7 @@ type BoundAttemptRow = Readonly<{
   attempt_source_before_tree_hash: string;
   attempt_source_after_sha: string | null;
   attempt_source_after_tree_hash: string | null;
+  attempt_lease_expires_at: Date | string;
   attempt_claim_id: string | number | null;
   claim_outcome: string | null;
   claim_story_id: string | null;
@@ -163,6 +165,26 @@ async function lockStory(
   await transaction.unsafe("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [
     storyLockIdentity(authority, source),
   ]);
+  const runs = await transaction.unsafe<Array<{ id: string }>>(
+    "SELECT id FROM runs WHERE id = $1 FOR UPDATE",
+    [authority.runId],
+  );
+  if (runs.length !== 1) {
+    fail("V3_DOWNSTREAM_EVIDENCE_RUN_NOT_FOUND", "downstream evidence run owner is missing");
+  }
+  const terminations = await transaction.unsafe<Array<{ request_id: string }>>(
+    `SELECT request_id FROM run_termination_requests
+      WHERE run_id = $1 AND state <> 'terminalized'
+      ORDER BY requested_at, request_id
+      LIMIT 1 FOR UPDATE`,
+    [authority.runId],
+  );
+  if (terminations.length > 0) {
+    fail(
+      "V3_DOWNSTREAM_EVIDENCE_TERMINATION_PENDING",
+      "run termination owns downstream evidence lifecycle",
+    );
+  }
 }
 
 async function loadAuthority(
@@ -243,6 +265,7 @@ async function loadBoundAttempt(
             attempt.source_before_tree_hash AS attempt_source_before_tree_hash,
             attempt.source_after_sha AS attempt_source_after_sha,
             attempt.source_after_tree_hash AS attempt_source_after_tree_hash,
+            attempt.lease_expires_at AS attempt_lease_expires_at,
             attempt.claim_id AS attempt_claim_id,
             child_claim.outcome AS claim_outcome,
             child_claim.story_id AS claim_story_id,
@@ -461,7 +484,7 @@ export function createV3DownstreamEvidencePublication(sql: Sql) {
     ): Promise<AttemptReservationResult> {
       const authority = V3DownstreamEvidenceAuthorityV1Schema.parse(rawAuthority);
       const prepared = V3DownstreamEvidencePreparedAttemptV1Schema.parse(rawPrepared);
-      const now = validTime(options.now);
+      validTime(options.now);
       if (
         prepared.runId !== authority.runId
         || prepared.stepId !== authority.workflowStepId
@@ -475,13 +498,6 @@ export function createV3DownstreamEvidencePublication(sql: Sql) {
         await lockStory(transaction, authority, prepared.sourceBefore);
         const authorityRow = await loadAuthority(transaction, authority);
         assertAuthority(authorityRow, authority);
-        const terminations = await transaction.unsafe<Array<{ request_id: string }>>(
-          "SELECT request_id FROM run_termination_requests WHERE run_id = $1 AND state <> 'terminalized' LIMIT 1 FOR UPDATE",
-          [authority.runId],
-        );
-        if (terminations.length > 0) {
-          fail("V3_DOWNSTREAM_EVIDENCE_TERMINATION_PENDING", "run termination owns the next lifecycle transition");
-        }
         const prior = await transaction.unsafe<Array<{
           attempt_id: string;
           disposition: string;
@@ -520,6 +536,10 @@ export function createV3DownstreamEvidencePublication(sql: Sql) {
           if (authorityRow.story_status === "failed" && ["claimed", "running"].includes(prior[0].disposition)) {
             fail("V3_DOWNSTREAM_EVIDENCE_FAILED_STORY_ACTIVE_ATTEMPT", "failed story replay requires terminal canonical evidence");
           }
+          const now = await readDatabaseWallClock(
+            transaction,
+            "V3_DOWNSTREAM_EVIDENCE_DATABASE_TIME_UNAVAILABLE",
+          );
           if (
             ["claimed", "running"].includes(prior[0].disposition)
             && new Date(prior[0].lease_expires_at).getTime() <= now.getTime()
@@ -578,6 +598,10 @@ export function createV3DownstreamEvidencePublication(sql: Sql) {
         if (openChildren.length > 0) {
           fail("V3_DOWNSTREAM_EVIDENCE_CHILD_CLAIM_CONFLICT", "story already has an active downstream evidence owner");
         }
+        const now = await readDatabaseWallClock(
+          transaction,
+          "V3_DOWNSTREAM_EVIDENCE_DATABASE_TIME_UNAVAILABLE",
+        );
         const claimRows = await transaction.unsafe<Array<{ id: string }>>(
           `INSERT INTO claim_log (run_id, step_id, story_id, agent_id, claimed_at)
            VALUES ($1, $2, $3, $4, $5)
@@ -621,12 +645,20 @@ export function createV3DownstreamEvidencePublication(sql: Sql) {
       now?: Date;
     }>): Promise<ExecutionAttemptV1> {
       const authority = V3DownstreamEvidenceAuthorityV1Schema.parse(input.authority);
-      const now = validTime(input.now);
+      validTime(input.now);
       await sql.begin(async (transaction) => {
         await lockStory(transaction, authority, input.attempt.sourceBefore);
         const row = await loadBoundAttempt(transaction, authority, input.attempt);
         assertBoundAttempt(row, authority, input.attempt);
-        if (row.claim_outcome !== null || !["claimed", "running"].includes(row.attempt_disposition)) {
+        const now = await readDatabaseWallClock(
+          transaction,
+          "V3_DOWNSTREAM_EVIDENCE_DATABASE_TIME_UNAVAILABLE",
+        );
+        if (
+          row.claim_outcome !== null
+          || !["claimed", "running"].includes(row.attempt_disposition)
+          || new Date(row.attempt_lease_expires_at).getTime() <= now.getTime()
+        ) {
           fail("V3_DOWNSTREAM_EVIDENCE_RUNNING_OWNER_INVALID", "only the exact open child claim may enter running");
         }
         const updated = await transaction.unsafe<Array<{ attempt_id: string }>>(
@@ -634,6 +666,7 @@ export function createV3DownstreamEvidencePublication(sql: Sql) {
               SET disposition = 'running', heartbeat_at = $4, updated_at = $4
             WHERE attempt_id = $1 AND generation = $2 AND fence_token = $3
               AND disposition IN ('claimed', 'running')
+              AND lease_expires_at > $4
             RETURNING attempt_id`,
           [input.attempt.attemptId, input.attempt.generation, input.attempt.fenceToken, now],
         );
@@ -657,7 +690,7 @@ export function createV3DownstreamEvidencePublication(sql: Sql) {
       const authority = V3DownstreamEvidenceAuthorityV1Schema.parse(input.authority);
       const bundle = EvidenceBundleV2Schema.parse(input.bundle);
       const findingSet = input.findingSet ? FindingSetV1Schema.parse(input.findingSet) : undefined;
-      const now = validTime(input.now);
+      validTime(input.now);
       assertTerminalEvidence({
         authority,
         attempt: input.attempt,
@@ -670,9 +703,14 @@ export function createV3DownstreamEvidencePublication(sql: Sql) {
         await lockStory(transaction, authority, input.attempt.sourceBefore);
         const row = await loadBoundAttempt(transaction, authority, input.attempt);
         assertBoundAttempt(row, authority, input.attempt);
+        const now = await readDatabaseWallClock(
+          transaction,
+          "V3_DOWNSTREAM_EVIDENCE_DATABASE_TIME_UNAVAILABLE",
+        );
         if (
           row.claim_outcome !== null
           || !["claimed", "running"].includes(row.attempt_disposition)
+          || new Date(row.attempt_lease_expires_at).getTime() <= now.getTime()
           || (row.attempt_source_after_sha !== null && (
             row.attempt_source_after_sha !== input.attempt.sourceBefore.sha
             || row.attempt_source_after_tree_hash !== input.attempt.sourceBefore.treeHash
@@ -705,6 +743,7 @@ export function createV3DownstreamEvidencePublication(sql: Sql) {
                   updated_at = $9
             WHERE attempt_id = $1 AND generation = $2 AND fence_token = $3
               AND disposition IN ('claimed', 'running')
+              AND lease_expires_at > $9
               AND (
                 source_after_sha IS NULL
                 OR (source_after_sha = $5 AND source_after_tree_hash = $6)

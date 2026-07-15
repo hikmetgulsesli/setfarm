@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 
 import { createAttemptRepository } from "../../src/execution/attempt-repository.js";
+import { requestRunTermination } from "../../src/execution/run-termination.js";
 import { createFindingSetV1 } from "../../src/findings/finding-set.js";
 import type { RecoveryCaseDraftV1 } from "../../src/recovery/recovery-case.js";
 import { createRecoveryDeliveryRepository } from "../../src/recovery/recovery-delivery-repository.js";
@@ -258,12 +259,17 @@ describe("v3 recovery-first claim authority", () => {
       (error: unknown) => error instanceof V3RecoveryClaimAuthorityError
         && error.code === "V3_RECOVERY_LEASE_HELD",
     );
+    await database.sql`
+      UPDATE recovery_dispatch_deliveries
+         SET lease_expires_at = clock_timestamp() - interval '1 second'
+       WHERE dispatch_id = ${first.dispatchId}
+    `;
     const takeover = await authority.acquireRecoveryClaim({
       runId: fixture.runId,
       storyId: fixture.storyId,
       ownerInstanceId: "lease-owner-b",
       leaseMs: 2_000,
-    }, { now: new Date("2026-07-13T09:02:02.000Z") });
+    }, { now: new Date("1900-01-01T00:00:00.000Z") });
     assert.equal(takeover.status, "lease_acquired");
     assert.equal(takeover.lease.ownerInstanceId, "lease-owner-b");
     assert.notEqual(takeover.lease.leaseToken, first.lease.leaseToken);
@@ -318,6 +324,21 @@ describe("v3 recovery-first claim authority", () => {
     assert.equal(replay.attemptBinding?.claimId, claimId);
     assert.equal(replay.reservationBoundary.requiredNextOperation, "resume_exact_attempt_only");
 
+    await database.sql.unsafe(
+      "UPDATE execution_attempts SET lease_expires_at = 'infinity'::timestamptz WHERE attempt_id = $1",
+      [reserved.attempt.attemptId],
+    );
+    await assert.rejects(
+      authority.acquireRecoveryClaim({
+        runId: fixture.runId,
+        storyId: fixture.storyId,
+        ownerInstanceId: "attempt-owner",
+        continuation: { kind: "attempt", attemptId: reserved.attempt.attemptId },
+      }),
+      (error: unknown) => error instanceof V3RecoveryClaimAuthorityError
+        && error.code === "V3_RECOVERY_ATTEMPT_BOUND_IDENTITY_MISMATCH",
+    );
+
     await assert.rejects(
       authority.acquireRecoveryClaim({
         runId: fixture.runId,
@@ -356,5 +377,37 @@ describe("v3 recovery-first claim authority", () => {
       .findDelivery(fixture.dispatch.dispatchId);
     assert.equal(delivery?.state, "authorized");
     assert.equal(delivery?.ownerInstanceId, undefined);
+  });
+
+  it("refuses normal and recovery claims once run termination owns the lifecycle", async () => {
+    const fixture = await setup();
+    await requestRunTermination(database.sql, {
+      runId: fixture.runId,
+      targetStatus: "cancelled",
+      requestedBy: "v3-recovery-claim-authority-test",
+      diagnostic: "termination must fence every later claim",
+      requestId: "RTR_claim-authority-termination",
+    });
+    const authority = createV3RecoveryClaimAuthority(database.sql);
+    for (const claim of [
+      () => authority.acquireRecoveryClaim({
+        runId: fixture.runId,
+        storyId: fixture.storyId,
+        ownerInstanceId: "late-recovery-owner",
+      }),
+      () => authority.withNormalClaimAuthority({
+        runId: fixture.runId,
+        storyId: fixture.storyId,
+      }, async () => "must-not-run"),
+    ]) {
+      await assert.rejects(
+        claim(),
+        (error: unknown) => error instanceof V3RecoveryClaimAuthorityError
+          && error.code === "V3_RECOVERY_AUTHORITY_TERMINATION_PENDING",
+      );
+    }
+    const delivery = await createRecoveryDeliveryRepository(database.sql)
+      .findDelivery(fixture.dispatch.dispatchId);
+    assert.equal(delivery?.state, "authorized");
   });
 });

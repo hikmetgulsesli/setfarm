@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import type postgres from "postgres";
 import { z } from "zod";
 
+import { readDatabaseWallClock } from "../db/database-wall-clock.js";
 import { hashCanonicalJson } from "../product-compiler/canonical-json.js";
 import {
   CanonicalOperationalEventV1Schema,
@@ -270,49 +271,69 @@ export function operationalOutboxIdForEventKey(eventKey: string): string {
   return `OBX_${hashCanonicalJson(validated).slice(0, 40)}`;
 }
 
+/**
+ * Insert one immutable outbox identity using the caller's transaction.
+ *
+ * Lifecycle owners use this function after acquiring and validating every
+ * owner lock so their state mutation and canonical operational evidence share
+ * one commit. A replay is accepted only when every immutable field is exact;
+ * the event key can never silently alias a different payload.
+ */
+export async function enqueueOperationalOutboxEventInTransaction(
+  sql: postgres.TransactionSql,
+  input: EnqueueOperationalOutboxEvent,
+): Promise<OperationalOutboxEvent> {
+  validTime(input.now);
+  const now = await readDatabaseWallClock(
+    sql,
+    "OPERATIONAL_OUTBOX_DATABASE_TIME_UNAVAILABLE",
+  );
+  const eventKey = requiredString(input.eventKey, "OPERATIONAL_OUTBOX_EVENT_KEY_INVALID");
+  const eventType = requiredString(input.eventType, "OPERATIONAL_OUTBOX_EVENT_TYPE_INVALID");
+  const aggregateType = requiredString(
+    input.aggregateType,
+    "OPERATIONAL_OUTBOX_AGGREGATE_TYPE_INVALID",
+  );
+  const aggregateId = requiredString(input.aggregateId, "OPERATIONAL_OUTBOX_AGGREGATE_ID_INVALID");
+  const requestId = input.requestId === undefined
+    ? null
+    : requiredString(input.requestId, "OPERATIONAL_OUTBOX_REQUEST_ID_INVALID");
+  const payload = payloadObject(input.payload);
+  const outboxId = operationalOutboxIdForEventKey(eventKey);
+  const rows = await sql.unsafe<OutboxRow[]>(
+    `INSERT INTO operational_outbox (
+       outbox_id, request_id, event_key, event_type, aggregate_type,
+       aggregate_id, payload, state, created_at, updated_at
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7::text::jsonb, 'pending', $8, $8)
+     ON CONFLICT (event_key) DO UPDATE
+       SET event_key = EXCLUDED.event_key
+     WHERE operational_outbox.outbox_id = EXCLUDED.outbox_id
+       AND operational_outbox.request_id IS NOT DISTINCT FROM EXCLUDED.request_id
+       AND operational_outbox.event_type = EXCLUDED.event_type
+       AND operational_outbox.aggregate_type = EXCLUDED.aggregate_type
+       AND operational_outbox.aggregate_id = EXCLUDED.aggregate_id
+       AND operational_outbox.payload = EXCLUDED.payload
+     RETURNING operational_outbox.*`,
+    [
+      outboxId,
+      requestId,
+      eventKey,
+      eventType,
+      aggregateType,
+      aggregateId,
+      JSON.stringify(payload),
+      now,
+    ],
+  );
+  if (!rows[0]) throw new Error("OPERATIONAL_OUTBOX_EVENT_KEY_CONFLICT");
+  return mapEvent(rows[0]);
+}
+
 export function createOperationalOutboxRepository(sql: Sql) {
   return Object.freeze({
     async enqueue(input: EnqueueOperationalOutboxEvent): Promise<OperationalOutboxEvent> {
-      const now = validTime(input.now);
-      const eventKey = requiredString(input.eventKey, "OPERATIONAL_OUTBOX_EVENT_KEY_INVALID");
-      const eventType = requiredString(input.eventType, "OPERATIONAL_OUTBOX_EVENT_TYPE_INVALID");
-      const aggregateType = requiredString(
-        input.aggregateType,
-        "OPERATIONAL_OUTBOX_AGGREGATE_TYPE_INVALID",
-      );
-      const aggregateId = requiredString(input.aggregateId, "OPERATIONAL_OUTBOX_AGGREGATE_ID_INVALID");
-      const requestId = input.requestId === undefined
-        ? null
-        : requiredString(input.requestId, "OPERATIONAL_OUTBOX_REQUEST_ID_INVALID");
-      const payload = payloadObject(input.payload);
-      const outboxId = operationalOutboxIdForEventKey(eventKey);
-      const rows = await sql.unsafe<OutboxRow[]>(
-        `INSERT INTO operational_outbox (
-           outbox_id, request_id, event_key, event_type, aggregate_type,
-           aggregate_id, payload, state, created_at, updated_at
-         ) VALUES ($1, $2, $3, $4, $5, $6, $7::text::jsonb, 'pending', $8, $8)
-         ON CONFLICT (event_key) DO UPDATE
-           SET event_key = EXCLUDED.event_key
-         WHERE operational_outbox.outbox_id = EXCLUDED.outbox_id
-           AND operational_outbox.request_id IS NOT DISTINCT FROM EXCLUDED.request_id
-           AND operational_outbox.event_type = EXCLUDED.event_type
-           AND operational_outbox.aggregate_type = EXCLUDED.aggregate_type
-           AND operational_outbox.aggregate_id = EXCLUDED.aggregate_id
-           AND operational_outbox.payload = EXCLUDED.payload
-         RETURNING operational_outbox.*`,
-        [
-          outboxId,
-          requestId,
-          eventKey,
-          eventType,
-          aggregateType,
-          aggregateId,
-          JSON.stringify(payload),
-          now,
-        ],
-      );
-      if (!rows[0]) throw new Error("OPERATIONAL_OUTBOX_EVENT_KEY_CONFLICT");
-      return mapEvent(rows[0]);
+      return sql.begin((transaction) =>
+        enqueueOperationalOutboxEventInTransaction(transaction, input)) as Promise<OperationalOutboxEvent>;
     },
 
     async findByEventKey(eventKeyInput: string): Promise<OperationalOutboxEvent | undefined> {
@@ -362,20 +383,27 @@ export function createOperationalOutboxRepository(sql: Sql) {
         input.ownerInstanceId,
         "OPERATIONAL_OUTBOX_OWNER_INSTANCE_ID_INVALID",
       );
-      const now = validTime(input.now);
+      validTime(input.now);
       const leaseMs = leaseDuration(input.leaseMs);
       return sql.begin(async (transaction) => {
         const candidates = await transaction.unsafe<OutboxRow[]>(
           `SELECT * FROM operational_outbox
             WHERE state = 'pending'
-               OR (state = 'leased' AND lease_expires_at <= $1)
+               OR (state = 'leased' AND lease_expires_at <= clock_timestamp())
             ORDER BY created_at, outbox_id
             LIMIT 1
             FOR UPDATE SKIP LOCKED`,
-          [now],
         );
         const candidate = candidates[0];
         if (!candidate) return undefined;
+        const now = await readDatabaseWallClock(
+          transaction,
+          "OPERATIONAL_OUTBOX_DATABASE_TIME_UNAVAILABLE",
+        );
+        if (
+          candidate.state === "leased"
+          && (!candidate.lease_expires_at || new Date(candidate.lease_expires_at).getTime() > now.getTime())
+        ) return undefined;
         const leaseToken = `OBL_${randomUUID()}`;
         const rows = await transaction.unsafe<OutboxRow[]>(
           `UPDATE operational_outbox
@@ -410,18 +438,37 @@ export function createOperationalOutboxRepository(sql: Sql) {
         "OPERATIONAL_OUTBOX_OWNER_INSTANCE_ID_INVALID",
       );
       const leaseToken = requiredString(input.leaseToken, "OPERATIONAL_OUTBOX_LEASE_TOKEN_INVALID");
-      const now = validTime(input.now);
+      validTime(input.now);
       const leaseMs = leaseDuration(input.leaseMs);
-      const rows = await sql.unsafe<Array<{ outbox_id: string }>>(
-        `UPDATE operational_outbox
+      return sql.begin(async (transaction) => {
+        const locked = await transaction.unsafe<OutboxRow[]>(
+          "SELECT * FROM operational_outbox WHERE outbox_id = $1 FOR UPDATE",
+          [outboxId],
+        );
+        const current = locked[0];
+        const now = await readDatabaseWallClock(
+          transaction,
+          "OPERATIONAL_OUTBOX_DATABASE_TIME_UNAVAILABLE",
+        );
+        if (
+          !current
+          || current.state !== "leased"
+          || current.owner_instance_id !== ownerInstanceId
+          || current.lease_token !== leaseToken
+          || !current.lease_expires_at
+          || new Date(current.lease_expires_at).getTime() <= now.getTime()
+        ) return false;
+        const rows = await transaction.unsafe<Array<{ outbox_id: string }>>(
+          `UPDATE operational_outbox
             SET lease_expires_at = $4, updated_at = $5
           WHERE outbox_id = $1 AND state = 'leased'
             AND owner_instance_id = $2 AND lease_token = $3
             AND lease_expires_at > $5
           RETURNING outbox_id`,
-        [outboxId, ownerInstanceId, leaseToken, new Date(now.getTime() + leaseMs), now],
-      );
-      return rows.length === 1;
+          [outboxId, ownerInstanceId, leaseToken, new Date(now.getTime() + leaseMs), now],
+        );
+        return rows.length === 1;
+      }) as Promise<boolean>;
     },
 
     /**
@@ -435,7 +482,7 @@ export function createOperationalOutboxRepository(sql: Sql) {
       leaseToken: string;
       now?: Date;
     }>): Promise<OperationalOutboxEvent> {
-      const now = validTime(input.now);
+      validTime(input.now);
       const outboxId = requiredString(input.outboxId, "OPERATIONAL_OUTBOX_ID_INVALID");
       const ownerInstanceId = requiredString(
         input.ownerInstanceId,
@@ -448,6 +495,10 @@ export function createOperationalOutboxRepository(sql: Sql) {
           [outboxId],
         );
         const current = locked[0];
+        const now = await readDatabaseWallClock(
+          transaction,
+          "OPERATIONAL_OUTBOX_DATABASE_TIME_UNAVAILABLE",
+        );
         if (
           !current
           || current.state !== "leased"
@@ -562,25 +613,45 @@ export function createOperationalOutboxRepository(sql: Sql) {
       diagnostic: string;
       now?: Date;
     }>): Promise<OperationalOutboxEvent> {
-      const now = validTime(input.now);
-      const rows = await sql.unsafe<OutboxRow[]>(
-        `UPDATE operational_outbox
+      validTime(input.now);
+      const outboxId = requiredString(input.outboxId, "OPERATIONAL_OUTBOX_ID_INVALID");
+      const ownerInstanceId = requiredString(
+        input.ownerInstanceId,
+        "OPERATIONAL_OUTBOX_OWNER_INSTANCE_ID_INVALID",
+      );
+      const leaseToken = requiredString(input.leaseToken, "OPERATIONAL_OUTBOX_LEASE_TOKEN_INVALID");
+      const retryDiagnostic = diagnostic(input.diagnostic);
+      return sql.begin(async (transaction) => {
+        const locked = await transaction.unsafe<OutboxRow[]>(
+          "SELECT * FROM operational_outbox WHERE outbox_id = $1 FOR UPDATE",
+          [outboxId],
+        );
+        const current = locked[0];
+        const now = await readDatabaseWallClock(
+          transaction,
+          "OPERATIONAL_OUTBOX_DATABASE_TIME_UNAVAILABLE",
+        );
+        if (
+          !current
+          || current.state !== "leased"
+          || current.owner_instance_id !== ownerInstanceId
+          || current.lease_token !== leaseToken
+          || !current.lease_expires_at
+          || new Date(current.lease_expires_at).getTime() <= now.getTime()
+        ) throw new Error("OPERATIONAL_OUTBOX_RETRY_FENCE_LOST");
+        const rows = await transaction.unsafe<OutboxRow[]>(
+          `UPDATE operational_outbox
             SET state = 'pending', owner_instance_id = NULL, lease_token = NULL,
                 lease_expires_at = NULL, diagnostic = $4, updated_at = $5
           WHERE outbox_id = $1 AND state = 'leased'
             AND owner_instance_id = $2 AND lease_token = $3
             AND lease_expires_at > $5
           RETURNING *`,
-        [
-          requiredString(input.outboxId, "OPERATIONAL_OUTBOX_ID_INVALID"),
-          requiredString(input.ownerInstanceId, "OPERATIONAL_OUTBOX_OWNER_INSTANCE_ID_INVALID"),
-          requiredString(input.leaseToken, "OPERATIONAL_OUTBOX_LEASE_TOKEN_INVALID"),
-          diagnostic(input.diagnostic),
-          now,
-        ],
-      );
-      if (!rows[0]) throw new Error("OPERATIONAL_OUTBOX_RETRY_FENCE_LOST");
-      return mapEvent(rows[0]);
+          [outboxId, ownerInstanceId, leaseToken, retryDiagnostic, now],
+        );
+        if (!rows[0]) throw new Error("OPERATIONAL_OUTBOX_RETRY_FENCE_LOST");
+        return mapEvent(rows[0]);
+      }) as Promise<OperationalOutboxEvent>;
     },
 
     async quarantine(input: Readonly<{
@@ -591,7 +662,7 @@ export function createOperationalOutboxRepository(sql: Sql) {
       diagnostic: string;
       now?: Date;
     }>): Promise<OperationalOutboxEvent> {
-      const now = validTime(input.now);
+      validTime(input.now);
       const outboxId = requiredString(input.outboxId, "OPERATIONAL_OUTBOX_ID_INVALID");
       const ownerInstanceId = requiredString(
         input.ownerInstanceId,
@@ -606,6 +677,10 @@ export function createOperationalOutboxRepository(sql: Sql) {
           [outboxId],
         );
         const current = locked[0];
+        const now = await readDatabaseWallClock(
+          transaction,
+          "OPERATIONAL_OUTBOX_DATABASE_TIME_UNAVAILABLE",
+        );
         if (
           !current
           || current.state !== "leased"

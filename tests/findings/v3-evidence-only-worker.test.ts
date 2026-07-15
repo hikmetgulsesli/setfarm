@@ -778,20 +778,23 @@ describe("v3 evidence-only recovery worker", () => {
       ownerInstanceId: "evidence-expired-owner",
       leaseMs: 30_000,
     });
-    const deliveryExpiresAt = new Date(owner.lease.leaseExpiresAt);
     await database.sql.unsafe(
-      "UPDATE execution_attempts SET lease_expires_at = $2 WHERE attempt_id = $1",
-      [owner.attempt.attemptId, new Date(deliveryExpiresAt.getTime() + 10 * 60_000)],
+      "UPDATE execution_attempts SET lease_expires_at = date_trunc('milliseconds', clock_timestamp()) + interval '10 minutes' WHERE attempt_id = $1",
+      [owner.attempt.attemptId],
+    );
+    await database.sql.unsafe(
+      "UPDATE recovery_dispatch_deliveries SET lease_expires_at = date_trunc('milliseconds', clock_timestamp()) - interval '1 second' WHERE dispatch_id = $1",
+      [owner.lease.dispatchId],
     );
     const reconciler = createV3RecoveryLifecycleReconciler(database.sql);
-    const reconcileAt = new Date(deliveryExpiresAt.getTime() + 1);
     const reports = await Promise.all([
-      reconciler.reconcileActive({ runId: fixture.runId }, { now: reconcileAt }),
-      reconciler.reconcileActive({ runId: fixture.runId }, { now: reconcileAt }),
+      reconciler.reconcileActive({ runId: fixture.runId }, { now: new Date("1900-01-01T00:00:00.000Z") }),
+      reconciler.reconcileActive({ runId: fixture.runId }, { now: new Date("2999-01-01T00:00:00.000Z") }),
     ]);
     assert.equal(
       reports.reduce((sum, report) => sum + report.counts.blockedExpiredEvidenceAttempts, 0),
       1,
+      JSON.stringify(reports.map((report) => report.events)),
     );
     const attempt = await createAttemptRepository(database.sql).findById(owner.attempt.attemptId);
     assert.equal(attempt?.disposition, "inconclusive");
@@ -893,7 +896,7 @@ describe("v3 evidence-only recovery worker", () => {
       workflowId: fixture.workflowId,
       ownerInstanceId: "evidence-pass-worker",
       leaseMs: 60_000,
-    }, { now: at() });
+    }, { now: new Date("2999-01-01T00:00:00.000Z") });
     assert.ok(result);
     assert.equal(executions, 1);
     assert.equal(result.execution, "executed");
@@ -909,6 +912,26 @@ describe("v3 evidence-only recovery worker", () => {
       [attempt!.claimId!],
     );
     assert.equal(claims[0]?.outcome, "completed");
+    const clocks = await database.sql.unsafe<Array<{
+      attempt_heartbeat: Date | string;
+      delivery_updated: Date | string;
+      recovery_updated: Date | string;
+    }>>(
+      `SELECT attempt.heartbeat_at AS attempt_heartbeat,
+              delivery.updated_at AS delivery_updated,
+              recovery.updated_at AS recovery_updated
+         FROM execution_attempts attempt
+         JOIN recovery_dispatch_deliveries delivery
+           ON delivery.attempt_id = attempt.attempt_id
+         JOIN recovery_cases recovery
+           ON recovery.recovery_case_id = delivery.recovery_case_id
+        WHERE attempt.attempt_id = $1`,
+      [result.attemptId],
+    );
+    const hostileClock = new Date("2999-01-01T00:00:00.000Z").getTime();
+    assert.ok(new Date(clocks[0]!.attempt_heartbeat).getTime() < hostileClock);
+    assert.ok(new Date(clocks[0]!.delivery_updated).getTime() < hostileClock);
+    assert.ok(new Date(clocks[0]!.recovery_updated).getTime() < hostileClock);
   });
 
   it("publishes typed findings for failed evidence and boundedly blocks unchanged retry", async () => {
@@ -1037,6 +1060,44 @@ describe("v3 evidence-only recovery worker", () => {
       workflowId: fixture.workflowId,
       ownerInstanceId: "evidence-source-fence-worker",
     }), undefined);
+  });
+
+  it("does not quarantine through a non-finite delivery lease", async () => {
+    const fixture = await setup({ workflowId: "workflow-evidence-only-nonfinite-lease" });
+    const baseDependencies = dependencies({ fixture, verdict: "pass" });
+    const worker = createV3EvidenceOnlyRecoveryWorker(database.sql, {
+      ...baseDependencies,
+      loadOrReserveAttempt: async () => {
+        throw new Error("TEST_ATTEMPT_CONTEXT_FAILURE");
+      },
+    });
+    const lease = await worker.acquireNext({
+      workflowId: fixture.workflowId,
+      ownerInstanceId: "evidence-nonfinite-lease-worker",
+      leaseMs: 60_000,
+    });
+    assert.ok(lease);
+    await database.sql.unsafe(
+      "UPDATE recovery_dispatch_deliveries SET lease_expires_at = 'infinity'::timestamptz WHERE dispatch_id = $1",
+      [fixture.dispatch.dispatchId],
+    );
+
+    await assert.rejects(worker.runLease(lease), /TEST_ATTEMPT_CONTEXT_FAILURE/);
+    const rows = await database.sql.unsafe<Array<{
+      delivery_state: string;
+      case_status: string;
+    }>>(
+      `SELECT delivery.state AS delivery_state, recovery_case.status AS case_status
+         FROM recovery_dispatch_deliveries delivery
+         JOIN recovery_cases recovery_case
+           ON recovery_case.recovery_case_id = delivery.recovery_case_id
+        WHERE delivery.dispatch_id = $1`,
+      [fixture.dispatch.dispatchId],
+    );
+    assert.deepEqual({ ...rows[0]! }, {
+      delivery_state: "leased",
+      case_status: "evidencing",
+    });
   });
 
   it("leaves a forged recovery chain unleased", async () => {

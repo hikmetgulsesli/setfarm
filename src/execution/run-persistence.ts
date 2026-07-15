@@ -1,5 +1,6 @@
 import type postgres from "postgres";
 
+import { readDatabaseWallClock } from "../db/database-wall-clock.js";
 import { hashCanonicalJson } from "../product-compiler/canonical-json.js";
 import type { RunProtocolIdentity } from "./run-protocol.js";
 import {
@@ -40,21 +41,21 @@ type AdmissionPersistenceRow = Readonly<{
 }>;
 
 async function lockAndVerifyReleaseAdmission(
-  sql: postgres.Sql | postgres.TransactionSql,
+  sql: postgres.TransactionSql,
   run: Readonly<{
     id: string;
     task: string;
     createdAt: string;
     protocol: RunProtocolIdentity;
   }>,
-): Promise<void> {
+): Promise<Date> {
   if (run.protocol.mode !== "v3") {
     if (
       run.protocol.releaseAdmissionHash !== null
       || run.protocol.releaseAdmissionKind !== null
       || run.protocol.canaryAdmission !== null
     ) throw new Error("RUN_RELEASE_ADMISSION_FORBIDDEN");
-    return;
+    return readDatabaseWallClock(sql, "RUN_PERSISTENCE_DATABASE_TIME_UNAVAILABLE");
   }
   if (!run.protocol.releaseAdmissionHash || !run.protocol.releaseAdmissionKind) {
     throw new Error("RUN_RELEASE_ADMISSION_REQUIRED");
@@ -83,7 +84,7 @@ async function lockAndVerifyReleaseAdmission(
     if (run.protocol.canaryAdmission !== null) {
       throw new Error("RUN_RELEASE_ADMISSION_KIND_INVALID");
     }
-    return;
+    return readDatabaseWallClock(sql, "RUN_PERSISTENCE_DATABASE_TIME_UNAVAILABLE");
   }
 
   const context = run.protocol.canaryAdmission;
@@ -92,7 +93,6 @@ async function lockAndVerifyReleaseAdmission(
     || context.admissionHash !== parsed.data.admissionHash
     || context.taskHash !== hashCanonicalJson(run.task)
     || row.expires_at === null
-    || new Date(row.expires_at).getTime() <= Date.now()
   ) throw new Error("RUN_CANARY_ADMISSION_INVALID");
   const claims = await sql.unsafe<Array<{
     slot_hash: string;
@@ -112,6 +112,13 @@ async function lockAndVerifyReleaseAdmission(
     [context.slotHash],
   );
   const claim = claims[0];
+  const observedAt = await readDatabaseWallClock(
+    sql,
+    "RUN_PERSISTENCE_DATABASE_TIME_UNAVAILABLE",
+  );
+  if (new Date(row.expires_at).getTime() <= observedAt.getTime()) {
+    throw new Error("RUN_CANARY_ADMISSION_INVALID");
+  }
   if (
     !claim
     || claim.slot_hash !== context.slotHash
@@ -123,10 +130,11 @@ async function lockAndVerifyReleaseAdmission(
     || claim.run_id !== null
     || claim.consumed_at !== null
   ) throw new Error("RUN_CANARY_ADMISSION_SLOT_UNAVAILABLE");
+  return observedAt;
 }
 
 export async function persistWorkflowRun(
-  sql: postgres.Sql | postgres.TransactionSql,
+  sql: postgres.TransactionSql,
   input: Readonly<{
     run: Readonly<{
       id: string;
@@ -142,6 +150,9 @@ export async function persistWorkflowRun(
   }>,
 ): Promise<void> {
   const { run } = input;
+  if (!Number.isFinite(new Date(run.createdAt).getTime())) {
+    throw new Error("RUN_PERSISTENCE_CALLER_TIME_INVALID");
+  }
   await sql.unsafe("SELECT pg_advisory_xact_lock($1)", [runAdmissionLockKey]);
   const activity = await sql.unsafe<Array<{
     active_runs: number;
@@ -172,7 +183,7 @@ export async function persistWorkflowRun(
   if (run.protocol.mode !== "legacy" && !run.protocol.activationPreflightHash) {
     throw new Error("RUN_ACTIVATION_PREFLIGHT_IDENTITY_MISSING");
   }
-  await lockAndVerifyReleaseAdmission(sql, run);
+  const persistedAt = await lockAndVerifyReleaseAdmission(sql, run);
   await sql.unsafe(
     `INSERT INTO runs
        (id, run_number, workflow_id, task, status, context, notify_url,
@@ -193,8 +204,8 @@ export async function persistWorkflowRun(
       run.protocol.compilerReleaseSha,
       run.protocol.activationPreflightHash,
       run.protocol.releaseAdmissionHash,
-      run.createdAt,
-      run.createdAt,
+      persistedAt,
+      persistedAt,
     ],
   );
 
@@ -209,7 +220,7 @@ export async function persistWorkflowRun(
       RETURNING slot_hash`,
       [
         run.id,
-        run.createdAt,
+        persistedAt,
         run.protocol.canaryAdmission.slotHash,
         run.protocol.releaseAdmissionHash,
       ],
@@ -235,8 +246,8 @@ export async function persistWorkflowRun(
         step.maxRetries,
         step.type,
         step.loopConfig,
-        run.createdAt,
-        run.createdAt,
+        persistedAt,
+        persistedAt,
       ],
     );
   }

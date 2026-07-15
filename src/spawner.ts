@@ -8842,29 +8842,6 @@ async function reconcileV3RecoveryLifecycle(): Promise<void> {
         `[spawner] v3 recovery lifecycle scanned=${scanned} repaired=${repaired} quarantined=${quarantined}`,
       );
     }
-    // Transitional only: P0b moves lifecycle mutation + this event into one
-    // transaction. Until then live runs stay disabled; this preserves the
-    // pre-existing projection path without claiming crash-atomic delivery.
-    const outbox = createOperationalOutboxRepository(getSql());
-    for (const event of reports.flatMap((report) => report.events)) {
-      if (!event.mutated && !["quarantine", "request_runtime_drain"].includes(event.action)) continue;
-      const eventKey = [
-        "v3-recovery-lifecycle",
-        event.dispatchId,
-        event.revisionId,
-        event.observedState,
-        event.action,
-        event.code,
-      ].join(":");
-      if (await outbox.findByEventKey(eventKey)) continue;
-      await outbox.enqueue({
-        eventKey,
-        eventType: "product_compiler.v3_recovery_lifecycle_reconciled",
-        aggregateType: "run",
-        aggregateId: event.runId,
-        payload: event,
-      });
-    }
   } catch (error) {
     console.warn(`[spawner] v3 recovery lifecycle reconciliation unavailable: ${String(error).slice(0, 300)}`);
   } finally {

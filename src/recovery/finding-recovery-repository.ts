@@ -21,6 +21,7 @@ import {
   type RecoveryDispatchAuthorizationV1,
 } from "./recovery-case.js";
 import { createRecoveryCaseRevisionV1 } from "./recovery-delivery.js";
+import { lockV3RecoveryRunMutationAuthorityInTransaction } from "./v3-recovery-run-mutation-authority.js";
 
 type Sql = postgres.Sql;
 type TransactionSql = postgres.TransactionSql;
@@ -441,8 +442,21 @@ export function createFindingRecoveryRepository(sql: Sql) {
       input: RecoveryCaseDraftV1,
       options: Readonly<{ now?: Date; evidencePlanArtifactHash?: string }> = {},
     ): Promise<OpenRecoveryCaseResult> {
-      const recoveryCase = createRecoveryCaseV1(input, options);
+      if (options.now && !Number.isFinite(new Date(options.now).getTime())) {
+        throw new Error("RECOVERY_CASE_TIME_INVALID");
+      }
+      // Validate the complete draft before touching operational authority;
+      // the DB clock below is the only timestamp that can be persisted.
+      const validated = createRecoveryCaseV1(input, options);
       return sql.begin(async (transaction) => {
+        const authority = await lockV3RecoveryRunMutationAuthorityInTransaction(transaction, {
+          runId: validated.runId,
+          storyId: validated.storyId,
+        });
+        const recoveryCase = createRecoveryCaseV1(input, {
+          ...options,
+          now: authority.observedAt,
+        });
         await transaction.unsafe("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [
           recoveryCase.dedupeKey,
         ]);
@@ -626,15 +640,29 @@ export function createFindingRecoveryRepository(sql: Sql) {
       options: Readonly<{ now?: Date }> = {},
     ): Promise<RecoveryTransitionResult> {
       const transition = RecoveryTransitionInputSchema.parse(input);
-      const now = new Date(options.now ?? new Date());
-      if (!Number.isFinite(now.getTime())) throw new Error("RECOVERY_TRANSITION_TIME_INVALID");
+      const requestedTime = new Date(options.now ?? new Date());
+      if (!Number.isFinite(requestedTime.getTime())) throw new Error("RECOVERY_TRANSITION_TIME_INVALID");
       return sql.begin(async (transaction) => {
+        const identity = await one<{ run_id: string; story_id: string }>(
+          transaction,
+          "SELECT run_id, story_id FROM recovery_cases WHERE recovery_case_id = $1",
+          [transition.recoveryCaseId],
+        );
+        if (!identity) throw new Error("RECOVERY_CASE_NOT_FOUND");
+        const authority = await lockV3RecoveryRunMutationAuthorityInTransaction(transaction, {
+          runId: identity.run_id,
+          storyId: identity.story_id,
+        });
+        const now = authority.observedAt;
         const currentRow = await one<RecoveryCaseRow>(
           transaction,
           "SELECT * FROM recovery_cases WHERE recovery_case_id = $1 FOR UPDATE",
           [transition.recoveryCaseId],
         );
         if (!currentRow) throw new Error("RECOVERY_CASE_NOT_FOUND");
+        if (currentRow.run_id !== identity.run_id || currentRow.story_id !== identity.story_id) {
+          throw new Error("RECOVERY_CASE_STORY_IDENTITY_CHANGED");
+        }
         const current = mapRecoveryCase(currentRow);
         if (current.stateVersion !== transition.expectedStateVersion) {
           return { status: "stale_version" as const, recoveryCase: current };
@@ -841,15 +869,29 @@ export function createFindingRecoveryRepository(sql: Sql) {
       options: Readonly<{ now?: Date }> = {},
     ): Promise<RecoveryDispatchResult> {
       const request = DispatchInputSchema.parse(input);
-      const now = new Date(options.now ?? new Date());
-      if (!Number.isFinite(now.getTime())) throw new Error("RECOVERY_DISPATCH_TIME_INVALID");
+      const requestedTime = new Date(options.now ?? new Date());
+      if (!Number.isFinite(requestedTime.getTime())) throw new Error("RECOVERY_DISPATCH_TIME_INVALID");
       return sql.begin(async (transaction) => {
+        const identity = await one<{ run_id: string; story_id: string }>(
+          transaction,
+          "SELECT run_id, story_id FROM recovery_cases WHERE recovery_case_id = $1",
+          [request.recoveryCaseId],
+        );
+        if (!identity) throw new Error("RECOVERY_CASE_NOT_FOUND");
+        const authority = await lockV3RecoveryRunMutationAuthorityInTransaction(transaction, {
+          runId: identity.run_id,
+          storyId: identity.story_id,
+        });
+        const now = authority.observedAt;
         const currentRow = await one<RecoveryCaseRow>(
           transaction,
           "SELECT * FROM recovery_cases WHERE recovery_case_id = $1 FOR UPDATE",
           [request.recoveryCaseId],
         );
         if (!currentRow) throw new Error("RECOVERY_CASE_NOT_FOUND");
+        if (currentRow.run_id !== identity.run_id || currentRow.story_id !== identity.story_id) {
+          throw new Error("RECOVERY_CASE_STORY_IDENTITY_CHANGED");
+        }
         const current = mapRecoveryCase(currentRow);
         if (current.stateVersion !== request.expectedStateVersion) {
           return { status: "stale_version" as const, recoveryCase: current };

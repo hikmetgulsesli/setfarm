@@ -44,14 +44,11 @@ describe("v3 release-bound admission", () => {
   });
 
   function canaryInput(suffix: string, task: string, repetitions = [1]) {
-    const issued = new Date(Date.now() - 1_000);
-    const expires = new Date(issued.getTime() + 60 * 60 * 1_000);
     return {
       releaseSha: RELEASE_SHA,
       suiteHash: SUITE_HASH,
       preflightHash: PREFLIGHT_HASH,
-      issuedAt: issued.toISOString(),
-      expiresAt: expires.toISOString(),
+      ttlMs: 60 * 60 * 1_000,
       slots: repetitions.map((repetition) => ({
         caseHash: hashCanonicalJson({ suffix, repetition }),
         taskHash: hashCanonicalJson(task),
@@ -64,13 +61,23 @@ describe("v3 release-bound admission", () => {
   it("creates exact immutable canary slots idempotently and rejects tamper or expiry", async () => {
     const task = "build the exact admission fixture";
     const input = canaryInput("idempotent", task, [1, 2]);
-    const fixedNow = new Date(input.issuedAt);
     const repository = createV3ReleaseAdmissionRepository(database.sql, store, {
-      now: () => fixedNow,
+      now: () => new Date("2999-01-01T00:00:00.000Z"),
     });
-    const first = await repository.createCanary(input);
-    const second = await repository.createCanary(input);
+    const [first, second] = await Promise.all([
+      repository.createCanary(input),
+      repository.createCanary(input),
+    ]);
     assert.deepEqual(second, first);
+    assert.deepEqual(
+      await repository.createCanary({ ...input, slots: [...input.slots].reverse() }),
+      first,
+    );
+    assert.ok(new Date(first.admission.issuedAt).getTime() < new Date("2999-01-01T00:00:00.000Z").getTime());
+    assert.equal(
+      new Date(first.admission.expiresAt).getTime() - new Date(first.admission.issuedAt).getTime(),
+      input.ttlMs,
+    );
 
     const rows = await database.sql<Array<{ admissions: number; claims: number }>>`
       SELECT
@@ -99,14 +106,17 @@ describe("v3 release-bound admission", () => {
       (error: unknown) => error instanceof V3ReleaseAdmissionError
         && error.code === "V3_CANARY_ADMISSION_INVALID",
     );
-    const expiredRepository = createV3ReleaseAdmissionRepository(database.sql, store, {
-      now: () => new Date(new Date(input.expiresAt).getTime() + 1),
-    });
+    const expiringInput = {
+      ...canaryInput("expiring", task),
+      ttlMs: 200,
+    };
+    const expiring = await repository.createCanary(expiringInput);
+    await database.sql`SELECT pg_sleep(0.3)`;
     await assert.rejects(
-      expiredRepository.verifyCanarySelection({
+      repository.verifyCanarySelection({
         releaseSha: RELEASE_SHA,
         taskHash: hashCanonicalJson(task),
-        context,
+        context: expiring.contexts[0]!,
       }),
       (error: unknown) => error instanceof V3ReleaseAdmissionError
         && error.code === "V3_CANARY_ADMISSION_EXPIRED",
@@ -137,7 +147,7 @@ describe("v3 release-bound admission", () => {
       activationPreflight: PASS_PREFLIGHT,
       releaseAdmission,
     });
-    const createdAt = new Date().toISOString();
+    const createdAt = "2999-01-01T00:00:00.000Z";
     await database.sql.begin((sql) => persistWorkflowRun(sql, {
       run: {
         id: "v3-canary-atomic-run",
@@ -155,9 +165,11 @@ describe("v3 release-bound admission", () => {
     const rows = await database.sql<Array<{
       release_admission_hash: string;
       run_id: string;
+      run_created_at: Date;
       consumed_at: Date;
     }>>`
-      SELECT run.release_admission_hash, claim.run_id, claim.consumed_at
+      SELECT run.release_admission_hash, claim.run_id,
+             run.created_at AS run_created_at, claim.consumed_at
         FROM runs run
         JOIN v3_canary_admission_claims claim
           ON claim.run_id = run.id
@@ -165,7 +177,8 @@ describe("v3 release-bound admission", () => {
     `;
     assert.equal(rows[0]?.release_admission_hash, created.admission.admissionHash);
     assert.equal(rows[0]?.run_id, "v3-canary-atomic-run");
-    assert.equal(rows[0]?.consumed_at.toISOString(), createdAt);
+    assert.equal(rows[0]?.consumed_at.toISOString(), rows[0]?.run_created_at.toISOString());
+    assert.ok(rows[0]!.run_created_at.getTime() < new Date(createdAt).getTime());
     const stored = await createRunProtocolRepository(database.sql).read("v3-canary-atomic-run");
     assert.equal(stored.releaseAdmissionHash, created.admission.admissionHash);
     assert.equal(stored.releaseAdmissionKind, "convergence_canary");

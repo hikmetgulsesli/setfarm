@@ -243,6 +243,9 @@ async function insertLegacyRevision(value: RecoveryCaseV1): Promise<string> {
 
 async function downgradeRecoveryDeliveryLedgerToV10(): Promise<void> {
   for (const statement of [
+    // v20 replaces a v11 delivery constraint and must be unwound before the
+    // table is recreated by the v10 -> current compatibility exercise.
+    "DELETE FROM setfarm_schema_migrations WHERE version = 20",
     // v17 is intentionally unwound with its pointer contract before v11. A
     // current-schema test database otherwise retains a real FK from the review
     // resolution ledger to recovery_revision_dispatches, which is not a v10
@@ -273,12 +276,76 @@ async function downgradeRecoveryDeliveryLedgerToV10(): Promise<void> {
 }
 
 describe("revisioned recovery migration compatibility", () => {
+  it("rejects sampled-state and NULL-bypass migration 20 lease constraints", async () => {
+    database = await createIsolatedTestDatabase();
+    await database.sql.unsafe(
+      "ALTER TABLE recovery_dispatch_deliveries DROP CONSTRAINT recovery_dispatch_deliveries_lease_check",
+    );
+    await database.sql.unsafe(
+      `ALTER TABLE recovery_dispatch_deliveries
+         ADD CONSTRAINT recovery_dispatch_deliveries_lease_check CHECK (
+           (state = 'authorized'
+             AND owner_instance_id IS NULL
+             AND lease_token IS NULL
+             AND lease_expires_at IS NULL)
+           OR (state = 'attempt_reserved'
+             AND owner_instance_id IS NULL
+             AND lease_token IS NULL
+             AND lease_expires_at IS NULL)
+           OR (state IN ('leased', 'running')
+             AND owner_instance_id IS NOT NULL
+             AND lease_token IS NOT NULL
+             AND lease_expires_at IS NOT NULL)
+           OR (state IN ('succeeded', 'failed', 'blocked', 'superseded')
+             AND (
+               (owner_instance_id IS NULL AND lease_token IS NULL AND lease_expires_at IS NULL)
+               OR (owner_instance_id IS NOT NULL AND lease_token IS NOT NULL AND lease_expires_at IS NOT NULL)
+             ))
+         )`,
+    );
+
+    await assert.rejects(
+      verifyContractSpineMigrations(database.sql),
+      /recovery delivery terminal lease constraint mismatch/,
+    );
+
+    await database.sql.unsafe(
+      "ALTER TABLE recovery_dispatch_deliveries DROP CONSTRAINT recovery_dispatch_deliveries_lease_check",
+    );
+    await database.sql.unsafe(
+      `ALTER TABLE recovery_dispatch_deliveries
+         ADD CONSTRAINT recovery_dispatch_deliveries_lease_check CHECK (
+           CASE WHEN (
+             (state = 'authorized'
+               AND owner_instance_id IS NULL
+               AND lease_token IS NULL
+               AND lease_expires_at IS NULL)
+             OR (state IN ('leased', 'attempt_reserved', 'running')
+               AND owner_instance_id IS NOT NULL
+               AND lease_token IS NOT NULL
+               AND lease_expires_at IS NOT NULL)
+             OR (state IN ('succeeded', 'failed', 'blocked', 'superseded')
+               AND (
+                 (owner_instance_id IS NULL AND lease_token IS NULL AND lease_expires_at IS NULL)
+                 OR (owner_instance_id IS NOT NULL AND lease_token IS NOT NULL AND lease_expires_at IS NOT NULL)
+               ))
+           ) THEN TRUE ELSE NULL END
+         )`,
+    );
+
+    await assert.rejects(
+      verifyContractSpineMigrations(database.sql),
+      /recovery delivery terminal lease constraint mismatch/,
+    );
+  });
+
   it("keeps fresh v11 recovery revisions exact", async () => {
     database = await createIsolatedTestDatabase();
     const verified = await verifyContractSpineMigrations(database.sql);
     assert.equal(verified.migrations.find((item) => item.version === 11)?.state, "applied");
 
     const findingSet = finding("run-fresh-revision", "US-FRESH");
+    await database.insertRun(findingSet.runId);
     const findings = createFindingRecoveryRepository(database.sql);
     await findings.putFindingSet(findingSet);
     const value = recovery(findingSet);
@@ -369,6 +436,7 @@ describe("revisioned recovery migration compatibility", () => {
     assert.deepEqual(applied.applied, [
       "011_revisioned_recovery_delivery_ledger",
       "017_v3_github_review_resolution_evidence",
+      "020_recovery_terminal_lease_identity",
     ]);
     const expected = createRecoveryCaseRevisionV1({
       recoveryCaseId: legacyCase.recoveryCaseId,
@@ -454,6 +522,7 @@ describe("revisioned recovery migration compatibility", () => {
     assert.deepEqual(applied.applied, [
       "011_revisioned_recovery_delivery_ledger",
       "017_v3_github_review_resolution_evidence",
+      "020_recovery_terminal_lease_identity",
     ]);
     const rows = await database.sql<Array<{
       legacy_dispatch_id: string;

@@ -1,5 +1,6 @@
 import type postgres from "postgres";
 
+import { readDatabaseWallClock } from "../db/database-wall-clock.js";
 import { operationalOutboxIdForEventKey } from "./operational-outbox-repository.js";
 import {
   completeSingleStepClaimAndStateInTransaction,
@@ -233,7 +234,12 @@ export function createV3DeployReceiptRepository(sql: postgres.Sql) {
     }>): Promise<V3DeployReceiptCommitResult> {
       const receipt = V3DeployReceiptV1Schema.parse(input.receipt);
       assertEnvelopeAndReceipt(input.completion, receipt);
-      const commitTime = input.completion.now ? new Date(input.completion.now) : new Date();
+      if (input.completion.now && !Number.isFinite(input.completion.now.getTime())) {
+        throw new V3DeployReceiptRepositoryError(
+          "V3_DEPLOY_RECEIPT_PUBLICATION_FAILED",
+          "Deploy receipt compatibility clock is invalid",
+        );
+      }
       return sql.begin(async (transaction) => {
         const runs = await transaction.unsafe<LockedRunRow[]>(
           `SELECT r.protocol, r.status, r.packet_hash, r.accepted_candidate_hash,
@@ -282,6 +288,10 @@ export function createV3DeployReceiptRepository(sql: postgres.Sql) {
           );
         }
 
+        const commitTime = await readDatabaseWallClock(
+          transaction,
+          "V3_DEPLOY_RECEIPT_DATABASE_TIME_UNAVAILABLE",
+        );
         const transition = await completeSingleStepClaimAndStateInTransaction(transaction, {
           ...input.completion,
           now: commitTime,

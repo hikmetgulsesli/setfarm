@@ -1,6 +1,7 @@
 import type postgres from "postgres";
 import { z } from "zod";
 
+import { readDatabaseWallClock } from "../db/database-wall-clock.js";
 import {
   closeExactSingleStepClaimInTransaction,
 } from "../execution/claim-attempt-transition.js";
@@ -380,7 +381,6 @@ async function commitRecoveryRoute(
   envelope: ClaimEnvelopeV1,
   decision: V3DownstreamOperationalDecisionV1,
   plan: RuntimeCompletionPlanDescriptorV1,
-  now: Date,
 ): Promise<void> {
   await sql.begin(async (transaction) => {
     const loopRows = await transaction.unsafe<Array<{ id: string; step_index: number; status: string }>>(
@@ -401,8 +401,11 @@ async function commitRecoveryRoute(
       envelope,
       outcome: "completed",
       diagnostic: `Canonical downstream evidence routed ${decision.recoveryRoutes.length} sealed stor${decision.recoveryRoutes.length === 1 ? "y" : "ies"}`,
-      now,
     });
+    const now = await readDatabaseWallClock(
+      transaction,
+      "V3_DOWNSTREAM_DATABASE_TIME_UNAVAILABLE",
+    );
     for (const route of decision.recoveryRoutes) {
       const changed = await transaction.unsafe<Array<{ id: string }>>(
         `UPDATE stories
@@ -451,7 +454,6 @@ async function commitTerminalDecision(
   envelope: ClaimEnvelopeV1,
   decision: V3DownstreamOperationalDecisionV1,
   plan: RuntimeCompletionPlanDescriptorV1,
-  now: Date,
 ): Promise<void> {
   await sql.begin(async (transaction) => {
     const runRows = await transaction.unsafe<Array<{ protocol: string; status: string; packet_hash: string | null }>>(
@@ -471,8 +473,11 @@ async function commitTerminalDecision(
       envelope,
       outcome: "failed",
       diagnostic: `${decision.outcome}:${decision.reasonCode ?? "canonical downstream recovery blocked"}`,
-      now,
     });
+    const now = await readDatabaseWallClock(
+      transaction,
+      "V3_DOWNSTREAM_DATABASE_TIME_UNAVAILABLE",
+    );
     const stepOutput = canonicalJsonStringify(decision);
     const changed = await transaction.unsafe<Array<{ id: string }>>(
       `UPDATE steps
@@ -522,12 +527,13 @@ export async function commitV3DownstreamEvidenceDecision(
   const envelope = ClaimEnvelopeV1Schema.parse(input.envelope);
   const decision = createV3DownstreamOperationalDecision({ envelope, route: input.route });
   const completionPlan = createV3DownstreamCompletionPlan(decision);
-  const now = new Date(input.now ?? new Date());
-  if (!Number.isFinite(now.getTime())) fail("V3_DOWNSTREAM_TRANSITION_TIME_INVALID", "transition time is invalid");
+  if (input.now && !Number.isFinite(new Date(input.now).getTime())) {
+    fail("V3_DOWNSTREAM_TRANSITION_TIME_INVALID", "transition time is invalid");
+  }
   if (decision.outcome === "recovery_routed") {
-    await commitRecoveryRoute(sql, envelope, decision, completionPlan, now);
+    await commitRecoveryRoute(sql, envelope, decision, completionPlan);
   } else {
-    await commitTerminalDecision(sql, envelope, decision, completionPlan, now);
+    await commitTerminalDecision(sql, envelope, decision, completionPlan);
   }
   return Object.freeze({ decision, completionPlan });
 }

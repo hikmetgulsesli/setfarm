@@ -276,10 +276,10 @@ export async function acquireClaimMutationAuthorityInTransaction(
     const fencedRuntimes = await transaction.unsafe<Array<{ session_id: string }>>(
       `UPDATE runtime_sessions
           SET state_version = state_version + 1,
-              updated_at = NOW()
+              updated_at = $2
         WHERE claim_id = $1
         RETURNING session_id`,
-      [input.claimId],
+      [input.claimId, wallClock],
     );
     if (fencedRuntimes.length !== runtimeSessions.length) {
       throw new Error("CLAIM_MUTATION_RUNTIME_FENCE_CAS_LOST");

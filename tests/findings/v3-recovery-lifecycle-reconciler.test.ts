@@ -240,6 +240,110 @@ describe("v3 recovery lifecycle reconciler", () => {
     return { publication: publication!, attempt: reservation.attempt };
   }
 
+  async function expireDelivery(dispatchId: string): Promise<void> {
+    const clocks = await database.sql<Array<{ wall_clock: Date }>>`
+      SELECT clock_timestamp() AS wall_clock
+    `;
+    await database.sql`
+      UPDATE recovery_dispatch_deliveries
+         SET lease_expires_at = ${new Date(clocks[0]!.wall_clock.getTime() - 1_000)}
+       WHERE dispatch_id = ${dispatchId}
+    `;
+  }
+
+  async function expireModelOwner(dispatchId: string, attemptId: string): Promise<void> {
+    await database.sql.begin(async (transaction) => {
+      const clocks = await transaction.unsafe<Array<{ wall_clock: Date }>>(
+        "SELECT clock_timestamp() AS wall_clock",
+      );
+      const anchor = clocks[0]!.wall_clock.getTime();
+      const claimAt = new Date(anchor - 3_000);
+      const startedAt = new Date(anchor - 2_000);
+      const expiresAt = new Date(anchor - 1_000);
+      await transaction.unsafe(
+        `UPDATE claim_log claim
+            SET claimed_at = $2
+          WHERE claim.id = (SELECT attempt.claim_id FROM execution_attempts attempt WHERE attempt.attempt_id = $1)`,
+        [attemptId, claimAt],
+      );
+      await transaction.unsafe(
+        `UPDATE stories story
+            SET claimed_at = $2
+           FROM execution_attempts attempt
+          WHERE attempt.attempt_id = $1
+            AND story.run_id = attempt.run_id
+            AND story.story_id = attempt.story_id`,
+        [attemptId, claimAt],
+      );
+      await transaction.unsafe(
+        `UPDATE runtime_sessions
+            SET created_at = $2, heartbeat_at = $3, updated_at = $3
+          WHERE attempt_id = $1`,
+        [attemptId, claimAt, startedAt],
+      );
+      await transaction.unsafe(
+        `UPDATE execution_attempts
+            SET lease_acquired_at = $2, heartbeat_at = $2,
+                lease_expires_at = $3, updated_at = $2
+          WHERE attempt_id = $1`,
+        [attemptId, startedAt, expiresAt],
+      );
+      await transaction.unsafe(
+        `UPDATE recovery_dispatch_deliveries
+            SET started_at = $2, lease_expires_at = $3, updated_at = $2
+          WHERE dispatch_id = $1`,
+        [dispatchId, startedAt, expiresAt],
+      );
+    });
+  }
+
+  async function expireUnreservedPublication(dispatchId: string): Promise<void> {
+    await database.sql.begin(async (transaction) => {
+      const clocks = await transaction.unsafe<Array<{ wall_clock: Date }>>(
+        "SELECT clock_timestamp() AS wall_clock",
+      );
+      const anchor = clocks[0]!.wall_clock.getTime();
+      const deliveryAt = new Date(anchor - 4_000);
+      const claimAt = new Date(anchor - 3_000);
+      const expiresAt = new Date(anchor - 1_000);
+      await transaction.unsafe(
+        `UPDATE claim_log claim
+            SET claimed_at = $2
+           FROM recovery_dispatch_deliveries delivery
+          WHERE delivery.dispatch_id = $1
+            AND claim.run_id = delivery.run_id
+            AND claim.story_id = delivery.story_id
+            AND claim.outcome IS NULL`,
+        [dispatchId, claimAt],
+      );
+      await transaction.unsafe(
+        `UPDATE stories story
+            SET claimed_at = $2
+           FROM recovery_dispatch_deliveries delivery
+          WHERE delivery.dispatch_id = $1
+            AND story.run_id = delivery.run_id
+            AND story.story_id = delivery.story_id`,
+        [dispatchId, claimAt],
+      );
+      await transaction.unsafe(
+        `UPDATE runtime_sessions runtime
+            SET created_at = $2, heartbeat_at = $2, updated_at = $2
+           FROM recovery_dispatch_deliveries delivery
+          WHERE delivery.dispatch_id = $1
+            AND runtime.run_id = delivery.run_id
+            AND runtime.story_id = delivery.story_id
+            AND runtime.state <> 'released'`,
+        [dispatchId, claimAt],
+      );
+      await transaction.unsafe(
+        `UPDATE recovery_dispatch_deliveries
+            SET lease_expires_at = $2, updated_at = $3
+          WHERE dispatch_id = $1`,
+        [dispatchId, expiresAt, deliveryAt],
+      );
+    });
+  }
+
   async function waitForBlockedStoryAdvisory(minimum = 1): Promise<void> {
     for (let attempt = 0; attempt < 150; attempt += 1) {
       const rows = await database.sql<Array<{ blocked: number }>>`
@@ -992,6 +1096,7 @@ describe("v3 recovery lifecycle reconciler", () => {
       sessionId,
       now: new Date(leaseAt.getTime() + 100),
     });
+    await expireModelOwner(handoff.dispatchId, bound.attempt.attemptId);
     const reconcileAt = new Date(leaseAt.getTime() + 70_000);
     const reconciler = createV3RecoveryLifecycleReconciler(database.sql);
 
@@ -1114,10 +1219,11 @@ describe("v3 recovery lifecycle reconciler", () => {
       now: leaseAt,
     });
     const sessionId = `RTS_${"q".repeat(20)}-${sequence}`;
-    await reserveModelAttempt(fixture, handoff, {
+    const bound = await reserveModelAttempt(fixture, handoff, {
       sessionId,
       now: new Date(leaseAt.getTime() + 100),
     });
+    await expireModelOwner(handoff.dispatchId, bound.attempt.attemptId);
     const reconciler = createV3RecoveryLifecycleReconciler(database.sql);
     const expiredAt = new Date(leaseAt.getTime() + 70_000);
     const requested = await reconciler.reconcileActive({ runId: fixture.runId }, { now: expiredAt });
@@ -1152,11 +1258,12 @@ describe("v3 recovery lifecycle reconciler", () => {
       now: leaseAt,
     });
     const sessionId = `RTS_${"z".repeat(20)}-${sequence}`;
-    await reserveModelAttempt(fixture, handoff, {
+    const bound = await reserveModelAttempt(fixture, handoff, {
       sessionId,
       now: new Date(leaseAt.getTime() + 100),
       start: false,
     });
+    await expireModelOwner(handoff.dispatchId, bound.attempt.attemptId);
     const report = await createV3RecoveryLifecycleReconciler(database.sql).reconcileActive(
       { runId: fixture.runId },
       { now: new Date(leaseAt.getTime() + 70_000) },
@@ -1170,7 +1277,8 @@ describe("v3 recovery lifecycle reconciler", () => {
   it("repairs an acquire/post-lease-validation crash exactly once under concurrent scans", async () => {
     const fixture = await setup();
     const leaseAt = new Date(fixture.base.getTime() + 2_000);
-    await lease(fixture, { ownerInstanceId: "lease-race-owner", leaseMs: 1_000, now: leaseAt });
+    const handoff = await lease(fixture, { ownerInstanceId: "lease-race-owner", leaseMs: 60_000, now: leaseAt });
+    await expireDelivery(handoff.dispatchId);
     const reconcileAt = new Date(leaseAt.getTime() + 2_000);
     const reconciler = createV3RecoveryLifecycleReconciler(database.sql);
 
@@ -1179,7 +1287,11 @@ describe("v3 recovery lifecycle reconciler", () => {
       reconciler.reconcileActive({ runId: fixture.runId }, { now: reconcileAt }),
     ]);
     const events = reports.flatMap((report) => report.events);
-    assert.equal(reports.reduce((sum, report) => sum + report.counts.resetExpiredLeases, 0), 1);
+    assert.equal(
+      reports.reduce((sum, report) => sum + report.counts.resetExpiredLeases, 0),
+      1,
+      JSON.stringify(events),
+    );
     assert.equal(events.filter((item) => item.mutated).length, 1);
     assert.ok(events.some((item) => item.code === "V3_RECOVERY_LIFECYCLE_AUTHORIZED_CONSISTENT"));
 
@@ -1195,12 +1307,112 @@ describe("v3 recovery lifecycle reconciler", () => {
     assert.equal(attempts[0]?.count, 0, "reconciliation never fabricates an attempt");
   });
 
+  it("rolls lifecycle mutation back when its canonical outbox evidence cannot commit", async () => {
+    const fixture = await setup();
+    const leaseAt = new Date(fixture.base.getTime() + 2_000);
+    const handoff = await lease(fixture, {
+      ownerInstanceId: "atomic-outbox-owner",
+      leaseMs: 60_000,
+      now: leaseAt,
+    });
+    await expireDelivery(handoff.dispatchId);
+    const reconcileAt = new Date(leaseAt.getTime() + 2_000);
+    const functionName = `test_fail_lifecycle_outbox_${sequence}`;
+    const triggerName = `trg_fail_lifecycle_outbox_${sequence}`;
+    try {
+      await database.sql.unsafe(
+        `CREATE FUNCTION ${functionName}() RETURNS trigger AS $$
+         BEGIN
+           IF NEW.event_type = 'product_compiler.v3_recovery_lifecycle_reconciled' THEN
+             RAISE EXCEPTION 'TEST_FORCED_LIFECYCLE_OUTBOX_FAILURE';
+           END IF;
+           RETURN NEW;
+         END;
+         $$ LANGUAGE plpgsql`,
+      );
+      await database.sql.unsafe(
+        `CREATE TRIGGER ${triggerName}
+         BEFORE INSERT ON operational_outbox
+         FOR EACH ROW EXECUTE FUNCTION ${functionName}()`,
+      );
+      await assert.rejects(
+        createV3RecoveryLifecycleReconciler(database.sql).reconcileActive(
+          { runId: fixture.runId },
+          { now: reconcileAt },
+        ),
+        /TEST_FORCED_LIFECYCLE_OUTBOX_FAILURE/,
+      );
+    } finally {
+      await database.sql.unsafe(`DROP TRIGGER IF EXISTS ${triggerName} ON operational_outbox`);
+      await database.sql.unsafe(`DROP FUNCTION IF EXISTS ${functionName}()`);
+    }
+
+    const rolledBack = await fixture.deliveries.findDelivery(fixture.dispatch.dispatchId);
+    assert.equal(rolledBack?.state, "leased");
+    assert.equal(rolledBack?.ownerInstanceId, handoff.lease.ownerInstanceId);
+    assert.equal(rolledBack?.leaseToken, handoff.lease.leaseToken);
+    assert.equal((await database.sql<Array<{ count: number }>>`
+      SELECT COUNT(*)::integer AS count
+        FROM operational_outbox
+       WHERE aggregate_id = ${fixture.runId}
+         AND event_type = 'product_compiler.v3_recovery_lifecycle_reconciled'
+    `)[0]?.count, 0);
+
+    const committed = await createV3RecoveryLifecycleReconciler(database.sql).reconcileActive(
+      { runId: fixture.runId },
+      { now: reconcileAt },
+    );
+    assert.equal(committed.counts.resetExpiredLeases, 1, JSON.stringify(committed.events));
+    const evidence = await database.sql<Array<{ action: string; mutated: boolean }>>`
+      SELECT payload->>'action' AS action,
+             (payload->>'mutated')::boolean AS mutated
+        FROM operational_outbox
+       WHERE aggregate_id = ${fixture.runId}
+         AND event_type = 'product_compiler.v3_recovery_lifecycle_reconciled'
+    `;
+    assert.deepEqual(evidence.map((row) => ({ ...row })), [{
+      action: "reset_expired_lease",
+      mutated: true,
+    }]);
+  });
+
+  it("deduplicates repeated report-only evidence while its source row is unchanged", async () => {
+    const fixture = await setup();
+    const leaseAt = new Date(fixture.base.getTime() + 2_000);
+    await lease(fixture, {
+      ownerInstanceId: "stable-evidence-owner",
+      leaseMs: 60_000,
+      now: leaseAt,
+    });
+    const reconciler = createV3RecoveryLifecycleReconciler(database.sql);
+    const first = await reconciler.reconcileActive(
+      { runId: fixture.runId },
+      { now: new Date(leaseAt.getTime() + 1_000) },
+    );
+    const second = await reconciler.reconcileActive(
+      { runId: fixture.runId },
+      { now: new Date(leaseAt.getTime() + 2_000) },
+    );
+    assert.equal(first.events[0]?.code, "V3_RECOVERY_LIFECYCLE_LEASE_NOT_EXPIRED");
+    assert.equal(second.events[0]?.code, "V3_RECOVERY_LIFECYCLE_LEASE_NOT_EXPIRED");
+    assert.equal(first.events[0]?.observedAt, second.events[0]?.observedAt);
+
+    const evidence = await database.sql<Array<{ count: number; keys: number }>>`
+      SELECT COUNT(*)::integer AS count,
+             COUNT(DISTINCT event_key)::integer AS keys
+        FROM operational_outbox
+       WHERE aggregate_id = ${fixture.runId}
+         AND event_type = 'product_compiler.v3_recovery_lifecycle_reconciled'
+    `;
+    assert.deepEqual({ ...evidence[0]! }, { count: 1, keys: 1 });
+  });
+
   it("rolls back only the exact expired reserved publication before attempt reservation", async () => {
     const fixture = await setup();
     const leaseAt = new Date(fixture.base.getTime() + 2_000);
     const handoff = await lease(fixture, {
       ownerInstanceId: "publication-owner",
-      leaseMs: 1_000,
+      leaseMs: 60_000,
       now: leaseAt,
     });
     const sessionId = `RTS_${"p".repeat(20)}-${sequence}`;
@@ -1209,6 +1421,7 @@ describe("v3 recovery lifecycle reconciler", () => {
       now: new Date(leaseAt.getTime() + 100),
     });
     assert.ok(publication);
+    await expireUnreservedPublication(handoff.dispatchId);
 
     const report = await createV3RecoveryLifecycleReconciler(database.sql).reconcileActive(
       { runId: fixture.runId },
@@ -1238,6 +1451,60 @@ describe("v3 recovery lifecycle reconciler", () => {
     const delivery = await fixture.deliveries.findDelivery(fixture.dispatch.dispatchId);
     assert.equal(delivery?.state, "authorized");
     assert.equal(delivery?.attemptId, undefined);
+  });
+
+  it("fails closed when a reserved publication heartbeat drifts from its creation proof", async () => {
+    const fixture = await setup();
+    const leaseAt = new Date(fixture.base.getTime() + 2_000);
+    const handoff = await lease(fixture, {
+      ownerInstanceId: "publication-heartbeat-drift-owner",
+      leaseMs: 60_000,
+      now: leaseAt,
+    });
+    const sessionId = `RTS_${"h".repeat(20)}-${sequence}`;
+    const publication = await publish(fixture, handoff, {
+      sessionId,
+      now: new Date(leaseAt.getTime() + 100),
+    });
+    assert.ok(publication);
+    await expireUnreservedPublication(handoff.dispatchId);
+    await database.sql`
+      UPDATE runtime_sessions
+         SET heartbeat_at = created_at + INTERVAL '1 millisecond',
+             updated_at = created_at + INTERVAL '1 millisecond'
+       WHERE session_id = ${sessionId}
+    `;
+
+    const report = await createV3RecoveryLifecycleReconciler(database.sql).reconcileActive(
+      { runId: fixture.runId },
+      { now: new Date(leaseAt.getTime() + 2_000) },
+    );
+    assert.equal(report.counts.rolledBackPublications, 0);
+    assert.equal(report.counts.quarantined, 1);
+    assert.equal(report.events[0]?.code, "V3_RECOVERY_LIFECYCLE_UNBOUND_OWNER_AMBIGUOUS");
+
+    const ownerRows = await database.sql<Array<{
+      runtime_state: string;
+      claim_outcome: string | null;
+      story_status: string;
+    }>>`
+      SELECT runtime.state AS runtime_state,
+             claim.outcome AS claim_outcome,
+             story.status AS story_status
+        FROM runtime_sessions runtime
+        JOIN claim_log claim ON claim.id = runtime.claim_id
+        JOIN stories story ON story.id = runtime.story_db_id
+       WHERE runtime.session_id = ${sessionId}
+    `;
+    assert.deepEqual({ ...ownerRows[0]! }, {
+      runtime_state: "reserved",
+      claim_outcome: null,
+      story_status: "running",
+    });
+    assert.equal(
+      (await fixture.deliveries.findDelivery(fixture.dispatch.dispatchId))?.state,
+      "leased",
+    );
   });
 
   it("advances only an exact running runtime and active attempt, then becomes a no-op", async () => {
@@ -1276,6 +1543,11 @@ describe("v3 recovery lifecycle reconciler", () => {
       evidenceRefs: [`setfarm://claim-log/${publication!.claimId}`],
     }, { now: new Date(leaseAt.getTime() + 200) });
     assert.equal(reservation.status, "reserved");
+    await createAttemptRepository(database.sql).markRunning({
+      attemptId: reservation.attempt.attemptId,
+      generation: reservation.attempt.generation,
+      fenceToken: reservation.attempt.fenceToken,
+    }, { now: new Date("2200-01-01T00:00:00.000Z") });
     await createRuntimeSessionRepository(database.sql).bindAttempt({
       sessionId,
       attemptId: reservation.attempt.attemptId,
@@ -1284,10 +1556,23 @@ describe("v3 recovery lifecycle reconciler", () => {
     });
     await database.sql`
       UPDATE runtime_sessions
-         SET state = 'running', started_at = ${new Date(leaseAt.getTime() + 400)},
+         SET state = 'running',
+             created_at = (
+               SELECT claim.claimed_at + interval '1 second'
+                 FROM claim_log claim
+                WHERE claim.id = runtime_sessions.claim_id
+             ),
+             started_at = ${new Date(leaseAt.getTime() + 400)},
              heartbeat_at = ${new Date(leaseAt.getTime() + 400)},
              updated_at = ${new Date(leaseAt.getTime() + 400)}
        WHERE session_id = ${sessionId} AND state = 'reserved'
+    `;
+    await database.sql`
+      UPDATE recovery_dispatch_deliveries delivery
+         SET started_at = claim.claimed_at + interval '2 seconds'
+        FROM claim_log claim
+       WHERE delivery.dispatch_id = ${fixture.dispatch.dispatchId}
+         AND claim.id = delivery.claim_id
     `;
 
     const reconciler = createV3RecoveryLifecycleReconciler(database.sql);
@@ -1295,7 +1580,7 @@ describe("v3 recovery lifecycle reconciler", () => {
       { runId: fixture.runId },
       { now: new Date(leaseAt.getTime() + 500) },
     );
-    assert.equal(first.counts.advancedRunning, 1);
+    assert.equal(first.counts.advancedRunning, 1, JSON.stringify(first, null, 2));
     assert.equal((await fixture.deliveries.findDelivery(fixture.dispatch.dispatchId))?.state, "running");
 
     const replay = await reconciler.reconcileActive(
@@ -1326,7 +1611,7 @@ describe("v3 recovery lifecycle reconciler", () => {
     const runtimeLeaseAt = new Date(runtimeFixture.base.getTime() + 2_000);
     const handoff = await lease(runtimeFixture, {
       ownerInstanceId: "starting-runtime-owner",
-      leaseMs: 1_000,
+      leaseMs: 60_000,
       now: runtimeLeaseAt,
     });
     const sessionId = `RTS_${"s".repeat(20)}-${sequence}`;
@@ -1340,6 +1625,7 @@ describe("v3 recovery lifecycle reconciler", () => {
       ownerInstanceId: handoff.lease.ownerInstanceId,
       now: new Date(runtimeLeaseAt.getTime() + 200),
     });
+    await expireDelivery(handoff.dispatchId);
 
     const unsafeReport = await createV3RecoveryLifecycleReconciler(database.sql).reconcileActive(
       { runId: runtimeFixture.runId },
@@ -1365,9 +1651,9 @@ describe("v3 recovery lifecycle reconciler", () => {
   it("fails closed on an ambiguous expired lease and never exposes a normal pending story", async () => {
     const fixture = await setup();
     const leaseAt = new Date(fixture.base.getTime() + 2_000);
-    await lease(fixture, {
+    const handoff = await lease(fixture, {
       ownerInstanceId: "ambiguous-owner",
-      leaseMs: 1_000,
+      leaseMs: 60_000,
       now: leaseAt,
     });
     const claims = await database.sql<Array<{ id: number }>>`
@@ -1375,6 +1661,7 @@ describe("v3 recovery lifecycle reconciler", () => {
       VALUES (${fixture.runId}, 'implement', ${fixture.storyId}, 'orphan-agent', ${new Date(leaseAt.getTime() + 100)})
       RETURNING id::integer AS id
     `;
+    await expireDelivery(handoff.dispatchId);
 
     const report = await createV3RecoveryLifecycleReconciler(database.sql).reconcileActive(
       { runId: fixture.runId },

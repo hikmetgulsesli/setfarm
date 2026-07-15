@@ -1,8 +1,18 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
+import {
+  applyContractSpineMigrations,
+  planContractSpineMigrations,
+  readContractSpineMigrationAttestation,
+  rollbackRecoveryTerminalLeaseIdentityToV19,
+} from "../../src/db/contract-spine-migrations.js";
 import { createAttemptRepository } from "../../src/execution/attempt-repository.js";
 import { transitionRunToTerminal } from "../../src/execution/run-terminal-transition.js";
+import { createRuntimeSessionRepository } from "../../src/execution/runtime-session-repository.js";
+import { createFindingSetV1 } from "../../src/findings/finding-set.js";
+import { createFindingRecoveryRepository } from "../../src/recovery/finding-recovery-repository.js";
+import { createRecoveryDeliveryRepository } from "../../src/recovery/recovery-delivery-repository.js";
 import { exactProductReservation, HASH_A } from "./fixtures.js";
 import { createIsolatedTestDatabase } from "./test-database.js";
 
@@ -27,6 +37,93 @@ async function seedActiveStory(database: Awaited<ReturnType<typeof createIsolate
     RETURNING id::integer AS id
   `;
   return { stepDbId, storyDbId, claimId: claims[0]!.id };
+}
+
+async function seedActiveRecovery(
+  database: Awaited<ReturnType<typeof createIsolatedTestDatabase>>,
+  input: Readonly<{ runId: string; runStatus: "failed" | "completed" }>,
+) {
+  const releaseSha = "d".repeat(40);
+  const releaseAdmissionHash = await database.seedV3ReleaseGoAdmission(releaseSha);
+  await database.sql`
+    INSERT INTO runs (
+      id, workflow_id, task, status, protocol,
+      compiler_release_sha, activation_preflight_hash, packet_hash, release_admission_hash
+    ) VALUES (
+      ${input.runId}, 'feature-dev', 'terminal recovery chain', 'running', 'v3',
+      ${releaseSha}, ${"e".repeat(64)}, ${HASH_A}, ${releaseAdmissionHash}
+    )
+  `;
+  const stepDbId = `${input.runId}-implement`;
+  const storyDbId = `${input.runId}-story`;
+  const storyId = "US-RECOVERY-TERMINAL";
+  await database.sql`
+    INSERT INTO steps
+      (id, run_id, step_id, agent_id, step_index, input_template, expects, status, type)
+    VALUES
+      (${stepDbId}, ${input.runId}, 'implement', 'feature-dev_developer', 1, '', '', 'pending', 'loop')
+  `;
+  await database.sql`
+    INSERT INTO stories
+      (id, run_id, story_index, story_id, title, status)
+    VALUES
+      (${storyDbId}, ${input.runId}, 1, ${storyId}, 'Terminal recovery story', 'failed')
+  `;
+  const findingSet = createFindingSetV1({
+    runId: input.runId,
+    storyId,
+    packetHash: HASH_A,
+    sliceHash: "b".repeat(64),
+    sourceRevision: { sha: "1".repeat(40), treeHash: "2".repeat(40) },
+    findings: [{
+      origin: "runtime",
+      classification: "structured",
+      invariantRef: "INV_SAVE_RELOAD",
+      sourceLocators: [{ path: "src/App.tsx", contentHash: "3".repeat(64) }],
+      observedEvidenceRefs: ["4".repeat(64)],
+      expectedPredicateRef: "EVID_SAVE_RELOAD",
+      status: "open",
+    }],
+  });
+  const findings = createFindingRecoveryRepository(database.sql);
+  await findings.putFindingSet(findingSet);
+  const opened = await findings.openRecoveryCase({
+    runId: input.runId,
+    storyId,
+    findingSetHash: findingSet.findingSetHash,
+    findingIds: findingSet.findings.map((finding) => finding.findingId),
+    packetHash: HASH_A,
+    sliceHash: "b".repeat(64),
+    sourceRevision: findingSet.sourceRevision,
+    owner: "implement",
+    expectedDelta: {
+      kind: "source_change",
+      invariantRefs: ["INV_SAVE_RELOAD"],
+      requiredPaths: ["src/App.tsx"],
+    },
+    allowedPaths: ["src/App.tsx"],
+    evidencePlan: ["EVID_SAVE_RELOAD"],
+    priorAttemptRefs: [],
+    budget: {
+      limits: { implement: 1, supervisorRepair: 1, evidenceOnly: 1 },
+      used: { implement: 0, supervisorRepair: 0, evidenceOnly: 0 },
+    },
+    status: "open",
+    decisionRefs: [],
+  });
+  const deliveries = createRecoveryDeliveryRepository(database.sql);
+  const revision = await deliveries.findCurrentRevision(opened.recoveryCase.recoveryCaseId);
+  assert.ok(revision);
+  const authorized = await deliveries.authorizeCurrentRevision({
+    recoveryCaseId: opened.recoveryCase.recoveryCaseId,
+    revisionId: revision.revisionId,
+    expectedStateVersion: opened.recoveryCase.stateVersion,
+    dispatchClass: "product_implementation",
+  });
+  assert.equal(authorized.status, "authorized");
+  if (authorized.status !== "authorized") throw new Error("expected authorized recovery fixture");
+  await database.sql`UPDATE runs SET status = ${input.runStatus} WHERE id = ${input.runId}`;
+  return { recoveryCaseId: opened.recoveryCase.recoveryCaseId, dispatchId: authorized.dispatch.dispatchId };
 }
 
 describe("canonical run terminal owner", () => {
@@ -163,6 +260,79 @@ describe("canonical run terminal owner", () => {
     }
   });
 
+  it("refuses terminal replay while a historical runtime may still be executing", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const runId = "run-terminal-replay-live-runtime";
+      await database.insertRun(runId);
+      const { stepDbId, storyDbId, claimId } = await seedActiveStory(database, runId);
+      const attempts = createAttemptRepository(database.sql, {
+        attemptId: () => "ATT_run-terminal-replay-live",
+        fenceToken: () => "c".repeat(64),
+      });
+      const reserved = await attempts.reserve(exactProductReservation({
+        claimId,
+        runId,
+        agentId: "feature-dev_developer",
+        evidenceRefs: [`setfarm://claim-log/${claimId}`],
+      }));
+      assert.equal(reserved.status, "reserved");
+      const sessionId = "RTS_run-terminal-replay-live-runtime";
+      const sessions = createRuntimeSessionRepository(database.sql);
+      await sessions.reserve({
+        sessionId,
+        runId,
+        stepDbId,
+        workflowStepId: "implement",
+        storyDbId,
+        storyId: "US-002",
+        claimId,
+        claimAgentId: "feature-dev_developer",
+        runtimeAgentId: "feature-dev_developer",
+        runtimeKind: "local_process",
+        ownerInstanceId: "historical-live-owner",
+      });
+      await sessions.bindAttempt({
+        sessionId,
+        attemptId: reserved.attempt.attemptId,
+        ownerInstanceId: "historical-live-owner",
+      });
+      await database.sql`
+        UPDATE runtime_sessions SET state = 'running' WHERE session_id = ${sessionId}
+      `;
+      await database.sql`UPDATE runs SET status = 'cancelled' WHERE id = ${runId}`;
+
+      await assert.rejects(
+        transitionRunToTerminal(database.sql, {
+          runId,
+          status: "cancelled",
+          diagnostic: "must not erase a potentially live historical owner",
+        }),
+        /RUN_TERMINAL_REPLAY_RUNTIME_NOT_DRAINED:1/,
+      );
+      const rows = await database.sql<Array<{
+        claim_outcome: string | null;
+        attempt_disposition: string;
+        runtime_state: string;
+      }>>`
+        SELECT claim.outcome AS claim_outcome,
+               attempt.disposition AS attempt_disposition,
+               runtime.state AS runtime_state
+          FROM claim_log claim
+          JOIN execution_attempts attempt ON attempt.claim_id = claim.id
+          JOIN runtime_sessions runtime ON runtime.claim_id = claim.id
+         WHERE claim.id = ${claimId}
+      `;
+      assert.deepEqual({ ...rows[0]! }, {
+        claim_outcome: null,
+        attempt_disposition: "claimed",
+        runtime_state: "running",
+      });
+    } finally {
+      await database.cleanup();
+    }
+  });
+
   it("does not treat exact packet-bound v3 owners as failure drain proof", async () => {
     const database = await createIsolatedTestDatabase();
     try {
@@ -263,6 +433,8 @@ describe("canonical run terminal owner", () => {
         previousStatus: "running",
         closedClaims: 0,
         closedAttempts: 0,
+        closedRecoveryDeliveries: 0,
+        closedRecoveryCases: 0,
         changedSteps: 1,
         changedStories: 0,
       });
@@ -318,6 +490,192 @@ describe("canonical run terminal owner", () => {
          WHERE r.id = ${runId}
       `;
       assert.deepEqual({ ...state[0] }, { status: "running", outcome: null });
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("atomically closes active recovery residue on an already-failed v3 run", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const runId = "run-terminal-v3-recovery-residue";
+      const fixture = await seedActiveRecovery(database, { runId, runStatus: "failed" });
+      const result = await transitionRunToTerminal(database.sql, {
+        runId,
+        status: "failed",
+        diagnostic: "reconcile historical terminal recovery owner",
+      });
+      assert.equal(result.closedRecoveryDeliveries, 1);
+      assert.equal(result.closedRecoveryCases, 1);
+
+      const delivery = await createRecoveryDeliveryRepository(database.sql)
+        .findDelivery(fixture.dispatchId);
+      assert.equal(delivery?.schema, "setfarm.recovery-dispatch-delivery.v2");
+      assert.equal(delivery?.state, "blocked");
+      assert.equal(delivery?.ownerInstanceId, undefined);
+      assert.equal(delivery?.leaseToken, undefined);
+      assert.equal(delivery?.terminalResult.schema, "setfarm.run-terminal-recovery-chain.v1");
+      const rows = await database.sql<Array<{
+        case_status: string;
+        case_terminal: unknown;
+        event_deliveries: number;
+        event_cases: number;
+      }>>`
+        SELECT recovery_case.status AS case_status,
+               recovery_case.terminal AS case_terminal,
+               (outbox.payload->>'closedRecoveryDeliveries')::integer AS event_deliveries,
+               (outbox.payload->>'closedRecoveryCases')::integer AS event_cases
+          FROM recovery_cases recovery_case
+          JOIN operational_outbox outbox
+            ON outbox.aggregate_id = recovery_case.run_id
+           AND outbox.event_type = 'run.terminal'
+         WHERE recovery_case.recovery_case_id = ${fixture.recoveryCaseId}
+      `;
+      assert.equal(rows[0]?.case_status, "blocked");
+      assert.deepEqual(rows[0]?.case_terminal, {
+        owner: "implement",
+        outcome: "blocked",
+        reasonCode: "evidence_inconclusive",
+        evidenceBundleHashes: [],
+      });
+      assert.equal(rows[0]?.event_deliveries, 1);
+      assert.equal(rows[0]?.event_cases, 1);
+
+      const settled = await database.sql<Array<{
+        updated_at: Date;
+        terminal_events: number;
+      }>>`
+        SELECT run.updated_at,
+               (SELECT COUNT(*)::integer FROM operational_outbox event
+                 WHERE event.aggregate_id = run.id
+                   AND event.event_type = 'run.terminal') AS terminal_events
+          FROM runs run
+         WHERE run.id = ${runId}
+      `;
+      await transitionRunToTerminal(database.sql, {
+        runId,
+        status: "failed",
+        diagnostic: "same settled state observed through different prose",
+      });
+      await transitionRunToTerminal(database.sql, {
+        runId,
+        status: "failed",
+        diagnostic: "another operator description must remain a no-op",
+      });
+      const replayed = await database.sql<Array<{
+        updated_at: Date;
+        terminal_events: number;
+      }>>`
+        SELECT run.updated_at,
+               (SELECT COUNT(*)::integer FROM operational_outbox event
+                 WHERE event.aggregate_id = run.id
+                   AND event.event_type = 'run.terminal') AS terminal_events
+          FROM runs run
+         WHERE run.id = ${runId}
+      `;
+      assert.equal(replayed[0]!.updated_at.toISOString(), settled[0]!.updated_at.toISOString());
+      assert.equal(settled[0]!.terminal_events, 1);
+      assert.equal(replayed[0]!.terminal_events, 1);
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("refuses to erase an active recovery owner from a completed v3 run", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const runId = "run-terminal-v3-complete-recovery";
+      const fixture = await seedActiveRecovery(database, { runId, runStatus: "completed" });
+      await assert.rejects(
+        transitionRunToTerminal(database.sql, {
+          runId,
+          status: "completed",
+          diagnostic: "must preserve unresolved recovery evidence",
+        }),
+        /RUN_TERMINAL_ACTIVE_RECOVERY/,
+      );
+      assert.equal(
+        (await createRecoveryDeliveryRepository(database.sql).findDelivery(fixture.dispatchId))?.state,
+        "authorized",
+      );
+      assert.equal(
+        (await createFindingRecoveryRepository(database.sql)
+          .findRecoveryCase(fixture.recoveryCaseId))?.status,
+        "repairing",
+      );
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("downgrades migration 20 terminal rows to the exact v19 reader contract", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const runId = "run-terminal-v19-binary-rollback";
+      const fixture = await seedActiveRecovery(database, { runId, runStatus: "failed" });
+      const targetReleaseSha = "7".repeat(40);
+      await assert.rejects(
+        rollbackRecoveryTerminalLeaseIdentityToV19(database.sql, { targetReleaseSha }),
+        /Migration 20 rollback requires zero active owners/,
+      );
+      await transitionRunToTerminal(database.sql, {
+        runId,
+        status: "failed",
+        diagnostic: "create a lease-free v2 terminal row before binary rollback",
+      });
+      assert.equal(
+        (await createRecoveryDeliveryRepository(database.sql).findDelivery(fixture.dispatchId))?.schema,
+        "setfarm.recovery-dispatch-delivery.v2",
+      );
+      const rollback = await rollbackRecoveryTerminalLeaseIdentityToV19(database.sql, {
+        targetReleaseSha,
+      });
+      assert.match(rollback.rollbackId, /^RBK_[a-f0-9]{64}$/);
+      assert.equal(rollback.rowsRewritten, 1);
+      assert.equal(rollback.targetVersion, 19);
+      const legacyReadable = await createRecoveryDeliveryRepository(database.sql)
+        .findDelivery(fixture.dispatchId);
+      assert.equal(legacyReadable?.schema, "setfarm.recovery-dispatch-delivery.v1");
+      assert.equal(legacyReadable?.ownerInstanceId, "setfarm-v19-rollback");
+      assert.match(legacyReadable?.leaseToken ?? "", /^ROLLBACK_[a-f0-9]{32}$/);
+
+      const plan = await planContractSpineMigrations(database.sql);
+      assert.equal(plan.migrations.find((migration) => migration.version === 20)?.state, "pending");
+      const attestation = await readContractSpineMigrationAttestation(database.sql);
+      assert.equal(attestation.status, "attested");
+      assert.equal(attestation.verifiedReleaseSha, targetReleaseSha);
+
+      const reapplied = await applyContractSpineMigrations(database.sql, {
+        releaseSha: "8".repeat(40),
+      });
+      assert.deepEqual(reapplied.applied, ["020_recovery_terminal_lease_identity"]);
+      assert.equal(
+        (await createRecoveryDeliveryRepository(database.sql).findDelivery(fixture.dispatchId))?.schema,
+        "setfarm.recovery-dispatch-delivery.v1",
+      );
+
+      const repeated = await rollbackRecoveryTerminalLeaseIdentityToV19(database.sql, {
+        targetReleaseSha,
+      });
+      assert.match(repeated.rollbackId, /^RBK_[a-f0-9]{64}$/);
+      assert.notEqual(repeated.rollbackId, rollback.rollbackId);
+      assert.equal(repeated.rowsRewritten, 0);
+      assert.equal(repeated.targetReleaseSha, targetReleaseSha);
+      const receipts = await database.sql<Array<{ rollback_id: string }>>`
+        SELECT rollback_id
+          FROM setfarm_schema_migration_rollbacks
+         WHERE target_release_sha = ${targetReleaseSha}
+         ORDER BY applied_at, rollback_id
+      `;
+      assert.deepEqual(
+        new Set(receipts.map((receipt) => receipt.rollback_id)),
+        new Set([rollback.rollbackId, repeated.rollbackId]),
+      );
+      assert.equal(
+        (await planContractSpineMigrations(database.sql)).migrations
+          .find((migration) => migration.version === 20)?.state,
+        "pending",
+      );
     } finally {
       await database.cleanup();
     }

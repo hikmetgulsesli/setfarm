@@ -129,7 +129,12 @@ export async function pgExec(sql: string): Promise<void> {
   await s.unsafe(sql);
 }
 
-export async function pgBegin<T>(fn: (sql: ReturnType<typeof postgres>) => Promise<T>): Promise<T> {
+export type PgTransactionSql = ReturnType<typeof postgres> & Readonly<{
+  savepoint: (...args: any[]) => Promise<any>;
+  prepare: (...args: any[]) => Promise<any>;
+}>;
+
+export async function pgBegin<T>(fn: (sql: PgTransactionSql) => Promise<T>): Promise<T> {
   await ensureSchemaReady();
   const s = getSql();
   return s.begin(fn as any) as any;

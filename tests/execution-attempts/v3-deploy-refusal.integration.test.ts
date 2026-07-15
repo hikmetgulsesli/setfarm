@@ -197,6 +197,164 @@ test("deploy authority failure becomes compiler-owned terminal refusal with zero
   }
 });
 
+test("deploy refusal leaves a started runtime claim to the canonical termination owner", async () => {
+  const previousPgUrl = process.env.SETFARM_PG_URL;
+  const database = await createIsolatedTestDatabase();
+  try {
+    const runId = "run-v3-deploy-refusal-started";
+    const stepDbId = "step-v3-deploy-refusal-started";
+    const claimAgentId = "feature-dev_deployer";
+    const runtimeAgentId = "deployer-runtime";
+    const releaseSha = "d".repeat(40);
+    const releaseAdmissionHash = await database.seedV3ReleaseGoAdmission(releaseSha);
+    await database.sql`
+      INSERT INTO runs (
+        id, workflow_id, task, status, context, protocol,
+        compiler_release_sha, activation_preflight_hash, release_admission_hash
+      ) VALUES (
+        ${runId}, 'feature-dev', 'deploy started-runtime refusal', 'running', '{}', 'v3',
+        ${releaseSha}, ${"e".repeat(64)}, ${releaseAdmissionHash}
+      )
+    `;
+    await database.sql`
+      INSERT INTO steps (
+        id, run_id, step_id, agent_id, step_index, input_template, expects,
+        status, type, retry_count, max_retries
+      ) VALUES (
+        ${stepDbId}, ${runId}, 'deploy', ${claimAgentId}, 11, '', '',
+        'running', 'single', 0, 3
+      )
+    `;
+    const claims = await database.sql<Array<{ id: number }>>`
+      INSERT INTO claim_log (run_id, step_id, story_id, agent_id)
+      VALUES (${runId}, 'deploy', NULL, ${claimAgentId})
+      RETURNING id::integer AS id
+    `;
+    const claimId = claims[0]!.id;
+    const sessions = createRuntimeSessionRepository(database.sql);
+    const session = await sessions.reserve({
+      sessionId: "RTS_v3-deploy-refusal-started",
+      runId,
+      stepDbId,
+      workflowStepId: "deploy",
+      claimId,
+      claimAgentId,
+      runtimeAgentId,
+      runtimeKind: "openclaw_session",
+      ownerInstanceId: "spawner-test",
+    });
+    await sessions.markStarting({
+      sessionId: session.sessionId,
+      ownerInstanceId: "spawner-test",
+      sessionKey: "deploy-refusal-started-session",
+    });
+    const envelope: ClaimEnvelopeV1 = {
+      schema: "setfarm.claim-envelope.v1",
+      protocol: "v3",
+      issuedAt: "2026-07-13T12:00:00.000Z",
+      stepId: stepDbId,
+      workflowStepId: "deploy",
+      runId,
+      claimId,
+      claimAgentId,
+      runtimeAgentId,
+    };
+    const refusal = await completeV3DeployAuthorityRefusal({
+      sql: database.sql,
+      envelope,
+      error: new V3DeployAuthorityError(
+        "V3_DEPLOY_SOURCE_REVISION_MISMATCH",
+        "deploy source changed after runtime reservation",
+        { runId },
+      ),
+      now: new Date("2099-01-01T00:00:00.000Z"),
+    });
+    assert.equal(refusal.claimClosure, "termination_owned");
+    const pending = await database.sql<Array<{
+      run_status: string;
+      step_status: string;
+      claim_outcome: string | null;
+      runtime_state: string;
+      termination_state: string;
+      step_updated_at: Date;
+    }>>`
+      SELECT run.status AS run_status, step.status AS step_status,
+             claim.outcome AS claim_outcome, runtime.state AS runtime_state,
+             termination.state AS termination_state, step.updated_at AS step_updated_at
+        FROM runs run
+        JOIN steps step ON step.id = ${stepDbId}
+        JOIN claim_log claim ON claim.id = ${claimId}
+        JOIN runtime_sessions runtime ON runtime.claim_id = claim.id
+        JOIN run_termination_requests termination ON termination.run_id = run.id
+       WHERE run.id = ${runId}
+    `;
+    assert.deepEqual({
+      run_status: pending[0]!.run_status,
+      step_status: pending[0]!.step_status,
+      claim_outcome: pending[0]!.claim_outcome,
+      runtime_state: pending[0]!.runtime_state,
+      termination_state: pending[0]!.termination_state,
+    }, {
+      run_status: "failing",
+      step_status: "failed",
+      claim_outcome: null,
+      runtime_state: "starting",
+      termination_state: "requested",
+    });
+    assert.ok(
+      new Date(pending[0]!.step_updated_at).getUTCFullYear() < 2099,
+      "caller clock must not become lifecycle authority",
+    );
+
+    const terminations = createRunTerminationRepository(database.sql);
+    const claimed = await terminations.claim({
+      requestId: refusal.terminationRequestId,
+      ownerInstanceId: "termination-test",
+    });
+    assert.equal(claimed?.state, "draining");
+    await sessions.markDrained({
+      sessionId: session.sessionId,
+      ownerInstanceId: "spawner-test",
+      evidence: {
+        schema: "setfarm.runtime-drain-evidence.v1",
+        observedAt: new Date().toISOString(),
+        localProcessAbsent: true,
+        openClawTaskAbsent: true,
+        workspaceProcessAbsent: true,
+        stableObservations: 2,
+        evidenceRefs: ["setfarm://test/deploy-refusal-started-drain"],
+      },
+    });
+    await terminations.markDrained({
+      requestId: refusal.terminationRequestId,
+      ownerInstanceId: "termination-test",
+      evidence: { source: "v3-deploy-refusal-started-test" },
+    });
+    await terminations.terminalize({ requestId: refusal.terminationRequestId });
+    const terminal = await database.sql<Array<{
+      run_status: string;
+      claim_outcome: string | null;
+      runtime_state: string;
+    }>>`
+      SELECT run.status AS run_status, claim.outcome AS claim_outcome,
+             runtime.state AS runtime_state
+        FROM runs run
+        JOIN claim_log claim ON claim.run_id = run.id
+        JOIN runtime_sessions runtime ON runtime.claim_id = claim.id
+       WHERE run.id = ${runId}
+    `;
+    assert.deepEqual({ ...terminal[0] }, {
+      run_status: "failed",
+      claim_outcome: "failed",
+      runtime_state: "released",
+    });
+  } finally {
+    await database.cleanup();
+    if (previousPgUrl === undefined) delete process.env.SETFARM_PG_URL;
+    else process.env.SETFARM_PG_URL = previousPgUrl;
+  }
+});
+
 test("deploy refusal rejects non-deploy claim capabilities before any database access", async () => {
   const envelope: ClaimEnvelopeV1 = {
     schema: "setfarm.claim-envelope.v1",

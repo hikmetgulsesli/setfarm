@@ -1084,8 +1084,9 @@ describe("canonical run operational snapshot", () => {
         ...ackPayload,
         ackHash: hashCanonicalJson(ackPayload),
       });
+      const hostileCallerTime = new Date("2999-01-01T00:00:00.000Z");
       const ackRepository = createV3ProjectTransferAckRepository(database.sql, {
-        now: () => new Date("2026-07-13T13:00:55.000Z"),
+        now: () => hostileCallerTime,
       });
       const publications = await Promise.all([
         ackRepository.publish(acknowledgement),
@@ -1093,6 +1094,25 @@ describe("canonical run operational snapshot", () => {
       ]);
       assert.deepEqual(publications.map((item) => item.status).sort(), ["committed", "existing"]);
       assert.deepEqual(await ackRepository.findByRunId(runId), acknowledgement);
+      const acknowledgementTimes = await database.sql<Array<{
+        ack_created_at: Date;
+        run_updated_at: Date;
+        outbox_created_at: Date;
+      }>>`
+        SELECT acknowledgement.created_at AS ack_created_at,
+               run.updated_at AS run_updated_at,
+               event.created_at AS outbox_created_at
+          FROM v3_project_transfer_acks acknowledgement
+          JOIN runs run ON run.id = acknowledgement.run_id
+          JOIN operational_outbox event
+            ON event.aggregate_id = run.id
+           AND event.event_type = 'v3.project_transfer_acknowledged'
+         WHERE acknowledgement.run_id = ${runId}
+      `;
+      assert.equal(acknowledgementTimes.length, 1);
+      for (const value of Object.values(acknowledgementTimes[0]!)) {
+        assert.ok(new Date(value).getTime() < hostileCallerTime.getTime());
+      }
       await assert.rejects(
         database.sql`UPDATE v3_project_transfer_acks SET project_id = 'forged' WHERE run_id = ${runId}`,
         /ARTIFACT_IDENTITY_IMMUTABLE/,

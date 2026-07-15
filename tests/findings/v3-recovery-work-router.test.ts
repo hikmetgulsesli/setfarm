@@ -90,7 +90,6 @@ describe("v3 recovery work router", () => {
   async function setup(input: Readonly<{
     workflowId: string;
     dispatchClass?: DispatchClass;
-    authorizedAt?: string;
     runStatus?: "running" | "resuming";
     stepStatus?: "pending" | "running";
   }>) {
@@ -154,7 +153,7 @@ describe("v3 recovery work router", () => {
       revisionId: revision.revisionId,
       expectedStateVersion: opened.recoveryCase.stateVersion,
       dispatchClass,
-    }, { now: new Date(input.authorizedAt ?? `2026-07-13T09:00:${String(sequence).padStart(2, "0")}.000Z`) });
+    });
     assert.equal(authorized.status, "authorized");
     if (authorized.status !== "authorized") throw new Error("expected recovery authorization");
     return {
@@ -174,21 +173,18 @@ describe("v3 recovery work router", () => {
 
   it("selects the oldest exact candidate and filters product from supervisor work", async () => {
     const workflowId = "workflow-router-filtering";
-    await setup({
-      workflowId,
-      dispatchClass: "product_implementation",
-      authorizedAt: "2026-07-13T10:00:03.000Z",
-    });
     const oldestProduct = await setup({
       workflowId,
       dispatchClass: "product_implementation",
-      authorizedAt: "2026-07-13T10:00:02.000Z",
       stepStatus: "running",
+    });
+    await setup({
+      workflowId,
+      dispatchClass: "product_implementation",
     });
     const supervisor = await setup({
       workflowId,
       dispatchClass: "supervisor_repair",
-      authorizedAt: "2026-07-13T10:00:01.000Z",
       runStatus: "resuming",
     });
     const router = createV3RecoveryWorkRouter(database.sql);
@@ -293,10 +289,24 @@ describe("v3 recovery work router", () => {
       runId: fixture.runId,
       storyId: fixture.storyId,
       ownerInstanceId: "expired-router-owner",
-      leaseMs: 1_000,
+      leaseMs: 60_000,
     }, { now: new Date("2020-01-01T00:00:00.000Z") });
 
-    const work = await createV3RecoveryWorkRouter(database.sql).acquireNext({
+    const router = createV3RecoveryWorkRouter(database.sql);
+    assert.equal(await router.acquireNext({
+      workflowId,
+      dispatchClass: "product_implementation",
+      ownerInstanceId: "takeover-router-owner",
+      leaseMs: 60_000,
+    }), undefined, "caller clock skew must not expire a database-owned lease");
+    await database.sql.unsafe(
+      `UPDATE recovery_dispatch_deliveries
+          SET lease_expires_at = clock_timestamp() - INTERVAL '1 second'
+        WHERE dispatch_id = $1`,
+      [fixture.dispatch.dispatchId],
+    );
+
+    const work = await router.acquireNext({
       workflowId,
       dispatchClass: "product_implementation",
       ownerInstanceId: "takeover-router-owner",

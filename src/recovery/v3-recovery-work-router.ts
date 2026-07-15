@@ -1,6 +1,7 @@
 import type postgres from "postgres";
 import { z } from "zod";
 
+import { readDatabaseWallClock } from "../db/database-wall-clock.js";
 import {
   V3RecoveryClaimAuthorityError,
   V3RecoveryClaimHandoffV1Schema,
@@ -284,7 +285,7 @@ async function discoverCandidate(
           )
           AND (
             delivery.state = 'authorized'
-            OR (delivery.state = 'leased' AND delivery.lease_expires_at <= CURRENT_TIMESTAMP)
+            OR (delivery.state = 'leased' AND delivery.lease_expires_at <= clock_timestamp())
           )
           AND NOT (delivery.dispatch_id = ANY($3::text[]))
           AND NOT EXISTS (
@@ -368,7 +369,12 @@ async function loadExactRoutedWork(
         handoff.lease.expiresAt,
       ],
     );
-    return rows.length === 1 ? rows[0] : undefined;
+    if (rows.length !== 1) return undefined;
+    const wallClock = await readDatabaseWallClock(
+      transaction,
+      "V3_RECOVERY_WORK_ROUTER_DATABASE_TIME_UNAVAILABLE",
+    );
+    return Date.parse(handoff.lease.expiresAt) > wallClock.getTime() ? rows[0] : undefined;
   }) as Promise<RoutedWorkRow | undefined>;
 }
 
@@ -433,6 +439,7 @@ function mapRoutedWork(row: RoutedWorkRow, handoff: V3RecoveryClaimHandoffV1): V
 const CLAIM_CONTENTION_CODES = new Set([
   "V3_RECOVERY_AUTHORITY_RUN_NOT_FOUND",
   "V3_RECOVERY_AUTHORITY_RUN_NOT_ACTIVE_V3",
+  "V3_RECOVERY_AUTHORITY_TERMINATION_PENDING",
   "V3_RECOVERY_AUTHORITY_DELIVERY_NOT_FOUND",
   "V3_RECOVERY_LEASE_HELD",
   "V3_RECOVERY_ATTEMPT_BOUND_CONFLICT",

@@ -261,7 +261,7 @@ function completionReplayOutputMatches(
  * is never used as a proxy for completion continuation/effect success.
  */
 export async function markRuntimeCompletionOwnerCommittedInTransaction(
-  sql: Sql | TransactionSql,
+  sql: TransactionSql,
   input: Readonly<{
     claimId: number;
     claimOutcome: string;
@@ -274,7 +274,7 @@ export async function markRuntimeCompletionOwnerCommittedInTransaction(
   }
   if (!input.claimOutcome.trim()) throw new Error("RUNTIME_COMPLETION_OWNER_COMMIT_OUTCOME_INVALID");
   const descriptor = RuntimeCompletionPlanDescriptorV1Schema.parse(input.plan);
-  const now = validTime(input.now);
+  validTime(input.now);
   const rows = await sql.unsafe<RuntimeCompletionRow[]>(
     `SELECT *
        FROM runtime_completion_requests
@@ -336,7 +336,7 @@ export async function markRuntimeCompletionOwnerCommittedInTransaction(
     workflowStepId: current.workflow_step_id,
     outputHash: current.output_hash,
     descriptor,
-    preparedAt: now,
+    preparedAt: wallClock,
   });
   const updated = await sql.unsafe<Array<{ request_id: string }>>(
     `UPDATE runtime_completion_requests
@@ -357,7 +357,7 @@ export async function markRuntimeCompletionOwnerCommittedInTransaction(
     [
       input.claimId,
       input.claimOutcome.slice(0, 80),
-      now,
+      wallClock,
       JSON.stringify(prepared.plan),
       prepared.planHash,
       capability.requestId,
@@ -388,7 +388,7 @@ export async function markRuntimeCompletionOwnerCommittedInTransaction(
         hashCanonicalJson(effectPayload),
         JSON.stringify(effectPayload),
         effect.mandatory,
-        now,
+        wallClock,
       ],
     );
   }
@@ -412,7 +412,7 @@ export async function markRuntimeCompletionOwnerCommittedInTransaction(
         claimOutcome: input.claimOutcome,
         planHash: prepared.planHash,
       }),
-      now,
+      wallClock,
     ],
   );
   return true;
@@ -444,7 +444,7 @@ export async function requestRuntimeCompletion(
   if (outputBytes < 1 || outputBytes > 4 * 1024 * 1024) {
     throw new Error("RUNTIME_COMPLETION_OUTPUT_SIZE_INVALID");
   }
-  const now = validTime(rawInput.now);
+  validTime(rawInput.now);
   const nativeV3Implementation = envelope.protocol === "v3"
     && envelope.workflowStepId === "implement";
   const transportCompilation = nativeV3Implementation
@@ -704,14 +704,14 @@ export async function requestRuntimeCompletion(
     // The step is the final lock in the publication chain. Read a volatile DB
     // wall clock only now: waiting on any earlier owner/step lock must be able
     // to expire the recovery lease before this publication becomes durable.
+    const publicationTime = await readDatabaseWallClock(
+      transaction,
+      "RUNTIME_COMPLETION_DATABASE_WALL_CLOCK_UNAVAILABLE",
+    );
     if (recoveryLeaseFence || normalAttemptLeaseFence) {
-      const wallClock = await readDatabaseWallClock(
-        transaction,
-        "RUNTIME_COMPLETION_DATABASE_WALL_CLOCK_UNAVAILABLE",
-      );
       const attemptLeaseExpiresAt = recoveryLeaseFence?.attemptLeaseExpiresAt
         ?? normalAttemptLeaseFence!.attemptLeaseExpiresAt;
-      if (new Date(attemptLeaseExpiresAt).getTime() <= wallClock.getTime()) {
+      if (new Date(attemptLeaseExpiresAt).getTime() <= publicationTime.getTime()) {
         throw new Error(
           recoveryLeaseFence
             ? "RUNTIME_COMPLETION_RECOVERY_ATTEMPT_FENCE_STALE"
@@ -720,7 +720,7 @@ export async function requestRuntimeCompletion(
       }
       if (
         recoveryLeaseFence
-        && new Date(recoveryLeaseFence.deliveryLeaseExpiresAt).getTime() <= wallClock.getTime()
+        && new Date(recoveryLeaseFence.deliveryLeaseExpiresAt).getTime() <= publicationTime.getTime()
       ) {
         throw new Error("RUNTIME_COMPLETION_RECOVERY_DELIVERY_FENCE_STALE");
       }
@@ -758,7 +758,7 @@ export async function requestRuntimeCompletion(
         sourceProposal ?? null,
         submissionEvidence ? JSON.stringify(submissionEvidence) : null,
         envelope.runtimeAgentId,
-        now,
+        publicationTime,
       ],
     );
     if (inserted.length !== 1) throw new Error("RUNTIME_COMPLETION_REQUEST_INSERT_FAILED");
@@ -777,7 +777,7 @@ export async function requestRuntimeCompletion(
         [
           owner.runtime_session_id,
           owner.runtime_owner_instance_id,
-          now,
+          publicationTime,
           `Completion ${requestId} requested exact runtime drain`,
         ],
       );
@@ -794,7 +794,7 @@ export async function requestRuntimeCompletion(
  * phase, and row-version timestamps it locked while proving expiry.
  */
 export async function quarantineExpiredRuntimeCompletionForRecoveryInTransaction(
-  sql: Sql | TransactionSql,
+  sql: TransactionSql,
   input: Readonly<{
     requestId: string;
     expectedOwnerInstanceId: string;
@@ -811,7 +811,7 @@ export async function quarantineExpiredRuntimeCompletionForRecoveryInTransaction
   if (!input.diagnostic.trim()) {
     throw new Error("RUNTIME_COMPLETION_RECOVERY_QUARANTINE_DIAGNOSTIC_REQUIRED");
   }
-  const now = validTime(input.now);
+  validTime(input.now);
   const expectedLeaseExpiresAt = exactTimestamp(
     input.expectedLeaseExpiresAt,
     "RUNTIME_COMPLETION_RECOVERY_QUARANTINE_LEASE_INVALID",
@@ -820,6 +820,32 @@ export async function quarantineExpiredRuntimeCompletionForRecoveryInTransaction
     input.expectedUpdatedAt,
     "RUNTIME_COMPLETION_RECOVERY_QUARANTINE_VERSION_INVALID",
   );
+  const identities = await sql.unsafe<Array<{ run_id: string }>>(
+    "SELECT run_id FROM runtime_completion_requests WHERE request_id = $1",
+    [RuntimeCompletionRequestIdSchema.parse(input.requestId)],
+  );
+  if (!identities[0]) throw new Error("RUNTIME_COMPLETION_RECOVERY_QUARANTINE_CAS_LOST");
+  await sql.unsafe("SELECT id FROM runs WHERE id = $1 FOR UPDATE", [identities[0].run_id]);
+  const locked = await sql.unsafe<RuntimeCompletionRow[]>(
+    "SELECT * FROM runtime_completion_requests WHERE request_id = $1 FOR UPDATE",
+    [input.requestId],
+  );
+  const current = locked[0];
+  const now = await readDatabaseWallClock(
+    sql,
+    "RUNTIME_COMPLETION_DATABASE_WALL_CLOCK_UNAVAILABLE",
+  );
+  if (
+    !current
+    || current.state !== "processing"
+    || current.owner_instance_id !== input.expectedOwnerInstanceId
+    || !current.lease_expires_at
+    || new Date(current.lease_expires_at).getTime() !== expectedLeaseExpiresAt.getTime()
+    || new Date(current.updated_at).getTime() !== expectedUpdatedAt.getTime()
+    || current.apply_phase !== input.expectedApplyPhase
+  ) {
+    throw new Error("RUNTIME_COMPLETION_RECOVERY_QUARANTINE_CAS_LOST");
+  }
   if (expectedLeaseExpiresAt.getTime() > now.getTime()) {
     throw new Error("RUNTIME_COMPLETION_RECOVERY_QUARANTINE_LEASE_STILL_LIVE");
   }
@@ -973,7 +999,7 @@ export function createRuntimeCompletionRepository(sql: Sql) {
       leaseMs?: number;
       now?: Date;
     }>): Promise<RuntimeCompletionRequest | undefined> {
-      const now = validTime(input.now);
+      validTime(input.now);
       const leaseMs = Math.max(30_000, Math.min(30 * 60_000, Math.trunc(input.leaseMs ?? 10 * 60_000)));
       return sql.begin(async (transaction) => {
         const candidates = await transaction.unsafe<Array<{ request_id: string; run_id: string }>>(
@@ -1031,7 +1057,7 @@ export function createRuntimeCompletionRepository(sql: Sql) {
       status: "none" | "resume_owner" | "resume_effects" | "finalize" | "preempted" | "quarantined";
       request?: RuntimeCompletionRequest;
     }>> {
-      const now = validTime(input.now);
+      validTime(input.now);
       const leaseMs = Math.max(60_000, Math.min(60 * 60_000, Math.trunc(input.leaseMs ?? 10 * 60_000)));
       return sql.begin(async (transaction) => {
         const candidates = await transaction.unsafe<Array<{ request_id: string; run_id: string }>>(
@@ -1150,7 +1176,7 @@ export function createRuntimeCompletionRepository(sql: Sql) {
       leaseMs?: number;
       now?: Date;
     }>): Promise<boolean> {
-      const now = validTime(input.now);
+      validTime(input.now);
       const leaseMs = Math.max(60_000, Math.min(60 * 60_000, Math.trunc(input.leaseMs ?? 10 * 60_000)));
       return sql.begin(async (transaction) => {
         const chain = await lockRuntimeCompletionChainInTransaction(transaction, input.requestId);
@@ -1195,7 +1221,7 @@ export function createRuntimeCompletionRepository(sql: Sql) {
       leaseMs?: number;
       now?: Date;
     }>): Promise<RuntimeCompletionRequest> {
-      const now = validTime(input.now);
+      validTime(input.now);
       const leaseMs = Math.max(60_000, Math.min(60 * 60_000, Math.trunc(input.leaseMs ?? 30 * 60_000)));
       return sql.begin(async (transaction) => {
         const chain = await lockRuntimeCompletionChainInTransaction(transaction, input.requestId);
@@ -1530,10 +1556,13 @@ export function createRuntimeCompletionRepository(sql: Sql) {
 
 /** Canonical run terminalization rejects any completion proposal it preempted. */
 export async function rejectRuntimeCompletionsForTerminalRunInTransaction(
-  sql: Sql | TransactionSql,
-  input: Readonly<{ runId: string; diagnostic: string; now?: Date }>,
+  sql: TransactionSql,
+  input: Readonly<{ runId: string; diagnostic: string }>,
 ): Promise<number> {
-  const now = validTime(input.now);
+  const wallClock = await readDatabaseWallClock(
+    sql,
+    "RUNTIME_COMPLETION_DATABASE_WALL_CLOCK_UNAVAILABLE",
+  );
   const rows = await sql.unsafe<Array<{ request_id: string }>>(
     `UPDATE runtime_completion_requests
         SET state = 'rejected', rejected_at = $2,
@@ -1541,7 +1570,7 @@ export async function rejectRuntimeCompletionsForTerminalRunInTransaction(
       WHERE run_id = $1
         AND state IN ('requested', 'draining')
       RETURNING request_id`,
-    [input.runId, now, input.diagnostic.slice(0, 4_000)],
+    [input.runId, wallClock, input.diagnostic.slice(0, 4_000)],
   );
   return rows.length;
 }

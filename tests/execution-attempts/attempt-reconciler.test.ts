@@ -220,6 +220,73 @@ describe("terminal claim attempt reconciler", () => {
     }
   });
 
+  it("refuses explicit reconciliation until the durable runtime session is quiescent", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const runId = "run-reconcile-runtime-owner";
+      await database.insertRun(runId);
+      const claims = await database.sql<Array<{ id: number }>>`
+        INSERT INTO claim_log (run_id, step_id, story_id, agent_id)
+        VALUES (${runId}, 'implement', 'US-002', 'feature-dev_developer')
+        RETURNING id::integer AS id
+      `;
+      const claimId = claims[0]!.id;
+      const repository = createAttemptRepository(database.sql, {
+        attemptId: () => "ATT_reconcile-runtime-owner",
+        fenceToken: () => "a".repeat(64),
+      });
+      const reserved = await repository.reserve(exactProductReservation({
+        claimId,
+        runId,
+        agentId: "feature-dev_developer",
+        evidenceRefs: [`setfarm://claim-log/${claimId}`],
+      }), { leaseMs: 5 * 60_000 });
+      await database.sql.unsafe(
+        `INSERT INTO runtime_sessions (
+           session_id, run_id, step_db_id, workflow_step_id, story_db_id, story_id,
+           claim_id, attempt_id, claim_agent_id, runtime_agent_id, runtime_kind,
+           state, owner_instance_id, heartbeat_at
+         ) VALUES (
+           $1, $2, $3, 'implement', $4, 'US-002',
+           $5, $6, 'feature-dev_developer', 'prism', 'openclaw_session',
+           'starting', 'spawner-test', clock_timestamp()
+         )`,
+        [
+          "RTS_reconcile-runtime-owner",
+          runId,
+          `${runId}-step`,
+          `${runId}-story`,
+          claimId,
+          reserved.attempt.attemptId,
+        ],
+      );
+      await database.sql`
+        UPDATE claim_log
+           SET outcome = 'infra_retry', abandoned_at = clock_timestamp(),
+               diagnostic = 'manager observed terminal claim before runtime drain'
+         WHERE id = ${claimId}
+      `;
+      const reconciler = createPostgresTerminalAttemptReconciler(database.sql, { graceMs: 0 });
+      assert.deepEqual(
+        await reconciler.reconcileClaim({ claimId, runtimeQuiesced: true }),
+        { scanned: 1, reconciled: 0, raced: 1, failed: 0 },
+      );
+      assert.equal((await repository.findById(reserved.attempt.attemptId))?.disposition, "claimed");
+      await database.sql`
+        UPDATE runtime_sessions
+           SET state = 'drained', drained_at = clock_timestamp(), updated_at = clock_timestamp()
+         WHERE session_id = 'RTS_reconcile-runtime-owner'
+      `;
+      assert.deepEqual(
+        await reconciler.reconcileClaim({ claimId, runtimeQuiesced: true }),
+        { scanned: 1, reconciled: 1, raced: 0, failed: 0 },
+      );
+      assert.equal((await repository.findById(reserved.attempt.attemptId))?.disposition, "inconclusive");
+    } finally {
+      await database.cleanup();
+    }
+  });
+
   it("rejects malformed relational bindings and ignores v3 compatibility candidates", async () => {
     const database = await createIsolatedTestDatabase({ migrate: false });
     try {

@@ -4,6 +4,7 @@ import { markRuntimeCompletionOwnerCommittedInTransaction } from "./runtime-comp
 import { createSingleEffectCompletionPlanDescriptorV1 } from "./schemas/runtime-completion-plan-v1.js";
 import { requestRunTerminationInTransaction } from "./run-termination.js";
 import { getSql } from "../db-pg.js";
+import { readDatabaseWallClock } from "../db/database-wall-clock.js";
 import { canonicalJsonStringify, hashCanonicalJson } from "../product-compiler/canonical-json.js";
 import {
   canonicalizeProductSpecRejectionV1,
@@ -83,21 +84,26 @@ export async function completeV3PlanProductSpecRefusal(input: Readonly<{
       outcome: "completed",
       diagnostic,
     });
+    const transitionTime = await readDatabaseWallClock(
+      transaction,
+      "V3_PLAN_REFUSAL_DATABASE_TIME_UNAVAILABLE",
+    );
     const step = await transaction.unsafe<Array<{ id: string }>>(
       `UPDATE steps
-          SET status = 'failed', output = $2, current_story_id = NULL, updated_at = NOW()
+          SET status = 'failed', output = $2, current_story_id = NULL, updated_at = $4
         WHERE id = $1
           AND run_id = $3
           AND step_id = 'plan'
           AND status IN ('running', 'pending')
         RETURNING id`,
-      [envelope.stepId, record, envelope.runId],
+      [envelope.stepId, record, envelope.runId, transitionTime],
     );
     if (step.length !== 1) throw new Error("V3_PLAN_REFUSAL_STEP_CAS_LOST");
     const ownerCommitted = await markRuntimeCompletionOwnerCommittedInTransaction(transaction, {
       claimId: envelope.claimId,
       claimOutcome: "completed",
       plan: completionPlan,
+      now: transitionTime,
     });
     if (!ownerCommitted) throw new Error("V3_PLAN_REFUSAL_RUNTIME_COMPLETION_REQUIRED");
     const termination = await requestRunTerminationInTransaction(transaction, {
@@ -115,6 +121,7 @@ export async function completeV3PlanProductSpecRefusal(input: Readonly<{
         requirementRefs,
         modelRedispatchBudget: 0,
       },
+      now: transitionTime,
     });
     if (termination.status === "already_terminal") {
       throw new Error("V3_PLAN_REFUSAL_RUN_ALREADY_TERMINAL");

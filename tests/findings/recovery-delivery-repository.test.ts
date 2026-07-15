@@ -236,12 +236,21 @@ describe("revisioned recovery dispatch delivery", () => {
     }, { now: new Date("2026-07-13T08:02:00.500Z") });
     assert.equal(beforeExpiry, undefined);
 
+    const clocks = await database.sql<Array<{ wall_clock: Date }>>`
+      SELECT clock_timestamp() AS wall_clock
+    `;
+    await database.sql`
+      UPDATE recovery_dispatch_deliveries
+         SET lease_expires_at = ${new Date(clocks[0]!.wall_clock.getTime() - 1_000)}
+       WHERE dispatch_id = ${leased.dispatchId}
+    `;
+
     const recovered = await deliveries.leaseNext({
       ownerInstanceId: "worker-c",
       runId: "run-recovery-delivery",
       storyId: "US-001",
       leaseMs: 1_000,
-    }, { now: new Date("2026-07-13T08:02:02.000Z") });
+    }, { now: new Date("1900-01-01T00:00:00.000Z") });
     assert.ok(recovered);
     assert.equal(recovered.dispatchId, leased.dispatchId);
     assert.equal(recovered.ownerInstanceId, "worker-c");

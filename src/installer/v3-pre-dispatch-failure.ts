@@ -1,6 +1,7 @@
 import type postgres from "postgres";
 
 import { pgBegin, pgGet, now } from "../db-pg.js";
+import { readDatabaseWallClock } from "../db/database-wall-clock.js";
 import {
   createV3PreDispatchFailureV1,
   decideV3PreDispatchDispositionV1,
@@ -107,7 +108,6 @@ export async function handleV3PreDispatchFailure(input: Readonly<{
     priorEquivalentFailures: previous?.count ?? 0,
     forceTerminal: input.operationalRetryRefused,
   });
-  const transitionTime = now();
   await pgBegin(async (sql) => {
     await closeReservedClaimRuntimeInTransaction(sql, {
       claimId: input.claimId,
@@ -119,6 +119,10 @@ export async function handleV3PreDispatchFailure(input: Readonly<{
       diagnostic: disposition.diagnostic,
       runtime: input.runtime,
     });
+    const transitionTime = await readDatabaseWallClock(
+      sql,
+      "V3_PRE_DISPATCH_DATABASE_TIME_UNAVAILABLE",
+    );
     if (disposition.runTerminal) {
       const stories = await sql.unsafe<Array<{ id: string }>>(
         `UPDATE stories
@@ -147,7 +151,7 @@ export async function handleV3PreDispatchFailure(input: Readonly<{
           failureFingerprint: failure.decision.fingerprint,
           errorCode: failure.decision.errorCode,
         },
-        now: new Date(transitionTime),
+        now: transitionTime,
       });
     } else {
       const stories = await sql.unsafe<Array<{ id: string }>>(

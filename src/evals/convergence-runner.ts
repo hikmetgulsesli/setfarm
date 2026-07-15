@@ -209,8 +209,7 @@ export interface ConvergenceAdmissionPort {
     releaseSha: string;
     suiteHash: string;
     preflightHash: string;
-    issuedAt: string;
-    expiresAt: string;
+    ttlMs: number;
     slots: readonly Readonly<{
       caseHash: string;
       taskHash: string;
@@ -745,18 +744,12 @@ export async function runConvergenceSuite(
   if (preflight.status !== "pass") blockers.add("EVAL_PREFLIGHT_BLOCKED");
 
   if (options.execute && preflight.status === "pass") {
-    const issuedAt = iso(ports.clock);
-    const expiresAt = new Date(
-      new Date(issuedAt).getTime()
-      + (planned.length * loaded.suite.timeout.runMs)
-      + 60 * 60 * 1_000,
-    ).toISOString();
+    const ttlMs = (planned.length * loaded.suite.timeout.runMs) + 60 * 60 * 1_000;
     const creation = await settle(() => ports.admissions.createCanary({
       releaseSha: options.releaseSha,
       suiteHash: loaded.suiteHash,
       preflightHash: preflight.preflightHash,
-      issuedAt,
-      expiresAt,
+      ttlMs,
       slots: planned.map((item) => ({
         caseHash: convergenceCaseHash(item.value),
         taskHash: safeHash(item.value.task),

@@ -7,11 +7,12 @@ import {
   applyContractSpineMigrations,
   planContractSpineMigrations,
   readContractSpineMigrationAttestation,
+  rollbackRecoveryTerminalLeaseIdentityToV19,
   verifyContractSpineMigrations,
 } from "../src/db/contract-spine-migrations.js";
 import { runtimeConfig } from "../src/runtime-config.js";
 
-type Mode = "plan" | "apply" | "verify";
+type Mode = "plan" | "apply" | "verify" | "rollback-20-to-19";
 
 function resolveReleaseSha(env: NodeJS.ProcessEnv = process.env): string {
   const configured = String(env.SETFARM_RELEASE_SHA || "").trim().toLowerCase();
@@ -42,25 +43,38 @@ function resolveReleaseSha(env: NodeJS.ProcessEnv = process.env): string {
   return sha;
 }
 
-function parseArgs(argv: string[]): Readonly<{ mode: Mode; databaseUrl: string }> {
+function parseArgs(argv: string[]): Readonly<{
+  mode: Mode;
+  databaseUrl: string;
+  targetReleaseSha?: string;
+}> {
   const mode = argv[0];
-  if (mode !== "plan" && mode !== "apply" && mode !== "verify") {
-    throw new Error("Usage: contract-spine-migrate.ts <plan|apply|verify> [--database <postgres-url>]");
+  if (!["plan", "apply", "verify", "rollback-20-to-19"].includes(mode ?? "")) {
+    throw new Error("Usage: contract-spine-migrate.ts <plan|apply|verify|rollback-20-to-19> [--database <postgres-url>] [--target-release <git-sha>]");
   }
   const databaseIndex = argv.indexOf("--database");
   if (databaseIndex >= 0 && !argv[databaseIndex + 1]) {
     throw new Error("--database requires a PostgreSQL URL");
   }
+  const targetReleaseIndex = argv.indexOf("--target-release");
+  if (targetReleaseIndex >= 0 && !argv[targetReleaseIndex + 1]) {
+    throw new Error("--target-release requires a Git SHA");
+  }
+  const targetReleaseSha = targetReleaseIndex >= 0 ? argv[targetReleaseIndex + 1] : undefined;
+  if (mode === "rollback-20-to-19" && !targetReleaseSha) {
+    throw new Error("rollback-20-to-19 requires --target-release <git-sha>");
+  }
   return {
-    mode,
+    mode: mode as Mode,
     databaseUrl: databaseIndex >= 0
       ? argv[databaseIndex + 1]!
       : runtimeConfig.setfarmPgUrl,
+    ...(targetReleaseSha ? { targetReleaseSha } : {}),
   };
 }
 
 async function main(): Promise<void> {
-  const { mode, databaseUrl } = parseArgs(process.argv.slice(2));
+  const { mode, databaseUrl, targetReleaseSha } = parseArgs(process.argv.slice(2));
   const sql = postgres(databaseUrl, {
     max: 4,
     connect_timeout: 10,
@@ -74,6 +88,16 @@ async function main(): Promise<void> {
     }
     if (mode === "verify") {
       process.stdout.write(`${JSON.stringify(await verifyContractSpineMigrations(sql), null, 2)}\n`);
+      return;
+    }
+    if (mode === "rollback-20-to-19") {
+      process.stdout.write(`${JSON.stringify(
+        await rollbackRecoveryTerminalLeaseIdentityToV19(sql, {
+          targetReleaseSha: targetReleaseSha!,
+        }),
+        null,
+        2,
+      )}\n`);
       return;
     }
     const applied = await applyContractSpineMigrations(sql, {

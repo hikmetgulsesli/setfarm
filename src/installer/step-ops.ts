@@ -2676,7 +2676,7 @@ async function resolveQualityFailureStoryId(runId: string, context: Record<strin
 }
 
 async function closeRoutedQualityClaimInTransaction(
-  sql: postgres.Sql | postgres.TransactionSql,
+  sql: postgres.TransactionSql,
   step: { id: string; run_id: string; step_id: string },
   diagnostic: string,
   claimEnvelope?: ClaimEnvelopeV1,
@@ -2713,7 +2713,7 @@ async function closeRoutedQualityClaimInTransaction(
 }
 
 async function markRoutedQualityOwnerCommittedInTransaction(
-  sql: postgres.Sql | postgres.TransactionSql,
+  sql: postgres.TransactionSql,
   claimEnvelope?: ClaimEnvelopeV1,
 ): Promise<void> {
   if (!claimEnvelope) return;

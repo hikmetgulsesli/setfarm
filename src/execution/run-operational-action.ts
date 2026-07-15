@@ -1,5 +1,6 @@
 import type postgres from "postgres";
 
+import { readDatabaseWallClock } from "../db/database-wall-clock.js";
 import {
   compileLegacyResumePlan,
   readLegacyResumePlanSource,
@@ -348,8 +349,8 @@ async function executeInTransaction(
 
   const workflowId = typeof source.run.workflow_id === "string" ? source.run.workflow_id : "";
   if (!workflowId) throw new Error("RUN_OPERATIONAL_ACTION_WORKFLOW_ID_INVALID");
-  const transitionTime = input.now ? new Date(input.now) : new Date();
-  if (!Number.isFinite(transitionTime.getTime())) throw new Error("RUN_OPERATIONAL_ACTION_TIME_INVALID");
+  const callerTime = input.now ? new Date(input.now) : new Date();
+  if (!Number.isFinite(callerTime.getTime())) throw new Error("RUN_OPERATIONAL_ACTION_TIME_INVALID");
 
   if (input.action === "stop") {
     const requested = await requestRunTerminationInTransaction(sql, {
@@ -362,7 +363,7 @@ async function executeInTransaction(
         expectedSnapshotHash: input.expectedSnapshotHash,
         actionStateHash: projected.stateHash,
       },
-      now: transitionTime,
+      now: callerTime,
     });
     if (requested.status === "already_terminal") {
       throw new Error("RUN_OPERATIONAL_ACTION_STOP_TERMINAL_RACE");
@@ -381,6 +382,10 @@ async function executeInTransaction(
     throw new Error("RUN_OPERATIONAL_ACTION_RESUME_PLAN_PROJECTION_MISMATCH");
   }
   const plan = resumePlan.plan;
+  const transitionTime = await readDatabaseWallClock(
+    sql,
+    "RUN_OPERATIONAL_ACTION_DATABASE_TIME_UNAVAILABLE",
+  );
   await applyStepMutations(sql, input.runId, plan, transitionTime);
   await applyStoryMutations(sql, input.runId, plan, transitionTime);
   const runRows = await sql.unsafe<Array<{ id: string }>>(

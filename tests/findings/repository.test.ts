@@ -406,6 +406,7 @@ describe("finding, evidence, and recovery repository", () => {
   });
 
   it("routes unstructured review input only to exact-path bounded supervisor ownership", async () => {
+    await database.insertRun("run-recovery-review");
     const unstructured = createFindingSetV1({
       runId: "run-recovery-review",
       storyId: "US-REVIEW",

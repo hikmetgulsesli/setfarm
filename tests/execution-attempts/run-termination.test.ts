@@ -466,4 +466,51 @@ describe("durable two-phase run termination", () => {
       await database.cleanup();
     }
   });
+
+  it("uses PostgreSQL time for lease takeover and cannot resurrect an expired owner", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const runId = "run-termination-db-clock";
+      await database.insertRun(runId);
+      const requested = await requestRunTermination(database.sql, {
+        runId,
+        targetStatus: "failed",
+        requestedBy: "clock-test",
+        diagnostic: "database clock authority",
+        requestId: "RTR_database-clock-0001",
+        now: new Date("2100-01-01T00:00:00.000Z"),
+      });
+      if (requested.status !== "requested") throw new Error("test request missing");
+      const terminations = createRunTerminationRepository(database.sql);
+      const first = await terminations.claim({
+        requestId: requested.request.requestId,
+        ownerInstanceId: "clock-owner-a",
+        leaseMs: 5_000,
+        now: new Date("1900-01-01T00:00:00.000Z"),
+      });
+      assert.equal(first?.ownerInstanceId, "clock-owner-a");
+      await database.sql`
+        UPDATE run_termination_requests
+           SET lease_expires_at = clock_timestamp() - interval '1 second'
+         WHERE request_id = ${requested.request.requestId}
+      `;
+
+      assert.equal(await terminations.heartbeat({
+        requestId: requested.request.requestId,
+        ownerInstanceId: "clock-owner-a",
+        leaseMs: 300_000,
+        now: new Date("2100-01-01T00:00:00.000Z"),
+      }), false);
+      const adopted = await terminations.claim({
+        requestId: requested.request.requestId,
+        ownerInstanceId: "clock-owner-b",
+        leaseMs: 5_000,
+        now: new Date("1900-01-01T00:00:00.000Z"),
+      });
+      assert.equal(adopted?.ownerInstanceId, "clock-owner-b");
+      assert.notEqual(adopted?.leaseExpiresAt, first?.leaseExpiresAt);
+    } finally {
+      await database.cleanup();
+    }
+  });
 });
