@@ -731,7 +731,8 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /if \(!hasReplacementProcess && !shuttingDown && claim\.stepId && !activeProcess\.claimRecoveryOwned\)/);
     assert.match(source, /new Error\("agent exited with code 0 without calling setfarm step complete\/fail"\)/);
     assert.match(source, /activeProcess\.runtimeDrainRequested = true;\s*drainingProcesses\.set\(runtimeSessionId, activeProcess\)/);
-    assert.match(source, /\.finally\(async \(\) => \{\s*await finalizeExitedStoryRuntime\(activeProcess\);\s*cleanupSpawnerDetachedToolChildren\("spawn-clean-exit"\)/);
+    assert.match(source, /settleExitedClaimAndRuntime\(\s*activeProcess,[\s\S]*agent exited with code 0 without calling setfarm step complete\/fail/);
+    assert.match(source, /\.finally\(\(\) => cleanupSpawnerDetachedToolChildren\("spawn-clean-exit"\)\)/);
   });
 
   it("hardens isolated OpenClaw workflow config for unattended exec", () => {
@@ -1043,7 +1044,7 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /await publishRuntimeCompletionProposal\(active\.stepId,\s*recoveryOutput,\s*recoveryEnvelope\)/);
     assert.match(source, /exitReason\.includes\("AGENT_STARTUP_SILENT"\)/);
     assert.match(source, /exitReason\.includes\("AGENT_PROCESS_STUCK"\)/);
-    assert.match(source, /failClaimIfStillRunning\(active,\s*new Error\(reason\)\)/);
+    assert.match(source, /settleExitedClaimAndRuntime\(active,\s*new Error\(reason\)\)/);
   });
 
   it("fences durable runtime signals with exact OS process identity", () => {

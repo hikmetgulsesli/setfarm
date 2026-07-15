@@ -39,6 +39,10 @@ import {
   type TerminalAttemptReconcileEvent,
 } from "./execution/attempt-reconciler.js";
 import {
+  createPostgresTerminalClaimRuntimeReconciler,
+  type TerminalClaimRuntimeReconcileEvent,
+} from "./execution/terminal-claim-runtime-reconciler.js";
+import {
   prepareAttemptRuntimeWorkspace,
   removeAttemptRuntimeWorkspace,
 } from "./execution/attempt-runtime-workspace.js";
@@ -4882,6 +4886,10 @@ async function cleanupQuiescedStoryWorktree(
 async function finalizeExitedStoryRuntime(active: ActiveProcess): Promise<void> {
   const runtimeSessions = createRuntimeSessionRepository(getSql());
   try {
+    if (!Number.isSafeInteger(active.claimId) || Number(active.claimId) <= 0) {
+      throw new Error("EXITED_RUNTIME_CLAIM_ID_MISSING");
+    }
+    const claimId = Number(active.claimId);
     let session = await runtimeSessions.findById(active.runtimeSessionId);
     if (!session) throw new Error("EXITED_RUNTIME_SESSION_NOT_FOUND");
     if (!["drained", "released"].includes(session.state)) {
@@ -4898,10 +4906,14 @@ async function finalizeExitedStoryRuntime(active: ActiveProcess): Promise<void> 
          LEFT JOIN stories st ON st.run_id = cl.run_id AND st.story_id = cl.story_id
         WHERE cl.id = $1
         LIMIT 1`,
-      [active.claimId],
+      [claimId],
     );
     if (completed?.outcome !== null && completed?.outcome !== undefined) {
-      await pgBegin((sql) => releaseDrainedRuntimeSessionsInTransaction(sql, { runId: active.runId }));
+      await pgBegin((sql) => releaseDrainedRuntimeSessionInTransaction(sql, {
+        sessionId: active.runtimeSessionId,
+        claimId,
+        ownerInstanceId: active.runtimeOwnerInstanceId,
+      }));
       emitEvent({
         ts: new Date().toISOString(),
         event: "runtime.released",
@@ -4991,6 +5003,23 @@ async function verifyEachHasDoneStory(runId: string, verifyStepId: string): Prom
   return parseInt(waiting?.cnt || "0", 10) > 0;
 }
 
+async function failActiveClaimAfterRuntimeQuiescence(
+  active: ActiveProcess,
+  error: string,
+): Promise<void> {
+  if (!Number.isSafeInteger(active.claimId) || Number(active.claimId) <= 0) {
+    throw new Error("ACTIVE_CLAIM_ID_MISSING");
+  }
+  const claimId = Number(active.claimId);
+  await waitForClaimRuntimeQuiescence(
+    active.runId,
+    active.storyId,
+    active.claimAgentId,
+  );
+  await failStep(active.stepId, error, activeClaimEnvelope(active));
+  await releaseReservedRuntimeForClaimIfPresent(claimId, error);
+}
+
 async function failClaimIfStillRunning(active: ActiveProcess, err: unknown): Promise<void> {
   const { stepId, wfId, role, transcriptPath, startedAtMs, spawnCwd: claimedCwd, outputPath } = active;
   const agentId = active.claimAgentId;
@@ -5022,7 +5051,7 @@ async function failClaimIfStillRunning(active: ActiveProcess, err: unknown): Pro
     if (row.status === "running" && active.recoveryDispatchId) {
       const reason = `V3_RECOVERY_AGENT_EXITED: exact dispatch ${active.recoveryDispatchId} ended before publishing its evidence-bound completion. ${compactExitReason(err)}. Transcript: ${transcriptPath}`;
       await recordSupervisorInfraEvent(row.run_id, row.step_id, active.storyDbId || null, reason);
-      await failStep(stepId, reason, activeClaimEnvelope(active));
+      await failActiveClaimAfterRuntimeQuiescence(active, reason);
       return;
     }
 
@@ -5067,10 +5096,8 @@ async function failClaimIfStillRunning(active: ActiveProcess, err: unknown): Pro
       console.warn(`[spawner] ${reason}`);
       await recordSupervisorInfraEvent(row.run_id, row.step_id, active.storyDbId || null, reason);
       const workflow = await pgGet<{ workflow_id: string }>("SELECT workflow_id FROM runs WHERE id = $1 LIMIT 1", [row.run_id]);
-      if (row.type === "loop") {
-        if (!active.storyId) throw new Error("AUTH_FAILURE_LOOP_STORY_ID_MISSING");
-        await waitForClaimRuntimeQuiescence(row.run_id, active.storyId, agentId);
-      }
+      if (row.type === "loop" && !active.storyId) throw new Error("AUTH_FAILURE_LOOP_STORY_ID_MISSING");
+      await waitForClaimRuntimeQuiescence(row.run_id, active.storyId, agentId);
       await failRun(row.run_id, true, reason);
       const nowIso = new Date().toISOString();
       const workflowId = workflow?.workflow_id || wfId;
@@ -5100,9 +5127,17 @@ async function failClaimIfStillRunning(active: ActiveProcess, err: unknown): Pro
     const reason = `AGENT_PROCESS_EXITED: ${agentId} exited before completing ${wfId}/${role}. ${compactExitReason(err)}. Transcript: ${transcriptPath}`;
     console.warn(`[spawner] failing still-running claim ${stepId} (${row.step_id}) after agent exit`);
     await recordSupervisorInfraEvent(row.run_id, row.step_id, row.current_story_id, reason);
-    await failStep(stepId, reason, activeClaimEnvelope(active));
+    await failActiveClaimAfterRuntimeQuiescence(active, reason);
   } catch (failErr) {
     console.warn(`[spawner] failed to mark exited agent claim as failed: ${String(failErr).slice(0, 300)}`);
+  }
+}
+
+async function settleExitedClaimAndRuntime(active: ActiveProcess, err: unknown): Promise<void> {
+  try {
+    await failClaimIfStillRunning(active, err);
+  } finally {
+    await finalizeExitedStoryRuntime(active);
   }
 }
 
@@ -5810,11 +5845,42 @@ async function requeueUntrackedRunningSingleStepClaims(): Promise<void> {
   }
 }
 
+async function reconcileTerminalClaimRuntimeOwnership(): Promise<void> {
+  const reconciler = createPostgresTerminalClaimRuntimeReconciler(getSql(), {
+    drain: (session, candidate) => drainDurableRuntimeSession(session, {
+      requestId: `terminal-claim-${candidate.claimId}-${candidate.sessionId}`,
+      authorityRef: `setfarm://terminal-claim-runtime-reconciler/claim/${candidate.claimId}`,
+    }),
+    emit: async (event: TerminalClaimRuntimeReconcileEvent) => {
+      if (event.code === "TERMINAL_CLAIM_RUNTIME_RECONCILE_FAILED") {
+        console.warn(
+          `[spawner] terminal claim runtime reconciliation failed for claim=${event.claimId} runtime=${event.sessionId}: ${event.diagnostic || "unknown"}`,
+        );
+        return;
+      }
+      if (event.code === "TERMINAL_CLAIM_RUNTIME_ALREADY_SETTLED") return;
+      emitEvent({
+        ts: new Date().toISOString(),
+        event: "runtime.released",
+        runId: event.runId,
+        detail: `Terminal claim runtime reconciler settled ${event.sessionId} for claim ${event.claimId} (${event.claimOutcome}); ${event.code}`,
+      });
+    },
+  });
+  const result = await reconciler.reconcile({ limit: 50 });
+  if (result.released > 0 || result.alreadySettled > 0 || result.failed > 0) {
+    console.warn(
+      `[spawner] terminal claim runtime reconciliation scanned=${result.scanned} released=${result.released} alreadySettled=${result.alreadySettled} failed=${result.failed}`,
+    );
+  }
+}
+
 async function runClaimMaintenance(): Promise<void> {
   if (shuttingDown || claimMaintenanceInFlight) return;
   claimMaintenanceInFlight = true;
   try {
     await reapFinishedClaims();
+    await reconcileTerminalClaimRuntimeOwnership();
     await requeueOrphanedRunningStories();
     await requeueUntrackedRunningLoopStoryClaims();
     await requeueUntrackedRunningSingleStepClaims();
@@ -6127,7 +6193,7 @@ ${reason}
 `); } catch {}
           terminateActiveProcess(active, "process-terminal");
           activeProcesses.delete(key);
-          await failClaimIfStillRunning(active, new Error(reason));
+          await settleExitedClaimAndRuntime(active, new Error(reason));
           continue;
         }
 
@@ -6204,7 +6270,7 @@ ${reason}
 `); } catch {}
           terminateActiveProcess(active, "startup-silent");
           activeProcesses.delete(key);
-          await failClaimIfStillRunning(active, new Error(reason));
+          await settleExitedClaimAndRuntime(active, new Error(reason));
           continue;
         }
 
@@ -6255,7 +6321,7 @@ ${reason}
           try { fs.appendFileSync(active.transcriptPath, `--- MODEL TURN STALL ${new Date().toISOString()} ---\n${reason}\n`); } catch {}
           terminateActiveProcess(active, "model-turn-stall");
           activeProcesses.delete(key);
-          await failClaimIfStillRunning(active, new Error(reason));
+          await settleExitedClaimAndRuntime(active, new Error(reason));
           continue;
         }
 
@@ -6274,7 +6340,7 @@ ${reason}
             await recordSupervisorRuntimeEvent(active.runId, row.step_id, effectiveStoryDbId || null, "AGENT_PROCESS_HARD_STUCK", "watchdog-hard-stuck", reason);
             terminateActiveProcess(active, "watchdog-hard-stuck");
             activeProcesses.delete(key);
-            await failClaimIfStillRunning(active, new Error(reason));
+            await settleExitedClaimAndRuntime(active, new Error(reason));
             continue;
           }
           console.log(`[spawner] ${active.agentId} exceeded ${formatDurationMs(thresholdMs)} but is active (last activity ${formatDurationMs(idleMs)} ago); watchdog deferred`);
@@ -6288,7 +6354,7 @@ ${reason}
 `); } catch {}
         terminateActiveProcess(active, "watchdog-stuck");
         activeProcesses.delete(key);
-        await failClaimIfStillRunning(active, new Error(reason));
+        await settleExitedClaimAndRuntime(active, new Error(reason));
         continue;
       } else {
         const ageMs = Date.now() - active.startedAtMs;
@@ -6857,11 +6923,8 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
     } catch (e) { console.warn("[spawner] transcript write failed: " + String(e)); }
     console.warn("[spawner] " + agentId + " spawn error: " + ((err as any).message || err) + " (transcript: " + transcriptPath + ")");
     if (!hasReplacementProcess && !shuttingDown && claim.stepId && !activeProcess.claimRecoveryOwned) {
-      void failClaimIfStillRunning(activeProcess, err)
-        .finally(async () => {
-          await finalizeExitedStoryRuntime(activeProcess);
-          cleanupSpawnerDetachedToolChildren("spawn-error");
-        });
+      void settleExitedClaimAndRuntime(activeProcess, err)
+        .finally(() => cleanupSpawnerDetachedToolChildren("spawn-error"));
     }
   });
   child.once("exit", (code, signal) => {
@@ -6886,23 +6949,17 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
     if (err) {
       console.warn("[spawner] " + agentId + " exited: " + ((err as any).message || err) + " (transcript: " + transcriptPath + ")");
       if (!hasReplacementProcess && !shuttingDown && claim.stepId && !activeProcess.claimRecoveryOwned) {
-        void failClaimIfStillRunning(activeProcess, err)
-          .finally(async () => {
-            await finalizeExitedStoryRuntime(activeProcess);
-            cleanupSpawnerDetachedToolChildren("spawn-exit");
-          });
+        void settleExitedClaimAndRuntime(activeProcess, err)
+          .finally(() => cleanupSpawnerDetachedToolChildren("spawn-exit"));
       }
     }
     else {
       console.log("[spawner] " + agentId + " completed (transcript: " + transcriptPath + ")");
       if (!hasReplacementProcess && !shuttingDown && claim.stepId && !activeProcess.claimRecoveryOwned) {
-        void failClaimIfStillRunning(
+        void settleExitedClaimAndRuntime(
           activeProcess,
           new Error("agent exited with code 0 without calling setfarm step complete/fail"),
-        ).finally(async () => {
-          await finalizeExitedStoryRuntime(activeProcess);
-          cleanupSpawnerDetachedToolChildren("spawn-clean-exit");
-        });
+        ).finally(() => cleanupSpawnerDetachedToolChildren("spawn-clean-exit"));
       }
     }
   });
@@ -7239,7 +7296,11 @@ function activeRuntimeEntry(runtimeSessionId: string): { key: string; active: Ac
 
 async function drainDurableRuntimeSession(
   session: ClaimRuntimeSession,
-  request: Readonly<{ requestId: string; terminationOwnerInstanceId?: string }>,
+  request: Readonly<{
+    requestId: string;
+    authorityRef?: string;
+    terminationOwnerInstanceId?: string;
+  }>,
 ): Promise<void> {
   const runtimeSessions = createRuntimeSessionRepository(getSql());
   const tracked = activeRuntimeEntry(session.sessionId);
@@ -7298,7 +7359,7 @@ async function drainDurableRuntimeSession(
           workspaceProcessAbsent,
           stableObservations,
           evidenceRefs: [
-            `setfarm://run-termination/${request.requestId}`,
+            request.authorityRef ?? `setfarm://run-termination/${request.requestId}`,
             `setfarm://runtime-session/${session.sessionId}`,
           ],
           ...(expectedProcessIdentity ? { expectedProcessIdentity } : {}),
