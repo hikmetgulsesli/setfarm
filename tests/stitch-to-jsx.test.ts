@@ -1409,6 +1409,102 @@ describe("stitch-to-jsx", () => {
     }
   });
 
+  it("annotates self-closed value controls before preserving valid JSX closure", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-stitch-self-closed-controls-"));
+    try {
+      const stitchDir = path.join(tmp, "stitch");
+      fs.mkdirSync(stitchDir, { recursive: true });
+      fs.writeFileSync(path.join(stitchDir, "DESIGN_MANIFEST.json"), JSON.stringify([
+        { screenId: "control-screen", title: "Control Screen" },
+      ]));
+      writeHtml(path.join(stitchDir, "control-screen.html"), `
+        <main>
+          <button data-action="ACT_SAVE" data-note="Save > / now">Save</button>
+          <a href="#" data-action="ACT_EXPORT" data-note='Export > / later'>Export</a>
+          <select aria-label="Priority" data-action-input="ACT_SAVE.priority" />
+          <textarea aria-label="Notes" data-action-input="ACT_SAVE.notes" />
+          <INPUT aria-label="Title" data-action-input="ACT_SAVE.title" placeholder="Use A > B / C" />
+          <textarea aria-label="Long notes" data-action-input="ACT_SAVE.longNotes" placeholder="Long > notes"></textarea>
+          <select aria-label="Category" data-action-input="ACT_SAVE.category" data-note='Category > / choices'><option>Primary</option></select>
+        </main>
+      `);
+
+      execFileSync("node", ["scripts/stitch-to-jsx.mjs", tmp], {
+        cwd: process.cwd(),
+        stdio: "pipe",
+      });
+
+      const code = fs.readFileSync(path.join(tmp, "src", "screens", "ControlScreen.tsx"), "utf-8");
+      assert.match(code, /data-action-id="save-1"/);
+      assert.match(code, /data-action-id="export-1"/);
+      assert.match(code, /placeholder="Use A > B \/ C"/);
+      assert.equal(code.includes('<input aria-label="Title" data-action-input="ACT_SAVE.title" placeholder="Use A > B / C" data-control-id="title-1" />'), true);
+      assert.equal(code.includes('<textarea aria-label="Notes" data-action-input="ACT_SAVE.notes" data-control-id="notes-2" />'), true);
+      assert.equal(code.includes('<select aria-label="Priority" data-action-input="ACT_SAVE.priority" data-control-id="priority-4" />'), true);
+      assert.match(code, /placeholder="Long > notes"/);
+      assert.match(code, /data-control-id="long-notes-3"/);
+      assert.match(code, /data-note='Category > \/ choices'/);
+      assert.match(code, /data-control-id="category-5"/);
+      assert.match(code, /<option>Primary<\/option><\/select>/);
+      assert.doesNotMatch(code, /\/\s+data-control-id=/);
+      const transpiled = ts.transpileModule(code, {
+        compilerOptions: {
+          jsx: ts.JsxEmit.ReactJSX,
+          module: ts.ModuleKind.ESNext,
+          target: ts.ScriptTarget.ES2020,
+        },
+        reportDiagnostics: true,
+      });
+      const errors = (transpiled.diagnostics || [])
+        .filter((diagnostic) => diagnostic.category === ts.DiagnosticCategory.Error);
+      assert.deepEqual(errors.map((diagnostic) => diagnostic.messageText), []);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("does not treat prefixed custom elements as native action tags", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-stitch-custom-action-tags-"));
+    try {
+      const stitchDir = path.join(tmp, "stitch");
+      fs.mkdirSync(stitchDir, { recursive: true });
+      fs.writeFileSync(path.join(stitchDir, "DESIGN_MANIFEST.json"), JSON.stringify([
+        { screenId: "custom-action-screen", title: "Custom Action Screen" },
+      ]));
+      writeHtml(path.join(stitchDir, "custom-action-screen.html"), `
+        <main>
+          <button-group data-note="Actions > primary"><button>Save</button></button-group>
+          <a-link data-note='Links > docs'><a href="/docs">Docs</a></a-link>
+        </main>
+      `);
+
+      execFileSync("node", ["scripts/stitch-to-jsx.mjs", tmp], {
+        cwd: process.cwd(),
+        stdio: "pipe",
+      });
+
+      const code = fs.readFileSync(path.join(tmp, "src", "screens", "CustomActionScreen.tsx"), "utf-8");
+      const index = JSON.parse(fs.readFileSync(path.join(tmp, "src", "screens", "SCREEN_INDEX.json"), "utf-8"));
+      assert.deepEqual(index[0].actions.map((action: { id: string }) => action.id), ["save-1", "docs-1"]);
+      assert.match(code, /<button-group data-note="Actions > primary"><button[^>]*data-action-id="save-1"[^>]*>Save<\/button><\/button-group>/);
+      assert.match(code, /<a-link data-note='Links > docs'><a href="\/docs" data-action-id="docs-1"/);
+      assert.match(code, />Docs<\/a><\/a-link>/);
+      assert.doesNotMatch(code, /<button-group[^>]*data-action-id=/);
+      assert.doesNotMatch(code, /<a-link[^>]*data-action-id=/);
+      const transpiled = ts.transpileModule(code, {
+        compilerOptions: {
+          jsx: ts.JsxEmit.ReactJSX,
+          module: ts.ModuleKind.ESNext,
+          target: ts.ScriptTarget.ES2020,
+        },
+        reportDiagnostics: true,
+      });
+      assert.equal((transpiled.diagnostics || []).length, 0);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("keeps form JSX valid when void tag attributes contain comparison-like text", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-stitch-void-quoted-gt-"));
     try {

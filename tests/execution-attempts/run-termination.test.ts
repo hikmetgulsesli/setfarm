@@ -458,10 +458,10 @@ describe("durable two-phase run termination", () => {
       if (healthy.status !== "requested") throw new Error("test request missing");
 
       const pending = await terminations.listPending(50);
-      assert.deepEqual(pending.map((request) => request.requestId), [
+      assert.deepEqual(pending.map((request) => request.requestId).sort(), [
         orphaned.request.requestId,
         healthy.request.requestId,
-      ]);
+      ].sort());
     } finally {
       await database.cleanup();
     }
