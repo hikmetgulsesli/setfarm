@@ -166,13 +166,52 @@ export const ConvergenceOwnershipEvidenceV1Schema = z.object({
   activeAttempts: z.number().int().nonnegative(),
   activeRuntimes: z.number().int().nonnegative(),
   activeRecoveryDeliveries: z.number().int().nonnegative(),
+  projectIdentityState: z.enum(["not_applicable", "provisional", "verified", "invalid"]).optional(),
+  workingTreeDirty: z.boolean().optional(),
   manualProjectMutationDetected: z.boolean(),
   sourceHeadMatchesCanonical: z.boolean(),
   projectHeadSha: GitObjectHashSchema.nullable(),
   projectTreeHash: GitObjectHashSchema.nullable(),
   canonicalHeadSha: GitObjectHashSchema.nullable(),
   canonicalTreeHash: GitObjectHashSchema.nullable(),
-}).strict();
+}).strict().superRefine((value, context) => {
+  const identityState = value.projectIdentityState ?? (
+    value.sourceHeadMatchesCanonical
+      ? value.projectHeadSha ? "verified" : "not_applicable"
+      : "invalid"
+  );
+  if (value.manualProjectMutationDetected && identityState !== "invalid") {
+    context.addIssue({ code: "custom", path: ["manualProjectMutationDetected"], message: "Manual mutation evidence requires invalid project identity" });
+  }
+  if (identityState === "verified" && (
+    !value.sourceHeadMatchesCanonical
+    || !value.projectHeadSha
+    || !value.projectTreeHash
+    || !value.canonicalHeadSha
+    || !value.canonicalTreeHash
+  )) {
+    context.addIssue({ code: "custom", path: ["projectIdentityState"], message: "Verified project identity requires exact project and canonical revisions" });
+  }
+  if (identityState === "provisional" && (
+    value.sourceHeadMatchesCanonical
+    || value.canonicalHeadSha !== null
+    || value.canonicalTreeHash !== null
+  )) {
+    context.addIssue({ code: "custom", path: ["projectIdentityState"], message: "Provisional project identity cannot claim a canonical accepted revision" });
+  }
+  if (identityState === "not_applicable" && (
+    !value.sourceHeadMatchesCanonical
+    || value.projectHeadSha !== null
+    || value.projectTreeHash !== null
+    || value.canonicalHeadSha !== null
+    || value.canonicalTreeHash !== null
+  )) {
+    context.addIssue({ code: "custom", path: ["projectIdentityState"], message: "Not-applicable project identity cannot carry source revisions" });
+  }
+  if (identityState === "invalid" && value.sourceHeadMatchesCanonical) {
+    context.addIssue({ code: "custom", path: ["sourceHeadMatchesCanonical"], message: "Invalid project identity cannot match canonical source" });
+  }
+});
 
 export const ConvergenceGitHubEvidenceV1Schema = z.object({
   stateHash: Sha256Schema,
@@ -294,7 +333,7 @@ const ConvergenceEvalRunPayloadV1Schema = z.object({
     && value.ownership.activeRuntimes === 0
     && value.ownership.activeRecoveryDeliveries === 0
     && !value.ownership.manualProjectMutationDetected
-    && value.ownership.sourceHeadMatchesCanonical;
+    && value.ownership.projectIdentityState !== "invalid";
   const projectionClean = value.projection.exactHashMatch
     && value.projection.setfarmProjection === "complete"
     && value.projection.missionControlProjection === "complete"
@@ -312,12 +351,20 @@ const ConvergenceEvalRunPayloadV1Schema = z.object({
     ? value.github.pullRequests > 0 && value.github.unverified === 0 && value.github.open === 0
     : value.github.pullRequests === 0 && value.github.unverified === 0 && value.github.open === 0;
   const projectIdentityClean = accepted
-    ? value.ownership.sourceHeadMatchesCanonical
+    ? (value.ownership.projectIdentityState ?? (
+        value.ownership.sourceHeadMatchesCanonical && value.ownership.projectHeadSha ? "verified" : "invalid"
+      )) === "verified"
+      && !(value.ownership.workingTreeDirty ?? false)
+      && value.ownership.sourceHeadMatchesCanonical
       && value.ownership.projectHeadSha !== null
       && value.ownership.projectTreeHash !== null
       && value.ownership.canonicalHeadSha !== null
       && value.ownership.canonicalTreeHash !== null
-    : value.ownership.sourceHeadMatchesCanonical
+    : (value.ownership.projectIdentityState ?? (
+        value.ownership.sourceHeadMatchesCanonical && !value.ownership.projectHeadSha ? "not_applicable" : "invalid"
+      )) === "not_applicable"
+      && !(value.ownership.workingTreeDirty ?? false)
+      && value.ownership.sourceHeadMatchesCanonical
       && value.ownership.projectHeadSha === null
       && value.ownership.projectTreeHash === null
       && value.ownership.canonicalHeadSha === null

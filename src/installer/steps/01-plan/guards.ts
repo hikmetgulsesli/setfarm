@@ -78,11 +78,13 @@ function canonicalExplicitStackContext(context: Record<string, string>): { platf
   return null;
 }
 
-function sealedDeliveryContext(context: Record<string, string>): {
+export function sealedDeliveryContext(context: Record<string, string>): {
   platform: string;
   techStack: string;
   designRequired: boolean;
   allowedDatabases: readonly string[];
+  stackPackId: string;
+  evidenceCapabilityPolicyHash: string;
 } | null {
   const raw = context["product_delivery_selection"] || "";
   if (!raw) return null;
@@ -101,6 +103,8 @@ function sealedDeliveryContext(context: Record<string, string>): {
     techStack: selection.delivery.techStack,
     designRequired: selection.delivery.designRequired,
     allowedDatabases: selection.delivery.allowedDatabases,
+    stackPackId: selection.stackPackId,
+    evidenceCapabilityPolicyHash: selection.evidenceCapabilities.policyHash,
   };
 }
 

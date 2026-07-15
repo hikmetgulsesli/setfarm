@@ -187,6 +187,8 @@ export const BuildCapabilityV1Schema = z
       "cli_interaction",
       "native_runtime",
       "test_runner",
+      "runtime_state",
+      "game_timing",
       "other",
     ]),
     enabled: z.boolean(),

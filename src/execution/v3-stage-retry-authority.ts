@@ -24,6 +24,7 @@ export const V3StageFailureDiagnosticV1Schema = z.object({
   code: z.string().min(1).max(500),
   path: z.string().max(4_000),
   message: z.string().min(1).max(4_000),
+  reference: z.string().min(1).max(500).optional(),
 }).strict();
 
 const V3StageFailureShapeV1Schema = z.object({
@@ -77,6 +78,9 @@ export function createV3StageFailureV1(input: Readonly<{
     code: String(diagnostic.code).slice(0, 500) || "V3_STAGE_FAILURE",
     path: String(diagnostic.path).slice(0, 4_000),
     message: String(diagnostic.message).slice(0, 4_000) || "Stage failure diagnostic unavailable",
+    ...(diagnostic.reference
+      ? { reference: String(diagnostic.reference).slice(0, 500) }
+      : {}),
   }));
   if (diagnostics.length === 0) {
     diagnostics = [{
@@ -100,6 +104,7 @@ export function createV3StageFailureV1(input: Readonly<{
       code: diagnostic.code.slice(0, 48),
       path: diagnostic.path.slice(0, 48),
       message: diagnostic.message.slice(0, 48),
+      ...(diagnostic.reference ? { reference: diagnostic.reference.slice(0, 48) } : {}),
     }));
     payload = { ...payload, diagnostics };
     candidate = { ...payload, failureHash: hashCanonicalJson(payload) };

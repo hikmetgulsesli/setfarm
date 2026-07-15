@@ -5,8 +5,12 @@ import {
   getStackTopologyCatalogContract,
   STACK_TOPOLOGY_CATALOG_VERSION,
 } from "./stack-topology-catalog.js";
+import {
+  PRODUCT_EVIDENCE_CAPABILITY_POLICY_VERSION,
+  productEvidenceCapabilityPolicyHashV1,
+} from "./product-evidence-capability-policy.js";
 
-export const PRODUCT_DELIVERY_PROFILE_CATALOG_VERSION = "1.0.0";
+export const PRODUCT_DELIVERY_PROFILE_CATALOG_VERSION = "1.1.0";
 
 const ProductClassV1Schema = z.enum([
   "utility",
@@ -62,6 +66,11 @@ export const ProductDeliveryProfileV1Schema = z.object({
     catalogVersion: z.literal(STACK_TOPOLOGY_CATALOG_VERSION),
     descriptorHash: z.string().regex(/^[a-f0-9]{64}$/),
   }).strict(),
+  evidenceCapabilities: z.object({
+    policySchema: z.literal("setfarm.product-evidence-capability-policy.v1"),
+    policyVersion: z.literal(PRODUCT_EVIDENCE_CAPABILITY_POLICY_VERSION),
+    policyHash: z.string().regex(/^[a-f0-9]{64}$/),
+  }).strict(),
 }).strict();
 
 export type ProductDeliveryProfileV1 = z.infer<typeof ProductDeliveryProfileV1Schema>;
@@ -94,6 +103,7 @@ export const ProductDeliverySelectionV1Schema = z.object({
   design: ProductDeliveryProfileV1Schema.shape.design,
   runtimeAdapter: ProductDeliveryProfileV1Schema.shape.runtimeAdapter,
   topology: ProductDeliveryProfileV1Schema.shape.topology,
+  evidenceCapabilities: ProductDeliveryProfileV1Schema.shape.evidenceCapabilities,
   selectionBasis: z.enum(["product_class", "explicit_stack_prefix"]),
   requestedStackPackId: z.string().min(1).max(160).optional(),
 }).strict();
@@ -118,7 +128,10 @@ export type ProductDeliverySelectionResultV1 =
       diagnostics: readonly ProductDeliverySelectionDiagnosticV1[];
     }>;
 
-function profile(input: Omit<ProductDeliveryProfileV1, "schema" | "version" | "topology">): ProductDeliveryProfileV1 {
+function profile(input: Omit<
+  ProductDeliveryProfileV1,
+  "schema" | "version" | "topology" | "evidenceCapabilities"
+>): ProductDeliveryProfileV1 {
   const topology = getStackTopologyCatalogContract(input.stackPackId);
   if (!topology) throw new Error(`PRODUCT_DELIVERY_TOPOLOGY_PROFILE_MISSING:${input.stackPackId}`);
   return ProductDeliveryProfileV1Schema.parse({
@@ -128,6 +141,11 @@ function profile(input: Omit<ProductDeliveryProfileV1, "schema" | "version" | "t
     topology: {
       catalogVersion: topology.identity.version,
       descriptorHash: topology.identity.contentHash,
+    },
+    evidenceCapabilities: {
+      policySchema: "setfarm.product-evidence-capability-policy.v1",
+      policyVersion: PRODUCT_EVIDENCE_CAPABILITY_POLICY_VERSION,
+      policyHash: productEvidenceCapabilityPolicyHashV1(),
     },
   });
 }
@@ -237,6 +255,7 @@ export function resolveProductDeliverySelectionV1(input: Readonly<{
     design: selected.design,
     runtimeAdapter: selected.runtimeAdapter,
     topology: selected.topology,
+    evidenceCapabilities: selected.evidenceCapabilities,
     selectionBasis: requestedStackPackId ? "explicit_stack_prefix" : "product_class",
     ...(requestedStackPackId ? { requestedStackPackId } : {}),
   });

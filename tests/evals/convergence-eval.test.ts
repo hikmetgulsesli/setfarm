@@ -24,11 +24,15 @@ import {
   type ConvergenceRunPoll,
   type ConvergenceSqlPort,
   evaluateConvergencePredicateCoverage,
+  canonicalConvergenceFailureObservationV1,
+  canonicalConvergenceStoryFailuresV1,
+  canonicalConvergenceTerminalFailureV1,
   runConvergenceSuite,
 } from "../../src/evals/convergence-runner.js";
 import {
   ConvergenceCanonicalEvidenceV1Schema,
   ConvergenceEvalResultV1Schema,
+  ConvergenceOwnershipEvidenceV1Schema,
   createConvergenceResult,
 } from "../../src/evals/result-schema.js";
 import { evaluateConvergenceReleaseGate } from "../../src/evals/release-gate.js";
@@ -478,6 +482,7 @@ type HarnessOptions = Readonly<{
   pass?: boolean;
   repeatedRoot?: boolean;
   manualMutation?: boolean;
+  provisionalIdentity?: boolean;
   projectionMismatch?: boolean;
   projectionWrongRun?: boolean;
   predicateCoverageFailure?: boolean;
@@ -560,14 +565,27 @@ function harness(loaded: Awaited<ReturnType<typeof suite>>, options: HarnessOpti
       runCases.set(runId, evalCase);
       return { runId, runNumber: starts };
     },
-    inspectProject: async () => ({
-      manualProjectMutationDetected: options.manualMutation === true,
-      sourceHeadMatchesCanonical: options.manualMutation !== true,
-      projectHeadSha: "8".repeat(40),
-      projectTreeHash: "7".repeat(40),
-      canonicalHeadSha: options.manualMutation === true ? "6".repeat(40) : "8".repeat(40),
-      canonicalTreeHash: options.manualMutation === true ? "5".repeat(40) : "7".repeat(40),
-    }),
+    inspectProject: async () => options.provisionalIdentity
+      ? {
+          projectIdentityState: "provisional" as const,
+          workingTreeDirty: true,
+          manualProjectMutationDetected: false,
+          sourceHeadMatchesCanonical: false,
+          projectHeadSha: "8".repeat(40),
+          projectTreeHash: "7".repeat(40),
+          canonicalHeadSha: null,
+          canonicalTreeHash: null,
+        }
+      : {
+          projectIdentityState: options.manualMutation ? "invalid" as const : "verified" as const,
+          workingTreeDirty: options.manualMutation === true,
+          manualProjectMutationDetected: options.manualMutation === true,
+          sourceHeadMatchesCanonical: options.manualMutation !== true,
+          projectHeadSha: "8".repeat(40),
+          projectTreeHash: "7".repeat(40),
+          canonicalHeadSha: options.manualMutation === true ? "6".repeat(40) : "8".repeat(40),
+          canonicalTreeHash: options.manualMutation === true ? "5".repeat(40) : "7".repeat(40),
+        },
     inspectGitHub: async (pullRequests) => ({
       stateHash: "e".repeat(64), pullRequests: pullRequests.length, unverified: 0, open: 0,
     }),
@@ -713,6 +731,107 @@ describe("product convergence suite contract", () => {
       nonPassingRequiredPredicates: 1,
     });
   });
+
+  it("hashes typed failure identity without volatile event IDs or diagnostic prose", () => {
+    const evidence = {
+      code: "SETUP_PACKET_STORY_PLAN_REJECTED",
+      failureHash: "1".repeat(64),
+      rejectionCodes: ["STORY_PLAN_EVIDENCE_CAPABILITY_UNAVAILABLE"],
+      diagnostics: [{
+        code: "STORY_PLAN_EVIDENCE_CAPABILITY_UNAVAILABLE",
+        category: "link",
+        severity: "error",
+        reference: "CAP_BROWSER_RUN",
+        message: "first prose rendering",
+      }],
+    };
+    const first = canonicalConvergenceFailureObservationV1({
+      check_id: "step.failed:2026-01-01T00:00:00Z:abc",
+      event_type: "step.failed",
+      status: "fail",
+      evidence: JSON.stringify(evidence),
+    });
+    const second = canonicalConvergenceFailureObservationV1({
+      check_id: "step.failed:2027-02-02T00:00:00Z:def",
+      event_type: "step.failed",
+      status: "fail",
+      evidence: JSON.stringify({
+        ...evidence,
+        failureHash: "2".repeat(64),
+        diagnostics: [{ ...evidence.diagnostics[0], message: "different prose rendering" }],
+      }),
+    });
+    const different = canonicalConvergenceFailureObservationV1({
+      check_id: "step.failed:2028-03-03T00:00:00Z:ghi",
+      event_type: "step.failed",
+      status: "fail",
+      evidence: JSON.stringify({
+        ...evidence,
+        diagnostics: [{ ...evidence.diagnostics[0], reference: "CAP_LOCAL_STORAGE" }],
+      }),
+    });
+
+    assert.deepEqual(first, second);
+    assert.notEqual(hashCanonicalJson(first), hashCanonicalJson(different));
+    assert.deepEqual(canonicalConvergenceFailureObservationV1({
+      check_id: "volatile:2028:ghi",
+      status: "fail",
+      evidence: JSON.stringify(evidence),
+    }), canonicalConvergenceFailureObservationV1({
+      check_id: "volatile:2029:jkl",
+      status: "fail",
+      evidence: JSON.stringify(evidence),
+    }));
+  });
+
+  it("removes run-local story IDs from canonical root-cause identity", () => {
+    assert.deepEqual(canonicalConvergenceStoryFailuresV1([
+      { story_id: "STORY_RUN_A", quality_failure_fingerprint: "failure-b" },
+      { story_id: "STORY_RUN_B", quality_failure_fingerprint: "failure-a" },
+      { story_id: "STORY_RUN_C", quality_failure_fingerprint: "failure-b" },
+    ]), ["failure-a", "failure-b"]);
+  });
+
+  it("uses the final typed failure instead of recovered earlier retry noise", () => {
+    const setupFailure = {
+      check_id: "setup:volatile",
+      event_type: "setup-build.packet-rejected",
+      status: "fail",
+      evidence: JSON.stringify({
+        schema: "setfarm.product-compilation-report.v1",
+        code: "SETUP_PACKET_STORY_PLAN_REJECTED",
+        rejectionCodes: ["STORY_PLAN_EVIDENCE_CAPABILITY_UNAVAILABLE"],
+      }),
+    };
+    assert.deepEqual(canonicalConvergenceTerminalFailureV1([
+      {
+        check_id: "plan:recovered",
+        event_type: "step.retry",
+        status: "fail",
+        evidence: JSON.stringify({ code: "V3_PLAN_OUTPUT_REJECTED" }),
+      },
+      setupFailure,
+      { check_id: "run:volatile", event_type: "run.failed", status: "fail", evidence: "{}" },
+    ]), canonicalConvergenceFailureObservationV1(setupFailure));
+  });
+
+  it("keeps historical v1 ownership evidence readable while emitting explicit identity state now", () => {
+    const historical = ConvergenceOwnershipEvidenceV1Schema.parse({
+      stateHash: "a".repeat(64),
+      openClaims: 0,
+      activeAttempts: 0,
+      activeRuntimes: 0,
+      activeRecoveryDeliveries: 0,
+      manualProjectMutationDetected: false,
+      sourceHeadMatchesCanonical: true,
+      projectHeadSha: "b".repeat(40),
+      projectTreeHash: "c".repeat(40),
+      canonicalHeadSha: "b".repeat(40),
+      canonicalTreeHash: "c".repeat(40),
+    });
+    assert.equal(historical.projectIdentityState, undefined);
+    assert.equal(historical.workingTreeDirty, undefined);
+  });
 });
 
 describe("convergence runner", () => {
@@ -839,6 +958,24 @@ describe("convergence runner", () => {
     assert.equal(output.result.status, "blocked");
     assert.equal(output.result.stoppedOnRepeatedRootCause, "9".repeat(64));
     assert.deepEqual(output.result.rootCauseCounts, [{ rootCauseHash: "9".repeat(64), count: 3 }]);
+  });
+
+  it("keeps measuring a cleanly settled pre-candidate failure with provisional source identity", async () => {
+    const loaded = await suite(2);
+    const fake = harness(loaded, {
+      pass: false,
+      repeatedRoot: true,
+      provisionalIdentity: true,
+    });
+    const output = await runConvergenceSuite(loaded, { releaseSha: SHA, execute: true }, fake.ports);
+
+    assert.equal(fake.starts(), 3);
+    assert.equal(output.result.runs.every((run) =>
+      run.ownership.projectIdentityState === "provisional"
+      && run.ownership.workingTreeDirty
+      && !run.ownership.manualProjectMutationDetected), true);
+    assert.equal(output.result.blockerCodes.includes("EVAL_RUN_IDENTITY_INVALIDATED"), false);
+    assert.equal(output.result.stoppedOnRepeatedRootCause, "9".repeat(64));
   });
 
   it("invalidates a manually mutated generated project and does not start another case", async () => {

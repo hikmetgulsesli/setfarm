@@ -161,7 +161,7 @@ describe("exact setup-to-BuildTopology adapter", () => {
     assert.deepEqual(result.diagnostics, []);
     assert.ok(result.candidate);
     assert.equal(result.candidate?.stackPack.id, "vite-react-web-app");
-    assert.equal(result.candidate?.stackPack.version, "1.4.0");
+    assert.equal(result.candidate?.stackPack.version, "1.5.0");
     assert.match(result.candidate?.stackPack.contentHash ?? "", /^[a-f0-9]{64}$/);
     assert.deepEqual(
       result.candidate?.commands.find((command) => command.kind === "build")?.argv,

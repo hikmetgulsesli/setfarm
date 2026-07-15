@@ -187,6 +187,8 @@ export interface ConvergenceProcessPort {
     projectLocator: string | null;
     canonicalSourceRevision: Readonly<{ sha: string; treeHash: string }> | null;
   }>): Promise<Readonly<{
+    projectIdentityState: "not_applicable" | "provisional" | "verified" | "invalid";
+    workingTreeDirty: boolean;
     manualProjectMutationDetected: boolean;
     sourceHeadMatchesCanonical: boolean;
     projectHeadSha: string | null;
@@ -559,6 +561,98 @@ function runDisposition(status: string, timedOut: boolean, invalidated: boolean)
   return "failed" as const;
 }
 
+function parsedEvidence(value: unknown): Record<string, unknown> {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  if (typeof value !== "string" || !value.trim()) return {};
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function compareUtf16(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function exactFailureEvidence(value: unknown): Record<string, unknown> {
+  const evidence = parsedEvidence(value);
+  const projection: Record<string, unknown> = {};
+  for (const key of [
+    "schema",
+    "code",
+    "kind",
+    "reasonCode",
+    "workflowStepId",
+    "failureOwner",
+    "retryPolicy",
+  ]) {
+    const candidate = evidence[key];
+    if (["string", "number", "boolean"].includes(typeof candidate) || candidate === null) {
+      projection[key] = candidate;
+    }
+  }
+  for (const key of ["rejectionCodes", "reasonCodes", "invariantCodes"]) {
+    const candidate = evidence[key];
+    if (Array.isArray(candidate)) {
+      projection[key] = [...new Set(candidate.filter((item): item is string => typeof item === "string"))].sort();
+    }
+  }
+  if (Array.isArray(evidence["diagnostics"])) {
+    projection["diagnostics"] = evidence["diagnostics"].flatMap((item) => {
+      if (!item || typeof item !== "object" || Array.isArray(item)) return [];
+      const raw = item as Record<string, unknown>;
+      const diagnostic: Record<string, unknown> = {};
+      for (const key of ["schema", "code", "category", "severity", "path", "reference"]) {
+        if (typeof raw[key] === "string") diagnostic[key] = raw[key];
+      }
+      return Object.keys(diagnostic).length > 0 ? [diagnostic] : [];
+    }).sort((left, right) => compareUtf16(JSON.stringify(left), JSON.stringify(right)));
+  }
+  return projection;
+}
+
+/** Stable operational failure identity: typed fields only, never prose or volatile event IDs. */
+export function canonicalConvergenceFailureObservationV1(
+  row: Readonly<Record<string, unknown>>,
+): Readonly<Record<string, unknown>> {
+  const eventType = String(row["event_type"] ?? "").trim();
+  return {
+    eventType: eventType || "untyped_observation",
+    status: String(row["status"] ?? "unknown"),
+    evidence: exactFailureEvidence(row["evidence"]),
+  };
+}
+
+/** Run-local story IDs are transport identity; the typed failure fingerprint is semantic identity. */
+export function canonicalConvergenceStoryFailuresV1(
+  rows: readonly Readonly<Record<string, unknown>>[],
+): readonly string[] {
+  return [...new Set(rows
+    .map((row) => String(row["quality_failure_fingerprint"] ?? "").trim())
+    .filter(Boolean))].sort(compareUtf16);
+}
+
+/**
+ * Root-cause identity follows the final typed failing observation. Earlier
+ * recovered planner/reviewer failures must not make the terminal cause vary.
+ */
+export function canonicalConvergenceTerminalFailureV1(
+  rows: readonly Readonly<Record<string, unknown>>[],
+): Readonly<Record<string, unknown>> | null {
+  const failures = rows.map(canonicalConvergenceFailureObservationV1);
+  const typed = failures.filter((failure) => {
+    const evidence = failure["evidence"];
+    return Boolean(evidence && typeof evidence === "object" && Object.keys(evidence).length > 0);
+  });
+  return typed.at(-1) ?? failures.at(-1) ?? null;
+}
+
 function rootCauseForFailure(input: Readonly<{
   collected: ConvergenceRunCollection;
   canonical: z.infer<typeof ConvergenceCanonicalEvidenceV1Schema>;
@@ -749,7 +843,9 @@ export async function runConvergenceSuite(
         loaded.suite.timeout.pollMs,
       );
       const projectRead = expectedDecision.kind === "typed_rejection"
-        ? { ok: true as const, value: {
+          ? { ok: true as const, value: {
+            projectIdentityState: "not_applicable" as const,
+            workingTreeDirty: false,
             manualProjectMutationDetected: false,
             sourceHeadMatchesCanonical: true,
             projectHeadSha: null,
@@ -770,7 +866,9 @@ export async function runConvergenceSuite(
       const project = projectRead.ok
         ? projectRead.value
         : {
-            manualProjectMutationDetected: true,
+            projectIdentityState: "invalid" as const,
+            workingTreeDirty: false,
+            manualProjectMutationDetected: false,
             sourceHeadMatchesCanonical: false,
             projectHeadSha: null,
             projectTreeHash: null,
@@ -779,6 +877,8 @@ export async function runConvergenceSuite(
           };
       const ownershipPayload = {
         ...terminal.poll.ownership,
+        projectIdentityState: project.projectIdentityState,
+        workingTreeDirty: project.workingTreeDirty,
         manualProjectMutationDetected: project.manualProjectMutationDetected,
         sourceHeadMatchesCanonical: project.sourceHeadMatchesCanonical,
         projectHeadSha: project.projectHeadSha,
@@ -871,7 +971,7 @@ export async function runConvergenceSuite(
         blockers.add("EVAL_RUN_TIMEOUT_ACTIVE_OWNERSHIP");
         break;
       }
-      if (identityInvalidated || project.manualProjectMutationDetected || !project.sourceHeadMatchesCanonical) {
+      if (identityInvalidated || project.projectIdentityState === "invalid") {
         blockers.add("EVAL_RUN_IDENTITY_INVALIDATED");
         break;
       }
@@ -1730,15 +1830,18 @@ export function createPostgresConvergencePort(
       });
 
       const failureRows = await sql.unsafe<Array<Record<string, unknown>>>(
-        `SELECT check_id, status FROM run_observations
+        `SELECT check_id, status, evidence, event_type FROM run_observations
           WHERE run_id = $1 AND status IN ('fail', 'blocked')
           ORDER BY created_at, id`,
         [runId],
       );
       const storyFailures = await sql.unsafe<Array<Record<string, unknown>>>(
-        `SELECT story_id, quality_failure_fingerprint
-           FROM stories WHERE run_id = $1 AND quality_failure_fingerprint IS NOT NULL
-          ORDER BY story_id`,
+        `SELECT quality_failure_fingerprint
+           FROM stories
+          WHERE run_id = $1
+            AND status = 'failed'
+            AND quality_failure_fingerprint IS NOT NULL
+          ORDER BY quality_failure_fingerprint`,
         [runId],
       );
       const failed = !["completed", "done"].includes(String(run["status"]).toLowerCase())
@@ -1750,8 +1853,8 @@ export function createPostgresConvergencePort(
             openFindingRefs: findingRows
               .filter((row) => row["status"] === "open")
               .map((row) => row["invariant_ref"]),
-            failureRows: sortedRows(failureRows),
-            storyFailures: sortedRows(storyFailures),
+            terminalFailure: canonicalConvergenceTerminalFailureV1(failureRows),
+            storyFailures: canonicalConvergenceStoryFailuresV1(storyFailures),
           })
         : null;
       const pullRequests = await sql.unsafe<Array<Record<string, unknown>>>(
@@ -1891,8 +1994,11 @@ export function createNodeConvergenceProcessPort(root = packageRoot()): Converge
 
     async inspectProject(input) {
       if (!input.projectLocator || !path.isAbsolute(input.projectLocator)) {
+        const invalid = Boolean(input.canonicalSourceRevision);
         return {
-          manualProjectMutationDetected: true,
+          projectIdentityState: invalid ? "invalid" as const : "provisional" as const,
+          workingTreeDirty: false,
+          manualProjectMutationDetected: false,
           sourceHeadMatchesCanonical: false,
           projectHeadSha: null,
           projectTreeHash: null,
@@ -1918,18 +2024,24 @@ export function createNodeConvergenceProcessPort(root = packageRoot()): Converge
       }
       const canonicalHeadSha = input.canonicalSourceRevision?.sha ?? null;
       const canonicalTreeHash = input.canonicalSourceRevision?.treeHash ?? null;
+      const workingTreeDirty = status.length > 0;
+      const sourceHeadMatchesCanonical = Boolean(
+        canonicalHeadSha
+        && canonicalTreeHash
+        && upstreamHeadSha
+        && upstreamTreeHash
+        && projectHeadSha.toLowerCase() === canonicalHeadSha.toLowerCase()
+        && projectTreeHash.toLowerCase() === canonicalTreeHash.toLowerCase()
+        && upstreamHeadSha.toLowerCase() === canonicalHeadSha.toLowerCase()
+        && upstreamTreeHash.toLowerCase() === canonicalTreeHash.toLowerCase()
+      );
       return {
-        manualProjectMutationDetected: status.length > 0,
-        sourceHeadMatchesCanonical: Boolean(
-          canonicalHeadSha
-          && canonicalTreeHash
-          && upstreamHeadSha
-          && upstreamTreeHash
-          && projectHeadSha.toLowerCase() === canonicalHeadSha.toLowerCase()
-          && projectTreeHash.toLowerCase() === canonicalTreeHash.toLowerCase()
-          && upstreamHeadSha.toLowerCase() === canonicalHeadSha.toLowerCase()
-          && upstreamTreeHash.toLowerCase() === canonicalTreeHash.toLowerCase()
-        ),
+        projectIdentityState: canonicalHeadSha && canonicalTreeHash
+          ? sourceHeadMatchesCanonical && !workingTreeDirty ? "verified" as const : "invalid" as const
+          : "provisional" as const,
+        workingTreeDirty,
+        manualProjectMutationDetected: Boolean(canonicalHeadSha && canonicalTreeHash && workingTreeDirty),
+        sourceHeadMatchesCanonical,
         projectHeadSha: GitObjectHashSchema.parse(projectHeadSha.toLowerCase()),
         projectTreeHash: GitObjectHashSchema.parse(projectTreeHash.toLowerCase()),
         canonicalHeadSha: canonicalHeadSha ? GitObjectHashSchema.parse(canonicalHeadSha.toLowerCase()) : null,
