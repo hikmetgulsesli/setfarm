@@ -2,6 +2,11 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 
+import {
+  collectScreenCandidatesFromResult,
+  partitionDirectScreenCandidates,
+} from "../scripts/stitch-response-parser.mjs";
+
 describe("stitch-api partial list recovery", () => {
   it("merges tracked screens into partial Stitch API lists", () => {
     const source = fs.readFileSync("scripts/stitch-api.mjs", "utf-8");
@@ -31,13 +36,15 @@ describe("stitch-api partial list recovery", () => {
     assert.doesNotMatch(source, /const listed = parseScreens\(listResult\)/);
   });
 
-  it("parses Stitch screens from structured and embedded MCP response shapes", () => {
+  it("delegates Stitch response parsing to the bounded response-schema decoder", () => {
     const source = fs.readFileSync("scripts/stitch-api.mjs", "utf-8");
+    const parser = fs.readFileSync("scripts/stitch-response-parser.mjs", "utf-8");
 
-    assert.match(source, /function collectScreensFromResult\(result\)/);
-    assert.match(source, /node\.structuredContent\?\.screens/);
-    assert.match(source, /node\.structured_content\?\.screens/);
-    assert.match(source, /jsonPayloadsFromToolText\(item\.text\)/);
+    assert.match(source, /collectScreenCandidatesFromResult/);
+    assert.match(source, /partitionDirectScreenCandidates/);
+    assert.doesNotMatch(source, /function screenSourceArrays/);
+    assert.match(parser, /function screenEntriesAtResponseBoundary/);
+    assert.doesNotMatch(parser, /for \(const child of Object\.values/);
     assert.match(source, /describeToolResultShape\(result\)/);
   });
 
@@ -88,5 +95,98 @@ describe("stitch-api partial list recovery", () => {
     assert.match(source, /const forceNewProject = process\.env\.STITCH_FORCE_NEW_PROJECT === '1'/);
     assert.match(source, /forceNewProject \? null : await callTool\('list_projects'/);
     assert.match(source, /\.stitch-screens-' \+ existing\.projectId \+ '\.json/);
+  });
+});
+
+describe("stitch-api direct response identity", () => {
+  const helper = (id: string, title: string) => ({
+    name: `projects/1/screens/${id}`,
+    title,
+    width: "512",
+    height: "512",
+    htmlCode: { downloadUrl: `https://example.invalid/${id}.html` },
+  });
+  const product = (id = "product") => ({
+    name: `projects/1/screens/${id}`,
+    title: "Status Page - Status Utility",
+    width: "2560",
+    height: "2048",
+    htmlCode: { downloadUrl: `https://example.invalid/${id}.html` },
+    screenshot: { downloadUrl: `https://example.invalid/${id}.png` },
+  });
+
+  it("excludes code canvas nodes by render evidence without title reconciliation", () => {
+    const result = {
+      structuredContent: {
+        outputComponents: [
+          { design: { screens: [helper("three", "Three.js")] } },
+          { design: { screens: [helper("shader", "Shader")] } },
+          { design: { screens: [product()] } },
+        ],
+      },
+    };
+    const partition = partitionDirectScreenCandidates(collectScreenCandidatesFromResult(result));
+
+    assert.equal(partition.candidates.length, 3);
+    assert.deepEqual(partition.screens.map((screen) => screen.screenId), ["product"]);
+    assert.deepEqual(partition.excluded.map((screen) => screen.screenId), ["three", "shader"]);
+    assert.deepEqual(
+      partition.evidence.filter((item) => item.disposition === "excluded_missing_render_evidence")
+        .map((item) => ({ id: item.screenId, missing: item.missingEvidence })),
+      [
+        { id: "shader", missing: ["screenshot"] },
+        { id: "three", missing: ["screenshot"] },
+      ],
+    );
+  });
+
+  it("ignores arbitrary nested design.screens descendants", () => {
+    const result = {
+      structuredContent: {
+        screens: [product()],
+        debug: { nested: { design: { screens: [product("rogue")] } } },
+      },
+    };
+    const candidates = collectScreenCandidatesFromResult(result);
+
+    assert.deepEqual(candidates.map((screen) => screen.screenId), ["product"]);
+  });
+
+  it("records the exact snake-case response boundary when the transport uses it", () => {
+    const result = {
+      structured_content: {
+        output_components: [{ design: { screens: [product()] } }],
+      },
+    };
+    const evidence = partitionDirectScreenCandidates(collectScreenCandidatesFromResult(result)).evidence;
+
+    assert.deepEqual(evidence[0]?.responsePaths, [
+      "$result.structured_content.output_components[0].design.screens[0]",
+    ]);
+  });
+
+  it("merges structured and embedded direct evidence without losing richer fields", () => {
+    const partial = {
+      name: "projects/1/screens/product",
+      title: "Status Page - Status Utility",
+      htmlCode: { downloadUrl: "https://example.invalid/product.html" },
+    };
+    const result = {
+      structuredContent: { outputComponents: [{ design: { screens: [partial] } }] },
+      content: [{
+        type: "text",
+        text: JSON.stringify({ outputComponents: [{ design: { screens: [product()] } }] }),
+      }],
+    };
+    const partition = partitionDirectScreenCandidates(collectScreenCandidatesFromResult(result));
+
+    assert.equal(partition.screens.length, 1);
+    assert.equal(partition.screens[0]?.screenshotUrl, "https://example.invalid/product.png");
+    assert.equal(partition.evidence[0]?.responsePaths.length, 2);
+  });
+
+  it("does not treat project resources as screens", () => {
+    const result = { structuredContent: { name: "projects/1", title: "Project" } };
+    assert.deepEqual(collectScreenCandidatesFromResult(result), []);
   });
 });

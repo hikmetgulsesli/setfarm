@@ -13,6 +13,7 @@ import {
   bindExactStitchTargetResponsesV1,
   produceDesignGenerationTargetsV1,
 } from "../../../product-compiler/producers/design-targets.js";
+import { decodeStitchDirectBatchV1 } from "../../../product-compiler/producers/stitch-direct-response.js";
 import {
   DesignGenerationTargetsV1Schema,
   StitchTargetResponseBindingsV1Schema,
@@ -24,6 +25,10 @@ import {
   ProductSpecV1Schema,
   type ProductSpecV1,
 } from "../../../product-compiler/schemas/product-spec-v1.js";
+import {
+  StitchDirectResponseEvidenceV1Schema,
+  type StitchDirectBatchEvidenceV1,
+} from "../../../product-compiler/schemas/stitch-direct-response-evidence-v1.js";
 
 const MIN_STITCH_HTML_BYTES = 1000;
 const PRECLAIM_CANCELLED = "DESIGN_PRECLAIM_CANCELLED";
@@ -83,6 +88,8 @@ export type DesignFailureCategory =
   | "empty_project"
   | "configuration"
   | "local_filesystem"
+  | "provider_response"
+  | "response_contract"
   | "surface_mismatch"
   | "unknown";
 
@@ -96,6 +103,89 @@ export type DesignFailureClassification = {
   confidence: "high" | "medium" | "low";
   reason: string;
 };
+
+export type V3DesignBoundaryCode =
+  | "DESIGN_V3_DIRECT_BATCH_INCOMPLETE"
+  | "DESIGN_V3_DIRECT_RESPONSE_EVIDENCE_INVALID"
+  | "DESIGN_V3_DIRECT_RESPONSE_EVIDENCE_MISMATCH"
+  | "DESIGN_V3_EXACT_RESPONSE_BINDING_REJECTED"
+  | "DESIGN_V3_RENDERABLE_SCREEN_MISSING"
+  | "DESIGN_V3_RESPONSE_HTML_MISSING"
+  | "DESIGN_V3_RESPONSE_SOURCE_INVALID";
+
+export function classifyV3DesignBoundary(code: V3DesignBoundaryCode): DesignFailureClassification {
+  switch (code) {
+    case "DESIGN_V3_DIRECT_RESPONSE_EVIDENCE_INVALID":
+    case "DESIGN_V3_DIRECT_RESPONSE_EVIDENCE_MISMATCH":
+      return {
+        category: "response_contract",
+        owner: "setfarm_local_system",
+        retryable: false,
+        apiRelated: false,
+        setfarmBugLikely: true,
+        promptRelated: false,
+        confidence: "high",
+        reason: "The typed Stitch transport evidence and reported direct screen set disagree.",
+      };
+    case "DESIGN_V3_RESPONSE_SOURCE_INVALID":
+    case "DESIGN_V3_RENDERABLE_SCREEN_MISSING":
+      return {
+        category: "provider_response",
+        owner: "stitch_api",
+        retryable: false,
+        apiRelated: true,
+        setfarmBugLikely: false,
+        promptRelated: false,
+        confidence: "high",
+        reason: "The direct generation response did not carry admissible product-screen identity; fallback discovery is not authoritative.",
+      };
+    case "DESIGN_V3_EXACT_RESPONSE_BINDING_REJECTED":
+      return {
+        category: "surface_mismatch",
+        owner: "prompt_or_design_contract",
+        retryable: false,
+        apiRelated: false,
+        setfarmBugLikely: false,
+        promptRelated: true,
+        confidence: "high",
+        reason: "Renderable Stitch screens did not exactly satisfy the immutable generation target set.",
+      };
+    case "DESIGN_V3_RESPONSE_HTML_MISSING":
+      return {
+        category: "network_fetch",
+        owner: "network_or_stitch_api",
+        retryable: false,
+        apiRelated: true,
+        setfarmBugLikely: false,
+        promptRelated: false,
+        confidence: "high",
+        reason: "A directly bound renderable screen lacked its required downloaded HTML evidence.",
+      };
+    case "DESIGN_V3_DIRECT_BATCH_INCOMPLETE":
+      return {
+        category: "response_contract",
+        owner: "setfarm_local_system",
+        retryable: false,
+        apiRelated: false,
+        setfarmBugLikely: true,
+        promptRelated: false,
+        confidence: "medium",
+        reason: "The v3 direct batch stopped without a more specific typed boundary code.",
+      };
+  }
+}
+
+class V3DesignBoundaryError extends Error {
+  readonly code: V3DesignBoundaryCode;
+  readonly classification: DesignFailureClassification;
+
+  constructor(code: V3DesignBoundaryCode, diagnostic: string) {
+    super(String(diagnostic || code).includes(code) ? String(diagnostic || code) : `${code}: ${diagnostic}`);
+    this.name = "V3DesignBoundaryError";
+    this.code = code;
+    this.classification = classifyV3DesignBoundary(code);
+  }
+}
 
 type DesignFailureReport = {
   schemaVersion: 1;
@@ -112,6 +202,7 @@ type DesignFailureReport = {
   stageCount?: number;
   surfaceIds?: string[];
   diagnostic: string;
+  failureCode?: string;
   classification: DesignFailureClassification;
   fingerprint: string;
   htmlCount?: number;
@@ -261,6 +352,7 @@ function designFailureFingerprint(report: Omit<DesignFailureReport, "fingerprint
       report.operation,
       report.projectId,
       report.classification.category,
+      report.failureCode || "",
       report.diagnostic.slice(0, 500),
       String(report.stageIndex || ""),
       (report.surfaceIds || []).join(","),
@@ -1377,7 +1469,14 @@ async function generateStitchScreensInSingleBatch(
   deviceType: string,
   uiLanguage: string,
   v3Contract?: V3DesignContract,
-): Promise<{ completed: boolean; providerUnavailable: boolean; diagnostic: string; batches: StitchBatchResponseV1[] }> {
+): Promise<{
+  completed: boolean;
+  providerUnavailable: boolean;
+  diagnostic: string;
+  failureCode?: V3DesignBoundaryCode;
+  batches: StitchBatchResponseV1[];
+  evidenceBatches: StitchDirectBatchEvidenceV1[];
+}> {
   const parsedSurfaces = parseProductSurfaces(prd);
   const parsedSurfaceById = new Map(parsedSurfaces.map((surface) => [surface.surfaceId, surface]));
   const surfaces = v3Contract
@@ -1386,13 +1485,20 @@ async function generateStitchScreensInSingleBatch(
         return surface ? [surface] : [];
       })
     : parsedSurfaces;
-  if (surfaces.length === 0) return { completed: false, providerUnavailable: false, diagnostic: "No Product Surfaces declared", batches: [] };
+  if (surfaces.length === 0) return {
+    completed: false,
+    providerUnavailable: false,
+    diagnostic: "No Product Surfaces declared",
+    batches: [],
+    evidenceBatches: [],
+  };
   if (v3Contract && surfaces.length !== v3Contract.generationTargets.targets.length) {
     return {
       completed: false,
       providerUnavailable: false,
       diagnostic: "V3 ProductSpec surfaces do not exactly match the legacy design projection",
       batches: [],
+      evidenceBatches: [],
     };
   }
   const retryAttempts = boundedIntEnv("SETFARM_STITCH_BATCH_RETRY_ATTEMPTS", 3, 1, 5);
@@ -1406,6 +1512,7 @@ async function generateStitchScreensInSingleBatch(
   let providerUnavailable = false;
   let diagnostic = "";
   const batches: StitchBatchResponseV1[] = [];
+  const evidenceBatches: StitchDirectBatchEvidenceV1[] = [];
 
   await recordPreClaimProgress(ctx, `Design preclaim: generating ${surfaces.length} Product Surfaces in ${stages.length} Stitch batch stage(s) of up to ${stageSize}`);
   for (let stageIndex = 0; stageIndex < stages.length; stageIndex++) {
@@ -1443,6 +1550,22 @@ async function generateStitchScreensInSingleBatch(
         try { genResult = JSON.parse(genOut); } catch {}
         const generatedTotal = Number(genResult.total || 0);
         logger.info(`[module:design preclaim] Generated ${generatedTotal} screen(s) in Stitch batch ${stageIndex + 1}/${stages.length} (attempt ${attempt}/${retryAttempts})`, { runId: ctx.runId });
+        if (v3Contract) {
+          const decoded = decodeStitchDirectBatchV1({ stageId, targetRefs: stageTargetRefs, result: genResult });
+          if (decoded.evidenceBatch) evidenceBatches.push(decoded.evidenceBatch);
+          if (decoded.status === "rejected") {
+            diagnostic = decoded.diagnostic;
+            return {
+              completed: false,
+              providerUnavailable: false,
+              diagnostic,
+              failureCode: decoded.code,
+              batches,
+              evidenceBatches,
+            };
+          }
+          batches.push(decoded.batch);
+        }
         if (generatedTotal === 0 && genResult.diagnostic) {
           const shape = JSON.stringify(genResult.diagnostic).slice(0, 260);
           const textSample = redactDiagnosticText(genResult.diagnostic.textSample).slice(0, 500);
@@ -1468,23 +1591,7 @@ async function generateStitchScreensInSingleBatch(
             await sleep(delayMs);
             continue;
           }
-          return { completed: false, providerUnavailable, diagnostic, batches };
-        }
-        if (v3Contract) {
-          if (genResult.screenSource !== "direct") {
-            diagnostic = `V3 Stitch response source must be direct, got ${String(genResult.screenSource || "unknown")}`;
-            return { completed: false, providerUnavailable: false, diagnostic, batches };
-          }
-          batches.push({
-            stageId,
-            targetRefs: stageTargetRefs,
-            screens: Array.isArray(genResult.screens)
-              ? genResult.screens.map((screen: any) => ({
-                  screenId: String(screen?.screenId || ""),
-                  title: String(screen?.title || ""),
-                }))
-              : [],
-          });
+          return { completed: false, providerUnavailable, diagnostic, batches, evidenceBatches };
         }
         await recordPreClaimProgress(ctx, `Design preclaim: Stitch batch ${stageIndex + 1}/${stages.length} generated ${generatedTotal} screen(s)`);
         stageCompleted = true;
@@ -1518,12 +1625,12 @@ async function generateStitchScreensInSingleBatch(
           await sleep(delayMs);
           continue;
         }
-        return { completed: false, providerUnavailable, diagnostic, batches };
+        return { completed: false, providerUnavailable, diagnostic, batches, evidenceBatches };
       }
     }
-    if (!stageCompleted) return { completed: false, providerUnavailable, diagnostic, batches };
+    if (!stageCompleted) return { completed: false, providerUnavailable, diagnostic, batches, evidenceBatches };
   }
-  return { completed: true, providerUnavailable: false, diagnostic, batches };
+  return { completed: true, providerUnavailable: false, diagnostic, batches, evidenceBatches };
 }
 
 function retitleTrackedStitchScreens(repo: string, projId: string, screenIds: string[], title: string): void {
@@ -2077,25 +2184,55 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
   let batchGenerationCompleted = false;
   let lastStitchDiagnostic = "";
   let stitchProviderUnavailable = false;
+  let v3BoundScreenIds: string[] = [];
+  if (v3Contract) {
+    fs.rmSync(path.join(stitchDir, "STITCH_DIRECT_RESPONSE_EVIDENCE.json"), { force: true });
+    fs.rmSync(path.join(stitchDir, "STITCH_RESPONSE_BINDINGS.json"), { force: true });
+  }
   try {
     const batchResult = await generateStitchScreensInSingleBatch(ctx, stitchScript, repo, stitchDir, projId, prd, deviceType, uiLanguage, v3Contract);
     batchGenerationCompleted = batchResult.completed;
     stitchProviderUnavailable = batchResult.providerUnavailable;
     lastStitchDiagnostic = batchResult.diagnostic || lastStitchDiagnostic;
-    if (v3Contract && batchResult.completed) {
+    if (v3Contract) {
+      if (batchResult.evidenceBatches.length > 0) {
+        const directEvidenceResult = StitchDirectResponseEvidenceV1Schema.safeParse({
+          schema: "setfarm.stitch-direct-response-evidence.v1",
+          projectId: projId,
+          batches: batchResult.evidenceBatches,
+        });
+        if (!directEvidenceResult.success) {
+          throw new V3DesignBoundaryError(
+            "DESIGN_V3_DIRECT_RESPONSE_EVIDENCE_INVALID",
+            directEvidenceResult.error.issues[0]?.message || "canonical evidence artifact rejected",
+          );
+        }
+        writeCanonicalJson(path.join(stitchDir, "STITCH_DIRECT_RESPONSE_EVIDENCE.json"), directEvidenceResult.data);
+      }
+      if (!batchResult.completed) {
+        throw new V3DesignBoundaryError(
+          batchResult.failureCode || "DESIGN_V3_DIRECT_BATCH_INCOMPLETE",
+          batchResult.diagnostic || "direct Stitch batch did not complete",
+        );
+      }
       const bound = bindExactStitchTargetResponsesV1({
         generationTargets: v3Contract.generationTargets,
         batches: batchResult.batches,
       });
       if (bound.status !== "produced") {
         const evidence = bound.diagnostics.map((item) => `${item.code}:${item.reference || "batch"}`).join(", ");
-        throw new Error(`DESIGN_V3_EXACT_RESPONSE_BINDING_REJECTED: ${evidence}`);
+        throw new V3DesignBoundaryError(
+          "DESIGN_V3_EXACT_RESPONSE_BINDING_REJECTED",
+          evidence,
+        );
       }
       writeCanonicalJson(path.join(stitchDir, "STITCH_RESPONSE_BINDINGS.json"), bound.responseBindings);
       ctx.context["stitch_response_bindings"] = canonicalJsonStringify(bound.responseBindings);
+      v3BoundScreenIds = bound.responseBindings.bindings.map((binding) => binding.responseScreenId);
     }
   } catch (e) {
     if (isPreclaimCancelledError(e)) return;
+    const boundaryError = e instanceof V3DesignBoundaryError ? e : undefined;
     const failureDetail = redactDiagnosticText(e).slice(0, 500);
     lastStitchDiagnostic = failureDetail;
     stitchProviderUnavailable = isStitchProviderUnavailable(failureDetail);
@@ -2105,6 +2242,10 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
       phase: "generate_batch",
       operation: "stitch.generate_all_screens",
       diagnostic: failureDetail || "unknown Stitch generation failure",
+      ...(boundaryError ? {
+        failureCode: boundaryError.code,
+        classification: boundaryError.classification,
+      } : {}),
       screensGenerated: 0,
       htmlCount: countValidStitchHtml(stitchDir),
     });
@@ -2116,12 +2257,40 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
     } else {
       await recordPreClaimProgress(ctx, `Design preclaim: batch Stitch generation failed: ${failureDetail || "unknown error"}; checking whether Stitch produced downloadable screens`);
     }
+    if (v3Contract) {
+      await failDesignPreclaim(ctx, failureDetail || "DESIGN_V3_DIRECT_BATCH_INCOMPLETE", { terminal: true });
+      return;
+    }
   }
 
   // 4. download-all with retries. When the batch call completed or returned an
   // ambiguous error, Stitch can still finish async work after a delay.
   let htmlCount = 0;
-  const downloadAttempts = stitchProviderUnavailable ? 1 : (batchGenerationCompleted ? 3 : 1);
+  if (v3Contract) {
+    const missingBoundHtml = v3BoundScreenIds.filter((screenId) =>
+      !isValidStitchHtml(path.join(stitchDir, `${screenId}.html`)));
+    htmlCount = v3BoundScreenIds.length - missingBoundHtml.length;
+    ctx.context["screens_generated"] = String(htmlCount);
+    if (missingBoundHtml.length > 0) {
+      const boundaryError = new V3DesignBoundaryError(
+        "DESIGN_V3_RESPONSE_HTML_MISSING",
+        `direct bound screens lack downloaded HTML (${missingBoundHtml.join(", ")})`,
+      );
+      writeDesignFailureReport(ctx, repo, {
+        projectId: projId,
+        phase: "direct_bound_html",
+        operation: "setfarm.verify_direct_stitch_html",
+        diagnostic: boundaryError.message,
+        failureCode: boundaryError.code,
+        classification: boundaryError.classification,
+        screensGenerated: htmlCount,
+        htmlCount,
+      });
+      await failDesignPreclaim(ctx, boundaryError.message, { terminal: true });
+      return;
+    }
+  }
+  const downloadAttempts = v3Contract ? 0 : (stitchProviderUnavailable ? 1 : (batchGenerationCompleted ? 3 : 1));
   for (let attempt = 0; attempt < downloadAttempts; attempt++) {
     try {
       await recordPreClaimProgress(ctx, `Design preclaim: downloading Stitch HTML files (attempt ${attempt + 1}/${downloadAttempts})`);
@@ -2164,7 +2333,7 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
   }
 
   // 4b. Tracking-file fallback: direct curl from cached URLs if download-all returned 0
-  if (htmlCount === 0) {
+  if (!v3Contract && htmlCount === 0) {
     const trackFile = path.join(repo, ".stitch-screens-" + projId + ".json");
     if (fs.existsSync(trackFile)) {
       try {

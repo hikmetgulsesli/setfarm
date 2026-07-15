@@ -1,0 +1,105 @@
+import assert from "node:assert/strict";
+import { describe, it } from "node:test";
+
+import { decodeStitchDirectBatchV1 } from "../../src/product-compiler/producers/stitch-direct-response.js";
+
+const admitted = {
+  screenId: "screen-status",
+  title: "Status Page - Status Utility",
+  responsePaths: ["$result.structuredContent.outputComponents[2].design.screens[0]"],
+  width: "2560",
+  height: "2048",
+  htmlAvailable: true,
+  screenshotAvailable: true,
+  disposition: "admitted_renderable_screen",
+  missingEvidence: [],
+};
+
+const helper = {
+  screenId: "screen-three",
+  title: "Three.js",
+  responsePaths: ["$result.structuredContent.outputComponents[0].design.screens[0]"],
+  width: "512",
+  height: "512",
+  htmlAvailable: true,
+  screenshotAvailable: false,
+  disposition: "excluded_missing_render_evidence",
+  missingEvidence: ["screenshot"],
+};
+
+function decode(result: Record<string, unknown>) {
+  return decodeStitchDirectBatchV1({
+    stageId: "stage-001",
+    targetRefs: ["TARGET_STATUS"],
+    result,
+  });
+}
+
+describe("v3 Stitch direct batch decoder", () => {
+  it("binds only renderable direct candidates and preserves excluded evidence", () => {
+    const result = decode({
+      total: 1,
+      screenSource: "direct",
+      screens: [{ screenId: admitted.screenId, title: admitted.title }],
+      directScreenEvidence: [helper, admitted],
+    });
+    assert.equal(result.status, "decoded");
+    if (result.status !== "decoded") return;
+    assert.deepEqual(result.batch.screens, [{ screenId: admitted.screenId, title: admitted.title }]);
+    assert.equal(result.evidenceBatch.candidates.length, 2);
+  });
+
+  it("does not use expected target titles as a decoder classifier", () => {
+    const extra = { ...admitted, screenId: "screen-extra", title: "Unexpected Real Canvas" };
+    const result = decode({
+      total: 2,
+      screenSource: "direct",
+      screens: [
+        { screenId: admitted.screenId, title: admitted.title },
+        { screenId: extra.screenId, title: extra.title },
+      ],
+      directScreenEvidence: [admitted, extra],
+    });
+    assert.equal(result.status, "decoded");
+    if (result.status !== "decoded") return;
+    assert.equal(result.batch.screens.length, 2);
+  });
+
+  it("rejects reported screens that are not backed by admitted evidence", () => {
+    const result = decode({
+      total: 1,
+      screenSource: "direct",
+      screens: [{ screenId: "invented", title: admitted.title }],
+      directScreenEvidence: [helper, admitted],
+    });
+    assert.equal(result.status, "rejected");
+    if (result.status !== "rejected") return;
+    assert.equal(result.code, "DESIGN_V3_DIRECT_RESPONSE_EVIDENCE_MISMATCH");
+  });
+
+  it("classifies helper-only direct responses as missing renderable product evidence", () => {
+    const result = decode({
+      total: 0,
+      screenSource: "direct",
+      screens: [],
+      directScreenEvidence: [helper],
+    });
+    assert.equal(result.status, "rejected");
+    if (result.status !== "rejected") return;
+    assert.equal(result.code, "DESIGN_V3_RENDERABLE_SCREEN_MISSING");
+    assert.equal(result.evidenceBatch?.candidates[0]?.screenId, helper.screenId);
+  });
+
+  it("rejects fallback discovery while retaining direct candidate evidence", () => {
+    const result = decode({
+      total: 1,
+      screenSource: "fallback_list",
+      screens: [{ screenId: admitted.screenId, title: admitted.title }],
+      directScreenEvidence: [helper],
+    });
+    assert.equal(result.status, "rejected");
+    if (result.status !== "rejected") return;
+    assert.equal(result.code, "DESIGN_V3_RESPONSE_SOURCE_INVALID");
+    assert.equal(result.evidenceBatch?.candidates[0]?.screenId, helper.screenId);
+  });
+});
