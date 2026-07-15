@@ -23,7 +23,11 @@ import {
 } from "./installer/step-ops.js";
 import { failStep } from "./installer/step-fail.js";
 import { failRun, getRunContext } from "./installer/repo.js";
-import { discardStoryWorktreeAndResetBranch, removeStoryWorktree } from "./installer/worktree-ops.js";
+import {
+  discardStoryWorktreeAndResetBranch,
+  discardStoryWorktreeAndResetBranchExact,
+  removeStoryWorktree,
+} from "./installer/worktree-ops.js";
 import { cleanupProjectEphemera, cleanupRunningRunOrphanedToolWorkers, scheduleRunCronTeardown } from "./installer/cleanup-ops.js";
 import { updateSupervisorMemory } from "./installer/product-supervisor.js";
 import { preserveActionableStoryRetryOutput } from "./installer/retry-output.js";
@@ -50,6 +54,16 @@ import {
   closeClaimAndBoundAttempt,
   closeUniqueSingleStepClaimForRecoveryInTransaction,
 } from "./execution/claim-attempt-transition.js";
+import { createAttemptRepository } from "./execution/attempt-repository.js";
+import { loadV3ImplementationAttemptContext } from "./execution/v3-implementation-attempt.js";
+import {
+  createOperationalRetryDirectiveV1,
+  parseOperationalRetryDirectiveStoryOutput,
+} from "./execution/operational-retry-directive.js";
+import {
+  publishOperationalRetryDirectiveInTransaction,
+  terminalizeOperationalRetryExhaustionInTransaction,
+} from "./execution/operational-retry-transition.js";
 import type { ClaimAttemptFenceV1, ClaimEnvelopeV1 } from "./execution/schemas/claim-envelope-v1.js";
 import { parseClaimEnvelope } from "./execution/claim-authority.js";
 import {
@@ -5489,11 +5503,13 @@ async function requeueOpenStoryClaim(
   diagnostic: string,
   runtimeAgentId = claimAgentId,
 ): Promise<boolean> {
-  const row = await pgGet<{ claim_id: string; step_db_id: string | null; story_db_id: string | null; story_status: string | null; story_output: string | null; claim_story_id: string; recovery_dispatch_id: string | null }>(
+  const row = await pgGet<{ claim_id: string; protocol: string; step_db_id: string | null; story_db_id: string | null; story_status: string | null; story_output: string | null; claim_story_id: string; recovery_dispatch_id: string | null }>(
     `SELECT cl.id::text as claim_id, step_row.id AS step_db_id,
             st.id as story_db_id, st.status as story_status, st.output as story_output,
-            cl.story_id as claim_story_id, delivery.dispatch_id AS recovery_dispatch_id
+            cl.story_id as claim_story_id, r.protocol,
+            delivery.dispatch_id AS recovery_dispatch_id
      FROM claim_log cl
+     JOIN runs r ON r.id = cl.run_id
      LEFT JOIN stories st ON st.run_id = cl.run_id AND st.story_id = cl.story_id
      LEFT JOIN steps step_row ON step_row.run_id = cl.run_id AND step_row.step_id = cl.step_id
      LEFT JOIN recovery_dispatch_deliveries delivery
@@ -5540,7 +5556,151 @@ async function requeueOpenStoryClaim(
     return true;
   }
 
-  if (row.story_db_id) {
+  if (row.protocol === "v3") {
+    if (!row.step_db_id || !row.story_db_id) {
+      throw new Error("V3_OPERATIONAL_RETRY_STATE_IDENTITY_INCOMPLETE");
+    }
+    const activeAttempt = await createAttemptRepository(getSql()).findActive({ runId, stepId, storyId });
+    if (!activeAttempt || activeAttempt.claimId !== claimId) {
+      throw new Error("V3_OPERATIONAL_RETRY_ACTIVE_ATTEMPT_IDENTITY_MISMATCH");
+    }
+    const v3AttemptContext = await loadV3ImplementationAttemptContext({
+      runId,
+      storyId,
+      attemptId: activeAttempt.attemptId,
+    });
+    if (activeAttempt.attemptClass === "infrastructure_retry") {
+      const priorDirective = parseOperationalRetryDirectiveStoryOutput(row.story_output);
+      if (
+        !priorDirective
+        || priorDirective.directiveHash !== v3AttemptContext.operationalRetry?.directive.directiveHash
+      ) {
+        throw new Error("V3_OPERATIONAL_RETRY_STORY_AUTHORITY_MISMATCH");
+      }
+      const exhaustedDiagnostic = `${diagnostic}\nOPERATIONAL_RETRY_EXHAUSTED: typed fallback ${priorDirective.retryBudget.ordinal}/${priorDirective.retryBudget.limit} failed; unchanged-source redispatch is forbidden.`;
+      const closed = await pgBegin((sql) => terminalizeOperationalRetryExhaustionInTransaction(sql, {
+        claimId,
+        attemptId: activeAttempt.attemptId,
+        attemptGeneration: activeAttempt.generation,
+        runId,
+        stepId,
+        stepDbId: row.step_db_id!,
+        storyId,
+        storyDbId: row.story_db_id!,
+        agentId: claimAgentId,
+        diagnostic: exhaustedDiagnostic,
+        directive: priorDirective,
+      }));
+      if (closed.status !== "closed") return false;
+      await releaseReservedRuntimeForClaimIfPresent(claimId, exhaustedDiagnostic);
+      await discardRuntimeGuardRetryWorktree(runId, storyId, claimAgentId, exhaustedDiagnostic);
+      await recordObservation({
+        runId,
+        stepId,
+        storyId,
+        agentId: claimAgentId,
+        phase: "operational-retry",
+        checkId: `operational_retry.exhausted:${priorDirective.directiveHash}`,
+        label: "Operational retry exhausted",
+        status: "blocked",
+        summary: "The one exact Kimi fallback failed; another unchanged-source model dispatch was refused.",
+        detail: exhaustedDiagnostic,
+        evidence: {
+          schema: "setfarm.operational-retry-exhaustion-evidence.v1",
+          directiveHash: priorDirective.directiveHash,
+          failedAttemptId: activeAttempt.attemptId,
+          failedAttemptGeneration: activeAttempt.generation,
+          packetHash: activeAttempt.packetHash,
+          sliceHash: activeAttempt.sliceHash,
+          sourceRevision: activeAttempt.sourceBefore,
+        },
+        metadata: {
+          failureCode: runtimeGuardDiagnosticKey(diagnostic),
+          recoveryOwner: "platform-terminal",
+        },
+        eventType: "operational-retry.exhausted",
+        completedAt: new Date().toISOString(),
+      });
+      await checkRuntimeGuardLoopContinuation(runId, stepId);
+      console.warn(`[spawner] exhausted typed operational retry for ${storyId}; refused another unchanged-source dispatch`);
+      return true;
+    }
+    if (activeAttempt.attemptClass !== "product_implementation") {
+      throw new Error(`V3_OPERATIONAL_RETRY_ATTEMPT_CLASS_INVALID:${activeAttempt.attemptClass}`);
+    }
+    const directive = createOperationalRetryDirectiveV1({
+      runId,
+      stepId,
+      storyId,
+      priorAttempt: {
+        claimId,
+        attemptId: v3AttemptContext.attempt.attemptId,
+        generation: v3AttemptContext.attempt.generation,
+        attemptClass: "product_implementation",
+        packetHash: v3AttemptContext.packetHash,
+        sliceHash: v3AttemptContext.sliceHash,
+        sourceBefore: v3AttemptContext.sourceBefore,
+        terminalDisposition: "inconclusive",
+      },
+      failure: {
+        code: runtimeGuardDiagnosticKey(diagnostic),
+        diagnostic: diagnostic.slice(0, 8_000),
+      },
+      nextSourceRevision: v3AttemptContext.sourceBefore,
+      allowedPaths: v3AttemptContext.slice.files
+        .filter((file) => file.role === "owned" || file.role === "shared_writable")
+        .map((file) => file.path),
+    });
+    await discardV3OperationalRetryWorktree(
+      runId,
+      storyId,
+      claimAgentId,
+      diagnostic,
+      directive.nextSourceRevision.sha,
+    );
+    const closed = await pgBegin((sql) => publishOperationalRetryDirectiveInTransaction(sql, {
+      claimId,
+      attemptId: v3AttemptContext.attempt.attemptId,
+      attemptGeneration: v3AttemptContext.attempt.generation,
+      runId,
+      stepId,
+      stepDbId: row.step_db_id!,
+      storyId,
+      storyDbId: row.story_db_id!,
+      agentId: claimAgentId,
+      diagnostic,
+      directive,
+    }));
+    if (closed.status !== "closed") return false;
+    await releaseReservedRuntimeForClaimIfPresent(claimId, diagnostic);
+    await recordObservation({
+      runId,
+      stepId,
+      storyId,
+      agentId: claimAgentId,
+      phase: "operational-retry",
+      checkId: `operational_retry.directive:${directive.directiveHash}`,
+      label: "Operational retry directive",
+      status: "retry",
+      summary: `${directive.failure.code} authorized one exact Kimi fallback against the reset source.`,
+      detail: directive.failure.diagnostic,
+      evidence: directive,
+      metadata: {
+        directiveHash: directive.directiveHash,
+        priorAttemptId: directive.priorAttempt.attemptId,
+        failureCode: directive.failure.code,
+        providerId: directive.executionProfile.providerId,
+        modelId: directive.executionProfile.modelId,
+      },
+      eventType: "operational-retry.authorized",
+      completedAt: new Date().toISOString(),
+    });
+    setRuntimeGuardRequeueCooldown(runtimeAgentId, diagnostic);
+    console.warn(`[spawner] published typed operational retry for ${storyId}; claim=${claimAgentId} runtime=${runtimeAgentId}`);
+    return true;
+  }
+
+  if (row.story_db_id && row.protocol !== "v3") {
     const repeatDecision = await runtimeGuardRepeatDecision(runId, stepId, storyId, claimAgentId, diagnostic);
     if (repeatDecision.hardFail) {
       const hardDiagnostic = `${diagnostic}\nRUNTIME_GUARD_REPEAT_LIMIT: ${repeatDecision.key} repeated ${repeatDecision.previousCount + 1}/${RUNTIME_GUARD_REPEAT_LIMIT} time(s) for ${storyId}; blocking the story instead of requeueing indefinitely.`;
@@ -5597,6 +5757,26 @@ async function requeueOpenStoryClaim(
   setRuntimeGuardRequeueCooldown(runtimeAgentId, diagnostic);
   console.warn(`[spawner] requeued open story claim ${storyId} for claim=${claimAgentId} runtime=${runtimeAgentId}: ${diagnostic.slice(0, 180)}`);
   return true;
+}
+
+async function discardV3OperationalRetryWorktree(
+  runId: string,
+  storyId: string,
+  agentId: string,
+  diagnostic: string,
+  expectedBaseSha: string,
+): Promise<void> {
+  const ctx = await getRunContext(runId);
+  if (!ctx["repo"]) throw new Error("V3_OPERATIONAL_RETRY_REPO_UNAVAILABLE");
+  const storyBranch = `${runId.slice(0, 8)}-${storyId}`.toLowerCase();
+  discardRuntimeGuardSiblingArtifacts(storyBranch, diagnostic);
+  discardStoryWorktreeAndResetBranchExact(
+    ctx["repo"],
+    storyBranch,
+    expectedBaseSha,
+    agentId,
+  );
+  console.warn(`[spawner] proved exact v3 retry reset for ${storyBranch} at ${expectedBaseSha.slice(0, 12)}`);
 }
 
 async function discardRuntimeGuardRetryWorktree(runId: string, storyId: string, agentId: string, diagnostic: string): Promise<void> {
@@ -6164,14 +6344,45 @@ async function reapFinishedClaims(): Promise<void> {
           const maskedCheck = implementMaskedCheckCommandGuard(active);
           if (maskedCheck.detected) {
             const reason = maskedCheck.reason + ` Transcript: ${active.transcriptPath}`;
-            console.warn(`[spawner] ${reason}`);
-            try { fs.appendFileSync(active.transcriptPath, `--- MASKED CHECK COMMAND GUARD ${new Date().toISOString()} ---\n${reason}\n`); } catch {}
-            await recordSupervisorRuntimeEvent(active.runId, row.step_id, effectiveStoryDbId || null, "PRODUCT_SUPERVISOR_RUNTIME_GUARD", "masked-check-command-guard", reason);
-            terminateActiveProcess(active, "masked-check-command-guard");
-            activeProcesses.delete(key);
-            if (await completeActiveClaimFromOutputFile(active)) continue;
-            await requeueOpenStoryClaim(active.runId, row.step_id, effectiveStoryId, active.claimAgentId, reason, active.agentId);
-            continue;
+            if (active.protocol === "v3") {
+              const observationKey = `v3-masked-check-advisory:${maskedCheck.reason.slice(0, 500)}`;
+              active.supervisorSignals ||= new Set<string>();
+              if (!active.supervisorSignals.has(observationKey)) {
+                active.supervisorSignals.add(observationKey);
+                console.warn(`[spawner] v3 advisory only; canonical Setfarm evidence remains authoritative: ${reason}`);
+                try { fs.appendFileSync(active.transcriptPath, `--- MASKED CHECK COMMAND ADVISORY ${new Date().toISOString()} ---\n${reason}\n`); } catch {}
+                await recordObservation({
+                  runId: active.runId,
+                  stepId: row.step_id,
+                  storyId: effectiveStoryId,
+                  agentId: active.claimAgentId,
+                  phase: "implementation-evidence",
+                  checkId: `v3.masked_check.advisory:${active.attempt?.attemptId || active.claimId}`,
+                  label: "Agent advisory check output was masked",
+                  status: "info",
+                  summary: "Candidate source was preserved; Setfarm-owned canonical evidence remains the only build/test verdict.",
+                  detail: reason,
+                  evidence: {
+                    schema: "setfarm.v3-masked-check-advisory-evidence.v1",
+                    attemptId: active.attempt?.attemptId || null,
+                    candidateSourcePreserved: true,
+                    authoritativeEvidenceOwner: "setfarm",
+                  },
+                  metadata: { code: "MASKED_CHECK_COMMAND", fatal: false },
+                  eventType: "implementation.masked-check-advisory",
+                  completedAt: new Date().toISOString(),
+                });
+              }
+            } else {
+              console.warn(`[spawner] ${reason}`);
+              try { fs.appendFileSync(active.transcriptPath, `--- MASKED CHECK COMMAND GUARD ${new Date().toISOString()} ---\n${reason}\n`); } catch {}
+              await recordSupervisorRuntimeEvent(active.runId, row.step_id, effectiveStoryDbId || null, "PRODUCT_SUPERVISOR_RUNTIME_GUARD", "masked-check-command-guard", reason);
+              terminateActiveProcess(active, "masked-check-command-guard");
+              activeProcesses.delete(key);
+              if (await completeActiveClaimFromOutputFile(active)) continue;
+              await requeueOpenStoryClaim(active.runId, row.step_id, effectiveStoryId, active.claimAgentId, reason, active.agentId);
+              continue;
+            }
           }
 
           const claimParseLoop = claimParseLoopGuard(active);
@@ -6842,6 +7053,9 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
   }
   const codexModelArgs = process.env.SETFARM_CODEX_MODEL ? ["--model", process.env.SETFARM_CODEX_MODEL] : [];
   const kimiModelArgs = process.env.SETFARM_KIMI_MODEL ? ["--model", process.env.SETFARM_KIMI_MODEL] : [];
+  const openClawV3ModelArgs = claim.v3ImplementationHandoff?.executionProfile.modelId
+    ? ["--model", claim.v3ImplementationHandoff.executionProfile.modelId]
+    : [];
   const kimiOutputFormat = process.env.SETFARM_KIMI_OUTPUT_FORMAT || "stream-json";
   const opencodeModel = process.env.SETFARM_OPENCODE_MODEL || process.env.SETFARM_MINIMAX_MODEL || "minimax-coding-plan/MiniMax-M3";
   const opencodePromptFile = path.join(path.dirname(transcriptPath), `${agentId}-${sessionId}-prompt.md`);
@@ -6883,6 +7097,7 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
     : [
       "agent", "--json", "--agent", agentId,
       ...(OPENCLAW_AGENT_LOCAL ? ["--local"] : []),
+      ...openClawV3ModelArgs,
       "--session-id", sessionId,
       "--message", prompt, "--timeout", String(AGENT_TIMEOUT_SECONDS),
     ];

@@ -5,7 +5,7 @@ import { execFileSync } from "node:child_process";
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
-import { applyScopedRetryPatchForStory, createStoryWorktree, discardDirtyRetryWorktreeState, discardStoryWorktreeAndResetBranch, latestRetryPatchForStory } from "../src/installer/worktree-ops.js";
+import { applyScopedRetryPatchForStory, createStoryWorktree, discardDirtyRetryWorktreeState, discardStoryWorktreeAndResetBranchExact, latestRetryPatchForStory } from "../src/installer/worktree-ops.js";
 
 function git(cwd: string, args: string[]): string {
   return execFileSync("git", args, {
@@ -512,7 +512,7 @@ describe("worktree operations", () => {
       assert.ok(fs.existsSync(worktree));
       assert.notEqual(git(worktree, ["rev-parse", "HEAD"]), baseSha);
 
-      discardStoryWorktreeAndResetBranch(repo, storyBranch, baseSha);
+      discardStoryWorktreeAndResetBranchExact(repo, storyBranch, baseSha);
 
       assert.equal(fs.existsSync(worktree), false);
       assert.equal(git(repo, ["rev-parse", storyBranch]), baseSha);
@@ -521,6 +521,42 @@ describe("worktree operations", () => {
       const cleanWorktree = createStoryWorktree(repo, storyBranch, baseSha);
       assert.equal(git(cleanWorktree, ["rev-parse", "HEAD"]), baseSha);
       assert.equal(fs.existsSync(path.join(cleanWorktree, "bad.txt")), false);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("removes a guarded story branch registered in another managed worktree root", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-worktree-exact-registered-"));
+    const remote = path.join(tmp, "remote.git");
+    const repo = path.join(tmp, "repo");
+    const managed = path.join(tmp, "story-worktrees", "run12345-story-1");
+    const storyBranch = "run12345-story-1";
+    try {
+      git(tmp, ["init", "--bare", remote]);
+      git(tmp, ["clone", remote, repo]);
+      git(repo, ["checkout", "-b", "main"]);
+      git(repo, ["config", "user.email", "setfarm-test@example.com"]);
+      git(repo, ["config", "user.name", "Setfarm Test"]);
+      fs.writeFileSync(path.join(repo, "README.md"), "base\n");
+      git(repo, ["add", "README.md"]);
+      git(repo, ["commit", "-m", "base"]);
+      git(repo, ["push", "-u", "origin", "main"]);
+      const baseSha = git(repo, ["rev-parse", "main"]);
+
+      fs.mkdirSync(path.dirname(managed), { recursive: true });
+      git(repo, ["worktree", "add", "-b", storyBranch, managed, baseSha]);
+      fs.writeFileSync(path.join(managed, "bad.txt"), "untracked contamination\n");
+      git(managed, ["add", "bad.txt"]);
+      git(managed, ["commit", "-m", "wip: guarded contamination"]);
+      assert.ok(fs.existsSync(managed));
+      assert.notEqual(git(managed, ["rev-parse", "HEAD"]), baseSha);
+
+      discardStoryWorktreeAndResetBranchExact(repo, storyBranch, baseSha);
+
+      assert.equal(fs.existsSync(managed), false);
+      assert.equal(git(repo, ["rev-parse", storyBranch]), baseSha);
+      assert.doesNotMatch(git(repo, ["worktree", "list", "--porcelain"]), new RegExp(`refs/heads/${storyBranch}`));
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

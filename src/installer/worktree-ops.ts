@@ -1542,6 +1542,59 @@ export function discardStoryWorktreeAndResetBranch(repo: string, storyBranch: st
   logger.warn(`[worktree] Discarded guarded retry worktree for ${branch}; reset local branch to ${baseRef}`, {});
 }
 
+/**
+ * Native v3 retry publication may proceed only after the contaminated owner is
+ * gone and the local story ref proves the exact reset commit. The legacy
+ * helper remains best-effort for compatibility; this wrapper fails closed.
+ */
+export function discardStoryWorktreeAndResetBranchExact(
+  repo: string,
+  storyBranch: string,
+  expectedBaseSha: string,
+  agentId?: string,
+): void {
+  const branch = safeManagedStoryBranch(storyBranch);
+  const expected = expectedBaseSha.trim().toLowerCase();
+  if (!repo || !branch || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(expected)) {
+    throw new Error("V3_OPERATIONAL_RETRY_RESET_IDENTITY_INVALID");
+  }
+  discardStoryWorktreeAndResetBranch(repo, branch, expected, agentId);
+  if (!releaseManagedStoryBranchOccupancy(repo, branch)) {
+    throw new Error("V3_OPERATIONAL_RETRY_WORKTREE_OWNERSHIP_UNRELEASED");
+  }
+  const remaining = findWorktreeDir(repo, branch, agentId);
+  if (remaining && fs.existsSync(remaining)) {
+    throw new Error(`V3_OPERATIONAL_RETRY_WORKTREE_STILL_OWNED:${remaining}`);
+  }
+  const registered = gitWorktreePathForBranch(repo, branch);
+  if (registered) {
+    throw new Error(`V3_OPERATIONAL_RETRY_WORKTREE_STILL_REGISTERED:${registered}`);
+  }
+  try {
+    execFileSync("git", ["branch", "-f", branch, expected], {
+      cwd: repo,
+      timeout: 10_000,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+  } catch (error) {
+    throw new Error(`V3_OPERATIONAL_RETRY_RESET_REF_FAILED:${String(error).slice(0, 200)}`);
+  }
+  let actual = "";
+  try {
+    actual = execFileSync("git", ["rev-parse", "--verify", `refs/heads/${branch}^{commit}`], {
+      cwd: repo,
+      encoding: "utf-8",
+      timeout: 10_000,
+      stdio: ["ignore", "pipe", "pipe"],
+    }).trim().toLowerCase();
+  } catch (error) {
+    throw new Error(`V3_OPERATIONAL_RETRY_RESET_REF_UNAVAILABLE:${String(error).slice(0, 200)}`);
+  }
+  if (actual !== expected) {
+    throw new Error(`V3_OPERATIONAL_RETRY_RESET_SOURCE_MISMATCH:${actual || "missing"}:${expected}`);
+  }
+}
+
 /** Auto-save uncommitted changes in a worktree without removing it (used on abandon) */
 export function autoSaveWorktree(repo: string, storyId: string, agentId?: string): void {
   const worktreeDir = findWorktreeDir(repo, storyId, agentId) || path.join(repo, ".worktrees", storyId.toLowerCase());

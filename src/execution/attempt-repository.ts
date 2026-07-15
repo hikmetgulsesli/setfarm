@@ -8,7 +8,6 @@ import {
   computeAttemptDedupeKey,
   defaultAttemptIdentityFactory,
   leaseWindow,
-  parseAttemptReservation,
   type AttemptIdentityFactory,
 } from "./lease-fence.js";
 import {
@@ -17,6 +16,7 @@ import {
   TerminalAttemptDispositionV1Schema,
   type ExecutionAttemptV1,
 } from "./schemas/execution-attempt-v1.js";
+import { parseOperationalRetryAwareAttemptReservation } from "./operational-retry-reservation.js";
 
 type Sql = postgres.Sql;
 type TransactionSql = postgres.TransactionSql;
@@ -177,8 +177,9 @@ export async function reserveAttemptInTransaction(
     identityFactory?: AttemptIdentityFactory;
   }> = {},
 ): Promise<AttemptReservationResult> {
-  const reservation = parseAttemptReservation(input);
-  const dedupeKey = computeAttemptDedupeKey(reservation);
+  const reservation = parseOperationalRetryAwareAttemptReservation(input);
+  const { predecessorAttempt: _predecessorAttempt, ...baseReservation } = reservation;
+  const dedupeKey = computeAttemptDedupeKey(baseReservation);
   const now = options.now ? new Date(options.now) : new Date();
   const lease = leaseWindow(now, options.leaseMs ?? DEFAULT_ATTEMPT_LEASE_MS);
   const identityFactory = options.identityFactory ?? defaultAttemptIdentityFactory;
@@ -291,11 +292,42 @@ export async function reserveAttemptInTransaction(
   );
   if (active) return { status: "active_conflict" as const, attempt: mapAttempt(active) };
 
+  if (reservation.predecessorAttempt) {
+    const predecessors = await transaction.unsafe<Array<{
+      attempt_id: string;
+      generation: number;
+      disposition: string;
+    }>>(
+      `SELECT attempt_id, generation, disposition
+         FROM execution_attempts
+        WHERE run_id = $1 AND step_id = $2 AND story_id = $3
+        ORDER BY generation DESC
+        LIMIT 1
+        FOR UPDATE`,
+      [reservation.runId, reservation.stepId, reservation.storyId],
+    );
+    const predecessor = predecessors[0];
+    if (
+      !predecessor
+      || predecessor.attempt_id !== reservation.predecessorAttempt.attemptId
+      || predecessor.generation !== reservation.predecessorAttempt.generation
+      || predecessor.disposition !== reservation.predecessorAttempt.terminalDisposition
+    ) {
+      throw new Error("ATTEMPT_PREDECESSOR_FENCE_INVALID");
+    }
+  }
+
   const generations = await transaction.unsafe<{ generation: number }[]>(
     "SELECT COALESCE(MAX(generation), 0)::integer + 1 AS generation FROM execution_attempts WHERE run_id = $1 AND step_id = $2 AND story_id = $3",
     [reservation.runId, reservation.stepId, reservation.storyId],
   );
   const generation = generations[0]?.generation ?? 1;
+  if (
+    reservation.predecessorAttempt
+    && generation !== reservation.predecessorAttempt.generation + 1
+  ) {
+    throw new Error("ATTEMPT_PREDECESSOR_GENERATION_INVALID");
+  }
   const attemptId = identityFactory.attemptId();
   const fenceToken = identityFactory.fenceToken();
   const inserted = await one(

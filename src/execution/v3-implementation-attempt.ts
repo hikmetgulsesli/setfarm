@@ -46,6 +46,12 @@ import {
   createV3ImplementationContextV1,
   V3ImplementationContextCapacityError,
 } from "./v3-implementation-handoff.js";
+import {
+  OperationalRetryDirectiveV1Schema,
+  resolveV3ExecutionProfile,
+  type ModelExecutionProfileV1,
+  type OperationalRetryDirectiveV1,
+} from "./operational-retry-directive.js";
 
 export type V3ReviewEvidenceArtifact = Readonly<{
   artifactHash: string;
@@ -62,6 +68,7 @@ export type V3ImplementationAttemptInput = Readonly<{
   branch: string;
   worktree: string;
   findingSetHash?: string;
+  operationalRetry?: OperationalRetryDirectiveV1;
   recoveryDelivery?: Readonly<{
     dispatchId: string;
     revisionId: string;
@@ -86,6 +93,12 @@ export type V3ImplementationAttemptResult = Readonly<{
   packetHash: string;
   compilationReportHash: string;
   sourceBefore: SourceRevisionV1;
+  executionProfile: ModelExecutionProfileV1;
+  operationalRetry?: Readonly<{
+    directive: OperationalRetryDirectiveV1;
+    artifactHash: string;
+    refKey: string;
+  }>;
   recovery?: Readonly<{
     revision: RecoveryCaseRevisionV1;
     dispatch: RecoveryRevisionDispatchV1;
@@ -205,6 +218,30 @@ function evidencePlanRefKey(storyId: string, artifactHash: string): string {
   return `EVIDENCE_PLAN_${story}_${artifactHash.slice(0, 16).toUpperCase()}`;
 }
 
+function operationalRetryRefKey(directiveHash: string): string {
+  return `OPERATIONAL_RETRY_${directiveHash.slice(0, 16).toUpperCase()}`;
+}
+
+function operationalRetryEnvelope(
+  packet: SealedRuntimePacketV1,
+  directive: OperationalRetryDirectiveV1,
+) {
+  return SemanticArtifactEnvelopeV1Schema.parse({
+    schema: "setfarm.semantic-artifact-envelope.v1",
+    artifactType: "setfarm.operational-retry-directive.v1",
+    producer: packet.producer,
+    payload: directive,
+  });
+}
+
+function writableSlicePaths(slice: ImplementationSliceV1): string[] {
+  return slice.files
+    .filter((file) => file.role === "owned" || file.role === "shared_writable")
+    .map((file) => file.path)
+    .filter((item, index, all) => all.indexOf(item) === index)
+    .sort();
+}
+
 function evidencePlanEnvelope(
   packet: SealedRuntimePacketV1,
   plan: EvidencePlanV1,
@@ -219,6 +256,161 @@ function evidencePlanEnvelope(
 
 function sameRevision(left: SourceRevisionV1, right: SourceRevisionV1): boolean {
   return left.sha === right.sha && left.treeHash === right.treeHash;
+}
+
+async function validateOperationalRetryAuthority(input: Readonly<{
+  dependencies: V3CompilerDependencies;
+  directive: OperationalRetryDirectiveV1;
+  runId: string;
+  stepId: string;
+  storyId: string;
+  claimId: number;
+  role: string;
+  packetHash: string;
+  sliceHash: string;
+  slice: ImplementationSliceV1;
+  sourceBefore: SourceRevisionV1;
+}>): Promise<ExecutionAttemptV1> {
+  const directive = OperationalRetryDirectiveV1Schema.parse(input.directive);
+  if (
+    directive.runId !== input.runId
+    || directive.stepId !== input.stepId
+    || directive.storyId !== input.storyId
+    || directive.priorAttempt.claimId === input.claimId
+    || directive.priorAttempt.packetHash !== input.packetHash
+    || directive.priorAttempt.sliceHash !== input.sliceHash
+    || !sameRevision(directive.nextSourceRevision, input.sourceBefore)
+    || input.role !== "developer"
+  ) {
+    throw new V3ImplementationAttemptError(
+      "V3_OPERATIONAL_RETRY_IDENTITY_MISMATCH",
+      "Operational retry does not bind the exact new claim, run, step, story, packet, slice, source, and developer authority",
+    );
+  }
+  const allowedPaths = writableSlicePaths(input.slice);
+  if (
+    directive.expectedDelta.allowedPaths.length !== allowedPaths.length
+    || directive.expectedDelta.allowedPaths.some((item, index) => item !== allowedPaths[index])
+  ) {
+    throw new V3ImplementationAttemptError(
+      "V3_OPERATIONAL_RETRY_IDENTITY_MISMATCH",
+      "Operational retry allowed paths differ from the exact writable implementation slice",
+    );
+  }
+  const prior = await input.dependencies.findAttempt(directive.priorAttempt.attemptId);
+  if (!prior) {
+    throw new V3ImplementationAttemptError(
+      "V3_OPERATIONAL_RETRY_PRIOR_ATTEMPT_UNAVAILABLE",
+      `Operational retry prior attempt ${directive.priorAttempt.attemptId} is unavailable`,
+    );
+  }
+  if (["claimed", "running", "superseded"].includes(prior.disposition)) {
+    throw new V3ImplementationAttemptError(
+      "V3_OPERATIONAL_RETRY_PRIOR_ATTEMPT_NOT_TERMINAL",
+      `Operational retry prior attempt ${prior.attemptId} is not terminally owned`,
+    );
+  }
+  if (
+    prior.claimId !== directive.priorAttempt.claimId
+    || prior.runId !== directive.runId
+    || prior.stepId !== directive.stepId
+    || prior.storyId !== directive.storyId
+    || prior.generation !== directive.priorAttempt.generation
+    || prior.attemptClass !== directive.priorAttempt.attemptClass
+    || prior.packetHash !== directive.priorAttempt.packetHash
+    || prior.sliceHash !== directive.priorAttempt.sliceHash
+    || prior.disposition !== directive.priorAttempt.terminalDisposition
+    || !sameRevision(prior.sourceBefore, directive.priorAttempt.sourceBefore)
+  ) {
+    throw new V3ImplementationAttemptError(
+      "V3_OPERATIONAL_RETRY_IDENTITY_MISMATCH",
+      `Operational retry differs from prior attempt ${directive.priorAttempt.attemptId}`,
+    );
+  }
+  return prior;
+}
+
+async function loadOperationalRetryArtifact(input: Readonly<{
+  dependencies: V3CompilerDependencies;
+  packet: SealedRuntimePacketV1;
+  attempt: ExecutionAttemptV1;
+  slice: ImplementationSliceV1;
+}>): Promise<Readonly<{
+  directive: OperationalRetryDirectiveV1;
+  artifactHash: string;
+  refKey: string;
+}>> {
+  const artifactHashes = input.attempt.evidenceRefs
+    .map((reference) => reference.match(/^setfarm:\/\/operational-retry-artifact\/([a-f0-9]{64})$/)?.[1])
+    .filter((hash): hash is string => Boolean(hash));
+  const directiveHashes = input.attempt.evidenceRefs
+    .map((reference) => reference.match(/^setfarm:\/\/operational-retry\/([a-f0-9]{64})$/)?.[1])
+    .filter((hash): hash is string => Boolean(hash));
+  if (artifactHashes.length !== 1 || directiveHashes.length !== 1 || !input.attempt.claimId) {
+    throw new V3ImplementationAttemptError(
+      "V3_OPERATIONAL_RETRY_PRIOR_ATTEMPT_UNAVAILABLE",
+      `Infrastructure attempt ${input.attempt.attemptId} must reference exactly one operational retry artifact`,
+    );
+  }
+  const artifactHash = artifactHashes[0]!;
+  const stored = await input.dependencies.readArtifact(artifactHash);
+  if (stored.artifactType !== "setfarm.operational-retry-directive.v1") {
+    throw new V3ImplementationAttemptError(
+      "V3_OPERATIONAL_RETRY_IDENTITY_MISMATCH",
+      `Operational retry artifact ${artifactHash} has the wrong artifact type`,
+    );
+  }
+  const directive = OperationalRetryDirectiveV1Schema.parse(stored.payload);
+  const envelope = SemanticArtifactEnvelopeV1Schema.parse({
+    schema: "setfarm.semantic-artifact-envelope.v1",
+    artifactType: stored.artifactType,
+    producer: stored.producer,
+    payload: directive,
+  });
+  if (
+    canonicalJsonStringify(stored.producer) !== canonicalJsonStringify(input.packet.producer)
+    || hashCanonicalJson(envelope) !== artifactHash
+  ) {
+    throw new V3ImplementationAttemptError(
+      "V3_OPERATIONAL_RETRY_IDENTITY_MISMATCH",
+      `Operational retry artifact ${artifactHash} differs from its producer or immutable content hash`,
+    );
+  }
+  const prior = await validateOperationalRetryAuthority({
+    dependencies: input.dependencies,
+    directive,
+    runId: input.attempt.runId,
+    stepId: input.attempt.stepId,
+    storyId: input.attempt.storyId,
+    claimId: input.attempt.claimId,
+    role: input.attempt.role,
+    packetHash: input.packet.packetHash,
+    sliceHash: input.attempt.sliceHash!,
+    slice: input.slice,
+    sourceBefore: input.attempt.sourceBefore,
+  });
+  if (input.attempt.generation !== prior.generation + 1) {
+    throw new V3ImplementationAttemptError(
+      "V3_OPERATIONAL_RETRY_IDENTITY_MISMATCH",
+      `Infrastructure attempt ${input.attempt.attemptId} does not follow its exact prior generation`,
+    );
+  }
+  const directiveEvidenceRef = `setfarm://operational-retry/${directive.directiveHash}`;
+  if (
+    directiveHashes[0] !== directive.directiveHash
+    || !input.attempt.evidenceRefs.includes(directiveEvidenceRef)
+    || !input.attempt.evidenceRefs.includes(`setfarm://artifact/${artifactHash}`)
+  ) {
+    throw new V3ImplementationAttemptError(
+      "V3_OPERATIONAL_RETRY_IDENTITY_MISMATCH",
+      `Infrastructure attempt ${input.attempt.attemptId} lacks its directive evidence reference`,
+    );
+  }
+  return {
+    directive,
+    artifactHash,
+    refKey: operationalRetryRefKey(directive.directiveHash),
+  };
 }
 
 export function captureDependencyFileSignatures(input: Readonly<{
@@ -413,10 +605,28 @@ export function createV3ImplementationAttemptCompiler(dependencies: V3CompilerDe
     async reserve(input: V3ImplementationAttemptInput): Promise<V3ImplementationAttemptResult> {
       const recoveryEvidenceOnly = input.evidenceOnlyLease !== undefined;
       const downstreamEvidence = input.downstreamEvidenceAuthority !== undefined;
+      const operationalRetry = input.operationalRetry
+        ? OperationalRetryDirectiveV1Schema.parse(input.operationalRetry)
+        : undefined;
+      const executionProfile = operationalRetry?.executionProfile ?? resolveV3ExecutionProfile("primary");
       if (recoveryEvidenceOnly && downstreamEvidence) {
         throw new V3ImplementationAttemptError(
           "V3_EVIDENCE_PUBLICATION_AUTHORITY_CONFLICT",
           "One attempt cannot be both initial downstream evidence and recovery evidence",
+        );
+      }
+      if (
+        operationalRetry
+        && (
+          input.recoveryDelivery !== undefined
+          || input.evidenceOnlyLease !== undefined
+          || input.downstreamEvidenceAuthority !== undefined
+          || input.findingSetHash !== undefined
+        )
+      ) {
+        throw new V3ImplementationAttemptError(
+          "V3_OPERATIONAL_RETRY_AUTHORITY_CONFLICT",
+          "Operational retry cannot be combined with FindingSet recovery or evidence-only authority",
         );
       }
       if (!recoveryEvidenceOnly && !downstreamEvidence && (!Number.isSafeInteger(input.claimId) || (input.claimId ?? 0) <= 0)) {
@@ -673,26 +883,52 @@ export function createV3ImplementationAttemptCompiler(dependencies: V3CompilerDe
           compilerRejectionMessage(compiled),
         );
       }
+      const priorOperationalAttempt = operationalRetry
+        ? await validateOperationalRetryAuthority({
+            dependencies,
+            directive: operationalRetry,
+            runId: input.runId,
+            stepId: input.stepId,
+            storyId: input.storyId,
+            claimId: input.claimId!,
+            role: input.role,
+            packetHash: packet.packetHash,
+            sliceHash: compiled.sliceHash,
+            slice: compiled.slice,
+            sourceBefore,
+          })
+        : undefined;
       const evidencePlan = compileEvidencePlanV1({
         slice: compiled.slice,
         sliceHash: compiled.sliceHash,
       });
       const planEnvelope = evidencePlanEnvelope(packet, evidencePlan);
       const expectedPlanArtifactHash = hashCanonicalJson(planEnvelope);
+      const retryEnvelope = operationalRetry
+        ? operationalRetryEnvelope(packet, operationalRetry)
+        : undefined;
+      const expectedOperationalRetryArtifactHash = retryEnvelope
+        ? hashCanonicalJson(retryEnvelope)
+        : undefined;
       if (!recoveryEvidenceOnly && !downstreamEvidence) {
         // Refuse before CAS publication and attempt reservation. The unknown
         // durable IDs use their schema maxima, so any later real handoff is no
         // larger than this exact pretty-serialized context estimate.
-        const attemptClass = recovery?.dispatch.dispatchClass ?? "product_implementation";
+        const attemptClass = operationalRetry
+          ? "infrastructure_retry"
+          : recovery?.dispatch.dispatchClass ?? "product_implementation";
         const executionAuthority = attemptClass === "supervisor_repair"
           ? { role: "supervisor" as const, attemptClass: "supervisor_repair" as const }
-          : { role: "developer" as const, attemptClass: "product_implementation" as const };
+          : attemptClass === "infrastructure_retry"
+            ? { role: "developer" as const, attemptClass: "infrastructure_retry" as const }
+            : { role: "developer" as const, attemptClass: "product_implementation" as const };
         try {
           const capacityHandoff = createV3ImplementationClaimHandoffV1({
             schema: "setfarm.v3-implementation-claim-handoff.v1",
             protocol: "v3",
             runId: input.runId,
             stepId: "S".repeat(500),
+            workflowStepId: "implement",
             storyId: input.storyId,
             storyDbId: "D".repeat(500),
             claimId: input.claimId!,
@@ -708,6 +944,13 @@ export function createV3ImplementationAttemptCompiler(dependencies: V3CompilerDe
             evidencePlanArtifactHash: expectedPlanArtifactHash,
             evidencePlanRef: evidencePlanRefKey(input.storyId, expectedPlanArtifactHash),
             executionAuthority,
+            executionProfile,
+            ...(operationalRetry && expectedOperationalRetryArtifactHash
+              ? {
+                  operationalRetry,
+                  operationalRetryArtifactHash: expectedOperationalRetryArtifactHash,
+                }
+              : {}),
             sourceBefore,
             artifactProducer: packet.producer,
             implementationSlice: compiled.slice,
@@ -744,8 +987,23 @@ export function createV3ImplementationAttemptCompiler(dependencies: V3CompilerDe
           `CAS published ${planPublication.hash}, evidence planner produced ${expectedPlanArtifactHash}`,
         );
       }
+      const operationalRetryPublication = retryEnvelope
+        ? await dependencies.publish(retryEnvelope)
+        : undefined;
+      if (
+        operationalRetryPublication
+        && operationalRetryPublication.hash !== expectedOperationalRetryArtifactHash
+      ) {
+        throw new V3ImplementationAttemptError(
+          "V3_OPERATIONAL_RETRY_PUBLICATION_HASH_MISMATCH",
+          `CAS published ${operationalRetryPublication.hash}, operational retry produced ${expectedOperationalRetryArtifactHash}`,
+        );
+      }
       const refKey = sliceRefKey(input.storyId, publication.hash);
       const planRefKey = evidencePlanRefKey(input.storyId, planPublication.hash);
+      const retryRefKey = operationalRetry
+        ? operationalRetryRefKey(operationalRetry.directiveHash)
+        : undefined;
       await dependencies.addRunRef({
         runId: input.runId,
         refKey,
@@ -756,12 +1014,26 @@ export function createV3ImplementationAttemptCompiler(dependencies: V3CompilerDe
         refKey: planRefKey,
         artifactHash: planPublication.hash,
       });
+      if (operationalRetryPublication && retryRefKey) {
+        await dependencies.addRunRef({
+          runId: input.runId,
+          refKey: retryRefKey,
+          artifactHash: operationalRetryPublication.hash,
+        });
+      }
 
       const durableEvidenceRefs = [
         `setfarm://artifact/${packet.packetHash}`,
         `setfarm://artifact/${packet.refs.compilationReport}`,
         `setfarm://artifact/${publication.hash}`,
         `setfarm://artifact/${planPublication.hash}`,
+        ...(operationalRetryPublication && operationalRetry
+          ? [
+              `setfarm://artifact/${operationalRetryPublication.hash}`,
+              `setfarm://operational-retry/${operationalRetry.directiveHash}`,
+              `setfarm://operational-retry-artifact/${operationalRetryPublication.hash}`,
+            ]
+          : []),
         ...(recovery
           ? [
               `setfarm://finding-set/${recovery.findingSet.findingSetHash}`,
@@ -813,11 +1085,22 @@ export function createV3ImplementationAttemptCompiler(dependencies: V3CompilerDe
             runId: input.runId,
             stepId: input.stepId,
             storyId: input.storyId,
-            attemptClass: recovery?.dispatch.dispatchClass ?? "product_implementation",
+            attemptClass: operationalRetry
+              ? "infrastructure_retry"
+              : recovery?.dispatch.dispatchClass ?? "product_implementation",
             packetHash: packet.packetHash,
             compilationReportHash: packet.refs.compilationReport,
             sliceHash: publication.hash,
             sourceBefore,
+            ...(operationalRetry
+              ? {
+                  predecessorAttempt: {
+                    attemptId: operationalRetry.priorAttempt.attemptId,
+                    generation: operationalRetry.priorAttempt.generation,
+                    terminalDisposition: operationalRetry.priorAttempt.terminalDisposition,
+                  },
+                }
+              : {}),
             ...(recovery
               ? {
                   findingSetHash: recovery.findingSet.findingSetHash,
@@ -855,6 +1138,10 @@ export function createV3ImplementationAttemptCompiler(dependencies: V3CompilerDe
         || reservation.attempt.compilationReportHash !== packet.refs.compilationReport
         || !sameRevision(reservation.attempt.sourceBefore, sourceBefore)
         || (downstreamEvidence && reservation.attempt.attemptClass !== "evidence_only")
+        || (operationalRetry && (
+          reservation.attempt.attemptClass !== "infrastructure_retry"
+          || reservation.attempt.generation !== priorOperationalAttempt!.generation + 1
+        ))
       ) {
         throw new V3ImplementationAttemptError(
           "V3_ATTEMPT_RESERVATION_BINDING_MISMATCH",
@@ -873,6 +1160,16 @@ export function createV3ImplementationAttemptCompiler(dependencies: V3CompilerDe
         packetHash: packet.packetHash,
         compilationReportHash: packet.refs.compilationReport,
         sourceBefore,
+        executionProfile,
+        ...(operationalRetry && operationalRetryPublication && retryRefKey
+          ? {
+              operationalRetry: {
+                directive: operationalRetry,
+                artifactHash: operationalRetryPublication.hash,
+                refKey: retryRefKey,
+              },
+            }
+          : {}),
         ...(recovery ? { recovery } : {}),
       };
     },
@@ -920,6 +1217,20 @@ export function createV3ImplementationAttemptCompiler(dependencies: V3CompilerDe
           `Attempt ${input.attemptId} slice payload differs from the attempt fence`,
         );
       }
+      const hasOperationalRetryEvidence = attempt.evidenceRefs.some(
+        (reference) => reference.startsWith("setfarm://operational-retry/"),
+      );
+      if (attempt.attemptClass !== "infrastructure_retry" && hasOperationalRetryEvidence) {
+        throw new V3ImplementationAttemptError(
+          "V3_OPERATIONAL_RETRY_IDENTITY_MISMATCH",
+          `Non-infrastructure attempt ${attempt.attemptId} cannot carry operational retry evidence`,
+        );
+      }
+      const operationalRetry = attempt.attemptClass === "infrastructure_retry"
+        ? await loadOperationalRetryArtifact({ dependencies, packet, attempt, slice })
+        : undefined;
+      const executionProfile = operationalRetry?.directive.executionProfile
+        ?? resolveV3ExecutionProfile("primary");
       const evidencePlan = compileEvidencePlanV1({ slice, sliceHash: attempt.sliceHash });
       const planEnvelope = evidencePlanEnvelope(packet, evidencePlan);
       const planArtifactHash = hashCanonicalJson(planEnvelope);
@@ -993,6 +1304,8 @@ export function createV3ImplementationAttemptCompiler(dependencies: V3CompilerDe
         packetHash: packet.packetHash,
         compilationReportHash: packet.refs.compilationReport,
         sourceBefore: attempt.sourceBefore,
+        executionProfile,
+        ...(operationalRetry ? { operationalRetry } : {}),
         ...(recovery ? { recovery } : {}),
       };
     },

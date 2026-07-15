@@ -271,6 +271,21 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /AGENT_RUNTIME === "codex" \|\| AGENT_RUNTIME === "kimi"/);
   });
 
+  it("passes the exact Product Compiler v3 execution profile to OpenClaw", () => {
+    const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
+    assert.match(source, /const openClawV3ModelArgs = claim\.v3ImplementationHandoff\?\.executionProfile\.modelId/);
+    assert.match(source, /\["--model", claim\.v3ImplementationHandoff\.executionProfile\.modelId\]/);
+    const openClawArgs = source.slice(
+      source.indexOf(': [\n      "agent", "--json", "--agent", agentId,'),
+      source.indexOf("try {", source.indexOf(': [\n      "agent", "--json", "--agent", agentId,')),
+    );
+    assert.match(openClawArgs, /\.\.\.openClawV3ModelArgs/);
+    assert.ok(
+      openClawArgs.indexOf("...openClawV3ModelArgs") < openClawArgs.indexOf('"--session-id"'),
+      "the exact model override must be part of the OpenClaw invocation",
+    );
+  });
+
   it("isolates Kimi per-claim session state with API-key config instead of stale OAuth credentials", () => {
     const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
     assert.match(source, /function prepareKimiIsolatedHome\(sessionId: string\): string/);
@@ -668,9 +683,19 @@ describe("spawner gateway recovery wiring", () => {
     const requeueStart = source.indexOf("async function requeueOpenStoryClaim(");
     const requeueEnd = source.indexOf("async function discardRuntimeGuardRetryWorktree", requeueStart);
     const requeue = source.slice(requeueStart, requeueEnd);
-    assert.ok(requeue.indexOf("waitForClaimRuntimeQuiescence") < requeue.indexOf("closeClaimAndBoundAttempt"));
-    assert.ok(requeue.indexOf("closeClaimAndBoundAttempt") < requeue.indexOf("discardRuntimeGuardRetryWorktree"));
+    const exhaustedTransition = requeue.indexOf("terminalizeOperationalRetryExhaustionInTransaction");
+    const exhaustedDiscard = requeue.indexOf("discardRuntimeGuardRetryWorktree", exhaustedTransition);
+    const exactRetryReset = requeue.indexOf("discardV3OperationalRetryWorktree");
+    const retryTransition = requeue.indexOf("publishOperationalRetryDirectiveInTransaction");
+    assert.ok(requeue.indexOf("waitForClaimRuntimeQuiescence") < exhaustedTransition);
+    assert.ok(exhaustedTransition < exhaustedDiscard);
+    assert.ok(exactRetryReset < retryTransition);
     assert.ok(requeue.indexOf("discardRuntimeGuardRetryWorktree") < requeue.lastIndexOf("UPDATE stories SET status = 'pending'"));
+
+    const transitionSource = fs.readFileSync(path.join(root, "src", "execution", "operational-retry-transition.ts"), "utf-8");
+    assert.ok(transitionSource.indexOf("closeClaimAndBoundAttemptInTransaction") < transitionSource.indexOf("publishStoryAndStepState"));
+    assert.match(transitionSource, /OPERATIONAL_RETRY_STORY_STATE_CAS_LOST/);
+    assert.match(transitionSource, /OPERATIONAL_RETRY_STEP_STATE_CAS_LOST/);
   });
 
   it("sweeps stale Setfarm-owned OpenClaw CLI task records when runtime cancel does not close the registry", () => {
@@ -1625,7 +1650,7 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(block, /await requeueOpenStoryClaim\(active\.runId,\s*row\.step_id,\s*effectiveStoryId,\s*active\.claimAgentId,\s*reason,\s*active\.agentId\)/);
   });
 
-  it("retries implement agents that mask build and test pipeline exit codes", () => {
+  it("observes masked v3 advisory checks without deleting source and keeps legacy fatal behavior", () => {
     const source = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
     assert.match(source, /function isMaskedDeterministicCheckCommand/);
     assert.match(source, /function implementMaskedCheckCommandGuard/);
@@ -1643,6 +1668,11 @@ describe("spawner gateway recovery wiring", () => {
     assert.notEqual(guardStart, -1, "masked check guard block missing");
     assert.notEqual(guardEnd, -1, "masked check guard should run before softer signal guards");
     const block = source.slice(guardStart, guardEnd);
+    assert.match(block, /active\.protocol === "v3"/);
+    assert.match(block, /setfarm\.v3-masked-check-advisory-evidence\.v1/);
+    assert.match(block, /candidateSourcePreserved: true/);
+    assert.match(block, /authoritativeEvidenceOwner: "setfarm"/);
+    assert.match(block, /fatal: false/);
     assert.match(block, /recordSupervisorRuntimeEvent\(active\.runId,\s*row\.step_id,\s*effectiveStoryDbId \|\| null,\s*"PRODUCT_SUPERVISOR_RUNTIME_GUARD"/);
     assert.match(block, /PRODUCT_SUPERVISOR_RUNTIME_GUARD/);
     assert.match(block, /terminateActiveProcess\(active,\s*"masked-check-command-guard"\)/);
@@ -1811,7 +1841,11 @@ describe("spawner gateway recovery wiring", () => {
     assert.ok(retryOutput.includes("MASKED_CHECK_COMMAND"));
     assert.ok(retryOutput.includes("IMPLEMENT_NO_DELTA"));
     assert.ok(retryOutput.includes("INFRA_RETRY:"));
+    assert.match(source, /const directive = createOperationalRetryDirectiveV1\(/);
+    assert.match(source, /publishOperationalRetryDirectiveInTransaction\(sql,/);
     assert.match(source, /const storyOutput = preserveActionableStoryRetryOutput\(row\.story_output,\s*diagnostic\)/);
+    assert.match(source, /activeAttempt\.attemptClass === "infrastructure_retry"/);
+    assert.match(source, /OPERATIONAL_RETRY_EXHAUSTED/);
     assert.match(source, /st\.output as story_output/);
   });
 

@@ -7,6 +7,7 @@ import { describe, it } from "node:test";
 
 import { compileEvidencePlanV1 } from "../../src/evidence/evidence-plan-v1.js";
 import { ClaimEnvelopeV1Schema } from "../../src/execution/schemas/claim-envelope-v1.js";
+import { createOperationalRetryDirectiveV1 } from "../../src/execution/operational-retry-directive.js";
 import {
   assertV3ImplementationContextCapacity,
   createV3ImplementationClaimHandoffV1,
@@ -164,6 +165,12 @@ describe("Product Compiler v3 implementation handoff", () => {
       const canonical = V3ImplementationContextV1Schema.parse(summary.canonicalImplementationContext);
       assert.deepEqual(canonical.handoff.implementationSlice, handoff.implementationSlice);
       assert.deepEqual(canonical.handoff.evidencePlan, handoff.evidencePlan);
+      assert.deepEqual(canonical.handoff.executionProfile, {
+        schema: "setfarm.model-execution-profile.v1",
+        providerId: "minimax",
+        modelId: "minimax/MiniMax-M3",
+        selection: "primary",
+      });
       assert.deepEqual(canonical.writeAuthority, { mode: "initial", allowedPaths: ["src/App.tsx"] });
       assert.equal(canonical.outputContract.source, "setfarm.v3-implementation-agent-output.v1");
       assert.match(canonical.outputContract.instruction, /Never emit STATUS.*STACK_PACK_ID/);
@@ -190,6 +197,96 @@ describe("Product Compiler v3 implementation handoff", () => {
       assert.match(output, /CANONICAL_EVIDENCE_PLAN=handoff\.evidencePlan/);
       assert.doesNotMatch(output, /IMPLEMENT_EVIDENCE_SEEDED/);
       assert.equal(fs.existsSync(path.join(workdir, ".setfarm-bin", "setfarm-evidence")), false);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("hands one exact operational fallback to Kimi as infrastructure retry authority", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-v3-operational-retry-handoff-"));
+    try {
+      const workdir = path.join(root, "worktree");
+      fs.mkdirSync(path.join(workdir, "src"), { recursive: true });
+      fs.writeFileSync(path.join(workdir, "src", "App.tsx"), "export const App = () => null;\n");
+      const { handoff } = fixture(workdir);
+      const operationalRetry = createOperationalRetryDirectiveV1({
+        runId: handoff.runId,
+        stepId: "implement",
+        storyId: handoff.storyId,
+        priorAttempt: {
+          claimId: handoff.claimId,
+          attemptId: handoff.attemptId,
+          generation: handoff.attemptGeneration,
+          attemptClass: "product_implementation",
+          packetHash: handoff.packetHash,
+          sliceHash: handoff.sliceHash,
+          sourceBefore: handoff.sourceBefore,
+          terminalDisposition: "inconclusive",
+        },
+        failure: {
+          code: "IMPLEMENT_NO_DELTA_STALL",
+          diagnostic: "IMPLEMENT_NO_DELTA_STALL: no bounded source delta",
+        },
+        nextSourceRevision: handoff.sourceBefore,
+        allowedPaths: ["src/App.tsx"],
+      });
+      const retryHandoff = createV3ImplementationClaimHandoffV1({
+        ...handoff,
+        claimId: 902,
+        attemptId: "ATT_00000000-0000-0000-0000-000000000902",
+        attemptGeneration: 2,
+        executionAuthority: { role: "developer", attemptClass: "infrastructure_retry" },
+        executionProfile: operationalRetry.executionProfile,
+        operationalRetry,
+        operationalRetryArtifactHash: hashCanonicalJson({
+          schema: "setfarm.semantic-artifact-envelope.v1",
+          artifactType: "setfarm.operational-retry-directive.v1",
+          producer: handoff.artifactProducer,
+          payload: operationalRetry,
+        }),
+      });
+      const context = createV3ImplementationContextV1({ handoff: retryHandoff });
+      assert.equal(context.writeAuthority.mode, "operational_retry");
+      assert.deepEqual(context.writeAuthority.allowedPaths, ["src/App.tsx"]);
+      assert.equal(context.handoff.executionProfile.modelId, "kimi/kimi-for-coding");
+      assert.equal(context.handoff.workflowStepId, "implement");
+      assert.equal(context.handoff.operationalRetry?.directiveHash, operationalRetry.directiveHash);
+      assert.match(context.rules.join("\n"), /typed operational retry.*operationalRetry\.expectedDelta/i);
+
+      assert.equal(V3ImplementationClaimHandoffV1Schema.safeParse({
+        ...retryHandoff,
+        executionProfile: handoff.executionProfile,
+      }).success, false);
+      assert.equal(V3ImplementationClaimHandoffV1Schema.safeParse({
+        ...retryHandoff,
+        operationalRetry: {
+          ...operationalRetry,
+          nextSourceRevision: { ...operationalRetry.nextSourceRevision, treeHash: "0".repeat(64) },
+        },
+      }).success, false);
+      assert.equal(V3ImplementationClaimHandoffV1Schema.safeParse({
+        ...retryHandoff,
+        operationalRetry: undefined,
+      }).success, false);
+      const wrongStepRetry = createOperationalRetryDirectiveV1({
+        runId: handoff.runId,
+        stepId: "verify",
+        storyId: handoff.storyId,
+        priorAttempt: operationalRetry.priorAttempt,
+        failure: operationalRetry.failure,
+        nextSourceRevision: handoff.sourceBefore,
+        allowedPaths: ["src/App.tsx"],
+      });
+      assert.equal(V3ImplementationClaimHandoffV1Schema.safeParse({
+        ...retryHandoff,
+        operationalRetry: wrongStepRetry,
+        operationalRetryArtifactHash: hashCanonicalJson({
+          schema: "setfarm.semantic-artifact-envelope.v1",
+          artifactType: "setfarm.operational-retry-directive.v1",
+          producer: handoff.artifactProducer,
+          payload: wrongStepRetry,
+        }),
+      }).success, false);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
