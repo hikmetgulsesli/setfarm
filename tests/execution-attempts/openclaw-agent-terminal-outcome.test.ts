@@ -4,6 +4,7 @@ import { describe, it } from "node:test";
 import {
   OpenClawAgentTerminalError,
   decodeOpenClawAgentTerminalTranscript,
+  decodeOpenClawTaskTerminalRecord,
 } from "../../src/execution/openclaw-agent-terminal-outcome.js";
 
 function transcript(value: unknown): string {
@@ -76,6 +77,36 @@ describe("OpenClaw machine-readable terminal outcome", () => {
     assert.equal(unknown.kind, "terminal_failure");
     if (unknown.kind !== "terminal_failure") assert.fail("expected terminal failure");
     assert.equal(unknown.code, "OPENCLAW_AGENT_STATUS_UNSUPPORTED");
+  });
+
+  it("maps task-registry timeout and loss to typed transient infrastructure", () => {
+    assert.deepEqual(decodeOpenClawTaskTerminalRecord({
+      status: "failed",
+      error: "LLM request timed out.",
+    }), {
+      schema: "setfarm.openclaw-agent-terminal-outcome.v1",
+      kind: "transient_failure",
+      code: "OPENCLAW_AGENT_TIMEOUT",
+      status: "failed",
+      diagnostic: "LLM request timed out.",
+      retryable: true,
+    });
+    const lost = decodeOpenClawTaskTerminalRecord({ status: "lost" });
+    assert.equal(lost.kind, "transient_failure");
+    if (lost.kind !== "transient_failure") assert.fail("expected transient loss");
+    assert.equal(lost.code, "OPENCLAW_AGENT_LOST");
+    assert.equal(lost.retryable, true);
+  });
+
+  it("redacts task-registry diagnostics and keeps cancellation terminal", () => {
+    const cancelled = decodeOpenClawTaskTerminalRecord({
+      status: "cancelled",
+      error: "Bearer private-token sk-private123",
+    });
+    assert.equal(cancelled.kind, "terminal_failure");
+    if (cancelled.kind !== "terminal_failure") assert.fail("expected terminal cancellation");
+    assert.equal(cancelled.code, "OPENCLAW_AGENT_CANCELLED");
+    assert.doesNotMatch(cancelled.diagnostic, /private-token|sk-private123/);
   });
 
   it("keeps ambiguous abort and cancellation terminal without prose classifiers", () => {
