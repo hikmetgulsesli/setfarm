@@ -541,7 +541,7 @@ async function routeVerifyEachFailureToImplement(
 }
 
 async function closeSingleStepClaimForFailure(
-  sql: postgres.Sql | postgres.TransactionSql,
+  sql: postgres.TransactionSql,
   input: Readonly<{
     runId: string;
     stepId: string;

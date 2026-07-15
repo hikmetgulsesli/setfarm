@@ -4,6 +4,11 @@ import { after, before, describe, it } from "node:test";
 import { createEvidenceBundleV2, computeObservationRef } from "../../src/evidence/evidence-bundle-v2.js";
 import { compileEvidencePlanV1 } from "../../src/evidence/evidence-plan-v1.js";
 import { createAttemptRepository } from "../../src/execution/attempt-repository.js";
+import { acquireClaimMutationAuthorityInTransaction } from "../../src/execution/claim-mutation-authority.js";
+import {
+  createRunTerminationRepository,
+  requestRunTermination,
+} from "../../src/execution/run-termination.js";
 import { createFindingSetV1 } from "../../src/findings/finding-set.js";
 import { hashCanonicalJson } from "../../src/product-compiler/canonical-json.js";
 import { ImplementationSliceV1Schema, type ImplementationSliceV1 } from "../../src/product-compiler/schemas/implementation-slice-v1.js";
@@ -201,8 +206,20 @@ async function initialInput(input: Readonly<{
   semanticSalt: string;
   failedCommandRef?: string;
 }>) {
-  await input.database.insertRun(input.runId);
   const slice = baseSlice();
+  const releaseSha = "d".repeat(40);
+  const releaseAdmissionHash = await input.database.seedV3ReleaseGoAdmission(releaseSha);
+  await input.database.sql`
+    INSERT INTO runs (
+      id, workflow_id, task, status, protocol, protocol_version,
+      compiler_release_sha, packet_hash, activation_preflight_hash,
+      release_admission_hash
+    ) VALUES (
+      ${input.runId}, 'feature-dev', 'recovery coordinator test', 'running',
+      'v3', 1, ${releaseSha}, ${slice.packetHash}, ${"e".repeat(64)},
+      ${releaseAdmissionHash}
+    )
+  `;
   await input.database.sql.unsafe(
     `INSERT INTO stories (id, run_id, story_index, story_id, title, status)
      VALUES ($1, $2, 1, $3, 'Recovery coordinator story', 'running')`,
@@ -528,6 +545,97 @@ describe("V3 recovery coordinator", () => {
         (SELECT used_implement FROM recovery_cases WHERE recovery_case_id = ${first.recoveryCaseId}) AS used
     `;
     assert.deepEqual(rows[0], { dispatches: 1, deliveries: 1, used: 1 });
+  });
+
+  it("serializes terminal run settlement against new recovery publication", async () => {
+    const runId = "run-v3-coordinator-terminal-race";
+    const input = await initialInput({
+      database,
+      runId,
+      productVerdict: "fail",
+      failureClass: "product",
+      semanticSalt: "terminal-race",
+    });
+    const claims = await database.sql<Array<{ id: number; agent_id: string }>>`
+      SELECT id::integer, agent_id
+        FROM claim_log
+       WHERE run_id = ${runId} AND story_id = ${input.evidenceBundle.storyId} AND outcome IS NULL
+    `;
+    if (claims[0]) await database.sql.begin(async (transaction) => {
+      await acquireClaimMutationAuthorityInTransaction(transaction, {
+        claimId: claims[0]!.id,
+        runId,
+        workflowStepId: "implement",
+        storyId: input.evidenceBundle.storyId,
+        claimAgentId: claims[0]!.agent_id,
+      });
+      await transaction.unsafe(
+        "UPDATE claim_log SET outcome = 'completed', completed_at = clock_timestamp() WHERE id = $1 AND outcome IS NULL",
+        [claims[0]!.id],
+      );
+    });
+    const [coordinated, requested] = await Promise.allSettled([
+      createV3RecoveryCoordinator(database.sql).coordinate(input, {
+        now: new Date("2200-01-01T00:00:00.000Z"),
+      }),
+      requestRunTermination(database.sql, {
+        runId,
+        targetStatus: "failed",
+        requestedBy: "terminal-race-test",
+        diagnostic: "TEST_TERMINAL_RECOVERY_SERIALIZATION",
+        evidence: { terminalFailure: true },
+        now: new Date("1900-01-01T00:00:00.000Z"),
+      }),
+    ]);
+    assert.equal(requested.status, "fulfilled");
+    if (requested.status !== "fulfilled" || requested.value.status === "already_terminal") {
+      throw new Error("expected one durable termination request");
+    }
+    if (coordinated.status === "rejected") {
+      assert.match(
+        String(coordinated.reason),
+        /V3_RECOVERY_(RUN_NOT_ACTIVE|TERMINATION_PENDING)/,
+      );
+    }
+    const terminations = createRunTerminationRepository(database.sql);
+    const owned = await terminations.claim({
+      requestId: requested.value.request.requestId,
+      ownerInstanceId: "terminal-race-owner",
+      now: new Date("2200-01-01T00:00:00.000Z"),
+    });
+    assert.equal(owned?.state, "draining");
+    await terminations.markDrained({
+      requestId: requested.value.request.requestId,
+      ownerInstanceId: "terminal-race-owner",
+      evidence: { noRuntimeSessions: true },
+      now: new Date("1900-01-01T00:00:00.000Z"),
+    });
+    await terminations.terminalize({
+      requestId: requested.value.request.requestId,
+      now: new Date("2200-01-01T00:00:00.000Z"),
+    });
+    const rows = await database.sql<Array<{
+      run_status: string;
+      active_deliveries: number;
+      active_cases: number;
+    }>>`
+      SELECT run.status AS run_status,
+             (SELECT COUNT(*)::integer
+                FROM recovery_dispatch_deliveries delivery
+               WHERE delivery.run_id = ${runId}
+                 AND delivery.state IN ('authorized', 'leased', 'attempt_reserved', 'running')) AS active_deliveries,
+             (SELECT COUNT(*)::integer
+                FROM recovery_cases recovery
+               WHERE recovery.run_id = ${runId}
+                 AND recovery.status IN ('open', 'repairing', 'evidencing')) AS active_cases
+        FROM runs run
+       WHERE run.id = ${runId}
+    `;
+    assert.deepEqual({ ...rows[0]! }, {
+      run_status: "failed",
+      active_deliveries: 0,
+      active_cases: 0,
+    });
   });
 
   it("carries every synthetic command predicate into the bounded recovery evidence plan", async () => {

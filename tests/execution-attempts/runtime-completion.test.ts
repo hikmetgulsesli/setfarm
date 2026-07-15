@@ -1778,20 +1778,42 @@ describe("manager-owned runtime completion", () => {
         requestId: requested.request.requestId,
         ownerInstanceId: "effect-owner-a",
         leaseMs: 30_000,
-        now: new Date(startedAt.getTime() + 2_000),
+        now: new Date("2999-01-01T00:00:00.000Z"),
       });
       assert.equal(first?.state, "leased");
       assert.equal(first?.mandatory, true);
       assert.equal((await effects.claimNext({
         requestId: requested.request.requestId,
         ownerInstanceId: "effect-owner-b",
-        now: new Date(startedAt.getTime() + 20_000),
+        now: new Date("2999-01-01T00:00:00.000Z"),
       })), undefined);
+      assert.equal(await effects.heartbeat({
+        requestId: requested.request.requestId,
+        effectKey: first!.effectKey,
+        ownerInstanceId: "effect-owner-a",
+        leaseToken: first!.leaseToken!,
+        leaseMs: 30_000,
+        now: new Date("1900-01-01T00:00:00.000Z"),
+      }), true);
+      await database.sql`
+        UPDATE runtime_completion_effects
+           SET lease_expires_at = clock_timestamp() - interval '1 second'
+         WHERE request_id = ${requested.request.requestId}
+           AND effect_key = ${first!.effectKey}
+      `;
+      assert.equal(await effects.heartbeat({
+        requestId: requested.request.requestId,
+        effectKey: first!.effectKey,
+        ownerInstanceId: "effect-owner-a",
+        leaseToken: first!.leaseToken!,
+        leaseMs: 30_000,
+        now: new Date("1900-01-01T00:00:00.000Z"),
+      }), false);
       const adopted = await effects.claimNext({
         requestId: requested.request.requestId,
         ownerInstanceId: "effect-owner-b",
         leaseMs: 30_000,
-        now: new Date(startedAt.getTime() + 40_000),
+        now: new Date("1900-01-01T00:00:00.000Z"),
       });
       assert.equal(adopted?.state, "leased");
       assert.notEqual(adopted?.leaseToken, first?.leaseToken);
@@ -1804,7 +1826,7 @@ describe("manager-owned runtime completion", () => {
           resolution: "applied",
           result: {},
           evidence: {},
-          now: new Date(startedAt.getTime() + 41_000),
+          now: new Date("2999-01-01T00:00:00.000Z"),
         }),
         /RUNTIME_COMPLETION_EFFECT_SETTLE_FENCE_LOST/,
       );
@@ -1816,7 +1838,7 @@ describe("manager-owned runtime completion", () => {
         resolution: "reconciled",
         result: { advanced: true, runCompleted: false },
         evidence: { source: "canonical-state-reconciliation" },
-        now: new Date(startedAt.getTime() + 41_000),
+        now: new Date("2999-01-01T00:00:00.000Z"),
       });
       assert.equal(await effects.allMandatorySettled(requested.request.requestId), true);
       assert.equal((await completions.markEffectsCommitted({

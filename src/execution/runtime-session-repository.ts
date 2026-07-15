@@ -487,11 +487,11 @@ export function parseRuntimeClaimIntentV1(value: unknown): RuntimeClaimIntentV1 
 }
 
 export async function reserveRuntimeSessionInTransaction(
-  sql: Sql | TransactionSql,
+  sql: TransactionSql,
   rawInput: unknown,
 ): Promise<ClaimRuntimeSession> {
   const input = RuntimeSessionReservationSchema.parse(rawInput);
-  const now = validTime(input.now);
+  validTime(input.now);
   const claims = await sql.unsafe<Array<{
     run_status: string;
     claim_run_id: string;
@@ -575,6 +575,11 @@ export async function reserveRuntimeSessionInTransaction(
     if (attempts.length !== 1) throw new Error("RUNTIME_SESSION_ATTEMPT_BINDING_INVALID");
   }
 
+  const now = await readDatabaseWallClock(
+    sql,
+    "RUNTIME_SESSION_RESERVATION_DATABASE_TIME_UNAVAILABLE",
+  );
+
   const inserted = await sql.unsafe<RuntimeSessionRow[]>(
     `INSERT INTO runtime_sessions (
        session_id, run_id, step_db_id, workflow_step_id, story_db_id, story_id,
@@ -613,14 +618,14 @@ export async function reserveRuntimeSessionInTransaction(
 }
 
 export async function bindRuntimeSessionAttemptInTransaction(
-  sql: Sql | TransactionSql,
+  sql: TransactionSql,
   input: Readonly<{ sessionId: string; attemptId: string; ownerInstanceId: string; now?: Date }>,
 ): Promise<ClaimRuntimeSession> {
   const sessionId = RuntimeSessionIdSchema.parse(input.sessionId);
-  const now = validTime(input.now);
+  validTime(input.now);
   const rows = await sql.unsafe<RuntimeSessionRow[]>(
     `UPDATE runtime_sessions rs
-        SET attempt_id = $2, state_version = state_version + 1, updated_at = $4
+        SET attempt_id = $2, state_version = state_version + 1, updated_at = clock_timestamp()
       WHERE rs.session_id = $1
         AND rs.owner_instance_id = $3
         AND rs.attempt_id IS NULL
@@ -635,7 +640,7 @@ export async function bindRuntimeSessionAttemptInTransaction(
              AND ea.disposition IN ('claimed', 'running')
         )
       RETURNING rs.*`,
-    [sessionId, input.attemptId, input.ownerInstanceId, now],
+    [sessionId, input.attemptId, input.ownerInstanceId],
   );
   if (rows.length !== 1) throw new Error("RUNTIME_SESSION_ATTEMPT_BINDING_CAS_LOST");
   return mapRuntimeSession(rows[0]!);
@@ -666,7 +671,7 @@ export function createRuntimeSessionRepository(sql: Sql) {
       recoveryFence?: RecoveryRuntimeLeaseFence;
       now?: Date;
     }>): Promise<ClaimRuntimeSession> {
-      const now = validTime(input.now);
+      validTime(input.now);
       return sql.begin(async (transaction) => {
         const current = await lockRuntimeStartAuthorityInTransaction(
           transaction,
@@ -676,6 +681,10 @@ export function createRuntimeSessionRepository(sql: Sql) {
         await assertBoundRecoveryLeaseLiveInTransaction(transaction, current, input.recoveryFence);
         if (current.state === "starting") return mapRuntimeSession(current);
         if (current.state !== "reserved") throw new Error(`RUNTIME_SESSION_START_STATE_INVALID:${current.state}`);
+        const now = await readDatabaseWallClock(
+          transaction,
+          "RUNTIME_SESSION_START_DATABASE_TIME_UNAVAILABLE",
+        );
         const updated = await transaction.unsafe<RuntimeSessionRow[]>(
           `UPDATE runtime_sessions
               SET state = 'starting', session_key = COALESCE($4, session_key),
@@ -710,7 +719,7 @@ export function createRuntimeSessionRepository(sql: Sql) {
       recoveryFence?: RecoveryRuntimeLeaseFence;
       now?: Date;
     }>): Promise<Readonly<{ status: "running" | "drain_requested"; session: ClaimRuntimeSession }>> {
-      const now = validTime(input.now);
+      validTime(input.now);
       const processIdentity = input.processIdentity
         ? ProcessIdentityV1Schema.parse(input.processIdentity)
         : undefined;
@@ -723,11 +732,11 @@ export function createRuntimeSessionRepository(sql: Sql) {
       if (processIdentity && processIdentity.pid !== input.pid) {
         throw new Error("RUNTIME_SESSION_PROCESS_IDENTITY_PID_MISMATCH");
       }
-      const processStartedAt = processIdentity
+      const explicitProcessStartedAt = processIdentity
         ? new Date(processIdentity.processStartedAt)
         : input.processStartedAt
           ? validTime(input.processStartedAt)
-          : now;
+          : undefined;
       return sql.begin(async (transaction) => {
         const sessionId = RuntimeSessionIdSchema.parse(input.sessionId);
         const locked = await lockRuntimeStartAuthorityInTransaction(
@@ -739,6 +748,11 @@ export function createRuntimeSessionRepository(sql: Sql) {
           return { status: "drain_requested" as const, session: mapRuntimeSession(locked) };
         }
         await assertBoundRecoveryLeaseLiveInTransaction(transaction, locked, input.recoveryFence);
+        const now = await readDatabaseWallClock(
+          transaction,
+          "RUNTIME_SESSION_RUNNING_DATABASE_TIME_UNAVAILABLE",
+        );
+        const processStartedAt = explicitProcessStartedAt ?? now;
         const updated = await transaction.unsafe<RuntimeSessionRow[]>(
           `UPDATE runtime_sessions
               SET state = 'running', pid = $3, session_key = $4,
@@ -803,14 +817,16 @@ export function createRuntimeSessionRepository(sql: Sql) {
       }) as Promise<Readonly<{ status: "running" | "drain_requested"; session: ClaimRuntimeSession }>>;
     },
     async heartbeat(input: Readonly<{ sessionId: string; ownerInstanceId: string; now?: Date }>): Promise<boolean> {
-      const now = validTime(input.now);
+      validTime(input.now);
       const rows = await sql.unsafe<Array<{ session_id: string }>>(
-        `UPDATE runtime_sessions
-            SET heartbeat_at = $3, updated_at = $3
+        `WITH wall_clock AS (SELECT clock_timestamp() AS now)
+         UPDATE runtime_sessions
+            SET heartbeat_at = wall_clock.now, updated_at = wall_clock.now
+           FROM wall_clock
           WHERE session_id = $1 AND owner_instance_id = $2
             AND state IN ('starting', 'running', 'drain_requested')
           RETURNING session_id`,
-        [RuntimeSessionIdSchema.parse(input.sessionId), input.ownerInstanceId, now],
+        [RuntimeSessionIdSchema.parse(input.sessionId), input.ownerInstanceId],
       );
       return rows.length === 1;
     },
@@ -820,15 +836,16 @@ export function createRuntimeSessionRepository(sql: Sql) {
       diagnostic: string;
       now?: Date;
     }>): Promise<ClaimRuntimeSession> {
-      const now = validTime(input.now);
+      validTime(input.now);
       const rows = await sql.unsafe<RuntimeSessionRow[]>(
-        `UPDATE runtime_sessions
+        `WITH wall_clock AS (SELECT clock_timestamp() AS now)
+         UPDATE runtime_sessions
             SET state = CASE
                   WHEN state IN ('reserved', 'starting', 'running') THEN 'drain_requested'
                   ELSE state
                 END,
                 drain_requested_at = CASE
-                  WHEN state IN ('reserved', 'starting', 'running') THEN COALESCE(drain_requested_at, $3)
+                  WHEN state IN ('reserved', 'starting', 'running') THEN COALESCE(drain_requested_at, wall_clock.now)
                   ELSE drain_requested_at
                 END,
                 diagnostic = CASE
@@ -839,15 +856,15 @@ export function createRuntimeSessionRepository(sql: Sql) {
                   WHEN state IN ('reserved', 'starting', 'running') THEN state_version + 1
                   ELSE state_version
                 END,
-                updated_at = $3
+                updated_at = wall_clock.now
+           FROM wall_clock
           WHERE session_id = $1
-            AND ($4::text IS NULL OR owner_instance_id = $4)
+            AND ($3::text IS NULL OR owner_instance_id = $3)
             AND state <> 'quarantined'
           RETURNING *`,
         [
           RuntimeSessionIdSchema.parse(input.sessionId),
           input.diagnostic.slice(0, 4_000),
-          now,
           input.ownerInstanceId ?? null,
         ],
       );
@@ -861,7 +878,7 @@ export function createRuntimeSessionRepository(sql: Sql) {
       now?: Date;
     }>): Promise<ClaimRuntimeSession> {
       const evidence = RuntimeDrainEvidenceV1Schema.parse(input.evidence);
-      const now = validTime(input.now);
+      validTime(input.now);
       return sql.begin(async (transaction) => {
         const currentRows = await transaction.unsafe<RuntimeSessionRow[]>(
           "SELECT * FROM runtime_sessions WHERE session_id = $1 FOR UPDATE",
@@ -879,6 +896,10 @@ export function createRuntimeSessionRepository(sql: Sql) {
         if (input.ownerInstanceId && current.owner_instance_id !== input.ownerInstanceId) {
           throw new Error("RUNTIME_SESSION_DRAIN_CAS_LOST");
         }
+        const now = await readDatabaseWallClock(
+          transaction,
+          "RUNTIME_SESSION_DRAIN_DATABASE_TIME_UNAVAILABLE",
+        );
         const rows = await transaction.unsafe<RuntimeSessionRow[]>(
           `UPDATE runtime_sessions
               SET state = 'drained', drained_at = $3,
@@ -914,44 +935,88 @@ export function createRuntimeSessionRepository(sql: Sql) {
       if (!input.diagnostic.trim()) {
         throw new Error("RUNTIME_SESSION_TERMINATION_RECOVERY_DIAGNOSTIC_REQUIRED");
       }
-      const now = validTime(input.now);
-      const rows = await sql.unsafe<RuntimeSessionRow[]>(
-        `UPDATE runtime_sessions AS rs
-            SET state = 'drained',
-                drained_at = COALESCE(rs.drained_at, $6),
-                drain_evidence = $5::text::jsonb,
-                heartbeat_at = $6,
-                diagnostic = LEFT(CONCAT_WS(E'\\n', NULLIF(rs.diagnostic, ''), $7::text), 4000),
-                state_version = rs.state_version + 1,
-                updated_at = $6
-           FROM run_termination_requests AS rr
-          WHERE rs.session_id = $1
-            AND rs.state = 'quarantined'
-            AND rs.state_version = $2
-            AND rr.request_id = $3
-            AND rr.run_id = rs.run_id
-            AND rr.owner_instance_id = $4
-            AND rr.state = 'draining'
-          RETURNING rs.*`,
-        [
-          RuntimeSessionIdSchema.parse(input.sessionId),
-          input.expectedStateVersion,
-          input.terminationRequestId,
-          input.terminationOwnerInstanceId,
-          JSON.stringify(evidence),
-          now,
-          input.diagnostic.slice(0, 4_000),
-        ],
+      validTime(input.now);
+      const sessionId = RuntimeSessionIdSchema.parse(input.sessionId);
+      const identities = await sql.unsafe<Array<{ run_id: string }>>(
+        "SELECT run_id FROM runtime_sessions WHERE session_id = $1",
+        [sessionId],
       );
-      if (rows.length === 1) return mapRuntimeSession(rows[0]!);
-
-      const current = await findById(input.sessionId);
-      if (!current) throw new Error("RUNTIME_SESSION_NOT_FOUND");
-      if (["drained", "released"].includes(current.state)) {
-        RuntimeDrainEvidenceV1Schema.parse(current.drainEvidence);
-        return current;
-      }
-      throw new Error(`RUNTIME_SESSION_TERMINATION_RECOVERY_CAS_LOST:${current.state}`);
+      if (!identities[0]) throw new Error("RUNTIME_SESSION_NOT_FOUND");
+      return sql.begin(async (transaction) => {
+        const runs = await transaction.unsafe<Array<{ id: string }>>(
+          "SELECT id FROM runs WHERE id = $1 FOR UPDATE",
+          [identities[0]!.run_id],
+        );
+        if (!runs[0]) throw new Error("RUNTIME_SESSION_TERMINATION_RECOVERY_RUN_NOT_FOUND");
+        const requests = await transaction.unsafe<Array<{
+          run_id: string;
+          state: string;
+          owner_instance_id: string | null;
+          lease_expires_at: Date | string | null;
+        }>>(
+          `SELECT run_id, state, owner_instance_id, lease_expires_at
+             FROM run_termination_requests
+            WHERE request_id = $1
+            FOR UPDATE`,
+          [input.terminationRequestId],
+        );
+        const currentRows = await transaction.unsafe<RuntimeSessionRow[]>(
+          "SELECT * FROM runtime_sessions WHERE session_id = $1 FOR UPDATE",
+          [sessionId],
+        );
+        const current = currentRows[0];
+        if (!current || current.run_id !== identities[0]!.run_id) {
+          throw new Error("RUNTIME_SESSION_TERMINATION_RECOVERY_IDENTITY_CHANGED");
+        }
+        if (["drained", "released"].includes(current.state)) {
+          const mapped = mapRuntimeSession(current);
+          RuntimeDrainEvidenceV1Schema.parse(mapped.drainEvidence);
+          return mapped;
+        }
+        const now = await readDatabaseWallClock(
+          transaction,
+          "RUNTIME_SESSION_TERMINATION_RECOVERY_DATABASE_TIME_UNAVAILABLE",
+        );
+        const request = requests[0];
+        if (
+          !request
+          || request.run_id !== current.run_id
+          || request.state !== "draining"
+          || request.owner_instance_id !== input.terminationOwnerInstanceId
+          || !request.lease_expires_at
+          || new Date(request.lease_expires_at).getTime() <= now.getTime()
+        ) {
+          throw new Error("RUNTIME_SESSION_TERMINATION_RECOVERY_LEASE_INVALID");
+        }
+        if (current.state !== "quarantined" || current.state_version !== input.expectedStateVersion) {
+          throw new Error(`RUNTIME_SESSION_TERMINATION_RECOVERY_CAS_LOST:${current.state}`);
+        }
+        const rows = await transaction.unsafe<RuntimeSessionRow[]>(
+          `UPDATE runtime_sessions
+              SET state = 'drained',
+                  drained_at = COALESCE(drained_at, $4),
+                  drain_evidence = $3::text::jsonb,
+                  heartbeat_at = $4,
+                  diagnostic = LEFT(CONCAT_WS(E'\\n', NULLIF(diagnostic, ''), $5::text), 4000),
+                  state_version = state_version + 1,
+                  updated_at = $4
+            WHERE session_id = $1
+              AND state = 'quarantined'
+              AND state_version = $2
+            RETURNING *`,
+          [
+            sessionId,
+            input.expectedStateVersion,
+            JSON.stringify(evidence),
+            now,
+            input.diagnostic.slice(0, 4_000),
+          ],
+        );
+        if (rows.length !== 1) {
+          throw new Error("RUNTIME_SESSION_TERMINATION_RECOVERY_CAS_LOST:quarantined");
+        }
+        return mapRuntimeSession(rows[0]!);
+      }) as Promise<ClaimRuntimeSession>;
     },
     async quarantine(input: Readonly<{
       sessionId: string;
@@ -968,9 +1033,10 @@ export function createRuntimeSessionRepository(sql: Sql) {
       if (!Number.isSafeInteger(input.expectedStateVersion) || input.expectedStateVersion < 0) {
         throw new Error("RUNTIME_SESSION_QUARANTINE_STATE_VERSION_INVALID");
       }
-      const now = validTime(input.now);
+      validTime(input.now);
       const rows = await sql.unsafe<RuntimeSessionRow[]>(
-        `UPDATE runtime_sessions
+        `WITH wall_clock AS (SELECT clock_timestamp() AS now)
+         UPDATE runtime_sessions
             SET state = 'quarantined', diagnostic = $2,
                 drain_evidence = CASE
                   WHEN state = 'drained'
@@ -978,17 +1044,17 @@ export function createRuntimeSessionRepository(sql: Sql) {
                     THEN drain_evidence
                   ELSE $3::text::jsonb
                 END,
-                state_version = state_version + 1, updated_at = $4
+                state_version = state_version + 1, updated_at = wall_clock.now
+           FROM wall_clock
           WHERE session_id = $1
-            AND owner_instance_id = $5
-            AND state_version = $6
+            AND owner_instance_id = $4
+            AND state_version = $5
             AND state IN ('reserved', 'starting', 'running', 'drain_requested', 'drained')
           RETURNING *`,
         [
           RuntimeSessionIdSchema.parse(input.sessionId),
           input.diagnostic.slice(0, 4_000),
           JSON.stringify(input.evidence ?? {}),
-          now,
           input.expectedOwnerInstanceId,
           input.expectedStateVersion,
         ],
@@ -1030,7 +1096,7 @@ export function createRuntimeSessionRepository(sql: Sql) {
  * runtime launch was authorized.
  */
 export async function releaseReservedRuntimeSessionInTransaction(
-  sql: Sql | TransactionSql,
+  sql: TransactionSql,
   input: Readonly<{
     sessionId: string;
     claimId: number;
@@ -1039,7 +1105,7 @@ export async function releaseReservedRuntimeSessionInTransaction(
     now?: Date;
   }>,
 ): Promise<ClaimRuntimeSession> {
-  const now = validTime(input.now);
+  validTime(input.now);
   const rows = await sql.unsafe<RuntimeSessionRow[]>(
     `SELECT rs.*
        FROM runtime_sessions rs
@@ -1068,6 +1134,10 @@ export async function releaseReservedRuntimeSessionInTransaction(
     [input.claimId],
   );
   if (activeAttempts.length > 0) throw new Error("RUNTIME_SESSION_RESERVED_RELEASE_ATTEMPT_ACTIVE");
+  const now = await readDatabaseWallClock(
+    sql,
+    "RUNTIME_SESSION_RESERVED_RELEASE_DATABASE_TIME_UNAVAILABLE",
+  );
   const updated = await sql.unsafe<RuntimeSessionRow[]>(
     `UPDATE runtime_sessions
         SET state = 'released', drained_at = $4, released_at = $4,
@@ -1095,10 +1165,10 @@ export async function releaseReservedRuntimeSessionInTransaction(
 }
 
 export async function releaseDrainedRuntimeSessionsInTransaction(
-  sql: Sql | TransactionSql,
+  sql: TransactionSql,
   input: Readonly<{ runId: string; now?: Date }>,
 ): Promise<number> {
-  const now = validTime(input.now);
+  validTime(input.now);
   const owners = await sql.unsafe<Array<{ session_id: string; claim_outcome: string | null }>>(
     `SELECT rs.session_id, cl.outcome AS claim_outcome
        FROM runtime_sessions rs
@@ -1121,6 +1191,10 @@ export async function releaseDrainedRuntimeSessionsInTransaction(
     [input.runId],
   );
   if (activeAttempts.length > 0) throw new Error("RUNTIME_SESSION_RELEASE_OWNER_ACTIVE");
+  const now = await readDatabaseWallClock(
+    sql,
+    "RUNTIME_SESSION_RELEASE_DATABASE_TIME_UNAVAILABLE",
+  );
   const rows = await sql.unsafe<Array<{ session_id: string }>>(
     `UPDATE runtime_sessions
         SET state = 'released', released_at = $2,
@@ -1133,7 +1207,7 @@ export async function releaseDrainedRuntimeSessionsInTransaction(
 }
 
 export async function releaseDrainedRuntimeSessionInTransaction(
-  sql: Sql | TransactionSql,
+  sql: TransactionSql,
   input: Readonly<{
     sessionId: string;
     claimId: number;
@@ -1141,7 +1215,7 @@ export async function releaseDrainedRuntimeSessionInTransaction(
     now?: Date;
   }>,
 ): Promise<ClaimRuntimeSession> {
-  const now = validTime(input.now);
+  validTime(input.now);
   const rows = await sql.unsafe<Array<RuntimeSessionRow & { claim_outcome: string | null }>>(
     `SELECT rs.*, cl.outcome AS claim_outcome
        FROM runtime_sessions rs
@@ -1165,6 +1239,10 @@ export async function releaseDrainedRuntimeSessionInTransaction(
     [input.claimId],
   );
   if (activeAttempts.length > 0) throw new Error("RUNTIME_SESSION_DRAINED_RELEASE_ATTEMPT_ACTIVE");
+  const now = await readDatabaseWallClock(
+    sql,
+    "RUNTIME_SESSION_DRAINED_RELEASE_DATABASE_TIME_UNAVAILABLE",
+  );
   const updated = await sql.unsafe<RuntimeSessionRow[]>(
     `UPDATE runtime_sessions
         SET state = 'released', released_at = $4,

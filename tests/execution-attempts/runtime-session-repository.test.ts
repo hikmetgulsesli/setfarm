@@ -241,9 +241,11 @@ describe("durable runtime session ownership", () => {
         runtimeKind: "openclaw_session",
         ownerInstanceId: "spawner-a",
         worktree: ".worktrees/us-001",
+        now: new Date("2099-01-01T00:00:00.000Z"),
       });
       assert.equal(session.state, "reserved");
       assert.equal(session.attemptId, undefined);
+      assert.ok(new Date(session.updatedAt).getUTCFullYear() < 2099);
       const bound = await sessions.bindAttempt({
         sessionId: session.sessionId,
         attemptId: reservedAttempt.attempt.attemptId,
@@ -257,12 +259,14 @@ describe("durable runtime session ownership", () => {
         worktree: ".worktrees/us-001-exact",
         runtimePath: "/tmp/runtime-us-001",
         transcriptPath: "/tmp/runtime-us-001.jsonl",
+        now: new Date("2099-01-01T00:00:01.000Z"),
       });
       assert.equal(starting.state, "starting");
       assert.equal(starting.sessionKey, "openclaw-key-starting");
       assert.equal(starting.worktree, ".worktrees/us-001-exact");
       assert.equal(starting.runtimePath, "/tmp/runtime-us-001");
       assert.equal(starting.transcriptPath, "/tmp/runtime-us-001.jsonl");
+      assert.ok(new Date(starting.updatedAt).getUTCFullYear() < 2099);
       await assert.rejects(
         sessions.markRunning({
           sessionId: session.sessionId,
@@ -286,11 +290,13 @@ describe("durable runtime session ownership", () => {
         pid: 1234,
         sessionKey: "openclaw-key",
         processIdentity,
+        now: new Date("2099-01-01T00:00:02.000Z"),
       });
       assert.equal(running.status, "running");
       assert.equal(running.session.pid, 1234);
       assert.deepEqual(running.session.processIdentity, processIdentity);
       assert.equal(running.session.processGroupId, 1234);
+      assert.ok(new Date(running.session.updatedAt).getUTCFullYear() < 2099);
       const runningAttempt = await attempts.findById(reservedAttempt.attempt.attemptId);
       assert.equal(
         runningAttempt?.disposition,
@@ -309,6 +315,7 @@ describe("durable runtime session ownership", () => {
         sessionId: session.sessionId,
         ownerInstanceId: "spawner-a",
         diagnostic: "shutdown",
+        now: new Date("2099-01-01T00:00:03.000Z"),
       })).state, "drain_requested");
       await assert.rejects(
         sessions.markDrained({
@@ -329,8 +336,10 @@ describe("durable runtime session ownership", () => {
         sessionId: session.sessionId,
         ownerInstanceId: "spawner-a",
         evidence: DRAIN_EVIDENCE,
+        now: new Date("2099-01-01T00:00:04.000Z"),
       });
       assert.equal(firstDrained.state, "drained");
+      assert.ok(new Date(firstDrained.updatedAt).getUTCFullYear() < 2099);
       const reusedDrainProof = await sessions.markDrained({
         sessionId: session.sessionId,
         ownerInstanceId: "spawner-b",
@@ -362,7 +371,12 @@ describe("durable runtime session ownership", () => {
       await database.sql`UPDATE claim_log SET outcome = 'infra_retry' WHERE id = ${claimId}`;
       assert.equal((await database.sql.begin((transaction) => releaseDrainedRuntimeSessionInTransaction(
         transaction,
-        { sessionId: session.sessionId, claimId, ownerInstanceId: "spawner-a" },
+        {
+          sessionId: session.sessionId,
+          claimId,
+          ownerInstanceId: "spawner-a",
+          now: new Date("2099-01-01T00:00:05.000Z"),
+        },
       ))).state, "released");
       assert.equal(await database.sql.begin((transaction) => releaseDrainedRuntimeSessionsInTransaction(
         transaction,
@@ -624,13 +638,35 @@ describe("durable runtime session ownership", () => {
           evidence: freshEvidence,
           diagnostic: "wrong owner must not recover quarantine",
         }),
-        /RUNTIME_SESSION_TERMINATION_RECOVERY_CAS_LOST:quarantined/,
+        /RUNTIME_SESSION_TERMINATION_RECOVERY_LEASE_INVALID/,
       );
+      await database.sql`
+        UPDATE run_termination_requests
+           SET lease_expires_at = clock_timestamp() - interval '1 second'
+         WHERE request_id = ${termination!.requestId}
+      `;
+      await assert.rejects(
+        sessions.recoverQuarantinedForTermination({
+          sessionId: quarantined.sessionId,
+          expectedStateVersion: quarantined.stateVersion,
+          terminationRequestId: termination!.requestId,
+          terminationOwnerInstanceId: termination!.ownerInstanceId!,
+          evidence: freshEvidence,
+          diagnostic: "expired owner must not recover quarantine",
+          now: new Date("2000-01-01T00:00:00.000Z"),
+        }),
+        /RUNTIME_SESSION_TERMINATION_RECOVERY_LEASE_INVALID/,
+      );
+      const adopted = await terminations.claim({
+        requestId: termination!.requestId,
+        ownerInstanceId: "spawner-termination-adopted",
+      });
+      assert.equal(adopted?.state, "draining");
       const recovered = await sessions.recoverQuarantinedForTermination({
         sessionId: quarantined.sessionId,
         expectedStateVersion: quarantined.stateVersion,
-        terminationRequestId: termination!.requestId,
-        terminationOwnerInstanceId: termination!.ownerInstanceId!,
+        terminationRequestId: adopted!.requestId,
+        terminationOwnerInstanceId: adopted!.ownerInstanceId!,
         evidence: freshEvidence,
         diagnostic: "termination owner re-proved process, task, and workspace absence",
       });
@@ -642,8 +678,8 @@ describe("durable runtime session ownership", () => {
       const replay = await sessions.recoverQuarantinedForTermination({
         sessionId: quarantined.sessionId,
         expectedStateVersion: quarantined.stateVersion,
-        terminationRequestId: termination!.requestId,
-        terminationOwnerInstanceId: termination!.ownerInstanceId!,
+        terminationRequestId: adopted!.requestId,
+        terminationOwnerInstanceId: adopted!.ownerInstanceId!,
         evidence: freshEvidence,
         diagnostic: "lost response replay",
       });

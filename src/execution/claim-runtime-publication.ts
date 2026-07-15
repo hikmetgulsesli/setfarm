@@ -1,5 +1,6 @@
 import type postgres from "postgres";
 
+import { readDatabaseWallClock } from "../db/database-wall-clock.js";
 import { hashCanonicalJson } from "../product-compiler/canonical-json.js";
 import {
   V3RecoveryClaimAuthorityError,
@@ -315,9 +316,8 @@ async function assertExactRecoveryPublicationHandoff(
   input: Readonly<{
     handoff: V3RecoveryClaimHandoffV1;
     runPacketHash: string | null;
-    now: Date;
   }>,
-): Promise<void> {
+): Promise<Date> {
   const rows = await transaction.unsafe<RecoveryPublicationRow[]>(
     `SELECT delivery.dispatch_id,
             delivery.recovery_case_id AS delivery_recovery_case_id,
@@ -375,6 +375,10 @@ async function assertExactRecoveryPublicationHandoff(
     [input.handoff.dispatchId],
   );
   const row = rows[0];
+  const now = await readDatabaseWallClock(
+    transaction,
+    "V3_RECOVERY_PUBLICATION_DATABASE_TIME_UNAVAILABLE",
+  );
   if (!row) {
     recoveryPublicationFail("V3_RECOVERY_PUBLICATION_DELIVERY_NOT_FOUND", "handoff dispatch has no exact delivery chain");
   }
@@ -459,13 +463,14 @@ async function assertExactRecoveryPublicationHandoff(
     || row.owner_instance_id !== input.handoff.lease.ownerInstanceId
     || row.lease_token !== input.handoff.lease.leaseToken
     || leaseExpiresAt !== handoffExpiresAt
-    || leaseExpiresAt <= input.now.getTime()
+    || leaseExpiresAt <= now.getTime()
     || row.attempt_id !== null
     || row.claim_id !== null
     || row.execution_slice_hash !== null
   ) {
     recoveryPublicationFail("V3_RECOVERY_PUBLICATION_LEASE_INVALID", "handoff does not own one exact unexpired unreserved delivery lease");
   }
+  return now;
 }
 
 export async function publishSingleClaimRuntime(
@@ -479,7 +484,7 @@ export async function publishSingleClaimRuntime(
     now?: Date;
   }>,
 ): Promise<ClaimRuntimePublication | undefined> {
-  const now = validTime(rawInput.now);
+  validTime(rawInput.now);
   const runtimeIntent = rawInput.runtimeIntent
     ? parseRuntimeClaimIntentV1(rawInput.runtimeIntent)
     : undefined;
@@ -514,6 +519,10 @@ export async function publishSingleClaimRuntime(
       [rawInput.stepDbId, rawInput.runId, rawInput.workflowStepId],
     );
     if (steps[0]?.status !== "pending") return undefined;
+    const now = await readDatabaseWallClock(
+      transaction,
+      "CLAIM_PUBLICATION_DATABASE_TIME_UNAVAILABLE",
+    );
     const updated = await transaction.unsafe<Array<{ id: string }>>(
       `UPDATE steps
           SET status = 'running', started_at = COALESCE(started_at, $4), updated_at = $4
@@ -589,7 +598,7 @@ export async function publishLoopClaimRuntime(
     now?: Date;
   }>,
 ): Promise<LoopClaimRuntimePublication | undefined> {
-  const now = validTime(rawInput.now);
+  validTime(rawInput.now);
   const runtimeIntent = rawInput.runtimeIntent
     ? parseRuntimeClaimIntentV1(rawInput.runtimeIntent)
     : undefined;
@@ -696,7 +705,6 @@ export async function publishLoopClaimRuntime(
         await assertExactRecoveryPublicationHandoff(transaction, {
           handoff: recoveryHandoff,
           runPacketHash: run.packet_hash,
-          now,
         });
       } else {
         if (preparationAuthority) {
@@ -737,6 +745,7 @@ export async function publishLoopClaimRuntime(
       [rawInput.runId, rawInput.workflowStepId, rawInput.storyId],
     );
     if (unreleased.length > 0) return undefined;
+    let assignGatewayDeveloper = false;
     if (!recoveryHandoff && rawInput.callerGatewayAgent) {
       if (run.assigned_developer && run.assigned_developer !== rawInput.callerGatewayAgent) return undefined;
       const occupied = await transaction.unsafe<Array<{ id: string }>>(
@@ -747,12 +756,7 @@ export async function publishLoopClaimRuntime(
         [rawInput.runId, rawInput.callerGatewayAgent],
       );
       if (occupied.length > 0) return undefined;
-      if (!run.assigned_developer) {
-        await transaction.unsafe(
-          "UPDATE runs SET assigned_developer = $2, updated_at = $3 WHERE id = $1",
-          [rawInput.runId, rawInput.callerGatewayAgent, now],
-        );
-      }
+      assignGatewayDeveloper = !run.assigned_developer;
     }
     const steps = await transaction.unsafe<Array<{ status: string }>>(
       "SELECT status FROM steps WHERE id = $1 AND run_id = $2 AND step_id = $3 FOR UPDATE",
@@ -779,6 +783,21 @@ export async function publishLoopClaimRuntime(
       [rawInput.runId],
     );
     if ((active[0]?.count ?? 0) >= rawInput.parallelLimit) return undefined;
+    const now = recoveryHandoff
+      ? await assertExactRecoveryPublicationHandoff(transaction, {
+          handoff: recoveryHandoff,
+          runPacketHash: run.packet_hash,
+        })
+      : await readDatabaseWallClock(
+          transaction,
+          "CLAIM_PUBLICATION_DATABASE_TIME_UNAVAILABLE",
+        );
+    if (assignGatewayDeveloper && rawInput.callerGatewayAgent) {
+      await transaction.unsafe(
+        "UPDATE runs SET assigned_developer = $2, updated_at = $3 WHERE id = $1",
+        [rawInput.runId, rawInput.callerGatewayAgent, now],
+      );
+    }
     const updatedStories = await transaction.unsafe<Array<{ claim_generation: number }>>(
       `UPDATE stories
           SET status = 'running', claim_generation = COALESCE(claim_generation, 0) + 1,

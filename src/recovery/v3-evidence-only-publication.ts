@@ -1,6 +1,7 @@
 import type postgres from "postgres";
 import { z } from "zod";
 
+import { readDatabaseWallClock } from "../db/database-wall-clock.js";
 import {
   reserveAttemptInTransaction,
   type AttemptReservationResult,
@@ -17,7 +18,7 @@ import {
 import { FindingSetV1Schema, type FindingSetV1 } from "../findings/finding-set.js";
 import { canonicalJsonStringify, hashCanonicalJson } from "../product-compiler/canonical-json.js";
 import { Sha256Schema } from "../product-compiler/schemas/common-v1.js";
-import { v3RecoveryStoryLockIdentity } from "./v3-recovery-claim-authority.js";
+import { lockV3RecoveryRunMutationAuthorityInTransaction } from "./v3-recovery-run-mutation-authority.js";
 
 type Sql = postgres.Sql;
 type TransactionSql = postgres.TransactionSql;
@@ -107,6 +108,7 @@ type BoundEvidenceAttemptRow = Readonly<{
   attempt_source_before_tree_hash: string;
   attempt_source_after_sha: string | null;
   attempt_source_after_tree_hash: string | null;
+  attempt_lease_expires_at: Date | string;
   delivery_state: string;
   delivery_owner_instance_id: string | null;
   delivery_lease_token: string | null;
@@ -117,6 +119,9 @@ type BoundEvidenceAttemptRow = Readonly<{
   delivery_attempt_count: number;
   claim_agent_id: string;
   claim_outcome: string | null;
+  run_status: string;
+  run_protocol: string;
+  run_packet_hash: string | null;
   story_status: string;
   story_claimed_by: string | null;
   story_claimed_at: Date | string | null;
@@ -269,9 +274,21 @@ async function lockStory(
   transaction: TransactionSql,
   lease: V3EvidenceOnlyPublicationLeaseV1,
 ): Promise<void> {
-  await transaction.unsafe("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [
-    v3RecoveryStoryLockIdentity({ runId: lease.runId, storyId: lease.storyId }),
-  ]);
+  try {
+    await lockV3RecoveryRunMutationAuthorityInTransaction(transaction, {
+      runId: lease.runId,
+      storyId: lease.storyId,
+    });
+  } catch (error) {
+    const message = String((error as Error)?.message ?? error);
+    if (/^V3_RECOVERY_(?:RUN_NOT_ACTIVE|TERMINATION_PENDING):/.test(message)) {
+      fail(
+        "V3_EVIDENCE_ONLY_PUBLICATION_RUN_NOT_ACTIVE",
+        `run or termination owns publication: ${message}`,
+      );
+    }
+    throw error;
+  }
 }
 
 async function loadExactPublication(
@@ -401,6 +418,7 @@ async function loadBoundEvidenceAttempt(
             attempt.source_before_tree_hash AS attempt_source_before_tree_hash,
             attempt.source_after_sha AS attempt_source_after_sha,
             attempt.source_after_tree_hash AS attempt_source_after_tree_hash,
+            attempt.lease_expires_at AS attempt_lease_expires_at,
             delivery.state AS delivery_state,
             delivery.owner_instance_id AS delivery_owner_instance_id,
             delivery.lease_token AS delivery_lease_token,
@@ -411,6 +429,9 @@ async function loadBoundEvidenceAttempt(
             delivery.attempt_count AS delivery_attempt_count,
             claim.agent_id AS claim_agent_id,
             claim.outcome AS claim_outcome,
+            run_row.status AS run_status,
+            run_row.protocol AS run_protocol,
+            run_row.packet_hash AS run_packet_hash,
             story.status AS story_status,
             story.claimed_by AS story_claimed_by,
             story.claimed_at AS story_claimed_at,
@@ -436,6 +457,8 @@ async function loadBoundEvidenceAttempt(
          ON recovery_case.recovery_case_id = delivery.recovery_case_id
        JOIN claim_log claim
          ON claim.id = attempt.claim_id
+       JOIN runs run_row
+         ON run_row.id = attempt.run_id
        JOIN stories story
          ON story.id = $6
         AND story.run_id = attempt.run_id
@@ -493,6 +516,9 @@ function assertBoundEvidenceAttempt(
     || row.attempt_fence_token !== attempt.fenceToken
     || row.attempt_agent_id !== attempt.agentId
     || row.claim_agent_id !== attempt.agentId
+    || row.run_status !== "running" && row.run_status !== "resuming"
+    || row.run_protocol !== "v3"
+    || row.run_packet_hash !== lease.packetHash
     || row.attempt_packet_hash !== lease.packetHash
     || row.attempt_slice_hash !== lease.contractSliceHash
     || row.attempt_finding_set_hash !== lease.findingSetHash
@@ -620,7 +646,7 @@ export function createV3EvidenceOnlyPublication(sql: Sql) {
         fail("V3_EVIDENCE_ONLY_PUBLICATION_FRESH_REQUIRED", "terminal replay must load its existing attempt instead of publishing another claim");
       }
       const prepared = PreparedPublicationSchema.parse(rawPrepared);
-      const now = validTime(options.now);
+      validTime(options.now);
       if (
         prepared.sliceHash !== lease.contractSliceHash
         || (lease.priorEvidencePlanArtifactHash !== undefined
@@ -634,7 +660,6 @@ export function createV3EvidenceOnlyPublication(sql: Sql) {
       return sql.begin(async (transaction) => {
         await lockStory(transaction, lease);
         const row = await loadExactPublication(transaction, lease);
-        assertExactLease(row, lease, now);
         const terminations = await transaction.unsafe<Array<{ request_id: string }>>(
           `SELECT request_id
              FROM run_termination_requests
@@ -671,6 +696,11 @@ export function createV3EvidenceOnlyPublication(sql: Sql) {
           fail("V3_EVIDENCE_ONLY_PUBLICATION_RUNTIME_FORBIDDEN", "evidence-only publication never owns a model runtime session");
         }
         await assertIndexedArtifacts(transaction, lease, prepared);
+        const now = await readDatabaseWallClock(
+          transaction,
+          "V3_EVIDENCE_ONLY_PUBLICATION_DATABASE_TIME_UNAVAILABLE",
+        );
+        assertExactLease(row, lease, now);
 
         const claimRows = await transaction.unsafe<Array<{ id: string }>>(
           `INSERT INTO claim_log (run_id, step_id, story_id, agent_id, claimed_at)
@@ -734,14 +764,19 @@ export function createV3EvidenceOnlyPublication(sql: Sql) {
       attempt: ExecutionAttemptV1;
       now?: Date;
     }>): Promise<void> {
-      const now = validTime(input.now);
+      validTime(input.now);
       await sql.begin(async (transaction) => {
         await lockStory(transaction, input.lease);
         const row = await loadBoundEvidenceAttempt(transaction, input.lease, input.attempt);
         assertBoundEvidenceAttempt(row, input.lease, input.attempt);
+        const now = await readDatabaseWallClock(
+          transaction,
+          "V3_EVIDENCE_ONLY_PUBLICATION_DATABASE_TIME_UNAVAILABLE",
+        );
         if (
           row.claim_outcome !== null
           || millis(row.delivery_lease_expires_at) <= now.getTime()
+          || millis(row.attempt_lease_expires_at) <= now.getTime()
           || !["attempt_reserved", "running"].includes(row.delivery_state)
           || !["claimed", "running"].includes(row.attempt_disposition)
         ) {
@@ -755,6 +790,7 @@ export function createV3EvidenceOnlyPublication(sql: Sql) {
                 AND generation = $2
                 AND fence_token = $3
                 AND disposition = 'claimed'
+                AND lease_expires_at > $4
               RETURNING attempt_id`,
             [input.attempt.attemptId, input.attempt.generation, input.attempt.fenceToken, now],
           );
@@ -772,6 +808,7 @@ export function createV3EvidenceOnlyPublication(sql: Sql) {
                 AND owner_instance_id = $4
                 AND lease_token = $5
                 AND state = 'attempt_reserved'
+                AND lease_expires_at > $6
               RETURNING dispatch_id`,
             [
               input.lease.dispatchId,
@@ -797,7 +834,7 @@ export function createV3EvidenceOnlyPublication(sql: Sql) {
       findingSet?: FindingSetV1;
       now?: Date;
     }>): Promise<void> {
-      const now = validTime(input.now);
+      validTime(input.now);
       const bundle = EvidenceBundleV2Schema.parse(input.bundle);
       const findingSet = input.findingSet === undefined
         ? undefined
@@ -832,10 +869,16 @@ export function createV3EvidenceOnlyPublication(sql: Sql) {
         await lockStory(transaction, input.lease);
         const row = await loadBoundEvidenceAttempt(transaction, input.lease, input.attempt);
         assertBoundEvidenceAttempt(row, input.lease, input.attempt);
+        const now = await readDatabaseWallClock(
+          transaction,
+          "V3_EVIDENCE_ONLY_PUBLICATION_DATABASE_TIME_UNAVAILABLE",
+        );
         if (
           row.delivery_state !== "running"
           || row.claim_outcome !== null
           || !["claimed", "running"].includes(row.attempt_disposition)
+          || millis(row.delivery_lease_expires_at) <= now.getTime()
+          || millis(row.attempt_lease_expires_at) <= now.getTime()
           || (
             row.attempt_source_after_sha !== null
             && (
@@ -873,6 +916,7 @@ export function createV3EvidenceOnlyPublication(sql: Sql) {
               AND generation = $2
               AND fence_token = $3
               AND disposition IN ('claimed', 'running')
+              AND lease_expires_at > $9
               AND (
                 source_after_sha IS NULL
                 OR (source_after_sha = $5 AND source_after_tree_hash = $6)
@@ -902,7 +946,7 @@ export function createV3EvidenceOnlyPublication(sql: Sql) {
       diagnostic: string;
       now?: Date;
     }>): Promise<void> {
-      const now = validTime(input.now);
+      validTime(input.now);
       const attemptAgentId = input.attempt.agentId;
       if (!input.attempt.claimId) {
         fail("V3_EVIDENCE_ONLY_CLAIM_ID_MISSING", "terminal evidence attempt has no operational claim identity");
@@ -917,14 +961,24 @@ export function createV3EvidenceOnlyPublication(sql: Sql) {
           claim_id: string | number | null;
           delivery_attempt_id: string | null;
           delivery_claim_id: string | number | null;
+          delivery_lease_expires_at: Date | string | null;
           outcome: string | null;
+          run_status: string;
+          run_protocol: string;
+          run_packet_hash: string | null;
         }>>(
           `SELECT attempt.disposition,
                   attempt.claim_id,
                   delivery.attempt_id AS delivery_attempt_id,
                   delivery.claim_id AS delivery_claim_id,
-                  claim.outcome
+                  delivery.lease_expires_at AS delivery_lease_expires_at,
+                  claim.outcome,
+                  run_row.status AS run_status,
+                  run_row.protocol AS run_protocol,
+                  run_row.packet_hash AS run_packet_hash
              FROM execution_attempts attempt
+             JOIN runs run_row
+               ON run_row.id = attempt.run_id
              JOIN recovery_dispatch_deliveries delivery
                ON delivery.dispatch_id = attempt.recovery_dispatch_id
               AND delivery.revision_id = attempt.recovery_case_revision_id
@@ -949,7 +1003,7 @@ export function createV3EvidenceOnlyPublication(sql: Sql) {
               AND delivery.state IN ('attempt_reserved', 'running')
               AND recovery_case.status = 'evidencing'
               AND recovery_case.owner = 'infrastructure'
-            FOR UPDATE OF claim, delivery`,
+            FOR UPDATE OF attempt, claim, delivery, recovery_case`,
           [
             input.attempt.attemptId,
             input.lease.runId,
@@ -962,6 +1016,10 @@ export function createV3EvidenceOnlyPublication(sql: Sql) {
           ],
         );
         const row = rows[0];
+        const now = await readDatabaseWallClock(
+          transaction,
+          "V3_EVIDENCE_ONLY_PUBLICATION_DATABASE_TIME_UNAVAILABLE",
+        );
         const exactClaimId = Number(row?.claim_id);
         if (
           !row
@@ -969,6 +1027,10 @@ export function createV3EvidenceOnlyPublication(sql: Sql) {
           || exactClaimId !== input.attempt.claimId
           || Number(row.delivery_claim_id) !== exactClaimId
           || row.delivery_attempt_id !== input.attempt.attemptId
+          || millis(row.delivery_lease_expires_at) <= now.getTime()
+          || !["running", "resuming"].includes(row.run_status)
+          || row.run_protocol !== "v3"
+          || row.run_packet_hash !== input.lease.packetHash
           || ["claimed", "running", "superseded"].includes(row.disposition)
         ) {
           fail("V3_EVIDENCE_ONLY_CLAIM_COMPLETION_MISMATCH", "claim close requires the exact terminal evidence-only attempt and delivery binding");

@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import type postgres from "postgres";
 import { z } from "zod";
 
+import { readDatabaseWallClock } from "../db/database-wall-clock.js";
 import { FindingSetV1Schema } from "../findings/finding-set.js";
 import { V3GithubReviewDispatchAuthorityV1Schema } from "../findings/github-review-routing-authority.js";
 import { hashCanonicalJson } from "../product-compiler/canonical-json.js";
@@ -14,16 +15,18 @@ import {
 } from "./recovery-case.js";
 import {
   RecoveryCaseRevisionV1Schema,
-  RecoveryDispatchDeliveryV1Schema,
   RecoveryRevisionDispatchV1Schema,
   computeRevisionDispatchDedupeKey,
   computeRevisionFindingDispatchKey,
   createRecoveryCaseRevisionV1,
   type RecoveryCaseRevisionV1,
-  type RecoveryDispatchDeliveryV1,
   type RecoveryRevisionDispatchV1,
 } from "./recovery-delivery.js";
-import { v3RecoveryStoryLockIdentity } from "./v3-recovery-claim-authority.js";
+import {
+  parseRecoveryDispatchDeliveryRecord,
+  type RecoveryDispatchDeliveryRecord,
+} from "./recovery-delivery-terminal-v2.js";
+import { lockV3RecoveryRunMutationAuthorityInTransaction } from "./v3-recovery-run-mutation-authority.js";
 import { V3DownstreamEvidenceAuthorityV1Schema } from "./v3-downstream-evidence-publication.js";
 
 type Sql = postgres.Sql;
@@ -414,9 +417,8 @@ function mapDispatch(row: DispatchRow): RecoveryRevisionDispatchV1 {
   });
 }
 
-function mapDelivery(row: DeliveryRow): RecoveryDispatchDeliveryV1 {
-  return RecoveryDispatchDeliveryV1Schema.parse({
-    schema: "setfarm.recovery-dispatch-delivery.v1",
+function mapDelivery(row: DeliveryRow): RecoveryDispatchDeliveryRecord {
+  return parseRecoveryDispatchDeliveryRecord({
     dispatchId: row.dispatch_id,
     recoveryCaseId: row.recovery_case_id,
     revisionId: row.revision_id,
@@ -864,10 +866,10 @@ export type RevisionDispatchResult =
   | Readonly<{
       status: "authorized";
       dispatch: RecoveryRevisionDispatchV1;
-      delivery: RecoveryDispatchDeliveryV1;
+      delivery: RecoveryDispatchDeliveryRecord;
       stateVersion: number;
     }>
-  | Readonly<{ status: "duplicate"; dispatch: RecoveryRevisionDispatchV1; delivery: RecoveryDispatchDeliveryV1 }>
+  | Readonly<{ status: "duplicate"; dispatch: RecoveryRevisionDispatchV1; delivery: RecoveryDispatchDeliveryRecord }>
   | Readonly<{ status: "finding_conflict"; findingIds: string[] }>
   | Readonly<{ status: "budget_exhausted"; stateVersion: number }>
   | Readonly<{ status: "stale_version"; stateVersion: number }>;
@@ -893,15 +895,29 @@ export function createRecoveryDeliveryRepository(sql: Sql) {
       options: Readonly<{ now?: Date }> = {},
     ): Promise<RevisionAdvanceResult> {
       const input = RevisionAdvanceInputSchema.parse(raw);
-      const now = new Date(options.now ?? new Date());
-      if (!Number.isFinite(now.getTime())) throw new Error("RECOVERY_REVISION_TIME_INVALID");
+      const requestedTime = new Date(options.now ?? new Date());
+      if (!Number.isFinite(requestedTime.getTime())) throw new Error("RECOVERY_REVISION_TIME_INVALID");
+      const identity = await one<{ run_id: string; story_id: string }>(
+        sql,
+        "SELECT run_id, story_id FROM recovery_cases WHERE recovery_case_id = $1",
+        [input.recoveryCaseId],
+      );
+      if (!identity) throw new Error("RECOVERY_CASE_NOT_FOUND");
       return sql.begin(async (transaction) => {
+        const authority = await lockV3RecoveryRunMutationAuthorityInTransaction(transaction, {
+          runId: identity.run_id,
+          storyId: identity.story_id,
+        });
+        const now = authority.observedAt;
         const currentCase = await one<CaseRow>(
           transaction,
           "SELECT * FROM recovery_cases WHERE recovery_case_id = $1 FOR UPDATE",
           [input.recoveryCaseId],
         );
         if (!currentCase) throw new Error("RECOVERY_CASE_NOT_FOUND");
+        if (currentCase.run_id !== identity.run_id || currentCase.story_id !== identity.story_id) {
+          throw new Error("RECOVERY_CASE_STORY_IDENTITY_CHANGED");
+        }
         if (currentCase.state_version !== input.expectedStateVersion) {
           return { status: "stale_version" as const, stateVersion: currentCase.state_version };
         }
@@ -1028,8 +1044,8 @@ export function createRecoveryDeliveryRepository(sql: Sql) {
       options: Readonly<{ now?: Date }> = {},
     ): Promise<RevisionDispatchResult> {
       const input = AuthorizeInputSchema.parse(raw);
-      const now = new Date(options.now ?? new Date());
-      if (!Number.isFinite(now.getTime())) throw new Error("RECOVERY_DISPATCH_TIME_INVALID");
+      const requestedTime = new Date(options.now ?? new Date());
+      if (!Number.isFinite(requestedTime.getTime())) throw new Error("RECOVERY_DISPATCH_TIME_INVALID");
       return sql.begin(async (transaction) => {
         const identity = await one<{ run_id: string; story_id: string }>(
           transaction,
@@ -1037,9 +1053,11 @@ export function createRecoveryDeliveryRepository(sql: Sql) {
           [input.recoveryCaseId],
         );
         if (!identity) throw new Error("RECOVERY_CASE_NOT_FOUND");
-        await transaction.unsafe("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [
-          v3RecoveryStoryLockIdentity({ runId: identity.run_id, storyId: identity.story_id }),
-        ]);
+        const authority = await lockV3RecoveryRunMutationAuthorityInTransaction(transaction, {
+          runId: identity.run_id,
+          storyId: identity.story_id,
+        });
+        const now = authority.observedAt;
         const currentCase = await one<CaseRow>(
           transaction,
           "SELECT * FROM recovery_cases WHERE recovery_case_id = $1 FOR UPDATE",
@@ -1226,12 +1244,12 @@ export function createRecoveryDeliveryRepository(sql: Sql) {
       return row ? mapDispatch(row) : undefined;
     },
 
-    async findDelivery(dispatchId: string): Promise<RecoveryDispatchDeliveryV1 | undefined> {
+    async findDelivery(dispatchId: string): Promise<RecoveryDispatchDeliveryRecord | undefined> {
       const row = await one<DeliveryRow>(sql, "SELECT * FROM recovery_dispatch_deliveries WHERE dispatch_id = $1", [dispatchId]);
       return row ? mapDelivery(row) : undefined;
     },
 
-    async findActiveForStory(input: Readonly<{ runId: string; storyId: string }>): Promise<RecoveryDispatchDeliveryV1 | undefined> {
+    async findActiveForStory(input: Readonly<{ runId: string; storyId: string }>): Promise<RecoveryDispatchDeliveryRecord | undefined> {
       const row = await one<DeliveryRow>(
         sql,
         `SELECT * FROM recovery_dispatch_deliveries
@@ -1244,67 +1262,134 @@ export function createRecoveryDeliveryRepository(sql: Sql) {
       return row ? mapDelivery(row) : undefined;
     },
 
-    async leaseNext(raw: unknown, options: Readonly<{ now?: Date }> = {}): Promise<RecoveryDispatchDeliveryV1 | undefined> {
+    async leaseNext(raw: unknown, options: Readonly<{ now?: Date }> = {}): Promise<RecoveryDispatchDeliveryRecord | undefined> {
       const input = LeaseInputSchema.parse(raw);
-      const now = new Date(options.now ?? new Date());
-      if (!Number.isFinite(now.getTime())) throw new Error("RECOVERY_DELIVERY_LEASE_TIME_INVALID");
-      const expiresAt = new Date(now.getTime() + input.leaseMs);
+      const requestedTime = new Date(options.now ?? new Date());
+      if (!Number.isFinite(requestedTime.getTime())) throw new Error("RECOVERY_DELIVERY_LEASE_TIME_INVALID");
       const leaseToken = randomBytes(32).toString("hex");
+      const discovered = await one<{ dispatch_id: string; run_id: string; story_id: string }>(
+        sql,
+        `SELECT dispatch_id, run_id, story_id
+           FROM recovery_dispatch_deliveries
+          WHERE (
+                state = 'authorized'
+                OR (state = 'leased' AND lease_expires_at <= clock_timestamp())
+              )
+            AND ($1::text IS NULL OR run_id = $1)
+            AND ($2::text IS NULL OR story_id = $2)
+          ORDER BY authorized_at, dispatch_id
+          LIMIT 1`,
+        [input.runId ?? null, input.storyId ?? null],
+      );
+      if (!discovered) return undefined;
       return sql.begin(async (transaction) => {
+        await lockV3RecoveryRunMutationAuthorityInTransaction(transaction, {
+          runId: discovered.run_id,
+          storyId: discovered.story_id,
+        });
+        const candidate = await one<DeliveryRow>(
+          transaction,
+          `SELECT *
+             FROM recovery_dispatch_deliveries
+            WHERE dispatch_id = $1
+              AND (
+                    state = 'authorized'
+                    OR (state = 'leased' AND lease_expires_at <= clock_timestamp())
+                  )
+              FOR UPDATE SKIP LOCKED`,
+          [discovered.dispatch_id],
+        );
+        if (!candidate) return undefined;
+        const now = await readDatabaseWallClock(
+          transaction,
+          "RECOVERY_DELIVERY_DATABASE_TIME_UNAVAILABLE",
+        );
+        if (
+          candidate.state === "leased"
+          && (!candidate.lease_expires_at || new Date(candidate.lease_expires_at).getTime() > now.getTime())
+        ) return undefined;
+        const expiresAt = new Date(now.getTime() + input.leaseMs);
         const row = await one<DeliveryRow>(
           transaction,
-          `WITH candidate AS (
-             SELECT dispatch_id
-               FROM recovery_dispatch_deliveries
-              WHERE (
-                    state = 'authorized'
-                    OR (state = 'leased' AND lease_expires_at <= $1)
-                  )
-                AND ($2::text IS NULL OR run_id = $2)
-                AND ($3::text IS NULL OR story_id = $3)
-              ORDER BY authorized_at, dispatch_id
-              LIMIT 1
-              FOR UPDATE SKIP LOCKED
-           )
-           UPDATE recovery_dispatch_deliveries delivery
+          `UPDATE recovery_dispatch_deliveries
               SET state = 'leased',
-                  owner_instance_id = $4,
-                  lease_token = $5,
-                  lease_expires_at = $6,
+                  owner_instance_id = $2,
+                  lease_token = $3,
+                  lease_expires_at = $4,
                   updated_at = $1
-             FROM candidate
-            WHERE delivery.dispatch_id = candidate.dispatch_id
-            RETURNING delivery.*`,
-          [now, input.runId ?? null, input.storyId ?? null, input.ownerInstanceId, leaseToken, expiresAt],
+             WHERE dispatch_id = $5
+               AND state = $6
+               AND owner_instance_id IS NOT DISTINCT FROM $7::text
+               AND lease_token IS NOT DISTINCT FROM $8::text
+               AND lease_expires_at IS NOT DISTINCT FROM $9::timestamptz
+               AND (state = 'authorized' OR lease_expires_at <= $1)
+             RETURNING *`,
+          [
+            now,
+            input.ownerInstanceId,
+            leaseToken,
+            expiresAt,
+            candidate.dispatch_id,
+            candidate.state,
+            candidate.owner_instance_id,
+            candidate.lease_token,
+            candidate.lease_expires_at,
+          ],
         );
         return row ? mapDelivery(row) : undefined;
-      }) as Promise<RecoveryDispatchDeliveryV1 | undefined>;
+      }) as Promise<RecoveryDispatchDeliveryRecord | undefined>;
     },
 
     async markRunning(input: Readonly<{
       dispatchId: string;
       revisionId: string;
       attemptId: string;
-    }>, options: Readonly<{ now?: Date }> = {}): Promise<RecoveryDispatchDeliveryV1 | undefined> {
-      const now = new Date(options.now ?? new Date());
-      const row = await one<DeliveryRow>(
+    }>, options: Readonly<{ now?: Date }> = {}): Promise<RecoveryDispatchDeliveryRecord | undefined> {
+      const requestedTime = new Date(options.now ?? new Date());
+      if (!Number.isFinite(requestedTime.getTime())) throw new Error("RECOVERY_DELIVERY_RUNNING_TIME_INVALID");
+      const identity = await one<{ run_id: string; story_id: string }>(
         sql,
-        `UPDATE recovery_dispatch_deliveries
+        "SELECT run_id, story_id FROM recovery_dispatch_deliveries WHERE dispatch_id = $1",
+        [input.dispatchId],
+      );
+      if (!identity) return undefined;
+      return sql.begin(async (transaction) => {
+        const authority = await lockV3RecoveryRunMutationAuthorityInTransaction(transaction, {
+          runId: identity.run_id,
+          storyId: identity.story_id,
+        });
+        const row = await one<DeliveryRow>(
+          transaction,
+          `UPDATE recovery_dispatch_deliveries
             SET state = 'running', updated_at = $4
           WHERE dispatch_id = $1 AND revision_id = $2 AND attempt_id = $3
             AND state IN ('attempt_reserved', 'running')
           RETURNING *`,
-        [input.dispatchId, input.revisionId, input.attemptId, now],
-      );
-      return row ? mapDelivery(row) : undefined;
+          [input.dispatchId, input.revisionId, input.attemptId, authority.observedAt],
+        );
+        return row ? mapDelivery(row) : undefined;
+      }) as Promise<RecoveryDispatchDeliveryRecord | undefined>;
     },
 
-    async completeDelivery(raw: unknown, options: Readonly<{ now?: Date }> = {}): Promise<RecoveryDispatchDeliveryV1 | undefined> {
+    async completeDelivery(raw: unknown, options: Readonly<{ now?: Date }> = {}): Promise<RecoveryDispatchDeliveryRecord | undefined> {
       const input = CompleteDeliveryInputSchema.parse(raw);
-      const now = new Date(options.now ?? new Date());
-      const row = await one<DeliveryRow>(
+      const requestedTime = new Date(options.now ?? new Date());
+      if (!Number.isFinite(requestedTime.getTime())) throw new Error("RECOVERY_DELIVERY_COMPLETION_TIME_INVALID");
+      const identity = await one<{ run_id: string; story_id: string }>(
         sql,
-        `UPDATE recovery_dispatch_deliveries
+        "SELECT run_id, story_id FROM recovery_dispatch_deliveries WHERE dispatch_id = $1",
+        [input.dispatchId],
+      );
+      if (!identity) return undefined;
+      return sql.begin(async (transaction) => {
+        const authority = await lockV3RecoveryRunMutationAuthorityInTransaction(transaction, {
+          runId: identity.run_id,
+          storyId: identity.story_id,
+        });
+        const now = authority.observedAt;
+        const row = await one<DeliveryRow>(
+          transaction,
+          `UPDATE recovery_dispatch_deliveries
             SET state = $4,
                 terminal_result = $5::text::jsonb,
                 diagnostic = $6,
@@ -1315,12 +1400,13 @@ export function createRecoveryDeliveryRepository(sql: Sql) {
             AND ($3::text IS NULL OR attempt_id = $3)
             AND state NOT IN ('succeeded', 'failed', 'blocked', 'superseded')
           RETURNING *`,
-        [
-          input.dispatchId, input.revisionId, input.attemptId ?? null, input.state,
-          JSON.stringify(input.terminalResult), input.diagnostic ?? null, now,
-        ],
-      );
-      return row ? mapDelivery(row) : undefined;
+          [
+            input.dispatchId, input.revisionId, input.attemptId ?? null, input.state,
+            JSON.stringify(input.terminalResult), input.diagnostic ?? null, now,
+          ],
+        );
+        return row ? mapDelivery(row) : undefined;
+      }) as Promise<RecoveryDispatchDeliveryRecord | undefined>;
     },
   };
 }

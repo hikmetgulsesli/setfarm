@@ -1,5 +1,6 @@
 import type postgres from "postgres";
 
+import { readDatabaseWallClock } from "../db/database-wall-clock.js";
 import { acquireClaimMutationAuthorityInTransaction } from "./claim-mutation-authority.js";
 import { releaseReservedRuntimeSessionInTransaction } from "./runtime-session-repository.js";
 
@@ -88,25 +89,6 @@ export async function withdrawPreDispatchClaimInTransaction(
     Number(delivery.claim_id) !== input.identity.claimId
   ));
 
-  const claims = await transaction.unsafe<Array<{ id: string }>>(
-    `UPDATE claim_log
-        SET outcome = $2, abandoned_at = NOW(),
-            duration_ms = LEAST(
-              CAST(EXTRACT(EPOCH FROM (NOW() - claimed_at::timestamptz)) * 1000 AS BIGINT),
-              2147483647
-            )::INTEGER,
-            diagnostic = $3
-      WHERE id = $1 AND outcome IS NULL
-      RETURNING id::text`,
-    [input.identity.claimId, input.outcome, input.diagnostic.slice(0, 1_000)],
-  );
-  if (claims.length !== 1) throw new Error("PRE_DISPATCH_CLAIM_CAS_LOST");
-  await transaction.unsafe(
-    `UPDATE execution_attempts
-        SET disposition = 'inconclusive', updated_at = NOW()
-      WHERE claim_id = $1 AND disposition IN ('claimed', 'running')`,
-    [input.identity.claimId],
-  );
   const runtimeRows = await transaction.unsafe<Array<{
     session_id: string;
     owner_instance_id: string;
@@ -124,6 +106,33 @@ export async function withdrawPreDispatchClaimInTransaction(
     || runtime.session_id !== input.identity.runtime.sessionId
     || runtime.owner_instance_id !== input.identity.runtime.ownerInstanceId
   )) throw new Error("PRE_DISPATCH_RUNTIME_IDENTITY_MISMATCH");
+  if (runtime && !["reserved", "released"].includes(runtime.state)) {
+    throw new Error(`PRE_DISPATCH_RUNTIME_STATE_INVALID:${runtime.state}`);
+  }
+  const wallClock = await readDatabaseWallClock(
+    transaction,
+    "PRE_DISPATCH_DATABASE_TIME_UNAVAILABLE",
+  );
+
+  const claims = await transaction.unsafe<Array<{ id: string }>>(
+    `UPDATE claim_log
+        SET outcome = $2, abandoned_at = $4,
+            duration_ms = LEAST(
+              CAST(EXTRACT(EPOCH FROM ($4::timestamptz - claimed_at::timestamptz)) * 1000 AS BIGINT),
+              2147483647
+            )::INTEGER,
+            diagnostic = $3
+      WHERE id = $1 AND outcome IS NULL
+      RETURNING id::text`,
+    [input.identity.claimId, input.outcome, input.diagnostic.slice(0, 1_000), wallClock],
+  );
+  if (claims.length !== 1) throw new Error("PRE_DISPATCH_CLAIM_CAS_LOST");
+  await transaction.unsafe(
+    `UPDATE execution_attempts
+        SET disposition = 'inconclusive', updated_at = $2
+      WHERE claim_id = $1 AND disposition IN ('claimed', 'running')`,
+    [input.identity.claimId, wallClock],
+  );
   if (runtime) {
     if (runtime.state === "reserved") {
       await releaseReservedRuntimeSessionInTransaction(transaction, {
@@ -132,8 +141,6 @@ export async function withdrawPreDispatchClaimInTransaction(
         ownerInstanceId: runtime.owner_instance_id,
         diagnostic: input.diagnostic,
       });
-    } else if (runtime.state !== "released") {
-      throw new Error(`PRE_DISPATCH_RUNTIME_STATE_INVALID:${runtime.state}`);
     }
   }
   return foreignOwnerRetained

@@ -273,23 +273,31 @@ describe("v3 downstream evidence publication", () => {
     const value = await setup();
     const publication = createV3DownstreamEvidencePublication(database.sql);
     const first = await publication.reserve(value.authority, value.prepared, {
-      now: RESERVED_AT,
+      now: new Date("2999-01-01T00:00:00.000Z"),
       leaseMs: 1_000,
     });
     assert.equal(first.status, "reserved");
     const running = await publication.markRunning({
       authority: value.authority,
       attempt: first.attempt,
-      now: new Date(RESERVED_AT.getTime() + 100),
+      now: new Date("1900-01-01T00:00:00.000Z"),
     });
     const liveReplay = await publication.reserve(value.authority, value.prepared, {
-      now: new Date(RESERVED_AT.getTime() + 999),
+      now: new Date("2999-01-01T00:00:00.000Z"),
       leaseMs: 1_000,
     });
     assert.equal(liveReplay.status, "active_conflict");
 
+    await database.sql.unsafe(
+      `UPDATE execution_attempts
+          SET lease_acquired_at = clock_timestamp() - interval '2 seconds',
+              heartbeat_at = clock_timestamp() - interval '2 seconds',
+              lease_expires_at = clock_timestamp() - interval '1 second'
+        WHERE attempt_id = $1`,
+      [running.attemptId],
+    );
     const adopted = await publication.reserve(value.authority, value.prepared, {
-      now: new Date(RESERVED_AT.getTime() + 1_001),
+      now: new Date("1900-01-01T00:00:00.000Z"),
       leaseMs: 1_000,
     });
     assert.equal(adopted.status, "reserved");
@@ -303,14 +311,14 @@ describe("v3 downstream evidence publication", () => {
       publication.markRunning({
         authority: value.authority,
         attempt: running,
-        now: new Date(RESERVED_AT.getTime() + 1_002),
+        now: new Date("2999-01-01T00:00:00.000Z"),
       }),
       /V3_DOWNSTREAM_EVIDENCE_RUNNING_CAS_LOST/,
     );
     const adoptedRunning = await publication.markRunning({
       authority: value.authority,
       attempt: adopted.attempt,
-      now: new Date(RESERVED_AT.getTime() + 1_003),
+      now: new Date("2999-01-01T00:00:00.000Z"),
     });
     assert.equal(adoptedRunning.disposition, "running");
 

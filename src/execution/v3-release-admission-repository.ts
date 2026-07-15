@@ -1,5 +1,6 @@
 import type postgres from "postgres";
 
+import { readDatabaseWallClock } from "../db/database-wall-clock.js";
 import { evaluateConvergenceReleaseGate } from "../evals/release-gate.js";
 import { ContentAddressedEvalResultStore } from "../evals/report.js";
 import type { ConvergenceEvalResultV1 } from "../evals/result-schema.js";
@@ -260,25 +261,14 @@ async function verifyConsumedCanaryEvidence(
   }
 }
 
-function assertCanaryWindow(input: Readonly<{
-  issuedAt: string;
-  expiresAt: string;
-  now: Date;
-}>): void {
-  const issued = new Date(input.issuedAt).getTime();
-  const expires = new Date(input.expiresAt).getTime();
-  if (
-    !Number.isFinite(issued)
-    || !Number.isFinite(expires)
-    || expires <= input.now.getTime()
-    || expires <= issued
-    || expires - issued > MAX_CANARY_TTL_MS
-  ) {
+function parseCanaryTtlMs(value: number): number {
+  if (!Number.isSafeInteger(value) || value <= 0 || value > MAX_CANARY_TTL_MS) {
     throw new V3ReleaseAdmissionError(
       "V3_CANARY_ADMISSION_INVALID",
-      "Canary admission expiry must be future, ordered, and bounded",
+      "Canary admission TTL must be a positive integer no greater than nine days",
     );
   }
+  return value;
 }
 
 function exactClaimMatches(
@@ -298,27 +288,34 @@ export function createV3ReleaseAdmissionRepository(
   store: ContentAddressedEvalResultStore,
   options: Readonly<{ now?: () => Date }> = {},
 ) {
-  const now = options.now ?? (() => new Date());
+  const validateCompatibilityClock = (): void => {
+    if (options.now && !Number.isFinite(new Date(options.now()).getTime())) {
+      throw new V3ReleaseAdmissionError(
+        "V3_CANARY_ADMISSION_INVALID",
+        "Canary compatibility clock is invalid",
+      );
+    }
+  };
 
   return Object.freeze({
     async createCanary(input: Readonly<{
       releaseSha: string;
       suiteHash: string;
       preflightHash: string;
-      issuedAt: string;
-      expiresAt: string;
+      ttlMs: number;
       slots: readonly V3CanaryAdmissionSlotInput[];
     }>): Promise<V3CanaryAdmissionCreation> {
       const releaseSha = GitObjectHashSchema.parse(input.releaseSha);
       const suiteHash = Sha256Schema.parse(input.suiteHash);
       const preflightHash = Sha256Schema.parse(input.preflightHash);
+      const ttlMs = parseCanaryTtlMs(input.ttlMs);
+      validateCompatibilityClock();
       if (input.slots.length < 1 || input.slots.length > MAX_CANARY_SLOTS) {
         throw new V3ReleaseAdmissionError(
           "V3_CANARY_ADMISSION_INVALID",
           "Canary admission must contain one to sixteen exact slots",
         );
       }
-      assertCanaryWindow({ issuedAt: input.issuedAt, expiresAt: input.expiresAt, now: now() });
       const descriptors = input.slots.map((slot) => {
         const selectorHash = canarySelectorHash(slot.slotToken);
         const descriptor = {
@@ -336,24 +333,93 @@ export function createV3ReleaseAdmissionRepository(
           }),
         };
         return { descriptor, slotToken: slot.slotToken };
-      });
+      }).sort((left, right) => exactCanarySlotKey(left.descriptor)
+        .localeCompare(exactCanarySlotKey(right.descriptor)));
       if (new Set(descriptors.map(({ descriptor }) => exactCanarySlotKey(descriptor))).size !== descriptors.length) {
         throw new V3ReleaseAdmissionError("V3_CANARY_ADMISSION_INVALID", "Canary exact slots must be unique");
       }
-      const admission = createV3ReleaseAdmissionV1({
-        schema: "setfarm.v3-release-admission.v1",
-        kind: "convergence_canary",
+      const creationLockIdentity = hashCanonicalJson({
+        schema: "setfarm.v3-canary-admission-creation.v1",
         releaseSha,
         suiteHash,
-        result: { hash: null, ref: null },
-        gate: { hash: null, ref: null },
         preflightHash,
+        ttlMs,
         slots: descriptors.map(({ descriptor }) => descriptor),
-        issuedAt: input.issuedAt,
-        expiresAt: input.expiresAt,
-      }) as Extract<V3ReleaseAdmissionV1, { kind: "convergence_canary" }>;
+      });
 
-      await sql.begin(async (transaction) => {
+      const admission = await sql.begin(async (transaction) => {
+        await transaction.unsafe(
+          "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+          [creationLockIdentity],
+        );
+        const existingClaims = await transaction.unsafe<CanaryClaimRow[]>(
+          `SELECT slot_hash, admission_hash, case_hash, task_hash, repetition,
+                  selector_hash, run_id, consumed_at
+             FROM v3_canary_admission_claims
+            WHERE slot_hash = ANY($1::text[])
+            ORDER BY slot_hash
+            FOR SHARE`,
+          [descriptors.map(({ descriptor }) => descriptor.slotHash)],
+        );
+        if (existingClaims.length > 0) {
+          const admissionHashes = new Set(existingClaims.map((claim) => claim.admission_hash));
+          const expected = new Map(descriptors.map(({ descriptor }) => [descriptor.slotHash, descriptor]));
+          if (
+            existingClaims.length !== descriptors.length
+            || admissionHashes.size !== 1
+            || existingClaims.some((claim) => {
+              const descriptor = expected.get(claim.slot_hash);
+              return !descriptor
+                || claim.case_hash !== descriptor.caseHash
+                || claim.task_hash !== descriptor.taskHash
+                || claim.repetition !== descriptor.repetition
+                || claim.selector_hash !== descriptor.selectorHash;
+            })
+          ) {
+            throw new V3ReleaseAdmissionError(
+              "V3_CANARY_ADMISSION_SLOT_CONFLICT",
+              "Canary creation overlaps a different immutable slot set",
+            );
+          }
+          const stored = await readAdmission(transaction, existingClaims[0]!.admission_hash);
+          const storedTtlMs = stored?.kind === "convergence_canary"
+            ? new Date(stored.expiresAt).getTime() - new Date(stored.issuedAt).getTime()
+            : Number.NaN;
+          if (
+            !stored
+            || stored.kind !== "convergence_canary"
+            || stored.releaseSha !== releaseSha
+            || stored.suiteHash !== suiteHash
+            || stored.preflightHash !== preflightHash
+            || storedTtlMs !== ttlMs
+            || hashCanonicalJson(stored.slots) !== hashCanonicalJson(descriptors.map(({ descriptor }) => descriptor))
+          ) {
+            throw new V3ReleaseAdmissionError(
+              "V3_CANARY_ADMISSION_SLOT_CONFLICT",
+              "Canary slot identity conflicts with its immutable admission",
+            );
+          }
+          return stored;
+        }
+
+        const wallClock = await readDatabaseWallClock(
+          transaction,
+          "V3_RELEASE_ADMISSION_DATABASE_TIME_UNAVAILABLE",
+        );
+        const issuedAt = wallClock.toISOString();
+        const expiresAt = new Date(wallClock.getTime() + ttlMs).toISOString();
+        const created = createV3ReleaseAdmissionV1({
+          schema: "setfarm.v3-release-admission.v1",
+          kind: "convergence_canary",
+          releaseSha,
+          suiteHash,
+          result: { hash: null, ref: null },
+          gate: { hash: null, ref: null },
+          preflightHash,
+          slots: descriptors.map(({ descriptor }) => descriptor),
+          issuedAt,
+          expiresAt,
+        }) as Extract<V3ReleaseAdmissionV1, { kind: "convergence_canary" }>;
         await transaction.unsafe(
           `INSERT INTO v3_release_admissions (
              admission_hash, kind, release_sha, suite_hash,
@@ -363,17 +429,17 @@ export function createV3ReleaseAdmissionRepository(
                      $5, $6::text::jsonb, $7)
            ON CONFLICT (admission_hash) DO NOTHING`,
           [
-            admission.admissionHash,
-            admission.kind,
-            admission.releaseSha,
-            admission.suiteHash,
-            admission.expiresAt,
-            JSON.stringify(admission),
-            admission.issuedAt,
+            created.admissionHash,
+            created.kind,
+            created.releaseSha,
+            created.suiteHash,
+            created.expiresAt,
+            JSON.stringify(created),
+            wallClock,
           ],
         );
-        const stored = await readAdmission(transaction, admission.admissionHash);
-        if (!stored || hashCanonicalJson(stored) !== hashCanonicalJson(admission)) {
+        const stored = await readAdmission(transaction, created.admissionHash);
+        if (!stored || hashCanonicalJson(stored) !== hashCanonicalJson(created)) {
           throw new V3ReleaseAdmissionError(
             "V3_CANARY_ADMISSION_SLOT_CONFLICT",
             "Canary admission identity conflicts with stored state",
@@ -388,12 +454,12 @@ export function createV3ReleaseAdmissionRepository(
              ON CONFLICT (slot_hash) DO NOTHING`,
             [
               descriptor.slotHash,
-              admission.admissionHash,
+              created.admissionHash,
               descriptor.caseHash,
               descriptor.taskHash,
               descriptor.repetition,
               descriptor.selectorHash,
-              admission.issuedAt,
+              wallClock,
             ],
           );
         }
@@ -403,13 +469,13 @@ export function createV3ReleaseAdmissionRepository(
              FROM v3_canary_admission_claims
             WHERE admission_hash = $1
             ORDER BY case_hash, task_hash, repetition`,
-          [admission.admissionHash],
+          [created.admissionHash],
         );
         const expected = new Map(descriptors.map(({ descriptor }) => [descriptor.slotHash, descriptor]));
         if (claims.length !== expected.size || claims.some((claim) => {
           const descriptor = expected.get(claim.slot_hash);
           return !descriptor
-            || claim.admission_hash !== admission.admissionHash
+            || claim.admission_hash !== created.admissionHash
             || claim.case_hash !== descriptor.caseHash
             || claim.task_hash !== descriptor.taskHash
             || claim.repetition !== descriptor.repetition
@@ -420,7 +486,8 @@ export function createV3ReleaseAdmissionRepository(
             "Canary admission slots conflict with stored state",
           );
         }
-      });
+        return created;
+      }) as Extract<V3ReleaseAdmissionV1, { kind: "convergence_canary" }>;
 
       return Object.freeze({
         admission,
@@ -443,6 +510,7 @@ export function createV3ReleaseAdmissionRepository(
     }>): Promise<V3ReleaseAdmissionSelection> {
       const releaseSha = GitObjectHashSchema.parse(input.releaseSha);
       const taskHash = Sha256Schema.parse(input.taskHash);
+      validateCompatibilityClock();
       const admission = await readAdmission(sql, input.context.admissionHash);
       if (!admission || admission.kind !== "convergence_canary") {
         throw new V3ReleaseAdmissionError("V3_RELEASE_ADMISSION_NOT_FOUND", "Canary admission not found");
@@ -450,7 +518,11 @@ export function createV3ReleaseAdmissionRepository(
       if (admission.releaseSha !== releaseSha || input.context.taskHash !== taskHash) {
         throw new V3ReleaseAdmissionError("V3_CANARY_ADMISSION_INVALID", "Canary release or task identity mismatch");
       }
-      if (new Date(admission.expiresAt).getTime() <= now().getTime()) {
+      const wallClock = await readDatabaseWallClock(
+        sql,
+        "V3_RELEASE_ADMISSION_DATABASE_TIME_UNAVAILABLE",
+      );
+      if (new Date(admission.expiresAt).getTime() <= wallClock.getTime()) {
         throw new V3ReleaseAdmissionError("V3_CANARY_ADMISSION_EXPIRED", "Canary admission expired");
       }
       const claims = await sql.unsafe<CanaryClaimRow[]>(

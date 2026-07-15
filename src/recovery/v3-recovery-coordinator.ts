@@ -1,6 +1,7 @@
 import type postgres from "postgres";
 import { z } from "zod";
 
+import { readDatabaseWallClock } from "../db/database-wall-clock.js";
 import {
   EvidenceBundleV2Schema,
   computeEvidenceBundleHash,
@@ -26,9 +27,9 @@ import {
 } from "./recovery-delivery-repository.js";
 import type {
   RecoveryCaseRevisionV1,
-  RecoveryDispatchDeliveryV1,
   RecoveryRevisionDispatchV1,
 } from "./recovery-delivery.js";
+import type { RecoveryDispatchDeliveryRecord } from "./recovery-delivery-terminal-v2.js";
 import type {
   RecoveryCaseDraftV1,
   RecoveryCaseV1,
@@ -100,7 +101,7 @@ type RecoveryIdentity = Readonly<{
   recoveryCase: RecoveryCaseV1;
   revision: RecoveryCaseRevisionV1;
   dispatch: RecoveryRevisionDispatchV1;
-  delivery: RecoveryDispatchDeliveryV1;
+  delivery: RecoveryDispatchDeliveryRecord;
   attempt: ExecutionAttemptV1;
 }>;
 
@@ -117,7 +118,7 @@ export type V3RecoveryCoordinatorResult =
       dispatchId: string;
       dispatchClass: DispatchClass;
       modelDispatch: boolean;
-      deliveryState: RecoveryDispatchDeliveryV1["state"];
+      deliveryState: RecoveryDispatchDeliveryRecord["state"];
       evidenceBundleHash: string;
     }>
   | Readonly<{
@@ -522,7 +523,7 @@ function assertRecoverySlice(input: Readonly<{
   context: ParsedEvidenceContext;
   revision: RecoveryCaseRevisionV1;
   dispatch: RecoveryRevisionDispatchV1;
-  delivery: RecoveryDispatchDeliveryV1;
+  delivery: RecoveryDispatchDeliveryRecord;
 }>): void {
   const { context, revision, dispatch, delivery } = input;
   const directive = context.slice.recovery;
@@ -676,7 +677,7 @@ export function createV3RecoveryCoordinator(sql: Sql) {
     context: ParsedEvidenceContext;
     coordinatorEventHash: string;
     now: Date;
-  }>): Promise<RecoveryDispatchDeliveryV1> {
+  }>): Promise<RecoveryDispatchDeliveryRecord> {
     const expectedState = input.context.evidenceBundle.aggregateVerdict === "pass" ? "succeeded" : "failed";
     const expectedResult = terminalResult({
       eventHash: input.coordinatorEventHash,
@@ -1406,8 +1407,8 @@ export function createV3RecoveryCoordinator(sql: Sql) {
       options: Readonly<{ now?: Date }> = {},
     ): Promise<V3RecoveryCoordinatorResult> {
       const raw = V3RecoveryCoordinatorInputSchema.parse(input);
-      const now = new Date(options.now ?? new Date());
-      if (!Number.isFinite(now.getTime())) fail("V3_RECOVERY_TIME_INVALID", "coordinator time is invalid");
+      const requestedTime = new Date(options.now ?? new Date());
+      if (!Number.isFinite(requestedTime.getTime())) fail("V3_RECOVERY_TIME_INVALID", "coordinator time is invalid");
       const context = parseContext(raw);
       const ownerKey = `setfarm:v3-recovery:${context.evidenceBundle.runId}:${context.evidenceBundle.storyId}`;
       // One story-level decision owner must finish revision advancement plus
@@ -1416,6 +1417,10 @@ export function createV3RecoveryCoordinator(sql: Sql) {
       // open-revision/no-delivery observation window between those CAS steps.
       return sql.begin(async (transaction) => {
         await transaction.unsafe("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [ownerKey]);
+        const now = await readDatabaseWallClock(
+          transaction,
+          "V3_RECOVERY_DATABASE_TIME_UNAVAILABLE",
+        );
         return raw.kind === "initial_evidence"
           ? coordinateInitial(raw, context, now)
           : coordinateRecovery(raw, context, now);

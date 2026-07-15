@@ -42,7 +42,7 @@ import {
   createV3RecoveryCoordinator,
   type V3RecoveryCoordinatorResult,
 } from "./v3-recovery-coordinator.js";
-import { v3RecoveryStoryLockIdentity } from "./v3-recovery-claim-authority.js";
+import { lockV3RecoveryRunMutationAuthorityInTransaction } from "./v3-recovery-run-mutation-authority.js";
 import { createV3RecoveryOwnerLeaseRepository } from "./v3-recovery-owner-lease.js";
 
 type Sql = postgres.Sql;
@@ -500,9 +500,17 @@ async function acquireCandidate(
   discoveredAt: Date,
 ): Promise<V3EvidenceOnlyLeaseV1 | undefined> {
   return sql.begin(async (transaction: TransactionSql) => {
-    await transaction.unsafe("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [
-      v3RecoveryStoryLockIdentity({ runId: candidate.run_id, storyId: candidate.story_id }),
-    ]);
+    try {
+      await lockV3RecoveryRunMutationAuthorityInTransaction(transaction, {
+        runId: candidate.run_id,
+        storyId: candidate.story_id,
+      });
+    } catch (error) {
+      if (/^V3_RECOVERY_(?:RUN_NOT_ACTIVE|TERMINATION_PENDING):/.test(
+        String((error as Error)?.message ?? error),
+      )) return undefined;
+      throw error;
+    }
     const rows = await transaction.unsafe<CandidateRow[]>(
       `SELECT ${CANDIDATE_COLUMNS}
          ${exactJoins()}
@@ -662,7 +670,6 @@ async function quarantineDelivery(input: Readonly<{
   lease: V3EvidenceOnlyLeaseV1;
   phase: string;
   error: unknown;
-  now: Date;
 }>): Promise<void> {
   const diagnostic = compactDiagnostic(input.error);
   const diagnosticHash = hashCanonicalJson({ phase: input.phase, diagnostic });
@@ -682,9 +689,10 @@ async function quarantineDelivery(input: Readonly<{
     decisionRef,
   };
   await input.sql.begin(async (transaction: TransactionSql) => {
-    await transaction.unsafe("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [
-      v3RecoveryStoryLockIdentity({ runId: input.lease.runId, storyId: input.lease.storyId }),
-    ]);
+    await lockV3RecoveryRunMutationAuthorityInTransaction(transaction, {
+      runId: input.lease.runId,
+      storyId: input.lease.storyId,
+    });
     const cases = await transaction.unsafe<Array<{
       current_revision_id: string;
       owner: string;
@@ -712,8 +720,9 @@ async function quarantineDelivery(input: Readonly<{
     const deliveryOwners = await transaction.unsafe<Array<{
       attempt_id: string | null;
       claim_id: string | number | null;
+      lease_expires_at: Date | string | null;
     }>>(
-      `SELECT attempt_id, claim_id
+      `SELECT attempt_id, claim_id, lease_expires_at
          FROM recovery_dispatch_deliveries
         WHERE dispatch_id = $1
           AND revision_id = $2
@@ -735,6 +744,7 @@ async function quarantineDelivery(input: Readonly<{
     if ((deliveryOwner.attempt_id === null) !== (deliveryOwner.claim_id === null)) {
       fail("V3_EVIDENCE_ONLY_QUARANTINE_OWNER_PARTIAL", "delivery has only one side of its attempt/claim binding");
     }
+    let mutationTime: Date | undefined;
     if (deliveryOwner.attempt_id && deliveryOwner.claim_id !== null) {
       const owners = await transaction.unsafe<Array<{
         attempt_id: string;
@@ -747,12 +757,14 @@ async function quarantineDelivery(input: Readonly<{
         recovery_dispatch_id: string | null;
         source_before_sha: string;
         source_before_tree_hash: string;
+        lease_expires_at: Date | string;
         claim_outcome: string | null;
       }>>(
         `SELECT attempt.attempt_id, attempt.claim_id, attempt.disposition,
                 attempt.attempt_class, attempt.run_id, attempt.story_id,
                 attempt.recovery_case_revision_id, attempt.recovery_dispatch_id,
                 attempt.source_before_sha, attempt.source_before_tree_hash,
+                attempt.lease_expires_at,
                 claim.outcome AS claim_outcome
            FROM execution_attempts attempt
            JOIN claim_log claim ON claim.id = attempt.claim_id
@@ -783,6 +795,17 @@ async function quarantineDelivery(input: Readonly<{
       if (!["claimed", "running"].includes(owner.disposition) || owner.claim_outcome !== null) {
         fail("V3_EVIDENCE_ONLY_QUARANTINE_OWNER_STATE_INVALID", "preterminal attempt/claim owner is not active and exact");
       }
+      mutationTime = await readDatabaseWallClock(
+        transaction,
+        "V3_EVIDENCE_ONLY_DB_TIME_UNAVAILABLE",
+      );
+      if (
+        !deliveryOwner.lease_expires_at
+        || new Date(deliveryOwner.lease_expires_at).getTime() <= mutationTime.getTime()
+        || new Date(owner.lease_expires_at).getTime() <= mutationTime.getTime()
+      ) {
+        fail("V3_EVIDENCE_ONLY_QUARANTINE_LEASE_LOST", "expired owner cannot quarantine canonical recovery state");
+      }
       const attempts = await transaction.unsafe<Array<{ attempt_id: string }>>(
         `UPDATE execution_attempts
             SET disposition = 'inconclusive',
@@ -790,8 +813,9 @@ async function quarantineDelivery(input: Readonly<{
                 updated_at = $2
           WHERE attempt_id = $1
             AND disposition IN ('claimed', 'running')
+            AND lease_expires_at > $2
           RETURNING attempt_id`,
-        [owner.attempt_id, input.now],
+        [owner.attempt_id, mutationTime],
       );
       if (attempts.length !== 1) {
         fail("V3_EVIDENCE_ONLY_QUARANTINE_ATTEMPT_CAS_LOST", "active evidence attempt changed before quarantine");
@@ -808,11 +832,21 @@ async function quarantineDelivery(input: Readonly<{
           WHERE id = $1
             AND outcome IS NULL
           RETURNING id::text`,
-        [deliveryOwner.claim_id, input.now, `V3_EVIDENCE_ONLY_QUARANTINED:${input.phase}:${diagnostic}`.slice(0, 10_000)],
+        [deliveryOwner.claim_id, mutationTime, `V3_EVIDENCE_ONLY_QUARANTINED:${input.phase}:${diagnostic}`.slice(0, 10_000)],
       );
       if (closed.length !== 1) {
         fail("V3_EVIDENCE_ONLY_QUARANTINE_CLAIM_CAS_LOST", "active evidence claim changed before quarantine");
       }
+    }
+    const now = mutationTime ?? await readDatabaseWallClock(
+      transaction,
+      "V3_EVIDENCE_ONLY_DB_TIME_UNAVAILABLE",
+    );
+    if (
+      !deliveryOwner.lease_expires_at
+      || new Date(deliveryOwner.lease_expires_at).getTime() <= now.getTime()
+    ) {
+      fail("V3_EVIDENCE_ONLY_QUARANTINE_LEASE_LOST", "expired owner cannot quarantine canonical recovery state");
     }
     const deliveries = await transaction.unsafe<Array<{ dispatch_id: string }>>(
       `UPDATE recovery_dispatch_deliveries
@@ -826,6 +860,7 @@ async function quarantineDelivery(input: Readonly<{
           AND owner_instance_id = $3
           AND lease_token = $4
           AND state IN ('leased', 'attempt_reserved', 'running')
+          AND lease_expires_at > $7
         RETURNING dispatch_id`,
       [
         input.lease.dispatchId,
@@ -834,7 +869,7 @@ async function quarantineDelivery(input: Readonly<{
         input.lease.leaseToken,
         JSON.stringify(result),
         `V3_EVIDENCE_ONLY_QUARANTINED:${input.phase}:${diagnostic}`.slice(0, 10_000),
-        input.now,
+        now,
       ],
     );
     if (deliveries.length !== 1) {
@@ -874,7 +909,7 @@ async function quarantineDelivery(input: Readonly<{
         recoveryCase.state_version,
         JSON.stringify(terminal),
         JSON.stringify([decisionRef]),
-        input.now,
+        now,
       ],
     );
     if (blocked.length !== 1) {
@@ -925,7 +960,6 @@ export function createV3EvidenceOnlyRecoveryWorker(
   async function withEvidenceOwnerHeartbeat<T>(
     lease: V3EvidenceOnlyLeaseV1,
     context: V3EvidenceOnlyAttemptContext,
-    initialNow: Date,
     operation: () => Promise<T>,
   ): Promise<T> {
     const heartbeatInput = {
@@ -947,9 +981,8 @@ export function createV3EvidenceOnlyRecoveryWorker(
     if (!context.attempt.claimId) {
       fail("V3_EVIDENCE_ONLY_HEARTBEAT_CLAIM_MISSING", "active evidence attempt has no claim fence");
     }
-    const retain = async (heartbeatAt: Date): Promise<void> => {
+    const retain = async (): Promise<void> => {
       const retained = await ownerLeases.heartbeat(heartbeatInput, {
-        now: heartbeatAt,
         leaseMs: ownerLeaseMs,
       });
       if (retained.status !== "retained") {
@@ -957,14 +990,14 @@ export function createV3EvidenceOnlyRecoveryWorker(
       }
     };
 
-    await retain(initialNow);
+    await retain();
     let timer: NodeJS.Timeout | undefined;
     let heartbeatInFlight = Promise.resolve();
     let heartbeatError: unknown;
     let stopped = false;
     const schedule = () => {
       timer = setTimeout(() => {
-        heartbeatInFlight = retain(new Date()).catch((error) => {
+        heartbeatInFlight = retain().catch((error) => {
           heartbeatError = error;
         }).finally(() => {
           if (!stopped && !heartbeatError) schedule();
@@ -987,9 +1020,8 @@ export function createV3EvidenceOnlyRecoveryWorker(
 
   async function acquireNext(raw: unknown, options: Readonly<{ now?: Date }> = {}) {
     const input = AcquireInputSchema.parse(raw);
-    // `now` remains a validated compatibility input for callers that also use
-    // it as a deterministic evidence/coordinator timestamp. Lease authority is
-    // always PostgreSQL wall time.
+    // `now` remains a validated compatibility input only. Evidence, lease, and
+    // coordinator lifecycle authority all use PostgreSQL wall time.
     if (options.now) validTime(options.now);
     const excludedDispatchIds: string[] = [];
     for (;;) {
@@ -1031,7 +1063,7 @@ export function createV3EvidenceOnlyRecoveryWorker(
     options: Readonly<{ now?: Date }> = {},
   ): Promise<V3EvidenceOnlyWorkerResult> {
     const lease = LeaseSchema.parse(rawLease);
-    const now = validTime(options.now);
+    if (options.now) validTime(options.now);
     let phase = "attempt_context";
     let terminal = lease.mode === "coordinator_replay";
     try {
@@ -1065,14 +1097,12 @@ export function createV3EvidenceOnlyRecoveryWorker(
         await publication.markRunning({
           lease: publicationLease(lease),
           attempt: context.attempt,
-          now,
         });
 
         phase = "evidence_execution";
         const result = await withEvidenceOwnerHeartbeat(
           lease,
           context,
-          now,
           () => dependencies.executeEvidence({ lease, context }),
         );
         const sourceAfter = await dependencies.captureSource(context.workdir);
@@ -1098,7 +1128,6 @@ export function createV3EvidenceOnlyRecoveryWorker(
           disposition: disposition(bundle),
           bundle,
           ...(findingSet ? { findingSet } : {}),
-          now,
         });
         const completed = await attempts.findById(context.attempt.attemptId);
         if (!completed || !terminalAttemptDisposition(completed.disposition) || completed.outputHash !== bundleHash) {
@@ -1139,7 +1168,7 @@ export function createV3EvidenceOnlyRecoveryWorker(
         evidenceBundle: bundle,
         ...(findingSet ? { findingSet } : {}),
         ...(failureClass ? { failureClass } : {}),
-      }, { now });
+      });
       return {
         lease,
         attemptId: attempt.attemptId,
@@ -1153,7 +1182,7 @@ export function createV3EvidenceOnlyRecoveryWorker(
       // quarantined as a blocked delivery; the worker never speculatively
       // repeats machine evidence on unchanged source.
       if (!terminal) {
-        await quarantineDelivery({ sql, lease, phase, error, now }).catch(() => undefined);
+        await quarantineDelivery({ sql, lease, phase, error }).catch(() => undefined);
       }
       if (error instanceof V3EvidenceOnlyWorkerError) throw error;
       fail("V3_EVIDENCE_ONLY_WORKER_FAILED", `${phase}:${compactDiagnostic(error)}`, error);

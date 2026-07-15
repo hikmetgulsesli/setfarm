@@ -1,10 +1,12 @@
 import type postgres from "postgres";
 import { z } from "zod";
 
+import { readDatabaseWallClock } from "../db/database-wall-clock.js";
 import {
   releaseDrainedRuntimeSessionInTransaction,
   releaseReservedRuntimeSessionInTransaction,
 } from "../execution/runtime-session-repository.js";
+import { enqueueOperationalOutboxEventInTransaction } from "../execution/operational-outbox-repository.js";
 import { hashCanonicalJson } from "../product-compiler/canonical-json.js";
 import { v3RecoveryStoryLockIdentity } from "./v3-recovery-claim-authority.js";
 
@@ -83,6 +85,7 @@ type CandidateRow = Readonly<{
   state: string;
   attempt_id: string | null;
   claim_id: string | number | null;
+  updated_at: Date | string;
 }>;
 
 type DeliveryRow = Readonly<{
@@ -215,10 +218,20 @@ function claimId(value: string | number | null): number | undefined {
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : undefined;
 }
 
+function sourceObservedAt(candidate: CandidateRow): string {
+  const parsed = candidate.updated_at instanceof Date
+    ? candidate.updated_at
+    : new Date(candidate.updated_at);
+  if (!Number.isFinite(parsed.getTime())) {
+    throw new Error("V3_RECOVERY_LIFECYCLE_SOURCE_TIME_INVALID");
+  }
+  return parsed.toISOString();
+}
+
 function event(
   candidate: CandidateRow,
   observedState: string,
-  now: Date,
+  _now: Date,
   input: Readonly<{
     action: V3RecoveryLifecycleReconciliationEventV1["action"];
     code: string;
@@ -238,8 +251,47 @@ function event(
     ...(input.runtimeSessionId ? { runtimeSessionId: input.runtimeSessionId } : {}),
     observedState: ActiveDeliveryStateSchema.parse(observedState),
     mutated: input.mutated,
-    observedAt: now.toISOString(),
+    // This is the immutable source revision observed by reconciliation, not
+    // the scanner's application clock. Identical unchanged source therefore
+    // produces one exact event identity instead of timestamp-driven churn.
+    observedAt: sourceObservedAt(candidate),
     detail: input.detail,
+  });
+}
+
+export function v3RecoveryLifecycleOperationalEventKey(
+  lifecycleEvent: V3RecoveryLifecycleReconciliationEventV1,
+): string {
+  const event = V3RecoveryLifecycleReconciliationEventV1Schema.parse(lifecycleEvent);
+  return [
+    "v3-recovery-lifecycle",
+    event.dispatchId,
+    event.revisionId,
+    hashCanonicalJson(event),
+  ].join(":");
+}
+
+function requiresOperationalEvidence(
+  lifecycleEvent: V3RecoveryLifecycleReconciliationEventV1,
+): boolean {
+  return lifecycleEvent.mutated
+    || lifecycleEvent.action === "quarantine"
+    || lifecycleEvent.action === "request_runtime_drain";
+}
+
+async function enqueueLifecycleEvidence(
+  sql: TransactionSql,
+  lifecycleEvent: V3RecoveryLifecycleReconciliationEventV1,
+  committedAt: Date,
+): Promise<void> {
+  if (!requiresOperationalEvidence(lifecycleEvent)) return;
+  await enqueueOperationalOutboxEventInTransaction(sql, {
+    eventKey: v3RecoveryLifecycleOperationalEventKey(lifecycleEvent),
+    eventType: "product_compiler.v3_recovery_lifecycle_reconciled",
+    aggregateType: "run",
+    aggregateId: lifecycleEvent.runId,
+    payload: lifecycleEvent,
+    now: committedAt,
   });
 }
 
@@ -536,6 +588,11 @@ function exactPublicationOwner(input: Readonly<{
 }>): boolean {
   const expectedClaimId = claimId(input.runtime.claim_id);
   const actualClaimId = claimId(input.claim.id);
+  const deliveryUpdatedAt = millis(input.delivery.updated_at);
+  const claimAt = millis(input.claim.claimed_at);
+  const runtimeCreatedAt = millis(input.runtime.created_at);
+  const runtimeHeartbeatAt = millis(input.runtime.heartbeat_at);
+  const deliveryExpiresAt = millis(input.delivery.lease_expires_at);
   return expectedClaimId !== undefined
     && expectedClaimId === actualClaimId
     && input.delivery.owner_instance_id !== null
@@ -554,11 +611,15 @@ function exactPublicationOwner(input: Readonly<{
     && input.story.status === "running"
     && input.story.claimed_by === input.claim.agent_id
     && input.story.claimed_at !== null
-    && millis(input.story.claimed_at) === millis(input.claim.claimed_at)
-    && millis(input.runtime.created_at) === millis(input.claim.claimed_at)
-    && millis(input.runtime.heartbeat_at) === millis(input.claim.claimed_at)
-    && millis(input.claim.claimed_at) >= millis(input.delivery.updated_at)
-    && millis(input.claim.claimed_at) <= millis(input.delivery.lease_expires_at)
+    && millis(input.story.claimed_at) === claimAt
+    // Identity comes from the atomic claim/runtime/delivery fences above. DB
+    // wall-clock reads within that transaction need only preserve causality;
+    // treating independent reads as an exact timestamp identity rejects valid
+    // publications whenever clock_timestamp() advances between statements.
+    && deliveryUpdatedAt <= claimAt
+    && claimAt <= runtimeCreatedAt
+    && runtimeCreatedAt === runtimeHeartbeatAt
+    && runtimeCreatedAt <= deliveryExpiresAt
     && input.story.claim_generation > 0
     && input.step.status === "running"
     && input.step.current_story_id === input.story.id;
@@ -578,6 +639,11 @@ function exactAttemptOwner(input: Readonly<{
   const runtimeClaimId = claimId(input.runtime.claim_id);
   const claimRowId = claimId(input.claim.id);
   const attemptClaimId = claimId(input.attempt.claim_id);
+  const claimAt = millis(input.claim.claimed_at);
+  const runtimeCreatedAt = millis(input.runtime.created_at);
+  const runtimeHeartbeatAt = millis(input.runtime.heartbeat_at);
+  const deliveryStartedAt = millis(input.delivery.started_at);
+  const deliveryExpiresAt = millis(input.delivery.lease_expires_at);
   return deliveryClaimId !== undefined
     && deliveryClaimId === runtimeClaimId
     && deliveryClaimId === claimRowId
@@ -593,7 +659,8 @@ function exactAttemptOwner(input: Readonly<{
     && input.runtime.attempt_id === input.delivery.attempt_id
     && input.runtime.owner_instance_id === input.delivery.owner_instance_id
     && input.runtime.claim_agent_id === input.claim.agent_id
-    && millis(input.runtime.created_at) === millis(input.claim.claimed_at)
+    && claimAt <= runtimeCreatedAt
+    && runtimeCreatedAt <= runtimeHeartbeatAt
     && input.claim.run_id === input.candidate.run_id
     && input.claim.step_id === "implement"
     && input.claim.story_id === input.candidate.story_id
@@ -614,12 +681,12 @@ function exactAttemptOwner(input: Readonly<{
     && (input.attempt.agent_id === null || input.attempt.agent_id === input.claim.agent_id)
     && input.delivery.attempt_count === 1
     && input.delivery.started_at !== null
-    && millis(input.claim.claimed_at) <= millis(input.delivery.started_at)
-    && millis(input.delivery.started_at) <= millis(input.delivery.lease_expires_at)
+    && runtimeCreatedAt <= deliveryStartedAt
+    && deliveryStartedAt <= deliveryExpiresAt
     && input.story.status === "running"
     && input.story.claimed_by === input.claim.agent_id
     && input.story.claimed_at !== null
-    && millis(input.story.claimed_at) === millis(input.claim.claimed_at)
+    && millis(input.story.claimed_at) === claimAt
     && input.step.status === "running"
     && input.step.current_story_id === input.story.id;
 }
@@ -1384,15 +1451,18 @@ async function reconcileUnbound(
   sql: TransactionSql,
   candidate: CandidateRow,
   expectedState: "authorized" | "leased",
-  now: Date,
 ): Promise<V3RecoveryLifecycleReconciliationEventV1> {
-  // Runtime -> claim -> delivery follows the strongest existing owner order.
-  // The run row is already locked, so attempt reservation cannot hold claim
-  // authority while waiting on the delivery row and deadlock this recovery.
+  // Canonical owner order is run -> runtime -> attempt -> delivery -> claim.
+  // Read the database wall clock only after every owner lock that can make the
+  // expiry decision wait; application time is never lease authority.
   const runtimes = await lockRuntimes(sql, candidate);
-  const claims = await lockOpenClaims(sql, candidate);
+  const attempts = await lockRelevantAttempts(sql, candidate);
   const deliveries = await lockActiveDeliveries(sql, candidate);
+  const claims = await lockOpenClaims(sql, candidate);
+  const steps = await lockSteps(sql, candidate);
+  const stories = await lockStories(sql, candidate);
   if (deliveries.length === 0) {
+    const now = await readDatabaseWallClock(sql, "V3_RECOVERY_LIFECYCLE_DATABASE_TIME_UNAVAILABLE");
     return event(candidate, expectedState, now, {
       action: "noop",
       code: "V3_RECOVERY_LIFECYCLE_CANDIDATE_SETTLED",
@@ -1401,12 +1471,14 @@ async function reconcileUnbound(
     });
   }
   if (deliveries.length !== 1) {
+    const now = await readDatabaseWallClock(sql, "V3_RECOVERY_LIFECYCLE_DATABASE_TIME_UNAVAILABLE");
     return quarantine(candidate, expectedState, now,
       "V3_RECOVERY_LIFECYCLE_MULTIPLE_ACTIVE_DELIVERIES",
       "More than one active recovery delivery names the same run and story");
   }
   const delivery = deliveries[0]!;
   if (delivery.dispatch_id !== candidate.dispatch_id || delivery.revision_id !== candidate.revision_id) {
+    const now = await readDatabaseWallClock(sql, "V3_RECOVERY_LIFECYCLE_DATABASE_TIME_UNAVAILABLE");
     return event(candidate, expectedState, now, {
       action: "noop",
       code: "V3_RECOVERY_LIFECYCLE_CANDIDATE_CHANGED",
@@ -1415,6 +1487,7 @@ async function reconcileUnbound(
     });
   }
   if (delivery.state !== expectedState) {
+    const now = await readDatabaseWallClock(sql, "V3_RECOVERY_LIFECYCLE_DATABASE_TIME_UNAVAILABLE");
     return event(candidate, ActiveDeliveryStateSchema.parse(delivery.state), now, {
       action: "noop",
       code: "V3_RECOVERY_LIFECYCLE_CANDIDATE_CHANGED",
@@ -1423,10 +1496,9 @@ async function reconcileUnbound(
     });
   }
 
-  const attempts = await lockRelevantAttempts(sql, candidate);
-  const steps = await lockSteps(sql, candidate);
-  const stories = await lockStories(sql, candidate);
   const chain = await loadExactChain(sql, delivery);
+  const completionPresent = await hasRuntimeCompletion(sql, runtimes);
+  const now = await readDatabaseWallClock(sql, "V3_RECOVERY_LIFECYCLE_DATABASE_TIME_UNAVAILABLE");
   const owner = exactStepAndStory(candidate, steps, stories);
   if (!chain) {
     return quarantine(candidate, delivery.state, now,
@@ -1487,7 +1559,7 @@ async function reconcileUnbound(
       "V3_RECOVERY_LIFECYCLE_LEASE_NOT_EXPIRED",
       "A nonexpired owner may still publish or reserve its exact attempt; reconciler made no mutation");
   }
-  if (await hasRuntimeCompletion(sql, runtimes)) {
+  if (completionPresent) {
     return quarantine(candidate, delivery.state, now,
       "V3_RECOVERY_LIFECYCLE_COMPLETION_PRESENT",
       "A runtime completion ledger exists, so pre-attempt rollback is not mechanically provable");
@@ -1565,9 +1637,9 @@ async function reconcileEvidenceOnlyAttemptBound(
   openClaims: readonly ClaimRow[],
   step: StepRow,
   story: StoryRow,
-  now: Date,
 ): Promise<V3RecoveryLifecycleReconciliationEventV1> {
   const boundClaim = await lockBoundClaim(sql, candidate, delivery);
+  const now = await readDatabaseWallClock(sql, "V3_RECOVERY_LIFECYCLE_DATABASE_TIME_UNAVAILABLE");
   const attempt = attempts.length === 1 ? attempts[0] : undefined;
   if (
     runtimes.length !== 0
@@ -1662,9 +1734,9 @@ async function reconcileAttemptBound(
   sql: TransactionSql,
   candidate: CandidateRow,
   snapshot: DeliveryRow,
-  now: Date,
 ): Promise<V3RecoveryLifecycleReconciliationEventV1> {
   if (!snapshot.attempt_id || !claimId(snapshot.claim_id)) {
+    const now = await readDatabaseWallClock(sql, "V3_RECOVERY_LIFECYCLE_DATABASE_TIME_UNAVAILABLE");
     return quarantine(candidate, snapshot.state, now,
       "V3_RECOVERY_LIFECYCLE_ATTEMPT_BINDING_MISSING",
       "Attempt-bound delivery lacks its exact attempt or claim identity");
@@ -1676,6 +1748,7 @@ async function reconcileAttemptBound(
   const attempts = await lockRelevantAttempts(sql, candidate);
   const deliveries = await lockActiveDeliveries(sql, candidate);
   if (deliveries.length === 0) {
+    const now = await readDatabaseWallClock(sql, "V3_RECOVERY_LIFECYCLE_DATABASE_TIME_UNAVAILABLE");
     return event(candidate, snapshot.state, now, {
       action: "noop",
       code: "V3_RECOVERY_LIFECYCLE_CANDIDATE_SETTLED",
@@ -1684,12 +1757,14 @@ async function reconcileAttemptBound(
     });
   }
   if (deliveries.length !== 1) {
+    const now = await readDatabaseWallClock(sql, "V3_RECOVERY_LIFECYCLE_DATABASE_TIME_UNAVAILABLE");
     return quarantine(candidate, snapshot.state, now,
       "V3_RECOVERY_LIFECYCLE_MULTIPLE_ACTIVE_DELIVERIES",
       "More than one active recovery delivery names the same run and story");
   }
   const delivery = deliveries[0]!;
   if (delivery.dispatch_id !== candidate.dispatch_id || delivery.revision_id !== candidate.revision_id) {
+    const now = await readDatabaseWallClock(sql, "V3_RECOVERY_LIFECYCLE_DATABASE_TIME_UNAVAILABLE");
     return event(candidate, snapshot.state, now, {
       action: "noop",
       code: "V3_RECOVERY_LIFECYCLE_CANDIDATE_CHANGED",
@@ -1698,6 +1773,7 @@ async function reconcileAttemptBound(
     });
   }
   if (!["attempt_reserved", "running"].includes(delivery.state)) {
+    const now = await readDatabaseWallClock(sql, "V3_RECOVERY_LIFECYCLE_DATABASE_TIME_UNAVAILABLE");
     return event(candidate, ActiveDeliveryStateSchema.parse(delivery.state), now, {
       action: "noop",
       code: "V3_RECOVERY_LIFECYCLE_CANDIDATE_CHANGED",
@@ -1712,11 +1788,13 @@ async function reconcileAttemptBound(
   const chain = await loadExactChain(sql, delivery);
   const owner = exactStepAndStory(candidate, steps, stories);
   if (!chain) {
+    const now = await readDatabaseWallClock(sql, "V3_RECOVERY_LIFECYCLE_DATABASE_TIME_UNAVAILABLE");
     return quarantine(candidate, delivery.state, now,
       "V3_RECOVERY_LIFECYCLE_CHAIN_MISMATCH",
       "Attempt delivery does not match the current case, revision, packet, finding set and source identity");
   }
   if (!owner) {
+    const now = await readDatabaseWallClock(sql, "V3_RECOVERY_LIFECYCLE_DATABASE_TIME_UNAVAILABLE");
     return quarantine(candidate, delivery.state, now,
       "V3_RECOVERY_LIFECYCLE_STEP_STORY_AMBIGUOUS",
       "Attempt recovery requires exactly one implement loop step and one exact story");
@@ -1732,10 +1810,11 @@ async function reconcileAttemptBound(
       claims,
       owner.step,
       owner.story,
-      now,
     );
   }
-  if (await hasRuntimeCompletion(sql, runtimes)) {
+  const completionPresent = await hasRuntimeCompletion(sql, runtimes);
+  const now = await readDatabaseWallClock(sql, "V3_RECOVERY_LIFECYCLE_DATABASE_TIME_UNAVAILABLE");
+  if (completionPresent) {
     return quarantine(candidate, delivery.state, now,
       "V3_RECOVERY_LIFECYCLE_COMPLETION_PRESENT",
       "Runtime completion owns the next lifecycle transition");
@@ -1849,10 +1928,10 @@ async function reconcileAttemptBound(
 async function reconcileCandidate(
   sql: Sql,
   candidate: CandidateRow,
-  now: Date,
 ): Promise<V3RecoveryLifecycleReconciliationEventV1> {
   try {
     return await (sql.begin(async (transaction) => {
+      const result = await (async (): Promise<V3RecoveryLifecycleReconciliationEventV1> => {
       await transaction.unsafe("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [
         v3RecoveryStoryLockIdentity({ runId: candidate.run_id, storyId: candidate.story_id }),
       ]);
@@ -1865,6 +1944,7 @@ async function reconcileCandidate(
       );
       const run = runs[0];
       if (!run || run.protocol !== "v3" || !["running", "resuming"].includes(run.status)) {
+        const now = await readDatabaseWallClock(transaction, "V3_RECOVERY_LIFECYCLE_DATABASE_TIME_UNAVAILABLE");
         return quarantine(candidate, candidate.state, now,
           "V3_RECOVERY_LIFECYCLE_RUN_NOT_ACTIVE",
           "Active delivery belongs to a missing, non-v3 or non-active run");
@@ -1876,6 +1956,7 @@ async function reconcileCandidate(
         [candidate.run_id],
       );
       if (terminations.length > 0) {
+        const now = await readDatabaseWallClock(transaction, "V3_RECOVERY_LIFECYCLE_DATABASE_TIME_UNAVAILABLE");
         return quarantine(candidate, candidate.state, now,
           "V3_RECOVERY_LIFECYCLE_TERMINATION_PENDING",
           "Run termination owns lifecycle recovery; delivery fence was left unchanged");
@@ -1883,6 +1964,7 @@ async function reconcileCandidate(
 
       const current = await activeSnapshot(transaction, candidate);
       if (current.length === 0) {
+        const now = await readDatabaseWallClock(transaction, "V3_RECOVERY_LIFECYCLE_DATABASE_TIME_UNAVAILABLE");
         return event(candidate, candidate.state, now, {
           action: "noop",
           code: "V3_RECOVERY_LIFECYCLE_CANDIDATE_SETTLED",
@@ -1891,12 +1973,14 @@ async function reconcileCandidate(
         });
       }
       if (current.length !== 1) {
+        const now = await readDatabaseWallClock(transaction, "V3_RECOVERY_LIFECYCLE_DATABASE_TIME_UNAVAILABLE");
         return quarantine(candidate, candidate.state, now,
           "V3_RECOVERY_LIFECYCLE_MULTIPLE_ACTIVE_DELIVERIES",
           "More than one active recovery delivery names the same run and story");
       }
       const snapshot = current[0]!;
       if (snapshot.dispatch_id !== candidate.dispatch_id || snapshot.revision_id !== candidate.revision_id) {
+        const now = await readDatabaseWallClock(transaction, "V3_RECOVERY_LIFECYCLE_DATABASE_TIME_UNAVAILABLE");
         return event(candidate, candidate.state, now, {
           action: "noop",
           code: "V3_RECOVERY_LIFECYCLE_CANDIDATE_CHANGED",
@@ -1906,19 +1990,34 @@ async function reconcileCandidate(
       }
       const state = ActiveDeliveryStateSchema.parse(snapshot.state);
       if (state === "attempt_reserved" || state === "running") {
-        return reconcileAttemptBound(transaction, candidate, snapshot, now);
+        return reconcileAttemptBound(transaction, candidate, snapshot);
       }
-      return reconcileUnbound(transaction, candidate, state, now);
+      return reconcileUnbound(transaction, candidate, state);
+      })();
+      const committedAt = await readDatabaseWallClock(
+        transaction,
+        "V3_RECOVERY_LIFECYCLE_DATABASE_TIME_UNAVAILABLE",
+      );
+      await enqueueLifecycleEvidence(transaction, result, committedAt);
+      return result;
     }) as Promise<V3RecoveryLifecycleReconciliationEventV1>);
   } catch (error) {
     if (error instanceof V3RecoveryLifecycleMutationError) {
-      return quarantine(
-        candidate,
-        candidate.state,
-        now,
-        "V3_RECOVERY_LIFECYCLE_MUTATION_REJECTED",
-        `${error.code}: exact transaction rolled back without exposing normal pending work`,
-      );
+      return sql.begin(async (transaction) => {
+        const committedAt = await readDatabaseWallClock(
+          transaction,
+          "V3_RECOVERY_LIFECYCLE_DATABASE_TIME_UNAVAILABLE",
+        );
+        const rejected = quarantine(
+          candidate,
+          candidate.state,
+          committedAt,
+          "V3_RECOVERY_LIFECYCLE_MUTATION_REJECTED",
+          `${error.code}: exact transaction rolled back without exposing normal pending work`,
+        );
+        await enqueueLifecycleEvidence(transaction, rejected, committedAt);
+        return rejected;
+      }) as Promise<V3RecoveryLifecycleReconciliationEventV1>;
     }
     throw error;
   }
@@ -1931,10 +2030,11 @@ export function createV3RecoveryLifecycleReconciler(sql: Sql) {
       options: Readonly<{ now?: Date }> = {},
     ): Promise<V3RecoveryLifecycleReconciliationReportV1> {
       const input = ReconcileActiveInputSchema.parse(raw);
-      const now = validTime(options.now);
+      validTime(options.now);
       const candidates = await sql.unsafe<CandidateRow[]>(
         `SELECT delivery.dispatch_id, delivery.revision_id, delivery.run_id,
-                delivery.story_id, delivery.state, delivery.attempt_id, delivery.claim_id
+                delivery.story_id, delivery.state, delivery.attempt_id, delivery.claim_id,
+                delivery.updated_at
            FROM recovery_dispatch_deliveries delivery
            JOIN runs run_row ON run_row.id = delivery.run_id
           WHERE run_row.protocol = 'v3'
@@ -1949,7 +2049,7 @@ export function createV3RecoveryLifecycleReconciler(sql: Sql) {
       const events: V3RecoveryLifecycleReconciliationEventV1[] = [];
       for (const candidate of candidates) {
         ActiveDeliveryStateSchema.parse(candidate.state);
-        events.push(await reconcileCandidate(sql, candidate, now));
+        events.push(await reconcileCandidate(sql, candidate));
       }
       const resetExpiredLeases = events.filter((item) => item.action === "reset_expired_lease").length;
       const rolledBackPublications = events.filter((item) => item.action === "rollback_unreserved_publication").length;
@@ -1963,9 +2063,13 @@ export function createV3RecoveryLifecycleReconciler(sql: Sql) {
       ).length;
       const noops = events.filter((item) => item.action === "noop").length;
       const quarantined = events.filter((item) => item.action === "quarantine").length;
+      const observedAt = await readDatabaseWallClock(
+        sql,
+        "V3_RECOVERY_LIFECYCLE_DATABASE_TIME_UNAVAILABLE",
+      );
       return V3RecoveryLifecycleReconciliationReportV1Schema.parse({
         schema: "setfarm.v3-recovery-lifecycle-reconciliation-report.v1",
-        observedAt: now.toISOString(),
+        observedAt: observedAt.toISOString(),
         counts: {
           scanned: events.length,
           repaired: resetExpiredLeases + rolledBackPublications + advancedRunning

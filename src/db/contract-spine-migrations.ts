@@ -174,6 +174,16 @@ export type ContractSpineMigrationApplyResult = Readonly<{
   alreadyApplied: string[];
 }>;
 
+export type RecoveryTerminalLeaseRollbackResult = Readonly<{
+  schema: "setfarm.contract-spine-rollback.v1";
+  rollbackId: string;
+  fromVersion: 20;
+  targetVersion: 19;
+  targetReleaseSha: string;
+  rowsRewritten: number;
+  appliedAt: string;
+}>;
+
 function normalizeSql(value: string): string {
   return value.replace(/\s+/g, " ").trim().toLowerCase();
 }
@@ -7070,6 +7080,123 @@ async function verifyRuntimeCompletionSubmissionEvidence(
   }
 }
 
+const RECOVERY_TERMINAL_LEASE_STATEMENTS = [
+  `ALTER TABLE recovery_dispatch_deliveries
+     DROP CONSTRAINT IF EXISTS recovery_dispatch_deliveries_lease_check`,
+  `ALTER TABLE recovery_dispatch_deliveries
+     ADD CONSTRAINT recovery_dispatch_deliveries_lease_check CHECK (
+       (state = 'authorized'
+         AND owner_instance_id IS NULL
+         AND lease_token IS NULL
+         AND lease_expires_at IS NULL)
+       OR (state IN ('leased', 'attempt_reserved', 'running')
+         AND owner_instance_id IS NOT NULL
+         AND lease_token IS NOT NULL
+         AND lease_expires_at IS NOT NULL)
+       OR (state IN ('succeeded', 'failed', 'blocked', 'superseded')
+         AND (
+           (owner_instance_id IS NULL AND lease_token IS NULL AND lease_expires_at IS NULL)
+           OR (owner_instance_id IS NOT NULL AND lease_token IS NOT NULL AND lease_expires_at IS NOT NULL)
+         ))
+     )`,
+] as const;
+
+async function recoveryDeliveryLeaseConstraint(
+  sql: Sql | TransactionSql,
+): Promise<Readonly<{ definition: string; expression: string }> | undefined> {
+  const rows = await sql.unsafe<Array<{ definition: string; expression: string }>>(
+    `SELECT pg_get_constraintdef(oid, true) AS definition,
+            pg_get_expr(conbin, conrelid, true) AS expression
+       FROM pg_constraint
+      WHERE conrelid = to_regclass('public.recovery_dispatch_deliveries')
+        AND conname = 'recovery_dispatch_deliveries_lease_check'`,
+  );
+  return rows[0]?.definition && rows[0]?.expression
+    ? Object.freeze({
+        definition: normalizeSql(rows[0].definition),
+        expression: rows[0].expression,
+      })
+    : undefined;
+}
+
+type RecoveryLeaseConstraintSemantics = "terminal_v2" | "legacy_v1" | "other";
+
+async function recoveryDeliveryLeaseConstraintSemantics(
+  sql: Sql | TransactionSql,
+  expression: string,
+): Promise<RecoveryLeaseConstraintSemantics> {
+  const rows = await sql.unsafe<Array<{ state: string; mask: number; allowed: boolean }>>(
+    `WITH states(state) AS (
+       VALUES
+         ('authorized'),
+         ('leased'),
+         ('attempt_reserved'),
+         ('running'),
+         ('succeeded'),
+         ('failed'),
+         ('blocked'),
+         ('superseded')
+     ), lease_cases AS (
+       SELECT state,
+              mask,
+              CASE WHEN (mask & 4) <> 0 THEN 'owner' END AS owner_instance_id,
+              CASE WHEN (mask & 2) <> 0 THEN 'lease-token-123456' END AS lease_token,
+              CASE WHEN (mask & 1) <> 0 THEN clock_timestamp() END AS lease_expires_at
+         FROM states
+         CROSS JOIN generate_series(0, 7) AS mask
+     )
+     SELECT state, mask, ((${expression}) IS NOT FALSE) AS allowed
+       FROM lease_cases
+      ORDER BY state, mask`,
+  );
+  const active = new Set(["leased", "attempt_reserved", "running"]);
+  const terminal = new Set(["succeeded", "failed", "blocked", "superseded"]);
+  const exact = (version: Exclude<RecoveryLeaseConstraintSemantics, "other">): boolean =>
+    rows.length === 64
+    && rows.every((row) => {
+      const expected = row.state === "authorized"
+        ? row.mask === 0
+        : active.has(row.state)
+          ? row.mask === 7
+          : terminal.has(row.state)
+            ? version === "terminal_v2"
+              ? row.mask === 0 || row.mask === 7
+              : row.mask === 7
+            : false;
+      return row.allowed === expected;
+    });
+  if (exact("terminal_v2")) return "terminal_v2";
+  if (exact("legacy_v1")) return "legacy_v1";
+  return "other";
+}
+
+async function detectRecoveryTerminalLeaseConstraint(
+  sql: Sql | TransactionSql,
+): Promise<"absent" | "present" | "partial"> {
+  if (!await relationExists(sql, "recovery_dispatch_deliveries")) return "absent";
+  const constraint = await recoveryDeliveryLeaseConstraint(sql);
+  if (!constraint) return "absent";
+  const semantics = await recoveryDeliveryLeaseConstraintSemantics(sql, constraint.expression);
+  if (semantics === "terminal_v2") return "present";
+  if (semantics === "legacy_v1") return "absent";
+  return "partial";
+}
+
+async function verifyRecoveryTerminalLeaseConstraint(
+  sql: Sql | TransactionSql,
+): Promise<void> {
+  const constraint = await recoveryDeliveryLeaseConstraint(sql);
+  const semantics = constraint
+    ? await recoveryDeliveryLeaseConstraintSemantics(sql, constraint.expression)
+    : "other";
+  if (semantics !== "terminal_v2") {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_ADOPTION_MISMATCH",
+      "recovery delivery terminal lease constraint mismatch",
+    );
+  }
+}
+
 const migrations: readonly Migration[] = [
   {
     version: 1,
@@ -7209,6 +7336,13 @@ const migrations: readonly Migration[] = [
     statements: RUNTIME_COMPLETION_SUBMISSION_EVIDENCE_STATEMENTS,
     detect: detectRuntimeCompletionSubmissionEvidence,
     verify: verifyRuntimeCompletionSubmissionEvidence,
+  },
+  {
+    version: 20,
+    name: "020_recovery_terminal_lease_identity",
+    statements: RECOVERY_TERMINAL_LEASE_STATEMENTS,
+    detect: detectRecoveryTerminalLeaseConstraint,
+    verify: verifyRecoveryTerminalLeaseConstraint,
   },
 ];
 
@@ -7475,6 +7609,238 @@ export async function applyContractSpineMigrations(
       throw new ContractSpineMigrationError(
         "MIGRATION_LOCK_TIMEOUT",
         `Contract spine migration lock was not acquired within ${lockTimeoutMs}ms`,
+        { cause: error },
+      );
+    }
+    throw error;
+  }
+}
+
+/**
+ * Prepare the database for a binary rollback from migration 20 to the v19
+ * reader contract. Services must be stopped: the table locks and active-owner
+ * proof make that operational precondition enforceable instead of advisory.
+ *
+ * Migration 20 permits terminal delivery rows to clear live lease identity.
+ * The v19/V1 reader requires those three columns on every non-authorized row,
+ * so this one-shot rollback restores an explicit synthetic historical marker,
+ * reinstalls the exact legacy constraint, removes only journal entry 20, and
+ * re-attests versions 1-19 to the target binary SHA.
+ */
+export async function rollbackRecoveryTerminalLeaseIdentityToV19(
+  sql: Sql,
+  options: Readonly<{
+    targetReleaseSha: string;
+    lockTimeoutMs?: number;
+    statementTimeoutMs?: number;
+  }>,
+): Promise<RecoveryTerminalLeaseRollbackResult> {
+  if (!/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/.test(options.targetReleaseSha)) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_RELEASE_INVALID",
+      "Rollback target release SHA must be a full lowercase Git object hash",
+    );
+  }
+  const migration = migrations.find((candidate) => candidate.version === 20)!;
+  const expectedChecksum = checksum(migration);
+  const lockTimeoutMs = Math.max(1, Math.min(options.lockTimeoutMs ?? 5_000, 60_000));
+  const statementTimeoutMs = Math.max(
+    lockTimeoutMs,
+    Math.min(options.statementTimeoutMs ?? 30_000, 300_000),
+  );
+  try {
+    return await sql.begin(async (transaction) => {
+      await transaction.unsafe("SELECT set_config('lock_timeout', $1, true)", [`${lockTimeoutMs}ms`]);
+      await transaction.unsafe("SELECT set_config('statement_timeout', $1, true)", [`${statementTimeoutMs}ms`]);
+      await transaction.unsafe("SELECT pg_advisory_xact_lock($1)", [contractSpineMigrationLockKey]);
+
+      const journal = await transaction.unsafe<Array<{
+        name: string;
+        checksum: string;
+        release_sha: string | null;
+        applied_at: Date | string;
+      }>>(
+        `SELECT name, checksum, release_sha, applied_at
+           FROM setfarm_schema_migrations
+          WHERE version = 20
+          FOR UPDATE`,
+      );
+      if (
+        journal[0]?.name !== migration.name
+        || journal[0]?.checksum !== expectedChecksum
+      ) {
+        throw new ContractSpineMigrationError(
+          "MIGRATION_CHECKSUM_MISMATCH",
+          "Migration 20 is absent or differs from the rollback source contract",
+        );
+      }
+
+      await transaction.unsafe(
+        "LOCK TABLE runs, runtime_sessions, execution_attempts, claim_log, run_termination_requests IN SHARE MODE",
+      );
+      await transaction.unsafe(
+        "LOCK TABLE recovery_dispatch_deliveries IN ACCESS EXCLUSIVE MODE",
+      );
+      const active = await transaction.unsafe<Array<{
+        active_runs: number;
+        active_runtimes: number;
+        active_attempts: number;
+        active_claims: number;
+        active_terminations: number;
+        active_deliveries: number;
+      }>>(
+        `SELECT
+           (SELECT COUNT(*)::integer FROM runs
+             WHERE status IN ('running', 'resuming', 'cancelling', 'failing')) AS active_runs,
+           (SELECT COUNT(*)::integer FROM runtime_sessions
+             WHERE state <> 'released') AS active_runtimes,
+           (SELECT COUNT(*)::integer FROM execution_attempts
+             WHERE disposition IN ('claimed', 'running')) AS active_attempts,
+           (SELECT COUNT(*)::integer FROM claim_log
+             WHERE outcome IS NULL) AS active_claims,
+           (SELECT COUNT(*)::integer FROM run_termination_requests
+             WHERE state <> 'terminalized') AS active_terminations,
+           (SELECT COUNT(*)::integer FROM recovery_dispatch_deliveries
+             WHERE state IN ('authorized', 'leased', 'attempt_reserved', 'running')) AS active_deliveries`,
+      );
+      const owners = active[0]!;
+      if (Object.values(owners).some((count) => count > 0)) {
+        throw new ContractSpineMigrationError(
+          "MIGRATION_INCOMPLETE",
+          `Migration 20 rollback requires zero active owners: ${JSON.stringify(owners)}`,
+        );
+      }
+      await verifyRecoveryTerminalLeaseConstraint(transaction);
+
+      const unsupported = await transaction.unsafe<Array<{ dispatch_id: string }>>(
+        `SELECT dispatch_id
+           FROM recovery_dispatch_deliveries
+          WHERE state IN ('succeeded', 'failed', 'blocked', 'superseded')
+            AND owner_instance_id IS NULL
+            AND lease_token IS NULL
+            AND lease_expires_at IS NULL
+            AND (
+              terminal_at IS NULL
+              OR terminal_result->>'schema' IS DISTINCT FROM 'setfarm.run-terminal-recovery-chain.v1'
+            )
+          ORDER BY dispatch_id
+          LIMIT 1`,
+      );
+      if (unsupported[0]) {
+        throw new ContractSpineMigrationError(
+          "MIGRATION_ADOPTION_MISMATCH",
+          `Terminal delivery ${unsupported[0].dispatch_id} lacks rollback-compatible provenance`,
+        );
+      }
+
+      const rewritten = await transaction.unsafe<Array<{ dispatch_id: string }>>(
+        `UPDATE recovery_dispatch_deliveries
+            SET owner_instance_id = 'setfarm-v19-rollback',
+                lease_token = 'ROLLBACK_' || substring(md5(dispatch_id), 1, 32),
+                lease_expires_at = COALESCE(terminal_at, updated_at)
+          WHERE state IN ('succeeded', 'failed', 'blocked', 'superseded')
+            AND owner_instance_id IS NULL
+            AND lease_token IS NULL
+            AND lease_expires_at IS NULL
+          RETURNING dispatch_id`,
+      );
+      await transaction.unsafe(
+        "ALTER TABLE recovery_dispatch_deliveries DROP CONSTRAINT recovery_dispatch_deliveries_lease_check",
+      );
+      await transaction.unsafe(
+        `ALTER TABLE recovery_dispatch_deliveries
+           ADD CONSTRAINT recovery_dispatch_deliveries_lease_check CHECK (
+             (state = 'authorized'
+               AND owner_instance_id IS NULL
+               AND lease_token IS NULL
+               AND lease_expires_at IS NULL)
+             OR (state <> 'authorized'
+               AND owner_instance_id IS NOT NULL
+               AND lease_token IS NOT NULL
+               AND lease_expires_at IS NOT NULL)
+           )`,
+      );
+      const legacyConstraint = await recoveryDeliveryLeaseConstraint(transaction);
+      if (
+        !legacyConstraint
+        || await recoveryDeliveryLeaseConstraintSemantics(
+          transaction,
+          legacyConstraint.expression,
+        ) !== "legacy_v1"
+      ) {
+        throw new ContractSpineMigrationError(
+          "MIGRATION_ADOPTION_MISMATCH",
+          "Migration 20 rollback did not restore the legacy lease constraint",
+        );
+      }
+
+      await transaction.unsafe(
+        `CREATE TABLE IF NOT EXISTS setfarm_schema_migration_rollbacks (
+           rollback_id TEXT PRIMARY KEY,
+           from_version INTEGER NOT NULL,
+           target_version INTEGER NOT NULL,
+           target_release_sha TEXT NOT NULL,
+           rows_rewritten INTEGER NOT NULL,
+           applied_at TIMESTAMPTZ NOT NULL
+         )`,
+      );
+      const appliedAtRows = await transaction.unsafe<Array<{ applied_at: Date | string }>>(
+        "SELECT clock_timestamp() AS applied_at",
+      );
+      const appliedAt = new Date(appliedAtRows[0]!.applied_at);
+      const rollbackId = `RBK_${hashCanonicalJson({
+        schema: "setfarm.contract-spine-rollback-identity.v1",
+        sourceMigration: {
+          version: 20,
+          name: journal[0]!.name,
+          checksum: journal[0]!.checksum,
+          releaseSha: journal[0]!.release_sha,
+          appliedAt: new Date(journal[0]!.applied_at).toISOString(),
+        },
+        targetVersion: 19,
+        targetReleaseSha: options.targetReleaseSha,
+      })}`;
+      await transaction.unsafe(
+        `INSERT INTO setfarm_schema_migration_rollbacks (
+           rollback_id, from_version, target_version, target_release_sha,
+           rows_rewritten, applied_at
+         ) VALUES ($1, 20, 19, $2, $3, $4)`,
+        [rollbackId, options.targetReleaseSha, rewritten.length, appliedAt],
+      );
+      const removed = await transaction.unsafe<Array<{ version: number }>>(
+        `DELETE FROM setfarm_schema_migrations
+          WHERE version = 20 AND name = $1 AND checksum = $2
+          RETURNING version`,
+        [migration.name, expectedChecksum],
+      );
+      if (removed.length !== 1) {
+        throw new ContractSpineMigrationError(
+          "MIGRATION_CHECKSUM_MISMATCH",
+          "Migration 20 journal ownership changed during rollback",
+        );
+      }
+      await transaction.unsafe(
+        `UPDATE setfarm_schema_migrations
+            SET verified_release_sha = $1, verified_at = $2
+          WHERE version <= 19`,
+        [options.targetReleaseSha, appliedAt],
+      );
+      return Object.freeze({
+        schema: "setfarm.contract-spine-rollback.v1" as const,
+        rollbackId,
+        fromVersion: 20 as const,
+        targetVersion: 19 as const,
+        targetReleaseSha: options.targetReleaseSha,
+        rowsRewritten: rewritten.length,
+        appliedAt: appliedAt.toISOString(),
+      });
+    }) as RecoveryTerminalLeaseRollbackResult;
+  } catch (error) {
+    if (error instanceof ContractSpineMigrationError) throw error;
+    if (isLockTimeout(error)) {
+      throw new ContractSpineMigrationError(
+        "MIGRATION_LOCK_TIMEOUT",
+        `Migration 20 rollback lock was not acquired within ${lockTimeoutMs}ms`,
         { cause: error },
       );
     }

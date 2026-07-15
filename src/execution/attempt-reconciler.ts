@@ -1,9 +1,7 @@
 import type postgres from "postgres";
 
-import {
-  createAttemptRepository,
-  type FenceUpdateResult,
-} from "./attempt-repository.js";
+import { readDatabaseWallClock } from "../db/database-wall-clock.js";
+import { createAttemptRepository } from "./attempt-repository.js";
 import type {
   ExecutionAttemptV1,
   TerminalAttemptDispositionV1,
@@ -36,13 +34,22 @@ type CompleteInput = Readonly<{
   attemptId: string;
   generation: number;
   fenceToken: string;
+  runId: string;
+  stepId: string;
+  storyId: string;
+  claimId: number;
+  claimOutcome: string;
   disposition: TerminalAttemptDispositionV1;
   evidenceRefs: string[];
 }>;
 
+type TerminalAttemptCompletionResult =
+  | Readonly<{ status: "completed" }>
+  | Readonly<{ status: "stale_fence" }>;
+
 export type TerminalAttemptReconcilerDependencies = Readonly<{
   listCandidates(input: Readonly<{ limit: number }>): Promise<TerminalAttemptCandidate[]>;
-  complete(input: CompleteInput): Promise<FenceUpdateResult>;
+  complete(input: CompleteInput): Promise<TerminalAttemptCompletionResult>;
   emit(event: TerminalAttemptReconcileEvent): void | Promise<void>;
 }>;
 
@@ -116,6 +123,11 @@ export async function reconcileTerminalClaimAttempts(
         attemptId: candidate.attempt.attemptId,
         generation: candidate.attempt.generation,
         fenceToken: candidate.attempt.fenceToken,
+        runId: candidate.attempt.runId,
+        stepId: candidate.attempt.stepId,
+        storyId: candidate.attempt.storyId,
+        claimId: candidate.claimId,
+        claimOutcome: candidate.claimOutcome,
         disposition,
         evidenceRefs,
       });
@@ -146,6 +158,123 @@ type CandidateRow = Readonly<{
   claim_outcome: string;
 }>;
 
+/**
+ * Close one missed shadow attempt only after durable claim and runtime state
+ * prove that no worker can still own it. This is intentionally separate from
+ * the normal attempt `complete` path: a worker must hold a live lease, while
+ * this bounded recovery owner is useful precisely after that lease expired or
+ * after the manager proved runtime drain.
+ */
+async function completeTerminalAttemptForRecovery(
+  sql: postgres.Sql,
+  input: CompleteInput,
+  runtimeQuiesced: boolean,
+): Promise<TerminalAttemptCompletionResult> {
+  return sql.begin(async (transaction) => {
+    const runs = await transaction.unsafe<Array<{ protocol: string }>>(
+      "SELECT protocol FROM runs WHERE id = $1 FOR UPDATE",
+      [input.runId],
+    );
+    if (runs[0]?.protocol !== "shadow") return { status: "stale_fence" as const };
+    await transaction.unsafe(
+      `SELECT request_id FROM run_termination_requests
+        WHERE run_id = $1 AND state <> 'terminalized'
+        ORDER BY requested_at, request_id
+        FOR UPDATE`,
+      [input.runId],
+    );
+    const runtimes = await transaction.unsafe<Array<{ state: string }>>(
+      `SELECT state FROM runtime_sessions
+        WHERE claim_id = $1
+        ORDER BY session_id
+        FOR UPDATE`,
+      [input.claimId],
+    );
+    if (runtimes.some((runtime) => !["drained", "released"].includes(runtime.state))) {
+      return { status: "stale_fence" as const };
+    }
+    const attempts = await transaction.unsafe<Array<{
+      claim_id: string | number | null;
+      run_id: string;
+      step_id: string;
+      story_id: string;
+      agent_id: string | null;
+      disposition: string;
+      lease_expires_at: Date | string;
+    }>>(
+      `SELECT claim_id, run_id, step_id, story_id, agent_id, disposition, lease_expires_at
+         FROM execution_attempts
+        WHERE attempt_id = $1 AND generation = $2 AND fence_token = $3
+        FOR UPDATE`,
+      [input.attemptId, input.generation, input.fenceToken],
+    );
+    const attempt = attempts[0];
+    if (
+      !attempt
+      || Number(attempt.claim_id) !== input.claimId
+      || attempt.run_id !== input.runId
+      || attempt.step_id !== input.stepId
+      || attempt.story_id !== input.storyId
+      || !["claimed", "running"].includes(attempt.disposition)
+    ) return { status: "stale_fence" as const };
+    const claims = await transaction.unsafe<Array<{
+      run_id: string;
+      step_id: string;
+      story_id: string | null;
+      agent_id: string;
+      outcome: string | null;
+    }>>(
+      `SELECT run_id, step_id, story_id, agent_id, outcome
+         FROM claim_log
+        WHERE id = $1
+        FOR UPDATE`,
+      [input.claimId],
+    );
+    const claim = claims[0];
+    if (
+      !claim
+      || claim.run_id !== input.runId
+      || claim.step_id !== input.stepId
+      || (claim.story_id ?? "") !== input.storyId
+      || claim.outcome !== input.claimOutcome
+      || (attempt.agent_id !== null && attempt.agent_id !== claim.agent_id)
+    ) return { status: "stale_fence" as const };
+    const now = await readDatabaseWallClock(
+      transaction,
+      "ATTEMPT_RECONCILER_DATABASE_TIME_UNAVAILABLE",
+    );
+    if (
+      !runtimeQuiesced
+      && new Date(attempt.lease_expires_at).getTime() > now.getTime()
+    ) return { status: "stale_fence" as const };
+    const rows = await transaction.unsafe<Array<{ attempt_id: string }>>(
+      `UPDATE execution_attempts
+          SET disposition = $4,
+              evidence_refs = $5,
+              heartbeat_at = $6,
+              updated_at = $6
+        WHERE attempt_id = $1
+          AND generation = $2
+          AND fence_token = $3
+          AND disposition IN ('claimed', 'running')
+          AND ($7::boolean OR lease_expires_at <= $6)
+        RETURNING attempt_id`,
+      [
+        input.attemptId,
+        input.generation,
+        input.fenceToken,
+        input.disposition,
+        JSON.stringify(input.evidenceRefs),
+        now,
+        runtimeQuiesced,
+      ],
+    );
+    return rows.length === 1
+      ? { status: "completed" as const }
+      : { status: "stale_fence" as const };
+  }) as Promise<TerminalAttemptCompletionResult>;
+}
+
 export function createPostgresTerminalAttemptReconciler(
   sql: postgres.Sql,
   options: Readonly<{
@@ -163,7 +292,6 @@ export function createPostgresTerminalAttemptReconciler(
     claimId?: number,
     runtimeQuiesced = false,
   ): Promise<TerminalAttemptCandidate[]> => {
-    const terminalBefore = new Date(Date.now() - candidateGraceMs);
     const rows = await sql.unsafe<CandidateRow[]>(
         `SELECT ea.attempt_id,
                 cl.id::text AS claim_id,
@@ -183,12 +311,12 @@ export function createPostgresTerminalAttemptReconciler(
             AND COALESCE(
                   cl.abandoned_at,
                   cl.claimed_at + (COALESCE(cl.duration_ms, 0)::text || ' milliseconds')::interval
-                ) <= $1
+                ) <= clock_timestamp() - ($1::bigint * interval '1 millisecond')
             AND ($3::bigint IS NULL OR cl.id = $3::bigint)
-            AND ($4::boolean OR ea.lease_expires_at <= NOW())
+            AND ($4::boolean OR ea.lease_expires_at <= clock_timestamp())
           ORDER BY ea.attempt_id
           LIMIT $2`,
-        [terminalBefore, limit, claimId ?? null, runtimeQuiesced],
+        [candidateGraceMs, limit, claimId ?? null, runtimeQuiesced],
       );
     const candidates: TerminalAttemptCandidate[] = [];
     for (const row of rows) {
@@ -202,7 +330,7 @@ export function createPostgresTerminalAttemptReconciler(
   };
   const dependencies: TerminalAttemptReconcilerDependencies = {
     listCandidates: async ({ limit }) => listCandidates(limit, graceMs),
-    complete: async (completion) => repository.complete(completion),
+    complete: async (completion) => completeTerminalAttemptForRecovery(sql, completion, false),
     emit: options.emit ?? (() => undefined),
   };
   return Object.freeze({
@@ -212,6 +340,11 @@ export function createPostgresTerminalAttemptReconciler(
       reconcileTerminalClaimAttempts(input, {
         ...dependencies,
         listCandidates: async ({ limit }) => listCandidates(limit, 0, undefined, input.runtimeQuiesced),
+        complete: async (completion) => completeTerminalAttemptForRecovery(
+          sql,
+          completion,
+          input.runtimeQuiesced,
+        ),
       }),
     reconcileClaim: (input: Readonly<{ claimId: number; runtimeQuiesced: true }>) => {
       const { claimId } = input;
@@ -221,6 +354,11 @@ export function createPostgresTerminalAttemptReconciler(
       return reconcileTerminalClaimAttempts({ limit: 1 }, {
         ...dependencies,
         listCandidates: async () => listCandidates(1, 0, claimId, input.runtimeQuiesced),
+        complete: async (completion) => completeTerminalAttemptForRecovery(
+          sql,
+          completion,
+          input.runtimeQuiesced,
+        ),
       });
     },
   });

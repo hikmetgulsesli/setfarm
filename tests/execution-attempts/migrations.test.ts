@@ -263,6 +263,7 @@ describe("contract spine migration journal", () => {
       "017_v3_github_review_resolution_evidence",
       "018_v3_project_transfer_ack_ledger",
       "019_runtime_completion_submission_evidence",
+      "020_recovery_terminal_lease_identity",
     ]);
     assert.equal((await verifyContractSpineMigrations(database.sql)).status, "verified");
   });

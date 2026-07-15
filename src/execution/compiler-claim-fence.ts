@@ -1,5 +1,6 @@
 import type postgres from "postgres";
 
+import { readDatabaseWallClock } from "../db/database-wall-clock.js";
 import { isClaimMutationAuthorityError } from "./claim-mutation-authority.js";
 import { withdrawPreDispatchClaimInTransaction } from "./pre-dispatch-withdrawal-authority.js";
 
@@ -88,25 +89,33 @@ export async function ensureCompilerClaimFence(
       throw error;
     }
     if (withdrawal.status !== "withdrawn") return withdrawal;
-    await transaction.unsafe(
+    const now = await readDatabaseWallClock(
+      transaction,
+      "COMPILER_CLAIM_FENCE_DATABASE_TIME_UNAVAILABLE",
+    );
+    const stories = await transaction.unsafe<Array<{ id: string }>>(
       `UPDATE stories
-          SET status = 'pending', claimed_by = NULL, claimed_at = NULL, updated_at = NOW()
+          SET status = 'pending', claimed_by = NULL, claimed_at = NULL, updated_at = $5
         WHERE id = $1
           AND run_id = $2
           AND story_id = $3
           AND status = 'running'
-          AND claimed_by = $4`,
-      [input.storyDbId, input.runId, input.storyId, input.claimAgentId],
+          AND claimed_by = $4
+        RETURNING id`,
+      [input.storyDbId, input.runId, input.storyId, input.claimAgentId, now],
     );
-    await transaction.unsafe(
+    if (stories.length !== 1) throw new Error("COMPILER_CLAIM_STORY_REQUEUE_CAS_LOST");
+    const steps = await transaction.unsafe<Array<{ id: string }>>(
       `UPDATE steps
-          SET status = 'pending', current_story_id = NULL, updated_at = NOW()
+          SET status = 'pending', current_story_id = NULL, updated_at = $4
         WHERE run_id = $1
           AND step_id = $2
           AND current_story_id = $3
-          AND status = 'running'`,
-      [input.runId, input.stepId, input.storyDbId],
+          AND status = 'running'
+        RETURNING id`,
+      [input.runId, input.stepId, input.storyDbId, now],
     );
+    if (steps.length !== 1) throw new Error("COMPILER_CLAIM_STEP_REQUEUE_CAS_LOST");
     return { status: "reverted" as const };
   }) as Promise<CompilerClaimFenceResult>;
 }

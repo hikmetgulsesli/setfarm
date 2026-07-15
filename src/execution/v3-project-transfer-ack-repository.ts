@@ -1,5 +1,6 @@
 import type postgres from "postgres";
 
+import { readDatabaseWallClock } from "../db/database-wall-clock.js";
 import { hashCanonicalJson } from "../product-compiler/canonical-json.js";
 import { buildRunOperationalSnapshotInTransaction } from "../server/run-operational-snapshot.js";
 import { operationalOutboxIdForEventKey } from "./operational-outbox-repository.js";
@@ -182,7 +183,7 @@ export function createV3ProjectTransferAckRepository(
   sql: postgres.Sql,
   dependencies: Readonly<{ now?: () => Date }> = {},
 ) {
-  const now = dependencies.now ?? (() => new Date());
+  const compatibilityNow = dependencies.now;
   return Object.freeze({
     async findByRunId(runId: string): Promise<V3ProjectTransferAckV1 | undefined> {
       const row = await readAckByRun(sql, runId);
@@ -194,6 +195,13 @@ export function createV3ProjectTransferAckRepository(
       acknowledgement: V3ProjectTransferAckV1;
     }>> {
       const acknowledgement = V3ProjectTransferAckV1Schema.parse(input);
+      const callerTime = compatibilityNow?.();
+      if (callerTime && !Number.isFinite(callerTime.getTime())) {
+        throw new V3ProjectTransferAckRepositoryError(
+          "V3_PROJECT_TRANSFER_ACK_PUBLICATION_FAILED",
+          "Project transfer acknowledgement compatibility clock is invalid",
+        );
+      }
       const commit = () => sql.begin("isolation level repeatable read", async (transaction) => {
         const rows = await transaction.unsafe<AuthorityRow[]>(
           `SELECT r.protocol, r.status, r.run_number, r.packet_hash,
@@ -277,7 +285,10 @@ export function createV3ProjectTransferAckRepository(
           );
         }
 
-        const createdAt = now();
+        const createdAt = await readDatabaseWallClock(
+          transaction,
+          "V3_PROJECT_TRANSFER_ACK_DATABASE_TIME_UNAVAILABLE",
+        );
         const inserted = await transaction.unsafe<Array<{ ack_hash: string }>>(
           `INSERT INTO v3_project_transfer_acks (
              ack_hash, run_id, candidate_id, candidate_hash, packet_hash,

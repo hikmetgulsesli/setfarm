@@ -1,6 +1,11 @@
 import type postgres from "postgres";
 
+import { readDatabaseWallClock } from "../db/database-wall-clock.js";
 import { canonicalJsonStringify, hashCanonicalJson } from "../product-compiler/canonical-json.js";
+import {
+  acquireClaimMutationAuthorityInTransaction,
+  ClaimMutationAuthorityError,
+} from "./claim-mutation-authority.js";
 import { closeExactSingleStepClaimInTransaction } from "./claim-attempt-transition.js";
 import { requestRunTerminationInTransaction } from "./run-termination.js";
 import { releaseReservedRuntimeSessionInTransaction } from "./runtime-session-repository.js";
@@ -74,8 +79,8 @@ export async function completeV3DeployAuthorityRefusal(input: Readonly<{
   ) {
     throw new Error("V3_DEPLOY_REFUSAL_CLAIM_IDENTITY_INVALID");
   }
-  const transitionTime = input.now ? new Date(input.now) : new Date();
-  if (!Number.isFinite(transitionTime.getTime())) {
+  const callerTime = input.now ? new Date(input.now) : new Date();
+  if (!Number.isFinite(callerTime.getTime())) {
     throw new Error("V3_DEPLOY_REFUSAL_TIME_INVALID");
   }
   const refusalPayload = {
@@ -101,6 +106,22 @@ export async function completeV3DeployAuthorityRefusal(input: Readonly<{
   const diagnostic = `${input.error.code}:compiler-owned deploy authority refusal ${refusalHash}`;
 
   const transition = await input.sql.begin(async (transaction) => {
+    let runtimeOwnsClaim = false;
+    try {
+      await acquireClaimMutationAuthorityInTransaction(transaction, {
+        claimId: envelope.claimId,
+        runId: envelope.runId,
+        workflowStepId: envelope.workflowStepId,
+        storyId: null,
+        claimAgentId: envelope.claimAgentId,
+      }, "pre_dispatch_withdrawal");
+    } catch (error) {
+      if (error instanceof ClaimMutationAuthorityError && error.ownerType === "runtime_session") {
+        runtimeOwnsClaim = true;
+      } else {
+        throw error;
+      }
+    }
     const rows = await transaction.unsafe<AuthorityRow[]>(
       `SELECT cl.run_id AS claim_run_id,
               cl.step_id AS claim_step_id,
@@ -174,15 +195,23 @@ export async function completeV3DeployAuthorityRefusal(input: Readonly<{
     const claimClosure = runtime.state === "reserved"
       ? "pre_spawn_released" as const
       : "termination_owned" as const;
+    if (runtimeOwnsClaim !== (claimClosure === "termination_owned")) {
+      throw new Error("V3_DEPLOY_REFUSAL_MUTATION_AUTHORITY_MISMATCH");
+    }
 
     if (claimClosure === "pre_spawn_released") {
       await closeExactSingleStepClaimInTransaction(transaction, {
         envelope,
         outcome: "failed",
         diagnostic,
-        now: transitionTime,
+        now: callerTime,
       });
     }
+
+    const transitionTime = await readDatabaseWallClock(
+      transaction,
+      "V3_DEPLOY_REFUSAL_DATABASE_TIME_UNAVAILABLE",
+    );
 
     const updated = await transaction.unsafe<Array<{ id: string }>>(
       `UPDATE steps

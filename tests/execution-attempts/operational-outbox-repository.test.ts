@@ -29,7 +29,12 @@ describe("operational outbox repository", () => {
     const database = await createIsolatedTestDatabase();
     try {
       const repository = createOperationalOutboxRepository(database.sql);
-      const inserted = await repository.enqueue(eventInput("concurrent-claim"));
+      const hostileClock = new Date("2999-01-01T00:00:00.000Z");
+      const inserted = await repository.enqueue({
+        ...eventInput("concurrent-claim"),
+        now: hostileClock,
+      });
+      assert.ok(new Date(inserted.createdAt).getTime() < hostileClock.getTime());
       const claims = await Promise.all([
         repository.claimNext({ ownerInstanceId: "publisher-a", leaseMs: 5_000, now: START }),
         repository.claimNext({ ownerInstanceId: "publisher-b", leaseMs: 5_000, now: START }),
@@ -40,17 +45,21 @@ describe("operational outbox repository", () => {
       assert.equal(claimed[0]?.state, "leased");
       assert.equal(claimed[0]?.attemptCount, 1);
       assert.equal(claims.filter((claim) => claim === undefined).length, 1);
+      const beforeHeartbeat = await database.sql<Array<{ wall_clock: Date }>>`
+        SELECT clock_timestamp() AS wall_clock
+      `;
       assert.equal(await repository.heartbeat({
         outboxId: claimed[0]!.outboxId,
         ownerInstanceId: claimed[0]!.ownerInstanceId!,
         leaseToken: claimed[0]!.leaseToken!,
         leaseMs: 10_000,
-        now: new Date(START.getTime() + 1),
+        now: new Date("2200-01-01T00:00:00.000Z"),
       }), true);
-      assert.equal(
-        (await repository.findByEventKey("concurrent-claim"))?.leaseExpiresAt,
-        new Date(START.getTime() + 10_001).toISOString(),
+      const heartbeatExpiry = new Date(
+        (await repository.findByEventKey("concurrent-claim"))!.leaseExpiresAt!,
       );
+      assert.ok(heartbeatExpiry.getTime() - beforeHeartbeat[0]!.wall_clock.getTime() >= 9_900);
+      assert.ok(heartbeatExpiry.getTime() - beforeHeartbeat[0]!.wall_clock.getTime() <= 11_000);
     } finally {
       await database.cleanup();
     }
@@ -67,7 +76,12 @@ describe("operational outbox repository", () => {
         now: START,
       });
       assert.ok(first?.leaseToken);
-      const adoptionTime = new Date(START.getTime() + 5_001);
+      await database.sql`
+        UPDATE operational_outbox
+           SET lease_expires_at = clock_timestamp() - interval '1 second'
+         WHERE outbox_id = ${first.outboxId}
+      `;
+      const adoptionTime = new Date("1900-01-01T00:00:00.000Z");
       const adopted = await repository.claimNext({
         ownerInstanceId: "publisher-new",
         leaseMs: 5_000,

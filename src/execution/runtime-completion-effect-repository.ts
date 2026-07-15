@@ -3,6 +3,8 @@ import { randomUUID } from "node:crypto";
 import type postgres from "postgres";
 import { z } from "zod";
 
+import { readDatabaseWallClock } from "../db/database-wall-clock.js";
+
 type Sql = postgres.Sql;
 type TransactionSql = postgres.TransactionSql;
 
@@ -93,6 +95,67 @@ function validTime(value?: Date): Date {
   return parsed;
 }
 
+type LockedEffectAuthority = Readonly<{
+  request?: Readonly<{ state: string; apply_phase: string }>;
+  effect?: EffectRow;
+  wallClock?: Date;
+}>;
+
+/**
+ * Every effect writer uses the same owner order as runtime completion:
+ * run -> completion request -> effect -> database wall clock. This makes run
+ * terminalization and effect settlement mutually exclusive at the canonical
+ * run owner, while caller clocks remain validation-only inputs.
+ */
+async function lockEffectAuthorityInTransaction(
+  sql: TransactionSql,
+  input: Readonly<{ requestId: string; effectKey: string; now?: Date }>,
+): Promise<LockedEffectAuthority> {
+  validTime(input.now);
+  const identities = await sql.unsafe<Array<{ run_id: string }>>(
+    "SELECT run_id FROM runtime_completion_requests WHERE request_id = $1",
+    [input.requestId],
+  );
+  if (!identities[0]) return {};
+  await sql.unsafe("SELECT id FROM runs WHERE id = $1 FOR UPDATE", [identities[0].run_id]);
+  const requests = await sql.unsafe<Array<{ state: string; apply_phase: string }>>(
+    "SELECT state, apply_phase FROM runtime_completion_requests WHERE request_id = $1 FOR UPDATE",
+    [input.requestId],
+  );
+  const effects = await sql.unsafe<EffectRow[]>(
+    `SELECT * FROM runtime_completion_effects
+      WHERE request_id = $1 AND effect_key = $2
+      FOR UPDATE`,
+    [input.requestId, input.effectKey],
+  );
+  const wallClock = await readDatabaseWallClock(
+    sql,
+    "RUNTIME_COMPLETION_EFFECT_DATABASE_TIME_UNAVAILABLE",
+  );
+  return {
+    ...(requests[0] ? { request: requests[0] } : {}),
+    ...(effects[0] ? { effect: effects[0] } : {}),
+    wallClock,
+  };
+}
+
+function hasLiveEffectLease(
+  authority: LockedEffectAuthority,
+  ownerInstanceId: string,
+  leaseToken: string,
+): authority is LockedEffectAuthority & Readonly<{ effect: EffectRow; wallClock: Date }> {
+  return Boolean(
+    authority.request?.state === "processing"
+    && authority.request.apply_phase === "owner_committed"
+    && authority.effect?.state === "leased"
+    && authority.effect.owner_instance_id === ownerInstanceId
+    && authority.effect.lease_token === leaseToken
+    && authority.effect.lease_expires_at
+    && authority.wallClock
+    && new Date(authority.effect.lease_expires_at).getTime() > authority.wallClock.getTime(),
+  );
+}
+
 export async function assertRuntimeCompletionEffectLeaseInTransaction(
   sql: TransactionSql,
   input: Readonly<{
@@ -103,37 +166,17 @@ export async function assertRuntimeCompletionEffectLeaseInTransaction(
     now?: Date;
   }>,
 ): Promise<RuntimeCompletionEffect> {
-  const now = validTime(input.now);
-  const requestRows = await sql.unsafe<Array<{ run_id: string; state: string; apply_phase: string }>>(
-    "SELECT run_id, state, apply_phase FROM runtime_completion_requests WHERE request_id = $1",
-    [input.requestId],
-  );
-  const request = requestRows[0];
-  if (!request) throw new Error("RUNTIME_COMPLETION_EFFECT_REQUEST_NOT_FOUND");
-  await sql.unsafe("SELECT id FROM runs WHERE id = $1 FOR UPDATE", [request.run_id]);
-  const lockedRequests = await sql.unsafe<Array<{ state: string; apply_phase: string }>>(
-    "SELECT state, apply_phase FROM runtime_completion_requests WHERE request_id = $1 FOR UPDATE",
-    [input.requestId],
-  );
+  const authority = await lockEffectAuthorityInTransaction(sql, input);
+  if (!authority.request) throw new Error("RUNTIME_COMPLETION_EFFECT_REQUEST_NOT_FOUND");
   if (
-    lockedRequests[0]?.state !== "processing"
-    || lockedRequests[0]?.apply_phase !== "owner_committed"
+    authority.request.state !== "processing"
+    || authority.request.apply_phase !== "owner_committed"
   ) throw new Error("RUNTIME_COMPLETION_EFFECT_REQUEST_NOT_APPLYING");
-  const rows = await sql.unsafe<EffectRow[]>(
-    `SELECT * FROM runtime_completion_effects
-      WHERE request_id = $1 AND effect_key = $2
-      FOR UPDATE`,
-    [input.requestId, input.effectKey],
-  );
-  const effect = rows[0];
+  const effect = authority.effect;
   if (!effect) throw new Error("RUNTIME_COMPLETION_EFFECT_NOT_FOUND");
-  if (
-    effect.state !== "leased"
-    || effect.owner_instance_id !== input.ownerInstanceId
-    || effect.lease_token !== input.leaseToken
-    || !effect.lease_expires_at
-    || new Date(effect.lease_expires_at).getTime() <= now.getTime()
-  ) throw new Error("RUNTIME_COMPLETION_EFFECT_LEASE_LOST");
+  if (!hasLiveEffectLease(authority, input.ownerInstanceId, input.leaseToken)) {
+    throw new Error("RUNTIME_COMPLETION_EFFECT_LEASE_LOST");
+  }
   return mapEffect(effect);
 }
 
@@ -153,7 +196,7 @@ export function createRuntimeCompletionEffectRepository(sql: Sql) {
       leaseMs?: number;
       now?: Date;
     }>): Promise<RuntimeCompletionEffect | undefined> {
-      const now = validTime(input.now);
+      validTime(input.now);
       const leaseMs = Math.max(30_000, Math.min(30 * 60_000, Math.trunc(input.leaseMs ?? 2 * 60_000)));
       return sql.begin(async (transaction) => {
         const requestRows = await transaction.unsafe<Array<{ run_id: string }>>(
@@ -170,7 +213,8 @@ export function createRuntimeCompletionEffectRepository(sql: Sql) {
         const candidates = await transaction.unsafe<EffectRow[]>(
           `SELECT effect.* FROM runtime_completion_effects effect
             WHERE effect.request_id = $1
-              AND (effect.state = 'pending' OR (effect.state = 'leased' AND effect.lease_expires_at <= $2))
+              AND (effect.state = 'pending'
+                OR (effect.state = 'leased' AND effect.lease_expires_at <= clock_timestamp()))
               AND NOT EXISTS (
                 SELECT 1 FROM runtime_completion_effects prior
                  WHERE prior.request_id = effect.request_id
@@ -180,10 +224,21 @@ export function createRuntimeCompletionEffectRepository(sql: Sql) {
               )
             ORDER BY effect.ordinal, effect.effect_key
             LIMIT 1 FOR UPDATE SKIP LOCKED`,
-          [input.requestId, now],
+          [input.requestId],
         );
         const candidate = candidates[0];
         if (!candidate) return undefined;
+        const now = await readDatabaseWallClock(
+          transaction,
+          "RUNTIME_COMPLETION_EFFECT_DATABASE_TIME_UNAVAILABLE",
+        );
+        if (
+          candidate.state === "leased"
+          && (
+            !candidate.lease_expires_at
+            || new Date(candidate.lease_expires_at).getTime() > now.getTime()
+          )
+        ) return undefined;
         const leaseToken = `RCE_${randomUUID()}`;
         const rows = await transaction.unsafe<EffectRow[]>(
           `UPDATE runtime_completion_effects
@@ -191,6 +246,7 @@ export function createRuntimeCompletionEffectRepository(sql: Sql) {
                   lease_expires_at = $5, attempt_count = attempt_count + 1,
                   updated_at = $2
             WHERE request_id = $1 AND effect_key = $6
+              AND (state = 'pending' OR (state = 'leased' AND lease_expires_at <= $2))
             RETURNING *`,
           [
             input.requestId,
@@ -213,24 +269,29 @@ export function createRuntimeCompletionEffectRepository(sql: Sql) {
       leaseMs?: number;
       now?: Date;
     }>): Promise<boolean> {
-      const now = validTime(input.now);
+      validTime(input.now);
       const leaseMs = Math.max(30_000, Math.min(30 * 60_000, Math.trunc(input.leaseMs ?? 2 * 60_000)));
-      const rows = await sql.unsafe<Array<{ effect_key: string }>>(
-        `UPDATE runtime_completion_effects
-            SET lease_expires_at = $5, updated_at = $6
-          WHERE request_id = $1 AND effect_key = $2 AND state = 'leased'
-            AND owner_instance_id = $3 AND lease_token = $4
-          RETURNING effect_key`,
-        [
-          input.requestId,
-          input.effectKey,
-          input.ownerInstanceId,
-          input.leaseToken,
-          new Date(now.getTime() + leaseMs),
-          now,
-        ],
-      );
-      return rows.length === 1;
+      return sql.begin(async (transaction) => {
+        const authority = await lockEffectAuthorityInTransaction(transaction, input);
+        if (!hasLiveEffectLease(authority, input.ownerInstanceId, input.leaseToken)) return false;
+        const rows = await transaction.unsafe<Array<{ effect_key: string }>>(
+          `UPDATE runtime_completion_effects
+              SET lease_expires_at = $5, updated_at = $6
+            WHERE request_id = $1 AND effect_key = $2 AND state = 'leased'
+              AND owner_instance_id = $3 AND lease_token = $4
+              AND lease_expires_at > $6
+            RETURNING effect_key`,
+          [
+            input.requestId,
+            input.effectKey,
+            input.ownerInstanceId,
+            input.leaseToken,
+            new Date(authority.wallClock.getTime() + leaseMs),
+            authority.wallClock,
+          ],
+        );
+        return rows.length === 1;
+      }) as Promise<boolean>;
     },
 
     async assertLease(input: Readonly<{
@@ -254,27 +315,33 @@ export function createRuntimeCompletionEffectRepository(sql: Sql) {
       diagnostic: string;
       now?: Date;
     }>): Promise<void> {
-      const now = validTime(input.now);
-      const rows = await sql.unsafe<Array<{ effect_key: string }>>(
-        `UPDATE runtime_completion_effects
-            SET state = 'pending', owner_instance_id = NULL, lease_token = NULL,
-                lease_expires_at = NULL,
-                result = jsonb_build_object('lastDiagnostic', $5),
-                updated_at = $6
-          WHERE request_id = $1 AND effect_key = $2 AND state = 'leased'
-            AND owner_instance_id = $3 AND lease_token = $4
-            AND lease_expires_at > $6
-          RETURNING effect_key`,
-        [
-          input.requestId,
-          input.effectKey,
-          input.ownerInstanceId,
-          input.leaseToken,
-          input.diagnostic.slice(0, 4_000),
-          now,
-        ],
-      );
-      if (rows.length !== 1) throw new Error("RUNTIME_COMPLETION_EFFECT_RETRY_FENCE_LOST");
+      validTime(input.now);
+      await sql.begin(async (transaction) => {
+        const authority = await lockEffectAuthorityInTransaction(transaction, input);
+        if (!hasLiveEffectLease(authority, input.ownerInstanceId, input.leaseToken)) {
+          throw new Error("RUNTIME_COMPLETION_EFFECT_RETRY_FENCE_LOST");
+        }
+        const rows = await transaction.unsafe<Array<{ effect_key: string }>>(
+          `UPDATE runtime_completion_effects
+              SET state = 'pending', owner_instance_id = NULL, lease_token = NULL,
+                  lease_expires_at = NULL,
+                  result = jsonb_build_object('lastDiagnostic', $5),
+                  updated_at = $6
+            WHERE request_id = $1 AND effect_key = $2 AND state = 'leased'
+              AND owner_instance_id = $3 AND lease_token = $4
+              AND lease_expires_at > $6
+            RETURNING effect_key`,
+          [
+            input.requestId,
+            input.effectKey,
+            input.ownerInstanceId,
+            input.leaseToken,
+            input.diagnostic.slice(0, 4_000),
+            authority.wallClock,
+          ],
+        );
+        if (rows.length !== 1) throw new Error("RUNTIME_COMPLETION_EFFECT_RETRY_FENCE_LOST");
+      });
     },
 
     async quarantine(input: Readonly<{
@@ -286,30 +353,36 @@ export function createRuntimeCompletionEffectRepository(sql: Sql) {
       evidence?: Record<string, unknown>;
       now?: Date;
     }>): Promise<RuntimeCompletionEffect> {
-      const now = validTime(input.now);
-      const rows = await sql.unsafe<EffectRow[]>(
-        `UPDATE runtime_completion_effects
-            SET state = 'quarantined', owner_instance_id = NULL, lease_token = NULL,
-                lease_expires_at = NULL,
-                result = jsonb_build_object('diagnostic', $5),
-                evidence = $6::text::jsonb,
-                updated_at = $7
-          WHERE request_id = $1 AND effect_key = $2 AND state = 'leased'
-            AND owner_instance_id = $3 AND lease_token = $4
-            AND lease_expires_at > $7
-          RETURNING *`,
-        [
-          input.requestId,
-          input.effectKey,
-          input.ownerInstanceId,
-          input.leaseToken,
-          input.diagnostic.slice(0, 4_000),
-          JSON.stringify(input.evidence ?? {}),
-          now,
-        ],
-      );
-      if (rows.length !== 1) throw new Error("RUNTIME_COMPLETION_EFFECT_QUARANTINE_FENCE_LOST");
-      return mapEffect(rows[0]!);
+      validTime(input.now);
+      return sql.begin(async (transaction) => {
+        const authority = await lockEffectAuthorityInTransaction(transaction, input);
+        if (!hasLiveEffectLease(authority, input.ownerInstanceId, input.leaseToken)) {
+          throw new Error("RUNTIME_COMPLETION_EFFECT_QUARANTINE_FENCE_LOST");
+        }
+        const rows = await transaction.unsafe<EffectRow[]>(
+          `UPDATE runtime_completion_effects
+              SET state = 'quarantined', owner_instance_id = NULL, lease_token = NULL,
+                  lease_expires_at = NULL,
+                  result = jsonb_build_object('diagnostic', $5),
+                  evidence = $6::text::jsonb,
+                  updated_at = $7
+            WHERE request_id = $1 AND effect_key = $2 AND state = 'leased'
+              AND owner_instance_id = $3 AND lease_token = $4
+              AND lease_expires_at > $7
+            RETURNING *`,
+          [
+            input.requestId,
+            input.effectKey,
+            input.ownerInstanceId,
+            input.leaseToken,
+            input.diagnostic.slice(0, 4_000),
+            JSON.stringify(input.evidence ?? {}),
+            authority.wallClock,
+          ],
+        );
+        if (rows.length !== 1) throw new Error("RUNTIME_COMPLETION_EFFECT_QUARANTINE_FENCE_LOST");
+        return mapEffect(rows[0]!);
+      }) as Promise<RuntimeCompletionEffect>;
     },
 
     async settle(input: Readonly<{
@@ -322,32 +395,38 @@ export function createRuntimeCompletionEffectRepository(sql: Sql) {
       evidence: Record<string, unknown>;
       now?: Date;
     }>): Promise<RuntimeCompletionEffect> {
-      const now = validTime(input.now);
-      const rows = await sql.unsafe<EffectRow[]>(
-        `UPDATE runtime_completion_effects
-            SET state = $5, owner_instance_id = NULL, lease_token = NULL,
-                lease_expires_at = NULL, result = $6::text::jsonb,
-                evidence = $7::text::jsonb,
-                applied_at = CASE WHEN $5 = 'applied' THEN $8 ELSE applied_at END,
-                reconciled_at = CASE WHEN $5 = 'reconciled' THEN $8 ELSE reconciled_at END,
-                updated_at = $8
-          WHERE request_id = $1 AND effect_key = $2 AND state = 'leased'
-            AND owner_instance_id = $3 AND lease_token = $4
-            AND lease_expires_at > $8
-          RETURNING *`,
-        [
-          input.requestId,
-          input.effectKey,
-          input.ownerInstanceId,
-          input.leaseToken,
-          input.resolution,
-          JSON.stringify(input.result),
-          JSON.stringify(input.evidence),
-          now,
-        ],
-      );
-      if (rows.length !== 1) throw new Error("RUNTIME_COMPLETION_EFFECT_SETTLE_FENCE_LOST");
-      return mapEffect(rows[0]!);
+      validTime(input.now);
+      return sql.begin(async (transaction) => {
+        const authority = await lockEffectAuthorityInTransaction(transaction, input);
+        if (!hasLiveEffectLease(authority, input.ownerInstanceId, input.leaseToken)) {
+          throw new Error("RUNTIME_COMPLETION_EFFECT_SETTLE_FENCE_LOST");
+        }
+        const rows = await transaction.unsafe<EffectRow[]>(
+          `UPDATE runtime_completion_effects
+              SET state = $5, owner_instance_id = NULL, lease_token = NULL,
+                  lease_expires_at = NULL, result = $6::text::jsonb,
+                  evidence = $7::text::jsonb,
+                  applied_at = CASE WHEN $5 = 'applied' THEN $8 ELSE applied_at END,
+                  reconciled_at = CASE WHEN $5 = 'reconciled' THEN $8 ELSE reconciled_at END,
+                  updated_at = $8
+            WHERE request_id = $1 AND effect_key = $2 AND state = 'leased'
+              AND owner_instance_id = $3 AND lease_token = $4
+              AND lease_expires_at > $8
+            RETURNING *`,
+          [
+            input.requestId,
+            input.effectKey,
+            input.ownerInstanceId,
+            input.leaseToken,
+            input.resolution,
+            JSON.stringify(input.result),
+            JSON.stringify(input.evidence),
+            authority.wallClock,
+          ],
+        );
+        if (rows.length !== 1) throw new Error("RUNTIME_COMPLETION_EFFECT_SETTLE_FENCE_LOST");
+        return mapEffect(rows[0]!);
+      }) as Promise<RuntimeCompletionEffect>;
     },
 
     async allMandatorySettled(requestId: string): Promise<boolean> {

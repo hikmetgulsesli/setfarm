@@ -1,6 +1,7 @@
 import type postgres from "postgres";
 import { z } from "zod";
 
+import { readDatabaseWallClock } from "../db/database-wall-clock.js";
 import { hashCanonicalJson } from "../product-compiler/canonical-json.js";
 import { Sha256Schema } from "../product-compiler/schemas/common-v1.js";
 import {
@@ -180,8 +181,9 @@ export async function reserveAttemptInTransaction(
   const reservation = parseOperationalRetryAwareAttemptReservation(input);
   const { predecessorAttempt: _predecessorAttempt, ...baseReservation } = reservation;
   const dedupeKey = computeAttemptDedupeKey(baseReservation);
-  const now = options.now ? new Date(options.now) : new Date();
-  const lease = leaseWindow(now, options.leaseMs ?? DEFAULT_ATTEMPT_LEASE_MS);
+  if (options.now && !Number.isFinite(new Date(options.now).getTime())) {
+    throw new Error("ATTEMPT_TIME_INVALID");
+  }
   const identityFactory = options.identityFactory ?? defaultAttemptIdentityFactory;
   const lockIdentity = hashCanonicalJson({
     schema: "setfarm.execution-attempt-lock.v1",
@@ -223,6 +225,7 @@ export async function reserveAttemptInTransaction(
   );
   if (boundClaims.length !== 1) throw new Error("ATTEMPT_CLAIM_BINDING_INVALID");
 
+  let leaseClock: Date | undefined;
   if (reservation.recoveryDispatchId) {
     const existingRecoveryAttempt = await one(
       transaction,
@@ -250,12 +253,16 @@ export async function reserveAttemptInTransaction(
     const delivery = deliveryRows[0];
     const leaseIdentity = reservation.recoveryDeliveryLease!;
     if (!delivery) throw new Error("RECOVERY_DELIVERY_NOT_FOUND");
+    leaseClock = await readDatabaseWallClock(
+      transaction,
+      "ATTEMPT_DATABASE_TIME_UNAVAILABLE",
+    );
     if (
       delivery.state !== "leased"
       || delivery.owner_instance_id !== leaseIdentity.ownerInstanceId
       || delivery.lease_token !== leaseIdentity.leaseToken
       || !delivery.lease_expires_at
-      || new Date(delivery.lease_expires_at).getTime() <= now.getTime()
+      || new Date(delivery.lease_expires_at).getTime() <= leaseClock.getTime()
     ) {
       throw new Error("RECOVERY_DELIVERY_LEASE_INVALID");
     }
@@ -330,6 +337,11 @@ export async function reserveAttemptInTransaction(
   }
   const attemptId = identityFactory.attemptId();
   const fenceToken = identityFactory.fenceToken();
+  const now = leaseClock ?? await readDatabaseWallClock(
+    transaction,
+    "ATTEMPT_DATABASE_TIME_UNAVAILABLE",
+  );
+  const lease = leaseWindow(now, options.leaseMs ?? DEFAULT_ATTEMPT_LEASE_MS);
   const inserted = await one(
     transaction,
     `INSERT INTO execution_attempts (
@@ -408,6 +420,74 @@ export async function reserveAttemptInTransaction(
   return { status: "reserved" as const, attempt: mapAttempt(inserted) };
 }
 
+async function mutateLiveAttemptFence(
+  sql: Sql,
+  identity: z.infer<typeof FenceIdentityV1Schema>,
+  operation: (
+    transaction: TransactionSql,
+    current: AttemptRow,
+    wallClock: Date,
+  ) => Promise<AttemptRow | undefined>,
+): Promise<AttemptRow | undefined> {
+  const discovered = await one(
+    sql,
+    "SELECT * FROM execution_attempts WHERE attempt_id = $1",
+    [identity.attemptId],
+  );
+  if (!discovered) return undefined;
+  return sql.begin(async (transaction) => {
+    const runs = await transaction.unsafe<Array<{ status: string }>>(
+      "SELECT status FROM runs WHERE id = $1 FOR UPDATE",
+      [discovered.run_id],
+    );
+    if (!runs[0] || !["running", "resuming"].includes(runs[0].status)) return undefined;
+    const locked = await one(
+      transaction,
+      `SELECT * FROM execution_attempts
+        WHERE attempt_id = $1 AND generation = $2 AND fence_token = $3
+        FOR UPDATE`,
+      [identity.attemptId, identity.generation, identity.fenceToken],
+    );
+    if (!locked || !["claimed", "running"].includes(locked.disposition)) return undefined;
+
+    let recoveryDelivery: Readonly<{
+      state: string;
+      attempt_id: string | null;
+      lease_expires_at: Date | string | null;
+    }> | undefined;
+    if (locked.recovery_dispatch_id) {
+      const deliveries = await transaction.unsafe<Array<{
+        state: string;
+        attempt_id: string | null;
+        lease_expires_at: Date | string | null;
+      }>>(
+        `SELECT state, attempt_id, lease_expires_at
+           FROM recovery_dispatch_deliveries
+          WHERE dispatch_id = $1
+          FOR UPDATE`,
+        [locked.recovery_dispatch_id],
+      );
+      recoveryDelivery = deliveries[0];
+    }
+    const wallClock = await readDatabaseWallClock(
+      transaction,
+      "ATTEMPT_DATABASE_TIME_UNAVAILABLE",
+    );
+    if (new Date(locked.lease_expires_at).getTime() <= wallClock.getTime()) return undefined;
+    if (
+      locked.recovery_dispatch_id
+      && (
+        !recoveryDelivery
+        || !["attempt_reserved", "running"].includes(recoveryDelivery.state)
+        || recoveryDelivery.attempt_id !== locked.attempt_id
+        || !recoveryDelivery.lease_expires_at
+        || new Date(recoveryDelivery.lease_expires_at).getTime() <= wallClock.getTime()
+      )
+    ) return undefined;
+    return operation(transaction, locked, wallClock);
+  }) as Promise<AttemptRow | undefined>;
+}
+
 export function createAttemptRepository(
   sql: Sql,
   identityFactory: AttemptIdentityFactory = defaultAttemptIdentityFactory,
@@ -451,32 +531,40 @@ export function createAttemptRepository(
       options: Readonly<{ now?: Date; leaseMs?: number }> = {},
     ): Promise<FenceUpdateResult> {
       const identity = FenceIdentityV1Schema.parse(input);
-      const now = options.now ? new Date(options.now) : new Date();
-      const lease = leaseWindow(now, options.leaseMs ?? DEFAULT_ATTEMPT_LEASE_MS);
-      const row = await one(
-        sql,
-        `UPDATE execution_attempts
-            SET heartbeat_at = $4, lease_expires_at = $5, updated_at = $4
-          WHERE attempt_id = $1 AND generation = $2 AND fence_token = $3
-            AND disposition IN ('claimed', 'running')
-          RETURNING *`,
-        [identity.attemptId, identity.generation, identity.fenceToken, now, lease.expiresAt],
-      );
+      if (options.now && !Number.isFinite(new Date(options.now).getTime())) {
+        throw new Error("ATTEMPT_TIME_INVALID");
+      }
+      const row = await mutateLiveAttemptFence(sql, identity, async (transaction, _current, now) => {
+        const lease = leaseWindow(now, options.leaseMs ?? DEFAULT_ATTEMPT_LEASE_MS);
+        return one(
+          transaction,
+          `UPDATE execution_attempts
+              SET heartbeat_at = $4, lease_expires_at = $5, updated_at = $4
+            WHERE attempt_id = $1 AND generation = $2 AND fence_token = $3
+              AND disposition IN ('claimed', 'running')
+              AND lease_expires_at > $4
+            RETURNING *`,
+          [identity.attemptId, identity.generation, identity.fenceToken, now, lease.expiresAt],
+        );
+      });
       return row ? { status: "heartbeat", attempt: mapAttempt(row) } : { status: "stale_fence" };
     },
 
     async markRunning(input: unknown, options: Readonly<{ now?: Date }> = {}): Promise<FenceUpdateResult> {
       const identity = FenceIdentityV1Schema.parse(input);
-      const now = options.now ? new Date(options.now) : new Date();
-      const row = await one(
-        sql,
+      if (options.now && !Number.isFinite(new Date(options.now).getTime())) {
+        throw new Error("ATTEMPT_TIME_INVALID");
+      }
+      const row = await mutateLiveAttemptFence(sql, identity, (transaction, _current, now) => one(
+        transaction,
         `UPDATE execution_attempts
             SET disposition = 'running', heartbeat_at = $4, updated_at = $4
           WHERE attempt_id = $1 AND generation = $2 AND fence_token = $3
             AND disposition IN ('claimed', 'running')
+            AND lease_expires_at > $4
           RETURNING *`,
         [identity.attemptId, identity.generation, identity.fenceToken, now],
-      );
+      ));
       return row ? { status: "running", attempt: mapAttempt(row) } : { status: "stale_fence" };
     },
 
@@ -491,9 +579,11 @@ export function createAttemptRepository(
       options: Readonly<{ now?: Date }> = {},
     ): Promise<FenceUpdateResult> {
       const candidate = CandidateSourceInputV1Schema.parse(input);
-      const now = options.now ? new Date(options.now) : new Date();
-      const row = await one(
-        sql,
+      if (options.now && !Number.isFinite(new Date(options.now).getTime())) {
+        throw new Error("ATTEMPT_TIME_INVALID");
+      }
+      const row = await mutateLiveAttemptFence(sql, candidate, (transaction, _current, now) => one(
+        transaction,
         `UPDATE execution_attempts
             SET source_after_sha = $4,
                 source_after_tree_hash = $5,
@@ -501,6 +591,7 @@ export function createAttemptRepository(
                 updated_at = $6
           WHERE attempt_id = $1 AND generation = $2 AND fence_token = $3
             AND disposition IN ('claimed', 'running')
+            AND lease_expires_at > $6
             AND (
               source_after_sha IS NULL
               OR (source_after_sha = $4 AND source_after_tree_hash = $5)
@@ -514,15 +605,17 @@ export function createAttemptRepository(
           candidate.sourceAfter.treeHash,
           now,
         ],
-      );
+      ));
       return row ? { status: "candidate", attempt: mapAttempt(row) } : { status: "stale_fence" };
     },
 
     async complete(input: unknown, options: Readonly<{ now?: Date }> = {}): Promise<FenceUpdateResult> {
       const completion = CompletionInputV1Schema.parse(input);
-      const now = options.now ? new Date(options.now) : new Date();
-      const row = await one(
-        sql,
+      if (options.now && !Number.isFinite(new Date(options.now).getTime())) {
+        throw new Error("ATTEMPT_TIME_INVALID");
+      }
+      const row = await mutateLiveAttemptFence(sql, completion, (transaction, _current, now) => one(
+        transaction,
         `UPDATE execution_attempts
             SET disposition = $4,
                 source_after_sha = COALESCE(execution_attempts.source_after_sha, $5),
@@ -541,6 +634,7 @@ export function createAttemptRepository(
                 updated_at = $9
           WHERE attempt_id = $1 AND generation = $2 AND fence_token = $3
             AND disposition IN ('claimed', 'running')
+            AND lease_expires_at > $9
             AND (
               source_after_sha IS NULL
               OR ($5::text IS NOT NULL AND source_after_sha = $5 AND source_after_tree_hash = $6)
@@ -557,7 +651,7 @@ export function createAttemptRepository(
           JSON.stringify(completion.evidenceRefs),
           now,
         ],
-      );
+      ));
       return row ? { status: "completed", attempt: mapAttempt(row) } : { status: "stale_fence" };
     },
   };

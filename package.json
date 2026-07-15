@@ -24,6 +24,7 @@
     "db:contract-spine:plan": "node --import tsx scripts/contract-spine-migrate.ts plan",
     "db:contract-spine:apply": "node --import tsx scripts/contract-spine-migrate.ts apply",
     "db:contract-spine:verify": "node --import tsx scripts/contract-spine-migrate.ts verify",
+    "db:contract-spine:rollback-20": "node --import tsx scripts/contract-spine-migrate.ts rollback-20-to-19",
     "artifacts:index:plan": "node --import tsx scripts/product-artifact-index.ts plan",
     "artifacts:index:bootstrap": "node --import tsx scripts/product-artifact-index.ts bootstrap",
     "artifacts:index:verify": "node --import tsx scripts/product-artifact-index.ts verify",

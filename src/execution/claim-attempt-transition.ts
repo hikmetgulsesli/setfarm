@@ -1,5 +1,6 @@
 import type postgres from "postgres";
 
+import { readDatabaseWallClock } from "../db/database-wall-clock.js";
 import type { TerminalAttemptDispositionV1 } from "./schemas/execution-attempt-v1.js";
 import type { SourceRevisionV1 } from "./schemas/execution-attempt-v1.js";
 import type { ClaimEnvelopeV1 } from "./schemas/claim-envelope-v1.js";
@@ -33,6 +34,9 @@ type AttemptRow = Readonly<{
   packet_hash?: string | null;
   compilation_report_hash?: string | null;
   slice_hash?: string | null;
+  lease_expires_at?: Date | string;
+  recovery_case_revision_id?: string | null;
+  recovery_dispatch_id?: string | null;
 }>;
 
 export type TerminalClaimTransitionResult = Readonly<{
@@ -107,7 +111,7 @@ function assertV3AttemptContract(
  * never become visible before the old immutable owner is terminal.
  */
 export async function closeExactSingleStepClaimInTransaction(
-  sql: postgres.Sql | postgres.TransactionSql,
+  sql: postgres.TransactionSql,
   input: Readonly<{
     envelope: ClaimEnvelopeV1;
     outcome: SingleStepClaimOutcome;
@@ -120,8 +124,8 @@ export async function closeExactSingleStepClaimInTransaction(
   if (envelope.storyId || envelope.storyDbId || envelope.attempt) {
     throw new Error("SINGLE_STEP_CLAIM_STORY_IDENTITY_FORBIDDEN");
   }
-  const transitionTime = input.now ? new Date(input.now) : new Date();
-  if (!Number.isFinite(transitionTime.getTime())) throw new Error("SINGLE_STEP_CLAIM_TIME_INVALID");
+  const callerTime = input.now ? new Date(input.now) : new Date();
+  if (!Number.isFinite(callerTime.getTime())) throw new Error("SINGLE_STEP_CLAIM_TIME_INVALID");
 
   await acquireClaimMutationAuthorityInTransaction(sql as postgres.TransactionSql, {
     claimId: envelope.claimId,
@@ -178,6 +182,10 @@ export async function closeExactSingleStepClaimInTransaction(
   if (claim.protocol !== envelope.protocol) throw new Error("SINGLE_STEP_CLAIM_PROTOCOL_MISMATCH");
   if (!["running", "resuming"].includes(claim.run_status)) throw new Error("SINGLE_STEP_CLAIM_RUN_NOT_ACTIVE");
   if (!["running", "pending"].includes(claim.step_status)) throw new Error("SINGLE_STEP_CLAIM_STEP_NOT_ACTIVE");
+  const transitionTime = await readDatabaseWallClock(
+    sql,
+    "SINGLE_STEP_CLAIM_DATABASE_TIME_UNAVAILABLE",
+  );
 
   const closed = await sql.unsafe<Array<{ id: string }>>(
     `UPDATE claim_log
@@ -213,7 +221,7 @@ export async function closeExactSingleStepClaimInTransaction(
  * packet-bound attempt fence.
  */
 export async function closeUniqueSingleStepClaimForRecoveryInTransaction(
-  sql: postgres.Sql | postgres.TransactionSql,
+  sql: postgres.TransactionSql,
   input: Readonly<{
     runId: string;
     stepDbId: string;
@@ -342,15 +350,15 @@ export type CloseClaimAndBoundAttemptInput = Readonly<{
 }>;
 
 export async function closeClaimAndBoundAttemptInTransaction(
-  transaction: postgres.Sql | postgres.TransactionSql,
+  transaction: postgres.TransactionSql,
   input: CloseClaimAndBoundAttemptInput,
 ): Promise<TerminalClaimTransitionResult> {
   if (!Number.isSafeInteger(input.claimId) || input.claimId <= 0) {
     throw new Error("CLAIM_LIFECYCLE_ID_INVALID");
   }
   if (!input.outcome.trim()) throw new Error("CLAIM_LIFECYCLE_OUTCOME_INVALID");
-  const now = input.now ? new Date(input.now) : new Date();
-  if (!Number.isFinite(now.getTime())) throw new Error("CLAIM_LIFECYCLE_TIME_INVALID");
+  const callerTime = input.now ? new Date(input.now) : new Date();
+  if (!Number.isFinite(callerTime.getTime())) throw new Error("CLAIM_LIFECYCLE_TIME_INVALID");
 
   try {
     await acquireClaimMutationAuthorityInTransaction(transaction as postgres.TransactionSql, {
@@ -436,7 +444,8 @@ export async function closeClaimAndBoundAttemptInTransaction(
     const attempts = claim.protocol !== "legacy"
       ? await transaction.unsafe<AttemptRow[]>(
         `SELECT attempt_id, claim_id::text, generation, fence_token, agent_id, evidence_refs,
-                step_id, story_id, packet_hash, compilation_report_hash, slice_hash
+                step_id, story_id, packet_hash, compilation_report_hash, slice_hash,
+                lease_expires_at, recovery_case_revision_id, recovery_dispatch_id
            FROM execution_attempts
           WHERE run_id = $1
             AND step_id = $2
@@ -463,6 +472,34 @@ export async function closeClaimAndBoundAttemptInTransaction(
     }
 
     const attempt = attempts[0];
+    let recoveryDelivery: Readonly<{
+      state: string;
+      attempt_id: string | null;
+      claim_id: string | number | null;
+      lease_expires_at: Date | string | null;
+    }> | undefined;
+    if (attempt?.recovery_dispatch_id || attempt?.recovery_case_revision_id) {
+      if (!attempt.recovery_dispatch_id || !attempt.recovery_case_revision_id) {
+        throw new Error("CLAIM_ATTEMPT_RECOVERY_IDENTITY_INCOMPLETE");
+      }
+      const deliveries = await transaction.unsafe<Array<{
+        state: string;
+        attempt_id: string | null;
+        claim_id: string | number | null;
+        lease_expires_at: Date | string | null;
+      }>>(
+        `SELECT state, attempt_id, claim_id, lease_expires_at
+           FROM recovery_dispatch_deliveries
+          WHERE dispatch_id = $1 AND revision_id = $2
+          FOR UPDATE`,
+        [attempt.recovery_dispatch_id, attempt.recovery_case_revision_id],
+      );
+      recoveryDelivery = deliveries[0];
+    }
+    const now = await readDatabaseWallClock(
+      transaction as postgres.TransactionSql,
+      "CLAIM_LIFECYCLE_DATABASE_TIME_UNAVAILABLE",
+    );
     let attemptDisposition: TerminalAttemptDispositionV1 | undefined;
     if (attempt) {
       const refs = parseEvidenceRefs(attempt.evidence_refs);
@@ -474,6 +511,29 @@ export async function closeClaimAndBoundAttemptInTransaction(
         || (attempt.agent_id !== null && attempt.agent_id !== claim.agent_id)
       ) {
         throw new Error("CLAIM_ATTEMPT_BINDING_MISMATCH");
+      }
+      if (
+        input.recoveryAuthority !== "orphan_recovery"
+        && (
+          !attempt.lease_expires_at
+          || new Date(attempt.lease_expires_at).getTime() <= now.getTime()
+        )
+      ) {
+        throw new Error("CLAIM_ATTEMPT_LEASE_EXPIRED");
+      }
+      if (
+        input.recoveryAuthority !== "orphan_recovery"
+        && attempt.recovery_dispatch_id
+        && (
+          !recoveryDelivery
+          || !["attempt_reserved", "running"].includes(recoveryDelivery.state)
+          || recoveryDelivery.attempt_id !== attempt.attempt_id
+          || Number(recoveryDelivery.claim_id) !== input.claimId
+          || !recoveryDelivery.lease_expires_at
+          || new Date(recoveryDelivery.lease_expires_at).getTime() <= now.getTime()
+        )
+      ) {
+        throw new Error("CLAIM_ATTEMPT_RECOVERY_LEASE_EXPIRED");
       }
       if (
         failureEvidence
@@ -523,6 +583,7 @@ export async function closeClaimAndBoundAttemptInTransaction(
             AND generation = $2
             AND fence_token = $3
             AND disposition IN ('claimed', 'running')
+            AND ($9::boolean OR lease_expires_at > $8)
             AND (
               $6::text IS NULL
               OR source_after_sha IS NULL
@@ -541,6 +602,7 @@ export async function closeClaimAndBoundAttemptInTransaction(
           failureEvidence?.sourceAtFailure.sha ?? null,
           failureEvidence?.sourceAtFailure.treeHash ?? null,
           now,
+          input.recoveryAuthority === "orphan_recovery",
         ],
       );
       if (updated.length !== 1) throw new Error("CLAIM_ATTEMPT_FENCE_LOST");
@@ -611,8 +673,8 @@ export async function completeStoryClaimAndBoundAttempt(
 ): Promise<CompletedStoryClaimTransitionResult> {
   const envelope = input.envelope;
   if (!envelope.storyId || !envelope.storyDbId) throw new Error("STORY_COMPLETION_IDENTITY_REQUIRED");
-  const now = input.now ? new Date(input.now) : new Date();
-  if (!Number.isFinite(now.getTime())) throw new Error("STORY_COMPLETION_TIME_INVALID");
+  const callerTime = input.now ? new Date(input.now) : new Date();
+  if (!Number.isFinite(callerTime.getTime())) throw new Error("STORY_COMPLETION_TIME_INVALID");
 
   return sql.begin(async (transaction) => {
     await acquireClaimMutationAuthorityInTransaction(transaction, {
@@ -691,6 +753,7 @@ export async function completeStoryClaimAndBoundAttempt(
     }
 
     let attemptDisposition: TerminalAttemptDispositionV1 | undefined;
+    let ownerClock: Date | undefined;
     if (claim.protocol !== "legacy") {
       const expected = envelope.attempt;
       if (!expected || !input.sourceAfter) throw new Error("STORY_COMPLETION_ATTEMPT_EVIDENCE_REQUIRED");
@@ -703,7 +766,8 @@ export async function completeStoryClaimAndBoundAttempt(
         `SELECT attempt_id, claim_id::text, generation, fence_token, agent_id, evidence_refs,
                 step_id, story_id, packet_hash, compilation_report_hash, slice_hash,
                 source_before_sha, source_before_tree_hash,
-                source_after_sha, source_after_tree_hash
+                source_after_sha, source_after_tree_hash,
+                lease_expires_at, recovery_case_revision_id, recovery_dispatch_id
            FROM execution_attempts
           WHERE attempt_id = $1
           FOR UPDATE`,
@@ -732,6 +796,53 @@ export async function completeStoryClaimAndBoundAttempt(
         attempt,
         "STORY_COMPLETION_V3_ATTEMPT_CONTRACT_MISMATCH",
       );
+      let recoveryDelivery: Readonly<{
+        state: string;
+        attempt_id: string | null;
+        claim_id: string | number | null;
+        lease_expires_at: Date | string | null;
+      }> | undefined;
+      if (attempt.recovery_dispatch_id || attempt.recovery_case_revision_id) {
+        if (!attempt.recovery_dispatch_id || !attempt.recovery_case_revision_id) {
+          throw new Error("STORY_COMPLETION_RECOVERY_IDENTITY_INCOMPLETE");
+        }
+        const deliveries = await transaction.unsafe<Array<{
+          state: string;
+          attempt_id: string | null;
+          claim_id: string | number | null;
+          lease_expires_at: Date | string | null;
+        }>>(
+          `SELECT state, attempt_id, claim_id, lease_expires_at
+             FROM recovery_dispatch_deliveries
+            WHERE dispatch_id = $1 AND revision_id = $2
+            FOR UPDATE`,
+          [attempt.recovery_dispatch_id, attempt.recovery_case_revision_id],
+        );
+        recoveryDelivery = deliveries[0];
+      }
+      ownerClock = await readDatabaseWallClock(
+        transaction,
+        "STORY_COMPLETION_DATABASE_TIME_UNAVAILABLE",
+      );
+      if (
+        !attempt.lease_expires_at
+        || new Date(attempt.lease_expires_at).getTime() <= ownerClock.getTime()
+      ) {
+        throw new Error("STORY_COMPLETION_ATTEMPT_LEASE_EXPIRED");
+      }
+      if (
+        attempt.recovery_dispatch_id
+        && (
+          !recoveryDelivery
+          || !["attempt_reserved", "running"].includes(recoveryDelivery.state)
+          || recoveryDelivery.attempt_id !== attempt.attempt_id
+          || Number(recoveryDelivery.claim_id) !== envelope.claimId
+          || !recoveryDelivery.lease_expires_at
+          || new Date(recoveryDelivery.lease_expires_at).getTime() <= ownerClock.getTime()
+        )
+      ) {
+        throw new Error("STORY_COMPLETION_RECOVERY_LEASE_EXPIRED");
+      }
       if (
         claim.protocol === "v3"
         && (
@@ -780,6 +891,7 @@ export async function completeStoryClaimAndBoundAttempt(
             AND generation = $2
             AND fence_token = $3
             AND disposition IN ('claimed', 'running')
+            AND lease_expires_at > $9
             AND (
               source_after_sha IS NULL
               OR (source_after_sha = $5 AND source_after_tree_hash = $6)
@@ -794,12 +906,16 @@ export async function completeStoryClaimAndBoundAttempt(
           input.sourceAfter.treeHash,
           input.outputHash ?? null,
           JSON.stringify(evidenceRefs),
-          now,
+          ownerClock,
         ],
       );
       if (completed.length !== 1) throw new Error("STORY_COMPLETION_ATTEMPT_CAS_LOST");
     }
 
+    const now = ownerClock ?? await readDatabaseWallClock(
+      transaction,
+      "STORY_COMPLETION_DATABASE_TIME_UNAVAILABLE",
+    );
     const closed = await transaction.unsafe<Array<{ id: string }>>(
       `UPDATE claim_log
           SET outcome = 'completed',
@@ -919,15 +1035,20 @@ export async function completeSingleStepClaimAndStateInTransaction(
   if (envelope.storyId || envelope.storyDbId || envelope.attempt) {
     throw new Error("SINGLE_STEP_COMPLETION_STORY_IDENTITY_FORBIDDEN");
   }
-  const now = input.now ? new Date(input.now) : new Date();
-  if (!Number.isFinite(now.getTime())) throw new Error("SINGLE_STEP_COMPLETION_TIME_INVALID");
+  const callerTime = input.now ? new Date(input.now) : new Date();
+  if (!Number.isFinite(callerTime.getTime())) throw new Error("SINGLE_STEP_COMPLETION_TIME_INVALID");
 
   await closeExactSingleStepClaimInTransaction(transaction, {
     envelope,
     outcome: "completed",
     diagnostic: input.diagnostic || "Exact single-step claim completed",
-    now,
+    now: callerTime,
   });
+
+  const now = await readDatabaseWallClock(
+    transaction,
+    "SINGLE_STEP_COMPLETION_DATABASE_TIME_UNAVAILABLE",
+  );
 
   const updated = await transaction.unsafe<Array<{ id: string }>>(
     `UPDATE steps

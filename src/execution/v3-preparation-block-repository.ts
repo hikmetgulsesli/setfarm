@@ -1,5 +1,6 @@
 import type postgres from "postgres";
 
+import { readDatabaseWallClock } from "../db/database-wall-clock.js";
 import { canonicalJsonStringify, hashCanonicalJson } from "../product-compiler/canonical-json.js";
 import {
   createV3PreparationFingerprint,
@@ -108,7 +109,12 @@ function readyFingerprint(input: Readonly<{
 }>): string {
   return hashCanonicalJson({
     schema: "setfarm.v3-preparation-ready.v1",
-    ...input,
+    runId: input.runId,
+    stepId: input.stepId,
+    storyId: input.storyId,
+    packetHash: input.packetHash,
+    sourceSha: input.sourceSha,
+    sourceTreeHash: input.sourceTreeHash,
     dependencyState: [...input.dependencyState]
       .sort((left, right) => left.storyId.localeCompare(right.storyId)),
   });
@@ -402,7 +408,9 @@ export function createV3PreparationBlockRepository(sql: postgres.Sql) {
       ) {
         throw new Error("V3_PREPARATION_DECISION_IDENTITY_MISMATCH");
       }
-      const openedAt = (input.now ?? new Date()).toISOString();
+      if (input.now && !Number.isFinite(new Date(input.now).getTime())) {
+        throw new Error("V3_PREPARATION_BLOCK_TIME_INVALID");
+      }
       return sql.begin(async (transaction) => {
         await lockPreparationStory(transaction, identity);
         await assertActivePacketOwner(transaction, identity);
@@ -423,6 +431,10 @@ export function createV3PreparationBlockRepository(sql: postgres.Sql) {
           [identity.runId, identity.stepId, identity.storyId, decision.fingerprint],
         );
         const historical = historicalRows[0];
+        const openedAt = (await readDatabaseWallClock(
+          transaction,
+          "V3_PREPARATION_DATABASE_TIME_UNAVAILABLE",
+        )).toISOString();
         if (open) {
           await transaction.unsafe(
             `UPDATE v3_preparation_blocks
@@ -506,7 +518,9 @@ export function createV3PreparationBlockRepository(sql: postgres.Sql) {
       authority?: V3PreparationClaimAuthorityV1;
     }>> {
       const resolutionFingerprint = readyFingerprint(input);
-      const resolvedAt = (input.now ?? new Date()).toISOString();
+      if (input.now && !Number.isFinite(new Date(input.now).getTime())) {
+        throw new Error("V3_PREPARATION_RESOLUTION_TIME_INVALID");
+      }
       return sql.begin(async (transaction) => {
         await lockPreparationStory(transaction, input);
         await assertActivePacketOwner(transaction, input);
@@ -522,6 +536,10 @@ export function createV3PreparationBlockRepository(sql: postgres.Sql) {
           if (open.fingerprint === resolutionFingerprint) {
             throw new Error("V3_PREPARATION_UNCHANGED_RESOLUTION_REJECTED");
           }
+          const resolvedAt = (await readDatabaseWallClock(
+            transaction,
+            "V3_PREPARATION_DATABASE_TIME_UNAVAILABLE",
+          )).toISOString();
           const resolvedRows = await transaction.unsafe<BlockRow[]>(
             `UPDATE v3_preparation_blocks
                 SET resolved_at = $2, resolution_fingerprint = $3
@@ -614,6 +632,10 @@ export function createV3PreparationBlockRepository(sql: postgres.Sql) {
           projectedDependencyIds,
           dependencyAttempts: [...dependencyAttempts],
         });
+        const resolvedAt = (await readDatabaseWallClock(
+          transaction,
+          "V3_PREPARATION_DATABASE_TIME_UNAVAILABLE",
+        )).toISOString();
         let resolvedBlock: V3PreparationBlockV1 | undefined;
         if (open) {
           if (open.fingerprint === authority.authorityHash) {

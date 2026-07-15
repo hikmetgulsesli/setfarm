@@ -174,16 +174,89 @@ describe("operational event delivery ownership", () => {
         }
       }
 
+      await database.sql`
+        UPDATE operational_event_deliveries
+           SET lease_expires_at = clock_timestamp() - interval '1 second'
+         WHERE event_key = 'webhook-final-lease-crash' AND consumer = 'webhook'
+      `;
       assert.equal(await repository.claimNext({
         consumer: "webhook",
         ownerInstanceId: "owner-after-final-crash",
         leaseMs: 1_000,
-        now: new Date(START.getTime() + 2_000),
+        now: new Date("1900-01-01T00:00:00.000Z"),
       }), undefined);
       const stored = await repository.find("webhook-final-lease-crash", "webhook");
       assert.equal(stored?.state, "quarantined");
       assert.equal(stored?.attemptCount, 3);
       assert.equal(stored?.diagnostic, "OPERATIONAL_EVENT_DELIVERY_FINAL_LEASE_EXPIRED");
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("uses database time for lease ownership and never revives an expired stale owner", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const outbox = createOperationalOutboxRepository(database.sql);
+      await publishFixture(outbox, "webhook-database-clock");
+      const repository = createOperationalEventDeliveryRepository(database.sql);
+      const first = await repository.claimNext({
+        consumer: "webhook",
+        ownerInstanceId: "clock-owner-one",
+        leaseMs: 60_000,
+        now: new Date("2999-01-01T00:00:00.000Z"),
+      });
+      assert.equal(first?.attemptCount, 1);
+
+      assert.equal(await repository.claimNext({
+        consumer: "webhook",
+        ownerInstanceId: "clock-owner-two",
+        leaseMs: 60_000,
+        now: new Date("2999-01-01T00:00:00.000Z"),
+      }), undefined);
+      assert.equal(await repository.heartbeat({
+        eventKey: first!.eventKey,
+        consumer: "webhook",
+        ownerInstanceId: first!.ownerInstanceId!,
+        leaseToken: first!.leaseToken!,
+        leaseMs: 60_000,
+        now: new Date("1900-01-01T00:00:00.000Z"),
+      }), true);
+
+      await database.sql`
+        UPDATE operational_event_deliveries
+           SET lease_expires_at = clock_timestamp() - interval '1 second'
+         WHERE event_key = 'webhook-database-clock' AND consumer = 'webhook'
+      `;
+      assert.equal(await repository.heartbeat({
+        eventKey: first!.eventKey,
+        consumer: "webhook",
+        ownerInstanceId: first!.ownerInstanceId!,
+        leaseToken: first!.leaseToken!,
+        leaseMs: 60_000,
+        now: new Date("1900-01-01T00:00:00.000Z"),
+      }), false);
+
+      const second = await repository.claimNext({
+        consumer: "webhook",
+        ownerInstanceId: "clock-owner-two",
+        leaseMs: 60_000,
+        now: new Date("1900-01-01T00:00:00.000Z"),
+      });
+      assert.equal(second?.attemptCount, 2);
+      assert.equal(second?.ownerInstanceId, "clock-owner-two");
+      await assert.rejects(
+        repository.settle({
+          eventKey: first!.eventKey,
+          consumer: "webhook",
+          ownerInstanceId: first!.ownerInstanceId!,
+          leaseToken: first!.leaseToken!,
+          outcome: "delivered",
+          result: { schema: "setfarm.test-webhook-result.v1" },
+          now: new Date("2999-01-01T00:00:00.000Z"),
+        }),
+        /OPERATIONAL_EVENT_DELIVERY_SETTLE_FENCE_LOST/,
+      );
     } finally {
       await database.cleanup();
     }

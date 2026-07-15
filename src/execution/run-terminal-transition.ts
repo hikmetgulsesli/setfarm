@@ -1,10 +1,17 @@
 import type postgres from "postgres";
 
+import { readDatabaseWallClock } from "../db/database-wall-clock.js";
+import {
+  lockV3TerminalRecoveryChainInTransaction,
+  settleV3TerminalRecoveryChainInTransaction,
+  type V3TerminalRecoverySnapshot,
+} from "../recovery/v3-terminal-recovery-chain.js";
 import { rejectRuntimeCompletionsForTerminalRunInTransaction } from "./runtime-completion.js";
 import { markRuntimeCompletionOwnerCommittedInTransaction } from "./runtime-completion.js";
 import { createSingleEffectCompletionPlanDescriptorV1 } from "./schemas/runtime-completion-plan-v1.js";
 import { hashCanonicalJson } from "../product-compiler/canonical-json.js";
 import { AcceptedCandidateV1Schema } from "../evidence/accepted-candidate-v1.js";
+import { enqueueOperationalOutboxEventInTransaction } from "./operational-outbox-repository.js";
 
 export type RunTerminalStatus = "completed" | "failed" | "cancelled";
 
@@ -45,6 +52,8 @@ export type RunTerminalTransitionResult = Readonly<{
   previousStatus: string;
   closedClaims: number;
   closedAttempts: number;
+  closedRecoveryDeliveries: number;
+  closedRecoveryCases: number;
   changedSteps: number;
   changedStories: number;
 }>;
@@ -86,7 +95,7 @@ function metaObject(raw: RunRow["meta"]): Record<string, unknown> {
  * when their immutable packet/slice contract matches the run.
  */
 export async function transitionRunToTerminalInTransaction(
-  sql: postgres.Sql | postgres.TransactionSql,
+  sql: postgres.TransactionSql,
   input: Readonly<{
     runId: string;
     status: RunTerminalStatus;
@@ -97,8 +106,9 @@ export async function transitionRunToTerminalInTransaction(
     now?: Date;
   }>,
 ): Promise<RunTerminalTransitionResult> {
-  const transitionTime = input.now ? new Date(input.now) : new Date();
-  if (!Number.isFinite(transitionTime.getTime())) throw new Error("RUN_TERMINAL_TIME_INVALID");
+  if (input.now && !Number.isFinite(new Date(input.now).getTime())) {
+    throw new Error("RUN_TERMINAL_TIME_INVALID");
+  }
   const runs = await sql.unsafe<RunRow[]>(
     `SELECT id, status, protocol, packet_hash, accepted_candidate_hash, meta
        FROM runs
@@ -146,6 +156,52 @@ export async function transitionRunToTerminalInTransaction(
   ) {
     throw new Error(`RUN_TERMINAL_SOURCE_STATUS_INVALID:${previousStatus}`);
   }
+  // Global owner order after run/termination is runtime -> attempt ->
+  // recovery delivery/case -> claim. Every canonical writer acquires the run
+  // row first, so this snapshot cannot gain a new downstream owner while the
+  // terminal transition is deciding.
+  const runtimes = await sql.unsafe<Array<{
+    session_id: string;
+    state: string;
+    claim_id: string | number;
+  }>>(
+    `SELECT session_id, state, claim_id
+       FROM runtime_sessions
+      WHERE run_id = $1
+      ORDER BY session_id
+      FOR UPDATE`,
+    [input.runId],
+  );
+  const attempts = await sql.unsafe<AttemptRow[]>(
+    `SELECT attempt_id, claim_id::text, step_id, story_id, generation, fence_token,
+            agent_id, disposition, evidence_refs, packet_hash,
+            compilation_report_hash, slice_hash
+       FROM execution_attempts
+      WHERE run_id = $1
+        AND disposition IN ('claimed', 'running')
+      ORDER BY attempt_id
+      FOR UPDATE`,
+    [input.runId],
+  );
+  const recoverySnapshot: V3TerminalRecoverySnapshot = run.protocol === "v3"
+    ? await lockV3TerminalRecoveryChainInTransaction(sql as postgres.TransactionSql, input.runId)
+    : Object.freeze({ deliveries: [], cases: [] });
+  const claims = await sql.unsafe<ClaimRow[]>(
+    `SELECT id::text, step_id, story_id, agent_id, outcome
+       FROM claim_log
+      WHERE run_id = $1
+      ORDER BY id
+      FOR UPDATE`,
+    [input.runId],
+  );
+  const openClaims = claims.filter((claim) => claim.outcome === null);
+  const transitionTime = await readDatabaseWallClock(sql, "RUN_TERMINAL_DATABASE_TIME_UNAVAILABLE");
+  const undrainedRuntimes = runtimes.filter((runtime) =>
+    !["drained", "released"].includes(runtime.state));
+  if (alreadyTerminal && undrainedRuntimes.length > 0) {
+    throw new Error(`RUN_TERMINAL_REPLAY_RUNTIME_NOT_DRAINED:${undrainedRuntimes.length}`);
+  }
+
   let terminationRequestId: string | undefined;
   if (terminationTarget && !alreadyTerminal && !unclaimedBootstrapFailure) {
     if (!requestBackedTermination) {
@@ -171,48 +227,17 @@ export async function transitionRunToTerminalInTransaction(
         ? "RUN_TERMINAL_CANCEL_DRAIN_PROOF_INVALID"
         : "RUN_TERMINAL_FAIL_DRAIN_PROOF_INVALID");
     }
-    const undrained = await sql.unsafe<Array<{ count: number }>>(
-      `SELECT COUNT(*)::integer AS count
-         FROM runtime_sessions
-        WHERE run_id = $1 AND state NOT IN ('drained', 'released')`,
-      [input.runId],
-    );
-    if ((undrained[0]?.count ?? 0) > 0) {
-      throw new Error(`RUN_TERMINAL_RUNTIME_NOT_DRAINED:${undrained[0]!.count}`);
+    if (undrainedRuntimes.length > 0) {
+      throw new Error(`RUN_TERMINAL_RUNTIME_NOT_DRAINED:${undrainedRuntimes.length}`);
     }
-    const untrackedClaims = await sql.unsafe<Array<{ count: number }>>(
-      `SELECT COUNT(*)::integer AS count
-         FROM claim_log cl
-         LEFT JOIN runtime_sessions rs ON rs.claim_id = cl.id
-        WHERE cl.run_id = $1 AND cl.outcome IS NULL AND rs.session_id IS NULL`,
-      [input.runId],
-    );
-    if ((untrackedClaims[0]?.count ?? 0) > 0) {
-      throw new Error(`RUN_TERMINAL_OPEN_CLAIM_SESSION_MISSING:${untrackedClaims[0]!.count}`);
+    const runtimeClaimIds = new Set(runtimes.map((runtime) => String(runtime.claim_id)));
+    const untrackedClaims = openClaims.filter((claim) => !runtimeClaimIds.has(claim.id));
+    if (untrackedClaims.length > 0) {
+      throw new Error(`RUN_TERMINAL_OPEN_CLAIM_SESSION_MISSING:${untrackedClaims.length}`);
     }
     terminationRequestId = requestId;
   }
 
-  const claims = await sql.unsafe<ClaimRow[]>(
-    `SELECT id::text, step_id, story_id, agent_id, outcome
-       FROM claim_log
-      WHERE run_id = $1
-      ORDER BY id
-      FOR UPDATE`,
-    [input.runId],
-  );
-  const attempts = await sql.unsafe<AttemptRow[]>(
-    `SELECT attempt_id, claim_id::text, step_id, story_id, generation, fence_token,
-            agent_id, disposition, evidence_refs, packet_hash,
-            compilation_report_hash, slice_hash
-       FROM execution_attempts
-      WHERE run_id = $1
-        AND disposition IN ('claimed', 'running')
-      ORDER BY attempt_id
-      FOR UPDATE`,
-    [input.runId],
-  );
-  const openClaims = claims.filter((claim) => claim.outcome === null);
   if (unclaimedBootstrapFailure) {
     const attemptCounts = await sql.unsafe<Array<{ count: number }>>(
       `SELECT COUNT(*)::integer AS count
@@ -220,19 +245,13 @@ export async function transitionRunToTerminalInTransaction(
         WHERE run_id = $1`,
       [input.runId],
     );
-    const runtimeCounts = await sql.unsafe<Array<{ count: number }>>(
-      `SELECT COUNT(*)::integer AS count
-         FROM runtime_sessions
-        WHERE run_id = $1`,
-      [input.runId],
-    );
     if (
       claims.length > 0
       || (attemptCounts[0]?.count ?? 0) > 0
-      || (runtimeCounts[0]?.count ?? 0) > 0
+      || runtimes.length > 0
     ) {
       throw new Error(
-        `RUN_TERMINAL_BOOTSTRAP_OWNER_EXISTS:claims=${claims.length}:attempts=${attemptCounts[0]?.count ?? 0}:runtimes=${runtimeCounts[0]?.count ?? 0}`,
+        `RUN_TERMINAL_BOOTSTRAP_OWNER_EXISTS:claims=${claims.length}:attempts=${attemptCounts[0]?.count ?? 0}:runtimes=${runtimes.length}`,
       );
     }
   }
@@ -267,6 +286,19 @@ export async function transitionRunToTerminalInTransaction(
       throw new Error("RUN_TERMINAL_V3_ACCEPTED_CANDIDATE_INVALID");
     }
   }
+
+  const recoverySettlement = run.protocol === "v3"
+    ? await settleV3TerminalRecoveryChainInTransaction(
+        sql as postgres.TransactionSql,
+        {
+          runId: input.runId,
+          status: input.status,
+          diagnostic: input.diagnostic,
+          transitionTime,
+          snapshot: recoverySnapshot,
+        },
+      )
+    : Object.freeze({ closedDeliveries: 0, closedRecoveryCases: 0, decisionRefs: [] });
 
   let closedAttempts = 0;
   if (run.protocol !== "legacy") {
@@ -346,6 +378,7 @@ export async function transitionRunToTerminalInTransaction(
 
   let changedStories = 0;
   let changedSteps = 0;
+  let rejectedRuntimeCompletions = 0;
   if (input.status !== "completed") {
     const storyStatus = input.status === "cancelled" ? "skipped" : "failed";
     const storyOutput = input.status === "cancelled" ? "Cancelled by user" : input.diagnostic;
@@ -377,10 +410,9 @@ export async function transitionRunToTerminalInTransaction(
       [input.runId, stepStatus, stepOutput.slice(0, 12_000), transitionTime],
     );
     changedSteps = steps.length;
-    await rejectRuntimeCompletionsForTerminalRunInTransaction(sql, {
+    rejectedRuntimeCompletions = await rejectRuntimeCompletionsForTerminalRunInTransaction(sql, {
       runId: input.runId,
       diagnostic: `Completion proposal preempted by canonical run ${input.status} transition: ${input.diagnostic}`,
-      now: transitionTime,
     });
   } else {
     const activeSteps = await sql.unsafe<Array<{ count: number }>>(
@@ -405,22 +437,25 @@ export async function transitionRunToTerminalInTransaction(
   }
 
   const meta = metaObject(run.meta);
-  if (input.status === "failed" && (input.terminalFailure ?? true)) {
+  if (!alreadyTerminal && input.status === "failed" && (input.terminalFailure ?? true)) {
     meta.terminal_failure = true;
     meta.terminal_marked_at = transitionTime.toISOString();
     meta.terminal_reason = input.diagnostic.slice(0, 1_000);
   }
-  const updatedRun = await sql.unsafe<Array<{ id: string }>>(
-    `UPDATE runs
-        SET status = $2,
-            meta = $3,
-            updated_at = $4
-      WHERE id = $1
-      RETURNING id`,
-    [input.runId, input.status, JSON.stringify(meta), transitionTime],
-  );
-  if (updatedRun.length !== 1) throw new Error("RUN_TERMINAL_RUN_CAS_LOST");
+  if (!alreadyTerminal) {
+    const updatedRun = await sql.unsafe<Array<{ id: string }>>(
+      `UPDATE runs
+          SET status = $2,
+              meta = $3,
+              updated_at = $4
+        WHERE id = $1
+        RETURNING id`,
+      [input.runId, input.status, JSON.stringify(meta), transitionTime],
+    );
+    if (updatedRun.length !== 1) throw new Error("RUN_TERMINAL_RUN_CAS_LOST");
+  }
 
+  let committedRuntimeCompletions = 0;
   if (input.status !== "cancelled") {
     // A processing manager completion can legitimately decide that its
     // acceptance gates terminally fail (or complete) the run. The terminal
@@ -438,6 +473,7 @@ export async function transitionRunToTerminalInTransaction(
         FOR UPDATE OF rcr, cl`,
       [input.runId],
     );
+    committedRuntimeCompletions = unplanned.length;
     for (const completion of unplanned) {
       const numericClaimId = Number(completion.claim_id);
       if (!Number.isSafeInteger(numericClaimId) || numericClaimId <= 0) {
@@ -487,37 +523,62 @@ export async function transitionRunToTerminalInTransaction(
     }
   }
 
-  const terminalEventKey = `run/${input.runId}/terminal/${input.status}`;
-  await sql.unsafe(
-    `INSERT INTO operational_outbox (
-       outbox_id, event_key, event_type, aggregate_type, aggregate_id,
-       payload, state, created_at, updated_at
-     ) VALUES ($1, $2, 'run.terminal', 'run', $3, $4::text::jsonb,
-       'pending', $5, $5)
-     ON CONFLICT (event_key) DO NOTHING`,
-    [
-      `OBX_${hashCanonicalJson(terminalEventKey).slice(0, 40)}`,
-      terminalEventKey,
-      input.runId,
-      JSON.stringify({
-        schema: "setfarm.operational-outbox-event.v1",
-        runId: input.runId,
-        status: input.status,
-        diagnostic: input.diagnostic,
-        ...(terminationRequestId ? { terminationRequestId } : {}),
-      }),
-      transitionTime,
-    ],
+  // Drained is the durable quiescence proof. Release it for both the initial
+  // terminal transition and an already-terminal replay repairing historical
+  // residue; an undrained replay was rejected before any owner mutation.
+  const releasedRuntimes = await sql.unsafe<Array<{ session_id: string }>>(
+    `UPDATE runtime_sessions
+        SET state = 'released', released_at = COALESCE(released_at, $2),
+            state_version = state_version + 1, updated_at = $2
+      WHERE run_id = $1 AND state = 'drained'
+      RETURNING session_id`,
+    [input.runId, transitionTime],
   );
 
+  const terminalEventPayload = {
+    schema: "setfarm.run-terminal-event.v2",
+    runId: input.runId,
+    status: input.status,
+    previousStatus,
+    reasonCode: alreadyTerminal
+      ? "historical_terminal_residue_reconciled"
+      : "canonical_terminal_transition",
+    ...(!alreadyTerminal ? { diagnostic: input.diagnostic } : {}),
+    closedClaims,
+    closedAttempts,
+    closedRecoveryDeliveries: recoverySettlement.closedDeliveries,
+    closedRecoveryCases: recoverySettlement.closedRecoveryCases,
+    recoveryDecisionRefs: recoverySettlement.decisionRefs,
+    changedSteps,
+    changedStories,
+    rejectedRuntimeCompletions,
+    committedRuntimeCompletions,
+    releasedRuntimes: releasedRuntimes.length,
+    ...(terminationRequestId ? { terminationRequestId } : {}),
+  };
+  const reconciledMutations = closedClaims
+    + closedAttempts
+    + recoverySettlement.closedDeliveries
+    + recoverySettlement.closedRecoveryCases
+    + changedSteps
+    + changedStories
+    + rejectedRuntimeCompletions
+    + committedRuntimeCompletions
+    + releasedRuntimes.length;
+  if (!alreadyTerminal || reconciledMutations > 0) {
+    const terminalEventKey = alreadyTerminal
+      ? `run/${input.runId}/terminal-reconciled/${hashCanonicalJson(terminalEventPayload)}`
+      : `run/${input.runId}/terminal/v2/${input.status}`;
+    await enqueueOperationalOutboxEventInTransaction(sql, {
+      eventKey: terminalEventKey,
+      eventType: "run.terminal",
+      aggregateType: "run",
+      aggregateId: input.runId,
+      payload: terminalEventPayload,
+      now: transitionTime,
+    });
+  }
   if (terminationRequestId) {
-    await sql.unsafe(
-      `UPDATE runtime_sessions
-          SET state = 'released', released_at = COALESCE(released_at, $2),
-              state_version = state_version + 1, updated_at = $2
-        WHERE run_id = $1 AND state = 'drained'`,
-      [input.runId, transitionTime],
-    );
     const terminalized = await sql.unsafe<Array<{ request_id: string }>>(
       `UPDATE run_termination_requests
           SET state = 'terminalized', terminalized_at = $3,
@@ -534,6 +595,8 @@ export async function transitionRunToTerminalInTransaction(
     previousStatus,
     closedClaims,
     closedAttempts,
+    closedRecoveryDeliveries: recoverySettlement.closedDeliveries,
+    closedRecoveryCases: recoverySettlement.closedRecoveryCases,
     changedSteps,
     changedStories,
   };

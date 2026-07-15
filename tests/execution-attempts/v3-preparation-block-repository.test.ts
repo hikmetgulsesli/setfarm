@@ -114,9 +114,10 @@ describe("v3 preparation block ledger", () => {
       decision: firstDecision,
       detail: "dependency missing",
       evidenceRefs: [`setfarm://artifact/${PACKET_HASH}`],
-      now: new Date("2026-07-13T10:00:00.000Z"),
+      now: new Date("2999-01-01T00:00:00.000Z"),
     });
     assert.equal(first.status, "opened");
+    assert.ok(new Date(first.block.openedAt).getTime() < new Date("2999-01-01T00:00:00.000Z").getTime());
     const duplicate = await repository.record({
       identity: firstIdentity,
       decision: firstDecision,
@@ -190,8 +191,10 @@ describe("v3 preparation block ledger", () => {
         sourceAfterSha: "6".repeat(40),
         sourceAfterTreeHash: "7".repeat(40),
       }],
+      now: new Date("2999-01-01T00:00:00.000Z"),
     });
     assert.equal(resolved.status, "resolved");
+    assert.ok(new Date(resolved.block!.resolvedAt!).getTime() < new Date("2999-01-01T00:00:00.000Z").getTime());
     assert.equal(await repository.findOpen({ runId: RUN_ID, stepId: "implement", storyId: "US-003" }), undefined);
   });
 

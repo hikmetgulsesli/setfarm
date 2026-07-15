@@ -584,12 +584,15 @@ describe("atomic claim and durable runtime publication", () => {
       }, { now: new Date("2026-07-13T10:00:00.500Z") });
       assert.equal(handoff.status, "lease_reissued");
 
-      const publication = await publishLoopClaimRuntime(database.sql, recoveryPublicationInput(
-        runId,
-        fixture,
-        "RTS_v3-exact-recovery",
-        handoff,
-      ));
+      const publication = await publishLoopClaimRuntime(database.sql, {
+        ...recoveryPublicationInput(
+          runId,
+          fixture,
+          "RTS_v3-exact-recovery",
+          handoff,
+        ),
+        now: new Date("2200-01-01T00:00:00.000Z"),
+      });
       assert.ok(publication);
       assert.deepEqual(publication!.claimAuthority, { mode: "recovery", handoff });
       const state = await database.sql<Array<{
@@ -727,10 +730,18 @@ describe("atomic claim and durable runtime publication", () => {
           && error.code === "V3_RECOVERY_PUBLICATION_DIRECTIVE_MISMATCH",
       );
 
+      const clocks = await database.sql<Array<{ wall_clock: Date }>>`
+        SELECT clock_timestamp() AS wall_clock
+      `;
+      await database.sql`
+        UPDATE recovery_dispatch_deliveries
+           SET lease_expires_at = ${new Date(clocks[0]!.wall_clock.getTime() - 1_000)}
+         WHERE dispatch_id = ${handoff.dispatchId}
+      `;
       await assert.rejects(
         publishLoopClaimRuntime(database.sql, {
           ...recoveryPublicationInput(runId, fixture, "RTS_v3-stale-lease-session", handoff),
-          now: new Date("2026-07-13T10:01:01.000Z"),
+          now: new Date("1900-01-01T00:00:00.000Z"),
         }),
         (error: unknown) => error instanceof V3RecoveryClaimAuthorityError
           && error.code === "V3_RECOVERY_PUBLICATION_LEASE_INVALID",
