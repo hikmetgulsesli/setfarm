@@ -642,13 +642,13 @@ export function createFindingRecoveryRepository(sql: Sql) {
       const transition = RecoveryTransitionInputSchema.parse(input);
       const requestedTime = new Date(options.now ?? new Date());
       if (!Number.isFinite(requestedTime.getTime())) throw new Error("RECOVERY_TRANSITION_TIME_INVALID");
-      const identity = await one<{ run_id: string; story_id: string }>(
-        sql,
-        "SELECT run_id, story_id FROM recovery_cases WHERE recovery_case_id = $1",
-        [transition.recoveryCaseId],
-      );
-      if (!identity) throw new Error("RECOVERY_CASE_NOT_FOUND");
       return sql.begin(async (transaction) => {
+        const identity = await one<{ run_id: string; story_id: string }>(
+          transaction,
+          "SELECT run_id, story_id FROM recovery_cases WHERE recovery_case_id = $1",
+          [transition.recoveryCaseId],
+        );
+        if (!identity) throw new Error("RECOVERY_CASE_NOT_FOUND");
         const authority = await lockV3RecoveryRunMutationAuthorityInTransaction(transaction, {
           runId: identity.run_id,
           storyId: identity.story_id,
@@ -871,13 +871,13 @@ export function createFindingRecoveryRepository(sql: Sql) {
       const request = DispatchInputSchema.parse(input);
       const requestedTime = new Date(options.now ?? new Date());
       if (!Number.isFinite(requestedTime.getTime())) throw new Error("RECOVERY_DISPATCH_TIME_INVALID");
-      const identity = await one<{ run_id: string; story_id: string }>(
-        sql,
-        "SELECT run_id, story_id FROM recovery_cases WHERE recovery_case_id = $1",
-        [request.recoveryCaseId],
-      );
-      if (!identity) throw new Error("RECOVERY_CASE_NOT_FOUND");
       return sql.begin(async (transaction) => {
+        const identity = await one<{ run_id: string; story_id: string }>(
+          transaction,
+          "SELECT run_id, story_id FROM recovery_cases WHERE recovery_case_id = $1",
+          [request.recoveryCaseId],
+        );
+        if (!identity) throw new Error("RECOVERY_CASE_NOT_FOUND");
         const authority = await lockV3RecoveryRunMutationAuthorityInTransaction(transaction, {
           runId: identity.run_id,
           storyId: identity.story_id,

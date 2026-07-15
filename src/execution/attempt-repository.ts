@@ -429,13 +429,13 @@ async function mutateLiveAttemptFence(
     wallClock: Date,
   ) => Promise<AttemptRow | undefined>,
 ): Promise<AttemptRow | undefined> {
-  const discovered = await one(
-    sql,
-    "SELECT * FROM execution_attempts WHERE attempt_id = $1",
-    [identity.attemptId],
-  );
-  if (!discovered) return undefined;
   return sql.begin(async (transaction) => {
+    const discoveredRows = await transaction.unsafe<Array<Pick<AttemptRow, "run_id">>>(
+      "SELECT run_id FROM execution_attempts WHERE attempt_id = $1",
+      [identity.attemptId],
+    );
+    const discovered = discoveredRows[0];
+    if (!discovered) return undefined;
     const runs = await transaction.unsafe<Array<{ status: string }>>(
       "SELECT status FROM runs WHERE id = $1 FOR UPDATE",
       [discovered.run_id],
@@ -473,7 +473,11 @@ async function mutateLiveAttemptFence(
       transaction,
       "ATTEMPT_DATABASE_TIME_UNAVAILABLE",
     );
-    if (new Date(locked.lease_expires_at).getTime() <= wallClock.getTime()) return undefined;
+    const attemptLeaseExpiresAt = new Date(locked.lease_expires_at).getTime();
+    if (
+      !Number.isFinite(attemptLeaseExpiresAt)
+      || attemptLeaseExpiresAt <= wallClock.getTime()
+    ) return undefined;
     if (
       locked.recovery_dispatch_id
       && (
@@ -481,6 +485,7 @@ async function mutateLiveAttemptFence(
         || !["attempt_reserved", "running"].includes(recoveryDelivery.state)
         || recoveryDelivery.attempt_id !== locked.attempt_id
         || !recoveryDelivery.lease_expires_at
+        || !Number.isFinite(new Date(recoveryDelivery.lease_expires_at).getTime())
         || new Date(recoveryDelivery.lease_expires_at).getTime() <= wallClock.getTime()
       )
     ) return undefined;

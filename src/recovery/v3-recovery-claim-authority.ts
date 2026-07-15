@@ -666,7 +666,9 @@ export function createV3RecoveryClaimAuthority(sql: Sql) {
             || attempt.source_before_tree_hash !== dispatch.sourceRevision.treeHash
             || !["claimed", "running"].includes(attempt.disposition)
             || !delivery.leaseExpiresAt
+            || !Number.isFinite(Date.parse(delivery.leaseExpiresAt))
             || Date.parse(delivery.leaseExpiresAt) <= now.getTime()
+            || !Number.isFinite(new Date(attempt.lease_expires_at).getTime())
             || new Date(attempt.lease_expires_at).getTime() <= now.getTime()
           ) {
             fail("V3_RECOVERY_ATTEMPT_BOUND_IDENTITY_MISMATCH", "delivery attempt binding is not exact");

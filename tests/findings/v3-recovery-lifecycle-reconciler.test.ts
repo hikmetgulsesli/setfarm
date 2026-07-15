@@ -1453,6 +1453,60 @@ describe("v3 recovery lifecycle reconciler", () => {
     assert.equal(delivery?.attemptId, undefined);
   });
 
+  it("fails closed when a reserved publication heartbeat drifts from its creation proof", async () => {
+    const fixture = await setup();
+    const leaseAt = new Date(fixture.base.getTime() + 2_000);
+    const handoff = await lease(fixture, {
+      ownerInstanceId: "publication-heartbeat-drift-owner",
+      leaseMs: 60_000,
+      now: leaseAt,
+    });
+    const sessionId = `RTS_${"h".repeat(20)}-${sequence}`;
+    const publication = await publish(fixture, handoff, {
+      sessionId,
+      now: new Date(leaseAt.getTime() + 100),
+    });
+    assert.ok(publication);
+    await expireUnreservedPublication(handoff.dispatchId);
+    await database.sql`
+      UPDATE runtime_sessions
+         SET heartbeat_at = created_at + INTERVAL '1 millisecond',
+             updated_at = created_at + INTERVAL '1 millisecond'
+       WHERE session_id = ${sessionId}
+    `;
+
+    const report = await createV3RecoveryLifecycleReconciler(database.sql).reconcileActive(
+      { runId: fixture.runId },
+      { now: new Date(leaseAt.getTime() + 2_000) },
+    );
+    assert.equal(report.counts.rolledBackPublications, 0);
+    assert.equal(report.counts.quarantined, 1);
+    assert.equal(report.events[0]?.code, "V3_RECOVERY_LIFECYCLE_UNBOUND_OWNER_AMBIGUOUS");
+
+    const ownerRows = await database.sql<Array<{
+      runtime_state: string;
+      claim_outcome: string | null;
+      story_status: string;
+    }>>`
+      SELECT runtime.state AS runtime_state,
+             claim.outcome AS claim_outcome,
+             story.status AS story_status
+        FROM runtime_sessions runtime
+        JOIN claim_log claim ON claim.id = runtime.claim_id
+        JOIN stories story ON story.id = runtime.story_db_id
+       WHERE runtime.session_id = ${sessionId}
+    `;
+    assert.deepEqual({ ...ownerRows[0]! }, {
+      runtime_state: "reserved",
+      claim_outcome: null,
+      story_status: "running",
+    });
+    assert.equal(
+      (await fixture.deliveries.findDelivery(fixture.dispatch.dispatchId))?.state,
+      "leased",
+    );
+  });
+
   it("advances only an exact running runtime and active attempt, then becomes a no-op", async () => {
     const fixture = await setup();
     const leaseAt = new Date(fixture.base.getTime() + 2_000);

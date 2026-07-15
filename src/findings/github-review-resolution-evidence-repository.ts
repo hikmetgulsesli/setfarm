@@ -434,16 +434,16 @@ export function createGithubReviewResolutionEvidenceRepository(sql: Sql) {
       if (!Number.isFinite(requestedTime.getTime())) {
         fail("GITHUB_REVIEW_RESOLUTION_TIME_INVALID", "Resolution commit time is invalid");
       }
-      const discoveredRow = await one<ResolutionRow>(
-        sql,
-        "SELECT * FROM github_review_resolution_evidence WHERE evidence_hash = $1",
-        [evidenceHash],
-      );
-      if (!discoveredRow) {
-        fail("GITHUB_REVIEW_RESOLUTION_EVIDENCE_NOT_FOUND", "Durable resolution evidence does not exist");
-      }
-      const discovered = assertRowIdentity(discoveredRow);
       return sql.begin(async (transaction) => {
+        const discoveredRow = await one<ResolutionRow>(
+          transaction,
+          "SELECT * FROM github_review_resolution_evidence WHERE evidence_hash = $1",
+          [evidenceHash],
+        );
+        if (!discoveredRow) {
+          fail("GITHUB_REVIEW_RESOLUTION_EVIDENCE_NOT_FOUND", "Durable resolution evidence does not exist");
+        }
+        const discovered = assertRowIdentity(discoveredRow);
         const authority = await lockV3RecoveryRunMutationAuthorityInTransaction(transaction, {
           runId: discovered.runId,
           storyId: discovered.storyId,

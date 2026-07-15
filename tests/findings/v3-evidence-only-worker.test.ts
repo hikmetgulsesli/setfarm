@@ -1062,6 +1062,44 @@ describe("v3 evidence-only recovery worker", () => {
     }), undefined);
   });
 
+  it("does not quarantine through a non-finite delivery lease", async () => {
+    const fixture = await setup({ workflowId: "workflow-evidence-only-nonfinite-lease" });
+    const baseDependencies = dependencies({ fixture, verdict: "pass" });
+    const worker = createV3EvidenceOnlyRecoveryWorker(database.sql, {
+      ...baseDependencies,
+      loadOrReserveAttempt: async () => {
+        throw new Error("TEST_ATTEMPT_CONTEXT_FAILURE");
+      },
+    });
+    const lease = await worker.acquireNext({
+      workflowId: fixture.workflowId,
+      ownerInstanceId: "evidence-nonfinite-lease-worker",
+      leaseMs: 60_000,
+    });
+    assert.ok(lease);
+    await database.sql.unsafe(
+      "UPDATE recovery_dispatch_deliveries SET lease_expires_at = 'infinity'::timestamptz WHERE dispatch_id = $1",
+      [fixture.dispatch.dispatchId],
+    );
+
+    await assert.rejects(worker.runLease(lease), /TEST_ATTEMPT_CONTEXT_FAILURE/);
+    const rows = await database.sql.unsafe<Array<{
+      delivery_state: string;
+      case_status: string;
+    }>>(
+      `SELECT delivery.state AS delivery_state, recovery_case.status AS case_status
+         FROM recovery_dispatch_deliveries delivery
+         JOIN recovery_cases recovery_case
+           ON recovery_case.recovery_case_id = delivery.recovery_case_id
+        WHERE delivery.dispatch_id = $1`,
+      [fixture.dispatch.dispatchId],
+    );
+    assert.deepEqual({ ...rows[0]! }, {
+      delivery_state: "leased",
+      case_status: "evidencing",
+    });
+  });
+
   it("leaves a forged recovery chain unleased", async () => {
     const fixture = await setup({ workflowId: "workflow-evidence-only-forged" });
     await database.sql.unsafe(

@@ -744,6 +744,9 @@ async function quarantineDelivery(input: Readonly<{
     if ((deliveryOwner.attempt_id === null) !== (deliveryOwner.claim_id === null)) {
       fail("V3_EVIDENCE_ONLY_QUARANTINE_OWNER_PARTIAL", "delivery has only one side of its attempt/claim binding");
     }
+    const deliveryLeaseExpiresAt = deliveryOwner.lease_expires_at
+      ? new Date(deliveryOwner.lease_expires_at).getTime()
+      : Number.NaN;
     let mutationTime: Date | undefined;
     if (deliveryOwner.attempt_id && deliveryOwner.claim_id !== null) {
       const owners = await transaction.unsafe<Array<{
@@ -799,10 +802,12 @@ async function quarantineDelivery(input: Readonly<{
         transaction,
         "V3_EVIDENCE_ONLY_DB_TIME_UNAVAILABLE",
       );
+      const attemptLeaseExpiresAt = new Date(owner.lease_expires_at).getTime();
       if (
-        !deliveryOwner.lease_expires_at
-        || new Date(deliveryOwner.lease_expires_at).getTime() <= mutationTime.getTime()
-        || new Date(owner.lease_expires_at).getTime() <= mutationTime.getTime()
+        !Number.isFinite(deliveryLeaseExpiresAt)
+        || deliveryLeaseExpiresAt <= mutationTime.getTime()
+        || !Number.isFinite(attemptLeaseExpiresAt)
+        || attemptLeaseExpiresAt <= mutationTime.getTime()
       ) {
         fail("V3_EVIDENCE_ONLY_QUARANTINE_LEASE_LOST", "expired owner cannot quarantine canonical recovery state");
       }
@@ -843,8 +848,8 @@ async function quarantineDelivery(input: Readonly<{
       "V3_EVIDENCE_ONLY_DB_TIME_UNAVAILABLE",
     );
     if (
-      !deliveryOwner.lease_expires_at
-      || new Date(deliveryOwner.lease_expires_at).getTime() <= now.getTime()
+      !Number.isFinite(deliveryLeaseExpiresAt)
+      || deliveryLeaseExpiresAt <= now.getTime()
     ) {
       fail("V3_EVIDENCE_ONLY_QUARANTINE_LEASE_LOST", "expired owner cannot quarantine canonical recovery state");
     }

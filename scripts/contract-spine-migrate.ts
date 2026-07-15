@@ -57,6 +57,9 @@ function parseArgs(argv: string[]): Readonly<{
     throw new Error("--database requires a PostgreSQL URL");
   }
   const targetReleaseIndex = argv.indexOf("--target-release");
+  if (targetReleaseIndex >= 0 && !argv[targetReleaseIndex + 1]) {
+    throw new Error("--target-release requires a Git SHA");
+  }
   const targetReleaseSha = targetReleaseIndex >= 0 ? argv[targetReleaseIndex + 1] : undefined;
   if (mode === "rollback-20-to-19" && !targetReleaseSha) {
     throw new Error("rollback-20-to-19 requires --target-release <git-sha>");

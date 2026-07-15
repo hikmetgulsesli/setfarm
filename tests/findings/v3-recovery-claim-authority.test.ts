@@ -324,6 +324,21 @@ describe("v3 recovery-first claim authority", () => {
     assert.equal(replay.attemptBinding?.claimId, claimId);
     assert.equal(replay.reservationBoundary.requiredNextOperation, "resume_exact_attempt_only");
 
+    await database.sql.unsafe(
+      "UPDATE execution_attempts SET lease_expires_at = 'infinity'::timestamptz WHERE attempt_id = $1",
+      [reserved.attempt.attemptId],
+    );
+    await assert.rejects(
+      authority.acquireRecoveryClaim({
+        runId: fixture.runId,
+        storyId: fixture.storyId,
+        ownerInstanceId: "attempt-owner",
+        continuation: { kind: "attempt", attemptId: reserved.attempt.attemptId },
+      }),
+      (error: unknown) => error instanceof V3RecoveryClaimAuthorityError
+        && error.code === "V3_RECOVERY_ATTEMPT_BOUND_IDENTITY_MISMATCH",
+    );
+
     await assert.rejects(
       authority.acquireRecoveryClaim({
         runId: fixture.runId,

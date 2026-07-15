@@ -1267,22 +1267,22 @@ export function createRecoveryDeliveryRepository(sql: Sql) {
       const requestedTime = new Date(options.now ?? new Date());
       if (!Number.isFinite(requestedTime.getTime())) throw new Error("RECOVERY_DELIVERY_LEASE_TIME_INVALID");
       const leaseToken = randomBytes(32).toString("hex");
-      const discovered = await one<{ dispatch_id: string; run_id: string; story_id: string }>(
-        sql,
-        `SELECT dispatch_id, run_id, story_id
-           FROM recovery_dispatch_deliveries
-          WHERE (
-                state = 'authorized'
-                OR (state = 'leased' AND lease_expires_at <= clock_timestamp())
-              )
-            AND ($1::text IS NULL OR run_id = $1)
-            AND ($2::text IS NULL OR story_id = $2)
-          ORDER BY authorized_at, dispatch_id
-          LIMIT 1`,
-        [input.runId ?? null, input.storyId ?? null],
-      );
-      if (!discovered) return undefined;
       return sql.begin(async (transaction) => {
+        const discovered = await one<{ dispatch_id: string; run_id: string; story_id: string }>(
+          transaction,
+          `SELECT dispatch_id, run_id, story_id
+             FROM recovery_dispatch_deliveries
+            WHERE (
+                  state = 'authorized'
+                  OR (state = 'leased' AND lease_expires_at <= clock_timestamp())
+                )
+              AND ($1::text IS NULL OR run_id = $1)
+              AND ($2::text IS NULL OR story_id = $2)
+            ORDER BY authorized_at, dispatch_id
+            LIMIT 1`,
+          [input.runId ?? null, input.storyId ?? null],
+        );
+        if (!discovered) return undefined;
         await lockV3RecoveryRunMutationAuthorityInTransaction(transaction, {
           runId: discovered.run_id,
           storyId: discovered.story_id,

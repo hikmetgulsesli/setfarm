@@ -184,6 +184,30 @@ describe("revision-fenced attempt repository", () => {
     assert.equal(unchanged?.sourceAfter, undefined);
   });
 
+  it("fails closed when PostgreSQL returns a non-finite lease timestamp", async () => {
+    const reserved = await repository.reserve(await exactBoundProductReservation(database.sql, {
+      storyId: "US-NONFINITE-LEASE",
+      packetHash: HASH_B,
+      sliceHash: HASH_C,
+    }));
+    assert.equal(reserved.status, "reserved");
+    await database.sql.unsafe(
+      "UPDATE execution_attempts SET lease_expires_at = 'infinity'::timestamptz WHERE attempt_id = $1",
+      [reserved.attempt.attemptId],
+    );
+
+    assert.deepEqual(await repository.markRunning({
+      attemptId: reserved.attempt.attemptId,
+      generation: reserved.attempt.generation,
+      fenceToken: reserved.attempt.fenceToken,
+    }), { status: "stale_fence" });
+    const rows = await database.sql.unsafe<Array<{ disposition: string }>>(
+      "SELECT disposition FROM execution_attempts WHERE attempt_id = $1",
+      [reserved.attempt.attemptId],
+    );
+    assert.equal(rows[0]?.disposition, "claimed");
+  });
+
   it("retains attempt evidence after the legacy run is hard-deleted", async () => {
     await database.insertRun("run-delete-test");
     const reserved = await repository.reserve(await exactBoundProductReservation(database.sql, {
