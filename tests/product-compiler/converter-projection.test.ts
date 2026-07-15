@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
+import ts from "typescript";
 
 describe("Stitch converter semantic projection", () => {
   it("projects only exact v3 controls and records every undeclared Stitch control as neutralized evidence", () => {
@@ -57,6 +58,7 @@ describe("Stitch converter semantic projection", () => {
           <button>Settings</button>
           <button aria-label="Help">?</button>
           <button data-action="ACT_REFRESH">Refresh Status</button>
+          <input aria-label="Decorative filter" />
           <img title="1 > 0" role="status" aria-label="Status refreshed" />
           ${"<p>design-token</p>".repeat(80)}
         </main>
@@ -72,7 +74,7 @@ describe("Stitch converter semantic projection", () => {
         schema: "setfarm.stitch-screen-projection.v2",
         mode: "contract_only",
         targetRef: "TARGET_STATUS",
-        rawInteractiveCounts: { buttons: 3, links: 0, inputs: 0, textareas: 0, selects: 0 },
+        rawInteractiveCounts: { buttons: 3, links: 0, inputs: 1, textareas: 0, selects: 0 },
         requiredObservableRefs: ["OBS_REFRESHED_STATUS"],
       });
       assert.deepEqual(index[0].observables, [{
@@ -93,15 +95,29 @@ describe("Stitch converter semantic projection", () => {
         [
           { label: "Settings", reasonCode: "undeclared_by_generation_target" },
           { label: "Help", reasonCode: "undeclared_by_generation_target" },
+          { label: "Decorative filter", reasonCode: "undeclared_by_generation_target" },
         ],
       );
 
       const source = fs.readFileSync(path.join(root, "src/screens/StatusPageStatusUtility.tsx"), "utf8");
       assert.match(source, /<button[^>]*hidden=\{true\}[^>]*data-setfarm-rejected-control="settings-1"[^>]*>Settings<\/button>/);
       assert.match(source, /<button[^>]*hidden=\{true\}[^>]*data-setfarm-rejected-control="help-2"[^>]*>/);
+      assert.match(source, /<input[^>]*aria-label="Decorative filter"[^>]*hidden=\{true\}[^>]*data-setfarm-rejected-control="decorative-filter-1"[^>]*\/>/);
       assert.match(source, /data-action="ACT_REFRESH"[^>]*data-action-id="refresh-status-3"[^>]*onClick=/);
       assert.match(source, /<img[^>]*title="1 > 0"[^>]*role="status"[^>]*aria-label="Status refreshed"[^>]*data-observable-refs="OBS_REFRESHED_STATUS"[^>]*\/>/);
       assert.doesNotMatch(source, /actions\?\.\["settings-1"\]|actions\?\.\["help-2"\]/);
+      assert.doesNotMatch(source, /\/\s+data-(?:control-id|setfarm-rejected-control)=/);
+      const transpiled = ts.transpileModule(source, {
+        compilerOptions: {
+          jsx: ts.JsxEmit.ReactJSX,
+          module: ts.ModuleKind.ESNext,
+          target: ts.ScriptTarget.ES2020,
+        },
+        reportDiagnostics: true,
+      });
+      const errors = (transpiled.diagnostics || [])
+        .filter((diagnostic) => diagnostic.category === ts.DiagnosticCategory.Error);
+      assert.deepEqual(errors.map((diagnostic) => diagnostic.messageText), []);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
@@ -218,6 +234,18 @@ describe("Stitch converter semantic projection", () => {
       assert.match(source, /data-action-input="ACT_SAVE_RECORD\.title"[^>]*data-control-id="task-title-1"/);
       assert.match(source, /data-action="ACT_SAVE_RECORD"[^>]*data-action-id="save-1"/);
       assert.doesNotMatch(source, /data-control-id="decorative-search/);
+      assert.doesNotMatch(source, /\/\s+data-(?:control-id|setfarm-rejected-control)=/);
+      const transpiled = ts.transpileModule(source, {
+        compilerOptions: {
+          jsx: ts.JsxEmit.ReactJSX,
+          module: ts.ModuleKind.ESNext,
+          target: ts.ScriptTarget.ES2020,
+        },
+        reportDiagnostics: true,
+      });
+      const errors = (transpiled.diagnostics || [])
+        .filter((diagnostic) => diagnostic.category === ts.DiagnosticCategory.Error);
+      assert.deepEqual(errors.map((diagnostic) => diagnostic.messageText), []);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

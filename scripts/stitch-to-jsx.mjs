@@ -1556,15 +1556,24 @@ function annotateInteractiveElements(html, projection) {
 
     return `<a${accessibleAttrs} data-action-id="${id}" data-setfarm-link-action="${id}">${inner}</a>`;
   });
+  const splitSelfClosingAttrs = (attrs) => {
+    const source = String(attrs || "");
+    const marker = /\/\s*$/.exec(source);
+    return {
+      attrs: marker ? source.slice(0, marker.index).trimEnd() : source,
+      selfClosing: Boolean(marker),
+    };
+  };
   const annotateValueTag = (tagName, attrs, fallback, index) => {
-    const label = attrValue(attrs, "aria-label")
-      || attrValue(attrs, "name")
-      || attrValue(attrs, "placeholder")
-      || attrValue(attrs, "id")
+    const sourceAttrs = splitSelfClosingAttrs(attrs).attrs;
+    const label = attrValue(sourceAttrs, "aria-label")
+      || attrValue(sourceAttrs, "name")
+      || attrValue(sourceAttrs, "placeholder")
+      || attrValue(sourceAttrs, "id")
       || fallback;
-    const actionRef = semanticActionRef(attrs);
-    const inputBindings = semanticActionInputs(attrs);
-    const cleanAttrs = String(attrs || "")
+    const actionRef = semanticActionRef(sourceAttrs);
+    const inputBindings = semanticActionInputs(sourceAttrs);
+    const cleanAttrs = sourceAttrs
       .replace(/\sdata-action-id=(?:"[^"]*"|'[^']*')/gi, "")
       .replace(/\sdata-control-id=(?:"[^"]*"|'[^']*')/gi, "")
       .replace(/\sonchange=(?:"[^"]*"|'[^']*')/gi, "")
@@ -1573,16 +1582,16 @@ function annotateInteractiveElements(html, projection) {
       const id = nextId(label, tagName, actions.length);
       if (projection && !projection.expectedActionRefs.has(actionRef)) {
         rejectControl({ id, kind: tagName, label, index, actionRef, inputBindings });
-        return neutralizedAttrs(attrs, id, tagName);
+        return neutralizedAttrs(sourceAttrs, id, tagName);
       }
       actions.push({ id, kind: tagName, label, index, actionRef, ...(inputBindings.length ? { inputBindings } : {}) });
       return `${cleanAttrs} data-action-id="${id}" onChange={() => actions?.["${id}"]?.()}`;
     }
-    if (inputBindings.length === 0 && !projection) return String(attrs || "");
+    if (inputBindings.length === 0 && !projection) return sourceAttrs;
     const id = nextId(label, tagName, valueControls.length);
     if (projection && !inputBindings.some(expectedInput)) {
       rejectControl({ id, kind: tagName, label, index, actionRef, inputBindings });
-      return neutralizedAttrs(attrs, id, tagName);
+      return neutralizedAttrs(sourceAttrs, id, tagName);
     }
     valueControls.push({ id, kind: tagName, label, index, inputBindings });
     return `${cleanAttrs} data-control-id="${id}"`;
@@ -1593,11 +1602,13 @@ function annotateInteractiveElements(html, projection) {
   });
   const withTextareas = withInputs.replace(/<textarea\b([^>]*)>/gi, (_match, attrs) => {
     const index = textareaIndex++;
-    return `<textarea${annotateValueTag("textarea", attrs, `Textarea ${index + 1}`, index)}>`;
+    const selfClosing = splitSelfClosingAttrs(attrs).selfClosing ? " /" : "";
+    return `<textarea${annotateValueTag("textarea", attrs, `Textarea ${index + 1}`, index)}${selfClosing}>`;
   });
   const withSelects = withTextareas.replace(/<select\b([^>]*)>/gi, (_match, attrs) => {
     const index = selectIndex++;
-    return `<select${annotateValueTag("select", attrs, `Select ${index + 1}`, index)}>`;
+    const selfClosing = splitSelfClosingAttrs(attrs).selfClosing ? " /" : "";
+    return `<select${annotateValueTag("select", attrs, `Select ${index + 1}`, index)}${selfClosing}>`;
   });
   return { html: withSelects, actions, valueControls, rejectedControls };
 }

@@ -1409,6 +1409,48 @@ describe("stitch-to-jsx", () => {
     }
   });
 
+  it("annotates self-closed value controls before preserving valid JSX closure", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-stitch-self-closed-controls-"));
+    try {
+      const stitchDir = path.join(tmp, "stitch");
+      fs.mkdirSync(stitchDir, { recursive: true });
+      fs.writeFileSync(path.join(stitchDir, "DESIGN_MANIFEST.json"), JSON.stringify([
+        { screenId: "control-screen", title: "Control Screen" },
+      ]));
+      writeHtml(path.join(stitchDir, "control-screen.html"), `
+        <main>
+          <input aria-label="Title" data-action-input="ACT_SAVE.title" />
+          <textarea aria-label="Notes" data-action-input="ACT_SAVE.notes" />
+          <select aria-label="Priority" data-action-input="ACT_SAVE.priority" />
+        </main>
+      `);
+
+      execFileSync("node", ["scripts/stitch-to-jsx.mjs", tmp], {
+        cwd: process.cwd(),
+        stdio: "pipe",
+      });
+
+      const code = fs.readFileSync(path.join(tmp, "src", "screens", "ControlScreen.tsx"), "utf-8");
+      assert.match(code, /<input[^>]*data-control-id="[^"]+"[^>]*\/>/);
+      assert.match(code, /<textarea[^>]*data-control-id="[^"]+"[^>]*\/>/);
+      assert.match(code, /<select[^>]*data-control-id="[^"]+"[^>]*\/>/);
+      assert.doesNotMatch(code, /\/\s+data-control-id=/);
+      const transpiled = ts.transpileModule(code, {
+        compilerOptions: {
+          jsx: ts.JsxEmit.ReactJSX,
+          module: ts.ModuleKind.ESNext,
+          target: ts.ScriptTarget.ES2020,
+        },
+        reportDiagnostics: true,
+      });
+      const errors = (transpiled.diagnostics || [])
+        .filter((diagnostic) => diagnostic.category === ts.DiagnosticCategory.Error);
+      assert.deepEqual(errors.map((diagnostic) => diagnostic.messageText), []);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("keeps form JSX valid when void tag attributes contain comparison-like text", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-stitch-void-quoted-gt-"));
     try {
