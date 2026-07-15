@@ -439,6 +439,22 @@ function checkDesign(input: ProductSupervisorInput): string[] {
   const rows = parsePrdSurfaceRows(prd);
   const screenMap = parseJsonArray(parsed.screen_map || context.screen_map || context.SCREEN_MAP || "");
   const issues: string[] = [];
+  const designRequired = String(
+    context.design_required
+      ?? context.DESIGN_REQUIRED
+      ?? parsed.design_required
+      ?? "true",
+  ).toLowerCase() !== "false";
+
+  // PLAN owns whether this delivery has a visual surface. A non-visual
+  // API/CLI DESIGN completion is canonical only with no Stitch screen map;
+  // requiring a screen here would contradict the design module and packet.
+  if (!designRequired) {
+    if (screenMap.length > 0) {
+      issues.push("DESIGN_NONVISUAL_SCREEN_MAP_PRESENT: DESIGN_REQUIRED=false cannot publish Stitch SCREEN_MAP entries.");
+    }
+    return issues;
+  }
 
   if (screenMap.length === 0) {
     issues.push("DESIGN_SCREEN_MAP_EMPTY: design did not produce SCREEN_MAP entries.");

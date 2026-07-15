@@ -4,6 +4,7 @@ import { describe, it } from "node:test";
 import {
   resolveV3PlanOutputAuthorityV1,
   shouldRunLegacyProductSupervisorV1,
+  V3PlanOutputRejectedError,
 } from "../../src/execution/v3-plan-output-authority.js";
 import { canonicalJsonStringify } from "../../src/product-compiler/canonical-json.js";
 import { extractTaskRequirementLedgerV1 } from "../../src/product-compiler/requirements/task-requirements-v1.js";
@@ -104,6 +105,28 @@ describe("PLAN v3 output authority", () => {
       stepId: "plan",
       planAuthority: authority,
     }), false);
+  });
+
+  it("rejects visual delivery that disables design before DESIGN can consume a contradictory packet", () => {
+    const invalid = proposal();
+    invalid.delivery.designRequired = false;
+
+    assert.throws(
+      () => resolveV3PlanOutputAuthorityV1({
+        task: TASK,
+        parsed: {
+          status: "done",
+          prd: `\`\`\`product-spec-v1\n${JSON.stringify(invalid, null, 2)}\n\`\`\``,
+        },
+      }),
+      (error: unknown) => {
+        assert.ok(error instanceof V3PlanOutputRejectedError);
+        assert.equal(error.diagnostics.some((item) =>
+          item.path === "/delivery/designRequired"
+          && item.message.includes("DESIGN_V1_VISUAL_PLATFORM_REQUIRES_DESIGN")), true);
+        return true;
+      },
+    );
   });
 
   it("fails forged task hashes and requirement refs closed before retry routing", () => {

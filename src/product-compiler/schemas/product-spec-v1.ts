@@ -532,8 +532,16 @@ export const ProductDeliveryV1Schema = z.object({
   if (!platformStacks[value.platform]?.includes(value.techStack)) {
     context.addIssue({ code: "custom", path: ["techStack"], message: `Tech stack ${value.techStack} is not valid for ${value.platform}` });
   }
-  if (["api", "cli"].includes(value.platform) && value.designRequired) {
+  const nonVisualPlatform = value.platform === "api" || value.platform === "cli";
+  if (nonVisualPlatform && value.designRequired) {
     context.addIssue({ code: "custom", path: ["designRequired"], message: `${value.platform} ProductSpec cannot require Stitch UI design` });
+  }
+  if (!nonVisualPlatform && !value.designRequired) {
+    context.addIssue({
+      code: "custom",
+      path: ["designRequired"],
+      message: `DESIGN_V1_VISUAL_PLATFORM_REQUIRES_DESIGN: ${value.platform} ProductSpec must require Stitch UI design`,
+    });
   }
 });
 

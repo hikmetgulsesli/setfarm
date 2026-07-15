@@ -57,7 +57,16 @@ export async function onComplete(ctx: CompleteContext): Promise<void> {
   if (parsed.device_type) context["device_type"] = parsed.device_type.toUpperCase();
   if (parsed.design_system) context["design_system"] = parsed.design_system;
   if (parsed.screen_map) context["screen_map"] = parsed.screen_map;
-  if (parsed.design_required) context["design_required"] = parsed.design_required.toLowerCase();
+  if (parsed.design_required) {
+    const proposed = parsed.design_required.toLowerCase();
+    const authoritative = String(context["design_required"] || "").toLowerCase();
+    if (authoritative && proposed !== authoritative) {
+      throw new Error(
+        `DESIGN_REQUIRED_AUTHORITY_MISMATCH: PLAN owns design_required=${authoritative}; DESIGN cannot replace it with ${proposed}`,
+      );
+    }
+    if (!authoritative) context["design_required"] = proposed;
+  }
 
   if (String(context["design_required"] || "true").toLowerCase() === "false") {
     return;

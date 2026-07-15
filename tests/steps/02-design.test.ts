@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { designModule } from "../../dist/installer/steps/02-design/module.js";
+import { PROTECTED_CONTEXT_KEYS } from "../../dist/installer/constants.js";
 import { classifyDesignFailure, inferPrdScreens, manifestUsesLocalFallback, parseProductSurfaces, stitchApiKeyAvailable, surfaceCoverageMode, synthesizeDesignMarkdownFromStitchAssets, verifyScreenMapToSurfaces } from "../../dist/installer/steps/02-design/preclaim.js";
 import { runModule } from "./harness.js";
 
@@ -50,6 +51,18 @@ describe("02-design step module", () => {
       screen_map: "[]",
     }));
     assert.equal(result.validation.ok, true, result.validation.errors.join("; "));
+  });
+
+  it("cannot replace PLAN-owned design_required during DESIGN completion", async () => {
+    const result = await runModule(designModule, "Visual web task", validDesignOutput({
+      design_required: "false",
+      device_type: "NONE",
+      screen_map: "[]",
+    }), { design_required: "true" });
+    assert.equal(result.validation.ok, true, result.validation.errors.join("; "));
+    assert.match(result.onCompleteError || "", /DESIGN_REQUIRED_AUTHORITY_MISMATCH/);
+    assert.equal(result.contextAfterComplete.design_required, "true");
+    assert.equal(PROTECTED_CONTEXT_KEYS.has("design_required"), true);
   });
 
   it("invalid DEVICE_TYPE rejected", async () => {
@@ -230,6 +243,15 @@ describe("02-design step module", () => {
     assert.match(source, /if \(v3Contract\)[\s\S]*exactV3ScreenMap/);
     assert.match(source, /if \(!v3Contract && screenMap\.length > 0\)[\s\S]*verifyScreenMapToSurfaces/);
     assert.match(source, /manifest\/title reconciliation is forbidden/);
+  });
+
+  it("resolves non-visual delivery before creating any Stitch target authority", () => {
+    const source = designPreclaimSource();
+    const bypass = source.indexOf("if (!designRequired)");
+    const targetCompilation = source.indexOf("prepareV3DesignContract(prd, stitchDir)");
+    assert.ok(bypass >= 0 && targetCompilation >= 0 && bypass < targetCompilation);
+    assert.match(source, /delete ctx\.context\["generation_targets"\]/);
+    assert.match(source, /delete ctx\.context\["stitch_response_bindings"\]/);
   });
 
   it("auto-completed reusable design screens preserve Product Surface ids for downstream guards", () => {
