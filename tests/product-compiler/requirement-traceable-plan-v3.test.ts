@@ -184,6 +184,25 @@ describe("requirement-traceable PLAN v3", () => {
       && /use a literal delta instead/.test(item.message)), true);
   });
 
+  it("makes persistence payload fields compiler-owned for a fixed literal action", () => {
+    const input = proposal();
+    input.actions[0].input.fields = [];
+    input.actions[0].evidenceScenario.targetInputValues = {};
+    input.actions[0].stateDeltas[0].valueFrom = { kind: "literal", value: "refreshed" };
+    input.actions[0].persistenceEffects[0].payloadFields = ["title"];
+    assert.equal(ProductSpecV3ProposalSchema.safeParse(input).success, false);
+
+    const result = canonicalizeProductSpecV3Proposal({ task: TASK, proposal: input });
+    assert.equal(result.status, "canonicalized");
+    if (result.status !== "canonicalized") return;
+    assert.deepEqual(result.productSpec.actions[0]?.persistenceEffects[0]?.payloadFields, []);
+    assert.equal(
+      result.persistenceProjectionEvidence.schema,
+      "setfarm.compiler-owned-persistence-projection-evidence.v1",
+    );
+    assert.deepEqual(result.persistenceProjectionEvidence.derivedEffects[0]?.payloadFields, []);
+  });
+
   it("returns an actionable RFC 6901 diagnostic for malformed state paths", () => {
     const input = proposal();
     input.actions[0].stateDeltas[0].path = "title";

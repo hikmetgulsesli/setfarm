@@ -2,10 +2,12 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import {
+  projectCanonicalV3PlanParsedOutputV1,
   resolveV3PlanOutputAuthorityV1,
   shouldRunLegacyProductSupervisorV1,
   V3PlanOutputRejectedError,
 } from "../../src/execution/v3-plan-output-authority.js";
+import { validateOutput as validatePlanOutput } from "../../src/installer/steps/01-plan/guards.js";
 import { canonicalJsonStringify } from "../../src/product-compiler/canonical-json.js";
 import { extractTaskRequirementLedgerV1 } from "../../src/product-compiler/requirements/task-requirements-v1.js";
 import { buildMinimalValidContracts } from "../product-compiler/fixtures/minimal-valid-contract.js";
@@ -89,6 +91,31 @@ function rejection(overrides: Record<string, unknown> = {}): any {
 }
 
 describe("PLAN v3 output authority", () => {
+  it("hands compiler-owned persistence bytes to the downstream PLAN module", () => {
+    const input = proposal();
+    input.actions[0].input.fields = [];
+    input.actions[0].evidenceScenario.targetInputValues = {};
+    input.actions[0].stateDeltas[0].valueFrom = { kind: "literal", value: "refreshed" };
+    input.actions[0].persistenceEffects[0].payloadFields = ["title"];
+    const parsed = {
+      status: "done",
+      prd: `Planner preface\n\`\`\`product-spec-v1\n${JSON.stringify(input, null, 2)}\n\`\`\`\nPlanner suffix`,
+    };
+    const originalPrd = parsed.prd;
+    assert.equal(validatePlanOutput(parsed).ok, false);
+
+    const authority = resolveV3PlanOutputAuthorityV1({ task: TASK, parsed });
+    assert.equal(authority.status, "proposal");
+    if (authority.status !== "proposal") return;
+    const projected = projectCanonicalV3PlanParsedOutputV1({ parsed, authority });
+
+    assert.equal(validatePlanOutput(projected).ok, true);
+    assert.match(projected.prd, new RegExp(authority.canonicalBytes.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    assert.deepEqual(authority.productSpec.actions[0]?.persistenceEffects[0]?.payloadFields, []);
+    assert.equal(parsed.prd, originalPrd);
+    assert.notEqual(projected.prd, originalPrd);
+  });
+
   it("bypasses the legacy Product Supervisor only for a canonical typed v3 proposal", () => {
     const input = proposal();
     input.evidencePredicates.forEach((predicate: any) => {

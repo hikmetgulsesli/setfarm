@@ -438,6 +438,7 @@ export async function onComplete(ctx: CompleteContext): Promise<void> {
         conversionPolicy: context["product_delivery_conversion_policy"] || null,
         designProjection: context["product_delivery_design_projection"] || null,
         topologyDescriptorHash: context["product_delivery_topology_hash"] || null,
+        persistenceProjection: canonical.persistenceProjectionEvidence,
         requirementRefs: spec.requirements!.map((requirement) => requirement.id),
       },
     });
