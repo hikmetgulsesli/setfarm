@@ -59,10 +59,9 @@ const WORKFLOW_AGENT_SKILLS_LIMITS = { maxSkillsPromptChars: 6000 } as const;
 const MINIMAX_PROVIDER_ID = "minimax";
 const MINIMAX_MODEL_REF = `${MINIMAX_PROVIDER_ID}/MiniMax-M3`;
 const KIMI_CODING_MODEL_REF = "kimi/kimi-for-coding";
-const CODEX_DEFAULT_MODEL_REF = "default";
 const MINIMAX_FIRST_AGENT_MODEL = {
   primary: MINIMAX_MODEL_REF,
-  fallbacks: [KIMI_CODING_MODEL_REF, CODEX_DEFAULT_MODEL_REF],
+  fallbacks: [KIMI_CODING_MODEL_REF],
 } as const;
 
 const DEFAULT_CRON_SESSION_RETENTION = "24h";

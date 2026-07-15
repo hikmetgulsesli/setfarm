@@ -54,6 +54,10 @@ describe("v3 preparation decision", () => {
       { action: "invariant_failure", errorCode: "V3_ATTEMPT_ACTIVE_CONFLICT" },
     );
     assert.equal(classifyV3PreparationFailure({ code: "40001" }).action, "bounded_infra");
+    assert.equal(
+      classifyV3PreparationFailure({ code: "V3_PREPARATION_WORKTREE_UNAVAILABLE" }).action,
+      "ownership_wait",
+    );
     assert.equal(classifyV3PreparationFailure(new Error("unknown")).action, "invariant_failure");
   });
 

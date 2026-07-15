@@ -272,12 +272,14 @@ describe("requirement-traceable PLAN v3", () => {
         v3_requirement_ledger: canonicalJsonStringify(extractTaskRequirementLedgerV1(TASK)),
       },
     });
-    assert.match(prompt, /exactly one product-spec-v1 JSON fence/i);
+    assert.match(prompt, /exactly one plan-semantic-proposal-v1 JSON fence/i);
     assert.match(prompt, /product-spec-rejection-v1/);
-    assert.match(prompt, /Setfarm validates and canonicalizes/i);
-    assert.match(prompt, /fixed button outcome is a literal state delta/i);
-    assert.match(prompt, /RFC 6901 JSON Pointer/);
-    assert.match(prompt, /Set capabilityRefs to \[\]/);
-    assert.match(prompt, /Physical capability IDs are Product Compiler output/);
+    assert.match(prompt, /Setfarm compiles all global IDs/i);
+    assert.match(prompt, /Fixed outcomes use literal deltas/i);
+    assert.match(prompt, /RFC 6901 path/i);
+    assert.match(prompt, /Persistence intents name stateDeltaKeys, never state-path copies or payloadFields/i);
+    assert.doesNotMatch(prompt, /product-delivery-profile-catalog-v1/);
+    assert.doesNotMatch(prompt, /"capabilityRefs"/);
+    assert.ok(prompt.length < 55_000, `semantic prompt is unexpectedly large: ${prompt.length}`);
   });
 });

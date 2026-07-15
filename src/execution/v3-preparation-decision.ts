@@ -17,6 +17,7 @@ export const V3ImplementationAttemptErrorCodeSchema = z.enum([
   "V3_ATTEMPT_DUPLICATE_UNCHANGED_SOURCE",
   "V3_ATTEMPT_RESERVATION_BINDING_MISMATCH",
   "V3_DOWNSTREAM_EVIDENCE_PUBLICATION_INPUT_INVALID",
+  "V3_EVIDENCE_PLAN_COMPILATION_REJECTED",
   "V3_EVIDENCE_ONLY_PUBLICATION_INPUT_INVALID",
   "V3_EVIDENCE_PLAN_PUBLICATION_HASH_MISMATCH",
   "V3_EVIDENCE_PUBLICATION_AUTHORITY_CONFLICT",
@@ -237,6 +238,7 @@ const ownershipWaitCodes = new Set<V3ImplementationAttemptErrorCode>([
 ]);
 
 const packetAmendmentCodes = new Set<V3ImplementationAttemptErrorCode>([
+  "V3_EVIDENCE_PLAN_COMPILATION_REJECTED",
   "V3_IMPLEMENTATION_CONTEXT_CAPACITY_EXCEEDED",
   "V3_RUNTIME_EVIDENCE_CONTRACT_REJECTED",
   "V3_RUNTIME_EVIDENCE_STACK_UNSUPPORTED",
@@ -290,6 +292,9 @@ export function classifyV3PreparationFailure(error: unknown): Readonly<{
     return { action: "invariant_failure", errorCode: implementationCode.data };
   }
   if (code === "RUNTIME_PACKET_NOT_ACTIVE") {
+    return { action: "ownership_wait", errorCode: code };
+  }
+  if (code === "V3_PREPARATION_WORKTREE_UNAVAILABLE") {
     return { action: "ownership_wait", errorCode: code };
   }
   if (code.startsWith("RUNTIME_")) {

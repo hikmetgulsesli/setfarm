@@ -376,6 +376,7 @@ export function buildMinimalValidV3ProductSpec(): any {
     evidenceRef: "EVID_SAVE_CONFIRMATION",
   }];
   action.evidenceRefs.push("EVID_SAVE_CONFIRMATION");
+  action.evidenceRefs.push("EVID_SAVE_FAILURE");
   action.success.evidenceRefs.push("EVID_SAVE_CONFIRMATION");
   action.failure.evidenceRefs.push("EVID_SAVE_FAILURE");
   value.evidencePredicates.push({
@@ -438,6 +439,7 @@ export function buildMinimalValidV3Contracts(): ReturnType<typeof buildMinimalVa
   const values = buildMinimalValidContracts();
   values.productSpec = buildMinimalValidV3ProductSpec();
   values.designGraph.bindings[0]!.evidenceRefs.push("EVID_SAVE_CONFIRMATION");
+  values.designGraph.bindings[0]!.evidenceRefs.push("EVID_SAVE_FAILURE");
   values.designGraph.observableBindings = [{
     observableRef: "OBS_SAVE_CONFIRMATION",
     actionRef: "ACT_SAVE_TASK",

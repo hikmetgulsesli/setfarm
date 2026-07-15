@@ -96,15 +96,27 @@ export function validateConfig(raw: unknown): ConfigValidationError[] {
     });
   }
 
-  // Rule 4: No model may use "default" as its value
+  // Rule 4: No model primary or fallback may use "default" as its value
   // Causes silent fallback failures in gateway
   const agents = config?.agents?.list;
   if (Array.isArray(agents)) {
     for (const agent of agents) {
-      if (agent?.model === "default") {
+      const model = agent?.model;
+      const invalidPaths = model === "default"
+        ? ["model"]
+        : model && typeof model === "object"
+          ? [
+              ...(model.primary === "default" ? ["model.primary"] : []),
+              ...(Array.isArray(model.fallbacks)
+                ? model.fallbacks.flatMap((fallback: unknown, index: number) =>
+                    fallback === "default" ? [`model.fallbacks[${index}]`] : [])
+                : []),
+            ]
+          : [];
+      for (const invalidPath of invalidPaths) {
         errors.push({
-          path: `agents.list[${agent.id ?? "?"}].model`,
-          expected: "explicit model name (e.g. minimax-openai/MiniMax-M3)",
+          path: `agents.list[${agent.id ?? "?"}].${invalidPath}`,
+          expected: "explicit model name (e.g. minimax/MiniMax-M3)",
           actual: '"default"',
           severity: "error",
         });

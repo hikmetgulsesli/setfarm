@@ -898,10 +898,18 @@ export function createV3ImplementationAttemptCompiler(dependencies: V3CompilerDe
             sourceBefore,
           })
         : undefined;
-      const evidencePlan = compileEvidencePlanV1({
-        slice: compiled.slice,
-        sliceHash: compiled.sliceHash,
-      });
+      let evidencePlan: EvidencePlanV1;
+      try {
+        evidencePlan = compileEvidencePlanV1({
+          slice: compiled.slice,
+          sliceHash: compiled.sliceHash,
+        });
+      } catch (error) {
+        throw new V3ImplementationAttemptError(
+          "V3_EVIDENCE_PLAN_COMPILATION_REJECTED",
+          String((error as Error)?.message || error).slice(0, 8_000),
+        );
+      }
       const planEnvelope = evidencePlanEnvelope(packet, evidencePlan);
       const expectedPlanArtifactHash = hashCanonicalJson(planEnvelope);
       const retryEnvelope = operationalRetry
@@ -1231,7 +1239,15 @@ export function createV3ImplementationAttemptCompiler(dependencies: V3CompilerDe
         : undefined;
       const executionProfile = operationalRetry?.directive.executionProfile
         ?? resolveV3ExecutionProfile("primary");
-      const evidencePlan = compileEvidencePlanV1({ slice, sliceHash: attempt.sliceHash });
+      let evidencePlan: EvidencePlanV1;
+      try {
+        evidencePlan = compileEvidencePlanV1({ slice, sliceHash: attempt.sliceHash });
+      } catch (error) {
+        throw new V3ImplementationAttemptError(
+          "V3_EVIDENCE_PLAN_COMPILATION_REJECTED",
+          String((error as Error)?.message || error).slice(0, 8_000),
+        );
+      }
       const planEnvelope = evidencePlanEnvelope(packet, evidencePlan);
       const planArtifactHash = hashCanonicalJson(planEnvelope);
       const storedPlanEnvelope = await dependencies.readArtifact(planArtifactHash);

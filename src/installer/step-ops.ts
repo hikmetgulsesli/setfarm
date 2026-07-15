@@ -60,7 +60,6 @@ import {
 import {
   bindRuntimeSessionAttemptInTransaction,
   parseRuntimeClaimIntentV1,
-  releaseReservedRuntimeSessionInTransaction,
   reserveRuntimeSessionInTransaction,
   type RuntimeClaimIntentV1,
 } from "../execution/runtime-session-repository.js";
@@ -174,6 +173,10 @@ import { routeDownstreamQualityFailure } from "./failure-router.js";
 import { IMPLICIT_STORY_SCOPE_FILES, isImplicitStoryScopeFile } from "./story-scope.js";
 import { resolvePlatformScript } from "./paths.js";
 import { ensureSmokeBuildFresh } from "./smoke-gate.js";
+import {
+  closeReservedClaimRuntimeInTransaction,
+  handleV3PreDispatchFailure,
+} from "./v3-pre-dispatch-failure.js";
 import {
   getRunStatus, getRunContext, updateRunContext, failRun,
   getWorkflowId as _getWorkflowId,
@@ -4229,50 +4232,6 @@ type RuntimeClaimOwnership = Readonly<{
   ownerInstanceId: string;
 }>;
 
-async function closeReservedClaimRuntimeInTransaction(
-  sql: postgres.Sql | postgres.TransactionSql,
-  input: Readonly<{
-    claimId: number;
-    outcome: string;
-    diagnostic: string;
-    runtime?: RuntimeClaimOwnership;
-  }>,
-): Promise<void> {
-  const rows = await sql.unsafe<Array<{ id: string }>>(
-    `UPDATE claim_log
-        SET outcome = $2,
-            abandoned_at = NOW(),
-            duration_ms = LEAST(CAST(EXTRACT(EPOCH FROM (NOW() - claimed_at::timestamptz)) * 1000 AS BIGINT), 2147483647)::INTEGER,
-            diagnostic = $3
-      WHERE id = $1 AND outcome IS NULL
-      RETURNING id::text AS id`,
-    [input.claimId, input.outcome, input.diagnostic.slice(0, 1000)],
-  );
-  if (rows.length !== 1) {
-    const existing = await sql.unsafe<Array<{ outcome: string | null }>>(
-      "SELECT outcome FROM claim_log WHERE id = $1 FOR UPDATE",
-      [input.claimId],
-    );
-    if (!existing[0] || existing[0].outcome === null) {
-      throw new Error("UNSTARTED_CLAIM_CAS_LOST");
-    }
-  }
-  await sql.unsafe(
-    `UPDATE execution_attempts
-        SET disposition = 'inconclusive', updated_at = NOW()
-      WHERE claim_id = $1 AND disposition IN ('claimed', 'running')`,
-    [input.claimId],
-  );
-  if (input.runtime) {
-    await releaseReservedRuntimeSessionInTransaction(sql, {
-      sessionId: input.runtime.sessionId,
-      claimId: input.claimId,
-      ownerInstanceId: input.runtime.ownerInstanceId,
-      diagnostic: input.diagnostic,
-    });
-  }
-}
-
 async function closeUnstartedStoryClaimExact(
   claimId: number | null,
   diagnostic: string,
@@ -7438,6 +7397,57 @@ export async function claimStep(
         return { found: false };
       }
 
+      if (
+        runProtocol?.protocol === "v3"
+        && (!v3PreparationAuthority || !v3PreparedBaseRevision)
+      ) {
+        const reason = "V3_PREPARATION_AUTHORITY_UNAVAILABLE: a v3 story reached publication without the exact ready authority";
+        const transitionTime = now();
+        await pgBegin(async (sql) => {
+          await sql.unsafe(
+            `UPDATE stories
+                SET status = 'failed', output = $2, claimed_at = NULL,
+                    claimed_by = NULL, updated_at = $3
+              WHERE id = $1 AND run_id = $4 AND story_id = $5 AND status = 'pending'`,
+            [nextStory.id, reason, transitionTime, step.run_id, nextStory.story_id],
+          );
+          await sql.unsafe(
+            `UPDATE steps
+                SET status = 'failed', output = $2, current_story_id = NULL, updated_at = $3
+              WHERE id = $1 AND run_id = $4 AND step_id = $5 AND status IN ('pending', 'running')`,
+            [step.id, reason, transitionTime, step.run_id, step.step_id],
+          );
+          await requestRunTerminationInTransaction(sql, {
+            runId: step.run_id,
+            targetStatus: "failed",
+            requestedBy: "setfarm.v3-pre-dispatch",
+            diagnostic: reason,
+            evidence: { source: "claimLoopStep", errorCode: "V3_PREPARATION_AUTHORITY_UNAVAILABLE" },
+            now: new Date(transitionTime),
+          });
+        });
+        await recordObservation({
+          runId: step.run_id,
+          stepId: step.step_id,
+          storyId: nextStory.story_id,
+          phase: "v3-pre-dispatch",
+          checkId: "v3_pre_dispatch.authority_unavailable",
+          label: "V3 implementation pre-dispatch authority",
+          status: "blocked",
+          summary: "Missing preparation authority terminalized before claim publication",
+          detail: reason,
+          evidence: {
+            schema: "setfarm.v3-pre-dispatch-authority-failure.v1",
+            errorCode: "V3_PREPARATION_AUTHORITY_UNAVAILABLE",
+            claimPublished: false,
+            modelDispatched: false,
+          },
+        });
+        await failRun(step.run_id, true, reason);
+        scheduleRunCronTeardown(step.run_id);
+        return { found: false };
+      }
+
       const requestedBaseRef = isPrEach ? "main" : (context["implement_base_commit"] || context["branch"] || "master");
       const publication = await publishLoopClaimAndRuntime(
         step,
@@ -7458,34 +7468,22 @@ export async function claimStep(
       if (
         runProtocol?.protocol === "v3"
         && (
-          !v3PreparationAuthority
-          || !v3PreparedBaseRevision
-          || publication.claimAuthority?.mode !== "preparation"
-          || publication.claimAuthority.authority.authorityHash !== v3PreparationAuthority.authorityHash
-          || publication.baseRevision?.sha !== v3PreparedBaseRevision.sha
-          || publication.baseRevision.treeHash !== v3PreparedBaseRevision.treeHash
+          publication.claimAuthority?.mode !== "preparation"
+          || publication.claimAuthority.authority.authorityHash !== v3PreparationAuthority!.authorityHash
+          || publication.baseRevision?.sha !== v3PreparedBaseRevision!.sha
+          || publication.baseRevision.treeHash !== v3PreparedBaseRevision!.treeHash
         )
       ) {
         const authorityReason = "V3_PREPARATION_PUBLICATION_RESULT_MISMATCH";
-        await pgBegin(async (sql) => {
-          await closeReservedClaimRuntimeInTransaction(sql, {
-            claimId: legacyClaimId,
-            outcome: "infra_retry",
-            diagnostic: authorityReason,
-            runtime: claimRuntime,
-          });
-          await sql.unsafe(
-            `UPDATE stories
-                SET status = 'pending', claimed_at = NULL, claimed_by = NULL, updated_at = $2
-              WHERE id = $1 AND status = 'running'`,
-            [nextStory.id, now()],
-          );
-          await sql.unsafe(
-            `UPDATE steps
-                SET status = 'pending', current_story_id = NULL, updated_at = $2
-              WHERE id = $1`,
-            [step.id, now()],
-          );
+        await handleV3PreDispatchFailure({
+          step,
+          story: nextStory,
+          agentId,
+          claimId: legacyClaimId,
+          runtime: claimRuntime,
+          authority: v3PreparationAuthority!,
+          phase: "reservation",
+          error: Object.assign(new Error(authorityReason), { code: authorityReason }),
         });
         logger.error(authorityReason, { runId: step.run_id, stepId: step.step_id });
         return { found: false };
@@ -7531,33 +7529,20 @@ export async function claimStep(
       if (!storyWorkdir) {
         const wtReason = `Worktree creation failed for story ${nextStory.story_id} — cannot isolate exact prepared source${worktreeFailureDetail ? `: ${worktreeFailureDetail}` : ""}`;
         logger.error(wtReason, { runId: step.run_id, stepId: step.step_id });
-        await pgBegin(async (sql) => {
-          await closeReservedClaimRuntimeInTransaction(sql, {
-            claimId: legacyClaimId,
-            outcome: "infra_retry",
-            diagnostic: wtReason,
-            runtime: claimRuntime,
-          });
-          await sql.unsafe(
-            `UPDATE stories
-                SET status = 'pending', claimed_at = NULL, claimed_by = NULL, updated_at = $2
-              WHERE id = $1 AND status = 'running'`,
-            [nextStory.id, now()],
-          );
-          await sql.unsafe(
-            `UPDATE steps
-                SET status = CASE
-                      WHEN EXISTS (
-                        SELECT 1 FROM stories
-                         WHERE run_id = $2 AND status = 'running' AND id <> $3
-                      ) THEN 'running' ELSE 'pending' END,
-                    current_story_id = CASE WHEN current_story_id = $3 THEN NULL ELSE current_story_id END,
-                    updated_at = $4
-              WHERE id = $1`,
-            [step.id, step.run_id, nextStory.id, now()],
-          );
+        await handleV3PreDispatchFailure({
+          step,
+          story: nextStory,
+          agentId,
+          claimId: legacyClaimId,
+          runtime: claimRuntime,
+          authority: v3PreparationAuthority!,
+          phase: "source",
+          error: Object.assign(new Error(wtReason), {
+            code: "V3_PREPARATION_WORKTREE_UNAVAILABLE",
+          }),
+          repo: context["repo"],
+          storyBranch,
         });
-        emitEvent({ ts: now(), event: "story.retry", runId: step.run_id, workflowId: await getWorkflowId(step.run_id), stepId: step.step_id, storyId: nextStory.story_id, storyTitle: nextStory.title, detail: wtReason });
         return { found: false };
       }
 
@@ -7790,73 +7775,20 @@ export async function claimStep(
             compiled,
           });
         } catch (error) {
-          const reason = `V3_IMPLEMENTATION_SLICE_RESERVATION_FAILED:${String((error as Error)?.message || error)}`.slice(0, 4_000);
           const operationalRetryRefused = Boolean(pendingOperationalRetry)
             || String(nextStory.output || "").includes("setfarm.operational-retry-directive.v1");
-          await pgBegin(async (sql) => {
-            await closeReservedClaimRuntimeInTransaction(sql, {
-              claimId: legacyClaimId,
-              outcome: operationalRetryRefused ? "failed" : "infra_retry",
-              diagnostic: reason,
-              runtime: claimRuntime,
-            });
-            if (operationalRetryRefused) {
-              await sql.unsafe(
-                `UPDATE stories
-                    SET status = 'failed', claimed_at = NULL, claimed_by = NULL,
-                        updated_at = $2
-                  WHERE id = $1 AND status = 'running'`,
-                [nextStory.id, now()],
-              );
-              await sql.unsafe(
-                `UPDATE steps
-                    SET status = 'waiting', current_story_id = NULL, updated_at = $2
-                  WHERE id = $1`,
-                [step.id, now()],
-              );
-            } else {
-              await sql.unsafe(
-                `UPDATE stories
-                    SET status = 'pending', claimed_at = NULL, claimed_by = NULL,
-                        output = $2, updated_at = $3
-                  WHERE id = $1 AND status = 'running'`,
-                [nextStory.id, reason, now()],
-              );
-              await sql.unsafe(
-                `UPDATE steps
-                    SET status = CASE
-                          WHEN EXISTS (
-                            SELECT 1 FROM stories
-                             WHERE run_id = $2 AND status = 'running' AND id <> $3
-                          ) THEN 'running' ELSE 'pending' END,
-                        current_story_id = CASE WHEN current_story_id = $3 THEN NULL ELSE current_story_id END,
-                        updated_at = $4
-                  WHERE id = $1`,
-                [step.id, step.run_id, nextStory.id, now()],
-              );
-            }
-          });
-          removeStoryWorktree(context["repo"], storyBranch, agentId);
-          await recordObservation({
-            runId: step.run_id,
-            stepId: step.step_id,
-            storyId: nextStory.story_id,
-            phase: "product-compiler-v3",
-            checkId: `product_compiler.v3.slice_reservation:${legacyClaimId}`,
-            label: "V3 implementation slice reservation",
-            status: "blocked",
-            summary: operationalRetryRefused
-              ? "Typed operational retry was refused and failed closed before another model dispatch"
-              : "Claim was withdrawn before agent spawn because its sealed slice could not be reserved",
-            detail: reason,
-            evidence: {
-              schema: "setfarm.v3-slice-reservation-failure.v1",
-              claimId: legacyClaimId,
-              operationalRetryRefused,
-              ...(pendingOperationalRetry
-                ? { directiveHash: pendingOperationalRetry.directiveHash }
-                : {}),
-            },
+          await handleV3PreDispatchFailure({
+            step,
+            story: nextStory,
+            agentId,
+            claimId: legacyClaimId,
+            runtime: claimRuntime,
+            authority: v3PreparationAuthority!,
+            phase: "reservation",
+            error,
+            operationalRetryRefused,
+            repo: context["repo"],
+            storyBranch,
           });
           return { found: false };
         }
@@ -8229,6 +8161,8 @@ export async function completeStep(
       return { advanced: false, runCompleted: false };
     }
     const delivery = nativeV3PlanAuthority.deliverySelection;
+    context["plan_source_transport"] = nativeV3PlanAuthority.sourceTransport;
+    context["plan_source_proposal_hash"] = nativeV3PlanAuthority.sourceProposalHash;
     context["product_delivery_selection"] = nativeV3PlanAuthority.deliverySelectionCanonicalBytes;
     context["product_delivery_selection_hash"] = nativeV3PlanAuthority.deliverySelectionHash;
     context["product_delivery_profile_id"] = delivery.profileId;

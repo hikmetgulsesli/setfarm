@@ -76,6 +76,94 @@ function proposal(): any {
   return value;
 }
 
+function semanticProposal(): any {
+  const ledger = extractTaskRequirementLedgerV1(TASK);
+  const requirementRef = ledger.requirements[0]!.id;
+  return {
+    schema: "setfarm.plan-semantic-proposal.v1",
+    sourceTaskHash: ledger.sourceHash,
+    product: {
+      key: "task_editor",
+      name: "Task Editor",
+      class: "operations",
+      uiLanguage: "en",
+      database: "none",
+      uiVisionSummary: "A focused task editor with a clear save control, an explicit saved confirmation region, and a compact single-route layout that keeps the current title visible.",
+      goals: [{ key: "save_task", statement: "Edit and persist a task title with visible confirmation.", requirementRefs: [requirementRef] }],
+      nonGoals: [],
+    },
+    requirements: [{
+      id: requirementRef,
+      classification: "functional",
+      expectedSemanticKinds: ["entity", "state", "persistence", "route", "surface", "action", "observable"],
+    }],
+    entities: [{
+      key: "task",
+      name: "Task",
+      fields: [{ key: "title", name: "title", valueType: "string", required: true }],
+      requirementRefs: [requirementRef],
+    }],
+    states: [{
+      key: "task",
+      name: "Task State",
+      kind: "domain",
+      initialValue: { title: "" },
+      invariants: ["The task title is always a string."],
+      requirementRefs: [requirementRef],
+    }],
+    persistencePolicies: [{
+      key: "task_local",
+      kind: "local_storage",
+      entityKeys: ["task"],
+      rehydration: { kind: "initialization" },
+      requirementRefs: [requirementRef],
+    }],
+    routes: [{ key: "tasks", path: "/tasks", entry: true, requirementRefs: [requirementRef] }],
+    surfaces: [{
+      key: "task_page",
+      name: "Task Page",
+      kind: "page",
+      routeKey: "tasks",
+      required: true,
+      requirementRefs: [requirementRef],
+    }],
+    actions: [{
+      key: "save_task",
+      name: "Save Task",
+      surfaceKeys: ["task_page"],
+      trigger: { kind: "user", sourceRef: "Save" },
+      inputs: [{ name: "title", valueType: "string", required: true, entityField: { entityKey: "task", fieldKey: "title" } }],
+      preconditions: [],
+      evidenceScenario: { targetInputValues: { title: "Updated task" }, prerequisiteSteps: [] },
+      stateDeltas: [{
+        key: "task_title",
+        stateKey: "task",
+        operation: "set",
+        path: "/title",
+        valueFrom: { kind: "input", field: "title" },
+      }],
+      navigation: { kind: "stay" },
+      persistenceIntents: [{
+        policyKey: "task_local",
+        operation: "write",
+        entityKey: "task",
+        stateDeltaKeys: ["task_title"],
+      }],
+      observables: [{
+        key: "saved_confirmation",
+        selector: { kind: "accessibility", surfaceKey: "task_page", role: "status", name: "Saved" },
+        assertions: [
+          { phase: "after", property: "visible_text", operator: "equals", expected: "Saved" },
+          { phase: "reload", property: "visible_text", operator: "equals", expected: "Saved" },
+        ],
+        requirementRefs: [requirementRef],
+      }],
+      requirementRefs: [requirementRef],
+    }],
+    assumptions: [],
+  };
+}
+
 function rejection(overrides: Record<string, unknown> = {}): any {
   const ledger = extractTaskRequirementLedgerV1(TASK);
   return {
@@ -91,6 +179,28 @@ function rejection(overrides: Record<string, unknown> = {}): any {
 }
 
 describe("PLAN v3 output authority", () => {
+  it("compiles the semantic transport and exposes only canonical ProductSpec downstream", () => {
+    const parsed = {
+      status: "done",
+      prd: `Planner preface\n\`\`\`plan-semantic-proposal-v1\n${JSON.stringify(semanticProposal(), null, 2)}\n\`\`\`\nPlanner suffix`,
+    };
+    const originalPrd = parsed.prd;
+    const authority = resolveV3PlanOutputAuthorityV1({ task: TASK, parsed });
+    assert.equal(authority.status, "proposal");
+    if (authority.status !== "proposal") return;
+    assert.equal(authority.sourceTransport, "semantic_proposal");
+    assert.equal(authority.sourceProposalHash.length, 64);
+    assert.equal(authority.productSpec.product.id, "PROD_TASK_EDITOR");
+    assert.equal(authority.productSpec.actions[0]?.id, "ACT_SAVE_TASK");
+    assert.deepEqual(authority.productSpec.actions[0]?.persistenceEffects[0]?.payloadFields, ["title"]);
+
+    const projected = projectCanonicalV3PlanParsedOutputV1({ parsed, authority });
+    assert.equal(validatePlanOutput(projected).ok, true);
+    assert.doesNotMatch(projected.prd, /plan-semantic-proposal-v1/);
+    assert.match(projected.prd, /```product-spec-v1/);
+    assert.equal(parsed.prd, originalPrd);
+  });
+
   it("hands compiler-owned persistence bytes to the downstream PLAN module", () => {
     const input = proposal();
     input.actions[0].input.fields = [];
