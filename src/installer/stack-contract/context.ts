@@ -2,7 +2,12 @@ import path from "node:path";
 import { resolveStackContract } from "./reconcile.js";
 import { writeStackContract } from "./ledger.js";
 import { parseStackPrefix } from "./prefix.js";
-import type { StackCommandSet, StackContract } from "./types.js";
+import type { StackCommandSet, StackContract, StackPackId } from "./types.js";
+import { hashCanonicalJson } from "../../product-compiler/canonical-json.js";
+import {
+  type ProductDeliverySelectionV1,
+  verifyProductDeliverySelectionV1,
+} from "../../product-compiler/product-delivery-profile-catalog.js";
 
 export interface StackContractContextOptions {
   repoPath?: string;
@@ -18,10 +23,18 @@ export function applyStackContractContext(
   const repoPath = normalizeRepoPath(options.repoPath || context["story_workdir"] || context["repo"] || context["REPO"] || "");
   const taskText = options.taskText || context["prd"] || context["task"] || context["TASK"] || "";
   const prefix = parseStackPrefix(taskText);
+  const deliverySelection = resolveDeliverySelection(context);
+  const authoritativePackId = deliverySelection?.stackPackId as StackPackId | undefined;
   const contract = resolveStackContract({
     repoPath: repoPath || undefined,
     taskText,
     projectSlug: options.projectSlug || context["project_slug"] || context["PROJECT_SLUG"] || undefined,
+    ...(authoritativePackId
+      ? {
+          authoritativePackId,
+          authorityRef: context["product_delivery_selection_hash"] || "missing-selection-hash",
+        }
+      : {}),
   });
 
   if (options.persist !== false && repoPath) {
@@ -30,11 +43,15 @@ export function applyStackContractContext(
 
   context["stack_contract"] = formatStackContractForPrompt(contract);
   context["stack_pack_id"] = contract.packId || "needs-reconcile";
-  if (prefix) {
+  if (prefix && !authoritativePackId) {
     context["requested_stack_prefix"] = prefix.prefix;
     context["task"] = prefix.taskText;
     context["platform"] = prefix.platform;
     context["tech_stack"] = prefix.techStack;
+  }
+  if (authoritativePackId) {
+    context["platform"] = deliverySelection!.delivery.platform;
+    context["tech_stack"] = deliverySelection!.delivery.techStack;
   }
   context["stack_prompt"] = contract.prompt;
   context["stack_setup_contract"] = formatCommandContract(contract.setup);
@@ -47,6 +64,28 @@ export function applyStackContractContext(
   context["stack_rules"] = contract.prompt;
 
   return contract;
+}
+
+function resolveDeliverySelection(context: Record<string, string>): ProductDeliverySelectionV1 | undefined {
+  const raw = context["product_delivery_selection"] || "";
+  if (!raw) return undefined;
+  let decoded: unknown;
+  try {
+    decoded = JSON.parse(raw);
+  } catch {
+    throw new Error("PRODUCT_DELIVERY_SELECTION_JSON_INVALID");
+  }
+  const selection = verifyProductDeliverySelectionV1(decoded);
+  if (hashCanonicalJson(selection) !== context["product_delivery_selection_hash"]) {
+    throw new Error("PRODUCT_DELIVERY_SELECTION_HASH_MISMATCH");
+  }
+  if (
+    context["product_delivery_stack_pack_id"]
+    && context["product_delivery_stack_pack_id"] !== selection.stackPackId
+  ) {
+    throw new Error("PRODUCT_DELIVERY_SELECTION_STACK_MISMATCH");
+  }
+  return selection;
 }
 
 export function formatStackContractForPrompt(contract: StackContract): string {

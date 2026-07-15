@@ -31,6 +31,7 @@ import {
   type SourceArtifactRefV1,
 } from "./schemas/common-v1.js";
 import {
+  BuildTopologyV1Schema,
   topologyPathAbsenceHash,
   type BuildEntrypointV1,
   type BuildTopologyV1,
@@ -41,17 +42,23 @@ import type { DesignInteractionGraphV1 } from "./schemas/design-interaction-grap
 import type { ProductSpecV1 } from "./schemas/product-spec-v1.js";
 import type { StoryPlanV1 } from "./schemas/story-plan-v1.js";
 import {
+  PRODUCT_DELIVERY_PROFILE_CATALOG_VERSION,
+  resolveProductDeliverySelectionV1,
+  type ProductDeliverySelectionV1,
+} from "./product-delivery-profile-catalog.js";
+import {
   getStackTopologyCatalogContract,
   matchesStackEntrypointRule,
   STACK_TOPOLOGY_CATALOG_VERSION,
 } from "./stack-topology-catalog.js";
 
-export const PRODUCT_COMPILER_RUNTIME_VERSION = "3.0.0";
+export const PRODUCT_COMPILER_RUNTIME_VERSION = "3.1.0";
 
 export type SetupBuildPacketErrorCode =
   | "SETUP_PACKET_ACTIVATION_REJECTED"
   | "SETUP_PACKET_DESIGN_GRAPH_REJECTED"
   | "SETUP_PACKET_DIRECT_RESPONSE_EVIDENCE_REJECTED"
+  | "SETUP_PACKET_DELIVERY_PROFILE_REJECTED"
   | "SETUP_PACKET_ENTRYPOINT_MISSING"
   | "SETUP_PACKET_FILE_INVALID"
   | "SETUP_PACKET_GENERATED_SOURCE_AMBIGUOUS"
@@ -101,11 +108,13 @@ type SharedGrantsArtifact = z.infer<typeof SharedGrantsArtifactV1Schema>;
 
 export type SetupBuildPacketContracts = Readonly<{
   productSpec: ProductSpecV1;
+  deliverySelection?: ProductDeliverySelectionV1;
   designGraph: DesignInteractionGraphV1;
   buildTopology: BuildTopologyV1;
   storyPlan: StoryPlanV1;
   sourceHashes: Readonly<{
     plan: string;
+    deliverySelection?: string;
     generationTargets: string;
     directResponseEvidence?: string;
     responseBindings: string;
@@ -125,6 +134,53 @@ function compareUtf16(left: string, right: string): number {
 
 function uniqueSorted(values: readonly string[]): string[] {
   return [...new Set(values)].sort(compareUtf16);
+}
+
+function resolveV3DeliverySelection(input: Readonly<{
+  productSpec: ProductSpecV1;
+  expectedSelectionHash?: string;
+  requestedStackPackId?: string;
+}>): Readonly<{ selection: ProductDeliverySelectionV1; selectionHash: string }> {
+  const selected = resolveProductDeliverySelectionV1({
+    productClass: input.productSpec.product.class,
+    ...(input.requestedStackPackId ? { requestedStackPackId: input.requestedStackPackId } : {}),
+  });
+  if (selected.status !== "selected") {
+    throw new SetupBuildPacketError(
+      "SETUP_PACKET_DELIVERY_PROFILE_REJECTED",
+      "ProductSpec class has no activated Product Compiler delivery profile",
+      { diagnostics: selected.diagnostics },
+    );
+  }
+  const delivery = input.productSpec.delivery;
+  const expected = selected.selection.delivery;
+  const mismatch = !delivery
+    || delivery.platform !== expected.platform
+    || delivery.techStack !== expected.techStack
+    || delivery.designRequired !== expected.designRequired
+    || !expected.allowedDatabases.includes(delivery.database);
+  if (mismatch) {
+    throw new SetupBuildPacketError(
+      "SETUP_PACKET_DELIVERY_PROFILE_REJECTED",
+      "ProductSpec delivery does not equal its compiler-owned Product Delivery Profile",
+      {
+        profileId: selected.selection.profileId,
+        expected,
+        observed: delivery ?? null,
+      },
+    );
+  }
+  if (input.expectedSelectionHash && input.expectedSelectionHash !== selected.selectionHash) {
+    throw new SetupBuildPacketError(
+      "SETUP_PACKET_DELIVERY_PROFILE_REJECTED",
+      "Setup-build selection hash does not equal the PLAN-sealed Product Delivery selection",
+      {
+        expectedSelectionHash: input.expectedSelectionHash,
+        actualSelectionHash: selected.selectionHash,
+      },
+    );
+  }
+  return { selection: selected.selection, selectionHash: selected.selectionHash };
 }
 
 function sha256(bytes: Uint8Array | string): string {
@@ -504,6 +560,8 @@ export function assembleSetupBuildPacketContracts(input: Readonly<{
   repo: string;
   planText: string;
   requireV3Proposal?: boolean;
+  expectedDeliverySelectionHash?: string;
+  requestedStackPackId?: string;
 }>): SetupBuildPacketContracts {
   const plan = resolveCanonicalProductSpecFromPlan({
     text: input.planText,
@@ -517,6 +575,17 @@ export function assembleSetupBuildPacketContracts(input: Readonly<{
       { rejectionCodes: plan.rejectionCodes, diagnostics: plan.diagnostics },
     );
   }
+  const deliverySelection = input.requireV3Proposal
+    ? resolveV3DeliverySelection({
+        productSpec: plan.productSpec,
+        ...(input.expectedDeliverySelectionHash
+          ? { expectedSelectionHash: input.expectedDeliverySelectionHash }
+          : {}),
+        ...(input.requestedStackPackId
+          ? { requestedStackPackId: input.requestedStackPackId }
+          : {}),
+      })
+    : undefined;
 
   const generationTargets = readJsonSource({
     repo: input.repo,
@@ -663,6 +732,32 @@ export function assembleSetupBuildPacketContracts(input: Readonly<{
     schema: SharedGrantsArtifactV1Schema,
     canonical: false,
   });
+  if (deliverySelection && (
+    certificate.value.stackPackId !== deliverySelection.selection.stackPackId
+    || certificate.value.platform !== deliverySelection.selection.delivery.platform
+    || certificate.value.techStack !== deliverySelection.selection.delivery.techStack
+    || certificate.value.designAuthority.conversionPolicy !== deliverySelection.selection.design.conversionPolicy
+  )) {
+    throw new SetupBuildPacketError(
+      "SETUP_PACKET_DELIVERY_PROFILE_REJECTED",
+      "Setup certificate topology does not equal the PLAN-sealed Product Delivery selection",
+      {
+        profileId: deliverySelection.selection.profileId,
+        expected: {
+          stackPackId: deliverySelection.selection.stackPackId,
+          platform: deliverySelection.selection.delivery.platform,
+          techStack: deliverySelection.selection.delivery.techStack,
+          conversionPolicy: deliverySelection.selection.design.conversionPolicy,
+        },
+        observed: {
+          stackPackId: certificate.value.stackPackId,
+          platform: certificate.value.platform,
+          techStack: certificate.value.techStack,
+          conversionPolicy: certificate.value.designAuthority.conversionPolicy,
+        },
+      },
+    );
+  }
   const sourceRunIds = [
     certificate.value.runId,
     manifest.value.runId,
@@ -717,10 +812,26 @@ export function assembleSetupBuildPacketContracts(input: Readonly<{
       { diagnostics: topology.diagnostics },
     );
   }
+  const buildTopology = deliverySelection
+    ? BuildTopologyV1Schema.parse({
+        ...topology.candidate,
+        deliveryProfile: {
+          schema: "setfarm.product-delivery-selection-ref.v1",
+          profileId: deliverySelection.selection.profileId,
+          catalogVersion: deliverySelection.selection.catalogVersion,
+          catalogHash: deliverySelection.selection.catalogHash,
+          selectionHash: deliverySelection.selectionHash,
+          productClass: deliverySelection.selection.productClass,
+          stackPackId: deliverySelection.selection.stackPackId,
+          designProjection: deliverySelection.selection.design.projection,
+          topologyDescriptorHash: deliverySelection.selection.topology.descriptorHash,
+        },
+      })
+    : topology.candidate;
   const stories = compileRuntimeStoryPlanV1({
     productSpec: plan.productSpec,
     designGraph: design.designGraph,
-    buildTopology: topology.candidate,
+    buildTopology,
   });
   if (stories.status !== "compiled") {
     throw new SetupBuildPacketError(
@@ -731,11 +842,13 @@ export function assembleSetupBuildPacketContracts(input: Readonly<{
   }
   return {
     productSpec: plan.productSpec,
+    ...(deliverySelection ? { deliverySelection: deliverySelection.selection } : {}),
     designGraph: design.designGraph,
-    buildTopology: topology.candidate,
+    buildTopology,
     storyPlan: stories.storyPlan,
     sourceHashes: {
       plan: plan.sourceHash,
+      ...(deliverySelection ? { deliverySelection: deliverySelection.selectionHash } : {}),
       generationTargets: generationTargets.source.hash,
       ...(directResponseEvidence ? { directResponseEvidence: directResponseEvidence.source.hash } : {}),
       responseBindings: responseBindings.source.hash,
@@ -756,6 +869,8 @@ export async function orchestrateSetupBuildProductPacket(input: Readonly<{
   expectedMode: "shadow" | "v3";
   repo: string;
   planText: string;
+  expectedDeliverySelectionHash?: string;
+  requestedStackPackId?: string;
   ownerInstanceId?: string;
 }>) {
   const protocol = await createRunProtocolRepository(input.sql).read(input.runId);
@@ -771,6 +886,12 @@ export async function orchestrateSetupBuildProductPacket(input: Readonly<{
     repo: input.repo,
     planText: input.planText,
     requireV3Proposal: input.expectedMode === "v3",
+    ...(input.expectedDeliverySelectionHash
+      ? { expectedDeliverySelectionHash: input.expectedDeliverySelectionHash }
+      : {}),
+    ...(input.requestedStackPackId
+      ? { requestedStackPackId: input.requestedStackPackId }
+      : {}),
   });
   const compiler = createRuntimePacketCompiler({
     sql: input.sql,
@@ -796,6 +917,7 @@ export async function orchestrateSetupBuildProductPacket(input: Readonly<{
         node: process.versions.node,
         productCompiler: PRODUCT_COMPILER_RUNTIME_VERSION,
         stackTopologyCatalog: STACK_TOPOLOGY_CATALOG_VERSION,
+        productDeliveryProfileCatalog: PRODUCT_DELIVERY_PROFILE_CATALOG_VERSION,
       },
     },
   });

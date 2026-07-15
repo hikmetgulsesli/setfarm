@@ -76,6 +76,8 @@ export function canonicalizeProductSpecV3Proposal(input: Readonly<{
   authoritativeDelivery?: Readonly<{
     platform: string;
     techStack: string;
+    designRequired?: boolean;
+    allowedDatabases?: readonly string[];
   }>;
 }>): CanonicalProductSpecProposalResultV1 {
   let ledger;
@@ -170,6 +172,26 @@ export function canonicalizeProductSpecV3Proposal(input: Readonly<{
         "PRODUCT_SPEC_DELIVERY_STACK_MISMATCH",
         "/delivery/techStack",
         `Planner stack ${base.data.delivery.techStack} conflicts with authoritative stack ${input.authoritativeDelivery.techStack}`,
+      ));
+    }
+    if (
+      input.authoritativeDelivery.designRequired !== undefined
+      && base.data.delivery.designRequired !== input.authoritativeDelivery.designRequired
+    ) {
+      diagnostics.push(diagnostic(
+        "PRODUCT_SPEC_DELIVERY_DESIGN_POLICY_MISMATCH",
+        "/delivery/designRequired",
+        `Planner designRequired=${base.data.delivery.designRequired} conflicts with authoritative profile designRequired=${input.authoritativeDelivery.designRequired}`,
+      ));
+    }
+    if (
+      input.authoritativeDelivery.allowedDatabases
+      && !input.authoritativeDelivery.allowedDatabases.includes(base.data.delivery.database)
+    ) {
+      diagnostics.push(diagnostic(
+        "PRODUCT_SPEC_DELIVERY_DATABASE_UNSUPPORTED",
+        "/delivery/database",
+        `Planner database ${base.data.delivery.database} is not activated by the authoritative delivery profile`,
       ));
     }
   }

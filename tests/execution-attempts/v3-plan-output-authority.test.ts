@@ -100,11 +100,64 @@ describe("PLAN v3 output authority", () => {
     assert.equal(authority.status, "proposal");
     if (authority.status !== "proposal") return;
     assert.equal(authority.canonicalBytes, canonicalJsonStringify(authority.productSpec));
+    assert.equal(authority.deliverySelection.profileId, "PROFILE_WEB_REACT_EXACT_V1");
+    assert.equal(authority.deliverySelection.stackPackId, "vite-react-web-app");
+    assert.equal(authority.deliverySelectionHash.length, 64);
     assert.equal(shouldRunLegacyProductSupervisorV1({
       protocol: "v3",
       stepId: "plan",
       planAuthority: authority,
     }), false);
+  });
+
+  it("rejects planner-owned static delivery for a utility with an exact profile delta", () => {
+    const invalid = proposal();
+    invalid.delivery.techStack = "static-html";
+
+    assert.throws(
+      () => resolveV3PlanOutputAuthorityV1({
+        task: TASK,
+        parsed: { prd: `\`\`\`product-spec-v1\n${JSON.stringify(invalid)}\n\`\`\`` },
+      }),
+      (error: unknown) => {
+        assert.ok(error instanceof V3PlanOutputRejectedError);
+        assert.equal(error.diagnostics.some((item) =>
+          item.code === "PRODUCT_SPEC_DELIVERY_STACK_MISMATCH"
+          && item.path === "/delivery/techStack"), true);
+        return true;
+      },
+    );
+  });
+
+  it("selects the browser-game profile from semantic class without task-language regex", () => {
+    const game = proposal();
+    game.product.class = "game";
+    game.delivery.platform = "game";
+    game.delivery.techStack = "browser-game";
+    const authority = resolveV3PlanOutputAuthorityV1({
+      task: TASK,
+      parsed: { prd: `\`\`\`product-spec-v1\n${JSON.stringify(game)}\n\`\`\`` },
+    });
+
+    assert.equal(authority.status, "proposal");
+    if (authority.status !== "proposal") return;
+    assert.equal(authority.deliverySelection.profileId, "PROFILE_BROWSER_GAME_REACT_CANVAS_EXACT_V1");
+    assert.equal(authority.deliverySelection.stackPackId, "browser-game-canvas");
+  });
+
+  it("rejects an explicit stack prefix that has no exact v3 design projection", () => {
+    assert.throws(
+      () => resolveV3PlanOutputAuthorityV1({
+        task: TASK,
+        requestedStackPackId: "static-html-site",
+        parsed: { prd: `\`\`\`product-spec-v1\n${JSON.stringify(proposal())}\n\`\`\`` },
+      }),
+      (error: unknown) => {
+        assert.ok(error instanceof V3PlanOutputRejectedError);
+        assert.deepEqual(error.diagnostics.map((item) => item.code), ["PRODUCT_DELIVERY_EXPLICIT_STACK_UNSUPPORTED"]);
+        return true;
+      },
+    );
   });
 
   it("rejects visual delivery that disables design before DESIGN can consume a contradictory packet", () => {

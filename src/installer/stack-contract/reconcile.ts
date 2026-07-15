@@ -8,6 +8,20 @@ const MEDIUM_CONFIDENCE = 55;
 
 export function resolveStackContract(input: ResolveStackContractInput): StackContract {
   const now = input.now ?? new Date().toISOString();
+  if (input.authoritativePackId) {
+    return contractFromPack(input.authoritativePackId, {
+      confidence: "high",
+      reason: `Selected ${input.authoritativePackId} from sealed Product Delivery authority ${input.authorityRef || "unknown"}.`,
+      repoPath: input.repoPath,
+      taskHints: [],
+      evidence: [{
+        type: "task-hint",
+        value: `sealed Product Delivery authority ${input.authorityRef || "unknown"}`,
+        weight: 1_000,
+      }],
+      now,
+    });
+  }
   const prefix = parseStackPrefix(input.taskText);
   if (prefix) {
     return contractFromPack(prefix.packId, {

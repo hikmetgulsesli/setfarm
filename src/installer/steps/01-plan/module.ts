@@ -19,10 +19,13 @@ const productSpecJsonSchema = JSON.stringify(z.toJSONSchema(ProductSpecV3Proposa
 function buildV3Prompt(ctx: PromptContext): string {
   const task = ctx.context["task"] || ctx.task || "";
   const requirementLedger = ctx.context["v3_requirement_ledger"] || "";
+  const deliveryProfileCatalog = ctx.context["v3_delivery_profile_catalog"] || "";
+  const deliveryProfileCatalogHash = ctx.context["v3_delivery_profile_catalog_hash"] || "";
+  const requestedStackPackId = ctx.context["v3_requested_stack_pack_id"] || "";
   return [
     "PLAN v3 - typed ProductSpec proposal",
     "",
-    "You are the semantic planner. Setfarm owns source clauses, canonical JSON bytes, runtime identity, artifact publication, and all verdicts. You must not classify this task through a canned product profile.",
+    "You are the semantic planner. Setfarm owns source clauses, delivery profiles, canonical JSON bytes, runtime identity, artifact publication, and all verdicts. Classify product semantics from the exact task; then bind delivery to the matching Setfarm-owned profile instead of choosing a stack yourself.",
     "",
     "## Exact task",
     task,
@@ -31,6 +34,16 @@ function buildV3Prompt(ctx: PromptContext): string {
     "Copy every requirement entry exactly. Add only classification and expectedSemanticKinds to each entry. Do not omit, rewrite, merge, split, or invent a requirement.",
     "```task-requirement-ledger-v1",
     requirementLedger,
+    "```",
+    "",
+    "## Setfarm-owned Product Delivery Profile Catalog",
+    `Catalog hash: ${deliveryProfileCatalogHash}`,
+    "The proposed product.class selects exactly one activated profile. Copy that profile's delivery.platform, delivery.techStack, and delivery.designRequired exactly; delivery.database must be one of allowedDatabases. Do not infer or substitute another stack. If no profile owns the semantic class, emit a typed semantic-unsupported rejection.",
+    requestedStackPackId
+      ? `The user explicitly requested stack pack ${requestedStackPackId}. It must equal the selected profile's stackPackId; otherwise emit a typed semantic-unsupported rejection.`
+      : "No explicit stack prefix was requested; selectionBasis is product_class.",
+    "```product-delivery-profile-catalog-v1",
+    deliveryProfileCatalog,
     "```",
     "",
     "## Proposal rules",
@@ -44,6 +57,7 @@ function buildV3Prompt(ctx: PromptContext): string {
     "- Every observable effect owns an observable_outcome evidence predicate whose subjectRef is the exact OBS_* ID; that evidence ref must also appear on the action.",
     "- Durable writes require a reload observable assertion. State bridge evidence is supplemental and cannot replace a DOM/accessibility/route observable assertion.",
     "- Do not guess ambiguous actions, persistence ownership, routes, or outcomes. Emit the typed rejection below instead.",
+    "- Product class is semantic input to the delivery catalog. Utility and operations use the catalog's exact Vite profile; game uses the catalog's exact browser-game profile. Static HTML and reference-only design stacks are not activated for Product Compiler v3 until an exact packet projection exists.",
     "",
     "## ProductSpec JSON Schema",
     "Refinements described above remain mandatory even when JSON Schema cannot express them.",

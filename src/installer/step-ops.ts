@@ -8134,6 +8134,9 @@ export async function completeStep(
       nativeV3PlanAuthority = resolveV3PlanOutputAuthorityV1({
         task: context["task"] || "",
         parsed,
+        ...(context["requested_stack_prefix"] && context["stack_pack_id"]
+          ? { requestedStackPackId: context["stack_pack_id"] }
+          : {}),
       });
     } catch (error) {
       // A malformed or semantically invalid typed PLAN proposal is an agent
@@ -8170,6 +8173,21 @@ export async function completeStep(
       });
       return { advanced: false, runCompleted: false };
     }
+    const delivery = nativeV3PlanAuthority.deliverySelection;
+    context["product_delivery_selection"] = nativeV3PlanAuthority.deliverySelectionCanonicalBytes;
+    context["product_delivery_selection_hash"] = nativeV3PlanAuthority.deliverySelectionHash;
+    context["product_delivery_profile_id"] = delivery.profileId;
+    context["product_delivery_catalog_version"] = delivery.catalogVersion;
+    context["product_delivery_catalog_hash"] = delivery.catalogHash;
+    context["product_delivery_stack_pack_id"] = delivery.stackPackId;
+    context["product_delivery_conversion_policy"] = delivery.design.conversionPolicy;
+    context["product_delivery_design_projection"] = delivery.design.projection;
+    context["product_delivery_topology_hash"] = delivery.topology.descriptorHash;
+    context["stack_pack_id"] = delivery.stackPackId;
+    context["detected_stack"] = delivery.stackPackId;
+    context["platform"] = delivery.delivery.platform;
+    context["tech_stack"] = delivery.delivery.techStack;
+    context["design_required"] = String(delivery.delivery.designRequired);
   }
   if (!isNativeV3ImplementCompletion) {
     for (const [key, value] of Object.entries(parsed)) {

@@ -65,6 +65,15 @@ export const PROTECTED_CONTEXT_KEYS = new Set([
   "branch",
   "run_id",
   "design_required",
+  "product_delivery_selection",
+  "product_delivery_selection_hash",
+  "product_delivery_profile_id",
+  "product_delivery_catalog_version",
+  "product_delivery_catalog_hash",
+  "product_delivery_stack_pack_id",
+  "product_delivery_conversion_policy",
+  "product_delivery_design_projection",
+  "product_delivery_topology_hash",
 ]);
 
 // ── Optional Template Variables ─────────────────────────────────────
