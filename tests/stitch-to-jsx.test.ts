@@ -1421,9 +1421,9 @@ describe("stitch-to-jsx", () => {
         <main>
           <button data-action="ACT_SAVE" data-note="Save > / now">Save</button>
           <a href="#" data-action="ACT_EXPORT" data-note='Export > / later'>Export</a>
-          <INPUT aria-label="Title" data-action-input="ACT_SAVE.title" placeholder="Use A > B / C" />
-          <textarea aria-label="Notes" data-action-input="ACT_SAVE.notes" />
           <select aria-label="Priority" data-action-input="ACT_SAVE.priority" />
+          <textarea aria-label="Notes" data-action-input="ACT_SAVE.notes" />
+          <INPUT aria-label="Title" data-action-input="ACT_SAVE.title" placeholder="Use A > B / C" />
           <textarea aria-label="Long notes" data-action-input="ACT_SAVE.longNotes" placeholder="Long > notes"></textarea>
           <select aria-label="Category" data-action-input="ACT_SAVE.category" data-note='Category > / choices'><option>Primary</option></select>
         </main>
@@ -1440,9 +1440,11 @@ describe("stitch-to-jsx", () => {
       assert.match(code, /placeholder="Use A > B \/ C"/);
       assert.equal(code.includes('<input aria-label="Title" data-action-input="ACT_SAVE.title" placeholder="Use A > B / C" data-control-id="title-1" />'), true);
       assert.equal(code.includes('<textarea aria-label="Notes" data-action-input="ACT_SAVE.notes" data-control-id="notes-2" />'), true);
-      assert.equal(code.includes('<select aria-label="Priority" data-action-input="ACT_SAVE.priority" data-control-id="priority-3" />'), true);
+      assert.equal(code.includes('<select aria-label="Priority" data-action-input="ACT_SAVE.priority" data-control-id="priority-4" />'), true);
       assert.match(code, /placeholder="Long > notes"/);
+      assert.match(code, /data-control-id="long-notes-3"/);
       assert.match(code, /data-note='Category > \/ choices'/);
+      assert.match(code, /data-control-id="category-5"/);
       assert.match(code, /<option>Primary<\/option><\/select>/);
       assert.doesNotMatch(code, /\/\s+data-control-id=/);
       const transpiled = ts.transpileModule(code, {

@@ -1623,25 +1623,32 @@ function annotateInteractiveElements(html, projection) {
     valueControls.push({ id, kind: tagName, label, index, inputBindings });
     return `${cleanAttrs} data-control-id="${id}"`;
   };
-  const withValueControls = mapOpeningTagsRespectingQuotes(annotated, ({ tagName, attrs, original }) => {
-    const normalizedTag = tagName.toLowerCase();
-    if (normalizedTag === "input") {
-      const index = inputIndex++;
-      return `<${normalizedTag}${annotateValueTag("input", attrs, `Input ${index + 1}`, index)}>`;
-    }
-    if (normalizedTag === "textarea") {
-      const index = textareaIndex++;
-      const selfClosing = splitSelfClosingAttrs(attrs).selfClosing ? " /" : "";
-      return `<${normalizedTag}${annotateValueTag("textarea", attrs, `Textarea ${index + 1}`, index)}${selfClosing}>`;
-    }
-    if (normalizedTag === "select") {
+  const annotateValueTags = (source, targetTagName) => mapOpeningTagsRespectingQuotes(
+    source,
+    ({ tagName, attrs, original }) => {
+      const normalizedTag = tagName.toLowerCase();
+      if (normalizedTag !== targetTagName) return original;
+      if (normalizedTag === "input") {
+        const index = inputIndex++;
+        return `<input${annotateValueTag("input", attrs, `Input ${index + 1}`, index)}>`;
+      }
+      if (normalizedTag === "textarea") {
+        const index = textareaIndex++;
+        const selfClosing = splitSelfClosingAttrs(attrs).selfClosing ? " /" : "";
+        return `<textarea${annotateValueTag("textarea", attrs, `Textarea ${index + 1}`, index)}${selfClosing}>`;
+      }
       const index = selectIndex++;
       const selfClosing = splitSelfClosingAttrs(attrs).selfClosing ? " /" : "";
-      return `<${normalizedTag}${annotateValueTag("select", attrs, `Select ${index + 1}`, index)}${selfClosing}>`;
-    }
-    return original;
-  });
-  return { html: withValueControls, actions, valueControls, rejectedControls };
+      return `<select${annotateValueTag("select", attrs, `Select ${index + 1}`, index)}${selfClosing}>`;
+    },
+  );
+  // Preserve the historical type-group annotation order. Generated local IDs
+  // are consumed by exact DesignGraph bindings, so a quote-aware parser upgrade
+  // must not renumber interleaved input/textarea/select controls on rerun.
+  const withInputs = annotateValueTags(annotated, "input");
+  const withTextareas = annotateValueTags(withInputs, "textarea");
+  const withSelects = annotateValueTags(withTextareas, "select");
+  return { html: withSelects, actions, valueControls, rejectedControls };
 }
 
 function annotateObservableElements(html, projection) {
