@@ -1993,24 +1993,40 @@ export function createNodeConvergenceProcessPort(root = packageRoot()): Converge
     },
 
     async inspectProject(input) {
+      const canonicalHeadSha = input.canonicalSourceRevision?.sha ?? null;
+      const canonicalTreeHash = input.canonicalSourceRevision?.treeHash ?? null;
+      const unresolved = () => ({
+        projectIdentityState: canonicalHeadSha && canonicalTreeHash
+          ? "invalid" as const
+          : "provisional" as const,
+        workingTreeDirty: false,
+        manualProjectMutationDetected: false,
+        sourceHeadMatchesCanonical: false,
+        projectHeadSha: null,
+        projectTreeHash: null,
+        canonicalHeadSha,
+        canonicalTreeHash,
+      });
       if (!input.projectLocator || !path.isAbsolute(input.projectLocator)) {
-        const invalid = Boolean(input.canonicalSourceRevision);
-        return {
-          projectIdentityState: invalid ? "invalid" as const : "provisional" as const,
-          workingTreeDirty: false,
-          manualProjectMutationDetected: false,
-          sourceHeadMatchesCanonical: false,
-          projectHeadSha: null,
-          projectTreeHash: null,
-          canonicalHeadSha: null,
-          canonicalTreeHash: null,
-        };
+        return unresolved();
       }
-      const [status, projectHeadSha, projectTreeHash] = await Promise.all([
-        command("git", ["status", "--porcelain", "--untracked-files=all"], { cwd: input.projectLocator }),
-        command("git", ["rev-parse", "HEAD"], { cwd: input.projectLocator }),
-        command("git", ["rev-parse", "HEAD^{tree}"], { cwd: input.projectLocator }),
-      ]);
+      let status: string;
+      let projectHeadSha: string;
+      let projectTreeHash: string;
+      try {
+        [status, projectHeadSha, projectTreeHash] = await Promise.all([
+          command("git", ["status", "--porcelain", "--untracked-files=all"], { cwd: input.projectLocator }),
+          command("git", ["rev-parse", "HEAD"], { cwd: input.projectLocator }),
+          command("git", ["rev-parse", "HEAD^{tree}"], { cwd: input.projectLocator }),
+        ]);
+      } catch {
+        // Before setup/acceptance a generated project locator may be an empty
+        // directory rather than a Git repository. With no canonical candidate
+        // there is no source identity to invalidate; keep measuring the typed
+        // platform failure as provisional. Once canonical source exists, the
+        // same absence remains a fail-closed invalid identity.
+        return unresolved();
+      }
       let upstreamHeadSha: string | null = null;
       let upstreamTreeHash: string | null = null;
       try {
@@ -2022,8 +2038,6 @@ export function createNodeConvergenceProcessPort(root = packageRoot()): Converge
         // A generated project without a configured upstream has no independent
         // canonical delivery revision and must fail closed.
       }
-      const canonicalHeadSha = input.canonicalSourceRevision?.sha ?? null;
-      const canonicalTreeHash = input.canonicalSourceRevision?.treeHash ?? null;
       const workingTreeDirty = status.length > 0;
       const sourceHeadMatchesCanonical = Boolean(
         canonicalHeadSha

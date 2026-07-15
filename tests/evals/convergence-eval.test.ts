@@ -27,6 +27,7 @@ import {
   canonicalConvergenceFailureObservationV1,
   canonicalConvergenceStoryFailuresV1,
   canonicalConvergenceTerminalFailureV1,
+  createNodeConvergenceProcessPort,
   runConvergenceSuite,
 } from "../../src/evals/convergence-runner.js";
 import {
@@ -976,6 +977,36 @@ describe("convergence runner", () => {
       && !run.ownership.manualProjectMutationDetected), true);
     assert.equal(output.result.blockerCodes.includes("EVAL_RUN_IDENTITY_INVALIDATED"), false);
     assert.equal(output.result.stoppedOnRepeatedRootCause, "9".repeat(64));
+  });
+
+  it("keeps an absolute pre-candidate non-repository provisional in the live process adapter", async () => {
+    const project = await mkdtemp(path.join(tmpdir(), "setfarm-convergence-pre-candidate-"));
+    roots.push(project);
+    const processPort = createNodeConvergenceProcessPort();
+
+    const provisional = await processPort.inspectProject({
+      projectLocator: project,
+      canonicalSourceRevision: null,
+    });
+    assert.deepEqual(provisional, {
+      projectIdentityState: "provisional",
+      workingTreeDirty: false,
+      manualProjectMutationDetected: false,
+      sourceHeadMatchesCanonical: false,
+      projectHeadSha: null,
+      projectTreeHash: null,
+      canonicalHeadSha: null,
+      canonicalTreeHash: null,
+    });
+
+    const invalid = await processPort.inspectProject({
+      projectLocator: project,
+      canonicalSourceRevision: { sha: "8".repeat(40), treeHash: "7".repeat(40) },
+    });
+    assert.equal(invalid.projectIdentityState, "invalid");
+    assert.equal(invalid.sourceHeadMatchesCanonical, false);
+    assert.equal(invalid.canonicalHeadSha, "8".repeat(40));
+    assert.equal(invalid.canonicalTreeHash, "7".repeat(40));
   });
 
   it("invalidates a manually mutated generated project and does not start another case", async () => {
