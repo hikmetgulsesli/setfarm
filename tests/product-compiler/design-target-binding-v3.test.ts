@@ -106,6 +106,13 @@ function exactAdapterInput() {
     selects: 0,
     links: 0,
     controls,
+    projection: {
+      schema: "setfarm.stitch-screen-projection.v1",
+      mode: "contract_only",
+      targetRef: target.targetId,
+      rawInteractiveCounts: { buttons: 2, links: 0, inputs: 0, textareas: 0, selects: 0 },
+    },
+    rejectedControls: [],
   }], null, 2);
   return {
     ...contracts,
@@ -219,9 +226,52 @@ describe("Product Compiler v3 exact Stitch target binding", () => {
     assert.equal(result.rejectionCodes.includes("DESIGN_SAME_ELEMENT_ACTION_MISSING"), true);
   });
 
+  it("accepts a complete contract-only projection with traceable neutralized Stitch extras", () => {
+    const input = exactAdapterInput();
+    const index = JSON.parse(input.screenIndex.text);
+    index[0].buttons = 3;
+    index[0].projection.rawInteractiveCounts.buttons = 3;
+    index[0].rejectedControls.push({
+      rejectionId: "settings-3",
+      kind: "button",
+      label: "Settings",
+      index: 2,
+      reasonCode: "undeclared_by_generation_target",
+      sourceLocator: "stitch/screen-pulse.html",
+      generatedSourceLocator: index[0].file,
+      selector: '[data-setfarm-rejected-control="settings-3"]',
+    });
+    input.screenIndex = textArtifact(
+      input.screenIndex.source.locator,
+      "application/json",
+      JSON.stringify(index, null, 2),
+    );
+    const source = input.generatedSources[0]!;
+    input.generatedSources[0] = {
+      targetRef: source.targetRef,
+      ...textArtifact(
+        source.source.locator,
+        source.source.mediaType,
+        source.text.replace(
+          "  </>;",
+          '    <button disabled hidden="true" aria-hidden="true" data-setfarm-rejected-control="settings-3">Settings</button>\n  </>;',
+        ),
+      ),
+    };
+
+    const adapted = adaptExactStitchScreenIndexV3(input);
+    assert.equal(adapted.status, "adapted", JSON.stringify(adapted.diagnostics));
+    const produced = produceDesignGraphFromExactStitchScreenIndexV3(input);
+    assert.equal(produced.status, "produced", JSON.stringify(produced.diagnostics));
+    if (produced.status !== "produced") return;
+    assert.equal(produced.designGraph.controls.some((control) => control.label === "Settings"), false);
+  });
+
   it("rejects an extra button even when its label resembles an allowed action", () => {
     const input = exactAdapterInput();
     const index = JSON.parse(input.screenIndex.text);
+    index[0].buttons = 3;
+    index[0].projection.rawInteractiveCounts.buttons = 3;
     index[0].controls.push({
       id: "save-looking-3",
       generatedLocalId: "save-looking-3",
@@ -230,9 +280,18 @@ describe("Product Compiler v3 exact Stitch target binding", () => {
       semanticSource: "data-action",
       sourceLocator: "stitch/screen-pulse.html",
       generatedSourceLocator: index[0].file,
-      selector: '[data-action-id="save-looking-3"]',
+      selector: '[data-control-id="save-looking-3"]',
     });
     input.screenIndex = textArtifact(input.screenIndex.source.locator, "application/json", JSON.stringify(index, null, 2));
+    const source = input.generatedSources[0]!;
+    input.generatedSources[0] = {
+      targetRef: source.targetRef,
+      ...textArtifact(
+        source.source.locator,
+        source.source.mediaType,
+        source.text.replace("  </>;", '    <button data-control-id="save-looking-3">Refresh status again</button>\n  </>;'),
+      ),
+    };
     const result = adaptExactStitchScreenIndexV3(input);
     assert.equal(result.status, "rejected");
     assert.equal(result.rejectionCodes.includes("DESIGN_CONTROL_UNEXPECTED"), true);

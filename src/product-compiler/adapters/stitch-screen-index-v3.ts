@@ -50,6 +50,35 @@ const IndexedControlSchema = z
   })
   .passthrough();
 
+const InteractiveCountsSchema = z.object({
+  buttons: z.number().int().nonnegative(),
+  links: z.number().int().nonnegative(),
+  inputs: z.number().int().nonnegative(),
+  textareas: z.number().int().nonnegative(),
+  selects: z.number().int().nonnegative(),
+}).strict();
+
+const RejectedControlSchema = z.object({
+  rejectionId: z.string().min(1).max(500),
+  kind: z.enum(["button", "link", "input", "textarea", "select"]),
+  label: z.string().min(1).max(500),
+  index: z.number().int().nonnegative(),
+  reasonCode: z.literal("undeclared_by_generation_target"),
+  rawActionRef: ActionIdSchema.optional(),
+  rawInputBindings: z.array(IndexedInputMappingSchema).max(500).optional(),
+  sourceLocator: z.string().min(1).max(1_024),
+  generatedSourceLocator: z.string().min(1).max(1_024),
+  selector: z.string().min(1).max(2_000),
+  href: z.string().max(2_000).optional(),
+}).strict();
+
+const ContractProjectionSchema = z.object({
+  schema: z.literal("setfarm.stitch-screen-projection.v1"),
+  mode: z.literal("contract_only"),
+  targetRef: z.string().regex(/^TARGET_[A-Z0-9]+(?:_[A-Z0-9]+)*$/),
+  rawInteractiveCounts: InteractiveCountsSchema,
+}).strict();
+
 const ScreenIndexEntrySchema = z
   .object({
     screenId: z.string().min(1).max(500),
@@ -62,6 +91,8 @@ const ScreenIndexEntrySchema = z
     selects: z.number().int().nonnegative(),
     links: z.number().int().nonnegative(),
     controls: z.array(IndexedControlSchema).max(10_000),
+    projection: ContractProjectionSchema,
+    rejectedControls: z.array(RejectedControlSchema).max(10_000),
   })
   .passthrough()
   .superRefine((value, context) => {
@@ -70,6 +101,18 @@ const ScreenIndexEntrySchema = z
     }
     if (!hasUniqueStrings(value.controls.map((control) => control.selector))) {
       context.addIssue({ code: "custom", path: ["controls"], message: "SCREEN_INDEX selectors must be unique per screen" });
+    }
+    if (!hasUniqueStrings(value.rejectedControls.map((control) => control.rejectionId))) {
+      context.addIssue({ code: "custom", path: ["rejectedControls"], message: "SCREEN_INDEX rejection IDs must be unique per screen" });
+    }
+    if (!hasUniqueStrings(value.rejectedControls.map((control) => control.selector))) {
+      context.addIssue({ code: "custom", path: ["rejectedControls"], message: "SCREEN_INDEX rejection selectors must be unique per screen" });
+    }
+    if (!hasUniqueStrings([
+      ...value.controls.map((control) => control.generatedLocalId),
+      ...value.rejectedControls.map((control) => control.rejectionId),
+    ])) {
+      context.addIssue({ code: "custom", path: ["rejectedControls"], message: "Accepted and rejected SCREEN_INDEX identities must be disjoint" });
     }
   });
 
@@ -190,6 +233,25 @@ function exactTagForControl(
   const identityAttribute = control.actionRef ? "data-action-id" : "data-control-id";
   return sourceOpeningTags(sourceText).find((tag) =>
     attrValue(tag, identityAttribute) === control.generatedLocalId);
+}
+
+function exactTagForRejectedControl(
+  sourceText: string,
+  control: z.infer<typeof RejectedControlSchema>,
+): string | undefined {
+  return sourceOpeningTags(sourceText).find((tag) =>
+    attrValue(tag, "data-setfarm-rejected-control") === control.rejectionId);
+}
+
+function hasAttribute(tag: string, name: string): boolean {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`\\b${escaped}(?:\\s*=|\\s|>)`, "i").test(tag);
+}
+
+function hasTrueAttributeValue(tag: string, name: string): boolean {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return attrValue(tag, name) === "true"
+    || new RegExp(`\\b${escaped}\\s*=\\s*\\{\\s*true\\s*\\}`, "i").test(tag);
 }
 
 function actionStateRefs(action: ProductActionV1): string[] {
@@ -353,6 +415,24 @@ export function adaptExactStitchScreenIndexV3(input: unknown): StitchScreenIndex
         reference: target.targetId,
       }));
     }
+    if (screen.projection.targetRef !== target.targetId) {
+      diagnostics.push(diagnostic({
+        code: "DESIGN_PROJECTION_TARGET_MISMATCH",
+        message: `SCREEN_INDEX contract projection ${screen.projection.targetRef} does not equal exact target ${target.targetId}`,
+        artifactHash: value.screenIndex.source.hash,
+        reference: target.targetId,
+      }));
+    }
+    for (const kind of ["buttons", "links", "inputs", "textareas", "selects"] as const) {
+      if (screen.projection.rawInteractiveCounts[kind] !== screen[kind]) {
+        diagnostics.push(diagnostic({
+          code: "DESIGN_PROJECTION_RAW_COUNT_MISMATCH",
+          message: `Target ${target.targetId} raw ${kind} count differs between SCREEN_INDEX and its contract projection`,
+          artifactHash: value.screenIndex.source.hash,
+          reference: `${target.targetId}:${kind}`,
+        }));
+      }
+    }
 
     const surface = value.productSpec.surfaces.find((item) => item.id === target.surfaceRef);
     if (!surface) {
@@ -375,10 +455,11 @@ export function adaptExactStitchScreenIndexV3(input: unknown): StitchScreenIndex
       ["select", screen.selects],
     ] as const) {
       const indexedCount = screen.controls.filter((control) => control.kind === kind).length;
-      if (indexedCount !== expectedCount) {
+      const rejectedCount = screen.rejectedControls.filter((control) => control.kind === kind).length;
+      if (indexedCount + rejectedCount !== expectedCount) {
         diagnostics.push(diagnostic({
           code: "DESIGN_CONTROL_INDEX_INCOMPLETE",
-          message: `Target ${target.targetId} has ${expectedCount} ${kind} element(s) but SCREEN_INDEX has ${indexedCount} exact semantic control(s)`,
+          message: `Target ${target.targetId} has ${expectedCount} raw ${kind} element(s) but SCREEN_INDEX accounts for ${indexedCount} accepted and ${rejectedCount} rejected control(s)`,
           artifactHash: value.screenIndex.source.hash,
           reference: `${target.targetId}:${kind}`,
         }));
@@ -403,6 +484,67 @@ export function adaptExactStitchScreenIndexV3(input: unknown): StitchScreenIndex
           message: `Target ${target.targetId} contains undeclared action control ${actionRef}`,
           artifactHash: source.source.hash,
           reference: actionRef,
+        }));
+      }
+    }
+
+    for (const rejectedControl of screen.rejectedControls) {
+      if (rejectedControl.generatedSourceLocator !== source.source.locator) {
+        diagnostics.push(diagnostic({
+          code: "DESIGN_REJECTED_CONTROL_SOURCE_MISMATCH",
+          message: `Rejected control ${rejectedControl.rejectionId} generated source locator differs from exact generated source`,
+          artifactHash: source.source.hash,
+          reference: rejectedControl.rejectionId,
+        }));
+      }
+      const expectedSelector = `[data-setfarm-rejected-control="${rejectedControl.rejectionId}"]`;
+      if (rejectedControl.selector !== expectedSelector) {
+        diagnostics.push(diagnostic({
+          code: "DESIGN_REJECTED_CONTROL_SELECTOR_MISMATCH",
+          message: `Rejected control ${rejectedControl.rejectionId} does not use its exact rejection marker selector`,
+          artifactHash: source.source.hash,
+          reference: rejectedControl.rejectionId,
+        }));
+      }
+      const exactRejectedTag = exactTagForRejectedControl(source.text, rejectedControl);
+      if (!exactRejectedTag) {
+        diagnostics.push(diagnostic({
+          code: "DESIGN_REJECTED_CONTROL_SOURCE_ELEMENT_MISSING",
+          message: `Generated source lacks rejection marker for ${rejectedControl.rejectionId}`,
+          artifactHash: source.source.hash,
+          reference: rejectedControl.rejectionId,
+        }));
+      } else if (
+        !hasAttribute(exactRejectedTag, "hidden")
+        || !hasTrueAttributeValue(exactRejectedTag, "aria-hidden")
+        || hasAttribute(exactRejectedTag, "data-action")
+        || hasAttribute(exactRejectedTag, "data-action-input")
+        || hasAttribute(exactRejectedTag, "onClick")
+        || hasAttribute(exactRejectedTag, "onChange")
+        || (rejectedControl.kind === "link" && hasAttribute(exactRejectedTag, "href"))
+      ) {
+        diagnostics.push(diagnostic({
+          code: "DESIGN_REJECTED_CONTROL_NOT_NEUTRALIZED",
+          message: `Rejected control ${rejectedControl.rejectionId} remains visible, semantic, or actionable in generated source`,
+          artifactHash: source.source.hash,
+          reference: rejectedControl.rejectionId,
+        }));
+      }
+      if (rejectedControl.rawActionRef && expectedActions.has(rejectedControl.rawActionRef)) {
+        diagnostics.push(diagnostic({
+          code: "DESIGN_REQUIRED_ACTION_CONTROL_REJECTED",
+          message: `Required action ${rejectedControl.rawActionRef} was rejected instead of projected as an exact control`,
+          artifactHash: source.source.hash,
+          reference: rejectedControl.rawActionRef,
+        }));
+      }
+      for (const mapping of rejectedControl.rawInputBindings ?? []) {
+        if (!expectedInputPairs.has(mappingKey(mapping.actionRef, mapping.inputField))) continue;
+        diagnostics.push(diagnostic({
+          code: "DESIGN_REQUIRED_INPUT_CONTROL_REJECTED",
+          message: `Required input ${mapping.actionRef}.${mapping.inputField} was rejected instead of projected as an exact value provider`,
+          artifactHash: source.source.hash,
+          reference: `${mapping.actionRef}.${mapping.inputField}`,
         }));
       }
     }

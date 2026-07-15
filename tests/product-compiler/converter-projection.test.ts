@@ -6,6 +6,85 @@ import path from "node:path";
 import { describe, it } from "node:test";
 
 describe("Stitch converter semantic projection", () => {
+  it("projects only exact v3 controls and records every undeclared Stitch control as neutralized evidence", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-v3-contract-projection-"));
+    try {
+      const stitch = path.join(root, "stitch");
+      fs.mkdirSync(stitch, { recursive: true });
+      fs.writeFileSync(path.join(stitch, "DESIGN_MANIFEST.json"), JSON.stringify([{
+        screenId: "status-screen",
+        title: "Status Page - Status Utility",
+        surfaceIds: ["SURF_STATUS"],
+      }]));
+      fs.writeFileSync(path.join(stitch, "GENERATION_TARGETS.json"), JSON.stringify({
+        schema: "setfarm.design-generation-targets.v1",
+        productSpecHash: "a".repeat(64),
+        targets: [{
+          targetId: "TARGET_STATUS",
+          designSurfaceId: "DSURF_STATUS",
+          surfaceRef: "SURF_STATUS",
+          requestScreenKey: "Status Page - Status Utility",
+          expectedScreenTitle: "Status Page - Status Utility",
+          requiredActionRefs: ["ACT_REFRESH"],
+          requiredActionInputs: [],
+        }],
+      }));
+      fs.writeFileSync(path.join(stitch, "STITCH_RESPONSE_BINDINGS.json"), JSON.stringify({
+        schema: "setfarm.stitch-target-response-bindings.v1",
+        generationTargetsHash: "b".repeat(64),
+        bindings: [{
+          targetRef: "TARGET_STATUS",
+          requestScreenKey: "Status Page - Status Utility",
+          expectedScreenTitle: "Status Page - Status Utility",
+          responseScreenId: "status-screen",
+          responseTitle: "Status Page - Status Utility",
+          stageId: "stage-status",
+        }],
+      }));
+      fs.writeFileSync(path.join(stitch, "status-screen.html"), `<!doctype html><html><body>
+        <main data-surface-id="SURF_STATUS">
+          <button>Settings</button>
+          <button aria-label="Help">?</button>
+          <button data-action="ACT_REFRESH">Refresh Status</button>
+          ${"<p>design-token</p>".repeat(80)}
+        </main>
+      </body></html>`);
+
+      execFileSync("node", ["scripts/stitch-to-jsx.mjs", root], {
+        cwd: process.cwd(),
+        stdio: "pipe",
+      });
+
+      const index = JSON.parse(fs.readFileSync(path.join(root, "src/screens/SCREEN_INDEX.json"), "utf8"));
+      assert.deepEqual(index[0].projection, {
+        schema: "setfarm.stitch-screen-projection.v1",
+        mode: "contract_only",
+        targetRef: "TARGET_STATUS",
+        rawInteractiveCounts: { buttons: 3, links: 0, inputs: 0, textareas: 0, selects: 0 },
+      });
+      assert.equal(index[0].controls.length, 1);
+      assert.equal(index[0].controls[0].actionRef, "ACT_REFRESH");
+      assert.deepEqual(
+        index[0].rejectedControls.map((control: { label: string; reasonCode: string }) => ({
+          label: control.label,
+          reasonCode: control.reasonCode,
+        })),
+        [
+          { label: "Settings", reasonCode: "undeclared_by_generation_target" },
+          { label: "Help", reasonCode: "undeclared_by_generation_target" },
+        ],
+      );
+
+      const source = fs.readFileSync(path.join(root, "src/screens/StatusPageStatusUtility.tsx"), "utf8");
+      assert.match(source, /<button[^>]*hidden=\{true\}[^>]*data-setfarm-rejected-control="settings-1"[^>]*>Settings<\/button>/);
+      assert.match(source, /<button[^>]*hidden=\{true\}[^>]*data-setfarm-rejected-control="help-2"[^>]*>/);
+      assert.match(source, /data-action="ACT_REFRESH"[^>]*data-action-id="refresh-status-3"[^>]*onClick=/);
+      assert.doesNotMatch(source, /actions\?\.\["settings-1"\]|actions\?\.\["help-2"\]/);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("retains same-element semantic and generated-local action identity", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-semantic-projection-"));
     try {

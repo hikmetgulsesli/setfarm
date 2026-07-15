@@ -45,6 +45,10 @@ import { requestRunTerminationInTransaction } from "../execution/run-termination
 
 // ── failStep ─────────────────────────────────────────────────────────
 
+export type FailStepOptions = Readonly<{
+  singleStepMode?: "bounded_stage_retry" | "terminal_platform_preclaim";
+}>;
+
 /**
  * Fail a step, with retry logic. For loop steps, applies per-story retry.
  */
@@ -52,6 +56,7 @@ export async function failStep(
   stepId: string,
   error: string,
   claimEnvelope?: ClaimEnvelopeV1,
+  options: FailStepOptions = {},
 ): Promise<{ retrying: boolean; runFailed: boolean }> {
   type FailStepRow = { id: string; run_id: string; step_id: string; step_index: number; retry_count: number; max_retries: number; type: string; current_story_id: string | null; agent_id: string };
   let step = await pgGet<FailStepRow>(
@@ -87,9 +92,18 @@ export async function failStep(
   if (failureAuthority?.storyDbId) step.current_story_id = failureAuthority.storyDbId;
 
   if (step.type === "loop" && step.current_story_id) {
+    if (options.singleStepMode === "terminal_platform_preclaim") {
+      throw new Error("PLATFORM_PRECLAIM_FAILURE_MODE_REQUIRES_SINGLE_STEP");
+    }
     return handleLoopStepFailurePG(stepId, step, error, failureAuthority?.envelope);
   }
-  return handleSingleStepFailurePG(stepId, step, error, failureAuthority?.envelope);
+  return handleSingleStepFailurePG(
+    stepId,
+    step,
+    error,
+    failureAuthority?.envelope,
+    options.singleStepMode ?? "bounded_stage_retry",
+  );
 }
 
 // ── Loop step failure (PG) ───────────────────────────────────────────
@@ -539,16 +553,25 @@ async function handleSingleStepFailurePG(
   step: { run_id: string; step_id?: string; step_index: number; retry_count: number; max_retries: number; type: string; current_story_id: string | null; agent_id: string },
   error: string,
   claimEnvelope?: ClaimEnvelopeV1,
+  failureMode: "bounded_stage_retry" | "terminal_platform_preclaim" = "bounded_stage_retry",
 ): Promise<{ retrying: boolean; runFailed: boolean }> {
+  const terminalPlatformPreclaim = failureMode === "terminal_platform_preclaim";
+  if (terminalPlatformPreclaim) {
+    step.max_retries = step.retry_count;
+    if (!error.startsWith("PLATFORM_PRECLAIM_TERMINAL")) {
+      error = `PLATFORM_PRECLAIM_TERMINAL [${step.step_id || stepId}]: ${error}`;
+    }
+    error = error.slice(0, 8_000);
+  }
   const newRetryCount = step.retry_count + 1;
 
   const workflowStepId = step.step_id || "";
 
-  if (await routeVerifyEachFailureToImplement(stepId, step, workflowStepId, error, claimEnvelope)) {
+  if (!terminalPlatformPreclaim && await routeVerifyEachFailureToImplement(stepId, step, workflowStepId, error, claimEnvelope)) {
     return { retrying: true, runFailed: false };
   }
 
-  if (isTransientAgentInfrastructureFailure(error)) {
+  if (!terminalPlatformPreclaim && isTransientAgentInfrastructureFailure(error)) {
     await pgBegin(async (sql) => {
       await closeSingleStepClaimForFailure(sql, {
         runId: step.run_id,
@@ -578,7 +601,7 @@ async function handleSingleStepFailurePG(
   }
 
   // Boost max_retries for quality gate steps so agents get more chances to fix issues
-  if (QUALITY_GATE_STEPS.has(workflowStepId) && step.max_retries < QUALITY_GATE_MIN_RETRIES) {
+  if (!terminalPlatformPreclaim && QUALITY_GATE_STEPS.has(workflowStepId) && step.max_retries < QUALITY_GATE_MIN_RETRIES) {
     step.max_retries = QUALITY_GATE_MIN_RETRIES;
     await pgRun("UPDATE steps SET max_retries = $1 WHERE id = $2", [QUALITY_GATE_MIN_RETRIES, stepId]);
     logger.info(`[failStep] Boosted max_retries to ${QUALITY_GATE_MIN_RETRIES} for quality gate step ${workflowStepId}`, { runId: step.run_id });
@@ -606,7 +629,11 @@ async function handleSingleStepFailurePG(
           targetStatus: "failed",
           requestedBy: "setfarm.step-fail.single",
           diagnostic: error,
-          evidence: { source: "handleSingleStepFailurePG" },
+          evidence: {
+            source: "handleSingleStepFailurePG",
+            failureOwner: terminalPlatformPreclaim ? "platform_preclaim" : "stage_agent",
+            retryPolicy: terminalPlatformPreclaim ? "terminal" : "bounded_stage_retry",
+          },
         });
       } else {
         claimOutcome = "skipped";

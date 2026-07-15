@@ -149,6 +149,30 @@ describe("requirement-traceable PLAN v3", () => {
     );
   });
 
+  it("rejects v3 action inputs that do not drive an exact state delta", () => {
+    const input = proposal();
+    input.actions[0].stateDeltas[0].valueFrom = { kind: "literal", value: "Task from state" };
+    const result = canonicalizeProductSpecV3Proposal({ task: TASK, proposal: input });
+    assert.equal(result.status, "rejected");
+    if (result.status !== "rejected") return;
+    assert.equal(result.diagnostics.some((item) =>
+      item.path === "/actions/0/input/fields/0/name"
+      && /behaviorally unused/.test(item.message)
+      && /use a literal delta instead/.test(item.message)), true);
+  });
+
+  it("returns an actionable RFC 6901 diagnostic for malformed state paths", () => {
+    const input = proposal();
+    input.actions[0].stateDeltas[0].path = "title";
+    const result = canonicalizeProductSpecV3Proposal({ task: TASK, proposal: input });
+    assert.equal(result.status, "rejected");
+    if (result.status !== "rejected") return;
+    assert.equal(result.diagnostics.some((item) =>
+      item.path === "/actions/0/stateDeltas/0/path"
+      && /RFC 6901 JSON Pointer/.test(item.message)
+      && /beginning with '\/'/.test(item.message)), true);
+  });
+
   it("uses a typed rejection for ambiguous or unsupported semantics", () => {
     const ledger = extractTaskRequirementLedgerV1("Connect it to the usual provider and keep it safe.");
     const rejection = canonicalizeProductSpecRejectionV1({
@@ -209,5 +233,7 @@ describe("requirement-traceable PLAN v3", () => {
     assert.match(prompt, /exactly one product-spec-v1 JSON fence/i);
     assert.match(prompt, /product-spec-rejection-v1/);
     assert.match(prompt, /Setfarm validates and canonicalizes/i);
+    assert.match(prompt, /fixed button outcome is a literal state delta/i);
+    assert.match(prompt, /RFC 6901 JSON Pointer/);
   });
 });

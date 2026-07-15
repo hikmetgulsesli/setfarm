@@ -208,6 +208,19 @@ function createFixture(runId = "run-packet-fixture", v3 = false): Fixture {
       selects: 0,
       links: 0,
       controls,
+      projection: {
+        schema: "setfarm.stitch-screen-projection.v1",
+        mode: "contract_only",
+        targetRef: target.targetId,
+        rawInteractiveCounts: {
+          buttons: target.requiredActionRefs.length,
+          links: 0,
+          inputs: target.requiredActionInputs.reduce((count, item) => count + item.inputFields.length, 0),
+          textareas: 0,
+          selects: 0,
+        },
+      },
+      rejectedControls: [],
     });
   });
   writeJson(path.join(repo, "src", "screens", "SCREEN_INDEX.json"), screenIndex);

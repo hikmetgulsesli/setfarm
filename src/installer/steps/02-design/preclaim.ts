@@ -416,12 +416,20 @@ async function failDesignPreclaim(ctx: ClaimContext, error: string, options: { t
     throw new Error(`design preclaim could not resolve step id for ${ctx.runId}/${ctx.stepId}`);
   }
 
-  if (options.terminal) {
+  const v3PlatformPreclaim = ctx.claimEnvelope?.protocol === "v3";
+  if (options.terminal && !v3PlatformPreclaim) {
     await pgRun("UPDATE steps SET max_retries = retry_count WHERE id = $1", [step.id]);
   }
 
   const { failStep } = await import("../../step-fail.js");
-  await failStep(step.id, safeError, ctx.claimEnvelope);
+  await failStep(
+    step.id,
+    v3PlatformPreclaim
+      ? `PLATFORM_PRECLAIM_TERMINAL [design]: ${safeError}`
+      : safeError,
+    ctx.claimEnvelope,
+    v3PlatformPreclaim ? { singleStepMode: "terminal_platform_preclaim" } : undefined,
+  );
 }
 
 function isValidStitchHtml(filePath: string): boolean {

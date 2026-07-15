@@ -36,6 +36,13 @@ const ValueTypeSchema = z.enum([
   "array",
 ]);
 
+const JsonPointerPathSchema = z.string().max(500).refine(
+  (value) => /^(?:\/(?:[^~]|~[01])*)*$/.test(value),
+  {
+    message: "State path must be empty or a valid RFC 6901 JSON Pointer beginning with '/'; escape '~' as '~0' and '/' as '~1'",
+  },
+);
+
 const GoalV1Schema = z
   .object({
     id: GoalIdSchema,
@@ -221,7 +228,7 @@ const ActionTriggerV1Schema = z
 const ActionPreconditionV1Schema = z
   .object({
     stateRef: StateIdSchema,
-    path: z.string().max(500).refine((value) => value === "" || value.startsWith("/")),
+    path: JsonPointerPathSchema,
     operator: z.enum(["equals", "not_equals", "exists", "not_exists", "truthy", "falsy"]),
     expected: z.json().optional(),
   })
@@ -253,7 +260,7 @@ export const ActionValueSourceV1Schema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("state"),
     stateRef: StateIdSchema,
-    path: z.string().max(500).refine((value) => value === "" || value.startsWith("/")),
+    path: JsonPointerPathSchema,
   }).strict(),
   z.object({
     kind: z.literal("entity_field"),
@@ -275,7 +282,7 @@ const ActionStateDeltaV1Schema = z
   .object({
     stateRef: StateIdSchema,
     operation: z.enum(["set", "merge", "append", "remove", "clear", "upsert"]),
-    path: z.string().max(500).refine((value) => value === "" || value.startsWith("/")),
+    path: JsonPointerPathSchema,
     valueFrom: ActionValueSourceV1Schema,
     matchField: z.string().min(1).max(160).optional(),
   })
@@ -314,7 +321,7 @@ const PersistenceEffectV1Schema = z
     }),
     statePaths: z.array(z.object({
       stateRef: StateIdSchema,
-      path: z.string().max(500).refine((value) => value === "" || value.startsWith("/")),
+      path: JsonPointerPathSchema,
     }).strict()).min(1).max(500).refine(
       (values) => hasUniqueStrings(values.map((value) => `${value.stateRef}\0${value.path}`)),
       { message: "Persistence state paths must be unique" },
@@ -838,6 +845,7 @@ export const ProductSpecV1Schema = z
     const evidenceIds = new Set(value.evidencePredicates.map((item) => item.id));
     const observableIds = new Set(value.actions.flatMap((item) =>
       (item.observableEffects ?? []).map((effect) => effect.id)));
+    const exactV3Contract = Boolean(value.delivery && value.requirements && value.traceability);
     if (observableIds.size !== value.actions.reduce(
       (total, action) => total + (action.observableEffects?.length ?? 0),
       0,
@@ -929,6 +937,7 @@ export const ProductSpecV1Schema = z
 
     value.actions.forEach((action, actionIndex) => {
       const inputFields = new Set(action.input.fields.map((field) => field.name));
+      const stateDeltaInputFields = new Set<string>();
       action.surfaceRefs.forEach((surfaceRef, surfaceIndex) => {
         requireRef(
           surfaceIds,
@@ -1003,8 +1012,12 @@ export const ProductSpecV1Schema = z
             message: `Unresolved action input field: ${delta.valueFrom.field}`,
           });
         }
+        if (delta.valueFrom.kind === "input") {
+          stateDeltaInputFields.add(delta.valueFrom.field);
+        }
         if (delta.valueFrom.kind === "inputs") {
           delta.valueFrom.fields.forEach((field, fieldIndex) => {
+            stateDeltaInputFields.add(field);
             if (!inputFields.has(field)) {
               context.addIssue({
                 code: "custom",
@@ -1022,6 +1035,16 @@ export const ProductSpecV1Schema = z
           requireRef(fieldIds, delta.valueFrom.fieldRef, ["actions", actionIndex, "stateDeltas", index, "valueFrom", "fieldRef"], "entity field ref");
         }
       });
+      if (exactV3Contract) {
+        action.input.fields.forEach((field, fieldIndex) => {
+          if (stateDeltaInputFields.has(field.name)) return;
+          context.addIssue({
+            code: "custom",
+            path: ["actions", actionIndex, "input", "fields", fieldIndex, "name"],
+            message: `Action input ${action.id}.${field.name} is behaviorally unused: every v3 input must feed an exact state delta through valueFrom.kind input or inputs; remove constant inputs and use a literal delta instead`,
+          });
+        });
+      }
       if (action.navigation.kind === "route") {
         requireRef(routeIds, action.navigation.routeRef, ["actions", actionIndex, "navigation", "routeRef"], "route ref");
       }
