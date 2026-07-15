@@ -56,13 +56,15 @@ export const GH_MERGE_TIMEOUT = 30_000;
 
 /**
  * Context keys that must never be overwritten by step output.
- * These are seed values set at run creation time.
+ * These are seed values set at run creation time or canonical packet fields
+ * established by their owning upstream stage.
  */
 export const PROTECTED_CONTEXT_KEYS = new Set([
   "repo",
   "task",
   "branch",
   "run_id",
+  "design_required",
 ]);
 
 // ── Optional Template Variables ─────────────────────────────────────

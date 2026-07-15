@@ -1799,20 +1799,14 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
       [ctx.runId],
     ))?.protocol
     ?? "legacy";
-  let v3Contract: V3DesignContract | undefined;
-  if (protocol === "v3") {
-    try {
-      v3Contract = prepareV3DesignContract(prd, stitchDir);
-      ctx.context["generation_targets"] = canonicalJsonStringify(v3Contract.generationTargets);
-    } catch (error) {
-      await failDesignPreclaim(ctx, String((error as Error)?.message || error), { terminal: true });
-      return;
-    }
-  }
   const designRequired = String(ctx.context["design_required"] || ctx.context["DESIGN_REQUIRED"] || "true").toLowerCase() !== "false";
   if (!designRequired) {
     const stepRow = await pgGet<{ id: string }>("SELECT id FROM steps WHERE run_id = $1 AND step_id = $2 LIMIT 1", [ctx.runId, ctx.stepId]);
     if (!stepRow?.id) return;
+    // A non-visual delivery must not leak a stale or speculative Stitch join
+    // into downstream context. The canonical authority is the empty map.
+    delete ctx.context["generation_targets"];
+    delete ctx.context["stitch_response_bindings"];
     ctx.context["screen_map"] = "[]";
     ctx.context["screens_generated"] = "0";
     ctx.context["design_system"] = "{}";
@@ -1828,6 +1822,16 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
     ].join("\n"), ctx.claimEnvelope);
     logger.info("[module:design preclaim] AUTO-COMPLETED design bypass (DESIGN_REQUIRED=false)", { runId: ctx.runId });
     return;
+  }
+  let v3Contract: V3DesignContract | undefined;
+  if (protocol === "v3") {
+    try {
+      v3Contract = prepareV3DesignContract(prd, stitchDir);
+      ctx.context["generation_targets"] = canonicalJsonStringify(v3Contract.generationTargets);
+    } catch (error) {
+      await failDesignPreclaim(ctx, String((error as Error)?.message || error), { terminal: true });
+      return;
+    }
   }
   const declaredSurfaces = parseProductSurfaces(prd);
   if (declaredSurfaces.length === 0) {

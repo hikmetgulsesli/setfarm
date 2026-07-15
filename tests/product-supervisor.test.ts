@@ -307,6 +307,42 @@ describe("product supervisor", () => {
     assert.equal(result.ok, true, result.reason);
   });
 
+  it("accepts the canonical empty DESIGN bypass for non-visual delivery", () => {
+    const result = runProductSupervisorGate({
+      phase: "design",
+      runId: "run-1",
+      stepId: "design",
+      parsed: {
+        status: "done",
+        design_required: "false",
+        screen_map: "[]",
+      },
+      context: {
+        design_required: "false",
+        prd: "# API contract\n\nDESIGN_REQUIRED=false.",
+      },
+    });
+
+    assert.equal(result.ok, true, result.reason);
+  });
+
+  it("rejects Stitch screens attached to a non-visual DESIGN bypass", () => {
+    const result = runProductSupervisorGate({
+      phase: "design",
+      runId: "run-1",
+      stepId: "design",
+      parsed: {
+        status: "done",
+        design_required: "false",
+        screen_map: JSON.stringify([{ screenId: "stale", name: "Stale Screen" }]),
+      },
+      context: { design_required: "false" },
+    });
+
+    assert.equal(result.ok, false);
+    assert.match(result.reason, /DESIGN_NONVISUAL_SCREEN_MAP_PRESENT/);
+  });
+
   it("does not treat implementation planning vocabulary as story domain drift", () => {
     const source = [
       "Project: brick-arcade-0512 Build a browser arcade game with brick grid, paddle controls, ball physics, score, lives, pause, restart, and game over.",
