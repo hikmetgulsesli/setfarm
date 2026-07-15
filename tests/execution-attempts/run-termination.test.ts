@@ -9,7 +9,12 @@ import {
   createRunTerminationRepository,
   requestRunTermination,
 } from "../../src/execution/run-termination.js";
+import {
+  operationalFailureCauseHashV1,
+  type OperationalFailureCauseV1,
+} from "../../src/execution/schemas/operational-failure-cause-v1.js";
 import { transitionRunToTerminal } from "../../src/execution/run-terminal-transition.js";
+import { buildRunOperationalSnapshot } from "../../src/server/run-operational-snapshot.js";
 import { exactProductReservation } from "./fixtures.js";
 import { createIsolatedTestDatabase } from "./test-database.js";
 
@@ -21,6 +26,19 @@ const DRAIN_EVIDENCE = {
   workspaceProcessAbsent: true,
   stableObservations: 2,
   evidenceRefs: ["setfarm://test/drain-proof"],
+};
+
+const SETUP_BUILD_CAUSE: OperationalFailureCauseV1 = {
+  schema: "setfarm.operational-failure-cause.v1",
+  workflowStepId: "setup-build",
+  boundary: "stitch.converter.generated_tsx",
+  failureClass: "generated_artifact_invalid",
+  failureCode: "V3_OBSERVABLE_REF_INVALID",
+};
+
+const SETUP_BUILD_BINDING_CAUSE: OperationalFailureCauseV1 = {
+  ...SETUP_BUILD_CAUSE,
+  failureCode: "V3_OBSERVABLE_SELECTOR_INVALID",
 };
 
 async function seedOwnedRuntime(
@@ -87,6 +105,256 @@ async function seedOwnedRuntime(
 }
 
 describe("durable two-phase run termination", () => {
+  it("rejects a structurally valid cause without exact producer authority before mutation", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const runId = "run-termination-cause-untrusted";
+      await database.insertRun(runId);
+      await assert.rejects(
+        requestRunTermination(database.sql, {
+          runId,
+          targetStatus: "failed",
+          requestedBy: "agent-prose-classifier",
+          diagnostic: "prose must not become canonical failure authority",
+          failureCause: SETUP_BUILD_CAUSE,
+        }),
+        /RUN_TERMINATION_FAILURE_CAUSE_AUTHORITY_INVALID:REQUESTER_UNKNOWN/,
+      );
+      const state = await database.sql<Array<{ status: string; termination_count: number }>>`
+        SELECT status,
+               (SELECT COUNT(*)::integer FROM run_termination_requests WHERE run_id = ${runId}) AS termination_count
+          FROM runs WHERE id = ${runId}
+      `;
+      assert.deepEqual({ ...state[0] }, { status: "running", termination_count: 0 });
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("rejects contradictory producer evidence before termination mutation", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const runId = "run-termination-cause-evidence-mismatch";
+      await database.insertRun(runId);
+      await assert.rejects(
+        requestRunTermination(database.sql, {
+          runId,
+          targetStatus: "failed",
+          requestedBy: "setfarm-v3-downstream-compiler",
+          diagnostic: "bounded recovery evidence and cause disagree",
+          failureCause: {
+            schema: "setfarm.operational-failure-cause.v1",
+            workflowStepId: "qa-test",
+            boundary: "product_compiler.downstream_recovery",
+            failureClass: "contract_invalid",
+            failureCode: "V3_DOWNSTREAM_SPECIFICATION_INCOMPLETE",
+          },
+          evidence: {
+            schema: "setfarm.v3-downstream-termination-evidence.v1",
+            outcome: "bounded_recovery_blocked",
+            terminalReasonCodes: ["budget_exhausted"],
+          },
+        }),
+        /RUN_TERMINATION_FAILURE_CAUSE_AUTHORITY_INVALID:EVIDENCE_BINDING_INVALID/,
+      );
+      const state = await database.sql<Array<{ status: string; termination_count: number }>>`
+        SELECT status,
+               (SELECT COUNT(*)::integer FROM run_termination_requests WHERE run_id = ${runId}) AS termination_count
+          FROM runs WHERE id = ${runId}
+      `;
+      assert.deepEqual({ ...state[0] }, { status: "running", termination_count: 0 });
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("seals a strict producer cause and rejects every later replacement path", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const runId = "run-termination-cause-seal";
+      await database.insertRun(runId);
+      const requested = await requestRunTermination(database.sql, {
+        runId,
+        targetStatus: "failed",
+        requestedBy: "setfarm.step-fail.single",
+        diagnostic: "generated TSX did not parse",
+        evidence: { sourceRef: "setfarm://test/converter-output" },
+        failureCause: SETUP_BUILD_CAUSE,
+        requestId: "RTR_cause-seal-request01",
+      });
+      assert.equal(requested.status, "requested");
+      if (requested.status !== "requested") throw new Error("test request missing");
+      assert.deepEqual(requested.request.failureCause, SETUP_BUILD_CAUSE);
+      assert.deepEqual(requested.request.evidence.operationalFailureCause, SETUP_BUILD_CAUSE);
+
+      const duplicate = await requestRunTermination(database.sql, {
+        runId,
+        targetStatus: "failed",
+        requestedBy: "setfarm.step-fail.single",
+        diagnostic: "same semantic failure, different occurrence prose",
+        failureCause: { ...SETUP_BUILD_CAUSE },
+      });
+      assert.equal(duplicate.status, "existing");
+      if (duplicate.status !== "existing") throw new Error("test duplicate missing");
+      assert.deepEqual(duplicate.request.failureCause, SETUP_BUILD_CAUSE);
+
+      await assert.rejects(
+        requestRunTermination(database.sql, {
+          runId,
+          targetStatus: "failed",
+          requestedBy: "setfarm.step-fail.single",
+          diagnostic: "conflicting cause must not replace the first writer",
+          failureCause: SETUP_BUILD_BINDING_CAUSE,
+        }),
+        /RUN_TERMINATION_FAILURE_CAUSE_CONFLICT/,
+      );
+
+      await assert.rejects(
+        requestRunTermination(database.sql, {
+          runId,
+          targetStatus: "failed",
+          requestedBy: "setfarm.step-fail.single",
+          diagnostic: "reserved key injection",
+          evidence: { operationalFailureCause: SETUP_BUILD_BINDING_CAUSE },
+        }),
+        /RUN_TERMINATION_FAILURE_CAUSE_RESERVED/,
+      );
+
+      const terminations = createRunTerminationRepository(database.sql);
+      const claimed = await terminations.claim({
+        requestId: requested.request.requestId,
+        ownerInstanceId: "termination-cause-owner",
+      });
+      assert.equal(claimed?.requestId, requested.request.requestId);
+      await assert.rejects(
+        terminations.markDrained({
+          requestId: requested.request.requestId,
+          ownerInstanceId: "termination-cause-owner",
+          evidence: { operationalFailureCause: SETUP_BUILD_BINDING_CAUSE },
+        }),
+        /RUN_TERMINATION_FAILURE_CAUSE_RESERVED/,
+      );
+      const drained = await terminations.markDrained({
+        requestId: requested.request.requestId,
+        ownerInstanceId: "termination-cause-owner",
+        evidence: { runtimeSessionCount: 0 },
+      });
+      assert.deepEqual(drained.failureCause, SETUP_BUILD_CAUSE);
+      assert.deepEqual(drained.evidence.operationalFailureCause, SETUP_BUILD_CAUSE);
+      const quarantined = await terminations.quarantine({
+        requestId: requested.request.requestId,
+        ownerInstanceId: "termination-cause-owner",
+        diagnostic: "drain evidence needs operator inspection",
+        evidence: { quarantineCode: "DRAIN_EVIDENCE_UNCERTAIN" },
+      });
+      assert.deepEqual(quarantined.failureCause, SETUP_BUILD_CAUSE);
+      assert.deepEqual(quarantined.evidence.operationalFailureCause, SETUP_BUILD_CAUSE);
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("allows exactly one concurrent first-writer cause", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const runId = "run-termination-cause-race";
+      await database.insertRun(runId);
+      const writes = await Promise.allSettled([
+        requestRunTermination(database.sql, {
+          runId,
+          targetStatus: "failed",
+          requestedBy: "setfarm.step-fail.single",
+          diagnostic: "candidate a",
+          failureCause: SETUP_BUILD_CAUSE,
+          requestId: "RTR_cause-race-request-a",
+        }),
+        requestRunTermination(database.sql, {
+          runId,
+          targetStatus: "failed",
+          requestedBy: "setfarm.step-fail.single",
+          diagnostic: "candidate b",
+          failureCause: SETUP_BUILD_BINDING_CAUSE,
+          requestId: "RTR_cause-race-request-b",
+        }),
+      ]);
+      assert.equal(writes.filter((result) => result.status === "fulfilled").length, 1);
+      const rejection = writes.find((result) => result.status === "rejected");
+      assert.match(String(rejection && rejection.status === "rejected" ? rejection.reason : ""), /RUN_TERMINATION_FAILURE_CAUSE_CONFLICT/);
+      const rows = await database.sql<Array<{ evidence: unknown }>>`
+        SELECT evidence FROM run_termination_requests WHERE run_id = ${runId}
+      `;
+      assert.equal(rows.length, 1);
+      const evidence = rows[0]!.evidence as Record<string, unknown>;
+      assert.ok(
+        operationalFailureCauseHashV1(evidence.operationalFailureCause) === operationalFailureCauseHashV1(SETUP_BUILD_CAUSE)
+        || operationalFailureCauseHashV1(evidence.operationalFailureCause) === operationalFailureCauseHashV1(SETUP_BUILD_BINDING_CAUSE),
+      );
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("preserves the exact cause through drain, terminalization, repository, and snapshot reads", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const runId = "run-termination-cause-lifecycle";
+      await database.insertRun(runId);
+      const requested = await requestRunTermination(database.sql, {
+        runId,
+        targetStatus: "failed",
+        requestedBy: "setfarm.step-fail.single",
+        diagnostic: "typed setup-build terminal failure",
+        failureCause: SETUP_BUILD_CAUSE,
+        requestId: "RTR_cause-lifecycle-001",
+      });
+      if (requested.status !== "requested") throw new Error("test request missing");
+      const terminations = createRunTerminationRepository(database.sql);
+      await terminations.claim({
+        requestId: requested.request.requestId,
+        ownerInstanceId: "termination-cause-lifecycle-owner",
+      });
+      await terminations.markDrained({
+        requestId: requested.request.requestId,
+        ownerInstanceId: "termination-cause-lifecycle-owner",
+        evidence: { runtimeSessionCount: 0 },
+      });
+      await terminations.terminalize({ requestId: requested.request.requestId });
+
+      const stored = await terminations.findById(requested.request.requestId);
+      assert.equal(stored?.state, "terminalized");
+      assert.deepEqual(stored?.failureCause, SETUP_BUILD_CAUSE);
+      assert.deepEqual(stored?.evidence.operationalFailureCause, SETUP_BUILD_CAUSE);
+      const snapshot = await buildRunOperationalSnapshot(database.sql, runId);
+      const projected = snapshot.terminationRequests.find(
+        (request) => request.requestId === requested.request.requestId,
+      );
+      assert.equal(projected?.state, "terminalized");
+      assert.deepEqual(projected?.evidence.operationalFailureCause, SETUP_BUILD_CAUSE);
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("forbids a failure cause on cancellation", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const runId = "run-cancel-cause-invalid";
+      await database.insertRun(runId);
+      await assert.rejects(
+        requestRunTermination(database.sql, {
+          runId,
+          targetStatus: "cancelled",
+          requestedBy: "cli-user",
+          diagnostic: "operator cancellation",
+          failureCause: SETUP_BUILD_CAUSE,
+        }),
+        /Cancelled termination cannot carry an operational failure cause/,
+      );
+    } finally {
+      await database.cleanup();
+    }
+  });
+
   it("keeps ownership active until runtime drain proof then terminalizes atomically", async () => {
     const database = await createIsolatedTestDatabase();
     try {

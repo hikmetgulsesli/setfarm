@@ -8,6 +8,15 @@ import {
   transitionRunToTerminal,
   type RunTerminalTransitionResult,
 } from "./run-terminal-transition.js";
+import { evaluateOperationalFailureCauseEvidenceAuthorityV1 } from "./operational-failure-cause-authority-v1.js";
+import {
+  OPERATIONAL_FAILURE_CAUSE_EVIDENCE_KEY,
+  OperationalFailureCauseV1Schema,
+  assertOperationalFailureCauseEvidenceKeyAbsent,
+  operationalFailureCauseFromEvidenceV1,
+  operationalFailureCauseHashV1,
+  type OperationalFailureCauseV1,
+} from "./schemas/operational-failure-cause-v1.js";
 
 const TerminationRequestIdSchema = z.string().regex(/^RTR_[A-Za-z0-9-]{16,160}$/);
 const TargetStatusSchema = z.enum(["cancelled", "failed"]);
@@ -51,6 +60,7 @@ export type RunTerminationRequest = Readonly<{
   terminalizedAt?: string;
   diagnostic: string;
   evidence: Record<string, unknown>;
+  failureCause?: OperationalFailureCauseV1;
   createdAt: string;
   updatedAt: string;
 }>;
@@ -74,6 +84,8 @@ function mapRequest(row: RequestRow): RunTerminationRequest {
   if (!evidence || typeof evidence !== "object" || Array.isArray(evidence)) {
     throw new Error("RUN_TERMINATION_EVIDENCE_INVALID");
   }
+  const typedEvidence = evidence as Record<string, unknown>;
+  const failureCause = operationalFailureCauseFromEvidenceV1(typedEvidence);
   return Object.freeze({
     requestId: TerminationRequestIdSchema.parse(row.request_id),
     runId: row.run_id,
@@ -87,7 +99,8 @@ function mapRequest(row: RequestRow): RunTerminationRequest {
     ...(optionalTimestamp(row.drained_at) ? { drainedAt: optionalTimestamp(row.drained_at) } : {}),
     ...(optionalTimestamp(row.terminalized_at) ? { terminalizedAt: optionalTimestamp(row.terminalized_at) } : {}),
     diagnostic: row.diagnostic,
-    evidence: Object.freeze({ ...(evidence as Record<string, unknown>) }),
+    evidence: Object.freeze({ ...typedEvidence }),
+    ...(failureCause ? { failureCause: Object.freeze(failureCause) } : {}),
     createdAt: timestamp(row.created_at),
     updatedAt: timestamp(row.updated_at),
   });
@@ -107,6 +120,7 @@ export type RequestRunTerminationInput = Readonly<{
   requestedBy: string;
   diagnostic: string;
   evidence?: Record<string, unknown>;
+  failureCause?: OperationalFailureCauseV1;
   requestId?: string;
   now?: Date;
 }>;
@@ -121,9 +135,29 @@ export async function requestRunTerminationInTransaction(
     requestedBy: z.string().min(1).max(500),
     diagnostic: z.string().min(1).max(4_000),
     evidence: z.record(z.string(), z.unknown()).optional(),
+    failureCause: OperationalFailureCauseV1Schema.optional(),
     requestId: TerminationRequestIdSchema.optional(),
     now: z.date().optional(),
-  }).strict().parse(rawInput);
+  }).strict().superRefine((value, context) => {
+    if (value.targetStatus === "cancelled" && value.failureCause) {
+      context.addIssue({
+        code: "custom",
+        path: ["failureCause"],
+        message: "Cancelled termination cannot carry an operational failure cause",
+      });
+    }
+  }).parse(rawInput);
+  assertOperationalFailureCauseEvidenceKeyAbsent(input.evidence);
+  if (input.failureCause) {
+    const authority = evaluateOperationalFailureCauseEvidenceAuthorityV1({
+      requestedBy: input.requestedBy,
+      cause: input.failureCause,
+      evidence: input.evidence ?? {},
+    });
+    if (!authority.trusted) {
+      throw new Error(`RUN_TERMINATION_FAILURE_CAUSE_AUTHORITY_INVALID:${authority.reasonCode}`);
+    }
+  }
   time(input.now);
   const runs = await sql.unsafe<Array<{ status: string }>>(
     "SELECT status FROM runs WHERE id = $1 FOR UPDATE",
@@ -144,7 +178,19 @@ export async function requestRunTerminationInTransaction(
     if (existing[0].target_status !== input.targetStatus) {
       throw new Error("RUN_TERMINATION_TARGET_CONFLICT");
     }
-    return { status: "existing" as const, request: mapRequest(existing[0]) };
+    const existingRequest = mapRequest(existing[0]);
+    if (
+      input.failureCause
+      && (!existingRequest.failureCause
+        || operationalFailureCauseHashV1(existingRequest.failureCause)
+          !== operationalFailureCauseHashV1(input.failureCause))
+    ) {
+      throw new Error("RUN_TERMINATION_FAILURE_CAUSE_CONFLICT");
+    }
+    if (input.failureCause && existingRequest.requestedBy !== input.requestedBy) {
+      throw new Error("RUN_TERMINATION_FAILURE_CAUSE_REQUESTER_CONFLICT");
+    }
+    return { status: "existing" as const, request: existingRequest };
   }
   if (!["running", "resuming"].includes(run.status)) {
     throw new Error(`RUN_TERMINATION_SOURCE_STATUS_INVALID:${run.status}`);
@@ -183,6 +229,9 @@ export async function requestRunTerminationInTransaction(
       input.diagnostic,
       JSON.stringify({
         ...(input.evidence ?? {}),
+        ...(input.failureCause ? {
+          [OPERATIONAL_FAILURE_CAUSE_EVIDENCE_KEY]: input.failureCause,
+        } : {}),
         ...(deferredForCompletion ? {
           deferredForCompletionRequestId: activeCompletionOwner[0]!.request_id,
         } : {}),
@@ -384,6 +433,7 @@ export function createRunTerminationRepository(sql: postgres.Sql) {
       evidence?: Record<string, unknown>;
       now?: Date;
     }>): Promise<RunTerminationRequest> {
+      assertOperationalFailureCauseEvidenceKeyAbsent(input.evidence);
       time(input.now);
       const requestId = TerminationRequestIdSchema.parse(input.requestId);
       const identity = await sql.unsafe<Array<{ run_id: string }>>(
@@ -459,6 +509,7 @@ export function createRunTerminationRepository(sql: postgres.Sql) {
       now?: Date;
     }>): Promise<RunTerminationRequest> {
       if (!input.diagnostic.trim()) throw new Error("RUN_TERMINATION_QUARANTINE_DIAGNOSTIC_REQUIRED");
+      assertOperationalFailureCauseEvidenceKeyAbsent(input.evidence);
       time(input.now);
       const requestId = TerminationRequestIdSchema.parse(input.requestId);
       const identity = await sql.unsafe<Array<{ run_id: string }>>(

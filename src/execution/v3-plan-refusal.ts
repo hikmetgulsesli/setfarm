@@ -111,6 +111,13 @@ export async function completeV3PlanProductSpecRefusal(input: Readonly<{
       targetStatus: "failed",
       requestedBy: "setfarm.product-compiler.plan-refusal",
       diagnostic,
+      failureCause: {
+        schema: "setfarm.operational-failure-cause.v1",
+        workflowStepId: "plan",
+        boundary: "product_compiler.plan_refusal",
+        failureClass: "contract_invalid",
+        failureCode: "V3_PLAN_CLARIFICATION_REQUIRED",
+      },
       evidence: {
         schema: "setfarm.v3-plan-clarification-termination.v1",
         terminalFailure: true,

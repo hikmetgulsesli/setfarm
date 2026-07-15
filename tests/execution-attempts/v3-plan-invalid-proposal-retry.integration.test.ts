@@ -522,6 +522,7 @@ test("invalid PLAN v3 proposal closes the exact claim and settles as a bounded r
       termination_count: number;
       latest_diagnostic: string;
       dedupe_observations: number;
+      termination_evidence: Record<string, unknown>;
     }>>`
       SELECT run.status AS run_status,
              step.status AS step_status,
@@ -530,13 +531,16 @@ test("invalid PLAN v3 proposal closes the exact claim and settles as a bounded r
              (SELECT COUNT(*)::integer FROM runtime_sessions WHERE run_id = run.id AND state = 'released') AS released_runtimes,
              (SELECT COUNT(*)::integer FROM run_termination_requests WHERE run_id = run.id) AS termination_count,
              (SELECT diagnostic FROM claim_log WHERE run_id = run.id ORDER BY id DESC LIMIT 1) AS latest_diagnostic,
-             (SELECT COUNT(*)::integer FROM run_observations WHERE run_id = run.id AND check_id LIKE 'v3.stage-retry.duplicate:%') AS dedupe_observations
+             (SELECT COUNT(*)::integer FROM run_observations WHERE run_id = run.id AND check_id LIKE 'v3.stage-retry.duplicate:%') AS dedupe_observations,
+             (SELECT evidence FROM run_termination_requests WHERE run_id = run.id LIMIT 1) AS termination_evidence
         FROM runs run
         JOIN steps step ON step.id = ${stepDbId}
        WHERE run.id = ${runId}
     `;
+    const terminationEvidence = dedupeState[0]!.termination_evidence;
     assert.deepEqual({
       ...dedupeState[0],
+      termination_evidence: undefined,
       latest_diagnostic: dedupeState[0]!.latest_diagnostic.replace(/: [a-f0-9]{64};.*/, ": <dedupe>"),
     }, {
       run_status: "failing",
@@ -547,6 +551,14 @@ test("invalid PLAN v3 proposal closes the exact claim and settles as a bounded r
       termination_count: 1,
       latest_diagnostic: "V3_STAGE_RETRY_DUPLICATE_UNCHANGED_TUPLE: <dedupe>",
       dedupe_observations: 1,
+      termination_evidence: undefined,
+    });
+    assert.deepEqual(terminationEvidence.operationalFailureCause, {
+      schema: "setfarm.operational-failure-cause.v1",
+      workflowStepId: "plan",
+      boundary: "stage_retry_authority",
+      failureClass: "retry_delta_missing",
+      failureCode: "V3_STAGE_RETRY_DUPLICATE_UNCHANGED_TUPLE",
     });
   } finally {
     await runtimeDb?.pgClose().catch(() => {});

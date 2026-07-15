@@ -24,9 +24,7 @@ import {
   type ConvergenceRunPoll,
   type ConvergenceSqlPort,
   evaluateConvergencePredicateCoverage,
-  canonicalConvergenceFailureObservationV1,
-  canonicalConvergenceStoryFailuresV1,
-  canonicalConvergenceTerminalFailureV1,
+  canonicalConvergenceScopedFailureV1,
   createNodeConvergenceProcessPort,
   runConvergenceSuite,
 } from "../../src/evals/convergence-runner.js";
@@ -44,6 +42,7 @@ import {
 } from "../../src/execution/v3-release-admission-repository.js";
 import { resolveNewRunProtocol } from "../../src/execution/run-protocol.js";
 import { persistWorkflowRun } from "../../src/execution/run-persistence.js";
+import { createV3DownstreamTerminalOperationalFailureCauseV1 } from "../../src/recovery/v3-downstream-terminal-cause-v1.js";
 import {
   ProductConvergenceSuiteV1Schema,
   loadConvergenceSuite,
@@ -57,6 +56,22 @@ import { buildNoVolumeRuntimeAuthorityFixture } from "../execution-attempts/fixt
 
 const SHA = "a".repeat(40);
 const HASH = "b".repeat(64);
+const REPEATED_OPERATIONAL_CAUSE = {
+  schema: "setfarm.operational-failure-cause.v1" as const,
+  workflowStepId: "setup-build",
+  boundary: "stitch.converter.generated_tsx",
+  failureClass: "generated_artifact_invalid",
+  failureCode: "V3_OBSERVABLE_REF_INVALID",
+};
+const REPEATED_OPERATIONAL_CAUSE_HASH = hashCanonicalJson(REPEATED_OPERATIONAL_CAUSE);
+const REPEATED_MULTI_REASON_OPERATIONAL_CAUSE =
+  createV3DownstreamTerminalOperationalFailureCauseV1({
+    workflowStepId: "qa-test",
+    terminalReasonCodes: ["specification_incomplete", "operator_required"],
+  });
+const REPEATED_MULTI_REASON_OPERATIONAL_CAUSE_HASH = hashCanonicalJson(
+  REPEATED_MULTI_REASON_OPERATIONAL_CAUSE,
+);
 // Admission expiry is a live lease fence checked by run persistence. Anchor
 // the deterministic suite clock to this process instead of an absolute date
 // that eventually turns the positive release-GO fixture into an expired canary.
@@ -491,6 +506,8 @@ type HarnessOptions = Readonly<{
   artifactIndexUnready?: boolean;
   pass?: boolean;
   repeatedRoot?: boolean;
+  repeatedMultiReasonRoot?: boolean;
+  scopedRoot?: boolean;
   manualMutation?: boolean;
   provisionalIdentity?: boolean;
   projectionMismatch?: boolean;
@@ -499,6 +516,7 @@ type HarnessOptions = Readonly<{
   predicateCoverageFailure?: boolean;
   neverTerminal?: boolean;
   releaseDriftBeforeStart?: boolean;
+  releaseDriftAfterStart?: boolean;
 }>;
 
 function harness(loaded: Awaited<ReturnType<typeof suite>>, options: HarnessOptions = {}) {
@@ -549,7 +567,16 @@ function harness(loaded: Awaited<ReturnType<typeof suite>>, options: HarnessOpti
           options.pass !== false,
           options.predicateCoverageFailure === true,
         ),
-        rootCauseHash: options.repeatedRoot ? "9".repeat(64) : null,
+        operationalFailureCause: options.repeatedMultiReasonRoot
+          ? REPEATED_MULTI_REASON_OPERATIONAL_CAUSE
+          : options.repeatedRoot
+            ? REPEATED_OPERATIONAL_CAUSE
+            : null,
+        scopedFailure: options.scopedRoot ? {
+          workflowStepId: "setup-build",
+          phase: "building",
+          kind: "step",
+        } : null,
         pullRequests: accepted
           ? [{ url: "https://github.com/example/project/pull/1", mergeStatus: "merged" }]
           : [],
@@ -558,7 +585,10 @@ function harness(loaded: Awaited<ReturnType<typeof suite>>, options: HarnessOpti
   };
   const processPort: ConvergenceProcessPort = {
     inspectRelease: async () => ({
-      headSha: options.releaseDriftBeforeStart && ++releaseInspections > 1 ? "f".repeat(40) : SHA,
+      headSha: (options.releaseDriftBeforeStart && ++releaseInspections > 1)
+        || (options.releaseDriftAfterStart && starts > 0)
+        ? "f".repeat(40)
+        : SHA,
       clean: true,
       runnerHash: "c".repeat(64),
       environmentHash: "d".repeat(64),
@@ -744,87 +774,16 @@ describe("product convergence suite contract", () => {
     });
   });
 
-  it("hashes typed failure identity without volatile event IDs or diagnostic prose", () => {
-    const evidence = {
-      code: "SETUP_PACKET_STORY_PLAN_REJECTED",
-      failureHash: "1".repeat(64),
-      rejectionCodes: ["STORY_PLAN_EVIDENCE_CAPABILITY_UNAVAILABLE"],
-      diagnostics: [{
-        code: "STORY_PLAN_EVIDENCE_CAPABILITY_UNAVAILABLE",
-        category: "link",
-        severity: "error",
-        reference: "CAP_BROWSER_RUN",
-        message: "first prose rendering",
-      }],
-    };
-    const first = canonicalConvergenceFailureObservationV1({
-      check_id: "step.failed:2026-01-01T00:00:00Z:abc",
-      event_type: "step.failed",
-      status: "fail",
-      evidence: JSON.stringify(evidence),
+  it("uses only stable step scope for a non-repeatable fallback and ignores the run wrapper", () => {
+    assert.deepEqual(canonicalConvergenceScopedFailureV1([
+      { step_id: "plan", story_id: "", phase: "planning" },
+      { step_id: "setup-build", story_id: "US_RUN_LOCAL_2039", phase: "building" },
+      { step_id: "run", story_id: "", phase: "operations" },
+    ]), {
+      workflowStepId: "setup-build",
+      phase: "building",
+      kind: "story",
     });
-    const second = canonicalConvergenceFailureObservationV1({
-      check_id: "step.failed:2027-02-02T00:00:00Z:def",
-      event_type: "step.failed",
-      status: "fail",
-      evidence: JSON.stringify({
-        ...evidence,
-        failureHash: "2".repeat(64),
-        diagnostics: [{ ...evidence.diagnostics[0], message: "different prose rendering" }],
-      }),
-    });
-    const different = canonicalConvergenceFailureObservationV1({
-      check_id: "step.failed:2028-03-03T00:00:00Z:ghi",
-      event_type: "step.failed",
-      status: "fail",
-      evidence: JSON.stringify({
-        ...evidence,
-        diagnostics: [{ ...evidence.diagnostics[0], reference: "CAP_LOCAL_STORAGE" }],
-      }),
-    });
-
-    assert.deepEqual(first, second);
-    assert.notEqual(hashCanonicalJson(first), hashCanonicalJson(different));
-    assert.deepEqual(canonicalConvergenceFailureObservationV1({
-      check_id: "volatile:2028:ghi",
-      status: "fail",
-      evidence: JSON.stringify(evidence),
-    }), canonicalConvergenceFailureObservationV1({
-      check_id: "volatile:2029:jkl",
-      status: "fail",
-      evidence: JSON.stringify(evidence),
-    }));
-  });
-
-  it("removes run-local story IDs from canonical root-cause identity", () => {
-    assert.deepEqual(canonicalConvergenceStoryFailuresV1([
-      { story_id: "STORY_RUN_A", quality_failure_fingerprint: "failure-b" },
-      { story_id: "STORY_RUN_B", quality_failure_fingerprint: "failure-a" },
-      { story_id: "STORY_RUN_C", quality_failure_fingerprint: "failure-b" },
-    ]), ["failure-a", "failure-b"]);
-  });
-
-  it("uses the final typed failure instead of recovered earlier retry noise", () => {
-    const setupFailure = {
-      check_id: "setup:volatile",
-      event_type: "setup-build.packet-rejected",
-      status: "fail",
-      evidence: JSON.stringify({
-        schema: "setfarm.product-compilation-report.v1",
-        code: "SETUP_PACKET_STORY_PLAN_REJECTED",
-        rejectionCodes: ["STORY_PLAN_EVIDENCE_CAPABILITY_UNAVAILABLE"],
-      }),
-    };
-    assert.deepEqual(canonicalConvergenceTerminalFailureV1([
-      {
-        check_id: "plan:recovered",
-        event_type: "step.retry",
-        status: "fail",
-        evidence: JSON.stringify({ code: "V3_PLAN_OUTPUT_REJECTED" }),
-      },
-      setupFailure,
-      { check_id: "run:volatile", event_type: "run.failed", status: "fail", evidence: "{}" },
-    ]), canonicalConvergenceFailureObservationV1(setupFailure));
   });
 
   it("keeps historical v1 ownership evidence readable while emitting explicit identity state now", () => {
@@ -968,8 +927,31 @@ describe("convergence runner", () => {
     assert.equal(fake.starts(), 3);
     assert.equal(output.result.plannedRuns, 16);
     assert.equal(output.result.status, "blocked");
-    assert.equal(output.result.stoppedOnRepeatedRootCause, "9".repeat(64));
-    assert.deepEqual(output.result.rootCauseCounts, [{ rootCauseHash: "9".repeat(64), count: 3 }]);
+    assert.equal(output.result.stoppedOnRepeatedRootCause, REPEATED_OPERATIONAL_CAUSE_HASH);
+    assert.deepEqual(output.result.rootCauseCounts, [{ rootCauseHash: REPEATED_OPERATIONAL_CAUSE_HASH, count: 3 }]);
+  });
+
+  it("stops repeated two-reason terminal matrices on their exact aggregate cause", async () => {
+    const loaded = await suite(2);
+    const fake = harness(loaded, { pass: false, repeatedMultiReasonRoot: true });
+    const output = await runConvergenceSuite(loaded, { releaseSha: SHA, execute: true }, fake.ports);
+    assert.equal(fake.starts(), 3);
+    assert.equal(output.result.stoppedOnRepeatedRootCause, REPEATED_MULTI_REASON_OPERATIONAL_CAUSE_HASH);
+    assert.deepEqual(output.result.rootCauseCounts, [{
+      rootCauseHash: REPEATED_MULTI_REASON_OPERATIONAL_CAUSE_HASH,
+      count: 3,
+    }]);
+  });
+
+  it("never stops on identical scoped failures without a typed producer cause", async () => {
+    const loaded = await suite(2);
+    const fake = harness(loaded, { pass: false, scopedRoot: true });
+    const output = await runConvergenceSuite(loaded, { releaseSha: SHA, execute: true }, fake.ports);
+    assert.equal(fake.starts(), 16);
+    assert.equal(output.result.status, "fail");
+    assert.equal(output.result.stoppedOnRepeatedRootCause, null);
+    assert.equal(output.result.rootCauseCounts.length, 16);
+    assert.ok(output.result.rootCauseCounts.every((item) => item.count === 1));
   });
 
   it("keeps measuring a cleanly settled pre-candidate failure with provisional source identity", async () => {
@@ -987,7 +969,7 @@ describe("convergence runner", () => {
       && run.ownership.workingTreeDirty
       && !run.ownership.manualProjectMutationDetected), true);
     assert.equal(output.result.blockerCodes.includes("EVAL_RUN_IDENTITY_INVALIDATED"), false);
-    assert.equal(output.result.stoppedOnRepeatedRootCause, "9".repeat(64));
+    assert.equal(output.result.stoppedOnRepeatedRootCause, REPEATED_OPERATIONAL_CAUSE_HASH);
   });
 
   it("keeps an absolute pre-candidate non-repository provisional in the live process adapter", async () => {
@@ -1022,12 +1004,13 @@ describe("convergence runner", () => {
 
   it("invalidates a manually mutated generated project and does not start another case", async () => {
     const loaded = await suite();
-    const fake = harness(loaded, { manualMutation: true });
+    const fake = harness(loaded, { manualMutation: true, repeatedRoot: true });
     const output = await runConvergenceSuite(loaded, { releaseSha: SHA, execute: true }, fake.ports);
     assert.equal(fake.starts(), 1);
     assert.equal(output.result.runs[0]!.passed, false);
     assert.equal(output.result.runs[0]!.ownership.manualProjectMutationDetected, true);
     assert.ok(output.result.blockerCodes.includes("EVAL_RUN_IDENTITY_INVALIDATED"));
+    assert.equal(output.result.stoppedOnRepeatedRootCause, null);
   });
 
   it("bounds polling, records timeout, and leaves the active run untouched", async () => {
@@ -1038,6 +1021,23 @@ describe("convergence runner", () => {
     assert.equal(output.result.runs[0]!.disposition, "timeout");
     assert.equal(output.result.status, "blocked");
     assert.ok(output.result.blockerCodes.includes("EVAL_RUN_TIMEOUT_ACTIVE_OWNERSHIP"));
+  });
+
+  it("reverifies the release after execution before counting a repeatable root", async () => {
+    const loaded = await suite(2);
+    const fake = harness(loaded, {
+      pass: false,
+      repeatedRoot: true,
+      releaseDriftAfterStart: true,
+    });
+    const output = await runConvergenceSuite(loaded, { releaseSha: SHA, execute: true }, fake.ports);
+    assert.equal(fake.starts(), 1);
+    assert.ok(output.result.blockerCodes.includes("EVAL_RELEASE_IDENTITY_DRIFT"));
+    assert.equal(output.result.stoppedOnRepeatedRootCause, null);
+    assert.deepEqual(output.result.rootCauseCounts, [{
+      rootCauseHash: REPEATED_OPERATIONAL_CAUSE_HASH,
+      count: 1,
+    }]);
   });
 
   it("records a Mission Control hash mismatch as failure instead of trusting prose", async () => {

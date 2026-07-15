@@ -58,7 +58,16 @@ test("v3 platform preclaim failure terminalizes without model retry authority", 
       stepDbId,
       "PRODUCT_BUILD_PACKET_V3_BLOCKED: DESIGN_CONTROL_INDEX_INCOMPLETE",
       envelope,
-      { singleStepMode: "terminal_platform_preclaim" },
+      {
+        singleStepMode: "terminal_platform_preclaim",
+        operationalFailureCause: {
+          schema: "setfarm.operational-failure-cause.v1",
+          workflowStepId: "setup-build",
+          boundary: "product_compiler.setup_build_packet",
+          failureClass: "contract_invalid",
+          failureCode: "SETUP_PACKET_DESIGN_GRAPH_REJECTED",
+        },
+      },
     );
     assert.deepEqual(result, { retrying: false, runFailed: true });
 
@@ -105,6 +114,13 @@ test("v3 platform preclaim failure terminalizes without model retry authority", 
     assert.equal(owner.termination_state, "requested");
     assert.equal(owner.termination_evidence.failureOwner, "platform_preclaim");
     assert.equal(owner.termination_evidence.retryPolicy, "terminal");
+    assert.deepEqual(owner.termination_evidence.operationalFailureCause, {
+      schema: "setfarm.operational-failure-cause.v1",
+      workflowStepId: "setup-build",
+      boundary: "product_compiler.setup_build_packet",
+      failureClass: "contract_invalid",
+      failureCode: "SETUP_PACKET_DESIGN_GRAPH_REJECTED",
+    });
     assert.equal(owner.implement_status, "waiting");
 
     const retry = await (await import("../../src/installer/step-ops.js")).claimStep(

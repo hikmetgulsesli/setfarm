@@ -17,15 +17,125 @@ import { materializeSetupBuildContracts } from "../../setup-handoff.js";
 import { getStackPack } from "../../stack-contract/packs.js";
 import type { StackPackId } from "../../stack-contract/types.js";
 import { recordObservation } from "../../observations.js";
+import {
+  OperationalFailureCauseError,
+  OperationalFailureCauseV1Schema,
+  type OperationalFailureCauseV1,
+} from "../../../execution/schemas/operational-failure-cause-v1.js";
 
 const MIN_STITCH_HTML_BYTES = 1000;
 const DESIGN_IMPORT_REPORT_REL = ".setfarm/setup/DESIGN_IMPORT_VALIDATE.json";
+const STITCH_CONVERSION_RESULT_REL = ".setfarm/setup/STITCH_TO_JSX_RESULT.json";
 const UNKNOWN_MATERIAL_ICONS_REPORT_REL = ".setfarm/setup/UNKNOWN_MATERIAL_ICONS.json";
 const DESIGN_IMPORT_REPAIR_SUGGESTION =
   "Inspect .setfarm/setup/DESIGN_IMPORT_VALIDATE.json, scripts/stitch-to-jsx.mjs, " +
   "scripts/generated-screen-validator.mjs, and src/screens/*.tsx. Fix the deterministic " +
   "Stitch-to-JSX import/conversion baseline, rerun generated-screen-validator --fix, then rerun npm run build. " +
   "Do not pass generated-screen mechanical defects to IMPLEMENT.";
+
+const STITCH_CONVERTER_CONTRACT_CODES = new Set([
+  "STITCH_DESIGN_MANIFEST_JSON_INVALID",
+  "V3_PROJECTION_CONTRACT_PARTIAL",
+  "V3_PROJECTION_CONTRACT_JSON_INVALID",
+  "V3_PROJECTION_TARGETS_INVALID",
+  "V3_PROJECTION_BINDINGS_INVALID",
+  "V3_PROJECTION_TARGET_ID_INVALID",
+  "V3_PROJECTION_RESPONSE_BINDING_INVALID",
+  "V3_PROJECTION_SCREEN_UNBOUND",
+]);
+const STITCH_CONVERTER_GENERATED_CODES = new Set([
+  "V3_OBSERVABLE_REF_INVALID",
+  "V3_OBSERVABLE_SELECTOR_INVALID",
+  "V3_OBSERVABLE_SELECTOR_MISSING",
+  "V3_OBSERVABLE_SELECTOR_AMBIGUOUS",
+]);
+
+class SetupBuildPreclaimError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SetupBuildPreclaimError";
+  }
+}
+
+function readJsonObject(filePath: string): Record<string, unknown> | undefined {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function stitchConverterFailureCause(repo: string): OperationalFailureCauseV1 | undefined {
+  const result = readJsonObject(path.join(repo, STITCH_CONVERSION_RESULT_REL));
+  const failureCode = typeof result?.failureCode === "string" ? result.failureCode : "";
+  const contractFailure = STITCH_CONVERTER_CONTRACT_CODES.has(failureCode);
+  const generatedFailure = STITCH_CONVERTER_GENERATED_CODES.has(failureCode);
+  if (
+    result?.schema !== "setfarm.stitch-to-jsx-result.v1"
+    || result.status !== "failed"
+    || (!contractFailure && !generatedFailure)
+    || Object.keys(result).sort().join(",") !== "failureCode,schema,status"
+  ) return undefined;
+  const parsed = OperationalFailureCauseV1Schema.safeParse({
+    schema: "setfarm.operational-failure-cause.v1",
+    workflowStepId: "setup-build",
+    boundary: contractFailure
+      ? "stitch.converter.input_contract"
+      : "stitch.converter.generated_tsx",
+    failureClass: contractFailure
+      ? "contract_invalid"
+      : "generated_artifact_invalid",
+    failureCode,
+  });
+  return parsed.success ? parsed.data : undefined;
+}
+
+export function stitchConverterSuccessContractFailure(
+  repo: string,
+): Readonly<{ diagnostic: string; cause: OperationalFailureCauseV1 }> | undefined {
+  const resultPath = path.join(repo, STITCH_CONVERSION_RESULT_REL);
+  const exists = fs.existsSync(resultPath);
+  const result = readJsonObject(resultPath);
+  if (
+    result?.schema === "setfarm.stitch-to-jsx-result.v1"
+    && result.status === "passed"
+    && Object.keys(result).sort().join(",") === "schema,status"
+  ) return undefined;
+  const failureCode = exists
+    ? "STITCH_CONVERTER_RESULT_INVALID"
+    : "STITCH_CONVERTER_RESULT_MISSING";
+  return Object.freeze({
+    diagnostic: `${failureCode}: stitch-to-jsx exited successfully without its exact passed result artifact`,
+    cause: OperationalFailureCauseV1Schema.parse({
+      schema: "setfarm.operational-failure-cause.v1",
+      workflowStepId: "setup-build",
+      boundary: "stitch.converter.result_contract",
+      failureClass: "platform_invariant_failed",
+      failureCode,
+    }),
+  });
+}
+
+function designImportValidatorFailureCause(repo: string): OperationalFailureCauseV1 | undefined {
+  const report = readJsonObject(path.join(repo, DESIGN_IMPORT_REPORT_REL));
+  if (
+    report?.schema !== "setfarm.design-import-validate.v1"
+    || report.status !== "fail"
+    || report.rootCauseCategory !== "design_import_failure"
+    || !Array.isArray(report.failedRules)
+    || report.failedRules.length === 0
+  ) return undefined;
+  return OperationalFailureCauseV1Schema.parse({
+    schema: "setfarm.operational-failure-cause.v1",
+    workflowStepId: "setup-build",
+    boundary: "stitch.design_import_validator",
+    failureClass: "generated_artifact_invalid",
+    failureCode: "STITCH_DESIGN_IMPORT_INVALID",
+  });
+}
 
 function appendSetupQualityWarning(ctx: ClaimContext, warning: string): void {
   const existing = ctx.context["setup_quality_warnings"] || "";
@@ -125,9 +235,12 @@ function throwPreclaimFailure(
   message: string,
   category = "setup_build_failure",
   suggestion = "Repair setup/build baseline, rerun the declared build command, then complete setup-build.",
+  failureCause?: OperationalFailureCauseV1,
 ): never {
   setPreclaimFailure(ctx, message, category, suggestion);
-  throw new Error(message.slice(0, 1200));
+  const diagnostic = message.slice(0, 1200);
+  if (failureCause) throw new OperationalFailureCauseError(failureCause, diagnostic);
+  throw new SetupBuildPreclaimError(diagnostic);
 }
 
 function summarizeDesignImportReport(repo: string, max = 1800): string {
@@ -218,6 +331,7 @@ function enforceFinalDesignImportValidation(ctx: ClaimContext, repo: string): bo
   const validatorPath = resolvePlatformScript("generated-screen-validator.mjs");
   if (!fs.existsSync(validatorPath)) return true;
   try {
+    fs.rmSync(path.join(repo, DESIGN_IMPORT_REPORT_REL), { force: true });
     execFileSync("node", [validatorPath, repo, "--fix"], { cwd: repo, timeout: 60000, stdio: "pipe" });
     ctx.context["design_import_validate_report"] = DESIGN_IMPORT_REPORT_REL;
     logger.info(`[module:setup-build preclaim] final design import validate ok`, { runId: ctx.runId });
@@ -468,6 +582,13 @@ async function compileSetupBuildProductPacket(
       `PRODUCT_BUILD_PACKET_V3_BLOCKED:\n${detail}`,
       "product_packet_compilation_failure",
       "Repair the exact PLAN/design/setup producer contract that rejected the packet; do not send incomplete semantics to IMPLEMENT.",
+      error instanceof SetupBuildPacketError ? {
+        schema: "setfarm.operational-failure-cause.v1",
+        workflowStepId: "setup-build",
+        boundary: "product_compiler.setup_build_packet",
+        failureClass: "contract_invalid",
+        failureCode: error.code,
+      } : undefined,
     );
   }
 }
@@ -688,10 +809,22 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
     try {
       const scriptPath = resolvePlatformScript("stitch-to-jsx.mjs");
       if (fs.existsSync(scriptPath)) {
+        fs.rmSync(path.join(repo, STITCH_CONVERSION_RESULT_REL), { force: true });
         execFileSync("node", [scriptPath, repo], { timeout: 30000, stdio: "pipe" });
+        const converterSuccessFailure = stitchConverterSuccessContractFailure(repo);
+        if (converterSuccessFailure) {
+          throwPreclaimFailure(
+            ctx,
+            converterSuccessFailure.diagnostic,
+            "design_import_failure",
+            DESIGN_IMPORT_REPAIR_SUGGESTION,
+            converterSuccessFailure.cause,
+          );
+        }
         const validatorPath = resolvePlatformScript("generated-screen-validator.mjs");
         if (fs.existsSync(validatorPath)) {
           try {
+            fs.rmSync(path.join(repo, DESIGN_IMPORT_REPORT_REL), { force: true });
             execFileSync("node", [validatorPath, repo, "--fix"], { cwd: repo, timeout: 60000, stdio: "pipe" });
             ctx.context["design_import_validate_report"] = DESIGN_IMPORT_REPORT_REL;
             logger.info(`[module:setup-build preclaim] design import validate ok`, { runId: ctx.runId });
@@ -705,7 +838,13 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
               formatProcessFailure(e),
             ].join("\n");
             logger.warn(`[module:setup-build preclaim] ${msg}`, { runId: ctx.runId });
-            throwPreclaimFailure(ctx, msg, "design_import_failure", DESIGN_IMPORT_REPAIR_SUGGESTION);
+            throwPreclaimFailure(
+              ctx,
+              msg,
+              "design_import_failure",
+              DESIGN_IMPORT_REPAIR_SUGGESTION,
+              designImportValidatorFailureCause(repo),
+            );
           }
         }
         try {
@@ -722,27 +861,23 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
             logger.info(`[module:setup-build preclaim] post-stitch build ok`, { runId: ctx.runId });
           }
         } catch (e) {
+          if (e instanceof OperationalFailureCauseError) throw e;
           const details = formatProcessFailure(e);
-          const generatedScreenFailure = /src\/screens|stitch-to-jsx|generated screen|DESIGN_IMPORT/i.test(details);
           const msg = [
-            generatedScreenFailure
-              ? `npm run build failed after stitch-to-jsx:\n${summarizeDesignImportReport(repo)}`
-              : "npm run build failed after stitch-to-jsx:\n",
+            `npm run build failed after stitch-to-jsx:\n${summarizeDesignImportReport(repo)}`,
             details,
           ].filter(Boolean).join("\n");
           logger.warn(`[module:setup-build preclaim] ${msg}`, { runId: ctx.runId });
-          if (generatedScreenFailure) {
-            throwPreclaimFailure(ctx, msg, "design_import_failure", DESIGN_IMPORT_REPAIR_SUGGESTION);
-          }
-          setPreclaimFailure(
+          throwPreclaimFailure(
             ctx,
             msg,
             "setup_build_failure",
-            "Fix setup/build baseline so npm run build passes, then complete setup-build.",
+            "Inspect the exact build output and repair the declared stack baseline; the converter and design validator did not prove ownership of this failure.",
           );
         }
       }
     } catch (e) {
+      if (e instanceof OperationalFailureCauseError || e instanceof SetupBuildPreclaimError) throw e;
       const details = formatProcessFailure(e);
       logger.warn(`[module:setup-build preclaim] stitch-to-jsx failed: ${details.slice(0, 300)}`, { runId: ctx.runId });
       throwPreclaimFailure(
@@ -750,6 +885,7 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
         `stitch-to-jsx failed:\n${details}`,
         "design_import_failure",
         DESIGN_IMPORT_REPAIR_SUGGESTION,
+        stitchConverterFailureCause(repo),
       );
     }
   }
@@ -760,7 +896,13 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
 
   if (!ctx.context["baseline_fail"] && !ctx.context["compat_fail"]) {
     if (!enforceFinalDesignImportValidation(ctx, repo)) {
-      throw new Error((ctx.context["baseline_fail"] || "DESIGN_IMPORT_VALIDATE failed before setup-build completion").slice(0, 1200));
+      throwPreclaimFailure(
+        ctx,
+        ctx.context["baseline_fail"] || "DESIGN_IMPORT_VALIDATE failed before setup-build completion",
+        "design_import_failure",
+        DESIGN_IMPORT_REPAIR_SUGGESTION,
+        designImportValidatorFailureCause(repo),
+      );
     }
   }
 

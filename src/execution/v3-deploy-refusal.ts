@@ -8,6 +8,7 @@ import {
 } from "./claim-mutation-authority.js";
 import { closeExactSingleStepClaimInTransaction } from "./claim-attempt-transition.js";
 import { requestRunTerminationInTransaction } from "./run-termination.js";
+import type { OperationalFailureCauseV1 } from "./schemas/operational-failure-cause-v1.js";
 import { releaseReservedRuntimeSessionInTransaction } from "./runtime-session-repository.js";
 import type { ClaimEnvelopeV1 } from "./schemas/claim-envelope-v1.js";
 import type { V3DeployAuthorityError } from "./v3-deploy-authority.js";
@@ -29,6 +30,29 @@ export class V3DeployRefusalLifecycleError extends Error {
     });
     this.name = "V3DeployRefusalLifecycleError";
     this.authorityCode = authorityError.code;
+  }
+}
+
+export function v3DeployOperationalFailureClass(
+  code: V3DeployAuthorityError["code"],
+): OperationalFailureCauseV1["failureClass"] {
+  switch (code) {
+    case "V3_DEPLOY_ACCEPTED_CANDIDATE_MISSING":
+    case "V3_DEPLOY_ACCEPTED_CANDIDATE_INVALID":
+    case "V3_DEPLOY_ACCEPTED_CANDIDATE_POINTER_MISMATCH":
+    case "V3_DEPLOY_SOURCE_REVISION_MISMATCH":
+    case "V3_DEPLOY_PACKET_INVALID":
+    case "V3_DEPLOY_RUNTIME_ENV_MISSING":
+      return "contract_invalid";
+    case "V3_DEPLOY_SOURCE_UNAVAILABLE":
+    case "V3_DEPLOY_PLATFORM_FAILED":
+    case "V3_DEPLOY_HEALTH_FAILED":
+      return "infrastructure_failure";
+    case "V3_DEPLOY_RUN_NOT_FOUND":
+    case "V3_DEPLOY_TARGET_UNSUPPORTED":
+      return "platform_authority_invalid";
+    case "V3_DEPLOY_ROLLBACK_FAILED":
+      return "platform_invariant_failed";
   }
 }
 
@@ -240,6 +264,13 @@ export async function completeV3DeployAuthorityRefusal(input: Readonly<{
       targetStatus: "failed",
       requestedBy: "setfarm.product-compiler.deploy-refusal",
       diagnostic,
+      failureCause: {
+        schema: "setfarm.operational-failure-cause.v1",
+        workflowStepId: "deploy",
+        boundary: "product_compiler.deploy_authority",
+        failureClass: v3DeployOperationalFailureClass(input.error.code),
+        failureCode: input.error.code,
+      },
       evidence: {
         schema: "setfarm.v3-deploy-authority-termination.v1",
         terminalFailure: true,

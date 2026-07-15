@@ -147,6 +147,11 @@ test("v3 single-step unresolved input terminalizes atomically and rolls back as 
     assert.equal(terminal.requested_by, "setfarm.v3-stage-input-authority");
     assert.deepEqual(terminal.termination_evidence.missingVariables, ["missing_required_contract"]);
     assert.equal(terminal.termination_evidence.modelRedispatchBudget, 0);
+    assert.equal(
+      terminal.termination_evidence.operationalFailureCause,
+      undefined,
+      "custom workflow stages remain terminal but cannot impersonate canonical repeatable causes",
+    );
     assert.equal(terminal.completion_count, 0);
 
     const legacy = await claimStep(legacyAgent, undefined, {

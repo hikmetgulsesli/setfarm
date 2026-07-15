@@ -29,9 +29,11 @@ import {
 } from "../../src/product-compiler/schemas/implementation-slice-v1.js";
 import {
   createV3DownstreamEvidenceRouter,
+  V3DownstreamEvidenceRouteResultV1Schema,
   V3DownstreamEvidenceRouterError,
 } from "../../src/recovery/v3-downstream-evidence-router.js";
 import type { V3RecoveryCoordinatorResult } from "../../src/recovery/v3-recovery-coordinator.js";
+import { V3_RECOVERY_TERMINAL_REASON_CODES_V1 } from "../../src/recovery/v3-downstream-terminal-cause-v1.js";
 import { buildMinimalValidContracts } from "../product-compiler/fixtures/minimal-valid-contract.js";
 
 const RUN_ID = "run-v3-downstream-router";
@@ -251,6 +253,90 @@ describe("v3 downstream evidence router", () => {
     const replay = await router.route(routeInput(value.worktree));
     assert.deepEqual(replay.stories.map((story) => story.execution), ["replayed", "replayed"]);
     assert.deepEqual(Object.fromEntries(value.executions), { "US-001": 1, "US-002": 1 });
+  });
+
+  it("carries the exact finite terminal reason instead of inventing budget exhaustion", async () => {
+    const value = await fixture({ "US-001": "pass", "US-002": "fail" });
+    const router = createV3DownstreamEvidenceRouter({
+      ...value.dependencies,
+      coordinate: async (input: unknown): Promise<V3RecoveryCoordinatorResult> => {
+        const exactBundle = (input as { evidenceBundle: EvidenceBundleV2 }).evidenceBundle;
+        const evidenceBundleHash = computeEvidenceBundleHash(exactBundle);
+        return exactBundle.aggregateVerdict === "pass"
+          ? { status: "verified", evidenceBundleHash, attemptId: exactBundle.attemptId! }
+          : {
+              status: "blocked",
+              recoveryCaseId: `RCV_${"3".repeat(64)}`,
+              revisionId: `RREV_${"4".repeat(64)}`,
+              reasonCode: "specification_incomplete",
+              evidenceBundleHash,
+            };
+      },
+    });
+    const result = await router.route(routeInput(value.worktree));
+    assert.equal(result.status, "bounded_recovery_blocked");
+    if (result.status !== "bounded_recovery_blocked") assert.fail("expected terminal recovery route");
+    assert.deepEqual(result.blockedStoryIds, ["US-002"]);
+    assert.deepEqual(result.terminalReasonCodes, ["specification_incomplete"]);
+  });
+
+  it("represents the complete six-reason terminal vocabulary without truncation", () => {
+    const stories = V3_RECOVERY_TERMINAL_REASON_CODES_V1.map((reasonCode, index) => ({
+      storyDbId: `story-db-${index + 1}`,
+      storyId: `US-00${index + 1}`,
+      attemptId: `ATT_all-six-terminal-000${index + 1}`,
+      sliceHash: "a".repeat(64),
+      evidencePlanArtifactHash: "b".repeat(64),
+      evidenceBundleHash: "c".repeat(64),
+      aggregateVerdict: "fail" as const,
+      execution: "replayed" as const,
+      coordinator: {
+        status: "blocked" as const,
+        recoveryCaseId: `RCV_${"d".repeat(64)}`,
+        revisionId: `RREV_${"e".repeat(64)}`,
+        reasonCode,
+        evidenceBundleHash: "c".repeat(64),
+      },
+    }));
+    const result = V3DownstreamEvidenceRouteResultV1Schema.parse({
+      schema: "setfarm.v3-downstream-evidence-route.v1",
+      status: "bounded_recovery_blocked",
+      runId: RUN_ID,
+      phase: "qa",
+      packetHash: PACKET_HASH,
+      sourceRevision: SOURCE,
+      stories,
+      blockedStoryIds: stories.map((story) => story.storyId),
+      terminalReasonCodes: V3_RECOVERY_TERMINAL_REASON_CODES_V1,
+    });
+    assert.equal(result.status, "bounded_recovery_blocked");
+    if (result.status !== "bounded_recovery_blocked") assert.fail("expected blocked route");
+    assert.deepEqual(result.terminalReasonCodes, V3_RECOVERY_TERMINAL_REASON_CODES_V1);
+  });
+
+  it("never terminalizes a pending recovery checkpoint", async () => {
+    const value = await fixture({ "US-001": "pass", "US-002": "fail" });
+    const router = createV3DownstreamEvidenceRouter({
+      ...value.dependencies,
+      coordinate: async (input: unknown): Promise<V3RecoveryCoordinatorResult> => {
+        const exactBundle = (input as { evidenceBundle: EvidenceBundleV2 }).evidenceBundle;
+        const evidenceBundleHash = computeEvidenceBundleHash(exactBundle);
+        return exactBundle.aggregateVerdict === "pass"
+          ? { status: "verified", evidenceBundleHash, attemptId: exactBundle.attemptId! }
+          : {
+              status: "pending",
+              recoveryCaseId: `RCV_${"3".repeat(64)}`,
+              revisionId: `RREV_${"4".repeat(64)}`,
+              reasonCode: "recovery_checkpoint_requires_replay",
+              evidenceBundleHash,
+            };
+      },
+    });
+    await assert.rejects(
+      router.route(routeInput(value.worktree)),
+      (error: unknown) => error instanceof V3DownstreamEvidenceRouterError
+        && error.code === "V3_DOWNSTREAM_RECOVERY_CHECKPOINT_PENDING",
+    );
   });
 
   it("requires a versioned packet amendment when all sealed story evidence passes", async () => {

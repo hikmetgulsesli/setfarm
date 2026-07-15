@@ -249,11 +249,13 @@ test("typed transient pre-dispatch failure atomically closes ownership and reque
         attempt_disposition: string;
         runtime_state: string;
         termination_state: string;
+        termination_evidence: Record<string, unknown>;
       }>>`
         SELECT run.status AS run_status, step.status AS step_status,
                step.current_story_id, story.status AS story_status, story.claimed_by,
                claim.outcome AS claim_outcome, attempt.disposition AS attempt_disposition,
-               runtime.state AS runtime_state, termination.state AS termination_state
+               runtime.state AS runtime_state, termination.state AS termination_state,
+               termination.evidence AS termination_evidence
           FROM runs run
           JOIN steps step ON step.id = ${managed.stepDbId}
           JOIN stories story ON story.id = ${managed.storyDbId}
@@ -263,7 +265,8 @@ test("typed transient pre-dispatch failure atomically closes ownership and reque
           JOIN run_termination_requests termination ON termination.run_id = run.id
          WHERE run.id = ${managed.runId}
       `;
-      assert.deepEqual({ ...terminalState[0] }, {
+      const terminalOwner = terminalState[0]!;
+      assert.deepEqual({ ...terminalOwner, termination_evidence: undefined }, {
         run_status: "failing",
         step_status: "failed",
         current_story_id: null,
@@ -273,8 +276,44 @@ test("typed transient pre-dispatch failure atomically closes ownership and reque
         attempt_disposition: "inconclusive",
         runtime_state: "released",
         termination_state: "requested",
+        termination_evidence: undefined,
+      });
+      assert.deepEqual(terminalOwner.termination_evidence.operationalFailureCause, {
+        schema: "setfarm.operational-failure-cause.v1",
+        workflowStepId: "implement",
+        boundary: "implementation.pre_dispatch.source",
+        failureClass: "platform_invariant_failed",
+        failureCode: failure.code,
       });
     }
+
+    const untypedManaged = await seedManagedOwner("untyped-terminal");
+    const untypedTerminal = await handleV3PreDispatchFailure({
+      step: {
+        id: untypedManaged.stepDbId,
+        run_id: untypedManaged.runId,
+        step_id: "implement",
+      },
+      story: {
+        id: untypedManaged.storyDbId,
+        story_id: untypedManaged.storyId,
+        title: "Managed pre-dispatch story",
+      },
+      agentId: "feature-dev_developer",
+      claimId: untypedManaged.claimId,
+      runtime: {
+        sessionId: untypedManaged.runtime.sessionId,
+        ownerInstanceId: untypedManaged.runtime.ownerInstanceId,
+      },
+      authority: untypedManaged.authority,
+      phase: "source",
+      error: new Error("unknown reservation failure"),
+    });
+    assert.equal(untypedTerminal.disposition, "terminal_contract");
+    const untypedEvidence = await database.sql<Array<{ evidence: Record<string, unknown> }>>`
+      SELECT evidence FROM run_termination_requests WHERE run_id = ${untypedManaged.runId}
+    `;
+    assert.equal(Object.hasOwn(untypedEvidence[0]!.evidence, "operationalFailureCause"), false);
 
     await database.sql.unsafe(`
       CREATE FUNCTION test_fail_v3_predispatch_story_terminal_update()

@@ -42,12 +42,14 @@ import { assertClaimAuthority } from "../execution/claim-authority.js";
 import type { ClaimEnvelopeV1 } from "../execution/schemas/claim-envelope-v1.js";
 import { createSingleEffectCompletionPlanDescriptorV1 } from "../execution/schemas/runtime-completion-plan-v1.js";
 import { requestRunTerminationInTransaction } from "../execution/run-termination.js";
+import type { OperationalFailureCauseV1 } from "../execution/schemas/operational-failure-cause-v1.js";
 
 // ── failStep ─────────────────────────────────────────────────────────
 
 export type FailStepOptions = Readonly<{
   singleStepMode?: "bounded_stage_retry" | "terminal_platform_preclaim";
   recoveryAuthority?: "orphan_recovery";
+  operationalFailureCause?: OperationalFailureCauseV1;
 }>;
 
 /**
@@ -114,6 +116,7 @@ export async function failStep(
     failureAuthority?.envelope,
     options.singleStepMode ?? "bounded_stage_retry",
     options.recoveryAuthority,
+    options.operationalFailureCause,
   );
 }
 
@@ -591,6 +594,7 @@ async function handleSingleStepFailurePG(
   claimEnvelope?: ClaimEnvelopeV1,
   failureMode: "bounded_stage_retry" | "terminal_platform_preclaim" = "bounded_stage_retry",
   recoveryAuthority?: "orphan_recovery",
+  operationalFailureCause?: OperationalFailureCauseV1,
 ): Promise<{ retrying: boolean; runFailed: boolean }> {
   const terminalPlatformPreclaim = failureMode === "terminal_platform_preclaim";
   if (terminalPlatformPreclaim) {
@@ -668,6 +672,7 @@ async function handleSingleStepFailurePG(
           targetStatus: "failed",
           requestedBy: "setfarm.step-fail.single",
           diagnostic: error,
+          ...(operationalFailureCause ? { failureCause: operationalFailureCause } : {}),
           evidence: {
             source: "handleSingleStepFailurePG",
             failureOwner: terminalPlatformPreclaim ? "platform_preclaim" : "stage_agent",

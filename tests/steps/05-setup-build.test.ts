@@ -159,7 +159,11 @@ describe("05-setup-build step module", () => {
     const preclaim = fs.readFileSync("src/installer/steps/05-setup-build/preclaim.ts", "utf-8");
     assert.match(stepOps, /HARD_PRECLAIM_STEPS\s*=\s*new Set\(\["setup-build", "security-gate", "qa-test", "final-test"\]\)/);
     assert.ok(preclaim.includes("function throwPreclaimFailure"), "setup-build should hard-stop preclaim failures instead of looping through the agent");
-    assert.ok(preclaim.includes('throwPreclaimFailure(ctx, msg, "design_import_failure", DESIGN_IMPORT_REPAIR_SUGGESTION)'), "design import failures should throw from preclaim");
+    assert.ok(preclaim.includes("new OperationalFailureCauseError"), "typed setup-build failures should preserve their producer-owned cause");
+    assert.ok(preclaim.includes("STITCH_CONVERSION_RESULT_REL"), "converter attribution must come from its machine result");
+    assert.ok(preclaim.includes("stitchConverterFailureCause(repo)"), "converter failures should use the strict producer code whitelist");
+    assert.ok(preclaim.includes("did not prove ownership of this failure"), "generic build exits must remain unattributed");
+    assert.equal(preclaim.includes("const generatedScreenFailure = /src\\/screens"), false, "post-converter ownership must not depend on compiler-prose regex");
     assert.ok(preclaim.includes("DESIGN_IMPORT_VALIDATE failed before setup-build completion"), "final design validation failures should still be hard blockers");
   });
 

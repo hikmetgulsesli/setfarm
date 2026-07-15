@@ -7,12 +7,22 @@ import { test } from "node:test";
 
 import { publishSingleClaimRuntime } from "../../src/execution/claim-runtime-publication.js";
 import type { ClaimEnvelopeV1 } from "../../src/execution/schemas/claim-envelope-v1.js";
-import { completeV3DeployAuthorityRefusal } from "../../src/execution/v3-deploy-refusal.js";
+import {
+  completeV3DeployAuthorityRefusal,
+  v3DeployOperationalFailureClass,
+} from "../../src/execution/v3-deploy-refusal.js";
 import { V3DeployAuthorityError } from "../../src/execution/v3-deploy-authority.js";
 import { createRunTerminationRepository } from "../../src/execution/run-termination.js";
 import { createRuntimeSessionRepository } from "../../src/execution/runtime-session-repository.js";
 import { rethrowV3DeployAuthorityAfterObservation } from "../../src/installer/steps/11-deploy/preclaim.js";
 import { createIsolatedTestDatabase } from "./test-database.js";
+
+test("deploy refusal cause class preserves the producer boundary category", () => {
+  assert.equal(v3DeployOperationalFailureClass("V3_DEPLOY_PACKET_INVALID"), "contract_invalid");
+  assert.equal(v3DeployOperationalFailureClass("V3_DEPLOY_SOURCE_UNAVAILABLE"), "infrastructure_failure");
+  assert.equal(v3DeployOperationalFailureClass("V3_DEPLOY_TARGET_UNSUPPORTED"), "platform_authority_invalid");
+  assert.equal(v3DeployOperationalFailureClass("V3_DEPLOY_ROLLBACK_FAILED"), "platform_invariant_failed");
+});
 
 test("deploy authority failure becomes compiler-owned terminal refusal with zero model redispatch", async () => {
   const previousPgUrl = process.env.SETFARM_PG_URL;
@@ -129,6 +139,13 @@ test("deploy authority failure becomes compiler-owned terminal refusal with zero
     assert.equal(owner.termination_evidence.owner, "compiler");
     assert.equal(owner.termination_evidence.refusalHash, refusal.refusalHash);
     assert.equal(owner.termination_evidence.modelRedispatchBudget, 0);
+    assert.deepEqual(owner.termination_evidence.operationalFailureCause, {
+      schema: "setfarm.operational-failure-cause.v1",
+      workflowStepId: "deploy",
+      boundary: "product_compiler.deploy_authority",
+      failureClass: "contract_invalid",
+      failureCode: "V3_DEPLOY_SOURCE_REVISION_MISMATCH",
+    });
     const record = JSON.parse(owner.step_output);
     assert.equal(record.schema, "setfarm.v3-deploy-authority-refusal.v1");
     assert.equal(record.refusalHash, refusal.refusalHash);
