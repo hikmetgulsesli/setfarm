@@ -12,10 +12,11 @@ import {
   V3ImplementationAttemptError,
 } from "../../src/execution/v3-implementation-attempt.js";
 import {
-  ExecutionAttemptReservationV1Schema,
   ExecutionAttemptV1Schema,
   type ExecutionAttemptV1,
 } from "../../src/execution/schemas/execution-attempt-v1.js";
+import { createOperationalRetryDirectiveV1 } from "../../src/execution/operational-retry-directive.js";
+import { parseOperationalRetryAwareAttemptReservation } from "../../src/execution/operational-retry-reservation.js";
 import { ContentAddressedArtifactStore } from "../../src/product-compiler/artifact-store.js";
 import { hashCanonicalJson } from "../../src/product-compiler/canonical-json.js";
 import { compileProductBuildPacket } from "../../src/product-compiler/packet-compiler.js";
@@ -86,8 +87,9 @@ describe("v3 implementation attempt compiler", () => {
     const source = { sha: "1".repeat(40), treeHash: "2".repeat(64) };
     const published = new Map<string, { artifactType: string; producer: unknown; payload: unknown }>();
     const runRefs: Array<{ runId: string; refKey: string; artifactHash: string }> = [];
-    let reservedInput: ReturnType<typeof ExecutionAttemptReservationV1Schema.parse> | undefined;
+    let reservedInput: ReturnType<typeof parseOperationalRetryAwareAttemptReservation> | undefined;
     let reservedAttempt: ExecutionAttemptV1 | undefined;
+    const attempts = new Map<string, ExecutionAttemptV1>();
     let dependencyPacketHash: string | undefined;
     const compiler = createV3ImplementationAttemptCompiler({
       readPacket: async () => packet,
@@ -99,16 +101,17 @@ describe("v3 implementation attempt compiler", () => {
       },
       addRunRef: async (input) => { runRefs.push(input); },
       reserveAttempt: async (input) => {
-        reservedInput = ExecutionAttemptReservationV1Schema.parse(input);
+        reservedInput = parseOperationalRetryAwareAttemptReservation(input);
         const timestamp = new Date("2026-07-13T10:00:00.000Z").toISOString();
+        const retry = reservedInput.attemptClass === "infrastructure_retry";
         reservedAttempt = ExecutionAttemptV1Schema.parse({
           schema: "setfarm.execution-attempt.v1",
-          attemptId: "ATT_v3-runtime-test-0001",
+          attemptId: retry ? "ATT_v3-runtime-test-0002" : "ATT_v3-runtime-test-0001",
           claimId: reservedInput.claimId,
           runId: reservedInput.runId,
           stepId: reservedInput.stepId,
           storyId: reservedInput.storyId,
-          generation: 1,
+          generation: retry ? 2 : 1,
           fenceToken: "3".repeat(64),
           attemptClass: reservedInput.attemptClass,
           packetHash: reservedInput.packetHash,
@@ -125,9 +128,10 @@ describe("v3 implementation attempt compiler", () => {
           createdAt: timestamp,
           updatedAt: timestamp,
         });
+        attempts.set(reservedAttempt.attemptId, reservedAttempt);
         return { status: "reserved", attempt: reservedAttempt };
       },
-      findAttempt: async () => reservedAttempt,
+      findAttempt: async (attemptId) => attempts.get(attemptId),
       readArtifact: async (hash) => {
         const envelope = published.get(hash);
         if (!envelope) throw new Error(`missing test artifact ${hash}`);
@@ -184,6 +188,74 @@ describe("v3 implementation attempt compiler", () => {
     assert.deepEqual(loaded.slice, result.slice);
     assert.deepEqual(loaded.evidencePlan, result.evidencePlan);
     assert.equal(loaded.evidencePlanArtifactHash, result.evidencePlanArtifactHash);
+    assert.equal(result.executionProfile.modelId, "minimax/MiniMax-M3");
+
+    const operationalRetry = createOperationalRetryDirectiveV1({
+      runId: packet.runId,
+      stepId: "implement",
+      storyId: "US-001",
+      priorAttempt: {
+        claimId: 41,
+        attemptId: result.attempt.attemptId,
+        generation: result.attempt.generation,
+        attemptClass: "product_implementation",
+        packetHash: result.packetHash,
+        sliceHash: result.sliceHash,
+        sourceBefore: result.sourceBefore,
+        terminalDisposition: "inconclusive",
+      },
+      failure: {
+        code: "IMPLEMENT_NO_DELTA_STALL",
+        diagnostic: "IMPLEMENT_NO_DELTA_STALL: no bounded source delta",
+      },
+      nextSourceRevision: result.sourceBefore,
+      allowedPaths: ["src/App.tsx"],
+    });
+    await assert.rejects(
+      compiler.reserve({
+        runId: packet.runId,
+        stepId: "implement",
+        storyId: "US-001",
+        claimId: 42,
+        role: "developer",
+        agentId: "feature-dev_developer",
+        branch: "story/us-001",
+        worktree,
+        operationalRetry,
+      }),
+      (error: unknown) => error instanceof V3ImplementationAttemptError
+        && error.code === "V3_OPERATIONAL_RETRY_PRIOR_ATTEMPT_NOT_TERMINAL",
+    );
+    const terminalPrior = ExecutionAttemptV1Schema.parse({
+      ...result.attempt,
+      disposition: "inconclusive",
+    });
+    attempts.set(terminalPrior.attemptId, terminalPrior);
+    const retry = await compiler.reserve({
+      runId: packet.runId,
+      stepId: "implement",
+      storyId: "US-001",
+      claimId: 42,
+      role: "developer",
+      agentId: "feature-dev_developer",
+      branch: "story/us-001",
+      worktree,
+      operationalRetry,
+    });
+    assert.equal(retry.attempt.attemptClass, "infrastructure_retry");
+    assert.equal(retry.attempt.generation, 2);
+    assert.equal(retry.executionProfile.modelId, "kimi/kimi-for-coding");
+    assert.equal(retry.operationalRetry?.directive.directiveHash, operationalRetry.directiveHash);
+    assert.ok(retry.attempt.evidenceRefs.includes(`setfarm://operational-retry/${operationalRetry.directiveHash}`));
+    assert.ok(retry.attempt.evidenceRefs.includes(`setfarm://operational-retry-artifact/${retry.operationalRetry?.artifactHash}`));
+
+    const loadedRetry = await compiler.loadAttemptContext({
+      runId: packet.runId,
+      storyId: "US-001",
+      attemptId: retry.attempt.attemptId,
+    });
+    assert.deepEqual(loadedRetry.operationalRetry, retry.operationalRetry);
+    assert.deepEqual(loadedRetry.executionProfile, retry.executionProfile);
   });
 
   it("rejects source drift before publishing a slice or reserving an attempt", async () => {

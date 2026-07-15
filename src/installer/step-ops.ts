@@ -105,6 +105,7 @@ import {
   type V3ImplementationContextV1,
   type V3ImplementationClaimHandoffV1,
 } from "../execution/v3-implementation-handoff.js";
+import { parseOperationalRetryDirectiveStoryOutput } from "../execution/operational-retry-directive.js";
 import {
   parseV3ImplementationAgentOutputV1,
   type V3ImplementationAgentOutputV1,
@@ -206,6 +207,13 @@ function applyV3ImplementationSliceContext(
   context["evidence_plan_ref"] = compiled.evidencePlanRefKey;
   context["product_build_packet_hash"] = compiled.packetHash;
   context["product_compilation_report_hash"] = compiled.compilationReportHash;
+  if (compiled.operationalRetry) {
+    context["operational_retry_directive_hash"] = compiled.operationalRetry.directive.directiveHash;
+    context["operational_retry_artifact_hash"] = compiled.operationalRetry.artifactHash;
+  } else {
+    delete context["operational_retry_directive_hash"];
+    delete context["operational_retry_artifact_hash"];
+  }
   if (compiled.recovery) {
     context["finding_set_hash"] = compiled.recovery.findingSet.findingSetHash;
     context["recovery_case_revision_id"] = compiled.recovery.revision.revisionId;
@@ -230,17 +238,23 @@ function structuredV3ImplementationHandoff(input: Readonly<{
   const compiled = input.compiled;
   const executionAuthority = compiled.attempt.attemptClass === "supervisor_repair"
     ? { role: "supervisor" as const, attemptClass: "supervisor_repair" as const }
+    : compiled.attempt.attemptClass === "infrastructure_retry"
+      ? { role: "developer" as const, attemptClass: "infrastructure_retry" as const }
     : compiled.attempt.attemptClass === "product_implementation"
       ? { role: "developer" as const, attemptClass: "product_implementation" as const }
       : undefined;
   if (!executionAuthority) {
     throw new Error("V3_IMPLEMENTATION_HANDOFF_MODEL_AUTHORITY_REQUIRED");
   }
+  if (compiled.attempt.stepId !== "implement") {
+    throw new Error("V3_IMPLEMENTATION_HANDOFF_WORKFLOW_STEP_MISMATCH");
+  }
   return createV3ImplementationClaimHandoffV1({
     schema: "setfarm.v3-implementation-claim-handoff.v1",
     protocol: "v3",
     runId: compiled.attempt.runId,
     stepId: input.stepDbId,
+    workflowStepId: "implement",
     storyId: compiled.attempt.storyId,
     storyDbId: input.storyDbId,
     claimId: input.claimId,
@@ -256,6 +270,13 @@ function structuredV3ImplementationHandoff(input: Readonly<{
     evidencePlanArtifactHash: compiled.evidencePlanArtifactHash,
     evidencePlanRef: compiled.evidencePlanRefKey,
     executionAuthority,
+    executionProfile: compiled.executionProfile,
+    ...(compiled.operationalRetry
+      ? {
+          operationalRetry: compiled.operationalRetry.directive,
+          operationalRetryArtifactHash: compiled.operationalRetry.artifactHash,
+        }
+      : {}),
     sourceBefore: compiled.sourceBefore,
     artifactProducer: compiled.artifactProducer,
     implementationSlice: compiled.slice,
@@ -7740,7 +7761,9 @@ export async function claimStep(
       let nativeV3Attempt: ClaimAttemptFenceV1 | undefined;
       let nativeV3ImplementationHandoff: V3ImplementationClaimHandoffV1 | undefined;
       if (runProtocol?.protocol === "v3") {
+        let pendingOperationalRetry: ReturnType<typeof parseOperationalRetryDirectiveStoryOutput>;
         try {
+          pendingOperationalRetry = parseOperationalRetryDirectiveStoryOutput(nextStory.output);
           const compiled = await reserveV3ImplementationAttempt({
             runId: step.run_id,
             stepId: step.step_id,
@@ -7750,6 +7773,7 @@ export async function claimStep(
             agentId,
             branch: String(context["story_branch"] || storyBranch),
             worktree: storyWorkdir,
+            ...(pendingOperationalRetry ? { operationalRetry: pendingOperationalRetry } : {}),
           });
           applyV3ImplementationSliceContext(context, compiled);
           nativeV3Attempt = {
@@ -7767,32 +7791,50 @@ export async function claimStep(
           });
         } catch (error) {
           const reason = `V3_IMPLEMENTATION_SLICE_RESERVATION_FAILED:${String((error as Error)?.message || error)}`.slice(0, 4_000);
+          const operationalRetryRefused = Boolean(pendingOperationalRetry)
+            || String(nextStory.output || "").includes("setfarm.operational-retry-directive.v1");
           await pgBegin(async (sql) => {
             await closeReservedClaimRuntimeInTransaction(sql, {
               claimId: legacyClaimId,
-              outcome: "infra_retry",
+              outcome: operationalRetryRefused ? "failed" : "infra_retry",
               diagnostic: reason,
               runtime: claimRuntime,
             });
-            await sql.unsafe(
-              `UPDATE stories
-                  SET status = 'pending', claimed_at = NULL, claimed_by = NULL,
-                      output = $2, updated_at = $3
-                WHERE id = $1 AND status = 'running'`,
-              [nextStory.id, reason, now()],
-            );
-            await sql.unsafe(
-              `UPDATE steps
-                  SET status = CASE
-                        WHEN EXISTS (
-                          SELECT 1 FROM stories
-                           WHERE run_id = $2 AND status = 'running' AND id <> $3
-                        ) THEN 'running' ELSE 'pending' END,
-                      current_story_id = CASE WHEN current_story_id = $3 THEN NULL ELSE current_story_id END,
-                      updated_at = $4
-                WHERE id = $1`,
-              [step.id, step.run_id, nextStory.id, now()],
-            );
+            if (operationalRetryRefused) {
+              await sql.unsafe(
+                `UPDATE stories
+                    SET status = 'failed', claimed_at = NULL, claimed_by = NULL,
+                        updated_at = $2
+                  WHERE id = $1 AND status = 'running'`,
+                [nextStory.id, now()],
+              );
+              await sql.unsafe(
+                `UPDATE steps
+                    SET status = 'waiting', current_story_id = NULL, updated_at = $2
+                  WHERE id = $1`,
+                [step.id, now()],
+              );
+            } else {
+              await sql.unsafe(
+                `UPDATE stories
+                    SET status = 'pending', claimed_at = NULL, claimed_by = NULL,
+                        output = $2, updated_at = $3
+                  WHERE id = $1 AND status = 'running'`,
+                [nextStory.id, reason, now()],
+              );
+              await sql.unsafe(
+                `UPDATE steps
+                    SET status = CASE
+                          WHEN EXISTS (
+                            SELECT 1 FROM stories
+                             WHERE run_id = $2 AND status = 'running' AND id <> $3
+                          ) THEN 'running' ELSE 'pending' END,
+                        current_story_id = CASE WHEN current_story_id = $3 THEN NULL ELSE current_story_id END,
+                        updated_at = $4
+                  WHERE id = $1`,
+                [step.id, step.run_id, nextStory.id, now()],
+              );
+            }
           });
           removeStoryWorktree(context["repo"], storyBranch, agentId);
           await recordObservation({
@@ -7803,11 +7845,17 @@ export async function claimStep(
             checkId: `product_compiler.v3.slice_reservation:${legacyClaimId}`,
             label: "V3 implementation slice reservation",
             status: "blocked",
-            summary: "Claim was withdrawn before agent spawn because its sealed slice could not be reserved",
+            summary: operationalRetryRefused
+              ? "Typed operational retry was refused and failed closed before another model dispatch"
+              : "Claim was withdrawn before agent spawn because its sealed slice could not be reserved",
             detail: reason,
             evidence: {
               schema: "setfarm.v3-slice-reservation-failure.v1",
               claimId: legacyClaimId,
+              operationalRetryRefused,
+              ...(pendingOperationalRetry
+                ? { directiveHash: pendingOperationalRetry.directiveHash }
+                : {}),
             },
           });
           return { found: false };

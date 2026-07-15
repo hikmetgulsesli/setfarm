@@ -243,6 +243,7 @@ export async function handleV3ImplementationRefusal(input: Readonly<{
     envelope.protocol !== "v3"
     || envelope.runId !== handoff.runId
     || envelope.stepId !== handoff.stepId
+    || envelope.workflowStepId !== handoff.workflowStepId
     || envelope.storyId !== handoff.storyId
     || envelope.storyDbId !== handoff.storyDbId
     || envelope.claimId !== handoff.claimId

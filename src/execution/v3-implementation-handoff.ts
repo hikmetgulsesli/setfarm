@@ -11,6 +11,11 @@ import {
 } from "../product-compiler/schemas/common-v1.js";
 import { ImplementationSliceV1Schema } from "../product-compiler/schemas/implementation-slice-v1.js";
 import { V3_IMPLEMENTATION_OUTPUT_CONTRACT_V1 } from "./v3-implementation-output.js";
+import {
+  ModelExecutionProfileV1Schema,
+  OperationalRetryDirectiveV1Schema,
+  resolveV3ExecutionProfile,
+} from "./operational-retry-directive.js";
 
 /** Exact UTF-8 capacity of the pretty-serialized context file read by the model. */
 export const V3_IMPLEMENTATION_CONTEXT_MAX_BYTES = 256 * 1024;
@@ -33,7 +38,8 @@ function semanticArtifactHash(
   artifactType:
     | "setfarm.implementation-slice.v1"
     | "setfarm.evidence-plan.v1"
-    | "setfarm.github-review-thread-evidence.v1",
+    | "setfarm.github-review-thread-evidence.v1"
+    | "setfarm.operational-retry-directive.v1",
   producer: z.infer<typeof SemanticArtifactProducerV1Schema>,
   payload: unknown,
 ): string {
@@ -54,7 +60,7 @@ const V3ImplementationOutputContractV1Schema = z.object({
 
 export const V3ImplementationExecutionAuthorityV1Schema = z.object({
   role: z.enum(["developer", "supervisor"]),
-  attemptClass: z.enum(["product_implementation", "supervisor_repair"]),
+  attemptClass: z.enum(["product_implementation", "infrastructure_retry", "supervisor_repair"]),
 }).strict();
 
 export const V3ReviewEvidenceArtifactV1Schema = z.object({
@@ -75,6 +81,7 @@ export const V3ImplementationClaimHandoffV1Schema = z.object({
   protocol: z.literal("v3"),
   runId: BoundedIdentitySchema,
   stepId: BoundedIdentitySchema,
+  workflowStepId: z.literal("implement").default("implement"),
   storyId: BoundedIdentitySchema,
   storyDbId: BoundedIdentitySchema,
   claimId: z.number().int().positive(),
@@ -90,6 +97,9 @@ export const V3ImplementationClaimHandoffV1Schema = z.object({
   evidencePlanArtifactHash: Sha256Schema,
   evidencePlanRef: z.string().min(1).max(2_000),
   executionAuthority: V3ImplementationExecutionAuthorityV1Schema,
+  executionProfile: ModelExecutionProfileV1Schema.default(resolveV3ExecutionProfile("primary")),
+  operationalRetry: OperationalRetryDirectiveV1Schema.optional(),
+  operationalRetryArtifactHash: Sha256Schema.optional(),
   sourceBefore: z.object({
     sha: GitObjectHashSchema,
     treeHash: GitObjectHashSchema,
@@ -148,9 +158,41 @@ export const V3ImplementationClaimHandoffV1Schema = z.object({
   }
 
   const recovery = slice.recovery;
-  const expectedExecutionAuthority = recovery?.dispatchClass === "supervisor_repair"
-    ? { role: "supervisor", attemptClass: "supervisor_repair" }
-    : { role: "developer", attemptClass: "product_implementation" };
+  const operationalRetry = value.operationalRetry;
+  if (Boolean(operationalRetry) !== Boolean(value.operationalRetryArtifactHash)) {
+    context.addIssue({
+      code: "custom",
+      path: ["operationalRetryArtifactHash"],
+      message: "Operational retry and its immutable artifact hash must be handed off together",
+    });
+  }
+  if (
+    operationalRetry
+    && value.operationalRetryArtifactHash
+    && semanticArtifactHash(
+      "setfarm.operational-retry-directive.v1",
+      value.artifactProducer,
+      operationalRetry,
+    ) !== value.operationalRetryArtifactHash
+  ) {
+    context.addIssue({
+      code: "custom",
+      path: ["operationalRetryArtifactHash"],
+      message: "Operational retry artifact hash must bind the exact semantic envelope",
+    });
+  }
+  if (recovery && operationalRetry) {
+    context.addIssue({
+      code: "custom",
+      path: ["operationalRetry"],
+      message: "FindingSet recovery and operational retry authorities are mutually exclusive",
+    });
+  }
+  const expectedExecutionAuthority = operationalRetry
+    ? { role: "developer", attemptClass: "infrastructure_retry" }
+    : recovery?.dispatchClass === "supervisor_repair"
+      ? { role: "supervisor", attemptClass: "supervisor_repair" }
+      : { role: "developer", attemptClass: "product_implementation" };
   if (
     value.executionAuthority.role !== expectedExecutionAuthority.role
     || value.executionAuthority.attemptClass !== expectedExecutionAuthority.attemptClass
@@ -158,8 +200,63 @@ export const V3ImplementationClaimHandoffV1Schema = z.object({
     context.addIssue({
       code: "custom",
       path: ["executionAuthority"],
-      message: "Execution role and attempt class must derive from the exact sealed recovery dispatch",
+      message: "Execution role and attempt class must derive from the exact sealed implementation authority",
     });
+  }
+  const expectedProfile = operationalRetry?.executionProfile ?? resolveV3ExecutionProfile("primary");
+  if (
+    value.executionProfile.providerId !== expectedProfile.providerId
+    || value.executionProfile.modelId !== expectedProfile.modelId
+    || value.executionProfile.selection !== expectedProfile.selection
+  ) {
+    context.addIssue({
+      code: "custom",
+      path: ["executionProfile"],
+      message: "Execution profile must derive from the exact implementation authority",
+    });
+  }
+  if (operationalRetry) {
+    const writablePaths = slice.files
+      .filter((file) => file.role === "owned" || file.role === "shared_writable")
+      .map((file) => file.path)
+      .filter((item, index, all) => all.indexOf(item) === index)
+      .sort();
+    if (
+      operationalRetry.runId !== value.runId
+      || operationalRetry.stepId !== value.workflowStepId
+      || operationalRetry.storyId !== value.storyId
+      || operationalRetry.priorAttempt.packetHash !== value.packetHash
+      || operationalRetry.priorAttempt.sliceHash !== value.sliceHash
+      || operationalRetry.nextSourceRevision.sha !== value.sourceBefore.sha
+      || operationalRetry.nextSourceRevision.treeHash !== value.sourceBefore.treeHash
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["operationalRetry"],
+        message: "Operational retry differs from the exact run, story, packet, slice, or reset source",
+      });
+    }
+    if (
+      operationalRetry.priorAttempt.claimId === value.claimId
+      || operationalRetry.priorAttempt.attemptId === value.attemptId
+      || operationalRetry.priorAttempt.generation >= value.attemptGeneration
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["operationalRetry", "priorAttempt"],
+        message: "Operational retry must bind an earlier exact claim and attempt generation",
+      });
+    }
+    if (
+      operationalRetry.expectedDelta.allowedPaths.length !== writablePaths.length
+      || operationalRetry.expectedDelta.allowedPaths.some((item, index) => item !== writablePaths[index])
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["operationalRetry", "expectedDelta", "allowedPaths"],
+        message: "Operational retry paths must equal the exact writable implementation slice",
+      });
+    }
   }
   const findingSet = value.findingSet;
   if (Boolean(recovery) !== Boolean(findingSet)) {
@@ -283,7 +380,7 @@ export const V3ImplementationClaimHandoffV1Schema = z.object({
 export type V3ImplementationClaimHandoffV1 = z.infer<typeof V3ImplementationClaimHandoffV1Schema>;
 
 const V3ImplementationWriteAuthorityV1Schema = z.object({
-  mode: z.enum(["initial", "recovery"]),
+  mode: z.enum(["initial", "operational_retry", "recovery"]),
   allowedPaths: z.array(z.string().min(1).max(1_024)).max(20_000),
 }).strict();
 
@@ -299,12 +396,16 @@ export const V3ImplementationContextV1Schema = z.object({
     context.addIssue({ code: "custom", path: ["handoffHash"], message: "Implementation context hash must bind the exact handoff" });
   }
   const slice = value.handoff.implementationSlice;
-  const expectedMode = slice.recovery ? "recovery" : "initial";
-  const expectedPaths = (slice.recovery
-    ? slice.recovery.allowedPaths
-    : slice.files
-      .filter((file) => file.role === "owned" || file.role === "shared_writable")
-      .map((file) => file.path))
+  const expectedMode = value.handoff.operationalRetry
+    ? "operational_retry"
+    : slice.recovery ? "recovery" : "initial";
+  const expectedPaths = (value.handoff.operationalRetry
+    ? value.handoff.operationalRetry.expectedDelta.allowedPaths
+    : slice.recovery
+      ? slice.recovery.allowedPaths
+      : slice.files
+        .filter((file) => file.role === "owned" || file.role === "shared_writable")
+        .map((file) => file.path))
     .filter((path, index, all) => all.indexOf(path) === index)
     .sort();
   if (value.writeAuthority.mode !== expectedMode) {
@@ -362,11 +463,13 @@ export function createV3ImplementationContextV1(input: Readonly<{
   outputContract?: z.input<typeof V3ImplementationOutputContractV1Schema>;
 }>): V3ImplementationContextV1 {
   const handoff = V3ImplementationClaimHandoffV1Schema.parse(input.handoff);
-  const allowedPaths = (handoff.implementationSlice.recovery
-    ? handoff.implementationSlice.recovery.allowedPaths
-    : handoff.implementationSlice.files
-      .filter((file) => file.role === "owned" || file.role === "shared_writable")
-      .map((file) => file.path))
+  const allowedPaths = (handoff.operationalRetry
+    ? handoff.operationalRetry.expectedDelta.allowedPaths
+    : handoff.implementationSlice.recovery
+      ? handoff.implementationSlice.recovery.allowedPaths
+      : handoff.implementationSlice.files
+        .filter((file) => file.role === "owned" || file.role === "shared_writable")
+        .map((file) => file.path))
     .filter((path, index, all) => all.indexOf(path) === index)
     .sort();
   const context = V3ImplementationContextV1Schema.parse({
@@ -374,7 +477,9 @@ export function createV3ImplementationContextV1(input: Readonly<{
     handoffHash: hashCanonicalJson(handoff),
     handoff,
     writeAuthority: {
-      mode: handoff.implementationSlice.recovery ? "recovery" : "initial",
+      mode: handoff.operationalRetry
+        ? "operational_retry"
+        : handoff.implementationSlice.recovery ? "recovery" : "initial",
       allowedPaths,
     },
     rules: [
@@ -388,6 +493,7 @@ export function createV3ImplementationContextV1(input: Readonly<{
       "If current source presence or content differs from the slice source/file signatures, fail with SOURCE_SNAPSHOT_MISMATCH before changing code.",
       "If the exact contract cannot be satisfied inside writeAuthority.allowedPaths, fail with CONTRACT_SCOPE_CONFLICT instead of broadening scope.",
       "For recovery, change only the typed findings and expected delta embedded in the slice. An exact immutable reviewEvidenceArtifact is a bounded external repair instruction for its declared path; never infer a platform invariant from its prose or resolve its GitHub thread.",
+      "For a typed operational retry, satisfy only handoff.operationalRetry.expectedDelta under its exact reset source and write paths. Its failure diagnostic is immutable operational evidence, not a new product requirement.",
       "Return outputContract fields exactly. Setfarm, not the implementation agent, owns completion, evidence verdicts, commits, review routing, and retries.",
     ],
     outputContract: input.outputContract ?? V3_IMPLEMENTATION_OUTPUT_CONTRACT_V1,
