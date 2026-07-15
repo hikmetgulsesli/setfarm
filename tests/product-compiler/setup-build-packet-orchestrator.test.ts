@@ -146,6 +146,39 @@ function createFixture(runId = "run-packet-fixture", v3 = false): Fixture {
   fs.writeFileSync(path.join(repo, "src", "main.tsx"), "export const main = true;\n");
   fs.writeFileSync(path.join(repo, "src", "features", "status.ts"), "export const status = 'ready';\n");
   writeJson(path.join(repo, "stitch", "GENERATION_TARGETS.json"), targets.generationTargets, true);
+  writeJson(path.join(repo, "stitch", "STITCH_DIRECT_RESPONSE_EVIDENCE.json"), {
+    schema: "setfarm.stitch-direct-response-evidence.v1",
+    projectId: "fixture-project",
+    batches: batches.map((batch, index) => ({
+      stageId: batch.stageId,
+      targetRefs: batch.targetRefs,
+      source: "direct",
+      candidates: [
+        {
+          screenId: batch.screens[0]!.screenId,
+          title: batch.screens[0]!.title,
+          responsePaths: [`$result.structuredContent.outputComponents[${index}].design.screens[0]`],
+          width: "1440",
+          height: "900",
+          htmlAvailable: true,
+          screenshotAvailable: true,
+          disposition: "admitted_renderable_screen",
+          missingEvidence: [],
+        },
+        ...(index === 0 ? [{
+          screenId: "helper-code-canvas",
+          title: "Three.js",
+          responsePaths: ["$result.structuredContent.outputComponents[0].design.screens[1]"],
+          width: "512",
+          height: "512",
+          htmlAvailable: true,
+          screenshotAvailable: false,
+          disposition: "excluded_missing_render_evidence",
+          missingEvidence: ["screenshot"],
+        }] : []),
+      ],
+    })),
+  }, true);
   writeJson(path.join(repo, "stitch", "STITCH_RESPONSE_BINDINGS.json"), bindings.responseBindings, true);
 
   const bindingByTarget = new Map(bindings.responseBindings.bindings.map((item) => [item.targetRef, item]));
@@ -356,6 +389,49 @@ describe("setup-build Product Build Packet orchestration", () => {
     assert.deepEqual(first.storyPlan.stories.map((story) => story.id), ["US-001"]);
     assert.equal(first.buildTopology.commands.find((command) => command.kind === "build")?.argv.join(" "), "npm run build");
     assert.equal(Object.values(first.sourceHashes).flat().every((hash) => /^[a-f0-9]{64}$/.test(hash)), true);
+  });
+
+  it("rejects exact bindings that lost admitted direct response evidence", () => {
+    const value = fixture();
+    const evidencePath = path.join(value.repo, "stitch", "STITCH_DIRECT_RESPONSE_EVIDENCE.json");
+    const evidence = JSON.parse(fs.readFileSync(evidencePath, "utf8"));
+    const admitted = evidence.batches
+      .flatMap((batch: any) => batch.candidates)
+      .find((candidate: any) => candidate.disposition === "admitted_renderable_screen");
+    admitted.screenId = "different-direct-screen";
+    writeJson(evidencePath, evidence, true);
+    git(value.repo, ["add", "stitch/STITCH_DIRECT_RESPONSE_EVIDENCE.json"]);
+    git(value.repo, ["commit", "-q", "-m", "break direct evidence"]);
+
+    assert.throws(
+      () => assembleSetupBuildPacketContracts(value),
+      (error: unknown) => error instanceof SetupBuildPacketError
+        && error.code === "SETUP_PACKET_DIRECT_RESPONSE_EVIDENCE_REJECTED",
+    );
+  });
+
+  it("keeps pre-v3 shadow assembly compatible when direct evidence is absent", () => {
+    const value = fixture();
+    fs.rmSync(path.join(value.repo, "stitch", "STITCH_DIRECT_RESPONSE_EVIDENCE.json"));
+    git(value.repo, ["add", "-u"]);
+    git(value.repo, ["commit", "-q", "-m", "legacy fixture without direct evidence"]);
+
+    const assembled = assembleSetupBuildPacketContracts(value);
+    assert.equal(assembled.sourceHashes.directResponseEvidence, undefined);
+  });
+
+  it("requires direct response evidence for Product Compiler v3 assembly", () => {
+    const value = createFixture("run-v3-direct-evidence", true);
+    repos.push(value.repo);
+    fs.rmSync(path.join(value.repo, "stitch", "STITCH_DIRECT_RESPONSE_EVIDENCE.json"));
+    git(value.repo, ["add", "-u"]);
+    git(value.repo, ["commit", "-q", "-m", "remove v3 direct evidence"]);
+
+    assert.throws(
+      () => assembleSetupBuildPacketContracts({ ...value, requireV3Proposal: true }),
+      (error: unknown) => error instanceof SetupBuildPacketError
+        && error.code === "SETUP_PACKET_DIRECT_RESPONSE_EVIDENCE_REJECTED",
+    );
   });
 
   it("rejects same-element semantic loss instead of guessing from labels", () => {

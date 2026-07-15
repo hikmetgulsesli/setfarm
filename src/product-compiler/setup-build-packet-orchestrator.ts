@@ -25,6 +25,7 @@ import {
   DesignGenerationTargetsV1Schema,
   StitchTargetResponseBindingsV1Schema,
 } from "./schemas/design-generation-targets-v1.js";
+import { StitchDirectResponseEvidenceV1Schema } from "./schemas/stitch-direct-response-evidence-v1.js";
 import {
   NormalizedRelativeLocatorSchema,
   type SourceArtifactRefV1,
@@ -50,6 +51,7 @@ export const PRODUCT_COMPILER_RUNTIME_VERSION = "3.0.0";
 export type SetupBuildPacketErrorCode =
   | "SETUP_PACKET_ACTIVATION_REJECTED"
   | "SETUP_PACKET_DESIGN_GRAPH_REJECTED"
+  | "SETUP_PACKET_DIRECT_RESPONSE_EVIDENCE_REJECTED"
   | "SETUP_PACKET_ENTRYPOINT_MISSING"
   | "SETUP_PACKET_FILE_INVALID"
   | "SETUP_PACKET_GENERATED_SOURCE_AMBIGUOUS"
@@ -105,6 +107,7 @@ export type SetupBuildPacketContracts = Readonly<{
   sourceHashes: Readonly<{
     plan: string;
     generationTargets: string;
+    directResponseEvidence?: string;
     responseBindings: string;
     screenIndex: string;
     generatedSources: string[];
@@ -527,6 +530,58 @@ export function assembleSetupBuildPacketContracts(input: Readonly<{
     schema: StitchTargetResponseBindingsV1Schema,
     canonical: true,
   });
+  const directResponseEvidencePath = path.join(input.repo, "stitch", "STITCH_DIRECT_RESPONSE_EVIDENCE.json");
+  if (input.requireV3Proposal && !fs.existsSync(directResponseEvidencePath)) {
+    throw new SetupBuildPacketError(
+      "SETUP_PACKET_DIRECT_RESPONSE_EVIDENCE_REJECTED",
+      "Product Compiler v3 requires canonical direct Stitch response evidence",
+      { locator: "stitch/STITCH_DIRECT_RESPONSE_EVIDENCE.json" },
+    );
+  }
+  const directResponseEvidence = fs.existsSync(directResponseEvidencePath)
+    ? readJsonSource({
+        repo: input.repo,
+        locator: "stitch/STITCH_DIRECT_RESPONSE_EVIDENCE.json",
+        schema: StitchDirectResponseEvidenceV1Schema,
+        canonical: true,
+      })
+    : undefined;
+  if (directResponseEvidence) {
+    const directCandidateById = new Map(directResponseEvidence.value.batches.flatMap((batch) =>
+      batch.candidates.map((candidate) => [candidate.screenId, { batch, candidate }] as const)));
+    const admittedCandidates = directResponseEvidence.value.batches.flatMap((batch) =>
+      batch.candidates.filter((candidate) => candidate.disposition === "admitted_renderable_screen"));
+    for (const binding of responseBindings.value.bindings) {
+      const evidence = directCandidateById.get(binding.responseScreenId);
+      if (
+        !evidence ||
+        evidence.candidate.disposition !== "admitted_renderable_screen" ||
+        evidence.candidate.title !== binding.responseTitle ||
+        evidence.batch.stageId !== binding.stageId
+      ) {
+        throw new SetupBuildPacketError(
+          "SETUP_PACKET_DIRECT_RESPONSE_EVIDENCE_REJECTED",
+          `Exact Stitch binding lacks matching admitted direct response evidence: ${binding.responseScreenId}`,
+          {
+            responseScreenId: binding.responseScreenId,
+            responseTitle: binding.responseTitle,
+            stageId: binding.stageId,
+            observed: evidence,
+          },
+        );
+      }
+    }
+    if (admittedCandidates.length !== responseBindings.value.bindings.length) {
+      throw new SetupBuildPacketError(
+        "SETUP_PACKET_DIRECT_RESPONSE_EVIDENCE_REJECTED",
+        "Admitted direct Stitch response evidence must equal the exact binding set",
+        {
+          admittedScreenIds: admittedCandidates.map((candidate) => candidate.screenId).sort(compareUtf16),
+          boundScreenIds: responseBindings.value.bindings.map((binding) => binding.responseScreenId).sort(compareUtf16),
+        },
+      );
+    }
+  }
   const screenIndex = readJsonSource({
     repo: input.repo,
     locator: "src/screens/SCREEN_INDEX.json",
@@ -682,6 +737,7 @@ export function assembleSetupBuildPacketContracts(input: Readonly<{
     sourceHashes: {
       plan: plan.sourceHash,
       generationTargets: generationTargets.source.hash,
+      ...(directResponseEvidence ? { directResponseEvidence: directResponseEvidence.source.hash } : {}),
       responseBindings: responseBindings.source.hash,
       screenIndex: screenIndex.source.hash,
       generatedSources: generatedSources.map((source) => source.source.hash).sort(compareUtf16),

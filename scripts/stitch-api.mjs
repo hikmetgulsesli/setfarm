@@ -20,6 +20,15 @@
 import { readFileSync, writeFileSync, mkdirSync, readdirSync, existsSync, copyFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  collectScreenCandidatesFromResult,
+  htmlUrlOf,
+  jsonPayloadsFromToolText,
+  partitionDirectScreenCandidates,
+  screenIdOf,
+  screenshotUrlOf,
+  titleOf,
+} from './stitch-response-parser.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -88,135 +97,6 @@ function sanitizeDesignFontTokenValue(prop, value) {
   if (!BANNED_PRIMARY_FONT_RE.test(primary)) return value;
   if (String(prop || '').startsWith('--font-google-')) return '"Hanken Grotesk"';
   return '"Hanken Grotesk", "Segoe UI", sans-serif';
-}
-
-function screenIdOf(screen) {
-  return String(
-    (screen?.name || '').replace(/^projects\/\d+\/screens\//, '') ||
-    (screen?.sourceScreen || '').replace(/^projects\/\d+\/screens\//, '') ||
-    screen?.id ||
-    screen?.screenId ||
-    screen?.screen_id ||
-    ''
-  ).trim();
-}
-
-function titleOf(screen) {
-  return String(screen?.title || screen?.displayName || screen?.name || screen?.screenId || 'Untitled').trim() || 'Untitled';
-}
-
-function htmlUrlOf(screen) {
-  return screen?.htmlUrl || screen?.htmlCode?.downloadUrl || screen?.html_code?.download_url || null;
-}
-
-function screenshotUrlOf(screen) {
-  return screen?.screenshotUrl || screen?.screenshot?.downloadUrl || screen?.screenshot?.download_url || null;
-}
-
-function jsonPayloadsFromToolText(text) {
-  const raw = String(text || '').trim();
-  if (!raw) return [];
-  const candidates = [raw];
-  const fence = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  if (fence?.[1]) candidates.push(fence[1].trim());
-  const objectStart = raw.indexOf('{');
-  const objectEnd = raw.lastIndexOf('}');
-  if (objectStart !== -1 && objectEnd > objectStart) candidates.push(raw.slice(objectStart, objectEnd + 1));
-  const arrayStart = raw.indexOf('[');
-  const arrayEnd = raw.lastIndexOf(']');
-  if (arrayStart !== -1 && arrayEnd > arrayStart) candidates.push(raw.slice(arrayStart, arrayEnd + 1));
-
-  const parsed = [];
-  const seen = new Set();
-  for (const candidate of candidates) {
-    const key = candidate.trim();
-    if (!key || seen.has(key)) continue;
-    seen.add(key);
-    try { parsed.push(JSON.parse(key)); } catch {}
-  }
-  return parsed;
-}
-
-function screenSourceArrays(value) {
-  const arrays = [];
-  const seen = new Set();
-  const visit = (node, depth = 0) => {
-    if (!node || depth > 8) return;
-    if (typeof node !== 'object') return;
-    if (seen.has(node)) return;
-    seen.add(node);
-
-    if (Array.isArray(node)) {
-      for (const item of node) visit(item, depth + 1);
-      return;
-    }
-
-    const directArrays = [
-      node.screens,
-      node.screenInstances,
-      node.screen_instances,
-      node.structuredContent?.screens,
-      node.structuredContent?.screenInstances,
-      node.structured_content?.screens,
-      node.structured_content?.screen_instances,
-      node.design?.screens,
-    ];
-    for (const maybeArray of directArrays) {
-      if (Array.isArray(maybeArray)) arrays.push(maybeArray);
-    }
-
-    for (const comp of node.outputComponents || node.output_components || []) {
-      if (Array.isArray(comp?.design?.screens)) arrays.push(comp.design.screens);
-      visit(comp, depth + 1);
-    }
-
-    for (const child of Object.values(node)) visit(child, depth + 1);
-  };
-  visit(value);
-  return arrays;
-}
-
-function normalizeScreenEntry(screen) {
-  const screenId = screenIdOf(screen);
-  if (!screenId) return null;
-  return {
-    ...screen,
-    screenId,
-    title: titleOf(screen),
-    htmlUrl: htmlUrlOf(screen),
-    screenshotUrl: screenshotUrlOf(screen),
-    width: screen?.width,
-    height: screen?.height,
-  };
-}
-
-function collectScreensFromResult(result) {
-  const byId = new Map();
-  const add = (screen) => {
-    const normalized = normalizeScreenEntry(screen);
-    if (!normalized?.screenId) return;
-    const existing = byId.get(normalized.screenId);
-    byId.set(normalized.screenId, existing ? { ...normalized, ...existing } : normalized);
-  };
-
-  for (const arr of screenSourceArrays(result)) {
-    for (const screen of arr) add(screen);
-  }
-
-  for (const item of result?.content || []) {
-    if (item?.type !== 'text') continue;
-    for (const parsed of jsonPayloadsFromToolText(item.text)) {
-      if (Array.isArray(parsed)) {
-        for (const screen of parsed) add(screen);
-      }
-      for (const arr of screenSourceArrays(parsed)) {
-        for (const screen of arr) add(screen);
-      }
-      if (parsed?.screen) add(parsed.screen);
-    }
-  }
-
-  return [...byId.values()];
 }
 
 function redactDiagnosticText(text) {
@@ -549,7 +429,7 @@ async function generateScreenFromText(args) {
     const result = await callTool('generate_screen_from_text', args);
     assertToolResultOk(result, 'generate_screen_from_text');
     const parsed = parseScreens(result);
-    if (parsed.screens.length === 0) {
+    if (parsed.candidates.length === 0) {
       const diagnostic = describeToolResultShape(result);
       const reason = diagnostic?.textSample || JSON.stringify(diagnostic) || 'no screens returned';
       const retryableEmptyResponse = shouldRotateForStitchFailure(reason) || /no screens returned|screens\.length === 0|generated 0/i.test(reason);
@@ -578,8 +458,8 @@ async function downloadFile(url, outputPath, attempt = 1) {
 // Parse screens from generate response
 function parseScreens(result) {
   const suggestions = [];
-  const screens = collectScreensFromResult(result);
-  if (!result || !result.content) return { screens, suggestions };
+  const partition = partitionDirectScreenCandidates(collectScreenCandidatesFromResult(result));
+  if (!result || !result.content) return { ...partition, suggestions };
 
   for (const item of result.content) {
     if (item.type === 'text') {
@@ -597,12 +477,12 @@ function parseScreens(result) {
     }
   }
 
-  return { screens, suggestions };
+  return { ...partition, suggestions };
 }
 
 // Parse screen list from list_screens result (shared helper)
 function parseScreenList(result) {
-  return collectScreensFromResult(result);
+  return collectScreenCandidatesFromResult(result);
 }
 
 // Safe JS object literal parser -- converts JS object syntax to JSON then parses.
@@ -1507,12 +1387,16 @@ const commands = {
     const retryBaseDelayMs = intEnv("STITCH_GENERATE_ALL_RETRY_BASE_DELAY_MS", 45000, 5000, 180000);
     let result = null;
     let screens = [];
+    let directCandidates = [];
+    let directScreenEvidence = [];
     let screenSource = "direct";
     for (let attempt = 1; attempt <= retryAttempts; attempt++) {
       try {
         const generated = await generateScreenFromText({ projectId, prompt, deviceType, modelId });
         result = generated.result;
         screens = generated.screens;
+        directCandidates = generated.candidates;
+        directScreenEvidence = generated.evidence;
         break;
       } catch (e) {
         const message = e?.message || String(e);
@@ -1528,7 +1412,17 @@ const commands = {
     }
 
     const elapsed = Math.round((Date.now() - startTime) / 1000);
-    process.stderr.write("Generated " + screens.length + " screens in " + elapsed + "s\n");
+    process.stderr.write(
+      "Generated " + screens.length + " renderable screen(s) from " + directCandidates.length +
+      " direct response candidate(s) in " + elapsed + "s\n"
+    );
+    const excludedDirect = directScreenEvidence.filter((item) => item.disposition !== "admitted_renderable_screen");
+    if (excludedDirect.length > 0) {
+      process.stderr.write(
+        "Excluded " + excludedDirect.length +
+        " direct candidate(s) missing HTML/screenshot render evidence\n"
+      );
+    }
     const zeroScreenDiagnostic = screens.length === 0 ? describeToolResultShape(result) : undefined;
     if (zeroScreenDiagnostic?.textSample) {
       process.stderr.write("0-screen Stitch response: " + zeroScreenDiagnostic.textSample.slice(0, 500) + "\n");
@@ -1629,6 +1523,9 @@ const commands = {
       total: screens.length,
       screens: screens.map(s => ({ screenId: s.screenId, title: s.title })),
       screenSource,
+      directCandidateTotal: directCandidates.length,
+      excludedDirectTotal: directScreenEvidence.filter((item) => item.disposition !== "admitted_renderable_screen").length,
+      directScreenEvidence,
       elapsedSeconds: Math.round((Date.now() - startTime) / 1000),
       diagnostic: screens.length === 0 ? zeroScreenDiagnostic : undefined
     }, null, 2));

@@ -5,7 +5,7 @@ import path from "node:path";
 import os from "node:os";
 import { designModule } from "../../dist/installer/steps/02-design/module.js";
 import { PROTECTED_CONTEXT_KEYS } from "../../dist/installer/constants.js";
-import { classifyDesignFailure, inferPrdScreens, manifestUsesLocalFallback, parseProductSurfaces, stitchApiKeyAvailable, surfaceCoverageMode, synthesizeDesignMarkdownFromStitchAssets, verifyScreenMapToSurfaces } from "../../dist/installer/steps/02-design/preclaim.js";
+import { classifyDesignFailure, classifyV3DesignBoundary, inferPrdScreens, manifestUsesLocalFallback, parseProductSurfaces, stitchApiKeyAvailable, surfaceCoverageMode, synthesizeDesignMarkdownFromStitchAssets, verifyScreenMapToSurfaces } from "../../dist/installer/steps/02-design/preclaim.js";
 import { runModule } from "./harness.js";
 
 function designPreclaimSource(): string {
@@ -160,6 +160,20 @@ describe("02-design step module", () => {
     const mismatch = classifyDesignFailure("DESIGN_SURFACE_MISMATCH: missing required Product Surfaces", "surface_verify");
     assert.equal(mismatch.category, "surface_mismatch");
     assert.equal(mismatch.promptRelated, true);
+
+    const typedContract = classifyV3DesignBoundary("DESIGN_V3_DIRECT_RESPONSE_EVIDENCE_MISMATCH");
+    assert.equal(typedContract.category, "response_contract");
+    assert.equal(typedContract.owner, "setfarm_local_system");
+    assert.equal(typedContract.retryable, false);
+    assert.equal(typedContract.setfarmBugLikely, true);
+
+    const typedProvider = classifyV3DesignBoundary("DESIGN_V3_RESPONSE_SOURCE_INVALID");
+    assert.equal(typedProvider.category, "provider_response");
+    assert.equal(typedProvider.owner, "stitch_api");
+
+    const noRenderable = classifyV3DesignBoundary("DESIGN_V3_RENDERABLE_SCREEN_MISSING");
+    assert.equal(noRenderable.category, "provider_response");
+    assert.equal(noRenderable.retryable, false);
   });
 
   it("preClaim writes structured DESIGN failure reports", () => {
@@ -192,7 +206,7 @@ describe("02-design step module", () => {
     assert.match(source, /SETFARM_STITCH_SCRIPT_RETRY_ATTEMPTS/);
     assert.match(source, /STITCH_GENERATE_ALL_RETRY_ATTEMPTS/);
     assert.match(source, /retrying same batch stage/);
-    assert.match(source, /const downloadAttempts = stitchProviderUnavailable \? 1 : \(batchGenerationCompleted \? 3 : 1\)/);
+    assert.match(source, /const downloadAttempts = v3Contract \? 0 : \(stitchProviderUnavailable \? 1 : \(batchGenerationCompleted \? 3 : 1\)\)/);
     assert.match(source, /SETFARM_STITCH_PER_SCREEN_RECOVERY/);
     assert.match(source, /SETFARM_STITCH_PER_SCREEN_RECOVERY === "1"/);
     assert.match(source, /SETFARM_STITCH_SCREEN_BATCH_SIZE/);
@@ -234,12 +248,18 @@ describe("02-design step module", () => {
 
   it("isolates Product Compiler v3 exact binding from legacy fuzzy reconciliation", () => {
     const source = designPreclaimSource();
+    const decoderSource = fs.readFileSync("src/product-compiler/producers/stitch-direct-response.ts", "utf8");
     assert.match(source, /protocol === "v3"/);
     assert.match(source, /prepareV3DesignContract/);
     assert.match(source, /GENERATION_TARGETS\.json/);
     assert.match(source, /STITCH_RESPONSE_BINDINGS\.json/);
+    assert.match(source, /STITCH_DIRECT_RESPONSE_EVIDENCE\.json/);
+    assert.match(source, /decodeStitchDirectBatchV1/);
+    assert.match(decoderSource, /DESIGN_V3_DIRECT_RESPONSE_EVIDENCE_MISMATCH/);
+    assert.match(source, /DESIGN_V3_DIRECT_BATCH_INCOMPLETE/);
+    assert.match(source, /DESIGN_V3_RESPONSE_HTML_MISSING/);
+    assert.match(source, /const downloadAttempts = v3Contract \? 0/);
     assert.match(source, /bindExactStitchTargetResponsesV1/);
-    assert.match(source, /screenSource !== "direct"/);
     assert.match(source, /if \(v3Contract\)[\s\S]*exactV3ScreenMap/);
     assert.match(source, /if \(!v3Contract && screenMap\.length > 0\)[\s\S]*verifyScreenMapToSurfaces/);
     assert.match(source, /manifest\/title reconciliation is forbidden/);
