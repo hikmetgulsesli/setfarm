@@ -177,7 +177,8 @@ describe("single-step claim_log lifecycle", () => {
     assert.match(source, /singleStepClaimEnvelope = \{/);
     assert.match(source, /claimId: singleStepClaimId,[\s\S]*claimAgentId: agentId,[\s\S]*runtimeAgentId: runtimeIntent\?\.runtimeAgentId \|\| agentId/);
     assert.match(source, /claimEnvelope: singleStepClaimEnvelope/);
-    assert.match(source, /failStep\(step\.id, preClaimError, singleStepClaimEnvelope\)/);
+    assert.match(source, /v3PlatformPreclaim[\s\S]*singleStepMode: "terminal_platform_preclaim"/);
+    assert.match(source, /failStep\([\s\S]*ownedPreClaimError,[\s\S]*singleStepClaimEnvelope/);
 
     const preclaims = [
       "01-plan", "02-design", "03-stories", "04-setup-repo", "05-setup-build",

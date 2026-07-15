@@ -85,6 +85,57 @@ if (manifest.length === 0) {
   }
 }
 
+function loadV3ProjectionContract() {
+  const targetsPath = path.join(stitchDir, "GENERATION_TARGETS.json");
+  const bindingsPath = path.join(stitchDir, "STITCH_RESPONSE_BINDINGS.json");
+  const hasTargets = fs.existsSync(targetsPath);
+  const hasBindings = fs.existsSync(bindingsPath);
+  if (!hasTargets && !hasBindings) return undefined;
+  if (!hasTargets || !hasBindings) {
+    throw new Error("V3_PROJECTION_CONTRACT_PARTIAL: GENERATION_TARGETS.json and STITCH_RESPONSE_BINDINGS.json must exist together");
+  }
+
+  let targets;
+  let bindings;
+  try {
+    targets = JSON.parse(fs.readFileSync(targetsPath, "utf-8"));
+    bindings = JSON.parse(fs.readFileSync(bindingsPath, "utf-8"));
+  } catch (error) {
+    throw new Error(`V3_PROJECTION_CONTRACT_JSON_INVALID: ${String(error)}`);
+  }
+  if (targets?.schema !== "setfarm.design-generation-targets.v1" || !Array.isArray(targets.targets)) {
+    throw new Error("V3_PROJECTION_TARGETS_INVALID: exact generation targets are required for contract-only projection");
+  }
+  if (bindings?.schema !== "setfarm.stitch-target-response-bindings.v1" || !Array.isArray(bindings.bindings)) {
+    throw new Error("V3_PROJECTION_BINDINGS_INVALID: exact Stitch response bindings are required for contract-only projection");
+  }
+
+  const targetById = new Map();
+  for (const target of targets.targets) {
+    if (!target?.targetId || targetById.has(target.targetId)) {
+      throw new Error(`V3_PROJECTION_TARGET_ID_INVALID:${String(target?.targetId || "missing")}`);
+    }
+    targetById.set(target.targetId, target);
+  }
+  const byScreenId = new Map();
+  for (const binding of bindings.bindings) {
+    const target = targetById.get(binding?.targetRef);
+    if (!target || !binding?.responseScreenId || byScreenId.has(binding.responseScreenId)) {
+      throw new Error(`V3_PROJECTION_RESPONSE_BINDING_INVALID:${String(binding?.targetRef || "missing")}`);
+    }
+    byScreenId.set(binding.responseScreenId, {
+      targetRef: target.targetId,
+      expectedActionRefs: new Set(Array.isArray(target.requiredActionRefs) ? target.requiredActionRefs : []),
+      expectedInputPairs: new Set((Array.isArray(target.requiredActionInputs) ? target.requiredActionInputs : [])
+        .flatMap((entry) => (Array.isArray(entry?.inputFields) ? entry.inputFields : [])
+          .map((field) => `${entry.actionRef}.${field}`))),
+    });
+  }
+  return { byScreenId };
+}
+
+const v3ProjectionContract = loadV3ProjectionContract();
+
 const JSX_ATTRIBUTE_MAP = {
   "accept-charset": "acceptCharset",
   "allowfullscreen": "allowFullScreen",
@@ -1378,21 +1429,66 @@ function escapeHtmlAttr(value) {
     .replace(/>/g, "&gt;");
 }
 
-function annotateInteractiveElements(html) {
+function annotateInteractiveElements(html, projection) {
   const actions = [];
   const valueControls = [];
+  const rejectedControls = [];
+  const identities = [];
   let buttonIndex = 0;
   let linkIndex = 0;
   let inputIndex = 0;
   let textareaIndex = 0;
   let selectIndex = 0;
+  const nextId = (label, fallback, index) => {
+    const id = uniqueActionId(identities, slugifyActionId(label, fallback), index);
+    identities.push({ id });
+    return id;
+  };
+  const expectedInput = (binding) => projection?.expectedInputPairs.has(`${binding.actionRef}.${binding.inputField}`) ?? false;
+  const rejectControl = ({ id, kind, label, index, actionRef, inputBindings, href }) => {
+    rejectedControls.push({
+      rejectionId: id,
+      kind,
+      label,
+      index,
+      reasonCode: "undeclared_by_generation_target",
+      ...(actionRef ? { rawActionRef: actionRef } : {}),
+      ...(inputBindings.length > 0 ? { rawInputBindings: inputBindings } : {}),
+      ...(href ? { href } : {}),
+    });
+  };
+  const neutralizedAttrs = (attrs, id, kind) => {
+    let cleanAttrs = String(attrs || "");
+    for (const attribute of [
+      "data-action", "data-action-input", "data-action-id", "data-control-id",
+      "data-setfarm-link-action", "onclick", "onClick", "onchange", "onChange",
+      "oninput", "onInput", "onsubmit", "onSubmit", "tabindex", "tabIndex",
+      "role", "hidden", "aria-hidden",
+    ]) {
+      cleanAttrs = stripJsxAttribute(cleanAttrs, attribute);
+    }
+    if (kind === "link") {
+      for (const attribute of ["href", "target", "rel", "download"]) {
+        cleanAttrs = stripJsxAttribute(cleanAttrs, attribute);
+      }
+    }
+    if (["button", "input", "textarea", "select"].includes(kind)) {
+      cleanAttrs = stripJsxAttribute(cleanAttrs, "disabled");
+      cleanAttrs += " disabled";
+    }
+    return `${cleanAttrs} hidden="true" aria-hidden="true" data-setfarm-rejected-control="${id}"`;
+  };
   const withButtons = String(html || "").replace(/<button\b([^>]*)>([\s\S]*?)<\/button>/gi, (match, attrs, inner) => {
     const index = buttonIndex++;
     const label = labelFromInteractive(attrs, inner, `Button ${index + 1}`);
-    const base = slugifyActionId(label, "button");
-    const id = uniqueActionId(actions, base, index);
+    const id = nextId(label, "button", index);
     const actionRef = semanticActionRef(attrs);
     const inputBindings = semanticActionInputs(attrs);
+    const accepted = !projection || Boolean(actionRef && projection.expectedActionRefs.has(actionRef));
+    if (!accepted) {
+      rejectControl({ id, kind: "button", label, index, actionRef, inputBindings });
+      return `<button${neutralizedAttrs(attrs, id, "button")}>${inner}</button>`;
+    }
     actions.push({ id, kind: "button", label, index, ...(actionRef ? { actionRef } : {}), ...(inputBindings.length ? { inputBindings } : {}) });
 
     let cleanAttrs = String(attrs || "")
@@ -1410,10 +1506,14 @@ function annotateInteractiveElements(html) {
     const index = linkIndex++;
     const href = attrValue(attrs, "href");
     const label = labelFromInteractive(attrs, inner, href || `Link ${index + 1}`);
-    const base = slugifyActionId(label, "link");
-    const id = uniqueActionId(actions, base, index);
+    const id = nextId(label, "link", index);
     const actionRef = semanticActionRef(attrs);
     const inputBindings = semanticActionInputs(attrs);
+    const accepted = !projection || Boolean(actionRef && projection.expectedActionRefs.has(actionRef));
+    if (!accepted) {
+      rejectControl({ id, kind: "link", label, index, actionRef, inputBindings, href });
+      return `<a${neutralizedAttrs(attrs, id, "link")}>${inner}</a>`;
+    }
     actions.push({ id, kind: "link", label, href, index, ...(actionRef ? { actionRef } : {}), ...(inputBindings.length ? { inputBindings } : {}) });
 
     const cleanAttrs = String(attrs || "")
@@ -1440,12 +1540,20 @@ function annotateInteractiveElements(html) {
       .replace(/\sonchange=(?:"[^"]*"|'[^']*')/gi, "")
       .replace(/\sonChange=\{[^}]*\}/g, "");
     if (actionRef) {
-      const id = uniqueActionId(actions, slugifyActionId(label, tagName), actions.length);
+      const id = nextId(label, tagName, actions.length);
+      if (projection && !projection.expectedActionRefs.has(actionRef)) {
+        rejectControl({ id, kind: tagName, label, index, actionRef, inputBindings });
+        return neutralizedAttrs(attrs, id, tagName);
+      }
       actions.push({ id, kind: tagName, label, index, actionRef, ...(inputBindings.length ? { inputBindings } : {}) });
       return `${cleanAttrs} data-action-id="${id}" onChange={() => actions?.["${id}"]?.()}`;
     }
-    if (inputBindings.length === 0) return String(attrs || "");
-    const id = uniqueActionId([...actions, ...valueControls], slugifyActionId(label, tagName), valueControls.length);
+    if (inputBindings.length === 0 && !projection) return String(attrs || "");
+    const id = nextId(label, tagName, valueControls.length);
+    if (projection && !inputBindings.some(expectedInput)) {
+      rejectControl({ id, kind: tagName, label, index, actionRef, inputBindings });
+      return neutralizedAttrs(attrs, id, tagName);
+    }
     valueControls.push({ id, kind: tagName, label, index, inputBindings });
     return `${cleanAttrs} data-control-id="${id}"`;
   };
@@ -1461,7 +1569,7 @@ function annotateInteractiveElements(html) {
     const index = selectIndex++;
     return `<select${annotateValueTag("select", attrs, `Select ${index + 1}`, index)}>`;
   });
-  return { html: withSelects, actions, valueControls };
+  return { html: withSelects, actions, valueControls, rejectedControls };
 }
 
 function restoreGeneratedLinkActionHandlers(jsx) {
@@ -1501,7 +1609,16 @@ for (const screen of manifest) {
   const lucideImports = new Set();
   const renderableBody = stripNonRenderedHtmlBlocks(body);
   const classNormalizedBody = normalizeDesignClassAttributes(renderableBody);
-  const { html: interactiveBody, actions, valueControls } = annotateInteractiveElements(classNormalizedBody);
+  const projection = v3ProjectionContract?.byScreenId.get(String(screen.screenId || ""));
+  if (v3ProjectionContract && !projection) {
+    throw new Error(`V3_PROJECTION_SCREEN_UNBOUND:${String(screen.screenId || screen.title || "missing")}`);
+  }
+  const {
+    html: interactiveBody,
+    actions,
+    valueControls,
+    rejectedControls,
+  } = annotateInteractiveElements(classNormalizedBody, projection);
   const sourceLocator = path.relative(repoPath, htmlFile).split(path.sep).join("/");
   const indexedActions = actions.map((action) => action.actionRef ? {
     ...action,
@@ -1567,6 +1684,12 @@ ${jsx.split("\n").map(l => "      " + l).join("\n")}
 `;
   const generatedSourceLocator = "src/screens/" + name + ".tsx";
   fs.writeFileSync(path.join(screensDir, name + ".tsx"), code);
+  const indexedRejectedControls = rejectedControls.map((control) => ({
+    ...control,
+    sourceLocator,
+    generatedSourceLocator,
+    selector: `[data-setfarm-rejected-control="${control.rejectionId}"]`,
+  }));
   screenIndex.push({
     screenId: screen.screenId,
     title: screen.title,
@@ -1582,8 +1705,23 @@ ${jsx.split("\n").map(l => "      " + l).join("\n")}
       ...control,
       generatedSourceLocator,
     })),
+    ...(projection ? {
+      projection: {
+        schema: "setfarm.stitch-screen-projection.v1",
+        mode: "contract_only",
+        targetRef: projection.targetRef,
+        rawInteractiveCounts: { buttons, links, inputs, textareas, selects },
+      },
+      rejectedControls: indexedRejectedControls,
+    } : {}),
   });
-  console.log("  OK:", screen.title, "->", name + ".tsx", "(" + buttons + "btn," + inputs + "inp," + links + "lnk)");
+  console.log(
+    "  OK:",
+    screen.title,
+    "->",
+    name + ".tsx",
+    "(" + buttons + "btn," + inputs + "inp," + links + "lnk," + indexedRejectedControls.length + " rejected)",
+  );
 }
 
 fs.writeFileSync(path.join(screensDir, "SCREEN_INDEX.json"), JSON.stringify(screenIndex, null, 2));

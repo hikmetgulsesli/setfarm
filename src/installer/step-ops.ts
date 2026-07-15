@@ -6375,10 +6375,22 @@ async function claimSingleStep(
             );
             return { found: false };
           }
-          if (HARD_PRECLAIM_STEPS.has(step.step_id)) {
-            logger.warn(`[step-module] ${_stepModule.id} preClaim failed as hard gate: ${String(_pce).slice(0, 200)}`, { runId: step.run_id });
-            await failStep(step.id, preClaimError, singleStepClaimEnvelope);
-            await closeSingleStepHandoff("failed", preClaimError);
+          const v3PlatformPreclaim = singleStepClaimEnvelope?.protocol === "v3";
+          if (v3PlatformPreclaim || HARD_PRECLAIM_STEPS.has(step.step_id)) {
+            const ownedPreClaimError = v3PlatformPreclaim
+              ? `PLATFORM_PRECLAIM_TERMINAL [${_stepModule.id}]: ${preClaimError}`
+              : preClaimError;
+            logger.warn(
+              `[step-module] ${_stepModule.id} preClaim failed as ${v3PlatformPreclaim ? "v3 platform-owned terminal gate" : "hard gate"}: ${String(_pce).slice(0, 200)}`,
+              { runId: step.run_id },
+            );
+            await failStep(
+              step.id,
+              ownedPreClaimError,
+              singleStepClaimEnvelope,
+              v3PlatformPreclaim ? { singleStepMode: "terminal_platform_preclaim" } : undefined,
+            );
+            await closeSingleStepHandoff("failed", ownedPreClaimError);
             return { found: false };
           }
           logger.warn(`[step-module] ${_stepModule.id} preClaim failed (non-fatal): ${String(_pce).slice(0, 200)}`, { runId: step.run_id });

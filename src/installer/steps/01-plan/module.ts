@@ -39,6 +39,8 @@ function buildV3Prompt(ctx: PromptContext): string {
     "- Every goal, non-goal, entity, state, persistence policy, route, surface, action, evidence predicate, and observable effect must have exactly one traceability binding to one or more exact REQ_* IDs.",
     "- Each requirement declares expectedSemanticKinds. Setfarm rejects a proposal when any declared kind lacks an exact bound semantic artifact.",
     "- Every action must declare at least one observableEffects entry. Its selector must bind the owning action control, one owning surface, or an exact accessibility role/name. Assertions use before/after/reload phases and visible_text/value/visibility/enabled/route properties.",
+    "- Declare an action input only when that variable value feeds an exact stateDelta through valueFrom.kind=input or inputs. A fixed button outcome is a literal state delta with no synthetic action input or payload field.",
+    "- Every state path is empty or an RFC 6901 JSON Pointer beginning with '/'; escape '~' as '~0' and '/' inside one token as '~1'.",
     "- Every observable effect owns an observable_outcome evidence predicate whose subjectRef is the exact OBS_* ID; that evidence ref must also appear on the action.",
     "- Durable writes require a reload observable assertion. State bridge evidence is supplemental and cannot replace a DOM/accessibility/route observable assertion.",
     "- Do not guess ambiguous actions, persistence ownership, routes, or outcomes. Emit the typed rejection below instead.",

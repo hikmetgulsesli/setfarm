@@ -950,7 +950,8 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /normalized\.includes\("agent_model_turn_stalled"\)/);
     assert.match(source, /normalized\.includes\("agent_startup_silent"\)/);
     assert.match(source, /normalized\.includes\("masked_check_command"\)/);
-    assert.match(singlePreamble, /if \(isTransientAgentInfrastructureFailure\(error\)\)/);
+    assert.match(singlePreamble, /if \(!terminalPlatformPreclaim && isTransientAgentInfrastructureFailure\(error\)\)/);
+    assert.match(singlePreamble, /failureMode === "terminal_platform_preclaim"/);
     assert.match(singlePreamble, /UPDATE steps SET status = 'pending', output = \$\{error\}, updated_at = \$\{now\(\)\} WHERE id = \$\{stepId\}/);
     assert.match(singlePreamble, /outcome:\s*"infra_retry"/);
     assert.match(source, /closeExactSingleStepClaimInTransaction/);

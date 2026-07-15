@@ -847,7 +847,12 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
     } catch (error) {
       if (!ctx.claimEnvelope) throw error;
       const { failStep } = await import("../../step-fail.js");
-      await failStep(step.id, String((error as Error)?.message || error), ctx.claimEnvelope);
+      await failStep(
+        step.id,
+        `PLATFORM_PRECLAIM_TERMINAL [stories]: ${String((error as Error)?.message || error)}`,
+        ctx.claimEnvelope,
+        { singleStepMode: "terminal_platform_preclaim" },
+      );
       return;
     }
     const { completeStep } = await import("../../step-ops.js");
