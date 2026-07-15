@@ -110,6 +110,7 @@ import {
   type V3ImplementationAgentOutputV1,
 } from "../execution/v3-implementation-output.js";
 import {
+  projectCanonicalV3PlanParsedOutputV1,
   resolveV3PlanOutputAuthorityV1,
   shouldRunLegacyProductSupervisorV1,
   V3PlanOutputRejectedError,
@@ -8138,6 +8139,12 @@ export async function completeStep(
           ? { requestedStackPackId: context["stack_pack_id"] }
           : {}),
       });
+      if (nativeV3PlanAuthority.status === "proposal") {
+        parsed.prd = projectCanonicalV3PlanParsedOutputV1({
+          parsed,
+          authority: nativeV3PlanAuthority,
+        }).prd;
+      }
     } catch (error) {
       // A malformed or semantically invalid typed PLAN proposal is an agent
       // output rejection, not a runtime-manager failure.  Keep it inside the

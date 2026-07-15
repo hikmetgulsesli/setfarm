@@ -14,6 +14,10 @@ import { RequirementIdSchema, hasUniqueStrings } from "../schemas/common-v1.js";
 import {
   compileProductEvidenceCapabilitiesV1,
 } from "../product-evidence-capability-policy.js";
+import {
+  projectCompilerOwnedPersistencePayloadsV1,
+  type CompilerOwnedPersistenceProjectionEvidenceV1,
+} from "./compiler-owned-persistence-projection.js";
 
 const RejectionCodeSchema = z.enum([
   "PRODUCT_SPEC_TASK_AMBIGUOUS",
@@ -49,6 +53,7 @@ export type CanonicalProductSpecProposalResultV1 =
       productSpec: ProductSpecV3Proposal;
       canonicalBytes: string;
       sourceTaskHash: string;
+      persistenceProjectionEvidence: CompilerOwnedPersistenceProjectionEvidenceV1;
     }>
   | Readonly<{
       status: "rejected";
@@ -119,7 +124,10 @@ export function canonicalizeProductSpecV3Proposal(input: Readonly<{
     };
   }
 
-  const base = ProductSpecV1Schema.safeParse(withoutPlannerCapabilityRefs(input.proposal));
+  const persistenceProjection = projectCompilerOwnedPersistencePayloadsV1(
+    withoutPlannerCapabilityRefs(input.proposal),
+  );
+  const base = ProductSpecV1Schema.safeParse(persistenceProjection.proposal);
   if (!base.success) {
     return { status: "rejected", diagnostics: schemaDiagnostics(base.error) };
   }
@@ -283,6 +291,7 @@ export function canonicalizeProductSpecV3Proposal(input: Readonly<{
     productSpec: parsed.data,
     canonicalBytes,
     sourceTaskHash: ledger.sourceHash,
+    persistenceProjectionEvidence: persistenceProjection.evidence,
   };
 }
 
