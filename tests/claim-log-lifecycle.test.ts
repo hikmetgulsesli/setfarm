@@ -19,6 +19,10 @@ function stepOpsSource(): string {
   return fs.readFileSync(path.join(root, "src", "installer", "step-ops.ts"), "utf-8");
 }
 
+function v3PreDispatchFailureOwnerSource(): string {
+  return fs.readFileSync(path.join(root, "src", "installer", "v3-pre-dispatch-failure.ts"), "utf-8");
+}
+
 function claimRuntimePublicationSource(): string {
   return fs.readFileSync(path.join(root, "src", "execution", "claim-runtime-publication.ts"), "utf-8");
 }
@@ -542,6 +546,27 @@ describe("single-step claim_log lifecycle", () => {
     assert.match(routeSource, /quality_failure_fingerprint/);
     assert.match(routeSource, /ON CONFLICT \(run_id, story_id\) WHERE status IN \('pending', 'running'\)/);
     assert.match(routeSource, /RETURNING id, story_id/);
+  });
+
+  it("binds v3 post-publication preparation failures to typed bounded ownership", () => {
+    const source = stepOpsSource();
+    const owner = v3PreDispatchFailureOwnerSource();
+    assert.match(source, /from "\.\/v3-pre-dispatch-failure\.js"/);
+    assert.doesNotMatch(source, /async function handleV3PreDispatchFailure\(/);
+    assert.match(owner, /export async function handleV3PreDispatchFailure/);
+    assert.match(owner, /createV3PreDispatchFailureV1/);
+    assert.match(owner, /LEFT\(diagnostic, CHAR_LENGTH\(\$4\)\) = \$4/);
+    assert.match(owner, /decideV3PreDispatchDispositionV1/);
+    assert.match(owner, /requestRunTerminationInTransaction/);
+    assert.match(owner, /closeReservedClaimRuntimeInTransaction/);
+
+    const reservation = source.slice(
+      source.indexOf("let nativeV3Attempt"),
+      source.indexOf("// Wave 14 Bug K", source.indexOf("let nativeV3Attempt")),
+    );
+    assert.match(reservation, /handleV3PreDispatchFailure/);
+    assert.doesNotMatch(reservation, /V3_IMPLEMENTATION_SLICE_RESERVATION_FAILED/);
+    assert.doesNotMatch(reservation, /outcome:\s*operationalRetryRefused\s*\?\s*"failed"\s*:\s*"infra_retry"/);
   });
 
   it("routes QA-FIX-disabled app quality failures back to the original story before failing the run", () => {
