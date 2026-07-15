@@ -4,12 +4,16 @@ import { canonicalJsonStringify } from "../canonical-json.js";
 import {
   ProductSpecV1Schema,
   ProductSpecV3ProposalSchema,
+  type ProductSpecV1,
   type ProductSpecV3Proposal,
 } from "../schemas/product-spec-v1.js";
 import {
   extractTaskRequirementLedgerV1,
 } from "../requirements/task-requirements-v1.js";
 import { RequirementIdSchema, hasUniqueStrings } from "../schemas/common-v1.js";
+import {
+  compileProductEvidenceCapabilitiesV1,
+} from "../product-evidence-capability-policy.js";
 
 const RejectionCodeSchema = z.enum([
   "PRODUCT_SPEC_TASK_AMBIGUOUS",
@@ -36,6 +40,7 @@ export type ProductSpecProposalDiagnosticV1 = Readonly<{
   code: string;
   path: string;
   message: string;
+  reference?: string;
 }>;
 
 export type CanonicalProductSpecProposalResultV1 =
@@ -50,8 +55,13 @@ export type CanonicalProductSpecProposalResultV1 =
       diagnostics: readonly ProductSpecProposalDiagnosticV1[];
     }>;
 
-function diagnostic(code: string, path: string, message: string): ProductSpecProposalDiagnosticV1 {
-  return { code, path, message };
+function diagnostic(
+  code: string,
+  path: string,
+  message: string,
+  reference?: string,
+): ProductSpecProposalDiagnosticV1 {
+  return { code, path, message, ...(reference ? { reference } : {}) };
 }
 
 function schemaDiagnostics(error: z.ZodError): ProductSpecProposalDiagnosticV1[] {
@@ -66,6 +76,19 @@ function compareUtf16(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
 }
 
+function withoutPlannerCapabilityRefs(proposal: unknown): unknown {
+  if (!proposal || typeof proposal !== "object" || Array.isArray(proposal)) return proposal;
+  const value = proposal as Record<string, unknown>;
+  if (!Array.isArray(value["evidencePredicates"])) return proposal;
+  return {
+    ...value,
+    evidencePredicates: value["evidencePredicates"].map((predicate) =>
+      predicate && typeof predicate === "object" && !Array.isArray(predicate)
+        ? { ...(predicate as Record<string, unknown>), capabilityRefs: [] }
+        : predicate),
+  };
+}
+
 /**
  * Setfarm owns source clauses and canonical bytes. The planner owns semantic
  * classification and bindings, but cannot alter, omit, or invent task clauses.
@@ -78,6 +101,8 @@ export function canonicalizeProductSpecV3Proposal(input: Readonly<{
     techStack: string;
     designRequired?: boolean;
     allowedDatabases?: readonly string[];
+    stackPackId?: string;
+    evidenceCapabilityPolicyHash?: string;
   }>;
 }>): CanonicalProductSpecProposalResultV1 {
   let ledger;
@@ -94,7 +119,7 @@ export function canonicalizeProductSpecV3Proposal(input: Readonly<{
     };
   }
 
-  const base = ProductSpecV1Schema.safeParse(input.proposal);
+  const base = ProductSpecV1Schema.safeParse(withoutPlannerCapabilityRefs(input.proposal));
   if (!base.success) {
     return { status: "rejected", diagnostics: schemaDiagnostics(base.error) };
   }
@@ -212,7 +237,7 @@ export function canonicalizeProductSpecV3Proposal(input: Readonly<{
     `${left.semanticKind}\0${left.semanticRef}`,
     `${right.semanticKind}\0${right.semanticRef}`,
   ));
-  const canonicalCandidate = {
+  let canonicalCandidate: ProductSpecV1 = ProductSpecV1Schema.parse({
     ...base.data,
     requirements,
     traceability: {
@@ -220,7 +245,34 @@ export function canonicalizeProductSpecV3Proposal(input: Readonly<{
       sourceTaskHash: ledger.sourceHash,
       bindings,
     },
-  };
+  });
+  if (input.authoritativeDelivery?.stackPackId) {
+    const compiled = compileProductEvidenceCapabilitiesV1({
+      productSpec: ProductSpecV1Schema.parse(canonicalCandidate),
+      stackPackId: input.authoritativeDelivery.stackPackId,
+    });
+    if (compiled.status === "rejected") {
+      return {
+        status: "rejected",
+        diagnostics: compiled.diagnostics.map((item) =>
+          diagnostic(item.code, item.path, item.message, item.reference)),
+      };
+    }
+    if (
+      input.authoritativeDelivery.evidenceCapabilityPolicyHash
+      && compiled.policyHash !== input.authoritativeDelivery.evidenceCapabilityPolicyHash
+    ) {
+      return {
+        status: "rejected",
+        diagnostics: [diagnostic(
+          "PRODUCT_SPEC_EVIDENCE_CAPABILITY_POLICY_MISMATCH",
+          "/evidencePredicates",
+          "Selected delivery profile does not bind the active evidence capability policy",
+        )],
+      };
+    }
+    canonicalCandidate = compiled.productSpec;
+  }
   const parsed = ProductSpecV3ProposalSchema.safeParse(canonicalCandidate);
   if (!parsed.success) {
     return { status: "rejected", diagnostics: schemaDiagnostics(parsed.error) };

@@ -90,11 +90,15 @@ function rejection(overrides: Record<string, unknown> = {}): any {
 
 describe("PLAN v3 output authority", () => {
   it("bypasses the legacy Product Supervisor only for a canonical typed v3 proposal", () => {
+    const input = proposal();
+    input.evidencePredicates.forEach((predicate: any) => {
+      predicate.capabilityRefs = ["CAP_BROWSER_RUN", "CAP_LOCAL_STORAGE"];
+    });
     const authority = resolveV3PlanOutputAuthorityV1({
       task: TASK,
       parsed: {
         status: "done",
-        prd: `\`\`\`product-spec-v1\n${JSON.stringify(proposal(), null, 2)}\n\`\`\``,
+        prd: `\`\`\`product-spec-v1\n${JSON.stringify(input, null, 2)}\n\`\`\``,
       },
     });
     assert.equal(authority.status, "proposal");
@@ -103,6 +107,15 @@ describe("PLAN v3 output authority", () => {
     assert.equal(authority.deliverySelection.profileId, "PROFILE_WEB_REACT_EXACT_V1");
     assert.equal(authority.deliverySelection.stackPackId, "vite-react-web-app");
     assert.equal(authority.deliverySelectionHash.length, 64);
+    assert.equal(authority.deliverySelection.evidenceCapabilities.policyHash.length, 64);
+    assert.equal(authority.productSpec.evidencePredicates.every((predicate) =>
+      !predicate.capabilityRefs.includes("CAP_BROWSER_RUN")
+      && !predicate.capabilityRefs.includes("CAP_LOCAL_STORAGE")), true);
+    assert.deepEqual(
+      authority.productSpec.evidencePredicates.find((predicate) =>
+        predicate.id === "EVID_SAVE_CONFIRMATION")?.capabilityRefs,
+      ["CAP_BROWSER_INTERACTION", "CAP_LOCAL_PERSISTENCE"],
+    );
     assert.equal(shouldRunLegacyProductSupervisorV1({
       protocol: "v3",
       stepId: "plan",
@@ -124,6 +137,26 @@ describe("PLAN v3 output authority", () => {
         assert.equal(error.diagnostics.some((item) =>
           item.code === "PRODUCT_SPEC_DELIVERY_STACK_MISMATCH"
           && item.path === "/delivery/techStack"), true);
+        return true;
+      },
+    );
+  });
+
+  it("preserves the exact missing topology capability in typed PLAN retry evidence", () => {
+    const invalid = proposal();
+    invalid.evidencePredicates[0].kind = "download";
+
+    assert.throws(
+      () => resolveV3PlanOutputAuthorityV1({
+        task: TASK,
+        parsed: { prd: `\`\`\`product-spec-v1\n${JSON.stringify(invalid)}\n\`\`\`` },
+      }),
+      (error: unknown) => {
+        assert.ok(error instanceof V3PlanOutputRejectedError);
+        assert.equal(error.diagnostics.some((item) =>
+          item.code === "PRODUCT_SPEC_EVIDENCE_CAPABILITY_UNAVAILABLE"
+          && item.path === "/evidencePredicates/0/capabilityRefs"
+          && item.reference === "download"), true);
         return true;
       },
     );

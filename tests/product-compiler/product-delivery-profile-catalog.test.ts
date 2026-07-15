@@ -12,6 +12,7 @@ import { canonicalJsonStringify, hashCanonicalJson } from "../../src/product-com
 import { getStackTopologyCatalogContract } from "../../src/product-compiler/stack-topology-catalog.js";
 import { getStackPack } from "../../src/installer/stack-contract/packs.js";
 import { planModule } from "../../src/installer/steps/01-plan/module.js";
+import { productEvidenceCapabilityPolicyHashV1 } from "../../src/product-compiler/product-evidence-capability-policy.js";
 
 describe("Product Delivery Profile catalog", () => {
   it("owns one exact activated delivery for utility, operations, and game", () => {
@@ -39,6 +40,8 @@ describe("Product Delivery Profile catalog", () => {
       assert.ok(topology);
       assert.equal(profile.topology.catalogVersion, topology.identity.version);
       assert.equal(profile.topology.descriptorHash, topology.identity.contentHash);
+      assert.equal(profile.evidenceCapabilities.policyHash, productEvidenceCapabilityPolicyHashV1());
+      assert.equal(profile.evidenceCapabilities.policySchema, "setfarm.product-evidence-capability-policy.v1");
       const setupPack = getStackPack(profile.stackPackId);
       assert.equal(setupPack.designPolicy, profile.design.policy);
       assert.equal(setupPack.conversionPolicy, profile.design.conversionPolicy);

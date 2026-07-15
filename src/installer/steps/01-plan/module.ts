@@ -55,6 +55,7 @@ function buildV3Prompt(ctx: PromptContext): string {
     "- Declare an action input only when that variable value feeds an exact stateDelta through valueFrom.kind=input or inputs. A fixed button outcome is a literal state delta with no synthetic action input or payload field.",
     "- Every state path is empty or an RFC 6901 JSON Pointer beginning with '/'; escape '~' as '~0' and '/' inside one token as '~1'.",
     "- Every observable effect owns an observable_outcome evidence predicate whose subjectRef is the exact OBS_* ID; that evidence ref must also appear on the action.",
+    "- Set capabilityRefs to [] on every evidence predicate. Physical capability IDs are Product Compiler output: Setfarm ignores planner-proposed values, derives exact IDs from evidence semantics and the selected topology, and rejects unavailable capability kinds during PLAN.",
     "- Durable writes require a reload observable assertion. State bridge evidence is supplemental and cannot replace a DOM/accessibility/route observable assertion.",
     "- Do not guess ambiguous actions, persistence ownership, routes, or outcomes. Emit the typed rejection below instead.",
     "- Product class is semantic input to the delivery catalog. Utility and operations use the catalog's exact Vite profile; game uses the catalog's exact browser-game profile. Static HTML and reference-only design stacks are not activated for Product Compiler v3 until an exact packet projection exists.",

@@ -51,8 +51,9 @@ import {
   matchesStackEntrypointRule,
   STACK_TOPOLOGY_CATALOG_VERSION,
 } from "./stack-topology-catalog.js";
+import { PRODUCT_EVIDENCE_CAPABILITY_POLICY_VERSION } from "./product-evidence-capability-policy.js";
 
-export const PRODUCT_COMPILER_RUNTIME_VERSION = "3.1.0";
+export const PRODUCT_COMPILER_RUNTIME_VERSION = "3.2.0";
 
 export type SetupBuildPacketErrorCode =
   | "SETUP_PACKET_ACTIVATION_REJECTED"
@@ -918,6 +919,7 @@ export async function orchestrateSetupBuildProductPacket(input: Readonly<{
         productCompiler: PRODUCT_COMPILER_RUNTIME_VERSION,
         stackTopologyCatalog: STACK_TOPOLOGY_CATALOG_VERSION,
         productDeliveryProfileCatalog: PRODUCT_DELIVERY_PROFILE_CATALOG_VERSION,
+        productEvidenceCapabilityPolicy: PRODUCT_EVIDENCE_CAPABILITY_POLICY_VERSION,
       },
     },
   });

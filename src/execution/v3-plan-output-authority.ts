@@ -124,6 +124,8 @@ export function resolveV3PlanOutputAuthorityV1(input: Readonly<{
       techStack: delivery.selection.delivery.techStack,
       designRequired: delivery.selection.delivery.designRequired,
       allowedDatabases: delivery.selection.delivery.allowedDatabases,
+      stackPackId: delivery.selection.stackPackId,
+      evidenceCapabilityPolicyHash: delivery.selection.evidenceCapabilities.policyHash,
     },
   });
   if (canonical.status !== "canonicalized") {

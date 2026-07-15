@@ -13,10 +13,15 @@ import {
 import {
   extractTaskRequirementLedgerV1,
 } from "../../src/product-compiler/requirements/task-requirements-v1.js";
-import { normalize, validateOutput } from "../../src/installer/steps/01-plan/guards.js";
+import {
+  normalize,
+  sealedDeliveryContext,
+  validateOutput,
+} from "../../src/installer/steps/01-plan/guards.js";
 import { buildPrompt } from "../../src/installer/steps/01-plan/module.js";
 import { buildMinimalValidContracts } from "./fixtures/minimal-valid-contract.js";
 import { produceDesignGenerationTargetsV1 } from "../../src/product-compiler/producers/design-targets.js";
+import { resolveProductDeliverySelectionV1 } from "../../src/product-compiler/product-delivery-profile-catalog.js";
 
 const TASK = "Let a user edit and save a task, keep the saved title after reload, and show visible confirmation.";
 
@@ -149,6 +154,24 @@ describe("requirement-traceable PLAN v3", () => {
     );
   });
 
+  it("keeps topology and evidence policy authority across the PLAN compatibility adapter", () => {
+    const selected = resolveProductDeliverySelectionV1({ productClass: "utility" });
+    assert.equal(selected.status, "selected");
+    if (selected.status !== "selected") return;
+
+    assert.deepEqual(sealedDeliveryContext({
+      product_delivery_selection: selected.canonicalBytes,
+      product_delivery_selection_hash: selected.selectionHash,
+    }), {
+      platform: "web",
+      techStack: "vite-react",
+      designRequired: true,
+      allowedDatabases: ["none"],
+      stackPackId: "vite-react-web-app",
+      evidenceCapabilityPolicyHash: selected.selection.evidenceCapabilities.policyHash,
+    });
+  });
+
   it("rejects v3 action inputs that do not drive an exact state delta", () => {
     const input = proposal();
     input.actions[0].stateDeltas[0].valueFrom = { kind: "literal", value: "Task from state" };
@@ -235,5 +258,7 @@ describe("requirement-traceable PLAN v3", () => {
     assert.match(prompt, /Setfarm validates and canonicalizes/i);
     assert.match(prompt, /fixed button outcome is a literal state delta/i);
     assert.match(prompt, /RFC 6901 JSON Pointer/);
+    assert.match(prompt, /Set capabilityRefs to \[\]/);
+    assert.match(prompt, /Physical capability IDs are Product Compiler output/);
   });
 });

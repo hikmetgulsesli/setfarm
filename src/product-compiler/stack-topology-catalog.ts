@@ -11,7 +11,7 @@ import {
 } from "./schemas/build-topology-v1.js";
 import { NormalizedRelativeLocatorSchema, StableReferenceSchema, hasUniqueStrings } from "./schemas/common-v1.js";
 
-export const STACK_TOPOLOGY_CATALOG_VERSION = "1.4.0";
+export const STACK_TOPOLOGY_CATALOG_VERSION = "1.5.0";
 
 /**
  * Platform-owned, write-free runtime for sealed static and Vite build output.
@@ -439,7 +439,7 @@ function basenameSuffixRule(
 function browserCapabilities(withTests = true): CatalogCapability[] {
   return [
     capability("CAP_BROWSER_INTERACTION", "browser_interaction"),
-    capability("CAP_RUNTIME_STATE", "other"),
+    capability("CAP_RUNTIME_STATE", "runtime_state"),
     capability("CAP_LOCAL_PERSISTENCE", "local_persistence", false),
     capability("CAP_VISUAL_CAPTURE", "visual_capture"),
     ...(withTests ? [capability("CAP_TEST_RUNNER", "test_runner")] : []),
@@ -448,7 +448,7 @@ function browserCapabilities(withTests = true): CatalogCapability[] {
 
 function serviceCapabilities(): CatalogCapability[] {
   return [
-    capability("CAP_RUNTIME_STATE", "other"),
+    capability("CAP_RUNTIME_STATE", "runtime_state"),
     capability("CAP_NETWORK_ACCESS", "network"),
     capability("CAP_FILESYSTEM_ACCESS", "filesystem", false),
     capability("CAP_TEST_RUNNER", "test_runner"),
@@ -457,7 +457,7 @@ function serviceCapabilities(): CatalogCapability[] {
 
 function cliCapabilities(): CatalogCapability[] {
   return [
-    capability("CAP_RUNTIME_STATE", "other"),
+    capability("CAP_RUNTIME_STATE", "runtime_state"),
     capability("CAP_CLI_INTERACTION", "cli_interaction"),
     capability("CAP_FILESYSTEM_ACCESS", "filesystem", false),
     capability("CAP_TEST_RUNNER", "test_runner"),
@@ -466,7 +466,7 @@ function cliCapabilities(): CatalogCapability[] {
 
 function nativeCapabilities(): CatalogCapability[] {
   return [
-    capability("CAP_RUNTIME_STATE", "other"),
+    capability("CAP_RUNTIME_STATE", "runtime_state"),
     capability("CAP_NATIVE_RUNTIME", "native_runtime"),
     capability("CAP_LOCAL_PERSISTENCE", "local_persistence", false),
     capability("CAP_VISUAL_CAPTURE", "visual_capture"),
@@ -585,7 +585,7 @@ const RAW_STACK_TOPOLOGY_CATALOG = {
     requiredCommandKinds: ["build", "test", "preview"],
     capabilities: [
       ...browserCapabilities(),
-      capability("CAP_GAME_TIMING", "other"),
+      capability("CAP_GAME_TIMING", "game_timing"),
     ],
     requiredPathRoles: ["entrypoint", "source"],
     deniedGlobs: DENIED_GLOBS,

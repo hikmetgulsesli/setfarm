@@ -146,6 +146,7 @@ describe("v3 stage execution context", () => {
         code: "PRODUCT_SPEC_PROPOSAL_SCHEMA_INVALID",
         path: "/actions/0/stateDeltas/0/path",
         message: "Invalid input: expected array, received string",
+        reference: "CAP_BROWSER_INTERACTION",
       }],
     });
     const retrySource = createV3StageRetrySourceV1({
@@ -174,6 +175,10 @@ describe("v3 stage execution context", () => {
     assert.equal(
       handoff.context.retry?.failure.diagnostics[0]?.message,
       "Invalid input: expected array, received string",
+    );
+    assert.equal(
+      handoff.context.retry?.failure.diagnostics[0]?.reference,
+      "CAP_BROWSER_INTERACTION",
     );
     assert.equal(
       handoff.context.retry?.previousOutput.path,
