@@ -1648,6 +1648,32 @@ describe("canonical run operational snapshot", () => {
         modelRedispatchBudget: 0,
       },
     }));
+    assert.doesNotThrow(() => OperationalTerminationRequestV1Schema.parse({
+      ...request,
+      requestedBy: "setfarm-v3-downstream-compiler",
+      evidence: {
+        schema: "setfarm.v3-downstream-termination-evidence.v1",
+        routeHash: HASH,
+        packetHash: INPUT_HASH,
+        sourceRevision: { sha: SHA, treeHash: TREE },
+        outcome: "bounded_recovery_blocked",
+        storyEvidenceRefs: ["setfarm://evidence-bundle/historical-v1"],
+      },
+    }));
+    assert.throws(() => OperationalTerminationRequestV1Schema.parse({
+      ...request,
+      requestedBy: "setfarm-v3-downstream-compiler",
+      evidence: {
+        schema: "setfarm.v3-downstream-termination-evidence.v1",
+        routeHash: HASH,
+        packetHash: INPUT_HASH,
+        sourceRevision: { sha: SHA, treeHash: TREE },
+        outcome: "packet_amendment_required",
+        storyEvidenceRefs: ["setfarm://evidence-bundle/contradictory-v1"],
+        requiredArtifact: "setfarm.product-build-packet.v.next",
+        terminalReasonCodes: ["budget_exhausted"],
+      },
+    }));
     const boundedDownstreamEvidence = {
       schema: "setfarm.v3-downstream-termination-evidence.v1" as const,
       routeHash: HASH,

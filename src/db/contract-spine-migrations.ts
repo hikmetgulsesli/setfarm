@@ -5,9 +5,13 @@ import { CONTRACT_SPINE_SEMANTIC_MIGRATION_DIGESTS } from "./contract-spine-migr
 import { assertContractSpineSemanticMigrationSourceIntegrityWhenAvailable } from "./contract-spine-migration-source-integrity.js";
 import { hashCanonicalJson } from "../product-compiler/canonical-json.js";
 import {
+  OPERATIONAL_FAILURE_CAUSE_AUTHORITY_BINDINGS_V1,
   operationalFailureCauseAuthoritySqlPredicateV1,
   operationalFailureCauseEvidenceAuthoritySqlPredicateV1,
 } from "../execution/operational-failure-cause-authority-v1.js";
+import {
+  V3_DOWNSTREAM_TERMINAL_CAUSE_BINDINGS_V1,
+} from "../recovery/v3-downstream-terminal-cause-v1.js";
 import {
   computeRecoveryDispatchDedupeKey,
   computeRecoveryFindingDispatchDedupeKey,
@@ -7228,9 +7232,7 @@ const OPERATIONAL_FAILURE_CAUSE_EVIDENCE_AUTHORITY_SQL =
     causeSql: "evidence->'operationalFailureCause'",
   });
 
-const OPERATIONAL_FAILURE_CAUSE_SEAL_STATEMENTS = [
-  `ALTER TABLE run_termination_requests
-     ADD CONSTRAINT ${OPERATIONAL_FAILURE_CAUSE_CONSTRAINT} CHECK (
+const OPERATIONAL_FAILURE_CAUSE_CONSTRAINT_EXPRESSION = `
        CASE
          WHEN NOT (evidence ? 'operationalFailureCause') THEN TRUE
          WHEN target_status <> 'failed' THEN FALSE
@@ -7269,8 +7271,12 @@ const OPERATIONAL_FAILURE_CAUSE_SEAL_STATEMENTS = [
              ~ '^[A-Z][A-Z0-9]*(_[A-Z0-9]+)+$'
            AND ${OPERATIONAL_FAILURE_CAUSE_AUTHORITY_SQL}
            AND (${OPERATIONAL_FAILURE_CAUSE_EVIDENCE_AUTHORITY_SQL}) IS TRUE
-       END
-     )`,
+       END`;
+
+const OPERATIONAL_FAILURE_CAUSE_SEAL_STATEMENTS = [
+  `ALTER TABLE run_termination_requests
+     ADD CONSTRAINT ${OPERATIONAL_FAILURE_CAUSE_CONSTRAINT}
+     CHECK (${OPERATIONAL_FAILURE_CAUSE_CONSTRAINT_EXPRESSION})`,
   `CREATE FUNCTION ${OPERATIONAL_FAILURE_CAUSE_FUNCTION}() RETURNS trigger AS $$
    BEGIN
      IF OLD.target_status IS DISTINCT FROM NEW.target_status THEN
@@ -7361,10 +7367,50 @@ async function operationalFailureCauseSealComponents(
   });
 }
 
+async function canonicalOperationalFailureCauseConstraintExpression(
+  sql: Sql | TransactionSql,
+): Promise<string | undefined> {
+  const inspect = async (connection: Sql | TransactionSql): Promise<string | undefined> => {
+    const tableName = "setfarm_operational_failure_cause_constraint_probe";
+    const constraintName = "setfarm_operational_failure_cause_constraint_probe_check";
+    await connection.unsafe(`DROP TABLE IF EXISTS pg_temp.${tableName}`);
+    try {
+      await connection.unsafe(
+        `CREATE TEMP TABLE ${tableName} (
+           requested_by TEXT NOT NULL,
+           target_status TEXT NOT NULL,
+           evidence JSONB NOT NULL,
+           CONSTRAINT ${constraintName}
+             CHECK (${OPERATIONAL_FAILURE_CAUSE_CONSTRAINT_EXPRESSION})
+         )`,
+      );
+      const rows = await connection.unsafe<Array<{ expression: string }>>(
+        `SELECT pg_get_expr(conbin, conrelid, true) AS expression
+           FROM pg_constraint
+          WHERE conrelid = to_regclass($1)
+            AND conname = $2`,
+        [`pg_temp.${tableName}`, constraintName],
+      );
+      return rows[0]?.expression;
+    } finally {
+      await connection.unsafe(`DROP TABLE IF EXISTS pg_temp.${tableName}`);
+    }
+  };
+  const rootSql = sql as Sql;
+  if (typeof rootSql.begin === "function") {
+    return rootSql.begin((transaction) => inspect(transaction)) as unknown as Promise<
+      string | undefined
+    >;
+  }
+  return inspect(sql);
+}
+
 async function operationalFailureCauseConstraintHasExactSemantics(
   sql: Sql | TransactionSql,
   expression: string,
 ): Promise<boolean> {
+  const canonicalExpression = await canonicalOperationalFailureCauseConstraintExpression(sql);
+  if (!canonicalExpression || canonicalExpression !== expression) return false;
   const validCause = {
     schema: "setfarm.operational-failure-cause.v1",
     workflowStepId: "setup-build",
@@ -7385,7 +7431,258 @@ async function operationalFailureCauseConstraintHasExactSemantics(
     ...(terminalReasonCodes ? { terminalReasonCodes } : {}),
     operationalFailureCause: cause,
   });
-  const cases = [
+  type VerifierCause = Readonly<{
+    schema: "setfarm.operational-failure-cause.v1";
+    workflowStepId: string;
+    boundary: string;
+    failureClass: string;
+    failureCode: string;
+  }>;
+  type VerifierCase = Readonly<{
+    label: string;
+    requested_by: string;
+    target_status: "failed" | "cancelled";
+    evidence: Readonly<Record<string, unknown>>;
+    expected: boolean;
+  }>;
+  const evidenceForCause = (
+    requestedBy: string,
+    cause: VerifierCause,
+  ): Readonly<Record<string, unknown>> => {
+    if (requestedBy === "setfarm.product-compiler.deploy-refusal") {
+      return {
+        schema: "setfarm.v3-deploy-authority-termination.v1",
+        authorityCode: cause.failureCode,
+        operationalFailureCause: cause,
+      };
+    }
+    if (requestedBy === "setfarm.v3-pre-dispatch") {
+      return {
+        errorCode: cause.failureCode,
+        operationalFailureCause: cause,
+      };
+    }
+    if (requestedBy === "setfarm-v3-downstream-compiler") {
+      if (cause.failureCode === "V3_DOWNSTREAM_PACKET_AMENDMENT_REQUIRED") {
+        return downstreamEvidence(cause, "packet_amendment_required");
+      }
+      const terminalBinding = V3_DOWNSTREAM_TERMINAL_CAUSE_BINDINGS_V1.find(
+        (candidate) => candidate.failureClass === cause.failureClass
+          && candidate.failureCode === cause.failureCode,
+      );
+      if (!terminalBinding) {
+        throw new Error(`OPERATIONAL_FAILURE_CAUSE_VERIFIER_BINDING_MISSING:${cause.failureCode}`);
+      }
+      return downstreamEvidence(
+        cause,
+        "bounded_recovery_blocked",
+        terminalBinding.reasons,
+      );
+    }
+    return causeEvidence(cause);
+  };
+  const failureClasses = [
+    "contract_invalid",
+    "generated_artifact_invalid",
+    "retry_delta_missing",
+    "platform_authority_invalid",
+    "infrastructure_failure",
+    "platform_invariant_failed",
+    "recovery_exhausted",
+  ] as const;
+  type AuthorityCoordinate = Readonly<{
+    requestedBy: string;
+    workflowStepId: string;
+    boundary: string;
+    failureClass: string;
+  }>;
+  const coordinateKey = (coordinate: AuthorityCoordinate): string => JSON.stringify([
+    coordinate.requestedBy,
+    coordinate.workflowStepId,
+    coordinate.boundary,
+    coordinate.failureClass,
+  ]);
+  const tupleKey = (coordinate: AuthorityCoordinate, failureCode: string): string =>
+    `${coordinateKey(coordinate)}\0${failureCode}`;
+  const authorityCoordinates = new Map<string, AuthorityCoordinate>();
+  const authorizedTupleKeys = new Set<string>();
+  const knownFailureCodes = new Set<string>();
+  for (const binding of OPERATIONAL_FAILURE_CAUSE_AUTHORITY_BINDINGS_V1) {
+    for (const workflowStepId of binding.workflowStepIds) {
+      const coordinate = {
+        requestedBy: binding.requestedBy,
+        workflowStepId,
+        boundary: binding.boundary,
+        failureClass: binding.failureClass,
+      };
+      authorityCoordinates.set(coordinateKey(coordinate), coordinate);
+      for (const failureCode of binding.failureCodes) {
+        knownFailureCodes.add(failureCode);
+        authorizedTupleKeys.add(tupleKey(coordinate, failureCode));
+      }
+    }
+  }
+  const evidenceForAuthorityCoordinate = (
+    coordinate: AuthorityCoordinate,
+    cause: VerifierCause,
+  ): Readonly<Record<string, unknown>> => {
+    if (coordinate.requestedBy !== "setfarm-v3-downstream-compiler") {
+      return evidenceForCause(coordinate.requestedBy, cause);
+    }
+    if (cause.failureCode === "V3_DOWNSTREAM_PACKET_AMENDMENT_REQUIRED") {
+      return downstreamEvidence(cause, "packet_amendment_required");
+    }
+    const terminalBinding = V3_DOWNSTREAM_TERMINAL_CAUSE_BINDINGS_V1.find(
+      (candidate) => candidate.failureCode === cause.failureCode,
+    );
+    return downstreamEvidence(
+      cause,
+      "bounded_recovery_blocked",
+      terminalBinding?.reasons ?? V3_DOWNSTREAM_TERMINAL_CAUSE_BINDINGS_V1[0]!.reasons,
+    );
+  };
+  const authorityCases: VerifierCase[] = [];
+  let authorityTupleIndex = 0;
+  for (const [bindingIndex, binding] of OPERATIONAL_FAILURE_CAUSE_AUTHORITY_BINDINGS_V1.entries()) {
+    const representativeCause: VerifierCause = {
+      schema: "setfarm.operational-failure-cause.v1",
+      workflowStepId: binding.workflowStepIds[0]!,
+      boundary: binding.boundary,
+      failureClass: binding.failureClass,
+      failureCode: binding.failureCodes[0]!,
+    };
+    const representativeEvidence = evidenceForCause(binding.requestedBy, representativeCause);
+    const alternativeClass = failureClasses.find(
+      (failureClass) => failureClass !== binding.failureClass,
+    )!;
+    const representativeMutations: readonly Readonly<{
+      label: string;
+      requestedBy: string;
+      cause: VerifierCause;
+    }>[] = [
+      {
+        label: "requester",
+        requestedBy: `${binding.requestedBy}.unauthorized`,
+        cause: representativeCause,
+      },
+      {
+        label: "workflow",
+        requestedBy: binding.requestedBy,
+        cause: { ...representativeCause, workflowStepId: "nonexistent-step" },
+      },
+      {
+        label: "boundary",
+        requestedBy: binding.requestedBy,
+        cause: { ...representativeCause, boundary: `${binding.boundary}.unauthorized` },
+      },
+      {
+        label: "class",
+        requestedBy: binding.requestedBy,
+        cause: { ...representativeCause, failureClass: alternativeClass },
+      },
+    ];
+    for (const mutation of representativeMutations) {
+      authorityCases.push({
+        label: `authority-binding-${bindingIndex}-${mutation.label}-negative`,
+        requested_by: mutation.requestedBy,
+        target_status: "failed",
+        evidence: binding.requestedBy === "setfarm-v3-downstream-compiler"
+          ? { ...representativeEvidence, operationalFailureCause: mutation.cause }
+          : evidenceForCause(mutation.requestedBy, mutation.cause),
+        expected: false,
+      });
+    }
+    for (const workflowStepId of binding.workflowStepIds) {
+      for (const failureCode of binding.failureCodes) {
+        const cause: VerifierCause = {
+          schema: "setfarm.operational-failure-cause.v1",
+          workflowStepId,
+          boundary: binding.boundary,
+          failureClass: binding.failureClass,
+          failureCode,
+        };
+        const evidence = evidenceForCause(binding.requestedBy, cause);
+        authorityCases.push({
+          label: `authority-tuple-${authorityTupleIndex}-positive`,
+          requested_by: binding.requestedBy,
+          target_status: "failed",
+          evidence,
+          expected: true,
+        });
+        if (binding.requestedBy === "setfarm-v3-downstream-compiler") {
+          if (failureCode === "V3_DOWNSTREAM_PACKET_AMENDMENT_REQUIRED") {
+            authorityCases.push({
+              label: `authority-tuple-${authorityTupleIndex}-negative`,
+              requested_by: binding.requestedBy,
+              target_status: "failed",
+              evidence: downstreamEvidence(
+                cause,
+                "bounded_recovery_blocked",
+                V3_DOWNSTREAM_TERMINAL_CAUSE_BINDINGS_V1[0]!.reasons,
+              ),
+              expected: false,
+            });
+          } else {
+            const currentIndex = V3_DOWNSTREAM_TERMINAL_CAUSE_BINDINGS_V1.findIndex(
+              (candidate) => candidate.failureClass === cause.failureClass
+                && candidate.failureCode === cause.failureCode,
+            );
+            for (const [mismatchIndex, mismatchedBinding] of
+              V3_DOWNSTREAM_TERMINAL_CAUSE_BINDINGS_V1.entries()) {
+              if (mismatchIndex === currentIndex) continue;
+              authorityCases.push({
+                label: `authority-tuple-${authorityTupleIndex}-negative-${mismatchIndex}`,
+                requested_by: binding.requestedBy,
+                target_status: "failed",
+                evidence: downstreamEvidence(
+                  cause,
+                  "bounded_recovery_blocked",
+                  mismatchedBinding.reasons,
+                ),
+                expected: false,
+              });
+            }
+          }
+        } else {
+          const invalidCause = {
+            ...cause,
+            failureCode: `${failureCode}_UNAUTHORIZED`,
+          };
+          authorityCases.push({
+            label: `authority-tuple-${authorityTupleIndex}-negative`,
+            requested_by: binding.requestedBy,
+            target_status: "failed",
+            evidence: evidenceForCause(binding.requestedBy, invalidCause),
+            expected: false,
+          });
+        }
+        authorityTupleIndex += 1;
+      }
+    }
+  }
+  let collisionIndex = 0;
+  const sortedKnownFailureCodes = [...knownFailureCodes].sort();
+  for (const coordinate of authorityCoordinates.values()) {
+    for (const failureCode of sortedKnownFailureCodes) {
+      if (authorizedTupleKeys.has(tupleKey(coordinate, failureCode))) continue;
+      const cause: VerifierCause = {
+        schema: "setfarm.operational-failure-cause.v1",
+        workflowStepId: coordinate.workflowStepId,
+        boundary: coordinate.boundary,
+        failureClass: coordinate.failureClass,
+        failureCode,
+      };
+      authorityCases.push({
+        label: `authority-known-code-collision-${collisionIndex}`,
+        requested_by: coordinate.requestedBy,
+        target_status: "failed",
+        evidence: evidenceForAuthorityCoordinate(coordinate, cause),
+        expected: false,
+      });
+      collisionIndex += 1;
+    }
+  }
+  const structuralCases = [
     { label: "absent-failed", requested_by: "untyped.owner", target_status: "failed", evidence: {}, expected: true },
     { label: "absent-cancelled", requested_by: "untyped.owner", target_status: "cancelled", evidence: {}, expected: true },
     { label: "valid-failed", requested_by: "setfarm.step-fail.single", target_status: "failed", evidence: causeEvidence(validCause), expected: true },
@@ -7721,7 +8018,8 @@ async function operationalFailureCauseConstraintHasExactSemantics(
   ].map((item) => ({
     requested_by: "setfarm.step-fail.single",
     ...item,
-  }));
+  })) as VerifierCase[];
+  const cases = [...authorityCases, ...structuralCases];
   const rows = await sql.unsafe<Array<{ label: string; allowed: boolean; expected: boolean }>>(
     `WITH cases AS (
        SELECT label, requested_by, target_status, evidence, expected

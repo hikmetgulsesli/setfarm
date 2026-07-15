@@ -298,11 +298,22 @@ export const OperationalV3DownstreamTerminationEvidenceV1Schema = z.object({
       message: "Only packet-amendment termination may require the next packet artifact",
     });
   }
-  if ((value.outcome === "bounded_recovery_blocked") !== Boolean(value.terminalReasonCodes)) {
+  if (value.outcome !== "bounded_recovery_blocked" && value.terminalReasonCodes) {
     context.addIssue({
       code: "custom",
       path: ["terminalReasonCodes"],
-      message: "Only bounded recovery termination must carry exact terminal reasons",
+      message: "Only bounded recovery termination may carry terminal reasons",
+    });
+  }
+  if (
+    value.operationalFailureCause
+    && value.outcome === "bounded_recovery_blocked"
+    && !value.terminalReasonCodes
+  ) {
+    context.addIssue({
+      code: "custom",
+      path: ["terminalReasonCodes"],
+      message: "Cause-bound bounded recovery termination must carry exact terminal reasons",
     });
   }
 });

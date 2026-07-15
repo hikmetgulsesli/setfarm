@@ -201,6 +201,58 @@ describe("operational failure cause migration", () => {
       assert.deepEqual(reapplied.applied, ["021_operational_failure_cause_seal"]);
       assert.equal((await verifyContractSpineMigrations(database.sql)).status, "verified");
 
+      const constraintRows = await database.sql<Array<{ expression: string }>>`
+        SELECT pg_get_expr(conbin, conrelid, true) AS expression
+          FROM pg_constraint
+         WHERE conrelid = 'run_termination_requests'::regclass
+           AND conname = 'run_termination_requests_operational_failure_cause_check'
+      `;
+      const exactExpression = constraintRows[0]?.expression;
+      assert.ok(exactExpression);
+      const installConstraint = async (expression: string): Promise<void> => {
+        await database.sql.unsafe(
+          "ALTER TABLE run_termination_requests DROP CONSTRAINT run_termination_requests_operational_failure_cause_check",
+        );
+        await database.sql.unsafe(
+          `ALTER TABLE run_termination_requests
+             ADD CONSTRAINT run_termination_requests_operational_failure_cause_check
+             CHECK (${expression}) NOT VALID`,
+        );
+        await database.sql.unsafe(
+          "ALTER TABLE run_termination_requests VALIDATE CONSTRAINT run_termination_requests_operational_failure_cause_check",
+        );
+      };
+      const assertConstraintDriftRejected = async (expression: string): Promise<void> => {
+        assert.notEqual(expression, exactExpression);
+        await installConstraint(expression);
+        await assert.rejects(
+          verifyContractSpineMigrations(database.sql),
+          (error: unknown) =>
+            error instanceof ContractSpineMigrationError
+            && error.code === "MIGRATION_ADOPTION_MISMATCH",
+        );
+      };
+      await assertConstraintDriftRejected(exactExpression.replace(
+        "'V3_DOWNSTREAM_TERMINAL_REASON_SET_3F'::text",
+        "'V3_DOWNSTREAM_TERMINAL_REASON_SET_3E'::text",
+      ));
+      const exactReasonPredicate =
+        "(evidence -> 'terminalReasonCodes'::text) = '[\"specification_incomplete\"]'::jsonb";
+      await assertConstraintDriftRejected(exactExpression.replace(
+        exactReasonPredicate,
+        `(${exactReasonPredicate} OR (evidence -> 'terminalReasonCodes'::text) = '["specification_incomplete","operator_required"]'::jsonb)`,
+      ));
+      await assertConstraintDriftRejected(exactExpression.replace(
+        "'V3_OBSERVABLE_REF_INVALID'::text",
+        "'V3_OBSERVABLE_REF_INVALID'::text, 'STORIES_REQUIRED_OUTPUT_MISSING'::text",
+      ));
+      await assertConstraintDriftRejected(exactExpression.replace(
+        "'V3_OBSERVABLE_REF_INVALID'::text",
+        "'V3_OBSERVABLE_REF_INVALID'::text, 'ATTACKER_NEW_CODE'::text",
+      ));
+      await installConstraint(exactExpression);
+      assert.equal((await verifyContractSpineMigrations(database.sql)).status, "verified");
+
       await database.sql.unsafe(
         "DROP TRIGGER trg_run_termination_requests_operational_failure_cause_immutable ON run_termination_requests",
       );
