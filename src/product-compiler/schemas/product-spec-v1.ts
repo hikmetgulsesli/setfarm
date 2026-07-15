@@ -1083,6 +1083,13 @@ export const ProductSpecV1Schema = z
         });
         outcome.evidenceRefs.forEach((ref, index) => {
           requireRef(evidenceIds, ref, ["actions", actionIndex, outcomeName, "evidenceRefs", index], "evidence ref");
+          if (!action.evidenceRefs.includes(ref)) {
+            context.addIssue({
+              code: "custom",
+              path: ["actions", actionIndex, outcomeName, "evidenceRefs", index],
+              message: "Action outcome evidence must be owned by the action evidenceRefs contract",
+            });
+          }
         });
       }
       action.evidenceRefs.forEach((ref, index) => {

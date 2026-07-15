@@ -6,7 +6,8 @@ import type { StepModule, PromptContext } from "../types.js";
 import { injectContext } from "./context.js";
 import { normalize, validateOutput, onComplete } from "./guards.js";
 import { preClaim } from "./preclaim.js";
-import { ProductSpecV3ProposalSchema } from "../../../product-compiler/schemas/product-spec-v1.js";
+import { PlanSemanticProposalV1Schema } from "../../../product-compiler/schemas/plan-semantic-proposal-v1.js";
+import { TaskRequirementLedgerV1Schema } from "../../../product-compiler/requirements/task-requirements-v1.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -14,69 +15,80 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // any edit to the markdown requires a process restart.
 const promptTemplate = fs.readFileSync(path.join(__dirname, "prompt.md"), "utf-8");
 const rulesBody = fs.readFileSync(path.join(__dirname, "rules.md"), "utf-8");
-const productSpecJsonSchema = JSON.stringify(z.toJSONSchema(ProductSpecV3ProposalSchema), null, 2);
+const semanticProposalJsonSchema = JSON.stringify(z.toJSONSchema(
+  PlanSemanticProposalV1Schema,
+  { reused: "ref" },
+), null, 2);
+
+function compactRequirementIndex(rawLedger: string): string {
+  try {
+    const ledger = TaskRequirementLedgerV1Schema.parse(JSON.parse(rawLedger));
+    return JSON.stringify({
+      schema: "setfarm.plan-requirement-index.v1",
+      sourceTaskHash: ledger.sourceHash,
+      requirements: ledger.requirements.map((requirement) => ({
+        id: requirement.id,
+        normalizedClause: requirement.normalizedClause,
+      })),
+    });
+  } catch {
+    return rawLedger;
+  }
+}
 
 function buildV3Prompt(ctx: PromptContext): string {
   const task = ctx.context["task"] || ctx.task || "";
   const requirementLedger = ctx.context["v3_requirement_ledger"] || "";
-  const deliveryProfileCatalog = ctx.context["v3_delivery_profile_catalog"] || "";
-  const deliveryProfileCatalogHash = ctx.context["v3_delivery_profile_catalog_hash"] || "";
   const requestedStackPackId = ctx.context["v3_requested_stack_pack_id"] || "";
   return [
-    "PLAN v3 - typed ProductSpec proposal",
+    "PLAN v3 - primary semantic proposal",
     "",
-    "You are the semantic planner. Setfarm owns source clauses, delivery profiles, canonical JSON bytes, runtime identity, artifact publication, and all verdicts. Classify product semantics from the exact task; then bind delivery to the matching Setfarm-owned profile instead of choosing a stack yourself.",
+    "You propose only primary product semantics and exact requirement references. Setfarm compiles all global IDs, delivery profiles, source bytes, persistence runtime ownership/durability/payloads, outcomes, evidence IDs/capabilities, traceability, canonical JSON, runtime identity, and verdicts.",
     "",
     "## Exact task",
     task,
     "",
-    "## Setfarm-owned requirement ledger",
-    "Copy every requirement entry exactly. Add only classification and expectedSemanticKinds to each entry. Do not omit, rewrite, merge, split, or invent a requirement.",
-    "```task-requirement-ledger-v1",
-    requirementLedger,
+    "## Setfarm-owned requirement index",
+    "Classify every exact requirement ID once. Bind every semantic node to one or more IDs; never copy source spans, hashes, or clause bytes into the proposal.",
+    "```plan-requirement-index-v1",
+    compactRequirementIndex(requirementLedger),
     "```",
     "",
-    "## Setfarm-owned Product Delivery Profile Catalog",
-    `Catalog hash: ${deliveryProfileCatalogHash}`,
-    "The proposed product.class selects exactly one activated profile. Copy that profile's delivery.platform, delivery.techStack, and delivery.designRequired exactly; delivery.database must be one of allowedDatabases. Do not infer or substitute another stack. If no profile owns the semantic class, emit a typed semantic-unsupported rejection.",
+    "## Compiler-owned delivery",
+    "Setfarm currently activates utility and operations on its exact web profile and game on its exact browser-game profile. Emit only product.class and database intent; do not emit platform, tech stack, stack pack, design policy, or capability IDs.",
     requestedStackPackId
-      ? `The user explicitly requested stack pack ${requestedStackPackId}. It must equal the selected profile's stackPackId; otherwise emit a typed semantic-unsupported rejection.`
-      : "No explicit stack prefix was requested; selectionBasis is product_class.",
-    "```product-delivery-profile-catalog-v1",
-    deliveryProfileCatalog,
-    "```",
+      ? `The compiler will validate the explicit requested stack pack ${requestedStackPackId}; do not repeat or reinterpret it.`
+      : "No explicit stack prefix was requested; the compiler selects delivery from product.class.",
     "",
     "## Proposal rules",
-    "- Emit exactly one product-spec-v1 JSON fence. Pretty or unsorted JSON is allowed; Setfarm validates and canonicalizes it.",
-    "- The proposal must include delivery, requirements, and traceability in addition to the ProductSpec v1 product/entities/states/persistencePolicies/routes/surfaces/actions/evidencePredicates/assumptions fields.",
-    "- Every goal, non-goal, entity, state, persistence policy, route, surface, action, evidence predicate, and observable effect must have exactly one traceability binding to one or more exact REQ_* IDs.",
-    "- Each requirement declares expectedSemanticKinds. Setfarm rejects a proposal when any declared kind lacks an exact bound semantic artifact.",
-    "- Every action must declare at least one observableEffects entry. Its selector must bind the owning action control, one owning surface, or an exact accessibility role/name. Assertions use before/after/reload phases and visible_text/value/visibility/enabled/route properties.",
-    "- Declare an action input only when that variable value feeds an exact stateDelta through valueFrom.kind=input or inputs. A fixed button outcome is a literal state delta with no synthetic action input or payload field.",
-    "- Every state path is empty or an RFC 6901 JSON Pointer beginning with '/'; escape '~' as '~0' and '/' inside one token as '~1'.",
-    "- Every observable effect owns an observable_outcome evidence predicate whose subjectRef is the exact OBS_* ID; that evidence ref must also appear on the action.",
-    "- Set capabilityRefs to [] on every evidence predicate. Physical capability IDs are Product Compiler output: Setfarm ignores planner-proposed values, derives exact IDs from evidence semantics and the selected topology, and rejects unavailable capability kinds during PLAN.",
-    "- Durable writes require a reload observable assertion. State bridge evidence is supplemental and cannot replace a DOM/accessibility/route observable assertion.",
-    "- Do not guess ambiguous actions, persistence ownership, routes, or outcomes. Emit the typed rejection below instead.",
-    "- Product class is semantic input to the delivery catalog. Utility and operations use the catalog's exact Vite profile; game uses the catalog's exact browser-game profile. Static HTML and reference-only design stacks are not activated for Product Compiler v3 until an exact packet projection exists.",
+    "- Emit exactly one plan-semantic-proposal-v1 JSON fence. Pretty or unsorted JSON is allowed.",
+    "- Use lowercase local keys only. Do not emit PROD_/STATE_/ACT_/EVID_/SURF_ or any other global ID.",
+    "- Every goal, non-goal, entity, state, persistence policy, route, surface, action, observable, and assumption cites exact requirementRefs.",
+    "- Routes do not repeat surface refs; surfaces name their routeKey and Setfarm closes the route graph.",
+    "- Persistence intents name stateDeltaKeys, never state-path copies or payloadFields. Setfarm derives both.",
+    "- Declare an input only when an input or inputs valueFrom consumes it. Fixed outcomes use literal deltas and no synthetic input.",
+    "- Every state must have an action precondition, delta, or value-source owner. Do not invent busy/loading/UI state unless behavior in the exact task owns it.",
+    "- Every action needs at least one observable with an after assertion. Durable writes additionally need a reload assertion.",
+    "- Observable selectors bind the owning control or an exact action surface/accessibility role and name. Setfarm generates observable and evidence identities.",
+    "- Use an empty or RFC 6901 path beginning with '/'; escape '~' as '~0' and '/' within a token as '~1'.",
+    "- If primary semantics are ambiguous, contradictory, missing, or outside activated product classes, emit the typed rejection instead of guessing.",
     "",
-    "## ProductSpec JSON Schema",
-    "Refinements described above remain mandatory even when JSON Schema cannot express them.",
+    "## PlanSemanticProposal JSON Schema",
     "```json",
-    productSpecJsonSchema,
+    semanticProposalJsonSchema,
     "```",
     "",
     "## Success output",
     "```text",
     "STATUS: done",
     "PRD:",
-    "```product-spec-v1",
-    "{ ...one ProductSpec proposal... }",
+    "```plan-semantic-proposal-v1",
+    "{ ...one primary semantic proposal... }",
     "```",
     "```",
     "",
     "## Typed rejection output",
-    "Use STATUS: done and exactly one product-spec-rejection-v1 fence with schema, exact sourceTaskHash, and one or more reasons. The Setfarm output guard will validate the typed rejection and stop PLAN without treating it as a successful ProductSpec. Allowed reason codes: PRODUCT_SPEC_TASK_AMBIGUOUS, PRODUCT_SPEC_SEMANTIC_UNSUPPORTED, PRODUCT_SPEC_REQUIREMENT_CONFLICT, PRODUCT_SPEC_REQUIRED_INFORMATION_MISSING. Every reason must cite exact requirementRefs and a concrete message.",
+    "Use STATUS: done and exactly one product-spec-rejection-v1 fence with schema, exact sourceTaskHash, and one or more reasons. Allowed reason codes: PRODUCT_SPEC_TASK_AMBIGUOUS, PRODUCT_SPEC_SEMANTIC_UNSUPPORTED, PRODUCT_SPEC_REQUIREMENT_CONFLICT, PRODUCT_SPEC_REQUIRED_INFORMATION_MISSING. Every reason cites exact requirementRefs and a concrete message.",
   ].join("\n");
 }
 

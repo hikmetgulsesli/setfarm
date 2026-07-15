@@ -1,4 +1,5 @@
 import type { ParsedOutput } from "../installer/steps/types.js";
+import { hashCanonicalJson } from "../product-compiler/canonical-json.js";
 import {
   ProductSpecRejectionV1Schema,
   canonicalizeProductSpecRejectionV1,
@@ -6,6 +7,7 @@ import {
   type ProductSpecProposalDiagnosticV1,
   type ProductSpecRejectionV1,
 } from "../product-compiler/producers/plan-product-spec-proposal.js";
+import { compilePlanSemanticProposalV1 } from "../product-compiler/producers/plan-semantic-proposal.js";
 import type { ProductSpecV3Proposal } from "../product-compiler/schemas/product-spec-v1.js";
 import type {
   CompilerOwnedPersistenceProjectionEvidenceV1,
@@ -16,6 +18,7 @@ import {
 } from "../product-compiler/product-delivery-profile-catalog.js";
 
 const PRODUCT_SPEC_BLOCK_RE = /```product-spec-v1\s*\n([\s\S]*?)\n```/g;
+const PLAN_SEMANTIC_PROPOSAL_BLOCK_RE = /```plan-semantic-proposal-v1\s*\n([\s\S]*?)\n```/g;
 const PRODUCT_SPEC_REJECTION_BLOCK_RE = /```product-spec-rejection-v1\s*\n([\s\S]*?)\n```/g;
 
 export type V3PlanOutputAuthorityV1 =
@@ -28,6 +31,8 @@ export type V3PlanOutputAuthorityV1 =
       deliverySelectionHash: string;
       deliverySelectionCanonicalBytes: string;
       persistenceProjectionEvidence: CompilerOwnedPersistenceProjectionEvidenceV1;
+      sourceTransport: "semantic_proposal" | "product_spec_compatibility";
+      sourceProposalHash: string;
     }>
   | Readonly<{
       status: "rejection";
@@ -70,7 +75,7 @@ function decodedBlock(raw: string, code: string): unknown {
 }
 
 /**
- * Replace the sole planner proposal fence with the exact compiler-owned bytes
+ * Replace the sole model proposal fence with the exact compiler-owned bytes
  * before the compatibility PLAN module validates or renders it. The caller's
  * parsed output is not mutated, and surrounding planner prose stays inert.
  */
@@ -80,10 +85,16 @@ export function projectCanonicalV3PlanParsedOutputV1(input: Readonly<{
 }>): ParsedOutput & { prd: string } {
   const prd = String(input.parsed.prd || "");
   let proposalCount = 0;
-  const canonicalPrd = prd.replace(PRODUCT_SPEC_BLOCK_RE, () => {
+  let canonicalPrd = prd.replace(PLAN_SEMANTIC_PROPOSAL_BLOCK_RE, () => {
     proposalCount += 1;
     return `\`\`\`product-spec-v1\n${input.authority.canonicalBytes}\n\`\`\``;
   });
+  if (proposalCount === 0) {
+    canonicalPrd = prd.replace(PRODUCT_SPEC_BLOCK_RE, () => {
+      proposalCount += 1;
+      return `\`\`\`product-spec-v1\n${input.authority.canonicalBytes}\n\`\`\``;
+    });
+  }
   const rejectionCount = exactBlock(prd, PRODUCT_SPEC_REJECTION_BLOCK_RE).length;
   if (proposalCount !== 1 || rejectionCount !== 0) {
     throw rejection(
@@ -105,14 +116,15 @@ export function resolveV3PlanOutputAuthorityV1(input: Readonly<{
   requestedStackPackId?: string;
 }>): V3PlanOutputAuthorityV1 {
   const prd = String(input.parsed.prd || "");
+  const semanticProposals = exactBlock(prd, PLAN_SEMANTIC_PROPOSAL_BLOCK_RE);
   const proposals = exactBlock(prd, PRODUCT_SPEC_BLOCK_RE);
   const rejections = exactBlock(prd, PRODUCT_SPEC_REJECTION_BLOCK_RE);
-  if (proposals.length + rejections.length !== 1) {
-    const code = `V3_PLAN_TYPED_PRODUCT_SPEC_REQUIRED:${proposals.length}:${rejections.length}`;
+  if (semanticProposals.length + proposals.length + rejections.length !== 1) {
+    const code = `V3_PLAN_TYPED_SEMANTIC_PROPOSAL_REQUIRED:${semanticProposals.length}:${proposals.length}:${rejections.length}`;
     throw rejection(
       code,
       "/prd",
-      `PLAN must emit exactly one typed ProductSpec or rejection fence; observed ${proposals.length} proposal(s) and ${rejections.length} rejection(s)`,
+      `PLAN must emit exactly one typed semantic proposal or rejection fence; observed ${semanticProposals.length} semantic proposal(s), ${proposals.length} compatibility ProductSpec proposal(s), and ${rejections.length} rejection(s)`,
     );
   }
 
@@ -127,6 +139,35 @@ export function resolveV3PlanOutputAuthorityV1(input: Readonly<{
         task: input.task,
         rejection: structurallyValid,
       }),
+    };
+  }
+
+  if (semanticProposals.length === 1) {
+    const compiled = compilePlanSemanticProposalV1({
+      task: input.task,
+      proposal: decodedBlock(
+        semanticProposals[0]!,
+        "V3_PLAN_SEMANTIC_PROPOSAL_JSON_INVALID",
+      ),
+      ...(input.requestedStackPackId ? { requestedStackPackId: input.requestedStackPackId } : {}),
+    });
+    if (compiled.status !== "canonicalized") {
+      throw new V3PlanOutputRejectedError(
+        "V3_PLAN_SEMANTIC_PROPOSAL_INVALID",
+        compiled.diagnostics.slice(0, 20),
+      );
+    }
+    return {
+      status: "proposal",
+      productSpec: compiled.productSpec,
+      canonicalBytes: compiled.canonicalBytes,
+      sourceTaskHash: compiled.sourceTaskHash,
+      deliverySelection: compiled.deliverySelection,
+      deliverySelectionHash: compiled.deliverySelectionHash,
+      deliverySelectionCanonicalBytes: compiled.deliverySelectionCanonicalBytes,
+      persistenceProjectionEvidence: compiled.persistenceProjectionEvidence,
+      sourceTransport: "semantic_proposal",
+      sourceProposalHash: compiled.semanticProposalHash,
     };
   }
 
@@ -178,6 +219,8 @@ export function resolveV3PlanOutputAuthorityV1(input: Readonly<{
     deliverySelectionHash: delivery.selectionHash,
     deliverySelectionCanonicalBytes: delivery.canonicalBytes,
     persistenceProjectionEvidence: canonical.persistenceProjectionEvidence,
+    sourceTransport: "product_spec_compatibility",
+    sourceProposalHash: hashCanonicalJson(semantic.productSpec),
   };
 }
 

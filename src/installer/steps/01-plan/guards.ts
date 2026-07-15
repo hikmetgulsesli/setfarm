@@ -431,6 +431,8 @@ export async function onComplete(ctx: CompleteContext): Promise<void> {
         schema: "setfarm.product-spec-proposal-evidence.v1",
         productSpecHash: context["product_spec_hash"],
         sourceTaskHash: canonical.sourceTaskHash,
+        sourceTransport: context["plan_source_transport"] || "product_spec_compatibility",
+        sourceProposalHash: context["plan_source_proposal_hash"] || null,
         deliveryProfileId: context["product_delivery_profile_id"] || null,
         deliverySelectionHash: context["product_delivery_selection_hash"] || null,
         deliveryCatalogHash: context["product_delivery_catalog_hash"] || null,

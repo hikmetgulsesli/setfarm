@@ -77,7 +77,7 @@ describe("Product Delivery Profile catalog", () => {
     );
   });
 
-  it("puts the complete catalog and explicit request boundary in the first PLAN prompt", () => {
+  it("keeps delivery catalog bytes compiler-owned while exposing the explicit request boundary", () => {
     const catalog = canonicalProductDeliveryProfileCatalogV1();
     const prompt = planModule.buildPrompt({
       task: "Build a single-page preference utility.",
@@ -91,10 +91,10 @@ describe("Product Delivery Profile catalog", () => {
       },
     } as any);
 
-    assert.match(prompt, /Setfarm-owned Product Delivery Profile Catalog/);
-    assert.match(prompt, /PROFILE_WEB_REACT_EXACT_V1/);
-    assert.match(prompt, /PROFILE_BROWSER_GAME_REACT_CANVAS_EXACT_V1/);
-    assert.match(prompt, /explicitly requested stack pack static-html-site/);
-    assert.match(prompt, /Static HTML and reference-only design stacks are not activated/);
+    assert.match(prompt, /Compiler-owned delivery/);
+    assert.match(prompt, /compiler will validate the explicit requested stack pack static-html-site/i);
+    assert.doesNotMatch(prompt, /PROFILE_WEB_REACT_EXACT_V1/);
+    assert.doesNotMatch(prompt, /PROFILE_BROWSER_GAME_REACT_CANVAS_EXACT_V1/);
+    assert.doesNotMatch(prompt, /product-delivery-profile-catalog-v1/);
   });
 });

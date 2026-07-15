@@ -808,13 +808,14 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
       stepId: ctx.stepId,
       phase: "planning",
       checkId: "product_compiler.planner_proposal_required",
-      label: "Planner ProductSpec proposal required",
+      label: "Planner semantic proposal required",
       status: "pass",
-      summary: "V3 PLAN remains claimable so the planner can propose the exact typed ProductSpec; deterministic legacy profiles are not execution authority.",
+      summary: "V3 PLAN remains claimable so the planner can propose primary semantics; the Product Compiler owns the complete ProductSpec projection.",
       evidence: {
-        schema: "setfarm.product-spec-planner-authority-evidence.v1",
+        schema: "setfarm.plan-semantic-planner-authority-evidence.v1",
         protocol,
-        producerAuthority: "planner_proposal",
+        producerAuthority: "planner_semantic_proposal",
+        compilerAuthority: "product_spec_projection",
       },
     });
     return;
