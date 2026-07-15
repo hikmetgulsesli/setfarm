@@ -3,6 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import type postgres from "postgres";
 import { z } from "zod";
 
+import { readDatabaseWallClock } from "../db/database-wall-clock.js";
 import { assertClaimAuthority, parseClaimEnvelope } from "./claim-authority.js";
 import type { ClaimEnvelopeV1 } from "./schemas/claim-envelope-v1.js";
 import {
@@ -18,8 +19,10 @@ import {
 } from "./schemas/runtime-completion-submission-evidence-v1.js";
 import { canonicalJsonStringify, hashCanonicalJson } from "../product-compiler/canonical-json.js";
 import { releaseDrainedRuntimeSessionInTransaction } from "./runtime-session-repository.js";
+import { currentRuntimeCompletionOwnerCapability } from "./runtime-completion-owner-context.js";
 import { compileV3ImplementationTransportProposalV1 } from "./v3-implementation-output.js";
 import { compileV3ImplementationCompletionProposal } from "./v3-implementation-completion.js";
+import { v3RecoveryStoryLockIdentity } from "../recovery/v3-recovery-claim-authority.js";
 
 type Sql = postgres.Sql;
 type TransactionSql = postgres.TransactionSql;
@@ -273,19 +276,35 @@ export async function markRuntimeCompletionOwnerCommittedInTransaction(
   const descriptor = RuntimeCompletionPlanDescriptorV1Schema.parse(input.plan);
   const now = validTime(input.now);
   const rows = await sql.unsafe<RuntimeCompletionRow[]>(
-    `SELECT * FROM runtime_completion_requests
+    `SELECT *
+       FROM runtime_completion_requests
       WHERE claim_id = $1
       FOR UPDATE`,
     [input.claimId],
   );
   const current = rows[0];
   if (!current) return false;
+  const wallClock = await readDatabaseWallClock(
+    sql,
+    "RUNTIME_COMPLETION_DATABASE_WALL_CLOCK_UNAVAILABLE",
+  );
   if (current.state !== "processing") {
     if (
       current.apply_phase === "effects_committed"
       && current.claim_outcome === input.claimOutcome
     ) return true;
     throw new Error(`RUNTIME_COMPLETION_OWNER_COMMIT_STATE_INVALID:${current.state}`);
+  }
+  const capability = currentRuntimeCompletionOwnerCapability();
+  if (
+    !capability
+    || current.request_id !== capability.requestId
+    || current.owner_instance_id !== capability.ownerInstanceId
+    || current.owner_attempt_count !== capability.ownerAttemptCount
+    || !current.lease_expires_at
+    || new Date(current.lease_expires_at).getTime() <= wallClock.getTime()
+  ) {
+    throw new Error("RUNTIME_COMPLETION_OWNER_COMMIT_CAPABILITY_STALE");
   }
   if (["owner_committed", "effects_committed"].includes(current.apply_phase)) {
     if (current.claim_outcome !== input.claimOutcome) {
@@ -327,7 +346,13 @@ export async function markRuntimeCompletionOwnerCommittedInTransaction(
             completion_plan_hash = $5,
             prepared_at = $3,
             updated_at = $3
-      WHERE claim_id = $1 AND state = 'processing' AND apply_phase = 'executing'
+      WHERE claim_id = $1
+        AND request_id = $6
+        AND state = 'processing'
+        AND apply_phase = 'executing'
+        AND owner_instance_id = $7
+        AND owner_attempt_count = $8
+        AND lease_expires_at > $9
       RETURNING request_id`,
     [
       input.claimId,
@@ -335,6 +360,10 @@ export async function markRuntimeCompletionOwnerCommittedInTransaction(
       now,
       JSON.stringify(prepared.plan),
       prepared.planHash,
+      capability.requestId,
+      capability.ownerInstanceId,
+      capability.ownerAttemptCount,
+      wallClock,
     ],
   );
   if (updated.length !== 1) throw new Error("RUNTIME_COMPLETION_OWNER_COMMIT_CAS_LOST");
@@ -482,6 +511,11 @@ export async function requestRuntimeCompletion(
   await assertClaimAuthority(sql, envelope, envelope.stepId);
 
   return sql.begin(async (transaction) => {
+    if (envelope.storyId) {
+      await transaction.unsafe("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [
+        v3RecoveryStoryLockIdentity({ runId: envelope.runId, storyId: envelope.storyId }),
+      ]);
+    }
     const runs = await transaction.unsafe<Array<{ status: string }>>(
       "SELECT status FROM runs WHERE id = $1 FOR UPDATE",
       [envelope.runId],
@@ -490,54 +524,153 @@ export async function requestRuntimeCompletion(
       throw new Error(`RUNTIME_COMPLETION_RUN_NOT_ACTIVE:${runs[0]?.status ?? "missing"}`);
     }
     const terminations = await transaction.unsafe<Array<{ request_id: string }>>(
-      "SELECT request_id FROM run_termination_requests WHERE run_id = $1 AND state <> 'terminalized' LIMIT 1",
+      `SELECT request_id FROM run_termination_requests
+        WHERE run_id = $1 AND state <> 'terminalized'
+        ORDER BY requested_at, request_id LIMIT 1 FOR UPDATE`,
       [envelope.runId],
     );
     if (terminations.length > 0) throw new Error("RUNTIME_COMPLETION_TERMINATION_PENDING");
 
-    const owners = await transaction.unsafe<Array<{
+    const runtimeOwners = await transaction.unsafe<Array<{
+      runtime_session_id: string;
+      runtime_state: string;
+      runtime_owner_instance_id: string;
+      runtime_attempt_id: string | null;
+    }>>(
+      `SELECT rs.session_id AS runtime_session_id,
+              rs.state AS runtime_state,
+              rs.owner_instance_id AS runtime_owner_instance_id,
+              rs.attempt_id AS runtime_attempt_id
+         FROM runtime_sessions rs
+        WHERE rs.claim_id = $1 AND rs.run_id = $2
+        ORDER BY rs.session_id
+        FOR UPDATE`,
+      [envelope.claimId, envelope.runId],
+    );
+    if (runtimeOwners.length !== 1) {
+      throw new Error(`RUNTIME_COMPLETION_RUNTIME_OWNER_CARDINALITY_INVALID:${runtimeOwners.length}`);
+    }
+    const runtimeOwner = runtimeOwners[0];
+    if (!runtimeOwner) throw new Error("RUNTIME_COMPLETION_OWNER_NOT_FOUND");
+
+    let normalAttemptLeaseFence: Readonly<{
+      attemptLeaseExpiresAt: Date | string;
+    }> | undefined;
+    let recoveryLeaseFence: Readonly<{
+      attemptLeaseExpiresAt: Date | string;
+      deliveryLeaseExpiresAt: Date | string;
+    }> | undefined;
+    if (nativeV3Implementation && envelope.attempt) {
+      const attempts = await transaction.unsafe<Array<{
+        attempt_id: string;
+        claim_id: string | number | null;
+        run_id: string;
+        story_id: string;
+        generation: number;
+        fence_token: string;
+        disposition: string;
+        step_id: string;
+        agent_id: string | null;
+        recovery_case_revision_id: string | null;
+        recovery_dispatch_id: string | null;
+        lease_expires_at: Date | string;
+      }>>(
+        `SELECT attempt_id, claim_id, run_id, step_id, story_id, agent_id,
+                generation, fence_token, disposition,
+                recovery_case_revision_id, recovery_dispatch_id,
+                lease_expires_at
+           FROM execution_attempts
+          WHERE attempt_id = $1
+          FOR UPDATE`,
+        [envelope.attempt.attemptId],
+      );
+      const attempt = attempts[0];
+      const recoveryBound = Boolean(
+        attempt?.recovery_case_revision_id && attempt.recovery_dispatch_id,
+      );
+      if ((attempt?.recovery_case_revision_id === null) !== (attempt?.recovery_dispatch_id === null)) {
+        throw new Error("RUNTIME_COMPLETION_RECOVERY_ATTEMPT_IDENTITY_INCOMPLETE");
+      }
+      const exactAttempt = Boolean(
+        attempt
+        && Number(attempt.claim_id) === envelope.claimId
+        && attempt.run_id === envelope.runId
+        && attempt.step_id === envelope.workflowStepId
+        && attempt.story_id === envelope.storyId
+        && (attempt.agent_id === null || attempt.agent_id === envelope.claimAgentId)
+        && attempt.generation === envelope.attempt.generation
+        && attempt.fence_token === envelope.attempt.fenceToken
+        && ["claimed", "running"].includes(attempt.disposition)
+        && runtimeOwner.runtime_attempt_id === attempt.attempt_id
+      );
+      if (!exactAttempt) {
+        throw new Error(
+          recoveryBound
+            ? "RUNTIME_COMPLETION_RECOVERY_ATTEMPT_FENCE_STALE"
+            : "RUNTIME_COMPLETION_NORMAL_ATTEMPT_FENCE_STALE",
+        );
+      }
+      if (recoveryBound) {
+        const deliveries = await transaction.unsafe<Array<{
+          dispatch_id: string;
+          lease_expires_at: Date | string;
+        }>>(
+          `SELECT dispatch_id, lease_expires_at
+             FROM recovery_dispatch_deliveries
+            WHERE dispatch_id = $1
+              AND revision_id = $2
+              AND run_id = $3
+              AND story_id = $4
+              AND attempt_id = $5
+              AND claim_id = $6
+              AND state IN ('attempt_reserved', 'running')
+            FOR UPDATE`,
+          [
+            attempt.recovery_dispatch_id!,
+            attempt.recovery_case_revision_id!,
+            envelope.runId,
+            envelope.storyId!,
+            attempt.attempt_id,
+            envelope.claimId,
+          ],
+        );
+        if (deliveries.length !== 1) {
+          throw new Error("RUNTIME_COMPLETION_RECOVERY_DELIVERY_FENCE_STALE");
+        }
+        recoveryLeaseFence = {
+          attemptLeaseExpiresAt: attempt.lease_expires_at,
+          deliveryLeaseExpiresAt: deliveries[0]!.lease_expires_at,
+        };
+      } else {
+        normalAttemptLeaseFence = { attemptLeaseExpiresAt: attempt!.lease_expires_at };
+      }
+    }
+
+    const claimOwners = await transaction.unsafe<Array<{
       claim_outcome: string | null;
       claim_run_id: string;
       claim_step_id: string;
       claim_story_id: string | null;
       claim_agent_id: string;
-      step_status: string;
-      current_story_id: string | null;
-      runtime_session_id: string;
-      runtime_state: string;
-      runtime_owner_instance_id: string;
     }>>(
-      `SELECT cl.outcome AS claim_outcome,
-              cl.run_id AS claim_run_id,
-              cl.step_id AS claim_step_id,
-              cl.story_id AS claim_story_id,
-              cl.agent_id AS claim_agent_id,
-              s.status AS step_status,
-              s.current_story_id,
-              rs.session_id AS runtime_session_id,
-              rs.state AS runtime_state,
-              rs.owner_instance_id AS runtime_owner_instance_id
+      `SELECT cl.outcome AS claim_outcome, cl.run_id AS claim_run_id,
+              cl.step_id AS claim_step_id, cl.story_id AS claim_story_id,
+              cl.agent_id AS claim_agent_id
          FROM claim_log cl
-         JOIN steps s ON s.id = $2 AND s.run_id = cl.run_id AND s.step_id = cl.step_id
-         JOIN runtime_sessions rs ON rs.claim_id = cl.id AND rs.run_id = cl.run_id
         WHERE cl.id = $1
-        FOR UPDATE OF cl, s, rs`,
-      [envelope.claimId, envelope.stepId],
+        FOR UPDATE`,
+      [envelope.claimId],
     );
-    const owner = owners[0];
-    if (!owner) throw new Error("RUNTIME_COMPLETION_OWNER_NOT_FOUND");
+    const claimOwner = claimOwners[0];
+    if (!claimOwner) throw new Error("RUNTIME_COMPLETION_OWNER_NOT_FOUND");
     if (
-      owner.claim_run_id !== envelope.runId
-      || owner.claim_step_id !== envelope.workflowStepId
-      || (owner.claim_story_id ?? undefined) !== envelope.storyId
-      || owner.claim_agent_id !== envelope.claimAgentId
-      || owner.current_story_id !== (envelope.storyDbId ?? null)
-    ) {
-      throw new Error("RUNTIME_COMPLETION_OWNER_IDENTITY_MISMATCH");
-    }
-    if (owner.claim_outcome !== null || owner.step_status !== "running") {
-      throw new Error("RUNTIME_COMPLETION_OWNER_NOT_ACTIVE");
-    }
+      claimOwner.claim_run_id !== envelope.runId
+      || claimOwner.claim_step_id !== envelope.workflowStepId
+      || (claimOwner.claim_story_id ?? undefined) !== envelope.storyId
+      || claimOwner.claim_agent_id !== envelope.claimAgentId
+    ) throw new Error("RUNTIME_COMPLETION_OWNER_IDENTITY_MISMATCH");
+    if (claimOwner.claim_outcome !== null) throw new Error("RUNTIME_COMPLETION_OWNER_NOT_ACTIVE");
+    const owner = { ...runtimeOwner, ...claimOwner };
 
     const existing = await transaction.unsafe<RuntimeCompletionRow[]>(
       "SELECT * FROM runtime_completion_requests WHERE claim_id = $1 LIMIT 1 FOR UPDATE",
@@ -558,6 +691,39 @@ export async function requestRuntimeCompletion(
         throw new Error("RUNTIME_COMPLETION_REQUEST_CONFLICT");
       }
       return { status: "existing" as const, request };
+    }
+    const steps = await transaction.unsafe<Array<{ status: string; current_story_id: string | null }>>(
+      `SELECT status, current_story_id FROM steps
+        WHERE id = $1 AND run_id = $2 AND step_id = $3 FOR UPDATE`,
+      [envelope.stepId, envelope.runId, envelope.workflowStepId],
+    );
+    if (
+      steps[0]?.status !== "running"
+      || steps[0].current_story_id !== (envelope.storyDbId ?? null)
+    ) throw new Error("RUNTIME_COMPLETION_OWNER_NOT_ACTIVE");
+    // The step is the final lock in the publication chain. Read a volatile DB
+    // wall clock only now: waiting on any earlier owner/step lock must be able
+    // to expire the recovery lease before this publication becomes durable.
+    if (recoveryLeaseFence || normalAttemptLeaseFence) {
+      const wallClock = await readDatabaseWallClock(
+        transaction,
+        "RUNTIME_COMPLETION_DATABASE_WALL_CLOCK_UNAVAILABLE",
+      );
+      const attemptLeaseExpiresAt = recoveryLeaseFence?.attemptLeaseExpiresAt
+        ?? normalAttemptLeaseFence!.attemptLeaseExpiresAt;
+      if (new Date(attemptLeaseExpiresAt).getTime() <= wallClock.getTime()) {
+        throw new Error(
+          recoveryLeaseFence
+            ? "RUNTIME_COMPLETION_RECOVERY_ATTEMPT_FENCE_STALE"
+            : "RUNTIME_COMPLETION_NORMAL_ATTEMPT_FENCE_STALE",
+        );
+      }
+      if (
+        recoveryLeaseFence
+        && new Date(recoveryLeaseFence.deliveryLeaseExpiresAt).getTime() <= wallClock.getTime()
+      ) {
+        throw new Error("RUNTIME_COMPLETION_RECOVERY_DELIVERY_FENCE_STALE");
+      }
     }
     if (!["reserved", "starting", "running", "drain_requested", "drained"].includes(owner.runtime_state)) {
       throw new Error(`RUNTIME_COMPLETION_RUNTIME_STATE_INVALID:${owner.runtime_state}`);
@@ -685,6 +851,93 @@ export async function quarantineExpiredRuntimeCompletionForRecoveryInTransaction
   return mapRequest(rows[0]!);
 }
 
+type LockedRuntimeCompletionChain = Readonly<{
+  request: RuntimeCompletionRow;
+  runStatus: string;
+  terminationRequestId?: string;
+  runtimeState: string;
+  claimOutcome: string | null;
+}>;
+
+async function lockRuntimeCompletionChainInTransaction(
+  transaction: TransactionSql,
+  rawRequestId: string,
+): Promise<LockedRuntimeCompletionChain | undefined> {
+  const requestId = RuntimeCompletionRequestIdSchema.parse(rawRequestId);
+  const identities = await transaction.unsafe<RuntimeCompletionRow[]>(
+    "SELECT * FROM runtime_completion_requests WHERE request_id = $1",
+    [requestId],
+  );
+  const identity = identities[0];
+  if (!identity) return undefined;
+  if (identity.story_id) {
+    await transaction.unsafe("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [
+      v3RecoveryStoryLockIdentity({ runId: identity.run_id, storyId: identity.story_id }),
+    ]);
+  }
+  const runs = await transaction.unsafe<Array<{ status: string }>>(
+    "SELECT status FROM runs WHERE id = $1 FOR UPDATE",
+    [identity.run_id],
+  );
+  if (!runs[0]) throw new Error("RUNTIME_COMPLETION_RUN_NOT_FOUND");
+  const terminations = await transaction.unsafe<Array<{ request_id: string }>>(
+    `SELECT request_id FROM run_termination_requests
+      WHERE run_id = $1 AND state <> 'terminalized'
+      ORDER BY requested_at, request_id LIMIT 1 FOR UPDATE`,
+    [identity.run_id],
+  );
+  const runtimes = await transaction.unsafe<Array<{
+    session_id: string;
+    claim_id: string | number;
+    attempt_id: string | null;
+    state: string;
+  }>>(
+    `SELECT session_id, claim_id, attempt_id, state
+       FROM runtime_sessions WHERE session_id = $1 FOR UPDATE`,
+    [identity.runtime_session_id],
+  );
+  const runtime = runtimes[0];
+  if (!runtime) throw new Error("RUNTIME_COMPLETION_RUNTIME_NOT_FOUND");
+  if (identity.attempt_id) {
+    const attempts = await transaction.unsafe<Array<{ attempt_id: string }>>(
+      "SELECT attempt_id FROM execution_attempts WHERE attempt_id = $1 FOR UPDATE",
+      [identity.attempt_id],
+    );
+    if (attempts.length !== 1) throw new Error("RUNTIME_COMPLETION_ATTEMPT_NOT_FOUND");
+    await transaction.unsafe(
+      `SELECT dispatch_id FROM recovery_dispatch_deliveries
+        WHERE attempt_id = $1 AND claim_id = $2 FOR UPDATE`,
+      [identity.attempt_id, identity.claim_id],
+    );
+  }
+  const claims = await transaction.unsafe<Array<{ outcome: string | null }>>(
+    "SELECT outcome FROM claim_log WHERE id = $1 FOR UPDATE",
+    [identity.claim_id],
+  );
+  if (!claims[0]) throw new Error("RUNTIME_COMPLETION_CLAIM_NOT_FOUND");
+  const requests = await transaction.unsafe<RuntimeCompletionRow[]>(
+    "SELECT * FROM runtime_completion_requests WHERE request_id = $1 FOR UPDATE",
+    [requestId],
+  );
+  const request = requests[0];
+  if (
+    !request
+    || request.run_id !== identity.run_id
+    || request.runtime_session_id !== identity.runtime_session_id
+    || request.claim_id !== identity.claim_id
+    || request.attempt_id !== identity.attempt_id
+    || String(runtime.claim_id) !== String(identity.claim_id)
+    || runtime.attempt_id !== identity.attempt_id
+  ) throw new Error("RUNTIME_COMPLETION_CHAIN_IDENTITY_CHANGED");
+  return {
+    request,
+    runStatus: runs[0].status,
+    ...(terminations[0] ? { terminationRequestId: terminations[0].request_id } : {}),
+    runtimeState: runtime.state,
+    claimOutcome: claims[0].outcome,
+  };
+}
+
 export function createRuntimeCompletionRepository(sql: Sql) {
   const findById = async (requestId: string): Promise<RuntimeCompletionRequest | undefined> => {
     const rows = await sql.unsafe<RuntimeCompletionRow[]>(
@@ -722,62 +975,50 @@ export function createRuntimeCompletionRepository(sql: Sql) {
     }>): Promise<RuntimeCompletionRequest | undefined> {
       const now = validTime(input.now);
       const leaseMs = Math.max(30_000, Math.min(30 * 60_000, Math.trunc(input.leaseMs ?? 10 * 60_000)));
-      const leaseExpiresAt = new Date(now.getTime() + leaseMs);
       return sql.begin(async (transaction) => {
         const candidates = await transaction.unsafe<Array<{ request_id: string; run_id: string }>>(
           `SELECT request_id, run_id FROM runtime_completion_requests
             WHERE ($1::text IS NULL OR request_id = $1)
               AND (
                 state = 'requested'
-                OR (state = 'draining' AND lease_expires_at <= $2)
+                OR (state = 'draining' AND lease_expires_at <= clock_timestamp())
               )
             ORDER BY requested_at, request_id
             LIMIT 1`,
-          [input.requestId ?? null, now],
+          [input.requestId ?? null],
         );
         const candidate = candidates[0];
         if (!candidate) return undefined;
 
-        // Canonical per-run lock comes first for every recovery claimant. A
-        // published cancellation has precedence until terminalized, so the
-        // completion and termination processors can never both own drain.
-        const runs = await transaction.unsafe<Array<{ status: string }>>(
-          "SELECT status FROM runs WHERE id = $1 FOR UPDATE",
-          [candidate.run_id],
+        const chain = await lockRuntimeCompletionChainInTransaction(transaction, candidate.request_id);
+        const request = chain?.request;
+        const wallClock = await readDatabaseWallClock(
+          transaction,
+          "RUNTIME_COMPLETION_DATABASE_WALL_CLOCK_UNAVAILABLE",
         );
-        if (!runs[0]) throw new Error("RUNTIME_COMPLETION_RUN_NOT_FOUND");
-        const rows = await transaction.unsafe<RuntimeCompletionRow[]>(
-          `SELECT * FROM runtime_completion_requests
-            WHERE request_id = $1
-              AND (
-                state = 'requested'
-                OR (state = 'draining' AND lease_expires_at <= $2)
-              )
-            FOR UPDATE SKIP LOCKED`,
-          [candidate.request_id, now],
-        );
-        const request = rows[0];
-        if (!request) return undefined;
-        const terminationRows = await transaction.unsafe<Array<{ request_id: string }>>(
-          `SELECT request_id FROM run_termination_requests
-            WHERE run_id = $1 AND state <> 'terminalized'
-            LIMIT 1 FOR UPDATE`,
-          [request.run_id],
-        );
+        if (
+          !request
+          || !(
+            request.state === "requested"
+            || (request.state === "draining" && request.lease_expires_at
+              && new Date(request.lease_expires_at).getTime() <= wallClock.getTime())
+          )
+        ) return undefined;
         // A cancellation published before this completion acquired ownership
         // wins immediately. If this request was already draining and its lease
         // expired, however, it must be recoverable solely to finish/reuse the
         // exact drain proof; markProcessing will then observe cancellation and
         // reject the completion before product state can change.
-        if (terminationRows.length > 0 && request.state === "requested") return undefined;
+        if (chain.terminationRequestId && request.state === "requested") return undefined;
+        const leaseExpiresAt = new Date(wallClock.getTime() + leaseMs);
         const updated = await transaction.unsafe<RuntimeCompletionRow[]>(
           `UPDATE runtime_completion_requests
               SET state = 'draining', owner_instance_id = $2,
                   lease_expires_at = $3, updated_at = $4
             WHERE request_id = $1
-              AND (state = 'requested' OR (state = 'draining' AND lease_expires_at <= $4))
+              AND (state = 'requested' OR (state = 'draining' AND lease_expires_at <= $5))
             RETURNING *`,
-          [request.request_id, input.ownerInstanceId, leaseExpiresAt, now],
+          [request.request_id, input.ownerInstanceId, leaseExpiresAt, wallClock, wallClock],
         );
         return updated[0] ? mapRequest(updated[0]) : undefined;
       }) as Promise<RuntimeCompletionRequest | undefined>;
@@ -796,45 +1037,27 @@ export function createRuntimeCompletionRepository(sql: Sql) {
         const candidates = await transaction.unsafe<Array<{ request_id: string; run_id: string }>>(
           `SELECT request_id, run_id
              FROM runtime_completion_requests
-            WHERE state = 'processing' AND lease_expires_at <= $1
+            WHERE state = 'processing' AND lease_expires_at <= clock_timestamp()
             ORDER BY requested_at, request_id
             LIMIT 1`,
-          [now],
+          [],
         );
         const candidate = candidates[0];
         if (!candidate) return { status: "none" as const };
-        const runs = await transaction.unsafe<Array<{ status: string }>>(
-          "SELECT status FROM runs WHERE id = $1 FOR UPDATE",
-          [candidate.run_id],
+        const chain = await lockRuntimeCompletionChainInTransaction(transaction, candidate.request_id);
+        const request = chain?.request;
+        const wallClock = await readDatabaseWallClock(
+          transaction,
+          "RUNTIME_COMPLETION_DATABASE_WALL_CLOCK_UNAVAILABLE",
         );
-        if (!runs[0]) throw new Error("RUNTIME_COMPLETION_RUN_NOT_FOUND");
-        const terminationRows = await transaction.unsafe<Array<{ request_id: string }>>(
-          `SELECT request_id FROM run_termination_requests
-            WHERE run_id = $1 AND state <> 'terminalized'
-            LIMIT 1 FOR UPDATE`,
-          [candidate.run_id],
-        );
-        const requestRows = await transaction.unsafe<RuntimeCompletionRow[]>(
-          `SELECT * FROM runtime_completion_requests
-            WHERE request_id = $1 AND state = 'processing' AND lease_expires_at <= $2
-            FOR UPDATE SKIP LOCKED`,
-          [candidate.request_id, now],
-        );
-        const request = requestRows[0];
-        if (!request) return { status: "none" as const };
-        const runtimeRows = await transaction.unsafe<Array<{ state: string }>>(
-          "SELECT state FROM runtime_sessions WHERE session_id = $1 FOR UPDATE",
-          [request.runtime_session_id],
-        );
-        const claimRows = await transaction.unsafe<Array<{ outcome: string | null }>>(
-          "SELECT outcome FROM claim_log WHERE id = $1 FOR UPDATE",
-          [request.claim_id],
-        );
-        const runtimeState = runtimeRows[0]?.state;
-        const claimOutcome = claimRows[0]?.outcome;
-        if (!runtimeState || claimOutcome === undefined) {
-          throw new Error("RUNTIME_COMPLETION_RECOVERY_OWNER_MISSING");
-        }
+        if (
+          !request
+          || request.state !== "processing"
+          || !request.lease_expires_at
+          || new Date(request.lease_expires_at).getTime() > wallClock.getTime()
+        ) return { status: "none" as const };
+        const runtimeState = chain.runtimeState;
+        const claimOutcome = chain.claimOutcome;
         const quarantineExpiredOwner = async (diagnostic: string): Promise<RuntimeCompletionRequest> => {
           if (!request.owner_instance_id || !request.lease_expires_at) {
             throw new Error("RUNTIME_COMPLETION_RECOVERY_QUARANTINE_PROOF_INCOMPLETE");
@@ -846,11 +1069,11 @@ export function createRuntimeCompletionRepository(sql: Sql) {
             expectedUpdatedAt: timestamp(request.updated_at),
             expectedApplyPhase: RuntimeCompletionApplyPhaseSchema.parse(request.apply_phase),
             diagnostic,
-            now,
+            now: wallClock,
           });
         };
         if (
-          terminationRows.length > 0
+          chain.terminationRequestId
           && request.apply_phase === "executing"
           && claimOutcome === null
         ) {
@@ -862,8 +1085,8 @@ export function createRuntimeCompletionRepository(sql: Sql) {
               RETURNING *`,
             [
               request.request_id,
-              now,
-              `Completion preempted before owner commit by ${terminationRows[0]!.request_id}`,
+              wallClock,
+              `Completion preempted before owner commit by ${chain.terminationRequestId}`,
             ],
           );
           if (rejected.length !== 1) throw new Error("RUNTIME_COMPLETION_RECOVERY_PREEMPT_CAS_LOST");
@@ -886,7 +1109,7 @@ export function createRuntimeCompletionRepository(sql: Sql) {
                     owner_attempt_count = owner_attempt_count + 1, updated_at = $1
               WHERE request_id = $4 AND state = 'processing'
               RETURNING *`,
-            [now, input.ownerInstanceId, new Date(now.getTime() + leaseMs), request.request_id],
+            [wallClock, input.ownerInstanceId, new Date(wallClock.getTime() + leaseMs), request.request_id],
           );
           if (adopted.length !== 1) throw new Error("RUNTIME_COMPLETION_RECOVERY_CAS_LOST");
           return { status: "resume_owner" as const, request: mapRequest(adopted[0]!) };
@@ -898,10 +1121,11 @@ export function createRuntimeCompletionRepository(sql: Sql) {
         ) {
           const adopted = await transaction.unsafe<RuntimeCompletionRow[]>(
             `UPDATE runtime_completion_requests
-                SET owner_instance_id = $2, lease_expires_at = $3, updated_at = $1
+                SET owner_instance_id = $2, lease_expires_at = $3,
+                    owner_attempt_count = owner_attempt_count + 1, updated_at = $1
               WHERE request_id = $4 AND state = 'processing'
               RETURNING *`,
-            [now, input.ownerInstanceId, new Date(now.getTime() + leaseMs), request.request_id],
+            [wallClock, input.ownerInstanceId, new Date(wallClock.getTime() + leaseMs), request.request_id],
           );
           if (adopted.length !== 1) throw new Error("RUNTIME_COMPLETION_RECOVERY_CAS_LOST");
           return {
@@ -922,24 +1146,48 @@ export function createRuntimeCompletionRepository(sql: Sql) {
     async heartbeatProcessing(input: Readonly<{
       requestId: string;
       ownerInstanceId: string;
+      ownerAttemptCount: number;
       leaseMs?: number;
       now?: Date;
     }>): Promise<boolean> {
       const now = validTime(input.now);
       const leaseMs = Math.max(60_000, Math.min(60 * 60_000, Math.trunc(input.leaseMs ?? 10 * 60_000)));
-      const rows = await sql.unsafe<Array<{ request_id: string }>>(
-        `UPDATE runtime_completion_requests
-            SET lease_expires_at = $3, updated_at = $4
-          WHERE request_id = $1 AND owner_instance_id = $2 AND state = 'processing'
-          RETURNING request_id`,
-        [
-          RuntimeCompletionRequestIdSchema.parse(input.requestId),
-          input.ownerInstanceId,
-          new Date(now.getTime() + leaseMs),
-          now,
-        ],
-      );
-      return rows.length === 1;
+      return sql.begin(async (transaction) => {
+        const chain = await lockRuntimeCompletionChainInTransaction(transaction, input.requestId);
+        const request = chain?.request;
+        if (!request) return false;
+        const wallClock = await readDatabaseWallClock(
+          transaction,
+          "RUNTIME_COMPLETION_DATABASE_WALL_CLOCK_UNAVAILABLE",
+        );
+        const ownerAttemptCount = z.number().int().positive().parse(input.ownerAttemptCount);
+        if (
+          request.state !== "processing"
+          || request.owner_instance_id !== input.ownerInstanceId
+          || request.owner_attempt_count !== ownerAttemptCount
+          || !request.lease_expires_at
+          || new Date(request.lease_expires_at).getTime() <= wallClock.getTime()
+        ) return false;
+        const rows = await transaction.unsafe<Array<{ request_id: string }>>(
+          `UPDATE runtime_completion_requests
+              SET lease_expires_at = $3, updated_at = $4
+            WHERE request_id = $1
+              AND owner_instance_id = $2
+              AND owner_attempt_count = $5
+              AND state = 'processing'
+              AND lease_expires_at > $6
+            RETURNING request_id`,
+          [
+            request.request_id,
+            input.ownerInstanceId,
+            new Date(wallClock.getTime() + leaseMs),
+            wallClock,
+            ownerAttemptCount,
+            wallClock,
+          ],
+        );
+        return rows.length === 1;
+      }) as Promise<boolean>;
     },
     async markProcessing(input: Readonly<{
       requestId: string;
@@ -950,36 +1198,26 @@ export function createRuntimeCompletionRepository(sql: Sql) {
       const now = validTime(input.now);
       const leaseMs = Math.max(60_000, Math.min(60 * 60_000, Math.trunc(input.leaseMs ?? 30 * 60_000)));
       return sql.begin(async (transaction) => {
-        const rows = await transaction.unsafe<Array<RuntimeCompletionRow & {
-          runtime_state: string;
-          claim_outcome: string | null;
-          run_status: string;
-        }>>(
-          `SELECT rcr.*, rs.state AS runtime_state, cl.outcome AS claim_outcome,
-                  r.status AS run_status
-             FROM runtime_completion_requests rcr
-             JOIN runtime_sessions rs ON rs.session_id = rcr.runtime_session_id
-             JOIN claim_log cl ON cl.id = rcr.claim_id
-             JOIN runs r ON r.id = rcr.run_id
-            WHERE rcr.request_id = $1
-            FOR UPDATE OF rcr, rs, cl, r`,
-          [RuntimeCompletionRequestIdSchema.parse(input.requestId)],
-        );
-        const request = rows[0];
+        const chain = await lockRuntimeCompletionChainInTransaction(transaction, input.requestId);
+        const request = chain?.request;
         if (!request) throw new Error("RUNTIME_COMPLETION_REQUEST_NOT_FOUND");
+        const wallClock = await readDatabaseWallClock(
+          transaction,
+          "RUNTIME_COMPLETION_DATABASE_WALL_CLOCK_UNAVAILABLE",
+        );
         if (request.state !== "draining" || request.owner_instance_id !== input.ownerInstanceId) {
           throw new Error("RUNTIME_COMPLETION_DRAIN_OWNER_MISMATCH");
         }
-        if (request.runtime_state !== "drained") throw new Error("RUNTIME_COMPLETION_RUNTIME_NOT_DRAINED");
-        if (request.claim_outcome !== null) throw new Error("RUNTIME_COMPLETION_CLAIM_ALREADY_TERMINAL");
-        if (!["running", "resuming"].includes(request.run_status)) {
-          throw new Error(`RUNTIME_COMPLETION_RUN_NOT_ACTIVE:${request.run_status}`);
+        if (
+          !request.lease_expires_at
+          || new Date(request.lease_expires_at).getTime() <= wallClock.getTime()
+        ) throw new Error("RUNTIME_COMPLETION_DRAIN_OWNER_LEASE_STALE");
+        if (chain.runtimeState !== "drained") throw new Error("RUNTIME_COMPLETION_RUNTIME_NOT_DRAINED");
+        if (chain.claimOutcome !== null) throw new Error("RUNTIME_COMPLETION_CLAIM_ALREADY_TERMINAL");
+        if (!["running", "resuming"].includes(chain.runStatus)) {
+          throw new Error(`RUNTIME_COMPLETION_RUN_NOT_ACTIVE:${chain.runStatus}`);
         }
-        const termination = await transaction.unsafe<Array<{ request_id: string }>>(
-          "SELECT request_id FROM run_termination_requests WHERE run_id = $1 AND state <> 'terminalized' LIMIT 1",
-          [request.run_id],
-        );
-        if (termination.length > 0) throw new Error("RUNTIME_COMPLETION_TERMINATION_PENDING");
+        if (chain.terminationRequestId) throw new Error("RUNTIME_COMPLETION_TERMINATION_PENDING");
         const updated = await transaction.unsafe<RuntimeCompletionRow[]>(
           `UPDATE runtime_completion_requests
               SET state = 'processing', processing_at = $3,
@@ -990,7 +1228,12 @@ export function createRuntimeCompletionRepository(sql: Sql) {
             WHERE request_id = $1 AND owner_instance_id = $2 AND state = 'draining'
               AND owner_attempt_count < 3
             RETURNING *`,
-          [request.request_id, input.ownerInstanceId, now, new Date(now.getTime() + leaseMs)],
+          [
+            request.request_id,
+            input.ownerInstanceId,
+            wallClock,
+            new Date(wallClock.getTime() + leaseMs),
+          ],
         );
         if (updated.length !== 1) throw new Error("RUNTIME_COMPLETION_PROCESSING_CAS_LOST");
         return mapRequest(updated[0]!);
@@ -999,27 +1242,48 @@ export function createRuntimeCompletionRepository(sql: Sql) {
     async markEffectsCommitted(input: Readonly<{
       requestId: string;
       ownerInstanceId: string;
+      ownerAttemptCount: number;
       result: Record<string, unknown>;
       now?: Date;
     }>): Promise<RuntimeCompletionRequest> {
-      const now = validTime(input.now);
+      if (input.now) validTime(input.now);
       return sql.begin(async (transaction) => {
-        const requestId = RuntimeCompletionRequestIdSchema.parse(input.requestId);
-        const requests = await transaction.unsafe<RuntimeCompletionRow[]>(
-          "SELECT * FROM runtime_completion_requests WHERE request_id = $1 FOR UPDATE",
-          [requestId],
+        const chain = await lockRuntimeCompletionChainInTransaction(
+          transaction,
+          input.requestId,
         );
-        const current = requests[0];
+        const current = chain?.request;
         if (!current) throw new Error("RUNTIME_COMPLETION_REQUEST_NOT_FOUND");
-        if (
-          current.state === "processing"
-          && current.apply_phase === "effects_committed"
+        const ownerAttemptCount = z.number().int().positive().parse(input.ownerAttemptCount);
+        const canonicalResult = hashCanonicalJson(input.result);
+        if (current.state === "accepted") {
+          if (
+            current.apply_phase === "effects_committed"
+            && hashCanonicalJson(objectValue(current.result, "RUNTIME_COMPLETION_RESULT_INVALID")) === canonicalResult
+          ) return mapRequest(current);
+          throw new Error("RUNTIME_COMPLETION_EFFECTS_COMMIT_TERMINAL_CONFLICT");
+        }
+        const wallClock = await readDatabaseWallClock(
+          transaction,
+          "RUNTIME_COMPLETION_DATABASE_WALL_CLOCK_UNAVAILABLE",
+        );
+        const exactOwner = current.state === "processing"
           && current.owner_instance_id === input.ownerInstanceId
-        ) return mapRequest(current);
+          && current.owner_attempt_count === ownerAttemptCount
+          && current.lease_expires_at !== null
+          && new Date(current.lease_expires_at).getTime() > wallClock.getTime();
         if (
-          current.state !== "processing"
+          exactOwner
+          && current.apply_phase === "effects_committed"
+        ) {
+          if (hashCanonicalJson(objectValue(current.result, "RUNTIME_COMPLETION_RESULT_INVALID")) !== canonicalResult) {
+            throw new Error("RUNTIME_COMPLETION_EFFECTS_COMMIT_RESULT_CONFLICT");
+          }
+          return mapRequest(current);
+        }
+        if (
+          !exactOwner
           || current.apply_phase !== "owner_committed"
-          || current.owner_instance_id !== input.ownerInstanceId
         ) throw new Error("RUNTIME_COMPLETION_EFFECTS_COMMIT_OWNER_MISMATCH");
         const effectCounts = await transaction.unsafe<Array<{ total: number; unsettled: number }>>(
           `SELECT COUNT(*) FILTER (WHERE mandatory)::integer AS total,
@@ -1028,7 +1292,7 @@ export function createRuntimeCompletionRepository(sql: Sql) {
                   )::integer AS unsettled
              FROM runtime_completion_effects
             WHERE request_id = $1`,
-          [requestId],
+          [current.request_id],
         );
         if ((effectCounts[0]?.total ?? 0) === 0) {
           throw new Error("RUNTIME_COMPLETION_MANDATORY_EFFECT_MANIFEST_MISSING");
@@ -1041,9 +1305,17 @@ export function createRuntimeCompletionRepository(sql: Sql) {
               SET apply_phase = 'effects_committed', effects_committed_at = $3,
                   result = $4::text::jsonb, updated_at = $3
             WHERE request_id = $1 AND owner_instance_id = $2
+              AND owner_attempt_count = $5
+              AND lease_expires_at > $3
               AND state = 'processing' AND apply_phase = 'owner_committed'
             RETURNING *`,
-          [requestId, input.ownerInstanceId, now, JSON.stringify(input.result)],
+          [
+            current.request_id,
+            input.ownerInstanceId,
+            wallClock,
+            JSON.stringify(input.result),
+            ownerAttemptCount,
+          ],
         );
         if (rows.length !== 1) throw new Error("RUNTIME_COMPLETION_EFFECTS_COMMIT_CAS_LOST");
         return mapRequest(rows[0]!);
@@ -1052,35 +1324,44 @@ export function createRuntimeCompletionRepository(sql: Sql) {
     async acceptAndRelease(input: Readonly<{
       requestId: string;
       ownerInstanceId: string;
+      ownerAttemptCount: number;
       result: Record<string, unknown>;
       now?: Date;
     }>): Promise<RuntimeCompletionRequest> {
-      const now = validTime(input.now);
+      if (input.now) validTime(input.now);
       return sql.begin(async (transaction) => {
-        const rows = await transaction.unsafe<Array<RuntimeCompletionRow & {
-          claim_outcome: string | null;
-        }>>(
-          `SELECT rcr.*, cl.outcome AS claim_outcome
-             FROM runtime_completion_requests rcr
-             JOIN claim_log cl ON cl.id = rcr.claim_id
-            WHERE rcr.request_id = $1
-            FOR UPDATE OF rcr, cl`,
-          [RuntimeCompletionRequestIdSchema.parse(input.requestId)],
-        );
-        const request = rows[0];
+        const chain = await lockRuntimeCompletionChainInTransaction(transaction, input.requestId);
+        const request = chain?.request;
         if (!request) throw new Error("RUNTIME_COMPLETION_REQUEST_NOT_FOUND");
-        if (request.state === "accepted") return mapRequest(request);
-        if (request.state !== "processing" || request.owner_instance_id !== input.ownerInstanceId) {
+        const ownerAttemptCount = z.number().int().positive().parse(input.ownerAttemptCount);
+        const canonicalResult = hashCanonicalJson(input.result);
+        if (request.state === "accepted") {
+          if (hashCanonicalJson(objectValue(request.result, "RUNTIME_COMPLETION_RESULT_INVALID")) === canonicalResult) {
+            return mapRequest(request);
+          }
+          throw new Error("RUNTIME_COMPLETION_ACCEPT_TERMINAL_CONFLICT");
+        }
+        const wallClock = await readDatabaseWallClock(
+          transaction,
+          "RUNTIME_COMPLETION_DATABASE_WALL_CLOCK_UNAVAILABLE",
+        );
+        if (
+          request.state !== "processing"
+          || request.owner_instance_id !== input.ownerInstanceId
+          || request.owner_attempt_count !== ownerAttemptCount
+          || !request.lease_expires_at
+          || new Date(request.lease_expires_at).getTime() <= wallClock.getTime()
+        ) {
           throw new Error("RUNTIME_COMPLETION_PROCESSING_OWNER_MISMATCH");
         }
-        if (request.claim_outcome === null) throw new Error("RUNTIME_COMPLETION_CLAIM_REMAINED_ACTIVE");
+        if (chain.claimOutcome === null) throw new Error("RUNTIME_COMPLETION_CLAIM_REMAINED_ACTIVE");
         if (request.apply_phase !== "effects_committed" || request.effects_committed_at === null) {
           throw new Error("RUNTIME_COMPLETION_EFFECTS_NOT_COMMITTED");
         }
         await releaseDrainedRuntimeSessionInTransaction(transaction, {
           sessionId: request.runtime_session_id,
           claimId: claimId(request.claim_id),
-          now,
+          now: wallClock,
         });
         const updated = await transaction.unsafe<RuntimeCompletionRow[]>(
           `UPDATE runtime_completion_requests
@@ -1090,42 +1371,90 @@ export function createRuntimeCompletionRepository(sql: Sql) {
                   diagnostic = 'Completion accepted after proven runtime drain',
                   updated_at = $3
             WHERE request_id = $1 AND owner_instance_id = $2 AND state = 'processing'
+              AND owner_attempt_count = $5
+              AND lease_expires_at > $3
             RETURNING *`,
-          [request.request_id, input.ownerInstanceId, now, JSON.stringify(input.result)],
+          [
+            request.request_id,
+            input.ownerInstanceId,
+            wallClock,
+            JSON.stringify(input.result),
+            ownerAttemptCount,
+          ],
         );
         if (updated.length !== 1) throw new Error("RUNTIME_COMPLETION_ACCEPT_CAS_LOST");
         return mapRequest(updated[0]!);
       }) as Promise<RuntimeCompletionRequest>;
     },
-    async reject(input: Readonly<{
+    async preemptForRunTermination(input: Readonly<{
       requestId: string;
       diagnostic: string;
       result?: Record<string, unknown>;
       now?: Date;
-    }>): Promise<RuntimeCompletionRequest> {
+    }>): Promise<Readonly<{
+      status: "preempted" | "resume_effects" | "finalize" | "not_pending" | "not_preemptible";
+      request: RuntimeCompletionRequest;
+    }>> {
       if (!input.diagnostic.trim()) throw new Error("RUNTIME_COMPLETION_REJECTION_DIAGNOSTIC_REQUIRED");
-      const now = validTime(input.now);
-      const rows = await sql.unsafe<RuntimeCompletionRow[]>(
-        `UPDATE runtime_completion_requests
-            SET state = 'rejected', rejected_at = $2,
-                lease_expires_at = NULL, diagnostic = $3,
-                result = (result || $4::text::jsonb), updated_at = $2
-          WHERE request_id = $1
-            AND state NOT IN ('accepted', 'rejected', 'quarantined')
-          RETURNING *`,
-        [
-          RuntimeCompletionRequestIdSchema.parse(input.requestId),
-          now,
-          input.diagnostic.slice(0, 4_000),
-          JSON.stringify(input.result ?? {}),
-        ],
-      );
-      if (rows.length !== 1) {
-        const current = await findById(input.requestId);
-        if (current?.state === "rejected") return current;
-        throw new Error("RUNTIME_COMPLETION_REJECT_CAS_LOST");
-      }
-      return mapRequest(rows[0]!);
+      if (input.now) validTime(input.now);
+      return sql.begin(async (transaction) => {
+        const chain = await lockRuntimeCompletionChainInTransaction(transaction, input.requestId);
+        const current = chain?.request;
+        if (!current) throw new Error("RUNTIME_COMPLETION_REQUEST_NOT_FOUND");
+        if (current.state === "rejected") {
+          return { status: "preempted" as const, request: mapRequest(current) };
+        }
+        if (current.state === "processing" && current.apply_phase === "owner_committed") {
+          return { status: "resume_effects" as const, request: mapRequest(current) };
+        }
+        if (current.state === "processing" && current.apply_phase === "effects_committed") {
+          return { status: "finalize" as const, request: mapRequest(current) };
+        }
+        if (!chain.terminationRequestId) {
+          return { status: "not_pending" as const, request: mapRequest(current) };
+        }
+        const preemptible = current.state === "requested"
+          || current.state === "draining"
+          || (
+            current.state === "processing"
+            && current.apply_phase === "executing"
+            && chain.claimOutcome === null
+          );
+        if (!preemptible) {
+          return { status: "not_preemptible" as const, request: mapRequest(current) };
+        }
+        const wallClock = await readDatabaseWallClock(
+          transaction,
+          "RUNTIME_COMPLETION_DATABASE_WALL_CLOCK_UNAVAILABLE",
+        );
+        const rows = await transaction.unsafe<RuntimeCompletionRow[]>(
+          `UPDATE runtime_completion_requests
+              SET state = 'rejected', rejected_at = $2,
+                  lease_expires_at = NULL, diagnostic = $3,
+                  result = (result || $4::text::jsonb), updated_at = $2
+            WHERE request_id = $1
+              AND state = $5
+              AND apply_phase = $6
+            RETURNING *`,
+          [
+            current.request_id,
+            wallClock,
+            input.diagnostic.slice(0, 4_000),
+            JSON.stringify({
+              ...(input.result ?? {}),
+              preemptedByRunTermination: true,
+              terminationRequestId: chain.terminationRequestId,
+            }),
+            current.state,
+            current.apply_phase,
+          ],
+        );
+        if (rows.length !== 1) throw new Error("RUNTIME_COMPLETION_REJECT_CAS_LOST");
+        return { status: "preempted" as const, request: mapRequest(rows[0]!) };
+      }) as Promise<Readonly<{
+        status: "preempted" | "resume_effects" | "finalize" | "not_pending" | "not_preemptible";
+        request: RuntimeCompletionRequest;
+      }>>;
     },
     async quarantine(input: Readonly<{
       requestId: string;
@@ -1139,7 +1468,7 @@ export function createRuntimeCompletionRepository(sql: Sql) {
     }>): Promise<RuntimeCompletionRequest> {
       if (!input.diagnostic.trim()) throw new Error("RUNTIME_COMPLETION_QUARANTINE_DIAGNOSTIC_REQUIRED");
       if (!input.ownerInstanceId.trim()) throw new Error("RUNTIME_COMPLETION_QUARANTINE_OWNER_REQUIRED");
-      const now = validTime(input.now);
+      if (input.now) validTime(input.now);
       const expectedLeaseExpiresAt = exactTimestamp(
         input.expectedLeaseExpiresAt,
         "RUNTIME_COMPLETION_QUARANTINE_LEASE_INVALID",
@@ -1148,32 +1477,53 @@ export function createRuntimeCompletionRepository(sql: Sql) {
         input.expectedUpdatedAt,
         "RUNTIME_COMPLETION_QUARANTINE_VERSION_INVALID",
       );
-      const rows = await sql.unsafe<RuntimeCompletionRow[]>(
-        `UPDATE runtime_completion_requests
-            SET state = 'quarantined', lease_expires_at = NULL,
-                diagnostic = $2, result = (result || $3::text::jsonb), updated_at = $4
-          WHERE request_id = $1
-            AND owner_instance_id = $5
-            AND state = $6
-            AND lease_expires_at = $7
-            AND lease_expires_at > $4
-            AND updated_at = $8
-          RETURNING *`,
-        [
-          RuntimeCompletionRequestIdSchema.parse(input.requestId),
-          input.diagnostic.slice(0, 4_000),
-          JSON.stringify(input.result ?? {}),
-          now,
-          input.ownerInstanceId,
-          input.expectedState,
-          expectedLeaseExpiresAt,
-          expectedUpdatedAt,
-        ],
-      );
-      if (rows.length === 1) return mapRequest(rows[0]!);
-      const current = await findById(input.requestId);
-      if (current?.state === "quarantined") return current;
-      throw new Error("RUNTIME_COMPLETION_QUARANTINE_AUTHORITY_LOST");
+      return sql.begin(async (transaction) => {
+        const chain = await lockRuntimeCompletionChainInTransaction(transaction, input.requestId);
+        const current = chain?.request;
+        if (!current) throw new Error("RUNTIME_COMPLETION_REQUEST_NOT_FOUND");
+        if (current.state === "quarantined") return mapRequest(current);
+        const wallClock = await readDatabaseWallClock(
+          transaction,
+          "RUNTIME_COMPLETION_DATABASE_WALL_CLOCK_UNAVAILABLE",
+        );
+        if (
+          current.owner_instance_id !== input.ownerInstanceId
+          || current.state !== input.expectedState
+          || !current.lease_expires_at
+          || new Date(current.lease_expires_at).getTime() !== expectedLeaseExpiresAt.getTime()
+          || new Date(current.lease_expires_at).getTime() <= wallClock.getTime()
+          || new Date(current.updated_at).getTime() !== expectedUpdatedAt.getTime()
+        ) throw new Error("RUNTIME_COMPLETION_QUARANTINE_AUTHORITY_LOST");
+        if (
+          current.state === "processing"
+          && current.apply_phase !== "executing"
+        ) throw new Error("RUNTIME_COMPLETION_QUARANTINE_CANONICAL_CONTINUATION_REQUIRED");
+        const rows = await transaction.unsafe<RuntimeCompletionRow[]>(
+          `UPDATE runtime_completion_requests
+              SET state = 'quarantined', lease_expires_at = NULL,
+                  diagnostic = $2, result = (result || $3::text::jsonb), updated_at = $4
+            WHERE request_id = $1
+              AND owner_instance_id = $5
+              AND state = $6
+              AND (state = 'draining' OR apply_phase = 'executing')
+              AND lease_expires_at = $7
+              AND lease_expires_at > $4
+              AND updated_at = $8
+            RETURNING *`,
+          [
+            current.request_id,
+            input.diagnostic.slice(0, 4_000),
+            JSON.stringify(input.result ?? {}),
+            wallClock,
+            input.ownerInstanceId,
+            input.expectedState,
+            expectedLeaseExpiresAt,
+            expectedUpdatedAt,
+          ],
+        );
+        if (rows.length !== 1) throw new Error("RUNTIME_COMPLETION_QUARANTINE_AUTHORITY_LOST");
+        return mapRequest(rows[0]!);
+      }) as Promise<RuntimeCompletionRequest>;
     },
   });
 }

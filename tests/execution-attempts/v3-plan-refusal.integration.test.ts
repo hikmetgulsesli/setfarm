@@ -7,6 +7,7 @@ import {
   createRuntimeCompletionRepository,
   requestRuntimeCompletion,
 } from "../../src/execution/runtime-completion.js";
+import { runWithRuntimeCompletionOwner } from "../../src/execution/runtime-completion-owner-context.js";
 import { createRuntimeSessionRepository } from "../../src/execution/runtime-session-repository.js";
 import { createRunTerminationRepository } from "../../src/execution/run-termination.js";
 import { extractTaskRequirementLedgerV1 } from "../../src/product-compiler/requirements/task-requirements-v1.js";
@@ -128,15 +129,23 @@ test("exact PLAN v3 rejection terminally requests compiler-owned clarification w
       ownerInstanceId: "spawner-test",
       evidence: DRAIN_EVIDENCE,
     });
-    await completions.markProcessing({
+    const processing = await completions.markProcessing({
       requestId: requested.request.requestId,
       ownerInstanceId: "spawner-test",
     });
+    if (!processing.ownerInstanceId || !processing.leaseExpiresAt) {
+      throw new Error("test completion owner capability missing");
+    }
 
     const { completeStep } = await import("../../src/installer/step-ops.js");
-    assert.deepEqual(await completeStep(stepDbId, output, envelope, {
-      deferContinuationToEffectLedger: true,
-    }), { advanced: false, runCompleted: false });
+    assert.deepEqual(await runWithRuntimeCompletionOwner({
+      requestId: processing.requestId,
+      ownerInstanceId: processing.ownerInstanceId,
+      leaseExpiresAt: processing.leaseExpiresAt,
+      ownerAttemptCount: processing.ownerAttemptCount,
+    }, () => completeStep(stepDbId, output, envelope, {
+        deferContinuationToEffectLedger: true,
+      })), { advanced: false, runCompleted: false });
 
     const ownerState = await database.sql<Array<{
       claim_outcome: string;
@@ -201,11 +210,13 @@ test("exact PLAN v3 rejection terminally requests compiler-owned clarification w
     await completions.markEffectsCommitted({
       requestId: requested.request.requestId,
       ownerInstanceId: "spawner-test",
+      ownerAttemptCount: (await completions.findById(requested.request.requestId))!.ownerAttemptCount,
       result,
     });
     await completions.acceptAndRelease({
       requestId: requested.request.requestId,
       ownerInstanceId: "spawner-test",
+      ownerAttemptCount: (await completions.findById(requested.request.requestId))!.ownerAttemptCount,
       result,
     });
 

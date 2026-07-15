@@ -57,7 +57,10 @@ import { buildNoVolumeRuntimeAuthorityFixture } from "../execution-attempts/fixt
 
 const SHA = "a".repeat(40);
 const HASH = "b".repeat(64);
-const NOW = "2026-07-13T12:00:00.000Z";
+// Admission expiry is a live lease fence checked by run persistence. Anchor
+// the deterministic suite clock to this process instead of an absolute date
+// that eventually turns the positive release-GO fixture into an expired canary.
+const NOW = new Date().toISOString();
 const roots: string[] = [];
 
 afterEach(async () => {
@@ -1200,7 +1203,17 @@ describe("content-addressed convergence results", () => {
         artifacts: store,
         admissions,
       });
-      assert.equal(output.gate.decision, "go");
+      assert.equal(output.gate.decision, "go", JSON.stringify({
+        gate: output.gate,
+        status: output.result.status,
+        blockers: output.result.blockerCodes,
+        runs: output.result.runs.map((run) => ({
+          caseId: run.caseId,
+          passed: run.passed,
+          disposition: run.disposition,
+          invariantCodes: run.canonical.invariantCodes,
+        })),
+      }, null, 2));
       const rows = await database.sql<Array<{
         admission_hash: string;
         result_hash: string;

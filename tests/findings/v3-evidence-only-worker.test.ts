@@ -201,11 +201,18 @@ function canonicalEvidence(input: Readonly<{
 
 describe("v3 evidence-only recovery worker", () => {
   let database: TestDatabase;
+  let databaseBase: Date;
   let sequence = 0;
   const workdirs: string[] = [];
 
+  const at = (offsetMs = 0) => new Date(databaseBase.getTime() + offsetMs);
+
   before(async () => {
     database = await createIsolatedTestDatabase();
+    const rows = await database.sql.unsafe<Array<{ wall_clock: Date }>>(
+      "SELECT date_trunc('milliseconds', clock_timestamp()) AS wall_clock",
+    );
+    databaseBase = rows[0]!.wall_clock;
   });
 
   after(async () => {
@@ -257,7 +264,7 @@ describe("v3 evidence-only recovery worker", () => {
     await findings.putFindingSet(findingSet);
     const priorPlanHash = hashCanonicalJson({ schema: "setfarm.test-prior-evidence-plan.v1", runId });
     const opened = await findings.openRecoveryCase(recoveryDraft(findingSet, slice, dispatchClass), {
-      now: new Date("2026-07-13T08:00:00.000Z"),
+      now: at(-2 * 60 * 60_000),
       evidencePlanArtifactHash: priorPlanHash,
     });
     const deliveries = createRecoveryDeliveryRepository(database.sql);
@@ -268,7 +275,7 @@ describe("v3 evidence-only recovery worker", () => {
       revisionId: revision.revisionId,
       expectedStateVersion: opened.recoveryCase.stateVersion,
       dispatchClass,
-    }, { now: input.authorizedAt ?? new Date(`2026-07-13T09:00:${String(sequence).padStart(2, "0")}.000Z`) });
+    }, { now: input.authorizedAt ?? at(-60 * 60_000 + sequence * 1_000) });
     assert.equal(authorized.status, "authorized");
     if (authorized.status !== "authorized") throw new Error("expected authorized recovery dispatch");
 
@@ -343,7 +350,7 @@ describe("v3 evidence-only recovery worker", () => {
               `setfarm://artifact/${input.fixture.sliceHash}`,
               `setfarm://artifact/${input.fixture.planArtifactHash}`,
             ],
-          }, { now: input.attemptNow ?? new Date("2026-07-13T10:00:01.000Z") });
+          }, { now: input.attemptNow ?? at(1_000) });
           assert.equal(reserved.status, "reserved");
           attempt = reserved.attempt;
         } else {
@@ -449,7 +456,7 @@ describe("v3 evidence-only recovery worker", () => {
     leaseMs?: number;
     acquiredAt?: Date;
   }>) {
-    const acquiredAt = input.acquiredAt ?? new Date("2026-07-13T10:00:00.000Z");
+    const acquiredAt = input.acquiredAt ?? at();
     const worker = createV3EvidenceOnlyRecoveryWorker(
       database.sql,
       dependencies({ fixture: input.fixture, verdict: "pass" }),
@@ -492,8 +499,8 @@ describe("v3 evidence-only recovery worker", () => {
 
   it("leases only one exact evidence-only dispatch under concurrent workers", async () => {
     const workflowId = "workflow-evidence-only-concurrency";
-    await setup({ workflowId, dispatchClass: "product_implementation", authorizedAt: new Date("2026-07-13T09:00:00.000Z") });
-    const evidence = await setup({ workflowId, dispatchClass: "evidence_only", authorizedAt: new Date("2026-07-13T09:00:01.000Z") });
+    await setup({ workflowId, dispatchClass: "product_implementation", authorizedAt: at(-60 * 60_000) });
+    const evidence = await setup({ workflowId, dispatchClass: "evidence_only", authorizedAt: at(-60 * 60_000 + 1_000) });
     const worker = createV3EvidenceOnlyRecoveryWorker(database.sql, dependencies({ fixture: evidence, verdict: "pass" }));
     const raced = await Promise.all([
       worker.acquireNext({ workflowId, ownerInstanceId: "evidence-racer-a", leaseMs: 60_000 }),
@@ -513,7 +520,7 @@ describe("v3 evidence-only recovery worker", () => {
       workflowId: fixture.workflowId,
       ownerInstanceId: "evidence-publication-racer",
       leaseMs: 60_000,
-    }, { now: new Date("2026-07-13T10:00:00.000Z") });
+    }, { now: at() });
     assert.ok(acquired);
     const lease = publicationLease(acquired);
     const sliceRefKey = `SLICE_${sequence}_PUBLICATION`;
@@ -543,8 +550,8 @@ describe("v3 evidence-only recovery worker", () => {
     };
     const publication = createV3EvidenceOnlyPublication(database.sql);
     const raced = await Promise.allSettled([
-      publication.reserve(lease, prepared, { now: new Date("2026-07-13T10:00:01.000Z") }),
-      publication.reserve(lease, prepared, { now: new Date("2026-07-13T10:00:01.000Z") }),
+      publication.reserve(lease, prepared, { now: at(1_000) }),
+      publication.reserve(lease, prepared, { now: at(1_000) }),
     ]);
     assert.equal(raced.filter((result) => result.status === "fulfilled").length, 1);
     assert.equal(raced.filter((result) => result.status === "rejected").length, 1);
@@ -598,7 +605,7 @@ describe("v3 evidence-only recovery worker", () => {
       workflowId: fixture.workflowId,
       ownerInstanceId: "evidence-publication-rollback",
       leaseMs: 60_000,
-    }, { now: new Date("2026-07-13T10:00:00.000Z") });
+    }, { now: at() });
     assert.ok(acquired);
     const lease = publicationLease(acquired);
     await assert.rejects(
@@ -612,7 +619,7 @@ describe("v3 evidence-only recovery worker", () => {
         branch: "story/evidence-publication-rollback",
         agentId: "setfarm-evidence-orchestrator",
         evidenceRefs: [],
-      }, { now: new Date("2026-07-13T10:00:01.000Z") }),
+      }, { now: at(1_000) }),
       /V3_EVIDENCE_ONLY_PUBLICATION_ARTIFACT_INDEX_MISMATCH/,
     );
     const claims = await database.sql.unsafe<Array<{ count: number }>>(
@@ -663,7 +670,7 @@ describe("v3 evidence-only recovery worker", () => {
         owner.publication.markRunning({
           lease: owner.lease,
           attempt: owner.attempt,
-          now: new Date("2026-07-13T10:00:02.000Z"),
+          now: at(2_000),
         }),
         /TEST_FORCED_RUNNING_PUBLICATION_FAILURE/,
       );
@@ -684,7 +691,7 @@ describe("v3 evidence-only recovery worker", () => {
     await owner.publication.markRunning({
       lease: owner.lease,
       attempt: owner.attempt,
-      now: new Date("2026-07-13T10:00:02.000Z"),
+      now: at(2_000),
     });
     const evidence = canonicalEvidence({
       runId: fixture.runId,
@@ -727,7 +734,7 @@ describe("v3 evidence-only recovery worker", () => {
           attempt: owner.attempt,
           disposition: "verified",
           bundle: evidence.bundle,
-          now: new Date("2026-07-13T10:00:03.000Z"),
+          now: at(3_000),
         }),
         /TEST_FORCED_TERMINAL_PUBLICATION_FAILURE/,
       );
@@ -756,7 +763,7 @@ describe("v3 evidence-only recovery worker", () => {
     );
     const report = await createV3RecoveryLifecycleReconciler(database.sql).reconcileActive(
       { runId: fixture.runId },
-      { now: new Date("2026-07-13T10:00:03.000Z") },
+      { now: at(3_000) },
     );
     assert.equal(report.counts.advancedRunning, 1);
     assert.equal(report.events[0]?.code, "V3_RECOVERY_LIFECYCLE_EVIDENCE_RUNNING_ADVANCED");
@@ -771,14 +778,16 @@ describe("v3 evidence-only recovery worker", () => {
       ownerInstanceId: "evidence-expired-owner",
       leaseMs: 30_000,
     });
+    const deliveryExpiresAt = new Date(owner.lease.leaseExpiresAt);
     await database.sql.unsafe(
       "UPDATE execution_attempts SET lease_expires_at = $2 WHERE attempt_id = $1",
-      [owner.attempt.attemptId, new Date("2026-07-13T10:10:00.000Z")],
+      [owner.attempt.attemptId, new Date(deliveryExpiresAt.getTime() + 10 * 60_000)],
     );
     const reconciler = createV3RecoveryLifecycleReconciler(database.sql);
+    const reconcileAt = new Date(deliveryExpiresAt.getTime() + 1);
     const reports = await Promise.all([
-      reconciler.reconcileActive({ runId: fixture.runId }, { now: new Date("2026-07-13T10:01:00.000Z") }),
-      reconciler.reconcileActive({ runId: fixture.runId }, { now: new Date("2026-07-13T10:01:00.000Z") }),
+      reconciler.reconcileActive({ runId: fixture.runId }, { now: reconcileAt }),
+      reconciler.reconcileActive({ runId: fixture.runId }, { now: reconcileAt }),
     ]);
     assert.equal(
       reports.reduce((sum, report) => sum + report.counts.blockedExpiredEvidenceAttempts, 0),
@@ -884,7 +893,7 @@ describe("v3 evidence-only recovery worker", () => {
       workflowId: fixture.workflowId,
       ownerInstanceId: "evidence-pass-worker",
       leaseMs: 60_000,
-    }, { now: new Date("2026-07-13T10:00:00.000Z") });
+    }, { now: at() });
     assert.ok(result);
     assert.equal(executions, 1);
     assert.equal(result.execution, "executed");
@@ -911,7 +920,7 @@ describe("v3 evidence-only recovery worker", () => {
       workflowId: fixture.workflowId,
       ownerInstanceId: "evidence-fail-worker",
       leaseMs: 60_000,
-    }, { now: new Date("2026-07-13T10:00:00.000Z") });
+    }, { now: at() });
     assert.ok(result);
     assert.equal(result.coordinator.status, "blocked");
     if (result.coordinator.status === "blocked") {
@@ -946,12 +955,12 @@ describe("v3 evidence-only recovery worker", () => {
       workflowId: fixture.workflowId,
       ownerInstanceId: "stable-evidence-worker",
       leaseMs: 60_000,
-    }, { now: new Date("2026-07-13T10:00:00.000Z") }), /claim_completion/);
+    }, { now: at() }), /claim_completion/);
     assert.equal(executions, 1);
     assert.equal((await createRecoveryDeliveryRepository(database.sql).findDelivery(fixture.dispatch.dispatchId))?.state, "running");
     const lifecycle = await createV3RecoveryLifecycleReconciler(database.sql).reconcileActive(
       { runId: fixture.runId },
-      { now: new Date("2026-07-13T10:00:05.000Z") },
+      { now: at(5_000) },
     );
     assert.equal(lifecycle.counts.noops, 1);
     assert.equal(lifecycle.events[0]?.code, "V3_RECOVERY_LIFECYCLE_EVIDENCE_REPLAY_PENDING");
@@ -964,7 +973,7 @@ describe("v3 evidence-only recovery worker", () => {
       workflowId: fixture.workflowId,
       ownerInstanceId: "stable-evidence-worker",
       leaseMs: 60_000,
-    }, { now: new Date("2026-07-13T10:00:10.000Z") });
+    }, { now: at(10_000) });
     assert.ok(resumed);
     assert.equal(resumed.execution, "replayed");
     assert.equal(resumed.coordinator.status, "resolved");
@@ -987,7 +996,7 @@ describe("v3 evidence-only recovery worker", () => {
       workflowId: fixture.workflowId,
       ownerInstanceId: "evidence-source-fence-worker",
       leaseMs: 60_000,
-    }, { now: new Date("2026-07-13T10:00:00.000Z") }), /V3_EVIDENCE_ONLY_SOURCE_MUTATED/);
+    }, { now: at() }), /V3_EVIDENCE_ONLY_SOURCE_MUTATED/);
     const rows = await database.sql.unsafe<Array<{ state: string; diagnostic: string | null }>>(
       "SELECT state, diagnostic FROM recovery_dispatch_deliveries WHERE dispatch_id = $1",
       [fixture.dispatch.dispatchId],

@@ -7,6 +7,7 @@ import {
   createRuntimeCompletionRepository,
   requestRuntimeCompletion,
 } from "../../src/execution/runtime-completion.js";
+import { runWithRuntimeCompletionOwner } from "../../src/execution/runtime-completion-owner-context.js";
 import { createRuntimeSessionRepository } from "../../src/execution/runtime-session-repository.js";
 import { recoverV3StageFailureV1 } from "../../src/execution/v3-stage-retry-authority.js";
 import { canonicalJsonStringify } from "../../src/product-compiler/canonical-json.js";
@@ -143,15 +144,23 @@ test("invalid PLAN v3 proposal closes the exact claim and settles as a bounded r
       ownerInstanceId: "spawner-test",
       evidence: DRAIN_EVIDENCE,
     });
-    await completions.markProcessing({
+    const processing = await completions.markProcessing({
       requestId: requested.request.requestId,
       ownerInstanceId: "spawner-test",
     });
+    if (!processing.ownerInstanceId || !processing.leaseExpiresAt) {
+      throw new Error("test completion owner capability missing");
+    }
 
     const { completeStep } = await import("../../src/installer/step-ops.js");
-    assert.deepEqual(await completeStep(stepDbId, output, envelope, {
-      deferContinuationToEffectLedger: true,
-    }), { advanced: false, runCompleted: false });
+    assert.deepEqual(await runWithRuntimeCompletionOwner({
+      requestId: processing.requestId,
+      ownerInstanceId: processing.ownerInstanceId,
+      leaseExpiresAt: processing.leaseExpiresAt,
+      ownerAttemptCount: processing.ownerAttemptCount,
+    }, () => completeStep(stepDbId, output, envelope, {
+        deferContinuationToEffectLedger: true,
+      })), { advanced: false, runCompleted: false });
 
     const ownerState = await database.sql<Array<{
       claim_outcome: string;
@@ -265,11 +274,13 @@ test("invalid PLAN v3 proposal closes the exact claim and settles as a bounded r
     await completions.markEffectsCommitted({
       requestId: requested.request.requestId,
       ownerInstanceId: "spawner-test",
+      ownerAttemptCount: (await completions.findById(requested.request.requestId))!.ownerAttemptCount,
       result,
     });
     await completions.acceptAndRelease({
       requestId: requested.request.requestId,
       ownerInstanceId: "spawner-test",
+      ownerAttemptCount: (await completions.findById(requested.request.requestId))!.ownerAttemptCount,
       result,
     });
 
@@ -348,13 +359,21 @@ test("invalid PLAN v3 proposal closes the exact claim and settles as a bounded r
         evidenceRefs: ["setfarm://test/v3-plan-invalid-proposal-retry-drain-2"],
       },
     });
-    await completions.markProcessing({
+    const retryProcessing = await completions.markProcessing({
       requestId: requestedRetry.request.requestId,
       ownerInstanceId: retryOwner,
     });
-    assert.deepEqual(await completeStep(stepDbId, changedOutput, retryEnvelope, {
-      deferContinuationToEffectLedger: true,
-    }), { advanced: false, runCompleted: false });
+    if (!retryProcessing.ownerInstanceId || !retryProcessing.leaseExpiresAt) {
+      throw new Error("test retry completion owner capability missing");
+    }
+    assert.deepEqual(await runWithRuntimeCompletionOwner({
+      requestId: retryProcessing.requestId,
+      ownerInstanceId: retryProcessing.ownerInstanceId,
+      leaseExpiresAt: retryProcessing.leaseExpiresAt,
+      ownerAttemptCount: retryProcessing.ownerAttemptCount,
+    }, () => completeStep(stepDbId, changedOutput, retryEnvelope, {
+        deferContinuationToEffectLedger: true,
+      })), { advanced: false, runCompleted: false });
     const retryEffect = await effects.claimNext({
       requestId: requestedRetry.request.requestId,
       ownerInstanceId: retryOwner,
@@ -372,11 +391,13 @@ test("invalid PLAN v3 proposal closes the exact claim and settles as a bounded r
     await completions.markEffectsCommitted({
       requestId: requestedRetry.request.requestId,
       ownerInstanceId: retryOwner,
+      ownerAttemptCount: (await completions.findById(requestedRetry.request.requestId))!.ownerAttemptCount,
       result,
     });
     await completions.acceptAndRelease({
       requestId: requestedRetry.request.requestId,
       ownerInstanceId: retryOwner,
+      ownerAttemptCount: (await completions.findById(requestedRetry.request.requestId))!.ownerAttemptCount,
       result,
     });
 
@@ -438,13 +459,21 @@ test("invalid PLAN v3 proposal closes the exact claim and settles as a bounded r
         evidenceRefs: ["setfarm://test/v3-plan-invalid-proposal-retry-drain-3"],
       },
     });
-    await completions.markProcessing({
+    const returningProcessing = await completions.markProcessing({
       requestId: requestedReturning.request.requestId,
       ownerInstanceId: returningOwner,
     });
-    assert.deepEqual(await completeStep(stepDbId, output, returningEnvelope, {
-      deferContinuationToEffectLedger: true,
-    }), { advanced: false, runCompleted: false });
+    if (!returningProcessing.ownerInstanceId || !returningProcessing.leaseExpiresAt) {
+      throw new Error("test returning completion owner capability missing");
+    }
+    assert.deepEqual(await runWithRuntimeCompletionOwner({
+      requestId: returningProcessing.requestId,
+      ownerInstanceId: returningProcessing.ownerInstanceId,
+      leaseExpiresAt: returningProcessing.leaseExpiresAt,
+      ownerAttemptCount: returningProcessing.ownerAttemptCount,
+    }, () => completeStep(stepDbId, output, returningEnvelope, {
+        deferContinuationToEffectLedger: true,
+      })), { advanced: false, runCompleted: false });
     const returningEffect = await effects.claimNext({
       requestId: requestedReturning.request.requestId,
       ownerInstanceId: returningOwner,
@@ -462,11 +491,13 @@ test("invalid PLAN v3 proposal closes the exact claim and settles as a bounded r
     await completions.markEffectsCommitted({
       requestId: requestedReturning.request.requestId,
       ownerInstanceId: returningOwner,
+      ownerAttemptCount: (await completions.findById(requestedReturning.request.requestId))!.ownerAttemptCount,
       result,
     });
     await completions.acceptAndRelease({
       requestId: requestedReturning.request.requestId,
       ownerInstanceId: returningOwner,
+      ownerAttemptCount: (await completions.findById(requestedReturning.request.requestId))!.ownerAttemptCount,
       result,
     });
 

@@ -98,4 +98,25 @@ describe("v3 pre-dispatch failure ownership", () => {
     assert.equal(disposition.disposition, "terminal_contract");
     assert.equal(disposition.occurrence, 1);
   });
+
+  it("terminalizes unresolved implementation input and empty critical context before model dispatch", () => {
+    for (const [code, message] of [
+      ["V3_IMPLEMENTATION_INPUT_UNRESOLVED", "Blocked: unresolved variable(s) [repo] in input"],
+      ["V3_IMPLEMENTATION_CRITICAL_CONTEXT_EMPTY", "EMPTY_CRITICAL_VARS: [repo] are empty"],
+    ] as const) {
+      const failure = createV3PreDispatchFailureV1({
+        identity: { ...identity(), phase: "source" },
+        error: Object.assign(new Error(message), { code }),
+      });
+      const disposition = decideV3PreDispatchDispositionV1({
+        failure,
+        priorEquivalentFailures: 0,
+      });
+      assert.equal(failure.decision.errorCode, code);
+      assert.equal(failure.decision.action, "invariant_failure");
+      assert.equal(disposition.disposition, "terminal_contract");
+      assert.equal(disposition.claimOutcome, "failed");
+      assert.equal(disposition.runTerminal, true);
+    }
+  });
 });

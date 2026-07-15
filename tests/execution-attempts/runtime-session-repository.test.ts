@@ -197,11 +197,17 @@ async function seedAttemptBoundRecoveryRuntime(
   });
   const session = await sessions.findById(publication.runtime.sessionId);
   assert.ok(session);
-  await sessions.markStarting({
-    sessionId: session.sessionId,
-    ownerInstanceId: session.ownerInstanceId,
-  });
-  return { sessions, session, attempt, deliveries, handoff };
+  const recoveryFence = {
+    revisionId: handoff.revisionId,
+    dispatchId: handoff.dispatchId,
+    leaseToken: handoff.lease.leaseToken,
+    attempt: {
+      attemptId: attempt.attempt.attemptId,
+      generation: attempt.attempt.generation,
+      fenceToken: attempt.attempt.fenceToken,
+    },
+  };
+  return { sessions, session, attempt, deliveries, handoff, recoveryFence };
 }
 
 describe("durable runtime session ownership", () => {
@@ -407,6 +413,11 @@ describe("durable runtime session ownership", () => {
         runId: "run-recovery-runtime-start",
       });
       assert.equal((await fixture.deliveries.findDelivery(fixture.handoff.dispatchId))?.state, "attempt_reserved");
+      await fixture.sessions.markStarting({
+        sessionId: fixture.session.sessionId,
+        ownerInstanceId: fixture.session.ownerInstanceId,
+        recoveryFence: fixture.recoveryFence,
+      });
       const running = await fixture.sessions.markRunning({
         sessionId: fixture.session.sessionId,
         ownerInstanceId: fixture.session.ownerInstanceId,
@@ -418,6 +429,7 @@ describe("durable runtime session ownership", () => {
           processGroupId: 4321,
           source: "observed_os",
         },
+        recoveryFence: fixture.recoveryFence,
       });
       assert.equal(running.status, "running");
       assert.equal((await fixture.deliveries.findDelivery(fixture.handoff.dispatchId))?.state, "running");
@@ -430,7 +442,7 @@ describe("durable runtime session ownership", () => {
     }
   });
 
-  it("rolls back runtime and attempt start when the recovery delivery owner differs", async () => {
+  it("blocks runtime start before publication when the recovery delivery owner differs", async () => {
     const database = await createIsolatedTestDatabase();
     try {
       const fixture = await seedAttemptBoundRecoveryRuntime(database, {
@@ -438,21 +450,14 @@ describe("durable runtime session ownership", () => {
         runtimeOwnerInstanceId: "different-spawner",
       });
       await assert.rejects(
-        fixture.sessions.markRunning({
+        fixture.sessions.markStarting({
           sessionId: fixture.session.sessionId,
           ownerInstanceId: fixture.session.ownerInstanceId,
-          pid: 5432,
-          processIdentity: {
-            schema: "setfarm.process-identity.v1",
-            pid: 5432,
-            processStartedAt: "2026-07-13T12:11:00.000Z",
-            processGroupId: 5432,
-            source: "observed_os",
-          },
+          recoveryFence: fixture.recoveryFence,
         }),
-        /RUNTIME_SESSION_RECOVERY_DELIVERY_RUNNING_CAS_LOST/,
+        /RUNTIME_SESSION_RECOVERY_DELIVERY_FENCE_STALE/,
       );
-      assert.equal((await fixture.sessions.findById(fixture.session.sessionId))?.state, "starting");
+      assert.equal((await fixture.sessions.findById(fixture.session.sessionId))?.state, "reserved");
       assert.equal((await fixture.deliveries.findDelivery(fixture.handoff.dispatchId))?.state, "attempt_reserved");
       assert.equal(
         (await createAttemptRepository(database.sql).findById(fixture.attempt.attempt.attemptId))?.disposition,
@@ -644,6 +649,124 @@ describe("durable runtime session ownership", () => {
       });
       assert.equal(replay.state, "drained");
       assert.deepEqual(replay.drainEvidence, freshEvidence);
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("returns the durable termination drain handoff when termination wins after markStarting", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const runId = "run-runtime-start-termination-handoff";
+      const { stepDbId, storyDbId, claimId } = await seedStory(database, runId);
+      const sessions = createRuntimeSessionRepository(database.sql);
+      const reserved = await sessions.reserve({
+        sessionId: "RTS_runtime-start-termination-handoff",
+        runId,
+        stepDbId,
+        workflowStepId: "implement",
+        storyDbId,
+        storyId: "US-001",
+        claimId,
+        claimAgentId: "feature-dev_developer",
+        runtimeAgentId: "prism",
+        runtimeKind: "openclaw_session",
+        ownerInstanceId: "spawner-runtime",
+      });
+      await sessions.markStarting({
+        sessionId: reserved.sessionId,
+        ownerInstanceId: reserved.ownerInstanceId,
+      });
+      const termination = await requestRunTermination(database.sql, {
+        runId,
+        targetStatus: "failed",
+        requestedBy: "test.runtime-start-race",
+        diagnostic: "termination won after runtime start intent",
+        requestId: "RTR_runtime-start-termination-handoff",
+      });
+      assert.equal(termination.status, "requested");
+      const draining = await sessions.requestDrain({
+        sessionId: reserved.sessionId,
+        ownerInstanceId: reserved.ownerInstanceId,
+        diagnostic: "termination owns the drain",
+      });
+      assert.equal(draining.state, "drain_requested");
+
+      const handoff = await sessions.markRunning({
+        sessionId: reserved.sessionId,
+        ownerInstanceId: reserved.ownerInstanceId,
+        sessionKey: "must-not-be-published-running",
+      });
+      assert.equal(handoff.status, "drain_requested");
+      assert.equal(handoff.session.state, "drain_requested");
+      assert.equal(handoff.session.sessionKey, undefined);
+      const rows = await database.sql<Array<{
+        run_status: string;
+        runtime_state: string;
+        termination_count: number;
+      }>>`
+        SELECT run.status AS run_status, runtime.state AS runtime_state,
+               (SELECT COUNT(*)::integer FROM run_termination_requests request
+                 WHERE request.run_id = run.id AND request.state <> 'terminalized') AS termination_count
+          FROM runs run
+          JOIN runtime_sessions runtime ON runtime.run_id = run.id
+         WHERE run.id = ${runId}
+      `;
+      assert.deepEqual({ ...rows[0] }, {
+        run_status: "failing",
+        runtime_state: "drain_requested",
+        termination_count: 1,
+      });
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("returns a recovery runtime drain handoff before consulting a stale attempt fence", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const fixture = await seedAttemptBoundRecoveryRuntime(database, {
+        runId: "run-recovery-runtime-termination-handoff",
+      });
+      await fixture.sessions.markStarting({
+        sessionId: fixture.session.sessionId,
+        ownerInstanceId: fixture.session.ownerInstanceId,
+        recoveryFence: fixture.recoveryFence,
+      });
+      const termination = await requestRunTermination(database.sql, {
+        runId: fixture.session.runId,
+        targetStatus: "failed",
+        requestedBy: "test.recovery-runtime-start-race",
+        diagnostic: "termination won while the recovery runtime was starting",
+        requestId: "RTR_recovery-runtime-termination-handoff",
+      });
+      assert.equal(termination.status, "requested");
+      const draining = await fixture.sessions.requestDrain({
+        sessionId: fixture.session.sessionId,
+        ownerInstanceId: fixture.session.ownerInstanceId,
+        diagnostic: "termination owns the recovery runtime drain",
+      });
+      assert.equal(draining.state, "drain_requested");
+
+      await database.sql`
+        UPDATE execution_attempts
+           SET fence_token = ${"e".repeat(64)}, updated_at = NOW()
+         WHERE attempt_id = ${fixture.attempt.attempt.attemptId}
+      `;
+
+      const handoff = await fixture.sessions.markRunning({
+        sessionId: fixture.session.sessionId,
+        ownerInstanceId: fixture.session.ownerInstanceId,
+        sessionKey: "must-not-be-published-after-recovery-relinquish",
+        recoveryFence: fixture.recoveryFence,
+      });
+      assert.equal(handoff.status, "drain_requested");
+      assert.equal(handoff.session.state, "drain_requested");
+      assert.equal(handoff.session.sessionKey, undefined);
+      assert.equal(
+        (await fixture.sessions.findById(fixture.session.sessionId))?.state,
+        "drain_requested",
+      );
     } finally {
       await database.cleanup();
     }

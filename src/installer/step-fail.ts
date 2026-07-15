@@ -47,6 +47,7 @@ import { requestRunTerminationInTransaction } from "../execution/run-termination
 
 export type FailStepOptions = Readonly<{
   singleStepMode?: "bounded_stage_retry" | "terminal_platform_preclaim";
+  recoveryAuthority?: "orphan_recovery";
 }>;
 
 /**
@@ -85,6 +86,9 @@ export async function failStep(
   const failureAuthority = claimEnvelope
     ? await assertClaimAuthority(getSql(), claimEnvelope, step.id)
     : undefined;
+  if (options.recoveryAuthority === "orphan_recovery" && !failureAuthority) {
+    throw new Error("CLAIM_ORPHAN_RECOVERY_ENVELOPE_REQUIRED");
+  }
   const runProtocol = await pgGet<{ protocol: string }>("SELECT protocol FROM runs WHERE id = $1", [step.run_id]);
   if (runProtocol?.protocol !== "legacy" && !failureAuthority) {
     throw new Error("CLAIM_ENVELOPE_REQUIRED");
@@ -95,7 +99,13 @@ export async function failStep(
     if (options.singleStepMode === "terminal_platform_preclaim") {
       throw new Error("PLATFORM_PRECLAIM_FAILURE_MODE_REQUIRES_SINGLE_STEP");
     }
-    return handleLoopStepFailurePG(stepId, step, error, failureAuthority?.envelope);
+    return handleLoopStepFailurePG(
+      stepId,
+      step,
+      error,
+      failureAuthority?.envelope,
+      options.recoveryAuthority,
+    );
   }
   return handleSingleStepFailurePG(
     stepId,
@@ -103,6 +113,7 @@ export async function failStep(
     error,
     failureAuthority?.envelope,
     options.singleStepMode ?? "bounded_stage_retry",
+    options.recoveryAuthority,
   );
 }
 
@@ -162,6 +173,7 @@ export async function terminalizeLoopClaimAndState(input: Readonly<{
   shadowFailure?: ShadowFailurePreparation;
   attemptDisposition: "inconclusive" | "failed";
   claimEnvelope?: ClaimEnvelopeV1;
+  recoveryAuthority?: "orphan_recovery";
   state: LoopClaimStateTransition;
 }>): Promise<void> {
   // Preserve the source-at-failure observation when its exact fence still
@@ -174,7 +186,6 @@ export async function terminalizeLoopClaimAndState(input: Readonly<{
     storyDbId: input.storyDbId,
     agentId: input.agentId,
   });
-  await finalizeShadowAttemptFailure(shadowFailure, input.attemptDisposition);
   const claim = await pgGet<{ id: string; run_id: string; step_id: string; story_id: string; agent_id: string; outcome: string | null }>(
     `SELECT id::text, run_id, step_id, story_id, agent_id, outcome
        FROM claim_log
@@ -232,6 +243,13 @@ export async function terminalizeLoopClaimAndState(input: Readonly<{
       agentId: claim.agent_id,
       outcome: input.outcome,
       diagnostic: input.error,
+      ...(input.recoveryAuthority ? { recoveryAuthority: input.recoveryAuthority } : {}),
+      ...(shadowFailure.status === "prepared"
+        ? {
+            attemptDisposition: input.attemptDisposition,
+            attemptFailureEvidence: shadowFailure.capture,
+          }
+        : {}),
     });
     if (closed.status !== "closed") throw new Error("LOOP_CLAIM_LIFECYCLE_CAS_LOST");
 
@@ -300,6 +318,11 @@ export async function terminalizeLoopClaimAndState(input: Readonly<{
       });
     }
   });
+  // The exact source-at-failure revision and evidence refs were persisted in
+  // the transaction above. This post-commit hook is telemetry only: its exact
+  // fence is now terminal, so it can observe a stale fence but cannot become a
+  // second lifecycle writer.
+  await finalizeShadowAttemptFailure(shadowFailure, input.attemptDisposition);
 }
 
 async function handleLoopStepFailurePG(
@@ -307,6 +330,7 @@ async function handleLoopStepFailurePG(
   step: { run_id: string; step_id?: string; step_index: number; retry_count: number; max_retries: number; type: string; current_story_id: string | null; agent_id: string },
   error: string,
   claimEnvelope?: ClaimEnvelopeV1,
+  recoveryAuthority?: "orphan_recovery",
 ): Promise<{ retrying: boolean; runFailed: boolean }> {
   const workflowStepId = step.step_id || stepId;
   const shadowFailure = await prepareShadowAttemptFailure({
@@ -319,7 +343,14 @@ async function handleLoopStepFailurePG(
     "SELECT id, retry_count, max_retries, output FROM stories WHERE id = $1", [step.current_story_id!]
   );
 
-  if (!story) return handleSingleStepFailurePG(stepId, step, error, claimEnvelope);
+  if (!story) return handleSingleStepFailurePG(
+    stepId,
+    step,
+    error,
+    claimEnvelope,
+    "bounded_stage_retry",
+    recoveryAuthority,
+  );
 
   const storyRow = await getStoryInfo(step.current_story_id!);
   if (isTransientAgentInfrastructureFailure(error)) {
@@ -337,6 +368,7 @@ async function handleLoopStepFailurePG(
       shadowFailure,
       attemptDisposition: "inconclusive",
       ...(claimEnvelope ? { claimEnvelope } : {}),
+      ...(recoveryAuthority ? { recoveryAuthority } : {}),
       state: {
         storyStatus: "pending",
         storyOutput,
@@ -377,6 +409,7 @@ async function handleLoopStepFailurePG(
       shadowFailure,
       attemptDisposition: "failed",
       ...(claimEnvelope ? { claimEnvelope } : {}),
+      ...(recoveryAuthority ? { recoveryAuthority } : {}),
       state: {
         storyStatus: "failed",
         storyOutput,
@@ -415,6 +448,7 @@ async function handleLoopStepFailurePG(
     shadowFailure,
     attemptDisposition: "failed",
     ...(claimEnvelope ? { claimEnvelope } : {}),
+    ...(recoveryAuthority ? { recoveryAuthority } : {}),
     state: {
       storyStatus: "pending",
       storyOutput,
@@ -515,6 +549,7 @@ async function closeSingleStepClaimForFailure(
     outcome: SingleStepClaimOutcome;
     diagnostic: string;
     claimEnvelope?: ClaimEnvelopeV1;
+    recoveryAuthority?: "orphan_recovery";
   }>,
 ): Promise<void> {
   if (input.claimEnvelope) {
@@ -522,6 +557,7 @@ async function closeSingleStepClaimForFailure(
       envelope: input.claimEnvelope,
       outcome: input.outcome,
       diagnostic: input.diagnostic,
+      ...(input.recoveryAuthority ? { recoveryAuthority: input.recoveryAuthority } : {}),
     });
     return;
   }
@@ -554,6 +590,7 @@ async function handleSingleStepFailurePG(
   error: string,
   claimEnvelope?: ClaimEnvelopeV1,
   failureMode: "bounded_stage_retry" | "terminal_platform_preclaim" = "bounded_stage_retry",
+  recoveryAuthority?: "orphan_recovery",
 ): Promise<{ retrying: boolean; runFailed: boolean }> {
   const terminalPlatformPreclaim = failureMode === "terminal_platform_preclaim";
   if (terminalPlatformPreclaim) {
@@ -580,6 +617,7 @@ async function handleSingleStepFailurePG(
         outcome: "infra_retry",
         diagnostic: error,
         ...(claimEnvelope ? { claimEnvelope } : {}),
+        ...(recoveryAuthority ? { recoveryAuthority } : {}),
       });
       await sql`UPDATE steps SET status = 'pending', output = ${error}, updated_at = ${now()} WHERE id = ${stepId}`;
       if (claimEnvelope) {
@@ -622,6 +660,7 @@ async function handleSingleStepFailurePG(
           outcome: "failed",
           diagnostic: error,
           ...(claimEnvelope ? { claimEnvelope } : {}),
+          ...(recoveryAuthority ? { recoveryAuthority } : {}),
         });
         await sql`UPDATE steps SET status = 'failed', output = ${error}, retry_count = ${terminalRetry}, updated_at = ${now()} WHERE id = ${stepId}`;
         await requestRunTerminationInTransaction(sql, {
@@ -644,6 +683,7 @@ async function handleSingleStepFailurePG(
           outcome: "skipped",
           diagnostic: error,
           ...(claimEnvelope ? { claimEnvelope } : {}),
+          ...(recoveryAuthority ? { recoveryAuthority } : {}),
         });
         await sql`UPDATE steps SET status = 'skipped', output = ${"SKIPPED: " + error}, retry_count = ${terminalRetry}, updated_at = ${now()} WHERE id = ${stepId}`;
       }
@@ -656,6 +696,7 @@ async function handleSingleStepFailurePG(
         outcome: "failed",
         diagnostic: error,
         ...(claimEnvelope ? { claimEnvelope } : {}),
+        ...(recoveryAuthority ? { recoveryAuthority } : {}),
       });
       await sql`UPDATE steps SET status = 'pending', retry_count = ${newRetryCount}, output = ${error}, updated_at = ${now()} WHERE id = ${stepId}`;
     }

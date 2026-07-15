@@ -17,6 +17,7 @@ import {
 import { createV3ReleaseAdmissionV1 } from "../../src/execution/v3-release-admission.js";
 import { ClaimEnvelopeV1Schema } from "../../src/execution/schemas/claim-envelope-v1.js";
 import { RuntimeCompletionPlanV1Schema } from "../../src/execution/schemas/runtime-completion-plan-v1.js";
+import { runWithRuntimeCompletionOwner } from "../../src/execution/runtime-completion-owner-context.js";
 import { buildClaimSummary, buildPreclaimedPrompt } from "../../src/spawner-prompt.js";
 
 const RELEASE_SHA = "c".repeat(40);
@@ -869,11 +870,19 @@ test("claimStep publishes and completes one exact bounded supervisor repair with
     });
     assert.equal(processingCompletion.state, "processing");
     assert.equal(processingCompletion.applyPhase, "executing");
+    if (!processingCompletion.ownerInstanceId || !processingCompletion.leaseExpiresAt) {
+      throw new Error("test completion owner capability missing");
+    }
 
     assert.deepEqual(
-      await stepOpsModule.completeStep(STEP_DB_ID, preparedReadyOutput.output, envelope, {
-        deferContinuationToEffectLedger: true,
-      }),
+      await runWithRuntimeCompletionOwner({
+        requestId: processingCompletion.requestId,
+        ownerInstanceId: processingCompletion.ownerInstanceId,
+        leaseExpiresAt: processingCompletion.leaseExpiresAt,
+        ownerAttemptCount: processingCompletion.ownerAttemptCount,
+      }, () => stepOpsModule.completeStep(STEP_DB_ID, preparedReadyOutput.output, envelope, {
+          deferContinuationToEffectLedger: true,
+        })),
       { advanced: false, runCompleted: false },
     );
 
@@ -991,12 +1000,14 @@ test("claimStep publishes and completes one exact bounded supervisor repair with
     const effectsCommitted = await completionRepository.markEffectsCommitted({
       requestId: completionRequestId,
       ownerInstanceId: COMPLETION_OWNER_INSTANCE_ID,
+      ownerAttemptCount: (await completionRepository.findById(completionRequestId))!.ownerAttemptCount,
       result: ledgerResult,
     });
     assert.equal(effectsCommitted.applyPhase, "effects_committed");
     const acceptedCompletion = await completionRepository.acceptAndRelease({
       requestId: completionRequestId,
       ownerInstanceId: COMPLETION_OWNER_INSTANCE_ID,
+      ownerAttemptCount: (await completionRepository.findById(completionRequestId))!.ownerAttemptCount,
       result: ledgerResult,
     });
     assert.equal(acceptedCompletion.state, "accepted");

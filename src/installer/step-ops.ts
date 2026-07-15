@@ -2189,8 +2189,7 @@ async function publishVerifyRetryToImplement(input: Readonly<{
     const supervisorSteps = await sql.unsafe<Array<{ id: string }>>(
       `SELECT id
          FROM steps
-        WHERE run_id = $1 AND step_id = $2
-        FOR UPDATE`,
+        WHERE run_id = $1 AND step_id = $2`,
       [input.verifyStep.run_id, input.superviseStepName],
     );
     const supervisorStep = supervisorSteps[0];
@@ -4172,14 +4171,24 @@ type RuntimeClaimOwnership = Readonly<{
 }>;
 
 async function closeUnstartedStoryClaimExact(
-  claimId: number | null,
+  identity: Readonly<{
+    claimId: number | null;
+    runId: string;
+    workflowStepId: string;
+    storyId: string;
+    claimAgentId: string;
+  }>,
   diagnostic: string,
   outcome: "failed" | "infra_retry" = "failed",
   runtime?: RuntimeClaimOwnership,
 ): Promise<void> {
-  if (claimId === null) return;
+  if (identity.claimId === null) return;
   await pgBegin((sql) => closeReservedClaimRuntimeInTransaction(sql, {
-    claimId,
+    claimId: identity.claimId!,
+    runId: identity.runId,
+    workflowStepId: identity.workflowStepId,
+    storyId: identity.storyId,
+    claimAgentId: identity.claimAgentId,
     outcome,
     diagnostic,
     runtime,
@@ -5767,6 +5776,10 @@ async function claimSingleStep(
     if (singleStepClaimId === null) return;
     await pgBegin((sql) => closeReservedClaimRuntimeInTransaction(sql, {
       claimId: singleStepClaimId!,
+      runId: step.run_id,
+      workflowStepId: step.step_id,
+      storyId: null,
+      claimAgentId: agentId,
       outcome,
       diagnostic,
       runtime: singleStepRuntime,
@@ -6363,6 +6376,70 @@ async function claimSingleStep(
   const allMissing = [...new Set([...resolvedInput.matchAll(/\[missing:\s*(\w+)\]/gi)].map(m => m[1].toLowerCase()))];
   if (allMissing.length > 0) {
     const reason = `Blocked: unresolved variable(s) [${allMissing.join(", ")}] in input`;
+    if (runProtocol?.protocol === "v3") {
+      if (singleStepClaimId === null || !singleStepClaimEnvelope) {
+        throw new Error("V3_STAGE_INPUT_UNRESOLVED_CLAIM_AUTHORITY_MISSING");
+      }
+      const diagnostic = `V3_STAGE_INPUT_UNRESOLVED: ${reason}; unchanged input has no model redispatch authority`;
+      const transitionTime = now();
+      await pgBegin(async (sql) => {
+        await closeReservedClaimRuntimeInTransaction(sql, {
+          claimId: singleStepClaimId!,
+          runId: step.run_id,
+          workflowStepId: step.step_id,
+          storyId: null,
+          claimAgentId: agentId,
+          outcome: "failed",
+          diagnostic,
+          runtime: singleStepRuntime,
+        });
+        const steps = await sql.unsafe<Array<{ id: string }>>(
+          `UPDATE steps
+              SET status = 'failed', output = $1, updated_at = $2
+            WHERE id = $3 AND run_id = $4 AND step_id = $5 AND status = 'running'
+            RETURNING id`,
+          [diagnostic, transitionTime, step.id, step.run_id, step.step_id],
+        );
+        if (steps.length !== 1) throw new Error("V3_STAGE_INPUT_UNRESOLVED_STEP_CAS_LOST");
+        await requestRunTerminationInTransaction(sql, {
+          runId: step.run_id,
+          targetStatus: "failed",
+          requestedBy: "setfarm.v3-stage-input-authority",
+          diagnostic,
+          evidence: {
+            schema: "setfarm.v3-stage-input-unresolved.v1",
+            missingVariables: allMissing,
+            modelRedispatchBudget: 0,
+          },
+          now: new Date(transitionTime),
+        });
+      });
+      await recordObservation({
+        runId: step.run_id,
+        stepId: step.step_id,
+        phase: "v3-pre-dispatch",
+        checkId: `v3_stage_input.unresolved:${allMissing.join(",")}`,
+        label: "V3 stage input authority",
+        status: "blocked",
+        summary: diagnostic,
+        evidence: {
+          schema: "setfarm.v3-stage-input-unresolved.v1",
+          missingVariables: allMissing,
+          modelRedispatchBudget: 0,
+        },
+      });
+      const workflowId = await getWorkflowId(step.run_id);
+      emitEvent({
+        ts: now(), event: "step.failed", runId: step.run_id, workflowId,
+        stepId: step.step_id, agentId, detail: diagnostic,
+      });
+      emitEvent({
+        ts: now(), event: "run.failed", runId: step.run_id, workflowId,
+        detail: diagnostic,
+      });
+      scheduleRunCronTeardown(step.run_id);
+      return { found: false };
+    }
     // Check step's retry_count to decide retry vs fail
     const stepRetry = await pgGet<{ retry_count: number }>("SELECT retry_count FROM steps WHERE id = $1", [step.id]);
     const retryCount = stepRetry?.retry_count ?? 0;
@@ -6404,6 +6481,10 @@ async function claimSingleStep(
       await pgBegin(async (sql) => {
         await closeReservedClaimRuntimeInTransaction(sql, {
           claimId: singleStepClaimId!,
+          runId: step.run_id,
+          workflowStepId: step.step_id,
+          storyId: null,
+          claimAgentId: agentId,
           outcome: "failed",
           diagnostic,
           runtime: singleStepRuntime,
@@ -7749,10 +7830,33 @@ export async function claimStep(
       const allMissing = [...new Set([...resolvedInput.matchAll(/\[missing:\s*(\w+)\]/gi)].map(m => m[1].toLowerCase()))];
       if (allMissing.length > 0) {
         const reason = `Blocked: unresolved variable(s) [${allMissing.join(", ")}] in input`;
+        if (runProtocol?.protocol === "v3") {
+          await handleV3PreDispatchFailure({
+            step,
+            story: nextStory,
+            agentId,
+            claimId: legacyClaimId,
+            runtime: claimRuntime,
+            authority: v3PreparationAuthority!,
+            phase: "source",
+            error: Object.assign(new Error(reason), {
+              code: "V3_IMPLEMENTATION_INPUT_UNRESOLVED",
+            }),
+            repo: context["repo"],
+            storyBranch,
+          });
+          return { found: false };
+        }
         const storyRetry = await pgGet<{ retry_count: number }>("SELECT retry_count FROM stories WHERE id = $1", [nextStory.id]);
         const retryCount = storyRetry?.retry_count ?? 0;
         logger.warn(`${reason} (story=${nextStory.story_id}, retry=${retryCount})`, { runId: step.run_id, stepId: step.step_id });
-        await closeUnstartedStoryClaimExact(legacyClaimId, reason, "failed", claimRuntime);
+        await closeUnstartedStoryClaimExact({
+          claimId: legacyClaimId,
+          runId: step.run_id,
+          workflowStepId: step.step_id,
+          storyId: nextStory.story_id,
+          claimAgentId: agentId,
+        }, reason, "failed", claimRuntime);
         // Reset the claimed story
         if (retryCount > 0) {
           // Second occurrence — fail everything (Wave 13 J-2: terminal flag)
@@ -7781,7 +7885,30 @@ export async function claimStep(
       if (emptyVars.length > 0) {
         const emptyReason = `EMPTY_CRITICAL_VARS: [${emptyVars.join(", ")}] are empty — cannot implement story`;
         logger.warn(`[claim] ${emptyReason} (story=${nextStory.story_id})`, { runId: step.run_id });
-        await closeUnstartedStoryClaimExact(legacyClaimId, emptyReason, "failed", claimRuntime);
+        if (runProtocol?.protocol === "v3") {
+          await handleV3PreDispatchFailure({
+            step,
+            story: nextStory,
+            agentId,
+            claimId: legacyClaimId,
+            runtime: claimRuntime,
+            authority: v3PreparationAuthority!,
+            phase: "source",
+            error: Object.assign(new Error(emptyReason), {
+              code: "V3_IMPLEMENTATION_CRITICAL_CONTEXT_EMPTY",
+            }),
+            repo: context["repo"],
+            storyBranch,
+          });
+          return { found: false };
+        }
+        await closeUnstartedStoryClaimExact({
+          claimId: legacyClaimId,
+          runId: step.run_id,
+          workflowStepId: step.step_id,
+          storyId: nextStory.story_id,
+          claimAgentId: agentId,
+        }, emptyReason, "failed", claimRuntime);
         await pgRun("UPDATE stories SET status = 'failed', output = $1, updated_at = $2 WHERE id = $3",
           [emptyReason, now(), nextStory.id]);
         await pgRun("UPDATE steps SET current_story_id = NULL, updated_at = $1 WHERE id = $2", [now(), step.id]);
@@ -7835,12 +7962,6 @@ export async function claimStep(
             if (fence.status === "reverted" && context["repo"]) {
               removeStoryWorktree(context["repo"], storyBranch, agentId);
             }
-            await pgBegin((sql) => closeReservedClaimRuntimeInTransaction(sql, {
-              claimId: legacyClaimId,
-              outcome: "infra_retry",
-              diagnostic: `Compiler fence unavailable: ${fence.status === "blocked" ? fence.reason : fence.status}`,
-              runtime: claimRuntime,
-            }));
             logger.warn(`[claim] compiler claim not handed off: ${fence.status === "blocked" ? fence.reason : fence.status}`, { runId: step.run_id, stepId: step.step_id });
             return { found: false };
           }

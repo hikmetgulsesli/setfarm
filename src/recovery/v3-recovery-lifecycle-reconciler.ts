@@ -21,6 +21,7 @@ const ActiveDeliveryStateSchema = z.enum([
 
 const ReconcileActiveInputSchema = z.object({
   runId: BoundedIdentitySchema.optional(),
+  dispatchId: z.string().regex(/^RDISP_[a-f0-9]{64}$/).optional(),
   limit: z.number().int().positive().max(500).default(100),
 }).strict();
 
@@ -1939,9 +1940,10 @@ export function createV3RecoveryLifecycleReconciler(sql: Sql) {
           WHERE run_row.protocol = 'v3'
             AND delivery.state IN ('authorized', 'leased', 'attempt_reserved', 'running')
             AND ($1::text IS NULL OR delivery.run_id = $1)
+            AND ($2::text IS NULL OR delivery.dispatch_id = $2)
           ORDER BY delivery.authorized_at, delivery.dispatch_id
-          LIMIT $2`,
-        [input.runId ?? null, input.limit],
+          LIMIT $3`,
+        [input.runId ?? null, input.dispatchId ?? null, input.limit],
       );
 
       const events: V3RecoveryLifecycleReconciliationEventV1[] = [];

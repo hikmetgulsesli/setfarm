@@ -1,6 +1,7 @@
 import type postgres from "postgres";
 import { z } from "zod";
 
+import { readDatabaseWallClock } from "../db/database-wall-clock.js";
 import { v3RecoveryStoryLockIdentity } from "./v3-recovery-claim-authority.js";
 
 type Sql = postgres.Sql;
@@ -22,6 +23,7 @@ const OwnerHeartbeatBaseSchema = z.object({
   runId: BoundedIdentitySchema,
   storyId: BoundedIdentitySchema,
   claimId: z.number().int().positive(),
+  claimAgentId: BoundedIdentitySchema,
   revisionId: RecoveryRevisionIdSchema,
   dispatchId: RecoveryDispatchIdSchema,
   ownerInstanceId: BoundedIdentitySchema,
@@ -47,6 +49,10 @@ export type V3RecoveryOwnerHeartbeatResult =
   | Readonly<{ status: "retained"; expiresAt: string }>
   | Readonly<{ status: "stale_fence"; reason: string }>;
 
+export type V3RecoveryOwnerRelinquishResult =
+  | Readonly<{ status: "relinquished"; relinquishedAt: string }>
+  | Readonly<{ status: "stale_fence"; reason: string }>;
+
 type RuntimeOwnerRow = Readonly<{
   session_id: string;
   run_id: string;
@@ -70,6 +76,7 @@ type AttemptOwnerRow = Readonly<{
   recovery_case_revision_id: string | null;
   recovery_dispatch_id: string | null;
   lease_expires_at: Date | string;
+  lease_acquired_at: Date | string;
 }>;
 
 type DeliveryOwnerRow = Readonly<{
@@ -164,15 +171,71 @@ async function lockRuntime(
   return row;
 }
 
+async function lockRelinquishRuntime(
+  sql: TransactionSql,
+  input: Extract<V3RecoveryOwnerHeartbeatInputV1, { kind: "model_runtime" }>,
+): Promise<RuntimeOwnerRow> {
+  const rows = await sql.unsafe<RuntimeOwnerRow[]>(
+    `SELECT session_id, run_id, story_id, claim_id, attempt_id,
+            owner_instance_id, state
+       FROM runtime_sessions
+      WHERE session_id = $1
+      FOR UPDATE`,
+    [input.runtimeSessionId],
+  );
+  const row = rows[0];
+  if (
+    !row
+    || row.run_id !== input.runId
+    || row.story_id !== input.storyId
+    || !sameClaimId(row.claim_id, input.claimId)
+    || row.attempt_id !== input.attempt.attemptId
+    || row.owner_instance_id !== input.ownerInstanceId
+    || !["reserved", "starting", "running", "drain_requested", "drained", "quarantined"].includes(row.state)
+  ) {
+    stale("V3_RECOVERY_OWNER_RUNTIME_FENCE_STALE");
+  }
+  return row;
+}
+
+async function lockClaim(
+  sql: TransactionSql,
+  input: V3RecoveryOwnerHeartbeatInputV1,
+): Promise<void> {
+  const rows = await sql.unsafe<Array<{
+    run_id: string;
+    step_id: string;
+    story_id: string | null;
+    agent_id: string;
+    outcome: string | null;
+  }>>(
+    `SELECT run_id, step_id, story_id, agent_id, outcome
+       FROM claim_log
+      WHERE id = $1
+      FOR UPDATE`,
+    [input.claimId],
+  );
+  const claim = rows[0];
+  if (
+    !claim
+    || claim.run_id !== input.runId
+    || claim.step_id !== "implement"
+    || claim.story_id !== input.storyId
+    || claim.agent_id !== input.claimAgentId
+    || claim.outcome !== null
+  ) {
+    stale("V3_RECOVERY_OWNER_CLAIM_FENCE_STALE");
+  }
+}
+
 async function lockAttempt(
   sql: TransactionSql,
   input: V3RecoveryOwnerHeartbeatInputV1,
-  now: Date,
 ): Promise<AttemptOwnerRow> {
   const rows = await sql.unsafe<AttemptOwnerRow[]>(
     `SELECT attempt_id, claim_id, run_id, step_id, story_id, attempt_class, generation,
             fence_token, disposition, recovery_case_revision_id,
-            recovery_dispatch_id, lease_expires_at
+            recovery_dispatch_id, lease_expires_at, lease_acquired_at
        FROM execution_attempts
       WHERE attempt_id = $1
       FOR UPDATE`,
@@ -194,8 +257,6 @@ async function lockAttempt(
     || !["claimed", "running"].includes(row.disposition)
     || row.recovery_case_revision_id !== input.revisionId
     || row.recovery_dispatch_id !== input.dispatchId
-    || !Number.isFinite(millis(row.lease_expires_at))
-    || millis(row.lease_expires_at) <= now.getTime()
   ) {
     stale("V3_RECOVERY_OWNER_ATTEMPT_FENCE_STALE");
   }
@@ -206,7 +267,6 @@ async function lockDelivery(
   sql: TransactionSql,
   input: V3RecoveryOwnerHeartbeatInputV1,
   attempt: AttemptOwnerRow,
-  now: Date,
 ): Promise<DeliveryOwnerRow> {
   const rows = await sql.unsafe<DeliveryOwnerRow[]>(
     `SELECT delivery.dispatch_id, delivery.revision_id, delivery.recovery_case_id,
@@ -235,8 +295,6 @@ async function lockDelivery(
     || row.attempt_id !== input.attempt.attemptId
     || !sameClaimId(row.claim_id, input.claimId)
     || row.dispatch_class !== attempt.attempt_class
-    || !Number.isFinite(millis(row.lease_expires_at))
-    || millis(row.lease_expires_at) <= now.getTime()
   ) {
     stale("V3_RECOVERY_OWNER_DELIVERY_FENCE_STALE");
   }
@@ -269,10 +327,10 @@ export function createV3RecoveryOwnerLeaseRepository(sql: Sql) {
       options: Readonly<{ now?: Date; leaseMs?: number }> = {},
     ): Promise<V3RecoveryOwnerHeartbeatResult> {
       const input = V3RecoveryOwnerHeartbeatInputV1Schema.parse(raw);
-      const now = validTime(options.now);
+      if (options.now) validTime(options.now);
       const leaseMs = z.number().int().min(30_000).max(24 * 60 * 60 * 1_000)
         .parse(options.leaseMs ?? 2 * 60_000);
-      const expiresAt = new Date(now.getTime() + leaseMs);
+      let retainedExpiresAt: Date | undefined;
       try {
         await sql.begin(async (transaction) => {
           await transaction.unsafe("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [
@@ -280,8 +338,22 @@ export function createV3RecoveryOwnerLeaseRepository(sql: Sql) {
           ]);
           await lockRun(transaction, input);
           if (input.kind === "model_runtime") await lockRuntime(transaction, input);
-          const attempt = await lockAttempt(transaction, input, now);
-          await lockDelivery(transaction, input, attempt, now);
+          const attempt = await lockAttempt(transaction, input);
+          const delivery = await lockDelivery(transaction, input, attempt);
+          await lockClaim(transaction, input);
+          const wallClock = await readDatabaseWallClock(
+            transaction,
+            "V3_RECOVERY_OWNER_DB_TIME_UNAVAILABLE",
+          );
+          if (
+            !Number.isFinite(millis(attempt.lease_expires_at))
+            || millis(attempt.lease_expires_at) <= wallClock.getTime()
+          ) stale("V3_RECOVERY_OWNER_ATTEMPT_FENCE_STALE");
+          if (
+            !Number.isFinite(millis(delivery.lease_expires_at))
+            || millis(delivery.lease_expires_at) <= wallClock.getTime()
+          ) stale("V3_RECOVERY_OWNER_DELIVERY_FENCE_STALE");
+          const expiresAt = new Date(wallClock.getTime() + leaseMs);
 
           if (input.kind === "model_runtime") {
             const runtimes = await transaction.unsafe<Array<{ session_id: string }>>(
@@ -302,7 +374,7 @@ export function createV3RecoveryOwnerLeaseRepository(sql: Sql) {
                 input.claimId,
                 input.attempt.attemptId,
                 input.ownerInstanceId,
-                now,
+                wallClock,
               ],
             );
             if (runtimes.length !== 1) stale("V3_RECOVERY_OWNER_RUNTIME_HEARTBEAT_CAS_LOST");
@@ -324,7 +396,7 @@ export function createV3RecoveryOwnerLeaseRepository(sql: Sql) {
               input.attempt.attemptId,
               input.attempt.generation,
               input.attempt.fenceToken,
-              now,
+              wallClock,
               expiresAt,
               input.claimId,
               input.revisionId,
@@ -355,14 +427,129 @@ export function createV3RecoveryOwnerLeaseRepository(sql: Sql) {
               input.ownerInstanceId,
               input.leaseToken,
               input.attempt.attemptId,
-              now,
+              wallClock,
               expiresAt,
               input.claimId,
             ],
           );
           if (deliveries.length !== 1) stale("V3_RECOVERY_OWNER_DELIVERY_HEARTBEAT_CAS_LOST");
+          retainedExpiresAt = expiresAt;
         });
-        return { status: "retained", expiresAt: expiresAt.toISOString() };
+        if (!retainedExpiresAt) throw new Error("V3_RECOVERY_OWNER_HEARTBEAT_TIME_UNAVAILABLE");
+        return { status: "retained", expiresAt: retainedExpiresAt.toISOString() };
+      } catch (error) {
+        if (error instanceof StaleRecoveryOwnerFence) {
+          return { status: "stale_fence", reason: error.reason };
+        }
+        throw error;
+      }
+    },
+
+    async relinquish(raw: unknown): Promise<V3RecoveryOwnerRelinquishResult> {
+      const input = V3RecoveryOwnerHeartbeatInputV1Schema.parse(raw);
+      try {
+        const relinquishedAt = await sql.begin(async (transaction) => {
+          await transaction.unsafe("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [
+            v3RecoveryStoryLockIdentity({ runId: input.runId, storyId: input.storyId }),
+          ]);
+          await lockRun(transaction, input);
+          if (input.kind === "model_runtime") await lockRelinquishRuntime(transaction, input);
+          const attempt = await lockAttempt(transaction, input);
+          const delivery = await lockDelivery(transaction, input, attempt);
+          await lockClaim(transaction, input);
+          const completions = await transaction.unsafe<Array<{ request_id: string }>>(
+            `SELECT request_id
+               FROM runtime_completion_requests
+              WHERE claim_id = $1
+                AND state NOT IN ('accepted', 'rejected')
+              LIMIT 1
+              FOR UPDATE`,
+            [input.claimId],
+          );
+          if (completions.length > 0) stale("V3_RECOVERY_OWNER_COMPLETION_ACTIVE");
+          const wallClock = await readDatabaseWallClock(
+            transaction,
+            "V3_RECOVERY_OWNER_DB_TIME_UNAVAILABLE",
+          );
+          if (
+            !Number.isFinite(millis(attempt.lease_expires_at))
+            || millis(attempt.lease_expires_at) <= wallClock.getTime()
+          ) stale("V3_RECOVERY_OWNER_ATTEMPT_FENCE_STALE");
+          if (
+            !Number.isFinite(millis(delivery.lease_expires_at))
+            || millis(delivery.lease_expires_at) <= wallClock.getTime()
+          ) stale("V3_RECOVERY_OWNER_DELIVERY_FENCE_STALE");
+          const acquiredAt = new Date(attempt.lease_acquired_at);
+          if (!Number.isFinite(acquiredAt.getTime())) {
+            throw new Error("V3_RECOVERY_OWNER_LEASE_ACQUIRED_AT_INVALID");
+          }
+          const at = new Date(Math.max(wallClock.getTime(), acquiredAt.getTime()));
+
+          const attempts = await transaction.unsafe<Array<{ attempt_id: string }>>(
+            `UPDATE execution_attempts
+                SET lease_expires_at = $9, updated_at = $9
+              WHERE attempt_id = $1
+                AND generation = $2
+                AND fence_token = $3
+                AND claim_id = $4
+                AND run_id = $5
+                AND story_id = $6
+                AND recovery_case_revision_id = $7
+                AND recovery_dispatch_id = $8
+                AND disposition IN ('claimed', 'running')
+                AND lease_expires_at > $9
+              RETURNING attempt_id`,
+            [
+              input.attempt.attemptId,
+              input.attempt.generation,
+              input.attempt.fenceToken,
+              input.claimId,
+              input.runId,
+              input.storyId,
+              input.revisionId,
+              input.dispatchId,
+              at,
+            ],
+          );
+          if (attempts.length !== 1) stale("V3_RECOVERY_OWNER_ATTEMPT_RELINQUISH_CAS_LOST");
+
+          const deliveries = await transaction.unsafe<Array<{ dispatch_id: string }>>(
+            `UPDATE recovery_dispatch_deliveries
+                SET lease_expires_at = $10, updated_at = $10
+              WHERE dispatch_id = $1
+                AND revision_id = $2
+                AND run_id = $3
+                AND story_id = $4
+                AND owner_instance_id = $5
+                AND lease_token = $6
+                AND attempt_id = $7
+                AND claim_id = $8
+                AND state IN ('attempt_reserved', 'running')
+                AND lease_expires_at > $10
+                AND EXISTS (
+                  SELECT 1 FROM recovery_revision_dispatches dispatch
+                   WHERE dispatch.dispatch_id = recovery_dispatch_deliveries.dispatch_id
+                     AND dispatch.revision_id = recovery_dispatch_deliveries.revision_id
+                     AND dispatch.dispatch_class = $9
+                )
+              RETURNING dispatch_id`,
+            [
+              input.dispatchId,
+              input.revisionId,
+              input.runId,
+              input.storyId,
+              input.ownerInstanceId,
+              input.leaseToken,
+              input.attempt.attemptId,
+              input.claimId,
+              attempt.attempt_class,
+              at,
+            ],
+          );
+          if (deliveries.length !== 1) stale("V3_RECOVERY_OWNER_DELIVERY_RELINQUISH_CAS_LOST");
+          return at;
+        }) as Date;
+        return { status: "relinquished", relinquishedAt: relinquishedAt.toISOString() };
       } catch (error) {
         if (error instanceof StaleRecoveryOwnerFence) {
           return { status: "stale_fence", reason: error.reason };
