@@ -97,6 +97,10 @@ import {
   sameProcessIdentity,
   type ProcessIdentityV1,
 } from "./execution/schemas/process-identity-v1.js";
+import {
+  OpenClawAgentTerminalError,
+  readOpenClawAgentTerminalOutcome,
+} from "./execution/openclaw-agent-terminal-outcome.js";
 
 type AgentRuntime = "codex" | "openclaw" | "kimi" | "opencode";
 type OperationalRecoveryIntent = "observe_fix" | "platform_replay" | "project_rescue";
@@ -5066,6 +5070,24 @@ async function failClaimIfStillRunning(active: ActiveProcess, err: unknown): Pro
       }
     }
 
+    const openClawTerminalFailure = err instanceof OpenClawAgentTerminalError
+      ? err.outcome
+      : undefined;
+    if (openClawTerminalFailure?.retryable) {
+      const reason = `AGENT_RUNTIME_TRANSIENT [${openClawTerminalFailure.code}]: ${openClawTerminalFailure.diagnostic}. Transcript: ${transcriptPath}`;
+      console.warn(`[spawner] ${reason}`);
+      await recordSupervisorInfraEvent(row.run_id, row.step_id, active.storyDbId || null, reason);
+      if (row.type === "loop") {
+        const requeued = active.storyId
+          ? await requeueOpenStoryClaim(row.run_id, row.step_id, active.storyId, agentId, reason, active.agentId)
+          : false;
+        if (requeued) return;
+        throw new Error("OPENCLAW_TRANSIENT_LOOP_LIFECYCLE_OWNER_FAILED");
+      }
+      await retryActiveSingleStepClaim(active, row.step_id, reason);
+      return;
+    }
+
     if (row.type === "loop" && row.status !== "running") {
       const requeued = await requeueOrphanedStoryClaim(row.run_id, row.step_id, agentId, `agent exited while loop step was ${row.status}: ${compactExitReason(err)}`);
       if (requeued) return;
@@ -6945,7 +6967,15 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
     try {
       fs.appendFileSync(transcriptPath, `--- EXIT code=${code ?? ""} signal=${signal ?? ""} ---\n--- FINISHED ${new Date().toISOString()} ---\n`);
     } catch (e) { console.warn("[spawner] transcript write failed: " + String(e)); }
-    const err = code === 0 ? null : new Error(`agent exited code=${code ?? ""} signal=${signal ?? ""}`);
+    const openClawTerminalOutcome = AGENT_RUNTIME === "openclaw"
+      ? readOpenClawAgentTerminalOutcome(transcriptPath)
+      : undefined;
+    const err = openClawTerminalOutcome
+      && (openClawTerminalOutcome.kind === "transient_failure" || openClawTerminalOutcome.kind === "terminal_failure")
+      ? new OpenClawAgentTerminalError(openClawTerminalOutcome)
+      : code === 0
+        ? null
+        : new Error(`agent exited code=${code ?? ""} signal=${signal ?? ""}`);
     if (err) {
       console.warn("[spawner] " + agentId + " exited: " + ((err as any).message || err) + " (transcript: " + transcriptPath + ")");
       if (!hasReplacementProcess && !shuttingDown && claim.stepId && !activeProcess.claimRecoveryOwned) {
