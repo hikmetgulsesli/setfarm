@@ -461,6 +461,7 @@ export function evaluateProducedPredicateSemanticsV1(
 type CapturedDomElementV1 = Readonly<{
   actionId?: string | null;
   controlId: string | null;
+  observableRefs?: readonly string[];
   surfaceId: string | null;
   containingSurfaceId?: string | null;
   role: string;
@@ -483,6 +484,10 @@ function capturedDomElements(capture: CapturedRuntimeState | undefined): Capture
       isRecord(value)
       && (typeof value.actionId === "string" || value.actionId === null || value.actionId === undefined)
       && (typeof value.controlId === "string" || value.controlId === null)
+      && (value.observableRefs === undefined || (
+        Array.isArray(value.observableRefs)
+        && value.observableRefs.every((item) => typeof item === "string")
+      ))
       && (typeof value.surfaceId === "string" || value.surfaceId === null)
       && (value.containingSurfaceId === undefined || typeof value.containingSurfaceId === "string" || value.containingSurfaceId === null)
       && typeof value.role === "string"
@@ -543,10 +548,19 @@ function observableElement(input: Readonly<{
   } else if (selector.kind === "surface") {
     matches = elements.filter((element) => element.surfaceId === selector.surfaceRef);
   } else {
-    matches = elements.filter((element) =>
-      (element.containingSurfaceId ?? element.surfaceId) === selector.surfaceRef
-      && element.role === selector.role
-      && element.accessibleName === selector.name);
+    const exactBinding = input.flow.observableBindings?.find((binding) =>
+      binding.observableRef === input.effect.id
+      && binding.target.kind === "accessibility");
+    matches = exactBinding
+      ? elements.filter((element) =>
+          (element.observableRefs ?? []).includes(input.effect.id)
+          && (element.containingSurfaceId ?? element.surfaceId) === selector.surfaceRef
+          && element.role === selector.role
+          && element.accessibleName === selector.name)
+      : elements.filter((element) =>
+          (element.containingSurfaceId ?? element.surfaceId) === selector.surfaceRef
+          && element.role === selector.role
+          && element.accessibleName === selector.name);
   }
   return matches.length === 1 ? matches[0] : undefined;
 }

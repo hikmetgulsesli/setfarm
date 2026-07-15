@@ -31,7 +31,16 @@ describe("versioned stack-topology catalog", () => {
       assert.equal(contract.descriptor.requiredCommandKinds.includes("build"), true);
       assert.equal(contract.descriptor.requiredPathRoles.includes("entrypoint"), true);
       assert.equal(contract.descriptor.requiredPathRoles.includes("source"), true);
+      contract.descriptor.entrypointKinds.forEach((kind) => {
+        const priorities = contract.descriptor.entrypointRules
+          .filter((rule) => rule.entrypointKind === kind)
+          .map((rule) => rule.selectionPriority);
+        assert.equal(new Set(priorities).size, priorities.length);
+      });
     });
+    const viteRules = getStackTopologyCatalogContract("vite-react-web-app")!.descriptor.entrypointRules;
+    assert.equal(viteRules.find((rule) => rule.id === "ENTRY_RULE_VITE_MAIN_TSX")?.selectionPriority, 10);
+    assert.equal(viteRules.find((rule) => rule.id === "ENTRY_RULE_VITE_APP_TSX")?.selectionPriority, 100);
   });
 
   it("activates only profiles with an exact required preview command", () => {

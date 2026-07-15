@@ -27,6 +27,17 @@ describe("Stitch converter semantic projection", () => {
           expectedScreenTitle: "Status Page - Status Utility",
           requiredActionRefs: ["ACT_REFRESH"],
           requiredActionInputs: [],
+          requiredObservableSelectors: [{
+            observableRef: "OBS_REFRESHED_STATUS",
+            actionRef: "ACT_REFRESH",
+            selector: {
+              kind: "accessibility",
+              surfaceRef: "SURF_STATUS",
+              actionRef: "ACT_REFRESH",
+              role: "status",
+              name: "Status refreshed",
+            },
+          }],
         }],
       }));
       fs.writeFileSync(path.join(stitch, "STITCH_RESPONSE_BINDINGS.json"), JSON.stringify({
@@ -46,6 +57,7 @@ describe("Stitch converter semantic projection", () => {
           <button>Settings</button>
           <button aria-label="Help">?</button>
           <button data-action="ACT_REFRESH">Refresh Status</button>
+          <img title="1 > 0" role="status" aria-label="Status refreshed" />
           ${"<p>design-token</p>".repeat(80)}
         </main>
       </body></html>`);
@@ -57,11 +69,20 @@ describe("Stitch converter semantic projection", () => {
 
       const index = JSON.parse(fs.readFileSync(path.join(root, "src/screens/SCREEN_INDEX.json"), "utf8"));
       assert.deepEqual(index[0].projection, {
-        schema: "setfarm.stitch-screen-projection.v1",
+        schema: "setfarm.stitch-screen-projection.v2",
         mode: "contract_only",
         targetRef: "TARGET_STATUS",
         rawInteractiveCounts: { buttons: 3, links: 0, inputs: 0, textareas: 0, selects: 0 },
+        requiredObservableRefs: ["OBS_REFRESHED_STATUS"],
       });
+      assert.deepEqual(index[0].observables, [{
+        observableRef: "OBS_REFRESHED_STATUS",
+        role: "status",
+        name: "Status refreshed",
+        sourceLocator: "stitch/status-screen.html",
+        generatedSourceLocator: "src/screens/StatusPageStatusUtility.tsx",
+        selector: '[data-observable-refs~="OBS_REFRESHED_STATUS"]',
+      }]);
       assert.equal(index[0].controls.length, 1);
       assert.equal(index[0].controls[0].actionRef, "ACT_REFRESH");
       assert.deepEqual(
@@ -79,6 +100,7 @@ describe("Stitch converter semantic projection", () => {
       assert.match(source, /<button[^>]*hidden=\{true\}[^>]*data-setfarm-rejected-control="settings-1"[^>]*>Settings<\/button>/);
       assert.match(source, /<button[^>]*hidden=\{true\}[^>]*data-setfarm-rejected-control="help-2"[^>]*>/);
       assert.match(source, /data-action="ACT_REFRESH"[^>]*data-action-id="refresh-status-3"[^>]*onClick=/);
+      assert.match(source, /<img[^>]*title="1 > 0"[^>]*role="status"[^>]*aria-label="Status refreshed"[^>]*data-observable-refs="OBS_REFRESHED_STATUS"[^>]*\/>/);
       assert.doesNotMatch(source, /actions\?\.\["settings-1"\]|actions\?\.\["help-2"\]/);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });

@@ -5,12 +5,12 @@ import path from "node:path";
 import { afterEach, describe, it } from "node:test";
 
 import { ContentAddressedArtifactStore } from "../../src/product-compiler/artifact-store.js";
+import { hashRuntimeEvidenceContractV1 } from "../../src/evidence/runtime-evidence-contract-v1.js";
 import { compileProductBuildPacket } from "../../src/product-compiler/packet-compiler.js";
-import { produceRuntimeDataContractV1 } from "../../src/product-compiler/producers/runtime-data-contract.js";
 import { hashRuntimeDataContractV1 } from "../../src/product-compiler/schemas/runtime-data-contract-v1.js";
 import {
   buildMinimalValidContracts,
-  buildMinimalValidV3ProductSpec,
+  buildMinimalValidV3Contracts,
 } from "./fixtures/minimal-valid-contract.js";
 
 function compilerInput(store: ContentAddressedArtifactStore) {
@@ -32,21 +32,14 @@ function compilerInput(store: ContentAddressedArtifactStore) {
 }
 
 function v3CompilerInput(store: ContentAddressedArtifactStore) {
-  const input = compilerInput(store);
-  input.productSpec = buildMinimalValidV3ProductSpec();
-  input.designGraph.bindings[0]!.evidenceRefs.push("EVID_SAVE_CONFIRMATION");
-  input.storyPlan.stories[0]!.evidenceRefs.push("EVID_SAVE_CONFIRMATION");
-  const runtimeData = produceRuntimeDataContractV1({
-    productSpec: input.productSpec,
-    commands: input.buildTopology.commands,
-  });
-  assert.equal(runtimeData.status, "produced", JSON.stringify(runtimeData));
-  if (runtimeData.status !== "produced") throw new Error("runtime-data fixture rejected");
-  Object.assign(input.buildTopology, {
-    runtimeDataContract: runtimeData.contract,
-    runtimeDataContractHash: runtimeData.contractHash,
-  });
-  return input;
+  const values = buildMinimalValidV3Contracts();
+  return {
+    ...compilerInput(store),
+    productSpec: values.productSpec,
+    designGraph: values.designGraph,
+    buildTopology: values.buildTopology,
+    storyPlan: values.storyPlan,
+  };
 }
 
 describe("Product Build Packet compiler", () => {
@@ -210,13 +203,47 @@ describe("Product Build Packet compiler", () => {
     );
   });
 
-  it("seals the exact topology runtime-data hash into a v3 Product Build Packet", async () => {
+  it("seals exact topology runtime-data and runtime-evidence hashes into a v3 Product Build Packet", async () => {
     const artifactStore = await store();
     const input = v3CompilerInput(artifactStore);
     const result = await compileProductBuildPacket(input);
     assert.equal(result.status, "sealed", JSON.stringify(result.report.diagnostics));
     assert.equal(result.packet?.runtimeDataContractHash, input.buildTopology.runtimeDataContractHash);
+    assert.equal(result.packet?.runtimeEvidenceContractHash, input.buildTopology.runtimeEvidenceContractHash);
     assert.equal(result.packet?.validationIds.includes("VALIDATE_RUNTIME_DATA_CLOSURE"), true);
+    assert.equal(result.packet?.validationIds.includes("VALIDATE_RUNTIME_EVIDENCE_CLOSURE"), true);
+  });
+
+  it("rejects a #2029-style duplicate runtime entrypoint and runtime-evidence projection drift before seal", async () => {
+    const artifactStore = await store();
+    const duplicated = v3CompilerInput(artifactStore);
+    duplicated.buildTopology.entrypoints.push({
+      ...duplicated.buildTopology.entrypoints[0]!,
+      id: "ENTRY_WEB_DUPLICATE",
+    });
+    const duplicateResult = await compileProductBuildPacket(duplicated);
+    assert.equal(duplicateResult.status, "rejected");
+    assert.equal(
+      duplicateResult.report.diagnostics.some((item) =>
+        item.code === "CONTRACT_RUNTIME_EVIDENCE_ENTRYPOINT_UNBOUND"),
+      true,
+    );
+
+    const drifted = v3CompilerInput(artifactStore);
+    if (drifted.buildTopology.runtimeEvidenceContract?.adapter !== "browser-service") {
+      throw new Error("Expected browser runtime-evidence fixture");
+    }
+    drifted.buildTopology.runtimeEvidenceContract.readiness.path = "/not-the-entry-route";
+    drifted.buildTopology.runtimeEvidenceContractHash = hashRuntimeEvidenceContractV1(
+      drifted.buildTopology.runtimeEvidenceContract,
+    );
+    const driftResult = await compileProductBuildPacket(drifted);
+    assert.equal(driftResult.status, "rejected");
+    assert.equal(
+      driftResult.report.diagnostics.some((item) =>
+        item.code === "CONTRACT_RUNTIME_EVIDENCE_PROJECTION_MISMATCH"),
+      true,
+    );
   });
 
   it("fails v3 packet sealing on runtime-data omission and ProductSpec drift", async () => {

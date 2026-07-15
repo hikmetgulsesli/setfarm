@@ -1,6 +1,5 @@
 import type postgres from "postgres";
 
-import { produceRuntimeEvidenceContractV1 } from "../evidence/runtime-evidence-contract-producer-v1.js";
 import type { SealedRuntimePacketV1 } from "../product-compiler/runtime-artifact-reader.js";
 import type { SourceRevisionV1 } from "./schemas/execution-attempt-v1.js";
 import { V3ImplementationAttemptError } from "./v3-implementation-attempt.js";
@@ -139,24 +138,7 @@ export function createV3PreparationEligibilityEvaluator(dependencies: Eligibilit
         });
       }
 
-      const runtimeEvidence = produceRuntimeEvidenceContractV1({
-        productSpec: packet.productSpec,
-        buildTopology: packet.buildTopology,
-      });
-      if (runtimeEvidence.status === "unsupported") {
-        return asBlocked({
-          ...input,
-          packet,
-          source,
-          dependencyState: [],
-          existingOpenFingerprint,
-          error: new V3ImplementationAttemptError(
-            "V3_RUNTIME_EVIDENCE_STACK_UNSUPPORTED",
-            `Sealed stack ${runtimeEvidence.stackPackId} has no authoritative runtime evidence producer`,
-          ),
-        });
-      }
-      if (runtimeEvidence.status === "rejected") {
+      if (!packet.buildTopology.runtimeEvidenceContract || !packet.buildTopology.runtimeEvidenceContractHash) {
         return asBlocked({
           ...input,
           packet,
@@ -165,7 +147,7 @@ export function createV3PreparationEligibilityEvaluator(dependencies: Eligibilit
           existingOpenFingerprint,
           error: new V3ImplementationAttemptError(
             "V3_RUNTIME_EVIDENCE_CONTRACT_REJECTED",
-            `Sealed packet cannot produce runtime evidence: ${runtimeEvidence.rejectionCode}`,
+            "Sealed packet does not carry its compiler-verified runtime evidence contract",
           ),
         });
       }

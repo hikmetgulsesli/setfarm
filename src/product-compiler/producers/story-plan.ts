@@ -196,12 +196,15 @@ function requiredActionPersistenceRefs(action: ProductActionV1): string[] {
   ]);
 }
 
-function requiredActionEvidenceRefs(action: ProductActionV1): string[] {
+function requiredActionEvidenceRefs(
+  action: ProductActionV1,
+  requiredEvidenceIds: ReadonlySet<string>,
+): string[] {
   return uniqueSorted([
     ...action.evidenceRefs,
     ...action.success.evidenceRefs,
     ...action.failure.evidenceRefs,
-  ]);
+  ]).filter((reference) => requiredEvidenceIds.has(reference));
 }
 
 function mismatchDiagnostic(input: {
@@ -244,7 +247,11 @@ function validateSemanticPartition(value: ParsedInput): {
     { field: "actionRefs", expected: value.productSpec.actions.map((item) => item.id), label: "ACTION" },
     { field: "stateRefs", expected: value.productSpec.states.map((item) => item.id), label: "STATE" },
     { field: "persistenceRefs", expected: value.productSpec.persistencePolicies.map((item) => item.id), label: "PERSISTENCE" },
-    { field: "evidenceRefs", expected: value.productSpec.evidencePredicates.map((item) => item.id), label: "EVIDENCE" },
+    {
+      field: "evidenceRefs",
+      expected: value.productSpec.evidencePredicates.filter((item) => item.required).map((item) => item.id),
+      label: "EVIDENCE",
+    },
   ];
   const owners = Object.fromEntries(expectations.map(({ field }) => [
     field,
@@ -288,6 +295,9 @@ function validateProductClosure(
 ): CompilationDiagnosticV1[] {
   const diagnostics: CompilationDiagnosticV1[] = [];
   const routes = routeOwners(value.productSpec, owners.surfaceRefs, diagnostics);
+  const requiredEvidenceIds = new Set(value.productSpec.evidencePredicates
+    .filter((item) => item.required)
+    .map((item) => item.id));
   value.productSpec.actions.forEach((action) => {
     const storyId = soleOwner(owners.actionRefs, action.id);
     if (!storyId) return;
@@ -321,7 +331,7 @@ function validateProductClosure(
       });
       if (issue) diagnostics.push(issue);
     });
-    requiredActionEvidenceRefs(action).forEach((reference) => {
+    requiredActionEvidenceRefs(action, requiredEvidenceIds).forEach((reference) => {
       const issue = requireSameOwner({
         owners: owners.evidenceRefs,
         reference,

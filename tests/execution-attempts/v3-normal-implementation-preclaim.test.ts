@@ -21,7 +21,7 @@ import {
 } from "../../src/execution/v3-preparation-decision.js";
 import { resolveV3GitRevision } from "../../src/execution/v3-git-revision.js";
 import type { SealedRuntimePacketV1 } from "../../src/product-compiler/runtime-artifact-reader.js";
-import { buildMinimalValidContracts } from "../product-compiler/fixtures/minimal-valid-contract.js";
+import { buildMinimalValidV3Contracts } from "../product-compiler/fixtures/minimal-valid-contract.js";
 
 const RUN_ID = "run-v3-normal-preclaim";
 const STEP_ID = "implement";
@@ -37,7 +37,7 @@ function git(repo: string, args: readonly string[]): string {
 }
 
 function packet(): SealedRuntimePacketV1 {
-  const values = buildMinimalValidContracts();
+  const values = buildMinimalValidV3Contracts();
   const first = values.storyPlan.stories[0]!;
   values.storyPlan.stories.push({
     ...first,

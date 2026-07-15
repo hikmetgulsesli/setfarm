@@ -308,7 +308,7 @@ export class WebPreviewRuntimeDriver implements RuntimeDriver {
         ).replace(/\\s+/g, " ").trim().slice(0, 1_000);
       };
       const candidates = [...document.querySelectorAll(
-        "[data-action-id],[data-control-id],[data-surface-id],button,a[href],input,select,textarea,[role]",
+        "[data-action-id],[data-control-id],[data-observable-refs],[data-surface-id],button,a[href],input,select,textarea,[role]",
       )].slice(0, 5_000);
       const elements = candidates.map((element) => {
         const html = element;
@@ -318,6 +318,7 @@ export class WebPreviewRuntimeDriver implements RuntimeDriver {
         return {
           actionId: element.getAttribute("data-action-id") || null,
           controlId: element.getAttribute("data-control-id") || null,
+          observableRefs: (element.getAttribute("data-observable-refs") || "").split(/\\s+/).filter(Boolean),
           surfaceId: element.getAttribute("data-surface-id") || null,
           containingSurfaceId: element.closest("[data-surface-id]")?.getAttribute("data-surface-id") || null,
           role: implicitRole(element),

@@ -6,12 +6,13 @@ import {
   ProductSpecV1Schema,
   type ProductSpecV1,
 } from "../product-compiler/schemas/product-spec-v1.js";
+import { isPlatformOwnedV3PreviewCommand } from "../product-compiler/stack-topology-catalog.js";
 import {
   RuntimeEvidenceContractV1Schema,
   type RuntimeEvidenceContractV1,
 } from "./runtime-evidence-contract-v1.js";
 
-export const RUNTIME_EVIDENCE_CONTRACT_PRODUCER_VERSION = "1.1.0";
+export const RUNTIME_EVIDENCE_CONTRACT_PRODUCER_VERSION = "1.2.0";
 
 const WEB_STACK_PACKS = new Set([
   "nextjs-web-app",
@@ -68,8 +69,14 @@ export function produceRuntimeEvidenceContractV1(input: Readonly<{
     return Object.freeze({ status: "rejected", rejectionCode: "RUNTIME_EVIDENCE_ENTRYPOINT_UNBOUND" });
   }
   const preview = previewCommands[0]!;
-  const argv = preview.argv.join("\u0000");
-  if (!argv.includes("{{HOST}}") || !argv.includes("{{PORT}}")) {
+  const runtimeEnvironment = isPlatformOwnedV3PreviewCommand(preview)
+    ? { HOST: "{{HOST}}", PORT: "{{PORT}}" }
+    : undefined;
+  const runtimeTokens = [
+    ...preview.argv,
+    ...Object.values(runtimeEnvironment ?? {}),
+  ].join("\u0000");
+  if (!runtimeTokens.includes("{{HOST}}") || !runtimeTokens.includes("{{PORT}}")) {
     return Object.freeze({ status: "rejected", rejectionCode: "RUNTIME_EVIDENCE_RUNTIME_TOKENS_MISSING" });
   }
 
@@ -81,6 +88,7 @@ export function produceRuntimeEvidenceContractV1(input: Readonly<{
       argv: [...preview.argv],
       cwd: preview.cwd,
       timeoutMs: preview.timeoutMs,
+      ...(runtimeEnvironment ? { env: runtimeEnvironment } : {}),
     },
     readiness: {
       method: "GET",

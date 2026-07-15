@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { produceRuntimeEvidenceContractV1 } from "../evidence/runtime-evidence-contract-producer-v1.js";
+import { hashRuntimeEvidenceContractV1 } from "../evidence/runtime-evidence-contract-v1.js";
 import {
   SemanticArtifactEnvelopeV1Schema,
   type SemanticArtifactEnvelopeV1,
@@ -28,7 +30,6 @@ import {
 import { ProductBuildPacketV1Schema } from "./schemas/product-build-packet-v1.js";
 import { ProductSpecV1Schema } from "./schemas/product-spec-v1.js";
 import { StoryPlanV1Schema } from "./schemas/story-plan-v1.js";
-import { RuntimeEvidenceContractV1Schema } from "../evidence/runtime-evidence-contract-v1.js";
 import { validateRuntimeDataContractClosureV1 } from "./producers/runtime-data-contract.js";
 
 const DependencySignatureInputV1Schema = z
@@ -70,7 +71,6 @@ const SliceCompilerInputV1Schema = z
     producer: SemanticArtifactProducerV1Schema,
     fileSnapshots: z.record(PathBindingIdSchema, SourceFileSnapshotV1Schema),
     dependencySignatures: z.record(StoryIdSchema, DependencySignatureInputV1Schema),
-    runtimeEvidence: RuntimeEvidenceContractV1Schema.optional(),
     recovery: ImplementationRecoveryDirectiveV1Schema.optional(),
   })
   .strict();
@@ -205,32 +205,48 @@ export function compileImplementationSlice(input: unknown): ImplementationSliceC
       reference: "delivery",
     }));
   }
-  if (value.runtimeEvidence && value.runtimeEvidence.stackPackId !== value.buildTopology.stackPack.id) {
-    diagnostics.push(diagnostic({
-      code: "SLICE_RUNTIME_STACK_MISMATCH",
-      message: `Runtime evidence stack ${value.runtimeEvidence.stackPackId} differs from sealed topology ${value.buildTopology.stackPack.id}`,
-      reference: value.runtimeEvidence.stackPackId,
-    }));
-  }
-  if (value.runtimeEvidence?.adapter === "browser-service") {
-    const previewCommands = value.buildTopology.commands.filter((command) => command.kind === "preview");
-    const preview = previewCommands[0];
-    const server = value.runtimeEvidence.server;
-    if (
-      previewCommands.length !== 1
-      || !preview
-      || server.cwd !== preview.cwd
-      || server.timeoutMs !== preview.timeoutMs
-      || server.env !== undefined
-      || server.argv.length !== preview.argv.length
-      || server.argv.some((argument, index) => argument !== preview.argv[index])
+  const runtimeEvidenceFields = [
+    value.buildTopology.runtimeEvidenceContract,
+    value.buildTopology.runtimeEvidenceContractHash,
+    value.packet.runtimeEvidenceContractHash,
+  ];
+  if (value.productSpec.delivery) {
+    if (runtimeEvidenceFields.some((item) => item === undefined)) {
+      diagnostics.push(diagnostic({
+        code: "SLICE_RUNTIME_EVIDENCE_CONTRACT_MISSING",
+        message: "V3 implementation slice requires topology contract plus matching topology/packet runtime-evidence hashes",
+        reference: "runtimeEvidenceContract",
+      }));
+    } else if (
+      value.buildTopology.runtimeEvidenceContractHash !== value.packet.runtimeEvidenceContractHash
     ) {
       diagnostics.push(diagnostic({
-        code: "SLICE_BROWSER_RUNTIME_COMMAND_MISMATCH",
-        message: "Browser runtime launcher must equal the one exact preview argv sealed in BuildTopology",
-        reference: value.runtimeEvidence.stackPackId,
+        code: "SLICE_RUNTIME_EVIDENCE_PACKET_HASH_MISMATCH",
+        message: "Packet runtime-evidence hash differs from sealed BuildTopology",
+        reference: value.packet.runtimeEvidenceContractHash,
       }));
+    } else {
+      const projected = produceRuntimeEvidenceContractV1({
+        productSpec: value.productSpec,
+        buildTopology: value.buildTopology,
+      });
+      if (
+        projected.status !== "produced"
+        || hashRuntimeEvidenceContractV1(projected.contract) !== value.buildTopology.runtimeEvidenceContractHash
+      ) {
+        diagnostics.push(diagnostic({
+          code: "SLICE_RUNTIME_EVIDENCE_PROJECTION_MISMATCH",
+          message: "Sealed runtime-evidence contract is not the exact ProductSpec/BuildTopology projection",
+          reference: projected.status === "produced" ? "runtimeEvidenceContractHash" : projected.status,
+        }));
+      }
     }
+  } else if (runtimeEvidenceFields.some((item) => item !== undefined)) {
+    diagnostics.push(diagnostic({
+      code: "SLICE_RUNTIME_EVIDENCE_PROTOCOL_AUTHORITY_MISSING",
+      message: "Historical ProductSpec without v3 delivery cannot be reinterpreted as runtime-evidence authority",
+      reference: "delivery",
+    }));
   }
   if (diagnostics.length > 0) {
     return { status: "rejected", diagnostics: sortCompilationDiagnostics(diagnostics) };
@@ -425,23 +441,35 @@ export function compileImplementationSlice(input: unknown): ImplementationSliceC
   const actionIds = new Set(story.actionRefs);
   const stateIds = new Set(story.stateRefs);
   const persistenceIds = new Set(story.persistenceRefs);
-  const evidenceIds = new Set(story.evidenceRefs);
   const surfaces = value.productSpec.surfaces.filter((item) => surfaceIds.has(item.id));
   const controls = value.designGraph.controls.filter((item) => controlIds.has(item.id));
   const bindings = value.designGraph.bindings.filter((item) => controlIds.has(item.controlRef));
+  const observableBindings = (value.designGraph.observableBindings ?? []).filter((item) =>
+    actionIds.has(item.actionRef));
   const actions = value.productSpec.actions.filter((item) => actionIds.has(item.id));
   const states = value.productSpec.states.filter((item) => stateIds.has(item.id));
   const persistencePolicies = value.productSpec.persistencePolicies.filter((item) =>
     persistenceIds.has(item.id));
+  const semanticEvidenceIds = new Set([
+    ...story.evidenceRefs,
+    ...actions.flatMap((action) => [
+      ...action.evidenceRefs,
+      ...action.success.evidenceRefs,
+      ...action.failure.evidenceRefs,
+      ...(action.observableEffects ?? []).map((effect) => effect.evidenceRef),
+    ]),
+  ]);
   const evidencePredicates = value.productSpec.evidencePredicates.filter((item) =>
-    evidenceIds.has(item.id));
+    semanticEvidenceIds.has(item.id));
   const routeIds = new Set([
     ...surfaces.map((item) => item.routeRef),
     ...bindings.flatMap((item) => item.disposition === "action" && item.routeRef ? [item.routeRef] : []),
     ...actions.flatMap((item) => item.navigation.kind === "route" ? [item.navigation.routeRef] : []),
   ]);
   const routes = value.productSpec.routes.filter((item) => routeIds.has(item.id));
-  const requiredEvidence = evidencePredicates.filter((item) => item.required);
+  const completionEvidenceIds = new Set(story.evidenceRefs);
+  const requiredEvidence = evidencePredicates.filter((item) =>
+    item.required && completionEvidenceIds.has(item.id));
 
   const sliceResult = ImplementationSliceV1Schema.safeParse({
     schema: "setfarm.implementation-slice.v1",
@@ -461,6 +489,7 @@ export function compileImplementationSlice(input: unknown): ImplementationSliceC
       surfaces,
       controls,
       bindings,
+      observableBindings,
       actions,
       states,
       persistencePolicies,
@@ -472,7 +501,9 @@ export function compileImplementationSlice(input: unknown): ImplementationSliceC
       runtimeDataContract: value.buildTopology.runtimeDataContract,
       runtimeDataContractHash: value.buildTopology.runtimeDataContractHash,
     } : {}),
-    ...(value.runtimeEvidence ? { runtimeEvidence: value.runtimeEvidence } : {}),
+    ...(value.buildTopology.runtimeEvidenceContract
+      ? { runtimeEvidence: value.buildTopology.runtimeEvidenceContract }
+      : {}),
     ...(value.recovery ? { recovery: value.recovery } : {}),
   });
   if (!sliceResult.success) {

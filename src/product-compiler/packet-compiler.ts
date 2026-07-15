@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { produceRuntimeEvidenceContractV1 } from "../evidence/runtime-evidence-contract-producer-v1.js";
+import { hashRuntimeEvidenceContractV1 } from "../evidence/runtime-evidence-contract-v1.js";
 import {
   SemanticArtifactEnvelopeV1Schema,
   type ArtifactPutResult,
@@ -42,6 +44,7 @@ const VALIDATION_IDS = [
   "VALIDATE_EVIDENCE_COVERAGE",
   "VALIDATE_REFERENCE_COMPLETENESS",
   "VALIDATE_RUNTIME_DATA_CLOSURE",
+  "VALIDATE_RUNTIME_EVIDENCE_CLOSURE",
   "VALIDATE_SCHEMA_STRICT",
   "VALIDATE_STORY_PARTITIONS",
   "VALIDATE_TOPOLOGY_CAPABILITIES",
@@ -353,6 +356,96 @@ function validateGraph(
     });
   });
 
+  const declaredObservableEffects = product.actions.flatMap((action) =>
+    (action.observableEffects ?? []).map((effect) => ({ action, effect })));
+  const declaredObservableRefs = new Set(declaredObservableEffects.map(({ effect }) => effect.id));
+  const observableBindings = graph.observableBindings ?? [];
+  for (const { action, effect } of declaredObservableEffects) {
+    const matches = observableBindings.filter((binding) => binding.observableRef === effect.id);
+    if (matches.length !== 1) {
+      diagnostics.push(diagnostic({
+        code: matches.length === 0
+          ? "LINK_OBSERVABLE_BINDING_MISSING"
+          : "LINK_OBSERVABLE_BINDING_AMBIGUOUS",
+        category: "link",
+        message: `Observable ${effect.id} requires exactly one exact design binding; observed ${matches.length}`,
+        artifactHash,
+        reference: effect.id,
+      }));
+      continue;
+    }
+    const binding = matches[0]!;
+    if (binding.actionRef !== action.id || binding.evidenceRef !== effect.evidenceRef) {
+      diagnostics.push(diagnostic({
+        code: "LINK_OBSERVABLE_CONTRACT_MISMATCH",
+        category: "link",
+        message: `Observable ${effect.id} binding action/evidence identity differs from ProductSpec`,
+        artifactHash,
+        reference: effect.id,
+      }));
+    }
+    const target = binding.target;
+    if (effect.selector.kind === "control") {
+      const actionControlRefs = graph.bindings.flatMap((candidate) =>
+        candidate.disposition === "action" && candidate.actionRef === action.id
+          ? [candidate.controlRef]
+          : []);
+      if (
+        target.kind !== "control"
+        || actionControlRefs.length !== 1
+        || target.controlRef !== actionControlRefs[0]
+      ) {
+        diagnostics.push(diagnostic({
+          code: "LINK_OBSERVABLE_CONTROL_MISMATCH",
+          category: "link",
+          message: `Observable ${effect.id} does not bind the exact ${action.id} control`,
+          artifactHash,
+          reference: effect.id,
+        }));
+      }
+    } else if (effect.selector.kind === "surface") {
+      const surfaceRef = effect.selector.surfaceRef;
+      const designSurfaces = graph.surfaces.filter((surface) =>
+        surface.surfaceRef === surfaceRef);
+      if (
+        target.kind !== "surface"
+        || designSurfaces.length !== 1
+        || target.designSurfaceRef !== designSurfaces[0]!.id
+      ) {
+        diagnostics.push(diagnostic({
+          code: "LINK_OBSERVABLE_SURFACE_MISMATCH",
+          category: "link",
+          message: `Observable ${effect.id} does not bind the exact ${surfaceRef} design surface`,
+          artifactHash,
+          reference: effect.id,
+        }));
+      }
+    } else if (
+      target.kind !== "accessibility"
+      || target.surfaceRef !== effect.selector.surfaceRef
+      || target.role !== effect.selector.role
+      || target.name !== effect.selector.name
+      || target.source.selector !== `[data-observable-refs~="${effect.id}"]`
+    ) {
+      diagnostics.push(diagnostic({
+        code: "LINK_OBSERVABLE_ACCESSIBILITY_MISMATCH",
+        category: "link",
+        message: `Observable ${effect.id} does not bind its exact accessibility source marker`,
+        artifactHash,
+        reference: effect.id,
+      }));
+    }
+  }
+  observableBindings
+    .filter((binding) => !declaredObservableRefs.has(binding.observableRef))
+    .forEach((binding) => diagnostics.push(diagnostic({
+      code: "LINK_OBSERVABLE_BINDING_UNEXPECTED",
+      category: "link",
+      message: `Design graph contains undeclared observable binding ${binding.observableRef}`,
+      artifactHash,
+      reference: binding.observableRef,
+    })));
+
   product.actions
     .filter((action) => action.trigger.kind === "user" || action.trigger.kind === "route")
     .forEach((action) => {
@@ -619,6 +712,63 @@ function validateRuntimeDataClosure(
   }).map((item) => ({ ...item, artifactHash }));
 }
 
+function validateRuntimeEvidenceClosure(
+  product: ProductSpecV1,
+  topology: BuildTopologyV1,
+  artifactHash: string,
+  requireV3: boolean,
+): CompilationDiagnosticV1[] {
+  const hasContract = Boolean(topology.runtimeEvidenceContract);
+  const hasHash = Boolean(topology.runtimeEvidenceContractHash);
+  if (requireV3 && !product.delivery) {
+    return [];
+  }
+  if (product.delivery && (!hasContract || !hasHash)) {
+    return [diagnostic({
+      code: "CONTRACT_RUNTIME_EVIDENCE_MISSING",
+      message: "V3 ProductSpec delivery requires an exact runtime-evidence contract and canonical hash before implementation",
+      artifactHash,
+      reference: "runtimeEvidenceContract",
+    })];
+  }
+  if (!product.delivery && (hasContract || hasHash)) {
+    return [diagnostic({
+      code: "CONTRACT_RUNTIME_EVIDENCE_PROTOCOL_AUTHORITY_MISSING",
+      message: "Historical ProductSpec without v3 delivery cannot be reinterpreted as runtime-evidence authority",
+      artifactHash,
+      reference: "delivery",
+    })];
+  }
+  if (!product.delivery) return [];
+  const produced = produceRuntimeEvidenceContractV1({ productSpec: product, buildTopology: topology });
+  if (produced.status === "unsupported") {
+    return [diagnostic({
+      code: "CONTRACT_RUNTIME_EVIDENCE_STACK_UNSUPPORTED",
+      message: `Stack ${produced.stackPackId} has no authoritative runtime-evidence producer`,
+      artifactHash,
+      reference: produced.stackPackId,
+    })];
+  }
+  if (produced.status === "rejected") {
+    return [diagnostic({
+      code: `CONTRACT_${produced.rejectionCode}`,
+      message: `BuildTopology cannot produce an exact runtime-evidence contract: ${produced.rejectionCode}`,
+      artifactHash,
+      reference: produced.rejectionCode,
+    })];
+  }
+  const expectedHash = hashRuntimeEvidenceContractV1(produced.contract);
+  if (expectedHash !== topology.runtimeEvidenceContractHash) {
+    return [diagnostic({
+      code: "CONTRACT_RUNTIME_EVIDENCE_PROJECTION_MISMATCH",
+      message: "Embedded runtime-evidence contract is not the exact ProductSpec/BuildTopology projection",
+      artifactHash,
+      reference: "runtimeEvidenceContractHash",
+    })];
+  }
+  return [];
+}
+
 async function storeChild(
   store: ArtifactWriter,
   artifactType: string,
@@ -701,6 +851,12 @@ export async function compileProductBuildPacket(
       rawHashes.buildTopology,
       input.protocol === "v3",
     ));
+    diagnostics.push(...validateRuntimeEvidenceClosure(
+      productResult.data,
+      topologyResult.data,
+      rawHashes.buildTopology,
+      input.protocol === "v3",
+    ));
   }
 
   const sortedDiagnostics = sortCompilationDiagnostics(diagnostics);
@@ -712,6 +868,9 @@ export async function compileProductBuildPacket(
   let packetHash: string | undefined;
   const runtimeDataContractHash = topologyResult.success
     ? topologyResult.data.runtimeDataContractHash
+    : undefined;
+  const runtimeEvidenceContractHash = topologyResult.success
+    ? topologyResult.data.runtimeEvidenceContractHash
     : undefined;
 
   if (rejectionCodes.length === 0) {
@@ -725,6 +884,9 @@ export async function compileProductBuildPacket(
       storyPlanHash: artifactHashes.storyPlan,
       ...(runtimeDataContractHash
         ? { runtimeDataContractHash }
+        : {}),
+      ...(runtimeEvidenceContractHash
+        ? { runtimeEvidenceContractHash }
         : {}),
       compiler,
       validationIds: [...VALIDATION_IDS],

@@ -10,7 +10,7 @@ import {
   productEvidenceCapabilityPolicyHashV1,
 } from "./product-evidence-capability-policy.js";
 
-export const PRODUCT_DELIVERY_PROFILE_CATALOG_VERSION = "1.1.0";
+export const PRODUCT_DELIVERY_PROFILE_CATALOG_VERSION = "1.2.0";
 
 const ProductClassV1Schema = z.enum([
   "utility",
@@ -58,8 +58,8 @@ export const ProductDeliveryProfileV1Schema = z.object({
   design: z.object({
     policy: z.literal("stitch-required"),
     conversionPolicy: z.literal("wrap_jsx"),
-    projection: z.literal("exact_stitch_screen_index_v3"),
-    producerId: z.literal("setfarm.stitch-screen-index-v3"),
+    projection: z.literal("exact_stitch_screen_index_v4"),
+    producerId: z.literal("setfarm.stitch-screen-index-v4"),
   }).strict(),
   runtimeAdapter: z.literal("browser"),
   topology: z.object({
@@ -167,8 +167,8 @@ const PRODUCT_DELIVERY_PROFILE_CATALOG = ProductDeliveryProfileCatalogV1Schema.p
       design: {
         policy: "stitch-required",
         conversionPolicy: "wrap_jsx",
-        projection: "exact_stitch_screen_index_v3",
-        producerId: "setfarm.stitch-screen-index-v3",
+        projection: "exact_stitch_screen_index_v4",
+        producerId: "setfarm.stitch-screen-index-v4",
       },
       runtimeAdapter: "browser",
     }),
@@ -185,8 +185,8 @@ const PRODUCT_DELIVERY_PROFILE_CATALOG = ProductDeliveryProfileCatalogV1Schema.p
       design: {
         policy: "stitch-required",
         conversionPolicy: "wrap_jsx",
-        projection: "exact_stitch_screen_index_v3",
-        producerId: "setfarm.stitch-screen-index-v3",
+        projection: "exact_stitch_screen_index_v4",
+        producerId: "setfarm.stitch-screen-index-v4",
       },
       runtimeAdapter: "browser",
     }),

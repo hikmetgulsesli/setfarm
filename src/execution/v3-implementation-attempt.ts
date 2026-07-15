@@ -19,7 +19,6 @@ import { captureShadowSourceRevision } from "./shadow-attempt-recorder.js";
 import { getSql } from "../db-pg.js";
 import { resolveProductArtifactCapacity, resolveProductArtifactDir } from "../runtime-config.js";
 import { compileEvidencePlanV1, type EvidencePlanV1 } from "../evidence/evidence-plan-v1.js";
-import { produceRuntimeEvidenceContractV1 } from "../evidence/runtime-evidence-contract-producer-v1.js";
 import { createRecoveryDeliveryRepository } from "../recovery/recovery-delivery-repository.js";
 import { createFindingRecoveryRepository } from "../recovery/finding-recovery-repository.js";
 import type {
@@ -471,20 +470,11 @@ export function createV3ImplementationAttemptCompiler(dependencies: V3CompilerDe
           `Story ${input.storyId} is absent from run ${input.runId}'s sealed packet`,
         );
       }
-      const runtimeEvidenceProduction = produceRuntimeEvidenceContractV1({
-        productSpec: packet.productSpec,
-        buildTopology: packet.buildTopology,
-      });
-      if (runtimeEvidenceProduction.status === "rejected") {
+      const runtimeEvidenceContract = packet.buildTopology.runtimeEvidenceContract;
+      if (!runtimeEvidenceContract || !packet.buildTopology.runtimeEvidenceContractHash) {
         throw new V3ImplementationAttemptError(
           "V3_RUNTIME_EVIDENCE_CONTRACT_REJECTED",
-          `Sealed packet cannot produce an exact runtime evidence contract: ${runtimeEvidenceProduction.rejectionCode}`,
-        );
-      }
-      if (runtimeEvidenceProduction.status === "unsupported") {
-        throw new V3ImplementationAttemptError(
-          "V3_RUNTIME_EVIDENCE_STACK_UNSUPPORTED",
-          `Sealed stack ${runtimeEvidenceProduction.stackPackId} has no authoritative runtime evidence contract producer`,
+          "Sealed packet does not carry its compiler-verified runtime evidence contract",
         );
       }
 
@@ -654,7 +644,6 @@ export function createV3ImplementationAttemptCompiler(dependencies: V3CompilerDe
         producer: packet.producer,
         fileSnapshots,
         dependencySignatures,
-        runtimeEvidence: runtimeEvidenceProduction.contract,
         ...(recovery && !recoveryEvidenceOnly
           ? {
               recovery: {

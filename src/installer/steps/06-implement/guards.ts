@@ -1089,7 +1089,7 @@ function componentHasPropInSources(
 
 function extractSemanticIntegrationTokens(line: string): string[] {
   const tokens = new Set<string>();
-  const attrRe = /\b(data-testid|data-action-id|aria-live|aria-label|role)\s*=\s*(?:"([^"]+)"|'([^']+)'|\{\s*["']([^"']+)["']\s*\})/g;
+  const attrRe = /\b(data-testid|data-action-id|data-observable-refs|aria-live|aria-label|role)\s*=\s*(?:"([^"]+)"|'([^']+)'|\{\s*["']([^"']+)["']\s*\})/g;
   let match: RegExpExecArray | null;
   while ((match = attrRe.exec(line)) !== null) {
     const name = match[1];

@@ -11,12 +11,14 @@ import {
   type DesignControlBindingV1,
   type DesignControlV1,
   type DesignInteractionGraphV1,
+  type DesignObservableBindingV1,
 } from "../schemas/design-interaction-graph-v1.js";
 import {
   ActionIdSchema,
   DesignSurfaceIdSchema,
   EvidenceIdSchema,
   NormalizedRelativeLocatorSchema,
+  ObservableIdSchema,
   PersistenceIdSchema,
   RouteIdSchema,
   Sha256Schema,
@@ -199,6 +201,19 @@ const ConverterControlSchema = z
   })
   .strict();
 
+const ConverterObservableSchema = z.object({
+  observableRef: ObservableIdSchema,
+  accessibility: z.object({
+    role: z.string().min(1).max(160),
+    name: z.string().min(1).max(500),
+  }).strict(),
+  source: z.object({
+    selector: z.string().min(1).max(2_000),
+    line: z.number().int().positive().optional(),
+    column: z.number().int().nonnegative().optional(),
+  }).strict(),
+}).strict();
+
 const ConverterOutputSchema = z
   .object({
     targetRef: GenerationTargetIdSchema,
@@ -208,6 +223,7 @@ const ConverterOutputSchema = z
     sourceArtifactHash: Sha256Schema,
     sourceLocator: NormalizedRelativeLocatorSchema,
     controls: z.array(ConverterControlSchema).max(10_000),
+    observables: z.array(ConverterObservableSchema).max(10_000).default([]),
     diagnosticHints: DiagnosticHintsSchema.optional(),
   })
   .strict();
@@ -306,6 +322,10 @@ function expectedSelector(
   identityAttribute: "data-action-id" | "data-control-id",
 ): string {
   return `[${identityAttribute}="${generatedLocalId.replaceAll('"', '\\"')}"]`;
+}
+
+function expectedObservableSelector(observableRef: string): string {
+  return `[data-observable-refs~="${observableRef.replaceAll('"', '\\"')}"]`;
 }
 
 function derivedControlId(
@@ -599,6 +619,7 @@ export function produceDesignInteractionGraphV1(input: unknown): DesignGraphProd
   const surfaces: DesignInteractionGraphV1["surfaces"] = [];
   const controls: DesignControlV1[] = [];
   const bindings: DesignControlBindingV1[] = [];
+  const observableBindings: DesignObservableBindingV1[] = [];
   const controlIdByTargetAndLocal = new Map<string, string>();
   const pendingActions: Array<{
     target: ParsedTarget;
@@ -894,6 +915,13 @@ export function produceDesignInteractionGraphV1(input: unknown): DesignGraphProd
             message: `Observable ${effect.id} requires one exact control for ${action.id}; observed ${actionBindings.length}`,
             reference: effect.id,
           }));
+        } else {
+          observableBindings.push({
+            observableRef: effect.id,
+            actionRef: action.id,
+            evidenceRef: effect.evidenceRef,
+            target: { kind: "control", controlRef: actionBindings[0]!.controlRef },
+          });
         }
         return;
       }
@@ -906,27 +934,89 @@ export function produceDesignInteractionGraphV1(input: unknown): DesignGraphProd
             message: `Observable ${effect.id} requires one exact design surface for ${selector.surfaceRef}; observed ${matchingSurfaces.length}`,
             reference: effect.id,
           }));
+        } else {
+          observableBindings.push({
+            observableRef: effect.id,
+            actionRef: action.id,
+            evidenceRef: effect.evidenceRef,
+            target: { kind: "surface", designSurfaceRef: matchingSurfaces[0]!.id },
+          });
         }
         return;
       }
       const selector = effect.selector;
-      const matches = controls.filter((control) =>
-        control.surfaceRef === selector.surfaceRef
-        && control.accessibility.role === selector.role
-        && control.accessibility.name === selector.name);
+      const matches = converterOutputs.flatMap((output) =>
+        output.surfaceRef === selector.surfaceRef
+          ? output.observables
+            .filter((observable) => observable.observableRef === effect.id)
+            .map((observable) => ({ output, observable }))
+          : []);
       if (matches.length !== 1) {
         diagnostics.push(diagnostic({
           code: "DESIGN_OBSERVABLE_ACCESSIBILITY_UNRESOLVED",
           message: `Observable ${effect.id} requires one exact ${selector.role}/${selector.name} accessibility selector; observed ${matches.length}`,
           reference: effect.id,
         }));
-      } else if (selector.actionRef && !actionBindings.some((binding) => binding.controlRef === matches[0]!.id)) {
+        return;
+      }
+      const match = matches[0]!;
+      const exactSelector = expectedObservableSelector(effect.id);
+      if (
+        match.observable.accessibility.role !== selector.role
+        || match.observable.accessibility.name !== selector.name
+        || match.observable.source.selector !== exactSelector
+      ) {
         diagnostics.push(diagnostic({
-          code: "DESIGN_OBSERVABLE_ACCESSIBILITY_ACTION_MISMATCH",
-          message: `Observable ${effect.id} accessibility selector is not the exact control bound to ${action.id}`,
+          code: "DESIGN_OBSERVABLE_ACCESSIBILITY_MISMATCH",
+          message: `Observable ${effect.id} exact indexed accessibility target differs from ProductSpec`,
+          artifactHash: match.output.sourceArtifactHash,
           reference: effect.id,
         }));
+        return;
       }
+      const provenance = [{
+        schema: "setfarm.provenance-ref.v1" as const,
+        sourceHash: match.output.sourceArtifactHash,
+        locator: match.output.sourceLocator,
+        confidence: "exact" as const,
+        ...(match.observable.source.line ? {
+          range: {
+            startLine: match.observable.source.line,
+            ...(match.observable.source.column !== undefined
+              ? { startColumn: match.observable.source.column }
+              : {}),
+            endLine: match.observable.source.line,
+            ...(match.observable.source.column !== undefined
+              ? { endColumn: match.observable.source.column }
+              : {}),
+          },
+        } : {}),
+      }];
+      observableBindings.push({
+        observableRef: effect.id,
+        actionRef: action.id,
+        evidenceRef: effect.evidenceRef,
+        target: {
+          kind: "accessibility",
+          surfaceRef: selector.surfaceRef,
+          role: selector.role,
+          name: selector.name,
+          identity: {
+            kind: "explicit",
+            attribute: "data-observable-refs",
+            provenance,
+          },
+          source: {
+            artifactHash: match.output.sourceArtifactHash,
+            locator: match.output.sourceLocator,
+            selector: match.observable.source.selector,
+            ...(match.observable.source.line ? { line: match.observable.source.line } : {}),
+            ...(match.observable.source.column !== undefined
+              ? { column: match.observable.source.column }
+              : {}),
+          },
+        },
+      });
     });
   });
 
@@ -938,6 +1028,8 @@ export function produceDesignInteractionGraphV1(input: unknown): DesignGraphProd
     surfaces: [...surfaces].sort((left, right) => compareUtf16(left.id, right.id)),
     controls: [...controls].sort((left, right) => compareUtf16(left.id, right.id)),
     bindings: [...bindings].sort((left, right) => compareUtf16(left.controlRef, right.controlRef)),
+    observableBindings: [...observableBindings].sort((left, right) =>
+      compareUtf16(left.observableRef, right.observableRef)),
     unresolvedBindings: [],
   });
   if (!graphResult.success) {

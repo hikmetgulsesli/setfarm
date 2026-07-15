@@ -349,7 +349,13 @@ export function produceStoryPartitionV1(input: unknown): StoryPartitionResult {
       }));
       return;
     }
-    pushByRoot(evidenceByRoot, partition.find(surfaces[0]!), predicate.id);
+    // StoryPlan.evidenceRefs is the completion-evidence set. Optional failure
+    // predicates remain owned through their action/subject and are carried by
+    // the ImplementationSlice contract, but they cannot become completion
+    // requirements.
+    if (predicate.required) {
+      pushByRoot(evidenceByRoot, partition.find(surfaces[0]!), predicate.id);
+    }
   });
 
   const surfaceIndex = new Map(productSpec.surfaces.map((surface, index) => [surface.id, index]));

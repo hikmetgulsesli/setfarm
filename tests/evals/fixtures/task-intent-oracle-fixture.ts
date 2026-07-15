@@ -1,4 +1,6 @@
 import { createAcceptedCandidateV1 } from "../../../src/evidence/accepted-candidate-v1.js";
+import { produceRuntimeEvidenceContractV1 } from "../../../src/evidence/runtime-evidence-contract-producer-v1.js";
+import { hashRuntimeEvidenceContractV1 } from "../../../src/evidence/runtime-evidence-contract-v1.js";
 import { TaskIntentOracleV1Schema } from "../../../src/evals/task-intent-oracle.js";
 import { extractTaskRequirementLedgerV1 } from "../../../src/product-compiler/requirements/task-requirements-v1.js";
 import { produceRuntimeDataContractV1 } from "../../../src/product-compiler/producers/runtime-data-contract.js";
@@ -91,6 +93,12 @@ export function buildTaskIntentOracleFixture(
       ...binding,
       evidenceRefs: ["EVID_SAVE_OBSERVABLE", "EVID_SAVE_RELOAD"],
     })),
+    observableBindings: [{
+      observableRef: "OBS_SAVE_CONFIRMATION",
+      actionRef: "ACT_SAVE_TASK",
+      evidenceRef: "EVID_SAVE_OBSERVABLE",
+      target: { kind: "control", controlRef: "CTRL_SAVE_TASK" },
+    }],
   });
   const storyPlan = StoryPlanV1Schema.parse({
     ...base.storyPlan,
@@ -106,10 +114,23 @@ export function buildTaskIntentOracleFixture(
   if (runtimeData.status !== "produced") {
     throw new Error(`ORACLE_FIXTURE_RUNTIME_DATA_REJECTED:${JSON.stringify(runtimeData.diagnostics)}`);
   }
-  const buildTopology = {
+  const topologyWithRuntimeData = {
     ...base.buildTopology,
     runtimeDataContract: runtimeData.contract,
     runtimeDataContractHash: runtimeData.contractHash,
+  };
+  const runtimeEvidence = produceRuntimeEvidenceContractV1({
+    productSpec,
+    buildTopology: topologyWithRuntimeData,
+  });
+  if (runtimeEvidence.status !== "produced") {
+    throw new Error(`ORACLE_FIXTURE_RUNTIME_EVIDENCE_REJECTED:${JSON.stringify(runtimeEvidence)}`);
+  }
+  const runtimeEvidenceContractHash = hashRuntimeEvidenceContractV1(runtimeEvidence.contract);
+  const buildTopology = {
+    ...topologyWithRuntimeData,
+    runtimeEvidenceContract: runtimeEvidence.contract,
+    runtimeEvidenceContractHash,
   };
   const implementationSlice = ImplementationSliceV1Schema.parse({
     ...base.implementationSlice,
@@ -119,6 +140,7 @@ export function buildTaskIntentOracleFixture(
       surfaces: productSpec.surfaces,
       controls: designGraph.controls,
       bindings: designGraph.bindings,
+      observableBindings: designGraph.observableBindings,
       actions: productSpec.actions,
       states: productSpec.states,
       persistencePolicies: productSpec.persistencePolicies,
@@ -127,6 +149,7 @@ export function buildTaskIntentOracleFixture(
     requiredEvidence: productSpec.evidencePredicates.filter((predicate) => predicate.required),
     runtimeDataContract: runtimeData.contract,
     runtimeDataContractHash: runtimeData.contractHash,
+    runtimeEvidence: runtimeEvidence.contract,
   });
   const oracle = TaskIntentOracleV1Schema.parse({
     schema: "setfarm.task-intent-oracle.v1",
@@ -205,6 +228,7 @@ export function buildTaskIntentOracleFixture(
       packet: {
         ...base.packet,
         runtimeDataContractHash: runtimeData.contractHash,
+        runtimeEvidenceContractHash,
       },
       implementationSlice,
     },

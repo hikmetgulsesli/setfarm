@@ -27,8 +27,8 @@ describe("Product Delivery Profile catalog", () => {
     assert.equal(utility.selection.stackPackId, "vite-react-web-app");
     assert.equal(operations.selection.stackPackId, "vite-react-web-app");
     assert.equal(game.selection.stackPackId, "browser-game-canvas");
-    assert.equal(utility.selection.design.projection, "exact_stitch_screen_index_v3");
-    assert.equal(game.selection.design.projection, "exact_stitch_screen_index_v3");
+    assert.equal(utility.selection.design.projection, "exact_stitch_screen_index_v4");
+    assert.equal(game.selection.design.projection, "exact_stitch_screen_index_v4");
     assert.equal(utility.canonicalBytes, canonicalJsonStringify(utility.selection));
     assert.equal(utility.selectionHash, hashCanonicalJson(utility.selection));
   });

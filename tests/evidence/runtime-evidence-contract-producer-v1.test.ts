@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import { produceRuntimeEvidenceContractV1 } from "../../src/evidence/runtime-evidence-contract-producer-v1.js";
+import { getStackTopologyCatalogContract } from "../../src/product-compiler/stack-topology-catalog.js";
 import { buildMinimalValidContracts } from "../product-compiler/fixtures/minimal-valid-contract.js";
 
 describe("runtime evidence contract producer v1", () => {
@@ -51,6 +52,25 @@ describe("runtime evidence contract producer v1", () => {
     assert.deepEqual(result, {
       status: "rejected",
       rejectionCode: "RUNTIME_EVIDENCE_PREVIEW_COMMAND_AMBIGUOUS",
+    });
+  });
+
+  it("projects exact host and port env bindings for the platform-owned static runtime", () => {
+    const values = buildMinimalValidContracts();
+    const preview = getStackTopologyCatalogContract("vite-react-web-app")!.descriptor.commands
+      .find((command) => command.kind === "preview")!;
+    values.buildTopology.commands = values.buildTopology.commands
+      .filter((command) => command.kind !== "preview")
+      .concat(preview);
+    const result = produceRuntimeEvidenceContractV1({
+      productSpec: values.productSpec,
+      buildTopology: values.buildTopology,
+    });
+    assert.equal(result.status, "produced");
+    if (result.status !== "produced") return;
+    assert.deepEqual(result.contract.server.env, {
+      HOST: "{{HOST}}",
+      PORT: "{{PORT}}",
     });
   });
 

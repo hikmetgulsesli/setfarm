@@ -187,13 +187,51 @@ describe("typed exact design graph producer", () => {
       assertion: { operator: "passes" },
     });
     input.converterOutputs[0].controls[0].bindings[0].evidenceRefs.push("EVID_SAVE_CONFIRMATION");
+    input.converterOutputs[0].observables = [{
+      observableRef: "OBS_SAVE_CONFIRMATION",
+      accessibility: { role: "button", name: "Save Changes" },
+      source: {
+        selector: '[data-observable-refs~="OBS_SAVE_CONFIRMATION"]',
+        line: 6,
+        column: 0,
+      },
+    }];
 
     const produced = produceDesignInteractionGraphV1(input);
     assert.equal(produced.status, "produced", JSON.stringify(produced.diagnostics));
+    assert.deepEqual(produced.designGraph.observableBindings, [{
+      observableRef: "OBS_SAVE_CONFIRMATION",
+      actionRef: "ACT_SAVE_RECORD",
+      evidenceRef: "EVID_SAVE_CONFIRMATION",
+      target: {
+        kind: "accessibility",
+        surfaceRef: "SURF_EDITOR",
+        role: "button",
+        name: "Save Changes",
+        identity: {
+          kind: "explicit",
+          attribute: "data-observable-refs",
+          provenance: [{
+            schema: "setfarm.provenance-ref.v1",
+            sourceHash: SOURCE_HASH,
+            locator: "stitch/patient-editor.html",
+            confidence: "exact",
+            range: { startLine: 6, startColumn: 0, endLine: 6, endColumn: 0 },
+          }],
+        },
+        source: {
+          artifactHash: SOURCE_HASH,
+          locator: "stitch/patient-editor.html",
+          selector: '[data-observable-refs~="OBS_SAVE_CONFIRMATION"]',
+          line: 6,
+          column: 0,
+        },
+      },
+    }]);
 
-    input.converterOutputs[0].controls[0].accessibility.name = "A different control";
+    input.converterOutputs[0].observables[0].accessibility.name = "A different control";
     const rejected = produceDesignInteractionGraphV1(input);
     assert.equal(rejected.status, "rejected");
-    assert.equal(rejected.rejectionCodes.includes("DESIGN_OBSERVABLE_ACCESSIBILITY_UNRESOLVED"), true);
+    assert.equal(rejected.rejectionCodes.includes("DESIGN_OBSERVABLE_ACCESSIBILITY_MISMATCH"), true);
   });
 });

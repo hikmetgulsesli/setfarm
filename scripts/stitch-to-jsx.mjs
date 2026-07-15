@@ -129,6 +129,15 @@ function loadV3ProjectionContract() {
       expectedInputPairs: new Set((Array.isArray(target.requiredActionInputs) ? target.requiredActionInputs : [])
         .flatMap((entry) => (Array.isArray(entry?.inputFields) ? entry.inputFields : [])
           .map((field) => `${entry.actionRef}.${field}`))),
+      requiredAccessibilityObservables: (Array.isArray(target.requiredObservableSelectors)
+        ? target.requiredObservableSelectors
+        : [])
+        .filter((entry) => entry?.selector?.kind === "accessibility")
+        .map((entry) => ({
+          observableRef: String(entry.observableRef || ""),
+          role: String(entry.selector.role || ""),
+          name: String(entry.selector.name || ""),
+        })),
     });
   }
   return { byScreenId };
@@ -524,6 +533,27 @@ function findTagEndRespectingQuotes(input, start) {
     if (ch === ">") return i;
   }
   return -1;
+}
+
+function mapOpeningTagsRespectingQuotes(input, transform) {
+  const source = String(input || "");
+  let out = "";
+  let cursor = 0;
+  const tagPattern = /<([A-Za-z][\w:-]*)\b/g;
+  let match;
+  while ((match = tagPattern.exec(source)) !== null) {
+    const tagStart = match.index;
+    const tagEnd = findTagEndRespectingQuotes(source, tagPattern.lastIndex);
+    if (tagEnd < 0) break;
+    const tagName = String(match[1] || "");
+    const attrs = source.slice(tagPattern.lastIndex, tagEnd);
+    const original = source.slice(tagStart, tagEnd + 1);
+    out += source.slice(cursor, tagStart);
+    out += transform({ tagName, attrs, original });
+    cursor = tagEnd + 1;
+    tagPattern.lastIndex = tagEnd + 1;
+  }
+  return out + source.slice(cursor);
 }
 
 function normalizeVoidElementStartTags(input) {
@@ -1572,6 +1602,55 @@ function annotateInteractiveElements(html, projection) {
   return { html: withSelects, actions, valueControls, rejectedControls };
 }
 
+function annotateObservableElements(html, projection) {
+  const required = projection?.requiredAccessibilityObservables || [];
+  if (required.length === 0) return { html: String(html || ""), observables: [] };
+
+  const bySelector = new Map();
+  for (const observable of required) {
+    if (!/^OBS_[A-Z0-9]+(?:_[A-Z0-9]+)*$/.test(observable.observableRef)) {
+      throw new Error(`V3_OBSERVABLE_REF_INVALID:${observable.observableRef || "missing"}`);
+    }
+    if (!observable.role || !observable.name) {
+      throw new Error(`V3_OBSERVABLE_SELECTOR_INVALID:${observable.observableRef}`);
+    }
+    const key = `${observable.role}\0${observable.name}`;
+    const entries = bySelector.get(key) || [];
+    entries.push(observable);
+    bySelector.set(key, entries);
+  }
+
+  const counts = new Map([...bySelector.keys()].map((key) => [key, 0]));
+  const annotated = mapOpeningTagsRespectingQuotes(
+    html,
+    ({ original, tagName, attrs }) => {
+      const role = attrValue(attrs, "role");
+      const name = attrValue(attrs, "aria-label");
+      const key = `${role}\0${name}`;
+      const matches = bySelector.get(key);
+      if (!matches) return original;
+      counts.set(key, (counts.get(key) || 0) + 1);
+      const refs = matches.map((entry) => entry.observableRef).sort().join(" ");
+      const selfClosing = /\/\s*$/.test(attrs);
+      const attributeBody = selfClosing ? attrs.replace(/\/\s*$/, "") : attrs;
+      const cleanAttrs = stripJsxAttribute(String(attributeBody || ""), "data-observable-refs");
+      return `<${tagName}${cleanAttrs} data-observable-refs="${escapeHtmlAttr(refs)}"${selfClosing ? " />" : ">"}`;
+    },
+  );
+
+  for (const [key, matches] of bySelector) {
+    const count = counts.get(key) || 0;
+    if (count !== 1) {
+      const code = count === 0 ? "V3_OBSERVABLE_SELECTOR_MISSING" : "V3_OBSERVABLE_SELECTOR_AMBIGUOUS";
+      throw new Error(`${code}:${matches.map((entry) => entry.observableRef).sort().join(",")}:${count}`);
+    }
+  }
+  return {
+    html: annotated,
+    observables: required.map((observable) => ({ ...observable })),
+  };
+}
+
 function restoreGeneratedLinkActionHandlers(jsx) {
   return String(jsx || "").replace(
     /\sdata-setfarm-link-action="([^"]+)"/g,
@@ -1613,12 +1692,13 @@ for (const screen of manifest) {
   if (v3ProjectionContract && !projection) {
     throw new Error(`V3_PROJECTION_SCREEN_UNBOUND:${String(screen.screenId || screen.title || "missing")}`);
   }
+  const observableProjection = annotateObservableElements(classNormalizedBody, projection);
   const {
     html: interactiveBody,
     actions,
     valueControls,
     rejectedControls,
-  } = annotateInteractiveElements(classNormalizedBody, projection);
+  } = annotateInteractiveElements(observableProjection.html, projection);
   const sourceLocator = path.relative(repoPath, htmlFile).split(path.sep).join("/");
   const indexedActions = actions.map((action) => action.actionRef ? {
     ...action,
@@ -1633,6 +1713,13 @@ for (const screen of manifest) {
     semanticSource: "data-action-input",
     sourceLocator,
     selector: `[data-control-id="${control.id}"]`,
+  }));
+  const indexedObservables = observableProjection.observables.map((observable) => ({
+    observableRef: observable.observableRef,
+    role: observable.role,
+    name: observable.name,
+    sourceLocator,
+    selector: `[data-observable-refs~="${observable.observableRef}"]`,
   }));
   const normalizedBody = replaceMaterialSymbolSpans(interactiveBody, lucideImports, unknownMaterialIcons);
   collectClassTokens(normalizedBody, usedClassTokens);
@@ -1705,12 +1792,17 @@ ${jsx.split("\n").map(l => "      " + l).join("\n")}
       ...control,
       generatedSourceLocator,
     })),
+    observables: indexedObservables.map((observable) => ({
+      ...observable,
+      generatedSourceLocator,
+    })),
     ...(projection ? {
       projection: {
-        schema: "setfarm.stitch-screen-projection.v1",
+        schema: "setfarm.stitch-screen-projection.v2",
         mode: "contract_only",
         targetRef: projection.targetRef,
         rawInteractiveCounts: { buttons, links, inputs, textareas, selects },
+        requiredObservableRefs: indexedObservables.map((observable) => observable.observableRef).sort(),
       },
       rejectedControls: indexedRejectedControls,
     } : {}),
