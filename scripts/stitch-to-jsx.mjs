@@ -556,6 +556,33 @@ function mapOpeningTagsRespectingQuotes(input, transform) {
   return out + source.slice(cursor);
 }
 
+function mapPairedTagsRespectingQuotes(input, targetTagName, transform) {
+  const source = String(input || "");
+  const tagName = String(targetTagName || "");
+  let out = "";
+  let cursor = 0;
+  const openingPattern = new RegExp(`<${escapeRegExp(tagName)}\\b`, "gi");
+  const closingPattern = new RegExp(`</${escapeRegExp(tagName)}\\s*>`, "gi");
+  let opening;
+  while ((opening = openingPattern.exec(source)) !== null) {
+    const tagStart = opening.index;
+    const tagEnd = findTagEndRespectingQuotes(source, openingPattern.lastIndex);
+    if (tagEnd < 0) break;
+    closingPattern.lastIndex = tagEnd + 1;
+    const closing = closingPattern.exec(source);
+    if (!closing) break;
+    const closingEnd = closing.index + closing[0].length;
+    const attrs = source.slice(openingPattern.lastIndex, tagEnd);
+    const inner = source.slice(tagEnd + 1, closing.index);
+    const original = source.slice(tagStart, closingEnd);
+    out += source.slice(cursor, tagStart);
+    out += transform({ tagName, attrs, inner, original });
+    cursor = closingEnd;
+    openingPattern.lastIndex = closingEnd;
+  }
+  return out + source.slice(cursor);
+}
+
 function normalizeVoidElementStartTags(input) {
   const source = String(input || "");
   let out = "";
@@ -1508,7 +1535,7 @@ function annotateInteractiveElements(html, projection) {
     }
     return `${cleanAttrs} hidden="true" aria-hidden="true" data-setfarm-rejected-control="${id}"`;
   };
-  const withButtons = String(html || "").replace(/<button\b([^>]*)>([\s\S]*?)<\/button>/gi, (match, attrs, inner) => {
+  const withButtons = mapPairedTagsRespectingQuotes(html, "button", ({ attrs, inner }) => {
     const index = buttonIndex++;
     const label = labelFromInteractive(attrs, inner, `Button ${index + 1}`);
     const id = nextId(label, "button", index);
@@ -1532,7 +1559,7 @@ function annotateInteractiveElements(html, projection) {
 
     return `<button${cleanAttrs} data-action-id="${id}" onClick={actions?.["${id}"]}>${inner}</button>`;
   });
-  const annotated = withButtons.replace(/<a\b([^>]*)>([\s\S]*?)<\/a>/gi, (match, attrs, inner) => {
+  const annotated = mapPairedTagsRespectingQuotes(withButtons, "a", ({ attrs, inner }) => {
     const index = linkIndex++;
     const href = attrValue(attrs, "href");
     const label = labelFromInteractive(attrs, inner, href || `Link ${index + 1}`);
@@ -1596,21 +1623,25 @@ function annotateInteractiveElements(html, projection) {
     valueControls.push({ id, kind: tagName, label, index, inputBindings });
     return `${cleanAttrs} data-control-id="${id}"`;
   };
-  const withInputs = annotated.replace(/<input\b([^>]*)>/gi, (_match, attrs) => {
-    const index = inputIndex++;
-    return `<input${annotateValueTag("input", attrs, `Input ${index + 1}`, index)}>`;
+  const withValueControls = mapOpeningTagsRespectingQuotes(annotated, ({ tagName, attrs, original }) => {
+    const normalizedTag = tagName.toLowerCase();
+    if (normalizedTag === "input") {
+      const index = inputIndex++;
+      return `<${normalizedTag}${annotateValueTag("input", attrs, `Input ${index + 1}`, index)}>`;
+    }
+    if (normalizedTag === "textarea") {
+      const index = textareaIndex++;
+      const selfClosing = splitSelfClosingAttrs(attrs).selfClosing ? " /" : "";
+      return `<${normalizedTag}${annotateValueTag("textarea", attrs, `Textarea ${index + 1}`, index)}${selfClosing}>`;
+    }
+    if (normalizedTag === "select") {
+      const index = selectIndex++;
+      const selfClosing = splitSelfClosingAttrs(attrs).selfClosing ? " /" : "";
+      return `<${normalizedTag}${annotateValueTag("select", attrs, `Select ${index + 1}`, index)}${selfClosing}>`;
+    }
+    return original;
   });
-  const withTextareas = withInputs.replace(/<textarea\b([^>]*)>/gi, (_match, attrs) => {
-    const index = textareaIndex++;
-    const selfClosing = splitSelfClosingAttrs(attrs).selfClosing ? " /" : "";
-    return `<textarea${annotateValueTag("textarea", attrs, `Textarea ${index + 1}`, index)}${selfClosing}>`;
-  });
-  const withSelects = withTextareas.replace(/<select\b([^>]*)>/gi, (_match, attrs) => {
-    const index = selectIndex++;
-    const selfClosing = splitSelfClosingAttrs(attrs).selfClosing ? " /" : "";
-    return `<select${annotateValueTag("select", attrs, `Select ${index + 1}`, index)}${selfClosing}>`;
-  });
-  return { html: withSelects, actions, valueControls, rejectedControls };
+  return { html: withValueControls, actions, valueControls, rejectedControls };
 }
 
 function annotateObservableElements(html, projection) {

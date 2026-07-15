@@ -1419,9 +1419,13 @@ describe("stitch-to-jsx", () => {
       ]));
       writeHtml(path.join(stitchDir, "control-screen.html"), `
         <main>
-          <input aria-label="Title" data-action-input="ACT_SAVE.title" />
+          <button data-action="ACT_SAVE" data-note="Save > / now">Save</button>
+          <a href="#" data-action="ACT_EXPORT" data-note='Export > / later'>Export</a>
+          <INPUT aria-label="Title" data-action-input="ACT_SAVE.title" placeholder="Use A > B / C" />
           <textarea aria-label="Notes" data-action-input="ACT_SAVE.notes" />
           <select aria-label="Priority" data-action-input="ACT_SAVE.priority" />
+          <textarea aria-label="Long notes" data-action-input="ACT_SAVE.longNotes" placeholder="Long > notes"></textarea>
+          <select aria-label="Category" data-action-input="ACT_SAVE.category" data-note='Category > / choices'><option>Primary</option></select>
         </main>
       `);
 
@@ -1431,9 +1435,15 @@ describe("stitch-to-jsx", () => {
       });
 
       const code = fs.readFileSync(path.join(tmp, "src", "screens", "ControlScreen.tsx"), "utf-8");
-      assert.match(code, /<input[^>]*data-control-id="[^"]+"[^>]*\/>/);
-      assert.match(code, /<textarea[^>]*data-control-id="[^"]+"[^>]*\/>/);
-      assert.match(code, /<select[^>]*data-control-id="[^"]+"[^>]*\/>/);
+      assert.match(code, /data-action-id="save-1"/);
+      assert.match(code, /data-action-id="export-1"/);
+      assert.match(code, /placeholder="Use A > B \/ C"/);
+      assert.equal(code.includes('<input aria-label="Title" data-action-input="ACT_SAVE.title" placeholder="Use A > B / C" data-control-id="title-1" />'), true);
+      assert.equal(code.includes('<textarea aria-label="Notes" data-action-input="ACT_SAVE.notes" data-control-id="notes-2" />'), true);
+      assert.equal(code.includes('<select aria-label="Priority" data-action-input="ACT_SAVE.priority" data-control-id="priority-3" />'), true);
+      assert.match(code, /placeholder="Long > notes"/);
+      assert.match(code, /data-note='Category > \/ choices'/);
+      assert.match(code, /<option>Primary<\/option><\/select>/);
       assert.doesNotMatch(code, /\/\s+data-control-id=/);
       const transpiled = ts.transpileModule(code, {
         compilerOptions: {
