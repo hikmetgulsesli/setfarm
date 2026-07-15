@@ -31,7 +31,10 @@ const DRAIN_EVIDENCE = {
 test("invalid PLAN v3 proposal closes the exact claim and settles as a bounded retry", async () => {
   const previousPgUrl = process.env.SETFARM_PG_URL;
   const database = await createIsolatedTestDatabase();
+  let runtimeDb: typeof import("../../src/db-pg.js") | undefined;
   try {
+    runtimeDb = await import("../../src/db-pg.js");
+    runtimeDb.pgConfigureIsolatedTestDatabase(database.url);
     // Import installer modules only after the isolated database has installed its
     // connection URL. Static imports would bind the shared DB singleton to the
     // developer database before the test database exists.
@@ -515,6 +518,7 @@ test("invalid PLAN v3 proposal closes the exact claim and settles as a bounded r
       dedupe_observations: 1,
     });
   } finally {
+    await runtimeDb?.pgClose().catch(() => {});
     await database.cleanup();
     if (previousPgUrl === undefined) delete process.env.SETFARM_PG_URL;
     else process.env.SETFARM_PG_URL = previousPgUrl;

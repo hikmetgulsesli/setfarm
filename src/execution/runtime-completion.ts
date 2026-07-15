@@ -12,8 +12,14 @@ import {
   type RuntimeCompletionPlanDescriptorV1,
   type RuntimeCompletionPlanV1,
 } from "./schemas/runtime-completion-plan-v1.js";
-import { hashCanonicalJson } from "../product-compiler/canonical-json.js";
+import {
+  RuntimeCompletionSubmissionEvidenceV1Schema,
+  type RuntimeCompletionSubmissionEvidenceV1,
+} from "./schemas/runtime-completion-submission-evidence-v1.js";
+import { canonicalJsonStringify, hashCanonicalJson } from "../product-compiler/canonical-json.js";
 import { releaseDrainedRuntimeSessionInTransaction } from "./runtime-session-repository.js";
+import { compileV3ImplementationTransportProposalV1 } from "./v3-implementation-output.js";
+import { compileV3ImplementationCompletionProposal } from "./v3-implementation-completion.js";
 
 type Sql = postgres.Sql;
 type TransactionSql = postgres.TransactionSql;
@@ -34,6 +40,11 @@ const RuntimeCompletionApplyPhaseSchema = z.enum([
   "effects_committed",
 ]);
 
+export {
+  RuntimeCompletionSubmissionEvidenceV1Schema,
+  type RuntimeCompletionSubmissionEvidenceV1,
+} from "./schemas/runtime-completion-submission-evidence-v1.js";
+
 type RuntimeCompletionRow = Readonly<{
   request_id: string;
   runtime_session_id: string;
@@ -47,6 +58,8 @@ type RuntimeCompletionRow = Readonly<{
   claim_envelope: unknown;
   output: string;
   output_hash: string;
+  source_proposal: string | null;
+  submission_evidence: unknown | null;
   apply_phase: string;
   claim_outcome: string | null;
   claim_committed_at: Date | string | null;
@@ -83,6 +96,8 @@ export type RuntimeCompletionRequest = Readonly<{
   claimEnvelope: ClaimEnvelopeV1;
   output: string;
   outputHash: string;
+  submissionEvidence?: RuntimeCompletionSubmissionEvidenceV1;
+  sourceProposalRef?: string;
   applyPhase: z.infer<typeof RuntimeCompletionApplyPhaseSchema>;
   claimOutcome?: string;
   claimCommittedAt?: string;
@@ -142,6 +157,27 @@ function mapRequest(row: RuntimeCompletionRow): RuntimeCompletionRequest {
   const envelope = parseClaimEnvelope(
     typeof row.claim_envelope === "string" ? JSON.parse(row.claim_envelope) : row.claim_envelope,
   );
+  const submissionEvidence = row.submission_evidence
+    ? RuntimeCompletionSubmissionEvidenceV1Schema.parse(
+        typeof row.submission_evidence === "string"
+          ? JSON.parse(row.submission_evidence)
+          : row.submission_evidence,
+      )
+    : undefined;
+  if (submissionEvidence) {
+    if (
+      envelope.protocol !== "v3"
+      || envelope.workflowStepId !== "implement"
+      || submissionEvidence.canonicalOutputHash !== row.output_hash
+      || !row.source_proposal
+      || createHash("sha256").update(row.source_proposal, "utf8").digest("hex")
+        !== submissionEvidence.sourceProposalHash
+    ) {
+      throw new Error("RUNTIME_COMPLETION_SUBMISSION_EVIDENCE_DB_BINDING_INVALID");
+    }
+  } else if (row.source_proposal !== null) {
+    throw new Error("RUNTIME_COMPLETION_SOURCE_PROPOSAL_DB_BINDING_INVALID");
+  }
   return Object.freeze({
     requestId: RuntimeCompletionRequestIdSchema.parse(row.request_id),
     runtimeSessionId: row.runtime_session_id,
@@ -155,6 +191,12 @@ function mapRequest(row: RuntimeCompletionRow): RuntimeCompletionRequest {
     claimEnvelope: envelope,
     output: row.output,
     outputHash: row.output_hash,
+    ...(submissionEvidence
+      ? {
+          submissionEvidence,
+          sourceProposalRef: `setfarm://runtime-completion/${row.request_id}/source-proposal/${submissionEvidence.sourceProposalHash}`,
+        }
+      : {}),
     applyPhase: RuntimeCompletionApplyPhaseSchema.parse(row.apply_phase),
     ...(row.claim_outcome ? { claimOutcome: row.claim_outcome } : {}),
     ...(optionalTimestamp(row.claim_committed_at) ? { claimCommittedAt: optionalTimestamp(row.claim_committed_at) } : {}),
@@ -190,6 +232,25 @@ export function newRuntimeCompletionRequestId(): string {
 export type RequestRuntimeCompletionResult =
   | Readonly<{ status: "direct" }>
   | Readonly<{ status: "requested" | "existing"; request: RuntimeCompletionRequest }>;
+
+function completionReplayOutputMatches(
+  replay: RuntimeCompletionRequest,
+  candidateOutputHash: string,
+  rawOutput: string,
+  nativeV3Implementation: boolean,
+): boolean {
+  if (replay.outputHash === candidateOutputHash) return true;
+  if (!nativeV3Implementation || replay.submissionEvidence) return false;
+  // Migration-v19 compatibility: historic native-v3 requests retained the
+  // raw legacy transport object. Compare its canonical projection without
+  // retroactively manufacturing a receipt or changing the stored owner.
+  try {
+    return compileV3ImplementationTransportProposalV1(replay.output)
+      .canonicalOutputHash === candidateOutputHash;
+  } catch {
+    return replay.output === rawOutput;
+  }
+}
 
 /**
  * Stamp the exact claim/product owner commit in the same transaction that
@@ -342,14 +403,30 @@ export async function requestRuntimeCompletion(
     now?: Date;
   }>,
 ): Promise<RequestRuntimeCompletionResult> {
+  if (
+    Object.hasOwn(rawInput, "submissionEvidence")
+    || Object.hasOwn(rawInput, "sourceProposal")
+  ) {
+    throw new Error("RUNTIME_COMPLETION_CALLER_COMPILER_EVIDENCE_NOT_AUTHORIZED");
+  }
   const envelope = parseClaimEnvelope(rawInput.envelope);
-  const output = String(rawInput.output ?? "");
-  const outputBytes = Buffer.byteLength(output, "utf8");
+  const rawOutput = String(rawInput.output ?? "");
+  const outputBytes = Buffer.byteLength(rawOutput, "utf8");
   if (outputBytes < 1 || outputBytes > 4 * 1024 * 1024) {
     throw new Error("RUNTIME_COMPLETION_OUTPUT_SIZE_INVALID");
   }
   const now = validTime(rawInput.now);
-  const outputHash = createHash("sha256").update(output, "utf8").digest("hex");
+  const nativeV3Implementation = envelope.protocol === "v3"
+    && envelope.workflowStepId === "implement";
+  const transportCompilation = nativeV3Implementation
+    ? compileV3ImplementationTransportProposalV1(rawOutput)
+    : undefined;
+  let output = transportCompilation
+    ? canonicalJsonStringify(transportCompilation.output)
+    : rawOutput;
+  let outputHash = createHash("sha256").update(output, "utf8").digest("hex");
+  let submissionEvidence: RuntimeCompletionSubmissionEvidenceV1 | undefined;
+  let sourceProposal: string | undefined;
   const requestId = rawInput.requestId
     ? RuntimeCompletionRequestIdSchema.parse(rawInput.requestId)
     : newRuntimeCompletionRequestId();
@@ -366,7 +443,12 @@ export async function requestRuntimeCompletion(
   if (replayRows[0]) {
     const replay = mapRequest(replayRows[0]);
     if (
-      replay.outputHash !== outputHash
+      !completionReplayOutputMatches(
+        replay,
+        outputHash,
+        rawOutput,
+        nativeV3Implementation,
+      )
       || JSON.stringify(replay.claimEnvelope) !== JSON.stringify(envelope)
     ) {
       throw new Error("RUNTIME_COMPLETION_REQUEST_CONFLICT");
@@ -378,7 +460,24 @@ export async function requestRuntimeCompletion(
     "SELECT session_id FROM runtime_sessions WHERE claim_id = $1 LIMIT 1",
     [envelope.claimId],
   );
-  if (runtimeRows.length === 0) return { status: "direct" };
+  if (runtimeRows.length === 0) {
+    if (envelope.protocol !== "legacy") {
+      throw new Error("RUNTIME_COMPLETION_MANAGED_RUNTIME_REQUIRED");
+    }
+    return { status: "direct" };
+  }
+
+  if (nativeV3Implementation) {
+    const compiled = await compileV3ImplementationCompletionProposal({
+      sql,
+      envelope,
+      rawProposal: rawOutput,
+    });
+    output = compiled.output;
+    outputHash = compiled.submissionEvidence.canonicalOutputHash;
+    submissionEvidence = compiled.submissionEvidence;
+    sourceProposal = compiled.sourceProposal;
+  }
 
   await assertClaimAuthority(sql, envelope, envelope.stepId);
 
@@ -448,7 +547,12 @@ export async function requestRuntimeCompletion(
       const request = mapRequest(existing[0]);
       if (
         request.runtimeSessionId !== owner.runtime_session_id
-        || request.outputHash !== outputHash
+        || !completionReplayOutputMatches(
+          request,
+          outputHash,
+          rawOutput,
+          nativeV3Implementation,
+        )
         || JSON.stringify(request.claimEnvelope) !== JSON.stringify(envelope)
       ) {
         throw new Error("RUNTIME_COMPLETION_REQUEST_CONFLICT");
@@ -463,13 +567,13 @@ export async function requestRuntimeCompletion(
       `INSERT INTO runtime_completion_requests (
          request_id, runtime_session_id, claim_id, run_id, step_db_id,
          workflow_step_id, story_db_id, story_id, attempt_id,
-         claim_envelope, output, output_hash, state, requested_by,
-         requested_at, created_at, updated_at
+         claim_envelope, output, output_hash, source_proposal, submission_evidence,
+         state, requested_by, requested_at, result, created_at, updated_at
        ) VALUES (
          $1, $2, $3, $4, $5,
          $6, $7, $8, $9,
-         $10::text::jsonb, $11, $12, 'requested', $13,
-         $14, $14, $14
+         $10::text::jsonb, $11, $12, $13, $14::text::jsonb,
+         'requested', $15, $16, '{}'::jsonb, $16, $16
        )
        RETURNING *`,
       [
@@ -485,6 +589,8 @@ export async function requestRuntimeCompletion(
         JSON.stringify(envelope),
         output,
         outputHash,
+        sourceProposal ?? null,
+        submissionEvidence ? JSON.stringify(submissionEvidence) : null,
         envelope.runtimeAgentId,
         now,
       ],
@@ -979,7 +1085,8 @@ export function createRuntimeCompletionRepository(sql: Sql) {
         const updated = await transaction.unsafe<RuntimeCompletionRow[]>(
           `UPDATE runtime_completion_requests
               SET state = 'accepted', accepted_at = $3,
-                  lease_expires_at = NULL, result = $4::text::jsonb,
+                  lease_expires_at = NULL,
+                  result = $4::text::jsonb,
                   diagnostic = 'Completion accepted after proven runtime drain',
                   updated_at = $3
             WHERE request_id = $1 AND owner_instance_id = $2 AND state = 'processing'

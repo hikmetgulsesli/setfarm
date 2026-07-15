@@ -26,7 +26,10 @@ const DRAIN_EVIDENCE = {
 test("exact PLAN v3 rejection terminally requests compiler-owned clarification without redispatch", async () => {
   const previousPgUrl = process.env.SETFARM_PG_URL;
   const database = await createIsolatedTestDatabase();
+  let runtimeDb: typeof import("../../src/db-pg.js") | undefined;
   try {
+    runtimeDb = await import("../../src/db-pg.js");
+    runtimeDb.pgConfigureIsolatedTestDatabase(database.url);
     const runId = "run-v3-plan-refusal";
     const stepDbId = "step-v3-plan-refusal";
     const claimAgentId = "feature-dev_planner";
@@ -237,6 +240,7 @@ test("exact PLAN v3 rejection terminally requests compiler-owned clarification w
       open_claims: 0,
     });
   } finally {
+    await runtimeDb?.pgClose().catch(() => {});
     await database.cleanup();
     if (previousPgUrl === undefined) delete process.env.SETFARM_PG_URL;
     else process.env.SETFARM_PG_URL = previousPgUrl;

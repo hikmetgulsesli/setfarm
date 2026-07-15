@@ -16,6 +16,19 @@ import { hasStopBlockingInvariant } from "./run-operational-invariant-policy.js"
 type Sql = postgres.Sql;
 type TransactionSql = postgres.TransactionSql;
 
+const RUN_OPERATIONAL_ACTION_REQUIRED_CAPABILITIES = [
+  "attempts",
+  "claimBinding",
+  "runtimeOwnership",
+  "managerCompletion",
+  "effectLedger",
+  "findingRecovery",
+  "evidenceLedger",
+  "acceptedCandidate",
+  "deploymentReceipt",
+  "projectTransferAck",
+] as const;
+
 export type RunOperationalAction = "stop" | "resume";
 export type RunOperationalActionPublicErrorCode =
   | "RUN_OPERATIONAL_ACTION_RUN_ID_REQUIRED"
@@ -310,7 +323,11 @@ async function executeInTransaction(
   if (snapshot.snapshotHash !== input.expectedSnapshotHash) {
     throw new RunOperationalActionError("RUN_OPERATIONAL_ACTION_STALE_SNAPSHOT");
   }
-  if (snapshot.source.projection !== "complete" || !Object.values(snapshot.source.capabilities).every(Boolean)) {
+  if (
+    !RUN_OPERATIONAL_ACTION_REQUIRED_CAPABILITIES.every(
+      (capability) => snapshot.source.capabilities[capability],
+    )
+  ) {
     throw new RunOperationalActionError("RUN_OPERATIONAL_ACTION_PROJECTION_INCOMPLETE");
   }
   if (

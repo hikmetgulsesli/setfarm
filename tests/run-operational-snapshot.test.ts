@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { readFile } from "node:fs/promises";
@@ -41,6 +42,7 @@ import {
   OperationalTerminationRequestV1Schema,
   RunOperationalSnapshotV1Schema,
 } from "../src/server/schemas/run-operational-snapshot-v1.js";
+import { RunOperationalSnapshotV2Schema } from "../src/server/schemas/run-operational-snapshot-v2.js";
 import { createIsolatedTestDatabase } from "./execution-attempts/test-database.js";
 
 const SHA = "a".repeat(40);
@@ -156,6 +158,16 @@ async function seedClaimAndAttempt(
   return { claimId, attemptId };
 }
 
+async function attestSnapshotMigrationShape(
+  database: Awaited<ReturnType<typeof createIsolatedTestDatabase>>,
+): Promise<void> {
+  await database.sql.unsafe(
+    `UPDATE setfarm_schema_migrations
+        SET verified_release_sha = $1, verified_at = NOW()`,
+    [SHA],
+  );
+}
+
 function reducerInput(options: Readonly<{
   protocol: "legacy" | "shadow" | "v3" | null;
   status: string;
@@ -172,6 +184,7 @@ function reducerInput(options: Readonly<{
         claimBinding: true,
         runtimeOwnership: true,
         managerCompletion: true,
+        implementationSubmissionEvidence: true,
         effectLedger: true,
         findingRecovery: true,
         evidenceLedger: true,
@@ -327,10 +340,29 @@ describe("canonical run operational snapshot", () => {
     try {
       const runId = "RUN_snapshot-full-0001";
       await database.insertRun(runId);
+      await attestSnapshotMigrationShape(database);
       const { claimId, attemptId } = await seedClaimAndAttempt(database, runId, "verified");
       const sessionId = "RTS_snapshot-full-0001";
       const requestId = "RCR_snapshot-full-0001";
       const terminationId = "RTR_snapshot-full-0001";
+      const canonicalOutput = JSON.stringify({
+        schema: "setfarm.v3-implementation-output-contract.v2",
+        privatePayload: "TOP_SECRET_RAW_OUTPUT",
+      });
+      const sourceProposal = JSON.stringify({
+        schema: "setfarm.v3-implementation-agent-proposal.v1",
+        providerAnnotation: "TOP_SECRET_SOURCE_PROPOSAL",
+      });
+      const canonicalOutputHash = createHash("sha256").update(canonicalOutput, "utf8").digest("hex");
+      const sourceProposalHash = createHash("sha256").update(sourceProposal, "utf8").digest("hex");
+      const submissionEvidence = {
+        schema: "setfarm.runtime-completion-submission-evidence.v1" as const,
+        compiler: "setfarm.v3-implementation-output-compilation.v1" as const,
+        sourceSchema: "setfarm.v3-implementation-agent-proposal.v1" as const,
+        sourceProposalHash,
+        canonicalOutputHash,
+        ignoredFieldPaths: ["/providerAnnotation"],
+      };
 
       await database.sql.unsafe(
         `INSERT INTO runtime_sessions (
@@ -350,15 +382,16 @@ describe("canonical run operational snapshot", () => {
         `INSERT INTO runtime_completion_requests (
            request_id, runtime_session_id, claim_id, run_id, step_db_id,
            workflow_step_id, story_db_id, story_id, attempt_id, claim_envelope,
-           output, output_hash, apply_phase, claim_outcome, claim_committed_at,
-           effects_committed_at, state, requested_by, requested_at, drained_at,
-           processing_at, accepted_at, result, completion_plan,
+           output, output_hash, source_proposal, submission_evidence, apply_phase,
+           claim_outcome, claim_committed_at, effects_committed_at, state,
+           requested_by, requested_at, drained_at, processing_at, accepted_at,
+           result, completion_plan,
            completion_plan_hash, prepared_at
          ) VALUES (
            $1, $2, $3, $4, 'STEP_DB_1', 'implement', 'STORY_DB_1', 'US-001', $5,
-           $6::jsonb, 'TOP_SECRET_RAW_OUTPUT', $7, 'effects_committed', 'completed',
+           $6::jsonb, $7, $8, $9, $10::jsonb, 'effects_committed', 'completed',
            NOW(), NOW(), 'accepted', 'runtime-agent', NOW(), NOW(), NOW(), NOW(),
-           $8::jsonb, $9::jsonb, $10, NOW()
+           $11::jsonb, $12::jsonb, $13, NOW()
          )`,
         [
           requestId,
@@ -366,8 +399,11 @@ describe("canonical run operational snapshot", () => {
           claimId,
           runId,
           attemptId,
-          { fenceToken: "SECRET_ENVELOPE_FENCE" },
-          HASH,
+          { protocol: "v3", fenceToken: "SECRET_ENVELOPE_FENCE" },
+          canonicalOutput,
+          canonicalOutputHash,
+          sourceProposal,
+          submissionEvidence,
           { raw: "SECRET_RESULT" },
           { schema: "setfarm.runtime-completion-plan.v1" },
           PLAN_HASH,
@@ -436,13 +472,14 @@ describe("canonical run operational snapshot", () => {
 
       const snapshot = await buildRunOperationalSnapshot(database.sql, runId);
       assert.ok(snapshot);
-      assert.equal(snapshot.schema, "setfarm.run-operational-snapshot.v1");
+      assert.equal(snapshot.schema, "setfarm.run-operational-snapshot.v2");
       assert.equal(snapshot.source.projection, "complete");
       assert.deepEqual(snapshot.source.capabilities, {
         attempts: true,
         claimBinding: true,
         runtimeOwnership: true,
         managerCompletion: true,
+        implementationSubmissionEvidence: true,
         effectLedger: true,
         findingRecovery: true,
         evidenceLedger: true,
@@ -463,6 +500,10 @@ describe("canonical run operational snapshot", () => {
       assert.equal(snapshot.attempts[0]?.claimRef, `setfarm://claim-log/${claimId}`);
       assert.equal(snapshot.runtimeSessions[0]?.ref, `setfarm://runtime-session/${sessionId}`);
       assert.equal(snapshot.completionRequests[0]?.ref, `setfarm://runtime-completion/${requestId}`);
+      assert.deepEqual(snapshot.completionRequests[0]?.implementationSubmissionEvidence, {
+        receipt: submissionEvidence,
+        sourceProposalRef: `setfarm://runtime-completion/${requestId}/source-proposal/${sourceProposalHash}`,
+      });
       assert.equal(snapshot.completionRequests[0]?.effects[0]?.ref, `setfarm://runtime-completion/${requestId}/effect/continuation`);
       assert.equal(snapshot.terminationRequests[0]?.ref, `setfarm://run-termination/${terminationId}`);
       assert.equal(snapshot.terminationRequests[0]?.requestedBy, "setfarm.product-compiler.deploy-refusal");
@@ -483,15 +524,45 @@ describe("canonical run operational snapshot", () => {
       assert.equal(snapshot.summary.lifecycleState, "terminal");
       assert.equal(snapshot.summary.health, "ok");
       assert.equal(snapshot.invariants.length, 0);
-      assert.doesNotThrow(() => RunOperationalSnapshotV1Schema.parse(snapshot));
+      assert.doesNotThrow(() => RunOperationalSnapshotV2Schema.parse(snapshot));
+      assert.throws(
+        () => RunOperationalSnapshotV2Schema.parse({
+          ...snapshot,
+          source: {
+            ...snapshot.source,
+            migrationVersions: snapshot.source.migrationVersions.filter((version) => version !== 19),
+          },
+        }),
+        /attested migration 19 shape/,
+      );
+      const projectedCompletion = snapshot.completionRequests[0];
+      assert.ok(projectedCompletion?.implementationSubmissionEvidence);
+      assert.throws(
+        () => RunOperationalSnapshotV2Schema.parse({
+          ...snapshot,
+          completionRequests: [{
+            ...projectedCompletion,
+            implementationSubmissionEvidence: {
+              ...projectedCompletion.implementationSubmissionEvidence,
+              receipt: {
+                ...projectedCompletion.implementationSubmissionEvidence.receipt,
+                canonicalOutputHash: HASH,
+              },
+            },
+          }],
+        }),
+        /bind the completion output hash/,
+      );
 
       const serialized = JSON.stringify(snapshot);
       for (const secret of [
         "FENCE_TOKEN_MUST_NOT_LEAK",
         "TOP_SECRET_RAW_OUTPUT",
+        "TOP_SECRET_SOURCE_PROPOSAL",
         "TOP_SECRET_TRANSCRIPT",
         "SECRET_SESSION_KEY",
         "SECRET_ENVELOPE_FENCE",
+        "SECRET_RESULT",
         "SECRET_EFFECT_PAYLOAD",
         "SECRET_EFFECT_RESULT",
         "SECRET_EFFECT_EVIDENCE",
@@ -525,6 +596,23 @@ describe("canonical run operational snapshot", () => {
       assert.equal(unchanged.snapshotHash, snapshot.snapshotHash);
       const { snapshotHash: _ignored, ...hashable } = unchanged;
       assert.equal(computeRunOperationalSnapshotHash(hashable), unchanged.snapshotHash);
+
+      // The presentation boundary must independently re-bind the private bytes
+      // even if storage protections are bypassed by a privileged corruption.
+      await database.sql.unsafe(
+        "ALTER TABLE runtime_completion_requests DISABLE TRIGGER trg_runtime_completion_submission_validate",
+      );
+      await database.sql.unsafe(
+        "ALTER TABLE runtime_completion_requests DISABLE TRIGGER trg_runtime_completion_submission_evidence_immutable",
+      );
+      await database.sql.unsafe(
+        "UPDATE runtime_completion_requests SET source_proposal = $2 WHERE request_id = $1",
+        [requestId, JSON.stringify({ schema: "tampered-private-source-proposal" })],
+      );
+      await assert.rejects(
+        buildRunOperationalSnapshot(database.sql, runId),
+        /OPERATIONAL_SNAPSHOT_SUBMISSION_EVIDENCE_DB_BINDING_INVALID/,
+      );
     } finally {
       await database.cleanup();
     }
@@ -618,6 +706,7 @@ describe("canonical run operational snapshot", () => {
            'running', 'v3', $2, $3, $4, $5)`,
         [runId, SHA, INPUT_HASH, PACKET_HASH, releaseAdmissionHash],
       );
+      await attestSnapshotMigrationShape(database);
       await database.sql.unsafe(
         `INSERT INTO product_packets (run_id, packet_hash, compiler_metadata)
          VALUES ($1, $2, $3::text::jsonb)`,
@@ -918,7 +1007,7 @@ describe("canonical run operational snapshot", () => {
       assert.equal(snapshot.deploymentReceipt?.receipt.runtime.deployUrl, `http://127.0.0.1:${port}/`);
       assert.equal(snapshot.summary.unpublishedOutbox, 1);
       assert.equal(snapshot.summary.lifecycleState, "effects_applying");
-      assert.doesNotThrow(() => RunOperationalSnapshotV1Schema.parse(snapshot));
+      assert.doesNotThrow(() => RunOperationalSnapshotV2Schema.parse(snapshot));
 
       const outbox = createOperationalOutboxPublisher({
         repository: createOperationalOutboxRepository(database.sql),
@@ -1017,7 +1106,7 @@ describe("canonical run operational snapshot", () => {
       assert.ok(acknowledgedSnapshot);
       assert.equal(acknowledgedSnapshot.projectTransferAck?.acknowledgement.ackHash, acknowledgement.ackHash);
       assert.equal(acknowledgedSnapshot.summary.unpublishedOutbox, 1);
-      assert.doesNotThrow(() => RunOperationalSnapshotV1Schema.parse(acknowledgedSnapshot));
+      assert.doesNotThrow(() => RunOperationalSnapshotV2Schema.parse(acknowledgedSnapshot));
       assert.equal((await outbox.drain({ maxEvents: 10 })).published, 1);
       const settledSnapshot = await buildRunOperationalSnapshot(database.sql, runId);
       assert.ok(settledSnapshot);
@@ -1169,7 +1258,7 @@ describe("canonical run operational snapshot", () => {
       assert.equal(dispatch.terminalReasonCode, "verification_failed");
       assert.ok(dispatch.leaseExpiresAt);
       assert.ok(dispatch.terminalAt);
-      assert.doesNotThrow(() => RunOperationalSnapshotV1Schema.parse(snapshot));
+      assert.doesNotThrow(() => RunOperationalSnapshotV2Schema.parse(snapshot));
 
       const serialized = JSON.stringify(snapshot);
       assert.equal(serialized.includes(leased.leaseToken!), false);
@@ -1271,6 +1360,7 @@ describe("canonical run operational snapshot", () => {
         claimBinding: false,
         runtimeOwnership: false,
         managerCompletion: false,
+        implementationSubmissionEvidence: false,
         effectLedger: false,
         findingRecovery: false,
         evidenceLedger: false,
@@ -1296,11 +1386,68 @@ describe("canonical run operational snapshot", () => {
     }
   });
 
+  it("keeps the v2 projection readable on a pre-v19 manager-completion database", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      await database.sql.unsafe(
+        "DROP TRIGGER trg_runtime_completion_submission_validate ON runtime_completion_requests",
+      );
+      await database.sql.unsafe(
+        "DROP TRIGGER trg_runtime_completion_submission_evidence_immutable ON runtime_completion_requests",
+      );
+      await database.sql.unsafe(
+        "ALTER TABLE runtime_completion_requests DROP CONSTRAINT runtime_completion_requests_submission_evidence_check",
+      );
+      await database.sql.unsafe(
+        "ALTER TABLE runtime_completion_requests DROP COLUMN submission_evidence, DROP COLUMN source_proposal",
+      );
+      await database.sql.unsafe("DELETE FROM setfarm_schema_migrations WHERE version = 19");
+      const runId = "RUN_snapshot-pre-v19-manager-completion";
+      await database.insertRun(runId);
+
+      const snapshot = await buildRunOperationalSnapshot(database.sql, runId);
+      assert.ok(snapshot);
+      assert.equal(snapshot.schema, "setfarm.run-operational-snapshot.v2");
+      assert.equal(snapshot.source.projection, "complete");
+      assert.equal(snapshot.source.capabilities.managerCompletion, true);
+      assert.equal(snapshot.source.capabilities.implementationSubmissionEvidence, false);
+      assert.deepEqual(snapshot.completionRequests, []);
+      assert.doesNotThrow(() => RunOperationalSnapshotV2Schema.parse(snapshot));
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("does not advertise submission evidence from an unattested v19 shape", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      await database.sql.unsafe(
+        "UPDATE setfarm_schema_migrations SET verified_release_sha = NULL, verified_at = NULL",
+      );
+      const runId = "RUN_snapshot-unattested-v19";
+      await database.insertRun(runId);
+
+      const snapshot = await buildRunOperationalSnapshot(database.sql, runId);
+      assert.ok(snapshot);
+      assert.equal(snapshot.source.verifiedReleaseSha, null);
+      assert.equal(snapshot.source.projection, "complete");
+      assert.equal(snapshot.source.capabilities.managerCompletion, true);
+      assert.equal(snapshot.source.capabilities.implementationSubmissionEvidence, false);
+      assert.doesNotThrow(() => RunOperationalSnapshotV2Schema.parse(snapshot));
+    } finally {
+      await database.cleanup();
+    }
+  });
+
   it("uses an explicit repeatable-read, read-only transaction and strict schema", async () => {
     const source = await readFile(new URL("../src/server/run-operational-snapshot.ts", import.meta.url), "utf8");
     assert.match(source, /sql\.begin\(\s*["']isolation level repeatable read read only["']/);
     assert.throws(
       () => RunOperationalSnapshotV1Schema.parse({ schema: "setfarm.run-operational-snapshot.v1", unexpected: true }),
+      /generatedAt|Required|Invalid input/,
+    );
+    assert.throws(
+      () => RunOperationalSnapshotV2Schema.parse({ schema: "setfarm.run-operational-snapshot.v2", unexpected: true }),
       /generatedAt|Required|Invalid input/,
     );
   });

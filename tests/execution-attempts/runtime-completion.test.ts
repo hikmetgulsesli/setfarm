@@ -12,6 +12,7 @@ import {
   createRuntimeCompletionRepository,
   markRuntimeCompletionOwnerCommittedInTransaction,
   requestRuntimeCompletion,
+  RuntimeCompletionSubmissionEvidenceV1Schema,
 } from "../../src/execution/runtime-completion.js";
 import { createRuntimeCompletionEffectRepository } from "../../src/execution/runtime-completion-effect-repository.js";
 import {
@@ -41,10 +42,26 @@ const DRAIN_EVIDENCE = {
 async function seedManagedClaim(
   database: Awaited<ReturnType<typeof createIsolatedTestDatabase>>,
   runId: string,
+  protocol: "shadow" | "v3" = "shadow",
 ) {
   const stepDbId = `${runId}-step`;
   const storyDbId = `${runId}-story`;
-  await database.insertRun(runId);
+  if (protocol === "v3") {
+    const releaseSha = "d".repeat(40);
+    const releaseAdmissionHash = await database.seedV3ReleaseGoAdmission(releaseSha);
+    await database.sql`
+      INSERT INTO runs (
+        id, workflow_id, task, status, context, protocol,
+        compiler_release_sha, activation_preflight_hash, packet_hash,
+        release_admission_hash
+      ) VALUES (
+        ${runId}, 'feature-dev', 'managed v3 completion test', 'running', '{}', 'v3',
+        ${releaseSha}, ${"e".repeat(64)}, ${"a".repeat(64)}, ${releaseAdmissionHash}
+      )
+    `;
+  } else {
+    await database.insertRun(runId);
+  }
   await database.sql`
     INSERT INTO steps
       (id, run_id, step_id, agent_id, step_index, input_template, expects, status, current_story_id)
@@ -97,7 +114,7 @@ async function seedManagedClaim(
   });
   const envelope: ClaimEnvelopeV1 = {
     schema: "setfarm.claim-envelope.v1",
-    protocol: "shadow",
+    protocol,
     issuedAt: "2026-07-13T12:00:00.000Z",
     stepId: stepDbId,
     workflowStepId: "implement",
@@ -352,6 +369,120 @@ describe("manager-owned runtime completion", () => {
         claim_outcome: "completed",
         attempt_disposition: "produced_delta",
         story_status: "done",
+      });
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("rejects caller-asserted compiler evidence before publishing any runtime drain", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const seeded = await seedManagedClaim(database, "run-compiled-completion-submission", "v3");
+      const output = "{\"schema\":\"setfarm.v3-implementation-agent-proposal.v1\"}";
+      const outputHash = createHash("sha256").update(output, "utf8").digest("hex");
+      const forgedInput = {
+        envelope: seeded.envelope,
+        output,
+        submissionEvidence: {
+          schema: "setfarm.runtime-completion-submission-evidence.v1" as const,
+          compiler: "setfarm.v3-implementation-output-compilation.v1" as const,
+          sourceSchema: "setfarm.v3-implementation-agent-output.v1" as const,
+          sourceProposalHash: outputHash,
+          canonicalOutputHash: outputHash,
+          ignoredFieldPaths: ["/commands"],
+        },
+        sourceProposal: output,
+      };
+      await assert.rejects(
+        requestRuntimeCompletion(database.sql, forgedInput),
+        /RUNTIME_COMPLETION_CALLER_COMPILER_EVIDENCE_NOT_AUTHORIZED/,
+      );
+      await assert.rejects(
+        requestRuntimeCompletion(database.sql, {
+          envelope: seeded.envelope,
+          output,
+        }),
+        /invalid_union|Invalid input/i,
+      );
+      const untouched = await database.sql<Array<{ request_count: number; runtime_state: string }>>`
+        SELECT (SELECT COUNT(*)::integer FROM runtime_completion_requests WHERE claim_id = ${seeded.claimId}) AS request_count,
+               state AS runtime_state
+          FROM runtime_sessions
+         WHERE claim_id = ${seeded.claimId}
+      `;
+      assert.deepEqual({ ...untouched[0] }, { request_count: 0, runtime_state: "running" });
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("keeps the compiler receipt schema strict and hash-bound", () => {
+    const evidence = {
+      schema: "setfarm.runtime-completion-submission-evidence.v1" as const,
+        compiler: "setfarm.v3-implementation-output-compilation.v1" as const,
+        sourceSchema: "setfarm.v3-implementation-agent-output.v1" as const,
+        sourceProposalHash: "a".repeat(64),
+        canonicalOutputHash: "b".repeat(64),
+        ignoredFieldPaths: ["/commands"],
+    };
+    assert.deepEqual(
+      RuntimeCompletionSubmissionEvidenceV1Schema.parse(evidence),
+      evidence,
+    );
+    assert.throws(
+      () => RuntimeCompletionSubmissionEvidenceV1Schema.parse({
+        ...evidence,
+        ignoredFieldPaths: ["/z", "/a"],
+      }),
+      /canonical/i,
+    );
+  });
+
+  it("fails closed before publication when a managed v3 runtime owner is missing", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const seeded = await seedManagedClaim(database, "run-v3-missing-runtime-owner", "v3");
+      const envelope = seeded.envelope;
+      const output = JSON.stringify({
+        schema: "setfarm.v3-implementation-agent-proposal.v1",
+        disposition: "ready_for_evidence",
+        handoffHash: "a".repeat(64),
+        attemptId: envelope.attempt!.attemptId,
+        packetHash: "b".repeat(64),
+        sliceHash: "c".repeat(64),
+        sourceBefore: { sha: "d".repeat(40), treeHash: "e".repeat(64) },
+        summary: "bounded transport proposal",
+        changes: [{ path: "src/App.tsx", summary: "exact" }],
+      });
+      await database.sql`DELETE FROM runtime_sessions WHERE claim_id = ${seeded.claimId}`;
+
+      await assert.rejects(
+        requestRuntimeCompletion(database.sql, { envelope, output }),
+        /RUNTIME_COMPLETION_MANAGED_RUNTIME_REQUIRED/,
+      );
+      const state = await database.sql<Array<{
+        completion_count: number;
+        claim_outcome: string | null;
+        story_status: string;
+        step_status: string;
+        attempt_disposition: string;
+      }>>`
+        SELECT (SELECT COUNT(*)::integer FROM runtime_completion_requests WHERE claim_id = cl.id) AS completion_count,
+               cl.outcome AS claim_outcome, st.status AS story_status, s.status AS step_status,
+               ea.disposition AS attempt_disposition
+          FROM claim_log cl
+          JOIN stories st ON st.run_id = cl.run_id AND st.story_id = cl.story_id
+          JOIN steps s ON s.id = ${seeded.stepDbId}
+          JOIN execution_attempts ea ON ea.claim_id = cl.id
+         WHERE cl.id = ${seeded.claimId}
+      `;
+      assert.deepEqual({ ...state[0] }, {
+        completion_count: 0,
+        claim_outcome: null,
+        story_status: "running",
+        step_status: "running",
+        attempt_disposition: "running",
       });
     } finally {
       await database.cleanup();

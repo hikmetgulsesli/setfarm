@@ -262,13 +262,14 @@ describe("contract spine migration journal", () => {
       "016_v3_preparation_block_ledger",
       "017_v3_github_review_resolution_evidence",
       "018_v3_project_transfer_ack_ledger",
+      "019_runtime_completion_submission_evidence",
     ]);
     assert.equal((await verifyContractSpineMigrations(database.sql)).status, "verified");
   });
 
   it("upgrades agent-scoped claim indexes and backfills the exact relational claim owner", async () => {
     await applyContractSpineMigrations(database.sql);
-    await database.sql`DELETE FROM setfarm_schema_migrations WHERE version IN (5, 6, 7, 8, 12, 14, 18)`;
+    await database.sql`DELETE FROM setfarm_schema_migrations WHERE version IN (5, 6, 7, 8, 12, 14, 18, 19)`;
     await database.sql`DROP TRIGGER trg_runs_project_transfer_ack_set_once ON runs`;
     await database.sql`DROP FUNCTION setfarm_enforce_project_transfer_ack_pointer_set_once()`;
     await database.sql`ALTER TABLE runs DROP CONSTRAINT runs_project_transfer_ack_identity_fkey`;
@@ -294,6 +295,8 @@ describe("contract spine migration journal", () => {
     await database.sql`DROP TABLE operational_outbox`;
     await database.sql`DROP TABLE runtime_completion_effects`;
     await database.sql`DROP TABLE runtime_completion_requests`;
+    await database.sql`DROP FUNCTION setfarm_validate_runtime_completion_submission()`;
+    await database.sql`DROP FUNCTION setfarm_forbid_runtime_completion_submission_update()`;
     await database.sql`DROP INDEX idx_runtime_sessions_session_claim_run_unique`;
     await database.sql`DROP TABLE runtime_sessions`;
     await database.sql`DROP TABLE run_termination_requests`;
@@ -348,6 +351,7 @@ describe("contract spine migration journal", () => {
       "012_canonical_operational_event_projection",
       "014_v3_deploy_receipt_ledger",
       "018_v3_project_transfer_ack_ledger",
+      "019_runtime_completion_submission_evidence",
     ]);
     const rows = await database.sql<Array<{
       claim_id: string | null;
@@ -658,6 +662,27 @@ describe("contract spine migration journal", () => {
     await database.sql.unsafe(
       "ALTER TABLE runtime_completion_requests ADD CONSTRAINT runtime_completion_requests_processing_time_check CHECK (TRUE)",
     );
+
+    await assert.rejects(
+      verifyContractSpineMigrations(database.sql),
+      (error: unknown) =>
+        error instanceof ContractSpineMigrationError
+        && error.code === "MIGRATION_ADOPTION_MISMATCH",
+    );
+  });
+
+  it("rejects a submission trigger that omits one authoritative update column", async () => {
+    await applyContractSpineMigrations(database.sql);
+    await database.sql.unsafe(
+      "DROP TRIGGER trg_runtime_completion_submission_validate ON runtime_completion_requests",
+    );
+    await database.sql.unsafe(`
+      CREATE TRIGGER trg_runtime_completion_submission_validate
+      BEFORE INSERT OR UPDATE OF
+        submission_evidence, source_proposal, output, output_hash, claim_envelope
+      ON runtime_completion_requests
+      FOR EACH ROW EXECUTE FUNCTION setfarm_validate_runtime_completion_submission()
+    `);
 
     await assert.rejects(
       verifyContractSpineMigrations(database.sql),

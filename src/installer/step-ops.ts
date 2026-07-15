@@ -35,6 +35,7 @@ import {
   captureShadowSourceRevision,
 } from "../execution/shadow-attempt-recorder.js";
 import {
+  createV3ImplementationAttemptHandoffV1,
   loadV3ImplementationAttemptContext,
   reserveV3ImplementationAttempt,
   type V3ImplementationAttemptResult,
@@ -45,7 +46,9 @@ import type { ClaimAttemptFenceV1 } from "../execution/schemas/claim-envelope-v1
 import type { ClaimEnvelopeV1 } from "../execution/schemas/claim-envelope-v1.js";
 import { assertClaimAuthority } from "../execution/claim-authority.js";
 import { requestRunTerminationInTransaction } from "../execution/run-termination.js";
-import { markRuntimeCompletionOwnerCommittedInTransaction } from "../execution/runtime-completion.js";
+import {
+  markRuntimeCompletionOwnerCommittedInTransaction,
+} from "../execution/runtime-completion.js";
 import {
   createSingleEffectCompletionPlanDescriptorV1,
   type RuntimeCompletionPlanV1,
@@ -99,7 +102,6 @@ import { createFindingRecoveryRepository } from "../recovery/finding-recovery-re
 import { createRecoveryDeliveryRepository } from "../recovery/recovery-delivery-repository.js";
 import type { V3RecoveryClaimHandoffV1 } from "../recovery/v3-recovery-claim-authority.js";
 import {
-  createV3ImplementationClaimHandoffV1,
   createV3ImplementationContextV1,
   type V3ImplementationContextV1,
   type V3ImplementationClaimHandoffV1,
@@ -228,69 +230,6 @@ function applyV3ImplementationSliceContext(
     delete context["recovery_dispatch_id"];
     delete context["recovery_dispatch_class"];
   }
-}
-
-function structuredV3ImplementationHandoff(input: Readonly<{
-  stepDbId: string;
-  storyDbId: string;
-  claimId: number;
-  branch: string;
-  workdir: string;
-  compiled: V3ImplementationAttemptResult;
-}>): V3ImplementationClaimHandoffV1 {
-  const compiled = input.compiled;
-  const executionAuthority = compiled.attempt.attemptClass === "supervisor_repair"
-    ? { role: "supervisor" as const, attemptClass: "supervisor_repair" as const }
-    : compiled.attempt.attemptClass === "infrastructure_retry"
-      ? { role: "developer" as const, attemptClass: "infrastructure_retry" as const }
-    : compiled.attempt.attemptClass === "product_implementation"
-      ? { role: "developer" as const, attemptClass: "product_implementation" as const }
-      : undefined;
-  if (!executionAuthority) {
-    throw new Error("V3_IMPLEMENTATION_HANDOFF_MODEL_AUTHORITY_REQUIRED");
-  }
-  if (compiled.attempt.stepId !== "implement") {
-    throw new Error("V3_IMPLEMENTATION_HANDOFF_WORKFLOW_STEP_MISMATCH");
-  }
-  return createV3ImplementationClaimHandoffV1({
-    schema: "setfarm.v3-implementation-claim-handoff.v1",
-    protocol: "v3",
-    runId: compiled.attempt.runId,
-    stepId: input.stepDbId,
-    workflowStepId: "implement",
-    storyId: compiled.attempt.storyId,
-    storyDbId: input.storyDbId,
-    claimId: input.claimId,
-    attemptId: compiled.attempt.attemptId,
-    attemptGeneration: compiled.attempt.generation,
-    branch: input.branch,
-    workdir: input.workdir,
-    packetHash: compiled.packetHash,
-    compilationReportHash: compiled.compilationReportHash,
-    sliceHash: compiled.sliceHash,
-    sliceRef: compiled.sliceRefKey,
-    evidencePlanHash: compiled.evidencePlan.planHash,
-    evidencePlanArtifactHash: compiled.evidencePlanArtifactHash,
-    evidencePlanRef: compiled.evidencePlanRefKey,
-    executionAuthority,
-    executionProfile: compiled.executionProfile,
-    ...(compiled.operationalRetry
-      ? {
-          operationalRetry: compiled.operationalRetry.directive,
-          operationalRetryArtifactHash: compiled.operationalRetry.artifactHash,
-        }
-      : {}),
-    sourceBefore: compiled.sourceBefore,
-    artifactProducer: compiled.artifactProducer,
-    implementationSlice: compiled.slice,
-    evidencePlan: compiled.evidencePlan,
-    ...(compiled.recovery
-      ? {
-          findingSet: compiled.recovery.findingSet,
-          reviewEvidenceArtifacts: [...compiled.recovery.reviewEvidenceArtifacts],
-        }
-      : {}),
-  });
 }
 
 const QUALITY_FIX_STEPS = new Set(["supervise", "security-gate", "qa-test", "final-test"]);
@@ -5612,7 +5551,7 @@ async function claimV3RecoveryWork(
     return { found: false };
   }
   applyV3ImplementationSliceContext(context, compiled);
-  const v3ImplementationHandoff = structuredV3ImplementationHandoff({
+  const v3ImplementationHandoff = createV3ImplementationAttemptHandoffV1({
     stepDbId: step.id,
     storyDbId: story.id,
     claimId: legacyClaimId,
@@ -7766,7 +7705,7 @@ export async function claimStep(
             generation: compiled.attempt.generation,
             fenceToken: compiled.attempt.fenceToken,
           };
-          nativeV3ImplementationHandoff = structuredV3ImplementationHandoff({
+          nativeV3ImplementationHandoff = createV3ImplementationAttemptHandoffV1({
             stepDbId: step.id,
             storyDbId: nextStory.id,
             claimId: legacyClaimId,
@@ -8076,7 +8015,7 @@ export async function completeStep(
     if (!compiled.attempt.branch || !compiled.attempt.worktree) {
       throw new Error("V3_IMPLEMENTATION_ATTEMPT_WORKSPACE_IDENTITY_REQUIRED");
     }
-    const handoff = structuredV3ImplementationHandoff({
+    const handoff = createV3ImplementationAttemptHandoffV1({
       stepDbId: step.id,
       storyDbId: envelope.storyDbId,
       claimId: envelope.claimId,

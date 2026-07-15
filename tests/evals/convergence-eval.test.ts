@@ -11,7 +11,7 @@ import {
 } from "../../src/execution/schemas/v3-deploy-receipt-v1.js";
 import { V3ProjectTransferAckV1Schema } from "../../src/execution/schemas/v3-project-transfer-ack-v1.js";
 import { computeRunOperationalSnapshotHash } from "../../src/server/run-operational-snapshot.js";
-import { RunOperationalSnapshotV1Schema } from "../../src/server/schemas/run-operational-snapshot-v1.js";
+import { RunOperationalSnapshotV2Schema } from "../../src/server/schemas/run-operational-snapshot-v2.js";
 import { hashCanonicalJson } from "../../src/product-compiler/canonical-json.js";
 import {
   type ConvergenceArtifactPort,
@@ -390,22 +390,28 @@ function canonical(
   return ConvergenceCanonicalEvidenceV1Schema.parse({ ...payload, stateHash: hashCanonicalJson(payload) });
 }
 
-function snapshot(runId: string, rejected: boolean, snapshotHash?: string) {
+function snapshot(
+  runId: string,
+  rejected: boolean,
+  snapshotHash?: string,
+  implementationSubmissionEvidence = true,
+) {
   const accepted = acceptedSnapshotEvidence(runId);
   const transfer = rejected ? null : transferSnapshotEvidence(runId);
   const hashable: Parameters<typeof computeRunOperationalSnapshotHash>[0] = {
-    schema: "setfarm.run-operational-snapshot.v1",
+    schema: "setfarm.run-operational-snapshot.v2",
     generatedAt: NOW,
     source: {
       database: "postgres",
-      projection: "complete",
-      migrationVersions: [1],
+      projection: implementationSubmissionEvidence ? "complete" : "partial",
+      migrationVersions: [19],
       verifiedReleaseSha: SHA,
       capabilities: {
         attempts: true,
         claimBinding: true,
         runtimeOwnership: true,
         managerCompletion: true,
+        implementationSubmissionEvidence,
         effectLedger: true,
         findingRecovery: true,
         evidenceLedger: true,
@@ -471,7 +477,7 @@ function snapshot(runId: string, rejected: boolean, snapshotHash?: string) {
         }
       : null,
   };
-  return RunOperationalSnapshotV1Schema.parse({
+  return RunOperationalSnapshotV2Schema.parse({
     ...hashable,
     snapshotHash: snapshotHash ?? computeRunOperationalSnapshotHash(hashable),
   });
@@ -486,6 +492,7 @@ type HarnessOptions = Readonly<{
   provisionalIdentity?: boolean;
   projectionMismatch?: boolean;
   projectionWrongRun?: boolean;
+  submissionEvidenceCapabilityUnavailable?: boolean;
   predicateCoverageFailure?: boolean;
   neverTerminal?: boolean;
   releaseDriftBeforeStart?: boolean;
@@ -599,6 +606,7 @@ function harness(loaded: Awaited<ReturnType<typeof suite>>, options: HarnessOpti
         options.projectionWrongRun ? "different-run" : runId,
         rejected,
         options.projectionMismatch && service === "mission_control" ? "f".repeat(64) : undefined,
+        options.submissionEvidenceCapabilityUnavailable !== true,
       );
       if (!options.projectionMismatch && !options.projectionWrongRun) {
         const { snapshotHash, ...hashable } = projected;
@@ -1041,6 +1049,17 @@ describe("convergence runner", () => {
   it("rejects equal snapshot hashes when both projections identify the wrong run", async () => {
     const loaded = await suite();
     const fake = harness(loaded, { projectionWrongRun: true });
+    const output = await runConvergenceSuite(loaded, { releaseSha: SHA, execute: true }, fake.ports);
+    assert.equal(output.result.status, "fail");
+    assert.ok(output.result.runs.every((item) =>
+      !item.passed
+      && item.projection.setfarmProjection === "unavailable"
+      && item.projection.missionControlProjection === "unavailable"));
+  });
+
+  it("rejects v2 projections that cannot expose implementation submission evidence", async () => {
+    const loaded = await suite();
+    const fake = harness(loaded, { submissionEvidenceCapabilityUnavailable: true });
     const output = await runConvergenceSuite(loaded, { releaseSha: SHA, execute: true }, fake.ports);
     assert.equal(output.result.status, "fail");
     assert.ok(output.result.runs.every((item) =>
