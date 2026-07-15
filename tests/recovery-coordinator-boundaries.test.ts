@@ -7,6 +7,10 @@ import { describe, it } from "node:test";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const spawnerSource = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf8");
 const stepOpsSource = fs.readFileSync(path.join(root, "src", "installer", "step-ops.ts"), "utf8");
+const terminalRuntimeReconcilerSource = fs.readFileSync(
+  path.join(root, "src", "execution", "terminal-claim-runtime-reconciler.ts"),
+  "utf8",
+);
 
 function sourceBlock(startMarker: string, endMarker: string): string {
   const start = spawnerSource.indexOf(startMarker);
@@ -112,6 +116,44 @@ describe("durable recovery coordinator source boundaries", () => {
       /requestRuntimeCompletion\s*\(|publishRuntimeCompletion\w*\s*\(/,
       "exit recovery must publish or delegate to an explicitly named completion publisher before retry/failure routing",
     );
+  });
+
+  it("proves runtime quiescence before terminal claim mutation and always finalizes watchdog-owned exits", () => {
+    const failure = sourceBlock(
+      "async function failActiveClaimAfterRuntimeQuiescence(",
+      "async function failClaimIfStillRunning(",
+    );
+    const quiescence = failure.indexOf("await waitForClaimRuntimeQuiescence(");
+    const transition = failure.indexOf("await failStep(");
+    const release = failure.indexOf("await releaseReservedRuntimeForClaimIfPresent(");
+    assert.ok(quiescence >= 0 && transition > quiescence && release > transition);
+
+    const settlement = sourceBlock(
+      "async function settleExitedClaimAndRuntime(",
+      "function detectRuntimeApprovalPending(",
+    );
+    assert.ok(
+      settlement.indexOf("await failClaimIfStillRunning(active, err)")
+        < settlement.indexOf("await finalizeExitedStoryRuntime(active)"),
+      "the watchdog owner must finalize its runtime even when claim routing fails",
+    );
+
+    const maintenance = sourceBlock(
+      "async function runClaimMaintenance(): Promise<void> {",
+      "async function cleanupRunningRunEphemeraOnStartup(",
+    );
+    assert.ok(
+      maintenance.indexOf("await reconcileTerminalClaimRuntimeOwnership()")
+        < maintenance.indexOf("await requeueOrphanedRunningStories()"),
+      "closed-claim runtime ownership must settle before any next-work requeue",
+    );
+  });
+
+  it("does not steal a terminal runtime from another durable recovery owner", () => {
+    assert.match(terminalRuntimeReconcilerSource, /NOT EXISTS[\s\S]*execution_attempts[\s\S]*disposition IN \('claimed', 'running'\)/);
+    assert.match(terminalRuntimeReconcilerSource, /NOT EXISTS[\s\S]*runtime_completion_requests[\s\S]*state IN \('requested', 'draining', 'processing'\)/);
+    assert.match(terminalRuntimeReconcilerSource, /NOT EXISTS[\s\S]*recovery_dispatch_deliveries[\s\S]*state IN \('authorized', 'leased', 'attempt_reserved', 'running'\)/);
+    assert.match(terminalRuntimeReconcilerSource, /NOT EXISTS[\s\S]*run_termination_requests[\s\S]*state <> 'terminalized'/);
   });
 
   it("excludes every durably owned claim from generic startup stale recovery", () => {
