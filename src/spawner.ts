@@ -98,9 +98,11 @@ import {
   type ProcessIdentityV1,
 } from "./execution/schemas/process-identity-v1.js";
 import {
+  decodeOpenClawTaskTerminalRecord,
   OpenClawAgentTerminalError,
   readOpenClawAgentTerminalOutcome,
 } from "./execution/openclaw-agent-terminal-outcome.js";
+import { readOpenClawTaskRegistryProbe } from "./execution/openclaw-task-registry.js";
 
 type AgentRuntime = "codex" | "openclaw" | "kimi" | "opencode";
 type OperationalRecoveryIntent = "observe_fix" | "platform_replay" | "project_rescue";
@@ -327,6 +329,7 @@ const CLAIM_PARSE_LOOP_MIN_READS = parsePositiveInt(process.env.SETFARM_CLAIM_PA
 const REAP_FINISHED_ACTIVE_GRACE_MS = parsePositiveInt(process.env.SETFARM_REAP_FINISHED_ACTIVE_GRACE_MS, 60_000);
 const ORPHANED_SINGLE_STEP_CLAIM_MS = parsePositiveInt(process.env.SETFARM_ORPHANED_SINGLE_STEP_CLAIM_MS, 2 * 60_000);
 const OPENCLAW_TASK_REGISTRY_SETTLE_MS = parsePositiveInt(process.env.SETFARM_OPENCLAW_TASK_REGISTRY_SETTLE_MS, 2000);
+const OPENCLAW_TASK_TERMINAL_SETTLE_MS = parsePositiveInt(process.env.SETFARM_OPENCLAW_TASK_TERMINAL_SETTLE_MS, 5_000);
 const OPENCLAW_STALE_TASK_SWEEP_MS = parsePositiveInt(process.env.SETFARM_OPENCLAW_STALE_TASK_SWEEP_MS, 2 * 60_000);
 const IMPLEMENT_EXIT_RECOVERY_BUILD_TIMEOUT_MS = parsePositiveInt(process.env.SETFARM_IMPLEMENT_EXIT_RECOVERY_BUILD_TIMEOUT_MS, 120_000);
 const OPENCLAW_AGENT_LOCAL = process.env.SETFARM_OPENCLAW_AGENT_LOCAL === "1";
@@ -4426,6 +4429,74 @@ async function completeActiveClaimFromOutputFile(active: ActiveProcess): Promise
   return completed;
 }
 
+async function reconcileTerminalOpenClawTask(
+  active: ActiveProcess,
+  activeKey: string,
+  workflowStepId: string,
+  storyDbId: string | null,
+): Promise<boolean> {
+  if (AGENT_RUNTIME !== "openclaw") return false;
+  const probe = readOpenClawTaskRegistryProbe({
+    databasePath: OPENCLAW_TASKS_DB,
+    sessionKey: active.sessionKey,
+    nowMs: Date.now(),
+    settleMs: OPENCLAW_TASK_TERMINAL_SETTLE_MS,
+  });
+  if (probe.kind === "ambiguous") {
+    await recordRuntimeSupervisorSignal(
+      active,
+      workflowStepId,
+      storyDbId,
+      "openclaw-task-registry-ambiguous",
+      "OPENCLAW TASK REGISTRY AMBIGUOUS",
+      `OPENCLAW_TASK_REGISTRY_AMBIGUOUS: exact session resolved ${probe.taskIds.length} task rows`,
+    );
+    return false;
+  }
+  if (probe.kind !== "terminal") return false;
+
+  const outcome = decodeOpenClawTaskTerminalRecord(probe.task);
+  const sessionKeyHash = crypto.createHash("sha256").update(active.sessionKey).digest("hex");
+  const evidence = {
+    schema: "setfarm.openclaw-task-terminal-evidence.v1",
+    taskId: probe.task.taskId,
+    sessionKeyHash,
+    status: probe.task.status,
+    endedAt: new Date(probe.task.endedAt).toISOString(),
+    outcomeKind: outcome.kind,
+    ...("code" in outcome ? { code: outcome.code } : {}),
+    ...("retryable" in outcome ? { retryable: outcome.retryable } : {}),
+  };
+  await recordObservation({
+    runId: active.runId,
+    stepId: workflowStepId,
+    storyId: active.storyId || "",
+    agentId: active.agentId,
+    checkId: `openclaw.task_terminal:${probe.task.taskId}`,
+    label: "OpenClaw task terminal",
+    status: "info",
+    summary: "code" in outcome ? outcome.code : "OPENCLAW_AGENT_COMPLETED",
+    detail: "diagnostic" in outcome ? outcome.diagnostic : "OpenClaw task registry reports completion",
+    evidence,
+    eventType: "runtime.openclaw_task_terminal",
+    completedAt: new Date().toISOString(),
+  });
+  try {
+    fs.appendFileSync(active.transcriptPath, `[spawner] ${JSON.stringify(evidence)}\n`);
+  } catch {}
+
+  terminateActiveProcess(active, "openclaw-task-registry-terminal");
+  activeProcesses.delete(activeKey);
+  if (await completeActiveClaimFromOutputFile(active)) return true;
+  const error = outcome.kind === "transient_failure" || outcome.kind === "terminal_failure"
+    ? new OpenClawAgentTerminalError(outcome)
+    : new Error(
+      `OPENCLAW_TASK_COMPLETED_WITHOUT_CLAIM_OUTPUT: task ${probe.task.taskId} ended before publishing claim completion`,
+    );
+  await settleExitedClaimAndRuntime(active, error);
+  return true;
+}
+
 type RunningStepRow = {
   status: string;
   step_id: string;
@@ -5962,6 +6033,15 @@ async function reapFinishedClaims(): Promise<void> {
 
         const effectiveStoryId = active.storyId || row.story_id || undefined;
         const effectiveStoryDbId = active.storyDbId || row.current_story_id || undefined;
+
+        if (await reconcileTerminalOpenClawTask(
+          active,
+          key,
+          row.step_id,
+          effectiveStoryDbId || null,
+        )) {
+          continue;
+        }
 
         if (row.type === "loop" && row.step_id === "implement" && effectiveStoryId && !isTerminalTestRole(active.role, active.agentId)) {
           const packageScopeDirty = implementPackageScopeDirtyGuard(active);

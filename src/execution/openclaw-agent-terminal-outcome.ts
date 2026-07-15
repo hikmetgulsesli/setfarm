@@ -43,6 +43,7 @@ export type OpenClawAgentTerminalOutcomeV1 =
         | "OPENCLAW_AGENT_TIMEOUT"
         | "OPENCLAW_AGENT_ABORTED"
         | "OPENCLAW_AGENT_CANCELLED"
+        | "OPENCLAW_AGENT_LOST"
         | "OPENCLAW_AGENT_FAILED"
         | "OPENCLAW_AGENT_STATUS_UNSUPPORTED";
       status: string;
@@ -183,6 +184,69 @@ function normalizeEnvelope(envelope: OpenClawAgentEnvelope): OpenClawAgentTermin
     code: "OPENCLAW_AGENT_STATUS_UNSUPPORTED",
     status,
     diagnostic: `Unsupported OpenClaw terminal status: ${safeDiagnostic(status) || "empty"}`,
+    retryable: false,
+  };
+}
+
+export function decodeOpenClawTaskTerminalRecord(record: Readonly<{
+  status: string;
+  error?: string | null;
+}>): OpenClawAgentTerminalOutcomeV1 {
+  const status = normalizeStatus(record.status);
+  const diagnostic = safeDiagnostic(record.error);
+  if (["completed", "success", "succeeded", "ok"].includes(status)) {
+    return {
+      schema: "setfarm.openclaw-agent-terminal-outcome.v1",
+      kind: "completed",
+      status,
+    };
+  }
+  if (["timeout", "timed_out"].includes(status) || /\b(?:timed?\s*out|timeout)\b/i.test(diagnostic)) {
+    return {
+      schema: "setfarm.openclaw-agent-terminal-outcome.v1",
+      kind: "transient_failure",
+      code: "OPENCLAW_AGENT_TIMEOUT",
+      status,
+      diagnostic: diagnostic || "OpenClaw agent request timed out",
+      retryable: true,
+    };
+  }
+  if (status === "lost") {
+    return {
+      schema: "setfarm.openclaw-agent-terminal-outcome.v1",
+      kind: "transient_failure",
+      code: "OPENCLAW_AGENT_LOST",
+      status,
+      diagnostic: diagnostic || "OpenClaw lost the agent task runtime",
+      retryable: true,
+    };
+  }
+  if (["cancelled", "canceled"].includes(status)) {
+    return {
+      schema: "setfarm.openclaw-agent-terminal-outcome.v1",
+      kind: "terminal_failure",
+      code: "OPENCLAW_AGENT_CANCELLED",
+      status,
+      diagnostic: diagnostic || "OpenClaw agent task was cancelled",
+      retryable: false,
+    };
+  }
+  if (["failed", "failure", "error"].includes(status)) {
+    return {
+      schema: "setfarm.openclaw-agent-terminal-outcome.v1",
+      kind: "terminal_failure",
+      code: "OPENCLAW_AGENT_FAILED",
+      status,
+      diagnostic: diagnostic || "OpenClaw agent task failed",
+      retryable: false,
+    };
+  }
+  return {
+    schema: "setfarm.openclaw-agent-terminal-outcome.v1",
+    kind: "terminal_failure",
+    code: "OPENCLAW_AGENT_STATUS_UNSUPPORTED",
+    status,
+    diagnostic: `Unsupported OpenClaw terminal task status: ${safeDiagnostic(status) || "empty"}`,
     retryable: false,
   };
 }

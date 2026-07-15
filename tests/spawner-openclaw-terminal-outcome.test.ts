@@ -34,4 +34,31 @@ describe("spawner OpenClaw terminal ownership", () => {
     assert.match(settle, /requeueOpenStoryClaim/);
     assert.doesNotMatch(settle, /OPENCLAW_AGENT_TIMEOUT.*includes|includes.*OPENCLAW_AGENT_TIMEOUT/);
   });
+
+  it("reconciles the exact terminal task registry before waiting on the wrapper process", () => {
+    const reconcileStart = source.indexOf("async function reconcileTerminalOpenClawTask");
+    const reconcileEnd = source.indexOf("type RunningStepRow", reconcileStart);
+    assert.notEqual(reconcileStart, -1);
+    assert.notEqual(reconcileEnd, -1);
+    const reconcile = source.slice(reconcileStart, reconcileEnd);
+    assert.match(reconcile, /readOpenClawTaskRegistryProbe\(\{[\s\S]*sessionKey: active\.sessionKey/);
+    assert.match(reconcile, /setfarm\.openclaw-task-terminal-evidence\.v1/);
+    assert.match(reconcile, /terminateActiveProcess\(active, "openclaw-task-registry-terminal"\)/);
+    assert.ok(
+      reconcile.indexOf('terminateActiveProcess(active, "openclaw-task-registry-terminal")')
+        < reconcile.indexOf("completeActiveClaimFromOutputFile(active)"),
+      "the terminal wrapper must be stopped before its output is recovered",
+    );
+    assert.ok(
+      reconcile.indexOf("completeActiveClaimFromOutputFile(active)")
+        < reconcile.indexOf("settleExitedClaimAndRuntime(active, error)"),
+      "fresh fenced output must win before task failure is routed to retry",
+    );
+
+    const reapStart = source.indexOf("async function reapFinishedClaims");
+    const terminalProcess = source.indexOf("const terminalReason = childProcessTerminalReason", reapStart);
+    const terminalTask = source.indexOf("await reconcileTerminalOpenClawTask", reapStart);
+    assert.notEqual(terminalTask, -1);
+    assert.ok(terminalTask < terminalProcess, "task registry must close the wrapper/process liveness split first");
+  });
 });
