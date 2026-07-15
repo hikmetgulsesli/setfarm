@@ -1463,6 +1463,48 @@ describe("stitch-to-jsx", () => {
     }
   });
 
+  it("does not treat prefixed custom elements as native action tags", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-stitch-custom-action-tags-"));
+    try {
+      const stitchDir = path.join(tmp, "stitch");
+      fs.mkdirSync(stitchDir, { recursive: true });
+      fs.writeFileSync(path.join(stitchDir, "DESIGN_MANIFEST.json"), JSON.stringify([
+        { screenId: "custom-action-screen", title: "Custom Action Screen" },
+      ]));
+      writeHtml(path.join(stitchDir, "custom-action-screen.html"), `
+        <main>
+          <button-group data-note="Actions > primary"><button>Save</button></button-group>
+          <a-link data-note='Links > docs'><a href="/docs">Docs</a></a-link>
+        </main>
+      `);
+
+      execFileSync("node", ["scripts/stitch-to-jsx.mjs", tmp], {
+        cwd: process.cwd(),
+        stdio: "pipe",
+      });
+
+      const code = fs.readFileSync(path.join(tmp, "src", "screens", "CustomActionScreen.tsx"), "utf-8");
+      const index = JSON.parse(fs.readFileSync(path.join(tmp, "src", "screens", "SCREEN_INDEX.json"), "utf-8"));
+      assert.deepEqual(index[0].actions.map((action: { id: string }) => action.id), ["save-1", "docs-1"]);
+      assert.match(code, /<button-group data-note="Actions > primary"><button[^>]*data-action-id="save-1"[^>]*>Save<\/button><\/button-group>/);
+      assert.match(code, /<a-link data-note='Links > docs'><a href="\/docs" data-action-id="docs-1"/);
+      assert.match(code, />Docs<\/a><\/a-link>/);
+      assert.doesNotMatch(code, /<button-group[^>]*data-action-id=/);
+      assert.doesNotMatch(code, /<a-link[^>]*data-action-id=/);
+      const transpiled = ts.transpileModule(code, {
+        compilerOptions: {
+          jsx: ts.JsxEmit.ReactJSX,
+          module: ts.ModuleKind.ESNext,
+          target: ts.ScriptTarget.ES2020,
+        },
+        reportDiagnostics: true,
+      });
+      assert.equal((transpiled.diagnostics || []).length, 0);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("keeps form JSX valid when void tag attributes contain comparison-like text", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-stitch-void-quoted-gt-"));
     try {

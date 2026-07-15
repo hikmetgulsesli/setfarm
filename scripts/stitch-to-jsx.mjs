@@ -561,7 +561,7 @@ function mapPairedTagsRespectingQuotes(input, targetTagName, transform) {
   const tagName = String(targetTagName || "");
   let out = "";
   let cursor = 0;
-  const openingPattern = new RegExp(`<${escapeRegExp(tagName)}\\b`, "gi");
+  const openingPattern = new RegExp(`<${escapeRegExp(tagName)}(?=[\\s/>])`, "gi");
   const closingPattern = new RegExp(`</${escapeRegExp(tagName)}\\s*>`, "gi");
   let opening;
   while ((opening = openingPattern.exec(source)) !== null) {
