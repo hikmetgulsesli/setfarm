@@ -21,7 +21,7 @@ import { hashCanonicalJson } from "../../src/product-compiler/canonical-json.js"
 import { compileProductBuildPacket } from "../../src/product-compiler/packet-compiler.js";
 import type { SealedRuntimePacketV1 } from "../../src/product-compiler/runtime-artifact-reader.js";
 import { topologyPathAbsenceHash } from "../../src/product-compiler/schemas/build-topology-v1.js";
-import { buildMinimalValidContracts } from "../product-compiler/fixtures/minimal-valid-contract.js";
+import { buildMinimalValidV3Contracts } from "../product-compiler/fixtures/minimal-valid-contract.js";
 
 const PRODUCER = {
   pass: "product-packet-compiler",
@@ -36,15 +36,14 @@ describe("v3 implementation attempt compiler", () => {
     await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
   });
 
-  async function fixture(stackPackId = "vite-react-web-app") {
+  async function fixture() {
     const root = await mkdtemp(path.join(tmpdir(), "setfarm-v3-attempt-"));
     roots.push(root);
     const worktree = path.join(root, "worktree");
     await mkdir(path.join(worktree, "src"), { recursive: true });
     const appBytes = Buffer.from("export const App = () => 'exact';\n", "utf8");
     await writeFile(path.join(worktree, "src/App.tsx"), appBytes);
-    const values = buildMinimalValidContracts();
-    values.buildTopology.stackPack.id = stackPackId;
+    const values = buildMinimalValidV3Contracts();
     values.buildTopology.pathBindings[0]!.knownContentHash = createHash("sha256")
       .update(appBytes)
       .digest("hex");
@@ -56,6 +55,7 @@ describe("v3 implementation attempt compiler", () => {
       storyPlan: values.storyPlan,
       compiler: { version: "3.0.0", codeSha: PRODUCER.codeSha },
       producer: PRODUCER,
+      protocol: "v3",
       artifactStore: store,
     });
     assert.equal(compilation.status, "sealed", JSON.stringify(compilation));
@@ -225,8 +225,10 @@ describe("v3 implementation attempt compiler", () => {
     assert.equal(reserved, false);
   });
 
-  it("rejects a sealed stack without an authoritative runtime contract before publication", async () => {
-    const { worktree, packet } = await fixture("node-cli");
+  it("rejects a packet stub that bypassed the reader without sealed runtime evidence before publication", async () => {
+    const { worktree, packet } = await fixture();
+    delete (packet.buildTopology as any).runtimeEvidenceContract;
+    delete (packet.buildTopology as any).runtimeEvidenceContractHash;
     let published = false;
     let reserved = false;
     const source = { sha: "1".repeat(40), treeHash: "2".repeat(64) };
@@ -256,7 +258,7 @@ describe("v3 implementation attempt compiler", () => {
         worktree,
       }),
       (error: unknown) => error instanceof V3ImplementationAttemptError
-        && error.code === "V3_RUNTIME_EVIDENCE_STACK_UNSUPPORTED",
+        && error.code === "V3_RUNTIME_EVIDENCE_CONTRACT_REJECTED",
     );
     assert.equal(published, false);
     assert.equal(reserved, false);

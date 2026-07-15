@@ -250,8 +250,9 @@ function createFixture(
       selects: 0,
       links: 0,
       controls,
+      observables: [],
       projection: {
-        schema: "setfarm.stitch-screen-projection.v1",
+        schema: "setfarm.stitch-screen-projection.v2",
         mode: "contract_only",
         targetRef: target.targetId,
         rawInteractiveCounts: {
@@ -261,6 +262,7 @@ function createFixture(
           textareas: 0,
           selects: 0,
         },
+        requiredObservableRefs: [],
       },
       rejectedControls: [],
     });
@@ -482,9 +484,34 @@ describe("setup-build Product Build Packet orchestration", () => {
     );
     assert.equal(
       assembled.buildTopology.deliveryProfile?.designProjection,
-      "exact_stitch_screen_index_v3",
+      "exact_stitch_screen_index_v4",
     );
     assert.equal(assembled.designGraph.bindings.length > 0, true);
+  });
+
+  it("selects one catalog-prioritized executable entrypoint and seals runtime evidence during setup-build", () => {
+    const value = createFixture("run-v3-entrypoint-authority", true);
+    repos.push(value.repo);
+    fs.writeFileSync(path.join(value.repo, "src", "App.tsx"), "export const app = true;\n");
+    git(value.repo, ["add", "src/App.tsx"]);
+    git(value.repo, ["commit", "-q", "-m", "add normal Vite app module"]);
+
+    const assembled = assembleSetupBuildPacketContracts({
+      ...value,
+      requireV3Proposal: true,
+    });
+    assert.equal(assembled.buildTopology.entrypoints.length, 1);
+    const entrypoint = assembled.buildTopology.entrypoints[0]!;
+    assert.equal(
+      assembled.buildTopology.pathBindings.find((binding) => binding.id === entrypoint.pathRef)?.path,
+      "src/main.tsx",
+    );
+    assert.equal(assembled.buildTopology.runtimeEvidenceContract?.adapter, "browser-service");
+    assert.deepEqual(assembled.buildTopology.runtimeEvidenceContract?.server.env, {
+      HOST: "{{HOST}}",
+      PORT: "{{PORT}}",
+    });
+    assert.match(assembled.buildTopology.runtimeEvidenceContractHash ?? "", /^[a-f0-9]{64}$/);
   });
 
   it("rejects setup when the PLAN-sealed delivery selection hash changes", () => {

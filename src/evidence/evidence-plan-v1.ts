@@ -13,6 +13,7 @@ import {
 } from "../product-compiler/schemas/common-v1.js";
 import { RuntimeEvidenceContractV1Schema } from "./runtime-evidence-contract-v1.js";
 import { ObservableActionEffectV1Schema } from "../product-compiler/schemas/product-spec-v1.js";
+import { DesignObservableBindingV1Schema } from "../product-compiler/schemas/design-interaction-graph-v1.js";
 
 const RuntimeUrlTokenSchema = z.string().regex(/^__SETFARM_RUNTIME_URL__(?:\/[^\s]*)?$/);
 
@@ -87,6 +88,7 @@ const EvidencePlanFlowV1Schema = z.object({
   }).strict()).max(500),
   predicateRefs: z.array(EvidenceIdSchema).min(1).max(5_000),
   observableEffects: z.array(ObservableActionEffectV1Schema).max(1_000),
+  observableBindings: z.array(DesignObservableBindingV1Schema).max(1_000).optional(),
   interactions: z.array(EvidencePlanInteractionV1Schema).min(1).max(1_000),
   actionInteractionId: z.string().min(1).max(500),
   reloadInteractionId: z.string().min(1).max(500).optional(),
@@ -197,9 +199,18 @@ export function compileEvidencePlanV1(input: Readonly<{
     .map((action) => {
       const predicates = predicatesByAction.get(action.id)!;
       const observableEffects = action.observableEffects ?? [];
+      const observableBindings = (slice.contract.observableBindings ?? []).filter((binding) =>
+        binding.actionRef === action.id);
       observableEffects.forEach((effect) => {
         if (!predicates.some((predicate) => predicate.id === effect.evidenceRef)) {
           throw new Error(`EVIDENCE_PLAN_OBSERVABLE_PREDICATE_MISSING:${action.id}:${effect.id}`);
+        }
+        if (slice.contract.observableBindings !== undefined) {
+          const matches = observableBindings.filter((binding) =>
+            binding.observableRef === effect.id && binding.evidenceRef === effect.evidenceRef);
+          if (matches.length !== 1) {
+            throw new Error(`EVIDENCE_PLAN_OBSERVABLE_BINDING_INVALID:${action.id}:${effect.id}:${matches.length}`);
+          }
         }
       });
       const observableReloadRequired = observableEffects.some((effect) =>
@@ -261,6 +272,7 @@ export function compileEvidencePlanV1(input: Readonly<{
           inputBindings,
           predicateRefs: canonical(predicates.map((predicate) => predicate.id)),
           observableEffects,
+          ...(slice.contract.observableBindings !== undefined ? { observableBindings } : {}),
           interactions: [
             ...prerequisiteInteractions,
             {
@@ -293,7 +305,7 @@ export function compileEvidencePlanV1(input: Readonly<{
         if (effect.selector.kind === "surface" && !action.surfaceRefs.includes(effect.selector.surfaceRef)) {
           throw new Error(`EVIDENCE_PLAN_OBSERVABLE_SURFACE_MISSING:${action.id}:${effect.id}`);
         }
-        if (effect.selector.kind === "accessibility") {
+        if (effect.selector.kind === "accessibility" && slice.contract.observableBindings === undefined) {
           const selector = effect.selector;
           const matches = slice.contract.controls.filter((candidate) =>
             candidate.surfaceRef === selector.surfaceRef
@@ -494,6 +506,7 @@ export function compileEvidencePlanV1(input: Readonly<{
         inputBindings,
         predicateRefs: canonical(predicates.map((predicate) => predicate.id)),
         observableEffects,
+        ...(slice.contract.observableBindings !== undefined ? { observableBindings } : {}),
         interactions,
         actionInteractionId,
         ...(reloadInteractionId ? { reloadInteractionId } : {}),

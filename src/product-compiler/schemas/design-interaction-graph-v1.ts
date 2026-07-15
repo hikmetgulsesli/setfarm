@@ -6,6 +6,7 @@ import {
   DesignSurfaceIdSchema,
   EvidenceIdSchema,
   NormalizedRelativeLocatorSchema,
+  ObservableIdSchema,
   PersistenceIdSchema,
   ProvenanceRefV1Schema,
   RouteIdSchema,
@@ -218,6 +219,42 @@ export const UnresolvedControlBindingV1Schema = z
 
 export type UnresolvedControlBindingV1 = z.infer<typeof UnresolvedControlBindingV1Schema>;
 
+const ObservableSourceIdentityV1Schema = z
+  .object({
+    kind: z.literal("explicit"),
+    attribute: z.literal("data-observable-refs"),
+    provenance: z.array(ProvenanceRefV1Schema).min(1).max(100),
+  })
+  .strict();
+
+const DesignObservableTargetV1Schema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("control"),
+    controlRef: ControlIdSchema,
+  }).strict(),
+  z.object({
+    kind: z.literal("surface"),
+    designSurfaceRef: DesignSurfaceIdSchema,
+  }).strict(),
+  z.object({
+    kind: z.literal("accessibility"),
+    surfaceRef: SurfaceIdSchema,
+    role: z.string().min(1).max(160),
+    name: z.string().min(1).max(500),
+    identity: ObservableSourceIdentityV1Schema,
+    source: ControlSourceV1Schema,
+  }).strict(),
+]);
+
+export const DesignObservableBindingV1Schema = z.object({
+  observableRef: ObservableIdSchema,
+  actionRef: ActionIdSchema,
+  evidenceRef: EvidenceIdSchema,
+  target: DesignObservableTargetV1Schema,
+}).strict();
+
+export type DesignObservableBindingV1 = z.infer<typeof DesignObservableBindingV1Schema>;
+
 export const DesignInteractionGraphV1Schema = z
   .object({
     schema: z.literal("setfarm.design-interaction-graph.v1"),
@@ -227,6 +264,9 @@ export const DesignInteractionGraphV1Schema = z
     surfaces: z.array(DesignSurfaceV1Schema).min(1).max(1_000),
     controls: z.array(DesignControlV1Schema).min(1).max(10_000),
     bindings: z.array(DesignControlBindingV1Schema).max(10_000),
+    // Compatible v1 extension. Historical graphs remain readable; every graph
+    // emitted by Product Compiler >=3.3.0 carries exact observable bindings.
+    observableBindings: z.array(DesignObservableBindingV1Schema).max(10_000).optional(),
     unresolvedBindings: z.array(UnresolvedControlBindingV1Schema).max(10_000),
   })
   .strict()
@@ -239,6 +279,7 @@ export const DesignInteractionGraphV1Schema = z
     }
     const controlIds = new Set(value.controls.map((item) => item.id));
     const surfaceRefs = new Set(value.surfaces.map((item) => item.surfaceRef));
+    const designSurfaceIds = new Set(value.surfaces.map((item) => item.id));
     value.controls.forEach((control, index) => {
       if (!surfaceRefs.has(control.surfaceRef)) {
         context.addIssue({
@@ -262,6 +303,47 @@ export const DesignInteractionGraphV1Schema = z
           path: ["surfaces", index, "sourceArtifactHash"],
           message: "Design surface source hash must be declared in rawArtifactHashes",
         });
+      }
+    });
+    const observableBindings = value.observableBindings ?? [];
+    if (!hasUniqueStrings(observableBindings.map((item) => item.observableRef))) {
+      context.addIssue({
+        code: "custom",
+        path: ["observableBindings"],
+        message: "Observable bindings must be unique by ProductSpec observable reference",
+      });
+    }
+    observableBindings.forEach((binding, index) => {
+      const target = binding.target;
+      if (target.kind === "control" && !controlIds.has(target.controlRef)) {
+        context.addIssue({
+          code: "custom",
+          path: ["observableBindings", index, "target", "controlRef"],
+          message: `Observable binding references absent control: ${target.controlRef}`,
+        });
+      }
+      if (target.kind === "surface" && !designSurfaceIds.has(target.designSurfaceRef)) {
+        context.addIssue({
+          code: "custom",
+          path: ["observableBindings", index, "target", "designSurfaceRef"],
+          message: `Observable binding references absent design surface: ${target.designSurfaceRef}`,
+        });
+      }
+      if (target.kind === "accessibility") {
+        if (!surfaceRefs.has(target.surfaceRef)) {
+          context.addIssue({
+            code: "custom",
+            path: ["observableBindings", index, "target", "surfaceRef"],
+            message: `Observable accessibility target references absent surface: ${target.surfaceRef}`,
+          });
+        }
+        if (!value.rawArtifactHashes.includes(target.source.artifactHash)) {
+          context.addIssue({
+            code: "custom",
+            path: ["observableBindings", index, "target", "source", "artifactHash"],
+            message: "Observable source hash must be declared in rawArtifactHashes",
+          });
+        }
       }
     });
 

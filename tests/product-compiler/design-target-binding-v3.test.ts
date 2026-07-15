@@ -106,11 +106,13 @@ function exactAdapterInput() {
     selects: 0,
     links: 0,
     controls,
+    observables: [],
     projection: {
-      schema: "setfarm.stitch-screen-projection.v1",
+      schema: "setfarm.stitch-screen-projection.v2",
       mode: "contract_only",
       targetRef: target.targetId,
       rawInteractiveCounts: { buttons: 2, links: 0, inputs: 0, textareas: 0, selects: 0 },
+      requiredObservableRefs: [],
     },
     rejectedControls: [],
   }], null, 2);

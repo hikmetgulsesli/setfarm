@@ -6,12 +6,11 @@ import { afterEach, describe, it } from "node:test";
 
 import { ContentAddressedArtifactStore } from "../../src/product-compiler/artifact-store.js";
 import { compileProductBuildPacket } from "../../src/product-compiler/packet-compiler.js";
-import { produceRuntimeDataContractV1 } from "../../src/product-compiler/producers/runtime-data-contract.js";
 import { compileImplementationSlice } from "../../src/product-compiler/slice-compiler.js";
 import { topologyPathAbsenceHash } from "../../src/product-compiler/schemas/build-topology-v1.js";
 import {
   buildMinimalValidContracts,
-  buildMinimalValidV3ProductSpec,
+  buildMinimalValidV3Contracts,
 } from "./fixtures/minimal-valid-contract.js";
 
 const PRODUCER = {
@@ -31,22 +30,7 @@ describe("implementation slice compiler", () => {
     const root = await mkdtemp(path.join(tmpdir(), "setfarm-slice-compiler-"));
     roots.push(root);
     const artifactStore = new ContentAddressedArtifactStore(path.join(root, "artifacts"));
-    const values = buildMinimalValidContracts();
-    if (v3) {
-      values.productSpec = buildMinimalValidV3ProductSpec();
-      values.designGraph.bindings[0]!.evidenceRefs.push("EVID_SAVE_CONFIRMATION");
-      values.storyPlan.stories[0]!.evidenceRefs.push("EVID_SAVE_CONFIRMATION");
-      const runtimeData = produceRuntimeDataContractV1({
-        productSpec: values.productSpec,
-        commands: values.buildTopology.commands,
-      });
-      assert.equal(runtimeData.status, "produced", JSON.stringify(runtimeData));
-      if (runtimeData.status !== "produced") throw new Error("runtime-data fixture rejected");
-      Object.assign(values.buildTopology, {
-        runtimeDataContract: runtimeData.contract,
-        runtimeDataContractHash: runtimeData.contractHash,
-      });
-    }
+    const values = v3 ? buildMinimalValidV3Contracts() : buildMinimalValidContracts();
     const compilation = await compileProductBuildPacket({
       productSpec: values.productSpec,
       designGraph: values.designGraph,
@@ -458,7 +442,7 @@ describe("implementation slice compiler", () => {
     );
   });
 
-  it("copies the exact packet/topology runtime-data contract into every v3 implementation slice", async () => {
+  it("copies exact packet/topology runtime-data and runtime-evidence authority into every v3 implementation slice", async () => {
     const input = await sealedInput(true);
     const result = compileImplementationSlice(input);
     assert.equal(result.status, "compiled", JSON.stringify(result.diagnostics));
@@ -470,6 +454,19 @@ describe("implementation slice compiler", () => {
       result.slice?.runtimeDataContract,
       input.buildTopology.runtimeDataContract,
     );
+    assert.deepEqual(
+      result.slice?.runtimeEvidence,
+      input.buildTopology.runtimeEvidenceContract,
+    );
+    assert.equal(
+      result.slice?.contract.evidencePredicates.some((item) =>
+        item.id === "EVID_SAVE_FAILURE" && item.required === false),
+      true,
+    );
+    assert.equal(
+      result.slice?.requiredEvidence.some((item) => item.id === "EVID_SAVE_FAILURE"),
+      false,
+    );
   });
 
   it("rejects a v3 slice when runtime-data is omitted after packet sealing", async () => {
@@ -480,6 +477,18 @@ describe("implementation slice compiler", () => {
     assert.equal(result.status, "rejected");
     assert.equal(
       result.diagnostics.some((item) => item.code === "SLICE_RUNTIME_DATA_CONTRACT_MISSING"),
+      true,
+    );
+  });
+
+  it("rejects a v3 slice when runtime evidence is omitted after packet sealing", async () => {
+    const input = await sealedInput(true);
+    delete input.buildTopology.runtimeEvidenceContract;
+    delete input.buildTopology.runtimeEvidenceContractHash;
+    const result = compileImplementationSlice(input);
+    assert.equal(result.status, "rejected");
+    assert.equal(
+      result.diagnostics.some((item) => item.code === "SLICE_RUNTIME_EVIDENCE_CONTRACT_MISSING"),
       true,
     );
   });

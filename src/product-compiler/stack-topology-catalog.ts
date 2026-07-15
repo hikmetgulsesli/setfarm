@@ -11,7 +11,7 @@ import {
 } from "./schemas/build-topology-v1.js";
 import { NormalizedRelativeLocatorSchema, StableReferenceSchema, hasUniqueStrings } from "./schemas/common-v1.js";
 
-export const STACK_TOPOLOGY_CATALOG_VERSION = "1.5.0";
+export const STACK_TOPOLOGY_CATALOG_VERSION = "1.6.0";
 
 /**
  * Platform-owned, write-free runtime for sealed static and Vite build output.
@@ -211,6 +211,7 @@ const StackEntrypointRuleV1Schema = z
   .object({
     id: StableReferenceSchema,
     entrypointKind: EntrypointKindSchema,
+    selectionPriority: z.number().int().min(0).max(10_000),
     mountPoint: z.string().min(1).max(500),
     matcher: StackEntrypointMatcherV1Schema,
   })
@@ -273,6 +274,18 @@ export const StackTopologyCatalogDescriptorV1Schema = z
   .strict()
   .superRefine((value, context) => {
     const entrypointKinds = new Set(value.entrypointKinds);
+    value.entrypointKinds.forEach((kind) => {
+      const priorities = value.entrypointRules
+        .filter((rule) => rule.entrypointKind === kind)
+        .map((rule) => rule.selectionPriority);
+      if (!hasUniqueStrings(priorities.map(String))) {
+        context.addIssue({
+          code: "custom",
+          path: ["entrypointRules"],
+          message: `Entrypoint selection priorities must be unique within ${kind}`,
+        });
+      }
+    });
     value.requiredEntrypointKinds.forEach((kind, index) => {
       if (!entrypointKinds.has(kind)) {
         context.addIssue({
@@ -406,15 +419,17 @@ function capability(
 function exactRule(
   id: string,
   entrypointKind: CatalogEntrypointRule["entrypointKind"],
+  selectionPriority: number,
   mountPoint: string,
   path: string,
 ): CatalogEntrypointRule {
-  return { id, entrypointKind, mountPoint, matcher: { kind: "exact", path } };
+  return { id, entrypointKind, selectionPriority, mountPoint, matcher: { kind: "exact", path } };
 }
 
 function basenameRule(
   id: string,
   entrypointKind: CatalogEntrypointRule["entrypointKind"],
+  selectionPriority: number,
   mountPoint: string,
   basename: string,
   underRoot?: string,
@@ -422,6 +437,7 @@ function basenameRule(
   return {
     id,
     entrypointKind,
+    selectionPriority,
     mountPoint,
     matcher: { kind: "basename", basename, ...(underRoot ? { underRoot } : {}) },
   };
@@ -430,10 +446,11 @@ function basenameRule(
 function basenameSuffixRule(
   id: string,
   entrypointKind: CatalogEntrypointRule["entrypointKind"],
+  selectionPriority: number,
   mountPoint: string,
   suffix: string,
 ): CatalogEntrypointRule {
-  return { id, entrypointKind, mountPoint, matcher: { kind: "basename_suffix", suffix } };
+  return { id, entrypointKind, selectionPriority, mountPoint, matcher: { kind: "basename_suffix", suffix } };
 }
 
 function browserCapabilities(withTests = true): CatalogCapability[] {
@@ -506,8 +523,8 @@ const RAW_STACK_TOPOLOGY_CATALOG = {
     entrypointKinds: ["web"],
     requiredEntrypointKinds: ["web"],
     entrypointRules: [
-      exactRule("ENTRY_RULE_NEXT_APP", "web", "/", "app/page.tsx"),
-      exactRule("ENTRY_RULE_NEXT_PAGES", "web", "/", "pages/index.tsx"),
+      exactRule("ENTRY_RULE_NEXT_APP", "web", 10, "/", "app/page.tsx"),
+      exactRule("ENTRY_RULE_NEXT_PAGES", "web", 20, "/", "pages/index.tsx"),
     ],
     commands: [
       command("CMD_INSTALL", "install", ["npm", "install"]),
@@ -531,10 +548,10 @@ const RAW_STACK_TOPOLOGY_CATALOG = {
     entrypointKinds: ["web"],
     requiredEntrypointKinds: ["web"],
     entrypointRules: [
-      exactRule("ENTRY_RULE_VITE_MAIN_TSX", "web", "/", "src/main.tsx"),
-      exactRule("ENTRY_RULE_VITE_MAIN_JSX", "web", "/", "src/main.jsx"),
-      exactRule("ENTRY_RULE_VITE_APP_TSX", "web", "/", "src/App.tsx"),
-      exactRule("ENTRY_RULE_VITE_APP_JSX", "web", "/", "src/App.jsx"),
+      exactRule("ENTRY_RULE_VITE_MAIN_TSX", "web", 10, "/", "src/main.tsx"),
+      exactRule("ENTRY_RULE_VITE_MAIN_JSX", "web", 20, "/", "src/main.jsx"),
+      exactRule("ENTRY_RULE_VITE_APP_TSX", "web", 100, "/", "src/App.tsx"),
+      exactRule("ENTRY_RULE_VITE_APP_JSX", "web", 110, "/", "src/App.jsx"),
     ],
     commands: [
       command("CMD_INSTALL", "install", ["npm", "install"]),
@@ -553,7 +570,7 @@ const RAW_STACK_TOPOLOGY_CATALOG = {
     packageManager: "none",
     entrypointKinds: ["web"],
     requiredEntrypointKinds: ["web"],
-    entrypointRules: [exactRule("ENTRY_RULE_STATIC_INDEX", "web", "/", "index.html")],
+    entrypointRules: [exactRule("ENTRY_RULE_STATIC_INDEX", "web", 10, "/", "index.html")],
     commands: [
       command("CMD_BUILD", "build", ["true"], [], 10_000),
       command("CMD_PREVIEW", "preview", ["node", "-e", V3_STATIC_SPA_PREVIEW_SOURCE, "."]),
@@ -570,11 +587,11 @@ const RAW_STACK_TOPOLOGY_CATALOG = {
     entrypointKinds: ["game"],
     requiredEntrypointKinds: ["game"],
     entrypointRules: [
-      exactRule("ENTRY_RULE_GAME_MAIN_TSX", "game", "/", "src/main.tsx"),
-      exactRule("ENTRY_RULE_GAME_MAIN_JSX", "game", "/", "src/main.jsx"),
-      exactRule("ENTRY_RULE_GAME_APP_TSX", "game", "/", "src/App.tsx"),
-      exactRule("ENTRY_RULE_GAME_APP_JSX", "game", "/", "src/App.jsx"),
-      exactRule("ENTRY_RULE_GAME_INDEX", "game", "/", "index.html"),
+      exactRule("ENTRY_RULE_GAME_MAIN_TSX", "game", 10, "/", "src/main.tsx"),
+      exactRule("ENTRY_RULE_GAME_MAIN_JSX", "game", 20, "/", "src/main.jsx"),
+      exactRule("ENTRY_RULE_GAME_APP_TSX", "game", 100, "/", "src/App.tsx"),
+      exactRule("ENTRY_RULE_GAME_APP_JSX", "game", 110, "/", "src/App.jsx"),
+      exactRule("ENTRY_RULE_GAME_INDEX", "game", 200, "/", "index.html"),
     ],
     commands: [
       command("CMD_INSTALL", "install", ["npm", "install"]),
@@ -597,9 +614,9 @@ const RAW_STACK_TOPOLOGY_CATALOG = {
     entrypointKinds: ["api"],
     requiredEntrypointKinds: ["api"],
     entrypointRules: [
-      exactRule("ENTRY_RULE_NODE_SERVER", "api", "/", "src/server.ts"),
-      exactRule("ENTRY_RULE_NODE_APP", "api", "/", "src/app.ts"),
-      exactRule("ENTRY_RULE_NODE_ROOT_SERVER", "api", "/", "server.ts"),
+      exactRule("ENTRY_RULE_NODE_SERVER", "api", 10, "/", "src/server.ts"),
+      exactRule("ENTRY_RULE_NODE_APP", "api", 20, "/", "src/app.ts"),
+      exactRule("ENTRY_RULE_NODE_ROOT_SERVER", "api", 30, "/", "server.ts"),
     ],
     commands: [
       command("CMD_INSTALL", "install", ["npm", "install"]),
@@ -623,8 +640,8 @@ const RAW_STACK_TOPOLOGY_CATALOG = {
     entrypointKinds: ["cli"],
     requiredEntrypointKinds: ["cli"],
     entrypointRules: [
-      exactRule("ENTRY_RULE_NODE_CLI", "cli", "command", "src/cli.ts"),
-      exactRule("ENTRY_RULE_NODE_INDEX", "cli", "command", "src/index.ts"),
+      exactRule("ENTRY_RULE_NODE_CLI", "cli", 10, "command", "src/cli.ts"),
+      exactRule("ENTRY_RULE_NODE_INDEX", "cli", 20, "command", "src/index.ts"),
     ],
     commands: [
       command("CMD_INSTALL", "install", ["npm", "install"]),
@@ -643,9 +660,9 @@ const RAW_STACK_TOPOLOGY_CATALOG = {
     entrypointKinds: ["cli"],
     requiredEntrypointKinds: ["cli"],
     entrypointRules: [
-      exactRule("ENTRY_RULE_PYTHON_MAIN", "cli", "command", "main.py"),
-      exactRule("ENTRY_RULE_PYTHON_CLI", "cli", "command", "cli.py"),
-      basenameRule("ENTRY_RULE_PYTHON_MODULE_MAIN", "cli", "command", "__main__.py", "src"),
+      exactRule("ENTRY_RULE_PYTHON_MAIN", "cli", 10, "command", "main.py"),
+      exactRule("ENTRY_RULE_PYTHON_CLI", "cli", 20, "command", "cli.py"),
+      basenameRule("ENTRY_RULE_PYTHON_MODULE_MAIN", "cli", 30, "command", "__main__.py", "src"),
     ],
     commands: [
       command("CMD_INSTALL", "install", ["python3", "-m", "pip", "install", "-r", "requirements.txt"]),
@@ -664,9 +681,9 @@ const RAW_STACK_TOPOLOGY_CATALOG = {
     entrypointKinds: ["web"],
     requiredEntrypointKinds: ["web"],
     entrypointRules: [
-      exactRule("ENTRY_RULE_PYTHON_WEB_MAIN", "web", "/", "main.py"),
-      exactRule("ENTRY_RULE_PYTHON_WEB_APP", "web", "/", "app.py"),
-      exactRule("ENTRY_RULE_PYTHON_WEB_SRC_MAIN", "web", "/", "src/main.py"),
+      exactRule("ENTRY_RULE_PYTHON_WEB_MAIN", "web", 10, "/", "main.py"),
+      exactRule("ENTRY_RULE_PYTHON_WEB_APP", "web", 20, "/", "app.py"),
+      exactRule("ENTRY_RULE_PYTHON_WEB_SRC_MAIN", "web", 30, "/", "src/main.py"),
     ],
     commands: [
       command("CMD_INSTALL", "install", ["python3", "-m", "pip", "install", "-r", "requirements.txt"]),
@@ -689,9 +706,9 @@ const RAW_STACK_TOPOLOGY_CATALOG = {
     entrypointKinds: ["native"],
     requiredEntrypointKinds: ["native"],
     entrypointRules: [
-      exactRule("ENTRY_RULE_EXPO_APP", "native", "application", "App.tsx"),
-      exactRule("ENTRY_RULE_EXPO_SRC_APP", "native", "application", "src/App.tsx"),
-      exactRule("ENTRY_RULE_EXPO_LAYOUT", "native", "application", "app/_layout.tsx"),
+      exactRule("ENTRY_RULE_EXPO_APP", "native", 10, "application", "App.tsx"),
+      exactRule("ENTRY_RULE_EXPO_SRC_APP", "native", 20, "application", "src/App.tsx"),
+      exactRule("ENTRY_RULE_EXPO_LAYOUT", "native", 30, "application", "app/_layout.tsx"),
     ],
     commands: [
       command("CMD_INSTALL", "install", ["npm", "install"]),
@@ -710,8 +727,8 @@ const RAW_STACK_TOPOLOGY_CATALOG = {
     entrypointKinds: ["native"],
     requiredEntrypointKinds: ["native"],
     entrypointRules: [
-      exactRule("ENTRY_RULE_ANDROID_MANIFEST", "native", "application", "app/src/main/AndroidManifest.xml"),
-      basenameRule("ENTRY_RULE_ANDROID_ACTIVITY", "native", "application", "MainActivity.kt", "app/src/main"),
+      exactRule("ENTRY_RULE_ANDROID_MANIFEST", "native", 10, "application", "app/src/main/AndroidManifest.xml"),
+      basenameRule("ENTRY_RULE_ANDROID_ACTIVITY", "native", 20, "application", "MainActivity.kt", "app/src/main"),
     ],
     commands: [
       command("CMD_BUILD", "build", ["./gradlew", "build"], ["CAP_NATIVE_RUNTIME"], 600_000),
@@ -729,10 +746,10 @@ const RAW_STACK_TOPOLOGY_CATALOG = {
     entrypointKinds: ["native"],
     requiredEntrypointKinds: ["native"],
     entrypointRules: [
-      basenameSuffixRule("ENTRY_RULE_IOS_APP", "native", "application", "App.swift"),
-      basenameRule("ENTRY_RULE_IOS_APP_DELEGATE", "native", "application", "AppDelegate.swift"),
-      basenameRule("ENTRY_RULE_IOS_SCENE_DELEGATE", "native", "application", "SceneDelegate.swift"),
-      basenameRule("ENTRY_RULE_IOS_CONTENT_VIEW", "native", "application", "ContentView.swift"),
+      basenameSuffixRule("ENTRY_RULE_IOS_APP", "native", 10, "application", "App.swift"),
+      basenameRule("ENTRY_RULE_IOS_APP_DELEGATE", "native", 20, "application", "AppDelegate.swift"),
+      basenameRule("ENTRY_RULE_IOS_SCENE_DELEGATE", "native", 30, "application", "SceneDelegate.swift"),
+      basenameRule("ENTRY_RULE_IOS_CONTENT_VIEW", "native", 40, "application", "ContentView.swift"),
     ],
     commands: [
       command("CMD_BUILD", "build", ["xcodebuild", "build"], ["CAP_NATIVE_RUNTIME"], 600_000),
@@ -750,9 +767,9 @@ const RAW_STACK_TOPOLOGY_CATALOG = {
     entrypointKinds: ["native", "web"],
     requiredEntrypointKinds: ["native", "web"],
     entrypointRules: [
-      exactRule("ENTRY_RULE_ELECTRON_MAIN", "native", "application", "src/main.ts"),
-      exactRule("ENTRY_RULE_ELECTRON_RENDERER", "web", "/", "src/renderer/main.tsx"),
-      exactRule("ENTRY_RULE_ELECTRON_APP", "web", "/", "src/App.tsx"),
+      exactRule("ENTRY_RULE_ELECTRON_MAIN", "native", 10, "application", "src/main.ts"),
+      exactRule("ENTRY_RULE_ELECTRON_RENDERER", "web", 10, "/", "src/renderer/main.tsx"),
+      exactRule("ENTRY_RULE_ELECTRON_APP", "web", 100, "/", "src/App.tsx"),
     ],
     commands: [
       command("CMD_INSTALL", "install", ["npm", "install"]),

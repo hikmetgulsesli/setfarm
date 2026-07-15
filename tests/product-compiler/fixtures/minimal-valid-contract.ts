@@ -1,3 +1,5 @@
+import { produceRuntimeEvidenceContractV1 } from "../../../src/evidence/runtime-evidence-contract-producer-v1.js";
+import { hashRuntimeEvidenceContractV1 } from "../../../src/evidence/runtime-evidence-contract-v1.js";
 import { extractTaskRequirementLedgerV1 } from "../../../src/product-compiler/requirements/task-requirements-v1.js";
 import { produceRuntimeDataContractV1 } from "../../../src/product-compiler/producers/runtime-data-contract.js";
 
@@ -375,6 +377,7 @@ export function buildMinimalValidV3ProductSpec(): any {
   }];
   action.evidenceRefs.push("EVID_SAVE_CONFIRMATION");
   action.success.evidenceRefs.push("EVID_SAVE_CONFIRMATION");
+  action.failure.evidenceRefs.push("EVID_SAVE_FAILURE");
   value.evidencePredicates.push({
     id: "EVID_SAVE_CONFIRMATION",
     kind: "observable_outcome",
@@ -382,6 +385,14 @@ export function buildMinimalValidV3ProductSpec(): any {
     subjectRef: "OBS_SAVE_CONFIRMATION",
     capabilityRefs: ["CAP_BROWSER_INTERACTION"],
     assertion: { operator: "passes" },
+  });
+  value.evidencePredicates.push({
+    id: "EVID_SAVE_FAILURE",
+    kind: "state_transition",
+    required: false,
+    subjectRef: "STATE_EDITOR",
+    capabilityRefs: ["CAP_BROWSER_INTERACTION"],
+    assertion: { operator: "not_equals", expected: { title: "Task from state" } },
   });
   value.delivery = {
     platform: "web",
@@ -427,6 +438,12 @@ export function buildMinimalValidV3Contracts(): ReturnType<typeof buildMinimalVa
   const values = buildMinimalValidContracts();
   values.productSpec = buildMinimalValidV3ProductSpec();
   values.designGraph.bindings[0]!.evidenceRefs.push("EVID_SAVE_CONFIRMATION");
+  values.designGraph.observableBindings = [{
+    observableRef: "OBS_SAVE_CONFIRMATION",
+    actionRef: "ACT_SAVE_TASK",
+    evidenceRef: "EVID_SAVE_CONFIRMATION",
+    target: { kind: "control", controlRef: "CTRL_SAVE_TASK" },
+  }];
   values.storyPlan.stories[0]!.evidenceRefs.push("EVID_SAVE_CONFIRMATION");
   const runtimeData = produceRuntimeDataContractV1({
     productSpec: values.productSpec,
@@ -439,10 +456,34 @@ export function buildMinimalValidV3Contracts(): ReturnType<typeof buildMinimalVa
     runtimeDataContract: runtimeData.contract,
     runtimeDataContractHash: runtimeData.contractHash,
   });
-  Object.assign(values.packet, { runtimeDataContractHash: runtimeData.contractHash });
+  const runtimeEvidence = produceRuntimeEvidenceContractV1({
+    productSpec: values.productSpec,
+    buildTopology: values.buildTopology,
+  });
+  if (runtimeEvidence.status !== "produced") {
+    throw new Error(`Minimal v3 runtime-evidence fixture rejected: ${JSON.stringify(runtimeEvidence)}`);
+  }
+  const runtimeEvidenceContractHash = hashRuntimeEvidenceContractV1(runtimeEvidence.contract);
+  Object.assign(values.buildTopology, {
+    runtimeEvidenceContract: runtimeEvidence.contract,
+    runtimeEvidenceContractHash,
+  });
+  Object.assign(values.packet, {
+    runtimeDataContractHash: runtimeData.contractHash,
+    runtimeEvidenceContractHash,
+  });
   Object.assign(values.implementationSlice, {
     runtimeDataContract: runtimeData.contract,
     runtimeDataContractHash: runtimeData.contractHash,
+    runtimeEvidence: runtimeEvidence.contract,
+    story: values.storyPlan.stories[0],
+    contract: {
+      ...values.implementationSlice.contract,
+      observableBindings: values.designGraph.observableBindings,
+      actions: values.productSpec.actions,
+      evidencePredicates: values.productSpec.evidencePredicates,
+    },
+    requiredEvidence: values.productSpec.evidencePredicates.filter((item: any) => item.required),
   });
   return values;
 }

@@ -8,13 +8,18 @@ import { z } from "zod";
 
 import { createRunProtocolRepository } from "../execution/run-protocol.js";
 import {
+  produceRuntimeEvidenceContractV1,
+  RUNTIME_EVIDENCE_CONTRACT_PRODUCER_VERSION,
+} from "../evidence/runtime-evidence-contract-producer-v1.js";
+import { hashRuntimeEvidenceContractV1 } from "../evidence/runtime-evidence-contract-v1.js";
+import {
   adaptExactSetupTopologyV1,
   FileTreeManifestV1Schema,
   SetupCertificateV1Schema,
   SharedGrantsArtifactV1Schema,
 } from "./adapters/setup-topology.js";
 import {
-  produceDesignGraphFromExactStitchScreenIndexV3,
+  produceDesignGraphFromExactStitchScreenIndexV4,
 } from "./adapters/stitch-screen-index-v3.js";
 import type { ArtifactCapacityLimits } from "./artifact-capacity.js";
 import { canonicalJsonStringify } from "./canonical-json.js";
@@ -53,13 +58,14 @@ import {
 } from "./stack-topology-catalog.js";
 import { PRODUCT_EVIDENCE_CAPABILITY_POLICY_VERSION } from "./product-evidence-capability-policy.js";
 
-export const PRODUCT_COMPILER_RUNTIME_VERSION = "3.2.0";
+export const PRODUCT_COMPILER_RUNTIME_VERSION = "3.4.0";
 
 export type SetupBuildPacketErrorCode =
   | "SETUP_PACKET_ACTIVATION_REJECTED"
   | "SETUP_PACKET_DESIGN_GRAPH_REJECTED"
   | "SETUP_PACKET_DIRECT_RESPONSE_EVIDENCE_REJECTED"
   | "SETUP_PACKET_DELIVERY_PROFILE_REJECTED"
+  | "SETUP_PACKET_ENTRYPOINT_AMBIGUOUS"
   | "SETUP_PACKET_ENTRYPOINT_MISSING"
   | "SETUP_PACKET_FILE_INVALID"
   | "SETUP_PACKET_GENERATED_SOURCE_AMBIGUOUS"
@@ -70,6 +76,7 @@ export type SetupBuildPacketErrorCode =
   | "SETUP_PACKET_PROTOCOL_MISMATCH"
   | "SETUP_PACKET_REPO_DIRTY"
   | "SETUP_PACKET_REPO_IDENTITY_INVALID"
+  | "SETUP_PACKET_RUNTIME_EVIDENCE_REJECTED"
   | "SETUP_PACKET_RUN_ID_MISMATCH"
   | "SETUP_PACKET_SOURCE_NON_CANONICAL"
   | "SETUP_PACKET_STORY_PLAN_REJECTED"
@@ -420,32 +427,47 @@ function selectEntrypoints(input: Readonly<{
   }
   const entrypoints: BuildEntrypointV1[] = [];
   for (const kind of catalog.descriptor.requiredEntrypointKinds) {
-    const selected = input.repoFiles.flatMap((locator) => {
+    const candidates = input.repoFiles.flatMap((locator) => {
       const rules = catalog.descriptor.entrypointRules.filter((rule) =>
         rule.entrypointKind === kind && matchesStackEntrypointRule(locator, rule.matcher));
       if (rules.length > 1) {
         throw new SetupBuildPacketError(
-          "SETUP_PACKET_ENTRYPOINT_MISSING",
+          "SETUP_PACKET_ENTRYPOINT_AMBIGUOUS",
           `Repository path matches multiple ${kind} entrypoint rules: ${locator}`,
           { locator, rules: rules.map((rule) => rule.id) },
         );
       }
       return rules.length === 1 ? [{ locator, rule: rules[0]! }] : [];
     });
-    if (selected.length === 0) {
+    if (candidates.length === 0) {
       throw new SetupBuildPacketError(
         "SETUP_PACKET_ENTRYPOINT_MISSING",
         `No repository file satisfies the ${kind} entrypoint contract for ${input.stackPackId}`,
         { stackPackId: input.stackPackId, kind },
       );
     }
-    selected.forEach(({ locator, rule }) => entrypoints.push({
+    const winningPriority = Math.min(...candidates.map(({ rule }) => rule.selectionPriority));
+    const selected = candidates.filter(({ rule }) => rule.selectionPriority === winningPriority);
+    if (selected.length !== 1) {
+      throw new SetupBuildPacketError(
+        "SETUP_PACKET_ENTRYPOINT_AMBIGUOUS",
+        `More than one repository file has winning ${kind} entrypoint priority ${winningPriority}`,
+        {
+          stackPackId: input.stackPackId,
+          kind,
+          winningPriority,
+          candidates: selected.map(({ locator, rule }) => ({ locator, ruleId: rule.id })),
+        },
+      );
+    }
+    const { locator, rule } = selected[0]!;
+    entrypoints.push({
       id: stableRef("ENTRY", `${kind}\0${locator}`),
       kind,
       pathRef: stableRef("PATH", locator),
       mountPoint: rule.mountPoint,
       routeRefs: uniqueSorted(input.routeRefs),
-    }));
+    });
   }
   return entrypoints.sort((left, right) => compareUtf16(left.id, right.id));
 }
@@ -697,7 +719,7 @@ export function assembleSetupBuildPacketContracts(input: Readonly<{
       { indexedScreens: [...indexByScreen.keys()].sort(compareUtf16) },
     );
   }
-  const design = produceDesignGraphFromExactStitchScreenIndexV3({
+  const design = produceDesignGraphFromExactStitchScreenIndexV4({
     productSpec: plan.productSpec,
     generationTargets: generationTargets.value,
     responseBindings: responseBindings.value,
@@ -813,7 +835,7 @@ export function assembleSetupBuildPacketContracts(input: Readonly<{
       { diagnostics: topology.diagnostics },
     );
   }
-  const buildTopology = deliverySelection
+  const deliveryBoundTopology = deliverySelection
     ? BuildTopologyV1Schema.parse({
         ...topology.candidate,
         deliveryProfile: {
@@ -829,6 +851,33 @@ export function assembleSetupBuildPacketContracts(input: Readonly<{
         },
       })
     : topology.candidate;
+  const runtimeEvidence = deliverySelection
+    ? produceRuntimeEvidenceContractV1({
+        productSpec: plan.productSpec,
+        buildTopology: deliveryBoundTopology,
+      })
+    : undefined;
+  if (runtimeEvidence?.status === "unsupported") {
+    throw new SetupBuildPacketError(
+      "SETUP_PACKET_RUNTIME_EVIDENCE_REJECTED",
+      `Product Compiler v3 cannot seal unsupported runtime evidence stack ${runtimeEvidence.stackPackId}`,
+      { stackPackId: runtimeEvidence.stackPackId },
+    );
+  }
+  if (runtimeEvidence?.status === "rejected") {
+    throw new SetupBuildPacketError(
+      "SETUP_PACKET_RUNTIME_EVIDENCE_REJECTED",
+      `Product Compiler v3 runtime evidence projection was rejected: ${runtimeEvidence.rejectionCode}`,
+      { rejectionCode: runtimeEvidence.rejectionCode },
+    );
+  }
+  const buildTopology = runtimeEvidence?.status === "produced"
+    ? BuildTopologyV1Schema.parse({
+        ...deliveryBoundTopology,
+        runtimeEvidenceContract: runtimeEvidence.contract,
+        runtimeEvidenceContractHash: hashRuntimeEvidenceContractV1(runtimeEvidence.contract),
+      })
+    : deliveryBoundTopology;
   const stories = compileRuntimeStoryPlanV1({
     productSpec: plan.productSpec,
     designGraph: design.designGraph,
@@ -920,6 +969,7 @@ export async function orchestrateSetupBuildProductPacket(input: Readonly<{
         stackTopologyCatalog: STACK_TOPOLOGY_CATALOG_VERSION,
         productDeliveryProfileCatalog: PRODUCT_DELIVERY_PROFILE_CATALOG_VERSION,
         productEvidenceCapabilityPolicy: PRODUCT_EVIDENCE_CAPABILITY_POLICY_VERSION,
+        runtimeEvidenceContractProducer: RUNTIME_EVIDENCE_CONTRACT_PRODUCER_VERSION,
       },
     },
   });

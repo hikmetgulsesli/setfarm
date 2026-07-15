@@ -5,14 +5,17 @@ import {
   createV3PreparationEligibilityEvaluator,
 } from "../../src/execution/v3-preparation-eligibility.js";
 import type { SealedRuntimePacketV1 } from "../../src/product-compiler/runtime-artifact-reader.js";
-import { buildMinimalValidContracts } from "../product-compiler/fixtures/minimal-valid-contract.js";
+import { buildMinimalValidV3Contracts } from "../product-compiler/fixtures/minimal-valid-contract.js";
 
 const PACKET_HASH = "a".repeat(64);
 const SOURCE = { sha: "b".repeat(40), treeHash: "c".repeat(64) };
 
-function packet(stackPackId = "vite-react-web-app"): SealedRuntimePacketV1 {
-  const values = buildMinimalValidContracts();
-  values.buildTopology.stackPack.id = stackPackId;
+function packet(withRuntimeEvidence = true): SealedRuntimePacketV1 {
+  const values = buildMinimalValidV3Contracts();
+  if (!withRuntimeEvidence) {
+    delete (values.buildTopology as any).runtimeEvidenceContract;
+    delete (values.buildTopology as any).runtimeEvidenceContractHash;
+  }
   const first = values.storyPlan.stories[0]!;
   values.storyPlan.stories.push({
     ...first,
@@ -96,10 +99,10 @@ describe("v3 preparation eligibility", () => {
 
   it("blocks packet/runtime and projection defects before claim publication", async () => {
     const unsupported = createV3PreparationEligibilityEvaluator({
-      readPacket: async () => packet("node-cli"),
+      readPacket: async () => packet(false),
       captureSource: async () => SOURCE,
       readTerminalDependencyAttempts: async () => {
-        assert.fail("unsupported packet must block before dependency lookup");
+        assert.fail("unsealed runtime evidence must block before dependency lookup");
       },
     });
     const unsupportedResult = await unsupported.evaluate({

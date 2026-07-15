@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { hashCanonicalJson } from "../product-compiler/canonical-json.js";
 import {
   ActionIdSchema,
   RepoRelativePathSchema,
@@ -189,3 +190,7 @@ export type RuntimeEvidenceActionBindingV1 = Extract<
 >["actions"][number];
 export type RuntimeCliInvocationV1 = z.infer<typeof CliInvocationV1Schema>;
 export type RuntimeHttpInvocationV1 = z.infer<typeof HttpInvocationV1Schema>;
+
+export function hashRuntimeEvidenceContractV1(value: unknown): string {
+  return hashCanonicalJson(RuntimeEvidenceContractV1Schema.parse(value));
+}

@@ -1,5 +1,7 @@
 import type postgres from "postgres";
 
+import { produceRuntimeEvidenceContractV1 } from "../evidence/runtime-evidence-contract-producer-v1.js";
+import { hashRuntimeEvidenceContractV1 } from "../evidence/runtime-evidence-contract-v1.js";
 import type { ArtifactCapacityLimits } from "./artifact-capacity.js";
 import { ContentAddressedArtifactStore } from "./artifact-store.js";
 import { createArtifactIndex } from "./artifact-index.js";
@@ -34,6 +36,7 @@ export type RuntimeArtifactReaderErrorCode =
   | "RUNTIME_PACKET_RELEASE_MISMATCH"
   | "RUNTIME_PACKET_CHILD_HASH_MISMATCH"
   | "RUNTIME_PACKET_RUNTIME_DATA_MISMATCH"
+  | "RUNTIME_PACKET_RUNTIME_EVIDENCE_MISMATCH"
   | "RUNTIME_PACKET_REPORT_MISMATCH";
 
 export class RuntimeArtifactReaderError extends Error {
@@ -208,6 +211,26 @@ export function createRuntimeArtifactReader(input: Readonly<{
       throw new RuntimeArtifactReaderError(
         "RUNTIME_PACKET_RUNTIME_DATA_MISMATCH",
         `Run ${runId} runtime-data contract is not the exact ProductSpec/topology projection: ${runtimeDataDiagnostics[0]!.code}`,
+      );
+    }
+    if (
+      !buildTopology.runtimeEvidenceContract
+      || !buildTopology.runtimeEvidenceContractHash
+      || packet.runtimeEvidenceContractHash !== buildTopology.runtimeEvidenceContractHash
+    ) {
+      throw new RuntimeArtifactReaderError(
+        "RUNTIME_PACKET_RUNTIME_EVIDENCE_MISMATCH",
+        `Run ${runId} v3 packet lacks one exact topology/packet runtime-evidence binding`,
+      );
+    }
+    const runtimeEvidence = produceRuntimeEvidenceContractV1({ productSpec, buildTopology });
+    if (
+      runtimeEvidence.status !== "produced"
+      || hashRuntimeEvidenceContractV1(runtimeEvidence.contract) !== buildTopology.runtimeEvidenceContractHash
+    ) {
+      throw new RuntimeArtifactReaderError(
+        "RUNTIME_PACKET_RUNTIME_EVIDENCE_MISMATCH",
+        `Run ${runId} runtime-evidence contract is not the exact ProductSpec/topology projection`,
       );
     }
     if (packet.compiler.codeSha !== run.compiler_release_sha) {

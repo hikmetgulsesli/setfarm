@@ -18,6 +18,7 @@ import {
 } from "../schemas/design-generation-targets-v1.js";
 import {
   ActionIdSchema,
+  ObservableIdSchema,
   SourceArtifactRefV1Schema,
   hasUniqueStrings,
 } from "../schemas/common-v1.js";
@@ -72,11 +73,21 @@ const RejectedControlSchema = z.object({
   href: z.string().max(2_000).optional(),
 }).strict();
 
+const IndexedObservableSchema = z.object({
+  observableRef: ObservableIdSchema,
+  role: z.string().min(1).max(160),
+  name: z.string().min(1).max(500),
+  sourceLocator: z.string().min(1).max(1_024),
+  generatedSourceLocator: z.string().min(1).max(1_024),
+  selector: z.string().min(1).max(2_000),
+}).strict();
+
 const ContractProjectionSchema = z.object({
-  schema: z.literal("setfarm.stitch-screen-projection.v1"),
+  schema: z.literal("setfarm.stitch-screen-projection.v2"),
   mode: z.literal("contract_only"),
   targetRef: z.string().regex(/^TARGET_[A-Z0-9]+(?:_[A-Z0-9]+)*$/),
   rawInteractiveCounts: InteractiveCountsSchema,
+  requiredObservableRefs: z.array(ObservableIdSchema).max(10_000).refine(hasUniqueStrings),
 }).strict();
 
 const ScreenIndexEntrySchema = z
@@ -91,6 +102,7 @@ const ScreenIndexEntrySchema = z
     selects: z.number().int().nonnegative(),
     links: z.number().int().nonnegative(),
     controls: z.array(IndexedControlSchema).max(10_000),
+    observables: z.array(IndexedObservableSchema).max(10_000),
     projection: ContractProjectionSchema,
     rejectedControls: z.array(RejectedControlSchema).max(10_000),
   })
@@ -107,6 +119,9 @@ const ScreenIndexEntrySchema = z
     }
     if (!hasUniqueStrings(value.rejectedControls.map((control) => control.selector))) {
       context.addIssue({ code: "custom", path: ["rejectedControls"], message: "SCREEN_INDEX rejection selectors must be unique per screen" });
+    }
+    if (!hasUniqueStrings(value.observables.map((observable) => observable.observableRef))) {
+      context.addIssue({ code: "custom", path: ["observables"], message: "SCREEN_INDEX observable refs must be unique per screen" });
     }
     if (!hasUniqueStrings([
       ...value.controls.map((control) => control.generatedLocalId),
@@ -137,9 +152,9 @@ const AdapterInputSchema = z
   })
   .strict();
 
-export type StitchScreenIndexV3AdapterInput = z.input<typeof AdapterInputSchema>;
+export type StitchScreenIndexV4AdapterInput = z.input<typeof AdapterInputSchema>;
 
-export type StitchScreenIndexV3AdapterResult =
+export type StitchScreenIndexV4AdapterResult =
   | Readonly<{
       status: "adapted";
       producerInput: DesignGraphProducerInput;
@@ -161,6 +176,12 @@ function uniqueSorted(values: readonly string[]): string[] {
   return [...new Set(values)].sort(compareUtf16);
 }
 
+function sameStrings(left: readonly string[], right: readonly string[]): boolean {
+  const first = uniqueSorted(left);
+  const second = uniqueSorted(right);
+  return first.length === second.length && first.every((value, index) => value === second[index]);
+}
+
 function diagnostic(input: {
   code: string;
   message: string;
@@ -180,7 +201,7 @@ function diagnostic(input: {
   });
 }
 
-function reject(diagnostics: CompilationDiagnosticV1[]): StitchScreenIndexV3AdapterResult {
+function reject(diagnostics: CompilationDiagnosticV1[]): StitchScreenIndexV4AdapterResult {
   const sorted = sortCompilationDiagnostics(diagnostics);
   return {
     status: "rejected",
@@ -226,6 +247,45 @@ function sourceOpeningTags(text: string): string[] {
   return [...text.matchAll(/<(?:button|a|input|textarea|select)\b[^>]*>/gi)].map((match) => match[0]);
 }
 
+function sourceElementOpeningTags(text: string): string[] {
+  const tags: string[] = [];
+  const pattern = /<[a-z][a-z0-9:-]*\b/g;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(text)) !== null) {
+    let quote = "";
+    let braceDepth = 0;
+    let escaped = false;
+    let end = -1;
+    for (let index = pattern.lastIndex; index < text.length; index += 1) {
+      const character = text[index]!;
+      if (quote) {
+        if (escaped) {
+          escaped = false;
+        } else if (character === "\\") {
+          escaped = true;
+        } else if (character === quote) {
+          quote = "";
+        }
+        continue;
+      }
+      if (character === '"' || character === "'" || character === "`") {
+        quote = character;
+      } else if (character === "{") {
+        braceDepth += 1;
+      } else if (character === "}" && braceDepth > 0) {
+        braceDepth -= 1;
+      } else if (character === ">" && braceDepth === 0) {
+        end = index;
+        break;
+      }
+    }
+    if (end < 0) break;
+    tags.push(text.slice(match.index, end + 1));
+    pattern.lastIndex = end + 1;
+  }
+  return tags;
+}
+
 function exactTagForControl(
   sourceText: string,
   control: z.infer<typeof IndexedControlSchema>,
@@ -241,6 +301,14 @@ function exactTagForRejectedControl(
 ): string | undefined {
   return sourceOpeningTags(sourceText).find((tag) =>
     attrValue(tag, "data-setfarm-rejected-control") === control.rejectionId);
+}
+
+function exactTagForObservable(
+  sourceText: string,
+  observable: z.infer<typeof IndexedObservableSchema>,
+): string | undefined {
+  return sourceElementOpeningTags(sourceText).find((tag) =>
+    (attrValue(tag, "data-observable-refs") ?? "").split(/\s+/).includes(observable.observableRef));
 }
 
 function hasAttribute(tag: string, name: string): boolean {
@@ -281,7 +349,7 @@ function mappingKey(actionRef: string, inputField: string): string {
  * file, control, action, and action-input pair must have a unique upstream
  * identity. Unindexed/fuzzy/label-derived controls are rejected.
  */
-export function adaptExactStitchScreenIndexV3(input: unknown): StitchScreenIndexV3AdapterResult {
+export function adaptExactStitchScreenIndexV4(input: unknown): StitchScreenIndexV4AdapterResult {
   const parsed = AdapterInputSchema.safeParse(input);
   if (!parsed.success) {
     return reject(parsed.error.issues.slice(0, 100).map((issue) => diagnostic({
@@ -423,6 +491,17 @@ export function adaptExactStitchScreenIndexV3(input: unknown): StitchScreenIndex
         reference: target.targetId,
       }));
     }
+    const requiredAccessibilityObservables = (target.requiredObservableSelectors ?? []).flatMap((item) =>
+      item.selector.kind === "accessibility" ? [{ ...item, selector: item.selector }] : []);
+    const requiredObservableRefs = requiredAccessibilityObservables.map((item) => item.observableRef);
+    if (!sameStrings(screen.projection.requiredObservableRefs, requiredObservableRefs)) {
+      diagnostics.push(diagnostic({
+        code: "DESIGN_PROJECTION_OBSERVABLE_REFS_MISMATCH",
+        message: `Target ${target.targetId} SCREEN_INDEX observable projection differs from exact generation targets`,
+        artifactHash: value.screenIndex.source.hash,
+        reference: target.targetId,
+      }));
+    }
     for (const kind of ["buttons", "links", "inputs", "textareas", "selects"] as const) {
       if (screen.projection.rawInteractiveCounts[kind] !== screen[kind]) {
         diagnostics.push(diagnostic({
@@ -545,6 +624,83 @@ export function adaptExactStitchScreenIndexV3(input: unknown): StitchScreenIndex
           message: `Required input ${mapping.actionRef}.${mapping.inputField} was rejected instead of projected as an exact value provider`,
           artifactHash: source.source.hash,
           reference: `${mapping.actionRef}.${mapping.inputField}`,
+        }));
+      }
+    }
+
+    const requiredObservableByRef = new Map(requiredAccessibilityObservables.map((item) => [
+      item.observableRef,
+      item.selector,
+    ]));
+    for (const observableRef of requiredObservableRefs) {
+      const count = screen.observables.filter((item) => item.observableRef === observableRef).length;
+      if (count !== 1) {
+        diagnostics.push(diagnostic({
+          code: count === 0
+            ? "DESIGN_REQUIRED_OBSERVABLE_MISSING"
+            : "DESIGN_REQUIRED_OBSERVABLE_AMBIGUOUS",
+          message: `Target ${target.targetId} requires exactly one indexed observable ${observableRef}; observed ${count}`,
+          artifactHash: source.source.hash,
+          reference: observableRef,
+        }));
+      }
+    }
+    for (const observable of screen.observables) {
+      const expected = requiredObservableByRef.get(observable.observableRef);
+      if (!expected) {
+        diagnostics.push(diagnostic({
+          code: "DESIGN_OBSERVABLE_UNEXPECTED",
+          message: `Target ${target.targetId} indexes undeclared observable ${observable.observableRef}`,
+          artifactHash: source.source.hash,
+          reference: observable.observableRef,
+        }));
+        continue;
+      }
+      if (observable.generatedSourceLocator !== source.source.locator) {
+        diagnostics.push(diagnostic({
+          code: "DESIGN_OBSERVABLE_SOURCE_MISMATCH",
+          message: `Observable ${observable.observableRef} generated source differs from exact target source`,
+          artifactHash: source.source.hash,
+          reference: observable.observableRef,
+        }));
+      }
+      const expectedRawLocator = `stitch/${binding.responseScreenId}.html`;
+      if (observable.sourceLocator !== expectedRawLocator) {
+        diagnostics.push(diagnostic({
+          code: "DESIGN_OBSERVABLE_RAW_SOURCE_MISMATCH",
+          message: `Observable ${observable.observableRef} raw source differs from its exact Stitch response`,
+          artifactHash: source.source.hash,
+          reference: observable.observableRef,
+        }));
+      }
+      const expectedSelector = `[data-observable-refs~="${observable.observableRef}"]`;
+      if (observable.selector !== expectedSelector) {
+        diagnostics.push(diagnostic({
+          code: "DESIGN_OBSERVABLE_SELECTOR_MISMATCH",
+          message: `Observable ${observable.observableRef} does not use its exact semantic selector`,
+          artifactHash: source.source.hash,
+          reference: observable.observableRef,
+        }));
+      }
+      const tag = exactTagForObservable(source.text, observable);
+      if (!tag) {
+        diagnostics.push(diagnostic({
+          code: "DESIGN_OBSERVABLE_SOURCE_ELEMENT_MISSING",
+          message: `Generated source lacks exact observable marker ${observable.observableRef}`,
+          artifactHash: source.source.hash,
+          reference: observable.observableRef,
+        }));
+      } else if (
+        attrValue(tag, "role") !== expected.role
+        || attrValue(tag, "aria-label") !== expected.name
+        || observable.role !== expected.role
+        || observable.name !== expected.name
+      ) {
+        diagnostics.push(diagnostic({
+          code: "DESIGN_OBSERVABLE_ACCESSIBILITY_MISMATCH",
+          message: `Observable ${observable.observableRef} does not preserve exact role and aria-label`,
+          artifactHash: source.source.hash,
+          reference: observable.observableRef,
         }));
       }
     }
@@ -700,6 +856,11 @@ export function adaptExactStitchScreenIndexV3(input: unknown): StitchScreenIndex
       sourceArtifactHash: source.source.hash,
       sourceLocator: source.source.locator,
       controls: outputControls,
+      observables: screen.observables.map((observable) => ({
+        observableRef: observable.observableRef,
+        accessibility: { role: observable.role, name: observable.name },
+        source: { selector: observable.selector },
+      })),
     });
   }
 
@@ -715,11 +876,18 @@ export function adaptExactStitchScreenIndexV3(input: unknown): StitchScreenIndex
   };
 }
 
-export function produceDesignGraphFromExactStitchScreenIndexV3(
+export function produceDesignGraphFromExactStitchScreenIndexV4(
   input: unknown,
-): StitchScreenIndexV3AdapterResult | DesignGraphProducerResult {
-  const adapted = adaptExactStitchScreenIndexV3(input);
+): StitchScreenIndexV4AdapterResult | DesignGraphProducerResult {
+  const adapted = adaptExactStitchScreenIndexV4(input);
   return adapted.status === "adapted"
     ? produceDesignInteractionGraphV1(adapted.producerInput)
     : adapted;
 }
+
+// Source-path compatibility for callers compiled against the preceding module.
+// The active delivery profile and setup orchestrator use the explicit v4 names.
+export type StitchScreenIndexV3AdapterInput = StitchScreenIndexV4AdapterInput;
+export type StitchScreenIndexV3AdapterResult = StitchScreenIndexV4AdapterResult;
+export const adaptExactStitchScreenIndexV3 = adaptExactStitchScreenIndexV4;
+export const produceDesignGraphFromExactStitchScreenIndexV3 = produceDesignGraphFromExactStitchScreenIndexV4;

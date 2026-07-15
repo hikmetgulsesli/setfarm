@@ -2,6 +2,10 @@ import { z } from "zod";
 import { createHash } from "node:crypto";
 
 import {
+  RuntimeEvidenceContractV1Schema,
+  hashRuntimeEvidenceContractV1,
+} from "../../evidence/runtime-evidence-contract-v1.js";
+import {
   CapabilityIdSchema,
   CommandIdSchema,
   EntrypointIdSchema,
@@ -228,6 +232,8 @@ export const BuildTopologyV1Schema = z
     policies: BuildPoliciesV1Schema,
     runtimeDataContract: RuntimeDataContractV1Schema.optional(),
     runtimeDataContractHash: Sha256Schema.optional(),
+    runtimeEvidenceContract: RuntimeEvidenceContractV1Schema.optional(),
+    runtimeEvidenceContractHash: Sha256Schema.optional(),
   })
   .strict()
   .superRefine((value, context) => {
@@ -342,6 +348,26 @@ export const BuildTopologyV1Schema = z
         code: "custom",
         path: ["runtimeDataContractHash"],
         message: "Runtime-data contract hash must equal the exact canonical embedded contract",
+      });
+    }
+    const runtimeEvidencePresence = [value.runtimeEvidenceContract, value.runtimeEvidenceContractHash]
+      .filter((item) => item !== undefined).length;
+    if (runtimeEvidencePresence === 1) {
+      context.addIssue({
+        code: "custom",
+        path: ["runtimeEvidenceContract"],
+        message: "Legacy compatibility permits runtime-evidence contract and hash only together or both absent",
+      });
+    }
+    if (
+      value.runtimeEvidenceContract
+      && value.runtimeEvidenceContractHash
+      && hashRuntimeEvidenceContractV1(value.runtimeEvidenceContract) !== value.runtimeEvidenceContractHash
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["runtimeEvidenceContractHash"],
+        message: "Runtime-evidence contract hash must equal the exact canonical embedded contract",
       });
     }
   });

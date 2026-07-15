@@ -17,6 +17,7 @@ import {
 import {
   DesignControlBindingV1Schema,
   DesignControlV1Schema,
+  DesignObservableBindingV1Schema,
 } from "./design-interaction-graph-v1.js";
 import {
   EvidencePredicateV1Schema,
@@ -147,6 +148,7 @@ const SliceContractV1Schema = z
     surfaces: z.array(ProductSurfaceV1Schema).max(2_000),
     controls: z.array(DesignControlV1Schema).max(10_000),
     bindings: z.array(DesignControlBindingV1Schema).max(10_000),
+    observableBindings: z.array(DesignObservableBindingV1Schema).max(10_000).optional(),
     actions: z.array(ProductActionV1Schema).min(1).max(5_000),
     states: z.array(ProductStateV1Schema).max(2_000),
     persistencePolicies: z.array(PersistencePolicyV1Schema).max(2_000),
@@ -265,6 +267,25 @@ export const ImplementationSliceV1Schema = z
       "evidence ref",
     );
 
+    const contractEvidenceIds = new Set(value.contract.evidencePredicates.map((item) => item.id));
+    value.contract.actions.forEach((action, actionIndex) => {
+      const semanticEvidenceRefs = [
+        ...action.evidenceRefs,
+        ...action.success.evidenceRefs,
+        ...action.failure.evidenceRefs,
+        ...(action.observableEffects ?? []).map((effect) => effect.evidenceRef),
+      ];
+      semanticEvidenceRefs.forEach((evidenceRef) => {
+        if (!contractEvidenceIds.has(evidenceRef)) {
+          context.addIssue({
+            code: "custom",
+            path: ["contract", "actions", actionIndex, "evidenceRefs"],
+            message: `Slice action evidence is absent from its semantic predicate contract: ${evidenceRef}`,
+          });
+        }
+      });
+    });
+
     const requiredEvidenceIds = new Set(value.requiredEvidence.map((item) => item.id));
     if (requiredEvidenceIds.size !== value.requiredEvidence.length) {
       context.addIssue({
@@ -292,6 +313,24 @@ export const ImplementationSliceV1Schema = z
       }
     });
     const sliceActionRefs = new Set(value.contract.actions.map((action) => action.id));
+    if (value.contract.observableBindings !== undefined) {
+      const observableBindings = value.contract.observableBindings;
+      value.contract.actions.forEach((action, actionIndex) => {
+        (action.observableEffects ?? []).forEach((effect, effectIndex) => {
+          const matches = observableBindings.filter((binding) =>
+            binding.observableRef === effect.id
+            && binding.actionRef === action.id
+            && binding.evidenceRef === effect.evidenceRef);
+          if (matches.length !== 1) {
+            context.addIssue({
+              code: "custom",
+              path: ["contract", "actions", actionIndex, "observableEffects", effectIndex],
+              message: `Slice requires exactly one exact observable binding for ${effect.id}`,
+            });
+          }
+        });
+      });
+    }
     value.contract.actions.forEach((action, actionIndex) => {
       action.evidenceScenario.prerequisiteSteps.forEach((step, stepIndex) => {
         if (!sliceActionRefs.has(step.actionRef)) {
