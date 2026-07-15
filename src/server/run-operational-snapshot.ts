@@ -12,22 +12,19 @@ import {
   V3ProjectTransferAckV1Schema,
   type V3ProjectTransferAckV1,
 } from "../execution/schemas/v3-project-transfer-ack-v1.js";
+import { RuntimeCompletionSubmissionEvidenceV1Schema } from "../execution/schemas/runtime-completion-submission-evidence-v1.js";
 import { hashCanonicalJson } from "../product-compiler/canonical-json.js";
 import {
-  RunOperationalSnapshotV1Schema,
   type OperationalAttemptV1,
   type OperationalAcceptedCandidateV1,
   type OperationalV3DeployReceiptV1,
   type OperationalV3ProjectTransferAckV1,
   type OperationalClaimV1,
   type OperationalCompletionEffectV1,
-  type OperationalCompletionRequestV1,
   type OperationalEvidenceBundleV1,
   type OperationalFindingSetV1,
   type OperationalInvariantV1,
   type OperationalOutboxItemV1,
-  type OperationalProjectionCapabilitiesV1,
-  type OperationalProjectionSourceV1,
   type OperationalRunV1,
   type OperationalRecoveryCaseV1,
   type OperationalRecoveryDispatchV1,
@@ -36,6 +33,13 @@ import {
   type OperationalTerminationRequestV1,
   type RunOperationalSnapshotV1,
 } from "./schemas/run-operational-snapshot-v1.js";
+import {
+  RunOperationalSnapshotV2Schema,
+  type OperationalCompletionRequestV2,
+  type OperationalProjectionCapabilitiesV2,
+  type OperationalProjectionSourceV2,
+  type RunOperationalSnapshotV2,
+} from "./schemas/run-operational-snapshot-v2.js";
 import { hasStopBlockingInvariant } from "../execution/run-operational-invariant-policy.js";
 
 type Sql = postgres.Sql;
@@ -203,6 +207,9 @@ type RawCompletion = {
   workflow_step_id: unknown;
   story_id: unknown;
   output_hash: unknown;
+  submission_evidence: unknown;
+  source_proposal_hash: unknown;
+  persisted_output_hash: unknown;
   apply_phase: unknown;
   claim_outcome: unknown;
   completion_plan_hash: unknown;
@@ -539,7 +546,7 @@ function hasColumns(columns: ReadonlyMap<string, ReadonlySet<string>>, table: Ta
 
 async function readSource(
   sql: TransactionSql,
-): Promise<Readonly<{ source: OperationalProjectionSourceV1; columns: ReadonlyMap<string, ReadonlySet<string>> }>> {
+): Promise<Readonly<{ source: OperationalProjectionSourceV2; columns: ReadonlyMap<string, ReadonlySet<string>> }>> {
   const tableNames = [...Object.keys(REQUIRED_TABLE_COLUMNS), "steps", "stories", "setfarm_schema_migrations"];
   const columnRows = await sql.unsafe<Array<{ table_name: string; column_name: string }>>(
     `SELECT table_name, column_name
@@ -565,6 +572,9 @@ async function readSource(
     && hasColumns(columns, "run_termination_requests");
   const managerCompletion = runtimeOwnership
     && hasColumns(columns, "runtime_completion_requests");
+  const implementationSubmissionEvidenceShape = managerCompletion
+    && Boolean(columns.get("runtime_completion_requests")?.has("submission_evidence"))
+    && Boolean(columns.get("runtime_completion_requests")?.has("source_proposal"));
   const effectLedger = managerCompletion
     && Boolean(columns.get("runtime_completion_requests")?.has("completion_plan_hash"))
     && hasColumns(columns, "runtime_completion_effects")
@@ -587,19 +597,6 @@ async function readSource(
   const projectTransferAck = deploymentReceipt
     && Boolean(columns.get("runs")?.has("project_transfer_ack_hash"))
     && hasColumns(columns, "v3_project_transfer_acks");
-  const capabilities: OperationalProjectionCapabilitiesV1 = {
-    attempts,
-    claimBinding,
-    runtimeOwnership,
-    managerCompletion,
-    effectLedger,
-    findingRecovery,
-    evidenceLedger,
-    acceptedCandidate,
-    deploymentReceipt,
-    projectTransferAck,
-  };
-
   const journalColumns = columns.get("setfarm_schema_migrations") ?? new Set<string>();
   let migrationVersions: number[] = [];
   let verifiedReleaseSha: string | null = null;
@@ -632,6 +629,34 @@ async function readSource(
     }
   }
 
+  const implementationSubmissionEvidence = implementationSubmissionEvidenceShape
+    && migrationVersions.includes(19)
+    && verifiedReleaseSha !== null;
+  const capabilities: OperationalProjectionCapabilitiesV2 = {
+    attempts,
+    claimBinding,
+    runtimeOwnership,
+    managerCompletion,
+    implementationSubmissionEvidence,
+    effectLedger,
+    findingRecovery,
+    evidenceLedger,
+    acceptedCandidate,
+    deploymentReceipt,
+    projectTransferAck,
+  };
+  const lifecycleProjectionComplete = [
+    attempts,
+    claimBinding,
+    runtimeOwnership,
+    managerCompletion,
+    effectLedger,
+    findingRecovery,
+    evidenceLedger,
+    acceptedCandidate,
+    deploymentReceipt,
+    projectTransferAck,
+  ].every(Boolean);
   const coreAvailable = hasColumns(columns, "runs");
   return {
     columns,
@@ -639,7 +664,7 @@ async function readSource(
       database: "postgres",
       projection: !coreAvailable
         ? "unavailable"
-        : Object.values(capabilities).every(Boolean)
+        : lifecycleProjectionComplete
           ? "complete"
           : "partial",
       migrationVersions,
@@ -771,11 +796,31 @@ function projectCompletion(
   runId: string,
   row: RawCompletion,
   effects: OperationalCompletionEffectV1[],
-): OperationalCompletionRequestV1 {
+): OperationalCompletionRequestV2 {
   const requestId = identity(row.request_id);
   const attemptId = optionalIdentity(row.attempt_id);
   const workflowStepId = identity(row.workflow_step_id);
   const storyId = optionalIdentity(row.story_id);
+  const submissionReceipt = row.submission_evidence === null || row.submission_evidence === undefined
+    ? null
+    : RuntimeCompletionSubmissionEvidenceV1Schema.parse(
+        typeof row.submission_evidence === "string"
+          ? JSON.parse(row.submission_evidence) as unknown
+          : row.submission_evidence,
+      );
+  const persistedSourceProposalHash = optionalIdentity(row.source_proposal_hash);
+  const persistedOutputHash = optionalIdentity(row.persisted_output_hash);
+  if (submissionReceipt) {
+    if (
+      persistedSourceProposalHash !== submissionReceipt.sourceProposalHash
+      || persistedOutputHash !== submissionReceipt.canonicalOutputHash
+      || identity(row.output_hash) !== submissionReceipt.canonicalOutputHash
+    ) {
+      throw new Error(`OPERATIONAL_SNAPSHOT_SUBMISSION_EVIDENCE_DB_BINDING_INVALID:${requestId}`);
+    }
+  } else if (persistedSourceProposalHash !== null || persistedOutputHash !== null) {
+    throw new Error(`OPERATIONAL_SNAPSHOT_SUBMISSION_EVIDENCE_DB_BINDING_INVALID:${requestId}`);
+  }
   return {
     ref: completionRef(requestId),
     requestId,
@@ -788,10 +833,16 @@ function projectCompletion(
     workflowStepId,
     storyId,
     outputHash: identity(row.output_hash),
-    applyPhase: identity(row.apply_phase) as OperationalCompletionRequestV1["applyPhase"],
+    implementationSubmissionEvidence: submissionReceipt
+      ? {
+          receipt: submissionReceipt,
+          sourceProposalRef: `setfarm://runtime-completion/${segment(requestId)}/source-proposal/${submissionReceipt.sourceProposalHash}`,
+        }
+      : null,
+    applyPhase: identity(row.apply_phase) as OperationalCompletionRequestV2["applyPhase"],
     claimOutcome: optionalIdentity(row.claim_outcome),
     completionPlanHash: optionalIdentity(row.completion_plan_hash),
-    state: identity(row.state) as OperationalCompletionRequestV1["state"],
+    state: identity(row.state) as OperationalCompletionRequestV2["state"],
     requestedAt: timestamp(row.requested_at),
     drainedAt: optionalTimestamp(row.drained_at),
     processingAt: optionalTimestamp(row.processing_at),
@@ -1125,12 +1176,12 @@ function projectV3ProjectTransferAck(
 }
 
 type ReducerInput = Readonly<{
-  source: OperationalProjectionSourceV1;
+  source: OperationalProjectionSourceV2;
   run: OperationalRunV1;
   claims: OperationalClaimV1[];
   attempts: OperationalAttemptV1[];
   runtimeSessions: OperationalRuntimeSessionV1[];
-  completionRequests: OperationalCompletionRequestV1[];
+  completionRequests: OperationalCompletionRequestV2[];
   terminationRequests: OperationalTerminationRequestV1[];
   outbox: OperationalOutboxItemV1[];
   invariants: OperationalInvariantV1[];
@@ -1384,7 +1435,9 @@ function deriveInvariants(input: InvariantInput): OperationalInvariantV1[] {
   return invariants.sort((left, right) => left.code.localeCompare(right.code) || left.refs.join("|").localeCompare(right.refs.join("|")));
 }
 
-type HashableSnapshot = Omit<RunOperationalSnapshotV1, "snapshotHash">;
+type HashableSnapshot =
+  | Omit<RunOperationalSnapshotV1, "snapshotHash">
+  | Omit<RunOperationalSnapshotV2, "snapshotHash">;
 
 /**
  * Hashes only canonical operational state. Observation-clock fields
@@ -1397,7 +1450,7 @@ export function computeRunOperationalSnapshotHash(snapshot: HashableSnapshot): s
   return hashCanonicalJson({ ...state, invariants });
 }
 
-function unavailableSnapshot(runId: string, generatedAt: string, source: OperationalProjectionSourceV1): RunOperationalSnapshotV1 {
+function unavailableSnapshot(runId: string, generatedAt: string, source: OperationalProjectionSourceV2): RunOperationalSnapshotV2 {
   const run: OperationalRunV1 = {
     ref: runOperationalRef(runId),
     id: runId,
@@ -1410,7 +1463,7 @@ function unavailableSnapshot(runId: string, generatedAt: string, source: Operati
   const claims: OperationalClaimV1[] = [];
   const attempts: OperationalAttemptV1[] = [];
   const runtimeSessions: OperationalRuntimeSessionV1[] = [];
-  const completionRequests: OperationalCompletionRequestV1[] = [];
+  const completionRequests: OperationalCompletionRequestV2[] = [];
   const terminationRequests: OperationalTerminationRequestV1[] = [];
   const outbox: OperationalOutboxItemV1[] = [];
   const legacyResumePlan: LegacyResumePlanResult = {
@@ -1447,7 +1500,7 @@ function unavailableSnapshot(runId: string, generatedAt: string, source: Operati
     legacyResumePlan,
   });
   const hashable: HashableSnapshot = {
-    schema: "setfarm.run-operational-snapshot.v1",
+    schema: "setfarm.run-operational-snapshot.v2",
     generatedAt,
     source,
     run,
@@ -1460,7 +1513,7 @@ function unavailableSnapshot(runId: string, generatedAt: string, source: Operati
     outbox,
     invariants,
   };
-  return RunOperationalSnapshotV1Schema.parse({
+  return RunOperationalSnapshotV2Schema.parse({
     ...hashable,
     snapshotHash: computeRunOperationalSnapshotHash(hashable),
   });
@@ -1469,7 +1522,7 @@ function unavailableSnapshot(runId: string, generatedAt: string, source: Operati
 export async function buildRunOperationalSnapshotInTransaction(
   sql: TransactionSql,
   runId: string,
-): Promise<RunOperationalSnapshotV1 | null> {
+): Promise<RunOperationalSnapshotV2 | null> {
   const clockRows = await sql.unsafe<Array<{ generated_at: unknown }>>(
     "SELECT transaction_timestamp() AS generated_at",
   );
@@ -1552,7 +1605,21 @@ export async function buildRunOperationalSnapshotInTransaction(
   const completionRows = source.capabilities.managerCompletion
     ? await sql.unsafe<RawCompletion[]>(
       `SELECT request_id, runtime_session_id, claim_id, attempt_id, workflow_step_id, story_id,
-              output_hash, apply_phase, claim_outcome,
+              output_hash,
+              ${source.capabilities.implementationSubmissionEvidence
+                ? "submission_evidence"
+                : "NULL::jsonb AS submission_evidence"},
+              ${source.capabilities.implementationSubmissionEvidence
+                ? `CASE WHEN submission_evidence IS NULL THEN NULL
+                        ELSE encode(sha256(convert_to(source_proposal, 'UTF8')), 'hex')
+                   END AS source_proposal_hash`
+                : "NULL::text AS source_proposal_hash"},
+              ${source.capabilities.implementationSubmissionEvidence
+                ? `CASE WHEN submission_evidence IS NULL THEN NULL
+                        ELSE encode(sha256(convert_to(output, 'UTF8')), 'hex')
+                   END AS persisted_output_hash`
+                : "NULL::text AS persisted_output_hash"},
+              apply_phase, claim_outcome,
               ${source.capabilities.effectLedger ? "completion_plan_hash" : "NULL::text AS completion_plan_hash"},
               state, requested_at, drained_at, processing_at, accepted_at, rejected_at,
               created_at, updated_at
@@ -1869,7 +1936,7 @@ export async function buildRunOperationalSnapshotInTransaction(
     legacyResumePlan,
   });
   const hashable: HashableSnapshot = {
-    schema: "setfarm.run-operational-snapshot.v1",
+    schema: "setfarm.run-operational-snapshot.v2",
     generatedAt,
     source,
     run,
@@ -1887,7 +1954,7 @@ export async function buildRunOperationalSnapshotInTransaction(
     ...(source.capabilities.deploymentReceipt ? { deploymentReceipt } : {}),
     ...(source.capabilities.projectTransferAck ? { projectTransferAck } : {}),
   };
-  return RunOperationalSnapshotV1Schema.parse({
+  return RunOperationalSnapshotV2Schema.parse({
     ...hashable,
     snapshotHash: computeRunOperationalSnapshotHash(hashable),
   });
@@ -1901,10 +1968,10 @@ export async function buildRunOperationalSnapshotInTransaction(
 export async function buildRunOperationalSnapshot(
   sql: Sql,
   runId: string,
-): Promise<RunOperationalSnapshotV1 | null> {
+): Promise<RunOperationalSnapshotV2 | null> {
   if (!runId.trim()) throw new TypeError("RUN_OPERATIONAL_SNAPSHOT_RUN_ID_REQUIRED");
   return sql.begin(
     "isolation level repeatable read read only",
     (transaction) => buildRunOperationalSnapshotInTransaction(transaction, runId),
-  ) as Promise<RunOperationalSnapshotV1 | null>;
+  ) as Promise<RunOperationalSnapshotV2 | null>;
 }

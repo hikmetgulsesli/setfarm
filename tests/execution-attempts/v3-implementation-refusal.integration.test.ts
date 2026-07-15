@@ -175,7 +175,7 @@ test("typed v3 refusal terminalizes the exact claim and cannot redispatch unchan
     });
     const context = createV3ImplementationContextV1({ handoff });
     const rawOutput = JSON.stringify({
-      schema: "setfarm.v3-implementation-agent-output.v1",
+      schema: "setfarm.v3-implementation-agent-proposal.v1",
       disposition: "refused",
       handoffHash: context.handoffHash,
       attemptId: handoff.attemptId,

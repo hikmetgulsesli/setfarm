@@ -10,7 +10,13 @@ import { readRecentLogs } from "../lib/logger.js";
 import { emitEvent, getRecentEvents, getRunEvents, type SetfarmEvent } from "../installer/events.js";
 import { startDaemon, stopDaemon, getDaemonStatus, isRunning } from "../server/daemonctl.js";
 import { startSpawner, stopSpawner, getSpawnerStatus, isSpawnerRunning } from "../server/spawnerctl.js";
-import { claimStep, completeStep, failStep, getStories, peekStep } from "../installer/step-ops.js";
+import {
+  claimStep,
+  completeStep,
+  failStep,
+  getStories,
+  peekStep,
+} from "../installer/step-ops.js";
 import { refreshRunContractSafe } from "../installer/contract-ledger.js";
 import { ensureCliSymlink } from "../installer/symlink.js";
 import { runMedicCheck, getMedicStatus, getRecentMedicChecks } from "../medic/medic.js";
@@ -38,6 +44,11 @@ import {
 import { parseInternalCanaryAdmissionContext } from "../execution/v3-release-admission.js";
 import { readClaimEnvelopeFile } from "../execution/claim-authority.js";
 import { requestRuntimeCompletion } from "../execution/runtime-completion.js";
+import { V3_IMPLEMENTATION_PROPOSAL_MAX_BYTES } from "../execution/v3-implementation-output.js";
+import {
+  BoundedFileReadError,
+  readUtf8RegularFileAtMostSync,
+} from "../lib/bounded-file-read.js";
 import { execFileSync, execSync } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -138,12 +149,19 @@ function isLikelyOutputFileArg(arg: string): boolean {
   return arg.startsWith("/") || arg.startsWith("./") || arg.startsWith("../") || /\.(md|out|txt)$/i.test(arg);
 }
 
-async function readFreshStepOutputFile(stepId: string, filePath: string): Promise<string> {
+async function readFreshStepOutputFile(
+  stepId: string,
+  filePath: string,
+  maxBytes?: number,
+): Promise<string> {
   try {
     // File output is the safest completion path, but stale files can make an
     // agent accidentally pass an old result. Keep the same freshness check for
     // --file and positional file-path use.
-    const fileStat = statSync(filePath);
+    const boundedRead = maxBytes === undefined
+      ? undefined
+      : readUtf8RegularFileAtMostSync(filePath, maxBytes);
+    const fileStat = boundedRead?.stat ?? statSync(filePath);
     const stepRow = await pgGet<{ started_at: string | null; status: string }>(
       "SELECT started_at, status FROM steps WHERE id = $1",
       [stepId],
@@ -157,8 +175,17 @@ async function readFreshStepOutputFile(stepId: string, filePath: string): Promis
         process.exit(3);
       }
     }
-    return readFileSync(filePath, "utf-8").trim();
+    const output = (boundedRead?.text ?? readFileSync(filePath, "utf-8")).trim();
+    if (maxBytes !== undefined && Buffer.byteLength(output, "utf8") > maxBytes) {
+      process.stderr.write(`V3_IMPLEMENTATION_OUTPUT_SIZE_INVALID: ${filePath} exceeds ${maxBytes} bytes after UTF-8 decoding.\n`);
+      process.exit(3);
+    }
+    return output;
   } catch (e) {
+    if (e instanceof BoundedFileReadError && e.code === "FILE_TOO_LARGE") {
+      process.stderr.write(`V3_IMPLEMENTATION_OUTPUT_SIZE_INVALID: ${filePath} exceeds ${maxBytes} bytes.\n`);
+      process.exit(3);
+    }
     process.stderr.write(`Cannot read file ${filePath}: ${e}\n`);
     process.exit(1);
   }
@@ -632,12 +659,17 @@ async function main() {
       const claimEnvelope = claimFileIdx !== -1 && args[claimFileIdx + 1]
         ? readClaimEnvelopeFile(args[claimFileIdx + 1])
         : undefined;
+      const nativeV3Implementation = claimEnvelope?.protocol === "v3"
+        && claimEnvelope.workflowStepId === "implement";
+      const proposalMaxBytes = nativeV3Implementation
+        ? V3_IMPLEMENTATION_PROPOSAL_MAX_BYTES
+        : undefined;
       await requireClaimEnvelopeForCompilerCliStep(target, Boolean(claimEnvelope));
       // Read output from --file flag, a positional file path, args, or stdin.
       let output = "";
       const fileIdx = args.indexOf("--file");
       if (fileIdx !== -1 && args[fileIdx + 1]) {
-        output = await readFreshStepOutputFile(target, args[fileIdx + 1]);
+        output = await readFreshStepOutputFile(target, args[fileIdx + 1], proposalMaxBytes);
       } else {
         const outputArgs = args.slice(3).filter((_, index, values) => {
           const absoluteIndex = index + 3;
@@ -650,7 +682,7 @@ async function main() {
             process.stderr.write(`Cannot read file ${outputArgs[0]}: file does not exist. Use stdin for literal one-argument output.\n`);
             process.exit(1);
           }
-          output = await readFreshStepOutputFile(target, outputArgs[0]);
+          output = await readFreshStepOutputFile(target, outputArgs[0], proposalMaxBytes);
         } else {
           output = outputArgs.join(" ").trim();
         }
@@ -658,8 +690,15 @@ async function main() {
       if (!output) {
         // Read from stdin (piped input) — fallback
         const chunks: Buffer[] = [];
+        let totalBytes = 0;
         for await (const chunk of process.stdin) {
-          chunks.push(chunk);
+          const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+          totalBytes += bytes.byteLength;
+          if (proposalMaxBytes !== undefined && totalBytes > proposalMaxBytes) {
+            process.stderr.write(`V3_IMPLEMENTATION_OUTPUT_SIZE_INVALID: stdin exceeds ${proposalMaxBytes} bytes.\n`);
+            process.exit(3);
+          }
+          chunks.push(bytes);
         }
         output = Buffer.concat(chunks).toString("utf-8").trim();
       }
@@ -706,6 +745,11 @@ async function main() {
         ? readClaimEnvelopeFile(args[claimFileIdx + 1])
         : undefined;
       await requireClaimEnvelopeForCompilerCliStep(target, Boolean(claimEnvelope));
+      if (claimEnvelope?.protocol === "v3" && claimEnvelope.workflowStepId === "implement") {
+        throw new Error(
+          "V3_IMPLEMENTATION_STEP_FAIL_NOT_AUTHORIZED: native v3 implementation must return one typed proposal or refusal through step complete; runtime and process failures are owned by the spawner",
+        );
+      }
       const error = args.slice(3).filter((value, index) => {
         const absoluteIndex = index + 3;
         if (value === "--claim-file") return false;

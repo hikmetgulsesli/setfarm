@@ -10,7 +10,7 @@ import {
   Sha256Schema,
 } from "../product-compiler/schemas/common-v1.js";
 import { ImplementationSliceV1Schema } from "../product-compiler/schemas/implementation-slice-v1.js";
-import { V3_IMPLEMENTATION_OUTPUT_CONTRACT_V1 } from "./v3-implementation-output.js";
+import { V3_IMPLEMENTATION_OUTPUT_CONTRACT_V2 } from "./v3-implementation-output.js";
 import {
   ModelExecutionProfileV1Schema,
   OperationalRetryDirectiveV1Schema,
@@ -57,6 +57,29 @@ const V3ImplementationOutputContractV1Schema = z.object({
   requiredFields: z.array(z.string().min(1).max(200)).min(1).max(100),
   instruction: z.string().min(1).max(4_000),
 }).strict();
+
+const V3ImplementationOutputContractV2Schema = z.object({
+  schema: z.literal("setfarm.v3-implementation-output-contract.v2"),
+  source: z.string().min(1).max(500),
+  format: z.string().min(1).max(20_000),
+  jsonSchema: z.record(z.string(), z.json()),
+  jsonSchemaHash: Sha256Schema,
+  requiredFields: z.array(z.string().min(1).max(200)).min(1).max(100),
+  instruction: z.string().min(1).max(4_000),
+}).strict().superRefine((value, context) => {
+  if (hashCanonicalJson(value.jsonSchema) !== value.jsonSchemaHash) {
+    context.addIssue({
+      code: "custom",
+      path: ["jsonSchemaHash"],
+      message: "Output contract JSON Schema hash must bind the exact machine-readable schema",
+    });
+  }
+});
+
+const V3ImplementationOutputContractSchema = z.union([
+  V3ImplementationOutputContractV2Schema,
+  V3ImplementationOutputContractV1Schema,
+]);
 
 export const V3ImplementationExecutionAuthorityV1Schema = z.object({
   role: z.enum(["developer", "supervisor"]),
@@ -390,7 +413,7 @@ export const V3ImplementationContextV1Schema = z.object({
   handoff: V3ImplementationClaimHandoffV1Schema,
   writeAuthority: V3ImplementationWriteAuthorityV1Schema,
   rules: z.array(z.string().min(1).max(2_000)).min(1).max(100),
-  outputContract: V3ImplementationOutputContractV1Schema,
+  outputContract: V3ImplementationOutputContractSchema,
 }).strict().superRefine((value, context) => {
   if (value.handoffHash !== hashCanonicalJson(value.handoff)) {
     context.addIssue({ code: "custom", path: ["handoffHash"], message: "Implementation context hash must bind the exact handoff" });
@@ -460,7 +483,7 @@ export function createV3ImplementationClaimHandoffV1(
 
 export function createV3ImplementationContextV1(input: Readonly<{
   handoff: V3ImplementationClaimHandoffV1;
-  outputContract?: z.input<typeof V3ImplementationOutputContractV1Schema>;
+  outputContract?: z.input<typeof V3ImplementationOutputContractV2Schema>;
 }>): V3ImplementationContextV1 {
   const handoff = V3ImplementationClaimHandoffV1Schema.parse(input.handoff);
   const allowedPaths = (handoff.operationalRetry
@@ -494,9 +517,9 @@ export function createV3ImplementationContextV1(input: Readonly<{
       "If the exact contract cannot be satisfied inside writeAuthority.allowedPaths, fail with CONTRACT_SCOPE_CONFLICT instead of broadening scope.",
       "For recovery, change only the typed findings and expected delta embedded in the slice. An exact immutable reviewEvidenceArtifact is a bounded external repair instruction for its declared path; never infer a platform invariant from its prose or resolve its GitHub thread.",
       "For a typed operational retry, satisfy only handoff.operationalRetry.expectedDelta under its exact reset source and write paths. Its failure diagnostic is immutable operational evidence, not a new product requirement.",
-      "Return outputContract fields exactly. Setfarm, not the implementation agent, owns completion, evidence verdicts, commits, review routing, and retries.",
+      "Return one proposal matching outputContract.jsonSchema. Do not report command outcomes or evidence verdicts: Setfarm compiles the proposal before runtime drain and owns command execution, completion, commits, review routing, and retries.",
     ],
-    outputContract: input.outputContract ?? V3_IMPLEMENTATION_OUTPUT_CONTRACT_V1,
+    outputContract: input.outputContract ?? V3_IMPLEMENTATION_OUTPUT_CONTRACT_V2,
   });
   assertV3ImplementationContextCapacity(context);
   return context;

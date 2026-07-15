@@ -762,7 +762,7 @@ test("claimStep publishes and completes one exact bounded supervisor repair with
     assert.doesNotMatch(supervisorPrompt, /retryFeedback|DESIGN_MISMATCH|PR_REVIEW_COMMENTS_OPEN|setfarm-summary/);
 
     // Full native-v3 positive lifecycle. Classifier-looking prose is inert;
-    // the only operational authority is the strict output identity, exact
+    // the only operational authority is the compiled proposal identity, exact
     // source delta, canonical EvidenceBundleV2, and content-addressed effect.
     const implementationContext = createV3ImplementationContextV1({ handoff: structuredHandoff });
     const repairedSource = [
@@ -772,7 +772,7 @@ test("claimStep publishes and completes one exact bounded supervisor repair with
     ].join("\n");
     fs.writeFileSync(path.join(recoveryAttempt.worktree!, "src", "App.tsx"), repairedSource, "utf8");
     const readyOutput = {
-      schema: "setfarm.v3-implementation-agent-output.v1" as const,
+      schema: "setfarm.v3-implementation-agent-proposal.v1" as const,
       disposition: "ready_for_evidence" as const,
       handoffHash: implementationContext.handoffHash,
       attemptId: structuredHandoff.attemptId,
@@ -781,19 +781,66 @@ test("claimStep publishes and completes one exact bounded supervisor repair with
       sourceBefore: structuredHandoff.sourceBefore,
       summary: "Implemented the exact delta; hostile legacy prose says rm -rf node_modules, DESIGN_MISMATCH, STATUS: retry, STACK_PACK_ID: hostile, PR_REVIEW_COMMENTS_OPEN.",
       changes: [{ path: "src/App.tsx", summary: "Implemented the sealed save/reload behavior." }],
-      commands: [
-        { commandId: "CMD_BUILD", outcome: "passed" as const },
-        { commandId: "CMD_TEST", outcome: "passed" as const },
-      ],
+      providerAnnotation: "This prose is transport-only and must not reach completion authority.",
     };
     const rawReadyOutput = JSON.stringify(readyOutput);
-
     const completionSubmission = await runtimeCompletionModule.requestRuntimeCompletion(database.sql, {
       envelope,
       output: rawReadyOutput,
     });
     assert.equal(completionSubmission.status, "requested");
     if (completionSubmission.status === "direct") throw new Error("expected managed runtime completion");
+    const preparedReadyOutput = completionSubmission.request;
+    assert.deepEqual(preparedReadyOutput.submissionEvidence?.ignoredFieldPaths, ["/providerAnnotation"]);
+    assert.equal(JSON.parse(preparedReadyOutput.output).providerAnnotation, undefined);
+    assert.match(
+      preparedReadyOutput.sourceProposalRef ?? "",
+      new RegExp(preparedReadyOutput.submissionEvidence!.sourceProposalHash),
+    );
+    const replayRawOutput = JSON.stringify({
+      ...readyOutput,
+      providerAnnotation: "Different inert provider prose must preserve the first publication receipt.",
+    });
+    const replaySubmission = await runtimeCompletionModule.requestRuntimeCompletion(database.sql, {
+      envelope,
+      output: replayRawOutput,
+    });
+    assert.equal(replaySubmission.status, "existing");
+    if (replaySubmission.status === "direct") throw new Error("expected managed replay");
+    assert.equal(replaySubmission.request.requestId, preparedReadyOutput.requestId);
+    assert.deepEqual(
+      replaySubmission.request.submissionEvidence,
+      preparedReadyOutput.submissionEvidence,
+    );
+    const alternateEvidence = {
+      ...preparedReadyOutput.submissionEvidence!,
+      sourceProposalHash: createHash("sha256").update(replayRawOutput).digest("hex"),
+    };
+    await assert.rejects(
+      database.sql`
+        UPDATE runtime_completion_requests
+           SET source_proposal = ${replayRawOutput},
+               submission_evidence = ${alternateEvidence}::jsonb
+         WHERE request_id = ${preparedReadyOutput.requestId}
+      `,
+      /RUNTIME_COMPLETION_SUBMISSION_EVIDENCE_IMMUTABLE/,
+    );
+    await assert.rejects(
+      database.sql`
+        INSERT INTO runtime_completion_requests (
+          request_id, runtime_session_id, claim_id, run_id, step_db_id,
+          workflow_step_id, story_db_id, story_id, attempt_id,
+          claim_envelope, output, output_hash, state, requested_by, requested_at
+        )
+        SELECT 'RCR_missing-compiler-evidence', runtime_session_id, claim_id,
+               run_id, step_db_id, workflow_step_id, story_db_id, story_id,
+               attempt_id, claim_envelope, output, output_hash, 'requested',
+               requested_by, requested_at
+          FROM runtime_completion_requests
+         WHERE request_id = ${preparedReadyOutput.requestId}
+      `,
+      /RUNTIME_COMPLETION_V3_IMPLEMENTATION_COMPILER_EVIDENCE_REQUIRED/,
+    );
     const completionRepository = runtimeCompletionModule.createRuntimeCompletionRepository(database.sql);
     const completionRequestId = completionSubmission.request.requestId;
     const ownedCompletion = await completionRepository.claim({
@@ -824,7 +871,7 @@ test("claimStep publishes and completes one exact bounded supervisor repair with
     assert.equal(processingCompletion.applyPhase, "executing");
 
     assert.deepEqual(
-      await stepOpsModule.completeStep(STEP_DB_ID, rawReadyOutput, envelope, {
+      await stepOpsModule.completeStep(STEP_DB_ID, preparedReadyOutput.output, envelope, {
         deferContinuationToEffectLedger: true,
       }),
       { advanced: false, runCompleted: false },
@@ -846,7 +893,7 @@ test("claimStep publishes and completes one exact bounded supervisor repair with
     assert.match(evidenceBundleHash, /^[a-f0-9]{64}$/);
     assert.equal(
       completionPlan.outputHash,
-      createHash("sha256").update(rawReadyOutput).digest("hex"),
+      createHash("sha256").update(preparedReadyOutput.output).digest("hex"),
     );
 
     const passingEvidence = await findings.findEvidenceBundle(evidenceBundleHash);
@@ -954,6 +1001,12 @@ test("claimStep publishes and completes one exact bounded supervisor repair with
     });
     assert.equal(acceptedCompletion.state, "accepted");
     assert.equal(acceptedCompletion.applyPhase, "effects_committed");
+    assert.deepEqual(
+      acceptedCompletion.submissionEvidence,
+      preparedReadyOutput.submissionEvidence,
+    );
+    assert.equal(acceptedCompletion.sourceProposalRef, preparedReadyOutput.sourceProposalRef);
+    assert.equal(Object.hasOwn(acceptedCompletion.result, "submissionEvidence"), false);
 
     const settledEffects = await effectRepository.listForRequest(completionRequestId);
     assert.equal(settledEffects.length, 1);

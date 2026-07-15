@@ -107,6 +107,69 @@ export type V3ImplementationAttemptResult = Readonly<{
   }>;
 }>;
 
+export function createV3ImplementationAttemptHandoffV1(input: Readonly<{
+  stepDbId: string;
+  storyDbId: string;
+  claimId: number;
+  branch: string;
+  workdir: string;
+  compiled: V3ImplementationAttemptResult;
+}>) {
+  const compiled = input.compiled;
+  const executionAuthority = compiled.attempt.attemptClass === "supervisor_repair"
+    ? { role: "supervisor" as const, attemptClass: "supervisor_repair" as const }
+    : compiled.attempt.attemptClass === "infrastructure_retry"
+      ? { role: "developer" as const, attemptClass: "infrastructure_retry" as const }
+      : compiled.attempt.attemptClass === "product_implementation"
+        ? { role: "developer" as const, attemptClass: "product_implementation" as const }
+        : undefined;
+  if (!executionAuthority) {
+    throw new Error("V3_IMPLEMENTATION_HANDOFF_MODEL_AUTHORITY_REQUIRED");
+  }
+  if (compiled.attempt.stepId !== "implement") {
+    throw new Error("V3_IMPLEMENTATION_HANDOFF_WORKFLOW_STEP_MISMATCH");
+  }
+  return createV3ImplementationClaimHandoffV1({
+    schema: "setfarm.v3-implementation-claim-handoff.v1",
+    protocol: "v3",
+    runId: compiled.attempt.runId,
+    stepId: input.stepDbId,
+    workflowStepId: "implement",
+    storyId: compiled.attempt.storyId,
+    storyDbId: input.storyDbId,
+    claimId: input.claimId,
+    attemptId: compiled.attempt.attemptId,
+    attemptGeneration: compiled.attempt.generation,
+    branch: input.branch,
+    workdir: input.workdir,
+    packetHash: compiled.packetHash,
+    compilationReportHash: compiled.compilationReportHash,
+    sliceHash: compiled.sliceHash,
+    sliceRef: compiled.sliceRefKey,
+    evidencePlanHash: compiled.evidencePlan.planHash,
+    evidencePlanArtifactHash: compiled.evidencePlanArtifactHash,
+    evidencePlanRef: compiled.evidencePlanRefKey,
+    executionAuthority,
+    executionProfile: compiled.executionProfile,
+    ...(compiled.operationalRetry
+      ? {
+          operationalRetry: compiled.operationalRetry.directive,
+          operationalRetryArtifactHash: compiled.operationalRetry.artifactHash,
+        }
+      : {}),
+    sourceBefore: compiled.sourceBefore,
+    artifactProducer: compiled.artifactProducer,
+    implementationSlice: compiled.slice,
+    evidencePlan: compiled.evidencePlan,
+    ...(compiled.recovery
+      ? {
+          findingSet: compiled.recovery.findingSet,
+          reviewEvidenceArtifacts: [...compiled.recovery.reviewEvidenceArtifacts],
+        }
+      : {}),
+  });
+}
+
 type DependencySignature = Readonly<{
   sliceHash: string;
   outputHash?: string;

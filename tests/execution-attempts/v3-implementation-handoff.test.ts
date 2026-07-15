@@ -172,7 +172,16 @@ describe("Product Compiler v3 implementation handoff", () => {
         selection: "primary",
       });
       assert.deepEqual(canonical.writeAuthority, { mode: "initial", allowedPaths: ["src/App.tsx"] });
-      assert.equal(canonical.outputContract.source, "setfarm.v3-implementation-agent-output.v1");
+      if (!("jsonSchema" in canonical.outputContract)) {
+        throw new Error("expected versioned v2 implementation output contract");
+      }
+      assert.equal(canonical.outputContract.schema, "setfarm.v3-implementation-output-contract.v2");
+      assert.equal(canonical.outputContract.source, "setfarm.v3-implementation-agent-proposal.v1");
+      assert.equal(
+        canonical.outputContract.jsonSchemaHash,
+        hashCanonicalJson(canonical.outputContract.jsonSchema),
+      );
+      assert.doesNotMatch(JSON.stringify(canonical.outputContract.jsonSchema), /commandId|commands/);
       assert.match(canonical.outputContract.instruction, /Never emit STATUS.*STACK_PACK_ID/);
       assert.ok(
         Buffer.byteLength(serializeV3ImplementationContextV1(canonical), "utf8")
@@ -197,6 +206,30 @@ describe("Product Compiler v3 implementation handoff", () => {
       assert.match(output, /CANONICAL_EVIDENCE_PLAN=handoff\.evidencePlan/);
       assert.doesNotMatch(output, /IMPLEMENT_EVIDENCE_SEEDED/);
       assert.equal(fs.existsSync(path.join(workdir, ".setfarm-bin", "setfarm-evidence")), false);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("continues to parse the exact historic implicit v1 context contract", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-v3-handoff-v1-reader-"));
+    try {
+      const workdir = path.join(root, "worktree");
+      fs.mkdirSync(workdir, { recursive: true });
+      const { handoff } = fixture(workdir);
+      const current = createV3ImplementationContextV1({ handoff });
+      const historic = V3ImplementationContextV1Schema.parse({
+        ...current,
+        outputContract: {
+          source: "setfarm.v3-implementation-agent-output.v1",
+          format: "Return the strict v1 output object.",
+          requiredFields: ["schema", "disposition", "handoffHash"],
+          instruction: "Historic implicit v1 contract fixture.",
+        },
+      });
+      assert.equal("jsonSchema" in historic.outputContract, false);
+      assert.equal(historic.handoffHash, current.handoffHash);
+      assert.deepEqual(historic.handoff, current.handoff);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
@@ -309,8 +342,11 @@ describe("Product Compiler v3 implementation handoff", () => {
         rules: Array.from({ length: 100 }, (_, index) =>
           `${String(index).padStart(3, "0")}:${"\0".repeat(1_996)}`),
         outputContract: {
+          schema: "setfarm.v3-implementation-output-contract.v2",
           source: "capacity-test",
           format: "f".repeat(20_000),
+          jsonSchema: { type: "object" },
+          jsonSchemaHash: hashCanonicalJson({ type: "object" }),
           requiredFields: Array.from({ length: 100 }, (_, index) =>
             `${String(index).padStart(3, "0")}:${"r".repeat(196)}`),
           instruction: "i".repeat(4_000),
@@ -436,8 +472,11 @@ describe("Product Compiler v3 implementation handoff", () => {
     assert.match(prompt, /setfarm\.implementation-context\.v3/);
     assert.match(prompt, /sole product, design, topology, ownership, command, state, persistence, recovery, and acceptance authority/);
     assert.doesNotMatch(prompt, /retryFeedback|DESIGN_MISMATCH|PR_REVIEW_COMMENTS_OPEN|setfarm-summary/);
-    assert.match(prompt, /exactly one JSON object/);
-    assert.match(prompt, /Never call step fail for a typed v3 refusal/);
+    assert.match(prompt, /exactly one JSON object matching outputContract\.jsonSchema/);
+    assert.match(prompt, /do not add[\s\S]*command outcomes, command notes, or evidence verdicts/);
+    assert.match(prompt, /compile the proposal before any runtime drain/);
+    assert.match(prompt, /Never call step fail for any native v3 implementation outcome/);
+    assert.match(prompt, /runtime and process failures are owned by the spawner/);
     assert.doesNotMatch(prompt, /step fail "\$STEP_ID"/);
     assert.match(prompt, /--claim-file '\/tmp\/v3-claim\.json'/);
 

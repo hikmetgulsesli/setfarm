@@ -105,6 +105,11 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /type OperationalRecoveryIntent = "observe_fix" \| "platform_replay" \| "project_rescue"/);
     assert.match(source, /function classifyOperationalRecoveryIntent/);
     assert.match(block, /classifyOperationalRecoveryIntent\("orphaned-running-implement-build-scope-passing"\)/);
+    assert.ok(
+      block.indexOf('runProtocol?.protocol === "v3"')
+        < block.indexOf("commitRecoveredImplementWorkThroughScopeGate"),
+      "native v3 startup orphan recovery must fall through to typed retry before committing source",
+    );
     assert.match(block, /if \(recoveryIntent === "project_rescue"\) return false/);
     assert.match(block, /checkId: `operational_recovery:\$\{recoveryIntent\}:orphaned_running_implement`/);
     assert.ok(
@@ -196,7 +201,10 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /async function readFreshStepOutputFile/);
     assert.match(source, /outputArgs\.length === 1 && isLikelyOutputFileArg\(outputArgs\[0\]\)/);
     assert.match(source, /Cannot read file \$\{outputArgs\[0\]\}: file does not exist\. Use stdin for literal one-argument output\./);
-    assert.match(source, /await readFreshStepOutputFile\(target,\s*outputArgs\[0\]\)/);
+    assert.match(source, /await readFreshStepOutputFile\(target,\s*outputArgs\[0\],\s*proposalMaxBytes\)/);
+    assert.match(source, /readUtf8RegularFileAtMostSync\(filePath, maxBytes\)/);
+    assert.match(source, /Buffer\.byteLength\(output, "utf8"\) > maxBytes/);
+    assert.match(source, /totalBytes > proposalMaxBytes/);
   });
 
   it("recovers caller-owned spawner output files during peek and claim", () => {
@@ -381,6 +389,7 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(controlSource, /const pids = new Set<number>\(listSpawnerProcessPids\(\)\)/);
 
     const spawnerSource = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
+    assert.match(spawnerSource, /readUtf8RegularFileAtMostSync\([\s\S]*V3_IMPLEMENTATION_PROPOSAL_MAX_BYTES/);
     assert.match(spawnerSource, /const LOCK_FILE = path\.join\(os\.homedir\(\),\s*"\.openclaw",\s*"setfarm",\s*"spawner\.lock"\)/);
     assert.match(spawnerSource, /fs\.openSync\(LOCK_FILE,\s*"wx"\)/);
     assert.match(spawnerSource, /Another spawner is already running/);
@@ -872,14 +881,46 @@ describe("spawner gateway recovery wiring", () => {
     assert.notEqual(completeEnd, -1, "CLI complete handler end not found");
     const completeSource = cliSource.slice(completeStart, completeEnd);
     assert.match(completeSource, /await requestRuntimeCompletion\(getSql\(\), \{/);
+    assert.match(completeSource, /envelope: claimEnvelope,\s*output,/);
+    assert.doesNotMatch(completeSource, /submissionEvidence|sourceProposal/);
     assert.match(completeSource, /pg_notify\('runtime_completion_requested'/);
     assert.match(completeSource, /completionRequested: true/);
     assert.ok(
       completeSource.indexOf("await requestRuntimeCompletion") < completeSource.indexOf("await completeStep"),
-      "the agent must publish a durable completion proposal before any legacy direct completion fallback",
+      "the publication boundary must compile before any legacy direct completion fallback",
+    );
+
+    const failStart = cliSource.indexOf('if (action === "fail")');
+    const failEnd = cliSource.indexOf('if (action === "stories")', failStart);
+    assert.notEqual(failStart, -1, "CLI fail handler not found");
+    assert.notEqual(failEnd, -1, "CLI fail handler end not found");
+    const failSource = cliSource.slice(failStart, failEnd);
+    assert.match(failSource, /claimEnvelope\?\.protocol === "v3"[\s\S]*workflowStepId === "implement"/);
+    assert.match(failSource, /V3_IMPLEMENTATION_STEP_FAIL_NOT_AUTHORIZED/);
+    assert.ok(
+      failSource.indexOf("V3_IMPLEMENTATION_STEP_FAIL_NOT_AUTHORIZED")
+        < failSource.indexOf("await requestRuntimeCompletion"),
+      "native v3 implementation fail must be rejected before any runtime drain publication",
     );
 
     const spawnerSource = fs.readFileSync(path.join(root, "src", "spawner.ts"), "utf-8");
+    const publishStart = spawnerSource.indexOf("async function publishRuntimeCompletionProposal(");
+    const publishEnd = spawnerSource.indexOf("async function publishRuntimeCompletionIfPresent(", publishStart);
+    const publishSource = spawnerSource.slice(publishStart, publishEnd);
+    assert.match(publishSource, /await requestRuntimeCompletion\(getSql\(\), \{\s*envelope: claimEnvelope,\s*output,/);
+    assert.doesNotMatch(publishSource, /submissionEvidence|sourceProposal/);
+    const completionBoundarySource = fs.readFileSync(
+      path.join(root, "src", "execution", "runtime-completion.ts"),
+      "utf-8",
+    );
+    const boundaryStart = completionBoundarySource.indexOf("export async function requestRuntimeCompletion(");
+    const boundaryEnd = completionBoundarySource.indexOf("export function createRuntimeCompletionRepository", boundaryStart);
+    const boundarySource = completionBoundarySource.slice(boundaryStart, boundaryEnd);
+    assert.ok(
+      boundarySource.indexOf("await compileV3ImplementationCompletionProposal")
+        < boundarySource.indexOf("INSERT INTO runtime_completion_requests"),
+      "the durable publication boundary must recompile raw v3 proposals before requesting drain",
+    );
     const processorStart = spawnerSource.indexOf("async function runRuntimeCompletionProcessor(");
     const processorEnd = spawnerSource.indexOf("function processRuntimeCompletionRequests(", processorStart);
     assert.notEqual(processorStart, -1, "runtime completion processor not found");
@@ -2008,6 +2049,8 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(block, /loop_step\.current_story_id = st\.id/);
     assert.match(block, /cl\.story_id = st\.story_id/);
     assert.match(block, /cl\.outcome IS NULL/);
+    assert.match(block, /runtime_completion_requests completion[\s\S]*completion\.state = 'quarantined'/);
+    assert.match(block, /runtime_sessions runtime[\s\S]*runtime\.state = 'quarantined'/);
     assert.match(block, /cl\.claimed_at <= NOW\(\) - \(\$1::int \* interval '1 millisecond'\)/);
     assert.match(block, /hasTrackedClaimRuntime\(\(active\) =>/);
     assert.match(block, /active\.storyDbId === row\.story_db_id \|\| active\.storyId === row\.story_id/);

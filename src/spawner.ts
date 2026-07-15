@@ -66,6 +66,11 @@ import {
 } from "./execution/operational-retry-transition.js";
 import type { ClaimAttemptFenceV1, ClaimEnvelopeV1 } from "./execution/schemas/claim-envelope-v1.js";
 import { parseClaimEnvelope } from "./execution/claim-authority.js";
+import { V3_IMPLEMENTATION_PROPOSAL_MAX_BYTES } from "./execution/v3-implementation-output.js";
+import {
+  BoundedFileReadError,
+  readUtf8RegularFileAtMostSync,
+} from "./lib/bounded-file-read.js";
 import {
   createRuntimeSessionRepository,
   newRuntimeSessionId,
@@ -4333,11 +4338,13 @@ async function publishRuntimeCompletionProposal(
   result?: { advanced: boolean; runCompleted: boolean };
   request?: RuntimeCompletionRequest;
 }>> {
+  let completionOutput = output;
   if (claimEnvelope) {
     const submission = await requestRuntimeCompletion(getSql(), {
       envelope: claimEnvelope,
       output,
     });
+    if (submission.status !== "direct") completionOutput = submission.request.output;
     if (submission.status !== "direct") {
       emitEvent({
         ts: new Date().toISOString(),
@@ -4362,7 +4369,7 @@ async function publishRuntimeCompletionProposal(
       };
     }
   }
-  return { managed: false, result: await completeStep(stepId, output, claimEnvelope) };
+  return { managed: false, result: await completeStep(stepId, completionOutput, claimEnvelope) };
 }
 
 async function publishRuntimeCompletionIfPresent(claimId: number | undefined): Promise<boolean> {
@@ -4383,22 +4390,43 @@ async function completeRunningClaimFromOutputFile(
   claimEnvelope?: ClaimEnvelopeV1,
 ): Promise<boolean> {
   if (!outputPath) return false;
+  const nativeV3Implementation = claimEnvelope?.protocol === "v3"
+    && claimEnvelope.workflowStepId === "implement";
   let stat: fs.Stats;
-  try {
-    stat = fs.statSync(outputPath);
-  } catch {
-    return false;
+  let output = "";
+  if (nativeV3Implementation) {
+    try {
+      const boundedRead = readUtf8RegularFileAtMostSync(
+        outputPath,
+        V3_IMPLEMENTATION_PROPOSAL_MAX_BYTES,
+      );
+      stat = boundedRead.stat;
+      output = boundedRead.text.trim();
+      if (Buffer.byteLength(output, "utf8") > V3_IMPLEMENTATION_PROPOSAL_MAX_BYTES) {
+        console.warn(`[spawner] rejected oversized UTF-8 v3 implementation proposal for ${stepId}`);
+        return false;
+      }
+    } catch (error) {
+      if (error instanceof BoundedFileReadError && error.code === "FILE_TOO_LARGE") {
+        console.warn(`[spawner] rejected oversized v3 implementation proposal for ${stepId}`);
+      }
+      return false;
+    }
+  } else {
+    try {
+      stat = fs.statSync(outputPath);
+      output = fs.readFileSync(outputPath, "utf-8").trim();
+    } catch {
+      return false;
+    }
   }
   if (!stat.isFile() || stat.size <= 0) return false;
   if (startedAtMs && stat.mtimeMs < startedAtMs - 5000) return false;
-
-  let output = "";
-  try {
-    output = fs.readFileSync(outputPath, "utf-8").trim();
-  } catch {
+  if (nativeV3Implementation) {
+    if (!output.startsWith("{") || !output.endsWith("}")) return false;
+  } else if (!/^STATUS\s*:/mi.test(output)) {
     return false;
   }
-  if (!/^STATUS\s*:/mi.test(output)) return false;
 
   const row = await pgGet<{ status: string; step_id: string; run_id: string }>(
     "SELECT status, step_id, run_id FROM steps WHERE id = $1 LIMIT 1",
@@ -4869,6 +4897,14 @@ async function tryRecoverExitedImplementWork(
     exitReason.includes("MASKED_CHECK_COMMAND");
   if (!recoverableExit) return false;
   if (row.status !== "running" || row.type !== "loop" || row.step_id !== "implement" || !active.storyDbId) return false;
+  const runProtocol = await pgGet<{ protocol: string }>(
+    "SELECT protocol FROM runs WHERE id = $1 LIMIT 1",
+    [row.run_id],
+  );
+  // A native v3 source delta is never converted into fabricated model output.
+  // Its valid JSON output file is handled above; without one the typed
+  // operational-retry transition resets the sealed source before redispatch.
+  if (runProtocol?.protocol === "v3") return false;
 
   const story = await pgGet<{ id: string; story_id: string; title: string; story_branch: string | null; status: string; claimed_by: string | null }>(
     "SELECT id, story_id, title, story_branch, status, claimed_by FROM stories WHERE id = $1 AND run_id = $2 LIMIT 1",
@@ -5232,8 +5268,23 @@ async function failClaimIfStillRunning(active: ActiveProcess, err: unknown): Pro
     }
 
     const reason = `AGENT_PROCESS_EXITED: ${agentId} exited before completing ${wfId}/${role}. ${compactExitReason(err)}. Transcript: ${transcriptPath}`;
-    console.warn(`[spawner] failing still-running claim ${stepId} (${row.step_id}) after agent exit`);
     await recordSupervisorInfraEvent(row.run_id, row.step_id, row.current_story_id, reason);
+    const envelope = activeClaimEnvelope(active);
+    if (row.type === "loop" && envelope.protocol === "v3") {
+      if (
+        active.storyId
+        && await requeueOpenStoryClaim(
+          row.run_id,
+          row.step_id,
+          active.storyId,
+          agentId,
+          reason,
+          active.agentId,
+        )
+      ) return;
+      throw new Error("V3_AGENT_EXIT_OPERATIONAL_RETRY_OWNER_FAILED");
+    }
+    console.warn(`[spawner] failing still-running claim ${stepId} (${row.step_id}) after agent exit`);
     await failActiveClaimAfterRuntimeQuiescence(active, reason);
   } catch (failErr) {
     console.warn(`[spawner] failed to mark exited agent claim as failed: ${String(failErr).slice(0, 300)}`);
@@ -5826,6 +5877,14 @@ async function tryRecoverOrphanedRunningImplementWork(row: {
   agent_id?: string | null;
 }): Promise<boolean> {
   if (!row.step_db_id || row.step_id !== "implement") return false;
+  const runProtocol = await pgGet<{ protocol: string }>(
+    "SELECT protocol FROM runs WHERE id = $1 LIMIT 1",
+    [row.run_id],
+  );
+  // Startup orphan recovery follows the same v3 owner as live process exits:
+  // never commit source and synthesize an agent proposal; let the caller
+  // publish one bounded typed operational retry from the reset source.
+  if (runProtocol?.protocol === "v3") return false;
 
   const storyBranch = (row.story_branch || `${row.run_id.slice(0, 8)}-${row.story_id}`).toLowerCase();
   const contextRow = await pgGet<{ context: string | null }>("SELECT context FROM runs WHERE id = $1 LIMIT 1", [row.run_id]);
@@ -5919,6 +5978,10 @@ async function tryRecoverOrphanedRunningImplementWork(row: {
 
 async function requeueOrphanedRunningStories(): Promise<void> {
   const thresholdMs = Math.max(0, ORPHANED_SINGLE_STEP_CLAIM_MS);
+  // Quarantined completion/runtime ownership is intentionally not converted
+  // into an orphan retry. The snapshot-fenced run stop action and its durable
+  // termination request are the sole owner allowed to re-prove absence and
+  // terminalize that claim/attempt/runtime lineage.
   const rows = await pgQuery<{ story_db_id: string; story_id: string; story_title: string; story_branch: string | null; run_id: string; run_number: number; step_db_id: string | null; step_id: string | null; step_status: string | null; agent_id: string | null; claim_step_id: string | null }>(
     `SELECT st.id as story_db_id, st.story_id, st.title as story_title, st.story_branch, st.run_id, r.run_number,
             loop_step.id as step_db_id, loop_step.step_id, loop_step.status as step_status,
@@ -5929,6 +5992,16 @@ async function requeueOrphanedRunningStories(): Promise<void> {
      LEFT JOIN steps loop_step ON loop_step.run_id = st.run_id AND loop_step.type = 'loop'
      WHERE st.status = 'running'
        AND r.status = 'running'
+       AND NOT EXISTS (
+         SELECT 1 FROM runtime_completion_requests completion
+          WHERE completion.claim_id = cl.id
+            AND completion.state = 'quarantined'
+       )
+       AND NOT EXISTS (
+         SELECT 1 FROM runtime_sessions runtime
+          WHERE runtime.claim_id = cl.id
+            AND runtime.state = 'quarantined'
+       )
        AND NOT (
          r.protocol = 'v3'
          AND EXISTS (
@@ -6011,6 +6084,8 @@ async function requeueOrphanedRunningStories(): Promise<void> {
 
 async function requeueUntrackedRunningLoopStoryClaims(): Promise<void> {
   const thresholdMs = Math.max(0, ORPHANED_SINGLE_STEP_CLAIM_MS);
+  // Keep the same single recovery owner as requeueOrphanedRunningStories:
+  // quarantine is resolved only by canonical snapshot-fenced termination.
   const rows = await pgQuery<{ story_db_id: string; story_id: string; story_title: string; story_branch: string | null; run_id: string; run_number: number; step_db_id: string; step_id: string; agent_id: string; claimed_at: string }>(
     `SELECT st.id as story_db_id, st.story_id, st.title as story_title, st.story_branch,
             st.run_id, r.run_number, loop_step.id as step_db_id, loop_step.step_id,
@@ -6029,6 +6104,16 @@ async function requeueUntrackedRunningLoopStoryClaims(): Promise<void> {
       AND cl.outcome IS NULL
      WHERE st.status = 'running'
        AND r.status = 'running'
+       AND NOT EXISTS (
+         SELECT 1 FROM runtime_completion_requests completion
+          WHERE completion.claim_id = cl.id
+            AND completion.state = 'quarantined'
+       )
+       AND NOT EXISTS (
+         SELECT 1 FROM runtime_sessions runtime
+          WHERE runtime.claim_id = cl.id
+            AND runtime.state = 'quarantined'
+       )
        AND NOT (
          r.protocol = 'v3'
          AND EXISTS (

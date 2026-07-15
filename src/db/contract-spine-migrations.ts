@@ -6773,6 +6773,303 @@ async function verifyV3ProjectTransferAckLedger(sql: Sql | TransactionSql): Prom
   }
 }
 
+const RUNTIME_COMPLETION_SUBMISSION_EVIDENCE_STATEMENTS = [
+  `ALTER TABLE runtime_completion_requests
+     ADD COLUMN source_proposal TEXT,
+     ADD COLUMN submission_evidence JSONB,
+     ADD CONSTRAINT runtime_completion_requests_submission_evidence_check
+       CHECK (
+         ((submission_evidence IS NULL) = (source_proposal IS NULL))
+         AND (
+           submission_evidence IS NULL
+           OR (
+             jsonb_typeof(submission_evidence) = 'object'
+             AND octet_length(source_proposal) BETWEEN 2 AND 524288
+           ) IS TRUE
+         )
+       )`,
+  `CREATE FUNCTION setfarm_validate_runtime_completion_submission()
+     RETURNS TRIGGER
+     LANGUAGE plpgsql
+     AS $$
+     DECLARE
+       native_v3_implementation BOOLEAN;
+       parsed_proposal JSONB;
+       ignored_item JSONB;
+       ignored_path TEXT;
+       previous_path TEXT := NULL;
+       ignored_path_bytes INTEGER := 0;
+     BEGIN
+       native_v3_implementation := COALESCE((
+         NEW.claim_envelope ->> 'protocol' = 'v3'
+         AND NEW.workflow_step_id = 'implement'
+       ), FALSE);
+       IF native_v3_implementation AND (
+         NEW.submission_evidence IS NULL OR NEW.source_proposal IS NULL
+       ) THEN
+         RAISE EXCEPTION 'RUNTIME_COMPLETION_V3_IMPLEMENTATION_COMPILER_EVIDENCE_REQUIRED'
+           USING ERRCODE = '23514';
+       END IF;
+       IF NOT native_v3_implementation AND (
+         NEW.submission_evidence IS NOT NULL OR NEW.source_proposal IS NOT NULL
+       ) THEN
+         RAISE EXCEPTION 'RUNTIME_COMPLETION_COMPILER_EVIDENCE_NOT_AUTHORIZED'
+           USING ERRCODE = '23514';
+       END IF;
+       IF NEW.submission_evidence IS NULL THEN
+         RETURN NEW;
+       END IF;
+       IF jsonb_typeof(NEW.submission_evidence) IS DISTINCT FROM 'object'
+          OR NOT NEW.submission_evidence ?& ARRAY[
+            'schema', 'compiler', 'sourceSchema', 'sourceProposalHash',
+            'canonicalOutputHash', 'ignoredFieldPaths'
+          ]
+          OR (NEW.submission_evidence - ARRAY[
+            'schema', 'compiler', 'sourceSchema', 'sourceProposalHash',
+            'canonicalOutputHash', 'ignoredFieldPaths'
+          ]::TEXT[]) <> '{}'::jsonb
+          OR NEW.submission_evidence ->> 'schema'
+             IS DISTINCT FROM 'setfarm.runtime-completion-submission-evidence.v1'
+          OR NEW.submission_evidence ->> 'compiler'
+             IS DISTINCT FROM 'setfarm.v3-implementation-output-compilation.v1'
+          OR NEW.submission_evidence ->> 'sourceSchema' IS NULL
+          OR NEW.submission_evidence ->> 'sourceSchema' NOT IN (
+            'setfarm.v3-implementation-agent-proposal.v1',
+            'setfarm.v3-implementation-agent-output.v1'
+          )
+          OR NEW.submission_evidence ->> 'sourceProposalHash' IS NULL
+          OR NEW.submission_evidence ->> 'sourceProposalHash' !~ '^[a-f0-9]{64}$'
+          OR NEW.submission_evidence ->> 'canonicalOutputHash' IS NULL
+          OR NEW.submission_evidence ->> 'canonicalOutputHash' !~ '^[a-f0-9]{64}$'
+          OR NEW.submission_evidence ->> 'canonicalOutputHash' IS DISTINCT FROM NEW.output_hash
+          OR jsonb_typeof(NEW.submission_evidence -> 'ignoredFieldPaths') IS DISTINCT FROM 'array'
+          OR jsonb_array_length(NEW.submission_evidence -> 'ignoredFieldPaths') > 20000
+          OR octet_length(NEW.source_proposal) NOT BETWEEN 2 AND 524288
+          OR encode(sha256(convert_to(NEW.output, 'UTF8')), 'hex') IS DISTINCT FROM NEW.output_hash
+          OR encode(sha256(convert_to(NEW.source_proposal, 'UTF8')), 'hex')
+             IS DISTINCT FROM NEW.submission_evidence ->> 'sourceProposalHash'
+       THEN
+         RAISE EXCEPTION 'RUNTIME_COMPLETION_SUBMISSION_EVIDENCE_INVALID'
+           USING ERRCODE = '23514';
+       END IF;
+       parsed_proposal := NEW.source_proposal::jsonb;
+       IF jsonb_typeof(parsed_proposal) IS DISTINCT FROM 'object'
+          OR jsonb_typeof(NEW.output::jsonb) IS DISTINCT FROM 'object' THEN
+         RAISE EXCEPTION 'RUNTIME_COMPLETION_SUBMISSION_PROPOSAL_JSON_INVALID'
+           USING ERRCODE = '23514';
+       END IF;
+       FOR ignored_item IN
+         SELECT value FROM jsonb_array_elements(
+           NEW.submission_evidence -> 'ignoredFieldPaths'
+         )
+       LOOP
+         IF jsonb_typeof(ignored_item) IS DISTINCT FROM 'string' THEN
+           RAISE EXCEPTION 'RUNTIME_COMPLETION_SUBMISSION_EVIDENCE_PATH_INVALID'
+             USING ERRCODE = '23514';
+         END IF;
+         ignored_path := ignored_item #>> '{}';
+         ignored_path_bytes := ignored_path_bytes + octet_length(ignored_path);
+         IF octet_length(ignored_path) NOT BETWEEN 1 AND 2000
+            OR ignored_path !~ '^/([^~/]|~[01])*(/([^~/]|~[01])*)*$'
+            OR (previous_path IS NOT NULL AND ignored_path COLLATE "C" <= previous_path COLLATE "C")
+            OR ignored_path_bytes > 131072
+         THEN
+           RAISE EXCEPTION 'RUNTIME_COMPLETION_SUBMISSION_EVIDENCE_PATH_INVALID'
+             USING ERRCODE = '23514';
+         END IF;
+         previous_path := ignored_path;
+       END LOOP;
+       RETURN NEW;
+     END
+     $$`,
+  `CREATE FUNCTION setfarm_forbid_runtime_completion_submission_update()
+     RETURNS TRIGGER
+     LANGUAGE plpgsql
+     AS $$
+     BEGIN
+       IF OLD.submission_evidence IS DISTINCT FROM NEW.submission_evidence
+          OR OLD.source_proposal IS DISTINCT FROM NEW.source_proposal
+          OR OLD.output IS DISTINCT FROM NEW.output
+          OR OLD.output_hash IS DISTINCT FROM NEW.output_hash THEN
+         RAISE EXCEPTION 'RUNTIME_COMPLETION_SUBMISSION_EVIDENCE_IMMUTABLE'
+           USING ERRCODE = '23514';
+       END IF;
+       RETURN NEW;
+     END
+     $$`,
+  `CREATE TRIGGER trg_runtime_completion_submission_validate
+     BEFORE INSERT OR UPDATE OF
+       submission_evidence, source_proposal, output, output_hash, claim_envelope, workflow_step_id
+     ON runtime_completion_requests
+     FOR EACH ROW EXECUTE FUNCTION setfarm_validate_runtime_completion_submission()`,
+  `CREATE TRIGGER trg_runtime_completion_submission_evidence_immutable
+     BEFORE UPDATE OF submission_evidence, source_proposal, output, output_hash
+     ON runtime_completion_requests
+     FOR EACH ROW EXECUTE FUNCTION setfarm_forbid_runtime_completion_submission_update()`,
+] as const;
+
+async function detectRuntimeCompletionSubmissionEvidence(
+  sql: Sql | TransactionSql,
+): Promise<"absent" | "present" | "partial"> {
+  if (!await relationExists(sql, "runtime_completion_requests")) return "absent";
+  const columns = await readColumns(sql, "runtime_completion_requests");
+  const hasColumns = columns.has("submission_evidence") && columns.has("source_proposal");
+  const relations = await sql.unsafe<Array<{
+    validate_trigger_exists: boolean;
+    immutable_trigger_exists: boolean;
+    validate_function_exists: boolean;
+    immutable_function_exists: boolean;
+  }>>(
+    `SELECT
+       EXISTS (
+         SELECT 1 FROM pg_trigger
+          WHERE tgrelid = to_regclass('public.runtime_completion_requests')
+            AND tgname = 'trg_runtime_completion_submission_validate'
+            AND NOT tgisinternal
+       ) AS validate_trigger_exists,
+       EXISTS (
+         SELECT 1 FROM pg_trigger
+          WHERE tgrelid = to_regclass('public.runtime_completion_requests')
+            AND tgname = 'trg_runtime_completion_submission_evidence_immutable'
+            AND NOT tgisinternal
+       ) AS immutable_trigger_exists,
+       to_regprocedure('public.setfarm_validate_runtime_completion_submission()') IS NOT NULL
+         AS validate_function_exists,
+       to_regprocedure('public.setfarm_forbid_runtime_completion_submission_update()') IS NOT NULL
+         AS immutable_function_exists`,
+  );
+  const states = [
+    hasColumns,
+    relations[0]?.validate_trigger_exists ?? false,
+    relations[0]?.immutable_trigger_exists ?? false,
+    relations[0]?.validate_function_exists ?? false,
+    relations[0]?.immutable_function_exists ?? false,
+  ];
+  if (states.every((state) => !state)) return "absent";
+  if (states.every(Boolean)) return "present";
+  return "partial";
+}
+
+async function verifyRuntimeCompletionSubmissionEvidence(
+  sql: Sql | TransactionSql,
+): Promise<void> {
+  const columns = await readColumns(sql, "runtime_completion_requests");
+  const evidenceColumn = columns.get("submission_evidence");
+  const proposalColumn = columns.get("source_proposal");
+  if (
+    !evidenceColumn || evidenceColumn.data_type !== "jsonb" || evidenceColumn.is_nullable !== "YES"
+    || !proposalColumn || proposalColumn.data_type !== "text" || proposalColumn.is_nullable !== "YES"
+  ) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_ADOPTION_MISMATCH",
+      "runtime completion submission evidence column mismatch",
+    );
+  }
+  const constraints = await sql.unsafe<Array<{ definition: string }>>(
+    `SELECT pg_get_constraintdef(oid, true) AS definition
+       FROM pg_constraint
+      WHERE conrelid = 'public.runtime_completion_requests'::regclass
+        AND conname = 'runtime_completion_requests_submission_evidence_check'`,
+  );
+  const constraint = normalizeSql(constraints[0]?.definition ?? "");
+  for (const fragment of [
+    "submission_evidence is null",
+    "source_proposal is null",
+    "jsonb_typeof(submission_evidence) = 'object'::text",
+    "octet_length(source_proposal) >= 2",
+    "octet_length(source_proposal) <= 524288",
+  ]) {
+    if (!constraint.includes(fragment)) {
+      throw new ContractSpineMigrationError(
+        "MIGRATION_ADOPTION_MISMATCH",
+        `runtime completion submission evidence constraint mismatch: ${fragment}`,
+      );
+    }
+  }
+  const triggers = await sql.unsafe<Array<{
+    name: string;
+    enabled: string;
+    type_bits: number;
+    function_identity: string;
+    update_columns: string[];
+    definition: string;
+  }>>(
+    `SELECT t.tgname AS name, t.tgenabled AS enabled,
+            t.tgtype::integer AS type_bits,
+            t.tgfoid::regprocedure::text AS function_identity,
+            ARRAY(
+              SELECT a.attname
+                FROM unnest(t.tgattr::smallint[]) WITH ORDINALITY AS attribute(attnum, ordinal)
+                JOIN pg_attribute a
+                  ON a.attrelid = t.tgrelid
+                 AND a.attnum = attribute.attnum
+               ORDER BY attribute.ordinal
+            ) AS update_columns,
+            lower(pg_get_triggerdef(t.oid, true)) AS definition
+       FROM pg_trigger t
+      WHERE t.tgrelid = 'public.runtime_completion_requests'::regclass
+        AND t.tgname IN (
+          'trg_runtime_completion_submission_validate',
+          'trg_runtime_completion_submission_evidence_immutable'
+        )
+        AND NOT t.tgisinternal`,
+  );
+  const triggerDefinitions = new Map(triggers.map((trigger) => [trigger.name, trigger]));
+  const validationTrigger = triggerDefinitions.get("trg_runtime_completion_submission_validate");
+  const immutableTrigger = triggerDefinitions.get("trg_runtime_completion_submission_evidence_immutable");
+  const functionName = (value: string | undefined) => value?.replace(/^public\./, "");
+  if (validationTrigger?.enabled !== "O"
+    || validationTrigger.type_bits !== 23
+    || functionName(validationTrigger.function_identity) !== "setfarm_validate_runtime_completion_submission()"
+    || JSON.stringify(validationTrigger.update_columns) !== JSON.stringify([
+      "submission_evidence",
+      "source_proposal",
+      "output",
+      "output_hash",
+      "claim_envelope",
+      "workflow_step_id",
+    ])
+    || immutableTrigger?.enabled !== "O"
+    || immutableTrigger.type_bits !== 19
+    || functionName(immutableTrigger.function_identity) !== "setfarm_forbid_runtime_completion_submission_update()"
+    || JSON.stringify(immutableTrigger.update_columns) !== JSON.stringify([
+      "submission_evidence",
+      "source_proposal",
+      "output",
+      "output_hash",
+    ])) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_ADOPTION_MISMATCH",
+      "runtime completion submission evidence trigger mismatch",
+    );
+  }
+  const functions = await sql.unsafe<Array<{ name: string; definition: string | null }>>(
+    `SELECT name, pg_get_functiondef(to_regprocedure(name || '()')) AS definition
+       FROM unnest($1::text[]) AS name`,
+    [[
+      "setfarm_validate_runtime_completion_submission",
+      "setfarm_forbid_runtime_completion_submission_update",
+    ]],
+  );
+  const functionDefinitions = new Map(functions.map((row) => [row.name, normalizeSql(row.definition ?? "")]));
+  const validationDefinition = functionDefinitions.get("setfarm_validate_runtime_completion_submission") ?? "";
+  const immutableDefinition = functionDefinitions.get("setfarm_forbid_runtime_completion_submission_update") ?? "";
+  if (!validationDefinition.includes("runtime_completion_v3_implementation_compiler_evidence_required")
+    || !validationDefinition.includes("new.submission_evidence ?& array")
+    || !validationDefinition.includes("sha256(convert_to(new.source_proposal, 'utf8'))")
+    || !validationDefinition.includes("sha256(convert_to(new.output, 'utf8'))")
+    || !validationDefinition.includes("runtime_completion_submission_evidence_path_invalid")
+    || !immutableDefinition.includes("old.submission_evidence is distinct from new.submission_evidence")
+    || !immutableDefinition.includes("old.source_proposal is distinct from new.source_proposal")
+    || !immutableDefinition.includes("old.output is distinct from new.output")
+    || !immutableDefinition.includes("runtime_completion_submission_evidence_immutable")) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_ADOPTION_MISMATCH",
+      "runtime completion submission evidence function mismatch",
+    );
+  }
+}
+
 const migrations: readonly Migration[] = [
   {
     version: 1,
@@ -6905,6 +7202,13 @@ const migrations: readonly Migration[] = [
     statements: V3_PROJECT_TRANSFER_ACK_STATEMENTS,
     detect: detectV3ProjectTransferAckLedger,
     verify: verifyV3ProjectTransferAckLedger,
+  },
+  {
+    version: 19,
+    name: "019_runtime_completion_submission_evidence",
+    statements: RUNTIME_COMPLETION_SUBMISSION_EVIDENCE_STATEMENTS,
+    detect: detectRuntimeCompletionSubmissionEvidence,
+    verify: verifyRuntimeCompletionSubmissionEvidence,
   },
 ];
 

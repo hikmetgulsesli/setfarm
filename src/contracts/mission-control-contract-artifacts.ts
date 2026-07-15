@@ -32,6 +32,10 @@ import {
   type OperationalEvidenceBundleV1,
   type RunOperationalSnapshotV1,
 } from "../server/schemas/run-operational-snapshot-v1.js";
+import {
+  RunOperationalSnapshotV2Schema,
+  type RunOperationalSnapshotV2,
+} from "../server/schemas/run-operational-snapshot-v2.js";
 
 export const MISSION_CONTROL_CONTRACT_ARTIFACT_DIRECTORY =
   "contracts/generated/mission-control" as const;
@@ -41,6 +45,7 @@ export const MISSION_CONTROL_CONTRACT_ARTIFACT_SCHEMA =
 
 export type MissionControlContractName =
   | "setfarm.run-operational-snapshot.v1"
+  | "setfarm.run-operational-snapshot.v2"
   | "setfarm.v3-deployment-observation.v1"
   | "setfarm.v3-project-transfer-ack.v1";
 
@@ -415,7 +420,7 @@ function createProjectTransferAckFixture(
   return V3ProjectTransferAckV1Schema.parse({ ...payload, ackHash: hashCanonicalJson(payload) });
 }
 
-function createRunOperationalSnapshotFixture(input: Readonly<{
+function createRunOperationalSnapshotV1Fixture(input: Readonly<{
   acceptance: AcceptanceFixture;
   receipt: V3DeployReceiptV1;
   acknowledgement: V3ProjectTransferAckV1;
@@ -506,6 +511,109 @@ function createRunOperationalSnapshotFixture(input: Readonly<{
   });
 }
 
+function createRunOperationalSnapshotV2Fixture(input: Readonly<{
+  acceptance: AcceptanceFixture;
+  receipt: V3DeployReceiptV1;
+  acknowledgement: V3ProjectTransferAckV1;
+}>): RunOperationalSnapshotV2 {
+  const v1 = createRunOperationalSnapshotV1Fixture(input);
+  const { snapshotHash: _v1SnapshotHash, ...v1State } = v1;
+  const requestId = "RCR_contract-implementation-0001";
+  const claimId = "1";
+  const claimRef = `setfarm://claim-log/${claimId}`;
+  const runtimeSessionId = "RTS_contract-implementation-0001";
+  const runtimeSessionRef = `setfarm://runtime-session/${runtimeSessionId}`;
+  const sourceProposalHash = "6".repeat(64);
+  const canonicalOutputHash = "a".repeat(64);
+  const state = {
+    ...v1State,
+    schema: "setfarm.run-operational-snapshot.v2" as const,
+    source: {
+      ...v1State.source,
+      migrationVersions: [...v1State.source.migrationVersions, 19],
+      capabilities: {
+        ...v1State.source.capabilities,
+        implementationSubmissionEvidence: true,
+      },
+    },
+    claims: [{
+      ref: claimRef,
+      id: claimId,
+      runRef: `setfarm://run/${RUN_ID}`,
+      stepRef: `setfarm://run/${RUN_ID}/step/implement`,
+      storyRef: `setfarm://run/${RUN_ID}/story/US-001`,
+      workflowStepId: "implement",
+      storyId: "US-001",
+      agentId: "feature-dev_developer",
+      state: "closed" as const,
+      outcome: "completed",
+      claimedAt: NOW,
+      abandonedAt: null,
+    }],
+    runtimeSessions: [{
+      ref: runtimeSessionRef,
+      sessionId: runtimeSessionId,
+      runRef: `setfarm://run/${RUN_ID}`,
+      claimRef,
+      attemptRef: null,
+      stepRef: `setfarm://run/${RUN_ID}/step/implement`,
+      storyRef: `setfarm://run/${RUN_ID}/story/US-001`,
+      workflowStepId: "implement",
+      storyId: "US-001",
+      runtimeKind: "openclaw_session" as const,
+      state: "released" as const,
+      stateVersion: 5,
+      startedAt: NOW,
+      heartbeatAt: NOW,
+      drainRequestedAt: NOW,
+      drainedAt: NOW,
+      releasedAt: NOW,
+      createdAt: NOW,
+      updatedAt: NOW,
+    }],
+    completionRequests: [{
+      ref: `setfarm://runtime-completion/${requestId}`,
+      requestId,
+      runRef: `setfarm://run/${RUN_ID}`,
+      runtimeSessionRef,
+      claimRef,
+      attemptRef: null,
+      stepRef: `setfarm://run/${RUN_ID}/step/implement`,
+      storyRef: `setfarm://run/${RUN_ID}/story/US-001`,
+      workflowStepId: "implement",
+      storyId: "US-001",
+      outputHash: canonicalOutputHash,
+      implementationSubmissionEvidence: {
+        receipt: {
+          schema: "setfarm.runtime-completion-submission-evidence.v1" as const,
+          compiler: "setfarm.v3-implementation-output-compilation.v1" as const,
+          sourceSchema: "setfarm.v3-implementation-agent-proposal.v1" as const,
+          sourceProposalHash,
+          canonicalOutputHash,
+          ignoredFieldPaths: ["/providerAnnotation"],
+        },
+        sourceProposalRef: `setfarm://runtime-completion/${requestId}/source-proposal/${sourceProposalHash}`,
+      },
+      applyPhase: "effects_committed" as const,
+      claimOutcome: "completed",
+      completionPlanHash: null,
+      state: "accepted" as const,
+      requestedAt: NOW,
+      drainedAt: NOW,
+      processingAt: NOW,
+      acceptedAt: NOW,
+      rejectedAt: null,
+      createdAt: NOW,
+      updatedAt: NOW,
+      effects: [],
+    }],
+  };
+  return RunOperationalSnapshotV2Schema.parse({
+    ...state,
+    snapshotHash: computeRunOperationalSnapshotHash(state),
+  });
+}
+
 function jsonSchemaFor(contract: MissionControlContractName, schema: z.ZodType): unknown {
   return {
     $id: `https://contracts.setfarm.dev/mission-control/${contract}.schema.json`,
@@ -544,13 +652,19 @@ export function createMissionControlContractArtifacts(): readonly MissionControl
   const acceptance = createAcceptanceFixture();
   const deployment = createDeploymentFixture(acceptance.candidate);
   const acknowledgement = createProjectTransferAckFixture(acceptance.candidate, deployment.receipt);
-  const snapshot = createRunOperationalSnapshotFixture({
+  const snapshotV1 = createRunOperationalSnapshotV1Fixture({
+    acceptance,
+    receipt: deployment.receipt,
+    acknowledgement,
+  });
+  const snapshotV2 = createRunOperationalSnapshotV2Fixture({
     acceptance,
     receipt: deployment.receipt,
     acknowledgement,
   });
 
-  RunOperationalSnapshotV1Schema.parse(snapshot);
+  RunOperationalSnapshotV1Schema.parse(snapshotV1);
+  RunOperationalSnapshotV2Schema.parse(snapshotV2);
   V3DeploymentObservationV1Schema.parse(deployment.observation);
   V3ProjectTransferAckV1Schema.parse(acknowledgement);
 
@@ -559,7 +673,13 @@ export function createMissionControlContractArtifacts(): readonly MissionControl
       contract: "setfarm.run-operational-snapshot.v1",
       stem: "run-operational-snapshot.v1",
       schema: RunOperationalSnapshotV1Schema,
-      fixture: snapshot,
+      fixture: snapshotV1,
+    }),
+    ...artifactPair({
+      contract: "setfarm.run-operational-snapshot.v2",
+      stem: "run-operational-snapshot.v2",
+      schema: RunOperationalSnapshotV2Schema,
+      fixture: snapshotV2,
     }),
     ...artifactPair({
       contract: "setfarm.v3-deployment-observation.v1",

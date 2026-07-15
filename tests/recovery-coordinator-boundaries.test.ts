@@ -65,6 +65,8 @@ describe("durable recovery coordinator source boundaries", () => {
       /requestRuntimeCompletion\s*\(|publishRuntimeCompletion\w*\s*\(/,
       "output-file recovery must publish the exact claim/output proposal to the manager-owned completion queue",
     );
+    assert.match(recovery, /claimEnvelope\?\.protocol === "v3"/);
+    assert.match(recovery, /output\.startsWith\("\{"\)[\s\S]*output\.endsWith\("\}"\)/);
   });
 
   it("publishes recovered implement work instead of directly completing its durable claim", () => {
@@ -82,6 +84,11 @@ describe("durable recovery coordinator source boundaries", () => {
       recovery,
       /requestRuntimeCompletion\s*\(|publishRuntimeCompletion\w*\s*\(/,
       "recovered implement output must enter the same canonical completion request path as agent output",
+    );
+    assert.ok(
+      recovery.indexOf('runProtocol?.protocol === "v3"')
+        < recovery.indexOf("commitRecoveredImplementWorkThroughScopeGate"),
+      "native v3 exit recovery must route to typed operational retry before any recovery commit",
     );
   });
 
@@ -115,6 +122,13 @@ describe("durable recovery coordinator source boundaries", () => {
       recovery,
       /requestRuntimeCompletion\s*\(|publishRuntimeCompletion\w*\s*\(/,
       "exit recovery must publish or delegate to an explicitly named completion publisher before retry/failure routing",
+    );
+    const v3Exit = recovery.indexOf('envelope.protocol === "v3"');
+    const typedRetry = recovery.indexOf("await requeueOpenStoryClaim(", v3Exit);
+    const legacyFailure = recovery.indexOf("await failActiveClaimAfterRuntimeQuiescence(active, reason)", typedRetry);
+    assert.ok(
+      v3Exit >= 0 && typedRetry > v3Exit && legacyFailure > typedRetry,
+      "native v3 loop exits must publish typed operational retry before the legacy fail fallback",
     );
   });
 

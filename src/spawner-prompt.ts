@@ -2608,10 +2608,10 @@ The bootstrap writes IMPLEMENT_CONTEXT_FILE. Read that file once with the file r
 
 Work only in handoff.workdir. Modify only writeAuthority.allowedPaths. Execute relevant implementationSlice.commands from their exact typed argv/cwd values. Implement the exact implementationSlice and make the exact evidencePlan executable; Setfarm owns evidence execution and verdicts. Do not stage, commit, push, create branches/PRs, install dependencies, start unmanaged servers, delegate, or broaden scope. On source mismatch return the typed SOURCE_SNAPSHOT_MISMATCH JSON refusal; on insufficient write authority return the typed CONTRACT_SCOPE_CONFLICT JSON refusal.
 
-Write exactly one JSON object matching outputContract to ${params.outputFile}; do not wrap it in markdown and do not add STATUS/KEY:value lines. For both ready_for_evidence and refused dispositions, complete with the exact claim capability so Setfarm can validate the refusal and transfer recovery ownership:
+Write exactly one JSON object matching outputContract.jsonSchema to ${params.outputFile}; do not wrap it in markdown and do not add STATUS/KEY:value lines, command outcomes, command notes, or evidence verdicts. Setfarm executes every declared command and owns that evidence. For both ready_for_evidence and refused dispositions, complete with the exact claim capability so Setfarm can compile the proposal before any runtime drain and then transfer recovery ownership:
 ${stepIdCommand}; ${cliCommand} step complete "$STEP_ID" --claim-file ${shellQuote(params.claimFile)} --file ${shellQuote(params.outputFile)}
 
-Never call step fail for a typed v3 refusal: that legacy path cannot carry source/slice/finding identity. After step complete, reply HEARTBEAT_OK and stop.`;
+Never call step fail for any native v3 implementation outcome. Typed refusals use step complete so Setfarm can validate their source/slice/finding identity; runtime and process failures are owned by the spawner. After step complete, reply HEARTBEAT_OK and stop.`;
   }
   if (params.protocol === "v3") {
     return `Setfarm Product Compiler v3 stage claim ready for ${params.wfId}/${params.role}. First action MUST be the exact bootstrap exec below; send no prose first.

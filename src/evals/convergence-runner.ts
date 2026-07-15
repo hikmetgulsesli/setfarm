@@ -39,7 +39,7 @@ import {
 } from "../runtime-config.js";
 import { readOpenClawConfig } from "../installer/openclaw-config.js";
 import { computeRunOperationalSnapshotHash } from "../server/run-operational-snapshot.js";
-import { RunOperationalSnapshotV1Schema } from "../server/schemas/run-operational-snapshot-v1.js";
+import { RunOperationalSnapshotV2Schema } from "../server/schemas/run-operational-snapshot-v2.js";
 import type { ConvergenceCaseV1, ProductConvergenceSuiteV1 } from "./suite-schema.js";
 import {
   ConvergenceStackPackV1Schema,
@@ -481,8 +481,8 @@ async function collectProjection(
     settle(() => ports.http.operationalSnapshot("mission_control", runId)),
   ]);
   if (!setfarmRead.ok || !missionControlRead.ok) return unavailableProjection();
-  const setfarm = RunOperationalSnapshotV1Schema.safeParse(setfarmRead.value);
-  const missionControl = RunOperationalSnapshotV1Schema.safeParse(missionControlRead.value);
+  const setfarm = RunOperationalSnapshotV2Schema.safeParse(setfarmRead.value);
+  const missionControl = RunOperationalSnapshotV2Schema.safeParse(missionControlRead.value);
   if (!setfarm.success || !missionControl.success) return unavailableProjection();
   const { snapshotHash: setfarmSnapshotHash, ...setfarmHashable } = setfarm.data;
   const { snapshotHash: missionControlSnapshotHash, ...missionControlHashable } = missionControl.data;
@@ -491,6 +491,8 @@ async function collectProjection(
     || missionControl.data.run.id !== runId
     || computeRunOperationalSnapshotHash(setfarmHashable) !== setfarmSnapshotHash
     || computeRunOperationalSnapshotHash(missionControlHashable) !== missionControlSnapshotHash
+    || !setfarm.data.source.capabilities.implementationSubmissionEvidence
+    || !missionControl.data.source.capabilities.implementationSubmissionEvidence
   ) return unavailableProjection();
   const capabilities = Object.fromEntries(REQUIRED_CAPABILITIES.map((key) => [
     key,
