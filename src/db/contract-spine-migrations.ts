@@ -5,6 +5,10 @@ import { CONTRACT_SPINE_SEMANTIC_MIGRATION_DIGESTS } from "./contract-spine-migr
 import { assertContractSpineSemanticMigrationSourceIntegrityWhenAvailable } from "./contract-spine-migration-source-integrity.js";
 import { hashCanonicalJson } from "../product-compiler/canonical-json.js";
 import {
+  operationalFailureCauseAuthoritySqlPredicateV1,
+  operationalFailureCauseEvidenceAuthoritySqlPredicateV1,
+} from "../execution/operational-failure-cause-authority-v1.js";
+import {
   computeRecoveryDispatchDedupeKey,
   computeRecoveryFindingDispatchDedupeKey,
 } from "../recovery/recovery-case.js";
@@ -181,6 +185,16 @@ export type RecoveryTerminalLeaseRollbackResult = Readonly<{
   targetVersion: 19;
   targetReleaseSha: string;
   rowsRewritten: number;
+  appliedAt: string;
+}>;
+
+export type OperationalFailureCauseSealRollbackResult = Readonly<{
+  schema: "setfarm.contract-spine-rollback.v1";
+  rollbackId: string;
+  fromVersion: 21;
+  targetVersion: 20;
+  targetReleaseSha: string;
+  rowsRewritten: 0;
   appliedAt: string;
 }>;
 
@@ -7197,6 +7211,764 @@ async function verifyRecoveryTerminalLeaseConstraint(
   }
 }
 
+const OPERATIONAL_FAILURE_CAUSE_CONSTRAINT =
+  "run_termination_requests_operational_failure_cause_check";
+const OPERATIONAL_FAILURE_CAUSE_TRIGGER =
+  "trg_run_termination_requests_operational_failure_cause_immutable";
+const OPERATIONAL_FAILURE_CAUSE_FUNCTION =
+  "setfarm_enforce_operational_failure_cause_immutable";
+const OPERATIONAL_FAILURE_CAUSE_AUTHORITY_SQL = operationalFailureCauseAuthoritySqlPredicateV1({
+  requestedBySql: "requested_by",
+  causeSql: "evidence->'operationalFailureCause'",
+});
+const OPERATIONAL_FAILURE_CAUSE_EVIDENCE_AUTHORITY_SQL =
+  operationalFailureCauseEvidenceAuthoritySqlPredicateV1({
+    requestedBySql: "requested_by",
+    evidenceSql: "evidence",
+    causeSql: "evidence->'operationalFailureCause'",
+  });
+
+const OPERATIONAL_FAILURE_CAUSE_SEAL_STATEMENTS = [
+  `ALTER TABLE run_termination_requests
+     ADD CONSTRAINT ${OPERATIONAL_FAILURE_CAUSE_CONSTRAINT} CHECK (
+       CASE
+         WHEN NOT (evidence ? 'operationalFailureCause') THEN TRUE
+         WHEN target_status <> 'failed' THEN FALSE
+         WHEN jsonb_typeof(evidence->'operationalFailureCause') IS DISTINCT FROM 'object' THEN FALSE
+         ELSE
+           ((((((evidence->'operationalFailureCause') - 'schema'::text)
+             - 'workflowStepId'::text) - 'boundary'::text)
+             - 'failureClass'::text) - 'failureCode'::text) = '{}'::jsonb
+           AND (evidence->'operationalFailureCause') ?& ARRAY[
+             'schema', 'workflowStepId', 'boundary', 'failureClass', 'failureCode'
+           ]
+           AND jsonb_typeof(evidence->'operationalFailureCause'->'schema') = 'string'
+           AND evidence->'operationalFailureCause'->>'schema'
+             = 'setfarm.operational-failure-cause.v1'
+           AND jsonb_typeof(evidence->'operationalFailureCause'->'workflowStepId') = 'string'
+           AND length(evidence->'operationalFailureCause'->>'workflowStepId') BETWEEN 1 AND 100
+           AND evidence->'operationalFailureCause'->>'workflowStepId'
+             ~ '^[a-z][a-z0-9]*(-[a-z0-9]+)*$'
+           AND jsonb_typeof(evidence->'operationalFailureCause'->'boundary') = 'string'
+           AND length(evidence->'operationalFailureCause'->>'boundary') BETWEEN 1 AND 160
+           AND evidence->'operationalFailureCause'->>'boundary'
+             ~ '^[a-z][a-z0-9]*([._-][a-z0-9]+)*$'
+           AND jsonb_typeof(evidence->'operationalFailureCause'->'failureClass') = 'string'
+           AND evidence->'operationalFailureCause'->>'failureClass' IN (
+             'contract_invalid',
+             'generated_artifact_invalid',
+             'retry_delta_missing',
+             'platform_authority_invalid',
+             'infrastructure_failure',
+             'platform_invariant_failed',
+             'recovery_exhausted'
+           )
+           AND jsonb_typeof(evidence->'operationalFailureCause'->'failureCode') = 'string'
+           AND length(evidence->'operationalFailureCause'->>'failureCode') BETWEEN 3 AND 160
+           AND evidence->'operationalFailureCause'->>'failureCode'
+             ~ '^[A-Z][A-Z0-9]*(_[A-Z0-9]+)+$'
+           AND ${OPERATIONAL_FAILURE_CAUSE_AUTHORITY_SQL}
+           AND (${OPERATIONAL_FAILURE_CAUSE_EVIDENCE_AUTHORITY_SQL}) IS TRUE
+       END
+     )`,
+  `CREATE FUNCTION ${OPERATIONAL_FAILURE_CAUSE_FUNCTION}() RETURNS trigger AS $$
+   BEGIN
+     IF OLD.target_status IS DISTINCT FROM NEW.target_status THEN
+       RAISE EXCEPTION 'SETFARM_RUN_TERMINATION_TARGET_STATUS_IMMUTABLE'
+         USING ERRCODE = '55000';
+     END IF;
+     IF OLD.requested_by IS DISTINCT FROM NEW.requested_by THEN
+       RAISE EXCEPTION 'SETFARM_RUN_TERMINATION_REQUESTED_BY_IMMUTABLE'
+         USING ERRCODE = '55000';
+     END IF;
+     IF OLD.evidence->'operationalFailureCause'
+          IS DISTINCT FROM NEW.evidence->'operationalFailureCause' THEN
+       RAISE EXCEPTION 'SETFARM_OPERATIONAL_FAILURE_CAUSE_IMMUTABLE'
+         USING ERRCODE = '55000';
+     END IF;
+     IF OLD.requested_by = 'setfarm.product-compiler.deploy-refusal'
+          AND OLD.evidence ? 'operationalFailureCause'
+          AND (
+            OLD.evidence->'schema' IS DISTINCT FROM NEW.evidence->'schema'
+            OR OLD.evidence->'authorityCode'
+                 IS DISTINCT FROM NEW.evidence->'authorityCode'
+          ) THEN
+       RAISE EXCEPTION 'SETFARM_OPERATIONAL_FAILURE_EVIDENCE_BINDING_IMMUTABLE'
+         USING ERRCODE = '55000';
+     END IF;
+     IF OLD.requested_by = 'setfarm.v3-pre-dispatch'
+          AND OLD.evidence ? 'operationalFailureCause'
+          AND OLD.evidence->'errorCode' IS DISTINCT FROM NEW.evidence->'errorCode' THEN
+       RAISE EXCEPTION 'SETFARM_OPERATIONAL_FAILURE_EVIDENCE_BINDING_IMMUTABLE'
+         USING ERRCODE = '55000';
+     END IF;
+     IF OLD.requested_by = 'setfarm-v3-downstream-compiler'
+          AND OLD.evidence ? 'operationalFailureCause'
+          AND (
+            OLD.evidence->'schema' IS DISTINCT FROM NEW.evidence->'schema'
+            OR OLD.evidence->'outcome' IS DISTINCT FROM NEW.evidence->'outcome'
+            OR OLD.evidence->'terminalReasonCodes'
+                 IS DISTINCT FROM NEW.evidence->'terminalReasonCodes'
+          ) THEN
+       RAISE EXCEPTION 'SETFARM_OPERATIONAL_FAILURE_EVIDENCE_BINDING_IMMUTABLE'
+         USING ERRCODE = '55000';
+     END IF;
+     RETURN NEW;
+   END;
+   $$ LANGUAGE plpgsql`,
+  `CREATE TRIGGER ${OPERATIONAL_FAILURE_CAUSE_TRIGGER}
+     BEFORE UPDATE OF evidence, target_status, requested_by ON run_termination_requests
+     FOR EACH ROW EXECUTE FUNCTION ${OPERATIONAL_FAILURE_CAUSE_FUNCTION}()`,
+] as const;
+
+async function operationalFailureCauseSealComponents(
+  sql: Sql | TransactionSql,
+): Promise<Readonly<{
+  constraint: Readonly<{ validated: boolean; expression: string }> | undefined;
+  trigger: Readonly<{ enabled: string; relation: string; definition: string }> | undefined;
+  functionDefinition: string | undefined;
+}>> {
+  const constraints = await sql.unsafe<Array<{ validated: boolean; expression: string }>>(
+    `SELECT convalidated AS validated,
+            pg_get_expr(conbin, conrelid, true) AS expression
+       FROM pg_constraint
+      WHERE conrelid = to_regclass('public.run_termination_requests')
+        AND conname = $1`,
+    [OPERATIONAL_FAILURE_CAUSE_CONSTRAINT],
+  );
+  const triggers = await sql.unsafe<Array<{
+    enabled: string;
+    relation: string;
+    definition: string;
+  }>>(
+    `SELECT t.tgenabled AS enabled,
+            t.tgrelid::regclass::text AS relation,
+            pg_get_triggerdef(t.oid, true) AS definition
+       FROM pg_trigger t
+      WHERE NOT t.tgisinternal
+        AND t.tgname = $1`,
+    [OPERATIONAL_FAILURE_CAUSE_TRIGGER],
+  );
+  const functions = await sql.unsafe<Array<{ definition: string | null }>>(
+    `SELECT pg_get_functiondef(
+       to_regprocedure('public.${OPERATIONAL_FAILURE_CAUSE_FUNCTION}()')
+     ) AS definition`,
+  );
+  return Object.freeze({
+    constraint: constraints[0],
+    trigger: triggers[0],
+    functionDefinition: functions[0]?.definition ?? undefined,
+  });
+}
+
+async function operationalFailureCauseConstraintHasExactSemantics(
+  sql: Sql | TransactionSql,
+  expression: string,
+): Promise<boolean> {
+  const validCause = {
+    schema: "setfarm.operational-failure-cause.v1",
+    workflowStepId: "setup-build",
+    boundary: "stitch.converter.generated_tsx",
+    failureClass: "generated_artifact_invalid",
+    failureCode: "V3_OBSERVABLE_REF_INVALID",
+  };
+  const causeEvidence = (cause: unknown): Record<string, unknown> => ({
+    operationalFailureCause: cause,
+  });
+  const downstreamEvidence = (
+    cause: unknown,
+    outcome: "packet_amendment_required" | "bounded_recovery_blocked",
+    terminalReasonCodes?: readonly string[],
+  ): Record<string, unknown> => ({
+    schema: "setfarm.v3-downstream-termination-evidence.v1",
+    outcome,
+    ...(terminalReasonCodes ? { terminalReasonCodes } : {}),
+    operationalFailureCause: cause,
+  });
+  const cases = [
+    { label: "absent-failed", requested_by: "untyped.owner", target_status: "failed", evidence: {}, expected: true },
+    { label: "absent-cancelled", requested_by: "untyped.owner", target_status: "cancelled", evidence: {}, expected: true },
+    { label: "valid-failed", requested_by: "setfarm.step-fail.single", target_status: "failed", evidence: causeEvidence(validCause), expected: true },
+    { label: "typed-cancelled", requested_by: "setfarm.step-fail.single", target_status: "cancelled", evidence: causeEvidence(validCause), expected: false },
+    { label: "unauthorized-requester", requested_by: "agent-prose-classifier", target_status: "failed", evidence: causeEvidence(validCause), expected: false },
+    { label: "unauthorized-code", requested_by: "setfarm.step-fail.single", target_status: "failed", evidence: causeEvidence({ ...validCause, failureCode: "STITCH_GENERATED_TSX_INVALID" }), expected: false },
+    {
+      label: "deploy-evidence-bound",
+      requested_by: "setfarm.product-compiler.deploy-refusal",
+      target_status: "failed",
+      evidence: {
+        schema: "setfarm.v3-deploy-authority-termination.v1",
+        authorityCode: "V3_DEPLOY_PACKET_INVALID",
+        operationalFailureCause: {
+          ...validCause,
+          workflowStepId: "deploy",
+          boundary: "product_compiler.deploy_authority",
+          failureClass: "contract_invalid",
+          failureCode: "V3_DEPLOY_PACKET_INVALID",
+        },
+      },
+      expected: true,
+    },
+    {
+      label: "deploy-evidence-mismatch",
+      requested_by: "setfarm.product-compiler.deploy-refusal",
+      target_status: "failed",
+      evidence: {
+        schema: "setfarm.v3-deploy-authority-termination.v1",
+        authorityCode: "V3_DEPLOY_SOURCE_UNAVAILABLE",
+        operationalFailureCause: {
+          ...validCause,
+          workflowStepId: "deploy",
+          boundary: "product_compiler.deploy_authority",
+          failureClass: "contract_invalid",
+          failureCode: "V3_DEPLOY_PACKET_INVALID",
+        },
+      },
+      expected: false,
+    },
+    {
+      label: "pre-dispatch-normalized-code",
+      requested_by: "setfarm.v3-pre-dispatch",
+      target_status: "failed",
+      evidence: {
+        errorCode: "40001",
+        operationalFailureCause: {
+          ...validCause,
+          workflowStepId: "implement",
+          boundary: "implementation.pre_dispatch.reservation",
+          failureClass: "infrastructure_failure",
+          failureCode: "SQLSTATE_40001",
+        },
+      },
+      expected: true,
+    },
+    {
+      label: "pre-dispatch-code-missing",
+      requested_by: "setfarm.v3-pre-dispatch",
+      target_status: "failed",
+      evidence: causeEvidence({
+        ...validCause,
+        workflowStepId: "implement",
+        boundary: "implementation.pre_dispatch.reservation",
+        failureClass: "infrastructure_failure",
+        failureCode: "SQLSTATE_40001",
+      }),
+      expected: false,
+    },
+    {
+      label: "pre-dispatch-numeric-code",
+      requested_by: "setfarm.v3-pre-dispatch",
+      target_status: "failed",
+      evidence: {
+        errorCode: 40001,
+        operationalFailureCause: {
+          ...validCause,
+          workflowStepId: "implement",
+          boundary: "implementation.pre_dispatch.reservation",
+          failureClass: "infrastructure_failure",
+          failureCode: "SQLSTATE_40001",
+        },
+      },
+      expected: false,
+    },
+    { label: "null-cause", target_status: "failed", evidence: causeEvidence(null), expected: false },
+    { label: "array-cause", target_status: "failed", evidence: causeEvidence([]), expected: false },
+    {
+      label: "extra-key",
+      target_status: "failed",
+      evidence: causeEvidence({ ...validCause, diagnostic: "volatile" }),
+      expected: false,
+    },
+    {
+      label: "missing-key",
+      target_status: "failed",
+      evidence: causeEvidence({
+        schema: validCause.schema,
+        workflowStepId: validCause.workflowStepId,
+        boundary: validCause.boundary,
+        failureClass: validCause.failureClass,
+      }),
+      expected: false,
+    },
+    {
+      label: "wrong-schema",
+      target_status: "failed",
+      evidence: causeEvidence({ ...validCause, schema: "setfarm.operational-failure-cause.v2" }),
+      expected: false,
+    },
+    {
+      label: "workflow-type",
+      target_status: "failed",
+      evidence: causeEvidence({ ...validCause, workflowStepId: 7 }),
+      expected: false,
+    },
+    {
+      label: "workflow-grammar",
+      target_status: "failed",
+      evidence: causeEvidence({ ...validCause, workflowStepId: "Setup Build" }),
+      expected: false,
+    },
+    {
+      label: "workflow-invented",
+      requested_by: "setfarm.v3-stage-input-authority",
+      target_status: "failed",
+      evidence: causeEvidence({
+        ...validCause,
+        workflowStepId: "a".repeat(100),
+        boundary: "stage_context_assembly",
+        failureClass: "contract_invalid",
+        failureCode: "V3_STAGE_INPUT_UNRESOLVED",
+      }),
+      expected: false,
+    },
+    {
+      label: "workflow-stage-canonical",
+      requested_by: "setfarm.v3-stage-input-authority",
+      target_status: "failed",
+      evidence: causeEvidence({
+        ...validCause,
+        workflowStepId: "verify",
+        boundary: "stage_context_assembly",
+        failureClass: "contract_invalid",
+        failureCode: "V3_STAGE_INPUT_UNRESOLVED",
+      }),
+      expected: true,
+    },
+    {
+      label: "workflow-too-long",
+      target_status: "failed",
+      evidence: causeEvidence({ ...validCause, workflowStepId: "a".repeat(101) }),
+      expected: false,
+    },
+    {
+      label: "boundary-type",
+      target_status: "failed",
+      evidence: causeEvidence({ ...validCause, boundary: false }),
+      expected: false,
+    },
+    {
+      label: "boundary-grammar",
+      target_status: "failed",
+      evidence: causeEvidence({ ...validCause, boundary: "stitch/converter" }),
+      expected: false,
+    },
+    {
+      label: "boundary-max",
+      target_status: "failed",
+      evidence: causeEvidence({ ...validCause, boundary: "a".repeat(160) }),
+      expected: false,
+    },
+    {
+      label: "boundary-too-long",
+      target_status: "failed",
+      evidence: causeEvidence({ ...validCause, boundary: "a".repeat(161) }),
+      expected: false,
+    },
+    {
+      label: "class-type",
+      target_status: "failed",
+      evidence: causeEvidence({ ...validCause, failureClass: ["contract_invalid"] }),
+      expected: false,
+    },
+    {
+      label: "class-unknown",
+      target_status: "failed",
+      evidence: causeEvidence({ ...validCause, failureClass: "contract_typo" }),
+      expected: false,
+    },
+    {
+      label: "class-enum-member",
+      requested_by: "setfarm-v3-downstream-compiler",
+      target_status: "failed",
+      evidence: downstreamEvidence({
+        ...validCause,
+        workflowStepId: "qa-test",
+        boundary: "product_compiler.downstream_recovery",
+        failureClass: "recovery_exhausted",
+        failureCode: "V3_DOWNSTREAM_RECOVERY_BUDGET_EXHAUSTED",
+      }, "bounded_recovery_blocked", ["budget_exhausted"]),
+      expected: true,
+    },
+    {
+      label: "downstream-cause-reason-mismatch",
+      requested_by: "setfarm-v3-downstream-compiler",
+      target_status: "failed",
+      evidence: downstreamEvidence({
+        ...validCause,
+        workflowStepId: "qa-test",
+        boundary: "product_compiler.downstream_recovery",
+        failureClass: "contract_invalid",
+        failureCode: "V3_DOWNSTREAM_SPECIFICATION_INCOMPLETE",
+      }, "bounded_recovery_blocked", ["budget_exhausted"]),
+      expected: false,
+    },
+    {
+      label: "downstream-schema-missing",
+      requested_by: "setfarm-v3-downstream-compiler",
+      target_status: "failed",
+      evidence: {
+        outcome: "bounded_recovery_blocked",
+        terminalReasonCodes: ["budget_exhausted"],
+        operationalFailureCause: {
+          ...validCause,
+          workflowStepId: "qa-test",
+          boundary: "product_compiler.downstream_recovery",
+          failureClass: "recovery_exhausted",
+          failureCode: "V3_DOWNSTREAM_RECOVERY_BUDGET_EXHAUSTED",
+        },
+      },
+      expected: false,
+    },
+    {
+      label: "downstream-outcome-missing",
+      requested_by: "setfarm-v3-downstream-compiler",
+      target_status: "failed",
+      evidence: {
+        schema: "setfarm.v3-downstream-termination-evidence.v1",
+        terminalReasonCodes: ["budget_exhausted"],
+        operationalFailureCause: {
+          ...validCause,
+          workflowStepId: "qa-test",
+          boundary: "product_compiler.downstream_recovery",
+          failureClass: "recovery_exhausted",
+          failureCode: "V3_DOWNSTREAM_RECOVERY_BUDGET_EXHAUSTED",
+        },
+      },
+      expected: false,
+    },
+    {
+      label: "downstream-reasons-missing",
+      requested_by: "setfarm-v3-downstream-compiler",
+      target_status: "failed",
+      evidence: downstreamEvidence({
+        ...validCause,
+        workflowStepId: "qa-test",
+        boundary: "product_compiler.downstream_recovery",
+        failureClass: "recovery_exhausted",
+        failureCode: "V3_DOWNSTREAM_RECOVERY_BUDGET_EXHAUSTED",
+      }, "bounded_recovery_blocked"),
+      expected: false,
+    },
+    {
+      label: "downstream-multi-reason",
+      requested_by: "setfarm-v3-downstream-compiler",
+      target_status: "failed",
+      evidence: downstreamEvidence({
+        ...validCause,
+        workflowStepId: "final-test",
+        boundary: "product_compiler.downstream_recovery",
+        failureClass: "contract_invalid",
+        failureCode: "V3_DOWNSTREAM_TERMINAL_REASON_SET_21",
+      }, "bounded_recovery_blocked", ["specification_incomplete", "operator_required"]),
+      expected: true,
+    },
+    {
+      label: "downstream-reason-order-drift",
+      requested_by: "setfarm-v3-downstream-compiler",
+      target_status: "failed",
+      evidence: downstreamEvidence({
+        ...validCause,
+        workflowStepId: "final-test",
+        boundary: "product_compiler.downstream_recovery",
+        failureClass: "contract_invalid",
+        failureCode: "V3_DOWNSTREAM_TERMINAL_REASON_SET_21",
+      }, "bounded_recovery_blocked", ["operator_required", "specification_incomplete"]),
+      expected: false,
+    },
+    {
+      label: "downstream-packet-amendment",
+      requested_by: "setfarm-v3-downstream-compiler",
+      target_status: "failed",
+      evidence: downstreamEvidence({
+        ...validCause,
+        workflowStepId: "qa-test",
+        boundary: "product_compiler.downstream_recovery",
+        failureClass: "contract_invalid",
+        failureCode: "V3_DOWNSTREAM_PACKET_AMENDMENT_REQUIRED",
+      }, "packet_amendment_required"),
+      expected: true,
+    },
+    {
+      label: "code-type",
+      target_status: "failed",
+      evidence: causeEvidence({ ...validCause, failureCode: 1 }),
+      expected: false,
+    },
+    {
+      label: "code-grammar",
+      target_status: "failed",
+      evidence: causeEvidence({ ...validCause, failureCode: "INVALID" }),
+      expected: false,
+    },
+    {
+      label: "code-min",
+      target_status: "failed",
+      evidence: causeEvidence({ ...validCause, failureCode: "A_B" }),
+      expected: false,
+    },
+    {
+      label: "code-max",
+      target_status: "failed",
+      evidence: causeEvidence({ ...validCause, failureCode: `A_${"B".repeat(158)}` }),
+      expected: false,
+    },
+    {
+      label: "code-too-long",
+      target_status: "failed",
+      evidence: causeEvidence({ ...validCause, failureCode: `A_${"B".repeat(159)}` }),
+      expected: false,
+    },
+  ].map((item) => ({
+    requested_by: "setfarm.step-fail.single",
+    ...item,
+  }));
+  const rows = await sql.unsafe<Array<{ label: string; allowed: boolean; expected: boolean }>>(
+    `WITH cases AS (
+       SELECT label, requested_by, target_status, evidence, expected
+         FROM jsonb_to_recordset($1::text::jsonb)
+           AS value(label text, requested_by text, target_status text, evidence jsonb, expected boolean)
+     )
+     SELECT label, ((${expression}) IS NOT FALSE) AS allowed, expected
+       FROM cases
+      ORDER BY label`,
+    [JSON.stringify(cases)],
+  );
+  return rows.length === cases.length
+    && rows.every((row) => row.allowed === row.expected);
+}
+
+async function operationalFailureCauseTriggerHasExactSemantics(
+  sql: Sql | TransactionSql,
+): Promise<boolean> {
+  try {
+    await sql.unsafe(
+      `DO $setfarm_probe$
+       DECLARE
+         rejected BOOLEAN;
+       BEGIN
+         DROP TABLE IF EXISTS pg_temp.setfarm_operational_failure_cause_probe;
+         CREATE TEMP TABLE setfarm_operational_failure_cause_probe (
+           target_status TEXT NOT NULL,
+           requested_by TEXT NOT NULL,
+           evidence JSONB NOT NULL
+         );
+         CREATE TRIGGER setfarm_operational_failure_cause_probe_trigger
+           BEFORE UPDATE OF evidence, target_status, requested_by
+           ON setfarm_operational_failure_cause_probe
+           FOR EACH ROW EXECUTE FUNCTION ${OPERATIONAL_FAILURE_CAUSE_FUNCTION}();
+         INSERT INTO setfarm_operational_failure_cause_probe
+           (target_status, requested_by, evidence)
+         VALUES (
+           'failed',
+           'setfarm.step-fail.single',
+           '{"operationalFailureCause":{"schema":"setfarm.operational-failure-cause.v1","workflowStepId":"setup-build","boundary":"stitch.converter.generated_tsx","failureClass":"generated_artifact_invalid","failureCode":"V3_OBSERVABLE_REF_INVALID"}}'::jsonb
+         );
+
+         rejected := FALSE;
+         BEGIN
+           UPDATE setfarm_operational_failure_cause_probe
+              SET target_status = 'cancelled';
+         EXCEPTION WHEN SQLSTATE '55000' THEN
+           IF SQLERRM = 'SETFARM_RUN_TERMINATION_TARGET_STATUS_IMMUTABLE' THEN
+             rejected := TRUE;
+           ELSE
+             RAISE;
+           END IF;
+         END;
+         IF NOT rejected THEN
+           RAISE EXCEPTION 'SETFARM_OPERATIONAL_FAILURE_CAUSE_TARGET_STATUS_PROBE_FAILED';
+         END IF;
+
+         rejected := FALSE;
+         BEGIN
+           UPDATE setfarm_operational_failure_cause_probe
+              SET requested_by = 'agent-prose-classifier';
+         EXCEPTION WHEN SQLSTATE '55000' THEN
+           IF SQLERRM = 'SETFARM_RUN_TERMINATION_REQUESTED_BY_IMMUTABLE' THEN
+             rejected := TRUE;
+           ELSE
+             RAISE;
+           END IF;
+         END;
+         IF NOT rejected THEN
+           RAISE EXCEPTION 'SETFARM_OPERATIONAL_FAILURE_CAUSE_REQUESTER_PROBE_FAILED';
+         END IF;
+
+         rejected := FALSE;
+         BEGIN
+           UPDATE setfarm_operational_failure_cause_probe
+              SET evidence = jsonb_set(
+                evidence,
+                '{operationalFailureCause,failureCode}',
+                '"V3_OBSERVABLE_SELECTOR_INVALID"'::jsonb
+              );
+         EXCEPTION WHEN SQLSTATE '55000' THEN
+           IF SQLERRM = 'SETFARM_OPERATIONAL_FAILURE_CAUSE_IMMUTABLE' THEN
+             rejected := TRUE;
+           ELSE
+             RAISE;
+           END IF;
+         END;
+         IF NOT rejected THEN
+           RAISE EXCEPTION 'SETFARM_OPERATIONAL_FAILURE_CAUSE_MUTATION_PROBE_FAILED';
+         END IF;
+
+         UPDATE setfarm_operational_failure_cause_probe
+            SET evidence = evidence || '{"runtimeSessionCount":0}'::jsonb;
+         IF NOT EXISTS (
+           SELECT 1
+             FROM setfarm_operational_failure_cause_probe
+            WHERE evidence->>'runtimeSessionCount' = '0'
+         ) THEN
+           RAISE EXCEPTION 'SETFARM_OPERATIONAL_FAILURE_CAUSE_MERGE_PROBE_FAILED';
+         END IF;
+
+         INSERT INTO setfarm_operational_failure_cause_probe
+           (target_status, requested_by, evidence)
+         VALUES
+           (
+             'failed',
+             'setfarm-v3-downstream-compiler',
+             '{"schema":"setfarm.v3-downstream-termination-evidence.v1","outcome":"bounded_recovery_blocked","terminalReasonCodes":["budget_exhausted"],"operationalFailureCause":{"schema":"setfarm.operational-failure-cause.v1","workflowStepId":"qa-test","boundary":"product_compiler.downstream_recovery","failureClass":"recovery_exhausted","failureCode":"V3_DOWNSTREAM_RECOVERY_BUDGET_EXHAUSTED"}}'::jsonb
+           ),
+           (
+             'failed',
+             'setfarm.product-compiler.deploy-refusal',
+             '{"schema":"setfarm.v3-deploy-authority-termination.v1","authorityCode":"V3_DEPLOY_PACKET_INVALID","operationalFailureCause":{"schema":"setfarm.operational-failure-cause.v1","workflowStepId":"deploy","boundary":"product_compiler.deploy_authority","failureClass":"contract_invalid","failureCode":"V3_DEPLOY_PACKET_INVALID"}}'::jsonb
+           ),
+           (
+             'failed',
+             'setfarm.v3-pre-dispatch',
+             '{"errorCode":"40001","operationalFailureCause":{"schema":"setfarm.operational-failure-cause.v1","workflowStepId":"implement","boundary":"implementation.pre_dispatch.reservation","failureClass":"infrastructure_failure","failureCode":"SQLSTATE_40001"}}'::jsonb
+           );
+
+         rejected := FALSE;
+         BEGIN
+           UPDATE setfarm_operational_failure_cause_probe
+              SET evidence = jsonb_set(evidence, '{terminalReasonCodes}', '["operator_required"]'::jsonb)
+            WHERE requested_by = 'setfarm-v3-downstream-compiler';
+         EXCEPTION WHEN SQLSTATE '55000' THEN
+           IF SQLERRM = 'SETFARM_OPERATIONAL_FAILURE_EVIDENCE_BINDING_IMMUTABLE' THEN
+             rejected := TRUE;
+           ELSE
+             RAISE;
+           END IF;
+         END;
+         IF NOT rejected THEN
+           RAISE EXCEPTION 'SETFARM_OPERATIONAL_FAILURE_DOWNSTREAM_BINDING_PROBE_FAILED';
+         END IF;
+
+         rejected := FALSE;
+         BEGIN
+           UPDATE setfarm_operational_failure_cause_probe
+              SET evidence = jsonb_set(evidence, '{authorityCode}', '"V3_DEPLOY_SOURCE_UNAVAILABLE"'::jsonb)
+            WHERE requested_by = 'setfarm.product-compiler.deploy-refusal';
+         EXCEPTION WHEN SQLSTATE '55000' THEN
+           IF SQLERRM = 'SETFARM_OPERATIONAL_FAILURE_EVIDENCE_BINDING_IMMUTABLE' THEN
+             rejected := TRUE;
+           ELSE
+             RAISE;
+           END IF;
+         END;
+         IF NOT rejected THEN
+           RAISE EXCEPTION 'SETFARM_OPERATIONAL_FAILURE_DEPLOY_BINDING_PROBE_FAILED';
+         END IF;
+
+         rejected := FALSE;
+         BEGIN
+           UPDATE setfarm_operational_failure_cause_probe
+              SET evidence = jsonb_set(evidence, '{errorCode}', '"40P01"'::jsonb)
+            WHERE requested_by = 'setfarm.v3-pre-dispatch';
+         EXCEPTION WHEN SQLSTATE '55000' THEN
+           IF SQLERRM = 'SETFARM_OPERATIONAL_FAILURE_EVIDENCE_BINDING_IMMUTABLE' THEN
+             rejected := TRUE;
+           ELSE
+             RAISE;
+           END IF;
+         END;
+         IF NOT rejected THEN
+           RAISE EXCEPTION 'SETFARM_OPERATIONAL_FAILURE_PRE_DISPATCH_BINDING_PROBE_FAILED';
+         END IF;
+         DROP TABLE setfarm_operational_failure_cause_probe;
+       END
+       $setfarm_probe$`,
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function detectOperationalFailureCauseSeal(
+  sql: Sql | TransactionSql,
+): Promise<"absent" | "present" | "partial"> {
+  const components = await operationalFailureCauseSealComponents(sql);
+  const presentCount = Number(Boolean(components.constraint))
+    + Number(Boolean(components.trigger))
+    + Number(Boolean(components.functionDefinition));
+  if (presentCount === 0) return "absent";
+  return presentCount === 3 ? "present" : "partial";
+}
+
+async function verifyOperationalFailureCauseSeal(
+  sql: Sql | TransactionSql,
+): Promise<void> {
+  const components = await operationalFailureCauseSealComponents(sql);
+  if (
+    !components.constraint?.validated
+    || !await operationalFailureCauseConstraintHasExactSemantics(
+      sql,
+      components.constraint.expression,
+    )
+  ) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_ADOPTION_MISMATCH",
+      "operational failure cause constraint mismatch",
+    );
+  }
+  const triggerDefinition = normalizeSql(components.trigger?.definition ?? "");
+  if (
+    components.trigger?.enabled !== "O"
+    || components.trigger.relation !== "run_termination_requests"
+    || !triggerDefinition.includes(
+      "before update of evidence, target_status, requested_by on run_termination_requests",
+    )
+    || !triggerDefinition.includes(`${OPERATIONAL_FAILURE_CAUSE_FUNCTION}()`)
+    || triggerDefinition.includes(" when ")
+    || !await operationalFailureCauseTriggerHasExactSemantics(sql)
+  ) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_ADOPTION_MISMATCH",
+      "operational failure cause trigger mismatch",
+    );
+  }
+  const functionDefinition = normalizeSql(components.functionDefinition ?? "");
+  for (const fragment of [
+    "old.target_status is distinct from new.target_status",
+    "setfarm_run_termination_target_status_immutable",
+    "old.requested_by is distinct from new.requested_by",
+    "setfarm_run_termination_requested_by_immutable",
+    "old.evidence->'operationalfailurecause'",
+    "new.evidence->'operationalfailurecause'",
+    "setfarm_operational_failure_cause_immutable",
+    "old.requested_by = 'setfarm.product-compiler.deploy-refusal'",
+    "old.evidence->'authoritycode'",
+    "old.requested_by = 'setfarm.v3-pre-dispatch'",
+    "old.evidence->'errorcode'",
+    "old.requested_by = 'setfarm-v3-downstream-compiler'",
+    "old.evidence->'outcome'",
+    "old.evidence->'terminalreasoncodes'",
+    "setfarm_operational_failure_evidence_binding_immutable",
+  ]) {
+    if (!functionDefinition.includes(fragment)) {
+      throw new ContractSpineMigrationError(
+        "MIGRATION_ADOPTION_MISMATCH",
+        `operational failure cause function mismatch: ${fragment}`,
+      );
+    }
+  }
+}
+
 const migrations: readonly Migration[] = [
   {
     version: 1,
@@ -7343,6 +8115,13 @@ const migrations: readonly Migration[] = [
     statements: RECOVERY_TERMINAL_LEASE_STATEMENTS,
     detect: detectRecoveryTerminalLeaseConstraint,
     verify: verifyRecoveryTerminalLeaseConstraint,
+  },
+  {
+    version: 21,
+    name: "021_operational_failure_cause_seal",
+    statements: OPERATIONAL_FAILURE_CAUSE_SEAL_STATEMENTS,
+    detect: detectOperationalFailureCauseSeal,
+    verify: verifyOperationalFailureCauseSeal,
   },
 ];
 
@@ -7617,6 +8396,183 @@ export async function applyContractSpineMigrations(
 }
 
 /**
+ * Remove only the v21 database enforcement so a v20 binary can start without
+ * seeing an unknown migration journal entry. Existing typed causes remain in
+ * evidence: v20 readers already treat evidence as an extensible JSON object.
+ * Services must be stopped while this runs; the access-exclusive table lock
+ * serializes every evidence/target-status writer for the rollback transaction.
+ */
+export async function rollbackOperationalFailureCauseSealToV20(
+  sql: Sql,
+  options: Readonly<{
+    targetReleaseSha: string;
+    lockTimeoutMs?: number;
+    statementTimeoutMs?: number;
+  }>,
+): Promise<OperationalFailureCauseSealRollbackResult> {
+  if (!/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/.test(options.targetReleaseSha)) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_RELEASE_INVALID",
+      "Rollback target release SHA must be a full lowercase Git object hash",
+    );
+  }
+  const migration = migrations.find((candidate) => candidate.version === 21)!;
+  const expectedChecksum = checksum(migration);
+  const lockTimeoutMs = Math.max(1, Math.min(options.lockTimeoutMs ?? 5_000, 60_000));
+  const statementTimeoutMs = Math.max(
+    lockTimeoutMs,
+    Math.min(options.statementTimeoutMs ?? 30_000, 300_000),
+  );
+  try {
+    return await sql.begin(async (transaction) => {
+      await transaction.unsafe("SELECT set_config('lock_timeout', $1, true)", [`${lockTimeoutMs}ms`]);
+      await transaction.unsafe("SELECT set_config('statement_timeout', $1, true)", [`${statementTimeoutMs}ms`]);
+      await transaction.unsafe("SELECT pg_advisory_xact_lock($1)", [contractSpineMigrationLockKey]);
+
+      const future = await transaction.unsafe<Array<{ version: number }>>(
+        "SELECT version FROM setfarm_schema_migrations WHERE version > 21 ORDER BY version LIMIT 1",
+      );
+      if (future[0]) {
+        throw new ContractSpineMigrationError(
+          "MIGRATION_UNKNOWN_VERSION",
+          `Migration ${future[0].version} must be rolled back before migration 21`,
+        );
+      }
+      const journal = await transaction.unsafe<Array<{
+        name: string;
+        checksum: string;
+        release_sha: string | null;
+        applied_at: Date | string;
+      }>>(
+        `SELECT name, checksum, release_sha, applied_at
+           FROM setfarm_schema_migrations
+          WHERE version = 21
+          FOR UPDATE`,
+      );
+      if (
+        journal[0]?.name !== migration.name
+        || journal[0]?.checksum !== expectedChecksum
+      ) {
+        throw new ContractSpineMigrationError(
+          "MIGRATION_CHECKSUM_MISMATCH",
+          "Migration 21 is absent or differs from the rollback source contract",
+        );
+      }
+      const sourceRows = await transaction.unsafe<Array<{
+        version: number;
+        name: string;
+        checksum: string;
+      }>>(
+        `SELECT version, name, checksum
+           FROM setfarm_schema_migrations
+          WHERE version <= 21
+          ORDER BY version`,
+      );
+      const sourceByVersion = new Map(sourceRows.map((row) => [row.version, row]));
+      for (const expected of migrations.filter((candidate) => candidate.version <= 21)) {
+        const actual = sourceByVersion.get(expected.version);
+        if (
+          actual?.name !== expected.name
+          || actual.checksum !== checksum(expected)
+        ) {
+          throw new ContractSpineMigrationError(
+            "MIGRATION_CHECKSUM_MISMATCH",
+            `Migration ${expected.version} source chain differs from the rollback contract`,
+          );
+        }
+      }
+
+      await transaction.unsafe(
+        "LOCK TABLE run_termination_requests IN ACCESS EXCLUSIVE MODE",
+      );
+      await verifyOperationalFailureCauseSeal(transaction);
+      await transaction.unsafe(
+        `DROP TRIGGER ${OPERATIONAL_FAILURE_CAUSE_TRIGGER} ON run_termination_requests`,
+      );
+      await transaction.unsafe(`DROP FUNCTION ${OPERATIONAL_FAILURE_CAUSE_FUNCTION}()`);
+      await transaction.unsafe(
+        `ALTER TABLE run_termination_requests
+           DROP CONSTRAINT ${OPERATIONAL_FAILURE_CAUSE_CONSTRAINT}`,
+      );
+      for (const retained of migrations.filter((candidate) => candidate.version <= 20)) {
+        await retained.verify(transaction);
+      }
+
+      await transaction.unsafe(
+        `CREATE TABLE IF NOT EXISTS setfarm_schema_migration_rollbacks (
+           rollback_id TEXT PRIMARY KEY,
+           from_version INTEGER NOT NULL,
+           target_version INTEGER NOT NULL,
+           target_release_sha TEXT NOT NULL,
+           rows_rewritten INTEGER NOT NULL,
+           applied_at TIMESTAMPTZ NOT NULL
+         )`,
+      );
+      const appliedAtRows = await transaction.unsafe<Array<{ applied_at: Date | string }>>(
+        "SELECT clock_timestamp() AS applied_at",
+      );
+      const appliedAt = new Date(appliedAtRows[0]!.applied_at);
+      const rollbackId = `RBK_${hashCanonicalJson({
+        schema: "setfarm.contract-spine-rollback-identity.v1",
+        sourceMigration: {
+          version: 21,
+          name: journal[0]!.name,
+          checksum: journal[0]!.checksum,
+          releaseSha: journal[0]!.release_sha,
+          appliedAt: new Date(journal[0]!.applied_at).toISOString(),
+        },
+        targetVersion: 20,
+        targetReleaseSha: options.targetReleaseSha,
+      })}`;
+      await transaction.unsafe(
+        `INSERT INTO setfarm_schema_migration_rollbacks (
+           rollback_id, from_version, target_version, target_release_sha,
+           rows_rewritten, applied_at
+         ) VALUES ($1, 21, 20, $2, 0, $3)`,
+        [rollbackId, options.targetReleaseSha, appliedAt],
+      );
+      const removed = await transaction.unsafe<Array<{ version: number }>>(
+        `DELETE FROM setfarm_schema_migrations
+          WHERE version = 21 AND name = $1 AND checksum = $2
+          RETURNING version`,
+        [migration.name, expectedChecksum],
+      );
+      if (removed.length !== 1) {
+        throw new ContractSpineMigrationError(
+          "MIGRATION_CHECKSUM_MISMATCH",
+          "Migration 21 journal ownership changed during rollback",
+        );
+      }
+      await transaction.unsafe(
+        `UPDATE setfarm_schema_migrations
+            SET verified_release_sha = $1, verified_at = $2
+          WHERE version <= 20`,
+        [options.targetReleaseSha, appliedAt],
+      );
+      return Object.freeze({
+        schema: "setfarm.contract-spine-rollback.v1" as const,
+        rollbackId,
+        fromVersion: 21 as const,
+        targetVersion: 20 as const,
+        targetReleaseSha: options.targetReleaseSha,
+        rowsRewritten: 0 as const,
+        appliedAt: appliedAt.toISOString(),
+      });
+    }) as OperationalFailureCauseSealRollbackResult;
+  } catch (error) {
+    if (error instanceof ContractSpineMigrationError) throw error;
+    if (isLockTimeout(error)) {
+      throw new ContractSpineMigrationError(
+        "MIGRATION_LOCK_TIMEOUT",
+        `Migration 21 rollback lock was not acquired within ${lockTimeoutMs}ms`,
+        { cause: error },
+      );
+    }
+    throw error;
+  }
+}
+
+/**
  * Prepare the database for a binary rollback from migration 20 to the v19
  * reader contract. Services must be stopped: the table locks and active-owner
  * proof make that operational precondition enforceable instead of advisory.
@@ -7653,6 +8609,16 @@ export async function rollbackRecoveryTerminalLeaseIdentityToV19(
       await transaction.unsafe("SELECT set_config('lock_timeout', $1, true)", [`${lockTimeoutMs}ms`]);
       await transaction.unsafe("SELECT set_config('statement_timeout', $1, true)", [`${statementTimeoutMs}ms`]);
       await transaction.unsafe("SELECT pg_advisory_xact_lock($1)", [contractSpineMigrationLockKey]);
+
+      const future = await transaction.unsafe<Array<{ version: number }>>(
+        "SELECT version FROM setfarm_schema_migrations WHERE version > 20 ORDER BY version LIMIT 1",
+      );
+      if (future[0]) {
+        throw new ContractSpineMigrationError(
+          "MIGRATION_UNKNOWN_VERSION",
+          `Migration ${future[0].version} must be rolled back before migration 20`,
+        );
+      }
 
       const journal = await transaction.unsafe<Array<{
         name: string;

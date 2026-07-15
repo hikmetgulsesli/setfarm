@@ -8,6 +8,7 @@ import {
 } from "../../src/evidence/evidence-bundle-v2.js";
 import { compileEvidencePlanV1 } from "../../src/evidence/evidence-plan-v1.js";
 import { ClaimEnvelopeV1Schema } from "../../src/execution/schemas/claim-envelope-v1.js";
+import { evaluateOperationalFailureCauseAuthorityV1 } from "../../src/execution/operational-failure-cause-authority-v1.js";
 import { createFindingSetV1 } from "../../src/findings/finding-set.js";
 import { hashCanonicalJson } from "../../src/product-compiler/canonical-json.js";
 import { ImplementationSliceV1Schema } from "../../src/product-compiler/schemas/implementation-slice-v1.js";
@@ -19,6 +20,7 @@ import {
 } from "../../src/recovery/v3-downstream-recovery-transition.js";
 import { createV3RecoveryCoordinator } from "../../src/recovery/v3-recovery-coordinator.js";
 import { createV3RecoveryWorkRouter } from "../../src/recovery/v3-recovery-work-router.js";
+import { createV3DownstreamTerminalOperationalFailureCauseV1 } from "../../src/recovery/v3-downstream-terminal-cause-v1.js";
 import { buildMinimalValidContracts } from "../product-compiler/fixtures/minimal-valid-contract.js";
 import { createIsolatedTestDatabase, type TestDatabase } from "./test-database.js";
 
@@ -35,6 +37,24 @@ describe("v3 downstream recovery transition", () => {
 
   after(async () => {
     await database.cleanup();
+  });
+
+  it("assigns an exact repeatable cause to a multi-reason terminal matrix", () => {
+    const cause = createV3DownstreamTerminalOperationalFailureCauseV1({
+      workflowStepId: "qa-test",
+      terminalReasonCodes: ["operator_required", "specification_incomplete"],
+    });
+    assert.deepEqual(cause, {
+      schema: "setfarm.operational-failure-cause.v1",
+      workflowStepId: "qa-test",
+      boundary: "product_compiler.downstream_recovery",
+      failureClass: "contract_invalid",
+      failureCode: "V3_DOWNSTREAM_TERMINAL_REASON_SET_21",
+    });
+    assert.equal(evaluateOperationalFailureCauseAuthorityV1({
+      requestedBy: "setfarm-v3-downstream-compiler",
+      cause,
+    }).trusted, true);
   });
 
   async function setup() {
@@ -425,6 +445,7 @@ describe("v3 downstream recovery transition", () => {
       termination_state: string;
       target_status: string;
       required_artifact: string;
+      termination_evidence: Record<string, unknown>;
       qa_fix_count: number;
       recovery_count: number;
     }>>(
@@ -438,6 +459,7 @@ describe("v3 downstream recovery transition", () => {
               termination.state AS termination_state,
               termination.target_status,
               termination.evidence->>'requiredArtifact' AS required_artifact,
+              termination.evidence AS termination_evidence,
               (SELECT COUNT(*)::integer FROM stories WHERE run_id = $1 AND story_id LIKE 'QA-FIX-%') AS qa_fix_count,
               (SELECT COUNT(*)::integer FROM recovery_revision_dispatches dispatch
                 JOIN recovery_cases recovery_case ON recovery_case.recovery_case_id = dispatch.recovery_case_id
@@ -450,7 +472,15 @@ describe("v3 downstream recovery transition", () => {
         WHERE run_row.id = $1`,
       [value.runId, value.qaStepDbId, value.parentClaimId, value.storyDbId],
     );
-    assert.deepEqual({ ...rows[0] }, {
+    const terminal = rows[0]!;
+    assert.deepEqual(terminal.termination_evidence.operationalFailureCause, {
+      schema: "setfarm.operational-failure-cause.v1",
+      workflowStepId: "qa-test",
+      boundary: "product_compiler.downstream_recovery",
+      failureClass: "contract_invalid",
+      failureCode: "V3_DOWNSTREAM_PACKET_AMENDMENT_REQUIRED",
+    });
+    assert.deepEqual({ ...terminal, termination_evidence: undefined }, {
       run_status: "failing",
       qa_status: "failed",
       parent_outcome: "failed",
@@ -461,8 +491,68 @@ describe("v3 downstream recovery transition", () => {
       termination_state: "requested",
       target_status: "failed",
       required_artifact: "setfarm.product-build-packet.v.next",
+      termination_evidence: undefined,
       qa_fix_count: 0,
       recovery_count: 0,
+    });
+  });
+
+  it("seals bounded recovery exhaustion as a distinct producer-owned cause", async () => {
+    const value = await setup();
+    const evidenceBundleHash = "9".repeat(64);
+    const route = V3DownstreamEvidenceRouteResultV1Schema.parse({
+      schema: "setfarm.v3-downstream-evidence-route.v1",
+      status: "bounded_recovery_blocked",
+      runId: value.runId,
+      phase: "qa",
+      packetHash: value.slice.packetHash,
+      sourceRevision: SOURCE,
+      stories: [{
+        storyDbId: value.storyDbId,
+        storyId: value.slice.storyId,
+        attemptId: "ATT_bounded-recovery-blocked-0001",
+        sliceHash: value.sliceHash,
+        evidencePlanArtifactHash: value.planArtifactHash,
+        evidenceBundleHash,
+        aggregateVerdict: "fail",
+        execution: "replayed",
+        coordinator: {
+          status: "blocked",
+          recoveryCaseId: `RCV_${"a".repeat(64)}`,
+          revisionId: `RREV_${"b".repeat(64)}`,
+          reasonCode: "budget_exhausted",
+          evidenceBundleHash,
+        },
+      }],
+      blockedStoryIds: [value.slice.storyId],
+      terminalReasonCodes: ["budget_exhausted"],
+    });
+    const committed = await commitV3DownstreamEvidenceDecision(database.sql, {
+      envelope: value.envelope,
+      route,
+    });
+    assert.equal(committed.decision.outcome, "bounded_recovery_blocked");
+    const rows = await database.sql<Array<{
+      run_status: string;
+      step_status: string;
+      termination_evidence: Record<string, unknown>;
+    }>>`
+      SELECT run_row.status AS run_status,
+             step.status AS step_status,
+             termination.evidence AS termination_evidence
+        FROM runs run_row
+        JOIN steps step ON step.id = ${value.qaStepDbId}
+        JOIN run_termination_requests termination ON termination.run_id = run_row.id
+       WHERE run_row.id = ${value.runId}
+    `;
+    assert.equal(rows[0]!.run_status, "failing");
+    assert.equal(rows[0]!.step_status, "failed");
+    assert.deepEqual(rows[0]!.termination_evidence.operationalFailureCause, {
+      schema: "setfarm.operational-failure-cause.v1",
+      workflowStepId: "qa-test",
+      boundary: "product_compiler.downstream_recovery",
+      failureClass: "recovery_exhausted",
+      failureCode: "V3_DOWNSTREAM_RECOVERY_BUDGET_EXHAUSTED",
     });
   });
 

@@ -185,6 +185,13 @@ test("exact PLAN v3 rejection terminally requests compiler-owned clarification w
     assert.equal(owner.termination_state, "requested");
     assert.equal(owner.termination_evidence.owner, "compiler");
     assert.equal(owner.termination_evidence.modelRedispatchBudget, 0);
+    assert.deepEqual(owner.termination_evidence.operationalFailureCause, {
+      schema: "setfarm.operational-failure-cause.v1",
+      workflowStepId: "plan",
+      boundary: "product_compiler.plan_refusal",
+      failureClass: "contract_invalid",
+      failureCode: "V3_PLAN_CLARIFICATION_REQUIRED",
+    });
     const record = JSON.parse(owner.plan_output);
     assert.equal(record.schema, "setfarm.v3-plan-clarification-record.v1");
     assert.equal(record.sourceTaskHash, ledger.sourceHash);

@@ -264,13 +264,14 @@ describe("contract spine migration journal", () => {
       "018_v3_project_transfer_ack_ledger",
       "019_runtime_completion_submission_evidence",
       "020_recovery_terminal_lease_identity",
+      "021_operational_failure_cause_seal",
     ]);
     assert.equal((await verifyContractSpineMigrations(database.sql)).status, "verified");
   });
 
   it("upgrades agent-scoped claim indexes and backfills the exact relational claim owner", async () => {
     await applyContractSpineMigrations(database.sql);
-    await database.sql`DELETE FROM setfarm_schema_migrations WHERE version IN (5, 6, 7, 8, 12, 14, 18, 19)`;
+    await database.sql`DELETE FROM setfarm_schema_migrations WHERE version IN (5, 6, 7, 8, 12, 14, 18, 19, 21)`;
     await database.sql`DROP TRIGGER trg_runs_project_transfer_ack_set_once ON runs`;
     await database.sql`DROP FUNCTION setfarm_enforce_project_transfer_ack_pointer_set_once()`;
     await database.sql`ALTER TABLE runs DROP CONSTRAINT runs_project_transfer_ack_identity_fkey`;
@@ -301,6 +302,7 @@ describe("contract spine migration journal", () => {
     await database.sql`DROP INDEX idx_runtime_sessions_session_claim_run_unique`;
     await database.sql`DROP TABLE runtime_sessions`;
     await database.sql`DROP TABLE run_termination_requests`;
+    await database.sql`DROP FUNCTION setfarm_enforce_operational_failure_cause_immutable()`;
     await database.sql`DROP INDEX idx_execution_attempts_attempt_claim_unique`;
     await database.sql`DROP INDEX idx_claim_log_id_run_unique`;
     await database.sql`DROP INDEX idx_execution_attempts_claim_id_unique`;
@@ -353,6 +355,7 @@ describe("contract spine migration journal", () => {
       "014_v3_deploy_receipt_ledger",
       "018_v3_project_transfer_ack_ledger",
       "019_runtime_completion_submission_evidence",
+      "021_operational_failure_cause_seal",
     ]);
     const rows = await database.sql<Array<{
       claim_id: string | null;

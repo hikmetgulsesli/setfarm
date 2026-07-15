@@ -9,7 +9,48 @@ const stitchDir = path.join(repoPath, "stitch");
 const manifestPath = path.join(stitchDir, "DESIGN_MANIFEST.json");
 if (!fs.existsSync(manifestPath)) { console.log("No DESIGN_MANIFEST.json — skipping"); process.exit(0); }
 
-const rawManifest = JSON.parse(fs.readFileSync(manifestPath, "utf-8"));
+const conversionResultPath = path.join(repoPath, ".setfarm", "setup", "STITCH_TO_JSX_RESULT.json");
+try { fs.rmSync(conversionResultPath, { force: true }); } catch {}
+
+class StitchConversionContractError extends Error {
+  constructor(code, message) {
+    super(message);
+    this.name = "StitchConversionContractError";
+    this.code = code;
+  }
+}
+
+function failConversion(code, message) {
+  throw new StitchConversionContractError(code, message);
+}
+
+function writeConversionResult(result) {
+  fs.mkdirSync(path.dirname(conversionResultPath), { recursive: true });
+  fs.writeFileSync(conversionResultPath, `${JSON.stringify({
+    schema: "setfarm.stitch-to-jsx-result.v1",
+    ...result,
+  }, null, 2)}\n`);
+}
+
+process.on("uncaughtException", (error) => {
+  if (error instanceof StitchConversionContractError) {
+    writeConversionResult({ status: "failed", failureCode: error.code });
+    console.error(`${error.code}:${error.message}`);
+  } else {
+    console.error(error);
+  }
+  process.exit(1);
+});
+
+let rawManifest;
+try {
+  rawManifest = JSON.parse(fs.readFileSync(manifestPath, "utf-8"));
+} catch {
+  failConversion(
+    "STITCH_DESIGN_MANIFEST_JSON_INVALID",
+    "DESIGN_MANIFEST.json must contain valid JSON",
+  );
+}
 const screensDir = path.join(repoPath, "src", "screens");
 fs.mkdirSync(screensDir, { recursive: true });
 const MIN_STITCH_HTML_BYTES = 1000;
@@ -92,7 +133,7 @@ function loadV3ProjectionContract() {
   const hasBindings = fs.existsSync(bindingsPath);
   if (!hasTargets && !hasBindings) return undefined;
   if (!hasTargets || !hasBindings) {
-    throw new Error("V3_PROJECTION_CONTRACT_PARTIAL: GENERATION_TARGETS.json and STITCH_RESPONSE_BINDINGS.json must exist together");
+    failConversion("V3_PROJECTION_CONTRACT_PARTIAL", "GENERATION_TARGETS.json and STITCH_RESPONSE_BINDINGS.json must exist together");
   }
 
   let targets;
@@ -101,19 +142,19 @@ function loadV3ProjectionContract() {
     targets = JSON.parse(fs.readFileSync(targetsPath, "utf-8"));
     bindings = JSON.parse(fs.readFileSync(bindingsPath, "utf-8"));
   } catch (error) {
-    throw new Error(`V3_PROJECTION_CONTRACT_JSON_INVALID: ${String(error)}`);
+    failConversion("V3_PROJECTION_CONTRACT_JSON_INVALID", "projection contract JSON is invalid");
   }
   if (targets?.schema !== "setfarm.design-generation-targets.v1" || !Array.isArray(targets.targets)) {
-    throw new Error("V3_PROJECTION_TARGETS_INVALID: exact generation targets are required for contract-only projection");
+    failConversion("V3_PROJECTION_TARGETS_INVALID", "exact generation targets are required for contract-only projection");
   }
   if (bindings?.schema !== "setfarm.stitch-target-response-bindings.v1" || !Array.isArray(bindings.bindings)) {
-    throw new Error("V3_PROJECTION_BINDINGS_INVALID: exact Stitch response bindings are required for contract-only projection");
+    failConversion("V3_PROJECTION_BINDINGS_INVALID", "exact Stitch response bindings are required for contract-only projection");
   }
 
   const targetById = new Map();
   for (const target of targets.targets) {
     if (!target?.targetId || targetById.has(target.targetId)) {
-      throw new Error(`V3_PROJECTION_TARGET_ID_INVALID:${String(target?.targetId || "missing")}`);
+      failConversion("V3_PROJECTION_TARGET_ID_INVALID", "projection target identity is missing or duplicated");
     }
     targetById.set(target.targetId, target);
   }
@@ -121,7 +162,7 @@ function loadV3ProjectionContract() {
   for (const binding of bindings.bindings) {
     const target = targetById.get(binding?.targetRef);
     if (!target || !binding?.responseScreenId || byScreenId.has(binding.responseScreenId)) {
-      throw new Error(`V3_PROJECTION_RESPONSE_BINDING_INVALID:${String(binding?.targetRef || "missing")}`);
+      failConversion("V3_PROJECTION_RESPONSE_BINDING_INVALID", "projection response binding is missing, duplicated, or unowned");
     }
     byScreenId.set(binding.responseScreenId, {
       targetRef: target.targetId,
@@ -1658,10 +1699,10 @@ function annotateObservableElements(html, projection) {
   const bySelector = new Map();
   for (const observable of required) {
     if (!/^OBS_[A-Z0-9]+(?:_[A-Z0-9]+)*$/.test(observable.observableRef)) {
-      throw new Error(`V3_OBSERVABLE_REF_INVALID:${observable.observableRef || "missing"}`);
+      failConversion("V3_OBSERVABLE_REF_INVALID", "observable reference is missing or duplicated");
     }
     if (!observable.role || !observable.name) {
-      throw new Error(`V3_OBSERVABLE_SELECTOR_INVALID:${observable.observableRef}`);
+      failConversion("V3_OBSERVABLE_SELECTOR_INVALID", "observable selector is invalid");
     }
     const key = `${observable.role}\0${observable.name}`;
     const entries = bySelector.get(key) || [];
@@ -1691,7 +1732,7 @@ function annotateObservableElements(html, projection) {
     const count = counts.get(key) || 0;
     if (count !== 1) {
       const code = count === 0 ? "V3_OBSERVABLE_SELECTOR_MISSING" : "V3_OBSERVABLE_SELECTOR_AMBIGUOUS";
-      throw new Error(`${code}:${matches.map((entry) => entry.observableRef).sort().join(",")}:${count}`);
+      failConversion(code, "observable selector cardinality does not match its contract");
     }
   }
   return {
@@ -1739,7 +1780,7 @@ for (const screen of manifest) {
   const classNormalizedBody = normalizeDesignClassAttributes(renderableBody);
   const projection = v3ProjectionContract?.byScreenId.get(String(screen.screenId || ""));
   if (v3ProjectionContract && !projection) {
-    throw new Error(`V3_PROJECTION_SCREEN_UNBOUND:${String(screen.screenId || screen.title || "missing")}`);
+    failConversion("V3_PROJECTION_SCREEN_UNBOUND", "Stitch screen has no exact projection binding");
   }
   const observableProjection = annotateObservableElements(classNormalizedBody, projection);
   const {
@@ -1890,3 +1931,4 @@ if (unknownMaterialIcons.size > 0) {
   console.warn("Supervisor should repair icon fidelity if the generated fallback harms the UI.");
 }
 console.log("Generated", screenIndex.length, "screen(s)");
+writeConversionResult({ status: "passed" });

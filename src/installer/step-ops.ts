@@ -44,7 +44,9 @@ import { canonicalJsonStringify } from "../product-compiler/canonical-json.js";
 import { ensureCompilerClaimFence } from "../execution/compiler-claim-fence.js";
 import type { ClaimAttemptFenceV1 } from "../execution/schemas/claim-envelope-v1.js";
 import type { ClaimEnvelopeV1 } from "../execution/schemas/claim-envelope-v1.js";
+import { OperationalFailureCauseError } from "../execution/schemas/operational-failure-cause-v1.js";
 import { assertClaimAuthority } from "../execution/claim-authority.js";
+import { isV3OperationalStageWorkflowStepIdV1 } from "../execution/operational-failure-cause-authority-v1.js";
 import { requestRunTerminationInTransaction } from "../execution/run-termination.js";
 import {
   markRuntimeCompletionOwnerCommittedInTransaction,
@@ -145,6 +147,17 @@ import {
   shouldMaterializeRepoDeployEnvironment,
   shouldRunLegacyDeployCompletionGuard,
 } from "./steps/11-deploy/env-policy.js";
+
+class V3PlatformPreclaimLifecycleError extends Error {
+  readonly hardPreClaim = true;
+
+  constructor(cause: unknown) {
+    super(`V3_PLATFORM_PRECLAIM_LIFECYCLE_FAILED:${String(cause).slice(0, 800)}`, {
+      cause,
+    });
+    this.name = "V3PlatformPreclaimLifecycleError";
+  }
+}
 
 // ── Re-exports from extracted modules (backwards compat for cli.ts, medic.ts) ──
 export { resolveTemplate, parseOutputKeyValues } from "./context-ops.js";
@@ -6317,13 +6330,24 @@ async function claimSingleStep(
               `[step-module] ${_stepModule.id} preClaim failed as ${v3PlatformPreclaim ? "v3 platform-owned terminal gate" : "hard gate"}: ${String(_pce).slice(0, 200)}`,
               { runId: step.run_id },
             );
-            await failStep(
-              step.id,
-              ownedPreClaimError,
-              singleStepClaimEnvelope,
-              v3PlatformPreclaim ? { singleStepMode: "terminal_platform_preclaim" } : undefined,
-            );
-            await closeSingleStepHandoff("failed", ownedPreClaimError);
+            try {
+              await failStep(
+                step.id,
+                ownedPreClaimError,
+                singleStepClaimEnvelope,
+                v3PlatformPreclaim ? {
+                  singleStepMode: "terminal_platform_preclaim",
+                  ...(_pce instanceof OperationalFailureCauseError
+                    ? { operationalFailureCause: _pce.failureCause }
+                    : {}),
+                } : undefined,
+              );
+            } catch (transitionError) {
+              if (v3PlatformPreclaim) {
+                throw new V3PlatformPreclaimLifecycleError(transitionError);
+              }
+              throw transitionError;
+            }
             return { found: false };
           }
           logger.warn(`[step-module] ${_stepModule.id} preClaim failed (non-fatal): ${String(_pce).slice(0, 200)}`, { runId: step.run_id });
@@ -6332,7 +6356,11 @@ async function claimSingleStep(
       await _stepModule.injectContext(_modCtx);
     }
   } catch (_ie) {
-    if (_ie instanceof V3DeployRefusalLifecycleError || _ie instanceof V3DeployAuthorityError) {
+    if (
+      _ie instanceof V3DeployRefusalLifecycleError
+      || _ie instanceof V3DeployAuthorityError
+      || _ie instanceof V3PlatformPreclaimLifecycleError
+    ) {
       logger.error(`[step-module] terminal preClaim lifecycle failed closed: ${String(_ie).slice(0, 500)}`, {
         runId: step.run_id,
         stepId: step.step_id,
@@ -6381,6 +6409,15 @@ async function claimSingleStep(
         throw new Error("V3_STAGE_INPUT_UNRESOLVED_CLAIM_AUTHORITY_MISSING");
       }
       const diagnostic = `V3_STAGE_INPUT_UNRESOLVED: ${reason}; unchanged input has no model redispatch authority`;
+      const operationalFailureCause = isV3OperationalStageWorkflowStepIdV1(step.step_id)
+        ? {
+            schema: "setfarm.operational-failure-cause.v1" as const,
+            workflowStepId: step.step_id,
+            boundary: "stage_context_assembly",
+            failureClass: "contract_invalid" as const,
+            failureCode: "V3_STAGE_INPUT_UNRESOLVED",
+          }
+        : undefined;
       const transitionTime = now();
       await pgBegin(async (sql) => {
         await closeReservedClaimRuntimeInTransaction(sql, {
@@ -6406,6 +6443,7 @@ async function claimSingleStep(
           targetStatus: "failed",
           requestedBy: "setfarm.v3-stage-input-authority",
           diagnostic,
+          ...(operationalFailureCause ? { failureCause: operationalFailureCause } : {}),
           evidence: {
             schema: "setfarm.v3-stage-input-unresolved.v1",
             missingVariables: allMissing,
@@ -6478,6 +6516,15 @@ async function claimSingleStep(
         throw new Error("V3_STAGE_RETRY_DUPLICATE_CLAIM_AUTHORITY_MISSING");
       }
       const diagnostic = `V3_STAGE_RETRY_DUPLICATE_UNCHANGED_TUPLE: ${currentDedupeKey}; the same instruction/output/failure tuple cannot be sent to a model twice`;
+      const operationalFailureCause = isV3OperationalStageWorkflowStepIdV1(step.step_id)
+        ? {
+            schema: "setfarm.operational-failure-cause.v1" as const,
+            workflowStepId: step.step_id,
+            boundary: "stage_retry_authority",
+            failureClass: "retry_delta_missing" as const,
+            failureCode: "V3_STAGE_RETRY_DUPLICATE_UNCHANGED_TUPLE",
+          }
+        : undefined;
       await pgBegin(async (sql) => {
         await closeReservedClaimRuntimeInTransaction(sql, {
           claimId: singleStepClaimId!,
@@ -6498,6 +6545,7 @@ async function claimSingleStep(
           targetStatus: "failed",
           requestedBy: "setfarm.v3-stage-retry-authority",
           diagnostic,
+          ...(operationalFailureCause ? { failureCause: operationalFailureCause } : {}),
           evidence: {
             schema: "setfarm.v3-stage-retry-dedupe-block.v1",
             dedupeKey: currentDedupeKey,
@@ -7442,6 +7490,13 @@ export async function claimStep(
             targetStatus: "failed",
             requestedBy: "setfarm.v3-pre-dispatch",
             diagnostic: reason,
+            failureCause: {
+              schema: "setfarm.operational-failure-cause.v1",
+              workflowStepId: step.step_id,
+              boundary: "implementation.pre_dispatch",
+              failureClass: "platform_authority_invalid",
+              failureCode: "V3_PREPARATION_AUTHORITY_UNAVAILABLE",
+            },
             evidence: { source: "claimLoopStep", errorCode: "V3_PREPARATION_AUTHORITY_UNAVAILABLE" },
             now: new Date(transitionTime),
           });
@@ -7463,7 +7518,6 @@ export async function claimStep(
             modelDispatched: false,
           },
         });
-        await failRun(step.run_id, true, reason);
         scheduleRunCronTeardown(step.run_id);
         return { found: false };
       }
@@ -9463,6 +9517,15 @@ ${prd}`;
             targetStatus: "failed",
             requestedBy: "setfarm.step-ops.stories-completeness",
             diagnostic: noStoriesMsg,
+            ...(runProtocol?.protocol === "v3" ? {
+              failureCause: {
+                schema: "setfarm.operational-failure-cause.v1" as const,
+                workflowStepId: step.step_id,
+                boundary: "story_plan.completeness",
+                failureClass: "contract_invalid",
+                failureCode: "STORIES_REQUIRED_OUTPUT_MISSING",
+              },
+            } : {}),
             evidence: { source: "completeStep.stories-completeness" },
           });
         });

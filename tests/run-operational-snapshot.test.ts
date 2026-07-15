@@ -1564,6 +1564,153 @@ describe("canonical run operational snapshot", () => {
       ...request,
       evidence: { schema: "setfarm.v3-deploy-authority-termination.v2" },
     }));
+    const genericOperationalCause = {
+      schema: "setfarm.operational-failure-cause.v1",
+      workflowStepId: "setup-build",
+      boundary: "stitch.converter.generated_tsx",
+      failureClass: "generated_artifact_invalid",
+      failureCode: "V3_OBSERVABLE_REF_INVALID",
+    } as const;
+    assert.throws(() => OperationalTerminationRequestV1Schema.parse({
+      ...request,
+      requestedBy: "setfarm.step-fail.single",
+      evidence: {
+        schema: "setfarm.v3-stitch-converter-termination.v1",
+        operationalFailureCause: genericOperationalCause,
+        diagnosticRef: "setfarm://observation/converter-failure",
+      },
+    }));
+    assert.doesNotThrow(() => OperationalTerminationRequestV1Schema.parse({
+      ...request,
+      requestedBy: "setfarm.step-fail.single",
+      evidence: {
+        operationalFailureCause: genericOperationalCause,
+        diagnosticRef: "setfarm://observation/converter-failure",
+      },
+    }));
+    assert.throws(() => OperationalTerminationRequestV1Schema.parse({
+      ...request,
+      requestedBy: "setfarm.step-fail.single",
+      evidence: {
+        schema: "setfarm.v3-stitch-converter-termination.v1",
+        operationalFailureCause: { ...genericOperationalCause, runId: "volatile-run" },
+      },
+    }));
+    assert.throws(() => OperationalTerminationRequestV1Schema.parse({
+      ...request,
+      requestedBy: "agent-prose-classifier",
+      evidence: { operationalFailureCause: genericOperationalCause },
+    }));
+    assert.throws(() => OperationalTerminationRequestV1Schema.parse({
+      ...request,
+      targetStatus: "cancelled",
+      requestedBy: "operator",
+      evidence: { operationalFailureCause: genericOperationalCause },
+    }));
+    assert.doesNotThrow(() => OperationalTerminationRequestV1Schema.parse({
+      ...request,
+      requestedBy: "setfarm.v3-stage-input-authority",
+      evidence: {
+        schema: "setfarm.v3-stage-input-unresolved.v1",
+        missingVariables: ["required_contract"],
+        modelRedispatchBudget: 0,
+        operationalFailureCause: {
+          schema: "setfarm.operational-failure-cause.v1",
+          workflowStepId: "verify",
+          boundary: "stage_context_assembly",
+          failureClass: "contract_invalid",
+          failureCode: "V3_STAGE_INPUT_UNRESOLVED",
+        },
+      },
+    }));
+    assert.doesNotThrow(() => OperationalTerminationRequestV1Schema.parse({
+      ...request,
+      requestedBy: "setfarm.v3-stage-retry-authority",
+      evidence: {
+        schema: "setfarm.v3-stage-retry-dedupe-block.v1",
+        dedupeKey: HASH,
+        modelRedispatchBudget: 0,
+        operationalFailureCause: {
+          schema: "setfarm.operational-failure-cause.v1",
+          workflowStepId: "final-test",
+          boundary: "stage_retry_authority",
+          failureClass: "retry_delta_missing",
+          failureCode: "V3_STAGE_RETRY_DUPLICATE_UNCHANGED_TUPLE",
+        },
+      },
+    }));
+    assert.throws(() => OperationalTerminationRequestV1Schema.parse({
+      ...request,
+      requestedBy: "setfarm.v3-stage-input-authority",
+      evidence: {
+        schema: "setfarm.v3-stage-retry-dedupe-block.v1",
+        dedupeKey: HASH,
+        modelRedispatchBudget: 0,
+      },
+    }));
+    const boundedDownstreamEvidence = {
+      schema: "setfarm.v3-downstream-termination-evidence.v1" as const,
+      routeHash: HASH,
+      packetHash: INPUT_HASH,
+      sourceRevision: { sha: SHA, treeHash: TREE },
+      outcome: "bounded_recovery_blocked" as const,
+      storyEvidenceRefs: ["setfarm://evidence-bundle/example"],
+      terminalReasonCodes: ["specification_incomplete", "operator_required"] as const,
+      operationalFailureCause: {
+        schema: "setfarm.operational-failure-cause.v1" as const,
+        workflowStepId: "qa-test",
+        boundary: "product_compiler.downstream_recovery",
+        failureClass: "contract_invalid",
+        failureCode: "V3_DOWNSTREAM_TERMINAL_REASON_SET_21",
+      },
+    };
+    assert.doesNotThrow(() => OperationalTerminationRequestV1Schema.parse({
+      ...request,
+      requestedBy: "setfarm-v3-downstream-compiler",
+      evidence: boundedDownstreamEvidence,
+    }));
+    assert.throws(() => OperationalTerminationRequestV1Schema.parse({
+      ...request,
+      requestedBy: "setfarm-v3-downstream-compiler",
+      evidence: {
+        ...boundedDownstreamEvidence,
+        terminalReasonCodes: ["budget_exhausted"],
+      },
+    }), /EVIDENCE_BINDING_INVALID/);
+    assert.throws(() => OperationalTerminationRequestV1Schema.parse({
+      ...request,
+      requestedBy: "setfarm-v3-downstream-compiler",
+      evidence: {
+        ...boundedDownstreamEvidence,
+        terminalReasonCodes: ["operator_required", "specification_incomplete"],
+      },
+    }), /EVIDENCE_BINDING_INVALID/);
+    assert.doesNotThrow(() => OperationalTerminationRequestV1Schema.parse({
+      ...request,
+      evidence: {
+        ...request.evidence,
+        operationalFailureCause: {
+          schema: "setfarm.operational-failure-cause.v1",
+          workflowStepId: "deploy",
+          boundary: "product_compiler.deploy_authority",
+          failureClass: "contract_invalid",
+          failureCode: "V3_DEPLOY_SOURCE_REVISION_MISMATCH",
+        },
+      },
+    }));
+    assert.throws(() => OperationalTerminationRequestV1Schema.parse({
+      ...request,
+      evidence: {
+        ...request.evidence,
+        operationalFailureCause: {
+          schema: "setfarm.operational-failure-cause.v1",
+          workflowStepId: "deploy",
+          boundary: "product_compiler.deploy_authority",
+          failureClass: "contract_invalid",
+          failureCode: "V3_DEPLOY_PACKET_INVALID",
+        },
+      },
+    }), /EVIDENCE_BINDING_INVALID/);
     assert.throws(() => OperationalTerminationRequestV1Schema.parse({
       ...request,
       requestedBy: "setfarm-v3-downstream-compiler",

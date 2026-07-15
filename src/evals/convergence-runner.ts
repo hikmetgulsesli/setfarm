@@ -73,6 +73,12 @@ import {
   type TaskIntentOracleV1,
 } from "./task-intent-oracle.js";
 import { createV3ReleaseAdmissionRepository } from "../execution/v3-release-admission-repository.js";
+import { evaluateOperationalFailureCauseEvidenceAuthorityV1 } from "../execution/operational-failure-cause-authority-v1.js";
+import {
+  OperationalFailureCauseV1Schema,
+  operationalFailureCauseHashV1,
+  type OperationalFailureCauseV1,
+} from "../execution/schemas/operational-failure-cause-v1.js";
 import {
   serializeInternalCanaryAdmissionContext,
   type InternalCanaryAdmissionContextV1,
@@ -150,9 +156,16 @@ export type ConvergencePullRequestRef = Readonly<{
   mergeStatus: string | null;
 }>;
 
+export type ConvergenceScopedFailureV1 = Readonly<{
+  workflowStepId: string;
+  phase: string | null;
+  kind: "step" | "story";
+}>;
+
 export type ConvergenceRunCollection = Readonly<{
   canonical: z.infer<typeof ConvergenceCanonicalEvidenceV1Schema>;
-  rootCauseHash: string | null;
+  operationalFailureCause: OperationalFailureCauseV1 | null;
+  scopedFailure: ConvergenceScopedFailureV1 | null;
   pullRequests: readonly ConvergencePullRequestRef[];
 }>;
 
@@ -577,102 +590,72 @@ function parsedEvidence(value: unknown): Record<string, unknown> {
   }
 }
 
-function compareUtf16(left: string, right: string): number {
-  return left < right ? -1 : left > right ? 1 : 0;
-}
-
-function exactFailureEvidence(value: unknown): Record<string, unknown> {
-  const evidence = parsedEvidence(value);
-  const projection: Record<string, unknown> = {};
-  for (const key of [
-    "schema",
-    "code",
-    "kind",
-    "reasonCode",
-    "workflowStepId",
-    "failureOwner",
-    "retryPolicy",
-  ]) {
-    const candidate = evidence[key];
-    if (["string", "number", "boolean"].includes(typeof candidate) || candidate === null) {
-      projection[key] = candidate;
-    }
-  }
-  for (const key of ["rejectionCodes", "reasonCodes", "invariantCodes"]) {
-    const candidate = evidence[key];
-    if (Array.isArray(candidate)) {
-      projection[key] = [...new Set(candidate.filter((item): item is string => typeof item === "string"))].sort();
-    }
-  }
-  if (Array.isArray(evidence["diagnostics"])) {
-    projection["diagnostics"] = evidence["diagnostics"].flatMap((item) => {
-      if (!item || typeof item !== "object" || Array.isArray(item)) return [];
-      const raw = item as Record<string, unknown>;
-      const diagnostic: Record<string, unknown> = {};
-      for (const key of ["schema", "code", "category", "severity", "path", "reference"]) {
-        if (typeof raw[key] === "string") diagnostic[key] = raw[key];
-      }
-      return Object.keys(diagnostic).length > 0 ? [diagnostic] : [];
-    }).sort((left, right) => compareUtf16(JSON.stringify(left), JSON.stringify(right)));
-  }
-  return projection;
-}
-
-/** Stable operational failure identity: typed fields only, never prose or volatile event IDs. */
-export function canonicalConvergenceFailureObservationV1(
-  row: Readonly<Record<string, unknown>>,
-): Readonly<Record<string, unknown>> {
-  const eventType = String(row["event_type"] ?? "").trim();
-  return {
-    eventType: eventType || "untyped_observation",
-    status: String(row["status"] ?? "unknown"),
-    evidence: exactFailureEvidence(row["evidence"]),
-  };
-}
-
-/** Run-local story IDs are transport identity; the typed failure fingerprint is semantic identity. */
-export function canonicalConvergenceStoryFailuresV1(
+export function canonicalConvergenceScopedFailureV1(
   rows: readonly Readonly<Record<string, unknown>>[],
-): readonly string[] {
-  return [...new Set(rows
-    .map((row) => String(row["quality_failure_fingerprint"] ?? "").trim())
-    .filter(Boolean))].sort(compareUtf16);
+): ConvergenceScopedFailureV1 | null {
+  for (let index = rows.length - 1; index >= 0; index -= 1) {
+    const row = rows[index]!;
+    const workflowStepId = String(row["step_id"] ?? "").trim();
+    if (!workflowStepId || workflowStepId === "run") continue;
+    const storyId = String(row["story_id"] ?? "").trim();
+    const phase = String(row["phase"] ?? "").trim();
+    return Object.freeze({
+      workflowStepId,
+      phase: phase || null,
+      kind: storyId ? "story" : "step",
+    });
+  }
+  return null;
 }
 
-/**
- * Root-cause identity follows the final typed failing observation. Earlier
- * recovered planner/reviewer failures must not make the terminal cause vary.
- */
-export function canonicalConvergenceTerminalFailureV1(
-  rows: readonly Readonly<Record<string, unknown>>[],
-): Readonly<Record<string, unknown>> | null {
-  const failures = rows.map(canonicalConvergenceFailureObservationV1);
-  const typed = failures.filter((failure) => {
-    const evidence = failure["evidence"];
-    return Boolean(evidence && typeof evidence === "object" && Object.keys(evidence).length > 0);
+export function trustedOperationalFailureCauseV1(input: Readonly<{
+  requestedBy: string;
+  evidence: unknown;
+  failedWorkflowStepIds: ReadonlySet<string>;
+}>): OperationalFailureCauseV1 | null {
+  const evidence = parsedEvidence(input.evidence);
+  const authority = evaluateOperationalFailureCauseEvidenceAuthorityV1({
+    requestedBy: input.requestedBy,
+    cause: evidence["operationalFailureCause"],
+    evidence,
   });
-  return typed.at(-1) ?? failures.at(-1) ?? null;
+  if (!authority.trusted
+    || !input.failedWorkflowStepIds.has(authority.cause.workflowStepId)) {
+    return null;
+  }
+  return authority.cause;
 }
 
 function rootCauseForFailure(input: Readonly<{
+  runId: string;
   collected: ConvergenceRunCollection;
-  canonical: z.infer<typeof ConvergenceCanonicalEvidenceV1Schema>;
-  projection: z.infer<typeof ConvergenceProjectionEvidenceV1Schema>;
-  ownership: z.infer<typeof ConvergenceOwnershipEvidenceV1Schema>;
-  github: z.infer<typeof ConvergenceGitHubEvidenceV1Schema>;
   disposition: string;
-  actualStackPackId: string | null;
-  expectedStackPackId: string | null;
-}>): string {
-  if (input.collected.rootCauseHash) return Sha256Schema.parse(input.collected.rootCauseHash);
-  return safeHash({
-    disposition: input.disposition,
-    canonical: input.canonical.stateHash,
-    projection: input.projection,
-    ownership: input.ownership,
-    github: input.github,
-    actualStackPackId: input.actualStackPackId,
-    expectedStackPackId: input.expectedStackPackId,
+}>): Readonly<{ hash: string; repeatable: boolean }> {
+  if (input.collected.operationalFailureCause) {
+    return Object.freeze({
+      hash: operationalFailureCauseHashV1(input.collected.operationalFailureCause),
+      repeatable: true,
+    });
+  }
+  if (input.collected.scopedFailure) {
+    return Object.freeze({
+      hash: safeHash({
+        schema: "setfarm.convergence-nonrepeatable-root.v1",
+        runId: input.runId,
+        source: "scoped_failure",
+        scope: input.collected.scopedFailure,
+      }),
+      repeatable: false,
+    });
+  }
+  return Object.freeze({
+    hash: safeHash({
+      schema: "setfarm.convergence-nonrepeatable-root.v1",
+      runId: input.runId,
+      source: "unattributed",
+      disposition: input.disposition,
+    }),
+    repeatable: false,
   });
 }
 
@@ -737,6 +720,7 @@ export async function runConvergenceSuite(
   const planned = plannedCases(loaded.suite);
   const runs: ConvergenceEvalRunResultV1[] = [];
   const rootCounts = new Map<string, number>();
+  const repeatableRootCounts = new Map<string, number>();
   const blockers = new Set<string>();
   let repeatedRootCause: string | null = null;
   let canaryContexts = new Map<string, InternalCanaryAdmissionContextV1>();
@@ -827,7 +811,8 @@ export async function runConvergenceSuite(
               task: item.value.task,
               oracle: item.value.oracle,
             }),
-            rootCauseHash: null,
+            operationalFailureCause: null,
+            scopedFailure: null,
             pullRequests: [],
           };
       const expectedDecision = item.value.oracle.expectedDecision;
@@ -940,27 +925,23 @@ export async function runConvergenceSuite(
       } catch {
         passed = false;
       }
-      const rootCauseHash = passed ? null : rootCauseForFailure({
+      const stableRunIdentity = !terminal.timedOut
+        && !identityInvalidated
+        && project.projectIdentityState !== "invalid";
+      const releaseStillPinned = stableRunIdentity
+        ? await verifyReleaseStillPinned(options.releaseSha, release.runnerHash, ports)
+        : false;
+      const rootCause = passed ? null : rootCauseForFailure({
+        runId: startRead.value.runId,
         collected,
-        canonical: collected.canonical,
-        projection,
-        ownership,
-        github,
         disposition,
-        actualStackPackId: actualStack.success ? actualStack.data : null,
-        expectedStackPackId: expectedDecision.kind === "accepted_candidate" ? expectedDecision.stackPackId : null,
       });
+      const rootCauseHash = rootCause?.hash ?? null;
       const runResult = createConvergenceRunResult({ ...runPayload, passed, rootCauseHash });
       await ports.artifacts.put(runResult);
       runs.push(runResult);
       if (rootCauseHash) {
-        const count = (rootCounts.get(rootCauseHash) ?? 0) + 1;
-        rootCounts.set(rootCauseHash, count);
-        if (count >= loaded.suite.rootCauseRepeatLimit) {
-          repeatedRootCause = rootCauseHash;
-          blockers.add("EVAL_REPEATED_ROOT_CAUSE_STOP");
-          break;
-        }
+        rootCounts.set(rootCauseHash, (rootCounts.get(rootCauseHash) ?? 0) + 1);
       }
       if (terminal.timedOut) {
         blockers.add("EVAL_RUN_TIMEOUT_ACTIVE_OWNERSHIP");
@@ -969,6 +950,22 @@ export async function runConvergenceSuite(
       if (identityInvalidated || project.projectIdentityState === "invalid") {
         blockers.add("EVAL_RUN_IDENTITY_INVALIDATED");
         break;
+      }
+      if (!releaseStillPinned) {
+        blockers.add("EVAL_RELEASE_IDENTITY_DRIFT");
+        break;
+      }
+      // A cause becomes repeatable only after the run, project, source and
+      // release identities that define "unchanged" have all survived the
+      // execution. Never let a stale or timed-out observation stop the suite.
+      if (rootCauseHash && rootCause?.repeatable === true) {
+        const count = (repeatableRootCounts.get(rootCauseHash) ?? 0) + 1;
+        repeatableRootCounts.set(rootCauseHash, count);
+        if (count >= loaded.suite.rootCauseRepeatLimit) {
+          repeatedRootCause = rootCauseHash;
+          blockers.add("EVAL_REPEATED_ROOT_CAUSE_STOP");
+          break;
+        }
       }
     }
   }
@@ -1144,6 +1141,9 @@ async function collectTypedRejectionRun(
   }
   const record = PlanClarificationRecordV1Schema.safeParse(rawRecord);
   const terminationEvidence = parseContext(terminationRows[0]?.["evidence"]);
+  const terminationCause = OperationalFailureCauseV1Schema.safeParse(
+    terminationEvidence["operationalFailureCause"],
+  );
   const recordValid = planRows.length === 1
     && planRows[0]?.["status"] === "failed"
     && integer(planRows[0]?.["retry_count"]) === 0
@@ -1160,6 +1160,11 @@ async function collectTypedRejectionRun(
     && terminationRows[0]?.["requested_by"] === "setfarm.product-compiler.plan-refusal"
     && terminationEvidence["owner"] === "compiler"
     && terminationEvidence["modelRedispatchBudget"] === 0
+    && terminationCause.success
+    && terminationCause.data.workflowStepId === "plan"
+    && terminationCause.data.boundary === "product_compiler.plan_refusal"
+    && terminationCause.data.failureClass === "contract_invalid"
+    && terminationCause.data.failureCode === "V3_PLAN_CLARIFICATION_REQUIRED"
     && record.success
     && terminationEvidence["sourceTaskHash"] === record.data.sourceTaskHash
     && terminationEvidence["rejectionHash"] === record.data.rejectionHash;
@@ -1273,13 +1278,10 @@ async function collectTypedRejectionRun(
     ...canonicalPayload,
     stateHash: safeHash(canonicalPayload),
   });
-  const failed = String(run["status"] ?? "").toLowerCase() !== "failed"
-    || canonical.invariantCodes.length > 0;
   return {
     canonical,
-    rootCauseHash: failed
-      ? safeHash({ runStatus: run["status"], invariantCodes: canonical.invariantCodes, oracle: oracle.evaluationHash })
-      : null,
+    operationalFailureCause: null,
+    scopedFailure: null,
     pullRequests: pullRequestRows.map((row) => ({
       url: String(row["pr_url"]),
       mergeStatus: row["merge_status"] ? String(row["merge_status"]) : null,
@@ -1825,31 +1827,30 @@ export function createPostgresConvergencePort(
       });
 
       const failureRows = await sql.unsafe<Array<Record<string, unknown>>>(
-        `SELECT check_id, status, evidence, event_type FROM run_observations
+        `SELECT step_id, story_id, phase, status, evidence, event_type FROM run_observations
           WHERE run_id = $1 AND status IN ('fail', 'blocked')
           ORDER BY created_at, id`,
         [runId],
       );
-      const storyFailures = await sql.unsafe<Array<Record<string, unknown>>>(
-        `SELECT quality_failure_fingerprint
-           FROM stories
+      const terminationRows = await sql.unsafe<Array<Record<string, unknown>>>(
+        `SELECT requested_by, evidence
+           FROM run_termination_requests
           WHERE run_id = $1
-            AND status = 'failed'
-            AND quality_failure_fingerprint IS NOT NULL
-          ORDER BY quality_failure_fingerprint`,
+            AND target_status = 'failed'
+            AND state = 'terminalized'
+          ORDER BY terminalized_at DESC NULLS LAST, requested_at DESC, request_id DESC
+          LIMIT 1`,
         [runId],
       );
-      const failed = !["completed", "done"].includes(String(run["status"]).toLowerCase())
-        || canonical.invariantCodes.length > 0;
-      const rootCauseHash = failed
-        ? safeHash({
-            runStatus: run["status"],
-            invariantCodes: canonical.invariantCodes,
-            openFindingRefs: findingRows
-              .filter((row) => row["status"] === "open")
-              .map((row) => row["invariant_ref"]),
-            terminalFailure: canonicalConvergenceTerminalFailureV1(failureRows),
-            storyFailures: canonicalConvergenceStoryFailuresV1(storyFailures),
+      const failedStepRows = await sql.unsafe<Array<{ step_id: string }>>(
+        "SELECT step_id FROM steps WHERE run_id = $1 AND status = 'failed' ORDER BY step_id",
+        [runId],
+      );
+      const operationalFailureCause = terminationRows[0]
+        ? trustedOperationalFailureCauseV1({
+            requestedBy: String(terminationRows[0]["requested_by"] ?? ""),
+            evidence: terminationRows[0]["evidence"],
+            failedWorkflowStepIds: new Set(failedStepRows.map((row) => row.step_id)),
           })
         : null;
       const pullRequests = await sql.unsafe<Array<Record<string, unknown>>>(
@@ -1860,7 +1861,8 @@ export function createPostgresConvergencePort(
       );
       return {
         canonical,
-        rootCauseHash,
+        operationalFailureCause,
+        scopedFailure: canonicalConvergenceScopedFailureV1(failureRows),
         pullRequests: pullRequests.map((row) => ({
           url: String(row["pr_url"]),
           mergeStatus: row["merge_status"] ? String(row["merge_status"]) : null,

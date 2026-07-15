@@ -37,6 +37,11 @@ import {
   V3DownstreamEvidenceAuthorityV1Schema,
   type V3DownstreamEvidenceAuthorityV1,
 } from "./v3-downstream-evidence-publication.js";
+import {
+  canonicalV3RecoveryTerminalReasonCodesV1,
+  V3_RECOVERY_TERMINAL_REASON_CARDINALITY_V1,
+  V3RecoveryTerminalReasonCodeV1Schema,
+} from "./v3-downstream-terminal-cause-v1.js";
 
 type Sql = postgres.Sql;
 
@@ -71,7 +76,6 @@ const AttemptIdSchema = z.string().regex(/^ATT_[A-Za-z0-9-]{16,160}$/);
 const RecoveryCaseIdSchema = z.string().regex(/^RCV_[a-f0-9]{64}$/);
 const RecoveryRevisionIdSchema = z.string().regex(/^RREV_[a-f0-9]{64}$/);
 const RecoveryDispatchIdSchema = z.string().regex(/^RDISP_[a-f0-9]{64}$/);
-
 const V3RecoveryCoordinatorResultSchema = z.discriminatedUnion("status", [
   z.object({
     status: z.literal("verified"),
@@ -99,14 +103,14 @@ const V3RecoveryCoordinatorResultSchema = z.discriminatedUnion("status", [
     status: z.enum(["blocked", "superseded"]),
     recoveryCaseId: RecoveryCaseIdSchema,
     revisionId: RecoveryRevisionIdSchema,
-    reasonCode: BoundedIdentitySchema,
+    reasonCode: V3RecoveryTerminalReasonCodeV1Schema,
     evidenceBundleHash: Sha256Schema,
   }).strict(),
   z.object({
     status: z.literal("pending"),
     recoveryCaseId: RecoveryCaseIdSchema,
     revisionId: RecoveryRevisionIdSchema,
-    reasonCode: BoundedIdentitySchema,
+    reasonCode: z.literal("recovery_checkpoint_requires_replay"),
     evidenceBundleHash: Sha256Schema,
   }).strict(),
 ]);
@@ -150,6 +154,9 @@ export const V3DownstreamEvidenceRouteResultV1Schema = z.discriminatedUnion("sta
   RouteResultCoreSchema.extend({
     status: z.literal("bounded_recovery_blocked"),
     blockedStoryIds: z.array(BoundedIdentitySchema).min(1).max(10_000),
+    terminalReasonCodes: z.array(V3RecoveryTerminalReasonCodeV1Schema)
+      .min(1)
+      .max(V3_RECOVERY_TERMINAL_REASON_CARDINALITY_V1),
   }).strict(),
 ]).superRefine((value, context) => {
   if (value.status !== "packet_amendment_required" && value.stories.length === 0) {
@@ -179,6 +186,36 @@ export const V3DownstreamEvidenceRouteResultV1Schema = z.discriminatedUnion("sta
       path: ["compilerReasonCode"],
       message: "passing story evidence cannot claim a compiler rejection",
     });
+  }
+  if (value.status === "bounded_recovery_blocked") {
+    const terminalStories = value.stories.filter((story) =>
+      story.coordinator.status === "blocked" || story.coordinator.status === "superseded");
+    const expectedStoryIds = terminalStories.map((story) => story.storyId).sort();
+    const expectedReasons = canonicalV3RecoveryTerminalReasonCodesV1([...new Set(value.stories.flatMap((story) =>
+      story.coordinator.status === "blocked" || story.coordinator.status === "superseded"
+        ? [story.coordinator.reasonCode]
+        : []))]);
+    if (value.stories.some((story) => story.coordinator.status === "pending")) {
+      context.addIssue({
+        code: "custom",
+        path: ["stories"],
+        message: "Pending recovery checkpoints are non-terminal",
+      });
+    }
+    if (JSON.stringify([...value.blockedStoryIds].sort()) !== JSON.stringify(expectedStoryIds)) {
+      context.addIssue({
+        code: "custom",
+        path: ["blockedStoryIds"],
+        message: "Blocked story IDs must exactly name terminal coordinator outcomes",
+      });
+    }
+    if (JSON.stringify(value.terminalReasonCodes) !== JSON.stringify(expectedReasons)) {
+      context.addIssue({
+        code: "custom",
+        path: ["terminalReasonCodes"],
+        message: "Terminal reason codes must exactly aggregate coordinator outcomes",
+      });
+    }
   }
 });
 
@@ -485,6 +522,15 @@ export function createV3DownstreamEvidenceRouter(
           coordinator: coordinated,
         });
       }
+      const pendingStoryIds = stories
+        .filter((story) => story.coordinator.status === "pending")
+        .map((story) => story.storyId);
+      if (pendingStoryIds.length > 0) {
+        fail(
+          "V3_DOWNSTREAM_RECOVERY_CHECKPOINT_PENDING",
+          `non-terminal recovery checkpoint requires canonical replay for ${pendingStoryIds.sort().join(",")}`,
+        );
+      }
       const routedStoryIds = stories
         .filter((story) => story.coordinator.status === "dispatched")
         .map((story) => story.storyId);
@@ -501,9 +547,13 @@ export function createV3DownstreamEvidenceRouter(
         });
       }
       const blockedStoryIds = stories
-        .filter((story) => ["blocked", "superseded", "pending"].includes(story.coordinator.status))
+        .filter((story) => story.coordinator.status === "blocked" || story.coordinator.status === "superseded")
         .map((story) => story.storyId);
       if (blockedStoryIds.length > 0) {
+        const terminalReasonCodes = canonicalV3RecoveryTerminalReasonCodesV1([...new Set(stories.flatMap((story) =>
+          story.coordinator.status === "blocked" || story.coordinator.status === "superseded"
+            ? [story.coordinator.reasonCode]
+            : []))]);
         return V3DownstreamEvidenceRouteResultV1Schema.parse({
           schema: "setfarm.v3-downstream-evidence-route.v1",
           status: "bounded_recovery_blocked",
@@ -513,6 +563,7 @@ export function createV3DownstreamEvidenceRouter(
           sourceRevision: finalSource,
           stories,
           blockedStoryIds,
+          terminalReasonCodes,
         });
       }
       if (input.intent === "final_acceptance") {

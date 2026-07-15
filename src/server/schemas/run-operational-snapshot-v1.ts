@@ -1,9 +1,15 @@
 import { z } from "zod";
 
 import { AcceptedCandidateV1Schema } from "../../evidence/accepted-candidate-v1.js";
+import { evaluateOperationalFailureCauseEvidenceAuthorityV1 } from "../../execution/operational-failure-cause-authority-v1.js";
+import { OperationalFailureCauseV1Schema } from "../../execution/schemas/operational-failure-cause-v1.js";
 import { V3DeployAuthorityEvidenceV1Schema } from "../../execution/schemas/v3-deploy-authority-evidence-v1.js";
 import { V3DeployReceiptV1Schema } from "../../execution/schemas/v3-deploy-receipt-v1.js";
 import { V3ProjectTransferAckV1Schema } from "../../execution/schemas/v3-project-transfer-ack-v1.js";
+import {
+  V3_RECOVERY_TERMINAL_REASON_CARDINALITY_V1,
+  V3RecoveryTerminalReasonCodeV1Schema,
+} from "../../recovery/v3-downstream-terminal-cause-v1.js";
 
 const IdentitySchema = z.string().min(1).max(1_000);
 const OptionalIdentitySchema = IdentitySchema.nullable();
@@ -241,6 +247,7 @@ const V3DeployAuthorityCodeSchema = z.enum([
 ]);
 
 const TerminationLifecycleEvidenceFields = {
+  operationalFailureCause: OperationalFailureCauseV1Schema.optional(),
   deferredForCompletionRequestId: IdentitySchema.optional(),
   runtimeSessionCount: z.number().int().nonnegative().optional(),
   ownerInstanceId: IdentitySchema.optional(),
@@ -278,6 +285,10 @@ export const OperationalV3DownstreamTerminationEvidenceV1Schema = z.object({
   outcome: z.enum(["packet_amendment_required", "bounded_recovery_blocked"]),
   storyEvidenceRefs: z.array(CanonicalRefSchema).max(10_000),
   requiredArtifact: z.literal("setfarm.product-build-packet.v.next").optional(),
+  terminalReasonCodes: z.array(V3RecoveryTerminalReasonCodeV1Schema)
+    .min(1)
+    .max(V3_RECOVERY_TERMINAL_REASON_CARDINALITY_V1)
+    .optional(),
   ...TerminationLifecycleEvidenceFields,
 }).strict().superRefine((value, context) => {
   if ((value.outcome === "packet_amendment_required") !== Boolean(value.requiredArtifact)) {
@@ -287,7 +298,30 @@ export const OperationalV3DownstreamTerminationEvidenceV1Schema = z.object({
       message: "Only packet-amendment termination may require the next packet artifact",
     });
   }
+  if ((value.outcome === "bounded_recovery_blocked") !== Boolean(value.terminalReasonCodes)) {
+    context.addIssue({
+      code: "custom",
+      path: ["terminalReasonCodes"],
+      message: "Only bounded recovery termination must carry exact terminal reasons",
+    });
+  }
 });
+
+export const OperationalV3StageInputUnresolvedTerminationEvidenceV1Schema = z.object({
+  schema: z.literal("setfarm.v3-stage-input-unresolved.v1"),
+  missingVariables: z.array(z.string().min(1).max(500).regex(/^[a-z0-9_]+$/))
+    .min(1)
+    .max(1_000),
+  modelRedispatchBudget: z.literal(0),
+  ...TerminationLifecycleEvidenceFields,
+}).strict();
+
+export const OperationalV3StageRetryDedupeTerminationEvidenceV1Schema = z.object({
+  schema: z.literal("setfarm.v3-stage-retry-dedupe-block.v1"),
+  dedupeKey: Sha256Schema,
+  modelRedispatchBudget: z.literal(0),
+  ...TerminationLifecycleEvidenceFields,
+}).strict();
 
 export const OperationalTerminationEvidenceV1Schema = z.record(z.string(), z.unknown());
 
@@ -315,6 +349,42 @@ export const OperationalTerminationRequestV1Schema = z.object({
     return;
   }
   const evidenceSchema = typeof value.evidence.schema === "string" ? value.evidence.schema : null;
+  const failureCauseResult = Object.hasOwn(value.evidence, "operationalFailureCause")
+    ? OperationalFailureCauseV1Schema.safeParse(value.evidence.operationalFailureCause)
+    : null;
+  if (failureCauseResult && !failureCauseResult.success) {
+    for (const issue of failureCauseResult.error.issues) {
+      context.addIssue({
+        code: "custom",
+        path: ["evidence", "operationalFailureCause", ...issue.path],
+        message: issue.message,
+      });
+    }
+    return;
+  }
+  if (value.targetStatus === "cancelled" && failureCauseResult?.success) {
+    context.addIssue({
+      code: "custom",
+      path: ["evidence", "operationalFailureCause"],
+      message: "Cancelled termination cannot carry an operational failure cause",
+    });
+    return;
+  }
+  if (failureCauseResult?.success) {
+    const authority = evaluateOperationalFailureCauseEvidenceAuthorityV1({
+      requestedBy: value.requestedBy,
+      cause: failureCauseResult.data,
+      evidence: value.evidence,
+    });
+    if (!authority.trusted) {
+      context.addIssue({
+        code: "custom",
+        path: ["evidence", "operationalFailureCause"],
+        message: `Operational failure cause lacks canonical producer authority: ${authority.reasonCode}`,
+      });
+      return;
+    }
+  }
   const knownEvidence = new Map<string, Readonly<{
     requestedBy: string;
     schema: z.ZodTypeAny;
@@ -330,6 +400,14 @@ export const OperationalTerminationRequestV1Schema = z.object({
     ["setfarm.v3-downstream-termination-evidence.v1", {
       requestedBy: "setfarm-v3-downstream-compiler",
       schema: OperationalV3DownstreamTerminationEvidenceV1Schema,
+    }],
+    ["setfarm.v3-stage-input-unresolved.v1", {
+      requestedBy: "setfarm.v3-stage-input-authority",
+      schema: OperationalV3StageInputUnresolvedTerminationEvidenceV1Schema,
+    }],
+    ["setfarm.v3-stage-retry-dedupe-block.v1", {
+      requestedBy: "setfarm.v3-stage-retry-authority",
+      schema: OperationalV3StageRetryDedupeTerminationEvidenceV1Schema,
     }],
   ]);
   const expectedByRequester = [...knownEvidence.entries()].find(([, entry]) => entry.requestedBy === value.requestedBy);
@@ -364,7 +442,7 @@ export const OperationalTerminationRequestV1Schema = z.object({
     context.addIssue({
       code: "custom",
       path: ["evidence", "schema"],
-      message: "Unsupported versioned v3 termination evidence must fail closed",
+      message: "Unknown versioned v3 termination evidence schema",
     });
   }
 });

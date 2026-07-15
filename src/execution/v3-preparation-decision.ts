@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { hashCanonicalJson } from "../product-compiler/canonical-json.js";
 import { GitObjectHashSchema, Sha256Schema } from "../product-compiler/schemas/common-v1.js";
+import { WorkflowStepIdV1Schema } from "./schemas/operational-failure-cause-v1.js";
 
 export const V3ImplementationAttemptErrorCodeSchema = z.enum([
   "V3_ATTEMPT_CLAIM_ID_REQUIRED",
@@ -115,7 +116,7 @@ export const V3PreparationDependencyStateV1Schema = z.object({
 const V3PreparationIdentityCoreV1Schema = z.object({
   schema: z.literal("setfarm.v3-preparation-identity.v1"),
   runId: z.string().min(1).max(500),
-  stepId: z.string().min(1).max(500),
+  stepId: WorkflowStepIdV1Schema,
   storyId: z.string().min(1).max(500),
   packetHash: Sha256Schema,
   sourceSha: GitObjectHashSchema,
@@ -267,6 +268,20 @@ const transientInfrastructureCodes = new Set([
   "ETIMEDOUT",
 ]);
 
+const explicitPreparationProducerCodes = new Set([
+  "RUNTIME_PACKET_NOT_ACTIVE",
+  "V3_PREPARATION_WORKTREE_UNAVAILABLE",
+  "V3_PREPARATION_PUBLICATION_RESULT_MISMATCH",
+  "V3_IMPLEMENTATION_INPUT_UNRESOLVED",
+  "V3_IMPLEMENTATION_CRITICAL_CONTEXT_EMPTY",
+]);
+
+export function isV3PreparationProducerFailureCode(code: string): boolean {
+  return V3ImplementationAttemptErrorCodeSchema.safeParse(code).success
+    || explicitPreparationProducerCodes.has(code)
+    || transientInfrastructureCodes.has(code);
+}
+
 function structuralErrorCode(error: unknown): string | undefined {
   if (!error || typeof error !== "object" || !("code" in error)) return undefined;
   const code = (error as { code?: unknown }).code;
@@ -296,9 +311,6 @@ export function classifyV3PreparationFailure(error: unknown): Readonly<{
   }
   if (code === "V3_PREPARATION_WORKTREE_UNAVAILABLE") {
     return { action: "ownership_wait", errorCode: code };
-  }
-  if (code.startsWith("RUNTIME_")) {
-    return { action: "invariant_failure", errorCode: code };
   }
   if (transientInfrastructureCodes.has(code)) {
     return { action: "bounded_infra", errorCode: code };

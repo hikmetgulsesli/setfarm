@@ -152,6 +152,13 @@ describe("convergence PostgreSQL port", () => {
           reasonCodes: ["PRODUCT_SPEC_TASK_AMBIGUOUS"],
           requirementRefs: ledger.requirements.map((requirement) => requirement.id),
           modelRedispatchBudget: 0,
+          operationalFailureCause: {
+            schema: "setfarm.operational-failure-cause.v1",
+            workflowStepId: "plan",
+            boundary: "product_compiler.plan_refusal",
+            failureClass: "contract_invalid",
+            failureCode: "V3_PLAN_CLARIFICATION_REQUIRED",
+          },
         }),
       ],
     );
@@ -164,7 +171,8 @@ describe("convergence PostgreSQL port", () => {
     assert.equal(clean.canonical.packet.packetRows, 0);
     assert.equal(clean.canonical.acceptance.candidates, 0);
     assert.equal(clean.pullRequests.length, 0);
-    assert.equal(clean.rootCauseHash, null);
+    assert.equal(clean.operationalFailureCause, null);
+    assert.equal(clean.scopedFailure, null);
 
     await database.sql.unsafe(
       `INSERT INTO claim_log (run_id, step_id, story_id, agent_id, outcome, diagnostic)
@@ -184,7 +192,8 @@ describe("convergence PostgreSQL port", () => {
     const polluted = await port.collectRun(runId, { task: evalCase.task, oracle: evalCase.oracle });
     assert.ok(polluted.canonical.invariantCodes.includes("EVAL_TYPED_REJECTION_DOWNSTREAM_SIDE_EFFECT"));
     assert.equal(polluted.pullRequests.length, 1);
-    assert.notEqual(polluted.rootCauseHash, null);
+    assert.equal(polluted.operationalFailureCause, null);
+    assert.equal(polluted.scopedFailure, null);
   });
 
   it("selects canonical evidence against each story attempt instead of the last global tree", async () => {
@@ -391,5 +400,71 @@ describe("convergence PostgreSQL port", () => {
     });
     assert.equal(corruptedCas.canonical.packet.casDeepVerified, false);
     assert.ok(corruptedCas.canonical.invariantCodes.includes("EVAL_PACKET_CAS_AUDIT_FAILED"));
+
+    const operationalFailureCause = {
+      schema: "setfarm.operational-failure-cause.v1",
+      workflowStepId: "setup-build",
+      boundary: "stitch.converter.generated_tsx",
+      failureClass: "generated_artifact_invalid",
+      failureCode: "V3_OBSERVABLE_REF_INVALID",
+    } as const;
+    await database.sql.unsafe("UPDATE runs SET status = 'failed' WHERE id = $1", [runId]);
+    await database.sql.unsafe(
+      `INSERT INTO steps (
+         id, run_id, step_id, agent_id, step_index, input_template, expects,
+         status, type
+       ) VALUES ($1, $2, 'setup-build', 'feature-dev_builder', 99, '', '',
+                 'failed', 'single')`,
+      ["step-eval-postgres-cause-setup", runId],
+    );
+    await database.sql.unsafe(
+      `INSERT INTO run_termination_requests (
+         request_id, run_id, target_status, state, requested_by,
+         requested_at, drained_at, terminalized_at, diagnostic, evidence
+       ) VALUES ($1, $2, 'failed', 'terminalized', 'setfarm.step-fail.single',
+                 NOW(), NOW(), NOW(), 'typed converter failure', $3::text::jsonb)`,
+      [
+        "RTR_eval-postgres-cause01",
+        runId,
+        JSON.stringify({ operationalFailureCause }),
+      ],
+    );
+    await database.sql.unsafe(
+      `INSERT INTO run_observations (
+         id, run_id, step_id, story_id, phase, check_id, label, status,
+         evidence, event_type, created_at, updated_at
+       ) VALUES
+         ($1, $2, 'setup-build', '', 'building', 'setup-build.converter',
+          'Converter failed', 'fail', '{}', 'setup-build.converter.failed', NOW(), NOW()),
+         ($3, $2, 'run', '', 'operations', 'run.failed',
+          'Run failed', 'fail', '{}', 'run.failed', NOW() + INTERVAL '1 second', NOW() + INTERVAL '1 second')`,
+      ["OBS_eval-postgres-cause-step", runId, "OBS_eval-postgres-cause-run"],
+    );
+    const attributed = await createPostgresConvergencePort(database.sql, {
+      artifactRoot,
+      artifactLimits,
+    }).collectRun(runId, {
+      task: intent.task,
+      oracle: intent.oracle,
+    });
+    assert.deepEqual(attributed.operationalFailureCause, operationalFailureCause);
+    assert.deepEqual(attributed.scopedFailure, {
+      workflowStepId: "setup-build",
+      phase: "building",
+      kind: "step",
+    });
+
+    await assert.rejects(
+      database.sql.unsafe(
+        "UPDATE run_termination_requests SET requested_by = 'untrusted-writer' WHERE run_id = $1",
+        [runId],
+      ),
+      /SETFARM_RUN_TERMINATION_REQUESTED_BY_IMMUTABLE/,
+    );
+    const sealed = await createPostgresConvergencePort(database.sql, {
+      artifactRoot,
+      artifactLimits,
+    }).collectRun(runId, { task: intent.task, oracle: intent.oracle });
+    assert.deepEqual(sealed.operationalFailureCause, operationalFailureCause);
   });
 });

@@ -22,6 +22,9 @@ export const ClaimEnvelopeV1Schema = z.object({
   protocol: z.enum(["legacy", "shadow", "v3"]),
   issuedAt: z.string().datetime({ offset: true }),
   stepId: z.string().min(1).max(500),
+  // Claim envelopes are a legacy/shadow/v3 compatibility ABI. Workflow
+  // installation currently accepts any non-empty trimmed step ID, so this
+  // transport must not silently tighten that pre-existing contract.
   workflowStepId: z.string().min(1).max(500),
   runId: z.string().min(1).max(500),
   storyId: z.string().min(1).max(500).optional(),

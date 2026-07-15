@@ -38,6 +38,10 @@ import {
   V3DownstreamEvidenceAuthorityV1Schema,
   type V3DownstreamEvidenceAuthorityV1,
 } from "./v3-downstream-evidence-publication.js";
+import {
+  V3_RECOVERY_TERMINAL_REASON_CODES_V1,
+  type V3RecoveryTerminalReasonCodeV1,
+} from "./v3-downstream-terminal-cause-v1.js";
 
 type Sql = postgres.Sql;
 
@@ -105,6 +109,12 @@ type RecoveryIdentity = Readonly<{
   attempt: ExecutionAttemptV1;
 }>;
 
+export type V3RecoveryTerminalReasonCode = V3RecoveryTerminalReasonCodeV1;
+
+const V3_RECOVERY_TERMINAL_REASON_CODES = new Set<V3RecoveryTerminalReasonCode>(
+  V3_RECOVERY_TERMINAL_REASON_CODES_V1,
+);
+
 export type V3RecoveryCoordinatorResult =
   | Readonly<{
       status: "verified";
@@ -132,14 +142,14 @@ export type V3RecoveryCoordinatorResult =
       status: "blocked" | "superseded";
       recoveryCaseId: string;
       revisionId: string;
-      reasonCode: string;
+      reasonCode: V3RecoveryTerminalReasonCode;
       evidenceBundleHash: string;
     }>
   | Readonly<{
       status: "pending";
       recoveryCaseId: string;
       revisionId: string;
-      reasonCode: string;
+      reasonCode: "recovery_checkpoint_requires_replay";
       evidenceBundleHash: string;
     }>;
 
@@ -742,11 +752,15 @@ export function createV3RecoveryCoordinator(sql: Sql) {
     if (input.recoveryCase.status === "blocked" || input.recoveryCase.status === "superseded") {
       const terminalEvidenceHash = input.recoveryCase.terminal?.evidenceBundleHashes.at(-1)
         ?? input.evidenceBundleHash;
+      const reasonCode = input.recoveryCase.terminal?.reasonCode ?? "operator_required";
+      if (!V3_RECOVERY_TERMINAL_REASON_CODES.has(reasonCode as V3RecoveryTerminalReasonCode)) {
+        fail("V3_RECOVERY_TERMINAL_REASON_INVALID", "blocked recovery carries a non-blocking terminal reason");
+      }
       return {
         status: input.recoveryCase.status,
         recoveryCaseId: input.recoveryCase.recoveryCaseId,
         revisionId: revision.revisionId,
-        reasonCode: input.recoveryCase.terminal?.reasonCode ?? "operator_required",
+        reasonCode: reasonCode as V3RecoveryTerminalReasonCode,
         evidenceBundleHash: terminalEvidenceHash,
       };
     }

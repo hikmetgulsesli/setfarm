@@ -16,12 +16,18 @@ import {
 } from "../execution/schemas/runtime-completion-plan-v1.js";
 import { markRuntimeCompletionOwnerCommittedInTransaction } from "../execution/runtime-completion.js";
 import { requestRunTerminationInTransaction } from "../execution/run-termination.js";
+import type { OperationalFailureCauseV1 } from "../execution/schemas/operational-failure-cause-v1.js";
 import { canonicalJsonStringify, hashCanonicalJson } from "../product-compiler/canonical-json.js";
 import { Sha256Schema } from "../product-compiler/schemas/common-v1.js";
 import {
   V3DownstreamEvidenceRouteResultV1Schema,
   type V3DownstreamEvidenceRouteResult,
 } from "./v3-downstream-evidence-router.js";
+import {
+  createV3DownstreamTerminalOperationalFailureCauseV1,
+  V3_RECOVERY_TERMINAL_REASON_CARDINALITY_V1,
+  V3RecoveryTerminalReasonCodeV1Schema,
+} from "./v3-downstream-terminal-cause-v1.js";
 
 type Sql = postgres.Sql;
 type TransactionSql = postgres.TransactionSql;
@@ -31,7 +37,6 @@ const AttemptIdSchema = z.string().regex(/^ATT_[A-Za-z0-9-]{16,160}$/);
 const RecoveryCaseIdSchema = z.string().regex(/^RCV_[a-f0-9]{64}$/);
 const RecoveryRevisionIdSchema = z.string().regex(/^RREV_[a-f0-9]{64}$/);
 const RecoveryDispatchIdSchema = z.string().regex(/^RDISP_[a-f0-9]{64}$/);
-
 const StoryEvidenceDecisionSchema = z.object({
   storyDbId: BoundedIdentitySchema,
   storyId: BoundedIdentitySchema,
@@ -65,6 +70,8 @@ export const V3DownstreamOperationalDecisionV1Schema = z.object({
   storyEvidence: z.array(StoryEvidenceDecisionSchema).max(10_000),
   recoveryRoutes: z.array(RecoveryRouteDecisionSchema).max(10_000),
   blockedStoryIds: z.array(BoundedIdentitySchema).max(10_000),
+  terminalReasonCodes: z.array(V3RecoveryTerminalReasonCodeV1Schema)
+    .max(V3_RECOVERY_TERMINAL_REASON_CARDINALITY_V1),
   reasonCode: BoundedIdentitySchema.optional(),
   requiredArtifact: z.literal("setfarm.product-build-packet.v.next").optional(),
 }).strict().superRefine((value, context) => {
@@ -73,6 +80,9 @@ export const V3DownstreamOperationalDecisionV1Schema = z.object({
   }
   if ((value.outcome === "bounded_recovery_blocked") !== (value.blockedStoryIds.length > 0)) {
     context.addIssue({ code: "custom", path: ["blockedStoryIds"], message: "only blocked recovery may name blocked stories" });
+  }
+  if ((value.outcome === "bounded_recovery_blocked") !== (value.terminalReasonCodes.length > 0)) {
+    context.addIssue({ code: "custom", path: ["terminalReasonCodes"], message: "only blocked recovery may carry terminal reasons" });
   }
   if (value.outcome === "packet_amendment_required") {
     if (!value.reasonCode || !value.requiredArtifact) {
@@ -205,11 +215,29 @@ export function createV3DownstreamOperationalDecision(input: Readonly<{
     })),
     recoveryRoutes,
     blockedStoryIds: route.status === "bounded_recovery_blocked" ? route.blockedStoryIds : [],
+    terminalReasonCodes: route.status === "bounded_recovery_blocked" ? route.terminalReasonCodes : [],
     ...(route.status === "packet_amendment_required"
       ? { reasonCode: route.reasonCode, requiredArtifact: route.requiredArtifact }
-      : route.status === "bounded_recovery_blocked"
-        ? { reasonCode: "bounded_recovery_unavailable" }
-        : {}),
+      : {}),
+  });
+}
+
+function downstreamOperationalFailureCause(
+  decision: V3DownstreamOperationalDecisionV1,
+): OperationalFailureCauseV1 | undefined {
+  if (decision.outcome === "packet_amendment_required") {
+    return {
+      schema: "setfarm.operational-failure-cause.v1",
+      workflowStepId: decision.workflowStepId,
+      boundary: "product_compiler.downstream_recovery",
+      failureClass: "contract_invalid",
+      failureCode: "V3_DOWNSTREAM_PACKET_AMENDMENT_REQUIRED",
+    };
+  }
+  if (decision.outcome !== "bounded_recovery_blocked") return undefined;
+  return createV3DownstreamTerminalOperationalFailureCauseV1({
+    workflowStepId: decision.workflowStepId,
+    terminalReasonCodes: decision.terminalReasonCodes,
   });
 }
 
@@ -455,6 +483,7 @@ async function commitTerminalDecision(
   decision: V3DownstreamOperationalDecisionV1,
   plan: RuntimeCompletionPlanDescriptorV1,
 ): Promise<void> {
+  const operationalFailureCause = downstreamOperationalFailureCause(decision);
   await sql.begin(async (transaction) => {
     const runRows = await transaction.unsafe<Array<{ protocol: string; status: string; packet_hash: string | null }>>(
       "SELECT protocol, status, packet_hash FROM runs WHERE id = $1 FOR UPDATE",
@@ -472,7 +501,7 @@ async function commitTerminalDecision(
     await closeExactSingleStepClaimInTransaction(transaction, {
       envelope,
       outcome: "failed",
-      diagnostic: `${decision.outcome}:${decision.reasonCode ?? "canonical downstream recovery blocked"}`,
+      diagnostic: `${decision.outcome}:${decision.reasonCode ?? decision.terminalReasonCodes.join(",")}`,
     });
     const now = await readDatabaseWallClock(
       transaction,
@@ -492,13 +521,17 @@ async function commitTerminalDecision(
       runId: decision.runId,
       targetStatus: "failed",
       requestedBy: "setfarm-v3-downstream-compiler",
-      diagnostic: `${decision.outcome}:${decision.reasonCode ?? "bounded recovery unavailable"}`,
+      diagnostic: `${decision.outcome}:${decision.reasonCode ?? decision.terminalReasonCodes.join(",")}`,
+      ...(operationalFailureCause ? { failureCause: operationalFailureCause } : {}),
       evidence: {
         schema: "setfarm.v3-downstream-termination-evidence.v1",
         routeHash: decision.routeHash,
         packetHash: decision.packetHash,
         sourceRevision: decision.sourceRevision,
         outcome: decision.outcome,
+        ...(decision.terminalReasonCodes.length > 0
+          ? { terminalReasonCodes: decision.terminalReasonCodes }
+          : {}),
         storyEvidenceRefs: decision.storyEvidence.map((story) => `setfarm://evidence-bundle/${story.evidenceBundleHash}`),
         ...(decision.requiredArtifact ? { requiredArtifact: decision.requiredArtifact } : {}),
       },

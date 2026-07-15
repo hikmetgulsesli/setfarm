@@ -5,6 +5,7 @@ import {
   applyContractSpineMigrations,
   planContractSpineMigrations,
   readContractSpineMigrationAttestation,
+  rollbackOperationalFailureCauseSealToV20,
   rollbackRecoveryTerminalLeaseIdentityToV19,
 } from "../../src/db/contract-spine-migrations.js";
 import { createAttemptRepository } from "../../src/execution/attempt-repository.js";
@@ -614,6 +615,9 @@ describe("canonical run terminal owner", () => {
       const runId = "run-terminal-v19-binary-rollback";
       const fixture = await seedActiveRecovery(database, { runId, runStatus: "failed" });
       const targetReleaseSha = "7".repeat(40);
+      await rollbackOperationalFailureCauseSealToV20(database.sql, {
+        targetReleaseSha: "6".repeat(40),
+      });
       await assert.rejects(
         rollbackRecoveryTerminalLeaseIdentityToV19(database.sql, { targetReleaseSha }),
         /Migration 20 rollback requires zero active owners/,
@@ -648,12 +652,18 @@ describe("canonical run terminal owner", () => {
       const reapplied = await applyContractSpineMigrations(database.sql, {
         releaseSha: "8".repeat(40),
       });
-      assert.deepEqual(reapplied.applied, ["020_recovery_terminal_lease_identity"]);
+      assert.deepEqual(reapplied.applied, [
+        "020_recovery_terminal_lease_identity",
+        "021_operational_failure_cause_seal",
+      ]);
       assert.equal(
         (await createRecoveryDeliveryRepository(database.sql).findDelivery(fixture.dispatchId))?.schema,
         "setfarm.recovery-dispatch-delivery.v1",
       );
 
+      await rollbackOperationalFailureCauseSealToV20(database.sql, {
+        targetReleaseSha: "9".repeat(40),
+      });
       const repeated = await rollbackRecoveryTerminalLeaseIdentityToV19(database.sql, {
         targetReleaseSha,
       });

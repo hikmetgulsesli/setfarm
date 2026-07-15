@@ -7,14 +7,20 @@ import {
   decideV3PreDispatchDispositionV1,
   type V3PreDispatchDispositionV1,
 } from "../execution/v3-pre-dispatch-failure.js";
+import { isV3PreparationProducerFailureCode } from "../execution/v3-preparation-decision.js";
 import type { V3PreparationClaimAuthorityV1 } from "../execution/v3-preparation-claim-authority.js";
 import type { V3PreparationDependencyStateV1 } from "../execution/v3-preparation-decision.js";
 import { requestRunTerminationInTransaction } from "../execution/run-termination.js";
+import {
+  normalizeOperationalFailureCodeV1,
+  OperationalFailureCauseV1Schema,
+  type OperationalFailureCauseV1,
+} from "../execution/schemas/operational-failure-cause-v1.js";
 import { withdrawPreDispatchClaimInTransaction } from "../execution/pre-dispatch-withdrawal-authority.js";
 import { scheduleRunCronTeardown } from "./cleanup-ops.js";
 import { emitEvent } from "./events.js";
 import { recordObservation } from "./observations.js";
-import { failRun, getWorkflowId } from "./repo.js";
+import { getWorkflowId } from "./repo.js";
 import { removeStoryWorktree } from "./worktree-ops.js";
 
 export type ReservedRuntimeOwnership = Readonly<{
@@ -63,6 +69,36 @@ function dependencyState(
   }));
 }
 
+function preDispatchOperationalFailureCause(
+  failure: ReturnType<typeof createV3PreDispatchFailureV1>,
+  workflowStepId: string,
+): OperationalFailureCauseV1 | undefined {
+  if (!isV3PreparationProducerFailureCode(failure.decision.errorCode)) return undefined;
+  // The terminal handler does not own the durable open-fingerprint comparison
+  // that proves unchanged replay. Until it does, do not let the same producer
+  // code choose a second retry_delta_missing identity.
+  if (failure.decision.action === "unchanged_replay") return undefined;
+  const failureClass = {
+    dependency_wait: "platform_authority_invalid",
+    packet_amendment: "contract_invalid",
+    ownership_wait: "platform_authority_invalid",
+    bounded_infra: "infrastructure_failure",
+    invariant_failure: "platform_invariant_failed",
+    ready: "platform_invariant_failed",
+  }[failure.decision.action];
+  const failureCode = normalizeOperationalFailureCodeV1(failure.decision.errorCode);
+  if (!failureCode) return undefined;
+  const candidate = {
+    schema: "setfarm.operational-failure-cause.v1" as const,
+    workflowStepId,
+    boundary: `implementation.pre_dispatch.${failure.decision.phase}`,
+    failureClass,
+    failureCode,
+  };
+  const parsed = OperationalFailureCauseV1Schema.safeParse(candidate);
+  return parsed.success ? parsed.data : undefined;
+}
+
 export async function handleV3PreDispatchFailure(input: Readonly<{
   step: Readonly<{ id: string; run_id: string; step_id: string }>;
   story: Readonly<{ id: string; story_id: string; title?: string | null }>;
@@ -108,6 +144,10 @@ export async function handleV3PreDispatchFailure(input: Readonly<{
     priorEquivalentFailures: previous?.count ?? 0,
     forceTerminal: input.operationalRetryRefused,
   });
+  const operationalFailureCause = preDispatchOperationalFailureCause(
+    failure,
+    input.step.step_id,
+  );
   await pgBegin(async (sql) => {
     await closeReservedClaimRuntimeInTransaction(sql, {
       claimId: input.claimId,
@@ -146,6 +186,7 @@ export async function handleV3PreDispatchFailure(input: Readonly<{
         targetStatus: "failed",
         requestedBy: "setfarm.v3-pre-dispatch",
         diagnostic: disposition.diagnostic,
+        ...(operationalFailureCause ? { failureCause: operationalFailureCause } : {}),
         evidence: {
           source: "handleV3PreDispatchFailure",
           failureFingerprint: failure.decision.fingerprint,
@@ -209,7 +250,6 @@ export async function handleV3PreDispatchFailure(input: Readonly<{
       ts: now(), event: "run.failed", runId: input.step.run_id, workflowId,
       detail: disposition.diagnostic,
     });
-    await failRun(input.step.run_id, true, disposition.diagnostic);
     scheduleRunCronTeardown(input.step.run_id);
   } else {
     emitEvent({
