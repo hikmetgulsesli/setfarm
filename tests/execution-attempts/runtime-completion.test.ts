@@ -1,13 +1,19 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { describe, it } from "node:test";
+import type postgres from "postgres";
 
 import { createAttemptRepository } from "../../src/execution/attempt-repository.js";
 import {
+  closeClaimAndBoundAttempt,
+  closeClaimAndBoundAttemptInTransaction,
   closeExactSingleStepClaimInTransaction,
   completeSingleStepClaimAndState,
   completeStoryClaimAndBoundAttempt,
 } from "../../src/execution/claim-attempt-transition.js";
+import {
+  acquireOrphanClaimRecoveryAuthorityInTransaction,
+} from "../../src/execution/claim-recovery-authority.js";
 import {
   createRuntimeCompletionRepository,
   markRuntimeCompletionOwnerCommittedInTransaction,
@@ -15,6 +21,7 @@ import {
   RuntimeCompletionSubmissionEvidenceV1Schema,
 } from "../../src/execution/runtime-completion.js";
 import { createRuntimeCompletionEffectRepository } from "../../src/execution/runtime-completion-effect-repository.js";
+import { runWithRuntimeCompletionOwner } from "../../src/execution/runtime-completion-owner-context.js";
 import {
   createRuntimeSessionRepository,
 } from "../../src/execution/runtime-session-repository.js";
@@ -38,6 +45,23 @@ const DRAIN_EVIDENCE = {
   stableObservations: 2,
   evidenceRefs: ["setfarm://test/completion-drain-proof"],
 };
+
+async function asRuntimeCompletionOwner<T>(
+  repository: ReturnType<typeof createRuntimeCompletionRepository>,
+  requestId: string,
+  action: () => Promise<T>,
+): Promise<T> {
+  const request = await repository.findById(requestId);
+  if (!request?.ownerInstanceId || !request.leaseExpiresAt) {
+    throw new Error("TEST_RUNTIME_COMPLETION_OWNER_CAPABILITY_MISSING");
+  }
+  return runWithRuntimeCompletionOwner({
+    requestId: request.requestId,
+    ownerInstanceId: request.ownerInstanceId,
+    leaseExpiresAt: request.leaseExpiresAt,
+    ownerAttemptCount: request.ownerAttemptCount,
+  }, action);
+}
 
 async function seedManagedClaim(
   database: Awaited<ReturnType<typeof createIsolatedTestDatabase>>,
@@ -195,7 +219,8 @@ async function waitForBlockedClaimTransition(
          WHERE datname = current_database()
            AND pid <> pg_backend_pid()
            AND wait_event_type = 'Lock'
-           AND query ILIKE '%FOR UPDATE OF cl, s%'
+           AND query ILIKE '%FROM claim_log%'
+           AND query ILIKE '%FOR UPDATE%'
       ) AS blocked
     `;
     if (rows[0]?.blocked) return;
@@ -222,6 +247,127 @@ async function waitForBlockedTerminationPublication(
     await new Promise<void>((resolve) => setTimeout(resolve, 20));
   }
   throw new Error("TEST_BARRIER_TERMINATION_PUBLICATION_DID_NOT_BLOCK");
+}
+
+async function waitForBlockedRuntimeQuarantine(
+  database: Awaited<ReturnType<typeof createIsolatedTestDatabase>>,
+): Promise<void> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const rows = await database.sql<Array<{ blocked: boolean }>>`
+      SELECT EXISTS (
+        SELECT 1
+          FROM pg_stat_activity
+         WHERE datname = current_database()
+           AND pid <> pg_backend_pid()
+           AND wait_event_type = 'Lock'
+           AND query ILIKE '%UPDATE runtime_sessions%SET state = ''quarantined''%'
+      ) AS blocked
+    `;
+    if (rows[0]?.blocked) return;
+    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error("TEST_BARRIER_RUNTIME_QUARANTINE_DID_NOT_BLOCK");
+}
+
+async function waitForBlockedRecoveryAdvisoryLock(
+  database: Awaited<ReturnType<typeof createIsolatedTestDatabase>>,
+): Promise<void> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const rows = await database.sql<Array<{ blocked: boolean }>>`
+      SELECT EXISTS (
+        SELECT 1
+          FROM pg_stat_activity
+         WHERE datname = current_database()
+           AND pid <> pg_backend_pid()
+           AND wait_event_type = 'Lock'
+           AND query ILIKE '%pg_advisory_xact_lock(hashtextextended($1, 0))%'
+      ) AS blocked
+    `;
+    if (rows[0]?.blocked) return;
+    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error("TEST_BARRIER_RECOVERY_ADVISORY_LOCK_DID_NOT_BLOCK");
+}
+
+async function expireRuntimeCompletionLease(
+  database: Awaited<ReturnType<typeof createIsolatedTestDatabase>>,
+  requestId: string,
+): Promise<void> {
+  const rows = await database.sql.unsafe<Array<{ request_id: string }>>(
+    `UPDATE runtime_completion_requests
+        SET lease_expires_at = date_trunc('milliseconds', clock_timestamp()) - INTERVAL '1 second'
+      WHERE request_id = $1
+        AND state IN ('draining', 'processing')
+      RETURNING request_id`,
+    [requestId],
+  );
+  assert.equal(rows.length, 1, "fixture must expire one exact completion lease");
+}
+
+type ManagedCompletionSeed =
+  | Awaited<ReturnType<typeof seedManagedClaim>>
+  | Awaited<ReturnType<typeof seedManagedSingleStepClaim>>;
+
+async function drainManagedRuntime(seeded: ManagedCompletionSeed): Promise<void> {
+  const draining = await seeded.sessions.requestDrain({
+    sessionId: seeded.session.sessionId,
+    ownerInstanceId: "spawner-a",
+    diagnostic: "test manager proved the runtime quiescent before orphan recovery",
+  });
+  assert.equal(draining.state, "drain_requested");
+  const drained = await seeded.sessions.markDrained({
+    sessionId: seeded.session.sessionId,
+    ownerInstanceId: "spawner-a",
+    evidence: DRAIN_EVIDENCE,
+  });
+  assert.equal(drained.state, "drained");
+}
+
+async function publishCompletionInState(
+  database: Awaited<ReturnType<typeof createIsolatedTestDatabase>>,
+  seeded: ManagedCompletionSeed,
+  state: "requested" | "draining" | "processing" | "quarantined",
+  requestId: string,
+): Promise<Readonly<{ requestId: string; output: string }>> {
+  const output = "STATUS: done\nCHANGES: durable completion owns this exact claim";
+  const requested = await requestRuntimeCompletion(database.sql, {
+    envelope: seeded.envelope,
+    output,
+    requestId,
+  });
+  if (requested.status !== "requested") throw new Error("test completion request missing");
+  if (state === "requested") return { requestId: requested.request.requestId, output };
+
+  const completions = createRuntimeCompletionRepository(database.sql);
+  const draining = await completions.claim({
+    requestId: requested.request.requestId,
+    ownerInstanceId: "completion-owner",
+  });
+  if (!draining) throw new Error("test completion drain owner missing");
+  if (state === "draining") return { requestId: requested.request.requestId, output };
+  if (state === "quarantined") {
+    if (!draining.leaseExpiresAt) throw new Error("test completion lease missing");
+    await completions.quarantine({
+      requestId: draining.requestId,
+      ownerInstanceId: "completion-owner",
+      expectedState: "draining",
+      expectedLeaseExpiresAt: draining.leaseExpiresAt,
+      expectedUpdatedAt: draining.updatedAt,
+      diagnostic: "test quarantined completion remains canonical",
+    });
+    return { requestId: requested.request.requestId, output };
+  }
+
+  await seeded.sessions.markDrained({
+    sessionId: seeded.session.sessionId,
+    ownerInstanceId: "spawner-a",
+    evidence: DRAIN_EVIDENCE,
+  });
+  await completions.markProcessing({
+    requestId: requested.request.requestId,
+    ownerInstanceId: "completion-owner",
+  });
+  return { requestId: requested.request.requestId, output };
 }
 
 async function settleCompletionEffects(
@@ -325,7 +471,7 @@ describe("manager-owned runtime completion", () => {
         ownerInstanceId: "spawner-a",
       })).state, "processing");
 
-      await completeStoryClaimAndBoundAttempt(database.sql, {
+      await asRuntimeCompletionOwner(completions, requested.request.requestId, () => completeStoryClaimAndBoundAttempt(database.sql, {
         envelope: seeded.envelope,
         sourceAfter: { sha: "2".repeat(40), treeHash: "3".repeat(64) },
         outputHash: createHash("sha256").update(output, "utf8").digest("hex"),
@@ -333,7 +479,7 @@ describe("manager-owned runtime completion", () => {
         storyOutput: output,
         stepStatus: "running",
         stepOutput: output,
-      });
+      }));
       const completionResult = { advanced: false, runCompleted: false };
       await settleCompletionEffects(
         database,
@@ -344,11 +490,13 @@ describe("manager-owned runtime completion", () => {
       await completions.markEffectsCommitted({
         requestId: requested.request.requestId,
         ownerInstanceId: "spawner-a",
+        ownerAttemptCount: (await completions.findById(requested.request.requestId))!.ownerAttemptCount,
         result: completionResult,
       });
       const accepted = await completions.acceptAndRelease({
         requestId: requested.request.requestId,
         ownerInstanceId: "spawner-a",
+        ownerAttemptCount: (await completions.findById(requested.request.requestId))!.ownerAttemptCount,
         result: completionResult,
       });
       assert.equal(accepted.state, "accepted");
@@ -667,12 +815,13 @@ describe("manager-owned runtime completion", () => {
           stepStatus: "running",
           stepOutput: "STATUS: done",
         }),
-        /STORY_COMPLETION_TERMINATION_PENDING/,
+        /CLAIM_MUTATION_DURABLE_OWNER_ACTIVE:run_termination:requested:/,
       );
-      await completions.reject({
+      const preempted = await completions.preemptForRunTermination({
         requestId: requested.request.requestId,
         diagnostic: "Completion preempted by canonical cancellation",
       });
+      assert.equal(preempted.status, "preempted");
       assert.equal((await terminations.claim({
         requestId: cancellation.request.requestId,
         ownerInstanceId: "spawner-a",
@@ -727,7 +876,7 @@ describe("manager-owned runtime completion", () => {
           stepStatus: "done",
           stepOutput: "STATUS: done\nSUMMARY: stale worker output",
         }),
-        /SINGLE_STEP_COMPLETION_TERMINATION_PENDING|SINGLE_STEP_CLAIM_RUN_NOT_ACTIVE/,
+        /CLAIM_MUTATION_DURABLE_OWNER_ACTIVE:run_termination:requested:|SINGLE_STEP_CLAIM_RUN_NOT_ACTIVE/,
       );
       const state = await database.sql<Array<{
         claim_outcome: string | null;
@@ -777,7 +926,7 @@ describe("manager-owned runtime completion", () => {
         ownerInstanceId: "spawner-a",
       });
 
-      const failure = await database.sql.begin(async (transaction) => {
+      const failure = await asRuntimeCompletionOwner(completions, requested.request.requestId, () => database.sql.begin(async (transaction) => {
         await closeExactSingleStepClaimInTransaction(transaction, {
           envelope: seeded.envelope,
           outcome: "failed",
@@ -802,18 +951,20 @@ describe("manager-owned runtime completion", () => {
           requestedBy: "runtime-completion-test",
           diagnostic: "completion-owned acceptance gate failed",
         });
-      });
+      }));
       assert.equal(failure.status, "requested");
       const completionResult = { advanced: false, runCompleted: false, runFailed: true };
       await settleCompletionEffects(database, requested.request.requestId, "spawner-a", completionResult);
       await completions.markEffectsCommitted({
         requestId: requested.request.requestId,
         ownerInstanceId: "spawner-a",
+        ownerAttemptCount: (await completions.findById(requested.request.requestId))!.ownerAttemptCount,
         result: completionResult,
       });
       let completionAfterFailure = await completions.acceptAndRelease({
         requestId: requested.request.requestId,
         ownerInstanceId: "spawner-a",
+        ownerAttemptCount: (await completions.findById(requested.request.requestId))!.ownerAttemptCount,
         result: completionResult,
       });
       assert.equal(completionAfterFailure?.state, "accepted");
@@ -864,11 +1015,11 @@ describe("manager-owned runtime completion", () => {
         requestId: requested.request.requestId,
         ownerInstanceId: "spawner-a",
       });
-      await completeSingleStepClaimAndState(database.sql, {
+      await asRuntimeCompletionOwner(completions, requested.request.requestId, () => completeSingleStepClaimAndState(database.sql, {
         envelope: seeded.envelope,
         stepStatus: "done",
         stepOutput: output,
-      });
+      }));
       const completionResult = { advanced: true, runCompleted: true };
       await settleCompletionEffects(
         database,
@@ -879,11 +1030,13 @@ describe("manager-owned runtime completion", () => {
       await completions.markEffectsCommitted({
         requestId: requested.request.requestId,
         ownerInstanceId: "spawner-a",
+        ownerAttemptCount: (await completions.findById(requested.request.requestId))!.ownerAttemptCount,
         result: completionResult,
       });
       await completions.acceptAndRelease({
         requestId: requested.request.requestId,
         ownerInstanceId: "spawner-a",
+        ownerAttemptCount: (await completions.findById(requested.request.requestId))!.ownerAttemptCount,
         result: completionResult,
       });
       await transitionRunToTerminal(database.sql, {
@@ -983,11 +1136,11 @@ describe("manager-owned runtime completion", () => {
       });
       await claimTableLockReady;
 
-      const completion = completeSingleStepClaimAndState(database.sql, {
+      const completion = asRuntimeCompletionOwner(completions, completionRequest.request.requestId, () => completeSingleStepClaimAndState(database.sql, {
         envelope: seeded.envelope,
         stepStatus: "done",
         stepOutput: "STATUS: done\nSUMMARY: raced by deferred cancellation",
-      });
+      }));
       void completion.catch(() => {});
       await waitForBlockedClaimTransition(database);
 
@@ -1088,7 +1241,7 @@ describe("manager-owned runtime completion", () => {
     try {
       const runId = "run-expired-missing-effect-receipt";
       const seeded = await seedManagedSingleStepClaim(database, runId);
-      const startedAt = new Date("2026-07-13T12:00:00.000Z");
+      const startedAt = new Date();
       const requested = await requestRuntimeCompletion(database.sql, {
         envelope: seeded.envelope,
         output: "STATUS: done\nSUMMARY: claim closes before routing receipt",
@@ -1108,22 +1261,24 @@ describe("manager-owned runtime completion", () => {
         evidence: DRAIN_EVIDENCE,
         now: startedAt,
       });
-      await completions.markProcessing({
+      const staleOwner = await completions.markProcessing({
         requestId: requested.request.requestId,
         ownerInstanceId: "crashed-manager",
         leaseMs: 60_000,
         now: startedAt,
       });
 
-      await database.sql.begin((transaction) => closeExactSingleStepClaimInTransaction(transaction, {
+      await asRuntimeCompletionOwner(completions, requested.request.requestId, () => database.sql.begin((transaction) => closeExactSingleStepClaimInTransaction(transaction, {
         envelope: seeded.envelope,
         outcome: "completed",
         diagnostic: "simulated crash after claim close but before step/routing receipt",
         now: new Date(startedAt.getTime() + 1_000),
-      }));
+      })));
       assert.equal((await database.sql<Array<{ status: string }>>`
         SELECT status FROM steps WHERE id = ${seeded.stepDbId}
       `)[0]?.status, "running", "fixture must stop before the product/routing effect is durably acknowledged");
+
+      await expireRuntimeCompletionLease(database, requested.request.requestId);
 
       const recovered = await completions.recoverExpiredProcessing({
         ownerInstanceId: "recovery-manager",
@@ -1165,12 +1320,14 @@ describe("manager-owned runtime completion", () => {
         evidence: DRAIN_EVIDENCE,
         now: startedAt,
       });
-      await completions.markProcessing({
+      const staleOwner = await completions.markProcessing({
         requestId: requested.request.requestId,
         ownerInstanceId: "crashed-manager",
         leaseMs: 60_000,
         now: startedAt,
       });
+
+      await expireRuntimeCompletionLease(database, requested.request.requestId);
 
       const recovered = await completions.recoverExpiredProcessing({
         ownerInstanceId: "recovery-manager",
@@ -1223,6 +1380,7 @@ describe("manager-owned runtime completion", () => {
       assert.ok(stale.leaseExpiresAt);
 
       const adoptedAt = new Date(startedAt.getTime() + 63_000);
+      await expireRuntimeCompletionLease(database, stale.requestId);
       await assert.rejects(
         completions.quarantine({
           requestId: stale.requestId,
@@ -1237,7 +1395,7 @@ describe("manager-owned runtime completion", () => {
       );
       const afterExpiry = await completions.findById(stale.requestId);
       assert.equal(afterExpiry?.state, "processing");
-      assert.equal(afterExpiry?.leaseExpiresAt, stale.leaseExpiresAt);
+      assert.notEqual(afterExpiry?.leaseExpiresAt, stale.leaseExpiresAt);
       assert.equal(afterExpiry?.updatedAt, stale.updatedAt);
 
       const adopted = await completions.recoverExpiredProcessing({
@@ -1317,6 +1475,7 @@ describe("manager-owned runtime completion", () => {
       });
       assert.equal(initial.ownerAttemptCount, 1);
 
+      await expireRuntimeCompletionLease(database, requested.request.requestId);
       const second = await completions.recoverExpiredProcessing({
         ownerInstanceId: "owner-2",
         leaseMs: 60_000,
@@ -1325,6 +1484,7 @@ describe("manager-owned runtime completion", () => {
       assert.equal(second.status, "resume_owner");
       assert.equal(second.request?.ownerAttemptCount, 2);
 
+      await expireRuntimeCompletionLease(database, requested.request.requestId);
       const third = await completions.recoverExpiredProcessing({
         ownerInstanceId: "owner-3",
         leaseMs: 60_000,
@@ -1333,6 +1493,7 @@ describe("manager-owned runtime completion", () => {
       assert.equal(third.status, "resume_owner");
       assert.equal(third.request?.ownerAttemptCount, 3);
 
+      await expireRuntimeCompletionLease(database, requested.request.requestId);
       const exhausted = await completions.recoverExpiredProcessing({
         ownerInstanceId: "owner-4",
         leaseMs: 60_000,
@@ -1354,7 +1515,7 @@ describe("manager-owned runtime completion", () => {
     try {
       const runId = "run-expired-resume-effects";
       const seeded = await seedManagedSingleStepClaim(database, runId);
-      const startedAt = new Date("2026-07-13T12:00:00.000Z");
+      const startedAt = new Date();
       const output = "STATUS: done\nSUMMARY: resume deterministic effects";
       const requested = await requestRuntimeCompletion(database.sql, {
         envelope: seeded.envelope,
@@ -1375,27 +1536,152 @@ describe("manager-owned runtime completion", () => {
         evidence: DRAIN_EVIDENCE,
         now: startedAt,
       });
-      await completions.markProcessing({
+      const staleOwner = await completions.markProcessing({
         requestId: requested.request.requestId,
         ownerInstanceId: "crashed-manager",
         leaseMs: 60_000,
         now: startedAt,
       });
-      await completeSingleStepClaimAndState(database.sql, {
+      await asRuntimeCompletionOwner(completions, requested.request.requestId, () => completeSingleStepClaimAndState(database.sql, {
         envelope: seeded.envelope,
         stepStatus: "done",
         stepOutput: output,
         now: new Date(startedAt.getTime() + 1_000),
-      });
+      }));
+
+      await expireRuntimeCompletionLease(database, requested.request.requestId);
 
       const recovered = await completions.recoverExpiredProcessing({
-        ownerInstanceId: "recovery-manager",
+        ownerInstanceId: "crashed-manager",
         now: new Date(startedAt.getTime() + 120_000),
       });
       assert.equal(recovered.status, "resume_effects");
-      assert.equal(recovered.request?.ownerInstanceId, "recovery-manager");
+      assert.equal(recovered.request?.ownerInstanceId, "crashed-manager");
+      assert.equal(recovered.request?.ownerAttemptCount, staleOwner.ownerAttemptCount + 1);
       assert.equal(recovered.request?.applyPhase, "owner_committed");
       assert.equal(recovered.request?.claimOutcome, "completed");
+      await assert.rejects(
+        completions.markEffectsCommitted({
+          requestId: requested.request.requestId,
+          ownerInstanceId: "crashed-manager",
+          ownerAttemptCount: staleOwner.ownerAttemptCount,
+          result: { advanced: true, runCompleted: false },
+        }),
+        /RUNTIME_COMPLETION_EFFECTS_COMMIT_OWNER_MISMATCH/,
+      );
+      await assert.rejects(
+        completions.acceptAndRelease({
+          requestId: requested.request.requestId,
+          ownerInstanceId: "crashed-manager",
+          ownerAttemptCount: staleOwner.ownerAttemptCount,
+          result: { advanced: true, runCompleted: false },
+        }),
+        /RUNTIME_COMPLETION_PROCESSING_OWNER_MISMATCH/,
+      );
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("preserves owner and effects commit receipts when cancellation arrives after canonical commit", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      for (const phase of ["owner_committed", "effects_committed"] as const) {
+        const runId = `run-cancel-after-${phase.replaceAll("_", "-")}`;
+        const seeded = await seedManagedSingleStepClaim(database, runId);
+        const requestId = phase === "owner_committed"
+          ? "RCR_cancel-after-owner-commit"
+          : "RCR_cancel-after-effects-commit";
+        const output = `STATUS: done\nSUMMARY: canonical ${phase} receipt`;
+        const requested = await requestRuntimeCompletion(database.sql, {
+          envelope: seeded.envelope,
+          output,
+          requestId,
+        });
+        if (requested.status !== "requested") throw new Error("completion request missing");
+        const completions = createRuntimeCompletionRepository(database.sql);
+        await completions.claim({ requestId, ownerInstanceId: "manager-a" });
+        await seeded.sessions.markDrained({
+          sessionId: seeded.session.sessionId,
+          ownerInstanceId: "spawner-a",
+          evidence: DRAIN_EVIDENCE,
+        });
+        await completions.markProcessing({ requestId, ownerInstanceId: "manager-a" });
+        await asRuntimeCompletionOwner(completions, requestId, () => completeSingleStepClaimAndState(database.sql, {
+          envelope: seeded.envelope,
+          stepStatus: "done",
+          stepOutput: output,
+        }));
+
+        if (phase === "effects_committed") {
+          const effects = createRuntimeCompletionEffectRepository(database.sql);
+          const effect = await effects.claimNext({
+            requestId,
+            ownerInstanceId: "effect-manager",
+          });
+          assert.ok(effect?.leaseToken);
+          await effects.settle({
+            requestId,
+            effectKey: effect.effectKey,
+            ownerInstanceId: "effect-manager",
+            leaseToken: effect.leaseToken,
+            resolution: "reconciled",
+            result: { advanced: true, runCompleted: false },
+            evidence: { source: "cancellation-race-fixture" },
+          });
+          const owner = await completions.findById(requestId);
+          assert.ok(owner);
+          await completions.markEffectsCommitted({
+            requestId,
+            ownerInstanceId: "manager-a",
+            ownerAttemptCount: owner.ownerAttemptCount,
+            result: { advanced: true, runCompleted: false },
+          });
+        }
+
+        const canonical = await completions.findById(requestId);
+        assert.ok(canonical?.ownerInstanceId);
+        assert.ok(canonical?.leaseExpiresAt);
+        assert.equal(canonical.applyPhase, phase);
+        const cancellation = await requestRunTermination(database.sql, {
+          runId,
+          targetStatus: "cancelled",
+          requestedBy: "test.cancellation-race",
+          diagnostic: `cancellation arrived after ${phase}`,
+          requestId: phase === "owner_committed"
+            ? "RTR_cancel-after-owner-commit"
+            : "RTR_cancel-after-effects-commit",
+        });
+        assert.equal(cancellation.status, "requested");
+
+        const preemption = await completions.preemptForRunTermination({
+          requestId,
+          diagnostic: `must not reject canonical ${phase}`,
+        });
+        assert.equal(
+          preemption.status,
+          phase === "owner_committed" ? "resume_effects" : "finalize",
+        );
+        assert.equal(preemption.request.state, "processing");
+        assert.equal(preemption.request.applyPhase, phase);
+        await assert.rejects(
+          completions.quarantine({
+            requestId,
+            ownerInstanceId: canonical.ownerInstanceId,
+            expectedState: "processing",
+            expectedLeaseExpiresAt: canonical.leaseExpiresAt,
+            expectedUpdatedAt: canonical.updatedAt,
+            diagnostic: "generic owner failure must not erase canonical receipt",
+          }),
+          /RUNTIME_COMPLETION_QUARANTINE_CANONICAL_CONTINUATION_REQUIRED/,
+        );
+        const retained = await completions.findById(requestId);
+        assert.equal(retained?.state, "processing");
+        assert.equal(retained?.applyPhase, phase);
+        assert.equal((await database.sql<Array<{ outcome: string | null }>>`
+          SELECT outcome FROM claim_log WHERE id = ${seeded.claimId}
+        `)[0]?.outcome, "completed");
+      }
     } finally {
       await database.cleanup();
     }
@@ -1406,7 +1692,7 @@ describe("manager-owned runtime completion", () => {
     try {
       const runId = "run-processing-heartbeat";
       const seeded = await seedManagedSingleStepClaim(database, runId);
-      const startedAt = new Date("2026-07-13T12:00:00.000Z");
+      const startedAt = new Date();
       const requested = await requestRuntimeCompletion(database.sql, {
         envelope: seeded.envelope,
         output: "STATUS: done\nSUMMARY: long-running acceptance gates",
@@ -1431,6 +1717,7 @@ describe("manager-owned runtime completion", () => {
       assert.equal(await completions.heartbeatProcessing({
         requestId: requested.request.requestId,
         ownerInstanceId: "live-manager",
+        ownerAttemptCount: 1,
         leaseMs: 60_000,
         now: new Date(startedAt.getTime() + 45_000),
       }), true);
@@ -1448,7 +1735,7 @@ describe("manager-owned runtime completion", () => {
     try {
       const runId = "run-effect-fence";
       const seeded = await seedManagedSingleStepClaim(database, runId);
-      const startedAt = new Date("2026-07-13T12:00:00.000Z");
+      const startedAt = new Date();
       const output = "STATUS: done\nSUMMARY: effect lease fencing";
       const requested = await requestRuntimeCompletion(database.sql, {
         envelope: seeded.envelope,
@@ -1470,17 +1757,18 @@ describe("manager-owned runtime completion", () => {
         ownerInstanceId: "manager-a",
         now: startedAt,
       });
-      await completeSingleStepClaimAndState(database.sql, {
+      await asRuntimeCompletionOwner(completions, requested.request.requestId, () => completeSingleStepClaimAndState(database.sql, {
         envelope: seeded.envelope,
         stepStatus: "done",
         stepOutput: output,
         now: new Date(startedAt.getTime() + 1_000),
-      });
+      }));
 
       await assert.rejects(
         completions.markEffectsCommitted({
           requestId: requested.request.requestId,
           ownerInstanceId: "manager-a",
+          ownerAttemptCount: (await completions.findById(requested.request.requestId))!.ownerAttemptCount,
           result: { advanced: true, runCompleted: false },
         }),
         /RUNTIME_COMPLETION_MANDATORY_EFFECTS_PENDING/,
@@ -1534,9 +1822,366 @@ describe("manager-owned runtime completion", () => {
       assert.equal((await completions.markEffectsCommitted({
         requestId: requested.request.requestId,
         ownerInstanceId: "manager-a",
+        ownerAttemptCount: (await completions.findById(requested.request.requestId))!.ownerAttemptCount,
         result: { advanced: true, runCompleted: false },
         now: new Date(startedAt.getTime() + 42_000),
       })).applyPhase, "effects_committed");
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("keeps every active completion state authoritative over loop and single orphan recovery", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const states = ["requested", "draining", "processing", "quarantined"] as const;
+      let canonicalProcessingLoop:
+        | Readonly<{ seeded: Awaited<ReturnType<typeof seedManagedClaim>>; output: string }>
+        | undefined;
+
+      for (const kind of ["loop", "single"] as const) {
+        for (const state of states) {
+          const runId = `run-orphan-fence-${kind}-${state}`;
+          const seeded = kind === "loop"
+            ? await seedManagedClaim(database, runId)
+            : await seedManagedSingleStepClaim(database, runId);
+          const completion = await publishCompletionInState(
+            database,
+            seeded,
+            state,
+            `RCR_orphan-fence-${kind}-${state}`,
+          );
+
+          const recovery = kind === "loop"
+            ? closeClaimAndBoundAttempt(database.sql, {
+                claimId: seeded.claimId,
+                runId,
+                stepId: "implement",
+                storyId: "US-001",
+                agentId: "feature-dev_developer",
+                outcome: "infra_retry",
+                diagnostic: "generic loop orphan recovery must lose",
+                recoveryAuthority: "orphan_recovery",
+              })
+            : database.sql.begin((transaction) => closeExactSingleStepClaimInTransaction(transaction, {
+                envelope: seeded.envelope,
+                outcome: "infra_retry",
+                diagnostic: "generic single orphan recovery must lose",
+                recoveryAuthority: "orphan_recovery",
+              }));
+          await assert.rejects(
+            recovery,
+            (error: unknown) => error instanceof Error
+              && error.message.includes(
+                `CLAIM_MUTATION_DURABLE_OWNER_ACTIVE:runtime_completion:${state}:`,
+              ),
+          );
+
+          const owner = await database.sql<Array<{
+            outcome: string | null;
+            completion_state: string;
+          }>>`
+            SELECT cl.outcome, completion.state AS completion_state
+              FROM claim_log cl
+              JOIN runtime_completion_requests completion ON completion.claim_id = cl.id
+             WHERE cl.id = ${seeded.claimId}
+          `;
+          assert.deepEqual({ ...owner[0] }, { outcome: null, completion_state: state });
+          if (kind === "loop") {
+            assert.equal((await seeded.attempts.findActive({
+              runId,
+              stepId: "implement",
+              storyId: "US-001",
+            }))?.disposition, "running");
+            if (state === "processing") {
+              canonicalProcessingLoop = { seeded, output: completion.output };
+            }
+          }
+        }
+      }
+
+      if (!canonicalProcessingLoop) throw new Error("processing loop fixture missing");
+      const canonicalCompletions = createRuntimeCompletionRepository(database.sql);
+      const canonicalRequest = await canonicalCompletions.findByClaimId(canonicalProcessingLoop.seeded.claimId);
+      if (!canonicalRequest) throw new Error("canonical processing request missing");
+      await asRuntimeCompletionOwner(canonicalCompletions, canonicalRequest.requestId, () => completeStoryClaimAndBoundAttempt(database.sql, {
+        envelope: canonicalProcessingLoop.seeded.envelope,
+        sourceAfter: { sha: "2".repeat(40), treeHash: "3".repeat(64) },
+        outputHash: createHash("sha256").update(canonicalProcessingLoop.output, "utf8").digest("hex"),
+        storyStatus: "done",
+        storyOutput: canonicalProcessingLoop.output,
+        stepStatus: "running",
+        stepOutput: canonicalProcessingLoop.output,
+      }));
+      assert.equal((await database.sql<Array<{ outcome: string }>>`
+        SELECT outcome FROM claim_log
+         WHERE id = ${canonicalProcessingLoop.seeded.claimId}
+      `)[0]?.outcome, "completed", "the canonical completion owner must remain able to commit");
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("allows exact loop and single orphan recovery only when no durable owner exists", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const loop = await seedManagedClaim(database, "run-orphan-no-owner-loop");
+      await drainManagedRuntime(loop);
+      const loopClosed = await closeClaimAndBoundAttempt(database.sql, {
+        claimId: loop.claimId,
+        runId: loop.envelope.runId,
+        stepId: loop.envelope.workflowStepId,
+        storyId: loop.envelope.storyId!,
+        agentId: loop.envelope.claimAgentId,
+        outcome: "infra_retry",
+        diagnostic: "loop orphan recovery acquired exact authority",
+        recoveryAuthority: "orphan_recovery",
+      });
+      assert.equal(loopClosed.status, "closed");
+
+      const single = await seedManagedSingleStepClaim(database, "run-orphan-no-owner-single");
+      await drainManagedRuntime(single);
+      await database.sql.begin((transaction) => closeExactSingleStepClaimInTransaction(transaction, {
+        envelope: single.envelope,
+        outcome: "infra_retry",
+        diagnostic: "single orphan recovery acquired exact authority",
+        recoveryAuthority: "orphan_recovery",
+      }));
+      const outcomes = await database.sql<Array<{ run_id: string; outcome: string }>>`
+        SELECT run_id, outcome FROM claim_log
+         WHERE id IN (${loop.claimId}, ${single.claimId})
+         ORDER BY run_id
+      `;
+      assert.deepEqual(outcomes.map((row) => ({ ...row })), [
+        { run_id: "run-orphan-no-owner-loop", outcome: "infra_retry" },
+        { run_id: "run-orphan-no-owner-single", outcome: "infra_retry" },
+      ]);
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("refuses to acquire orphan authority through an autocommit/base Sql capability", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const seeded = await seedManagedSingleStepClaim(database, "run-orphan-autocommit-rejected");
+      await assert.rejects(
+        acquireOrphanClaimRecoveryAuthorityInTransaction(
+          database.sql as unknown as postgres.TransactionSql,
+          {
+            claimId: seeded.claimId,
+            runId: seeded.envelope.runId,
+            workflowStepId: seeded.envelope.workflowStepId,
+            storyId: null,
+            claimAgentId: seeded.envelope.claimAgentId,
+          },
+        ),
+        /CLAIM_MUTATION_TRANSACTION_REQUIRED/,
+      );
+      assert.equal((await database.sql<Array<{ outcome: string | null }>>`
+        SELECT outcome FROM claim_log WHERE id = ${seeded.claimId}
+      `)[0]?.outcome, null);
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("serializes competing story orphan owners on the shared recovery advisory identity before run locking", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const seeded = await seedManagedClaim(database, "run-orphan-advisory-order");
+      await drainManagedRuntime(seeded);
+      const identity = {
+        claimId: seeded.claimId,
+        runId: seeded.envelope.runId,
+        workflowStepId: seeded.envelope.workflowStepId,
+        storyId: seeded.envelope.storyId!,
+        claimAgentId: seeded.envelope.claimAgentId,
+      } as const;
+      let releaseFirst!: () => void;
+      let firstAcquired!: () => void;
+      const release = new Promise<void>((resolve) => { releaseFirst = resolve; });
+      const acquired = new Promise<void>((resolve) => { firstAcquired = resolve; });
+      const first = database.sql.begin(async (transaction) => {
+        await acquireOrphanClaimRecoveryAuthorityInTransaction(transaction, identity);
+        firstAcquired();
+        await release;
+        return closeClaimAndBoundAttemptInTransaction(transaction, {
+          claimId: seeded.claimId,
+          runId: seeded.envelope.runId,
+          stepId: seeded.envelope.workflowStepId,
+          storyId: seeded.envelope.storyId!,
+          agentId: seeded.envelope.claimAgentId,
+          outcome: "infra_retry",
+          diagnostic: "first advisory owner won",
+        });
+      });
+      await acquired;
+      const second = database.sql.begin((transaction) =>
+        acquireOrphanClaimRecoveryAuthorityInTransaction(transaction, identity)
+      );
+      await waitForBlockedRecoveryAdvisoryLock(database);
+      releaseFirst();
+      assert.equal((await first).status, "closed");
+      await assert.rejects(second, /CLAIM_MUTATION_CLAIM_TERMINAL/);
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("fences active termination and runtime quarantine owners before orphan claim mutation", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const termination = await seedManagedSingleStepClaim(database, "run-orphan-termination-owner");
+      await database.sql`
+        INSERT INTO run_termination_requests (
+          request_id, run_id, target_status, state, requested_by,
+          requested_at, diagnostic
+        ) VALUES (
+          'RTR_orphan-termination-owner', ${termination.envelope.runId},
+          'cancelled', 'requested', 'test-owner', NOW(), 'durable termination owner'
+        )
+      `;
+      await assert.rejects(
+        database.sql.begin((transaction) => closeExactSingleStepClaimInTransaction(transaction, {
+          envelope: termination.envelope,
+          outcome: "infra_retry",
+          diagnostic: "must not steal termination",
+          recoveryAuthority: "orphan_recovery",
+        })),
+        /CLAIM_MUTATION_DURABLE_OWNER_ACTIVE:run_termination:requested:/,
+      );
+
+      const quarantine = await seedManagedSingleStepClaim(database, "run-orphan-runtime-quarantine");
+      const liveRuntime = await quarantine.sessions.findById(quarantine.session.sessionId);
+      if (!liveRuntime) throw new Error("runtime fixture missing");
+      await quarantine.sessions.quarantine({
+        sessionId: liveRuntime.sessionId,
+        expectedOwnerInstanceId: liveRuntime.ownerInstanceId,
+        expectedStateVersion: liveRuntime.stateVersion,
+        diagnostic: "runtime quarantine owns recovery",
+      });
+      await assert.rejects(
+        database.sql.begin((transaction) => closeExactSingleStepClaimInTransaction(transaction, {
+          envelope: quarantine.envelope,
+          outcome: "infra_retry",
+          diagnostic: "must not steal quarantine",
+          recoveryAuthority: "orphan_recovery",
+        })),
+        /CLAIM_MUTATION_DURABLE_OWNER_ACTIVE:runtime_quarantine:quarantined:/,
+      );
+      const claims = await database.sql<Array<{ id: string; outcome: string | null }>>`
+        SELECT id::text, outcome FROM claim_log
+         WHERE id IN (${termination.claimId}, ${quarantine.claimId})
+         ORDER BY id
+      `;
+      assert.deepEqual(claims.map((claim) => claim.outcome), [null, null]);
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("linearizes recovery-first completion publication to one terminal claim owner", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const seeded = await seedManagedSingleStepClaim(database, "run-orphan-completion-race");
+      await drainManagedRuntime(seeded);
+      let releaseRecovery!: () => void;
+      let authorityAcquired!: () => void;
+      const release = new Promise<void>((resolve) => { releaseRecovery = resolve; });
+      const acquired = new Promise<void>((resolve) => { authorityAcquired = resolve; });
+      const recovery = database.sql.begin(async (transaction) => {
+        await acquireOrphanClaimRecoveryAuthorityInTransaction(transaction, {
+          claimId: seeded.claimId,
+          runId: seeded.envelope.runId,
+          workflowStepId: seeded.envelope.workflowStepId,
+          storyId: null,
+          claimAgentId: seeded.envelope.claimAgentId,
+        });
+        authorityAcquired();
+        await release;
+        await closeExactSingleStepClaimInTransaction(transaction, {
+          envelope: seeded.envelope,
+          outcome: "infra_retry",
+          diagnostic: "recovery won the run and claim fence",
+        });
+      });
+      await acquired;
+      const completion = requestRuntimeCompletion(database.sql, {
+        envelope: seeded.envelope,
+        output: "STATUS: done\nSUMMARY: completion lost the authority race",
+        requestId: "RCR_orphan-completion-race",
+      });
+      await waitForBlockedTerminationPublication(database);
+      releaseRecovery();
+      await recovery;
+      await assert.rejects(completion, /RUNTIME_COMPLETION_OWNER_NOT_ACTIVE/);
+      const owner = await database.sql<Array<{ outcome: string; request_count: number }>>`
+        SELECT cl.outcome,
+               (SELECT COUNT(*)::integer FROM runtime_completion_requests rcr
+                 WHERE rcr.claim_id = cl.id) AS request_count
+          FROM claim_log cl
+         WHERE cl.id = ${seeded.claimId}
+      `;
+      assert.deepEqual({ ...owner[0] }, { outcome: "infra_retry", request_count: 0 });
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("invalidates an already-waiting quarantine CAS when orphan recovery wins first", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const seeded = await seedManagedSingleStepClaim(database, "run-orphan-quarantine-race");
+      await drainManagedRuntime(seeded);
+      const runtimeBefore = await seeded.sessions.findById(seeded.session.sessionId);
+      if (!runtimeBefore) throw new Error("runtime fixture missing");
+      let releaseRecovery!: () => void;
+      let authorityAcquired!: () => void;
+      const release = new Promise<void>((resolve) => { releaseRecovery = resolve; });
+      const acquired = new Promise<void>((resolve) => { authorityAcquired = resolve; });
+      const recovery = database.sql.begin(async (transaction) => {
+        await acquireOrphanClaimRecoveryAuthorityInTransaction(transaction, {
+          claimId: seeded.claimId,
+          runId: seeded.envelope.runId,
+          workflowStepId: seeded.envelope.workflowStepId,
+          storyId: null,
+          claimAgentId: seeded.envelope.claimAgentId,
+        });
+        authorityAcquired();
+        await release;
+        await closeExactSingleStepClaimInTransaction(transaction, {
+          envelope: seeded.envelope,
+          outcome: "infra_retry",
+          diagnostic: "recovery won before runtime quarantine",
+        });
+      });
+      await acquired;
+      const quarantine = seeded.sessions.quarantine({
+        sessionId: runtimeBefore.sessionId,
+        expectedOwnerInstanceId: runtimeBefore.ownerInstanceId,
+        expectedStateVersion: runtimeBefore.stateVersion,
+        diagnostic: "stale quarantine CAS must lose",
+      });
+      await waitForBlockedRuntimeQuarantine(database);
+      releaseRecovery();
+      await recovery;
+      await assert.rejects(quarantine, /RUNTIME_SESSION_QUARANTINE_CAS_LOST/);
+      const owner = await database.sql<Array<{
+        outcome: string;
+        runtime_state: string;
+        state_version: number;
+      }>>`
+        SELECT cl.outcome, runtime.state AS runtime_state, runtime.state_version
+          FROM claim_log cl
+          JOIN runtime_sessions runtime ON runtime.claim_id = cl.id
+         WHERE cl.id = ${seeded.claimId}
+      `;
+      assert.deepEqual({ ...owner[0] }, {
+        outcome: "infra_retry",
+        runtime_state: "drained",
+        state_version: runtimeBefore.stateVersion + 1,
+      });
     } finally {
       await database.cleanup();
     }

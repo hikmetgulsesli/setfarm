@@ -9,7 +9,7 @@ import {
 import type { V3PreparationClaimAuthorityV1 } from "../execution/v3-preparation-claim-authority.js";
 import type { V3PreparationDependencyStateV1 } from "../execution/v3-preparation-decision.js";
 import { requestRunTerminationInTransaction } from "../execution/run-termination.js";
-import { releaseReservedRuntimeSessionInTransaction } from "../execution/runtime-session-repository.js";
+import { withdrawPreDispatchClaimInTransaction } from "../execution/pre-dispatch-withdrawal-authority.js";
 import { scheduleRunCronTeardown } from "./cleanup-ops.js";
 import { emitEvent } from "./events.js";
 import { recordObservation } from "./observations.js";
@@ -25,44 +25,28 @@ export async function closeReservedClaimRuntimeInTransaction(
   sql: postgres.Sql | postgres.TransactionSql,
   input: Readonly<{
     claimId: number;
+    runId: string;
+    workflowStepId: string;
+    storyId: string | null;
+    claimAgentId: string;
     outcome: string;
     diagnostic: string;
     runtime?: ReservedRuntimeOwnership;
   }>,
 ): Promise<void> {
-  const rows = await sql.unsafe<Array<{ id: string }>>(
-    `UPDATE claim_log
-        SET outcome = $2,
-            abandoned_at = NOW(),
-            duration_ms = LEAST(CAST(EXTRACT(EPOCH FROM (NOW() - claimed_at::timestamptz)) * 1000 AS BIGINT), 2147483647)::INTEGER,
-            diagnostic = $3
-      WHERE id = $1 AND outcome IS NULL
-      RETURNING id::text AS id`,
-    [input.claimId, input.outcome, input.diagnostic.slice(0, 1000)],
-  );
-  if (rows.length !== 1) {
-    const existing = await sql.unsafe<Array<{ outcome: string | null }>>(
-      "SELECT outcome FROM claim_log WHERE id = $1 FOR UPDATE",
-      [input.claimId],
-    );
-    if (!existing[0] || existing[0].outcome === null) {
-      throw new Error("UNSTARTED_CLAIM_CAS_LOST");
-    }
-  }
-  await sql.unsafe(
-    `UPDATE execution_attempts
-        SET disposition = 'inconclusive', updated_at = NOW()
-      WHERE claim_id = $1 AND disposition IN ('claimed', 'running')`,
-    [input.claimId],
-  );
-  if (input.runtime) {
-    await releaseReservedRuntimeSessionInTransaction(sql, {
-      sessionId: input.runtime.sessionId,
+  const result = await withdrawPreDispatchClaimInTransaction(sql as postgres.TransactionSql, {
+    identity: {
       claimId: input.claimId,
-      ownerInstanceId: input.runtime.ownerInstanceId,
-      diagnostic: input.diagnostic,
-    });
-  }
+      runId: input.runId,
+      workflowStepId: input.workflowStepId,
+      storyId: input.storyId,
+      claimAgentId: input.claimAgentId,
+      ...(input.runtime ? { runtime: input.runtime } : {}),
+    },
+    outcome: input.outcome,
+    diagnostic: input.diagnostic,
+  });
+  if (result.status !== "withdrawn") throw new Error(`UNSTARTED_CLAIM_WITHDRAWAL_${result.status.toUpperCase()}`);
 }
 
 function dependencyState(
@@ -127,6 +111,10 @@ export async function handleV3PreDispatchFailure(input: Readonly<{
   await pgBegin(async (sql) => {
     await closeReservedClaimRuntimeInTransaction(sql, {
       claimId: input.claimId,
+      runId: input.step.run_id,
+      workflowStepId: input.step.step_id,
+      storyId: input.story.story_id,
+      claimAgentId: input.agentId,
       outcome: disposition.claimOutcome,
       diagnostic: disposition.diagnostic,
       runtime: input.runtime,

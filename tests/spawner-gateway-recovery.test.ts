@@ -698,7 +698,8 @@ describe("spawner gateway recovery wiring", () => {
     const retryTransition = requeue.indexOf("publishOperationalRetryDirectiveInTransaction");
     assert.ok(requeue.indexOf("waitForClaimRuntimeQuiescence") < exhaustedTransition);
     assert.ok(exhaustedTransition < exhaustedDiscard);
-    assert.ok(exactRetryReset < retryTransition);
+    assert.ok(retryTransition < exactRetryReset);
+    assert.match(requeue, /closed = await pgBegin\(async \(sql\) => \{[\s\S]*publishOperationalRetryDirectiveInTransaction\(sql,[\s\S]*discardV3OperationalRetryWorktree/);
     assert.ok(requeue.indexOf("discardRuntimeGuardRetryWorktree") < requeue.lastIndexOf("UPDATE stories SET status = 'pending'"));
 
     const transitionSource = fs.readFileSync(path.join(root, "src", "execution", "operational-retry-transition.ts"), "utf-8");
@@ -939,7 +940,23 @@ describe("spawner gateway recovery wiring", () => {
     const ownerSource = spawnerSource.slice(ownerStart, ownerEnd);
     assert.match(ownerSource, /completeStep\(/);
     assert.match(ownerSource, /deferContinuationToEffectLedger: true/);
+    assert.match(ownerSource, /withRuntimeCompletionOwnerCapability\(request/);
     assert.match(ownerSource, /await applyAndAcceptRuntimeCompletionEffects\(request\)/);
+    const effectStart = spawnerSource.indexOf("async function applyAndAcceptRuntimeCompletionEffects(");
+    const effectEnd = spawnerSource.indexOf("async function executeRuntimeCompletionOwner(", effectStart);
+    const effectSource = spawnerSource.slice(effectStart, effectEnd);
+    assert.match(effectSource, /withRuntimeCompletionOwnerCapability\(request/);
+    assert.ok(
+      effectSource.indexOf("withRuntimeCompletionOwnerCapability(request")
+        < effectSource.indexOf("runRuntimeCompletionEffectLedger({"),
+      "normal and recovered effect continuations must inherit the exact durable completion owner capability",
+    );
+    const resumeStart = spawnerSource.indexOf("async function resumeRuntimeCompletionOwnerEffects(");
+    const resumeEnd = spawnerSource.indexOf("async function runRuntimeCompletionProcessor(", resumeStart);
+    assert.match(
+      spawnerSource.slice(resumeStart, resumeEnd),
+      /await applyAndAcceptRuntimeCompletionEffects\(request\)/,
+    );
     assert.match(spawnerSource, /runRuntimeCompletionEffectLedger\(/);
     assert.match(spawnerSource, /await listener\.listen\("runtime_completion_requested"/);
     assert.match(
@@ -1391,12 +1408,14 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /let preparedScopeParentDirs: string\[\] = \[\]/);
     assert.match(source, /preparedScopeParentDirs = claim\.storyId/);
     assert.match(source, /prepared scope parent dirs/);
+    const ownedChildSpawn = source.indexOf("const child = preTransferChild = spawn(");
+    assert.notEqual(ownedChildSpawn, -1, "post-claim child must remain tracked before ownership transfer");
     assert.ok(
       source.indexOf("claimSummary = buildClaimSummary") < source.indexOf("ensureClaimScopeParentDirs(spawnCwd"),
       "scope parent dirs must be derived from the claim summary before the agent child process starts",
     );
     assert.ok(
-      source.indexOf("ensureClaimScopeParentDirs(spawnCwd") < source.indexOf("const child = spawn("),
+      source.indexOf("ensureClaimScopeParentDirs(spawnCwd") < ownedChildSpawn,
       "scope parent dirs must exist before agent tools try to write missing owned files",
     );
   });
@@ -2028,6 +2047,13 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(source, /waitForClaimRuntimeQuiescence\(row\.run_id, undefined, row\.agent_id\)/);
     assert.match(source, /retrySingleStepClaimWithAuthority\(\{/);
     assert.match(source, /runtimeAgentId:\s*"spawner-untracked-recovery"/);
+    const singleRecovery = source.slice(
+      source.indexOf("async function requeueUntrackedRunningSingleStepClaims"),
+      source.indexOf("async function reconcileTerminalClaimRuntimeOwnership"),
+    );
+    assert.match(singleRecovery, /runtime_completion_requests completion[\s\S]*completion\.state NOT IN \('accepted', 'rejected'\)/);
+    assert.match(singleRecovery, /runtime_sessions runtime[\s\S]*runtime\.state = 'quarantined'/);
+    assert.match(singleRecovery, /run_termination_requests termination[\s\S]*termination\.state <> 'terminalized'/);
     assert.doesNotMatch(source.slice(
       source.indexOf("async function requeueUntrackedRunningSingleStepClaims"),
       source.indexOf("async function runClaimMaintenance"),
@@ -2049,8 +2075,9 @@ describe("spawner gateway recovery wiring", () => {
     assert.match(block, /loop_step\.current_story_id = st\.id/);
     assert.match(block, /cl\.story_id = st\.story_id/);
     assert.match(block, /cl\.outcome IS NULL/);
-    assert.match(block, /runtime_completion_requests completion[\s\S]*completion\.state = 'quarantined'/);
+    assert.match(block, /runtime_completion_requests completion[\s\S]*completion\.state NOT IN \('accepted', 'rejected'\)/);
     assert.match(block, /runtime_sessions runtime[\s\S]*runtime\.state = 'quarantined'/);
+    assert.match(block, /run_termination_requests termination[\s\S]*termination\.state <> 'terminalized'/);
     assert.match(block, /cl\.claimed_at <= NOW\(\) - \(\$1::int \* interval '1 millisecond'\)/);
     assert.match(block, /hasTrackedClaimRuntime\(\(active\) =>/);
     assert.match(block, /active\.storyDbId === row\.story_db_id \|\| active\.storyId === row\.story_id/);

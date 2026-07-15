@@ -54,6 +54,7 @@ import {
   closeClaimAndBoundAttempt,
   closeUniqueSingleStepClaimForRecoveryInTransaction,
 } from "./execution/claim-attempt-transition.js";
+import { isClaimMutationAuthorityError } from "./execution/claim-mutation-authority.js";
 import { createAttemptRepository } from "./execution/attempt-repository.js";
 import { loadV3ImplementationAttemptContext } from "./execution/v3-implementation-attempt.js";
 import {
@@ -104,7 +105,9 @@ import {
   createPostgresV3RecoveryEffectHandler,
   type V3RecoveryEffectCoordinateResult,
 } from "./recovery/v3-recovery-effect.js";
-import { createV3RecoveryLifecycleReconciler } from "./recovery/v3-recovery-lifecycle-reconciler.js";
+import {
+  createV3RecoveryLifecycleReconciler,
+} from "./recovery/v3-recovery-lifecycle-reconciler.js";
 import { createV3RecoveryOwnerLeaseRepository } from "./recovery/v3-recovery-owner-lease.js";
 import { createV3EvidenceOnlyRecoveryWorker } from "./recovery/v3-evidence-only-worker.js";
 import { createV3EvidenceOnlyRuntimeDependencies } from "./recovery/v3-evidence-only-runtime.js";
@@ -2676,6 +2679,7 @@ async function heartbeatRunningV3RecoveryOwner(active: ActiveProcess): Promise<b
       runId: active.runId,
       storyId: active.storyId,
       claimId: active.claimId,
+      claimAgentId: active.claimAgentId,
       revisionId: active.recoveryRevisionId,
       dispatchId: active.recoveryDispatchId,
       ownerInstanceId: active.runtimeOwnerInstanceId,
@@ -4083,10 +4087,12 @@ async function retrySingleStepClaimWithAuthority(input: Readonly<{
     claimAgentId: input.claimAgentId,
     runtimeAgentId: input.runtimeAgentId,
   });
+  if (!envelope) throw new Error("CLAIM_ORPHAN_RECOVERY_ENVELOPE_UNAVAILABLE");
   await failStep(
     input.stepDbId,
     `SETFARM_INFRA_RETRY:\n${input.diagnostic}`,
     envelope,
+    { recoveryAuthority: "orphan_recovery" },
   );
   await pgRun("SELECT pg_notify('step_pending', $1)", [
     JSON.stringify({ agentId: input.claimAgentId, runId: input.runId, stepId: input.workflowStepId }),
@@ -4105,6 +4111,97 @@ async function retryActiveSingleStepClaim(active: ActiveProcess, stepIdName: str
     envelope: activeClaimEnvelope(active),
   });
   if (active.claimId) await releaseReservedRuntimeForClaimIfPresent(active.claimId, diagnostic);
+}
+
+type V3RecoveryOwnerIdentity = Readonly<{
+  runId?: string;
+  storyId?: string;
+  claimId?: number;
+  claimAgentId?: string;
+  attempt?: ClaimAttemptFenceV1;
+  recoveryDispatchId?: string;
+  recoveryRevisionId?: string;
+  recoveryLeaseToken?: string;
+  runtimeSessionId?: string;
+  runtimeOwnerInstanceId?: string;
+}>;
+
+async function relinquishV3RecoveryOwner(
+  owner: V3RecoveryOwnerIdentity,
+  diagnostic: string,
+): Promise<boolean> {
+  if (!owner.recoveryDispatchId) return false;
+  if (
+    !owner.runId
+    || !owner.storyId
+    || !owner.claimId
+    || !owner.claimAgentId
+    || !owner.attempt
+    || !owner.recoveryRevisionId
+    || !owner.recoveryLeaseToken
+    || !owner.runtimeSessionId
+    || !owner.runtimeOwnerInstanceId
+  ) {
+    throw new Error(`V3_RECOVERY_RELINQUISH_IDENTITY_INCOMPLETE:${owner.recoveryDispatchId}`);
+  }
+  const result = await createV3RecoveryOwnerLeaseRepository(getSql()).relinquish({
+    kind: "model_runtime",
+    runId: owner.runId,
+    storyId: owner.storyId,
+    claimId: owner.claimId,
+    claimAgentId: owner.claimAgentId,
+    revisionId: owner.recoveryRevisionId,
+    dispatchId: owner.recoveryDispatchId,
+    ownerInstanceId: owner.runtimeOwnerInstanceId,
+    leaseToken: owner.recoveryLeaseToken,
+    attempt: owner.attempt,
+    runtimeSessionId: owner.runtimeSessionId,
+  });
+  const reconcileExact = async (observedAt?: string): Promise<void> => {
+    const reconciler = createV3RecoveryLifecycleReconciler(getSql());
+    const first = await reconciler.reconcileActive({
+      runId: owner.runId,
+      dispatchId: owner.recoveryDispatchId,
+      limit: 1,
+    }, observedAt ? { now: new Date(observedAt) } : {});
+    for (const event of first.events) {
+      if (event.action !== "request_runtime_drain" || !event.runtimeSessionId) continue;
+      const session = await createRuntimeSessionRepository(getSql()).findById(event.runtimeSessionId);
+      if (!session || session.state !== "drain_requested") {
+        throw new Error(`V3_RECOVERY_EXACT_DRAIN_STATE_INVALID:${owner.recoveryDispatchId}`);
+      }
+      try {
+        await drainDurableRuntimeSession(session, {
+          requestId: `v3-recovery-relinquish-${owner.recoveryDispatchId}`,
+        });
+      } catch (error) {
+        console.warn(`[spawner] V3_RECOVERY_EXACT_DRAIN_FAILED:${owner.recoveryDispatchId}:${String(error).slice(0, 240)}`);
+      }
+    }
+    const second = await reconciler.reconcileActive({
+      runId: owner.runId,
+      dispatchId: owner.recoveryDispatchId,
+      limit: 1,
+    }, observedAt ? { now: new Date(observedAt) } : {});
+    const retained = await pgGet<{ state: string }>(
+      `SELECT state FROM recovery_dispatch_deliveries
+        WHERE dispatch_id = $1 AND revision_id = $2`,
+      [owner.recoveryDispatchId, owner.recoveryRevisionId],
+    );
+    if (retained && ["authorized", "leased", "attempt_reserved", "running"].includes(retained.state)) {
+      throw new Error(`V3_RECOVERY_RELINQUISH_NOT_RECONCILED:${owner.recoveryDispatchId}:${retained.state}`);
+    }
+  };
+  if (result.status !== "relinquished") {
+    console.warn(`[spawner] V3_RECOVERY_RELINQUISH_STALE:${owner.recoveryDispatchId}:${result.reason}:${diagnostic.slice(0, 160)}`);
+    if (!["V3_RECOVERY_OWNER_COMPLETION_ACTIVE", "V3_RECOVERY_OWNER_TERMINATION_PENDING"].includes(result.reason)) {
+      await reconcileExact();
+    }
+    return false;
+  }
+  console.warn(`[spawner] V3_RECOVERY_OWNER_RELINQUISHED:${owner.recoveryDispatchId}:${diagnostic.slice(0, 160)}`);
+  await reconcileExact(result.relinquishedAt);
+  return true;
 }
 
 async function releaseReservedRuntimeForClaimIfPresent(
@@ -4178,22 +4275,7 @@ async function releasePreSpawnClaim(
     || !claim.claimAgentId
   ) return false;
   if (claim.recoveryDispatchId && claim.storyId && claim.storyDbId) {
-    const envelope = await recoverClaimEnvelopeFromDatabase({
-      runId: claim.runId,
-      stepDbId: claim.stepId,
-      workflowStepId: claim.workflowStepId,
-      storyId: claim.storyId,
-      storyDbId: claim.storyDbId,
-      claimAgentId: claim.claimAgentId,
-      runtimeAgentId,
-    });
-    if (!envelope) return false;
-    await failStep(
-      claim.stepId,
-      `V3_RECOVERY_PRESPAWN_HANDOFF_FAILED: ${diagnostic}`,
-      envelope,
-    );
-    return true;
+    return relinquishV3RecoveryOwner(claim, `V3_RECOVERY_PRESPAWN_HANDOFF_FAILED: ${diagnostic}`);
   }
   if (claim.storyId) {
     return requeueOpenStoryClaim(
@@ -4214,6 +4296,205 @@ async function releasePreSpawnClaim(
     diagnostic,
   );
   return true;
+}
+
+export async function releaseUntransferredPostClaimOwnership(
+  claim: Awaited<ReturnType<typeof claimStep>>,
+  runtimeAgentId: string,
+  diagnostic: string,
+): Promise<Readonly<{
+  status: "settled" | "handed_off_completion" | "handed_off_termination";
+}>> {
+  if (
+    !claim.found
+    || !claim.runId
+    || !claim.stepId
+    || !claim.workflowStepId
+    || !claim.claimId
+    || !claim.claimAgentId
+    || !claim.runtimeSessionId
+    || !claim.runtimeOwnerInstanceId
+  ) throw new Error("POST_CLAIM_OWNERSHIP_IDENTITY_INCOMPLETE");
+  type OwnershipSnapshot = Readonly<{
+    claim_outcome: string | null;
+    runtime_state: string | null;
+    active_attempt_count: number;
+    active_delivery_count: number;
+    active_completion_count: number;
+    quarantined_completion_count: number;
+    active_termination_count: number;
+  }>;
+  const loadExact = () => pgGet<OwnershipSnapshot>(
+    `SELECT claim.outcome AS claim_outcome,
+            (
+              SELECT runtime.state
+                FROM runtime_sessions runtime
+               WHERE runtime.session_id = $6
+                 AND runtime.claim_id = claim.id
+                 AND runtime.owner_instance_id = $7
+               LIMIT 1
+            ) AS runtime_state,
+            (
+              SELECT COUNT(*)::integer
+                FROM execution_attempts attempt
+               WHERE attempt.claim_id = claim.id
+                 AND attempt.disposition IN ('claimed', 'running')
+            ) AS active_attempt_count,
+            (
+              SELECT COUNT(*)::integer
+                FROM recovery_dispatch_deliveries delivery
+               WHERE delivery.claim_id = claim.id
+                 AND delivery.state IN ('authorized', 'leased', 'attempt_reserved', 'running')
+            ) AS active_delivery_count,
+            (
+              SELECT COUNT(*)::integer
+                FROM runtime_completion_requests completion
+               WHERE completion.claim_id = claim.id
+                 AND completion.runtime_session_id = $6
+                 AND completion.state IN ('requested', 'draining', 'processing')
+            ) AS active_completion_count,
+            (
+              SELECT COUNT(*)::integer
+                FROM runtime_completion_requests completion
+               WHERE completion.claim_id = claim.id
+                 AND completion.runtime_session_id = $6
+                 AND completion.state = 'quarantined'
+            ) AS quarantined_completion_count,
+            (
+              SELECT COUNT(*)::integer
+                FROM run_termination_requests termination
+               WHERE termination.run_id = claim.run_id
+                 AND termination.state <> 'terminalized'
+            ) AS active_termination_count
+       FROM claim_log claim
+      WHERE claim.id = $1
+        AND claim.run_id = $2
+        AND claim.step_id = $3
+        AND claim.story_id IS NOT DISTINCT FROM $4::text
+        AND claim.agent_id = $5
+      LIMIT 1`,
+    [
+      claim.claimId,
+      claim.runId,
+      claim.workflowStepId,
+      claim.storyId ?? null,
+      claim.claimAgentId,
+      claim.runtimeSessionId,
+      claim.runtimeOwnerInstanceId,
+    ],
+  );
+
+  let snapshot = await loadExact();
+  if (!snapshot || !snapshot.runtime_state) {
+    throw new Error(`POST_CLAIM_EXACT_OWNERSHIP_MISSING:${claim.claimId}:${claim.runtimeSessionId}`);
+  }
+  const canonicalHandoff = (current: OwnershipSnapshot) => {
+    if (current.quarantined_completion_count > 0) {
+      throw new Error(`POST_CLAIM_COMPLETION_QUARANTINED:${claim.claimId}`);
+    }
+    if (current.active_completion_count > 0 && current.active_termination_count > 0) {
+      throw new Error(`POST_CLAIM_DURABLE_OWNER_AMBIGUOUS:${claim.claimId}`);
+    }
+    if (
+      current.active_completion_count === 1
+      && ["drain_requested", "drained"].includes(current.runtime_state ?? "")
+    ) return { status: "handed_off_completion" as const };
+    if (
+      current.active_termination_count === 1
+      && ["drain_requested", "drained"].includes(current.runtime_state ?? "")
+    ) return { status: "handed_off_termination" as const };
+    return undefined;
+  };
+  const initialHandoff = canonicalHandoff(snapshot);
+  if (initialHandoff) return initialHandoff;
+  const sessions = createRuntimeSessionRepository(getSql());
+  if (["starting", "running", "drain_requested"].includes(snapshot.runtime_state)) {
+    const current = await sessions.findById(claim.runtimeSessionId);
+    if (
+      !current
+      || current.claimId !== claim.claimId
+      || current.ownerInstanceId !== claim.runtimeOwnerInstanceId
+    ) {
+      throw new Error(`POST_CLAIM_RUNTIME_IDENTITY_MISMATCH:${claim.runtimeSessionId}`);
+    }
+    const draining = current.state === "drain_requested"
+      ? current
+      : await sessions.requestDrain({
+          sessionId: current.sessionId,
+          ownerInstanceId: current.ownerInstanceId,
+          diagnostic: `${diagnostic}: exact pre-transfer runtime drain`,
+        });
+    await drainDurableRuntimeSession(draining, {
+      requestId: `post-claim-pre-transfer-${claim.claimId}`,
+      authorityRef: `setfarm://claim-log/${claim.claimId}/pre-transfer-drain`,
+    });
+    snapshot = await loadExact();
+    if (!snapshot || snapshot.runtime_state !== "drained") {
+      throw new Error(`POST_CLAIM_RUNTIME_DRAIN_UNPROVEN:${claim.runtimeSessionId}`);
+    }
+    const racedHandoff = canonicalHandoff(snapshot);
+    if (racedHandoff) return racedHandoff;
+  }
+  if (snapshot.runtime_state === "quarantined") {
+    throw new Error(`POST_CLAIM_RUNTIME_QUARANTINED:${claim.runtimeSessionId}`);
+  }
+
+  if (snapshot.claim_outcome === null) {
+    await releasePreSpawnClaim(claim, runtimeAgentId, diagnostic);
+  } else {
+    if (snapshot.active_delivery_count > 0 && claim.recoveryDispatchId) {
+      await relinquishV3RecoveryOwner(claim, `V3_RECOVERY_POST_CLAIM_TERMINAL_CLEANUP: ${diagnostic}`);
+    }
+    if (snapshot.active_attempt_count > 0 && snapshot.active_delivery_count === 0) {
+      await createPostgresTerminalAttemptReconciler(getSql(), { graceMs: 0 }).reconcileClaim({
+        claimId: claim.claimId,
+        runtimeQuiesced: true,
+      });
+    }
+  }
+
+  const settledRuntime = await sessions.findById(claim.runtimeSessionId);
+  if (!settledRuntime) throw new Error(`POST_CLAIM_RUNTIME_MISSING:${claim.runtimeSessionId}`);
+  if (settledRuntime.state === "reserved") {
+    await pgBegin((sql) => releaseReservedRuntimeSessionInTransaction(sql, {
+      sessionId: settledRuntime.sessionId,
+      claimId: claim.claimId!,
+      ownerInstanceId: settledRuntime.ownerInstanceId,
+      diagnostic,
+    }));
+  } else if (settledRuntime.state === "drained") {
+    await pgBegin((sql) => releaseDrainedRuntimeSessionInTransaction(sql, {
+      sessionId: settledRuntime.sessionId,
+      claimId: claim.claimId!,
+      ownerInstanceId: settledRuntime.ownerInstanceId,
+    }));
+  } else if (settledRuntime.state !== "released") {
+    throw new Error(`POST_CLAIM_RUNTIME_NOT_SETTLED:${settledRuntime.sessionId}:${settledRuntime.state}`);
+  }
+
+  const retained = await loadExact();
+  if (
+    !retained
+    || retained.claim_outcome === null
+    || retained.runtime_state !== "released"
+    || retained.active_attempt_count > 0
+    || retained.active_delivery_count > 0
+    || retained.active_completion_count > 0
+    || retained.quarantined_completion_count > 0
+    || retained.active_termination_count > 0
+  ) {
+    throw new Error(
+      `POST_CLAIM_OWNERSHIP_RETAINED:${claim.claimId}`
+      + `:${retained?.claim_outcome ?? "claim-open"}`
+      + `:${retained?.runtime_state ?? "runtime-missing"}`
+      + `:attempts=${retained?.active_attempt_count ?? -1}`
+      + `:deliveries=${retained?.active_delivery_count ?? -1}`
+      + `:completions=${retained?.active_completion_count ?? -1}`
+      + `:quarantined-completions=${retained?.quarantined_completion_count ?? -1}`
+      + `:terminations=${retained?.active_termination_count ?? -1}`,
+    );
+  }
+  return { status: "settled" };
 }
 
 async function activeProcessHasOpenClaim(active: ActiveProcess, stepIdName: string): Promise<boolean> {
@@ -5136,11 +5417,19 @@ async function failActiveClaimAfterRuntimeQuiescence(
     throw new Error("ACTIVE_CLAIM_ID_MISSING");
   }
   const claimId = Number(active.claimId);
+  if (active.protocol === "v3" && !active.storyId && !active.recoveryDispatchId) {
+    await retryActiveSingleStepClaim(active, active.workflowStepId, error);
+    return;
+  }
   await waitForClaimRuntimeQuiescence(
     active.runId,
     active.storyId,
     active.claimAgentId,
   );
+  if (active.recoveryDispatchId) {
+    await relinquishV3RecoveryOwner(active, error);
+    return;
+  }
   await failStep(active.stepId, error, activeClaimEnvelope(active));
   await releaseReservedRuntimeForClaimIfPresent(claimId, error);
 }
@@ -5586,25 +5875,8 @@ async function requeueOpenStoryClaim(
   await waitForClaimRuntimeQuiescence(runId, storyId, claimAgentId);
 
   if (row.recovery_dispatch_id) {
-    if (!row.step_db_id || !row.story_db_id) {
-      throw new Error("V3_RECOVERY_REQUEUE_IDENTITY_INCOMPLETE");
-    }
-    const envelope = await recoverClaimEnvelopeFromDatabase({
-      runId,
-      stepDbId: row.step_db_id,
-      workflowStepId: stepId,
-      storyId,
-      storyDbId: row.story_db_id,
-      claimAgentId,
-      runtimeAgentId,
-    });
-    if (!envelope) throw new Error("V3_RECOVERY_REQUEUE_ENVELOPE_UNAVAILABLE");
-    await failStep(
-      row.step_db_id,
-      `V3_RECOVERY_REQUEUE_REJECTED: exact dispatch ${row.recovery_dispatch_id} is canonical owner; ${diagnostic}`,
-      envelope,
-    );
-    return true;
+    console.warn(`[spawner] V3_RECOVERY_GENERIC_REQUEUE_DEFERRED:${row.recovery_dispatch_id}:${diagnostic.slice(0, 160)}`);
+    return false;
   }
 
   if (row.protocol === "v3") {
@@ -5629,19 +5901,25 @@ async function requeueOpenStoryClaim(
         throw new Error("V3_OPERATIONAL_RETRY_STORY_AUTHORITY_MISMATCH");
       }
       const exhaustedDiagnostic = `${diagnostic}\nOPERATIONAL_RETRY_EXHAUSTED: typed fallback ${priorDirective.retryBudget.ordinal}/${priorDirective.retryBudget.limit} failed; unchanged-source redispatch is forbidden.`;
-      const closed = await pgBegin((sql) => terminalizeOperationalRetryExhaustionInTransaction(sql, {
-        claimId,
-        attemptId: activeAttempt.attemptId,
-        attemptGeneration: activeAttempt.generation,
-        runId,
-        stepId,
-        stepDbId: row.step_db_id!,
-        storyId,
-        storyDbId: row.story_db_id!,
-        agentId: claimAgentId,
-        diagnostic: exhaustedDiagnostic,
-        directive: priorDirective,
-      }));
+      let closed;
+      try {
+        closed = await pgBegin((sql) => terminalizeOperationalRetryExhaustionInTransaction(sql, {
+          claimId,
+          attemptId: activeAttempt.attemptId,
+          attemptGeneration: activeAttempt.generation,
+          runId,
+          stepId,
+          stepDbId: row.step_db_id!,
+          storyId,
+          storyDbId: row.story_db_id!,
+          agentId: claimAgentId,
+          diagnostic: exhaustedDiagnostic,
+          directive: priorDirective,
+        }));
+      } catch (error) {
+        if (isClaimMutationAuthorityError(error)) return false;
+        throw error;
+      }
       if (closed.status !== "closed") return false;
       await releaseReservedRuntimeForClaimIfPresent(claimId, exhaustedDiagnostic);
       await discardRuntimeGuardRetryWorktree(runId, storyId, claimAgentId, exhaustedDiagnostic);
@@ -5702,26 +5980,38 @@ async function requeueOpenStoryClaim(
         .filter((file) => file.role === "owned" || file.role === "shared_writable")
         .map((file) => file.path),
     });
-    await discardV3OperationalRetryWorktree(
-      runId,
-      storyId,
-      claimAgentId,
-      diagnostic,
-      directive.nextSourceRevision.sha,
-    );
-    const closed = await pgBegin((sql) => publishOperationalRetryDirectiveInTransaction(sql, {
-      claimId,
-      attemptId: v3AttemptContext.attempt.attemptId,
-      attemptGeneration: v3AttemptContext.attempt.generation,
-      runId,
-      stepId,
-      stepDbId: row.step_db_id!,
-      storyId,
-      storyDbId: row.story_db_id!,
-      agentId: claimAgentId,
-      diagnostic,
-      directive,
-    }));
+    let closed;
+    try {
+      closed = await pgBegin(async (sql) => {
+        const acquired = await publishOperationalRetryDirectiveInTransaction(sql, {
+          claimId,
+          attemptId: v3AttemptContext.attempt.attemptId,
+          attemptGeneration: v3AttemptContext.attempt.generation,
+          runId,
+          stepId,
+          stepDbId: row.step_db_id!,
+          storyId,
+          storyDbId: row.story_db_id!,
+          agentId: claimAgentId,
+          diagnostic,
+          directive,
+        });
+        if (acquired.status !== "closed") return acquired;
+        // The exact claim/attempt fence is now closed under the uncommitted
+        // transaction. Reset source before pending state becomes observable.
+        await discardV3OperationalRetryWorktree(
+          runId,
+          storyId,
+          claimAgentId,
+          diagnostic,
+          directive.nextSourceRevision.sha,
+        );
+        return acquired;
+      });
+    } catch (error) {
+      if (isClaimMutationAuthorityError(error)) return false;
+      throw error;
+    }
     if (closed.status !== "closed") return false;
     await releaseReservedRuntimeForClaimIfPresent(claimId, diagnostic);
     await recordObservation({
@@ -5755,15 +6045,22 @@ async function requeueOpenStoryClaim(
     const repeatDecision = await runtimeGuardRepeatDecision(runId, stepId, storyId, claimAgentId, diagnostic);
     if (repeatDecision.hardFail) {
       const hardDiagnostic = `${diagnostic}\nRUNTIME_GUARD_REPEAT_LIMIT: ${repeatDecision.key} repeated ${repeatDecision.previousCount + 1}/${RUNTIME_GUARD_REPEAT_LIMIT} time(s) for ${storyId}; blocking the story instead of requeueing indefinitely.`;
-      const closed = await closeClaimAndBoundAttempt(getSql(), {
-        claimId,
-        runId,
-        stepId,
-        storyId,
-        agentId: claimAgentId,
-        outcome: "failed",
-        diagnostic: hardDiagnostic,
-      });
+      let closed;
+      try {
+        closed = await closeClaimAndBoundAttempt(getSql(), {
+          claimId,
+          runId,
+          stepId,
+          storyId,
+          agentId: claimAgentId,
+          outcome: "failed",
+          diagnostic: hardDiagnostic,
+          recoveryAuthority: "orphan_recovery",
+        });
+      } catch (error) {
+        if (isClaimMutationAuthorityError(error)) return false;
+        throw error;
+      }
       if (closed.status !== "closed") return false;
       await releaseReservedRuntimeForClaimIfPresent(claimId, hardDiagnostic);
       await discardRuntimeGuardRetryWorktree(runId, storyId, claimAgentId, hardDiagnostic);
@@ -5781,15 +6078,22 @@ async function requeueOpenStoryClaim(
 
   // Close the exact claim and its shadow attempt before exposing retryable
   // story/step state. This prevents the next claim from racing an active fence.
-  const closed = await closeClaimAndBoundAttempt(getSql(), {
-    claimId,
-    runId,
-    stepId,
-    storyId,
-    agentId: claimAgentId,
-    outcome: "infra_retry",
-    diagnostic,
-  });
+  let closed;
+  try {
+    closed = await closeClaimAndBoundAttempt(getSql(), {
+      claimId,
+      runId,
+      stepId,
+      storyId,
+      agentId: claimAgentId,
+      outcome: "infra_retry",
+      diagnostic,
+      recoveryAuthority: "orphan_recovery",
+    });
+  } catch (error) {
+    if (isClaimMutationAuthorityError(error)) return false;
+    throw error;
+  }
   if (closed.status !== "closed") return false;
   await releaseReservedRuntimeForClaimIfPresent(claimId, diagnostic);
   await discardRuntimeGuardRetryWorktree(runId, storyId, claimAgentId, diagnostic);
@@ -5978,10 +6282,8 @@ async function tryRecoverOrphanedRunningImplementWork(row: {
 
 async function requeueOrphanedRunningStories(): Promise<void> {
   const thresholdMs = Math.max(0, ORPHANED_SINGLE_STEP_CLAIM_MS);
-  // Quarantined completion/runtime ownership is intentionally not converted
-  // into an orphan retry. The snapshot-fenced run stop action and its durable
-  // termination request are the sole owner allowed to re-prove absence and
-  // terminalize that claim/attempt/runtime lineage.
+  // Process-map absence is advisory. Any active completion, termination,
+  // quarantine, or recovery delivery remains the durable lifecycle owner.
   const rows = await pgQuery<{ story_db_id: string; story_id: string; story_title: string; story_branch: string | null; run_id: string; run_number: number; step_db_id: string | null; step_id: string | null; step_status: string | null; agent_id: string | null; claim_step_id: string | null }>(
     `SELECT st.id as story_db_id, st.story_id, st.title as story_title, st.story_branch, st.run_id, r.run_number,
             loop_step.id as step_db_id, loop_step.step_id, loop_step.status as step_status,
@@ -5995,21 +6297,23 @@ async function requeueOrphanedRunningStories(): Promise<void> {
        AND NOT EXISTS (
          SELECT 1 FROM runtime_completion_requests completion
           WHERE completion.claim_id = cl.id
-            AND completion.state = 'quarantined'
+            AND completion.state NOT IN ('accepted', 'rejected')
        )
        AND NOT EXISTS (
          SELECT 1 FROM runtime_sessions runtime
           WHERE runtime.claim_id = cl.id
             AND runtime.state = 'quarantined'
        )
-       AND NOT (
-         r.protocol = 'v3'
-         AND EXISTS (
-           SELECT 1 FROM recovery_dispatch_deliveries recovery_delivery
-            WHERE recovery_delivery.run_id = st.run_id
-              AND recovery_delivery.story_id = st.story_id
-              AND recovery_delivery.state IN ('authorized', 'leased', 'attempt_reserved', 'running')
-         )
+       AND NOT EXISTS (
+         SELECT 1 FROM recovery_dispatch_deliveries recovery_delivery
+          WHERE recovery_delivery.run_id = st.run_id
+            AND recovery_delivery.story_id = st.story_id
+            AND recovery_delivery.state IN ('authorized', 'leased', 'attempt_reserved', 'running')
+       )
+       AND NOT EXISTS (
+         SELECT 1 FROM run_termination_requests termination
+          WHERE termination.run_id = st.run_id
+            AND termination.state <> 'terminalized'
        )
        AND st.updated_at <= NOW() - ($1::int * interval '1 millisecond')
        AND (
@@ -6084,8 +6388,7 @@ async function requeueOrphanedRunningStories(): Promise<void> {
 
 async function requeueUntrackedRunningLoopStoryClaims(): Promise<void> {
   const thresholdMs = Math.max(0, ORPHANED_SINGLE_STEP_CLAIM_MS);
-  // Keep the same single recovery owner as requeueOrphanedRunningStories:
-  // quarantine is resolved only by canonical snapshot-fenced termination.
+  // Keep the same durable-owner fence as requeueOrphanedRunningStories.
   const rows = await pgQuery<{ story_db_id: string; story_id: string; story_title: string; story_branch: string | null; run_id: string; run_number: number; step_db_id: string; step_id: string; agent_id: string; claimed_at: string }>(
     `SELECT st.id as story_db_id, st.story_id, st.title as story_title, st.story_branch,
             st.run_id, r.run_number, loop_step.id as step_db_id, loop_step.step_id,
@@ -6107,21 +6410,23 @@ async function requeueUntrackedRunningLoopStoryClaims(): Promise<void> {
        AND NOT EXISTS (
          SELECT 1 FROM runtime_completion_requests completion
           WHERE completion.claim_id = cl.id
-            AND completion.state = 'quarantined'
+            AND completion.state NOT IN ('accepted', 'rejected')
        )
        AND NOT EXISTS (
          SELECT 1 FROM runtime_sessions runtime
           WHERE runtime.claim_id = cl.id
             AND runtime.state = 'quarantined'
        )
-       AND NOT (
-         r.protocol = 'v3'
-         AND EXISTS (
-           SELECT 1 FROM recovery_dispatch_deliveries recovery_delivery
-            WHERE recovery_delivery.run_id = st.run_id
-              AND recovery_delivery.story_id = st.story_id
-              AND recovery_delivery.state IN ('authorized', 'leased', 'attempt_reserved', 'running')
-         )
+       AND NOT EXISTS (
+         SELECT 1 FROM recovery_dispatch_deliveries recovery_delivery
+          WHERE recovery_delivery.run_id = st.run_id
+            AND recovery_delivery.story_id = st.story_id
+            AND recovery_delivery.state IN ('authorized', 'leased', 'attempt_reserved', 'running')
+       )
+       AND NOT EXISTS (
+         SELECT 1 FROM run_termination_requests termination
+          WHERE termination.run_id = st.run_id
+            AND termination.state <> 'terminalized'
        )
        AND cl.claimed_at <= NOW() - ($1::int * interval '1 millisecond')
        AND loop_step.updated_at <= NOW() - ($1::int * interval '1 millisecond')
@@ -6171,6 +6476,21 @@ async function requeueUntrackedRunningSingleStepClaims(): Promise<void> {
      WHERE s.status = 'running'
        AND s.type <> 'loop'
        AND r.status = 'running'
+       AND NOT EXISTS (
+         SELECT 1 FROM runtime_completion_requests completion
+          WHERE completion.claim_id = cl.id
+            AND completion.state NOT IN ('accepted', 'rejected')
+       )
+       AND NOT EXISTS (
+         SELECT 1 FROM runtime_sessions runtime
+          WHERE runtime.claim_id = cl.id
+            AND runtime.state = 'quarantined'
+       )
+       AND NOT EXISTS (
+         SELECT 1 FROM run_termination_requests termination
+          WHERE termination.run_id = s.run_id
+            AND termination.state <> 'terminalized'
+       )
        AND cl.claimed_at <= NOW() - ($1::int * interval '1 millisecond')
        AND s.updated_at <= NOW() - ($1::int * interval '1 millisecond')
      ORDER BY cl.claimed_at ASC
@@ -6189,16 +6509,21 @@ async function requeueUntrackedRunningSingleStepClaims(): Promise<void> {
     const claimedAtMs = new Date(row.claimed_at).getTime();
     const ageMs = Number.isFinite(claimedAtMs) ? Date.now() - claimedAtMs : thresholdMs;
     const diagnostic = `UNTRACKED_RUNNING_SINGLE_STEP: ${row.agent_id} has an open ${row.step_id} claim for ${formatDurationMs(ageMs)} but no active spawner process is tracking it; retrying instead of leaving the run idle.`;
-    await waitForClaimRuntimeQuiescence(row.run_id, undefined, row.agent_id);
-    await retrySingleStepClaimWithAuthority({
-      runId: row.run_id,
-      stepDbId: row.step_db_id,
-      workflowStepId: row.step_id,
-      claimAgentId: row.agent_id,
-      runtimeAgentId: "spawner-untracked-recovery",
-      diagnostic,
-    });
-    await releaseReservedRuntimeForClaimIfPresent(Number(row.claim_id), diagnostic);
+    try {
+      await waitForClaimRuntimeQuiescence(row.run_id, undefined, row.agent_id);
+      await retrySingleStepClaimWithAuthority({
+        runId: row.run_id,
+        stepDbId: row.step_db_id,
+        workflowStepId: row.step_id,
+        claimAgentId: row.agent_id,
+        runtimeAgentId: "spawner-untracked-recovery",
+        diagnostic,
+      });
+      await releaseReservedRuntimeForClaimIfPresent(Number(row.claim_id), diagnostic);
+    } catch (error) {
+      if (isClaimMutationAuthorityError(error)) continue;
+      throw error;
+    }
     console.warn(`[spawner] requeued untracked single-step claim for run #${row.run_number}: ${row.step_id}/${row.agent_id}`);
   }
 }
@@ -6958,6 +7283,12 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
     console.log("[spawner] No claimable work for " + fullAgentId + ", skip spawn");
     return;
   }
+  let postClaimOwnershipTransferred = false;
+  let postClaimFailure: unknown;
+  let preTransferChild: ReturnType<typeof spawn> | undefined;
+  let preTransferOutFd: number | undefined;
+  let preTransferErrFd: number | undefined;
+  try {
   if (
     claim.runtimeSessionId !== runtimeSessionId
     || claim.runtimeOwnerInstanceId !== SPAWNER_INSTANCE_ID
@@ -7000,8 +7331,7 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
     const reason = "CLAIM_WORKDIR_MISSING: story claim " + claim.storyId + " for " + fullAgentId + " did not resolve a project/story worktree from claim input. Refusing to spawn in agent scratch.";
     console.warn("[spawner] " + reason);
     if (claim.runId) await recordSupervisorInfraEvent(claim.runId, "spawner", claim.storyDbId || null, reason);
-    if (claim.stepId) await failStep(claim.stepId, reason, claimEnvelope);
-    if (claim.claimId) await releaseReservedRuntimeForClaimIfPresent(claim.claimId, reason);
+    await releasePreSpawnClaim(claim, agentId, reason);
     return;
   }
   if (!claim.storyId && claimRoleRequiresProjectCwd(role, agentId) && spawnCwd === AGENT_SAFE_CWD) {
@@ -7053,11 +7383,7 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
     console.warn(`[spawner] ${diagnostic}`);
     if (claim.runId) await recordSupervisorInfraEvent(claim.runId, stepName || "spawner", claim.storyDbId || null, diagnostic);
     if (claim.recoveryDispatchId && claim.stepId) {
-      await failStep(
-        claim.stepId,
-        `V3_RECOVERY_HANDOFF_PREPARATION_FAILED: ${diagnostic}`,
-        claimEnvelope,
-      );
+      await relinquishV3RecoveryOwner(claim, `V3_RECOVERY_HANDOFF_PREPARATION_FAILED: ${diagnostic}`);
     } else if (claim.storyId && claim.runId && stepName) {
       await requeueOpenStoryClaim(claim.runId, stepName, claim.storyId, claim.claimAgentId || fullAgentId, diagnostic, agentId);
     } else if (claim.runId && claim.stepId && stepName) {
@@ -7116,11 +7442,7 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
         await recordSupervisorInfraEvent(claim.runId, role, claim.storyDbId || null, reason);
       }
       if (claim.recoveryDispatchId && claim.stepId) {
-        await failStep(
-          claim.stepId,
-          `V3_RECOVERY_RUNTIME_WORKSPACE_PREPARATION_FAILED: ${reason}`,
-          claimEnvelope,
-        );
+        await relinquishV3RecoveryOwner(claim, `V3_RECOVERY_RUNTIME_WORKSPACE_PREPARATION_FAILED: ${reason}`);
       } else if (claim.storyId && claim.runId) {
         const claimedStepName = await stepNameForDbId(claim.stepId || "");
         if (claimedStepName) {
@@ -7203,6 +7525,16 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
       worktree: spawnCwd,
       runtimePath: runtimeWorkspaceDir,
       transcriptPath,
+      ...(claim.recoveryDispatchId && claim.recoveryRevisionId && claim.recoveryLeaseToken && claim.attempt
+        ? {
+            recoveryFence: {
+              revisionId: claim.recoveryRevisionId,
+              dispatchId: claim.recoveryDispatchId,
+              leaseToken: claim.recoveryLeaseToken,
+              attempt: claim.attempt,
+            },
+          }
+        : {}),
     });
   } catch (error) {
     claimingSpawns.delete(key);
@@ -7222,18 +7554,14 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
       emitEvent({ ts: new Date().toISOString(), event: "runtime.quarantined", runId: claim.runId!, workflowId: wfId, detail: diagnostic });
     }
     if (claim.recoveryDispatchId && claim.stepId) {
-      await failStep(
-        claim.stepId,
-        `V3_RECOVERY_RUNTIME_START_FAILED: ${diagnostic}`,
-        claimEnvelope,
-      );
+      await relinquishV3RecoveryOwner(claim, `V3_RECOVERY_RUNTIME_START_FAILED: ${diagnostic}`);
     }
     console.warn(`[spawner] ${diagnostic}; no child was started`);
     return;
   }
-  const outFd = fs.openSync(transcriptPath, "a");
-  const errFd = fs.openSync(transcriptPath, "a");
-  const child = spawn(AGENT_RUNTIME === "codex" ? CODEX_CLI : AGENT_RUNTIME === "openclaw" ? OPENCLAW_CLI : AGENT_RUNTIME === "opencode" ? OPENCODE_CLI : KIMI_CLI, childArgs, {
+  const outFd = preTransferOutFd = fs.openSync(transcriptPath, "a");
+  const errFd = preTransferErrFd = fs.openSync(transcriptPath, "a");
+  const child = preTransferChild = spawn(AGENT_RUNTIME === "codex" ? CODEX_CLI : AGENT_RUNTIME === "openclaw" ? OPENCLAW_CLI : AGENT_RUNTIME === "opencode" ? OPENCODE_CLI : KIMI_CLI, childArgs, {
     cwd: spawnCwd,  // Use the claimed worktree when available so relative tool paths resolve correctly.
     // Security audit S-1: explicit env allowlist. Previous `{...process.env}` leaked
     // ALL secrets (API keys, DB password, master URLs) to every agent child process.
@@ -7387,7 +7715,18 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
       pid: child.pid,
       sessionKey,
       processIdentity,
+      ...(claim.recoveryDispatchId && claim.recoveryRevisionId && claim.recoveryLeaseToken && claim.attempt
+        ? {
+            recoveryFence: {
+              revisionId: claim.recoveryRevisionId,
+              dispatchId: claim.recoveryDispatchId,
+              leaseToken: claim.recoveryLeaseToken,
+              attempt: claim.attempt,
+            },
+          }
+        : {}),
     });
+    postClaimOwnershipTransferred = true;
     if (published.status === "drain_requested") {
       activeProcess.runtimeDrainRequested = true;
       drainingProcesses.set(runtimeSessionId, activeProcess);
@@ -7411,6 +7750,41 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
     }
     if (quarantined) {
       emitEvent({ ts: new Date().toISOString(), event: "runtime.quarantined", runId: claim.runId!, workflowId: wfId, detail: diagnostic });
+    }
+    if (claim.recoveryDispatchId) {
+      await relinquishV3RecoveryOwner(activeProcess, diagnostic);
+    }
+  }
+  } catch (error) {
+    postClaimFailure = error;
+    console.warn(`[spawner] POST_CLAIM_PRE_TRANSFER_FAILED:${fullAgentId}:${String(error).slice(0, 500)}`);
+  } finally {
+    claimingSpawns.delete(key);
+    if (!postClaimOwnershipTransferred) {
+      if (preTransferChild && activeProcesses.get(key)?.child === preTransferChild) {
+        activeProcesses.delete(key);
+      }
+      if (preTransferChild?.pid) killProcessTree(preTransferChild.pid, "SIGKILL");
+      if (preTransferOutFd !== undefined) {
+        try { fs.closeSync(preTransferOutFd); } catch {}
+      }
+      if (preTransferErrFd !== undefined) {
+        try { fs.closeSync(preTransferErrFd); } catch {}
+      }
+      const diagnostic = `POST_CLAIM_PRE_TRANSFER_FAILED:${String(postClaimFailure ?? "spawn returned before canonical transfer").slice(0, 500)}`;
+      try {
+        await releaseUntransferredPostClaimOwnership(claim, agentId, diagnostic);
+      } catch (cleanupError) {
+        if (claim.runId) {
+          await recordSupervisorInfraEvent(
+            claim.runId,
+            role || "spawner",
+            claim.storyDbId || null,
+            `POST_CLAIM_OWNERSHIP_RELEASE_FAILED:${String(cleanupError).slice(0, 500)}`,
+          ).catch(() => {});
+        }
+        throw cleanupError;
+      }
     }
   }
 }
@@ -7444,7 +7818,7 @@ async function failStaleRunningClaimsFromPreviousSpawner(): Promise<void> {
          AND NOT EXISTS (
            SELECT 1 FROM runtime_completion_requests rcr
             WHERE rcr.run_id = s.run_id
-              AND rcr.state NOT IN ('accepted', 'rejected', 'quarantined')
+              AND rcr.state NOT IN ('accepted', 'rejected')
          )
          AND NOT EXISTS (
            SELECT 1 FROM run_termination_requests rtr
@@ -7843,25 +8217,11 @@ async function quarantineRuntimeCompletion(
   const completions = createRuntimeCompletionRepository(getSql());
   const runtimeSessions = createRuntimeSessionRepository(getSql());
   const diagnostic = `RUNTIME_COMPLETION_QUARANTINED: ${String(error).slice(0, 1_000)}`;
-  const preempted = await pgGet<{ run_status: string; termination_count: number }>(
-    `SELECT r.status AS run_status,
-            COUNT(rr.request_id)::integer AS termination_count
-       FROM runs r
-       LEFT JOIN run_termination_requests rr
-         ON rr.run_id = r.id AND rr.state <> 'terminalized'
-      WHERE r.id = $1
-      GROUP BY r.status`,
-    [request.runId],
-  );
-  if (
-    (preempted?.termination_count ?? 0) > 0
-    || ["cancelling", "failing", "cancelled", "failed"].includes(preempted?.run_status ?? "")
-  ) {
-    await completions.reject({
-      requestId: request.requestId,
-      diagnostic: `Completion preempted by canonical run termination: ${String(error).slice(0, 800)}`,
-      result: { preemptedByRunTermination: true },
-    });
+  const preemption = await completions.preemptForRunTermination({
+    requestId: request.requestId,
+    diagnostic: `Completion preempted by canonical run termination: ${String(error).slice(0, 800)}`,
+  });
+  if (preemption.status === "preempted") {
     emitEvent({
       ts: new Date().toISOString(),
       event: "runtime.completion_rejected",
@@ -7871,6 +8231,18 @@ async function quarantineRuntimeCompletion(
       storyId: request.storyId,
       detail: `Completion ${request.requestId} yielded to run termination`,
     });
+    return;
+  }
+  if (preemption.status === "resume_effects" || preemption.status === "finalize") {
+    console.warn(
+      `[spawner] completion ${request.requestId} retained canonical ${preemption.status} continuation after owner failure`,
+    );
+    return;
+  }
+  if (preemption.status === "not_preemptible") {
+    console.warn(
+      `[spawner] completion ${request.requestId} is not termination-preemptible; durable owner remains authoritative`,
+    );
     return;
   }
   const currentRequest = await completions.findById(request.requestId);
@@ -7899,9 +8271,12 @@ async function quarantineRuntimeCompletion(
         result: { ownerInstanceId: SPAWNER_INSTANCE_ID },
       });
     } catch (quarantineError) {
-      if (String(quarantineError).includes("RUNTIME_COMPLETION_QUARANTINE_AUTHORITY_LOST")) {
+      if (
+        String(quarantineError).includes("RUNTIME_COMPLETION_QUARANTINE_AUTHORITY_LOST")
+        || String(quarantineError).includes("RUNTIME_COMPLETION_QUARANTINE_CANONICAL_CONTINUATION_REQUIRED")
+      ) {
         console.warn(
-          `[spawner] completion quarantine CAS lost for ${request.requestId}; current owner remains authoritative`,
+          `[spawner] completion quarantine fence lost for ${request.requestId}; current owner remains authoritative`,
         );
         return;
       }
@@ -7935,6 +8310,7 @@ async function finalizeRecoveredRuntimeCompletion(request: RuntimeCompletionRequ
   await completions.acceptAndRelease({
     requestId: request.requestId,
     ownerInstanceId: SPAWNER_INSTANCE_ID,
+    ownerAttemptCount: request.ownerAttemptCount,
     result: { ...request.result, recoveredAfterCoordinatorCrash: true },
   });
   if (request.storyId) {
@@ -7972,6 +8348,7 @@ async function withRuntimeCompletionHeartbeat<T>(
           const retained = await completions.heartbeatProcessing({
             requestId: request.requestId,
             ownerInstanceId: SPAWNER_INSTANCE_ID,
+            ownerAttemptCount: request.ownerAttemptCount,
             leaseMs: 2 * 60_000,
           });
           if (!retained) leaseError = new Error("RUNTIME_COMPLETION_PROCESSING_LEASE_LOST");
@@ -7993,6 +8370,28 @@ async function withRuntimeCompletionHeartbeat<T>(
     if (timer) clearTimeout(timer);
     await heartbeatInFlight;
   }
+}
+
+async function withRuntimeCompletionOwnerCapability<T>(
+  request: RuntimeCompletionRequest,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const { runWithRuntimeCompletionOwner } = await import(
+    "./execution/runtime-completion-owner-context.js",
+  );
+  if (
+    request.ownerInstanceId !== SPAWNER_INSTANCE_ID
+    || !request.leaseExpiresAt
+    || request.ownerAttemptCount < 1
+  ) {
+    throw new Error(`RUNTIME_COMPLETION_OWNER_CAPABILITY_INCOMPLETE:${request.requestId}`);
+  }
+  return runWithRuntimeCompletionOwner({
+    requestId: request.requestId,
+    ownerInstanceId: request.ownerInstanceId,
+    leaseExpiresAt: request.leaseExpiresAt,
+    ownerAttemptCount: request.ownerAttemptCount,
+  }, operation);
 }
 
 const V3_RECOVERY_COORDINATE_EFFECT_TYPE = "v3.recovery.coordinate";
@@ -8069,84 +8468,88 @@ async function applyAndAcceptRuntimeCompletionEffects(
 ): Promise<void> {
   const completions = createRuntimeCompletionRepository(getSql());
   const effects = createRuntimeCompletionEffectRepository(getSql());
-  const result = await withRuntimeCompletionHeartbeat(request, () => runRuntimeCompletionEffectLedger({
-    requestId: request.requestId,
-    ownerInstanceId: SPAWNER_INSTANCE_ID,
-    repository: effects,
-    handler: {
-      reconcile: async ({ input: effectInput, effect }) => {
-        // V3 recovery is replayed through its content-addressed coordinator.
-        // Reconcile must remain observation-only and must never send this
-        // effect through the generic continuation-state interpreter.
-        if (effect.effectType === V3_RECOVERY_COORDINATE_EFFECT_TYPE) return undefined;
-        const reconciled = await reconcileRuntimeCompletionEffects({
-          runId: request.runId,
-          stepDbId: request.stepDbId,
-          workflowStepId: request.workflowStepId,
-          output: request.output,
-          ...(request.storyDbId ? { storyDbId: request.storyDbId } : {}),
-          ...(request.storyId ? { storyId: request.storyId } : {}),
-          completionPlan: effectInput.plan,
-        });
-        if (!reconciled) return undefined;
-        return {
-          resolution: "reconciled" as const,
-          result: reconciled.result,
-          evidence: reconciled.evidence,
-        };
-      },
-      apply: async ({ input: effectInput, effect, assertLease }) => {
-        if (effect.effectType === V3_RECOVERY_COORDINATE_EFFECT_TYPE) {
-          return executeV3RecoveryRuntimeCompletionEffect({
-            completionRequestId: request.requestId,
-            effectKey: effect.effectKey,
-            planHash: effectInput.planHash,
-            assertLease,
-            coordinate: () => createPostgresV3RecoveryEffectHandler(getSql()).coordinate(effectInput.effect),
-            resumeCanonicalContinuation: () => resumeRuntimeCompletionEffects({
-              runId: request.runId,
-              stepDbId: request.stepDbId,
-              workflowStepId: request.workflowStepId,
-              output: request.output,
-              ...(request.storyDbId ? { storyDbId: request.storyDbId } : {}),
-              ...(request.storyId ? { storyId: request.storyId } : {}),
-              completionPlan: effectInput.plan,
-            }),
+  const result = await withRuntimeCompletionOwnerCapability(request, () => (
+    withRuntimeCompletionHeartbeat(request, () => runRuntimeCompletionEffectLedger({
+      requestId: request.requestId,
+      ownerInstanceId: SPAWNER_INSTANCE_ID,
+      repository: effects,
+      handler: {
+        reconcile: async ({ input: effectInput, effect }) => {
+          // V3 recovery is replayed through its content-addressed coordinator.
+          // Reconcile must remain observation-only and must never send this
+          // effect through the generic continuation-state interpreter.
+          if (effect.effectType === V3_RECOVERY_COORDINATE_EFFECT_TYPE) return undefined;
+          const reconciled = await reconcileRuntimeCompletionEffects({
+            runId: request.runId,
+            stepDbId: request.stepDbId,
+            workflowStepId: request.workflowStepId,
+            output: request.output,
+            ...(request.storyDbId ? { storyDbId: request.storyDbId } : {}),
+            ...(request.storyId ? { storyId: request.storyId } : {}),
+            completionPlan: effectInput.plan,
           });
-        }
-        await assertLease();
-        const applied = await resumeRuntimeCompletionEffects({
-          runId: request.runId,
-          stepDbId: request.stepDbId,
-          workflowStepId: request.workflowStepId,
-          output: request.output,
-          ...(request.storyDbId ? { storyDbId: request.storyDbId } : {}),
-          ...(request.storyId ? { storyId: request.storyId } : {}),
-          completionPlan: effectInput.plan,
-        });
-        await assertLease();
-        return {
-          resolution: "applied" as const,
-          result: applied,
-          evidence: {
-            schema: "setfarm.runtime-completion-effect-evidence.v1",
-            source: "canonical-continuation-handler",
-            completionRequestId: request.requestId,
-            effectKey: effect.effectKey,
-            planHash: effectInput.planHash,
-          },
-        };
+          if (!reconciled) return undefined;
+          return {
+            resolution: "reconciled" as const,
+            result: reconciled.result,
+            evidence: reconciled.evidence,
+          };
+        },
+        apply: async ({ input: effectInput, effect, assertLease }) => {
+          if (effect.effectType === V3_RECOVERY_COORDINATE_EFFECT_TYPE) {
+            return executeV3RecoveryRuntimeCompletionEffect({
+              completionRequestId: request.requestId,
+              effectKey: effect.effectKey,
+              planHash: effectInput.planHash,
+              assertLease,
+              coordinate: () => createPostgresV3RecoveryEffectHandler(getSql()).coordinate(effectInput.effect),
+              resumeCanonicalContinuation: () => resumeRuntimeCompletionEffects({
+                runId: request.runId,
+                stepDbId: request.stepDbId,
+                workflowStepId: request.workflowStepId,
+                output: request.output,
+                ...(request.storyDbId ? { storyDbId: request.storyDbId } : {}),
+                ...(request.storyId ? { storyId: request.storyId } : {}),
+                completionPlan: effectInput.plan,
+              }),
+            });
+          }
+          await assertLease();
+          const applied = await resumeRuntimeCompletionEffects({
+            runId: request.runId,
+            stepDbId: request.stepDbId,
+            workflowStepId: request.workflowStepId,
+            output: request.output,
+            ...(request.storyDbId ? { storyDbId: request.storyDbId } : {}),
+            ...(request.storyId ? { storyId: request.storyId } : {}),
+            completionPlan: effectInput.plan,
+          });
+          await assertLease();
+          return {
+            resolution: "applied" as const,
+            result: applied,
+            evidence: {
+              schema: "setfarm.runtime-completion-effect-evidence.v1",
+              source: "canonical-continuation-handler",
+              completionRequestId: request.requestId,
+              effectKey: effect.effectKey,
+              planHash: effectInput.planHash,
+            },
+          };
+        },
       },
-    },
-  }));
+    }))
+  ));
   await completions.markEffectsCommitted({
     requestId: request.requestId,
     ownerInstanceId: SPAWNER_INSTANCE_ID,
+    ownerAttemptCount: request.ownerAttemptCount,
     result,
   });
   await completions.acceptAndRelease({
     requestId: request.requestId,
     ownerInstanceId: SPAWNER_INSTANCE_ID,
+    ownerAttemptCount: request.ownerAttemptCount,
     result,
   });
   if (request.storyId) {
@@ -8169,11 +8572,13 @@ async function applyAndAcceptRuntimeCompletionEffects(
 }
 
 async function executeRuntimeCompletionOwner(request: RuntimeCompletionRequest): Promise<void> {
-  await withRuntimeCompletionHeartbeat(request, () => completeStep(
-    request.stepDbId,
-    request.output,
-    request.claimEnvelope,
-    { deferContinuationToEffectLedger: true },
+  await withRuntimeCompletionOwnerCapability(request, () => (
+    withRuntimeCompletionHeartbeat(request, () => completeStep(
+      request.stepDbId,
+      request.output,
+      request.claimEnvelope,
+      { deferContinuationToEffectLedger: true },
+    ))
   ));
   await applyAndAcceptRuntimeCompletionEffects(request);
 }
@@ -8437,6 +8842,9 @@ async function reconcileV3RecoveryLifecycle(): Promise<void> {
         `[spawner] v3 recovery lifecycle scanned=${scanned} repaired=${repaired} quarantined=${quarantined}`,
       );
     }
+    // Transitional only: P0b moves lifecycle mutation + this event into one
+    // transaction. Until then live runs stay disabled; this preserves the
+    // pre-existing projection path without claiming crash-atomic delivery.
     const outbox = createOperationalOutboxRepository(getSql());
     for (const event of reports.flatMap((report) => report.events)) {
       if (!event.mutated && !["quarantine", "request_runtime_drain"].includes(event.action)) continue;
@@ -9016,6 +9424,15 @@ async function autoPassEvidenceReadySuperviseEachSteps(): Promise<void> {
         const observationId = crypto.randomUUID();
 
         await pgBegin(async (sql) => {
+          await closeUniqueSingleStepClaimForRecoveryInTransaction(sql, {
+            runId: row.run_id,
+            stepDbId: row.supervise_step_db_id,
+            workflowStepId: row.supervise_step_id,
+            outcome: "completed",
+            diagnostic: "deterministic supervise_each auto-pass from canonical implement evidence",
+            runtimeAgentId: "deterministic-supervisor-policy",
+          });
+
           const evidenceReady = await sql.unsafe<Array<{ id: string }>>(
             `SELECT st.id
                FROM stories st
@@ -9052,15 +9469,6 @@ async function autoPassEvidenceReadySuperviseEachSteps(): Promise<void> {
             [row.story_db_id, row.run_id],
           );
           if (evidenceReady.length !== 1) throw new Error("SUPERVISE_AUTO_PASS_EVIDENCE_CHANGED");
-
-          await closeUniqueSingleStepClaimForRecoveryInTransaction(sql, {
-            runId: row.run_id,
-            stepDbId: row.supervise_step_db_id,
-            workflowStepId: row.supervise_step_id,
-            outcome: "completed",
-            diagnostic: "deterministic supervise_each auto-pass from canonical implement evidence",
-            runtimeAgentId: "deterministic-supervisor-policy",
-          });
 
           const runUpdated = await sql.unsafe<Array<{ id: string }>>(
             `UPDATE runs

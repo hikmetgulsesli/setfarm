@@ -2,14 +2,27 @@ import { randomUUID } from "node:crypto";
 
 import type postgres from "postgres";
 import { z } from "zod";
+import { readDatabaseWallClock } from "../db/database-wall-clock.js";
 import {
   ProcessIdentityV1Schema,
   sameProcessIdentity,
   type ProcessIdentityV1,
 } from "./schemas/process-identity-v1.js";
+import { v3RecoveryStoryLockIdentity } from "../recovery/v3-recovery-claim-authority.js";
 
 type Sql = postgres.Sql;
 type TransactionSql = postgres.TransactionSql;
+
+export type RecoveryRuntimeLeaseFence = Readonly<{
+  revisionId: string;
+  dispatchId: string;
+  leaseToken: string;
+  attempt: Readonly<{
+    attemptId: string;
+    generation: number;
+    fenceToken: string;
+  }>;
+}>;
 
 export const RuntimeSessionStateSchema = z.enum([
   "reserved",
@@ -231,6 +244,150 @@ function validTime(value: Date | undefined): Date {
   const now = value ? new Date(value) : new Date();
   if (!Number.isFinite(now.getTime())) throw new Error("RUNTIME_SESSION_TIME_INVALID");
   return now;
+}
+
+async function assertBoundRecoveryLeaseLiveInTransaction(
+  sql: TransactionSql,
+  session: RuntimeSessionRow,
+  recoveryFence?: RecoveryRuntimeLeaseFence,
+): Promise<void> {
+  if (!session.attempt_id) {
+    if (recoveryFence) throw new Error("RUNTIME_SESSION_RECOVERY_FENCE_UNEXPECTED");
+    return;
+  }
+  const attempts = await sql.unsafe<Array<{
+    attempt_id: string;
+    claim_id: string | number | null;
+    run_id: string;
+    story_id: string;
+    generation: number;
+    fence_token: string;
+    disposition: string;
+    recovery_case_revision_id: string | null;
+    recovery_dispatch_id: string | null;
+    lease_expires_at: Date | string;
+  }>>(
+    `SELECT attempt_id, claim_id, run_id, story_id, generation, fence_token,
+            disposition, recovery_case_revision_id, recovery_dispatch_id,
+            lease_expires_at
+       FROM execution_attempts
+      WHERE attempt_id = $1
+      FOR UPDATE`,
+    [session.attempt_id],
+  );
+  const attempt = attempts[0];
+  if (!attempt) throw new Error("RUNTIME_SESSION_ATTEMPT_FENCE_MISSING");
+  const recoveryBound = attempt.recovery_case_revision_id !== null
+    || attempt.recovery_dispatch_id !== null;
+  if (!recoveryBound) {
+    if (recoveryFence) throw new Error("RUNTIME_SESSION_RECOVERY_FENCE_UNEXPECTED");
+    return;
+  }
+  if (!recoveryFence) throw new Error("RUNTIME_SESSION_RECOVERY_FENCE_REQUIRED");
+  if (
+    attempt.recovery_case_revision_id === null
+    || attempt.recovery_dispatch_id === null
+    || attempt.attempt_id !== recoveryFence.attempt.attemptId
+    || Number(attempt.claim_id) !== Number(session.claim_id)
+    || attempt.run_id !== session.run_id
+    || attempt.story_id !== session.story_id
+    || attempt.generation !== recoveryFence.attempt.generation
+    || attempt.fence_token !== recoveryFence.attempt.fenceToken
+    || !["claimed", "running"].includes(attempt.disposition)
+    || attempt.recovery_case_revision_id !== recoveryFence.revisionId
+    || attempt.recovery_dispatch_id !== recoveryFence.dispatchId
+  ) {
+    throw new Error("RUNTIME_SESSION_RECOVERY_ATTEMPT_FENCE_STALE");
+  }
+  const deliveries = await sql.unsafe<Array<{ dispatch_id: string; lease_expires_at: Date | string }>>(
+    `SELECT dispatch_id, lease_expires_at
+       FROM recovery_dispatch_deliveries
+      WHERE dispatch_id = $1
+        AND revision_id = $2
+        AND run_id = $3
+        AND story_id = $4
+        AND attempt_id = $5
+        AND claim_id = $6
+        AND owner_instance_id = $7
+        AND lease_token = $8
+        AND state IN ('attempt_reserved', 'running')
+      FOR UPDATE`,
+    [
+      recoveryFence.dispatchId,
+      recoveryFence.revisionId,
+      session.run_id,
+      session.story_id,
+      recoveryFence.attempt.attemptId,
+      Number(session.claim_id),
+      session.owner_instance_id,
+      recoveryFence.leaseToken,
+    ],
+  );
+  const wallClock = await readDatabaseWallClock(
+    sql,
+    "RUNTIME_SESSION_DATABASE_WALL_CLOCK_UNAVAILABLE",
+  );
+  if (new Date(attempt.lease_expires_at).getTime() <= wallClock.getTime()) {
+    throw new Error("RUNTIME_SESSION_RECOVERY_ATTEMPT_FENCE_STALE");
+  }
+  if (
+    deliveries.length !== 1
+    || new Date(deliveries[0]!.lease_expires_at).getTime() <= wallClock.getTime()
+  ) {
+    throw new Error("RUNTIME_SESSION_RECOVERY_DELIVERY_FENCE_STALE");
+  }
+}
+
+async function lockRuntimeStartAuthorityInTransaction(
+  sql: TransactionSql,
+  sessionId: string,
+  ownerInstanceId: string,
+): Promise<RuntimeSessionRow> {
+  const identities = await sql.unsafe<Array<{ run_id: string; story_id: string | null }>>(
+    "SELECT run_id, story_id FROM runtime_sessions WHERE session_id = $1",
+    [sessionId],
+  );
+  const identity = identities[0];
+  if (!identity) throw new Error("RUNTIME_SESSION_NOT_FOUND");
+  if (identity.story_id) {
+    await sql.unsafe("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [
+      v3RecoveryStoryLockIdentity({ runId: identity.run_id, storyId: identity.story_id }),
+    ]);
+  }
+  const runs = await sql.unsafe<Array<{ status: string }>>(
+    "SELECT status FROM runs WHERE id = $1 FOR UPDATE",
+    [identity.run_id],
+  );
+  if (!runs[0]) throw new Error("RUNTIME_SESSION_START_RUN_NOT_FOUND");
+  const terminations = await sql.unsafe<Array<{ request_id: string }>>(
+    `SELECT request_id FROM run_termination_requests
+      WHERE run_id = $1 AND state <> 'terminalized'
+      ORDER BY requested_at, request_id
+      LIMIT 1
+      FOR UPDATE`,
+    [identity.run_id],
+  );
+  const rows = await sql.unsafe<RuntimeSessionRow[]>(
+    "SELECT * FROM runtime_sessions WHERE session_id = $1 FOR UPDATE",
+    [sessionId],
+  );
+  const current = rows[0];
+  if (!current || current.run_id !== identity.run_id || current.story_id !== identity.story_id) {
+    throw new Error("RUNTIME_SESSION_IDENTITY_CHANGED");
+  }
+  if (current.owner_instance_id !== ownerInstanceId) {
+    throw new Error("RUNTIME_SESSION_OWNER_MISMATCH");
+  }
+  // Canonical termination may win after markStarting and publish a durable
+  // drain request. markRunning must observe that handoff instead of throwing
+  // before it reaches the runtime row and stranding the claim owner.
+  if (current.state !== "drain_requested") {
+    if (!["running", "resuming"].includes(runs[0].status)) {
+      throw new Error("RUNTIME_SESSION_START_RUN_NOT_ACTIVE");
+    }
+    if (terminations.length > 0) throw new Error("RUNTIME_SESSION_START_TERMINATION_PENDING");
+  }
+  return current;
 }
 
 /**
@@ -506,36 +663,19 @@ export function createRuntimeSessionRepository(sql: Sql) {
       worktree?: string;
       runtimePath?: string;
       transcriptPath?: string;
+      recoveryFence?: RecoveryRuntimeLeaseFence;
       now?: Date;
     }>): Promise<ClaimRuntimeSession> {
       const now = validTime(input.now);
       return sql.begin(async (transaction) => {
-        const rows = await transaction.unsafe<RuntimeSessionRow[]>(
-          `SELECT rs.*
-             FROM runtime_sessions rs
-             JOIN runs r ON r.id = rs.run_id
-            WHERE rs.session_id = $1
-            FOR UPDATE OF rs, r`,
-          [RuntimeSessionIdSchema.parse(input.sessionId)],
+        const current = await lockRuntimeStartAuthorityInTransaction(
+          transaction,
+          RuntimeSessionIdSchema.parse(input.sessionId),
+          input.ownerInstanceId,
         );
-        const current = rows[0];
-        if (!current) throw new Error("RUNTIME_SESSION_NOT_FOUND");
-        if (current.owner_instance_id !== input.ownerInstanceId) throw new Error("RUNTIME_SESSION_OWNER_MISMATCH");
+        await assertBoundRecoveryLeaseLiveInTransaction(transaction, current, input.recoveryFence);
         if (current.state === "starting") return mapRuntimeSession(current);
         if (current.state !== "reserved") throw new Error(`RUNTIME_SESSION_START_STATE_INVALID:${current.state}`);
-        const runRows = await transaction.unsafe<Array<{ status: string }>>(
-          "SELECT status FROM runs WHERE id = $1",
-          [current.run_id],
-        );
-        if (!['running', 'resuming'].includes(runRows[0]?.status ?? "")) {
-          throw new Error("RUNTIME_SESSION_START_RUN_NOT_ACTIVE");
-        }
-        const requests = await transaction.unsafe<Array<{ request_id: string }>>(
-          `SELECT request_id FROM run_termination_requests
-            WHERE run_id = $1 AND state <> 'terminalized' LIMIT 1`,
-          [current.run_id],
-        );
-        if (requests.length > 0) throw new Error("RUNTIME_SESSION_START_TERMINATION_PENDING");
         const updated = await transaction.unsafe<RuntimeSessionRow[]>(
           `UPDATE runtime_sessions
               SET state = 'starting', session_key = COALESCE($4, session_key),
@@ -567,6 +707,7 @@ export function createRuntimeSessionRepository(sql: Sql) {
       sessionKey?: string;
       processStartedAt?: Date;
       processIdentity?: ProcessIdentityV1;
+      recoveryFence?: RecoveryRuntimeLeaseFence;
       now?: Date;
     }>): Promise<Readonly<{ status: "running" | "drain_requested"; session: ClaimRuntimeSession }>> {
       const now = validTime(input.now);
@@ -589,6 +730,15 @@ export function createRuntimeSessionRepository(sql: Sql) {
           : now;
       return sql.begin(async (transaction) => {
         const sessionId = RuntimeSessionIdSchema.parse(input.sessionId);
+        const locked = await lockRuntimeStartAuthorityInTransaction(
+          transaction,
+          sessionId,
+          input.ownerInstanceId,
+        );
+        if (locked.state === "drain_requested") {
+          return { status: "drain_requested" as const, session: mapRuntimeSession(locked) };
+        }
+        await assertBoundRecoveryLeaseLiveInTransaction(transaction, locked, input.recoveryFence);
         const updated = await transaction.unsafe<RuntimeSessionRow[]>(
           `UPDATE runtime_sessions
               SET state = 'running', pid = $3, session_key = $4,

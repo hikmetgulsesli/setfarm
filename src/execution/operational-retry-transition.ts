@@ -164,6 +164,7 @@ export async function publishOperationalRetryDirectiveInTransaction(
     agentId: input.agentId,
     outcome: "infra_retry",
     diagnostic: input.diagnostic,
+    recoveryAuthority: "orphan_recovery",
     now,
   });
   if (closed.status !== "closed") return closed;
@@ -221,6 +222,7 @@ export async function terminalizeOperationalRetryExhaustionInTransaction(
     agentId: input.agentId,
     outcome: "failed",
     diagnostic: input.diagnostic,
+    recoveryAuthority: "orphan_recovery",
     now,
   });
   if (closed.status !== "closed") return closed;

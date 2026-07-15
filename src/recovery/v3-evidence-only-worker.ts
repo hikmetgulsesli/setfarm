@@ -3,6 +3,7 @@ import { randomBytes } from "node:crypto";
 import type postgres from "postgres";
 import { z } from "zod";
 
+import { readDatabaseWallClock } from "../db/database-wall-clock.js";
 import type { CanonicalEvidenceResultV1 } from "../evidence/canonical-evidence-runner.js";
 import {
   EvidenceBundleV2Schema,
@@ -496,7 +497,7 @@ async function acquireCandidate(
   sql: Sql,
   input: AcquireInput,
   candidate: CandidateRow,
-  now: Date,
+  discoveredAt: Date,
 ): Promise<V3EvidenceOnlyLeaseV1 | undefined> {
   return sql.begin(async (transaction: TransactionSql) => {
     await transaction.unsafe("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [
@@ -508,12 +509,19 @@ async function acquireCandidate(
         WHERE ${candidateEligibilityPredicate()}
           AND delivery.dispatch_id = $4
         FOR UPDATE OF delivery, recovery_case`,
-      [input.workflowId, now, input.ownerInstanceId, candidate.dispatch_id],
+      [input.workflowId, discoveredAt, input.ownerInstanceId, candidate.dispatch_id],
     );
     if (rows.length !== 1) return undefined;
     const row = rows[0]!;
+    // Candidate discovery is only an optimization. The durable lease instant
+    // comes from PostgreSQL after the story/delivery owner locks are held, so a
+    // caller clock or a lock wait can never publish an already-expired lease.
+    const acquiredAt = await readDatabaseWallClock(
+      transaction,
+      "V3_EVIDENCE_ONLY_DB_TIME_UNAVAILABLE",
+    );
     const leaseToken = randomBytes(32).toString("hex");
-    const leaseExpiresAt = new Date(now.getTime() + input.leaseMs);
+    const leaseExpiresAt = new Date(acquiredAt.getTime() + input.leaseMs);
     const updated = await transaction.unsafe<Array<{ dispatch_id: string }>>(
       `UPDATE recovery_dispatch_deliveries
           SET state = CASE WHEN attempt_id IS NULL THEN 'leased' ELSE state END,
@@ -531,7 +539,7 @@ async function acquireCandidate(
         input.ownerInstanceId,
         leaseToken,
         leaseExpiresAt,
-        now,
+        acquiredAt,
         row.revision_id,
         row.delivery_state,
         row.attempt_id,
@@ -925,6 +933,7 @@ export function createV3EvidenceOnlyRecoveryWorker(
       runId: lease.runId,
       storyId: lease.storyId,
       claimId: context.attempt.claimId!,
+      claimAgentId: context.attempt.agentId!,
       revisionId: lease.revisionId,
       dispatchId: lease.dispatchId,
       ownerInstanceId: lease.ownerInstanceId,
@@ -978,13 +987,20 @@ export function createV3EvidenceOnlyRecoveryWorker(
 
   async function acquireNext(raw: unknown, options: Readonly<{ now?: Date }> = {}) {
     const input = AcquireInputSchema.parse(raw);
-    const now = validTime(options.now);
+    // `now` remains a validated compatibility input for callers that also use
+    // it as a deterministic evidence/coordinator timestamp. Lease authority is
+    // always PostgreSQL wall time.
+    if (options.now) validTime(options.now);
     const excludedDispatchIds: string[] = [];
     for (;;) {
-      const candidate = await discoverCandidate(sql, input, now, excludedDispatchIds);
+      const discoveredAt = await readDatabaseWallClock(
+        sql,
+        "V3_EVIDENCE_ONLY_DB_TIME_UNAVAILABLE",
+      );
+      const candidate = await discoverCandidate(sql, input, discoveredAt, excludedDispatchIds);
       if (!candidate) return undefined;
       excludedDispatchIds.push(candidate.dispatch_id);
-      const lease = await acquireCandidate(sql, input, candidate, now);
+      const lease = await acquireCandidate(sql, input, candidate, discoveredAt);
       if (lease) return lease;
     }
   }

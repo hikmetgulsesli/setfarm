@@ -1,6 +1,7 @@
 import type postgres from "postgres";
 
-import { releaseReservedRuntimeSessionInTransaction } from "./runtime-session-repository.js";
+import { isClaimMutationAuthorityError } from "./claim-mutation-authority.js";
+import { withdrawPreDispatchClaimInTransaction } from "./pre-dispatch-withdrawal-authority.js";
 
 type Sql = postgres.Sql;
 
@@ -58,90 +59,35 @@ export async function ensureCompilerClaimFence(
     throw new Error("COMPILER_CLAIM_ID_INVALID");
   }
   return sql.begin(async (transaction) => {
-    const claims = await transaction.unsafe<ClaimRow[]>(
-      `SELECT cl.id::text, cl.outcome, r.protocol, r.status AS run_status
-         FROM claim_log cl
-         JOIN runs r ON r.id = cl.run_id
-        WHERE cl.id = $1
-          AND cl.run_id = $2
-          AND cl.step_id = $3
-          AND cl.story_id = $4
-          AND cl.agent_id = $5
-        FOR UPDATE OF cl`,
-      [input.claimId, input.runId, input.stepId, input.storyId, input.claimAgentId],
-    );
-    const claim = claims[0];
-    if (!claim) throw new Error("COMPILER_CLAIM_IDENTITY_MISMATCH");
-    if (claim.protocol === "legacy") throw new Error("COMPILER_CLAIM_PROTOCOL_LEGACY");
-
-    const attempts = await transaction.unsafe<AttemptRow[]>(
-      `SELECT attempt_id, claim_id::text, generation, fence_token, agent_id
-         FROM execution_attempts
-        WHERE run_id = $1
-          AND step_id = $2
-          AND story_id = $3
-          AND disposition IN ('claimed', 'running')
-        FOR UPDATE`,
-      [input.runId, input.stepId, input.storyId],
-    );
-    if (attempts.length > 1) throw new Error("COMPILER_CLAIM_ACTIVE_FENCE_AMBIGUOUS");
-    const attempt = attempts[0];
-    const exactAttempt = attempt
-      && attempt.claim_id === String(input.claimId)
-      && (attempt.agent_id === null || attempt.agent_id === input.claimAgentId);
-
-    if (claim.outcome === null && exactAttempt) {
-      return {
-        status: "fenced" as const,
-        attempt: {
-          attemptId: attempt.attempt_id,
-          generation: attempt.generation,
-          fenceToken: attempt.fence_token,
+    let withdrawal: Awaited<ReturnType<typeof withdrawPreDispatchClaimInTransaction>>;
+    try {
+      withdrawal = await withdrawPreDispatchClaimInTransaction(transaction, {
+        identity: {
+          claimId: input.claimId,
+          runId: input.runId,
+          workflowStepId: input.stepId,
+          storyId: input.storyId,
+          claimAgentId: input.claimAgentId,
         },
-      };
-    }
-    if (claim.outcome !== null) {
-      return { status: "blocked" as const, reason: "COMPILER_CLAIM_ALREADY_TERMINAL" };
-    }
-
-    const runtimes = await transaction.unsafe<RuntimeRow[]>(
-      `SELECT session_id, owner_instance_id, state
-         FROM runtime_sessions
-        WHERE claim_id = $1
-        FOR UPDATE`,
-      [input.claimId],
-    );
-    if (runtimes.length > 1) throw new Error("COMPILER_CLAIM_RUNTIME_AMBIGUOUS");
-    const runtime = runtimes[0];
-    if (runtime && !["reserved", "released"].includes(runtime.state)) {
-      return { status: "blocked" as const, reason: `COMPILER_CLAIM_RUNTIME_ALREADY_STARTED:${runtime.state}` };
-    }
-
-    await transaction.unsafe(
-      `UPDATE claim_log
-          SET outcome = 'infra_retry',
-              abandoned_at = NOW(),
-              duration_ms = LEAST(CAST(EXTRACT(EPOCH FROM (NOW() - claimed_at::timestamptz)) * 1000 AS BIGINT), 2147483647)::INTEGER,
-              diagnostic = $2
-        WHERE id = $1 AND outcome IS NULL`,
-      [input.claimId, input.diagnostic],
-    );
-
-    if (runtime?.state === "reserved") {
-      await releaseReservedRuntimeSessionInTransaction(transaction, {
-        sessionId: runtime.session_id,
-        claimId: input.claimId,
-        ownerInstanceId: runtime.owner_instance_id,
+        outcome: "infra_retry",
         diagnostic: input.diagnostic,
+        preserveExactAttempt: true,
       });
+    } catch (error) {
+      if (
+        isClaimMutationAuthorityError(error)
+        && error instanceof Error
+        && error.message.startsWith("CLAIM_MUTATION_DURABLE_OWNER_ACTIVE:runtime_session:")
+      ) {
+        const state = error.message.split(":")[2] || "unknown";
+        return {
+          status: "blocked" as const,
+          reason: `COMPILER_CLAIM_RUNTIME_ALREADY_STARTED:${state}`,
+        };
+      }
+      throw error;
     }
-
-    if (attempt) {
-      return { status: "blocked" as const, reason: "COMPILER_CLAIM_DIFFERENT_ACTIVE_FENCE" };
-    }
-    if (!["running", "resuming"].includes(claim.run_status)) {
-      return { status: "blocked" as const, reason: "COMPILER_CLAIM_RUN_TERMINAL" };
-    }
+    if (withdrawal.status !== "withdrawn") return withdrawal;
     await transaction.unsafe(
       `UPDATE stories
           SET status = 'pending', claimed_by = NULL, claimed_at = NULL, updated_at = NOW()

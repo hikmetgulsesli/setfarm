@@ -2,13 +2,18 @@ import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 
 import { createAttemptRepository } from "../../src/execution/attempt-repository.js";
+import { ensureCompilerClaimFence } from "../../src/execution/compiler-claim-fence.js";
 import { publishLoopClaimRuntime } from "../../src/execution/claim-runtime-publication.js";
+import { withdrawPreDispatchClaimInTransaction } from "../../src/execution/pre-dispatch-withdrawal-authority.js";
 import { createRuntimeSessionRepository } from "../../src/execution/runtime-session-repository.js";
 import { createFindingSetV1 } from "../../src/findings/finding-set.js";
 import type { RecoveryCaseDraftV1 } from "../../src/recovery/recovery-case.js";
 import { createRecoveryDeliveryRepository } from "../../src/recovery/recovery-delivery-repository.js";
 import { createFindingRecoveryRepository } from "../../src/recovery/finding-recovery-repository.js";
-import { createV3RecoveryClaimAuthority } from "../../src/recovery/v3-recovery-claim-authority.js";
+import {
+  createV3RecoveryClaimAuthority,
+  v3RecoveryStoryLockIdentity,
+} from "../../src/recovery/v3-recovery-claim-authority.js";
 import { createV3RecoveryLifecycleReconciler } from "../../src/recovery/v3-recovery-lifecycle-reconciler.js";
 import { createV3RecoveryOwnerLeaseRepository } from "../../src/recovery/v3-recovery-owner-lease.js";
 import { createIsolatedTestDatabase, type TestDatabase } from "../execution-attempts/test-database.js";
@@ -82,7 +87,7 @@ describe("v3 recovery lifecycle reconciler", () => {
     const storyId = `US-LIFE-${sequence}`;
     const stepDbId = `step-v3-lifecycle-${sequence}`;
     const storyDbId = `story-v3-lifecycle-${sequence}`;
-    const base = new Date(Date.UTC(2026, 6, 13, 12, sequence, 0));
+    const base = new Date(Date.now() + sequence * 1_000);
     const releaseSha = "3".repeat(40);
     const releaseAdmissionHash = await database.seedV3ReleaseGoAdmission(releaseSha);
     await database.sql.unsafe(
@@ -219,10 +224,102 @@ describe("v3 recovery lifecycle reconciler", () => {
       await createRuntimeSessionRepository(database.sql).markStarting({
         sessionId: input.sessionId,
         ownerInstanceId: handoff.lease.ownerInstanceId,
+        recoveryFence: {
+          revisionId: handoff.revisionId,
+          dispatchId: handoff.dispatchId,
+          leaseToken: handoff.lease.leaseToken,
+          attempt: {
+            attemptId: reservation.attempt.attemptId,
+            generation: reservation.attempt.generation,
+            fenceToken: reservation.attempt.fenceToken,
+          },
+        },
         now: new Date(input.now.getTime() + 300),
       });
     }
     return { publication: publication!, attempt: reservation.attempt };
+  }
+
+  async function waitForBlockedStoryAdvisory(minimum = 1): Promise<void> {
+    for (let attempt = 0; attempt < 150; attempt += 1) {
+      const rows = await database.sql<Array<{ blocked: number }>>`
+        SELECT COUNT(*)::integer AS blocked
+          FROM pg_stat_activity
+         WHERE datname = current_database()
+           AND pid <> pg_backend_pid()
+           AND wait_event_type = 'Lock'
+           AND query ILIKE '%pg_advisory_xact_lock(hashtextextended($1, 0))%'
+      `;
+      if ((rows[0]?.blocked ?? 0) >= minimum) return;
+      await new Promise<void>((resolve) => setTimeout(resolve, 20));
+    }
+    throw new Error(`TEST_BARRIER_RECOVERY_ADVISORY_WAITERS_MISSING:${minimum}`);
+  }
+
+  async function holdStoryAdvisory(runId: string, storyId: string) {
+    let entered!: () => void;
+    let release!: () => void;
+    const enteredGate = new Promise<void>((resolve) => { entered = resolve; });
+    const releaseGate = new Promise<void>((resolve) => { release = resolve; });
+    const done = database.sql.begin(async (transaction) => {
+      await transaction.unsafe("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [
+        v3RecoveryStoryLockIdentity({ runId, storyId }),
+      ]);
+      entered();
+      await releaseGate;
+    });
+    await enteredGate;
+    return { release, done };
+  }
+
+  async function makeModelOwner(label: string, start = true) {
+    const fixture = await setup();
+    const leaseAt = new Date(Date.now() - 1_000);
+    const handoff = await lease(fixture, {
+      ownerInstanceId: `barrier-owner-${label}`,
+      leaseMs: 120_000,
+      now: leaseAt,
+    });
+    const safeLabel = label.replace(/[^A-Za-z0-9-]/g, "x").padEnd(20, "x").slice(0, 20);
+    const sessionId = `RTS_${safeLabel}-${sequence}`;
+    const bound = await reserveModelAttempt(fixture, handoff, {
+      sessionId,
+      now: new Date(leaseAt.getTime() + 100),
+      start,
+    });
+    const recoveryFence = {
+      revisionId: handoff.revisionId,
+      dispatchId: handoff.dispatchId,
+      leaseToken: handoff.lease.leaseToken,
+      attempt: {
+        attemptId: bound.attempt.attemptId,
+        generation: bound.attempt.generation,
+        fenceToken: bound.attempt.fenceToken,
+      },
+    };
+    const exact = {
+      kind: "model_runtime" as const,
+      runId: fixture.runId,
+      storyId: fixture.storyId,
+      claimId: bound.publication.claimId,
+      claimAgentId: "recovery-agent",
+      revisionId: handoff.revisionId,
+      dispatchId: handoff.dispatchId,
+      ownerInstanceId: handoff.lease.ownerInstanceId,
+      leaseToken: handoff.lease.leaseToken,
+      attempt: recoveryFence.attempt,
+      runtimeSessionId: sessionId,
+    };
+    return {
+      fixture,
+      handoff,
+      bound,
+      sessionId,
+      recoveryFence,
+      exact,
+      sessions: createRuntimeSessionRepository(database.sql),
+      leases: createV3RecoveryOwnerLeaseRepository(database.sql),
+    };
   }
 
   it("heartbeats runtime, attempt and delivery atomically and rejects a second owner", async () => {
@@ -245,6 +342,7 @@ describe("v3 recovery lifecycle reconciler", () => {
       runId: fixture.runId,
       storyId: fixture.storyId,
       claimId: bound.publication.claimId,
+      claimAgentId: "recovery-agent",
       revisionId: handoff.revisionId,
       dispatchId: handoff.dispatchId,
       ownerInstanceId: handoff.lease.ownerInstanceId,
@@ -265,7 +363,7 @@ describe("v3 recovery lifecycle reconciler", () => {
     ]);
     assert.equal(retained.status, "retained");
     assert.equal(forged.status, "stale_fence");
-    const expectedExpiry = new Date(heartbeatAt.getTime() + 120_000).toISOString();
+    if (retained.status !== "retained") throw new Error("expected retained owner heartbeat");
     const rows = await database.sql.unsafe<Array<{
       runtime_heartbeat: Date;
       attempt_heartbeat: Date;
@@ -282,10 +380,434 @@ describe("v3 recovery lifecycle reconciler", () => {
         WHERE runtime.session_id = $1`,
       [sessionId],
     );
-    assert.equal(rows[0]?.runtime_heartbeat.toISOString(), heartbeatAt.toISOString());
-    assert.equal(rows[0]?.attempt_heartbeat.toISOString(), heartbeatAt.toISOString());
-    assert.equal(rows[0]?.attempt_expiry.toISOString(), expectedExpiry);
-    assert.equal(rows[0]?.delivery_expiry.toISOString(), expectedExpiry);
+    assert.equal(rows[0]?.runtime_heartbeat.toISOString(), rows[0]?.attempt_heartbeat.toISOString());
+    assert.equal(rows[0]?.attempt_expiry.toISOString(), retained.expiresAt);
+    assert.equal(rows[0]?.delivery_expiry.toISOString(), retained.expiresAt);
+    assert.equal(
+      rows[0]!.attempt_expiry.getTime() - rows[0]!.attempt_heartbeat.getTime(),
+      120_000,
+      "one fresh DB wall-clock instant must drive heartbeat and expiry",
+    );
+  });
+
+  it("relinquishes only the exact active owner leases without terminalizing product state", async () => {
+    const fixture = await setup();
+    const leaseAt = new Date(Date.now() - 1_000);
+    const handoff = await lease(fixture, {
+      ownerInstanceId: "relinquish-owner",
+      leaseMs: 120_000,
+      now: leaseAt,
+    });
+    const sessionId = `RTS_${"r".repeat(20)}-${sequence}`;
+    const bound = await reserveModelAttempt(fixture, handoff, {
+      sessionId,
+      now: new Date(leaseAt.getTime() + 100),
+      start: false,
+    });
+    const exact = {
+      kind: "model_runtime" as const,
+      runId: fixture.runId,
+      storyId: fixture.storyId,
+      claimId: bound.publication.claimId,
+      claimAgentId: "recovery-agent",
+      revisionId: handoff.revisionId,
+      dispatchId: handoff.dispatchId,
+      ownerInstanceId: handoff.lease.ownerInstanceId,
+      leaseToken: handoff.lease.leaseToken,
+      attempt: {
+        attemptId: bound.attempt.attemptId,
+        generation: bound.attempt.generation,
+        fenceToken: bound.attempt.fenceToken,
+      },
+      runtimeSessionId: sessionId,
+    };
+    const repository = createV3RecoveryOwnerLeaseRepository(database.sql);
+    for (const forged of [
+      { ...exact, ownerInstanceId: "forged-owner" },
+      { ...exact, leaseToken: "forged-lease-token-000000" },
+      { ...exact, claimAgentId: "forged-claim-agent" },
+      { ...exact, claimId: exact.claimId + 100_000 },
+      { ...exact, revisionId: `RREV_${"0".repeat(64)}` },
+      { ...exact, dispatchId: `RDISP_${"0".repeat(64)}` },
+      { ...exact, runtimeSessionId: `RTS_${"x".repeat(20)}-${sequence}` },
+      { ...exact, attempt: { ...exact.attempt, attemptId: `ATT_${"x".repeat(20)}` } },
+      { ...exact, attempt: { ...exact.attempt, generation: exact.attempt.generation + 1 } },
+      { ...exact, attempt: { ...exact.attempt, fenceToken: "forged-fence-token-000000" } },
+    ]) {
+      assert.equal((await repository.relinquish(forged)).status, "stale_fence");
+    }
+
+    const result = await repository.relinquish(exact);
+    assert.equal(result.status, "relinquished");
+    if (result.status !== "relinquished") throw new Error("expected exact relinquish");
+    const rows = await database.sql.unsafe<Array<{
+      claim_outcome: string | null;
+      story_status: string;
+      step_status: string;
+      attempt_disposition: string;
+      delivery_state: string;
+      attempt_expiry: Date;
+      delivery_expiry: Date;
+    }>>(
+      `SELECT claim.outcome AS claim_outcome, story.status AS story_status,
+              step.status AS step_status, attempt.disposition AS attempt_disposition,
+              delivery.state AS delivery_state,
+              attempt.lease_expires_at AS attempt_expiry,
+              delivery.lease_expires_at AS delivery_expiry
+         FROM claim_log claim
+         JOIN stories story ON story.run_id = claim.run_id AND story.story_id = claim.story_id
+         JOIN steps step ON step.run_id = claim.run_id AND step.step_id = claim.step_id
+         JOIN execution_attempts attempt ON attempt.claim_id = claim.id
+         JOIN recovery_dispatch_deliveries delivery ON delivery.attempt_id = attempt.attempt_id
+        WHERE claim.id = $1`,
+      [exact.claimId],
+    );
+    assert.deepEqual({
+      claimOutcome: rows[0]?.claim_outcome,
+      storyStatus: rows[0]?.story_status,
+      stepStatus: rows[0]?.step_status,
+      attemptDisposition: rows[0]?.attempt_disposition,
+      deliveryState: rows[0]?.delivery_state,
+    }, {
+      claimOutcome: null,
+      storyStatus: "running",
+      stepStatus: "running",
+      attemptDisposition: "claimed",
+      deliveryState: "attempt_reserved",
+    });
+    assert.equal(rows[0]?.attempt_expiry.toISOString(), result.relinquishedAt);
+    assert.equal(rows[0]?.delivery_expiry.toISOString(), result.relinquishedAt);
+  });
+
+  it("hard-fences runtime start in both orders around exact relinquish", async () => {
+    const relinquishFirst = await makeModelOwner("relinquish-first", false);
+    const firstBarrier = await holdStoryAdvisory(
+      relinquishFirst.fixture.runId,
+      relinquishFirst.fixture.storyId,
+    );
+    const relinquishPending = relinquishFirst.leases.relinquish(relinquishFirst.exact);
+    await waitForBlockedStoryAdvisory(1);
+    const startPending = relinquishFirst.sessions.markStarting({
+      sessionId: relinquishFirst.sessionId,
+      ownerInstanceId: relinquishFirst.handoff.lease.ownerInstanceId,
+      recoveryFence: relinquishFirst.recoveryFence,
+    });
+    await waitForBlockedStoryAdvisory(2);
+    firstBarrier.release();
+    await firstBarrier.done;
+    assert.equal((await relinquishPending).status, "relinquished");
+    await assert.rejects(startPending, /RUNTIME_SESSION_RECOVERY_ATTEMPT_FENCE_STALE/);
+
+    const startFirst = await makeModelOwner("start-first", false);
+    const secondBarrier = await holdStoryAdvisory(startFirst.fixture.runId, startFirst.fixture.storyId);
+    const startFirstPending = startFirst.sessions.markStarting({
+      sessionId: startFirst.sessionId,
+      ownerInstanceId: startFirst.handoff.lease.ownerInstanceId,
+      recoveryFence: startFirst.recoveryFence,
+    });
+    await waitForBlockedStoryAdvisory(1);
+    const relinquishSecondPending = startFirst.leases.relinquish(startFirst.exact);
+    await waitForBlockedStoryAdvisory(2);
+    secondBarrier.release();
+    await secondBarrier.done;
+    assert.equal((await startFirstPending).state, "starting");
+    assert.equal((await relinquishSecondPending).status, "relinquished");
+    await assert.rejects(
+      startFirst.sessions.markRunning({
+        sessionId: startFirst.sessionId,
+        ownerInstanceId: startFirst.handoff.lease.ownerInstanceId,
+        recoveryFence: startFirst.recoveryFence,
+      }),
+      /RUNTIME_SESSION_RECOVERY_ATTEMPT_FENCE_STALE/,
+    );
+  });
+
+  it("cannot revive a lease that expires while heartbeat or relinquish waits on the owner lock", async () => {
+    const runBlockedExpiry = async (
+      label: string,
+      operation: (owner: Awaited<ReturnType<typeof makeModelOwner>>) => Promise<{ status: string }>,
+    ) => {
+      const owner = await makeModelOwner(label);
+      const barrier = await holdStoryAdvisory(owner.fixture.runId, owner.fixture.storyId);
+      await database.sql.begin(async (transaction) => {
+        const times = await transaction.unsafe<Array<{ expires_at: Date }>>(
+          "SELECT clock_timestamp() + INTERVAL '350 milliseconds' AS expires_at",
+        );
+        const expiresAt = times[0]!.expires_at;
+        await transaction.unsafe(
+          `UPDATE execution_attempts SET lease_expires_at = $2
+            WHERE attempt_id = $1`,
+          [owner.bound.attempt.attemptId, expiresAt],
+        );
+        await transaction.unsafe(
+          `UPDATE recovery_dispatch_deliveries SET lease_expires_at = $2
+            WHERE dispatch_id = $1`,
+          [owner.handoff.dispatchId, expiresAt],
+        );
+      });
+      const pending = operation(owner);
+      await waitForBlockedStoryAdvisory(1);
+      await new Promise<void>((resolve) => setTimeout(resolve, 500));
+      barrier.release();
+      await barrier.done;
+      const result = await pending;
+      assert.equal(result.status, "stale_fence");
+      const rows = await database.sql.unsafe<Array<{
+        attempt_expiry: Date;
+        delivery_expiry: Date;
+        db_now: Date;
+      }>>(
+        `SELECT attempt.lease_expires_at AS attempt_expiry,
+                delivery.lease_expires_at AS delivery_expiry,
+                clock_timestamp() AS db_now
+           FROM execution_attempts attempt
+           JOIN recovery_dispatch_deliveries delivery ON delivery.attempt_id = attempt.attempt_id
+          WHERE attempt.attempt_id = $1`,
+        [owner.bound.attempt.attemptId],
+      );
+      assert.ok(rows[0]!.attempt_expiry.getTime() <= rows[0]!.db_now.getTime());
+      assert.equal(rows[0]!.attempt_expiry.toISOString(), rows[0]!.delivery_expiry.toISOString());
+    };
+
+    await runBlockedExpiry("heartbeat-expiry", (owner) => owner.leases.heartbeat(
+      owner.exact,
+      { now: new Date("2000-01-01T00:00:00.000Z"), leaseMs: 120_000 },
+    ));
+    await runBlockedExpiry("relinquish-expiry", (owner) => owner.leases.relinquish(owner.exact));
+  });
+
+  it("linearizes simultaneous relinquish before heartbeat to one durable owner outcome", async () => {
+    const owner = await makeModelOwner("heartbeat-relinquish");
+    const barrier = await holdStoryAdvisory(owner.fixture.runId, owner.fixture.storyId);
+    const relinquishPending = owner.leases.relinquish(owner.exact);
+    await waitForBlockedStoryAdvisory(1);
+    const heartbeatPending = owner.leases.heartbeat(owner.exact, {
+      now: new Date("2000-01-01T00:00:00.000Z"),
+      leaseMs: 120_000,
+    });
+    await waitForBlockedStoryAdvisory(2);
+    barrier.release();
+    await barrier.done;
+    assert.equal((await relinquishPending).status, "relinquished");
+    assert.equal((await heartbeatPending).status, "stale_fence");
+  });
+
+  it("relinquishes every nonreleased recovery runtime state without mutating product state", async () => {
+    for (const state of ["running", "drain_requested", "drained", "quarantined"] as const) {
+      const owner = await makeModelOwner(`state-${state}`);
+      if (state === "running") {
+        assert.equal((await owner.sessions.markRunning({
+          sessionId: owner.sessionId,
+          ownerInstanceId: owner.handoff.lease.ownerInstanceId,
+          recoveryFence: owner.recoveryFence,
+        })).status, "running");
+      }
+      if (["drain_requested", "drained"].includes(state)) {
+        assert.equal((await owner.sessions.requestDrain({
+          sessionId: owner.sessionId,
+          ownerInstanceId: owner.handoff.lease.ownerInstanceId,
+          diagnostic: `fixture ${state}`,
+        })).state, "drain_requested");
+      }
+      if (state === "drained") {
+        assert.equal((await owner.sessions.markDrained({
+          sessionId: owner.sessionId,
+          ownerInstanceId: owner.handoff.lease.ownerInstanceId,
+          evidence: {
+            schema: "setfarm.runtime-drain-evidence.v1",
+            observedAt: new Date().toISOString(),
+            localProcessAbsent: true,
+            openClawTaskAbsent: true,
+            workspaceProcessAbsent: true,
+            stableObservations: 2,
+            evidenceRefs: ["setfarm://test/relinquish-state-matrix"],
+          },
+        })).state, "drained");
+      }
+      if (state === "quarantined") {
+        const current = await owner.sessions.findById(owner.sessionId);
+        assert.ok(current);
+        assert.equal((await owner.sessions.quarantine({
+          sessionId: owner.sessionId,
+          expectedOwnerInstanceId: owner.handoff.lease.ownerInstanceId,
+          expectedStateVersion: current.stateVersion,
+          diagnostic: "fixture quarantined owner",
+        })).state, "quarantined");
+      }
+      assert.equal((await owner.leases.relinquish(owner.exact)).status, "relinquished");
+      const product = await database.sql.unsafe<Array<{
+        claim_outcome: string | null;
+        story_status: string;
+      }>>(
+        `SELECT claim.outcome AS claim_outcome, story.status AS story_status
+           FROM claim_log claim
+           JOIN stories story ON story.run_id = claim.run_id AND story.story_id = claim.story_id
+          WHERE claim.id = $1`,
+        [owner.exact.claimId],
+      );
+      assert.equal(product[0]?.claim_outcome, null);
+      assert.equal(product[0]?.story_status, "running");
+    }
+  });
+
+  it("blocks generic pre-dispatch withdrawal behind a foreign active recovery owner", async () => {
+    const owner = await makeModelOwner("foreign-predispatch");
+    // The partial unique index correctly prevents two open story claims. Model
+    // the stale/foreign recovery envelope that this fence must reject by
+    // closing its old claim while leaving the independently durable delivery
+    // active, then publish the duplicate pre-dispatch claim.
+    await database.sql`
+      UPDATE claim_log
+         SET outcome = 'infra_retry', abandoned_at = clock_timestamp()
+       WHERE id = ${owner.exact.claimId}
+    `;
+    const duplicateClaims = await database.sql<Array<{ id: number }>>`
+      INSERT INTO claim_log (run_id, step_id, story_id, agent_id, claimed_at)
+      VALUES (
+        ${owner.fixture.runId}, 'implement', ${owner.fixture.storyId},
+        'duplicate-agent', clock_timestamp()
+      )
+      RETURNING id::integer AS id
+    `;
+    const duplicateClaimId = duplicateClaims[0]!.id;
+    await database.sql`
+      UPDATE stories
+         SET claimed_by = 'duplicate-agent', claimed_at = clock_timestamp(),
+             claim_generation = claim_generation + 1
+       WHERE id = ${owner.fixture.storyDbId}
+    `;
+    const duplicateRuntimeId = `RTS_${"d".repeat(20)}-${sequence}`;
+    await createRuntimeSessionRepository(database.sql).reserve({
+      sessionId: duplicateRuntimeId,
+      runId: owner.fixture.runId,
+      stepDbId: owner.fixture.stepDbId,
+      workflowStepId: "implement",
+      storyDbId: owner.fixture.storyDbId,
+      storyId: owner.fixture.storyId,
+      claimId: duplicateClaimId,
+      claimAgentId: "duplicate-agent",
+      runtimeAgentId: "duplicate-runtime",
+      runtimeKind: "local_process",
+      ownerInstanceId: "duplicate-owner",
+    });
+
+    await assert.rejects(
+      database.sql.begin((transaction) => withdrawPreDispatchClaimInTransaction(transaction, {
+        identity: {
+          claimId: duplicateClaimId,
+          runId: owner.fixture.runId,
+          workflowStepId: "implement",
+          storyId: owner.fixture.storyId,
+          claimAgentId: "duplicate-agent",
+          runtime: { sessionId: duplicateRuntimeId, ownerInstanceId: "duplicate-owner" },
+        },
+        outcome: "infra_retry",
+        diagnostic: "generic duplicate must not steal a recovery-owned story",
+      })),
+      /CLAIM_MUTATION_DURABLE_OWNER_ACTIVE:recovery_dispatch/,
+    );
+    const state = await database.sql<Array<{
+      claim_outcome: string | null;
+      runtime_state: string;
+      story_status: string;
+      step_status: string;
+    }>>`
+      SELECT claim.outcome AS claim_outcome, runtime.state AS runtime_state,
+             story.status AS story_status, step.status AS step_status
+        FROM claim_log claim
+        JOIN runtime_sessions runtime ON runtime.claim_id = claim.id
+        JOIN stories story ON story.run_id = claim.run_id AND story.story_id = claim.story_id
+        JOIN steps step ON step.run_id = claim.run_id AND step.step_id = claim.step_id
+       WHERE claim.id = ${duplicateClaimId}
+    `;
+    assert.deepEqual({ ...state[0] }, {
+      claim_outcome: null,
+      runtime_state: "reserved",
+      story_status: "running",
+      step_status: "running",
+    });
+  });
+
+  it("withdraws compiler duplicates but never resets product state owned by authorized or leased recovery", async () => {
+    for (const deliveryState of ["authorized", "leased"] as const) {
+      const fixture = await setup();
+      if (deliveryState === "leased") {
+        await lease(fixture, {
+          ownerInstanceId: `compiler-foreign-${deliveryState}`,
+          leaseMs: 120_000,
+          now: new Date(Date.now() - 1_000),
+        });
+      }
+      await database.sql.unsafe(
+        `UPDATE stories
+            SET status = 'running', claimed_by = 'duplicate-agent', claimed_at = clock_timestamp()
+          WHERE id = $1`,
+        [fixture.storyDbId],
+      );
+      await database.sql.unsafe(
+        `UPDATE steps SET status = 'running', current_story_id = $2 WHERE id = $1`,
+        [fixture.stepDbId, fixture.storyDbId],
+      );
+      const claims = await database.sql<Array<{ id: number }>>`
+        INSERT INTO claim_log (run_id, step_id, story_id, agent_id, claimed_at)
+        VALUES (${fixture.runId}, 'implement', ${fixture.storyId}, 'duplicate-agent', clock_timestamp())
+        RETURNING id::integer AS id
+      `;
+      const claimId = claims[0]!.id;
+      const runtimeSessionId = `RTS_${deliveryState.padEnd(20, "x")}-${sequence}`;
+      await createRuntimeSessionRepository(database.sql).reserve({
+        sessionId: runtimeSessionId,
+        runId: fixture.runId,
+        stepDbId: fixture.stepDbId,
+        workflowStepId: "implement",
+        storyDbId: fixture.storyDbId,
+        storyId: fixture.storyId,
+        claimId,
+        claimAgentId: "duplicate-agent",
+        runtimeAgentId: "duplicate-runtime",
+        runtimeKind: "local_process",
+        ownerInstanceId: "duplicate-owner",
+      });
+
+      assert.deepEqual(await ensureCompilerClaimFence(database.sql, {
+        claimId,
+        runId: fixture.runId,
+        stepId: "implement",
+        storyId: fixture.storyId,
+        storyDbId: fixture.storyDbId,
+        claimAgentId: "duplicate-agent",
+        diagnostic: "compiler duplicate observed a foreign recovery owner",
+      }), {
+        status: "blocked",
+        reason: "COMPILER_CLAIM_FOREIGN_OWNER_RETAINED",
+      });
+      const state = await database.sql<Array<{
+        story_status: string;
+        step_status: string;
+        current_story_id: string | null;
+        claim_outcome: string | null;
+        runtime_state: string;
+        delivery_state: string;
+      }>>`
+        SELECT story.status AS story_status, step.status AS step_status,
+               step.current_story_id, claim.outcome AS claim_outcome,
+               runtime.state AS runtime_state, delivery.state AS delivery_state
+          FROM stories story
+          JOIN steps step ON step.run_id = story.run_id AND step.step_id = 'implement'
+          JOIN claim_log claim ON claim.id = ${claimId}
+          JOIN runtime_sessions runtime ON runtime.claim_id = claim.id
+          JOIN recovery_dispatch_deliveries delivery ON delivery.dispatch_id = ${fixture.dispatch.dispatchId}
+         WHERE story.id = ${fixture.storyDbId}
+      `;
+      assert.deepEqual({ ...state[0] }, {
+        story_status: "running",
+        step_status: "running",
+        current_story_id: fixture.storyDbId,
+        claim_outcome: "infra_retry",
+        runtime_state: "released",
+        delivery_state: deliveryState,
+      });
+    }
   });
 
   it("rolls back every owner heartbeat when the delivery fence update fails", async () => {
@@ -341,6 +863,7 @@ describe("v3 recovery lifecycle reconciler", () => {
           runId: fixture.runId,
           storyId: fixture.storyId,
           claimId: bound.publication.claimId,
+          claimAgentId: "recovery-agent",
           revisionId: handoff.revisionId,
           dispatchId: handoff.dispatchId,
           ownerInstanceId: handoff.lease.ownerInstanceId,
@@ -372,6 +895,87 @@ describe("v3 recovery lifecycle reconciler", () => {
     assert.deepEqual(
       Object.fromEntries(Object.entries(after[0]!).map(([key, value]) => [key, (value as Date).toISOString()])),
       Object.fromEntries(Object.entries(before[0]!).map(([key, value]) => [key, (value as Date).toISOString()])),
+    );
+  });
+
+  it("rolls back exact relinquish atomically when the delivery lease update fails", async () => {
+    const fixture = await setup();
+    const leaseAt = new Date(Date.now() - 1_000);
+    const handoff = await lease(fixture, {
+      ownerInstanceId: "relinquish-rollback-owner",
+      leaseMs: 120_000,
+      now: leaseAt,
+    });
+    const sessionId = `RTS_${"q".repeat(20)}-${sequence}`;
+    const bound = await reserveModelAttempt(fixture, handoff, {
+      sessionId,
+      now: new Date(leaseAt.getTime() + 100),
+      start: false,
+    });
+    const readLeases = () => database.sql.unsafe<Array<{
+      attempt_expiry: Date;
+      delivery_expiry: Date;
+    }>>(
+      `SELECT attempt.lease_expires_at AS attempt_expiry,
+              delivery.lease_expires_at AS delivery_expiry
+         FROM execution_attempts attempt
+         JOIN recovery_dispatch_deliveries delivery ON delivery.attempt_id = attempt.attempt_id
+        WHERE attempt.attempt_id = $1`,
+      [bound.attempt.attemptId],
+    );
+    const before = await readLeases();
+    const functionName = `test_fail_owner_relinquish_${sequence}`;
+    const triggerName = `trg_fail_owner_relinquish_${sequence}`;
+    try {
+      await database.sql.unsafe(
+        `CREATE FUNCTION ${functionName}() RETURNS trigger AS $$
+         BEGIN
+           IF NEW.lease_expires_at <> OLD.lease_expires_at THEN
+             RAISE EXCEPTION 'TEST_FORCED_OWNER_RELINQUISH_FAILURE';
+           END IF;
+           RETURN NEW;
+         END;
+         $$ LANGUAGE plpgsql`,
+      );
+      await database.sql.unsafe(
+        `CREATE TRIGGER ${triggerName}
+         BEFORE UPDATE ON recovery_dispatch_deliveries
+         FOR EACH ROW EXECUTE FUNCTION ${functionName}()`,
+      );
+      await assert.rejects(
+        createV3RecoveryOwnerLeaseRepository(database.sql).relinquish({
+          kind: "model_runtime",
+          runId: fixture.runId,
+          storyId: fixture.storyId,
+          claimId: bound.publication.claimId,
+          claimAgentId: "recovery-agent",
+          revisionId: handoff.revisionId,
+          dispatchId: handoff.dispatchId,
+          ownerInstanceId: handoff.lease.ownerInstanceId,
+          leaseToken: handoff.lease.leaseToken,
+          attempt: {
+            attemptId: bound.attempt.attemptId,
+            generation: bound.attempt.generation,
+            fenceToken: bound.attempt.fenceToken,
+          },
+          runtimeSessionId: sessionId,
+        }),
+        /TEST_FORCED_OWNER_RELINQUISH_FAILURE/,
+      );
+    } finally {
+      await database.sql.unsafe(`DROP TRIGGER IF EXISTS ${triggerName} ON recovery_dispatch_deliveries`);
+      await database.sql.unsafe(`DROP FUNCTION IF EXISTS ${functionName}()`);
+    }
+    const after = await readLeases();
+    assert.deepEqual(
+      after[0] && {
+        attemptExpiry: after[0].attempt_expiry.toISOString(),
+        deliveryExpiry: after[0].delivery_expiry.toISOString(),
+      },
+      before[0] && {
+        attemptExpiry: before[0].attempt_expiry.toISOString(),
+        deliveryExpiry: before[0].delivery_expiry.toISOString(),
+      },
     );
   });
 

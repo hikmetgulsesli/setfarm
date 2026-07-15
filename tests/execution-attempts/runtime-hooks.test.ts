@@ -55,16 +55,17 @@ describe("shadow runtime hook boundaries", () => {
     const prepare = block.indexOf("await prepareShadowAttemptFailure({");
     const firstStoryRead = block.indexOf("const story = await pgGet");
     const lifecycleOwner = stepFail.indexOf("async function terminalizeLoopClaimAndState(");
-    const ownerFinalize = stepFail.indexOf("await finalizeShadowAttemptFailure(", lifecycleOwner);
-    const ownerTransaction = stepFail.indexOf("await pgBegin(async (sql) => {", ownerFinalize);
+    const ownerTransaction = stepFail.indexOf("await pgBegin(async (sql) => {", lifecycleOwner);
     const ownerTransition = stepFail.indexOf("await closeClaimAndBoundAttemptInTransaction(", ownerTransaction);
     const storyState = stepFail.indexOf("UPDATE stories", ownerTransition);
     const stepState = stepFail.indexOf("UPDATE steps", storyState);
     const ownerReceipt = stepFail.indexOf("await markRuntimeCompletionOwnerCommittedInTransaction(", stepState);
+    const ownerFinalize = stepFail.indexOf("await finalizeShadowAttemptFailure(", ownerReceipt);
     assert.ok(prepare >= 0 && prepare < firstStoryRead);
-    assert.ok(lifecycleOwner >= 0 && ownerFinalize > lifecycleOwner && ownerTransaction > ownerFinalize);
+    assert.ok(lifecycleOwner >= 0 && ownerTransaction > lifecycleOwner);
     assert.ok(ownerTransition > ownerTransaction && storyState > ownerTransition && stepState > storyState);
     assert.ok(ownerReceipt > stepState, "RCR owner receipt must follow claim and product state in the same transaction");
+    assert.ok(ownerFinalize > ownerReceipt, "post-commit shadow telemetry must follow the authoritative owner transaction");
     assert.equal((block.match(/await terminalizeLoopClaimAndState\(/g) || []).length, 3);
     assert.equal((block.match(/return \{ retrying:/g) || []).length, 3);
     for (const marker of [

@@ -89,6 +89,148 @@ describe("atomic claim-attempt terminal transition", () => {
     }
   });
 
+  it("persists exact source-at-failure evidence in the claim terminalization transaction", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const runId = "run-claim-failure-source";
+      await database.insertRun(runId);
+      const claimId = await insertClaim(database, { runId });
+      const repository = createAttemptRepository(database.sql, {
+        attemptId: () => "ATT_claim-failure-source-0001",
+        fenceToken: () => "7".repeat(64),
+      });
+      const reserved = await repository.reserve(exactProductReservation({
+        claimId,
+        runId,
+        agentId: "feature-dev_developer",
+        evidenceRefs: [`setfarm://claim-log/${claimId}`],
+      }));
+      const sourceAtFailure = { sha: "1".repeat(40), treeHash: "2".repeat(64) };
+
+      const result = await closeClaimAndBoundAttempt(database.sql, {
+        claimId,
+        runId,
+        stepId: "implement",
+        storyId: "US-002",
+        agentId: "feature-dev_developer",
+        outcome: "infra_retry",
+        diagnostic: "captured exact failure source",
+        attemptDisposition: "inconclusive",
+        attemptFailureEvidence: {
+          attemptId: reserved.attempt.attemptId,
+          generation: reserved.attempt.generation,
+          fenceToken: reserved.attempt.fenceToken,
+          runId,
+          stepId: "implement",
+          storyId: "US-002",
+          sourceAtFailure,
+          legacyClaimId: claimId,
+          evidenceRefs: ["setfarm://test/source-at-failure"],
+        },
+      });
+      assert.equal(result.status, "closed");
+      const rows = await database.sql<Array<{
+        outcome: string;
+        disposition: string;
+        source_after_sha: string;
+        source_after_tree_hash: string;
+        evidence_refs: string[];
+      }>>`
+        SELECT claim.outcome, attempt.disposition,
+               attempt.source_after_sha, attempt.source_after_tree_hash,
+               attempt.evidence_refs
+          FROM claim_log claim
+          JOIN execution_attempts attempt ON attempt.claim_id = claim.id
+         WHERE claim.id = ${claimId}
+      `;
+      assert.equal(rows[0]?.outcome, "infra_retry");
+      assert.equal(rows[0]?.disposition, "inconclusive");
+      assert.equal(rows[0]?.source_after_sha, sourceAtFailure.sha);
+      assert.equal(rows[0]?.source_after_tree_hash, sourceAtFailure.treeHash);
+      assert.ok(rows[0]?.evidence_refs.includes("setfarm://test/source-at-failure"));
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("rolls back claim and source-at-failure fence together when claim terminalization fails", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const runId = "run-claim-failure-source-rollback";
+      await database.insertRun(runId);
+      const claimId = await insertClaim(database, { runId });
+      const repository = createAttemptRepository(database.sql, {
+        attemptId: () => "ATT_claim-failure-source-rollback-0001",
+        fenceToken: () => "8".repeat(64),
+      });
+      const reserved = await repository.reserve(exactProductReservation({
+        claimId,
+        runId,
+        agentId: "feature-dev_developer",
+        evidenceRefs: [`setfarm://claim-log/${claimId}`],
+      }));
+      await database.sql.unsafe(`
+        CREATE FUNCTION test_reject_claim_terminalization() RETURNS trigger AS $$
+        BEGIN
+          RAISE EXCEPTION 'TEST_REJECT_CLAIM_TERMINALIZATION';
+        END;
+        $$ LANGUAGE plpgsql
+      `);
+      await database.sql.unsafe(`
+        CREATE TRIGGER test_reject_claim_terminalization
+        BEFORE UPDATE OF outcome ON claim_log
+        FOR EACH ROW
+        WHEN (OLD.outcome IS NULL AND NEW.outcome IS NOT NULL)
+        EXECUTE FUNCTION test_reject_claim_terminalization()
+      `);
+
+      await assert.rejects(
+        closeClaimAndBoundAttempt(database.sql, {
+          claimId,
+          runId,
+          stepId: "implement",
+          storyId: "US-002",
+          agentId: "feature-dev_developer",
+          outcome: "infra_retry",
+          diagnostic: "transaction must roll back",
+          attemptDisposition: "inconclusive",
+          attemptFailureEvidence: {
+            attemptId: reserved.attempt.attemptId,
+            generation: reserved.attempt.generation,
+            fenceToken: reserved.attempt.fenceToken,
+            runId,
+            stepId: "implement",
+            storyId: "US-002",
+            sourceAtFailure: { sha: "3".repeat(40), treeHash: "4".repeat(64) },
+            legacyClaimId: claimId,
+            evidenceRefs: ["setfarm://test/source-at-failure-rollback"],
+          },
+        }),
+        /TEST_REJECT_CLAIM_TERMINALIZATION/,
+      );
+      const rows = await database.sql<Array<{
+        outcome: string | null;
+        disposition: string;
+        source_after_sha: string | null;
+        source_after_tree_hash: string | null;
+      }>>`
+        SELECT claim.outcome, attempt.disposition,
+               attempt.source_after_sha, attempt.source_after_tree_hash
+          FROM claim_log claim
+          JOIN execution_attempts attempt ON attempt.claim_id = claim.id
+         WHERE claim.id = ${claimId}
+      `;
+      assert.deepEqual({ ...rows[0] }, {
+        outcome: null,
+        disposition: "claimed",
+        source_after_sha: null,
+        source_after_tree_hash: null,
+      });
+    } finally {
+      await database.cleanup();
+    }
+  });
+
   it("serializes competing recovery owners and accepts exactly one CAS", async () => {
     const database = await createIsolatedTestDatabase();
     try {

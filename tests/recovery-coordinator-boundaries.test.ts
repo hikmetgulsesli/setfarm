@@ -11,6 +11,14 @@ const terminalRuntimeReconcilerSource = fs.readFileSync(
   path.join(root, "src", "execution", "terminal-claim-runtime-reconciler.ts"),
   "utf8",
 );
+const claimTransitionSource = fs.readFileSync(
+  path.join(root, "src", "execution", "claim-attempt-transition.ts"),
+  "utf8",
+);
+const operationalRetryTransitionSource = fs.readFileSync(
+  path.join(root, "src", "execution", "operational-retry-transition.ts"),
+  "utf8",
+);
 
 function sourceBlock(startMarker: string, endMarker: string): string {
   const start = spawnerSource.indexOf(startMarker);
@@ -188,11 +196,49 @@ describe("durable recovery coordinator source boundaries", () => {
     assert.match(staleSelection, /NOT EXISTS[\s\S]*runtime_completion_requests/i);
     assert.match(
       staleSelection,
-      /runtime_completion_requests[\s\S]*state\s+(?:IN\s*\(\s*'requested'\s*,\s*'draining'\s*,\s*'processing'\s*\)|NOT IN\s*\(\s*'accepted'\s*,\s*'rejected'\s*,\s*'quarantined'\s*\))/i,
-      "requested, draining, and processing completion requests fence generic stale recovery without a lease-age exception",
+      /runtime_completion_requests[\s\S]*state\s+NOT IN\s*\(\s*'accepted'\s*,\s*'rejected'\s*\)/i,
+      "requested, draining, processing, and quarantined completion requests fence generic stale recovery without a lease-age exception",
     );
     assert.match(staleSelection, /NOT EXISTS[\s\S]*run_termination_requests/i);
     assert.match(staleSelection, /run_termination_requests[\s\S]*state\s*<>\s*'terminalized'/i);
+  });
+
+  it("keeps bounded single-step recovery outside the story advisory-lock domain", () => {
+    const start = claimTransitionSource.indexOf(
+      "export async function closeUniqueSingleStepClaimForRecoveryInTransaction(",
+    );
+    const end = claimTransitionSource.indexOf(
+      "export type CloseClaimAndBoundAttemptInput",
+      start,
+    );
+    assert.ok(start >= 0 && end > start, "bounded single-step transition source missing");
+    const bounded = claimTransitionSource.slice(start, end);
+    assert.match(bounded, /story_id IS NULL/);
+    assert.match(bounded, /recoveryAuthority:\s*"orphan_recovery"/);
+    assert.doesNotMatch(bounded, /storyId:\s*(?!null)/);
+  });
+
+  it("propagates orphan authority through every loop and single terminal mutation", () => {
+    const single = sourceBlock(
+      "async function retrySingleStepClaimWithAuthority(",
+      "async function retryActiveSingleStepClaim(",
+    );
+    assert.match(single, /failStep\([\s\S]*recoveryAuthority:\s*"orphan_recovery"/);
+
+    const story = sourceBlock(
+      "async function requeueOpenStoryClaim(",
+      "async function discardV3OperationalRetryWorktree(",
+    );
+    assert.equal(
+      (story.match(/recoveryAuthority:\s*"orphan_recovery"/g) || []).length,
+      2,
+      "legacy hard-fail and infra-retry story mutations must both carry authority",
+    );
+    assert.equal(
+      (operationalRetryTransitionSource.match(/recoveryAuthority:\s*"orphan_recovery"/g) || []).length,
+      2,
+      "v3 typed retry publication and exhaustion must both carry authority",
+    );
   });
 
   it("awaits every lifecycle processor before shutdown releases ownership", () => {
@@ -264,5 +310,47 @@ describe("durable recovery coordinator source boundaries", () => {
       /terminationOwnerInstanceId:\s*owned\.ownerInstanceId/,
       "termination recovery must carry the exact durable owner into the re-proof CAS",
     );
+  });
+
+  it("covers every post-claim pre-transfer return and throw with one exact ownership finalizer", () => {
+    const spawn = sourceBlock(
+      "let postClaimOwnershipTransferred = false;",
+      "async function failStaleRunningClaimsFromPreviousSpawner(): Promise<void> {",
+    );
+    const outerTry = spawn.indexOf("try {", spawn.indexOf("let preTransferErrFd"));
+    const childSpawn = spawn.indexOf("const child = preTransferChild = spawn(");
+    const markRunning = spawn.indexOf("const published = await runtimeSessions.markRunning(");
+    const transfer = spawn.indexOf("postClaimOwnershipTransferred = true;");
+    const finalizer = spawn.indexOf("await releaseUntransferredPostClaimOwnership(");
+    const outerFinally = spawn.lastIndexOf("} finally {");
+    assert.ok(
+      outerTry >= 0
+      && childSpawn > outerTry
+      && markRunning > childSpawn
+      && transfer > markRunning
+      && outerFinally > transfer
+      && finalizer > outerFinally,
+      "claim publication through child start must remain inside the outer try/finally until markRunning transfers ownership",
+    );
+    assert.equal(
+      (spawn.match(/postClaimOwnershipTransferred\s*=\s*true/g) || []).length,
+      1,
+      "only the exact durable runtime publication may transfer post-claim ownership",
+    );
+    assert.match(
+      spawn.slice(outerFinally),
+      /if \(!postClaimOwnershipTransferred\)[\s\S]*killProcessTree\(preTransferChild\.pid, "SIGKILL"\)[\s\S]*releaseUntransferredPostClaimOwnership\(claim, agentId, diagnostic\)/,
+      "all early returns and synchronous spawn failures must terminate any child and settle or hand off the exact durable owner",
+    );
+
+    const finalizerBody = sourceBlock(
+      "export async function releaseUntransferredPostClaimOwnership(",
+      "async function activeProcessHasOpenClaim(",
+    );
+    assert.match(finalizerBody, /active_completion_count/);
+    assert.match(finalizerBody, /active_termination_count/);
+    assert.match(finalizerBody, /status:\s*"handed_off_completion"/);
+    assert.match(finalizerBody, /status:\s*"handed_off_termination"/);
+    assert.match(finalizerBody, /POST_CLAIM_OWNERSHIP_RETAINED/);
   });
 });

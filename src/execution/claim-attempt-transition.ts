@@ -3,6 +3,7 @@ import type postgres from "postgres";
 import type { TerminalAttemptDispositionV1 } from "./schemas/execution-attempt-v1.js";
 import type { SourceRevisionV1 } from "./schemas/execution-attempt-v1.js";
 import type { ClaimEnvelopeV1 } from "./schemas/claim-envelope-v1.js";
+import { acquireClaimMutationAuthorityInTransaction } from "./claim-mutation-authority.js";
 import { markRuntimeCompletionOwnerCommittedInTransaction } from "./runtime-completion.js";
 import {
   createSingleEffectCompletionPlanDescriptorV1,
@@ -111,6 +112,7 @@ export async function closeExactSingleStepClaimInTransaction(
     envelope: ClaimEnvelopeV1;
     outcome: SingleStepClaimOutcome;
     diagnostic: string;
+    recoveryAuthority?: "orphan_recovery";
     now?: Date;
   }>,
 ): Promise<void> {
@@ -120,6 +122,14 @@ export async function closeExactSingleStepClaimInTransaction(
   }
   const transitionTime = input.now ? new Date(input.now) : new Date();
   if (!Number.isFinite(transitionTime.getTime())) throw new Error("SINGLE_STEP_CLAIM_TIME_INVALID");
+
+  await acquireClaimMutationAuthorityInTransaction(sql as postgres.TransactionSql, {
+    claimId: envelope.claimId,
+    runId: envelope.runId,
+    workflowStepId: envelope.workflowStepId,
+    storyId: null,
+    claimAgentId: envelope.claimAgentId,
+  }, input.recoveryAuthority ?? "claim_transition");
 
   const runRows = await sql.unsafe<Array<{ status: string; protocol: string }>>(
     "SELECT status, protocol FROM runs WHERE id = $1 FOR UPDATE",
@@ -231,7 +241,7 @@ export async function closeUniqueSingleStepClaimForRecoveryInTransaction(
       WHERE r.id = $1
         AND s.id = $2
         AND s.step_id = $3
-      FOR UPDATE OF r, s`,
+      `,
     [input.runId, input.stepDbId, input.workflowStepId],
   );
   const owner = owners[0];
@@ -240,6 +250,10 @@ export async function closeUniqueSingleStepClaimForRecoveryInTransaction(
     throw new Error("BOUNDED_RECOVERY_RUN_NOT_ACTIVE");
   }
 
+  // Discovery is deliberately lockless. The exact recovery authority below
+  // owns the canonical advisory -> run -> termination -> runtime -> attempt ->
+  // delivery -> claim -> completion sequence, then revalidates the step and
+  // claim identities under lock. A caller must not pre-lock step/story rows.
   const claims = await sql.unsafe<Array<{ id: string; agent_id: string }>>(
     `SELECT id::text, agent_id
        FROM claim_log
@@ -248,7 +262,7 @@ export async function closeUniqueSingleStepClaimForRecoveryInTransaction(
         AND story_id IS NULL
         AND outcome IS NULL
       ORDER BY id
-      FOR UPDATE`,
+      `,
     [input.runId, input.workflowStepId],
   );
   if (claims.length > 1) throw new Error("BOUNDED_RECOVERY_CLAIM_AMBIGUOUS");
@@ -274,8 +288,18 @@ export async function closeUniqueSingleStepClaimForRecoveryInTransaction(
     },
     outcome: input.outcome,
     diagnostic: input.diagnostic,
+    recoveryAuthority: "orphan_recovery",
     now: transitionTime,
   });
+  const remaining = await sql.unsafe<Array<{ id: string }>>(
+    `SELECT id::text
+       FROM claim_log
+      WHERE run_id = $1 AND step_id = $2 AND story_id IS NULL AND outcome IS NULL
+      ORDER BY id
+      FOR UPDATE`,
+    [input.runId, input.workflowStepId],
+  );
+  if (remaining.length > 0) throw new Error("BOUNDED_RECOVERY_CLAIM_AMBIGUOUS");
   return {
     status: "closed",
     protocol: owner.protocol,
@@ -300,6 +324,19 @@ export type CloseClaimAndBoundAttemptInput = Readonly<{
   agentId: string;
   outcome: string;
   diagnostic: string;
+  recoveryAuthority?: "orphan_recovery";
+  attemptDisposition?: "inconclusive" | "failed";
+  attemptFailureEvidence?: Readonly<{
+    attemptId: string;
+    generation: number;
+    fenceToken: string;
+    runId: string;
+    stepId: string;
+    storyId: string;
+    sourceAtFailure: SourceRevisionV1;
+    legacyClaimId?: number;
+    evidenceRefs: readonly string[];
+  }>;
   abandoned?: boolean;
   now?: Date;
 }>;
@@ -314,6 +351,45 @@ export async function closeClaimAndBoundAttemptInTransaction(
   if (!input.outcome.trim()) throw new Error("CLAIM_LIFECYCLE_OUTCOME_INVALID");
   const now = input.now ? new Date(input.now) : new Date();
   if (!Number.isFinite(now.getTime())) throw new Error("CLAIM_LIFECYCLE_TIME_INVALID");
+
+  try {
+    await acquireClaimMutationAuthorityInTransaction(transaction as postgres.TransactionSql, {
+      claimId: input.claimId,
+      runId: input.runId,
+      workflowStepId: input.stepId,
+      storyId: input.storyId,
+      claimAgentId: input.agentId,
+    }, input.recoveryAuthority ?? "claim_transition");
+  } catch (error) {
+    if (!(error instanceof Error) || error.message !== "CLAIM_MUTATION_CLAIM_TERMINAL") throw error;
+    const terminal = await transaction.unsafe<Array<{
+      run_id: string;
+      step_id: string;
+      story_id: string | null;
+      agent_id: string;
+      outcome: string | null;
+    }>>(
+      `SELECT run_id, step_id, story_id, agent_id, outcome
+         FROM claim_log
+        WHERE id = $1
+        FOR UPDATE`,
+      [input.claimId],
+    );
+    const claim = terminal[0];
+    if (
+      !claim
+      || claim.run_id !== input.runId
+      || claim.step_id !== input.stepId
+      || (claim.story_id ?? null) !== input.storyId
+      || claim.agent_id !== input.agentId
+      || claim.outcome === null
+    ) throw error;
+    return {
+      status: "cas_lost" as const,
+      claimId: input.claimId,
+      claimOutcome: claim.outcome,
+    };
+  }
 
   const runRows = await transaction.unsafe<Array<{ status: string; protocol: string }>>(
       "SELECT status, protocol FROM runs WHERE id = $1 FOR UPDATE",
@@ -390,6 +466,7 @@ export async function closeClaimAndBoundAttemptInTransaction(
     let attemptDisposition: TerminalAttemptDispositionV1 | undefined;
     if (attempt) {
       const refs = parseEvidenceRefs(attempt.evidence_refs);
+      const failureEvidence = input.attemptFailureEvidence;
       if (
         attempt.claim_id !== String(input.claimId)
         || attempt.step_id !== claim.step_id
@@ -398,27 +475,62 @@ export async function closeClaimAndBoundAttemptInTransaction(
       ) {
         throw new Error("CLAIM_ATTEMPT_BINDING_MISMATCH");
       }
+      if (
+        failureEvidence
+        && (
+          failureEvidence.runId !== input.runId
+          || failureEvidence.stepId !== input.stepId
+          || failureEvidence.storyId !== (input.storyId ?? "")
+          || (
+            failureEvidence.legacyClaimId !== undefined
+            && failureEvidence.legacyClaimId !== input.claimId
+          )
+        )
+      ) {
+        throw new Error("CLAIM_ATTEMPT_FAILURE_EVIDENCE_IDENTITY_MISMATCH");
+      }
+      if (
+        failureEvidence
+        && (
+          failureEvidence.attemptId !== attempt.attempt_id
+          || failureEvidence.generation !== attempt.generation
+          || failureEvidence.fenceToken !== attempt.fence_token
+        )
+      ) {
+        throw new Error("CLAIM_ATTEMPT_FAILURE_EVIDENCE_FENCE_MISMATCH");
+      }
       assertV3AttemptContract(
         claim.protocol,
         claim.packet_hash,
         attempt,
         "CLAIM_ATTEMPT_V3_CONTRACT_MISMATCH",
       );
-      attemptDisposition = fallbackDisposition(input.outcome);
+      attemptDisposition = input.attemptDisposition ?? fallbackDisposition(input.outcome);
       const evidenceRefs = [...new Set([
         ...refs,
+        ...(failureEvidence?.evidenceRefs ?? []),
         `setfarm://attempt-reconciler/claim-terminal/${normalizedOutcome(input.outcome)}`,
       ])].sort();
       const updated = await transaction.unsafe<Array<{ attempt_id: string }>>(
         `UPDATE execution_attempts
             SET disposition = $4,
                 evidence_refs = $5,
-                heartbeat_at = $6,
-                updated_at = $6
+                source_after_sha = COALESCE(source_after_sha, $6),
+                source_after_tree_hash = COALESCE(source_after_tree_hash, $7),
+                heartbeat_at = $8,
+                updated_at = $8
           WHERE attempt_id = $1
             AND generation = $2
             AND fence_token = $3
             AND disposition IN ('claimed', 'running')
+            AND (
+              $6::text IS NULL
+              OR source_after_sha IS NULL
+              OR (
+                source_after_sha = $6
+                AND source_after_tree_hash = $7
+              )
+            )
           RETURNING attempt_id`,
         [
           attempt.attempt_id,
@@ -426,6 +538,8 @@ export async function closeClaimAndBoundAttemptInTransaction(
           attempt.fence_token,
           attemptDisposition,
           JSON.stringify(evidenceRefs),
+          failureEvidence?.sourceAtFailure.sha ?? null,
+          failureEvidence?.sourceAtFailure.treeHash ?? null,
           now,
         ],
       );
@@ -501,6 +615,13 @@ export async function completeStoryClaimAndBoundAttempt(
   if (!Number.isFinite(now.getTime())) throw new Error("STORY_COMPLETION_TIME_INVALID");
 
   return sql.begin(async (transaction) => {
+    await acquireClaimMutationAuthorityInTransaction(transaction, {
+      claimId: envelope.claimId,
+      runId: envelope.runId,
+      workflowStepId: envelope.workflowStepId,
+      storyId: envelope.storyId!,
+      claimAgentId: envelope.claimAgentId,
+    });
     const runRows = await transaction.unsafe<Array<{ status: string; protocol: string }>>(
       "SELECT status, protocol FROM runs WHERE id = $1 FOR UPDATE",
       [envelope.runId],
