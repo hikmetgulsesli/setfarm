@@ -488,8 +488,8 @@ export const STACK_PACKS: Record<StackPackId, StackPack> = {
     label: "Browser Game Canvas",
     platform: "game",
     techStackAliases: ["browser-game", "canvas-game", "game"],
-    designPolicy: "stitch-brief-only",
-    conversionPolicy: "reference_only",
+    designPolicy: "stitch-required",
+    conversionPolicy: "wrap_jsx",
     scaffoldPolicy: "hybrid",
     projectTypes: ["browser-game", "arcade", "canvas-game"],
     whenToUse: "Use for browser games where the primary experience is canvas, game loop, keyboard/touch input, animation, scoring, and restartable gameplay.",
@@ -536,6 +536,7 @@ export const STACK_PACKS: Record<StackPackId, StackPack> = {
     dependencyPolicy: { ecosystem: "npm", allowedDependencies: ["phaser", "matter-js", "zustand", "zod", "lucide-react"] },
     prompt: [
       "Follow the resolved browser game stack contract.",
+      "Use the exact generated React screen shell for menus, HUD controls, and observable action bindings; keep canvas gameplay/runtime logic implementation-owned inside that shell.",
       "Implement a real game loop, state transitions, input handling, scoring/progress, pause/restart, and terminal states as required by the PRD.",
       "Visible controls must either affect current game state or be hidden/disabled when inactive.",
       "Canvas or scene output must be nonblank and verifiable in Playwright screenshots.",

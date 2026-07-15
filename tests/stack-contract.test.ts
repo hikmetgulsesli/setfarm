@@ -9,6 +9,7 @@ import { getStackPack, listStackPacks } from "../dist/installer/stack-contract/p
 import { applyStackContractContext } from "../dist/installer/stack-contract/context.js";
 import { parseStackPrefix, stripStackPrefix } from "../dist/installer/stack-contract/prefix.js";
 import { validateAllStackPacks } from "../dist/installer/stack-contract/validators.js";
+import { resolveProductDeliverySelectionV1 } from "../dist/product-compiler/product-delivery-profile-catalog.js";
 
 function tmpDir(name: string): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), `setfarm-${name}-`));
@@ -303,6 +304,52 @@ describe("stack contract", () => {
     } finally {
       fs.rmSync(repo, { recursive: true, force: true });
     }
+  });
+
+  it("does not let task prose or repo evidence overwrite a sealed Product Delivery stack", () => {
+    const repo = tmpDir("sealed-delivery-context");
+    try {
+      writeText(path.join(repo, ".git/info/exclude"), "");
+      writeText(path.join(repo, "index.html"), "<!doctype html><html></html>");
+      const selected = resolveProductDeliverySelectionV1({ productClass: "utility" });
+      assert.equal(selected.status, "selected");
+      if (selected.status !== "selected") return;
+      const context: Record<string, string> = {
+        repo,
+        task: "Build a static HTML landing page",
+        product_delivery_stack_pack_id: "vite-react-web-app",
+        product_delivery_selection: selected.canonicalBytes,
+        product_delivery_selection_hash: selected.selectionHash,
+        platform: "web",
+        tech_stack: "vite-react",
+      };
+      const contract = applyStackContractContext(context);
+
+      assert.equal(contract.packId, "vite-react-web-app");
+      assert.equal(contract.confidence, "high");
+      assert.match(contract.reason, /sealed Product Delivery authority/);
+      assert.equal(context.stack_pack_id, "vite-react-web-app");
+      assert.equal(context.detected_stack, "vite-react-web-app");
+      assert.equal(context.tech_stack, "vite-react");
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed when a sealed Product Delivery selection is tampered", () => {
+    const selected = resolveProductDeliverySelectionV1({ productClass: "utility" });
+    assert.equal(selected.status, "selected");
+    if (selected.status !== "selected") return;
+
+    assert.throws(
+      () => applyStackContractContext({
+        task: "Build a static HTML landing page",
+        product_delivery_selection: selected.canonicalBytes,
+        product_delivery_selection_hash: "0".repeat(64),
+        product_delivery_stack_pack_id: "vite-react-web-app",
+      }, { persist: false }),
+      /PRODUCT_DELIVERY_SELECTION_HASH_MISMATCH/,
+    );
   });
 
   it("exposes all initial stack packs with prompt fragments", () => {

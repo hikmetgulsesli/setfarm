@@ -7,6 +7,10 @@ import {
   type ProductSpecRejectionV1,
 } from "../product-compiler/producers/plan-product-spec-proposal.js";
 import type { ProductSpecV3Proposal } from "../product-compiler/schemas/product-spec-v1.js";
+import {
+  resolveProductDeliverySelectionV1,
+  type ProductDeliverySelectionV1,
+} from "../product-compiler/product-delivery-profile-catalog.js";
 
 const PRODUCT_SPEC_BLOCK_RE = /```product-spec-v1\s*\n([\s\S]*?)\n```/g;
 const PRODUCT_SPEC_REJECTION_BLOCK_RE = /```product-spec-rejection-v1\s*\n([\s\S]*?)\n```/g;
@@ -17,6 +21,9 @@ export type V3PlanOutputAuthorityV1 =
       productSpec: ProductSpecV3Proposal;
       canonicalBytes: string;
       sourceTaskHash: string;
+      deliverySelection: ProductDeliverySelectionV1;
+      deliverySelectionHash: string;
+      deliverySelectionCanonicalBytes: string;
     }>
   | Readonly<{
       status: "rejection";
@@ -60,6 +67,7 @@ function decodedBlock(raw: string, code: string): unknown {
 export function resolveV3PlanOutputAuthorityV1(input: Readonly<{
   task: string;
   parsed: ParsedOutput;
+  requestedStackPackId?: string;
 }>): V3PlanOutputAuthorityV1 {
   const prd = String(input.parsed.prd || "");
   const proposals = exactBlock(prd, PRODUCT_SPEC_BLOCK_RE);
@@ -87,13 +95,40 @@ export function resolveV3PlanOutputAuthorityV1(input: Readonly<{
     };
   }
 
+  const proposed = decodedBlock(proposals[0]!, "V3_PLAN_PRODUCT_SPEC_PROPOSAL_JSON_INVALID");
+  const semantic = canonicalizeProductSpecV3Proposal({
+    task: input.task,
+    proposal: proposed,
+  });
+  if (semantic.status !== "canonicalized") {
+    throw new V3PlanOutputRejectedError(
+      "V3_PLAN_PRODUCT_SPEC_PROPOSAL_INVALID",
+      semantic.diagnostics.slice(0, 20),
+    );
+  }
+  const delivery = resolveProductDeliverySelectionV1({
+    productClass: semantic.productSpec.product.class,
+    ...(input.requestedStackPackId ? { requestedStackPackId: input.requestedStackPackId } : {}),
+  });
+  if (delivery.status !== "selected") {
+    throw new V3PlanOutputRejectedError(
+      "V3_PLAN_PRODUCT_DELIVERY_PROFILE_REJECTED",
+      delivery.diagnostics.slice(0, 20),
+    );
+  }
   const canonical = canonicalizeProductSpecV3Proposal({
     task: input.task,
-    proposal: decodedBlock(proposals[0]!, "V3_PLAN_PRODUCT_SPEC_PROPOSAL_JSON_INVALID"),
+    proposal: semantic.productSpec,
+    authoritativeDelivery: {
+      platform: delivery.selection.delivery.platform,
+      techStack: delivery.selection.delivery.techStack,
+      designRequired: delivery.selection.delivery.designRequired,
+      allowedDatabases: delivery.selection.delivery.allowedDatabases,
+    },
   });
   if (canonical.status !== "canonicalized") {
     throw new V3PlanOutputRejectedError(
-      "V3_PLAN_PRODUCT_SPEC_PROPOSAL_INVALID",
+      "V3_PLAN_PRODUCT_DELIVERY_MISMATCH",
       canonical.diagnostics.slice(0, 20),
     );
   }
@@ -102,6 +137,9 @@ export function resolveV3PlanOutputAuthorityV1(input: Readonly<{
     productSpec: canonical.productSpec,
     canonicalBytes: canonical.canonicalBytes,
     sourceTaskHash: canonical.sourceTaskHash,
+    deliverySelection: delivery.selection,
+    deliverySelectionHash: delivery.selectionHash,
+    deliverySelectionCanonicalBytes: delivery.canonicalBytes,
   };
 }
 

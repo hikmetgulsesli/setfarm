@@ -21,6 +21,7 @@ import {
 import { produceProductSpecV1 } from "../../src/product-compiler/producers/product-spec.js";
 import { extractTaskRequirementLedgerV1 } from "../../src/product-compiler/requirements/task-requirements-v1.js";
 import { renderLegacyPrd } from "../../src/product-compiler/renderers/legacy-prd.js";
+import { resolveProductDeliverySelectionV1 } from "../../src/product-compiler/product-delivery-profile-catalog.js";
 import {
   createIsolatedTestDatabase,
   type TestDatabase,
@@ -53,7 +54,7 @@ function git(repo: string, args: string[]): string {
   return execFileSync("git", args, { cwd: repo, encoding: "utf8" }).trim();
 }
 
-function addV3PlanContract(productSpec: any): void {
+function addV3PlanContract(productSpec: any, productClass: "utility" | "game" = "utility"): void {
   const ledger = extractTaskRequirementLedgerV1(TASK);
   productSpec.actions.forEach((action: any) => {
     const token = action.id.replace(/^ACT_/, "");
@@ -83,9 +84,10 @@ function addV3PlanContract(productSpec: any): void {
       assertion: { operator: "passes" },
     });
   });
+  productSpec.product.class = productClass;
   productSpec.delivery = {
-    platform: "web",
-    techStack: "vite-react",
+    platform: productClass === "game" ? "game" : "web",
+    techStack: productClass === "game" ? "browser-game" : "vite-react",
     uiLanguage: "English",
     database: "none",
     designRequired: true,
@@ -116,11 +118,18 @@ function addV3PlanContract(productSpec: any): void {
   };
 }
 
-function createFixture(runId = "run-packet-fixture", v3 = false): Fixture {
+function createFixture(
+  runId = "run-packet-fixture",
+  v3 = false,
+  productClass: "utility" | "game" = "utility",
+): Fixture {
   const repo = fs.mkdtempSync(path.join(tmpdir(), "setfarm-setup-packet-"));
   const product = produceProductSpecV1({ task: TASK });
   assert.equal(product.status, "produced", JSON.stringify(product.diagnostics));
-  if (v3) addV3PlanContract(product.productSpec);
+  if (v3) addV3PlanContract(product.productSpec, productClass);
+  const platform = productClass === "game" ? "game" : "web";
+  const techStack = productClass === "game" ? "browser-game" : "vite-react";
+  const stackPackId = productClass === "game" ? "browser-game-canvas" : "vite-react-web-app";
   const targets = produceDesignGenerationTargetsV1(product.productSpec);
   assert.equal(targets.status, "produced", JSON.stringify(targets.diagnostics));
   const batches = targets.generationTargets.targets.map((target, index) => ({
@@ -264,9 +273,9 @@ function createFixture(runId = "run-packet-fixture", v3 = false): Fixture {
     runId,
     projectName: "Pulse Tile",
     projectSlug: "pulse-tile",
-    platform: "web",
-    techStack: "vite-react",
-    stackPackId: "vite-react-web-app",
+    platform,
+    techStack,
+    stackPackId,
     commands: { build: "legacy command prose is not compiler authority" },
     entrypoints: ["src/main.tsx", "src/main.jsx", "src/App.tsx", "src/App.jsx"],
     setupOwnedFiles: ["package.json"],
@@ -303,7 +312,7 @@ function createFixture(runId = "run-packet-fixture", v3 = false): Fixture {
   const manifest = {
     schema: "setfarm.file-tree-manifest.v1",
     runId,
-    stackPackId: "vite-react-web-app",
+    stackPackId,
     resolvedTargets: [{
       storyId: "US-001",
       role: "action_handler",
@@ -353,8 +362,8 @@ function createFixture(runId = "run-packet-fixture", v3 = false): Fixture {
     runId,
     repo,
     planText: renderLegacyPrd(product.productSpec, {
-      platform: "web",
-      techStack: "vite-react",
+      platform,
+      techStack,
       uiLanguage: "English",
     }),
     generatedFiles,
@@ -432,6 +441,86 @@ describe("setup-build Product Build Packet orchestration", () => {
       (error: unknown) => error instanceof SetupBuildPacketError
         && error.code === "SETUP_PACKET_DIRECT_RESPONSE_EVIDENCE_REJECTED",
     );
+  });
+
+  it("rejects utility static delivery before reading a missing generated-screen topology", () => {
+    const value = createFixture("run-v3-static-delivery", true);
+    repos.push(value.repo);
+    fs.rmSync(path.join(value.repo, "src", "screens"), { recursive: true, force: true });
+    const incompatiblePlan = value.planText.replace(
+      '"techStack":"vite-react"',
+      '"techStack":"static-html"',
+    );
+
+    assert.throws(
+      () => assembleSetupBuildPacketContracts({
+        ...value,
+        planText: incompatiblePlan,
+        requireV3Proposal: true,
+      }),
+      (error: unknown) => error instanceof SetupBuildPacketError
+        && error.code === "SETUP_PACKET_DELIVERY_PROFILE_REJECTED"
+        && !String(error.message).includes("SCREEN_INDEX"),
+    );
+  });
+
+  it("seals a browser-game React/canvas shell through the same exact packet projection", () => {
+    const value = createFixture("run-v3-browser-game", true, "game");
+    repos.push(value.repo);
+    const assembled = assembleSetupBuildPacketContracts({
+      ...value,
+      requireV3Proposal: true,
+    });
+
+    assert.equal(assembled.deliverySelection?.profileId, "PROFILE_BROWSER_GAME_REACT_CANVAS_EXACT_V1");
+    assert.equal(assembled.deliverySelection?.stackPackId, "browser-game-canvas");
+    assert.equal(assembled.buildTopology.stackPack.id, "browser-game-canvas");
+    assert.equal(assembled.sourceHashes.deliverySelection?.length, 64);
+    assert.equal(
+      assembled.buildTopology.deliveryProfile?.selectionHash,
+      assembled.sourceHashes.deliverySelection,
+    );
+    assert.equal(
+      assembled.buildTopology.deliveryProfile?.designProjection,
+      "exact_stitch_screen_index_v3",
+    );
+    assert.equal(assembled.designGraph.bindings.length > 0, true);
+  });
+
+  it("rejects setup when the PLAN-sealed delivery selection hash changes", () => {
+    const value = createFixture("run-v3-selection-hash", true);
+    repos.push(value.repo);
+
+    assert.throws(
+      () => assembleSetupBuildPacketContracts({
+        ...value,
+        requireV3Proposal: true,
+        expectedDeliverySelectionHash: "0".repeat(64),
+      }),
+      (error: unknown) => error instanceof SetupBuildPacketError
+        && error.code === "SETUP_PACKET_DELIVERY_PROFILE_REJECTED"
+        && String(error.message).includes("selection hash"),
+    );
+  });
+
+  it("preserves a valid explicit stack-prefix selection identity through packet seal", () => {
+    const value = createFixture("run-v3-explicit-vite", true);
+    repos.push(value.repo);
+    const explicit = resolveProductDeliverySelectionV1({
+      productClass: "utility",
+      requestedStackPackId: "vite-react-web-app",
+    });
+    assert.equal(explicit.status, "selected");
+    if (explicit.status !== "selected") return;
+
+    const assembled = assembleSetupBuildPacketContracts({
+      ...value,
+      requireV3Proposal: true,
+      expectedDeliverySelectionHash: explicit.selectionHash,
+      requestedStackPackId: "vite-react-web-app",
+    });
+    assert.equal(assembled.deliverySelection?.selectionBasis, "explicit_stack_prefix");
+    assert.equal(assembled.sourceHashes.deliverySelection, explicit.selectionHash);
   });
 
   it("rejects same-element semantic loss instead of guessing from labels", () => {

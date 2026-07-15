@@ -10,6 +10,10 @@ import {
 import { createRuntimeSessionRepository } from "../../src/execution/runtime-session-repository.js";
 import { recoverV3StageFailureV1 } from "../../src/execution/v3-stage-retry-authority.js";
 import { canonicalJsonStringify } from "../../src/product-compiler/canonical-json.js";
+import {
+  canonicalProductDeliveryProfileCatalogV1,
+  productDeliveryProfileCatalogHashV1,
+} from "../../src/product-compiler/product-delivery-profile-catalog.js";
 import { extractTaskRequirementLedgerV1 } from "../../src/product-compiler/requirements/task-requirements-v1.js";
 import { createIsolatedTestDatabase } from "./test-database.js";
 
@@ -55,6 +59,9 @@ test("invalid PLAN v3 proposal closes the exact claim and settles as a bounded r
         task: TASK,
         plan_protocol: "v3",
         v3_requirement_ledger: canonicalJsonStringify(extractTaskRequirementLedgerV1(TASK)),
+        v3_delivery_profile_catalog: canonicalProductDeliveryProfileCatalogV1(),
+        v3_delivery_profile_catalog_hash: productDeliveryProfileCatalogHashV1(),
+        v3_requested_stack_pack_id: "",
       },
     });
 

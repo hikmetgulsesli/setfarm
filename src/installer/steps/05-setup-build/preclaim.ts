@@ -382,6 +382,12 @@ async function compileSetupBuildProductPacket(
       expectedMode: protocol,
       repo,
       planText: ctx.context["prd"] || ctx.context["PRD"] || "",
+      ...(ctx.context["product_delivery_selection_hash"]
+        ? { expectedDeliverySelectionHash: ctx.context["product_delivery_selection_hash"] }
+        : {}),
+      ...(ctx.context["requested_stack_prefix"] && ctx.context["product_delivery_stack_pack_id"]
+        ? { requestedStackPackId: ctx.context["product_delivery_stack_pack_id"] }
+        : {}),
       ownerInstanceId: `setup-build:${ctx.runId}:${process.pid}`,
     });
     const runtime = orchestrated.compilation;

@@ -165,6 +165,30 @@ describe("versioned Product Build Packet contract schemas", () => {
     assert.equal(BuildTopologyV1Schema.safeParse(duplicateStoryOwner).success, false);
   });
 
+  it("binds a delivery profile reference to the exact topology descriptor", () => {
+    const topology = clone(buildMinimalValidContracts().buildTopology) as any;
+    topology.deliveryProfile = {
+      schema: "setfarm.product-delivery-selection-ref.v1",
+      profileId: "PROFILE_WEB_REACT_EXACT_V1",
+      catalogVersion: "1.0.0",
+      catalogHash: "d".repeat(64),
+      selectionHash: "e".repeat(64),
+      productClass: "utility",
+      stackPackId: topology.stackPack.id,
+      designProjection: "exact_stitch_screen_index_v3",
+      topologyDescriptorHash: topology.stackPack.contentHash,
+    };
+    assert.equal(BuildTopologyV1Schema.safeParse(topology).success, true);
+
+    const wrongPack = clone(topology);
+    wrongPack.deliveryProfile.stackPackId = "browser-game-canvas";
+    assert.equal(BuildTopologyV1Schema.safeParse(wrongPack).success, false);
+
+    const wrongDescriptor = clone(topology);
+    wrongDescriptor.deliveryProfile.topologyDescriptorHash = "f".repeat(64);
+    assert.equal(BuildTopologyV1Schema.safeParse(wrongDescriptor).success, false);
+  });
+
   it("requires resolvable acyclic story dependencies and unique order", () => {
     const values = buildMinimalValidContracts();
     const storyPlan = clone(values.storyPlan);

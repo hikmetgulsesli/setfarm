@@ -14,6 +14,7 @@ import {
 } from "../../../product-compiler/producers/plan-product-spec-proposal.js";
 import { renderLegacyPrd } from "../../../product-compiler/renderers/legacy-prd.js";
 import { recordObservation } from "../../observations.js";
+import { verifyProductDeliverySelectionV1 } from "../../../product-compiler/product-delivery-profile-catalog.js";
 
 const VALID_TECH_STACKS = new Set([
   "vite-react",
@@ -75,6 +76,32 @@ function canonicalExplicitStackContext(context: Record<string, string>): { platf
     }
   }
   return null;
+}
+
+function sealedDeliveryContext(context: Record<string, string>): {
+  platform: string;
+  techStack: string;
+  designRequired: boolean;
+  allowedDatabases: readonly string[];
+} | null {
+  const raw = context["product_delivery_selection"] || "";
+  if (!raw) return null;
+  let decoded: unknown;
+  try {
+    decoded = JSON.parse(raw);
+  } catch {
+    throw new Error("PRODUCT_DELIVERY_SELECTION_JSON_INVALID");
+  }
+  const selection = verifyProductDeliverySelectionV1(decoded);
+  if (hashCanonicalJson(selection) !== context["product_delivery_selection_hash"]) {
+    throw new Error("PRODUCT_DELIVERY_SELECTION_HASH_MISMATCH");
+  }
+  return {
+    platform: selection.delivery.platform,
+    techStack: selection.delivery.techStack,
+    designRequired: selection.delivery.designRequired,
+    allowedDatabases: selection.delivery.allowedDatabases,
+  };
 }
 
 const REQUIRED_PRD_SECTIONS = [
@@ -355,7 +382,7 @@ export async function onComplete(ctx: CompleteContext): Promise<void> {
   normalize(parsed);
   const typed = parsedProductSpec(String(parsed.prd || ""));
   if (typed?.success && (typed.data.delivery || typed.data.requirements || typed.data.traceability)) {
-    const authoritativeDelivery = canonicalExplicitStackContext(context);
+    const authoritativeDelivery = sealedDeliveryContext(context) ?? canonicalExplicitStackContext(context);
     const canonical = canonicalizeProductSpecV3Proposal({
       task: context["task"] || "",
       proposal: typed.data,
@@ -400,6 +427,13 @@ export async function onComplete(ctx: CompleteContext): Promise<void> {
         schema: "setfarm.product-spec-proposal-evidence.v1",
         productSpecHash: context["product_spec_hash"],
         sourceTaskHash: canonical.sourceTaskHash,
+        deliveryProfileId: context["product_delivery_profile_id"] || null,
+        deliverySelectionHash: context["product_delivery_selection_hash"] || null,
+        deliveryCatalogHash: context["product_delivery_catalog_hash"] || null,
+        stackPackId: context["product_delivery_stack_pack_id"] || context["stack_pack_id"] || null,
+        conversionPolicy: context["product_delivery_conversion_policy"] || null,
+        designProjection: context["product_delivery_design_projection"] || null,
+        topologyDescriptorHash: context["product_delivery_topology_hash"] || null,
         requirementRefs: spec.requirements!.map((requirement) => requirement.id),
       },
     });

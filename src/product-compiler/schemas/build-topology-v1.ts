@@ -29,6 +29,20 @@ const StackPackV1Schema = z
   })
   .strict();
 
+export const ProductDeliverySelectionRefV1Schema = z.object({
+  schema: z.literal("setfarm.product-delivery-selection-ref.v1"),
+  profileId: z.string().min(1).max(160).regex(/^[A-Z0-9_]+$/),
+  catalogVersion: z.string().min(1).max(100),
+  catalogHash: Sha256Schema,
+  selectionHash: Sha256Schema,
+  productClass: z.string().min(1).max(160),
+  stackPackId: z.string().min(1).max(160),
+  designProjection: z.string().min(1).max(160),
+  topologyDescriptorHash: Sha256Schema,
+}).strict();
+
+export type ProductDeliverySelectionRefV1 = z.infer<typeof ProductDeliverySelectionRefV1Schema>;
+
 const RepoIdentityV1Schema = z
   .object({
     id: z.string().min(1).max(200).regex(/^[A-Za-z0-9._-]+$/),
@@ -201,6 +215,7 @@ export const BuildTopologyV1Schema = z
   .object({
     schema: z.literal("setfarm.build-topology.v1"),
     stackPack: StackPackV1Schema,
+    deliveryProfile: ProductDeliverySelectionRefV1Schema.optional(),
     repo: RepoIdentityV1Schema,
     owners: z.array(TopologyOwnerV1Schema).min(1).max(2_000),
     pathBindings: z.array(TopologyPathBindingV1Schema).min(1).max(20_000),
@@ -231,6 +246,22 @@ export const BuildTopologyV1Schema = z
     unique(value.entrypoints.map((item) => item.id), ["entrypoints"], "Entrypoint IDs");
     unique(value.commands.map((item) => item.id), ["commands"], "Command IDs");
     unique(value.capabilities.map((item) => item.id), ["capabilities"], "Capability IDs");
+    if (value.deliveryProfile) {
+      if (value.deliveryProfile.stackPackId !== value.stackPack.id) {
+        context.addIssue({
+          code: "custom",
+          path: ["deliveryProfile", "stackPackId"],
+          message: "Delivery profile stack pack must equal BuildTopology stack pack",
+        });
+      }
+      if (value.deliveryProfile.topologyDescriptorHash !== value.stackPack.contentHash) {
+        context.addIssue({
+          code: "custom",
+          path: ["deliveryProfile", "topologyDescriptorHash"],
+          message: "Delivery profile topology descriptor hash must equal BuildTopology stack content hash",
+        });
+      }
+    }
 
     const ownerIds = new Set(value.owners.map((item) => item.id));
     const pathIds = new Set(value.pathBindings.map((item) => item.id));

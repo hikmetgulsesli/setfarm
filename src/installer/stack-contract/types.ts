@@ -303,6 +303,8 @@ export interface ResolveStackContractInput {
   repoPath?: string;
   taskText?: string;
   projectSlug?: string;
+  authoritativePackId?: StackPackId;
+  authorityRef?: string;
   now?: string;
 }
 
