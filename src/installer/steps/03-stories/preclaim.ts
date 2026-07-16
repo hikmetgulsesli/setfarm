@@ -30,6 +30,7 @@ import {
   StitchTargetResponseBindingsV2Schema,
 } from "../../../product-compiler/schemas/stitch-target-candidate-selection-v1.js";
 import { StitchRenderedSemanticsV1Schema } from "../../../product-compiler/schemas/stitch-rendered-semantics-v1.js";
+import { buildProductSemanticsV2StoriesOutput } from "./runtime-v2.js";
 
 type PredictedScreen = ReturnType<typeof computePredictedScreenFiles>[number];
 type ProjectKind = "game" | "product";
@@ -788,7 +789,15 @@ export function buildV3AutoStoriesOutput(params: {
   repo: string;
   prd: string;
   maxStories?: number | null;
+  productSemanticsVersion?: string;
 }): string {
+  if (params.productSemanticsVersion === "v2") {
+    return buildProductSemanticsV2StoriesOutput({
+      repo: params.repo,
+      planText: params.prd,
+      maxStories: params.maxStories,
+    });
+  }
   const plan = resolveCanonicalProductSpecFromPlan({
     text: params.prd,
     locator: "pipeline/plan.md",
@@ -872,6 +881,7 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
         repo,
         prd: ctx.context["prd"] || ctx.context["PRD"] || "",
         maxStories,
+        productSemanticsVersion: ctx.context["product_semantics_version"],
       });
     } catch (error) {
       if (!ctx.claimEnvelope) throw error;

@@ -31,6 +31,14 @@ function getExplicitMaxStories(context: Record<string, string>): number | null {
   return Number.isInteger(n) && n > 0 && n < 50 ? n : null;
 }
 
+export function buildExpectedV3StoriesOutput(context: Record<string, string>): string {
+  return buildV3AutoStoriesOutput({
+    repo: context["repo"] || context["REPO"] || "",
+    prd: context["prd"] || context["PRD"] || "",
+    productSemanticsVersion: context["product_semantics_version"],
+  });
+}
+
 const SEMANTIC_STOP_WORDS = new Set([
   "about", "agent", "app", "application", "basic", "build", "css", "deploy", "dev",
   "frontend", "github", "html", "javascript", "local", "localstorage", "minimal",
@@ -471,10 +479,7 @@ export async function onComplete(ctx: CompleteContext): Promise<void> {
   if (protocol === "v3") {
     let expected: string;
     try {
-      expected = buildV3AutoStoriesOutput({
-        repo: context["repo"] || context["REPO"] || "",
-        prd: context["prd"] || context["PRD"] || "",
-      });
+      expected = buildExpectedV3StoriesOutput(context);
     } catch (error) {
       await pgRun("DELETE FROM stories WHERE run_id = $1", [runId]);
       throw new Error(`V3_STORY_PROJECTION_SOURCE_INVALID:${String((error as Error)?.message || error)}`);
