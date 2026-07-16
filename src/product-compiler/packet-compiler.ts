@@ -70,6 +70,10 @@ import {
 } from "./schemas/stitch-target-candidate-selection-v2.js";
 import { StoryPlanV2Schema } from "./schemas/story-plan-v2.js";
 import { validateRuntimeDataContractClosureV1 } from "./producers/runtime-data-contract.js";
+import {
+  produceImplementationSourceMapV1,
+  type ImplementationSourceMapProducerInputV1,
+} from "./producers/implementation-source-map-v1.js";
 import { produceStoryPlanV2 } from "./producers/story-plan-v2.js";
 
 const VALIDATION_IDS = [
@@ -92,6 +96,7 @@ const VALIDATION_IDS_V2 = [
 const VALIDATION_IDS_V3 = [
   "VALIDATE_V3_AUTHORITY_HASH_CHAIN",
   "VALIDATE_V3_DESIGN_SOURCE_CLOSURE",
+  "VALIDATE_V3_IMPLEMENTATION_SOURCE_MAP_AUTHORITY",
   "VALIDATE_V3_RELEASE_PIN",
   "VALIDATE_V3_RUNTIME_CONTRACT_PAIR",
   "VALIDATE_V3_SCHEMA_STRICT",
@@ -130,6 +135,7 @@ export type ProductPacketCompilerInputV3 = Readonly<{
   buildTopologyV1: unknown;
   storyPlanV2: unknown;
   designSourceClosureV2: unknown;
+  implementationSourceInputsV1: ImplementationSourceMapProducerInputV1;
   designSourceArtifactsV2?: unknown;
   compiler: unknown;
   producer: unknown;
@@ -161,6 +167,7 @@ export type ProductPacketCompilationResultV3 = Readonly<{
     buildTopologyV1?: string;
     storyPlanV2?: string;
     designSourceClosureV2?: string;
+    implementationSourceMapV1?: string;
   }>;
   packet?: ProductBuildPacketV3;
   packetHash?: string;
@@ -1179,6 +1186,10 @@ export async function compileProductBuildPacketV3(
     buildTopologyV1: safeInputHash(input.buildTopologyV1, "buildTopologyV1"),
     storyPlanV2: safeInputHash(input.storyPlanV2, "storyPlanV2"),
     designSourceClosureV2: safeInputHash(input.designSourceClosureV2, "designSourceClosureV2"),
+    implementationSourceInputsV1: safeInputHash(
+      input.implementationSourceInputsV1,
+      "implementationSourceInputsV1",
+    ),
     ...(input.designSourceArtifactsV2 === undefined ? {} : {
       designSourceArtifactsV2: safeInputHash(
         input.designSourceArtifactsV2,
@@ -1202,6 +1213,9 @@ export async function compileProductBuildPacketV3(
   const topologyResult = BuildTopologyV1Schema.safeParse(input.buildTopologyV1);
   const storiesResult = StoryPlanV2Schema.safeParse(input.storyPlanV2);
   const closureResult = DesignSourceClosureV2Schema.safeParse(input.designSourceClosureV2);
+  const sourceMapResult = produceImplementationSourceMapV1(
+    input.implementationSourceInputsV1,
+  );
   const designSourceArtifactsResult = input.designSourceArtifactsV2 === undefined
     ? undefined
     : ProductPacketDesignSourceArtifactsV2Schema.safeParse(input.designSourceArtifactsV2);
@@ -1260,6 +1274,9 @@ export async function compileProductBuildPacketV3(
       reference: "designSourceArtifactsV2",
     }));
   }
+  if (sourceMapResult.status === "rejected") {
+    diagnostics.push(...sourceMapResult.diagnostics);
+  }
 
   const artifactHashes: {
     productSpecV2?: string;
@@ -1267,6 +1284,7 @@ export async function compileProductBuildPacketV3(
     buildTopologyV1?: string;
     storyPlanV2?: string;
     designSourceClosureV2?: string;
+    implementationSourceMapV1?: string;
   } = {};
   if (productResult.success) {
     artifactHashes.productSpecV2 = await storeChild(
@@ -1300,6 +1318,14 @@ export async function compileProductBuildPacketV3(
       "setfarm.story-plan.v2",
       producer,
       storiesResult.data,
+    );
+  }
+  if (sourceMapResult.status === "produced") {
+    artifactHashes.implementationSourceMapV1 = await storeChild(
+      input.artifactStore,
+      "setfarm.implementation-source-map.v1",
+      producer,
+      sourceMapResult.sourceMap,
     );
   }
   let designSourceArtifactsVerified = closureResult.success
@@ -1374,10 +1400,13 @@ export async function compileProductBuildPacketV3(
     && topologyResult.success
     && storiesResult.success
     && closureResult.success
+    && sourceMapResult.status === "produced"
   ) {
     const productSpecHash = hashCanonicalJson(productResult.data);
     const designGraphHash = graphResult.data === null ? null : hashCanonicalJson(graphResult.data);
     const buildTopologyHash = hashCanonicalJson(topologyResult.data);
+    const storyPlanHash = hashCanonicalJson(storiesResult.data);
+    const designSourceClosureHash = hashCanonicalJson(closureResult.data);
     const expectedDesignKind = productResult.data.delivery.designRequired ? "stitch" : "none";
     if (
       storiesResult.data.productSpecHash !== productSpecHash
@@ -1400,6 +1429,59 @@ export async function compileProductBuildPacketV3(
         message: "ProductSpecV2 delivery, graph presence, StoryPlanV2, and DesignSourceClosureV2 must declare one exact design-source kind",
         reference: "designSourceKind",
       }));
+    }
+    if (
+      sourceMapResult.sourceMap.designSourceKind !== expectedDesignKind
+      || sourceMapResult.sourceMap.designSourceKind !== storiesResult.data.designSourceKind
+      || sourceMapResult.sourceMap.designSourceKind !== closureResult.data.kind
+      || sourceMapResult.sourceMap.productSpecV2PayloadHash !== productSpecHash
+      || sourceMapResult.sourceMap.designGraphV2PayloadHash !== designGraphHash
+      || sourceMapResult.sourceMap.buildTopologyV1PayloadHash !== buildTopologyHash
+      || sourceMapResult.sourceMap.storyPlanV2PayloadHash !== storyPlanHash
+      || sourceMapResult.sourceMap.designSourceClosureV2PayloadHash !== designSourceClosureHash
+    ) {
+      diagnostics.push(diagnostic({
+        code: "CONTRACT_V3_IMPLEMENTATION_SOURCE_MAP_AUTHORITY_MISMATCH",
+        message: "ImplementationSourceMapV1 does not bind the exact ProductSpecV2, DesignInteractionGraphV2, BuildTopologyV1, StoryPlanV2, DesignSourceClosureV2, and design-source kind authorities",
+        reference: "implementationSourceMapV1",
+      }));
+    }
+    if (
+      sourceMapResult.sourceMap.designSourceKind === "stitch"
+      && designSourceArtifactsResult?.success
+    ) {
+      const targetByRef = new Map(
+        designSourceArtifactsResult.data.generationTargets.targets.map((target) =>
+          [target.targetId, target] as const),
+      );
+      const responseByTarget = new Map(
+        designSourceArtifactsResult.data.responseBindings.bindings.map((binding) =>
+          [binding.targetRef, binding] as const),
+      );
+      let exactScreenAuthorities =
+        sourceMapResult.sourceMap.screens.length === targetByRef.size
+        && sourceMapResult.sourceMap.screens.length === responseByTarget.size;
+      for (const screen of sourceMapResult.sourceMap.screens) {
+        const target = targetByRef.get(screen.targetRef);
+        const response = responseByTarget.get(screen.targetRef);
+        if (
+          !target
+          || !response
+          || screen.responseScreenId !== response.responseScreenId
+          || screen.targetHash !== hashCanonicalJson(target)
+          || screen.targetHash !== response.targetHash
+          || screen.responseBindingHash !== hashCanonicalJson(response)
+        ) {
+          exactScreenAuthorities = false;
+        }
+      }
+      if (!exactScreenAuthorities) {
+        diagnostics.push(diagnostic({
+          code: "CONTRACT_V3_IMPLEMENTATION_SOURCE_MAP_SCREEN_AUTHORITY_MISMATCH",
+          message: "ImplementationSourceMapV1 must bind every and only exact DesignGenerationTargetV2 and StitchTargetResponseBindingV3 payload",
+          reference: "implementationSourceMapV1.screens",
+        }));
+      }
     }
     if (graphResult.data !== null) {
       if (
@@ -1461,6 +1543,7 @@ export async function compileProductBuildPacketV3(
     && topologyResult.success
     && storiesResult.success
     && closureResult.success
+    && sourceMapResult.status === "produced"
   ) {
     packet = ProductBuildPacketV3Schema.parse({
       schema: "setfarm.product-build-packet.v3",
@@ -1478,6 +1561,7 @@ export async function compileProductBuildPacketV3(
         ? { runtimeEvidenceContractHash: topologyResult.data.runtimeEvidenceContractHash }
         : {}),
       designSourceClosureV2Hash: artifactHashes.designSourceClosureV2,
+      implementationSourceMapV1Hash: artifactHashes.implementationSourceMapV1,
       compiler,
       validationIds: [...VALIDATION_IDS_V3],
     });
@@ -1504,6 +1588,9 @@ export async function compileProductBuildPacketV3(
       : {}),
     ...(artifactHashes.designSourceClosureV2
       ? { designSourceClosureV2: artifactHashes.designSourceClosureV2 }
+      : {}),
+    ...(artifactHashes.implementationSourceMapV1
+      ? { implementationSourceMapV1: artifactHashes.implementationSourceMapV1 }
       : {}),
   };
   const report = ProductCompilationReportV3Schema.parse(rejectionCodes.length > 0 ? {

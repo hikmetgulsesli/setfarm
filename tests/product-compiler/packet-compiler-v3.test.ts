@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 
 import { hashCanonicalJson } from "../../src/product-compiler/canonical-json.js";
 import { compileProductBuildPacketV3 } from "../../src/product-compiler/packet-compiler.js";
+import { produceImplementationSourceMapV1 } from "../../src/product-compiler/producers/implementation-source-map-v1.js";
 import { ProductCompilationReportV3Schema } from "../../src/product-compiler/schemas/compilation-report-v3.js";
 import {
   buildNoDesignProductBuildPacketV3Contracts,
@@ -31,6 +32,11 @@ class MemoryArtifactWriter {
 describe("Product Build Packet v3 compiler", () => {
   it("seals only native v2 authorities and records exact CAS envelope child hashes", async () => {
     const contracts = buildNoDesignProductBuildPacketV3Contracts();
+    const expectedSourceMap = produceImplementationSourceMapV1(
+      contracts.implementationSourceInputsV1,
+    );
+    assert.equal(expectedSourceMap.status, "produced");
+    if (expectedSourceMap.status !== "produced") return;
     const artifactStore = new MemoryArtifactWriter();
     const result = await compileProductBuildPacketV3({
       ...contracts,
@@ -53,8 +59,24 @@ describe("Product Build Packet v3 compiler", () => {
       result.packet.designSourceClosureV2Hash,
       result.artifactHashes.designSourceClosureV2,
     );
+    assert.equal(
+      result.packet.implementationSourceMapV1Hash,
+      result.artifactHashes.implementationSourceMapV1,
+    );
     assert.notEqual(result.packet.productSpecV2Hash, hashCanonicalJson(contracts.productSpecV2));
+    assert.notEqual(
+      result.packet.implementationSourceMapV1Hash,
+      expectedSourceMap.payloadHash,
+    );
     assert.deepEqual(result.report.artifactHashes, result.artifactHashes);
+    const reportWithoutSourceMap: any = structuredClone(result.report);
+    delete reportWithoutSourceMap.artifactHashes.implementationSourceMapV1;
+    assert.equal(ProductCompilationReportV3Schema.safeParse(reportWithoutSourceMap).success, false);
+    const storedSourceMap = artifactStore.artifacts.get(
+      result.packet.implementationSourceMapV1Hash,
+    );
+    assert.equal(storedSourceMap?.artifactType, "setfarm.implementation-source-map.v1");
+    assert.deepEqual(storedSourceMap?.payload, expectedSourceMap.sourceMap);
     assert.equal(
       artifactStore.artifacts.get(result.packetHash)?.artifactType,
       "setfarm.product-build-packet.v3",
@@ -63,17 +85,37 @@ describe("Product Build Packet v3 compiler", () => {
 
   it("seals the exact Stitch graph envelope and closure without v1 graph adaptation", async () => {
     const contracts = await buildStitchProductBuildPacketV3Contracts(producer);
+    const expectedSourceMap = produceImplementationSourceMapV1(
+      contracts.implementationSourceInputsV1,
+    );
+    assert.equal(expectedSourceMap.status, "produced");
+    if (expectedSourceMap.status !== "produced") return;
+    const forgedPrecomputedMap: any = structuredClone(expectedSourceMap.sourceMap);
+    forgedPrecomputedMap.screens[0].path = "src/Forged.tsx";
+    forgedPrecomputedMap.screens[0].storyId = "US-999";
+    forgedPrecomputedMap.screens[0].targetHash = "f".repeat(64);
+    forgedPrecomputedMap.screens[0].controls[0].generatedSelector = "#forged";
     const artifactStore = new MemoryArtifactWriter();
     const result = await compileProductBuildPacketV3({
       ...contracts,
+      implementationSourceMapV1: forgedPrecomputedMap,
       compiler,
       producer,
       artifactStore,
-    });
+    } as any);
     assert.equal(result.status, "sealed", JSON.stringify(result.report));
     assert.equal(result.packet?.designSourceKind, "stitch");
     assert.ok(result.packet?.designGraphV2Hash);
     assert.equal(result.packet?.designGraphV2Hash, result.artifactHashes.designGraphV2);
+    assert.equal(
+      result.packet?.implementationSourceMapV1Hash,
+      result.artifactHashes.implementationSourceMapV1,
+    );
+    assert.equal(expectedSourceMap.sourceMap.designSourceKind, "stitch");
+    assert.deepEqual(
+      artifactStore.artifacts.get(result.artifactHashes.implementationSourceMapV1!)?.payload,
+      expectedSourceMap.sourceMap,
+    );
     assert.equal(
       contracts.designSourceClosureV2.designGraph.envelopeHash,
       result.artifactHashes.designGraphV2,
@@ -205,10 +247,11 @@ describe("Product Build Packet v3 compiler", () => {
       buildTopologyV1: { schema: "setfarm.build-topology.v1" },
       storyPlanV2: { schema: "setfarm.story-plan.v1" },
       designSourceClosureV2: { schema: "setfarm.design-source-closure.v1" },
+      implementationSourceInputsV1: { schema: "setfarm.implementation-source-map.v0" },
       compiler,
       producer,
       artifactStore: new MemoryArtifactWriter(),
-    });
+    } as any);
     assert.equal(result.status, "rejected");
     assert.equal(result.packetHash, undefined);
     assert.equal(result.report.schema, "setfarm.product-compilation-report.v3");
@@ -217,6 +260,113 @@ describe("Product Build Packet v3 compiler", () => {
     assert.equal(result.report.rejectionCodes.includes("CONTRACT_V3_PRODUCT_SPEC_SCHEMA_INVALID"), true);
     assert.equal(result.report.rejectionCodes.includes("CONTRACT_V3_DESIGN_GRAPH_SCHEMA_INVALID"), true);
     assert.equal(result.report.rejectionCodes.includes("CONTRACT_V3_STORY_PLAN_SCHEMA_INVALID"), true);
+    assert.equal(
+      result.report.rejectionCodes.includes(
+        "IMPLEMENTATION_SOURCE_MAP_V1_INPUT_INVALID",
+      ),
+      true,
+    );
+  });
+
+  it("rejects a forged precomputed map when compiler-owned producer inputs are absent", async () => {
+    const contracts = await buildStitchProductBuildPacketV3Contracts(producer);
+    const produced = produceImplementationSourceMapV1(contracts.implementationSourceInputsV1);
+    assert.equal(produced.status, "produced");
+    if (produced.status !== "produced") return;
+    const forgedPrecomputedMap: any = structuredClone(produced.sourceMap);
+    forgedPrecomputedMap.screens[0].path = "src/Forged.tsx";
+    forgedPrecomputedMap.screens[0].storyId = "US-999";
+    forgedPrecomputedMap.screens[0].targetHash = "f".repeat(64);
+    forgedPrecomputedMap.screens[0].controls[0].generatedSelector = "#forged";
+    const {
+      implementationSourceInputsV1: _omitted,
+      ...withoutSourceInputs
+    } = contracts;
+    const artifactStore = new MemoryArtifactWriter();
+    const result = await compileProductBuildPacketV3({
+      ...withoutSourceInputs,
+      implementationSourceMapV1: forgedPrecomputedMap,
+      compiler,
+      producer,
+      artifactStore,
+    } as any);
+    assert.equal(result.status, "rejected");
+    assert.equal(result.packet, undefined);
+    assert.equal(result.artifactHashes.implementationSourceMapV1, undefined);
+    assert.equal(
+      result.report.status === "rejected"
+        && result.report.rejectionCodes.includes(
+          "IMPLEMENTATION_SOURCE_MAP_V1_INPUT_INVALID",
+        ),
+      true,
+    );
+    assert.equal(
+      [...artifactStore.artifacts.values()].some((artifact) =>
+        artifact.artifactType === "setfarm.implementation-source-map.v1"),
+      false,
+    );
+  });
+
+  it("propagates producer rejection diagnostics and never stores a source map", async () => {
+    const contracts = buildNoDesignProductBuildPacketV3Contracts();
+    const implementationSourceInputsV1: any = structuredClone(
+      contracts.implementationSourceInputsV1,
+    );
+    implementationSourceInputsV1.storyPlan.stories[0].title =
+      "Caller-authored producer-input title";
+    implementationSourceInputsV1.storyPlan.partitionHash = hashCanonicalJson(
+      implementationSourceInputsV1.storyPlan.stories,
+    );
+    const artifactStore = new MemoryArtifactWriter();
+    const result = await compileProductBuildPacketV3({
+      ...contracts,
+      implementationSourceInputsV1,
+      compiler,
+      producer,
+      artifactStore,
+    });
+    assert.equal(result.status, "rejected");
+    assert.equal(result.packet, undefined);
+    assert.equal(result.artifactHashes.implementationSourceMapV1, undefined);
+    assert.equal(
+      result.report.status === "rejected"
+        && result.report.rejectionCodes.includes(
+          "IMPLEMENTATION_SOURCE_MAP_V1_STORY_PLAN_PROJECTION_MISMATCH",
+        ),
+      true,
+    );
+    assert.equal(
+      [...artifactStore.artifacts.values()].some((artifact) =>
+        artifact.artifactType === "setfarm.implementation-source-map.v1"),
+      false,
+    );
+  });
+
+  it("rejects producer-input authority or design-kind drift before packet seal", async () => {
+    const contracts = await buildStitchProductBuildPacketV3Contracts(producer);
+    const noDesign = buildNoDesignProductBuildPacketV3Contracts();
+    const artifactStore = new MemoryArtifactWriter();
+    const result = await compileProductBuildPacketV3({
+      ...contracts,
+      implementationSourceInputsV1: noDesign.implementationSourceInputsV1,
+      compiler,
+      producer,
+      artifactStore,
+    });
+    assert.equal(result.status, "rejected");
+    assert.equal(result.packet, undefined);
+    assert.equal(
+      result.report.status === "rejected"
+        && result.report.rejectionCodes.includes(
+          "CONTRACT_V3_IMPLEMENTATION_SOURCE_MAP_AUTHORITY_MISMATCH",
+        ),
+      true,
+    );
+    assert.ok(result.artifactHashes.implementationSourceMapV1);
+    assert.equal(
+      artifactStore.artifacts.get(result.artifactHashes.implementationSourceMapV1!)?.artifactType,
+      "setfarm.implementation-source-map.v1",
+    );
   });
 
   it("keeps the v3 report strict and release-pinned", async () => {

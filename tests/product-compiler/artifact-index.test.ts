@@ -584,6 +584,7 @@ describe("durable semantic artifact index", () => {
       STORY_PLAN: artifact("3", 10, "setfarm.story-plan.v2"),
       DESIGN_SOURCE_CLOSURE: artifact("4", 10, "setfarm.design-source-closure.v2"),
       COMPILATION_REPORT: artifact("5", 10, "setfarm.product-compilation-report.v3"),
+      IMPLEMENTATION_SOURCE_MAP: artifact("6", 10, "setfarm.implementation-source-map.v1"),
     } as const;
     const packet = {
       schema: "setfarm.product-build-packet.v3" as const,
@@ -595,6 +596,7 @@ describe("durable semantic artifact index", () => {
       buildTopologyV1Hash: refs.BUILD_TOPOLOGY.hash,
       storyPlanV2Hash: refs.STORY_PLAN.hash,
       designSourceClosureV2Hash: refs.DESIGN_SOURCE_CLOSURE.hash,
+      implementationSourceMapV1Hash: refs.IMPLEMENTATION_SOURCE_MAP.hash,
       compiler,
       validationIds: ["VALIDATE_V3_SCHEMA_STRICT"],
     };
@@ -610,14 +612,41 @@ describe("durable semantic artifact index", () => {
       byteLength: 10,
       producer,
     };
+    const wrongMapArtifact = artifact("7", 10, "setfarm.story-plan.v2");
+    const wrongTypePacket = {
+      ...packet,
+      implementationSourceMapV1Hash: wrongMapArtifact.hash,
+    };
+    const wrongTypePacketHash = hashCanonicalJson({
+      schema: "setfarm.semantic-artifact-envelope.v1",
+      artifactType: "setfarm.product-build-packet.v3",
+      producer,
+      payload: wrongTypePacket,
+    });
+    const wrongTypePacketArtifact: ArtifactIdentity = {
+      hash: wrongTypePacketHash,
+      artifactType: "setfarm.product-build-packet.v3",
+      byteLength: 10,
+      producer,
+    };
     await index.bootstrap({
-      artifacts: [...Object.values(refs), packetArtifact],
+      artifacts: [
+        ...Object.values(refs),
+        wrongMapArtifact,
+        packetArtifact,
+        wrongTypePacketArtifact,
+      ],
       quotaBytes: 200,
       maxPayloadBytes: 100,
       now: at(0),
     });
     const releaseAdmissionHash = await database.seedV3ReleaseGoAdmission(producer.codeSha);
-    for (const runId of ["packet-v3-activation", "packet-v3-forged"]) {
+    for (const runId of [
+      "packet-v3-activation",
+      "packet-v3-forged",
+      "packet-v3-missing-map",
+      "packet-v3-wrong-map-type",
+    ]) {
       await database.sql`
         INSERT INTO runs (
           id, workflow_id, task, status, protocol,
@@ -633,6 +662,7 @@ describe("durable semantic artifact index", () => {
       BUILD_TOPOLOGY: refs.BUILD_TOPOLOGY.hash,
       STORY_PLAN: refs.STORY_PLAN.hash,
       DESIGN_SOURCE_CLOSURE: refs.DESIGN_SOURCE_CLOSURE.hash,
+      IMPLEMENTATION_SOURCE_MAP: refs.IMPLEMENTATION_SOURCE_MAP.hash,
       PRODUCT_BUILD_PACKET: packetHash,
       COMPILATION_REPORT: refs.COMPILATION_REPORT.hash,
     };
@@ -645,7 +675,41 @@ describe("durable semantic artifact index", () => {
       now: at(10),
     });
     assert.equal(activated.created, true);
-    assert.equal((await index.listRunArtifactRefs("packet-v3-activation")).length, 6);
+    assert.equal((await index.listRunArtifactRefs("packet-v3-activation")).length, 7);
+
+    const {
+      IMPLEMENTATION_SOURCE_MAP: _implementationSourceMap,
+      ...missingMapRefs
+    } = artifactRefs;
+    await assert.rejects(
+      index.activateProductPacket({
+        runId: "packet-v3-missing-map",
+        packetHash,
+        compiler,
+        packet,
+        artifactRefs: missingMapRefs,
+        now: at(11),
+      }),
+      (error: unknown) => error instanceof ArtifactIndexError
+        && error.code === "PRODUCT_PACKET_REFS_INCOMPLETE",
+    );
+
+    await assert.rejects(
+      index.activateProductPacket({
+        runId: "packet-v3-wrong-map-type",
+        packetHash: wrongTypePacketHash,
+        compiler,
+        packet: wrongTypePacket,
+        artifactRefs: {
+          ...artifactRefs,
+          IMPLEMENTATION_SOURCE_MAP: wrongMapArtifact.hash,
+          PRODUCT_BUILD_PACKET: wrongTypePacketHash,
+        },
+        now: at(12),
+      }),
+      (error: unknown) => error instanceof ArtifactIndexError
+        && error.code === "PRODUCT_PACKET_ARTIFACT_TYPE_INVALID",
+    );
 
     await assert.rejects(
       index.activateProductPacket({
@@ -654,7 +718,7 @@ describe("durable semantic artifact index", () => {
         compiler,
         packet: { ...packet, storyPlanV2Hash: refs.PRODUCT_SPEC.hash },
         artifactRefs,
-        now: at(11),
+        now: at(13),
       }),
       (error: unknown) => error instanceof ArtifactIndexError
         && error.code === "ARTIFACT_IDENTITY_MISMATCH",
@@ -664,9 +728,13 @@ describe("durable semantic artifact index", () => {
         (SELECT COUNT(*)::integer FROM run_artifact_refs WHERE run_id = r.id) AS refs,
         (SELECT COUNT(*)::integer FROM product_packets WHERE run_id = r.id) AS packets,
         r.packet_hash
-      FROM runs r WHERE r.id = 'packet-v3-forged'
+      FROM runs r
+      WHERE r.id IN ('packet-v3-forged', 'packet-v3-missing-map', 'packet-v3-wrong-map-type')
+      ORDER BY r.id
     `;
     assert.deepEqual(rolledBack.map((row) => ({ ...row })), [
+      { refs: 0, packets: 0, packet_hash: null },
+      { refs: 0, packets: 0, packet_hash: null },
       { refs: 0, packets: 0, packet_hash: null },
     ]);
   });

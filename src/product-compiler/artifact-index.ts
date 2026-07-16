@@ -51,6 +51,7 @@ const PRODUCT_PACKET_REF_TYPES_V3_NONE = Object.freeze({
   BUILD_TOPOLOGY: "setfarm.build-topology.v1",
   STORY_PLAN: "setfarm.story-plan.v2",
   DESIGN_SOURCE_CLOSURE: "setfarm.design-source-closure.v2",
+  IMPLEMENTATION_SOURCE_MAP: "setfarm.implementation-source-map.v1",
   PRODUCT_BUILD_PACKET: "setfarm.product-build-packet.v3",
   COMPILATION_REPORT: "setfarm.product-compilation-report.v3",
 } as const);
@@ -1083,6 +1084,7 @@ export function createArtifactIndex(sql: Sql) {
             BUILD_TOPOLOGY: packetV3.buildTopologyV1Hash,
             STORY_PLAN: packetV3.storyPlanV2Hash,
             DESIGN_SOURCE_CLOSURE: packetV3.designSourceClosureV2Hash,
+            IMPLEMENTATION_SOURCE_MAP: packetV3.implementationSourceMapV1Hash,
             PRODUCT_BUILD_PACKET: packetHash,
           };
           for (const [refKey, expectedHash] of Object.entries(packetRefs)) {

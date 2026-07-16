@@ -12,6 +12,7 @@ import {
   type ProductPacketCompilationResult,
   type ProductPacketCompilationResultV3,
 } from "./packet-compiler.js";
+import type { ImplementationSourceMapProducerInputV1 } from "./producers/implementation-source-map-v1.js";
 import {
   CompilerIdentityV1Schema,
   SemanticArtifactProducerV1Schema,
@@ -47,6 +48,7 @@ export type RuntimePacketCompilationInput = Readonly<{
   buildTopologyV1?: unknown;
   storyPlanV2?: unknown;
   designSourceClosureV2?: unknown;
+  implementationSourceInputsV1?: unknown;
   designSourceArtifactsV2?: unknown;
   compiler: unknown;
   producer: unknown;
@@ -78,6 +80,7 @@ const CHILD_REF_KEYS = Object.freeze({
   buildTopologyV1: "BUILD_TOPOLOGY",
   storyPlanV2: "STORY_PLAN",
   designSourceClosureV2: "DESIGN_SOURCE_CLOSURE",
+  implementationSourceMapV1: "IMPLEMENTATION_SOURCE_MAP",
 } as const);
 
 function historicalRefKey(prefix: string, hash: string): string {
@@ -209,6 +212,9 @@ export function createRuntimePacketCompiler(input: Readonly<{
         buildTopologyV1: value.buildTopologyV1,
         storyPlanV2: value.storyPlanV2,
         designSourceClosureV2: value.designSourceClosureV2,
+        implementationSourceInputsV1: (
+          value.implementationSourceInputsV1 as ImplementationSourceMapProducerInputV1
+        ),
         designSourceArtifactsV2: value.designSourceArtifactsV2,
         compiler,
         producer,
@@ -234,6 +240,7 @@ export function createRuntimePacketCompiler(input: Readonly<{
         BUILD_TOPOLOGY: hashes.buildTopologyV1!,
         STORY_PLAN: hashes.storyPlanV2!,
         DESIGN_SOURCE_CLOSURE: hashes.designSourceClosureV2!,
+        IMPLEMENTATION_SOURCE_MAP: hashes.implementationSourceMapV1!,
         PRODUCT_BUILD_PACKET: compilation.packetHash,
         COMPILATION_REPORT: compilation.reportHash,
       };

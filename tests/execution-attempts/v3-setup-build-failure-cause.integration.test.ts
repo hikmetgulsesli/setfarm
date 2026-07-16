@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -52,6 +53,7 @@ test("v3 setup-build converter reads its machine result instead of classifying p
     };
     const context: Record<string, string> = {
       repo,
+      product_semantics_version: "v2",
       stack_pack_id: "vite-react-web-app",
       tech_stack: "vite-react",
       task: "Compile malformed Stitch input",
@@ -116,5 +118,65 @@ test("v3 setup-build requires the exact converter passed artifact after exit zer
     assert.equal(stitchConverterSuccessContractFailure(repo), undefined);
   } finally {
     await rm(repo, { recursive: true, force: true });
+  }
+});
+
+test("setup-build executes and returns one exact private converter byte snapshot", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "setfarm-converter-attestation-"));
+  try {
+    const repo = path.join(root, "repo");
+    const scriptPath = path.join(root, "stitch-to-jsx.mjs");
+    fs.mkdirSync(repo, { recursive: true });
+    const sourceText = [
+      'import fs from "node:fs";',
+      'import path from "node:path";',
+      'const repo = process.argv[2];',
+      'fs.writeFileSync(path.join(repo, "converter-marker"), "executed");',
+      "",
+    ].join("\n");
+    fs.writeFileSync(scriptPath, sourceText);
+    const { executeAttestedStitchConverter } = await import(
+      "../../src/installer/steps/05-setup-build/preclaim.js"
+    );
+
+    const source = executeAttestedStitchConverter(scriptPath, repo);
+
+    assert.equal(fs.readFileSync(path.join(repo, "converter-marker"), "utf8"), "executed");
+    assert.deepEqual(source, {
+      source: {
+        schema: "setfarm.source-artifact-ref.v1",
+        hash: createHash("sha256").update(Buffer.from(sourceText, "utf8")).digest("hex"),
+        mediaType: "text/javascript",
+        locator: "scripts/stitch-to-jsx.mjs",
+        byteLength: Buffer.byteLength(sourceText),
+      },
+      text: sourceText,
+    });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("setup-build rejects converter release bytes changed during execution", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "setfarm-converter-drift-"));
+  try {
+    const repo = path.join(root, "repo");
+    const scriptPath = path.join(root, "stitch-to-jsx.mjs");
+    fs.mkdirSync(repo, { recursive: true });
+    fs.writeFileSync(scriptPath, [
+      'import fs from "node:fs";',
+      `fs.writeFileSync(${JSON.stringify(scriptPath)}, "changed-after-private-copy");`,
+      "",
+    ].join("\n"));
+    const { executeAttestedStitchConverter } = await import(
+      "../../src/installer/steps/05-setup-build/preclaim.js"
+    );
+
+    assert.throws(
+      () => executeAttestedStitchConverter(scriptPath, repo),
+      /Release converter source changed while the converter was executing/,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
   }
 });

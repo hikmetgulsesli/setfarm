@@ -39,6 +39,10 @@ import {
   type ProductBuildPacketV3,
 } from "./schemas/product-build-packet-v3.js";
 import {
+  ImplementationSourceMapV1Schema,
+  type ImplementationSourceMapV1,
+} from "./schemas/implementation-source-map-v1.js";
+import {
   DesignSourceClosureV2Schema,
   type DesignSourceClosureV2,
 } from "./schemas/design-source-closure-v2.js";
@@ -99,6 +103,7 @@ export type RuntimeArtifactReaderErrorCode =
   | "RUNTIME_PACKET_NOT_SEALED"
   | "RUNTIME_PACKET_RELEASE_MISMATCH"
   | "RUNTIME_PACKET_CHILD_HASH_MISMATCH"
+  | "RUNTIME_PACKET_IMPLEMENTATION_SOURCE_MAP_MISMATCH"
   | "RUNTIME_PACKET_RUNTIME_DATA_MISMATCH"
   | "RUNTIME_PACKET_RUNTIME_EVIDENCE_MISMATCH"
   | "RUNTIME_PACKET_REPORT_MISMATCH";
@@ -173,6 +178,7 @@ export type SealedRuntimePacketV3 = Readonly<{
   buildTopology: BuildTopologyV1;
   storyPlan: StoryPlanV2;
   designSourceClosure: DesignSourceClosureV2;
+  implementationSourceMap: ImplementationSourceMapV1;
   designSources?: Readonly<{
     generationTargets: DesignGenerationTargetsV2;
     directResponseEvidence: StitchDirectResponseEvidenceV2;
@@ -188,6 +194,7 @@ export type SealedRuntimePacketV3 = Readonly<{
     buildTopology: string;
     storyPlan: string;
     designSourceClosure: string;
+    implementationSourceMap: string;
     packet: string;
     compilationReport: string;
   }>;
@@ -202,6 +209,7 @@ type CanonicalRefKey =
   | "BUILD_TOPOLOGY"
   | "STORY_PLAN"
   | "DESIGN_SOURCE_CLOSURE"
+  | "IMPLEMENTATION_SOURCE_MAP"
   | "PRODUCT_BUILD_PACKET"
   | "COMPILATION_REPORT";
 
@@ -592,12 +600,25 @@ export function createRuntimeArtifactReader(input: Readonly<{
       );
     }
     const packet = ProductBuildPacketV3Schema.parse(packetRef.envelope.payload);
-    const [productSpecRef, buildTopologyRef, storyPlanRef, closureRef, reportRef, designGraphRef] =
+    const [
+      productSpecRef,
+      buildTopologyRef,
+      storyPlanRef,
+      closureRef,
+      implementationSourceMapRef,
+      reportRef,
+      designGraphRef,
+    ] =
       await Promise.all([
         readCanonicalRef(runId, "PRODUCT_SPEC", "setfarm.product-spec.v2"),
         readCanonicalRef(runId, "BUILD_TOPOLOGY", "setfarm.build-topology.v1"),
         readCanonicalRef(runId, "STORY_PLAN", "setfarm.story-plan.v2"),
         readCanonicalRef(runId, "DESIGN_SOURCE_CLOSURE", "setfarm.design-source-closure.v2"),
+        readCanonicalRef(
+          runId,
+          "IMPLEMENTATION_SOURCE_MAP",
+          "setfarm.implementation-source-map.v1",
+        ),
         readCanonicalRef(runId, "COMPILATION_REPORT", "setfarm.product-compilation-report.v3"),
         packet.designSourceKind === "stitch"
           ? readCanonicalRef(runId, "DESIGN_GRAPH", "setfarm.design-interaction-graph.v2")
@@ -609,6 +630,7 @@ export function createRuntimeArtifactReader(input: Readonly<{
       buildTopologyRef,
       storyPlanRef,
       closureRef,
+      implementationSourceMapRef,
       reportRef,
       ...(designGraphRef ? [designGraphRef] : []),
     ]) {
@@ -627,6 +649,9 @@ export function createRuntimeArtifactReader(input: Readonly<{
     const buildTopology = BuildTopologyV1Schema.parse(buildTopologyRef.envelope.payload);
     const storyPlan = StoryPlanV2Schema.parse(storyPlanRef.envelope.payload);
     const designSourceClosure = DesignSourceClosureV2Schema.parse(closureRef.envelope.payload);
+    const implementationSourceMap = ImplementationSourceMapV1Schema.parse(
+      implementationSourceMapRef.envelope.payload,
+    );
     const compilationReport = ProductCompilationReportV3Schema.parse(reportRef.envelope.payload);
     if (compilationReport.status !== "sealed") {
       throw new RuntimeArtifactReaderError(
@@ -653,6 +678,7 @@ export function createRuntimeArtifactReader(input: Readonly<{
       buildTopologyV1Hash: buildTopologyRef.reference.artifactHash,
       storyPlanV2Hash: storyPlanRef.reference.artifactHash,
       designSourceClosureV2Hash: closureRef.reference.artifactHash,
+      implementationSourceMapV1Hash: implementationSourceMapRef.reference.artifactHash,
     };
     for (const [field, hash] of Object.entries(childHashes)) {
       if (packet[field as keyof typeof childHashes] !== hash) {
@@ -670,6 +696,8 @@ export function createRuntimeArtifactReader(input: Readonly<{
       || compilationReport.artifactHashes.storyPlanV2 !== childHashes.storyPlanV2Hash
       || compilationReport.artifactHashes.designSourceClosureV2
         !== childHashes.designSourceClosureV2Hash
+      || compilationReport.artifactHashes.implementationSourceMapV1
+        !== childHashes.implementationSourceMapV1Hash
     ) {
       throw new RuntimeArtifactReaderError(
         "RUNTIME_PACKET_REPORT_MISMATCH",
@@ -680,6 +708,8 @@ export function createRuntimeArtifactReader(input: Readonly<{
     const productSpecPayloadHash = hashCanonicalJson(productSpec);
     const designGraphPayloadHash = designGraph ? hashCanonicalJson(designGraph) : null;
     const buildTopologyPayloadHash = hashCanonicalJson(buildTopology);
+    const storyPlanPayloadHash = hashCanonicalJson(storyPlan);
+    const designSourceClosurePayloadHash = hashCanonicalJson(designSourceClosure);
     const exactDesignKind = productSpec.delivery.designRequired ? "stitch" : "none";
     if (
       packet.designSourceKind !== exactDesignKind
@@ -690,6 +720,20 @@ export function createRuntimeArtifactReader(input: Readonly<{
       throw new RuntimeArtifactReaderError(
         "RUNTIME_PACKET_CHILD_HASH_MISMATCH",
         `Run ${runId} ProductSpec delivery, packet, graph, StoryPlan, and closure design kinds disagree`,
+      );
+    }
+    if (
+      implementationSourceMap.designSourceKind !== exactDesignKind
+      || implementationSourceMap.productSpecV2PayloadHash !== productSpecPayloadHash
+      || implementationSourceMap.designGraphV2PayloadHash !== designGraphPayloadHash
+      || implementationSourceMap.buildTopologyV1PayloadHash !== buildTopologyPayloadHash
+      || implementationSourceMap.storyPlanV2PayloadHash !== storyPlanPayloadHash
+      || implementationSourceMap.designSourceClosureV2PayloadHash
+        !== designSourceClosurePayloadHash
+    ) {
+      throw new RuntimeArtifactReaderError(
+        "RUNTIME_PACKET_IMPLEMENTATION_SOURCE_MAP_MISMATCH",
+        `Run ${runId} ImplementationSourceMapV1 does not bind the exact packet authority payloads`,
       );
     }
     if (
@@ -754,6 +798,39 @@ export function createRuntimeArtifactReader(input: Readonly<{
         candidateSelection: StitchTargetCandidateSelectionV2Schema.parse(selectionEnvelope.payload),
         responseBindings: StitchTargetResponseBindingsV3Schema.parse(bindingsEnvelope.payload),
       };
+      if (implementationSourceMap.designSourceKind !== "stitch") {
+        throw new RuntimeArtifactReaderError(
+          "RUNTIME_PACKET_IMPLEMENTATION_SOURCE_MAP_MISMATCH",
+          `Run ${runId} Stitch closure has a no-design ImplementationSourceMapV1`,
+        );
+      }
+      const targetByRef = new Map(designSources.generationTargets.targets.map((target) =>
+        [target.targetId, target] as const));
+      const responseByTarget = new Map(designSources.responseBindings.bindings.map((binding) =>
+        [binding.targetRef, binding] as const));
+      let exactScreenAuthorities =
+        implementationSourceMap.screens.length === targetByRef.size
+        && implementationSourceMap.screens.length === responseByTarget.size;
+      for (const screen of implementationSourceMap.screens) {
+        const target = targetByRef.get(screen.targetRef);
+        const response = responseByTarget.get(screen.targetRef);
+        if (
+          !target
+          || !response
+          || screen.responseScreenId !== response.responseScreenId
+          || screen.targetHash !== hashCanonicalJson(target)
+          || screen.targetHash !== response.targetHash
+          || screen.responseBindingHash !== hashCanonicalJson(response)
+        ) {
+          exactScreenAuthorities = false;
+        }
+      }
+      if (!exactScreenAuthorities) {
+        throw new RuntimeArtifactReaderError(
+          "RUNTIME_PACKET_IMPLEMENTATION_SOURCE_MAP_MISMATCH",
+          `Run ${runId} source-map screens do not bind every and only exact generation target and selected response`,
+        );
+      }
     }
 
     return {
@@ -765,6 +842,7 @@ export function createRuntimeArtifactReader(input: Readonly<{
       buildTopology,
       storyPlan,
       designSourceClosure,
+      implementationSourceMap,
       ...(designSources ? { designSources } : {}),
       packet,
       compilationReport,
@@ -774,6 +852,7 @@ export function createRuntimeArtifactReader(input: Readonly<{
         buildTopology: childHashes.buildTopologyV1Hash,
         storyPlan: childHashes.storyPlanV2Hash,
         designSourceClosure: childHashes.designSourceClosureV2Hash,
+        implementationSourceMap: childHashes.implementationSourceMapV1Hash,
         packet: packetRef.reference.artifactHash,
         compilationReport: reportRef.reference.artifactHash,
       },

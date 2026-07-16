@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -26,6 +27,8 @@ import {
   assembleSetupBuildPacketContractsV2,
   orchestrateSetupBuildProductPacket,
   SetupBuildPacketError,
+  type DesignSourceAttemptExpectationV2,
+  type SetupConverterSourceV1,
 } from "../../src/product-compiler/setup-build-packet-orchestrator.js";
 import {
   createIsolatedTestDatabase,
@@ -67,6 +70,8 @@ type NativeFixture = Readonly<{
   artifactRoot: string;
   planText: string;
   attemptId: string;
+  designSourceExpectation: DesignSourceAttemptExpectationV2;
+  converterSource: SetupConverterSourceV1;
   targetRef: string;
   surfaceRef: string;
   screenId: string;
@@ -195,7 +200,20 @@ async function createNativeV2Fixture(input: Readonly<{
   assert.equal(binding.targetRef, target.targetId);
   assert.equal(binding.responseScreenId, screenId);
 
-  execFileSync(process.execPath, [path.resolve("scripts/stitch-to-jsx.mjs"), repo], {
+  const converterPath = path.resolve("scripts/stitch-to-jsx.mjs");
+  const converterText = fs.readFileSync(converterPath, "utf8");
+  const converterBytes = Buffer.from(converterText, "utf8");
+  const converterSource: SetupConverterSourceV1 = {
+    source: {
+      schema: "setfarm.source-artifact-ref.v1",
+      hash: createHash("sha256").update(converterBytes).digest("hex"),
+      mediaType: "text/javascript",
+      locator: "scripts/stitch-to-jsx.mjs",
+      byteLength: converterBytes.byteLength,
+    },
+    text: converterText,
+  };
+  execFileSync(process.execPath, [converterPath, repo], {
     cwd: process.cwd(),
     stdio: "pipe",
   });
@@ -333,6 +351,7 @@ async function createNativeV2Fixture(input: Readonly<{
       generationTargetsHash: hashCanonicalJson(targets.generationTargets),
       compilerReleaseSha: RELEASE_SHA,
     },
+    converterSource,
     targetRef: target.targetId,
     surfaceRef: target.surfaceRef,
     screenId,
@@ -376,6 +395,7 @@ describe("setup-build native Product Build Packet v3 orchestration", { concurren
         repo: fixture.repo,
         planText: fixture.planText,
         producer,
+        converterSource: fixture.converterSource,
         designSourceExpectation: {
           ...fixture.designSourceExpectation,
           attemptId: `PCA_${"0".repeat(64)}`,
@@ -394,6 +414,7 @@ describe("setup-build native Product Build Packet v3 orchestration", { concurren
       repo: fixture.repo,
       planText: fixture.planText,
       productSemanticsVersion: "v2",
+      converterSource: fixture.converterSource,
       designSourceExpectation: fixture.designSourceExpectation,
       ownerInstanceId: "setup-packet-native-v2-test",
     });
@@ -405,6 +426,13 @@ describe("setup-build native Product Build Packet v3 orchestration", { concurren
     assert.equal(result.contracts.designGraphV2?.schema, "setfarm.design-interaction-graph.v2");
     assert.equal(result.contracts.storyPlanV2.schema, "setfarm.story-plan.v2");
     assert.equal(result.contracts.designSourceClosureV2.kind, "stitch");
+    assert.equal(result.contracts.implementationSourceMapV1.designSourceKind, "stitch");
+    assert.equal(result.contracts.implementationSourceMapV1.screens.length, 1);
+    assert.equal(
+      result.contracts.buildTopologyV1.pathBindings.find((binding) =>
+        binding.path === fixture.generatedFile)?.role,
+      "generated",
+    );
     assert.equal(result.contracts.designSourceClosureV2.acceptedAttempt.attemptRef, fixture.attemptId);
     assert.equal(result.contracts.sourceHashes.generatedSources.length, 1);
 
@@ -430,7 +458,7 @@ describe("setup-build native Product Build Packet v3 orchestration", { concurren
       SELECT (SELECT COUNT(*)::integer FROM product_packets WHERE run_id = ${fixture.runId}) AS packets,
              (SELECT COUNT(*)::integer FROM run_artifact_refs WHERE run_id = ${fixture.runId}) AS refs
     `;
-    assert.deepEqual(rows.map((row) => ({ ...row })), [{ packets: 1, refs: 7 }]);
+    assert.deepEqual(rows.map((row) => ({ ...row })), [{ packets: 1, refs: 8 }]);
 
     const screenIndexPath = path.join(fixture.repo, "src", "screens", "SCREEN_INDEX.json");
     const exactScreenIndex = fs.readFileSync(screenIndexPath, "utf8");
@@ -455,6 +483,7 @@ describe("setup-build native Product Build Packet v3 orchestration", { concurren
           repo: fixture.repo,
           planText: fixture.planText,
           producer: sealed.producer,
+          converterSource: fixture.converterSource,
           designSourceExpectation: fixture.designSourceExpectation,
         }),
         (error: unknown) => error instanceof SetupBuildPacketError
@@ -479,6 +508,7 @@ describe("setup-build native Product Build Packet v3 orchestration", { concurren
         repo: fixture.repo,
         planText: fixture.planText,
         producer: sealed.producer,
+        converterSource: fixture.converterSource,
         designSourceExpectation: fixture.designSourceExpectation,
       }),
       (error: unknown) => error instanceof SetupBuildPacketError

@@ -1,5 +1,8 @@
 import path from "node:path";
 import fs from "node:fs";
+import os from "node:os";
+import { createHash } from "node:crypto";
+import { TextDecoder } from "node:util";
 import { execFileSync } from "node:child_process";
 import type { ClaimContext } from "../types.js";
 import { getSql, pgGet } from "../../../db-pg.js";
@@ -11,7 +14,9 @@ import {
 import {
   orchestrateSetupBuildProductPacket,
   SetupBuildPacketError,
+  type SetupConverterSourceV1,
 } from "../../../product-compiler/setup-build-packet-orchestrator.js";
+import { readRegularFileAtMostSync } from "../../../lib/bounded-file-read.js";
 import { isValidStitchHtmlFile } from "../../../product-compiler/stitch-render-artifact.js";
 import { resolvePlatformScript } from "../../paths.js";
 import { materializeSetupBuildContracts } from "../../setup-handoff.js";
@@ -55,6 +60,129 @@ class SetupBuildPreclaimError extends Error {
     super(message);
     this.name = "SetupBuildPreclaimError";
   }
+}
+
+class StitchConverterSourceAttestationError extends Error {
+  readonly code = "STITCH_CONVERTER_SOURCE_CHANGED_DURING_EXECUTION";
+
+  constructor(message: string) {
+    super(message);
+    this.name = "StitchConverterSourceAttestationError";
+  }
+}
+
+const MAX_STITCH_CONVERTER_SOURCE_BYTES = 16 * 1024 * 1024;
+
+type ConverterSourceSnapshot = Readonly<{
+  source: SetupConverterSourceV1;
+  bytes: Buffer;
+  identity: Readonly<{
+    dev: number;
+    ino: number;
+    size: number;
+    mtimeMs: number;
+    ctimeMs: number;
+  }>;
+}>;
+
+function snapshotConverterSource(filePath: string): ConverterSourceSnapshot {
+  try {
+    const exact = readRegularFileAtMostSync(filePath, MAX_STITCH_CONVERTER_SOURCE_BYTES);
+    const text = new TextDecoder("utf-8", { fatal: true }).decode(exact.bytes);
+    return Object.freeze({
+      source: Object.freeze({
+        source: Object.freeze({
+          schema: "setfarm.source-artifact-ref.v1",
+          hash: createHash("sha256").update(exact.bytes).digest("hex"),
+          mediaType: "text/javascript",
+          locator: "scripts/stitch-to-jsx.mjs",
+          byteLength: exact.byteLength,
+        }),
+        text,
+      }),
+      bytes: exact.bytes,
+      identity: Object.freeze({
+        dev: exact.stat.dev,
+        ino: exact.stat.ino,
+        size: exact.stat.size,
+        mtimeMs: exact.stat.mtimeMs,
+        ctimeMs: exact.stat.ctimeMs,
+      }),
+    });
+  } catch (error) {
+    throw new StitchConverterSourceAttestationError(
+      `Converter source is not one stable bounded UTF-8 regular file: ${String((error as Error)?.message || error)}`,
+    );
+  }
+}
+
+function sameConverterSnapshot(
+  left: ConverterSourceSnapshot,
+  right: ConverterSourceSnapshot,
+): boolean {
+  return left.source.source.hash === right.source.source.hash
+    && left.source.source.byteLength === right.source.source.byteLength
+    && left.bytes.equals(right.bytes)
+    && left.identity.dev === right.identity.dev
+    && left.identity.ino === right.identity.ino
+    && left.identity.size === right.identity.size
+    && left.identity.mtimeMs === right.identity.mtimeMs
+    && left.identity.ctimeMs === right.identity.ctimeMs;
+}
+
+/**
+ * Executes a private immutable copy of the exact bounded converter bytes, then
+ * proves both the release source and the executed copy stayed unchanged. The
+ * returned source is therefore the converter that generated the TSX, not a
+ * later read of a mutable platform path.
+ */
+export function executeAttestedStitchConverter(
+  scriptPath: string,
+  repo: string,
+): SetupConverterSourceV1 {
+  const sourceBefore = snapshotConverterSource(scriptPath);
+  const privateDir = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-stitch-converter-"));
+  const executionPath = path.join(privateDir, "stitch-to-jsx.mjs");
+  let executionError: unknown;
+  let attestationError: unknown;
+  try {
+    fs.chmodSync(privateDir, 0o700);
+    fs.writeFileSync(executionPath, sourceBefore.bytes, { flag: "wx", mode: 0o500 });
+    const executionBefore = snapshotConverterSource(executionPath);
+    if (
+      executionBefore.source.source.hash !== sourceBefore.source.source.hash
+      || executionBefore.source.source.byteLength !== sourceBefore.source.source.byteLength
+      || !executionBefore.bytes.equals(sourceBefore.bytes)
+    ) {
+      throw new StitchConverterSourceAttestationError(
+        "Private converter execution copy does not match the release source bytes",
+      );
+    }
+    try {
+      execFileSync("node", [executionPath, repo], { timeout: 30000, stdio: "pipe" });
+    } catch (error) {
+      executionError = error;
+    }
+    const executionAfter = snapshotConverterSource(executionPath);
+    const sourceAfter = snapshotConverterSource(scriptPath);
+    if (!sameConverterSnapshot(executionBefore, executionAfter)) {
+      throw new StitchConverterSourceAttestationError(
+        "Private converter bytes changed while the converter was executing",
+      );
+    }
+    if (!sameConverterSnapshot(sourceBefore, sourceAfter)) {
+      throw new StitchConverterSourceAttestationError(
+        "Release converter source changed while the converter was executing",
+      );
+    }
+  } catch (error) {
+    attestationError = error;
+  } finally {
+    fs.rmSync(privateDir, { recursive: true, force: true });
+  }
+  if (attestationError) throw attestationError;
+  if (executionError) throw executionError;
+  return sourceBefore.source;
 }
 
 function readJsonObject(filePath: string): Record<string, unknown> | undefined {
@@ -476,6 +604,7 @@ async function compileSetupBuildProductPacket(
   ctx: ClaimContext,
   repo: string,
   protocol: "legacy" | "shadow" | "v3",
+  converterSource?: SetupConverterSourceV1,
 ): Promise<void> {
   if (protocol === "legacy") return;
   try {
@@ -488,6 +617,7 @@ async function compileSetupBuildProductPacket(
       repo,
       planText: ctx.context["prd"] || ctx.context["PRD"] || "",
       productSemanticsVersion: ctx.context["product_semantics_version"],
+      ...(converterSource ? { converterSource } : {}),
       ...(ctx.context["design_source_attempt_id"]
         ? {
             designSourceExpectation: {
@@ -626,6 +756,7 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
   if (process.env.SETFARM_DISABLE_AUTO_SETUP_BUILD === "1") return;
 
   const protocol = await resolveSetupBuildProtocol(ctx);
+  let executedConverterSource: SetupConverterSourceV1 | undefined;
 
   if (protocol === "v3" && ctx.context["product_semantics_version"] !== "v2") {
     throwPreclaimFailure(
@@ -849,7 +980,11 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
       const scriptPath = resolvePlatformScript("stitch-to-jsx.mjs");
       if (fs.existsSync(scriptPath)) {
         fs.rmSync(path.join(repo, STITCH_CONVERSION_RESULT_REL), { force: true });
-        execFileSync("node", [scriptPath, repo], { timeout: 30000, stdio: "pipe" });
+        executedConverterSource = executeAttestedStitchConverter(scriptPath, repo);
+        ctx.context["stitch_converter_source_hash"] = executedConverterSource.source.hash;
+        ctx.context["stitch_converter_source_byte_length"] = String(
+          executedConverterSource.source.byteLength,
+        );
         const converterSuccessFailure = stitchConverterSuccessContractFailure(repo);
         if (converterSuccessFailure) {
           throwPreclaimFailure(
@@ -917,6 +1052,21 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
       }
     } catch (e) {
       if (e instanceof OperationalFailureCauseError || e instanceof SetupBuildPreclaimError) throw e;
+      if (e instanceof StitchConverterSourceAttestationError) {
+        throwPreclaimFailure(
+          ctx,
+          `${e.code}: ${e.message}`,
+          "design_import_failure",
+          "Restore the pinned Setfarm release converter bytes, then rerun setup-build; do not seal generated sources from an unattested converter.",
+          OperationalFailureCauseV1Schema.parse({
+            schema: "setfarm.operational-failure-cause.v1",
+            workflowStepId: "setup-build",
+            boundary: "stitch.converter.source_attestation",
+            failureClass: "platform_invariant_failed",
+            failureCode: e.code,
+          }),
+        );
+      }
       const details = formatProcessFailure(e);
       logger.warn(`[module:setup-build preclaim] stitch-to-jsx failed: ${details.slice(0, 300)}`, { runId: ctx.runId });
       throwPreclaimFailure(
@@ -946,7 +1096,7 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
   }
 
   if (!ctx.context["baseline_fail"] && !ctx.context["compat_fail"]) {
-    await compileSetupBuildProductPacket(ctx, repo, protocol);
+    await compileSetupBuildProductPacket(ctx, repo, protocol, executedConverterSource);
   }
 
   if (!ctx.context["baseline_fail"] && !ctx.context["compat_fail"]) {

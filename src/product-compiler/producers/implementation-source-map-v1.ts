@@ -149,6 +149,16 @@ function sha256Utf8(value: string): string {
   return createHash("sha256").update(value, "utf8").digest("hex");
 }
 
+function cssAttributeString(value: string): string {
+  return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
+function generatedSelector(attribute: string, value: string, token = false): string {
+  return token
+    ? `[${attribute}~="${cssAttributeString(value)}"]`
+    : `[${attribute}="${cssAttributeString(value)}"]`;
+}
+
 function isCanonical(values: readonly string[]): boolean {
   return values.every((value, index) =>
     index === 0 || compareUtf16(value, values[index - 1]!) > 0);
@@ -364,15 +374,11 @@ function validateGlobalStitchClosure(input: StitchInput): CompilationDiagnosticV
     parsedScreenIndex = undefined;
   }
   const parsedScreenIndexResult = StitchScreenIndexV2Schema.safeParse(parsedScreenIndex);
-  const canonicalScreenIndexText = parsedScreenIndexResult.success
-    ? JSON.stringify(parsedScreenIndexResult.data, null, 2)
-    : undefined;
   if (
     input.screenIndexSource.source.locator !== "src/screens/SCREEN_INDEX.json"
     || input.screenIndexSource.source.hash !== sha256Utf8(input.screenIndexSource.text)
     || input.screenIndexSource.source.byteLength !== Buffer.byteLength(input.screenIndexSource.text, "utf8")
     || !parsedScreenIndexResult.success
-    || input.screenIndexSource.text !== canonicalScreenIndexText
     || !sameCanonical(parsedScreenIndexResult.data, input.screenIndex)
   ) {
     diagnostics.push(diagnostic({
@@ -567,6 +573,10 @@ function mappedActionInputs(
       sourceElementRef: control.sourceElementRef,
       generatedControlId: control.generatedLocalId,
       generatedSelector: control.selector,
+      expectedGeneratedSelector: generatedSelector(
+        control.semanticSource === "data-action" ? "data-action-id" : "data-control-id",
+        control.generatedLocalId,
+      ),
     })));
   addAmbiguityDiagnostics(
     diagnostics,
@@ -643,6 +653,7 @@ function mappedActionInputs(
       observedBinding.actionRef !== binding.actionRef
       || observedBinding.inputField !== binding.inputField
       || observedBinding.sourceElementRef !== binding.sourceElementRef
+      || observedBinding.generatedSelector !== observedBinding.expectedGeneratedSelector
       || transport.stateKey !== binding.actionInputRef
       || !responseBinding
       || responseBinding.actionRef !== binding.actionRef
@@ -662,7 +673,7 @@ function mappedActionInputs(
     mapped.push({
       ...binding,
       generatedControlId: transport.generatedControlId,
-      generatedSelector: observedBinding.generatedSelector,
+      generatedSelector: observedBinding.expectedGeneratedSelector,
       stateKey: transport.stateKey,
       valueEvent: "change",
       actionHandlerIds,
@@ -719,6 +730,10 @@ function mappedControls(
       .map((field) => field.name)
       .sort(compareUtf16);
     const expectedAffected = [...product.action.affectedSurfaceRefs].sort(compareUtf16);
+    const expectedGeneratedSelector = generatedSelector(
+      "data-action-id",
+      screen?.generatedLocalId ?? "",
+    );
     if (
       required.actionRef !== product.action.id
       || required.surfaceRef !== product.placement.surfaceRef
@@ -741,6 +756,7 @@ function mappedControls(
       || screen.href !== graph.href
       || screen.interactiveRole !== graph.interactiveRole
       || screen.generatedSourceLocator !== indexed.file
+      || screen.selector !== expectedGeneratedSelector
       || !sameCanonical(screen.affectedSurfaceRefs, expectedAffected)
       || !sameCanonical(graphAction.affectedSurfaceRefs, expectedAffected)
       || responseBinding.actionRef !== product.action.id
@@ -768,7 +784,7 @@ function mappedControls(
       sourceElementRef: graph.elementRef,
       sourceElementHash: graph.elementHash,
       generatedLocalId: screen.generatedLocalId,
-      generatedSelector: screen.selector,
+      generatedSelector: expectedGeneratedSelector,
       generatedKind: screen.kind,
       tagName: screen.tagName,
       nativeControlKind: screen.nativeControlKind,
@@ -824,6 +840,11 @@ function mappedObservables(
     const expectedName = graph?.selector.kind === "accessibility"
       ? graph.selector.name
       : undefined;
+    const expectedGeneratedSelector = generatedSelector(
+      "data-observable-refs",
+      required.observableRef,
+      true,
+    );
     if (!product || !graph || !screen || !responseBinding || !element) {
       diagnostics.push(diagnostic({
         code: "IMPLEMENTATION_SOURCE_MAP_V1_OBSERVABLE_MAPPING_MISSING",
@@ -853,6 +874,7 @@ function mappedObservables(
       || screen.evidenceRef !== graph.evidenceRef
       || screen.sourceElementRef !== element.elementRef
       || screen.generatedSourceLocator !== indexed.file
+      || screen.selector !== expectedGeneratedSelector
       || responseBinding.actionRef !== graph.actionRef
       || responseBinding.selectorKind !== graph.selector.kind
       || responseBinding.selectorHash !== graph.selectorHash
@@ -877,7 +899,7 @@ function mappedObservables(
       evidenceRef: graph.evidenceRef,
       sourceElementRef: element.elementRef,
       sourceElementHash: element.elementHash,
-      generatedSelector: screen.selector,
+      generatedSelector: expectedGeneratedSelector,
       assertionsHash: graph.assertionsHash,
     });
   }
@@ -1083,8 +1105,21 @@ function projectStitchScreens(input: StitchInput): {
     const observables = mappedObservables(diagnostics, input, target, response, indexed, story);
     const rejectedControls = [...indexed.rejectedControls]
       .sort((left, right) => compareUtf16(left.rejectionId, right.rejectionId))
-      .map((contract) => ({
-        contract,
+      .map((contract) => {
+        const expectedSelector = generatedSelector(
+          "data-setfarm-rejected-control",
+          contract.rejectionId,
+        );
+        if (contract.selector !== expectedSelector) {
+          diagnostics.push(diagnostic({
+            code: "IMPLEMENTATION_SOURCE_MAP_V1_REJECTED_CONTROL_SELECTOR_MISMATCH",
+            category: "link",
+            message: `Rejected control ${contract.rejectionId} carries a noncanonical generated selector`,
+            reference: contract.rejectionId,
+          }));
+        }
+        return {
+        contract: { ...contract, selector: expectedSelector },
         inertnessEvidence: {
           schema: "setfarm.generated-control-inertness-evidence.v1" as const,
           sourceValidation: "ast_exact" as const,
@@ -1094,7 +1129,8 @@ function projectStitchScreens(input: StitchInput): {
           eventHandlersAbsent: true as const,
           nativeDisabledOrLinkNeutralized: true as const,
         },
-      }));
+      };
+      });
     const cardinality = {
       raw: indexed.projection.rawInteractiveCounts,
       accepted: interactiveCounts(indexed.controls),
@@ -1146,6 +1182,17 @@ export function produceImplementationSourceMapV1(
   }
 
   const value = parsed.data;
+  if (
+    (value.designSourceKind === "stitch")
+      !== value.productSpec.delivery.designRequired
+  ) {
+    return reject([diagnostic({
+      code: "IMPLEMENTATION_SOURCE_MAP_V1_DELIVERY_KIND_MISMATCH",
+      category: "configuration",
+      message: "Implementation source kind must be derived from ProductSpecV2 delivery.designRequired",
+      reference: "productSpec.delivery.designRequired",
+    })]);
+  }
   const authorityDiagnostics = validateBoundAuthority(value);
   if (authorityDiagnostics.length > 0) return reject(authorityDiagnostics);
 

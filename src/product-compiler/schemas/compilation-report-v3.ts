@@ -15,6 +15,7 @@ const ArtifactHashesV3Schema = z
     buildTopologyV1: Sha256Schema.optional(),
     storyPlanV2: Sha256Schema.optional(),
     designSourceClosureV2: Sha256Schema.optional(),
+    implementationSourceMapV1: Sha256Schema.optional(),
   })
   .strict();
 
@@ -25,6 +26,7 @@ const SealedArtifactHashesV3Schema = z
     buildTopologyV1: Sha256Schema,
     storyPlanV2: Sha256Schema,
     designSourceClosureV2: Sha256Schema,
+    implementationSourceMapV1: Sha256Schema,
   })
   .strict();
 

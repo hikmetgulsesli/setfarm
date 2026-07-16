@@ -444,6 +444,7 @@ function packetV3(designSourceKind: "none" | "stitch" = "stitch") {
     runtimeDataContractHash: HASH_F,
     runtimeEvidenceContractHash: HASH_0,
     designSourceClosureV2Hash: HASH_A,
+    implementationSourceMapV1Hash: HASH_0,
     compiler: { version: "4.0.0", codeSha: "e4db8ae" },
     validationIds: ["VALIDATE_DESIGN_SOURCE_CLOSURE_V2"],
   };
@@ -472,6 +473,10 @@ describe("Product Build Packet v3", () => {
     delete noRuntimeHashes.runtimeDataContractHash;
     delete noRuntimeHashes.runtimeEvidenceContractHash;
     assert.equal(ProductBuildPacketV3Schema.safeParse(noRuntimeHashes).success, true);
+
+    const missingSourceMap: any = packetV3();
+    delete missingSourceMap.implementationSourceMapV1Hash;
+    assert.equal(ProductBuildPacketV3Schema.safeParse(missingSourceMap).success, false);
   });
 
   it("rejects v2 inference fields, duplicate identities, and embellishment", () => {

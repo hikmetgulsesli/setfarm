@@ -107,7 +107,7 @@ describe("runtime Product Build Packet compiler", () => {
     } as const;
   }
 
-  it("atomically activates one deterministic v3 packet and its exact six-ref no-design set", async () => {
+  it("atomically activates one deterministic v3 packet and its exact seven-ref no-design set", async () => {
     const test = await fixture("v3");
     const [first, second] = await Promise.all([
       test.compiler.compile(test.input),
@@ -121,20 +121,26 @@ describe("runtime Product Build Packet compiler", () => {
       packet_hash: string | null;
       packets: number;
       refs: number;
+      source_map_type: string | null;
     }>>`
       SELECT r.packet_hash,
              (SELECT COUNT(*)::integer FROM product_packets WHERE run_id = r.id) AS packets,
-             (SELECT COUNT(*)::integer FROM run_artifact_refs WHERE run_id = r.id) AS refs
+             (SELECT COUNT(*)::integer FROM run_artifact_refs WHERE run_id = r.id) AS refs,
+             (SELECT MAX(a.artifact_type)
+                FROM run_artifact_refs ra
+                JOIN semantic_artifacts a ON a.artifact_hash = ra.artifact_hash
+               WHERE ra.run_id = r.id AND ra.ref_key = 'IMPLEMENTATION_SOURCE_MAP') AS source_map_type
         FROM runs r WHERE r.id = ${test.runId}
     `;
     assert.deepEqual(rows.map((row) => ({ ...row })), [{
       packet_hash: first.compilation.packetHash,
       packets: 1,
-      refs: 6,
+      refs: 7,
+      source_map_type: "setfarm.implementation-source-map.v1",
     }]);
   });
 
-  it("activates the exact seven-ref native Stitch packet without historical adapters", async () => {
+  it("activates the exact eight-ref native Stitch packet without historical adapters", async () => {
     const test = await fixture("v3");
     Object.assign(
       test.input,
@@ -146,10 +152,12 @@ describe("runtime Product Build Packet compiler", () => {
     const rows = await database.sql<Array<{
       refs: number;
       graph_type: string | null;
+      source_map_type: string | null;
       nested_design_sources: number;
     }>>`
       SELECT COUNT(ra.ref_key)::integer AS refs,
              MAX(a.artifact_type) FILTER (WHERE ra.ref_key = 'DESIGN_GRAPH') AS graph_type,
+             MAX(a.artifact_type) FILTER (WHERE ra.ref_key = 'IMPLEMENTATION_SOURCE_MAP') AS source_map_type,
              (SELECT COUNT(*)::integer
                 FROM semantic_artifacts nested
                WHERE nested.artifact_type IN (
@@ -164,8 +172,9 @@ describe("runtime Product Build Packet compiler", () => {
        WHERE ra.run_id = ${test.runId}
     `;
     assert.deepEqual(rows.map((row) => ({ ...row })), [{
-      refs: 7,
+      refs: 8,
       graph_type: "setfarm.design-interaction-graph.v2",
+      source_map_type: "setfarm.implementation-source-map.v1",
       nested_design_sources: 5,
     }]);
   });
@@ -213,7 +222,8 @@ describe("runtime Product Build Packet compiler", () => {
              (SELECT COUNT(*)::integer FROM run_artifact_refs
                WHERE run_id = r.id AND ref_key IN (
                  'PRODUCT_SPEC', 'DESIGN_GRAPH', 'BUILD_TOPOLOGY', 'STORY_PLAN',
-                 'DESIGN_SOURCE_CLOSURE', 'PRODUCT_BUILD_PACKET', 'COMPILATION_REPORT'
+                 'DESIGN_SOURCE_CLOSURE', 'IMPLEMENTATION_SOURCE_MAP',
+                 'PRODUCT_BUILD_PACKET', 'COMPILATION_REPORT'
                )) AS canonical_refs,
              (SELECT COUNT(*)::integer FROM run_artifact_refs
                WHERE run_id = r.id AND ref_key LIKE 'REJECTED_%') AS rejected_refs
@@ -223,6 +233,21 @@ describe("runtime Product Build Packet compiler", () => {
     assert.equal(rows[0]?.packets, 0);
     assert.equal(rows[0]?.canonical_refs, 0);
     assert.equal((rows[0]?.rejected_refs ?? 0) > 0, true);
+  });
+
+  it("rejects a v3 compile without its required ImplementationSourceMapV1 producer inputs", async () => {
+    const test = await fixture("v3");
+    delete (test.input as any).implementationSourceInputsV1;
+    const result = await test.compiler.compile(test.input);
+    assert.equal(result.activation, "rejected");
+    assert.equal(result.compilation.packet, undefined);
+    assert.equal(
+      result.compilation.report.status === "rejected"
+        && result.compilation.report.rejectionCodes.includes(
+          "IMPLEMENTATION_SOURCE_MAP_V1_INPUT_INVALID",
+        ),
+      true,
+    );
   });
 
   it("rejects historical ProductSpec bytes on the explicit v3 compiler path", async () => {

@@ -17,6 +17,7 @@ import {
   ImplementationSourceMapV1Schema,
   implementationSourceMapPayloadHashV1,
 } from "../../src/product-compiler/schemas/implementation-source-map-v1.js";
+import { ProductSpecV2Schema } from "../../src/product-compiler/schemas/product-spec-v2.js";
 import {
   StitchScreenIndexV2Schema,
   type StitchScreenIndexEntryV2,
@@ -522,7 +523,15 @@ describe("ImplementationSourceMapV1", { concurrency: 1 }, () => {
   });
 
   it("emits an explicit empty no-design branch without fabricating screen mappings", () => {
-    const productSpec = buildContainedGameProductSpecV2();
+    const productSpec = ProductSpecV2Schema.parse({
+      ...structuredClone(buildContainedGameProductSpecV2()),
+      delivery: {
+        ...buildContainedGameProductSpecV2().delivery,
+        platform: "cli",
+        techStack: "node-cli",
+        designRequired: false,
+      },
+    });
     const buildTopology = topologyFor(productSpec);
     const story = produceStoryPlanV2({ productSpec, buildTopology });
     assert.equal(story.status, "produced", JSON.stringify(story));
@@ -553,6 +562,36 @@ describe("ImplementationSourceMapV1", { concurrency: 1 }, () => {
     assert.equal(result.sourceMap.screenIndexSourceHash, null);
     assert.equal(result.sourceMap.converter, null);
     assert.deepEqual(result.sourceMap.screens, []);
+  });
+
+  it("rejects caller-selected no-design authority for a design-required ProductSpec", () => {
+    const productSpec = buildContainedGameProductSpecV2();
+    const buildTopology = topologyFor(productSpec);
+    const story = produceStoryPlanV2({ productSpec, buildTopology });
+    assert.equal(story.status, "produced", JSON.stringify(story));
+    if (story.status !== "produced") return;
+    const result = produceImplementationSourceMapV1({
+      designSourceKind: "none",
+      productSpec,
+      designGraph: null,
+      buildTopology,
+      storyPlan: story.storyPlan,
+      designSourceClosure: noDesignClosure(),
+      generationTargets: null,
+      responseBindings: null,
+      screenIndex: [],
+      screenIndexSource: null,
+      converterSource: null,
+      generatedSources: [],
+    });
+    assert.equal(result.status, "rejected");
+    if (result.status !== "rejected") return;
+    assert.equal(
+      result.rejectionCodes.includes(
+        "IMPLEMENTATION_SOURCE_MAP_V1_DELIVERY_KIND_MISMATCH",
+      ),
+      true,
+    );
   });
 
   it("keeps the payload fingerprint distinct from producer-bound CAS envelope identity", async () => {
@@ -609,13 +648,41 @@ describe("ImplementationSourceMapV1", { concurrency: 1 }, () => {
       "utf8",
     );
     const reformattedIndexResult = produceImplementationSourceMapV1(reformattedIndex);
-    assert.equal(reformattedIndexResult.status, "rejected");
-    if (reformattedIndexResult.status === "rejected") {
+    assert.equal(reformattedIndexResult.status, "produced", JSON.stringify(reformattedIndexResult));
+    const originalIndexResult = produceImplementationSourceMapV1(input);
+    assert.equal(originalIndexResult.status, "produced", JSON.stringify(originalIndexResult));
+    if (
+      reformattedIndexResult.status === "produced"
+      && originalIndexResult.status === "produced"
+    ) {
       assert.equal(
-        reformattedIndexResult.rejectionCodes.includes(
-          "IMPLEMENTATION_SOURCE_MAP_V1_SCREEN_INDEX_SOURCE_HASH_MISMATCH",
+        reformattedIndexResult.sourceMap.screenIndexV2PayloadHash,
+        originalIndexResult.sourceMap.screenIndexV2PayloadHash,
+      );
+      assert.notEqual(
+        reformattedIndexResult.sourceMap.screenIndexSourceHash,
+        originalIndexResult.sourceMap.screenIndexSourceHash,
+      );
+    }
+
+    const selectorDrift: any = structuredClone(input);
+    selectorDrift.screenIndex[0].controls[0].selector = "#fabricated-selector";
+    selectorDrift.screenIndex[0].actions[0].selector = "#fabricated-selector";
+    selectorDrift.screenIndexSource.text = JSON.stringify(selectorDrift.screenIndex, null, 2);
+    selectorDrift.screenIndexSource.source.hash = sha256(selectorDrift.screenIndexSource.text);
+    selectorDrift.screenIndexSource.source.byteLength = Buffer.byteLength(
+      selectorDrift.screenIndexSource.text,
+      "utf8",
+    );
+    const selectorDriftResult = produceImplementationSourceMapV1(selectorDrift);
+    assert.equal(selectorDriftResult.status, "rejected");
+    if (selectorDriftResult.status === "rejected") {
+      assert.equal(
+        selectorDriftResult.rejectionCodes.includes(
+          "IMPLEMENTATION_SOURCE_MAP_V1_CONTROL_IDENTITY_MISMATCH",
         ),
         true,
+        JSON.stringify(selectorDriftResult),
       );
     }
 

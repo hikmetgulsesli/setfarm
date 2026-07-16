@@ -12,6 +12,7 @@ import {
   bootstrapArtifactIndex,
 } from "../../src/product-compiler/indexed-artifact-publisher.js";
 import { compileProductBuildPacket } from "../../src/product-compiler/packet-compiler.js";
+import { produceImplementationSourceMapV1 } from "../../src/product-compiler/producers/implementation-source-map-v1.js";
 import {
   RuntimeArtifactReaderError,
   createRuntimeArtifactReader,
@@ -261,12 +262,25 @@ describe("sealed runtime artifact reader", () => {
     assert.equal(result.designGraph, null);
     assert.deepEqual(result.storyPlan, test.contracts.storyPlanV2);
     assert.equal(result.designSourceClosure.kind, "none");
+    const sourceMapResult = produceImplementationSourceMapV1(
+      test.contracts.implementationSourceInputsV1,
+    );
+    assert.equal(sourceMapResult.status, "produced", JSON.stringify(sourceMapResult));
+    if (sourceMapResult.status !== "produced") return;
+    assert.deepEqual(
+      result.implementationSourceMap,
+      sourceMapResult.sourceMap,
+    );
     assert.equal(result.compilationReport.schema, "setfarm.product-compilation-report.v3");
     assert.equal(result.refs.productSpec, result.packet.productSpecV2Hash);
     assert.equal(result.refs.designGraph, null);
     assert.equal(result.refs.buildTopology, result.packet.buildTopologyV1Hash);
     assert.equal(result.refs.storyPlan, result.packet.storyPlanV2Hash);
     assert.equal(result.refs.designSourceClosure, result.packet.designSourceClosureV2Hash);
+    assert.equal(
+      result.refs.implementationSourceMap,
+      result.packet.implementationSourceMapV1Hash,
+    );
     await assert.rejects(
       test.reader.readSealedPacket(test.runId),
       (error: unknown) => error instanceof RuntimeArtifactReaderError
@@ -283,6 +297,8 @@ describe("sealed runtime artifact reader", () => {
     assert.ok(result.designGraph);
     assert.equal(result.designSourceClosure.kind, "stitch");
     assert.ok(result.designSources);
+    assert.equal(result.implementationSourceMap.designSourceKind, "stitch");
+    assert.equal(result.implementationSourceMap.screens.length, 1);
     assert.equal(
       result.designSources?.generationTargets.schema,
       "setfarm.design-generation-targets.v2",
@@ -307,6 +323,19 @@ describe("sealed runtime artifact reader", () => {
     const sealed = await test.reader.readExactSealedPacket(test.runId);
     assert.equal(sealed.packet.schema, "setfarm.product-build-packet.v3");
     await rm(test.reader.store.pathFor(sealed.refs.storyPlan), { force: true });
+    await assert.rejects(
+      test.reader.readExactSealedPacket(test.runId),
+      (error: unknown) => error instanceof RuntimeArtifactReaderError
+        && error.code === "RUNTIME_ARTIFACT_INDEX_MISMATCH",
+    );
+  });
+
+  it("fails exact v3 reads when the canonical implementation source map bytes disappear", async () => {
+    const test = await nativeV3Fixture("stitch");
+    const sealed = await test.reader.readExactSealedPacket(test.runId);
+    assert.equal(sealed.packet.schema, "setfarm.product-build-packet.v3");
+    if (sealed.packet.schema !== "setfarm.product-build-packet.v3") return;
+    await rm(test.reader.store.pathFor(sealed.refs.implementationSourceMap), { force: true });
     await assert.rejects(
       test.reader.readExactSealedPacket(test.runId),
       (error: unknown) => error instanceof RuntimeArtifactReaderError

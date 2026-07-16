@@ -45,6 +45,10 @@ import { resolveCanonicalProductSpecFromPlan } from "./runtime-plan-source.js";
 import { resolveCanonicalProductSpecV2FromPlan } from "./runtime-plan-source-v2.js";
 import { validateStitchScreenSourceV2 } from "./stitch-screen-source-validator-v2.js";
 import { produceDesignGenerationTargetsV2 } from "./producers/design-targets-v2.js";
+import {
+  produceImplementationSourceMapV1,
+  type ImplementationSourceMapProducerInputV1,
+} from "./producers/implementation-source-map-v1.js";
 import { selectStitchTargetCandidatesV1 } from "./producers/stitch-target-candidate-selection.js";
 import {
   DesignGenerationTargetsV1Schema,
@@ -78,7 +82,11 @@ import {
   type DesignInteractionGraphV2,
 } from "./schemas/design-interaction-graph-v2.js";
 import type { DesignSourceClosureV2 } from "./schemas/design-source-closure-v2.js";
-import { DesignGenerationTargetsV2Schema } from "./schemas/design-generation-targets-v2.js";
+import {
+  DesignGenerationTargetsV2Schema,
+  type DesignGenerationTargetsV2,
+} from "./schemas/design-generation-targets-v2.js";
+import type { ImplementationSourceMapV1 } from "./schemas/implementation-source-map-v1.js";
 import type { ProductSpecV1 } from "./schemas/product-spec-v1.js";
 import type { ProductSpecV1OrV2, ProductSpecV2 } from "./schemas/product-spec-v2.js";
 import type { StoryPlanV1 } from "./schemas/story-plan-v1.js";
@@ -86,11 +94,13 @@ import type { StoryPlanV2 } from "./schemas/story-plan-v2.js";
 import { StitchRenderedSemanticsV2Schema } from "./schemas/stitch-rendered-semantics-v2.js";
 import {
   StitchScreenIndexV2Schema,
+  type StitchScreenIndexV2,
   type StitchScreenIndexEntryV2,
 } from "./schemas/stitch-screen-index-v2.js";
 import {
   StitchTargetCandidateSelectionV2Schema,
   StitchTargetResponseBindingsV3Schema,
+  type StitchTargetResponseBindingsV3,
 } from "./schemas/stitch-target-candidate-selection-v2.js";
 import {
   PRODUCT_DELIVERY_PROFILE_CATALOG_VERSION,
@@ -119,6 +129,7 @@ export type SetupBuildPacketErrorCode =
   | "SETUP_PACKET_GENERATED_SOURCE_AMBIGUOUS"
   | "SETUP_PACKET_GENERATED_SOURCE_MISSING"
   | "SETUP_PACKET_GENERATED_SOURCE_TOPOLOGY_MISSING"
+  | "SETUP_PACKET_IMPLEMENTATION_SOURCE_MAP_REJECTED"
   | "SETUP_PACKET_JSON_INVALID"
   | "SETUP_PACKET_PLAN_REJECTED"
   | "SETUP_PACKET_PROTOCOL_MISMATCH"
@@ -193,6 +204,8 @@ export type SetupBuildPacketContractsV2 = Readonly<{
   buildTopologyV1: BuildTopologyV1;
   storyPlanV2: StoryPlanV2;
   designSourceClosureV2: DesignSourceClosureV2;
+  implementationSourceInputsV1: ImplementationSourceMapProducerInputV1;
+  implementationSourceMapV1: ImplementationSourceMapV1;
   designSourceArtifactsV2?: Readonly<{
     generationTargets: unknown;
     directResponseEvidence: unknown;
@@ -213,11 +226,30 @@ export type SetupBuildPacketContractsV2 = Readonly<{
     artifactManifest?: string;
     projectionReceipt?: string;
     screenIndex?: string;
+    converterSource?: string;
     generatedSources: string[];
     setupCertificate: string;
     fileTreeManifest: string;
     sharedGrants: string;
   }>;
+}>;
+
+export type SetupConverterSourceV1 = Readonly<{
+  source: SourceArtifactRefV1;
+  text: string;
+}>;
+
+type StitchImplementationSourceInputsV1 = Readonly<{
+  generationTargets: DesignGenerationTargetsV2;
+  responseBindings: StitchTargetResponseBindingsV3;
+  screenIndex: StitchScreenIndexV2;
+  screenIndexSource: SetupConverterSourceV1;
+  generatedSources: ReadonlyArray<Readonly<{
+    targetRef: string;
+    responseScreenId: string;
+    source: SourceArtifactRefV1;
+    text: string;
+  }>>;
 }>;
 
 export type DesignSourceAttemptExpectationV2 = Readonly<{
@@ -519,7 +551,7 @@ function roleForPath(input: Readonly<{
 }>): TopologyPathBindingV1["role"] {
   if (input.entrypointPaths.has(input.locator)) return "entrypoint";
   if (input.targetRoles.some((role) => role === "fixture_data" || role === "test_bridge")) return "test";
-  if (input.generatedDesignFiles.has(input.locator)) return "asset";
+  if (input.generatedDesignFiles.has(input.locator)) return "generated";
   if (/(?:^|\/)(?:package(?:-lock)?\.json|requirements\.txt|pyproject\.toml)$/.test(input.locator)) return "dependency";
   if (/\.(?:json|ya?ml|toml|gradle|config\.[cm]?[jt]s)$/.test(input.locator)) return "config";
   if (/\.(?:ts|tsx|js|jsx|mjs|cjs|py|kt|java|swift|html|css)$/.test(input.locator)) return "source";
@@ -1468,6 +1500,7 @@ export async function assembleSetupBuildPacketContractsV2(input: Readonly<{
   repo: string;
   planText: string;
   producer: SemanticArtifactProducerV1;
+  converterSource?: SetupConverterSourceV1;
   designSourceExpectation?: DesignSourceAttemptExpectationV2;
   expectedDeliverySelectionHash?: string;
   requestedStackPackId?: string;
@@ -1499,6 +1532,7 @@ export async function assembleSetupBuildPacketContractsV2(input: Readonly<{
   let designSourceArtifactsV2: SetupBuildPacketContractsV2["designSourceArtifactsV2"];
   let designSourceClosureV2: DesignSourceClosureV2;
   let designSourceHashes: Partial<SetupBuildPacketContractsV2["sourceHashes"]> = {};
+  let stitchImplementationSources: StitchImplementationSourceInputsV1 | undefined;
 
   if (!plan.productSpec.delivery.designRequired) {
     const compiled = compileDesignSourceClosureV2({ kind: "none" });
@@ -1838,7 +1872,12 @@ export async function assembleSetupBuildPacketContractsV2(input: Readonly<{
           },
         );
       }
-      return { targetRef: binding.targetRef, source: source.source };
+      return {
+        targetRef: binding.targetRef,
+        responseScreenId: binding.responseScreenId,
+        source: source.source,
+        text: source.text,
+      };
     });
     if (indexByScreen.size !== generatedSources.length) {
       throw new SetupBuildPacketError(
@@ -1846,6 +1885,13 @@ export async function assembleSetupBuildPacketContractsV2(input: Readonly<{
         "SCREEN_INDEX contains a generated screen outside the exact ProductSpecV2 binding set",
       );
     }
+    stitchImplementationSources = {
+      generationTargets: targets.generationTargets,
+      responseBindings: bindings.value,
+      screenIndex: screenIndex.value,
+      screenIndexSource: { source: screenIndex.source, text: screenIndex.text },
+      generatedSources,
+    };
 
     const artifactManifest = await readProductCompilationArtifactManifestV1({
       repo: input.repo,
@@ -1955,6 +2001,70 @@ export async function assembleSetupBuildPacketContractsV2(input: Readonly<{
       { rejectionCodes: stories.rejectionCodes, diagnostics: stories.diagnostics },
     );
   }
+  let implementationSourceMapInput: ImplementationSourceMapProducerInputV1;
+  if (designGraphV2 === null) {
+    if (input.converterSource !== undefined) {
+      throw new SetupBuildPacketError(
+        "SETUP_PACKET_IMPLEMENTATION_SOURCE_MAP_REJECTED",
+        "No-design ProductSpecV2 setup cannot bind a Stitch converter source",
+      );
+    }
+    implementationSourceMapInput = {
+      designSourceKind: "none",
+      productSpec: plan.productSpec,
+      designGraph: null,
+      buildTopology: buildTopologyV1,
+      storyPlan: stories.storyPlan,
+      designSourceClosure: designSourceClosureV2,
+      generationTargets: null,
+      responseBindings: null,
+      screenIndex: [],
+      screenIndexSource: null,
+      converterSource: null,
+      generatedSources: [],
+    };
+  } else {
+    if (!stitchImplementationSources || !input.converterSource) {
+      throw new SetupBuildPacketError(
+        "SETUP_PACKET_IMPLEMENTATION_SOURCE_MAP_REJECTED",
+        "Stitch ProductSpecV2 setup requires exact generated sources and executed converter bytes",
+      );
+    }
+    const generatedSources = stitchImplementationSources.generatedSources.map((generated) => {
+      const paths = buildTopologyV1.pathBindings.filter((binding) =>
+        binding.path === generated.source.locator);
+      if (paths.length !== 1) {
+        throw new SetupBuildPacketError(
+          "SETUP_PACKET_IMPLEMENTATION_SOURCE_MAP_REJECTED",
+          `Generated source must resolve to one exact BuildTopology path: ${generated.source.locator}`,
+          { locator: generated.source.locator, observedPaths: paths.length },
+        );
+      }
+      return { ...generated, pathRef: paths[0]!.id };
+    });
+    implementationSourceMapInput = {
+      designSourceKind: "stitch",
+      productSpec: plan.productSpec,
+      designGraph: designGraphV2,
+      buildTopology: buildTopologyV1,
+      storyPlan: stories.storyPlan,
+      designSourceClosure: designSourceClosureV2,
+      generationTargets: stitchImplementationSources.generationTargets,
+      responseBindings: stitchImplementationSources.responseBindings,
+      screenIndex: stitchImplementationSources.screenIndex,
+      screenIndexSource: stitchImplementationSources.screenIndexSource,
+      converterSource: input.converterSource,
+      generatedSources,
+    };
+  }
+  const sourceMap = produceImplementationSourceMapV1(implementationSourceMapInput);
+  if (sourceMap.status !== "produced") {
+    throw new SetupBuildPacketError(
+      "SETUP_PACKET_IMPLEMENTATION_SOURCE_MAP_REJECTED",
+      `ImplementationSourceMapV1 was rejected: ${sourceMap.rejectionCodes.join(",")}`,
+      { rejectionCodes: sourceMap.rejectionCodes, diagnostics: sourceMap.diagnostics },
+    );
+  }
   return {
     productSpecV2: plan.productSpec,
     deliverySelection: deliverySelection.selection,
@@ -1962,11 +2072,14 @@ export async function assembleSetupBuildPacketContractsV2(input: Readonly<{
     buildTopologyV1,
     storyPlanV2: stories.storyPlan,
     designSourceClosureV2,
+    implementationSourceInputsV1: implementationSourceMapInput,
+    implementationSourceMapV1: sourceMap.sourceMap,
     ...(designSourceArtifactsV2 ? { designSourceArtifactsV2 } : {}),
     sourceHashes: {
       plan: plan.sourceHash,
       deliverySelection: deliverySelection.selectionHash,
       ...designSourceHashes,
+      ...(input.converterSource ? { converterSource: input.converterSource.source.hash } : {}),
       generatedSources: designSourceHashes.generatedSources ?? [],
       setupCertificate: setup.certificate.source.hash,
       fileTreeManifest: setup.manifest.source.hash,
@@ -1984,6 +2097,7 @@ export async function orchestrateSetupBuildProductPacket(input: Readonly<{
   repo: string;
   planText: string;
   productSemanticsVersion?: string;
+  converterSource?: SetupConverterSourceV1;
   designSourceExpectation?: DesignSourceAttemptExpectationV2;
   expectedDeliverySelectionHash?: string;
   requestedStackPackId?: string;
@@ -2057,6 +2171,7 @@ export async function orchestrateSetupBuildProductPacket(input: Readonly<{
     repo: input.repo,
     planText: input.planText,
     producer,
+    ...(input.converterSource ? { converterSource: input.converterSource } : {}),
     ...(input.designSourceExpectation
       ? { designSourceExpectation: input.designSourceExpectation }
       : {}),
@@ -2075,6 +2190,7 @@ export async function orchestrateSetupBuildProductPacket(input: Readonly<{
     buildTopologyV1: contracts.buildTopologyV1,
     storyPlanV2: contracts.storyPlanV2,
     designSourceClosureV2: contracts.designSourceClosureV2,
+    implementationSourceInputsV1: contracts.implementationSourceInputsV1,
     ...(contracts.designSourceArtifactsV2
       ? { designSourceArtifactsV2: contracts.designSourceArtifactsV2 }
       : {}),
