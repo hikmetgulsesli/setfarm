@@ -8,6 +8,7 @@ import { afterEach, describe, it } from "node:test";
 import { canonicalJsonBytes, hashCanonicalJson } from "../../src/product-compiler/canonical-json.js";
 import {
   createInitialDesignSourceGenerationRequestV2,
+  DesignSourceMaterializationFailureV2,
   runDesignSourceCompilationAttemptsV2,
   type DesignSourceAcceptedArtifactSetV2,
   type DesignSourceCompilationAttemptRepositoryPortV2,
@@ -770,6 +771,110 @@ describe("design-source product compilation attempt runner", () => {
     assert.equal(
       await readFile(path.join(root, result.attempt.attemptLocator, "raw", "stages", "DSGS_001", "response.bin"), "utf8"),
       "typed provider rejection",
+    );
+  });
+
+  it("preserves typed materialization rejection instead of flattening it into infrastructure prose", async () => {
+    const root = await repoRoot("typed-materialization-rejection");
+    const value = fixture(1);
+    const rejectionFingerprint = sha("typed-selection-rejection");
+    const operationalCauseHash = sha("typed-selection-cause");
+    const result = await runDesignSourceCompilationAttemptsV2(
+      runnerInput(root, value),
+      {
+        repository: new FakeAttemptRepository(),
+        dispatchStage: acceptedDispatch("direct provider evidence"),
+        materializeAccepted: async () => {
+          throw new DesignSourceMaterializationFailureV2({
+            disposition: "rejected",
+            failure: {
+              failureFingerprint: rejectionFingerprint,
+              operationalCauseHash,
+              reasonCodes: ["DESIGN_CANDIDATE_SELECTION_V2_UNRESOLVED"],
+              evidence: { targetRefs: ["TARGET_SCREEN_1"] },
+            },
+          });
+        },
+      },
+    );
+    assert.equal(result.status, "rejected");
+    if (result.status !== "rejected") return;
+    assert.equal(result.failure.failureFingerprint, rejectionFingerprint);
+    assert.equal(result.failure.operationalCauseHash, operationalCauseHash);
+    assert.deepEqual(result.failure.reasonCodes, ["DESIGN_CANDIDATE_SELECTION_V2_UNRESOLVED"]);
+    assert.equal(result.stopReason, "no_retry");
+  });
+
+  it("redispatches only proven changed stages and carries unchanged parent evidence forward", async () => {
+    const root = await repoRoot("stage-scoped-retry");
+    const value = fixture(6);
+    const repository = new FakeAttemptRepository();
+    const externalDispatches: string[] = [];
+    const reusedStages: string[] = [];
+    const result = await runDesignSourceCompilationAttemptsV2(
+      runnerInput(root, value),
+      {
+        repository,
+        dispatchStage: async ({ stage, attempt }) => {
+          externalDispatches.push(`${attempt.ordinal}:${stage.stageId}`);
+          if (attempt.ordinal === 1 && stage.stageId === "DSGS_002") {
+            return {
+              disposition: "rejected",
+              rawEvidence: "typed stage two rejection",
+              failure: {
+                failureFingerprint: sha("stage-two-failure"),
+                operationalCauseHash: sha("stage-two-cause"),
+                reasonCodes: ["DESIGN_TARGET_EVIDENCE_INCOMPLETE"],
+                evidence: { failedStageIds: ["DSGS_002"], failedTargetRefs: ["TARGET_SCREEN_6"] },
+              },
+            };
+          }
+          return {
+            disposition: "accepted",
+            response: { stageId: stage.stageId, ordinal: attempt.ordinal },
+            rawEvidence: `external:${attempt.ordinal}:${stage.stageId}`,
+          };
+        },
+        reuseStage: async ({ stage, parentAttemptRef }) => {
+          reusedStages.push(stage.stageId);
+          assert.equal(parentAttemptRef, [...repository.attempts.values()]
+            .find((attempt) => attempt.ordinal === 1)?.attemptId);
+          return {
+            disposition: "accepted",
+            response: { stageId: stage.stageId, ordinal: 1 },
+            rawEvidence: `reused:${stage.stageId}`,
+          };
+        },
+        materializeAccepted: acceptedMaterializer(),
+        planRetry: async ({ stagePrompts, failureEvidence }) => {
+          assert.equal((failureEvidence as { stageId?: string }).stageId, "DSGS_002");
+          assert.deepEqual((failureEvidence as { providerEvidence?: unknown }).providerEvidence, {
+            failedStageIds: ["DSGS_002"],
+            failedTargetRefs: ["TARGET_SCREEN_6"],
+          });
+          return {
+            stagePrompts: stagePrompts.map((stage) => stage.stageId === "DSGS_002"
+              ? { ...stage, prompt: `${stage.prompt}\nexact stage two repair` }
+              : stage),
+          };
+        },
+      },
+    );
+    assert.equal(result.status, "accepted", JSON.stringify(result));
+    if (result.status !== "accepted") return;
+    assert.deepEqual(externalDispatches, ["1:DSGS_001", "1:DSGS_002", "2:DSGS_002"]);
+    assert.deepEqual(reusedStages, ["DSGS_001"]);
+    assert.equal(result.attempt.ordinal, 2);
+    assert.equal(
+      await readFile(path.join(
+        root,
+        result.attempt.attemptLocator,
+        "raw",
+        "stages",
+        "DSGS_001",
+        "response.bin",
+      ), "utf8"),
+      "reused:DSGS_001",
     );
   });
 });

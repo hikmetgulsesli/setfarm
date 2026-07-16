@@ -163,6 +163,23 @@ const DispatchFailureSeedSchema = z.object({
   evidence: z.unknown(),
 }).strict();
 
+export class DesignSourceMaterializationFailureV2 extends Error {
+  readonly disposition: "rejected" | "infrastructure_failure";
+  readonly failure: z.infer<typeof DispatchFailureSeedSchema>;
+
+  constructor(input: Readonly<{
+    disposition: "rejected" | "infrastructure_failure";
+    failure: z.input<typeof DispatchFailureSeedSchema>;
+    message?: string;
+  }>) {
+    const failure = DispatchFailureSeedSchema.parse(input.failure);
+    super(input.message ?? failure.reasonCodes.join(","));
+    this.name = "DesignSourceMaterializationFailureV2";
+    this.disposition = input.disposition;
+    this.failure = failure;
+  }
+}
+
 const FailureArtifactSchema = DispatchFailureSeedSchema.extend({
   schema: z.literal("setfarm.design-source-generation-failure-artifact.v1"),
   attemptId: ProductCompilationAttemptIdSchema,
@@ -221,6 +238,16 @@ export type DesignSourceCompilationAttemptRunnerDependenciesV2 = Readonly<{
     signal: AbortSignal;
     writeEvidence: DesignSourceGenerationWriteEvidenceV2;
   }>): Promise<DesignSourceGenerationDispatchResultV2>;
+  reuseStage?(input: Readonly<{
+    authority: DesignSourceGenerationAuthorityV1;
+    request: DesignSourceGenerationRequestV2;
+    stage: DesignSourceGenerationRequestV2["stages"][number];
+    prompt: string;
+    attempt: ProductCompilationAttemptV1;
+    parentAttemptRef: string;
+    signal: AbortSignal;
+    writeEvidence: DesignSourceGenerationWriteEvidenceV2;
+  }>): Promise<Extract<DesignSourceGenerationDispatchResultV2, { disposition: "accepted" }>>;
   materializeAccepted(input: Readonly<{
     authority: DesignSourceGenerationAuthorityV1;
     request: DesignSourceGenerationRequestV2;
@@ -235,6 +262,7 @@ export type DesignSourceCompilationAttemptRunnerDependenciesV2 = Readonly<{
     stagePrompts: readonly DesignSourceGenerationStagePromptV2[];
     attempt: ProductCompilationAttemptV1;
     failure: ProductCompilationAttemptFailureV1;
+    failureEvidence: unknown;
   }>): Promise<Readonly<{ stagePrompts: readonly DesignSourceGenerationStagePromptV2[] }> | null>;
   projectAccepted?(input: Readonly<{
     repo: string;
@@ -732,10 +760,10 @@ async function persistFailure(input: Readonly<{
   });
 }
 
-async function verifyStoredFailure(
+async function readStoredFailureArtifact(
   repo: string,
   attempt: ProductCompilationAttemptV1,
-): Promise<void> {
+): Promise<z.infer<typeof FailureArtifactSchema>> {
   if (!attempt.failure || !attempt.disposition || attempt.disposition === "accepted") {
     throw new Error("DESIGN_SOURCE_STORED_FAILURE_MISSING");
   }
@@ -754,6 +782,7 @@ async function verifyStoredFailure(
   ) {
     throw new Error("DESIGN_SOURCE_STORED_FAILURE_AUTHORITY_MISMATCH");
   }
+  return artifact;
 }
 
 function fence(attempt: ProductCompilationAttemptV1, ownerInstanceId: string) {
@@ -922,6 +951,34 @@ function expiredDispatchFailureSeed(
   };
 }
 
+function carryForwardFailureSeed(
+  attempt: ProductCompilationAttemptV1,
+  stageId: string,
+  error: unknown,
+): z.input<typeof DispatchFailureSeedSchema> {
+  const fact = errorFact(error);
+  const cause = {
+    schema: "setfarm.operational-failure-cause.v1",
+    workflowStepId: "design",
+    boundary: "product_compiler.design_source.carry_forward",
+    failureClass: "infrastructure_failure",
+    failureCode: "DESIGN_SOURCE_CARRY_FORWARD_INVALID",
+  };
+  return {
+    failureFingerprint: hashCanonicalJson({
+      schema: "setfarm.design-source-failure-fingerprint.v1",
+      requestHash: attempt.requestHash,
+      phase: "carry_forward",
+      stageId,
+      errorName: fact.name,
+      errorCode: fact.code,
+    }),
+    operationalCauseHash: hashCanonicalJson(cause),
+    reasonCodes: ["DESIGN_SOURCE_CARRY_FORWARD_INVALID"],
+    evidence: { cause, stageId, error: fact },
+  };
+}
+
 async function runSingleAttempt(input: Readonly<{
   repo: string;
   authority: DesignSourceGenerationAuthorityV1;
@@ -1052,7 +1109,7 @@ async function runSingleAttempt(input: Readonly<{
         });
         return { kind: "accepted", attempt, projection, replayed: true };
       }
-      await verifyStoredFailure(input.repo, attempt);
+      await readStoredFailureArtifact(input.repo, attempt);
     } catch {
       return {
         kind: "runner_failure",
@@ -1096,6 +1153,8 @@ async function runSingleAttempt(input: Readonly<{
   const stageResults: DesignSourceGenerationAcceptedStageResultV2[] = [];
   for (const stage of input.request.stages) {
     const stagePrompt = input.stagePrompts.find((candidate) => candidate.stageId === stage.stageId)!;
+    const carryForward = input.retryDelta !== null
+      && !input.retryDelta.changes.some((change) => change.stageId === stage.stageId);
     let dispatchResult: DesignSourceGenerationDispatchResultV2;
     let rawEvidence: ProductCompilationAttemptArtifactRefV1;
     try {
@@ -1106,16 +1165,32 @@ async function runSingleAttempt(input: Readonly<{
         leaseMs: input.leaseMs,
         heartbeatIntervalMs: input.heartbeatIntervalMs,
         dispatch: async (signal) => {
-          const result = await input.dependencies.dispatchStage({
-            authority: input.authority,
-            request: input.request,
-            stage,
-            prompt: stagePrompt.prompt,
-            attempt,
-            externalOperationId: `${operationId}:${stage.stageId}`,
-            signal,
-            writeEvidence: writer,
-          });
+          const result = carryForward
+            ? await (() => {
+                if (!input.dependencies.reuseStage || !input.request.retryAuthority) {
+                  throw new Error("DESIGN_SOURCE_CARRY_FORWARD_HANDLER_MISSING");
+                }
+                return input.dependencies.reuseStage({
+                  authority: input.authority,
+                  request: input.request,
+                  stage,
+                  prompt: stagePrompt.prompt,
+                  attempt,
+                  parentAttemptRef: input.request.retryAuthority.parentAttemptRef,
+                  signal,
+                  writeEvidence: writer,
+                });
+              })()
+            : await input.dependencies.dispatchStage({
+                authority: input.authority,
+                request: input.request,
+                stage,
+                prompt: stagePrompt.prompt,
+                attempt,
+                externalOperationId: `${operationId}:${stage.stageId}`,
+                signal,
+                writeEvidence: writer,
+              });
           const raw = await writeStageRawEvidence(writer, stage.stageId, result.rawEvidence);
           return { result, raw };
         },
@@ -1129,8 +1204,10 @@ async function runSingleAttempt(input: Readonly<{
           repo: input.repo,
           attempt,
           ownerInstanceId: input.ownerInstanceId,
-          disposition: "dispatch_ambiguous",
-          failure: ambiguousFailureSeed(attempt, "provider_dispatch", stage.stageId, error),
+          disposition: carryForward ? "infrastructure_failure" : "dispatch_ambiguous",
+          failure: carryForward
+            ? carryForwardFailureSeed(attempt, stage.stageId, error)
+            : ambiguousFailureSeed(attempt, "provider_dispatch", stage.stageId, error),
         });
         recordAttempt(input.attempts, attempt);
         return { kind: "failed", attempt, inputs: {
@@ -1234,14 +1311,15 @@ async function runSingleAttempt(input: Readonly<{
       },
     });
   } catch (error) {
+    const typed = error instanceof DesignSourceMaterializationFailureV2 ? error : undefined;
     try {
       attempt = await sealFailure({
         repository: input.dependencies.repository,
         repo: input.repo,
         attempt,
         ownerInstanceId: input.ownerInstanceId,
-        disposition: "infrastructure_failure",
-        failure: {
+        disposition: typed?.disposition ?? "infrastructure_failure",
+        failure: typed?.failure ?? {
           ...ambiguousFailureSeed(attempt, "accepted_artifact_materialization", null, error),
           reasonCodes: ["DESIGN_SOURCE_ACCEPTED_ARTIFACT_INVALID"],
         },
@@ -1393,6 +1471,12 @@ export async function runDesignSourceCompilationAttemptsV2(
     }
 
     let planned: Readonly<{ stagePrompts: readonly DesignSourceGenerationStagePromptV2[] }> | null;
+    let failureEvidence: unknown;
+    try {
+      failureEvidence = (await readStoredFailureArtifact(input.repo, failedAttempt)).evidence;
+    } catch {
+      return runnerFailure("DESIGN_SOURCE_RUNNER_REPLAY_INVALID", attempts, failedAttempt);
+    }
     try {
       planned = await dependencies.planRetry({
         authority: single.inputs.authority,
@@ -1400,6 +1484,7 @@ export async function runDesignSourceCompilationAttemptsV2(
         stagePrompts: single.inputs.stagePrompts.map(({ stageId, prompt }) => ({ stageId, prompt })),
         attempt: failedAttempt,
         failure,
+        failureEvidence,
       });
     } catch {
       return runnerFailure("DESIGN_SOURCE_RUNNER_RETRY_PLANNER_FAILED", attempts, failedAttempt);

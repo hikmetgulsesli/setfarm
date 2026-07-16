@@ -222,16 +222,19 @@ export class ProductCompilationAttemptRepository {
       ) {
         throw new Error("PRODUCT_COMPILATION_RUN_NOT_ACTIVE_V3_OWNER");
       }
-      const claimRows = await transaction.unsafe<Array<{ id: string }>>(
+      const originClaimRows = await transaction.unsafe<Array<{ id: string }>>(
         `SELECT id::text FROM claim_log
-          WHERE id = ANY($1::bigint[]) AND run_id = $2 AND outcome IS NULL
+          WHERE id = $1 AND run_id = $2
           FOR KEY SHARE`,
-        [[reservation.originClaimId, reservation.ownerClaimId], reservation.runId],
+        [reservation.originClaimId, reservation.runId],
       );
-      if (new Set(claimRows.map((row) => Number(row.id))).size !== new Set([
-        reservation.originClaimId,
-        reservation.ownerClaimId,
-      ]).size) {
+      const ownerClaimRows = await transaction.unsafe<Array<{ id: string }>>(
+        `SELECT id::text FROM claim_log
+          WHERE id = $1 AND run_id = $2 AND outcome IS NULL
+          FOR KEY SHARE`,
+        [reservation.ownerClaimId, reservation.runId],
+      );
+      if (originClaimRows.length !== 1 || ownerClaimRows.length !== 1) {
         throw new Error("PRODUCT_COMPILATION_CLAIM_BINDING_INVALID");
       }
 

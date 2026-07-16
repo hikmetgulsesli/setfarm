@@ -239,6 +239,79 @@ describe("product compilation attempt ledger", () => {
     }), /PRODUCT_COMPILATION_STALE_FENCE/);
   });
 
+  it("keeps a closed originating claim as immutable identity while a new open owner performs retry", async () => {
+    const claimRows = await database.sql<Array<{ id: string }>>`
+      INSERT INTO claim_log (run_id, step_id, story_id, agent_id)
+      VALUES ('run-product-compilation', 'design-closed-origin', NULL, 'originating-claim-owner')
+      RETURNING id::text AS id
+    `;
+    const originClaimId = Number(claimRows[0]!.id);
+    const authorityHash = hash("closed-origin-authority");
+    const first = await repository.reserve({
+      runId: "run-product-compilation",
+      originClaimId,
+      ownerClaimId: originClaimId,
+      passKind: "design_source_generation",
+      authorityHash,
+      requestHash: hash("closed-origin-request-1"),
+      ordinal: 1,
+      retryAuthority: null,
+      ownerInstanceId: "originating-claim-owner",
+    });
+    assert.equal(first.status, "reserved");
+    if (first.status !== "reserved") return;
+    await repository.commitDispatchIntent({
+      attemptId: first.attempt.attemptId,
+      generation: first.attempt.generation,
+      fenceToken: first.attempt.fenceToken,
+      ownerInstanceId: "originating-claim-owner",
+      externalOperationId: null,
+    });
+    const failure = {
+      failureArtifactHash: hash("closed-origin-failure-artifact"),
+      failureFingerprint: hash("closed-origin-failure-fingerprint"),
+      operationalCauseHash: hash("closed-origin-cause"),
+      reasonCodes: ["DESIGN_TARGET_EVIDENCE_INCOMPLETE"],
+    };
+    await repository.sealFailure({
+      attemptId: first.attempt.attemptId,
+      generation: first.attempt.generation,
+      fenceToken: first.attempt.fenceToken,
+      ownerInstanceId: "originating-claim-owner",
+      disposition: "rejected",
+      failure,
+    });
+    await database.sql`
+      UPDATE claim_log SET outcome = 'infra_retry' WHERE id = ${originClaimId}
+    `;
+    const newOwnerRows = await database.sql<Array<{ id: string }>>`
+      INSERT INTO claim_log (run_id, step_id, story_id, agent_id)
+      VALUES ('run-product-compilation', 'design-closed-origin', NULL, 'retry-claim-owner')
+      RETURNING id::text AS id
+    `;
+    const newOwnerClaimId = Number(newOwnerRows[0]!.id);
+    const retry = await repository.reserve({
+      runId: "run-product-compilation",
+      originClaimId,
+      ownerClaimId: newOwnerClaimId,
+      passKind: "design_source_generation",
+      authorityHash,
+      requestHash: hash("closed-origin-request-2"),
+      ordinal: 2,
+      retryAuthority: {
+        parentAttemptRef: first.attempt.attemptId,
+        parentFailureArtifactHash: failure.failureArtifactHash,
+        parentFailureFingerprint: failure.failureFingerprint,
+        retryDeltaHash: hash("closed-origin-retry-delta"),
+      },
+      ownerInstanceId: "retry-claim-owner",
+    });
+    assert.equal(retry.status, "reserved");
+    if (retry.status !== "reserved") return;
+    assert.equal(retry.attempt.originClaimId, originClaimId);
+    assert.equal(retry.attempt.ownerClaimId, newOwnerClaimId);
+  });
+
   it("database trigger freezes authority fields independently of repository code", async () => {
     const authorityHash = hash("immutable-authority");
     const reserved = await repository.reserve({
