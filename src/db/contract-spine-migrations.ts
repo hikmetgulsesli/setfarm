@@ -202,6 +202,16 @@ export type OperationalFailureCauseSealRollbackResult = Readonly<{
   appliedAt: string;
 }>;
 
+export type ProductCompilationAttemptLedgerRollbackResult = Readonly<{
+  schema: "setfarm.contract-spine-rollback.v1";
+  rollbackId: string;
+  fromVersion: 22;
+  targetVersion: 21;
+  targetReleaseSha: string;
+  rowsRewritten: 0;
+  appliedAt: string;
+}>;
+
 function normalizeSql(value: string): string {
   return value.replace(/\s+/g, " ").trim().toLowerCase();
 }
@@ -8267,6 +8277,298 @@ async function verifyOperationalFailureCauseSeal(
   }
 }
 
+const PRODUCT_COMPILATION_ATTEMPT_STATEMENTS = [
+  `CREATE TABLE product_compilation_attempts (
+    attempt_id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE RESTRICT,
+    origin_claim_id BIGINT NOT NULL,
+    owner_claim_id BIGINT NOT NULL,
+    pass_kind TEXT NOT NULL CHECK (pass_kind IN ('design_source_generation')),
+    authority_hash TEXT NOT NULL CHECK (authority_hash ~ '^[a-f0-9]{64}$'),
+    request_hash TEXT NOT NULL CHECK (request_hash ~ '^[a-f0-9]{64}$'),
+    ordinal INTEGER NOT NULL CHECK (ordinal IN (1, 2)),
+    parent_attempt_id TEXT REFERENCES product_compilation_attempts(attempt_id) ON DELETE RESTRICT,
+    parent_failure_artifact_hash TEXT,
+    parent_failure_fingerprint TEXT,
+    retry_delta_hash TEXT,
+    generation INTEGER NOT NULL CHECK (generation > 0),
+    fence_token TEXT NOT NULL CHECK (fence_token ~ '^[a-f0-9]{64}$'),
+    state TEXT NOT NULL CHECK (state IN ('reserved', 'dispatching', 'sealed', 'quarantined')),
+    disposition TEXT CHECK (disposition IN ('accepted', 'rejected', 'infrastructure_failure', 'dispatch_ambiguous')),
+    owner_instance_id TEXT,
+    lease_token TEXT,
+    lease_acquired_at TIMESTAMPTZ,
+    lease_expires_at TIMESTAMPTZ,
+    heartbeat_at TIMESTAMPTZ,
+    dispatch_intent_at TIMESTAMPTZ,
+    dispatch_started_at TIMESTAMPTZ,
+    dispatch_finished_at TIMESTAMPTZ,
+    external_operation_id TEXT,
+    output_refs JSONB,
+    output_seal_hash TEXT,
+    failure JSONB,
+    failure_artifact_hash TEXT,
+    failure_fingerprint TEXT,
+    operational_cause_hash TEXT,
+    attempt_locator TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT product_compilation_attempt_origin_claim_fkey
+      FOREIGN KEY (origin_claim_id) REFERENCES claim_log(id) ON DELETE RESTRICT,
+    CONSTRAINT product_compilation_attempt_owner_claim_fkey
+      FOREIGN KEY (owner_claim_id) REFERENCES claim_log(id) ON DELETE RESTRICT,
+    CONSTRAINT product_compilation_attempt_id_check CHECK (attempt_id ~ '^PCA_[a-f0-9]{64}$'),
+    CONSTRAINT product_compilation_attempt_retry_authority_check CHECK (
+      (ordinal = 1 AND parent_attempt_id IS NULL AND parent_failure_artifact_hash IS NULL
+        AND parent_failure_fingerprint IS NULL AND retry_delta_hash IS NULL)
+      OR
+      (ordinal = 2 AND parent_attempt_id IS NOT NULL AND parent_failure_artifact_hash ~ '^[a-f0-9]{64}$'
+        AND parent_failure_fingerprint ~ '^[a-f0-9]{64}$' AND retry_delta_hash ~ '^[a-f0-9]{64}$')
+    ),
+    CONSTRAINT product_compilation_attempt_active_lease_check CHECK (
+      (state IN ('reserved', 'dispatching')) =
+      (owner_instance_id IS NOT NULL AND lease_token IS NOT NULL AND lease_acquired_at IS NOT NULL
+        AND lease_expires_at IS NOT NULL AND heartbeat_at IS NOT NULL)
+    ),
+    CONSTRAINT product_compilation_attempt_lease_order_check CHECK (
+      lease_acquired_at IS NULL OR (heartbeat_at >= lease_acquired_at AND lease_expires_at >= heartbeat_at)
+    ),
+    CONSTRAINT product_compilation_attempt_dispatch_check CHECK (
+      (state = 'reserved' AND dispatch_intent_at IS NULL AND dispatch_started_at IS NULL
+        AND dispatch_finished_at IS NULL AND external_operation_id IS NULL)
+      OR
+      (state IN ('dispatching', 'sealed', 'quarantined') AND dispatch_intent_at IS NOT NULL
+        AND (dispatch_started_at IS NULL OR dispatch_started_at >= dispatch_intent_at)
+        AND (dispatch_finished_at IS NULL OR (dispatch_started_at IS NOT NULL AND dispatch_finished_at >= dispatch_started_at)))
+    ),
+    CONSTRAINT product_compilation_attempt_terminal_check CHECK (
+      (state IN ('reserved', 'dispatching') AND disposition IS NULL AND output_seal_hash IS NULL
+        AND output_refs IS NULL AND failure IS NULL AND failure_artifact_hash IS NULL
+        AND failure_fingerprint IS NULL AND operational_cause_hash IS NULL)
+      OR
+      (state = 'sealed' AND disposition = 'accepted' AND output_refs IS NOT NULL
+        AND jsonb_typeof(output_refs) = 'object' AND output_seal_hash ~ '^[a-f0-9]{64}$'
+        AND failure IS NULL AND failure_artifact_hash IS NULL AND failure_fingerprint IS NULL
+        AND operational_cause_hash IS NULL)
+      OR
+      (state = 'sealed' AND disposition IN ('rejected', 'infrastructure_failure') AND output_refs IS NULL
+        AND output_seal_hash ~ '^[a-f0-9]{64}$' AND jsonb_typeof(failure) = 'object'
+        AND failure_artifact_hash ~ '^[a-f0-9]{64}$' AND failure_fingerprint ~ '^[a-f0-9]{64}$'
+        AND operational_cause_hash ~ '^[a-f0-9]{64}$')
+      OR
+      (state = 'quarantined' AND disposition = 'dispatch_ambiguous' AND output_refs IS NULL
+        AND output_seal_hash ~ '^[a-f0-9]{64}$' AND jsonb_typeof(failure) = 'object'
+        AND failure_artifact_hash ~ '^[a-f0-9]{64}$' AND failure_fingerprint ~ '^[a-f0-9]{64}$'
+        AND operational_cause_hash ~ '^[a-f0-9]{64}$')
+    ),
+    CONSTRAINT product_compilation_attempt_locator_check CHECK (
+      attempt_locator = '.setfarm/product-compilation-attempts/' || attempt_id
+    )
+  )`,
+  "CREATE UNIQUE INDEX idx_product_compilation_attempt_ordinal ON product_compilation_attempts(run_id, pass_kind, authority_hash, ordinal)",
+  "CREATE UNIQUE INDEX idx_product_compilation_attempt_active ON product_compilation_attempts(run_id, pass_kind, authority_hash) WHERE state IN ('reserved', 'dispatching')",
+  "CREATE UNIQUE INDEX idx_product_compilation_attempt_accepted ON product_compilation_attempts(run_id, pass_kind, authority_hash) WHERE disposition = 'accepted'",
+  "CREATE UNIQUE INDEX idx_product_compilation_attempt_parent ON product_compilation_attempts(parent_attempt_id) WHERE parent_attempt_id IS NOT NULL",
+  "CREATE INDEX idx_product_compilation_attempt_lease ON product_compilation_attempts(lease_expires_at) WHERE state IN ('reserved', 'dispatching')",
+  "CREATE INDEX idx_product_compilation_attempt_failure ON product_compilation_attempts(failure_fingerprint, authority_hash) WHERE failure_fingerprint IS NOT NULL",
+  `CREATE OR REPLACE FUNCTION setfarm_enforce_product_compilation_attempt_transition()
+   RETURNS trigger
+   LANGUAGE plpgsql
+   AS $setfarm$
+   BEGIN
+     IF TG_OP IN ('INSERT', 'UPDATE') THEN
+       PERFORM 1 FROM claim_log WHERE id = NEW.origin_claim_id AND run_id = NEW.run_id;
+       IF NOT FOUND THEN
+         RAISE EXCEPTION 'SETFARM_PRODUCT_COMPILATION_ORIGIN_CLAIM_MISMATCH' USING ERRCODE = '23503';
+       END IF;
+       PERFORM 1 FROM claim_log WHERE id = NEW.owner_claim_id AND run_id = NEW.run_id;
+       IF NOT FOUND THEN
+         RAISE EXCEPTION 'SETFARM_PRODUCT_COMPILATION_OWNER_CLAIM_MISMATCH' USING ERRCODE = '23503';
+       END IF;
+     END IF;
+     IF TG_OP = 'INSERT' THEN
+       RETURN NEW;
+     END IF;
+     IF TG_OP = 'DELETE' THEN
+       RAISE EXCEPTION 'SETFARM_PRODUCT_COMPILATION_ATTEMPT_DELETE_FORBIDDEN' USING ERRCODE = '55000';
+     END IF;
+     IF OLD.state IN ('sealed', 'quarantined') THEN
+       RAISE EXCEPTION 'SETFARM_PRODUCT_COMPILATION_ATTEMPT_TERMINAL_IMMUTABLE' USING ERRCODE = '55000';
+     END IF;
+     IF OLD.attempt_id IS DISTINCT FROM NEW.attempt_id
+        OR OLD.run_id IS DISTINCT FROM NEW.run_id
+        OR OLD.origin_claim_id IS DISTINCT FROM NEW.origin_claim_id
+        OR OLD.pass_kind IS DISTINCT FROM NEW.pass_kind
+        OR OLD.authority_hash IS DISTINCT FROM NEW.authority_hash
+        OR OLD.request_hash IS DISTINCT FROM NEW.request_hash
+        OR OLD.ordinal IS DISTINCT FROM NEW.ordinal
+        OR OLD.parent_attempt_id IS DISTINCT FROM NEW.parent_attempt_id
+        OR OLD.parent_failure_artifact_hash IS DISTINCT FROM NEW.parent_failure_artifact_hash
+        OR OLD.parent_failure_fingerprint IS DISTINCT FROM NEW.parent_failure_fingerprint
+        OR OLD.retry_delta_hash IS DISTINCT FROM NEW.retry_delta_hash
+        OR OLD.generation IS DISTINCT FROM NEW.generation
+        OR OLD.fence_token IS DISTINCT FROM NEW.fence_token
+        OR OLD.attempt_locator IS DISTINCT FROM NEW.attempt_locator THEN
+       RAISE EXCEPTION 'SETFARM_PRODUCT_COMPILATION_ATTEMPT_AUTHORITY_IMMUTABLE' USING ERRCODE = '55000';
+     END IF;
+     IF OLD.dispatch_intent_at IS NOT NULL AND (
+       OLD.dispatch_intent_at IS DISTINCT FROM NEW.dispatch_intent_at
+       OR OLD.external_operation_id IS DISTINCT FROM NEW.external_operation_id
+     ) THEN
+       RAISE EXCEPTION 'SETFARM_PRODUCT_COMPILATION_DISPATCH_IDENTITY_IMMUTABLE' USING ERRCODE = '55000';
+     END IF;
+     IF OLD.state = 'dispatching' AND NEW.state = 'reserved' THEN
+       RAISE EXCEPTION 'SETFARM_PRODUCT_COMPILATION_STATE_REGRESSION' USING ERRCODE = '55000';
+     END IF;
+     RETURN NEW;
+   END
+   $setfarm$`,
+  `CREATE TRIGGER trg_product_compilation_attempt_transition
+     BEFORE INSERT OR UPDATE OR DELETE ON product_compilation_attempts
+     FOR EACH ROW EXECUTE FUNCTION setfarm_enforce_product_compilation_attempt_transition()`,
+] as const;
+
+const EXPECTED_PRODUCT_COMPILATION_ATTEMPT_COLUMNS = new Map([
+  ["attempt_id", { dataType: "text", nullable: "NO" as const }],
+  ["run_id", { dataType: "text", nullable: "NO" as const }],
+  ["origin_claim_id", { dataType: "bigint", nullable: "NO" as const }],
+  ["owner_claim_id", { dataType: "bigint", nullable: "NO" as const }],
+  ["pass_kind", { dataType: "text", nullable: "NO" as const }],
+  ["authority_hash", { dataType: "text", nullable: "NO" as const }],
+  ["request_hash", { dataType: "text", nullable: "NO" as const }],
+  ["ordinal", { dataType: "integer", nullable: "NO" as const }],
+  ["parent_attempt_id", { dataType: "text", nullable: "YES" as const }],
+  ["parent_failure_artifact_hash", { dataType: "text", nullable: "YES" as const }],
+  ["parent_failure_fingerprint", { dataType: "text", nullable: "YES" as const }],
+  ["retry_delta_hash", { dataType: "text", nullable: "YES" as const }],
+  ["generation", { dataType: "integer", nullable: "NO" as const }],
+  ["fence_token", { dataType: "text", nullable: "NO" as const }],
+  ["state", { dataType: "text", nullable: "NO" as const }],
+  ["disposition", { dataType: "text", nullable: "YES" as const }],
+  ["owner_instance_id", { dataType: "text", nullable: "YES" as const }],
+  ["lease_token", { dataType: "text", nullable: "YES" as const }],
+  ["lease_acquired_at", { dataType: "timestamp with time zone", nullable: "YES" as const }],
+  ["lease_expires_at", { dataType: "timestamp with time zone", nullable: "YES" as const }],
+  ["heartbeat_at", { dataType: "timestamp with time zone", nullable: "YES" as const }],
+  ["dispatch_intent_at", { dataType: "timestamp with time zone", nullable: "YES" as const }],
+  ["dispatch_started_at", { dataType: "timestamp with time zone", nullable: "YES" as const }],
+  ["dispatch_finished_at", { dataType: "timestamp with time zone", nullable: "YES" as const }],
+  ["external_operation_id", { dataType: "text", nullable: "YES" as const }],
+  ["output_refs", { dataType: "jsonb", nullable: "YES" as const }],
+  ["output_seal_hash", { dataType: "text", nullable: "YES" as const }],
+  ["failure", { dataType: "jsonb", nullable: "YES" as const }],
+  ["failure_artifact_hash", { dataType: "text", nullable: "YES" as const }],
+  ["failure_fingerprint", { dataType: "text", nullable: "YES" as const }],
+  ["operational_cause_hash", { dataType: "text", nullable: "YES" as const }],
+  ["attempt_locator", { dataType: "text", nullable: "NO" as const }],
+  ["created_at", { dataType: "timestamp with time zone", nullable: "NO" as const }],
+  ["updated_at", { dataType: "timestamp with time zone", nullable: "NO" as const }],
+]);
+
+const EXPECTED_PRODUCT_COMPILATION_ATTEMPT_INDEXES = new Map([
+  ["idx_product_compilation_attempt_ordinal", "create unique index idx_product_compilation_attempt_ordinal on public.product_compilation_attempts using btree (run_id, pass_kind, authority_hash, ordinal)"],
+  ["idx_product_compilation_attempt_active", "create unique index idx_product_compilation_attempt_active on public.product_compilation_attempts using btree (run_id, pass_kind, authority_hash) where (state = any (array['reserved'::text, 'dispatching'::text]))"],
+  ["idx_product_compilation_attempt_accepted", "create unique index idx_product_compilation_attempt_accepted on public.product_compilation_attempts using btree (run_id, pass_kind, authority_hash) where (disposition = 'accepted'::text)"],
+  ["idx_product_compilation_attempt_parent", "create unique index idx_product_compilation_attempt_parent on public.product_compilation_attempts using btree (parent_attempt_id) where (parent_attempt_id is not null)"],
+  ["idx_product_compilation_attempt_lease", "create index idx_product_compilation_attempt_lease on public.product_compilation_attempts using btree (lease_expires_at) where (state = any (array['reserved'::text, 'dispatching'::text]))"],
+  ["idx_product_compilation_attempt_failure", "create index idx_product_compilation_attempt_failure on public.product_compilation_attempts using btree (failure_fingerprint, authority_hash) where (failure_fingerprint is not null)"],
+]);
+
+async function detectProductCompilationAttemptLedger(
+  sql: Sql | TransactionSql,
+): Promise<"absent" | "present" | "partial"> {
+  const table = await relationExists(sql, "product_compilation_attempts");
+  const indexes = await readNamedIndexes(sql, [...EXPECTED_PRODUCT_COMPILATION_ATTEMPT_INDEXES.keys()]);
+  const triggers = await sql.unsafe<Array<{ count: number }>>(
+    `SELECT COUNT(*)::integer AS count FROM pg_trigger
+      WHERE NOT tgisinternal AND tgname = 'trg_product_compilation_attempt_transition'`,
+  );
+  const functionPresent = Boolean((await sql.unsafe<Array<{ relation: string | null }>>(
+    "SELECT to_regprocedure('setfarm_enforce_product_compilation_attempt_transition()')::text AS relation",
+  ))[0]?.relation);
+  const presentCount = Number(table) + Number(indexes.size > 0) + Number((triggers[0]?.count ?? 0) > 0) + Number(functionPresent);
+  if (presentCount === 0) return "absent";
+  return table
+    && indexes.size === EXPECTED_PRODUCT_COMPILATION_ATTEMPT_INDEXES.size
+    && triggers[0]?.count === 1
+    && functionPresent
+    ? "present"
+    : "partial";
+}
+
+async function verifyProductCompilationAttemptLedger(sql: Sql | TransactionSql): Promise<void> {
+  await verifyExpectedTableColumns(
+    sql,
+    "product_compilation_attempts",
+    EXPECTED_PRODUCT_COMPILATION_ATTEMPT_COLUMNS,
+  );
+  const indexes = await readNamedIndexes(sql, [...EXPECTED_PRODUCT_COMPILATION_ATTEMPT_INDEXES.keys()]);
+  for (const [name, expected] of EXPECTED_PRODUCT_COMPILATION_ATTEMPT_INDEXES) {
+    if (indexes.get(name) !== expected) {
+      throw new ContractSpineMigrationError(
+        "MIGRATION_ADOPTION_MISMATCH",
+        `product compilation attempt index mismatch: ${name}`,
+      );
+    }
+  }
+  const constraintRows = await sql.unsafe<Array<{ definition: string }>>(
+    `SELECT pg_get_constraintdef(oid, true) AS definition
+       FROM pg_constraint
+      WHERE conrelid = 'public.product_compilation_attempts'::regclass`,
+  );
+  const definitions = constraintRows.map((row) => normalizeSql(row.definition));
+  for (const fragment of [
+    "foreign key (origin_claim_id) references claim_log(id) on delete restrict",
+    "foreign key (owner_claim_id) references claim_log(id) on delete restrict",
+    "ordinal = any (array[1, 2])",
+    "state = any (array['reserved'::text, 'dispatching'::text, 'sealed'::text, 'quarantined'::text])",
+    "attempt_locator = ('.setfarm/product-compilation-attempts/'::text || attempt_id)",
+  ]) {
+    if (!definitions.some((definition) => definition.includes(fragment))) {
+      throw new ContractSpineMigrationError(
+        "MIGRATION_ADOPTION_MISMATCH",
+        `product compilation attempt constraint mismatch: ${fragment}`,
+      );
+    }
+  }
+  const triggerRows = await sql.unsafe<Array<{ enabled: string; definition: string }>>(
+    `SELECT t.tgenabled AS enabled, pg_get_triggerdef(t.oid, true) AS definition
+       FROM pg_trigger t
+      WHERE NOT t.tgisinternal AND t.tgname = 'trg_product_compilation_attempt_transition'`,
+  );
+  const triggerDefinition = normalizeSql(triggerRows[0]?.definition ?? "");
+  if (
+    triggerRows.length !== 1
+    || triggerRows[0]?.enabled !== "O"
+    || !triggerDefinition.includes("before insert or delete or update on product_compilation_attempts")
+    || !triggerDefinition.includes("setfarm_enforce_product_compilation_attempt_transition()")
+  ) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_ADOPTION_MISMATCH",
+      "product compilation attempt transition trigger mismatch",
+    );
+  }
+  const functionRows = await sql.unsafe<Array<{ definition: string }>>(
+    "SELECT pg_get_functiondef('setfarm_enforce_product_compilation_attempt_transition()'::regprocedure) AS definition",
+  );
+  const functionDefinition = normalizeSql(functionRows[0]?.definition ?? "");
+  for (const fragment of [
+    "setfarm_product_compilation_attempt_terminal_immutable",
+    "setfarm_product_compilation_attempt_authority_immutable",
+    "setfarm_product_compilation_dispatch_identity_immutable",
+    "setfarm_product_compilation_state_regression",
+    "setfarm_product_compilation_origin_claim_mismatch",
+    "setfarm_product_compilation_owner_claim_mismatch",
+  ]) {
+    if (!functionDefinition.includes(fragment)) {
+      throw new ContractSpineMigrationError(
+        "MIGRATION_ADOPTION_MISMATCH",
+        `product compilation attempt transition function mismatch: ${fragment}`,
+      );
+    }
+  }
+}
+
 const migrations: readonly Migration[] = [
   {
     version: 1,
@@ -8420,6 +8722,13 @@ const migrations: readonly Migration[] = [
     statements: OPERATIONAL_FAILURE_CAUSE_SEAL_STATEMENTS,
     detect: detectOperationalFailureCauseSeal,
     verify: verifyOperationalFailureCauseSeal,
+  },
+  {
+    version: 22,
+    name: "022_product_compilation_attempt_ledger",
+    statements: PRODUCT_COMPILATION_ATTEMPT_STATEMENTS,
+    detect: detectProductCompilationAttemptLedger,
+    verify: verifyProductCompilationAttemptLedger,
   },
 ];
 
@@ -8686,6 +8995,161 @@ export async function applyContractSpineMigrations(
       throw new ContractSpineMigrationError(
         "MIGRATION_LOCK_TIMEOUT",
         `Contract spine migration lock was not acquired within ${lockTimeoutMs}ms`,
+        { cause: error },
+      );
+    }
+    throw error;
+  }
+}
+
+/**
+ * Roll migration 22 back only before it has accepted any compilation attempt.
+ * Once evidence exists the ledger is append-only operational truth and must be
+ * migrated forward; silently dropping it would recreate the missing-attempt
+ * failure mode this migration is designed to remove.
+ */
+export async function rollbackProductCompilationAttemptLedgerToV21(
+  sql: Sql,
+  options: Readonly<{
+    targetReleaseSha: string;
+    lockTimeoutMs?: number;
+    statementTimeoutMs?: number;
+  }>,
+): Promise<ProductCompilationAttemptLedgerRollbackResult> {
+  if (!/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/.test(options.targetReleaseSha)) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_RELEASE_INVALID",
+      "Rollback target release SHA must be a full lowercase Git object hash",
+    );
+  }
+  const migration = migrations.find((candidate) => candidate.version === 22)!;
+  const expectedChecksum = checksum(migration);
+  const lockTimeoutMs = Math.max(1, Math.min(options.lockTimeoutMs ?? 5_000, 60_000));
+  const statementTimeoutMs = Math.max(
+    lockTimeoutMs,
+    Math.min(options.statementTimeoutMs ?? 30_000, 300_000),
+  );
+  try {
+    return await sql.begin(async (transaction) => {
+      await transaction.unsafe("SELECT set_config('lock_timeout', $1, true)", [`${lockTimeoutMs}ms`]);
+      await transaction.unsafe("SELECT set_config('statement_timeout', $1, true)", [`${statementTimeoutMs}ms`]);
+      await transaction.unsafe("SELECT pg_advisory_xact_lock($1)", [contractSpineMigrationLockKey]);
+
+      const future = await transaction.unsafe<Array<{ version: number }>>(
+        "SELECT version FROM setfarm_schema_migrations WHERE version > 22 ORDER BY version LIMIT 1",
+      );
+      if (future[0]) {
+        throw new ContractSpineMigrationError(
+          "MIGRATION_UNKNOWN_VERSION",
+          `Migration ${future[0].version} must be rolled back before migration 22`,
+        );
+      }
+      const journal = await transaction.unsafe<Array<{
+        name: string;
+        checksum: string;
+        release_sha: string | null;
+        applied_at: Date | string;
+      }>>(
+        `SELECT name, checksum, release_sha, applied_at
+           FROM setfarm_schema_migrations
+          WHERE version = 22
+          FOR UPDATE`,
+      );
+      if (journal[0]?.name !== migration.name || journal[0]?.checksum !== expectedChecksum) {
+        throw new ContractSpineMigrationError(
+          "MIGRATION_CHECKSUM_MISMATCH",
+          "Migration 22 is absent or differs from the rollback source contract",
+        );
+      }
+      await transaction.unsafe(
+        "LOCK TABLE product_compilation_attempts IN ACCESS EXCLUSIVE MODE",
+      );
+      await verifyProductCompilationAttemptLedger(transaction);
+      const counts = await transaction.unsafe<Array<{ count: number }>>(
+        "SELECT COUNT(*)::integer AS count FROM product_compilation_attempts",
+      );
+      if ((counts[0]?.count ?? 0) !== 0) {
+        throw new ContractSpineMigrationError(
+          "MIGRATION_INCOMPLETE",
+          "Migration 22 rollback refuses to erase product-compilation attempt evidence; roll forward instead",
+        );
+      }
+      await transaction.unsafe(
+        "DROP TRIGGER trg_product_compilation_attempt_transition ON product_compilation_attempts",
+      );
+      await transaction.unsafe("DROP FUNCTION setfarm_enforce_product_compilation_attempt_transition()")
+      await transaction.unsafe("DROP TABLE product_compilation_attempts");
+      for (const retained of migrations.filter((candidate) => candidate.version <= 21)) {
+        await retained.verify(transaction);
+      }
+
+      await transaction.unsafe(
+        `CREATE TABLE IF NOT EXISTS setfarm_schema_migration_rollbacks (
+           rollback_id TEXT PRIMARY KEY,
+           from_version INTEGER NOT NULL,
+           target_version INTEGER NOT NULL,
+           target_release_sha TEXT NOT NULL,
+           rows_rewritten INTEGER NOT NULL,
+           applied_at TIMESTAMPTZ NOT NULL
+         )`,
+      );
+      const appliedAtRows = await transaction.unsafe<Array<{ applied_at: Date | string }>>(
+        "SELECT clock_timestamp() AS applied_at",
+      );
+      const appliedAt = new Date(appliedAtRows[0]!.applied_at);
+      const rollbackId = `RBK_${hashCanonicalJson({
+        schema: "setfarm.contract-spine-rollback-identity.v1",
+        sourceMigration: {
+          version: 22,
+          name: journal[0]!.name,
+          checksum: journal[0]!.checksum,
+          releaseSha: journal[0]!.release_sha,
+          appliedAt: new Date(journal[0]!.applied_at).toISOString(),
+        },
+        targetVersion: 21,
+        targetReleaseSha: options.targetReleaseSha,
+      })}`;
+      await transaction.unsafe(
+        `INSERT INTO setfarm_schema_migration_rollbacks (
+           rollback_id, from_version, target_version, target_release_sha,
+           rows_rewritten, applied_at
+         ) VALUES ($1, 22, 21, $2, 0, $3)`,
+        [rollbackId, options.targetReleaseSha, appliedAt],
+      );
+      const removed = await transaction.unsafe<Array<{ version: number }>>(
+        `DELETE FROM setfarm_schema_migrations
+          WHERE version = 22 AND name = $1 AND checksum = $2
+          RETURNING version`,
+        [migration.name, expectedChecksum],
+      );
+      if (removed.length !== 1) {
+        throw new ContractSpineMigrationError(
+          "MIGRATION_CHECKSUM_MISMATCH",
+          "Migration 22 journal ownership changed during rollback",
+        );
+      }
+      await transaction.unsafe(
+        `UPDATE setfarm_schema_migrations
+            SET verified_release_sha = $1, verified_at = $2
+          WHERE version <= 21`,
+        [options.targetReleaseSha, appliedAt],
+      );
+      return Object.freeze({
+        schema: "setfarm.contract-spine-rollback.v1" as const,
+        rollbackId,
+        fromVersion: 22 as const,
+        targetVersion: 21 as const,
+        targetReleaseSha: options.targetReleaseSha,
+        rowsRewritten: 0 as const,
+        appliedAt: appliedAt.toISOString(),
+      });
+    }) as ProductCompilationAttemptLedgerRollbackResult;
+  } catch (error) {
+    if (error instanceof ContractSpineMigrationError) throw error;
+    if (isLockTimeout(error)) {
+      throw new ContractSpineMigrationError(
+        "MIGRATION_LOCK_TIMEOUT",
+        `Migration 22 rollback lock was not acquired within ${lockTimeoutMs}ms`,
         { cause: error },
       );
     }
