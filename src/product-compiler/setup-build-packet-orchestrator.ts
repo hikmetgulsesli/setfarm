@@ -1084,7 +1084,7 @@ export function assembleSetupBuildPacketContracts(input: Readonly<{
     generationTargets: generationTargets.value,
     ...(candidateSelection ? { candidateSelection: candidateSelection.value } : {}),
     ...(renderedSemantics ? { renderedSemantics: renderedSemantics.value } : {}),
-    authoritySourceHashes: [
+    authoritySourceHashes: uniqueSorted([
       generationTargets.source.hash,
       responseBindings.source.hash,
       ...(candidateSelection ? [candidateSelection.source.hash] : []),
@@ -1096,7 +1096,7 @@ export function assembleSetupBuildPacketContracts(input: Readonly<{
         renderedSemantics.source.hash,
         hashCanonicalJson(renderedSemantics.value),
       ] : []),
-    ].sort(compareUtf16),
+    ]),
     responseBindings: responseBindings.value,
     screenIndex: { source: screenIndex.source, text: screenIndex.text },
     generatedSources,

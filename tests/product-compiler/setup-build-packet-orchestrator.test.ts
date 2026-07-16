@@ -54,7 +54,7 @@ function writeJson(file: string, value: unknown, canonical = false): void {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(
     file,
-    canonical ? `${canonicalJsonStringify(value)}\n` : `${JSON.stringify(value, null, 2)}\n`,
+    canonical ? canonicalJsonStringify(value) : `${JSON.stringify(value, null, 2)}\n`,
     "utf8",
   );
 }
