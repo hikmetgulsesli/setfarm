@@ -21,7 +21,7 @@ import {
   type ExecutionAttemptV1,
   type SourceRevisionV1,
 } from "../execution/schemas/execution-attempt-v1.js";
-import { createRuntimeArtifactReader, type SealedRuntimePacketV1 } from "../product-compiler/runtime-artifact-reader.js";
+import { createRuntimeArtifactReader, type SealedRuntimePacket } from "../product-compiler/runtime-artifact-reader.js";
 import { Sha256Schema } from "../product-compiler/schemas/common-v1.js";
 import { resolveProductArtifactCapacity, resolveProductArtifactDir } from "../runtime-config.js";
 import { createFindingRecoveryRepository } from "./finding-recovery-repository.js";
@@ -284,7 +284,7 @@ function terminalVerdict(bundle: EvidenceBundleV2): "pass" | "fail" | "inconclus
 }
 
 export type V3DownstreamEvidenceRouterDependencies = Readonly<{
-  readPacket(runId: string): Promise<SealedRuntimePacketV1>;
+  readPacket(runId: string): Promise<SealedRuntimePacket>;
   readStories(input: Readonly<{ runId: string; storyIds: readonly string[] }>): Promise<readonly StoryIdentity[]>;
   reserveAttempt(input: Readonly<{
     authority: V3DownstreamEvidenceAuthorityV1;
@@ -308,7 +308,7 @@ export type V3DownstreamEvidenceRouterDependencies = Readonly<{
     findingSet?: FindingSetV1;
   }>): Promise<ExecutionAttemptV1>;
   executeEvidence(input: Readonly<{
-    packet: SealedRuntimePacketV1;
+    packet: SealedRuntimePacket;
     context: V3ImplementationAttemptResult;
     worktree: string;
   }>): Promise<EvidenceBundleV2>;

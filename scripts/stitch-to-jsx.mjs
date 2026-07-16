@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import fs from "node:fs";
 import path from "node:path";
+import { createHash } from "node:crypto";
 
 const repoPath = process.argv[2];
 if (!repoPath) { console.error("Usage: node stitch-to-jsx.mjs <repo-path>"); process.exit(1); }
@@ -117,6 +118,53 @@ function fallbackManifestFromScreenMap() {
     .filter(Boolean);
 }
 
+function canonicalJsonStringify(value) {
+  if (value === null || typeof value === "boolean" || typeof value === "string") {
+    return JSON.stringify(value);
+  }
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) failConversion("V3_PROJECTION_CONTRACT_JSON_INVALID", "projection contract contains a non-finite number");
+    return Object.is(value, -0) ? "0" : JSON.stringify(value);
+  }
+  if (Array.isArray(value)) return `[${value.map(canonicalJsonStringify).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJsonStringify(value[key])}`).join(",")}}`;
+  }
+  failConversion("V3_PROJECTION_CONTRACT_JSON_INVALID", "projection contract contains a non-JSON value");
+}
+
+function sha256Bytes(value) {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function sha256Canonical(value) {
+  return sha256Bytes(canonicalJsonStringify(value));
+}
+
+function exactRepoLocator(locator, expectedPrefix) {
+  const value = String(locator || "");
+  if (
+    !value
+    || value.includes("\\")
+    || value.startsWith("/")
+    || path.posix.normalize(value) !== value
+    || !value.startsWith(expectedPrefix)
+  ) {
+    failConversion("V3_RENDERED_SEMANTIC_DOM_LOCATOR_INVALID", "rendered semantic DOM locator is unsafe or outside its canonical namespace");
+  }
+  const resolved = path.resolve(repoPath, ...value.split("/"));
+  const root = path.resolve(repoPath);
+  if (resolved !== root && !resolved.startsWith(`${root}${path.sep}`)) {
+    failConversion("V3_RENDERED_SEMANTIC_DOM_LOCATOR_INVALID", "rendered semantic DOM locator escapes the generated repository");
+  }
+  return resolved;
+}
+
+function sameSortedStrings(left, right) {
+  const normalize = (values) => [...new Set(Array.isArray(values) ? values : [])].sort();
+  return JSON.stringify(normalize(left)) === JSON.stringify(normalize(right));
+}
+
 let manifest = manifestScreens(rawManifest);
 if (manifest.length === 0) {
   const fallbackManifest = fallbackManifestFromScreenMap();
@@ -129,6 +177,8 @@ if (manifest.length === 0) {
 function loadV3ProjectionContract() {
   const targetsPath = path.join(stitchDir, "GENERATION_TARGETS.json");
   const bindingsPath = path.join(stitchDir, "STITCH_RESPONSE_BINDINGS.json");
+  const selectionPath = path.join(stitchDir, "STITCH_TARGET_CANDIDATE_SELECTION.json");
+  const renderedSemanticsPath = path.join(stitchDir, "STITCH_RENDERED_SEMANTICS.json");
   const hasTargets = fs.existsSync(targetsPath);
   const hasBindings = fs.existsSync(bindingsPath);
   if (!hasTargets && !hasBindings) return undefined;
@@ -138,17 +188,46 @@ function loadV3ProjectionContract() {
 
   let targets;
   let bindings;
+  let selection;
+  let renderedSemantics;
   try {
     targets = JSON.parse(fs.readFileSync(targetsPath, "utf-8"));
     bindings = JSON.parse(fs.readFileSync(bindingsPath, "utf-8"));
+    if (fs.existsSync(selectionPath)) selection = JSON.parse(fs.readFileSync(selectionPath, "utf-8"));
+    if (fs.existsSync(renderedSemanticsPath)) renderedSemantics = JSON.parse(fs.readFileSync(renderedSemanticsPath, "utf-8"));
   } catch (error) {
     failConversion("V3_PROJECTION_CONTRACT_JSON_INVALID", "projection contract JSON is invalid");
   }
   if (targets?.schema !== "setfarm.design-generation-targets.v1" || !Array.isArray(targets.targets)) {
     failConversion("V3_PROJECTION_TARGETS_INVALID", "exact generation targets are required for contract-only projection");
   }
-  if (bindings?.schema !== "setfarm.stitch-target-response-bindings.v1" || !Array.isArray(bindings.bindings)) {
+  if (!["setfarm.stitch-target-response-bindings.v1", "setfarm.stitch-target-response-bindings.v2"].includes(bindings?.schema) || !Array.isArray(bindings.bindings)) {
     failConversion("V3_PROJECTION_BINDINGS_INVALID", "exact Stitch response bindings are required for contract-only projection");
+  }
+  if (bindings.schema === "setfarm.stitch-target-response-bindings.v2") {
+    if (selection?.schema !== "setfarm.stitch-target-candidate-selection.v1" || !Array.isArray(selection.selections)) {
+      failConversion("V3_PROJECTION_RESPONSE_BINDING_INVALID", "response bindings v2 require canonical target candidate selection");
+    }
+    if (renderedSemantics?.schema !== "setfarm.stitch-rendered-semantics.v1" || !Array.isArray(renderedSemantics.candidates)) {
+      failConversion("V3_RENDERED_SEMANTICS_MISSING", "response bindings v2 require canonical browser-rendered semantics");
+    }
+    const targetsHash = sha256Canonical(targets);
+    const selectionHash = sha256Canonical(selection);
+    const renderedSemanticsHash = sha256Canonical(renderedSemantics);
+    if (
+      bindings.generationTargetsHash !== targetsHash
+      || selection.generationTargetsHash !== targetsHash
+      || renderedSemantics.generationTargetsHash !== targetsHash
+      || bindings.candidateSelectionHash !== selectionHash
+      || bindings.renderedSemanticsHash !== renderedSemanticsHash
+      || selection.renderedSemanticsHash !== renderedSemanticsHash
+      || selection.directResponseEvidenceHash !== renderedSemantics.directResponseEvidenceHash
+      || selection.semanticEvidencePolicy !== "browser_rendered_v1"
+    ) {
+      failConversion("V3_PROJECTION_RESPONSE_BINDING_INVALID", "projection targets, rendered semantics, selection, and bindings do not form one canonical hash chain");
+    }
+  } else if (selection || renderedSemantics) {
+    failConversion("V3_PROJECTION_RESPONSE_BINDING_INVALID", "historical v1 bindings cannot claim candidate-selection authority");
   }
 
   const targetById = new Map();
@@ -159,13 +238,142 @@ function loadV3ProjectionContract() {
     targetById.set(target.targetId, target);
   }
   const byScreenId = new Map();
+  const selectionByTarget = new Map(Array.isArray(selection?.selections)
+    ? selection.selections.map((item) => [item.targetRef, item])
+    : []);
+  const selectionCandidateById = new Map(Array.isArray(selection?.candidates)
+    ? selection.candidates.map((item) => [item.screenId, item])
+    : []);
+  const renderedCandidateById = new Map(Array.isArray(renderedSemantics?.candidates)
+    ? renderedSemantics.candidates.map((item) => [item.screenId, item])
+    : []);
   for (const binding of bindings.bindings) {
     const target = targetById.get(binding?.targetRef);
     if (!target || !binding?.responseScreenId || byScreenId.has(binding.responseScreenId)) {
       failConversion("V3_PROJECTION_RESPONSE_BINDING_INVALID", "projection response binding is missing, duplicated, or unowned");
     }
+    if (bindings.schema === "setfarm.stitch-target-response-bindings.v2") {
+      const selected = selectionByTarget.get(binding.targetRef);
+      const selectedEvaluation = selected?.evaluations?.find((evaluation) => evaluation?.screenId === binding.responseScreenId);
+      const selectedCandidate = selectionCandidateById.get(binding.responseScreenId);
+      const renderedCandidate = renderedCandidateById.get(binding.responseScreenId);
+      const htmlPath = path.join(stitchDir, `${binding.responseScreenId}.html`);
+      const screenshotPath = path.join(stitchDir, `${binding.responseScreenId}.png`);
+      if (
+        selected?.status !== "selected"
+        || selected.selectedScreenId !== binding.responseScreenId
+        || selected.stageId !== binding.stageId
+        || selectedEvaluation?.qualificationTier !== "exact_target_semantics"
+        || !Array.isArray(selectedEvaluation.semanticChecks)
+        || selectedEvaluation.semanticChecks.some((check) => check?.disposition !== "exact")
+        || selectedCandidate?.semanticEvidenceStatus !== "browser_rendered"
+        || renderedCandidate?.status !== "rendered"
+        || renderedCandidate.stageId !== binding.stageId
+        || !fs.existsSync(htmlPath)
+        || !fs.existsSync(screenshotPath)
+        || sha256Bytes(fs.readFileSync(htmlPath)) !== binding.htmlArtifactHash
+        || sha256Bytes(fs.readFileSync(screenshotPath)) !== binding.screenshotArtifactHash
+        || selectedCandidate.htmlArtifactHash !== binding.htmlArtifactHash
+        || selectedCandidate.screenshotArtifactHash !== binding.screenshotArtifactHash
+        || renderedCandidate.htmlArtifactHash !== binding.htmlArtifactHash
+        || renderedCandidate.screenshotArtifactHash !== binding.screenshotArtifactHash
+        || selectedCandidate.semanticDomHash !== binding.semanticDomHash
+        || selectedCandidate.semanticObservationHash !== binding.semanticObservationHash
+        || renderedCandidate.semanticDom?.hash !== binding.semanticDomHash
+        || renderedCandidate.observationHash !== binding.semanticObservationHash
+        || sha256Canonical(renderedCandidate.elements) !== renderedCandidate.observationHash
+      ) {
+        failConversion("V3_PROJECTION_RESPONSE_BINDING_INVALID", "selected response artifact bytes do not match response bindings v2");
+      }
+
+      const exactChecks = selectedEvaluation.semanticChecks.filter((check) =>
+        check.kind !== "screen_title" && check.disposition === "exact");
+      const exactContractRefs = exactChecks.flatMap((check) => check.elementRefs || []);
+      if (!sameSortedStrings(exactContractRefs, binding.contractElementRefs)) {
+        failConversion("V3_RENDERED_CONTRACT_ELEMENT_REFS_INVALID", "response binding element refs differ from exact browser semantic checks");
+      }
+      const renderedElements = Array.isArray(renderedCandidate.elements) ? renderedCandidate.elements : [];
+      const elementByRef = new Map(renderedElements.map((element) => [element.elementRef, element]));
+      if (
+        elementByRef.size !== renderedElements.length
+        || binding.contractElementRefs.some((ref) => !elementByRef.has(ref))
+      ) {
+        failConversion("V3_RENDERED_CONTRACT_ELEMENT_REFS_INVALID", "response binding contains missing or duplicated rendered element refs");
+      }
+      const semanticDomFile = exactRepoLocator(renderedCandidate.semanticDom?.locator, "stitch/rendered-dom/");
+      if (!fs.existsSync(semanticDomFile)) {
+        failConversion("V3_RENDERED_SEMANTIC_DOM_MISSING", "selected rendered semantic DOM sidecar is missing");
+      }
+      const semanticDomBytes = fs.readFileSync(semanticDomFile);
+      if (
+        semanticDomBytes.byteLength !== renderedCandidate.semanticDom.byteLength
+        || sha256Bytes(semanticDomBytes) !== binding.semanticDomHash
+      ) {
+        failConversion("V3_RENDERED_SEMANTIC_DOM_HASH_MISMATCH", "selected rendered semantic DOM sidecar bytes do not match browser authority");
+      }
+      const semanticDomText = semanticDomBytes.toString("utf8");
+      for (const elementRef of binding.contractElementRefs) {
+        const matches = semanticDomText.match(new RegExp(`\\bdata-setfarm-element-ref=(?:"${elementRef}"|'${elementRef}')`, "g")) || [];
+        if (matches.length !== 1) {
+          failConversion("V3_RENDERED_CONTRACT_ELEMENT_REFS_INVALID", "each bound rendered element ref must occur exactly once in the semantic DOM sidecar");
+        }
+      }
+
+      const exactRefs = (kind, semanticRef) => {
+        const checks = exactChecks.filter((check) => check.kind === kind && check.semanticRef === semanticRef);
+        if (checks.length !== 1 || checks[0].expectedCount !== 1 || checks[0].observedCount !== 1 || checks[0].elementRefs?.length !== 1) {
+          failConversion("V3_RENDERED_SEMANTIC_CHECK_INVALID", `required ${kind} ${semanticRef} lacks one exact browser element ref`);
+        }
+        return new Set(checks[0].elementRefs);
+      };
+      const actionElementRefs = new Map((target.requiredActionRefs || []).map((actionRef) => [
+        actionRef,
+        exactRefs("action", actionRef),
+      ]));
+      const expectedInputPairs = (Array.isArray(target.requiredActionInputs) ? target.requiredActionInputs : [])
+        .flatMap((entry) => (Array.isArray(entry?.inputFields) ? entry.inputFields : [])
+          .map((field) => `${entry.actionRef}.${field}`));
+      const inputElementRefs = new Map(expectedInputPairs.map((inputRef) => [
+        inputRef,
+        exactRefs("action_input", inputRef),
+      ]));
+      const requiredAccessibilityObservables = (Array.isArray(target.requiredObservableSelectors)
+        ? target.requiredObservableSelectors
+        : [])
+        .filter((entry) => entry?.selector?.kind === "accessibility")
+        .map((entry) => ({
+          observableRef: String(entry.observableRef || ""),
+          role: String(entry.selector.role || ""),
+          name: String(entry.selector.name || ""),
+          elementRefs: exactRefs("accessibility", String(entry.observableRef || "")),
+        }));
+      for (const [semanticRef, refs] of [
+        ...actionElementRefs,
+        ...inputElementRefs,
+        ...requiredAccessibilityObservables.map((item) => [item.observableRef, item.elementRefs]),
+      ]) {
+        const element = elementByRef.get([...refs][0]);
+        if (!element || element.renderState !== "rendered" || element.nearestSurfaceRef !== target.surfaceRef) {
+          failConversion("V3_RENDERED_SEMANTIC_CHECK_INVALID", `required semantic ref ${semanticRef} is not rendered on its exact surface`);
+        }
+      }
+      byScreenId.set(binding.responseScreenId, {
+        targetRef: target.targetId,
+        authorityMode: "browser_rendered_v1",
+        semanticDomFile,
+        semanticDomLocator: renderedCandidate.semanticDom.locator,
+        contractElementRefs: new Set(binding.contractElementRefs),
+        expectedActionRefs: new Set(Array.isArray(target.requiredActionRefs) ? target.requiredActionRefs : []),
+        expectedInputPairs: new Set(expectedInputPairs),
+        actionElementRefs,
+        inputElementRefs,
+        requiredAccessibilityObservables,
+      });
+      continue;
+    }
     byScreenId.set(binding.responseScreenId, {
       targetRef: target.targetId,
+      authorityMode: "historical_static_v1",
       expectedActionRefs: new Set(Array.isArray(target.requiredActionRefs) ? target.requiredActionRefs : []),
       expectedInputPairs: new Set((Array.isArray(target.requiredActionInputs) ? target.requiredActionInputs : [])
         .flatMap((entry) => (Array.isArray(entry?.inputFields) ? entry.inputFields : [])
@@ -1490,7 +1698,7 @@ function uniqueActionId(actions, base, index) {
 
 function attrValue(attrs, attrName) {
   const match = new RegExp(
-    `\\b${escapeRegExp(attrName)}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s"'=<>]+))`,
+    `(?:^|[\\t\\n\\f\\r ])${escapeRegExp(attrName)}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s"'=<>]+))`,
     "i",
   ).exec(String(attrs || ""));
   return match ? String(match[1] ?? match[2] ?? match[3] ?? "").trim() : "";
@@ -1519,6 +1727,11 @@ function semanticActionInputs(attrs) {
     });
 }
 
+function semanticElementRef(attrs) {
+  const value = attrValue(attrs, "data-setfarm-element-ref");
+  return /^E[0-9]{6}$/.test(value) ? value : "";
+}
+
 function escapeHtmlAttr(value) {
   return String(value || "")
     .replace(/&/g, "&amp;")
@@ -1537,22 +1750,44 @@ function annotateInteractiveElements(html, projection) {
   let inputIndex = 0;
   let textareaIndex = 0;
   let selectIndex = 0;
+  const browserAuthority = projection?.authorityMode === "browser_rendered_v1";
+  const consumedActionElements = new Map();
+  const consumedInputElements = new Map();
   const nextId = (label, fallback, index) => {
     const id = uniqueActionId(identities, slugifyActionId(label, fallback), index);
     identities.push({ id });
     return id;
   };
-  const expectedInput = (binding) => projection?.expectedInputPairs.has(`${binding.actionRef}.${binding.inputField}`) ?? false;
-  const rejectControl = ({ id, kind, label, index, actionRef, inputBindings, href }) => {
+  const inputKey = (binding) => `${binding.actionRef}.${binding.inputField}`;
+  const expectedInput = (binding) => projection?.expectedInputPairs.has(inputKey(binding)) ?? false;
+  const exactElement = (mapping, semanticRef, elementRef) => Boolean(
+    elementRef && mapping?.get(semanticRef)?.has(elementRef),
+  );
+  const exactActionElement = (actionRef, elementRef) => !browserAuthority
+    || exactElement(projection.actionElementRefs, actionRef, elementRef);
+  const exactInputElement = (binding, elementRef) => !browserAuthority
+    || exactElement(projection.inputElementRefs, inputKey(binding), elementRef);
+  const consume = (map, semanticRef, elementRef) => {
+    const key = `${semanticRef}\0${elementRef}`;
+    map.set(key, (map.get(key) || 0) + 1);
+  };
+  const consumeAccepted = (actionRef, inputBindings, elementRef) => {
+    if (actionRef) consume(consumedActionElements, actionRef, elementRef);
+    for (const binding of inputBindings) consume(consumedInputElements, inputKey(binding), elementRef);
+  };
+  const rejectControl = ({ id, kind, label, index, actionRef, inputBindings, href, sourceElementRef }) => {
     rejectedControls.push({
       rejectionId: id,
       kind,
       label,
       index,
-      reasonCode: "undeclared_by_generation_target",
+      reasonCode: browserAuthority
+        ? "outside_canonical_rendered_contract"
+        : "undeclared_by_generation_target",
       ...(actionRef ? { rawActionRef: actionRef } : {}),
       ...(inputBindings.length > 0 ? { rawInputBindings: inputBindings } : {}),
       ...(href ? { href } : {}),
+      ...(sourceElementRef ? { sourceElementRef } : {}),
     });
   };
   const neutralizedAttrs = (attrs, id, kind) => {
@@ -1582,12 +1817,19 @@ function annotateInteractiveElements(html, projection) {
     const id = nextId(label, "button", index);
     const actionRef = semanticActionRef(attrs);
     const inputBindings = semanticActionInputs(attrs);
-    const accepted = !projection || Boolean(actionRef && projection.expectedActionRefs.has(actionRef));
+    const sourceElementRef = semanticElementRef(attrs);
+    const accepted = !projection || Boolean(
+      actionRef
+      && projection.expectedActionRefs.has(actionRef)
+      && exactActionElement(actionRef, sourceElementRef)
+      && inputBindings.every((binding) => expectedInput(binding) && exactInputElement(binding, sourceElementRef)),
+    );
     if (!accepted) {
-      rejectControl({ id, kind: "button", label, index, actionRef, inputBindings });
+      rejectControl({ id, kind: "button", label, index, actionRef, inputBindings, sourceElementRef });
       return `<button${neutralizedAttrs(attrs, id, "button")}>${inner}</button>`;
     }
-    actions.push({ id, kind: "button", label, index, ...(actionRef ? { actionRef } : {}), ...(inputBindings.length ? { inputBindings } : {}) });
+    consumeAccepted(actionRef, inputBindings, sourceElementRef);
+    actions.push({ id, kind: "button", label, index, ...(actionRef ? { actionRef } : {}), ...(inputBindings.length ? { inputBindings } : {}), ...(sourceElementRef ? { sourceElementRef } : {}) });
 
     let cleanAttrs = String(attrs || "")
       .replace(/\sdata-action-id=(?:"[^"]*"|'[^']*')/gi, "")
@@ -1607,12 +1849,19 @@ function annotateInteractiveElements(html, projection) {
     const id = nextId(label, "link", index);
     const actionRef = semanticActionRef(attrs);
     const inputBindings = semanticActionInputs(attrs);
-    const accepted = !projection || Boolean(actionRef && projection.expectedActionRefs.has(actionRef));
+    const sourceElementRef = semanticElementRef(attrs);
+    const accepted = !projection || Boolean(
+      actionRef
+      && projection.expectedActionRefs.has(actionRef)
+      && exactActionElement(actionRef, sourceElementRef)
+      && inputBindings.every((binding) => expectedInput(binding) && exactInputElement(binding, sourceElementRef)),
+    );
     if (!accepted) {
-      rejectControl({ id, kind: "link", label, index, actionRef, inputBindings, href });
+      rejectControl({ id, kind: "link", label, index, actionRef, inputBindings, href, sourceElementRef });
       return `<a${neutralizedAttrs(attrs, id, "link")}>${inner}</a>`;
     }
-    actions.push({ id, kind: "link", label, href, index, ...(actionRef ? { actionRef } : {}), ...(inputBindings.length ? { inputBindings } : {}) });
+    consumeAccepted(actionRef, inputBindings, sourceElementRef);
+    actions.push({ id, kind: "link", label, href, index, ...(actionRef ? { actionRef } : {}), ...(inputBindings.length ? { inputBindings } : {}), ...(sourceElementRef ? { sourceElementRef } : {}) });
 
     const cleanAttrs = String(attrs || "")
       .replace(/\sdata-action-id=(?:"[^"]*"|'[^']*')/gi, "")
@@ -1641,6 +1890,7 @@ function annotateInteractiveElements(html, projection) {
       || fallback;
     const actionRef = semanticActionRef(sourceAttrs);
     const inputBindings = semanticActionInputs(sourceAttrs);
+    const sourceElementRef = semanticElementRef(sourceAttrs);
     const cleanAttrs = sourceAttrs
       .replace(/\sdata-action-id=(?:"[^"]*"|'[^']*')/gi, "")
       .replace(/\sdata-control-id=(?:"[^"]*"|'[^']*')/gi, "")
@@ -1648,20 +1898,29 @@ function annotateInteractiveElements(html, projection) {
       .replace(/\sonChange=\{[^}]*\}/g, "");
     if (actionRef) {
       const id = nextId(label, tagName, actions.length);
-      if (projection && !projection.expectedActionRefs.has(actionRef)) {
-        rejectControl({ id, kind: tagName, label, index, actionRef, inputBindings });
+      if (projection && (
+        !projection.expectedActionRefs.has(actionRef)
+        || !exactActionElement(actionRef, sourceElementRef)
+        || !inputBindings.every((binding) => expectedInput(binding) && exactInputElement(binding, sourceElementRef))
+      )) {
+        rejectControl({ id, kind: tagName, label, index, actionRef, inputBindings, sourceElementRef });
         return neutralizedAttrs(sourceAttrs, id, tagName);
       }
-      actions.push({ id, kind: tagName, label, index, actionRef, ...(inputBindings.length ? { inputBindings } : {}) });
+      consumeAccepted(actionRef, inputBindings, sourceElementRef);
+      actions.push({ id, kind: tagName, label, index, actionRef, ...(inputBindings.length ? { inputBindings } : {}), ...(sourceElementRef ? { sourceElementRef } : {}) });
       return `${cleanAttrs} data-action-id="${id}" onChange={() => actions?.["${id}"]?.()}`;
     }
     if (inputBindings.length === 0 && !projection) return sourceAttrs;
     const id = nextId(label, tagName, valueControls.length);
-    if (projection && !inputBindings.some(expectedInput)) {
-      rejectControl({ id, kind: tagName, label, index, actionRef, inputBindings });
+    if (projection && (
+      inputBindings.length === 0
+      || !inputBindings.every((binding) => expectedInput(binding) && exactInputElement(binding, sourceElementRef))
+    )) {
+      rejectControl({ id, kind: tagName, label, index, actionRef, inputBindings, sourceElementRef });
       return neutralizedAttrs(sourceAttrs, id, tagName);
     }
-    valueControls.push({ id, kind: tagName, label, index, inputBindings });
+    consumeAccepted(actionRef, inputBindings, sourceElementRef);
+    valueControls.push({ id, kind: tagName, label, index, inputBindings, ...(sourceElementRef ? { sourceElementRef } : {}) });
     return `${cleanAttrs} data-control-id="${id}"`;
   };
   const annotateValueTags = (source, targetTagName) => mapOpeningTagsRespectingQuotes(
@@ -1689,12 +1948,68 @@ function annotateInteractiveElements(html, projection) {
   const withInputs = annotateValueTags(annotated, "input");
   const withTextareas = annotateValueTags(withInputs, "textarea");
   const withSelects = annotateValueTags(withTextareas, "select");
+  if (browserAuthority) {
+    for (const [actionRef, refs] of projection.actionElementRefs) {
+      const elementRef = [...refs][0];
+      if (consumedActionElements.get(`${actionRef}\0${elementRef}`) !== 1) {
+        failConversion("V3_RENDERED_ACTION_PROJECTION_MISMATCH", `action ${actionRef} was not projected exactly once from browser element ${elementRef}`);
+      }
+    }
+    for (const [inputRef, refs] of projection.inputElementRefs) {
+      const elementRef = [...refs][0];
+      if (consumedInputElements.get(`${inputRef}\0${elementRef}`) !== 1) {
+        failConversion("V3_RENDERED_INPUT_PROJECTION_MISMATCH", `action input ${inputRef} was not projected exactly once from browser element ${elementRef}`);
+      }
+    }
+  }
   return { html: withSelects, actions, valueControls, rejectedControls };
 }
 
 function annotateObservableElements(html, projection) {
   const required = projection?.requiredAccessibilityObservables || [];
   if (required.length === 0) return { html: String(html || ""), observables: [] };
+
+  const browserAuthority = projection?.authorityMode === "browser_rendered_v1";
+  if (browserAuthority) {
+    const byElementRef = new Map();
+    for (const observable of required) {
+      const elementRef = [...observable.elementRefs][0];
+      const entries = byElementRef.get(elementRef) || [];
+      entries.push(observable);
+      byElementRef.set(elementRef, entries);
+    }
+    const counts = new Map(required.map((observable) => [observable.observableRef, 0]));
+    const annotated = mapOpeningTagsRespectingQuotes(html, ({ original, tagName, attrs }) => {
+      const elementRef = semanticElementRef(attrs);
+      const matches = byElementRef.get(elementRef);
+      if (!matches) return original;
+      for (const observable of matches) {
+        if (attrValue(attrs, "role") !== observable.role || attrValue(attrs, "aria-label") !== observable.name) {
+          failConversion("V3_OBSERVABLE_RENDERED_ELEMENT_MISMATCH", `observable ${observable.observableRef} differs from its exact browser element`);
+        }
+        counts.set(observable.observableRef, (counts.get(observable.observableRef) || 0) + 1);
+      }
+      const refs = matches.map((entry) => entry.observableRef).sort().join(" ");
+      const selfClosing = /\/\s*$/.test(attrs);
+      const attributeBody = selfClosing ? attrs.replace(/\/\s*$/, "") : attrs;
+      const cleanAttrs = stripJsxAttribute(String(attributeBody || ""), "data-observable-refs");
+      return `<${tagName}${cleanAttrs} data-observable-refs="${escapeHtmlAttr(refs)}"${selfClosing ? " />" : ">"}`;
+    });
+    for (const observable of required) {
+      if (counts.get(observable.observableRef) !== 1) {
+        failConversion("V3_OBSERVABLE_RENDERED_ELEMENT_MISMATCH", `observable ${observable.observableRef} was not projected exactly once from browser evidence`);
+      }
+    }
+    return {
+      html: annotated,
+      observables: required.map((observable) => ({
+        observableRef: observable.observableRef,
+        role: observable.role,
+        name: observable.name,
+        sourceElementRef: [...observable.elementRefs][0],
+      })),
+    };
+  }
 
   const bySelector = new Map();
   for (const observable of required) {
@@ -1770,7 +2085,13 @@ const stitchStyleBlocks = new Set();
 const unknownMaterialIcons = new Map();
 for (const screen of manifest) {
   if (isPrdPseudoScreen(screen)) { console.warn("  SKIP PRD:", screen.title); continue; }
-  const htmlFile = findScreenHtml(screen);
+  const projection = v3ProjectionContract?.byScreenId.get(String(screen.screenId || ""));
+  if (v3ProjectionContract && !projection) {
+    failConversion("V3_PROJECTION_SCREEN_UNBOUND", "Stitch screen has no exact projection binding");
+  }
+  const htmlFile = projection?.authorityMode === "browser_rendered_v1"
+    ? projection.semanticDomFile
+    : findScreenHtml(screen);
   if (!htmlFile) { console.warn("  SKIP invalid/missing HTML:", screen.title); continue; }
   const raw = fs.readFileSync(htmlFile, "utf-8");
   collectStyleBlocks(raw, stitchStyleBlocks);
@@ -1778,10 +2099,6 @@ for (const screen of manifest) {
   const lucideImports = new Set();
   const renderableBody = stripNonRenderedHtmlBlocks(body);
   const classNormalizedBody = normalizeDesignClassAttributes(renderableBody);
-  const projection = v3ProjectionContract?.byScreenId.get(String(screen.screenId || ""));
-  if (v3ProjectionContract && !projection) {
-    failConversion("V3_PROJECTION_SCREEN_UNBOUND", "Stitch screen has no exact projection binding");
-  }
   const observableProjection = annotateObservableElements(classNormalizedBody, projection);
   const {
     html: interactiveBody,
@@ -1789,7 +2106,9 @@ for (const screen of manifest) {
     valueControls,
     rejectedControls,
   } = annotateInteractiveElements(observableProjection.html, projection);
-  const sourceLocator = path.relative(repoPath, htmlFile).split(path.sep).join("/");
+  const sourceLocator = projection?.authorityMode === "browser_rendered_v1"
+    ? projection.semanticDomLocator
+    : path.relative(repoPath, htmlFile).split(path.sep).join("/");
   const indexedActions = actions.map((action) => action.actionRef ? {
     ...action,
     generatedLocalId: action.id,
@@ -1808,6 +2127,7 @@ for (const screen of manifest) {
     observableRef: observable.observableRef,
     role: observable.role,
     name: observable.name,
+    ...(observable.sourceElementRef ? { sourceElementRef: observable.sourceElementRef } : {}),
     sourceLocator,
     selector: `[data-observable-refs~="${observable.observableRef}"]`,
   }));

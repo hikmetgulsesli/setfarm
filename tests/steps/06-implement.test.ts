@@ -200,22 +200,21 @@ describe("06-implement step module", () => {
   });
 
   it("exposes retry worktree patch memory instead of compact-only feedback", () => {
-    const sources = [
-      "dist/installer/steps/06-implement/context.js",
-      "dist/installer/step-ops.js",
-    ];
-    for (const sourcePath of sources) {
-      const source = fs.readFileSync(path.join(process.cwd(), sourcePath), "utf-8");
-      const blockStart = source.indexOf("RETRY_WORKTREE_PATCH:");
-      assert.notEqual(blockStart, -1, `${sourcePath} retry patch feedback block missing`);
-      const block = source.slice(blockStart, blockStart + 1200);
-      assert.match(source, /RETRY_WORKTREE_PATCH_MEMORY:/, sourcePath);
-      assert.match(source, /RETRY_WORKTREE_PATCH_BODY:/, sourcePath);
-      assert.match(block, /Touched files/, sourcePath);
-      assert.match(block, /Full patch body is available/, sourcePath);
-      assert.match(source, /```diff/, sourcePath);
-      assert.match(source, /900_000|900000/, sourcePath);
-    }
+    const sourcePath = "dist/installer/steps/06-implement/context.js";
+    const source = fs.readFileSync(path.join(process.cwd(), sourcePath), "utf-8");
+    const blockStart = source.indexOf("RETRY_WORKTREE_PATCH:");
+    assert.notEqual(blockStart, -1, `${sourcePath} retry patch feedback block missing`);
+    const block = source.slice(blockStart, blockStart + 1200);
+    assert.match(source, /RETRY_WORKTREE_PATCH_MEMORY:/, sourcePath);
+    assert.match(source, /RETRY_WORKTREE_PATCH_BODY:/, sourcePath);
+    assert.match(block, /Touched files/, sourcePath);
+    assert.match(block, /Full patch body is available/, sourcePath);
+    assert.match(source, /```diff/, sourcePath);
+    assert.match(source, /900_000|900000/, sourcePath);
+
+    const stepOps = fs.readFileSync(path.join(process.cwd(), "dist/installer/step-ops.js"), "utf-8");
+    assert.match(stepOps, /injectStoryContextFromModule\(nextStory, step, context,/);
+    assert.doesNotMatch(stepOps, /RETRY_WORKTREE_PATCH_MEMORY:/);
   });
 
   it("blocks visible app-shell diagnostics around generated full-screen Stitch screens", () => {
@@ -1681,6 +1680,11 @@ describe("06-implement step module", () => {
     assert.match(prompt, /If no generated component exists for this stack, recreate the assigned screen from Stitch HTML, DESIGN_DOM, UI_CONTRACT/);
     assert.match(contextSource, /DESIGN_SOURCE_OF_TRUTH/);
     assert.match(contextSource, /binding visual contract/);
+    assert.match(contextSource, /setfarm\.stitch-target-response-bindings\.v2/);
+    assert.match(contextSource, /V3_STITCH_SELECTED_ARTIFACT_HASH_MISMATCH/);
+    assert.match(contextSource, /V3_STITCH_SELECTED_ARTIFACT_MISSING/);
+    assert.match(contextSource, /V3_STITCH_STORY_SCREEN_UNBOUND/);
+    assert.match(contextSource, /candidateSelectionHash/);
     assert.doesNotMatch(contextSource, /read stitch files for full design/);
     assert.doesNotMatch(contextSource, /read stitch\/DESIGN_DOM\.json for full DOM/);
     assert.doesNotMatch(contextSource, /read stitch\/DESIGN_DOM\.json for the full behavior contract/);
@@ -1853,7 +1857,9 @@ describe("06-implement step module", () => {
   });
 
   it("resets story scope context before each loop claim", () => {
-    const source = fs.readFileSync(path.join(process.cwd(), "src/installer/step-ops.ts"), "utf-8");
+    const stepOps = fs.readFileSync(path.join(process.cwd(), "src/installer/step-ops.ts"), "utf-8");
+    assert.match(stepOps, /injectStoryContextFromModule\(nextStory, step, context,/);
+    const source = fs.readFileSync(path.join(process.cwd(), "src/installer/steps/06-implement/context.ts"), "utf-8");
     const scopeRead = source.indexOf("SELECT scope_files, shared_files, scope_description");
     const baseRepo = source.indexOf("const baseRepo = context[\"repo\"] || context[\"REPO\"] || \"\";", scopeRead);
     assert.notEqual(scopeRead, -1, "scope row lookup should exist");

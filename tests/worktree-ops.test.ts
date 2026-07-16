@@ -5,7 +5,19 @@ import { execFileSync } from "node:child_process";
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
-import { applyScopedRetryPatchForStory, createStoryWorktree, discardDirtyRetryWorktreeState, discardStoryWorktreeAndResetBranchExact, latestRetryPatchForStory } from "../src/installer/worktree-ops.js";
+import { applyScopedRetryPatchForStory, copyStitchToWorktree, createStoryWorktree, discardDirtyRetryWorktreeState, discardStoryWorktreeAndResetBranchExact, latestRetryPatchForStory } from "../src/installer/worktree-ops.js";
+import { produceProductSpecV1 } from "../src/product-compiler/producers/product-spec.js";
+import { produceDesignGenerationTargetsV1 } from "../src/product-compiler/producers/design-targets.js";
+import {
+  bindStitchTargetCandidateSelectionsV2,
+  selectStitchTargetCandidatesV1,
+} from "../src/product-compiler/producers/stitch-target-candidate-selection.js";
+import {
+  buildTestRenderedSemantics,
+  stitchDownloadReceipts,
+  validStitchHtml,
+  validStitchPng,
+} from "./product-compiler/fixtures/stitch-artifacts.js";
 
 function git(cwd: string, args: string[]): string {
   return execFileSync("git", args, {
@@ -16,7 +28,128 @@ function git(cwd: string, args: string[]): string {
   }).trim();
 }
 
+function writeValidStitchV2Authority(repo: string): void {
+  const product = produceProductSpecV1({
+    task: "Build a compact status utility called Worktree Pulse. It has a refresh button and a ready/paused toggle. Keep status in localStorage. Do not add navigation or analytics.",
+  });
+  assert.equal(product.status, "produced", JSON.stringify(product.diagnostics));
+  const targets = produceDesignGenerationTargetsV1(product.productSpec);
+  assert.equal(targets.status, "produced", JSON.stringify(targets.diagnostics));
+  const target = targets.generationTargets.targets[0]!;
+  let ordinal = 1;
+  const nextRef = () => `E${String(ordinal++).padStart(6, "0")}`;
+  const html = validStitchHtml([
+    `<main data-surface-id="${target.surfaceRef}" data-setfarm-element-ref="${nextRef()}">`,
+    ...target.requiredActionRefs.map((actionRef) =>
+      `<button data-action="${actionRef}" data-setfarm-element-ref="${nextRef()}">${actionRef}</button>`),
+    ...target.requiredActionInputs.flatMap((input) => input.inputFields.map((field) =>
+      `<input data-action-input="${input.actionRef}.${field}" data-setfarm-element-ref="${nextRef()}" />`)),
+    "</main>",
+  ].join(""), "worktree-authority");
+  const screenshot = validStitchPng(4);
+  const directResponseEvidence = {
+    schema: "setfarm.stitch-direct-response-evidence.v2",
+    projectId: "worktree-authority",
+    batches: [{
+      stageId: "stage-worktree",
+      targetRefs: [target.targetId],
+      source: "direct",
+      candidates: [{
+        screenId: "screen",
+        title: target.expectedScreenTitle,
+        responsePaths: ["$result.screens[0]"],
+        htmlAvailable: true,
+        screenshotAvailable: true,
+        ...stitchDownloadReceipts("screen", html, screenshot),
+        identityConflicts: [],
+        disposition: "admitted_renderable_screen",
+        missingEvidence: [],
+      }],
+    }],
+  };
+  const artifacts = [{ screenId: "screen", htmlBytes: html, screenshotBytes: screenshot }];
+  const renderedSemantics = buildTestRenderedSemantics({
+    generationTargets: targets.generationTargets,
+    directResponseEvidence,
+    artifacts,
+  });
+  const selected = selectStitchTargetCandidatesV1({
+    generationTargets: targets.generationTargets,
+    directResponseEvidence,
+    renderedSemantics,
+    artifacts,
+    authorityMode: "clean_v3",
+  });
+  assert.equal(selected.status, "produced", JSON.stringify(selected.diagnostics));
+  if (selected.status !== "produced") return;
+  const bound = bindStitchTargetCandidateSelectionsV2({
+    generationTargets: targets.generationTargets,
+    candidateSelection: selected.candidateSelection,
+  });
+  assert.equal(bound.status, "produced", JSON.stringify(bound.diagnostics));
+  if (bound.status !== "produced") return;
+  const stitch = path.join(repo, "stitch");
+  fs.mkdirSync(path.join(stitch, "rendered-dom"), { recursive: true });
+  for (const [name, value] of [
+    ["GENERATION_TARGETS.json", targets.generationTargets],
+    ["STITCH_DIRECT_RESPONSE_EVIDENCE.json", directResponseEvidence],
+    ["STITCH_RENDERED_SEMANTICS.json", renderedSemantics],
+    ["STITCH_TARGET_CANDIDATE_SELECTION.json", selected.candidateSelection],
+    ["STITCH_RESPONSE_BINDINGS.json", bound.responseBindings],
+  ] as const) {
+    fs.writeFileSync(path.join(stitch, name), `${JSON.stringify(value)}\n`);
+  }
+  fs.writeFileSync(path.join(stitch, "screen.html"), html);
+  fs.writeFileSync(path.join(stitch, "screen.png"), screenshot);
+  fs.writeFileSync(path.join(stitch, "rendered-dom", "screen.html"), html);
+}
+
 describe("worktree operations", () => {
+  it("replaces stale worktree Stitch bytes when v2 output authority exists", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-stitch-v2-copy-"));
+    const repo = path.join(tmp, "repo");
+    const worktree = path.join(tmp, "worktree");
+    try {
+      fs.mkdirSync(path.join(repo, "stitch"), { recursive: true });
+      fs.mkdirSync(path.join(worktree, "stitch"), { recursive: true });
+      writeValidStitchV2Authority(repo);
+      fs.writeFileSync(path.join(worktree, "stitch", "screen.html"), "stale html\n");
+      fs.writeFileSync(path.join(worktree, "stitch", "stale-only.html"), "stale only\n");
+
+      copyStitchToWorktree(repo, worktree);
+
+      assert.deepEqual(
+        fs.readFileSync(path.join(worktree, "stitch", "screen.html")),
+        fs.readFileSync(path.join(repo, "stitch", "screen.html")),
+      );
+      assert.equal(fs.existsSync(path.join(worktree, "stitch", "stale-only.html")), false);
+      assert.equal(fs.existsSync(path.join(worktree, "stitch", "STITCH_TARGET_CANDIDATE_SELECTION.json")), true);
+      assert.equal(fs.existsSync(path.join(worktree, "stitch", "STITCH_RENDERED_SEMANTICS.json")), true);
+      assert.equal(fs.existsSync(path.join(worktree, "stitch", "rendered-dom", "screen.html")), true);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses to copy a tampered rendered-semantics sidecar into a story worktree", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-stitch-v2-tamper-"));
+    const repo = path.join(tmp, "repo");
+    const worktree = path.join(tmp, "worktree");
+    try {
+      fs.mkdirSync(worktree, { recursive: true });
+      writeValidStitchV2Authority(repo);
+      fs.appendFileSync(path.join(repo, "stitch", "rendered-dom", "screen.html"), "<!-- tampered -->");
+
+      assert.throws(
+        () => copyStitchToWorktree(repo, worktree),
+        (error: unknown) => (error as { code?: string }).code === "STITCH_WORKTREE_AUTHORITY_INVALID",
+      );
+      assert.equal(fs.existsSync(path.join(worktree, "stitch", "STITCH_RESPONSE_BINDINGS.json")), false);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("supports macOS worktree process cleanup via lsof", () => {
     const source = fs.readFileSync(path.join(process.cwd(), "src/installer/worktree-ops.ts"), "utf-8");
 

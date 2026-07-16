@@ -7,7 +7,7 @@ import type { IndexedArtifactPublicationResult } from "../product-compiler/index
 import { IndexedArtifactPublisher } from "../product-compiler/indexed-artifact-publisher.js";
 import { canonicalJsonStringify, hashCanonicalJson } from "../product-compiler/canonical-json.js";
 import { SemanticArtifactEnvelopeV1Schema } from "../product-compiler/artifact-store.js";
-import { createRuntimeArtifactReader, type SealedRuntimePacketV1 } from "../product-compiler/runtime-artifact-reader.js";
+import { createRuntimeArtifactReader, type SealedRuntimePacket } from "../product-compiler/runtime-artifact-reader.js";
 import { compileImplementationSlice } from "../product-compiler/slice-compiler.js";
 import { ImplementationSliceV1Schema, type ImplementationSliceV1 } from "../product-compiler/schemas/implementation-slice-v1.js";
 import type { SemanticArtifactProducerV1 } from "../product-compiler/schemas/common-v1.js";
@@ -182,7 +182,7 @@ type DependencySignature = Readonly<{
 }>;
 
 type V3CompilerDependencies = Readonly<{
-  readPacket(runId: string): Promise<SealedRuntimePacketV1>;
+  readPacket(runId: string): Promise<SealedRuntimePacket>;
   publish(envelope: unknown): Promise<IndexedArtifactPublicationResult>;
   addRunRef(input: { runId: string; refKey: string; artifactHash: string }): Promise<unknown>;
   reserveAttempt(input: unknown): Promise<AttemptReservationResult>;
@@ -286,7 +286,7 @@ function operationalRetryRefKey(directiveHash: string): string {
 }
 
 function operationalRetryEnvelope(
-  packet: SealedRuntimePacketV1,
+  packet: SealedRuntimePacket,
   directive: OperationalRetryDirectiveV1,
 ) {
   return SemanticArtifactEnvelopeV1Schema.parse({
@@ -306,7 +306,7 @@ function writableSlicePaths(slice: ImplementationSliceV1): string[] {
 }
 
 function evidencePlanEnvelope(
-  packet: SealedRuntimePacketV1,
+  packet: SealedRuntimePacket,
   plan: EvidencePlanV1,
 ) {
   return SemanticArtifactEnvelopeV1Schema.parse({
@@ -395,7 +395,7 @@ async function validateOperationalRetryAuthority(input: Readonly<{
 
 async function loadOperationalRetryArtifact(input: Readonly<{
   dependencies: V3CompilerDependencies;
-  packet: SealedRuntimePacketV1;
+  packet: SealedRuntimePacket;
   attempt: ExecutionAttemptV1;
   slice: ImplementationSliceV1;
 }>): Promise<Readonly<{

@@ -15,6 +15,15 @@ import { getMedicStatus, getRecentMedicChecks } from "../medic/medic.js";
 import { readSupervisorArtifactSummary } from "./supervisor-summary.js";
 import { getRunOperationalModel } from "./run-operational-model.js";
 import { buildRunOperationalSnapshot } from "./run-operational-snapshot.js";
+import { readProductBuildAuthorityV1 } from "./product-build-authority.js";
+import {
+  RuntimeArtifactReaderError,
+  createRuntimeArtifactReader,
+} from "../product-compiler/runtime-artifact-reader.js";
+import {
+  resolveProductArtifactCapacity,
+  resolveProductArtifactDir,
+} from "../runtime-config.js";
 import { readShadowParityReport } from "../execution/shadow-parity.js";
 import {
   createV3ProjectTransferAckRepository,
@@ -574,6 +583,38 @@ export function startDashboard(port = 3333, options: Readonly<{
     if (operationalSnapshotMatch) {
       const snapshot = await buildRunOperationalSnapshot(getSql(), operationalSnapshotMatch[1]);
       return snapshot ? json(res, snapshot) : json(res, { error: "not found" }, 404);
+    }
+
+    const productBuildAuthorityMatch = p.match(/^\/api\/runs\/([^/]+)\/product-build-authority$/);
+    if (productBuildAuthorityMatch && req.method === "GET") {
+      const runId = productBuildAuthorityMatch[1];
+      try {
+        const authority = await readProductBuildAuthorityV1(createRuntimeArtifactReader({
+          sql: getSql(),
+          artifactRoot: resolveProductArtifactDir(),
+          artifactLimits: resolveProductArtifactCapacity(),
+        }), runId);
+        return json(res, authority);
+      } catch (error) {
+        if (error instanceof RuntimeArtifactReaderError) {
+          const status = error.code === "RUNTIME_PACKET_RUN_NOT_FOUND"
+            ? 404
+            : [
+                "RUNTIME_PACKET_RUN_NOT_V3",
+                "RUNTIME_PACKET_NOT_ACTIVE",
+                "RUNTIME_PACKET_NOT_TERMINAL",
+                "RUNTIME_PACKET_NOT_SEALED",
+              ].includes(error.code)
+              ? 409
+              : 503;
+          return json(res, {
+            schema: "setfarm.product-build-authority-error.v1",
+            runId,
+            code: error.code,
+          }, status);
+        }
+        throw error;
+      }
     }
 
     const deploymentObservationMatch = p.match(/^\/api\/runs\/([^/]+)\/deployment-observation$/);

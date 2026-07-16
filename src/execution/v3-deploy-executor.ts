@@ -25,7 +25,7 @@ import { z } from "zod";
 
 import { hashCanonicalJson } from "../product-compiler/canonical-json.js";
 import { isPlatformOwnedV3PreviewCommand } from "../product-compiler/stack-topology-catalog.js";
-import { createRuntimeArtifactReader, type SealedRuntimePacketV1 } from "../product-compiler/runtime-artifact-reader.js";
+import { createRuntimeArtifactReader, type SealedRuntimePacket } from "../product-compiler/runtime-artifact-reader.js";
 import {
   hashRuntimeDataContractV1,
   RuntimeDataContractV1Schema,
@@ -198,7 +198,7 @@ export type V3DeployExecutorResult =
 type Sql = postgres.Sql | postgres.TransactionSql;
 
 export type V3DeployExecutorDependencies = Readonly<{
-  readPacket(runId: string): Promise<SealedRuntimePacketV1>;
+  readPacket(runId: string): Promise<SealedRuntimePacket>;
   assertAuthority(input: Readonly<{ runId: string; worktree: string }>): Promise<V3DeployAuthorityResult>;
   adapter: V3DeploymentPlatformAdapter;
   now?: () => Date;
@@ -317,7 +317,7 @@ function assertAuthorized(result: V3DeployAuthorityResult): Extract<V3DeployAuth
 function createReceipt(input: Readonly<{
   runId: string;
   candidate: AcceptedCandidateV1;
-  packet: SealedRuntimePacketV1;
+  packet: SealedRuntimePacket;
   buildCommand: BuildCommandV1;
   previewCommand: BuildCommandV1;
   sourceBefore: SourceRevisionV1;
@@ -438,7 +438,7 @@ export function createV3DeployExecutor(dependencies: V3DeployExecutorDependencie
       context: Readonly<Record<string, string>>;
       target: V3DeployTargetV1;
     }>): Promise<V3DeployExecutorResult> {
-      let packet: SealedRuntimePacketV1;
+      let packet: SealedRuntimePacket;
       try {
         packet = await dependencies.readPacket(input.runId);
       } catch (error) {

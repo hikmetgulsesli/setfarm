@@ -17,8 +17,14 @@ import {
   StitchTargetResponseBindingsV1Schema,
 } from "../schemas/design-generation-targets-v1.js";
 import {
+  StitchTargetCandidateSelectionV1Schema,
+  StitchTargetResponseBindingsV2Schema,
+} from "../schemas/stitch-target-candidate-selection-v1.js";
+import { StitchRenderedSemanticsV1Schema } from "../schemas/stitch-rendered-semantics-v1.js";
+import {
   ActionIdSchema,
   ObservableIdSchema,
+  Sha256Schema,
   SourceArtifactRefV1Schema,
   hasUniqueStrings,
 } from "../schemas/common-v1.js";
@@ -45,6 +51,7 @@ const IndexedControlSchema = z
     sourceLocator: z.string().min(1).max(1_024),
     generatedSourceLocator: z.string().min(1).max(1_024),
     selector: z.string().min(1).max(2_000),
+    sourceElementRef: z.string().regex(/^E[0-9]{6}$/).optional(),
     semanticSource: z.enum(["data-action", "data-action-input"]).optional(),
     href: z.string().max(2_000).optional(),
     index: z.number().int().nonnegative().optional(),
@@ -64,12 +71,16 @@ const RejectedControlSchema = z.object({
   kind: z.enum(["button", "link", "input", "textarea", "select"]),
   label: z.string().min(1).max(500),
   index: z.number().int().nonnegative(),
-  reasonCode: z.literal("undeclared_by_generation_target"),
+  reasonCode: z.enum([
+    "undeclared_by_generation_target",
+    "outside_canonical_rendered_contract",
+  ]),
   rawActionRef: ActionIdSchema.optional(),
   rawInputBindings: z.array(IndexedInputMappingSchema).max(500).optional(),
   sourceLocator: z.string().min(1).max(1_024),
   generatedSourceLocator: z.string().min(1).max(1_024),
   selector: z.string().min(1).max(2_000),
+  sourceElementRef: z.string().regex(/^E[0-9]{6}$/).optional(),
   href: z.string().max(2_000).optional(),
 }).strict();
 
@@ -80,6 +91,7 @@ const IndexedObservableSchema = z.object({
   sourceLocator: z.string().min(1).max(1_024),
   generatedSourceLocator: z.string().min(1).max(1_024),
   selector: z.string().min(1).max(2_000),
+  sourceElementRef: z.string().regex(/^E[0-9]{6}$/).optional(),
 }).strict();
 
 const ContractProjectionSchema = z.object({
@@ -123,6 +135,10 @@ const ScreenIndexEntrySchema = z
     if (!hasUniqueStrings(value.observables.map((observable) => observable.observableRef))) {
       context.addIssue({ code: "custom", path: ["observables"], message: "SCREEN_INDEX observable refs must be unique per screen" });
     }
+    const controlElementRefs = value.controls.flatMap((control) => control.sourceElementRef ? [control.sourceElementRef] : []);
+    if (!hasUniqueStrings(controlElementRefs)) {
+      context.addIssue({ code: "custom", path: ["controls"], message: "SCREEN_INDEX control browser element refs must be unique per screen" });
+    }
     if (!hasUniqueStrings([
       ...value.controls.map((control) => control.generatedLocalId),
       ...value.rejectedControls.map((control) => control.rejectionId),
@@ -146,7 +162,15 @@ const AdapterInputSchema = z
   .object({
     productSpec: ProductSpecV1Schema,
     generationTargets: DesignGenerationTargetsV1Schema,
-    responseBindings: StitchTargetResponseBindingsV1Schema,
+    candidateSelection: StitchTargetCandidateSelectionV1Schema.optional(),
+    renderedSemantics: StitchRenderedSemanticsV1Schema.optional(),
+    authoritySourceHashes: z.array(Sha256Schema).max(100).refine(hasUniqueStrings, {
+      message: "Exact design authority source hashes must be unique",
+    }).default([]),
+    responseBindings: z.union([
+      StitchTargetResponseBindingsV2Schema,
+      StitchTargetResponseBindingsV1Schema,
+    ]),
     screenIndex: ExactTextArtifactSchema,
     generatedSources: z.array(GeneratedSourceSchema).min(1).max(1_000),
   })
@@ -375,6 +399,28 @@ export function adaptExactStitchScreenIndexV4(input: unknown): StitchScreenIndex
       reference: value.responseBindings.generationTargetsHash,
     }));
   }
+  if (value.responseBindings.schema === "setfarm.stitch-target-response-bindings.v2" && (
+    !value.candidateSelection
+    || hashCanonicalJson(value.generationTargets) !== value.candidateSelection.generationTargetsHash
+    || hashCanonicalJson(value.candidateSelection) !== value.responseBindings.candidateSelectionHash
+    || !value.renderedSemantics
+    || hashCanonicalJson(value.renderedSemantics) !== value.responseBindings.renderedSemanticsHash
+    || value.candidateSelection.renderedSemanticsHash !== value.responseBindings.renderedSemanticsHash
+    || value.renderedSemantics.generationTargetsHash !== value.responseBindings.generationTargetsHash
+    || value.renderedSemantics.directResponseEvidenceHash !== value.candidateSelection.directResponseEvidenceHash
+  )) {
+    diagnostics.push(diagnostic({
+      code: "DESIGN_CANDIDATE_SELECTION_HASH_MISMATCH",
+      message: "Stitch response bindings do not reference one exact rendered-semantics and candidate-selection authority chain",
+      reference: value.responseBindings.candidateSelectionHash,
+    }));
+  }
+  if (value.responseBindings.schema === "setfarm.stitch-target-response-bindings.v1" && (value.candidateSelection || value.renderedSemantics)) {
+    diagnostics.push(diagnostic({
+      code: "DESIGN_CANDIDATE_SELECTION_VERSION_MISMATCH",
+      message: "Historical v1 bindings cannot claim browser-rendered or v2 candidate-selection authority",
+    }));
+  }
   exactArtifactBytes(value.screenIndex, diagnostics);
   value.generatedSources.forEach((source) => exactArtifactBytes(source, diagnostics));
 
@@ -466,6 +512,72 @@ export function adaptExactStitchScreenIndexV4(input: unknown): StitchScreenIndex
         reference: target.targetId,
       }));
       continue;
+    }
+    const bindingV2 = "semanticDomHash" in binding ? binding : undefined;
+    const targetSelection = value.candidateSelection?.selections.find((selection) => selection.targetRef === target.targetId);
+    const selectedEvaluation = targetSelection?.evaluations.find((evaluation) => evaluation.screenId === binding.responseScreenId);
+    const selectedCandidate = value.candidateSelection?.candidates.find((candidate) => candidate.screenId === binding.responseScreenId);
+    const renderedCandidate = value.renderedSemantics?.candidates.find((candidate) => candidate.screenId === binding.responseScreenId);
+    const exactElementRefsBySemantic = new Map<string, string[]>();
+    for (const check of selectedEvaluation?.semanticChecks ?? []) {
+      if (check.kind === "screen_title" || check.disposition !== "exact") continue;
+      const key = `${check.kind}\0${check.semanticRef}`;
+      if (exactElementRefsBySemantic.has(key)) {
+        diagnostics.push(diagnostic({
+          code: "DESIGN_RENDERED_SEMANTIC_CHECK_DUPLICATE",
+          message: `Target ${target.targetId} repeats exact semantic check ${check.kind}:${check.semanticRef}`,
+          reference: check.semanticRef,
+        }));
+      }
+      exactElementRefsBySemantic.set(key, check.elementRefs);
+    }
+    const exactElementRefs = (kind: string, semanticRef: string): string[] =>
+      exactElementRefsBySemantic.get(`${kind}\0${semanticRef}`) ?? [];
+    const expectedSourceLocator = bindingV2
+      ? renderedCandidate?.semanticDom?.locator
+      : `stitch/${binding.responseScreenId}.html`;
+    if (bindingV2) {
+      const exactContractRefs = uniqueSorted([...exactElementRefsBySemantic.values()].flat());
+      if (
+        !targetSelection
+        || targetSelection.status !== "selected"
+        || targetSelection.selectedScreenId !== binding.responseScreenId
+        || targetSelection.stageId !== binding.stageId
+        || selectedEvaluation?.qualificationTier !== "exact_target_semantics"
+        || !selectedCandidate
+        || selectedCandidate.semanticEvidenceStatus !== "browser_rendered"
+        || selectedCandidate.semanticDomHash !== bindingV2.semanticDomHash
+        || selectedCandidate.semanticObservationHash !== bindingV2.semanticObservationHash
+        || !renderedCandidate
+        || renderedCandidate.status !== "rendered"
+        || renderedCandidate.stageId !== binding.stageId
+        || renderedCandidate.semanticDom?.hash !== bindingV2.semanticDomHash
+        || renderedCandidate.observationHash !== bindingV2.semanticObservationHash
+        || hashCanonicalJson(renderedCandidate.elements) !== renderedCandidate.observationHash
+        || !sameStrings(exactContractRefs, bindingV2.contractElementRefs)
+      ) {
+        diagnostics.push(diagnostic({
+          code: "DESIGN_RENDERED_AUTHORITY_MISMATCH",
+          message: `Target ${target.targetId} converter evidence does not match its exact browser-rendered binding`,
+          reference: target.targetId,
+        }));
+      }
+      for (const [kind, semanticRefs] of [
+        ["surface", [target.surfaceRef]],
+        ["action", target.requiredActionRefs],
+        ["action_input", target.requiredActionInputs.flatMap((entry) => entry.inputFields.map((field) => `${entry.actionRef}.${field}`))],
+        ["accessibility", (target.requiredObservableSelectors ?? []).flatMap((entry) => entry.selector.kind === "accessibility" ? [entry.observableRef] : [])],
+      ] as const) {
+        for (const semanticRef of semanticRefs) {
+          if (exactElementRefs(kind, semanticRef).length !== 1) {
+            diagnostics.push(diagnostic({
+              code: "DESIGN_RENDERED_SEMANTIC_CHECK_INVALID",
+              message: `Target ${target.targetId} requires one exact browser element for ${kind}:${semanticRef}`,
+              reference: semanticRef,
+            }));
+          }
+        }
+      }
     }
     if (screen.title !== target.expectedScreenTitle || binding.responseTitle !== target.expectedScreenTitle) {
       diagnostics.push(diagnostic({
@@ -576,6 +688,25 @@ export function adaptExactStitchScreenIndexV4(input: unknown): StitchScreenIndex
           reference: rejectedControl.rejectionId,
         }));
       }
+      if (rejectedControl.sourceLocator !== expectedSourceLocator) {
+        diagnostics.push(diagnostic({
+          code: "DESIGN_REJECTED_CONTROL_RAW_SOURCE_MISMATCH",
+          message: `Rejected control ${rejectedControl.rejectionId} source differs from exact design authority`,
+          artifactHash: source.source.hash,
+          reference: rejectedControl.rejectionId,
+        }));
+      }
+      if (bindingV2 && (
+        !rejectedControl.sourceElementRef
+        || rejectedControl.reasonCode !== "outside_canonical_rendered_contract"
+      )) {
+        diagnostics.push(diagnostic({
+          code: "DESIGN_REJECTED_CONTROL_RENDERED_REF_MISSING",
+          message: `Rejected control ${rejectedControl.rejectionId} lacks its canonical browser element disposition`,
+          artifactHash: source.source.hash,
+          reference: rejectedControl.rejectionId,
+        }));
+      }
       const expectedSelector = `[data-setfarm-rejected-control="${rejectedControl.rejectionId}"]`;
       if (rejectedControl.selector !== expectedSelector) {
         diagnostics.push(diagnostic({
@@ -609,7 +740,11 @@ export function adaptExactStitchScreenIndexV4(input: unknown): StitchScreenIndex
           reference: rejectedControl.rejectionId,
         }));
       }
-      if (rejectedControl.rawActionRef && expectedActions.has(rejectedControl.rawActionRef)) {
+      if (
+        rejectedControl.rawActionRef
+        && expectedActions.has(rejectedControl.rawActionRef)
+        && (!bindingV2 || exactElementRefs("action", rejectedControl.rawActionRef).includes(rejectedControl.sourceElementRef ?? ""))
+      ) {
         diagnostics.push(diagnostic({
           code: "DESIGN_REQUIRED_ACTION_CONTROL_REJECTED",
           message: `Required action ${rejectedControl.rawActionRef} was rejected instead of projected as an exact control`,
@@ -619,6 +754,7 @@ export function adaptExactStitchScreenIndexV4(input: unknown): StitchScreenIndex
       }
       for (const mapping of rejectedControl.rawInputBindings ?? []) {
         if (!expectedInputPairs.has(mappingKey(mapping.actionRef, mapping.inputField))) continue;
+        if (bindingV2 && !exactElementRefs("action_input", `${mapping.actionRef}.${mapping.inputField}`).includes(rejectedControl.sourceElementRef ?? "")) continue;
         diagnostics.push(diagnostic({
           code: "DESIGN_REQUIRED_INPUT_CONTROL_REJECTED",
           message: `Required input ${mapping.actionRef}.${mapping.inputField} was rejected instead of projected as an exact value provider`,
@@ -664,11 +800,10 @@ export function adaptExactStitchScreenIndexV4(input: unknown): StitchScreenIndex
           reference: observable.observableRef,
         }));
       }
-      const expectedRawLocator = `stitch/${binding.responseScreenId}.html`;
-      if (observable.sourceLocator !== expectedRawLocator) {
+      if (observable.sourceLocator !== expectedSourceLocator) {
         diagnostics.push(diagnostic({
           code: "DESIGN_OBSERVABLE_RAW_SOURCE_MISMATCH",
-          message: `Observable ${observable.observableRef} raw source differs from its exact Stitch response`,
+          message: `Observable ${observable.observableRef} source differs from its exact design authority`,
           artifactHash: source.source.hash,
           reference: observable.observableRef,
         }));
@@ -703,6 +838,18 @@ export function adaptExactStitchScreenIndexV4(input: unknown): StitchScreenIndex
           reference: observable.observableRef,
         }));
       }
+      if (bindingV2 && (
+        !observable.sourceElementRef
+        || !exactElementRefs("accessibility", observable.observableRef).includes(observable.sourceElementRef)
+        || attrValue(tag ?? "", "data-setfarm-element-ref") !== observable.sourceElementRef
+      )) {
+        diagnostics.push(diagnostic({
+          code: "DESIGN_OBSERVABLE_RENDERED_REF_MISMATCH",
+          message: `Observable ${observable.observableRef} does not preserve its exact browser element ref`,
+          artifactHash: source.source.hash,
+          reference: observable.observableRef,
+        }));
+      }
     }
 
     const providerByInputPair = new Map<string, string[]>();
@@ -719,6 +866,14 @@ export function adaptExactStitchScreenIndexV4(input: unknown): StitchScreenIndex
         diagnostics.push(diagnostic({
           code: "DESIGN_SCREEN_INDEX_CONTROL_SOURCE_MISMATCH",
           message: `Control ${control.generatedLocalId} generated source locator differs from exact generated source`,
+          artifactHash: source.source.hash,
+          reference: control.generatedLocalId,
+        }));
+      }
+      if (control.sourceLocator !== expectedSourceLocator) {
+        diagnostics.push(diagnostic({
+          code: "DESIGN_SCREEN_INDEX_CONTROL_RAW_SOURCE_MISMATCH",
+          message: `Control ${control.generatedLocalId} source differs from exact design authority`,
           artifactHash: source.source.hash,
           reference: control.generatedLocalId,
         }));
@@ -741,6 +896,18 @@ export function adaptExactStitchScreenIndexV4(input: unknown): StitchScreenIndex
             reference: control.generatedLocalId,
           }));
         }
+        if (bindingV2 && (
+          !control.sourceElementRef
+          || !exactElementRefs("action", control.actionRef).includes(control.sourceElementRef)
+          || attrValue(exactTag ?? "", "data-setfarm-element-ref") !== control.sourceElementRef
+        )) {
+          diagnostics.push(diagnostic({
+            code: "DESIGN_ACTION_RENDERED_REF_MISMATCH",
+            message: `Control ${control.generatedLocalId} does not preserve exact browser action element ref`,
+            artifactHash: source.source.hash,
+            reference: control.actionRef,
+          }));
+        }
       } else if (!["input", "textarea", "select"].includes(control.kind) || control.semanticSource !== "data-action-input") {
         diagnostics.push(diagnostic({
           code: "DESIGN_CONTROL_UNEXPECTED",
@@ -757,6 +924,18 @@ export function adaptExactStitchScreenIndexV4(input: unknown): StitchScreenIndex
           diagnostics.push(diagnostic({
             code: "DESIGN_INPUT_SOURCE_MAPPING_MISSING",
             message: `Control ${control.generatedLocalId} does not preserve exact data-action-input=${mapping.actionRef}.${mapping.inputField}`,
+            artifactHash: source.source.hash,
+            reference: `${mapping.actionRef}.${mapping.inputField}`,
+          }));
+        }
+        if (bindingV2 && (
+          !control.sourceElementRef
+          || !exactElementRefs("action_input", `${mapping.actionRef}.${mapping.inputField}`).includes(control.sourceElementRef)
+          || attrValue(exactTag ?? "", "data-setfarm-element-ref") !== control.sourceElementRef
+        )) {
+          diagnostics.push(diagnostic({
+            code: "DESIGN_INPUT_RENDERED_REF_MISMATCH",
+            message: `Control ${control.generatedLocalId} does not preserve exact browser input element ref`,
             artifactHash: source.source.hash,
             reference: `${mapping.actionRef}.${mapping.inputField}`,
           }));
@@ -785,6 +964,14 @@ export function adaptExactStitchScreenIndexV4(input: unknown): StitchScreenIndex
     }
 
     const outputControls: DesignGraphProducerInput["converterOutputs"][number]["controls"] = [];
+    const renderedSourceFor = (elementRef: string | undefined) =>
+      bindingV2 && expectedSourceLocator && elementRef
+        ? {
+            artifactHash: bindingV2.semanticDomHash,
+            locator: expectedSourceLocator,
+            elementRef,
+          }
+        : undefined;
     for (const control of screen.controls) {
       const inputMappings = control.inputBindings ?? [];
       if (!control.actionRef) {
@@ -793,7 +980,12 @@ export function adaptExactStitchScreenIndexV4(input: unknown): StitchScreenIndex
           kind: control.kind,
           interactive: true,
           ...(control.label ? { label: control.label } : {}),
-          source: { selector: control.selector },
+          source: {
+            selector: control.selector,
+            ...(renderedSourceFor(control.sourceElementRef)
+              ? { renderedSource: renderedSourceFor(control.sourceElementRef) }
+              : {}),
+          },
           bindings: [{
             disposition: "value_input" as const,
             fields: inputMappings.map((mapping) => ({
@@ -822,7 +1014,12 @@ export function adaptExactStitchScreenIndexV4(input: unknown): StitchScreenIndex
         kind: control.kind,
         interactive: true,
         ...(control.label ? { label: control.label } : {}),
-        source: { selector: control.selector },
+        source: {
+          selector: control.selector,
+          ...(renderedSourceFor(control.sourceElementRef)
+            ? { renderedSource: renderedSourceFor(control.sourceElementRef) }
+            : {}),
+        },
         bindings: [{
           disposition: "action" as const,
           sameElement: {
@@ -847,6 +1044,9 @@ export function adaptExactStitchScreenIndexV4(input: unknown): StitchScreenIndex
       returnedScreenId: binding.responseScreenId,
       sourceArtifactHash: source.source.hash,
       sourceLocator: source.source.locator,
+      ...(renderedSourceFor(exactElementRefs("surface", target.surfaceRef)[0])
+        ? { renderedSource: renderedSourceFor(exactElementRefs("surface", target.surfaceRef)[0]) }
+        : {}),
     });
     converterOutputs.push({
       targetRef: target.targetId,
@@ -859,7 +1059,12 @@ export function adaptExactStitchScreenIndexV4(input: unknown): StitchScreenIndex
       observables: screen.observables.map((observable) => ({
         observableRef: observable.observableRef,
         accessibility: { role: observable.role, name: observable.name },
-        source: { selector: observable.selector },
+        source: {
+          selector: observable.selector,
+          ...(renderedSourceFor(observable.sourceElementRef)
+            ? { renderedSource: renderedSourceFor(observable.sourceElementRef) }
+            : {}),
+        },
       })),
     });
   }
@@ -871,6 +1076,13 @@ export function adaptExactStitchScreenIndexV4(input: unknown): StitchScreenIndex
       productSpec: value.productSpec,
       generationTargets,
       converterOutputs,
+      authorityArtifactHashes: uniqueSorted([
+        ...value.authoritySourceHashes,
+        hashCanonicalJson(value.generationTargets),
+        hashCanonicalJson(value.responseBindings),
+        ...(value.candidateSelection ? [hashCanonicalJson(value.candidateSelection)] : []),
+        ...(value.renderedSemantics ? [hashCanonicalJson(value.renderedSemantics)] : []),
+      ]),
     },
     diagnostics: [],
   };

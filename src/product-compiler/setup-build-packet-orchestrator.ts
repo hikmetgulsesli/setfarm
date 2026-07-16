@@ -22,15 +22,25 @@ import {
   produceDesignGraphFromExactStitchScreenIndexV4,
 } from "./adapters/stitch-screen-index-v3.js";
 import type { ArtifactCapacityLimits } from "./artifact-capacity.js";
-import { canonicalJsonStringify } from "./canonical-json.js";
+import { canonicalJsonStringify, hashCanonicalJson } from "./canonical-json.js";
+import type { StitchDesignSourceInputV1 } from "./design-source-closure-compiler.js";
 import { compileRuntimeStoryPlanV1 } from "./runtime-story-plan-compiler.js";
 import { createRuntimePacketCompiler } from "./runtime-packet-compiler.js";
 import { resolveCanonicalProductSpecFromPlan } from "./runtime-plan-source.js";
+import { selectStitchTargetCandidatesV1 } from "./producers/stitch-target-candidate-selection.js";
 import {
   DesignGenerationTargetsV1Schema,
   StitchTargetResponseBindingsV1Schema,
 } from "./schemas/design-generation-targets-v1.js";
-import { StitchDirectResponseEvidenceV1Schema } from "./schemas/stitch-direct-response-evidence-v1.js";
+import {
+  StitchDirectResponseEvidenceSchema,
+  StitchDirectResponseEvidenceV2Schema,
+} from "./schemas/stitch-direct-response-evidence-v2.js";
+import { StitchRenderedSemanticsV1Schema } from "./schemas/stitch-rendered-semantics-v1.js";
+import {
+  StitchTargetCandidateSelectionV1Schema,
+  StitchTargetResponseBindingsV2Schema,
+} from "./schemas/stitch-target-candidate-selection-v1.js";
 import {
   NormalizedRelativeLocatorSchema,
   type SourceArtifactRefV1,
@@ -58,7 +68,7 @@ import {
 } from "./stack-topology-catalog.js";
 import { PRODUCT_EVIDENCE_CAPABILITY_POLICY_VERSION } from "./product-evidence-capability-policy.js";
 
-export const PRODUCT_COMPILER_RUNTIME_VERSION = "3.4.0";
+export const PRODUCT_COMPILER_RUNTIME_VERSION = "3.5.0";
 
 export type SetupBuildPacketErrorCode =
   | "SETUP_PACKET_ACTIVATION_REJECTED"
@@ -120,11 +130,14 @@ export type SetupBuildPacketContracts = Readonly<{
   designGraph: DesignInteractionGraphV1;
   buildTopology: BuildTopologyV1;
   storyPlan: StoryPlanV1;
+  designSource?: StitchDesignSourceInputV1;
   sourceHashes: Readonly<{
     plan: string;
     deliverySelection?: string;
     generationTargets: string;
     directResponseEvidence?: string;
+    renderedSemantics?: string;
+    candidateSelection?: string;
     responseBindings: string;
     screenIndex: string;
     generatedSources: string[];
@@ -619,9 +632,38 @@ export function assembleSetupBuildPacketContracts(input: Readonly<{
   const responseBindings = readJsonSource({
     repo: input.repo,
     locator: "stitch/STITCH_RESPONSE_BINDINGS.json",
-    schema: StitchTargetResponseBindingsV1Schema,
+    schema: z.union([
+      StitchTargetResponseBindingsV2Schema,
+      StitchTargetResponseBindingsV1Schema,
+    ]),
     canonical: true,
   });
+  if (input.requireV3Proposal && responseBindings.value.schema !== "setfarm.stitch-target-response-bindings.v2") {
+    throw new SetupBuildPacketError(
+      "SETUP_PACKET_DIRECT_RESPONSE_EVIDENCE_REJECTED",
+      "Product Compiler v3 requires response bindings v2 produced by canonical candidate selection",
+      { observedSchema: responseBindings.value.schema },
+    );
+  }
+  const candidateSelectionPath = path.join(input.repo, "stitch", "STITCH_TARGET_CANDIDATE_SELECTION.json");
+  if (
+    (input.requireV3Proposal || responseBindings.value.schema === "setfarm.stitch-target-response-bindings.v2")
+    && !fs.existsSync(candidateSelectionPath)
+  ) {
+    throw new SetupBuildPacketError(
+      "SETUP_PACKET_DIRECT_RESPONSE_EVIDENCE_REJECTED",
+      "Selected Stitch response bindings require canonical candidate-selection authority",
+      { locator: "stitch/STITCH_TARGET_CANDIDATE_SELECTION.json" },
+    );
+  }
+  const candidateSelection = fs.existsSync(candidateSelectionPath)
+    ? readJsonSource({
+        repo: input.repo,
+        locator: "stitch/STITCH_TARGET_CANDIDATE_SELECTION.json",
+        schema: StitchTargetCandidateSelectionV1Schema,
+        canonical: true,
+      })
+    : undefined;
   const directResponseEvidencePath = path.join(input.repo, "stitch", "STITCH_DIRECT_RESPONSE_EVIDENCE.json");
   if (input.requireV3Proposal && !fs.existsSync(directResponseEvidencePath)) {
     throw new SetupBuildPacketError(
@@ -634,11 +676,212 @@ export function assembleSetupBuildPacketContracts(input: Readonly<{
     ? readJsonSource({
         repo: input.repo,
         locator: "stitch/STITCH_DIRECT_RESPONSE_EVIDENCE.json",
-        schema: StitchDirectResponseEvidenceV1Schema,
+        schema: StitchDirectResponseEvidenceSchema,
         canonical: true,
       })
     : undefined;
-  if (directResponseEvidence) {
+  const renderedSemanticsPath = path.join(input.repo, "stitch", "STITCH_RENDERED_SEMANTICS.json");
+  if (
+    (input.requireV3Proposal || responseBindings.value.schema === "setfarm.stitch-target-response-bindings.v2")
+    && !fs.existsSync(renderedSemanticsPath)
+  ) {
+    throw new SetupBuildPacketError(
+      "SETUP_PACKET_DIRECT_RESPONSE_EVIDENCE_REJECTED",
+      "Product Compiler v3 requires canonical browser-rendered Stitch semantics",
+      { locator: "stitch/STITCH_RENDERED_SEMANTICS.json" },
+    );
+  }
+  const renderedSemantics = fs.existsSync(renderedSemanticsPath)
+    ? readJsonSource({
+        repo: input.repo,
+        locator: "stitch/STITCH_RENDERED_SEMANTICS.json",
+        schema: StitchRenderedSemanticsV1Schema,
+        canonical: true,
+      })
+    : undefined;
+  if (responseBindings.value.schema === "setfarm.stitch-target-response-bindings.v2") {
+    if (!candidateSelection || !directResponseEvidence || !renderedSemantics) {
+      throw new SetupBuildPacketError(
+        "SETUP_PACKET_DIRECT_RESPONSE_EVIDENCE_REJECTED",
+        "Response bindings v2 require rendered semantics, candidate selection, and direct response evidence",
+      );
+    }
+    if (
+      directResponseEvidence.value.schema !== "setfarm.stitch-direct-response-evidence.v2"
+      ||
+      candidateSelection.value.generationTargetsHash !== hashCanonicalJson(generationTargets.value)
+      || candidateSelection.value.directResponseEvidenceHash !== hashCanonicalJson(directResponseEvidence.value)
+      || renderedSemantics.value.generationTargetsHash !== hashCanonicalJson(generationTargets.value)
+      || renderedSemantics.value.directResponseEvidenceHash !== hashCanonicalJson(directResponseEvidence.value)
+      || candidateSelection.value.renderedSemanticsHash !== hashCanonicalJson(renderedSemantics.value)
+      || responseBindings.value.candidateSelectionHash !== hashCanonicalJson(candidateSelection.value)
+      || responseBindings.value.renderedSemanticsHash !== hashCanonicalJson(renderedSemantics.value)
+      || candidateSelection.value.downloadReceiptPolicy !== "required"
+      || candidateSelection.value.semanticEvidencePolicy !== "browser_rendered_v1"
+    ) {
+      throw new SetupBuildPacketError(
+        "SETUP_PACKET_DIRECT_RESPONSE_EVIDENCE_REJECTED",
+        "Stitch generation targets, direct evidence, candidate selection, and v2 bindings do not form one hash chain",
+      );
+    }
+    const directResponseEvidenceV2 = StitchDirectResponseEvidenceV2Schema.parse(directResponseEvidence.value);
+    for (const resource of renderedSemantics.value.resources) {
+      const source = readExactSource(input.repo, resource.locator);
+      if (source.source.hash !== resource.contentHash || source.source.byteLength !== resource.byteLength) {
+        throw new SetupBuildPacketError(
+          "SETUP_PACKET_DIRECT_RESPONSE_EVIDENCE_REJECTED",
+          `Rendered-semantics resource sidecar differs from sealed evidence: ${resource.urlHash}`,
+        );
+      }
+    }
+    for (const candidate of renderedSemantics.value.candidates) {
+      if (candidate.status !== "rendered" || !candidate.semanticDom) continue;
+      const source = readExactSource(input.repo, candidate.semanticDom.locator);
+      if (source.source.hash !== candidate.semanticDom.hash || source.source.byteLength !== candidate.semanticDom.byteLength) {
+        throw new SetupBuildPacketError(
+          "SETUP_PACKET_DIRECT_RESPONSE_EVIDENCE_REJECTED",
+          `Rendered semantic DOM sidecar differs from sealed evidence: ${candidate.screenId}`,
+        );
+      }
+    }
+    const recomputedArtifacts = directResponseEvidenceV2.batches.flatMap((batch) =>
+      batch.candidates.map((candidate) => {
+        if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,499}$/.test(candidate.screenId)) {
+          return { screenId: candidate.screenId };
+        }
+        const archivedHtmlLocator = `stitch/candidates/${candidate.screenId}.html`;
+        const archivedScreenshotLocator = `stitch/candidates/${candidate.screenId}.png`;
+        const htmlLocator = fs.existsSync(path.join(input.repo, archivedHtmlLocator))
+          ? archivedHtmlLocator
+          : `stitch/${candidate.screenId}.html`;
+        const screenshotLocator = fs.existsSync(path.join(input.repo, archivedScreenshotLocator))
+          ? archivedScreenshotLocator
+          : `stitch/${candidate.screenId}.png`;
+        return {
+          screenId: candidate.screenId,
+          ...(fs.existsSync(path.join(input.repo, htmlLocator)) ? { htmlBytes: readExactSource(input.repo, htmlLocator).bytes } : {}),
+          ...(fs.existsSync(path.join(input.repo, screenshotLocator)) ? { screenshotBytes: readExactSource(input.repo, screenshotLocator).bytes } : {}),
+        };
+      }));
+    const recomputedSelection = selectStitchTargetCandidatesV1({
+      generationTargets: generationTargets.value,
+      directResponseEvidence: directResponseEvidenceV2,
+      renderedSemantics: renderedSemantics.value,
+      artifacts: recomputedArtifacts,
+      authorityMode: "clean_v3",
+    });
+    if (
+      recomputedSelection.status !== "produced"
+      || canonicalJsonStringify(recomputedSelection.candidateSelection) !== canonicalJsonStringify(candidateSelection.value)
+    ) {
+      throw new SetupBuildPacketError(
+        "SETUP_PACKET_DIRECT_RESPONSE_EVIDENCE_REJECTED",
+        "Candidate selection does not equal the deterministic producer result over current exact artifact bytes",
+        { rejectionCodes: "rejectionCodes" in recomputedSelection ? recomputedSelection.rejectionCodes : [] },
+      );
+    }
+    const evidenceCandidateById = new Map(directResponseEvidenceV2.batches.flatMap((batch) =>
+      batch.candidates.map((candidate) => [candidate.screenId, { batch, candidate }] as const)));
+    for (const candidate of candidateSelection.value.candidates) {
+      const evidence = evidenceCandidateById.get(candidate.screenId);
+      if (
+        !evidence
+        || evidence.batch.stageId !== candidate.stageId
+        || canonicalJsonStringify([...evidence.batch.targetRefs].sort(compareUtf16)) !== canonicalJsonStringify(candidate.targetRefs)
+        || evidence.candidate.title !== candidate.title
+        || canonicalJsonStringify([...evidence.candidate.responsePaths].sort(compareUtf16)) !== canonicalJsonStringify(candidate.responsePaths)
+        || evidence.candidate.disposition !== candidate.renderDisposition
+        || canonicalJsonStringify(evidence.candidate.identityConflicts) !== canonicalJsonStringify(candidate.identityConflicts)
+        || canonicalJsonStringify(evidence.candidate.missingEvidence) !== canonicalJsonStringify(candidate.missingEvidence)
+        || (evidence.candidate.htmlSourceRefHash ?? null) !== candidate.htmlSourceRefHash
+        || (evidence.candidate.screenshotSourceRefHash ?? null) !== candidate.screenshotSourceRefHash
+        || (evidence.candidate.htmlDownloadedArtifactHash ?? null) !== candidate.htmlDownloadedArtifactHash
+        || (evidence.candidate.screenshotDownloadedArtifactHash ?? null) !== candidate.screenshotDownloadedArtifactHash
+      ) {
+        throw new SetupBuildPacketError(
+          "SETUP_PACKET_DIRECT_RESPONSE_EVIDENCE_REJECTED",
+          `Candidate selection rewrites or loses direct response evidence: ${candidate.screenId}`,
+          { candidate, evidence },
+        );
+      }
+      if (candidate.htmlArtifactHash) {
+        const archivedLocator = `stitch/candidates/${candidate.screenId}.html`;
+        const html = readExactSource(
+          input.repo,
+          fs.existsSync(path.join(input.repo, archivedLocator)) ? archivedLocator : `stitch/${candidate.screenId}.html`,
+        );
+        if (html.source.hash !== candidate.htmlArtifactHash) {
+          throw new SetupBuildPacketError(
+            "SETUP_PACKET_DIRECT_RESPONSE_EVIDENCE_REJECTED",
+            `Candidate HTML bytes differ from sealed selection: ${candidate.screenId}`,
+          );
+        }
+      }
+      if (candidate.screenshotArtifactHash) {
+        const archivedLocator = `stitch/candidates/${candidate.screenId}.png`;
+        const screenshot = readExactSource(
+          input.repo,
+          fs.existsSync(path.join(input.repo, archivedLocator)) ? archivedLocator : `stitch/${candidate.screenId}.png`,
+        );
+        if (screenshot.source.hash !== candidate.screenshotArtifactHash) {
+          throw new SetupBuildPacketError(
+            "SETUP_PACKET_DIRECT_RESPONSE_EVIDENCE_REJECTED",
+            `Candidate screenshot bytes differ from sealed selection: ${candidate.screenId}`,
+          );
+        }
+      }
+    }
+    if (candidateSelection.value.candidates.length !== evidenceCandidateById.size) {
+      throw new SetupBuildPacketError(
+        "SETUP_PACKET_DIRECT_RESPONSE_EVIDENCE_REJECTED",
+        "Candidate selection must preserve the complete direct response candidate set",
+      );
+    }
+    const selectionByTarget = new Map(candidateSelection.value.selections.map((selection) => [selection.targetRef, selection]));
+    const candidateById = new Map(candidateSelection.value.candidates.map((candidate) => [candidate.screenId, candidate]));
+    const renderedById = new Map(renderedSemantics.value.candidates.map((candidate) => [candidate.screenId, candidate]));
+    for (const binding of responseBindings.value.bindings) {
+      const selection = selectionByTarget.get(binding.targetRef);
+      const candidate = candidateById.get(binding.responseScreenId);
+      const rendered = renderedById.get(binding.responseScreenId);
+      const operationalHtml = readExactSource(input.repo, `stitch/${binding.responseScreenId}.html`);
+      const operationalScreenshot = readExactSource(input.repo, `stitch/${binding.responseScreenId}.png`);
+      if (
+        selection?.status !== "selected"
+        || selection.selectedScreenId !== binding.responseScreenId
+        || selection.stageId !== binding.stageId
+        || !candidate
+        || candidate.title !== binding.responseTitle
+        || candidate.htmlArtifactValidity !== "valid"
+        || candidate.screenshotArtifactValidity !== "valid"
+        || candidate.htmlArtifactHash !== binding.htmlArtifactHash
+        || candidate.screenshotArtifactHash !== binding.screenshotArtifactHash
+        || candidate.semanticDomHash !== binding.semanticDomHash
+        || candidate.semanticObservationHash !== binding.semanticObservationHash
+        || rendered?.status !== "rendered"
+        || rendered.semanticDom?.hash !== binding.semanticDomHash
+        || rendered.observationHash !== binding.semanticObservationHash
+        || binding.contractElementRefs.some((elementRef) =>
+          !rendered.elements.some((element) => element.elementRef === elementRef))
+        || operationalHtml.source.hash !== binding.htmlArtifactHash
+        || operationalScreenshot.source.hash !== binding.screenshotArtifactHash
+      ) {
+        throw new SetupBuildPacketError(
+          "SETUP_PACKET_DIRECT_RESPONSE_EVIDENCE_REJECTED",
+          `Response binding does not equal the canonical selected candidate: ${binding.targetRef}`,
+        );
+      }
+    }
+    if (
+      responseBindings.value.bindings.length !== generationTargets.value.targets.length
+      || candidateSelection.value.selections.some((selection) => selection.status !== "selected")
+    ) {
+      throw new SetupBuildPacketError(
+        "SETUP_PACKET_DIRECT_RESPONSE_EVIDENCE_REJECTED",
+        "Every generation target requires exactly one selected candidate and v2 response binding",
+      );
+    }
+  } else if (directResponseEvidence) {
     const directCandidateById = new Map(directResponseEvidence.value.batches.flatMap((batch) =>
       batch.candidates.map((candidate) => [candidate.screenId, { batch, candidate }] as const)));
     const admittedCandidates = directResponseEvidence.value.batches.flatMap((batch) =>
@@ -722,6 +965,21 @@ export function assembleSetupBuildPacketContracts(input: Readonly<{
   const design = produceDesignGraphFromExactStitchScreenIndexV4({
     productSpec: plan.productSpec,
     generationTargets: generationTargets.value,
+    ...(candidateSelection ? { candidateSelection: candidateSelection.value } : {}),
+    ...(renderedSemantics ? { renderedSemantics: renderedSemantics.value } : {}),
+    authoritySourceHashes: [
+      generationTargets.source.hash,
+      responseBindings.source.hash,
+      ...(candidateSelection ? [candidateSelection.source.hash] : []),
+      ...(directResponseEvidence ? [
+        directResponseEvidence.source.hash,
+        hashCanonicalJson(directResponseEvidence.value),
+      ] : []),
+      ...(renderedSemantics ? [
+        renderedSemantics.source.hash,
+        hashCanonicalJson(renderedSemantics.value),
+      ] : []),
+    ].sort(compareUtf16),
     responseBindings: responseBindings.value,
     screenIndex: { source: screenIndex.source, text: screenIndex.text },
     generatedSources,
@@ -890,17 +1148,39 @@ export function assembleSetupBuildPacketContracts(input: Readonly<{
       { rejectionCodes: stories.rejectionCodes, diagnostics: stories.diagnostics },
     );
   }
+  const designSource = responseBindings.value.schema === "setfarm.stitch-target-response-bindings.v2"
+    && directResponseEvidence?.value.schema === "setfarm.stitch-direct-response-evidence.v2"
+    && renderedSemantics
+    && candidateSelection
+    ? {
+        kind: "stitch" as const,
+        generationTargets: generationTargets.value,
+        directResponseEvidence: directResponseEvidence.value,
+        renderedSemantics: renderedSemantics.value,
+        candidateSelection: candidateSelection.value,
+        responseBindings: responseBindings.value,
+      }
+    : undefined;
+  if (input.requireV3Proposal && !designSource) {
+    throw new SetupBuildPacketError(
+      "SETUP_PACKET_DIRECT_RESPONSE_EVIDENCE_REJECTED",
+      "Product Compiler v3 requires one typed Stitch design-source closure input",
+    );
+  }
   return {
     productSpec: plan.productSpec,
     ...(deliverySelection ? { deliverySelection: deliverySelection.selection } : {}),
     designGraph: design.designGraph,
     buildTopology,
     storyPlan: stories.storyPlan,
+    ...(designSource ? { designSource } : {}),
     sourceHashes: {
       plan: plan.sourceHash,
       ...(deliverySelection ? { deliverySelection: deliverySelection.selectionHash } : {}),
       generationTargets: generationTargets.source.hash,
       ...(directResponseEvidence ? { directResponseEvidence: directResponseEvidence.source.hash } : {}),
+      ...(renderedSemantics ? { renderedSemantics: renderedSemantics.source.hash } : {}),
+      ...(candidateSelection ? { candidateSelection: candidateSelection.source.hash } : {}),
       responseBindings: responseBindings.source.hash,
       screenIndex: screenIndex.source.hash,
       generatedSources: generatedSources.map((source) => source.source.hash).sort(compareUtf16),
@@ -956,6 +1236,9 @@ export async function orchestrateSetupBuildProductPacket(input: Readonly<{
     designGraph: contracts.designGraph,
     buildTopology: contracts.buildTopology,
     storyPlan: contracts.storyPlan,
+    ...(input.expectedMode === "v3" && contracts.designSource
+      ? { designSource: contracts.designSource }
+      : {}),
     compiler: {
       version: PRODUCT_COMPILER_RUNTIME_VERSION,
       codeSha: protocol.compilerReleaseSha,

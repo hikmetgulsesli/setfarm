@@ -8,9 +8,18 @@
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
+import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { pgGet } from "../db-pg.js";
 import { logger } from "../lib/logger.js";
+import { hashCanonicalJson } from "../product-compiler/canonical-json.js";
+import { DesignGenerationTargetsV1Schema } from "../product-compiler/schemas/design-generation-targets-v1.js";
+import { StitchDirectResponseEvidenceV2Schema } from "../product-compiler/schemas/stitch-direct-response-evidence-v2.js";
+import { StitchRenderedSemanticsV1Schema } from "../product-compiler/schemas/stitch-rendered-semantics-v1.js";
+import {
+  StitchTargetCandidateSelectionV1Schema,
+  StitchTargetResponseBindingsV2Schema,
+} from "../product-compiler/schemas/stitch-target-candidate-selection-v1.js";
 
 // ── Worktree Base Dir Resolution ────────────────────────────────────
 
@@ -638,6 +647,107 @@ const IMPLEMENT_REFERENCE_README = [
 
 const GENERATED_SCREEN_STUB_MARKER = "Setfarm generated screen source stub";
 
+class StitchWorktreeAuthorityError extends Error {
+  readonly code = "STITCH_WORKTREE_AUTHORITY_INVALID";
+
+  constructor(message: string, cause?: unknown) {
+    super(message, cause === undefined ? undefined : { cause });
+    this.name = "StitchWorktreeAuthorityError";
+  }
+}
+
+function sha256Bytes(bytes: Uint8Array): string {
+  return createHash("sha256").update(bytes).digest("hex");
+}
+
+function exactAuthorityPath(repo: string, locator: string): string {
+  const root = path.resolve(repo);
+  const resolved = path.resolve(repo, ...String(locator).split("/"));
+  if (resolved !== root && !resolved.startsWith(`${root}${path.sep}`)) {
+    throw new StitchWorktreeAuthorityError(`Stitch authority locator escapes repository: ${locator}`);
+  }
+  return resolved;
+}
+
+function readAuthorityJson(repo: string, locator: string): unknown {
+  try {
+    return JSON.parse(fs.readFileSync(exactAuthorityPath(repo, locator), "utf8"));
+  } catch (error) {
+    throw new StitchWorktreeAuthorityError(`Cannot read Stitch authority ${locator}`, error);
+  }
+}
+
+/** Refuse to hand a story an internally inconsistent clean-v3 design corpus. */
+export function verifyStitchV2AuthorityCorpus(repo: string): void {
+  try {
+    const targets = DesignGenerationTargetsV1Schema.parse(readAuthorityJson(repo, "stitch/GENERATION_TARGETS.json"));
+    const direct = StitchDirectResponseEvidenceV2Schema.parse(readAuthorityJson(repo, "stitch/STITCH_DIRECT_RESPONSE_EVIDENCE.json"));
+    const rendered = StitchRenderedSemanticsV1Schema.parse(readAuthorityJson(repo, "stitch/STITCH_RENDERED_SEMANTICS.json"));
+    const selection = StitchTargetCandidateSelectionV1Schema.parse(readAuthorityJson(repo, "stitch/STITCH_TARGET_CANDIDATE_SELECTION.json"));
+    const bindings = StitchTargetResponseBindingsV2Schema.parse(readAuthorityJson(repo, "stitch/STITCH_RESPONSE_BINDINGS.json"));
+    const targetsHash = hashCanonicalJson(targets);
+    const directHash = hashCanonicalJson(direct);
+    const renderedHash = hashCanonicalJson(rendered);
+    const selectionHash = hashCanonicalJson(selection);
+    if (
+      rendered.generationTargetsHash !== targetsHash
+      || rendered.directResponseEvidenceHash !== directHash
+      || selection.generationTargetsHash !== targetsHash
+      || selection.directResponseEvidenceHash !== directHash
+      || selection.renderedSemanticsHash !== renderedHash
+      || bindings.generationTargetsHash !== targetsHash
+      || bindings.renderedSemanticsHash !== renderedHash
+      || bindings.candidateSelectionHash !== selectionHash
+    ) {
+      throw new StitchWorktreeAuthorityError("Stitch v2 authority hashes do not form one canonical chain");
+    }
+    for (const resource of rendered.resources) {
+      const bytes = fs.readFileSync(exactAuthorityPath(repo, resource.locator));
+      if (bytes.byteLength !== resource.byteLength || sha256Bytes(bytes) !== resource.contentHash) {
+        throw new StitchWorktreeAuthorityError(`Rendered resource bytes differ from authority: ${resource.locator}`);
+      }
+    }
+    const renderedById = new Map(rendered.candidates.map((candidate) => [candidate.screenId, candidate]));
+    const candidateById = new Map(selection.candidates.map((candidate) => [candidate.screenId, candidate]));
+    const selectionByTarget = new Map(selection.selections.map((item) => [item.targetRef, item]));
+    for (const binding of bindings.bindings) {
+      const targetSelection = selectionByTarget.get(binding.targetRef);
+      const selectedCandidate = candidateById.get(binding.responseScreenId);
+      const renderedCandidate = renderedById.get(binding.responseScreenId);
+      const renderedRefs = new Set(renderedCandidate?.elements.map((element) => element.elementRef) ?? []);
+      if (
+        targetSelection?.status !== "selected"
+        || targetSelection.selectedScreenId !== binding.responseScreenId
+        || selectedCandidate?.semanticDomHash !== binding.semanticDomHash
+        || selectedCandidate.semanticObservationHash !== binding.semanticObservationHash
+        || renderedCandidate?.status !== "rendered"
+        || renderedCandidate.semanticDom?.hash !== binding.semanticDomHash
+        || renderedCandidate.observationHash !== binding.semanticObservationHash
+        || binding.contractElementRefs.some((ref) => !renderedRefs.has(ref))
+      ) {
+        throw new StitchWorktreeAuthorityError(`Selected Stitch binding is not backed by rendered evidence: ${binding.targetRef}`);
+      }
+      const html = fs.readFileSync(exactAuthorityPath(repo, `stitch/${binding.responseScreenId}.html`));
+      const screenshot = fs.readFileSync(exactAuthorityPath(repo, `stitch/${binding.responseScreenId}.png`));
+      const semanticDom = fs.readFileSync(exactAuthorityPath(repo, renderedCandidate.semanticDom.locator));
+      if (
+        sha256Bytes(html) !== binding.htmlArtifactHash
+        || sha256Bytes(screenshot) !== binding.screenshotArtifactHash
+        || semanticDom.byteLength !== renderedCandidate.semanticDom.byteLength
+        || sha256Bytes(semanticDom) !== binding.semanticDomHash
+      ) {
+        throw new StitchWorktreeAuthorityError(`Selected Stitch artifact bytes differ from binding: ${binding.responseScreenId}`);
+      }
+    }
+    if (bindings.bindings.length !== targets.targets.length) {
+      throw new StitchWorktreeAuthorityError("Stitch v2 binding cardinality differs from generation targets");
+    }
+  } catch (error) {
+    if (error instanceof StitchWorktreeAuthorityError) throw error;
+    throw new StitchWorktreeAuthorityError("Stitch v2 authority corpus failed schema validation", error);
+  }
+}
+
 /** Copy stitch/ design assets from main repo into worktree so agents can reference them */
 function ensureReferencesLink(repo: string, worktreeDir: string): void {
   const refsSrc = path.join(repo, "references");
@@ -769,6 +879,17 @@ function listStitchCorpusPaths(worktreeDir: string): string[] {
           || /^\.stitch-screens.*\.json$/i.test(entry)) {
           paths.push(rel);
         }
+        if (["rendered-dom", "render-resources"].includes(entry)) {
+          const pending = [path.join(stitchDir, entry)];
+          while (pending.length > 0) {
+            const current = pending.pop()!;
+            for (const child of fs.readdirSync(current, { withFileTypes: true })) {
+              const absolute = path.join(current, child.name);
+              if (child.isDirectory()) pending.push(absolute);
+              else paths.push(path.relative(worktreeDir, absolute).replace(/\\/g, "/"));
+            }
+          }
+        }
       }
     }
     for (const entry of fs.readdirSync(worktreeDir)) {
@@ -857,13 +978,32 @@ export function hardenGeneratedScreenSourcesForScope(worktreeDir: string, allowe
 export function copyStitchToWorktree(repo: string, worktreeDir: string): void {
   try {
     const stitchDst = path.join(worktreeDir, "stitch");
+    const stitchSrc = path.join(repo, "stitch");
+    const sourceBindingsPath = path.join(stitchSrc, "STITCH_RESPONSE_BINDINGS.json");
+    if (fs.existsSync(sourceBindingsPath)) {
+      try {
+        const sourceBindings = JSON.parse(fs.readFileSync(sourceBindingsPath, "utf8"));
+        if (sourceBindings?.schema === "setfarm.stitch-target-response-bindings.v2") {
+          verifyStitchV2AuthorityCorpus(repo);
+          fs.rmSync(stitchDst, { recursive: true, force: true });
+          fs.cpSync(stitchSrc, stitchDst, { recursive: true });
+          verifyStitchV2AuthorityCorpus(worktreeDir);
+          logger.info("[worktree] Synchronized immutable Stitch v2 authority from canonical repo", {});
+          return;
+        }
+      } catch (error) {
+        logger.warn(`[worktree] Failed to read Stitch v2 authority: ${String(error).slice(0, 120)}`, {});
+        throw error instanceof StitchWorktreeAuthorityError
+          ? error
+          : new StitchWorktreeAuthorityError("Cannot determine Stitch worktree authority version", error);
+      }
+    }
     if (fs.existsSync(stitchDst) && fs.readdirSync(stitchDst).some(f => f.endsWith(".html"))) {
       logger.info(`[worktree] stitch/ already present in worktree, skipping copy`, {});
       return;
     }
 
     // Source 1: repo working directory
-    const stitchSrc = path.join(repo, "stitch");
     if (fs.existsSync(stitchSrc) && fs.readdirSync(stitchSrc).some(f => f.endsWith(".html"))) {
       fs.cpSync(stitchSrc, stitchDst, { recursive: true });
       logger.info(`[worktree] Copied stitch/ from repo working dir`, {});
@@ -898,6 +1038,7 @@ export function copyStitchToWorktree(repo: string, worktreeDir: string): void {
     logger.warn(`[worktree] No stitch/ source found for worktree`, {});
   } catch (e: any) {
     logger.warn(`[worktree] copyStitchToWorktree failed: ${e.message}`, {});
+    if (e instanceof StitchWorktreeAuthorityError) throw e;
   }
 }
 

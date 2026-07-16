@@ -2,8 +2,12 @@ import { hashCanonicalJson } from "../canonical-json.js";
 import { produceStoryPartitionV1 } from "../producers/story-partition.js";
 import {
   DesignGenerationTargetsV1Schema,
-  StitchTargetResponseBindingsV1Schema,
 } from "../schemas/design-generation-targets-v1.js";
+import {
+  StitchTargetCandidateSelectionV1Schema,
+  StitchTargetResponseBindingsV2Schema,
+} from "../schemas/stitch-target-candidate-selection-v1.js";
+import { StitchRenderedSemanticsV1Schema } from "../schemas/stitch-rendered-semantics-v1.js";
 import {
   ProductSpecV1Schema,
   type ProductActionV1,
@@ -183,17 +187,31 @@ function appTargets(productSpec: ProductSpecV1): LegacyScopeTarget[] {
 export function compileV3CompatibilityStoryProjection(input: Readonly<{
   productSpec: unknown;
   generationTargets: unknown;
+  renderedSemantics: unknown;
+  candidateSelection: unknown;
   responseBindings: unknown;
   maxStories?: number | null;
 }>): V3CompatibilityStoryProjection {
   const productSpec = ProductSpecV1Schema.parse(input.productSpec);
   const generationTargets = DesignGenerationTargetsV1Schema.parse(input.generationTargets);
-  const responseBindings = StitchTargetResponseBindingsV1Schema.parse(input.responseBindings);
+  const renderedSemantics = StitchRenderedSemanticsV1Schema.parse(input.renderedSemantics);
+  const candidateSelection = StitchTargetCandidateSelectionV1Schema.parse(input.candidateSelection);
+  const responseBindings = StitchTargetResponseBindingsV2Schema.parse(input.responseBindings);
   if (generationTargets.productSpecHash !== hashCanonicalJson(productSpec)) {
     throw new Error("V3_STORY_PRODUCT_SPEC_TARGET_HASH_MISMATCH");
   }
   if (responseBindings.generationTargetsHash !== hashCanonicalJson(generationTargets)) {
     throw new Error("V3_STORY_TARGET_BINDING_HASH_MISMATCH");
+  }
+  if (
+    renderedSemantics.generationTargetsHash !== hashCanonicalJson(generationTargets)
+    || candidateSelection.generationTargetsHash !== hashCanonicalJson(generationTargets)
+    || renderedSemantics.directResponseEvidenceHash !== candidateSelection.directResponseEvidenceHash
+    || candidateSelection.renderedSemanticsHash !== hashCanonicalJson(renderedSemantics)
+    || responseBindings.renderedSemanticsHash !== hashCanonicalJson(renderedSemantics)
+    || responseBindings.candidateSelectionHash !== hashCanonicalJson(candidateSelection)
+  ) {
+    throw new Error("V3_STORY_CANDIDATE_SELECTION_HASH_MISMATCH");
   }
 
   const partition = produceStoryPartitionV1({ productSpec });
@@ -206,17 +224,57 @@ export function compileV3CompatibilityStoryProjection(input: Readonly<{
 
   const targetBySurface = new Map(generationTargets.targets.map((target) => [target.surfaceRef, target]));
   const bindingByTarget = new Map(responseBindings.bindings.map((binding) => [binding.targetRef, binding]));
+  const selectionByTarget = new Map(candidateSelection.selections.map((selection) => [selection.targetRef, selection]));
+  const candidateById = new Map(candidateSelection.candidates.map((candidate) => [candidate.screenId, candidate]));
+  const renderedCandidateById = new Map(renderedSemantics.candidates.map((candidate) => [candidate.screenId, candidate]));
   if (targetBySurface.size !== productSpec.surfaces.length || responseBindings.bindings.length !== generationTargets.targets.length) {
     throw new Error("V3_STORY_DESIGN_CARDINALITY_MISMATCH");
   }
 
-  const surfaceScreen = new Map<string, { screenId: string; title: string; file: string }>();
+  const surfaceScreen = new Map<string, {
+    screenId: string;
+    title: string;
+    file: string;
+    semanticDomLocator: string;
+    semanticDomHash: string;
+    contractElementRefs: string[];
+  }>();
   const componentOwners = new Map<string, string>();
   for (const surface of productSpec.surfaces) {
     const target = targetBySurface.get(surface.id);
     if (!target) throw new Error(`V3_STORY_TARGET_MISSING:${surface.id}`);
     const binding = bindingByTarget.get(target.targetId);
-    if (!binding || binding.responseTitle !== target.expectedScreenTitle) {
+    const selection = selectionByTarget.get(target.targetId);
+    const candidate = binding ? candidateById.get(binding.responseScreenId) : undefined;
+    const renderedCandidate = binding ? renderedCandidateById.get(binding.responseScreenId) : undefined;
+    const selectedEvaluation = binding
+      ? selection?.evaluations.find((evaluation) => evaluation.screenId === binding.responseScreenId)
+      : undefined;
+    const exactContractElementRefs = unique(selectedEvaluation?.semanticChecks
+      .filter((check) => check.kind !== "screen_title" && check.disposition === "exact")
+      .flatMap((check) => check.elementRefs) ?? []).sort(compareUtf16);
+    if (
+      !binding
+      || binding.responseTitle !== target.expectedScreenTitle
+      || selection?.status !== "selected"
+      || selection.selectedScreenId !== binding.responseScreenId
+      || selection.stageId !== binding.stageId
+      || selectedEvaluation?.qualificationTier !== "exact_target_semantics"
+      || !candidate
+      || candidate.semanticEvidenceStatus !== "browser_rendered"
+      || candidate.semanticDomHash !== binding.semanticDomHash
+      || candidate.semanticObservationHash !== binding.semanticObservationHash
+      || !renderedCandidate
+      || renderedCandidate.status !== "rendered"
+      || renderedCandidate.stageId !== binding.stageId
+      || renderedCandidate.semanticDom?.hash !== binding.semanticDomHash
+      || renderedCandidate.observationHash !== binding.semanticObservationHash
+      || hashCanonicalJson(renderedCandidate.elements) !== renderedCandidate.observationHash
+      || exactContractElementRefs.length !== binding.contractElementRefs.length
+      || exactContractElementRefs.some((elementRef, index) => elementRef !== [...binding.contractElementRefs].sort(compareUtf16)[index])
+      || binding.contractElementRefs.some((elementRef) =>
+        !renderedCandidate.elements.some((element) => element.elementRef === elementRef))
+    ) {
       throw new Error(`V3_STORY_RESPONSE_BINDING_MISSING:${target.targetId}`);
     }
     const componentName = stitchComponentNameV3(binding.responseTitle);
@@ -228,6 +286,9 @@ export function compileV3CompatibilityStoryProjection(input: Readonly<{
       screenId: binding.responseScreenId,
       title: binding.responseTitle,
       file: `src/screens/${componentName}.tsx`,
+      semanticDomLocator: renderedCandidate.semanticDom.locator,
+      semanticDomHash: binding.semanticDomHash,
+      contractElementRefs: [...binding.contractElementRefs].sort(compareUtf16),
     });
   }
 
@@ -284,6 +345,10 @@ export function compileV3CompatibilityStoryProjection(input: Readonly<{
       ...story.surfaceRefs.map((surfaceRef) => {
         const screen = surfaceScreen.get(surfaceRef)!;
         return `[PRODUCT_SPEC_SURFACE] ${surfaceRef} is implemented by exact Stitch response ${screen.screenId} (${screen.title}) in ${screen.file}.`;
+      }),
+      ...story.surfaceRefs.map((surfaceRef) => {
+        const screen = surfaceScreen.get(surfaceRef)!;
+        return `[RENDERED_DESIGN_SOURCE] ${surfaceRef}; semanticDom=${screen.semanticDomLocator}#${screen.semanticDomHash}; elementRefs=${screen.contractElementRefs.join(",")}.`;
       }),
       ...story.actionRefs.map((actionRef) => {
         const action = actionById.get(actionRef)!;

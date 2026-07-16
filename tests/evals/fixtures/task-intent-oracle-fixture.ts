@@ -4,11 +4,23 @@ import { hashRuntimeEvidenceContractV1 } from "../../../src/evidence/runtime-evi
 import { TaskIntentOracleV1Schema } from "../../../src/evals/task-intent-oracle.js";
 import { extractTaskRequirementLedgerV1 } from "../../../src/product-compiler/requirements/task-requirements-v1.js";
 import { produceRuntimeDataContractV1 } from "../../../src/product-compiler/producers/runtime-data-contract.js";
+import { produceDesignGenerationTargetsV1 } from "../../../src/product-compiler/producers/design-targets.js";
+import {
+  bindStitchTargetCandidateSelectionsV2,
+  selectStitchTargetCandidatesV1,
+} from "../../../src/product-compiler/producers/stitch-target-candidate-selection.js";
+import { hashCanonicalJson } from "../../../src/product-compiler/canonical-json.js";
 import { ProductSpecV3ProposalSchema } from "../../../src/product-compiler/schemas/product-spec-v1.js";
 import { DesignInteractionGraphV1Schema } from "../../../src/product-compiler/schemas/design-interaction-graph-v1.js";
 import { ImplementationSliceV1Schema } from "../../../src/product-compiler/schemas/implementation-slice-v1.js";
 import { StoryPlanV1Schema } from "../../../src/product-compiler/schemas/story-plan-v1.js";
 import { buildMinimalValidContracts } from "../../product-compiler/fixtures/minimal-valid-contract.js";
+import {
+  buildTestRenderedSemantics,
+  stitchDownloadReceipts,
+  validStitchHtml,
+  validStitchPng,
+} from "../../product-compiler/fixtures/stitch-artifacts.js";
 
 export const TASK_INTENT_ORACLE_TASK = "Build a single-page task editor at / with a Save button that stores the entered title in domain state and local storage across reloads, then shows text Saved, value Task from state, keeps the button visible and enabled, and remains on /";
 
@@ -87,7 +99,7 @@ export function buildTaskIntentOracleFixture(
       ],
     },
   });
-  const designGraph = DesignInteractionGraphV1Schema.parse({
+  const designGraphBase = DesignInteractionGraphV1Schema.parse({
     ...base.designGraph,
     bindings: base.designGraph.bindings.map((binding) => ({
       ...binding,
@@ -99,6 +111,85 @@ export function buildTaskIntentOracleFixture(
       evidenceRef: "EVID_SAVE_OBSERVABLE",
       target: { kind: "control", controlRef: "CTRL_SAVE_TASK" },
     }],
+  });
+  const targetsResult = produceDesignGenerationTargetsV1(productSpec);
+  if (targetsResult.status !== "produced") {
+    throw new Error(`ORACLE_FIXTURE_GENERATION_TARGETS_REJECTED:${JSON.stringify(targetsResult.diagnostics)}`);
+  }
+  const target = targetsResult.generationTargets.targets[0]!;
+  const html = validStitchHtml([
+    `<main data-surface-id="${target.surfaceRef}">`,
+    ...target.requiredActionRefs.map((actionRef) => `<button data-action="${actionRef}">${actionRef}</button>`),
+    ...target.requiredActionInputs.flatMap((input) => input.inputFields.map((field) =>
+      `<input data-action-input="${input.actionRef}.${field}" />`)),
+    "</main>",
+  ].join(""), "task-intent-oracle");
+  const screenshot = validStitchPng(29);
+  const directResponseEvidence = {
+    schema: "setfarm.stitch-direct-response-evidence.v2" as const,
+    projectId: "task-intent-oracle",
+    batches: [{
+      stageId: "stage-task-intent-oracle",
+      targetRefs: [target.targetId],
+      source: "direct" as const,
+      candidates: [{
+        screenId: "screen-task-intent-oracle",
+        title: target.expectedScreenTitle,
+        responsePaths: ["$result.screens[0]"],
+        htmlAvailable: true,
+        screenshotAvailable: true,
+        ...stitchDownloadReceipts("screen-task-intent-oracle", html, screenshot),
+        identityConflicts: [],
+        disposition: "admitted_renderable_screen" as const,
+        missingEvidence: [],
+      }],
+    }],
+  };
+  const artifacts = [{
+    screenId: "screen-task-intent-oracle",
+    htmlBytes: html,
+    screenshotBytes: screenshot,
+  }];
+  const renderedSemantics = buildTestRenderedSemantics({
+    generationTargets: targetsResult.generationTargets,
+    directResponseEvidence,
+    artifacts,
+  });
+  const selection = selectStitchTargetCandidatesV1({
+    generationTargets: targetsResult.generationTargets,
+    directResponseEvidence,
+    renderedSemantics,
+    artifacts,
+    authorityMode: "clean_v3",
+  });
+  if (selection.status !== "produced") {
+    throw new Error(`ORACLE_FIXTURE_CANDIDATE_SELECTION_REJECTED:${JSON.stringify(selection.diagnostics)}`);
+  }
+  const bindings = bindStitchTargetCandidateSelectionsV2({
+    generationTargets: targetsResult.generationTargets,
+    candidateSelection: selection.candidateSelection,
+  });
+  if (bindings.status !== "produced") {
+    throw new Error(`ORACLE_FIXTURE_RESPONSE_BINDINGS_REJECTED:${JSON.stringify(bindings.diagnostics)}`);
+  }
+  const designSource = {
+    kind: "stitch" as const,
+    generationTargets: targetsResult.generationTargets,
+    directResponseEvidence,
+    renderedSemantics,
+    candidateSelection: selection.candidateSelection,
+    responseBindings: bindings.responseBindings,
+  };
+  const designGraph = DesignInteractionGraphV1Schema.parse({
+    ...designGraphBase,
+    rawArtifactHashes: [...new Set([
+      ...designGraphBase.rawArtifactHashes,
+      hashCanonicalJson(designSource.generationTargets),
+      hashCanonicalJson(designSource.directResponseEvidence),
+      hashCanonicalJson(designSource.renderedSemantics),
+      hashCanonicalJson(designSource.candidateSelection),
+      hashCanonicalJson(designSource.responseBindings),
+    ])].sort(),
   });
   const storyPlan = StoryPlanV1Schema.parse({
     ...base.storyPlan,
@@ -225,6 +316,7 @@ export function buildTaskIntentOracleFixture(
       designGraph,
       buildTopology,
       storyPlan,
+      designSource,
       packet: {
         ...base.packet,
         runtimeDataContractHash: runtimeData.contractHash,

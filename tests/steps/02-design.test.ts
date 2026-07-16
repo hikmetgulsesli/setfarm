@@ -254,12 +254,14 @@ describe("02-design step module", () => {
     assert.match(source, /GENERATION_TARGETS\.json/);
     assert.match(source, /STITCH_RESPONSE_BINDINGS\.json/);
     assert.match(source, /STITCH_DIRECT_RESPONSE_EVIDENCE\.json/);
-    assert.match(source, /decodeStitchDirectBatchV1/);
+    assert.match(source, /STITCH_TARGET_CANDIDATE_SELECTION\.json/);
+    assert.match(source, /decodeStitchDirectBatchV2/);
     assert.match(decoderSource, /DESIGN_V3_DIRECT_RESPONSE_EVIDENCE_MISMATCH/);
     assert.match(source, /DESIGN_V3_DIRECT_BATCH_INCOMPLETE/);
     assert.match(source, /DESIGN_V3_RESPONSE_HTML_MISSING/);
     assert.match(source, /const downloadAttempts = v3Contract \? 0/);
-    assert.match(source, /bindExactStitchTargetResponsesV1/);
+    assert.match(source, /selectStitchTargetCandidatesV1/);
+    assert.match(source, /bindStitchTargetCandidateSelectionsV2/);
     assert.match(source, /if \(v3Contract\)[\s\S]*exactV3ScreenMap/);
     assert.match(source, /if \(!v3Contract && screenMap\.length > 0\)[\s\S]*verifyScreenMapToSurfaces/);
     assert.match(source, /manifest\/title reconciliation is forbidden/);
@@ -271,6 +273,7 @@ describe("02-design step module", () => {
     const targetCompilation = source.indexOf("prepareV3DesignContract(prd, stitchDir)");
     assert.ok(bypass >= 0 && targetCompilation >= 0 && bypass < targetCompilation);
     assert.match(source, /delete ctx\.context\["generation_targets"\]/);
+    assert.match(source, /delete ctx\.context\["stitch_candidate_selection"\]/);
     assert.match(source, /delete ctx\.context\["stitch_response_bindings"\]/);
   });
 

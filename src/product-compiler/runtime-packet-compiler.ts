@@ -5,6 +5,7 @@ import type { ArtifactCapacityLimits } from "./artifact-capacity.js";
 import { ContentAddressedArtifactStore } from "./artifact-store.js";
 import { createArtifactIndex } from "./artifact-index.js";
 import { IndexedArtifactPublisher } from "./indexed-artifact-publisher.js";
+import type { DesignSourceInputV1 } from "./design-source-closure-compiler.js";
 import {
   compileProductBuildPacket,
   type ProductPacketCompilationResult,
@@ -15,6 +16,7 @@ import {
 } from "./schemas/common-v1.js";
 
 export type RuntimePacketCompilerErrorCode =
+  | "RUNTIME_PACKET_DESIGN_SOURCE_REQUIRED"
   | "RUNTIME_PACKET_RUN_NOT_ACTIVE"
   | "RUNTIME_PACKET_RUN_NOT_COMPILER"
   | "RUNTIME_PACKET_RUN_NOT_FOUND"
@@ -41,6 +43,7 @@ export type RuntimePacketCompilationInput = Readonly<{
   compiler: unknown;
   producer: unknown;
   parentPacketHashes?: unknown;
+  designSource?: DesignSourceInputV1;
 }>;
 
 export type RuntimePacketCompilationResult = Readonly<{
@@ -61,6 +64,7 @@ const CHILD_REF_KEYS = Object.freeze({
   designGraph: "DESIGN_GRAPH",
   buildTopology: "BUILD_TOPOLOGY",
   storyPlan: "STORY_PLAN",
+  designSourceClosure: "DESIGN_SOURCE_CLOSURE",
 } as const);
 
 function historicalRefKey(prefix: string, hash: string): string {
@@ -164,6 +168,12 @@ export function createRuntimePacketCompiler(input: Readonly<{
           `Run ${runId}, compiler, and producer release identities do not agree`,
         );
       }
+      if (value.expectedMode === "v3" && !value.designSource) {
+        throw new RuntimePacketCompilerError(
+          "RUNTIME_PACKET_DESIGN_SOURCE_REQUIRED",
+          `Run ${runId} cannot compile a new v3 packet without typed design-source closure input`,
+        );
+      }
 
       const compilation = await compileProductBuildPacket({
         productSpec: value.productSpec,
@@ -174,6 +184,7 @@ export function createRuntimePacketCompiler(input: Readonly<{
         producer,
         protocol: value.expectedMode === "v3" ? "v3" : "legacy-shadow",
         parentPacketHashes: value.parentPacketHashes,
+        ...(value.designSource ? { designSource: value.designSource } : {}),
         artifactStore: publisher,
       });
 
@@ -200,18 +211,22 @@ export function createRuntimePacketCompiler(input: Readonly<{
         };
       }
       const hashes = compilation.artifactHashes;
+      const artifactRefs: Record<string, string> = {
+        PRODUCT_SPEC: hashes.productSpec!,
+        DESIGN_GRAPH: hashes.designGraph!,
+        BUILD_TOPOLOGY: hashes.buildTopology!,
+        STORY_PLAN: hashes.storyPlan!,
+        PRODUCT_BUILD_PACKET: compilation.packetHash,
+        COMPILATION_REPORT: compilation.reportHash,
+      };
+      if (compilation.packet.schema === "setfarm.product-build-packet.v2") {
+        artifactRefs.DESIGN_SOURCE_CLOSURE = hashes.designSourceClosure!;
+      }
       const activated = await index.activateProductPacket({
         runId,
         packetHash: compilation.packetHash,
         compiler,
-        artifactRefs: {
-          PRODUCT_SPEC: hashes.productSpec!,
-          DESIGN_GRAPH: hashes.designGraph!,
-          BUILD_TOPOLOGY: hashes.buildTopology!,
-          STORY_PLAN: hashes.storyPlan!,
-          PRODUCT_BUILD_PACKET: compilation.packetHash,
-          COMPILATION_REPORT: compilation.reportHash,
-        },
+        artifactRefs,
       });
       return {
         mode: "v3",

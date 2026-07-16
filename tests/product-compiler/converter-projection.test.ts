@@ -6,6 +6,17 @@ import path from "node:path";
 import { describe, it } from "node:test";
 import ts from "typescript";
 
+import {
+  bindStitchTargetCandidateSelectionsV2,
+  selectStitchTargetCandidatesV1,
+} from "../../src/product-compiler/producers/stitch-target-candidate-selection.js";
+import {
+  buildTestRenderedSemantics,
+  stitchDownloadReceipts,
+  validStitchHtml,
+  validStitchPng,
+} from "./fixtures/stitch-artifacts.js";
+
 describe("Stitch converter semantic projection", () => {
   it("projects only exact v3 controls and records every undeclared Stitch control as neutralized evidence", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-v3-contract-projection-"));
@@ -17,7 +28,7 @@ describe("Stitch converter semantic projection", () => {
         title: "Status Page - Status Utility",
         surfaceIds: ["SURF_STATUS"],
       }]));
-      fs.writeFileSync(path.join(stitch, "GENERATION_TARGETS.json"), JSON.stringify({
+      const generationTargets = {
         schema: "setfarm.design-generation-targets.v1",
         productSpecHash: "a".repeat(64),
         targets: [{
@@ -40,30 +51,68 @@ describe("Stitch converter semantic projection", () => {
             },
           }],
         }],
-      }));
-      fs.writeFileSync(path.join(stitch, "STITCH_RESPONSE_BINDINGS.json"), JSON.stringify({
-        schema: "setfarm.stitch-target-response-bindings.v1",
-        generationTargetsHash: "b".repeat(64),
-        bindings: [{
-          targetRef: "TARGET_STATUS",
-          requestScreenKey: "Status Page - Status Utility",
-          expectedScreenTitle: "Status Page - Status Utility",
-          responseScreenId: "status-screen",
-          responseTitle: "Status Page - Status Utility",
-          stageId: "stage-status",
-        }],
-      }));
-      fs.writeFileSync(path.join(stitch, "status-screen.html"), `<!doctype html><html><body>
-        <main data-surface-id="SURF_STATUS">
-          <button>Settings</button>
-          <button aria-label="Help">?</button>
-          <button data-action="ACT_REFRESH">Refresh Status</button>
-          <input aria-label="Status query" data-action-input="ACT_REFRESH.query" placeholder="Use A > B / C" />
-          <input aria-label="Decorative filter" data-note='Filter > / options' />
-          <img title="1 > 0" role="status" aria-label="Status refreshed" />
+      };
+      fs.writeFileSync(path.join(stitch, "GENERATION_TARGETS.json"), JSON.stringify(generationTargets));
+      const htmlBytes = validStitchHtml(`
+        <main data-surface-id="SURF_STATUS" data-setfarm-element-ref="E000001">
+          <button hidden data-setfarm-element-ref="E000002">Settings</button>
+          <button hidden aria-label="Help" data-setfarm-element-ref="E000003">?</button>
+          <button data-action="ACT_REFRESH" data-setfarm-element-ref="E000004">Refresh Status</button>
+          <input aria-label="Status query" data-action-input="ACT_REFRESH.query" data-setfarm-element-ref="E000005" placeholder="Use A > B / C" />
+          <input hidden aria-label="Decorative filter" data-setfarm-element-ref="E000006" data-note='Filter > / options' />
+          <img title="1 > 0" role="status" aria-label="Status refreshed" data-setfarm-element-ref="E000007" />
           ${"<p>design-token</p>".repeat(80)}
         </main>
-      </body></html>`);
+      `, "converter-browser-authority");
+      const screenshotBytes = validStitchPng(9);
+      fs.writeFileSync(path.join(stitch, "status-screen.html"), htmlBytes);
+      fs.writeFileSync(path.join(stitch, "status-screen.png"), screenshotBytes);
+      const directResponseEvidence = {
+        schema: "setfarm.stitch-direct-response-evidence.v2",
+        projectId: "converter-browser-authority",
+        batches: [{
+          stageId: "stage-status",
+          targetRefs: ["TARGET_STATUS"],
+          source: "direct",
+          candidates: [{
+            screenId: "status-screen",
+            title: "Status Page - Status Utility",
+            responsePaths: ["$result.screens[0]"],
+            htmlAvailable: true,
+            screenshotAvailable: true,
+            ...stitchDownloadReceipts("status-screen", htmlBytes, screenshotBytes),
+            identityConflicts: [],
+            disposition: "admitted_renderable_screen",
+            missingEvidence: [],
+          }],
+        }],
+      };
+      const artifacts = [{ screenId: "status-screen", htmlBytes, screenshotBytes }];
+      const renderedSemantics = buildTestRenderedSemantics({
+        generationTargets,
+        directResponseEvidence,
+        artifacts,
+      });
+      const selected = selectStitchTargetCandidatesV1({
+        generationTargets,
+        directResponseEvidence,
+        renderedSemantics,
+        artifacts,
+        authorityMode: "clean_v3",
+      });
+      assert.equal(selected.status, "produced", JSON.stringify(selected.diagnostics));
+      if (selected.status !== "produced") return;
+      const bound = bindStitchTargetCandidateSelectionsV2({
+        generationTargets,
+        candidateSelection: selected.candidateSelection,
+      });
+      assert.equal(bound.status, "produced", JSON.stringify(bound.diagnostics));
+      if (bound.status !== "produced") return;
+      fs.mkdirSync(path.join(stitch, "rendered-dom"), { recursive: true });
+      fs.writeFileSync(path.join(stitch, "rendered-dom/status-screen.html"), htmlBytes);
+      fs.writeFileSync(path.join(stitch, "STITCH_RENDERED_SEMANTICS.json"), JSON.stringify(renderedSemantics));
+      fs.writeFileSync(path.join(stitch, "STITCH_TARGET_CANDIDATE_SELECTION.json"), JSON.stringify(selected.candidateSelection));
+      fs.writeFileSync(path.join(stitch, "STITCH_RESPONSE_BINDINGS.json"), JSON.stringify(bound.responseBindings));
 
       execFileSync("node", ["scripts/stitch-to-jsx.mjs", root], {
         cwd: process.cwd(),
@@ -82,9 +131,10 @@ describe("Stitch converter semantic projection", () => {
         observableRef: "OBS_REFRESHED_STATUS",
         role: "status",
         name: "Status refreshed",
-        sourceLocator: "stitch/status-screen.html",
+        sourceLocator: "stitch/rendered-dom/status-screen.html",
         generatedSourceLocator: "src/screens/StatusPageStatusUtility.tsx",
         selector: '[data-observable-refs~="OBS_REFRESHED_STATUS"]',
+        sourceElementRef: "E000007",
       }]);
       assert.equal(index[0].controls.length, 2);
       assert.deepEqual(index[0].controls.find((control: { kind: string }) => control.kind === "input").inputBindings, [{
@@ -97,9 +147,9 @@ describe("Stitch converter semantic projection", () => {
           reasonCode: control.reasonCode,
         })),
         [
-          { label: "Settings", reasonCode: "undeclared_by_generation_target" },
-          { label: "Help", reasonCode: "undeclared_by_generation_target" },
-          { label: "Decorative filter", reasonCode: "undeclared_by_generation_target" },
+          { label: "Settings", reasonCode: "outside_canonical_rendered_contract" },
+          { label: "Help", reasonCode: "outside_canonical_rendered_contract" },
+          { label: "Decorative filter", reasonCode: "outside_canonical_rendered_contract" },
         ],
       );
 
@@ -124,6 +174,16 @@ describe("Stitch converter semantic projection", () => {
       const errors = (transpiled.diagnostics || [])
         .filter((diagnostic) => diagnostic.category === ts.DiagnosticCategory.Error);
       assert.deepEqual(errors.map((diagnostic) => diagnostic.messageText), []);
+      fs.appendFileSync(path.join(stitch, "rendered-dom/status-screen.html"), "<!-- stale mutation -->");
+      assert.throws(() => execFileSync("node", ["scripts/stitch-to-jsx.mjs", root], {
+        cwd: process.cwd(),
+        stdio: "pipe",
+      }));
+      const failed = JSON.parse(fs.readFileSync(
+        path.join(root, ".setfarm/setup/STITCH_TO_JSX_RESULT.json"),
+        "utf8",
+      ));
+      assert.equal(failed.failureCode, "V3_RENDERED_SEMANTIC_DOM_HASH_MISMATCH");
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

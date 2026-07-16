@@ -9,30 +9,48 @@ import { now, pgGet, pgRun } from "../../../db-pg.js";
 import { emitEvent } from "../../events.js";
 import { resolvePlatformScript } from "../../paths.js";
 import { canonicalJsonStringify, hashCanonicalJson } from "../../../product-compiler/canonical-json.js";
+import { parseStitchDirectResponseEvidence } from "../../../product-compiler/compatibility/stitch-direct-response-evidence.js";
+import { isValidStitchHtmlFile } from "../../../product-compiler/stitch-render-artifact.js";
 import {
-  bindExactStitchTargetResponsesV1,
   produceDesignGenerationTargetsV1,
 } from "../../../product-compiler/producers/design-targets.js";
-import { decodeStitchDirectBatchV1 } from "../../../product-compiler/producers/stitch-direct-response.js";
+import { decodeStitchDirectBatchV2 } from "../../../product-compiler/producers/stitch-direct-response.js";
+import {
+  captureStitchRenderedSemanticsV1,
+  StitchRenderedSemanticsInfrastructureError,
+  verifyStitchRenderedSemanticsReplayV1,
+  writeStitchRenderedSemanticsV1,
+} from "../../../product-compiler/producers/stitch-rendered-semantics.js";
+import {
+  bindStitchTargetCandidateSelectionsV2,
+  selectStitchTargetCandidatesV1,
+  type StitchCandidateArtifactBytesV1,
+} from "../../../product-compiler/producers/stitch-target-candidate-selection.js";
 import {
   DesignGenerationTargetsV1Schema,
-  StitchTargetResponseBindingsV1Schema,
   type DesignGenerationTargetsV1,
-  type StitchBatchResponseV1,
-  type StitchTargetResponseBindingsV1,
 } from "../../../product-compiler/schemas/design-generation-targets-v1.js";
 import {
   ProductSpecV1Schema,
   type ProductSpecV1,
 } from "../../../product-compiler/schemas/product-spec-v1.js";
+import type { StitchDirectResponseEvidenceV1 } from "../../../product-compiler/schemas/stitch-direct-response-evidence-v1.js";
 import {
-  StitchDirectResponseEvidenceV1Schema,
-  type StitchDirectBatchEvidenceV1,
-} from "../../../product-compiler/schemas/stitch-direct-response-evidence-v1.js";
+  StitchDirectResponseEvidenceV2Schema,
+  type StitchDirectBatchEvidenceV2,
+  type StitchDirectResponseEvidenceV2,
+} from "../../../product-compiler/schemas/stitch-direct-response-evidence-v2.js";
+import {
+  StitchTargetCandidateSelectionV1Schema,
+  StitchTargetResponseBindingsV2Schema,
+  type StitchBatchResponseV2,
+  type StitchTargetCandidateSelectionV1,
+  type StitchTargetResponseBindingsV2,
+} from "../../../product-compiler/schemas/stitch-target-candidate-selection-v1.js";
 
-const MIN_STITCH_HTML_BYTES = 1000;
 const PRECLAIM_CANCELLED = "DESIGN_PRECLAIM_CANCELLED";
 const progressDedupe = new Map<string, { detail: string; emittedAt: number }>();
+type StitchDirectResponseEvidence = StitchDirectResponseEvidenceV1 | StitchDirectResponseEvidenceV2;
 
 type ExecFileTextOptions = {
   cwd?: string;
@@ -110,11 +128,23 @@ export type V3DesignBoundaryCode =
   | "DESIGN_V3_DIRECT_RESPONSE_EVIDENCE_MISMATCH"
   | "DESIGN_V3_EXACT_RESPONSE_BINDING_REJECTED"
   | "DESIGN_V3_RENDERABLE_SCREEN_MISSING"
+  | "DESIGN_V3_RENDERED_SEMANTICS_INFRASTRUCTURE_UNAVAILABLE"
   | "DESIGN_V3_RESPONSE_HTML_MISSING"
   | "DESIGN_V3_RESPONSE_SOURCE_INVALID";
 
 export function classifyV3DesignBoundary(code: V3DesignBoundaryCode): DesignFailureClassification {
   switch (code) {
+    case "DESIGN_V3_RENDERED_SEMANTICS_INFRASTRUCTURE_UNAVAILABLE":
+      return {
+        category: "local_filesystem",
+        owner: "setfarm_local_system",
+        retryable: false,
+        apiRelated: false,
+        setfarmBugLikely: true,
+        promptRelated: false,
+        confidence: "high",
+        reason: "The exact locked browser renderer or its sealed replay boundary is unavailable; model retry is forbidden.",
+      };
     case "DESIGN_V3_DIRECT_RESPONSE_EVIDENCE_INVALID":
     case "DESIGN_V3_DIRECT_RESPONSE_EVIDENCE_MISMATCH":
       return {
@@ -159,7 +189,7 @@ export function classifyV3DesignBoundary(code: V3DesignBoundaryCode): DesignFail
         setfarmBugLikely: false,
         promptRelated: false,
         confidence: "high",
-        reason: "A directly bound renderable screen lacked its required downloaded HTML evidence.",
+        reason: "A direct candidate lacked valid attempt-bound downloaded HTML or screenshot evidence after bounded fetch recovery.",
       };
     case "DESIGN_V3_DIRECT_BATCH_INCOMPLETE":
       return {
@@ -185,6 +215,34 @@ class V3DesignBoundaryError extends Error {
     this.code = code;
     this.classification = classifyV3DesignBoundary(code);
   }
+}
+
+function candidateSelectionBoundaryCode(
+  result: ReturnType<typeof selectStitchTargetCandidatesV1>,
+): V3DesignBoundaryCode {
+  if (!result.candidateSelection) return "DESIGN_V3_DIRECT_RESPONSE_EVIDENCE_MISMATCH";
+  let allUnresolvedTargetsAreLocalArtifactFailures = true;
+  for (const selection of result.candidateSelection.selections.filter((item) => item.status === "unresolved")) {
+    const exactTitle = selection.evaluations.filter((evaluation) =>
+      evaluation.semanticChecks.some((check) => check.kind === "screen_title" && check.disposition === "exact"));
+    const conflictFree = exactTitle.filter((evaluation) =>
+      !evaluation.rejectionCodes.includes("CANDIDATE_RESPONSE_IDENTITY_CONFLICT"));
+    if (exactTitle.length > 0 && conflictFree.length === 0) {
+      return "DESIGN_V3_DIRECT_RESPONSE_EVIDENCE_MISMATCH";
+    }
+    const candidatesToExplain = conflictFree.length > 0 ? conflictFree : exactTitle;
+    const localOnly = candidatesToExplain.length > 0 && candidatesToExplain.every((evaluation) =>
+      evaluation.rejectionCodes.length > 0
+      && evaluation.rejectionCodes.every((code) =>
+        code.startsWith("CANDIDATE_LOCAL_")
+        || code.startsWith("CANDIDATE_DOWNLOAD_RECEIPT_")
+        || code === "CANDIDATE_RENDER_EVIDENCE_INCOMPLETE"));
+    if (!localOnly) allUnresolvedTargetsAreLocalArtifactFailures = false;
+  }
+  if (allUnresolvedTargetsAreLocalArtifactFailures) {
+    return "DESIGN_V3_RESPONSE_HTML_MISSING";
+  }
+  return "DESIGN_V3_EXACT_RESPONSE_BINDING_REJECTED";
 }
 
 type DesignFailureReport = {
@@ -525,16 +583,7 @@ async function failDesignPreclaim(ctx: ClaimContext, error: string, options: { t
 }
 
 function isValidStitchHtml(filePath: string): boolean {
-  try {
-    if (!fs.existsSync(filePath)) return false;
-    if (fs.statSync(filePath).size < MIN_STITCH_HTML_BYTES) return false;
-    const head = fs.readFileSync(filePath, "utf-8").slice(0, 4000).toLowerCase();
-    if (!head.includes("<html") && !head.includes("<!doctype")) return false;
-    if (head.includes("empty html") || head.includes("design not generated")) return false;
-    return true;
-  } catch {
-    return false;
-  }
+  return isValidStitchHtmlFile(filePath);
 }
 
 function countValidStitchHtml(stitchDir: string): number {
@@ -776,7 +825,7 @@ function prepareV3DesignContract(prd: string, stitchDir: string): V3DesignContra
 
 function exactV3ScreenMap(
   contract: V3DesignContract,
-  bindings: StitchTargetResponseBindingsV1,
+  bindings: StitchTargetResponseBindingsV2,
   stitchDir: string,
 ): ScreenMapEntry[] {
   if (bindings.generationTargetsHash !== hashCanonicalJson(contract.generationTargets)) {
@@ -808,12 +857,168 @@ function exactV3ScreenMap(
   return screens;
 }
 
-function readExactV3Bindings(stitchDir: string): StitchTargetResponseBindingsV1 | undefined {
+function readExactV3Bindings(stitchDir: string): StitchTargetResponseBindingsV2 | undefined {
   try {
-    const raw = JSON.parse(fs.readFileSync(path.join(stitchDir, "STITCH_RESPONSE_BINDINGS.json"), "utf8"));
-    return StitchTargetResponseBindingsV1Schema.parse(raw);
+    const text = fs.readFileSync(path.join(stitchDir, "STITCH_RESPONSE_BINDINGS.json"), "utf8");
+    const parsed = StitchTargetResponseBindingsV2Schema.parse(JSON.parse(text));
+    return canonicalJsonStringify(parsed) === text.trim() ? parsed : undefined;
   } catch {
     return undefined;
+  }
+}
+
+function readExactV3CandidateSelection(stitchDir: string): StitchTargetCandidateSelectionV1 | undefined {
+  try {
+    const text = fs.readFileSync(path.join(stitchDir, "STITCH_TARGET_CANDIDATE_SELECTION.json"), "utf8");
+    const parsed = StitchTargetCandidateSelectionV1Schema.parse(JSON.parse(text));
+    return canonicalJsonStringify(parsed) === text.trim() ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function exactFileHash(filePath: string): string {
+  return crypto.createHash("sha256").update(fs.readFileSync(filePath)).digest("hex");
+}
+
+function readCandidateArtifactBytes(
+  stitchDir: string,
+  evidence: StitchDirectResponseEvidence,
+): StitchCandidateArtifactBytesV1[] {
+  return evidence.batches.flatMap((batch) => batch.candidates.map((candidate) => {
+    const archivedHtmlPath = path.join(stitchDir, "candidates", `${candidate.screenId}.html`);
+    const archivedScreenshotPath = path.join(stitchDir, "candidates", `${candidate.screenId}.png`);
+    const htmlPath = fs.existsSync(archivedHtmlPath)
+      ? archivedHtmlPath
+      : path.join(stitchDir, `${candidate.screenId}.html`);
+    const screenshotPath = fs.existsSync(archivedScreenshotPath)
+      ? archivedScreenshotPath
+      : path.join(stitchDir, `${candidate.screenId}.png`);
+    return {
+      screenId: candidate.screenId,
+      ...(fs.existsSync(htmlPath) ? { htmlBytes: fs.readFileSync(htmlPath) } : {}),
+      ...(fs.existsSync(screenshotPath) ? { screenshotBytes: fs.readFileSync(screenshotPath) } : {}),
+    };
+  }));
+}
+
+function materializeSelectedCandidateProjection(
+  stitchDir: string,
+  selection: StitchTargetCandidateSelectionV1,
+  publishSelected: boolean,
+): void {
+  const archiveDir = path.join(stitchDir, "candidates");
+  fs.mkdirSync(archiveDir, { recursive: true });
+  const selectedIds = new Set(publishSelected
+    ? selection.selections.flatMap((item) => item.selectedScreenId ? [item.selectedScreenId] : [])
+    : []);
+  for (const candidate of selection.candidates) {
+    for (const extension of ["html", "png"] as const) {
+      const operationalPath = path.join(stitchDir, `${candidate.screenId}.${extension}`);
+      const archivePath = path.join(archiveDir, `${candidate.screenId}.${extension}`);
+      if (fs.existsSync(operationalPath)) fs.copyFileSync(operationalPath, archivePath);
+      if (!selectedIds.has(candidate.screenId)) fs.rmSync(operationalPath, { force: true });
+    }
+  }
+  for (const file of fs.readdirSync(stitchDir)) {
+    if (!/\.(?:html|png)$/i.test(file)) continue;
+    const screenId = file.replace(/\.(?:html|png)$/i, "");
+    if (!selectedIds.has(screenId)) fs.rmSync(path.join(stitchDir, file), { force: true });
+  }
+}
+
+async function verifyExactV3SelectionAuthority(
+  contract: V3DesignContract,
+  selection: StitchTargetCandidateSelectionV1,
+  bindings: StitchTargetResponseBindingsV2,
+  stitchDir: string,
+): Promise<void> {
+  const generationTargetsHash = hashCanonicalJson(contract.generationTargets);
+  const renderedSemantics = await verifyStitchRenderedSemanticsReplayV1({ repo: path.dirname(stitchDir) });
+  const renderedSemanticsHash = hashCanonicalJson(renderedSemantics);
+  if (
+    selection.generationTargetsHash !== generationTargetsHash
+    || bindings.generationTargetsHash !== generationTargetsHash
+    || bindings.candidateSelectionHash !== hashCanonicalJson(selection)
+    || selection.semanticEvidencePolicy !== "browser_rendered_v1"
+    || selection.renderedSemanticsHash !== renderedSemanticsHash
+    || bindings.renderedSemanticsHash !== renderedSemanticsHash
+  ) {
+    throw new Error("DESIGN_V3_SELECTION_AUTHORITY_HASH_MISMATCH");
+  }
+  const directEvidencePath = path.join(stitchDir, "STITCH_DIRECT_RESPONSE_EVIDENCE.json");
+  let directEvidence: StitchDirectResponseEvidenceV2;
+  try {
+    const text = fs.readFileSync(directEvidencePath, "utf8");
+    const raw = JSON.parse(text);
+    const parsed = parseStitchDirectResponseEvidence(raw);
+    if (parsed.status !== "parsed" || parsed.sourceVersion !== "v2") throw new Error("v2 required");
+    directEvidence = StitchDirectResponseEvidenceV2Schema.parse(parsed.source);
+    if (canonicalJsonStringify(directEvidence) !== text.trim()) throw new Error("non-canonical");
+  } catch {
+    throw new Error("DESIGN_V3_DIRECT_RESPONSE_EVIDENCE_MISSING");
+  }
+  if (
+    selection.downloadReceiptPolicy !== "required"
+    || selection.directResponseEvidenceHash !== hashCanonicalJson(directEvidence)
+  ) {
+    throw new Error("DESIGN_V3_SELECTION_DIRECT_EVIDENCE_HASH_MISMATCH");
+  }
+  const replayedSelection = selectStitchTargetCandidatesV1({
+    generationTargets: contract.generationTargets,
+    directResponseEvidence: directEvidence,
+    renderedSemantics,
+    artifacts: readCandidateArtifactBytes(stitchDir, directEvidence),
+    authorityMode: "clean_v3",
+  });
+  if (
+    replayedSelection.status !== "produced"
+    || canonicalJsonStringify(replayedSelection.candidateSelection) !== canonicalJsonStringify(selection)
+  ) {
+    throw new Error("DESIGN_V3_SELECTION_DETERMINISTIC_REPLAY_MISMATCH");
+  }
+  const replayedBindings = bindStitchTargetCandidateSelectionsV2({
+    generationTargets: contract.generationTargets,
+    candidateSelection: replayedSelection.candidateSelection,
+  });
+  if (
+    replayedBindings.status !== "produced"
+    || canonicalJsonStringify(replayedBindings.responseBindings) !== canonicalJsonStringify(bindings)
+  ) {
+    throw new Error("DESIGN_V3_BINDINGS_DETERMINISTIC_REPLAY_MISMATCH");
+  }
+  const selectionByTarget = new Map(selection.selections.map((item) => [item.targetRef, item]));
+  const selectedCandidateById = new Map(selection.candidates.map((item) => [item.screenId, item]));
+  const renderedCandidateById = new Map(renderedSemantics.candidates.map((item) => [item.screenId, item]));
+  for (const binding of bindings.bindings) {
+    const selected = selectionByTarget.get(binding.targetRef);
+    const selectedCandidate = selectedCandidateById.get(binding.responseScreenId);
+    const renderedCandidate = renderedCandidateById.get(binding.responseScreenId);
+    if (
+      selected?.status !== "selected"
+      || selected.selectedScreenId !== binding.responseScreenId
+      || selected.stageId !== binding.stageId
+      || !selectedCandidate
+      || selectedCandidate.semanticDomHash !== binding.semanticDomHash
+      || selectedCandidate.semanticObservationHash !== binding.semanticObservationHash
+      || renderedCandidate?.status !== "rendered"
+      || renderedCandidate.semanticDom?.hash !== binding.semanticDomHash
+      || renderedCandidate.observationHash !== binding.semanticObservationHash
+      || binding.contractElementRefs.some((elementRef) =>
+        !renderedCandidate.elements.some((element) => element.elementRef === elementRef))
+    ) {
+      throw new Error(`DESIGN_V3_RESPONSE_SELECTION_MISMATCH: ${binding.targetRef}`);
+    }
+    const htmlPath = path.join(stitchDir, `${binding.responseScreenId}.html`);
+    const screenshotPath = path.join(stitchDir, `${binding.responseScreenId}.png`);
+    if (
+      !fs.existsSync(htmlPath)
+      || !fs.existsSync(screenshotPath)
+      || exactFileHash(htmlPath) !== binding.htmlArtifactHash
+      || exactFileHash(screenshotPath) !== binding.screenshotArtifactHash
+    ) {
+      throw new Error(`DESIGN_V3_SELECTED_ARTIFACT_HASH_MISMATCH: ${binding.responseScreenId}`);
+    }
   }
 }
 
@@ -1403,6 +1608,7 @@ export function buildV3BatchStitchPrompt(
       `- target_ref: ${target.targetId}`,
       `- surface_ref: ${target.surfaceRef}`,
       `- exact_screen_title: ${target.expectedScreenTitle}`,
+      `- exact_surface_attribute: data-surface-id="${target.surfaceRef}"`,
       `- surface_kind: ${surface.kind}`,
       `- exact_actions:`,
       actions || "  - none",
@@ -1425,6 +1631,7 @@ export function buildV3BatchStitchPrompt(
     "## MACHINE_READABLE_COMPLETENESS_RULES",
     "- The returned screen title must equal exact_screen_title byte-for-byte. Do not abbreviate, translate, normalize, decorate, or rename it.",
     "- Return exactly one screen for each SCREEN_TARGET and no style-guide, assistant, summary, moodboard, PRD, or extra canvas.",
+    "- Every returned screen must preserve exact_surface_attribute byte-for-byte on exactly one root product-surface wrapper. Do not place a different SURF_* value in that screen.",
     "- For every exact_actions entry, render exactly one actionable HTML element and preserve the exact data-action=\"ACT_*\" attribute on that same button, link, or input element.",
     "- Do not put ACT_* only in prose, labels, nearby wrappers, comments, scripts, or a different DOM element; the actionable element itself owns data-action.",
     "- For every exact_input_mappings entry, exactly one value-providing element must preserve data-action-input=\"ACT_*.field\". A checkbox/action element may carry both data-action and data-action-input when it supplies its own value.",
@@ -1474,8 +1681,8 @@ async function generateStitchScreensInSingleBatch(
   providerUnavailable: boolean;
   diagnostic: string;
   failureCode?: V3DesignBoundaryCode;
-  batches: StitchBatchResponseV1[];
-  evidenceBatches: StitchDirectBatchEvidenceV1[];
+  batches: StitchBatchResponseV2[];
+  evidenceBatches: StitchDirectBatchEvidenceV2[];
 }> {
   const parsedSurfaces = parseProductSurfaces(prd);
   const parsedSurfaceById = new Map(parsedSurfaces.map((surface) => [surface.surfaceId, surface]));
@@ -1511,8 +1718,8 @@ async function generateStitchScreensInSingleBatch(
   }
   let providerUnavailable = false;
   let diagnostic = "";
-  const batches: StitchBatchResponseV1[] = [];
-  const evidenceBatches: StitchDirectBatchEvidenceV1[] = [];
+  const batches: StitchBatchResponseV2[] = [];
+  const evidenceBatches: StitchDirectBatchEvidenceV2[] = [];
 
   await recordPreClaimProgress(ctx, `Design preclaim: generating ${surfaces.length} Product Surfaces in ${stages.length} Stitch batch stage(s) of up to ${stageSize}`);
   for (let stageIndex = 0; stageIndex < stages.length; stageIndex++) {
@@ -1551,7 +1758,7 @@ async function generateStitchScreensInSingleBatch(
         const generatedTotal = Number(genResult.total || 0);
         logger.info(`[module:design preclaim] Generated ${generatedTotal} screen(s) in Stitch batch ${stageIndex + 1}/${stages.length} (attempt ${attempt}/${retryAttempts})`, { runId: ctx.runId });
         if (v3Contract) {
-          const decoded = decodeStitchDirectBatchV1({ stageId, targetRefs: stageTargetRefs, result: genResult });
+          const decoded = decodeStitchDirectBatchV2({ stageId, targetRefs: stageTargetRefs, result: genResult });
           if (decoded.evidenceBatch) evidenceBatches.push(decoded.evidenceBatch);
           if (decoded.status === "rejected") {
             diagnostic = decoded.diagnostic;
@@ -1921,6 +2128,7 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
     // A non-visual delivery must not leak a stale or speculative Stitch join
     // into downstream context. The canonical authority is the empty map.
     delete ctx.context["generation_targets"];
+    delete ctx.context["stitch_candidate_selection"];
     delete ctx.context["stitch_response_bindings"];
     ctx.context["screen_map"] = "[]";
     ctx.context["screens_generated"] = "0";
@@ -1993,13 +2201,16 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
   } else if (existingHtml > 0 && existingCounts.valid > 0 && (existingCounts.total === 0 || existingCounts.valid >= existingCounts.total)) {
     if (v3Contract) {
       const bindings = readExactV3Bindings(stitchDir);
-      if (!bindings) {
-        await failDesignPreclaim(ctx, "DESIGN_V3_RESPONSE_BINDINGS_MISSING: cached Stitch HTML cannot be rebound from manifest prose or title similarity.", { terminal: true });
+      const selection = readExactV3CandidateSelection(stitchDir);
+      if (!bindings || !selection) {
+        await failDesignPreclaim(ctx, "DESIGN_V3_RESPONSE_BINDINGS_MISSING: cached Stitch HTML requires exact candidate selection and v2 bindings; manifest prose or title similarity cannot rebind it.", { terminal: true });
         return;
       }
       try {
+        await verifyExactV3SelectionAuthority(v3Contract, selection, bindings, stitchDir);
         const exactScreenMap = exactV3ScreenMap(v3Contract, bindings, stitchDir);
         rewriteScreenArtifactsForScreenMap(stitchDir, exactScreenMap, ctx.context["device_type"] || "DESKTOP");
+        ctx.context["stitch_candidate_selection"] = canonicalJsonStringify(selection);
         ctx.context["stitch_response_bindings"] = canonicalJsonStringify(bindings);
         ctx.context["screen_map"] = JSON.stringify(exactScreenMap);
         if (hasValidStitchDesignMarkdown(stitchDir)) {
@@ -2187,7 +2398,15 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
   let v3BoundScreenIds: string[] = [];
   if (v3Contract) {
     fs.rmSync(path.join(stitchDir, "STITCH_DIRECT_RESPONSE_EVIDENCE.json"), { force: true });
+    fs.rmSync(path.join(stitchDir, "STITCH_RENDERED_SEMANTICS.json"), { force: true });
+    fs.rmSync(path.join(stitchDir, "STITCH_TARGET_CANDIDATE_SELECTION.json"), { force: true });
     fs.rmSync(path.join(stitchDir, "STITCH_RESPONSE_BINDINGS.json"), { force: true });
+    fs.rmSync(path.join(stitchDir, "candidates"), { recursive: true, force: true });
+    fs.rmSync(path.join(stitchDir, "rendered-dom"), { recursive: true, force: true });
+    fs.rmSync(path.join(stitchDir, "render-resources"), { recursive: true, force: true });
+    for (const file of fs.readdirSync(stitchDir).filter((name) => /\.(?:html|png)$/i.test(name))) {
+      fs.rmSync(path.join(stitchDir, file), { force: true });
+    }
   }
   try {
     const batchResult = await generateStitchScreensInSingleBatch(ctx, stitchScript, repo, stitchDir, projId, prd, deviceType, uiLanguage, v3Contract);
@@ -2195,9 +2414,10 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
     stitchProviderUnavailable = batchResult.providerUnavailable;
     lastStitchDiagnostic = batchResult.diagnostic || lastStitchDiagnostic;
     if (v3Contract) {
+      let directEvidence: StitchDirectResponseEvidenceV2 | undefined;
       if (batchResult.evidenceBatches.length > 0) {
-        const directEvidenceResult = StitchDirectResponseEvidenceV1Schema.safeParse({
-          schema: "setfarm.stitch-direct-response-evidence.v1",
+        const directEvidenceResult = StitchDirectResponseEvidenceV2Schema.safeParse({
+          schema: "setfarm.stitch-direct-response-evidence.v2",
           projectId: projId,
           batches: batchResult.evidenceBatches,
         });
@@ -2207,7 +2427,8 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
             directEvidenceResult.error.issues[0]?.message || "canonical evidence artifact rejected",
           );
         }
-        writeCanonicalJson(path.join(stitchDir, "STITCH_DIRECT_RESPONSE_EVIDENCE.json"), directEvidenceResult.data);
+        directEvidence = directEvidenceResult.data;
+        writeCanonicalJson(path.join(stitchDir, "STITCH_DIRECT_RESPONSE_EVIDENCE.json"), directEvidence);
       }
       if (!batchResult.completed) {
         throw new V3DesignBoundaryError(
@@ -2215,18 +2436,70 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
           batchResult.diagnostic || "direct Stitch batch did not complete",
         );
       }
-      const bound = bindExactStitchTargetResponsesV1({
+      if (!directEvidence) {
+        throw new V3DesignBoundaryError(
+          "DESIGN_V3_DIRECT_RESPONSE_EVIDENCE_INVALID",
+          "completed direct batch produced no canonical response evidence",
+        );
+      }
+      const candidateArtifacts = readCandidateArtifactBytes(stitchDir, directEvidence);
+      let renderedSemantics: Awaited<ReturnType<typeof captureStitchRenderedSemanticsV1>>;
+      try {
+        renderedSemantics = await captureStitchRenderedSemanticsV1({
+          generationTargets: v3Contract.generationTargets,
+          directResponseEvidence: directEvidence,
+          artifacts: candidateArtifacts,
+          deviceType,
+        });
+        await writeStitchRenderedSemanticsV1(repo, renderedSemantics);
+      } catch (error) {
+        if (error instanceof StitchRenderedSemanticsInfrastructureError) {
+          throw new V3DesignBoundaryError(
+            "DESIGN_V3_RENDERED_SEMANTICS_INFRASTRUCTURE_UNAVAILABLE",
+            `${error.code}:${error.message}`,
+          );
+        }
+        throw error;
+      }
+      const selected = selectStitchTargetCandidatesV1({
         generationTargets: v3Contract.generationTargets,
-        batches: batchResult.batches,
+        directResponseEvidence: directEvidence,
+        renderedSemantics: renderedSemantics.artifact,
+        artifacts: candidateArtifacts,
+        authorityMode: "clean_v3",
+      });
+      if (selected.candidateSelection) {
+        writeCanonicalJson(
+          path.join(stitchDir, "STITCH_TARGET_CANDIDATE_SELECTION.json"),
+          selected.candidateSelection,
+        );
+        ctx.context["stitch_candidate_selection"] = canonicalJsonStringify(selected.candidateSelection);
+      }
+      if (selected.status !== "produced") {
+        if (selected.candidateSelection) {
+          materializeSelectedCandidateProjection(stitchDir, selected.candidateSelection, false);
+        }
+        const evidence = selected.diagnostics.map((item) => `${item.code}:${item.reference || "candidate"}`).join(", ");
+        throw new V3DesignBoundaryError(
+          candidateSelectionBoundaryCode(selected),
+          evidence,
+        );
+      }
+      const bound = bindStitchTargetCandidateSelectionsV2({
+        generationTargets: v3Contract.generationTargets,
+        candidateSelection: selected.candidateSelection,
       });
       if (bound.status !== "produced") {
-        const evidence = bound.diagnostics.map((item) => `${item.code}:${item.reference || "batch"}`).join(", ");
+        materializeSelectedCandidateProjection(stitchDir, selected.candidateSelection, false);
+        const evidence = bound.diagnostics.map((item) => `${item.code}:${item.reference || "selection"}`).join(", ");
         throw new V3DesignBoundaryError(
           "DESIGN_V3_EXACT_RESPONSE_BINDING_REJECTED",
           evidence,
         );
       }
+      materializeSelectedCandidateProjection(stitchDir, selected.candidateSelection, true);
       writeCanonicalJson(path.join(stitchDir, "STITCH_RESPONSE_BINDINGS.json"), bound.responseBindings);
+      await verifyExactV3SelectionAuthority(v3Contract, selected.candidateSelection, bound.responseBindings, stitchDir);
       ctx.context["stitch_response_bindings"] = canonicalJsonStringify(bound.responseBindings);
       v3BoundScreenIds = bound.responseBindings.bindings.map((binding) => binding.responseScreenId);
     }
@@ -2440,14 +2713,17 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
   let screenMap: ScreenMapEntry[] = [];
   if (v3Contract) {
     const bindings = readExactV3Bindings(stitchDir);
-    if (!bindings) {
-      const error = "DESIGN_V3_RESPONSE_BINDINGS_MISSING: direct batch response identity was not sealed; manifest/title reconciliation is forbidden.";
+    const selection = readExactV3CandidateSelection(stitchDir);
+    if (!bindings || !selection) {
+      const error = "DESIGN_V3_RESPONSE_BINDINGS_MISSING: direct candidate selection and response identity were not sealed; manifest/title reconciliation is forbidden.";
       await failDesignPreclaim(ctx, error, { terminal: true });
       return;
     }
     try {
+      await verifyExactV3SelectionAuthority(v3Contract, selection, bindings, stitchDir);
       screenMap = exactV3ScreenMap(v3Contract, bindings, stitchDir);
       rewriteScreenArtifactsForScreenMap(stitchDir, screenMap, deviceType);
+      ctx.context["stitch_candidate_selection"] = canonicalJsonStringify(selection);
       ctx.context["stitch_response_bindings"] = canonicalJsonStringify(bindings);
       ctx.context["screen_map"] = JSON.stringify(screenMap);
       logger.info(`[module:design preclaim] V3 SCREEN_MAP injected from ${screenMap.length} exact target/response bindings`, { runId: ctx.runId });

@@ -17,12 +17,14 @@
  *   node stitch-api.mjs download <url> <outputFile>
  */
 
-import { readFileSync, writeFileSync, mkdirSync, readdirSync, existsSync, copyFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, readdirSync, existsSync, copyFileSync, renameSync, rmSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
+import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import {
   collectScreenCandidatesFromResult,
   htmlUrlOf,
+  isSafeScreenId,
   jsonPayloadsFromToolText,
   partitionDirectScreenCandidates,
   screenIdOf,
@@ -172,7 +174,7 @@ function mergeTrackedScreens(projectId, screens) {
   const byId = new Map();
   const add = (screen) => {
     const screenId = screenIdOf(screen);
-    if (!screenId) return;
+    if (!isSafeScreenId(screenId)) return;
     const normalized = {
       ...screen,
       screenId,
@@ -442,17 +444,88 @@ async function generateScreenFromText(args) {
   }
 }
 
-// Download a file from a signed URL (User-Agent + 429 retry + size validation)
+function validDownloadedHtml(buffer) {
+  if (buffer.length < 1000) return false;
+  const head = buffer.toString('utf8').slice(0, 4000).toLowerCase();
+  return (head.includes('<html') || head.includes('<!doctype'))
+    && !head.includes('empty html')
+    && !head.includes('design not generated');
+}
+
+function validDownloadedPng(buffer) {
+  const signature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  if (buffer.length < 45 || !buffer.subarray(0, 8).equals(signature)) return false;
+  let offset = 8;
+  let chunkCount = 0;
+  let sawHeader = false;
+  let sawImageData = false;
+  while (offset + 12 <= buffer.length && chunkCount < 10_000) {
+    const length = buffer.readUInt32BE(offset);
+    const dataStart = offset + 8;
+    const dataEnd = dataStart + length;
+    const chunkEnd = dataEnd + 4;
+    if (chunkEnd > buffer.length) return false;
+    const type = buffer.subarray(offset + 4, offset + 8).toString('ascii');
+    let crc = 0xffffffff;
+    for (let index = offset + 4; index < dataEnd; index++) {
+      crc ^= buffer[index];
+      for (let bit = 0; bit < 8; bit++) crc = (crc >>> 1) ^ ((crc & 1) ? 0xedb88320 : 0);
+    }
+    if (!/^[A-Za-z]{4}$/.test(type) || buffer.readUInt32BE(dataEnd) !== ((crc ^ 0xffffffff) >>> 0)) return false;
+    if (chunkCount === 0) {
+      if (type !== 'IHDR' || length !== 13 || buffer.readUInt32BE(dataStart) === 0 || buffer.readUInt32BE(dataStart + 4) === 0) return false;
+      sawHeader = true;
+    } else if (type === 'IHDR') {
+      return false;
+    }
+    if (type === 'IDAT' && length > 0) sawImageData = true;
+    if (type === 'IEND') return length === 0 && sawHeader && sawImageData && chunkEnd === buffer.length;
+    offset = chunkEnd;
+    chunkCount++;
+  }
+  return false;
+}
+
+// Download to a new attempt file, validate it, then atomically publish it.
 async function downloadFile(url, outputPath, attempt = 1) {
-  const headers = { 'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) Chrome/120.0.0.0 Safari/537.36' };
-  const res = await fetch(url, { signal: AbortSignal.timeout(120_000), headers });
-  if (res.status === 429 && attempt < 5) { const delay = 10000 * Math.pow(2, attempt - 1) + Math.random() * 2000; process.stderr.write(`429 rate limited -- retrying in ${Math.round(delay/1000)}s (attempt ${attempt}/5)\n`); await new Promise(r => setTimeout(r, delay)); return downloadFile(url, outputPath, attempt + 1); }
-  if (!res.ok) throw new Error(`Download failed: HTTP ${res.status}`);
-  const buffer = Buffer.from(await res.arrayBuffer());
-  mkdirSync(dirname(outputPath), { recursive: true });
-  writeFileSync(outputPath, buffer);
-  if (buffer.length < 500 && outputPath.endsWith('.html')) throw new Error('Empty HTML (' + buffer.length + ' bytes) - design not generated');
-  return { path: outputPath, size: buffer.length };
+  if (attempt === 1) rmSync(outputPath, { force: true });
+  const attemptPath = `${outputPath}.download-${process.pid}-${attempt}-${Date.now()}`;
+  try {
+    const headers = { 'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) Chrome/120.0.0.0 Safari/537.36' };
+    const res = await fetch(url, { signal: AbortSignal.timeout(120_000), headers });
+    if (res.status === 429 && attempt < 5) {
+      const delay = 10000 * Math.pow(2, attempt - 1) + Math.random() * 2000;
+      process.stderr.write(`429 rate limited -- retrying in ${Math.round(delay/1000)}s (attempt ${attempt}/5)\n`);
+      await new Promise(r => setTimeout(r, delay));
+      return downloadFile(url, outputPath, attempt + 1);
+    }
+    if (!res.ok) throw new Error(`Download failed: HTTP ${res.status}`);
+    const buffer = Buffer.from(await res.arrayBuffer());
+    if (outputPath.toLowerCase().endsWith('.html') && !validDownloadedHtml(buffer)) {
+      throw new Error(`Invalid Stitch HTML (${buffer.length} bytes)`);
+    }
+    if (outputPath.toLowerCase().endsWith('.png') && !validDownloadedPng(buffer)) {
+      throw new Error(`Invalid Stitch PNG (${buffer.length} bytes)`);
+    }
+    mkdirSync(dirname(outputPath), { recursive: true });
+    writeFileSync(attemptPath, buffer);
+    renameSync(attemptPath, outputPath);
+    return {
+      path: outputPath,
+      size: buffer.length,
+      artifactHash: createHash('sha256').update(buffer).digest('hex'),
+      sourceRefHash: createHash('sha256').update(String(url)).digest('hex'),
+      attempt,
+    };
+  } catch (error) {
+    rmSync(attemptPath, { force: true });
+    rmSync(outputPath, { force: true });
+    if (attempt < 3 && /fetch|network|timeout|timed out|HTTP 5\d\d/i.test(String(error?.message || error))) {
+      await new Promise((resolveRetry) => setTimeout(resolveRetry, attempt * 1000));
+      return downloadFile(url, outputPath, attempt + 1);
+    }
+    throw error;
+  }
 }
 
 // Parse screens from generate response
@@ -1016,7 +1089,7 @@ const commands = {
           const instances = projResult.structuredContent.screenInstances;
           for (const inst of instances) {
             const sid = inst.id || (inst.sourceScreen || '').replace(/^projects\/\d+\/screens\//, '');
-            if (sid) {
+            if (isSafeScreenId(sid)) {
               try {
                 const sr = await callTool('get_screen', { name: 'projects/' + projectId + '/screens/' + sid, projectId, screenId: sid });
                 if (sr && sr.structuredContent) {
@@ -1045,6 +1118,7 @@ const commands = {
     if (screens.length === 0 && screenIdArgs.length > 0) {
       const ids = screenIdArgs.join(',').split(',').filter(Boolean);
       for (const sid of ids) {
+        if (!isSafeScreenId(sid)) continue;
         try {
           const name = `projects/${projectId}/screens/${sid}`;
           const sr = await callTool('get_screen', { name, projectId, screenId: sid });
@@ -1245,7 +1319,7 @@ const commands = {
     try { manifest = JSON.parse(readFileSync(manifestPath, 'utf-8')); } catch { /* no manifest */ }
 
     for (const screen of manifest) {
-      if (!screen.screenId || !screen.htmlFile) continue;
+      if (!isSafeScreenId(screen.screenId) || !screen.htmlFile || dirname(screen.htmlFile) !== '.') continue;
       const srcHtml = pathJoin(sourceDir, screen.htmlFile);
       const dstHtml = pathJoin(destDir, screen.screenId + '.html');
       // Copy HTML with screenId name (MC expects this)
@@ -1444,15 +1518,28 @@ const commands = {
       await Promise.allSettled(screens.map(async (s) => {
         let localHtml = null;
         let localScreenshot = null;
+        const responseEvidence = directScreenEvidence.find((item) => item.screenId === s.screenId);
         try {
           if (s.htmlUrl) {
-            localHtml = resolve(stitchDir, s.screenId + ".html");
-            await downloadFile(s.htmlUrl, localHtml);
+            const htmlPath = resolve(stitchDir, s.screenId + ".html");
+            const receipt = await downloadFile(s.htmlUrl, htmlPath);
+            if (!responseEvidence || receipt.sourceRefHash !== responseEvidence.htmlSourceRefHash) {
+              rmSync(htmlPath, { force: true });
+              throw new Error("STITCH_HTML_SOURCE_RECEIPT_MISMATCH");
+            }
+            localHtml = htmlPath;
+            responseEvidence.htmlDownloadedArtifactHash = receipt.artifactHash;
             process.stderr.write("  HTML: " + (s.title || s.screenId) + "\n");
           }
           if (s.screenshotUrl) {
-            localScreenshot = resolve(stitchDir, s.screenId + ".png");
-            await downloadFile(s.screenshotUrl, localScreenshot);
+            const screenshotPath = resolve(stitchDir, s.screenId + ".png");
+            const receipt = await downloadFile(s.screenshotUrl, screenshotPath);
+            if (!responseEvidence || receipt.sourceRefHash !== responseEvidence.screenshotSourceRefHash) {
+              rmSync(screenshotPath, { force: true });
+              throw new Error("STITCH_SCREENSHOT_SOURCE_RECEIPT_MISMATCH");
+            }
+            localScreenshot = screenshotPath;
+            responseEvidence.screenshotDownloadedArtifactHash = receipt.artifactHash;
           }
           if (localHtml) dlOk++;
           else dlFail++;
@@ -1470,8 +1557,8 @@ const commands = {
             title: tracked[trackedIndex].title || trackedEntry.title,
             htmlUrl: tracked[trackedIndex].htmlUrl || trackedEntry.htmlUrl,
             screenshotUrl: tracked[trackedIndex].screenshotUrl || trackedEntry.screenshotUrl,
-            localHtml: tracked[trackedIndex].localHtml || trackedEntry.localHtml,
-            localScreenshot: tracked[trackedIndex].localScreenshot || trackedEntry.localScreenshot,
+            localHtml: trackedEntry.localHtml,
+            localScreenshot: trackedEntry.localScreenshot,
           };
         }
       }));
@@ -1494,7 +1581,7 @@ const commands = {
             title: titleOf(s),
             htmlUrl: htmlUrlOf(s),
             screenshotUrl: screenshotUrlOf(s),
-          })).filter(s => s.screenId);
+          })).filter(s => isSafeScreenId(s.screenId));
           if (listedScreens.length > 0) {
             screenSource = "fallback_list";
             process.stderr.write("Found " + listedScreens.length + " screens via list-screens (retry " + (retry + 1) + ")\n");
@@ -1525,6 +1612,7 @@ const commands = {
       screenSource,
       directCandidateTotal: directCandidates.length,
       excludedDirectTotal: directScreenEvidence.filter((item) => item.disposition !== "admitted_renderable_screen").length,
+      directScreenEvidenceSchema: "setfarm.stitch-direct-screen-evidence.v2",
       directScreenEvidence,
       elapsedSeconds: Math.round((Date.now() - startTime) / 1000),
       diagnostic: screens.length === 0 ? zeroScreenDiagnostic : undefined

@@ -10,10 +10,14 @@ import {
   stitchComponentNameV3,
 } from "../../src/product-compiler/compatibility/story-projection-v3.js";
 import {
-  bindExactStitchTargetResponsesV1,
   produceDesignGenerationTargetsV1,
 } from "../../src/product-compiler/producers/design-targets.js";
+import {
+  bindStitchTargetCandidateSelectionsV2,
+  selectStitchTargetCandidatesV1,
+} from "../../src/product-compiler/producers/stitch-target-candidate-selection.js";
 import { buildMinimalValidContracts } from "./fixtures/minimal-valid-contract.js";
+import { buildTestRenderedSemantics, stitchDownloadReceipts, validStitchHtml, validStitchPng } from "./fixtures/stitch-artifacts.js";
 import { renderLegacyPrd } from "../../src/product-compiler/renderers/legacy-prd.js";
 import { buildV3AutoStoriesOutput } from "../../src/installer/steps/03-stories/preclaim.js";
 
@@ -21,21 +25,82 @@ function input() {
   const productSpec = buildMinimalValidContracts().productSpec;
   const targets = produceDesignGenerationTargetsV1(productSpec);
   assert.equal(targets.status, "produced", JSON.stringify(targets.diagnostics));
-  const bound = bindExactStitchTargetResponsesV1({
-    generationTargets: targets.generationTargets,
+  const candidates = targets.generationTargets.targets.map((target, index) => {
+    const accessibility = (target.requiredObservableSelectors ?? [])
+      .filter((item) => item.selector.kind === "accessibility");
+    const actionTags = target.requiredActionRefs.map((actionRef) => {
+      const selector = accessibility.find((item) => item.selector.kind === "accessibility" && item.selector.actionRef === actionRef)?.selector;
+      return `<button data-action="${actionRef}"${selector?.kind === "accessibility" ? ` role="${selector.role}" aria-label="${selector.name}"` : ""}>${actionRef}</button>`;
+    });
+    const standaloneAccessibility = accessibility.flatMap((item) =>
+      item.selector.kind === "accessibility" && !item.selector.actionRef
+        ? [`<div role="${item.selector.role}" aria-label="${item.selector.name}"></div>`]
+        : []);
+    const html = validStitchHtml([
+      `<main data-surface-id="${target.surfaceRef}">`,
+      ...actionTags,
+      ...target.requiredActionInputs.flatMap((item) => item.inputFields.map((field) =>
+        `<input data-action-input="${item.actionRef}.${field}" />`)),
+      ...standaloneAccessibility,
+      "</main>",
+    ].join(""), `story-projection-screen-${index + 1}`);
+    return {
+      screenId: `screen-${index + 1}`,
+      title: target.expectedScreenTitle,
+      html,
+      screenshot: validStitchPng(index + 1),
+    };
+  });
+  const directResponseEvidence = {
+    schema: "setfarm.stitch-direct-response-evidence.v2",
+    projectId: "story-projection",
     batches: [{
       stageId: "stage-counter",
       targetRefs: targets.generationTargets.targets.map((target) => target.targetId),
-      screens: targets.generationTargets.targets.map((target, index) => ({
-        screenId: `screen-${index + 1}`,
-        title: target.expectedScreenTitle,
+      source: "direct",
+      candidates: candidates.map((candidate, index) => ({
+        screenId: candidate.screenId,
+        title: candidate.title,
+        responsePaths: [`$result.screens[${index}]`],
+        htmlAvailable: true,
+        screenshotAvailable: true,
+        ...stitchDownloadReceipts(candidate.screenId, candidate.html, candidate.screenshot),
+        identityConflicts: [],
+        disposition: "admitted_renderable_screen",
+        missingEvidence: [],
       })),
     }],
+  };
+  const artifacts = candidates.map((candidate) => ({
+    screenId: candidate.screenId,
+    htmlBytes: candidate.html,
+    screenshotBytes: candidate.screenshot,
+  }));
+  const renderedSemantics = buildTestRenderedSemantics({
+    generationTargets: targets.generationTargets,
+    directResponseEvidence,
+    artifacts,
+  });
+  const selected = selectStitchTargetCandidatesV1({
+    generationTargets: targets.generationTargets,
+    directResponseEvidence,
+    renderedSemantics,
+    artifacts,
+    authorityMode: "clean_v3",
+  });
+  assert.equal(selected.status, "produced", JSON.stringify(selected.diagnostics));
+  if (selected.status !== "produced") throw new Error("story projection selection failed");
+  const bound = bindStitchTargetCandidateSelectionsV2({
+    generationTargets: targets.generationTargets,
+    candidateSelection: selected.candidateSelection,
   });
   assert.equal(bound.status, "produced", JSON.stringify(bound.diagnostics));
+  if (bound.status !== "produced") throw new Error("story projection binding failed");
   return {
     productSpec,
     generationTargets: targets.generationTargets,
+    renderedSemantics,
+    candidateSelection: selected.candidateSelection,
     responseBindings: bound.responseBindings,
   };
 }
@@ -79,6 +144,16 @@ describe("Product Compiler v3 legacy story compatibility projection", () => {
     fs.mkdirSync(path.join(repo, "stitch"), { recursive: true });
     const targetsPath = path.join(repo, "stitch", "GENERATION_TARGETS.json");
     fs.writeFileSync(targetsPath, `${canonicalJsonStringify(contracts.generationTargets)}\n`, "utf8");
+    fs.writeFileSync(
+      path.join(repo, "stitch", "STITCH_RENDERED_SEMANTICS.json"),
+      `${canonicalJsonStringify(contracts.renderedSemantics)}\n`,
+      "utf8",
+    );
+    fs.writeFileSync(
+      path.join(repo, "stitch", "STITCH_TARGET_CANDIDATE_SELECTION.json"),
+      `${canonicalJsonStringify(contracts.candidateSelection)}\n`,
+      "utf8",
+    );
     fs.writeFileSync(
       path.join(repo, "stitch", "STITCH_RESPONSE_BINDINGS.json"),
       `${canonicalJsonStringify(contracts.responseBindings)}\n`,

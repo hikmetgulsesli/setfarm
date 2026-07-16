@@ -16,12 +16,19 @@ import {
   hasUniqueStrings,
 } from "./common-v1.js";
 
+export const RenderedDesignElementSourceV1Schema = z.object({
+  artifactHash: Sha256Schema,
+  locator: NormalizedRelativeLocatorSchema,
+  elementRef: z.string().regex(/^E[0-9]{6}$/),
+}).strict();
+
 export const DesignSurfaceV1Schema = z
   .object({
     id: DesignSurfaceIdSchema,
     surfaceRef: SurfaceIdSchema,
     sourceArtifactHash: Sha256Schema,
     sourceLocator: NormalizedRelativeLocatorSchema,
+    renderedSource: RenderedDesignElementSourceV1Schema.optional(),
   })
   .strict();
 
@@ -82,6 +89,7 @@ export const DesignControlV1Schema = z
     surfaceRef: SurfaceIdSchema,
     interactive: z.boolean(),
     source: ControlSourceV1Schema,
+    renderedSource: RenderedDesignElementSourceV1Schema.optional(),
   })
   .strict();
 
@@ -243,6 +251,7 @@ const DesignObservableTargetV1Schema = z.discriminatedUnion("kind", [
     name: z.string().min(1).max(500),
     identity: ObservableSourceIdentityV1Schema,
     source: ControlSourceV1Schema,
+    renderedSource: RenderedDesignElementSourceV1Schema.optional(),
   }).strict(),
 ]);
 
@@ -295,6 +304,13 @@ export const DesignInteractionGraphV1Schema = z
           message: "Control source hash must be declared in rawArtifactHashes",
         });
       }
+      if (control.renderedSource && !value.rawArtifactHashes.includes(control.renderedSource.artifactHash)) {
+        context.addIssue({
+          code: "custom",
+          path: ["controls", index, "renderedSource", "artifactHash"],
+          message: "Control rendered-source hash must be declared in rawArtifactHashes",
+        });
+      }
     });
     value.surfaces.forEach((surface, index) => {
       if (!value.rawArtifactHashes.includes(surface.sourceArtifactHash)) {
@@ -302,6 +318,13 @@ export const DesignInteractionGraphV1Schema = z
           code: "custom",
           path: ["surfaces", index, "sourceArtifactHash"],
           message: "Design surface source hash must be declared in rawArtifactHashes",
+        });
+      }
+      if (surface.renderedSource && !value.rawArtifactHashes.includes(surface.renderedSource.artifactHash)) {
+        context.addIssue({
+          code: "custom",
+          path: ["surfaces", index, "renderedSource", "artifactHash"],
+          message: "Surface rendered-source hash must be declared in rawArtifactHashes",
         });
       }
     });
@@ -342,6 +365,13 @@ export const DesignInteractionGraphV1Schema = z
             code: "custom",
             path: ["observableBindings", index, "target", "source", "artifactHash"],
             message: "Observable source hash must be declared in rawArtifactHashes",
+          });
+        }
+        if (target.renderedSource && !value.rawArtifactHashes.includes(target.renderedSource.artifactHash)) {
+          context.addIssue({
+            code: "custom",
+            path: ["observableBindings", index, "target", "renderedSource", "artifactHash"],
+            message: "Observable rendered-source hash must be declared in rawArtifactHashes",
           });
         }
       }

@@ -1,8 +1,10 @@
 import type postgres from "postgres";
 
-import type { SealedRuntimePacketV1 } from "../product-compiler/runtime-artifact-reader.js";
+import type { SealedRuntimePacket } from "../product-compiler/runtime-artifact-reader.js";
 import { ProductBuildPacketV1Schema } from "../product-compiler/schemas/product-build-packet-v1.js";
+import { ProductBuildPacketV2Schema } from "../product-compiler/schemas/product-build-packet-v2.js";
 import { ProductCompilationReportV1Schema } from "../product-compiler/schemas/compilation-report-v1.js";
+import { ProductCompilationReportV2Schema } from "../product-compiler/schemas/compilation-report-v2.js";
 import { StoryIdSchema } from "../product-compiler/schemas/common-v1.js";
 import { StoryPlanV1Schema, type StoryPlanV1 } from "../product-compiler/schemas/story-plan-v1.js";
 import type { SourceRevisionV1 } from "./schemas/execution-attempt-v1.js";
@@ -114,7 +116,7 @@ export type V3NormalImplementationPreclaimResult<
 export type V3NormalImplementationPreclaimDependencies<
   TStory extends V3NormalImplementationStoryRow = V3NormalImplementationStoryRow,
 > = Readonly<{
-  readPacket(runId: string): Promise<SealedRuntimePacketV1>;
+  readPacket(runId: string): Promise<SealedRuntimePacket>;
   readPendingStories(input: Readonly<{
     runId: string;
     stepId: string;
@@ -184,7 +186,7 @@ function canonicalStrings(values: readonly string[]): string[] {
   return [...new Set(values)].sort();
 }
 
-function validatePacket(packet: SealedRuntimePacketV1, runId: string): StoryPlanV1 {
+function validatePacket(packet: SealedRuntimePacket, runId: string): StoryPlanV1 {
   if (
     packet.runId !== runId
     || !SHA256.test(packet.packetHash)
@@ -195,8 +197,12 @@ function validatePacket(packet: SealedRuntimePacketV1, runId: string): StoryPlan
       "runtime packet identity is not bound to the requested run and artifact ref",
     );
   }
-  const packetPayload = ProductBuildPacketV1Schema.safeParse(packet.packet);
-  const report = ProductCompilationReportV1Schema.safeParse(packet.compilationReport);
+  const packetPayload = packet.packet.schema === "setfarm.product-build-packet.v2"
+    ? ProductBuildPacketV2Schema.safeParse(packet.packet)
+    : ProductBuildPacketV1Schema.safeParse(packet.packet);
+  const report = packet.compilationReport.schema === "setfarm.product-compilation-report.v2"
+    ? ProductCompilationReportV2Schema.safeParse(packet.compilationReport)
+    : ProductCompilationReportV1Schema.safeParse(packet.compilationReport);
   const storyPlan = StoryPlanV1Schema.safeParse(packet.storyPlan);
   if (!packetPayload.success || !report.success || report.data.status !== "sealed" || !storyPlan.success) {
     throw new V3NormalImplementationPreclaimError(
@@ -218,6 +224,12 @@ function validatePacket(packet: SealedRuntimePacketV1, runId: string): StoryPlan
     || report.data.artifactHashes.storyPlan !== refs.storyPlan
     || packetPayload.data.compiler.codeSha !== report.data.compiler.codeSha
     || packetPayload.data.compiler.version !== report.data.compiler.version
+    || (packetPayload.data.schema === "setfarm.product-build-packet.v2" && (
+      !("designSourceClosure" in refs)
+      || packetPayload.data.designSourceClosureHash !== refs.designSourceClosure
+      || report.data.schema !== "setfarm.product-compilation-report.v2"
+      || report.data.artifactHashes.designSourceClosure !== refs.designSourceClosure
+    ))
   ) {
     throw new V3NormalImplementationPreclaimError(
       "V3_NORMAL_PRECLAIM_PACKET_INVALID",
@@ -340,7 +352,7 @@ function validateStoryProjection(
   return projected;
 }
 
-function packetEvidenceRefs(packet: SealedRuntimePacketV1): string[] {
+function packetEvidenceRefs(packet: SealedRuntimePacket): string[] {
   return canonicalStrings(Object.values(packet.refs).map((hash) => `setfarm://artifact/${hash}`));
 }
 
@@ -394,7 +406,7 @@ export function createV3NormalImplementationPreclaim<
         });
       }
 
-      let packet: SealedRuntimePacketV1;
+      let packet: SealedRuntimePacket;
       let storyPlan: StoryPlanV1;
       try {
         packet = await dependencies.readPacket(input.runId);

@@ -22,13 +22,23 @@ const ReservationIdSchema = z.string().min(1).max(200);
 const OwnerIdSchema = z.string().min(1).max(200);
 const RefKeySchema = z.string().min(1).max(160).regex(/^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*$/);
 
-const PRODUCT_PACKET_REF_TYPES = Object.freeze({
+const PRODUCT_PACKET_REF_TYPES_V1 = Object.freeze({
   PRODUCT_SPEC: "setfarm.product-spec.v1",
   DESIGN_GRAPH: "setfarm.design-interaction-graph.v1",
   BUILD_TOPOLOGY: "setfarm.build-topology.v1",
   STORY_PLAN: "setfarm.story-plan.v1",
   PRODUCT_BUILD_PACKET: "setfarm.product-build-packet.v1",
   COMPILATION_REPORT: "setfarm.product-compilation-report.v1",
+} as const);
+
+const PRODUCT_PACKET_REF_TYPES_V2 = Object.freeze({
+  PRODUCT_SPEC: "setfarm.product-spec.v1",
+  DESIGN_GRAPH: "setfarm.design-interaction-graph.v1",
+  BUILD_TOPOLOGY: "setfarm.build-topology.v1",
+  STORY_PLAN: "setfarm.story-plan.v1",
+  DESIGN_SOURCE_CLOSURE: "setfarm.design-source-closure.v1",
+  PRODUCT_BUILD_PACKET: "setfarm.product-build-packet.v2",
+  COMPILATION_REPORT: "setfarm.product-compilation-report.v2",
 } as const);
 
 const ArtifactIdentitySchema = z.object({
@@ -908,7 +918,7 @@ export function createArtifactIndex(sql: Sql) {
       runId: string;
       packetHash: string;
       compiler: CompilerIdentityV1;
-      artifactRefs: Readonly<Record<keyof typeof PRODUCT_PACKET_REF_TYPES, string>>;
+      artifactRefs: Readonly<Record<string, string>>;
       now?: Date;
     }>): Promise<Readonly<{
       created: boolean;
@@ -921,16 +931,10 @@ export function createArtifactIndex(sql: Sql) {
       const packetHash = Sha256Schema.parse(input.packetHash);
       const compiler = CompilerIdentityV1Schema.parse(input.compiler);
       const rawRefs = z.record(RefKeySchema, Sha256Schema).parse(input.artifactRefs);
-      const expectedKeys = Object.keys(PRODUCT_PACKET_REF_TYPES).sort();
-      const observedKeys = Object.keys(rawRefs).sort();
-      if (
-        observedKeys.length !== expectedKeys.length
-        || observedKeys.some((key, index) => key !== expectedKeys[index])
-        || rawRefs.PRODUCT_BUILD_PACKET !== packetHash
-      ) {
+      if (rawRefs.PRODUCT_BUILD_PACKET !== packetHash) {
         throw new ArtifactIndexError(
           "PRODUCT_PACKET_REFS_INCOMPLETE",
-          "Product packet activation requires the exact canonical artifact reference set",
+          "Product packet activation requires its canonical packet reference",
         );
       }
       const now = validTime(input.now);
@@ -991,13 +995,35 @@ export function createArtifactIndex(sql: Sql) {
           );
         }
 
+        const packetArtifact = await readArtifact(transaction, packetHash);
+        const refTypes = packetArtifact?.artifact_type === "setfarm.product-build-packet.v2"
+          ? PRODUCT_PACKET_REF_TYPES_V2
+          : packetArtifact?.artifact_type === "setfarm.product-build-packet.v1"
+            ? PRODUCT_PACKET_REF_TYPES_V1
+            : undefined;
+        if (!refTypes) {
+          throw new ArtifactIndexError(
+            "PRODUCT_PACKET_ARTIFACT_TYPE_INVALID",
+            `Packet ${packetHash} is not an indexed Product Build Packet v1 or v2 artifact`,
+          );
+        }
+        const expectedKeys = Object.keys(refTypes).sort();
+        const observedKeys = Object.keys(rawRefs).sort();
+        if (
+          observedKeys.length !== expectedKeys.length
+          || observedKeys.some((key, index) => key !== expectedKeys[index])
+        ) {
+          throw new ArtifactIndexError(
+            "PRODUCT_PACKET_REFS_INCOMPLETE",
+            "Product packet activation requires the exact canonical reference set for its indexed packet schema",
+          );
+        }
+
         let refsCreated = 0;
         for (const refKey of expectedKeys) {
           const artifactHash = rawRefs[refKey]!;
           const artifact = await readArtifact(transaction, artifactHash);
-          const expectedType = PRODUCT_PACKET_REF_TYPES[
-            refKey as keyof typeof PRODUCT_PACKET_REF_TYPES
-          ];
+          const expectedType = refTypes[refKey as keyof typeof refTypes];
           if (!artifact || artifact.artifact_type !== expectedType) {
             throw new ArtifactIndexError(
               "PRODUCT_PACKET_ARTIFACT_TYPE_INVALID",
@@ -1107,10 +1133,13 @@ export function createArtifactIndex(sql: Sql) {
       const now = validTime(input.now);
       return sql.begin(async (transaction) => {
         const artifact = await readArtifact(transaction, packetHash);
-        if (!artifact || artifact.artifact_type !== "setfarm.product-build-packet.v1") {
+        if (
+          !artifact
+          || !["setfarm.product-build-packet.v1", "setfarm.product-build-packet.v2"].includes(artifact.artifact_type)
+        ) {
           throw new ArtifactIndexError(
             "PRODUCT_PACKET_ARTIFACT_TYPE_INVALID",
-            `Packet ${packetHash} is not an indexed Product Build Packet v1 artifact`,
+            `Packet ${packetHash} is not an indexed Product Build Packet v1 or v2 artifact`,
           );
         }
         const inserted = await transaction.unsafe<Array<{ run_id: string }>>(

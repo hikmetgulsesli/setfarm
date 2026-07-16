@@ -2,6 +2,13 @@ import { produceRuntimeEvidenceContractV1 } from "../../../src/evidence/runtime-
 import { hashRuntimeEvidenceContractV1 } from "../../../src/evidence/runtime-evidence-contract-v1.js";
 import { extractTaskRequirementLedgerV1 } from "../../../src/product-compiler/requirements/task-requirements-v1.js";
 import { produceRuntimeDataContractV1 } from "../../../src/product-compiler/producers/runtime-data-contract.js";
+import { produceDesignGenerationTargetsV1 } from "../../../src/product-compiler/producers/design-targets.js";
+import {
+  bindStitchTargetCandidateSelectionsV2,
+  selectStitchTargetCandidatesV1,
+} from "../../../src/product-compiler/producers/stitch-target-candidate-selection.js";
+import { hashCanonicalJson } from "../../../src/product-compiler/canonical-json.js";
+import { buildTestRenderedSemantics, stitchDownloadReceipts, validStitchHtml, validStitchPng } from "./stitch-artifacts.js";
 
 const HASH_A = "a".repeat(64);
 const HASH_B = "b".repeat(64);
@@ -487,5 +494,94 @@ export function buildMinimalValidV3Contracts(): ReturnType<typeof buildMinimalVa
     },
     requiredEvidence: values.productSpec.evidencePredicates.filter((item: any) => item.required),
   });
+  return values;
+}
+
+export function buildMinimalValidV3PacketV2Contracts(): ReturnType<typeof buildMinimalValidV3Contracts> & {
+  designSource: {
+    kind: "stitch";
+    generationTargets: unknown;
+    directResponseEvidence: unknown;
+    renderedSemantics: unknown;
+    candidateSelection: unknown;
+    responseBindings: unknown;
+  };
+} {
+  const values: any = buildMinimalValidV3Contracts();
+  const targets = produceDesignGenerationTargetsV1(values.productSpec);
+  if (targets.status !== "produced") {
+    throw new Error(`Minimal v3 generation-target fixture rejected: ${JSON.stringify(targets.diagnostics)}`);
+  }
+  const target = targets.generationTargets.targets[0]!;
+  const html = validStitchHtml([
+    `<main data-surface-id="${target.surfaceRef}">`,
+    ...target.requiredActionRefs.map((actionRef) => `<button data-action="${actionRef}">${actionRef}</button>`),
+    ...target.requiredActionInputs.flatMap((input) => input.inputFields.map((field) =>
+      `<input data-action-input="${input.actionRef}.${field}" />`)),
+    "</main>",
+  ].join(""), "minimal-v3-packet-v2");
+  const screenshot = validStitchPng(23);
+  const directResponseEvidence = {
+    schema: "setfarm.stitch-direct-response-evidence.v2" as const,
+    projectId: "minimal-v3-packet-v2",
+    batches: [{
+      stageId: "stage-minimal-v3",
+      targetRefs: [target.targetId],
+      source: "direct" as const,
+      candidates: [{
+        screenId: "screen-minimal-v3",
+        title: target.expectedScreenTitle,
+        responsePaths: ["$result.screens[0]"],
+        htmlAvailable: true,
+        screenshotAvailable: true,
+        ...stitchDownloadReceipts("screen-minimal-v3", html, screenshot),
+        identityConflicts: [],
+        disposition: "admitted_renderable_screen" as const,
+        missingEvidence: [],
+      }],
+    }],
+  };
+  const artifacts = [{ screenId: "screen-minimal-v3", htmlBytes: html, screenshotBytes: screenshot }];
+  const renderedSemantics = buildTestRenderedSemantics({
+    generationTargets: targets.generationTargets,
+    directResponseEvidence,
+    artifacts,
+  });
+  const selected = selectStitchTargetCandidatesV1({
+    generationTargets: targets.generationTargets,
+    directResponseEvidence,
+    renderedSemantics,
+    artifacts,
+    authorityMode: "clean_v3",
+  });
+  if (selected.status !== "produced") {
+    throw new Error(`Minimal v3 candidate-selection fixture rejected: ${JSON.stringify(selected.diagnostics)}`);
+  }
+  const bound = bindStitchTargetCandidateSelectionsV2({
+    generationTargets: targets.generationTargets,
+    candidateSelection: selected.candidateSelection,
+  });
+  if (bound.status !== "produced") {
+    throw new Error(`Minimal v3 response-binding fixture rejected: ${JSON.stringify(bound.diagnostics)}`);
+  }
+  const authorityPayloadHashes = [
+    hashCanonicalJson(targets.generationTargets),
+    hashCanonicalJson(directResponseEvidence),
+    hashCanonicalJson(renderedSemantics),
+    hashCanonicalJson(selected.candidateSelection),
+    hashCanonicalJson(bound.responseBindings),
+  ];
+  values.designGraph.rawArtifactHashes = [...new Set([
+    ...values.designGraph.rawArtifactHashes,
+    ...authorityPayloadHashes,
+  ])].sort();
+  values.designSource = {
+    kind: "stitch",
+    generationTargets: targets.generationTargets,
+    directResponseEvidence,
+    renderedSemantics,
+    candidateSelection: selected.candidateSelection,
+    responseBindings: bound.responseBindings,
+  };
   return values;
 }
