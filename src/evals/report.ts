@@ -10,11 +10,20 @@ import {
   ConvergenceEvalRunResultV1Schema,
   type ConvergenceEvalResultV1,
 } from "./result-schema.js";
+import {
+  ConvergenceEvalResultV2Schema,
+  ConvergenceEvalResultVersionedSchema,
+  ConvergenceEvalRunResultV2Schema,
+  type ConvergenceEvalResultV2,
+  type ConvergenceEvalResultVersioned,
+} from "./result-schema-v2.js";
 import { ConvergenceReleaseGateV1Schema, type ConvergenceReleaseGateV1 } from "./release-gate.js";
 
 const PersistableSchema = z.union([
   ConvergenceEvalRunResultV1Schema,
   ConvergenceEvalResultV1Schema,
+  ConvergenceEvalRunResultV2Schema,
+  ConvergenceEvalResultV2Schema,
   ConvergenceReleaseGateV1Schema,
 ]);
 type Persistable = z.infer<typeof PersistableSchema>;
@@ -103,6 +112,14 @@ export class ContentAddressedEvalResultStore {
     return ConvergenceEvalResultV1Schema.parse(await this.get(hash));
   }
 
+  async getResultV2(hash: string): Promise<ConvergenceEvalResultV2> {
+    return ConvergenceEvalResultV2Schema.parse(await this.get(hash));
+  }
+
+  async getVersionedResult(hash: string): Promise<ConvergenceEvalResultVersioned> {
+    return ConvergenceEvalResultVersionedSchema.parse(await this.get(hash));
+  }
+
   async getReleaseGate(hash: string): Promise<ConvergenceReleaseGateV1> {
     return ConvergenceReleaseGateV1Schema.parse(await this.get(hash));
   }
@@ -112,8 +129,36 @@ export function stableConvergenceResultJson(value: ConvergenceEvalResultV1): str
   return `${JSON.stringify(ConvergenceEvalResultV1Schema.parse(value), null, 2)}\n`;
 }
 
+export function stableConvergenceResultJsonV2(value: ConvergenceEvalResultV2): string {
+  return `${JSON.stringify(ConvergenceEvalResultV2Schema.parse(value), null, 2)}\n`;
+}
+
 export function convergenceResultTable(value: ConvergenceEvalResultV1): string {
   const result = ConvergenceEvalResultV1Schema.parse(value);
+  const rows = result.runs.map((run) => [
+    run.caseId,
+    String(run.repetition),
+    run.productClass,
+    run.disposition,
+    run.passed ? "PASS" : "FAIL",
+    run.rootCauseHash?.slice(0, 12) ?? "-",
+  ]);
+  const headings = ["CASE", "REP", "CLASS", "DISPOSITION", "RESULT", "ROOT_CAUSE"];
+  const widths = headings.map((heading, index) => Math.max(
+    heading.length,
+    ...rows.map((row) => row[index]!.length),
+  ));
+  const format = (row: string[]) => row.map((cell, index) => cell.padEnd(widths[index]!)).join("  ").trimEnd();
+  return [
+    format(headings),
+    format(widths.map((width) => "-".repeat(width))),
+    ...rows.map(format),
+    `${result.status.toUpperCase()} ${result.runs.filter((item) => item.passed).length}/${result.plannedRuns} HASH ${result.resultHash}`,
+  ].join("\n") + "\n";
+}
+
+export function convergenceResultTableV2(value: ConvergenceEvalResultV2): string {
+  const result = ConvergenceEvalResultV2Schema.parse(value);
   const rows = result.runs.map((run) => [
     run.caseId,
     String(run.repetition),

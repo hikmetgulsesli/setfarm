@@ -19,7 +19,7 @@ const SlugSchema = z.string().min(1).max(160).regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/
 const ReasonCodeSchema = z.string().min(3).max(160).regex(/^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$/);
 const ProductClassSchema = z.enum(["utility", "operations", "game"]);
 const StackPackSchema = z.enum(["vite-react-web-app", "browser-game-canvas"]);
-const RejectionCodeSchema = z.enum([
+export const RejectionCodeSchema = z.enum([
   "PRODUCT_SPEC_TASK_AMBIGUOUS",
   "PRODUCT_SPEC_SEMANTIC_UNSUPPORTED",
   "PRODUCT_SPEC_REQUIREMENT_CONFLICT",
@@ -32,7 +32,7 @@ const RejectionCodeSchema = z.enum([
  * Exact task spans bind expectations to source without sharing producer IDs.
  */
 
-const OracleClauseV1Schema = z.object({
+export const OracleClauseV1Schema = z.object({
   clauseId: SlugSchema,
   source: z.object({
     startOffset: z.number().int().nonnegative(),
@@ -160,7 +160,7 @@ export const TaskIntentExpectationV1Schema = z.discriminatedUnion("kind", [
   ActionExpectationV1Schema,
 ]);
 
-const AcceptedDecisionV1Schema = z.object({
+export const AcceptedDecisionV1Schema = z.object({
   kind: z.literal("accepted_candidate"),
   productClass: ProductClassSchema,
   delivery: z.object({
