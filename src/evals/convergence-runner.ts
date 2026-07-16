@@ -40,12 +40,18 @@ import {
 import { readOpenClawConfig } from "../installer/openclaw-config.js";
 import { computeRunOperationalSnapshotHash } from "../server/run-operational-snapshot.js";
 import { RunOperationalSnapshotV2Schema } from "../server/schemas/run-operational-snapshot-v2.js";
-import type { ConvergenceCaseV1, ProductConvergenceSuiteV1 } from "./suite-schema.js";
+import type { ConvergenceCaseV1 } from "./suite-schema.js";
 import {
   ConvergenceStackPackV1Schema,
   convergenceCaseHash,
-  loadConvergenceSuite,
 } from "./suite-schema.js";
+import {
+  convergenceCaseHashV2,
+  loadConvergenceSuiteVersioned,
+  type ConvergenceCaseV2,
+  type LoadedConvergenceSuiteVersioned,
+  type ProductConvergenceSuiteVersioned,
+} from "./suite-schema-v2.js";
 import {
   ConvergenceCanonicalEvidenceV1Schema,
   ConvergenceGitHubEvidenceV1Schema,
@@ -58,9 +64,20 @@ import {
   type ConvergenceEvalRunResultV1,
 } from "./result-schema.js";
 import {
+  ConvergenceCanonicalEvidenceV2Schema,
+  createConvergenceResultV2,
+  createConvergenceRunResultV2,
+  type ConvergenceEvalResultV2,
+  type ConvergenceEvalResultVersioned,
+  type ConvergenceEvalRunResultV2,
+  type ConvergenceEvalRunResultVersioned,
+} from "./result-schema-v2.js";
+import {
   ContentAddressedEvalResultStore,
   convergenceResultTable,
+  convergenceResultTableV2,
   stableConvergenceResultJson,
+  stableConvergenceResultJsonV2,
   type StoredConvergenceArtifact,
 } from "./report.js";
 import {
@@ -72,6 +89,13 @@ import {
   taskIntentOracleHashV1,
   type TaskIntentOracleV1,
 } from "./task-intent-oracle.js";
+import {
+  evaluateTaskIntentOracleV2,
+  taskIntentOracleHashV2,
+  type TaskIntentOracleActualV2,
+  type TaskIntentOracleV2,
+  type TaskIntentOracleVersioned,
+} from "./task-intent-oracle-v2.js";
 import { createV3ReleaseAdmissionRepository } from "../execution/v3-release-admission-repository.js";
 import { evaluateOperationalFailureCauseEvidenceAuthorityV1 } from "../execution/operational-failure-cause-authority-v1.js";
 import {
@@ -171,8 +195,13 @@ export type ConvergenceScopedFailureV1 = Readonly<{
   kind: "step" | "story";
 }>;
 
+type ConvergenceCaseVersioned = ConvergenceCaseV1 | ConvergenceCaseV2;
+type ConvergenceCanonicalEvidenceVersioned =
+  | z.infer<typeof ConvergenceCanonicalEvidenceV1Schema>
+  | z.infer<typeof ConvergenceCanonicalEvidenceV2Schema>;
+
 export type ConvergenceRunCollection = Readonly<{
-  canonical: z.infer<typeof ConvergenceCanonicalEvidenceV1Schema>;
+  canonical: ConvergenceCanonicalEvidenceVersioned;
   operationalFailureCause: OperationalFailureCauseV1 | null;
   scopedFailure: ConvergenceScopedFailureV1 | null;
   pullRequests: readonly ConvergencePullRequestRef[];
@@ -185,7 +214,7 @@ export interface ConvergenceSqlPort {
     runId: string,
     input: Readonly<{
       task: string;
-      oracle: TaskIntentOracleV1;
+      oracle: TaskIntentOracleVersioned;
     }>,
   ): Promise<ConvergenceRunCollection>;
   close?(): Promise<void>;
@@ -223,7 +252,13 @@ export interface ConvergenceProcessPort {
 
 export interface ConvergenceArtifactPort {
   prepare(): Promise<void>;
-  put(value: ConvergenceEvalRunResultV1 | ConvergenceEvalResultV1 | ConvergenceReleaseGateV1): Promise<StoredConvergenceArtifact>;
+  put(value:
+    | ConvergenceEvalRunResultV1
+    | ConvergenceEvalResultV1
+    | ConvergenceEvalRunResultV2
+    | ConvergenceEvalResultV2
+    | ConvergenceReleaseGateV1
+  ): Promise<StoredConvergenceArtifact>;
 }
 
 export interface ConvergenceAdmissionPort {
@@ -264,7 +299,7 @@ export type ConvergenceRunnerPorts = Readonly<{
 }>;
 
 export type ConvergenceSuiteRun = Readonly<{
-  result: ConvergenceEvalResultV1;
+  result: ConvergenceEvalResultVersioned;
   artifact: StoredConvergenceArtifact;
   gate: ConvergenceReleaseGateV1;
   gateArtifact: StoredConvergenceArtifact;
@@ -272,6 +307,80 @@ export type ConvergenceSuiteRun = Readonly<{
 
 function safeHash(value: unknown): string {
   return hashCanonicalJson(value);
+}
+
+function convergenceCaseHashVersioned(value: ConvergenceCaseVersioned): string {
+  return value.oracle.schema === "setfarm.task-intent-oracle.v2"
+    ? convergenceCaseHashV2(value as ConvergenceCaseV2)
+    : convergenceCaseHash(value as ConvergenceCaseV1);
+}
+
+export function taskIntentOracleHashVersioned(task: string, oracle: TaskIntentOracleVersioned): string {
+  return oracle.schema === "setfarm.task-intent-oracle.v2"
+    ? taskIntentOracleHashV2(task, oracle)
+    : taskIntentOracleHashV1(task, oracle);
+}
+
+export function evaluateTaskIntentOracleVersioned(input: Readonly<{
+  task: string;
+  oracle: TaskIntentOracleVersioned;
+  actual: TaskIntentOracleActualV2;
+}>) {
+  return input.oracle.schema === "setfarm.task-intent-oracle.v2"
+    ? evaluateTaskIntentOracleV2(input as Readonly<{
+        task: string;
+        oracle: TaskIntentOracleV2;
+        actual: TaskIntentOracleActualV2;
+      }>)
+    : evaluateTaskIntentOracleV1(input as Readonly<{
+        task: string;
+        oracle: TaskIntentOracleV1;
+        actual: TaskIntentOracleActualV2;
+      }>);
+}
+
+function createCanonicalEvidenceVersioned(
+  oracle: TaskIntentOracleVersioned,
+  payload: Readonly<Record<string, unknown>>,
+): ConvergenceCanonicalEvidenceVersioned {
+  const value = { ...payload, stateHash: safeHash(payload) };
+  return oracle.schema === "setfarm.task-intent-oracle.v2"
+    ? ConvergenceCanonicalEvidenceV2Schema.parse(value)
+    : ConvergenceCanonicalEvidenceV1Schema.parse(value);
+}
+
+function createConvergenceRunResultVersioned(
+  suite: ProductConvergenceSuiteVersioned,
+  input: Readonly<Record<string, unknown>>,
+): ConvergenceEvalRunResultVersioned {
+  return suite.schema === "setfarm.product-convergence-suite.v2"
+    ? createConvergenceRunResultV2({
+        ...input,
+        schema: "setfarm.product-convergence-run-result.v2",
+        suiteVersion: 2,
+      })
+    : createConvergenceRunResult({
+        ...input,
+        schema: "setfarm.product-convergence-run-result.v1",
+        suiteVersion: 1,
+      });
+}
+
+function createConvergenceResultVersioned(
+  suite: ProductConvergenceSuiteVersioned,
+  input: Readonly<Record<string, unknown>>,
+): ConvergenceEvalResultVersioned {
+  return suite.schema === "setfarm.product-convergence-suite.v2"
+    ? createConvergenceResultV2({
+        ...input,
+        schema: "setfarm.product-convergence-result.v2",
+        suiteVersion: 2,
+      })
+    : createConvergenceResult({
+        ...input,
+        schema: "setfarm.product-convergence-result.v1",
+        suiteVersion: 1,
+      });
 }
 
 function iso(clock: ConvergenceClock): string {
@@ -306,14 +415,14 @@ async function settle<T>(work: () => Promise<T>): Promise<Readonly<{ ok: true; v
   }
 }
 
-function suiteProfilesMatch(suite: ProductConvergenceSuiteV1, release: ConvergenceReleaseInspection): boolean {
+function suiteProfilesMatch(suite: ProductConvergenceSuiteVersioned, release: ConvergenceReleaseInspection): boolean {
   return suite.cases.every((item) =>
     item.executionProfile.providerId === release.providerId
     && item.executionProfile.modelId === release.modelId);
 }
 
 async function buildPreflight(
-  suite: ProductConvergenceSuiteV1,
+  suite: ProductConvergenceSuiteVersioned,
   releaseSha: string,
   execute: boolean,
   ports: ConvergenceRunnerPorts,
@@ -440,8 +549,8 @@ async function buildPreflight(
 
 function emptyCanonical(
   code: string,
-  input: Readonly<{ task: string; oracle: TaskIntentOracleV1 }>,
-): z.infer<typeof ConvergenceCanonicalEvidenceV1Schema> {
+  input: Readonly<{ task: string; oracle: TaskIntentOracleVersioned }>,
+): ConvergenceCanonicalEvidenceVersioned {
   const packet = {
     stateHash: safeHash({ packet: "unavailable" }), packetHash: null,
     casAuditHash: safeHash({ cas: "unavailable" }), casDeepVerified: false,
@@ -472,9 +581,9 @@ function emptyCanonical(
     candidates: 0, storyEvidence: 0, sourceSha: null, sourceTreeHash: null,
     invalidBindings: 1,
   };
-  const oracle = evaluateTaskIntentOracleV1({ ...input, actual: { kind: "unavailable" } });
+  const oracle = evaluateTaskIntentOracleVersioned({ ...input, actual: { kind: "unavailable" } });
   const payload = { packet, attempts, findings, recovery, evidence, acceptance, oracle, invariantCodes: [reasonCode(code)] };
-  return ConvergenceCanonicalEvidenceV1Schema.parse({ ...payload, stateHash: safeHash(payload) });
+  return createCanonicalEvidenceVersioned(input.oracle, payload);
 }
 
 function unavailableProjection(): z.infer<typeof ConvergenceProjectionEvidenceV1Schema> {
@@ -682,7 +791,7 @@ async function verifyReleaseStillPinned(
 
 async function waitForTerminal(
   runId: string,
-  suite: ProductConvergenceSuiteV1,
+  suite: ProductConvergenceSuiteVersioned,
   releaseSha: string,
   ports: ConvergenceRunnerPorts,
 ): Promise<Readonly<{ poll: ConvergenceRunPoll; timedOut: boolean; invalidated: boolean }>> {
@@ -697,11 +806,11 @@ async function waitForTerminal(
   return { poll: latest, timedOut: !latest.terminal, invalidated };
 }
 
-function plannedCases(suite: ProductConvergenceSuiteV1): Array<Readonly<{
-  value: ConvergenceCaseV1;
+function plannedCases(suite: ProductConvergenceSuiteVersioned): Array<Readonly<{
+  value: ConvergenceCaseVersioned;
   repetition: number;
 }>> {
-  const planned: Array<Readonly<{ value: ConvergenceCaseV1; repetition: number }>> = [];
+  const planned: Array<Readonly<{ value: ConvergenceCaseVersioned; repetition: number }>> = [];
   for (const value of suite.cases) {
     for (let repetition = 1; repetition <= suite.repetitionsPerCase; repetition += 1) {
       planned.push({ value, repetition });
@@ -711,7 +820,7 @@ function plannedCases(suite: ProductConvergenceSuiteV1): Array<Readonly<{
 }
 
 export async function runConvergenceSuite(
-  loaded: Readonly<{ suite: ProductConvergenceSuiteV1; suiteHash: string }>,
+  loaded: LoadedConvergenceSuiteVersioned,
   rawOptions: Readonly<{ releaseSha: string; execute?: boolean }>,
   ports: ConvergenceRunnerPorts,
 ): Promise<ConvergenceSuiteRun> {
@@ -727,7 +836,7 @@ export async function runConvergenceSuite(
     ports,
   );
   const planned = plannedCases(loaded.suite);
-  const runs: ConvergenceEvalRunResultV1[] = [];
+  const runs: ConvergenceEvalRunResultVersioned[] = [];
   const rootCounts = new Map<string, number>();
   const repeatableRootCounts = new Map<string, number>();
   const blockers = new Set<string>();
@@ -744,7 +853,7 @@ export async function runConvergenceSuite(
       preflightHash: preflight.preflightHash,
       ttlMs,
       slots: planned.map((item) => ({
-        caseHash: convergenceCaseHash(item.value),
+        caseHash: convergenceCaseHashVersioned(item.value),
         taskHash: safeHash(item.value.task),
         repetition: item.repetition,
         slotToken: randomBytes(32).toString("base64url"),
@@ -786,7 +895,7 @@ export async function runConvergenceSuite(
       }
 
       const runStartedAt = iso(ports.clock);
-      const caseHash = convergenceCaseHash(item.value);
+      const caseHash = convergenceCaseHashVersioned(item.value);
       const taskHash = safeHash(item.value.task);
       const admission = canaryContexts.get(`${caseHash}:${taskHash}:${item.repetition}`);
       if (!admission) {
@@ -907,7 +1016,7 @@ export async function runConvergenceSuite(
         protocol: "v3" as const,
         releaseSha: options.releaseSha,
         taskHash,
-        oracleHash: taskIntentOracleHashV1(item.value.task, item.value.oracle),
+        oracleHash: taskIntentOracleHashVersioned(item.value.task, item.value.oracle),
         expectedDecision: expectedDecision.kind,
         expectedProviderHash: safeHash(item.value.executionProfile.providerId),
         expectedModelHash: safeHash(item.value.executionProfile.modelId),
@@ -929,7 +1038,7 @@ export async function runConvergenceSuite(
       };
       let passed = false;
       try {
-        createConvergenceRunResult({ ...runPayload, passed: true, rootCauseHash: null });
+        createConvergenceRunResultVersioned(loaded.suite, { ...runPayload, passed: true, rootCauseHash: null });
         passed = true;
       } catch {
         passed = false;
@@ -946,7 +1055,7 @@ export async function runConvergenceSuite(
         disposition,
       });
       const rootCauseHash = rootCause?.hash ?? null;
-      const runResult = createConvergenceRunResult({ ...runPayload, passed, rootCauseHash });
+      const runResult = createConvergenceRunResultVersioned(loaded.suite, { ...runPayload, passed, rootCauseHash });
       await ports.artifacts.put(runResult);
       runs.push(runResult);
       if (rootCauseHash) {
@@ -988,10 +1097,8 @@ export async function runConvergenceSuite(
       : complete && repeatedRootCause === null
         ? "fail" as const
         : "blocked" as const;
-  const result = createConvergenceResult({
-    schema: "setfarm.product-convergence-result.v1",
+  const result = createConvergenceResultVersioned(loaded.suite, {
     suiteId: loaded.suite.suiteId,
-    suiteVersion: loaded.suite.suiteVersion,
     suiteHash: loaded.suiteHash,
     releaseSha: options.releaseSha,
     runnerHash: release.runnerHash,
@@ -1095,7 +1202,7 @@ async function collectTypedRejectionRun(
   sql: UnsafeSql,
   runId: string,
   run: Readonly<Record<string, unknown>>,
-  input: Readonly<{ task: string; oracle: TaskIntentOracleV1 }>,
+  input: Readonly<{ task: string; oracle: TaskIntentOracleVersioned }>,
 ): Promise<ConvergenceRunCollection> {
   const [planRows, planClaimRows, terminationRows, countRows, pullRequestRows] = await Promise.all([
     sql.unsafe<Array<Record<string, unknown>>>(
@@ -1178,7 +1285,7 @@ async function collectTypedRejectionRun(
     && terminationEvidence["sourceTaskHash"] === record.data.sourceTaskHash
     && terminationEvidence["rejectionHash"] === record.data.rejectionHash;
   const oracle = record.success
-    ? evaluateTaskIntentOracleV1({
+    ? evaluateTaskIntentOracleVersioned({
         ...input,
         actual: {
           kind: "typed_rejection",
@@ -1187,7 +1294,7 @@ async function collectTypedRejectionRun(
           modelRedispatchBudget: record.data.terminal.modelRedispatchBudget,
         },
       })
-    : evaluateTaskIntentOracleV1({ ...input, actual: { kind: "unavailable" } });
+    : evaluateTaskIntentOracleVersioned({ ...input, actual: { kind: "unavailable" } });
   const packetRows = integer(counts["packet_rows"]);
   const artifactRefs = integer(counts["artifact_refs"]);
   const attemptCount = integer(counts["attempts"]);
@@ -1283,10 +1390,7 @@ async function collectTypedRejectionRun(
     oracle,
     invariantCodes: [...invariantCodes].sort(),
   };
-  const canonical = ConvergenceCanonicalEvidenceV1Schema.parse({
-    ...canonicalPayload,
-    stateHash: safeHash(canonicalPayload),
-  });
+  const canonical = createCanonicalEvidenceVersioned(input.oracle, canonicalPayload);
   return {
     canonical,
     operationalFailureCause: null,
@@ -1778,7 +1882,7 @@ export function createPostgresConvergencePort(
       };
 
       const oracle = auditedProductSpec && auditedDesignGraph && acceptedCandidate
-        ? evaluateTaskIntentOracleV1({
+        ? evaluateTaskIntentOracleVersioned({
             ...input,
             actual: {
               kind: "accepted_candidate",
@@ -1791,7 +1895,7 @@ export function createPostgresConvergencePort(
                 .map((predicate) => predicate.predicateRef),
             },
           })
-        : evaluateTaskIntentOracleV1({ ...input, actual: { kind: "unavailable" } });
+        : evaluateTaskIntentOracleVersioned({ ...input, actual: { kind: "unavailable" } });
 
       const invariantCodes = new Set<string>();
       if (packet.packetRows !== 1) invariantCodes.add("EVAL_PACKET_CARDINALITY_INVALID");
@@ -1834,10 +1938,7 @@ export function createPostgresConvergencePort(
         oracle,
         invariantCodes: [...invariantCodes].sort(),
       };
-      const canonical = ConvergenceCanonicalEvidenceV1Schema.parse({
-        ...canonicalPayload,
-        stateHash: safeHash(canonicalPayload),
-      });
+      const canonical = createCanonicalEvidenceVersioned(input.oracle, canonicalPayload);
 
       const failureRows = await sql.unsafe<Array<Record<string, unknown>>>(
         `SELECT step_id, story_id, phase, status, evidence, event_type FROM run_observations
@@ -1907,7 +2008,7 @@ async function command(
 async function evaluationCodeHash(root: string): Promise<string> {
   const directory = path.dirname(fileURLToPath(import.meta.url));
   const entries = (await readdir(directory))
-    .filter((entry) => /^(?:suite-schema|result-schema|convergence-runner|release-gate|report|task-intent-oracle)\.(?:ts|js)$/.test(entry))
+    .filter((entry) => /^(?:suite-schema|result-schema|convergence-runner|release-gate|report|task-intent-oracle)(?:-v2)?\.(?:ts|js)$/.test(entry))
     .sort();
   const hashes: Record<string, string> = {};
   for (const entry of entries) {
@@ -2224,14 +2325,18 @@ async function main(): Promise<void> {
     const inspected = await ports.process.inspectRelease();
     const releaseSha = GitObjectHashSchema.parse(options.releaseSha ?? inspected.headSha);
     if (options.execute && !options.releaseSha) throw new Error("EVAL_EXECUTE_RELEASE_SHA_REQUIRED");
-    const loaded = await loadConvergenceSuite(options.suiteFile);
+    const loaded = await loadConvergenceSuiteVersioned(options.suiteFile);
     const completed = await runConvergenceSuite(loaded, {
       releaseSha,
       execute: options.execute,
     }, ports);
-    process.stdout.write(options.json
-      ? stableConvergenceResultJson(completed.result)
-      : convergenceResultTable(completed.result));
+    process.stdout.write(completed.result.schema === "setfarm.product-convergence-result.v2"
+      ? options.json
+        ? stableConvergenceResultJsonV2(completed.result)
+        : convergenceResultTableV2(completed.result)
+      : options.json
+        ? stableConvergenceResultJson(completed.result)
+        : convergenceResultTable(completed.result));
     process.stdout.write(`ARTIFACT ${completed.artifact.locator}\n`);
     process.stdout.write(`RELEASE_GATE ${completed.gate.decision.toUpperCase()} ${completed.gateArtifact.locator} ${completed.gate.gateHash}\n`);
     if (completed.result.status === "blocked" || completed.result.status === "fail") process.exitCode = 2;

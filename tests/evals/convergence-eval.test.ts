@@ -34,6 +34,7 @@ import {
   ConvergenceOwnershipEvidenceV1Schema,
   createConvergenceResult,
 } from "../../src/evals/result-schema.js";
+import { ConvergenceCanonicalEvidenceV2Schema } from "../../src/evals/result-schema-v2.js";
 import { evaluateConvergenceReleaseGate } from "../../src/evals/release-gate.js";
 import { ContentAddressedEvalResultStore } from "../../src/evals/report.js";
 import {
@@ -46,11 +47,21 @@ import { createV3DownstreamTerminalOperationalFailureCauseV1 } from "../../src/r
 import {
   ProductConvergenceSuiteV1Schema,
   loadConvergenceSuite,
+  type ConvergenceCaseV1,
 } from "../../src/evals/suite-schema.js";
+import {
+  ProductConvergenceSuiteV2Schema,
+  type ConvergenceCaseV2,
+} from "../../src/evals/suite-schema-v2.js";
 import {
   evaluateTaskIntentOracleTaskBindingV1,
   taskIntentOracleHashV1,
 } from "../../src/evals/task-intent-oracle.js";
+import {
+  createTaskIntentOracleEvaluationV2,
+  evaluateTaskIntentOracleTaskBindingV2,
+  taskIntentOracleHashV2,
+} from "../../src/evals/task-intent-oracle-v2.js";
 import { createIsolatedTestDatabase } from "../execution-attempts/test-database.js";
 import { buildNoVolumeRuntimeAuthorityFixture } from "../execution-attempts/fixtures/v3-runtime-authority.js";
 
@@ -85,6 +96,37 @@ afterEach(async () => {
 async function suite(repetitionsPerCase = 1) {
   const loaded = await loadConvergenceSuite(path.resolve("evals/suites/product-convergence-v1.json"));
   const value = ProductConvergenceSuiteV1Schema.parse({ ...loaded.suite, repetitionsPerCase });
+  return { suite: value, suiteHash: hashCanonicalJson(value) };
+}
+
+async function suiteV2(repetitionsPerCase = 1) {
+  const raw = JSON.parse(await readFile(path.resolve("evals/suites/product-convergence-v1.json"), "utf8"));
+  const value = ProductConvergenceSuiteV2Schema.parse({
+    ...raw,
+    schema: "setfarm.product-convergence-suite.v2",
+    suiteId: "product-convergence-v2-runner",
+    suiteVersion: 2,
+    repetitionsPerCase,
+    cases: raw.cases.map((item: any) => ({
+      ...item,
+      oracle: {
+        ...item.oracle,
+        schema: "setfarm.task-intent-oracle.v2",
+        oracleVersion: 2,
+        expectedDecision: item.oracle.expectedDecision.kind === "typed_rejection"
+          ? {
+              kind: "typed_rejection",
+              requiredReasonCodes: item.oracle.expectedDecision.reasonCodes,
+              allowedReasonCodes: item.oracle.expectedDecision.reasonCodes,
+              reasonRequirements: item.oracle.expectedDecision.reasonCodes.map((reasonCode: string) => ({
+                reasonCode,
+                clauseRefs: item.oracle.clauses.map((clause: any) => clause.clauseId),
+              })),
+            }
+          : item.oracle.expectedDecision,
+      },
+    })),
+  });
   return { suite: value, suiteHash: hashCanonicalJson(value) };
 }
 
@@ -336,9 +378,49 @@ function transferSnapshotEvidence(runId: string) {
   return { receipt, acknowledgement };
 }
 
-type LoadedCase = Awaited<ReturnType<typeof suite>>["suite"]["cases"][number];
+type LoadedCase = ConvergenceCaseV1 | ConvergenceCaseV2;
 
 function oracleEvaluation(evalCase: LoadedCase, pass: boolean) {
+  if (evalCase.oracle.schema === "setfarm.task-intent-oracle.v2") {
+    const binding = evaluateTaskIntentOracleTaskBindingV2(evalCase.task, evalCase.oracle);
+    const decision = evalCase.oracle.expectedDecision;
+    const declaredReasonRequirements = decision.kind === "typed_rejection"
+      ? decision.reasonRequirements.map((item) => ({
+          reasonCode: item.reasonCode,
+          requirementRefs: item.clauseRefs
+            .map((clauseRef) => binding.requirementIdsByClause.get(clauseRef))
+            .filter((value): value is string => Boolean(value))
+            .sort(),
+        })).sort((left, right) => left.reasonCode.localeCompare(right.reasonCode))
+      : [];
+    const actualReasonRequirements = pass && decision.kind === "typed_rejection"
+      ? declaredReasonRequirements.filter((item) => decision.requiredReasonCodes.includes(item.reasonCode))
+      : [];
+    return createTaskIntentOracleEvaluationV2({
+      schema: "setfarm.task-intent-oracle-evaluation.v2",
+      oracleHash: taskIntentOracleHashV2(evalCase.task, evalCase.oracle),
+      expectedDecision: decision.kind,
+      actualDecision: pass ? decision.kind : "unavailable",
+      contractComplete: pass,
+      decisionEvidenceVerified: pass,
+      matchedIntentIds: pass && decision.kind === "accepted_candidate"
+        ? evalCase.oracle.expectations.map((expectation) => expectation.intentId).sort()
+        : [],
+      requiredEvidenceRefs: pass && decision.kind === "accepted_candidate"
+        ? ["EVID_ACTION_CONTROL"]
+        : [],
+      rejectionContract: decision.kind === "typed_rejection"
+        ? {
+            requiredReasonCodes: decision.requiredReasonCodes,
+            allowedReasonCodes: decision.allowedReasonCodes,
+            actualReasonCodes: actualReasonRequirements.map((item) => item.reasonCode),
+            declaredReasonRequirements,
+            actualReasonRequirements,
+          }
+        : null,
+      mismatchCodes: pass ? [] : ["ORACLE_FAKE_FAILURE"],
+    });
+  }
   const payload = {
     schema: "setfarm.task-intent-oracle-evaluation.v1" as const,
     oracleHash: taskIntentOracleHashV1(evalCase.task, evalCase.oracle),
@@ -405,7 +487,10 @@ function canonical(
     packet, attempts, findings, recovery, evidence, acceptance, oracle,
     invariantCodes: pass ? [] : rejected ? ["EVAL_TASK_INTENT_ORACLE_MISMATCH"] : ["EVAL_PACKET_HASH_MISSING"],
   };
-  return ConvergenceCanonicalEvidenceV1Schema.parse({ ...payload, stateHash: hashCanonicalJson(payload) });
+  const value = { ...payload, stateHash: hashCanonicalJson(payload) };
+  return evalCase.oracle.schema === "setfarm.task-intent-oracle.v2"
+    ? ConvergenceCanonicalEvidenceV2Schema.parse(value)
+    : ConvergenceCanonicalEvidenceV1Schema.parse(value);
 }
 
 function snapshot(
@@ -519,11 +604,13 @@ type HarnessOptions = Readonly<{
   releaseDriftAfterStart?: boolean;
 }>;
 
-function harness(loaded: Awaited<ReturnType<typeof suite>>, options: HarnessOptions = {}) {
+type LoadedSuiteFixture = Awaited<ReturnType<typeof suite>> | Awaited<ReturnType<typeof suiteV2>>;
+
+function harness(loaded: LoadedSuiteFixture, options: HarnessOptions = {}) {
   let time = Date.parse(NOW);
   let starts = 0;
   let releaseInspections = 0;
-  const runCases = new Map<string, (typeof loaded.suite.cases)[number]>();
+  const runCases = new Map<string, LoadedCase>();
   const artifacts: Array<{ schema: string; hash: string }> = [];
   const canaryCreations: Parameters<ConvergenceAdmissionPort["createCanary"]>[0][] = [];
   const promotions: Parameters<ConvergenceAdmissionPort["promoteReleaseGo"]>[0][] = [];
@@ -899,6 +986,37 @@ describe("convergence runner", () => {
     assert.equal(fake.promotions[0]?.gateHash, output.gate.gateHash);
     assert.equal(evaluateConvergenceReleaseGate(output.result).gateHash, output.gate.gateHash);
     assert.equal(fake.artifacts.at(-1)!.schema, "setfarm.product-convergence-release-gate.v1");
+  });
+
+  it("executes a v2 suite with v2 run/result authority and unchanged canonical case semantics", async () => {
+    const loaded = await suiteV2();
+    const fake = harness(loaded);
+    const output = await runConvergenceSuite(loaded, { releaseSha: SHA, execute: true }, fake.ports);
+
+    assert.equal(output.result.schema, "setfarm.product-convergence-result.v2");
+    assert.equal(output.result.suiteVersion, 2);
+    assert.equal(output.result.suiteHash, loaded.suiteHash);
+    assert.equal(output.result.releaseSha, SHA);
+    assert.equal(output.result.preflight.status, "pass");
+    assert.equal(output.result.status, "pass");
+    assert.deepEqual(output.result.rootCauseCounts, []);
+    assert.equal(output.result.runs.length, 8);
+    assert.ok(output.result.runs.every((run) =>
+      run.schema === "setfarm.product-convergence-run-result.v2"
+      && run.suiteVersion === 2
+      && run.suiteHash === loaded.suiteHash
+      && run.releaseSha === SHA
+      && run.caseHash === hashCanonicalJson(loaded.suite.cases.find((item) => item.caseId === run.caseId))
+      && run.canonical.oracle.schema === "setfarm.task-intent-oracle-evaluation.v2"
+      && run.canonical.oracle.oracleHash === run.oracleHash
+      && run.passed));
+    assert.ok(output.result.runs
+      .filter((run) => run.expectedDecision === "accepted_candidate")
+      .every((run) => run.canonical.evidence.missingExpectedPredicates === 0));
+    assert.equal(output.gate.decision, "go");
+    assert.equal(fake.promotions.length, 1);
+    assert.equal(fake.artifacts.filter((item) => item.schema === "setfarm.product-convergence-run-result.v2").length, 8);
+    assert.equal(fake.artifacts.at(-2)?.schema, "setfarm.product-convergence-result.v2");
   });
 
   it("fails closed before execution when live ownership is active", async () => {
