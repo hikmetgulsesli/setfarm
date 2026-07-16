@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
-import { describe, it } from "node:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { afterEach, describe, it } from "node:test";
 
 import {
   DESIGN_CANDIDATE_AUTHORITY_EVIDENCE_SCHEMA_V2,
@@ -8,8 +11,16 @@ import {
   STITCH_TARGET_CANDIDATE_SELECTION_FAILURE_REF_KEY_V2,
   createOperationalFailureIdentityV2,
 } from "../src/execution/schemas/operational-failure-identity-v2.js";
-import { hashCanonicalJson } from "../src/product-compiler/canonical-json.js";
+import {
+  canonicalJsonBytes,
+  hashCanonicalJson,
+} from "../src/product-compiler/canonical-json.js";
+import { ContentAddressedArtifactStore } from "../src/product-compiler/artifact-store.js";
 import { compileProductBuildPacket } from "../src/product-compiler/packet-compiler.js";
+import {
+  RuntimeArtifactReaderError,
+  type SealedRuntimePacket,
+} from "../src/product-compiler/runtime-artifact-reader.js";
 import {
   stitchTargetCandidateSelectionFailureFingerprintBasisV1,
   type StitchTargetCandidateSelectionFailureV1,
@@ -17,9 +28,15 @@ import {
 import { ProductBuildAuthorityV1Schema } from "../src/server/schemas/product-build-authority-v1.js";
 import { ProductBuildAuthorityV2Schema } from "../src/server/schemas/product-build-authority-v2.js";
 import {
+  ProductBuildAuthorityV2Error,
+  produceSealedProductBuildAuthorityV2,
+  readProductBuildAuthorityV2,
+} from "../src/server/product-build-authority.js";
+import {
   RunOperationalSnapshotV3Schema,
   computeRunOperationalSnapshotHashV3,
 } from "../src/server/schemas/run-operational-snapshot-v3.js";
+import { projectCanonicalOperationalFailureV3 } from "../src/server/run-operational-snapshot.js";
 import { buildMinimalValidV3Contracts } from "./product-compiler/fixtures/minimal-valid-contract.js";
 
 const RELEASE_SHA = "a".repeat(40);
@@ -33,6 +50,16 @@ const CAUSE = Object.freeze({
   boundary: "product_compiler.design_candidate_authority",
   failureClass: "generated_artifact_invalid" as const,
   failureCode: "V3_DESIGN_CANDIDATE_AUTHORITY_UNRESOLVED",
+});
+const ARTIFACT_LIMITS = {
+  maxPayloadBytes: 4 * 1024 * 1024,
+  rootQuotaBytes: 8 * 1024 * 1024,
+  minFreeBytes: 0,
+};
+const roots: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
 function candidateFailure(): StitchTargetCandidateSelectionFailureV1 {
@@ -279,6 +306,49 @@ async function sealedPacketAuthorityV1() {
   });
 }
 
+async function verifiedRefusalReaderFixture(options: Readonly<{
+  indexedByteLengthDelta?: number;
+}> = {}) {
+  const root = await mkdtemp(path.join(tmpdir(), "setfarm-authority-v2-producer-"));
+  roots.push(root);
+  const artifactRoot = path.join(root, "sha256");
+  const refusal = refusalFixture();
+  const envelope = refusal.refusal.failureArtifact.envelope;
+  const stored = await new ContentAddressedArtifactStore(artifactRoot, {
+    limits: ARTIFACT_LIMITS,
+  }).put(envelope);
+  assert.equal(stored.hash, refusal.refusal.failureArtifact.artifactHash);
+  const termination = snapshotFixture().terminationRequests[0]!;
+  const sql = {
+    async unsafe(query: string) {
+      if (query.includes("FROM run_termination_requests")) {
+        return [{
+          request_id: termination.requestId,
+          target_status: termination.targetStatus,
+          state: termination.state,
+          requested_by: termination.requestedBy,
+          evidence: termination.evidence,
+        }];
+      }
+      if (query.includes("FROM run_artifact_refs")) {
+        return [{
+          artifact_hash: stored.hash,
+          artifact_type: envelope.artifactType,
+          byte_length: canonicalJsonBytes(envelope).byteLength
+            + (options.indexedByteLengthDelta ?? 0),
+          producer_metadata: envelope.producer,
+        }];
+      }
+      throw new Error(`Unexpected authority v2 query: ${query}`);
+    },
+  } as any;
+  return {
+    options: { sql, artifactRoot, artifactLimits: ARTIFACT_LIMITS },
+    refusal,
+    storedPath: stored.path,
+  };
+}
+
 describe("run operational snapshot v3 schema", () => {
   it("binds one canonical terminal request to its stable and exact failure identities", () => {
     const snapshot = snapshotFixture();
@@ -323,6 +393,24 @@ describe("run operational snapshot v3 schema", () => {
     });
     assert.equal(RunOperationalSnapshotV3Schema.safeParse(withoutTermination).success, true);
   });
+
+  it("projects exact snapshot failure identity only after the shared deep refusal read", async () => {
+    const fixture = await verifiedRefusalReaderFixture();
+    const snapshot = snapshotFixture();
+    const operationalFailure = await projectCanonicalOperationalFailureV3(
+      fixture.options.sql,
+      RUN_ID,
+      snapshot.terminationRequests,
+      {
+        artifactRoot: fixture.options.artifactRoot,
+        artifactLimits: fixture.options.artifactLimits,
+      },
+    );
+    assert.equal(
+      operationalFailure?.failureIdentity.exactFailure?.failureArtifactHash,
+      fixture.refusal.refusal.failureArtifact.artifactHash,
+    );
+  });
 });
 
 describe("product build authority v2 schema", () => {
@@ -346,20 +434,51 @@ describe("product build authority v2 schema", () => {
     );
   });
 
+  it("reads refused-before-packet only after termination, ref, index, and CAS verification", async () => {
+    const fixture = await verifiedRefusalReaderFixture();
+    const reader = {
+      async readSealedPacket(): Promise<SealedRuntimePacket> {
+        throw new RuntimeArtifactReaderError("RUNTIME_PACKET_NOT_ACTIVE", "terminal run");
+      },
+      async auditTerminalPacket(): Promise<SealedRuntimePacket> {
+        throw new RuntimeArtifactReaderError("RUNTIME_PACKET_NOT_SEALED", "no packet");
+      },
+    };
+    const authority = await readProductBuildAuthorityV2(reader, RUN_ID, fixture.options);
+    assert.equal(authority.disposition, "refused_before_packet");
+    assert.equal(
+      authority.refusal?.failureArtifact.artifactHash,
+      fixture.refusal.refusal.failureArtifact.artifactHash,
+    );
+
+    const drifted = await verifiedRefusalReaderFixture({ indexedByteLengthDelta: 1 });
+    await assert.rejects(
+      readProductBuildAuthorityV2(reader, RUN_ID, drifted.options),
+      (error: unknown) => error instanceof ProductBuildAuthorityV2Error
+        && error.code === "PRODUCT_BUILD_REFUSAL_ARTIFACT_INDEX_INVALID",
+    );
+
+    const missing = await verifiedRefusalReaderFixture();
+    await rm(missing.storedPath);
+    await assert.rejects(
+      readProductBuildAuthorityV2(reader, RUN_ID, missing.options),
+      (error: unknown) => error instanceof ProductBuildAuthorityV2Error
+        && error.code === "PRODUCT_BUILD_REFUSAL_ARTIFACT_STORE_INVALID",
+    );
+  });
+
   it("wraps a sealed v1 packet without mutating its authority", async () => {
     const packetAuthority = await sealedPacketAuthorityV1();
-    const identity = {
-      schema: "setfarm.product-build-authority.v2" as const,
-      runId: RUN_ID,
-      disposition: "sealed_packet" as const,
-      packetAuthority,
-      refusal: null,
-    };
-    const authority = {
-      ...identity,
-      authorityHash: hashCanonicalJson(identity),
-    };
+    const {
+      schema: _schema,
+      authorityHash: _authorityHash,
+      ...sealedPacket
+    } = packetAuthority;
+    const authority = produceSealedProductBuildAuthorityV2(
+      sealedPacket as SealedRuntimePacket,
+    );
     assert.equal(ProductBuildAuthorityV2Schema.safeParse(authority).success, true);
+    assert.deepEqual(authority.packetAuthority, packetAuthority);
 
     const wrongRun = rehashAuthority({ ...authority, runId: "RUN_other" });
     assert.equal(ProductBuildAuthorityV2Schema.safeParse(wrongRun).success, false);

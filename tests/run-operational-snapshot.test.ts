@@ -17,6 +17,7 @@ import { createOperationalOutboxRepository } from "../src/execution/operational-
 import { createV3DeployReceiptRepository } from "../src/execution/v3-deploy-receipt-repository.js";
 import { createV3ProjectTransferAckRepository } from "../src/execution/v3-project-transfer-ack-repository.js";
 import { ClaimEnvelopeV1Schema } from "../src/execution/schemas/claim-envelope-v1.js";
+import { operationalFailureCauseHashV1 } from "../src/execution/schemas/operational-failure-cause-v1.js";
 import {
   createV3BuildArtifactV1,
   createV3DeployReceiptV1,
@@ -43,6 +44,7 @@ import {
   RunOperationalSnapshotV1Schema,
 } from "../src/server/schemas/run-operational-snapshot-v1.js";
 import { RunOperationalSnapshotV2Schema } from "../src/server/schemas/run-operational-snapshot-v2.js";
+import { RunOperationalSnapshotV3Schema } from "../src/server/schemas/run-operational-snapshot-v3.js";
 import { createIsolatedTestDatabase } from "./execution-attempts/test-database.js";
 
 const SHA = "a".repeat(40);
@@ -465,6 +467,13 @@ describe("canonical run operational snapshot", () => {
           modelRedispatchBudget: 0,
           runtimeSessionCount: 1,
           ownerInstanceId: "setfarm-spawner",
+          operationalFailureCause: {
+            schema: "setfarm.operational-failure-cause.v1",
+            workflowStepId: "deploy",
+            boundary: "product_compiler.deploy_authority",
+            failureClass: "contract_invalid",
+            failureCode: "V3_DEPLOY_SOURCE_REVISION_MISMATCH",
+          },
         }],
       );
       await database.sql.unsafe("UPDATE claim_log SET outcome = 'completed' WHERE id = $1", [claimId]);
@@ -472,7 +481,7 @@ describe("canonical run operational snapshot", () => {
 
       const snapshot = await buildRunOperationalSnapshot(database.sql, runId);
       assert.ok(snapshot);
-      assert.equal(snapshot.schema, "setfarm.run-operational-snapshot.v2");
+      assert.equal(snapshot.schema, "setfarm.run-operational-snapshot.v3");
       assert.equal(snapshot.source.projection, "complete");
       assert.deepEqual(snapshot.source.capabilities, {
         attempts: true,
@@ -486,7 +495,16 @@ describe("canonical run operational snapshot", () => {
         acceptedCandidate: true,
         deploymentReceipt: true,
         projectTransferAck: true,
+        operationalFailureAuthority: true,
       });
+      assert.ok("operationalFailure" in snapshot && snapshot.operationalFailure);
+      assert.equal(snapshot.operationalFailure.terminationRequestRef, `setfarm://run-termination/${terminationId}`);
+      assert.equal(snapshot.operationalFailure.failureIdentity.requestedBy, "setfarm.product-compiler.deploy-refusal");
+      assert.equal(snapshot.operationalFailure.failureIdentity.exactFailure, null);
+      assert.equal(
+        snapshot.operationalFailure.failureIdentity.operationalCauseHash,
+        operationalFailureCauseHashV1(snapshot.terminationRequests[0]?.evidence.operationalFailureCause),
+      );
       assert.deepEqual(snapshot.findingSets, []);
       assert.deepEqual(snapshot.evidenceBundles, []);
       assert.deepEqual(snapshot.recoveryCases, []);
@@ -519,14 +537,21 @@ describe("canonical run operational snapshot", () => {
         modelRedispatchBudget: 0,
         runtimeSessionCount: 1,
         ownerInstanceId: "setfarm-spawner",
+        operationalFailureCause: {
+          schema: "setfarm.operational-failure-cause.v1",
+          workflowStepId: "deploy",
+          boundary: "product_compiler.deploy_authority",
+          failureClass: "contract_invalid",
+          failureCode: "V3_DEPLOY_SOURCE_REVISION_MISMATCH",
+        },
       });
       assert.equal(snapshot.outbox[0]?.requestRef, `setfarm://runtime-completion/${requestId}`);
       assert.equal(snapshot.summary.lifecycleState, "terminal");
       assert.equal(snapshot.summary.health, "ok");
       assert.equal(snapshot.invariants.length, 0);
-      assert.doesNotThrow(() => RunOperationalSnapshotV2Schema.parse(snapshot));
+      assert.doesNotThrow(() => RunOperationalSnapshotV3Schema.parse(snapshot));
       assert.throws(
-        () => RunOperationalSnapshotV2Schema.parse({
+        () => RunOperationalSnapshotV3Schema.parse({
           ...snapshot,
           source: {
             ...snapshot.source,
@@ -538,7 +563,7 @@ describe("canonical run operational snapshot", () => {
       const projectedCompletion = snapshot.completionRequests[0];
       assert.ok(projectedCompletion?.implementationSubmissionEvidence);
       assert.throws(
-        () => RunOperationalSnapshotV2Schema.parse({
+        () => RunOperationalSnapshotV3Schema.parse({
           ...snapshot,
           completionRequests: [{
             ...projectedCompletion,
@@ -1007,7 +1032,7 @@ describe("canonical run operational snapshot", () => {
       assert.equal(snapshot.deploymentReceipt?.receipt.runtime.deployUrl, `http://127.0.0.1:${port}/`);
       assert.equal(snapshot.summary.unpublishedOutbox, 1);
       assert.equal(snapshot.summary.lifecycleState, "effects_applying");
-      assert.doesNotThrow(() => RunOperationalSnapshotV2Schema.parse(snapshot));
+      assert.doesNotThrow(() => RunOperationalSnapshotV3Schema.parse(snapshot));
 
       const outbox = createOperationalOutboxPublisher({
         repository: createOperationalOutboxRepository(database.sql),
@@ -1126,7 +1151,7 @@ describe("canonical run operational snapshot", () => {
       assert.ok(acknowledgedSnapshot);
       assert.equal(acknowledgedSnapshot.projectTransferAck?.acknowledgement.ackHash, acknowledgement.ackHash);
       assert.equal(acknowledgedSnapshot.summary.unpublishedOutbox, 1);
-      assert.doesNotThrow(() => RunOperationalSnapshotV2Schema.parse(acknowledgedSnapshot));
+      assert.doesNotThrow(() => RunOperationalSnapshotV3Schema.parse(acknowledgedSnapshot));
       assert.equal((await outbox.drain({ maxEvents: 10 })).published, 1);
       const settledSnapshot = await buildRunOperationalSnapshot(database.sql, runId);
       assert.ok(settledSnapshot);
@@ -1438,6 +1463,25 @@ describe("canonical run operational snapshot", () => {
     }
   });
 
+  it("keeps the v2 projection readable until migration 22 is release-attested", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      await attestSnapshotMigrationShape(database);
+      await database.sql.unsafe("DELETE FROM setfarm_schema_migrations WHERE version = 22");
+      const runId = "RUN_snapshot-pre-v22-failure-authority";
+      await database.insertRun(runId);
+
+      const snapshot = await buildRunOperationalSnapshot(database.sql, runId);
+      assert.ok(snapshot);
+      assert.equal(snapshot.schema, "setfarm.run-operational-snapshot.v2");
+      assert.equal(snapshot.source.projection, "complete");
+      assert.equal("operationalFailureAuthority" in snapshot.source.capabilities, false);
+      assert.doesNotThrow(() => RunOperationalSnapshotV2Schema.parse(snapshot));
+    } finally {
+      await database.cleanup();
+    }
+  });
+
   it("does not advertise submission evidence from an unattested v19 shape", async () => {
     const database = await createIsolatedTestDatabase();
     try {
@@ -1468,6 +1512,10 @@ describe("canonical run operational snapshot", () => {
     );
     assert.throws(
       () => RunOperationalSnapshotV2Schema.parse({ schema: "setfarm.run-operational-snapshot.v2", unexpected: true }),
+      /generatedAt|Required|Invalid input/,
+    );
+    assert.throws(
+      () => RunOperationalSnapshotV3Schema.parse({ schema: "setfarm.run-operational-snapshot.v3", unexpected: true }),
       /generatedAt|Required|Invalid input/,
     );
   });

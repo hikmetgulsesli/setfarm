@@ -1,12 +1,20 @@
 import type postgres from "postgres";
 
 import { AcceptedCandidateV1Schema, type AcceptedCandidateV1 } from "../evidence/accepted-candidate-v1.js";
+import type { ArtifactCapacityLimits } from "../product-compiler/artifact-capacity.js";
 import {
   compileLegacyResumePlan,
   OPERATOR_ACTION_STATE_SCHEMA,
   readLegacyResumePlanSource,
   type LegacyResumePlanResult,
 } from "../execution/legacy-resume-plan.js";
+import {
+  DESIGN_CANDIDATE_AUTHORITY_EVIDENCE_SCHEMA_V2,
+  DESIGN_CANDIDATE_AUTHORITY_REQUESTER_V2,
+  OperationalFailureIdentityV2Schema,
+  createOperationalFailureIdentityV2,
+} from "../execution/schemas/operational-failure-identity-v2.js";
+import { OperationalFailureCauseV1Schema } from "../execution/schemas/operational-failure-cause-v1.js";
 import { V3DeployReceiptV1Schema, type V3DeployReceiptV1 } from "../execution/schemas/v3-deploy-receipt-v1.js";
 import {
   V3ProjectTransferAckV1Schema,
@@ -14,6 +22,10 @@ import {
 } from "../execution/schemas/v3-project-transfer-ack-v1.js";
 import { RuntimeCompletionSubmissionEvidenceV1Schema } from "../execution/schemas/runtime-completion-submission-evidence-v1.js";
 import { hashCanonicalJson } from "../product-compiler/canonical-json.js";
+import {
+  resolveProductArtifactCapacity,
+  resolveProductArtifactDir,
+} from "../runtime-config.js";
 import {
   type OperationalAttemptV1,
   type OperationalAcceptedCandidateV1,
@@ -40,6 +52,18 @@ import {
   type OperationalProjectionSourceV2,
   type RunOperationalSnapshotV2,
 } from "./schemas/run-operational-snapshot-v2.js";
+import {
+  OperationalTerminationRequestV3Schema,
+  RunOperationalSnapshotV3Schema,
+  computeRunOperationalSnapshotHashV3,
+  type CanonicalOperationalFailureV3,
+  type OperationalProjectionSourceV3,
+  type RunOperationalSnapshotV3,
+} from "./schemas/run-operational-snapshot-v3.js";
+import {
+  readVerifiedDesignCandidateRefusal,
+  type VerifiedDesignCandidateRefusalReadOptions,
+} from "./product-build-authority.js";
 import { hasStopBlockingInvariant } from "../execution/run-operational-invariant-policy.js";
 
 type Sql = postgres.Sql;
@@ -132,6 +156,12 @@ const REQUIRED_TABLE_COLUMNS = {
     "source_sha", "source_tree_hash", "deploy_receipt_hash", "source_snapshot_hash",
     "project_id", "projection_hash", "project_record_hash", "project_record_ref",
     "persisted_at", "payload", "created_at",
+  ],
+  semantic_artifacts: [
+    "artifact_hash", "artifact_type", "byte_length", "producer_metadata", "created_at",
+  ],
+  run_artifact_refs: [
+    "run_id", "ref_key", "artifact_hash", "created_at",
   ],
 } as const;
 
@@ -546,7 +576,11 @@ function hasColumns(columns: ReadonlyMap<string, ReadonlySet<string>>, table: Ta
 
 async function readSource(
   sql: TransactionSql,
-): Promise<Readonly<{ source: OperationalProjectionSourceV2; columns: ReadonlyMap<string, ReadonlySet<string>> }>> {
+): Promise<Readonly<{
+  source: OperationalProjectionSourceV2;
+  columns: ReadonlyMap<string, ReadonlySet<string>>;
+  operationalFailureAuthority: boolean;
+}>> {
   const tableNames = [...Object.keys(REQUIRED_TABLE_COLUMNS), "steps", "stories", "setfarm_schema_migrations"];
   const columnRows = await sql.unsafe<Array<{ table_name: string; column_name: string }>>(
     `SELECT table_name, column_name
@@ -597,6 +631,9 @@ async function readSource(
   const projectTransferAck = deploymentReceipt
     && Boolean(columns.get("runs")?.has("project_transfer_ack_hash"))
     && hasColumns(columns, "v3_project_transfer_acks");
+  const operationalFailureAuthorityShape = runtimeOwnership
+    && hasColumns(columns, "semantic_artifacts")
+    && hasColumns(columns, "run_artifact_refs");
   const journalColumns = columns.get("setfarm_schema_migrations") ?? new Set<string>();
   let migrationVersions: number[] = [];
   let verifiedReleaseSha: string | null = null;
@@ -632,6 +669,9 @@ async function readSource(
   const implementationSubmissionEvidence = implementationSubmissionEvidenceShape
     && migrationVersions.includes(19)
     && verifiedReleaseSha !== null;
+  const operationalFailureAuthority = operationalFailureAuthorityShape
+    && migrationVersions.includes(22)
+    && verifiedReleaseSha !== null;
   const capabilities: OperationalProjectionCapabilitiesV2 = {
     attempts,
     claimBinding,
@@ -660,6 +700,7 @@ async function readSource(
   const coreAvailable = hasColumns(columns, "runs");
   return {
     columns,
+    operationalFailureAuthority,
     source: {
       database: "postgres",
       projection: !coreAvailable
@@ -1437,7 +1478,79 @@ function deriveInvariants(input: InvariantInput): OperationalInvariantV1[] {
 
 type HashableSnapshot =
   | Omit<RunOperationalSnapshotV1, "snapshotHash">
-  | Omit<RunOperationalSnapshotV2, "snapshotHash">;
+  | Omit<RunOperationalSnapshotV2, "snapshotHash">
+  | Omit<RunOperationalSnapshotV3, "snapshotHash">;
+
+export type RunOperationalSnapshotBuildOptions = Readonly<{
+  artifactRoot?: string;
+  artifactLimits?: ArtifactCapacityLimits;
+}>;
+
+function verifiedRefusalOptions(
+  sql: VerifiedDesignCandidateRefusalReadOptions["sql"],
+  options: RunOperationalSnapshotBuildOptions,
+  terminationRequest: OperationalTerminationRequestV1,
+): VerifiedDesignCandidateRefusalReadOptions {
+  return {
+    sql,
+    artifactRoot: options.artifactRoot ?? resolveProductArtifactDir(),
+    artifactLimits: options.artifactLimits ?? resolveProductArtifactCapacity(),
+    terminationRequest,
+  };
+}
+
+export async function projectCanonicalOperationalFailureV3(
+  sql: VerifiedDesignCandidateRefusalReadOptions["sql"],
+  runId: string,
+  terminationRequests: readonly OperationalTerminationRequestV1[],
+  options: RunOperationalSnapshotBuildOptions,
+): Promise<CanonicalOperationalFailureV3 | null> {
+  const parsedRequests = terminationRequests.map((request) =>
+    OperationalTerminationRequestV3Schema.parse(request));
+  const candidates = parsedRequests.filter((request) =>
+    request.targetStatus === "failed"
+    && request.state === "terminalized"
+    && Object.hasOwn(request.evidence, "operationalFailureCause"));
+  if (candidates.length === 0) return null;
+  if (candidates.length !== 1) {
+    throw new Error(`OPERATIONAL_FAILURE_TERMINATION_CARDINALITY_INVALID:${runId}`);
+  }
+  const request = candidates[0]!;
+  const evidenceSchema = typeof request.evidence.schema === "string"
+    ? request.evidence.schema
+    : null;
+  if (
+    request.requestedBy === DESIGN_CANDIDATE_AUTHORITY_REQUESTER_V2
+    || evidenceSchema === DESIGN_CANDIDATE_AUTHORITY_EVIDENCE_SCHEMA_V2
+  ) {
+    const refusal = await readVerifiedDesignCandidateRefusal(
+      runId,
+      verifiedRefusalOptions(sql, options, request),
+    );
+    if (!refusal) {
+      throw new Error(`OPERATIONAL_FAILURE_DESIGN_REFUSAL_MISSING:${runId}`);
+    }
+    return {
+      terminationRequestRef: refusal.terminationRequestRef,
+      failureIdentity: refusal.failureIdentity,
+    };
+  }
+
+  const cause = OperationalFailureCauseV1Schema.parse(
+    request.evidence.operationalFailureCause,
+  );
+  return {
+    terminationRequestRef: request.ref,
+    failureIdentity: OperationalFailureIdentityV2Schema.parse(
+      createOperationalFailureIdentityV2({
+        requestedBy: request.requestedBy,
+        evidenceSchema,
+        operationalCause: cause,
+        exactFailure: null,
+      }),
+    ),
+  };
+}
 
 /**
  * Hashes only canonical operational state. Observation-clock fields
@@ -1522,12 +1635,13 @@ function unavailableSnapshot(runId: string, generatedAt: string, source: Operati
 export async function buildRunOperationalSnapshotInTransaction(
   sql: TransactionSql,
   runId: string,
-): Promise<RunOperationalSnapshotV2 | null> {
+  options: RunOperationalSnapshotBuildOptions = {},
+): Promise<RunOperationalSnapshotV2 | RunOperationalSnapshotV3 | null> {
   const clockRows = await sql.unsafe<Array<{ generated_at: unknown }>>(
     "SELECT transaction_timestamp() AS generated_at",
   );
   const generatedAt = timestamp(clockRows[0]?.generated_at);
-  const { source, columns } = await readSource(sql);
+  const { source, columns, operationalFailureAuthority } = await readSource(sql);
   if (source.projection === "unavailable") return unavailableSnapshot(runId, generatedAt, source);
 
   const runRows = await sql.unsafe<RawRun[]>(
@@ -1935,7 +2049,7 @@ export async function buildRunOperationalSnapshotInTransaction(
     invariants,
     legacyResumePlan,
   });
-  const hashable: HashableSnapshot = {
+  const hashableV2: Omit<RunOperationalSnapshotV2, "snapshotHash"> = {
     schema: "setfarm.run-operational-snapshot.v2",
     generatedAt,
     source,
@@ -1954,9 +2068,34 @@ export async function buildRunOperationalSnapshotInTransaction(
     ...(source.capabilities.deploymentReceipt ? { deploymentReceipt } : {}),
     ...(source.capabilities.projectTransferAck ? { projectTransferAck } : {}),
   };
+  if (operationalFailureAuthority) {
+    const sourceV3: OperationalProjectionSourceV3 = {
+      ...source,
+      capabilities: {
+        ...source.capabilities,
+        operationalFailureAuthority: true,
+      },
+    };
+    const operationalFailure = await projectCanonicalOperationalFailureV3(
+      sql,
+      runId,
+      terminationRequests,
+      options,
+    );
+    const hashableV3: Omit<RunOperationalSnapshotV3, "snapshotHash"> = {
+      ...hashableV2,
+      schema: "setfarm.run-operational-snapshot.v3",
+      source: sourceV3,
+      operationalFailure,
+    };
+    return RunOperationalSnapshotV3Schema.parse({
+      ...hashableV3,
+      snapshotHash: computeRunOperationalSnapshotHashV3(hashableV3),
+    });
+  }
   return RunOperationalSnapshotV2Schema.parse({
-    ...hashable,
-    snapshotHash: computeRunOperationalSnapshotHash(hashable),
+    ...hashableV2,
+    snapshotHash: computeRunOperationalSnapshotHash(hashableV2),
   });
 }
 
@@ -1968,10 +2107,11 @@ export async function buildRunOperationalSnapshotInTransaction(
 export async function buildRunOperationalSnapshot(
   sql: Sql,
   runId: string,
-): Promise<RunOperationalSnapshotV2 | null> {
+  options: RunOperationalSnapshotBuildOptions = {},
+): Promise<RunOperationalSnapshotV2 | RunOperationalSnapshotV3 | null> {
   if (!runId.trim()) throw new TypeError("RUN_OPERATIONAL_SNAPSHOT_RUN_ID_REQUIRED");
   return sql.begin(
     "isolation level repeatable read read only",
-    (transaction) => buildRunOperationalSnapshotInTransaction(transaction, runId),
-  ) as Promise<RunOperationalSnapshotV2 | null>;
+    (transaction) => buildRunOperationalSnapshotInTransaction(transaction, runId, options),
+  ) as Promise<RunOperationalSnapshotV2 | RunOperationalSnapshotV3 | null>;
 }
