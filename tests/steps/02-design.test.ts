@@ -267,6 +267,29 @@ describe("02-design step module", () => {
     assert.match(source, /manifest\/title reconciliation is forbidden/);
   });
 
+  it("routes ProductSpec v2 through sealed attempts before any legacy cache cleanup or retry classifier", () => {
+    const source = designPreclaimSource();
+    const guards = designGuardsSource();
+    const runtime = fs.readFileSync(
+      path.resolve(import.meta.dirname, "../../src/installer/steps/02-design/runtime-v2.ts"),
+      "utf8",
+    );
+    const authorityEntry = source.indexOf("executeDesignPreclaimV2({");
+    const legacyPreparation = source.indexOf("prepareV3DesignContract(prd, stitchDir)");
+    const destructiveReset = source.indexOf("resetFailedStitchProject");
+
+    assert.ok(authorityEntry > 0);
+    assert.ok(legacyPreparation > authorityEntry);
+    assert.ok(destructiveReset > authorityEntry);
+    assert.match(source, /product_semantics_version"] === "v2"/);
+    assert.match(source, /design_source_attempt_id/);
+    assert.match(runtime, /generate-all-screens-attempt/);
+    assert.match(runtime, /ProductCompilationAttemptRepository/);
+    assert.match(runtime, /duplicateWaitMs: 15 \* 60_000/);
+    assert.doesNotMatch(runtime, /generate-all-screens"|generate-screen-safe|STITCH_FORCE_NEW_PROJECT/);
+    assert.match(guards, /product_semantics_version"] === "v2"\) return/);
+  });
+
   it("resolves non-visual delivery before creating any Stitch target authority", () => {
     const source = designPreclaimSource();
     const bypass = source.indexOf("if (!designRequired)");

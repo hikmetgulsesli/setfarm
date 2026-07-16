@@ -5,7 +5,7 @@ import crypto from "node:crypto";
 import { execFile } from "node:child_process";
 import type { ClaimContext } from "../types.js";
 import { logger } from "../../../lib/logger.js";
-import { now, pgGet, pgRun } from "../../../db-pg.js";
+import { getSql, now, pgGet, pgRun } from "../../../db-pg.js";
 import { emitEvent } from "../../events.js";
 import { resolvePlatformScript } from "../../paths.js";
 import { canonicalJsonStringify, hashCanonicalJson } from "../../../product-compiler/canonical-json.js";
@@ -47,6 +47,7 @@ import {
   type StitchTargetCandidateSelectionV1,
   type StitchTargetResponseBindingsV2,
 } from "../../../product-compiler/schemas/stitch-target-candidate-selection-v1.js";
+import { executeDesignPreclaimV2 } from "./runtime-v2.js";
 
 const PRECLAIM_CANCELLED = "DESIGN_PRECLAIM_CANCELLED";
 const progressDedupe = new Map<string, { detail: string; emittedAt: number }>();
@@ -2146,6 +2147,87 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
       "AUTO_COMPLETED: design-bypass (DESIGN_REQUIRED=false)",
     ].join("\n"), ctx.claimEnvelope);
     logger.info("[module:design preclaim] AUTO-COMPLETED design bypass (DESIGN_REQUIRED=false)", { runId: ctx.runId });
+    return;
+  }
+  if (protocol === "v3" && ctx.context["product_semantics_version"] === "v2") {
+    const envelope = ctx.claimEnvelope;
+    if (!envelope || envelope.protocol !== "v3") {
+      await failDesignPreclaim(ctx, "DESIGN_V2_CLAIM_AUTHORITY_REQUIRED", { terminal: true });
+      return;
+    }
+    const run = await pgGet<{ compiler_release_sha: string | null }>(
+      "SELECT compiler_release_sha FROM runs WHERE id = $1 LIMIT 1",
+      [ctx.runId],
+    );
+    const releaseSha = String(run?.compiler_release_sha || "");
+    if (!/^[a-f0-9]{40}$/.test(releaseSha)) {
+      await failDesignPreclaim(ctx, "DESIGN_V2_COMPILER_RELEASE_SHA_REQUIRED", { terminal: true });
+      return;
+    }
+    const originClaim = await pgGet<{ id: string }>(
+      `SELECT id::text AS id
+         FROM claim_log
+        WHERE run_id = $1
+          AND step_id = $2
+          AND story_id IS NULL
+          AND id <= $3
+        ORDER BY id ASC
+        LIMIT 1`,
+      [ctx.runId, envelope.workflowStepId, envelope.claimId],
+    );
+    const originClaimId = Number(originClaim?.id);
+    if (!Number.isSafeInteger(originClaimId) || originClaimId <= 0) {
+      await failDesignPreclaim(ctx, "DESIGN_V2_ORIGIN_CLAIM_REQUIRED", { terminal: true });
+      return;
+    }
+    const requestedDeviceType = String(ctx.context["device_type"] || "DESKTOP").toUpperCase();
+    const deviceType = requestedDeviceType === "MOBILE" || requestedDeviceType === "TABLET"
+      ? requestedDeviceType
+      : "DESKTOP";
+    try {
+      await recordPreClaimProgress(ctx, "Design preclaim v2: compiling exact ProductSpec/Stitch authority");
+      const result = await executeDesignPreclaimV2({
+        sql: getSql(),
+        repo,
+        runId: ctx.runId,
+        prd,
+        originClaimId,
+        ownerClaimId: envelope.claimId,
+        ownerInstanceId: `${envelope.runtimeAgentId}:${envelope.claimId}:${process.pid}`,
+        producerReleaseSha: releaseSha,
+        deviceType,
+        uiLanguage: ctx.context["ui_language"] || ctx.context["UI_LANGUAGE"] || "English",
+      });
+      if (result.status !== "accepted") {
+        ctx.context["design_source_attempt_id"] = result.attemptId || "";
+        ctx.context["design_source_failure_code"] = result.code;
+        await failDesignPreclaim(ctx, result.diagnostic, { terminal: true });
+        return;
+      }
+      Object.assign(ctx.context, result.context);
+      const stepRow = await pgGet<{ id: string }>(
+        "SELECT id FROM steps WHERE run_id = $1 AND step_id = $2 LIMIT 1",
+        [ctx.runId, ctx.stepId],
+      );
+      if (!stepRow?.id) throw new Error("DESIGN_V2_STEP_ID_REQUIRED");
+      await recordPreClaimProgress(
+        ctx,
+        `Design preclaim v2: ${result.replayed ? "replayed" : "accepted"} ${result.screenMap.length} exact screen authority item(s)`,
+      );
+      const { completeStep } = await import("../../step-ops.js");
+      await completeStep(stepRow.id, result.completionOutput, envelope);
+      logger.info(
+        `[module:design preclaim] AUTO-COMPLETED v2 authority ${result.attemptId} (${result.screenMap.length} screens)`,
+        { runId: ctx.runId, stepId: stepRow.id },
+      );
+    } catch (error) {
+      if (isPreclaimCancelledError(error)) return;
+      await failDesignPreclaim(
+        ctx,
+        `DESIGN_V2_RUNTIME_FAILED: ${redactDiagnosticText(error).slice(0, 850)}`,
+        { terminal: true },
+      );
+    }
     return;
   }
   let v3Contract: V3DesignContract | undefined;

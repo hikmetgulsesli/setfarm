@@ -626,6 +626,7 @@ function authorityFor(input: DesignSourceAuthorityRuntimeInputV2): DesignSourceG
       schema: "setfarm.design-source-prompt-contract.v2",
       builder: "buildV3BatchStitchPromptV2",
       generationTargetsSchema: generationTargets.schema,
+      projectId: input.projectId,
     }),
     renderPolicyHash: hashCanonicalJson(STITCH_RENDERED_SEMANTICS_POLICY_V2),
     selectionPolicyHash: hashCanonicalJson(STITCH_TARGET_CANDIDATE_SELECTION_POLICY_V2),

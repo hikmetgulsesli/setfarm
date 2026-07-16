@@ -849,6 +849,84 @@ const commands = {
     console.log(JSON.stringify({ projectId, source: 'created-or-found' }, null, 2));
   },
 
+  async 'ensure-project-identity'(name, repoPath) {
+    if (!name || !repoPath) {
+      throw new Error('Usage: ensure-project-identity "Project Name" /path/to/repo');
+    }
+    const stitchFile = resolve(repoPath, '.stitch');
+    const validProjectId = (value) => /^[A-Za-z0-9][A-Za-z0-9._-]{0,499}$/.test(String(value || ''));
+    try {
+      const existing = JSON.parse(readFileSync(stitchFile, 'utf-8'));
+      if (validProjectId(existing.projectId)) {
+        console.log(JSON.stringify({
+          schema: 'setfarm.stitch-project-identity.v1',
+          projectId: existing.projectId,
+          name,
+          source: 'stitch-file',
+        }, null, 2));
+        return;
+      }
+    } catch { /* no sealed local identity */ }
+
+    // Project identity is established outside screen-generation attempts. It
+    // performs one list and, only when absent, one create. Exact-title lookup
+    // makes an ambiguous create response recoverable on the next invocation.
+    // No credential rotation, substring match, provider retry, or screen-state
+    // heuristic is allowed at this boundary.
+    await initializeOnce();
+    const listResult = await rpcOnce('tools/call', {
+      name: 'list_projects',
+      arguments: {},
+    });
+    assertToolResultOk(listResult, 'list_projects');
+    const projects = [];
+    for (const item of listResult?.content || []) {
+      if (item.type !== 'text') continue;
+      try {
+        const parsed = JSON.parse(item.text);
+        const values = Array.isArray(parsed) ? parsed : parsed.projects;
+        if (Array.isArray(values)) projects.push(...values);
+      } catch { /* typed failure below if no exact identity can be established */ }
+    }
+    const exactIds = [...new Set(projects
+      .filter((project) => String(project.title || project.displayName || project.name || '') === name)
+      .map((project) => String(project.name || '').replace(/^projects\//, '') || project.projectId || project.id)
+      .filter(validProjectId))];
+    if (exactIds.length > 1) throw new Error('STITCH_PROJECT_IDENTITY_AMBIGUOUS');
+
+    let projectId = exactIds[0] || '';
+    let source = 'exact-title';
+    if (!projectId) {
+      const createResult = await rpcOnce('tools/call', {
+        name: 'create_project',
+        arguments: { title: name },
+      });
+      assertToolResultOk(createResult, 'create_project');
+      for (const item of createResult?.content || []) {
+        if (item.type !== 'text') continue;
+        try {
+          const parsed = JSON.parse(item.text);
+          const raw = parsed.name || parsed.project?.name || parsed.projectId || parsed.project_id || '';
+          const candidate = String(raw).replace(/^projects\//, '');
+          if (validProjectId(candidate)) {
+            projectId = candidate;
+            break;
+          }
+        } catch { /* fail closed below */ }
+      }
+      source = 'created';
+    }
+    if (!validProjectId(projectId)) throw new Error('STITCH_PROJECT_IDENTITY_UNRESOLVED');
+    const identity = {
+      schema: 'setfarm.stitch-project-identity.v1',
+      projectId,
+      name,
+    };
+    mkdirSync(dirname(stitchFile), { recursive: true });
+    writeFileSync(stitchFile, JSON.stringify(identity, null, 2) + '\n');
+    console.log(JSON.stringify({ ...identity, source }, null, 2));
+  },
+
   async 'generate-screen-safe'(projectId, prompt, screenTitle, deviceType = 'DESKTOP', modelId = 'GEMINI_3_1_PRO') {
     if (!projectId || !prompt) throw new Error('Usage: generate-screen-safe <projectId> "<prompt>" "<screenTitle>" [DESKTOP|MOBILE|TABLET] [model]');
 
@@ -1759,6 +1837,7 @@ Commands:
   find-project "Name"                                                    Find project by name
   create-project "Title"                                                 Create a Stitch project
   ensure-project "Name" /path/to/repo                                    Find-or-create + persist .stitch
+  ensure-project-identity "Name" /path/to/repo                           Seal/reuse exact project identity once
   generate-screen <projectId> "<prompt>" [device] [model]                Generate a screen
   generate-screen-safe <projectId> "<prompt>" "<title>" [device] [model] Generate with dedup check
   get-design-md <projectId> [repoPath]                                   Extract DESIGN.md from project

@@ -108,6 +108,21 @@ describe("stitch-api partial list recovery", () => {
     assert.doesNotMatch(command, /rotateKey|list_screens|mergeTrackedScreens|STITCH_GENERATE_ALL_RETRY_ATTEMPTS/);
   });
 
+  it("seals one exact Stitch project identity without screen heuristics or hidden retries", () => {
+    const source = fs.readFileSync("scripts/stitch-api.mjs", "utf-8");
+    const start = source.indexOf("'ensure-project-identity'");
+    const end = source.indexOf("\n  },", start);
+    const command = source.slice(start, end);
+
+    assert.ok(start > 0);
+    assert.match(command, /setfarm\.stitch-project-identity\.v1/);
+    assert.match(command, /await initializeOnce\(\)/);
+    assert.match(command, /rpcOnce\('tools\/call'/);
+    assert.match(command, /String\(project\.title \|\| project\.displayName \|\| project\.name \|\| ''\) === name/);
+    assert.match(command, /STITCH_PROJECT_IDENTITY_AMBIGUOUS/);
+    assert.doesNotMatch(command, /htmlCount|trackedCount|rotateKey|callTool\(|includes\(name/);
+  });
+
   it("can force a fresh Stitch project after an empty cached project failure", () => {
     const source = fs.readFileSync("scripts/stitch-api.mjs", "utf-8");
 

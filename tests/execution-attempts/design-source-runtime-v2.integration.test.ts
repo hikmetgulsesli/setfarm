@@ -11,6 +11,7 @@ import {
   runDesignSourceAuthorityV2,
   serializeAttemptTransportV2,
 } from "../../src/product-compiler/design-source-runtime-v2.js";
+import { hashCanonicalJson } from "../../src/product-compiler/canonical-json.js";
 import { ProductCompilationAttemptRepository } from "../../src/product-compiler/product-compilation-attempt-repository.js";
 import { produceDesignGenerationTargetsV2 } from "../../src/product-compiler/producers/design-targets-v2.js";
 import { compilePlanSemanticProposalV2 } from "../../src/product-compiler/producers/plan-semantic-proposal-v2.js";
@@ -144,6 +145,12 @@ describe("design-source authority v2 runtime", { concurrency: 1 }, () => {
       if (first.runner.status !== "accepted") return;
       assert.equal(first.runner.replayed, false);
       assert.equal(dispatches, 1);
+      assert.equal(first.authority.promptContractHash, hashCanonicalJson({
+        schema: "setfarm.design-source-prompt-contract.v2",
+        builder: "buildV3BatchStitchPromptV2",
+        generationTargetsSchema: targets.generationTargets.schema,
+        projectId: "stitch-runtime-v2-project",
+      }));
       assert.equal(first.artifacts?.designGraph.controls.length, 1);
       assert.equal(first.artifacts?.designGraph.controls[0]?.identity.controlSlotRef, placement.controlSlotRef);
       assert.equal(await readFile(path.join(repo, "stitch", `${screenId}.html`), "utf8"), htmlBytes.toString("utf8"));
