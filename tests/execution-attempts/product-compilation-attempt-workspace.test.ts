@@ -339,6 +339,49 @@ describe("immutable product compilation attempt workspace", () => {
     assert.deepEqual(replay, receipt);
   });
 
+  it("repairs tampered, missing, and symlinked projection artifacts from the immutable accepted attempt", async () => {
+    const root = await repo("projection-repair");
+    const fixture = await acceptedProjectionFixture(root, "projection-repair");
+    const receipt = await projectAcceptedProductCompilationAttemptV1({
+      repo: root,
+      attempt: fixture.attempt,
+    });
+    const stitchHtml = path.join(root, "stitch", "play.html");
+    const receiptPath = path.join(root, "stitch", "PRODUCT_COMPILATION_PROJECTION_RECEIPT.json");
+
+    await writeFile(stitchHtml, "tampered-projection");
+    const afterTamper = await projectAcceptedProductCompilationAttemptV1({
+      repo: root,
+      attempt: fixture.attempt,
+    });
+    assert.deepEqual(afterTamper, receipt);
+    assert.equal(await readFile(stitchHtml, "utf8"), fixture.html);
+
+    await rm(stitchHtml);
+    const afterMissing = await projectAcceptedProductCompilationAttemptV1({
+      repo: root,
+      attempt: fixture.attempt,
+    });
+    assert.deepEqual(afterMissing, receipt);
+    assert.equal(await readFile(stitchHtml, "utf8"), fixture.html);
+
+    const outside = path.join(root, "outside-projection.html");
+    await writeFile(outside, "outside-must-remain-unchanged");
+    await rm(stitchHtml);
+    await symlink(outside, stitchHtml);
+    const afterSymlink = await projectAcceptedProductCompilationAttemptV1({
+      repo: root,
+      attempt: fixture.attempt,
+    });
+    assert.deepEqual(afterSymlink, receipt);
+    assert.equal(await readFile(stitchHtml, "utf8"), fixture.html);
+    assert.equal(await readFile(outside, "utf8"), "outside-must-remain-unchanged");
+    assert.deepEqual(
+      ProductCompilationProjectionReceiptV1Schema.parse(JSON.parse(await readFile(receiptPath, "utf8"))),
+      receipt,
+    );
+  });
+
   it("never lets failed, quarantined, or active attempts replace a prior canonical projection", async () => {
     const root = await repo("non-projectable");
     const accepted = await acceptedProjectionFixture(root, "accepted-parent", "<main>parent</main>");

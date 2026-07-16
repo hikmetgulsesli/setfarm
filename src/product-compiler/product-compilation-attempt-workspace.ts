@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { constants as fsConstants } from "node:fs";
 import {
   link,
   lstat,
@@ -620,6 +621,88 @@ async function existingProjectionReceipt(
   }
 }
 
+async function projectionRealpathOrUndefined(target: string): Promise<string | undefined> {
+  try {
+    return await realpath(target);
+  } catch (error) {
+    if (
+      isNodeError(error, "ENOENT")
+      || isNodeError(error, "ENOTDIR")
+      || isNodeError(error, "ELOOP")
+    ) {
+      return undefined;
+    }
+    throw workspaceError("PRODUCT_COMPILATION_CANONICAL_PROJECTION_UNSAFE", target);
+  }
+}
+
+async function projectionMatchesReceipt(
+  projectionRoot: string,
+  receipt: ProductCompilationProjectionReceiptV1,
+): Promise<boolean> {
+  const root = await requireSafeRoot(projectionRoot);
+  for (const artifact of receipt.artifacts) {
+    const segments = locatorSegments(artifact.path);
+    let directory = root.lexical;
+    for (const segment of segments.slice(0, -1)) {
+      directory = path.join(directory, segment);
+      const directoryStat = await statOrUndefined(directory);
+      if (!directoryStat?.isDirectory() || directoryStat.isSymbolicLink()) {
+        return false;
+      }
+      const resolved = await projectionRealpathOrUndefined(directory);
+      if (!resolved || !isWithin(root.real, resolved)) return false;
+    }
+
+    const target = path.join(directory, segments.at(-1)!);
+    let handle;
+    try {
+      handle = await open(
+        target,
+        fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK,
+      );
+    } catch (error) {
+      if (
+        isNodeError(error, "ENOENT")
+        || isNodeError(error, "ENOTDIR")
+        || isNodeError(error, "ELOOP")
+      ) {
+        return false;
+      }
+      throw workspaceError("PRODUCT_COMPILATION_CANONICAL_PROJECTION_UNSAFE", target);
+    }
+
+    try {
+      const before = await handle.stat();
+      if (!before.isFile() || before.size !== artifact.byteLength) return false;
+      const bytes = await handle.readFile();
+      const after = await handle.stat();
+      const pathStat = await statOrUndefined(target);
+      const resolvedTarget = await projectionRealpathOrUndefined(target);
+      if (
+        !pathStat?.isFile()
+        || pathStat.isSymbolicLink()
+        || !resolvedTarget
+        || !isWithin(root.real, resolvedTarget)
+        || before.dev !== after.dev
+        || before.ino !== after.ino
+        || before.size !== after.size
+        || before.mtimeMs !== after.mtimeMs
+        || before.ctimeMs !== after.ctimeMs
+        || after.dev !== pathStat.dev
+        || after.ino !== pathStat.ino
+        || bytes.length !== artifact.byteLength
+        || sha256(bytes) !== artifact.contentHash
+      ) {
+        return false;
+      }
+    } finally {
+      await handle.close();
+    }
+  }
+  return true;
+}
+
 export async function projectAcceptedProductCompilationAttemptV1(input: Readonly<{
   repo: string;
   attempt: ProductCompilationAttemptV1;
@@ -690,7 +773,10 @@ export async function projectAcceptedProductCompilationAttemptV1(input: Readonly
     }
     if (existing) {
       const currentReceipt = await existingProjectionReceipt(stitchPath);
-      if (currentReceipt?.receiptHash === receipt.receiptHash) {
+      if (
+        currentReceipt?.receiptHash === receipt.receiptHash
+        && await projectionMatchesReceipt(stitchPath, currentReceipt)
+      ) {
         return receipt;
       }
     }
