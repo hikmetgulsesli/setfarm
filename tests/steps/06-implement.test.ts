@@ -1861,7 +1861,7 @@ describe("06-implement step module", () => {
     assert.match(stepOps, /injectStoryContextFromModule\(nextStory, step, context,/);
     const source = fs.readFileSync(path.join(process.cwd(), "src/installer/steps/06-implement/context.ts"), "utf-8");
     const scopeRead = source.indexOf("SELECT scope_files, shared_files, scope_description");
-    const baseRepo = source.indexOf("const baseRepo = context[\"repo\"] || context[\"REPO\"] || \"\";", scopeRead);
+    const baseRepo = source.indexOf("const baseRepo = context[\"repo\"] || context[\"REPO\"] || context[\"story_workdir\"] || \"\";", scopeRead);
     assert.notEqual(scopeRead, -1, "scope row lookup should exist");
     assert.notEqual(baseRepo, -1, "base repo line should exist after scope row lookup");
     const block = source.slice(scopeRead, baseRepo);
