@@ -1,5 +1,9 @@
 import { z } from "zod";
 
+import {
+  SemanticArtifactEnvelopeV1Schema,
+  type SemanticArtifactEnvelopeV1,
+} from "./artifact-store.js";
 import { hashCanonicalJson } from "./canonical-json.js";
 import {
   BuildTopologyV1Schema,
@@ -8,8 +12,10 @@ import {
 } from "./schemas/build-topology-v1.js";
 import {
   PathBindingIdSchema,
+  SemanticArtifactProducerV1Schema,
   Sha256Schema,
   StoryIdSchema,
+  type SemanticArtifactProducerV1,
 } from "./schemas/common-v1.js";
 import { DesignInteractionGraphV2Schema } from "./schemas/design-interaction-graph-v2.js";
 import { DesignSourceClosureV2Schema } from "./schemas/design-source-closure-v2.js";
@@ -22,7 +28,6 @@ import {
   implementationFilesHashV2,
   implementationSharedGrantsHashV2,
   implementationSliceAuthorityHashV2,
-  implementationSliceHashV2,
   type ImplementationDependencyOutputV2,
   type ImplementationFileV2,
   type ImplementationSliceV2,
@@ -52,6 +57,7 @@ export const ImplementationSliceCompilerInputV2Schema = z.object({
   designSourceClosure: DesignSourceClosureV2Schema,
   storyId: StoryIdSchema,
   sourceRevision: SourceRevisionV1Schema,
+  producer: SemanticArtifactProducerV1Schema,
   currentFiles: z.array(CurrentFileSnapshotV2Schema).min(1).max(20_000),
   dependencyOutputs: z.array(ImplementationDependencyOutputV2Schema).max(5_000),
   recovery: ImplementationRecoveryDirectiveV2Schema.optional(),
@@ -84,6 +90,7 @@ export type ImplementationSliceCompilationResultV2 =
       diagnostics: readonly [];
       slice: ImplementationSliceV2;
       sliceHash: string;
+      envelope: SemanticArtifactEnvelopeV1;
     }>
   | Readonly<{
       status: "rejected";
@@ -123,6 +130,27 @@ function exactHash(value: unknown): string {
   return hashCanonicalJson(value);
 }
 
+function semanticEnvelope(
+  artifactType: string,
+  producer: SemanticArtifactProducerV1,
+  payload: unknown,
+): SemanticArtifactEnvelopeV1 {
+  return SemanticArtifactEnvelopeV1Schema.parse({
+    schema: "setfarm.semantic-artifact-envelope.v1",
+    artifactType,
+    producer,
+    payload,
+  });
+}
+
+function envelopeHash(
+  artifactType: string,
+  producer: SemanticArtifactProducerV1,
+  payload: unknown,
+): string {
+  return exactHash(semanticEnvelope(artifactType, producer, payload));
+}
+
 function canonicalGrant(grant: SharedGrantV1): SharedGrantV1 {
   return {
     ...grant,
@@ -142,37 +170,54 @@ function canonicalDependencyOutput(
 
 function validateArtifactAuthority(value: ParsedInput): ImplementationSliceV2Diagnostic[] {
   const diagnostics: ImplementationSliceV2Diagnostic[] = [];
-  const packetHash = exactHash(value.packet);
+  const packetHash = envelopeHash(
+    "setfarm.product-build-packet.v3",
+    value.producer,
+    value.packet,
+  );
   if (packetHash !== value.packetHash) {
     diagnostics.push(diagnostic(
       "SLICE_V2_PACKET_HASH_MISMATCH",
-      "Supplied packet hash does not bind the exact ProductBuildPacketV3 payload",
+      "Supplied packet hash does not bind the exact ProductBuildPacketV3 producer envelope",
       "packetHash",
     ));
   }
 
-  const childHashes = {
+  const childPayloadHashes = {
     productSpecV2Hash: exactHash(value.productSpec),
     designGraphV2Hash: value.designGraph ? exactHash(value.designGraph) : null,
     buildTopologyV1Hash: exactHash(value.buildTopology),
     storyPlanV2Hash: exactHash(value.storyPlan),
     designSourceClosureV2Hash: exactHash(value.designSourceClosure),
   };
-  for (const field of Object.keys(childHashes) as Array<keyof typeof childHashes>) {
-    if (childHashes[field] !== value.packet[field]) {
+  const childEnvelopeHashes = {
+    productSpecV2Hash: envelopeHash("setfarm.product-spec.v2", value.producer, value.productSpec),
+    designGraphV2Hash: value.designGraph
+      ? envelopeHash("setfarm.design-interaction-graph.v2", value.producer, value.designGraph)
+      : null,
+    buildTopologyV1Hash: envelopeHash("setfarm.build-topology.v1", value.producer, value.buildTopology),
+    storyPlanV2Hash: envelopeHash("setfarm.story-plan.v2", value.producer, value.storyPlan),
+    designSourceClosureV2Hash: envelopeHash(
+      "setfarm.design-source-closure.v2",
+      value.producer,
+      value.designSourceClosure,
+    ),
+  };
+  for (const field of Object.keys(childEnvelopeHashes) as Array<keyof typeof childEnvelopeHashes>) {
+    if (childEnvelopeHashes[field] !== value.packet[field]) {
       diagnostics.push(diagnostic(
         "SLICE_V2_CHILD_HASH_MISMATCH",
-        `${field} does not hash to the exact child authority sealed by ProductBuildPacketV3`,
+        `${field} does not hash to the exact child producer envelope sealed by ProductBuildPacketV3`,
         field,
       ));
     }
   }
 
   if (
-    value.storyPlan.productSpecHash !== childHashes.productSpecV2Hash
+    value.storyPlan.productSpecHash !== childPayloadHashes.productSpecV2Hash
     || value.storyPlan.designSourceKind !== value.packet.designSourceKind
-    || value.storyPlan.designGraphHash !== childHashes.designGraphV2Hash
-    || value.storyPlan.buildTopologyHash !== childHashes.buildTopologyV1Hash
+    || value.storyPlan.designGraphHash !== childPayloadHashes.designGraphV2Hash
+    || value.storyPlan.buildTopologyHash !== childPayloadHashes.buildTopologyV1Hash
   ) {
     diagnostics.push(diagnostic(
       "SLICE_V2_STORY_PLAN_AUTHORITY_MISMATCH",
@@ -195,9 +240,10 @@ function validateArtifactAuthority(value: ParsedInput): ImplementationSliceV2Dia
   }
   if (value.designGraph) {
     if (
-      value.designGraph.productSpecHash !== childHashes.productSpecV2Hash
+      value.designGraph.productSpecHash !== childPayloadHashes.productSpecV2Hash
       || value.designSourceClosure.kind !== "stitch"
-      || value.designSourceClosure.designGraph.payloadHash !== childHashes.designGraphV2Hash
+      || value.designSourceClosure.designGraph.payloadHash !== childPayloadHashes.designGraphV2Hash
+      || value.designSourceClosure.designGraph.envelopeHash !== childEnvelopeHashes.designGraphV2Hash
     ) {
       diagnostics.push(diagnostic(
         "SLICE_V2_DESIGN_AUTHORITY_MISMATCH",
@@ -210,6 +256,11 @@ function validateArtifactAuthority(value: ParsedInput): ImplementationSliceV2Dia
   if (
     value.buildTopology.runtimeDataContractHash !== value.packet.runtimeDataContractHash
     || value.buildTopology.runtimeEvidenceContractHash !== value.packet.runtimeEvidenceContractHash
+    || (
+      value.buildTopology.runtimeDataContract !== undefined
+      && value.buildTopology.runtimeDataContract.sourceProductSpecHash
+        !== childPayloadHashes.productSpecV2Hash
+    )
   ) {
     diagnostics.push(diagnostic(
       "SLICE_V2_RUNTIME_AUTHORITY_MISMATCH",
@@ -578,10 +629,15 @@ export function compileImplementationSliceV2(
   const authority = ImplementationSliceAuthorityV2Schema.parse({
     schema: "setfarm.implementation-slice-authority.v2",
     packetHash: value.packetHash,
+    productSpecV2PayloadHash: exactHash(value.productSpec),
     productSpecV2Hash: value.packet.productSpecV2Hash,
+    designGraphV2PayloadHash: value.designGraph ? exactHash(value.designGraph) : null,
     designGraphV2Hash: value.packet.designGraphV2Hash,
+    buildTopologyV1PayloadHash: exactHash(value.buildTopology),
     buildTopologyV1Hash: value.packet.buildTopologyV1Hash,
+    storyPlanV2PayloadHash: exactHash(value.storyPlan),
     storyPlanV2Hash: value.packet.storyPlanV2Hash,
+    designSourceClosureV2PayloadHash: exactHash(value.designSourceClosure),
     designSourceClosureV2Hash: value.packet.designSourceClosureV2Hash,
     storyHash: exactHash(story),
     sourceRevisionHash: exactHash(value.sourceRevision),
@@ -595,6 +651,7 @@ export function compileImplementationSliceV2(
   const sliceCandidate = {
     schema: "setfarm.implementation-slice.v2" as const,
     sliceVersion: 2 as const,
+    producer: value.producer,
     packetHash: value.packetHash,
     packet: value.packet,
     authorityHash: implementationSliceAuthorityHashV2(authority),
@@ -618,10 +675,16 @@ export function compileImplementationSliceV2(
       issue.path.join("/") || "$",
     )));
   }
+  const envelope = semanticEnvelope(
+    "setfarm.implementation-slice.v2",
+    value.producer,
+    slice.data,
+  );
   return {
     status: "compiled",
     diagnostics: [],
     slice: slice.data,
-    sliceHash: implementationSliceHashV2(slice.data),
+    sliceHash: exactHash(envelope),
+    envelope,
   };
 }

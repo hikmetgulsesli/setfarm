@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 
 import { hashRuntimeEvidenceContractV1 } from "../../src/evidence/runtime-evidence-contract-v1.js";
 import { createFindingSetV1 } from "../../src/findings/finding-set.js";
+import { SemanticArtifactEnvelopeV1Schema } from "../../src/product-compiler/artifact-store.js";
 import { hashCanonicalJson } from "../../src/product-compiler/canonical-json.js";
 import { produceDesignInteractionGraphV2 } from "../../src/product-compiler/producers/design-graph-v2.js";
 import { produceDesignGenerationTargetsV2 } from "../../src/product-compiler/producers/design-targets-v2.js";
@@ -34,6 +35,25 @@ import {
 
 function sha(label: string): string {
   return hashCanonicalJson({ label });
+}
+
+const PRODUCER = {
+  pass: "product-packet-compiler-v3",
+  codeSha: "e4db8ae",
+  toolVersions: { zod: "4.4.3" },
+};
+
+function semanticEnvelope(artifactType: string, payload: unknown) {
+  return SemanticArtifactEnvelopeV1Schema.parse({
+    schema: "setfarm.semantic-artifact-envelope.v1",
+    artifactType,
+    producer: PRODUCER,
+    payload,
+  });
+}
+
+function envelopeHash(artifactType: string, payload: unknown): string {
+  return hashCanonicalJson(semanticEnvelope(artifactType, payload));
 }
 
 function strictStitchProductSpec() {
@@ -291,36 +311,32 @@ function stitchTopology(productSpec: ReturnType<typeof strictStitchProductSpec>)
 }
 
 function stitchClosure(value: Awaited<ReturnType<typeof exactDesignFixture>>) {
-  const typedRef = (artifactType: string, label: string, payload: unknown) => ({
+  const typedRef = (artifactType: string, payload: unknown) => ({
     artifactType,
-    envelopeHash: sha(`${label}-envelope`),
+    envelopeHash: envelopeHash(artifactType, payload),
     payloadHash: hashCanonicalJson(payload),
   });
   return DesignSourceClosureV2Schema.parse({
     schema: "setfarm.design-source-closure.v2",
     kind: "stitch",
-    generationTargets: typedRef("setfarm.design-generation-targets.v2", "targets", value.generationTargets),
+    generationTargets: typedRef("setfarm.design-generation-targets.v2", value.generationTargets),
     directResponseEvidence: typedRef(
       "setfarm.stitch-direct-response-evidence.v2",
-      "direct",
       value.directResponseEvidence,
     ),
     renderedSemantics: typedRef(
       "setfarm.stitch-rendered-semantics.v2",
-      "rendered",
       value.renderedSemantics,
     ),
     candidateSelection: typedRef(
       "setfarm.stitch-target-candidate-selection.v2",
-      "selection",
       value.candidateSelection,
     ),
     responseBindings: typedRef(
       "setfarm.stitch-target-response-bindings.v3",
-      "bindings",
       value.responseBindings,
     ),
-    designGraph: typedRef("setfarm.design-interaction-graph.v2", "graph", value.graph),
+    designGraph: typedRef("setfarm.design-interaction-graph.v2", value.graph),
     acceptedAttempt: {
       attemptRef: `PCA_${sha("accepted-attempt")}`,
       outputSealHash: sha("accepted-output-seal"),
@@ -353,13 +369,13 @@ async function stitchCompilerFixture() {
     packetVersion: 3,
     parentPacketHashes: [],
     designSourceKind: "stitch",
-    productSpecV2Hash: hashCanonicalJson(design.productSpec),
-    designGraphV2Hash: hashCanonicalJson(design.graph),
-    buildTopologyV1Hash: hashCanonicalJson(buildTopology),
-    storyPlanV2Hash: hashCanonicalJson(storyPlan),
+    productSpecV2Hash: envelopeHash("setfarm.product-spec.v2", design.productSpec),
+    designGraphV2Hash: envelopeHash("setfarm.design-interaction-graph.v2", design.graph),
+    buildTopologyV1Hash: envelopeHash("setfarm.build-topology.v1", buildTopology),
+    storyPlanV2Hash: envelopeHash("setfarm.story-plan.v2", storyPlan),
     runtimeDataContractHash: buildTopology.runtimeDataContractHash,
     runtimeEvidenceContractHash: buildTopology.runtimeEvidenceContractHash,
-    designSourceClosureV2Hash: hashCanonicalJson(designSourceClosure),
+    designSourceClosureV2Hash: envelopeHash("setfarm.design-source-closure.v2", designSourceClosure),
     compiler: { version: "4.0.0", codeSha: "e4db8ae" },
     validationIds: ["VALIDATE_IMPLEMENTATION_SLICE_V2"],
   });
@@ -372,7 +388,7 @@ async function stitchCompilerFixture() {
   ]);
   const sourceRevision = { sha: "3".repeat(40), treeHash: "4".repeat(40) };
   const input = {
-    packetHash: hashCanonicalJson(packet),
+    packetHash: envelopeHash("setfarm.product-build-packet.v3", packet),
     packet,
     productSpec: design.productSpec,
     designGraph: design.graph,
@@ -381,6 +397,7 @@ async function stitchCompilerFixture() {
     designSourceClosure,
     storyId: story.id,
     sourceRevision,
+    producer: PRODUCER,
     currentFiles: buildTopology.pathBindings
       .filter((binding) => accessiblePathRefs.has(binding.id))
       .map((binding) => ({
@@ -545,11 +562,11 @@ function dependencyCompilerFixture() {
     packetVersion: 3,
     parentPacketHashes: [],
     designSourceKind: "none",
-    productSpecV2Hash: hashCanonicalJson(productSpec),
+    productSpecV2Hash: envelopeHash("setfarm.product-spec.v2", productSpec),
     designGraphV2Hash: null,
-    buildTopologyV1Hash: hashCanonicalJson(buildTopology),
-    storyPlanV2Hash: hashCanonicalJson(storyPlan),
-    designSourceClosureV2Hash: hashCanonicalJson(designSourceClosure),
+    buildTopologyV1Hash: envelopeHash("setfarm.build-topology.v1", buildTopology),
+    storyPlanV2Hash: envelopeHash("setfarm.story-plan.v2", storyPlan),
+    designSourceClosureV2Hash: envelopeHash("setfarm.design-source-closure.v2", designSourceClosure),
     compiler: { version: "4.0.0", codeSha: "e4db8ae" },
     validationIds: ["VALIDATE_IMPLEMENTATION_SLICE_V2"],
   });
@@ -569,7 +586,7 @@ function dependencyCompilerFixture() {
   return {
     buildTopology,
     input: {
-      packetHash: hashCanonicalJson(packet),
+      packetHash: envelopeHash("setfarm.product-build-packet.v3", packet),
       packet,
       productSpec,
       designGraph: null,
@@ -578,6 +595,7 @@ function dependencyCompilerFixture() {
       designSourceClosure,
       storyId: story.id,
       sourceRevision: { sha: "9".repeat(40), treeHash: "a".repeat(40) },
+      producer: PRODUCER,
       currentFiles: [
         { pathRef: "PATH_APP", presence: "present" as const, contentHash: dependencyHash },
         { pathRef: "PATH_SETTINGS", presence: "present" as const, contentHash: sha("settings-base") },
@@ -637,7 +655,9 @@ describe("ImplementationSliceV2 exact authority compiler", { concurrency: 1 }, (
 
     assert.deepEqual(first.slice, second.slice);
     assert.equal(first.sliceHash, second.sliceHash);
-    assert.equal(first.sliceHash, implementationSliceHashV2(first.slice));
+    assert.deepEqual(first.envelope, semanticEnvelope("setfarm.implementation-slice.v2", first.slice));
+    assert.equal(first.sliceHash, hashCanonicalJson(first.envelope));
+    assert.notEqual(first.sliceHash, implementationSliceHashV2(first.slice));
     assert.deepEqual(first.slice.files.map((file) => [file.pathRef, file.role]), [
       ["PATH_APP", "owned"],
       ["PATH_SHARED_READ", "shared_readonly"],
@@ -690,6 +710,32 @@ describe("ImplementationSliceV2 exact authority compiler", { concurrency: 1 }, (
     assert.equal(compiled.slice.designSourceClosure.kind, "none");
   });
 
+  it("keeps CAS envelope identities distinct from payload fingerprints", async () => {
+    const value = await stitchCompilerFixture();
+    const compiled = compileOrThrow(value.input);
+    assert.equal(
+      compiled.slice.authority.productSpecV2PayloadHash,
+      hashCanonicalJson(value.productSpec),
+    );
+    assert.equal(compiled.slice.authority.productSpecV2Hash, value.packet.productSpecV2Hash);
+    assert.notEqual(
+      compiled.slice.authority.productSpecV2PayloadHash,
+      compiled.slice.authority.productSpecV2Hash,
+    );
+
+    const payloadAsArtifact: any = structuredClone(value.input);
+    payloadAsArtifact.packet.productSpecV2Hash = hashCanonicalJson(payloadAsArtifact.productSpec);
+    payloadAsArtifact.packetHash = envelopeHash(
+      "setfarm.product-build-packet.v3",
+      payloadAsArtifact.packet,
+    );
+    assert.equal(rejectionCodes(payloadAsArtifact).includes("SLICE_V2_CHILD_HASH_MISMATCH"), true);
+
+    const wrongProducer: any = structuredClone(value.input);
+    wrongProducer.producer.pass = "forged-producer";
+    assert.equal(rejectionCodes(wrongProducer).includes("SLICE_V2_PACKET_HASH_MISMATCH"), true);
+  });
+
   it("rejects a fully re-hashed graph whose physical control no longer binds ProductSpec placement and action input", async () => {
     const value = await stitchCompilerFixture();
     const forged: any = structuredClone(value.input);
@@ -697,13 +743,18 @@ describe("ImplementationSliceV2 exact authority compiler", { concurrency: 1 }, (
     control.controlPlacementHash = sha("forged-placement");
     control.actionInputBindings[0]!.fieldRef = "forged";
     control.actionInputBindings[0]!.actionInputRef = `${control.identity.actionRef}.forged`;
-    const graphHash = hashCanonicalJson(forged.designGraph);
-    forged.storyPlan.designGraphHash = graphHash;
-    forged.designSourceClosure.designGraph.payloadHash = graphHash;
-    forged.packet.designGraphV2Hash = graphHash;
-    forged.packet.storyPlanV2Hash = hashCanonicalJson(forged.storyPlan);
-    forged.packet.designSourceClosureV2Hash = hashCanonicalJson(forged.designSourceClosure);
-    forged.packetHash = hashCanonicalJson(forged.packet);
+    const graphPayloadHash = hashCanonicalJson(forged.designGraph);
+    const graphEnvelopeHash = envelopeHash("setfarm.design-interaction-graph.v2", forged.designGraph);
+    forged.storyPlan.designGraphHash = graphPayloadHash;
+    forged.designSourceClosure.designGraph.payloadHash = graphPayloadHash;
+    forged.designSourceClosure.designGraph.envelopeHash = graphEnvelopeHash;
+    forged.packet.designGraphV2Hash = graphEnvelopeHash;
+    forged.packet.storyPlanV2Hash = envelopeHash("setfarm.story-plan.v2", forged.storyPlan);
+    forged.packet.designSourceClosureV2Hash = envelopeHash(
+      "setfarm.design-source-closure.v2",
+      forged.designSourceClosure,
+    );
+    forged.packetHash = envelopeHash("setfarm.product-build-packet.v3", forged.packet);
 
     const result = compileImplementationSliceV2(forged);
     assert.equal(result.status, "rejected", JSON.stringify(result));

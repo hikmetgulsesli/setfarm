@@ -18,6 +18,7 @@ import {
 import {
   NormalizedRelativeLocatorSchema,
   PathBindingIdSchema,
+  SemanticArtifactProducerV1Schema,
   Sha256Schema,
   StoryIdSchema,
   hasUniqueStrings,
@@ -283,10 +284,15 @@ export type ImplementationStoryContractV2 = z.infer<
 export const ImplementationSliceAuthorityV2Schema = z.object({
   schema: z.literal("setfarm.implementation-slice-authority.v2"),
   packetHash: Sha256Schema,
+  productSpecV2PayloadHash: Sha256Schema,
   productSpecV2Hash: Sha256Schema,
+  designGraphV2PayloadHash: Sha256Schema.nullable(),
   designGraphV2Hash: Sha256Schema.nullable(),
+  buildTopologyV1PayloadHash: Sha256Schema,
   buildTopologyV1Hash: Sha256Schema,
+  storyPlanV2PayloadHash: Sha256Schema,
   storyPlanV2Hash: Sha256Schema,
+  designSourceClosureV2PayloadHash: Sha256Schema,
   designSourceClosureV2Hash: Sha256Schema,
   storyHash: Sha256Schema,
   sourceRevisionHash: Sha256Schema,
@@ -327,6 +333,7 @@ export function implementationSliceAuthorityHashV2(
 export const ImplementationSliceV2Schema = z.object({
   schema: z.literal("setfarm.implementation-slice.v2"),
   sliceVersion: z.literal(2),
+  producer: SemanticArtifactProducerV1Schema,
   packetHash: Sha256Schema,
   packet: ProductBuildPacketV3Schema,
   authorityHash: Sha256Schema,
@@ -342,12 +349,24 @@ export const ImplementationSliceV2Schema = z.object({
   designSourceClosure: DesignSourceClosureV2Schema,
   recovery: ImplementationRecoveryDirectiveV2Schema.optional(),
 }).strict().superRefine((value, context) => {
-  const expectedPacketHash = hashCanonicalJson(value.packet);
+  const expectedPacketHash = hashCanonicalJson({
+    schema: "setfarm.semantic-artifact-envelope.v1",
+    artifactType: "setfarm.product-build-packet.v3",
+    producer: value.producer,
+    payload: value.packet,
+  });
   if (value.packetHash !== expectedPacketHash || value.authority.packetHash !== expectedPacketHash) {
     context.addIssue({
       code: "custom",
       path: ["packetHash"],
       message: "Slice packet hash must bind the exact embedded ProductBuildPacketV3",
+    });
+  }
+  if (value.producer.codeSha !== value.packet.compiler.codeSha) {
+    context.addIssue({
+      code: "custom",
+      path: ["producer", "codeSha"],
+      message: "Slice producer revision must equal the embedded packet compiler revision",
     });
   }
   if (value.authorityHash !== implementationSliceAuthorityHashV2(value.authority)) {
@@ -371,6 +390,16 @@ export const ImplementationSliceV2Schema = z.object({
     });
   }
   if (
+    (value.authority.designGraphV2PayloadHash === null)
+      !== (value.authority.designGraphV2Hash === null)
+  ) {
+    context.addIssue({
+      code: "custom",
+      path: ["authority", "designGraphV2PayloadHash"],
+      message: "Design graph payload fingerprint and CAS artifact identity must be present together",
+    });
+  }
+  if (
     value.storyId !== value.story.id
     || value.authority.storyHash !== hashCanonicalJson(value.story)
     || value.authority.sourceRevisionHash !== hashCanonicalJson(value.sourceRevision)
@@ -379,7 +408,13 @@ export const ImplementationSliceV2Schema = z.object({
     || value.authority.sharedGrantsHash !== implementationSharedGrantsHashV2(value.sharedGrants)
     || value.authority.storyContractHash !== hashCanonicalJson(value.contract)
     || value.authority.buildAuthorityHash !== hashCanonicalJson(value.build)
-    || value.authority.designSourceClosureV2Hash !== hashCanonicalJson(value.designSourceClosure)
+    || value.authority.designSourceClosureV2PayloadHash !== hashCanonicalJson(value.designSourceClosure)
+    || value.authority.designSourceClosureV2Hash !== hashCanonicalJson({
+      schema: "setfarm.semantic-artifact-envelope.v1",
+      artifactType: "setfarm.design-source-closure.v2",
+      producer: value.producer,
+      payload: value.designSourceClosure,
+    })
     || value.authority.recoveryHash !== (value.recovery ? hashCanonicalJson(value.recovery) : null)
   ) {
     context.addIssue({
@@ -879,7 +914,8 @@ export const ImplementationSliceV2Schema = z.object({
       }
     });
     if (
-      value.designSourceClosure.designGraph.payloadHash !== value.packet.designGraphV2Hash
+      value.designSourceClosure.designGraph.payloadHash !== value.authority.designGraphV2PayloadHash
+      || value.designSourceClosure.designGraph.envelopeHash !== value.packet.designGraphV2Hash
       || value.designSourceClosure.acceptedAttempt.outputSealHash.length !== 64
       || value.designSourceClosure.projectionReceipt.artifactHash.length !== 64
     ) {
@@ -907,7 +943,7 @@ export const ImplementationSliceV2Schema = z.object({
   }
   if (
     value.build.runtimeDataContract
-    && value.build.runtimeDataContract.sourceProductSpecHash !== value.packet.productSpecV2Hash
+    && value.build.runtimeDataContract.sourceProductSpecHash !== value.authority.productSpecV2PayloadHash
   ) {
     context.addIssue({
       code: "custom",
