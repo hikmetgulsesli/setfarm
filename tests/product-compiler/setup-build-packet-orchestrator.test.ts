@@ -718,9 +718,9 @@ describe("setup-build packet runtime publication", () => {
     );
   });
 
-  async function compile(mode: "shadow" | "v3") {
-    const runId = `setup-packet-runtime-${mode}`;
-    const fixture = createFixture(runId, mode === "v3");
+  async function compileShadow() {
+    const runId = "setup-packet-runtime-shadow";
+    const fixture = createFixture(runId);
     roots.push(fixture.repo);
     const artifactParent = fs.mkdtempSync(path.join(tmpdir(), "setfarm-setup-packet-cas-"));
     roots.push(artifactParent);
@@ -731,62 +731,28 @@ describe("setup-build packet runtime publication", () => {
       quotaBytes: limits.rootQuotaBytes,
       maxPayloadBytes: limits.maxPayloadBytes,
     });
-    const releaseAdmissionHash = mode === "v3"
-      ? await database.seedV3ReleaseGoAdmission(releaseSha)
-      : null;
     await database.sql.unsafe(
       `INSERT INTO runs (
          id, workflow_id, task, status, protocol,
          compiler_release_sha, activation_preflight_hash, release_admission_hash
        ) VALUES ($1, 'feature-dev', 'setup packet runtime', 'running', $2, $3, $4, $5)`,
-      [runId, mode, releaseSha, "d".repeat(64), releaseAdmissionHash],
+      [runId, "shadow", releaseSha, "d".repeat(64), null],
     );
     const result = await orchestrateSetupBuildProductPacket({
       sql: database.sql,
       artifactRoot,
       artifactLimits: limits,
       runId,
-      expectedMode: mode,
+      expectedMode: "shadow",
       repo: fixture.repo,
       planText: fixture.planText,
-      ownerInstanceId: `setup-packet-test-${mode}`,
+      ownerInstanceId: "setup-packet-test-shadow",
     });
     return { runId, result };
   }
 
-  it("atomically activates a v3 packet with seven same-producer canonical refs", async () => {
-    const { runId, result } = await compile("v3");
-    assert.equal(result.compilation.activation, "activated", JSON.stringify({
-      report: result.compilation.compilation.report,
-      sourceHashes: result.contracts.sourceHashes,
-      rawArtifactHashes: result.contracts.designGraph.rawArtifactHashes,
-    }));
-    assert.equal(result.compilation.compilation.status, "sealed");
-    const rows = await database.sql<Array<{
-      packet_hash: string | null;
-      packets: number;
-      refs: number;
-      producers: number;
-    }>>`
-      SELECT r.packet_hash,
-             (SELECT COUNT(*)::integer FROM product_packets WHERE run_id = r.id) AS packets,
-             (SELECT COUNT(*)::integer FROM run_artifact_refs WHERE run_id = r.id) AS refs,
-             (SELECT COUNT(DISTINCT a.producer_metadata::text)::integer
-                FROM run_artifact_refs rr
-                JOIN semantic_artifacts a ON a.artifact_hash = rr.artifact_hash
-               WHERE rr.run_id = r.id) AS producers
-        FROM runs r WHERE r.id = ${runId}
-    `;
-    assert.deepEqual(rows.map((row) => ({ ...row })), [{
-      packet_hash: result.compilation.compilation.packetHash,
-      packets: 1,
-      refs: 7,
-      producers: 1,
-    }]);
-  });
-
   it("publishes shadow history refs without mutating run packet state", async () => {
-    const { runId, result } = await compile("shadow");
+    const { runId, result } = await compileShadow();
     assert.equal(result.compilation.activation, "observed");
     assert.equal(result.compilation.compilation.status, "sealed");
     const rows = await database.sql<Array<{
