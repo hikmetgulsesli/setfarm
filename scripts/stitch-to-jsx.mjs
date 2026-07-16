@@ -603,12 +603,6 @@ function loadNativeV2ProjectionContract({ targets, bindings, selection, rendered
         responseObservable.elementHashes[0],
         `observable ${observable.observableRef}`,
       );
-      if (
-        observable.selector.kind === "accessibility"
-        && (element.role !== observable.selector.role || element.ariaLabel !== observable.selector.name)
-      ) {
-        failConversion("V2_PROJECTION_OBSERVABLE_BINDING_MISMATCH", `observable ${observable.observableRef} differs from its exact getByRole source`);
-      }
       const roleReceipt = rendered.roleReceipts?.find((value) =>
         value?.observableRef === observable.observableRef);
       if (observable.selector.kind === "accessibility") {
@@ -2634,12 +2628,6 @@ function annotateObservableElements(html, projection) {
       if (!matches) return original;
       for (const observable of matches) {
         if (
-          observable.selectorKind === "accessibility"
-          && (attrValue(attrs, "role") !== observable.role || attrValue(attrs, "aria-label") !== observable.name)
-        ) {
-          failConversion("V3_OBSERVABLE_RENDERED_ELEMENT_MISMATCH", `observable ${observable.observableRef} differs from its exact browser element`);
-        }
-        if (
           observable.selectorKind === "control"
           && semanticControlSlotRef(attrs) !== observable.controlSlotRef
         ) {
@@ -2656,8 +2644,30 @@ function annotateObservableElements(html, projection) {
       const refs = matches.map((entry) => entry.observableRef).sort().join(" ");
       const selfClosing = /\/\s*$/.test(attrs);
       const attributeBody = selfClosing ? attrs.replace(/\/\s*$/, "") : attrs;
-      const cleanAttrs = stripJsxAttribute(String(attributeBody || ""), "data-observable-refs");
-      return `<${tagName}${cleanAttrs} data-observable-refs="${escapeHtmlAttr(refs)}"${selfClosing ? " />" : ">"}`;
+      const accessibility = matches.filter((entry) => entry.selectorKind === "accessibility");
+      const roleValues = new Set(accessibility.map((entry) => entry.role));
+      const nameValues = new Set(accessibility.map((entry) => entry.name));
+      if (roleValues.size > 1 || nameValues.size > 1) {
+        failConversion(
+          "V3_OBSERVABLE_RENDERED_ELEMENT_MISMATCH",
+          `browser element ${elementRef} cannot carry conflicting accessibility receipts`,
+        );
+      }
+      let cleanAttrs = stripJsxAttribute(String(attributeBody || ""), "data-observable-refs");
+      let accessibilityAttrs = "";
+      if (accessibility.length > 0) {
+        const role = accessibility[0]?.role;
+        const name = accessibility[0]?.name;
+        if (!role || !name) {
+          failConversion(
+            "V3_OBSERVABLE_RENDERED_ELEMENT_MISMATCH",
+            `browser element ${elementRef} has an incomplete accessibility receipt`,
+          );
+        }
+        cleanAttrs = stripJsxAttribute(stripJsxAttribute(cleanAttrs, "role"), "aria-label");
+        accessibilityAttrs = ` role="${escapeHtmlAttr(role)}" aria-label="${escapeHtmlAttr(name)}"`;
+      }
+      return `<${tagName}${cleanAttrs}${accessibilityAttrs} data-observable-refs="${escapeHtmlAttr(refs)}"${selfClosing ? " />" : ">"}`;
     });
     for (const observable of required) {
       if (counts.get(observable.observableRef) !== 1) {
@@ -3049,7 +3059,6 @@ ${jsx.split("\n").map(l => "      " + l).join("\n")}
       ...observable,
       generatedSourceLocator,
     })),
-    componentApi,
     ...(projection ? {
       projection: {
         schema: "setfarm.stitch-screen-projection.v2",
@@ -3061,8 +3070,9 @@ ${jsx.split("\n").map(l => "      " + l).join("\n")}
         rawInteractiveCounts: { buttons, links, inputs, textareas, selects },
         requiredObservableRefs: indexedObservables.map((observable) => observable.observableRef).sort(),
       },
-      rejectedControls: indexedRejectedControls,
     } : {}),
+    componentApi,
+    ...(projection ? { rejectedControls: indexedRejectedControls } : {}),
   });
   console.log(
     "  OK:",

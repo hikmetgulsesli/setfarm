@@ -27,7 +27,7 @@ import {
 
 async function writeNativeV2Projection(
   root: string,
-  options: { customRoleControl?: boolean } = {},
+  options: { customRoleControl?: boolean; implicitStatusRole?: boolean } = {},
 ) {
   const stitch = path.join(root, "stitch");
   fs.mkdirSync(stitch, { recursive: true });
@@ -47,11 +47,14 @@ async function writeNativeV2Projection(
   const physicalControl = options.customRoleControl
     ? `<div role="button" aria-label="Start Game" tabindex="0" data-action="${placement.actionRef}" data-control-slot="${placement.controlSlotRef}">Start Game</div>`
     : `<button data-action="${placement.actionRef}" data-control-slot="${placement.controlSlotRef}">Start Game</button>`;
+  const statusElement = options.implicitStatusRole
+    ? `<output hidden aria-label="${statusObservable.selector.name}">Playing</output>`
+    : `<div hidden role="${statusObservable.selector.role}" aria-label="${statusObservable.selector.name}">Playing</div>`;
   const htmlBytes = validStitchHtml([
     `<main data-surface-id="${target.surfaceRef}">`,
     physicalControl,
     `<section data-surface-id="${canvasSurface}"><canvas aria-label="Game canvas"></canvas></section>`,
-    `<section data-surface-id="${statusObservable.selector.surfaceRef}"><div hidden role="${statusObservable.selector.role}" aria-label="${statusObservable.selector.name}">Playing</div></section>`,
+    `<section data-surface-id="${statusObservable.selector.surfaceRef}">${statusElement}</section>`,
     "</main>",
   ].join(""), "converter-native-v2");
   const screenshotBytes = validStitchPng(177);
@@ -285,6 +288,31 @@ describe("Stitch converter semantic projection", () => {
         `<div[^>]*data-setfarm-element-ref="${control.sourceElementRef}"[^>]*data-action-id="${control.generatedLocalId}"[^>]*onClick=`,
       ));
       assert.doesNotMatch(source, new RegExp(`<button[^>]*data-action-id="${control.generatedLocalId}"`));
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts browser-proven implicit native roles and seals canonical generated role/name", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-native-v2-implicit-role-"));
+    try {
+      await writeNativeV2Projection(root, { implicitStatusRole: true });
+      execFileSync("node", ["scripts/stitch-to-jsx.mjs", root], {
+        cwd: process.cwd(),
+        stdio: "pipe",
+      });
+
+      const index = JSON.parse(fs.readFileSync(path.join(root, "src/screens/SCREEN_INDEX.json"), "utf8"));
+      const observable = index[0].observables.find((entry: any) =>
+        entry.selectorKind === "accessibility");
+      assert.ok(observable);
+      const source = fs.readFileSync(path.join(root, index[0].file), "utf8");
+      const generatedTag = source.match(new RegExp(
+        `<output[^>]*data-setfarm-element-ref="${observable.sourceElementRef}"[^>]*>`,
+      ))?.[0];
+      assert.ok(generatedTag);
+      assert.match(generatedTag, /role="status"/);
+      assert.match(generatedTag, /aria-label="Game status"/);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
