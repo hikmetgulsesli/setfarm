@@ -8,7 +8,9 @@ import { IndexedArtifactPublisher } from "./indexed-artifact-publisher.js";
 import type { DesignSourceInputV1 } from "./design-source-closure-compiler.js";
 import {
   compileProductBuildPacket,
+  compileProductBuildPacketV3,
   type ProductPacketCompilationResult,
+  type ProductPacketCompilationResultV3,
 } from "./packet-compiler.js";
 import {
   CompilerIdentityV1Schema,
@@ -36,10 +38,15 @@ export class RuntimePacketCompilerError extends Error {
 export type RuntimePacketCompilationInput = Readonly<{
   runId: string;
   expectedMode: "shadow" | "v3";
-  productSpec: unknown;
-  designGraph: unknown;
-  buildTopology: unknown;
-  storyPlan: unknown;
+  productSpec?: unknown;
+  designGraph?: unknown;
+  buildTopology?: unknown;
+  storyPlan?: unknown;
+  productSpecV2?: unknown;
+  designGraphV2?: unknown | null;
+  buildTopologyV1?: unknown;
+  storyPlanV2?: unknown;
+  designSourceClosureV2?: unknown;
   compiler: unknown;
   producer: unknown;
   parentPacketHashes?: unknown;
@@ -50,7 +57,7 @@ export type RuntimePacketCompilationResult = Readonly<{
   mode: "shadow" | "v3";
   activation: "activated" | "observed" | "rejected";
   activationCreated: boolean;
-  compilation: ProductPacketCompilationResult;
+  compilation: ProductPacketCompilationResult | ProductPacketCompilationResultV3;
 }>;
 
 type RunRow = Readonly<{
@@ -65,6 +72,11 @@ const CHILD_REF_KEYS = Object.freeze({
   buildTopology: "BUILD_TOPOLOGY",
   storyPlan: "STORY_PLAN",
   designSourceClosure: "DESIGN_SOURCE_CLOSURE",
+  productSpecV2: "PRODUCT_SPEC",
+  designGraphV2: "DESIGN_GRAPH",
+  buildTopologyV1: "BUILD_TOPOLOGY",
+  storyPlanV2: "STORY_PLAN",
+  designSourceClosureV2: "DESIGN_SOURCE_CLOSURE",
 } as const);
 
 function historicalRefKey(prefix: string, hash: string): string {
@@ -106,10 +118,11 @@ export function createRuntimePacketCompiler(input: Readonly<{
   async function addHistoricalRefs(
     runId: string,
     mode: "shadow" | "v3",
-    compilation: ProductPacketCompilationResult,
+    compilation: ProductPacketCompilationResult | ProductPacketCompilationResultV3,
   ): Promise<void> {
     const prefix = mode === "shadow" ? "SHADOW" : "REJECTED";
     for (const [field, hash] of Object.entries(compilation.artifactHashes)) {
+      if (typeof hash !== "string") continue;
       const base = CHILD_REF_KEYS[field as keyof typeof CHILD_REF_KEYS];
       if (!base) continue;
       await index.addRunArtifactRef({
@@ -168,27 +181,19 @@ export function createRuntimePacketCompiler(input: Readonly<{
           `Run ${runId}, compiler, and producer release identities do not agree`,
         );
       }
-      if (value.expectedMode === "v3" && !value.designSource) {
-        throw new RuntimePacketCompilerError(
-          "RUNTIME_PACKET_DESIGN_SOURCE_REQUIRED",
-          `Run ${runId} cannot compile a new v3 packet without typed design-source closure input`,
-        );
-      }
-
-      const compilation = await compileProductBuildPacket({
-        productSpec: value.productSpec,
-        designGraph: value.designGraph,
-        buildTopology: value.buildTopology,
-        storyPlan: value.storyPlan,
-        compiler,
-        producer,
-        protocol: value.expectedMode === "v3" ? "v3" : "legacy-shadow",
-        parentPacketHashes: value.parentPacketHashes,
-        ...(value.designSource ? { designSource: value.designSource } : {}),
-        artifactStore: publisher,
-      });
-
       if (value.expectedMode === "shadow") {
+        const compilation = await compileProductBuildPacket({
+          productSpec: value.productSpec,
+          designGraph: value.designGraph,
+          buildTopology: value.buildTopology,
+          storyPlan: value.storyPlan,
+          compiler,
+          producer,
+          protocol: "legacy-shadow",
+          parentPacketHashes: value.parentPacketHashes,
+          ...(value.designSource ? { designSource: value.designSource } : {}),
+          artifactStore: publisher,
+        });
         await addHistoricalRefs(runId, "shadow", compilation);
         return {
           mode: "shadow",
@@ -197,6 +202,17 @@ export function createRuntimePacketCompiler(input: Readonly<{
           compilation,
         };
       }
+      const compilation = await compileProductBuildPacketV3({
+        productSpecV2: value.productSpecV2,
+        designGraphV2: value.designGraphV2,
+        buildTopologyV1: value.buildTopologyV1,
+        storyPlanV2: value.storyPlanV2,
+        designSourceClosureV2: value.designSourceClosureV2,
+        compiler,
+        producer,
+        parentPacketHashes: value.parentPacketHashes,
+        artifactStore: publisher,
+      });
       if (
         compilation.status !== "sealed"
         || !compilation.packetHash
@@ -212,20 +228,21 @@ export function createRuntimePacketCompiler(input: Readonly<{
       }
       const hashes = compilation.artifactHashes;
       const artifactRefs: Record<string, string> = {
-        PRODUCT_SPEC: hashes.productSpec!,
-        DESIGN_GRAPH: hashes.designGraph!,
-        BUILD_TOPOLOGY: hashes.buildTopology!,
-        STORY_PLAN: hashes.storyPlan!,
+        PRODUCT_SPEC: hashes.productSpecV2!,
+        BUILD_TOPOLOGY: hashes.buildTopologyV1!,
+        STORY_PLAN: hashes.storyPlanV2!,
+        DESIGN_SOURCE_CLOSURE: hashes.designSourceClosureV2!,
         PRODUCT_BUILD_PACKET: compilation.packetHash,
         COMPILATION_REPORT: compilation.reportHash,
       };
-      if (compilation.packet.schema === "setfarm.product-build-packet.v2") {
-        artifactRefs.DESIGN_SOURCE_CLOSURE = hashes.designSourceClosure!;
+      if (hashes.designGraphV2) {
+        artifactRefs.DESIGN_GRAPH = hashes.designGraphV2;
       }
       const activated = await index.activateProductPacket({
         runId,
         packetHash: compilation.packetHash,
         compiler,
+        packet: compilation.packet,
         artifactRefs,
       });
       return {

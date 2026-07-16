@@ -6,6 +6,7 @@ import {
   createArtifactIndex,
   type ArtifactIdentity,
 } from "../../src/product-compiler/artifact-index.js";
+import { hashCanonicalJson } from "../../src/product-compiler/canonical-json.js";
 import { createIsolatedTestDatabase, type TestDatabase } from "../execution-attempts/test-database.js";
 
 const producer = Object.freeze({
@@ -568,6 +569,102 @@ describe("durable semantic artifact index", () => {
         (SELECT COUNT(*)::integer FROM product_packets WHERE run_id = r.id) AS packets,
         r.packet_hash
       FROM runs r WHERE r.id = 'packet-activation-rollback'
+    `;
+    assert.deepEqual(rolledBack.map((row) => ({ ...row })), [
+      { refs: 0, packets: 0, packet_hash: null },
+    ]);
+  });
+
+  it("activates ProductBuildPacketV3 only from its exact CAS payload and native ref set", async () => {
+    const index = createArtifactIndex(database.sql);
+    const compiler = { version: "4.0.0", codeSha: producer.codeSha };
+    const refs = {
+      PRODUCT_SPEC: artifact("1", 10, "setfarm.product-spec.v2"),
+      BUILD_TOPOLOGY: artifact("2", 10, "setfarm.build-topology.v1"),
+      STORY_PLAN: artifact("3", 10, "setfarm.story-plan.v2"),
+      DESIGN_SOURCE_CLOSURE: artifact("4", 10, "setfarm.design-source-closure.v2"),
+      COMPILATION_REPORT: artifact("5", 10, "setfarm.product-compilation-report.v3"),
+    } as const;
+    const packet = {
+      schema: "setfarm.product-build-packet.v3" as const,
+      packetVersion: 3 as const,
+      parentPacketHashes: [],
+      designSourceKind: "none" as const,
+      productSpecV2Hash: refs.PRODUCT_SPEC.hash,
+      designGraphV2Hash: null,
+      buildTopologyV1Hash: refs.BUILD_TOPOLOGY.hash,
+      storyPlanV2Hash: refs.STORY_PLAN.hash,
+      designSourceClosureV2Hash: refs.DESIGN_SOURCE_CLOSURE.hash,
+      compiler,
+      validationIds: ["VALIDATE_V3_SCHEMA_STRICT"],
+    };
+    const packetHash = hashCanonicalJson({
+      schema: "setfarm.semantic-artifact-envelope.v1",
+      artifactType: "setfarm.product-build-packet.v3",
+      producer,
+      payload: packet,
+    });
+    const packetArtifact: ArtifactIdentity = {
+      hash: packetHash,
+      artifactType: "setfarm.product-build-packet.v3",
+      byteLength: 10,
+      producer,
+    };
+    await index.bootstrap({
+      artifacts: [...Object.values(refs), packetArtifact],
+      quotaBytes: 200,
+      maxPayloadBytes: 100,
+      now: at(0),
+    });
+    const releaseAdmissionHash = await database.seedV3ReleaseGoAdmission(producer.codeSha);
+    for (const runId of ["packet-v3-activation", "packet-v3-forged"]) {
+      await database.sql`
+        INSERT INTO runs (
+          id, workflow_id, task, status, protocol,
+          compiler_release_sha, activation_preflight_hash, release_admission_hash
+        ) VALUES (
+          ${runId}, 'feature-dev', 'packet v3 activation', 'running', 'v3',
+          ${producer.codeSha}, ${"9".repeat(64)}, ${releaseAdmissionHash}
+        )
+      `;
+    }
+    const artifactRefs = {
+      PRODUCT_SPEC: refs.PRODUCT_SPEC.hash,
+      BUILD_TOPOLOGY: refs.BUILD_TOPOLOGY.hash,
+      STORY_PLAN: refs.STORY_PLAN.hash,
+      DESIGN_SOURCE_CLOSURE: refs.DESIGN_SOURCE_CLOSURE.hash,
+      PRODUCT_BUILD_PACKET: packetHash,
+      COMPILATION_REPORT: refs.COMPILATION_REPORT.hash,
+    };
+    const activated = await index.activateProductPacket({
+      runId: "packet-v3-activation",
+      packetHash,
+      compiler,
+      packet,
+      artifactRefs,
+      now: at(10),
+    });
+    assert.equal(activated.created, true);
+    assert.equal((await index.listRunArtifactRefs("packet-v3-activation")).length, 6);
+
+    await assert.rejects(
+      index.activateProductPacket({
+        runId: "packet-v3-forged",
+        packetHash,
+        compiler,
+        packet: { ...packet, storyPlanV2Hash: refs.PRODUCT_SPEC.hash },
+        artifactRefs,
+        now: at(11),
+      }),
+      (error: unknown) => error instanceof ArtifactIndexError
+        && error.code === "ARTIFACT_IDENTITY_MISMATCH",
+    );
+    const rolledBack = await database.sql<Array<{ refs: number; packets: number; packet_hash: string | null }>>`
+      SELECT
+        (SELECT COUNT(*)::integer FROM run_artifact_refs WHERE run_id = r.id) AS refs,
+        (SELECT COUNT(*)::integer FROM product_packets WHERE run_id = r.id) AS packets,
+        r.packet_hash
+      FROM runs r WHERE r.id = 'packet-v3-forged'
     `;
     assert.deepEqual(rolledBack.map((row) => ({ ...row })), [
       { refs: 0, packets: 0, packet_hash: null },

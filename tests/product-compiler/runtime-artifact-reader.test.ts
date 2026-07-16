@@ -26,6 +26,10 @@ import {
   buildMinimalValidV3Contracts,
   buildMinimalValidV3PacketV2Contracts,
 } from "./fixtures/minimal-valid-contract.js";
+import {
+  buildNoDesignProductBuildPacketV3Contracts,
+  buildStitchProductBuildPacketV3Contracts,
+} from "./fixtures/product-build-packet-v3.js";
 import { createIsolatedTestDatabase, type TestDatabase } from "../execution-attempts/test-database.js";
 
 const RELEASE_SHA = "c".repeat(40);
@@ -77,17 +81,107 @@ describe("sealed runtime artifact reader", () => {
       [runId, RELEASE_SHA, "d".repeat(64), releaseAdmissionHash],
     );
     const contracts = buildMinimalValidV3PacketV2Contracts();
+    const compiler = { version: "3.0.0", codeSha: RELEASE_SHA };
+    const producer = { pass: "reader-test", codeSha: RELEASE_SHA, toolVersions: {} };
+    const compilation = await compileProductBuildPacket({
+      productSpec: contracts.productSpec,
+      designGraph: contracts.designGraph,
+      buildTopology: contracts.buildTopology,
+      storyPlan: contracts.storyPlan,
+      designSource: contracts.designSource,
+      compiler,
+      producer,
+      protocol: "v3",
+      artifactStore: new IndexedArtifactPublisher({
+        index: createArtifactIndex(database.sql),
+        store,
+        ownerInstanceId: "reader-test",
+      }),
+    });
+    assert.equal(compilation.status, "sealed");
+    assert.ok(compilation.packetHash);
+    await createArtifactIndex(database.sql).activateProductPacket({
+      runId,
+      packetHash: compilation.packetHash,
+      compiler,
+      artifactRefs: {
+        PRODUCT_SPEC: compilation.artifactHashes.productSpec!,
+        DESIGN_GRAPH: compilation.artifactHashes.designGraph!,
+        BUILD_TOPOLOGY: compilation.artifactHashes.buildTopology!,
+        STORY_PLAN: compilation.artifactHashes.storyPlan!,
+        DESIGN_SOURCE_CLOSURE: compilation.artifactHashes.designSourceClosure!,
+        PRODUCT_BUILD_PACKET: compilation.packetHash,
+        COMPILATION_REPORT: compilation.reportHash,
+      },
+    });
+    return {
+      runId,
+      reader: createRuntimeArtifactReader({ sql: database.sql, artifactRoot, artifactLimits: limits }),
+      compilation: { compilation },
+      contracts,
+    };
+  }
+
+  async function nativeV3Fixture(designSourceKind: "none" | "stitch" = "none") {
+    const root = await mkdtemp(path.join(tmpdir(), "setfarm-runtime-reader-native-v3-"));
+    roots.push(root);
+    const artifactRoot = path.join(root, "sha256");
+    const store = new ContentAddressedArtifactStore(artifactRoot, { limits });
+    await bootstrapArtifactIndex({
+      index: createArtifactIndex(database.sql),
+      store,
+      quotaBytes: limits.rootQuotaBytes,
+      maxPayloadBytes: limits.maxPayloadBytes,
+    });
+    const runId = `runtime-reader-native-v3-${designSourceKind}`;
+    const releaseAdmissionHash = await database.seedV3ReleaseGoAdmission(RELEASE_SHA);
+    await database.sql.unsafe(
+      `INSERT INTO runs (
+         id, workflow_id, task, status, protocol, compiler_release_sha,
+         activation_preflight_hash, release_admission_hash
+       ) VALUES ($1, 'feature-dev', 'native v3 reader', 'running', 'v3', $2, $3, $4)`,
+      [runId, RELEASE_SHA, "f".repeat(64), releaseAdmissionHash],
+    );
+    const producer = {
+      pass: "native-v3-reader-test",
+      codeSha: RELEASE_SHA,
+      toolVersions: {},
+    };
+    const contracts = designSourceKind === "stitch"
+      ? await buildStitchProductBuildPacketV3Contracts(producer)
+      : buildNoDesignProductBuildPacketV3Contracts();
+    if (designSourceKind === "stitch" && "nestedDesignSources" in contracts) {
+      const publisher = new IndexedArtifactPublisher({
+        index: createArtifactIndex(database.sql),
+        store,
+        ownerInstanceId: "native-v3-reader-nested-test",
+      });
+      for (const [artifactType, payload] of [
+        ["setfarm.design-generation-targets.v2", contracts.nestedDesignSources.generationTargets],
+        ["setfarm.stitch-direct-response-evidence.v2", contracts.nestedDesignSources.directResponseEvidence],
+        ["setfarm.stitch-rendered-semantics.v2", contracts.nestedDesignSources.renderedSemantics],
+        ["setfarm.stitch-target-candidate-selection.v2", contracts.nestedDesignSources.candidateSelection],
+        ["setfarm.stitch-target-response-bindings.v3", contracts.nestedDesignSources.responseBindings],
+      ] as const) {
+        await publisher.put({
+          schema: "setfarm.semantic-artifact-envelope.v1",
+          artifactType,
+          producer,
+          payload,
+        });
+      }
+    }
     const compilation = await createRuntimePacketCompiler({
       sql: database.sql,
       artifactRoot,
       artifactLimits: limits,
-      ownerInstanceId: "reader-test",
+      ownerInstanceId: "native-v3-reader-test",
     }).compile({
       runId,
       expectedMode: "v3",
       ...contracts,
-      compiler: { version: "3.0.0", codeSha: RELEASE_SHA },
-      producer: { pass: "reader-test", codeSha: RELEASE_SHA, toolVersions: {} },
+      compiler: { version: "4.0.0", codeSha: RELEASE_SHA },
+      producer,
     });
     assert.equal(compilation.activation, "activated");
     return {
@@ -178,6 +272,69 @@ describe("sealed runtime artifact reader", () => {
     assert.equal(ProductBuildAuthorityV1Schema.safeParse(drifted).success, false);
   });
 
+  it("reads the exact ProductBuildPacketV3 union without adapting v1/v2 authority fields", async () => {
+    const test = await nativeV3Fixture();
+    const result = await test.reader.readExactSealedPacket(test.runId);
+    assert.equal(result.packet.schema, "setfarm.product-build-packet.v3");
+    if (result.packet.schema !== "setfarm.product-build-packet.v3") return;
+    assert.equal(result.packetHash, test.compilation.compilation.packetHash);
+    assert.deepEqual(result.productSpec, test.contracts.productSpecV2);
+    assert.equal(result.designGraph, null);
+    assert.deepEqual(result.storyPlan, test.contracts.storyPlanV2);
+    assert.equal(result.designSourceClosure.kind, "none");
+    assert.equal(result.compilationReport.schema, "setfarm.product-compilation-report.v3");
+    assert.equal(result.refs.productSpec, result.packet.productSpecV2Hash);
+    assert.equal(result.refs.designGraph, null);
+    assert.equal(result.refs.buildTopology, result.packet.buildTopologyV1Hash);
+    assert.equal(result.refs.storyPlan, result.packet.storyPlanV2Hash);
+    assert.equal(result.refs.designSourceClosure, result.packet.designSourceClosureV2Hash);
+    await assert.rejects(
+      test.reader.readSealedPacket(test.runId),
+      (error: unknown) => error instanceof RuntimeArtifactReaderError
+        && error.code === "RUNTIME_ARTIFACT_TYPE_MISMATCH",
+    );
+  });
+
+  it("deep-reads every typed Stitch closure child behind ProductBuildPacketV3", async () => {
+    const test = await nativeV3Fixture("stitch");
+    const result = await test.reader.readExactSealedPacket(test.runId);
+    assert.equal(result.packet.schema, "setfarm.product-build-packet.v3");
+    if (result.packet.schema !== "setfarm.product-build-packet.v3") return;
+    assert.equal(result.packet.designSourceKind, "stitch");
+    assert.ok(result.designGraph);
+    assert.equal(result.designSourceClosure.kind, "stitch");
+    assert.ok(result.designSources);
+    assert.equal(
+      result.designSources?.generationTargets.schema,
+      "setfarm.design-generation-targets.v2",
+    );
+    assert.equal(
+      result.designSources?.renderedSemantics.schema,
+      "setfarm.stitch-rendered-semantics.v2",
+    );
+    assert.equal(
+      result.designSources?.responseBindings.schema,
+      "setfarm.stitch-target-response-bindings.v3",
+    );
+    assert.equal(
+      result.designSourceClosure.kind === "stitch"
+        && result.designSourceClosure.designGraph.envelopeHash,
+      result.refs.designGraph,
+    );
+  });
+
+  it("fails exact v3 reads when the activated packet child ref no longer resolves", async () => {
+    const test = await nativeV3Fixture();
+    const sealed = await test.reader.readExactSealedPacket(test.runId);
+    assert.equal(sealed.packet.schema, "setfarm.product-build-packet.v3");
+    await rm(test.reader.store.pathFor(sealed.refs.storyPlan), { force: true });
+    await assert.rejects(
+      test.reader.readExactSealedPacket(test.runId),
+      (error: unknown) => error instanceof RuntimeArtifactReaderError
+        && error.code === "RUNTIME_ARTIFACT_INDEX_MISMATCH",
+    );
+  });
+
   it("keeps active Product Build Packet v1 owners readable during the v2 migration", async () => {
     const test = await legacyV1Fixture();
     const result = await test.reader.readSealedPacket(test.runId);
@@ -261,6 +418,22 @@ describe("sealed runtime artifact reader", () => {
 
     await assert.rejects(
       test.reader.readSealedPacket(test.runId),
+      (error: unknown) => error instanceof RuntimeArtifactReaderError
+        && error.code === "RUNTIME_PACKET_NOT_ACTIVE",
+    );
+  });
+
+  it("deep-audits an exact native v3 packet after terminalization", async () => {
+    const test = await nativeV3Fixture();
+    await database.sql.unsafe(
+      "UPDATE runs SET status = 'completed' WHERE id = $1",
+      [test.runId],
+    );
+    const audited = await test.reader.auditExactTerminalPacket(test.runId);
+    assert.equal(audited.packet.schema, "setfarm.product-build-packet.v3");
+    assert.equal(audited.packetHash, test.compilation.compilation.packetHash);
+    await assert.rejects(
+      test.reader.readExactSealedPacket(test.runId),
       (error: unknown) => error instanceof RuntimeArtifactReaderError
         && error.code === "RUNTIME_PACKET_NOT_ACTIVE",
     );

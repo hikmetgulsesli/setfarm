@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import type postgres from "postgres";
 import { z } from "zod";
 
+import { hashCanonicalJson } from "./canonical-json.js";
 import {
   CompilerIdentityV1Schema,
   SemanticArtifactProducerV1Schema,
@@ -10,6 +11,10 @@ import {
   type CompilerIdentityV1,
   type SemanticArtifactProducerV1,
 } from "./schemas/common-v1.js";
+import {
+  ProductBuildPacketV3Schema,
+  type ProductBuildPacketV3,
+} from "./schemas/product-build-packet-v3.js";
 
 type Sql = postgres.Sql;
 type TransactionSql = postgres.TransactionSql;
@@ -39,6 +44,20 @@ const PRODUCT_PACKET_REF_TYPES_V2 = Object.freeze({
   DESIGN_SOURCE_CLOSURE: "setfarm.design-source-closure.v1",
   PRODUCT_BUILD_PACKET: "setfarm.product-build-packet.v2",
   COMPILATION_REPORT: "setfarm.product-compilation-report.v2",
+} as const);
+
+const PRODUCT_PACKET_REF_TYPES_V3_NONE = Object.freeze({
+  PRODUCT_SPEC: "setfarm.product-spec.v2",
+  BUILD_TOPOLOGY: "setfarm.build-topology.v1",
+  STORY_PLAN: "setfarm.story-plan.v2",
+  DESIGN_SOURCE_CLOSURE: "setfarm.design-source-closure.v2",
+  PRODUCT_BUILD_PACKET: "setfarm.product-build-packet.v3",
+  COMPILATION_REPORT: "setfarm.product-compilation-report.v3",
+} as const);
+
+const PRODUCT_PACKET_REF_TYPES_V3_STITCH = Object.freeze({
+  ...PRODUCT_PACKET_REF_TYPES_V3_NONE,
+  DESIGN_GRAPH: "setfarm.design-interaction-graph.v2",
 } as const);
 
 const ArtifactIdentitySchema = z.object({
@@ -918,6 +937,7 @@ export function createArtifactIndex(sql: Sql) {
       runId: string;
       packetHash: string;
       compiler: CompilerIdentityV1;
+      packet?: unknown;
       artifactRefs: Readonly<Record<string, string>>;
       now?: Date;
     }>): Promise<Readonly<{
@@ -996,15 +1016,53 @@ export function createArtifactIndex(sql: Sql) {
         }
 
         const packetArtifact = await readArtifact(transaction, packetHash);
-        const refTypes = packetArtifact?.artifact_type === "setfarm.product-build-packet.v2"
-          ? PRODUCT_PACKET_REF_TYPES_V2
-          : packetArtifact?.artifact_type === "setfarm.product-build-packet.v1"
-            ? PRODUCT_PACKET_REF_TYPES_V1
-            : undefined;
+        let packetV3: ProductBuildPacketV3 | undefined;
+        if (packetArtifact?.artifact_type === "setfarm.product-build-packet.v3") {
+          const parsed = ProductBuildPacketV3Schema.safeParse(input.packet);
+          if (!parsed.success) {
+            throw new ArtifactIndexError(
+              "PRODUCT_PACKET_ARTIFACT_TYPE_INVALID",
+              `Packet ${packetHash} requires one exact ProductBuildPacketV3 activation payload`,
+            );
+          }
+          packetV3 = parsed.data;
+          const packetIdentity = identityFromRow(packetArtifact);
+          const envelopeHash = hashCanonicalJson({
+            schema: "setfarm.semantic-artifact-envelope.v1",
+            artifactType: "setfarm.product-build-packet.v3",
+            producer: packetIdentity.producer,
+            payload: packetV3,
+          });
+          if (envelopeHash !== packetHash) {
+            throw new ArtifactIndexError(
+              "ARTIFACT_IDENTITY_MISMATCH",
+              `Packet ${packetHash} activation payload differs from its immutable CAS envelope`,
+            );
+          }
+          if (
+            packetV3.compiler.codeSha !== compiler.codeSha
+            || packetV3.compiler.version !== compiler.version
+            || packetIdentity.producer.codeSha !== compiler.codeSha
+          ) {
+            throw new ArtifactIndexError(
+              "PRODUCT_PACKET_RELEASE_MISMATCH",
+              `Packet ${packetHash}, producer, compiler, and run release identities do not agree`,
+            );
+          }
+        }
+        const refTypes = packetV3?.designSourceKind === "stitch"
+          ? PRODUCT_PACKET_REF_TYPES_V3_STITCH
+          : packetV3?.designSourceKind === "none"
+            ? PRODUCT_PACKET_REF_TYPES_V3_NONE
+            : packetArtifact?.artifact_type === "setfarm.product-build-packet.v2"
+              ? PRODUCT_PACKET_REF_TYPES_V2
+              : packetArtifact?.artifact_type === "setfarm.product-build-packet.v1"
+                ? PRODUCT_PACKET_REF_TYPES_V1
+                : undefined;
         if (!refTypes) {
           throw new ArtifactIndexError(
             "PRODUCT_PACKET_ARTIFACT_TYPE_INVALID",
-            `Packet ${packetHash} is not an indexed Product Build Packet v1 or v2 artifact`,
+            `Packet ${packetHash} is not an indexed Product Build Packet v1, v2, or v3 artifact`,
           );
         }
         const expectedKeys = Object.keys(refTypes).sort();
@@ -1017,6 +1075,25 @@ export function createArtifactIndex(sql: Sql) {
             "PRODUCT_PACKET_REFS_INCOMPLETE",
             "Product packet activation requires the exact canonical reference set for its indexed packet schema",
           );
+        }
+        if (packetV3) {
+          const packetRefs: Record<string, string | null> = {
+            PRODUCT_SPEC: packetV3.productSpecV2Hash,
+            DESIGN_GRAPH: packetV3.designGraphV2Hash,
+            BUILD_TOPOLOGY: packetV3.buildTopologyV1Hash,
+            STORY_PLAN: packetV3.storyPlanV2Hash,
+            DESIGN_SOURCE_CLOSURE: packetV3.designSourceClosureV2Hash,
+            PRODUCT_BUILD_PACKET: packetHash,
+          };
+          for (const [refKey, expectedHash] of Object.entries(packetRefs)) {
+            const observedHash = rawRefs[refKey] ?? null;
+            if (observedHash !== expectedHash) {
+              throw new ArtifactIndexError(
+                "PRODUCT_PACKET_REFS_INCOMPLETE",
+                `${refKey} does not equal the exact CAS envelope hash sealed by ProductBuildPacketV3`,
+              );
+            }
+          }
         }
 
         let refsCreated = 0;
