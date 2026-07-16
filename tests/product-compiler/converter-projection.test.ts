@@ -10,6 +10,14 @@ import {
   bindStitchTargetCandidateSelectionsV2,
   selectStitchTargetCandidatesV1,
 } from "../../src/product-compiler/producers/stitch-target-candidate-selection.js";
+import { produceDesignInteractionGraphV2 } from "../../src/product-compiler/producers/design-graph-v2.js";
+import { produceDesignGenerationTargetsV2 } from "../../src/product-compiler/producers/design-targets-v2.js";
+import { captureStitchRenderedSemanticsV2 } from "../../src/product-compiler/producers/stitch-rendered-semantics-v2.js";
+import {
+  bindStitchTargetCandidateSelectionsV3,
+  selectStitchTargetCandidatesV2,
+} from "../../src/product-compiler/producers/stitch-target-candidate-selection-v2.js";
+import { buildContainedGameProductSpecV2 } from "./fixtures/product-semantics-v2.js";
 import {
   buildTestRenderedSemantics,
   stitchDownloadReceipts,
@@ -17,7 +25,253 @@ import {
   validStitchPng,
 } from "./fixtures/stitch-artifacts.js";
 
+async function writeNativeV2Projection(root: string) {
+  const stitch = path.join(root, "stitch");
+  fs.mkdirSync(stitch, { recursive: true });
+  const productSpec = buildContainedGameProductSpecV2();
+  const producedTargets = produceDesignGenerationTargetsV2(productSpec);
+  assert.equal(producedTargets.status, "produced", JSON.stringify(producedTargets));
+  if (producedTargets.status !== "produced") throw new Error("unreachable");
+  const generationTargets = producedTargets.generationTargets;
+  const target = generationTargets.targets[0]!;
+  const placement = target.requiredControlPlacements[0]!;
+  const statusObservable = target.requiredObservableSelectors.find((observable) =>
+    observable.selector.kind === "accessibility")!;
+  assert.equal(statusObservable.selector.kind, "accessibility");
+  if (statusObservable.selector.kind !== "accessibility") throw new Error("unreachable");
+  const canvasSurface = target.containedSurfaceRefs.find((surfaceRef) =>
+    surfaceRef !== statusObservable.selector.surfaceRef)!;
+  const htmlBytes = validStitchHtml([
+    `<main data-surface-id="${target.surfaceRef}">`,
+    `<button data-action="${placement.actionRef}" data-control-slot="${placement.controlSlotRef}">Start Game</button>`,
+    `<section data-surface-id="${canvasSurface}"><canvas aria-label="Game canvas"></canvas></section>`,
+    `<section data-surface-id="${statusObservable.selector.surfaceRef}"><div hidden role="${statusObservable.selector.role}" aria-label="${statusObservable.selector.name}">Playing</div></section>`,
+    "</main>",
+  ].join(""), "converter-native-v2");
+  const screenshotBytes = validStitchPng(177);
+  const screenId = "screen-converter-native-v2";
+  const directResponseEvidence = {
+    schema: "setfarm.stitch-direct-response-evidence.v2",
+    projectId: "converter-native-v2",
+    batches: [{
+      stageId: "stage-converter-native-v2",
+      targetRefs: [target.targetId],
+      source: "direct",
+      candidates: [{
+        screenId,
+        title: target.expectedScreenTitle,
+        responsePaths: ["$result.screens[0]"],
+        htmlAvailable: true,
+        screenshotAvailable: true,
+        ...stitchDownloadReceipts(screenId, htmlBytes, screenshotBytes),
+        identityConflicts: [],
+        disposition: "admitted_renderable_screen",
+        missingEvidence: [],
+      }],
+    }],
+  };
+  const artifacts = [{ screenId, htmlBytes, screenshotBytes }];
+  const capture = await captureStitchRenderedSemanticsV2({
+    generationTargets,
+    directResponseEvidence,
+    artifacts,
+    deviceType: "DESKTOP",
+  });
+  const selected = selectStitchTargetCandidatesV2({
+    generationTargets,
+    directResponseEvidence,
+    renderedSemantics: capture.artifact,
+    artifacts,
+  });
+  assert.equal(selected.status, "produced", JSON.stringify(selected));
+  if (selected.status !== "produced") throw new Error("unreachable");
+  const bound = bindStitchTargetCandidateSelectionsV3({
+    generationTargets,
+    candidateSelection: selected.candidateSelection,
+    renderedSemantics: capture.artifact,
+  });
+  assert.equal(bound.status, "produced", JSON.stringify(bound));
+  if (bound.status !== "produced") throw new Error("unreachable");
+  const designGraph = produceDesignInteractionGraphV2({
+    productSpec,
+    generationTargets,
+    renderedSemantics: capture.artifact,
+    candidateSelection: selected.candidateSelection,
+    responseBindings: bound.responseBindings,
+  }).designGraph;
+
+  fs.writeFileSync(path.join(stitch, "DESIGN_MANIFEST.json"), JSON.stringify([{
+    screenId,
+    title: target.expectedScreenTitle,
+    htmlFile: `${screenId}.html`,
+    screenshotFile: `${screenId}.png`,
+    targetRef: target.targetId,
+  }]));
+  fs.writeFileSync(path.join(stitch, `${screenId}.html`), htmlBytes);
+  fs.writeFileSync(path.join(stitch, `${screenId}.png`), screenshotBytes);
+  for (const [locator, bytes] of capture.sidecars.semanticDom) {
+    const destination = path.join(root, ...locator.split("/"));
+    fs.mkdirSync(path.dirname(destination), { recursive: true });
+    fs.writeFileSync(destination, bytes);
+  }
+  fs.writeFileSync(path.join(stitch, "GENERATION_TARGETS.json"), JSON.stringify(generationTargets));
+  fs.writeFileSync(path.join(stitch, "STITCH_RENDERED_SEMANTICS_V2.json"), JSON.stringify(capture.artifact));
+  fs.writeFileSync(path.join(stitch, "STITCH_TARGET_CANDIDATE_SELECTION.json"), JSON.stringify(selected.candidateSelection));
+  fs.writeFileSync(path.join(stitch, "STITCH_RESPONSE_BINDINGS.json"), JSON.stringify(bound.responseBindings));
+  fs.writeFileSync(path.join(stitch, "DESIGN_INTERACTION_GRAPH_V2.json"), JSON.stringify(designGraph));
+  return { target, placement, designGraph, screenId };
+}
+
 describe("Stitch converter semantic projection", () => {
+  it("does not infer native v2 authority from partial or mixed-version artifacts", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-native-v2-version-boundary-"));
+    try {
+      const stitch = path.join(root, "stitch");
+      fs.mkdirSync(stitch, { recursive: true });
+      fs.writeFileSync(path.join(stitch, "DESIGN_MANIFEST.json"), "[]");
+      fs.writeFileSync(path.join(stitch, "GENERATION_TARGETS.json"), JSON.stringify({
+        schema: "setfarm.design-generation-targets.v2",
+        productSpecHash: "a".repeat(64),
+        targets: [],
+      }));
+      fs.writeFileSync(path.join(stitch, "STITCH_RESPONSE_BINDINGS.json"), JSON.stringify({
+        schema: "setfarm.stitch-target-response-bindings.v3",
+        generationTargetsHash: "b".repeat(64),
+        directResponseEvidenceHash: "c".repeat(64),
+        candidateSelectionHash: "d".repeat(64),
+        renderedSemanticsHash: "e".repeat(64),
+        bindings: [],
+      }));
+      assert.throws(() => execFileSync("node", ["scripts/stitch-to-jsx.mjs", root], {
+        cwd: process.cwd(),
+        stdio: "pipe",
+      }));
+      let failed = JSON.parse(fs.readFileSync(
+        path.join(root, ".setfarm/setup/STITCH_TO_JSX_RESULT.json"),
+        "utf8",
+      ));
+      assert.equal(failed.failureCode, "V2_PROJECTION_CONTRACT_PARTIAL");
+
+      fs.writeFileSync(path.join(stitch, "GENERATION_TARGETS.json"), JSON.stringify({
+        schema: "setfarm.design-generation-targets.v1",
+        productSpecHash: "a".repeat(64),
+        targets: [],
+      }));
+      fs.writeFileSync(path.join(stitch, "STITCH_RESPONSE_BINDINGS.json"), JSON.stringify({
+        schema: "setfarm.stitch-target-response-bindings.v1",
+        generationTargetsHash: "b".repeat(64),
+        bindings: [],
+      }));
+      fs.writeFileSync(path.join(stitch, "DESIGN_INTERACTION_GRAPH_V2.json"), JSON.stringify({
+        schema: "setfarm.design-interaction-graph.v2",
+      }));
+      assert.throws(() => execFileSync("node", ["scripts/stitch-to-jsx.mjs", root], {
+        cwd: process.cwd(),
+        stdio: "pipe",
+      }));
+      failed = JSON.parse(fs.readFileSync(
+        path.join(root, ".setfarm/setup/STITCH_TO_JSX_RESULT.json"),
+        "utf8",
+      ));
+      assert.equal(failed.failureCode, "V2_PROJECTION_VERSION_MIXED");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("projects native v2 physical slots and every observable from exact browser authority", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-native-v2-contract-projection-"));
+    try {
+      const value = await writeNativeV2Projection(root);
+      execFileSync("node", ["scripts/stitch-to-jsx.mjs", root], {
+        cwd: process.cwd(),
+        stdio: "pipe",
+      });
+
+      const index = JSON.parse(fs.readFileSync(path.join(root, "src/screens/SCREEN_INDEX.json"), "utf8"));
+      assert.equal(index.length, 1);
+      assert.equal(index[0].projection.authoritySchema, "setfarm.design-interaction-graph.v2");
+      const graphControl = value.designGraph.controls.find((control) =>
+        control.identity.controlSlotRef === value.placement.controlSlotRef)!;
+      const graphAction = value.designGraph.actions.find((action) =>
+        action.actionRef === value.placement.actionRef)!;
+      const control = index[0].controls.find((entry: any) =>
+        entry.controlSlotRef === value.placement.controlSlotRef);
+      assert.ok(control);
+      assert.equal(control.actionRef, value.placement.actionRef);
+      assert.equal(control.surfaceRef, value.placement.surfaceRef);
+      assert.equal(control.physicalControlRef, graphControl.id);
+      assert.equal(control.sourceElementRef, graphControl.elementRef);
+      assert.deepEqual(control.affectedSurfaceRefs, graphAction.affectedSurfaceRefs);
+      assert.notDeepEqual(control.affectedSurfaceRefs, [control.surfaceRef]);
+
+      assert.equal(index[0].observables.length, value.target.requiredObservableSelectors.length);
+      for (const expected of value.target.requiredObservableSelectors) {
+        const observable = index[0].observables.find((entry: any) =>
+          entry.observableRef === expected.observableRef);
+        const graphObservable = value.designGraph.observables.find((entry) =>
+          entry.observableRef === expected.observableRef)!;
+        assert.ok(observable);
+        assert.equal(observable.actionRef, expected.actionRef);
+        assert.equal(observable.selectorKind, expected.selector.kind);
+        assert.equal(observable.sourceElementRef, graphObservable.elementBindings[0]!.elementRef);
+        assert.equal(observable.evidenceRef, graphObservable.evidenceRef);
+      }
+
+      const source = fs.readFileSync(path.join(root, index[0].file), "utf8");
+      const exactControlTag = source.match(new RegExp(
+        `<button[^>]*data-setfarm-element-ref="${graphControl.elementRef}"[^>]*>`,
+      ))?.[0];
+      assert.ok(exactControlTag);
+      assert.match(exactControlTag, new RegExp(`data-action="${value.placement.actionRef}"`));
+      assert.match(exactControlTag, new RegExp(`data-control-slot="${value.placement.controlSlotRef}"`));
+      assert.match(exactControlTag, /data-action-id=/);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed on native v2 physical-slot drift and canonical hash-chain drift", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-native-v2-slot-tamper-"));
+    try {
+      const value = await writeNativeV2Projection(root);
+      const graphPath = path.join(root, "stitch/DESIGN_INTERACTION_GRAPH_V2.json");
+      const graph = JSON.parse(fs.readFileSync(graphPath, "utf8"));
+      const graphAction = graph.actions.find((action: any) => action.actionRef === value.placement.actionRef);
+      const graphControl = graph.controls.find((control: any) =>
+        control.identity.controlSlotRef === value.placement.controlSlotRef);
+      graphControl.identity.surfaceRef = graphAction.affectedSurfaceRefs[0];
+      fs.writeFileSync(graphPath, JSON.stringify(graph));
+
+      assert.throws(() => execFileSync("node", ["scripts/stitch-to-jsx.mjs", root], {
+        cwd: process.cwd(),
+        stdio: "pipe",
+      }));
+      const failed = JSON.parse(fs.readFileSync(
+        path.join(root, ".setfarm/setup/STITCH_TO_JSX_RESULT.json"),
+        "utf8",
+      ));
+      assert.equal(failed.failureCode, "V2_PROJECTION_CONTROL_BINDING_MISMATCH");
+
+      fs.writeFileSync(graphPath, JSON.stringify(value.designGraph));
+      const selectionPath = path.join(root, "stitch/STITCH_TARGET_CANDIDATE_SELECTION.json");
+      const selection = JSON.parse(fs.readFileSync(selectionPath, "utf8"));
+      selection.directResponseEvidenceHash = "f".repeat(64);
+      fs.writeFileSync(selectionPath, JSON.stringify(selection));
+      assert.throws(() => execFileSync("node", ["scripts/stitch-to-jsx.mjs", root], {
+        cwd: process.cwd(),
+        stdio: "pipe",
+      }));
+      const chainFailure = JSON.parse(fs.readFileSync(
+        path.join(root, ".setfarm/setup/STITCH_TO_JSX_RESULT.json"),
+        "utf8",
+      ));
+      assert.equal(chainFailure.failureCode, "V2_PROJECTION_AUTHORITY_CHAIN_MISMATCH");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("projects only exact v3 controls and records every undeclared Stitch control as neutralized evidence", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-v3-contract-projection-"));
     try {
