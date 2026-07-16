@@ -40,7 +40,7 @@ import {
   reserveV3ImplementationAttempt,
   type V3ImplementationAttemptResult,
 } from "../execution/v3-implementation-attempt.js";
-import { canonicalJsonStringify } from "../product-compiler/canonical-json.js";
+import { canonicalJsonStringify, hashCanonicalJson } from "../product-compiler/canonical-json.js";
 import { isValidStitchHtmlFile } from "../product-compiler/stitch-render-artifact.js";
 import { ensureCompilerClaimFence } from "../execution/compiler-claim-fence.js";
 import type { ClaimAttemptFenceV1 } from "../execution/schemas/claim-envelope-v1.js";
@@ -121,6 +121,13 @@ import {
   V3PlanOutputRejectedError,
   type V3PlanOutputAuthorityV1,
 } from "../execution/v3-plan-output-authority.js";
+import {
+  projectCanonicalV3PlanParsedOutputV2,
+  resolveV3PlanOutputAuthorityV2,
+  shouldRunLegacyProductSupervisorV2,
+  V3PlanOutputV2RejectedError,
+  type V3PlanOutputAuthorityV2,
+} from "../execution/v3-plan-output-authority-v2.js";
 import {
   createV3StageFailureV1,
   createV3StageRetryDedupeKeyV1,
@@ -7617,7 +7624,7 @@ export async function completeStep(
   let nativeV3AgentOutput: V3ImplementationAgentOutputV1 | undefined;
   let nativeV3AgentContext: V3ImplementationContextV1 | undefined;
   let nativeV3AttemptContext: V3ImplementationAttemptResult | undefined;
-  let nativeV3PlanAuthority: V3PlanOutputAuthorityV1 | undefined;
+  let nativeV3PlanAuthority: V3PlanOutputAuthorityV1 | V3PlanOutputAuthorityV2 | undefined;
 
   if (
     completionAuthority?.protocol === "v3"
@@ -7717,18 +7724,27 @@ export async function completeStep(
     : parseOutputKeyValues(output);
   if (isNativeV3PlanCompletion) {
     try {
-      nativeV3PlanAuthority = resolveV3PlanOutputAuthorityV1({
+      const planInput = {
         task: context["task"] || "",
         parsed,
         ...(context["requested_stack_prefix"] && context["stack_pack_id"]
           ? { requestedStackPackId: context["stack_pack_id"] }
           : {}),
-      });
+      };
+      const semanticsV2 = context["product_semantics_version"] === "v2";
+      nativeV3PlanAuthority = semanticsV2
+        ? resolveV3PlanOutputAuthorityV2(planInput)
+        : resolveV3PlanOutputAuthorityV1(planInput);
       if (nativeV3PlanAuthority.status === "proposal") {
-        parsed.prd = projectCanonicalV3PlanParsedOutputV1({
-          parsed,
-          authority: nativeV3PlanAuthority,
-        }).prd;
+        parsed.prd = semanticsV2
+          ? projectCanonicalV3PlanParsedOutputV2({
+              parsed,
+              authority: nativeV3PlanAuthority as Extract<V3PlanOutputAuthorityV2, { status: "proposal" }>,
+            }).prd
+          : projectCanonicalV3PlanParsedOutputV1({
+              parsed,
+              authority: nativeV3PlanAuthority as Extract<V3PlanOutputAuthorityV1, { status: "proposal" }>,
+            }).prd;
       }
     } catch (error) {
       // A malformed or semantically invalid typed PLAN proposal is an agent
@@ -7740,7 +7756,7 @@ export async function completeStep(
       const failure = createV3StageFailureV1({
         workflowStepId: "plan",
         kind: "output_contract_invalid",
-        diagnostics: error instanceof V3PlanOutputRejectedError
+        diagnostics: error instanceof V3PlanOutputRejectedError || error instanceof V3PlanOutputV2RejectedError
           ? error.diagnostics
           : [{
               code: "V3_PLAN_OUTPUT_REJECTED",
@@ -7749,7 +7765,7 @@ export async function completeStep(
             }],
       });
       const diagnostic = serializeV3StageFailureDiagnostic(
-        error instanceof V3PlanOutputRejectedError
+        error instanceof V3PlanOutputRejectedError || error instanceof V3PlanOutputV2RejectedError
           ? `V3_PLAN_OUTPUT_REJECTED: ${error.message}`
           : "V3_PLAN_OUTPUT_REJECTED",
         failure,
@@ -7768,6 +7784,12 @@ export async function completeStep(
     const delivery = nativeV3PlanAuthority.deliverySelection;
     context["plan_source_transport"] = nativeV3PlanAuthority.sourceTransport;
     context["plan_source_proposal_hash"] = nativeV3PlanAuthority.sourceProposalHash;
+    context["product_semantics_version"] = nativeV3PlanAuthority.productSpec.schema === "setfarm.product-spec.v2"
+      ? "v2"
+      : "v1";
+    context["product_spec_schema"] = nativeV3PlanAuthority.productSpec.schema;
+    context["product_persistence_projection"] = canonicalJsonStringify(nativeV3PlanAuthority.persistenceProjectionEvidence);
+    context["product_persistence_projection_hash"] = hashCanonicalJson(nativeV3PlanAuthority.persistenceProjectionEvidence);
     context["product_delivery_selection"] = nativeV3PlanAuthority.deliverySelectionCanonicalBytes;
     context["product_delivery_selection_hash"] = nativeV3PlanAuthority.deliverySelectionHash;
     context["product_delivery_profile_id"] = delivery.profileId;
@@ -8064,11 +8086,23 @@ export async function completeStep(
         step.step_id === "design" ? "design" :
         step.step_id === "deploy" ? "deploy" :
         "";
-      const runLegacyProductSupervisor = shouldRunLegacyProductSupervisorV1({
+      const supervisorInput = {
         protocol: completionAuthority?.protocol ?? "legacy",
         stepId: step.step_id,
-        ...(nativeV3PlanAuthority ? { planAuthority: nativeV3PlanAuthority } : {}),
-      });
+      } as const;
+      const runLegacyProductSupervisor = context["product_semantics_version"] === "v2"
+        ? shouldRunLegacyProductSupervisorV2({
+            ...supervisorInput,
+            ...(nativeV3PlanAuthority
+              ? { planAuthority: nativeV3PlanAuthority as V3PlanOutputAuthorityV2 }
+              : {}),
+          })
+        : shouldRunLegacyProductSupervisorV1({
+            ...supervisorInput,
+            ...(nativeV3PlanAuthority
+              ? { planAuthority: nativeV3PlanAuthority as V3PlanOutputAuthorityV1 }
+              : {}),
+          });
       if (supervisorPhase && runLegacyProductSupervisor && (parsed["status"] || "").toLowerCase() === "done") {
         const { runProductSupervisorGate, updateSupervisorMemory } = await import("./product-supervisor.js");
         const supervisor = runProductSupervisorGate({

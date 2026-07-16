@@ -7,6 +7,7 @@ import { injectContext } from "./context.js";
 import { normalize, validateOutput, onComplete } from "./guards.js";
 import { preClaim } from "./preclaim.js";
 import { PlanSemanticProposalV1Schema } from "../../../product-compiler/schemas/plan-semantic-proposal-v1.js";
+import { PlanSemanticProposalV2Schema } from "../../../product-compiler/schemas/plan-semantic-proposal-v2.js";
 import { TaskRequirementLedgerV1Schema } from "../../../product-compiler/requirements/task-requirements-v1.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -17,6 +18,10 @@ const promptTemplate = fs.readFileSync(path.join(__dirname, "prompt.md"), "utf-8
 const rulesBody = fs.readFileSync(path.join(__dirname, "rules.md"), "utf-8");
 const semanticProposalJsonSchema = JSON.stringify(z.toJSONSchema(
   PlanSemanticProposalV1Schema,
+  { reused: "ref" },
+), null, 2);
+const semanticProposalV2JsonSchema = JSON.stringify(z.toJSONSchema(
+  PlanSemanticProposalV2Schema,
   { reused: "ref" },
 ), null, 2);
 
@@ -37,6 +42,13 @@ function compactRequirementIndex(rawLedger: string): string {
 }
 
 function buildV3Prompt(ctx: PromptContext): string {
+  const productSemanticsVersion = ctx.context["product_semantics_version"] === "v2"
+    ? "v2"
+    : "v1";
+  const proposalFence = `plan-semantic-proposal-${productSemanticsVersion}`;
+  const proposalSchema = productSemanticsVersion === "v2"
+    ? semanticProposalV2JsonSchema
+    : semanticProposalJsonSchema;
   const task = ctx.context["task"] || ctx.task || "";
   const requirementLedger = ctx.context["v3_requirement_ledger"] || "";
   const requestedStackPackId = ctx.context["v3_requested_stack_pack_id"] || "";
@@ -61,10 +73,16 @@ function buildV3Prompt(ctx: PromptContext): string {
       : "No explicit stack prefix was requested; the compiler selects delivery from product.class.",
     "",
     "## Proposal rules",
-    "- Emit exactly one plan-semantic-proposal-v1 JSON fence. Pretty or unsorted JSON is allowed.",
+    `- Emit exactly one ${proposalFence} JSON fence. Pretty or unsorted JSON is allowed.`,
     "- Use lowercase local keys only. Do not emit PROD_/STATE_/ACT_/EVID_/SURF_ or any other global ID.",
     "- Every goal, non-goal, entity, state, persistence policy, route, surface, action, observable, and assumption cites exact requirementRefs.",
-    "- Routes do not repeat surface refs; surfaces name their routeKey and Setfarm closes the route graph.",
+    ...(productSemanticsVersion === "v2"
+      ? [
+          "- Every route has exactly one route_root surface. Other same-route surfaces use composition.kind=contained and an exact hostSurfaceKey; contained surfaces are not separate screens.",
+          "- Every user action declares exact controlPlacements. Each placement is one physical control on one surface; affectedSurfaceKeys are behavior/effect context and never imply a rendered control.",
+          "- Every user action evidenceScenario selects one exact controlPlacementKey. Control observables also select an exact controlPlacementKey.",
+        ]
+      : ["- Routes do not repeat surface refs; surfaces name their routeKey and Setfarm closes the route graph."]),
     "- Persistence intents name stateDeltaKeys, never state-path copies or payloadFields. Setfarm derives both.",
     "- Declare an input only when an input or inputs valueFrom consumes it. Fixed outcomes use literal deltas and no synthetic input.",
     "- Every state must have an action precondition, delta, or value-source owner. Do not invent busy/loading/UI state unless behavior in the exact task owns it.",
@@ -75,14 +93,14 @@ function buildV3Prompt(ctx: PromptContext): string {
     "",
     "## PlanSemanticProposal JSON Schema",
     "```json",
-    semanticProposalJsonSchema,
+    proposalSchema,
     "```",
     "",
     "## Success output",
     "```text",
     "STATUS: done",
     "PRD:",
-    "```plan-semantic-proposal-v1",
+    `\`\`\`${proposalFence}`,
     "{ ...one primary semantic proposal... }",
     "```",
     "```",

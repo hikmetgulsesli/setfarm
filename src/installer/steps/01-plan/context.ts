@@ -12,6 +12,12 @@ export async function injectContext(ctx: ClaimContext): Promise<void> {
   const protocol = ctx.claimEnvelope?.protocol ?? "legacy";
   ctx.context["plan_protocol"] = protocol;
   if (protocol === "v3") {
+    const existingVersion = ctx.context["product_semantics_version"];
+    ctx.context["product_semantics_version"] = existingVersion === "v1" || existingVersion === "v2"
+      ? existingVersion
+      : process.env.SETFARM_PRODUCT_SEMANTICS_VERSION === "v1"
+        ? "v1"
+        : "v2";
     const ledger = extractTaskRequirementLedgerV1(ctx.task);
     ctx.context["v3_requirement_ledger"] = canonicalJsonStringify(ledger);
     ctx.context["v3_requested_stack_pack_id"] = ctx.context["requested_stack_prefix"]
@@ -19,7 +25,7 @@ export async function injectContext(ctx: ClaimContext): Promise<void> {
       : "";
     if (ctx.retryCount === 0 && !ctx.context["previous_failure"]) {
       ctx.context["previous_failure"] =
-        "V3 PLAN requires exactly one PlanSemanticProposal v1. Propose only primary behavior and exact requirement refs; Setfarm compiles delivery, global IDs, source bytes, evidence, traceability, persistence payloads, and canonical ProductSpec. Emit a typed rejection when primary semantics are ambiguous or unsupported.";
+        `V3 PLAN requires exactly one PlanSemanticProposal ${ctx.context["product_semantics_version"]}. Propose only primary behavior and exact requirement refs; Setfarm compiles delivery, global IDs, source bytes, evidence, traceability, persistence payloads, and canonical ProductSpec. In v2, physical controlPlacements and affected surfaces are separate authority. Emit a typed rejection when primary semantics are ambiguous or unsupported.`;
     }
     return;
   }
