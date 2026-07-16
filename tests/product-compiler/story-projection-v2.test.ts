@@ -7,7 +7,10 @@ import { describe, it } from "node:test";
 import { buildExpectedV3StoriesOutput } from "../../src/installer/steps/03-stories/guards.js";
 import { buildV3AutoStoriesOutput } from "../../src/installer/steps/03-stories/preclaim.js";
 import { canonicalJsonStringify } from "../../src/product-compiler/canonical-json.js";
-import { buildStitchProductBuildPacketV3Contracts } from "./fixtures/product-build-packet-v3.js";
+import {
+  buildNoDesignProductBuildPacketV3Contracts,
+  buildStitchProductBuildPacketV3Contracts,
+} from "./fixtures/product-build-packet-v3.js";
 
 const PRODUCER = {
   pass: "story-scheduling-projection-v2-test",
@@ -24,7 +27,7 @@ async function fixture() {
   fs.mkdirSync(stitchDir, { recursive: true });
   const artifacts = contracts.designSourceArtifactsV2;
   const write = (name: string, value: unknown) => {
-    fs.writeFileSync(path.join(stitchDir, name), `${canonicalJsonStringify(value)}\n`, "utf8");
+    fs.writeFileSync(path.join(stitchDir, name), canonicalJsonStringify(value), "utf8");
   };
   write("GENERATION_TARGETS.json", artifacts.generationTargets);
   write("STITCH_DIRECT_RESPONSE_EVIDENCE.json", artifacts.directResponseEvidence);
@@ -123,6 +126,42 @@ describe("Product Semantics v2 story scheduling projection", { concurrency: 1 },
       );
     } finally {
       fs.rmSync(value.repo, { recursive: true, force: true });
+    }
+  });
+
+  it("projects a no-design CLI directly from ProductSpecV2 without Stitch inference", () => {
+    const contracts = buildNoDesignProductBuildPacketV3Contracts();
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-stories-v2-cli-"));
+    const planText = [
+      "# Canonical PLAN",
+      "",
+      "```product-spec-v2",
+      canonicalJsonStringify(contracts.productSpecV2),
+      "```",
+      "",
+    ].join("\n");
+    try {
+      const output = buildV3AutoStoriesOutput({
+        repo,
+        prd: planText,
+        productSemanticsVersion: "v2",
+      });
+      const stories = jsonLine(output, "STORIES_JSON");
+      assert.ok(stories.length > 0);
+      assert.deepEqual(jsonLine(output, "SCREEN_MAP"), []);
+      assert.match(output, /^DESIGN_GRAPH_HASH: none$/m);
+      for (const story of stories) {
+        assert.deepEqual(story.screens, []);
+        assert.equal(story.implementation_contract.design_graph_hash, null);
+        assert.deepEqual(story.implementation_contract.owned_physical_control_ids, []);
+        assert.ok(
+          story.scope_targets.some((target: any) => target.role === "cli_command"),
+          "each no-design semantic component must own an exact CLI command target",
+        );
+      }
+      assert.equal(fs.existsSync(path.join(repo, "stitch")), false);
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
     }
   });
 

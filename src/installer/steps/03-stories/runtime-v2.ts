@@ -39,7 +39,9 @@ type ScopeTargetRole =
   | "persistence_adapter"
   | "test_bridge"
   | "style_integration"
-  | "game_runtime";
+  | "game_runtime"
+  | "api_route"
+  | "cli_command";
 
 type V2ScopeTarget = Readonly<{
   role: ScopeTargetRole;
@@ -90,7 +92,7 @@ export type ProductSemanticsV2CompatibilityProjection = Readonly<{
     implementation_contract: Readonly<{
       authority_schema: "setfarm.story-scheduling-authority.v2";
       product_spec_hash: string;
-      design_graph_hash: string;
+      design_graph_hash: string | null;
       component_hash: string;
       owned_route_ids: string[];
       owned_surface_ids: string[];
@@ -117,7 +119,7 @@ export type ProductSemanticsV2CompatibilityProjection = Readonly<{
   }>>;
   productSpecSourceHash: string;
   productSpecHash: string;
-  designGraphHash: string;
+  designGraphHash: string | null;
 }>;
 
 function compareUtf16(left: string, right: string): number {
@@ -158,7 +160,7 @@ function readCanonicalV2Json<T>(input: Readonly<{
     const detail = String(error instanceof Error ? error.message : error).replace(/\s+/g, " ").slice(0, 1_000);
     throw new Error(`V2_STORY_${input.label}_SCHEMA_INVALID:${detail}`);
   }
-  if (canonicalJsonStringify(parsed) !== text.trim()) {
+  if (canonicalJsonStringify(parsed) !== text) {
     throw new Error(`V2_STORY_${input.label}_NON_CANONICAL:${input.filePath}`);
   }
   return parsed;
@@ -214,6 +216,165 @@ function appTargets(productSpec: ProductSpecV2): V2ScopeTarget[] {
     entity_names: [],
     resolved_path: null,
   }));
+}
+
+function nonVisualAppTargets(productSpec: ProductSpecV2): V2ScopeTarget[] {
+  const roles: ScopeTargetRole[] = [
+    "app_shell",
+    "route_registration",
+    "state_store",
+    "fixture_data",
+    "persistence_adapter",
+    "test_bridge",
+  ];
+  const domain = semanticSlug(productSpec.product.id);
+  return roles.map((role) => ({
+    role,
+    domain_slug: domain,
+    target_slug: role.replace(/_/g, "-"),
+    action_ids: [],
+    entity_names: [],
+    resolved_path: null,
+  }));
+}
+
+function projectNoDesignCompatibilityStories(input: Readonly<{
+  productSpec: ProductSpecV2;
+  definitions: ProductStoryDefinitionV2[];
+}>): Pick<ProductSemanticsV2CompatibilityProjection, "stories" | "screenMap"> {
+  const { productSpec, definitions } = input;
+  const productSpecHash = hashCanonicalJson(productSpec);
+  const actionById = new Map(productSpec.actions.map((action) => [action.id, action] as const));
+  const stateById = new Map(productSpec.states.map((state) => [state.id, state] as const));
+  const persistenceById = new Map(productSpec.persistencePolicies.map((policy) =>
+    [policy.id, policy] as const));
+  const evidenceById = new Map(productSpec.evidencePredicates.map((evidence) =>
+    [evidence.id, evidence] as const));
+  const surfaceById = new Map(productSpec.surfaces.map((surface) => [surface.id, surface] as const));
+  const endpointRole: ScopeTargetRole = productSpec.delivery.platform === "api"
+    ? "api_route"
+    : "cli_command";
+
+  const stories = definitions.map((story, storyIndex) => {
+    const ownedActions = story.actionRefs.map((actionRef): V2OwnedAction => {
+      const action = actionById.get(actionRef);
+      if (!action) throw new Error(`V2_STORY_ACTION_MISSING:${actionRef}`);
+      const placementSurfaceIds = uniqueSorted(action.controlPlacements.map((placement) =>
+        placement.surfaceRef));
+      return {
+        id: action.id,
+        ...(placementSurfaceIds[0] ? { surface_id: placementSurfaceIds[0] } : {}),
+        trigger: canonicalJsonStringify(action.trigger),
+        state_change: canonicalJsonStringify(action.stateDeltas),
+        ui_feedback: canonicalJsonStringify({
+          observableRefs: action.observableEffects.map((observable) => observable.id).sort(compareUtf16),
+          success: action.success,
+          failure: action.failure,
+        }),
+        control_slot_ids: action.controlPlacements.map((placement) => placement.id).sort(compareUtf16),
+        physical_control_ids: [],
+        control_surface_ids: placementSurfaceIds,
+        affected_surface_ids: [...action.affectedSurfaceRefs].sort(compareUtf16),
+        observable_ids: action.observableEffects.map((observable) => observable.id).sort(compareUtf16),
+        state_ids: actionStateRefs(action),
+        persistence_ids: actionPersistenceRefs(action),
+        evidence_ids: actionEvidenceRefs(action),
+      };
+    });
+    const actionTargets = story.actionRefs.map((actionRef): V2ScopeTarget => {
+      const action = actionById.get(actionRef)!;
+      const surfaceRef = action.controlPlacements[0]?.surfaceRef
+        ?? action.affectedSurfaceRefs[0]
+        ?? story.surfaceRefs[0]!;
+      return {
+        role: endpointRole,
+        surface_id: surfaceRef,
+        domain_slug: semanticSlug(surfaceRef),
+        target_slug: semanticSlug(action.id),
+        action_ids: [action.id],
+        entity_names: [],
+        resolved_path: null,
+      };
+    });
+    const acceptanceCriteria = [
+      `[PRODUCT_SPEC_V2_COMPONENT] componentHash=${story.componentHash}; routes=${story.routeRefs.join(",")}; surfaces=${story.surfaceRefs.join(",")}; actions=${story.actionRefs.join(",")}.`,
+      `[PRODUCT_SPEC_V2_OWNERSHIP] controlSlots=${story.controlSlotRefs.join(",") || "none"}; physicalControls=none; observables=${story.observableRefs.join(",")}; states=${story.stateRefs.join(",") || "none"}; persistence=${story.persistenceRefs.join(",") || "none"}; evidence=${story.evidenceRefs.join(",")}.`,
+      ...story.surfaceRefs.map((surfaceRef) => {
+        const surface = surfaceById.get(surfaceRef)!;
+        return `[PRODUCT_SPEC_V2_SURFACE] ${surfaceRef}; hash=${hashCanonicalJson(surface)}; kind=${surface.kind}; route=${surface.routeRef}.`;
+      }),
+      ...story.actionRefs.map((actionRef) => {
+        const action = actionById.get(actionRef)!;
+        return `[PRODUCT_SPEC_V2_ACTION] ${action.id}; hash=${hashCanonicalJson(action)}; endpointRole=${endpointRole}; navigation=${canonicalJsonStringify(action.navigation)}.`;
+      }),
+      ...story.evidenceRefs.map((evidenceRef) => {
+        const evidence = evidenceById.get(evidenceRef)!;
+        return `[PRODUCT_SPEC_V2_EVIDENCE] ${evidence.id}; hash=${hashCanonicalJson(evidence)}; subject=${evidence.subjectRef}; kind=${evidence.kind}.`;
+      }),
+    ];
+    return {
+      id: story.id,
+      title: `${productSpec.product.name}: ${story.title}`.slice(0, 500),
+      description: `${story.description} ProductSpecV2=${productSpecHash}; DesignInteractionGraphV2=none.`,
+      acceptanceCriteria,
+      depends_on: storyIndex === 0 ? [] : [definitions[0]!.id],
+      screens: [],
+      requested_dependencies: [] as const,
+      scope_targets: [...(storyIndex === 0 ? nonVisualAppTargets(productSpec) : []), ...actionTargets],
+      shared_edit_requests: storyIndex === 0 ? [] : [
+        {
+          role: "route_registration" as const,
+          action: "register_route" as const,
+          intent: `Register only exact route refs ${story.routeRefs.join(",")} for ${story.id}.`,
+          edit_scope: "route_registration_only" as const,
+          requested_by: story.id,
+        },
+        {
+          role: "app_shell" as const,
+          action: "wire_action" as const,
+          intent: `Wire only exact action refs ${story.actionRefs.join(",")} for ${story.id}.`,
+          edit_scope: "owned_action_wiring_only" as const,
+          requested_by: story.id,
+        },
+      ],
+      scope_description: `Compatibility scheduling projection for no-design semantic component ${story.componentHash}; final path ownership is compiled later by StoryPlanV2 and BuildTopologyV1.`,
+      file_skeletons: {},
+      implementation_contract: {
+        authority_schema: "setfarm.story-scheduling-authority.v2" as const,
+        product_spec_hash: productSpecHash,
+        design_graph_hash: null,
+        component_hash: story.componentHash,
+        owned_route_ids: [...story.routeRefs],
+        owned_surface_ids: [...story.surfaceRefs],
+        owned_screen_ids: [],
+        owned_screen_files: [] as const,
+        owned_control_slot_ids: [...story.controlSlotRefs],
+        owned_physical_control_ids: [] as string[],
+        owned_observable_ids: [...story.observableRefs],
+        owned_evidence_ids: [...story.evidenceRefs],
+        owned_actions: ownedActions,
+        state_contract: story.stateRefs.map((stateRef) => {
+          const state = stateById.get(stateRef)!;
+          return `${state.id}#${hashCanonicalJson(state)}:${canonicalJsonStringify(state)}`;
+        }),
+        persistence_contract: story.persistenceRefs.length > 0
+          ? story.persistenceRefs.map((persistenceRef) => {
+              const policy = persistenceById.get(persistenceRef)!;
+              return `${policy.id}#${hashCanonicalJson(policy)}:${canonicalJsonStringify(policy)}`;
+            })
+          : ["ProductSpecV2 declares no persistence policy owned by this semantic component."],
+        navigation_contract: story.actionRefs.map((actionRef) => {
+          const action = actionById.get(actionRef)!;
+          return `${action.id}:${canonicalJsonStringify(action.navigation)}`;
+        }),
+        test_contract: story.evidenceRefs.map((evidenceRef) => {
+          const evidence = evidenceById.get(evidenceRef)!;
+          return `${evidence.id}#${hashCanonicalJson(evidence)}:${canonicalJsonStringify(evidence)}`;
+        }),
+      },
+    };
+  });
+  return { stories, screenMap: [] };
 }
 
 function projectCompatibilityStories(input: Readonly<{
@@ -437,7 +598,36 @@ export function buildProductSemanticsV2StoriesOutput(input: Readonly<{
     throw new Error(`V2_STORY_PRODUCT_SPEC_REJECTED:${plan.rejectionCodes.join(",")}`);
   }
   if (!plan.productSpec.delivery.designRequired) {
-    throw new Error("V2_STORY_DESIGN_AUTHORITY_REQUIRED");
+    const definitions = produceStoryDefinitionsV2({
+      productSpec: plan.productSpec,
+      designGraph: null,
+    });
+    if (definitions.status !== "produced") {
+      throw new Error(`V2_STORY_PARTITION_REJECTED:${definitions.rejectionCodes.join(",")}`);
+    }
+    if (input.maxStories && definitions.stories.length > input.maxStories) {
+      throw new Error(`V2_STORY_CAP_INCOMPATIBLE:required=${definitions.stories.length}:cap=${input.maxStories}`);
+    }
+    const projected = projectNoDesignCompatibilityStories({
+      productSpec: definitions.productSpec,
+      definitions: definitions.stories,
+    });
+    const projection: ProductSemanticsV2CompatibilityProjection = {
+      ...projected,
+      productSpecSourceHash: plan.sourceHash,
+      productSpecHash: hashCanonicalJson(plan.productSpec),
+      designGraphHash: null,
+    };
+    return [
+      "STATUS: done",
+      "STORY_SCHEDULING_PROJECTION_SCHEMA: setfarm.story-scheduling-projection.v2",
+      `PRODUCT_SPEC_SOURCE_HASH: ${projection.productSpecSourceHash}`,
+      `PRODUCT_SPEC_HASH: ${projection.productSpecHash}`,
+      "DESIGN_GRAPH_HASH: none",
+      `STORIES_JSON: ${canonicalJsonStringify(projection.stories)}`,
+      `SCREEN_MAP: ${canonicalJsonStringify(projection.screenMap)}`,
+      "",
+    ].join("\n");
   }
   const stitchDir = path.join(input.repo, "stitch");
   const generationTargets = readCanonicalV2Json({
