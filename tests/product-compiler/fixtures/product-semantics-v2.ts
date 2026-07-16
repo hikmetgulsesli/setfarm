@@ -1,4 +1,9 @@
 import { extractTaskRequirementLedgerV1 } from "../../../src/product-compiler/requirements/task-requirements-v1.js";
+import { compilePlanSemanticProposalV2 } from "../../../src/product-compiler/producers/plan-semantic-proposal-v2.js";
+import {
+  ProductSpecV2Schema,
+  type ProductSpecV2,
+} from "../../../src/product-compiler/schemas/product-spec-v2.js";
 
 export const CONTAINED_GAME_TASK = "Build a browser game with one Start Game control on the play page; starting the game updates the contained game canvas and status panel.";
 
@@ -135,4 +140,15 @@ export function containedGamePlanProposalV2(): any {
     }],
     assumptions: [],
   };
+}
+
+export function buildContainedGameProductSpecV2(): ProductSpecV2 {
+  const result = compilePlanSemanticProposalV2({
+    task: CONTAINED_GAME_TASK,
+    proposal: containedGamePlanProposalV2(),
+  });
+  if (result.status !== "canonicalized") {
+    throw new Error(`Contained game ProductSpecV2 fixture rejected: ${JSON.stringify(result)}`);
+  }
+  return ProductSpecV2Schema.parse(result.productSpec);
 }

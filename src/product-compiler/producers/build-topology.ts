@@ -16,7 +16,7 @@ import {
 } from "../schemas/build-topology-v1.js";
 import type { CompilationDiagnosticV1 } from "../schemas/compilation-report-v1.js";
 import { hasUniqueStrings } from "../schemas/common-v1.js";
-import { ProductSpecV1Schema } from "../schemas/product-spec-v1.js";
+import { ProductSpecV1OrV2Schema } from "../schemas/product-spec-v2.js";
 import { RuntimeDataProvisioningV1Schema } from "../schemas/runtime-data-contract-v1.js";
 import {
   produceRuntimeDataContractV1,
@@ -99,7 +99,7 @@ const BuildTopologyProducerInputSchema = z
     commands: z.array(BuildCommandV1Schema).min(1).max(1_000),
     capabilities: z.array(BuildCapabilityV1Schema).max(1_000),
     policies: BuildTopologyV1Schema.shape.policies,
-    productSpec: ProductSpecV1Schema.optional(),
+    productSpec: ProductSpecV1OrV2Schema.optional(),
     runtimeDataProvisioning: RuntimeDataProvisioningV1Schema.optional(),
   })
   .strict();
@@ -446,7 +446,7 @@ export function produceBuildTopologyV1(input: unknown): BuildTopologyProducerRes
     return reject([diagnostic({
       code: "BUILD_TOPOLOGY_RUNTIME_DATA_PROTOCOL_INVALID",
       category: "configuration",
-      message: "Runtime-data provisioning requires a v3 ProductSpec delivery authority",
+      message: "Runtime-data provisioning requires a delivery-bearing ProductSpec authority",
       reference: "runtimeDataProvisioning",
     })]);
   }

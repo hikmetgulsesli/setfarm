@@ -15,7 +15,7 @@ import {
   SourceArtifactRefV1Schema,
   StoryIdSchema,
 } from "../schemas/common-v1.js";
-import { ProductSpecV1Schema } from "../schemas/product-spec-v1.js";
+import { ProductSpecV1OrV2Schema } from "../schemas/product-spec-v2.js";
 import { RuntimeDataProvisioningV1Schema } from "../schemas/runtime-data-contract-v1.js";
 import {
   getStackTopologyCatalogContract,
@@ -218,7 +218,7 @@ export const ExactSetupTopologySnapshotV1Schema = z
     certificate: artifactSnapshot(SetupCertificateV1Schema),
     manifest: artifactSnapshot(FileTreeManifestV1Schema),
     sharedGrants: artifactSnapshot(SharedGrantsArtifactV1Schema),
-    productSpec: ProductSpecV1Schema.optional(),
+    productSpec: ProductSpecV1OrV2Schema.optional(),
     repo: BuildTopologyV1Schema.shape.repo,
     owners: z.array(TopologyOwnerV1Schema).min(1).max(2_000),
     pathBindings: z.array(TopologyPathBindingV1Schema).min(1).max(20_000),

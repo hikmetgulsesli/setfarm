@@ -19,6 +19,7 @@ import {
   ProductRequirementV1Schema,
   ProductSpecV1Schema,
   validatePersistenceDeliveryCompatibilityV1,
+  type ProductSpecV1,
 } from "./product-spec-v1.js";
 import { TaskRequirementClauseV1Schema } from "../requirements/task-requirements-v1.js";
 
@@ -576,3 +577,15 @@ export const ProductSpecV2Schema = z.object({
 });
 
 export type ProductSpecV2 = z.infer<typeof ProductSpecV2Schema>;
+
+/**
+ * Explicit product-semantics authority accepted by shared topology/runtime
+ * projections. This is a version union, never a compatibility conversion:
+ * callers retain the exact v1 or v2 payload and its schema identity.
+ */
+export const ProductSpecV1OrV2Schema = z.union([
+  ProductSpecV2Schema,
+  ProductSpecV1Schema,
+]);
+
+export type ProductSpecV1OrV2 = ProductSpecV1 | ProductSpecV2;

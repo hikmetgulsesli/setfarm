@@ -4,6 +4,7 @@ import { describe, it } from "node:test";
 import { produceRuntimeEvidenceContractV1 } from "../../src/evidence/runtime-evidence-contract-producer-v1.js";
 import { getStackTopologyCatalogContract } from "../../src/product-compiler/stack-topology-catalog.js";
 import { buildMinimalValidContracts } from "../product-compiler/fixtures/minimal-valid-contract.js";
+import { buildContainedGameProductSpecV2 } from "../product-compiler/fixtures/product-semantics-v2.js";
 
 describe("runtime evidence contract producer v1", () => {
   it("derives one exact browser launcher from sealed topology and the entry route", () => {
@@ -40,6 +41,26 @@ describe("runtime evidence contract producer v1", () => {
       schema: "setfarm.browser-flow-isolation.v1",
       method: "clear-local-session-storage-and-reload",
     });
+  });
+
+  it("derives exact browser readiness and state bindings from native ProductSpecV2", () => {
+    const values = buildMinimalValidContracts();
+    const productSpec = buildContainedGameProductSpecV2();
+    values.buildTopology.entrypoints[0]!.routeRefs = productSpec.routes.map((route) => route.id);
+
+    const result = produceRuntimeEvidenceContractV1({
+      productSpec,
+      buildTopology: values.buildTopology,
+    });
+
+    assert.equal(result.status, "produced", JSON.stringify(result));
+    if (result.status !== "produced") return;
+    assert.equal(result.contract.schema, "setfarm.runtime-evidence-contract.v1");
+    assert.equal(result.contract.readiness.path, "/play");
+    assert.deepEqual(result.contract.capture.stateBindings, productSpec.states.map((state) => ({
+      stateRef: state.id,
+      pointer: `/states/${state.id}`,
+    })));
   });
 
   it("rejects web topology without one tokenized preview command", () => {

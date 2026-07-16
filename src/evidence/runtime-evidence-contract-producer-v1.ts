@@ -3,9 +3,9 @@ import {
   type BuildTopologyV1,
 } from "../product-compiler/schemas/build-topology-v1.js";
 import {
-  ProductSpecV1Schema,
-  type ProductSpecV1,
-} from "../product-compiler/schemas/product-spec-v1.js";
+  ProductSpecV1OrV2Schema,
+  type ProductSpecV1OrV2,
+} from "../product-compiler/schemas/product-spec-v2.js";
 import { isPlatformOwnedV3PreviewCommand } from "../product-compiler/stack-topology-catalog.js";
 import {
   RuntimeEvidenceContractV1Schema,
@@ -44,10 +44,10 @@ export type RuntimeEvidenceContractProductionV1 =
     }>;
 
 export function produceRuntimeEvidenceContractV1(input: Readonly<{
-  productSpec: ProductSpecV1;
+  productSpec: ProductSpecV1OrV2;
   buildTopology: BuildTopologyV1;
 }>): RuntimeEvidenceContractProductionV1 {
-  const productSpec = ProductSpecV1Schema.parse(input.productSpec);
+  const productSpec = ProductSpecV1OrV2Schema.parse(input.productSpec);
   const buildTopology = BuildTopologyV1Schema.parse(input.buildTopology);
   const stackPackId = buildTopology.stackPack.id;
   if (!WEB_STACK_PACKS.has(stackPackId)) {
