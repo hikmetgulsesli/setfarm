@@ -13,7 +13,10 @@ import {
 } from "../../src/product-compiler/producers/stitch-target-candidate-selection-v2.js";
 import { DesignGenerationTargetsV2Schema } from "../../src/product-compiler/schemas/design-generation-targets-v2.js";
 import { ProductSpecV2Schema } from "../../src/product-compiler/schemas/product-spec-v2.js";
-import { StitchTargetCandidateSelectionV2Schema } from "../../src/product-compiler/schemas/stitch-target-candidate-selection-v2.js";
+import {
+  StitchTargetCandidateSelectionV2Schema,
+  StitchTargetResponseBindingsV3Schema,
+} from "../../src/product-compiler/schemas/stitch-target-candidate-selection-v2.js";
 import {
   CONTAINED_GAME_TASK,
   containedGamePlanProposalV2,
@@ -233,6 +236,13 @@ describe("Stitch target candidate selection v2", { concurrency: 1 }, () => {
       `${value.placement.actionRef}.phase`,
     ]);
     assert.equal(binding.actionInputBindings[0]!.elementRef, control.elementRef);
+    const ambiguousObservableBinding: any = structuredClone(bound.responseBindings);
+    ambiguousObservableBinding.bindings[0].observableBindings[0].elementRefs.push("E999999");
+    ambiguousObservableBinding.bindings[0].observableBindings[0].elementHashes.push("9".repeat(64));
+    assert.equal(
+      StitchTargetResponseBindingsV3Schema.safeParse(ambiguousObservableBinding).success,
+      false,
+    );
     assert.equal(binding.controlSlotBindings[0]!.elementRef, control.elementRef);
     assert.equal(binding.observableBindings.length, 3);
     assert.equal(

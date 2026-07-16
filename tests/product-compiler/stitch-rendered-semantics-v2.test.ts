@@ -13,7 +13,10 @@ import {
   verifyStitchRenderedSemanticsReplayV2,
   writeStitchRenderedSemanticsV2,
 } from "../../src/product-compiler/producers/stitch-rendered-semantics-v2.js";
-import { StitchRenderedCandidateFailureCodeV2Schema } from "../../src/product-compiler/schemas/stitch-rendered-semantics-v2.js";
+import {
+  StitchGetByRoleReceiptV2Schema,
+  StitchRenderedCandidateFailureCodeV2Schema,
+} from "../../src/product-compiler/schemas/stitch-rendered-semantics-v2.js";
 import {
   CONTAINED_GAME_TASK,
   containedGamePlanProposalV2,
@@ -151,6 +154,16 @@ describe("Stitch rendered semantics v2", { concurrency: 1 }, () => {
     assert.deepEqual(buttonReceipt.phases, ["before", "after"]);
     assert.deepEqual(buttonReceipt.cardinality, { expected: 1, observed: 1, visible: 1 });
     assert.deepEqual(buttonReceipt.elementRefs, [button.elementRef]);
+    const missingElementReceipt: any = structuredClone(buttonReceipt);
+    missingElementReceipt.elementRefs = [];
+    missingElementReceipt.nearestSurfaceRefs = [];
+    missingElementReceipt.cardinality.observed = 0;
+    assert.equal(StitchGetByRoleReceiptV2Schema.safeParse(missingElementReceipt).success, false);
+    const ambiguousElementReceipt: any = structuredClone(buttonReceipt);
+    ambiguousElementReceipt.elementRefs.push("E999999");
+    ambiguousElementReceipt.nearestSurfaceRefs.push(buttonReceipt.surfaceRef);
+    ambiguousElementReceipt.cardinality.observed = 2;
+    assert.equal(StitchGetByRoleReceiptV2Schema.safeParse(ambiguousElementReceipt).success, false);
 
     const statusReceipt = candidate.roleReceipts.find((receipt) =>
       receipt.query.role === "status")!;

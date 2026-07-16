@@ -382,6 +382,35 @@ describe("immutable product compilation attempt workspace", () => {
     );
   });
 
+  it("rejects a stale expected projection before replacing canonical Stitch content", async () => {
+    const root = await repo("expected-projection");
+    const accepted = await acceptedProjectionFixture(root, "expected-projection");
+    const baseline = await projectAcceptedProductCompilationAttemptV1({
+      repo: root,
+      attempt: accepted.attempt,
+    });
+    const exactHtml = await readFile(path.join(root, "stitch", "play.html"), "utf8");
+
+    await assert.rejects(
+      () => projectAcceptedProductCompilationAttemptV1({
+        repo: root,
+        attempt: accepted.attempt,
+        expectedProjectionArtifacts: [{
+          path: "play.html",
+          contentHash: sha("different-authority"),
+          byteLength: Buffer.byteLength("different-authority"),
+        }],
+      }),
+      /PRODUCT_COMPILATION_EXPECTED_PROJECTION_MISMATCH/,
+    );
+
+    assert.equal(await readFile(path.join(root, "stitch", "play.html"), "utf8"), exactHtml);
+    const receipt = ProductCompilationProjectionReceiptV1Schema.parse(JSON.parse(
+      await readFile(path.join(root, "stitch", "PRODUCT_COMPILATION_PROJECTION_RECEIPT.json"), "utf8"),
+    ));
+    assert.equal(receipt.receiptHash, baseline.receiptHash);
+  });
+
   it("never lets failed, quarantined, or active attempts replace a prior canonical projection", async () => {
     const root = await repo("non-projectable");
     const accepted = await acceptedProjectionFixture(root, "accepted-parent", "<main>parent</main>");

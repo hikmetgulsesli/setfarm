@@ -516,10 +516,14 @@ export const StitchObservableBindingV3Schema = z.object({
   actionRef: ActionIdSchema,
   selectorKind: z.enum(["control", "surface", "accessibility"]),
   selectorHash: Sha256Schema,
-  elementRefs: z.array(ElementRefSchema).min(1).max(1_000).refine(hasUniqueStrings, {
+  elementRefs: z.array(ElementRefSchema).length(1, {
+    message: "Every accepted observable must resolve to one exact rendered element",
+  }).refine(hasUniqueStrings, {
     message: "Observable binding element refs must be unique",
   }),
-  elementHashes: z.array(Sha256Schema).min(1).max(1_000),
+  elementHashes: z.array(Sha256Schema).length(1, {
+    message: "Every accepted observable must hash one exact rendered element",
+  }),
   roleReceiptHash: Sha256Schema.nullable(),
 }).strict().superRefine((value, context) => {
   if (value.elementRefs.length !== value.elementHashes.length) {

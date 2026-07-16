@@ -487,6 +487,20 @@ async function compileSetupBuildProductPacket(
       expectedMode: protocol,
       repo,
       planText: ctx.context["prd"] || ctx.context["PRD"] || "",
+      productSemanticsVersion: ctx.context["product_semantics_version"],
+      ...(ctx.context["design_source_attempt_id"]
+        ? {
+            designSourceExpectation: {
+              attemptId: ctx.context["design_source_attempt_id"],
+              authorityHash: ctx.context["design_source_authority_hash"] || "",
+              requestHash: ctx.context["design_source_request_hash"] || "",
+              outputSealHash: ctx.context["design_source_output_seal_hash"] || "",
+              productSpecHash: ctx.context["design_source_product_spec_hash"] || "",
+              generationTargetsHash: ctx.context["design_source_generation_targets_hash"] || "",
+              compilerReleaseSha: ctx.context["design_source_compiler_release_sha"] || "",
+            },
+          }
+        : {}),
       ...(ctx.context["product_delivery_selection_hash"]
         ? { expectedDeliverySelectionHash: ctx.context["product_delivery_selection_hash"] }
         : {}),
@@ -533,6 +547,24 @@ async function compileSetupBuildProductPacket(
     }
     ctx.context["product_build_packet_hash"] = packetHash;
     ctx.context["product_compilation_report_hash"] = compiled.reportHash;
+    const canonicalRefs = await getSql().unsafe<Array<{
+      ref_key: string;
+      artifact_hash: string;
+    }>>(
+      `SELECT ref_key, artifact_hash
+         FROM run_artifact_refs
+       WHERE run_id = $1
+          AND ref_key !~ '^(REJECTED|SHADOW)_'
+        ORDER BY ref_key ASC`,
+      [ctx.runId],
+    );
+    const activationEvidence = {
+      ...evidence,
+      canonicalArtifactRefs: canonicalRefs.map((item) => ({
+        refKey: item.ref_key,
+        artifactHash: item.artifact_hash,
+      })),
+    };
     await recordObservation({
       runId: ctx.runId,
       stepId: ctx.stepId,
@@ -540,8 +572,8 @@ async function compileSetupBuildProductPacket(
       checkId: "product_compiler.setup_build_packet_activated",
       label: "Product Build Packet activation",
       status: "pass",
-      summary: "Six canonical Product Build Packet refs were atomically activated",
-      evidence,
+      summary: `${canonicalRefs.length} canonical Product Build Packet refs were atomically activated: ${canonicalRefs.map((item) => item.ref_key).join(", ")}`,
+      evidence: activationEvidence,
       completedAt: new Date().toISOString(),
     });
   } catch (error) {
@@ -594,6 +626,22 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
   if (process.env.SETFARM_DISABLE_AUTO_SETUP_BUILD === "1") return;
 
   const protocol = await resolveSetupBuildProtocol(ctx);
+
+  if (protocol === "v3" && ctx.context["product_semantics_version"] !== "v2") {
+    throwPreclaimFailure(
+      ctx,
+      "SETUP_PACKET_SEMANTICS_VERSION_MISMATCH: V3 setup-build requires explicit Product Semantics v2 authority before any repository mutation.",
+      "product_packet_compilation_failure",
+      "Drain or restart the historical v3/v1 run under its pinned release; do not infer Product Semantics v2 from legacy artifacts.",
+      {
+        schema: "setfarm.operational-failure-cause.v1",
+        workflowStepId: "setup-build",
+        boundary: "product_compiler.semantics_version_dispatch",
+        failureClass: "contract_invalid",
+        failureCode: "SETUP_PACKET_SEMANTICS_VERSION_MISMATCH",
+      },
+    );
+  }
 
   const repo = ctx.context["repo"] || ctx.context["REPO"] || "";
   if (!repo) {

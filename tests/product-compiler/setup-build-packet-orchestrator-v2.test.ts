@@ -7,7 +7,10 @@ import { after, before, describe, it } from "node:test";
 
 import { createArtifactIndex } from "../../src/product-compiler/artifact-index.js";
 import { ContentAddressedArtifactStore } from "../../src/product-compiler/artifact-store.js";
-import { canonicalJsonStringify } from "../../src/product-compiler/canonical-json.js";
+import {
+  canonicalJsonStringify,
+  hashCanonicalJson,
+} from "../../src/product-compiler/canonical-json.js";
 import {
   readProjectedDesignSourceAuthorityV2,
   runDesignSourceAuthorityV2,
@@ -192,8 +195,24 @@ async function createNativeV2Fixture(input: Readonly<{
   assert.equal(binding.targetRef, target.targetId);
   assert.equal(binding.responseScreenId, screenId);
 
-  const generatedFile = "src/screens/PlayPage.tsx";
-  fs.mkdirSync(path.join(repo, "src", "screens"), { recursive: true });
+  execFileSync(process.execPath, [path.resolve("scripts/stitch-to-jsx.mjs"), repo], {
+    cwd: process.cwd(),
+    stdio: "pipe",
+  });
+  const projectedScreenIndex = JSON.parse(
+    fs.readFileSync(path.join(repo, "src", "screens", "SCREEN_INDEX.json"), "utf8"),
+  );
+  const projectedScreen = projectedScreenIndex.find((entry: any) => entry.screenId === screenId);
+  assert.ok(projectedScreen);
+  const generatedFile = String(projectedScreen.file);
+  assert.equal(projectedScreen.projection.authoritySchema, "setfarm.design-interaction-graph.v2");
+  assert.equal(projectedScreen.projection.targetRef, target.targetId);
+  assert.equal(projectedScreen.controls[0]?.controlSlotRef, placement.controlSlotRef);
+  assert.equal(
+    projectedScreen.observables.length,
+    target.requiredObservableSelectors.length,
+  );
+
   fs.mkdirSync(path.join(repo, ".setfarm", "setup"), { recursive: true });
   fs.writeFileSync(path.join(repo, "package.json"), `${JSON.stringify({
     name: "contained-game",
@@ -202,47 +221,6 @@ async function createNativeV2Fixture(input: Readonly<{
   }, null, 2)}\n`);
   fs.writeFileSync(path.join(repo, "src", "main.tsx"), "export const main = true;\n");
   fs.writeFileSync(path.join(repo, "src", "game.ts"), "export const phase = 'ready';\n");
-  fs.writeFileSync(path.join(repo, generatedFile), [
-    "export function PlayPage() {",
-    "  return <main>",
-    `    <button data-action="${placement.actionRef}" data-control-slot="${placement.controlSlotRef}" data-action-id="start-game">Start Game</button>`,
-    "  </main>;",
-    "}",
-    "",
-  ].join("\n"));
-  writeJson(path.join(repo, "src", "screens", "SCREEN_INDEX.json"), [{
-    screenId,
-    title: binding.responseTitle,
-    componentName: "PlayPage",
-    file: generatedFile,
-    buttons: 1,
-    inputs: 0,
-    textareas: 0,
-    selects: 0,
-    links: 0,
-    controls: [{
-      id: "start-game",
-      generatedLocalId: "start-game",
-      kind: "button",
-      label: "Start Game",
-      actionRef: placement.actionRef,
-      controlSlotRef: placement.controlSlotRef,
-      semanticSource: "data-control-slot",
-      sourceLocator: `stitch/${screenId}.html`,
-      generatedSourceLocator: generatedFile,
-      selector: "[data-action-id=\"start-game\"]",
-    }],
-    observables: [],
-    projection: {
-      schema: "setfarm.stitch-screen-projection.v2",
-      mode: "contract_only",
-      targetRef: target.targetId,
-      rawInteractiveCounts: { buttons: 1, links: 0, inputs: 0, textareas: 0, selects: 0 },
-      requiredObservableRefs: target.requiredObservableSelectors.map((item) => item.observableRef),
-    },
-    rejectedControls: [],
-  }]);
-
   const dependencyEvidence = { requested: [], approved: [], installed: [], rejected: [] };
   const manifestPath = path.join(repo, ".setfarm", "setup", "FILE_TREE_MANIFEST.json");
   writeJson(path.join(repo, ".setfarm", "setup", "SETUP_CERTIFICATE.json"), {
@@ -263,6 +241,8 @@ async function createNativeV2Fixture(input: Readonly<{
       "src/main.tsx",
       "src/game.ts",
       "src/screens/SCREEN_INDEX.json",
+      "src/screens/index.ts",
+      ...(fs.existsSync(path.join(repo, "src", "index.css")) ? ["src/index.css"] : []),
       generatedFile,
     ],
     generatedDesignFiles: [generatedFile],
@@ -344,6 +324,15 @@ async function createNativeV2Fixture(input: Readonly<{
     artifactRoot,
     planText: renderProductSpecV2Compatibility(compiled.productSpec),
     attemptId: authority.runner.attempt.attemptId,
+    designSourceExpectation: {
+      attemptId: authority.runner.attempt.attemptId,
+      authorityHash: authority.runner.attempt.authorityHash,
+      requestHash: authority.runner.attempt.requestHash,
+      outputSealHash: authority.runner.attempt.outputSealHash!,
+      productSpecHash: hashCanonicalJson(compiled.productSpec),
+      generationTargetsHash: hashCanonicalJson(targets.generationTargets),
+      compilerReleaseSha: RELEASE_SHA,
+    },
     targetRef: target.targetId,
     surfaceRef: target.surfaceRef,
     screenId,
@@ -387,7 +376,10 @@ describe("setup-build native Product Build Packet v3 orchestration", { concurren
         repo: fixture.repo,
         planText: fixture.planText,
         producer,
-        designSourceAttemptId: `PCA_${"0".repeat(64)}`,
+        designSourceExpectation: {
+          ...fixture.designSourceExpectation,
+          attemptId: `PCA_${"0".repeat(64)}`,
+        },
       }),
       (error: unknown) => error instanceof SetupBuildPacketError
         && error.code === "SETUP_PACKET_DESIGN_SOURCE_ATTEMPT_REJECTED",
@@ -401,7 +393,8 @@ describe("setup-build native Product Build Packet v3 orchestration", { concurren
       expectedMode: "v3",
       repo: fixture.repo,
       planText: fixture.planText,
-      designSourceAttemptId: fixture.attemptId,
+      productSemanticsVersion: "v2",
+      designSourceExpectation: fixture.designSourceExpectation,
       ownerInstanceId: "setup-packet-native-v2-test",
     });
     assert.equal(result.compilation.activation, "activated", JSON.stringify(result.compilation));
@@ -439,6 +432,41 @@ describe("setup-build native Product Build Packet v3 orchestration", { concurren
     `;
     assert.deepEqual(rows.map((row) => ({ ...row })), [{ packets: 1, refs: 7 }]);
 
+    const screenIndexPath = path.join(fixture.repo, "src", "screens", "SCREEN_INDEX.json");
+    const exactScreenIndex = fs.readFileSync(screenIndexPath, "utf8");
+    for (const mutate of [
+      (screenIndex: any[]) => {
+        screenIndex[0]!.controls[0]!.actionRef = "ACT_FORGED";
+      },
+      (screenIndex: any[]) => {
+        screenIndex[0]!.observables[0]!.sourceElementRef = "E999999";
+      },
+      (screenIndex: any[]) => {
+        screenIndex[0]!.projection.targetRef = "TARGET_FORGED";
+      },
+    ]) {
+      const screenIndex = JSON.parse(exactScreenIndex);
+      mutate(screenIndex);
+      writeJson(screenIndexPath, screenIndex);
+      await assert.rejects(
+        assembleSetupBuildPacketContractsV2({
+          sql: database.sql,
+          runId: fixture.runId,
+          repo: fixture.repo,
+          planText: fixture.planText,
+          producer: sealed.producer,
+          designSourceExpectation: fixture.designSourceExpectation,
+        }),
+        (error: unknown) => error instanceof SetupBuildPacketError
+          && [
+            "SETUP_PACKET_JSON_INVALID",
+            "SETUP_PACKET_GENERATED_SOURCE_MISSING",
+            "SETUP_PACKET_GENERATED_SOURCE_TOPOLOGY_MISSING",
+          ].includes(error.code),
+      );
+      fs.writeFileSync(screenIndexPath, exactScreenIndex, "utf8");
+    }
+
     const manifest = JSON.parse(fs.readFileSync(fixture.manifestPath, "utf8"));
     const surfaceTarget = manifest.resolvedTargets.find((target: any) =>
       target.role === "surface_component" && target.path === fixture.generatedFile);
@@ -451,7 +479,7 @@ describe("setup-build native Product Build Packet v3 orchestration", { concurren
         repo: fixture.repo,
         planText: fixture.planText,
         producer: sealed.producer,
-        designSourceAttemptId: fixture.attemptId,
+        designSourceExpectation: fixture.designSourceExpectation,
       }),
       (error: unknown) => error instanceof SetupBuildPacketError
         && error.code === "SETUP_PACKET_GENERATED_SOURCE_TOPOLOGY_MISSING",

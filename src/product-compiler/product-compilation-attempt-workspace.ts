@@ -15,6 +15,7 @@ import path from "node:path";
 
 import { z } from "zod";
 
+import { readUtf8RegularFileAtMostSync } from "../lib/bounded-file-read.js";
 import { canonicalJsonBytes, canonicalJsonStringify, hashCanonicalJson } from "./canonical-json.js";
 import {
   NormalizedRelativeLocatorSchema,
@@ -573,11 +574,19 @@ async function readCanonicalManifest(
   attempt: ProductCompilationAttemptV1,
 ): Promise<ProductCompilationArtifactManifestV1> {
   const workspace = await prepareProductCompilationAttemptWorkspaceV1({ repo, attempt });
-  const stat = await statOrUndefined(workspace.artifactManifestPath);
-  if (!stat?.isFile() || stat.isSymbolicLink()) {
-    throw workspaceError("PRODUCT_COMPILATION_ARTIFACT_MANIFEST_UNAVAILABLE");
+  let exact: ReturnType<typeof readUtf8RegularFileAtMostSync>;
+  try {
+    exact = readUtf8RegularFileAtMostSync(
+      workspace.artifactManifestPath,
+      16 * 1024 * 1024,
+    );
+  } catch (error) {
+    throw workspaceError(
+      "PRODUCT_COMPILATION_ARTIFACT_MANIFEST_UNAVAILABLE",
+      error instanceof Error ? error.message : String(error),
+    );
   }
-  const bytes = await readFile(workspace.artifactManifestPath);
+  const bytes = Buffer.from(exact.text, "utf8");
   let decoded: unknown;
   try {
     decoded = JSON.parse(bytes.toString("utf8"));
@@ -589,6 +598,15 @@ async function readCanonicalManifest(
     throw workspaceError("PRODUCT_COMPILATION_ARTIFACT_MANIFEST_NON_CANONICAL");
   }
   return validateManifestAgainstAttempt(attempt, manifest);
+}
+
+export async function readProductCompilationArtifactManifestV1(input: Readonly<{
+  repo: string;
+  attempt: ProductCompilationAttemptV1;
+}>): Promise<ProductCompilationArtifactManifestV1> {
+  const attempt = requireProjectableAttempt(input.attempt);
+  const repo = (await requireSafeRoot(input.repo)).lexical;
+  return readCanonicalManifest(repo, attempt);
 }
 
 async function writeProjectionFile(
@@ -706,6 +724,11 @@ async function projectionMatchesReceipt(
 export async function projectAcceptedProductCompilationAttemptV1(input: Readonly<{
   repo: string;
   attempt: ProductCompilationAttemptV1;
+  expectedProjectionArtifacts?: readonly Readonly<{
+    path: string;
+    contentHash: string;
+    byteLength: number;
+  }>[];
 }>): Promise<ProductCompilationProjectionReceiptV1> {
   const attempt = requireProjectableAttempt(input.attempt);
   const repo = (await requireSafeRoot(input.repo)).lexical;
@@ -725,6 +748,30 @@ export async function projectAcceptedProductCompilationAttemptV1(input: Readonly
       byteLength: bytes.length,
     }))
     .sort((left, right) => compareUtf16(left.path, right.path));
+  if (input.expectedProjectionArtifacts) {
+    const expected = z.array(z.object({
+      path: NormalizedRelativeLocatorSchema,
+      contentHash: Sha256Schema,
+      byteLength: z.number().int().nonnegative(),
+    }).strict()).max(10_000).parse(input.expectedProjectionArtifacts);
+    if (new Set(expected.map((artifact) => artifact.path)).size !== expected.length) {
+      throw workspaceError("PRODUCT_COMPILATION_EXPECTED_PROJECTION_DUPLICATED");
+    }
+    const observedByPath = new Map(receiptArtifacts.map((artifact) => [artifact.path, artifact] as const));
+    for (const artifact of expected) {
+      const observed = observedByPath.get(artifact.path);
+      if (
+        !observed
+        || observed.contentHash !== artifact.contentHash
+        || observed.byteLength !== artifact.byteLength
+      ) {
+        throw workspaceError(
+          "PRODUCT_COMPILATION_EXPECTED_PROJECTION_MISMATCH",
+          artifact.path,
+        );
+      }
+    }
+  }
   const projectionHash = hashCanonicalJson({
     schema: "setfarm.product-compilation-projection-content.v1",
     attemptId: attempt.attemptId,

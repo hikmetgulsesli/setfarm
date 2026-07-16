@@ -90,6 +90,27 @@ function nativeScreen(): StitchScreenIndexEntryV2 {
       },
       requiredObservableRefs: ["OBS_RECORD_SAVED"],
     },
+    componentApi: {
+      schema: "setfarm.generated-screen-component-api.v1",
+      actionsPropName: "actions",
+      actionBindings: [{
+        generatedLocalId: "save-record-1",
+        actionRef: "ACT_SAVE_RECORD",
+        inputFields: ["description", "title"],
+      }],
+      inputTransports: [
+        {
+          actionInputRef: "ACT_SAVE_RECORD.description",
+          generatedControlId: "record-fields-1",
+          stateKey: "ACT_SAVE_RECORD.description",
+        },
+        {
+          actionInputRef: "ACT_SAVE_RECORD.title",
+          generatedControlId: "record-fields-1",
+          stateKey: "ACT_SAVE_RECORD.title",
+        },
+      ],
+    },
     rejectedControls: [],
   });
 }
@@ -156,6 +177,27 @@ function synchronizeScreenProjection(
   }
   Object.assign(screen, counts);
   screen.projection.rawInteractiveCounts = counts;
+  const physicalControls = screen.controls.filter((control) =>
+    control.semanticSource === "data-action");
+  screen.componentApi.actionBindings = physicalControls
+    .map((control) => ({
+      generatedLocalId: control.generatedLocalId,
+      actionRef: control.actionRef,
+      inputFields: [...new Set(screen.controls.flatMap((candidate) =>
+        (candidate.inputBindings ?? [])
+          .filter((binding) => binding.actionRef === control.actionRef)
+          .map((binding) => binding.inputField)))].sort(),
+    }))
+    .sort((left, right) => `${left.generatedLocalId}\0${left.actionRef}`
+      .localeCompare(`${right.generatedLocalId}\0${right.actionRef}`));
+  screen.componentApi.inputTransports = screen.controls
+    .flatMap((control) => (control.inputBindings ?? []).map((binding) => ({
+      actionInputRef: `${binding.actionRef}.${binding.inputField}`,
+      generatedControlId: control.generatedLocalId,
+      stateKey: `${binding.actionRef}.${binding.inputField}`,
+    })))
+    .sort((left, right) => `${left.actionInputRef}\0${left.generatedControlId}`
+      .localeCompare(`${right.actionInputRef}\0${right.generatedControlId}`));
   return StitchScreenIndexEntryV2Schema.parse(screen);
 }
 

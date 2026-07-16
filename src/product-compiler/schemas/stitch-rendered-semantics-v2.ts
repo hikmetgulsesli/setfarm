@@ -84,10 +84,14 @@ export const StitchGetByRoleReceiptV2Schema = z.object({
     "must_be_visible_before",
     "traceable_hidden_allowed",
   ]),
-  elementRefs: z.array(ElementRefSchema).min(1).max(1_000).refine(hasUniqueStrings, {
+  elementRefs: z.array(ElementRefSchema).length(1, {
+    message: "Role receipts must resolve one exact browser element",
+  }).refine(hasUniqueStrings, {
     message: "Role receipt element refs must be unique",
   }),
-  nearestSurfaceRefs: z.array(z.string().min(1).max(500).nullable()).min(1).max(1_000),
+  nearestSurfaceRefs: z.array(z.string().min(1).max(500).nullable()).length(1, {
+    message: "Role receipts must preserve one exact nearest-surface observation",
+  }),
   cardinality: z.object({
     expected: z.literal(1),
     observed: z.number().int().nonnegative().max(1_000),

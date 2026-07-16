@@ -316,7 +316,9 @@ export const DesignObservableBindingV2Schema = z.object({
   assertionsHash: Sha256Schema,
   evidenceRef: EvidenceIdSchema,
   source: DesignElementSourceV2Schema,
-  elementBindings: z.array(DesignElementBindingV2Schema).min(1).max(1_000),
+  elementBindings: z.array(DesignElementBindingV2Schema).length(1, {
+    message: "Every canonical observable must resolve to one exact rendered element",
+  }),
   roleReceipt: DesignObservableRoleReceiptV2Schema.nullable(),
 }).strict().superRefine((value, context) => {
   if (value.selectorHash !== hashCanonicalJson(value.selector)) {
