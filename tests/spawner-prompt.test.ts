@@ -9,6 +9,8 @@ import {
   buildResolvedClaimBootstrapScript,
   buildPreclaimedPrompt,
 } from "../dist/spawner-prompt.js";
+import { legacyOutputFileTransportV1 } from "../dist/execution/agent-tool-policy.js";
+import { createV3StageClaimHandoffV1 } from "../dist/execution/v3-stage-execution-context.js";
 import {
   createV3StageFailureV1,
   createV3StageRetrySourceV1,
@@ -156,6 +158,12 @@ describe("spawner prompt bootstrap", () => {
       assert.equal(stageHandoff.schema, "setfarm.v3-stage-claim-handoff.v1");
       assert.equal(stageHandoff.context.schema, "setfarm.v3-stage-execution-context.v1");
       assert.equal(stageHandoff.context.workflowStepId, "plan");
+      assert.equal(stageHandoff.context.toolPolicy.profile, "artifact-only");
+      assert.equal(stageHandoff.context.toolPolicy.toolAuthority.filesystemMutation.scope, "none");
+      assert.equal(
+        stageHandoff.context.toolPolicy.artifactSubmission.transport.kind,
+        "claim-bound-step-complete-stdin",
+      );
       assert.equal(stageHandoff.instructionContent, instruction);
 
       const bootstrapOutput = execFileSync("bash", [bootstrapFile], {
@@ -190,9 +198,86 @@ describe("spawner prompt bootstrap", () => {
       assert.match(prompt, /read the exact instruction\.path it binds/);
       assert.match(prompt, /sole task, role, output, recovery, and completion authority/);
       assert.match(prompt, /Do not infer product requirements or retry work from WORKDIR, old projects/);
+      assert.match(prompt, /canonical tool policy selects claim-bound-step-complete-stdin/);
+      assert.match(prompt, /Final artifact submission is separately authorized and is not a generic filesystem mutation/);
+      assert.match(prompt, /do not create or edit any temporary output file/);
+      assert.match(prompt, /do not invoke a filesystem mutation tool for final submission/);
+      assert.match(prompt, /exact --claim-file envelope binds runId, stepId, storyId when present, claimId, and attempt identity when present/);
+      assert.match(prompt, /one exact step-complete-stdin command/);
+      assert.match(prompt, /step complete "\$\(node -e [^\n]+\)" --claim-file '[^']+' <<'SETFARM_STAGE_ARTIFACT'/);
+      assert.match(prompt, /<complete final artifact required by STAGE_INSTRUCTION_FILE>\nSETFARM_STAGE_ARTIFACT/);
+      assert.equal(prompt.match(/ step complete /g)?.length, 1);
+      assert.doesNotMatch(prompt, /OUTPUT_FILE=/);
+      assert.doesNotMatch(prompt, /--file /);
+      assert.doesNotMatch(prompt, /Write the response required by the stage instruction to/);
       assert.doesNotMatch(prompt, /The project planning, design, and story approval gates already happened/);
       assert.doesNotMatch(prompt, /normal implement loop/);
       assert.doesNotMatch(prompt, /IMPLEMENT_CONTEXT_FILE/);
+      assert.throws(() => buildPreclaimedPrompt({
+        wfId: "feature-dev",
+        role: "designer",
+        protocol: "v3",
+        claimFile,
+        claimSummaryFile,
+        outputFile,
+        bootstrapFile,
+      }), /V3_STAGE_TOOL_POLICY_PROMPT_AUTHORITY_MISMATCH/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves output-file submission only for an explicit v3 legacy compatibility transport", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-v3-stage-legacy-output-"));
+    try {
+      const workdir = path.join(tmp, "stage-workdir");
+      fs.mkdirSync(workdir, { recursive: true });
+      const claimFile = path.join(tmp, "claim.json");
+      const claimSummaryFile = path.join(tmp, "claim-summary.json");
+      const outputFile = path.join(tmp, "output.txt");
+      const bootstrapFile = path.join(tmp, "bootstrap.sh");
+      const instruction = "PLAN v3 compatibility fixture";
+      const claimEnvelope = {
+        schema: "setfarm.claim-envelope.v1",
+        protocol: "v3",
+        issuedAt: "2026-07-15T00:00:00.000Z",
+        stepId: "step-plan-v3-legacy",
+        workflowStepId: "plan",
+        runId: "run-plan-v3-legacy",
+        claimId: 79,
+        claimAgentId: "feature-dev_planner",
+        runtimeAgentId: "feature-dev_planner",
+        workdir,
+        repo: workdir,
+        input: instruction,
+      } as const;
+      const handoff = createV3StageClaimHandoffV1({
+        claimEnvelope,
+        workflow: "feature-dev",
+        role: "planner",
+        workdir,
+        outputFile,
+        outputTransport: legacyOutputFileTransportV1(outputFile),
+        instructionContent: instruction,
+      });
+      fs.writeFileSync(claimFile, `${JSON.stringify(claimEnvelope)}\n`);
+      fs.writeFileSync(claimSummaryFile, `${JSON.stringify({ canonicalStageClaimHandoff: handoff })}\n`);
+
+      const prompt = buildPreclaimedPrompt({
+        wfId: "feature-dev",
+        role: "planner",
+        protocol: "v3",
+        claimFile,
+        claimSummaryFile,
+        outputFile,
+        bootstrapFile,
+      });
+
+      assert.match(prompt, /canonical tool policy explicitly selects legacy-output-file compatibility transport/);
+      assert.match(prompt, new RegExp(`Write the response required by the stage instruction to ${outputFile.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+      assert.match(prompt, new RegExp(`--file '${outputFile.replace(/'/g, "'\\''")}'`));
+      assert.doesNotMatch(prompt, /SETFARM_STAGE_ARTIFACT/);
+      assert.doesNotMatch(prompt, /claim-bound-step-complete-stdin/);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
