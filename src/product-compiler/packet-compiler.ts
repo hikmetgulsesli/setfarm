@@ -58,9 +58,16 @@ import {
   type ProductSpecV1,
 } from "./schemas/product-spec-v1.js";
 import { StoryPlanV1Schema, type StoryPlanV1 } from "./schemas/story-plan-v1.js";
+import { DesignGenerationTargetsV2Schema } from "./schemas/design-generation-targets-v2.js";
 import { DesignInteractionGraphV2Schema } from "./schemas/design-interaction-graph-v2.js";
 import { DesignSourceClosureV2Schema } from "./schemas/design-source-closure-v2.js";
 import { ProductSpecV2Schema } from "./schemas/product-spec-v2.js";
+import { StitchDirectResponseEvidenceV2Schema } from "./schemas/stitch-direct-response-evidence-v2.js";
+import { StitchRenderedSemanticsV2Schema } from "./schemas/stitch-rendered-semantics-v2.js";
+import {
+  StitchTargetCandidateSelectionV2Schema,
+  StitchTargetResponseBindingsV3Schema,
+} from "./schemas/stitch-target-candidate-selection-v2.js";
 import { StoryPlanV2Schema } from "./schemas/story-plan-v2.js";
 import { validateRuntimeDataContractClosureV1 } from "./producers/runtime-data-contract.js";
 import { produceStoryPlanV2 } from "./producers/story-plan-v2.js";
@@ -123,11 +130,26 @@ export type ProductPacketCompilerInputV3 = Readonly<{
   buildTopologyV1: unknown;
   storyPlanV2: unknown;
   designSourceClosureV2: unknown;
+  designSourceArtifactsV2?: unknown;
   compiler: unknown;
   producer: unknown;
   parentPacketHashes?: unknown;
   artifactStore: ArtifactWriter;
 }>;
+
+export const ProductPacketDesignSourceArtifactsV2Schema = z
+  .object({
+    generationTargets: DesignGenerationTargetsV2Schema,
+    directResponseEvidence: StitchDirectResponseEvidenceV2Schema,
+    renderedSemantics: StitchRenderedSemanticsV2Schema,
+    candidateSelection: StitchTargetCandidateSelectionV2Schema,
+    responseBindings: StitchTargetResponseBindingsV3Schema,
+  })
+  .strict();
+
+export type ProductPacketDesignSourceArtifactsV2 = z.infer<
+  typeof ProductPacketDesignSourceArtifactsV2Schema
+>;
 
 export type ProductPacketCompilationResultV3 = Readonly<{
   status: "sealed" | "rejected";
@@ -1157,6 +1179,12 @@ export async function compileProductBuildPacketV3(
     buildTopologyV1: safeInputHash(input.buildTopologyV1, "buildTopologyV1"),
     storyPlanV2: safeInputHash(input.storyPlanV2, "storyPlanV2"),
     designSourceClosureV2: safeInputHash(input.designSourceClosureV2, "designSourceClosureV2"),
+    ...(input.designSourceArtifactsV2 === undefined ? {} : {
+      designSourceArtifactsV2: safeInputHash(
+        input.designSourceArtifactsV2,
+        "designSourceArtifactsV2",
+      ),
+    }),
   };
   const diagnostics: CompilationDiagnosticV1[] = [];
   if (compiler.codeSha !== producer.codeSha) {
@@ -1174,6 +1202,9 @@ export async function compileProductBuildPacketV3(
   const topologyResult = BuildTopologyV1Schema.safeParse(input.buildTopologyV1);
   const storiesResult = StoryPlanV2Schema.safeParse(input.storyPlanV2);
   const closureResult = DesignSourceClosureV2Schema.safeParse(input.designSourceClosureV2);
+  const designSourceArtifactsResult = input.designSourceArtifactsV2 === undefined
+    ? undefined
+    : ProductPacketDesignSourceArtifactsV2Schema.safeParse(input.designSourceArtifactsV2);
   if (!productResult.success) {
     diagnostics.push(...schemaDiagnostics(
       "CONTRACT_V3_PRODUCT_SPEC_SCHEMA_INVALID",
@@ -1208,6 +1239,26 @@ export async function compileProductBuildPacketV3(
       rawHashes.designSourceClosureV2,
       closureResult.error,
     ));
+  } else if (closureResult.data.kind === "stitch") {
+    if (!designSourceArtifactsResult) {
+      diagnostics.push(diagnostic({
+        code: "CONTRACT_V3_DESIGN_SOURCE_ARTIFACTS_REQUIRED",
+        message: "A Stitch DesignSourceClosureV2 requires the exact five native design-source payloads",
+        reference: "designSourceArtifactsV2",
+      }));
+    } else if (!designSourceArtifactsResult.success) {
+      diagnostics.push(...schemaDiagnostics(
+        "CONTRACT_V3_DESIGN_SOURCE_ARTIFACTS_SCHEMA_INVALID",
+        rawHashes.designSourceArtifactsV2!,
+        designSourceArtifactsResult.error,
+      ));
+    }
+  } else if (input.designSourceArtifactsV2 !== undefined) {
+    diagnostics.push(diagnostic({
+      code: "CONTRACT_V3_DESIGN_SOURCE_ARTIFACTS_FORBIDDEN",
+      message: "A no-design DesignSourceClosureV2 must not carry Stitch design-source payloads",
+      reference: "designSourceArtifactsV2",
+    }));
   }
 
   const artifactHashes: {
@@ -1251,7 +1302,64 @@ export async function compileProductBuildPacketV3(
       storiesResult.data,
     );
   }
-  if (closureResult.success) {
+  let designSourceArtifactsVerified = closureResult.success
+    && closureResult.data.kind === "none"
+    && input.designSourceArtifactsV2 === undefined;
+  if (
+    closureResult.success
+    && closureResult.data.kind === "stitch"
+    && designSourceArtifactsResult?.success
+  ) {
+    const nestedArtifacts = [
+      ["generationTargets", "setfarm.design-generation-targets.v2"],
+      ["directResponseEvidence", "setfarm.stitch-direct-response-evidence.v2"],
+      ["renderedSemantics", "setfarm.stitch-rendered-semantics.v2"],
+      ["candidateSelection", "setfarm.stitch-target-candidate-selection.v2"],
+      ["responseBindings", "setfarm.stitch-target-response-bindings.v3"],
+    ] as const;
+    let exactReferences = true;
+    for (const [field, artifactType] of nestedArtifacts) {
+      const payload = designSourceArtifactsResult.data[field];
+      const reference = closureResult.data[field];
+      const payloadHash = hashCanonicalJson(payload);
+      const envelopeHash = hashCanonicalJson(SemanticArtifactEnvelopeV1Schema.parse({
+        schema: "setfarm.semantic-artifact-envelope.v1",
+        artifactType,
+        producer,
+        payload,
+      }));
+      if (
+        reference.artifactType !== artifactType
+        || reference.payloadHash !== payloadHash
+        || reference.envelopeHash !== envelopeHash
+      ) {
+        exactReferences = false;
+        diagnostics.push(diagnostic({
+          code: "CONTRACT_V3_DESIGN_SOURCE_ARTIFACT_HASH_MISMATCH",
+          message: `DesignSourceClosureV2 ${field} does not bind the exact strict payload and producer envelope`,
+          artifactHash: envelopeHash,
+          reference: field,
+        }));
+      }
+    }
+    if (exactReferences) {
+      for (const [field, artifactType] of nestedArtifacts) {
+        const storedHash = await storeChild(
+          input.artifactStore,
+          artifactType,
+          producer,
+          designSourceArtifactsResult.data[field],
+        );
+        if (storedHash !== closureResult.data[field].envelopeHash) {
+          throw new TypeError(
+            `Artifact writer returned ${storedHash} for exact ${field} envelope ${closureResult.data[field].envelopeHash}`,
+          );
+        }
+      }
+      designSourceArtifactsVerified = true;
+    }
+  }
+  if (closureResult.success && designSourceArtifactsVerified) {
     artifactHashes.designSourceClosureV2 = await storeChild(
       input.artifactStore,
       "setfarm.design-source-closure.v2",

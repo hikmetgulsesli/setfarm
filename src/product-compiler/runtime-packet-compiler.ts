@@ -47,6 +47,7 @@ export type RuntimePacketCompilationInput = Readonly<{
   buildTopologyV1?: unknown;
   storyPlanV2?: unknown;
   designSourceClosureV2?: unknown;
+  designSourceArtifactsV2?: unknown;
   compiler: unknown;
   producer: unknown;
   parentPacketHashes?: unknown;
@@ -208,6 +209,7 @@ export function createRuntimePacketCompiler(input: Readonly<{
         buildTopologyV1: value.buildTopologyV1,
         storyPlanV2: value.storyPlanV2,
         designSourceClosureV2: value.designSourceClosureV2,
+        designSourceArtifactsV2: value.designSourceArtifactsV2,
         compiler,
         producer,
         parentPacketHashes: value.parentPacketHashes,

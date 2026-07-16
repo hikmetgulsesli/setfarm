@@ -63,11 +63,12 @@ describe("Product Build Packet v3 compiler", () => {
 
   it("seals the exact Stitch graph envelope and closure without v1 graph adaptation", async () => {
     const contracts = await buildStitchProductBuildPacketV3Contracts(producer);
+    const artifactStore = new MemoryArtifactWriter();
     const result = await compileProductBuildPacketV3({
       ...contracts,
       compiler,
       producer,
-      artifactStore: new MemoryArtifactWriter(),
+      artifactStore,
     });
     assert.equal(result.status, "sealed", JSON.stringify(result.report));
     assert.equal(result.packet?.designSourceKind, "stitch");
@@ -80,6 +81,99 @@ describe("Product Build Packet v3 compiler", () => {
     assert.equal(
       contracts.designSourceClosureV2.designGraph.payloadHash,
       hashCanonicalJson(contracts.designGraphV2),
+    );
+    for (const reference of [
+      contracts.designSourceClosureV2.generationTargets,
+      contracts.designSourceClosureV2.directResponseEvidence,
+      contracts.designSourceClosureV2.renderedSemantics,
+      contracts.designSourceClosureV2.candidateSelection,
+      contracts.designSourceClosureV2.responseBindings,
+    ]) {
+      assert.equal(
+        artifactStore.artifacts.get(reference.envelopeHash)?.artifactType,
+        reference.artifactType,
+      );
+    }
+  });
+
+  it("requires all five strict design-source payloads before a Stitch closure can seal", async () => {
+    const contracts = await buildStitchProductBuildPacketV3Contracts(producer);
+    const { designSourceArtifactsV2: _omitted, ...withoutArtifacts } = contracts;
+    const result = await compileProductBuildPacketV3({
+      ...withoutArtifacts,
+      compiler,
+      producer,
+      artifactStore: new MemoryArtifactWriter(),
+    });
+    assert.equal(result.status, "rejected");
+    assert.equal(result.packetHash, undefined);
+    assert.equal(
+      result.report.status === "rejected"
+        && result.report.rejectionCodes.includes("CONTRACT_V3_DESIGN_SOURCE_ARTIFACTS_REQUIRED"),
+      true,
+    );
+  });
+
+  it("rejects unknown fields in the additive design-source payload contract", async () => {
+    const contracts = await buildStitchProductBuildPacketV3Contracts(producer);
+    const result = await compileProductBuildPacketV3({
+      ...contracts,
+      designSourceArtifactsV2: {
+        ...contracts.designSourceArtifactsV2,
+        inferredLegacySources: [],
+      },
+      compiler,
+      producer,
+      artifactStore: new MemoryArtifactWriter(),
+    });
+    assert.equal(result.status, "rejected");
+    assert.equal(
+      result.report.status === "rejected"
+        && result.report.rejectionCodes.includes("CONTRACT_V3_DESIGN_SOURCE_ARTIFACTS_SCHEMA_INVALID"),
+      true,
+    );
+  });
+
+  it("rejects payload drift from closure hashes without publishing a partial nested closure", async () => {
+    const contracts = await buildStitchProductBuildPacketV3Contracts(producer);
+    const designSourceArtifactsV2 = structuredClone(contracts.designSourceArtifactsV2);
+    designSourceArtifactsV2.directResponseEvidence.projectId = "drifted-project-id";
+    const artifactStore = new MemoryArtifactWriter();
+    const result = await compileProductBuildPacketV3({
+      ...contracts,
+      designSourceArtifactsV2,
+      compiler,
+      producer,
+      artifactStore,
+    });
+    assert.equal(result.status, "rejected");
+    assert.equal(
+      result.report.status === "rejected"
+        && result.report.rejectionCodes.includes("CONTRACT_V3_DESIGN_SOURCE_ARTIFACT_HASH_MISMATCH"),
+      true,
+    );
+    assert.equal(result.artifactHashes.designSourceClosureV2, undefined);
+    assert.equal(
+      [...artifactStore.artifacts.values()].some((artifact) =>
+        artifact.artifactType === "setfarm.stitch-direct-response-evidence.v2"),
+      false,
+    );
+  });
+
+  it("forbids Stitch payloads for an exact no-design closure", async () => {
+    const contracts = buildNoDesignProductBuildPacketV3Contracts();
+    const result = await compileProductBuildPacketV3({
+      ...contracts,
+      designSourceArtifactsV2: {},
+      compiler,
+      producer,
+      artifactStore: new MemoryArtifactWriter(),
+    });
+    assert.equal(result.status, "rejected");
+    assert.equal(
+      result.report.status === "rejected"
+        && result.report.rejectionCodes.includes("CONTRACT_V3_DESIGN_SOURCE_ARTIFACTS_FORBIDDEN"),
+      true,
     );
   });
 

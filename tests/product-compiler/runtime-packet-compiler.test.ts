@@ -143,9 +143,22 @@ describe("runtime Product Build Packet compiler", () => {
     const result = await test.compiler.compile(test.input);
     assert.equal(result.activation, "activated");
     assert.equal(result.compilation.packet?.schema, "setfarm.product-build-packet.v3");
-    const rows = await database.sql<Array<{ refs: number; graph_type: string | null }>>`
+    const rows = await database.sql<Array<{
+      refs: number;
+      graph_type: string | null;
+      nested_design_sources: number;
+    }>>`
       SELECT COUNT(ra.ref_key)::integer AS refs,
-             MAX(a.artifact_type) FILTER (WHERE ra.ref_key = 'DESIGN_GRAPH') AS graph_type
+             MAX(a.artifact_type) FILTER (WHERE ra.ref_key = 'DESIGN_GRAPH') AS graph_type,
+             (SELECT COUNT(*)::integer
+                FROM semantic_artifacts nested
+               WHERE nested.artifact_type IN (
+                 'setfarm.design-generation-targets.v2',
+                 'setfarm.stitch-direct-response-evidence.v2',
+                 'setfarm.stitch-rendered-semantics.v2',
+                 'setfarm.stitch-target-candidate-selection.v2',
+                 'setfarm.stitch-target-response-bindings.v3'
+               )) AS nested_design_sources
         FROM run_artifact_refs ra
         JOIN semantic_artifacts a ON a.artifact_hash = ra.artifact_hash
        WHERE ra.run_id = ${test.runId}
@@ -153,6 +166,7 @@ describe("runtime Product Build Packet compiler", () => {
     assert.deepEqual(rows.map((row) => ({ ...row })), [{
       refs: 7,
       graph_type: "setfarm.design-interaction-graph.v2",
+      nested_design_sources: 5,
     }]);
   });
 

@@ -234,7 +234,7 @@ export async function buildStitchProductBuildPacketV3Contracts(producer: Readonl
         artifactHash: "4".repeat(64),
       },
     },
-    nestedDesignSources: {
+    designSourceArtifactsV2: {
       generationTargets,
       directResponseEvidence,
       renderedSemantics: rendered.artifact,

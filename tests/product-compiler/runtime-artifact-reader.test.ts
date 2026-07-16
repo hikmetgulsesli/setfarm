@@ -150,27 +150,6 @@ describe("sealed runtime artifact reader", () => {
     const contracts = designSourceKind === "stitch"
       ? await buildStitchProductBuildPacketV3Contracts(producer)
       : buildNoDesignProductBuildPacketV3Contracts();
-    if (designSourceKind === "stitch" && "nestedDesignSources" in contracts) {
-      const publisher = new IndexedArtifactPublisher({
-        index: createArtifactIndex(database.sql),
-        store,
-        ownerInstanceId: "native-v3-reader-nested-test",
-      });
-      for (const [artifactType, payload] of [
-        ["setfarm.design-generation-targets.v2", contracts.nestedDesignSources.generationTargets],
-        ["setfarm.stitch-direct-response-evidence.v2", contracts.nestedDesignSources.directResponseEvidence],
-        ["setfarm.stitch-rendered-semantics.v2", contracts.nestedDesignSources.renderedSemantics],
-        ["setfarm.stitch-target-candidate-selection.v2", contracts.nestedDesignSources.candidateSelection],
-        ["setfarm.stitch-target-response-bindings.v3", contracts.nestedDesignSources.responseBindings],
-      ] as const) {
-        await publisher.put({
-          schema: "setfarm.semantic-artifact-envelope.v1",
-          artifactType,
-          producer,
-          payload,
-        });
-      }
-    }
     const compilation = await createRuntimePacketCompiler({
       sql: database.sql,
       artifactRoot,
@@ -295,7 +274,7 @@ describe("sealed runtime artifact reader", () => {
     );
   });
 
-  it("deep-reads every typed Stitch closure child behind ProductBuildPacketV3", async () => {
+  it("deep-reads every compiler-published Stitch closure child behind ProductBuildPacketV3", async () => {
     const test = await nativeV3Fixture("stitch");
     const result = await test.reader.readExactSealedPacket(test.runId);
     assert.equal(result.packet.schema, "setfarm.product-build-packet.v3");
