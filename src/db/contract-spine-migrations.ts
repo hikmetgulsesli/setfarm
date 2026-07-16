@@ -8375,6 +8375,9 @@ const PRODUCT_COMPILATION_ATTEMPT_STATEMENTS = [
    RETURNS trigger
    LANGUAGE plpgsql
    AS $setfarm$
+   DECLARE
+     recovery_authority_changed BOOLEAN;
+     exact_expired_recovery BOOLEAN;
    BEGIN
      IF TG_OP IN ('INSERT', 'UPDATE') THEN
        PERFORM 1 FROM claim_log WHERE id = NEW.origin_claim_id AND run_id = NEW.run_id;
@@ -8395,6 +8398,47 @@ const PRODUCT_COMPILATION_ATTEMPT_STATEMENTS = [
      IF OLD.state IN ('sealed', 'quarantined') THEN
        RAISE EXCEPTION 'SETFARM_PRODUCT_COMPILATION_ATTEMPT_TERMINAL_IMMUTABLE' USING ERRCODE = '55000';
      END IF;
+
+     recovery_authority_changed :=
+       OLD.owner_claim_id IS DISTINCT FROM NEW.owner_claim_id
+       OR OLD.generation IS DISTINCT FROM NEW.generation
+       OR OLD.fence_token IS DISTINCT FROM NEW.fence_token;
+     exact_expired_recovery :=
+       recovery_authority_changed
+       AND OLD.state IN ('reserved', 'dispatching')
+       AND NEW.state IS NOT DISTINCT FROM OLD.state
+       AND OLD.lease_expires_at <= clock_timestamp()
+       AND NEW.owner_claim_id IS DISTINCT FROM OLD.owner_claim_id
+       AND NEW.generation = OLD.generation + 1
+       AND NEW.fence_token IS DISTINCT FROM OLD.fence_token
+       AND NEW.owner_instance_id IS DISTINCT FROM OLD.owner_instance_id
+       AND NEW.lease_token IS DISTINCT FROM OLD.lease_token
+       AND NEW.lease_acquired_at >= OLD.lease_expires_at
+       AND NEW.lease_acquired_at <= clock_timestamp()
+       AND NEW.heartbeat_at IS NOT DISTINCT FROM NEW.lease_acquired_at
+       AND NEW.updated_at IS NOT DISTINCT FROM NEW.lease_acquired_at
+       AND NEW.lease_expires_at >= NEW.lease_acquired_at + INTERVAL '5 seconds'
+       AND NEW.lease_expires_at <= NEW.lease_acquired_at + INTERVAL '30 minutes'
+       AND OLD.disposition IS NOT DISTINCT FROM NEW.disposition
+       AND OLD.dispatch_intent_at IS NOT DISTINCT FROM NEW.dispatch_intent_at
+       AND OLD.dispatch_started_at IS NOT DISTINCT FROM NEW.dispatch_started_at
+       AND OLD.dispatch_finished_at IS NOT DISTINCT FROM NEW.dispatch_finished_at
+       AND OLD.external_operation_id IS NOT DISTINCT FROM NEW.external_operation_id
+       AND OLD.output_refs IS NOT DISTINCT FROM NEW.output_refs
+       AND OLD.output_seal_hash IS NOT DISTINCT FROM NEW.output_seal_hash
+       AND OLD.failure IS NOT DISTINCT FROM NEW.failure
+       AND OLD.failure_artifact_hash IS NOT DISTINCT FROM NEW.failure_artifact_hash
+       AND OLD.failure_fingerprint IS NOT DISTINCT FROM NEW.failure_fingerprint
+       AND OLD.operational_cause_hash IS NOT DISTINCT FROM NEW.operational_cause_hash
+       AND OLD.created_at IS NOT DISTINCT FROM NEW.created_at
+       AND EXISTS (
+         SELECT 1 FROM runs
+          WHERE id = NEW.run_id AND status IN ('running', 'resuming') AND protocol = 'v3'
+       )
+       AND EXISTS (
+         SELECT 1 FROM claim_log
+          WHERE id = NEW.owner_claim_id AND run_id = NEW.run_id AND outcome IS NULL
+       );
      IF OLD.attempt_id IS DISTINCT FROM NEW.attempt_id
         OR OLD.run_id IS DISTINCT FROM NEW.run_id
         OR OLD.origin_claim_id IS DISTINCT FROM NEW.origin_claim_id
@@ -8406,10 +8450,19 @@ const PRODUCT_COMPILATION_ATTEMPT_STATEMENTS = [
         OR OLD.parent_failure_artifact_hash IS DISTINCT FROM NEW.parent_failure_artifact_hash
         OR OLD.parent_failure_fingerprint IS DISTINCT FROM NEW.parent_failure_fingerprint
         OR OLD.retry_delta_hash IS DISTINCT FROM NEW.retry_delta_hash
-        OR OLD.generation IS DISTINCT FROM NEW.generation
-        OR OLD.fence_token IS DISTINCT FROM NEW.fence_token
-        OR OLD.attempt_locator IS DISTINCT FROM NEW.attempt_locator THEN
+        OR OLD.attempt_locator IS DISTINCT FROM NEW.attempt_locator
+        OR (recovery_authority_changed AND NOT exact_expired_recovery) THEN
        RAISE EXCEPTION 'SETFARM_PRODUCT_COMPILATION_ATTEMPT_AUTHORITY_IMMUTABLE' USING ERRCODE = '55000';
+     END IF;
+     IF NOT recovery_authority_changed
+        AND OLD.state IN ('reserved', 'dispatching')
+        AND NEW.state IN ('reserved', 'dispatching')
+        AND (
+          OLD.owner_instance_id IS DISTINCT FROM NEW.owner_instance_id
+          OR OLD.lease_token IS DISTINCT FROM NEW.lease_token
+          OR OLD.lease_acquired_at IS DISTINCT FROM NEW.lease_acquired_at
+        ) THEN
+       RAISE EXCEPTION 'SETFARM_PRODUCT_COMPILATION_LEASE_IDENTITY_IMMUTABLE' USING ERRCODE = '55000';
      END IF;
      IF OLD.dispatch_intent_at IS NOT NULL AND (
        OLD.dispatch_intent_at IS DISTINCT FROM NEW.dispatch_intent_at
@@ -8555,10 +8608,26 @@ async function verifyProductCompilationAttemptLedger(sql: Sql | TransactionSql):
   for (const fragment of [
     "setfarm_product_compilation_attempt_terminal_immutable",
     "setfarm_product_compilation_attempt_authority_immutable",
+    "setfarm_product_compilation_lease_identity_immutable",
     "setfarm_product_compilation_dispatch_identity_immutable",
     "setfarm_product_compilation_state_regression",
     "setfarm_product_compilation_origin_claim_mismatch",
     "setfarm_product_compilation_owner_claim_mismatch",
+    "recovery_authority_changed",
+    "exact_expired_recovery",
+    "new.state is not distinct from old.state",
+    "new.generation = old.generation + 1",
+    "old.lease_expires_at <= clock_timestamp()",
+    "new.owner_claim_id is distinct from old.owner_claim_id",
+    "new.fence_token is distinct from old.fence_token",
+    "new.owner_instance_id is distinct from old.owner_instance_id",
+    "new.lease_token is distinct from old.lease_token",
+    "new.lease_acquired_at >= old.lease_expires_at",
+    "new.heartbeat_at is not distinct from new.lease_acquired_at",
+    "new.lease_expires_at >= new.lease_acquired_at + interval '5 seconds'",
+    "new.lease_expires_at <= new.lease_acquired_at + interval '30 minutes'",
+    "status in ('running', 'resuming') and protocol = 'v3'",
+    "outcome is null",
   ]) {
     if (!functionDefinition.includes(fragment)) {
       throw new ContractSpineMigrationError(

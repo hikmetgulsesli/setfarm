@@ -61,6 +61,14 @@ const FailureSealSchema = FenceSchema.extend({
   failure: ProductCompilationAttemptFailureV1Schema,
 }).strict();
 
+const ExpiredRecoverySchema = z.object({
+  attemptId: z.string().regex(/^PCA_[a-f0-9]{64}$/),
+  runId: BoundedIdentitySchema,
+  ownerClaimId: z.number().int().positive(),
+  ownerInstanceId: BoundedIdentitySchema,
+  leaseMs: z.number().int().min(5_000).max(30 * 60_000).default(5 * 60_000),
+}).strict();
+
 type AttemptRow = {
   attempt_id: string;
   run_id: string;
@@ -179,6 +187,16 @@ export type ProductCompilationAttemptReservationResult =
   | Readonly<{ status: "duplicate"; attempt: ProductCompilationAttemptV1 }>
   | Readonly<{ status: "active_conflict"; attempt: ProductCompilationAttemptV1 }>
   | Readonly<{ status: "already_accepted"; attempt: ProductCompilationAttemptV1 }>;
+
+export type ProductCompilationAttemptExpiredRecoveryResult =
+  | Readonly<{
+      status: "reserved_safe_to_resume";
+      attempt: ProductCompilationAttemptV1;
+    }>
+  | Readonly<{
+      status: "dispatching_must_quarantine";
+      attempt: ProductCompilationAttemptV1;
+    }>;
 
 export class ProductCompilationAttemptRepository {
   constructor(private readonly sql: Sql) {}
@@ -311,6 +329,99 @@ export class ProductCompilationAttemptRepository {
       if (!inserted) throw new Error("PRODUCT_COMPILATION_ATTEMPT_INSERT_FAILED");
       return { status: "reserved" as const, attempt: mapAttempt(inserted) };
     }) as Promise<ProductCompilationAttemptReservationResult>;
+  }
+
+  async recoverExpired(input: unknown): Promise<ProductCompilationAttemptExpiredRecoveryResult> {
+    const recovery = ExpiredRecoverySchema.parse(input);
+    const recovered = await this.sql.begin(async (transaction) => {
+      const runRows = await transaction.unsafe<Array<{ status: string; protocol: string }>>(
+        `SELECT status, protocol FROM runs
+          WHERE id = $1
+          FOR NO KEY UPDATE`,
+        [recovery.runId],
+      );
+      if (
+        runRows.length !== 1
+        || !["running", "resuming"].includes(runRows[0]!.status)
+        || runRows[0]!.protocol !== "v3"
+      ) {
+        throw new Error("PRODUCT_COMPILATION_RECOVERY_RUN_NOT_ACTIVE_V3");
+      }
+
+      const claimRows = await transaction.unsafe<Array<{ id: string }>>(
+        `SELECT id::text FROM claim_log
+          WHERE id = $1 AND run_id = $2 AND outcome IS NULL
+          FOR NO KEY UPDATE`,
+        [recovery.ownerClaimId, recovery.runId],
+      );
+      if (claimRows.length !== 1) {
+        throw new Error("PRODUCT_COMPILATION_RECOVERY_OWNER_CLAIM_INVALID");
+      }
+
+      const current = await first(
+        transaction,
+        `SELECT * FROM product_compilation_attempts
+          WHERE attempt_id = $1 AND run_id = $2
+          FOR UPDATE`,
+        [recovery.attemptId, recovery.runId],
+      );
+      if (!current) throw new Error("PRODUCT_COMPILATION_RECOVERY_ATTEMPT_NOT_FOUND");
+      if (!current.owner_instance_id || !["reserved", "dispatching"].includes(current.state)) {
+        throw new Error("PRODUCT_COMPILATION_RECOVERY_STATE_INVALID");
+      }
+      if (
+        Number(current.owner_claim_id) === recovery.ownerClaimId
+        || current.owner_instance_id === recovery.ownerInstanceId
+      ) {
+        throw new Error("PRODUCT_COMPILATION_RECOVERY_OWNER_NOT_ROTATED");
+      }
+
+      const now = await readDatabaseWallClock(
+        transaction,
+        "PRODUCT_COMPILATION_DATABASE_TIME_UNAVAILABLE",
+      );
+      if (
+        !current.lease_expires_at
+        || new Date(current.lease_expires_at).getTime() > now.getTime()
+      ) {
+        throw new Error("PRODUCT_COMPILATION_RECOVERY_LEASE_NOT_EXPIRED");
+      }
+
+      const expiresAt = new Date(now.getTime() + recovery.leaseMs);
+      const updated = await first(
+        transaction,
+        `UPDATE product_compilation_attempts
+            SET owner_claim_id = $3, generation = $4, fence_token = $5,
+                owner_instance_id = $6, lease_token = $7,
+                lease_acquired_at = $8, lease_expires_at = $9,
+                heartbeat_at = $8, updated_at = $8
+          WHERE attempt_id = $1 AND run_id = $2
+            AND generation = $10 AND fence_token = $11
+            AND state IN ('reserved', 'dispatching')
+            AND lease_expires_at <= $8
+          RETURNING *`,
+        [
+          recovery.attemptId,
+          recovery.runId,
+          recovery.ownerClaimId,
+          current.generation + 1,
+          randomHash(),
+          recovery.ownerInstanceId,
+          randomHash(),
+          now,
+          expiresAt,
+          current.generation,
+          current.fence_token,
+        ],
+      );
+      if (!updated) throw new Error("PRODUCT_COMPILATION_RECOVERY_CAS_LOST");
+      return { previousState: current.state, attempt: updated };
+    });
+    const attempt = mapAttempt(recovered.attempt as AttemptRow);
+    if (recovered.previousState === "reserved") {
+      return { status: "reserved_safe_to_resume", attempt };
+    }
+    return { status: "dispatching_must_quarantine", attempt };
   }
 
   async commitDispatchIntent(input: unknown): Promise<ProductCompilationAttemptV1> {
@@ -457,4 +568,5 @@ export const ProductCompilationAttemptFenceSchema = FenceSchema;
 export const ProductCompilationAttemptDispatchSchema = DispatchSchema;
 export const ProductCompilationAttemptAcceptedSealSchema = AcceptedSealSchema;
 export const ProductCompilationAttemptFailureSealSchema = FailureSealSchema;
+export const ProductCompilationAttemptExpiredRecoverySchema = ExpiredRecoverySchema;
 export const ProductCompilationAttemptTimestampSchema = TimestampSchema;
