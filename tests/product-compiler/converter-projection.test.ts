@@ -25,7 +25,10 @@ import {
   validStitchPng,
 } from "./fixtures/stitch-artifacts.js";
 
-async function writeNativeV2Projection(root: string) {
+async function writeNativeV2Projection(
+  root: string,
+  options: { customRoleControl?: boolean } = {},
+) {
   const stitch = path.join(root, "stitch");
   fs.mkdirSync(stitch, { recursive: true });
   const productSpec = buildContainedGameProductSpecV2();
@@ -41,9 +44,12 @@ async function writeNativeV2Projection(root: string) {
   if (statusObservable.selector.kind !== "accessibility") throw new Error("unreachable");
   const canvasSurface = target.containedSurfaceRefs.find((surfaceRef) =>
     surfaceRef !== statusObservable.selector.surfaceRef)!;
+  const physicalControl = options.customRoleControl
+    ? `<div role="button" aria-label="Start Game" tabindex="0" data-action="${placement.actionRef}" data-control-slot="${placement.controlSlotRef}">Start Game</div>`
+    : `<button data-action="${placement.actionRef}" data-control-slot="${placement.controlSlotRef}">Start Game</button>`;
   const htmlBytes = validStitchHtml([
     `<main data-surface-id="${target.surfaceRef}">`,
-    `<button data-action="${placement.actionRef}" data-control-slot="${placement.controlSlotRef}">Start Game</button>`,
+    physicalControl,
     `<section data-surface-id="${canvasSurface}"><canvas aria-label="Game canvas"></canvas></section>`,
     `<section data-surface-id="${statusObservable.selector.surfaceRef}"><div hidden role="${statusObservable.selector.role}" aria-label="${statusObservable.selector.name}">Playing</div></section>`,
     "</main>",
@@ -204,6 +210,12 @@ describe("Stitch converter semantic projection", () => {
       assert.equal(control.sourceElementRef, graphControl.elementRef);
       assert.deepEqual(control.affectedSurfaceRefs, graphAction.affectedSurfaceRefs);
       assert.notDeepEqual(control.affectedSurfaceRefs, [control.surfaceRef]);
+      assert.equal(control.tagName, graphControl.tagName);
+      assert.equal(control.nativeControlKind, graphControl.nativeControlKind);
+      assert.equal(control.role, graphControl.role);
+      assert.equal(control.ariaLabel, graphControl.ariaLabel);
+      assert.equal(control.href, graphControl.href);
+      assert.equal(control.interactiveRole, graphControl.interactiveRole);
 
       assert.equal(index[0].observables.length, value.target.requiredObservableSelectors.length);
       for (const expected of value.target.requiredObservableSelectors) {
@@ -226,6 +238,53 @@ describe("Stitch converter semantic projection", () => {
       assert.match(exactControlTag, new RegExp(`data-action="${value.placement.actionRef}"`));
       assert.match(exactControlTag, new RegExp(`data-control-slot="${value.placement.controlSlotRef}"`));
       assert.match(exactControlTag, /data-action-id=/);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves custom-role physical control authority and counts it exactly once", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-native-v2-role-control-"));
+    try {
+      const value = await writeNativeV2Projection(root, { customRoleControl: true });
+      execFileSync("node", ["scripts/stitch-to-jsx.mjs", root], {
+        cwd: process.cwd(),
+        stdio: "pipe",
+      });
+
+      const index = JSON.parse(fs.readFileSync(path.join(root, "src/screens/SCREEN_INDEX.json"), "utf8"));
+      assert.equal(index.length, 1);
+      assert.deepEqual(index[0].projection.rawInteractiveCounts, {
+        buttons: 1,
+        links: 0,
+        inputs: 0,
+        textareas: 0,
+        selects: 0,
+      });
+      assert.equal(index[0].buttons, 1);
+      assert.equal(index[0].links, 0);
+      const control = index[0].controls.find((entry: any) =>
+        entry.controlSlotRef === value.placement.controlSlotRef);
+      assert.deepEqual({
+        tagName: control.tagName,
+        nativeControlKind: control.nativeControlKind,
+        role: control.role,
+        ariaLabel: control.ariaLabel,
+        href: control.href,
+        interactiveRole: control.interactiveRole,
+      }, {
+        tagName: "div",
+        nativeControlKind: null,
+        role: "button",
+        ariaLabel: "Start Game",
+        href: null,
+        interactiveRole: true,
+      });
+      const source = fs.readFileSync(path.join(root, index[0].file), "utf8");
+      assert.match(source, new RegExp(
+        `<div[^>]*data-setfarm-element-ref="${control.sourceElementRef}"[^>]*data-action-id="${control.generatedLocalId}"[^>]*onClick=`,
+      ));
+      assert.doesNotMatch(source, new RegExp(`<button[^>]*data-action-id="${control.generatedLocalId}"`));
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

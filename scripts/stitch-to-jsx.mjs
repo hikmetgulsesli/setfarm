@@ -487,6 +487,12 @@ function loadNativeV2ProjectionContract({ targets, bindings, selection, rendered
         || graphControl.id !== `CTRL_${identityHash.slice(0, 16)}`
         || element.dataAction !== placement.actionRef
         || element.dataControlSlot !== placement.controlSlotRef
+        || graphControl.tagName !== element.tagName
+        || graphControl.nativeControlKind !== element.nativeControlKind
+        || graphControl.role !== element.role
+        || graphControl.ariaLabel !== element.ariaLabel
+        || graphControl.href !== element.href
+        || graphControl.interactiveRole !== element.interactiveRole
         || element.nearestSurfaceRef !== placement.surfaceRef
         || element.renderState !== "rendered"
         || element.enabled !== true
@@ -501,9 +507,12 @@ function loadNativeV2ProjectionContract({ targets, bindings, selection, rendered
         physicalControlRef: graphControl.id,
         affectedSurfaceRefs: Array.isArray(graphAction.affectedSurfaceRefs) ? [...graphAction.affectedSurfaceRefs] : [],
         sourceElementRef: responseControl.elementRef,
+        tagName: graphControl.tagName,
         nativeControlKind: graphControl.nativeControlKind,
         role: graphControl.role,
-        tagName: graphControl.tagName,
+        ariaLabel: graphControl.ariaLabel,
+        href: graphControl.href,
+        interactiveRole: graphControl.interactiveRole,
       };
       controlElementRefs.set(placement.controlSlotRef, new Set([responseControl.elementRef]));
       if (controlByElementRef.has(responseControl.elementRef)) {
@@ -2280,6 +2289,8 @@ function annotateInteractiveElements(html, projection) {
   const actions = [];
   const valueControls = [];
   const rejectedControls = [];
+  const actionInputFields = new Map();
+  const actionInputInitialValues = new Map();
   const identities = [];
   let buttonIndex = 0;
   let linkIndex = 0;
@@ -2324,7 +2335,23 @@ function annotateInteractiveElements(html, projection) {
       controlSlotRef: control.controlSlotRef,
       surfaceRef: control.surfaceRef,
       affectedSurfaceRefs: [...control.affectedSurfaceRefs],
+      tagName: control.tagName,
+      nativeControlKind: control.nativeControlKind,
+      role: control.role,
+      ariaLabel: control.ariaLabel,
+      href: control.href,
+      interactiveRole: control.interactiveRole,
     };
+  };
+  const registerActionInputs = (inputBindings, initialValue) => {
+    for (const binding of inputBindings) {
+      const fields = actionInputFields.get(binding.actionRef) || new Set();
+      fields.add(binding.inputField);
+      actionInputFields.set(binding.actionRef, fields);
+      const key = inputKey(binding);
+      if (!actionInputInitialValues.has(key)) actionInputInitialValues.set(key, "");
+      if (initialValue !== undefined) actionInputInitialValues.set(key, String(initialValue));
+    }
   };
   const consume = (map, semanticRef, elementRef) => {
     const key = `${semanticRef}\0${elementRef}`;
@@ -2334,6 +2361,7 @@ function annotateInteractiveElements(html, projection) {
     if (actionRef) consume(consumedActionElements, actionRef, elementRef);
     for (const binding of inputBindings) consume(consumedInputElements, inputKey(binding), elementRef);
     if (controlSlotRef) consume(consumedControlSlots, controlSlotRef, elementRef);
+    registerActionInputs(inputBindings);
   };
   const rejectControl = ({ id, kind, label, index, actionRef, inputBindings, href, sourceElementRef }) => {
     rejectedControls.push({
@@ -2402,7 +2430,7 @@ function annotateInteractiveElements(html, projection) {
       cleanAttrs += ` aria-label="${escapeHtmlAttr(label)}"`;
     }
 
-    return `<button${cleanAttrs} data-action-id="${id}" onClick={actions?.["${id}"]}>${inner}</button>`;
+    return `<button${cleanAttrs} data-action-id="${id}">${inner}</button>`;
   });
   const annotated = mapPairedTagsRespectingQuotes(withButtons, "a", ({ attrs, inner }) => {
     const index = linkIndex++;
@@ -2435,7 +2463,7 @@ function annotateInteractiveElements(html, projection) {
       ? `${cleanAttrs} aria-label="${escapeHtmlAttr(label)}"`
       : cleanAttrs;
 
-    return `<a${accessibleAttrs} data-action-id="${id}" data-setfarm-link-action="${id}">${inner}</a>`;
+    return `<a${accessibleAttrs} data-action-id="${id}">${inner}</a>`;
   });
   const splitSelfClosingAttrs = (attrs) => {
     const source = String(attrs || "");
@@ -2473,8 +2501,9 @@ function annotateInteractiveElements(html, projection) {
         return neutralizedAttrs(sourceAttrs, id, tagName);
       }
       consumeAccepted(actionRef, inputBindings, sourceElementRef, controlSlotRef);
+      registerActionInputs(inputBindings, attrValue(sourceAttrs, "value"));
       actions.push({ id, kind: tagName, label, index, actionRef, ...(inputBindings.length ? { inputBindings } : {}), ...(sourceElementRef ? { sourceElementRef } : {}), ...physicalControlFields(actionRef, controlSlotRef, sourceElementRef) });
-      return `${cleanAttrs} data-action-id="${id}" onChange={() => actions?.["${id}"]?.()}`;
+      return `${cleanAttrs} data-action-id="${id}"`;
     }
     if (inputBindings.length === 0 && !projection) return sourceAttrs;
     const id = nextId(label, tagName, valueControls.length);
@@ -2486,6 +2515,7 @@ function annotateInteractiveElements(html, projection) {
       return neutralizedAttrs(sourceAttrs, id, tagName);
     }
     consumeAccepted(actionRef, inputBindings, sourceElementRef);
+    registerActionInputs(inputBindings, attrValue(sourceAttrs, "value"));
     valueControls.push({ id, kind: tagName, label, index, inputBindings, ...(sourceElementRef ? { sourceElementRef } : {}) });
     return `${cleanAttrs} data-control-id="${id}"`;
   };
@@ -2548,7 +2578,7 @@ function annotateInteractiveElements(html, projection) {
           sourceElementRef,
           ...physicalControlFields(actionRef, controlSlotRef, sourceElementRef),
         });
-        return `<${tagName}${cleanAttrs} data-action-id="${id}" onClick={actions?.["${id}"]}${selfClosing ? " />" : ">"}`;
+        return `<${tagName}${cleanAttrs} data-action-id="${id}"${selfClosing ? " />" : ">"}`;
       })
     : withSelects;
   if (browserAuthority) {
@@ -2574,7 +2604,14 @@ function annotateInteractiveElements(html, projection) {
       }
     }
   }
-  return { html: withRoleControls, actions, valueControls, rejectedControls };
+  return {
+    html: withRoleControls,
+    actions,
+    valueControls,
+    rejectedControls,
+    actionInputFields,
+    actionInputInitialValues,
+  };
 }
 
 function annotateObservableElements(html, projection) {
@@ -2688,11 +2725,159 @@ function annotateObservableElements(html, projection) {
   };
 }
 
-function restoreGeneratedLinkActionHandlers(jsx) {
-  return String(jsx || "").replace(
-    /\sdata-setfarm-link-action="([^"]+)"/g,
-    (_match, id) => ` onClick={(event) => { event.preventDefault(); actions?.["${id}"]?.(); }}`,
-  );
+function sortedActionInputFields(actionRef, actionInputFields) {
+  return [...(actionInputFields.get(actionRef) || [])].sort();
+}
+
+function actionPayloadExpression(action, actionInputFields, currentValueKeys = new Set()) {
+  if (!action.actionRef) return "";
+  const fields = sortedActionInputFields(action.actionRef, actionInputFields);
+  if (fields.length === 0) return "";
+  const properties = fields.map((field) => {
+    const key = `${action.actionRef}.${field}`;
+    const value = currentValueKeys.has(key)
+      ? "nextValue"
+      : `actionInputValues[${JSON.stringify(key)}]`;
+    return `${JSON.stringify(field)}: ${value}`;
+  });
+  return `{ ${properties.join(", ")} }`;
+}
+
+function actionDispatchExpression(action, actionInputFields, currentValueKeys = new Set()) {
+  const payload = actionPayloadExpression(action, actionInputFields, currentValueKeys);
+  return `actions?.[${JSON.stringify(action.id)}]?.(${payload})`;
+}
+
+function inputStateUpdateStatements(inputBindings) {
+  const keys = [...new Set(inputBindings.map((binding) =>
+    `${binding.actionRef}.${binding.inputField}`))].sort();
+  if (keys.length === 0) return { keys, statements: "" };
+  const updates = keys.map((key) => `${JSON.stringify(key)}: nextValue`).join(", ");
+  return {
+    keys,
+    statements: `const nextValue = event.currentTarget.value; setActionInputValues((current) => ({ ...current, ${updates} })); `,
+  };
+}
+
+function materializeInteractiveRuntime(jsx, actions, valueControls, actionInputFields) {
+  const actionById = new Map(actions.map((action) => [action.id, action]));
+  const valueControlById = new Map(valueControls.map((control) => [control.id, control]));
+  return mapOpeningTagsRespectingQuotes(jsx, ({ original, tagName, attrs }) => {
+    const actionId = attrValue(attrs, "data-action-id");
+    const controlId = attrValue(attrs, "data-control-id");
+    const action = actionId ? actionById.get(actionId) : undefined;
+    const valueControl = controlId ? valueControlById.get(controlId) : undefined;
+    if (!action && !valueControl) return original;
+
+    const selfClosing = /\/\s*$/.test(attrs);
+    let cleanAttrs = selfClosing ? attrs.replace(/\/\s*$/, "") : attrs;
+    cleanAttrs = stripJsxAttribute(cleanAttrs, "onClick");
+    cleanAttrs = stripJsxAttribute(cleanAttrs, "onChange");
+
+    const normalizedTag = tagName.toLowerCase();
+    const valueLike = ["input", "textarea", "select"].includes(normalizedTag);
+    if (action) {
+      const payload = actionPayloadExpression(action, actionInputFields);
+      if (valueLike) {
+        const update = inputStateUpdateStatements(action.inputBindings || []);
+        if (update.keys.length > 0 && !(normalizedTag === "input" && attrValue(cleanAttrs, "type").toLowerCase() === "file")) {
+          cleanAttrs = stripJsxAttribute(cleanAttrs, "value");
+          cleanAttrs = stripJsxAttribute(cleanAttrs, "defaultValue");
+          cleanAttrs += ` value={actionInputValues[${JSON.stringify(update.keys[0])}]}`;
+        }
+        const dispatch = actionDispatchExpression(action, actionInputFields, new Set(update.keys));
+        if (update.statements) {
+          cleanAttrs += ` onChange={(event) => { ${update.statements}${dispatch}; }}`;
+        } else if (payload) {
+          cleanAttrs += ` onChange={() => { ${dispatch}; }}`;
+        } else {
+          cleanAttrs += ` onChange={actions?.[${JSON.stringify(action.id)}]}`;
+        }
+      } else {
+        const dispatch = actionDispatchExpression(action, actionInputFields);
+        if (normalizedTag === "a") {
+          cleanAttrs += ` onClick={(event) => { event.preventDefault(); ${dispatch}; }}`;
+        } else if (payload) {
+          cleanAttrs += ` onClick={() => { ${dispatch}; }}`;
+        } else {
+          cleanAttrs += ` onClick={actions?.[${JSON.stringify(action.id)}]}`;
+        }
+      }
+    } else if (valueControl) {
+      const update = inputStateUpdateStatements(valueControl.inputBindings || []);
+      if (update.keys.length === 0) {
+        failConversion("STITCH_ACTION_INPUT_RUNTIME_INVALID", `value control ${valueControl.id} has no exact action-input binding`);
+      }
+      if (!(normalizedTag === "input" && attrValue(cleanAttrs, "type").toLowerCase() === "file")) {
+        cleanAttrs = stripJsxAttribute(cleanAttrs, "value");
+        cleanAttrs = stripJsxAttribute(cleanAttrs, "defaultValue");
+        cleanAttrs += ` value={actionInputValues[${JSON.stringify(update.keys[0])}]}`;
+      }
+      cleanAttrs += ` onChange={(event) => { ${update.statements}}}`;
+    }
+    return `<${tagName}${cleanAttrs}${selfClosing ? " />" : ">"}`;
+  });
+}
+
+function actionCallbackProperties(actions, actionInputFields) {
+  return actions.map((action) => {
+    const fields = action.actionRef
+      ? sortedActionInputFields(action.actionRef, actionInputFields)
+      : [];
+    if (fields.length === 0) return `    ${JSON.stringify(action.id)}?: () => void;`;
+    const payload = fields.map((field) => `${JSON.stringify(field)}: string`).join("; ");
+    return `    ${JSON.stringify(action.id)}?: (payload: { ${payload} }) => void;`;
+  }).join("\n");
+}
+
+function actionInputStateDeclaration(actionInputFields, actionInputInitialValues) {
+  const keys = [...actionInputFields]
+    .flatMap(([actionRef, fields]) => [...fields].map((field) => `${actionRef}.${field}`))
+    .sort();
+  if (keys.length === 0) return "";
+  const stateType = keys.map((key) => `    ${JSON.stringify(key)}: string;`).join("\n");
+  const initialState = keys.map((key) =>
+    `    ${JSON.stringify(key)}: ${JSON.stringify(actionInputInitialValues.get(key) || "")},`).join("\n");
+  return `  const [actionInputValues, setActionInputValues] = useState<{\n${stateType}\n  }>({\n${initialState}\n  });\n`;
+}
+
+function compareUtf16Strings(left, right) {
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
+}
+
+function generatedScreenComponentApi(actions, valueControls, actionInputFields) {
+  const actionBindings = actions
+    .filter((action) => Boolean(action.actionRef))
+    .map((action) => ({
+      generatedLocalId: action.id,
+      actionRef: action.actionRef,
+      inputFields: sortedActionInputFields(action.actionRef, actionInputFields),
+    }))
+    .sort((left, right) => compareUtf16Strings(
+      `${left.generatedLocalId}\0${left.actionRef}`,
+      `${right.generatedLocalId}\0${right.actionRef}`,
+    ));
+  const inputTransports = [...actions, ...valueControls]
+    .flatMap((control) => (control.inputBindings || []).map((binding) => {
+      const actionInputRef = `${binding.actionRef}.${binding.inputField}`;
+      return {
+        actionInputRef,
+        generatedControlId: control.id,
+        stateKey: actionInputRef,
+      };
+    }))
+    .sort((left, right) => compareUtf16Strings(
+      `${left.actionInputRef}\0${left.generatedControlId}`,
+      `${right.actionInputRef}\0${right.generatedControlId}`,
+    ));
+  return {
+    schema: "setfarm.generated-screen-component-api.v1",
+    actionsPropName: "actions",
+    actionBindings,
+    inputTransports,
+  };
 }
 
 function stripNonRenderedHtmlBlocks(html) {
@@ -2737,6 +2922,8 @@ for (const screen of manifest) {
     actions,
     valueControls,
     rejectedControls,
+    actionInputFields,
+    actionInputInitialValues,
   } = annotateInteractiveElements(observableProjection.html, projection);
   const sourceLocator = projection?.authorityMode === "browser_rendered_v1" || projection?.authorityMode === "browser_rendered_v2"
     ? projection.semanticDomLocator
@@ -2770,14 +2957,23 @@ for (const screen of manifest) {
   }));
   const normalizedBody = replaceMaterialSymbolSpans(interactiveBody, lucideImports, unknownMaterialIcons);
   collectClassTokens(normalizedBody, usedClassTokens);
-  const jsx = restoreGeneratedLinkActionHandlers(htmlToJsx(normalizedBody));
+  const jsx = materializeInteractiveRuntime(
+    htmlToJsx(normalizedBody),
+    actions,
+    valueControls,
+    actionInputFields,
+  );
   const name = toComponentName(screen.title);
   if (!name) { console.warn("  SKIP empty component name:", screen.title); continue; }
-  const buttons = [...renderableBody.matchAll(/<button[^>]*>/gi)].length;
+  const nativeButtons = [...renderableBody.matchAll(/<button[^>]*>/gi)].length;
   const inputs = [...renderableBody.matchAll(/<input[^>]*>/gi)].length;
   const textareas = [...renderableBody.matchAll(/<textarea[^>]*>/gi)].length;
   const selects = [...renderableBody.matchAll(/<select[^>]*>/gi)].length;
-  const links = [...renderableBody.matchAll(/<a\s[^>]*>/gi)].length;
+  const nativeLinks = [...renderableBody.matchAll(/<a\s[^>]*>/gi)].length;
+  const customRoleActions = actions.filter((action) =>
+    action.nativeControlKind === null && action.interactiveRole === true);
+  const buttons = nativeButtons + customRoleActions.filter((action) => action.kind !== "link").length;
+  const links = nativeLinks + customRoleActions.filter((action) => action.kind === "link").length;
   const actionType = actions.length > 0 ? actions.map((action) => JSON.stringify(action.id)).join(" | ") : "never";
   const needsRuntime = isGameplayScreen(screen);
   const functionSignature = actions.length > 0 || needsRuntime
@@ -2786,17 +2982,23 @@ for (const screen of manifest) {
       needsRuntime ? "runtime" : "",
     ].filter(Boolean).join(", ")} }: ${name}Props) {`
     : `export function ${name}(_props: ${name}Props) {`;
-  const importBlock = lucideImports.size > 0
-    ? `import { ${[...lucideImports].sort().join(", ")} } from "lucide-react";\n\n`
-    : "";
+  const imports = [];
+  if (actionInputFields.size > 0) imports.push('import { useState } from "react";');
+  if (lucideImports.size > 0) {
+    imports.push(`import { ${[...lucideImports].sort().join(", ")} } from "lucide-react";`);
+  }
+  const importBlock = imports.length > 0 ? `${imports.join("\n")}\n\n` : "";
   const runtimeProp = needsRuntime ? `  runtime?: ${gameRuntimeType()};\n` : "";
+  const callbackProperties = actionCallbackProperties(actions, actionInputFields);
+  const actionInputState = actionInputStateDeclaration(actionInputFields, actionInputInitialValues);
+  const componentApi = generatedScreenComponentApi(actions, valueControls, actionInputFields);
 
   const code = `// AUTO-GENERATED from Stitch — DO NOT modify layout or CSS
 // Screen: ${screen.title}
 // 
 // AGENT INSTRUCTIONS:
 // 1. DO NOT change className values or layout structure
-// 2. Add useState for dynamic values (replace hardcoded text)
+// 2. Preserve the generated action-input state and exact payload transport
 // 3. Wire interactive controls through the typed actions prop
 // 4. Replace placeholder data with props/state
 
@@ -2804,12 +3006,16 @@ ${importBlock}
 export type ${name}ActionId = ${actionType};
 
 export interface ${name}Props {
-  actions?: Partial<Record<${name}ActionId, () => void>>;
+  actions?: {
+${callbackProperties}
+  };
 ${runtimeProp}
 }
 
+export type ${name}ActionCallbacks = NonNullable<${name}Props["actions"]>;
+
 ${functionSignature}
-${needsRuntime ? "  void runtime;\n" : ""}  return (
+${needsRuntime ? "  void runtime;\n" : ""}${actionInputState}  return (
     <>
 ${jsx.split("\n").map(l => "      " + l).join("\n")}
     </>
@@ -2843,6 +3049,7 @@ ${jsx.split("\n").map(l => "      " + l).join("\n")}
       ...observable,
       generatedSourceLocator,
     })),
+    componentApi,
     ...(projection ? {
       projection: {
         schema: "setfarm.stitch-screen-projection.v2",
@@ -2877,7 +3084,7 @@ for (const screen of screenIndex) {
 const barrel = uniqueBarrelScreens
   .map((screen) => [
     `export { ${screen.componentName} } from "./${screen.componentName}";`,
-    `export type { ${screen.componentName}Props, ${screen.componentName}ActionId } from "./${screen.componentName}";`,
+    `export type { ${screen.componentName}Props, ${screen.componentName}ActionId, ${screen.componentName}ActionCallbacks } from "./${screen.componentName}";`,
   ].join("\n"))
   .join("\n");
 fs.writeFileSync(path.join(screensDir, "index.ts"), barrel ? `${barrel}\n` : "");

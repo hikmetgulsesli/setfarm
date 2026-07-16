@@ -80,11 +80,12 @@ describe("stitch-to-jsx", () => {
 
       const code = fs.readFileSync(path.join(screensDir, "HomeScreen.tsx"), "utf-8");
       assert.match(code, /export type HomeScreenActionId = "add-1";/);
-      assert.match(code, /actions\?: Partial<Record<HomeScreenActionId, \(\) => void>>;/);
+      assert.match(code, /"add-1"\?: \(\) => void;/);
+      assert.match(code, /export type HomeScreenActionCallbacks = NonNullable<HomeScreenProps\["actions"\]>;/);
       assert.match(code, /<button type="button" data-action-id="add-1" onClick=\{actions\?\.\["add-1"\]\}>Add<\/button>/);
 
       const barrel = fs.readFileSync(path.join(screensDir, "index.ts"), "utf-8");
-      assert.equal(barrel, 'export { HomeScreen } from "./HomeScreen";\nexport type { HomeScreenProps, HomeScreenActionId } from "./HomeScreen";\n');
+      assert.equal(barrel, 'export { HomeScreen } from "./HomeScreen";\nexport type { HomeScreenProps, HomeScreenActionId, HomeScreenActionCallbacks } from "./HomeScreen";\n');
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -447,7 +448,7 @@ describe("stitch-to-jsx", () => {
       assert.match(code, /<Info className="text-outline text-\[16px\] cursor-help" aria-hidden=\{true\} focusable="false" \/>/);
       assert.match(code, /<CircleHelp aria-hidden=\{true\} focusable="false" \/>Help Center/);
       assert.match(code, /<RotateCw className="text-\[18px\]" aria-hidden=\{true\} focusable="false" \/>Rotate/);
-      assert.match(code, /<button[^>]*data-action-id="close-3"[^>]*className="text-\[12px\] hover:text-error transition-colors"[^>]*aria-label="Close"><X aria-hidden=\{true\} focusable="false" \/><\/button>/);
+      assert.match(code, /<button[^>]*data-action-id="close-3"[^>]*className="text-\[12px\] hover:text-error transition-colors"[^>]*aria-label="Close"[^>]*><X aria-hidden=\{true\} focusable="false" \/><\/button>/);
       assert.match(code, /<button className="transition-colors"/);
       assert.equal((code.match(/aria-hidden/g) || []).length, 5);
       assert.equal((code.match(/focusable=/g) || []).length, 5);
@@ -1438,9 +1439,9 @@ describe("stitch-to-jsx", () => {
       assert.match(code, /data-action-id="save-1"/);
       assert.match(code, /data-action-id="export-1"/);
       assert.match(code, /placeholder="Use A > B \/ C"/);
-      assert.equal(code.includes('<input aria-label="Title" data-action-input="ACT_SAVE.title" placeholder="Use A > B / C" data-control-id="title-1" />'), true);
-      assert.equal(code.includes('<textarea aria-label="Notes" data-action-input="ACT_SAVE.notes" data-control-id="notes-2" />'), true);
-      assert.equal(code.includes('<select aria-label="Priority" data-action-input="ACT_SAVE.priority" data-control-id="priority-4" />'), true);
+      assert.match(code, /data-action-input="ACT_SAVE\.title"[^\n]*data-control-id="title-1"/);
+      assert.match(code, /data-action-input="ACT_SAVE\.notes"[^\n]*data-control-id="notes-2"/);
+      assert.match(code, /data-action-input="ACT_SAVE\.priority"[^\n]*data-control-id="priority-4"/);
       assert.match(code, /placeholder="Long > notes"/);
       assert.match(code, /data-control-id="long-notes-3"/);
       assert.match(code, /data-note='Category > \/ choices'/);
