@@ -158,6 +158,10 @@ describe("design-source authority v2 runtime", { concurrency: 1 }, () => {
         JSON.parse(await readFile(path.join(repo, "stitch", "DESIGN_INTERACTION_GRAPH_V2.json"), "utf8")),
         first.artifacts?.designGraph,
       );
+      assert.deepEqual(
+        JSON.parse(await readFile(path.join(repo, "stitch", "GENERATION_TARGETS.json"), "utf8")),
+        targets.generationTargets,
+      );
       assert.match(await readFile(path.join(repo, "stitch", "DESIGN.md"), "utf8"), /Physical control slots/);
 
       const replay = await runDesignSourceAuthorityV2(runtimeInput, {

@@ -368,6 +368,15 @@ async function materializeAcceptedAuthority(input: Readonly<{
     projectId: input.projectId,
     batches,
   });
+  // The converter is a downstream consumer of the same compiler-owned target
+  // authority. Project the exact v2 payload from the accepted attempt instead
+  // of asking setup-build to reconstruct or promote a historical v1 contract.
+  const generationTargetsRef = await writeCanonicalPayload({
+    area: "selection",
+    locator: "generation-targets-v2.json",
+    payload: input.contract.generationTargets,
+    writeEvidence: input.writeEvidence,
+  });
   const directRef = await writeCanonicalPayload({
     area: "raw",
     locator: "direct-response-evidence.json",
@@ -534,6 +543,7 @@ async function materializeAcceptedAuthority(input: Readonly<{
   const projectionArtifacts = [
     ...selectedProjection,
     ...sidecarProjection,
+    { source: generationTargetsRef, targetPath: "GENERATION_TARGETS.json" },
     { source: directRef, targetPath: "STITCH_DIRECT_RESPONSE_EVIDENCE.json" },
     { source: renderedRef, targetPath: "STITCH_RENDERED_SEMANTICS_V2.json" },
     { source: selectionRef, targetPath: "STITCH_TARGET_CANDIDATE_SELECTION.json" },
