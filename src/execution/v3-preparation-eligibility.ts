@@ -1,6 +1,6 @@
 import type postgres from "postgres";
 
-import type { SealedRuntimePacket } from "../product-compiler/runtime-artifact-reader.js";
+import type { ExactSealedRuntimePacket } from "../product-compiler/runtime-artifact-reader.js";
 import type { SourceRevisionV1 } from "./schemas/execution-attempt-v1.js";
 import { V3ImplementationAttemptError } from "./v3-implementation-attempt.js";
 import {
@@ -20,13 +20,13 @@ type TerminalDependencyAttempt = Readonly<{
 export type V3PreparationEligibilityResult =
   | Readonly<{
       status: "ready";
-      packet: SealedRuntimePacket;
+      packet: ExactSealedRuntimePacket;
       source: SourceRevisionV1;
       dependencyState: readonly V3PreparationDependencyStateV1[];
     }>
   | Readonly<{
       status: "blocked";
-      packet: SealedRuntimePacket;
+      packet: ExactSealedRuntimePacket;
       source: SourceRevisionV1;
       dependencyState: readonly V3PreparationDependencyStateV1[];
       decision: V3PreparationDecisionV1;
@@ -34,7 +34,7 @@ export type V3PreparationEligibilityResult =
     }>;
 
 type EligibilityDependencies = Readonly<{
-  readPacket(runId: string): Promise<SealedRuntimePacket>;
+  readPacket(runId: string): Promise<ExactSealedRuntimePacket>;
   captureSource(worktree: string): Promise<SourceRevisionV1>;
   readTerminalDependencyAttempts(input: Readonly<{
     runId: string;
@@ -60,7 +60,7 @@ function asBlocked(input: Readonly<{
   runId: string;
   stepId: string;
   storyId: string;
-  packet: SealedRuntimePacket;
+  packet: ExactSealedRuntimePacket;
   source: SourceRevisionV1;
   dependencyState: readonly V3PreparationDependencyStateV1[];
   error: V3ImplementationAttemptError;

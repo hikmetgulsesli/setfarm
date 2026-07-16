@@ -11,6 +11,9 @@ import {
   type V3NormalImplementationStoryRow,
   type V3TerminalDependencyAttemptProjection,
 } from "../../src/execution/v3-normal-implementation-preclaim.js";
+import { hashCanonicalJson } from "../../src/product-compiler/canonical-json.js";
+import { produceImplementationSourceMapV1 } from "../../src/product-compiler/producers/implementation-source-map-v1.js";
+import { ProductBuildPacketV3Schema } from "../../src/product-compiler/schemas/product-build-packet-v3.js";
 import {
   createV3PreparationClaimAuthorityV1,
   type V3PreparationClaimAuthorityV1,
@@ -20,12 +23,18 @@ import {
   type V3PreparationBlockV1,
 } from "../../src/execution/v3-preparation-decision.js";
 import { resolveV3GitRevision } from "../../src/execution/v3-git-revision.js";
-import type { SealedRuntimePacketV1 } from "../../src/product-compiler/runtime-artifact-reader.js";
+import type {
+  ExactSealedRuntimePacket,
+  SealedRuntimePacketV1,
+  SealedRuntimePacketV3,
+} from "../../src/product-compiler/runtime-artifact-reader.js";
 import { buildMinimalValidV3Contracts } from "../product-compiler/fixtures/minimal-valid-contract.js";
+import { buildNoDesignProductBuildPacketV3Contracts } from "../product-compiler/fixtures/product-build-packet-v3.js";
 
 const RUN_ID = "run-v3-normal-preclaim";
 const STEP_ID = "implement";
 const PACKET_HASH = "e".repeat(64);
+const NATIVE_V3_RELEASE_SHA = "c".repeat(40);
 
 function git(repo: string, args: readonly string[]): string {
   return execFileSync("git", [...args], {
@@ -80,6 +89,102 @@ function packet(): SealedRuntimePacketV1 {
       packetHash: PACKET_HASH,
     },
     refs,
+  };
+}
+
+function semanticEnvelopeHash(
+  artifactType: string,
+  producer: SealedRuntimePacketV3["producer"],
+  payload: unknown,
+): string {
+  return hashCanonicalJson({
+    schema: "setfarm.semantic-artifact-envelope.v1",
+    artifactType,
+    producer,
+    payload,
+  });
+}
+
+function nativeV3Packet(): SealedRuntimePacketV3 {
+  const contracts = buildNoDesignProductBuildPacketV3Contracts();
+  const producer = {
+    pass: "v3-normal-preclaim-test",
+    codeSha: NATIVE_V3_RELEASE_SHA,
+    toolVersions: {},
+  };
+  const sourceMap = produceImplementationSourceMapV1(contracts.implementationSourceInputsV1);
+  assert.equal(sourceMap.status, "produced", JSON.stringify(sourceMap));
+  if (sourceMap.status !== "produced") throw new Error("unreachable");
+  const refs = {
+    productSpec: semanticEnvelopeHash("setfarm.product-spec.v2", producer, contracts.productSpecV2),
+    designGraph: null,
+    buildTopology: semanticEnvelopeHash("setfarm.build-topology.v1", producer, contracts.buildTopologyV1),
+    storyPlan: semanticEnvelopeHash("setfarm.story-plan.v2", producer, contracts.storyPlanV2),
+    designSourceClosure: semanticEnvelopeHash(
+      "setfarm.design-source-closure.v2",
+      producer,
+      contracts.designSourceClosureV2,
+    ),
+    implementationSourceMap: semanticEnvelopeHash(
+      "setfarm.implementation-source-map.v1",
+      producer,
+      sourceMap.sourceMap,
+    ),
+  };
+  const compiler = { version: "4.0.0", codeSha: NATIVE_V3_RELEASE_SHA };
+  const packetPayload = ProductBuildPacketV3Schema.parse({
+    schema: "setfarm.product-build-packet.v3",
+    packetVersion: 3,
+    parentPacketHashes: [],
+    designSourceKind: "none",
+    productSpecV2Hash: refs.productSpec,
+    designGraphV2Hash: null,
+    buildTopologyV1Hash: refs.buildTopology,
+    storyPlanV2Hash: refs.storyPlan,
+    designSourceClosureV2Hash: refs.designSourceClosure,
+    implementationSourceMapV1Hash: refs.implementationSourceMap,
+    compiler,
+    validationIds: ["VALIDATE_NATIVE_V3_PRECLAIM"],
+  });
+  const packetHash = semanticEnvelopeHash("setfarm.product-build-packet.v3", producer, packetPayload);
+  const compilationReport = {
+    schema: "setfarm.product-compilation-report.v3" as const,
+    compiler,
+    inputHashes: ["9".repeat(64)],
+    diagnostics: [],
+    validationIds: packetPayload.validationIds,
+    status: "sealed" as const,
+    artifactHashes: {
+      productSpecV2: refs.productSpec,
+      designGraphV2: null,
+      buildTopologyV1: refs.buildTopology,
+      storyPlanV2: refs.storyPlan,
+      designSourceClosureV2: refs.designSourceClosure,
+      implementationSourceMapV1: refs.implementationSourceMap,
+    },
+    packetHash,
+  };
+  return {
+    runId: RUN_ID,
+    packetHash,
+    producer,
+    productSpec: contracts.productSpecV2,
+    designGraph: null,
+    buildTopology: contracts.buildTopologyV1,
+    storyPlan: contracts.storyPlanV2,
+    designSourceClosure: contracts.designSourceClosureV2,
+    implementationSourceMap: sourceMap.sourceMap,
+    packet: packetPayload,
+    compilationReport,
+    refs: {
+      ...refs,
+      packet: packetHash,
+      compilationReport: semanticEnvelopeHash(
+        "setfarm.product-compilation-report.v3",
+        producer,
+        compilationReport,
+      ),
+    },
   };
 }
 
@@ -180,7 +285,7 @@ function fakeBlockRepository(options: Readonly<{
 function dependencies(input: Readonly<{
   stories?: readonly V3NormalImplementationStoryRow[];
   attempts?: () => readonly V3TerminalDependencyAttemptProjection[];
-  packet?: () => SealedRuntimePacketV1;
+  packet?: () => ExactSealedRuntimePacket;
   blockRepository?: BlockRepository;
   syncBeforePin?: V3NormalImplementationPreclaimDependencies["syncBeforePin"];
   resolveRevision?: typeof resolveV3GitRevision;
@@ -215,6 +320,40 @@ describe("v3 normal implementation preclaim", () => {
 
   afterEach(async () => {
     await rm(repo, { recursive: true, force: true });
+  });
+
+  it("accepts an exact native ProductBuildPacketV3 and rejects child-ref drift before selection", async () => {
+    const accepted = createV3NormalImplementationPreclaim(dependencies({
+      packet: nativeV3Packet,
+      stories: [],
+    }));
+    assert.deepEqual(await accepted.prepare({
+      runId: RUN_ID,
+      stepId: STEP_ID,
+      repo,
+      requestedBaseRef: "base",
+    }), { status: "none" });
+
+    const rejected = createV3NormalImplementationPreclaim(dependencies({
+      packet: () => {
+        const value = structuredClone(nativeV3Packet());
+        value.refs.implementationSourceMap = "0".repeat(64);
+        return value;
+      },
+      stories: [],
+    }));
+    const result = await rejected.prepare({
+      runId: RUN_ID,
+      stepId: STEP_ID,
+      repo,
+      requestedBaseRef: "base",
+    });
+    assert.equal(result.status, "blocked");
+    if (result.status === "blocked") {
+      assert.equal(result.error.code, "V3_NORMAL_PRECLAIM_PACKET_INVALID");
+      assert.equal(result.consumesClaim, false);
+      assert.equal(result.dispatchModel, false);
+    }
   });
 
   it("selects the lowest story_index and runs sync before the single immutable pin", async () => {

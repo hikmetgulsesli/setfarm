@@ -1,12 +1,19 @@
 import type postgres from "postgres";
 
-import type { SealedRuntimePacket } from "../product-compiler/runtime-artifact-reader.js";
+import type {
+  ExactSealedRuntimePacket,
+  SealedRuntimePacket,
+  SealedRuntimePacketV3,
+} from "../product-compiler/runtime-artifact-reader.js";
 import { ProductBuildPacketV1Schema } from "../product-compiler/schemas/product-build-packet-v1.js";
 import { ProductBuildPacketV2Schema } from "../product-compiler/schemas/product-build-packet-v2.js";
+import { ProductBuildPacketV3Schema } from "../product-compiler/schemas/product-build-packet-v3.js";
 import { ProductCompilationReportV1Schema } from "../product-compiler/schemas/compilation-report-v1.js";
 import { ProductCompilationReportV2Schema } from "../product-compiler/schemas/compilation-report-v2.js";
+import { ProductCompilationReportV3Schema } from "../product-compiler/schemas/compilation-report-v3.js";
 import { StoryIdSchema } from "../product-compiler/schemas/common-v1.js";
 import { StoryPlanV1Schema, type StoryPlanV1 } from "../product-compiler/schemas/story-plan-v1.js";
+import { StoryPlanV2Schema, type StoryPlanV2 } from "../product-compiler/schemas/story-plan-v2.js";
 import type { SourceRevisionV1 } from "./schemas/execution-attempt-v1.js";
 import type { createV3PreparationBlockRepository } from "./v3-preparation-block-repository.js";
 import {
@@ -116,7 +123,7 @@ export type V3NormalImplementationPreclaimResult<
 export type V3NormalImplementationPreclaimDependencies<
   TStory extends V3NormalImplementationStoryRow = V3NormalImplementationStoryRow,
 > = Readonly<{
-  readPacket(runId: string): Promise<SealedRuntimePacket>;
+  readPacket(runId: string): Promise<ExactSealedRuntimePacket>;
   readPendingStories(input: Readonly<{
     runId: string;
     stepId: string;
@@ -186,7 +193,61 @@ function canonicalStrings(values: readonly string[]): string[] {
   return [...new Set(values)].sort();
 }
 
-function validatePacket(packet: SealedRuntimePacket, runId: string): StoryPlanV1 {
+type V3ImplementationStoryPlan = StoryPlanV1 | StoryPlanV2;
+
+function validateNativeV3Packet(
+  packet: SealedRuntimePacketV3,
+): StoryPlanV2 {
+  const packetPayload = ProductBuildPacketV3Schema.safeParse(packet.packet);
+  const report = ProductCompilationReportV3Schema.safeParse(packet.compilationReport);
+  const storyPlan = StoryPlanV2Schema.safeParse(packet.storyPlan);
+  if (!packetPayload.success || !report.success || report.data.status !== "sealed" || !storyPlan.success) {
+    throw new V3NormalImplementationPreclaimError(
+      "V3_NORMAL_PRECLAIM_PACKET_INVALID",
+      "native v3 packet payload, sealed report, or StoryPlanV2 is invalid",
+    );
+  }
+  const refs = packet.refs;
+  const requiredRefs = [
+    refs.productSpec,
+    refs.buildTopology,
+    refs.storyPlan,
+    refs.designSourceClosure,
+    refs.implementationSourceMap,
+    refs.packet,
+    refs.compilationReport,
+  ];
+  if (
+    requiredRefs.some((hash) => !SHA256.test(hash))
+    || (refs.designGraph !== null && !SHA256.test(refs.designGraph))
+    || (packetPayload.data.designGraphV2Hash === null) !== (refs.designGraph === null)
+    || packetPayload.data.productSpecV2Hash !== refs.productSpec
+    || packetPayload.data.designGraphV2Hash !== refs.designGraph
+    || packetPayload.data.buildTopologyV1Hash !== refs.buildTopology
+    || packetPayload.data.storyPlanV2Hash !== refs.storyPlan
+    || packetPayload.data.designSourceClosureV2Hash !== refs.designSourceClosure
+    || packetPayload.data.implementationSourceMapV1Hash !== refs.implementationSourceMap
+    || report.data.packetHash !== packet.packetHash
+    || report.data.artifactHashes.productSpecV2 !== refs.productSpec
+    || report.data.artifactHashes.designGraphV2 !== refs.designGraph
+    || report.data.artifactHashes.buildTopologyV1 !== refs.buildTopology
+    || report.data.artifactHashes.storyPlanV2 !== refs.storyPlan
+    || report.data.artifactHashes.designSourceClosureV2 !== refs.designSourceClosure
+    || report.data.artifactHashes.implementationSourceMapV1 !== refs.implementationSourceMap
+    || packetPayload.data.compiler.codeSha !== report.data.compiler.codeSha
+    || packetPayload.data.compiler.version !== report.data.compiler.version
+    || packetPayload.data.runtimeDataContractHash !== packet.buildTopology.runtimeDataContractHash
+    || packetPayload.data.runtimeEvidenceContractHash !== packet.buildTopology.runtimeEvidenceContractHash
+  ) {
+    throw new V3NormalImplementationPreclaimError(
+      "V3_NORMAL_PRECLAIM_PACKET_INVALID",
+      "native v3 packet child refs, runtime authority, or compiler identity are internally inconsistent",
+    );
+  }
+  return storyPlan.data;
+}
+
+function validatePacket(packet: ExactSealedRuntimePacket, runId: string): V3ImplementationStoryPlan {
   if (
     packet.runId !== runId
     || !SHA256.test(packet.packetHash)
@@ -197,6 +258,7 @@ function validatePacket(packet: SealedRuntimePacket, runId: string): StoryPlanV1
       "runtime packet identity is not bound to the requested run and artifact ref",
     );
   }
+  if ("implementationSourceMap" in packet) return validateNativeV3Packet(packet);
   const packetPayload = packet.packet.schema === "setfarm.product-build-packet.v2"
     ? ProductBuildPacketV2Schema.safeParse(packet.packet)
     : ProductBuildPacketV1Schema.safeParse(packet.packet);
@@ -287,7 +349,7 @@ function selectPendingStory<TStory extends V3NormalImplementationStoryRow>(
 
 function validateStoryProjection(
   story: V3NormalImplementationStoryRow,
-  storyPlan: StoryPlanV1,
+  storyPlan: V3ImplementationStoryPlan,
 ): readonly string[] {
   const orderedStories = [...storyPlan.stories].sort((left, right) => left.order - right.order);
   const sealedIndex = orderedStories.findIndex((candidate) => candidate.id === story.story_id);
@@ -352,8 +414,10 @@ function validateStoryProjection(
   return projected;
 }
 
-function packetEvidenceRefs(packet: SealedRuntimePacket): string[] {
-  return canonicalStrings(Object.values(packet.refs).map((hash) => `setfarm://artifact/${hash}`));
+function packetEvidenceRefs(packet: ExactSealedRuntimePacket): string[] {
+  return canonicalStrings(Object.values(packet.refs)
+    .filter((hash): hash is string => typeof hash === "string")
+    .map((hash) => `setfarm://artifact/${hash}`));
 }
 
 function exactAuthorityMatch(input: Readonly<{
@@ -406,8 +470,8 @@ export function createV3NormalImplementationPreclaim<
         });
       }
 
-      let packet: SealedRuntimePacket;
-      let storyPlan: StoryPlanV1;
+      let packet: ExactSealedRuntimePacket;
+      let storyPlan: V3ImplementationStoryPlan;
       try {
         packet = await dependencies.readPacket(input.runId);
         storyPlan = validatePacket(packet, input.runId);
