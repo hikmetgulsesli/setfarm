@@ -31,6 +31,7 @@ import {
   ProductBuildAuthorityV2Error,
   produceSealedProductBuildAuthorityV2,
   readProductBuildAuthorityV2,
+  readVersionedProductBuildAuthority,
 } from "../src/server/product-build-authority.js";
 import {
   RunOperationalSnapshotV3Schema,
@@ -414,6 +415,33 @@ describe("run operational snapshot v3 schema", () => {
 });
 
 describe("product build authority v2 schema", () => {
+  it("defaults versioned reads to v2 and exposes v1 only as an explicit migration view", async () => {
+    const v1 = await sealedPacketAuthorityV1();
+    const { schema: _schema, authorityHash: _authorityHash, ...packet } = v1;
+    const reader = {
+      async readSealedPacket() { return packet as SealedRuntimePacket; },
+      async auditTerminalPacket() { throw new Error("unreachable"); },
+    };
+    const refusalOptions = {
+      sql: { async unsafe() { throw new Error("unreachable"); } } as any,
+      artifactRoot: path.join(tmpdir(), "unreachable-authority-v2"),
+      artifactLimits: ARTIFACT_LIMITS,
+    };
+    const current = await readVersionedProductBuildAuthority({
+      reader,
+      runId: RUN_ID,
+      refusalOptions,
+    });
+    assert.equal(current.schema, "setfarm.product-build-authority.v2");
+    const legacy = await readVersionedProductBuildAuthority({
+      schema: "v1",
+      reader,
+      runId: RUN_ID,
+      refusalOptions,
+    });
+    assert.equal(legacy.schema, "setfarm.product-build-authority.v1");
+  });
+
   it("deeply binds a refused-before-packet authority to the exact semantic envelope", () => {
     const refusal = refusalFixture();
     assert.equal(ProductBuildAuthorityV2Schema.safeParse(refusal).success, true);

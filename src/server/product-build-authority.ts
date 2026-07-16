@@ -379,3 +379,15 @@ export async function readProductBuildAuthorityV2(
     return produceRefusedProductBuildAuthorityV2(runId, refusal);
   }
 }
+
+/** Default operational reader is v2; v1 remains an explicit migration view. */
+export async function readVersionedProductBuildAuthority(input: Readonly<{
+  schema?: "v1" | "v2";
+  reader: ProductBuildAuthorityReader;
+  runId: string;
+  refusalOptions: VerifiedDesignCandidateRefusalReadOptions;
+}>): Promise<ProductBuildAuthorityV1 | ProductBuildAuthorityV2> {
+  return input.schema === "v1"
+    ? readProductBuildAuthorityV1(input.reader, input.runId)
+    : readProductBuildAuthorityV2(input.reader, input.runId, input.refusalOptions);
+}
