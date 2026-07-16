@@ -28,6 +28,7 @@ import {
   type ImplementationSliceV1,
 } from "./schemas/implementation-slice-v1.js";
 import { ProductBuildPacketV1Schema } from "./schemas/product-build-packet-v1.js";
+import { ProductBuildPacketV2Schema } from "./schemas/product-build-packet-v2.js";
 import { ProductSpecV1Schema } from "./schemas/product-spec-v1.js";
 import { StoryPlanV1Schema } from "./schemas/story-plan-v1.js";
 import { validateRuntimeDataContractClosureV1 } from "./producers/runtime-data-contract.js";
@@ -58,7 +59,7 @@ const SourceFileSnapshotV1Schema = z
 const SliceCompilerInputV1Schema = z
   .object({
     packetHash: Sha256Schema,
-    packet: ProductBuildPacketV1Schema,
+    packet: z.union([ProductBuildPacketV1Schema, ProductBuildPacketV2Schema]),
     productSpec: ProductSpecV1Schema,
     designGraph: DesignInteractionGraphV1Schema,
     buildTopology: BuildTopologyV1Schema,
@@ -137,7 +138,7 @@ export function compileImplementationSlice(input: unknown): ImplementationSliceC
   const value = parsed.data;
   const diagnostics: CompilationDiagnosticV1[] = [];
   const expectedPacketHash = envelopeHash(
-    "setfarm.product-build-packet.v1",
+    value.packet.schema,
     value.producer,
     value.packet,
   );

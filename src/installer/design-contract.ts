@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { logger } from "../lib/logger.js";
 import { pgQuery, pgRun, now } from "../db-pg.js";
 import { parseAcceptanceCriteria } from "./story-ops.js";
+import { isValidStitchHtmlFile } from "../product-compiler/stitch-render-artifact.js";
 
 // ESM __dirname polyfill (NodeNext doesn't provide it)
 const __filename = fileURLToPath(import.meta.url);
@@ -146,8 +147,6 @@ export function parseDesignHTML(html: string, screenId?: string): DesignContract
 }
 
 // --- Build contracts from DESIGN_MANIFEST.json ---
-const MIN_STITCH_HTML_BYTES = 1000;
-
 function isPrdPseudoScreen(screen: any): boolean {
   const title = String(screen?.title || screen?.name || "").trim().toLowerCase();
   const htmlFile = String(screen?.htmlFile || "").trim().toLowerCase();
@@ -155,16 +154,7 @@ function isPrdPseudoScreen(screen: any): boolean {
 }
 
 function isValidStitchHtml(filePath: string): boolean {
-  try {
-    if (!fs.existsSync(filePath)) return false;
-    if (fs.statSync(filePath).size < MIN_STITCH_HTML_BYTES) return false;
-    const head = fs.readFileSync(filePath, "utf-8").slice(0, 4000).toLowerCase();
-    if (!head.includes("<html") && !head.includes("<!doctype")) return false;
-    if (head.includes("empty html") || head.includes("design not generated")) return false;
-    return true;
-  } catch {
-    return false;
-  }
+  return isValidStitchHtmlFile(filePath);
 }
 
 export function buildDesignContracts(repoPath: string): DesignContract[] {

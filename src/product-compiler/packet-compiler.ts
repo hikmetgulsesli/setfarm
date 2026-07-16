@@ -8,6 +8,12 @@ import {
 } from "./artifact-store.js";
 import { hashCanonicalJson } from "./canonical-json.js";
 import {
+  buildDesignSourceClosureV1,
+  validateDesignSourceClosureInputV1,
+  type DesignSourceInputV1,
+  type ValidatedDesignSourceClosureInputV1,
+} from "./design-source-closure-compiler.js";
+import {
   makeCompilationDiagnostic,
   sortCompilationDiagnostics,
 } from "./diagnostics.js";
@@ -17,6 +23,10 @@ import {
   ProductCompilationReportV1Schema,
   type ProductCompilationReportV1,
 } from "./schemas/compilation-report-v1.js";
+import {
+  ProductCompilationReportV2Schema,
+  type ProductCompilationReportV2,
+} from "./schemas/compilation-report-v2.js";
 import {
   CompilerIdentityV1Schema,
   SemanticArtifactProducerV1Schema,
@@ -30,6 +40,10 @@ import {
   ProductBuildPacketV1Schema,
   type ProductBuildPacketV1,
 } from "./schemas/product-build-packet-v1.js";
+import {
+  ProductBuildPacketV2Schema,
+  type ProductBuildPacketV2,
+} from "./schemas/product-build-packet-v2.js";
 import {
   ProductSpecV1Schema,
   type ProductActionV1,
@@ -50,6 +64,11 @@ const VALIDATION_IDS = [
   "VALIDATE_TOPOLOGY_CAPABILITIES",
 ] as const;
 
+const VALIDATION_IDS_V2 = [
+  ...VALIDATION_IDS,
+  "VALIDATE_DESIGN_SOURCE_CLOSURE",
+] as const;
+
 type ArtifactWriter = Readonly<{
   put(value: unknown): Promise<ArtifactPutResult>;
 }>;
@@ -63,15 +82,16 @@ export type ProductPacketCompilerInput = Readonly<{
   producer: unknown;
   parentPacketHashes?: unknown;
   protocol?: "legacy-shadow" | "v3";
+  designSource?: DesignSourceInputV1;
   artifactStore: ArtifactWriter;
 }>;
 
 export type ProductPacketCompilationResult = Readonly<{
   status: "sealed" | "rejected";
-  report: ProductCompilationReportV1;
+  report: ProductCompilationReportV1 | ProductCompilationReportV2;
   reportHash: string;
   artifactHashes: Readonly<Record<string, string>>;
-  packet?: ProductBuildPacketV1;
+  packet?: ProductBuildPacketV1 | ProductBuildPacketV2;
   packetHash?: string;
 }>;
 
@@ -793,11 +813,24 @@ export async function compileProductBuildPacket(
   const compiler = CompilerIdentityV1Schema.parse(input.compiler);
   const producer = SemanticArtifactProducerV1Schema.parse(input.producer);
   const parentPacketHashes = z.array(Sha256Schema).max(100).parse(input.parentPacketHashes ?? []);
+  const usePacketV2 = input.designSource !== undefined;
+  if (usePacketV2 && input.protocol !== "v3") {
+    throw new TypeError("A typed design-source closure is only valid for Product Compiler v3 packets");
+  }
   const rawHashes = {
     productSpec: safeInputHash(input.productSpec, "productSpec"),
     designGraph: safeInputHash(input.designGraph, "designGraph"),
     buildTopology: safeInputHash(input.buildTopology, "buildTopology"),
     storyPlan: safeInputHash(input.storyPlan, "storyPlan"),
+    ...(input.designSource?.kind === "stitch" ? {
+      designGenerationTargets: safeInputHash(input.designSource.generationTargets, "designGenerationTargets"),
+      stitchDirectResponseEvidence: safeInputHash(input.designSource.directResponseEvidence, "stitchDirectResponseEvidence"),
+      stitchRenderedSemantics: safeInputHash(input.designSource.renderedSemantics, "stitchRenderedSemantics"),
+      stitchTargetCandidateSelection: safeInputHash(input.designSource.candidateSelection, "stitchTargetCandidateSelection"),
+      stitchTargetResponseBindings: safeInputHash(input.designSource.responseBindings, "stitchTargetResponseBindings"),
+    } : input.designSource?.kind === "none" ? {
+      designSourceNone: safeInputHash(input.designSource, "designSourceNone"),
+    } : {}),
   };
   const diagnostics: CompilationDiagnosticV1[] = [];
   if (compiler.codeSha !== producer.codeSha) {
@@ -859,12 +892,89 @@ export async function compileProductBuildPacket(
     ));
   }
 
+  let validatedDesignSource: ValidatedDesignSourceClosureInputV1 | undefined;
+  if (input.designSource && productResult.success && graphResult.success) {
+    const validated = validateDesignSourceClosureInputV1({
+      productSpec: productResult.data,
+      designGraph: graphResult.data,
+      designSource: input.designSource,
+    });
+    if (validated.status === "rejected") {
+      diagnostics.push(...validated.issues.map((entry) => diagnostic({
+        code: entry.code,
+        message: entry.message,
+        reference: entry.reference,
+      })));
+    } else {
+      validatedDesignSource = validated.value;
+    }
+  }
+
+  if (validatedDesignSource) {
+    let envelopeHashes: {
+      generationTargets: string;
+      directResponseEvidence: string;
+      renderedSemantics: string;
+      candidateSelection: string;
+      responseBindings: string;
+    } | undefined;
+    if (validatedDesignSource.kind === "stitch") {
+      envelopeHashes = {
+        generationTargets: await storeChild(
+          input.artifactStore,
+          "setfarm.design-generation-targets.v1",
+          producer,
+          validatedDesignSource.generationTargets,
+        ),
+        directResponseEvidence: await storeChild(
+          input.artifactStore,
+          "setfarm.stitch-direct-response-evidence.v2",
+          producer,
+          validatedDesignSource.directResponseEvidence,
+        ),
+        renderedSemantics: await storeChild(
+          input.artifactStore,
+          "setfarm.stitch-rendered-semantics.v1",
+          producer,
+          validatedDesignSource.renderedSemantics,
+        ),
+        candidateSelection: await storeChild(
+          input.artifactStore,
+          "setfarm.stitch-target-candidate-selection.v1",
+          producer,
+          validatedDesignSource.candidateSelection,
+        ),
+        responseBindings: await storeChild(
+          input.artifactStore,
+          "setfarm.stitch-target-response-bindings.v2",
+          producer,
+          validatedDesignSource.responseBindings,
+        ),
+      };
+      artifactHashes.designGenerationTargets = envelopeHashes.generationTargets;
+      artifactHashes.stitchDirectResponseEvidence = envelopeHashes.directResponseEvidence;
+      artifactHashes.stitchRenderedSemantics = envelopeHashes.renderedSemantics;
+      artifactHashes.stitchTargetCandidateSelection = envelopeHashes.candidateSelection;
+      artifactHashes.stitchTargetResponseBindings = envelopeHashes.responseBindings;
+    }
+    const closure = buildDesignSourceClosureV1({
+      validated: validatedDesignSource,
+      ...(envelopeHashes ? { envelopeHashes } : {}),
+    });
+    artifactHashes.designSourceClosure = await storeChild(
+      input.artifactStore,
+      "setfarm.design-source-closure.v1",
+      producer,
+      closure,
+    );
+  }
+
   const sortedDiagnostics = sortCompilationDiagnostics(diagnostics);
   const rejectionCodes = uniqueSorted(
     sortedDiagnostics.filter((item) => item.severity === "error").map((item) => item.code),
   );
   const inputHashes = uniqueSorted(Object.values(rawHashes));
-  let packet: ProductBuildPacketV1 | undefined;
+  let packet: ProductBuildPacketV1 | ProductBuildPacketV2 | undefined;
   let packetHash: string | undefined;
   const runtimeDataContractHash = topologyResult.success
     ? topologyResult.data.runtimeDataContractHash
@@ -874,53 +984,93 @@ export async function compileProductBuildPacket(
     : undefined;
 
   if (rejectionCodes.length === 0) {
-    packet = ProductBuildPacketV1Schema.parse({
-      schema: "setfarm.product-build-packet.v1",
-      packetVersion: 1,
-      parentPacketHashes: uniqueSorted(parentPacketHashes),
-      productSpecHash: artifactHashes.productSpec,
-      designGraphHash: artifactHashes.designGraph,
-      buildTopologyHash: artifactHashes.buildTopology,
-      storyPlanHash: artifactHashes.storyPlan,
-      ...(runtimeDataContractHash
-        ? { runtimeDataContractHash }
-        : {}),
-      ...(runtimeEvidenceContractHash
-        ? { runtimeEvidenceContractHash }
-        : {}),
-      compiler,
-      validationIds: [...VALIDATION_IDS],
-    });
+    packet = usePacketV2
+      ? ProductBuildPacketV2Schema.parse({
+          schema: "setfarm.product-build-packet.v2",
+          packetVersion: 2,
+          parentPacketHashes: uniqueSorted(parentPacketHashes),
+          productSpecHash: artifactHashes.productSpec,
+          designGraphHash: artifactHashes.designGraph,
+          buildTopologyHash: artifactHashes.buildTopology,
+          storyPlanHash: artifactHashes.storyPlan,
+          ...(runtimeDataContractHash ? { runtimeDataContractHash } : {}),
+          ...(runtimeEvidenceContractHash ? { runtimeEvidenceContractHash } : {}),
+          designSourceClosureHash: artifactHashes.designSourceClosure,
+          compiler,
+          validationIds: [...VALIDATION_IDS_V2],
+        })
+      : ProductBuildPacketV1Schema.parse({
+          schema: "setfarm.product-build-packet.v1",
+          packetVersion: 1,
+          parentPacketHashes: uniqueSorted(parentPacketHashes),
+          productSpecHash: artifactHashes.productSpec,
+          designGraphHash: artifactHashes.designGraph,
+          buildTopologyHash: artifactHashes.buildTopology,
+          storyPlanHash: artifactHashes.storyPlan,
+          ...(runtimeDataContractHash ? { runtimeDataContractHash } : {}),
+          ...(runtimeEvidenceContractHash ? { runtimeEvidenceContractHash } : {}),
+          compiler,
+          validationIds: [...VALIDATION_IDS],
+        });
     packetHash = await storeChild(
       input.artifactStore,
-      "setfarm.product-build-packet.v1",
+      usePacketV2 ? "setfarm.product-build-packet.v2" : "setfarm.product-build-packet.v1",
       producer,
       packet,
     );
   }
 
-  const report = ProductCompilationReportV1Schema.parse(rejectionCodes.length > 0 ? {
-    schema: "setfarm.product-compilation-report.v1",
-    status: "rejected",
-    compiler,
-    inputHashes,
-    artifactHashes,
-    diagnostics: sortedDiagnostics,
-    validationIds: [...VALIDATION_IDS],
-    rejectionCodes,
-  } : {
-    schema: "setfarm.product-compilation-report.v1",
-    status: "sealed",
-    compiler,
-    inputHashes,
-    artifactHashes,
-    diagnostics: sortedDiagnostics,
-    validationIds: [...VALIDATION_IDS],
-    packetHash,
-  });
+  const reportArtifactHashes = {
+    ...(artifactHashes.productSpec ? { productSpec: artifactHashes.productSpec } : {}),
+    ...(artifactHashes.designGraph ? { designGraph: artifactHashes.designGraph } : {}),
+    ...(artifactHashes.buildTopology ? { buildTopology: artifactHashes.buildTopology } : {}),
+    ...(artifactHashes.storyPlan ? { storyPlan: artifactHashes.storyPlan } : {}),
+    ...(usePacketV2 && artifactHashes.designSourceClosure
+      ? { designSourceClosure: artifactHashes.designSourceClosure }
+      : {}),
+  };
+  const report = usePacketV2
+    ? ProductCompilationReportV2Schema.parse(rejectionCodes.length > 0 ? {
+        schema: "setfarm.product-compilation-report.v2",
+        status: "rejected",
+        compiler,
+        inputHashes,
+        artifactHashes: reportArtifactHashes,
+        diagnostics: sortedDiagnostics,
+        validationIds: [...VALIDATION_IDS_V2],
+        rejectionCodes,
+      } : {
+        schema: "setfarm.product-compilation-report.v2",
+        status: "sealed",
+        compiler,
+        inputHashes,
+        artifactHashes: reportArtifactHashes,
+        diagnostics: sortedDiagnostics,
+        validationIds: [...VALIDATION_IDS_V2],
+        packetHash,
+      })
+    : ProductCompilationReportV1Schema.parse(rejectionCodes.length > 0 ? {
+        schema: "setfarm.product-compilation-report.v1",
+        status: "rejected",
+        compiler,
+        inputHashes,
+        artifactHashes: reportArtifactHashes,
+        diagnostics: sortedDiagnostics,
+        validationIds: [...VALIDATION_IDS],
+        rejectionCodes,
+      } : {
+        schema: "setfarm.product-compilation-report.v1",
+        status: "sealed",
+        compiler,
+        inputHashes,
+        artifactHashes: reportArtifactHashes,
+        diagnostics: sortedDiagnostics,
+        validationIds: [...VALIDATION_IDS],
+        packetHash,
+      });
   const reportHash = await storeChild(
     input.artifactStore,
-    "setfarm.product-compilation-report.v1",
+    usePacketV2 ? "setfarm.product-compilation-report.v2" : "setfarm.product-compilation-report.v1",
     producer,
     report,
   );

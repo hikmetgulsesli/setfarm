@@ -8,6 +8,7 @@ import {
 import type { CompilationDiagnosticV1 } from "../schemas/compilation-report-v1.js";
 import {
   DesignInteractionGraphV1Schema,
+  RenderedDesignElementSourceV1Schema,
   type DesignControlBindingV1,
   type DesignControlV1,
   type DesignInteractionGraphV1,
@@ -57,6 +58,7 @@ const GenerationTargetSchema = z
     returnedScreenId: ScreenIdentitySchema,
     sourceArtifactHash: Sha256Schema,
     sourceLocator: NormalizedRelativeLocatorSchema,
+    renderedSource: RenderedDesignElementSourceV1Schema.optional(),
     diagnosticHints: DiagnosticHintsSchema.optional(),
   })
   .strict();
@@ -195,6 +197,7 @@ const ConverterControlSchema = z
       selector: z.string().min(1).max(2_000),
       line: z.number().int().positive().optional(),
       column: z.number().int().nonnegative().optional(),
+      renderedSource: RenderedDesignElementSourceV1Schema.optional(),
     }).strict(),
     bindings: z.array(ConverterDispositionSchema).max(100),
     diagnosticHints: DiagnosticHintsSchema.optional(),
@@ -211,6 +214,7 @@ const ConverterObservableSchema = z.object({
     selector: z.string().min(1).max(2_000),
     line: z.number().int().positive().optional(),
     column: z.number().int().nonnegative().optional(),
+    renderedSource: RenderedDesignElementSourceV1Schema.optional(),
   }).strict(),
 }).strict();
 
@@ -233,6 +237,9 @@ const DesignGraphProducerInputSchema = z
     productSpec: ProductSpecV1Schema,
     generationTargets: z.array(GenerationTargetSchema).min(1).max(1_000),
     converterOutputs: z.array(ConverterOutputSchema).min(1).max(1_000),
+    authorityArtifactHashes: z.array(Sha256Schema).max(100).refine(hasUniqueStrings, {
+      message: "Design authority artifact hashes must be unique",
+    }).default([]),
   })
   .strict();
 
@@ -541,7 +548,7 @@ export function produceDesignInteractionGraphV1(input: unknown): DesignGraphProd
     })));
   }
 
-  const { productSpec, generationTargets, converterOutputs } = parsed.data;
+  const { productSpec, generationTargets, converterOutputs, authorityArtifactHashes } = parsed.data;
   const diagnostics: CompilationDiagnosticV1[] = [];
   const productSurfaces = new Map(productSpec.surfaces.map((surface) => [surface.id, surface]));
   const evidenceIds = new Set(productSpec.evidencePredicates.map((item) => item.id));
@@ -649,6 +656,7 @@ export function produceDesignInteractionGraphV1(input: unknown): DesignGraphProd
       surfaceRef: target.surfaceRef,
       sourceArtifactHash: target.sourceArtifactHash,
       sourceLocator: target.sourceLocator,
+      ...(target.renderedSource ? { renderedSource: target.renderedSource } : {}),
     });
     const outputHint = hintDiagnostic(output.diagnosticHints, target.targetId);
     if (outputHint) diagnostics.push(outputHint);
@@ -720,6 +728,9 @@ export function produceDesignInteractionGraphV1(input: unknown): DesignGraphProd
           ...(control.source.line ? { line: control.source.line } : {}),
           ...(control.source.column !== undefined ? { column: control.source.column } : {}),
         },
+        ...(control.source.renderedSource
+          ? { renderedSource: control.source.renderedSource }
+          : {}),
       });
 
       const controlHint = hintDiagnostic(control.diagnosticHints, reference);
@@ -1015,6 +1026,9 @@ export function produceDesignInteractionGraphV1(input: unknown): DesignGraphProd
               ? { column: match.observable.source.column }
               : {}),
           },
+          ...(match.observable.source.renderedSource
+            ? { renderedSource: match.observable.source.renderedSource }
+            : {}),
         },
       });
     });
@@ -1024,7 +1038,16 @@ export function produceDesignInteractionGraphV1(input: unknown): DesignGraphProd
 
   const graphResult = DesignInteractionGraphV1Schema.safeParse({
     schema: "setfarm.design-interaction-graph.v1",
-    rawArtifactHashes: uniqueSorted(generationTargets.map((target) => target.sourceArtifactHash)),
+    rawArtifactHashes: uniqueSorted([
+      ...generationTargets.map((target) => target.sourceArtifactHash),
+      ...generationTargets.flatMap((target) =>
+        target.renderedSource ? [target.renderedSource.artifactHash] : []),
+      ...converterOutputs.flatMap((output) => output.controls.flatMap((control) =>
+        control.source.renderedSource ? [control.source.renderedSource.artifactHash] : [])),
+      ...converterOutputs.flatMap((output) => output.observables.flatMap((observable) =>
+        observable.source.renderedSource ? [observable.source.renderedSource.artifactHash] : [])),
+      ...authorityArtifactHashes,
+    ]),
     surfaces: [...surfaces].sort((left, right) => compareUtf16(left.id, right.id)),
     controls: [...controls].sort((left, right) => compareUtf16(left.id, right.id)),
     bindings: [...bindings].sort((left, right) => compareUtf16(left.controlRef, right.controlRef)),

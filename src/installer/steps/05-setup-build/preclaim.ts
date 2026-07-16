@@ -12,6 +12,7 @@ import {
   orchestrateSetupBuildProductPacket,
   SetupBuildPacketError,
 } from "../../../product-compiler/setup-build-packet-orchestrator.js";
+import { isValidStitchHtmlFile } from "../../../product-compiler/stitch-render-artifact.js";
 import { resolvePlatformScript } from "../../paths.js";
 import { materializeSetupBuildContracts } from "../../setup-handoff.js";
 import { getStackPack } from "../../stack-contract/packs.js";
@@ -23,7 +24,6 @@ import {
   type OperationalFailureCauseV1,
 } from "../../../execution/schemas/operational-failure-cause-v1.js";
 
-const MIN_STITCH_HTML_BYTES = 1000;
 const DESIGN_IMPORT_REPORT_REL = ".setfarm/setup/DESIGN_IMPORT_VALIDATE.json";
 const STITCH_CONVERSION_RESULT_REL = ".setfarm/setup/STITCH_TO_JSX_RESULT.json";
 const UNKNOWN_MATERIAL_ICONS_REPORT_REL = ".setfarm/setup/UNKNOWN_MATERIAL_ICONS.json";
@@ -144,16 +144,7 @@ function appendSetupQualityWarning(ctx: ClaimContext, warning: string): void {
 }
 
 function isReusableStitchHtml(filePath: string): boolean {
-  try {
-    if (!fs.existsSync(filePath)) return false;
-    if (fs.statSync(filePath).size < MIN_STITCH_HTML_BYTES) return false;
-    const head = fs.readFileSync(filePath, "utf-8").slice(0, 4000).toLowerCase();
-    if (!head.includes("<html") && !head.includes("<!doctype")) return false;
-    if (head.includes("empty html") || head.includes("design not generated")) return false;
-    return true;
-  } catch {
-    return false;
-  }
+  return isValidStitchHtmlFile(filePath);
 }
 
 function isPrdPseudoHtmlFile(fileName: string): boolean {

@@ -8,6 +8,15 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { canonicalJsonStringify, hashCanonicalJson } from "../../../product-compiler/canonical-json.js";
+import { DesignGenerationTargetsV1Schema } from "../../../product-compiler/schemas/design-generation-targets-v1.js";
+import { StitchDirectResponseEvidenceV2Schema } from "../../../product-compiler/schemas/stitch-direct-response-evidence-v2.js";
+import {
+  StitchTargetCandidateSelectionV1Schema,
+  StitchTargetResponseBindingsV2Schema,
+} from "../../../product-compiler/schemas/stitch-target-candidate-selection-v1.js";
+import { StitchRenderedSemanticsV1Schema } from "../../../product-compiler/schemas/stitch-rendered-semantics-v1.js";
 import { pgGet, pgQuery } from "../../../db-pg.js";
 import { logger } from "../../../lib/logger.js";
 import { getStories, getCurrentStory, formatStoryForTemplate, formatCompletedStories, formatStoryRoadmap, parseAcceptanceCriteria } from "../../story-ops.js";
@@ -26,6 +35,7 @@ import { applyScopedRetryPatchForStory, discardDirtyRetryWorktreeState, latestRe
 
 const STITCH_HTML_EXCERPT_CHARS = 12000;
 const STITCH_HTML_TOTAL_CHARS = 50000;
+const CANONICAL_RENDERED_DESIGN_CONTEXT_CHARS = 500_000;
 const DESIGN_DOM_EXCERPT_CHARS = 30000;
 const UI_BEHAVIOR_CONTRACT_CHARS = 12000;
 
@@ -369,11 +379,11 @@ function sanitizedRetryFailureText(text: string, repoPath?: string, workdir?: st
  */
 export async function injectStoryContext(
   nextStory: any,
-  step: { run_id: string; step_id: string; retry_count: number; max_retries: number },
+  step: { run_id: string; step_id: string; retry_count: number; max_retries?: number },
   context: Record<string, string>,
   helpers: {
     readProgressFile: (runId: string) => Promise<string>;
-    readProjectMemory: (ctx: Record<string, string>) => Promise<string>;
+    readProjectMemory: (ctx: Record<string, string>) => string | Promise<string>;
     resolveStoryScreens: (storyId: string, ctx: Record<string, string>, runId: string, source: string) => Promise<void>;
     generateSrcTree: (repoPath: string) => string;
     getProjectTree: (workdir: string) => string;
@@ -551,12 +561,14 @@ export async function injectStoryContext(
   // Inject stitch HTML content for this story's screens
   await injectStitchHtml(context, step.run_id, story.storyId);
 
-  // Inject DESIGN_DOM for element-level coding guidance
-  injectDesignDom(context);
-
-  // Inject explicit behavior requirements from Stitch controls for this story's
-  // screens. This is the prevention layer before smoke-test catches dead UI.
-  injectUiBehaviorContract(context);
+  if (context["_canonical_rendered_design_authority"] !== "true") {
+    // Historical protocols retain their compatibility-only design context.
+    injectDesignDom(context);
+    injectUiBehaviorContract(context);
+  } else {
+    context["design_dom"] = "";
+    context["ui_behavior_contract"] = "";
+  }
 
   // Smart Context Injection (implement-only)
   if (step.step_id === "implement") {
@@ -709,6 +721,9 @@ async function injectScopeContext(nextStory: any, context: Record<string, string
       "SELECT scope_files, shared_files, scope_description, file_skeletons, implementation_contract, scope_targets, shared_edit_requests, depends_on FROM stories WHERE id = $1",
       [nextStory.id]
     );
+    delete context["story_scope_files"];
+    delete context["story_shared_files"];
+    delete context["scope_reminder"];
     const baseRepo = context["repo"] || context["REPO"] || context["story_workdir"] || "";
     if (scopeRow && baseRepo) {
       const implementContext = assembleImplementContext({
@@ -935,12 +950,176 @@ export function cleanupOutOfScopeWorktreeFiles(
   return cleaned;
 }
 
-async function injectStitchHtml(context: Record<string, string>, runId: string, storyId: string): Promise<void> {
+function readCanonicalDesignArtifact<T>(input: Readonly<{
+  filePath: string;
+  label: string;
+  parse(value: unknown): T;
+}>): T {
+  let text: string;
+  let raw: unknown;
+  try {
+    text = fs.readFileSync(input.filePath, "utf8");
+    raw = JSON.parse(text);
+  } catch {
+    throw new Error(`V3_STITCH_${input.label}_AUTHORITY_INVALID`);
+  }
+  const parsed = input.parse(raw);
+  if (canonicalJsonStringify(parsed) !== text.trim()) {
+    throw new Error(`V3_STITCH_${input.label}_AUTHORITY_NON_CANONICAL`);
+  }
+  return parsed;
+}
+
+function exactBytesHash(bytes: Uint8Array): string {
+  return createHash("sha256").update(bytes).digest("hex");
+}
+
+export async function injectStitchHtml(context: Record<string, string>, runId: string, storyId: string): Promise<void> {
   const storyScreensRaw = context["story_screens"] || "[]";
   try {
     const storyScreensParsed = JSON.parse(storyScreensRaw);
     const repoPath = context["repo"] || context["REPO"] || "";
     if (Array.isArray(storyScreensParsed) && storyScreensParsed.length > 0 && repoPath) {
+      const bindingsPath = path.join(repoPath, "stitch", "STITCH_RESPONSE_BINDINGS.json");
+      if (fs.existsSync(bindingsPath)) {
+        let rawBindings: unknown;
+        try {
+          rawBindings = JSON.parse(fs.readFileSync(bindingsPath, "utf8"));
+        } catch {
+          throw new Error("V3_STITCH_BINDING_AUTHORITY_INVALID");
+        }
+        if ((rawBindings as { schema?: unknown })?.schema === "setfarm.stitch-target-response-bindings.v2") {
+          const stitchDir = path.join(repoPath, "stitch");
+          const generationTargets = readCanonicalDesignArtifact({
+            filePath: path.join(stitchDir, "GENERATION_TARGETS.json"),
+            label: "GENERATION_TARGETS",
+            parse: (value) => DesignGenerationTargetsV1Schema.parse(value),
+          });
+          const directEvidence = readCanonicalDesignArtifact({
+            filePath: path.join(stitchDir, "STITCH_DIRECT_RESPONSE_EVIDENCE.json"),
+            label: "DIRECT_RESPONSE_EVIDENCE",
+            parse: (value) => StitchDirectResponseEvidenceV2Schema.parse(value),
+          });
+          const renderedSemantics = readCanonicalDesignArtifact({
+            filePath: path.join(stitchDir, "STITCH_RENDERED_SEMANTICS.json"),
+            label: "RENDERED_SEMANTICS",
+            parse: (value) => StitchRenderedSemanticsV1Schema.parse(value),
+          });
+          const selection = readCanonicalDesignArtifact({
+            filePath: path.join(stitchDir, "STITCH_TARGET_CANDIDATE_SELECTION.json"),
+            label: "SELECTION",
+            parse: (value) => StitchTargetCandidateSelectionV1Schema.parse(value),
+          });
+          const bindings = readCanonicalDesignArtifact({
+            filePath: bindingsPath,
+            label: "BINDING",
+            parse: (value) => StitchTargetResponseBindingsV2Schema.parse(value),
+          });
+          const generationTargetsHash = hashCanonicalJson(generationTargets);
+          const directEvidenceHash = hashCanonicalJson(directEvidence);
+          const renderedSemanticsHash = hashCanonicalJson(renderedSemantics);
+          if (
+            renderedSemantics.generationTargetsHash !== generationTargetsHash
+            || selection.generationTargetsHash !== generationTargetsHash
+            || bindings.generationTargetsHash !== generationTargetsHash
+            || renderedSemantics.directResponseEvidenceHash !== directEvidenceHash
+            || selection.directResponseEvidenceHash !== directEvidenceHash
+            || selection.renderedSemanticsHash !== renderedSemanticsHash
+            || bindings.renderedSemanticsHash !== renderedSemanticsHash
+            || bindings.candidateSelectionHash !== hashCanonicalJson(selection)
+          ) {
+            throw new Error("V3_STITCH_RENDERED_AUTHORITY_HASH_MISMATCH");
+          }
+          const targetById = new Map(generationTargets.targets.map((target) => [target.targetId, target]));
+          const selectionByTarget = new Map(selection.selections.map((item) => [item.targetRef, item]));
+          const candidateById = new Map(selection.candidates.map((candidate) => [candidate.screenId, candidate]));
+          const renderedById = new Map(renderedSemantics.candidates.map((candidate) => [candidate.screenId, candidate]));
+          const bindingByScreenId = new Map(bindings.bindings.map((binding) => [binding.responseScreenId, binding]));
+          const screens = storyScreensParsed.map((screen: { screenId?: unknown; name?: unknown; htmlFile?: unknown }) => {
+            const screenId = String(screen.screenId || "");
+            const binding = bindingByScreenId.get(screenId);
+            if (!binding) throw new Error(`V3_STITCH_STORY_SCREEN_UNBOUND:${screenId}`);
+            const target = targetById.get(binding.targetRef);
+            const selected = selectionByTarget.get(binding.targetRef);
+            const candidate = candidateById.get(screenId);
+            const rendered = renderedById.get(screenId);
+            const selectedEvaluation = selected?.evaluations.find((evaluation) => evaluation.screenId === screenId);
+            const exactElementRefs = [...new Set(selectedEvaluation?.semanticChecks
+              .filter((check) => check.kind !== "screen_title" && check.disposition === "exact")
+              .flatMap((check) => check.elementRefs) ?? [])].sort();
+            const sortedBindingRefs = [...binding.contractElementRefs].sort();
+            if (
+              !target
+              || selected?.status !== "selected"
+              || selected.selectedScreenId !== screenId
+              || selected.stageId !== binding.stageId
+              || selectedEvaluation?.qualificationTier !== "exact_target_semantics"
+              || candidate?.semanticEvidenceStatus !== "browser_rendered"
+              || candidate.semanticDomHash !== binding.semanticDomHash
+              || candidate.semanticObservationHash !== binding.semanticObservationHash
+              || rendered?.status !== "rendered"
+              || rendered.stageId !== binding.stageId
+              || rendered.semanticDom?.hash !== binding.semanticDomHash
+              || rendered.observationHash !== binding.semanticObservationHash
+              || hashCanonicalJson(rendered.elements) !== rendered.observationHash
+              || exactElementRefs.length !== sortedBindingRefs.length
+              || exactElementRefs.some((elementRef, index) => elementRef !== sortedBindingRefs[index])
+              || sortedBindingRefs.some((elementRef) =>
+                !rendered.elements.some((element) => element.elementRef === elementRef))
+            ) {
+              throw new Error(`V3_STITCH_SELECTED_BINDING_MISMATCH:${binding.targetRef}`);
+            }
+            const canonicalHtmlPath = path.join(stitchDir, `${screenId}.html`);
+            const requestedHtmlPath = path.join(repoPath, String(screen.htmlFile || `stitch/${screenId}.html`));
+            const screenshotPath = path.join(stitchDir, `${screenId}.png`);
+            const semanticDomPath = path.join(repoPath, rendered.semanticDom.locator);
+            if (!fs.existsSync(canonicalHtmlPath) || !fs.existsSync(screenshotPath) || !fs.existsSync(semanticDomPath)) {
+              throw new Error(`V3_STITCH_SELECTED_ARTIFACT_MISSING:${screenId}`);
+            }
+            const semanticDomBytes = fs.readFileSync(semanticDomPath);
+            if (
+              path.resolve(requestedHtmlPath) !== path.resolve(canonicalHtmlPath)
+              || exactBytesHash(fs.readFileSync(canonicalHtmlPath)) !== binding.htmlArtifactHash
+              || exactBytesHash(fs.readFileSync(screenshotPath)) !== binding.screenshotArtifactHash
+              || exactBytesHash(semanticDomBytes) !== binding.semanticDomHash
+              || semanticDomBytes.byteLength !== rendered.semanticDom.byteLength
+            ) {
+              throw new Error(`V3_STITCH_SELECTED_ARTIFACT_HASH_MISMATCH:${screenId}`);
+            }
+            const refSet = new Set(sortedBindingRefs);
+            return {
+              screenId,
+              targetRef: binding.targetRef,
+              surfaceRef: target.surfaceRef,
+              title: binding.responseTitle,
+              rawArtifacts: {
+                htmlHash: binding.htmlArtifactHash,
+                screenshotHash: binding.screenshotArtifactHash,
+              },
+              semanticDom: rendered.semanticDom,
+              semanticObservationHash: binding.semanticObservationHash,
+              contractElementRefs: sortedBindingRefs,
+              elements: rendered.elements
+                .filter((element) => refSet.has(element.elementRef))
+                .sort((left, right) => left.elementRef.localeCompare(right.elementRef)),
+            };
+          }).sort((left, right) => left.screenId.localeCompare(right.screenId));
+          const renderedContext = canonicalJsonStringify({
+            schema: "setfarm.story-rendered-design-evidence.v1",
+            storyId,
+            authority: "browser_rendered",
+            screens,
+          });
+          if (renderedContext.length > CANONICAL_RENDERED_DESIGN_CONTEXT_CHARS) {
+            throw new Error(`V3_STITCH_RENDERED_CONTEXT_CAPACITY_EXCEEDED:${renderedContext.length}`);
+          }
+          context["stitch_html"] = renderedContext;
+          context["_stitch_html_transient"] = "true";
+          context["_canonical_rendered_design_authority"] = "true";
+          logger.info(`[stitch-rendered-context] Injected ${screens.length} canonical rendered screen contract(s) (${renderedContext.length} chars)`, { runId });
+          return;
+        }
+      }
       let stitchHtmlContent = "";
       for (const screen of storyScreensParsed) {
         const htmlFile = path.join(repoPath, screen.htmlFile || `stitch/${screen.screenId}.html`);
@@ -960,11 +1139,13 @@ async function injectStitchHtml(context: Record<string, string>, runId: string, 
       if (stitchHtmlContent) {
         context["stitch_html"] = stitchHtmlContent;
         context["_stitch_html_transient"] = "true";
+        delete context["_canonical_rendered_design_authority"];
         logger.info(`[stitch-html-inject] Injected ${storyScreensParsed.length} screen HTML(s) (${stitchHtmlContent.length} chars)`, { runId });
       }
     }
   } catch (e) {
     logger.warn(`[stitch-html-inject] Failed: ${String(e)}`, { runId });
+    if (/V3_STITCH_/.test(String(e))) throw e;
   }
 }
 

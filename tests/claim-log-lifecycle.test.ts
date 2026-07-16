@@ -1357,17 +1357,18 @@ describe("single-step claim_log lifecycle", () => {
     assert.match(guard, /missing project source files/);
   });
 
-  it("injects stored verify retry feedback before developer claim context is persisted", () => {
+  it("delegates retry context assembly to one authority before developer claim context is persisted", () => {
     const stepOps = stepOpsSource();
     const stepOpsStart = stepOps.indexOf("async function injectStoryContext(");
     const stepOpsEnd = stepOps.indexOf("async function injectVerifyContext(", stepOpsStart);
     assert.notEqual(stepOpsStart, -1, "step-ops injectStoryContext not found");
     assert.notEqual(stepOpsEnd, -1, "step-ops injectStoryContext end not found");
     const stepOpsInject = stepOps.slice(stepOpsStart, stepOpsEnd);
+    assert.match(stepOpsInject, /await injectStoryContextFromModule\(nextStory, step, context,/);
+    assert.doesNotMatch(stepOpsInject, /const retryFailureText = nextStory\.output/);
 
     const extracted = implementContextSource();
     for (const [source, persistMarker] of [
-      [stepOpsInject, "await updateRunContext(step.run_id, context)"],
       [extracted, "await helpers.updateRunContext(step.run_id, context)"],
     ] as Array<[string, string]>) {
       const retryFailure = source.indexOf("const retryFailureText = nextStory.output");

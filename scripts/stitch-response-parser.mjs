@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 function screenIdOf(screen) {
   return String(
     (screen?.name || '').replace(/^projects\/\d+\/screens\//, '') ||
@@ -13,6 +15,10 @@ function titleOf(screen) {
   return String(screen?.title || screen?.displayName || screen?.name || screen?.screenId || 'Untitled').trim() || 'Untitled';
 }
 
+function hasExplicitTitle(screen) {
+  return Boolean(String(screen?.title || screen?.displayName || '').trim());
+}
+
 function htmlUrlOf(screen) {
   return screen?.htmlUrl || screen?.htmlCode?.downloadUrl || screen?.html_code?.download_url || null;
 }
@@ -25,8 +31,9 @@ function jsonPayloadsFromToolText(text) {
   const raw = String(text || '').trim();
   if (!raw) return [];
   const candidates = [raw];
-  const fence = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  if (fence?.[1]) candidates.push(fence[1].trim());
+  for (const fence of raw.matchAll(/```(?:json)?\s*([\s\S]*?)```/gi)) {
+    if (fence[1]) candidates.push(fence[1].trim());
+  }
   const objectStart = raw.indexOf('{');
   const objectEnd = raw.lastIndexOf('}');
   if (objectStart !== -1 && objectEnd > objectStart) candidates.push(raw.slice(objectStart, objectEnd + 1));
@@ -49,6 +56,14 @@ function normalizedResponsePaths(value) {
   return [...new Set((value || []).map((item) => String(item || '').trim()).filter(Boolean))].sort();
 }
 
+function sha256Text(value) {
+  return createHash('sha256').update(String(value || '')).digest('hex');
+}
+
+function isSafeScreenId(value) {
+  return /^[A-Za-z0-9][A-Za-z0-9._-]{0,499}$/.test(String(value || ''));
+}
+
 function normalizeScreenEntry(screen, responsePath) {
   const screenId = screenIdOf(screen);
   if (!screenId) return null;
@@ -58,12 +73,16 @@ function normalizeScreenEntry(screen, responsePath) {
     /\/screens\//.test(resourceName)
   );
   if (!explicitScreenIdentity) return null;
+  const htmlUrl = htmlUrlOf(screen);
+  const screenshotUrl = screenshotUrlOf(screen);
   return {
     ...screen,
     screenId,
     title: titleOf(screen),
-    htmlUrl: htmlUrlOf(screen),
-    screenshotUrl: screenshotUrlOf(screen),
+    titleExplicit: hasExplicitTitle(screen),
+    htmlUrl,
+    screenshotUrl,
+    completeRenderOccurrence: Boolean(htmlUrl && screenshotUrl),
     width: screen?.width,
     height: screen?.height,
     responsePaths: normalizedResponsePaths([responsePath]),
@@ -73,15 +92,50 @@ function normalizeScreenEntry(screen, responsePath) {
 function mergeScreenEntries(existing, candidate) {
   if (!existing) return candidate;
   if (!candidate) return existing;
+  const conflicts = new Set([
+    ...(existing.identityConflicts || []),
+    ...(candidate.identityConflicts || []),
+  ]);
+  const conflictIfDifferent = (field, left, right, options = {}) => {
+    const normalize = options.normalize || ((value) => String(value ?? '').trim());
+    const leftValue = normalize(left);
+    const rightValue = normalize(right);
+    if (!leftValue || !rightValue) return;
+    if (options.ignoreUntitled && (leftValue === 'Untitled' || rightValue === 'Untitled')) return;
+    if (leftValue !== rightValue) conflicts.add(field);
+  };
+  if (existing.titleExplicit && candidate.titleExplicit) {
+    conflictIfDifferent('title', existing.title, candidate.title, { ignoreUntitled: true });
+  }
+  conflictIfDifferent('html_url', existing.htmlUrl, candidate.htmlUrl);
+  conflictIfDifferent('screenshot_url', existing.screenshotUrl, candidate.screenshotUrl);
+  conflictIfDifferent('width', existing.width, candidate.width);
+  conflictIfDifferent('height', existing.height, candidate.height);
+  const htmlUrl = candidate.htmlUrl || existing.htmlUrl || null;
+  const screenshotUrl = candidate.screenshotUrl || existing.screenshotUrl || null;
+  const completeRenderOccurrence = Boolean(existing.completeRenderOccurrence || candidate.completeRenderOccurrence);
+  if (htmlUrl && screenshotUrl && !completeRenderOccurrence) conflicts.add('render_evidence_splice');
+  const candidateExactTitle = candidate.titleExplicit && candidate.title !== 'Untitled';
+  const existingExactTitle = existing.titleExplicit && existing.title !== 'Untitled';
+  const title = candidateExactTitle
+    ? candidate.title
+    : existingExactTitle
+      ? existing.title
+      : candidate.title && candidate.title !== 'Untitled'
+        ? candidate.title
+        : existing.title;
   return {
     ...existing,
     ...candidate,
     screenId: candidate.screenId || existing.screenId,
-    title: candidate.title && candidate.title !== 'Untitled' ? candidate.title : existing.title,
-    htmlUrl: candidate.htmlUrl || existing.htmlUrl || null,
-    screenshotUrl: candidate.screenshotUrl || existing.screenshotUrl || null,
+    title,
+    titleExplicit: Boolean(existingExactTitle || candidateExactTitle),
+    htmlUrl,
+    screenshotUrl,
+    completeRenderOccurrence,
     width: candidate.width || existing.width,
     height: candidate.height || existing.height,
+    identityConflicts: [...conflicts].sort(),
     responsePaths: normalizedResponsePaths([
       ...(existing.responsePaths || []),
       ...(candidate.responsePaths || []),
@@ -170,6 +224,10 @@ function directScreenEvidence(screen) {
     ...(!screenshotAvailable ? ['screenshot'] : []),
   ];
   const screenType = String(screen?.screenType || screen?.screen_type || '').trim();
+  const identityConflicts = [...new Set([
+    ...(screen?.identityConflicts || []),
+    ...(isSafeScreenId(screenIdOf(screen)) ? [] : ['screen_id']),
+  ])].sort();
   const displayMode = String(
     screen?.screenMetadata?.displayMode ||
     screen?.screen_metadata?.display_mode ||
@@ -185,9 +243,14 @@ function directScreenEvidence(screen) {
     ...(screen?.height != null ? { height: String(screen.height) } : {}),
     htmlAvailable,
     screenshotAvailable,
-    disposition: missingEvidence.length === 0
-      ? 'admitted_renderable_screen'
-      : 'excluded_missing_render_evidence',
+    ...(htmlUrlOf(screen) ? { htmlSourceRefHash: sha256Text(htmlUrlOf(screen)) } : {}),
+    ...(screenshotUrlOf(screen) ? { screenshotSourceRefHash: sha256Text(screenshotUrlOf(screen)) } : {}),
+    identityConflicts,
+    disposition: identityConflicts.length > 0
+      ? 'excluded_identity_conflict'
+      : missingEvidence.length === 0
+        ? 'admitted_renderable_screen'
+        : 'excluded_missing_render_evidence',
     missingEvidence,
   };
 }
@@ -219,6 +282,7 @@ export {
   collectScreenCandidatesFromResult,
   directScreenEvidence,
   htmlUrlOf,
+  isSafeScreenId,
   jsonPayloadsFromToolText,
   mergeScreenEntries,
   normalizeScreenEntry,

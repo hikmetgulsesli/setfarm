@@ -98,13 +98,22 @@ const REQUIRED_CAPABILITIES = [
   "deploymentReceipt",
   "projectTransferAck",
 ] as const;
-const REQUIRED_PACKET_ARTIFACT_TYPES: Readonly<Record<string, string>> = Object.freeze({
+const REQUIRED_PACKET_ARTIFACT_TYPES_V1: Readonly<Record<string, string>> = Object.freeze({
   PRODUCT_SPEC: "setfarm.product-spec.v1",
   DESIGN_GRAPH: "setfarm.design-interaction-graph.v1",
   BUILD_TOPOLOGY: "setfarm.build-topology.v1",
   STORY_PLAN: "setfarm.story-plan.v1",
   PRODUCT_BUILD_PACKET: "setfarm.product-build-packet.v1",
   COMPILATION_REPORT: "setfarm.product-compilation-report.v1",
+});
+const REQUIRED_PACKET_ARTIFACT_TYPES_V2: Readonly<Record<string, string>> = Object.freeze({
+  PRODUCT_SPEC: "setfarm.product-spec.v1",
+  DESIGN_GRAPH: "setfarm.design-interaction-graph.v1",
+  BUILD_TOPOLOGY: "setfarm.build-topology.v1",
+  STORY_PLAN: "setfarm.story-plan.v1",
+  DESIGN_SOURCE_CLOSURE: "setfarm.design-source-closure.v1",
+  PRODUCT_BUILD_PACKET: "setfarm.product-build-packet.v2",
+  COMPILATION_REPORT: "setfarm.product-compilation-report.v2",
 });
 
 const RunnerOptionsSchema = z.object({
@@ -1502,14 +1511,18 @@ export function createPostgresConvergencePort(
       );
       const packetHash = run["packet_hash"] ? String(run["packet_hash"]) : null;
       const refKeys = refs.map((row) => String(row["ref_key"]));
-      const missingRequiredRefs = Object.keys(REQUIRED_PACKET_ARTIFACT_TYPES)
+      const packetRefType = refs.find((row) => row["ref_key"] === "PRODUCT_BUILD_PACKET")?.["artifact_type"];
+      const requiredPacketArtifactTypes = packetRefType === "setfarm.product-build-packet.v2"
+        ? REQUIRED_PACKET_ARTIFACT_TYPES_V2
+        : REQUIRED_PACKET_ARTIFACT_TYPES_V1;
+      const missingRequiredRefs = Object.keys(requiredPacketArtifactTypes)
         .filter((ref) => !refKeys.includes(ref)).length;
       const missingArtifacts = refs.filter((row) => row["artifact_exists"] !== true).length;
       const packetInvalid = packetRows.filter((row) =>
         String(row["packet_hash"]) !== packetHash
         || String(row["compiler_code_sha"]) !== String(run["compiler_release_sha"])).length;
       const requiredRefInvalid = refs.filter((row) => {
-        const expectedType = REQUIRED_PACKET_ARTIFACT_TYPES[String(row["ref_key"])] ?? null;
+        const expectedType = requiredPacketArtifactTypes[String(row["ref_key"])] ?? null;
         if (!expectedType) return false;
         return row["artifact_type"] !== expectedType
           || row["producer_code_sha"] !== run["compiler_release_sha"]

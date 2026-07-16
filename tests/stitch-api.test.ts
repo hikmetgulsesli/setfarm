@@ -1,11 +1,16 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { execFileSync } from "node:child_process";
 
 import {
   collectScreenCandidatesFromResult,
+  mergeScreenEntries,
   partitionDirectScreenCandidates,
 } from "../scripts/stitch-response-parser.mjs";
+import { validStitchPng } from "./product-compiler/fixtures/stitch-artifacts.js";
 
 describe("stitch-api partial list recovery", () => {
   it("merges tracked screens into partial Stitch API lists", () => {
@@ -96,6 +101,32 @@ describe("stitch-api partial list recovery", () => {
     assert.match(source, /forceNewProject \? null : await callTool\('list_projects'/);
     assert.match(source, /\.stitch-screens-' \+ existing\.projectId \+ '\.json/);
   });
+
+  it("atomically removes stale output when a new download is not a valid PNG", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-stitch-download-"));
+    const output = path.join(tmp, "screen.png");
+    try {
+      fs.writeFileSync(output, validStitchPng(1));
+      assert.throws(() => execFileSync("node", [
+        "scripts/stitch-api.mjs",
+        "download",
+        `data:image/png;base64,${Buffer.from("not-a-png").toString("base64")}`,
+        output,
+      ], { cwd: process.cwd(), stdio: "pipe" }));
+      assert.equal(fs.existsSync(output), false);
+
+      const expected = validStitchPng(2);
+      execFileSync("node", [
+        "scripts/stitch-api.mjs",
+        "download",
+        `data:image/png;base64,${expected.toString("base64")}`,
+        output,
+      ], { cwd: process.cwd(), stdio: "pipe" });
+      assert.deepEqual(fs.readFileSync(output), expected);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("stitch-api direct response identity", () => {
@@ -165,6 +196,60 @@ describe("stitch-api direct response identity", () => {
     ]);
   });
 
+  it("preserves every bounded JSON fence in one Stitch text item", () => {
+    const result = {
+      content: [{
+        type: "text",
+        text: [
+          "```json",
+          JSON.stringify({ screens: [product("screen-a")] }),
+          "```",
+          "provider note",
+          "```json",
+          JSON.stringify({ screens: [product("screen-b")] }),
+          "```",
+        ].join("\n"),
+      }],
+    };
+    const candidates = collectScreenCandidatesFromResult(result);
+    assert.deepEqual(candidates.map((item) => item.screenId).sort(), ["screen-a", "screen-b"]);
+  });
+
+  it("detects same-ID conflicts split across separate JSON fences", () => {
+    const first = product();
+    const second = {
+      ...product(),
+      title: "Conflicting Canvas",
+      htmlCode: { downloadUrl: "https://example.invalid/conflict.html" },
+    };
+    const result = {
+      content: [{
+        type: "text",
+        text: `\`\`\`json\n${JSON.stringify({ screens: [first] })}\n\`\`\`\n\`\`\`json\n${JSON.stringify({ screens: [second] })}\n\`\`\``,
+      }],
+    };
+    const partition = partitionDirectScreenCandidates(collectScreenCandidatesFromResult(result));
+    assert.equal(partition.screens.length, 0);
+    assert.deepEqual(partition.evidence[0]?.identityConflicts, ["html_url", "title"]);
+  });
+
+  it("never lets an explicit Untitled placeholder overwrite an exact title", () => {
+    const exact = {
+      screenId: "product",
+      title: "Status Page - Status Utility",
+      titleExplicit: true,
+      responsePaths: ["$exact"],
+    };
+    const placeholder = {
+      screenId: "product",
+      title: "Untitled",
+      titleExplicit: true,
+      responsePaths: ["$placeholder"],
+    };
+    assert.equal(mergeScreenEntries(exact, placeholder).title, exact.title);
+    assert.equal(mergeScreenEntries(placeholder, exact).title, exact.title);
+  });
+
   it("merges structured and embedded direct evidence without losing richer fields", () => {
     const partial = {
       name: "projects/1/screens/product",
@@ -183,6 +268,83 @@ describe("stitch-api direct response identity", () => {
     assert.equal(partition.screens.length, 1);
     assert.equal(partition.screens[0]?.screenshotUrl, "https://example.invalid/product.png");
     assert.equal(partition.evidence[0]?.responsePaths.length, 2);
+  });
+
+  it("does not treat a resource-name fallback as a conflicting explicit title", () => {
+    const partial = {
+      name: "projects/1/screens/product",
+      htmlCode: { downloadUrl: "https://example.invalid/product.html" },
+    };
+    const completed = {
+      name: "projects/1/screens/product",
+      title: "Status Page - Status Utility",
+      htmlCode: { downloadUrl: "https://example.invalid/product.html" },
+      screenshot: { downloadUrl: "https://example.invalid/product.png" },
+    };
+    const result = {
+      structuredContent: { screens: [partial] },
+      content: [{ type: "text", text: JSON.stringify({ screens: [completed] }) }],
+    };
+    const partition = partitionDirectScreenCandidates(collectScreenCandidatesFromResult(result));
+
+    assert.equal(partition.screens.length, 1);
+    assert.equal(partition.evidence[0]?.title, "Status Page - Status Utility");
+    assert.deepEqual(partition.evidence[0]?.identityConflicts, []);
+  });
+
+  it("preserves an unsafe provider screen ID as excluded evidence", () => {
+    const unsafe = {
+      screenId: "../unsafe",
+      title: "Status Page - Status Utility",
+      htmlCode: { downloadUrl: "https://example.invalid/unsafe.html" },
+      screenshot: { downloadUrl: "https://example.invalid/unsafe.png" },
+    };
+    const partition = partitionDirectScreenCandidates(collectScreenCandidatesFromResult({ screens: [unsafe] }));
+
+    assert.equal(partition.screens.length, 0);
+    assert.equal(partition.evidence[0]?.screenId, "../unsafe");
+    assert.equal(partition.evidence[0]?.disposition, "excluded_identity_conflict");
+    assert.deepEqual(partition.evidence[0]?.identityConflicts, ["screen_id"]);
+  });
+
+  it("excludes same-ID response occurrences with conflicting output identity", () => {
+    const first = product();
+    const second = {
+      ...product(),
+      title: "Conflicting Status Canvas",
+      htmlCode: { downloadUrl: "https://example.invalid/other.html" },
+    };
+    const result = {
+      structuredContent: { screens: [first] },
+      content: [{ type: "text", text: JSON.stringify({ screens: [second] }) }],
+    };
+    const partition = partitionDirectScreenCandidates(collectScreenCandidatesFromResult(result));
+
+    assert.equal(partition.screens.length, 0);
+    assert.equal(partition.evidence[0]?.disposition, "excluded_identity_conflict");
+    assert.deepEqual(partition.evidence[0]?.identityConflicts, ["html_url", "title"]);
+  });
+
+  it("does not splice HTML and screenshot evidence from separate incomplete occurrences", () => {
+    const htmlOnly = {
+      name: "projects/1/screens/product",
+      title: "Status Page - Status Utility",
+      htmlCode: { downloadUrl: "https://example.invalid/product.html" },
+    };
+    const screenshotOnly = {
+      name: "projects/1/screens/product",
+      title: "Status Page - Status Utility",
+      screenshot: { downloadUrl: "https://example.invalid/product.png" },
+    };
+    const result = {
+      structuredContent: { screens: [htmlOnly] },
+      content: [{ type: "text", text: JSON.stringify({ screens: [screenshotOnly] }) }],
+    };
+    const partition = partitionDirectScreenCandidates(collectScreenCandidatesFromResult(result));
+
+    assert.equal(partition.screens.length, 0);
+    assert.equal(partition.evidence[0]?.disposition, "excluded_identity_conflict");
+    assert.deepEqual(partition.evidence[0]?.identityConflicts, ["render_evidence_splice"]);
   });
 
   it("does not treat project resources as screens", () => {

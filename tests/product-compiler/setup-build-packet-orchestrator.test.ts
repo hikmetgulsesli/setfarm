@@ -15,9 +15,12 @@ import {
   SetupBuildPacketError,
 } from "../../src/product-compiler/setup-build-packet-orchestrator.js";
 import {
-  bindExactStitchTargetResponsesV1,
   produceDesignGenerationTargetsV1,
 } from "../../src/product-compiler/producers/design-targets.js";
+import {
+  bindStitchTargetCandidateSelectionsV2,
+  selectStitchTargetCandidatesV1,
+} from "../../src/product-compiler/producers/stitch-target-candidate-selection.js";
 import { produceProductSpecV1 } from "../../src/product-compiler/producers/product-spec.js";
 import { extractTaskRequirementLedgerV1 } from "../../src/product-compiler/requirements/task-requirements-v1.js";
 import { renderLegacyPrd } from "../../src/product-compiler/renderers/legacy-prd.js";
@@ -26,6 +29,12 @@ import {
   createIsolatedTestDatabase,
   type TestDatabase,
 } from "../execution-attempts/test-database.js";
+import {
+  buildTestRenderedSemantics,
+  stitchDownloadReceipts,
+  validStitchHtml,
+  validStitchPng,
+} from "./fixtures/stitch-artifacts.js";
 
 const TASK = [
   "Build a compact single-page status utility called Pulse Tile.",
@@ -137,26 +146,29 @@ function createFixture(
     targetRefs: [target.targetId],
     screens: [{ screenId: `screen-${index + 1}`, title: target.expectedScreenTitle }],
   }));
-  const bindings = bindExactStitchTargetResponsesV1({
-    generationTargets: targets.generationTargets,
-    batches,
+  const candidateArtifacts = targets.generationTargets.targets.map((target, index) => {
+    const screenId = `screen-${index + 1}`;
+    let elementOrdinal = 1;
+    const nextElementRef = () => `E${String(elementOrdinal++).padStart(6, "0")}`;
+    const surfaceElementRef = nextElementRef();
+    const actionTags = target.requiredActionRefs.map((actionRef) =>
+      `<button data-action="${actionRef}" data-setfarm-element-ref="${nextElementRef()}">${actionRef}</button>`);
+    const inputTags = target.requiredActionInputs.flatMap((input) => input.inputFields.map((field) =>
+      `<input data-action-input="${input.actionRef}.${field}" data-setfarm-element-ref="${nextElementRef()}" />`));
+    const html = [
+      `<main data-surface-id="${target.surfaceRef}" data-setfarm-element-ref="${surfaceElementRef}">`,
+      ...actionTags,
+      ...inputTags,
+      "</main>",
+    ].join("");
+    return {
+      screenId,
+      htmlBytes: validStitchHtml(html, `setup-build-${screenId}`),
+      screenshotBytes: validStitchPng(index + 1),
+    };
   });
-  assert.equal(bindings.status, "produced", JSON.stringify(bindings.diagnostics));
-
-  fs.mkdirSync(path.join(repo, "src", "screens"), { recursive: true });
-  fs.mkdirSync(path.join(repo, "src", "features"), { recursive: true });
-  fs.mkdirSync(path.join(repo, "stitch"), { recursive: true });
-  fs.mkdirSync(path.join(repo, ".setfarm", "setup"), { recursive: true });
-  fs.writeFileSync(path.join(repo, "package.json"), JSON.stringify({
-    name: "pulse-tile",
-    private: true,
-    scripts: { build: "vite build", test: "vitest run" },
-  }, null, 2) + "\n");
-  fs.writeFileSync(path.join(repo, "src", "main.tsx"), "export const main = true;\n");
-  fs.writeFileSync(path.join(repo, "src", "features", "status.ts"), "export const status = 'ready';\n");
-  writeJson(path.join(repo, "stitch", "GENERATION_TARGETS.json"), targets.generationTargets, true);
-  writeJson(path.join(repo, "stitch", "STITCH_DIRECT_RESPONSE_EVIDENCE.json"), {
-    schema: "setfarm.stitch-direct-response-evidence.v1",
+  const directResponseEvidence = {
+    schema: "setfarm.stitch-direct-response-evidence.v2",
     projectId: "fixture-project",
     batches: batches.map((batch, index) => ({
       stageId: batch.stageId,
@@ -171,6 +183,12 @@ function createFixture(
           height: "900",
           htmlAvailable: true,
           screenshotAvailable: true,
+          ...stitchDownloadReceipts(
+            batch.screens[0]!.screenId,
+            candidateArtifacts[index]!.htmlBytes,
+            candidateArtifacts[index]!.screenshotBytes,
+          ),
+          identityConflicts: [],
           disposition: "admitted_renderable_screen",
           missingEvidence: [],
         },
@@ -182,19 +200,78 @@ function createFixture(
           height: "512",
           htmlAvailable: true,
           screenshotAvailable: false,
+          htmlSourceRefHash: "a".repeat(64),
+          identityConflicts: [],
           disposition: "excluded_missing_render_evidence",
           missingEvidence: ["screenshot"],
         }] : []),
       ],
     })),
-  }, true);
+  };
+  const renderedSemantics = buildTestRenderedSemantics({
+    generationTargets: targets.generationTargets,
+    directResponseEvidence,
+    artifacts: candidateArtifacts,
+  });
+  const selection = selectStitchTargetCandidatesV1({
+    generationTargets: targets.generationTargets,
+    directResponseEvidence,
+    renderedSemantics,
+    artifacts: candidateArtifacts,
+    authorityMode: "clean_v3",
+  });
+  assert.equal(selection.status, "produced", JSON.stringify(selection.diagnostics));
+  if (selection.status !== "produced") throw new Error("fixture candidate selection failed");
+  const bindings = bindStitchTargetCandidateSelectionsV2({
+    generationTargets: targets.generationTargets,
+    candidateSelection: selection.candidateSelection,
+  });
+  assert.equal(bindings.status, "produced", JSON.stringify(bindings.diagnostics));
+  if (bindings.status !== "produced") throw new Error("fixture response binding failed");
+
+  fs.mkdirSync(path.join(repo, "src", "screens"), { recursive: true });
+  fs.mkdirSync(path.join(repo, "src", "features"), { recursive: true });
+  fs.mkdirSync(path.join(repo, "stitch"), { recursive: true });
+  fs.mkdirSync(path.join(repo, ".setfarm", "setup"), { recursive: true });
+  fs.writeFileSync(path.join(repo, "package.json"), JSON.stringify({
+    name: "pulse-tile",
+    private: true,
+    scripts: { build: "vite build", test: "vitest run" },
+  }, null, 2) + "\n");
+  fs.writeFileSync(path.join(repo, "src", "main.tsx"), "export const main = true;\n");
+  fs.writeFileSync(path.join(repo, "src", "features", "status.ts"), "export const status = 'ready';\n");
+  writeJson(path.join(repo, "stitch", "GENERATION_TARGETS.json"), targets.generationTargets, true);
+  writeJson(path.join(repo, "stitch", "STITCH_DIRECT_RESPONSE_EVIDENCE.json"), directResponseEvidence, true);
+  writeJson(path.join(repo, "stitch", "STITCH_RENDERED_SEMANTICS.json"), renderedSemantics, true);
+  writeJson(path.join(repo, "stitch", "STITCH_TARGET_CANDIDATE_SELECTION.json"), selection.candidateSelection, true);
   writeJson(path.join(repo, "stitch", "STITCH_RESPONSE_BINDINGS.json"), bindings.responseBindings, true);
+  candidateArtifacts.forEach((artifact) => {
+    fs.writeFileSync(path.join(repo, "stitch", `${artifact.screenId}.html`), artifact.htmlBytes);
+    fs.writeFileSync(path.join(repo, "stitch", `${artifact.screenId}.png`), artifact.screenshotBytes);
+  });
+  for (const candidate of renderedSemantics.candidates) {
+    if (candidate.status !== "rendered" || !candidate.semanticDom) continue;
+    const artifact = candidateArtifacts.find((item) => item.screenId === candidate.screenId)!;
+    fs.mkdirSync(path.dirname(path.join(repo, candidate.semanticDom.locator)), { recursive: true });
+    fs.writeFileSync(path.join(repo, candidate.semanticDom.locator), artifact.htmlBytes);
+  }
 
   const bindingByTarget = new Map(bindings.responseBindings.bindings.map((item) => [item.targetRef, item]));
   const screenIndex: Array<Record<string, unknown>> = [];
   const generatedFiles: string[] = [];
   targets.generationTargets.targets.forEach((target, targetIndex) => {
     const binding = bindingByTarget.get(target.targetId)!;
+    const targetSelection = selection.candidateSelection.selections.find((item) => item.targetRef === target.targetId)!;
+    const selectedEvaluation = targetSelection.evaluations.find((item) => item.screenId === binding.responseScreenId)!;
+    const exactElementRef = (kind: string, semanticRef: string) => {
+      const check = selectedEvaluation.semanticChecks.find((item) => item.kind === kind && item.semanticRef === semanticRef);
+      assert.equal(check?.disposition, "exact");
+      assert.equal(check?.elementRefs.length, 1);
+      return check!.elementRefs[0]!;
+    };
+    const renderedCandidate = renderedSemantics.candidates.find((item) => item.screenId === binding.responseScreenId)!;
+    assert.equal(renderedCandidate.status, "rendered");
+    const sourceLocator = renderedCandidate.semanticDom!.locator;
     const file = `src/screens/Surface${targetIndex + 1}.tsx`;
     const controls: Array<Record<string, unknown>> = [];
     const tags: string[] = [];
@@ -207,11 +284,12 @@ function createFixture(
         label: actionRef,
         actionRef,
         semanticSource: "data-action",
-        sourceLocator: `stitch/${binding.responseScreenId}.html`,
+        sourceLocator,
+        sourceElementRef: exactElementRef("action", actionRef),
         generatedSourceLocator: file,
         selector: `[data-action-id="${generatedLocalId}"]`,
       });
-      tags.push(`<button data-action="${actionRef}" data-action-id="${generatedLocalId}">${actionRef}</button>`);
+      tags.push(`<button data-action="${actionRef}" data-setfarm-element-ref="${exactElementRef("action", actionRef)}" data-action-id="${generatedLocalId}">${actionRef}</button>`);
     });
     target.requiredActionInputs.forEach((required, actionIndex) => {
       required.inputFields.forEach((inputField, fieldIndex) => {
@@ -223,11 +301,12 @@ function createFixture(
           label: inputField,
           inputBindings: [{ actionRef: required.actionRef, inputField }],
           semanticSource: "data-action-input",
-          sourceLocator: `stitch/${binding.responseScreenId}.html`,
+          sourceLocator,
+          sourceElementRef: exactElementRef("action_input", `${required.actionRef}.${inputField}`),
           generatedSourceLocator: file,
           selector: `[data-control-id="${generatedLocalId}"]`,
         });
-        tags.push(`<input data-action-input="${required.actionRef}.${inputField}" data-control-id="${generatedLocalId}" />`);
+        tags.push(`<input data-action-input="${required.actionRef}.${inputField}" data-setfarm-element-ref="${exactElementRef("action_input", `${required.actionRef}.${inputField}`)}" data-control-id="${generatedLocalId}" />`);
       });
     });
     fs.writeFileSync(path.join(repo, file), [
@@ -400,9 +479,13 @@ describe("setup-build Product Build Packet orchestration", () => {
     assert.deepEqual(first.storyPlan.stories.map((story) => story.id), ["US-001"]);
     assert.equal(first.buildTopology.commands.find((command) => command.kind === "build")?.argv.join(" "), "npm run build");
     assert.equal(Object.values(first.sourceHashes).flat().every((hash) => /^[a-f0-9]{64}$/.test(hash)), true);
+    assert.equal(first.sourceHashes.candidateSelection?.length, 64);
+    assert.equal(first.designGraph.rawArtifactHashes.includes(first.sourceHashes.generationTargets), true);
+    assert.equal(first.designGraph.rawArtifactHashes.includes(first.sourceHashes.candidateSelection!), true);
+    assert.equal(first.designGraph.rawArtifactHashes.includes(first.sourceHashes.responseBindings), true);
   });
 
-  it("rejects exact bindings that lost admitted direct response evidence", () => {
+  it("rejects candidate selection that lost admitted direct response evidence", () => {
     const value = fixture();
     const evidencePath = path.join(value.repo, "stitch", "STITCH_DIRECT_RESPONSE_EVIDENCE.json");
     const evidence = JSON.parse(fs.readFileSync(evidencePath, "utf8"));
@@ -423,8 +506,33 @@ describe("setup-build Product Build Packet orchestration", () => {
 
   it("keeps pre-v3 shadow assembly compatible when direct evidence is absent", () => {
     const value = fixture();
+    const bindingsPath = path.join(value.repo, "stitch", "STITCH_RESPONSE_BINDINGS.json");
+    const selected = JSON.parse(fs.readFileSync(bindingsPath, "utf8"));
+    writeJson(bindingsPath, {
+      schema: "setfarm.stitch-target-response-bindings.v1",
+      generationTargetsHash: selected.generationTargetsHash,
+      bindings: selected.bindings.map(({
+        htmlArtifactHash: _html,
+        screenshotArtifactHash: _png,
+        semanticDomHash: _dom,
+        semanticObservationHash: _observation,
+        contractElementRefs: _elementRefs,
+        ...binding
+      }: any) => binding),
+    }, true);
     fs.rmSync(path.join(value.repo, "stitch", "STITCH_DIRECT_RESPONSE_EVIDENCE.json"));
-    git(value.repo, ["add", "-u"]);
+    fs.rmSync(path.join(value.repo, "stitch", "STITCH_RENDERED_SEMANTICS.json"));
+    fs.rmSync(path.join(value.repo, "stitch", "STITCH_TARGET_CANDIDATE_SELECTION.json"));
+    const screenIndexPath = path.join(value.repo, "src", "screens", "SCREEN_INDEX.json");
+    const screenIndex = JSON.parse(fs.readFileSync(screenIndexPath, "utf8"));
+    for (const screen of screenIndex) {
+      for (const control of screen.controls) {
+        control.sourceLocator = `stitch/${screen.screenId}.html`;
+        delete control.sourceElementRef;
+      }
+    }
+    writeJson(screenIndexPath, screenIndex);
+    git(value.repo, ["add", "-A"]);
     git(value.repo, ["commit", "-q", "-m", "legacy fixture without direct evidence"]);
 
     const assembled = assembleSetupBuildPacketContracts(value);
@@ -646,9 +754,13 @@ describe("setup-build packet runtime publication", () => {
     return { runId, result };
   }
 
-  it("atomically activates a v3 packet with six same-producer canonical refs", async () => {
+  it("atomically activates a v3 packet with seven same-producer canonical refs", async () => {
     const { runId, result } = await compile("v3");
-    assert.equal(result.compilation.activation, "activated");
+    assert.equal(result.compilation.activation, "activated", JSON.stringify({
+      report: result.compilation.compilation.report,
+      sourceHashes: result.contracts.sourceHashes,
+      rawArtifactHashes: result.contracts.designGraph.rawArtifactHashes,
+    }));
     assert.equal(result.compilation.compilation.status, "sealed");
     const rows = await database.sql<Array<{
       packet_hash: string | null;
@@ -668,7 +780,7 @@ describe("setup-build packet runtime publication", () => {
     assert.deepEqual(rows.map((row) => ({ ...row })), [{
       packet_hash: result.compilation.compilation.packetHash,
       packets: 1,
-      refs: 6,
+      refs: 7,
       producers: 1,
     }]);
   });

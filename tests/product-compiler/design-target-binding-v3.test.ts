@@ -11,12 +11,17 @@ import {
   bindExactStitchTargetResponsesV1,
   produceDesignGenerationTargetsV1,
 } from "../../src/product-compiler/producers/design-targets.js";
+import {
+  bindStitchTargetCandidateSelectionsV2,
+  selectStitchTargetCandidatesV1,
+} from "../../src/product-compiler/producers/stitch-target-candidate-selection.js";
 import { produceProductSpecV1 } from "../../src/product-compiler/producers/product-spec.js";
 import { renderLegacyPrd } from "../../src/product-compiler/renderers/legacy-prd.js";
 import {
   buildV3BatchStitchPrompt,
   extractCanonicalProductSpecFromPrd,
 } from "../../src/installer/steps/02-design/preclaim.js";
+import { buildTestRenderedSemantics, stitchDownloadReceipts, validStitchHtml, validStitchPng } from "./fixtures/stitch-artifacts.js";
 
 const TASK = [
   "Build a compact single-page status utility called Pulse Tile.",
@@ -31,18 +36,58 @@ function compilerInputs() {
   const targets = produceDesignGenerationTargetsV1(product.productSpec);
   assert.equal(targets.status, "produced", JSON.stringify(targets.diagnostics));
   const target = targets.generationTargets.targets[0]!;
-  const bound = bindExactStitchTargetResponsesV1({
-    generationTargets: targets.generationTargets,
+  const html = validStitchHtml([
+    `<main data-surface-id="${target.surfaceRef}" data-setfarm-element-ref="E000001">`,
+    '<button data-action="ACT_REFRESH_STATUS" data-setfarm-element-ref="E000002">Refresh</button>',
+    '<button data-action="ACT_SET_PAUSED" data-action-input="ACT_SET_PAUSED.paused" data-setfarm-element-ref="E000003">Pause</button>',
+    '<button hidden data-setfarm-element-ref="E000004">Settings</button>',
+    "</main>",
+  ].join(""), "design-binding-screen-pulse");
+  const screenshot = validStitchPng(1);
+  const directResponseEvidence = {
+    schema: "setfarm.stitch-direct-response-evidence.v2",
+    projectId: "design-binding-test",
     batches: [{
       stageId: "stage-1",
       targetRefs: [target.targetId],
-      screens: [{ screenId: "screen-pulse", title: target.expectedScreenTitle }],
+      source: "direct",
+      candidates: [{
+        screenId: "screen-pulse",
+        title: target.expectedScreenTitle,
+        responsePaths: ["$result.screens[0]"],
+        htmlAvailable: true,
+        screenshotAvailable: true,
+        ...stitchDownloadReceipts("screen-pulse", html, screenshot),
+        identityConflicts: [],
+        disposition: "admitted_renderable_screen",
+        missingEvidence: [],
+      }],
     }],
+  };
+  const artifacts = [{ screenId: "screen-pulse", htmlBytes: html, screenshotBytes: screenshot }];
+  const renderedSemantics = buildTestRenderedSemantics({
+    generationTargets: targets.generationTargets,
+    directResponseEvidence,
+    artifacts,
+  });
+  const selected = selectStitchTargetCandidatesV1({
+    generationTargets: targets.generationTargets,
+    directResponseEvidence,
+    renderedSemantics,
+    artifacts,
+    authorityMode: "clean_v3",
+  });
+  assert.equal(selected.status, "produced", JSON.stringify(selected.diagnostics));
+  const bound = bindStitchTargetCandidateSelectionsV2({
+    generationTargets: targets.generationTargets,
+    candidateSelection: selected.candidateSelection,
   });
   assert.equal(bound.status, "produced", JSON.stringify(bound.diagnostics));
   return {
     productSpec: product.productSpec,
     generationTargets: targets.generationTargets,
+    renderedSemantics,
+    candidateSelection: selected.candidateSelection,
     responseBindings: bound.responseBindings,
   };
 }
@@ -68,8 +113,9 @@ function exactAdapterInput() {
   const generated = [
     "export function StatusUtilityPulseTile() {",
     "  return <>",
-    '    <button data-action="ACT_REFRESH_STATUS" data-action-id="refresh-status-1">Refresh</button>',
-    '    <button data-action="ACT_SET_PAUSED" data-action-input="ACT_SET_PAUSED.paused" data-action-id="ready-paused-2">Pause</button>',
+    '    <button data-action="ACT_REFRESH_STATUS" data-setfarm-element-ref="E000002" data-action-id="refresh-status-1">Refresh</button>',
+    '    <button data-action="ACT_SET_PAUSED" data-action-input="ACT_SET_PAUSED.paused" data-setfarm-element-ref="E000003" data-action-id="ready-paused-2">Pause</button>',
+    '    <button disabled hidden="true" aria-hidden="true" data-setfarm-element-ref="E000004" data-setfarm-rejected-control="settings-3">Settings</button>',
     "  </>;",
     "}",
   ].join("\n");
@@ -80,7 +126,8 @@ function exactAdapterInput() {
     label: "Refresh",
     actionRef: "ACT_REFRESH_STATUS",
     semanticSource: "data-action",
-    sourceLocator: "stitch/screen-pulse.html",
+    sourceLocator: "stitch/rendered-dom/screen-pulse.html",
+    sourceElementRef: "E000002",
     generatedSourceLocator: generatedLocator,
     selector: '[data-action-id="refresh-status-1"]',
   }, {
@@ -91,7 +138,8 @@ function exactAdapterInput() {
     actionRef: "ACT_SET_PAUSED",
     inputBindings: [{ actionRef: "ACT_SET_PAUSED", inputField: "paused" }],
     semanticSource: "data-action",
-    sourceLocator: "stitch/screen-pulse.html",
+    sourceLocator: "stitch/rendered-dom/screen-pulse.html",
+    sourceElementRef: "E000003",
     generatedSourceLocator: generatedLocator,
     selector: '[data-action-id="ready-paused-2"]',
   }];
@@ -100,7 +148,7 @@ function exactAdapterInput() {
     title: target.expectedScreenTitle,
     componentName: "StatusUtilityPulseTile",
     file: generatedLocator,
-    buttons: 2,
+    buttons: 3,
     inputs: 0,
     textareas: 0,
     selects: 0,
@@ -111,10 +159,20 @@ function exactAdapterInput() {
       schema: "setfarm.stitch-screen-projection.v2",
       mode: "contract_only",
       targetRef: target.targetId,
-      rawInteractiveCounts: { buttons: 2, links: 0, inputs: 0, textareas: 0, selects: 0 },
+      rawInteractiveCounts: { buttons: 3, links: 0, inputs: 0, textareas: 0, selects: 0 },
       requiredObservableRefs: [],
     },
-    rejectedControls: [],
+    rejectedControls: [{
+      rejectionId: "settings-3",
+      kind: "button",
+      label: "Settings",
+      index: 2,
+      reasonCode: "outside_canonical_rendered_contract",
+      sourceLocator: "stitch/rendered-dom/screen-pulse.html",
+      sourceElementRef: "E000004",
+      generatedSourceLocator: generatedLocator,
+      selector: '[data-setfarm-rejected-control="settings-3"]',
+    }],
   }], null, 2);
   return {
     ...contracts,
@@ -230,36 +288,6 @@ describe("Product Compiler v3 exact Stitch target binding", () => {
 
   it("accepts a complete contract-only projection with traceable neutralized Stitch extras", () => {
     const input = exactAdapterInput();
-    const index = JSON.parse(input.screenIndex.text);
-    index[0].buttons = 3;
-    index[0].projection.rawInteractiveCounts.buttons = 3;
-    index[0].rejectedControls.push({
-      rejectionId: "settings-3",
-      kind: "button",
-      label: "Settings",
-      index: 2,
-      reasonCode: "undeclared_by_generation_target",
-      sourceLocator: "stitch/screen-pulse.html",
-      generatedSourceLocator: index[0].file,
-      selector: '[data-setfarm-rejected-control="settings-3"]',
-    });
-    input.screenIndex = textArtifact(
-      input.screenIndex.source.locator,
-      "application/json",
-      JSON.stringify(index, null, 2),
-    );
-    const source = input.generatedSources[0]!;
-    input.generatedSources[0] = {
-      targetRef: source.targetRef,
-      ...textArtifact(
-        source.source.locator,
-        source.source.mediaType,
-        source.text.replace(
-          "  </>;",
-          '    <button disabled hidden="true" aria-hidden="true" data-setfarm-rejected-control="settings-3">Settings</button>\n  </>;',
-        ),
-      ),
-    };
 
     const adapted = adaptExactStitchScreenIndexV3(input);
     assert.equal(adapted.status, "adapted", JSON.stringify(adapted.diagnostics));
@@ -272,15 +300,16 @@ describe("Product Compiler v3 exact Stitch target binding", () => {
   it("rejects an extra button even when its label resembles an allowed action", () => {
     const input = exactAdapterInput();
     const index = JSON.parse(input.screenIndex.text);
-    index[0].buttons = 3;
-    index[0].projection.rawInteractiveCounts.buttons = 3;
+    index[0].buttons = 4;
+    index[0].projection.rawInteractiveCounts.buttons = 4;
     index[0].controls.push({
       id: "save-looking-3",
       generatedLocalId: "save-looking-3",
       kind: "button",
       label: "Refresh status again",
       semanticSource: "data-action",
-      sourceLocator: "stitch/screen-pulse.html",
+      sourceLocator: "stitch/rendered-dom/screen-pulse.html",
+      sourceElementRef: "E000005",
       generatedSourceLocator: index[0].file,
       selector: '[data-control-id="save-looking-3"]',
     });
@@ -291,7 +320,7 @@ describe("Product Compiler v3 exact Stitch target binding", () => {
       ...textArtifact(
         source.source.locator,
         source.source.mediaType,
-        source.text.replace("  </>;", '    <button data-control-id="save-looking-3">Refresh status again</button>\n  </>;'),
+        source.text.replace("  </>;", '    <button data-setfarm-element-ref="E000005" data-control-id="save-looking-3">Refresh status again</button>\n  </>;'),
       ),
     };
     const result = adaptExactStitchScreenIndexV3(input);

@@ -201,7 +201,7 @@ test("claimStep publishes and completes one exact bounded supervisor repair with
     const sourceRevision = await sourceRevisionModule.captureShadowSourceRevision(repo);
     const sourceTreeObject = git(repo, ["rev-parse", "HEAD^{tree}"]);
     const appContentHash = createHash("sha256").update(appSource).digest("hex");
-    const contracts = contractFixtureModule.buildMinimalValidV3Contracts();
+    const contracts = contractFixtureModule.buildMinimalValidV3PacketV2Contracts();
     contracts.buildTopology.repo.baseSha = sourceRevision.sha;
     contracts.buildTopology.repo.treeHash = sourceTreeObject;
     contracts.buildTopology.pathBindings[0]!.knownContentHash = appContentHash;
@@ -321,6 +321,7 @@ test("claimStep publishes and completes one exact bounded supervisor repair with
       designGraph: contracts.designGraph,
       buildTopology: contracts.buildTopology,
       storyPlan: contracts.storyPlan,
+      designSource: contracts.designSource,
       compiler: { version: "3.0.0", codeSha: RELEASE_SHA },
       producer,
     });

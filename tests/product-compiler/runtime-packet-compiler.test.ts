@@ -4,13 +4,17 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, afterEach, before, beforeEach, describe, it } from "node:test";
 
-import { createArtifactIndex } from "../../src/product-compiler/artifact-index.js";
+import {
+  ArtifactIndexError,
+  createArtifactIndex,
+} from "../../src/product-compiler/artifact-index.js";
+import { canonicalJsonBytes, hashCanonicalJson } from "../../src/product-compiler/canonical-json.js";
 import { bootstrapArtifactIndex } from "../../src/product-compiler/indexed-artifact-publisher.js";
 import { ContentAddressedArtifactStore } from "../../src/product-compiler/artifact-store.js";
 import { createRuntimePacketCompiler } from "../../src/product-compiler/runtime-packet-compiler.js";
 import {
   buildMinimalValidContracts,
-  buildMinimalValidV3Contracts,
+  buildMinimalValidV3PacketV2Contracts,
 } from "./fixtures/minimal-valid-contract.js";
 import { createIsolatedTestDatabase, type TestDatabase } from "../execution-attempts/test-database.js";
 
@@ -72,7 +76,7 @@ describe("runtime Product Build Packet compiler", () => {
       [runId, mode, RELEASE_SHA, "d".repeat(64), releaseAdmissionHash],
     );
     const contracts = mode === "v3"
-      ? buildMinimalValidV3Contracts()
+      ? buildMinimalValidV3PacketV2Contracts()
       : buildMinimalValidContracts();
     const compiler = createRuntimePacketCompiler({
       sql: database.sql,
@@ -97,7 +101,7 @@ describe("runtime Product Build Packet compiler", () => {
     } as const;
   }
 
-  it("atomically activates one deterministic v3 packet and six canonical refs", async () => {
+  it("atomically activates one deterministic v3 packet and seven canonical refs", async () => {
     const test = await fixture("v3");
     const [first, second] = await Promise.all([
       test.compiler.compile(test.input),
@@ -120,7 +124,7 @@ describe("runtime Product Build Packet compiler", () => {
     assert.deepEqual(rows.map((row) => ({ ...row })), [{
       packet_hash: first.compilation.packetHash,
       packets: 1,
-      refs: 6,
+      refs: 7,
     }]);
   });
 
@@ -201,5 +205,76 @@ describe("runtime Product Build Packet compiler", () => {
         item.code === "CONTRACT_V3_PRODUCT_DELIVERY_MISSING"),
       true,
     );
+  });
+
+  it("applies the indexed payload limit to nested design-source closure children", async () => {
+    const test = await fixture("v3");
+    const designSource = structuredClone(test.input.designSource!);
+    if (designSource.kind !== "stitch") throw new Error("Expected Stitch fixture");
+    const renderedSemantics = designSource.renderedSemantics as any;
+    renderedSemantics.resources = Array.from({ length: 200 }, (_, index) => {
+      const urlHash = index.toString(16).padStart(64, "0");
+      const contentHash = (index + 10_000).toString(16).padStart(64, "0");
+      return {
+        urlHash,
+        resourceType: index % 2 === 0 ? "stylesheet" : "script",
+        contentHash,
+        byteLength: 1,
+        locator: `stitch/render-resources/${contentHash}.bin`,
+      };
+    });
+    const candidateSelection = designSource.candidateSelection as any;
+    candidateSelection.renderedSemanticsHash = hashCanonicalJson(renderedSemantics);
+    const responseBindings = designSource.responseBindings as any;
+    responseBindings.renderedSemanticsHash = candidateSelection.renderedSemanticsHash;
+    responseBindings.candidateSelectionHash = hashCanonicalJson(candidateSelection);
+    const designGraph = structuredClone(test.input.designGraph) as any;
+    designGraph.rawArtifactHashes = [...new Set([
+      ...designGraph.rawArtifactHashes,
+      hashCanonicalJson(designSource.generationTargets),
+      hashCanonicalJson(designSource.directResponseEvidence),
+      hashCanonicalJson(renderedSemantics),
+      hashCanonicalJson(candidateSelection),
+      hashCanonicalJson(responseBindings),
+    ])].sort();
+    Object.assign(test.input, { designGraph, designSource });
+
+    const envelopeBytes = (artifactType: string, payload: unknown) => canonicalJsonBytes({
+      schema: "setfarm.semantic-artifact-envelope.v1",
+      artifactType,
+      producer: test.input.producer,
+      payload,
+    }).byteLength;
+    const earlierEnvelopeBytes = [
+      ["setfarm.product-spec.v1", test.input.productSpec],
+      ["setfarm.design-interaction-graph.v1", designGraph],
+      ["setfarm.build-topology.v1", test.input.buildTopology],
+      ["setfarm.story-plan.v1", test.input.storyPlan],
+      ["setfarm.design-generation-targets.v1", designSource.generationTargets],
+      ["setfarm.stitch-direct-response-evidence.v2", designSource.directResponseEvidence],
+    ].map(([artifactType, payload]) => envelopeBytes(artifactType as string, payload));
+    const renderedEnvelopeBytes = envelopeBytes(
+      "setfarm.stitch-rendered-semantics.v1",
+      renderedSemantics,
+    );
+    const maxEarlierEnvelopeBytes = Math.max(...earlierEnvelopeBytes);
+    assert.equal(renderedEnvelopeBytes > maxEarlierEnvelopeBytes, true);
+    await database.sql.unsafe(
+      `UPDATE artifact_capacity SET max_payload_bytes = $1, updated_at = NOW()
+        WHERE capacity_key = 'semantic-artifacts'`,
+      [maxEarlierEnvelopeBytes],
+    );
+
+    await assert.rejects(
+      test.compiler.compile(test.input),
+      (error: unknown) => error instanceof ArtifactIndexError
+        && error.code === "ARTIFACT_PAYLOAD_TOO_LARGE",
+    );
+    const rows = await database.sql<Array<{ packet_hash: string | null; packets: number }>>`
+      SELECT r.packet_hash,
+             (SELECT COUNT(*)::integer FROM product_packets WHERE run_id = r.id) AS packets
+        FROM runs r WHERE r.id = ${test.runId}
+    `;
+    assert.deepEqual(rows.map((row) => ({ ...row })), [{ packet_hash: null, packets: 0 }]);
   });
 });

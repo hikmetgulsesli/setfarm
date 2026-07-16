@@ -19,13 +19,17 @@ import {
 import { contextPrdText, parsePrdContract, type PrdSurfaceAction } from "./prd-contract-parser.js";
 import { hasBrowserGameIntent } from "../../stack-contract/detector.js";
 import { isBrowserGameStackPack, stackPackFromContext } from "../../stack-contract/identity.js";
-import { canonicalJsonStringify } from "../../../product-compiler/canonical-json.js";
+import { canonicalJsonStringify, hashCanonicalJson } from "../../../product-compiler/canonical-json.js";
 import { compileV3CompatibilityStoryProjection } from "../../../product-compiler/compatibility/story-projection-v3.js";
 import { resolveCanonicalProductSpecFromPlan } from "../../../product-compiler/runtime-plan-source.js";
 import {
   DesignGenerationTargetsV1Schema,
-  StitchTargetResponseBindingsV1Schema,
 } from "../../../product-compiler/schemas/design-generation-targets-v1.js";
+import {
+  StitchTargetCandidateSelectionV1Schema,
+  StitchTargetResponseBindingsV2Schema,
+} from "../../../product-compiler/schemas/stitch-target-candidate-selection-v1.js";
+import { StitchRenderedSemanticsV1Schema } from "../../../product-compiler/schemas/stitch-rendered-semantics-v1.js";
 
 type PredictedScreen = ReturnType<typeof computePredictedScreenFiles>[number];
 type ProjectKind = "game" | "product";
@@ -801,11 +805,36 @@ export function buildV3AutoStoriesOutput(params: {
   const responseBindings = readCanonicalV3Json({
     filePath: path.join(stitchDir, "STITCH_RESPONSE_BINDINGS.json"),
     label: "RESPONSE_BINDINGS",
-    parse: (value) => StitchTargetResponseBindingsV1Schema.parse(value),
+    parse: (value) => StitchTargetResponseBindingsV2Schema.parse(value),
   });
+  const candidateSelection = readCanonicalV3Json({
+    filePath: path.join(stitchDir, "STITCH_TARGET_CANDIDATE_SELECTION.json"),
+    label: "CANDIDATE_SELECTION",
+    parse: (value) => StitchTargetCandidateSelectionV1Schema.parse(value),
+  });
+  const renderedSemantics = readCanonicalV3Json({
+    filePath: path.join(stitchDir, "STITCH_RENDERED_SEMANTICS.json"),
+    label: "RENDERED_SEMANTICS",
+    parse: (value) => StitchRenderedSemanticsV1Schema.parse(value),
+  });
+  const generationTargetsHash = hashCanonicalJson(generationTargets);
+  const renderedSemanticsHash = hashCanonicalJson(renderedSemantics);
+  if (
+    renderedSemantics.generationTargetsHash !== generationTargetsHash
+    || candidateSelection.generationTargetsHash !== generationTargetsHash
+    || responseBindings.generationTargetsHash !== generationTargetsHash
+    || renderedSemantics.directResponseEvidenceHash !== candidateSelection.directResponseEvidenceHash
+    || candidateSelection.renderedSemanticsHash !== renderedSemanticsHash
+    || responseBindings.renderedSemanticsHash !== renderedSemanticsHash
+    || responseBindings.candidateSelectionHash !== hashCanonicalJson(candidateSelection)
+  ) {
+    throw new Error("V3_STORY_DESIGN_AUTHORITY_HASH_MISMATCH");
+  }
   const projection = compileV3CompatibilityStoryProjection({
     productSpec: plan.productSpec,
     generationTargets,
+    renderedSemantics,
+    candidateSelection,
     responseBindings,
     maxStories: params.maxStories,
   });
