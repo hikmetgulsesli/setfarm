@@ -125,7 +125,7 @@ function exactSource(): string {
     "        data-action=\"ACT_SAVE_RECORD\"",
     "        data-control-slot=\"CSLOT_SAVE_RECORD_PRIMARY\"",
     "        data-setfarm-element-ref=\"E000001\"",
-    "        onClick={actions?.[\"save-record-1\"]}",
+    "        onClick={() => actions?.[\"save-record-1\"]?.({ \"description\": actionInputValues[\"ACT_SAVE_RECORD.description\"], \"title\": actionInputValues[\"ACT_SAVE_RECORD.title\"] })}",
     "      >Save</button>",
     "      <input",
     "        data-control-id=\"record-fields-1\"",
@@ -378,20 +378,31 @@ describe("native Stitch SCREEN_INDEX v2 generated-source validator", () => {
     action.nativeControlKind = "link";
     action.href = "/records/save";
     const exactLinkScreen = synchronizeScreenProjection(screen);
-    const linkHandler = 'onClick={(event) => { event.preventDefault(); actions?.["save-record-1"]?.(); }}';
+    const linkHandler = 'onClick={(event) => { event.preventDefault(); actions?.["save-record-1"]?.({ "description": actionInputValues["ACT_SAVE_RECORD.description"], "title": actionInputValues["ACT_SAVE_RECORD.title"] }); }}';
+    const buttonHandler = 'onClick={() => actions?.["save-record-1"]?.({ "description": actionInputValues["ACT_SAVE_RECORD.description"], "title": actionInputValues["ACT_SAVE_RECORD.title"] })}';
     const linkSource = exactSource()
       .replace("      <button", '      <a href="/records/save"')
       .replace(">Save</button>", ">Save</a>")
-      .replace('onClick={actions?.["save-record-1"]}', linkHandler);
+      .replace(buttonHandler, linkHandler);
     assert.equal(validateStitchScreenSourceV2({ screen: exactLinkScreen, sourceText: linkSource }).status, "valid");
     assert.deepEqual(codesFor(exactLinkScreen, linkSource.replace(
       `        ${linkHandler}\n`,
       "",
-    )), ["STITCH_SCREEN_ACTION_DISPATCH_MISMATCH"]);
+    )), [
+      "STITCH_SCREEN_ACTION_DEFAULT_BEHAVIOR_MISMATCH",
+      "STITCH_SCREEN_ACTION_DISPATCH_MISMATCH",
+    ]);
     assert.deepEqual(codesFor(exactLinkScreen, linkSource.replace(
       linkHandler,
       'onClick={() => { const candidate = actions?.["save-record-1"]; void candidate; }}',
-    )), ["STITCH_SCREEN_ACTION_DISPATCH_MISMATCH"]);
+    )), [
+      "STITCH_SCREEN_ACTION_DEFAULT_BEHAVIOR_MISMATCH",
+      "STITCH_SCREEN_ACTION_DISPATCH_MISMATCH",
+    ]);
+    assert.deepEqual(codesFor(exactLinkScreen, linkSource.replace(
+      "event.preventDefault(); ",
+      "",
+    )), ["STITCH_SCREEN_ACTION_DEFAULT_BEHAVIOR_MISMATCH"]);
   });
 
   it("does not accept contract JSX parked outside the exact exported screen component", () => {
@@ -443,5 +454,19 @@ describe("native Stitch SCREEN_INDEX v2 generated-source validator", () => {
         'value={actionInputValues["ACT_SAVE_RECORD.title"]}',
       );
     assert.deepEqual(codes(tampered), ["STITCH_SCREEN_INPUT_TRANSPORT_MISMATCH"]);
+  });
+
+  it("rejects callback payload fields that differ from the exact component API", () => {
+    const missingField = exactSource().replace(
+      '{ "description": actionInputValues["ACT_SAVE_RECORD.description"], "title": actionInputValues["ACT_SAVE_RECORD.title"] }',
+      '{ "title": actionInputValues["ACT_SAVE_RECORD.title"] }',
+    );
+    assert.deepEqual(codes(missingField), ["STITCH_SCREEN_ACTION_PAYLOAD_MISMATCH"]);
+
+    const wrongTransport = exactSource().replace(
+      '"description": actionInputValues["ACT_SAVE_RECORD.description"]',
+      '"description": actionInputValues["ACT_SAVE_RECORD.title"]',
+    );
+    assert.deepEqual(codes(wrongTransport), ["STITCH_SCREEN_ACTION_PAYLOAD_MISMATCH"]);
   });
 });

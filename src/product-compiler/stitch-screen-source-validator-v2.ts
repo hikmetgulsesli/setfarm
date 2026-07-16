@@ -15,6 +15,8 @@ export const STITCH_SCREEN_SOURCE_DIAGNOSTIC_CODES_V2 = [
   "STITCH_SCREEN_CONTROL_ACCESSIBILITY_MISMATCH",
   "STITCH_SCREEN_CONTROL_HREF_MISMATCH",
   "STITCH_SCREEN_ACTION_DISPATCH_MISMATCH",
+  "STITCH_SCREEN_ACTION_PAYLOAD_MISMATCH",
+  "STITCH_SCREEN_ACTION_DEFAULT_BEHAVIOR_MISMATCH",
   "STITCH_SCREEN_INPUT_CONTROL_MISSING",
   "STITCH_SCREEN_INPUT_CONTROL_AMBIGUOUS",
   "STITCH_SCREEN_INPUT_BINDINGS_MISMATCH",
@@ -255,6 +257,110 @@ function exactActionDispatch(
   return !hasUnprovedAccess
     && dispatchKeys.length === 1
     && dispatchKeys[0] === generatedLocalId;
+}
+
+function exactActionPayload(
+  screen: StitchScreenIndexEntryV2,
+  element: JsxElementRecord,
+  handlerAttribute: string,
+  generatedLocalId: string,
+): boolean {
+  const expression = exactHandlerExpression(element, handlerAttribute);
+  if (!expression) return false;
+  const binding = screen.componentApi.actionBindings.find((candidate) =>
+    candidate.generatedLocalId === generatedLocalId);
+  if (!binding) return false;
+  const directHandler = unwrapParentheses(expression);
+  if (
+    ts.isElementAccessExpression(directHandler)
+    && ts.isIdentifier(directHandler.expression)
+    && directHandler.expression.text === "actions"
+  ) {
+    return binding.inputFields.length === 0;
+  }
+
+  const dispatchCalls: ts.CallExpression[] = [];
+  const visit = (node: ts.Node): void => {
+    if (ts.isCallExpression(node)) {
+      const callee = unwrapParentheses(node.expression);
+      if (
+        ts.isElementAccessExpression(callee)
+        && ts.isIdentifier(callee.expression)
+        && callee.expression.text === "actions"
+        && callee.argumentExpression
+        && (ts.isStringLiteral(callee.argumentExpression)
+          || ts.isNoSubstitutionTemplateLiteral(callee.argumentExpression))
+        && callee.argumentExpression.text === generatedLocalId
+      ) {
+        dispatchCalls.push(node);
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(expression);
+  if (dispatchCalls.length !== 1) return false;
+  const call = dispatchCalls[0]!;
+  if (binding.inputFields.length === 0) return call.arguments.length === 0;
+  if (call.arguments.length !== 1) return false;
+  const payload = unwrapParentheses(call.arguments[0]!);
+  if (!ts.isObjectLiteralExpression(payload)) return false;
+  if (payload.properties.length !== binding.inputFields.length) return false;
+
+  const currentValueRefs = new Set(screen.componentApi.inputTransports
+    .filter((transport) => transport.generatedControlId === generatedLocalId)
+    .map((transport) => transport.actionInputRef));
+  return payload.properties.every((property, index) => {
+    const field = binding.inputFields[index];
+    if (
+      !field
+      || !ts.isPropertyAssignment(property)
+      || !(ts.isStringLiteral(property.name)
+        || ts.isNoSubstitutionTemplateLiteral(property.name))
+      || property.name.text !== field
+    ) {
+      return false;
+    }
+    const actionInputRef = `${binding.actionRef}.${field}`;
+    const value = unwrapParentheses(property.initializer);
+    if (currentValueRefs.has(actionInputRef)) {
+      return ts.isIdentifier(value) && value.text === "nextValue";
+    }
+    return exactStateValueExpression(value, actionInputRef);
+  });
+}
+
+function exactDefaultBehavior(
+  element: JsxElementRecord,
+  handlerAttribute: string,
+  preventsDefault: boolean,
+): boolean {
+  const expression = exactHandlerExpression(element, handlerAttribute);
+  if (!expression) return false;
+  const calls: ts.CallExpression[] = [];
+  const visit = (node: ts.Node): void => {
+    if (ts.isCallExpression(node)) {
+      const callee = unwrapParentheses(node.expression);
+      if (ts.isPropertyAccessExpression(callee) && callee.name.text === "preventDefault") {
+        calls.push(node);
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(expression);
+  if (!preventsDefault) return calls.length === 0;
+  if (
+    (!ts.isArrowFunction(expression) && !ts.isFunctionExpression(expression))
+    || expression.parameters.length !== 1
+    || !ts.isIdentifier(expression.parameters[0]!.name)
+    || calls.length !== 1
+    || calls[0]!.arguments.length !== 0
+  ) {
+    return false;
+  }
+  const callee = unwrapParentheses(calls[0]!.expression);
+  return ts.isPropertyAccessExpression(callee)
+    && ts.isIdentifier(callee.expression)
+    && callee.expression.text === expression.parameters[0]!.name.text;
 }
 
 function exactPropertyChain(expression: ts.Expression, names: readonly string[]): boolean {
@@ -606,10 +712,29 @@ function validatePhysicalControls(
     const handler = control.kind === "button" || control.kind === "link"
       ? "onClick"
       : "onChange";
-    if (!exactActionDispatch(element, handler, control.generatedLocalId)) {
+    const dispatchValid = exactActionDispatch(element, handler, control.generatedLocalId);
+    if (!dispatchValid) {
       diagnostics.push(diagnostic({
         code: "STITCH_SCREEN_ACTION_DISPATCH_MISMATCH",
         message: `Action control ${control.generatedLocalId} ${handler} must contain exactly one literal actions[${JSON.stringify(control.generatedLocalId)}] dispatch and no other action key`,
+        reference: control.generatedLocalId,
+      }));
+    } else if (!exactActionPayload(
+      screen,
+      element,
+      handler,
+      control.generatedLocalId,
+    )) {
+      diagnostics.push(diagnostic({
+        code: "STITCH_SCREEN_ACTION_PAYLOAD_MISMATCH",
+        message: `Action control ${control.generatedLocalId} must dispatch the exact generated component API payload`,
+        reference: control.generatedLocalId,
+      }));
+    }
+    if (!exactDefaultBehavior(element, handler, control.tagName === "a")) {
+      diagnostics.push(diagnostic({
+        code: "STITCH_SCREEN_ACTION_DEFAULT_BEHAVIOR_MISMATCH",
+        message: `Action control ${control.generatedLocalId} must preserve exact link default-prevention behavior`,
         reference: control.generatedLocalId,
       }));
     }
