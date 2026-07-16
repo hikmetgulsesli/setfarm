@@ -65,6 +65,7 @@ class FakeAttemptRepository implements DesignSourceCompilationAttemptRepositoryP
   readonly attempts = new Map<string, ProductCompilationAttemptV1>();
   readonly reservations: Reservation[] = [];
   readonly events: string[] = [];
+  readonly recoverableAttemptIds = new Set<string>();
 
   async reserve(inputValue: unknown): Promise<ProductCompilationAttemptReservationResult> {
     const input = inputValue as Reservation;
@@ -141,6 +142,36 @@ class FakeAttemptRepository implements DesignSourceCompilationAttemptRepositoryP
     });
     this.attempts.set(id, attempt);
     return { status: "reserved", attempt };
+  }
+
+  async recoverExpired(inputValue: unknown) {
+    const input = inputValue as {
+      attemptId: string;
+      ownerClaimId: number;
+      ownerInstanceId: string;
+    };
+    const current = this.require(input.attemptId);
+    if (!this.recoverableAttemptIds.has(input.attemptId)) {
+      throw new Error("PRODUCT_COMPILATION_RECOVERY_LEASE_NOT_EXPIRED");
+    }
+    this.recoverableAttemptIds.delete(input.attemptId);
+    const attempt = this.store({
+      ...current,
+      ownerClaimId: input.ownerClaimId,
+      generation: current.generation + 1,
+      fenceToken: sha(`recovered-fence:${current.attemptId}:${current.generation + 1}`),
+      lease: {
+        ownerInstanceId: input.ownerInstanceId,
+        acquiredAt: timestamp,
+        expiresAt,
+        heartbeatAt: timestamp,
+      },
+      updatedAt: timestamp,
+    });
+    this.events.push(`recover:${current.state}`);
+    return current.state === "reserved"
+      ? { status: "reserved_safe_to_resume" as const, attempt }
+      : { status: "dispatching_must_quarantine" as const, attempt };
   }
 
   async commitDispatchIntent(inputValue: unknown): Promise<ProductCompilationAttemptV1> {
@@ -564,6 +595,84 @@ describe("design-source product compilation attempt runner", () => {
       await readFile(path.join(root, result.attempt.attemptLocator, "raw", "stages", "DSGS_001", "response.bin"), "utf8"),
       "stage one durable",
     );
+  });
+
+  it("recovers only expired reserved work and quarantines expired dispatch intent without replay", async () => {
+    const reservedRoot = await repoRoot("expired-reserved");
+    const reservedValue = fixture(1, "expired-reserved");
+    const reservedRepository = new FakeAttemptRepository();
+    const staleReserved = await reservedRepository.reserve({
+      runId: reservedValue.authority.runId,
+      originClaimId: reservedValue.authority.originClaimId,
+      ownerClaimId: 40,
+      passKind: "design_source_generation",
+      authorityHash: reservedValue.request.authorityHash,
+      requestHash: hashCanonicalJson(reservedValue.request),
+      ordinal: 1,
+      retryAuthority: null,
+      ownerInstanceId: "expired-reserved-owner",
+    });
+    assert.equal(staleReserved.status, "reserved");
+    reservedRepository.recoverableAttemptIds.add(staleReserved.attempt.attemptId);
+    let reservedDispatches = 0;
+    const resumed = await runDesignSourceCompilationAttemptsV2(
+      runnerInput(reservedRoot, reservedValue),
+      {
+        repository: reservedRepository,
+        dispatchStage: async () => {
+          reservedDispatches += 1;
+          return acceptedDispatch("recovered reserved response")();
+        },
+        materializeAccepted: acceptedMaterializer(),
+      },
+    );
+    assert.equal(resumed.status, "accepted");
+    assert.equal(reservedDispatches, 1);
+    assert.ok(reservedRepository.events.includes("recover:reserved"));
+
+    const dispatchRoot = await repoRoot("expired-dispatching");
+    const dispatchValue = fixture(1, "expired-dispatching");
+    const dispatchRepository = new FakeAttemptRepository();
+    const stale = await dispatchRepository.reserve({
+      runId: dispatchValue.authority.runId,
+      originClaimId: dispatchValue.authority.originClaimId,
+      ownerClaimId: 40,
+      passKind: "design_source_generation",
+      authorityHash: dispatchValue.request.authorityHash,
+      requestHash: hashCanonicalJson(dispatchValue.request),
+      ordinal: 1,
+      retryAuthority: null,
+      ownerInstanceId: "expired-dispatch-owner",
+    });
+    assert.equal(stale.status, "reserved");
+    const staleDispatch = await dispatchRepository.commitDispatchIntent({
+      attemptId: stale.attempt.attemptId,
+      externalOperationId: "external-operation-before-crash",
+    });
+    dispatchRepository.recoverableAttemptIds.add(staleDispatch.attemptId);
+    let forbiddenDispatches = 0;
+    const quarantined = await runDesignSourceCompilationAttemptsV2(
+      runnerInput(dispatchRoot, dispatchValue),
+      {
+        repository: dispatchRepository,
+        dispatchStage: async () => {
+          forbiddenDispatches += 1;
+          return acceptedDispatch()();
+        },
+        materializeAccepted: acceptedMaterializer(),
+      },
+    );
+    assert.equal(quarantined.status, "dispatch_ambiguous");
+    if (quarantined.status === "dispatch_ambiguous") {
+      assert.equal(quarantined.attempt.state, "quarantined");
+      assert.deepEqual(quarantined.failure.reasonCodes, ["DESIGN_SOURCE_DISPATCH_LEASE_EXPIRED"]);
+      assert.equal(
+        quarantined.attempt.dispatch?.externalOperationId,
+        "external-operation-before-crash",
+      );
+    }
+    assert.equal(forbiddenDispatches, 0);
+    assert.ok(dispatchRepository.events.includes("recover:dispatching"));
   });
 
   it("separates stable operational cause from request-bound failure fingerprint", async () => {

@@ -6,6 +6,7 @@ import { z } from "zod";
 
 import { canonicalJsonBytes, canonicalJsonStringify, hashCanonicalJson } from "./canonical-json.js";
 import {
+  type ProductCompilationAttemptExpiredRecoveryResult,
   type ProductCompilationAttemptReservationResult,
 } from "./product-compilation-attempt-repository.js";
 import {
@@ -200,6 +201,7 @@ export type DesignSourceGenerationWriteEvidenceV2 = (
 
 export type DesignSourceCompilationAttemptRepositoryPortV2 = Readonly<{
   reserve(input: unknown): Promise<ProductCompilationAttemptReservationResult>;
+  recoverExpired(input: unknown): Promise<ProductCompilationAttemptExpiredRecoveryResult>;
   commitDispatchIntent(input: unknown): Promise<ProductCompilationAttemptV1>;
   sealAccepted(input: unknown): Promise<ProductCompilationAttemptV1>;
   sealFailure(input: unknown): Promise<ProductCompilationAttemptV1>;
@@ -891,6 +893,35 @@ function ambiguousFailureSeed(
   };
 }
 
+function expiredDispatchFailureSeed(
+  attempt: ProductCompilationAttemptV1,
+): z.input<typeof DispatchFailureSeedSchema> {
+  const cause = {
+    schema: "setfarm.operational-failure-cause.v1",
+    workflowStepId: "design",
+    boundary: "product_compiler.design_source.expired_dispatch_recovery",
+    failureClass: "infrastructure_failure",
+    failureCode: "DESIGN_SOURCE_DISPATCH_LEASE_EXPIRED",
+  };
+  return {
+    failureFingerprint: hashCanonicalJson({
+      schema: "setfarm.design-source-failure-fingerprint.v1",
+      requestHash: attempt.requestHash,
+      phase: "expired_dispatch_recovery",
+      externalOperationId: attempt.dispatch?.externalOperationId ?? null,
+    }),
+    operationalCauseHash: hashCanonicalJson(cause),
+    reasonCodes: ["DESIGN_SOURCE_DISPATCH_LEASE_EXPIRED"],
+    evidence: {
+      cause,
+      attemptId: attempt.attemptId,
+      generation: attempt.generation,
+      dispatch: attempt.dispatch,
+      recoveryDisposition: "quarantine_without_redispatch",
+    },
+  };
+}
+
 async function runSingleAttempt(input: Readonly<{
   repo: string;
   authority: DesignSourceGenerationAuthorityV1;
@@ -927,6 +958,59 @@ async function runSingleAttempt(input: Readonly<{
 
   let attempt = ProductCompilationAttemptV1Schema.parse(reservation.attempt);
   recordAttempt(input.attempts, attempt);
+  if (
+    (reservation.status === "duplicate" || reservation.status === "active_conflict")
+    && ["reserved", "dispatching"].includes(attempt.state)
+  ) {
+    try {
+      const recovered = await input.dependencies.repository.recoverExpired({
+        attemptId: attempt.attemptId,
+        runId: input.authority.runId,
+        ownerClaimId: input.ownerClaimId,
+        ownerInstanceId: input.ownerInstanceId,
+        leaseMs: input.leaseMs,
+      });
+      attempt = ProductCompilationAttemptV1Schema.parse(recovered.attempt);
+      recordAttempt(input.attempts, attempt);
+      if (recovered.status === "dispatching_must_quarantine") {
+        try {
+          attempt = await sealFailure({
+            repository: input.dependencies.repository,
+            repo: input.repo,
+            attempt,
+            ownerInstanceId: input.ownerInstanceId,
+            disposition: "dispatch_ambiguous",
+            failure: expiredDispatchFailureSeed(attempt),
+          });
+          recordAttempt(input.attempts, attempt);
+          return {
+            kind: "failed",
+            attempt,
+            inputs: {
+              authority: input.authority,
+              request: input.request,
+              stagePrompts: input.stagePrompts,
+              retryDelta: input.retryDelta,
+            },
+          };
+        } catch {
+          return {
+            kind: "runner_failure",
+            result: runnerFailure(
+              "DESIGN_SOURCE_RUNNER_FAILURE_SEAL_FAILED",
+              input.attempts,
+              attempt,
+            ),
+          };
+        }
+      }
+      reservation = { status: "reserved", attempt };
+    } catch {
+      // The repository uses the database clock as authority. A live lease,
+      // same-owner recovery, or concurrent recovery loss remains an ordinary
+      // active conflict and follows the bounded terminal wait below.
+    }
+  }
   if (reservation.status !== "already_accepted") {
     try {
       requireAttemptBinding({
