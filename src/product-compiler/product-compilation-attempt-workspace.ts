@@ -203,6 +203,12 @@ function sha256(bytes: Uint8Array): string {
   return createHash("sha256").update(bytes).digest("hex");
 }
 
+function compareUtf16(left: string, right: string): number {
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
+}
+
 function isNodeError(error: unknown, code: string): error is NodeJS.ErrnoException {
   return error instanceof Error && "code" in error && error.code === code;
 }
@@ -635,7 +641,7 @@ export async function projectAcceptedProductCompilationAttemptV1(input: Readonly
       contentHash: sha256(bytes),
       byteLength: bytes.length,
     }))
-    .sort((left, right) => left.path.localeCompare(right.path));
+    .sort((left, right) => compareUtf16(left.path, right.path));
   const projectionHash = hashCanonicalJson({
     schema: "setfarm.product-compilation-projection-content.v1",
     attemptId: attempt.attemptId,
