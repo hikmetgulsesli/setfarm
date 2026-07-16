@@ -6,6 +6,15 @@ import { z } from "zod";
 import { hashCanonicalJson } from "../product-compiler/canonical-json.js";
 import { Sha256Schema } from "../product-compiler/schemas/common-v1.js";
 import {
+  AgentToolPolicyV1Schema,
+  StageOutputTransportV1Schema,
+  claimBoundStepCompleteStdinTransportV1,
+  createAgentToolPolicyV1,
+  type AgentToolPolicyProfile,
+  type AgentToolPolicyV1,
+  type StageOutputTransportV1,
+} from "./agent-tool-policy.js";
+import {
   ClaimEnvelopeV1Schema,
   type ClaimEnvelopeV1,
 } from "./schemas/claim-envelope-v1.js";
@@ -37,6 +46,7 @@ const V3StageInstructionRefV1Schema = z.object({
 const V3StageCompletionContractV1Schema = z.object({
   schema: z.literal("setfarm.v3-stage-completion-contract.v1"),
   outputFile: AbsolutePathSchema,
+  outputFileAuthority: z.literal("legacy_compatibility_only"),
   responseAuthority: z.literal("stage_instruction"),
   normalOutcome: z.literal("step_complete"),
   infrastructureOutcome: z.literal("step_fail"),
@@ -51,6 +61,52 @@ const V3StageStoryIdentityV1Schema = z.object({
 
 function exactInstructionHash(content: string): string {
   return createHash("sha256").update(Buffer.from(content, "utf8")).digest("hex");
+}
+
+const STAGE_TOOL_POLICY_PROFILE_BY_AUTHORITY = {
+  "bug-fix/triage/triager": "artifact-only",
+  "bug-fix/investigate/investigator": "artifact-only",
+  "bug-fix/setup/setup": "workspace-bootstrap",
+  "bug-fix/fix/fixer": "source-scoped",
+  "bug-fix/verify/verifier": "verification",
+  "bug-fix/pr/pr": "repository-operator",
+  "daily-standup/collect/collector": "artifact-only",
+  "daily-standup/report/reporter": "artifact-only",
+  "feature-dev/plan/planner": "artifact-only",
+  "feature-dev/design/designer": "artifact-only",
+  "feature-dev/stories/planner": "artifact-only",
+  "feature-dev/setup-repo/setup-repo": "workspace-bootstrap",
+  "feature-dev/setup-build/setup-build": "workspace-bootstrap",
+  "feature-dev/implement/developer": "source-scoped",
+  "feature-dev/verify/reviewer": "verification",
+  "feature-dev/supervise/supervisor": "source-scoped",
+  "feature-dev/security-gate/security-gate": "scanner",
+  "feature-dev/qa-test/qa-tester": "browser-verification",
+  "feature-dev/final-test/tester": "browser-verification",
+  "feature-dev/deploy/deployer": "platform-operator",
+  "security-audit/scan/scanner": "scanner",
+  "security-audit/prioritize/prioritizer": "artifact-only",
+  "security-audit/setup/setup": "workspace-bootstrap",
+  "security-audit/fix/fixer": "source-scoped",
+  "security-audit/verify/verifier": "verification",
+  "security-audit/test/tester": "browser-verification",
+  "security-audit/pr/pr": "repository-operator",
+  "ui-refactor/plan/planner": "artifact-only",
+  "ui-refactor/setup/setup": "workspace-bootstrap",
+  "ui-refactor/implement/developer": "source-scoped",
+  "ui-refactor/verify/verifier": "verification",
+  "ui-refactor/final-test/tester": "browser-verification",
+} as const satisfies Record<string, AgentToolPolicyProfile>;
+
+function resolveStageToolPolicyProfile(
+  workflow: string,
+  workflowStepId: string,
+  role: string,
+): AgentToolPolicyProfile | undefined {
+  const authorityKey = `${workflow}/${workflowStepId}/${role}`;
+  return STAGE_TOOL_POLICY_PROFILE_BY_AUTHORITY[
+    authorityKey as keyof typeof STAGE_TOOL_POLICY_PROFILE_BY_AUTHORITY
+  ];
 }
 
 const V3StageExecutionContextShapeV1Schema = z.object({
@@ -73,6 +129,7 @@ const V3StageExecutionContextShapeV1Schema = z.object({
   story: V3StageStoryIdentityV1Schema.optional(),
   instruction: V3StageInstructionRefV1Schema,
   retry: V3StageRetryDirectiveV1Schema.optional(),
+  toolPolicy: AgentToolPolicyV1Schema,
   completion: V3StageCompletionContractV1Schema,
   contextHash: Sha256Schema,
 }).strict();
@@ -89,6 +146,35 @@ export const V3StageExecutionContextV1Schema = V3StageExecutionContextShapeV1Sch
         code: "custom",
         path: ["claim", "claimAgentId"],
         message: "Stage execution role must match the exact claim authority",
+      });
+    }
+    const expectedToolPolicyProfile = resolveStageToolPolicyProfile(
+      value.workflow,
+      value.workflowStepId,
+      value.role,
+    );
+    if (!expectedToolPolicyProfile) {
+      context.addIssue({
+        code: "custom",
+        path: ["toolPolicy", "profile"],
+        message: "Stage execution authority has no canonical tool policy mapping",
+      });
+    } else if (value.toolPolicy.profile !== expectedToolPolicyProfile) {
+      context.addIssue({
+        code: "custom",
+        path: ["toolPolicy", "profile"],
+        message: "Stage tool policy profile must match the exact workflow stage authority",
+      });
+    }
+    const outputTransport = value.toolPolicy.artifactSubmission.transport;
+    if (
+      outputTransport.kind === "legacy-output-file"
+      && outputTransport.outputFile !== value.completion.outputFile
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["toolPolicy", "artifactSubmission", "transport", "outputFile"],
+        message: "Legacy output transport must bind the exact compatibility output file",
       });
     }
     const expectedInstructionPath = path.join(
@@ -224,6 +310,8 @@ export function createV3StageClaimHandoffV1(input: Readonly<{
   outputFile: string;
   instructionContent: string;
   retrySource?: V3StageRetrySourceV1;
+  outputTransport?: StageOutputTransportV1;
+  toolPolicy?: AgentToolPolicyV1;
 }>): V3StageClaimHandoffV1 {
   const envelope = ClaimEnvelopeV1Schema.parse(input.claimEnvelope);
   if (envelope.protocol !== "v3") throw new Error("V3_STAGE_CLAIM_ENVELOPE_REQUIRED");
@@ -239,6 +327,43 @@ export function createV3StageClaimHandoffV1(input: Readonly<{
   if (envelope.claimAgentId !== `${input.workflow}_${input.role}`) {
     throw new Error("V3_STAGE_CONTEXT_CLAIM_ROLE_MISMATCH");
   }
+  const toolPolicyProfile = resolveStageToolPolicyProfile(
+    input.workflow,
+    envelope.workflowStepId,
+    input.role,
+  );
+  if (!toolPolicyProfile) {
+    throw new Error("V3_STAGE_TOOL_POLICY_MAPPING_MISSING");
+  }
+  const outputFile = path.resolve(input.outputFile);
+  const outputTransport = input.outputTransport
+    ? StageOutputTransportV1Schema.parse(input.outputTransport)
+    : claimBoundStepCompleteStdinTransportV1();
+  if (
+    outputTransport.kind === "legacy-output-file"
+    && outputTransport.outputFile !== outputFile
+  ) {
+    throw new Error("V3_STAGE_LEGACY_OUTPUT_FILE_MISMATCH");
+  }
+  const expectedToolPolicy = createAgentToolPolicyV1({
+    profile: toolPolicyProfile,
+    outputTransport,
+  });
+  const suppliedToolPolicy = input.toolPolicy
+    ? AgentToolPolicyV1Schema.safeParse(input.toolPolicy)
+    : undefined;
+  if (suppliedToolPolicy && !suppliedToolPolicy.success) {
+    throw new Error("V3_STAGE_TOOL_POLICY_INVALID");
+  }
+  if (
+    suppliedToolPolicy?.success
+    && suppliedToolPolicy.data.policyHash !== expectedToolPolicy.policyHash
+  ) {
+    throw new Error("V3_STAGE_TOOL_POLICY_MISMATCH");
+  }
+  const toolPolicy = suppliedToolPolicy?.success
+    ? suppliedToolPolicy.data
+    : expectedToolPolicy;
   const instructionPath = path.join(
     workdir,
     ".setfarm",
@@ -293,9 +418,11 @@ export function createV3StageClaimHandoffV1(input: Readonly<{
       path: instructionPath,
     },
     ...(retry ? { retry } : {}),
+    toolPolicy,
     completion: {
       schema: "setfarm.v3-stage-completion-contract.v1" as const,
-      outputFile: path.resolve(input.outputFile),
+      outputFile,
+      outputFileAuthority: "legacy_compatibility_only" as const,
       responseAuthority: "stage_instruction" as const,
       normalOutcome: "step_complete" as const,
       infrastructureOutcome: "step_fail" as const,
