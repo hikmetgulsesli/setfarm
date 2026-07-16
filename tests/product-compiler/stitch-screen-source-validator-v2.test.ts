@@ -117,7 +117,16 @@ function nativeScreen(): StitchScreenIndexEntryV2 {
 
 function exactSource(): string {
   return [
+    'import { useState } from "react";',
+    "",
     "export function EditorScreen({ actions }: { actions?: Record<string, () => void> }) {",
+    "  const [actionInputValues, setActionInputValues] = useState<{",
+    '    "ACT_SAVE_RECORD.description": string;',
+    '    "ACT_SAVE_RECORD.title": string;',
+    "  }>({",
+    '    "ACT_SAVE_RECORD.description": "",',
+    '    "ACT_SAVE_RECORD.title": "",',
+    "  });",
     "  return (",
     "    <main title={\"1 > 0\"}>",
     "      <button",
@@ -326,12 +335,10 @@ describe("native Stitch SCREEN_INDEX v2 generated-source validator", () => {
       .replace('aria-label="Record saved"', 'aria-label="Record failed"')
       .replace("    </main>", "      <button>Unindexed</button>\n    </main>");
     assert.deepEqual(codes(tampered), [
-      "STITCH_SCREEN_ACTION_DISPATCH_MISMATCH",
+      "STITCH_SCREEN_ACTION_CONTROL_MISSING",
       "STITCH_SCREEN_COMPONENT_EXPORT_MISSING",
-      "STITCH_SCREEN_CONTRACT_ELEMENT_SPREAD_FORBIDDEN",
-      "STITCH_SCREEN_CONTROL_TAG_MISMATCH",
-      "STITCH_SCREEN_INTERACTIVE_ELEMENT_UNINDEXED",
-      "STITCH_SCREEN_OBSERVABLE_ACCESSIBILITY_MISMATCH",
+      "STITCH_SCREEN_INPUT_CONTROL_MISSING",
+      "STITCH_SCREEN_OBSERVABLE_MISSING",
     ]);
   });
 
@@ -412,8 +419,125 @@ describe("native Stitch SCREEN_INDEX v2 generated-source validator", () => {
     ].join("\n");
     assert.deepEqual(codes(parked), [
       "STITCH_SCREEN_ACTION_CONTROL_MISSING",
+      "STITCH_SCREEN_BEHAVIOR_UNPROVABLE",
       "STITCH_SCREEN_INPUT_CONTROL_MISSING",
       "STITCH_SCREEN_OBSERVABLE_MISSING",
+    ]);
+  });
+
+  it("does not accept contract JSX parked in an unreachable local expression", () => {
+    const unreachable = exactSource()
+      .replace("  return (", "  const unreachable = false && (")
+      .replace(
+        "  );\n}",
+        "  );\n  void unreachable;\n  return <main />;\n}",
+      );
+    assert.deepEqual(codes(unreachable), [
+      "STITCH_SCREEN_ACTION_CONTROL_MISSING",
+      "STITCH_SCREEN_BEHAVIOR_UNPROVABLE",
+      "STITCH_SCREEN_INPUT_CONTROL_MISSING",
+      "STITCH_SCREEN_OBSERVABLE_MISSING",
+    ]);
+  });
+
+  it("rejects local and imported custom components in the returned screen tree", () => {
+    const localComponent = exactSource()
+      .replace(
+        "export function EditorScreen",
+        [
+          "function Dangerous() {",
+          '  return <button onClick={() => document.addEventListener("click", () => undefined)}>Hidden</button>;',
+          "}",
+          "",
+          "export function EditorScreen",
+        ].join("\n"),
+      )
+      .replace("    </main>", "      <Dangerous />\n    </main>");
+    assert.deepEqual(codes(localComponent), ["STITCH_SCREEN_BEHAVIOR_UNPROVABLE"]);
+
+    const importedComponent = [
+      'import { Dangerous } from "./Dangerous";',
+      exactSource().replace("    </main>", "      <Dangerous />\n    </main>"),
+    ].join("\n");
+    assert.deepEqual(codes(importedComponent), ["STITCH_SCREEN_BEHAVIOR_UNPROVABLE"]);
+  });
+
+  it("rejects imperative component statements and arbitrary calls in exact handlers", () => {
+    const imperative = exactSource().replace(
+      "  return (",
+      '  document.addEventListener("click", () => undefined);\n  return (',
+    );
+    assert.deepEqual(codes(imperative), ["STITCH_SCREEN_BEHAVIOR_UNPROVABLE"]);
+
+    const handlerWithExtraCall = exactSource().replace(
+      '        onClick={() => actions?.["save-record-1"]?.({ "description": actionInputValues["ACT_SAVE_RECORD.description"], "title": actionInputValues["ACT_SAVE_RECORD.title"] })}',
+      '        onClick={() => { document.addEventListener("click", () => undefined); actions?.["save-record-1"]?.({ "description": actionInputValues["ACT_SAVE_RECORD.description"], "title": actionInputValues["ACT_SAVE_RECORD.title"] }); }}',
+    );
+    assert.deepEqual(codes(handlerWithExtraCall), [
+      "STITCH_SCREEN_ACTION_DISPATCH_MISMATCH",
+    ]);
+  });
+
+  it("rejects effect/ref escape hatches and dangerous HTML injection", () => {
+    const effect = exactSource().replace(
+      "  return (",
+      '  useEffect(() => { document.addEventListener("click", () => undefined); }, []);\n  return (',
+    );
+    assert.deepEqual(codes(effect), ["STITCH_SCREEN_BEHAVIOR_UNPROVABLE"]);
+
+    const ref = exactSource()
+      .replace("  return (", "  const hiddenRef = useRef(null);\n  return (")
+      .replace('<main title={"1 > 0"}>', '<main title={"1 > 0"} ref={hiddenRef}>');
+    assert.deepEqual(codes(ref), ["STITCH_SCREEN_BEHAVIOR_UNPROVABLE"]);
+
+    const dangerousHtml = exactSource().replace(
+      "    </main>",
+      '      <div dangerouslySetInnerHTML={{ __html: "<button>Hidden</button>" }} />\n    </main>',
+    );
+    assert.deepEqual(codes(dangerousHtml), ["STITCH_SCREEN_BEHAVIOR_UNPROVABLE"]);
+  });
+
+  it("accepts only converter-known void runtime, exact useState, then return statements", () => {
+    const runtimeSource = exactSource().replace(
+      "export function EditorScreen({ actions }: { actions?: Record<string, () => void> }) {",
+      "export function EditorScreen({ actions, runtime }: { actions?: Record<string, () => void>; runtime?: unknown }) {\n  void runtime;",
+    );
+    assert.deepEqual(validateStitchScreenSourceV2({
+      screen: nativeScreen(),
+      sourceText: runtimeSource,
+    }), {
+      status: "valid",
+      diagnostics: [],
+    });
+  });
+
+  it("rejects conditional JSX inside the exported component return tree", () => {
+    const conditional = exactSource().replace(
+      "    </main>",
+      '      {false && <button data-action-id="dead-control">Dead</button>}\n    </main>',
+    );
+    assert.deepEqual(codes(conditional), ["STITCH_SCREEN_RENDER_TREE_UNPROVABLE"]);
+  });
+
+  it("treats every JSX event attribute as active rejected-control behavior", () => {
+    const screen = screenWithRejectedControls();
+    screen.rejectedControls = screen.rejectedControls.slice(0, 1);
+    const active = exactSource().replace("    </main>", [
+      "      <button hidden aria-hidden=\"true\" disabled onPointerDown={() => { throw new Error('active'); }} data-setfarm-rejected-control=\"settings-1\" data-setfarm-element-ref=\"E000004\">Settings</button>",
+      "    </main>",
+    ].join("\n"));
+    assert.deepEqual(codesFor(synchronizeScreenProjection(screen), active), [
+      "STITCH_SCREEN_REJECTED_CONTROL_ACTIVE",
+    ]);
+  });
+
+  it("rejects extra event behavior on an otherwise exact accepted control", () => {
+    const active = exactSource().replace(
+      '        onClick={() => actions?.["save-record-1"]',
+      '        onPointerDown={() => { throw new Error("extra"); }}\n        onClick={() => actions?.["save-record-1"]',
+    );
+    assert.deepEqual(codes(active), [
+      "STITCH_SCREEN_EXTRA_EVENT_HANDLER_FORBIDDEN",
     ]);
   });
 
