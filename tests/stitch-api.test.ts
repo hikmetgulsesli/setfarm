@@ -93,6 +93,21 @@ describe("stitch-api partial list recovery", () => {
     assert.doesNotMatch(rotateBody, /service unavailable|temporarily unavailable|\\b503\\b/);
   });
 
+  it("provides an attempt-owned direct command with no hidden generation replay", () => {
+    const source = fs.readFileSync("scripts/stitch-api.mjs", "utf-8");
+    const start = source.indexOf("'generate-all-screens-attempt'");
+    const end = source.indexOf("\n  },\n};", start);
+    const command = source.slice(start, end);
+
+    assert.ok(start > 0);
+    assert.match(source, /async function rpcOnce\(method, params = \{\}\)/);
+    assert.match(source, /async function generateScreenFromTextOnce\(args\)/);
+    assert.match(command, /await initializeOnce\(\)/);
+    assert.match(command, /await generateScreenFromTextOnce/);
+    assert.match(command, /setfarm\.stitch-attempt-transport\.v1/);
+    assert.doesNotMatch(command, /rotateKey|list_screens|mergeTrackedScreens|STITCH_GENERATE_ALL_RETRY_ATTEMPTS/);
+  });
+
   it("can force a fresh Stitch project after an empty cached project failure", () => {
     const source = fs.readFileSync("scripts/stitch-api.mjs", "utf-8");
 

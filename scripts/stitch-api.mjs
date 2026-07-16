@@ -404,9 +404,47 @@ async function rpc(method, params = {}) {
   }
 }
 
+// One transport attempt with no credential rotation or implicit replay. This
+// is the only RPC primitive used by ProductCompilationAttempt: once Setfarm
+// commits dispatch intent, an unobserved response is ambiguous and must not be
+// hidden behind another provider call.
+async function rpcOnce(method, params = {}) {
+  requestId++;
+  const body = {
+    jsonrpc: '2.0',
+    id: requestId,
+    method,
+    params,
+  };
+  const res = await fetch(MCP_ENDPOINT, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Goog-Api-Key': getApiKey(),
+    },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(rpcTimeoutMs()),
+  });
+  if (!res.ok) {
+    const responseText = await res.text();
+    throw new Error(`HTTP ${res.status}: ${responseText}`);
+  }
+  const json = await res.json();
+  if (json.error) throw new Error(`RPC error ${json.error.code}: ${json.error.message}`);
+  return json.result;
+}
+
 // Initialize MCP session
 async function initialize() {
   return rpc('initialize', {
+    protocolVersion: '2024-11-05',
+    capabilities: {},
+    clientInfo: { name: 'stitch-cli', version: '1.0.0' },
+  });
+}
+
+async function initializeOnce() {
+  return rpcOnce('initialize', {
     protocolVersion: '2024-11-05',
     capabilities: {},
     clientInfo: { name: 'stitch-cli', version: '1.0.0' },
@@ -442,6 +480,15 @@ async function generateScreenFromText(args) {
     }
     return { result, ...parsed };
   }
+}
+
+async function generateScreenFromTextOnce(args) {
+  const result = await rpcOnce('tools/call', {
+    name: 'generate_screen_from_text',
+    arguments: args,
+  });
+  assertToolResultOk(result, 'generate_screen_from_text');
+  return { result, ...parseScreens(result) };
 }
 
 function validDownloadedHtml(buffer) {
@@ -1618,6 +1665,87 @@ const commands = {
       diagnostic: screens.length === 0 ? zeroScreenDiagnostic : undefined
     }, null, 2));
   },
+
+  'generate-all-screens-attempt': async function generateAllScreensAttempt(
+    projectId,
+    promptFile,
+    outputDir,
+    deviceType = "DESKTOP",
+    modelId = "GEMINI_3_1_PRO",
+  ) {
+    if (!projectId || !promptFile || !outputDir) {
+      throw new Error(
+        "Usage: generate-all-screens-attempt <projectId> <promptFile> <outputDir> [device] [model]",
+      );
+    }
+    let prompt;
+    try {
+      prompt = readFileSync(promptFile, "utf-8").trim();
+    } catch (error) {
+      throw new Error(`Cannot read prompt file: ${error.message}`);
+    }
+    if (!prompt) throw new Error("Prompt file is empty");
+    const resolvedOutput = resolve(outputDir);
+    mkdirSync(resolvedOutput, { recursive: true });
+
+    // Exactly one initialize and one generate operation. There is no key
+    // rotation, provider retry, fallback discovery, tracking-file merge, or
+    // canonical repo projection in this command.
+    await initializeOnce();
+    const generated = await generateScreenFromTextOnce({
+      projectId,
+      prompt,
+      deviceType,
+      modelId,
+    });
+    const directScreenEvidence = generated.evidence.map((item) => ({ ...item }));
+    const downloaded = [];
+    for (const screen of generated.screens) {
+      const evidence = directScreenEvidence.find((item) => item.screenId === screen.screenId);
+      if (!evidence) continue;
+      const receipt = { screenId: screen.screenId, title: screen.title || "" };
+      try {
+        if (screen.htmlUrl) {
+          const htmlPath = resolve(resolvedOutput, `${screen.screenId}.html`);
+          const html = await downloadFile(screen.htmlUrl, htmlPath);
+          if (html.sourceRefHash !== evidence.htmlSourceRefHash) {
+            rmSync(htmlPath, { force: true });
+            throw new Error("STITCH_HTML_SOURCE_RECEIPT_MISMATCH");
+          }
+          evidence.htmlDownloadedArtifactHash = html.artifactHash;
+          receipt.htmlFile = `${screen.screenId}.html`;
+        }
+        if (screen.screenshotUrl) {
+          const screenshotPath = resolve(resolvedOutput, `${screen.screenId}.png`);
+          const screenshot = await downloadFile(screen.screenshotUrl, screenshotPath);
+          if (screenshot.sourceRefHash !== evidence.screenshotSourceRefHash) {
+            rmSync(screenshotPath, { force: true });
+            throw new Error("STITCH_SCREENSHOT_SOURCE_RECEIPT_MISMATCH");
+          }
+          evidence.screenshotDownloadedArtifactHash = screenshot.artifactHash;
+          receipt.screenshotFile = `${screen.screenId}.png`;
+        }
+      } catch (error) {
+        receipt.downloadError = redactDiagnosticText(error?.message || error).slice(0, 700);
+      }
+      downloaded.push(receipt);
+    }
+    console.log(JSON.stringify({
+      schema: "setfarm.stitch-attempt-transport.v1",
+      total: generated.screens.length,
+      screens: generated.screens.map((screen) => ({
+        screenId: screen.screenId,
+        title: screen.title || "",
+      })),
+      screenSource: "direct",
+      directCandidateTotal: generated.candidates.length,
+      excludedDirectTotal: directScreenEvidence.filter((item) =>
+        item.disposition !== "admitted_renderable_screen").length,
+      directScreenEvidenceSchema: "setfarm.stitch-direct-screen-evidence.v2",
+      directScreenEvidence,
+      downloaded,
+    }, null, 2));
+  },
 };
 
 // Main
@@ -1642,7 +1770,8 @@ Commands:
   download <url> <outputFile>                                            Download file from URL
   populate-cache <sourceDir> <destDir>                                   Copy PNGs+HTMLs from sourceDir to destDir
   download-all <projectId> <outputDir>                                   Download all screens + manifest + tokens
-  generate-all-screens <pId> <promptFile> [device] [model]                Single-call multi-screen generation`);
+  generate-all-screens <pId> <promptFile> [device] [model]                Single-call multi-screen generation
+  generate-all-screens-attempt <pId> <promptFile> <outputDir> [device] [model] Exact attempt-owned generation`);
   process.exit(1);
 }
 
