@@ -10,17 +10,17 @@ import {
   unlink,
 } from "node:fs/promises";
 import path from "node:path";
-import { z } from "zod";
 
 import {
   CanonicalJsonLimitError,
   DEFAULT_CANONICAL_JSON_BOUNDED_WORK_LIMITS,
   canonicalJsonBytesBounded,
 } from "./bounded-canonical-json.js";
+import { Sha256Schema } from "./schemas/common-v1.js";
 import {
-  SemanticArtifactProducerV1Schema,
-  Sha256Schema,
-} from "./schemas/common-v1.js";
+  SemanticArtifactEnvelopeV1Schema,
+  type SemanticArtifactEnvelopeV1,
+} from "./artifact-envelope.js";
 import {
   ArtifactCapacityError,
   DEFAULT_ARTIFACT_CAPACITY_LIMITS,
@@ -33,21 +33,10 @@ import {
 } from "./artifact-capacity.js";
 
 export { ArtifactCapacityError } from "./artifact-capacity.js";
-
-export const SemanticArtifactEnvelopeV1Schema = z
-  .object({
-    schema: z.literal("setfarm.semantic-artifact-envelope.v1"),
-    artifactType: z
-      .string()
-      .min(1)
-      .max(200)
-      .regex(/^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)+$/),
-    producer: SemanticArtifactProducerV1Schema,
-    payload: z.unknown(),
-  })
-  .strict();
-
-export type SemanticArtifactEnvelopeV1 = z.infer<typeof SemanticArtifactEnvelopeV1Schema>;
+export {
+  SemanticArtifactEnvelopeV1Schema,
+  type SemanticArtifactEnvelopeV1,
+} from "./artifact-envelope.js";
 
 export type ArtifactStoreErrorCode =
   | "ARTIFACT_INVALID_HASH"
