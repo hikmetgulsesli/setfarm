@@ -21,6 +21,7 @@ export const STITCH_RENDERED_SEMANTICS_ARTIFACT_TYPE_V3 =
   "setfarm.stitch-rendered-semantics.v3" as const;
 export const STITCH_RENDERED_SEMANTICS_POLICY_V3 =
   "direct-response-composite-static-contract-projection.v3" as const;
+export const STITCH_RENDERED_STATIC_FAILURE_SOURCE_WITNESS_LIMIT_V3 = 100;
 
 function compareUtf16(left: string, right: string): number {
   if (left < right) return -1;
@@ -46,6 +47,23 @@ function requireUniqueSorted(
       message: `${label} must be unique and canonically UTF-16 sorted`,
     });
   }
+}
+
+function requireCanonicalHash(
+  actual: string,
+  payload: unknown,
+  context: z.RefinementCtx,
+  path: PropertyKey[],
+  message: string,
+): void {
+  try {
+    if (actual === hashCanonicalJson(payload)) return;
+  } catch {
+    // A refinement must remain total for malformed public input. The caller's
+    // schema issues still describe the malformed child; this adds the failed
+    // integrity boundary without throwing out of safeParse.
+  }
+  context.addIssue({ code: "custom", path, message });
 }
 
 export const StitchRenderedSemanticsVerificationBoundaryV3Schema = z.object({
@@ -183,38 +201,38 @@ export const StitchRenderedTargetAuthorityV3Schema =
       ["actionInputTransports"],
       "Action-input authority identities",
     );
-    for (const [path, actual, expected] of [
-      ["surfacesHash", value.surfacesHash, hashCanonicalJson(value.surfaces)],
-      ["controlsHash", value.controlsHash, hashCanonicalJson(value.controls)],
-      ["actionsHash", value.actionsHash, hashCanonicalJson(value.actions)],
+    for (const [path, actual, projection] of [
+      ["surfacesHash", value.surfacesHash, value.surfaces],
+      ["controlsHash", value.controlsHash, value.controls],
+      ["actionsHash", value.actionsHash, value.actions],
       [
         "evidencePredicatesHash",
         value.evidencePredicatesHash,
-        hashCanonicalJson(value.evidencePredicates),
+        value.evidencePredicates,
       ],
-      ["observablesHash", value.observablesHash, hashCanonicalJson(value.observables)],
+      ["observablesHash", value.observablesHash, value.observables],
       [
         "actionInputTransportsHash",
         value.actionInputTransportsHash,
-        hashCanonicalJson(value.actionInputTransports),
+        value.actionInputTransports,
       ],
     ] as const) {
-      if (actual !== expected) {
-        context.addIssue({
-          code: "custom",
-          path: [path],
-          message: `${path} must bind its exact ordered target authority projection`,
-        });
-      }
+      requireCanonicalHash(
+        actual,
+        projection,
+        context,
+        [path],
+        `${path} must bind its exact ordered target authority projection`,
+      );
     }
     const { authorityHash: _authorityHash, ...payload } = value;
-    if (value.authorityHash !== hashStitchRenderedTargetAuthorityV3(payload)) {
-      context.addIssue({
-        code: "custom",
-        path: ["authorityHash"],
-        message: "RENDERED_SEMANTICS_V3_TARGET_AUTHORITY_HASH_MISMATCH: authorityHash must bind the complete target authority projection",
-      });
-    }
+    requireCanonicalHash(
+      value.authorityHash,
+      payload,
+      context,
+      ["authorityHash"],
+      "RENDERED_SEMANTICS_V3_TARGET_AUTHORITY_HASH_MISMATCH: authorityHash must bind the complete target authority projection",
+    );
   });
 
 export type StitchRenderedTargetAuthorityV3 = z.infer<
@@ -248,13 +266,13 @@ export const StitchRenderedControlMappingV3Schema =
     mappingHash: Sha256Schema,
   }).strict().superRefine((value, context) => {
     const { mappingHash: _mappingHash, ...payload } = value;
-    if (value.mappingHash !== hashStitchRenderedControlMappingV3(payload)) {
-      context.addIssue({
-        code: "custom",
-        path: ["mappingHash"],
-        message: "RENDERED_SEMANTICS_V3_CONTROL_MAPPING_HASH_MISMATCH",
-      });
-    }
+    requireCanonicalHash(
+      value.mappingHash,
+      payload,
+      context,
+      ["mappingHash"],
+      "RENDERED_SEMANTICS_V3_CONTROL_MAPPING_HASH_MISMATCH",
+    );
   });
 
 const StitchRenderedActionInputMappingPayloadV3Schema = z.object({
@@ -288,13 +306,13 @@ export const StitchRenderedActionInputMappingV3Schema =
     mappingHash: Sha256Schema,
   }).strict().superRefine((value, context) => {
     const { mappingHash: _mappingHash, ...payload } = value;
-    if (value.mappingHash !== hashStitchRenderedActionInputMappingV3(payload)) {
-      context.addIssue({
-        code: "custom",
-        path: ["mappingHash"],
-        message: "RENDERED_SEMANTICS_V3_ACTION_INPUT_MAPPING_HASH_MISMATCH",
-      });
-    }
+    requireCanonicalHash(
+      value.mappingHash,
+      payload,
+      context,
+      ["mappingHash"],
+      "RENDERED_SEMANTICS_V3_ACTION_INPUT_MAPPING_HASH_MISMATCH",
+    );
   });
 
 const StitchRenderedSurfaceMappingPayloadV3Schema = z.object({
@@ -321,13 +339,13 @@ export const StitchRenderedSurfaceMappingV3Schema =
     mappingHash: Sha256Schema,
   }).strict().superRefine((value, context) => {
     const { mappingHash: _mappingHash, ...payload } = value;
-    if (value.mappingHash !== hashStitchRenderedSurfaceMappingV3(payload)) {
-      context.addIssue({
-        code: "custom",
-        path: ["mappingHash"],
-        message: "RENDERED_SEMANTICS_V3_SURFACE_MAPPING_HASH_MISMATCH",
-      });
-    }
+    requireCanonicalHash(
+      value.mappingHash,
+      payload,
+      context,
+      ["mappingHash"],
+      "RENDERED_SEMANTICS_V3_SURFACE_MAPPING_HASH_MISMATCH",
+    );
   });
 
 const StitchRenderedObservableMappingPayloadV3Schema = z.object({
@@ -337,7 +355,7 @@ const StitchRenderedObservableMappingPayloadV3Schema = z.object({
   ownerKind: z.enum(["control", "surface"]),
   ownerRef: z.string().min(1).max(500),
   ownerElementRef: SourceElementRefV3Schema,
-  selectorElementRef: SourceElementRefV3Schema,
+  selectorElementRef: SourceElementRefV3Schema.nullable(),
   accessibilityRole: z.string().min(1).max(100).nullable(),
   accessibilityName: z.string().min(1).max(500).nullable(),
   observableHash: Sha256Schema,
@@ -373,9 +391,12 @@ export const StitchRenderedObservableMappingV3Schema =
     }
     if (
       accessibility
-        ? value.accessibilityRole === null || value.accessibilityName === null
+        ? value.accessibilityRole === null
+          || value.accessibilityName === null
+          || value.selectorElementRef !== null
         : value.accessibilityRole !== null
           || value.accessibilityName !== null
+          || value.selectorElementRef === null
           || value.selectorElementRef !== value.ownerElementRef
     ) {
       context.addIssue({
@@ -385,16 +406,218 @@ export const StitchRenderedObservableMappingV3Schema =
       });
     }
     const { mappingHash: _mappingHash, ...payload } = value;
-    if (value.mappingHash !== hashStitchRenderedObservableMappingV3(payload)) {
-      context.addIssue({
-        code: "custom",
-        path: ["mappingHash"],
-        message: "RENDERED_SEMANTICS_V3_OBSERVABLE_MAPPING_HASH_MISMATCH",
-      });
-    }
+    requireCanonicalHash(
+      value.mappingHash,
+      payload,
+      context,
+      ["mappingHash"],
+      "RENDERED_SEMANTICS_V3_OBSERVABLE_MAPPING_HASH_MISMATCH",
+    );
   });
 
-const StitchRenderedCandidatePayloadV3Schema = z.object({
+export const StitchRenderedStaticFailurePhaseV3Schema = z.enum([
+  "source_validation",
+  "semantic_indexing",
+  "surface_mapping",
+  "control_mapping",
+  "action_input_mapping",
+  "observable_mapping",
+]);
+
+export type StitchRenderedStaticFailurePhaseV3 = z.infer<
+  typeof StitchRenderedStaticFailurePhaseV3Schema
+>;
+
+export const StitchRenderedStaticFailureCodeV3Schema = z.enum([
+  "RENDERED_SEMANTICS_V3_ARTIFACT_CAPACITY_EXCEEDED",
+  "RENDERED_SEMANTICS_V3_HTML_ENCODING_INVALID",
+  "RENDERED_SEMANTICS_V3_ARTIFACT_BYTES_INVALID",
+  "RENDERED_SEMANTICS_V3_ELEMENT_CAPACITY_EXCEEDED",
+  "RENDERED_SEMANTICS_V3_CONTRACT_ATTRIBUTE_DUPLICATE",
+  "RENDERED_SEMANTICS_V3_SURFACE_MAPPING_MISSING",
+  "RENDERED_SEMANTICS_V3_SURFACE_MAPPING_DUPLICATE",
+  "RENDERED_SEMANTICS_V3_SURFACE_MAPPING_EXTRA",
+  "RENDERED_SEMANTICS_V3_SURFACE_MAPPING_INVALID",
+  "RENDERED_SEMANTICS_V3_CONTROL_MAPPING_MISSING",
+  "RENDERED_SEMANTICS_V3_CONTROL_MAPPING_DUPLICATE",
+  "RENDERED_SEMANTICS_V3_CONTROL_MAPPING_EXTRA",
+  "RENDERED_SEMANTICS_V3_CONTROL_MAPPING_INVALID",
+  "RENDERED_SEMANTICS_V3_ACTION_INPUT_MAPPING_MISSING",
+  "RENDERED_SEMANTICS_V3_ACTION_INPUT_MAPPING_DUPLICATE",
+  "RENDERED_SEMANTICS_V3_ACTION_INPUT_MAPPING_EXTRA",
+  "RENDERED_SEMANTICS_V3_ACTION_INPUT_MARKER_INVALID",
+  "RENDERED_SEMANTICS_V3_ACTION_INPUT_CODEC_MISMATCH",
+  "RENDERED_SEMANTICS_V3_ACTION_INPUT_DOM_INCOMPATIBLE",
+  "RENDERED_SEMANTICS_V3_OBSERVABLE_MAPPING_UNRESOLVED",
+]);
+
+export type StitchRenderedStaticFailureCodeV3 = z.infer<
+  typeof StitchRenderedStaticFailureCodeV3Schema
+>;
+
+const STITCH_RENDERED_STATIC_FAILURE_PHASE_BY_CODE_V3 = Object.freeze({
+  RENDERED_SEMANTICS_V3_ARTIFACT_CAPACITY_EXCEEDED: "source_validation",
+  RENDERED_SEMANTICS_V3_HTML_ENCODING_INVALID: "source_validation",
+  RENDERED_SEMANTICS_V3_ARTIFACT_BYTES_INVALID: "source_validation",
+  RENDERED_SEMANTICS_V3_ELEMENT_CAPACITY_EXCEEDED: "semantic_indexing",
+  RENDERED_SEMANTICS_V3_CONTRACT_ATTRIBUTE_DUPLICATE: "semantic_indexing",
+  RENDERED_SEMANTICS_V3_SURFACE_MAPPING_MISSING: "surface_mapping",
+  RENDERED_SEMANTICS_V3_SURFACE_MAPPING_DUPLICATE: "surface_mapping",
+  RENDERED_SEMANTICS_V3_SURFACE_MAPPING_EXTRA: "surface_mapping",
+  RENDERED_SEMANTICS_V3_SURFACE_MAPPING_INVALID: "surface_mapping",
+  RENDERED_SEMANTICS_V3_CONTROL_MAPPING_MISSING: "control_mapping",
+  RENDERED_SEMANTICS_V3_CONTROL_MAPPING_DUPLICATE: "control_mapping",
+  RENDERED_SEMANTICS_V3_CONTROL_MAPPING_EXTRA: "control_mapping",
+  RENDERED_SEMANTICS_V3_CONTROL_MAPPING_INVALID: "control_mapping",
+  RENDERED_SEMANTICS_V3_ACTION_INPUT_MAPPING_MISSING: "action_input_mapping",
+  RENDERED_SEMANTICS_V3_ACTION_INPUT_MAPPING_DUPLICATE: "action_input_mapping",
+  RENDERED_SEMANTICS_V3_ACTION_INPUT_MAPPING_EXTRA: "action_input_mapping",
+  RENDERED_SEMANTICS_V3_ACTION_INPUT_MARKER_INVALID: "action_input_mapping",
+  RENDERED_SEMANTICS_V3_ACTION_INPUT_CODEC_MISMATCH: "action_input_mapping",
+  RENDERED_SEMANTICS_V3_ACTION_INPUT_DOM_INCOMPATIBLE: "action_input_mapping",
+  RENDERED_SEMANTICS_V3_OBSERVABLE_MAPPING_UNRESOLVED: "observable_mapping",
+} satisfies Readonly<Record<
+  StitchRenderedStaticFailureCodeV3,
+  StitchRenderedStaticFailurePhaseV3
+>>);
+
+export function stitchRenderedStaticFailurePhaseV3(
+  code: StitchRenderedStaticFailureCodeV3,
+): StitchRenderedStaticFailurePhaseV3 {
+  return STITCH_RENDERED_STATIC_FAILURE_PHASE_BY_CODE_V3[code];
+}
+
+const StitchRenderedFailureSemanticRefV3Schema = z.object({
+  kind: z.enum([
+    "target",
+    "surface",
+    "control_slot",
+    "action",
+    "action_input",
+    "observable",
+    "contract_attribute",
+  ]),
+  ref: z.string().min(1).max(500),
+}).strict();
+
+const StitchRenderedFailureSourceRefV3Schema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("html_source"),
+    ref: Sha256Schema,
+  }).strict(),
+  z.object({
+    kind: z.literal("screenshot_source"),
+    ref: Sha256Schema,
+  }).strict(),
+  z.object({
+    kind: z.literal("source_element"),
+    ref: SourceElementRefV3Schema,
+  }).strict(),
+]);
+
+const StitchRenderedStaticFailureReceiptPayloadV3Schema = z.object({
+  requestRef: DesignSourceGenerationRequestV3Schema.shape.requestRef,
+  screenId: z.string().min(1).max(500),
+  targetRef: GenerationTargetIdSchema,
+  directCandidateHash: Sha256Schema,
+  htmlArtifactHash: Sha256Schema,
+  screenshotArtifactHash: Sha256Schema,
+  phase: StitchRenderedStaticFailurePhaseV3Schema,
+  code: StitchRenderedStaticFailureCodeV3Schema,
+  semanticRefs: z.array(StitchRenderedFailureSemanticRefV3Schema).min(1).max(100),
+  sourceElementRefCount: z.number().int().nonnegative().max(100_000),
+  sourceElementRefsHash: Sha256Schema,
+  sourceRefs: z.array(StitchRenderedFailureSourceRefV3Schema).min(2).max(
+    STITCH_RENDERED_STATIC_FAILURE_SOURCE_WITNESS_LIMIT_V3 + 2,
+  ),
+}).strict();
+
+export type StitchRenderedStaticFailureReceiptPayloadV3 = z.infer<
+  typeof StitchRenderedStaticFailureReceiptPayloadV3Schema
+>;
+
+export function hashStitchRenderedStaticFailureReceiptV3(
+  value: StitchRenderedStaticFailureReceiptPayloadV3,
+): string {
+  return hashCanonicalJson(
+    StitchRenderedStaticFailureReceiptPayloadV3Schema.parse(value),
+  );
+}
+
+export const StitchRenderedStaticFailureReceiptV3Schema =
+  StitchRenderedStaticFailureReceiptPayloadV3Schema.extend({
+    receiptHash: Sha256Schema,
+  }).strict().superRefine((value, context) => {
+    if (value.phase !== stitchRenderedStaticFailurePhaseV3(value.code)) {
+      context.addIssue({
+        code: "custom",
+        path: ["phase"],
+        message: "RENDERED_SEMANTICS_V3_STATIC_FAILURE_PHASE_MISMATCH",
+      });
+    }
+    requireUniqueSorted(
+      value.semanticRefs.map((entry) => `${entry.kind}\0${entry.ref}`),
+      context,
+      ["semanticRefs"],
+      "Static failure semantic references",
+    );
+    requireUniqueSorted(
+      value.sourceRefs.map((entry) => `${entry.kind}\0${entry.ref}`),
+      context,
+      ["sourceRefs"],
+      "Static failure source references",
+    );
+    if (
+      value.sourceRefs.filter((entry) => entry.kind === "html_source").length !== 1
+      || value.sourceRefs.filter((entry) => entry.kind === "screenshot_source").length !== 1
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["sourceRefs"],
+        message: "RENDERED_SEMANTICS_V3_STATIC_FAILURE_SOURCE_AUTHORITY_CARDINALITY_MISMATCH",
+      });
+    }
+    const sourceElementRefs = value.sourceRefs
+      .filter((entry) => entry.kind === "source_element")
+      .map((entry) => entry.ref);
+    if (
+      sourceElementRefs.length !== Math.min(
+        value.sourceElementRefCount,
+        STITCH_RENDERED_STATIC_FAILURE_SOURCE_WITNESS_LIMIT_V3,
+      )
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["sourceRefs"],
+        message: "RENDERED_SEMANTICS_V3_STATIC_FAILURE_SOURCE_WITNESS_COUNT_MISMATCH",
+      });
+    }
+    if (
+      value.sourceElementRefCount
+        <= STITCH_RENDERED_STATIC_FAILURE_SOURCE_WITNESS_LIMIT_V3
+      && value.sourceElementRefsHash !== hashCanonicalJson(sourceElementRefs)
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["sourceElementRefsHash"],
+        message: "RENDERED_SEMANTICS_V3_STATIC_FAILURE_SOURCE_REFS_HASH_MISMATCH",
+      });
+    }
+    const { receiptHash: _receiptHash, ...payload } = value;
+    requireCanonicalHash(
+      value.receiptHash,
+      payload,
+      context,
+      ["receiptHash"],
+      "RENDERED_SEMANTICS_V3_STATIC_FAILURE_RECEIPT_HASH_MISMATCH",
+    );
+  });
+
+export type StitchRenderedStaticFailureReceiptV3 = z.infer<
+  typeof StitchRenderedStaticFailureReceiptV3Schema
+>;
+
+const StitchRenderedCandidateIdentityPayloadV3Schema = z.object({
   requestRef: DesignSourceGenerationRequestV3Schema.shape.requestRef,
   requestReceiptHash: Sha256Schema,
   dispatchReceiptHash: Sha256Schema,
@@ -413,10 +636,14 @@ const StitchRenderedCandidatePayloadV3Schema = z.object({
   screenshotSourceRefHash: Sha256Schema,
   htmlArtifactHash: Sha256Schema,
   screenshotArtifactHash: Sha256Schema,
-  htmlByteLength: z.number().int().positive().max(8 * 1024 * 1024),
-  screenshotByteLength: z.number().int().positive().max(16 * 1024 * 1024),
-  projectionStatus: z.literal("static_contract_projected"),
+  htmlByteLength: z.number().int().nonnegative().max(64 * 1024 * 1024),
+  screenshotByteLength: z.number().int().nonnegative().max(128 * 1024 * 1024),
   targetAuthorityHash: Sha256Schema,
+}).strict();
+
+const StitchRenderedProjectedCandidatePayloadV3Schema =
+  StitchRenderedCandidateIdentityPayloadV3Schema.extend({
+  projectionStatus: z.literal("static_contract_projected"),
   surfaceMappings: z.array(StitchRenderedSurfaceMappingV3Schema).min(1).max(1_001),
   surfaceMappingsHash: Sha256Schema,
   controlMappings: z.array(StitchRenderedControlMappingV3Schema).max(2_000),
@@ -426,6 +653,21 @@ const StitchRenderedCandidatePayloadV3Schema = z.object({
   observableMappings: z.array(StitchRenderedObservableMappingV3Schema).max(2_000),
   observableMappingsHash: Sha256Schema,
 }).strict();
+
+const StitchRenderedRejectedCandidatePayloadV3Schema =
+  StitchRenderedCandidateIdentityPayloadV3Schema.extend({
+    projectionStatus: z.literal("static_source_rejected"),
+    failureReceipts: z.array(StitchRenderedStaticFailureReceiptV3Schema).min(1).max(100),
+    failureReceiptsHash: Sha256Schema,
+  }).strict();
+
+const StitchRenderedCandidatePayloadV3Schema = z.discriminatedUnion(
+  "projectionStatus",
+  [
+    StitchRenderedProjectedCandidatePayloadV3Schema,
+    StitchRenderedRejectedCandidatePayloadV3Schema,
+  ],
+);
 
 export type StitchRenderedCandidatePayloadV3 = z.infer<
   typeof StitchRenderedCandidatePayloadV3Schema
@@ -437,10 +679,22 @@ export function hashStitchRenderedCandidateV3(
   return hashCanonicalJson(StitchRenderedCandidatePayloadV3Schema.parse(value));
 }
 
-export const StitchRenderedCandidateV3Schema =
-  StitchRenderedCandidatePayloadV3Schema.extend({
+const StitchRenderedProjectedCandidateV3Schema =
+  StitchRenderedProjectedCandidatePayloadV3Schema.extend({
     candidateHash: Sha256Schema,
   }).strict().superRefine((value, context) => {
+    if (
+      value.htmlByteLength === 0
+      || value.screenshotByteLength === 0
+      || value.htmlByteLength > 8 * 1024 * 1024
+      || value.screenshotByteLength > 16 * 1024 * 1024
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["htmlByteLength"],
+        message: "Projected candidate bytes exceed static projection capacity",
+      });
+    }
     requireUniqueSorted(
       value.surfaceMappings.map((entry) => entry.surfaceRef),
       context,
@@ -487,46 +741,106 @@ export const StitchRenderedCandidateV3Schema =
       ["observableMappings"],
       "Observable mappings",
     );
-    if (value.surfaceMappingsHash !== hashCanonicalJson(value.surfaceMappings)) {
-      context.addIssue({
-        code: "custom",
-        path: ["surfaceMappingsHash"],
-        message: "RENDERED_SEMANTICS_V3_SURFACE_MAPPINGS_HASH_MISMATCH",
-      });
-    }
-    if (value.controlMappingsHash !== hashCanonicalJson(value.controlMappings)) {
-      context.addIssue({
-        code: "custom",
-        path: ["controlMappingsHash"],
-        message: "RENDERED_SEMANTICS_V3_CONTROL_MAPPINGS_HASH_MISMATCH",
-      });
-    }
-    if (
-      value.actionInputMappingsHash
-      !== hashCanonicalJson(value.actionInputMappings)
-    ) {
-      context.addIssue({
-        code: "custom",
-        path: ["actionInputMappingsHash"],
-        message: "RENDERED_SEMANTICS_V3_ACTION_INPUT_MAPPINGS_HASH_MISMATCH",
-      });
-    }
-    if (value.observableMappingsHash !== hashCanonicalJson(value.observableMappings)) {
-      context.addIssue({
-        code: "custom",
-        path: ["observableMappingsHash"],
-        message: "RENDERED_SEMANTICS_V3_OBSERVABLE_MAPPINGS_HASH_MISMATCH",
-      });
-    }
+    requireCanonicalHash(
+      value.surfaceMappingsHash,
+      value.surfaceMappings,
+      context,
+      ["surfaceMappingsHash"],
+      "RENDERED_SEMANTICS_V3_SURFACE_MAPPINGS_HASH_MISMATCH",
+    );
+    requireCanonicalHash(
+      value.controlMappingsHash,
+      value.controlMappings,
+      context,
+      ["controlMappingsHash"],
+      "RENDERED_SEMANTICS_V3_CONTROL_MAPPINGS_HASH_MISMATCH",
+    );
+    requireCanonicalHash(
+      value.actionInputMappingsHash,
+      value.actionInputMappings,
+      context,
+      ["actionInputMappingsHash"],
+      "RENDERED_SEMANTICS_V3_ACTION_INPUT_MAPPINGS_HASH_MISMATCH",
+    );
+    requireCanonicalHash(
+      value.observableMappingsHash,
+      value.observableMappings,
+      context,
+      ["observableMappingsHash"],
+      "RENDERED_SEMANTICS_V3_OBSERVABLE_MAPPINGS_HASH_MISMATCH",
+    );
     const { candidateHash: _candidateHash, ...payload } = value;
-    if (value.candidateHash !== hashStitchRenderedCandidateV3(payload)) {
-      context.addIssue({
-        code: "custom",
-        path: ["candidateHash"],
-        message: "RENDERED_SEMANTICS_V3_CANDIDATE_HASH_MISMATCH",
-      });
-    }
+    requireCanonicalHash(
+      value.candidateHash,
+      payload,
+      context,
+      ["candidateHash"],
+      "RENDERED_SEMANTICS_V3_CANDIDATE_HASH_MISMATCH",
+    );
   });
+
+const StitchRenderedRejectedCandidateV3Schema =
+  StitchRenderedRejectedCandidatePayloadV3Schema.extend({
+    candidateHash: Sha256Schema,
+  }).strict().superRefine((value, context) => {
+    requireUniqueSorted(
+      value.failureReceipts.map((receipt) => receipt.receiptHash),
+      context,
+      ["failureReceipts"],
+      "Static failure receipts",
+    );
+    value.failureReceipts.forEach((receipt, index) => {
+      if (
+        receipt.requestRef !== value.requestRef
+        || receipt.screenId !== value.screenId
+        || receipt.targetRef !== value.targetRef
+        || receipt.directCandidateHash !== value.directCandidateHash
+        || receipt.htmlArtifactHash !== value.htmlArtifactHash
+        || receipt.screenshotArtifactHash !== value.screenshotArtifactHash
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: ["failureReceipts", index],
+          message: "RENDERED_SEMANTICS_V3_STATIC_FAILURE_RECEIPT_IDENTITY_MISMATCH",
+        });
+      }
+      if (
+        !receipt.semanticRefs.some((reference) =>
+          reference.kind === "target" && reference.ref === value.targetRef)
+        || !receipt.sourceRefs.some((reference) =>
+          reference.kind === "html_source" && reference.ref === value.htmlSourceRefHash)
+        || !receipt.sourceRefs.some((reference) =>
+          reference.kind === "screenshot_source"
+          && reference.ref === value.screenshotSourceRefHash)
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: ["failureReceipts", index],
+          message: "RENDERED_SEMANTICS_V3_STATIC_FAILURE_RECEIPT_REFERENCE_MISMATCH",
+        });
+      }
+    });
+    requireCanonicalHash(
+      value.failureReceiptsHash,
+      value.failureReceipts,
+      context,
+      ["failureReceiptsHash"],
+      "RENDERED_SEMANTICS_V3_STATIC_FAILURE_RECEIPTS_HASH_MISMATCH",
+    );
+    const { candidateHash: _candidateHash, ...payload } = value;
+    requireCanonicalHash(
+      value.candidateHash,
+      payload,
+      context,
+      ["candidateHash"],
+      "RENDERED_SEMANTICS_V3_CANDIDATE_HASH_MISMATCH",
+    );
+  });
+
+export const StitchRenderedCandidateV3Schema = z.discriminatedUnion(
+  "projectionStatus",
+  [StitchRenderedProjectedCandidateV3Schema, StitchRenderedRejectedCandidateV3Schema],
+);
 
 export type StitchRenderedCandidateV3 = z.infer<
   typeof StitchRenderedCandidateV3Schema
@@ -541,7 +855,7 @@ const StitchRenderedSemanticsPayloadV3Schema = z.object({
   verificationBoundary: StitchRenderedSemanticsVerificationBoundaryV3Schema,
   targetAuthorities: z.array(StitchRenderedTargetAuthorityV3Schema).min(1).max(1_000),
   targetAuthoritiesHash: Sha256Schema,
-  candidates: z.array(StitchRenderedCandidateV3Schema).min(1).max(10_000),
+  candidates: z.array(StitchRenderedCandidateV3Schema).max(10_000),
   candidatesHash: Sha256Schema,
 }).strict();
 
@@ -565,13 +879,13 @@ export const StitchRenderedSemanticsV3Schema =
       ["targetAuthorities"],
       "Target authorities",
     );
-    if (value.targetAuthoritiesHash !== hashCanonicalJson(value.targetAuthorities)) {
-      context.addIssue({
-        code: "custom",
-        path: ["targetAuthoritiesHash"],
-        message: "RENDERED_SEMANTICS_V3_TARGET_AUTHORITIES_HASH_MISMATCH",
-      });
-    }
+    requireCanonicalHash(
+      value.targetAuthoritiesHash,
+      value.targetAuthorities,
+      context,
+      ["targetAuthoritiesHash"],
+      "RENDERED_SEMANTICS_V3_TARGET_AUTHORITIES_HASH_MISMATCH",
+    );
     const targetAuthorityByRef = new Map(value.targetAuthorities.map((authority) =>
       [authority.targetRef, authority] as const));
     const identities = value.candidates.map((candidate) =>
@@ -603,6 +917,7 @@ export const StitchRenderedSemanticsV3Schema =
         });
         return;
       }
+      if (candidate.projectionStatus !== "static_contract_projected") return;
       const surfaceAuthorityByRef = new Map(authority.surfaces.map((entry) =>
         [entry.surfaceRef, entry] as const));
       if (
@@ -675,23 +990,63 @@ export const StitchRenderedSemanticsV3Schema =
         });
       }
     });
-    if (value.candidatesHash !== hashCanonicalJson(value.candidates)) {
-      context.addIssue({
-        code: "custom",
-        path: ["candidatesHash"],
-        message: "RENDERED_SEMANTICS_V3_CANDIDATES_HASH_MISMATCH",
-      });
-    }
+    requireCanonicalHash(
+      value.candidatesHash,
+      value.candidates,
+      context,
+      ["candidatesHash"],
+      "RENDERED_SEMANTICS_V3_CANDIDATES_HASH_MISMATCH",
+    );
     const { payloadHash: _payloadHash, ...payload } = value;
-    if (value.payloadHash !== hashStitchRenderedSemanticsV3(payload)) {
-      context.addIssue({
-        code: "custom",
-        path: ["payloadHash"],
-        message: "RENDERED_SEMANTICS_V3_PAYLOAD_HASH_MISMATCH",
-      });
-    }
+    requireCanonicalHash(
+      value.payloadHash,
+      payload,
+      context,
+      ["payloadHash"],
+      "RENDERED_SEMANTICS_V3_PAYLOAD_HASH_MISMATCH",
+    );
   });
 
 export type StitchRenderedSemanticsV3 = z.infer<
   typeof StitchRenderedSemanticsV3Schema
 >;
+
+export type StitchRenderedSemanticsParseResultV3 =
+  | Readonly<{
+      status: "parsed";
+      renderedSemantics: StitchRenderedSemanticsV3;
+    }>
+  | Readonly<{
+      status: "rejected";
+      issuePath: string;
+      issueMessage: string;
+    }>;
+
+/**
+ * Total boundary for unknown/in-process input. Raw Zod schemas remain useful
+ * for ordinary deserialized values, but Zod property discovery can execute a
+ * hostile Proxy trap before `safeParse` returns. Operational consumers must
+ * use this boundary so such traps become typed rejection rather than escape.
+ */
+export function parseStitchRenderedSemanticsV3(
+  input: unknown,
+): StitchRenderedSemanticsParseResultV3 {
+  try {
+    const parsed = StitchRenderedSemanticsV3Schema.safeParse(input);
+    if (parsed.success) {
+      return { status: "parsed", renderedSemantics: parsed.data };
+    }
+    const issue = parsed.error.issues[0];
+    return {
+      status: "rejected",
+      issuePath: issue?.path.map(String).join("/") || "$",
+      issueMessage: issue?.message.slice(0, 500) || "schema mismatch",
+    };
+  } catch {
+    return {
+      status: "rejected",
+      issuePath: "$",
+      issueMessage: "hostile or inaccessible input",
+    };
+  }
+}
