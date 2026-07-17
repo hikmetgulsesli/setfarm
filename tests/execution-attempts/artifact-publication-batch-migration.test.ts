@@ -171,7 +171,7 @@ describe("artifact publication batch migration 23", () => {
         artifactType: "setfarm.byte-chunk.v1",
         byteLength: 1,
         producer: {
-          pass: "üretim",
+          pass: "production",
           codeSha: "b".repeat(40),
           model: "模型",
           promptHash: "c".repeat(64),
@@ -190,7 +190,7 @@ describe("artifact publication batch migration 23", () => {
       },
     ].map((item) => ArtifactPublicationBatchIdentityItemSchema.parse(item));
     const batchIdentityHash = computeArtifactPublicationBatchIdentityHash(items);
-    assert.equal(batchIdentityHash, "35f6d66713891fb51ab75d028501f40d22f9c56881d66c26fbed66a4973ccbef");
+    assert.equal(batchIdentityHash, "84e58ec72bc63479ab313496a6216aa7a8a5869ca917f3fa8b1d0ce40247a61b");
     const leaseToken = "APB_00000000-0000-4000-8000-000000000002";
     const createdAt = new Date();
     const leaseExpiresAt = new Date(createdAt.getTime() + 60_000);

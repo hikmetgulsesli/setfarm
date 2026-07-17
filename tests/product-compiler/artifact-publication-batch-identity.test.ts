@@ -14,7 +14,7 @@ const unicodeItems = () => [
     artifactType: "setfarm.byte-chunk.v1",
     byteLength: 1,
     producer: {
-      pass: "üretim",
+      pass: "production",
       codeSha: "b".repeat(40),
       model: "模型",
       promptHash: "c".repeat(64),
@@ -37,11 +37,11 @@ describe("artifact publication batch identity v1", () => {
   it("pins full-field UTF-8 identity, ordering, and child reservation golden vectors", () => {
     const items = unicodeItems();
     assert.deepEqual(items.map(computeArtifactPublicationBatchItemIdentityHash), [
-      "e3dece172f3da46b880ba81ddad9af0a19bcb2a5ef0c37c5f183d53678f0aa84",
+      "9bd5d66e715199f0299874a72cfcfb4141c6bd5226268e06892b1ec892719333",
       "bc66ebb73c1ecb2e0d66596dc0eb1ff2e3e79e54e571d10be469107cf64c8c98",
     ]);
     const batchHash = computeArtifactPublicationBatchIdentityHash(items);
-    assert.equal(batchHash, "35f6d66713891fb51ab75d028501f40d22f9c56881d66c26fbed66a4973ccbef");
+    assert.equal(batchHash, "84e58ec72bc63479ab313496a6216aa7a8a5869ca917f3fa8b1d0ce40247a61b");
     assert.equal(computeArtifactPublicationBatchIdentityHash([...items].reverse()), batchHash);
     assert.equal(
       computeArtifactPublicationBatchChildReservationId(
@@ -49,7 +49,7 @@ describe("artifact publication batch identity v1", () => {
         batchHash,
         items[1]!.hash,
       ),
-      "APRB_a12af771faaa71b9c23b7ae97366c71909bc36a5dd76f75a5ee872d6c12f5d1d",
+      "APRB_723ff513ada928d9d66894ca1d43fff2087b149c8efacd47707283a7f48fd4a9",
     );
     assert.notEqual(
       computeArtifactPublicationBatchIdentityHash([{
