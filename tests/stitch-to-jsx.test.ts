@@ -11,6 +11,34 @@ function writeHtml(filePath: string, body: string): void {
   fs.writeFileSync(filePath, `<!doctype html><html><body>${body}${filler}</body></html>`);
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function intrinsicIconSvg(
+  code: string,
+  iconName: string,
+  source = "intrinsic-registry.v1",
+): string {
+  const match = code.match(new RegExp(
+    `<svg\\b(?=[^>]*data-setfarm-icon="${escapeRegExp(iconName)}")(?=[^>]*data-setfarm-icon-source="${escapeRegExp(source)}")(?=[^>]*aria-hidden=\\{true\\})(?=[^>]*focusable="false")[^>]*>[\\s\\S]*?<\\/svg>`,
+  ));
+  assert.ok(match, `missing ${source} intrinsic SVG for ${iconName}`);
+  assert.match(match[0], /<(?:path|circle|ellipse|line|polygon|polyline|rect)\b/);
+  return match[0];
+}
+
+function assertMappedIntrinsicIcons(code: string, iconNames: readonly string[]): void {
+  assert.doesNotMatch(code, /from\s+["']lucide-react["']/);
+  assert.doesNotMatch(code, /<[A-Z][A-Za-z0-9]*(?:\s|\/|>)/);
+  assert.doesNotMatch(code, /data-setfarm-icon-source="neutral-fallback\.v1"/);
+  assert.doesNotMatch(code, /className="[^"]*\bmaterial-symbols/);
+  for (const iconName of iconNames) {
+    intrinsicIconSvg(code, iconName);
+    assert.doesNotMatch(code, new RegExp(`>${escapeRegExp(iconName)}<`));
+  }
+}
+
 describe("stitch-to-jsx", () => {
   it("falls back to SCREEN_MAP when DESIGN_MANIFEST is empty but HTML exists", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-stitch-screen-map-fallback-"));
@@ -419,7 +447,7 @@ describe("stitch-to-jsx", () => {
     }
   });
 
-  it("converts Material Symbols spans into lucide-react SVG components", () => {
+  it("converts Material Symbols spans into source-local intrinsic SVG", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-stitch-icons-"));
     try {
       const stitchDir = path.join(tmp, "stitch");
@@ -443,17 +471,17 @@ describe("stitch-to-jsx", () => {
       });
 
       const code = fs.readFileSync(path.join(tmp, "src", "screens", "ControlsHelp.tsx"), "utf-8");
-      assert.match(code, /import \{ CircleHelp, Info, RotateCw, TriangleAlert, X \} from "lucide-react";/);
-      assert.match(code, /<TriangleAlert className="text-primary transition-colors" aria-hidden=\{true\} focusable="false" \/>/);
-      assert.match(code, /<Info className="text-outline text-\[16px\] cursor-help" aria-hidden=\{true\} focusable="false" \/>/);
-      assert.match(code, /<CircleHelp aria-hidden=\{true\} focusable="false" \/>Help Center/);
-      assert.match(code, /<RotateCw className="text-\[18px\]" aria-hidden=\{true\} focusable="false" \/>Rotate/);
-      assert.match(code, /<button[^>]*data-action-id="close-3"[^>]*className="text-\[12px\] hover:text-error transition-colors"[^>]*aria-label="Close"[^>]*><X aria-hidden=\{true\} focusable="false" \/><\/button>/);
+      assertMappedIntrinsicIcons(code, ["warning", "info", "help_center", "rotate_right", "close"]);
+      assert.match(intrinsicIconSvg(code, "warning"), /className="text-primary transition-colors"/);
+      assert.match(intrinsicIconSvg(code, "info"), /className="text-outline text-\[16px\] cursor-help"/);
+      assert.match(code, /data-setfarm-icon="help_center"[^>]*>[\s\S]*?<\/svg>Help Center/);
+      assert.match(code, /data-setfarm-icon="rotate_right"[^>]*>[\s\S]*?<\/svg>Rotate/);
+      assert.match(code, /<button[^>]*data-action-id="close-3"[^>]*className="text-\[12px\] hover:text-error transition-colors"[^>]*aria-label="Close"[^>]*><svg[^>]*data-setfarm-icon="close"[^>]*>[\s\S]*?<\/svg><\/button>/);
       assert.match(code, /<button className="transition-colors"/);
       assert.equal((code.match(/aria-hidden/g) || []).length, 5);
       assert.equal((code.match(/focusable=/g) || []).length, 5);
-      assert.doesNotMatch(code, /<Info[^>]*\stitle=/);
-      assert.doesNotMatch(code, /material-symbols|Material Symbols|>warning<|>help_center<|>rotate_right|>close</);
+      assert.doesNotMatch(intrinsicIconSvg(code, "info"), /\stitle=/);
+      assert.doesNotMatch(code, /material-symbols|Material Symbols|>warning<|>help_center<|>rotate_right<|>close</);
       assert.doesNotMatch(code, /transition-all/);
 
       const transpiled = ts.transpileModule(code, {
@@ -510,13 +538,13 @@ describe("stitch-to-jsx", () => {
       assert.match(css, /background: var\(--color-primary-container\);/);
       assert.match(css, /box-shadow: 0 0 8px var\(--color-outline-variant\);/);
       assert.match(css, /transition: color, background-color, border-color, box-shadow, opacity, transform 0\.2s;/);
-      assert.match(code, /Palette/);
+      assertMappedIntrinsicIcons(code, ["style"]);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
 
-  it("maps pointer Material Symbols to build-safe lucide icon exports", () => {
+  it("maps pointer Material Symbols to deterministic intrinsic icon geometry", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-stitch-touch-icon-"));
     try {
       const stitchDir = path.join(tmp, "stitch");
@@ -537,16 +565,18 @@ describe("stitch-to-jsx", () => {
       });
 
       const code = fs.readFileSync(path.join(tmp, "src", "screens", "ControlsHelp.tsx"), "utf-8");
-      assert.match(code, /import \{ MousePointerClick \} from "lucide-react";/);
-      assert.match(code, /<MousePointerClick className="text-\[18px\]" aria-hidden=\{true\} focusable="false" \/>/);
-      assert.match(code, /<MousePointerClick className="text-\[16px\]" aria-hidden=\{true\} focusable="false" \/>/);
-      assert.doesNotMatch(code, /HandPointer|touch_app|>mouse<|material-symbols/);
+      assertMappedIntrinsicIcons(code, ["touch_app", "mouse"]);
+      assert.match(intrinsicIconSvg(code, "touch_app"), /className="text-\[18px\]"/);
+      assert.match(intrinsicIconSvg(code, "mouse"), /className="text-\[16px\]"/);
+      assert.match(intrinsicIconSvg(code, "touch_app"), /<path d="M9\.037 9\.69/);
+      assert.match(intrinsicIconSvg(code, "mouse"), /<path d="M9\.037 9\.69/);
+      assert.doesNotMatch(code, /HandPointer|>touch_app<|>mouse<|material-symbols/);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
 
-  it("maps key Material Symbol to a deterministic lucide icon", () => {
+  it("maps key Material Symbol to deterministic intrinsic icon geometry", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-stitch-key-icon-"));
     try {
       const stitchDir = path.join(tmp, "stitch");
@@ -569,9 +599,9 @@ describe("stitch-to-jsx", () => {
       const iconReport = JSON.parse(fs.readFileSync(path.join(tmp, ".setfarm", "setup", "UNKNOWN_MATERIAL_ICONS.json"), "utf-8"));
       assert.equal(iconReport.status, "pass");
       assert.deepEqual(iconReport.icons, []);
-      assert.match(code, /import \{ Key \} from "lucide-react";/);
-      assert.match(code, /<Key/);
-      assert.doesNotMatch(code, /\bBadgeHelp\b|material-symbols|>key</);
+      assertMappedIntrinsicIcons(code, ["key"]);
+      assert.match(intrinsicIconSvg(code, "key"), /<circle cx="7\.5" cy="15\.5" r="5\.5"/);
+      assert.doesNotMatch(code, /material-symbols|>key</);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -600,9 +630,8 @@ describe("stitch-to-jsx", () => {
       const iconReport = JSON.parse(fs.readFileSync(path.join(tmp, ".setfarm", "setup", "UNKNOWN_MATERIAL_ICONS.json"), "utf-8"));
       assert.equal(iconReport.status, "pass");
       assert.deepEqual(iconReport.icons, []);
-      assert.match(code, /import \{ RotateCcw \} from "lucide-react";/);
-      assert.match(code, /<RotateCcw/);
-      assert.doesNotMatch(code, /\bBadgeHelp\b|material-symbols|>restore</);
+      assertMappedIntrinsicIcons(code, ["restore"]);
+      assert.doesNotMatch(code, /material-symbols|>restore</);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -631,15 +660,14 @@ describe("stitch-to-jsx", () => {
       const iconReport = JSON.parse(fs.readFileSync(path.join(tmp, ".setfarm", "setup", "UNKNOWN_MATERIAL_ICONS.json"), "utf-8"));
       assert.equal(iconReport.status, "pass");
       assert.deepEqual(iconReport.icons, []);
-      assert.match(code, /import \{ LogOut \} from "lucide-react";/);
-      assert.match(code, /<LogOut/);
-      assert.doesNotMatch(code, /\bBadgeHelp\b|material-symbols|>exit_to_app</);
+      assertMappedIntrinsicIcons(code, ["exit_to_app"]);
+      assert.doesNotMatch(code, /material-symbols|>exit_to_app</);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
 
-  it("maps common app navigation Material Symbols to semantic lucide icons instead of Circle", () => {
+  it("maps common app navigation Material Symbols to semantic intrinsic icon geometry", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-stitch-nav-icons-"));
     try {
       const stitchDir = path.join(tmp, "stitch");
@@ -786,123 +814,25 @@ describe("stitch-to-jsx", () => {
       const iconReport = JSON.parse(fs.readFileSync(path.join(tmp, ".setfarm", "setup", "UNKNOWN_MATERIAL_ICONS.json"), "utf-8"));
       assert.equal(iconReport.status, "pass");
       assert.deepEqual(iconReport.icons, []);
-      assert.match(code, /import \{ Activity, Armchair, ArrowLeftRight, ArrowUpDown, AudioWaveform, BadgeAlert, BadgeCheck, Ban, BarChart3, Bed, Bell, BellRing, Bolt, BookOpen, Braces, BriefcaseMedical, CheckCheck, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, ChevronsUpDown, CircleHelp, ClipboardCheck, ClipboardList, ClipboardPlus, Clock, CloudOff, Columns3, Database, DoorOpen, Expand, Eye, Factory, FastForward, FilePenLine, FileWarning, Filter, FilterX, FolderOpen, FolderX, Gauge, GitCompareArrows, Grid3X3, GripHorizontal, GripVertical, HardHat, Headphones, Heart, HeartPulse, History, Hospital, Kanban, Keyboard, LayoutDashboard, Lightbulb, ListChecks, ListOrdered, ListTodo, LoaderCircle, LogIn, LogOut, Mail, Map, MapPin, Monitor, MonitorCog, MoveDownRight, Music, Navigation, Package, PackageCheck, PackageSearch, Palette, Pencil, Phone, PhoneCall, Plane, PlaneLanding, PlaneTakeoff, PlusSquare, Power, RadioTower, RefreshCcw, RefreshCw, RefreshCwOff, Rocket, RotateCcw, Route, Rows2, Rows3, Server, Sparkles, Star, Tag, Terminal, Timer, ToggleRight, Train, TrendingUp, Triangle, Truck, UserCheck, UserMinus, UserPlus, UserSearch, Users, UsersRound, Volume2, VolumeX, Warehouse, WifiOff, Wrench \} from "lucide-react";/);
-      assert.match(code, /<LayoutDashboard/);
-      assert.match(code, /<PackageCheck/);
-      assert.match(code, /<PackageSearch/);
-      assert.match(code, /<BarChart3/);
-      assert.match(code, /<ArrowUpDown/);
-      assert.match(code, /<Bell/);
-      assert.match(code, /<Pencil/);
-      assert.match(code, /<Monitor/);
-      assert.match(code, /<Rows3/);
-      assert.match(code, /<Kanban/);
-      assert.match(code, /<Train/);
-      assert.match(code, /<Braces/);
-      assert.match(code, /<Database/);
-      assert.match(code, /<BookOpen/);
-      assert.match(code, /<GitCompareArrows/);
-      assert.match(code, /<PlusSquare/);
-      assert.match(code, /<ArrowLeftRight/);
-      assert.match(code, /<Route/);
-      assert.match(code, /<MoveDownRight/);
-      assert.match(code, /<RefreshCcw/);
-      assert.match(code, /<Timer/);
-      assert.match(code, /<Clock/);
-      assert.match(code, /<Users/);
-      assert.match(code, /<RefreshCw/);
-      assert.match(code, /<ChevronDown/);
-      assert.match(code, /<ChevronUp/);
-      assert.match(code, /<Triangle/);
-      assert.match(code, /<Hospital/);
-      assert.match(code, /<BriefcaseMedical/);
-      assert.match(code, /<ListOrdered/);
-      assert.match(code, /<MonitorCog/);
-      assert.match(code, /<ClipboardPlus/);
-      assert.match(code, /<LoaderCircle/);
-      assert.match(code, /<RefreshCwOff/);
-      assert.match(code, /<FolderOpen/);
-      assert.match(code, /<FolderX/);
-      assert.match(code, /<FilterX/);
-      assert.match(code, /<UsersRound/);
-      assert.match(code, /<Lightbulb/);
-      assert.match(code, /<Sparkles/);
-      assert.match(code, /<BellRing/);
-      assert.match(code, /<Bolt/);
-      assert.match(code, /<ListChecks/);
-      assert.match(code, /<Server/);
-      assert.match(code, /<CheckCheck/);
-      assert.match(code, /<History/);
-      assert.match(code, /<Columns3/);
-      assert.match(code, /<CloudOff/);
-      assert.match(code, /<CircleHelp/);
-      assert.match(code, /<UserPlus/);
-      assert.match(code, /<PhoneCall/);
-      assert.match(code, /<Phone/);
-      assert.match(code, /<Mail/);
-      assert.match(code, /<RotateCcw/);
-      assert.match(code, /<BadgeAlert/);
-      assert.match(code, /<LogIn/);
-      assert.match(code, /<Star/);
-      assert.match(code, /<Heart/);
-      assert.match(code, /<HeartPulse/);
-      assert.match(code, /<Gauge/);
-      assert.match(code, /<TrendingUp/);
-      assert.match(code, /<Factory/);
-      assert.match(code, /<ListTodo/);
-      assert.match(code, /<RadioTower/);
-      assert.match(code, /<ClipboardCheck/);
-      assert.match(code, /<Wrench/);
-      assert.match(code, /<FilePenLine/);
-      assert.match(code, /<Plane/);
-      assert.match(code, /<PlaneLanding/);
-      assert.match(code, /<PlaneTakeoff/);
-      assert.match(code, /<UserMinus/);
-      assert.match(code, /<DoorOpen/);
-      assert.match(code, /<Grid3X3/);
-      assert.match(code, /<GripVertical/);
-      assert.match(code, /<Expand/);
-      assert.match(code, /<ClipboardList/);
-      assert.match(code, /<Activity/);
-      assert.match(code, /<Monitor/);
-      assert.match(code, /<Filter/);
-      assert.match(code, /<Power/);
-      assert.match(code, /<WifiOff/);
-      assert.match(code, /<FileWarning/);
-      assert.match(code, /<UserSearch/);
-      assert.match(code, /<ChevronsUpDown/);
-      assert.match(code, /<Ban/);
-      assert.match(code, /<BadgeCheck/);
-      assert.match(code, /<Warehouse/);
-      assert.match(code, /<Armchair/);
-      assert.match(code, /<Bed/);
-      assert.match(code, /<UserCheck/);
-      assert.match(code, /<Rows2/);
-      assert.match(code, /<Package/);
-      assert.match(code, /<HardHat/);
-      assert.match(code, /<Tag/);
-      assert.match(code, /<Truck/);
-      assert.match(code, /<MapPin/);
-      assert.match(code, /<Map/);
-      assert.match(code, /<Navigation/);
-      assert.match(code, /<GripHorizontal/);
-      assert.match(code, /<Headphones/);
-      assert.match(code, /<Terminal/);
-      assert.match(code, /<ToggleRight/);
-      assert.match(code, /<Keyboard/);
-      assert.match(code, /<ChevronLeft/);
-      assert.match(code, /<ChevronRight/);
-      assert.match(code, /<Music/);
-      assert.match(code, /<AudioWaveform/);
-      assert.match(code, /<Volume2/);
-      assert.match(code, /<VolumeX/);
-      assert.match(code, /<FastForward/);
-      assert.match(code, /<Eye/);
-      assert.match(code, /<Rocket/);
-      assert.match(code, /<CircleHelp/);
-      assert.match(code, /<LogOut/);
-      assert.doesNotMatch(code, /\bCircle\b/);
-      assert.doesNotMatch(code, /\bBadgeHelp\b/);
+      assertMappedIntrinsicIcons(code, [
+        "dashboard", "assignment_return", "inventory_2", "analytics", "sort", "notifications", "edit_note", "desktop_windows",
+        "table_rows", "view_kanban", "train", "data_object", "database", "dataset", "menu_book", "rebase_edit",
+        "add_box", "swap_horiz", "route", "south_east", "sync_alt", "timer", "schedule", "group",
+        "sync", "expand_more", "local_hospital", "medical_services", "queue", "tv_options_parental", "clinical_notes", "progress_activity",
+        "sync_problem", "folder_open", "folder_off", "filter_list_off", "groups", "lightbulb", "cleaning_services", "notifications_active",
+        "cloud_off", "contact_support", "person_add", "contact_phone", "call", "mail", "restart_alt", "priority_high",
+        "login", "star", "favorite", "ecg_heart", "speed", "trending_up", "precision_manufacturing", "list_alt",
+        "sensors", "arrow_drop_down", "arrow_drop_up", "change_history", "assignment_ind", "build", "edit_document", "flight",
+        "flight_land", "flight_takeoff", "group_remove", "meeting_room", "grid_view", "drag_indicator", "open_in_full", "pending_actions",
+        "monitoring", "monitor", "monitor_heart", "filter_alt", "power", "wifi_off", "report", "person_search",
+        "unfold_more", "block", "fact_check", "warehouse", "airline_seat_recline_normal", "bed", "format_list_numbered", "how_to_reg",
+        "vital_signs", "density_medium", "density_small", "deployed_code", "engineering", "label", "local_shipping", "location_on",
+        "map", "near_me", "reorder", "support_agent", "task_alt", "terminal", "toggle_on", "keyboard",
+        "music_note", "keyboard_arrow_left", "keyboard_arrow_right", "graphic_eq", "volume_up", "volume_mute", "fast_forward", "visibility",
+        "rocket_launch", "blur_on", "style", "bolt", "checklist", "dns", "done_all", "help_outline",
+        "history", "notification_important", "view_week", "help", "logout",
+      ]);
+      assert.equal((code.match(/data-setfarm-icon-source="intrinsic-registry\.v1"/g) || []).length, 125);
       assert.doesNotMatch(code, /material-symbols/);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
@@ -932,9 +862,10 @@ describe("stitch-to-jsx", () => {
       const iconReport = JSON.parse(fs.readFileSync(path.join(tmp, ".setfarm", "setup", "UNKNOWN_MATERIAL_ICONS.json"), "utf-8"));
       assert.equal(iconReport.status, "pass");
       assert.deepEqual(iconReport.icons, []);
-      assert.match(code, /import \{ Database \} from "lucide-react";/);
-      assert.match(code, /<Database/);
-      assert.doesNotMatch(code, /\bBadgeHelp\b|material-symbols|>data_usage</);
+      assertMappedIntrinsicIcons(code, [
+        "data_usage",
+      ]);
+      assert.equal((code.match(/data-setfarm-icon=/g) || []).length, 1);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -969,15 +900,10 @@ describe("stitch-to-jsx", () => {
       const iconReport = JSON.parse(fs.readFileSync(path.join(tmp, ".setfarm", "setup", "UNKNOWN_MATERIAL_ICONS.json"), "utf-8"));
       assert.equal(iconReport.status, "pass");
       assert.deepEqual(iconReport.icons, []);
-      assert.match(code, /import \{ ArrowRight, BarChart3, Cpu, EyeOff, Lightbulb, PieChart, TrendingUp \} from "lucide-react";/);
-      assert.match(code, /<ArrowRight/);
-      assert.match(code, /<EyeOff/);
-      assert.match(code, /<Cpu/);
-      assert.match(code, /<PieChart/);
-      assert.match(code, /<BarChart3/);
-      assert.match(code, /<TrendingUp/);
-      assert.match(code, /<Lightbulb/);
-      assert.doesNotMatch(code, /\bBadgeHelp\b|material-symbols|arrow_right_alt|blur_off|query_stats/);
+      assertMappedIntrinsicIcons(code, [
+        "arrow_right_alt", "blur_off", "memory", "pie_chart", "query_stats", "stacked_line_chart", "tips_and_updates",
+      ]);
+      assert.equal((code.match(/data-setfarm-icon=/g) || []).length, 7);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -1009,12 +935,10 @@ describe("stitch-to-jsx", () => {
       const iconReport = JSON.parse(fs.readFileSync(path.join(tmp, ".setfarm", "setup", "UNKNOWN_MATERIAL_ICONS.json"), "utf-8"));
       assert.equal(iconReport.status, "pass");
       assert.deepEqual(iconReport.icons, []);
-      assert.match(code, /import \{ Braces, PieChart, ShieldAlert, Trash2 \} from "lucide-react";/);
-      assert.match(code, /<Braces/);
-      assert.match(code, /<Trash2/);
-      assert.match(code, /<PieChart/);
-      assert.match(code, /<ShieldAlert/);
-      assert.doesNotMatch(code, /\bBadgeHelp\b|material-symbols|delete_sweep|donut_small|gpp_bad/);
+      assertMappedIntrinsicIcons(code, [
+        "api", "delete_sweep", "donut_small", "gpp_bad",
+      ]);
+      assert.equal((code.match(/data-setfarm-icon=/g) || []).length, 4);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -1049,15 +973,10 @@ describe("stitch-to-jsx", () => {
       const iconReport = JSON.parse(fs.readFileSync(path.join(tmp, ".setfarm", "setup", "UNKNOWN_MATERIAL_ICONS.json"), "utf-8"));
       assert.equal(iconReport.status, "pass");
       assert.deepEqual(iconReport.icons, []);
-      assert.match(code, /import \{ Circle, FileText, Inbox, Rows3, Ruler, Save, StickyNote \} from "lucide-react";/);
-      assert.match(code, /<FileText/);
-      assert.match(code, /<Circle/);
-      assert.match(code, /<Rows3/);
-      assert.match(code, /<Inbox/);
-      assert.match(code, /<StickyNote/);
-      assert.match(code, /<Ruler/);
-      assert.match(code, /<Save/);
-      assert.doesNotMatch(code, /\bBadgeHelp\b|material-symbols|dynamic_feed|sync_saved_locally/);
+      assertMappedIntrinsicIcons(code, [
+        "article", "circle", "dynamic_feed", "inbox", "notes", "rule", "sync_saved_locally",
+      ]);
+      assert.equal((code.match(/data-setfarm-icon=/g) || []).length, 7);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -1093,16 +1012,11 @@ describe("stitch-to-jsx", () => {
       const iconReport = JSON.parse(fs.readFileSync(path.join(tmp, ".setfarm", "setup", "UNKNOWN_MATERIAL_ICONS.json"), "utf-8"));
       assert.equal(iconReport.status, "pass");
       assert.deepEqual(iconReport.icons, []);
-      assert.match(code, /import \{ Briefcase, CircleAlert, Database, Flag, GitBranch, Lightbulb, Network, Type \} from "lucide-react";/);
-      assert.match(code, /<GitBranch/);
-      assert.match(code, /<CircleAlert/);
-      assert.match(code, /<Flag/);
-      assert.match(code, /<Lightbulb/);
-      assert.match(code, /<Network/);
-      assert.match(code, /<Database/);
-      assert.match(code, /<Type/);
-      assert.match(code, /<Briefcase/);
-      assert.doesNotMatch(code, /\bBadgeHelp\b|material-symbols|account_tree|error_outline/);
+      assertMappedIntrinsicIcons(code, [
+        "account_tree", "error_outline", "flag", "insights", "lan", "storage", "title",
+        "work",
+      ]);
+      assert.equal((code.match(/data-setfarm-icon=/g) || []).length, 8);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -1134,12 +1048,10 @@ describe("stitch-to-jsx", () => {
       const iconReport = JSON.parse(fs.readFileSync(path.join(tmp, ".setfarm", "setup", "UNKNOWN_MATERIAL_ICONS.json"), "utf-8"));
       assert.equal(iconReport.status, "pass");
       assert.deepEqual(iconReport.icons, []);
-      assert.match(code, /import \{ Cloud, Router, ShieldAlert, TrendingUp \} from "lucide-react";/);
-      assert.match(code, /<Cloud/);
-      assert.match(code, /<ShieldAlert/);
-      assert.match(code, /<Router/);
-      assert.match(code, /<TrendingUp/);
-      assert.doesNotMatch(code, /\bBadgeHelp\b|material-symbols|gpp_maybe|show_chart/);
+      assertMappedIntrinsicIcons(code, [
+        "cloud", "gpp_maybe", "router", "show_chart",
+      ]);
+      assert.equal((code.match(/data-setfarm-icon=/g) || []).length, 4);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -1177,18 +1089,11 @@ describe("stitch-to-jsx", () => {
       const iconReport = JSON.parse(fs.readFileSync(path.join(tmp, ".setfarm", "setup", "UNKNOWN_MATERIAL_ICONS.json"), "utf-8"));
       assert.equal(iconReport.status, "pass");
       assert.deepEqual(iconReport.icons, []);
-      assert.match(code, /import \{ Bug, Circle, Code, DatabaseZap, ExternalLink, FlaskConical, Languages, ListX, Minus, Smartphone \} from "lucide-react";/);
-      assert.match(code, /<Bug/);
-      assert.match(code, /<Circle/);
-      assert.match(code, /<Minus/);
-      assert.match(code, /<ExternalLink/);
-      assert.match(code, /<ListX/);
-      assert.match(code, /<DatabaseZap/);
-      assert.match(code, /<FlaskConical/);
-      assert.match(code, /<Code/);
-      assert.match(code, /<Languages/);
-      assert.match(code, /<Smartphone/);
-      assert.doesNotMatch(code, /\bBadgeHelp\b|material-symbols|horizontal_rule|open_in_new|clear_all|dataset_linked|science|smartphone|bug_report|lens/);
+      assertMappedIntrinsicIcons(code, [
+        "horizontal_rule", "open_in_new", "clear_all", "dataset_linked", "science", "code", "language",
+        "smartphone", "bug_report", "lens",
+      ]);
+      assert.equal((code.match(/data-setfarm-icon=/g) || []).length, 10);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -1218,8 +1123,16 @@ describe("stitch-to-jsx", () => {
       assert.equal(iconReport.status, "warning");
       assert.equal(iconReport.severity, "supervisor_fixable");
       assert.deepEqual(iconReport.icons, [{ iconName: "domain_specific_unknown_icon", count: 1 }]);
-      assert.match(code, /import \{ BadgeHelp \} from "lucide-react";/);
-      assert.doesNotMatch(code, /material-symbols|domain_specific_unknown_icon/);
+      assert.doesNotMatch(code, /from\s+["']lucide-react["']/);
+      assert.doesNotMatch(code, /<[A-Z][A-Za-z0-9]*(?:\s|\/|>)/);
+      const fallback = intrinsicIconSvg(
+        code,
+        "domain_specific_unknown_icon",
+        "neutral-fallback.v1",
+      );
+      assert.match(fallback, /<circle cx="12" cy="12" r="9"\s*\/>/);
+      assert.doesNotMatch(code, /material-symbols|>domain_specific_unknown_icon</);
+      assert.match(iconReport.guidance, /source-local neutral intrinsic SVG fallbacks/);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -1261,21 +1174,12 @@ describe("stitch-to-jsx", () => {
       });
 
       const code = fs.readFileSync(path.join(tmp, "src", "screens", "GameSettings.tsx"), "utf-8");
-      assert.match(code, /import \{ Ban, CirclePause, CirclePlay, CornerDownLeft, Gamepad2, Layers, Power, RefreshCcw, RotateCcw, Shield, SlidersHorizontal, Smile, Sparkles, Trophy \} from "lucide-react";/);
-      assert.match(code, /<Ban/);
-      assert.match(code, /<CirclePause/);
-      assert.match(code, /<CirclePlay/);
-      assert.match(code, /<CornerDownLeft/);
-      assert.match(code, /<Layers/);
-      assert.match(code, /<Power/);
-      assert.match(code, /<RefreshCcw/);
-      assert.match(code, /<RotateCcw/);
-      assert.match(code, /<SlidersHorizontal/);
-      assert.match(code, /<Shield/);
-      assert.match(code, /<Smile/);
-      assert.match(code, /<Sparkles/);
-      assert.match(code, /<Trophy/);
-      assert.match(code, /<Gamepad2/);
+      assertMappedIntrinsicIcons(code, [
+        "settings_input_component", "shield", "leaderboard", "pause_circle", "play_circle", "replay", "device_reset",
+        "cancel", "face", "keyboard_return", "power_settings_new", "layers", "stars", "trophy",
+        "emoji_events", "sports_esports",
+      ]);
+      assert.equal((code.match(/data-setfarm-icon=/g) || []).length, 16);
       assert.doesNotMatch(code, /\boninput=|\bonInput="syncValue/);
       const iconReport = JSON.parse(fs.readFileSync(path.join(tmp, ".setfarm", "setup", "UNKNOWN_MATERIAL_ICONS.json"), "utf-8"));
       assert.equal(iconReport.status, "pass");
@@ -1328,26 +1232,13 @@ describe("stitch-to-jsx", () => {
       });
 
       const code = fs.readFileSync(path.join(tmp, "src", "screens", "GameIcons.tsx"), "utf-8");
-      assert.match(code, /Car/);
-      assert.match(code, /AudioWaveform/);
-      assert.match(code, /ChevronDown/);
-      assert.match(code, /CircleDot/);
-      assert.match(code, /Coins/);
-      assert.match(code, /Flame/);
-      assert.match(code, /Fuel/);
-      assert.match(code, /Keyboard/);
-      assert.match(code, /Mic/);
-      assert.match(code, /MousePointerClick/);
-      assert.match(code, /Network/);
-      assert.match(code, /RadioTower/);
-      assert.match(code, /Ruler/);
-      assert.match(code, /Settings2/);
-      assert.match(code, /Shapes/);
-      assert.match(code, /Space/);
-      assert.match(code, /Trophy/);
-      assert.match(code, /Vibrate/);
-      assert.match(code, /Volume1/);
-      assert.match(code, /Zap/);
+      assertMappedIntrinsicIcons(code, [
+        "local_fire_department", "local_gas_station", "straighten", "ads_click", "electric_bolt", "equalizer", "volume_down",
+        "vibration", "wifi", "wifi_tethering", "directions_car", "flash_on", "hub", "interests",
+        "keyboard_alt", "keyboard_arrow_down", "keyboard_voice", "scoreboard", "settings_suggest", "space_bar", "token",
+        "trip_origin",
+      ]);
+      assert.equal((code.match(/data-setfarm-icon=/g) || []).length, 22);
       const iconReport = JSON.parse(fs.readFileSync(path.join(tmp, ".setfarm", "setup", "UNKNOWN_MATERIAL_ICONS.json"), "utf-8"));
       assert.equal(iconReport.status, "pass");
     } finally {
@@ -1378,9 +1269,10 @@ describe("stitch-to-jsx", () => {
       });
 
       const code = fs.readFileSync(path.join(tmp, "src", "screens", "MainMenu.tsx"), "utf-8");
-      assert.match(code, /import \{ Play \} from "lucide-react";/);
+      assertMappedIntrinsicIcons(code, ["play_arrow"]);
       assert.match(code, /<button className="transition-colors"/);
-      assert.match(code, /<Play className="text-\[20px\]" aria-hidden=\{true\} focusable="false" \/>/);
+      assert.match(intrinsicIconSvg(code, "play_arrow"), /className="text-\[20px\]"/);
+      assert.match(intrinsicIconSvg(code, "play_arrow"), /<polygon points="6 3 20 12 6 21 6 3"\s*\/>/);
       assert.doesNotMatch(code, /material-symbols|Material Symbols|>play_arrow<|transition-all/);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });

@@ -13,6 +13,8 @@ import {
 import { produceDesignInteractionGraphV2 } from "../../src/product-compiler/producers/design-graph-v2.js";
 import { produceDesignGenerationTargetsV2 } from "../../src/product-compiler/producers/design-targets-v2.js";
 import { captureStitchRenderedSemanticsV2 } from "../../src/product-compiler/producers/stitch-rendered-semantics-v2.js";
+import { StitchScreenIndexEntryV2Schema } from "../../src/product-compiler/schemas/stitch-screen-index-v2.js";
+import { validateStitchScreenSourceV2 } from "../../src/product-compiler/stitch-screen-source-validator-v2.js";
 import {
   bindStitchTargetCandidateSelectionsV3,
   selectStitchTargetCandidatesV2,
@@ -27,7 +29,11 @@ import {
 
 async function writeNativeV2Projection(
   root: string,
-  options: { customRoleControl?: boolean; implicitStatusRole?: boolean } = {},
+  options: {
+    customRoleControl?: boolean;
+    implicitStatusRole?: boolean;
+    materialIcons?: boolean;
+  } = {},
 ) {
   const stitch = path.join(root, "stitch");
   fs.mkdirSync(stitch, { recursive: true });
@@ -47,12 +53,16 @@ async function writeNativeV2Projection(
   const physicalControl = options.customRoleControl
     ? `<div role="button" aria-label="Start Game" tabindex="0" data-action="${placement.actionRef}" data-control-slot="${placement.controlSlotRef}">Start Game</div>`
     : `<button data-action="${placement.actionRef}" data-control-slot="${placement.controlSlotRef}">Start Game</button>`;
+  const materialIconDecorations = options.materialIcons
+    ? `<div aria-label="Static icon samples"><span class="material-symbols-outlined h-5 w-5">play_arrow</span><i class="material-icons icon-shell" data-icon="search"></i><span class="material-symbols-outlined text-slate-500">project_specific_unknown_icon</span></div>`
+    : "";
   const statusElement = options.implicitStatusRole
     ? `<output hidden aria-label="${statusObservable.selector.name}">Playing</output>`
     : `<div hidden role="${statusObservable.selector.role}" aria-label="${statusObservable.selector.name}">Playing</div>`;
   const htmlBytes = validStitchHtml([
     `<main data-surface-id="${target.surfaceRef}">`,
     physicalControl,
+    materialIconDecorations,
     `<section data-surface-id="${canvasSurface}"><canvas aria-label="Game canvas"></canvas></section>`,
     `<section data-surface-id="${statusObservable.selector.surfaceRef}">${statusElement}</section>`,
     "</main>",
@@ -241,6 +251,51 @@ describe("Stitch converter semantic projection", () => {
       assert.match(exactControlTag, new RegExp(`data-action="${value.placement.actionRef}"`));
       assert.match(exactControlTag, new RegExp(`data-control-slot="${value.placement.controlSlotRef}"`));
       assert.match(exactControlTag, /data-action-id=/);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("emits mapped and fallback Material icons as validator-safe source-local intrinsic SVG", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-native-v2-intrinsic-icons-"));
+    try {
+      await writeNativeV2Projection(root, { materialIcons: true });
+      execFileSync("node", ["scripts/stitch-to-jsx.mjs", root], {
+        cwd: process.cwd(),
+        stdio: "pipe",
+      });
+
+      const rawIndex = JSON.parse(fs.readFileSync(
+        path.join(root, "src/screens/SCREEN_INDEX.json"),
+        "utf8",
+      ));
+      assert.equal(rawIndex.length, 1);
+      const screen = StitchScreenIndexEntryV2Schema.parse(rawIndex[0]);
+      const source = fs.readFileSync(path.join(root, screen.file), "utf8");
+
+      assert.doesNotMatch(source, /from\s+["']lucide-react["']/);
+      assert.doesNotMatch(source, /<(?:Play|Search|BadgeHelp)\b/);
+      assert.match(source, /<svg[^>]*className="h-5 w-5"[^>]*data-setfarm-icon="play_arrow"[^>]*data-setfarm-icon-source="intrinsic-registry\.v1"/);
+      assert.match(source, /<polygon points="6 3 20 12 6 21 6 3"\s*\/>/);
+      assert.match(source, /<i[^>]*className="icon-shell"[^>]*><svg[^>]*data-setfarm-icon="search"[^>]*data-setfarm-icon-source="intrinsic-registry\.v1"/);
+      assert.match(source, /<svg[^>]*className="text-slate-500"[^>]*data-setfarm-icon="project_specific_unknown_icon"[^>]*data-setfarm-icon-source="neutral-fallback\.v1"/);
+      assert.match(source, /<circle cx="12" cy="12" r="9"\s*\/>/);
+      assert.deepEqual(validateStitchScreenSourceV2({ screen, sourceText: source }), {
+        status: "valid",
+        diagnostics: [],
+      });
+
+      const unknownReport = JSON.parse(fs.readFileSync(
+        path.join(root, ".setfarm/setup/UNKNOWN_MATERIAL_ICONS.json"),
+        "utf8",
+      ));
+      assert.equal(unknownReport.status, "warning");
+      assert.equal(unknownReport.count, 1);
+      assert.deepEqual(unknownReport.icons, [{
+        iconName: "project_specific_unknown_icon",
+        count: 1,
+      }]);
+      assert.match(unknownReport.guidance, /source-local neutral intrinsic SVG fallbacks/);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
