@@ -7,6 +7,7 @@ import {
   auditArtifactPublicationBatchLedgerData,
   planContractSpineMigrations,
   rollbackArtifactPublicationBatchLedgerToV22,
+  rollbackArtifactStoreAuthorityLedgerToV23,
   verifyContractSpineMigrations,
 } from "../../src/db/contract-spine-migrations.js";
 import {
@@ -22,6 +23,12 @@ const migrationProducer = Object.freeze({
   codeSha: "a".repeat(40),
   toolVersions: Object.freeze({ node: "22" }),
 });
+
+async function rollbackEmptyAuthorityLedger(database: TestDatabase): Promise<void> {
+  await rollbackArtifactStoreAuthorityLedgerToV23(database.sql, {
+    targetReleaseSha: "f".repeat(40),
+  });
+}
 
 async function insertCompleteReservedBatch(
   database: TestDatabase,
@@ -134,6 +141,8 @@ describe("artifact publication batch migration 23", () => {
       "artifact_publication_batch_items",
       "artifact_publication_batches",
     ]);
+
+    await rollbackEmptyAuthorityLedger(database);
 
     const rollback = await rollbackArtifactPublicationBatchLedgerToV22(database.sql, {
       targetReleaseSha: targetRelease,
@@ -269,6 +278,7 @@ describe("artifact publication batch migration 23", () => {
 
   it("refuses rollback after immutable batch evidence exists", async () => {
     await applyContractSpineMigrations(database.sql, { releaseSha: "c".repeat(40) });
+    await rollbackEmptyAuthorityLedger(database);
     await insertCompleteReservedBatch(database, "batch-migration-evidence", "d");
     await assert.rejects(
       database.sql`
@@ -625,6 +635,7 @@ describe("artifact publication batch migration 23", () => {
 
   it("reports a missing journaled batch relation as typed drift", async () => {
     await applyContractSpineMigrations(database.sql);
+    await rollbackEmptyAuthorityLedger(database);
     await database.sql.unsafe("DROP TABLE artifact_publication_batch_items CASCADE");
     const plan = await planContractSpineMigrations(database.sql);
     assert.equal(plan.status, "drift");
@@ -653,6 +664,7 @@ describe("artifact publication batch migration 23", () => {
 
   it("reports a missing journaled helper as typed drift across every operation", async () => {
     await applyContractSpineMigrations(database.sql);
+    await rollbackEmptyAuthorityLedger(database);
     await database.sql.unsafe(
       "DROP FUNCTION public.setfarm_artifact_publication_batch_producer_identity_bytes(jsonb)",
     );
@@ -680,6 +692,7 @@ describe("artifact publication batch migration 23", () => {
 
   it("rejects unlogged batch relations across plan, verify, audit, apply, and rollback", async () => {
     await applyContractSpineMigrations(database.sql);
+    await rollbackEmptyAuthorityLedger(database);
     await database.sql.unsafe("ALTER TABLE artifact_publication_batch_items SET UNLOGGED");
     await database.sql.unsafe("ALTER TABLE artifact_publication_batches SET UNLOGGED");
     const plan = await planContractSpineMigrations(database.sql);
@@ -732,6 +745,7 @@ describe("artifact publication batch migration 23", () => {
 
   it("fails plan, audit, and rollback closed on shared reservation schema poison", async () => {
     await applyContractSpineMigrations(database.sql, { releaseSha: "a".repeat(40) });
+    await rollbackEmptyAuthorityLedger(database);
     await database.sql.unsafe(`
       ALTER TABLE artifact_publication_reservations
       ADD CONSTRAINT artifact_publication_reservations_poison_check CHECK (true)
@@ -769,6 +783,7 @@ describe("artifact publication batch migration 23", () => {
   ] as const) {
     it(`fails every v23 operation closed when shared authority ${relation} enables RLS`, async () => {
       await applyContractSpineMigrations(database.sql, { releaseSha: "a".repeat(40) });
+      await rollbackEmptyAuthorityLedger(database);
       await database.sql.unsafe(`
         ALTER TABLE public.${relation} ENABLE ROW LEVEL SECURITY;
         ALTER TABLE public.${relation} FORCE ROW LEVEL SECURITY
@@ -805,6 +820,7 @@ describe("artifact publication batch migration 23", () => {
 
   it("rejects a disabled semantic artifact immutability authority on every v23 path", async () => {
     await applyContractSpineMigrations(database.sql, { releaseSha: "a".repeat(40) });
+    await rollbackEmptyAuthorityLedger(database);
     await database.sql.unsafe(
       "ALTER TABLE semantic_artifacts DISABLE TRIGGER trg_semantic_artifacts_immutable",
     );
@@ -832,6 +848,7 @@ describe("artifact publication batch migration 23", () => {
 
   it("rejects weakened capacity authority and coherent over-quota batch data", async () => {
     await applyContractSpineMigrations(database.sql, { releaseSha: "a".repeat(40) });
+    await rollbackEmptyAuthorityLedger(database);
     await database.sql.unsafe(`
       UPDATE artifact_capacity
          SET quota_bytes = 100, max_payload_bytes = 80,
@@ -908,6 +925,7 @@ describe("artifact publication batch migration 23", () => {
   ] as const) {
     it(`classifies pre-v23 shared authority ${relation} RLS poison before adoption`, async () => {
       await applyContractSpineMigrations(database.sql, { releaseSha: "a".repeat(40) });
+      await rollbackEmptyAuthorityLedger(database);
       await rollbackArtifactPublicationBatchLedgerToV22(database.sql, {
         targetReleaseSha: "b".repeat(40),
       });
@@ -948,6 +966,7 @@ describe("artifact publication batch migration 23", () => {
 
   it("classifies a legacy APRB namespace row as typed migration drift", async () => {
     await applyContractSpineMigrations(database.sql, { releaseSha: "a".repeat(40) });
+    await rollbackEmptyAuthorityLedger(database);
     await rollbackArtifactPublicationBatchLedgerToV22(database.sql, {
       targetReleaseSha: "b".repeat(40),
     });

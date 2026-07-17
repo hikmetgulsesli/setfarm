@@ -6,11 +6,26 @@ import {
   applyContractSpineMigrations,
   planContractSpineMigrations,
   readContractSpineMigrationAttestation,
+  rollbackArtifactPublicationBatchLedgerToV22,
+  rollbackArtifactStoreAuthorityLedgerToV23,
   rollbackOperationalFailureCauseSealToV20,
+  rollbackProductCompilationAttemptLedgerToV21,
   rollbackRecoveryTerminalLeaseIdentityToV19,
   verifyContractSpineMigrations,
 } from "../../src/db/contract-spine-migrations.js";
-import { createIsolatedTestDatabase } from "./test-database.js";
+import { createIsolatedTestDatabase, type TestDatabase } from "./test-database.js";
+
+async function rollbackCurrentToV21(database: TestDatabase): Promise<void> {
+  await rollbackArtifactStoreAuthorityLedgerToV23(database.sql, {
+    targetReleaseSha: "d".repeat(40),
+  });
+  await rollbackArtifactPublicationBatchLedgerToV22(database.sql, {
+    targetReleaseSha: "e".repeat(40),
+  });
+  await rollbackProductCompilationAttemptLedgerToV21(database.sql, {
+    targetReleaseSha: "f".repeat(40),
+  });
+}
 
 const VALID_CAUSE = Object.freeze({
   schema: "setfarm.operational-failure-cause.v1",
@@ -151,6 +166,7 @@ describe("operational failure cause migration", () => {
       );
 
       const targetReleaseSha = "a".repeat(40);
+      await rollbackCurrentToV21(database);
       const rollback = await rollbackOperationalFailureCauseSealToV20(database.sql, {
         targetReleaseSha,
       });
@@ -198,7 +214,12 @@ describe("operational failure cause migration", () => {
       const reapplied = await applyContractSpineMigrations(database.sql, {
         releaseSha: "b".repeat(40),
       });
-      assert.deepEqual(reapplied.applied, ["021_operational_failure_cause_seal"]);
+      assert.deepEqual(reapplied.applied, [
+        "021_operational_failure_cause_seal",
+        "022_product_compilation_attempt_ledger",
+        "023_artifact_publication_batch_ledger",
+        "024_artifact_store_authority_ledger",
+      ]);
       assert.equal((await verifyContractSpineMigrations(database.sql)).status, "verified");
 
       const constraintRows = await database.sql<Array<{ expression: string }>>`

@@ -11069,6 +11069,716 @@ export async function auditArtifactPublicationBatchLedgerData(
 }
 // SETFARM_SEMANTIC_MIGRATION_REGION:migration-v23-shared-ownership:END
 
+// SETFARM_SEMANTIC_MIGRATION_REGION:migration-v24-artifact-store-authority:BEGIN
+export type ArtifactStoreAuthorityLedgerRollbackResult = Readonly<{
+  schema: "setfarm.contract-spine-rollback.v1";
+  rollbackId: string;
+  fromVersion: 24;
+  targetVersion: 23;
+  targetReleaseSha: string;
+  rowsRewritten: 0;
+  appliedAt: string;
+}>;
+
+const ARTIFACT_STORE_AUTHORITY_SCHEMA_V1 =
+  "setfarm.artifact-store-authority.v1" as const;
+
+const ARTIFACT_STORE_AUTHORITY_TRANSITION_BODY_SQL = `
+  BEGIN
+    IF TG_OP = 'TRUNCATE' THEN
+      RAISE EXCEPTION 'ARTIFACT_STORE_AUTHORITY_TERMINAL_IMMUTABLE'
+        USING ERRCODE = '23514';
+    END IF;
+
+    IF TG_OP = 'INSERT' THEN
+      IF NEW.state <> 'binding' THEN
+        RAISE EXCEPTION 'ARTIFACT_STORE_AUTHORITY_INITIAL_STATE_INVALID'
+          USING ERRCODE = '23514';
+      END IF;
+      NEW.created_at := clock_timestamp();
+      NEW.updated_at := NEW.created_at;
+      RETURN NEW;
+    END IF;
+
+    IF TG_OP = 'DELETE' THEN
+      RAISE EXCEPTION 'ARTIFACT_STORE_AUTHORITY_TERMINAL_IMMUTABLE'
+        USING ERRCODE = '23514';
+    END IF;
+
+    IF NEW.authority_key IS DISTINCT FROM OLD.authority_key
+       OR NEW.authority_schema IS DISTINCT FROM OLD.authority_schema
+       OR NEW.authority_id IS DISTINCT FROM OLD.authority_id
+       OR NEW.root_locator_hash IS DISTINCT FROM OLD.root_locator_hash
+       OR NEW.created_at IS DISTINCT FROM OLD.created_at THEN
+      RAISE EXCEPTION 'ARTIFACT_STORE_AUTHORITY_IDENTITY_IMMUTABLE'
+        USING ERRCODE = '23514';
+    END IF;
+
+    IF OLD.state = 'quarantined' THEN
+      RAISE EXCEPTION 'ARTIFACT_STORE_AUTHORITY_TERMINAL_IMMUTABLE'
+        USING ERRCODE = '23514';
+    END IF;
+
+    IF NOT (
+      (OLD.state = 'binding' AND NEW.state IN ('ready', 'quarantined'))
+      OR (OLD.state = 'ready' AND NEW.state = 'quarantined')
+    ) THEN
+      RAISE EXCEPTION 'ARTIFACT_STORE_AUTHORITY_TRANSITION_INVALID'
+        USING ERRCODE = '23514';
+    END IF;
+
+    NEW.updated_at := clock_timestamp();
+    RETURN NEW;
+  END;
+`;
+
+const ARTIFACT_STORE_AUTHORITY_STATEMENTS = [
+  `CREATE TABLE artifact_store_authorities (
+     authority_key TEXT COLLATE "C" PRIMARY KEY
+       REFERENCES artifact_capacity(capacity_key) ON DELETE RESTRICT,
+     authority_schema TEXT COLLATE "C" NOT NULL,
+     authority_id UUID NOT NULL,
+     root_locator_hash TEXT COLLATE "C" NOT NULL,
+     state TEXT COLLATE "C" NOT NULL,
+     diagnostic TEXT COLLATE "C",
+     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+     CONSTRAINT artifact_store_authorities_key_check
+       CHECK (authority_key = 'semantic-artifacts'),
+     CONSTRAINT artifact_store_authorities_schema_check
+       CHECK (authority_schema = 'setfarm.artifact-store-authority.v1'),
+     CONSTRAINT artifact_store_authorities_authority_id_key UNIQUE (authority_id),
+     CONSTRAINT artifact_store_authorities_authority_id_check
+       CHECK (
+         authority_id::text
+           ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+       ),
+     CONSTRAINT artifact_store_authorities_root_locator_hash_check
+       CHECK (root_locator_hash ~ '^[a-f0-9]{64}$'),
+     CONSTRAINT artifact_store_authorities_state_check
+       CHECK (state IN ('binding', 'ready', 'quarantined')),
+     CONSTRAINT artifact_store_authorities_diagnostic_check
+       CHECK (
+         (
+           (state = 'quarantined' AND NULLIF(diagnostic, '') IS NOT NULL)
+           OR (state IN ('binding', 'ready') AND diagnostic IS NULL)
+         )
+         AND (
+           diagnostic IS NULL
+           OR octet_length(convert_to(diagnostic, 'UTF8')) <= 4000
+         )
+       ),
+     CONSTRAINT artifact_store_authorities_time_check
+       CHECK (updated_at >= created_at)
+   )`,
+  `CREATE FUNCTION setfarm_enforce_artifact_store_authority_transition()
+   RETURNS trigger
+   LANGUAGE plpgsql
+   SET search_path TO pg_catalog, public
+   AS $$${ARTIFACT_STORE_AUTHORITY_TRANSITION_BODY_SQL}$$`,
+  `CREATE TRIGGER trg_artifact_store_authorities_transition
+   BEFORE INSERT OR UPDATE OR DELETE ON artifact_store_authorities
+   FOR EACH ROW
+   EXECUTE FUNCTION setfarm_enforce_artifact_store_authority_transition()`,
+  `CREATE TRIGGER trg_artifact_store_authorities_no_truncate
+   BEFORE TRUNCATE ON artifact_store_authorities
+   FOR EACH STATEMENT
+   EXECUTE FUNCTION setfarm_enforce_artifact_store_authority_transition()`,
+] as const;
+
+const EXPECTED_ARTIFACT_STORE_AUTHORITY_COLUMNS = new Map<string, Readonly<{
+  dataType: string;
+  nullable: "YES" | "NO";
+  defaultValue: string;
+  collationSchema: string | null;
+  collationName: string | null;
+}>>([
+  ["authority_key", {
+    dataType: "text", nullable: "NO", defaultValue: "", collationSchema: "pg_catalog", collationName: "C",
+  }],
+  ["authority_schema", {
+    dataType: "text", nullable: "NO", defaultValue: "", collationSchema: "pg_catalog", collationName: "C",
+  }],
+  ["authority_id", {
+    dataType: "uuid", nullable: "NO", defaultValue: "", collationSchema: null, collationName: null,
+  }],
+  ["root_locator_hash", {
+    dataType: "text", nullable: "NO", defaultValue: "", collationSchema: "pg_catalog", collationName: "C",
+  }],
+  ["state", {
+    dataType: "text", nullable: "NO", defaultValue: "", collationSchema: "pg_catalog", collationName: "C",
+  }],
+  ["diagnostic", {
+    dataType: "text", nullable: "YES", defaultValue: "", collationSchema: "pg_catalog", collationName: "C",
+  }],
+  ["created_at", {
+    dataType: "timestamp with time zone",
+    nullable: "NO",
+    defaultValue: "now()",
+    collationSchema: null,
+    collationName: null,
+  }],
+  ["updated_at", {
+    dataType: "timestamp with time zone",
+    nullable: "NO",
+    defaultValue: "now()",
+    collationSchema: null,
+    collationName: null,
+  }],
+]);
+
+const EXPECTED_ARTIFACT_STORE_AUTHORITY_CONSTRAINTS = new Map([
+  ["artifact_store_authorities_pkey", "PRIMARY KEY (authority_key)"],
+  [
+    "artifact_store_authorities_authority_id_key",
+    "UNIQUE (authority_id)",
+  ],
+  [
+    "artifact_store_authorities_authority_key_fkey",
+    "FOREIGN KEY (authority_key) REFERENCES artifact_capacity(capacity_key) ON DELETE RESTRICT",
+  ],
+  [
+    "artifact_store_authorities_key_check",
+    "CHECK (authority_key = 'semantic-artifacts'::text)",
+  ],
+  [
+    "artifact_store_authorities_schema_check",
+    "CHECK (authority_schema = 'setfarm.artifact-store-authority.v1'::text)",
+  ],
+  [
+    "artifact_store_authorities_authority_id_check",
+    "CHECK (authority_id::text ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'::text)",
+  ],
+  [
+    "artifact_store_authorities_root_locator_hash_check",
+    "CHECK (root_locator_hash ~ '^[a-f0-9]{64}$'::text)",
+  ],
+  [
+    "artifact_store_authorities_state_check",
+    "CHECK (state = ANY (ARRAY['binding'::text, 'ready'::text, 'quarantined'::text]))",
+  ],
+  [
+    "artifact_store_authorities_diagnostic_check",
+    "CHECK ((state = 'quarantined'::text AND NULLIF(diagnostic, ''::text) IS NOT NULL OR (state = ANY (ARRAY['binding'::text, 'ready'::text])) AND diagnostic IS NULL) AND (diagnostic IS NULL OR octet_length(convert_to(diagnostic, 'UTF8'::name)) <= 4000))",
+  ],
+  [
+    "artifact_store_authorities_time_check",
+    "CHECK (updated_at >= created_at)",
+  ],
+]);
+
+const EXPECTED_ARTIFACT_STORE_AUTHORITY_INDEXES = new Map([
+  [
+    "artifact_store_authorities_authority_id_key",
+    "CREATE UNIQUE INDEX artifact_store_authorities_authority_id_key ON public.artifact_store_authorities USING btree (authority_id)",
+  ],
+  [
+    "artifact_store_authorities_pkey",
+    "CREATE UNIQUE INDEX artifact_store_authorities_pkey ON public.artifact_store_authorities USING btree (authority_key)",
+  ],
+]);
+
+type ArtifactStoreAuthorityAuditRow = Readonly<{
+  authority_key: string;
+  authority_schema: string;
+  authority_id: string;
+  root_locator_hash: string;
+  state: "binding" | "ready" | "quarantined";
+  diagnostic: string | null;
+  created_at: Date | string;
+  updated_at: Date | string;
+}>;
+
+async function detectArtifactStoreAuthorityLedger(
+  sql: Sql | TransactionSql,
+): Promise<"absent" | "present" | "partial"> {
+  const tablePresent = await relationExists(sql, "artifact_store_authorities");
+  const functionRows = await sql.unsafe<Array<{ count: number }>>(
+    `SELECT COUNT(*)::integer AS count
+       FROM pg_proc p
+       JOIN pg_namespace n ON n.oid = p.pronamespace
+      WHERE n.nspname = 'public'
+        AND p.proname = 'setfarm_enforce_artifact_store_authority_transition'`,
+  );
+  const functionPresent = (functionRows[0]?.count ?? 0) > 0;
+  const triggerRows = await sql.unsafe<Array<{
+    transition_count: number;
+    truncate_count: number;
+  }>>(
+    `SELECT COUNT(*) FILTER (
+              WHERE tgname = 'trg_artifact_store_authorities_transition'
+            )::integer AS transition_count,
+            COUNT(*) FILTER (
+              WHERE tgname = 'trg_artifact_store_authorities_no_truncate'
+            )::integer AS truncate_count
+       FROM pg_trigger
+      WHERE NOT tgisinternal
+        AND tgrelid = to_regclass('public.artifact_store_authorities')
+        AND tgname IN (
+          'trg_artifact_store_authorities_transition',
+          'trg_artifact_store_authorities_no_truncate'
+        )`,
+  );
+  const triggerPresent = triggerRows[0]?.transition_count === 1
+    && triggerRows[0]?.truncate_count === 1;
+  if (!tablePresent && !functionPresent && !triggerPresent) return "absent";
+  if (tablePresent && functionPresent && triggerPresent) return "present";
+  return "partial";
+}
+
+async function readArtifactStoreAuthorityRows(
+  sql: Sql | TransactionSql,
+): Promise<ArtifactStoreAuthorityAuditRow[]> {
+  return sql.unsafe<ArtifactStoreAuthorityAuditRow[]>(
+    `SELECT authority_key, authority_schema, authority_id::text AS authority_id,
+            root_locator_hash, state, diagnostic, created_at, updated_at
+       FROM public.artifact_store_authorities
+      ORDER BY authority_key
+      LIMIT 2`,
+  );
+}
+
+async function verifyArtifactStoreAuthorityLedgerSnapshot(
+  sql: Sql | TransactionSql,
+): Promise<ArtifactStoreAuthorityAuditRow | null> {
+  const relationRows = await sql.unsafe<Array<{
+    relkind: string;
+    relpersistence: string;
+    relispartition: boolean;
+    relrowsecurity: boolean;
+    relforcerowsecurity: boolean;
+    inheritance_edge_count: number;
+    rule_count: number;
+    policy_count: number;
+  }>>(
+    `SELECT c.relkind, c.relpersistence, c.relispartition,
+            c.relrowsecurity, c.relforcerowsecurity,
+            (SELECT COUNT(*)::integer
+               FROM pg_inherits i
+              WHERE i.inhrelid = c.oid
+                 OR i.inhparent = c.oid) AS inheritance_edge_count,
+            (SELECT COUNT(*)::integer
+               FROM pg_rewrite r
+              WHERE r.ev_class = c.oid) AS rule_count,
+            (SELECT COUNT(*)::integer
+               FROM pg_policy p
+              WHERE p.polrelid = c.oid) AS policy_count
+       FROM pg_class c
+       JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = 'public'
+        AND c.relname = 'artifact_store_authorities'`,
+  );
+  const relation = relationRows[0];
+  if (
+    relationRows.length !== 1
+    || relation?.relkind !== "r"
+    || relation.relpersistence !== "p"
+    || relation.relispartition
+    || relation.relrowsecurity
+    || relation.relforcerowsecurity
+    || relation.inheritance_edge_count !== 0
+    || relation.rule_count !== 0
+    || relation.policy_count !== 0
+  ) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_ADOPTION_MISMATCH",
+      "artifact store authority relation is not one permanent ordinary authority table",
+    );
+  }
+
+  const columnRows = await sql.unsafe<Array<{
+    column_name: string;
+    data_type: string;
+    is_nullable: "YES" | "NO";
+    column_default: string | null;
+    collation_schema: string | null;
+    collation_name: string | null;
+  }>>(
+    `SELECT column_name, data_type, is_nullable, column_default,
+            collation_schema, collation_name
+       FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'artifact_store_authorities'
+      ORDER BY ordinal_position`,
+  );
+  if (
+    columnRows.length !== EXPECTED_ARTIFACT_STORE_AUTHORITY_COLUMNS.size
+    || columnRows.some((row) => {
+      const expected = EXPECTED_ARTIFACT_STORE_AUTHORITY_COLUMNS.get(row.column_name);
+      return !expected
+        || row.data_type !== expected.dataType
+        || row.is_nullable !== expected.nullable
+        || normalizeSqlExact(row.column_default ?? "") !== expected.defaultValue
+        || row.collation_schema !== expected.collationSchema
+        || row.collation_name !== expected.collationName;
+    })
+  ) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_ADOPTION_MISMATCH",
+      "artifact store authority exact column set/default mismatch",
+    );
+  }
+
+  const constraintRows = await sql.unsafe<Array<{
+    conname: string;
+    definition: string;
+    validated: boolean;
+    deferrable: boolean;
+    initially_deferred: boolean;
+    reference_matches: boolean;
+    non_catalog_function_dependencies: number;
+    non_catalog_operator_dependencies: number;
+  }>>(
+    `SELECT conname, pg_get_constraintdef(oid, true) AS definition,
+            convalidated AS validated,
+            condeferrable AS deferrable,
+            condeferred AS initially_deferred,
+            CASE
+              WHEN conname = 'artifact_store_authorities_authority_key_fkey'
+                THEN confrelid = to_regclass('public.artifact_capacity')
+              ELSE TRUE
+            END AS reference_matches,
+            (SELECT COUNT(*)::integer
+               FROM pg_depend d
+               JOIN pg_proc p
+                 ON d.refclassid = 'pg_proc'::regclass
+                AND p.oid = d.refobjid
+               JOIN pg_namespace n ON n.oid = p.pronamespace
+              WHERE d.classid = 'pg_constraint'::regclass
+                AND d.objid = c.oid
+                AND n.nspname <> 'pg_catalog') AS non_catalog_function_dependencies,
+            (SELECT COUNT(*)::integer
+               FROM pg_depend d
+               JOIN pg_operator o
+                 ON d.refclassid = 'pg_operator'::regclass
+                AND o.oid = d.refobjid
+               JOIN pg_namespace n ON n.oid = o.oprnamespace
+              WHERE d.classid = 'pg_constraint'::regclass
+                AND d.objid = c.oid
+                AND n.nspname <> 'pg_catalog') AS non_catalog_operator_dependencies
+       FROM pg_constraint c
+      WHERE c.conrelid = 'public.artifact_store_authorities'::regclass
+        AND c.contype <> 't'`,
+  );
+  const constraints = new Map(constraintRows.map((row) => [
+    row.conname,
+    normalizeSqlExact(row.definition),
+  ]));
+  if (
+    constraints.size !== EXPECTED_ARTIFACT_STORE_AUTHORITY_CONSTRAINTS.size
+    || constraintRows.some((row) =>
+      !row.validated
+      || row.deferrable
+      || row.initially_deferred
+      || !row.reference_matches
+      || row.non_catalog_function_dependencies !== 0
+      || row.non_catalog_operator_dependencies !== 0)
+    || [...EXPECTED_ARTIFACT_STORE_AUTHORITY_CONSTRAINTS].some(([name, definition]) =>
+      constraints.get(name) !== normalizeSqlExact(definition))
+  ) {
+    const mismatch = [...EXPECTED_ARTIFACT_STORE_AUTHORITY_CONSTRAINTS]
+      .find(([name, definition]) =>
+        constraints.get(name) !== normalizeSqlExact(definition));
+    throw new ContractSpineMigrationError(
+      "MIGRATION_ADOPTION_MISMATCH",
+      `artifact store authority exact constraint set mismatch: ${mismatch?.[0] ?? "count"}; actual=${mismatch ? constraints.get(mismatch[0]) ?? "missing" : constraints.size}`,
+    );
+  }
+
+  const indexRows = await sql.unsafe<Array<{ indexname: string; indexdef: string }>>(
+    `SELECT indexname, indexdef
+       FROM pg_indexes
+      WHERE schemaname = 'public'
+        AND tablename = 'artifact_store_authorities'`,
+  );
+  const indexes = new Map(indexRows.map((row) => [
+    row.indexname,
+    normalizeSqlExact(row.indexdef),
+  ]));
+  if (
+    indexes.size !== EXPECTED_ARTIFACT_STORE_AUTHORITY_INDEXES.size
+    || [...EXPECTED_ARTIFACT_STORE_AUTHORITY_INDEXES].some(([name, definition]) =>
+      indexes.get(name) !== normalizeSqlExact(definition))
+  ) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_ADOPTION_MISMATCH",
+      "artifact store authority exact index set mismatch",
+    );
+  }
+
+  const functionRows = await sql.unsafe<Array<{
+    body: string;
+    language: string;
+    volatility: string;
+    security_definer: boolean;
+    configuration: string[] | null;
+    result: string;
+    arguments: string;
+    external_trigger_count: number;
+  }>>(
+    `SELECT p.prosrc AS body, l.lanname AS language,
+            p.provolatile AS volatility, p.prosecdef AS security_definer,
+            p.proconfig AS configuration,
+            pg_get_function_result(p.oid) AS result,
+            pg_get_function_arguments(p.oid) AS arguments,
+            (SELECT COUNT(*)::integer
+               FROM pg_trigger t
+              WHERE NOT t.tgisinternal
+                AND t.tgfoid = p.oid
+                AND t.tgrelid <> 'public.artifact_store_authorities'::regclass)
+              AS external_trigger_count
+       FROM pg_proc p
+       JOIN pg_namespace n ON n.oid = p.pronamespace
+       JOIN pg_language l ON l.oid = p.prolang
+      WHERE n.nspname = 'public'
+        AND p.proname = 'setfarm_enforce_artifact_store_authority_transition'`,
+  );
+  const transition = functionRows[0];
+  if (
+    functionRows.length !== 1
+    || !transition
+    || normalizeSqlExact(transition.body)
+      !== normalizeSqlExact(ARTIFACT_STORE_AUTHORITY_TRANSITION_BODY_SQL)
+    || transition.language !== "plpgsql"
+    || transition.volatility !== "v"
+    || transition.security_definer
+    || transition.result !== "trigger"
+    || transition.arguments !== ""
+    || transition.external_trigger_count !== 0
+    || JSON.stringify(transition.configuration)
+      !== JSON.stringify(["search_path=pg_catalog, public"])
+  ) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_ADOPTION_MISMATCH",
+      "artifact store authority transition function mismatch",
+    );
+  }
+
+  const triggerRows = await sql.unsafe<Array<{
+    tgname: string;
+    enabled: string;
+    deferrable: boolean;
+    initially_deferred: boolean;
+    function_matches: boolean;
+    definition: string;
+  }>>(
+    `SELECT t.tgname, t.tgenabled AS enabled,
+            t.tgdeferrable AS deferrable,
+            t.tginitdeferred AS initially_deferred,
+            t.tgfoid = to_regprocedure(
+              'public.setfarm_enforce_artifact_store_authority_transition()'
+            ) AS function_matches,
+            pg_get_triggerdef(t.oid, true) AS definition
+       FROM pg_trigger t
+      WHERE t.tgrelid = 'public.artifact_store_authorities'::regclass
+        AND NOT t.tgisinternal`,
+  );
+  const expectedTriggers = new Map([
+    [
+      "trg_artifact_store_authorities_no_truncate",
+      "CREATE TRIGGER trg_artifact_store_authorities_no_truncate BEFORE TRUNCATE ON artifact_store_authorities FOR EACH STATEMENT EXECUTE FUNCTION setfarm_enforce_artifact_store_authority_transition()",
+    ],
+    [
+      "trg_artifact_store_authorities_transition",
+      "CREATE TRIGGER trg_artifact_store_authorities_transition BEFORE INSERT OR DELETE OR UPDATE ON artifact_store_authorities FOR EACH ROW EXECUTE FUNCTION setfarm_enforce_artifact_store_authority_transition()",
+    ],
+  ]);
+  const triggerByName = new Map(triggerRows.map((row) => [row.tgname, row]));
+  if (
+    triggerRows.length !== expectedTriggers.size
+    || [...expectedTriggers].some(([name, definition]) => {
+      const trigger = triggerByName.get(name);
+      return !trigger
+        || trigger.enabled !== "O"
+        || trigger.deferrable
+        || trigger.initially_deferred
+        || !trigger.function_matches
+        || normalizeSqlExact(trigger.definition) !== normalizeSqlExact(definition);
+    })
+  ) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_ADOPTION_MISMATCH",
+      "artifact store authority exact transition trigger mismatch",
+    );
+  }
+
+  const rows = await readArtifactStoreAuthorityRows(sql);
+  if (rows.length > 1) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_ADOPTION_MISMATCH",
+      "artifact store authority singleton contains multiple rows",
+    );
+  }
+  const authority = rows[0];
+  if (authority && (
+    authority.authority_key !== "semantic-artifacts"
+    || authority.authority_schema !== ARTIFACT_STORE_AUTHORITY_SCHEMA_V1
+    || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(
+      authority.authority_id,
+    )
+    || !/^[a-f0-9]{64}$/.test(authority.root_locator_hash)
+    || !["binding", "ready", "quarantined"].includes(authority.state)
+    || (authority.state === "quarantined") !== Boolean(authority.diagnostic)
+    || (authority.diagnostic !== null
+      && Buffer.byteLength(authority.diagnostic, "utf8") > 4_000)
+    || !Number.isFinite(new Date(authority.created_at).getTime())
+    || new Date(authority.updated_at).getTime()
+      < new Date(authority.created_at).getTime()
+  )) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_ADOPTION_MISMATCH",
+      "artifact store authority row identity mismatch",
+    );
+  }
+
+  const journaledRows = await relationExists(sql, "setfarm_schema_migrations")
+    ? await sql.unsafe<Array<{ journaled: boolean }>>(
+        `SELECT EXISTS (
+           SELECT 1 FROM public.setfarm_schema_migrations WHERE version = 24
+         ) AS journaled`,
+      )
+    : [];
+  if (rows.length > 0 && journaledRows[0]?.journaled !== true) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_ADOPTION_MISMATCH",
+      "populated artifact store authority schema requires explicit offline reconciliation",
+    );
+  }
+  return authority ?? null;
+}
+
+async function verifyArtifactStoreAuthorityLedger(
+  sql: Sql | TransactionSql,
+): Promise<void> {
+  await verifyArtifactStoreAuthorityLedgerSnapshot(sql);
+}
+
+export async function auditArtifactStoreAuthorityLedgerData(
+  sql: Sql,
+): Promise<Readonly<{
+  schema: "setfarm.artifact-store-authority-ledger-audit.v1";
+  scope: "database-ledger-only";
+  status: "verified";
+  authority: null | Readonly<{
+    authorityKey: string;
+    authoritySchema: string;
+    authorityId: string;
+    rootLocatorHash: string;
+    state: "binding" | "ready" | "quarantined";
+    diagnostic: string | null;
+    createdAt: string;
+    updatedAt: string;
+  }>;
+}>> {
+  return sql.begin(async (transaction) => {
+    await transaction.unsafe("SELECT set_config('search_path', 'public', true)");
+    await transaction.unsafe("SELECT pg_advisory_xact_lock($1)", [
+      contractSpineMigrationLockKey,
+    ]);
+    try {
+      await transaction.unsafe(
+        `LOCK TABLE public.setfarm_schema_migrations,
+                    public.semantic_artifacts,
+                    public.artifact_capacity,
+                    public.artifact_publication_reservations,
+                    public.artifact_publication_batches,
+                    public.artifact_publication_batch_items,
+                    public.artifact_store_authorities IN SHARE MODE`,
+      );
+    } catch (cause) {
+      if (cause instanceof Error && "code" in cause && cause.code === "42P01") {
+        throw new ContractSpineMigrationError(
+          "MIGRATION_INCOMPLETE",
+          "artifact store authority ledger or migration journal is not fully installed",
+          { cause },
+        );
+      }
+      throw cause;
+    }
+
+    await verifyExactContractSpineJournalAuthority(transaction);
+    const future = await transaction.unsafe<Array<{ version: number }>>(
+      `SELECT version
+         FROM public.setfarm_schema_migrations
+        WHERE version > 24
+        ORDER BY version
+        LIMIT 1`,
+    );
+    if (future[0]) {
+      throw new ContractSpineMigrationError(
+        "MIGRATION_UNKNOWN_VERSION",
+        `Migration ${future[0].version} is newer than the v24 ledger audit contract`,
+      );
+    }
+    await verifyCurrentContractSpineObjectOwnership(transaction);
+    const detected = await detectArtifactStoreAuthorityLedger(transaction);
+    if (detected === "partial") {
+      throw new ContractSpineMigrationError(
+        "MIGRATION_ADOPTION_MISMATCH",
+        "artifact store authority ledger is partially installed",
+      );
+    }
+    if (detected !== "present") {
+      throw new ContractSpineMigrationError(
+        "MIGRATION_INCOMPLETE",
+        "artifact store authority ledger is not fully installed",
+      );
+    }
+    const row = await verifyArtifactStoreAuthorityLedgerSnapshot(transaction);
+    const migration = migrations.find((candidate) => candidate.version === 24)!;
+    const journal = await transaction.unsafe<Array<{ name: string; checksum: string }>>(
+      `SELECT name, checksum
+         FROM public.setfarm_schema_migrations
+        WHERE version = 24`,
+    );
+    if (journal.length !== 1) {
+      throw new ContractSpineMigrationError(
+        "MIGRATION_INCOMPLETE",
+        "artifact store authority ledger has no exact migration journal",
+      );
+    }
+    if (journal[0]?.name !== migration.name || journal[0]?.checksum !== checksum(migration)) {
+      throw new ContractSpineMigrationError(
+        "MIGRATION_CHECKSUM_MISMATCH",
+        "artifact store authority migration journal differs from source",
+      );
+    }
+    await verifyExactContractSpineSourceChain(transaction, 24);
+    return Object.freeze({
+      schema: "setfarm.artifact-store-authority-ledger-audit.v1" as const,
+      scope: "database-ledger-only" as const,
+      status: "verified" as const,
+      authority: row
+        ? Object.freeze({
+            authorityKey: row.authority_key,
+            authoritySchema: row.authority_schema,
+            authorityId: row.authority_id,
+            rootLocatorHash: row.root_locator_hash,
+            state: row.state,
+            diagnostic: row.diagnostic,
+            createdAt: new Date(row.created_at).toISOString(),
+            updatedAt: new Date(row.updated_at).toISOString(),
+          })
+        : null,
+    });
+  }) as Promise<Readonly<{
+    schema: "setfarm.artifact-store-authority-ledger-audit.v1";
+    scope: "database-ledger-only";
+    status: "verified";
+    authority: null | Readonly<{
+      authorityKey: string;
+      authoritySchema: string;
+      authorityId: string;
+      rootLocatorHash: string;
+      state: "binding" | "ready" | "quarantined";
+      diagnostic: string | null;
+      createdAt: string;
+      updatedAt: string;
+    }>;
+  }>>;
+}
+// SETFARM_SEMANTIC_MIGRATION_REGION:migration-v24-artifact-store-authority:END
+
 const migrations: readonly Migration[] = [
   {
     version: 1,
@@ -11240,6 +11950,16 @@ const migrations: readonly Migration[] = [
     verify: verifyArtifactPublicationBatchLedger,
   },
   // SETFARM_SEMANTIC_MIGRATION_REGION:migration-v23-registration:END
+  // SETFARM_SEMANTIC_MIGRATION_REGION:migration-v24-registration:BEGIN
+  {
+    version: 24,
+    name: "024_artifact_store_authority_ledger",
+    statements: ARTIFACT_STORE_AUTHORITY_STATEMENTS,
+    implementationDigest: CONTRACT_SPINE_SEMANTIC_MIGRATION_DIGESTS[24],
+    detect: detectArtifactStoreAuthorityLedger,
+    verify: verifyArtifactStoreAuthorityLedger,
+  },
+  // SETFARM_SEMANTIC_MIGRATION_REGION:migration-v24-registration:END
 ];
 
 function assertSemanticMigrationDefinitionsAreSourceBound(): void {
@@ -11266,46 +11986,192 @@ assertSemanticMigrationDefinitionsAreSourceBound();
 
 export async function readContractSpineMigrationAttestation(
   sql: Sql,
+  options: Readonly<{
+    lockTimeoutMs?: number;
+    statementTimeoutMs?: number;
+  }> = {},
 ): Promise<Readonly<{
   status: "missing" | "unattested" | "attested";
   versions: number[];
   verifiedReleaseSha: string | null;
 }>> {
-  if (await detectMigrationAttestationShape(sql) !== "present") {
-    return { status: "missing", versions: [], verifiedReleaseSha: null };
-  }
-  await verifyMigrationAttestationShape(sql);
-  const rows = await sql.unsafe<Array<{
-    version: number;
-    verified_release_sha: string | null;
-    verified_at: string | null;
-  }>>(
-    `SELECT version, verified_release_sha, verified_at
-       FROM setfarm_schema_migrations
-      ORDER BY version`,
+  const lockTimeoutMs = Math.max(1, Math.min(options.lockTimeoutMs ?? 5_000, 60_000));
+  const statementTimeoutMs = Math.max(
+    lockTimeoutMs,
+    Math.min(options.statementTimeoutMs ?? 30_000, 300_000),
   );
-  const versions = rows.map((row) => row.version);
-  const releases = new Set(rows.map((row) => row.verified_release_sha).filter(
-    (value): value is string => value !== null,
-  ));
-  const attested = rows.length > 0
-    && rows.every((row) => row.verified_release_sha !== null && row.verified_at !== null)
-    && releases.size === 1;
-  return {
-    status: attested ? "attested" : "unattested",
-    versions,
-    verifiedReleaseSha: attested ? [...releases][0]! : null,
-  };
+  try {
+    return await sql.begin(async (transaction) => {
+      await transaction.unsafe("SELECT set_config('lock_timeout', $1, true)", [
+        `${lockTimeoutMs}ms`,
+      ]);
+      await transaction.unsafe("SELECT set_config('statement_timeout', $1, true)", [
+        `${statementTimeoutMs}ms`,
+      ]);
+      await transaction.unsafe("SELECT set_config('search_path', 'public', true)");
+      await transaction.unsafe("SELECT pg_advisory_xact_lock($1)", [
+        contractSpineMigrationLockKey,
+      ]);
+      if (!await relationExists(transaction, "setfarm_schema_migrations")) {
+        return { status: "missing" as const, versions: [], verifiedReleaseSha: null };
+      }
+      await transaction.unsafe(
+        "LOCK TABLE public.setfarm_schema_migrations IN SHARE MODE",
+      );
+      const shape = await detectMigrationAttestationShape(transaction);
+      if (shape === "absent") {
+        return { status: "missing" as const, versions: [], verifiedReleaseSha: null };
+      }
+      if (shape !== "present") {
+        throw new ContractSpineMigrationError(
+          "MIGRATION_ADOPTION_MISMATCH",
+          "migration attestation schema is partially installed",
+        );
+      }
+      await verifyExactContractSpineJournalAuthority(transaction);
+      const rows = await transaction.unsafe<Array<{
+        version: number;
+        name: string;
+        checksum: string;
+        verified_release_sha: string | null;
+        verified_at: string | null;
+      }>>(
+        `SELECT version, name, checksum, verified_release_sha, verified_at
+           FROM public.setfarm_schema_migrations
+          ORDER BY version`,
+      );
+      const knownByVersion = new Map(migrations.map((migration) => [
+        migration.version,
+        migration,
+      ]));
+      const unexpected = rows.find((row) => !knownByVersion.has(row.version));
+      if (unexpected) {
+        throw new ContractSpineMigrationError(
+          "MIGRATION_UNKNOWN_VERSION",
+          `Migration journal contains unknown version ${unexpected.version}`,
+        );
+      }
+      const maximumVersion = rows[rows.length - 1]?.version ?? 0;
+      const expected = migrations.filter((migration) =>
+        migration.version <= maximumVersion);
+      if (
+        rows.length !== expected.length
+        || rows.some((row) => {
+          const source = knownByVersion.get(row.version);
+          return source?.name !== row.name || checksum(source) !== row.checksum;
+        })
+      ) {
+        throw new ContractSpineMigrationError(
+          "MIGRATION_CHECKSUM_MISMATCH",
+          `Observed migration source chain through version ${maximumVersion} differs from source`,
+        );
+      }
+      const versions = rows.map((row) => row.version);
+      const releases = new Set(rows.map((row) => row.verified_release_sha).filter(
+        (value): value is string => value !== null,
+      ));
+      const attested = rows.length > 0
+        && rows.every((row) => row.verified_release_sha !== null && row.verified_at !== null)
+        && releases.size === 1;
+      return {
+        status: attested ? "attested" as const : "unattested" as const,
+        versions,
+        verifiedReleaseSha: attested ? [...releases][0]! : null,
+      };
+    }) as Readonly<{
+      status: "missing" | "unattested" | "attested";
+      versions: number[];
+      verifiedReleaseSha: string | null;
+    }>;
+  } catch (error) {
+    if (error instanceof ContractSpineMigrationError) throw error;
+    if (isLockTimeout(error)) {
+      throw new ContractSpineMigrationError(
+        "MIGRATION_LOCK_TIMEOUT",
+        `Migration attestation lock was not acquired within ${lockTimeoutMs}ms`,
+        { cause: error },
+      );
+    }
+    throw error;
+  }
 }
+
+// SETFARM_SEMANTIC_MIGRATION_REGION:migration-journal-operational-authority-v1:BEGIN
+async function verifyContractSpineJournalTopology(
+  sql: Sql | TransactionSql,
+): Promise<void> {
+  const rows = await sql.unsafe<Array<{
+    relkind: string;
+    relpersistence: string;
+    relispartition: boolean;
+    relrowsecurity: boolean;
+    relforcerowsecurity: boolean;
+    inheritance_edges: number;
+    triggers: number;
+    rules: number;
+    policies: number;
+  }>>(
+    `SELECT c.relkind, c.relpersistence, c.relispartition,
+            c.relrowsecurity, c.relforcerowsecurity,
+            (SELECT COUNT(*)::integer
+               FROM pg_inherits i
+              WHERE i.inhrelid = c.oid OR i.inhparent = c.oid) AS inheritance_edges,
+            (SELECT COUNT(*)::integer
+               FROM pg_trigger t
+              WHERE t.tgrelid = c.oid AND NOT t.tgisinternal) AS triggers,
+            (SELECT COUNT(*)::integer
+               FROM pg_rewrite r
+              WHERE r.ev_class = c.oid) AS rules,
+            (SELECT COUNT(*)::integer
+               FROM pg_policy p
+              WHERE p.polrelid = c.oid) AS policies
+       FROM pg_class c
+       JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = 'public'
+        AND c.relname = 'setfarm_schema_migrations'`,
+  );
+  const relation = rows[0];
+  if (
+    rows.length !== 1
+    || relation?.relkind !== "r"
+    || relation.relpersistence !== "p"
+    || relation.relispartition
+    || relation.relrowsecurity
+    || relation.relforcerowsecurity
+    || relation.inheritance_edges !== 0
+    || relation.triggers !== 0
+    || relation.rules !== 0
+    || relation.policies !== 0
+  ) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_ADOPTION_MISMATCH",
+      "migration journal is not one permanent unrewritten public authority table",
+    );
+  }
+}
+// SETFARM_SEMANTIC_MIGRATION_REGION:migration-journal-operational-authority-v1:END
 
 async function journalRows(sql: Sql | TransactionSql): Promise<JournalRow[]> {
   if (!await relationExists(sql, "setfarm_schema_migrations")) return [];
+  await verifyContractSpineJournalTopology(sql);
+  const attestation = await detectMigrationAttestationShape(sql);
+  if (attestation === "partial") {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_ADOPTION_MISMATCH",
+      "migration journal attestation schema is partially installed",
+    );
+  }
+  if (attestation === "present") {
+    await verifyExactContractSpineJournalAuthority(sql);
+  }
   return sql.unsafe<JournalRow[]>(
-    "SELECT version, name, checksum, state FROM setfarm_schema_migrations ORDER BY version",
+    "SELECT version, name, checksum, state FROM public.setfarm_schema_migrations ORDER BY version",
   );
 }
 
-export async function planContractSpineMigrations(sql: Sql): Promise<ContractSpineMigrationPlan> {
+async function planContractSpineMigrationsOnConnection(
+  sql: Sql | TransactionSql,
+): Promise<ContractSpineMigrationPlan> {
   const journal = await journalRows(sql);
   const rows = new Map(journal.map((row) => [row.version, row]));
   const knownVersions = new Set(migrations.map((migration) => migration.version));
@@ -11401,6 +12267,15 @@ export async function planContractSpineMigrations(sql: Sql): Promise<ContractSpi
   };
 }
 
+export async function planContractSpineMigrations(sql: Sql): Promise<ContractSpineMigrationPlan> {
+  return sql.begin(async (transaction) => {
+    await transaction.unsafe(
+      "SELECT set_config('search_path', 'public', true)",
+    );
+    return planContractSpineMigrationsOnConnection(transaction);
+  }) as Promise<ContractSpineMigrationPlan>;
+}
+
 function isLockTimeout(error: unknown): boolean {
   return error instanceof Error
     && "code" in error
@@ -11426,10 +12301,13 @@ export async function applyContractSpineMigrations(
     return await sql.begin(async (transaction) => {
       await transaction.unsafe("SELECT set_config('lock_timeout', $1, true)", [`${lockTimeoutMs}ms`]);
       await transaction.unsafe("SELECT set_config('statement_timeout', $1, true)", [`${statementTimeoutMs}ms`]);
+      await transaction.unsafe(
+        "SELECT set_config('search_path', 'public', true)",
+      );
       await transaction.unsafe("SELECT pg_advisory_xact_lock($1)", [contractSpineMigrationLockKey]);
 
       await transaction.unsafe(`
-        CREATE TABLE IF NOT EXISTS setfarm_schema_migrations (
+        CREATE TABLE IF NOT EXISTS public.setfarm_schema_migrations (
           version INTEGER PRIMARY KEY CHECK (version > 0),
           name TEXT NOT NULL UNIQUE,
           checksum TEXT NOT NULL CHECK (checksum ~ '^[a-f0-9]{64}$'),
@@ -11438,6 +12316,9 @@ export async function applyContractSpineMigrations(
           applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
       `);
+      await transaction.unsafe(
+        "LOCK TABLE public.setfarm_schema_migrations IN SHARE ROW EXCLUSIVE MODE",
+      );
 
       const applied: string[] = [];
       const adopted: string[] = [];
@@ -11498,7 +12379,7 @@ export async function applyContractSpineMigrations(
           applied.push(migration.name);
         }
         await transaction.unsafe(
-          `INSERT INTO setfarm_schema_migrations
+          `INSERT INTO public.setfarm_schema_migrations
              (version, name, checksum, state, release_sha)
            VALUES ($1, $2, $3, $4, $5)`,
           [
@@ -11515,12 +12396,17 @@ export async function applyContractSpineMigrations(
 
       if (options.releaseSha) {
         await transaction.unsafe(
-          `UPDATE setfarm_schema_migrations
+          `UPDATE public.setfarm_schema_migrations
               SET verified_release_sha = $1,
                   verified_at = NOW()`,
           [options.releaseSha],
         );
       }
+      await verifyExactContractSpineJournalAuthority(transaction);
+      await verifyExactContractSpineSourceChain(
+        transaction,
+        migrations[migrations.length - 1]!.version,
+      );
 
       return {
         schema: "setfarm.contract-spine-migration-apply.v1" as const,
@@ -11541,6 +12427,577 @@ export async function applyContractSpineMigrations(
     throw error;
   }
 }
+
+/**
+ * Roll migration 24 back only while no physical root authority row exists.
+ * Binding is permanent provenance; a later root move must add a new versioned
+ * authority epoch rather than deleting this row.
+ */
+// SETFARM_SEMANTIC_MIGRATION_REGION:migration-v24-rollback:BEGIN
+async function verifyExactContractSpineJournalAuthority(
+  sql: Sql | TransactionSql,
+): Promise<void> {
+  await verifyContractSpineJournalTopology(sql);
+  const expectedColumns = new Map<
+    string,
+    readonly [string, string, string, string | null, string | null]
+  >([
+    ["version", ["integer", "NO", "", null, null]],
+    ["name", ["text", "NO", "", null, null]],
+    ["checksum", ["text", "NO", "", null, null]],
+    ["state", ["text", "NO", "", null, null]],
+    ["release_sha", ["text", "YES", "", null, null]],
+    ["applied_at", ["timestamp with time zone", "NO", "now()", null, null]],
+    ["verified_release_sha", ["text", "YES", "", null, null]],
+    ["verified_at", ["timestamp with time zone", "YES", "", null, null]],
+  ]);
+  const columns = await sql.unsafe<Array<{
+    column_name: string;
+    data_type: string;
+    is_nullable: string;
+    column_default: string | null;
+    collation_schema: string | null;
+    collation_name: string | null;
+  }>>(
+    `SELECT column_name, data_type, is_nullable, column_default,
+            collation_schema, collation_name
+       FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'setfarm_schema_migrations'
+      ORDER BY ordinal_position`,
+  );
+  if (
+    columns.length !== expectedColumns.size
+    || columns.some((column) => {
+      const expected = expectedColumns.get(column.column_name);
+      return !expected
+        || column.data_type !== expected[0]
+        || column.is_nullable !== expected[1]
+        || normalizeSqlExact(column.column_default ?? "") !== expected[2]
+        || column.collation_schema !== expected[3]
+        || column.collation_name !== expected[4];
+    })
+  ) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_ADOPTION_MISMATCH",
+      "migration journal exact column set mismatch",
+    );
+  }
+  const expectedConstraints = new Map([
+    [
+      "setfarm_schema_migrations_checksum_check",
+      "CHECK (checksum ~ '^[a-f0-9]{64}$'::text)",
+    ],
+    ["setfarm_schema_migrations_name_key", "UNIQUE (name)"],
+    ["setfarm_schema_migrations_pkey", "PRIMARY KEY (version)"],
+    [
+      "setfarm_schema_migrations_state_check",
+      "CHECK (state = ANY (ARRAY['applied'::text, 'adopted'::text]))",
+    ],
+    [
+      "setfarm_schema_migrations_verified_pair_check",
+      "CHECK ((verified_release_sha IS NULL) = (verified_at IS NULL))",
+    ],
+    [
+      "setfarm_schema_migrations_verified_release_check",
+      "CHECK (verified_release_sha IS NULL OR verified_release_sha ~ '^[a-f0-9]{40}([a-f0-9]{24})?$'::text)",
+    ],
+    ["setfarm_schema_migrations_version_check", "CHECK (version > 0)"],
+  ]);
+  const constraints = await sql.unsafe<Array<{
+    conname: string;
+    definition: string;
+    validated: boolean;
+    deferrable: boolean;
+    initially_deferred: boolean;
+    non_catalog_function_dependencies: number;
+    non_catalog_operator_dependencies: number;
+  }>>(
+    `SELECT c.conname, pg_get_constraintdef(c.oid, true) AS definition,
+            c.convalidated AS validated, c.condeferrable AS deferrable,
+            c.condeferred AS initially_deferred,
+            (SELECT COUNT(*)::integer
+               FROM pg_depend d
+               JOIN pg_proc p
+                 ON d.refclassid = 'pg_proc'::regclass
+                AND p.oid = d.refobjid
+               JOIN pg_namespace n ON n.oid = p.pronamespace
+              WHERE d.classid = 'pg_constraint'::regclass
+                AND d.objid = c.oid
+                AND n.nspname <> 'pg_catalog') AS non_catalog_function_dependencies,
+            (SELECT COUNT(*)::integer
+               FROM pg_depend d
+               JOIN pg_operator o
+                 ON d.refclassid = 'pg_operator'::regclass
+                AND o.oid = d.refobjid
+               JOIN pg_namespace n ON n.oid = o.oprnamespace
+              WHERE d.classid = 'pg_constraint'::regclass
+                AND d.objid = c.oid
+                AND n.nspname <> 'pg_catalog') AS non_catalog_operator_dependencies
+       FROM pg_constraint c
+      WHERE c.conrelid = 'public.setfarm_schema_migrations'::regclass`,
+  );
+  const constraintByName = new Map(constraints.map((constraint) => [
+    constraint.conname,
+    constraint,
+  ]));
+  if (
+    constraints.length !== expectedConstraints.size
+    || [...expectedConstraints].some(([name, definition]) => {
+      const actual = constraintByName.get(name);
+      return !actual
+        || normalizeSqlExact(actual.definition) !== normalizeSqlExact(definition)
+        || !actual.validated
+        || actual.deferrable
+        || actual.initially_deferred
+        || actual.non_catalog_function_dependencies !== 0
+        || actual.non_catalog_operator_dependencies !== 0;
+    })
+  ) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_ADOPTION_MISMATCH",
+      "migration journal exact constraint authority mismatch",
+    );
+  }
+  const incomingForeignKeys = await sql.unsafe<Array<{ count: number }>>(
+    `SELECT COUNT(*)::integer AS count
+       FROM pg_constraint
+      WHERE contype = 'f'
+        AND confrelid = 'public.setfarm_schema_migrations'::regclass`,
+  );
+  if (incomingForeignKeys[0]?.count !== 0) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_ADOPTION_MISMATCH",
+      "migration journal cannot be referenced by foreign-key side effects",
+    );
+  }
+  const expectedIndexes = new Map([
+    [
+      "setfarm_schema_migrations_name_key",
+      "CREATE UNIQUE INDEX setfarm_schema_migrations_name_key ON public.setfarm_schema_migrations USING btree (name)",
+    ],
+    [
+      "setfarm_schema_migrations_pkey",
+      "CREATE UNIQUE INDEX setfarm_schema_migrations_pkey ON public.setfarm_schema_migrations USING btree (version)",
+    ],
+  ]);
+  const indexes = await sql.unsafe<Array<{ indexname: string; indexdef: string }>>(
+    `SELECT indexname, indexdef
+       FROM pg_indexes
+      WHERE schemaname = 'public'
+        AND tablename = 'setfarm_schema_migrations'`,
+  );
+  const indexByName = new Map(indexes.map((index) => [index.indexname, index.indexdef]));
+  if (
+    indexes.length !== expectedIndexes.size
+    || [...expectedIndexes].some(([name, definition]) =>
+      normalizeSqlExact(indexByName.get(name) ?? "") !== normalizeSqlExact(definition))
+  ) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_ADOPTION_MISMATCH",
+      "migration journal exact index authority mismatch",
+    );
+  }
+}
+
+async function verifyExactContractSpineSourceChain(
+  sql: Sql | TransactionSql,
+  throughVersion: number,
+): Promise<void> {
+  const sourceRows = await sql.unsafe<Array<{
+    version: number;
+    name: string;
+    checksum: string;
+  }>>(
+    `SELECT version, name, checksum
+       FROM public.setfarm_schema_migrations
+      WHERE version <= $1
+      ORDER BY version`,
+    [throughVersion],
+  );
+  const expectedSource = migrations.filter(
+    (candidate) => candidate.version <= throughVersion,
+  );
+  const sourceByVersion = new Map(sourceRows.map((row) => [row.version, row]));
+  if (
+    sourceRows.length !== expectedSource.length
+    || expectedSource.some((expected) => {
+      const actual = sourceByVersion.get(expected.version);
+      return actual?.name !== expected.name
+        || actual.checksum !== checksum(expected);
+    })
+  ) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_CHECKSUM_MISMATCH",
+      `Migration source chain through version ${throughVersion} differs from source`,
+    );
+  }
+}
+
+async function ensureExactContractSpineRollbackLedger(
+  sql: TransactionSql,
+): Promise<void> {
+  await sql.unsafe(
+    `CREATE TABLE IF NOT EXISTS public.setfarm_schema_migration_rollbacks (
+       rollback_id TEXT PRIMARY KEY,
+       from_version INTEGER NOT NULL,
+       target_version INTEGER NOT NULL,
+       target_release_sha TEXT NOT NULL,
+       rows_rewritten INTEGER NOT NULL,
+       applied_at TIMESTAMPTZ NOT NULL
+     )`,
+  );
+  const relations = await sql.unsafe<Array<{
+    relkind: string;
+    relpersistence: string;
+    relispartition: boolean;
+    relrowsecurity: boolean;
+    relforcerowsecurity: boolean;
+    inheritance_edges: number;
+  }>>(
+    `SELECT c.relkind, c.relpersistence, c.relispartition,
+            c.relrowsecurity, c.relforcerowsecurity,
+            (SELECT COUNT(*)::integer
+               FROM pg_inherits i
+              WHERE i.inhrelid = c.oid OR i.inhparent = c.oid) AS inheritance_edges
+       FROM pg_class c
+       JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = 'public'
+        AND c.relname = 'setfarm_schema_migration_rollbacks'`,
+  );
+  const relation = relations[0];
+  if (
+    relations.length !== 1
+    || relation?.relkind !== "r"
+    || relation.relpersistence !== "p"
+    || relation.relispartition
+    || relation.relrowsecurity
+    || relation.relforcerowsecurity
+    || relation.inheritance_edges !== 0
+  ) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_ADOPTION_MISMATCH",
+      "migration rollback receipt relation is not one permanent ordinary authority table",
+    );
+  }
+  const expectedColumns = new Map<string, readonly [string, string, string]>([
+    ["rollback_id", ["text", "NO", ""]],
+    ["from_version", ["integer", "NO", ""]],
+    ["target_version", ["integer", "NO", ""]],
+    ["target_release_sha", ["text", "NO", ""]],
+    ["rows_rewritten", ["integer", "NO", ""]],
+    ["applied_at", ["timestamp with time zone", "NO", ""]],
+  ]);
+  const columns = await sql.unsafe<Array<{
+    column_name: string;
+    data_type: string;
+    is_nullable: string;
+    column_default: string | null;
+  }>>(
+    `SELECT column_name, data_type, is_nullable, column_default
+       FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'setfarm_schema_migration_rollbacks'
+      ORDER BY ordinal_position`,
+  );
+  if (
+    columns.length !== expectedColumns.size
+    || columns.some((column) => {
+      const expected = expectedColumns.get(column.column_name);
+      return !expected
+        || column.data_type !== expected[0]
+        || column.is_nullable !== expected[1]
+        || normalizeSqlExact(column.column_default ?? "") !== expected[2];
+    })
+  ) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_ADOPTION_MISMATCH",
+      "migration rollback receipt exact column set mismatch",
+    );
+  }
+  const constraints = await sql.unsafe<Array<{
+    conname: string;
+    definition: string;
+    validated: boolean;
+    deferrable: boolean;
+    initially_deferred: boolean;
+  }>>(
+    `SELECT conname, pg_get_constraintdef(oid, true) AS definition,
+            convalidated AS validated, condeferrable AS deferrable,
+            condeferred AS initially_deferred
+       FROM pg_constraint
+      WHERE conrelid = 'public.setfarm_schema_migration_rollbacks'::regclass`,
+  );
+  if (
+    constraints.length !== 1
+    || constraints[0]?.conname !== "setfarm_schema_migration_rollbacks_pkey"
+    || normalizeSqlExact(constraints[0].definition)
+      !== normalizeSqlExact("PRIMARY KEY (rollback_id)")
+    || !constraints[0].validated
+    || constraints[0].deferrable
+    || constraints[0].initially_deferred
+  ) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_ADOPTION_MISMATCH",
+      "migration rollback receipt exact constraint set mismatch",
+    );
+  }
+  const indexes = await sql.unsafe<Array<{ indexname: string; indexdef: string }>>(
+    `SELECT indexname, indexdef
+       FROM pg_indexes
+      WHERE schemaname = 'public'
+        AND tablename = 'setfarm_schema_migration_rollbacks'`,
+  );
+  if (
+    indexes.length !== 1
+    || indexes[0]?.indexname !== "setfarm_schema_migration_rollbacks_pkey"
+    || normalizeSqlExact(indexes[0].indexdef)
+      !== normalizeSqlExact(
+        "CREATE UNIQUE INDEX setfarm_schema_migration_rollbacks_pkey ON public.setfarm_schema_migration_rollbacks USING btree (rollback_id)",
+      )
+  ) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_ADOPTION_MISMATCH",
+      "migration rollback receipt exact index set mismatch",
+    );
+  }
+  const poison = await sql.unsafe<Array<{
+    triggers: number;
+    rules: number;
+    policies: number;
+  }>>(
+    `SELECT
+       (SELECT COUNT(*)::integer
+          FROM pg_trigger
+         WHERE tgrelid = 'public.setfarm_schema_migration_rollbacks'::regclass
+           AND NOT tgisinternal) AS triggers,
+       (SELECT COUNT(*)::integer
+          FROM pg_rewrite
+         WHERE ev_class = 'public.setfarm_schema_migration_rollbacks'::regclass) AS rules,
+       (SELECT COUNT(*)::integer
+          FROM pg_policy
+         WHERE polrelid = 'public.setfarm_schema_migration_rollbacks'::regclass) AS policies`,
+  );
+  if (
+    poison[0]?.triggers !== 0
+    || poison[0]?.rules !== 0
+    || poison[0]?.policies !== 0
+  ) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_ADOPTION_MISMATCH",
+      "migration rollback receipt contains trigger, rule, or policy authority",
+    );
+  }
+}
+
+export async function rollbackArtifactStoreAuthorityLedgerToV23(
+  sql: Sql,
+  options: Readonly<{
+    targetReleaseSha: string;
+    lockTimeoutMs?: number;
+    statementTimeoutMs?: number;
+  }>,
+): Promise<ArtifactStoreAuthorityLedgerRollbackResult> {
+  if (!/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/.test(options.targetReleaseSha)) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_RELEASE_INVALID",
+      "Rollback target release SHA must be a full lowercase Git object hash",
+    );
+  }
+  const migration = migrations.find((candidate) => candidate.version === 24)!;
+  const expectedChecksum = checksum(migration);
+  const lockTimeoutMs = Math.max(1, Math.min(options.lockTimeoutMs ?? 5_000, 60_000));
+  const statementTimeoutMs = Math.max(
+    lockTimeoutMs,
+    Math.min(options.statementTimeoutMs ?? 30_000, 300_000),
+  );
+  try {
+    return await sql.begin(async (transaction) => {
+      await transaction.unsafe("SELECT set_config('lock_timeout', $1, true)", [
+        `${lockTimeoutMs}ms`,
+      ]);
+      await transaction.unsafe("SELECT set_config('statement_timeout', $1, true)", [
+        `${statementTimeoutMs}ms`,
+      ]);
+      await transaction.unsafe(
+        "SELECT set_config('search_path', 'public', true)",
+      );
+      await transaction.unsafe("SELECT pg_advisory_xact_lock($1)", [
+        contractSpineMigrationLockKey,
+      ]);
+      if (!await relationExists(transaction, "setfarm_schema_migrations")) {
+        throw new ContractSpineMigrationError(
+          "MIGRATION_CHECKSUM_MISMATCH",
+          "Migration 24 journal authority is absent",
+        );
+      }
+      await transaction.unsafe(
+        "LOCK TABLE public.setfarm_schema_migrations IN SHARE ROW EXCLUSIVE MODE",
+      );
+      await verifyExactContractSpineJournalAuthority(transaction);
+
+      const future = await transaction.unsafe<Array<{ version: number }>>(
+        "SELECT version FROM public.setfarm_schema_migrations WHERE version > 24 ORDER BY version LIMIT 1",
+      );
+      if (future[0]) {
+        throw new ContractSpineMigrationError(
+          "MIGRATION_UNKNOWN_VERSION",
+          `Migration ${future[0].version} must be rolled back before migration 24`,
+        );
+      }
+      const journal = await transaction.unsafe<Array<{
+        name: string;
+        checksum: string;
+        release_sha: string | null;
+        applied_at: Date | string;
+      }>>(
+        `SELECT name, checksum, release_sha, applied_at
+           FROM public.setfarm_schema_migrations
+          WHERE version = 24
+          FOR UPDATE`,
+      );
+      if (journal[0]?.name !== migration.name || journal[0]?.checksum !== expectedChecksum) {
+        throw new ContractSpineMigrationError(
+          "MIGRATION_CHECKSUM_MISMATCH",
+          "Migration 24 is absent or differs from the rollback source contract",
+        );
+      }
+      await verifyExactContractSpineSourceChain(transaction, 24);
+      if (await detectArtifactStoreAuthorityLedger(transaction) !== "present") {
+        throw new ContractSpineMigrationError(
+          "MIGRATION_ADOPTION_MISMATCH",
+          "Migration 24 journaled objects are not fully present",
+        );
+      }
+      await verifyArtifactStoreAuthorityLedger(transaction);
+      await transaction.unsafe(
+        "LOCK TABLE public.artifact_store_authorities IN ACCESS EXCLUSIVE MODE",
+      );
+      await verifyArtifactStoreAuthorityLedger(transaction);
+      const counts = await transaction.unsafe<Array<{ authorities: number }>>(
+        `SELECT COUNT(*)::integer AS authorities
+           FROM public.artifact_store_authorities`,
+      );
+      if ((counts[0]?.authorities ?? 0) !== 0) {
+        throw new ContractSpineMigrationError(
+          "MIGRATION_INCOMPLETE",
+          "Migration 24 rollback refuses to erase artifact store root authority; roll forward instead",
+        );
+      }
+
+      await transaction.unsafe(
+        "DROP TRIGGER trg_artifact_store_authorities_no_truncate ON public.artifact_store_authorities",
+      );
+      await transaction.unsafe(
+        "DROP TRIGGER trg_artifact_store_authorities_transition ON public.artifact_store_authorities",
+      );
+      await transaction.unsafe("DROP TABLE public.artifact_store_authorities");
+      await transaction.unsafe(
+        "DROP FUNCTION public.setfarm_enforce_artifact_store_authority_transition()",
+      );
+      if (await detectArtifactStoreAuthorityLedger(transaction) !== "absent") {
+        throw new ContractSpineMigrationError(
+          "MIGRATION_ADOPTION_MISMATCH",
+          "Migration 24 objects remain after empty rollback",
+        );
+      }
+      for (const retained of migrations.filter((candidate) => candidate.version <= 23)) {
+        if (await retained.detect(transaction) !== "present") {
+          throw new ContractSpineMigrationError(
+            "MIGRATION_ADOPTION_MISMATCH",
+            `Retained migration ${retained.version} is incomplete during migration 24 rollback`,
+          );
+        }
+        await retained.verify(transaction);
+      }
+
+      await ensureExactContractSpineRollbackLedger(transaction);
+      await transaction.unsafe(
+        "LOCK TABLE public.setfarm_schema_migration_rollbacks IN SHARE ROW EXCLUSIVE MODE",
+      );
+      await ensureExactContractSpineRollbackLedger(transaction);
+      const appliedAtRows = await transaction.unsafe<Array<{ applied_at: Date | string }>>(
+        "SELECT clock_timestamp() AS applied_at",
+      );
+      const appliedAt = new Date(appliedAtRows[0]!.applied_at);
+      const rollbackId = `RBK_${hashCanonicalJson({
+        schema: "setfarm.contract-spine-rollback-identity.v1",
+        sourceMigration: {
+          version: 24,
+          name: journal[0]!.name,
+          checksum: journal[0]!.checksum,
+          releaseSha: journal[0]!.release_sha,
+          appliedAt: new Date(journal[0]!.applied_at).toISOString(),
+        },
+        targetVersion: 23,
+        targetReleaseSha: options.targetReleaseSha,
+      })}`;
+      const receiptRows = await transaction.unsafe<Array<{ rollback_id: string }>>(
+        `INSERT INTO public.setfarm_schema_migration_rollbacks (
+           rollback_id, from_version, target_version, target_release_sha,
+           rows_rewritten, applied_at
+         ) VALUES ($1, 24, 23, $2, 0, $3)
+         RETURNING rollback_id`,
+        [rollbackId, options.targetReleaseSha, appliedAt],
+      );
+      if (receiptRows.length !== 1 || receiptRows[0]?.rollback_id !== rollbackId) {
+        throw new ContractSpineMigrationError(
+          "MIGRATION_ADOPTION_MISMATCH",
+          "Migration 24 rollback receipt was not durably inserted",
+        );
+      }
+      const removed = await transaction.unsafe<Array<{ version: number }>>(
+        `DELETE FROM public.setfarm_schema_migrations
+          WHERE version = 24 AND name = $1 AND checksum = $2
+          RETURNING version`,
+        [migration.name, expectedChecksum],
+      );
+      if (removed.length !== 1) {
+        throw new ContractSpineMigrationError(
+          "MIGRATION_CHECKSUM_MISMATCH",
+          "Migration 24 journal ownership changed during rollback",
+        );
+      }
+      const stillJournaled = await transaction.unsafe<Array<{ present: boolean }>>(
+        `SELECT EXISTS (
+           SELECT 1 FROM public.setfarm_schema_migrations WHERE version = 24
+         ) AS present`,
+      );
+      if (stillJournaled[0]?.present !== false) {
+        throw new ContractSpineMigrationError(
+          "MIGRATION_ADOPTION_MISMATCH",
+          "Migration 24 journal row remains after rollback deletion",
+        );
+      }
+      await transaction.unsafe(
+        `UPDATE public.setfarm_schema_migrations
+            SET verified_release_sha = $1, verified_at = $2
+          WHERE version <= 23`,
+        [options.targetReleaseSha, appliedAt],
+      );
+      return Object.freeze({
+        schema: "setfarm.contract-spine-rollback.v1" as const,
+        rollbackId,
+        fromVersion: 24 as const,
+        targetVersion: 23 as const,
+        targetReleaseSha: options.targetReleaseSha,
+        rowsRewritten: 0 as const,
+        appliedAt: appliedAt.toISOString(),
+      });
+    }) as ArtifactStoreAuthorityLedgerRollbackResult;
+  } catch (error) {
+    if (error instanceof ContractSpineMigrationError) throw error;
+    if (isLockTimeout(error)) {
+      throw new ContractSpineMigrationError(
+        "MIGRATION_LOCK_TIMEOUT",
+        `Migration 24 rollback lock was not acquired within ${lockTimeoutMs}ms`,
+        { cause: error },
+      );
+    }
+    throw error;
+  }
+}
+// SETFARM_SEMANTIC_MIGRATION_REGION:migration-v24-rollback:END
 
 /**
  * Roll migration 23 back only while its immutable batch ledger is empty.
@@ -12318,54 +13775,109 @@ export async function rollbackRecoveryTerminalLeaseIdentityToV19(
 
 export async function verifyContractSpineMigrations(
   sql: Sql,
+  options: Readonly<{
+    lockTimeoutMs?: number;
+    statementTimeoutMs?: number;
+  }> = {},
 ): Promise<Readonly<{
   schema: "setfarm.contract-spine-migration-verify.v1";
   status: "verified";
   migrations: ContractSpineMigrationPlan["migrations"];
 }>> {
-  const plan = await planContractSpineMigrations(sql);
-  const unexpected = plan.migrations.find((migration) => migration.state === "unexpected");
-  if (unexpected) {
-    throw new ContractSpineMigrationError(
-      "MIGRATION_UNKNOWN_VERSION",
-      `Migration journal contains unknown version ${unexpected.version}`,
-    );
-  }
-  const mismatch = plan.migrations.find((migration) => migration.state === "checksum_mismatch");
-  if (mismatch) {
-    throw new ContractSpineMigrationError(
-      "MIGRATION_CHECKSUM_MISMATCH",
-      `Migration ${mismatch.version} journal checksum or name differs from source`,
-    );
-  }
-  const adoptionMismatch = plan.migrations.find((migration) => migration.state === "adoption_mismatch");
-  if (adoptionMismatch) {
-    throw new ContractSpineMigrationError(
-      "MIGRATION_ADOPTION_MISMATCH",
-      `Migration ${adoptionMismatch.version} existing relation does not match the expected shape`,
-    );
-  }
-  const pending = plan.migrations.find((migration) =>
-    migration.state === "pending" || migration.state === "adoptable");
-  if (pending) {
-    throw new ContractSpineMigrationError(
-      "MIGRATION_INCOMPLETE",
-      `Migration ${pending.version} is pending`,
-    );
-  }
-  for (const migration of migrations) {
-    if (await migration.detect(sql) !== "present") {
+  const lockTimeoutMs = Math.max(1, Math.min(options.lockTimeoutMs ?? 5_000, 60_000));
+  const statementTimeoutMs = Math.max(
+    lockTimeoutMs,
+    Math.min(options.statementTimeoutMs ?? 30_000, 300_000),
+  );
+  try {
+    return await sql.begin(async (transaction) => {
+      await transaction.unsafe("SELECT set_config('lock_timeout', $1, true)", [
+        `${lockTimeoutMs}ms`,
+      ]);
+      await transaction.unsafe("SELECT set_config('statement_timeout', $1, true)", [
+        `${statementTimeoutMs}ms`,
+      ]);
+      await transaction.unsafe(
+        "SELECT set_config('search_path', 'public', true)",
+      );
+      await transaction.unsafe("SELECT pg_advisory_xact_lock($1)", [
+        contractSpineMigrationLockKey,
+      ]);
+      if (await relationExists(transaction, "setfarm_schema_migrations")) {
+        try {
+          await transaction.unsafe(
+            "LOCK TABLE public.setfarm_schema_migrations IN SHARE MODE",
+          );
+        } catch (cause) {
+          if (cause instanceof Error && "code" in cause && cause.code === "42P01") {
+            throw new ContractSpineMigrationError(
+              "MIGRATION_INCOMPLETE",
+              "Migration journal disappeared before authoritative verification",
+              { cause },
+            );
+          }
+          throw cause;
+        }
+      }
+      const plan = await planContractSpineMigrationsOnConnection(transaction);
+      const unexpected = plan.migrations.find((migration) => migration.state === "unexpected");
+      if (unexpected) {
+        throw new ContractSpineMigrationError(
+          "MIGRATION_UNKNOWN_VERSION",
+          `Migration journal contains unknown version ${unexpected.version}`,
+        );
+      }
+      const mismatch = plan.migrations.find((migration) => migration.state === "checksum_mismatch");
+      if (mismatch) {
+        throw new ContractSpineMigrationError(
+          "MIGRATION_CHECKSUM_MISMATCH",
+          `Migration ${mismatch.version} journal checksum or name differs from source`,
+        );
+      }
+      const adoptionMismatch = plan.migrations.find((migration) => migration.state === "adoption_mismatch");
+      if (adoptionMismatch) {
+        throw new ContractSpineMigrationError(
+          "MIGRATION_ADOPTION_MISMATCH",
+          `Migration ${adoptionMismatch.version} existing relation does not match the expected shape`,
+        );
+      }
+      const pending = plan.migrations.find((migration) =>
+        migration.state === "pending" || migration.state === "adoptable");
+      if (pending) {
+        throw new ContractSpineMigrationError(
+          "MIGRATION_INCOMPLETE",
+          `Migration ${pending.version} is pending`,
+        );
+      }
+      for (const migration of migrations) {
+        if (await migration.detect(transaction) !== "present") {
+          throw new ContractSpineMigrationError(
+            "MIGRATION_ADOPTION_MISMATCH",
+            `Migration ${migration.version} journaled objects are not fully present`,
+          );
+        }
+        await migration.verify(transaction);
+      }
+      await verifyCurrentContractSpineObjectOwnership(transaction);
+      return {
+        schema: "setfarm.contract-spine-migration-verify.v1" as const,
+        status: "verified" as const,
+        migrations: plan.migrations,
+      };
+    }) as Readonly<{
+      schema: "setfarm.contract-spine-migration-verify.v1";
+      status: "verified";
+      migrations: ContractSpineMigrationPlan["migrations"];
+    }>;
+  } catch (error) {
+    if (error instanceof ContractSpineMigrationError) throw error;
+    if (isLockTimeout(error)) {
       throw new ContractSpineMigrationError(
-        "MIGRATION_ADOPTION_MISMATCH",
-        `Migration ${migration.version} journaled objects are not fully present`,
+        "MIGRATION_LOCK_TIMEOUT",
+        `Contract spine verification lock was not acquired within ${lockTimeoutMs}ms`,
+        { cause: error },
       );
     }
-    await migration.verify(sql);
+    throw error;
   }
-  await verifyCurrentContractSpineObjectOwnership(sql);
-  return {
-    schema: "setfarm.contract-spine-migration-verify.v1",
-    status: "verified",
-    migrations: plan.migrations,
-  };
 }

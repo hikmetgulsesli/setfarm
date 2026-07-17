@@ -216,12 +216,12 @@ Migration 24 adds the exact singleton authority relation:
 
 ```sql
 CREATE TABLE artifact_store_authorities (
-  authority_key TEXT PRIMARY KEY,
-  authority_schema TEXT NOT NULL,
+  authority_key TEXT COLLATE "C" PRIMARY KEY,
+  authority_schema TEXT COLLATE "C" NOT NULL,
   authority_id UUID NOT NULL UNIQUE,
-  root_locator_hash TEXT NOT NULL,
-  state TEXT NOT NULL,
-  diagnostic TEXT,
+  root_locator_hash TEXT COLLATE "C" NOT NULL,
+  state TEXT COLLATE "C" NOT NULL,
+  diagnostic TEXT COLLATE "C",
   created_at TIMESTAMPTZ NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL
 );
@@ -231,9 +231,14 @@ Exact constraints restrict `authority_key` to `semantic-artifacts`,
 `authority_schema` to `setfarm.artifact-store-authority.v1`,
 `root_locator_hash` to lowercase SHA-256, and `state` to
 `binding | ready | quarantined`. `ready` has no diagnostic; `quarantined`
-requires one. Identity fields and a ready row are immutable. Migration 24 owns
-the exact table, constraints, indexes, transition trigger, verifier, source
-digest, audit, and empty-only rollback.
+requires one. Identity fields are immutable. A `ready` row may only transition
+once to `quarantined`; `quarantined` is terminal. Migration 24 owns the exact
+table, constraints, indexes, transition trigger, verifier, source digest,
+database audit, and empty-only rollback. The database-only audit takes one
+bounded migration advisory lock plus `SHARE` locks over the exact journal,
+v23 artifact prerequisites, and authority ledger; it verifies and returns one
+post-lock snapshot. Authoritative apply, verify, and attestation reads also
+lock the journal so a direct writer cannot make operational evidence stale.
 
 The root contains one canonical, no-replace marker named
 `.setfarm-artifact-root-authority.json`:
@@ -259,6 +264,11 @@ even though PostgreSQL advisory locks are database-local.
 An existing unmarked root may be bound only by an explicit offline adoption
 operation that first performs complete bounded inventory and database
 reconciliation. Normal startup never adopts it merely because its path matches.
+The migration-only slice cannot grant root adoption; that operation remains
+absent until the marker capability, PostgreSQL capacity lock, and closure-aware
+inventory exist together. Unbind never exists because the row is permanent
+provenance. Generic migration adoption accepts only an exact empty unjournaled
+migration 24 schema.
 
 The advisory lock identity is the fixed versioned domain
 `setfarm.semantic-artifact-filesystem-publication.v1`. One database may only
@@ -533,21 +543,19 @@ Rollback is code-first:
 4. retain CAS files and migration 23 evidence;
 5. remove no final artifact and bypass no checksum.
 
-Migration 24 rollback has a stricter offline boundary. It refuses while any
-final artifact, staging entry, active publisher, or authority mismatch exists.
-An explicit unbind operation must hold the advisory lock, prove the marker and
-database row are exact, prove the root has no final artifacts and empty staging,
-remove the marker with no-follow identity checks, synchronize the root, and
-delete the authority row in a source-bound receipt transaction. Only then may
-the empty migration 24 schema roll back to migration 23. Normal release rollback
-does not require or perform this destructive unbind.
+The migration-only rollback boundary is deliberately narrow: it refuses while
+any authority row exists and makes no filesystem claim. Binding is permanent
+provenance, so there is no authority-row deletion or unbind path. If the store
+must move later, a new source-bound migration introduces a new authority epoch
+while preserving the original identity and receipt history. Only a migration 24
+schema that has never held authority may roll back to migration 23.
 
 ## Dependency-order implementation program
 
 1. Add pure bounded batch-plan preparation and golden identity tests.
 2. Add aggregate capacity assessment without changing single-payload limits.
-3. Add migration 24 database/root authority, exact verifier, source digest,
-   offline audit, adoption CLI, and empty-only rollback.
+3. Add migration 24 database authority schema, exact verifier, source digest,
+   database-only audit, exact-empty migration adoption, and empty-row rollback.
 4. Add the PostgreSQL transaction-scoped capacity provider, exact marker
    binding, abort deadline, and production factory assertion.
 5. Add owned staging validation and bounded abandoned-staging cleanup.
@@ -578,8 +586,9 @@ the provider, store, publisher, recovery, and bootstrap consumers all use it.
 - per-item payload limit plus safe aggregate-byte overflow handling;
 - original input mutation after preparation cannot alter output;
 - ByteBundle dependency-tier plan and exact closure validator.
-- migration 24 rejects extra/missing/weakened authority objects and marker
-  identity drift across plan, apply, verify, audit, adoption, and rollback.
+- migration 24 rejects extra/missing/weakened database authority objects across
+  plan, apply, verify, audit, exact-empty migration adoption, and rollback;
+  marker identity drift becomes testable only with the B2 marker capability.
 
 ### Filesystem integration
 

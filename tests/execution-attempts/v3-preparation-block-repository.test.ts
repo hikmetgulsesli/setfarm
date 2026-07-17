@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 
-import { verifyContractSpineMigrations } from "../../src/db/contract-spine-migrations.js";
+import {
+  ContractSpineMigrationError,
+  verifyContractSpineMigrations,
+} from "../../src/db/contract-spine-migrations.js";
 import { createV3PreparationBlockRepository } from "../../src/execution/v3-preparation-block-repository.js";
 import {
   decideV3PreparationFailure,
@@ -98,7 +101,12 @@ describe("v3 preparation block ledger", () => {
     await database.sql`ALTER TABLE v3_preparation_blocks
                        DISABLE TRIGGER trg_v3_preparation_blocks_transition`;
     try {
-      await assert.rejects(verifyContractSpineMigrations(database.sql), /trigger mismatch/);
+      await assert.rejects(
+        verifyContractSpineMigrations(database.sql),
+        (error: unknown) => error instanceof ContractSpineMigrationError
+          && error.code === "MIGRATION_ADOPTION_MISMATCH"
+          && /Migration 16 /.test(error.message),
+      );
     } finally {
       await database.sql`ALTER TABLE v3_preparation_blocks
                          ENABLE TRIGGER trg_v3_preparation_blocks_transition`;

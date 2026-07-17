@@ -19,7 +19,10 @@ import {
   createV3ReleaseAdmissionRepository,
 } from "../../src/execution/v3-release-admission-repository.js";
 import { hashCanonicalJson } from "../../src/product-compiler/canonical-json.js";
-import { verifyContractSpineMigrations } from "../../src/db/contract-spine-migrations.js";
+import {
+  ContractSpineMigrationError,
+  verifyContractSpineMigrations,
+} from "../../src/db/contract-spine-migrations.js";
 import { createIsolatedTestDatabase, type TestDatabase } from "./test-database.js";
 
 const RELEASE_SHA = "a".repeat(40);
@@ -290,7 +293,12 @@ describe("v3 release-bound admission", () => {
     await database.sql`ALTER TABLE v3_release_admissions
                        DISABLE TRIGGER trg_v3_release_admissions_immutable`;
     try {
-      await assert.rejects(verifyContractSpineMigrations(database.sql), /trigger mismatch/);
+      await assert.rejects(
+        verifyContractSpineMigrations(database.sql),
+        (error: unknown) => error instanceof ContractSpineMigrationError
+          && error.code === "MIGRATION_ADOPTION_MISMATCH"
+          && /Migration 15 /.test(error.message),
+      );
     } finally {
       await database.sql`ALTER TABLE v3_release_admissions
                          ENABLE TRIGGER trg_v3_release_admissions_immutable`;
@@ -298,7 +306,12 @@ describe("v3 release-bound admission", () => {
     await database.sql`ALTER TABLE v3_canary_admission_claims
                        DROP CONSTRAINT v3_canary_claims_task_hash_check`;
     try {
-      await assert.rejects(verifyContractSpineMigrations(database.sql), /constraint mismatch/);
+      await assert.rejects(
+        verifyContractSpineMigrations(database.sql),
+        (error: unknown) => error instanceof ContractSpineMigrationError
+          && error.code === "MIGRATION_ADOPTION_MISMATCH"
+          && /Migration 15 /.test(error.message),
+      );
     } finally {
       await database.sql`ALTER TABLE v3_canary_admission_claims
                          ADD CONSTRAINT v3_canary_claims_task_hash_check

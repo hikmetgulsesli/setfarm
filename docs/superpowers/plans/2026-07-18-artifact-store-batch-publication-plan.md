@@ -143,12 +143,19 @@ Tests first:
 - reject extra/missing columns, constraints, indexes, functions, or triggers;
 - reject unlogged, partitioned, inherited, or RLS-enabled authority relation;
 - enforce exact `binding|ready|quarantined` shapes;
-- make authority identity and ready state immutable;
+- make authority identity immutable and quarantine terminal;
 - detect dropped journaled helpers with typed drift on every operation;
-- source digest changes for SQL, verifier, registration, audit, adoption,
-  rollback, and marker identity code;
-- offline audit rejects authority/marker receipt drift;
-- rollback refuses a row, marker evidence, final artifact, or staging entry;
+- source digest changes for SQL, verifier, registration, database audit,
+  migration-schema adoption, rollback, and canonical receipt identity; mutable
+  CLI/package wiring is verified separately and never changes DB journal identity;
+- offline database audit rejects authority-row drift;
+- audit linearizes after an in-flight authority writer, verifies the exact
+  journal/source chain and v23 prerequisites, and rejects newer journal versions;
+- deterministic authority collations and exact journal collation ownership
+  reject case-insensitive canonical identity or state weakening;
+- apply, verify, attestation, audit, and rollback fail closed behind direct
+  journal writers; rollback rejects incoming FK cascade side effects;
+- rollback refuses any authority row;
 - empty verified migration rolls back to v23 under an exact release target;
 - concurrent apply has one migration owner and no intermediate adoption.
 
@@ -158,7 +165,11 @@ Implementation:
    authority.
 2. Add bounded startup verification and explicit offline data audit.
 3. Add source-bound empty-only rollback.
-4. Add CLI modes for authority audit, offline adoption, unbind, and rollback.
+4. Add CLI modes for database authority audit and empty rollback. Keep offline
+   root adoption absent until B2 marker/lease authority and E1 closure-aware
+   inventory are available. Binding is permanent provenance: never add an
+   unbind GUC, trigger bypass, or authority-row deletion path; future root
+   movement uses a new versioned authority epoch.
 5. Keep migration 23 byte-for-byte and checksum-identical.
 
 Verification:
@@ -205,6 +216,10 @@ Tests first:
 - `assertCurrent` fences transaction, row, marker, and physical-root changes;
 - production factory refuses a store without the PostgreSQL provider;
 - existing unmarked root is not adopted during normal startup.
+- adoption remains unavailable until the E1 bounded inventory reconciliation
+  is present; B2 supplies marker/lease capability but does not guess an
+  existing root's identity. Unbind does not exist; future movement is a
+  forward-only authority epoch.
 
 Implementation:
 

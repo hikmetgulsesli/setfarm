@@ -25,6 +25,8 @@
     "db:contract-spine:apply": "node --import tsx scripts/contract-spine-migrate.ts apply",
     "db:contract-spine:verify": "node --import tsx scripts/contract-spine-migrate.ts verify",
     "db:contract-spine:audit-artifact-batches": "node --import tsx scripts/contract-spine-migrate.ts audit-artifact-publication-batches",
+    "db:contract-spine:audit-artifact-store-authority-ledger": "node --import tsx scripts/contract-spine-migrate.ts audit-artifact-store-authority-ledger",
+    "db:contract-spine:rollback-24": "node --import tsx scripts/contract-spine-migrate.ts rollback-24-to-23",
     "db:contract-spine:rollback-23": "node --import tsx scripts/contract-spine-migrate.ts rollback-23-to-22",
     "db:contract-spine:rollback-22": "node --import tsx scripts/contract-spine-migrate.ts rollback-22-to-21",
     "db:contract-spine:rollback-21": "node --import tsx scripts/contract-spine-migrate.ts rollback-21-to-20",

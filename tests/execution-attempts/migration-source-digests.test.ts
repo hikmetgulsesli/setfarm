@@ -36,6 +36,10 @@ describe("contract-spine semantic migration source digests", () => {
       assertContractSpineSemanticMigrationSourceIntegrity(sourceReader),
       CONTRACT_SPINE_SEMANTIC_MIGRATION_DIGESTS,
     );
+    assert.equal(
+      CONTRACT_SPINE_SEMANTIC_MIGRATION_DIGESTS[23],
+      "dfeac8a3e38de094192e21d0281ff28330ae75d1227c994920f9a35c1b48e7fe",
+    );
   });
 
   it("changes v8 journal identity when the semantic apply body changes", () => {
@@ -153,6 +157,7 @@ describe("contract-spine semantic migration source digests", () => {
       ),
     );
     assert.notEqual(canonicalDependencyMutation[23], baseline[23]);
+    assert.notEqual(canonicalDependencyMutation[24], baseline[24]);
 
     const unrelatedMutation = computeContractSpineSemanticMigrationDigests(replacingReader(
       "src/product-compiler/artifact-publication-batch-identity.ts",
@@ -173,6 +178,86 @@ describe("contract-spine semantic migration source digests", () => {
       computeContractSpineMigrationChecksumV1({
         ...migration,
         implementationDigest: identityMutation[23],
+      }),
+    );
+  });
+
+  it("binds v24 DB authority semantics without coupling mutable CLI or package files", () => {
+    const baseline = computeContractSpineSemanticMigrationDigests(sourceReader);
+    const authorityMutation = computeContractSpineSemanticMigrationDigests(replacingReader(
+      "src/db/contract-spine-migrations.ts",
+      (source) => replaceExactlyOnce(
+        source,
+        "artifact store authority relation is not one permanent ordinary authority table",
+        "mutated artifact store authority relation diagnostic",
+      ),
+    ));
+    assert.notEqual(authorityMutation[24], baseline[24]);
+    assert.equal(authorityMutation[23], baseline[23]);
+
+    const journalTopologyMutation = computeContractSpineSemanticMigrationDigests(
+      replacingReader(
+        "src/db/contract-spine-migrations.ts",
+        (source) => replaceExactlyOnce(
+          source,
+          "migration journal is not one permanent unrewritten public authority table",
+          "mutated migration journal operational authority diagnostic",
+        ),
+      ),
+    );
+    assert.notEqual(journalTopologyMutation[24], baseline[24]);
+    assert.equal(journalTopologyMutation[23], baseline[23]);
+
+    const rollbackMutation = computeContractSpineSemanticMigrationDigests(replacingReader(
+      "src/db/contract-spine-migrations.ts",
+      (source) => replaceExactlyOnce(
+        source,
+        "Migration source chain through version ${throughVersion} differs from source",
+        "Mutated source chain through version ${throughVersion} differs from source",
+      ),
+    ));
+    assert.notEqual(rollbackMutation[24], baseline[24]);
+    assert.equal(rollbackMutation[23], baseline[23]);
+
+    const registrationMutation = computeContractSpineSemanticMigrationDigests(
+      replacingReader(
+        "src/db/contract-spine-migrations.ts",
+        (source) => replaceExactlyOnce(
+          source,
+          "verify: verifyArtifactStoreAuthorityLedger,",
+          "verify: verifyArtifactPublicationBatchLedger,",
+        ),
+      ),
+    );
+    assert.notEqual(registrationMutation[24], baseline[24]);
+    assert.equal(registrationMutation[23], baseline[23]);
+
+    for (const mutableOperationalFile of [
+      "package.json",
+      "scripts/contract-spine-migrate.ts",
+    ]) {
+      const operationalMutation = computeContractSpineSemanticMigrationDigests(
+        replacingReader(
+          mutableOperationalFile,
+          (source) => `${source}\n// simulated mutable operational wiring change\n`,
+        ),
+      );
+      assert.deepEqual(operationalMutation, baseline);
+    }
+
+    const migration = {
+      version: 24,
+      name: "024_artifact_store_authority_ledger",
+      statements: ["SELECT 1"],
+    } as const;
+    assert.notEqual(
+      computeContractSpineMigrationChecksumV1({
+        ...migration,
+        implementationDigest: baseline[24],
+      }),
+      computeContractSpineMigrationChecksumV1({
+        ...migration,
+        implementationDigest: authorityMutation[24],
       }),
     );
   });
