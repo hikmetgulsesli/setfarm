@@ -266,6 +266,7 @@ describe("contract spine migration journal", () => {
       "020_recovery_terminal_lease_identity",
       "021_operational_failure_cause_seal",
       "022_product_compilation_attempt_ledger",
+      "023_artifact_publication_batch_ledger",
     ]);
     assert.equal((await verifyContractSpineMigrations(database.sql)).status, "verified");
   });

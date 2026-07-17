@@ -141,6 +141,10 @@ type Migration = MigrationDefinition & (
       apply(sql: TransactionSql): Promise<void>;
     }>
   | Readonly<{
+      implementationDigest: string;
+      apply?: never;
+    }>
+  | Readonly<{
       implementationDigest?: never;
       apply?: never;
     }>
@@ -211,6 +215,58 @@ export type ProductCompilationAttemptLedgerRollbackResult = Readonly<{
   rowsRewritten: 0;
   appliedAt: string;
 }>;
+
+export type ArtifactPublicationBatchLedgerRollbackResult = Readonly<{
+  schema: "setfarm.contract-spine-rollback.v1";
+  rollbackId: string;
+  fromVersion: 23;
+  targetVersion: 22;
+  targetReleaseSha: string;
+  rowsRewritten: 0;
+  appliedAt: string;
+}>;
+
+// SETFARM_SEMANTIC_MIGRATION_REGION:sql-definition-normalization-v1:BEGIN
+function normalizeSqlExact(value: string): string {
+  let normalized = "";
+  let quote: "single" | "double" | undefined;
+  let pendingSpace = false;
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value[index]!;
+    if (quote) {
+      normalized += character;
+      const delimiter = quote === "single" ? "'" : '"';
+      if (character === delimiter) {
+        if (value[index + 1] === delimiter) {
+          normalized += delimiter;
+          index += 1;
+        } else {
+          quote = undefined;
+        }
+      }
+      continue;
+    }
+    if (/\s/.test(character)) {
+      pendingSpace = normalized.length > 0;
+      continue;
+    }
+    if (pendingSpace) {
+      normalized += " ";
+      pendingSpace = false;
+    }
+    if (character === "'") {
+      quote = "single";
+      normalized += character;
+    } else if (character === '"') {
+      quote = "double";
+      normalized += character;
+    } else {
+      normalized += character.toLowerCase();
+    }
+  }
+  return normalized.trim();
+}
+// SETFARM_SEMANTIC_MIGRATION_REGION:sql-definition-normalization-v1:END
 
 function normalizeSql(value: string): string {
   return value.replace(/\s+/g, " ").trim().toLowerCase();
@@ -8638,6 +8694,2381 @@ async function verifyProductCompilationAttemptLedger(sql: Sql | TransactionSql):
   }
 }
 
+// SETFARM_SEMANTIC_MIGRATION_REGION:migration-v23-batch-ledger:BEGIN
+const ARTIFACT_PUBLICATION_BATCH_STATEMENTS = [
+  `DO $$
+   BEGIN
+     IF EXISTS (
+       SELECT 1 FROM public.artifact_publication_reservations
+        WHERE left(reservation_id, 5) = 'APRB_'
+     ) THEN
+       RAISE EXCEPTION 'ARTIFACT_PUBLICATION_BATCH_NAMESPACE_OCCUPIED' USING ERRCODE = '23514';
+     END IF;
+   END;
+   $$`,
+  `CREATE UNIQUE INDEX idx_artifact_publication_reservations_id_hash
+     ON public.artifact_publication_reservations(reservation_id, artifact_hash)`,
+  `CREATE TABLE public.artifact_publication_batches (
+    batch_reservation_id TEXT PRIMARY KEY,
+    identity_schema TEXT NOT NULL,
+    batch_identity_hash TEXT NOT NULL,
+    artifact_count INTEGER NOT NULL,
+    created_by_instance_id TEXT NOT NULL,
+    state TEXT NOT NULL,
+    owner_instance_id TEXT,
+    lease_token TEXT,
+    lease_expires_at TIMESTAMPTZ,
+    diagnostic TEXT,
+    finalized_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT artifact_publication_batches_id_check
+      CHECK (batch_reservation_id ~ '^[A-Za-z0-9._:-]{1,200}$'),
+    CONSTRAINT artifact_publication_batches_identity_schema_check
+      CHECK (identity_schema = 'setfarm.artifact-publication-batch.v1'),
+    CONSTRAINT artifact_publication_batches_hash_check
+      CHECK (batch_identity_hash ~ '^[a-f0-9]{64}$'),
+    CONSTRAINT artifact_publication_batches_count_check
+      CHECK (artifact_count BETWEEN 1 AND 9),
+    CONSTRAINT artifact_publication_batches_creator_check
+      CHECK (length(created_by_instance_id) BETWEEN 1 AND 200),
+    CONSTRAINT artifact_publication_batches_owner_check
+      CHECK (owner_instance_id IS NULL OR length(owner_instance_id) BETWEEN 1 AND 200),
+    CONSTRAINT artifact_publication_batches_state_check
+      CHECK (state IN ('active', 'completed', 'released', 'quarantined')),
+    CONSTRAINT artifact_publication_batches_token_check
+      CHECK (
+        lease_token IS NULL
+        OR lease_token ~ '^APB_[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+      ),
+    CONSTRAINT artifact_publication_batches_active_shape_check
+      CHECK (
+        (state = 'active') = (owner_instance_id IS NOT NULL)
+        AND (state = 'active') = (lease_token IS NOT NULL)
+        AND (state = 'active') = (lease_expires_at IS NOT NULL)
+      ),
+    CONSTRAINT artifact_publication_batches_finalized_check
+      CHECK ((state <> 'active') = (finalized_at IS NOT NULL)),
+    CONSTRAINT artifact_publication_batches_diagnostic_check
+      CHECK (
+        (state IN ('released', 'quarantined')) = (NULLIF(diagnostic, '') IS NOT NULL)
+      ),
+    CONSTRAINT artifact_publication_batches_time_check
+      CHECK (
+        updated_at >= created_at
+        AND (finalized_at IS NULL OR finalized_at >= created_at)
+        AND (
+          state <> 'active'
+          OR (
+            lease_expires_at > updated_at
+            AND lease_expires_at <= updated_at + INTERVAL '30 minutes'
+          )
+        )
+      )
+  )`,
+  `CREATE TABLE public.artifact_publication_batch_items (
+    batch_reservation_id TEXT NOT NULL
+      REFERENCES public.artifact_publication_batches(batch_reservation_id) ON DELETE RESTRICT,
+    ordinal INTEGER NOT NULL,
+    artifact_hash TEXT NOT NULL,
+    artifact_type TEXT NOT NULL,
+    byte_length BIGINT NOT NULL,
+    producer_metadata JSONB NOT NULL,
+    reservation_id TEXT,
+    indexed_artifact_hash TEXT REFERENCES public.semantic_artifacts(artifact_hash) ON DELETE RESTRICT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT artifact_publication_batch_items_pkey
+      PRIMARY KEY (batch_reservation_id, artifact_hash),
+    CONSTRAINT artifact_publication_batch_items_ordinal_unique
+      UNIQUE (batch_reservation_id, ordinal),
+    CONSTRAINT artifact_publication_batch_items_reservation_unique
+      UNIQUE (reservation_id),
+    CONSTRAINT artifact_publication_batch_items_reservation_identity_fkey
+      FOREIGN KEY (reservation_id, artifact_hash)
+      REFERENCES public.artifact_publication_reservations(reservation_id, artifact_hash)
+      ON DELETE RESTRICT,
+    CONSTRAINT artifact_publication_batch_items_ordinal_check
+      CHECK (ordinal BETWEEN 0 AND 8),
+    CONSTRAINT artifact_publication_batch_items_hash_check
+      CHECK (artifact_hash ~ '^[a-f0-9]{64}$'),
+    CONSTRAINT artifact_publication_batch_items_type_check
+      CHECK (
+        length(artifact_type) BETWEEN 1 AND 200
+        AND artifact_type ~ '^[a-z][a-z0-9]*([.-][a-z0-9]+)+$'
+      ),
+    CONSTRAINT artifact_publication_batch_items_byte_length_check
+      CHECK (byte_length BETWEEN 1 AND 9007199254740991),
+    CONSTRAINT artifact_publication_batch_items_producer_object_check
+      CHECK (jsonb_typeof(producer_metadata) = 'object'),
+    CONSTRAINT artifact_publication_batch_items_producer_keys_check
+      CHECK (
+        producer_metadata ?& ARRAY['pass', 'codeSha', 'toolVersions']
+        AND producer_metadata - ARRAY['pass', 'codeSha', 'model', 'promptHash', 'toolVersions']::text[] = '{}'::jsonb
+      ),
+    CONSTRAINT artifact_publication_batch_items_producer_values_check
+      CHECK (
+        jsonb_typeof(producer_metadata->'pass') = 'string'
+        AND octet_length(convert_to(producer_metadata->>'pass', 'UTF8')) BETWEEN 1 AND 160
+        AND jsonb_typeof(producer_metadata->'codeSha') = 'string'
+        AND producer_metadata->>'codeSha' ~ '^[a-f0-9]{7,64}$'
+        AND jsonb_typeof(producer_metadata->'toolVersions') = 'object'
+        AND NOT jsonb_path_exists(
+          producer_metadata,
+          '$.toolVersions.* ? (@.type() != "string")'
+        )
+        AND (NOT producer_metadata ? 'model' OR (
+          jsonb_typeof(producer_metadata->'model') = 'string'
+          AND octet_length(convert_to(producer_metadata->>'model', 'UTF8')) BETWEEN 1 AND 200
+        ))
+        AND (NOT producer_metadata ? 'promptHash' OR (
+          jsonb_typeof(producer_metadata->'promptHash') = 'string'
+          AND producer_metadata->>'promptHash' ~ '^[a-f0-9]{64}$'
+        ))
+      ),
+    CONSTRAINT artifact_publication_batch_items_authority_check
+      CHECK (
+        (reservation_id IS NULL) <> (indexed_artifact_hash IS NULL)
+        AND (indexed_artifact_hash IS NULL OR indexed_artifact_hash = artifact_hash)
+      )
+  )`,
+  `CREATE FUNCTION public.setfarm_artifact_publication_batch_producer_identity_bytes(
+     producer JSONB
+   ) RETURNS BIGINT
+   LANGUAGE sql
+   IMMUTABLE
+   STRICT
+   SET search_path TO pg_catalog, public
+   AS $$
+     SELECT octet_length(convert_to(producer->>'pass', 'UTF8'))::bigint
+          + octet_length(convert_to(producer->>'codeSha', 'UTF8'))::bigint
+          + octet_length(convert_to(COALESCE(producer->>'model', ''), 'UTF8'))::bigint
+          + octet_length(convert_to(COALESCE(producer->>'promptHash', ''), 'UTF8'))::bigint
+          + COALESCE((
+              SELECT SUM(
+                       octet_length(convert_to(tool_version.key, 'UTF8'))
+                       + octet_length(convert_to(tool_version.value, 'UTF8'))
+                     )::bigint
+                FROM jsonb_each_text(producer->'toolVersions') tool_version
+            ), 0::bigint)
+   $$`,
+  `CREATE FUNCTION public.setfarm_validate_artifact_publication_batch_completeness() RETURNS trigger
+   LANGUAGE plpgsql
+   SET search_path TO pg_catalog, public
+   AS $$
+   DECLARE
+     expected_count INTEGER;
+     observed_identity_schema TEXT;
+     observed_batch_identity_hash TEXT;
+     observed_state TEXT;
+     observed_owner_instance_id TEXT;
+     observed_lease_token TEXT;
+     observed_lease_expires_at TIMESTAMPTZ;
+     expected_batch_identity_hash TEXT;
+     actual_count INTEGER;
+     minimum_ordinal INTEGER;
+     maximum_ordinal INTEGER;
+     total_producer_identity_bytes BIGINT;
+   BEGIN
+     SELECT artifact_count, identity_schema, batch_identity_hash,
+            state, owner_instance_id, lease_token, lease_expires_at
+       INTO expected_count, observed_identity_schema, observed_batch_identity_hash,
+            observed_state, observed_owner_instance_id,
+            observed_lease_token, observed_lease_expires_at
+       FROM public.artifact_publication_batches
+      WHERE batch_reservation_id = NEW.batch_reservation_id;
+     IF expected_count IS NULL THEN
+       RAISE EXCEPTION 'ARTIFACT_PUBLICATION_BATCH_HEADER_MISSING' USING ERRCODE = '23514';
+     END IF;
+     SELECT COUNT(*)::integer, MIN(ordinal), MAX(ordinal)
+       INTO actual_count, minimum_ordinal, maximum_ordinal
+       FROM public.artifact_publication_batch_items
+      WHERE batch_reservation_id = NEW.batch_reservation_id;
+     IF actual_count <> expected_count
+        OR minimum_ordinal IS DISTINCT FROM 0
+        OR maximum_ordinal IS DISTINCT FROM expected_count - 1 THEN
+       RAISE EXCEPTION 'ARTIFACT_PUBLICATION_BATCH_INCOMPLETE' USING ERRCODE = '23514';
+     END IF;
+     SELECT COALESCE(SUM(
+              public.setfarm_artifact_publication_batch_producer_identity_bytes(
+                i.producer_metadata
+              )
+            ), 0::bigint)
+       INTO total_producer_identity_bytes
+       FROM public.artifact_publication_batch_items i
+      WHERE i.batch_reservation_id = NEW.batch_reservation_id;
+     IF total_producer_identity_bytes > 524288 THEN
+       RAISE EXCEPTION 'ARTIFACT_PUBLICATION_BATCH_PRODUCER_BUDGET_EXCEEDED' USING ERRCODE = '23514';
+     END IF;
+     SELECT encode(sha256(convert_to(
+              'setfarm.artifact-publication-batch.v1' || E'\n'
+              || string_agg(batch_item.item_identity_hash, E'\n'
+                   ORDER BY batch_item.artifact_hash COLLATE "C"),
+              'UTF8'
+            )), 'hex')
+       INTO expected_batch_identity_hash
+       FROM (
+         SELECT i.artifact_hash,
+                encode(sha256(convert_to(
+                  'setfarm.artifact-publication-batch-item.v1' || E'\n'
+                  || octet_length(convert_to(i.artifact_hash, 'UTF8'))::text || ':' || i.artifact_hash
+                  || octet_length(convert_to(i.artifact_type, 'UTF8'))::text || ':' || i.artifact_type
+                  || octet_length(convert_to(i.byte_length::text, 'UTF8'))::text || ':' || i.byte_length::text
+                  || octet_length(convert_to(i.producer_metadata->>'pass', 'UTF8'))::text || ':'
+                     || (i.producer_metadata->>'pass')
+                  || octet_length(convert_to(i.producer_metadata->>'codeSha', 'UTF8'))::text || ':'
+                     || (i.producer_metadata->>'codeSha')
+                  || octet_length(convert_to(COALESCE(i.producer_metadata->>'model', ''), 'UTF8'))::text || ':'
+                     || COALESCE(i.producer_metadata->>'model', '')
+                  || octet_length(convert_to(COALESCE(i.producer_metadata->>'promptHash', ''), 'UTF8'))::text || ':'
+                     || COALESCE(i.producer_metadata->>'promptHash', '')
+                  || COALESCE((
+                       SELECT string_agg(
+                                octet_length(convert_to(tool_version.key, 'UTF8'))::text || ':' || tool_version.key
+                                || octet_length(convert_to(tool_version.value, 'UTF8'))::text || ':' || tool_version.value,
+                                '' ORDER BY convert_to(tool_version.key, 'UTF8')
+                              )
+                         FROM jsonb_each_text(i.producer_metadata->'toolVersions') tool_version
+                     ), ''),
+                  'UTF8'
+                )), 'hex') AS item_identity_hash
+           FROM public.artifact_publication_batch_items i
+          WHERE i.batch_reservation_id = NEW.batch_reservation_id
+       ) batch_item;
+     IF observed_identity_schema IS DISTINCT FROM 'setfarm.artifact-publication-batch.v1'
+        OR observed_batch_identity_hash IS DISTINCT FROM expected_batch_identity_hash THEN
+       RAISE EXCEPTION 'ARTIFACT_PUBLICATION_BATCH_IDENTITY_MISMATCH' USING ERRCODE = '23514';
+     END IF;
+     IF EXISTS (
+       SELECT 1
+         FROM (
+           SELECT artifact_hash,
+                  lag(artifact_hash) OVER (ORDER BY ordinal) AS preceding_hash
+             FROM public.artifact_publication_batch_items
+            WHERE batch_reservation_id = NEW.batch_reservation_id
+         ) ordered_items
+        WHERE preceding_hash IS NOT NULL
+          AND preceding_hash COLLATE "C" >= artifact_hash COLLATE "C"
+     ) THEN
+       RAISE EXCEPTION 'ARTIFACT_PUBLICATION_BATCH_ORDER_MISMATCH' USING ERRCODE = '23514';
+     END IF;
+     IF EXISTS (
+       SELECT 1
+         FROM public.artifact_publication_batch_items i
+         LEFT JOIN public.artifact_publication_reservations r
+           ON r.reservation_id = i.reservation_id
+          AND r.artifact_hash = i.artifact_hash
+         LEFT JOIN public.semantic_artifacts a
+           ON a.artifact_hash = i.indexed_artifact_hash
+        WHERE i.batch_reservation_id = NEW.batch_reservation_id
+          AND (
+            (i.reservation_id IS NOT NULL AND (
+              r.reservation_id IS NULL
+              OR i.reservation_id IS DISTINCT FROM 'APRB_' || encode(sha256(convert_to(
+                   'setfarm.artifact-publication-batch-child.v1' || E'\n'
+                   || NEW.batch_reservation_id || E'\n'
+                   || expected_batch_identity_hash || E'\n'
+                   || i.artifact_hash,
+                   'UTF8'
+                 )), 'hex')
+              OR r.artifact_type IS DISTINCT FROM i.artifact_type
+              OR r.byte_length IS DISTINCT FROM i.byte_length
+              OR r.producer_metadata IS DISTINCT FROM i.producer_metadata
+            ))
+            OR (i.indexed_artifact_hash IS NOT NULL AND (
+              a.artifact_hash IS NULL
+              OR a.artifact_type IS DISTINCT FROM i.artifact_type
+              OR a.byte_length IS DISTINCT FROM i.byte_length
+              OR a.producer_metadata IS DISTINCT FROM i.producer_metadata
+            ))
+            OR public.setfarm_artifact_publication_batch_producer_identity_bytes(
+                 i.producer_metadata
+               ) > 131072
+            OR (SELECT COUNT(*) FROM jsonb_each(i.producer_metadata->'toolVersions')) > 4096
+            OR EXISTS (
+              SELECT 1
+                FROM jsonb_each_text(i.producer_metadata->'toolVersions') tool_version
+               WHERE octet_length(convert_to(tool_version.key, 'UTF8')) NOT BETWEEN 1 AND 100
+                  OR octet_length(convert_to(tool_version.value, 'UTF8')) NOT BETWEEN 1 AND 200
+                  OR tool_version.key IN ('__proto__', 'constructor', 'prototype')
+            )
+          )
+     ) THEN
+       RAISE EXCEPTION 'ARTIFACT_PUBLICATION_BATCH_IDENTITY_MISMATCH' USING ERRCODE = '23514';
+     END IF;
+     IF EXISTS (
+       SELECT 1
+         FROM public.artifact_publication_batch_items i
+         JOIN public.artifact_publication_reservations r
+           ON r.reservation_id = i.reservation_id
+         LEFT JOIN public.semantic_artifacts a
+           ON a.artifact_hash = i.artifact_hash
+        WHERE i.batch_reservation_id = NEW.batch_reservation_id
+          AND r.state = 'published'
+          AND (
+            a.artifact_hash IS NULL
+            OR a.artifact_type IS DISTINCT FROM i.artifact_type
+            OR a.byte_length IS DISTINCT FROM i.byte_length
+            OR a.producer_metadata IS DISTINCT FROM i.producer_metadata
+          )
+     ) THEN
+       RAISE EXCEPTION 'ARTIFACT_PUBLICATION_BATCH_PUBLISHED_IDENTITY_MISMATCH' USING ERRCODE = '23514';
+     END IF;
+     IF observed_state = 'active' THEN
+       IF NOT EXISTS (
+         SELECT 1
+           FROM public.artifact_publication_batch_items i
+           JOIN public.artifact_publication_reservations r
+             ON r.reservation_id = i.reservation_id
+          WHERE i.batch_reservation_id = NEW.batch_reservation_id
+            AND r.state = 'reserved'
+       ) OR EXISTS (
+         SELECT 1
+           FROM public.artifact_publication_batch_items i
+           JOIN public.artifact_publication_reservations r
+             ON r.reservation_id = i.reservation_id
+          WHERE i.batch_reservation_id = NEW.batch_reservation_id
+            AND (
+              r.state NOT IN ('reserved', 'published')
+              OR (r.state = 'reserved' AND (
+                r.owner_instance_id IS DISTINCT FROM observed_owner_instance_id
+                OR r.lease_token IS DISTINCT FROM observed_lease_token
+                OR r.lease_expires_at IS DISTINCT FROM observed_lease_expires_at
+              ))
+            )
+       ) THEN
+         RAISE EXCEPTION 'ARTIFACT_PUBLICATION_BATCH_LEASE_INCOHERENT' USING ERRCODE = '23514';
+       END IF;
+     ELSIF observed_state = 'completed' THEN
+       IF EXISTS (
+         SELECT 1
+           FROM public.artifact_publication_batch_items i
+           LEFT JOIN public.artifact_publication_reservations r
+             ON r.reservation_id = i.reservation_id
+           LEFT JOIN public.semantic_artifacts a
+             ON a.artifact_hash = i.artifact_hash
+          WHERE i.batch_reservation_id = NEW.batch_reservation_id
+            AND (a.artifact_hash IS NULL OR (i.reservation_id IS NOT NULL AND r.state <> 'published'))
+       ) THEN
+         RAISE EXCEPTION 'ARTIFACT_PUBLICATION_BATCH_COMPLETION_INVALID' USING ERRCODE = '23514';
+       END IF;
+     ELSIF observed_state = 'released' THEN
+       IF EXISTS (
+         SELECT 1
+           FROM public.artifact_publication_batch_items i
+           JOIN public.artifact_publication_reservations r
+             ON r.reservation_id = i.reservation_id
+          WHERE i.batch_reservation_id = NEW.batch_reservation_id
+            AND r.state NOT IN ('published', 'released')
+       ) THEN
+         RAISE EXCEPTION 'ARTIFACT_PUBLICATION_BATCH_RELEASE_INVALID' USING ERRCODE = '23514';
+       END IF;
+     ELSIF observed_state = 'quarantined' THEN
+       IF EXISTS (
+         SELECT 1
+           FROM public.artifact_publication_batch_items i
+           JOIN public.artifact_publication_reservations r
+             ON r.reservation_id = i.reservation_id
+          WHERE i.batch_reservation_id = NEW.batch_reservation_id
+            AND r.state NOT IN ('published', 'quarantined')
+       ) THEN
+         RAISE EXCEPTION 'ARTIFACT_PUBLICATION_BATCH_QUARANTINE_INVALID' USING ERRCODE = '23514';
+       END IF;
+     END IF;
+     IF (SELECT COUNT(*) FROM public.artifact_capacity
+           WHERE capacity_key = 'semantic-artifacts') <> 1
+        OR EXISTS (
+          SELECT 1
+            FROM public.artifact_capacity c
+           WHERE c.capacity_key = 'semantic-artifacts'
+             AND (
+               c.reserved_bytes IS DISTINCT FROM (
+                 SELECT COALESCE(SUM(r.byte_length), 0)::bigint
+                   FROM public.artifact_publication_reservations r
+                  WHERE r.state = 'reserved'
+               )
+               OR c.total_bytes IS DISTINCT FROM (
+                 SELECT COALESCE(SUM(a.byte_length), 0)::bigint
+                   FROM public.semantic_artifacts a
+               )
+             )
+        ) THEN
+       RAISE EXCEPTION 'ARTIFACT_PUBLICATION_BATCH_CAPACITY_INCOHERENT' USING ERRCODE = '23514';
+     END IF;
+
+     RETURN NULL;
+   END;
+   $$`,
+  `CREATE CONSTRAINT TRIGGER trg_artifact_publication_batches_complete
+     AFTER INSERT OR UPDATE ON public.artifact_publication_batches
+     DEFERRABLE INITIALLY DEFERRED
+     FOR EACH ROW EXECUTE FUNCTION public.setfarm_validate_artifact_publication_batch_completeness()`,
+  `CREATE CONSTRAINT TRIGGER trg_artifact_publication_batch_items_complete
+     AFTER INSERT ON public.artifact_publication_batch_items
+     DEFERRABLE INITIALLY DEFERRED
+     FOR EACH ROW EXECUTE FUNCTION public.setfarm_validate_artifact_publication_batch_completeness()`,
+  `CREATE FUNCTION public.setfarm_enforce_artifact_publication_reservation_identity() RETURNS trigger
+   LANGUAGE plpgsql
+   SET search_path TO pg_catalog, public
+   AS $$
+   BEGIN
+     IF TG_OP = 'DELETE' THEN
+       RAISE EXCEPTION 'ARTIFACT_PUBLICATION_RESERVATION_IMMUTABLE' USING ERRCODE = '23514';
+     END IF;
+     IF OLD.reservation_id IS DISTINCT FROM NEW.reservation_id
+        OR OLD.artifact_hash IS DISTINCT FROM NEW.artifact_hash
+        OR OLD.artifact_type IS DISTINCT FROM NEW.artifact_type
+        OR OLD.byte_length IS DISTINCT FROM NEW.byte_length
+        OR OLD.producer_metadata IS DISTINCT FROM NEW.producer_metadata
+        OR OLD.created_at IS DISTINCT FROM NEW.created_at THEN
+       RAISE EXCEPTION 'ARTIFACT_PUBLICATION_RESERVATION_IDENTITY_IMMUTABLE' USING ERRCODE = '23514';
+     END IF;
+     IF OLD.state <> 'reserved' THEN
+       RAISE EXCEPTION 'ARTIFACT_PUBLICATION_RESERVATION_TERMINAL_IMMUTABLE' USING ERRCODE = '23514';
+     END IF;
+     RETURN NEW;
+   END;
+   $$`,
+  `CREATE TRIGGER trg_artifact_publication_reservations_identity_immutable
+     BEFORE UPDATE OR DELETE ON public.artifact_publication_reservations
+     FOR EACH ROW EXECUTE FUNCTION public.setfarm_enforce_artifact_publication_reservation_identity()`,
+  `CREATE FUNCTION public.setfarm_validate_artifact_publication_batch_child_membership() RETURNS trigger
+   LANGUAGE plpgsql
+   SET search_path TO pg_catalog, public
+   AS $$
+   DECLARE
+     observed_batch_reservation_id TEXT;
+     observed_state TEXT;
+     observed_owner_instance_id TEXT;
+     observed_lease_token TEXT;
+     observed_lease_expires_at TIMESTAMPTZ;
+   BEGIN
+     IF left(NEW.reservation_id, 5) <> 'APRB_' THEN
+       RETURN NULL;
+     END IF;
+     SELECT i.batch_reservation_id
+       INTO observed_batch_reservation_id
+       FROM public.artifact_publication_batch_items i
+      WHERE i.reservation_id = NEW.reservation_id
+        AND i.artifact_hash = NEW.artifact_hash;
+     IF observed_batch_reservation_id IS NULL THEN
+       RAISE EXCEPTION 'ARTIFACT_PUBLICATION_BATCH_CHILD_ORPHANED' USING ERRCODE = '23514';
+     END IF;
+     SELECT state, owner_instance_id, lease_token, lease_expires_at
+       INTO observed_state, observed_owner_instance_id,
+            observed_lease_token, observed_lease_expires_at
+       FROM public.artifact_publication_batches
+      WHERE batch_reservation_id = observed_batch_reservation_id;
+     IF NEW.state = 'reserved' AND EXISTS (
+       SELECT 1
+         FROM public.semantic_artifacts a
+        WHERE a.artifact_hash = NEW.artifact_hash
+     ) THEN
+       RAISE EXCEPTION 'ARTIFACT_PUBLICATION_BATCH_RESERVED_ARTIFACT_INDEXED' USING ERRCODE = '23514';
+     END IF;
+     IF NEW.state = 'published' AND NOT EXISTS (
+       SELECT 1
+         FROM public.semantic_artifacts a
+        WHERE a.artifact_hash = NEW.artifact_hash
+          AND a.artifact_type IS NOT DISTINCT FROM NEW.artifact_type
+          AND a.byte_length IS NOT DISTINCT FROM NEW.byte_length
+          AND a.producer_metadata IS NOT DISTINCT FROM NEW.producer_metadata
+     ) THEN
+       RAISE EXCEPTION 'ARTIFACT_PUBLICATION_BATCH_PUBLISHED_IDENTITY_MISMATCH' USING ERRCODE = '23514';
+     END IF;
+     IF (observed_state = 'active' AND (
+          NEW.state NOT IN ('reserved', 'published')
+          OR (NEW.state = 'reserved' AND (
+            NEW.owner_instance_id IS DISTINCT FROM observed_owner_instance_id
+            OR NEW.lease_token IS DISTINCT FROM observed_lease_token
+            OR NEW.lease_expires_at IS DISTINCT FROM observed_lease_expires_at
+          ))
+        ))
+        OR (observed_state = 'completed' AND NEW.state <> 'published')
+        OR (observed_state = 'released' AND NEW.state NOT IN ('published', 'released'))
+        OR (observed_state = 'quarantined' AND NEW.state NOT IN ('published', 'quarantined')) THEN
+       RAISE EXCEPTION 'ARTIFACT_PUBLICATION_BATCH_CHILD_STATE_INCOHERENT' USING ERRCODE = '23514';
+     END IF;
+     IF observed_state = 'active' AND NOT EXISTS (
+       SELECT 1
+         FROM public.artifact_publication_batch_items i
+         JOIN public.artifact_publication_reservations r
+           ON r.reservation_id = i.reservation_id
+        WHERE i.batch_reservation_id = observed_batch_reservation_id
+          AND r.state = 'reserved'
+     ) THEN
+       RAISE EXCEPTION 'ARTIFACT_PUBLICATION_BATCH_ACTIVE_WITHOUT_RESERVATION' USING ERRCODE = '23514';
+     END IF;
+     IF (SELECT COUNT(*) FROM public.artifact_capacity
+           WHERE capacity_key = 'semantic-artifacts') <> 1
+        OR EXISTS (
+          SELECT 1
+            FROM public.artifact_capacity c
+           WHERE c.capacity_key = 'semantic-artifacts'
+             AND (
+               c.reserved_bytes IS DISTINCT FROM (
+                 SELECT COALESCE(SUM(r.byte_length), 0)::bigint
+                   FROM public.artifact_publication_reservations r
+                  WHERE r.state = 'reserved'
+               )
+               OR c.total_bytes IS DISTINCT FROM (
+                 SELECT COALESCE(SUM(a.byte_length), 0)::bigint
+                   FROM public.semantic_artifacts a
+               )
+             )
+        ) THEN
+       RAISE EXCEPTION 'ARTIFACT_PUBLICATION_BATCH_CAPACITY_INCOHERENT' USING ERRCODE = '23514';
+     END IF;
+     RETURN NULL;
+   END;
+   $$`,
+  `CREATE CONSTRAINT TRIGGER trg_artifact_publication_batch_child_membership
+     AFTER INSERT OR UPDATE ON public.artifact_publication_reservations
+     DEFERRABLE INITIALLY DEFERRED
+     FOR EACH ROW EXECUTE FUNCTION public.setfarm_validate_artifact_publication_batch_child_membership()`,
+  `CREATE FUNCTION public.setfarm_forbid_artifact_publication_batch_identity_update() RETURNS trigger
+   LANGUAGE plpgsql
+   SET search_path TO pg_catalog, public
+   AS $$
+   BEGIN
+     RAISE EXCEPTION 'ARTIFACT_PUBLICATION_BATCH_IDENTITY_IMMUTABLE' USING ERRCODE = '23514';
+   END;
+   $$`,
+  `CREATE FUNCTION public.setfarm_enforce_artifact_publication_batch_transition() RETURNS trigger
+   LANGUAGE plpgsql
+   SET search_path TO pg_catalog, public
+   AS $$
+   DECLARE
+     observed_now TIMESTAMPTZ := clock_timestamp();
+     created_in_current_transaction BOOLEAN := OLD.xmin::TEXT = pg_current_xact_id()::TEXT;
+   BEGIN
+     IF TG_OP = 'DELETE' THEN
+       RAISE EXCEPTION 'ARTIFACT_PUBLICATION_BATCH_IDENTITY_IMMUTABLE' USING ERRCODE = '23514';
+     END IF;
+     IF OLD.batch_reservation_id IS DISTINCT FROM NEW.batch_reservation_id
+        OR OLD.identity_schema IS DISTINCT FROM NEW.identity_schema
+        OR OLD.batch_identity_hash IS DISTINCT FROM NEW.batch_identity_hash
+        OR OLD.artifact_count IS DISTINCT FROM NEW.artifact_count
+        OR OLD.created_by_instance_id IS DISTINCT FROM NEW.created_by_instance_id
+        OR OLD.created_at IS DISTINCT FROM NEW.created_at THEN
+       RAISE EXCEPTION 'ARTIFACT_PUBLICATION_BATCH_IDENTITY_IMMUTABLE' USING ERRCODE = '23514';
+     END IF;
+     IF OLD.state <> 'active' THEN
+       RAISE EXCEPTION 'ARTIFACT_PUBLICATION_BATCH_TERMINAL_IMMUTABLE' USING ERRCODE = '23514';
+     END IF;
+     IF NEW.updated_at <= OLD.updated_at THEN
+       RAISE EXCEPTION 'ARTIFACT_PUBLICATION_BATCH_TIME_REGRESSION' USING ERRCODE = '23514';
+     END IF;
+     IF NEW.state = 'active' THEN
+       IF NEW.owner_instance_id IS NOT DISTINCT FROM OLD.owner_instance_id
+          AND NEW.lease_token IS NOT DISTINCT FROM OLD.lease_token THEN
+         IF (NOT created_in_current_transaction AND observed_now >= OLD.lease_expires_at)
+            OR NEW.lease_expires_at <= OLD.lease_expires_at
+            OR NEW.lease_expires_at <= observed_now
+            OR NEW.lease_expires_at > observed_now + INTERVAL '30 minutes' THEN
+           RAISE EXCEPTION 'ARTIFACT_PUBLICATION_BATCH_HEARTBEAT_INVALID' USING ERRCODE = '23514';
+         END IF;
+       ELSIF observed_now < OLD.lease_expires_at
+          OR NEW.updated_at < OLD.lease_expires_at
+          OR NEW.lease_expires_at <= observed_now
+          OR NEW.lease_expires_at > observed_now + INTERVAL '30 minutes'
+          OR NEW.owner_instance_id IS NOT DISTINCT FROM OLD.owner_instance_id
+          OR NEW.lease_token IS NOT DISTINCT FROM OLD.lease_token THEN
+         RAISE EXCEPTION 'ARTIFACT_PUBLICATION_BATCH_ADOPTION_INVALID' USING ERRCODE = '23514';
+       END IF;
+     ELSIF NEW.state NOT IN ('completed', 'released', 'quarantined') THEN
+       RAISE EXCEPTION 'ARTIFACT_PUBLICATION_BATCH_TRANSITION_INVALID' USING ERRCODE = '23514';
+     END IF;
+     RETURN NEW;
+   END;
+   $$`,
+  `CREATE TRIGGER trg_artifact_publication_batches_immutable
+     BEFORE UPDATE OR DELETE ON public.artifact_publication_batches
+     FOR EACH ROW EXECUTE FUNCTION public.setfarm_enforce_artifact_publication_batch_transition()`,
+  `CREATE TRIGGER trg_artifact_publication_batch_items_immutable
+     BEFORE UPDATE OR DELETE ON public.artifact_publication_batch_items
+     FOR EACH ROW EXECUTE FUNCTION public.setfarm_forbid_artifact_publication_batch_identity_update()`,
+] as const;
+
+const EXPECTED_ARTIFACT_PUBLICATION_BATCH_COLUMNS = new Map([
+  ["artifact_publication_batches", new Map([
+    ["batch_reservation_id", { dataType: "text", nullable: "NO" as const }],
+    ["identity_schema", { dataType: "text", nullable: "NO" as const }],
+    ["batch_identity_hash", { dataType: "text", nullable: "NO" as const }],
+    ["artifact_count", { dataType: "integer", nullable: "NO" as const }],
+    ["created_by_instance_id", { dataType: "text", nullable: "NO" as const }],
+    ["state", { dataType: "text", nullable: "NO" as const }],
+    ["owner_instance_id", { dataType: "text", nullable: "YES" as const }],
+    ["lease_token", { dataType: "text", nullable: "YES" as const }],
+    ["lease_expires_at", { dataType: "timestamp with time zone", nullable: "YES" as const }],
+    ["diagnostic", { dataType: "text", nullable: "YES" as const }],
+    ["finalized_at", { dataType: "timestamp with time zone", nullable: "YES" as const }],
+    ["created_at", { dataType: "timestamp with time zone", nullable: "NO" as const }],
+    ["updated_at", { dataType: "timestamp with time zone", nullable: "NO" as const }],
+  ])],
+  ["artifact_publication_batch_items", new Map([
+    ["batch_reservation_id", { dataType: "text", nullable: "NO" as const }],
+    ["ordinal", { dataType: "integer", nullable: "NO" as const }],
+    ["artifact_hash", { dataType: "text", nullable: "NO" as const }],
+    ["artifact_type", { dataType: "text", nullable: "NO" as const }],
+    ["byte_length", { dataType: "bigint", nullable: "NO" as const }],
+    ["producer_metadata", { dataType: "jsonb", nullable: "NO" as const }],
+    ["reservation_id", { dataType: "text", nullable: "YES" as const }],
+    ["indexed_artifact_hash", { dataType: "text", nullable: "YES" as const }],
+    ["created_at", { dataType: "timestamp with time zone", nullable: "NO" as const }],
+  ])],
+]);
+
+type ArtifactPublicationBatchRelationAuthorityRow = Readonly<{
+  relation: string;
+  relkind: string;
+  relpersistence: string;
+  relispartition: boolean;
+  relrowsecurity: boolean;
+  relforcerowsecurity: boolean;
+  participates_in_inheritance: boolean;
+}>;
+
+async function readArtifactPublicationRelationAuthorities(
+  sql: Sql | TransactionSql,
+  relations: readonly string[],
+): Promise<ArtifactPublicationBatchRelationAuthorityRow[]> {
+  return sql.unsafe<ArtifactPublicationBatchRelationAuthorityRow[]>(
+    `SELECT c.relname AS relation, c.relkind, c.relpersistence,
+            c.relispartition, c.relrowsecurity, c.relforcerowsecurity,
+            EXISTS (
+              SELECT 1
+                FROM pg_inherits i
+               WHERE i.inhrelid = c.oid OR i.inhparent = c.oid
+            ) AS participates_in_inheritance
+       FROM pg_class c
+       JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = 'public'
+        AND c.relname = ANY($1::text[])
+      ORDER BY c.relname`,
+    [relations],
+  );
+}
+
+function hasExactArtifactPublicationRelationAuthority(
+  rows: readonly ArtifactPublicationBatchRelationAuthorityRow[],
+  relations: readonly string[],
+): boolean {
+  const expectedRelations = new Set(relations);
+  return rows.length === expectedRelations.size
+    && rows.every((row) =>
+      expectedRelations.has(row.relation)
+      && row.relkind === "r"
+      && row.relpersistence === "p"
+      && !row.relispartition
+      && !row.relrowsecurity
+      && !row.relforcerowsecurity
+      && !row.participates_in_inheritance);
+}
+
+async function detectArtifactPublicationBatchLedger(
+  sql: Sql | TransactionSql,
+): Promise<"absent" | "present" | "partial"> {
+  const batchRelations = [...EXPECTED_ARTIFACT_PUBLICATION_BATCH_COLUMNS.keys()];
+  const relations = await Promise.all(
+    batchRelations.map((table) =>
+      relationExists(sql, table)),
+  );
+  const relationAuthorities = await readArtifactPublicationRelationAuthorities(
+    sql,
+    batchRelations,
+  );
+  const indexes = await readNamedIndexes(sql, [
+    "idx_artifact_publication_reservations_id_hash",
+  ]);
+  const triggerRows = await sql.unsafe<Array<{ count: number }>>(
+    `SELECT COUNT(*)::integer AS count
+       FROM pg_trigger
+      WHERE NOT tgisinternal
+        AND tgname = ANY($1::text[])`,
+    [[
+      "trg_artifact_publication_batches_immutable",
+      "trg_artifact_publication_batch_items_immutable",
+      "trg_artifact_publication_batches_complete",
+      "trg_artifact_publication_batch_items_complete",
+      "trg_artifact_publication_reservations_identity_immutable",
+      "trg_artifact_publication_batch_child_membership",
+    ]],
+  );
+  const completenessFunction = Boolean((await sql.unsafe<Array<{ relation: string | null }>>(
+    "SELECT to_regprocedure('public.setfarm_validate_artifact_publication_batch_completeness()')::text AS relation",
+  ))[0]?.relation);
+  const reservationIdentityFunction = Boolean((await sql.unsafe<Array<{ relation: string | null }>>(
+    "SELECT to_regprocedure('public.setfarm_enforce_artifact_publication_reservation_identity()')::text AS relation",
+  ))[0]?.relation);
+  const childMembershipFunction = Boolean((await sql.unsafe<Array<{ relation: string | null }>>(
+    "SELECT to_regprocedure('public.setfarm_validate_artifact_publication_batch_child_membership()')::text AS relation",
+  ))[0]?.relation);
+  const producerBytesFunction = Boolean((await sql.unsafe<Array<{ relation: string | null }>>(
+    "SELECT to_regprocedure('public.setfarm_artifact_publication_batch_producer_identity_bytes(jsonb)')::text AS relation",
+  ))[0]?.relation);
+  const batchImmutabilityFunction = Boolean((await sql.unsafe<Array<{ relation: string | null }>>(
+    "SELECT to_regprocedure('public.setfarm_forbid_artifact_publication_batch_identity_update()')::text AS relation",
+  ))[0]?.relation);
+  const batchTransitionFunction = Boolean((await sql.unsafe<Array<{ relation: string | null }>>(
+    "SELECT to_regprocedure('public.setfarm_enforce_artifact_publication_batch_transition()')::text AS relation",
+  ))[0]?.relation);
+  const relationCount = relations.filter(Boolean).length;
+  const triggerCount = triggerRows[0]?.count ?? 0;
+  const namespaceRows = await relationExists(sql, "artifact_publication_reservations")
+    ? await sql.unsafe<Array<{ occupied: boolean }>>(
+        `SELECT EXISTS (
+           SELECT 1
+             FROM public.artifact_publication_reservations
+            WHERE left(reservation_id, 5) = 'APRB_'
+         ) AS occupied`,
+      )
+    : [];
+  const namespaceOccupied = namespaceRows[0]?.occupied === true;
+  if (
+    relationCount === 0
+    && indexes.size === 0
+    && triggerCount === 0
+    && !completenessFunction
+    && !reservationIdentityFunction
+    && !childMembershipFunction
+    && !producerBytesFunction
+    && !batchImmutabilityFunction
+    && !batchTransitionFunction
+  ) return namespaceOccupied ? "partial" : "absent";
+  if (
+    relationCount === 2
+    && hasExactArtifactPublicationRelationAuthority(relationAuthorities, batchRelations)
+    && indexes.size === 1
+    && triggerCount === 6
+    && completenessFunction
+    && reservationIdentityFunction
+    && childMembershipFunction
+    && producerBytesFunction
+    && batchImmutabilityFunction
+    && batchTransitionFunction
+  ) return "present";
+  return "partial";
+}
+
+async function verifyArtifactPublicationBatchLedger(
+  sql: Sql | TransactionSql,
+  options: Readonly<{
+    requireExactCurrentShape?: boolean;
+    forceDataAudit?: boolean;
+  }> = {},
+): Promise<void> {
+  const requireExactV23Shape = options.requireExactCurrentShape === true;
+  const batchRelations = [...EXPECTED_ARTIFACT_PUBLICATION_BATCH_COLUMNS.keys()];
+  const relationAuthorities = await readArtifactPublicationRelationAuthorities(
+    sql,
+    batchRelations,
+  );
+  if (!hasExactArtifactPublicationRelationAuthority(relationAuthorities, batchRelations)) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_ADOPTION_MISMATCH",
+      "artifact publication batch relations are not permanent ordinary authority tables",
+    );
+  }
+  for (const [table, expected] of EXPECTED_ARTIFACT_PUBLICATION_BATCH_COLUMNS) {
+    const rows = await sql.unsafe<Array<{
+      column_name: string;
+      data_type: string;
+      is_nullable: "YES" | "NO";
+      column_default: string | null;
+    }>>(
+      `SELECT column_name, data_type, is_nullable, column_default
+         FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = $1
+        ORDER BY ordinal_position`,
+      [table],
+    );
+    if (
+      (requireExactV23Shape && (
+        rows.length !== expected.size
+        || rows.some((row) => !expected.has(row.column_name))
+      ))
+      || [...expected.keys()].some((columnName) =>
+        !rows.some((row) => row.column_name === columnName))
+      || rows.some((row) => {
+        const shape = expected.get(row.column_name);
+        return shape !== undefined
+          && (row.data_type !== shape.dataType || row.is_nullable !== shape.nullable);
+      })
+      || rows.filter((row) => expected.has(row.column_name)).some((row) =>
+        normalizeSqlExact(row.column_default ?? "")
+          !== (["created_at", "updated_at"].includes(row.column_name) ? "now()" : ""))
+    ) {
+      throw new ContractSpineMigrationError(
+        "MIGRATION_ADOPTION_MISMATCH",
+        `artifact publication batch exact column set/default mismatch: ${table}`,
+      );
+    }
+  }
+  const indexes = await readNamedIndexes(sql, [
+    "idx_artifact_publication_reservations_id_hash",
+  ]);
+  if (
+    indexes.get("idx_artifact_publication_reservations_id_hash")
+      !== "create unique index idx_artifact_publication_reservations_id_hash on public.artifact_publication_reservations using btree (reservation_id, artifact_hash)"
+  ) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_ADOPTION_MISMATCH",
+      "artifact publication batch reservation identity index mismatch",
+    );
+  }
+  const expectedConstraints = new Map<string, ReadonlyMap<string, string>>([
+    ["artifact_publication_batches", new Map([
+      ["artifact_publication_batches_pkey", "PRIMARY KEY (batch_reservation_id)"],
+      ["artifact_publication_batches_id_check", "CHECK (batch_reservation_id ~ '^[A-Za-z0-9._:-]{1,200}$'::text)"],
+      ["artifact_publication_batches_identity_schema_check", "CHECK (identity_schema = 'setfarm.artifact-publication-batch.v1'::text)"],
+      ["artifact_publication_batches_hash_check", "CHECK (batch_identity_hash ~ '^[a-f0-9]{64}$'::text)"],
+      ["artifact_publication_batches_count_check", "CHECK (artifact_count >= 1 AND artifact_count <= 9)"],
+      ["artifact_publication_batches_creator_check", "CHECK (length(created_by_instance_id) >= 1 AND length(created_by_instance_id) <= 200)"],
+      ["artifact_publication_batches_owner_check", "CHECK (owner_instance_id IS NULL OR length(owner_instance_id) >= 1 AND length(owner_instance_id) <= 200)"],
+      ["artifact_publication_batches_state_check", "CHECK (state = ANY (ARRAY['active'::text, 'completed'::text, 'released'::text, 'quarantined'::text]))"],
+      ["artifact_publication_batches_token_check", "CHECK (lease_token IS NULL OR lease_token ~ '^APB_[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'::text)"],
+      ["artifact_publication_batches_active_shape_check", "CHECK ((state = 'active'::text) = (owner_instance_id IS NOT NULL) AND (state = 'active'::text) = (lease_token IS NOT NULL) AND (state = 'active'::text) = (lease_expires_at IS NOT NULL))"],
+      ["artifact_publication_batches_finalized_check", "CHECK ((state <> 'active'::text) = (finalized_at IS NOT NULL))"],
+      ["artifact_publication_batches_diagnostic_check", "CHECK ((state = ANY (ARRAY['released'::text, 'quarantined'::text])) = (NULLIF(diagnostic, ''::text) IS NOT NULL))"],
+      ["artifact_publication_batches_time_check", "CHECK (updated_at >= created_at AND (finalized_at IS NULL OR finalized_at >= created_at) AND (state <> 'active'::text OR lease_expires_at > updated_at AND lease_expires_at <= (updated_at + '00:30:00'::interval)))"],
+    ])],
+    ["artifact_publication_batch_items", new Map([
+      ["artifact_publication_batch_items_pkey", "PRIMARY KEY (batch_reservation_id, artifact_hash)"],
+      ["artifact_publication_batch_items_ordinal_unique", "UNIQUE (batch_reservation_id, ordinal)"],
+      ["artifact_publication_batch_items_reservation_unique", "UNIQUE (reservation_id)"],
+      ["artifact_publication_batch_items_batch_reservation_id_fkey", "FOREIGN KEY (batch_reservation_id) REFERENCES artifact_publication_batches(batch_reservation_id) ON DELETE RESTRICT"],
+      ["artifact_publication_batch_items_reservation_identity_fkey", "FOREIGN KEY (reservation_id, artifact_hash) REFERENCES artifact_publication_reservations(reservation_id, artifact_hash) ON DELETE RESTRICT"],
+      ["artifact_publication_batch_items_indexed_artifact_hash_fkey", "FOREIGN KEY (indexed_artifact_hash) REFERENCES semantic_artifacts(artifact_hash) ON DELETE RESTRICT"],
+      ["artifact_publication_batch_items_ordinal_check", "CHECK (ordinal >= 0 AND ordinal <= 8)"],
+      ["artifact_publication_batch_items_hash_check", "CHECK (artifact_hash ~ '^[a-f0-9]{64}$'::text)"],
+      ["artifact_publication_batch_items_type_check", "CHECK (length(artifact_type) >= 1 AND length(artifact_type) <= 200 AND artifact_type ~ '^[a-z][a-z0-9]*([.-][a-z0-9]+)+$'::text)"],
+      ["artifact_publication_batch_items_byte_length_check", "CHECK (byte_length >= 1 AND byte_length <= '9007199254740991'::bigint)"],
+      ["artifact_publication_batch_items_producer_object_check", "CHECK (jsonb_typeof(producer_metadata) = 'object'::text)"],
+      ["artifact_publication_batch_items_producer_keys_check", "CHECK (producer_metadata ?& ARRAY['pass'::text, 'codeSha'::text, 'toolVersions'::text] AND (producer_metadata - ARRAY['pass'::text, 'codeSha'::text, 'model'::text, 'promptHash'::text, 'toolVersions'::text]) = '{}'::jsonb)"],
+      ["artifact_publication_batch_items_producer_values_check", `CHECK (jsonb_typeof(producer_metadata -> 'pass'::text) = 'string'::text AND octet_length(convert_to(producer_metadata ->> 'pass'::text, 'UTF8'::name)) >= 1 AND octet_length(convert_to(producer_metadata ->> 'pass'::text, 'UTF8'::name)) <= 160 AND jsonb_typeof(producer_metadata -> 'codeSha'::text) = 'string'::text AND (producer_metadata ->> 'codeSha'::text) ~ '^[a-f0-9]{7,64}$'::text AND jsonb_typeof(producer_metadata -> 'toolVersions'::text) = 'object'::text AND NOT jsonb_path_exists(producer_metadata, '$."toolVersions".*?(@.type() != "string")'::jsonpath) AND (NOT producer_metadata ? 'model'::text OR jsonb_typeof(producer_metadata -> 'model'::text) = 'string'::text AND octet_length(convert_to(producer_metadata ->> 'model'::text, 'UTF8'::name)) >= 1 AND octet_length(convert_to(producer_metadata ->> 'model'::text, 'UTF8'::name)) <= 200) AND (NOT producer_metadata ? 'promptHash'::text OR jsonb_typeof(producer_metadata -> 'promptHash'::text) = 'string'::text AND (producer_metadata ->> 'promptHash'::text) ~ '^[a-f0-9]{64}$'::text))`],
+      ["artifact_publication_batch_items_authority_check", "CHECK ((reservation_id IS NULL) <> (indexed_artifact_hash IS NULL) AND (indexed_artifact_hash IS NULL OR indexed_artifact_hash = artifact_hash))"],
+    ])],
+  ]);
+  for (const [table, expected] of expectedConstraints) {
+    const rows = await sql.unsafe<Array<{ conname: string; definition: string }>>(
+      `SELECT conname, pg_get_constraintdef(oid, true) AS definition
+         FROM pg_constraint
+        WHERE conrelid = $1::regclass
+          AND contype <> 't'`,
+      [`public.${table}`],
+    );
+    const actual = new Map(
+      rows.map((row) => [row.conname, normalizeSqlExact(row.definition)]),
+    );
+    if (requireExactV23Shape && actual.size !== expected.size) {
+      throw new ContractSpineMigrationError(
+        "MIGRATION_ADOPTION_MISMATCH",
+        `artifact publication batch constraint count mismatch: ${table}`,
+      );
+    }
+    for (const [name, definition] of expected) {
+      if (actual.get(name) !== normalizeSqlExact(definition)) {
+        throw new ContractSpineMigrationError(
+          "MIGRATION_ADOPTION_MISMATCH",
+          `artifact publication batch constraint mismatch: ${table}:${name}`,
+        );
+      }
+    }
+  }
+  const batchIndexRows = await sql.unsafe<Array<{
+    tablename: string;
+    indexname: string;
+    indexdef: string;
+  }>>(
+    `SELECT tablename, indexname, indexdef
+       FROM pg_indexes
+      WHERE schemaname = 'public'
+        AND tablename IN (
+          'artifact_publication_batches',
+          'artifact_publication_batch_items'
+        )
+      ORDER BY tablename, indexname`,
+  );
+  const expectedBatchIndexes = new Map([
+    [
+      "artifact_publication_batch_items.artifact_publication_batch_items_ordinal_unique",
+      "CREATE UNIQUE INDEX artifact_publication_batch_items_ordinal_unique ON public.artifact_publication_batch_items USING btree (batch_reservation_id, ordinal)",
+    ],
+    [
+      "artifact_publication_batch_items.artifact_publication_batch_items_pkey",
+      "CREATE UNIQUE INDEX artifact_publication_batch_items_pkey ON public.artifact_publication_batch_items USING btree (batch_reservation_id, artifact_hash)",
+    ],
+    [
+      "artifact_publication_batch_items.artifact_publication_batch_items_reservation_unique",
+      "CREATE UNIQUE INDEX artifact_publication_batch_items_reservation_unique ON public.artifact_publication_batch_items USING btree (reservation_id)",
+    ],
+    [
+      "artifact_publication_batches.artifact_publication_batches_pkey",
+      "CREATE UNIQUE INDEX artifact_publication_batches_pkey ON public.artifact_publication_batches USING btree (batch_reservation_id)",
+    ],
+  ]);
+  const actualBatchIndexes = new Map(batchIndexRows.map((row) => [
+    `${row.tablename}.${row.indexname}`,
+    normalizeSqlExact(row.indexdef),
+  ]));
+  if (
+    (requireExactV23Shape && actualBatchIndexes.size !== expectedBatchIndexes.size)
+    || [...expectedBatchIndexes].some(([name, definition]) =>
+      actualBatchIndexes.get(name) !== normalizeSqlExact(definition))
+  ) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_ADOPTION_MISMATCH",
+      "artifact publication batch exact index set mismatch",
+    );
+  }
+  const triggerRows = await sql.unsafe<Array<{
+    tgname: string;
+    relation: string;
+    enabled: string;
+    definition: string;
+  }>>(
+    `SELECT tgname, tgrelid::regclass::text AS relation, tgenabled AS enabled,
+            pg_get_triggerdef(oid, true) AS definition
+       FROM pg_trigger
+      WHERE NOT tgisinternal
+        AND tgname = ANY($1::text[])`,
+    [[
+      "trg_artifact_publication_batches_immutable",
+      "trg_artifact_publication_batch_items_immutable",
+    ]],
+  );
+  const triggerTargets = new Map([
+    ["trg_artifact_publication_batches_immutable", "artifact_publication_batches"],
+    ["trg_artifact_publication_batch_items_immutable", "artifact_publication_batch_items"],
+  ]);
+  const batchImmutabilityFunctionRows = await sql.unsafe<Array<{ definition: string }>>(
+    "SELECT pg_get_functiondef('public.setfarm_forbid_artifact_publication_batch_identity_update()'::regprocedure) AS definition",
+  );
+  const batchTransitionFunctionRows = await sql.unsafe<Array<{ definition: string }>>(
+    "SELECT pg_get_functiondef('public.setfarm_enforce_artifact_publication_batch_transition()'::regprocedure) AS definition",
+  );
+  const expectedBatchImmutabilityFunction = `CREATE OR REPLACE FUNCTION public.setfarm_forbid_artifact_publication_batch_identity_update()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SET search_path TO 'pg_catalog', 'public'
+AS $function$
+   BEGIN
+     RAISE EXCEPTION 'ARTIFACT_PUBLICATION_BATCH_IDENTITY_IMMUTABLE' USING ERRCODE = '23514';
+   END;
+   $function$`;
+  const expectedBatchTransitionFunction = `CREATE OR REPLACE FUNCTION public.setfarm_enforce_artifact_publication_batch_transition()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SET search_path TO 'pg_catalog', 'public'
+AS $function$
+   DECLARE
+     observed_now TIMESTAMPTZ := clock_timestamp();
+     created_in_current_transaction BOOLEAN := OLD.xmin::TEXT = pg_current_xact_id()::TEXT;
+   BEGIN
+     IF TG_OP = 'DELETE' THEN
+       RAISE EXCEPTION 'ARTIFACT_PUBLICATION_BATCH_IDENTITY_IMMUTABLE' USING ERRCODE = '23514';
+     END IF;
+     IF OLD.batch_reservation_id IS DISTINCT FROM NEW.batch_reservation_id
+        OR OLD.identity_schema IS DISTINCT FROM NEW.identity_schema
+        OR OLD.batch_identity_hash IS DISTINCT FROM NEW.batch_identity_hash
+        OR OLD.artifact_count IS DISTINCT FROM NEW.artifact_count
+        OR OLD.created_by_instance_id IS DISTINCT FROM NEW.created_by_instance_id
+        OR OLD.created_at IS DISTINCT FROM NEW.created_at THEN
+       RAISE EXCEPTION 'ARTIFACT_PUBLICATION_BATCH_IDENTITY_IMMUTABLE' USING ERRCODE = '23514';
+     END IF;
+     IF OLD.state <> 'active' THEN
+       RAISE EXCEPTION 'ARTIFACT_PUBLICATION_BATCH_TERMINAL_IMMUTABLE' USING ERRCODE = '23514';
+     END IF;
+     IF NEW.updated_at <= OLD.updated_at THEN
+       RAISE EXCEPTION 'ARTIFACT_PUBLICATION_BATCH_TIME_REGRESSION' USING ERRCODE = '23514';
+     END IF;
+     IF NEW.state = 'active' THEN
+       IF NEW.owner_instance_id IS NOT DISTINCT FROM OLD.owner_instance_id
+          AND NEW.lease_token IS NOT DISTINCT FROM OLD.lease_token THEN
+         IF (NOT created_in_current_transaction AND observed_now >= OLD.lease_expires_at)
+            OR NEW.lease_expires_at <= OLD.lease_expires_at
+            OR NEW.lease_expires_at <= observed_now
+            OR NEW.lease_expires_at > observed_now + INTERVAL '30 minutes' THEN
+           RAISE EXCEPTION 'ARTIFACT_PUBLICATION_BATCH_HEARTBEAT_INVALID' USING ERRCODE = '23514';
+         END IF;
+       ELSIF observed_now < OLD.lease_expires_at
+          OR NEW.updated_at < OLD.lease_expires_at
+          OR NEW.lease_expires_at <= observed_now
+          OR NEW.lease_expires_at > observed_now + INTERVAL '30 minutes'
+          OR NEW.owner_instance_id IS NOT DISTINCT FROM OLD.owner_instance_id
+          OR NEW.lease_token IS NOT DISTINCT FROM OLD.lease_token THEN
+         RAISE EXCEPTION 'ARTIFACT_PUBLICATION_BATCH_ADOPTION_INVALID' USING ERRCODE = '23514';
+       END IF;
+     ELSIF NEW.state NOT IN ('completed', 'released', 'quarantined') THEN
+       RAISE EXCEPTION 'ARTIFACT_PUBLICATION_BATCH_TRANSITION_INVALID' USING ERRCODE = '23514';
+     END IF;
+     RETURN NEW;
+   END;
+   $function$`;
+  if (
+    batchImmutabilityFunctionRows.length !== 1
+    || normalizeSqlExact(batchImmutabilityFunctionRows[0]!.definition)
+      !== normalizeSqlExact(expectedBatchImmutabilityFunction)
+    || batchTransitionFunctionRows.length !== 1
+    || normalizeSqlExact(batchTransitionFunctionRows[0]!.definition)
+      !== normalizeSqlExact(expectedBatchTransitionFunction)
+  ) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_ADOPTION_MISMATCH",
+      "artifact publication batch immutability function mismatch",
+    );
+  }
+  if (
+    triggerRows.length !== 2
+    || triggerRows.some((row) => {
+      const target = triggerTargets.get(row.tgname);
+      const definition = normalizeSqlExact(row.definition);
+      const functionName = row.tgname === "trg_artifact_publication_batches_immutable"
+        ? "setfarm_enforce_artifact_publication_batch_transition"
+        : "setfarm_forbid_artifact_publication_batch_identity_update";
+      const expectedDefinition = normalizeSqlExact(
+        `CREATE TRIGGER ${row.tgname} BEFORE DELETE OR UPDATE ON ${target} FOR EACH ROW EXECUTE FUNCTION ${functionName}()`,
+      );
+      return row.enabled !== "O"
+        || row.relation !== target
+        || definition !== expectedDefinition;
+    })
+  ) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_ADOPTION_MISMATCH",
+      "artifact publication batch immutability trigger mismatch",
+    );
+  }
+  const completenessFunctionRows = await sql.unsafe<Array<{ definition: string }>>(
+    "SELECT pg_get_functiondef('public.setfarm_validate_artifact_publication_batch_completeness()'::regprocedure) AS definition",
+  );
+  const producerBytesFunctionRows = await sql.unsafe<Array<{ definition: string }>>(
+    "SELECT pg_get_functiondef('public.setfarm_artifact_publication_batch_producer_identity_bytes(jsonb)'::regprocedure) AS definition",
+  );
+  const expectedProducerBytesFunction = `CREATE OR REPLACE FUNCTION public.setfarm_artifact_publication_batch_producer_identity_bytes(producer jsonb)
+ RETURNS bigint
+ LANGUAGE sql
+ IMMUTABLE STRICT
+ SET search_path TO 'pg_catalog', 'public'
+AS $function$
+     SELECT octet_length(convert_to(producer->>'pass', 'UTF8'))::bigint
+          + octet_length(convert_to(producer->>'codeSha', 'UTF8'))::bigint
+          + octet_length(convert_to(COALESCE(producer->>'model', ''), 'UTF8'))::bigint
+          + octet_length(convert_to(COALESCE(producer->>'promptHash', ''), 'UTF8'))::bigint
+          + COALESCE((
+              SELECT SUM(
+                       octet_length(convert_to(tool_version.key, 'UTF8'))
+                       + octet_length(convert_to(tool_version.value, 'UTF8'))
+                     )::bigint
+                FROM jsonb_each_text(producer->'toolVersions') tool_version
+            ), 0::bigint)
+   $function$`;
+  if (
+    producerBytesFunctionRows.length !== 1
+    || normalizeSqlExact(producerBytesFunctionRows[0]!.definition)
+      !== normalizeSqlExact(expectedProducerBytesFunction)
+  ) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_ADOPTION_MISMATCH",
+      "artifact publication batch producer byte function mismatch",
+    );
+  }
+  const expectedCompletenessFunction = `CREATE OR REPLACE FUNCTION public.setfarm_validate_artifact_publication_batch_completeness()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SET search_path TO 'pg_catalog', 'public'
+AS $function$
+   DECLARE
+     expected_count INTEGER;
+     observed_identity_schema TEXT;
+     observed_batch_identity_hash TEXT;
+     observed_state TEXT;
+     observed_owner_instance_id TEXT;
+     observed_lease_token TEXT;
+     observed_lease_expires_at TIMESTAMPTZ;
+     expected_batch_identity_hash TEXT;
+     actual_count INTEGER;
+     minimum_ordinal INTEGER;
+     maximum_ordinal INTEGER;
+     total_producer_identity_bytes BIGINT;
+   BEGIN
+     SELECT artifact_count, identity_schema, batch_identity_hash,
+            state, owner_instance_id, lease_token, lease_expires_at
+       INTO expected_count, observed_identity_schema, observed_batch_identity_hash,
+            observed_state, observed_owner_instance_id,
+            observed_lease_token, observed_lease_expires_at
+       FROM public.artifact_publication_batches
+      WHERE batch_reservation_id = NEW.batch_reservation_id;
+     IF expected_count IS NULL THEN
+       RAISE EXCEPTION 'ARTIFACT_PUBLICATION_BATCH_HEADER_MISSING' USING ERRCODE = '23514';
+     END IF;
+     SELECT COUNT(*)::integer, MIN(ordinal), MAX(ordinal)
+       INTO actual_count, minimum_ordinal, maximum_ordinal
+       FROM public.artifact_publication_batch_items
+      WHERE batch_reservation_id = NEW.batch_reservation_id;
+     IF actual_count <> expected_count
+        OR minimum_ordinal IS DISTINCT FROM 0
+        OR maximum_ordinal IS DISTINCT FROM expected_count - 1 THEN
+       RAISE EXCEPTION 'ARTIFACT_PUBLICATION_BATCH_INCOMPLETE' USING ERRCODE = '23514';
+     END IF;
+     SELECT COALESCE(SUM(
+              public.setfarm_artifact_publication_batch_producer_identity_bytes(
+                i.producer_metadata
+              )
+            ), 0::bigint)
+       INTO total_producer_identity_bytes
+       FROM public.artifact_publication_batch_items i
+      WHERE i.batch_reservation_id = NEW.batch_reservation_id;
+     IF total_producer_identity_bytes > 524288 THEN
+       RAISE EXCEPTION 'ARTIFACT_PUBLICATION_BATCH_PRODUCER_BUDGET_EXCEEDED' USING ERRCODE = '23514';
+     END IF;
+     SELECT encode(sha256(convert_to(
+              'setfarm.artifact-publication-batch.v1' || E'\n'
+              || string_agg(batch_item.item_identity_hash, E'\n'
+                   ORDER BY batch_item.artifact_hash COLLATE "C"),
+              'UTF8'
+            )), 'hex')
+       INTO expected_batch_identity_hash
+       FROM (
+         SELECT i.artifact_hash,
+                encode(sha256(convert_to(
+                  'setfarm.artifact-publication-batch-item.v1' || E'\n'
+                  || octet_length(convert_to(i.artifact_hash, 'UTF8'))::text || ':' || i.artifact_hash
+                  || octet_length(convert_to(i.artifact_type, 'UTF8'))::text || ':' || i.artifact_type
+                  || octet_length(convert_to(i.byte_length::text, 'UTF8'))::text || ':' || i.byte_length::text
+                  || octet_length(convert_to(i.producer_metadata->>'pass', 'UTF8'))::text || ':'
+                     || (i.producer_metadata->>'pass')
+                  || octet_length(convert_to(i.producer_metadata->>'codeSha', 'UTF8'))::text || ':'
+                     || (i.producer_metadata->>'codeSha')
+                  || octet_length(convert_to(COALESCE(i.producer_metadata->>'model', ''), 'UTF8'))::text || ':'
+                     || COALESCE(i.producer_metadata->>'model', '')
+                  || octet_length(convert_to(COALESCE(i.producer_metadata->>'promptHash', ''), 'UTF8'))::text || ':'
+                     || COALESCE(i.producer_metadata->>'promptHash', '')
+                  || COALESCE((
+                       SELECT string_agg(
+                                octet_length(convert_to(tool_version.key, 'UTF8'))::text || ':' || tool_version.key
+                                || octet_length(convert_to(tool_version.value, 'UTF8'))::text || ':' || tool_version.value,
+                                '' ORDER BY convert_to(tool_version.key, 'UTF8')
+                              )
+                         FROM jsonb_each_text(i.producer_metadata->'toolVersions') tool_version
+                     ), ''),
+                  'UTF8'
+                )), 'hex') AS item_identity_hash
+           FROM public.artifact_publication_batch_items i
+          WHERE i.batch_reservation_id = NEW.batch_reservation_id
+       ) batch_item;
+     IF observed_identity_schema IS DISTINCT FROM 'setfarm.artifact-publication-batch.v1'
+        OR observed_batch_identity_hash IS DISTINCT FROM expected_batch_identity_hash THEN
+       RAISE EXCEPTION 'ARTIFACT_PUBLICATION_BATCH_IDENTITY_MISMATCH' USING ERRCODE = '23514';
+     END IF;
+     IF EXISTS (
+       SELECT 1
+         FROM (
+           SELECT artifact_hash,
+                  lag(artifact_hash) OVER (ORDER BY ordinal) AS preceding_hash
+             FROM public.artifact_publication_batch_items
+            WHERE batch_reservation_id = NEW.batch_reservation_id
+         ) ordered_items
+        WHERE preceding_hash IS NOT NULL
+          AND preceding_hash COLLATE "C" >= artifact_hash COLLATE "C"
+     ) THEN
+       RAISE EXCEPTION 'ARTIFACT_PUBLICATION_BATCH_ORDER_MISMATCH' USING ERRCODE = '23514';
+     END IF;
+     IF EXISTS (
+       SELECT 1
+         FROM public.artifact_publication_batch_items i
+         LEFT JOIN public.artifact_publication_reservations r
+           ON r.reservation_id = i.reservation_id
+          AND r.artifact_hash = i.artifact_hash
+         LEFT JOIN public.semantic_artifacts a
+           ON a.artifact_hash = i.indexed_artifact_hash
+        WHERE i.batch_reservation_id = NEW.batch_reservation_id
+          AND (
+            (i.reservation_id IS NOT NULL AND (
+              r.reservation_id IS NULL
+              OR i.reservation_id IS DISTINCT FROM 'APRB_' || encode(sha256(convert_to(
+                   'setfarm.artifact-publication-batch-child.v1' || E'\n'
+                   || NEW.batch_reservation_id || E'\n'
+                   || expected_batch_identity_hash || E'\n'
+                   || i.artifact_hash,
+                   'UTF8'
+                 )), 'hex')
+              OR r.artifact_type IS DISTINCT FROM i.artifact_type
+              OR r.byte_length IS DISTINCT FROM i.byte_length
+              OR r.producer_metadata IS DISTINCT FROM i.producer_metadata
+            ))
+            OR (i.indexed_artifact_hash IS NOT NULL AND (
+              a.artifact_hash IS NULL
+              OR a.artifact_type IS DISTINCT FROM i.artifact_type
+              OR a.byte_length IS DISTINCT FROM i.byte_length
+              OR a.producer_metadata IS DISTINCT FROM i.producer_metadata
+            ))
+            OR public.setfarm_artifact_publication_batch_producer_identity_bytes(
+                 i.producer_metadata
+               ) > 131072
+            OR (SELECT COUNT(*) FROM jsonb_each(i.producer_metadata->'toolVersions')) > 4096
+            OR EXISTS (
+              SELECT 1
+                FROM jsonb_each_text(i.producer_metadata->'toolVersions') tool_version
+               WHERE octet_length(convert_to(tool_version.key, 'UTF8')) NOT BETWEEN 1 AND 100
+                  OR octet_length(convert_to(tool_version.value, 'UTF8')) NOT BETWEEN 1 AND 200
+                  OR tool_version.key IN ('__proto__', 'constructor', 'prototype')
+            )
+          )
+     ) THEN
+       RAISE EXCEPTION 'ARTIFACT_PUBLICATION_BATCH_IDENTITY_MISMATCH' USING ERRCODE = '23514';
+     END IF;
+     IF EXISTS (
+       SELECT 1
+         FROM public.artifact_publication_batch_items i
+         JOIN public.artifact_publication_reservations r
+           ON r.reservation_id = i.reservation_id
+         LEFT JOIN public.semantic_artifacts a
+           ON a.artifact_hash = i.artifact_hash
+        WHERE i.batch_reservation_id = NEW.batch_reservation_id
+          AND r.state = 'published'
+          AND (
+            a.artifact_hash IS NULL
+            OR a.artifact_type IS DISTINCT FROM i.artifact_type
+            OR a.byte_length IS DISTINCT FROM i.byte_length
+            OR a.producer_metadata IS DISTINCT FROM i.producer_metadata
+          )
+     ) THEN
+       RAISE EXCEPTION 'ARTIFACT_PUBLICATION_BATCH_PUBLISHED_IDENTITY_MISMATCH' USING ERRCODE = '23514';
+     END IF;
+     IF observed_state = 'active' THEN
+       IF NOT EXISTS (
+         SELECT 1
+           FROM public.artifact_publication_batch_items i
+           JOIN public.artifact_publication_reservations r
+             ON r.reservation_id = i.reservation_id
+          WHERE i.batch_reservation_id = NEW.batch_reservation_id
+            AND r.state = 'reserved'
+       ) OR EXISTS (
+         SELECT 1
+           FROM public.artifact_publication_batch_items i
+           JOIN public.artifact_publication_reservations r
+             ON r.reservation_id = i.reservation_id
+          WHERE i.batch_reservation_id = NEW.batch_reservation_id
+            AND (
+              r.state NOT IN ('reserved', 'published')
+              OR (r.state = 'reserved' AND (
+                r.owner_instance_id IS DISTINCT FROM observed_owner_instance_id
+                OR r.lease_token IS DISTINCT FROM observed_lease_token
+                OR r.lease_expires_at IS DISTINCT FROM observed_lease_expires_at
+              ))
+            )
+       ) THEN
+         RAISE EXCEPTION 'ARTIFACT_PUBLICATION_BATCH_LEASE_INCOHERENT' USING ERRCODE = '23514';
+       END IF;
+     ELSIF observed_state = 'completed' THEN
+       IF EXISTS (
+         SELECT 1
+           FROM public.artifact_publication_batch_items i
+           LEFT JOIN public.artifact_publication_reservations r
+             ON r.reservation_id = i.reservation_id
+           LEFT JOIN public.semantic_artifacts a
+             ON a.artifact_hash = i.artifact_hash
+          WHERE i.batch_reservation_id = NEW.batch_reservation_id
+            AND (a.artifact_hash IS NULL OR (i.reservation_id IS NOT NULL AND r.state <> 'published'))
+       ) THEN
+         RAISE EXCEPTION 'ARTIFACT_PUBLICATION_BATCH_COMPLETION_INVALID' USING ERRCODE = '23514';
+       END IF;
+     ELSIF observed_state = 'released' THEN
+       IF EXISTS (
+         SELECT 1
+           FROM public.artifact_publication_batch_items i
+           JOIN public.artifact_publication_reservations r
+             ON r.reservation_id = i.reservation_id
+          WHERE i.batch_reservation_id = NEW.batch_reservation_id
+            AND r.state NOT IN ('published', 'released')
+       ) THEN
+         RAISE EXCEPTION 'ARTIFACT_PUBLICATION_BATCH_RELEASE_INVALID' USING ERRCODE = '23514';
+       END IF;
+     ELSIF observed_state = 'quarantined' THEN
+       IF EXISTS (
+         SELECT 1
+           FROM public.artifact_publication_batch_items i
+           JOIN public.artifact_publication_reservations r
+             ON r.reservation_id = i.reservation_id
+          WHERE i.batch_reservation_id = NEW.batch_reservation_id
+            AND r.state NOT IN ('published', 'quarantined')
+       ) THEN
+         RAISE EXCEPTION 'ARTIFACT_PUBLICATION_BATCH_QUARANTINE_INVALID' USING ERRCODE = '23514';
+       END IF;
+     END IF;
+     IF (SELECT COUNT(*) FROM public.artifact_capacity
+           WHERE capacity_key = 'semantic-artifacts') <> 1
+        OR EXISTS (
+          SELECT 1
+            FROM public.artifact_capacity c
+           WHERE c.capacity_key = 'semantic-artifacts'
+             AND (
+               c.reserved_bytes IS DISTINCT FROM (
+                 SELECT COALESCE(SUM(r.byte_length), 0)::bigint
+                   FROM public.artifact_publication_reservations r
+                  WHERE r.state = 'reserved'
+               )
+               OR c.total_bytes IS DISTINCT FROM (
+                 SELECT COALESCE(SUM(a.byte_length), 0)::bigint
+                   FROM public.semantic_artifacts a
+               )
+             )
+        ) THEN
+       RAISE EXCEPTION 'ARTIFACT_PUBLICATION_BATCH_CAPACITY_INCOHERENT' USING ERRCODE = '23514';
+     END IF;
+
+     RETURN NULL;
+   END;
+   $function$`;
+  if (
+    completenessFunctionRows.length !== 1
+    || normalizeSqlExact(completenessFunctionRows[0]!.definition)
+      !== normalizeSqlExact(expectedCompletenessFunction)
+  ) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_ADOPTION_MISMATCH",
+      "artifact publication batch completeness function mismatch",
+    );
+  }
+  const completenessTriggerRows = await sql.unsafe<Array<{
+    tgname: string;
+    relation: string;
+    enabled: string;
+    deferrable: boolean;
+    initially_deferred: boolean;
+    definition: string;
+  }>>(
+    `SELECT tgname, tgrelid::regclass::text AS relation, tgenabled AS enabled,
+            tgdeferrable AS deferrable, tginitdeferred AS initially_deferred,
+            pg_get_triggerdef(oid, true) AS definition
+       FROM pg_trigger
+      WHERE NOT tgisinternal
+        AND tgname = ANY($1::text[])`,
+    [[
+      "trg_artifact_publication_batches_complete",
+      "trg_artifact_publication_batch_items_complete",
+    ]],
+  );
+  const completenessTriggerTargets = new Map([
+    ["trg_artifact_publication_batches_complete", "artifact_publication_batches"],
+    ["trg_artifact_publication_batch_items_complete", "artifact_publication_batch_items"],
+  ]);
+  if (
+    completenessTriggerRows.length !== 2
+    || completenessTriggerRows.some((row) => {
+      const target = completenessTriggerTargets.get(row.tgname);
+      const events = row.tgname === "trg_artifact_publication_batches_complete"
+        ? "INSERT OR UPDATE"
+        : "INSERT";
+      const expectedDefinition = normalizeSqlExact(
+        `CREATE CONSTRAINT TRIGGER ${row.tgname} AFTER ${events} ON ${target} DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION setfarm_validate_artifact_publication_batch_completeness()`,
+      );
+      return row.enabled !== "O"
+        || !row.deferrable
+        || !row.initially_deferred
+        || row.relation !== target
+        || normalizeSqlExact(row.definition) !== expectedDefinition;
+    })
+  ) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_ADOPTION_MISMATCH",
+      "artifact publication batch completeness trigger mismatch",
+    );
+  }
+  const reservationIdentityFunctionRows = await sql.unsafe<Array<{ definition: string }>>(
+    "SELECT pg_get_functiondef('public.setfarm_enforce_artifact_publication_reservation_identity()'::regprocedure) AS definition",
+  );
+  const expectedReservationIdentityFunction = `CREATE OR REPLACE FUNCTION public.setfarm_enforce_artifact_publication_reservation_identity()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SET search_path TO 'pg_catalog', 'public'
+AS $function$
+   BEGIN
+     IF TG_OP = 'DELETE' THEN
+       RAISE EXCEPTION 'ARTIFACT_PUBLICATION_RESERVATION_IMMUTABLE' USING ERRCODE = '23514';
+     END IF;
+     IF OLD.reservation_id IS DISTINCT FROM NEW.reservation_id
+        OR OLD.artifact_hash IS DISTINCT FROM NEW.artifact_hash
+        OR OLD.artifact_type IS DISTINCT FROM NEW.artifact_type
+        OR OLD.byte_length IS DISTINCT FROM NEW.byte_length
+        OR OLD.producer_metadata IS DISTINCT FROM NEW.producer_metadata
+        OR OLD.created_at IS DISTINCT FROM NEW.created_at THEN
+       RAISE EXCEPTION 'ARTIFACT_PUBLICATION_RESERVATION_IDENTITY_IMMUTABLE' USING ERRCODE = '23514';
+     END IF;
+     IF OLD.state <> 'reserved' THEN
+       RAISE EXCEPTION 'ARTIFACT_PUBLICATION_RESERVATION_TERMINAL_IMMUTABLE' USING ERRCODE = '23514';
+     END IF;
+     RETURN NEW;
+   END;
+   $function$`;
+  if (
+    reservationIdentityFunctionRows.length !== 1
+    || normalizeSqlExact(reservationIdentityFunctionRows[0]!.definition)
+      !== normalizeSqlExact(expectedReservationIdentityFunction)
+  ) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_ADOPTION_MISMATCH",
+      "artifact publication reservation identity function mismatch",
+    );
+  }
+  const reservationIdentityTriggerRows = await sql.unsafe<Array<{
+    enabled: string;
+    relation: string;
+    definition: string;
+  }>>(
+    `SELECT tgenabled AS enabled, tgrelid::regclass::text AS relation,
+            pg_get_triggerdef(oid, true) AS definition
+       FROM pg_trigger
+      WHERE NOT tgisinternal
+        AND tgname = 'trg_artifact_publication_reservations_identity_immutable'`,
+  );
+  if (
+    reservationIdentityTriggerRows.length !== 1
+    || reservationIdentityTriggerRows[0]!.enabled !== "O"
+    || reservationIdentityTriggerRows[0]!.relation !== "artifact_publication_reservations"
+    || normalizeSqlExact(reservationIdentityTriggerRows[0]!.definition) !== normalizeSqlExact(
+      "CREATE TRIGGER trg_artifact_publication_reservations_identity_immutable BEFORE DELETE OR UPDATE ON artifact_publication_reservations FOR EACH ROW EXECUTE FUNCTION setfarm_enforce_artifact_publication_reservation_identity()",
+    )
+  ) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_ADOPTION_MISMATCH",
+      "artifact publication reservation identity trigger mismatch",
+    );
+  }
+  const childMembershipFunctionRows = await sql.unsafe<Array<{ definition: string }>>(
+    "SELECT pg_get_functiondef('public.setfarm_validate_artifact_publication_batch_child_membership()'::regprocedure) AS definition",
+  );
+  const expectedChildMembershipFunction = `CREATE OR REPLACE FUNCTION public.setfarm_validate_artifact_publication_batch_child_membership()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SET search_path TO 'pg_catalog', 'public'
+AS $function$
+   DECLARE
+     observed_batch_reservation_id TEXT;
+     observed_state TEXT;
+     observed_owner_instance_id TEXT;
+     observed_lease_token TEXT;
+     observed_lease_expires_at TIMESTAMPTZ;
+   BEGIN
+     IF left(NEW.reservation_id, 5) <> 'APRB_' THEN
+       RETURN NULL;
+     END IF;
+     SELECT i.batch_reservation_id
+       INTO observed_batch_reservation_id
+       FROM public.artifact_publication_batch_items i
+      WHERE i.reservation_id = NEW.reservation_id
+        AND i.artifact_hash = NEW.artifact_hash;
+     IF observed_batch_reservation_id IS NULL THEN
+       RAISE EXCEPTION 'ARTIFACT_PUBLICATION_BATCH_CHILD_ORPHANED' USING ERRCODE = '23514';
+     END IF;
+     SELECT state, owner_instance_id, lease_token, lease_expires_at
+       INTO observed_state, observed_owner_instance_id,
+            observed_lease_token, observed_lease_expires_at
+       FROM public.artifact_publication_batches
+      WHERE batch_reservation_id = observed_batch_reservation_id;
+     IF NEW.state = 'reserved' AND EXISTS (
+       SELECT 1
+         FROM public.semantic_artifacts a
+        WHERE a.artifact_hash = NEW.artifact_hash
+     ) THEN
+       RAISE EXCEPTION 'ARTIFACT_PUBLICATION_BATCH_RESERVED_ARTIFACT_INDEXED' USING ERRCODE = '23514';
+     END IF;
+     IF NEW.state = 'published' AND NOT EXISTS (
+       SELECT 1
+         FROM public.semantic_artifacts a
+        WHERE a.artifact_hash = NEW.artifact_hash
+          AND a.artifact_type IS NOT DISTINCT FROM NEW.artifact_type
+          AND a.byte_length IS NOT DISTINCT FROM NEW.byte_length
+          AND a.producer_metadata IS NOT DISTINCT FROM NEW.producer_metadata
+     ) THEN
+       RAISE EXCEPTION 'ARTIFACT_PUBLICATION_BATCH_PUBLISHED_IDENTITY_MISMATCH' USING ERRCODE = '23514';
+     END IF;
+     IF (observed_state = 'active' AND (
+          NEW.state NOT IN ('reserved', 'published')
+          OR (NEW.state = 'reserved' AND (
+            NEW.owner_instance_id IS DISTINCT FROM observed_owner_instance_id
+            OR NEW.lease_token IS DISTINCT FROM observed_lease_token
+            OR NEW.lease_expires_at IS DISTINCT FROM observed_lease_expires_at
+          ))
+        ))
+        OR (observed_state = 'completed' AND NEW.state <> 'published')
+        OR (observed_state = 'released' AND NEW.state NOT IN ('published', 'released'))
+        OR (observed_state = 'quarantined' AND NEW.state NOT IN ('published', 'quarantined')) THEN
+       RAISE EXCEPTION 'ARTIFACT_PUBLICATION_BATCH_CHILD_STATE_INCOHERENT' USING ERRCODE = '23514';
+     END IF;
+     IF observed_state = 'active' AND NOT EXISTS (
+       SELECT 1
+         FROM public.artifact_publication_batch_items i
+         JOIN public.artifact_publication_reservations r
+           ON r.reservation_id = i.reservation_id
+        WHERE i.batch_reservation_id = observed_batch_reservation_id
+          AND r.state = 'reserved'
+     ) THEN
+       RAISE EXCEPTION 'ARTIFACT_PUBLICATION_BATCH_ACTIVE_WITHOUT_RESERVATION' USING ERRCODE = '23514';
+     END IF;
+     IF (SELECT COUNT(*) FROM public.artifact_capacity
+           WHERE capacity_key = 'semantic-artifacts') <> 1
+        OR EXISTS (
+          SELECT 1
+            FROM public.artifact_capacity c
+           WHERE c.capacity_key = 'semantic-artifacts'
+             AND (
+               c.reserved_bytes IS DISTINCT FROM (
+                 SELECT COALESCE(SUM(r.byte_length), 0)::bigint
+                   FROM public.artifact_publication_reservations r
+                  WHERE r.state = 'reserved'
+               )
+               OR c.total_bytes IS DISTINCT FROM (
+                 SELECT COALESCE(SUM(a.byte_length), 0)::bigint
+                   FROM public.semantic_artifacts a
+               )
+             )
+        ) THEN
+       RAISE EXCEPTION 'ARTIFACT_PUBLICATION_BATCH_CAPACITY_INCOHERENT' USING ERRCODE = '23514';
+     END IF;
+     RETURN NULL;
+   END;
+   $function$`;
+  if (
+    childMembershipFunctionRows.length !== 1
+    || normalizeSqlExact(childMembershipFunctionRows[0]!.definition)
+      !== normalizeSqlExact(expectedChildMembershipFunction)
+  ) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_ADOPTION_MISMATCH",
+      "artifact publication batch child membership function mismatch",
+    );
+  }
+  const childMembershipTriggerRows = await sql.unsafe<Array<{
+    enabled: string;
+    relation: string;
+    deferrable: boolean;
+    initially_deferred: boolean;
+    definition: string;
+  }>>(
+    `SELECT tgenabled AS enabled, tgrelid::regclass::text AS relation,
+            tgdeferrable AS deferrable, tginitdeferred AS initially_deferred,
+            pg_get_triggerdef(oid, true) AS definition
+       FROM pg_trigger
+      WHERE NOT tgisinternal
+        AND tgname = 'trg_artifact_publication_batch_child_membership'`,
+  );
+  if (
+    childMembershipTriggerRows.length !== 1
+    || childMembershipTriggerRows[0]!.enabled !== "O"
+    || childMembershipTriggerRows[0]!.relation !== "artifact_publication_reservations"
+    || !childMembershipTriggerRows[0]!.deferrable
+    || !childMembershipTriggerRows[0]!.initially_deferred
+    || normalizeSqlExact(childMembershipTriggerRows[0]!.definition) !== normalizeSqlExact(
+      "CREATE CONSTRAINT TRIGGER trg_artifact_publication_batch_child_membership AFTER INSERT OR UPDATE ON artifact_publication_reservations DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION setfarm_validate_artifact_publication_batch_child_membership()",
+    )
+  ) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_ADOPTION_MISMATCH",
+      "artifact publication batch child membership trigger mismatch",
+    );
+  }
+  const authorityTriggerRows = await sql.unsafe<Array<{
+    relation: string;
+    tgname: string;
+  }>>(
+    `SELECT tgrelid::regclass::text AS relation, tgname
+       FROM pg_trigger
+      WHERE NOT tgisinternal
+        AND tgrelid IN (
+          'public.artifact_publication_batches'::regclass,
+          'public.artifact_publication_batch_items'::regclass,
+          'public.artifact_publication_reservations'::regclass
+        )
+      ORDER BY relation, tgname`,
+  );
+  const expectedAuthorityTriggers = new Map<string, readonly string[]>([
+    ["artifact_publication_batches", [
+      "trg_artifact_publication_batches_complete",
+      "trg_artifact_publication_batches_immutable",
+    ]],
+    ["artifact_publication_batch_items", [
+      "trg_artifact_publication_batch_items_complete",
+      "trg_artifact_publication_batch_items_immutable",
+    ]],
+    ["artifact_publication_reservations", [
+      "trg_artifact_publication_batch_child_membership",
+      "trg_artifact_publication_reservations_identity_immutable",
+    ]],
+  ]);
+  const actualAuthorityTriggers = new Map<string, string[]>();
+  for (const row of authorityTriggerRows) {
+    const names = actualAuthorityTriggers.get(row.relation) ?? [];
+    names.push(row.tgname);
+    actualAuthorityTriggers.set(row.relation, names);
+  }
+  if (
+    (requireExactV23Shape && authorityTriggerRows.length !== 6)
+    || [...expectedAuthorityTriggers].some(([relation, names]) =>
+      !names.every((name) => (actualAuthorityTriggers.get(relation) ?? []).includes(name)))
+  ) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_ADOPTION_MISMATCH",
+      "artifact publication batch authority trigger set mismatch",
+    );
+  }
+  const journaledV23Rows = await relationExists(sql, "setfarm_schema_migrations")
+    ? await sql.unsafe<Array<{ journaled: boolean }>>(
+        `SELECT EXISTS (
+           SELECT 1 FROM public.setfarm_schema_migrations WHERE version = 23
+         ) AS journaled`,
+      )
+    : [];
+  if (journaledV23Rows[0]?.journaled === true && options.forceDataAudit !== true) {
+    // Deferred DB invariants guard every post-migration write. Historical row
+    // re-hashing is reserved for apply/adoption and explicit offline audits so
+    // activation cost does not grow with the immutable ledger forever.
+    return;
+  }
+  const incompleteRows = await sql.unsafe<Array<{ batch_reservation_id: string }>>(
+    `SELECT b.batch_reservation_id
+       FROM public.artifact_publication_batches b
+       LEFT JOIN public.artifact_publication_batch_items i
+         ON i.batch_reservation_id = b.batch_reservation_id
+      GROUP BY b.batch_reservation_id, b.artifact_count
+     HAVING COUNT(i.artifact_hash)::integer <> b.artifact_count
+         OR MIN(i.ordinal) IS DISTINCT FROM 0
+         OR MAX(i.ordinal) IS DISTINCT FROM b.artifact_count - 1
+      ORDER BY b.batch_reservation_id
+      LIMIT 1`,
+  );
+  if (incompleteRows[0]) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_ADOPTION_MISMATCH",
+      `artifact publication batch membership is incomplete: ${incompleteRows[0].batch_reservation_id}`,
+    );
+  }
+  const lifecycleMismatchRows = await sql.unsafe<Array<{ batch_reservation_id: string }>>(
+    `SELECT b.batch_reservation_id
+       FROM public.artifact_publication_batches b
+      WHERE (
+        b.state = 'active' AND (
+          NOT EXISTS (
+            SELECT 1
+              FROM public.artifact_publication_batch_items i
+              JOIN public.artifact_publication_reservations r
+                ON r.reservation_id = i.reservation_id
+             WHERE i.batch_reservation_id = b.batch_reservation_id
+               AND r.state = 'reserved'
+          )
+          OR EXISTS (
+            SELECT 1
+              FROM public.artifact_publication_batch_items i
+              JOIN public.artifact_publication_reservations r
+                ON r.reservation_id = i.reservation_id
+             WHERE i.batch_reservation_id = b.batch_reservation_id
+               AND (
+                 r.state NOT IN ('reserved', 'published')
+                 OR (r.state = 'reserved' AND (
+                   r.owner_instance_id IS DISTINCT FROM b.owner_instance_id
+                   OR r.lease_token IS DISTINCT FROM b.lease_token
+                   OR r.lease_expires_at IS DISTINCT FROM b.lease_expires_at
+                 ))
+               )
+          )
+        )
+      ) OR (
+        b.state = 'completed' AND EXISTS (
+          SELECT 1
+            FROM public.artifact_publication_batch_items i
+            LEFT JOIN public.artifact_publication_reservations r
+              ON r.reservation_id = i.reservation_id
+            LEFT JOIN public.semantic_artifacts a
+              ON a.artifact_hash = i.artifact_hash
+           WHERE i.batch_reservation_id = b.batch_reservation_id
+             AND (a.artifact_hash IS NULL OR (i.reservation_id IS NOT NULL AND r.state <> 'published'))
+        )
+      ) OR (
+        b.state = 'released' AND EXISTS (
+          SELECT 1
+            FROM public.artifact_publication_batch_items i
+            JOIN public.artifact_publication_reservations r
+              ON r.reservation_id = i.reservation_id
+           WHERE i.batch_reservation_id = b.batch_reservation_id
+             AND r.state NOT IN ('published', 'released')
+        )
+      ) OR (
+        b.state = 'quarantined' AND EXISTS (
+          SELECT 1
+            FROM public.artifact_publication_batch_items i
+            JOIN public.artifact_publication_reservations r
+              ON r.reservation_id = i.reservation_id
+           WHERE i.batch_reservation_id = b.batch_reservation_id
+             AND r.state NOT IN ('published', 'quarantined')
+        )
+      )
+      ORDER BY b.batch_reservation_id
+      LIMIT 1`,
+  );
+  if (lifecycleMismatchRows[0]) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_ADOPTION_MISMATCH",
+      `artifact publication batch lifecycle is incoherent: ${lifecycleMismatchRows[0].batch_reservation_id}`,
+    );
+  }
+  const capacityMismatchRows = await sql.unsafe<Array<{ mismatched: boolean }>>(
+    `SELECT (
+       (SELECT COUNT(*) FROM public.artifact_capacity
+         WHERE capacity_key = 'semantic-artifacts') <> 1
+       OR EXISTS (
+         SELECT 1
+           FROM public.artifact_capacity c
+          WHERE c.capacity_key = 'semantic-artifacts'
+            AND NOT (
+              c.quota_bytes > 0
+              AND c.max_payload_bytes > 0
+              AND c.max_payload_bytes <= c.quota_bytes
+              AND c.total_bytes >= 0
+              AND c.reserved_bytes >= 0
+              AND c.total_bytes + c.reserved_bytes <= c.quota_bytes
+              AND c.state IN ('bootstrap_required', 'ready', 'quarantined')
+              AND ((c.state = 'bootstrap_required') = (c.reconciled_at IS NULL))
+              AND (c.state <> 'quarantined' OR NULLIF(c.diagnostic, '') IS NOT NULL)
+            )
+       )
+       OR (SELECT reserved_bytes FROM public.artifact_capacity
+            WHERE capacity_key = 'semantic-artifacts') IS DISTINCT FROM (
+         SELECT COALESCE(SUM(r.byte_length), 0)::bigint
+           FROM public.artifact_publication_reservations r
+          WHERE r.state = 'reserved'
+       )
+       OR (SELECT total_bytes FROM public.artifact_capacity
+            WHERE capacity_key = 'semantic-artifacts') IS DISTINCT FROM (
+         SELECT COALESCE(SUM(a.byte_length), 0)::bigint
+           FROM public.semantic_artifacts a
+       )
+     ) AS mismatched`,
+  );
+  if (capacityMismatchRows[0]?.mismatched !== false) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_ADOPTION_MISMATCH",
+      "artifact publication capacity accounting is incoherent",
+    );
+  }
+  const mismatchedRows = await sql.unsafe<Array<{ batch_reservation_id: string }>>(
+    `SELECT i.batch_reservation_id
+       FROM public.artifact_publication_batch_items i
+       JOIN public.artifact_publication_batches b
+         ON b.batch_reservation_id = i.batch_reservation_id
+       LEFT JOIN public.artifact_publication_reservations r
+         ON r.reservation_id = i.reservation_id
+        AND r.artifact_hash = i.artifact_hash
+       LEFT JOIN public.semantic_artifacts a
+         ON a.artifact_hash = i.indexed_artifact_hash
+       LEFT JOIN public.semantic_artifacts published_artifact
+         ON published_artifact.artifact_hash = i.artifact_hash
+      WHERE (i.reservation_id IS NOT NULL AND (
+               r.reservation_id IS NULL
+               OR i.reservation_id IS DISTINCT FROM 'APRB_' || encode(sha256(convert_to(
+                    'setfarm.artifact-publication-batch-child.v1' || E'\n'
+                    || i.batch_reservation_id || E'\n'
+                    || b.batch_identity_hash || E'\n'
+                    || i.artifact_hash,
+                    'UTF8'
+                  )), 'hex')
+               OR r.artifact_type IS DISTINCT FROM i.artifact_type
+               OR r.byte_length IS DISTINCT FROM i.byte_length
+               OR r.producer_metadata IS DISTINCT FROM i.producer_metadata
+            ))
+         OR (i.indexed_artifact_hash IS NOT NULL AND (
+               a.artifact_hash IS NULL
+               OR a.artifact_type IS DISTINCT FROM i.artifact_type
+               OR a.byte_length IS DISTINCT FROM i.byte_length
+               OR a.producer_metadata IS DISTINCT FROM i.producer_metadata
+            ))
+         OR (r.state = 'published' AND (
+               published_artifact.artifact_hash IS NULL
+               OR published_artifact.artifact_type IS DISTINCT FROM i.artifact_type
+               OR published_artifact.byte_length IS DISTINCT FROM i.byte_length
+               OR published_artifact.producer_metadata IS DISTINCT FROM i.producer_metadata
+            ))
+         OR (r.state = 'reserved' AND published_artifact.artifact_hash IS NOT NULL)
+         OR public.setfarm_artifact_publication_batch_producer_identity_bytes(
+              i.producer_metadata
+            ) > 131072
+         OR (SELECT COUNT(*) FROM jsonb_each(i.producer_metadata->'toolVersions')) > 4096
+         OR EXISTS (
+              SELECT 1
+                FROM jsonb_each_text(i.producer_metadata->'toolVersions') tool_version
+               WHERE octet_length(convert_to(tool_version.key, 'UTF8')) NOT BETWEEN 1 AND 100
+                  OR octet_length(convert_to(tool_version.value, 'UTF8')) NOT BETWEEN 1 AND 200
+                  OR tool_version.key IN ('__proto__', 'constructor', 'prototype')
+            )
+      ORDER BY i.batch_reservation_id
+      LIMIT 1`,
+  );
+  if (mismatchedRows[0]) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_ADOPTION_MISMATCH",
+      `artifact publication batch identity is mismatched: ${mismatchedRows[0].batch_reservation_id}`,
+    );
+  }
+  const producerBudgetRows = await sql.unsafe<Array<{ batch_reservation_id: string }>>(
+    `SELECT i.batch_reservation_id
+       FROM public.artifact_publication_batch_items i
+      GROUP BY i.batch_reservation_id
+     HAVING SUM(
+              public.setfarm_artifact_publication_batch_producer_identity_bytes(
+                i.producer_metadata
+              )
+            ) > 524288
+      ORDER BY i.batch_reservation_id
+      LIMIT 1`,
+  );
+  if (producerBudgetRows[0]) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_ADOPTION_MISMATCH",
+      `artifact publication batch producer budget is exceeded: ${producerBudgetRows[0].batch_reservation_id}`,
+    );
+  }
+  const orphanedNamespaceRows = await sql.unsafe<Array<{ reservation_id: string }>>(
+    `SELECT r.reservation_id
+       FROM public.artifact_publication_reservations r
+       LEFT JOIN public.artifact_publication_batch_items i
+         ON i.reservation_id = r.reservation_id
+      WHERE left(r.reservation_id, 5) = 'APRB_'
+        AND i.reservation_id IS NULL
+      ORDER BY r.reservation_id
+      LIMIT 1`,
+  );
+  if (orphanedNamespaceRows[0]) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_ADOPTION_MISMATCH",
+      `artifact publication batch namespace is orphaned: ${orphanedNamespaceRows[0].reservation_id}`,
+    );
+  }
+  const identityMismatchRows = await sql.unsafe<Array<{ batch_reservation_id: string }>>(
+    `WITH item_identities AS (
+       SELECT i.batch_reservation_id, i.ordinal, i.artifact_hash,
+              lag(i.artifact_hash) OVER (
+                PARTITION BY i.batch_reservation_id ORDER BY i.ordinal
+              ) AS preceding_hash,
+              encode(sha256(convert_to(
+                'setfarm.artifact-publication-batch-item.v1' || E'\n'
+                || octet_length(convert_to(i.artifact_hash, 'UTF8'))::text || ':' || i.artifact_hash
+                || octet_length(convert_to(i.artifact_type, 'UTF8'))::text || ':' || i.artifact_type
+                || octet_length(convert_to(i.byte_length::text, 'UTF8'))::text || ':' || i.byte_length::text
+                || octet_length(convert_to(i.producer_metadata->>'pass', 'UTF8'))::text || ':'
+                   || (i.producer_metadata->>'pass')
+                || octet_length(convert_to(i.producer_metadata->>'codeSha', 'UTF8'))::text || ':'
+                   || (i.producer_metadata->>'codeSha')
+                || octet_length(convert_to(COALESCE(i.producer_metadata->>'model', ''), 'UTF8'))::text || ':'
+                   || COALESCE(i.producer_metadata->>'model', '')
+                || octet_length(convert_to(COALESCE(i.producer_metadata->>'promptHash', ''), 'UTF8'))::text || ':'
+                   || COALESCE(i.producer_metadata->>'promptHash', '')
+                || COALESCE((
+                     SELECT string_agg(
+                              octet_length(convert_to(tool_version.key, 'UTF8'))::text || ':' || tool_version.key
+                              || octet_length(convert_to(tool_version.value, 'UTF8'))::text || ':' || tool_version.value,
+                              '' ORDER BY convert_to(tool_version.key, 'UTF8')
+                            )
+                       FROM jsonb_each_text(i.producer_metadata->'toolVersions') tool_version
+                   ), ''),
+                'UTF8'
+              )), 'hex') AS item_identity_hash
+         FROM public.artifact_publication_batch_items i
+     ), batch_identities AS (
+       SELECT b.batch_reservation_id, b.identity_schema, b.batch_identity_hash,
+              encode(sha256(convert_to(
+                'setfarm.artifact-publication-batch.v1' || E'\n'
+                || string_agg(i.item_identity_hash, E'\n'
+                     ORDER BY i.artifact_hash COLLATE "C"),
+                'UTF8'
+              )), 'hex') AS expected_batch_identity_hash,
+              bool_or(
+                i.preceding_hash IS NOT NULL
+                AND i.preceding_hash COLLATE "C" >= i.artifact_hash COLLATE "C"
+              ) AS order_mismatch
+         FROM public.artifact_publication_batches b
+         JOIN item_identities i ON i.batch_reservation_id = b.batch_reservation_id
+        GROUP BY b.batch_reservation_id, b.identity_schema, b.batch_identity_hash
+     )
+     SELECT batch_reservation_id
+       FROM batch_identities
+      WHERE identity_schema IS DISTINCT FROM 'setfarm.artifact-publication-batch.v1'
+         OR batch_identity_hash IS DISTINCT FROM expected_batch_identity_hash
+         OR order_mismatch
+      ORDER BY batch_reservation_id
+      LIMIT 1`,
+  );
+  if (identityMismatchRows[0]) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_ADOPTION_MISMATCH",
+      `artifact publication batch canonical identity mismatch: ${identityMismatchRows[0].batch_reservation_id}`,
+    );
+  }
+}
+// SETFARM_SEMANTIC_MIGRATION_REGION:migration-v23-batch-ledger:END
+
+// SETFARM_SEMANTIC_MIGRATION_REGION:migration-v23-shared-ownership:BEGIN
+const ARTIFACT_PUBLICATION_SHARED_AUTHORITY_RELATIONS = Object.freeze([
+  "artifact_capacity",
+  "artifact_publication_reservations",
+  "semantic_artifacts",
+] as const);
+
+async function verifyCurrentArtifactPublicationReservationOwnership(
+  sql: Sql | TransactionSql,
+  options: Readonly<{ includeBatchLedgerObjects?: boolean }> = {},
+): Promise<void> {
+  const includeBatchLedgerObjects = options.includeBatchLedgerObjects !== false;
+  const relationAuthorities = await readArtifactPublicationRelationAuthorities(
+    sql,
+    ARTIFACT_PUBLICATION_SHARED_AUTHORITY_RELATIONS,
+  );
+  if (!hasExactArtifactPublicationRelationAuthority(
+    relationAuthorities,
+    ARTIFACT_PUBLICATION_SHARED_AUTHORITY_RELATIONS,
+  )) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_ADOPTION_MISMATCH",
+      "current artifact publication shared authority relations are not permanent ordinary tables",
+    );
+  }
+
+  const capacityAuthorityRows = await sql.unsafe<Array<{ valid: boolean }>>(
+    `SELECT COUNT(*) = 1
+            AND COALESCE(bool_and(
+              capacity_key = 'semantic-artifacts'
+              AND quota_bytes > 0
+              AND max_payload_bytes > 0
+              AND max_payload_bytes <= quota_bytes
+              AND total_bytes >= 0
+              AND reserved_bytes >= 0
+              AND total_bytes + reserved_bytes <= quota_bytes
+              AND state IN ('bootstrap_required', 'ready', 'quarantined')
+              AND ((state = 'bootstrap_required') = (reconciled_at IS NULL))
+              AND (state <> 'quarantined' OR NULLIF(diagnostic, '') IS NOT NULL)
+            ), false) AS valid
+       FROM public.artifact_capacity`,
+  );
+  if (capacityAuthorityRows[0]?.valid !== true) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_ADOPTION_MISMATCH",
+      "current artifact publication capacity value ownership mismatch",
+    );
+  }
+
+  const sharedBaseColumnDefaults = new Map<string, ReadonlyMap<string, string>>([
+    ["semantic_artifacts", new Map([
+      ["created_at", "now()"],
+    ])],
+    ["artifact_capacity", new Map([
+      ["capacity_key", "'semantic-artifacts'::text"],
+      ["quota_bytes", "536870912"],
+      ["max_payload_bytes", "4194304"],
+      ["total_bytes", "0"],
+      ["reserved_bytes", "0"],
+      ["state", "'bootstrap_required'::text"],
+      ["updated_at", "now()"],
+    ])],
+  ]);
+  for (const table of ["semantic_artifacts", "artifact_capacity"] as const) {
+    const expected = EXPECTED_ARTIFACT_INDEX_COLUMNS.get(table)!;
+    const expectedDefaults = sharedBaseColumnDefaults.get(table)!;
+    const rows = await sql.unsafe<Array<{
+      column_name: string;
+      data_type: string;
+      is_nullable: "YES" | "NO";
+      column_default: string | null;
+    }>>(
+      `SELECT column_name, data_type, is_nullable, column_default
+         FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = $1
+        ORDER BY ordinal_position`,
+      [table],
+    );
+    if (
+      rows.length !== expected.size
+      || rows.some((column) => !expected.has(column.column_name))
+      || rows.some((column) => {
+        const shape = expected.get(column.column_name);
+        return shape !== undefined
+          && (column.data_type !== shape.dataType || column.is_nullable !== shape.nullable);
+      })
+      || rows.some((column) => normalizeSqlExact(column.column_default ?? "")
+        !== normalizeSqlExact(expectedDefaults.get(column.column_name) ?? ""))
+    ) {
+      throw new ContractSpineMigrationError(
+        "MIGRATION_ADOPTION_MISMATCH",
+        `current artifact publication shared column ownership mismatch: ${table}`,
+      );
+    }
+  }
+
+  const sharedBaseConstraints = new Map<string, ReadonlyMap<string, string>>([
+    ["semantic_artifacts", new Map([
+      ["semantic_artifacts_byte_length_check", "CHECK (byte_length > 0)"],
+      ["semantic_artifacts_hash_check", "CHECK (artifact_hash ~ '^[a-f0-9]{64}$'::text)"],
+      ["semantic_artifacts_pkey", "PRIMARY KEY (artifact_hash)"],
+      ["semantic_artifacts_producer_keys_check", "CHECK (producer_metadata ?& ARRAY['pass'::text, 'codeSha'::text, 'toolVersions'::text] AND (producer_metadata - ARRAY['pass'::text, 'codeSha'::text, 'model'::text, 'promptHash'::text, 'toolVersions'::text]) = '{}'::jsonb)"],
+      ["semantic_artifacts_producer_object_check", "CHECK (jsonb_typeof(producer_metadata) = 'object'::text)"],
+      ["semantic_artifacts_producer_values_check", `CHECK (jsonb_typeof(producer_metadata -> 'pass'::text) = 'string'::text AND length(producer_metadata ->> 'pass'::text) >= 1 AND length(producer_metadata ->> 'pass'::text) <= 160 AND jsonb_typeof(producer_metadata -> 'codeSha'::text) = 'string'::text AND (producer_metadata ->> 'codeSha'::text) ~ '^[a-f0-9]{7,64}$'::text AND jsonb_typeof(producer_metadata -> 'toolVersions'::text) = 'object'::text AND NOT jsonb_path_exists(producer_metadata, '$."toolVersions".*?(@.type() != "string")'::jsonpath) AND (NOT producer_metadata ? 'model'::text OR jsonb_typeof(producer_metadata -> 'model'::text) = 'string'::text AND length(producer_metadata ->> 'model'::text) >= 1 AND length(producer_metadata ->> 'model'::text) <= 200) AND (NOT producer_metadata ? 'promptHash'::text OR jsonb_typeof(producer_metadata -> 'promptHash'::text) = 'string'::text AND (producer_metadata ->> 'promptHash'::text) ~ '^[a-f0-9]{64}$'::text))`],
+      ["semantic_artifacts_type_check", "CHECK (artifact_type ~ '^[a-z][a-z0-9]*([.-][a-z0-9]+)+$'::text)"],
+    ])],
+    ["artifact_capacity", new Map([
+      ["artifact_capacity_pkey", "PRIMARY KEY (capacity_key)"],
+      ["artifact_capacity_quarantine_check", "CHECK (state <> 'quarantined'::text OR NULLIF(diagnostic, ''::text) IS NOT NULL)"],
+      ["artifact_capacity_reconciled_check", "CHECK ((state = 'bootstrap_required'::text) = (reconciled_at IS NULL))"],
+      ["artifact_capacity_singleton_check", "CHECK (capacity_key = 'semantic-artifacts'::text)"],
+      ["artifact_capacity_state_check", "CHECK (state = ANY (ARRAY['bootstrap_required'::text, 'ready'::text, 'quarantined'::text]))"],
+      ["artifact_capacity_values_check", "CHECK (quota_bytes > 0 AND max_payload_bytes > 0 AND max_payload_bytes <= quota_bytes AND total_bytes >= 0 AND reserved_bytes >= 0 AND (total_bytes + reserved_bytes) <= quota_bytes)"],
+    ])],
+  ]);
+  for (const [table, expected] of sharedBaseConstraints) {
+    const rows = await sql.unsafe<Array<{
+      conname: string;
+      definition: string;
+      convalidated: boolean;
+    }>>(
+      `SELECT conname, pg_get_constraintdef(oid, true) AS definition, convalidated
+         FROM pg_constraint
+        WHERE conrelid = $1::regclass AND contype <> 't'
+        ORDER BY conname`,
+      [`public.${table}`],
+    );
+    const actual = new Map(rows.map((row) => [row.conname, row]));
+    if (
+      actual.size !== expected.size
+      || [...expected].some(([name, definition]) => {
+        const row = actual.get(name);
+        return !row
+          || !row.convalidated
+          || normalizeSqlExact(row.definition) !== normalizeSqlExact(definition);
+      })
+    ) {
+      throw new ContractSpineMigrationError(
+        "MIGRATION_ADOPTION_MISMATCH",
+        `current artifact publication shared constraint ownership mismatch: ${table}`,
+      );
+    }
+  }
+
+  const sharedBaseIndexRows = await sql.unsafe<Array<{
+    tablename: string;
+    indexname: string;
+    indexdef: string;
+  }>>(
+    `SELECT tablename, indexname, indexdef
+       FROM pg_indexes
+      WHERE schemaname = 'public'
+        AND tablename = ANY($1::text[])
+      ORDER BY tablename, indexname`,
+    [["artifact_capacity", "semantic_artifacts"]],
+  );
+  const expectedSharedBaseIndexes = new Map([
+    ["artifact_capacity.artifact_capacity_pkey", "CREATE UNIQUE INDEX artifact_capacity_pkey ON public.artifact_capacity USING btree (capacity_key)"],
+    ["semantic_artifacts.semantic_artifacts_pkey", "CREATE UNIQUE INDEX semantic_artifacts_pkey ON public.semantic_artifacts USING btree (artifact_hash)"],
+  ]);
+  const actualSharedBaseIndexes = new Map(sharedBaseIndexRows.map((row) => [
+    `${row.tablename}.${row.indexname}`,
+    normalizeSqlExact(row.indexdef),
+  ]));
+  if (
+    actualSharedBaseIndexes.size !== expectedSharedBaseIndexes.size
+    || [...expectedSharedBaseIndexes].some(([name, definition]) =>
+      actualSharedBaseIndexes.get(name) !== normalizeSqlExact(definition))
+  ) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_ADOPTION_MISMATCH",
+      "current artifact publication shared index ownership mismatch",
+    );
+  }
+
+  const semanticImmutabilityFunctionRows = await sql.unsafe<Array<{
+    definition: string | null;
+  }>>(
+    `SELECT CASE
+              WHEN to_regprocedure('public.setfarm_forbid_artifact_identity_update()') IS NULL
+                THEN NULL
+              ELSE pg_get_functiondef(
+                to_regprocedure('public.setfarm_forbid_artifact_identity_update()')
+              )
+            END AS definition`,
+  );
+  const expectedSemanticImmutabilityFunction = `CREATE OR REPLACE FUNCTION public.setfarm_forbid_artifact_identity_update()
+ RETURNS trigger
+ LANGUAGE plpgsql
+AS $function$
+   BEGIN
+     RAISE EXCEPTION 'ARTIFACT_IDENTITY_IMMUTABLE' USING ERRCODE = '23514';
+   END;
+   $function$`;
+  if (
+    semanticImmutabilityFunctionRows.length !== 1
+    || normalizeSqlExact(semanticImmutabilityFunctionRows[0]?.definition ?? "")
+      !== normalizeSqlExact(expectedSemanticImmutabilityFunction)
+  ) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_ADOPTION_MISMATCH",
+      "current semantic artifact immutability function ownership mismatch",
+    );
+  }
+  const semanticAuthorityTriggerRows = await sql.unsafe<Array<{
+    relation: string;
+    tgname: string;
+    enabled: string;
+    definition: string;
+  }>>(
+    `SELECT tgrelid::regclass::text AS relation, tgname, tgenabled AS enabled,
+            pg_get_triggerdef(oid, true) AS definition
+       FROM pg_trigger
+      WHERE NOT tgisinternal
+        AND tgrelid = 'public.semantic_artifacts'::regclass
+      ORDER BY tgname`,
+  );
+  if (
+    semanticAuthorityTriggerRows.length !== 1
+    || semanticAuthorityTriggerRows[0]?.relation !== "semantic_artifacts"
+    || semanticAuthorityTriggerRows[0]?.tgname !== "trg_semantic_artifacts_immutable"
+    || semanticAuthorityTriggerRows[0]?.enabled !== "O"
+    || normalizeSqlExact(semanticAuthorityTriggerRows[0]?.definition ?? "")
+      !== normalizeSqlExact(
+        "CREATE TRIGGER trg_semantic_artifacts_immutable BEFORE DELETE OR UPDATE ON semantic_artifacts FOR EACH ROW EXECUTE FUNCTION setfarm_forbid_artifact_identity_update()",
+      )
+  ) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_ADOPTION_MISMATCH",
+      "current semantic artifact immutability trigger ownership mismatch",
+    );
+  }
+
+  const expectedColumns = EXPECTED_ARTIFACT_INDEX_COLUMNS.get(
+    "artifact_publication_reservations",
+  )!;
+  const columns = await sql.unsafe<Array<{
+    column_name: string;
+    data_type: string;
+    is_nullable: "YES" | "NO";
+    column_default: string | null;
+  }>>(
+    `SELECT column_name, data_type, is_nullable, column_default
+       FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'artifact_publication_reservations'
+      ORDER BY ordinal_position`,
+  );
+  if (
+    columns.length !== expectedColumns.size
+    || columns.some((column) => !expectedColumns.has(column.column_name))
+    || columns.some((column) => {
+      const shape = expectedColumns.get(column.column_name);
+      return shape !== undefined
+        && (column.data_type !== shape.dataType || column.is_nullable !== shape.nullable);
+    })
+    || columns.some((column) => normalizeSqlExact(column.column_default ?? "")
+      !== (["created_at", "updated_at"].includes(column.column_name) ? "now()" : ""))
+  ) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_ADOPTION_MISMATCH",
+      "current artifact publication reservation column ownership mismatch",
+    );
+  }
+
+  const expectedConstraints = new Map([
+    ["artifact_publication_reservations_byte_length_check", "CHECK (byte_length > 0)"],
+    ["artifact_publication_reservations_finalized_check", "CHECK ((state <> 'reserved'::text) = (finalized_at IS NOT NULL))"],
+    ["artifact_publication_reservations_hash_check", "CHECK (artifact_hash ~ '^[a-f0-9]{64}$'::text)"],
+    ["artifact_publication_reservations_lease_check", "CHECK ((state = 'reserved'::text) = (owner_instance_id IS NOT NULL) AND (state = 'reserved'::text) = (lease_token IS NOT NULL) AND (state = 'reserved'::text) = (lease_expires_at IS NOT NULL))"],
+    ["artifact_publication_reservations_pkey", "PRIMARY KEY (reservation_id)"],
+    ["artifact_publication_reservations_producer_keys_check", "CHECK (producer_metadata ?& ARRAY['pass'::text, 'codeSha'::text, 'toolVersions'::text] AND (producer_metadata - ARRAY['pass'::text, 'codeSha'::text, 'model'::text, 'promptHash'::text, 'toolVersions'::text]) = '{}'::jsonb)"],
+    ["artifact_publication_reservations_producer_object_check", "CHECK (jsonb_typeof(producer_metadata) = 'object'::text)"],
+    ["artifact_publication_reservations_producer_values_check", `CHECK (jsonb_typeof(producer_metadata -> 'pass'::text) = 'string'::text AND length(producer_metadata ->> 'pass'::text) >= 1 AND length(producer_metadata ->> 'pass'::text) <= 160 AND jsonb_typeof(producer_metadata -> 'codeSha'::text) = 'string'::text AND (producer_metadata ->> 'codeSha'::text) ~ '^[a-f0-9]{7,64}$'::text AND jsonb_typeof(producer_metadata -> 'toolVersions'::text) = 'object'::text AND NOT jsonb_path_exists(producer_metadata, '$."toolVersions".*?(@.type() != "string")'::jsonpath) AND (NOT producer_metadata ? 'model'::text OR jsonb_typeof(producer_metadata -> 'model'::text) = 'string'::text AND length(producer_metadata ->> 'model'::text) >= 1 AND length(producer_metadata ->> 'model'::text) <= 200) AND (NOT producer_metadata ? 'promptHash'::text OR jsonb_typeof(producer_metadata -> 'promptHash'::text) = 'string'::text AND (producer_metadata ->> 'promptHash'::text) ~ '^[a-f0-9]{64}$'::text))`],
+    ["artifact_publication_reservations_published_check", "CHECK ((state = 'published'::text) = (published_at IS NOT NULL))"],
+    ["artifact_publication_reservations_quarantine_check", "CHECK (state <> 'quarantined'::text OR NULLIF(diagnostic, ''::text) IS NOT NULL)"],
+    ["artifact_publication_reservations_state_check", "CHECK (state = ANY (ARRAY['reserved'::text, 'published'::text, 'released'::text, 'quarantined'::text]))"],
+    ["artifact_publication_reservations_type_check", "CHECK (artifact_type ~ '^[a-z][a-z0-9]*([.-][a-z0-9]+)+$'::text)"],
+  ]);
+  const constraints = await sql.unsafe<Array<{
+    conname: string;
+    definition: string;
+    convalidated: boolean;
+  }>>(
+    `SELECT conname, pg_get_constraintdef(oid, true) AS definition, convalidated
+       FROM pg_constraint
+      WHERE conrelid = 'public.artifact_publication_reservations'::regclass
+        AND contype <> 't'
+      ORDER BY conname`,
+  );
+  const actualConstraints = new Map(
+    constraints.map((constraint) => [constraint.conname, constraint]),
+  );
+  if (
+    actualConstraints.size !== expectedConstraints.size
+    || [...expectedConstraints].some(([name, definition]) =>
+      actualConstraints.get(name)?.definition === undefined
+      || !actualConstraints.get(name)!.convalidated
+      || normalizeSqlExact(actualConstraints.get(name)!.definition)
+        !== normalizeSqlExact(definition))
+  ) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_ADOPTION_MISMATCH",
+      "current artifact publication reservation constraint ownership mismatch",
+    );
+  }
+
+  const expectedIndexes = new Map([
+    ["artifact_publication_reservations_pkey", "CREATE UNIQUE INDEX artifact_publication_reservations_pkey ON public.artifact_publication_reservations USING btree (reservation_id)"],
+    ["idx_artifact_publication_reservations_active_hash", "CREATE UNIQUE INDEX idx_artifact_publication_reservations_active_hash ON public.artifact_publication_reservations USING btree (artifact_hash) WHERE (state = 'reserved'::text)"],
+    ["idx_artifact_publication_reservations_expired", "CREATE INDEX idx_artifact_publication_reservations_expired ON public.artifact_publication_reservations USING btree (lease_expires_at, reservation_id) WHERE (state = 'reserved'::text)"],
+  ]);
+  if (includeBatchLedgerObjects) {
+    expectedIndexes.set(
+      "idx_artifact_publication_reservations_id_hash",
+      "CREATE UNIQUE INDEX idx_artifact_publication_reservations_id_hash ON public.artifact_publication_reservations USING btree (reservation_id, artifact_hash)",
+    );
+  }
+  const indexes = await sql.unsafe<Array<{ indexname: string; indexdef: string }>>(
+    `SELECT indexname, indexdef
+       FROM pg_indexes
+      WHERE schemaname = 'public'
+        AND tablename = 'artifact_publication_reservations'
+      ORDER BY indexname`,
+  );
+  const actualIndexes = new Map(
+    indexes.map((index) => [index.indexname, normalizeSqlExact(index.indexdef)]),
+  );
+  if (
+    actualIndexes.size !== expectedIndexes.size
+    || [...expectedIndexes].some(([name, definition]) =>
+      actualIndexes.get(name) !== normalizeSqlExact(definition))
+  ) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_ADOPTION_MISMATCH",
+      "current artifact publication reservation index ownership mismatch",
+    );
+  }
+  const reservationAuthorityTriggerRows = await sql.unsafe<Array<{
+    tgname: string;
+    enabled: string;
+    deferrable: boolean;
+    initially_deferred: boolean;
+    definition: string;
+  }>>(
+    `SELECT tgname, tgenabled AS enabled, tgdeferrable AS deferrable,
+            tginitdeferred AS initially_deferred,
+            pg_get_triggerdef(oid, true) AS definition
+       FROM pg_trigger
+      WHERE NOT tgisinternal
+        AND tgrelid = 'public.artifact_publication_reservations'::regclass
+      ORDER BY tgname`,
+  );
+  if (!includeBatchLedgerObjects) {
+    if (reservationAuthorityTriggerRows.length !== 0) {
+      throw new ContractSpineMigrationError(
+        "MIGRATION_ADOPTION_MISMATCH",
+        "pre-v23 artifact publication reservation trigger ownership mismatch",
+      );
+    }
+  } else {
+    const expectedReservationAuthorityTriggers = new Map([
+      [
+        "trg_artifact_publication_batch_child_membership",
+        {
+          deferrable: true,
+          initiallyDeferred: true,
+          definition: "CREATE CONSTRAINT TRIGGER trg_artifact_publication_batch_child_membership AFTER INSERT OR UPDATE ON artifact_publication_reservations DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION setfarm_validate_artifact_publication_batch_child_membership()",
+        },
+      ],
+      [
+        "trg_artifact_publication_reservations_identity_immutable",
+        {
+          deferrable: false,
+          initiallyDeferred: false,
+          definition: "CREATE TRIGGER trg_artifact_publication_reservations_identity_immutable BEFORE DELETE OR UPDATE ON artifact_publication_reservations FOR EACH ROW EXECUTE FUNCTION setfarm_enforce_artifact_publication_reservation_identity()",
+        },
+      ],
+    ]);
+    const actualReservationAuthorityTriggers = new Map(
+      reservationAuthorityTriggerRows.map((row) => [row.tgname, row]),
+    );
+    if (
+      actualReservationAuthorityTriggers.size !== expectedReservationAuthorityTriggers.size
+      || [...expectedReservationAuthorityTriggers].some(([name, expected]) => {
+        const row = actualReservationAuthorityTriggers.get(name);
+        return !row
+          || row.enabled !== "O"
+          || row.deferrable !== expected.deferrable
+          || row.initially_deferred !== expected.initiallyDeferred
+          || normalizeSqlExact(row.definition) !== normalizeSqlExact(expected.definition);
+      })
+    ) {
+      throw new ContractSpineMigrationError(
+        "MIGRATION_ADOPTION_MISMATCH",
+        "current artifact publication reservation trigger ownership mismatch",
+      );
+    }
+  }
+}
+
+async function verifyCurrentContractSpineObjectOwnership(
+  sql: Sql | TransactionSql,
+): Promise<void> {
+  const batchLedger = await detectArtifactPublicationBatchLedger(sql);
+  if (batchLedger === "partial") {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_ADOPTION_MISMATCH",
+      "current contract-spine object ownership is partially installed",
+    );
+  }
+  if (batchLedger === "present") {
+    await verifyCurrentArtifactPublicationReservationOwnership(sql);
+    await verifyArtifactPublicationBatchLedger(sql, { requireExactCurrentShape: true });
+    return;
+  }
+  const sharedRelationPresence = await Promise.all(
+    ARTIFACT_PUBLICATION_SHARED_AUTHORITY_RELATIONS.map((relation) =>
+      relationExists(sql, relation)),
+  );
+  if (sharedRelationPresence.every((present) => !present)) return;
+  if (sharedRelationPresence.some((present) => !present)) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_ADOPTION_MISMATCH",
+      "artifact publication shared authority relations are partially installed",
+    );
+  }
+  await verifyCurrentArtifactPublicationReservationOwnership(sql, {
+    includeBatchLedgerObjects: false,
+  });
+}
+
+export async function auditArtifactPublicationBatchLedgerData(
+  sql: Sql,
+): Promise<Readonly<{
+  schema: "setfarm.artifact-publication-batch-data-audit.v1";
+  status: "verified";
+}>> {
+  const detected = await detectArtifactPublicationBatchLedger(sql);
+  if (detected === "partial") {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_ADOPTION_MISMATCH",
+      "artifact publication batch ledger is partially installed",
+    );
+  }
+  if (detected !== "present") {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_INCOMPLETE",
+      "artifact publication batch ledger is not fully installed",
+    );
+  }
+  await verifyCurrentArtifactPublicationReservationOwnership(sql);
+  await verifyArtifactPublicationBatchLedger(sql, {
+    requireExactCurrentShape: true,
+    forceDataAudit: true,
+  });
+  return {
+    schema: "setfarm.artifact-publication-batch-data-audit.v1",
+    status: "verified",
+  };
+}
+// SETFARM_SEMANTIC_MIGRATION_REGION:migration-v23-shared-ownership:END
+
 const migrations: readonly Migration[] = [
   {
     version: 1,
@@ -8799,6 +11230,16 @@ const migrations: readonly Migration[] = [
     detect: detectProductCompilationAttemptLedger,
     verify: verifyProductCompilationAttemptLedger,
   },
+  // SETFARM_SEMANTIC_MIGRATION_REGION:migration-v23-registration:BEGIN
+  {
+    version: 23,
+    name: "023_artifact_publication_batch_ledger",
+    statements: ARTIFACT_PUBLICATION_BATCH_STATEMENTS,
+    implementationDigest: CONTRACT_SPINE_SEMANTIC_MIGRATION_DIGESTS[23],
+    detect: detectArtifactPublicationBatchLedger,
+    verify: verifyArtifactPublicationBatchLedger,
+  },
+  // SETFARM_SEMANTIC_MIGRATION_REGION:migration-v23-registration:END
 ];
 
 function assertSemanticMigrationDefinitionsAreSourceBound(): void {
@@ -8808,14 +11249,9 @@ function assertSemanticMigrationDefinitionsAreSourceBound(): void {
   );
   for (const migration of migrations) {
     const expectedDigest = sourceDigests.get(migration.version);
-    if (migration.apply && migration.implementationDigest !== expectedDigest) {
+    if (migration.implementationDigest !== expectedDigest) {
       throw new Error(
         `CONTRACT_SPINE_SEMANTIC_MIGRATION_NOT_SOURCE_BOUND:v${migration.version}`,
-      );
-    }
-    if (!migration.apply && expectedDigest !== undefined) {
-      throw new Error(
-        `CONTRACT_SPINE_SEMANTIC_MIGRATION_APPLY_MISSING:v${migration.version}`,
       );
     }
   }
@@ -8900,11 +11336,25 @@ export async function planContractSpineMigrations(sql: Sql): Promise<ContractSpi
         }
       }
     } else {
-      state = row.name !== migration.name || row.checksum !== expectedChecksum
-        ? "checksum_mismatch" as const
-        : row.state === "adopted"
-          ? "adopted" as const
-          : "applied" as const;
+      if (row.name !== migration.name || row.checksum !== expectedChecksum) {
+        state = "checksum_mismatch";
+      } else if (await migration.detect(sql) !== "present") {
+        state = "adoption_mismatch";
+      } else {
+        try {
+          await migration.verify(sql);
+          state = row.state === "adopted" ? "adopted" : "applied";
+        } catch (error) {
+          if (
+            error instanceof ContractSpineMigrationError
+            && error.code === "MIGRATION_ADOPTION_MISMATCH"
+          ) {
+            state = "adoption_mismatch";
+          } else {
+            throw error;
+          }
+        }
+      }
     }
     planned.push({
       version: migration.version,
@@ -8912,6 +11362,19 @@ export async function planContractSpineMigrations(sql: Sql): Promise<ContractSpi
       checksum: expectedChecksum,
       state,
     });
+  }
+  try {
+    await verifyCurrentContractSpineObjectOwnership(sql);
+  } catch (error) {
+    if (
+      error instanceof ContractSpineMigrationError
+      && error.code === "MIGRATION_ADOPTION_MISMATCH"
+    ) {
+      const index = planned.findIndex((migration) => migration.version === 23);
+      if (index >= 0) planned[index] = { ...planned[index]!, state: "adoption_mismatch" };
+    } else {
+      throw error;
+    }
   }
   for (const row of journal) {
     if (knownVersions.has(row.version)) continue;
@@ -9000,6 +11463,12 @@ export async function applyContractSpineMigrations(
               `Migration ${migration.version} journal checksum or name differs from source`,
             );
           }
+          if (await migration.detect(transaction) !== "present") {
+            throw new ContractSpineMigrationError(
+              "MIGRATION_ADOPTION_MISMATCH",
+              `Migration ${migration.version} journaled objects are not fully present`,
+            );
+          }
           await migration.verify(transaction);
           alreadyApplied.push(migration.name);
           continue;
@@ -9042,6 +11511,8 @@ export async function applyContractSpineMigrations(
         );
       }
 
+      await verifyCurrentContractSpineObjectOwnership(transaction);
+
       if (options.releaseSha) {
         await transaction.unsafe(
           `UPDATE setfarm_schema_migrations
@@ -9070,6 +11541,206 @@ export async function applyContractSpineMigrations(
     throw error;
   }
 }
+
+/**
+ * Roll migration 23 back only while its immutable batch ledger is empty.
+ * Once a batch header exists it is publication provenance and must migrate
+ * forward rather than being erased.
+ */
+// SETFARM_SEMANTIC_MIGRATION_REGION:migration-v23-rollback:BEGIN
+export async function rollbackArtifactPublicationBatchLedgerToV22(
+  sql: Sql,
+  options: Readonly<{
+    targetReleaseSha: string;
+    lockTimeoutMs?: number;
+    statementTimeoutMs?: number;
+  }>,
+): Promise<ArtifactPublicationBatchLedgerRollbackResult> {
+  if (!/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/.test(options.targetReleaseSha)) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_RELEASE_INVALID",
+      "Rollback target release SHA must be a full lowercase Git object hash",
+    );
+  }
+  const migration = migrations.find((candidate) => candidate.version === 23)!;
+  const expectedChecksum = checksum(migration);
+  const lockTimeoutMs = Math.max(1, Math.min(options.lockTimeoutMs ?? 5_000, 60_000));
+  const statementTimeoutMs = Math.max(
+    lockTimeoutMs,
+    Math.min(options.statementTimeoutMs ?? 30_000, 300_000),
+  );
+  try {
+    return await sql.begin(async (transaction) => {
+      await transaction.unsafe("SELECT set_config('lock_timeout', $1, true)", [`${lockTimeoutMs}ms`]);
+      await transaction.unsafe("SELECT set_config('statement_timeout', $1, true)", [`${statementTimeoutMs}ms`]);
+      await transaction.unsafe("SELECT pg_advisory_xact_lock($1)", [contractSpineMigrationLockKey]);
+
+      const future = await transaction.unsafe<Array<{ version: number }>>(
+        "SELECT version FROM setfarm_schema_migrations WHERE version > 23 ORDER BY version LIMIT 1",
+      );
+      if (future[0]) {
+        throw new ContractSpineMigrationError(
+          "MIGRATION_UNKNOWN_VERSION",
+          `Migration ${future[0].version} must be rolled back before migration 23`,
+        );
+      }
+      const journal = await transaction.unsafe<Array<{
+        name: string;
+        checksum: string;
+        release_sha: string | null;
+        applied_at: Date | string;
+      }>>(
+        `SELECT name, checksum, release_sha, applied_at
+           FROM setfarm_schema_migrations
+          WHERE version = 23
+          FOR UPDATE`,
+      );
+      if (journal[0]?.name !== migration.name || journal[0]?.checksum !== expectedChecksum) {
+        throw new ContractSpineMigrationError(
+          "MIGRATION_CHECKSUM_MISMATCH",
+          "Migration 23 is absent or differs from the rollback source contract",
+        );
+      }
+      await transaction.unsafe(
+        "SELECT capacity_key FROM public.artifact_capacity WHERE capacity_key = 'semantic-artifacts' FOR UPDATE",
+      );
+      // Classify a partial journaled installation before LOCK TABLE can leak a
+      // raw undefined-relation error. The exact check is repeated after the
+      // lock to retain the rollback ownership fence.
+      await verifyCurrentContractSpineObjectOwnership(transaction);
+      await transaction.unsafe(
+        "LOCK TABLE public.artifact_publication_batches, public.artifact_publication_batch_items IN ACCESS EXCLUSIVE MODE",
+      );
+      await verifyCurrentContractSpineObjectOwnership(transaction);
+      const counts = await transaction.unsafe<Array<{
+        batches: number;
+        items: number;
+        batch_reservations: number;
+      }>>(
+        `SELECT
+           (SELECT COUNT(*)::integer FROM public.artifact_publication_batches) AS batches,
+           (SELECT COUNT(*)::integer FROM public.artifact_publication_batch_items) AS items,
+           (SELECT COUNT(*)::integer FROM public.artifact_publication_reservations
+             WHERE left(reservation_id, 5) = 'APRB_') AS batch_reservations`,
+      );
+      if (
+        (counts[0]?.batches ?? 0) !== 0
+        || (counts[0]?.items ?? 0) !== 0
+        || (counts[0]?.batch_reservations ?? 0) !== 0
+      ) {
+        throw new ContractSpineMigrationError(
+          "MIGRATION_INCOMPLETE",
+          "Migration 23 rollback refuses to erase artifact publication batch evidence; roll forward instead",
+        );
+      }
+      await transaction.unsafe(
+        "DROP TRIGGER trg_artifact_publication_batch_items_complete ON public.artifact_publication_batch_items",
+      );
+      await transaction.unsafe(
+        "DROP TRIGGER trg_artifact_publication_batches_complete ON public.artifact_publication_batches",
+      );
+      await transaction.unsafe(
+        "DROP TRIGGER trg_artifact_publication_batch_items_immutable ON public.artifact_publication_batch_items",
+      );
+      await transaction.unsafe(
+        "DROP TRIGGER trg_artifact_publication_batches_immutable ON public.artifact_publication_batches",
+      );
+      await transaction.unsafe(
+        "DROP TRIGGER trg_artifact_publication_reservations_identity_immutable ON public.artifact_publication_reservations",
+      );
+      await transaction.unsafe(
+        "DROP TRIGGER trg_artifact_publication_batch_child_membership ON public.artifact_publication_reservations",
+      );
+      await transaction.unsafe("DROP TABLE public.artifact_publication_batch_items");
+      await transaction.unsafe("DROP TABLE public.artifact_publication_batches");
+      await transaction.unsafe("DROP FUNCTION public.setfarm_validate_artifact_publication_batch_completeness()");
+      await transaction.unsafe("DROP FUNCTION public.setfarm_artifact_publication_batch_producer_identity_bytes(jsonb)");
+      await transaction.unsafe("DROP FUNCTION public.setfarm_enforce_artifact_publication_reservation_identity()");
+      await transaction.unsafe("DROP FUNCTION public.setfarm_validate_artifact_publication_batch_child_membership()");
+      await transaction.unsafe("DROP FUNCTION public.setfarm_enforce_artifact_publication_batch_transition()");
+      await transaction.unsafe("DROP FUNCTION public.setfarm_forbid_artifact_publication_batch_identity_update()");
+      await transaction.unsafe("DROP INDEX public.idx_artifact_publication_reservations_id_hash");
+      await verifyCurrentArtifactPublicationReservationOwnership(transaction, {
+        includeBatchLedgerObjects: false,
+      });
+      for (const retained of migrations.filter((candidate) => candidate.version <= 22)) {
+        await retained.verify(transaction);
+      }
+
+      await transaction.unsafe(
+        `CREATE TABLE IF NOT EXISTS setfarm_schema_migration_rollbacks (
+           rollback_id TEXT PRIMARY KEY,
+           from_version INTEGER NOT NULL,
+           target_version INTEGER NOT NULL,
+           target_release_sha TEXT NOT NULL,
+           rows_rewritten INTEGER NOT NULL,
+           applied_at TIMESTAMPTZ NOT NULL
+         )`,
+      );
+      const appliedAtRows = await transaction.unsafe<Array<{ applied_at: Date | string }>>(
+        "SELECT clock_timestamp() AS applied_at",
+      );
+      const appliedAt = new Date(appliedAtRows[0]!.applied_at);
+      const rollbackId = `RBK_${hashCanonicalJson({
+        schema: "setfarm.contract-spine-rollback-identity.v1",
+        sourceMigration: {
+          version: 23,
+          name: journal[0]!.name,
+          checksum: journal[0]!.checksum,
+          releaseSha: journal[0]!.release_sha,
+          appliedAt: new Date(journal[0]!.applied_at).toISOString(),
+        },
+        targetVersion: 22,
+        targetReleaseSha: options.targetReleaseSha,
+      })}`;
+      await transaction.unsafe(
+        `INSERT INTO setfarm_schema_migration_rollbacks (
+           rollback_id, from_version, target_version, target_release_sha,
+           rows_rewritten, applied_at
+         ) VALUES ($1, 23, 22, $2, 0, $3)`,
+        [rollbackId, options.targetReleaseSha, appliedAt],
+      );
+      const removed = await transaction.unsafe<Array<{ version: number }>>(
+        `DELETE FROM setfarm_schema_migrations
+          WHERE version = 23 AND name = $1 AND checksum = $2
+          RETURNING version`,
+        [migration.name, expectedChecksum],
+      );
+      if (removed.length !== 1) {
+        throw new ContractSpineMigrationError(
+          "MIGRATION_CHECKSUM_MISMATCH",
+          "Migration 23 journal ownership changed during rollback",
+        );
+      }
+      await transaction.unsafe(
+        `UPDATE setfarm_schema_migrations
+            SET verified_release_sha = $1, verified_at = $2
+          WHERE version <= 22`,
+        [options.targetReleaseSha, appliedAt],
+      );
+      return Object.freeze({
+        schema: "setfarm.contract-spine-rollback.v1" as const,
+        rollbackId,
+        fromVersion: 23 as const,
+        targetVersion: 22 as const,
+        targetReleaseSha: options.targetReleaseSha,
+        rowsRewritten: 0 as const,
+        appliedAt: appliedAt.toISOString(),
+      });
+    }) as ArtifactPublicationBatchLedgerRollbackResult;
+  } catch (error) {
+    if (error instanceof ContractSpineMigrationError) throw error;
+    if (isLockTimeout(error)) {
+      throw new ContractSpineMigrationError(
+        "MIGRATION_LOCK_TIMEOUT",
+        `Migration 23 rollback lock was not acquired within ${lockTimeoutMs}ms`,
+        { cause: error },
+      );
+    }
+    throw error;
+  }
+}
+// SETFARM_SEMANTIC_MIGRATION_REGION:migration-v23-rollback:END
 
 /**
  * Roll migration 22 back only before it has accepted any compilation attempt.
@@ -9682,7 +12353,16 @@ export async function verifyContractSpineMigrations(
       `Migration ${pending.version} is pending`,
     );
   }
-  for (const migration of migrations) await migration.verify(sql);
+  for (const migration of migrations) {
+    if (await migration.detect(sql) !== "present") {
+      throw new ContractSpineMigrationError(
+        "MIGRATION_ADOPTION_MISMATCH",
+        `Migration ${migration.version} journaled objects are not fully present`,
+      );
+    }
+    await migration.verify(sql);
+  }
+  await verifyCurrentContractSpineObjectOwnership(sql);
   return {
     schema: "setfarm.contract-spine-migration-verify.v1",
     status: "verified",

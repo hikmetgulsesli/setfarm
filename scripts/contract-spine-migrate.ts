@@ -5,16 +5,26 @@ import postgres from "postgres";
 
 import {
   applyContractSpineMigrations,
+  auditArtifactPublicationBatchLedgerData,
   planContractSpineMigrations,
   readContractSpineMigrationAttestation,
   rollbackProductCompilationAttemptLedgerToV21,
   rollbackOperationalFailureCauseSealToV20,
+  rollbackArtifactPublicationBatchLedgerToV22,
   rollbackRecoveryTerminalLeaseIdentityToV19,
   verifyContractSpineMigrations,
 } from "../src/db/contract-spine-migrations.js";
 import { runtimeConfig } from "../src/runtime-config.js";
 
-type Mode = "plan" | "apply" | "verify" | "rollback-22-to-21" | "rollback-21-to-20" | "rollback-20-to-19";
+type Mode =
+  | "plan"
+  | "apply"
+  | "verify"
+  | "audit-artifact-publication-batches"
+  | "rollback-23-to-22"
+  | "rollback-22-to-21"
+  | "rollback-21-to-20"
+  | "rollback-20-to-19";
 
 function resolveReleaseSha(env: NodeJS.ProcessEnv = process.env): string {
   const configured = String(env.SETFARM_RELEASE_SHA || "").trim().toLowerCase();
@@ -51,8 +61,8 @@ function parseArgs(argv: string[]): Readonly<{
   targetReleaseSha?: string;
 }> {
   const mode = argv[0];
-  if (!["plan", "apply", "verify", "rollback-22-to-21", "rollback-21-to-20", "rollback-20-to-19"].includes(mode ?? "")) {
-    throw new Error("Usage: contract-spine-migrate.ts <plan|apply|verify|rollback-22-to-21|rollback-21-to-20|rollback-20-to-19> [--database <postgres-url>] [--target-release <git-sha>]");
+  if (!["plan", "apply", "verify", "audit-artifact-publication-batches", "rollback-23-to-22", "rollback-22-to-21", "rollback-21-to-20", "rollback-20-to-19"].includes(mode ?? "")) {
+    throw new Error("Usage: contract-spine-migrate.ts <plan|apply|verify|audit-artifact-publication-batches|rollback-23-to-22|rollback-22-to-21|rollback-21-to-20|rollback-20-to-19> [--database <postgres-url>] [--target-release <git-sha>]");
   }
   const databaseIndex = argv.indexOf("--database");
   if (databaseIndex >= 0 && !argv[databaseIndex + 1]) {
@@ -90,6 +100,24 @@ async function main(): Promise<void> {
     }
     if (mode === "verify") {
       process.stdout.write(`${JSON.stringify(await verifyContractSpineMigrations(sql), null, 2)}\n`);
+      return;
+    }
+    if (mode === "audit-artifact-publication-batches") {
+      process.stdout.write(`${JSON.stringify(
+        await auditArtifactPublicationBatchLedgerData(sql),
+        null,
+        2,
+      )}\n`);
+      return;
+    }
+    if (mode === "rollback-23-to-22") {
+      process.stdout.write(`${JSON.stringify(
+        await rollbackArtifactPublicationBatchLedgerToV22(sql, {
+          targetReleaseSha: targetReleaseSha!,
+        }),
+        null,
+        2,
+      )}\n`);
       return;
     }
     if (mode === "rollback-20-to-19") {

@@ -5,6 +5,7 @@ import {
   ContractSpineMigrationError,
   applyContractSpineMigrations,
   planContractSpineMigrations,
+  rollbackArtifactPublicationBatchLedgerToV22,
   rollbackProductCompilationAttemptLedgerToV21,
   verifyContractSpineMigrations,
 } from "../../src/db/contract-spine-migrations.js";
@@ -31,6 +32,10 @@ describe("product compilation attempt migration 22", () => {
     assert.equal(applied.applied.includes("022_product_compilation_attempt_ledger"), true);
     const verified = await verifyContractSpineMigrations(database.sql);
     assert.equal(verified.status, "verified");
+
+    await rollbackArtifactPublicationBatchLedgerToV22(database.sql, {
+      targetReleaseSha: "d".repeat(40),
+    });
 
     const rollback = await rollbackProductCompilationAttemptLedgerToV21(database.sql, {
       targetReleaseSha: targetRelease,
@@ -59,6 +64,9 @@ describe("product compilation attempt migration 22", () => {
 
   it("refuses rollback after immutable attempt evidence exists", async () => {
     await applyContractSpineMigrations(database.sql, { releaseSha: "c".repeat(40) });
+    await rollbackArtifactPublicationBatchLedgerToV22(database.sql, {
+      targetReleaseSha: "d".repeat(40),
+    });
     await database.sql`
       INSERT INTO runs (id, workflow_id, task, status)
       VALUES ('run-migration-22-evidence', 'feature-dev', 'migration evidence', 'running')

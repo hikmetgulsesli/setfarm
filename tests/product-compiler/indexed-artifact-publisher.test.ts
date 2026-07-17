@@ -10,7 +10,10 @@ import {
   ContentAddressedArtifactStore,
   SemanticArtifactEnvelopeV1Schema,
 } from "../../src/product-compiler/artifact-store.js";
-import { createArtifactIndex, type ArtifactIdentity } from "../../src/product-compiler/artifact-index.js";
+import {
+  createArtifactIndexForTests as createArtifactIndex,
+  type ArtifactIdentity,
+} from "../../src/product-compiler/artifact-index.js";
 import { canonicalJsonBytes } from "../../src/product-compiler/canonical-json.js";
 import {
   IndexedArtifactPublisher,
