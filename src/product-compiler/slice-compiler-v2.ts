@@ -4,7 +4,11 @@ import {
   SemanticArtifactEnvelopeV1Schema,
   type SemanticArtifactEnvelopeV1,
 } from "./artifact-store.js";
-import { hashCanonicalJson } from "./canonical-json.js";
+import { canonicalJsonStringify, hashCanonicalJson } from "./canonical-json.js";
+import {
+  compileActionInputTransportV2,
+  type ActionInputTransportV2,
+} from "./schemas/action-input-transport-v2.js";
 import {
   BuildTopologyV1Schema,
   topologyPathAbsenceHash,
@@ -19,18 +23,23 @@ import {
 } from "./schemas/common-v1.js";
 import { DesignInteractionGraphV2Schema } from "./schemas/design-interaction-graph-v2.js";
 import { DesignSourceClosureV2Schema } from "./schemas/design-source-closure-v2.js";
+import { ImplementationSourceMapV1Schema } from "./schemas/implementation-source-map-v1.js";
 import {
   ImplementationDependencyOutputV2Schema,
   ImplementationRecoveryDirectiveV2Schema,
   ImplementationSliceAuthorityV2Schema,
   ImplementationSliceV2Schema,
+  ImplementationStorySourceMapV1Schema,
+  implementationActionInputTransportsHashV2,
   implementationDependencyOutputsHashV2,
   implementationFilesHashV2,
   implementationSharedGrantsHashV2,
   implementationSliceAuthorityHashV2,
+  implementationStorySourceMapHashV1,
   type ImplementationDependencyOutputV2,
   type ImplementationFileV2,
   type ImplementationSliceV2,
+  type ImplementationStorySourceMapV1,
 } from "./schemas/implementation-slice-v2.js";
 import { ProductBuildPacketV3Schema } from "./schemas/product-build-packet-v3.js";
 import { ProductSpecV2Schema } from "./schemas/product-spec-v2.js";
@@ -55,6 +64,7 @@ export const ImplementationSliceCompilerInputV2Schema = z.object({
   buildTopology: BuildTopologyV1Schema,
   storyPlan: StoryPlanV2Schema,
   designSourceClosure: DesignSourceClosureV2Schema,
+  implementationSourceMap: ImplementationSourceMapV1Schema,
   storyId: StoryIdSchema,
   sourceRevision: SourceRevisionV1Schema,
   producer: SemanticArtifactProducerV1Schema,
@@ -74,11 +84,17 @@ export type ImplementationSliceV2Diagnostic = Readonly<{
     | "SLICE_V2_CHILD_HASH_MISMATCH"
     | "SLICE_V2_STORY_PLAN_AUTHORITY_MISMATCH"
     | "SLICE_V2_DESIGN_AUTHORITY_MISMATCH"
+    | "SLICE_V2_IMPLEMENTATION_SOURCE_MAP_AUTHORITY_MISMATCH"
+    | "SLICE_V2_STORY_SOURCE_MAP_INVALID"
+    | "SLICE_V2_ACTION_INPUT_TRANSPORT_AMBIGUOUS"
+    | "SLICE_V2_ACTION_INPUT_TRANSPORT_UNSUPPORTED"
+    | "SLICE_V2_ACTION_INPUT_TRANSPORT_INVALID"
     | "SLICE_V2_RUNTIME_AUTHORITY_MISMATCH"
     | "SLICE_V2_STORY_NOT_FOUND"
     | "SLICE_V2_GRANT_INVALID"
     | "SLICE_V2_FILE_SNAPSHOT_INVALID"
     | "SLICE_V2_DEPENDENCY_OUTPUT_INVALID"
+    | "SLICE_V2_AUTHORITY_MISMATCH"
     | "SLICE_V2_CONTRACT_INVALID";
   message: string;
   reference: string;
@@ -91,6 +107,23 @@ export type ImplementationSliceCompilationResultV2 =
       slice: ImplementationSliceV2;
       sliceHash: string;
       envelope: SemanticArtifactEnvelopeV1;
+    }>
+  | Readonly<{
+      status: "rejected";
+      diagnostics: readonly ImplementationSliceV2Diagnostic[];
+    }>;
+
+export type ImplementationSliceVerificationInputV2 = Readonly<{
+  compilerInput: ImplementationSliceCompilerInputV2;
+  slice: unknown;
+}>;
+
+export type ImplementationSliceVerificationResultV2 =
+  | Readonly<{
+      status: "verified";
+      diagnostics: readonly [];
+      slice: Readonly<ImplementationSliceV2>;
+      sliceHash: string;
     }>
   | Readonly<{
       status: "rejected";
@@ -189,6 +222,7 @@ function validateArtifactAuthority(value: ParsedInput): ImplementationSliceV2Dia
     buildTopologyV1Hash: exactHash(value.buildTopology),
     storyPlanV2Hash: exactHash(value.storyPlan),
     designSourceClosureV2Hash: exactHash(value.designSourceClosure),
+    implementationSourceMapV1Hash: exactHash(value.implementationSourceMap),
   };
   const childEnvelopeHashes = {
     productSpecV2Hash: envelopeHash("setfarm.product-spec.v2", value.producer, value.productSpec),
@@ -201,6 +235,11 @@ function validateArtifactAuthority(value: ParsedInput): ImplementationSliceV2Dia
       "setfarm.design-source-closure.v2",
       value.producer,
       value.designSourceClosure,
+    ),
+    implementationSourceMapV1Hash: envelopeHash(
+      "setfarm.implementation-source-map.v1",
+      value.producer,
+      value.implementationSourceMap,
     ),
   };
   for (const field of Object.keys(childEnvelopeHashes) as Array<keyof typeof childEnvelopeHashes>) {
@@ -253,6 +292,75 @@ function validateArtifactAuthority(value: ParsedInput): ImplementationSliceV2Dia
     }
   }
 
+  const sourceMap = value.implementationSourceMap;
+  if (
+    sourceMap.designSourceKind !== value.packet.designSourceKind
+    || sourceMap.productSpecV2PayloadHash !== childPayloadHashes.productSpecV2Hash
+    || sourceMap.designGraphV2PayloadHash !== childPayloadHashes.designGraphV2Hash
+    || sourceMap.buildTopologyV1PayloadHash !== childPayloadHashes.buildTopologyV1Hash
+    || sourceMap.storyPlanV2PayloadHash !== childPayloadHashes.storyPlanV2Hash
+    || sourceMap.designSourceClosureV2PayloadHash !== childPayloadHashes.designSourceClosureV2Hash
+    || childEnvelopeHashes.implementationSourceMapV1Hash
+      !== value.packet.implementationSourceMapV1Hash
+  ) {
+    diagnostics.push(diagnostic(
+      "SLICE_V2_IMPLEMENTATION_SOURCE_MAP_AUTHORITY_MISMATCH",
+      "ImplementationSourceMapV1 does not bind the exact packet child payloads and semantic envelope",
+      "implementationSourceMap",
+    ));
+  }
+  if (sourceMap.designSourceKind === "stitch") {
+    const storyById = new Map(value.storyPlan.stories.map((story) => [story.id, story] as const));
+    const pathById = new Map(value.buildTopology.pathBindings.map((path) => [path.id, path] as const));
+    const sourceAuthorityByTarget = new Map(
+      (value.designGraph?.sourceAuthorities ?? []).map((authority) =>
+        [authority.targetRef, authority] as const),
+    );
+    for (const screen of sourceMap.screens) {
+      const screenStory = storyById.get(screen.storyId);
+      const path = pathById.get(screen.pathRef);
+      const sourceAuthority = sourceAuthorityByTarget.get(screen.targetRef);
+      const screenSurfaceRefs = [
+        screen.rootSurface.surfaceRef,
+        ...screen.containedSurfaces.map((surface) => surface.surfaceRef),
+      ];
+      const screenActionRefs = [
+        ...screen.controls.map((control) => control.actionRef),
+        ...screen.actionInputs.map((input) => input.actionRef),
+        ...screen.observables.map((observable) => observable.actionRef),
+      ];
+      if (
+        !screenStory
+        || screen.ownerRef !== screenStory.ownerRef
+        || !screenStory.routeRefs.includes(screen.routeRef)
+        || !screenStory.ownedPathRefs.includes(screen.pathRef)
+        || screenSurfaceRefs.some((surfaceRef) => !screenStory.surfaceRefs.includes(surfaceRef))
+        || screen.controls.some((control) =>
+          !screenStory.controlRefs.includes(control.physicalControlRef)
+          || !screenStory.controlSlotRefs.includes(control.controlSlotRef))
+        || screenActionRefs.some((actionRef) => !screenStory.actionRefs.includes(actionRef))
+        || screen.observables.some((observable) =>
+          !screenStory.observableRefs.includes(observable.observableRef)
+          || !screenStory.evidenceRefs.includes(observable.evidenceRef))
+        || !sourceAuthority
+        || sourceAuthority.responseScreenId !== screen.responseScreenId
+        || sourceAuthority.targetHash !== screen.targetHash
+        || !path
+        || path.path !== screen.path
+        || path.role !== "generated"
+        || path.ownerRef !== screen.ownerRef
+        || path.presence !== "present"
+        || path.knownContentHash !== screen.contentHash
+      ) {
+        diagnostics.push(diagnostic(
+          "SLICE_V2_IMPLEMENTATION_SOURCE_MAP_AUTHORITY_MISMATCH",
+          `Implementation screen ${screen.targetRef} is foreign to its exact story/topology authority`,
+          screen.targetRef,
+        ));
+      }
+    }
+  }
+
   if (
     value.buildTopology.runtimeDataContractHash !== value.packet.runtimeDataContractHash
     || value.buildTopology.runtimeEvidenceContractHash !== value.packet.runtimeEvidenceContractHash
@@ -269,6 +377,119 @@ function validateArtifactAuthority(value: ParsedInput): ImplementationSliceV2Dia
     ));
   }
   return diagnostics;
+}
+
+function projectStorySourceMap(
+  input: ParsedInput,
+  files: readonly ImplementationFileV2[],
+  diagnostics: ImplementationSliceV2Diagnostic[],
+): ImplementationStorySourceMapV1 | undefined {
+  const sourceMapPayloadHash = exactHash(input.implementationSourceMap);
+  const sourceMapArtifactHash = envelopeHash(
+    "setfarm.implementation-source-map.v1",
+    input.producer,
+    input.implementationSourceMap,
+  );
+  const candidate = input.implementationSourceMap.designSourceKind === "none"
+      ? {
+          schema: "setfarm.implementation-story-source-map.v1" as const,
+          storyId: input.storyId,
+          producer: input.producer,
+          implementationSourceMapV1Witness: input.implementationSourceMap,
+          implementationSourceMapV1PayloadHash: sourceMapPayloadHash,
+          implementationSourceMapV1Hash: sourceMapArtifactHash,
+        designSourceKind: "none" as const,
+        screens: [],
+      }
+      : {
+          schema: "setfarm.implementation-story-source-map.v1" as const,
+          storyId: input.storyId,
+          producer: input.producer,
+          implementationSourceMapV1Witness: input.implementationSourceMap,
+          implementationSourceMapV1PayloadHash: sourceMapPayloadHash,
+        implementationSourceMapV1Hash: sourceMapArtifactHash,
+        designSourceKind: "stitch" as const,
+        screens: input.implementationSourceMap.screens
+          .filter((screen) => screen.storyId === input.storyId)
+          .sort((left, right) => compareUtf16(left.targetRef, right.targetRef)),
+      };
+  const parsed = ImplementationStorySourceMapV1Schema.safeParse(candidate);
+  if (!parsed.success) {
+    diagnostics.push(...parsed.error.issues.slice(0, 200).map((issue) => diagnostic(
+      "SLICE_V2_STORY_SOURCE_MAP_INVALID",
+      `Story source-map projection failed at ${issue.path.join("/") || "$"}: ${issue.message}`,
+      issue.path.join("/") || "$",
+    )));
+    return undefined;
+  }
+  if (parsed.data.designSourceKind === "stitch") {
+    const fileByRef = new Map(files.map((file) => [file.pathRef, file] as const));
+    for (const screen of parsed.data.screens) {
+      const file = fileByRef.get(screen.pathRef);
+      if (
+        !file
+        || file.role !== "owned"
+        || file.path !== screen.path
+        || file.presence !== "present"
+        || file.contentHash !== screen.contentHash
+      ) {
+        diagnostics.push(diagnostic(
+          "SLICE_V2_STORY_SOURCE_MAP_INVALID",
+          `Mapped screen ${screen.targetRef} is absent from exact current story files`,
+          screen.pathRef,
+        ));
+      }
+    }
+  }
+  return parsed.data;
+}
+
+function compileStoryActionInputTransports(
+  input: ParsedInput,
+  diagnostics: ImplementationSliceV2Diagnostic[],
+): ActionInputTransportV2[] {
+  const story = input.storyPlan.stories.find((candidate) => candidate.id === input.storyId);
+  if (!story) return [];
+  if (input.implementationSourceMap.designSourceKind !== "stitch") return [];
+  const actionById = new Map(input.productSpec.actions.map((action) => [action.id, action] as const));
+  const transports: ActionInputTransportV2[] = [];
+  for (const actionRef of story.actionRefs) {
+    const action = actionById.get(actionRef);
+    if (!action) {
+      diagnostics.push(diagnostic(
+        "SLICE_V2_ACTION_INPUT_TRANSPORT_INVALID",
+        `Story action ${actionRef} is absent from exact ProductSpecV2 transport authority`,
+        actionRef,
+      ));
+      continue;
+    }
+    if (action.controlPlacements.length === 0) continue;
+    for (const field of [...action.input.fields]
+      .sort((left, right) => compareUtf16(left.name, right.name))) {
+      const result = compileActionInputTransportV2({
+        productSpec: input.productSpec,
+        actionRef,
+        fieldName: field.name,
+      });
+      if (result.status === "compiled") {
+        transports.push(result.contract);
+        continue;
+      }
+      const code: ImplementationSliceV2Diagnostic["code"] =
+        result.rejectionCode === "ACTION_INPUT_V2_OPTIONAL_PRESENCE_UNSPECIFIED"
+          ? "SLICE_V2_ACTION_INPUT_TRANSPORT_AMBIGUOUS"
+          : result.rejectionCode === "ACTION_INPUT_V2_VALUE_TYPE_UNSUPPORTED"
+            ? "SLICE_V2_ACTION_INPUT_TRANSPORT_UNSUPPORTED"
+            : "SLICE_V2_ACTION_INPUT_TRANSPORT_INVALID";
+      diagnostics.push(diagnostic(
+        code,
+        `${result.rejectionCode}: ${result.message}`,
+        `${actionRef}.${field.name}`,
+      ));
+    }
+  }
+  return transports.sort((left, right) =>
+    compareUtf16(left.actionInputRef, right.actionInputRef));
 }
 
 function compileOwnership(input: ParsedInput, diagnostics: ImplementationSliceV2Diagnostic[]) {
@@ -622,7 +843,10 @@ export function compileImplementationSliceV2(
   }
 
   const ownership = compileOwnership(value, diagnostics);
+  const storySourceMap = projectStorySourceMap(value, ownership.files, diagnostics);
+  const actionInputTransports = compileStoryActionInputTransports(value, diagnostics);
   if (diagnostics.length > 0) return reject(diagnostics);
+  if (!storySourceMap) return reject(diagnostics);
 
   const contract = storyContract(value);
   const build = buildAuthority(value);
@@ -639,12 +863,16 @@ export function compileImplementationSliceV2(
     storyPlanV2Hash: value.packet.storyPlanV2Hash,
     designSourceClosureV2PayloadHash: exactHash(value.designSourceClosure),
     designSourceClosureV2Hash: value.packet.designSourceClosureV2Hash,
+    implementationSourceMapV1PayloadHash: exactHash(value.implementationSourceMap),
+    implementationSourceMapV1Hash: value.packet.implementationSourceMapV1Hash,
+    storySourceMapHash: implementationStorySourceMapHashV1(storySourceMap),
     storyHash: exactHash(story),
     sourceRevisionHash: exactHash(value.sourceRevision),
     filesHash: implementationFilesHashV2(ownership.files),
     dependencyOutputsHash: implementationDependencyOutputsHashV2(ownership.dependencyOutputs),
     sharedGrantsHash: implementationSharedGrantsHashV2(ownership.grants),
     storyContractHash: exactHash(contract),
+    actionInputTransportsHash: implementationActionInputTransportsHashV2(actionInputTransports),
     buildAuthorityHash: exactHash(build),
     recoveryHash: value.recovery ? exactHash(value.recovery) : null,
   });
@@ -663,8 +891,10 @@ export function compileImplementationSliceV2(
     dependencyOutputs: ownership.dependencyOutputs,
     sharedGrants: ownership.grants,
     contract,
+    actionInputTransports,
     build,
     designSourceClosure: value.designSourceClosure,
+    storySourceMap,
     ...(value.recovery ? { recovery: value.recovery } : {}),
   };
   const slice = ImplementationSliceV2Schema.safeParse(sliceCandidate);
@@ -686,5 +916,46 @@ export function compileImplementationSliceV2(
     slice: slice.data,
     sliceHash: exactHash(envelope),
     envelope,
+  };
+}
+
+/**
+ * Verifies an externally supplied slice against a fresh deterministic
+ * reproduction from an authoritative compiler input. Callers must obtain the
+ * compiler input from the native/runtime artifact trust boundary rather than
+ * from the same untrusted payload as the candidate slice.
+ */
+export function verifyImplementationSliceV2(
+  input: ImplementationSliceVerificationInputV2,
+): ImplementationSliceVerificationResultV2 {
+  const candidate = ImplementationSliceV2Schema.safeParse(input.slice);
+  if (!candidate.success) {
+    return {
+      status: "rejected",
+      diagnostics: sortedDiagnostics(candidate.error.issues.slice(0, 200).map((issue) => diagnostic(
+        "SLICE_V2_CONTRACT_INVALID",
+        `Candidate ImplementationSliceV2 failed at ${issue.path.join("/") || "$"}: ${issue.message}`,
+        issue.path.join("/") || "$",
+      ))),
+    };
+  }
+
+  const reproduced = compileImplementationSliceV2(input.compilerInput);
+  if (reproduced.status === "rejected") return reproduced;
+  if (canonicalJsonStringify(candidate.data) !== canonicalJsonStringify(reproduced.slice)) {
+    return {
+      status: "rejected",
+      diagnostics: [diagnostic(
+        "SLICE_V2_AUTHORITY_MISMATCH",
+        "Candidate ImplementationSliceV2 does not byte-equal its canonical compiler reproduction",
+        "slice",
+      )],
+    };
+  }
+  return {
+    status: "verified",
+    diagnostics: [],
+    slice: reproduced.slice,
+    sliceHash: reproduced.sliceHash,
   };
 }

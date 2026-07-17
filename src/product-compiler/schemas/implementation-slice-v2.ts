@@ -16,6 +16,10 @@ import {
   topologyPathAbsenceHash,
 } from "./build-topology-v1.js";
 import {
+  ActionInputTransportV2Schema,
+  type ActionInputTransportV2,
+} from "./action-input-transport-v2.js";
+import {
   NormalizedRelativeLocatorSchema,
   PathBindingIdSchema,
   SemanticArtifactProducerV1Schema,
@@ -30,6 +34,10 @@ import {
   DesignSurfaceBindingV2Schema,
 } from "./design-interaction-graph-v2.js";
 import { DesignSourceClosureV2Schema } from "./design-source-closure-v2.js";
+import {
+  ImplementationScreenSourceV1Schema,
+  ImplementationSourceMapV1Schema,
+} from "./implementation-source-map-v1.js";
 import { ProductBuildPacketV3Schema } from "./product-build-packet-v3.js";
 import {
   ProductActionV2Schema,
@@ -281,6 +289,89 @@ export type ImplementationStoryContractV2 = z.infer<
   typeof ImplementationStoryContractV2Schema
 >;
 
+const ImplementationStorySourceMapAuthorityV1Shape = {
+  schema: z.literal("setfarm.implementation-story-source-map.v1"),
+  storyId: StoryIdSchema,
+  producer: SemanticArtifactProducerV1Schema,
+  implementationSourceMapV1Witness: ImplementationSourceMapV1Schema,
+  implementationSourceMapV1PayloadHash: Sha256Schema,
+  implementationSourceMapV1Hash: Sha256Schema,
+};
+
+const ImplementationStorySourceMapNoneV1Schema = z.object({
+  ...ImplementationStorySourceMapAuthorityV1Shape,
+  designSourceKind: z.literal("none"),
+  screens: z.array(z.never()).length(0),
+}).strict();
+
+const ImplementationStorySourceMapStitchV1Schema = z.object({
+  ...ImplementationStorySourceMapAuthorityV1Shape,
+  designSourceKind: z.literal("stitch"),
+  screens: z.array(ImplementationScreenSourceV1Schema).min(1).max(1_000),
+}).strict().superRefine((value, context) => {
+  requireCanonicalSet(
+    context,
+    ["screens"],
+    value.screens.map((screen) => screen.targetRef),
+    "Story source-map target refs",
+  );
+  if (!hasUniqueStrings(value.screens.map((screen) => screen.pathRef))) {
+    context.addIssue({
+      code: "custom",
+      path: ["screens"],
+      message: "Story source-map screen paths must be unique",
+    });
+  }
+});
+
+export const ImplementationStorySourceMapV1Schema = z.discriminatedUnion(
+  "designSourceKind",
+  [ImplementationStorySourceMapNoneV1Schema, ImplementationStorySourceMapStitchV1Schema],
+).superRefine((value, context) => {
+  const witness = value.implementationSourceMapV1Witness;
+  const payloadHash = hashCanonicalJson(witness);
+  const envelopeHash = hashCanonicalJson({
+    schema: "setfarm.semantic-artifact-envelope.v1",
+    artifactType: "setfarm.implementation-source-map.v1",
+    producer: value.producer,
+    payload: witness,
+  });
+  if (
+    value.designSourceKind !== witness.designSourceKind
+    || value.implementationSourceMapV1PayloadHash !== payloadHash
+    || value.implementationSourceMapV1Hash !== envelopeHash
+  ) {
+    context.addIssue({
+      code: "custom",
+      path: ["implementationSourceMapV1Witness"],
+      message: "Story source map must hash-bind the exact strict ImplementationSourceMapV1 witness",
+    });
+  }
+
+  const expectedScreens = witness.designSourceKind === "stitch"
+    ? witness.screens
+      .filter((screen) => screen.storyId === value.storyId)
+      .sort((left, right) => compareUtf16(left.targetRef, right.targetRef))
+    : [];
+  if (canonicalJsonStringify(value.screens) !== canonicalJsonStringify(expectedScreens)) {
+    context.addIssue({
+      code: "custom",
+      path: ["screens"],
+      message: "Story screens must be the canonical byte-exact storyId filter of the embedded source-map witness",
+    });
+  }
+});
+
+export type ImplementationStorySourceMapV1 = z.infer<
+  typeof ImplementationStorySourceMapV1Schema
+>;
+
+export function implementationStorySourceMapHashV1(
+  sourceMap: ImplementationStorySourceMapV1,
+): string {
+  return hashCanonicalJson(ImplementationStorySourceMapV1Schema.parse(sourceMap));
+}
+
 export const ImplementationSliceAuthorityV2Schema = z.object({
   schema: z.literal("setfarm.implementation-slice-authority.v2"),
   packetHash: Sha256Schema,
@@ -294,12 +385,16 @@ export const ImplementationSliceAuthorityV2Schema = z.object({
   storyPlanV2Hash: Sha256Schema,
   designSourceClosureV2PayloadHash: Sha256Schema,
   designSourceClosureV2Hash: Sha256Schema,
+  implementationSourceMapV1PayloadHash: Sha256Schema,
+  implementationSourceMapV1Hash: Sha256Schema,
+  storySourceMapHash: Sha256Schema,
   storyHash: Sha256Schema,
   sourceRevisionHash: Sha256Schema,
   filesHash: Sha256Schema,
   dependencyOutputsHash: Sha256Schema,
   sharedGrantsHash: Sha256Schema,
   storyContractHash: Sha256Schema,
+  actionInputTransportsHash: Sha256Schema,
   buildAuthorityHash: Sha256Schema,
   recoveryHash: Sha256Schema.nullable(),
 }).strict();
@@ -324,6 +419,15 @@ export function implementationSharedGrantsHashV2(
   return hashCanonicalJson({ schema: "setfarm.implementation-shared-grant-set.v2", grants });
 }
 
+export function implementationActionInputTransportsHashV2(
+  transports: readonly ActionInputTransportV2[],
+): string {
+  return hashCanonicalJson({
+    schema: "setfarm.implementation-action-input-transport-set.v2",
+    transports,
+  });
+}
+
 export function implementationSliceAuthorityHashV2(
   authority: ImplementationSliceAuthorityV2,
 ): string {
@@ -345,8 +449,10 @@ export const ImplementationSliceV2Schema = z.object({
   dependencyOutputs: z.array(ImplementationDependencyOutputV2Schema).max(5_000),
   sharedGrants: z.array(SharedGrantV1Schema).max(20_000),
   contract: ImplementationStoryContractV2Schema,
+  actionInputTransports: z.array(ActionInputTransportV2Schema).max(100_000),
   build: ImplementationBuildAuthorityV2Schema,
   designSourceClosure: DesignSourceClosureV2Schema,
+  storySourceMap: ImplementationStorySourceMapV1Schema,
   recovery: ImplementationRecoveryDirectiveV2Schema.optional(),
 }).strict().superRefine((value, context) => {
   const expectedPacketHash = hashCanonicalJson({
@@ -382,6 +488,7 @@ export const ImplementationSliceV2Schema = z.object({
     || value.authority.buildTopologyV1Hash !== value.packet.buildTopologyV1Hash
     || value.authority.storyPlanV2Hash !== value.packet.storyPlanV2Hash
     || value.authority.designSourceClosureV2Hash !== value.packet.designSourceClosureV2Hash
+    || value.authority.implementationSourceMapV1Hash !== value.packet.implementationSourceMapV1Hash
   ) {
     context.addIssue({
       code: "custom",
@@ -407,7 +514,15 @@ export const ImplementationSliceV2Schema = z.object({
     || value.authority.dependencyOutputsHash !== implementationDependencyOutputsHashV2(value.dependencyOutputs)
     || value.authority.sharedGrantsHash !== implementationSharedGrantsHashV2(value.sharedGrants)
     || value.authority.storyContractHash !== hashCanonicalJson(value.contract)
+    || value.authority.actionInputTransportsHash
+      !== implementationActionInputTransportsHashV2(value.actionInputTransports)
     || value.authority.buildAuthorityHash !== hashCanonicalJson(value.build)
+    || value.authority.implementationSourceMapV1PayloadHash
+      !== value.storySourceMap.implementationSourceMapV1PayloadHash
+    || value.authority.implementationSourceMapV1Hash
+      !== value.storySourceMap.implementationSourceMapV1Hash
+    || value.authority.storySourceMapHash
+      !== hashCanonicalJson(value.storySourceMap)
     || value.authority.designSourceClosureV2PayloadHash !== hashCanonicalJson(value.designSourceClosure)
     || value.authority.designSourceClosureV2Hash !== hashCanonicalJson({
       schema: "setfarm.semantic-artifact-envelope.v1",
@@ -424,9 +539,234 @@ export const ImplementationSliceV2Schema = z.object({
     });
   }
 
+  if (
+    value.storySourceMap.storyId !== value.storyId
+    || canonicalJsonStringify(value.storySourceMap.producer) !== canonicalJsonStringify(value.producer)
+    || value.storySourceMap.designSourceKind !== value.packet.designSourceKind
+    || value.storySourceMap.implementationSourceMapV1Witness.designSourceKind
+      !== value.packet.designSourceKind
+    || value.storySourceMap.implementationSourceMapV1Hash
+      !== value.packet.implementationSourceMapV1Hash
+  ) {
+    context.addIssue({
+      code: "custom",
+      path: ["storySourceMap"],
+      message: "Story source map must bind the exact story, packet design kind, and source-map artifact",
+    });
+  }
+
   requireCanonicalSet(context, ["files"], value.files.map((file) => file.pathRef), "Slice file refs");
   if (!hasUniqueStrings(value.files.map((file) => file.path))) {
     context.addIssue({ code: "custom", path: ["files"], message: "Slice file paths must be unique" });
+  }
+  requireCanonicalSet(
+    context,
+    ["actionInputTransports"],
+    value.actionInputTransports.map((transport) => transport.actionInputRef),
+    "Action-input transport refs",
+  );
+  if (value.storySourceMap.designSourceKind === "stitch") {
+    const screens = value.storySourceMap.screens;
+    const expectedRoutes = sorted(value.story.routeRefs);
+    const expectedSurfaces = sorted(value.story.surfaceRefs);
+    const expectedControlSlots = sorted(value.story.controlSlotRefs);
+    const expectedControls = sorted(value.story.controlRefs);
+    const expectedObservables = sorted(value.story.observableRefs);
+    const designContract = value.contract.design;
+    const expectedActions = sorted([
+      ...(designContract?.controls ?? []).map((control) => control.identity.actionRef),
+      ...(designContract?.controls ?? []).flatMap((control) =>
+        control.actionInputBindings.map(() => control.identity.actionRef)),
+      ...(designContract?.observables ?? []).map((observable) => observable.actionRef),
+    ]);
+    const observedRoutes = sorted(screens.map((screen) => screen.routeRef));
+    const observedSurfaces = sorted(screens.flatMap((screen) => [
+      screen.rootSurface.surfaceRef,
+      ...screen.containedSurfaces.map((surface) => surface.surfaceRef),
+    ]));
+    const observedControlSlots = sorted(screens.flatMap((screen) =>
+      screen.controls.map((control) => control.controlSlotRef)));
+    const observedControls = sorted(screens.flatMap((screen) =>
+      screen.controls.map((control) => control.physicalControlRef)));
+    const observedActions = sorted(screens.flatMap((screen) => [
+      ...screen.controls.map((control) => control.actionRef),
+      ...screen.actionInputs.map((input) => input.actionRef),
+      ...screen.observables.map((observable) => observable.actionRef),
+    ]));
+    const observedObservables = sorted(screens.flatMap((screen) =>
+      screen.observables.map((observable) => observable.observableRef)));
+    for (const [field, expected, observed] of [
+      ["routes", expectedRoutes, observedRoutes],
+      ["surfaces", expectedSurfaces, observedSurfaces],
+      ["controlSlots", expectedControlSlots, observedControlSlots],
+      ["controls", expectedControls, observedControls],
+      ["actions", expectedActions, observedActions],
+      ["observables", expectedObservables, observedObservables],
+    ] as const) {
+      if (!sameStrings(expected, observed)) {
+        context.addIssue({
+          code: "custom",
+          path: ["storySourceMap", "screens"],
+          message: `Story source-map ${field} must exactly equal ProductStoryV2`,
+        });
+      }
+    }
+
+    const fileByRef = new Map(value.files.map((file) => [file.pathRef, file] as const));
+    const designControlByRef = new Map((value.contract.design?.controls ?? []).map((control) =>
+      [control.id, control] as const));
+    const designObservableByRef = new Map((value.contract.design?.observables ?? []).map((observable) =>
+      [observable.observableRef, observable] as const));
+    const designSurfaceByRef = new Map((value.contract.design?.surfaces ?? []).map((surface) =>
+      [surface.surfaceRef, surface] as const));
+    const expectedMappedActionInputs = sorted((designContract?.controls ?? []).flatMap((control) =>
+      control.actionInputBindings.map((binding) => `${control.id}\0${binding.actionInputRef}`)));
+    const observedMappedActionInputs = sorted(screens.flatMap((screen) =>
+      screen.actionInputs.map((input) => {
+        const control = screen.controls.find((candidate) =>
+          candidate.generatedLocalId === input.generatedControlId);
+        return `${control?.physicalControlRef ?? `UNRESOLVED_${screen.targetRef}_${input.generatedControlId}`}\0${input.actionInputRef}`;
+      })));
+    if (!sameStrings(expectedMappedActionInputs, observedMappedActionInputs)) {
+      context.addIssue({
+        code: "custom",
+        path: ["storySourceMap", "screens"],
+        message: "Mapped action inputs must exactly equal the design control binding multiset",
+      });
+    }
+    const mappedActionInputRefs = screens.flatMap((screen) =>
+      screen.actionInputs.map((input) => input.actionInputRef));
+    value.contract.product.actions
+      .filter((action) => action.trigger.kind === "user")
+      .flatMap((action) => action.input.fields
+        .filter((field) => field.required)
+        .map((field) => `${action.id}.${field.name}`))
+      .forEach((requiredRef) => {
+        if (!mappedActionInputRefs.includes(requiredRef)) {
+          context.addIssue({
+            code: "custom",
+            path: ["storySourceMap", "screens"],
+            message: `Required user-control action input is unmapped: ${requiredRef}`,
+          });
+        }
+      });
+    screens.forEach((screen, screenIndex) => {
+      const file = fileByRef.get(screen.pathRef);
+      if (
+        screen.storyId !== value.storyId
+        || screen.ownerRef !== value.story.ownerRef
+        || !value.story.ownedPathRefs.includes(screen.pathRef)
+        || !file
+        || file.role !== "owned"
+        || file.path !== screen.path
+        || file.presence !== "present"
+        || file.contentHash !== screen.contentHash
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: ["storySourceMap", "screens", screenIndex],
+          message: "Mapped generated screen must equal one current story-owned source file",
+        });
+      }
+      const storyEvidence = new Set(value.story.evidenceRefs);
+      if (screen.observables.some((observable) => !storyEvidence.has(observable.evidenceRef))) {
+        context.addIssue({
+          code: "custom",
+          path: ["storySourceMap", "screens", screenIndex, "observables"],
+          message: "Mapped observable evidence must belong to the exact story",
+        });
+      }
+      for (const surface of [screen.rootSurface, ...screen.containedSurfaces]) {
+        const designSurface = designSurfaceByRef.get(surface.surfaceRef);
+        if (
+          !designSurface
+          || designSurface.elementRef !== surface.sourceElementRef
+          || designSurface.elementHash !== surface.sourceElementHash
+          || designSurface.routeRef !== screen.routeRef
+          || designSurface.source.targetRef !== screen.targetRef
+          || designSurface.source.responseScreenId !== screen.responseScreenId
+        ) {
+          context.addIssue({
+            code: "custom",
+            path: ["storySourceMap", "screens", screenIndex, "rootSurface"],
+            message: "Mapped surface source must equal the exact story design surface",
+          });
+        }
+      }
+      screen.controls.forEach((control, controlIndex) => {
+        const designControl = designControlByRef.get(control.physicalControlRef);
+        if (
+          !designControl
+          || designControl.identity.controlSlotRef !== control.controlSlotRef
+          || designControl.identity.actionRef !== control.actionRef
+          || designControl.controlPlacementHash !== control.controlPlacementHash
+          || designControl.elementRef !== control.sourceElementRef
+          || designControl.elementHash !== control.sourceElementHash
+          || designControl.tagName !== control.tagName
+          || designControl.nativeControlKind !== control.nativeControlKind
+          || designControl.role !== control.role
+          || designControl.ariaLabel !== control.ariaLabel
+          || designControl.href !== control.href
+          || designControl.interactiveRole !== control.interactiveRole
+          || designControl.source.targetRef !== screen.targetRef
+          || designControl.source.responseScreenId !== screen.responseScreenId
+        ) {
+          context.addIssue({
+            code: "custom",
+            path: ["storySourceMap", "screens", screenIndex, "controls", controlIndex],
+            message: "Mapped physical control must equal the exact story design control",
+          });
+        }
+      });
+      screen.actionInputs.forEach((actionInput, inputIndex) => {
+        const exactTransports = value.actionInputTransports.filter((transport) =>
+          transport.actionInputRef === actionInput.actionInputRef
+          && transport.actionRef === actionInput.actionRef
+          && transport.fieldRef === actionInput.inputField);
+        const mappedControl = screen.controls.find((control) =>
+          control.generatedLocalId === actionInput.generatedControlId);
+        const designControl = mappedControl
+          ? designControlByRef.get(mappedControl.physicalControlRef)
+          : undefined;
+        const exactBindings = designControl?.identity.actionRef === actionInput.actionRef
+          ? designControl.actionInputBindings.filter((binding) =>
+              binding.actionInputRef === actionInput.actionInputRef
+              && binding.fieldRef === actionInput.inputField
+              && binding.elementRef === actionInput.sourceElementRef
+              && binding.elementHash === actionInput.sourceElementHash)
+          : [];
+        if (exactBindings.length !== 1 || exactTransports.length !== 1) {
+          context.addIssue({
+            code: "custom",
+            path: ["storySourceMap", "screens", screenIndex, "actionInputs", inputIndex],
+            message: "Mapped action input must resolve to one exact design binding and typed transport",
+          });
+        }
+      });
+      screen.observables.forEach((observable, observableIndex) => {
+        const designObservable = designObservableByRef.get(observable.observableRef);
+        if (
+          !designObservable
+          || designObservable.actionRef !== observable.actionRef
+          || canonicalJsonStringify(designObservable.selector)
+            !== canonicalJsonStringify(observable.selector)
+          || designObservable.selectorHash !== observable.selectorHash
+          || designObservable.assertionsHash !== observable.assertionsHash
+          || designObservable.evidenceRef !== observable.evidenceRef
+          || designObservable.elementBindings.length !== 1
+          || designObservable.elementBindings[0]!.elementRef !== observable.sourceElementRef
+          || designObservable.elementBindings[0]!.elementHash !== observable.sourceElementHash
+          || designObservable.source.targetRef !== screen.targetRef
+          || designObservable.source.responseScreenId !== screen.responseScreenId
+        ) {
+          context.addIssue({
+            code: "custom",
+            path: ["storySourceMap", "screens", screenIndex, "observables", observableIndex],
+            message: "Mapped observable must equal the exact story design binding",
+          });
+        }
+      });
+    });
   }
   requireCanonicalSet(
     context,
@@ -498,6 +838,49 @@ export const ImplementationSliceV2Schema = z.object({
   });
 
   const product = value.contract.product;
+  const expectedActionInputTransportRefs = value.storySourceMap.designSourceKind === "stitch"
+    ? sorted(product.actions
+      .filter((action) => action.controlPlacements.length > 0)
+      .flatMap((action) =>
+        action.input.fields.map((field) => `${action.id}.${field.name}`)))
+    : [];
+  const observedActionInputTransportRefs = value.actionInputTransports.map((transport) =>
+    transport.actionInputRef);
+  if (!sameStrings(expectedActionInputTransportRefs, observedActionInputTransportRefs)) {
+    context.addIssue({
+      code: "custom",
+      path: ["actionInputTransports"],
+      message: "Typed action-input transports must contain every and only rendered story action input",
+    });
+  }
+  const transportActionById = new Map(product.actions.map((action) => [action.id, action] as const));
+  const transportEntityFieldById = new Map(product.entities.flatMap((entity) =>
+    entity.fields.map((field) => [field.id, field] as const)));
+  value.actionInputTransports.forEach((transport, transportIndex) => {
+    const action = transportActionById.get(transport.actionRef);
+    const field = action?.input.fields.find((candidate) => candidate.name === transport.fieldRef);
+    const entityField = field?.entityFieldRef
+      ? transportEntityFieldById.get(field.entityFieldRef)
+      : undefined;
+    const expectedEnumValues = field?.valueType === "enum"
+      ? entityField?.enumValues ?? null
+      : null;
+    if (
+      !field
+      || transport.actionInputRef !== `${transport.actionRef}.${transport.fieldRef}`
+      || transport.valueType !== field.valueType
+      || transport.required !== field.required
+      || transport.entityFieldRef !== (field.entityFieldRef ?? null)
+      || canonicalJsonStringify(transport.enumValues)
+        !== canonicalJsonStringify(expectedEnumValues)
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["actionInputTransports", transportIndex],
+        message: "Typed action-input transport must equal its exact embedded ProductSpecV2 field authority",
+      });
+    }
+  });
   const exactRefs = [
     ["routeRefs", value.story.routeRefs, product.routes.map((item) => item.id)],
     ["surfaceRefs", value.story.surfaceRefs, product.surfaces.map((item) => item.id)],

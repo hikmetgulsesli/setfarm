@@ -16,13 +16,22 @@ import {
 } from "../../src/product-compiler/producers/stitch-target-candidate-selection-v2.js";
 import { BuildTopologyV1Schema } from "../../src/product-compiler/schemas/build-topology-v1.js";
 import { DesignSourceClosureV2Schema } from "../../src/product-compiler/schemas/design-source-closure-v2.js";
+import { ImplementationSourceMapV1Schema } from "../../src/product-compiler/schemas/implementation-source-map-v1.js";
 import {
+  ImplementationSliceV2Schema,
+  implementationActionInputTransportsHashV2,
+  implementationFilesHashV2,
+  implementationSliceAuthorityHashV2,
   implementationSliceHashV2,
+  implementationStorySourceMapHashV1,
 } from "../../src/product-compiler/schemas/implementation-slice-v2.js";
 import { ProductBuildPacketV3Schema } from "../../src/product-compiler/schemas/product-build-packet-v3.js";
 import { ProductSpecV2Schema } from "../../src/product-compiler/schemas/product-spec-v2.js";
 import { hashRuntimeDataContractV1 } from "../../src/product-compiler/schemas/runtime-data-contract-v1.js";
-import { compileImplementationSliceV2 } from "../../src/product-compiler/slice-compiler-v2.js";
+import {
+  compileImplementationSliceV2,
+  verifyImplementationSliceV2,
+} from "../../src/product-compiler/slice-compiler-v2.js";
 import {
   CONTAINED_GAME_TASK,
   containedGamePlanProposalV2,
@@ -42,6 +51,9 @@ const PRODUCER = {
   codeSha: "e4db8ae",
   toolVersions: { zod: "4.4.3" },
 };
+
+const GENERATED_SCREEN_PATH = "src/screens/PlayPage.tsx";
+const GENERATED_SCREEN_HASH = sha("generated-play-page");
 
 function semanticEnvelope(artifactType: string, payload: unknown) {
   return SemanticArtifactEnvelopeV1Schema.parse({
@@ -236,6 +248,14 @@ function stitchTopology(productSpec: ReturnType<typeof strictStitchProductSpec>)
         knownContentHash: sha("app-v1"),
       },
       {
+        id: "PATH_PLAY_PAGE",
+        path: GENERATED_SCREEN_PATH,
+        role: "generated",
+        ownerRef: "OWNER_US_001",
+        presence: "present",
+        knownContentHash: GENERATED_SCREEN_HASH,
+      },
+      {
         id: "PATH_SHARED_READ",
         path: "src/shared/read.ts",
         role: "source",
@@ -352,6 +372,195 @@ function stitchClosure(value: Awaited<ReturnType<typeof exactDesignFixture>>) {
   });
 }
 
+function stitchImplementationSourceMap(input: Readonly<{
+  design: Awaited<ReturnType<typeof exactDesignFixture>>;
+  buildTopology: ReturnType<typeof stitchTopology>;
+  storyPlan: ReturnType<typeof produceStoryPlanV2> extends { status: "produced"; storyPlan: infer T } ? T : never;
+  designSourceClosure: ReturnType<typeof stitchClosure>;
+}>) {
+  const target = input.design.generationTargets.targets[0]!;
+  const response = input.design.responseBindings.bindings[0]!;
+  const story = input.storyPlan.stories[0]!;
+  const controls = input.design.graph.controls
+    .filter((control) => control.source.targetRef === target.targetId)
+    .sort((left, right) => left.identity.controlSlotRef.localeCompare(right.identity.controlSlotRef));
+  const localIdByControl = new Map(controls.map((control, index) =>
+    [control.id, `generated-control-${index + 1}`] as const));
+  const mappedControls = controls.map((control) => {
+    const action = input.design.productSpec.actions.find((candidate) =>
+      candidate.id === control.identity.actionRef)!;
+    const placement = action.controlPlacements.find((candidate) =>
+      candidate.id === control.identity.controlSlotRef)!;
+    const generatedLocalId = localIdByControl.get(control.id)!;
+    const generatedKind = control.nativeControlKind ?? (control.role === "link" ? "link" : "button");
+    return {
+      controlSlotRef: control.identity.controlSlotRef,
+      actionRef: action.id,
+      placement,
+      controlPlacementHash: hashCanonicalJson(placement),
+      affectedSurfaceRefs: [...action.affectedSurfaceRefs].sort(),
+      physicalControlRef: control.id,
+      sourceElementRef: control.elementRef,
+      sourceElementHash: control.elementHash,
+      generatedLocalId,
+      generatedSelector: `[data-action-id="${generatedLocalId}"]`,
+      generatedKind,
+      tagName: control.tagName,
+      nativeControlKind: control.nativeControlKind,
+      role: control.role,
+      ariaLabel: control.ariaLabel,
+      href: control.href,
+      interactiveRole: control.interactiveRole,
+      handlerBinding: {
+        actionsPropName: "actions" as const,
+        callbackKey: generatedLocalId,
+        event: generatedKind === "button" || generatedKind === "link" ? "click" as const : "change" as const,
+        preventsDefault: control.tagName === "a",
+        inputFields: action.input.fields.map((field) => field.name).sort(),
+      },
+    };
+  });
+  const actionInputs = controls.flatMap((control) => {
+    const generatedControlId = localIdByControl.get(control.id)!;
+    return control.actionInputBindings.map((binding) => {
+      const actionRef = control.identity.actionRef;
+      const actionInputRef = `${actionRef}.${binding.fieldRef}`;
+      return {
+        actionInputRef,
+        actionRef,
+        inputField: binding.fieldRef,
+        sourceElementRef: binding.elementRef,
+        sourceElementHash: binding.elementHash,
+        generatedControlId,
+        generatedSelector: `[data-action-id="${generatedControlId}"]`,
+        stateKey: actionInputRef,
+        valueEvent: "change" as const,
+        actionHandlerIds: mappedControls
+          .filter((candidate) => candidate.actionRef === actionRef)
+          .map((candidate) => candidate.generatedLocalId)
+          .sort(),
+      };
+    });
+  }).sort((left, right) =>
+    `${left.actionInputRef}\0${left.generatedControlId}`.localeCompare(
+      `${right.actionInputRef}\0${right.generatedControlId}`,
+    ));
+  const observables = input.design.graph.observables
+    .filter((observable) => observable.source.targetRef === target.targetId)
+    .sort((left, right) => left.observableRef.localeCompare(right.observableRef))
+    .map((observable) => ({
+      observableRef: observable.observableRef,
+      actionRef: observable.actionRef,
+      selector: observable.selector,
+      selectorHash: observable.selectorHash,
+      evidenceRef: observable.evidenceRef,
+      sourceElementRef: observable.elementBindings[0]!.elementRef,
+      sourceElementHash: observable.elementBindings[0]!.elementHash,
+      generatedSelector: `[data-observable-refs~="${observable.observableRef}"]`,
+      assertionsHash: observable.assertionsHash,
+    }));
+  const graphSurfaceByRef = new Map(input.design.graph.surfaces.map((surface) =>
+    [surface.surfaceRef, surface] as const));
+  const surfaceSource = (surfaceRef: string) => {
+    const surface = graphSurfaceByRef.get(surfaceRef)!;
+    return {
+      surfaceRef,
+      sourceElementRef: surface.elementRef,
+      sourceElementHash: surface.elementHash,
+    };
+  };
+  const counts = { buttons: 0, links: 0, inputs: 0, textareas: 0, selects: 0 };
+  mappedControls.forEach((control) => {
+    if (control.generatedKind === "button") counts.buttons += 1;
+    else if (control.generatedKind === "link") counts.links += 1;
+    else if (control.generatedKind === "input") counts.inputs += 1;
+    else if (control.generatedKind === "textarea") counts.textareas += 1;
+    else counts.selects += 1;
+  });
+  return ImplementationSourceMapV1Schema.parse({
+    schema: "setfarm.implementation-source-map.v1",
+    sourceMapVersion: 1,
+    designSourceKind: "stitch",
+    productSpecV2PayloadHash: hashCanonicalJson(input.design.productSpec),
+    designGraphV2PayloadHash: hashCanonicalJson(input.design.graph),
+    buildTopologyV1PayloadHash: hashCanonicalJson(input.buildTopology),
+    storyPlanV2PayloadHash: hashCanonicalJson(input.storyPlan),
+    designSourceClosureV2PayloadHash: hashCanonicalJson(input.designSourceClosure),
+    screenIndexV2PayloadHash: sha("screen-index-payload"),
+    screenIndexSourceHash: sha("screen-index-source"),
+    converter: {
+      schema: "setfarm.implementation-source-converter.v1",
+      converterId: "setfarm.stitch-to-jsx",
+      contractVersion: 1,
+      componentApiSchema: "setfarm.generated-screen-component-api.v1",
+      sourceHash: sha("stitch-converter-source"),
+      sourceByteLength: 1_024,
+    },
+    screens: [{
+      targetRef: target.targetId,
+      responseScreenId: response.responseScreenId,
+      routeRef: target.routeRef,
+      rootSurface: surfaceSource(target.surfaceRef),
+      containedSurfaces: [...target.containedSurfaceRefs].sort().map(surfaceSource),
+      pathRef: "PATH_PLAY_PAGE",
+      path: GENERATED_SCREEN_PATH,
+      contentHash: GENERATED_SCREEN_HASH,
+      sourceByteLength: 2_048,
+      componentName: "PlayPage",
+      componentApi: {
+        schema: "setfarm.generated-screen-component-api.v1",
+        actionsPropName: "actions",
+        actionBindings: mappedControls.map((control) => ({
+          generatedLocalId: control.generatedLocalId,
+          actionRef: control.actionRef,
+          inputFields: control.handlerBinding.inputFields,
+        })).sort((left, right) =>
+          `${left.generatedLocalId}\0${left.actionRef}`.localeCompare(
+            `${right.generatedLocalId}\0${right.actionRef}`,
+          )),
+        inputTransports: actionInputs.map((transport) => ({
+          actionInputRef: transport.actionInputRef,
+          generatedControlId: transport.generatedControlId,
+          stateKey: transport.stateKey,
+        })),
+      },
+      targetHash: hashCanonicalJson(target),
+      responseBindingHash: hashCanonicalJson(response),
+      storyId: story.id,
+      ownerRef: story.ownerRef,
+      controls: mappedControls,
+      actionInputs,
+      observables,
+      rejectedControls: [],
+      cardinality: { raw: counts, accepted: counts, rejected: {
+        buttons: 0, links: 0, inputs: 0, textareas: 0, selects: 0,
+      } },
+    }],
+  });
+}
+
+function noDesignImplementationSourceMap(input: Readonly<{
+  productSpec: unknown;
+  buildTopology: unknown;
+  storyPlan: unknown;
+  designSourceClosure: unknown;
+}>) {
+  return ImplementationSourceMapV1Schema.parse({
+    schema: "setfarm.implementation-source-map.v1",
+    sourceMapVersion: 1,
+    designSourceKind: "none",
+    productSpecV2PayloadHash: hashCanonicalJson(input.productSpec),
+    designGraphV2PayloadHash: null,
+    buildTopologyV1PayloadHash: hashCanonicalJson(input.buildTopology),
+    storyPlanV2PayloadHash: hashCanonicalJson(input.storyPlan),
+    designSourceClosureV2PayloadHash: hashCanonicalJson(input.designSourceClosure),
+    screenIndexV2PayloadHash: null,
+    screenIndexSourceHash: null,
+    converter: null,
+    screens: [],
+  });
+}
+
 async function stitchCompilerFixture() {
   const design = await exactDesignFixture();
   const buildTopology = stitchTopology(design.productSpec);
@@ -364,6 +573,12 @@ async function stitchCompilerFixture() {
   if (storyPlanResult.status !== "produced") throw new Error("unreachable");
   const storyPlan = storyPlanResult.storyPlan;
   const designSourceClosure = stitchClosure(design);
+  const implementationSourceMap = stitchImplementationSourceMap({
+    design,
+    buildTopology,
+    storyPlan,
+    designSourceClosure,
+  });
   const packet = ProductBuildPacketV3Schema.parse({
     schema: "setfarm.product-build-packet.v3",
     packetVersion: 3,
@@ -376,6 +591,10 @@ async function stitchCompilerFixture() {
     runtimeDataContractHash: buildTopology.runtimeDataContractHash,
     runtimeEvidenceContractHash: buildTopology.runtimeEvidenceContractHash,
     designSourceClosureV2Hash: envelopeHash("setfarm.design-source-closure.v2", designSourceClosure),
+    implementationSourceMapV1Hash: envelopeHash(
+      "setfarm.implementation-source-map.v1",
+      implementationSourceMap,
+    ),
     compiler: { version: "4.0.0", codeSha: "e4db8ae" },
     validationIds: ["VALIDATE_IMPLEMENTATION_SLICE_V2"],
   });
@@ -395,6 +614,7 @@ async function stitchCompilerFixture() {
     buildTopology,
     storyPlan,
     designSourceClosure,
+    implementationSourceMap,
     storyId: story.id,
     sourceRevision,
     producer: PRODUCER,
@@ -407,7 +627,65 @@ async function stitchCompilerFixture() {
       })),
     dependencyOutputs: [],
   };
-  return { ...design, buildTopology, storyPlan, designSourceClosure, packet, sourceRevision, input };
+  return {
+    ...design,
+    buildTopology,
+    storyPlan,
+    designSourceClosure,
+    implementationSourceMap,
+    packet,
+    sourceRevision,
+    input,
+  };
+}
+
+function resealStitchCompilerInput(input: any): void {
+  const productSpecPayloadHash = hashCanonicalJson(input.productSpec);
+  input.designGraph.productSpecHash = productSpecPayloadHash;
+  input.designGraph.actions.forEach((designAction: any) => {
+    const productAction = input.productSpec.actions.find((action: any) =>
+      action.id === designAction.actionRef)!;
+    designAction.productActionHash = hashCanonicalJson(productAction);
+  });
+  if (input.buildTopology.runtimeDataContract) {
+    input.buildTopology.runtimeDataContract.sourceProductSpecHash = productSpecPayloadHash;
+    input.buildTopology.runtimeDataContractHash = hashRuntimeDataContractV1(
+      input.buildTopology.runtimeDataContract,
+    );
+  }
+  const designGraphPayloadHash = hashCanonicalJson(input.designGraph);
+  input.storyPlan.productSpecHash = productSpecPayloadHash;
+  input.storyPlan.designGraphHash = designGraphPayloadHash;
+  input.storyPlan.buildTopologyHash = hashCanonicalJson(input.buildTopology);
+  input.designSourceClosure.designGraph.payloadHash = designGraphPayloadHash;
+  input.designSourceClosure.designGraph.envelopeHash = envelopeHash(
+    "setfarm.design-interaction-graph.v2",
+    input.designGraph,
+  );
+  input.implementationSourceMap.productSpecV2PayloadHash = productSpecPayloadHash;
+  input.implementationSourceMap.designGraphV2PayloadHash = designGraphPayloadHash;
+  input.implementationSourceMap.buildTopologyV1PayloadHash = hashCanonicalJson(input.buildTopology);
+  input.implementationSourceMap.storyPlanV2PayloadHash = hashCanonicalJson(input.storyPlan);
+  input.implementationSourceMap.designSourceClosureV2PayloadHash = hashCanonicalJson(
+    input.designSourceClosure,
+  );
+  input.packet.productSpecV2Hash = envelopeHash("setfarm.product-spec.v2", input.productSpec);
+  input.packet.designGraphV2Hash = envelopeHash(
+    "setfarm.design-interaction-graph.v2",
+    input.designGraph,
+  );
+  input.packet.buildTopologyV1Hash = envelopeHash("setfarm.build-topology.v1", input.buildTopology);
+  input.packet.storyPlanV2Hash = envelopeHash("setfarm.story-plan.v2", input.storyPlan);
+  input.packet.runtimeDataContractHash = input.buildTopology.runtimeDataContractHash;
+  input.packet.designSourceClosureV2Hash = envelopeHash(
+    "setfarm.design-source-closure.v2",
+    input.designSourceClosure,
+  );
+  input.packet.implementationSourceMapV1Hash = envelopeHash(
+    "setfarm.implementation-source-map.v1",
+    input.implementationSourceMap,
+  );
+  input.packetHash = envelopeHash("setfarm.product-build-packet.v3", input.packet);
 }
 
 function compileOrThrow(input: unknown) {
@@ -423,9 +701,12 @@ function rejectionCodes(input: unknown): string[] {
   return result.status === "rejected" ? result.diagnostics.map((item) => item.code) : [];
 }
 
-function twoComponentNoDesignProductSpec() {
+function twoComponentNoDesignProductSpec(
+  settingsMode: "user-boolean" | "timer-optional-date" = "user-boolean",
+) {
   const proposal: any = containedGamePlanProposalV2();
   const requirementRefs = proposal.requirements.map((requirement: any) => requirement.id);
+  const noControl = settingsMode === "timer-optional-date";
   proposal.states.push({
     key: "settings_mode",
     name: "Settings Mode",
@@ -447,17 +728,21 @@ function twoComponentNoDesignProductSpec() {
   proposal.actions.push({
     key: "toggle_settings",
     name: "Toggle Settings",
-    controlPlacements: [{
+    controlPlacements: noControl ? [] : [{
       key: "primary_toggle",
       surfaceKey: "settings_page",
       controlHint: "primary_button",
       requirementRefs,
     }],
-    affectedSurfaceKeys: [],
-    trigger: { kind: "user", sourceRef: "Toggle Settings" },
+    affectedSurfaceKeys: noControl ? ["settings_page"] : [],
+    trigger: noControl
+      ? { kind: "timer", sourceRef: "settings-clock" }
+      : { kind: "user", sourceRef: "Toggle Settings" },
     inputs: [],
     preconditions: [],
-    evidenceScenario: { controlPlacementKey: "primary_toggle", targetInputValues: {}, prerequisiteSteps: [] },
+    evidenceScenario: noControl
+      ? { targetInputValues: {}, prerequisiteSteps: [] }
+      : { controlPlacementKey: "primary_toggle", targetInputValues: {}, prerequisiteSteps: [] },
     stateDeltas: [{
       key: "toggle_value",
       stateKey: "settings_mode",
@@ -469,7 +754,9 @@ function twoComponentNoDesignProductSpec() {
     persistenceIntents: [],
     observables: [{
       key: "toggle_control",
-      selector: { kind: "control", controlPlacementKey: "primary_toggle" },
+      selector: noControl
+        ? { kind: "surface", surfaceKey: "settings_page" }
+        : { kind: "control", controlPlacementKey: "primary_toggle" },
       assertions: [{ phase: "after", property: "enabled", operator: "equals", expected: true }],
       requirementRefs,
     }],
@@ -490,11 +777,23 @@ function twoComponentNoDesignProductSpec() {
   productSpec.evidencePredicates.forEach((predicate: any) => {
     predicate.capabilityRefs = ["CAP_CLI_INTERACTION"];
   });
+  const settingsAction = productSpec.actions.find((action: any) =>
+    action.id === "ACT_TOGGLE_SETTINGS")!;
+  if (noControl) {
+    settingsAction.input.fields = [{ name: "scheduledDate", valueType: "date", required: false }];
+    settingsAction.evidenceScenario.targetInputValues = { scheduledDate: "2026-07-17" };
+  } else {
+    settingsAction.input.fields = [{ name: "enabled", valueType: "boolean", required: true }];
+    settingsAction.evidenceScenario.targetInputValues = { enabled: true };
+    settingsAction.stateDeltas[0]!.valueFrom = { kind: "input", field: "enabled" };
+  }
   return ProductSpecV2Schema.parse(productSpec);
 }
 
-function dependencyCompilerFixture() {
-  const productSpec = twoComponentNoDesignProductSpec();
+function dependencyCompilerFixture(
+  settingsMode: "user-boolean" | "timer-optional-date" = "user-boolean",
+) {
+  const productSpec = twoComponentNoDesignProductSpec(settingsMode);
   const buildTopology = BuildTopologyV1Schema.parse({
     schema: "setfarm.build-topology.v1",
     stackPack: { id: "node-cli", version: "2.0.0", contentHash: sha("node-cli-stack") },
@@ -557,6 +856,12 @@ function dependencyCompilerFixture() {
     kind: "none",
     reason: "product_delivery_design_not_required",
   });
+  const implementationSourceMap = noDesignImplementationSourceMap({
+    productSpec,
+    buildTopology,
+    storyPlan,
+    designSourceClosure,
+  });
   const packet = ProductBuildPacketV3Schema.parse({
     schema: "setfarm.product-build-packet.v3",
     packetVersion: 3,
@@ -567,6 +872,10 @@ function dependencyCompilerFixture() {
     buildTopologyV1Hash: envelopeHash("setfarm.build-topology.v1", buildTopology),
     storyPlanV2Hash: envelopeHash("setfarm.story-plan.v2", storyPlan),
     designSourceClosureV2Hash: envelopeHash("setfarm.design-source-closure.v2", designSourceClosure),
+    implementationSourceMapV1Hash: envelopeHash(
+      "setfarm.implementation-source-map.v1",
+      implementationSourceMap,
+    ),
     compiler: { version: "4.0.0", codeSha: "e4db8ae" },
     validationIds: ["VALIDATE_IMPLEMENTATION_SLICE_V2"],
   });
@@ -593,6 +902,7 @@ function dependencyCompilerFixture() {
       buildTopology,
       storyPlan,
       designSourceClosure,
+      implementationSourceMap,
       storyId: story.id,
       sourceRevision: { sha: "9".repeat(40), treeHash: "a".repeat(40) },
       producer: PRODUCER,
@@ -658,8 +968,22 @@ describe("ImplementationSliceV2 exact authority compiler", { concurrency: 1 }, (
     assert.deepEqual(first.envelope, semanticEnvelope("setfarm.implementation-slice.v2", first.slice));
     assert.equal(first.sliceHash, hashCanonicalJson(first.envelope));
     assert.notEqual(first.sliceHash, implementationSliceHashV2(first.slice));
+    const mutableCandidate: any = structuredClone(first.slice);
+    const verification = verifyImplementationSliceV2({
+      compilerInput: value.input,
+      slice: mutableCandidate,
+    });
+    assert.equal(verification.status, "verified");
+    if (verification.status === "verified") {
+      assert.deepEqual(verification.slice, first.slice);
+      assert.equal(verification.sliceHash, first.sliceHash);
+      assert.notStrictEqual(verification.slice, mutableCandidate);
+      mutableCandidate.story.title = "mutated after verification";
+      assert.notEqual(verification.slice.story.title, mutableCandidate.story.title);
+    }
     assert.deepEqual(first.slice.files.map((file) => [file.pathRef, file.role]), [
       ["PATH_APP", "owned"],
+      ["PATH_PLAY_PAGE", "owned"],
       ["PATH_SHARED_READ", "shared_readonly"],
       ["PATH_SHARED_WRITE", "shared_writable"],
     ]);
@@ -678,6 +1002,34 @@ describe("ImplementationSliceV2 exact authority compiler", { concurrency: 1 }, (
     assert.deepEqual(first.slice.build.runtimeDataContract, value.buildTopology.runtimeDataContract);
     assert.deepEqual(first.slice.build.runtimeEvidenceContract, value.buildTopology.runtimeEvidenceContract);
     assert.equal(first.slice.designSourceClosure.kind, "stitch");
+    assert.equal(first.slice.storySourceMap.designSourceKind, "stitch");
+    assert.deepEqual(first.slice.storySourceMap.producer, PRODUCER);
+    assert.deepEqual(
+      first.slice.storySourceMap.implementationSourceMapV1Witness,
+      value.implementationSourceMap,
+    );
+    assert.deepEqual(first.slice.storySourceMap.screens, value.implementationSourceMap.screens);
+    assert.deepEqual(first.slice.actionInputTransports.map((transport) => [
+      transport.actionInputRef,
+      transport.valueType,
+      transport.codecId,
+    ]), [["ACT_START_GAME.phase", "string", "text.v2"]]);
+    assert.equal(
+      first.slice.authority.actionInputTransportsHash,
+      implementationActionInputTransportsHashV2(first.slice.actionInputTransports),
+    );
+    assert.equal(
+      first.slice.authority.implementationSourceMapV1PayloadHash,
+      hashCanonicalJson(value.implementationSourceMap),
+    );
+    assert.equal(
+      first.slice.authority.implementationSourceMapV1Hash,
+      value.packet.implementationSourceMapV1Hash,
+    );
+    assert.equal(
+      first.slice.authority.storySourceMapHash,
+      implementationStorySourceMapHashV1(first.slice.storySourceMap),
+    );
     assert.equal(
       first.slice.designSourceClosure.kind === "stitch"
         ? first.slice.designSourceClosure.acceptedAttempt.outputSealHash
@@ -708,6 +1060,22 @@ describe("ImplementationSliceV2 exact authority compiler", { concurrency: 1 }, (
     assert.equal(compiled.slice.packet.designSourceKind, "none");
     assert.equal(compiled.slice.contract.design, null);
     assert.equal(compiled.slice.designSourceClosure.kind, "none");
+    assert.equal(compiled.slice.storySourceMap.designSourceKind, "none");
+    assert.deepEqual(compiled.slice.storySourceMap.screens, []);
+    assert.deepEqual(compiled.slice.actionInputTransports, []);
+
+    const noControl = dependencyCompilerFixture("timer-optional-date");
+    const noControlCompiled = compileOrThrow(noControl.input);
+    const noControlAction = noControlCompiled.slice.contract.product.actions.find((action) =>
+      action.id === "ACT_TOGGLE_SETTINGS")!;
+    assert.equal(noControlAction.trigger.kind, "timer");
+    assert.deepEqual(noControlAction.controlPlacements, []);
+    assert.deepEqual(noControlAction.input.fields, [{
+      name: "scheduledDate",
+      valueType: "date",
+      required: false,
+    }]);
+    assert.deepEqual(noControlCompiled.slice.actionInputTransports, []);
   });
 
   it("keeps CAS envelope identities distinct from payload fingerprints", async () => {
@@ -736,6 +1104,246 @@ describe("ImplementationSliceV2 exact authority compiler", { concurrency: 1 }, (
     assert.equal(rejectionCodes(wrongProducer).includes("SLICE_V2_PACKET_HASH_MISMATCH"), true);
   });
 
+  it("fails closed with typed diagnostics for ambiguous or unsupported story input transports", async () => {
+    const value = await stitchCompilerFixture();
+
+    const ambiguous: any = structuredClone(value.input);
+    ambiguous.productSpec.actions[0]!.input.fields[0]!.required = false;
+    resealStitchCompilerInput(ambiguous);
+    assert.equal(
+      rejectionCodes(ambiguous).includes("SLICE_V2_ACTION_INPUT_TRANSPORT_AMBIGUOUS"),
+      true,
+    );
+
+    const unsupported: any = structuredClone(value.input);
+    unsupported.productSpec.actions[0]!.input.fields[0]!.valueType = "date";
+    unsupported.productSpec.actions[0]!.evidenceScenario.targetInputValues.phase = "2026-07-17";
+    resealStitchCompilerInput(unsupported);
+    assert.equal(
+      rejectionCodes(unsupported).includes("SLICE_V2_ACTION_INPUT_TRANSPORT_UNSUPPORTED"),
+      true,
+    );
+  });
+
+  it("requires the exact source-map authority and rejects foreign maps or forged story projections", async () => {
+    const value = await stitchCompilerFixture();
+
+    const missing: any = structuredClone(value.input);
+    delete missing.implementationSourceMap;
+    assert.deepEqual([...new Set(rejectionCodes(missing))], ["SLICE_V2_INPUT_INVALID"]);
+
+    const tampered: any = structuredClone(value.input);
+    tampered.implementationSourceMap.productSpecV2PayloadHash = sha("foreign-product-payload");
+    tampered.packet.implementationSourceMapV1Hash = envelopeHash(
+      "setfarm.implementation-source-map.v1",
+      tampered.implementationSourceMap,
+    );
+    tampered.packetHash = envelopeHash("setfarm.product-build-packet.v3", tampered.packet);
+    assert.equal(
+      rejectionCodes(tampered).includes("SLICE_V2_IMPLEMENTATION_SOURCE_MAP_AUTHORITY_MISMATCH"),
+      true,
+    );
+
+    const forgedTargetHash: any = structuredClone(value.input);
+    forgedTargetHash.implementationSourceMap.screens[0]!.targetHash = sha("foreign-target");
+    forgedTargetHash.packet.implementationSourceMapV1Hash = envelopeHash(
+      "setfarm.implementation-source-map.v1",
+      forgedTargetHash.implementationSourceMap,
+    );
+    forgedTargetHash.packetHash = envelopeHash(
+      "setfarm.product-build-packet.v3",
+      forgedTargetHash.packet,
+    );
+    assert.equal(
+      rejectionCodes(forgedTargetHash).includes(
+        "SLICE_V2_IMPLEMENTATION_SOURCE_MAP_AUTHORITY_MISMATCH",
+      ),
+      true,
+    );
+
+    const foreign: any = structuredClone(value.input);
+    foreign.implementationSourceMap.screens[0]!.storyId = "US-999";
+    foreign.packet.implementationSourceMapV1Hash = envelopeHash(
+      "setfarm.implementation-source-map.v1",
+      foreign.implementationSourceMap,
+    );
+    foreign.packetHash = envelopeHash("setfarm.product-build-packet.v3", foreign.packet);
+    assert.equal(
+      rejectionCodes(foreign).includes("SLICE_V2_IMPLEMENTATION_SOURCE_MAP_AUTHORITY_MISMATCH"),
+      true,
+    );
+
+    const reassignedTarget: any = structuredClone(value.input);
+    reassignedTarget.implementationSourceMap.screens[0]!.targetRef = "TARGET_FORGED";
+    reassignedTarget.packet.implementationSourceMapV1Hash = envelopeHash(
+      "setfarm.implementation-source-map.v1",
+      reassignedTarget.implementationSourceMap,
+    );
+    reassignedTarget.packetHash = envelopeHash(
+      "setfarm.product-build-packet.v3",
+      reassignedTarget.packet,
+    );
+    assert.equal(
+      rejectionCodes(reassignedTarget).includes(
+        "SLICE_V2_IMPLEMENTATION_SOURCE_MAP_AUTHORITY_MISMATCH",
+      ),
+      true,
+    );
+
+    const missingMappedFile: any = structuredClone(value.input);
+    missingMappedFile.currentFiles = missingMappedFile.currentFiles.filter(
+      (file: any) => file.pathRef !== "PATH_PLAY_PAGE",
+    );
+    const missingMappedFileCodes = rejectionCodes(missingMappedFile);
+    assert.equal(missingMappedFileCodes.includes("SLICE_V2_FILE_SNAPSHOT_INVALID"), true);
+    assert.equal(missingMappedFileCodes.includes("SLICE_V2_STORY_SOURCE_MAP_INVALID"), true);
+
+    const compiled = compileOrThrow(value.input);
+    const forgedSlice: any = structuredClone(compiled.slice);
+    forgedSlice.storySourceMap.screens[0]!.storyId = "US-999";
+    forgedSlice.authority.storySourceMapHash = hashCanonicalJson(forgedSlice.storySourceMap);
+    forgedSlice.authorityHash = implementationSliceAuthorityHashV2(forgedSlice.authority);
+    assert.equal(ImplementationSliceV2Schema.safeParse(forgedSlice).success, false);
+
+    const projectionTamperCases: ReadonlyArray<readonly [string, (screen: any) => void]> = [
+      ["componentName", (screen) => {
+        screen.componentName = "ForgedPlayPage";
+      }],
+      ["componentApi", (screen) => {
+        const control = screen.controls[0]!;
+        const priorId = control.generatedLocalId;
+        const forgedId = "generated-control-forged";
+        control.generatedLocalId = forgedId;
+        control.handlerBinding.callbackKey = forgedId;
+        screen.componentApi.actionBindings.find((binding: any) =>
+          binding.generatedLocalId === priorId)!.generatedLocalId = forgedId;
+        screen.componentApi.inputTransports
+          .filter((transport: any) => transport.generatedControlId === priorId)
+          .forEach((transport: any) => {
+            transport.generatedControlId = forgedId;
+          });
+        screen.actionInputs
+          .filter((input: any) => input.generatedControlId === priorId)
+          .forEach((input: any) => {
+            input.generatedControlId = forgedId;
+            input.actionHandlerIds = input.actionHandlerIds
+              .map((handlerId: string) => handlerId === priorId ? forgedId : handlerId)
+              .sort();
+          });
+      }],
+      ["selector", (screen) => {
+        screen.controls[0]!.generatedSelector = "[data-action-id=\"forged\"]";
+      }],
+      ["responseBindingHash", (screen) => {
+        screen.responseBindingHash = sha("forged-response-binding");
+      }],
+      ["cardinality", (screen) => {
+        screen.cardinality.raw.buttons += 1;
+        screen.cardinality.rejected.buttons += 1;
+      }],
+    ];
+    for (const [label, mutate] of projectionTamperCases) {
+      const forgedProjection: any = structuredClone(compiled.slice);
+      mutate(forgedProjection.storySourceMap.screens[0]!);
+      assert.equal(
+        ImplementationSourceMapV1Schema.safeParse({
+          ...forgedProjection.storySourceMap.implementationSourceMapV1Witness,
+          screens: forgedProjection.storySourceMap.screens,
+        }).success,
+        true,
+        `${label} tamper must remain a strict V1 screen so witness equality is the rejecting invariant`,
+      );
+      forgedProjection.authority.storySourceMapHash = hashCanonicalJson(
+        forgedProjection.storySourceMap,
+      );
+      forgedProjection.authorityHash = implementationSliceAuthorityHashV2(
+        forgedProjection.authority,
+      );
+      assert.equal(
+        ImplementationSliceV2Schema.safeParse(forgedProjection).success,
+        false,
+        `${label} projection tamper must not survive full local re-hashing`,
+      );
+    }
+
+    const missingTypedTransport: any = structuredClone(compiled.slice);
+    missingTypedTransport.actionInputTransports = [];
+    missingTypedTransport.authority.actionInputTransportsHash =
+      implementationActionInputTransportsHashV2([]);
+    missingTypedTransport.authorityHash = implementationSliceAuthorityHashV2(
+      missingTypedTransport.authority,
+    );
+    assert.equal(
+      ImplementationSliceV2Schema.safeParse(missingTypedTransport).success,
+      false,
+      "A fully re-hashed slice cannot omit a required typed action-input transport",
+    );
+  });
+
+  it("rejects fully re-hashed file, build, or story forgeries against authoritative compiler input", async () => {
+    const value = await stitchCompilerFixture();
+    const compiled = compileOrThrow(value.input);
+    const invalidCandidate: any = structuredClone(compiled.slice);
+    delete invalidCandidate.storySourceMap;
+    const invalidVerification = verifyImplementationSliceV2({
+      compilerInput: value.input,
+      slice: invalidCandidate,
+    });
+    assert.equal(invalidVerification.status, "rejected");
+    if (invalidVerification.status === "rejected") {
+      assert.deepEqual(
+        [...new Set(invalidVerification.diagnostics.map((item) => item.code))],
+        ["SLICE_V2_CONTRACT_INVALID"],
+      );
+    }
+
+    const forgeryCases: ReadonlyArray<readonly [string, (slice: any) => void]> = [
+      ["file topology", (slice) => {
+        const file = slice.files.find((candidate: any) => candidate.pathRef === "PATH_APP")!;
+        file.path = "src/ForgedApp.tsx";
+        file.contentHash = sha("forged-app");
+        slice.authority.filesHash = implementationFilesHashV2(slice.files);
+      }],
+      ["build authority", (slice) => {
+        slice.build.repo.treeHash = "f".repeat(40);
+        slice.authority.buildAuthorityHash = hashCanonicalJson(slice.build);
+      }],
+      ["story authority", (slice) => {
+        slice.story.title = `${slice.story.title} forged`;
+        slice.authority.storyHash = hashCanonicalJson(slice.story);
+      }],
+    ];
+
+    for (const [label, mutate] of forgeryCases) {
+      const forged: any = structuredClone(compiled.slice);
+      mutate(forged);
+      forged.authorityHash = implementationSliceAuthorityHashV2(forged.authority);
+      assert.equal(
+        ImplementationSliceV2Schema.safeParse(forged).success,
+        true,
+        `${label} remains internally self-consistent after local re-hashing`,
+      );
+      const verification = verifyImplementationSliceV2({
+        compilerInput: value.input,
+        slice: forged,
+      });
+      assert.equal(verification.status, "rejected", `${label} must fail canonical reproduction`);
+      if (verification.status === "rejected") {
+        assert.deepEqual(
+          [...new Set(verification.diagnostics.map((item) => item.code))],
+          ["SLICE_V2_AUTHORITY_MISMATCH"],
+          `${label} must preserve stable authority-mismatch typing`,
+        );
+        assert.equal(
+          verification.diagnostics.some((item) =>
+            item.message.includes("canonical compiler reproduction")),
+          true,
+          `${label} must identify reproduction mismatch`,
+        );
+      }
+    }
+  });
+
   it("rejects a fully re-hashed graph whose physical control no longer binds ProductSpec placement and action input", async () => {
     const value = await stitchCompilerFixture();
     const forged: any = structuredClone(value.input);
@@ -753,6 +1361,15 @@ describe("ImplementationSliceV2 exact authority compiler", { concurrency: 1 }, (
     forged.packet.designSourceClosureV2Hash = envelopeHash(
       "setfarm.design-source-closure.v2",
       forged.designSourceClosure,
+    );
+    forged.implementationSourceMap.designGraphV2PayloadHash = graphPayloadHash;
+    forged.implementationSourceMap.storyPlanV2PayloadHash = hashCanonicalJson(forged.storyPlan);
+    forged.implementationSourceMap.designSourceClosureV2PayloadHash = hashCanonicalJson(
+      forged.designSourceClosure,
+    );
+    forged.packet.implementationSourceMapV1Hash = envelopeHash(
+      "setfarm.implementation-source-map.v1",
+      forged.implementationSourceMap,
     );
     forged.packetHash = envelopeHash("setfarm.product-build-packet.v3", forged.packet);
 
