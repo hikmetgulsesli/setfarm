@@ -99,7 +99,95 @@ describe("artifact capacity admission", () => {
       measure: async () => ({ rootBytes: 0, freeBytes: 10_000 }),
     });
     await assert.rejects(
-      store.put(envelope("oversized", "x".repeat(2_000))),
+      store.put(envelope("oversized", "x".repeat(8 * 1024 * 1024))),
+      (error: unknown) =>
+        error instanceof ArtifactCapacityError
+        && error.code === "ARTIFACT_PAYLOAD_TOO_LARGE",
+    );
+    assert.deepEqual(await readdir(parent), []);
+  });
+
+  it("maps deep canonical traversal to payload capacity before creating the root", async () => {
+    const parent = await mkdtemp(path.join(tmpdir(), "setfarm-capacity-depth-"));
+    roots.push(parent);
+    const root = path.join(parent, "missing", "sha256");
+    const store = new ContentAddressedArtifactStore(root, {
+      limits: {
+        maxPayloadBytes: 4 * 1024 * 1024,
+        rootQuotaBytes: 16 * 1024 * 1024,
+        minFreeBytes: 0,
+      },
+    });
+    let deep: unknown = null;
+    for (let index = 0; index < 130; index += 1) deep = { child: deep };
+
+    await assert.rejects(
+      store.put({ ...envelope("deep"), payload: deep }),
+      (error: unknown) =>
+        error instanceof ArtifactCapacityError
+        && error.code === "ARTIFACT_PAYLOAD_TOO_LARGE",
+    );
+    assert.deepEqual(await readdir(parent), []);
+  });
+
+  it("maps high-container and high-node canonical work to payload capacity", async () => {
+    const parent = await mkdtemp(path.join(tmpdir(), "setfarm-capacity-shape-"));
+    roots.push(parent);
+    const root = path.join(parent, "missing", "sha256");
+    const store = new ContentAddressedArtifactStore(root, {
+      limits: {
+        maxPayloadBytes: 4 * 1024 * 1024,
+        rootQuotaBytes: 16 * 1024 * 1024,
+        minFreeBytes: 0,
+      },
+    });
+    const tooManyEntries = Array.from({ length: 100_001 }, () => null);
+    const tooManyNodes = Array.from(
+      { length: 501 },
+      () => Array.from({ length: 500 }, () => null),
+    );
+
+    for (const [id, payload] of [
+      ["container", tooManyEntries],
+      ["nodes", tooManyNodes],
+    ] as const) {
+      await assert.rejects(
+        store.put({ ...envelope(id), payload }),
+        (error: unknown) =>
+          error instanceof ArtifactCapacityError
+          && error.code === "ARTIFACT_PAYLOAD_TOO_LARGE",
+      );
+    }
+    assert.deepEqual(await readdir(parent), []);
+  });
+
+  it("bounds producer toolVersions before schema traversal or root creation", async () => {
+    const parent = await mkdtemp(path.join(tmpdir(), "setfarm-capacity-producer-"));
+    roots.push(parent);
+    const root = path.join(parent, "missing", "sha256");
+    const store = new ContentAddressedArtifactStore(root, {
+      limits: {
+        maxPayloadBytes: 4 * 1024 * 1024,
+        rootQuotaBytes: 16 * 1024 * 1024,
+        minFreeBytes: 0,
+      },
+    });
+    const toolVersions: Record<string, unknown> = {};
+    for (let index = 0; index < 100_001; index += 1) {
+      toolVersions[`tool-${index}`] = "1";
+    }
+    // If schema traversal happens first this fails immediately as a Zod type
+    // error. The container authority must win before Zod sees the snapshot.
+    toolVersions["tool-0"] = 0;
+
+    await assert.rejects(
+      store.put({
+        ...envelope("hostile-producer"),
+        producer: {
+          ...envelope("hostile-producer").producer,
+          toolVersions,
+        },
+      }),
       (error: unknown) =>
         error instanceof ArtifactCapacityError
         && error.code === "ARTIFACT_PAYLOAD_TOO_LARGE",
