@@ -7,6 +7,7 @@ import { afterEach, describe, it } from "node:test";
 import {
   ArtifactCapacityError,
   assessArtifactCapacity,
+  assessArtifactBatchCapacity,
   resolveArtifactCapacityVolumeDirectory,
 } from "../../src/product-compiler/artifact-capacity.js";
 import {
@@ -88,6 +89,147 @@ describe("artifact capacity admission", () => {
       freeBytes: 205,
       limits: { maxPayloadBytes: 500, rootQuotaBytes: 1_000, minFreeBytes: 10 },
     }).code, "ARTIFACT_FREE_SPACE_LOW");
+  });
+
+  it("assesses aggregate missing bytes while preserving per-item payload limits", () => {
+    const limits = { maxPayloadBytes: 100, rootQuotaBytes: 1_000, minFreeBytes: 100 };
+    const aggregate = assessArtifactBatchCapacity({
+      missingPayloadByteLengths: [60, 60],
+      rootBytes: 700,
+      freeBytes: 1_000,
+      limits,
+    });
+    assert.equal(aggregate.status, "pass");
+    assert.equal(aggregate.code, "ARTIFACT_CAPACITY_OK");
+    assert.equal(aggregate.payloadBytes, 120);
+    assert.equal(aggregate.projectedRootBytes, 820);
+    assert.equal(aggregate.projectedFreeBytes, 880);
+
+    assert.equal(assessArtifactBatchCapacity({
+      missingPayloadByteLengths: [101, 1],
+      rootBytes: 0,
+      freeBytes: 10_000,
+      limits,
+    }).code, "ARTIFACT_PAYLOAD_TOO_LARGE");
+  });
+
+  it("rejects aggregate or projected-root arithmetic authority loss", () => {
+    const limits = {
+      maxPayloadBytes: Number.MAX_SAFE_INTEGER,
+      rootQuotaBytes: Number.MAX_SAFE_INTEGER,
+      minFreeBytes: 0,
+    };
+    for (const input of [
+      {
+        missingPayloadByteLengths: [Number.MAX_SAFE_INTEGER, 1],
+        rootBytes: 0,
+      },
+      {
+        missingPayloadByteLengths: [1],
+        rootBytes: Number.MAX_SAFE_INTEGER,
+      },
+    ]) {
+      assert.throws(
+        () => assessArtifactBatchCapacity({
+          ...input,
+          freeBytes: Number.MAX_SAFE_INTEGER,
+          limits,
+        }),
+        (error: unknown) =>
+          error instanceof ArtifactCapacityError
+          && error.code === "ARTIFACT_BATCH_CAPACITY_OVERFLOW",
+      );
+    }
+  });
+
+  it("snapshots at most nine dense byte lengths without invoking caller traps", () => {
+    const base = {
+      rootBytes: 0,
+      freeBytes: 10_000,
+      limits: { maxPayloadBytes: 1_000, rootQuotaBytes: 10_000, minFreeBytes: 0 },
+    };
+    let traps = 0;
+    const proxied = new Proxy([1], {
+      getPrototypeOf() {
+        traps += 1;
+        throw new Error("length prototype trap");
+      },
+      ownKeys() {
+        traps += 1;
+        throw new Error("length keys trap");
+      },
+    });
+    assert.throws(
+      () => assessArtifactBatchCapacity({ ...base, missingPayloadByteLengths: proxied }),
+      TypeError,
+    );
+    assert.equal(traps, 0);
+
+    let getterCalls = 0;
+    const accessor = Object.defineProperty([], "0", {
+      enumerable: true,
+      get() {
+        getterCalls += 1;
+        return 1;
+      },
+    });
+    assert.throws(
+      () => assessArtifactBatchCapacity({ ...base, missingPayloadByteLengths: accessor }),
+      TypeError,
+    );
+    assert.equal(getterCalls, 0);
+
+    const sparse = new Array(2);
+    sparse[1] = 1;
+    for (const lengths of [
+      sparse,
+      Array.from({ length: 10 }, () => 1),
+      [1, -1],
+      [1, 1.5],
+    ]) {
+      assert.throws(
+        () => assessArtifactBatchCapacity({
+          ...base,
+          missingPayloadByteLengths: lengths,
+        }),
+        TypeError,
+      );
+    }
+  });
+
+  it("keeps aggregate quota, free-space, and exact-existing accounting distinct", () => {
+    const limits = { maxPayloadBytes: 500, rootQuotaBytes: 1_000, minFreeBytes: 100 };
+    assert.equal(assessArtifactBatchCapacity({
+      missingPayloadByteLengths: [200, 300],
+      rootBytes: 600,
+      freeBytes: 10_000,
+      limits,
+    }).code, "ARTIFACT_ROOT_QUOTA_EXCEEDED");
+    assert.equal(assessArtifactBatchCapacity({
+      missingPayloadByteLengths: [200, 300],
+      rootBytes: 0,
+      freeBytes: 550,
+      limits,
+    }).code, "ARTIFACT_FREE_SPACE_LOW");
+    const exactExisting = assessArtifactBatchCapacity({
+      missingPayloadByteLengths: [0, 100, 0],
+      rootBytes: 800,
+      freeBytes: 1_000,
+      limits,
+    });
+    assert.equal(exactExisting.status, "pass");
+    assert.equal(exactExisting.payloadBytes, 100);
+    assert.equal(exactExisting.projectedRootBytes, 900);
+
+    const allExactExisting = assessArtifactBatchCapacity({
+      missingPayloadByteLengths: [],
+      rootBytes: limits.rootQuotaBytes,
+      freeBytes: 0,
+      limits,
+    });
+    assert.equal(allExactExisting.status, "pass");
+    assert.equal(allExactExisting.code, "ARTIFACT_CAPACITY_OK");
+    assert.equal(allExactExisting.payloadBytes, 0);
   });
 
   it("rejects an oversized canonical envelope before creating a root or temp file", async () => {

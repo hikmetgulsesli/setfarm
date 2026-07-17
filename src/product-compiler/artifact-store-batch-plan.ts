@@ -8,6 +8,7 @@ import {
 } from "./bounded-canonical-json.js";
 import { CanonicalJsonError } from "./canonical-json.js";
 import {
+  ARTIFACT_BATCH_CAPACITY_MAX_ITEMS_V1,
   ArtifactCapacityError,
   DEFAULT_ARTIFACT_CAPACITY_LIMITS,
 } from "./artifact-capacity.js";
@@ -28,7 +29,8 @@ export const PREPARED_ARTIFACT_STORE_BATCH_SCHEMA_V1 =
   "setfarm.prepared-artifact-store-batch.v1" as const;
 export const ARTIFACT_STORE_BATCH_PUT_RESULT_SCHEMA_V1 =
   "setfarm.artifact-store-batch-put-result.v1" as const;
-export const ARTIFACT_STORE_BATCH_MAX_OCCURRENCES_V1 = 9;
+export const ARTIFACT_STORE_BATCH_MAX_OCCURRENCES_V1 =
+  ARTIFACT_BATCH_CAPACITY_MAX_ITEMS_V1;
 export const ARTIFACT_STORE_BATCH_MAX_DURABILITY_TIER_V1 = 8;
 
 export type ArtifactStoreBatchPutPlanItemV1 = Readonly<{

@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { describe, it } from "node:test";
 
-import { ArtifactCapacityError } from "../../src/product-compiler/artifact-capacity.js";
+import {
+  ArtifactCapacityError,
+  assessArtifactBatchCapacity,
+} from "../../src/product-compiler/artifact-capacity.js";
 import {
   ARTIFACT_STORE_BATCH_PLAN_SCHEMA_V1,
   ArtifactStoreBatchPlanError,
@@ -224,6 +227,37 @@ describe("artifact store prepared batch plan v1", () => {
         error instanceof ArtifactStoreBatchPlanError
         && error.code === "ARTIFACT_BATCH_DUPLICATE_CONFLICT",
     );
+  });
+
+  it("charges duplicate and exact-existing occurrences only once before a write hook", () => {
+    const shared = envelope("shared-capacity");
+    const missing = envelope("missing-capacity");
+    const prepared = prepareArtifactStoreBatchPlanV1(plan([
+      { durabilityTier: 0, envelope: shared },
+      { durabilityTier: 0, envelope: structuredClone(shared) },
+      { durabilityTier: 0, envelope: missing },
+    ]));
+    const exactExistingHashes = new Set([hash(shared)]);
+    const missingPayloadByteLengths = prepared.items.map((item) =>
+      exactExistingHashes.has(item.identity.hash) ? 0 : item.identity.byteLength);
+    let writeHooks = 0;
+    const assessment = assessArtifactBatchCapacity({
+      missingPayloadByteLengths,
+      rootBytes: 0,
+      freeBytes: Number.MAX_SAFE_INTEGER,
+      limits: {
+        maxPayloadBytes: 4 * 1024 * 1024,
+        rootQuotaBytes: canonicalJsonBytes(missing).length - 1,
+        minFreeBytes: 0,
+      },
+    });
+    if (assessment.status === "pass") writeHooks += 1;
+
+    assert.equal(prepared.occurrenceCount, 3);
+    assert.equal(prepared.items.length, 2);
+    assert.equal(assessment.payloadBytes, canonicalJsonBytes(missing).length);
+    assert.equal(assessment.code, "ARTIFACT_ROOT_QUOTA_EXCEEDED");
+    assert.equal(writeHooks, 0);
   });
 
   it("rejects producer identities that exceed migration 23 aggregate authority", () => {
