@@ -556,10 +556,76 @@ The existing `SEMANTIC_SOURCE_PATH_TOKEN_V1` still includes ordinal `storyId`.
 That can churn a path when an unrelated earlier component changes story order,
 so the intent artifact remains blocked by
 `SEMANTIC_SOURCE_INTENT_PATH_IDENTITY_V2_UNVERIFIED`. FileTreeManifestV2 may not
-activate until a V2 token contract uses stable `scopeRef`/component identity and
-the rule catalog/profile hashes are versioned forward. Shadow intent refs are
-already stable; this blocker prevents the physical materializer from reusing the
-unsafe V1 token as production authority.
+activate until a V2 token contract uses a stable scope projection and the rule
+catalog/profile hashes are versioned forward. That projection must carry only
+story/product/setup/platform namespace authority; it cannot reuse component
+membership hashes that churn when the same story grows. Current V1 intent refs
+remain exact binding authority outside path identity; this blocker prevents the
+physical materializer from reusing the unsafe V1 token as production authority.
+
+## SemanticSourcePathTokenSetV2
+
+FileTree compilation first consumes a separate semantic-source path authority;
+the Node execution `PathTokenV2` is not widened in place. The first Node token
+contract deliberately covers only `originKind: node_execution_path_slot`, while
+semantic source paths have a different source identity and lifecycle.
+
+`SemanticSourcePathTokenSetV2` fresh-reproduces the exact no-design semantic
+intent set. Every `source_slot` intent is accounted for exactly once as either:
+
+- a portable V2 token derived for a compiler semantic-token path; or
+- an external resolution requirement for selected-entrypoint, generated-receipt,
+  fixed-release, or shared-structural path authority.
+
+The semantic token origin binds the V2 path-identity contract version/hash, a
+V2 scope projection (`story|product + productRef`, `setup + stackPackId`, or
+`platform + platformAuthorityRef`), a typed stable subject projection,
+responsibility, stable rule ref, and a V2 path-projection hash. Direct subjects
+project exact semantic refs from their typed origins rather than copying an
+opaque V1 `subjectRef`. Per-story runtime-data subjects instead project one
+product-level catalog aggregation identity, so component membership changes do
+not remove and recreate their source file. The exact V1 subject ref remains in
+the token binding. The origin never binds ordinal `storyId`, story component
+membership, V1 `scopeRef`, full rule-set hash, V1 `intentRef`, or `intentHash`.
+The token binding separately carries the current exact V1
+rule-set/scope/subject/intent refs and `intentHash`; semantic changes therefore
+invalidate authority without causing stable source locators to churn when the
+path obligation itself is unchanged.
+The V2 path projection contains only code-owned root, extension, namespace,
+physical-space, and containing-root authority. The legacy V1 token algorithm,
+token ref, and V1 token hash are not token input and are never copied into the
+V2 artifact.
+
+External requirements do not manufacture a raw locator. A selected-entrypoint
+requirement must later resolve to the exact `NodeExecutionPathTokenSetV2`
+source-entrypoint token; generated and fixed-release requirements must resolve
+to their own versioned receipt/catalog authority. FileTreeManifestV2 performs
+that join. A requirement is therefore complete accounting, not path authority.
+
+There is one token binding per exact source-slot intent, but token binding count
+is not falsely equated with physical file count. Only a code-owned catalog
+aggregate may share one exact origin/path across multiple intent bindings. The
+first such case is product-level runtime-data fixture aggregation; all exclusive
+subjects remain path-unique. The set publishes exact `uniquePathCount`, and
+FileTree later materializes the aggregate once while declarations assign unique
+structural slots to its contributing intents.
+
+The path-identity contract is separate from a code-owned set compiler contract.
+The latter versions the token/external partition, supported semantic projection,
+external expectation kinds, hash domains, ordering, and completeness rules.
+Changing set compilation alone must not force a path-token contract bump and
+relocate every source file. Token-origin, token-binding, portable exact/folded,
+projection, legacy-path, external-requirement, membership, and set hash domains
+and payload shapes are themselves fields of those contracts; the compiler does
+not hide behavior-changing hash literals outside version identity. The set
+publishes both contract hashes, separate
+token and external-requirement membership hashes, and one complete set hash. A
+schema-valid self-rehashed set remains a local candidate. The authoritative
+verifier fresh-recompiles ProductSpec, delivery selection, no-design closure,
+semantic intents, and the V2 token/requirement partition, then requires
+canonical equality. The artifact remains shadow and production-forbidden until
+FileTree, declarations, release activation, and all external path requirements
+are verified.
 
 ## FileTreeManifestV2 And BuildTopologyV2
 
