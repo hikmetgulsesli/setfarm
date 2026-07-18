@@ -190,8 +190,17 @@ describe("single-step claim_log lifecycle", () => {
     ];
     for (const step of preclaims) {
       const preclaim = fs.readFileSync(path.join(root, "src", "installer", "steps", step, "preclaim.ts"), "utf-8");
+      const exactClaimAliases = [...preclaim.matchAll(
+        /const\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*ctx\.claimEnvelope\s*;/g,
+      )].map((match) => match[1]!);
       for (const call of preclaim.matchAll(/(?:completeStep|failStep)\([\s\S]*?\);/g)) {
-        assert.match(call[0], /ctx\.claimEnvelope/, `${step} preclaim must complete or fail through exact claim authority`);
+        const carriesExactAuthority = /ctx\.claimEnvelope/.test(call[0])
+          || exactClaimAliases.some((alias) => new RegExp(`\\b${alias}\\b`).test(call[0]));
+        assert.equal(
+          carriesExactAuthority,
+          true,
+          `${step} preclaim must complete or fail through exact claim authority`,
+        );
       }
     }
   });
