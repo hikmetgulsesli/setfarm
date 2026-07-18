@@ -189,6 +189,19 @@ export function deriveActionInvocationEvidenceIdV2(actionRef: string): string {
   return `EVID_INVOCATION_${digest}`;
 }
 
+/** Compiler-owned namespace for an exact action/persistence-policy witness. */
+export function derivePersistenceRoundTripEvidenceIdV2(
+  actionRef: string,
+  persistenceRef: string,
+): string {
+  const digest = hashCanonicalJson({
+    domain: "setfarm.persistence-round-trip-evidence-id.v2",
+    actionRef,
+    persistenceRef,
+  }).toUpperCase();
+  return `EVID_PERSISTENCE_ROUND_TRIP_${digest}`;
+}
+
 const {
   surfaceRefs: _surfaceRefs,
   evidenceScenario: ActionEvidenceScenarioV1Schema,
@@ -566,6 +579,14 @@ export const ProductSpecV2Schema = z.object({
   const persistenceById = new Map(value.persistencePolicies.map((policy) =>
     [policy.id, policy] as const));
   const actionById = new Map(value.actions.map((action) => [action.id, action] as const));
+  const actionOwnersByEvidenceId = new Map<string, ProductActionV2[]>();
+  value.actions.forEach((action) => {
+    action.evidenceRefs.forEach((evidenceRef) => {
+      const owners = actionOwnersByEvidenceId.get(evidenceRef) ?? [];
+      owners.push(action);
+      actionOwnersByEvidenceId.set(evidenceRef, owners);
+    });
+  });
   const evidenceById = new Map(value.evidencePredicates.map((predicate) =>
     [predicate.id, predicate] as const));
   const observableIds = new Set(value.actions.flatMap((action) =>
@@ -1251,12 +1272,73 @@ export const ProductSpecV2Schema = z.object({
       ["evidencePredicates", predicateIndex, "subjectRef"],
       "evidence subject",
     );
-    if (predicate.kind !== "action_invocation" || actionIds.has(predicate.subjectRef)) return;
-    context.addIssue({
-      code: "custom",
-      path: ["evidencePredicates", predicateIndex, "subjectRef"],
-      message: `PRODUCT_SPEC_ACTION_INVOCATION_SUBJECT_UNRESOLVED: ${predicate.subjectRef}`,
-    });
+    if (predicate.kind === "action_invocation" && !actionIds.has(predicate.subjectRef)) {
+      context.addIssue({
+        code: "custom",
+        path: ["evidencePredicates", predicateIndex, "subjectRef"],
+        message: `PRODUCT_SPEC_ACTION_INVOCATION_SUBJECT_UNRESOLVED: ${predicate.subjectRef}`,
+      });
+    }
+    if (predicate.kind !== "persistence_round_trip") return;
+    if (!persistenceIds.has(predicate.subjectRef)) {
+      context.addIssue({
+        code: "custom",
+        path: ["evidencePredicates", predicateIndex, "subjectRef"],
+        message: `PRODUCT_SPEC_PERSISTENCE_ROUND_TRIP_SUBJECT_INVALID: ${predicate.subjectRef} must name one exact persistence policy`,
+      });
+    }
+    const owners = actionOwnersByEvidenceId.get(predicate.id) ?? [];
+    if (owners.length !== 1) {
+      context.addIssue({
+        code: "custom",
+        path: ["evidencePredicates", predicateIndex, "id"],
+        message: `PRODUCT_SPEC_PERSISTENCE_ROUND_TRIP_OWNER_CARDINALITY: ${predicate.id} must be owned through evidenceRefs by exactly one action; observed ${owners.length}`,
+      });
+      return;
+    }
+    if (
+      persistenceIds.has(predicate.subjectRef)
+      && !owners[0]!.persistenceEffects.some((effect) => effect.policyRef === predicate.subjectRef)
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["evidencePredicates", predicateIndex, "subjectRef"],
+        message: `PRODUCT_SPEC_PERSISTENCE_ROUND_TRIP_EFFECT_MISSING: ${owners[0]!.id} has no persistence effect for ${predicate.subjectRef}`,
+      });
+    }
+    if (
+      !owners[0]!.success.evidenceRefs.includes(predicate.id)
+      || owners[0]!.failure.evidenceRefs.includes(predicate.id)
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["evidencePredicates", predicateIndex, "id"],
+        message: `PRODUCT_SPEC_PERSISTENCE_ROUND_TRIP_OUTCOME_CLOSURE: ${owners[0]!.id} success must claim ${predicate.id} and failure must not claim it`,
+      });
+    }
+    if (
+      !(owners[0]!.success.persistenceRefs ?? []).includes(predicate.subjectRef)
+      || (owners[0]!.failure.persistenceRefs ?? []).includes(predicate.subjectRef)
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["evidencePredicates", predicateIndex, "subjectRef"],
+        message: `PRODUCT_SPEC_PERSISTENCE_ROUND_TRIP_PERSISTENCE_OUTCOME_CLOSURE: ${owners[0]!.id} success must claim ${predicate.subjectRef} and failure must not claim it`,
+      });
+    }
+    if (persistenceIds.has(predicate.subjectRef)) {
+      const expectedId = derivePersistenceRoundTripEvidenceIdV2(
+        owners[0]!.id,
+        predicate.subjectRef,
+      );
+      if (predicate.id !== expectedId) {
+        context.addIssue({
+          code: "custom",
+          path: ["evidencePredicates", predicateIndex, "id"],
+          message: `PRODUCT_SPEC_PERSISTENCE_ROUND_TRIP_ID_MISMATCH: expected ${expectedId}`,
+        });
+      }
+    }
   });
   value.evidencePredicates.forEach((predicate, predicateIndex) => {
     if (predicate.kind !== "action_invocation" || !actionIds.has(predicate.subjectRef)) return;

@@ -16,6 +16,7 @@ import {
 import {
   ProductSpecV2Schema,
   deriveActionInvocationEvidenceIdV2,
+  derivePersistenceRoundTripEvidenceIdV2,
   type ProductSpecV2,
 } from "../schemas/product-spec-v2.js";
 import type { ProductSpecProposalDiagnosticV1 } from "./plan-product-spec-proposal.js";
@@ -324,6 +325,19 @@ export function compilePlanSemanticProposalV2(input: Readonly<{
   }
   const planActionById = new Map(proposal.actions.map((action) => [actionId(action.key), action] as const));
   const planSurfaceById = new Map(proposal.surfaces.map((surface) => [surfaceId(surface.key), surface] as const));
+  const persistenceRoundTripPredicatesByAction = new Map(base.actions.map((action) => {
+    const predicates = [...new Set(action.persistenceEffects.map((effect) => effect.policyRef))]
+      .sort()
+      .map((policyRef) => ({
+        id: derivePersistenceRoundTripEvidenceIdV2(action.id, policyRef),
+        kind: "persistence_round_trip" as const,
+        required: true,
+        subjectRef: policyRef,
+        capabilityRefs: [],
+        assertion: { operator: "passes" as const },
+      }));
+    return [action.id, predicates] as const;
+  }));
 
   const routes = base.routes.map((route) => {
     const planRoute = proposal.routes.find((candidate) => routeId(candidate.key) === route.id)!;
@@ -359,6 +373,9 @@ export function compilePlanSemanticProposalV2(input: Readonly<{
     } = baseAction;
     const observableEffects = optionalObservableEffects!;
     const actionInvocationEvidenceRef = invocationEvidenceId(planAction.key);
+    const persistenceRoundTripEvidenceRefs = (
+      persistenceRoundTripPredicatesByAction.get(baseAction.id) ?? []
+    ).map((predicate) => predicate.id);
     const observableById = new Map(planAction.observables.map((observable) => [
       stableId("OBS", planAction.key, observable.key),
       observable,
@@ -389,10 +406,18 @@ export function compilePlanSemanticProposalV2(input: Readonly<{
             }
           : {}),
       },
-      evidenceRefs: [...evidenceRefs, actionInvocationEvidenceRef].sort(),
+      evidenceRefs: [
+        ...evidenceRefs,
+        ...persistenceRoundTripEvidenceRefs,
+        actionInvocationEvidenceRef,
+      ].sort(),
       success: {
         ...success,
-        evidenceRefs: [...success.evidenceRefs, actionInvocationEvidenceRef].sort(),
+        evidenceRefs: [
+          ...success.evidenceRefs,
+          ...persistenceRoundTripEvidenceRefs,
+          actionInvocationEvidenceRef,
+        ].sort(),
       },
       observableEffects: observableEffects.map((effect) => {
         const planObservable = observableById.get(effect.id)!;
@@ -438,6 +463,12 @@ export function compilePlanSemanticProposalV2(input: Readonly<{
     semanticRef: invocationEvidenceId(action.key),
     requirementRefs: [...action.requirementRefs].sort(),
   }));
+  const persistenceRoundTripEvidenceBindings = proposal.actions.flatMap((action) =>
+    (persistenceRoundTripPredicatesByAction.get(actionId(action.key)) ?? []).map((predicate) => ({
+      semanticKind: "evidence" as const,
+      semanticRef: predicate.id,
+      requirementRefs: [...action.requirementRefs].sort(),
+    })));
   const invocationEvidencePredicates = proposal.actions.map((action) => ({
     id: invocationEvidenceId(action.key),
     kind: "action_invocation" as const,
@@ -463,7 +494,11 @@ export function compilePlanSemanticProposalV2(input: Readonly<{
     routes,
     surfaces,
     actions,
-    evidencePredicates: [...base.evidencePredicates, ...invocationEvidencePredicates],
+    evidencePredicates: [
+      ...base.evidencePredicates,
+      ...[...persistenceRoundTripPredicatesByAction.values()].flat(),
+      ...invocationEvidencePredicates,
+    ],
     assumptions: base.assumptions,
     delivery: base.delivery,
     requirements,
@@ -473,6 +508,7 @@ export function compilePlanSemanticProposalV2(input: Readonly<{
       bindings: [
         ...base.traceability.bindings,
         ...controlPlacementBindings,
+        ...persistenceRoundTripEvidenceBindings,
         ...invocationEvidenceBindings,
       ],
     },

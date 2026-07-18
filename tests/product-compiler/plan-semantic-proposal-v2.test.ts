@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 
 import { hashCanonicalJson } from "../../src/product-compiler/canonical-json.js";
 import { compilePlanSemanticProposalV2 } from "../../src/product-compiler/producers/plan-semantic-proposal-v2.js";
+import { derivePersistenceRoundTripEvidenceIdV2 } from "../../src/product-compiler/schemas/product-spec-v2.js";
 import {
   CONTAINED_GAME_TASK,
   containedGamePlanProposalV2,
@@ -66,6 +67,56 @@ describe("plan semantic proposal v2 compiler", () => {
       assert.equal(replay.semanticProposalHash, first.semanticProposalHash);
       assert.equal(replay.canonicalBytes, first.canonicalBytes);
     }
+  });
+
+  it("emits one compiler-owned exact action/policy round-trip witness", () => {
+    const proposal: any = containedGamePlanProposalV2();
+    const requirementRefs = proposal.actions[0].requirementRefs;
+    proposal.persistencePolicies.push({
+      key: "game_phase_local",
+      kind: "local_storage",
+      entityKeys: [],
+      rehydration: { kind: "initialization" },
+      requirementRefs,
+    });
+    proposal.actions[0].persistenceIntents.push({
+      policyKey: "game_phase_local",
+      operation: "write",
+      stateDeltaKeys: ["start_phase"],
+    });
+    proposal.actions[0].observables[0].assertions.push({
+      phase: "reload",
+      property: "visibility",
+      operator: "equals",
+      expected: true,
+    });
+
+    const result = compilePlanSemanticProposalV2({ task: CONTAINED_GAME_TASK, proposal });
+    assert.equal(result.status, "canonicalized", result.status === "rejected"
+      ? JSON.stringify(result.diagnostics)
+      : undefined);
+    if (result.status !== "canonicalized") return;
+    const actionRef = "ACT_START_GAME";
+    const policyRef = "PERSIST_GAME_PHASE_LOCAL";
+    const evidenceRef = derivePersistenceRoundTripEvidenceIdV2(actionRef, policyRef);
+    const predicate = result.productSpec.evidencePredicates.find((item) => item.id === evidenceRef);
+    assert.deepEqual(predicate, {
+      id: evidenceRef,
+      kind: "persistence_round_trip",
+      required: true,
+      subjectRef: policyRef,
+      capabilityRefs: [],
+      assertion: { operator: "passes" },
+    });
+    const action = result.productSpec.actions.find((item) => item.id === actionRef)!;
+    assert.ok(action.persistenceEffects.some((effect) => effect.policyRef === policyRef));
+    assert.ok(action.evidenceRefs.includes(evidenceRef));
+    assert.ok(action.success.evidenceRefs.includes(evidenceRef));
+    assert.ok(action.success.persistenceRefs?.includes(policyRef));
+    assert.equal(action.failure.evidenceRefs.includes(evidenceRef), false);
+    assert.equal(action.failure.persistenceRefs?.includes(policyRef), false);
+    assert.equal(result.productSpec.traceability.bindings.some((binding) =>
+      binding.semanticKind === "evidence" && binding.semanticRef === evidenceRef), true);
   });
 
   it("rejects an unqualified or wrong-owner control selector before stable base compilation", () => {

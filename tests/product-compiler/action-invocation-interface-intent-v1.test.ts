@@ -20,6 +20,10 @@ import {
   buildContainedGameProductSpecV2,
   containedGamePlanProposalV2,
 } from "./fixtures/product-semantics-v2.js";
+import {
+  nodeCliPlanProposalV2,
+  nodeExpressApiPlanProposalV2,
+} from "./fixtures/no-design-product-semantics-v2.js";
 import { buildNoDesignProductBuildPacketV3Contracts } from "./fixtures/product-build-packet-v3.js";
 
 function messages(result: ReturnType<typeof PlanSemanticProposalV2Schema.safeParse>): string[];
@@ -64,101 +68,11 @@ function nonRenderedPlan(): any {
 }
 
 function cliPlan(): any {
-  const value = nonRenderedPlan();
-  const action = value.actions[0];
-  action.trigger = { kind: "user" };
-  action.inputs = [{ name: "phase", valueType: "string", required: true }];
-  action.evidenceScenario.targetInputValues = { phase: "playing" };
-  action.stateDeltas[0].valueFrom = { kind: "input", field: "phase" };
-  action.observables[0].selector.valueContract = {
-    valueType: "string",
-    expectedFrom: { kind: "input", fieldName: "phase" },
-  };
-  action.observables[0].assertions[0].expected = "playing";
-  action.invocationInterface = {
-    schema: "setfarm.action-invocation-interface-intent.v1",
-    kind: "cli_command",
-    subcommandTokens: ["start"],
-    fieldBindings: [{
-      fieldName: "phase",
-      optionalPresence: "not_applicable",
-      channel: { kind: "argv_flag", flag: "--phase", style: "separate" },
-    }],
-    result: {
-      kind: "stdout_json",
-      successExitCodes: [0],
-      valuePointer: "/result",
-      failureCases: [
-        {
-          kind: "input_validation",
-          exitCodes: [2],
-          channel: "stderr_json",
-          errorCode: "INPUT_VALIDATION_FAILED",
-          codePointer: "/error/code",
-          messagePointer: "/error/message",
-        },
-        {
-          kind: "action_failure",
-          exitCodes: [1],
-          channel: "stderr_json",
-          errorCode: "ACTION_FAILED",
-          codePointer: "/error/code",
-          messagePointer: "/error/message",
-        },
-      ],
-    },
-  };
-  return value;
+  return nodeCliPlanProposalV2();
 }
 
 function httpPlan(): any {
-  const value = nonRenderedPlan();
-  value.routes[0].path = "/play/:phase";
-  const action = value.actions[0];
-  action.trigger = { kind: "user" };
-  action.inputs = [{ name: "phase", valueType: "string", required: true }];
-  action.evidenceScenario.targetInputValues = { phase: "playing" };
-  action.stateDeltas[0].valueFrom = { kind: "input", field: "phase" };
-  action.observables[0].selector.valueContract = {
-    valueType: "string",
-    expectedFrom: { kind: "input", fieldName: "phase" },
-  };
-  action.observables[0].assertions[0].expected = "playing";
-  action.invocationInterface = {
-    schema: "setfarm.action-invocation-interface-intent.v1",
-    kind: "http_request",
-    method: "POST",
-    routeKey: "play",
-    fieldBindings: [{
-      fieldName: "phase",
-      optionalPresence: "not_applicable",
-      channel: { kind: "path_parameter", name: "phase" },
-    }],
-    result: {
-      kind: "response_json",
-      successStatusCodes: [200],
-      valuePointer: "/result",
-      failureCases: [
-        {
-          kind: "input_validation",
-          statusCodes: [400],
-          channel: "response_json",
-          errorCode: "INPUT_VALIDATION_FAILED",
-          codePointer: "/error/code",
-          messagePointer: "/error/message",
-        },
-        {
-          kind: "action_failure",
-          statusCodes: [500],
-          channel: "response_json",
-          errorCode: "ACTION_FAILED",
-          codePointer: "/error/code",
-          messagePointer: "/error/message",
-        },
-      ],
-    },
-  };
-  return value;
+  return nodeExpressApiPlanProposalV2();
 }
 
 function productWithSecondNativeCliAction(tokens: string[]): any {
@@ -273,7 +187,7 @@ describe("ActionInvocationInterfaceIntentV1 authority", () => {
     duplicate.actions[0].evidenceScenario.targetInputValues.mode = "fast";
     duplicate.actions[0].stateDeltas.push({
       key: "set_mode",
-      stateKey: "game_phase",
+      stateKey: "tasks",
       operation: "set",
       path: "/mode",
       valueFrom: { kind: "input", field: "mode" },
@@ -281,7 +195,7 @@ describe("ActionInvocationInterfaceIntentV1 authority", () => {
     duplicate.actions[0].invocationInterface.fieldBindings.push({
       fieldName: "mode",
       optionalPresence: "not_applicable",
-      channel: { kind: "argv_flag", flag: "--phase", style: "equals" },
+      channel: { kind: "argv_flag", flag: "--title", style: "equals" },
     });
     assert.equal(messages(PlanSemanticProposalV2Schema.safeParse(duplicate)).some((message) =>
       message.includes("INVOCATION_INTERFACE_CHANNEL_DUPLICATE")), true);
@@ -373,7 +287,7 @@ describe("ActionInvocationInterfaceIntentV1 authority", () => {
           },
         },
         {
-          fieldName: "phase",
+          fieldName: "title",
           optionalPresence: "not_applicable",
           channel: {
             kind: "stdin_json_pointer",
@@ -453,26 +367,26 @@ describe("ActionInvocationInterfaceIntentV1 authority", () => {
 
     const enumPlan = cliPlan();
     enumPlan.entities.push({
-      key: "phase_option",
-      name: "Phase option",
+      key: "task_option",
+      name: "Task option",
       fields: [{
         key: "value",
         name: "value",
         valueType: "enum",
         required: true,
-        enumValues: ["playing", "paused"],
+        enumValues: ["Ship Setfarm", "Pause Setfarm"],
       }],
       requirementRefs: [...enumPlan.actions[0].requirementRefs],
     });
     enumPlan.actions[0].inputs[0] = {
-      name: "phase",
+      name: "title",
       valueType: "enum",
       required: true,
-      entityField: { entityKey: "phase_option", fieldKey: "value" },
+      entityField: { entityKey: "task_option", fieldKey: "value" },
     };
     enumPlan.actions[0].observables[0].selector.valueContract.valueType = "enum";
     assert.equal(PlanSemanticProposalV2Schema.safeParse(enumPlan).success, true);
-    enumPlan.actions[0].evidenceScenario.targetInputValues.phase = "unknown";
+    enumPlan.actions[0].evidenceScenario.targetInputValues.title = "unknown";
     enumPlan.actions[0].observables[0].assertions[0].expected = "unknown";
     assert.equal(messages(PlanSemanticProposalV2Schema.safeParse(enumPlan)).some((message) =>
       message.includes("PLAN_SEMANTIC_EVIDENCE_VALUE_INVALID")), true);
@@ -598,7 +512,7 @@ describe("ActionInvocationInterfaceIntentV1 authority", () => {
     const secondCli = structuredClone(planCliCollision.actions[0]);
     secondCli.key = "second_action";
     secondCli.name = "Second action";
-    secondCli.invocationInterface.subcommandTokens = ["start", "nested"];
+    secondCli.invocationInterface.subcommandTokens = ["add", "nested"];
     planCliCollision.actions.push(secondCli);
     assert.equal(messages(PlanSemanticProposalV2Schema.safeParse(planCliCollision)).some((message) =>
       message.includes("PLAN_SEMANTIC_CLI_INVOCATION_IDENTITY_COLLISION")), true);
@@ -611,7 +525,7 @@ describe("ActionInvocationInterfaceIntentV1 authority", () => {
     assert.equal(messages(PlanSemanticProposalV2Schema.safeParse(exactHttpCollision)).some((message) =>
       message.includes("PLAN_SEMANTIC_HTTP_INVOCATION_IDENTITY_COLLISION")), true);
 
-    for (const overlappingPath of ["/play/new", "/play/:other"]) {
+    for (const overlappingPath of ["/tasks/new", "/tasks/:other"]) {
       const overlap = httpPlan();
       overlap.routes.push({
         key: "second_route",
@@ -635,7 +549,7 @@ describe("ActionInvocationInterfaceIntentV1 authority", () => {
       second.invocationInterface.routeKey = "second_route";
       second.invocationInterface.fieldBindings[0].channel = overlappingPath.endsWith(":other")
         ? { kind: "path_parameter", name: "other" }
-        : { kind: "query_parameter", name: "phase" };
+        : { kind: "query_parameter", name: "project" };
       overlap.actions.push(second);
       assert.equal(messages(PlanSemanticProposalV2Schema.safeParse(overlap)).some((message) =>
         message.includes("PLAN_SEMANTIC_HTTP_INVOCATION_IDENTITY_COLLISION")), true, overlappingPath);

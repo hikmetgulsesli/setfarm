@@ -4,6 +4,7 @@ import { describe, it } from "node:test";
 import {
   STACK_SEMANTIC_SOURCE_RULES_CATALOG_PACK_IDS_V1,
   compileStackSemanticSourceRulesCatalogV1,
+  getCodeOwnedStackSemanticSourceRuleSetV1,
   verifyStackSemanticSourceRulesCatalogV1,
 } from "../../src/product-compiler/stack-semantic-source-rules-catalog-v1.js";
 import { canonicalJsonStringify, hashCanonicalJson } from "../../src/product-compiler/canonical-json.js";
@@ -559,7 +560,7 @@ describe("StackSemanticSourceRulesCatalogV1", () => {
       && rule.responsibility === "persistence_adapter"
       && rule.activation.kind === "all"
       && rule.activation.atoms.some((atom) =>
-        atom.kind === "persistence_kind" && atom.values.includes("database")))!) as any;
+        atom.kind === "persistence_kind" && atom.values.includes("local_storage")))!) as any;
     partialPersistence.activation.atoms.push({
       kind: "persistence_durability",
       values: ["durable", "reload"],
@@ -677,7 +678,7 @@ describe("StackSemanticSourceRulesCatalogV1", () => {
       const expected = [...commonResponsibilities];
       if (ruleSet.stackPackBinding.stackPackId === "node-cli") expected.push("cli_output_adapter");
       if (ruleSet.stackPackBinding.stackPackId === "node-express-api") {
-        expected.push("api_response_adapter", "persistence_adapter");
+        expected.push("api_response_adapter");
       }
       if (["vite-react-web-app", "browser-game-canvas"].includes(
         ruleSet.stackPackBinding.stackPackId,
@@ -748,9 +749,7 @@ describe("StackSemanticSourceRulesCatalogV1", () => {
       }
       const persistenceRule = ruleSet.rules.find((rule) =>
         rule.responsibility === "persistence_adapter");
-      const expectedPersistenceKinds = ruleSet.stackPackBinding.stackPackId === "node-express-api"
-        ? ["database", "file"]
-        : ["vite-react-web-app", "browser-game-canvas"].includes(
+      const expectedPersistenceKinds = ["vite-react-web-app", "browser-game-canvas"].includes(
             ruleSet.stackPackBinding.stackPackId,
           )
           ? ["local_storage"]
@@ -766,5 +765,28 @@ describe("StackSemanticSourceRulesCatalogV1", () => {
         }
       }
     }
+  });
+
+  it("exposes only recursively frozen code-owned rule sets and retires the old API persistence claim", () => {
+    const cli = getCodeOwnedStackSemanticSourceRuleSetV1("node-cli");
+    const api = getCodeOwnedStackSemanticSourceRuleSetV1("node-express-api");
+
+    assert.ok(cli);
+    assert.ok(api);
+    assert.equal(cli.ruleSetRef, "RULESET_NODE_CLI_V1");
+    assert.equal(api.ruleSetRef, "RULESET_NODE_EXPRESS_API_STATELESS_V1");
+    assert.equal(
+      api.rules.some((rule) => rule.responsibility === "persistence_adapter"),
+      false,
+    );
+    assert.equal(Object.isFrozen(api), true);
+    assert.equal(Object.isFrozen(api.rules), true);
+    assert.equal(Object.isFrozen(api.rules[0]), true);
+    assert.throws(() => {
+      (api as any).ruleSetRef = "RULESET_NODE_EXPRESS_API_V1";
+    }, TypeError);
+    assert.equal(api.ruleSetRef, "RULESET_NODE_EXPRESS_API_STATELESS_V1");
+    assert.equal(getCodeOwnedStackSemanticSourceRuleSetV1("python-cli"), null);
+    assert.equal(getCodeOwnedStackSemanticSourceRuleSetV1("unknown-stack"), null);
   });
 });

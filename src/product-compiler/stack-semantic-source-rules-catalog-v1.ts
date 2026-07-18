@@ -472,13 +472,13 @@ const RAW_RULE_SET_DESCRIPTORS: readonly RawRuleSetDescriptor[] = Object.freeze(
     actionInputTransportKind: "cli_invocation_input_transport",
   }),
   Object.freeze({
-    ruleSetRef: "RULESET_NODE_EXPRESS_API_V1",
+    ruleSetRef: "RULESET_NODE_EXPRESS_API_STATELESS_V1",
     stackPackId: "node-express-api",
     prefix: "NODE_API",
     entrypointKind: "api",
     routeSlotKind: "api_route_registration",
     stitchCapable: false,
-    persistenceAdapterKinds: Object.freeze(["database", "file"] as const),
+    persistenceAdapterKinds: Object.freeze([] as const),
     actionAdapterResponsibility: "api_response_adapter",
     actionInputTransportKind: "http_invocation_input_transport",
   }),
@@ -698,6 +698,23 @@ function finalRuleSet(descriptor: RawRuleSetDescriptor): StackSemanticSourceRule
     ...withoutHash,
     ruleSetHash: hashStackSemanticSourceRuleSetV1(withoutHash),
   });
+}
+
+/**
+ * Returns the exact code-owned rule set for one supported stack. This accessor
+ * deliberately excludes caller-authored catalog artifacts: profile authority
+ * must bind the descriptor that this compiler would reproduce now.
+ */
+export function getCodeOwnedStackSemanticSourceRuleSetV1(
+  stackPackId: string,
+): Readonly<StackSemanticSourceRuleSetV1> | null {
+  const descriptor = RAW_RULE_SET_DESCRIPTORS.find((candidate) =>
+    candidate.stackPackId === stackPackId);
+  if (!descriptor) return null;
+  const reproduced = StackSemanticSourceRuleSetV1Schema.parse(
+    JSON.parse(canonicalJsonStringify(finalRuleSet(descriptor))),
+  );
+  return deepFreezeJson(reproduced);
 }
 
 function catalogDiagnostics(
