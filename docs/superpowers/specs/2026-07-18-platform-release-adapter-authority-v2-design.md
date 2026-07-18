@@ -57,6 +57,8 @@ profile can perform the promised evidence operation.
 
 Three in-memory brands separate production stages. They are module-private
 `WeakSet` capabilities and cannot be serialized or reconstructed by a caller.
+WeakSet membership alone is deliberately insufficient for operational use:
+activation is also guarded by one module-private, revocable generation lease.
 
 ```ts
 type PreparedPlatformReleaseV2 = Readonly<{
@@ -70,6 +72,10 @@ type VerifiedPlatformReleaseV2 = Readonly<{
 type ActivatedPlatformReleaseV2 = Readonly<{
   readonly releaseId: string;
   readonly activationAcknowledgementHash: Sha256;
+}>;
+
+type CurrentActivatedPlatformReleaseLeaseV2 = Readonly<{
+  readonly releaseId: string;
 }>;
 ```
 
@@ -87,13 +93,27 @@ external-resolution verification. The activated brand additionally requires a
 durable observed activation acknowledgement. Manifest JSON alone is never an
 authority object.
 
+Every operational entrypoint first calls the private
+`acquireCurrentActivatedPlatformReleaseLeaseV2`. Acquisition compares the
+handle's acknowledgement with the one current acknowledged generation, rejects
+a draining, rolled-back or superseded generation, and records a bounded in-
+flight lease. An activation or rollback acknowledgement atomically closes the
+old generation to new acquisitions before changing the current generation.
+Existing bounded leases either finish with receipts bound to their original
+acknowledgement or are cancelled by the drain deadline; only after that drain is
+the old generation fully revoked. A previously issued Activated handle can
+therefore never start new work after rollback merely because it remains in a
+WeakSet. Every runner validates the lease again before durable receipt commit.
+
 After restart, brands are rehydrated only by a root-owned, separately installed
 Release Bootstrap V2 whose executable/module hash is pinned by host admission,
 not by the candidate release it verifies. `loadActivatedPlatformReleaseV2()`
 replays the append-only activation request/acknowledgement chain, reads exact CAS
 bytes, fresh-verifies the release filesystem and external authority, and only
-then issues a new activated handle. Candidate bytes cannot self-authorize by
-running their own verifier.
+then issues a new activated handle and current-generation lease authority.
+Candidate bytes cannot self-authorize by running their own verifier. Restart
+never recreates a lease for a historical acknowledgement that is no longer the
+head of the append-only activation chain.
 
 ## PlatformReleaseManifestV2
 
@@ -128,7 +148,8 @@ type PlatformReleaseManifestV2 = {
       remoteRef: "refs/remotes/origin/main";
       admittedSha: GitObjectHash;
       policy: "exact_remote_main_sha";
-      admissionEvidenceHash: Sha256;
+      receipt: SourceAdmissionReceiptV2;
+      receiptHash: Sha256;
     };
     packageName: "setfarm";
     packageVersion: string;
@@ -164,6 +185,10 @@ type PlatformReleaseManifestV2 = {
     outputPolicy: "parameterized_empty_stage_only";
     sourceDateEpoch: string;
     reproducibility: "double_clean_build_exact_tree_match";
+    firstBuildReceipt: PlatformReleaseBuildReceiptV2;
+    firstBuildReceiptHash: Sha256;
+    secondBuildReceipt: PlatformReleaseBuildReceiptV2;
+    secondBuildReceiptHash: Sha256;
   };
 
   runtimePayload: {
@@ -205,6 +230,19 @@ type PlatformReleaseManifestV2 = {
 itself. Nested catalogs have their own domain-separated payload hashes. Catalog
 hashes are included in the manifest, so a self-consistent nested rehash changes
 the release identity and cannot pass an existing activation anchor.
+
+Source, build and host provenance are typed receipts, not opaque proof hashes.
+`SourceAdmissionReceiptV2` binds the exact remote ref observation, admitted
+commit/tree, clean-worktree proof, source-before/source-after identity and the
+root-owned admission implementation. Each `PlatformReleaseBuildReceiptV2`
+binds the exact exported source tree, compiler/npm/executable identities,
+command/argv/config, isolated source/output roots, exit status and produced
+runtime-tree bindings; the two receipts must describe independent empty stages
+and equal outputs. Every `ExactHostOwnedFileRefV2` additionally carries a strict
+`HostAdmissionReceiptV2` binding realpath, bytes, mode, owner/group, OS build and
+the independently installed verifier that observed them. A selected receipt
+schema or self-consistent hash without the corresponding canonical payload
+cannot satisfy a manifest join.
 
 ## Runtime Payload Closure
 
@@ -395,7 +433,8 @@ type EvidenceEnvironmentCapsuleV2 = {
       sandboxExecutableRef: "EXEC_MACOS_SANDBOX_EXEC_V2";
       canonicalProfileHash: Sha256;
       hostRuntimeIdentityHash: Sha256;
-      negativeProbeReceiptSchemaHash: Sha256;
+      negativeProbeReceipt: NetworkIsolationNegativeProbeReceiptV2;
+      negativeProbeReceiptHash: Sha256;
       authorityHash: Sha256;
     };
   };
@@ -427,19 +466,40 @@ object in both components would create two independently hashable truths.
 
 The network fields are promises only when the authority resolves to a real,
 verified release wrapper plus exact host sandbox executable/profile/OS build and
-a bounded negative outbound-network/DNS/redirect probe receipt. The first macOS
+the full bounded `NetworkIsolationNegativeProbeReceiptV2`, not merely a chosen
+receipt-schema hash. That receipt binds release/wrapper/profile/host identities,
+one attempt nonce, exact loopback success, exact DNS/outbound/redirect negative
+probes, observed process lifecycle, bounded captures, start/end time and its own
+domain-separated hash. The fresh release verifier reruns the code-owned probe and
+requires canonical equality before issuing authority. The first macOS
 implementation must reuse or replace the existing Darwin runtime-isolation
 mechanism under this exact schema; prose does not authorize it. A schema-valid
-capsule without that join is shadow-blocked; environment variables alone never
-prove loopback-only isolation.
+capsule without that reproduced receipt join is shadow-blocked; environment
+variables alone never prove loopback-only isolation.
 
-Port allocation returns a held listening socket lease. For the HTTP profile the
-platform launcher, not generated application prose, owns the Node HTTP server;
-it passes the listening handle to the child and attaches the generated exact
-handler export under a versioned ABI. The lease remains owned until that
-handle/handler handoff is acknowledged or the start attempt fails.
-Check-then-close allocation and a generic `app.listen(PORT)` preview command are
+Port allocation returns a private `ExclusiveSocketLeaseV2` whose bound
+`net.Server`, descriptor, address, port, attempt nonce and lease hash remain in a
+module-private record. For the HTTP profile a code-owned child bootstrap, not
+the generated application and not the parent evidence process, owns the Node
+HTTP server. The parent sends the held server handle plus a one-use handoff nonce
+over authenticated Node IPC with `keepOpen:true`; the child imports the exact
+verified candidate module/export, attaches it under the versioned handler ABI,
+starts serving on the received handle, and returns an application-level
+`SocketHandoffAcknowledgementV2` binding nonce, descriptor identity,
+module/export/ABI, child process identity and readiness observation. The
+`child.send` callback proves only local message submission and is never treated
+as this acknowledgement. The parent closes its copy only after validating the
+acknowledgement; on timeout, child exit, wrong nonce/export/process or readiness
+failure it retains and closes the lease itself. Check-then-close allocation, a
+same-process candidate import and generic `app.listen(PORT)` preview command are
 not evidence authority.
+
+`ExclusiveSocketLeaseV2`, `SocketHandoffAcknowledgementV2`,
+`ServiceReadinessReceiptV2` and `SocketCleanupReceiptV2` are strict canonical
+receipt schemas with explicit state transitions
+`bound -> sent -> acknowledged -> ready -> closed` or one typed terminal failure.
+Opaque lifecycle hashes without their canonical receipt payloads cannot satisfy
+the runner or EvidenceReceiptV2 joins.
 
 ## Launchers and Runners
 
@@ -460,13 +520,17 @@ The first runner exports are real modules:
 - `ENTRY_EVIDENCE_HTTP_SERVICE_V2`.
 
 Every module exports `runEvidenceAdapterV2`. The operational runner ABI accepts
-only a branded `ActivatedPlatformReleaseV2`, a branded exact candidate launch
-target/runtime bundle, an executable transport binding, sealed runtime
-allocation and a bounded check request. Verified-but-never-activated or rolled-
-back releases cannot execute evidence. It returns one durable
-`EvidenceOutcomeV2`; it cannot accept an arbitrary command string, environment
-map, runner locator, adapter ref, mutable worktree path or expected product value
-from generic caller prose.
+only a current `CurrentActivatedPlatformReleaseLeaseV2`, a branded exact
+candidate launch target/runtime bundle, an executable transport binding, sealed
+runtime allocation and a bounded check request. Verified-but-never-activated,
+draining, superseded or rolled-back releases cannot start evidence. It returns
+`Promise<DurableEvidenceExecutionResultV2>`, never a free-standing outcome. The
+result contains the immutable CAS publication identity and exact
+`EvidenceReceiptV2`; the typed `EvidenceOutcomeV2` is nested in that receipt.
+The promise cannot resolve until capture bytes and the receipt are durably
+published and the activation lease is revalidated. The runner cannot accept an
+arbitrary command string, environment map, runner locator, adapter ref, mutable
+worktree path or expected product value from generic caller prose.
 
 `toolchainHash` binds runner entrypoint ref, module hash, runner ABI hash, both
 canonical runtime-tree hashes, runtime-payload hash, exact external dependency
@@ -556,6 +620,59 @@ The contract binds declared failure ABI structurally, but first activation does
 not claim failure-path behavioral evidence. That requires versioned negative
 scenarios; a success-only sample cannot prove error behavior.
 
+## Upstream Executable Source Closure
+
+Candidate execution cannot infer a module, output path or export from a mutable
+worktree. It also cannot demand the final module content hash before the
+implementation and build exist. The release-neutral source chain therefore
+separates planned executable authority from observed candidate bytes:
+
+```text
+ProductSpecV2 + ProductDeliverySelectionV2 + StackSemanticSourceRulesV1
+  -> SemanticSourceIntentSetV1
+  -> FileTreeManifestV2 / BuildTopologyV2
+  -> SemanticSourceDeclarationsV1 / StoryPlanV3
+  -> ExecutableSourceContractV2
+  -> ImplementationSourceMapV2
+  -> ProductBuildPacketV4
+  -> private candidate build/runtime verifier
+  -> CandidateLaunchTargetV2 with actual module bytes
+```
+
+For the first no-design profiles the only canonical execution layouts are:
+
+- Node CLI: `src/cli.ts` -> `dist/cli.js` ->
+  `candidate-bundle/application/cli.js`, Node ESM under
+  `NODE_ESM_CLI_ENTRYPOINT_ABI_V2`;
+- Node Express API: `src/app.ts` -> `dist/app.js` ->
+  `candidate-bundle/application/app.js`, named export
+  `setfarmHttpHandlerV2` under `EXPRESS_REQUEST_HANDLER_ABI_V2`, with server and
+  listener ownership fixed to the platform and candidate `listen()` forbidden.
+
+`src/index.ts`, `src/server.ts` and root `server.ts` remain historical V1
+compatibility candidates only. V2 rejects them with a typed non-canonical
+entrypoint error instead of selecting the first existing file. The code-owned
+Node scaffold owns exact ESM `package.json` and `tsconfig.json` projections,
+including `tsc -p tsconfig.json`, `ES2022`/`NodeNext`, `rootDir:"src"`,
+`outDir:"dist"` and `noEmitOnError:true`.
+
+`ExecutableSourceContractV2` binds the exact ProductSpec, delivery selection,
+semantic intent/declaration, topology and SourceMap authorities; the selected
+entrypoint and build command; the source-to-output-to-bundle mapping; package
+and compiler configuration projections; module system; export/ABI; and the
+every-and-only invocation-transport set. It is `shadow_blocked` and
+`productionUse:"forbidden"` until those upstream authorities fresh-verify.
+Writable source slots never carry a future content hash. The candidate build
+receipt later binds the actual source revision and output tree, and the private
+runtime verifier alone derives the final module content hash and launch target.
+
+`ProductBuildPacketV3` remains a historical branch artifact. The new required
+executable child and distinct payload/envelope joins require
+`ProductBuildPacketV4`; V3 is not reinterpreted or extended in place. PacketV4
+does not make a self-consistent launch DTO authoritative: execution still
+requires a current activation lease plus the private candidate verifier's
+fresh byte and filesystem closure.
+
 ## Candidate Build and Launch Authority
 
 Platform release authority proves the evidence engine bytes, not the generated
@@ -627,8 +744,16 @@ BuildTopology/Packet/SourceMap compiler produces this exact export contract.
 
 All three artifacts are bounded, canonical and content-addressed. The runtime
 bundle is fresh-verified immediately before launch. A runner accepts a branded
-candidate launch target plus an `ActivatedPlatformReleaseV2`; source revision
-alone cannot authorize ignored/stale generated output or dependencies.
+candidate launch target plus a `CurrentActivatedPlatformReleaseLeaseV2`; source
+revision alone cannot authorize ignored/stale generated output or dependencies.
+
+Fresh verification issues a private `CandidateExecutionLeaseV2` binding the
+exact source revision, held runtime-root descriptors, candidate build/runtime/
+launch hashes, host-admission generation and current release-activation
+generation. The runner revalidates that same lease immediately before spawn and
+again in the evidence-publication compare-and-set. Source, host or activation
+generation drift closes the lease and yields a typed rejection; a DTO that was
+valid before the drift cannot be replayed into admission.
 
 The schema-only slice exports strict candidate parsers and hash functions, but
 no `verify`, `issue`, `materialize`, `activate`, branded handle or runnable
@@ -794,37 +919,41 @@ into an existing `dist`:
    --ignore-scripts --no-audit --no-fund` plus an exact config hash), remove
    verified `.bin` symlinks, and copy the committed Stitch converter into each
    staged legacy-assets path;
-5. derive exact external resolution and only definition/launcher/runner/codec/
-   receipt catalogs whose module/export bytes already exist; do not materialize
-   runnable adapter support or Registry yet;
+5. preflight every required definition/launcher/runner/codec/receipt module and
+   export directly against each staged tree, without yet finalizing a catalog or
+   toolchain hash;
 6. normalize `dist` and `node_modules` to read-only modes, prove metadata clear,
    capture both full canonical trees in both stages, derive their bounded
    bindings, and require the two independent stage bindings to be equal;
-7. write and fsync `PLATFORM_RELEASE_MANIFEST.v2.json` adjacent to `payload` as
+7. derive exact external/environment authority and only the definition/
+   launcher/runner/codec/receipt catalogs whose preflighted module bytes now
+   join the captured tree hashes; derive final toolchain hashes here and do not
+   materialize runnable adapter support or Registry yet;
+8. write and fsync `PLATFORM_RELEASE_MANIFEST.v2.json` adjacent to `payload` as
    the terminal content write, then make the release root read-only;
-8. prepare/acquire the existing publication batch lease for the exact manifest
+9. prepare/acquire the existing publication batch lease for the exact manifest
    identity, then atomically rename to `releases/<manifestPayloadHash>/`; a
    concurrent identical winner is adopted only after full verification and a
    conflicting target is never replaced;
-9. issue the prepared brand and run a fresh independent verifier to issue the
+10. issue the prepared brand and run a fresh independent verifier to issue the
    verified brand;
-10. derive the runnable adapter catalog and Registry only from that verified
+11. derive the runnable adapter catalog and Registry only from that verified
     brand, then publish exactly three envelopes--the manifest (with its nested
     pre-verification catalogs), derived adapter catalog and Registry--as one
     prepared CAS batch after exact envelope-byte preflight;
-11. append an activation-request event binding every published hash and ask the
+12. append an activation-request event binding every published hash and ask the
     root-owned listener broker to start the new service on a private, unique Unix
     socket while the previous acknowledged release continues to own public
     traffic;
-12. after the new process independently verifies the chain/CAS/filesystem,
+13. after the new process independently verifies the chain/CAS/filesystem,
     reports exact process/release identity and passes bounded health directly on
     that private socket, acquire the activation predecessor lease and prepare a
     durable listener-cutover record;
-13. close the broker's public-dispatch gate under the same cutover lease, queue
+14. close the broker's public-dispatch gate under the same cutover lease, queue
     new public requests within a strict time/count bound, switch the pending
     backend pointer and run a root-authenticated cutover probe through the fixed
     listener while ordinary traffic remains gated;
-14. if that probe succeeds, append an activation-acknowledgement event containing
+15. if that probe succeeds, append an activation-acknowledgement event containing
     the exact cutover receipt, reopen the gate on the acknowledged backend, issue
     the activated handle and only then drain the old backend. On any pre-ack
     failure, restore the old pointer before reopening the gate.
@@ -898,22 +1027,29 @@ until the release builder/verifier and migration matrix are green on clean
    CandidateLaunchTargetV2/HttpHandlerExportV2, EvidenceOutcomeV2/ReceiptV2,
    launcher, runner, adapter-definition and operational-catalog schemas plus
    zero-input definitions that cannot materialize unsupported entries;
-3. upstream Packet/BuildTopology/SourceMap production of exact launch targets,
-   real command/CLI/HTTP launcher/runner exports, sealed child environment,
-   network enforcer and exclusive socket-handle handoff;
-4. only after every nested schema, launch contract and real claimed export
+3. pure shadow semantic-source intent derivation, then FileTreeManifestV2/
+   BuildTopologyV2, declarations, StoryPlanV3, ExecutableSourceContractV2,
+   SourceMapV2 and PacketV4; this stage plans exact source/output/export/ABI but
+   never invents a future candidate module content hash;
+4. typed Node CLI/API scaffold and exact source-to-output layout, private
+   candidate build/runtime verifier and generation lease, then real
+   command/CLI/HTTP launcher/runner exports, sealed child environment, network
+   enforcer and exclusive socket-handle handoff; only this stage may derive an
+   exact launch target from observed immutable build output;
+5. only after every nested schema, launch contract and real claimed export
    exists, the root
    manifest schema/hash vectors, empty-staging materializer and terminal writer;
-5. fresh installed/prepared verifier and private authority brands;
-6. new AdapterCatalogV2 and RegistryV2 derived only from verified release;
+6. fresh installed/prepared verifier, private revocable authority brands and
+   current-generation execution leases;
+7. new AdapterCatalogV2 and RegistryV2 derived only from verified release;
    RegistryV1 remains
    historical/read-only;
-7. atomic prepared CAS publication, the independently installed fixed-port
+8. atomic prepared CAS publication, the independently installed fixed-port
    listener broker, `ListenerCutoverReceiptV2`, crash reconciliation and migration
    26 activation ledger;
-8. Story/Slice/EvidencePlan/retry/supervisor consumers and Mission Control
+9. Story/Slice/EvidencePlan/retry/supervisor consumers and Mission Control
    canonical projection;
-9. clean-main double build, restart and three-class clean-run convergence eval.
+10. clean-main double build, restart and three-class clean-run convergence eval.
 
 No later item may be activated by stubbing an earlier authority. Schemas may be
 implemented shadow-first, but the root manifest cannot hide a nested catalog
