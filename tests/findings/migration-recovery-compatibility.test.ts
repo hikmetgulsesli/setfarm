@@ -3,6 +3,7 @@ import { afterEach, describe, it } from "node:test";
 
 import {
   applyContractSpineMigrations,
+  ContractSpineMigrationError,
   verifyContractSpineMigrations,
 } from "../../src/db/contract-spine-migrations.js";
 import { createFindingSetV1 } from "../../src/findings/finding-set.js";
@@ -306,7 +307,8 @@ describe("revisioned recovery migration compatibility", () => {
 
     await assert.rejects(
       verifyContractSpineMigrations(database.sql),
-      /recovery delivery terminal lease constraint mismatch/,
+      (error: unknown) => error instanceof ContractSpineMigrationError
+        && error.code === "MIGRATION_ADOPTION_MISMATCH",
     );
 
     await database.sql.unsafe(
@@ -335,7 +337,8 @@ describe("revisioned recovery migration compatibility", () => {
 
     await assert.rejects(
       verifyContractSpineMigrations(database.sql),
-      /recovery delivery terminal lease constraint mismatch/,
+      (error: unknown) => error instanceof ContractSpineMigrationError
+        && error.code === "MIGRATION_ADOPTION_MISMATCH",
     );
   });
 

@@ -15,8 +15,11 @@ import { TaskIntentOracleV2Schema } from "../../src/evals/task-intent-oracle-v2.
 import { hashCanonicalJson } from "../../src/product-compiler/canonical-json.js";
 import { createArtifactIndex } from "../../src/product-compiler/artifact-index.js";
 import { ContentAddressedArtifactStore } from "../../src/product-compiler/artifact-store.js";
-import { bootstrapArtifactIndex } from "../../src/product-compiler/indexed-artifact-publisher.js";
-import { createRuntimePacketCompiler } from "../../src/product-compiler/runtime-packet-compiler.js";
+import {
+  bootstrapArtifactIndex,
+  IndexedArtifactPublisher,
+} from "../../src/product-compiler/indexed-artifact-publisher.js";
+import { compileProductBuildPacket } from "../../src/product-compiler/packet-compiler.js";
 import { extractTaskRequirementLedgerV1 } from "../../src/product-compiler/requirements/task-requirements-v1.js";
 import { buildTaskIntentOracleFixture } from "./fixtures/task-intent-oracle-fixture.js";
 import {
@@ -369,22 +372,41 @@ describe("convergence PostgreSQL port", () => {
                  'v3', 1, $3, NULL, $4, $5)`,
       [runId, intent.task, releaseSha, "9".repeat(64), releaseAdmissionHash],
     );
-    const compilation = await createRuntimePacketCompiler({
-      sql: database.sql,
-      artifactRoot,
-      artifactLimits,
-      ownerInstanceId: "eval-postgres-test",
-    }).compile({
-      runId,
-      expectedMode: "v3",
-      ...intent.contracts,
-      compiler: { version: "3.0.0", codeSha: releaseSha },
-      producer: { pass: "eval-postgres-test", codeSha: releaseSha, toolVersions: {} },
+    const compiler = { version: "3.0.0", codeSha: releaseSha };
+    const producer = { pass: "eval-postgres-test", codeSha: releaseSha, toolVersions: {} };
+    const compilation = await compileProductBuildPacket({
+      productSpec: intent.contracts.productSpec,
+      designGraph: intent.contracts.designGraph,
+      buildTopology: intent.contracts.buildTopology,
+      storyPlan: intent.contracts.storyPlan,
+      designSource: intent.contracts.designSource,
+      compiler,
+      producer,
+      protocol: "v3",
+      artifactStore: new IndexedArtifactPublisher({
+        index: createArtifactIndex(database.sql),
+        store,
+        ownerInstanceId: "eval-postgres-test",
+      }),
     });
-    assert.equal(compilation.activation, "activated");
-    assert.equal(compilation.compilation.status, "sealed");
-    const packetHash = compilation.compilation.packetHash!;
-    const reportHash = compilation.compilation.reportHash;
+    assert.equal(compilation.status, "sealed");
+    assert.ok(compilation.packetHash);
+    await createArtifactIndex(database.sql).activateProductPacket({
+      runId,
+      packetHash: compilation.packetHash,
+      compiler,
+      artifactRefs: {
+        PRODUCT_SPEC: compilation.artifactHashes.productSpec!,
+        DESIGN_GRAPH: compilation.artifactHashes.designGraph!,
+        BUILD_TOPOLOGY: compilation.artifactHashes.buildTopology!,
+        STORY_PLAN: compilation.artifactHashes.storyPlan!,
+        DESIGN_SOURCE_CLOSURE: compilation.artifactHashes.designSourceClosure!,
+        PRODUCT_BUILD_PACKET: compilation.packetHash,
+        COMPILATION_REPORT: compilation.reportHash,
+      },
+    });
+    const packetHash = compilation.packetHash;
+    const reportHash = compilation.reportHash;
     await database.sql.unsafe("UPDATE runs SET status = 'completed' WHERE id = $1", [runId]);
 
     const stories = [

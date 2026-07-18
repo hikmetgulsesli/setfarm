@@ -21,7 +21,7 @@ import {
   IndexedArtifactPublisher,
   bootstrapArtifactIndex,
 } from "../../src/product-compiler/indexed-artifact-publisher.js";
-import { createRuntimePacketCompiler } from "../../src/product-compiler/runtime-packet-compiler.js";
+import { compileProductBuildPacket } from "../../src/product-compiler/packet-compiler.js";
 import { ImplementationSliceV1Schema } from "../../src/product-compiler/schemas/implementation-slice-v1.js";
 import { createPostgresConvergencePort } from "../../src/evals/convergence-runner.js";
 import { transitionRunToTerminal } from "../../src/execution/run-terminal-transition.js";
@@ -91,20 +91,40 @@ describe("accepted candidate repository", () => {
     );
     const contracts = intent.contracts;
     const producer = { pass: "accepted-candidate-test", codeSha: RELEASE_SHA, toolVersions: {} };
-    const compiled = await createRuntimePacketCompiler({
-      sql: database.sql,
-      artifactRoot,
-      artifactLimits: limits,
+    const compiler = { version: "3.0.0", codeSha: RELEASE_SHA };
+    const publisher = new IndexedArtifactPublisher({
+      index,
+      store,
       ownerInstanceId: "accepted-candidate-compiler",
-    }).compile({
-      runId,
-      expectedMode: "v3",
-      ...contracts,
-      compiler: { version: "3.0.0", codeSha: RELEASE_SHA },
-      producer,
     });
-    assert.equal(compiled.activation, "activated");
-    const packetHash = compiled.compilation.packetHash!;
+    const compiled = await compileProductBuildPacket({
+      productSpec: contracts.productSpec,
+      designGraph: contracts.designGraph,
+      buildTopology: contracts.buildTopology,
+      storyPlan: contracts.storyPlan,
+      designSource: contracts.designSource,
+      compiler,
+      producer,
+      protocol: "v3",
+      artifactStore: publisher,
+    });
+    assert.equal(compiled.status, "sealed");
+    assert.ok(compiled.packetHash);
+    await index.activateProductPacket({
+      runId,
+      packetHash: compiled.packetHash,
+      compiler,
+      artifactRefs: {
+        PRODUCT_SPEC: compiled.artifactHashes.productSpec!,
+        DESIGN_GRAPH: compiled.artifactHashes.designGraph!,
+        BUILD_TOPOLOGY: compiled.artifactHashes.buildTopology!,
+        STORY_PLAN: compiled.artifactHashes.storyPlan!,
+        DESIGN_SOURCE_CLOSURE: compiled.artifactHashes.designSourceClosure!,
+        PRODUCT_BUILD_PACKET: compiled.packetHash,
+        COMPILATION_REPORT: compiled.reportHash,
+      },
+    });
+    const packetHash = compiled.packetHash;
     await database.sql.unsafe(
       `INSERT INTO stories (id, run_id, story_index, story_id, title, status)
        VALUES ('story-accepted-candidate-us-001', $1, 0, 'US-001', 'Save task', 'done')`,
@@ -115,11 +135,6 @@ describe("accepted candidate repository", () => {
       ...contracts.implementationSlice,
       packetHash,
       sourceRevision: { baseSha: sourceRevision.sha, treeHash: sourceRevision.treeHash },
-    });
-    const publisher = new IndexedArtifactPublisher({
-      index,
-      store,
-      ownerInstanceId: "accepted-candidate-publisher",
     });
     const slicePublication = await publisher.put({
       schema: "setfarm.semantic-artifact-envelope.v1",
@@ -253,7 +268,7 @@ describe("accepted candidate repository", () => {
         runId,
         "6".repeat(64),
         packetHash,
-        compiled.compilation.reportHash,
+        compiled.reportHash,
         slicePublication.hash,
         sourceRevision.sha,
         sourceRevision.treeHash,
