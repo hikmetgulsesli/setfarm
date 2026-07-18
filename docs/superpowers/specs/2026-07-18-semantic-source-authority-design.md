@@ -128,6 +128,10 @@ type StackSemanticSourceRuleSetV1 = {
   schema: "setfarm.stack-semantic-source-rule-set.v1";
   ruleSetRef: StableReference;
   ruleSetVersion: string;
+  readiness: {
+    status: "shadow";
+    blockerCodes: SemanticSourceRuleSetShadowBlockerCodeV1[];
+  };
   stackPackBinding: {
     stackPackId: string;
     stackPackVersion: string;
@@ -143,17 +147,23 @@ catalog hash. Rules are produced first. The profile catalog then selects an
 exact `(ruleSetRef, ruleSetVersion, ruleSetHash)`. This one-way identity removes
 the otherwise impossible profile-hash/rule-set-hash cycle.
 
-One rule contains:
+Every rule contains:
 
 - a stable rule ref and domain-separated rule hash;
 - one exact semantic subject kind;
 - one exact source responsibility;
-- a typed activation predicate and cardinality;
-- one owner policy;
-- one path-resolution contract;
-- one structural locator contract;
-- an access/output policy; and
-- bounded aggregation authority when sharing is allowed.
+- a typed activation predicate and cardinality; and
+- one discriminated target: project/generated source slot, platform contract,
+  typed exemption, or predicate relation.
+
+A source-slot target additionally carries one owner policy, path-resolution
+contract, structural locator contract, access/output policy, and bounded
+aggregation authority when sharing is allowed. Its mandatory
+`subjectContractResolution` is `none` except for action-input source: web/game
+bind exact `ActionInputTransportV2`, CLI binds the future CLI invocation ABI,
+and API binds the future HTTP invocation ABI. Platform, exemption, and
+predicate-relation rules cannot smuggle placeholder source paths or ownership
+claims.
 
 Supported subject kinds are `entrypoint`, `command`, `route`, `surface`, `control_slot`,
 `physical_control`, `action`, `action_input`, `state`, `persistence_policy`,
@@ -175,27 +185,33 @@ Supported source responsibilities are:
 - `api_response_adapter`;
 - `cli_output_adapter`;
 - `runtime_data_fixture`;
-- `generated_screen`; and
 - `runtime_registration` or `platform_registration`.
 
-Activation is a strict discriminated union over facts already in ProductSpecV2
-and the selected profile: always, subject present, action trigger kind,
-persistence kind/durability, entrypoint kind, design/no-design kind, or an exact
-conjunction of those predicates. It never executes code or accepts a free-form
-expression.
+Generated source is a discriminated target of `surface_primary` or
+`physical_control_binding`, not a second overlapping semantic responsibility.
 
-Cardinality is one of `exactly_one_per_subject`, `exactly_one_per_story`,
+Activation is a strict discriminated union over facts already in ProductSpecV2
+and the selected profile: always, action trigger kind, persistence
+kind/durability, entrypoint kind, command kind, design/no-design kind, or an
+exact conjunction of those predicates. Subject existence is the compiler's
+iteration domain, not a caller-authored activation fact. Activation never
+executes code or accepts a free-form expression.
+
+Cardinality is one of `exactly_one_per_subject`,
 `exactly_one_per_entrypoint`, `typed_exemption_per_subject`, or
 `catalog_bounded_aggregate`. Aggregate rules include a maximum member count and
-one parser-owned unique slot-key domain.
+one parser-owned unique slot-key domain. There is no story-wide singleton that
+could collapse multiple semantic subjects into one untraceable obligation.
 
 Path resolution is one of:
 
 - `compiler_semantic_token_path`: a fixed release-owned prefix/suffix plus the
   full SHA-256 of `(ruleSetHash, storyId, subjectKind, subjectRef,
-  responsibility)`;
+  responsibility)`, bound to the code-owned
+  `SEMANTIC_SOURCE_PATH_TOKEN_V1` contract and contract hash;
 - `selected_entrypoint_path`: the exact topology-selected entrypoint path;
-- `generated_receipt_path`: the exact verified generated-source receipt;
+- `generated_receipt_path`: one exact verified
+  `setfarm.generated-source-receipt.v2` identity;
 - `fixed_release_path`: an exact catalog path; or
 - `shared_structural_slot_path`: an exact catalog path or selected entrypoint
   plus a required structural locator.
@@ -203,11 +219,65 @@ Path resolution is one of:
 There is no title token, slug token, basename scan, regex path, glob path,
 allowed-root fallback, or first-existing candidate.
 
-Structural locators are strict unions: whole-file exclusive, exported symbol,
-route-registration slot, component action-prop slot, state registry key,
-persistence registry key, CLI command slot, API method/path slot, or generated
-element receipt. Each locator binds a versioned parser ref and parser contract
-hash except whole-file exclusive and generated-receipt locators.
+Structural locators are strict unions: whole-file exclusive, versioned export,
+versioned AST slot, or generated element receipt. AST slot kinds cover exact
+entrypoint/route/action/control/state/persistence/observable/CLI/API/runtime
+registrations. Each structural locator binds the code-owned parser ref and
+parser-contract hash except whole-file exclusive and generated-receipt
+locators.
+
+The first code-owned catalog slice contains exact stack-specific rule sets:
+
+- Vite React and browser-game use Stitch receipt-owned surface/physical-control
+  source, browser-local persistence, and project-owned action/state wiring;
+- Node CLI uses typed no-design surface source, none/memory persistence
+  exemptions, and an exact CLI output adapter, with no invented rendered-control
+  or durable persistence rule; and
+- Node Express API uses typed no-design surface source, exact file/database
+  persistence, and an API response adapter.
+
+All shared entrypoint/route/runtime slots bind the exact code-owned TypeScript
+parser contract hash. Writable rules bind one responsibility-specific
+structural-postcondition ref and exact slot-domain refs. Predicate rules resolve
+each predicate through one exact support signature in the verified
+`EvidenceAdapterRegistryV1`; a broad stack capability is not sufficient.
+
+Catalog V1 is intentionally shadow-only. It has no `active` state and no public
+resolver that can turn a catalog row into production authority. Its exact
+blockers are:
+
+- web/game: `SEMANTIC_SOURCE_GENERATED_RECEIPT_UNVERIFIED`, parser
+  implementation, and release manifest;
+- CLI/API: `SEMANTIC_SOURCE_INVOCATION_INPUT_TRANSPORT_UNVERIFIED`, parser
+  implementation, and release manifest.
+
+The descriptor hash proves only the code-owned contract description. It does
+not prove that a parser, generator, transport, or release manifest exists. A
+future separately verified `SemanticSourceRuleSetActivationReceiptV1` must bind
+the exact catalog/rule-set hashes and evidence that discharges every blocker;
+the catalog itself is never rewritten or relabeled active.
+
+### GeneratedSourceReceiptV2 prerequisite
+
+The existing Stitch screen index is an input, not a source receipt.
+`GeneratedSourceReceiptV2` must bind the design-source closure and exact
+`StitchScreenIndexV2` payload hashes, generator implementation and platform
+bundle hashes, generated-source CAS identity, byte length/content hash, and the
+exact index-entry, component-API, and semantic-identity-closure hashes for its
+target, surfaces, physical controls, actions, action inputs, and observables.
+The rule contract fixes this required authority set under
+`GENERATOR_STITCH_GENERATED_SOURCE_V2`; no title, path scan, or mutable screen
+prose can substitute for the receipt.
+
+### InvocationInputTransportV2 prerequisite
+
+CLI/API action-input authority cannot be derived from an action handler path.
+The transport artifact must bind every ProductSpec input field to an exact ABI:
+CLI argv position/flag/stdin/env encoding plus exit/stdout readback, or HTTP
+method/path parameter/query/header/body encoding plus response/readback. It
+also binds the exact evidence-adapter support signature that can execute that
+ABI. Until this artifact fresh-verifies, CLI/API rule-set selection remains
+blocked.
 
 ## ProductDeliveryProfileV2
 
@@ -234,12 +304,14 @@ Initial V2 profile/rule coverage is deliberately cross-class:
 - Node CLI; and
 - Node Express API.
 
-Web utility/operations and browser game remain the first active profile
-candidates. Node CLI and Node Express API remain shadow profiles until their
-parser and runtime evidence chains pass. Only profiles whose complete rule
-sets, parsers, and fixtures pass may be activated. Unsupported or shadow-only
-stacks fail production selection with a typed source-rules blocker; they never
-fall back to coarse topology.
+Web utility/operations and browser game remain the first activation candidates.
+All four initial rule sets begin in shadow. Web/game additionally require exact
+generated-source receipts; CLI/API require exact invocation-input transports;
+all require the parser implementation and typed release manifest. A V2 profile
+may select a rule set only with the separate activation receipt proving that
+its exact blocker set is discharged. Unsupported or shadow-only stacks fail
+production selection with a typed source-rules blocker; they never fall back to
+coarse topology.
 
 ## SemanticSourceIntentSetV1
 
@@ -249,30 +321,47 @@ profile requires design and an exact typed absence when it does not, and the
 semantic-rule catalog verification input. It does not consume
 BuildTopology, setup output, DB story rows, or caller path proposals.
 
-Each intent binds:
+Each intent has one common identity:
 
 ```ts
-type SemanticSourceIntentV1 = {
+type SemanticSourceIntentCommonV1 = {
   intentRef: StableReference;
   storyId: StoryId;
   subjectKind: SemanticSourceSubjectKindV1;
   subjectRef: StableReference;
   subjectHash: Sha256;
   responsibility: SemanticSourceResponsibilityV1;
-  targetKind:
-    | "project_source"
-    | "generated_source"
-    | "platform_contract"
-    | "typed_exemption";
   ruleRef: StableReference;
   ruleHash: Sha256;
-  ownerPolicy: SemanticSourceOwnerPolicyV1;
-  pathResolution: SemanticPathResolutionV1;
-  locatorContract: SemanticLocatorContractV1;
-  accessPolicy: SemanticSourceAccessPolicyV1;
-  outputPolicy: SemanticSourceOutputPolicyV1;
   intentHash: Sha256;
 };
+
+type SemanticSourceIntentV1 = SemanticSourceIntentCommonV1 & (
+  | {
+      targetKind: "project_source" | "generated_source";
+      ownerPolicy: SemanticSourceOwnerPolicyV1;
+      pathResolution: SemanticPathResolutionV1;
+      locatorContract: SemanticLocatorContractV1;
+      accessPolicy: SemanticSourceAccessPolicyV1;
+      outputPolicy: SemanticSourceOutputPolicyV1;
+      subjectContractResolution: SemanticSubjectContractResolutionV1;
+    }
+  | {
+      targetKind: "platform_contract";
+      platformAuthorityRef: StableReference;
+      platformContractProjectionHash: Sha256;
+      capabilityRefs: CapabilityId[];
+    }
+  | {
+      targetKind: "typed_exemption";
+      exemptionCode: PersistenceExemptionCodeV1;
+      backingResponsibility: "state_store" | null;
+    }
+  | {
+      targetKind: "predicate_relation";
+      bindingResolution: ExactEvidenceAdapterSupportSignatureResolutionV1;
+    }
+);
 ```
 
 Intent identity is content-derived. The complete set is canonical and must
@@ -435,7 +524,8 @@ and replaced by the one final V2 proof contract. Historical V1/V2 packet and
 SliceV1 read/replay remains discriminated. No historical artifact is rewritten,
 promoted, or silently projected into the new branch.
 
-Rollback before cutover removes only shadow artifact refs/catalog admission.
+Rollback before cutover removes only shadow artifact refs and profile-selection
+enablement.
 Rollback after cutover drains new claims first and restores the previous whole
 new-write release; it does not translate V3 attempts into historical attempts.
 
@@ -443,20 +533,24 @@ new-write release; it does not translate V3 attempts into historical attempts.
 
 1. Add this design and keep production NO-GO.
 2. Implement strict StackSemanticSourceRulesCatalogV1 schema/compiler/verifier
-   with active web/game and shadow CLI/API fixtures.
-3. Implement ProductDeliveryProfileV2 exact rules binding and selection tests.
-4. Implement pure SemanticSourceIntentSetV1 derivation and every-and-only
+   with four cross-class shadow rule sets and exact unresolved blockers.
+3. Implement GeneratedSourceReceiptV2 for Stitch source and
+   InvocationInputTransportV2 for CLI/API ABIs.
+4. Implement required structural parser implementation, typed release manifest,
+   activation receipt, and negative fixtures. Do not activate a catalog label.
+5. Implement ProductDeliveryProfileV2 exact rules/activation-receipt binding and
+   selection tests.
+6. Implement pure SemanticSourceIntentSetV1 derivation and every-and-only
    coverage tests across utility, operations/data, game, CLI, and API fixtures.
-5. Implement required structural parser contracts and negative parser fixtures.
-6. Implement FileTreeManifestV2 and BuildTopologyV2 materialization/verification.
-7. Implement SemanticSourceDeclarationsV1 and concurrent artifact-batch
+7. Implement FileTreeManifestV2 and BuildTopologyV2 materialization/verification.
+8. Implement SemanticSourceDeclarationsV1 and concurrent artifact-batch
    publication authority.
-8. Implement StoryPlanV3, SourceMapV2 root/leaves/proofs, and least-privilege
+9. Implement StoryPlanV3, SourceMapV2 root/leaves/proofs, and least-privilege
    story proof verification.
-9. Finalize ProductBuildPacketV3/ImplementationSliceV2 field replacement before
+10. Finalize ProductBuildPacketV3/ImplementationSliceV2 field replacement before
    their first live write and then resume
    EvidencePlanV2 -> HandoffV2 -> ContextV2.
-10. Only after release manifests, DB provenance, typed receipts, recovery, and
+11. Only after release manifests, DB provenance, typed receipts, recovery, and
     three-class clean evals may the new-write branch cut over.
 
 ## Test Matrix
@@ -464,7 +558,8 @@ new-write release; it does not translate V3 attempts into historical attempts.
 Catalog unit tests cover strict parsing, exact stack/profile reproduction,
 domain hashes, canonical order, duplicate rule ownership, invalid activation/
 cardinality/path/locator combinations, unknown refs, hostile inputs, immutable
-outputs, 4 MiB publication bounds, and release drift.
+outputs, 4 MiB publication bounds, release drift, self-consistent blocker/domain/
+topology forgeries, and rejection of an invented active label.
 
 Intent tests cover exact semantic obligation closure, title/slug independence,
 determinism, missing/extra/duplicate subjects, persistence exemptions, generated
