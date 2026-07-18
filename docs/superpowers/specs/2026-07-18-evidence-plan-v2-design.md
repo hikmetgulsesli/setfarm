@@ -80,8 +80,8 @@ the exact candidate without changing the plan or its required checks.
   witness and no unrelated story topology.
 - Emit typed receipts that identify the exact semantic subject, node, check,
   adapter, lifecycle, environment, and candidate source authority.
-- Make missing and ambiguous adapters compile-time blockers rather than runtime
-  inconclusive success.
+- Make missing adapter support and duplicate support ownership compile-time
+  blockers rather than runtime inconclusive success.
 - Make unchanged-source retry suppression depend on typed failed evidence and
   exact source bindings, not GitHub prose or regex classifier output.
 
@@ -136,23 +136,36 @@ type EvidenceAdapterRegistryV1 = {
     environmentCapsuleHash: Sha256;
   };
   adapters: EvidenceAdapterDescriptorV1[];
-  registryHash: Sha256;
+  registryPayloadHash: Sha256;
 };
 
 type EvidenceAdapterDescriptorV1 = {
   adapterRef: StableReference;
   adapterVersion: string;
   owner: "setfarm-orchestrator";
-  stackPackBindings: Array<{
+  supportSignatures: EvidenceAdapterSupportSignatureV1[];
+  receiptSchema: "setfarm.evidence-receipt.v2";
+  runtimeDependencyRefs: StableReference[];
+  toolchainHash: Sha256;
+  runnerEntrypointRef: StableReference;
+  adapterEntryHash: Sha256;
+};
+
+type EvidenceAdapterSupportSignatureV1 = {
+  schema: "setfarm.evidence-adapter-support-signature.v1";
+  stackPackBinding: {
     stackPackId: LowercaseStackPackId;
     stackPackVersion: string;
     stackPackContentHash: Sha256;
-  }>;
-  deliveryProfileBindings: Array<{
-    profileId: UppercaseProfileId;
-    catalogVersion: string;
-    catalogHash: Sha256;
-  }>;
+  };
+  deliveryBinding:
+    | { kind: "unprofiled" }
+    | {
+        kind: "profile";
+        profileId: UppercaseProfileId;
+        catalogVersion: string;
+        catalogHash: Sha256;
+      };
   invocationKind:
     | "command"
     | "browser_dom"
@@ -162,46 +175,67 @@ type EvidenceAdapterDescriptorV1 = {
     | "persistence_lifecycle"
     | "visual"
     | "download";
-  supportedPredicateKinds: EvidencePredicateKindV1[];
+  predicateKind: EvidencePredicateKindV1;
   evidenceCapabilityRefs: CapabilityId[];
   inputTransportSchemaRefs: string[];
-  supportedCheckKinds: StableReference[];
-  lifecycleModes: Array<
+  checkKind: EvidenceCheckKindReferenceV1;
+  lifecycleMode:
     | "none"
     | "reload"
     | "process_restart"
     | "durable_readback"
     | "flow_isolation"
-    | "download_completion"
-  >;
-  receiptSchema: "setfarm.evidence-receipt.v2";
-  runtimeDependencyRefs: StableReference[];
-  toolchainHash: Sha256;
-  runnerEntrypointRef: StableReference;
+    | "download_completion";
+  supportSignatureHash: Sha256;
 };
 ```
 
 Registry invariants:
 
 - `releaseAuthority.codeSha` equals `producer.codeSha`.
-- `registryHash` binds the exact strict payload without `registryHash`.
+- `registryPayloadHash` binds the exact strict payload without that field. The
+  compiler separately returns `registryArtifactHash`, the SHA-256 identity of
+  the full SemanticArtifactEnvelopeV1 bytes used by CAS/index/DB authority.
 - Adapter refs are unique and canonically UTF-16 sorted. One release registry
   contains at most one active version for an adapter ref.
-- Every set-like nested array is unique and canonically UTF-16 sorted.
-- Stack-pack bindings are unique by exact `(id, version, contentHash)` and
-  delivery-profile bindings by `(profileId, catalogVersion, catalogHash)`.
-- An adapter declares at least one predicate kind and check kind.
-- Input transports are exact schema refs; there is no wildcard or
-  "any browser/CLI input" value.
-- Registry validation is pure. It performs no module loading, filesystem scan,
-  network discovery, environment probing, or fallback.
+- Each support signature is one exact tuple. Independent support arrays are
+  forbidden because their Cartesian product would authorize undeclared
+  predicate/check/capability/lifecycle combinations.
+- Support-signature hashes and adapter-entry hashes are domain-separated.
+  Signatures are canonical by hash; one signature has exactly one adapter owner
+  across the whole registry.
+- One logical `(stackPackId, version)` or `(profileId, catalogVersion)` cannot
+  carry conflicting hashes. Stack/profile identities and enabled capabilities
+  must reproduce from canonical release catalogs.
+- Input transports, check kinds, runner entrypoints, and runtime dependency
+  refs come from exact code-owned enums; syntactically plausible unknown refs
+  are rejected.
+- The exported runner ABI binds each runner entrypoint to one invocation kind
+  and an exact runtime-dependency profile. The exported exhaustive
+  predicate-to-check mapping is the sole mapping PlanV2 may use.
+- Compiler and verifier inputs are bounded canonical snapshots before Zod;
+  proxies, accessors, cycles, sparse containers, excessive depth/work/bytes,
+  and publication-incompatible Unicode become typed rejection results.
+- The full envelope must pass artifact-store batch preparation, including the
+  four-MiB CAS limit and DB producer identity rules. Returned payload/envelope
+  snapshots are recursively immutable.
+- Registry validation performs no filesystem scan, network discovery,
+  environment probing, or fallback.
 
 An EvidencePlan node has one exact requirement signature formed from its stack
-pack, optional delivery profile, invocation kind, predicate kind, capability
-refs, input transport schema refs, check kind, and lifecycle mode. An adapter
-matches only when every exact required value is declared. Cardinality zero is
-`EVIDENCE_PLAN_V2_ADAPTER_MISSING`; cardinality greater than one is
-`EVIDENCE_PLAN_V2_ADAPTER_AMBIGUOUS`. Ordering never breaks a tie.
+pack, discriminated delivery binding, invocation kind, predicate kind, exact
+capability set, exact input transport set, check kind, and lifecycle mode. An
+adapter matches only when the complete canonical tuple equals one declared
+signature. Cardinality zero is `EVIDENCE_PLAN_V2_ADAPTER_MISSING`. Duplicate
+ownership is rejected while compiling or verifying RegistryV1, before PlanV2
+selection; ordering never breaks a tie. A defensive internal `>1` assertion may
+remain, but it is not a reachable public state under fresh registry authority.
+
+The shadow compiler currently reproduces stack/profile catalogs and publication
+compatibility. Production admission remains blocked until
+`platformBundleHash`, `externalResolutionHash`, `environmentCapsuleHash`,
+toolchain hashes, runner entrypoints, and runtime dependency refs are derived
+from typed verified release manifests rather than supplied as compiler input.
 
 ## EvidencePlanV2
 
@@ -214,7 +248,8 @@ type EvidencePlanV2 = {
   sliceHash: Sha256;
   sliceAuthorityHash: Sha256;
   storyId: StoryId;
-  adapterRegistryHash: Sha256;
+  adapterRegistryPayloadHash: Sha256;
+  adapterRegistryArtifactHash: Sha256;
   semanticCoverage: SemanticCoverageV2;
   scenarios: EvidenceScenarioV2[];
   nodes: EvidenceNodeV2[];
@@ -233,17 +268,23 @@ source bindings. It must equal the complete story proof in both directions.
 Missing and extra values are equally invalid.
 
 Each scenario has a stable compiler-derived ref, an optional action ref, exact
-canonical input values, and prerequisite node refs. Each node has:
+canonical input values, and prerequisite node refs. Every verdict-bearing node
+owns exactly one predicate/check and has:
 
-- a compiler-derived stable node ref and phase (`prepare`, `command`, `invoke`,
-  `observe`, `assert`, `lifecycle`, or `cleanup`);
+- a compiler-derived stable node ref and typed evidence phase;
 - exact semantic subjects and optional subject contract hashes;
 - exact SourceMapV2 binding refs;
-- one `(adapterRef, adapterVersion, registryEntryHash)` binding;
+- one `(adapterRef, adapterVersion, adapterEntryHash,
+  supportSignatureHash)` binding;
 - one discriminated typed operation;
 - canonical dependency node refs; and
-- one or more required checks with exact predicate, subject, assertion,
+- one required check with exact predicate, subject, assertion,
   required-receipt, postcondition, and `required_pass` policy authority.
+
+Multiple checks compile to separate DAG nodes. A node never splices checks
+served by different adapters. Adapter session preparation and cleanup are
+runner-owned typed receipts outside verdict-node cardinality; they do not add or
+remove semantic checks.
 
 The typed operation union includes exact build/test/evidence command execution,
 route navigation, browser control action, HTTP/CLI invocation, state capture,
@@ -266,19 +307,22 @@ a serialized `{ verified: true }` marker.
 ```ts
 compileEvidencePlanV2(input: {
   sliceVerificationInput: ImplementationSliceVerificationInputV2;
-  adapterRegistryEnvelope: SemanticArtifactEnvelopeV1;
+  adapterRegistryVerificationInput: EvidenceAdapterRegistryVerificationInputV1;
 }): EvidencePlanCompilationResultV2;
 
 verifyEvidencePlanV2(input: {
   sliceVerificationInput: ImplementationSliceVerificationInputV2;
-  adapterRegistryEnvelope: SemanticArtifactEnvelopeV1;
+  adapterRegistryVerificationInput: EvidenceAdapterRegistryVerificationInputV1;
   candidatePlan: unknown;
 }): EvidencePlanVerificationResultV2;
 ```
 
-Both APIs call `verifyImplementationSliceV2` themselves. The compiler validates
-the strict registry envelope, reproduces the registry hash, verifies exact
-release/stack/profile authority, verifies the SourceMapV2 story proof, derives
+Both APIs call `verifyImplementationSliceV2` and
+`verifyEvidenceAdapterRegistryV1` themselves. Registry verification fresh
+reproduces the candidate envelope from the release compiler input supplied by
+verified release admission; a self-consistent envelope/hash is not sufficient
+authority. The compiler then verifies exact release/stack/profile authority,
+verifies the SourceMapV2 story proof, derives
 coverage and graph, checks adapter cardinality, validates DAG/cardinality, and
 emits a semantic artifact envelope. The verifier performs a fresh compile and
 requires canonical byte equality with the candidate plan. A caller-provided
@@ -286,7 +330,8 @@ plan hash or mutable parsed object is never authority.
 
 Diagnostics are typed, canonically sorted, and bounded. At minimum they cover
 invalid input/envelope, slice verification failure, SourceMapV2 prerequisite or
-proof failure, registry authority/hash failure, missing/ambiguous adapter,
+proof failure, registry authority/hash failure, missing adapter or duplicate
+registry ownership,
 semantic coverage mismatch, graph cycle, orphan node/check, unsupported
 operation/input/lifecycle, and candidate authority mismatch.
 
@@ -368,8 +413,8 @@ fields, invalid capability/input/check/lifecycle values, and exact envelope
 reproduction.
 
 Plan compiler tests cover fresh SliceV2 verification, SourceMapV2 prerequisite,
-exact semantic set equality, deterministic graph/hash, missing and ambiguous
-adapters, exact stack/profile resolution, input transport binding, graph cycles,
+exact semantic set equality, deterministic graph/hash, missing adapter and
+duplicate registry ownership, exact stack/profile/runner resolution, input transport binding, graph cycles,
 orphan nodes/checks, candidate tamper, and rejection of future source/runtime
 fields.
 
