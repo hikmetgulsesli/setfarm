@@ -6,9 +6,12 @@ Scope: Release-bound evidence adapter authority and compiler-owned typed evidenc
 
 ## Context
 
-`ImplementationSliceV2` closes packet, story, product, design, build, current
-source, dependency, and typed browser-input authority. It does not make the
-current evidence path safe. `EvidencePlanV1` accepts only SliceV1 and lowers
+The current branch-only `ImplementationSliceV2` closes PacketV3, story,
+product, design, build, current source, dependency, and typed browser-input
+authority. It does not yet carry the superseding semantic-source declarations
+or a projectable SourceMapV2 proof, and it does not make the current evidence
+path safe.
+`EvidencePlanV1` accepts only SliceV1 and lowers
 semantics to generic interactions. The V1 runner can therefore associate a
 predicate with the first command of the same kind, cannot prove several
 lifecycle outcomes, and cannot identify the exact semantic source binding that
@@ -98,11 +101,15 @@ the exact candidate without changing the plan or its required checks.
 
 ## Required Upstream Authority
 
-Successful PlanV2 compilation requires a fresh verification of
-ImplementationSliceV2 plus a projectable `ImplementationSourceMapV2` story
-proof. SourceMapV2 must provide planned semantic source slots for design and
-no-design products, including command, action, state, persistence, predicate,
-and platform registration ownership.
+Successful PlanV2 compilation requires a fresh verification of the final
+ImplementationSliceV2 wire contract, including one projectable
+`ImplementationSourceMapStoryProofV2`. SourceMapV2 must provide planned
+semantic source slots for design and no-design products, including entrypoint,
+action, state, persistence, predicate, and platform registration ownership.
+The proof must reproduce from ProductBuildPacketV3, StoryPlanV3,
+BuildTopologyV2, SemanticSourceDeclarationsV1, and the code-owned semantic-rule
+catalog. The current V1-witness SliceV2 shape is replaced before its first live
+write; a separately attached proof or dual wire shape is not authority.
 
 The current `ImplementationStorySourceMapV1` is not sufficient:
 
@@ -263,9 +270,10 @@ type EvidencePlanV2 = {
 
 `SemanticCoverageV2` contains canonical exact sets for entrypoints, commands,
 routes, surfaces, control slots, controls, actions, action inputs with contract
-hashes, states, persistence policies, observables, predicates, and SourceMapV2
-source bindings. It must equal the complete story proof in both directions.
-Missing and extra values are equally invalid.
+hashes, entities with exact field-set/contract hashes, states, persistence
+policies, observables, every story-contract predicate, predicate-source
+relations, and SourceMapV2 source bindings. It must equal the complete story
+proof in both directions. Missing and extra values are equally invalid.
 
 Each scenario has a stable compiler-derived ref, an optional action ref, exact
 canonical input values, and prerequisite node refs. Every verdict-bearing node
@@ -378,7 +386,7 @@ historical read/replay only:
   SliceV1 + PlanV1 + BundleV2 + AcceptedCandidateV1
 
 new-write branch after cutover:
-  SliceV2 + PlanV2 + CandidateSourceReceiptV1
+  PacketV3 + SliceV2 + PlanV2 + CandidateSourceReceiptV1
   + CandidateEvidenceContractV2 + ReceiptV2 + BundleV3
   + AcceptedCandidateV2
 ```
@@ -395,8 +403,11 @@ it does not rewrite them as V1.
 2. Implement strict `EvidenceAdapterRegistryV1` schema, hash/reproduction
    validator, envelope helper, and adversarial tests. Keep it unreferenced by
    production runtime.
-3. Implement SourceMapV2 planned slot authority and projectable story proof.
-4. Implement EvidencePlanV2 schema/compiler/verifier with no V1 fallback.
+3. Implement semantic source rules, intents, declarations, StoryPlanV3,
+   SourceMapV2 planned slot authority, and projectable story proof.
+4. Replace the branch-only ProductBuildPacketV3 and ImplementationSliceV2
+   V1-source-map fields before their first live write, then implement
+   EvidencePlanV2 schema/compiler/verifier with no V1 fallback.
 5. Implement CandidateSourceReceiptV1 and versioned source-slot parsers.
 6. Implement CandidateEvidenceContractV2, EvidenceReceiptV2, adapters, DAG
    runner, BundleV3, and AcceptedCandidateV2.
