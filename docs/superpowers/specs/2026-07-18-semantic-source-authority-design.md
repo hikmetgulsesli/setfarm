@@ -508,22 +508,61 @@ exactly three setup-owned UTF-8 JSON byte artifacts per entry:
 Each JSON file is canonical JSON followed by one LF, with no BOM. Package names
 are fixed private code-owned names and never derive from product title, run,
 repository, or story identity. Direct dependency versions are exact, never
-ranges or registry tags. The catalog separately binds the complete build graph,
-Node/npm/TypeScript requirements, install/build/test command artifacts, all
-three Node path-token bindings, and an exact readiness blocker set. Its public
-resolver accepts only ProductSpec plus delivery selection, fresh-reproduces
-layout, Node PathToken, and semantic-path authorities, and joins caller-neutral
-catalog bytes forward into a product-specific resolution. A self-rehashed
-caller catalog or resolution is never authority.
+ranges or registry tags. The static catalog separately binds the complete build
+graph, Node/npm/TypeScript requirements, install/build/test command artifacts,
+the three path-slot refs, and an exact readiness blocker set. Path tokens and
+semantic requirements are product-specific resolution authority, not static
+catalog fields. Its public resolver accepts only ProductSpec plus delivery
+selection, fresh-reproduces layout, Node PathToken, and semantic-path
+authorities, joins all three scaffold files to their exact current tokens, and
+maps every current selected-entrypoint requirement to the one canonical source
+token. Requirement cardinality is not profile-fixed: one current API fixture
+has three while its two-route form has four. A self-rehashed caller catalog or
+resolution is never authority.
 
 The catalog produces no `src/**`, test, `.gitignore`, README, `dist`,
-`node_modules`, or candidate-bundle bytes. It carries
-`acceptanceAuthority: none` and forbids a zero-test receipt. The canonical CLI
-or API entrypoint must be absent after scaffold materialization. Pre-source
-`npm run build` is a typed precondition rejection, not a setup failure and not
-product evidence. Scaffold admission may later run only an exact `npm ci
---ignore-scripts --no-audit --no-fund` build-dependency materialization plus
-toolchain probe inside a private stage.
+`node_modules`, or candidate-bundle bytes. It grants no acceptance authority
+until a verified canonical test receipt exists, requires at least one executed
+test, and forbids a zero-test receipt. `requiredBaseState: absent` is a future
+FileTree/materializer precondition, not evidence that the current repository is
+already absent. Pre-source `npm run build` is a typed precondition rejection,
+not a setup failure and not product evidence. Scaffold admission may later run
+only exact `npm ci --include=dev --ignore-scripts --no-audit --no-fund`
+build-dependency materialization plus a toolchain probe inside a private stage.
+The shared install/build/test environment contract is deliberately
+`planned_isolated_exact`, not current execution authority. It constructs the
+child environment from deny-all, strips every case-insensitive
+`npm_config_*` variable before exact settings, binds distinct private blank-LF
+user/global npmrc paths, requires project `.npmrc` absence from FileTreeV2, and
+binds `PATH` to an exact ordered host-toolchain receipt (candidate
+`node_modules/.bin`, exact Node bin, then admitted platform bins). `HOME`,
+temporary paths, and npm cache are attempt-private. Builtin npmrc, effective
+npm config, proxy/CA absence and the resulting environment require dedicated
+receipts; until then execution remains blocked. Every recipe references the
+same environment hash rather than install alone carrying an unverified prose
+claim.
+
+Install, build, and test each carry an exact ordered precondition set with
+typed missing-authority rejection. Install requires deep scaffold bundles,
+effective npm config, environment, host toolchain, base FileTree and private
+materializer authority. Build additionally requires dependency materialization,
+source receipt and BuildTopology. Test requires those authorities plus a
+canonical build receipt and test-input FileTree. These future schema refs do
+not publish an execute API; they prevent a blocker list from being mistaken for
+an executable join.
+
+Lock closure proves exact root joins, canonical npm lock-v3 package-path
+grammar, target package-name equality, recomputed nearest-node_modules
+resolution, reachability, exact profile dependency tuples, and their joins to
+the toolchain contract. Its explicitly bounded version-spec grammar uses
+canonical numeric identifiers and arbitrary-precision comparison; leading-zero,
+unsafe-number and over-limit inputs fail closed. It proves `hasInstallScript` is
+absent from the lock and adds `--ignore-scripts` as the execution barrier. It
+does not claim that all packages lack `prepare`/`prepublish` metadata, nor that
+lock metadata proves tarball contents. Registry lifecycle metadata observed in
+an unversioned audit is not production authority; deep tarball/CAS verification
+and transitive Node-engine compatibility each retain their own exact blocker
+code.
 
 The current Node V1 rules cannot be activated under this lifecycle: they call
 entrypoint/route/runtime registration a model-writable shared AST slot, while
@@ -910,13 +949,21 @@ transition.
 
 Scaffold catalog tests require two entries, exactly three canonical-LF JSON
 artifacts per profile, title/run/repository independence, exact package/lock/
-tsconfig semantic joins, every-and-only lock graph closure, absence of source,
-test, `.gitignore`, README and output artifacts, no lifecycle/start/listen
-scripts, zero-test non-evidence, and typed rejection of build before a generated
-entrypoint receipt. Adversarial cases include cross-profile substitution,
-self-rehashing, dependency range/tag/git/file/workspace injection, lock-root or
-integrity drift, missing/extra/reordered artifacts, fake PATH tools, ambient npm
-config drift, and source mutation during dependency materialization.
+tsconfig semantic joins, every-and-only derived lock graph closure, absence of
+source, test, `.gitignore`, README and output artifacts, no root lifecycle,
+start or listen scripts, zero-test non-evidence, and typed rejection of build
+before a generated entrypoint receipt. Adversarial cases include
+cross-profile substitution, self-rehashing, unsupported version-spec/tag/git/
+file/workspace injection, lock-root or registry/integrity drift,
+missing/extra/reordered artifacts, trailing/noncanonical lock paths, wrong-name
+and non-nearest target swaps, unsafe-number/leading-zero/oversized version
+inputs, dependency-to-toolchain drift, contradictory or duplicate resolved file
+tokens, hostile bounded inputs, three-versus-four semantic requirement closure,
+missing PATH authority, ambient npm config drift, precondition omission/reorder,
+and orphaned blocker codes. Fake PATH execution and source mutation during
+dependency materialization remain future integration tests until those private
+consumers exist; this catalog slice tests their fail-closed environment,
+precondition, command and blocker contracts.
 
 Intent tests cover exact semantic obligation closure, title/slug independence,
 determinism, missing/extra/duplicate subjects, persistence exemptions, generated
