@@ -393,6 +393,49 @@ ASCII-casefold collision freedom, and consumer-ref role/disposition closure.
 `LegacyInstallerExecutionObservationV1` raw locators are compatibility evidence
 only and are never PathToken compiler input.
 
+The first PathTokenV2 implementation is deliberately scoped to
+`originKind: node_execution_path_slot`; it does not launder the ordinal
+`SEMANTIC_SOURCE_PATH_TOKEN_V1` into V2 authority. Its public compiler accepts
+only `{productSpec, deliverySelection}`, fresh-resolves the code-owned layout,
+and derives all roots, locators, namespaces, dispositions, and consumer
+bindings. Caller-provided layout, slot set, root, locator, namespace, or token
+definitions are excess fields and are rejected.
+
+The versioned lexical contract admits only raw relative locators with `/`
+separators and segment grammar `[A-Za-z0-9._@+-]+`. It performs no host-OS path
+normalization, URL decoding, Unicode normalization, filesystem lookup, or
+realpath operation. The limits are 1,024 ASCII bytes per locator, 255 bytes per
+segment, and 64 segments. Empty, absolute POSIX, drive-qualified/drive-relative,
+UNC/device, backslash, colon, percent, NUL/control/DEL, empty/dot/traversal,
+trailing slash/dot/space, non-ASCII, and Windows device-basename locators are
+rejected before token production. ASCII folding is used only for collision
+proof; it never changes the exact locator identity. PathToken proves lexical
+identity only. A later physical materializer must separately reject symlink,
+junction, reparse-point, file-as-parent, and TOCTOU escape conditions.
+
+`NodeExecutionPathTokenSetV2` publishes canonical root bindings, every planned
+and reject-only slot token, and every typed consumer binding. Roots are ordered
+by `rootRef`, tokens by `slotRef`, and consumers by stable JSON pointer. The
+closure requires one empty anchor per physical space, same-space acyclic nearest
+parents, nearest segment-containing roots, unique refs, exact and ASCII-casefold
+collision freedom, and no file/root or file/file ancestor conflict. Compiler,
+canonical topology, source/output/candidate, and runtime consumers may bind only
+their exact planned namespace/disposition. Only historical entrypoint consumers
+may bind `reject_only`; no slot may be orphaned. Any new `PATH_ROOT_*` or
+`PATH_SLOT_*` consumer outside the classified field set fails closed. The
+legacy observation subtree is excluded from this machine walk.
+
+The set carries separate domain hashes for roots, tokens, consumers, and the
+complete artifact. Individual `pathToken` identity remains exactly
+`(contractVersion, contractHash, slotSetHash, slotRef)`, so consumer wiring can
+change the set artifact without creating an identity cycle or admitting
+`layoutHash`/legacy observation churn into a path token. A schema-valid,
+self-rehashed token set is still only a candidate; the authoritative verifier
+fresh-recompiles from ProductSpec and delivery selection and requires canonical
+byte equality. The artifact remains `shadow`/`productionUse: forbidden` with
+source-layout, FileTreeV2, BuildTopologyV2, physical materializer, and release
+activation blockers. The existing layout blocker is not removed in place.
+
 `layoutHash` binds a complete layout; `catalogHash` binds the exact ordered
 layout set. A bounded fresh verifier reproduces the catalog from code-owned
 ProfileV2 and stack-topology identities, and the selection resolver first
