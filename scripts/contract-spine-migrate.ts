@@ -6,13 +6,14 @@ import postgres from "postgres";
 import {
   applyContractSpineMigrations,
   auditArtifactPublicationBatchLedgerData,
-  auditArtifactStoreAuthorityLedgerData,
+  auditCurrentArtifactStoreAuthorityLedgerData,
   planContractSpineMigrations,
   readContractSpineMigrationAttestation,
   rollbackProductCompilationAttemptLedgerToV21,
   rollbackOperationalFailureCauseSealToV20,
   rollbackArtifactPublicationBatchLedgerToV22,
   rollbackArtifactStoreAuthorityLedgerToV23,
+  rollbackPreparationAuthorityV2LedgerToV24,
   rollbackRecoveryTerminalLeaseIdentityToV19,
   verifyContractSpineMigrations,
 } from "../src/db/contract-spine-migrations.js";
@@ -24,6 +25,7 @@ type Mode =
   | "verify"
   | "audit-artifact-publication-batches"
   | "audit-artifact-store-authority-ledger"
+  | "rollback-25-to-24"
   | "rollback-24-to-23"
   | "rollback-23-to-22"
   | "rollback-22-to-21"
@@ -65,8 +67,8 @@ function parseArgs(argv: string[]): Readonly<{
   targetReleaseSha?: string;
 }> {
   const mode = argv[0];
-  if (!["plan", "apply", "verify", "audit-artifact-publication-batches", "audit-artifact-store-authority-ledger", "rollback-24-to-23", "rollback-23-to-22", "rollback-22-to-21", "rollback-21-to-20", "rollback-20-to-19"].includes(mode ?? "")) {
-    throw new Error("Usage: contract-spine-migrate.ts <plan|apply|verify|audit-artifact-publication-batches|audit-artifact-store-authority-ledger|rollback-24-to-23|rollback-23-to-22|rollback-22-to-21|rollback-21-to-20|rollback-20-to-19> [--database <postgres-url>] [--target-release <git-sha>]");
+  if (!["plan", "apply", "verify", "audit-artifact-publication-batches", "audit-artifact-store-authority-ledger", "rollback-25-to-24", "rollback-24-to-23", "rollback-23-to-22", "rollback-22-to-21", "rollback-21-to-20", "rollback-20-to-19"].includes(mode ?? "")) {
+    throw new Error("Usage: contract-spine-migrate.ts <plan|apply|verify|audit-artifact-publication-batches|audit-artifact-store-authority-ledger|rollback-25-to-24|rollback-24-to-23|rollback-23-to-22|rollback-22-to-21|rollback-21-to-20|rollback-20-to-19> [--database <postgres-url>] [--target-release <git-sha>]");
   }
   const databaseIndex = argv.indexOf("--database");
   if (databaseIndex >= 0 && !argv[databaseIndex + 1]) {
@@ -116,7 +118,17 @@ async function main(): Promise<void> {
     }
     if (mode === "audit-artifact-store-authority-ledger") {
       process.stdout.write(`${JSON.stringify(
-        await auditArtifactStoreAuthorityLedgerData(sql),
+        await auditCurrentArtifactStoreAuthorityLedgerData(sql),
+        null,
+        2,
+      )}\n`);
+      return;
+    }
+    if (mode === "rollback-25-to-24") {
+      process.stdout.write(`${JSON.stringify(
+        await rollbackPreparationAuthorityV2LedgerToV24(sql, {
+          targetReleaseSha: targetReleaseSha!,
+        }),
         null,
         2,
       )}\n`);

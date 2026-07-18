@@ -153,7 +153,7 @@ test("claimStep publishes and completes one exact bounded supervisor repair with
     database = await createIsolatedTestDatabase();
 
     const [
-      runtimePacketModule,
+      packetCompilerModule,
       artifactIndexModule,
       artifactStoreModule,
       artifactPublisherModule,
@@ -174,7 +174,7 @@ test("claimStep publishes and completes one exact bounded supervisor repair with
       recoveryEffectModule,
       spawnerModule,
     ] = await Promise.all([
-      import("../../src/product-compiler/runtime-packet-compiler.js"),
+      import("../../src/product-compiler/packet-compiler.js"),
       import("../../src/product-compiler/artifact-index.js"),
       import("../../src/product-compiler/artifact-store.js"),
       import("../../src/product-compiler/indexed-artifact-publisher.js"),
@@ -309,26 +309,39 @@ test("claimStep publishes and completes one exact bounded supervisor repair with
       codeSha: RELEASE_SHA,
       toolVersions: { zod: "4.4.3" },
     } as const;
-    const packetCompilation = await runtimePacketModule.createRuntimePacketCompiler({
-      sql: database.sql,
-      artifactRoot,
-      artifactLimits: ARTIFACT_LIMITS,
-      ownerInstanceId: "claim-step-recovery-packet-compiler",
-    }).compile({
-      runId: RUN_ID,
-      expectedMode: "v3",
+    const compiler = { version: "3.0.0", codeSha: RELEASE_SHA } as const;
+    const packetCompilation = await packetCompilerModule.compileProductBuildPacket({
       productSpec: contracts.productSpec,
       designGraph: contracts.designGraph,
       buildTopology: contracts.buildTopology,
       storyPlan: contracts.storyPlan,
       designSource: contracts.designSource,
-      compiler: { version: "3.0.0", codeSha: RELEASE_SHA },
+      compiler,
       producer,
+      protocol: "v3",
+      artifactStore: new artifactPublisherModule.IndexedArtifactPublisher({
+        index: artifactIndex,
+        store: artifactStore,
+        ownerInstanceId: "claim-step-recovery-packet-compiler",
+      }),
     });
-    assert.equal(packetCompilation.activation, "activated", JSON.stringify(packetCompilation));
-    assert.equal(packetCompilation.compilation.status, "sealed", JSON.stringify(packetCompilation));
-    const packetHash = packetCompilation.compilation.packetHash;
+    assert.equal(packetCompilation.status, "sealed", JSON.stringify(packetCompilation));
+    const packetHash = packetCompilation.packetHash;
     assert.ok(packetHash);
+    await artifactIndex.activateProductPacket({
+      runId: RUN_ID,
+      packetHash,
+      compiler,
+      artifactRefs: {
+        PRODUCT_SPEC: packetCompilation.artifactHashes.productSpec!,
+        DESIGN_GRAPH: packetCompilation.artifactHashes.designGraph!,
+        BUILD_TOPOLOGY: packetCompilation.artifactHashes.buildTopology!,
+        STORY_PLAN: packetCompilation.artifactHashes.storyPlan!,
+        DESIGN_SOURCE_CLOSURE: packetCompilation.artifactHashes.designSourceClosure!,
+        PRODUCT_BUILD_PACKET: packetHash,
+        COMPILATION_REPORT: packetCompilation.reportHash,
+      },
+    });
 
     const priorClaims = await database.sql.unsafe<Array<{ id: string }>>(
       `INSERT INTO claim_log (run_id, step_id, story_id, agent_id)

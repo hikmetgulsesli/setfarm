@@ -8,6 +8,7 @@ import {
   rollbackArtifactPublicationBatchLedgerToV22,
   rollbackArtifactStoreAuthorityLedgerToV23,
   rollbackOperationalFailureCauseSealToV20,
+  rollbackPreparationAuthorityV2LedgerToV24,
   rollbackProductCompilationAttemptLedgerToV21,
   rollbackRecoveryTerminalLeaseIdentityToV19,
 } from "../../src/db/contract-spine-migrations.js";
@@ -23,6 +24,9 @@ import { createIsolatedTestDatabase } from "./test-database.js";
 async function rollbackCurrentToV21(
   database: Awaited<ReturnType<typeof createIsolatedTestDatabase>>,
 ): Promise<void> {
+  await rollbackPreparationAuthorityV2LedgerToV24(database.sql, {
+    targetReleaseSha: "2".repeat(40),
+  });
   await rollbackArtifactStoreAuthorityLedgerToV23(database.sql, {
     targetReleaseSha: "3".repeat(40),
   });
@@ -676,6 +680,7 @@ describe("canonical run terminal owner", () => {
         "022_product_compilation_attempt_ledger",
         "023_artifact_publication_batch_ledger",
         "024_artifact_store_authority_ledger",
+        "025_v3_preparation_authority_v2_ledger",
       ]);
       assert.equal(
         (await createRecoveryDeliveryRepository(database.sql).findDelivery(fixture.dispatchId))?.schema,

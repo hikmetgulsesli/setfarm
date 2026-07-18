@@ -40,6 +40,10 @@ describe("contract-spine semantic migration source digests", () => {
       CONTRACT_SPINE_SEMANTIC_MIGRATION_DIGESTS[23],
       "dfeac8a3e38de094192e21d0281ff28330ae75d1227c994920f9a35c1b48e7fe",
     );
+    assert.equal(
+      CONTRACT_SPINE_SEMANTIC_MIGRATION_DIGESTS[24],
+      "62fd9d92eaceffee527aa734b1ae91b17594e4898750b0468bbe9d6acd9b75b4",
+    );
   });
 
   it("changes v8 journal identity when the semantic apply body changes", () => {
@@ -258,6 +262,84 @@ describe("contract-spine semantic migration source digests", () => {
       computeContractSpineMigrationChecksumV1({
         ...migration,
         implementationDigest: authorityMutation[24],
+      }),
+    );
+  });
+
+  it("binds v25 preparation authority semantics without rewriting historical digests", () => {
+    const baseline = computeContractSpineSemanticMigrationDigests(sourceReader);
+    const ledgerMutation = computeContractSpineSemanticMigrationDigests(replacingReader(
+      "src/db/preparation-authority-v2-migration.ts",
+      (source) => replaceExactlyOnce(
+        source,
+        "preparation authority v2 exact function authority mismatch",
+        "mutated preparation authority function diagnostic",
+      ),
+    ));
+    assert.notEqual(ledgerMutation[25], baseline[25]);
+    assert.equal(ledgerMutation[23], baseline[23]);
+    assert.equal(ledgerMutation[24], baseline[24]);
+
+    const contractMutation = computeContractSpineSemanticMigrationDigests(replacingReader(
+      "src/execution/v3-preparation-claim-authority-v2.ts",
+      (source) => `${source}\n// simulated preparation authority contract mutation\n`,
+    ));
+    assert.notEqual(contractMutation[25], baseline[25]);
+    assert.equal(contractMutation[23], baseline[23]);
+    assert.equal(contractMutation[24], baseline[24]);
+
+    const rollbackMutation = computeContractSpineSemanticMigrationDigests(replacingReader(
+      "src/db/contract-spine-migrations.ts",
+      (source) => replaceExactlyOnce(
+        source,
+        "Migration 25 rollback refuses to erase preparation authority provenance; roll forward instead",
+        "Mutated migration 25 rollback provenance diagnostic",
+      ),
+    ));
+    assert.notEqual(rollbackMutation[25], baseline[25]);
+    assert.equal(rollbackMutation[23], baseline[23]);
+    assert.equal(rollbackMutation[24], baseline[24]);
+
+    const currentAuditMutation = computeContractSpineSemanticMigrationDigests(
+      replacingReader(
+        "src/db/contract-spine-migrations.ts",
+        (source) => replaceExactlyOnce(
+          source,
+          "current artifact store or preparation authority journal differs from source",
+          "mutated current authority audit diagnostic",
+        ),
+      ),
+    );
+    assert.notEqual(currentAuditMutation[25], baseline[25]);
+    assert.equal(currentAuditMutation[23], baseline[23]);
+    assert.equal(currentAuditMutation[24], baseline[24]);
+
+    for (const mutableOperationalFile of [
+      "package.json",
+      "scripts/contract-spine-migrate.ts",
+    ]) {
+      const operationalMutation = computeContractSpineSemanticMigrationDigests(
+        replacingReader(
+          mutableOperationalFile,
+          (source) => `${source}\n// simulated mutable operational wiring change\n`,
+        ),
+      );
+      assert.deepEqual(operationalMutation, baseline);
+    }
+
+    const migration = {
+      version: 25,
+      name: "025_v3_preparation_authority_v2_ledger",
+      statements: ["SELECT 1"],
+    } as const;
+    assert.notEqual(
+      computeContractSpineMigrationChecksumV1({
+        ...migration,
+        implementationDigest: baseline[25],
+      }),
+      computeContractSpineMigrationChecksumV1({
+        ...migration,
+        implementationDigest: ledgerMutation[25],
       }),
     );
   });

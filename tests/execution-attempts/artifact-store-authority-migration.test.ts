@@ -6,10 +6,12 @@ import { CONTRACT_SPINE_SEMANTIC_MIGRATION_DIGESTS } from "../../src/db/contract
 import {
   ContractSpineMigrationError,
   applyContractSpineMigrations,
-  auditArtifactStoreAuthorityLedgerData,
+  auditArtifactStoreAuthorityLedgerData as auditArtifactStoreAuthorityLedgerDataV24,
+  auditCurrentArtifactStoreAuthorityLedgerData,
   planContractSpineMigrations,
   readContractSpineMigrationAttestation,
-  rollbackArtifactStoreAuthorityLedgerToV23,
+  rollbackArtifactStoreAuthorityLedgerToV23 as rollbackArtifactStoreAuthorityLedgerToV23Raw,
+  rollbackPreparationAuthorityV2LedgerToV24,
   verifyContractSpineMigrations,
 } from "../../src/db/contract-spine-migrations.js";
 import { createIsolatedTestDatabase, type TestDatabase } from "./test-database.js";
@@ -18,6 +20,30 @@ const sourceRelease = "a".repeat(40);
 const targetRelease = "b".repeat(40);
 const authorityId = "11111111-1111-4111-8111-111111111111";
 const rootLocatorHash = "c".repeat(64);
+
+async function rollbackPreparationAuthorityIfPresent(sql: postgres.Sql): Promise<void> {
+  const rows = await sql.unsafe<Array<{ present: boolean }>>(
+    `SELECT EXISTS (
+       SELECT 1 FROM public.setfarm_schema_migrations WHERE version = 25
+     ) AS present`,
+  );
+  if (!rows[0]?.present) return;
+  await rollbackPreparationAuthorityV2LedgerToV24(sql, {
+    targetReleaseSha: "9".repeat(40),
+  });
+}
+
+async function auditArtifactStoreAuthorityLedgerData(sql: postgres.Sql) {
+  return auditCurrentArtifactStoreAuthorityLedgerData(sql);
+}
+
+async function rollbackArtifactStoreAuthorityLedgerToV23(
+  sql: postgres.Sql,
+  options: Parameters<typeof rollbackArtifactStoreAuthorityLedgerToV23Raw>[1],
+) {
+  await rollbackPreparationAuthorityIfPresent(sql);
+  return rollbackArtifactStoreAuthorityLedgerToV23Raw(sql, options);
+}
 
 async function insertBindingAuthority(database: TestDatabase): Promise<void> {
   await database.sql.unsafe(
@@ -222,9 +248,10 @@ describe("artifact store authority migration 24", () => {
 
   it("requires an exact v24 journal before reporting a database-ledger audit", async () => {
     await applyContractSpineMigrations(database.sql);
+    await rollbackPreparationAuthorityIfPresent(database.sql);
     await database.sql`DELETE FROM setfarm_schema_migrations WHERE version = 24`;
     await assert.rejects(
-      auditArtifactStoreAuthorityLedgerData(database.sql),
+      auditArtifactStoreAuthorityLedgerDataV24(database.sql),
       (error: unknown) => error instanceof ContractSpineMigrationError
         && error.code === "MIGRATION_INCOMPLETE",
     );
@@ -248,16 +275,10 @@ describe("artifact store authority migration 24", () => {
     }
   });
 
-  it("rejects a journal version newer than the v24 ledger-audit contract", async () => {
+  it("keeps the historical v24 audit bounded when the real v25 ledger is installed", async () => {
     await applyContractSpineMigrations(database.sql);
-    await database.sql.unsafe(
-      `INSERT INTO public.setfarm_schema_migrations (
-         version, name, checksum, state
-       ) VALUES (25, '025_unknown_future', $1, 'applied')`,
-      ["f".repeat(64)],
-    );
     await assert.rejects(
-      auditArtifactStoreAuthorityLedgerData(database.sql),
+      auditArtifactStoreAuthorityLedgerDataV24(database.sql),
       (error: unknown) => error instanceof ContractSpineMigrationError
         && error.code === "MIGRATION_UNKNOWN_VERSION",
     );
@@ -969,7 +990,7 @@ describe("artifact store authority migration 24", () => {
              AS evil_checksum`,
       );
       assert.deepEqual(evidence[0], {
-        public_rows: 24,
+      public_rows: 25,
         evil_checksum: "0".repeat(64),
       });
     } finally {

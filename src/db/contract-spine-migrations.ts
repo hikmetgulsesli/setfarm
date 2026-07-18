@@ -33,6 +33,12 @@ import {
 } from "../execution/schemas/runtime-completion-plan-v1.js";
 import { ProcessIdentityV1Schema } from "../execution/schemas/process-identity-v1.js";
 import {
+  PREPARATION_AUTHORITY_V2_LEDGER_STATEMENTS,
+  auditPreparationAuthorityV2LedgerData,
+  detectPreparationAuthorityV2Ledger,
+  verifyPreparationAuthorityV2Ledger,
+} from "./preparation-authority-v2-migration.js";
+import {
   createCanonicalOperationalEventV1,
   operationalEventDeliveryId,
   type OperationalEventDeliveryConsumerV1,
@@ -221,6 +227,16 @@ export type ArtifactPublicationBatchLedgerRollbackResult = Readonly<{
   rollbackId: string;
   fromVersion: 23;
   targetVersion: 22;
+  targetReleaseSha: string;
+  rowsRewritten: 0;
+  appliedAt: string;
+}>;
+
+export type PreparationAuthorityV2LedgerRollbackResult = Readonly<{
+  schema: "setfarm.contract-spine-rollback.v1";
+  rollbackId: string;
+  fromVersion: 25;
+  targetVersion: 24;
   targetReleaseSha: string;
   rowsRewritten: 0;
   appliedAt: string;
@@ -11960,6 +11976,16 @@ const migrations: readonly Migration[] = [
     verify: verifyArtifactStoreAuthorityLedger,
   },
   // SETFARM_SEMANTIC_MIGRATION_REGION:migration-v24-registration:END
+  // SETFARM_SEMANTIC_MIGRATION_REGION:migration-v25-registration:BEGIN
+  {
+    version: 25,
+    name: "025_v3_preparation_authority_v2_ledger",
+    statements: PREPARATION_AUTHORITY_V2_LEDGER_STATEMENTS,
+    implementationDigest: CONTRACT_SPINE_SEMANTIC_MIGRATION_DIGESTS[25],
+    detect: detectPreparationAuthorityV2Ledger,
+    verify: verifyPreparationAuthorityV2Ledger,
+  },
+  // SETFARM_SEMANTIC_MIGRATION_REGION:migration-v25-registration:END
 ];
 
 function assertSemanticMigrationDefinitionsAreSourceBound(): void {
@@ -11983,6 +12009,166 @@ function assertSemanticMigrationDefinitionsAreSourceBound(): void {
 }
 
 assertSemanticMigrationDefinitionsAreSourceBound();
+
+// SETFARM_SEMANTIC_MIGRATION_REGION:migration-v25-current-artifact-store-audit:BEGIN
+export async function auditCurrentArtifactStoreAuthorityLedgerData(
+  sql: Sql,
+): Promise<Readonly<{
+  schema: "setfarm.artifact-store-authority-ledger-audit.v1";
+  scope: "database-ledger-only";
+  status: "verified";
+  authority: null | Readonly<{
+    authorityKey: string;
+    authoritySchema: string;
+    authorityId: string;
+    rootLocatorHash: string;
+    state: "binding" | "ready" | "quarantined";
+    diagnostic: string | null;
+    createdAt: string;
+    updatedAt: string;
+  }>;
+}>> {
+  return sql.begin(async (transaction) => {
+    await transaction.unsafe("SELECT set_config('search_path', 'public', true)");
+    await transaction.unsafe("SELECT pg_advisory_xact_lock($1)", [
+      contractSpineMigrationLockKey,
+    ]);
+    try {
+      await transaction.unsafe(
+        `LOCK TABLE public.setfarm_schema_migrations,
+                    public.semantic_artifacts,
+                    public.artifact_capacity,
+                    public.artifact_publication_reservations,
+                    public.artifact_publication_batches,
+                    public.artifact_publication_batch_items,
+                    public.artifact_store_authorities,
+                    public.product_packets,
+                    public.claim_log,
+                    public.execution_attempts,
+                    public.v3_preparation_authorities_v2,
+                    public.v3_preparation_authority_claims_v2,
+                    public.v3_preparation_authority_attempts_v2 IN SHARE MODE`,
+      );
+    } catch (cause) {
+      if (cause instanceof Error && "code" in cause && cause.code === "42P01") {
+        throw new ContractSpineMigrationError(
+          "MIGRATION_INCOMPLETE",
+          "current artifact store and preparation authority ledgers are not fully installed",
+          { cause },
+        );
+      }
+      throw cause;
+    }
+
+    await verifyExactContractSpineJournalAuthority(transaction);
+    const future = await transaction.unsafe<Array<{ version: number }>>(
+      `SELECT version
+         FROM public.setfarm_schema_migrations
+        WHERE version > 25
+        ORDER BY version
+        LIMIT 1`,
+    );
+    if (future[0]) {
+      throw new ContractSpineMigrationError(
+        "MIGRATION_UNKNOWN_VERSION",
+        `Migration ${future[0].version} is newer than the v25 current ledger audit contract`,
+      );
+    }
+
+    await verifyCurrentContractSpineObjectOwnership(transaction);
+    const artifactStoreState = await detectArtifactStoreAuthorityLedger(transaction);
+    if (artifactStoreState === "partial") {
+      throw new ContractSpineMigrationError(
+        "MIGRATION_ADOPTION_MISMATCH",
+        "artifact store authority ledger is partially installed",
+      );
+    }
+    if (artifactStoreState !== "present") {
+      throw new ContractSpineMigrationError(
+        "MIGRATION_INCOMPLETE",
+        "artifact store authority ledger is not fully installed",
+      );
+    }
+    const preparationState = await detectPreparationAuthorityV2Ledger(transaction);
+    if (preparationState === "partial") {
+      throw new ContractSpineMigrationError(
+        "MIGRATION_ADOPTION_MISMATCH",
+        "preparation authority v2 ledger is partially installed",
+      );
+    }
+    if (preparationState !== "present") {
+      throw new ContractSpineMigrationError(
+        "MIGRATION_INCOMPLETE",
+        "preparation authority v2 ledger is not fully installed",
+      );
+    }
+    const row = await verifyArtifactStoreAuthorityLedgerSnapshot(transaction);
+    await auditPreparationAuthorityV2LedgerData(transaction);
+
+    const expected = new Map(
+      migrations
+        .filter((candidate) => candidate.version === 24 || candidate.version === 25)
+        .map((candidate) => [candidate.version, candidate]),
+    );
+    const journal = await transaction.unsafe<Array<{
+      version: number;
+      name: string;
+      checksum: string;
+    }>>(
+      `SELECT version, name, checksum
+         FROM public.setfarm_schema_migrations
+        WHERE version IN (24, 25)
+        ORDER BY version`,
+    );
+    if (
+      journal.length !== 2
+      || journal.some((entry) => {
+        const migration = expected.get(entry.version);
+        return !migration
+          || entry.name !== migration.name
+          || entry.checksum !== checksum(migration);
+      })
+    ) {
+      throw new ContractSpineMigrationError(
+        "MIGRATION_CHECKSUM_MISMATCH",
+        "current artifact store or preparation authority journal differs from source",
+      );
+    }
+    await verifyExactContractSpineSourceChain(transaction, 25);
+    return Object.freeze({
+      schema: "setfarm.artifact-store-authority-ledger-audit.v1" as const,
+      scope: "database-ledger-only" as const,
+      status: "verified" as const,
+      authority: row
+        ? Object.freeze({
+            authorityKey: row.authority_key,
+            authoritySchema: row.authority_schema,
+            authorityId: row.authority_id,
+            rootLocatorHash: row.root_locator_hash,
+            state: row.state,
+            diagnostic: row.diagnostic,
+            createdAt: new Date(row.created_at).toISOString(),
+            updatedAt: new Date(row.updated_at).toISOString(),
+          })
+        : null,
+    });
+  }) as Promise<Readonly<{
+    schema: "setfarm.artifact-store-authority-ledger-audit.v1";
+    scope: "database-ledger-only";
+    status: "verified";
+    authority: null | Readonly<{
+      authorityKey: string;
+      authoritySchema: string;
+      authorityId: string;
+      rootLocatorHash: string;
+      state: "binding" | "ready" | "quarantined";
+      diagnostic: string | null;
+      createdAt: string;
+      updatedAt: string;
+    }>;
+  }>>;
+}
+// SETFARM_SEMANTIC_MIGRATION_REGION:migration-v25-current-artifact-store-audit:END
 
 export async function readContractSpineMigrationAttestation(
   sql: Sql,
@@ -12427,6 +12613,247 @@ export async function applyContractSpineMigrations(
     throw error;
   }
 }
+
+/**
+ * Roll migration 25 back only while no preparation authority provenance was
+ * published. Once any authority exists the ledger must migrate forward.
+ */
+// SETFARM_SEMANTIC_MIGRATION_REGION:migration-v25-rollback:BEGIN
+export async function rollbackPreparationAuthorityV2LedgerToV24(
+  sql: Sql,
+  options: Readonly<{
+    targetReleaseSha: string;
+    lockTimeoutMs?: number;
+    statementTimeoutMs?: number;
+  }>,
+): Promise<PreparationAuthorityV2LedgerRollbackResult> {
+  if (!/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/.test(options.targetReleaseSha)) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_RELEASE_INVALID",
+      "Rollback target release SHA must be a full lowercase Git object hash",
+    );
+  }
+  const migration = migrations.find((candidate) => candidate.version === 25)!;
+  const expectedChecksum = checksum(migration);
+  const lockTimeoutMs = Math.max(1, Math.min(options.lockTimeoutMs ?? 5_000, 60_000));
+  const statementTimeoutMs = Math.max(
+    lockTimeoutMs,
+    Math.min(options.statementTimeoutMs ?? 30_000, 300_000),
+  );
+  try {
+    return await sql.begin(async (transaction) => {
+      await transaction.unsafe("SELECT set_config('lock_timeout', $1, true)", [
+        `${lockTimeoutMs}ms`,
+      ]);
+      await transaction.unsafe("SELECT set_config('statement_timeout', $1, true)", [
+        `${statementTimeoutMs}ms`,
+      ]);
+      await transaction.unsafe("SELECT set_config('search_path', 'public', true)");
+      await transaction.unsafe("SELECT pg_advisory_xact_lock($1)", [
+        contractSpineMigrationLockKey,
+      ]);
+      const future = await transaction.unsafe<Array<{ version: number }>>(
+        `SELECT version FROM public.setfarm_schema_migrations
+          WHERE version > 25 ORDER BY version LIMIT 1`,
+      );
+      if (future[0]) {
+        throw new ContractSpineMigrationError(
+          "MIGRATION_UNKNOWN_VERSION",
+          `Migration ${future[0].version} must be rolled back before migration 25`,
+        );
+      }
+      await verifyExactContractSpineJournalAuthority(transaction);
+      const journal = await transaction.unsafe<Array<{
+        name: string;
+        checksum: string;
+        release_sha: string | null;
+        applied_at: Date | string;
+      }>>(
+        `SELECT name, checksum, release_sha, applied_at
+           FROM public.setfarm_schema_migrations
+          WHERE version = 25
+          FOR UPDATE`,
+      );
+      if (journal[0]?.name !== migration.name || journal[0]?.checksum !== expectedChecksum) {
+        throw new ContractSpineMigrationError(
+          "MIGRATION_CHECKSUM_MISMATCH",
+          "Migration 25 is absent or differs from the rollback source contract",
+        );
+      }
+      await verifyExactContractSpineSourceChain(transaction, 25);
+      if (await detectPreparationAuthorityV2Ledger(transaction) !== "present") {
+        throw new ContractSpineMigrationError(
+          "MIGRATION_ADOPTION_MISMATCH",
+          "Migration 25 journaled objects are not fully present",
+        );
+      }
+      await verifyPreparationAuthorityV2Ledger(transaction);
+      await transaction.unsafe(
+        `LOCK TABLE public.v3_preparation_authority_attempts_v2,
+                    public.v3_preparation_authority_claims_v2,
+                    public.v3_preparation_authorities_v2,
+                    public.execution_attempts IN ACCESS EXCLUSIVE MODE`,
+      );
+      await verifyPreparationAuthorityV2Ledger(transaction);
+      const counts = await transaction.unsafe<Array<{
+        authorities: number;
+        claims: number;
+        attempts: number;
+      }>>(
+        `SELECT
+           (SELECT COUNT(*)::integer FROM public.v3_preparation_authorities_v2)
+             AS authorities,
+           (SELECT COUNT(*)::integer FROM public.v3_preparation_authority_claims_v2)
+             AS claims,
+           (SELECT COUNT(*)::integer FROM public.v3_preparation_authority_attempts_v2)
+             AS attempts`,
+      );
+      if (
+        counts[0]?.authorities !== 0
+        || counts[0]?.claims !== 0
+        || counts[0]?.attempts !== 0
+      ) {
+        throw new ContractSpineMigrationError(
+          "MIGRATION_INCOMPLETE",
+          "Migration 25 rollback refuses to erase preparation authority provenance; roll forward instead",
+        );
+      }
+
+      await transaction.unsafe(
+        "DROP TRIGGER trg_execution_attempts_v3_preparation_v2_identity ON public.execution_attempts",
+      );
+      await transaction.unsafe(
+        "DROP TRIGGER trg_claim_log_v3_preparation_v2_identity ON public.claim_log",
+      );
+      await transaction.unsafe(
+        "DROP TRIGGER trg_v3_preparation_authority_attempts_v2_no_truncate ON public.v3_preparation_authority_attempts_v2",
+      );
+      await transaction.unsafe(
+        "DROP TRIGGER trg_v3_preparation_authority_attempts_v2_binding ON public.v3_preparation_authority_attempts_v2",
+      );
+      await transaction.unsafe(
+        "DROP TRIGGER trg_v3_preparation_authority_claims_v2_no_truncate ON public.v3_preparation_authority_claims_v2",
+      );
+      await transaction.unsafe(
+        "DROP TRIGGER trg_v3_preparation_authority_claims_v2_binding ON public.v3_preparation_authority_claims_v2",
+      );
+      await transaction.unsafe(
+        "DROP TRIGGER trg_v3_preparation_authorities_v2_no_truncate ON public.v3_preparation_authorities_v2",
+      );
+      await transaction.unsafe(
+        "DROP TRIGGER trg_v3_preparation_authorities_v2_immutable ON public.v3_preparation_authorities_v2",
+      );
+      await transaction.unsafe("DROP TABLE public.v3_preparation_authority_attempts_v2");
+      await transaction.unsafe("DROP TABLE public.v3_preparation_authority_claims_v2");
+      await transaction.unsafe("DROP TABLE public.v3_preparation_authorities_v2");
+      await transaction.unsafe(
+        "DROP FUNCTION public.setfarm_enforce_v3_preparation_bound_attempt_v2()",
+      );
+      await transaction.unsafe(
+        "DROP FUNCTION public.setfarm_enforce_v3_preparation_bound_claim_v2()",
+      );
+      await transaction.unsafe(
+        "DROP FUNCTION public.setfarm_enforce_v3_preparation_authority_attempt_v2()",
+      );
+      await transaction.unsafe(
+        "DROP FUNCTION public.setfarm_enforce_v3_preparation_authority_claim_v2()",
+      );
+      await transaction.unsafe(
+        "DROP FUNCTION public.setfarm_enforce_v3_preparation_authority_v2_immutable()",
+      );
+      if (await detectPreparationAuthorityV2Ledger(transaction) !== "absent") {
+        throw new ContractSpineMigrationError(
+          "MIGRATION_ADOPTION_MISMATCH",
+          "Migration 25 objects remain after empty rollback",
+        );
+      }
+      for (const retained of migrations.filter((candidate) => candidate.version <= 24)) {
+        if (await retained.detect(transaction) !== "present") {
+          throw new ContractSpineMigrationError(
+            "MIGRATION_ADOPTION_MISMATCH",
+            `Retained migration ${retained.version} is incomplete during migration 25 rollback`,
+          );
+        }
+        await retained.verify(transaction);
+      }
+      await verifyCurrentContractSpineObjectOwnership(transaction);
+
+      await ensureExactContractSpineRollbackLedger(transaction);
+      await transaction.unsafe(
+        "LOCK TABLE public.setfarm_schema_migration_rollbacks IN SHARE ROW EXCLUSIVE MODE",
+      );
+      await ensureExactContractSpineRollbackLedger(transaction);
+      const appliedAtRows = await transaction.unsafe<Array<{ applied_at: Date | string }>>(
+        "SELECT clock_timestamp() AS applied_at",
+      );
+      const appliedAt = new Date(appliedAtRows[0]!.applied_at);
+      const rollbackId = `RBK_${hashCanonicalJson({
+        schema: "setfarm.contract-spine-rollback-identity.v1",
+        sourceMigration: {
+          version: 25,
+          name: journal[0]!.name,
+          checksum: journal[0]!.checksum,
+          releaseSha: journal[0]!.release_sha,
+          appliedAt: new Date(journal[0]!.applied_at).toISOString(),
+        },
+        targetVersion: 24,
+        targetReleaseSha: options.targetReleaseSha,
+      })}`;
+      const receipt = await transaction.unsafe<Array<{ rollback_id: string }>>(
+        `INSERT INTO public.setfarm_schema_migration_rollbacks (
+           rollback_id, from_version, target_version, target_release_sha,
+           rows_rewritten, applied_at
+         ) VALUES ($1, 25, 24, $2, 0, $3)
+         RETURNING rollback_id`,
+        [rollbackId, options.targetReleaseSha, appliedAt],
+      );
+      if (receipt.length !== 1 || receipt[0]?.rollback_id !== rollbackId) {
+        throw new ContractSpineMigrationError(
+          "MIGRATION_ADOPTION_MISMATCH",
+          "Migration 25 rollback receipt was not durably inserted",
+        );
+      }
+      const removed = await transaction.unsafe<Array<{ version: number }>>(
+        `DELETE FROM public.setfarm_schema_migrations
+          WHERE version = 25 AND name = $1 AND checksum = $2
+          RETURNING version`,
+        [migration.name, expectedChecksum],
+      );
+      if (removed.length !== 1) {
+        throw new ContractSpineMigrationError(
+          "MIGRATION_CHECKSUM_MISMATCH",
+          "Migration 25 journal ownership changed during rollback",
+        );
+      }
+      await transaction.unsafe(
+        `UPDATE public.setfarm_schema_migrations
+            SET verified_release_sha = $1, verified_at = $2
+          WHERE version <= 24`,
+        [options.targetReleaseSha, appliedAt],
+      );
+      return Object.freeze({
+        schema: "setfarm.contract-spine-rollback.v1" as const,
+        rollbackId,
+        fromVersion: 25 as const,
+        targetVersion: 24 as const,
+        targetReleaseSha: options.targetReleaseSha,
+        rowsRewritten: 0 as const,
+        appliedAt: appliedAt.toISOString(),
+      });
+    }) as PreparationAuthorityV2LedgerRollbackResult;
+  } catch (error) {
+    if (error instanceof ContractSpineMigrationError) throw error;
+    if (isLockTimeout(error)) {
+      throw new ContractSpineMigrationError(
+        "MIGRATION_LOCK_TIMEOUT",
+        `Migration 25 rollback lock was not acquired within ${lockTimeoutMs}ms`,
+        { cause: error },
+      );
+    }
+    throw error;
+  }
+}
+// SETFARM_SEMANTIC_MIGRATION_REGION:migration-v25-rollback:END
 
 /**
  * Roll migration 24 back only while no physical root authority row exists.

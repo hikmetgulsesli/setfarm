@@ -7,6 +7,7 @@ import {
   contractSpineMigrationLockKey,
   readContractSpineMigrationAttestation,
   planContractSpineMigrations,
+  rollbackPreparationAuthorityV2LedgerToV24,
   verifyContractSpineMigrations,
 } from "../../src/db/contract-spine-migrations.js";
 import { createRuntimeCompletionEffectRepository } from "../../src/execution/runtime-completion-effect-repository.js";
@@ -268,12 +269,16 @@ describe("contract spine migration journal", () => {
       "022_product_compilation_attempt_ledger",
       "023_artifact_publication_batch_ledger",
       "024_artifact_store_authority_ledger",
+      "025_v3_preparation_authority_v2_ledger",
     ]);
     assert.equal((await verifyContractSpineMigrations(database.sql)).status, "verified");
   });
 
   it("upgrades agent-scoped claim indexes and backfills the exact relational claim owner", async () => {
     await applyContractSpineMigrations(database.sql);
+    await rollbackPreparationAuthorityV2LedgerToV24(database.sql, {
+      targetReleaseSha: "9".repeat(40),
+    });
     await database.sql`DELETE FROM setfarm_schema_migrations WHERE version IN (5, 6, 7, 8, 12, 14, 18, 19, 21)`;
     await database.sql`DROP TRIGGER trg_runs_project_transfer_ack_set_once ON runs`;
     await database.sql`DROP FUNCTION setfarm_enforce_project_transfer_ack_pointer_set_once()`;
@@ -359,6 +364,7 @@ describe("contract spine migration journal", () => {
       "018_v3_project_transfer_ack_ledger",
       "019_runtime_completion_submission_evidence",
       "021_operational_failure_cause_seal",
+      "025_v3_preparation_authority_v2_ledger",
     ]);
     const rows = await database.sql<Array<{
       claim_id: string | null;

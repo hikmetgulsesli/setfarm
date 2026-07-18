@@ -1,6 +1,9 @@
 import { z } from "zod";
 
-import { hashCanonicalJson } from "../product-compiler/canonical-json.js";
+import {
+  canonicalJsonStringify,
+  hashCanonicalJson,
+} from "../product-compiler/canonical-json.js";
 import { GitObjectHashSchema, Sha256Schema } from "../product-compiler/schemas/common-v1.js";
 import { ImplementationDependencyOutputV2Schema } from "../product-compiler/schemas/implementation-slice-v2.js";
 
@@ -12,15 +15,27 @@ ImplementationDependencyOutputV2Schema.extend({
   disposition: z.enum(["produced_delta", "already_satisfied", "verified"]),
 }).strict();
 
+export const V3_PREPARATION_CLAIM_AUTHORITY_V2_MAX_CANONICAL_BYTES = 4 * 1024 * 1024;
+
+const PreparationIdentityV2Schema = z.string().min(1).max(500).refine(
+  (value) => Buffer.byteLength(value, "utf8") <= 500,
+  "Preparation authority identity exceeds 500 UTF-8 bytes",
+);
+
+function compareCanonicalText(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
 const V3PreparationClaimAuthorityPayloadV2Schema = z.object({
   schema: z.literal("setfarm.v3-preparation-claim-authority.v2"),
   authorityVersion: z.literal(2),
   packetSchema: z.literal("setfarm.product-build-packet.v3"),
   stateVersion: z.number().int().positive(),
-  runId: z.string().min(1).max(500),
-  stepId: z.string().min(1).max(500),
-  storyId: z.string().min(1).max(500),
+  runId: PreparationIdentityV2Schema,
+  stepId: PreparationIdentityV2Schema,
+  storyId: PreparationIdentityV2Schema,
   packetHash: Sha256Schema,
+  compilationReportHash: Sha256Schema,
   baseRevision: z.object({
     sha: GitObjectHashSchema,
     treeHash: GitObjectHashSchema,
@@ -28,7 +43,7 @@ const V3PreparationClaimAuthorityPayloadV2Schema = z.object({
   projectedDependencyIds: z.array(z.string().min(1).max(500)).max(5_000),
   dependencyAttempts: z.array(V3PreparationDependencyAttemptAuthorityV2Schema).max(5_000),
 }).strict().superRefine((value, context) => {
-  const projected = [...new Set(value.projectedDependencyIds)].sort();
+  const projected = [...new Set(value.projectedDependencyIds)].sort(compareCanonicalText);
   if (
     projected.length !== value.projectedDependencyIds.length
     || projected.some((storyId, index) => storyId !== value.projectedDependencyIds[index])
@@ -40,7 +55,7 @@ const V3PreparationClaimAuthorityPayloadV2Schema = z.object({
     });
   }
   const attemptStoryIds = value.dependencyAttempts.map((attempt) => attempt.storyId);
-  const canonicalAttemptStoryIds = [...new Set(attemptStoryIds)].sort();
+  const canonicalAttemptStoryIds = [...new Set(attemptStoryIds)].sort(compareCanonicalText);
   if (
     canonicalAttemptStoryIds.length !== attemptStoryIds.length
     || canonicalAttemptStoryIds.some((storyId, index) => storyId !== attemptStoryIds[index])
@@ -59,6 +74,15 @@ const V3PreparationClaimAuthorityPayloadV2Schema = z.object({
       code: "custom",
       path: ["dependencyAttempts"],
       message: "Every projected dependency must bind exactly one terminal attempt",
+    });
+  }
+  if (
+    Buffer.byteLength(canonicalJsonStringify(value), "utf8")
+      > V3_PREPARATION_CLAIM_AUTHORITY_V2_MAX_CANONICAL_BYTES
+  ) {
+    context.addIssue({
+      code: "custom",
+      message: "Preparation claim authority exceeds the canonical byte boundary",
     });
   }
 });
@@ -101,9 +125,9 @@ export function createV3PreparationClaimAuthorityV2(
     schema: "setfarm.v3-preparation-claim-authority.v2",
     authorityVersion: 2,
     packetSchema: "setfarm.product-build-packet.v3",
-    projectedDependencyIds: [...input.projectedDependencyIds].sort(),
+    projectedDependencyIds: [...input.projectedDependencyIds].sort(compareCanonicalText),
     dependencyAttempts: [...input.dependencyAttempts]
-      .sort((left, right) => left.storyId.localeCompare(right.storyId)),
+      .sort((left, right) => compareCanonicalText(left.storyId, right.storyId)),
   });
   return V3PreparationClaimAuthorityV2Schema.parse({
     ...payload,

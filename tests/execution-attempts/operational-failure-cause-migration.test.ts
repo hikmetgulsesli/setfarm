@@ -9,6 +9,7 @@ import {
   rollbackArtifactPublicationBatchLedgerToV22,
   rollbackArtifactStoreAuthorityLedgerToV23,
   rollbackOperationalFailureCauseSealToV20,
+  rollbackPreparationAuthorityV2LedgerToV24,
   rollbackProductCompilationAttemptLedgerToV21,
   rollbackRecoveryTerminalLeaseIdentityToV19,
   verifyContractSpineMigrations,
@@ -16,6 +17,9 @@ import {
 import { createIsolatedTestDatabase, type TestDatabase } from "./test-database.js";
 
 async function rollbackCurrentToV21(database: TestDatabase): Promise<void> {
+  await rollbackPreparationAuthorityV2LedgerToV24(database.sql, {
+    targetReleaseSha: "c".repeat(40),
+  });
   await rollbackArtifactStoreAuthorityLedgerToV23(database.sql, {
     targetReleaseSha: "d".repeat(40),
   });
@@ -219,6 +223,7 @@ describe("operational failure cause migration", () => {
         "022_product_compilation_attempt_ledger",
         "023_artifact_publication_batch_ledger",
         "024_artifact_store_authority_ledger",
+        "025_v3_preparation_authority_v2_ledger",
       ]);
       assert.equal((await verifyContractSpineMigrations(database.sql)).status, "verified");
 

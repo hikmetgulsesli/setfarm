@@ -8,6 +8,7 @@ import {
   planContractSpineMigrations,
   rollbackArtifactPublicationBatchLedgerToV22,
   rollbackArtifactStoreAuthorityLedgerToV23,
+  rollbackPreparationAuthorityV2LedgerToV24,
   verifyContractSpineMigrations,
 } from "../../src/db/contract-spine-migrations.js";
 import {
@@ -25,6 +26,9 @@ const migrationProducer = Object.freeze({
 });
 
 async function rollbackEmptyAuthorityLedger(database: TestDatabase): Promise<void> {
+  await rollbackPreparationAuthorityV2LedgerToV24(database.sql, {
+    targetReleaseSha: "e".repeat(40),
+  });
   await rollbackArtifactStoreAuthorityLedgerToV23(database.sql, {
     targetReleaseSha: "f".repeat(40),
   });
