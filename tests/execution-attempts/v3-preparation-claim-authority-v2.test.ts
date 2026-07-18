@@ -126,7 +126,7 @@ describe("V3 preparation claim authority v2", () => {
 
     assert.throws(() => createV3PreparationClaimAuthorityV2({
       stateVersion: 1,
-      runId: "ü".repeat(251),
+      runId: "\u00fc".repeat(251),
       stepId: "implement",
       storyId: "US-001",
       packetHash: "1".repeat(64),
