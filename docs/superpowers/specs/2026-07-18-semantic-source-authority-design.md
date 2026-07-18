@@ -246,8 +246,9 @@ Catalog V1 is intentionally shadow-only. It has no `active` state and no public
 resolver that can turn a catalog row into production authority. Its exact
 blockers are:
 
-- web/game: `SEMANTIC_SOURCE_GENERATED_RECEIPT_UNVERIFIED`, parser
-  implementation, and release manifest;
+- web/game: `SEMANTIC_SOURCE_GENERATED_RECEIPT_UNVERIFIED`,
+  `SEMANTIC_SOURCE_GENERATOR_EXECUTION_UNVERIFIED`, parser implementation, and
+  release manifest;
 - CLI/API: `SEMANTIC_SOURCE_INVOCATION_INPUT_TRANSPORT_UNVERIFIED`, parser
   implementation, and release manifest.
 
@@ -265,9 +266,19 @@ The existing Stitch screen index is an input, not a source receipt.
 bundle hashes, generated-source CAS identity, byte length/content hash, and the
 exact index-entry, component-API, and semantic-identity-closure hashes for its
 target, surfaces, physical controls, actions, action inputs, and observables.
+Every graph surface binding must also resolve inside the exact generated TSX to
+one element carrying the same literal surface and element refs; graph membership
+alone cannot mint generated-source authority. Candidate verification is bounded
+per target by the fresh expected publication size, and the compiler performs
+the same capacity preflight so compiled output is intrinsically verifiable.
 The rule contract fixes this required authority set under
 `GENERATOR_STITCH_GENERATED_SOURCE_V2`; no title, path scan, or mutable screen
 prose can substitute for the receipt.
+
+Binding generator implementation bytes does not prove that those bytes produced
+the generated outputs. Until a hermetic invocation receipt or deterministic
+fresh-run adapter proves exact inputs, outputs, release identity, exit status,
+and execution policy, the separate generator-execution blocker remains.
 
 ### InvocationInputTransportV2 prerequisite
 

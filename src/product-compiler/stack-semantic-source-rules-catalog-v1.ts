@@ -671,7 +671,10 @@ function finalRuleSet(descriptor: RawRuleSetDescriptor): StackSemanticSourceRule
   if (!stack) throw new Error(`Missing canonical topology ${descriptor.stackPackId}`);
   const blockerCodes = [
     ...(descriptor.stitchCapable
-      ? ["SEMANTIC_SOURCE_GENERATED_RECEIPT_UNVERIFIED" as const]
+      ? [
+          "SEMANTIC_SOURCE_GENERATED_RECEIPT_UNVERIFIED" as const,
+          "SEMANTIC_SOURCE_GENERATOR_EXECUTION_UNVERIFIED" as const,
+        ]
       : ["SEMANTIC_SOURCE_INVOCATION_INPUT_TRANSPORT_UNVERIFIED" as const]),
     "SEMANTIC_SOURCE_PARSER_IMPLEMENTATION_UNVERIFIED" as const,
     "SEMANTIC_SOURCE_RELEASE_MANIFEST_UNVERIFIED" as const,
@@ -744,7 +747,10 @@ function catalogDiagnostics(
     }
     const expectedBlockerCodes = [
       ...(sourceDescriptor.stitchCapable
-        ? ["SEMANTIC_SOURCE_GENERATED_RECEIPT_UNVERIFIED" as const]
+        ? [
+            "SEMANTIC_SOURCE_GENERATED_RECEIPT_UNVERIFIED" as const,
+            "SEMANTIC_SOURCE_GENERATOR_EXECUTION_UNVERIFIED" as const,
+          ]
         : ["SEMANTIC_SOURCE_INVOCATION_INPUT_TRANSPORT_UNVERIFIED" as const]),
       "SEMANTIC_SOURCE_PARSER_IMPLEMENTATION_UNVERIFIED" as const,
       "SEMANTIC_SOURCE_RELEASE_MANIFEST_UNVERIFIED" as const,

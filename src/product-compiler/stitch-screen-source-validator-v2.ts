@@ -11,6 +11,7 @@ export const STITCH_SCREEN_SOURCE_DIAGNOSTIC_CODES_V2 = [
   "STITCH_SCREEN_ACTION_BINDING_MISMATCH",
   "STITCH_SCREEN_CONTROL_SLOT_MISMATCH",
   "STITCH_SCREEN_ACTION_SOURCE_ELEMENT_REF_MISMATCH",
+  "STITCH_SCREEN_ACTION_SOURCE_ELEMENT_REF_AMBIGUOUS",
   "STITCH_SCREEN_CONTROL_TAG_MISMATCH",
   "STITCH_SCREEN_CONTROL_ACCESSIBILITY_MISMATCH",
   "STITCH_SCREEN_CONTROL_HREF_MISMATCH",
@@ -28,6 +29,11 @@ export const STITCH_SCREEN_SOURCE_DIAGNOSTIC_CODES_V2 = [
   "STITCH_SCREEN_OBSERVABLE_ACCESSIBILITY_MISMATCH",
   "STITCH_SCREEN_OBSERVABLE_CONTROL_SLOT_MISMATCH",
   "STITCH_SCREEN_OBSERVABLE_SURFACE_MISMATCH",
+  "STITCH_SCREEN_SURFACE_AUTHORITY_INVALID",
+  "STITCH_SCREEN_SURFACE_BINDING_MISSING",
+  "STITCH_SCREEN_SURFACE_BINDING_AMBIGUOUS",
+  "STITCH_SCREEN_SURFACE_SOURCE_ELEMENT_REF_MISMATCH",
+  "STITCH_SCREEN_EXTRA_SURFACE_ID",
   "STITCH_SCREEN_EXTRA_ACTION_CONTROL_ID",
   "STITCH_SCREEN_EXTRA_INPUT_CONTROL_ID",
   "STITCH_SCREEN_INTERACTIVE_ELEMENT_UNINDEXED",
@@ -66,6 +72,10 @@ export type StitchScreenSourceValidationResultV2 =
 export type StitchScreenSourceValidationInputV2 = Readonly<{
   screen: StitchScreenIndexEntryV2;
   sourceText: string;
+  surfaceBindings?: readonly Readonly<{
+    surfaceRef: string;
+    elementRef: string;
+  }>[];
 }>;
 
 type AttributeOccurrence = Readonly<{
@@ -1159,7 +1169,12 @@ function validateLiteralIdentityAttributes(
   diagnostics: StitchScreenSourceDiagnosticV2[],
 ): void {
   for (const element of elements) {
-    for (const attribute of ["data-action-id", "data-control-id"] as const) {
+    for (const attribute of [
+      "data-action-id",
+      "data-control-id",
+      "data-surface-id",
+      "data-setfarm-element-ref",
+    ] as const) {
       const occurrences = element.attributes.get(attribute) ?? [];
       if (
         occurrences.length > 0
@@ -1171,6 +1186,78 @@ function validateLiteralIdentityAttributes(
           reference: `${attribute}@${sourceLocation(element)}`,
         }));
       }
+    }
+  }
+}
+
+function validateSurfaceBindings(
+  bindings: StitchScreenSourceValidationInputV2["surfaceBindings"],
+  elements: readonly JsxElementRecord[],
+  diagnostics: StitchScreenSourceDiagnosticV2[],
+): void {
+  if (!bindings) return;
+  const surfaceRefs = bindings.map((binding) => binding.surfaceRef);
+  const bindingKeys = bindings.map((binding) =>
+    `${binding.surfaceRef}\0${binding.elementRef}`);
+  if (
+    surfaceRefs.length !== new Set(surfaceRefs).size
+    || bindingKeys.length !== new Set(bindingKeys).size
+  ) {
+    diagnostics.push(diagnostic({
+      code: "STITCH_SCREEN_SURFACE_AUTHORITY_INVALID",
+      message: "Generated-source surface authority must contain one exact binding per surface ref",
+      reference: "surfaceBindings",
+    }));
+  }
+  const expectedBySurface = new Map(bindings.map((binding) =>
+    [binding.surfaceRef, binding] as const));
+  for (const binding of bindings) {
+    const surfaceMatches = matchingElements(elements, "data-surface-id", binding.surfaceRef);
+    if (surfaceMatches.length === 0) {
+      diagnostics.push(diagnostic({
+        code: "STITCH_SCREEN_SURFACE_BINDING_MISSING",
+        message: `Surface ${binding.surfaceRef} has no exact literal data-surface-id element`,
+        reference: binding.surfaceRef,
+      }));
+      continue;
+    }
+    if (surfaceMatches.length > 1) {
+      diagnostics.push(diagnostic({
+        code: "STITCH_SCREEN_SURFACE_BINDING_AMBIGUOUS",
+        message: `Surface ${binding.surfaceRef} resolves to ${surfaceMatches.length} data-surface-id elements`,
+        reference: binding.surfaceRef,
+      }));
+      continue;
+    }
+    const element = surfaceMatches[0]!;
+    if (exactLiteralAttribute(element, "data-setfarm-element-ref") !== binding.elementRef) {
+      diagnostics.push(diagnostic({
+        code: "STITCH_SCREEN_SURFACE_SOURCE_ELEMENT_REF_MISMATCH",
+        message: `Surface ${binding.surfaceRef} does not preserve source element ${binding.elementRef} on the same element`,
+        reference: binding.surfaceRef,
+      }));
+    }
+    const elementRefMatches = matchingElements(
+      elements,
+      "data-setfarm-element-ref",
+      binding.elementRef,
+    );
+    if (elementRefMatches.length !== 1) {
+      diagnostics.push(diagnostic({
+        code: "STITCH_SCREEN_SURFACE_BINDING_AMBIGUOUS",
+        message: `Surface ${binding.surfaceRef} source element ${binding.elementRef} resolves to ${elementRefMatches.length} generated elements`,
+        reference: binding.surfaceRef,
+      }));
+    }
+  }
+  for (const element of elements) {
+    const surfaceRef = exactLiteralAttribute(element, "data-surface-id");
+    if (surfaceRef !== undefined && !expectedBySurface.has(surfaceRef)) {
+      diagnostics.push(diagnostic({
+        code: "STITCH_SCREEN_EXTRA_SURFACE_ID",
+        message: `Generated element at ${sourceLocation(element)} carries uncontracted surface ${surfaceRef}`,
+        reference: surfaceRef,
+      }));
     }
   }
 }
@@ -1225,6 +1312,19 @@ function validatePhysicalControls(
         message: `Action control ${control.generatedLocalId} does not preserve source element ${control.sourceElementRef} on the same element`,
         reference: control.generatedLocalId,
       }));
+    } else {
+      const sourceElementMatches = matchingElements(
+        elements,
+        "data-setfarm-element-ref",
+        control.sourceElementRef,
+      );
+      if (sourceElementMatches.length !== 1) {
+        diagnostics.push(diagnostic({
+          code: "STITCH_SCREEN_ACTION_SOURCE_ELEMENT_REF_AMBIGUOUS",
+          message: `Physical control ${control.generatedLocalId} source element ${control.sourceElementRef} resolves to ${sourceElementMatches.length} generated elements`,
+          reference: control.generatedLocalId,
+        }));
+      }
     }
     const inputBindings = control.inputBindings ?? [];
     const handler = control.kind === "button" || control.kind === "link"
@@ -1772,6 +1872,7 @@ export function validateStitchScreenSourceV2(
     : [];
   const rejectedControls = rejectedControlContracts(input.screen, diagnostics);
   validateLiteralIdentityAttributes(elements, diagnostics);
+  validateSurfaceBindings(input.surfaceBindings, elements, diagnostics);
   validatePhysicalControls(input.screen, elements, diagnostics);
   validateInputControls(input.screen, elements, diagnostics);
   validateObservables(input.screen, elements, diagnostics);

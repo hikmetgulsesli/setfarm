@@ -290,10 +290,13 @@ describe("StackSemanticSourceRulesCatalogV1", () => {
     const compiled = compiledCatalog();
     for (const ruleSet of compiled.catalog.ruleSets) {
       const expected = [
-        ruleSet.stackPackBinding.stackPackId === "vite-react-web-app"
+        ...(ruleSet.stackPackBinding.stackPackId === "vite-react-web-app"
           || ruleSet.stackPackBinding.stackPackId === "browser-game-canvas"
-          ? "SEMANTIC_SOURCE_GENERATED_RECEIPT_UNVERIFIED"
-          : "SEMANTIC_SOURCE_INVOCATION_INPUT_TRANSPORT_UNVERIFIED",
+          ? [
+              "SEMANTIC_SOURCE_GENERATED_RECEIPT_UNVERIFIED",
+              "SEMANTIC_SOURCE_GENERATOR_EXECUTION_UNVERIFIED",
+            ]
+          : ["SEMANTIC_SOURCE_INVOCATION_INPUT_TRANSPORT_UNVERIFIED"]),
         "SEMANTIC_SOURCE_PARSER_IMPLEMENTATION_UNVERIFIED",
         "SEMANTIC_SOURCE_RELEASE_MANIFEST_UNVERIFIED",
       ].sort();

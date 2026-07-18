@@ -1,6 +1,17 @@
 import { z } from "zod";
 
 import { hashCanonicalJson } from "../canonical-json.js";
+import {
+  GENERATED_SOURCE_RECEIPT_ARTIFACT_TYPE_V2,
+  STITCH_GENERATED_SOURCE_CONTRACT_HASH_V2,
+  STITCH_GENERATED_SOURCE_CONTRACT_V2,
+} from "./generated-source-contract-v2.js";
+
+export {
+  GENERATED_SOURCE_RECEIPT_ARTIFACT_TYPE_V2,
+  STITCH_GENERATED_SOURCE_CONTRACT_HASH_V2,
+  STITCH_GENERATED_SOURCE_CONTRACT_V2,
+} from "./generated-source-contract-v2.js";
 import { ACTION_INPUT_TRANSPORT_ARTIFACT_TYPE_V2 } from "./action-input-transport-v2.js";
 import {
   CapabilityIdSchema,
@@ -240,45 +251,8 @@ export const SEMANTIC_SOURCE_PATH_TOKEN_CONTRACT_HASH_V1 = hashCanonicalJson(
   SEMANTIC_SOURCE_PATH_TOKEN_CONTRACT_V1,
 );
 
-export const GENERATED_SOURCE_RECEIPT_ARTIFACT_TYPE_V2 =
-  "setfarm.generated-source-receipt.v2" as const;
 export const INVOCATION_INPUT_TRANSPORT_ARTIFACT_TYPE_V2 =
   "setfarm.invocation-input-transport.v2" as const;
-
-export const STITCH_GENERATED_SOURCE_CONTRACT_V2 = Object.freeze({
-  schema: "setfarm.generated-source-contract.v2",
-  contractRef: "GENERATOR_STITCH_GENERATED_SOURCE_V2",
-  contractVersion: 2,
-  receiptArtifactType: GENERATED_SOURCE_RECEIPT_ARTIFACT_TYPE_V2,
-  indexSchema: "setfarm.stitch-screen-index.v2",
-  componentApiSchema: "setfarm.generated-screen-component-api.v1",
-  receiptCardinality: "one_per_generated_source_entry",
-  semanticIdentityFields: Object.freeze([
-    "targetRef",
-    "surfaceRefs",
-    "physicalControlRefs",
-    "actionRefs",
-    "actionInputRefs",
-    "observableRefs",
-  ]),
-  requiredAuthority: Object.freeze([
-    "componentApiHash",
-    "designSourceClosurePayloadHash",
-    "generatorImplementationHash",
-    "generatorPlatformBundleHash",
-    "generatedSourceArtifactHash",
-    "generatedSourceByteLength",
-    "generatedSourceContentHash",
-    "semanticIdentityClosureHash",
-    "stitchScreenIndexEntryHash",
-    "stitchScreenIndexPayloadHash",
-  ]),
-  elementKeySource: "subject_ref",
-} as const);
-
-export const STITCH_GENERATED_SOURCE_CONTRACT_HASH_V2 = hashCanonicalJson(
-  STITCH_GENERATED_SOURCE_CONTRACT_V2,
-);
 
 const SemanticTokenPathResolutionV1Schema = z.object({
   kind: z.literal("compiler_semantic_token_path"),
@@ -1200,6 +1174,7 @@ export type SemanticSourceRuleV1 = z.infer<typeof SemanticSourceRuleV1Schema>;
 
 export const SemanticSourceRuleSetShadowBlockerCodeV1Schema = z.enum([
   "SEMANTIC_SOURCE_GENERATED_RECEIPT_UNVERIFIED",
+  "SEMANTIC_SOURCE_GENERATOR_EXECUTION_UNVERIFIED",
   "SEMANTIC_SOURCE_INVOCATION_INPUT_TRANSPORT_UNVERIFIED",
   "SEMANTIC_SOURCE_PARSER_IMPLEMENTATION_UNVERIFIED",
   "SEMANTIC_SOURCE_RELEASE_MANIFEST_UNVERIFIED",

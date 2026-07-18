@@ -226,10 +226,15 @@ function stitchImplementationProjectionV1(input: {
       observable,
     ]);
   }
+  const graphSurfaces = input.designGraphV2.surfaces
+    .filter((surface: any) => surface.source.targetRef === target.targetId)
+    .sort((left: any, right: any) => left.surfaceRef.localeCompare(right.surfaceRef));
+  const graphSurfaceByElement = new Map(graphSurfaces.map((surface: any) =>
+    [surface.elementRef, surface] as const));
   const controlLines = controls.map((control) => {
     const boundObservables = observablesByElement.get(control.sourceElementRef) ?? [];
-    const surface = boundObservables.find((observable: any) =>
-      observable.selectorKind === "surface");
+    const surface = graphSurfaceByElement.get(control.sourceElementRef)
+      ?? boundObservables.find((observable: any) => observable.selectorKind === "surface");
     const accessibility = boundObservables.find((observable: any) =>
       observable.selectorKind === "accessibility");
     const attributes = [
@@ -254,7 +259,8 @@ function stitchImplementationProjectionV1(input: {
     .sort(([left], [right]) => left.localeCompare(right))
     .map(([elementRef, bindings]) => {
       const control = bindings.find((observable: any) => observable.selectorKind === "control");
-      const surface = bindings.find((observable: any) => observable.selectorKind === "surface");
+      const surface = graphSurfaceByElement.get(elementRef)
+        ?? bindings.find((observable: any) => observable.selectorKind === "surface");
       const accessibility = bindings.find((observable: any) =>
         observable.selectorKind === "accessibility");
       const tagName = accessibility ? "output" : "section";
@@ -271,10 +277,19 @@ function stitchImplementationProjectionV1(input: {
       ];
       return `      <${tagName} ${attributes.join(" ")}>Evidence</${tagName}>`;
     });
+  const representedElementRefs = new Set([
+    ...controls.map((control) => control.sourceElementRef),
+    ...observables.map((observable: any) => observable.sourceElementRef),
+  ]);
+  const surfaceLines = graphSurfaces
+    .filter((surface: any) => !representedElementRefs.has(surface.elementRef))
+    .map((surface: any) =>
+      `      <section data-surface-id=${JSON.stringify(surface.surfaceRef)} data-setfarm-element-ref=${JSON.stringify(surface.elementRef)}>Surface</section>`);
   const generatedText = [
     "export function App({ actions }: { actions?: Record<string, () => void> }) {",
     "  return (",
     "    <main>",
+    ...surfaceLines,
     ...controlLines,
     ...observableLines,
     "    </main>",
