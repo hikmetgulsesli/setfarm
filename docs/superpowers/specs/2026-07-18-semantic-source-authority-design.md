@@ -345,6 +345,85 @@ that its exact blocker set is discharged. Unsupported or shadow-only stacks fail
 production selection with a typed source-rules blocker; they never fall back to
 coarse topology.
 
+## NodeExecutionLayoutCatalogV2
+
+The code-owned Node layout catalog is a separate versioned artifact; changing a
+ProductDeliveryProfileV2 or a historical V1 topology row does not silently
+change executable layout authority. It contains exactly the two currently
+selected no-design profiles in canonical profile order and binds each current
+profile/catalog hash plus its exact stack-pack version/content hash.
+
+Each layout fixes one source-to-runtime chain and no alternatives:
+
+- Node CLI: `src/cli.ts` -> `dist/cli.js` ->
+  `candidate-bundle/application/cli.js`, Node ESM,
+  `NODE_ESM_CLI_ENTRYPOINT_ABI_V2`;
+- Node Express API: `src/app.ts` -> `dist/app.js` ->
+  `candidate-bundle/application/app.js`, Node ESM, named export
+  `setfarmHttpHandlerV2`, `EXPRESS_REQUEST_HANDLER_ABI_V2`, platform-owned
+  server/listener/socket and candidate `listen()` forbidden.
+
+The layout also binds the exact current `CMD_BUILD` direct argv and the Node
+compiler/scaffold contract: ESM package type, build script name, structured
+`tsc` arguments whose config argument is a path-slot ref, `ES2022`/`NodeNext`,
+source/output root refs, and `noEmitOnError: true`. Historical `src/index.ts`,
+`src/server.ts`, and root
+`server.ts` locators are retained only as the V2 rejection set; the V2 resolver
+never selects them.
+
+Every planned or rejected locator lives once in a hashed `pathSlots` closure.
+Each slot has a stable ref, repository/candidate namespace, planned or
+`reject_only` disposition, file kind, exact locator, and containing root ref.
+`locator` is always the full logical locator relative to its declared physical
+space; `underRootRef` is a containment boundary, never a join base. A consumer
+must therefore validate `src/cli.ts` under the `src` root by segment-prefix and
+must not construct `src/src/cli.ts`.
+The compiler, topology, source-to-runtime, build-cwd, and launcher contracts
+carry only slot/root refs; they do not repeat raw paths. This catalog is the
+code-owned producer of path plans, while PathTokenV2 remains the downstream
+portable path-identity verifier. `PATH_TOKEN_CONTRACT_UNVERIFIED` therefore
+remains an exact production blocker.
+
+PathTokenV2 binds its origin to `(pathTokenContractVersion,
+pathTokenContractHash, slotSetHash, slotRef)`, not the whole layout hash, so an
+unrelated compatibility observation cannot churn a stable path identity. Its
+closure verifier must prove root existence and parent acyclicity,
+segment-boundary containment, slot/ref uniqueness, physical-space exact and
+ASCII-casefold collision freedom, and consumer-ref role/disposition closure.
+`LegacyInstallerExecutionObservationV1` raw locators are compatibility evidence
+only and are never PathToken compiler input.
+
+`layoutHash` binds a complete layout; `catalogHash` binds the exact ordered
+layout set. A bounded fresh verifier reproduces the catalog from code-owned
+ProfileV2 and stack-topology identities, and the selection resolver first
+fresh-verifies ProductSpecV2 + ProductDeliverySelectionV2. The catalog is
+`shadow`/`productionUse: forbidden` with exact file-tree, declaration, scaffold
+materialization, and candidate-byte blockers. It supplies planned paths and ABI,
+never future source/output content hashes or execution authority.
+
+The compiler pins the admitted upstream profile catalog hash, each profile
+hash, and both topology content hashes. Upstream drift therefore fails as typed
+code-authority drift until this catalog is intentionally revised and its
+goldens change; importing the newest upstream row is not an implicit layout
+version transition.
+
+The historical setup resolver still prefers `src/server.ts` when that file is
+present, and the historical Node CLI topology still publishes no `dist` output
+root. Those are explicit
+`LEGACY_ENTRYPOINT_RESOLVER_UNMIGRATED` and
+`LEGACY_BUILD_OUTPUT_AUTHORITY_UNMIGRATED` blockers. The unversioned installer
+stack-pack file entrypoints, app-shell target rule, shared entrypoints, and V1
+topology build-output roots are copied into a hashed
+`LegacyInstallerExecutionObservationV1` whose authority kind is
+`compatibility_unmigrated` and whose production use is forbidden. The API
+observation states explicitly that `src/server.ts` conflicts with the V2
+`src/app.ts` handler; the CLI observation states explicitly that its empty V1
+output-root set conflicts with `dist/cli.js`. Production admission cannot
+consume this catalog until BuildTopologyV2 makes the exact layout source/output
+authoritative, rejects every historical locator if present, and the
+topology/profile identities are intentionally version-bumped. Historical V1
+reads remain compatibility-only until that cutover.
+
 ## SemanticSourceIntentSetV1
 
 The intent compiler consumes exact ProductSpecV2, deterministic semantic story
@@ -603,7 +682,8 @@ new-write release; it does not translate V3 attempts into historical attempts.
    selection tests.
 6. Implement pure SemanticSourceIntentSetV1 derivation and every-and-only
    coverage tests across utility, operations/data, game, CLI, and API fixtures.
-7. Implement FileTreeManifestV2 and BuildTopologyV2 materialization/verification.
+7. Implement NodeExecutionLayoutCatalogV2, PathTokenV2, FileTreeManifestV2,
+   and BuildTopologyV2 materialization/verification in that dependency order.
 8. Implement SemanticSourceDeclarationsV1 and concurrent artifact-batch
    publication authority.
 9. Implement StoryPlanV3, SourceMapV2 root/leaves/proofs, and least-privilege
@@ -621,6 +701,13 @@ domain hashes, canonical order, duplicate rule ownership, invalid activation/
 cardinality/path/locator combinations, unknown refs, hostile inputs, immutable
 outputs, 4 MiB publication bounds, release drift, self-consistent blocker/domain/
 topology forgeries, and rejection of an invented active label.
+
+Layout tests additionally pin the exact CLI/API source-output-module/export ABI,
+legacy installer observation hashes, and the catalog's own version-to-hash
+identity. They reject reversed rehashed catalogs, cross-domain hashes, stale
+same-profile selections, process-local stack-pack drift, both historical API
+fallbacks, CLI output-root disagreement, and every rehashed source/output/
+module/export override while production blockers remain exact.
 
 Intent tests cover exact semantic obligation closure, title/slug independence,
 determinism, missing/extra/duplicate subjects, persistence exemptions, generated
