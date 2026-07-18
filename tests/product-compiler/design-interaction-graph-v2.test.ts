@@ -17,7 +17,10 @@ import {
   DesignInteractionGraphV2Schema,
   designControlIdV2,
 } from "../../src/product-compiler/schemas/design-interaction-graph-v2.js";
-import { ProductSpecV2Schema } from "../../src/product-compiler/schemas/product-spec-v2.js";
+import {
+  ProductSpecV2Schema,
+  deriveActionInvocationEvidenceIdV2,
+} from "../../src/product-compiler/schemas/product-spec-v2.js";
 import {
   CONTAINED_GAME_TASK,
   containedGamePlanProposalV2,
@@ -43,13 +46,13 @@ function strictProductSpec(options: FixtureOptions) {
   const productSpec: any = structuredClone(compiled.productSpec);
   const userAction = productSpec.actions[0]!;
   userAction.name = options.actionName ?? userAction.name;
-  userAction.trigger.sourceRef = options.actionName ?? userAction.trigger.sourceRef;
   userAction.input.fields = [{ name: "phase", valueType: "string", required: true }];
   userAction.evidenceScenario.targetInputValues = { phase: "playing" };
   userAction.stateDeltas[0]!.valueFrom = { kind: "input", field: "phase" };
 
   const statusObservable = userAction.observableEffects.find((observable: any) =>
     observable.selector.kind === "accessibility")!;
+  const systemInvocationEvidenceRef = deriveActionInvocationEvidenceIdV2("ACT_SYSTEM_REFRESH");
   const systemObservable = {
     ...structuredClone(statusObservable),
     id: "OBS_SYSTEM_REFRESH_STATUS",
@@ -59,7 +62,12 @@ function strictProductSpec(options: FixtureOptions) {
     ...structuredClone(userAction),
     id: "ACT_SYSTEM_REFRESH",
     name: "System Refresh",
-    trigger: { kind: "system", sourceRef: "runtime" },
+    trigger: { kind: "route", sourceRef: productSpec.routes[0]!.id },
+    invocationInterface: {
+      schema: "setfarm.action-invocation-interface-intent.v1",
+      kind: "route_entry",
+      routeRef: productSpec.routes[0]!.id,
+    },
     input: { fields: [] },
     stateDeltas: [{
       ...structuredClone(userAction.stateDeltas[0]),
@@ -72,9 +80,9 @@ function strictProductSpec(options: FixtureOptions) {
     },
     success: {
       ...structuredClone(userAction.success),
-      evidenceRefs: ["EVID_SYSTEM_REFRESH_STATUS"],
+      evidenceRefs: ["EVID_SYSTEM_REFRESH_STATUS", systemInvocationEvidenceRef],
     },
-    evidenceRefs: ["EVID_SYSTEM_REFRESH_STATUS"],
+    evidenceRefs: ["EVID_SYSTEM_REFRESH_STATUS", systemInvocationEvidenceRef],
     observableEffects: [systemObservable],
   };
   productSpec.actions.push(systemAction);
@@ -86,11 +94,20 @@ function strictProductSpec(options: FixtureOptions) {
     capabilityRefs: ["CAP_BROWSER_INTERACTION"],
     assertion: { operator: "passes" },
   });
+  productSpec.evidencePredicates.push({
+    id: systemInvocationEvidenceRef,
+    kind: "action_invocation",
+    required: true,
+    subjectRef: "ACT_SYSTEM_REFRESH",
+    capabilityRefs: [],
+    assertion: { operator: "passes" },
+  });
   const requirementRefs = productSpec.requirements.map((requirement: any) => requirement.id);
   productSpec.traceability.bindings.push(
     { semanticKind: "action", semanticRef: systemAction.id, requirementRefs },
     { semanticKind: "observable", semanticRef: systemObservable.id, requirementRefs },
     { semanticKind: "evidence", semanticRef: systemObservable.evidenceRef, requirementRefs },
+    { semanticKind: "evidence", semanticRef: systemInvocationEvidenceRef, requirementRefs },
   );
   return ProductSpecV2Schema.parse(productSpec);
 }
@@ -236,7 +253,7 @@ describe("DesignInteractionGraph v2", { concurrency: 1 }, () => {
     assert.deepEqual(userAction.affectedSurfaceRefs.sort(), [value.canvasSurface, value.statusSurface].sort());
     const systemAction = value.graph.actions.find((action) =>
       action.actionRef === "ACT_SYSTEM_REFRESH")!;
-    assert.equal(systemAction.triggerKind, "system");
+    assert.equal(systemAction.triggerKind, "route");
     assert.deepEqual(systemAction.controlSlotRefs, []);
     assert.deepEqual(systemAction.controlRefs, []);
 

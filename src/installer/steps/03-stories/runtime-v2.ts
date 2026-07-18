@@ -56,6 +56,8 @@ type V2ScopeTarget = Readonly<{
 
 type V2OwnedAction = Readonly<{
   id: string;
+  canonical_action_hash: string;
+  canonical_action: ProductActionV2;
   surface_id?: string;
   trigger: string;
   state_change: string;
@@ -263,6 +265,8 @@ function projectNoDesignCompatibilityStories(input: Readonly<{
         placement.surfaceRef));
       return {
         id: action.id,
+        canonical_action_hash: hashCanonicalJson(action),
+        canonical_action: structuredClone(action),
         ...(placementSurfaceIds[0] ? { surface_id: placementSurfaceIds[0] } : {}),
         trigger: canonicalJsonStringify(action.trigger),
         state_change: canonicalJsonStringify(action.stateDeltas),
@@ -416,6 +420,8 @@ function projectCompatibilityStories(input: Readonly<{
       const placementSurfaceIds = uniqueSorted(action.controlPlacements.map((placement) => placement.surfaceRef));
       return {
         id: action.id,
+        canonical_action_hash: hashCanonicalJson(action),
+        canonical_action: structuredClone(action),
         ...(placementSurfaceIds[0] ? { surface_id: placementSurfaceIds[0] } : {}),
         trigger: canonicalJsonStringify(action.trigger),
         state_change: canonicalJsonStringify(action.stateDeltas),

@@ -29,22 +29,20 @@ import {
 } from "../../src/execution/v3-source-snapshot-v2.js";
 import { resolveV3GitRevision } from "../../src/execution/v3-git-revision.js";
 import { hashCanonicalJson } from "../../src/product-compiler/canonical-json.js";
-import { compilePlanSemanticProposalV2 } from "../../src/product-compiler/producers/plan-semantic-proposal-v2.js";
 import { produceImplementationSourceMapV1 } from "../../src/product-compiler/producers/implementation-source-map-v1.js";
 import { produceStoryPlanV2 } from "../../src/product-compiler/producers/story-plan-v2.js";
 import { BuildTopologyV1Schema } from "../../src/product-compiler/schemas/build-topology-v1.js";
 import { ProductCompilationReportV3Schema } from "../../src/product-compiler/schemas/compilation-report-v3.js";
 import { ProductBuildPacketV3Schema } from "../../src/product-compiler/schemas/product-build-packet-v3.js";
-import { ProductSpecV2Schema } from "../../src/product-compiler/schemas/product-spec-v2.js";
+import {
+  ProductSpecV2Schema,
+  deriveActionInvocationEvidenceIdV2,
+} from "../../src/product-compiler/schemas/product-spec-v2.js";
 import type {
   ExactSealedRuntimePacket,
   SealedRuntimePacketV3,
 } from "../../src/product-compiler/runtime-artifact-reader.js";
 import { buildNoDesignProductBuildPacketV3Contracts } from "../product-compiler/fixtures/product-build-packet-v3.js";
-import {
-  CONTAINED_GAME_TASK,
-  containedGamePlanProposalV2,
-} from "../product-compiler/fixtures/product-semantics-v2.js";
 
 const RUN_ID = "run-native-v3-attempt-v2";
 const STEP_ID = "implement";
@@ -204,101 +202,154 @@ function nativePacketV3(sourceHash: string): SealedRuntimePacketV3 {
 }
 
 function twoStoryProductSpecV2() {
-  const proposal: any = containedGamePlanProposalV2();
-  const requirementRefs = proposal.requirements.map((requirement: any) => requirement.id);
-  proposal.states.push({
-    key: "settings_mode",
+  const productSpec: any = structuredClone(
+    buildNoDesignProductBuildPacketV3Contracts().productSpecV2,
+  );
+  const requirementRefs = productSpec.requirements.map((requirement: any) => requirement.id);
+  const invocationEvidenceRef = deriveActionInvocationEvidenceIdV2("ACT_TOGGLE_SETTINGS");
+  productSpec.states.push({
+    id: "STATE_SETTINGS_MODE",
     name: "Settings Mode",
     kind: "application",
     initialValue: { enabled: false },
     invariants: ["The enabled value is boolean."],
-    requirementRefs,
   });
-  proposal.routes.push({
-    key: "settings",
+  productSpec.routes.push({
+    id: "ROUTE_SETTINGS",
     path: "/settings",
+    rootSurfaceRef: "SURF_SETTINGS_TERMINAL",
+    surfaceRefs: ["SURF_SETTINGS_TERMINAL"],
     entry: false,
-    requirementRefs,
   });
-  proposal.surfaces.push({
-    key: "settings_page",
-    name: "Settings Page",
+  productSpec.surfaces.push({
+    id: "SURF_SETTINGS_TERMINAL",
+    name: "Settings CLI Terminal",
     kind: "terminal",
-    routeKey: "settings",
+    routeRef: "ROUTE_SETTINGS",
     required: true,
     composition: { kind: "route_root" },
-    requirementRefs,
   });
-  proposal.actions.push({
-    key: "toggle_settings",
+  productSpec.actions.push({
+    id: "ACT_TOGGLE_SETTINGS",
     name: "Toggle Settings",
-    controlPlacements: [{
-      key: "primary_toggle",
-      surfaceKey: "settings_page",
-      controlHint: "primary_button",
-      requirementRefs,
-    }],
-    affectedSurfaceKeys: [],
-    trigger: { kind: "user", sourceRef: "Toggle Settings" },
-    inputs: [],
+    controlPlacements: [],
+    affectedSurfaceRefs: ["SURF_SETTINGS_TERMINAL"],
+    trigger: { kind: "user" },
+    invocationInterface: {
+      schema: "setfarm.action-invocation-interface-intent.v1",
+      kind: "cli_command",
+      subcommandTokens: ["settings", "set"],
+      fieldBindings: [{
+        fieldName: "enabled",
+        optionalPresence: "not_applicable",
+        channel: { kind: "argv_flag", flag: "--enabled", style: "separate" },
+      }],
+      result: {
+        kind: "stdout_json",
+        successExitCodes: [0],
+        valuePointer: "/settings",
+        failureCases: [
+          {
+            kind: "input_validation",
+            exitCodes: [2],
+            channel: "stderr_json",
+            errorCode: "SETTINGS_INPUT_INVALID",
+            codePointer: "/error/code",
+            messagePointer: "/error/message",
+          },
+          {
+            kind: "action_failure",
+            exitCodes: [1],
+            channel: "stderr_json",
+            errorCode: "SETTINGS_UPDATE_FAILED",
+            codePointer: "/error/code",
+            messagePointer: "/error/message",
+          },
+        ],
+      },
+    },
+    input: {
+      fields: [{ name: "enabled", valueType: "boolean", required: true }],
+    },
     preconditions: [],
     evidenceScenario: {
-      controlPlacementKey: "primary_toggle",
-      targetInputValues: {},
+      targetInputValues: { enabled: true },
       prerequisiteSteps: [],
     },
     stateDeltas: [{
-      key: "toggle_value",
-      stateKey: "settings_mode",
+      stateRef: "STATE_SETTINGS_MODE",
       operation: "set",
       path: "/enabled",
-      valueFrom: { kind: "literal", value: true },
+      valueFrom: { kind: "input", field: "enabled" },
     }],
     navigation: { kind: "stay" },
-    persistenceIntents: [],
-    observables: [{
-      key: "toggle_control",
-      selector: { kind: "control", controlPlacementKey: "primary_toggle" },
+    persistenceEffects: [],
+    success: {
+      stateRefs: ["STATE_SETTINGS_MODE"],
+      persistenceRefs: [],
+      evidenceRefs: ["EVID_SETTINGS_UPDATED", invocationEvidenceRef],
+      userVisible: true,
+    },
+    failure: {
+      stateRefs: [],
+      persistenceRefs: [],
+      evidenceRefs: [],
+      userVisible: true,
+    },
+    evidenceRefs: ["EVID_SETTINGS_UPDATED", invocationEvidenceRef],
+    observableEffects: [{
+      id: "OBS_SETTINGS_UPDATED",
+      selector: {
+        kind: "invocation_output",
+        coordinate: "result_value",
+        pointer: "/enabled",
+        valueContract: {
+          valueType: "boolean",
+          expectedFrom: { kind: "input", fieldName: "enabled" },
+        },
+      },
       assertions: [{
         phase: "after",
-        property: "enabled",
+        property: "value",
         operator: "equals",
         expected: true,
       }],
-      requirementRefs,
+      evidenceRef: "EVID_SETTINGS_UPDATED",
     }],
-    requirementRefs,
   });
-  const compiled = compilePlanSemanticProposalV2({
-    task: CONTAINED_GAME_TASK,
-    proposal,
-  });
-  assert.equal(compiled.status, "canonicalized", JSON.stringify(compiled));
-  if (compiled.status !== "canonicalized") throw new Error("unreachable");
-  const productSpec: any = structuredClone(compiled.productSpec);
-  productSpec.delivery = {
-    platform: "cli",
-    techStack: "node-cli",
-    uiLanguage: "English",
-    database: "none",
-    designRequired: false,
-    uiVisionSummary: "A deterministic two-story dependency contract.",
-  };
-  productSpec.evidencePredicates.forEach((predicate: any) => {
-    predicate.capabilityRefs = ["CAP_CLI_INTERACTION"];
-  });
-  const settingsAction = productSpec.actions.find((action: any) =>
-    action.id === "ACT_TOGGLE_SETTINGS")!;
-  settingsAction.input.fields = [{
-    name: "enabled",
-    valueType: "boolean",
-    required: true,
-  }];
-  settingsAction.evidenceScenario.targetInputValues = { enabled: true };
-  settingsAction.stateDeltas[0]!.valueFrom = {
-    kind: "input",
-    field: "enabled",
-  };
+  productSpec.evidencePredicates.push(
+    {
+      id: "EVID_SETTINGS_UPDATED",
+      kind: "observable_outcome",
+      required: true,
+      subjectRef: "OBS_SETTINGS_UPDATED",
+      capabilityRefs: [],
+      assertion: { operator: "passes" },
+    },
+    {
+      id: invocationEvidenceRef,
+      kind: "action_invocation",
+      required: true,
+      subjectRef: "ACT_TOGGLE_SETTINGS",
+      capabilityRefs: [],
+      assertion: { operator: "passes" },
+    },
+  );
+  for (const [semanticKind, semanticRef] of [
+    ["state", "STATE_SETTINGS_MODE"],
+    ["route", "ROUTE_SETTINGS"],
+    ["surface", "SURF_SETTINGS_TERMINAL"],
+    ["action", "ACT_TOGGLE_SETTINGS"],
+    ["evidence", "EVID_SETTINGS_UPDATED"],
+    ["evidence", invocationEvidenceRef],
+    ["observable", "OBS_SETTINGS_UPDATED"],
+  ]) {
+    productSpec.traceability.bindings.push({
+      semanticKind,
+      semanticRef,
+      requirementRefs,
+    });
+  }
   return ProductSpecV2Schema.parse(productSpec);
 }
 

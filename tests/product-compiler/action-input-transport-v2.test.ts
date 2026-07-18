@@ -15,6 +15,7 @@ import {
 } from "../../src/product-compiler/schemas/action-input-transport-v2.js";
 import type { ProductSpecV2 } from "../../src/product-compiler/schemas/product-spec-v2.js";
 import { buildContainedGameProductSpecV2 } from "./fixtures/product-semantics-v2.js";
+import { buildNoDesignProductBuildPacketV3Contracts } from "./fixtures/product-build-packet-v3.js";
 
 type ProductValueType = ProductSpecV2["actions"][number]["input"]["fields"][number]["valueType"];
 
@@ -122,6 +123,16 @@ function domCandidate(
 }
 
 describe("ActionInputTransportV2 compiler and schema", () => {
+  it("never launders CLI/HTTP invocation fields into browser DOM transport", () => {
+    const cli = buildNoDesignProductBuildPacketV3Contracts().productSpecV2;
+    assertCompileRejected(
+      cli,
+      "ACTION_INPUT_V2_INVOCATION_INTERFACE_UNSUPPORTED",
+      "ACT_ADD_TASK",
+      "title",
+    );
+  });
+
   it("compiles the complete supported value-type matrix with canonical profiles", () => {
     const cases: ReadonlyArray<Readonly<{
       valueType: ProductValueType;
@@ -241,43 +252,43 @@ describe("ActionInputTransportV2 compiler and schema", () => {
     assert.equal(ActionInputTransportV2Schema.safeParse(rehashedWrongProfile).success, false);
   });
 
-  it("rejects unresolved identity, optional presence, and unsupported date semantics", () => {
+  it("rejects unresolved identity and defers invalid active-profile semantics to ProductSpecV2", () => {
     const stringSpec = productSpecWithInput("string", "hello");
     assertCompileRejected(stringSpec, "ACTION_INPUT_V2_ACTION_UNRESOLVED", "ACT_UNKNOWN");
     assertCompileRejected(stringSpec, "ACTION_INPUT_V2_FIELD_UNRESOLVED", ACTION_REF, "unknown");
     assertCompileRejected(
       productSpecWithInput("string", "hello", { required: false }),
-      "ACTION_INPUT_V2_OPTIONAL_PRESENCE_UNSPECIFIED",
+      "ACTION_INPUT_V2_PRODUCT_SPEC_INVALID",
     );
     assertCompileRejected(
       productSpecWithInput("date", "2026-07-17"),
-      "ACTION_INPUT_V2_VALUE_TYPE_UNSUPPORTED",
+      "ACTION_INPUT_V2_PRODUCT_SPEC_INVALID",
     );
     assertCompileRejected(
       productSpecWithInput("datetime", "2026-07-17T12:30:00Z"),
-      "ACTION_INPUT_V2_VALUE_TYPE_UNSUPPORTED",
+      "ACTION_INPUT_V2_PRODUCT_SPEC_INVALID",
     );
   });
 
   it("rejects missing, mismatched, or non-unique entity enum authority", () => {
     assertCompileRejected(
       productSpecWithInput("enum", "ready"),
-      "ACTION_INPUT_V2_ENUM_AUTHORITY_MISSING",
+      "ACTION_INPUT_V2_PRODUCT_SPEC_INVALID",
     );
     assertCompileRejected(
       productSpecWithInput("enum", "ready", { entityValueType: "string" }),
-      "ACTION_INPUT_V2_ENTITY_VALUE_TYPE_MISMATCH",
+      "ACTION_INPUT_V2_PRODUCT_SPEC_INVALID",
     );
     assertCompileRejected(
       productSpecWithInput("number", 2, { entityValueType: "string" }),
-      "ACTION_INPUT_V2_ENTITY_VALUE_TYPE_MISMATCH",
+      "ACTION_INPUT_V2_PRODUCT_SPEC_INVALID",
     );
     assertCompileRejected(
       productSpecWithInput("enum", "ready", {
         entityValueType: "enum",
         enumValues: ["ready", "ready"],
       }),
-      "ACTION_INPUT_V2_ENUM_AUTHORITY_INVALID",
+      "ACTION_INPUT_V2_PRODUCT_SPEC_INVALID",
     );
   });
 

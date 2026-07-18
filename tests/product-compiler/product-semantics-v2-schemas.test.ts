@@ -5,7 +5,10 @@ import { extractTaskRequirementLedgerV1 } from "../../src/product-compiler/requi
 import { PlanSemanticProposalV1Schema } from "../../src/product-compiler/schemas/plan-semantic-proposal-v1.js";
 import { PlanSemanticProposalV2Schema } from "../../src/product-compiler/schemas/plan-semantic-proposal-v2.js";
 import { ProductSpecV1Schema } from "../../src/product-compiler/schemas/product-spec-v1.js";
-import { ProductSpecV2Schema } from "../../src/product-compiler/schemas/product-spec-v2.js";
+import {
+  ProductSpecV2Schema,
+  deriveActionInvocationEvidenceIdV2,
+} from "../../src/product-compiler/schemas/product-spec-v2.js";
 
 const TASK = "Build a browser game with one Start Game control on the play page; starting the game updates the contained game canvas and status panel.";
 
@@ -100,7 +103,11 @@ function planProposal(): any {
         requirementRefs,
       }],
       affectedSurfaceKeys: ["game_canvas", "status_panel"],
-      trigger: { kind: "user", sourceRef: "Start Game" },
+      trigger: { kind: "user" },
+      invocationInterface: {
+        schema: "setfarm.action-invocation-interface-intent.v1",
+        kind: "rendered_control",
+      },
       inputs: [],
       preconditions: [],
       evidenceScenario: {
@@ -151,6 +158,7 @@ function planProposal(): any {
 function productSpec(): any {
   const ledger = extractTaskRequirementLedgerV1(TASK);
   const requirementRefs = ledger.requirements.map((requirement) => requirement.id);
+  const invocationEvidenceRef = deriveActionInvocationEvidenceIdV2("ACT_START_GAME");
   const value: any = {
     schema: "setfarm.product-spec.v2",
     product: {
@@ -214,7 +222,11 @@ function productSpec(): any {
         controlHint: "primary_button",
       }],
       affectedSurfaceRefs: ["SURF_GAME_CANVAS", "SURF_STATUS_PANEL"],
-      trigger: { kind: "user", sourceRef: "Start Game" },
+      trigger: { kind: "user" },
+      invocationInterface: {
+        schema: "setfarm.action-invocation-interface-intent.v1",
+        kind: "rendered_control",
+      },
       input: { fields: [] },
       preconditions: [],
       evidenceScenario: {
@@ -233,7 +245,7 @@ function productSpec(): any {
       success: {
         stateRefs: ["STATE_GAME_PHASE"],
         persistenceRefs: [],
-        evidenceRefs: ["EVID_START_CONTROL", "EVID_CANVAS_ROUTE", "EVID_STATUS_TEXT"],
+        evidenceRefs: ["EVID_START_CONTROL", "EVID_CANVAS_ROUTE", "EVID_STATUS_TEXT", invocationEvidenceRef],
         userVisible: true,
       },
       failure: {
@@ -242,7 +254,7 @@ function productSpec(): any {
         evidenceRefs: [],
         userVisible: false,
       },
-      evidenceRefs: ["EVID_START_CONTROL", "EVID_CANVAS_ROUTE", "EVID_STATUS_TEXT"],
+      evidenceRefs: ["EVID_START_CONTROL", "EVID_CANVAS_ROUTE", "EVID_STATUS_TEXT", invocationEvidenceRef],
       observableEffects: [
         {
           id: "OBS_START_CONTROL",
@@ -291,6 +303,14 @@ function productSpec(): any {
         kind: "observable_outcome",
         required: true,
         subjectRef: "OBS_STATUS_TEXT",
+        capabilityRefs: [],
+        assertion: { operator: "passes" },
+      },
+      {
+        id: invocationEvidenceRef,
+        kind: "action_invocation",
+        required: true,
+        subjectRef: "ACT_START_GAME",
         capabilityRefs: [],
         assertion: { operator: "passes" },
       },
@@ -421,8 +441,8 @@ describe("PlanSemanticProposalV2 schema authority", () => {
     noControl.actions[0].controlPlacements = [];
     delete noControl.actions[0].evidenceScenario.controlPlacementKey;
     const noControlMessages = rejectionMessages(PlanSemanticProposalV2Schema.safeParse(noControl));
-    assert.equal(noControlMessages.some((message) => message.includes("PLAN_SEMANTIC_USER_CONTROL_PLACEMENT_REQUIRED")), true);
-    assert.equal(noControlMessages.some((message) => message.includes("PLAN_SEMANTIC_EVIDENCE_CONTROL_PLACEMENT_REQUIRED")), true);
+    assert.equal(noControlMessages.some((message) => message.includes("INVOCATION_INTERFACE_RENDERED_CONTROL_REQUIRED")), true);
+    assert.equal(noControlMessages.some((message) => message.includes("INVOCATION_INTERFACE_RENDERED_EVIDENCE_CONTROL_REQUIRED")), true);
 
     const affectedOnly = planProposal();
     affectedOnly.actions[0].affectedSurfaceKeys = ["game_canvas"];
@@ -432,7 +452,7 @@ describe("PlanSemanticProposalV2 schema authority", () => {
     const nonUser = planProposal();
     nonUser.actions[0].trigger = { kind: "system" };
     assert.equal(rejectionMessages(PlanSemanticProposalV2Schema.safeParse(nonUser)).some((message) =>
-      message.includes("PLAN_SEMANTIC_NON_USER_CONTROL_PLACEMENT_FORBIDDEN")), true);
+      message.includes("INVOCATION_INTERFACE_RENDERED_TRIGGER_MISMATCH")), true);
   });
 
   it("rejects legacy action surfaceKeys at the strict v2 boundary", () => {
@@ -545,6 +565,6 @@ describe("ProductSpecV2 schema authority", () => {
     const nonUser = productSpec();
     nonUser.actions[0].trigger = { kind: "system" };
     assert.equal(rejectionMessages(ProductSpecV2Schema.safeParse(nonUser)).some((message) =>
-      message.includes("PRODUCT_SPEC_NON_USER_CONTROL_SLOT_FORBIDDEN")), true);
+      message.includes("INVOCATION_INTERFACE_RENDERED_TRIGGER_MISMATCH")), true);
   });
 });

@@ -45,6 +45,7 @@ function renderAction(action: ProductActionV2): string {
     `- Affected Surface Refs: ${action.affectedSurfaceRefs.join(", ") || "none"}`,
     "- Placement/Effect Boundary: Control Slots are rendered controls; Affected Surface Refs are observable effect targets only.",
     `- Trigger: ${canonicalJsonStringify(action.trigger)}`,
+    `- Invocation Interface: ${canonicalJsonStringify(action.invocationInterface)}`,
     `- Input Contract: ${input}`,
     `- Preconditions: ${canonicalJsonStringify(action.preconditions)}`,
     `- State Changes: ${canonicalJsonStringify(action.stateDeltas)}`,
@@ -106,6 +107,13 @@ function renderSurface(
   const controlSlots = controlActions.flatMap(({ action, placements }) =>
     placements.map((placement) =>
       `${placement.id} (${action.id}; control_hint: ${placement.controlHint})`));
+  const renderedDelivery = ["web", "mobile", "desktop", "game"].includes(
+    productSpec.delivery.platform,
+  );
+  const invocationActions = affectedActions
+    .filter((action) => action.invocationInterface.kind === "cli_command"
+      || action.invocationInterface.kind === "http_request")
+    .map((action) => `${action.id} (${action.invocationInterface.kind})`);
 
   return [
     `### SURFACE: ${surface.id}`,
@@ -119,7 +127,9 @@ function renderSurface(
     `- Data Entities Bound: ${entityRefs.join(", ") || "none"}`,
     `- Display Fields: ${displayFields.join(", ") || "typed state only"}`,
     `- Core Content: ${surface.name} renders only its declared typed state and action outcomes.`,
-    `- Permitted Actions: ${permittedActions.join(", ") || "none"}`,
+    ...(renderedDelivery
+      ? [`- Permitted Actions: ${permittedActions.join(", ") || "none"}`]
+      : [`- Permitted Invocation Actions: ${invocationActions.join(", ") || "none"}`]),
     `- Control Slots: ${controlSlots.join(", ") || "none"}`,
     `- Control Hint: ${permittedActions.join(", ") || "none"}`,
     `- Affected By Actions: ${affectedActions.map((action) => action.id).join(", ") || "none"}`,
@@ -174,6 +184,24 @@ export function renderProductSpecV2Compatibility(
   const requiredInputs = spec.actions.flatMap((action) => action.input.fields)
     .filter((field) => field.required)
     .map((field) => field.name);
+  const renderedDelivery = ["web", "mobile", "desktop", "game"].includes(
+    spec.delivery.platform,
+  );
+  const platformContractLines = renderedDelivery
+    ? [
+        `- Routes: ${spec.routes.map((route) => `${route.id}=${route.path}`).join(", ")}.`,
+        "- route_guard_policy: no authentication guard is declared; every ProductSpec route is reachable exactly through its typed navigation actions.",
+        "- Runtime Contract: the first rendered state is a required Product Surface, never a landing page, setup tutorial, or placeholder shell.",
+        "- Accessibility Contract: every rendered user action has a named interactive control and observable success/failure feedback.",
+      ]
+    : [
+        `- Route/Interface Scopes: ${spec.routes.map((route) => `${route.id}=${route.path}`).join(", ")}.`,
+        "- Invocation Contract: public action execution follows each typed invocationInterface exactly; action names, route prose, and semantic surface names do not imply argv or HTTP ABI.",
+        "- Evidence Contract: CLI/API actions use exact action_invocation plus invocation_output evidence; no browser control, rendered-state, or accessibility requirement may be inferred.",
+      ];
+  const requiredInputSummary = unique(requiredInputs).join(", ") || (renderedDelivery
+    ? "none; rendered controls still validate their typed trigger state"
+    : "none; zero-input invocations execute only their declared typed interface");
 
   return [
     "CONTRACT_SCHEMA_VERSION: setfarm.plan.v2.2",
@@ -210,7 +238,7 @@ export function renderProductSpecV2Compatibility(
     "## 4. Product Surfaces",
     ...spec.surfaces.flatMap((surface) => [renderSurface(surface, spec), ""]),
     "## 5. Validation And Error Strategy",
-    `- Required Inputs: ${unique(requiredInputs).join(", ") || "none; controls still validate their typed trigger state"}.`,
+    `- Required Inputs: ${requiredInputSummary}.`,
     "- Validation Rules: action input must satisfy the exact ProductSpec value type and required-field contract before any state or persistence effect runs.",
     "- Business Logic Errors: preserve the last valid state refs declared by the action failure outcome and expose user-visible feedback when required.",
     "- Persistence Errors: preserve the last good state, report the failed policy ref, and offer only a retry that repeats the same typed action identity.",
@@ -229,10 +257,7 @@ export function renderProductSpecV2Compatibility(
     "",
     "## 7. Platform Contract",
     `- Platform: ${platform}; stack: ${techStack}.`,
-    `- Routes: ${spec.routes.map((route) => `${route.id}=${route.path}`).join(", ")}.`,
-    "- route_guard_policy: no authentication guard is declared; every ProductSpec route is reachable exactly through its typed navigation actions.",
-    "- Runtime Contract: the first rendered state is a required Product Surface, never a landing page, setup tutorial, or placeholder shell.",
-    "- Accessibility Contract: every user action has a named interactive control and observable success/failure feedback.",
+    ...platformContractLines,
     "",
     "## 8. Testability Contract",
     ...spec.evidencePredicates.map((predicate) =>

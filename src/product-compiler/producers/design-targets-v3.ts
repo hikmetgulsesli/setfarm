@@ -117,7 +117,7 @@ function observableSurfaceRef(
   action: ProductActionV2,
   observable: ProductActionV2["observableEffects"][number],
 ): string {
-  const selector = observable.selector;
+  const selector = renderedObservableSelector(observable);
   if (selector.kind !== "control") return selector.surfaceRef;
   const placement = action.controlPlacements.find((candidate) =>
     candidate.id === selector.controlSlotRef);
@@ -127,6 +127,18 @@ function observableSurfaceRef(
     );
   }
   return placement.surfaceRef;
+}
+
+function renderedObservableSelector(
+  observable: ProductActionV2["observableEffects"][number],
+): RequiredObservableSelectorV3["selector"] {
+  const selector = observable.selector;
+  if (selector.kind === "invocation_output") {
+    throw new Error(
+      `DESIGN_TARGET_V3_NON_RENDERED_OBSERVABLE_FORBIDDEN: ${observable.id}`,
+    );
+  }
+  return selector;
 }
 
 function requiredObservableSelectors(
@@ -139,7 +151,7 @@ function requiredObservableSelectors(
         ? [{
             observableRef: observable.id,
             actionRef: action.id,
-            selector: observable.selector,
+            selector: renderedObservableSelector(observable),
             assertions: observable.assertions,
             evidenceRef: observable.evidenceRef,
           }]

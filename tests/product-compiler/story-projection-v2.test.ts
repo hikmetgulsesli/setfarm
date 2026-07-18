@@ -6,7 +6,10 @@ import { describe, it } from "node:test";
 
 import { buildExpectedV3StoriesOutput } from "../../src/installer/steps/03-stories/guards.js";
 import { buildV3AutoStoriesOutput } from "../../src/installer/steps/03-stories/preclaim.js";
-import { canonicalJsonStringify } from "../../src/product-compiler/canonical-json.js";
+import {
+  canonicalJsonStringify,
+  hashCanonicalJson,
+} from "../../src/product-compiler/canonical-json.js";
 import {
   buildNoDesignProductBuildPacketV3Contracts,
   buildStitchProductBuildPacketV3Contracts,
@@ -80,6 +83,15 @@ describe("Product Semantics v2 story scheduling projection", { concurrency: 1 },
       assert.deepEqual(story.implementation_contract.owned_physical_control_ids, [physicalControl.id]);
       assert.equal(story.implementation_contract.owned_physical_control_ids.length, 1);
       assert.deepEqual(story.implementation_contract.owned_actions[0].control_slot_ids, [slotRef]);
+      assert.deepEqual(story.implementation_contract.owned_actions[0].canonical_action, action);
+      assert.equal(
+        story.implementation_contract.owned_actions[0].canonical_action_hash,
+        hashCanonicalJson(action),
+      );
+      assert.deepEqual(
+        story.implementation_contract.owned_actions[0].canonical_action.invocationInterface,
+        action.invocationInterface,
+      );
       assert.deepEqual(story.implementation_contract.owned_actions[0].physical_control_ids, [physicalControl.id]);
       assert.deepEqual(story.implementation_contract.owned_actions[0].control_surface_ids, [placementSurface]);
       assert.deepEqual(

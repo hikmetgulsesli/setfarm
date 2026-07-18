@@ -94,7 +94,11 @@ export function containedGamePlanProposalV2(): any {
         requirementRefs,
       }],
       affectedSurfaceKeys: ["game_canvas", "status_panel"],
-      trigger: { kind: "user", sourceRef: "Start Game" },
+      trigger: { kind: "user" },
+      invocationInterface: {
+        schema: "setfarm.action-invocation-interface-intent.v1",
+        kind: "rendered_control",
+      },
       inputs: [],
       preconditions: [],
       evidenceScenario: {

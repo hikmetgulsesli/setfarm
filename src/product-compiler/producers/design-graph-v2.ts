@@ -253,6 +253,9 @@ function observableSurfaceRef(
   observable: ProductActionV2["observableEffects"][number],
 ): string {
   const selector = observable.selector;
+  if (selector.kind === "invocation_output") {
+    contractMismatch(`Observable ${observable.id} is non-rendered invocation output and cannot enter a design graph`);
+  }
   if (selector.kind !== "control") return selector.surfaceRef;
   const placement = action.controlPlacements.find((candidate) =>
     candidate.id === selector.controlSlotRef);

@@ -355,12 +355,11 @@ export function produceStoryPartitionV2(input: unknown): StoryPartitionResultV2 
     action.observableEffects.forEach((observable) => {
       partition.union(actionNode, node("observable", observable.id));
       const selector = observable.selector;
-      partition.union(
-        node("observable", observable.id),
-        selector.kind === "control"
-          ? node("control_slot", selector.controlSlotRef)
-          : node("surface", selector.surfaceRef),
-      );
+      if (selector.kind === "control") {
+        partition.union(node("observable", observable.id), node("control_slot", selector.controlSlotRef));
+      } else if (selector.kind !== "invocation_output") {
+        partition.union(node("observable", observable.id), node("surface", selector.surfaceRef));
+      }
     });
     actionStateRefs(action).forEach((reference) =>
       partition.union(actionNode, node("state", reference)));

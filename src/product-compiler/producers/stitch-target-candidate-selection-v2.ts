@@ -1076,13 +1076,17 @@ function bindStitchTargetCandidateSelectionsV3Internal(input: Readonly<{
         const binding = surfaceByRef.get(observable.selector.surfaceRef);
         if (!binding) bindingChainMismatch(`Surface observable unresolved: ${observable.observableRef}`);
         elementRefs = [binding.elementRef];
-      } else {
+      } else if (observable.selector.kind === "accessibility") {
         const receipt = receiptByObservable.get(observable.observableRef);
         if (!receipt || receipt.selectorHash !== hashCanonicalJson(observable.selector)) {
           bindingChainMismatch(`Accessibility observable receipt unresolved: ${observable.observableRef}`);
         }
         elementRefs = [...receipt.elementRefs];
         roleReceiptHash = hashCanonicalJson(receipt);
+      } else {
+        bindingChainMismatch(
+          `Invocation-output observable cannot bind Stitch target: ${observable.observableRef}`,
+        );
       }
       const elementHashes = elementRefs.map((elementRef) => {
         const element = elementByRef.get(elementRef);

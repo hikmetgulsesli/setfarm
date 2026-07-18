@@ -1051,7 +1051,7 @@ export const ImplementationSliceV2Schema = z.object({
       checkRef(evidenceRefs, evidenceRef, ["contract", "product", "actions", actionIndex, "evidenceRefs", index], "action evidence"));
     action.observableEffects.forEach((effect, effectIndex) => {
       checkRef(evidenceRefs, effect.evidenceRef, ["contract", "product", "actions", actionIndex, "observableEffects", effectIndex], "observable evidence");
-      if (effect.selector.kind !== "control") {
+      if (effect.selector.kind !== "control" && effect.selector.kind !== "invocation_output") {
         checkRef(surfaceRefs, effect.selector.surfaceRef, ["contract", "product", "actions", actionIndex, "observableEffects", effectIndex], "observable surface");
       }
     });

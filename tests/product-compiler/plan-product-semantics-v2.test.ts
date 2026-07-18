@@ -15,7 +15,7 @@ import {
 } from "./fixtures/product-semantics-v2.js";
 
 describe("PLAN product semantics v2 integration", () => {
-  it("prompts for placement/effect separation and the exact v2 schema", () => {
+  it("prompts for placement/effect separation and exact invocation authority", () => {
     const ledger = extractTaskRequirementLedgerV1(CONTAINED_GAME_TASK);
     const prompt = buildPrompt({
       runId: "run-plan-v2",
@@ -29,8 +29,28 @@ describe("PLAN product semantics v2 integration", () => {
     });
     assert.match(prompt, /plan-semantic-proposal-v2/);
     assert.match(prompt, /controlPlacements/);
-    assert.match(prompt, /affectedSurfaceKeys are behavior\/effect context and never imply a rendered control/);
+    assert.match(prompt, /affectedSurfaceKeys are behavior\/effect scope and never imply a rendered control/);
     assert.match(prompt, /exactly one route_root surface/);
+    assert.match(prompt, /Every action declares exactly one invocationInterface/);
+    assert.match(prompt, /every-and-only input fieldBindings/);
+    assert.match(prompt, /Every V1 CLI\/HTTP input is required=true/);
+    assert.match(prompt, /rendered date\/datetime inputs are unsupported/);
+    assert.match(prompt, /Timer\/system invocation is unsupported/);
+    assert.match(prompt, /subcommand token sequences are prefix-free/);
+    assert.match(prompt, /argv_position values are distinct and contiguous from zero/);
+    assert.match(prompt, /containerPolicy=object_intermediates/);
+    assert.match(prompt, /JSON pointers may not duplicate or overlap/);
+    assert.match(prompt, /Each HTTP path :parameter has exactly one same-name path_parameter binding/);
+    assert.match(prompt, /endpoint templates may not overlap/);
+    assert.match(prompt, /100000 pair-comparison budget/);
+    assert.match(prompt, /failureCases contain every-and-only input_validation/);
+    assert.match(prompt, /distinct stable errorCode/);
+    assert.match(prompt, /Setfarm canonicalizes their non-semantic ordering/);
+    assert.match(prompt, /coordinate=result_value/);
+    assert.match(prompt, /An all-CLI\/HTTP product may be stateless/);
+    assert.match(prompt, /environment variables and HTTP headers are unsupported/);
+    assert.doesNotMatch(prompt, /Every user action declares exact controlPlacements/);
+    assert.doesNotMatch(prompt, /Declare an input only when an input or inputs valueFrom consumes it/);
     assert.doesNotMatch(prompt, /Emit exactly one plan-semantic-proposal-v1 JSON fence/);
   });
 

@@ -100,4 +100,114 @@ describe("plan semantic proposal v2 compiler", () => {
       assert.equal(result.diagnostics[0]?.code, "PLAN_SEMANTIC_PROPOSAL_V2_SCHEMA_INVALID");
     }
   });
+
+  it("snapshots hostile public input before Zod without invoking caller code", () => {
+    let proxyTrapCount = 0;
+    const proxied = new Proxy(containedGamePlanProposalV2(), {
+      get() {
+        proxyTrapCount += 1;
+        throw new Error("proxy trap must not run");
+      },
+    });
+    const proxyResult = compilePlanSemanticProposalV2({
+      task: CONTAINED_GAME_TASK,
+      proposal: proxied,
+    });
+    assert.equal(proxyResult.status, "rejected");
+    assert.equal(proxyTrapCount, 0);
+    if (proxyResult.status === "rejected") {
+      assert.equal(proxyResult.diagnostics[0]?.code, "PLAN_SEMANTIC_PROPOSAL_V2_INPUT_INVALID");
+    }
+
+    let getterCount = 0;
+    const accessor = containedGamePlanProposalV2();
+    Object.defineProperty(accessor.product, "name", {
+      enumerable: true,
+      configurable: true,
+      get() {
+        getterCount += 1;
+        return "forged";
+      },
+    });
+    const accessorResult = compilePlanSemanticProposalV2({
+      task: CONTAINED_GAME_TASK,
+      proposal: accessor,
+    });
+    assert.equal(accessorResult.status, "rejected");
+    assert.equal(getterCount, 0);
+
+    const cyclic: any = containedGamePlanProposalV2();
+    cyclic.loop = cyclic;
+    assert.equal(compilePlanSemanticProposalV2({
+      task: CONTAINED_GAME_TASK,
+      proposal: cyclic,
+    }).status, "rejected");
+
+    const sparse = containedGamePlanProposalV2();
+    sparse.actions.length = 2;
+    assert.equal(compilePlanSemanticProposalV2({
+      task: CONTAINED_GAME_TASK,
+      proposal: sparse,
+    }).status, "rejected");
+
+    let deep: any = "leaf";
+    for (let index = 0; index < 140; index += 1) deep = { value: deep };
+    const deepProposal = containedGamePlanProposalV2();
+    deepProposal.actions[0].observables[0].assertions[0].expected = deep;
+    assert.equal(compilePlanSemanticProposalV2({
+      task: CONTAINED_GAME_TASK,
+      proposal: deepProposal,
+    }).status, "rejected");
+
+    const oversized = containedGamePlanProposalV2();
+    oversized.actions[0].observables[0].assertions[0].expected = "x".repeat(4 * 1024 * 1024);
+    const oversizedResult = compilePlanSemanticProposalV2({
+      task: CONTAINED_GAME_TASK,
+      proposal: oversized,
+    });
+    assert.equal(oversizedResult.status, "rejected");
+    if (oversizedResult.status === "rejected") {
+      assert.equal(oversizedResult.diagnostics[0]?.code, "PLAN_SEMANTIC_PROPOSAL_V2_INPUT_INVALID");
+    }
+
+    const longTaskResult = compilePlanSemanticProposalV2({
+      task: "x".repeat(50_001),
+      proposal: containedGamePlanProposalV2(),
+    });
+    assert.equal(longTaskResult.status, "rejected");
+    if (longTaskResult.status === "rejected") {
+      assert.equal(longTaskResult.diagnostics[0]?.code, "PLAN_SEMANTIC_TASK_V2_INPUT_INVALID");
+    }
+  });
+
+  it("returns one recursively frozen, bounded compiler output or a typed size rejection", () => {
+    const result = compilePlanSemanticProposalV2({
+      task: CONTAINED_GAME_TASK,
+      proposal: containedGamePlanProposalV2(),
+    });
+    assert.equal(result.status, "canonicalized");
+    if (result.status !== "canonicalized") return;
+    assert.equal(Object.isFrozen(result), true);
+    assert.equal(Object.isFrozen(result.productSpec), true);
+    assert.equal(Object.isFrozen(result.productSpec.actions), true);
+    assert.equal(Object.isFrozen(result.productSpec.actions[0]), true);
+    const canonicalBefore = result.canonicalBytes;
+    assert.throws(() => {
+      (result.productSpec.actions[0] as { name: string }).name = "mutated";
+    }, TypeError);
+    assert.equal(result.canonicalBytes, canonicalBefore);
+
+    const oversizedOutput = containedGamePlanProposalV2();
+    oversizedOutput.actions[0].observables[2].assertions[0].expected = "x".repeat(
+      (3 * 1024 * 1024) + 64 * 1024,
+    );
+    const rejected = compilePlanSemanticProposalV2({
+      task: CONTAINED_GAME_TASK,
+      proposal: oversizedOutput,
+    });
+    assert.equal(rejected.status, "rejected");
+    if (rejected.status === "rejected") {
+      assert.equal(rejected.diagnostics[0]?.code, "PRODUCT_SPEC_V2_PAYLOAD_TOO_LARGE");
+    }
+  });
 });

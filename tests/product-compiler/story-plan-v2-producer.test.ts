@@ -80,7 +80,11 @@ function strictProductSpec(options: Readonly<{
         requirementRefs,
       }],
       affectedSurfaceKeys: [],
-      trigger: { kind: "user", sourceRef: "Toggle Settings" },
+      trigger: { kind: "user" },
+      invocationInterface: {
+        schema: "setfarm.action-invocation-interface-intent.v1",
+        kind: "rendered_control",
+      },
       inputs: [],
       preconditions: [],
       evidenceScenario: {

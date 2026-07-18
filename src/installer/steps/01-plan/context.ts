@@ -25,7 +25,7 @@ export async function injectContext(ctx: ClaimContext): Promise<void> {
       : "";
     if (ctx.retryCount === 0 && !ctx.context["previous_failure"]) {
       ctx.context["previous_failure"] =
-        `V3 PLAN requires exactly one PlanSemanticProposal ${ctx.context["product_semantics_version"]}. Propose only primary behavior and exact requirement refs; Setfarm compiles delivery, global IDs, source bytes, evidence, traceability, persistence payloads, and canonical ProductSpec. In v2, physical controlPlacements and affected surfaces are separate authority. Emit a typed rejection when primary semantics are ambiguous or unsupported.`;
+        `V3 PLAN requires exactly one PlanSemanticProposal ${ctx.context["product_semantics_version"]}. Propose primary behavior, exact requirement refs, and in v2 exactly one typed invocationInterface per action; Setfarm compiles delivery, global IDs, source bytes, evidence identities/capabilities, traceability, persistence payloads, and canonical ProductSpec but never invents product ABI. In v2, rendered controlPlacements, affected surfaces, and non-rendered invocation/output/failure contracts are separate authority. Emit a typed rejection when primary semantics are ambiguous or unsupported.`;
     }
     return;
   }

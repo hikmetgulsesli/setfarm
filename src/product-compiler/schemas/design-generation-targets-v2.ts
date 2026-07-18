@@ -15,7 +15,7 @@ import {
 } from "./common-v2.js";
 import { GenerationTargetIdSchema } from "./design-generation-targets-v1.js";
 import { ObservableAssertionV1Schema } from "./product-spec-v1.js";
-import { ObservableSelectorV2Schema } from "./product-spec-v2.js";
+import { RenderedObservableSelectorV2Schema } from "./product-spec-v2.js";
 
 export const RequiredControlPlacementV2Schema = z.object({
   controlSlotRef: ControlSlotIdSchema,
@@ -32,7 +32,7 @@ export type RequiredControlPlacementV2 = z.infer<typeof RequiredControlPlacement
 export const RequiredObservableSelectorV2Schema = z.object({
   observableRef: ObservableIdSchema,
   actionRef: ActionIdSchema,
-  selector: ObservableSelectorV2Schema,
+  selector: RenderedObservableSelectorV2Schema,
   assertions: z.array(ObservableAssertionV1Schema).min(1).max(100),
 }).strict().superRefine((value, context) => {
   if (!value.assertions.some((assertion) => assertion.phase === "after")) {

@@ -148,6 +148,48 @@ describe("PLAN v3 product semantics v2 output authority", () => {
     );
   });
 
+  it("bounds PLAN prose before regex and JSON parsing and saturates cardinality", () => {
+    assert.throws(
+      () => resolveV3PlanOutputAuthorityV2({
+        task: CONTAINED_GAME_TASK,
+        parsed: { prd: "x".repeat((4 * 1024 * 1024) + 1) },
+      }),
+      /V3_PLAN_V2_PRD_TOO_LARGE/,
+    );
+    assert.throws(
+      () => resolveV3PlanOutputAuthorityV2({
+        task: CONTAINED_GAME_TASK,
+        parsed: { prd: 42 } as any,
+      }),
+      /V3_PLAN_V2_PRD_TYPE_INVALID/,
+    );
+
+    const many = Array.from({ length: 1_000 }, () =>
+      block("plan-semantic-proposal-v2", {})).join("\n");
+    assert.throws(
+      () => resolveV3PlanOutputAuthorityV2({
+        task: CONTAINED_GAME_TASK,
+        parsed: { prd: many },
+      }),
+      /V3_PLAN_V2_TYPED_ARTIFACT_REQUIRED:2:0/,
+    );
+
+    const authority = resolveV3PlanOutputAuthorityV2({
+      task: CONTAINED_GAME_TASK,
+      parsed: { prd: block("plan-semantic-proposal-v2", containedGamePlanProposalV2()) },
+    });
+    assert.equal(authority.status, "proposal");
+    if (authority.status === "proposal") {
+      assert.throws(
+        () => projectCanonicalV3PlanParsedOutputV2({
+          parsed: { prd: "x".repeat((4 * 1024 * 1024) + 1) },
+          authority,
+        }),
+        /V3_PLAN_V2_PRD_TOO_LARGE/,
+      );
+    }
+  });
+
   it("bypasses the legacy supervisor only for an accepted v2 PLAN proposal", () => {
     const proposal = resolveV3PlanOutputAuthorityV2({
       task: CONTAINED_GAME_TASK,

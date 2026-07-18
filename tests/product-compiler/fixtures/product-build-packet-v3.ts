@@ -11,8 +11,12 @@ import {
   selectStitchTargetCandidatesV2,
 } from "../../../src/product-compiler/producers/stitch-target-candidate-selection-v2.js";
 import { produceStoryPlanV2 } from "../../../src/product-compiler/producers/story-plan-v2.js";
+import { extractTaskRequirementLedgerV1 } from "../../../src/product-compiler/requirements/task-requirements-v1.js";
 import { BuildTopologyV1Schema } from "../../../src/product-compiler/schemas/build-topology-v1.js";
-import { ProductSpecV2Schema } from "../../../src/product-compiler/schemas/product-spec-v2.js";
+import {
+  ProductSpecV2Schema,
+  deriveActionInvocationEvidenceIdV2,
+} from "../../../src/product-compiler/schemas/product-spec-v2.js";
 import { StitchScreenIndexV2Schema } from "../../../src/product-compiler/schemas/stitch-screen-index-v2.js";
 import {
   CONTAINED_GAME_TASK,
@@ -26,6 +30,187 @@ import {
 
 function sha256(value: string): string {
   return createHash("sha256").update(value, "utf8").digest("hex");
+}
+
+const NODE_CLI_TASK = "Build a Node CLI with an add command that accepts a required task title, records it in runtime state, and prints the added task as JSON.";
+
+function genuineNodeCliProductSpecV2() {
+  const ledger = extractTaskRequirementLedgerV1(NODE_CLI_TASK);
+  const requirementRefs = ledger.requirements.map((requirement) => requirement.id);
+  const invocationEvidenceRef = deriveActionInvocationEvidenceIdV2("ACT_ADD_TASK");
+  const value: any = {
+    schema: "setfarm.product-spec.v2",
+    product: {
+      id: "PROD_TASK_CLI",
+      name: "Task CLI",
+      class: "developer_tool",
+      goals: [{ id: "GOAL_ADD_TASK", statement: "Add one typed task through the public CLI interface." }],
+      nonGoals: [],
+    },
+    entities: [],
+    states: [{
+      id: "STATE_TASKS",
+      name: "Tasks",
+      kind: "application",
+      initialValue: [],
+      invariants: ["Every recorded task title is a non-empty string."],
+    }],
+    persistencePolicies: [],
+    routes: [{
+      id: "ROUTE_CLI",
+      path: "/cli",
+      rootSurfaceRef: "SURF_TERMINAL",
+      surfaceRefs: ["SURF_TERMINAL"],
+      entry: true,
+    }],
+    surfaces: [{
+      id: "SURF_TERMINAL",
+      name: "CLI Terminal",
+      kind: "terminal",
+      routeRef: "ROUTE_CLI",
+      required: true,
+      composition: { kind: "route_root" },
+    }],
+    actions: [{
+      id: "ACT_ADD_TASK",
+      name: "Add Task",
+      controlPlacements: [],
+      affectedSurfaceRefs: ["SURF_TERMINAL"],
+      trigger: { kind: "user" },
+      invocationInterface: {
+        schema: "setfarm.action-invocation-interface-intent.v1",
+        kind: "cli_command",
+        subcommandTokens: ["add"],
+        fieldBindings: [{
+          fieldName: "title",
+          optionalPresence: "not_applicable",
+          channel: { kind: "argv_flag", flag: "--title", style: "separate" },
+        }],
+        result: {
+          kind: "stdout_json",
+          successExitCodes: [0],
+          valuePointer: "/task",
+          failureCases: [
+            {
+              kind: "input_validation",
+              exitCodes: [2],
+              channel: "stderr_json",
+              errorCode: "INPUT_VALIDATION_FAILED",
+              codePointer: "/error/code",
+              messagePointer: "/error/message",
+            },
+            {
+              kind: "action_failure",
+              exitCodes: [1],
+              channel: "stderr_json",
+              errorCode: "ACTION_FAILED",
+              codePointer: "/error/code",
+              messagePointer: "/error/message",
+            },
+          ],
+        },
+      },
+      input: { fields: [{ name: "title", valueType: "string", required: true }] },
+      preconditions: [],
+      evidenceScenario: {
+        targetInputValues: { title: "Ship Setfarm" },
+        prerequisiteSteps: [],
+      },
+      stateDeltas: [{
+        stateRef: "STATE_TASKS",
+        operation: "append",
+        path: "",
+        valueFrom: { kind: "input", field: "title" },
+      }],
+      navigation: { kind: "stay" },
+      persistenceEffects: [],
+      success: {
+        stateRefs: ["STATE_TASKS"],
+        persistenceRefs: [],
+        evidenceRefs: ["EVID_TASK_ADDED", invocationEvidenceRef],
+        userVisible: true,
+      },
+      failure: {
+        stateRefs: [],
+        persistenceRefs: [],
+        evidenceRefs: [],
+        userVisible: true,
+      },
+      evidenceRefs: ["EVID_TASK_ADDED", invocationEvidenceRef],
+      observableEffects: [{
+        id: "OBS_TASK_ADDED",
+        selector: {
+          kind: "invocation_output",
+          coordinate: "result_value",
+          pointer: "/title",
+          valueContract: {
+            valueType: "string",
+            expectedFrom: { kind: "input", fieldName: "title" },
+          },
+        },
+        assertions: [{
+          phase: "after",
+          property: "value",
+          operator: "equals",
+          expected: "Ship Setfarm",
+        }],
+        evidenceRef: "EVID_TASK_ADDED",
+      }],
+    }],
+    evidencePredicates: [
+      {
+        id: "EVID_TASK_ADDED",
+        kind: "observable_outcome",
+        required: true,
+        subjectRef: "OBS_TASK_ADDED",
+        capabilityRefs: [],
+        assertion: { operator: "passes" },
+      },
+      {
+        id: invocationEvidenceRef,
+        kind: "action_invocation",
+        required: true,
+        subjectRef: "ACT_ADD_TASK",
+        capabilityRefs: [],
+        assertion: { operator: "passes" },
+      },
+    ],
+    assumptions: [],
+    delivery: {
+      platform: "cli",
+      techStack: "node-cli",
+      uiLanguage: "English",
+      database: "none",
+      designRequired: false,
+      uiVisionSummary: "A no-design command-line product with one exact add subcommand, one required title flag, deterministic JSON output, and no rendered browser surface.",
+    },
+    requirements: ledger.requirements.map((requirement) => ({
+      ...requirement,
+      classification: "functional",
+      expectedSemanticKinds: ["state", "route", "surface", "action", "evidence", "observable"],
+    })),
+    traceability: {
+      schema: "setfarm.product-requirement-traceability.v2",
+      sourceTaskHash: ledger.sourceHash,
+      bindings: [],
+    },
+  };
+  const semantics: Array<[string, string]> = [
+    ["goal", "GOAL_ADD_TASK"],
+    ["state", "STATE_TASKS"],
+    ["route", "ROUTE_CLI"],
+    ["surface", "SURF_TERMINAL"],
+    ["action", "ACT_ADD_TASK"],
+    ["evidence", "EVID_TASK_ADDED"],
+    ["evidence", invocationEvidenceRef],
+    ["observable", "OBS_TASK_ADDED"],
+  ];
+  value.traceability.bindings = semantics.map(([semanticKind, semanticRef]) => ({
+    semanticKind,
+    semanticRef,
+    requirementRefs,
+  }));
+  return ProductSpecV2Schema.parse(value);
 }
 
 function topologyFor(
@@ -71,8 +256,8 @@ function topologyFor(
       capabilityRefs: [],
     }],
     capabilities: [{
-      id: "CAP_BROWSER_INTERACTION",
-      kind: "browser_interaction",
+      id: entrypointKind === "cli" ? "CAP_CLI_INTERACTION" : "CAP_BROWSER_INTERACTION",
+      kind: entrypointKind === "cli" ? "cli_interaction" : "browser_interaction",
       enabled: true,
     }],
     policies: {
@@ -338,20 +523,7 @@ function stitchImplementationProjectionV1(input: {
 }
 
 export function buildNoDesignProductBuildPacketV3Contracts() {
-  const compiled = compilePlanSemanticProposalV2({
-    task: CONTAINED_GAME_TASK,
-    proposal: containedGamePlanProposalV2(),
-  });
-  if (compiled.status !== "canonicalized") {
-    throw new Error(`ProductBuildPacketV3 fixture proposal rejected: ${JSON.stringify(compiled)}`);
-  }
-  const productSpecValue: any = structuredClone(compiled.productSpec);
-  Object.assign(productSpecValue.delivery, {
-    platform: "cli",
-    techStack: "node-cli",
-    designRequired: false,
-  });
-  const productSpecV2 = ProductSpecV2Schema.parse(productSpecValue);
+  const productSpecV2 = genuineNodeCliProductSpecV2();
   const buildTopologyV1 = topologyFor(productSpecV2, "cli");
   const stories = produceStoryPlanV2({
     productSpec: productSpecV2,

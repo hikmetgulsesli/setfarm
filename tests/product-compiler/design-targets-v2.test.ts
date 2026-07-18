@@ -5,7 +5,10 @@ import { hashCanonicalJson } from "../../src/product-compiler/canonical-json.js"
 import { produceDesignGenerationTargetsV2 } from "../../src/product-compiler/producers/design-targets-v2.js";
 import { extractTaskRequirementLedgerV1 } from "../../src/product-compiler/requirements/task-requirements-v1.js";
 import { DesignGenerationTargetsV2Schema } from "../../src/product-compiler/schemas/design-generation-targets-v2.js";
-import { ProductSpecV2Schema } from "../../src/product-compiler/schemas/product-spec-v2.js";
+import {
+  ProductSpecV2Schema,
+  deriveActionInvocationEvidenceIdV2,
+} from "../../src/product-compiler/schemas/product-spec-v2.js";
 
 const TASK = "Build a browser game with one Start Game control on the Play Page; starting it changes the contained Game Canvas and Status Panel.";
 
@@ -16,6 +19,7 @@ function clone<T>(value: T): T {
 function productSpec2045(): any {
   const ledger = extractTaskRequirementLedgerV1(TASK);
   const requirementRefs = ledger.requirements.map((requirement) => requirement.id);
+  const invocationEvidenceRef = deriveActionInvocationEvidenceIdV2("ACT_START_GAME");
   const value: any = {
     schema: "setfarm.product-spec.v2",
     product: {
@@ -76,7 +80,11 @@ function productSpec2045(): any {
         controlHint: "primary_button",
       }],
       affectedSurfaceRefs: ["SURF_GAME_CANVAS", "SURF_STATUS_PANEL"],
-      trigger: { kind: "user", sourceRef: "Start Game" },
+      trigger: { kind: "user" },
+      invocationInterface: {
+        schema: "setfarm.action-invocation-interface-intent.v1",
+        kind: "rendered_control",
+      },
       input: {
         fields: [{ name: "phase", valueType: "string", required: true }],
       },
@@ -97,7 +105,7 @@ function productSpec2045(): any {
       success: {
         stateRefs: ["STATE_GAME_PHASE"],
         persistenceRefs: [],
-        evidenceRefs: ["EVID_START_CONTROL", "EVID_CANVAS_ROUTE", "EVID_STATUS_TEXT"],
+        evidenceRefs: ["EVID_START_CONTROL", "EVID_CANVAS_ROUTE", "EVID_STATUS_TEXT", invocationEvidenceRef],
         userVisible: true,
       },
       failure: {
@@ -106,7 +114,7 @@ function productSpec2045(): any {
         evidenceRefs: [],
         userVisible: false,
       },
-      evidenceRefs: ["EVID_START_CONTROL", "EVID_CANVAS_ROUTE", "EVID_STATUS_TEXT"],
+      evidenceRefs: ["EVID_START_CONTROL", "EVID_CANVAS_ROUTE", "EVID_STATUS_TEXT", invocationEvidenceRef],
       observableEffects: [
         {
           id: "OBS_START_CONTROL",
@@ -161,6 +169,14 @@ function productSpec2045(): any {
         kind: "observable_outcome",
         required: true,
         subjectRef: "OBS_STATUS_TEXT",
+        capabilityRefs: [],
+        assertion: { operator: "passes" },
+      },
+      {
+        id: invocationEvidenceRef,
+        kind: "action_invocation",
+        required: true,
+        subjectRef: "ACT_START_GAME",
         capabilityRefs: [],
         assertion: { operator: "passes" },
       },

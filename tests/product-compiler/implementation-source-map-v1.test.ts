@@ -23,6 +23,7 @@ import {
   type StitchScreenIndexEntryV2,
 } from "../../src/product-compiler/schemas/stitch-screen-index-v2.js";
 import { buildContainedGameProductSpecV2 } from "./fixtures/product-semantics-v2.js";
+import { buildNoDesignProductBuildPacketV3Contracts } from "./fixtures/product-build-packet-v3.js";
 import {
   stitchDownloadReceipts,
   validStitchHtml,
@@ -523,15 +524,7 @@ describe("ImplementationSourceMapV1", { concurrency: 1 }, () => {
   });
 
   it("emits an explicit empty no-design branch without fabricating screen mappings", () => {
-    const productSpec = ProductSpecV2Schema.parse({
-      ...structuredClone(buildContainedGameProductSpecV2()),
-      delivery: {
-        ...buildContainedGameProductSpecV2().delivery,
-        platform: "cli",
-        techStack: "node-cli",
-        designRequired: false,
-      },
-    });
+    const productSpec = buildNoDesignProductBuildPacketV3Contracts().productSpecV2;
     const buildTopology = topologyFor(productSpec);
     const story = produceStoryPlanV2({ productSpec, buildTopology });
     assert.equal(story.status, "produced", JSON.stringify(story));

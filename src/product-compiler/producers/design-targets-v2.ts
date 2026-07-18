@@ -73,7 +73,7 @@ function observableSurfaceRef(
   action: ProductActionV2,
   observable: ProductActionV2["observableEffects"][number],
 ): string {
-  const selector = observable.selector;
+  const selector = renderedObservableSelector(observable);
   if (selector.kind !== "control") return selector.surfaceRef;
   const placement = action.controlPlacements.find((candidate) =>
     candidate.id === selector.controlSlotRef);
@@ -83,6 +83,18 @@ function observableSurfaceRef(
     );
   }
   return placement.surfaceRef;
+}
+
+function renderedObservableSelector(
+  observable: ProductActionV2["observableEffects"][number],
+): RequiredObservableSelectorV2["selector"] {
+  const selector = observable.selector;
+  if (selector.kind === "invocation_output") {
+    throw new Error(
+      `DESIGN_TARGET_V2_NON_RENDERED_OBSERVABLE_FORBIDDEN: ${observable.id}`,
+    );
+  }
+  return selector;
 }
 
 function requiredObservableSelectors(
@@ -95,7 +107,7 @@ function requiredObservableSelectors(
         ? [{
             observableRef: observable.id,
             actionRef: action.id,
-            selector: observable.selector,
+            selector: renderedObservableSelector(observable),
             assertions: observable.assertions,
           }]
         : []))
@@ -118,6 +130,13 @@ export function produceDesignGenerationTargetsV2(input: unknown): GenerationTarg
   }
 
   const productSpec = parsed.data;
+  if (!productSpec.delivery.designRequired) {
+    return reject([diagnostic(
+      "DESIGN_TARGET_V2_DESIGN_NOT_REQUIRED",
+      `ProductSpec delivery ${productSpec.delivery.platform}/${productSpec.delivery.techStack} forbids Stitch generation targets because designRequired=false`,
+      "delivery.designRequired",
+    )]);
+  }
   const rootSurfaces = productSpec.surfaces
     .filter((surface) => surface.composition.kind === "route_root")
     .sort((left, right) => compareUtf16(left.id, right.id));

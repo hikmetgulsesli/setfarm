@@ -18,7 +18,7 @@ import {
 import { ControlSlotIdSchema } from "./common-v2.js";
 import { GenerationTargetIdSchema } from "./design-generation-targets-v1.js";
 import {
-  ObservableSelectorV2Schema,
+  RenderedObservableSelectorV2Schema,
   ProductControlPlacementV2Schema,
 } from "./product-spec-v2.js";
 import { StitchScreenIndexEntryV2Schema } from "./stitch-screen-index-v2.js";
@@ -205,7 +205,7 @@ export type ImplementationActionInputSourceV1 = z.infer<
 export const ImplementationObservableSourceV1Schema = z.object({
   observableRef: ObservableIdSchema,
   actionRef: ActionIdSchema,
-  selector: ObservableSelectorV2Schema,
+  selector: RenderedObservableSelectorV2Schema,
   selectorHash: Sha256Schema,
   evidenceRef: EvidenceIdSchema,
   sourceElementRef: ElementRefSchema,

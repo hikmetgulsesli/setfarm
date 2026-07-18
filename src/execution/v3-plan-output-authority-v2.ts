@@ -11,11 +11,17 @@ import {
 import type { ProductDeliverySelectionV1 } from "../product-compiler/product-delivery-profile-catalog.js";
 import type { CompilerOwnedPersistenceProjectionEvidenceV1 } from "../product-compiler/producers/compiler-owned-persistence-projection.js";
 import type { ProductSpecV2 } from "../product-compiler/schemas/product-spec-v2.js";
+import {
+  DEFAULT_CANONICAL_JSON_BOUNDED_WORK_LIMITS,
+  canonicalJsonBytesBounded,
+} from "../product-compiler/bounded-canonical-json.js";
+import { PLAN_SEMANTIC_PROPOSAL_V2_INPUT_MAX_BYTES } from "../product-compiler/producers/plan-semantic-proposal-v2.js";
 
 const PLAN_SEMANTIC_PROPOSAL_V2_BLOCK_RE = /```plan-semantic-proposal-v2\s*\n([\s\S]*?)\n```/g;
 const PRODUCT_SPEC_V2_BLOCK_RE = /```product-spec-v2\s*\n([\s\S]*?)\n```/g;
 const PRODUCT_SPEC_REJECTION_BLOCK_RE = /```product-spec-rejection-v1\s*\n([\s\S]*?)\n```/g;
 const LEGACY_TYPED_BLOCK_RE = /```(?:plan-semantic-proposal-v1|product-spec-v1)\s*\n([\s\S]*?)\n```/g;
+export const PLAN_V2_PRD_MAX_BYTES = 4 * 1024 * 1024;
 
 export type V3PlanOutputAuthorityV2 =
   | Readonly<{
@@ -52,7 +58,15 @@ function rejection(code: string, path: string, message: string): V3PlanOutputV2R
 }
 
 function blocks(text: string, pattern: RegExp): string[] {
-  return [...text.matchAll(pattern)].map((match) => match[1]!);
+  const matches: string[] = [];
+  pattern.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(text)) !== null) {
+    matches.push(match[1]!);
+    if (matches.length === 2) break; // cardinality authority needs only 0, 1, or 2+
+  }
+  pattern.lastIndex = 0;
+  return matches;
 }
 
 function decode(raw: string, code: string): unknown {
@@ -63,13 +77,46 @@ function decode(raw: string, code: string): unknown {
   }
 }
 
+function prdText(parsed: ParsedOutput): string {
+  const raw = parsed.prd;
+  if (raw === undefined || raw === null || raw === "") return "";
+  if (typeof raw !== "string") {
+    throw rejection(
+      "V3_PLAN_V2_PRD_TYPE_INVALID",
+      "/prd",
+      "PLAN prd must be an exact string",
+    );
+  }
+  const bytes = Buffer.byteLength(raw, "utf8");
+  if (bytes > PLAN_V2_PRD_MAX_BYTES) {
+    throw rejection(
+      "V3_PLAN_V2_PRD_TOO_LARGE",
+      "/prd",
+      `PLAN prd exceeds ${PLAN_V2_PRD_MAX_BYTES} UTF-8 bytes`,
+    );
+  }
+  return raw;
+}
+
+function boundedParsedSnapshot(value: unknown, code: string): unknown {
+  try {
+    const bytes = canonicalJsonBytesBounded(value, {
+      maxBytes: PLAN_SEMANTIC_PROPOSAL_V2_INPUT_MAX_BYTES,
+      ...DEFAULT_CANONICAL_JSON_BOUNDED_WORK_LIMITS,
+    });
+    return JSON.parse(bytes.toString("utf8"));
+  } catch {
+    throw rejection(code, "", "PLAN typed artifact exceeds bounded canonical authority");
+  }
+}
+
 /** New runs accept primary v2 semantics only; no lossy v1 upgrade exists. */
 export function resolveV3PlanOutputAuthorityV2(input: Readonly<{
   task: string;
   parsed: ParsedOutput;
   requestedStackPackId?: string;
 }>): V3PlanOutputAuthorityV2 {
-  const prd = String(input.parsed.prd || "");
+  const prd = prdText(input.parsed);
   const semantic = blocks(prd, PLAN_SEMANTIC_PROPOSAL_V2_BLOCK_RE);
   const rejections = blocks(prd, PRODUCT_SPEC_REJECTION_BLOCK_RE);
   const projected = blocks(prd, PRODUCT_SPEC_V2_BLOCK_RE);
@@ -96,9 +143,9 @@ export function resolveV3PlanOutputAuthorityV2(input: Readonly<{
     );
   }
   if (rejections.length === 1) {
-    const parsed = ProductSpecRejectionV1Schema.parse(decode(
-      rejections[0]!,
-      "V3_PLAN_V2_REJECTION_JSON_INVALID",
+    const parsed = ProductSpecRejectionV1Schema.parse(boundedParsedSnapshot(
+      decode(rejections[0]!, "V3_PLAN_V2_REJECTION_JSON_INVALID"),
+      "V3_PLAN_V2_REJECTION_INPUT_INVALID",
     ));
     return {
       status: "rejection",
@@ -134,7 +181,7 @@ export function projectCanonicalV3PlanParsedOutputV2(input: Readonly<{
   parsed: ParsedOutput;
   authority: ProposalAuthorityV2;
 }>): ParsedOutput & { prd: string } {
-  const prd = String(input.parsed.prd || "");
+  const prd = prdText(input.parsed);
   let count = 0;
   const canonicalPrd = prd.replace(PLAN_SEMANTIC_PROPOSAL_V2_BLOCK_RE, () => {
     count += 1;

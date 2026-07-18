@@ -57,6 +57,10 @@ function productSpecWithTwoTargetsAndInputs(): ProductSpecV2 {
     description: "Exact description",
     title: "Exact title",
   };
+  action.stateDeltas[0]!.valueFrom = {
+    kind: "inputs",
+    fields: ["description", "title"],
+  };
   const requirementRefs = productSpec.requirements.map((requirement: any) => requirement.id);
   const root = productSpec.surfaces.find((surface: any) =>
     surface.composition.kind === "route_root")!;

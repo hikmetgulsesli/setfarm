@@ -235,6 +235,7 @@ export const ActionInputTransportV2Schema = ActionInputTransportV2BaseSchema
 export type ActionInputTransportCompilationRejectionCodeV2 =
   | "ACTION_INPUT_V2_PRODUCT_SPEC_INVALID"
   | "ACTION_INPUT_V2_ACTION_UNRESOLVED"
+  | "ACTION_INPUT_V2_INVOCATION_INTERFACE_UNSUPPORTED"
   | "ACTION_INPUT_V2_FIELD_UNRESOLVED"
   | "ACTION_INPUT_V2_OPTIONAL_PRESENCE_UNSPECIFIED"
   | "ACTION_INPUT_V2_VALUE_TYPE_UNSUPPORTED"
@@ -285,6 +286,12 @@ export function compileActionInputTransportV2(input: Readonly<{
     return compilationRejection(
       "ACTION_INPUT_V2_ACTION_UNRESOLVED",
       `ProductSpecV2 has no action ${input.actionRef}`,
+    );
+  }
+  if (action.invocationInterface.kind !== "rendered_control") {
+    return compilationRejection(
+      "ACTION_INPUT_V2_INVOCATION_INTERFACE_UNSUPPORTED",
+      `Browser DOM input transport cannot compile ${action.id} interface ${action.invocationInterface.kind}`,
     );
   }
   const field = action.input.fields.find((candidate) => candidate.name === input.fieldName);

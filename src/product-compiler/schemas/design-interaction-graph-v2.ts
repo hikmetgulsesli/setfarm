@@ -15,7 +15,7 @@ import {
 import { ControlSlotIdSchema } from "./common-v2.js";
 import { GenerationTargetIdSchema } from "./design-generation-targets-v1.js";
 import {
-  ObservableSelectorV2Schema,
+  RenderedObservableSelectorV2Schema,
   ProductSurfaceCompositionV2Schema,
 } from "./product-spec-v2.js";
 import { ObservableAssertionV1Schema } from "./product-spec-v1.js";
@@ -310,7 +310,7 @@ export const DesignObservableBindingV2Schema = z.object({
   observableRef: ObservableIdSchema,
   productObservableHash: Sha256Schema,
   actionRef: ActionIdSchema,
-  selector: ObservableSelectorV2Schema,
+  selector: RenderedObservableSelectorV2Schema,
   selectorHash: Sha256Schema,
   assertions: z.array(ObservableAssertionV1Schema).min(1).max(100),
   assertionsHash: Sha256Schema,

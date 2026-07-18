@@ -29,6 +29,7 @@ import {
   buildContainedGameProductSpecV2,
   containedGamePlanProposalV2,
 } from "./fixtures/product-semantics-v2.js";
+import { buildNoDesignProductBuildPacketV3Contracts } from "./fixtures/product-build-packet-v3.js";
 
 type ProductValueType = ProductSpecV2["actions"][number]["input"]["fields"][number]["valueType"];
 
@@ -131,7 +132,12 @@ function noControlOptionalDateProductSpec(): ProductSpecV2 {
   const action = productSpec.actions.find((candidate) => candidate.id === ACTION_REF)!;
   const removedControlSlots = new Set(action.controlPlacements.map((placement) =>
     placement.id));
-  action.trigger = { kind: "timer", sourceRef: "daily-schedule" };
+  action.trigger = { kind: "route", sourceRef: productSpec.routes[0]!.id };
+  action.invocationInterface = {
+    schema: "setfarm.action-invocation-interface-intent.v1",
+    kind: "route_entry",
+    routeRef: productSpec.routes[0]!.id,
+  };
   action.controlPlacements = [];
   action.input.fields = [{
     name: "scheduledDate",
@@ -202,7 +208,11 @@ function transitivePrerequisiteProductSpec(options: Readonly<{
         requirementRefs,
       }],
       affectedSurfaceKeys: [],
-      trigger: { kind: "user", sourceRef: `${key} Action` },
+      trigger: { kind: "user" },
+      invocationInterface: {
+        schema: "setfarm.action-invocation-interface-intent.v1",
+        kind: "rendered_control",
+      },
       inputs: [],
       preconditions: [],
       evidenceScenario: {
@@ -260,6 +270,7 @@ function transitivePrerequisiteProductSpec(options: Readonly<{
         actionRef: "ACT_START_GAME",
         inputValues: {},
       }];
+    return productSpec;
   }
   return ProductSpecV2Schema.parse(productSpec);
 }
@@ -541,14 +552,7 @@ describe("DesignGenerationTargetsV3 typed projection", () => {
 
 describe("DesignGenerationTargetsV3 fail-closed publication", () => {
   it("rejects no-design delivery instead of manufacturing Stitch targets", () => {
-    const noDesign = clone(buildContainedGameProductSpecV2());
-    noDesign.delivery = {
-      ...noDesign.delivery,
-      platform: "cli",
-      techStack: "node-cli",
-      designRequired: false,
-    };
-    const productSpec = ProductSpecV2Schema.parse(noDesign);
+    const productSpec = buildNoDesignProductBuildPacketV3Contracts().productSpecV2;
     assertRejectedWithCode(
       productSpec,
       "DESIGN_TARGET_V3_DESIGN_NOT_REQUIRED",
@@ -556,43 +560,48 @@ describe("DesignGenerationTargetsV3 fail-closed publication", () => {
   });
 
   it("rejects transitive evidence prerequisite cycles with a typed diagnostic", () => {
-    assertRejectedWithCode(
+    const parsed = ProductSpecV2Schema.safeParse(
       transitivePrerequisiteProductSpec({ cycle: true }),
-      "DESIGN_TARGET_V3_PREREQUISITE_CYCLE",
     );
+    assert.equal(parsed.success, false);
+    if (!parsed.success) {
+      assert.equal(parsed.error.issues.some((issue) =>
+        issue.message.includes("PRODUCT_SPEC_V2_PREREQUISITE_CYCLE")), true);
+    }
   });
 
-  it("rejects unsupported rendered-control transport semantics", () => {
-    assertRejectedWithCode(
-      singleInputProductSpec("string", "hello", { required: false }),
-      "ACTION_INPUT_V2_OPTIONAL_PRESENCE_UNSPECIFIED",
-    );
-    assertRejectedWithCode(
-      singleInputProductSpec("date", "2026-07-17"),
-      "ACTION_INPUT_V2_VALUE_TYPE_UNSUPPORTED",
-    );
-    assertRejectedWithCode(
-      singleInputProductSpec("datetime", "2026-07-17T12:00:00Z"),
-      "ACTION_INPUT_V2_VALUE_TYPE_UNSUPPORTED",
-    );
-    assertRejectedWithCode(
-      singleInputProductSpec("enum", "ready"),
-      "ACTION_INPUT_V2_ENUM_AUTHORITY_MISSING",
-    );
+  it("rejects unsupported rendered-control transport semantics at ProductSpec authority", () => {
+    for (const [candidate, diagnostic] of [
+      [
+        singleInputProductSpec("string", "hello", { required: false }),
+        "INVOCATION_INTERFACE_RENDERED_OPTIONAL_INPUT_UNSUPPORTED",
+      ],
+      [
+        singleInputProductSpec("date", "2026-07-17"),
+        "INVOCATION_INTERFACE_RENDERED_TEMPORAL_INPUT_UNSUPPORTED",
+      ],
+      [
+        singleInputProductSpec("datetime", "2026-07-17T12:00:00Z"),
+        "INVOCATION_INTERFACE_RENDERED_TEMPORAL_INPUT_UNSUPPORTED",
+      ],
+      [
+        singleInputProductSpec("enum", "ready"),
+        "PRODUCT_SPEC_V2_ENUM_INPUT_AUTHORITY_MISSING",
+      ],
+    ] as const) {
+      const parsed = ProductSpecV2Schema.safeParse(candidate);
+      assert.equal(parsed.success, false);
+      if (!parsed.success) {
+        assert.equal(parsed.error.issues.some((issue) =>
+          issue.message.includes(diagnostic)), true, JSON.stringify(parsed.error.issues));
+      }
+    }
   });
 
-  it("admits optional date semantics for a no-control action without compiling a DOM transport", () => {
-    const productSpec = noControlOptionalDateProductSpec();
-    const artifact = produced(productSpec);
-    const requiredActions = artifact.targets.flatMap((target) => target.requiredActions)
-      .filter((action) => action.id === ACTION_REF);
-    assert.equal(requiredActions.length > 0, true);
-    assert.equal(requiredActions.every((action) =>
-      action.input.fields[0]!.valueType === "date"
-      && action.input.fields[0]!.required === false), true);
-    assert.equal(
-      artifact.targets.flatMap((target) => target.requiredControlPlacements).length,
-      0,
+  it("rejects unbound route-entry inputs instead of laundering them into DOM transport", () => {
+    assert.throws(
+      () => noControlOptionalDateProductSpec(),
+      /INVOCATION_INTERFACE_UNBOUND_INPUTS/,
     );
   });
 

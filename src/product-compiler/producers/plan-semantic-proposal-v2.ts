@@ -1,6 +1,11 @@
 import { createHash } from "node:crypto";
 
-import { canonicalJsonStringify, hashCanonicalJson } from "../canonical-json.js";
+import { CanonicalJsonError, hashCanonicalJson } from "../canonical-json.js";
+import {
+  CanonicalJsonLimitError,
+  DEFAULT_CANONICAL_JSON_BOUNDED_WORK_LIMITS,
+  canonicalJsonBytesBounded,
+} from "../bounded-canonical-json.js";
 import {
   PlanSemanticProposalV2Schema,
   type PlanSemanticProposalV2,
@@ -10,9 +15,16 @@ import {
 } from "../schemas/product-spec-v1.js";
 import {
   ProductSpecV2Schema,
+  deriveActionInvocationEvidenceIdV2,
   type ProductSpecV2,
 } from "../schemas/product-spec-v2.js";
 import type { ProductSpecProposalDiagnosticV1 } from "./plan-product-spec-proposal.js";
+import type {
+  PlanActionInvocationInterfaceIntentV1,
+  PlanInvocationResultValueContractV1,
+  ProductInvocationResultValueContractV1,
+  ProductActionInvocationInterfaceIntentV1,
+} from "../schemas/action-invocation-interface-intent-v1.js";
 import {
   compilePlanSemanticProposalV1,
   type CompiledPlanSemanticProposalV1,
@@ -35,6 +47,42 @@ export type PlanSemanticProposalCompilerResultV2 =
       diagnostics: readonly ProductSpecProposalDiagnosticV1[];
     }>;
 
+export const PLAN_SEMANTIC_PROPOSAL_V2_INPUT_MAX_BYTES = 4 * 1024 * 1024;
+export const PLAN_SEMANTIC_TASK_V2_MAX_CODE_UNITS = 50_000;
+// This is a compiler-local output/DoS budget, not a publication guarantee.
+// Exact envelope publishability also depends on producer identity and must be
+// proven by the prepared artifact-publication batch boundary.
+export const PRODUCT_SPEC_V2_COMPILER_OUTPUT_MAX_BYTES = 3 * 1024 * 1024;
+
+function deepFreezeJson<T>(value: T): T {
+  if (value === null || typeof value !== "object") return value;
+  const stack: object[] = [value as object];
+  while (stack.length > 0) {
+    const current = stack.pop()!;
+    if (Object.isFrozen(current)) continue;
+    for (const child of Object.values(current)) {
+      if (child !== null && typeof child === "object" && !Object.isFrozen(child)) stack.push(child);
+    }
+    Object.freeze(current);
+  }
+  return value;
+}
+
+function canonicalInputRejection(error: unknown): ProductSpecProposalDiagnosticV1 {
+  const code = error instanceof CanonicalJsonLimitError || error instanceof CanonicalJsonError
+    ? error.code
+    : "CANONICAL_JSON_INPUT_INVALID";
+  const path = error instanceof CanonicalJsonLimitError || error instanceof CanonicalJsonError
+    ? error.path
+    : "$";
+  return {
+    code: "PLAN_SEMANTIC_PROPOSAL_V2_INPUT_INVALID",
+    path,
+    message: `Plan semantic input failed bounded canonical preflight: ${code}`,
+    reference: code,
+  };
+}
+
 function stableToken(value: string): string {
   return value.toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "PLACEMENT";
 }
@@ -51,6 +99,10 @@ function stableId(prefix: string, ...keys: string[]): string {
 
 function actionId(key: string): string {
   return stableId("ACT", key);
+}
+
+function stateId(key: string): string {
+  return stableId("STATE", key);
 }
 
 function surfaceId(key: string): string {
@@ -70,6 +122,69 @@ function controlSlotId(actionKey: string, placementKey: string): string {
   const budget = 160 - "CSLOT_".length - actionToken.length - digest.length - 2;
   const placementHead = placementToken.slice(0, Math.max(1, budget)).replace(/_+$/u, "") || "PLACEMENT";
   return `CSLOT_${actionToken}_${placementHead}_${digest}`;
+}
+
+function invocationEvidenceId(actionKey: string): string {
+  return deriveActionInvocationEvidenceIdV2(actionId(actionKey));
+}
+
+export function canonicalizePlanActionInvocationInterfaceV1(
+  value: PlanActionInvocationInterfaceIntentV1,
+): ProductActionInvocationInterfaceIntentV1 {
+  const failureRank = new Map([
+    ["input_validation", 0],
+    ["precondition", 1],
+    ["action_failure", 2],
+  ] as const);
+  const sortedCodes = (codes: readonly number[]) => [...codes].sort((left, right) => left - right);
+  const sortedBindings = <T extends Readonly<{ fieldName: string }>>(bindings: readonly T[]) =>
+    [...bindings].sort((left, right) =>
+      left.fieldName < right.fieldName ? -1 : left.fieldName > right.fieldName ? 1 : 0);
+  const sortedFailures = <T extends Readonly<{ kind: "input_validation" | "precondition" | "action_failure" }>>(
+    failures: readonly T[],
+  ) => [...failures].sort((left, right) => failureRank.get(left.kind)! - failureRank.get(right.kind)!);
+
+  if (value.kind === "cli_command") {
+    return {
+      ...value,
+      fieldBindings: sortedBindings(value.fieldBindings),
+      result: {
+        ...value.result,
+        successExitCodes: sortedCodes(value.result.successExitCodes),
+        failureCases: sortedFailures(value.result.failureCases).map((failure) => ({
+          ...failure,
+          exitCodes: sortedCodes(failure.exitCodes),
+        })),
+      },
+    };
+  }
+  if (value.kind === "http_request") {
+    const { routeKey, ...stable } = value;
+    return {
+      ...stable,
+      routeRef: routeId(routeKey),
+      fieldBindings: sortedBindings(value.fieldBindings),
+      result: {
+        ...value.result,
+        successStatusCodes: sortedCodes(value.result.successStatusCodes),
+        failureCases: sortedFailures(value.result.failureCases).map((failure) => ({
+          ...failure,
+          statusCodes: sortedCodes(failure.statusCodes),
+        })),
+      },
+    };
+  }
+  if (value.kind === "route_entry") {
+    const { routeKey, ...stable } = value;
+    return { ...stable, routeRef: routeId(routeKey) };
+  }
+  return value;
+}
+
+function resolveInvocationResultValueContract(
+  value: PlanInvocationResultValueContractV1,
+): ProductInvocationResultValueContractV1 {
+  return { valueType: value.valueType, expectedFrom: value.expectedFrom };
 }
 
 function diagnostic(message: string, path = ""): ProductSpecProposalDiagnosticV1 {
@@ -106,6 +221,7 @@ function v1ValidationProjection(proposal: PlanSemanticProposalV2): unknown {
       const {
         controlPlacements,
         affectedSurfaceKeys,
+        invocationInterface: _invocationInterface,
         evidenceScenario,
         observables,
         ...stableAction
@@ -139,7 +255,31 @@ export function compilePlanSemanticProposalV2(input: Readonly<{
   proposal: unknown;
   requestedStackPackId?: string;
 }>): PlanSemanticProposalCompilerResultV2 {
-  const parsed = PlanSemanticProposalV2Schema.safeParse(input.proposal);
+  if (
+    typeof input.task !== "string"
+    || input.task.length === 0
+    || input.task.length > PLAN_SEMANTIC_TASK_V2_MAX_CODE_UNITS
+  ) {
+    return {
+      status: "rejected",
+      diagnostics: [{
+        code: "PLAN_SEMANTIC_TASK_V2_INPUT_INVALID",
+        path: "/task",
+        message: `Task must contain 1..${PLAN_SEMANTIC_TASK_V2_MAX_CODE_UNITS} UTF-16 code units`,
+      }],
+    };
+  }
+  let proposalSnapshot: unknown;
+  try {
+    const bytes = canonicalJsonBytesBounded(input.proposal, {
+      maxBytes: PLAN_SEMANTIC_PROPOSAL_V2_INPUT_MAX_BYTES,
+      ...DEFAULT_CANONICAL_JSON_BOUNDED_WORK_LIMITS,
+    });
+    proposalSnapshot = JSON.parse(bytes.toString("utf8"));
+  } catch (error) {
+    return { status: "rejected", diagnostics: [canonicalInputRejection(error)] };
+  }
+  const parsed = PlanSemanticProposalV2Schema.safeParse(proposalSnapshot);
   if (!parsed.success) {
     return {
       status: "rejected",
@@ -150,6 +290,19 @@ export function compilePlanSemanticProposalV2(input: Readonly<{
     };
   }
   const proposal = parsed.data;
+  const shadowOnlyActionIndex = proposal.actions.findIndex((action) =>
+    action.invocationInterface.kind === "cli_command"
+    || action.invocationInterface.kind === "http_request");
+  if (shadowOnlyActionIndex >= 0) {
+    return {
+      status: "rejected",
+      diagnostics: [{
+        code: "PLAN_SEMANTIC_PROPOSAL_V2_INVOCATION_PROFILE_UNAVAILABLE",
+        path: `/actions/${shadowOnlyActionIndex}/invocationInterface`,
+        message: "CLI/API invocation semantics are valid proposal authority but remain shadow-only until ProductDeliveryProfileV2 and the standalone V2 compiler path are active",
+      }],
+    };
+  }
   const baseResult = compilePlanSemanticProposalV1({
     task: input.task,
     proposal: v1ValidationProjection(proposal),
@@ -196,14 +349,29 @@ export function compilePlanSemanticProposalV2(input: Readonly<{
   });
   const actions = base.actions.map((baseAction) => {
     const planAction = planActionById.get(baseAction.id)!;
-    const { surfaceRefs: _surfaceRefs, evidenceScenario, observableEffects: optionalObservableEffects, ...stableAction } = baseAction;
+    const {
+      surfaceRefs: _surfaceRefs,
+      evidenceScenario,
+      evidenceRefs,
+      success,
+      observableEffects: optionalObservableEffects,
+      ...stableAction
+    } = baseAction;
     const observableEffects = optionalObservableEffects!;
+    const actionInvocationEvidenceRef = invocationEvidenceId(planAction.key);
     const observableById = new Map(planAction.observables.map((observable) => [
       stableId("OBS", planAction.key, observable.key),
       observable,
     ] as const));
     return {
       ...stableAction,
+      invocationInterface: canonicalizePlanActionInvocationInterfaceV1(planAction.invocationInterface),
+      trigger: planAction.invocationInterface.kind === "route_entry"
+        ? {
+            ...baseAction.trigger,
+            sourceRef: routeId(planAction.invocationInterface.routeKey),
+          }
+        : baseAction.trigger,
       controlPlacements: planAction.controlPlacements.map((placement) => ({
         id: controlSlotId(planAction.key, placement.key),
         surfaceRef: surfaceId(placement.surfaceKey),
@@ -221,6 +389,11 @@ export function compilePlanSemanticProposalV2(input: Readonly<{
             }
           : {}),
       },
+      evidenceRefs: [...evidenceRefs, actionInvocationEvidenceRef].sort(),
+      success: {
+        ...success,
+        evidenceRefs: [...success.evidenceRefs, actionInvocationEvidenceRef].sort(),
+      },
       observableEffects: observableEffects.map((effect) => {
         const planObservable = observableById.get(effect.id)!;
         return {
@@ -235,6 +408,15 @@ export function compilePlanSemanticProposalV2(input: Readonly<{
               }
             : planObservable.selector.kind === "surface"
               ? { kind: "surface" as const, surfaceRef: surfaceId(planObservable.selector.surfaceKey) }
+              : planObservable.selector.kind === "invocation_output"
+                ? {
+                    kind: "invocation_output" as const,
+                    coordinate: "result_value" as const,
+                    pointer: planObservable.selector.pointer,
+                    valueContract: resolveInvocationResultValueContract(
+                      planObservable.selector.valueContract,
+                    ),
+                  }
               : {
                   kind: "accessibility" as const,
                   surfaceRef: surfaceId(planObservable.selector.surfaceKey),
@@ -251,6 +433,19 @@ export function compilePlanSemanticProposalV2(input: Readonly<{
       semanticRef: controlSlotId(action.key, placement.key),
       requirementRefs: [...placement.requirementRefs].sort(),
     })));
+  const invocationEvidenceBindings = proposal.actions.map((action) => ({
+    semanticKind: "evidence" as const,
+    semanticRef: invocationEvidenceId(action.key),
+    requirementRefs: [...action.requirementRefs].sort(),
+  }));
+  const invocationEvidencePredicates = proposal.actions.map((action) => ({
+    id: invocationEvidenceId(action.key),
+    kind: "action_invocation" as const,
+    required: true,
+    subjectRef: actionId(action.key),
+    capabilityRefs: [],
+    assertion: { operator: "passes" as const },
+  }));
   const requirements = base.requirements.map((requirement) => {
     const source = proposal.requirements.find((candidate) => candidate.id === requirement.id)!;
     return {
@@ -259,7 +454,7 @@ export function compilePlanSemanticProposalV2(input: Readonly<{
     };
   });
 
-  const productSpec = ProductSpecV2Schema.parse({
+  const productSpecResult = ProductSpecV2Schema.safeParse({
     schema: "setfarm.product-spec.v2",
     product: base.product,
     entities: base.entities,
@@ -268,21 +463,57 @@ export function compilePlanSemanticProposalV2(input: Readonly<{
     routes,
     surfaces,
     actions,
-    evidencePredicates: base.evidencePredicates,
+    evidencePredicates: [...base.evidencePredicates, ...invocationEvidencePredicates],
     assumptions: base.assumptions,
     delivery: base.delivery,
     requirements,
     traceability: {
       schema: "setfarm.product-requirement-traceability.v2",
       sourceTaskHash: base.traceability.sourceTaskHash,
-      bindings: [...base.traceability.bindings, ...controlPlacementBindings],
+      bindings: [
+        ...base.traceability.bindings,
+        ...controlPlacementBindings,
+        ...invocationEvidenceBindings,
+      ],
     },
   });
-  return {
+  if (!productSpecResult.success) {
+    return {
+      status: "rejected",
+      diagnostics: productSpecResult.error.issues.slice(0, 200).map((issue) => diagnostic(
+        issue.message,
+        issue.path.length > 0 ? `/${issue.path.join("/")}` : "",
+      )),
+    };
+  }
+  let canonicalProductSpecBytes: Buffer;
+  try {
+    canonicalProductSpecBytes = canonicalJsonBytesBounded(productSpecResult.data, {
+      maxBytes: PRODUCT_SPEC_V2_COMPILER_OUTPUT_MAX_BYTES,
+      ...DEFAULT_CANONICAL_JSON_BOUNDED_WORK_LIMITS,
+    });
+  } catch (error) {
+    const reference = error instanceof CanonicalJsonLimitError || error instanceof CanonicalJsonError
+      ? error.code
+      : "CANONICAL_JSON_OUTPUT_INVALID";
+    return {
+      status: "rejected",
+      diagnostics: [{
+        code: "PRODUCT_SPEC_V2_PAYLOAD_TOO_LARGE",
+        path: "/",
+        message: `ProductSpecV2 exceeds the bounded compiler output budget: ${reference}`,
+        reference,
+      }],
+    };
+  }
+  const productSpec = ProductSpecV2Schema.parse(JSON.parse(
+    canonicalProductSpecBytes.toString("utf8"),
+  ));
+  return deepFreezeJson({
     ...baseResult,
-    semanticProposal: proposal,
+    semanticProposal: deepFreezeJson(proposal),
     semanticProposalHash: hashCanonicalJson(proposal),
-    productSpec,
-    canonicalBytes: canonicalJsonStringify(productSpec),
-  };
+    productSpec: deepFreezeJson(productSpec),
+    canonicalBytes: canonicalProductSpecBytes.toString("utf8"),
+  });
 }

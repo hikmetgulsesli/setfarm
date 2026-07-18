@@ -22,7 +22,7 @@ import {
 import { GenerationTargetIdSchema } from "./design-generation-targets-v1.js";
 import { ObservableAssertionV1Schema } from "./product-spec-v1.js";
 import {
-  ObservableSelectorV2Schema,
+  RenderedObservableSelectorV2Schema,
   ProductActionV2Schema,
   ProductSpecV2Schema,
   type ProductActionV2,
@@ -77,7 +77,7 @@ function requireCanonicalIdentities(
 export const RequiredObservableSelectorV3Schema = z.object({
   observableRef: ObservableIdSchema,
   actionRef: ActionIdSchema,
-  selector: ObservableSelectorV2Schema,
+  selector: RenderedObservableSelectorV2Schema,
   assertions: z.array(ObservableAssertionV1Schema).min(1).max(100),
   evidenceRef: EvidenceIdSchema,
 }).strict().superRefine((value, context) => {
@@ -460,6 +460,14 @@ export const DesignGenerationTargetV3Schema = DesignGenerationTargetV3BaseSchema
     const expectedObservables = value.requiredActions.flatMap((action) =>
       action.observableEffects.flatMap((observable) => {
         const selector = observable.selector;
+        if (selector.kind === "invocation_output") {
+          context.addIssue({
+            code: "custom",
+            path: ["requiredActions"],
+            message: `DESIGN_TARGET_V3_INVOCATION_OUTPUT_FORBIDDEN: ${observable.id}`,
+          });
+          return [];
+        }
         const surfaceRef = selector.kind === "control"
           ? action.controlPlacements.find((placement) =>
               placement.id === selector.controlSlotRef)?.surfaceRef
@@ -468,7 +476,7 @@ export const DesignGenerationTargetV3Schema = DesignGenerationTargetV3BaseSchema
           ? [{
               observableRef: observable.id,
               actionRef: action.id,
-              selector: observable.selector,
+              selector,
               assertions: observable.assertions,
               evidenceRef: observable.evidenceRef,
             }]

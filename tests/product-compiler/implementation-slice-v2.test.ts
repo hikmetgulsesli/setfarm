@@ -26,7 +26,10 @@ import {
   implementationStorySourceMapHashV1,
 } from "../../src/product-compiler/schemas/implementation-slice-v2.js";
 import { ProductBuildPacketV3Schema } from "../../src/product-compiler/schemas/product-build-packet-v3.js";
-import { ProductSpecV2Schema } from "../../src/product-compiler/schemas/product-spec-v2.js";
+import {
+  ProductSpecV2Schema,
+  deriveActionInvocationEvidenceIdV2,
+} from "../../src/product-compiler/schemas/product-spec-v2.js";
 import { hashRuntimeDataContractV1 } from "../../src/product-compiler/schemas/runtime-data-contract-v1.js";
 import {
   compileImplementationSliceV2,
@@ -36,6 +39,7 @@ import {
   CONTAINED_GAME_TASK,
   containedGamePlanProposalV2,
 } from "./fixtures/product-semantics-v2.js";
+import { buildNoDesignProductBuildPacketV3Contracts } from "./fixtures/product-build-packet-v3.js";
 import {
   stitchDownloadReceipts,
   validStitchHtml,
@@ -702,96 +706,170 @@ function rejectionCodes(input: unknown): string[] {
 }
 
 function twoComponentNoDesignProductSpec(
-  settingsMode: "user-boolean" | "timer-optional-date" = "user-boolean",
+  settingsMode: "user-boolean" | "cli-required-date" = "user-boolean",
 ) {
-  const proposal: any = containedGamePlanProposalV2();
-  const requirementRefs = proposal.requirements.map((requirement: any) => requirement.id);
-  const noControl = settingsMode === "timer-optional-date";
-  proposal.states.push({
-    key: "settings_mode",
+  const productSpec: any = structuredClone(
+    buildNoDesignProductBuildPacketV3Contracts().productSpecV2,
+  );
+  const requirementRefs = productSpec.requirements.map((requirement: any) => requirement.id);
+  const requiredDate = settingsMode === "cli-required-date";
+  const actionRef = "ACT_TOGGLE_SETTINGS";
+  const observableRef = "OBS_SETTINGS_UPDATED";
+  const observableEvidenceRef = "EVID_SETTINGS_UPDATED";
+  const invocationEvidenceRef = deriveActionInvocationEvidenceIdV2(actionRef);
+  const field = requiredDate
+    ? { name: "scheduledDate", valueType: "date", required: true }
+    : { name: "enabled", valueType: "boolean", required: true };
+  const evidenceValue = requiredDate ? "2026-07-17" : true;
+
+  productSpec.states.push({
+    id: "STATE_SETTINGS_MODE",
     name: "Settings Mode",
     kind: "application",
-    initialValue: { enabled: false },
-    invariants: ["The enabled value is boolean."],
-    requirementRefs,
+    initialValue: requiredDate ? { scheduledDate: null } : { enabled: false },
+    invariants: [requiredDate
+      ? "The scheduled date is an RFC 3339 full-date string after invocation."
+      : "The enabled value is boolean."],
   });
-  proposal.routes.push({ key: "settings", path: "/settings", entry: false, requirementRefs });
-  proposal.surfaces.push({
-    key: "settings_page",
-    name: "Settings Page",
+  productSpec.routes.push({
+    id: "ROUTE_SETTINGS",
+    path: "/settings",
+    rootSurfaceRef: "SURF_SETTINGS_TERMINAL",
+    surfaceRefs: ["SURF_SETTINGS_TERMINAL"],
+    entry: false,
+  });
+  productSpec.surfaces.push({
+    id: "SURF_SETTINGS_TERMINAL",
+    name: "Settings Terminal",
     kind: "terminal",
-    routeKey: "settings",
+    routeRef: "ROUTE_SETTINGS",
     required: true,
     composition: { kind: "route_root" },
-    requirementRefs,
   });
-  proposal.actions.push({
-    key: "toggle_settings",
+  productSpec.actions.push({
+    id: actionRef,
     name: "Toggle Settings",
-    controlPlacements: noControl ? [] : [{
-      key: "primary_toggle",
-      surfaceKey: "settings_page",
-      controlHint: "primary_button",
-      requirementRefs,
-    }],
-    affectedSurfaceKeys: noControl ? ["settings_page"] : [],
-    trigger: noControl
-      ? { kind: "timer", sourceRef: "settings-clock" }
-      : { kind: "user", sourceRef: "Toggle Settings" },
-    inputs: [],
+    controlPlacements: [],
+    affectedSurfaceRefs: ["SURF_SETTINGS_TERMINAL"],
+    trigger: { kind: "user" },
+    invocationInterface: {
+      schema: "setfarm.action-invocation-interface-intent.v1",
+      kind: "cli_command",
+      subcommandTokens: ["settings", "set"],
+      fieldBindings: [{
+        fieldName: field.name,
+        optionalPresence: "not_applicable",
+        channel: {
+          kind: "argv_flag",
+          flag: requiredDate ? "--scheduled-date" : "--enabled",
+          style: "separate",
+        },
+      }],
+      result: {
+        kind: "stdout_json",
+        successExitCodes: [0],
+        valuePointer: "/settings",
+        failureCases: [
+          {
+            kind: "input_validation",
+            exitCodes: [2],
+            channel: "stderr_json",
+            errorCode: "INPUT_VALIDATION_FAILED",
+            codePointer: "/error/code",
+            messagePointer: "/error/message",
+          },
+          {
+            kind: "action_failure",
+            exitCodes: [1],
+            channel: "stderr_json",
+            errorCode: "ACTION_FAILED",
+            codePointer: "/error/code",
+            messagePointer: "/error/message",
+          },
+        ],
+      },
+    },
+    input: { fields: [field] },
     preconditions: [],
-    evidenceScenario: noControl
-      ? { targetInputValues: {}, prerequisiteSteps: [] }
-      : { controlPlacementKey: "primary_toggle", targetInputValues: {}, prerequisiteSteps: [] },
+    evidenceScenario: {
+      targetInputValues: { [field.name]: evidenceValue },
+      prerequisiteSteps: [],
+    },
     stateDeltas: [{
-      key: "toggle_value",
-      stateKey: "settings_mode",
+      stateRef: "STATE_SETTINGS_MODE",
       operation: "set",
-      path: "/enabled",
-      valueFrom: { kind: "literal", value: true },
+      path: requiredDate ? "/scheduledDate" : "/enabled",
+      valueFrom: { kind: "input", field: field.name },
     }],
     navigation: { kind: "stay" },
-    persistenceIntents: [],
-    observables: [{
-      key: "toggle_control",
-      selector: noControl
-        ? { kind: "surface", surfaceKey: "settings_page" }
-        : { kind: "control", controlPlacementKey: "primary_toggle" },
-      assertions: [{ phase: "after", property: "enabled", operator: "equals", expected: true }],
-      requirementRefs,
+    persistenceEffects: [],
+    success: {
+      stateRefs: ["STATE_SETTINGS_MODE"],
+      persistenceRefs: [],
+      evidenceRefs: [observableEvidenceRef, invocationEvidenceRef],
+      userVisible: true,
+    },
+    failure: {
+      stateRefs: [],
+      persistenceRefs: [],
+      evidenceRefs: [],
+      userVisible: true,
+    },
+    evidenceRefs: [observableEvidenceRef, invocationEvidenceRef],
+    observableEffects: [{
+      id: observableRef,
+      selector: {
+        kind: "invocation_output",
+        coordinate: "result_value",
+        pointer: requiredDate ? "/scheduledDate" : "/enabled",
+        valueContract: {
+          valueType: field.valueType,
+          expectedFrom: { kind: "input", fieldName: field.name },
+        },
+      },
+      assertions: [{ phase: "after", property: "value", operator: "equals", expected: evidenceValue }],
+      evidenceRef: observableEvidenceRef,
     }],
-    requirementRefs,
   });
-  const compiled = compilePlanSemanticProposalV2({ task: CONTAINED_GAME_TASK, proposal });
-  assert.equal(compiled.status, "canonicalized", JSON.stringify(compiled));
-  if (compiled.status !== "canonicalized") throw new Error("unreachable");
-  const productSpec: any = structuredClone(compiled.productSpec);
-  productSpec.delivery = {
-    platform: "cli",
-    techStack: "node-cli",
-    uiLanguage: "English",
-    database: "none",
-    designRequired: false,
-    uiVisionSummary: "A deterministic non-Stitch command interaction contract.",
-  };
+  productSpec.evidencePredicates.push(
+    {
+      id: observableEvidenceRef,
+      kind: "observable_outcome",
+      required: true,
+      subjectRef: observableRef,
+      capabilityRefs: ["CAP_CLI_INTERACTION"],
+      assertion: { operator: "passes" },
+    },
+    {
+      id: invocationEvidenceRef,
+      kind: "action_invocation",
+      required: true,
+      subjectRef: actionRef,
+      capabilityRefs: [],
+      assertion: { operator: "passes" },
+    },
+  );
   productSpec.evidencePredicates.forEach((predicate: any) => {
-    predicate.capabilityRefs = ["CAP_CLI_INTERACTION"];
+    predicate.capabilityRefs = predicate.kind === "action_invocation"
+      ? []
+      : ["CAP_CLI_INTERACTION"];
   });
-  const settingsAction = productSpec.actions.find((action: any) =>
-    action.id === "ACT_TOGGLE_SETTINGS")!;
-  if (noControl) {
-    settingsAction.input.fields = [{ name: "scheduledDate", valueType: "date", required: false }];
-    settingsAction.evidenceScenario.targetInputValues = { scheduledDate: "2026-07-17" };
-  } else {
-    settingsAction.input.fields = [{ name: "enabled", valueType: "boolean", required: true }];
-    settingsAction.evidenceScenario.targetInputValues = { enabled: true };
-    settingsAction.stateDeltas[0]!.valueFrom = { kind: "input", field: "enabled" };
+  for (const [semanticKind, semanticRef] of [
+    ["state", "STATE_SETTINGS_MODE"],
+    ["route", "ROUTE_SETTINGS"],
+    ["surface", "SURF_SETTINGS_TERMINAL"],
+    ["action", actionRef],
+    ["evidence", observableEvidenceRef],
+    ["evidence", invocationEvidenceRef],
+    ["observable", observableRef],
+  ] as const) {
+    productSpec.traceability.bindings.push({ semanticKind, semanticRef, requirementRefs });
   }
   return ProductSpecV2Schema.parse(productSpec);
 }
 
 function dependencyCompilerFixture(
-  settingsMode: "user-boolean" | "timer-optional-date" = "user-boolean",
+  settingsMode: "user-boolean" | "cli-required-date" = "user-boolean",
 ) {
   const productSpec = twoComponentNoDesignProductSpec(settingsMode);
   const buildTopology = BuildTopologyV1Schema.parse({
@@ -1064,16 +1142,17 @@ describe("ImplementationSliceV2 exact authority compiler", { concurrency: 1 }, (
     assert.deepEqual(compiled.slice.storySourceMap.screens, []);
     assert.deepEqual(compiled.slice.actionInputTransports, []);
 
-    const noControl = dependencyCompilerFixture("timer-optional-date");
+    const noControl = dependencyCompilerFixture("cli-required-date");
     const noControlCompiled = compileOrThrow(noControl.input);
     const noControlAction = noControlCompiled.slice.contract.product.actions.find((action) =>
       action.id === "ACT_TOGGLE_SETTINGS")!;
-    assert.equal(noControlAction.trigger.kind, "timer");
+    assert.equal(noControlAction.trigger.kind, "user");
+    assert.equal(noControlAction.invocationInterface.kind, "cli_command");
     assert.deepEqual(noControlAction.controlPlacements, []);
     assert.deepEqual(noControlAction.input.fields, [{
       name: "scheduledDate",
       valueType: "date",
-      required: false,
+      required: true,
     }]);
     assert.deepEqual(noControlCompiled.slice.actionInputTransports, []);
   });
@@ -1104,14 +1183,14 @@ describe("ImplementationSliceV2 exact authority compiler", { concurrency: 1 }, (
     assert.equal(rejectionCodes(wrongProducer).includes("SLICE_V2_PACKET_HASH_MISMATCH"), true);
   });
 
-  it("fails closed with typed diagnostics for ambiguous or unsupported story input transports", async () => {
+  it("rejects rendered input/profile incompatibility before story transport compilation", async () => {
     const value = await stitchCompilerFixture();
 
     const ambiguous: any = structuredClone(value.input);
     ambiguous.productSpec.actions[0]!.input.fields[0]!.required = false;
     resealStitchCompilerInput(ambiguous);
     assert.equal(
-      rejectionCodes(ambiguous).includes("SLICE_V2_ACTION_INPUT_TRANSPORT_AMBIGUOUS"),
+      rejectionCodes(ambiguous).includes("SLICE_V2_INPUT_INVALID"),
       true,
     );
 
@@ -1120,7 +1199,7 @@ describe("ImplementationSliceV2 exact authority compiler", { concurrency: 1 }, (
     unsupported.productSpec.actions[0]!.evidenceScenario.targetInputValues.phase = "2026-07-17";
     resealStitchCompilerInput(unsupported);
     assert.equal(
-      rejectionCodes(unsupported).includes("SLICE_V2_ACTION_INPUT_TRANSPORT_UNSUPPORTED"),
+      rejectionCodes(unsupported).includes("SLICE_V2_INPUT_INVALID"),
       true,
     );
   });

@@ -9,6 +9,7 @@ import {
   CONTAINED_GAME_TASK,
   containedGamePlanProposalV2,
 } from "./fixtures/product-semantics-v2.js";
+import { buildNoDesignProductBuildPacketV3Contracts } from "./fixtures/product-build-packet-v3.js";
 
 function containedGameSpec(): ProductSpecV2 {
   const result = compilePlanSemanticProposalV2({
@@ -111,6 +112,33 @@ describe("ProductSpec v2 compatibility renderer", () => {
       assert.doesNotMatch(contained, /CSLOT_START_GAME_PRIMARY_START/);
       assert.doesNotMatch(contained, /control_hint: primary_button/);
     }
+  });
+
+  it("does not inject browser-control prose into a no-design CLI contract", () => {
+    const source: any = buildNoDesignProductBuildPacketV3Contracts().productSpecV2;
+    const rendered = renderProductSpecV2Compatibility(source);
+    assert.match(rendered, /public action execution follows each typed invocationInterface exactly/);
+    assert.match(rendered, /CLI\/API actions use exact action_invocation plus invocation_output evidence/);
+    assert.match(rendered, /Permitted Invocation Actions: ACT_ADD_TASK \(cli_command\)/);
+    assert.doesNotMatch(rendered, /first rendered state/);
+    assert.doesNotMatch(rendered, /every user action has a named interactive control/);
+    assert.doesNotMatch(rendered, /every rendered user action has a named interactive control/);
+    assert.doesNotMatch(rendered, /Permitted Actions: none/);
+    const zeroInput = structuredClone(source);
+    zeroInput.actions[0].input.fields = [];
+    zeroInput.actions[0].invocationInterface.fieldBindings = [];
+    zeroInput.actions[0].invocationInterface.result.failureCases =
+      zeroInput.actions[0].invocationInterface.result.failureCases.filter((failure: any) =>
+        failure.kind !== "input_validation");
+    zeroInput.actions[0].evidenceScenario.targetInputValues = {};
+    zeroInput.actions[0].stateDeltas[0].valueFrom = { kind: "literal", value: "Ship Setfarm" };
+    zeroInput.actions[0].observableEffects[0].selector.valueContract = {
+      valueType: "string",
+      expectedFrom: { kind: "literal", value: "Ship Setfarm" },
+    };
+    const zeroInputRendered = renderProductSpecV2Compatibility(zeroInput);
+    assert.match(zeroInputRendered, /Required Inputs: none; zero-input invocations execute only their declared typed interface/);
+    assert.doesNotMatch(zeroInputRendered, /controls still validate/);
   });
 
   it("rejects legacy or otherwise non-strict ProductSpec input", () => {
