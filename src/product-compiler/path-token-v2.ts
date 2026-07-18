@@ -10,6 +10,7 @@ import {
   resolveNodeExecutionLayoutV2,
 } from "./node-execution-layout-catalog-v2.js";
 import {
+  NODE_EXECUTION_PATH_SLOT_CONTRACT_VERSION_V2,
   NodeExecutionLayoutV2Schema,
   hashNodeExecutionPathSlotSetV2,
   type NodeExecutionLayoutV2,
@@ -86,24 +87,24 @@ const EXPECTED_PATH_TOKEN_CONTRACT_HASH_V2 =
 
 const EXPECTED_NODE_EXECUTION_PATH_TOKEN_SET_IDENTITIES_V2 = Object.freeze([
   Object.freeze({
-    slotSetHash: "519c28c28125c0705234d251952445d465cfe5f0306cf01231a9bd5984992bd3",
-    rootCount: 4,
-    tokenCount: 6,
-    consumerBindingCount: 20,
-    rootMembershipHash: "4dce3320599b0ceb5ef7eecbb4029e0c642f8161f530fe5eed399797f830fab1",
-    tokenMembershipHash: "c25b499c851a66ef44a4a607eb9b424c8d06d5043ac56d3eb132926ad60189b3",
-    consumerMembershipHash: "0cae856c4eb0fc4478338cf31d86d939a3906b09ab4bcd91c0f5cf56c3a6aba2",
-    tokenSetHash: "2d0c83f1f10247cf3a45e0248831a15af3786c891a0250c3a015a449503c9209",
-  }),
-  Object.freeze({
-    slotSetHash: "65709b7c8d55d098d3e1e13dcc8cebd419c826fc4523c68c53a2ebe4dc650426",
+    slotSetHash: "99c4b3c6a4beb37b7ee7a75033737dc494a57ecb3c61adb1b1d27400c200a1b8",
     rootCount: 4,
     tokenCount: 7,
     consumerBindingCount: 22,
     rootMembershipHash: "4dce3320599b0ceb5ef7eecbb4029e0c642f8161f530fe5eed399797f830fab1",
-    tokenMembershipHash: "429335392411ad8ea80846490ec82505a241cecbff45e4edc33dc248451041ca",
-    consumerMembershipHash: "af4c43dfdaa00985162ceb9017b1fab091c8ef85993f17546dd48661d28b87a8",
-    tokenSetHash: "b019e4e5eea594e64ee229d901a81055c884b039979e309155777234891ffcdc",
+    tokenMembershipHash: "081a13276f8eb78d160e67d7eed08ad3da04f8ca3d3db38a69dd3f10c2cdc803",
+    consumerMembershipHash: "a89328558c85678f8219b20ff032cec23838a0eb3a582d075e4fef9a956e4340",
+    tokenSetHash: "adf99e6f3520e303f16d7076c9ed948ea8c5f4ffa6530e36b3fbe1c52cb58758",
+  }),
+  Object.freeze({
+    slotSetHash: "ea778a2956cf3215f34ce7f5953e7e864c881e2e079e58c11093c7036061a307",
+    rootCount: 4,
+    tokenCount: 8,
+    consumerBindingCount: 24,
+    rootMembershipHash: "4dce3320599b0ceb5ef7eecbb4029e0c642f8161f530fe5eed399797f830fab1",
+    tokenMembershipHash: "5928e8a5aed6f23471d6f01524dc45b8f0badf6ed19e68e95a549df028649492",
+    consumerMembershipHash: "d2eaf249a5607fcd4d0ed44ef0fba86c540aea87ba9d933c6ab3e1e5a94ca744",
+    tokenSetHash: "ff6439cd6c6889aac82f6ce5786b8ca1cb7cd798bdb32a1c2a62884f9b55c1e6",
   }),
 ]);
 
@@ -224,6 +225,7 @@ const SlotConsumerV2Schema = z.object({
   consumerPath: ConsumerPathV2Schema,
   role: z.enum([
     "compiler_package_manifest",
+    "dependency_lock_manifest",
     "compiler_argument",
     "compiler_config",
     "canonical_entrypoint",
@@ -871,6 +873,7 @@ function extractPathClosureModelV2(layout: NodeExecutionLayoutV2): PathClosureMo
   ) as GenericSlotV2[];
   const namedSlots = {
     packageJson: pathSlots.packageJson as GenericSlotV2,
+    packageLockJson: pathSlots.packageLockJson as GenericSlotV2,
     tsconfigJson: pathSlots.tsconfigJson as GenericSlotV2,
     sourceEntrypoint: pathSlots.sourceEntrypoint as GenericSlotV2,
     buildOutput: pathSlots.buildOutput as GenericSlotV2,
@@ -905,6 +908,7 @@ function extractPathClosureModelV2(layout: NodeExecutionLayoutV2): PathClosureMo
     expectedRoot: GenericRootV2;
   }>> = [
     { path: "/pathSlots/packageJson/underRootRef", slot: namedSlots.packageJson, expectedRoot: namedRoots.repository },
+    { path: "/pathSlots/packageLockJson/underRootRef", slot: namedSlots.packageLockJson, expectedRoot: namedRoots.repository },
     { path: "/pathSlots/tsconfigJson/underRootRef", slot: namedSlots.tsconfigJson, expectedRoot: namedRoots.repository },
     { path: "/pathSlots/sourceEntrypoint/underRootRef", slot: namedSlots.sourceEntrypoint, expectedRoot: namedRoots.source },
     { path: "/pathSlots/buildOutput/underRootRef", slot: namedSlots.buildOutput, expectedRoot: namedRoots.buildOutput },
@@ -933,6 +937,14 @@ function extractPathClosureModelV2(layout: NodeExecutionLayoutV2): PathClosureMo
       "compiler_package_manifest",
       layout.compilerContract.packageJsonPathSlotRef,
       namedSlots.packageJson.slotRef,
+      "repository_config",
+      "planned",
+    ),
+    slotConsumer(
+      "/dependencyContract/packageLockJsonPathSlotRef",
+      "dependency_lock_manifest",
+      layout.dependencyContract.packageLockJsonPathSlotRef,
+      namedSlots.packageLockJson.slotRef,
       "repository_config",
       "planned",
     ),
@@ -1238,7 +1250,7 @@ function buildPathTokenSetFromFreshLayoutV2(
     sourceAuthority: {
       kind: "node_execution_path_slot_set" as const,
       pathSlotSetSchema: "setfarm.node-execution-path-slot-set.v2" as const,
-      slotContractVersion: "2.0.0" as const,
+      slotContractVersion: NODE_EXECUTION_PATH_SLOT_CONTRACT_VERSION_V2,
       slotSetHash: closure.slotSetHash,
     },
     readiness: {

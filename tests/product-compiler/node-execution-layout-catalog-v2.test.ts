@@ -40,15 +40,15 @@ import {
 } from "./fixtures/no-design-product-semantics-v2.js";
 
 const CATALOG_HASH_GOLDEN_V2 =
-  "22ea7647900849bde998b4b24d520f281e28d81aecc1e05feff4088da367dc57";
+  "f12dc89562b890016d8f86f942cc274e225b944922bdab4590b163e184b9eb97";
 const CLI_LAYOUT_HASH_GOLDEN_V2 =
-  "fe6e7edaf8dee936d9e8de9ad585003541c18d88f7fac7a407ffde777cbe1d4d";
+  "16a3e3096469316b0098c7aa56084833144fad0c8b10d1a0dcb96f47e3197f08";
 const API_LAYOUT_HASH_GOLDEN_V2 =
-  "684cc97834ae6e470b218bac7b4eb319a856ad2d30f5cdf5cf3189736dc8aef7";
+  "e6e26a2793362b20058223a0485e71c8cb466227a48fb80513f17591d17d284d";
 const CLI_PATH_SLOT_SET_HASH_GOLDEN_V2 =
-  "519c28c28125c0705234d251952445d465cfe5f0306cf01231a9bd5984992bd3";
+  "99c4b3c6a4beb37b7ee7a75033737dc494a57ecb3c61adb1b1d27400c200a1b8";
 const API_PATH_SLOT_SET_HASH_GOLDEN_V2 =
-  "65709b7c8d55d098d3e1e13dcc8cebd419c826fc4523c68c53a2ebe4dc650426";
+  "ea778a2956cf3215f34ce7f5953e7e864c881e2e079e58c11093c7036061a307";
 const CLI_LEGACY_OBSERVATION_HASH_GOLDEN_V1 =
   "1f5276ee122ec98b0ee3e98c3722c9b42c9db6cb3885f5c9062359e259bdf175";
 const API_LEGACY_OBSERVATION_HASH_GOLDEN_V1 =
@@ -145,7 +145,7 @@ describe("NodeExecutionLayoutCatalogV2 code-owned authority", () => {
     const catalog = getCodeOwnedNodeExecutionLayoutCatalogV2();
 
     assert.equal(catalog.schema, "setfarm.node-execution-layout-catalog.v2");
-    assert.equal(catalog.catalogVersion, "2.0.0");
+    assert.equal(catalog.catalogVersion, "2.1.0");
     assert.equal(catalog.readiness.status, "shadow");
     assert.equal(catalog.readiness.productionUse, "forbidden");
     assert.deepEqual(catalog.readiness.blockerCodes, NODE_EXECUTION_LAYOUT_BLOCKER_CODES_V2);
@@ -158,8 +158,10 @@ describe("NodeExecutionLayoutCatalogV2 code-owned authority", () => {
       catalog.layouts.map((layout) => layout.layoutHash),
       [CLI_LAYOUT_HASH_GOLDEN_V2, API_LAYOUT_HASH_GOLDEN_V2],
     );
-    catalog.layouts.forEach((layout) =>
-      assert.equal(layout.layoutHash, hashNodeExecutionLayoutV2(layout)));
+    catalog.layouts.forEach((layout) => {
+      assert.equal(layout.layoutHash, hashNodeExecutionLayoutV2(layout));
+      assert.equal(layout.pathSlots.slotContractVersion, "2.1.0");
+    });
     assert.equal(NodeExecutionLayoutCatalogV2Schema.safeParse(catalog).success, true);
     assertRecursivelyFrozen(catalog);
   });
@@ -171,6 +173,14 @@ describe("NodeExecutionLayoutCatalogV2 code-owned authority", () => {
     assert.ok(cli);
     assert.equal(cli.kind, "cli");
     assert.equal(cli.pathSlots.slotSetHash, CLI_PATH_SLOT_SET_HASH_GOLDEN_V2);
+    assert.deepEqual(cli.pathSlots.packageLockJson, {
+      slotRef: "PATH_SLOT_NODE_PACKAGE_LOCK_JSON_V2",
+      namespace: "repository_config",
+      disposition: "planned",
+      nodeKind: "file",
+      locator: "package-lock.json",
+      underRootRef: "PATH_ROOT_NODE_REPOSITORY_V2",
+    });
     assert.deepEqual({
       source: cli.pathSlots.sourceEntrypoint.locator,
       output: cli.pathSlots.buildOutput.locator,
@@ -216,6 +226,7 @@ describe("NodeExecutionLayoutCatalogV2 code-owned authority", () => {
     assert.ok(api);
     assert.equal(api.kind, "http_handler");
     assert.equal(api.pathSlots.slotSetHash, API_PATH_SLOT_SET_HASH_GOLDEN_V2);
+    assert.equal(api.pathSlots.packageLockJson.locator, "package-lock.json");
     assert.deepEqual({
       source: api.pathSlots.sourceEntrypoint.locator,
       output: api.pathSlots.buildOutput.locator,
@@ -260,6 +271,7 @@ describe("NodeExecutionLayoutCatalogV2 code-owned authority", () => {
         packageType: "module",
         packageBuildScriptName: "build",
         compilerExecutable: "tsc",
+        compilerExecutableRef: "TOOL_NODE_TYPESCRIPT_TSC_V2",
         compilerArguments: [
           { kind: "literal", value: "-p" },
           {
@@ -275,10 +287,15 @@ describe("NodeExecutionLayoutCatalogV2 code-owned authority", () => {
         outputRootRef: "PATH_ROOT_NODE_BUILD_OUTPUT_V2",
         noEmitOnError: true,
       });
+      assert.deepEqual(layout.dependencyContract, {
+        packageLockJsonPathSlotRef: "PATH_SLOT_NODE_PACKAGE_LOCK_JSON_V2",
+        packageManagerExecutableRef: "TOOL_NODE_NPM_CLI_V2",
+      });
       assert.deepEqual(layout.topologyBinding.buildCommand, {
         commandRef: "CMD_BUILD",
         commandKind: "build",
         cwdRootRef: "PATH_ROOT_NODE_REPOSITORY_V2",
+        executableRef: "TOOL_NODE_NPM_CLI_V2",
         directArgv: ["npm", "run", "build"],
       });
     }
@@ -571,6 +588,23 @@ describe("NodeExecutionLayoutV2 ProductSpec and selection resolution", () => {
       "node-express-api",
     );
     const mutations: Array<(candidate: any) => void> = [
+      (candidate) => { candidate.pathSlots.packageLockJson.locator = "npm-shrinkwrap.json"; },
+      (candidate) => {
+        candidate.dependencyContract.packageLockJsonPathSlotRef =
+          "PATH_SLOT_NODE_PACKAGE_JSON_V2";
+      },
+      (candidate) => {
+        candidate.dependencyContract.packageManagerExecutableRef =
+          "TOOL_NODE_FAKE_NPM_CLI_V2";
+      },
+      (candidate) => {
+        candidate.compilerContract.compilerExecutableRef =
+          "TOOL_NODE_FAKE_TYPESCRIPT_TSC_V2";
+      },
+      (candidate) => {
+        candidate.topologyBinding.buildCommand.executableRef =
+          "TOOL_NODE_FAKE_NPM_CLI_V2";
+      },
       (candidate) => { candidate.pathSlots.sourceEntrypoint.locator = "src/server.ts"; },
       (candidate) => { candidate.pathSlots.sourceEntrypoint.locator = "server.ts"; },
       (candidate) => { candidate.pathSlots.buildOutput.locator = "dist/server.js"; },

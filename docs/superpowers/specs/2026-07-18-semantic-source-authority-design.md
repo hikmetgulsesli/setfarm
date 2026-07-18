@@ -467,6 +467,86 @@ authoritative, rejects every historical locator if present, and the
 topology/profile identities are intentionally version-bumped. Historical V1
 reads remain compatibility-only until that cutover.
 
+### Node layout 2.1 and scaffold/toolchain prerequisite
+
+The first layout artifact was never published or referenced by the live
+artifact database: a read-only query on 2026-07-18 found zero matching rows in
+`semantic_artifacts`, `run_artifact_refs`, `product_packets`, `runs`, and
+`live_events`, and a workspace/Projects search found only source, test, and
+audit occurrences. The shadow catalog is therefore intentionally revised from
+`2.0.0` to `2.1.0`; it is not silently reinterpreted after activation.
+
+Revision 2.1 adds exactly one shared repository-config slot,
+`PATH_SLOT_NODE_PACKAGE_LOCK_JSON_V2` at `package-lock.json`, so the package
+manifest, lock manifest, and TypeScript config all have portable path-token
+authority before scaffold compilation. CLI slot cardinality becomes seven and
+API cardinality eight. A separate dependency contract binds the lock slot with
+the typed `dependency_lock_manifest` consumer role and npm tool ref; the
+compiler contract separately names `TOOL_NODE_TYPESCRIPT_TSC_V2`. The literal
+`tsc`/`npm` argv tokens remain compatibility observations and are not host
+executable authority. Exact executable paths, bytes, versions, environment,
+and package trees require later host-toolchain and dependency-materialization
+receipts. The layout remains shadow and adds exact scaffold-catalog and
+toolchain-executable blockers.
+
+The lexical PathToken contract remains 2.0 because its origin/hash algorithm
+did not change. The Node execution path-slot contract and path-token set both
+advance to 2.1: the former added a slot and the latter added a consumer role and
+changed its accepted artifact shape. Their versions are separate code-owned
+constants, so a later catalog-only change cannot churn stable slot/token
+identity accidentally.
+
+`NodeScaffoldToolchainCatalogV2` is now a required stage between the portable
+path-token set and FileTreeV2. It contains exactly two profile entries and
+exactly three setup-owned UTF-8 JSON byte artifacts per entry:
+
+- `package.json`;
+- `package-lock.json` with lockfile version 3 and an every-and-only exact build
+  dependency graph; and
+- `tsconfig.json`.
+
+Each JSON file is canonical JSON followed by one LF, with no BOM. Package names
+are fixed private code-owned names and never derive from product title, run,
+repository, or story identity. Direct dependency versions are exact, never
+ranges or registry tags. The catalog separately binds the complete build graph,
+Node/npm/TypeScript requirements, install/build/test command artifacts, all
+three Node path-token bindings, and an exact readiness blocker set. Its public
+resolver accepts only ProductSpec plus delivery selection, fresh-reproduces
+layout, Node PathToken, and semantic-path authorities, and joins caller-neutral
+catalog bytes forward into a product-specific resolution. A self-rehashed
+caller catalog or resolution is never authority.
+
+The catalog produces no `src/**`, test, `.gitignore`, README, `dist`,
+`node_modules`, or candidate-bundle bytes. It carries
+`acceptanceAuthority: none` and forbids a zero-test receipt. The canonical CLI
+or API entrypoint must be absent after scaffold materialization. Pre-source
+`npm run build` is a typed precondition rejection, not a setup failure and not
+product evidence. Scaffold admission may later run only an exact `npm ci
+--ignore-scripts --no-audit --no-fund` build-dependency materialization plus
+toolchain probe inside a private stage.
+
+The current Node V1 rules cannot be activated under this lifecycle: they call
+entrypoint/route/runtime registration a model-writable shared AST slot, while
+their parser contract has metadata but no implemented grammar or locator. Node
+rules must version forward. Model-owned stories produce exclusive handler,
+adapter, state, and test sources; a later code-owned
+`NodeEntrypointGeneratorV2` consumes every verified registration obligation and
+emits the entire canonical `src/cli.ts` or `src/app.ts` plus a
+`NodeEntrypointSourceReceiptV2`. That receipt binds the exact execution-layout
+token, semantic subjects, handler declarations, invocation transport, release
+generator identity, output bytes, and CLI/API ABI. Only then may the actual
+build produce `dist/cli.js` or `dist/app.js`. The old shared-entrypoint parser
+requirement remains a compatibility blocker rather than being implemented only
+to preserve an unsafe central-file mutation model.
+
+The first scaffold catalog is still schema/compiler/verifier authority only.
+ByteBundle deep CAS reassembly, exact build-dependency materialization receipt,
+host toolchain resolution, private no-replace staged filesystem materializer,
+FileTree/BuildTopology, entrypoint generator, candidate build/runtime ABI,
+activation, and setup-flow cutover remain independently blocking. In
+particular, adding exact byte refs does not make the current ambient
+`npm install`/`npm run build` setup path a valid consumer.
+
 ## SemanticSourceIntentSetV1
 
 The intent compiler consumes exact ProductSpecV2, deterministic semantic story
@@ -785,23 +865,30 @@ new-write release; it does not translate V3 attempts into historical attempts.
    with four cross-class shadow rule sets and exact unresolved blockers.
 3. Implement GeneratedSourceReceiptV2 for Stitch source and
    InvocationInputTransportV2 for CLI/API ABIs.
-4. Implement required structural parser implementation, typed release manifest,
-   activation receipt, and negative fixtures. Do not activate a catalog label.
+4. Implement required structural parser implementation for the rule sets that
+   retain parser-owned shared slots, typed release manifest, activation receipt,
+   and negative fixtures. Do not activate a catalog label. Node V1 shared
+   entrypoint rules remain compatibility-only and version forward to the
+   generator-owned lifecycle described above.
 5. Implement ProductDeliveryProfileV2 exact rules/activation-receipt binding and
    selection tests.
 6. Implement pure SemanticSourceIntentSetV1 derivation and every-and-only
    coverage tests across utility, operations/data, game, CLI, and API fixtures.
-7. Implement NodeExecutionLayoutCatalogV2, PathTokenV2, FileTreeManifestV2,
-   and BuildTopologyV2 materialization/verification in that dependency order.
-8. Implement SemanticSourceDeclarationsV1 and concurrent artifact-batch
+7. Implement NodeExecutionLayoutCatalogV2 2.1 and PathTokenV2, then
+   NodeScaffoldToolchainCatalogV2 exact bytes/build graph and its fresh resolver.
+8. Implement ByteBundle deep CAS verification, host-toolchain admission, exact
+   build-dependency receipt, and private staged scaffold materializer.
+9. Implement FileTreeManifestV2 and BuildTopologyV2, then the Node semantic-rule
+   version transition and NodeEntrypointGeneratorV2 receipt.
+10. Implement SemanticSourceDeclarationsV1 and concurrent artifact-batch
    publication authority.
-9. Implement StoryPlanV3, SourceMapV2 root/leaves/proofs, and least-privilege
+11. Implement StoryPlanV3, SourceMapV2 root/leaves/proofs, and least-privilege
    story proof verification.
-10. Finalize ProductBuildPacketV3/ImplementationSliceV2 field replacement before
+12. Finalize ProductBuildPacketV3/ImplementationSliceV2 field replacement before
    their first live write and then resume
    EvidencePlanV2 -> HandoffV2 -> ContextV2.
-11. Only after release manifests, DB provenance, typed receipts, recovery, and
-    three-class clean evals may the new-write branch cut over.
+13. Only after release manifests, DB provenance, typed receipts, recovery, and
+   three-class clean evals may the new-write branch cut over.
 
 ## Test Matrix
 
@@ -816,7 +903,20 @@ legacy installer observation hashes, and the catalog's own version-to-hash
 identity. They reject reversed rehashed catalogs, cross-domain hashes, stale
 same-profile selections, process-local stack-pack drift, both historical API
 fallbacks, CLI output-root disagreement, and every rehashed source/output/
-module/export override while production blockers remain exact.
+module/export override while production blockers remain exact. Revision 2.1
+also pins the package-lock slot, dependency-lock consumer, npm/tsc tool refs,
+updated slot/token/consumer cardinalities, and the intentional 2.0-to-2.1 hash
+transition.
+
+Scaffold catalog tests require two entries, exactly three canonical-LF JSON
+artifacts per profile, title/run/repository independence, exact package/lock/
+tsconfig semantic joins, every-and-only lock graph closure, absence of source,
+test, `.gitignore`, README and output artifacts, no lifecycle/start/listen
+scripts, zero-test non-evidence, and typed rejection of build before a generated
+entrypoint receipt. Adversarial cases include cross-profile substitution,
+self-rehashing, dependency range/tag/git/file/workspace injection, lock-root or
+integrity drift, missing/extra/reordered artifacts, fake PATH tools, ambient npm
+config drift, and source mutation during dependency materialization.
 
 Intent tests cover exact semantic obligation closure, title/slug independence,
 determinism, missing/extra/duplicate subjects, persistence exemptions, generated

@@ -22,6 +22,7 @@ import {
   NODE_EXECUTION_LAYOUT_BLOCKER_CODES_V2,
   NODE_EXECUTION_LAYOUT_CATALOG_V2_SCHEMA,
   NODE_EXECUTION_LAYOUT_CATALOG_VERSION_V2,
+  NODE_EXECUTION_PATH_SLOT_CONTRACT_VERSION_V2,
   NODE_EXECUTION_LAYOUT_REFS_V2,
   NODE_EXECUTION_LAYOUT_V2_SCHEMA,
   NODE_EXECUTION_PATH_SLOT_SET_V2_SCHEMA,
@@ -107,18 +108,18 @@ const EXPECTED_PROFILE_CATALOG_AUTHORITY_V2 = Object.freeze({
 });
 
 const EXPECTED_NODE_EXECUTION_LAYOUT_IDENTITY_V2 = Object.freeze({
-  catalogVersion: "2.0.0",
+  catalogVersion: "2.1.0",
   layoutHashes: Object.freeze([
     Object.freeze({
       layoutRef: "NODE_EXECUTION_LAYOUT_NODE_CLI_V2",
-      layoutHash: "fe6e7edaf8dee936d9e8de9ad585003541c18d88f7fac7a407ffde777cbe1d4d",
+      layoutHash: "16a3e3096469316b0098c7aa56084833144fad0c8b10d1a0dcb96f47e3197f08",
     }),
     Object.freeze({
       layoutRef: "NODE_EXECUTION_LAYOUT_NODE_EXPRESS_API_V2",
-      layoutHash: "684cc97834ae6e470b218bac7b4eb319a856ad2d30f5cdf5cf3189736dc8aef7",
+      layoutHash: "e6e26a2793362b20058223a0485e71c8cb466227a48fb80513f17591d17d284d",
     }),
   ]),
-  catalogHash: "22ea7647900849bde998b4b24d520f281e28d81aecc1e05feff4088da367dc57",
+  catalogHash: "f12dc89562b890016d8f86f942cc274e225b944922bdab4590b163e184b9eb97",
 });
 
 const EXPECTED_TOPOLOGY_ENTRYPOINT_RULES_V2 = Object.freeze({
@@ -177,6 +178,7 @@ const NODE_COMPILER_CONTRACT_V2: NodeExecutionLayoutHashPayloadV2["compilerContr
   packageType: "module",
   packageBuildScriptName: "build",
   compilerExecutable: "tsc",
+  compilerExecutableRef: "TOOL_NODE_TYPESCRIPT_TSC_V2",
   compilerArguments: [
     { kind: "literal", value: "-p" },
     {
@@ -197,6 +199,11 @@ const NODE_COMPILER_CONTRACT_V2: NodeExecutionLayoutHashPayloadV2["compilerContr
   sourceRootRef: "PATH_ROOT_NODE_SOURCE_V2",
   outputRootRef: "PATH_ROOT_NODE_BUILD_OUTPUT_V2",
   noEmitOnError: true,
+});
+
+const NODE_DEPENDENCY_CONTRACT_V2: NodeExecutionLayoutHashPayloadV2["dependencyContract"] = Object.freeze({
+  packageLockJsonPathSlotRef: "PATH_SLOT_NODE_PACKAGE_LOCK_JSON_V2",
+  packageManagerExecutableRef: "TOOL_NODE_NPM_CLI_V2",
 });
 
 function deepFreezeJson<T>(value: T): T {
@@ -353,6 +360,14 @@ function commonNodePathSlotsV2() {
       locator: "package.json" as const,
       underRootRef: "PATH_ROOT_NODE_REPOSITORY_V2" as const,
     },
+    packageLockJson: {
+      slotRef: "PATH_SLOT_NODE_PACKAGE_LOCK_JSON_V2" as const,
+      namespace: "repository_config" as const,
+      disposition: "planned" as const,
+      nodeKind: "file" as const,
+      locator: "package-lock.json" as const,
+      underRootRef: "PATH_ROOT_NODE_REPOSITORY_V2" as const,
+    },
     tsconfigJson: {
       slotRef: "PATH_SLOT_NODE_TSCONFIG_JSON_V2" as const,
       namespace: "repository_config" as const,
@@ -479,9 +494,9 @@ function buildCodeOwnedNodeExecutionLayoutCatalogV2(): NodeExecutionLayoutCatalo
   const commonPathSlots = commonNodePathSlotsV2();
   const cliPathSlots = withPathSlotSetHash({
     schema: NODE_EXECUTION_PATH_SLOT_SET_V2_SCHEMA,
-    slotContractVersion: NODE_EXECUTION_LAYOUT_CATALOG_VERSION_V2,
+    slotContractVersion: NODE_EXECUTION_PATH_SLOT_CONTRACT_VERSION_V2,
     roots: nodeExecutionPathRootsV2(),
-    slotCount: 6,
+    slotCount: 7,
     ...commonPathSlots,
     sourceEntrypoint: {
       slotRef: "PATH_SLOT_NODE_CLI_SOURCE_ENTRYPOINT_V2",
@@ -518,9 +533,9 @@ function buildCodeOwnedNodeExecutionLayoutCatalogV2(): NodeExecutionLayoutCatalo
   });
   const apiPathSlots = withPathSlotSetHash({
     schema: NODE_EXECUTION_PATH_SLOT_SET_V2_SCHEMA,
-    slotContractVersion: NODE_EXECUTION_LAYOUT_CATALOG_VERSION_V2,
+    slotContractVersion: NODE_EXECUTION_PATH_SLOT_CONTRACT_VERSION_V2,
     roots: nodeExecutionPathRootsV2(),
-    slotCount: 7,
+    slotCount: 8,
     ...commonPathSlots,
     sourceEntrypoint: {
       slotRef: "PATH_SLOT_NODE_API_SOURCE_ENTRYPOINT_V2",
@@ -565,7 +580,7 @@ function buildCodeOwnedNodeExecutionLayoutCatalogV2(): NodeExecutionLayoutCatalo
       },
     ],
   });
-  if (cliPathSlots.slotCount !== 6 || apiPathSlots.slotCount !== 7) {
+  if (cliPathSlots.slotCount !== 7 || apiPathSlots.slotCount !== 8) {
     throw new NodeExecutionLayoutCodeAuthorityErrorV2(
       "Node path-slot discriminants do not match Node profiles",
     );
@@ -601,11 +616,13 @@ function buildCodeOwnedNodeExecutionLayoutCatalogV2(): NodeExecutionLayoutCatalo
         commandRef: "CMD_BUILD",
         commandKind: "build",
         cwdRootRef: "PATH_ROOT_NODE_REPOSITORY_V2",
+        executableRef: "TOOL_NODE_NPM_CLI_V2",
         directArgv: ["npm", "run", "build"],
       },
     },
     legacyInstallerObservation: cliLegacyInstallerObservation,
     compilerContract: NODE_COMPILER_CONTRACT_V2,
+    dependencyContract: NODE_DEPENDENCY_CONTRACT_V2,
     sourceToRuntime: {
       sourcePathSlotRef: "PATH_SLOT_NODE_CLI_SOURCE_ENTRYPOINT_V2",
       buildOutputPathSlotRef: "PATH_SLOT_NODE_CLI_BUILD_OUTPUT_V2",
@@ -658,11 +675,13 @@ function buildCodeOwnedNodeExecutionLayoutCatalogV2(): NodeExecutionLayoutCatalo
         commandRef: "CMD_BUILD",
         commandKind: "build",
         cwdRootRef: "PATH_ROOT_NODE_REPOSITORY_V2",
+        executableRef: "TOOL_NODE_NPM_CLI_V2",
         directArgv: ["npm", "run", "build"],
       },
     },
     legacyInstallerObservation: apiLegacyInstallerObservation,
     compilerContract: NODE_COMPILER_CONTRACT_V2,
+    dependencyContract: NODE_DEPENDENCY_CONTRACT_V2,
     sourceToRuntime: {
       sourcePathSlotRef: "PATH_SLOT_NODE_API_SOURCE_ENTRYPOINT_V2",
       buildOutputPathSlotRef: "PATH_SLOT_NODE_API_BUILD_OUTPUT_V2",

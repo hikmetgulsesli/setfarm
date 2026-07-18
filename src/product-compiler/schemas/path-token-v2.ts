@@ -6,6 +6,9 @@ import {
 } from "../bounded-canonical-json.js";
 import { canonicalJsonStringify, hashCanonicalJson } from "../canonical-json.js";
 import { Sha256Schema, hasUniqueStrings } from "./common-v1.js";
+import {
+  NODE_EXECUTION_PATH_SLOT_CONTRACT_VERSION_V2,
+} from "./node-execution-layout-catalog-v2.js";
 
 export const PATH_TOKEN_CONTRACT_V2_SCHEMA =
   "setfarm.path-token-contract.v2" as const;
@@ -17,7 +20,7 @@ export const PATH_CONSUMER_BINDING_V2_SCHEMA =
 export const NODE_EXECUTION_PATH_TOKEN_SET_V2_SCHEMA =
   "setfarm.node-execution-path-token-set.v2" as const;
 export const PATH_TOKEN_CONTRACT_VERSION_V2 = "2.0.0" as const;
-export const PATH_TOKEN_SET_VERSION_V2 = "2.0.0" as const;
+export const PATH_TOKEN_SET_VERSION_V2 = "2.1.0" as const;
 export const PATH_TOKEN_MAX_LOCATOR_BYTES_V2 = 1_024 as const;
 export const PATH_TOKEN_MAX_SEGMENT_BYTES_V2 = 255 as const;
 export const PATH_TOKEN_MAX_SEGMENTS_V2 = 64 as const;
@@ -492,6 +495,7 @@ export const PATH_CONSUMER_ROLES_V2 = Object.freeze([
   "compiler_output_root",
   "build_cwd_root",
   "compiler_package_manifest",
+  "dependency_lock_manifest",
   "compiler_argument",
   "compiler_config",
   "canonical_entrypoint",
@@ -616,7 +620,7 @@ const NodeExecutionPathTokenSetCandidateV2Schema = z.object({
   sourceAuthority: z.object({
     kind: z.literal("node_execution_path_slot_set"),
     pathSlotSetSchema: z.literal("setfarm.node-execution-path-slot-set.v2"),
-    slotContractVersion: z.literal("2.0.0"),
+    slotContractVersion: z.literal(NODE_EXECUTION_PATH_SLOT_CONTRACT_VERSION_V2),
     slotSetHash: Sha256Schema,
   }).strict(),
   readiness: PathTokenSetReadinessV2Schema,
@@ -1060,6 +1064,7 @@ function addConsumerClosureIssues(
     disposition: "planned" | "reject_only";
   }>>([
     ["compiler_package_manifest", { namespace: "repository_config", disposition: "planned" }],
+    ["dependency_lock_manifest", { namespace: "repository_config", disposition: "planned" }],
     ["compiler_argument", { namespace: "repository_config", disposition: "planned" }],
     ["compiler_config", { namespace: "repository_config", disposition: "planned" }],
     ["canonical_entrypoint", { namespace: "repository_source", disposition: "planned" }],

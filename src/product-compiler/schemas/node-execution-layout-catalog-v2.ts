@@ -18,7 +18,8 @@ export const LEGACY_INSTALLER_EXECUTION_OBSERVATION_V1_SCHEMA =
   "setfarm.legacy-installer-execution-observation.v1" as const;
 export const NODE_EXECUTION_PATH_SLOT_SET_V2_SCHEMA =
   "setfarm.node-execution-path-slot-set.v2" as const;
-export const NODE_EXECUTION_LAYOUT_CATALOG_VERSION_V2 = "2.0.0" as const;
+export const NODE_EXECUTION_LAYOUT_CATALOG_VERSION_V2 = "2.1.0" as const;
+export const NODE_EXECUTION_PATH_SLOT_CONTRACT_VERSION_V2 = "2.1.0" as const;
 export const NODE_EXECUTION_LAYOUT_CATALOG_MAX_CANONICAL_BYTES_V2 =
   256 * 1024;
 
@@ -34,8 +35,10 @@ export const NODE_EXECUTION_LAYOUT_BLOCKER_CODES_V2 = Object.freeze([
   "NODE_EXECUTION_LAYOUT_V2_LEGACY_ENTRYPOINT_RESOLVER_UNMIGRATED",
   "NODE_EXECUTION_LAYOUT_V2_LEGACY_SCOPE_TARGET_AUTHORITY_UNMIGRATED",
   "NODE_EXECUTION_LAYOUT_V2_PATH_TOKEN_CONTRACT_UNVERIFIED",
+  "NODE_EXECUTION_LAYOUT_V2_SCAFFOLD_CATALOG_UNVERIFIED",
   "NODE_EXECUTION_LAYOUT_V2_SCAFFOLD_MATERIALIZATION_UNVERIFIED",
   "NODE_EXECUTION_LAYOUT_V2_SOURCE_DECLARATIONS_UNVERIFIED",
+  "NODE_EXECUTION_LAYOUT_V2_TOOLCHAIN_EXECUTABLE_AUTHORITY_UNVERIFIED",
 ] as const);
 
 const NodeExecutionLayoutBlockerCodeV2Schema = z.enum(
@@ -64,6 +67,7 @@ const NodeCompilerContractV2Schema = z.object({
   packageType: z.literal("module"),
   packageBuildScriptName: z.literal("build"),
   compilerExecutable: z.literal("tsc"),
+  compilerExecutableRef: z.literal("TOOL_NODE_TYPESCRIPT_TSC_V2"),
   compilerArguments: z.tuple([
     z.object({
       kind: z.literal("literal"),
@@ -83,6 +87,11 @@ const NodeCompilerContractV2Schema = z.object({
   noEmitOnError: z.literal(true),
 }).strict();
 
+const NodeDependencyContractV2Schema = z.object({
+  packageLockJsonPathSlotRef: z.literal("PATH_SLOT_NODE_PACKAGE_LOCK_JSON_V2"),
+  packageManagerExecutableRef: z.literal("TOOL_NODE_NPM_CLI_V2"),
+}).strict();
+
 const ProfileBindingCommonV2Shape = {
   catalogVersion: z.literal("2.0.0"),
   catalogHash: Sha256Schema,
@@ -98,6 +107,7 @@ const BuildCommandBindingV2Schema = z.object({
   commandRef: z.literal("CMD_BUILD"),
   commandKind: z.literal("build"),
   cwdRootRef: z.literal("PATH_ROOT_NODE_REPOSITORY_V2"),
+  executableRef: z.literal("TOOL_NODE_NPM_CLI_V2"),
   directArgv: z.tuple([
     z.literal("npm"),
     z.literal("run"),
@@ -248,6 +258,14 @@ const PackageJsonPathSlotV2Schema = exactPathSlotV2Schema(
   "PATH_ROOT_NODE_REPOSITORY_V2",
 );
 
+const PackageLockJsonPathSlotV2Schema = exactPathSlotV2Schema(
+  "PATH_SLOT_NODE_PACKAGE_LOCK_JSON_V2",
+  "repository_config",
+  "planned",
+  "package-lock.json",
+  "PATH_ROOT_NODE_REPOSITORY_V2",
+);
+
 const TsconfigJsonPathSlotV2Schema = exactPathSlotV2Schema(
   "PATH_SLOT_NODE_TSCONFIG_JSON_V2",
   "repository_config",
@@ -258,10 +276,11 @@ const TsconfigJsonPathSlotV2Schema = exactPathSlotV2Schema(
 
 const CliPathSlotSetIdentityV2Schema = z.object({
   schema: z.literal(NODE_EXECUTION_PATH_SLOT_SET_V2_SCHEMA),
-  slotContractVersion: z.literal(NODE_EXECUTION_LAYOUT_CATALOG_VERSION_V2),
+  slotContractVersion: z.literal(NODE_EXECUTION_PATH_SLOT_CONTRACT_VERSION_V2),
   roots: NodeExecutionPathRootsV2Schema,
-  slotCount: z.literal(6),
+  slotCount: z.literal(7),
   packageJson: PackageJsonPathSlotV2Schema,
+  packageLockJson: PackageLockJsonPathSlotV2Schema,
   tsconfigJson: TsconfigJsonPathSlotV2Schema,
   sourceEntrypoint: exactPathSlotV2Schema(
     "PATH_SLOT_NODE_CLI_SOURCE_ENTRYPOINT_V2",
@@ -297,10 +316,11 @@ const CliPathSlotSetIdentityV2Schema = z.object({
 
 const ApiPathSlotSetIdentityV2Schema = z.object({
   schema: z.literal(NODE_EXECUTION_PATH_SLOT_SET_V2_SCHEMA),
-  slotContractVersion: z.literal(NODE_EXECUTION_LAYOUT_CATALOG_VERSION_V2),
+  slotContractVersion: z.literal(NODE_EXECUTION_PATH_SLOT_CONTRACT_VERSION_V2),
   roots: NodeExecutionPathRootsV2Schema,
-  slotCount: z.literal(7),
+  slotCount: z.literal(8),
   packageJson: PackageJsonPathSlotV2Schema,
+  packageLockJson: PackageLockJsonPathSlotV2Schema,
   tsconfigJson: TsconfigJsonPathSlotV2Schema,
   sourceEntrypoint: exactPathSlotV2Schema(
     "PATH_SLOT_NODE_API_SOURCE_ENTRYPOINT_V2",
@@ -487,6 +507,7 @@ const LayoutCommonV2Shape = {
   layoutVersion: z.literal(NODE_EXECUTION_LAYOUT_CATALOG_VERSION_V2),
   readiness: ReadinessV2Schema,
   compilerContract: NodeCompilerContractV2Schema,
+  dependencyContract: NodeDependencyContractV2Schema,
 } as const;
 
 const CliLayoutIdentityV2Schema = z.object({

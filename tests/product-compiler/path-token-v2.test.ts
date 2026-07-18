@@ -50,19 +50,19 @@ import {
 const CONTRACT_HASH_GOLDEN_V2 =
   "7721d9bd64f6d989d9ec84a5ed9ff457a53cae09ed9c56a927431729ce8efca6";
 const CLI_TOKEN_SET_HASH_GOLDEN_V2 =
-  "2d0c83f1f10247cf3a45e0248831a15af3786c891a0250c3a015a449503c9209";
+  "adf99e6f3520e303f16d7076c9ed948ea8c5f4ffa6530e36b3fbe1c52cb58758";
 const API_TOKEN_SET_HASH_GOLDEN_V2 =
-  "b019e4e5eea594e64ee229d901a81055c884b039979e309155777234891ffcdc";
+  "ff6439cd6c6889aac82f6ce5786b8ca1cb7cd798bdb32a1c2a62884f9b55c1e6";
 const ROOT_MEMBERSHIP_HASH_GOLDEN_V2 =
   "4dce3320599b0ceb5ef7eecbb4029e0c642f8161f530fe5eed399797f830fab1";
 const CLI_TOKEN_MEMBERSHIP_HASH_GOLDEN_V2 =
-  "c25b499c851a66ef44a4a607eb9b424c8d06d5043ac56d3eb132926ad60189b3";
+  "081a13276f8eb78d160e67d7eed08ad3da04f8ca3d3db38a69dd3f10c2cdc803";
 const API_TOKEN_MEMBERSHIP_HASH_GOLDEN_V2 =
-  "429335392411ad8ea80846490ec82505a241cecbff45e4edc33dc248451041ca";
+  "5928e8a5aed6f23471d6f01524dc45b8f0badf6ed19e68e95a549df028649492";
 const CLI_CONSUMER_MEMBERSHIP_HASH_GOLDEN_V2 =
-  "0cae856c4eb0fc4478338cf31d86d939a3906b09ab4bcd91c0f5cf56c3a6aba2";
+  "a89328558c85678f8219b20ff032cec23838a0eb3a582d075e4fef9a956e4340";
 const API_CONSUMER_MEMBERSHIP_HASH_GOLDEN_V2 =
-  "af4c43dfdaa00985162ceb9017b1fab091c8ef85993f17546dd48661d28b87a8";
+  "d2eaf249a5607fcd4d0ed44ef0fba86c540aea87ba9d933c6ab3e1e5a94ca744";
 
 function selectionFor(
   productSpec: ProductSpecV2,
@@ -315,13 +315,17 @@ describe("Node execution PathTokenV2 compiler and authority", () => {
       "node-express-api",
     ).tokenSet;
     assert.equal(cli.schema, NODE_EXECUTION_PATH_TOKEN_SET_V2_SCHEMA);
+    assert.equal(cli.tokenSetVersion, "2.1.0");
+    assert.equal(api.tokenSetVersion, "2.1.0");
+    assert.equal(cli.sourceAuthority.slotContractVersion, "2.1.0");
+    assert.equal(api.sourceAuthority.slotContractVersion, "2.1.0");
     assert.equal(cli.readiness.status, "shadow");
     assert.equal(cli.readiness.productionUse, "forbidden");
     assert.deepEqual(cli.readiness.blockerCodes, PATH_TOKEN_SET_BLOCKER_CODES_V2);
     assert.deepEqual({ roots: cli.rootCount, tokens: cli.tokenCount, consumers: cli.consumerBindingCount },
-      { roots: 4, tokens: 6, consumers: 20 });
-    assert.deepEqual({ roots: api.rootCount, tokens: api.tokenCount, consumers: api.consumerBindingCount },
       { roots: 4, tokens: 7, consumers: 22 });
+    assert.deepEqual({ roots: api.rootCount, tokens: api.tokenCount, consumers: api.consumerBindingCount },
+      { roots: 4, tokens: 8, consumers: 24 });
     assert.deepEqual(
       cli.tokens.map((token) => ({
         locator: token.normalizedLocator,
@@ -333,6 +337,7 @@ describe("Node execution PathTokenV2 compiler and authority", () => {
         { locator: "src/index.ts", disposition: "reject_only" },
         { locator: "src/cli.ts", disposition: "planned" },
         { locator: "package.json", disposition: "planned" },
+        { locator: "package-lock.json", disposition: "planned" },
         { locator: "tsconfig.json", disposition: "planned" },
       ],
     );
@@ -351,6 +356,12 @@ describe("Node execution PathTokenV2 compiler and authority", () => {
     assert.equal(api.tokenSetHash, API_TOKEN_SET_HASH_GOLDEN_V2);
     assert.equal(cli.tokenSetHash, hashNodeExecutionPathTokenSetV2(cli));
     assert.equal(api.tokenSetHash, hashNodeExecutionPathTokenSetV2(api));
+    const staleSetVersion = structuredClone(cli) as any;
+    staleSetVersion.tokenSetVersion = "2.0.0";
+    assert.equal(NodeExecutionPathTokenSetV2Schema.safeParse(staleSetVersion).success, false);
+    const staleSlotVersion = structuredClone(cli) as any;
+    staleSlotVersion.sourceAuthority.slotContractVersion = "2.0.0";
+    assert.equal(NodeExecutionPathTokenSetV2Schema.safeParse(staleSlotVersion).success, false);
     assertRecursivelyFrozen(cli);
     assertRecursivelyFrozen(api);
   });
@@ -411,6 +422,21 @@ describe("Node execution PathTokenV2 compiler and authority", () => {
         && consumer.target.requiredDisposition === "reject_only"), true);
       assert.equal(set.consumerBindings.some((consumer) =>
         consumer.consumerRef.startsWith("/legacyInstallerObservation")), false);
+      const dependencyLock = set.consumerBindings.find((consumer) =>
+        consumer.consumerRef
+          === "/dependencyContract/packageLockJsonPathSlotRef");
+      assert.ok(dependencyLock);
+      assert.equal(dependencyLock.consumerRole, "dependency_lock_manifest");
+      assert.equal(dependencyLock.target.kind, "slot");
+      if (dependencyLock.target.kind !== "slot") {
+        throw new Error("Expected dependency-lock slot consumer binding");
+      }
+      assert.equal(
+        dependencyLock.target.slotRef,
+        "PATH_SLOT_NODE_PACKAGE_LOCK_JSON_V2",
+      );
+      assert.equal(dependencyLock.target.requiredNamespace, "repository_config");
+      assert.equal(dependencyLock.target.requiredDisposition, "planned");
     }
     assert.equal(api.consumerBindings.some((consumer) =>
       consumer.consumerRef === "/runtimeTarget/modulePathSlotRef"
@@ -549,10 +575,10 @@ describe("Node execution PathTokenV2 compiler and authority", () => {
       productionUse: "forbidden",
       slotSetHash: cli.tokenSet.sourceAuthority.slotSetHash,
       rootCount: 4,
-      slotCount: 6,
-      plannedSlotCount: 5,
+      slotCount: 7,
+      plannedSlotCount: 6,
       rejectOnlySlotCount: 1,
-      consumerCount: 20,
+      consumerCount: 22,
     });
     const serialized = JSON.stringify(cli.tokenSet);
     assert.equal(serialized.includes("legacyInstallerObservation"), false);
