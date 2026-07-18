@@ -233,8 +233,10 @@ The first code-owned catalog slice contains exact stack-specific rule sets:
 - Node CLI uses typed no-design surface source, none/memory persistence
   exemptions, and an exact CLI output adapter, with no invented rendered-control
   or durable persistence rule; and
-- Node Express API uses typed no-design surface source, exact file/database
-  persistence, and an API response adapter.
+- Node Express API uses typed no-design surface source, the current stateless
+  none/memory persistence boundary, and an API response adapter. File/database
+  persistence remains unsupported until a profile, rule and evidence runner own
+  that exact contract.
 
 All shared entrypoint/route/runtime slots bind the exact code-owned TypeScript
 parser contract hash. Writable rules bind one responsibility-specific
@@ -283,12 +285,14 @@ and execution policy, the separate generator-execution blocker remains.
 ### InvocationInputTransportV2 prerequisite
 
 CLI/API action-input authority cannot be derived from an action handler path.
-The transport artifact must bind every ProductSpec input field to an exact ABI:
-CLI argv position/flag/stdin/env encoding plus exit/stdout readback, or HTTP
-method/path parameter/query/header/body encoding plus response/readback. It
-also binds the exact evidence-adapter support signature that can execute that
-ABI. Until this artifact fresh-verifies, CLI/API rule-set selection remains
-blocked.
+The current transport artifact binds every ProductSpec input field to the exact
+implemented ABI: CLI argv position/flag/stdin encoding plus exit/stdout readback,
+or HTTP method/path parameter/query/body encoding plus response/readback. Env
+and caller-authored HTTP header channels are not implemented and cannot be
+claimed. The artifact binds the selected evidence capability policy but not a
+future executable evidence-adapter support signature; that join remains a
+separate Registry/release blocker. Until the transport fresh-verifies and the
+operational join exists, CLI/API production selection remains blocked.
 
 ## ProductDeliveryProfileV2
 
@@ -297,10 +301,10 @@ V2 preserves the exact V1 delivery/topology/evidence bindings and adds:
 ```ts
 semanticSourceRules: {
   catalogVersion: string;
-  catalogHash: Sha256;
   ruleSetRef: StableReference;
   ruleSetVersion: string;
   ruleSetHash: Sha256;
+  readiness: SemanticSourceRuleSetReadinessV1;
 };
 ```
 
@@ -308,19 +312,15 @@ Selection and verification fresh-reproduce both the delivery catalog and the
 semantic-rule catalog. A V1 selection is historical input only and cannot be
 promoted to V2 by attaching hashes.
 
-Initial V2 profile/rule coverage is deliberately cross-class:
-
-- Vite React utility/operations;
-- browser-game React/canvas;
-- Node CLI; and
-- Node Express API.
-
-Web utility/operations and browser game remain the first activation candidates.
-All four initial rule sets begin in shadow. Web/game additionally require exact
-generated-source receipts; CLI/API require exact invocation-input transports;
-all require the parser implementation and typed release manifest. A V2 profile
-may select a rule set only with the separate activation receipt proving that
-its exact blocker set is discharged. Unsupported or shadow-only stacks fail
+The rule catalog contains Vite React, browser-game, Node CLI and Node Express
+descriptors. The currently implemented ProductDeliveryProfileV2 catalog selects
+only the exact Node CLI and stateless Node Express API descriptors. Web/game
+profile selection is not claimed merely because shadow rule descriptions exist.
+All descriptors remain shadow. Web/game additionally require exact generated-
+source receipts; CLI/API require exact invocation-input transports; all require
+the parser implementation and typed release manifest. A future production
+profile may select a rule set only with a separate activation receipt proving
+that its exact blocker set is discharged. Unsupported or shadow-only stacks fail
 production selection with a typed source-rules blocker; they never fall back to
 coarse topology.
 
@@ -332,62 +332,91 @@ profile requires design and an exact typed absence when it does not, and the
 semantic-rule catalog verification input. It does not consume
 BuildTopology, setup output, DB story rows, or caller path proposals.
 
-Each intent has one common identity:
+Each intent has one stable obligation identity and one complete content hash:
 
 ```ts
 type SemanticSourceIntentCommonV1 = {
   intentRef: StableReference;
-  storyId: StoryId;
+  semanticScope:
+    | { kind: "story"; productRef: ProductId; storyId: StoryId; componentHash: Sha256; scopeRef: StableReference }
+    | { kind: "product"; productRef: ProductId; productSpecHash: Sha256; scopeRef: StableReference }
+    | { kind: "setup"; stackPackId: string; scopeRef: StableReference }
+    | { kind: "platform"; platformAuthorityRef: StableReference; scopeRef: StableReference };
   subjectKind: SemanticSourceSubjectKindV1;
   subjectRef: StableReference;
   subjectHash: Sha256;
+  subjectOrigin: TypedSemanticSubjectOriginV1;
   responsibility: SemanticSourceResponsibilityV1;
+  ruleSetHash: Sha256;
   ruleRef: StableReference;
   ruleHash: Sha256;
+  activationWitness: SemanticSourceActivationWitnessV1;
+  cardinality: SemanticSourceCardinalityV1;
   intentHash: Sha256;
 };
 
 type SemanticSourceIntentV1 = SemanticSourceIntentCommonV1 & (
   | {
-      targetKind: "project_source" | "generated_source";
-      ownerPolicy: SemanticSourceOwnerPolicyV1;
-      pathResolution: SemanticPathResolutionV1;
-      locatorContract: SemanticLocatorContractV1;
-      accessPolicy: SemanticSourceAccessPolicyV1;
-      outputPolicy: SemanticSourceOutputPolicyV1;
-      subjectContractResolution: SemanticSubjectContractResolutionV1;
+      target: SourceSlotIntentTargetV1;
     }
   | {
-      targetKind: "platform_contract";
-      platformAuthorityRef: StableReference;
-      platformContractProjectionHash: Sha256;
-      capabilityRefs: CapabilityId[];
+      target: PlatformContractIntentTargetV1;
     }
   | {
-      targetKind: "typed_exemption";
-      exemptionCode: PersistenceExemptionCodeV1;
-      backingResponsibility: "state_store" | null;
+      target: TypedExemptionIntentTargetV1;
     }
   | {
-      targetKind: "predicate_relation";
-      bindingResolution: ExactEvidenceAdapterSupportSignatureResolutionV1;
+      target: UnresolvedPredicateRequirementV1;
     }
 );
 ```
 
-Intent identity is content-derived. The complete set is canonical and must
-equal the every-and-only obligations re-derived from ProductSpec and rules.
+`intentRef` is derived only from the stable obligation tuple `(ruleSetHash,
+scopeRef, subjectKind, subjectRef, responsibility, ruleRef)`. `intentHash` binds
+the complete content including subject and target projections. A prose/title
+change can therefore update exact subject/content authority without inventing a
+new retry key or source obligation. Setup and platform responsibilities are not
+falsely assigned to the first ordinal story. Story scope uses the product-
+namespaced stable component hash in addition to the compatibility `US-*` ID, so
+two products that reuse common semantic IDs cannot collide in retry/declaration
+identity.
+
+The complete set is canonical and must equal the every-and-only obligations
+re-derived from ProductSpec and rules.
 Every story-contract evidence predicate, including action-referenced optional
-predicates, has exactly one canonical predicate-source relation. The relation
-binds predicate ref, subject ref, a non-empty exact declaration-ref set and/or
-one platform-adapter authority ref, and a binding hash. Predicates do not create
-invented instrumentation files. Requiredness controls verdict policy later; it
-does not control SourceMap completeness.
+predicates, has exactly one canonical predicate requirement. The intent stage
+marks that requirement `unresolved_shadow`; it cannot claim declaration refs or
+an executable adapter because both authorities are produced later. The
+declaration compiler and RegistryV2 join later replace that requirement with an
+exact relation and binding hash. Predicates do not create invented
+instrumentation files. Requiredness controls verdict policy later; it does not
+control SourceMap completeness. The predicate origin also preserves every exact
+action reference independent of requiredness. Until StoryPartitionV3 can carry
+cross-story evidence dependencies, a predicate whose subject owner and
+referencing-action owner differ is a typed rejection, never a silently reassigned
+intent.
 
 An entity-model intent carries the exact entity field-ID set and field-contract
 hash. It does not require one file per field unless a release rule explicitly
 chooses a bounded per-field layout. Every action input field always has its own
 exact action-input source obligation and contract hash.
+
+The first implemented shadow slice supports the exact no-design Node CLI/API
+profiles. It emits one synthetic persistence-none and runtime-data subject per
+stable story component that has no persistence policy, even when another story
+in the same product has memory persistence. It compiles the every-action
+invocation transport set from one bounded ProductSpec snapshot, and rejects non-empty entity sets because
+StoryPartitionV2 does not carry entity ownership. Consumer inference is not
+promoted to authority. Entity support waits for StoryPartitionV3 `entityRefs`.
+
+The existing `SEMANTIC_SOURCE_PATH_TOKEN_V1` still includes ordinal `storyId`.
+That can churn a path when an unrelated earlier component changes story order,
+so the intent artifact remains blocked by
+`SEMANTIC_SOURCE_INTENT_PATH_IDENTITY_V2_UNVERIFIED`. FileTreeManifestV2 may not
+activate until a V2 token contract uses stable `scopeRef`/component identity and
+the rule catalog/profile hashes are versioned forward. Shadow intent refs are
+already stable; this blocker prevents the physical materializer from reusing the
+unsafe V1 token as production authority.
 
 ## FileTreeManifestV2 And BuildTopologyV2
 

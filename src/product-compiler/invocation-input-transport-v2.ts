@@ -44,6 +44,7 @@ const COMPILER_INPUT_MAX_BYTES = 8 * 1024 * 1024;
 const VERIFIER_INPUT_MAX_BYTES = 12 * 1024 * 1024;
 const ENCODER_INPUT_MAX_BYTES = 8 * 1024 * 1024;
 const ENCODED_REQUEST_MAX_BYTES = 8 * 1024 * 1024;
+const CONTRACT_SET_MAX_BYTES = 4 * 1024 * 1024;
 const MAX_DIAGNOSTICS = 100;
 const EMPTY_DIAGNOSTICS = Object.freeze([]) as readonly [];
 
@@ -82,6 +83,11 @@ const CompilerInputV2Schema = z.object({
   productSpec: z.unknown(),
   deliverySelection: z.unknown(),
   actionRef: ActionIdSchema,
+}).strict();
+
+const SetCompilerInputV2Schema = z.object({
+  productSpec: z.unknown(),
+  deliverySelection: z.unknown(),
 }).strict();
 
 const VerificationInputV2Schema = z.object({
@@ -136,6 +142,19 @@ export type InvocationInputTransportCompilationResultV2 =
       diagnostics: readonly [];
       contract: Readonly<InvocationInputTransportV2>;
       contractHash: string;
+      canonicalBytes: string;
+    }>
+  | Readonly<{
+      status: "rejected";
+      diagnostics: readonly InvocationInputTransportCompilationDiagnosticV2[];
+    }>;
+
+export type InvocationInputTransportSetCompilationResultV2 =
+  | Readonly<{
+      status: "shadow_compiled";
+      diagnostics: readonly [];
+      contracts: readonly Readonly<InvocationInputTransportV2>[];
+      contractSetHash: string;
       canonicalBytes: string;
     }>
   | Readonly<{
@@ -300,6 +319,13 @@ function profileMatchesAction(
 function compileFields(
   productSpec: ProductSpecV2,
   action: ProductSpecV2["actions"][number],
+  entityFieldById: ReadonlyMap<
+    string,
+    ProductSpecV2["entities"][number]["fields"][number]
+  > = new Map(
+    productSpec.entities.flatMap((entity) =>
+      entity.fields.map((field) => [field.id, field] as const)),
+  ),
 ):
   | Readonly<{ status: "compiled"; fields: readonly Record<string, unknown>[] }>
   | Readonly<{
@@ -322,7 +348,6 @@ function compileFields(
   const bindingByName = new Map(
     action.invocationInterface.fieldBindings.map((binding) => [binding.fieldName, binding]),
   );
-  const entityFields = productSpec.entities.flatMap((entity) => entity.fields);
   const fields: Record<string, unknown>[] = [];
   for (const field of [...action.input.fields].sort((left, right) =>
     left.name < right.name ? -1 : left.name > right.name ? 1 : 0)) {
@@ -350,7 +375,7 @@ function compileFields(
       };
     }
     const entityField = field.entityFieldRef
-      ? entityFields.find((candidate) => candidate.id === field.entityFieldRef)
+      ? entityFieldById.get(field.entityFieldRef)
       : undefined;
     if (field.entityFieldRef && !entityField) {
       return {
@@ -440,53 +465,12 @@ function commonHashPayload(
   };
 }
 
-/**
- * Pure shadow projection. It accepts only ProductSpec, a delivery selection,
- * and one action identity; it cannot accept execution or release authority.
- */
-export function compileInvocationInputTransportV2(
-  input: unknown,
+function compileFromVerifiedAuthority(
+  productSpec: ProductSpecV2,
+  selection: ProductDeliverySelectionV2,
+  action: ProductSpecV2["actions"][number],
+  entityFieldById?: ReadonlyMap<string, ProductSpecV2["entities"][number]["fields"][number]>,
 ): InvocationInputTransportCompilationResultV2 {
-  let snapshot: unknown;
-  try {
-    snapshot = boundedSnapshot(input, COMPILER_INPUT_MAX_BYTES);
-  } catch (error) {
-    return singleRejected(
-      "INVOCATION_TRANSPORT_V2_INPUT_INVALID",
-      "/",
-      errorMessage(error),
-    );
-  }
-  const outer = CompilerInputV2Schema.safeParse(snapshot);
-  if (!outer.success) {
-    return rejected(diagnosticsFromZod(
-      "INVOCATION_TRANSPORT_V2_INPUT_INVALID",
-      outer.error,
-    ));
-  }
-  const unsupported = unsupportedInputDiagnostic(
-    outer.data.productSpec,
-    outer.data.actionRef,
-  );
-  if (unsupported) return rejected([unsupported]);
-
-  const productSpecResult = ProductSpecV2Schema.safeParse(outer.data.productSpec);
-  if (!productSpecResult.success) {
-    return rejected(diagnosticsFromZod(
-      "INVOCATION_TRANSPORT_V2_PRODUCT_SPEC_INVALID",
-      productSpecResult.error,
-      "/productSpec",
-    ));
-  }
-  const productSpec = productSpecResult.data;
-  const action = productSpec.actions.find((candidate) => candidate.id === outer.data.actionRef);
-  if (!action) {
-    return singleRejected(
-      "INVOCATION_TRANSPORT_V2_ACTION_UNRESOLVED",
-      "/actionRef",
-      `ProductSpecV2 has no action ${outer.data.actionRef}`,
-    );
-  }
   if (
     action.invocationInterface.kind !== "cli_command"
     && action.invocationInterface.kind !== "http_request"
@@ -497,12 +481,6 @@ export function compileInvocationInputTransportV2(
       `InvocationInputTransportV2 supports only cli_command and http_request; observed ${action.invocationInterface.kind}`,
     );
   }
-
-  const verifiedSelection = exactSelection(productSpec, outer.data.deliverySelection);
-  if (verifiedSelection.status === "rejected") {
-    return rejected([verifiedSelection.diagnostic]);
-  }
-  const selection = verifiedSelection.selection;
   if (!profileMatchesAction(selection, action.invocationInterface.kind)) {
     return singleRejected(
       "INVOCATION_TRANSPORT_V2_PROFILE_MISMATCH",
@@ -511,7 +489,11 @@ export function compileInvocationInputTransportV2(
     );
   }
 
-  const compiledFields = compileFields(productSpec, action);
+  const compiledFields = compileFields(
+    productSpec,
+    action,
+    entityFieldById,
+  );
   if (compiledFields.status === "rejected") {
     return rejected([compiledFields.diagnostic]);
   }
@@ -593,6 +575,182 @@ export function compileInvocationInputTransportV2(
     contract,
     contractHash: contract.contractHash,
     canonicalBytes: canonicalJsonStringify(contract),
+  });
+}
+
+/**
+ * Pure shadow projection. It accepts only ProductSpec, a delivery selection,
+ * and one action identity; it cannot accept execution or release authority.
+ */
+export function compileInvocationInputTransportV2(
+  input: unknown,
+): InvocationInputTransportCompilationResultV2 {
+  let snapshot: unknown;
+  try {
+    snapshot = boundedSnapshot(input, COMPILER_INPUT_MAX_BYTES);
+  } catch (error) {
+    return singleRejected(
+      "INVOCATION_TRANSPORT_V2_INPUT_INVALID",
+      "/",
+      errorMessage(error),
+    );
+  }
+  const outer = CompilerInputV2Schema.safeParse(snapshot);
+  if (!outer.success) {
+    return rejected(diagnosticsFromZod(
+      "INVOCATION_TRANSPORT_V2_INPUT_INVALID",
+      outer.error,
+    ));
+  }
+  const unsupported = unsupportedInputDiagnostic(
+    outer.data.productSpec,
+    outer.data.actionRef,
+  );
+  if (unsupported) return rejected([unsupported]);
+
+  const productSpecResult = ProductSpecV2Schema.safeParse(outer.data.productSpec);
+  if (!productSpecResult.success) {
+    return rejected(diagnosticsFromZod(
+      "INVOCATION_TRANSPORT_V2_PRODUCT_SPEC_INVALID",
+      productSpecResult.error,
+      "/productSpec",
+    ));
+  }
+  const productSpec = productSpecResult.data;
+  const action = productSpec.actions.find((candidate) => candidate.id === outer.data.actionRef);
+  if (!action) {
+    return singleRejected(
+      "INVOCATION_TRANSPORT_V2_ACTION_UNRESOLVED",
+      "/actionRef",
+      `ProductSpecV2 has no action ${outer.data.actionRef}`,
+    );
+  }
+  if (
+    action.invocationInterface.kind !== "cli_command"
+    && action.invocationInterface.kind !== "http_request"
+  ) {
+    return singleRejected(
+      "INVOCATION_TRANSPORT_V2_INVOCATION_INTERFACE_UNSUPPORTED",
+      `/productSpec/actions/${productSpec.actions.indexOf(action)}/invocationInterface/kind`,
+      `InvocationInputTransportV2 supports only cli_command and http_request; observed ${action.invocationInterface.kind}`,
+    );
+  }
+
+  const verifiedSelection = exactSelection(productSpec, outer.data.deliverySelection);
+  if (verifiedSelection.status === "rejected") {
+    return rejected([verifiedSelection.diagnostic]);
+  }
+  return compileFromVerifiedAuthority(productSpec, verifiedSelection.selection, action);
+}
+
+/**
+ * Compiles the every-action transport set from one bounded ProductSpec snapshot
+ * and one freshly verified selection. This avoids reparsing the complete spec
+ * once per action while preserving the single-action compiler's exact output.
+ */
+export function compileInvocationInputTransportSetV2(
+  input: unknown,
+): InvocationInputTransportSetCompilationResultV2 {
+  let snapshot: unknown;
+  try {
+    snapshot = boundedSnapshot(input, COMPILER_INPUT_MAX_BYTES);
+  } catch (error) {
+    return recursivelyFreezeInvocationTransportV2({
+      status: "rejected" as const,
+      diagnostics: [diagnostic(
+        "INVOCATION_TRANSPORT_V2_INPUT_INVALID",
+        "/",
+        errorMessage(error),
+      )],
+    });
+  }
+  const outer = SetCompilerInputV2Schema.safeParse(snapshot);
+  if (!outer.success) {
+    return recursivelyFreezeInvocationTransportV2({
+      status: "rejected" as const,
+      diagnostics: diagnosticsFromZod(
+        "INVOCATION_TRANSPORT_V2_INPUT_INVALID",
+        outer.error,
+      ),
+    });
+  }
+  const productSpecResult = ProductSpecV2Schema.safeParse(outer.data.productSpec);
+  if (!productSpecResult.success) {
+    return recursivelyFreezeInvocationTransportV2({
+      status: "rejected" as const,
+      diagnostics: diagnosticsFromZod(
+        "INVOCATION_TRANSPORT_V2_PRODUCT_SPEC_INVALID",
+        productSpecResult.error,
+        "/productSpec",
+      ),
+    });
+  }
+  const productSpec = productSpecResult.data;
+  const verifiedSelection = exactSelection(productSpec, outer.data.deliverySelection);
+  if (verifiedSelection.status === "rejected") {
+    return recursivelyFreezeInvocationTransportV2({
+      status: "rejected" as const,
+      diagnostics: [verifiedSelection.diagnostic],
+    });
+  }
+
+  const contracts: InvocationInputTransportV2[] = [];
+  let retainedCanonicalBytes = 2;
+  const entityFieldById = new Map(productSpec.entities.flatMap((entity) =>
+    entity.fields.map((field) => [field.id, field] as const)));
+  for (const action of [...productSpec.actions].sort((left, right) =>
+    left.id < right.id ? -1 : left.id > right.id ? 1 : 0)) {
+    const result = compileFromVerifiedAuthority(
+      productSpec,
+      verifiedSelection.selection,
+      action,
+      entityFieldById,
+    );
+    if (result.status === "rejected") {
+      return recursivelyFreezeInvocationTransportV2({
+        status: "rejected" as const,
+        diagnostics: result.diagnostics,
+      });
+    }
+    retainedCanonicalBytes += Buffer.byteLength(result.canonicalBytes, "utf8")
+      + (contracts.length === 0 ? 0 : 1);
+    if (retainedCanonicalBytes > CONTRACT_SET_MAX_BYTES) {
+      return recursivelyFreezeInvocationTransportV2({
+        status: "rejected" as const,
+        diagnostics: [diagnostic(
+          "INVOCATION_TRANSPORT_V2_CONTRACT_INVALID",
+          "/contracts",
+          `Invocation transport set exceeds ${CONTRACT_SET_MAX_BYTES} canonical bytes`,
+        )],
+      });
+    }
+    contracts.push(result.contract);
+  }
+
+  const canonicalBytes = canonicalJsonStringify(contracts);
+  if (Buffer.byteLength(canonicalBytes, "utf8") > CONTRACT_SET_MAX_BYTES) {
+    return recursivelyFreezeInvocationTransportV2({
+      status: "rejected" as const,
+      diagnostics: [diagnostic(
+        "INVOCATION_TRANSPORT_V2_CONTRACT_INVALID",
+        "/contracts",
+        `Invocation transport set exceeds ${CONTRACT_SET_MAX_BYTES} canonical bytes`,
+      )],
+    });
+  }
+  const frozenContracts = recursivelyFreezeInvocationTransportV2(contracts);
+  return recursivelyFreezeInvocationTransportV2({
+    status: "shadow_compiled" as const,
+    diagnostics: EMPTY_DIAGNOSTICS,
+    contracts: frozenContracts,
+    contractSetHash: hashCanonicalJson({
+      schema: "setfarm.invocation-input-transport-set-hash.v2",
+      contracts: frozenContracts.map((contract) => ({
+        actionRef: contract.actionRef,
+        contractHash: contract.contractHash,
+      })),
+    }),
+    canonicalBytes,
   });
 }
 
