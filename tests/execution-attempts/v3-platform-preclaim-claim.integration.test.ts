@@ -36,6 +36,7 @@ test("claimStep publishes one normal v3 platform-preclaim terminal transition", 
           repo,
           stack_pack_id: "vite-react-web-app",
           tech_stack: "vite-react",
+          product_semantics_version: "v2",
           task: "Prove one preclaim terminal owner",
         })}, 'v3', ${releaseSha}, ${"8".repeat(64)}, ${releaseAdmissionHash}
       )

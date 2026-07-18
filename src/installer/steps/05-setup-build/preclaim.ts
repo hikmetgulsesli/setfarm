@@ -600,6 +600,17 @@ function packetFailureDetail(error: unknown): string {
   return `SETUP_PACKET_UNEXPECTED: ${String((error as Error)?.message || error)}`.slice(0, 4_000);
 }
 
+function setupBuildPacketOperationalFailureCode(
+  error: SetupBuildPacketError,
+): SetupBuildPacketError["code"] {
+  // Product Semantics is part of the setup packet protocol boundary. Keep the
+  // specific producer diagnostic, but terminate through the immutable v1
+  // authority tuple instead of inventing an unregistered cause identity.
+  return error.code === "SETUP_PACKET_SEMANTICS_VERSION_MISMATCH"
+    ? "SETUP_PACKET_PROTOCOL_MISMATCH"
+    : error.code;
+}
+
 async function compileSetupBuildProductPacket(
   ctx: ClaimContext,
   repo: string,
@@ -740,7 +751,7 @@ async function compileSetupBuildProductPacket(
         workflowStepId: "setup-build",
         boundary: "product_compiler.setup_build_packet",
         failureClass: "contract_invalid",
-        failureCode: error.code,
+        failureCode: setupBuildPacketOperationalFailureCode(error),
       } : undefined,
     );
   }
@@ -767,9 +778,9 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
       {
         schema: "setfarm.operational-failure-cause.v1",
         workflowStepId: "setup-build",
-        boundary: "product_compiler.semantics_version_dispatch",
+        boundary: "product_compiler.setup_build_packet",
         failureClass: "contract_invalid",
-        failureCode: "SETUP_PACKET_SEMANTICS_VERSION_MISMATCH",
+        failureCode: "SETUP_PACKET_PROTOCOL_MISMATCH",
       },
     );
   }
