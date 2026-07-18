@@ -24,6 +24,9 @@ import {
 } from "./common-v1.js";
 import { ControlSlotIdSchema } from "./common-v2.js";
 import {
+  hashInvocationInputTransportMembershipV2,
+} from "./invocation-input-transport-set-v2.js";
+import {
   STACK_SEMANTIC_SOURCE_RULES_CATALOG_VERSION_V1,
   SemanticSourceAccessPolicyV1Schema,
   SemanticSourceCardinalityV1Schema,
@@ -638,13 +641,7 @@ export type InvocationTransportIntentBindingV2 = z.infer<
 export function hashInvocationTransportIntentBindingsV2(
   bindings: readonly InvocationTransportIntentBindingV2[],
 ): string {
-  return hashCanonicalJson({
-    schema: "setfarm.invocation-input-transport-set-hash.v2",
-    contracts: bindings.map((binding) => ({
-      actionRef: binding.actionRef,
-      contractHash: binding.contractHash,
-    })),
-  });
+  return hashInvocationInputTransportMembershipV2(bindings);
 }
 
 const DeliverySelectionBindingV2Schema = z.object({

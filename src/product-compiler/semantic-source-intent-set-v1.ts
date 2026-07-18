@@ -1176,14 +1176,14 @@ export function compileSemanticSourceIntentSetV1(
     );
   }
   const transportBindings: InvocationTransportIntentBindingV2[] =
-    transportResult.contracts.map((contract) => ({
+    transportResult.contractSet.contracts.map((contract) => ({
       actionRef: contract.actionRef,
       transportKind: contract.kind,
       actionInvocationIntentHash: contract.actionInvocationIntentHash,
       contractHash: contract.contractHash,
     }));
   const transportSetHash = hashInvocationTransportIntentBindingsV2(transportBindings);
-  if (transportSetHash !== transportResult.contractSetHash) {
+  if (transportSetHash !== transportResult.membershipHash) {
     return singleRejected(
       "SEMANTIC_SOURCE_INTENT_V1_INVOCATION_TRANSPORT_REJECTED",
       "/productSpec/actions",
@@ -1195,14 +1195,14 @@ export function compileSemanticSourceIntentSetV1(
     productSpec,
     selection,
     stories,
-    transportContracts: transportResult.contracts,
+    transportContracts: transportResult.contractSet.contracts,
   });
   if (subjectResult.status === "rejected") return rejected(subjectResult.diagnostics);
   const intentResult = deriveIntents({
     subjects: subjectResult.subjects,
     rules: ruleSet.rules,
     ruleSetHash: ruleSet.ruleSetHash,
-    transportContracts: transportResult.contracts,
+    transportContracts: transportResult.contractSet.contracts,
   });
   if (intentResult.status === "rejected") return rejected(intentResult.diagnostics);
 

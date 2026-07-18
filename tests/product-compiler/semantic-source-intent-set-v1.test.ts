@@ -17,8 +17,6 @@ import {
 } from "../../src/product-compiler/semantic-source-intent-set-v1.js";
 import {
   ProductSpecV2Schema,
-  deriveActionInvocationEvidenceIdV2,
-  derivePersistenceRoundTripEvidenceIdV2,
   type ProductSpecV2,
 } from "../../src/product-compiler/schemas/product-spec-v2.js";
 import {
@@ -33,6 +31,7 @@ import {
 import {
   genuineNodeCliProductSpecV2,
   genuineNodeExpressApiProductSpecV2,
+  twoStoryNodeExpressApiProductSpecV2,
 } from "./fixtures/no-design-product-semantics-v2.js";
 
 const NO_DESIGN_CLOSURE = Object.freeze({
@@ -48,151 +47,6 @@ const API_INTENT_SET_HASH_GOLDEN_V1 =
 
 function compareUtf16(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
-}
-
-function twoStoryApiProductSpecV2(options: Readonly<{
-  memoryOnOriginalStory?: boolean;
-  crossStoryOptionalEvidence?: boolean;
-}> = {}): ProductSpecV2 {
-  const value: any = structuredClone(genuineNodeExpressApiProductSpecV2());
-  const requirementRefs = [...value.traceability.bindings[0].requirementRefs];
-  const noteAction = structuredClone(value.actions[0]);
-  noteAction.id = "ACT_CREATE_NOTE";
-  noteAction.name = "Create Note";
-  noteAction.affectedSurfaceRefs = ["SURF_NOTE_API"];
-  noteAction.invocationInterface.routeRef = "ROUTE_NOTES";
-  noteAction.stateDeltas[0].stateRef = "STATE_NOTES";
-  noteAction.observableEffects[0].id = "OBS_NOTE_CREATED";
-  noteAction.observableEffects[0].evidenceRef = "EVID_NOTE_CREATED";
-  const noteInvocationEvidence = deriveActionInvocationEvidenceIdV2(noteAction.id);
-  noteAction.evidenceRefs = ["EVID_NOTE_CREATED", noteInvocationEvidence]
-    .sort(compareUtf16);
-  noteAction.success.stateRefs = ["STATE_NOTES"];
-  noteAction.success.evidenceRefs = ["EVID_NOTE_CREATED", noteInvocationEvidence]
-    .sort(compareUtf16);
-
-  value.states.push({
-    id: "STATE_NOTES",
-    name: "Notes",
-    kind: "application",
-    initialValue: [],
-    invariants: ["Every note has text."],
-  });
-  value.routes.push({
-    id: "ROUTE_NOTES",
-    path: "/notes/:project",
-    rootSurfaceRef: "SURF_NOTE_API",
-    surfaceRefs: ["SURF_NOTE_API"],
-    entry: false,
-  });
-  value.surfaces.push({
-    id: "SURF_NOTE_API",
-    name: "Note API",
-    kind: "api",
-    routeRef: "ROUTE_NOTES",
-    required: true,
-    composition: { kind: "route_root" },
-  });
-  value.actions.push(noteAction);
-  value.evidencePredicates.push(
-    {
-      id: "EVID_NOTE_CREATED",
-      kind: "observable_outcome",
-      required: true,
-      subjectRef: "OBS_NOTE_CREATED",
-      capabilityRefs: [],
-      assertion: { operator: "passes" },
-    },
-    {
-      id: noteInvocationEvidence,
-      kind: "action_invocation",
-      required: true,
-      subjectRef: noteAction.id,
-      capabilityRefs: [],
-      assertion: { operator: "passes" },
-    },
-  );
-
-  const addedBindings: any[] = [
-    ["state", "STATE_NOTES"],
-    ["route", "ROUTE_NOTES"],
-    ["surface", "SURF_NOTE_API"],
-    ["action", noteAction.id],
-    ["evidence", "EVID_NOTE_CREATED"],
-    ["evidence", noteInvocationEvidence],
-    ["observable", "OBS_NOTE_CREATED"],
-  ].map(([semanticKind, semanticRef]) => ({
-    semanticKind,
-    semanticRef,
-    requirementRefs,
-  }));
-
-  if (options.memoryOnOriginalStory) {
-    const policyRef = "PERSIST_TASKS_MEMORY";
-    const originalAction = value.actions.find(
-      (action: any) => action.id === "ACT_CREATE_TASK",
-    )!;
-    const roundTripEvidence = derivePersistenceRoundTripEvidenceIdV2(
-      originalAction.id,
-      policyRef,
-    );
-    value.persistencePolicies.push({
-      id: policyRef,
-      kind: "memory",
-      owner: "server",
-      entityRefs: [],
-      durability: "session",
-      rehydration: { kind: "none" },
-    });
-    originalAction.persistenceEffects.push({
-      policyRef,
-      operation: "write",
-      payloadFields: [],
-      statePaths: [{ stateRef: "STATE_TASKS", path: "" }],
-    });
-    originalAction.success.persistenceRefs = [policyRef];
-    originalAction.evidenceRefs.push(roundTripEvidence);
-    originalAction.evidenceRefs.sort(compareUtf16);
-    originalAction.success.evidenceRefs.push(roundTripEvidence);
-    originalAction.success.evidenceRefs.sort(compareUtf16);
-    value.evidencePredicates.push({
-      id: roundTripEvidence,
-      kind: "persistence_round_trip",
-      required: true,
-      subjectRef: policyRef,
-      capabilityRefs: [],
-      assertion: { operator: "passes" },
-    });
-    addedBindings.push(
-      { semanticKind: "persistence", semanticRef: policyRef, requirementRefs },
-      { semanticKind: "evidence", semanticRef: roundTripEvidence, requirementRefs },
-    );
-  }
-
-  if (options.crossStoryOptionalEvidence) {
-    const optionalEvidenceRef = "EVID_OPTIONAL_CROSS";
-    noteAction.evidenceRefs.push(optionalEvidenceRef);
-    noteAction.evidenceRefs.sort(compareUtf16);
-    value.evidencePredicates.push({
-      id: optionalEvidenceRef,
-      kind: "runtime",
-      required: false,
-      subjectRef: "OBS_TASK_CREATED",
-      capabilityRefs: [],
-      assertion: { operator: "passes" },
-    });
-    addedBindings.push({
-      semanticKind: "evidence",
-      semanticRef: optionalEvidenceRef,
-      requirementRefs,
-    });
-  }
-
-  value.traceability.bindings.push(...addedBindings);
-  value.traceability.bindings.sort((left: any, right: any) =>
-    compareUtf16(left.semanticKind, right.semanticKind)
-    || compareUtf16(left.semanticRef, right.semanticRef));
-  return ProductSpecV2Schema.parse(value);
 }
 
 function selectionFor(
@@ -372,8 +226,8 @@ describe("SemanticSourceIntentSetV1 shadow compiler", () => {
     assert.equal(setResult.status, "shadow_compiled");
     assert.equal(single.status, "shadow_compiled");
     if (setResult.status !== "shadow_compiled" || single.status !== "shadow_compiled") return;
-    assert.equal(setResult.contracts.length, 1);
-    assert.deepEqual(setResult.contracts[0], single.contract);
+    assert.equal(setResult.contractSet.contracts.length, 1);
+    assert.deepEqual(setResult.contractSet.contracts[0], single.contract);
     assertDeepFrozen(setResult);
   });
 
@@ -443,7 +297,9 @@ describe("SemanticSourceIntentSetV1 shadow compiler", () => {
   });
 
   it("derives persistence absence per story and rejects cross-story optional evidence", () => {
-    const mixed = twoStoryApiProductSpecV2({ memoryOnOriginalStory: true });
+    const mixed = twoStoryNodeExpressApiProductSpecV2({
+      memoryOnOriginalStory: true,
+    });
     const mixedIntentSet = compileFor(mixed, "node-express-api").intentSet;
     const persistenceIntents = mixedIntentSet.intents.filter((intent) =>
       intent.responsibility === "persistence_exemption");
@@ -461,7 +317,9 @@ describe("SemanticSourceIntentSetV1 shadow compiler", () => {
     assert.equal(new Set(persistenceIntents.map((intent) =>
       intent.semanticScope.scopeRef)).size, 2);
 
-    const crossStory = twoStoryApiProductSpecV2({ crossStoryOptionalEvidence: true });
+    const crossStory = twoStoryNodeExpressApiProductSpecV2({
+      crossStoryOptionalEvidence: true,
+    });
     const crossStoryResult = compileSemanticSourceIntentSetV1({
       productSpec: crossStory,
       deliverySelection: selectionFor(crossStory, "node-express-api"),

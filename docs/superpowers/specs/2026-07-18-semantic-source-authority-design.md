@@ -294,6 +294,27 @@ future executable evidence-adapter support signature; that join remains a
 separate Registry/release blocker. Until the transport fresh-verifies and the
 operational join exists, CLI/API production selection remains blocked.
 
+Every action-level transport is published through one strict
+`InvocationInputTransportSetV2` artifact. The set carries every full contract in
+canonical action order, binds the exact ProductSpec and delivery-selection
+hashes, is limited to 3 MiB canonical payload so a semantic-artifact envelope
+still fits the 4 MiB store boundary, and remains `productionUse: forbidden`.
+It exposes two non-interchangeable identities: `membershipHash` binds the
+canonical ordered `{actionRef, contractHash}` projection used by semantic
+consumers, while `contractSetHash` binds the complete wire artifact except its
+own hash field. The membership projection retains the previously committed
+`setfarm.invocation-input-transport-set-hash.v2` domain and
+`SemanticSourceIntentSetV1.authority.invocationTransportSet.setHash` wire field;
+renaming either requires a new semantic artifact version. The verifier's byte,
+node, depth, and work budgets compose the
+compiler-input budget with the maximum artifact budget, so compiler-admitted
+authority cannot become unverifiable merely because the candidate is added to
+the verification envelope.
+Its verifier accepts no caller contracts or set membership; it freshly
+recompiles the every-action set and requires canonical equality. Consumers may
+bind the set membership hash but cannot reconstruct a missing contract from that
+projection.
+
 ## ProductDeliveryProfileV2
 
 V2 preserves the exact V1 delivery/topology/evidence bindings and adds:

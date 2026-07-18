@@ -10,6 +10,7 @@ import { z } from "zod";
 import {
   DEFAULT_CANONICAL_JSON_BOUNDED_WORK_LIMITS,
   canonicalJsonBytesBounded,
+  type CanonicalJsonBoundedLimits,
 } from "./bounded-canonical-json.js";
 import { canonicalJsonStringify, hashCanonicalJson } from "./canonical-json.js";
 import {
@@ -39,14 +40,50 @@ import {
   type InvocationInputTransportV2,
   type InvocationTransportValueTypeV2,
 } from "./schemas/invocation-input-transport-v2.js";
+import {
+  INVOCATION_INPUT_TRANSPORT_SET_ARTIFACT_TYPE_V2,
+  INVOCATION_INPUT_TRANSPORT_SET_BOUNDED_WORK_LIMITS_V2,
+  INVOCATION_INPUT_TRANSPORT_SET_MAX_CANONICAL_BYTES_V2,
+  INVOCATION_INPUT_TRANSPORT_SET_VERSION_V2,
+  InvocationInputTransportSetV2Schema,
+  hashInvocationInputTransportMembershipV2,
+  hashInvocationInputTransportSetV2,
+  recursivelyFreezeInvocationInputTransportSetV2,
+  type InvocationInputTransportSetV2,
+} from "./schemas/invocation-input-transport-set-v2.js";
 
 const COMPILER_INPUT_MAX_BYTES = 8 * 1024 * 1024;
 const VERIFIER_INPUT_MAX_BYTES = 12 * 1024 * 1024;
+const SET_VERIFIER_INPUT_MAX_BYTES = 16 * 1024 * 1024;
 const ENCODER_INPUT_MAX_BYTES = 8 * 1024 * 1024;
 const ENCODED_REQUEST_MAX_BYTES = 8 * 1024 * 1024;
-const CONTRACT_SET_MAX_BYTES = 4 * 1024 * 1024;
 const MAX_DIAGNOSTICS = 100;
 const EMPTY_DIAGNOSTICS = Object.freeze([]) as readonly [];
+
+/*
+ * Compiler admission already spends the default node/work authority on the
+ * ProductSpec + selection envelope. Set verification adds one freshly compiled
+ * artifact whose canonical payload is capped independently at 3 MiB. These
+ * limits are deliberately compositional: every compiler-admitted authority and
+ * every compiler-produced set remain verifier-admitted, while hostile combined
+ * inputs are still finitely bounded.
+ */
+const SET_VERIFIER_BOUNDED_WORK_LIMITS = Object.freeze({
+  maxDepth: Math.max(
+    DEFAULT_CANONICAL_JSON_BOUNDED_WORK_LIMITS.maxDepth,
+    INVOCATION_INPUT_TRANSPORT_SET_BOUNDED_WORK_LIMITS_V2.maxDepth + 1,
+  ),
+  maxNodes:
+    DEFAULT_CANONICAL_JSON_BOUNDED_WORK_LIMITS.maxNodes
+    + INVOCATION_INPUT_TRANSPORT_SET_BOUNDED_WORK_LIMITS_V2.maxNodes
+    + 4,
+  maxContainerEntries:
+    DEFAULT_CANONICAL_JSON_BOUNDED_WORK_LIMITS.maxContainerEntries,
+  maxWorkUnits:
+    DEFAULT_CANONICAL_JSON_BOUNDED_WORK_LIMITS.maxWorkUnits
+    + INVOCATION_INPUT_TRANSPORT_SET_BOUNDED_WORK_LIMITS_V2.maxWorkUnits
+    + (1024 * 1024),
+});
 
 const RESPONSE_DECODER_POLICY_V2 = Object.freeze({
   utf8Decoding: "fatal_exact_roundtrip" as const,
@@ -88,6 +125,12 @@ const CompilerInputV2Schema = z.object({
 const SetCompilerInputV2Schema = z.object({
   productSpec: z.unknown(),
   deliverySelection: z.unknown(),
+}).strict();
+
+const SetVerificationInputV2Schema = z.object({
+  productSpec: z.unknown(),
+  deliverySelection: z.unknown(),
+  candidate: z.unknown(),
 }).strict();
 
 const VerificationInputV2Schema = z.object({
@@ -153,7 +196,8 @@ export type InvocationInputTransportSetCompilationResultV2 =
   | Readonly<{
       status: "shadow_compiled";
       diagnostics: readonly [];
-      contracts: readonly Readonly<InvocationInputTransportV2>[];
+      contractSet: Readonly<InvocationInputTransportSetV2>;
+      membershipHash: string;
       contractSetHash: string;
       canonicalBytes: string;
     }>
@@ -162,10 +206,15 @@ export type InvocationInputTransportSetCompilationResultV2 =
       diagnostics: readonly InvocationInputTransportCompilationDiagnosticV2[];
     }>;
 
-function boundedSnapshot(value: unknown, maxBytes: number): unknown {
+function boundedSnapshot(
+  value: unknown,
+  maxBytes: number,
+  workLimits: Omit<CanonicalJsonBoundedLimits, "maxBytes"> =
+    DEFAULT_CANONICAL_JSON_BOUNDED_WORK_LIMITS,
+): unknown {
   const bytes = canonicalJsonBytesBounded(value, {
     maxBytes,
-    ...DEFAULT_CANONICAL_JSON_BOUNDED_WORK_LIMITS,
+    ...workLimits,
   });
   return JSON.parse(bytes.toString("utf8"));
 }
@@ -714,42 +763,70 @@ export function compileInvocationInputTransportSetV2(
     }
     retainedCanonicalBytes += Buffer.byteLength(result.canonicalBytes, "utf8")
       + (contracts.length === 0 ? 0 : 1);
-    if (retainedCanonicalBytes > CONTRACT_SET_MAX_BYTES) {
+    if (
+      retainedCanonicalBytes
+      > INVOCATION_INPUT_TRANSPORT_SET_MAX_CANONICAL_BYTES_V2
+    ) {
       return recursivelyFreezeInvocationTransportV2({
         status: "rejected" as const,
         diagnostics: [diagnostic(
           "INVOCATION_TRANSPORT_V2_CONTRACT_INVALID",
           "/contracts",
-          `Invocation transport set exceeds ${CONTRACT_SET_MAX_BYTES} canonical bytes`,
+          `Invocation transport set exceeds ${INVOCATION_INPUT_TRANSPORT_SET_MAX_CANONICAL_BYTES_V2} canonical bytes`,
         )],
       });
     }
     contracts.push(result.contract);
   }
 
-  const canonicalBytes = canonicalJsonStringify(contracts);
-  if (Buffer.byteLength(canonicalBytes, "utf8") > CONTRACT_SET_MAX_BYTES) {
+  const withoutHash = {
+    schema: INVOCATION_INPUT_TRANSPORT_SET_ARTIFACT_TYPE_V2,
+    contractSetVersion: INVOCATION_INPUT_TRANSPORT_SET_VERSION_V2,
+    readiness: "shadow" as const,
+    productionUse: "forbidden" as const,
+    productSpecHash: verifiedSelection.selection.productSpecHash,
+    deliverySelectionHash: hashProductDeliverySelectionV2(verifiedSelection.selection),
+    contractCount: contracts.length,
+    contracts,
+    membershipHash: hashInvocationInputTransportMembershipV2(contracts),
+  };
+  const parsedContractSet = InvocationInputTransportSetV2Schema.safeParse({
+    ...withoutHash,
+    contractSetHash: hashInvocationInputTransportSetV2(withoutHash),
+  });
+  if (!parsedContractSet.success) {
+    return recursivelyFreezeInvocationTransportV2({
+      status: "rejected" as const,
+      diagnostics: diagnosticsFromZod(
+        "INVOCATION_TRANSPORT_V2_CONTRACT_INVALID",
+        parsedContractSet.error,
+        "/contractSet",
+      ),
+    });
+  }
+  const canonicalBytes = canonicalJsonStringify(parsedContractSet.data);
+  if (
+    Buffer.byteLength(canonicalBytes, "utf8")
+    > INVOCATION_INPUT_TRANSPORT_SET_MAX_CANONICAL_BYTES_V2
+  ) {
     return recursivelyFreezeInvocationTransportV2({
       status: "rejected" as const,
       diagnostics: [diagnostic(
         "INVOCATION_TRANSPORT_V2_CONTRACT_INVALID",
         "/contracts",
-        `Invocation transport set exceeds ${CONTRACT_SET_MAX_BYTES} canonical bytes`,
+        `Invocation transport set exceeds ${INVOCATION_INPUT_TRANSPORT_SET_MAX_CANONICAL_BYTES_V2} canonical bytes`,
       )],
     });
   }
-  const frozenContracts = recursivelyFreezeInvocationTransportV2(contracts);
-  return recursivelyFreezeInvocationTransportV2({
+  const contractSet = recursivelyFreezeInvocationInputTransportSetV2(
+    parsedContractSet.data,
+  );
+  return recursivelyFreezeInvocationInputTransportSetV2({
     status: "shadow_compiled" as const,
     diagnostics: EMPTY_DIAGNOSTICS,
-    contracts: frozenContracts,
-    contractSetHash: hashCanonicalJson({
-      schema: "setfarm.invocation-input-transport-set-hash.v2",
-      contracts: frozenContracts.map((contract) => ({
-        actionRef: contract.actionRef,
-        contractHash: contract.contractHash,
-      })),
-    }),
+    contractSet,
+    membershipHash: contractSet.membershipHash,
+    contractSetHash: contractSet.contractSetHash,
     canonicalBytes,
   });
 }
@@ -825,6 +902,91 @@ export function verifyInvocationInputTransportV2(
     status: "verified_shadow" as const,
     contract: reproduced.contract,
     contractHash: reproduced.contractHash,
+    canonicalBytes: reproduced.canonicalBytes,
+  });
+}
+
+export type InvocationInputTransportSetVerificationErrorCodeV2 =
+  | "INVOCATION_TRANSPORT_SET_V2_VERIFICATION_INPUT_INVALID"
+  | "INVOCATION_TRANSPORT_SET_V2_VERIFICATION_CANDIDATE_INVALID"
+  | "INVOCATION_TRANSPORT_SET_V2_VERIFICATION_REPRODUCTION_REJECTED"
+  | "INVOCATION_TRANSPORT_SET_V2_VERIFICATION_AUTHORITY_MISMATCH";
+
+export class InvocationInputTransportSetVerificationErrorV2 extends Error {
+  readonly code: InvocationInputTransportSetVerificationErrorCodeV2;
+
+  constructor(code: InvocationInputTransportSetVerificationErrorCodeV2, message: string) {
+    super(message);
+    this.name = "InvocationInputTransportSetVerificationErrorV2";
+    this.code = code;
+  }
+}
+
+export type VerifiedShadowInvocationInputTransportSetV2 = Readonly<{
+  status: "verified_shadow";
+  contractSet: Readonly<InvocationInputTransportSetV2>;
+  membershipHash: string;
+  contractSetHash: string;
+  canonicalBytes: string;
+}>;
+
+/** Reproduces the complete set from fresh ProductSpec and selection authority. */
+export function verifyInvocationInputTransportSetV2(
+  input: unknown,
+): VerifiedShadowInvocationInputTransportSetV2 {
+  let snapshot: unknown;
+  try {
+    snapshot = boundedSnapshot(
+      input,
+      SET_VERIFIER_INPUT_MAX_BYTES,
+      SET_VERIFIER_BOUNDED_WORK_LIMITS,
+    );
+  } catch (error) {
+    throw new InvocationInputTransportSetVerificationErrorV2(
+      "INVOCATION_TRANSPORT_SET_V2_VERIFICATION_INPUT_INVALID",
+      errorMessage(error),
+    );
+  }
+  const outer = SetVerificationInputV2Schema.safeParse(snapshot);
+  if (!outer.success) {
+    throw new InvocationInputTransportSetVerificationErrorV2(
+      "INVOCATION_TRANSPORT_SET_V2_VERIFICATION_INPUT_INVALID",
+      outer.error.issues[0]?.message ?? "Transport-set verification input is invalid",
+    );
+  }
+  const candidate = InvocationInputTransportSetV2Schema.safeParse(
+    outer.data.candidate,
+  );
+  if (!candidate.success) {
+    throw new InvocationInputTransportSetVerificationErrorV2(
+      "INVOCATION_TRANSPORT_SET_V2_VERIFICATION_CANDIDATE_INVALID",
+      candidate.error.issues[0]?.message ?? "Transport-set candidate is invalid",
+    );
+  }
+  const reproduced = compileInvocationInputTransportSetV2({
+    productSpec: outer.data.productSpec,
+    deliverySelection: outer.data.deliverySelection,
+  });
+  if (reproduced.status !== "shadow_compiled") {
+    throw new InvocationInputTransportSetVerificationErrorV2(
+      "INVOCATION_TRANSPORT_SET_V2_VERIFICATION_REPRODUCTION_REJECTED",
+      reproduced.diagnostics[0]?.message ?? "Fresh transport-set reproduction was rejected",
+    );
+  }
+  if (
+    canonicalJsonStringify(reproduced.contractSet)
+    !== canonicalJsonStringify(candidate.data)
+  ) {
+    throw new InvocationInputTransportSetVerificationErrorV2(
+      "INVOCATION_TRANSPORT_SET_V2_VERIFICATION_AUTHORITY_MISMATCH",
+      "Transport-set candidate does not equal fresh every-action ProductSpec/profile/codec authority",
+    );
+  }
+  return recursivelyFreezeInvocationInputTransportSetV2({
+    status: "verified_shadow" as const,
+    contractSet: reproduced.contractSet,
+    membershipHash: reproduced.membershipHash,
+    contractSetHash: reproduced.contractSetHash,
     canonicalBytes: reproduced.canonicalBytes,
   });
 }
