@@ -581,6 +581,44 @@ identity; it does not symlink the worktree. `CandidateLaunchTargetV2` binds that
 bundle, selected profile/stack/launcher, exact module/argv target, export name,
 module hash, transport hash and launch ABI.
 
+The CLI target fixes an empty Node-option tuple, the exact bundled module as the
+first module argument, and transport-provided user arguments only after that
+module. The duplicated module-argument locator must equal the content-addressed
+module ref. Thus “argv owned by transport” cannot leave the actual Node module
+position or ambient Node options implicit.
+
+The candidate bundle does not expand the already-observed
+`CanonicalRuntimeTreeV2` profile enum and never launders the `dependencies`
+profile into a whole application tree. Its logical root is exactly
+`candidate-bundle` with mode `0555` and exactly three entries:
+`application`, `node_modules`, and `package.json`. `application` is a fresh
+`dist`-profile canonical tree; `node_modules` is a fresh `dependencies`-profile
+canonical tree; `package.json` is one exact read-only bundled-file ref. A
+domain-separated `bundleClosureHash` binds the exact root layout, both complete
+tree bindings and package file. Fresh verification enumerates the root and
+reproduces both every-and-only subtrees, so two subtree summaries cannot hide a
+fourth root entry. The application tree must exactly equal the build receipt's
+fresh `candidate-build-output` tree identity.
+
+Candidate dependency materialization has its own receipt because the platform
+release npm receipt fixes `payload/node_modules` as its output root. The
+candidate receipt instead fixes `candidate-bundle/node_modules` and binds the
+candidate lockfile, code-owned install recipe, exact npm identity, resolved
+package graph, produced dependency tree, package count, forbidden lifecycle
+scripts and exit code zero. Reusing the platform receipt with a different root
+or accepting only a caller-selected receipt-schema hash is invalid. The recipe
+embeds one exact code-owned npm config hash and one code-owned candidate receipt
+ABI-policy hash; both are versioned artifacts with literal hash goldens. The
+lockfile, observed npm identity, graph and produced tree remain candidate claims
+until the later private materializer/verifier reproduces them.
+
+These DTOs contain logical locators and content identities, never a mutable
+worktree path or an absolute attempt directory. Candidate build requires
+`sourceBefore === sourceAfter`, one exact selected topology build command,
+packet-envelope and topology hashes, exact environment/toolchain bindings, exit
+code zero and a bounded domain-separated receipt hash. Filesystem roots and held
+descriptors remain private records behind the later candidate verifier brand.
+
 For API, the launch target contains `HttpHandlerExportV2`: exact bundled module,
 export and handler ABI that the platform-owned server attaches to its handed-off
 socket. Existing `npm run start`, generic `app.listen(PORT)` and mutable preview
@@ -591,6 +629,12 @@ All three artifacts are bounded, canonical and content-addressed. The runtime
 bundle is fresh-verified immediately before launch. A runner accepts a branded
 candidate launch target plus an `ActivatedPlatformReleaseV2`; source revision
 alone cannot authorize ignored/stale generated output or dependencies.
+
+The schema-only slice exports strict candidate parsers and hash functions, but
+no `verify`, `issue`, `materialize`, `activate`, branded handle or runnable
+function. A self-consistent caller candidate is data until the later
+filesystem/toolchain verifier reproduces it. This prevents an early DTO from
+becoming production authority merely because its hash is internally consistent.
 
 ## EvidenceReceiptV2
 
@@ -612,7 +656,47 @@ Every attempted check returns a bounded `EvidenceOutcomeV2`. Pass/fail receipts
 and infrastructure/source rejections are durable typed variants; none disappear
 into logs or prose. Capture refs are content-addressed, media-typed and
 byte-bounded, never mutable filesystem paths. HTTP fetch uses
-`redirect:"error"`, explicit response/time limits and loopback origin equality.
+`redirect:"error"`, a code-owned 30-second request limit, a code-owned 4 MiB
+response limit and loopback origin equality. A successful response binds its
+body byte length; streaming reads abort after exactly limit-plus-one observed
+bytes and emit a typed `response_limit_exceeded` observation.
+
+The first outcome statuses map exactly to verdict and failure owner:
+`passed/pass/none`, `product_failed/fail/generated_product`,
+`source_rejected/fail/generated_source`, and the inconclusive
+`platform_rejected`, `infrastructure_failed`, `external_dependency_failed` and
+`cancelled` owners. Arbitrary diagnostic or agent prose is not a receipt field;
+bounded redacted capture artifacts carry diagnostics. Every completed product
+check binds an observed-value hash. A preflight refusal uses a typed
+`not_started` lifecycle with the same intended check kind and failure owner; it
+does not invent a process or service identity.
+
+The invocation-response hash equals the typed outcome hash, and the outcome's
+capture-envelope hashes equal every-and-only canonically ordered receipt capture
+refs. Each capture binds envelope hash, content hash, byte length, media type and
+a code-owned redaction-policy hash while explicitly forbidding a mutable locator.
+Source drift can only yield `source_rejected`; a passing HTTP outcome requires
+the exact loopback/no-redirect lifecycle and a 2xx response, and a passing
+process outcome requires normal exit. UTC timestamps use one millisecond format
+and must exactly equal the bounded integer duration.
+
+The receipt ABI policy binds an explicit schema revision, exact lifecycle shape
+signatures, exact cross-field relation identifiers, the complete Node signal
+catalog and disjoint name-only or number-only future-runtime signal fallbacks;
+an unverifiable name/number pair is never stored as one claim. A timeout observation uses
+the same literal 30-second value as its request policy. `start_failed` and
+`readiness_failed` both retain the held private socket-lease hash; a failure
+before lease allocation is `not_started`, not a fabricated service lifecycle.
+The policy hash used as `receiptSchemaHash` therefore changes when these ABI
+shapes or relations change instead of hashing only a coarse receipt label.
+
+An HTTP product failure is not restricted to a returned non-2xx response. A
+typed start failure, readiness failure, timeout, connection failure, rejected
+redirect or response-limit observation can all belong to `generated_product`
+when the code-owned runner proves that owner. The same transport symptom is not
+silently relabelled infrastructure merely to satisfy the receipt schema; the
+later verified adapter/runner owns attribution and the receipt preserves its
+typed lifecycle evidence.
 
 The receipt never embeds secrets, ambient environment, agent prose, or a
 generated-project-specific classifier. Passing evidence is valid only when the
@@ -626,6 +710,17 @@ requirements, not runnable support claims. They do not accept raw support
 signatures, runner refs, toolchain hashes, profile hashes, or adapter refs from
 a caller. This definition catalog is bound in the manifest because its exact
 module bytes already exist in the platform tree.
+
+The corresponding launcher/runner definition catalogs are also requirements-
+only in the schema slice. They may name the fixed launcher/runner/ABI references
+the platform must implement, but contain no caller-supplied module hash,
+toolchain hash or support signature. Each standalone subcatalog carries explicit
+`authorityKind:"requirements_only"` and `productionUse:"forbidden"` markers, so
+a future persistence consumer cannot detach it from the outer blocked catalog
+and mistake requirements for operational support. Until the real modules and exports exist,
+the operational catalog is canonically empty and marked `shadow_blocked`; it
+cannot materialize even a fixture entry. Receipt-schema binding is derived from
+the code-owned EvidenceReceiptV2 ABI policy, not a caller-provided schema hash.
 
 The runnable `EvidenceAdapterCatalogV2` is deliberately not a manifest input.
 It is materialized only after a branded verified release joins the definitions
