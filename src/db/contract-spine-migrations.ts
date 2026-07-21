@@ -39,6 +39,14 @@ import {
   verifyPreparationAuthorityV2Ledger,
 } from "./preparation-authority-v2-migration.js";
 import {
+  ARTIFACT_PUBLICATION_BATCH_PLAN_STATEMENTS,
+  applyArtifactPublicationBatchPlanLedger,
+  auditArtifactPublicationBatchPlanLedgerData,
+  configureArtifactPublicationBatchPlanMigrationErrorFactory,
+  detectArtifactPublicationBatchPlanLedger,
+  verifyArtifactPublicationBatchPlanLedger,
+} from "./artifact-publication-batch-plan-migration.js";
+import {
   createCanonicalOperationalEventV1,
   operationalEventDeliveryId,
   type OperationalEventDeliveryConsumerV1,
@@ -74,6 +82,15 @@ export class ContractSpineMigrationError extends Error {
   }
 }
 // SETFARM_SEMANTIC_MIGRATION_REGION:migration-error-contract:END
+
+// SETFARM_SEMANTIC_MIGRATION_REGION:migration-v26-error-binding:BEGIN
+configureArtifactPublicationBatchPlanMigrationErrorFactory((message, cause) =>
+  new ContractSpineMigrationError(
+    "MIGRATION_ADOPTION_MISMATCH",
+    message,
+    cause === undefined ? {} : { cause },
+  ));
+// SETFARM_SEMANTIC_MIGRATION_REGION:migration-v26-error-binding:END
 
 assertContractSpineSemanticMigrationSourceIntegrityWhenAvailable();
 
@@ -237,6 +254,16 @@ export type PreparationAuthorityV2LedgerRollbackResult = Readonly<{
   rollbackId: string;
   fromVersion: 25;
   targetVersion: 24;
+  targetReleaseSha: string;
+  rowsRewritten: 0;
+  appliedAt: string;
+}>;
+
+export type ArtifactPublicationBatchPlanLedgerRollbackResult = Readonly<{
+  schema: "setfarm.contract-spine-rollback.v1";
+  rollbackId: string;
+  fromVersion: 26;
+  targetVersion: 25;
   targetReleaseSha: string;
   rowsRewritten: 0;
   appliedAt: string;
@@ -11085,6 +11112,82 @@ export async function auditArtifactPublicationBatchLedgerData(
 }
 // SETFARM_SEMANTIC_MIGRATION_REGION:migration-v23-shared-ownership:END
 
+// SETFARM_SEMANTIC_MIGRATION_REGION:migration-v26-current-object-ownership:BEGIN
+async function verifyExactArtifactPublicationBatchPlanExtension(
+  sql: Sql | TransactionSql,
+): Promise<void> {
+  const rows = await sql.unsafe<Array<{ relation: string; trigger_name: string }>>(
+    `SELECT tgrelid::regclass::text AS relation, tgname AS trigger_name
+       FROM pg_trigger
+      WHERE NOT tgisinternal
+        AND tgrelid IN (
+          'public.artifact_publication_batches'::regclass,
+          'public.artifact_publication_batch_items'::regclass,
+          'public.artifact_publication_reservations'::regclass
+        )
+      ORDER BY relation, trigger_name`,
+  );
+  const expected = new Set([
+    "artifact_publication_batches:trg_artifact_publication_batches_complete",
+    "artifact_publication_batches:trg_artifact_publication_batches_immutable",
+    "artifact_publication_batches:trg_artifact_publication_batches_require_plan",
+    "artifact_publication_batch_items:trg_artifact_publication_batch_items_complete",
+    "artifact_publication_batch_items:trg_artifact_publication_batch_items_immutable",
+    "artifact_publication_reservations:trg_artifact_publication_batch_child_membership",
+    "artifact_publication_reservations:trg_artifact_publication_reservations_identity_immutable",
+  ]);
+  if (
+    rows.length !== expected.size
+    || rows.some((row) => !expected.has(`${row.relation}:${row.trigger_name}`))
+  ) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_ADOPTION_MISMATCH",
+      "current artifact publication batch and plan extension trigger set mismatch",
+    );
+  }
+}
+
+async function verifyCurrentContractSpineObjectOwnershipAtHead(
+  sql: Sql | TransactionSql,
+): Promise<void> {
+  const planLedger = await detectArtifactPublicationBatchPlanLedger(sql);
+  if (planLedger === "absent") {
+    await verifyCurrentContractSpineObjectOwnership(sql);
+    return;
+  }
+  if (planLedger === "partial") {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_ADOPTION_MISMATCH",
+      "current artifact publication batch-plan authority is partially installed",
+    );
+  }
+  const batchLedger = await detectArtifactPublicationBatchLedger(sql);
+  if (batchLedger !== "present") {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_ADOPTION_MISMATCH",
+      "artifact publication batch-plan authority has no exact migration-23 parent ledger",
+    );
+  }
+  await verifyCurrentArtifactPublicationReservationOwnership(sql);
+  // Migration 26 owns one additional constraint trigger on the v23 batch
+  // header. Historical v23 exact-shape audits remain unchanged; current-head
+  // ownership verifies required v23 objects plus the exact v26 extension.
+  try {
+    await verifyArtifactPublicationBatchLedger(sql, { requireExactCurrentShape: true });
+  } catch (error) {
+    if (
+      !(error instanceof ContractSpineMigrationError)
+      || error.code !== "MIGRATION_ADOPTION_MISMATCH"
+      || error.message !== "artifact publication batch authority trigger set mismatch"
+    ) {
+      throw error;
+    }
+  }
+  await verifyExactArtifactPublicationBatchPlanExtension(sql);
+  await verifyArtifactPublicationBatchPlanLedger(sql);
+}
+// SETFARM_SEMANTIC_MIGRATION_REGION:migration-v26-current-object-ownership:END
+
 // SETFARM_SEMANTIC_MIGRATION_REGION:migration-v24-artifact-store-authority:BEGIN
 export type ArtifactStoreAuthorityLedgerRollbackResult = Readonly<{
   schema: "setfarm.contract-spine-rollback.v1";
@@ -11986,6 +12089,17 @@ const migrations: readonly Migration[] = [
     verify: verifyPreparationAuthorityV2Ledger,
   },
   // SETFARM_SEMANTIC_MIGRATION_REGION:migration-v25-registration:END
+  // SETFARM_SEMANTIC_MIGRATION_REGION:migration-v26-registration:BEGIN
+  {
+    version: 26,
+    name: "026_artifact_publication_batch_plan_ledger",
+    statements: ARTIFACT_PUBLICATION_BATCH_PLAN_STATEMENTS,
+    implementationDigest: CONTRACT_SPINE_SEMANTIC_MIGRATION_DIGESTS[26],
+    apply: applyArtifactPublicationBatchPlanLedger,
+    detect: detectArtifactPublicationBatchPlanLedger,
+    verify: verifyArtifactPublicationBatchPlanLedger,
+  },
+  // SETFARM_SEMANTIC_MIGRATION_REGION:migration-v26-registration:END
 ];
 
 function assertSemanticMigrationDefinitionsAreSourceBound(): void {
@@ -12009,6 +12123,165 @@ function assertSemanticMigrationDefinitionsAreSourceBound(): void {
 }
 
 assertSemanticMigrationDefinitionsAreSourceBound();
+
+// SETFARM_SEMANTIC_MIGRATION_REGION:migration-v26-current-authority-audit:BEGIN
+export async function auditCurrentArtifactPublicationAuthorityLedgerData(
+  sql: Sql,
+): Promise<Readonly<{
+  schema: "setfarm.artifact-publication-authority-ledger-audit.v2";
+  scope: "database-ledger-only";
+  status: "verified";
+  batchPlanCount: number;
+  authority: null | Readonly<{
+    authorityKey: string;
+    authoritySchema: string;
+    authorityId: string;
+    rootLocatorHash: string;
+    state: "binding" | "ready" | "quarantined";
+    diagnostic: string | null;
+    createdAt: string;
+    updatedAt: string;
+  }>;
+}>> {
+  return sql.begin(async (transaction) => {
+    await transaction.unsafe("SELECT set_config('search_path', 'public', true)");
+    await transaction.unsafe("SELECT pg_advisory_xact_lock($1)", [
+      contractSpineMigrationLockKey,
+    ]);
+    try {
+      await transaction.unsafe(
+        `LOCK TABLE public.setfarm_schema_migrations,
+                    public.semantic_artifacts,
+                    public.artifact_capacity,
+                    public.artifact_publication_reservations,
+                    public.artifact_publication_batches,
+                    public.artifact_publication_batch_items,
+                    public.artifact_publication_batch_plans,
+                    public.artifact_publication_batch_plan_items,
+                    public.artifact_store_authorities,
+                    public.product_packets,
+                    public.claim_log,
+                    public.execution_attempts,
+                    public.v3_preparation_authorities_v2,
+                    public.v3_preparation_authority_claims_v2,
+                    public.v3_preparation_authority_attempts_v2 IN SHARE MODE`,
+      );
+    } catch (cause) {
+      if (cause instanceof Error && "code" in cause && cause.code === "42P01") {
+        throw new ContractSpineMigrationError(
+          "MIGRATION_INCOMPLETE",
+          "current artifact publication authority ledgers are not fully installed",
+          { cause },
+        );
+      }
+      throw cause;
+    }
+    await verifyExactContractSpineJournalAuthority(transaction);
+    const future = await transaction.unsafe<Array<{ version: number }>>(
+      `SELECT version
+         FROM public.setfarm_schema_migrations
+        WHERE version > 26
+        ORDER BY version
+        LIMIT 1`,
+    );
+    if (future[0]) {
+      throw new ContractSpineMigrationError(
+        "MIGRATION_UNKNOWN_VERSION",
+        `Migration ${future[0].version} is newer than the v26 current authority audit contract`,
+      );
+    }
+    await verifyCurrentContractSpineObjectOwnershipAtHead(transaction);
+    if (await detectArtifactStoreAuthorityLedger(transaction) !== "present") {
+      throw new ContractSpineMigrationError(
+        "MIGRATION_ADOPTION_MISMATCH",
+        "journaled artifact store authority ledger is not fully present",
+      );
+    }
+    if (await detectPreparationAuthorityV2Ledger(transaction) !== "present") {
+      throw new ContractSpineMigrationError(
+        "MIGRATION_ADOPTION_MISMATCH",
+        "journaled preparation authority v2 ledger is not fully present",
+      );
+    }
+    if (await detectArtifactPublicationBatchPlanLedger(transaction) !== "present") {
+      throw new ContractSpineMigrationError(
+        "MIGRATION_ADOPTION_MISMATCH",
+        "journaled artifact publication batch-plan ledger is not fully present",
+      );
+    }
+    const authority = await verifyArtifactStoreAuthorityLedgerSnapshot(transaction);
+    await verifyArtifactPublicationBatchLedger(transaction, { forceDataAudit: true });
+    await auditPreparationAuthorityV2LedgerData(transaction);
+    await auditArtifactPublicationBatchPlanLedgerData(transaction);
+    const expected = new Map(
+      migrations
+        .filter((candidate) => candidate.version >= 24 && candidate.version <= 26)
+        .map((candidate) => [candidate.version, candidate]),
+    );
+    const journal = await transaction.unsafe<Array<{
+      version: number;
+      name: string;
+      checksum: string;
+    }>>(
+      `SELECT version, name, checksum
+         FROM public.setfarm_schema_migrations
+        WHERE version BETWEEN 24 AND 26
+        ORDER BY version`,
+    );
+    if (
+      journal.length !== 3
+      || journal.some((entry) => {
+        const migration = expected.get(entry.version);
+        return !migration
+          || entry.name !== migration.name
+          || entry.checksum !== checksum(migration);
+      })
+    ) {
+      throw new ContractSpineMigrationError(
+        "MIGRATION_CHECKSUM_MISMATCH",
+        "current artifact publication authority journal differs from source",
+      );
+    }
+    await verifyExactContractSpineSourceChain(transaction, 26);
+    const planCounts = await transaction.unsafe<Array<{ count: number }>>(
+      "SELECT COUNT(*)::integer AS count FROM public.artifact_publication_batch_plans",
+    );
+    return Object.freeze({
+      schema: "setfarm.artifact-publication-authority-ledger-audit.v2" as const,
+      scope: "database-ledger-only" as const,
+      status: "verified" as const,
+      batchPlanCount: planCounts[0]?.count ?? 0,
+      authority: authority
+        ? Object.freeze({
+            authorityKey: authority.authority_key,
+            authoritySchema: authority.authority_schema,
+            authorityId: authority.authority_id,
+            rootLocatorHash: authority.root_locator_hash,
+            state: authority.state,
+            diagnostic: authority.diagnostic,
+            createdAt: new Date(authority.created_at).toISOString(),
+            updatedAt: new Date(authority.updated_at).toISOString(),
+          })
+        : null,
+    });
+  }) as Promise<Readonly<{
+    schema: "setfarm.artifact-publication-authority-ledger-audit.v2";
+    scope: "database-ledger-only";
+    status: "verified";
+    batchPlanCount: number;
+    authority: null | Readonly<{
+      authorityKey: string;
+      authoritySchema: string;
+      authorityId: string;
+      rootLocatorHash: string;
+      state: "binding" | "ready" | "quarantined";
+      diagnostic: string | null;
+      createdAt: string;
+      updatedAt: string;
+    }>;
+  }>>;
+}
+// SETFARM_SEMANTIC_MIGRATION_REGION:migration-v26-current-authority-audit:END
 
 // SETFARM_SEMANTIC_MIGRATION_REGION:migration-v25-current-artifact-store-audit:BEGIN
 export async function auditCurrentArtifactStoreAuthorityLedgerData(
@@ -12416,7 +12689,7 @@ async function planContractSpineMigrationsOnConnection(
     });
   }
   try {
-    await verifyCurrentContractSpineObjectOwnership(sql);
+    await verifyCurrentContractSpineObjectOwnershipAtHead(sql);
   } catch (error) {
     if (
       error instanceof ContractSpineMigrationError
@@ -12578,7 +12851,7 @@ export async function applyContractSpineMigrations(
         );
       }
 
-      await verifyCurrentContractSpineObjectOwnership(transaction);
+      await verifyCurrentContractSpineObjectOwnershipAtHead(transaction);
 
       if (options.releaseSha) {
         await transaction.unsafe(
@@ -12854,6 +13127,232 @@ export async function rollbackPreparationAuthorityV2LedgerToV24(
   }
 }
 // SETFARM_SEMANTIC_MIGRATION_REGION:migration-v25-rollback:END
+
+/**
+ * Roll migration 26 back only while no batch exists. A populated migration-23
+ * ledger cannot be recovered without its immutable tier plan, so evidence is
+ * never rewritten or discarded during rollback.
+ */
+// SETFARM_SEMANTIC_MIGRATION_REGION:migration-v26-rollback:BEGIN
+export async function rollbackArtifactPublicationBatchPlanLedgerToV25(
+  sql: Sql,
+  options: Readonly<{
+    targetReleaseSha: string;
+    lockTimeoutMs?: number;
+    statementTimeoutMs?: number;
+  }>,
+): Promise<ArtifactPublicationBatchPlanLedgerRollbackResult> {
+  if (!/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/.test(options.targetReleaseSha)) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_RELEASE_INVALID",
+      "Rollback target release SHA must be a full lowercase Git object hash",
+    );
+  }
+  const migration = migrations.find((candidate) => candidate.version === 26)!;
+  const expectedChecksum = checksum(migration);
+  const lockTimeoutMs = Math.max(1, Math.min(options.lockTimeoutMs ?? 5_000, 60_000));
+  const statementTimeoutMs = Math.max(
+    lockTimeoutMs,
+    Math.min(options.statementTimeoutMs ?? 30_000, 300_000),
+  );
+  try {
+    return await sql.begin(async (transaction) => {
+      await transaction.unsafe("SELECT set_config('lock_timeout', $1, true)", [
+        `${lockTimeoutMs}ms`,
+      ]);
+      await transaction.unsafe("SELECT set_config('statement_timeout', $1, true)", [
+        `${statementTimeoutMs}ms`,
+      ]);
+      await transaction.unsafe("SELECT set_config('search_path', 'public', true)");
+      await transaction.unsafe("SELECT pg_advisory_xact_lock($1)", [
+        contractSpineMigrationLockKey,
+      ]);
+      const future = await transaction.unsafe<Array<{ version: number }>>(
+        `SELECT version FROM public.setfarm_schema_migrations
+          WHERE version > 26 ORDER BY version LIMIT 1`,
+      );
+      if (future[0]) {
+        throw new ContractSpineMigrationError(
+          "MIGRATION_UNKNOWN_VERSION",
+          `Migration ${future[0].version} must be rolled back before migration 26`,
+        );
+      }
+      await verifyExactContractSpineJournalAuthority(transaction);
+      const journal = await transaction.unsafe<Array<{
+        name: string;
+        checksum: string;
+        release_sha: string | null;
+        applied_at: Date | string;
+      }>>(
+        `SELECT name, checksum, release_sha, applied_at
+           FROM public.setfarm_schema_migrations
+          WHERE version = 26
+          FOR UPDATE`,
+      );
+      if (journal[0]?.name !== migration.name || journal[0]?.checksum !== expectedChecksum) {
+        throw new ContractSpineMigrationError(
+          "MIGRATION_CHECKSUM_MISMATCH",
+          "Migration 26 is absent or differs from the rollback source contract",
+        );
+      }
+      await verifyExactContractSpineSourceChain(transaction, 26);
+      if (await detectArtifactPublicationBatchPlanLedger(transaction) !== "present") {
+        throw new ContractSpineMigrationError(
+          "MIGRATION_ADOPTION_MISMATCH",
+          "Migration 26 journaled objects are not fully present",
+        );
+      }
+      await verifyArtifactPublicationBatchPlanLedger(transaction);
+      await transaction.unsafe(
+        `LOCK TABLE public.artifact_publication_batch_plan_items,
+                    public.artifact_publication_batch_plans,
+                    public.artifact_publication_batch_items,
+                    public.artifact_publication_batches IN ACCESS EXCLUSIVE MODE`,
+      );
+      await verifyArtifactPublicationBatchPlanLedger(transaction);
+      const counts = await transaction.unsafe<Array<{
+        batches: number;
+        plans: number;
+        plan_items: number;
+      }>>(
+        `SELECT
+           (SELECT COUNT(*)::integer FROM public.artifact_publication_batches) AS batches,
+           (SELECT COUNT(*)::integer FROM public.artifact_publication_batch_plans) AS plans,
+           (SELECT COUNT(*)::integer FROM public.artifact_publication_batch_plan_items) AS plan_items`,
+      );
+      if (
+        counts[0]?.batches !== 0
+        || counts[0]?.plans !== 0
+        || counts[0]?.plan_items !== 0
+      ) {
+        throw new ContractSpineMigrationError(
+          "MIGRATION_INCOMPLETE",
+          "Migration 26 rollback refuses to erase batch recovery-plan provenance; roll forward instead",
+        );
+      }
+
+      await transaction.unsafe(
+        "DROP TRIGGER trg_artifact_publication_batches_require_plan ON public.artifact_publication_batches",
+      );
+      await transaction.unsafe(
+        "DROP TRIGGER trg_artifact_publication_batch_plan_items_no_truncate ON public.artifact_publication_batch_plan_items",
+      );
+      await transaction.unsafe(
+        "DROP TRIGGER trg_artifact_publication_batch_plan_items_immutable ON public.artifact_publication_batch_plan_items",
+      );
+      await transaction.unsafe(
+        "DROP TRIGGER trg_artifact_publication_batch_plan_items_complete ON public.artifact_publication_batch_plan_items",
+      );
+      await transaction.unsafe(
+        "DROP TRIGGER trg_artifact_publication_batch_plans_no_truncate ON public.artifact_publication_batch_plans",
+      );
+      await transaction.unsafe(
+        "DROP TRIGGER trg_artifact_publication_batch_plans_immutable ON public.artifact_publication_batch_plans",
+      );
+      await transaction.unsafe(
+        "DROP TRIGGER trg_artifact_publication_batch_plans_complete ON public.artifact_publication_batch_plans",
+      );
+      await transaction.unsafe("DROP TABLE public.artifact_publication_batch_plan_items");
+      await transaction.unsafe("DROP TABLE public.artifact_publication_batch_plans");
+      await transaction.unsafe(
+        "DROP FUNCTION public.setfarm_forbid_artifact_publication_batch_plan_mutation()",
+      );
+      await transaction.unsafe(
+        "DROP FUNCTION public.setfarm_validate_artifact_publication_batch_plan()",
+      );
+      if (await detectArtifactPublicationBatchPlanLedger(transaction) !== "absent") {
+        throw new ContractSpineMigrationError(
+          "MIGRATION_ADOPTION_MISMATCH",
+          "Migration 26 objects remain after empty rollback",
+        );
+      }
+      for (const retained of migrations.filter((candidate) => candidate.version <= 25)) {
+        if (await retained.detect(transaction) !== "present") {
+          throw new ContractSpineMigrationError(
+            "MIGRATION_ADOPTION_MISMATCH",
+            `Retained migration ${retained.version} is incomplete during migration 26 rollback`,
+          );
+        }
+        await retained.verify(transaction);
+      }
+      await verifyCurrentContractSpineObjectOwnership(transaction);
+
+      await ensureExactContractSpineRollbackLedger(transaction);
+      await transaction.unsafe(
+        "LOCK TABLE public.setfarm_schema_migration_rollbacks IN SHARE ROW EXCLUSIVE MODE",
+      );
+      await ensureExactContractSpineRollbackLedger(transaction);
+      const appliedAtRows = await transaction.unsafe<Array<{ applied_at: Date | string }>>(
+        "SELECT clock_timestamp() AS applied_at",
+      );
+      const appliedAt = new Date(appliedAtRows[0]!.applied_at);
+      const rollbackId = `RBK_${hashCanonicalJson({
+        schema: "setfarm.contract-spine-rollback-identity.v1",
+        sourceMigration: {
+          version: 26,
+          name: journal[0]!.name,
+          checksum: journal[0]!.checksum,
+          releaseSha: journal[0]!.release_sha,
+          appliedAt: new Date(journal[0]!.applied_at).toISOString(),
+        },
+        targetVersion: 25,
+        targetReleaseSha: options.targetReleaseSha,
+      })}`;
+      const receipt = await transaction.unsafe<Array<{ rollback_id: string }>>(
+        `INSERT INTO public.setfarm_schema_migration_rollbacks (
+           rollback_id, from_version, target_version, target_release_sha,
+           rows_rewritten, applied_at
+         ) VALUES ($1, 26, 25, $2, 0, $3)
+         RETURNING rollback_id`,
+        [rollbackId, options.targetReleaseSha, appliedAt],
+      );
+      if (receipt.length !== 1 || receipt[0]?.rollback_id !== rollbackId) {
+        throw new ContractSpineMigrationError(
+          "MIGRATION_ADOPTION_MISMATCH",
+          "Migration 26 rollback receipt was not durably inserted",
+        );
+      }
+      const removed = await transaction.unsafe<Array<{ version: number }>>(
+        `DELETE FROM public.setfarm_schema_migrations
+          WHERE version = 26 AND name = $1 AND checksum = $2
+          RETURNING version`,
+        [migration.name, expectedChecksum],
+      );
+      if (removed.length !== 1) {
+        throw new ContractSpineMigrationError(
+          "MIGRATION_CHECKSUM_MISMATCH",
+          "Migration 26 journal ownership changed during rollback",
+        );
+      }
+      await transaction.unsafe(
+        `UPDATE public.setfarm_schema_migrations
+            SET verified_release_sha = $1, verified_at = $2
+          WHERE version <= 25`,
+        [options.targetReleaseSha, appliedAt],
+      );
+      return Object.freeze({
+        schema: "setfarm.contract-spine-rollback.v1" as const,
+        rollbackId,
+        fromVersion: 26 as const,
+        targetVersion: 25 as const,
+        targetReleaseSha: options.targetReleaseSha,
+        rowsRewritten: 0 as const,
+        appliedAt: appliedAt.toISOString(),
+      });
+    }) as ArtifactPublicationBatchPlanLedgerRollbackResult;
+  } catch (error) {
+    if (error instanceof ContractSpineMigrationError) throw error;
+    if (isLockTimeout(error)) {
+      throw new ContractSpineMigrationError(
+        "MIGRATION_LOCK_TIMEOUT",
+        `Migration 26 rollback lock was not acquired within ${lockTimeoutMs}ms`,
+        { cause: error },
+      );
+    }
+    throw error;
+  }
+}
+// SETFARM_SEMANTIC_MIGRATION_REGION:migration-v26-rollback:END
 
 /**
  * Roll migration 24 back only while no physical root authority row exists.
@@ -14285,7 +14784,7 @@ export async function verifyContractSpineMigrations(
         }
         await migration.verify(transaction);
       }
-      await verifyCurrentContractSpineObjectOwnership(transaction);
+      await verifyCurrentContractSpineObjectOwnershipAtHead(transaction);
       return {
         schema: "setfarm.contract-spine-migration-verify.v1" as const,
         status: "verified" as const,

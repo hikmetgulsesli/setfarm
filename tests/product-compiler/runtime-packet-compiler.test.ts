@@ -42,9 +42,7 @@ describe("runtime Product Build Packet compiler", () => {
   after(async () => database.cleanup());
 
   beforeEach(async () => {
-    await database.sql.unsafe(
-      "TRUNCATE product_packets, run_artifact_refs, artifact_publication_reservations, semantic_artifacts, execution_attempts, claim_log, runs CASCADE",
-    );
+    await database.reset();
     await database.sql.unsafe(
       `UPDATE artifact_capacity
           SET quota_bytes = 8388608, max_payload_bytes = 4194304,

@@ -5,8 +5,10 @@ import {
   ContractSpineMigrationError,
   applyContractSpineMigrations,
   auditArtifactPublicationBatchLedgerData,
+  auditCurrentArtifactPublicationAuthorityLedgerData,
   planContractSpineMigrations,
   rollbackArtifactPublicationBatchLedgerToV22,
+  rollbackArtifactPublicationBatchPlanLedgerToV25,
   rollbackArtifactStoreAuthorityLedgerToV23,
   rollbackPreparationAuthorityV2LedgerToV24,
   verifyContractSpineMigrations,
@@ -17,6 +19,9 @@ import {
   computeArtifactPublicationBatchChildReservationId,
   computeArtifactPublicationBatchIdentityHash,
 } from "../../src/product-compiler/artifact-publication-batch-identity.js";
+import {
+  createArtifactPublicationBatchPlanBindingV1,
+} from "../../src/product-compiler/artifact-publication-batch-plan-binding.js";
 import { createIsolatedTestDatabase, type TestDatabase } from "./test-database.js";
 
 const migrationProducer = Object.freeze({
@@ -26,6 +31,9 @@ const migrationProducer = Object.freeze({
 });
 
 async function rollbackEmptyAuthorityLedger(database: TestDatabase): Promise<void> {
+  await rollbackArtifactPublicationBatchPlanLedgerToV25(database.sql, {
+    targetReleaseSha: "d".repeat(40),
+  });
   await rollbackPreparationAuthorityV2LedgerToV24(database.sql, {
     targetReleaseSha: "e".repeat(40),
   });
@@ -56,7 +64,13 @@ async function insertCompleteReservedBatch(
   );
   const leaseToken = "APB_00000000-0000-4000-8000-000000000001";
   const leaseExpiresAt = new Date(createdAt.getTime() + 60_000);
+  const plan = createArtifactPublicationBatchPlanBindingV1([
+    Object.freeze({ durabilityTier: 0, identity: artifact }),
+  ]);
   await database.sql.begin(async (transaction) => {
+    const planRelations = await transaction.unsafe<Array<{ relation: string | null }>>(
+      "SELECT to_regclass('public.artifact_publication_batch_plans')::text AS relation",
+    );
     await transaction.unsafe(
       `INSERT INTO artifact_publication_reservations (
          reservation_id, artifact_hash, artifact_type, byte_length,
@@ -112,6 +126,22 @@ async function insertCompleteReservedBatch(
         reservationId,
       ],
     );
+    if (planRelations[0]?.relation) {
+      await transaction.unsafe(
+        `INSERT INTO artifact_publication_batch_plans (
+           batch_reservation_id, plan_schema, plan_identity_hash,
+           item_count, created_at
+         ) VALUES ($1, $2, $3, 1, $4)`,
+        [batchReservationId, plan.schema, plan.planIdentityHash, createdAt],
+      );
+      await transaction.unsafe(
+        `INSERT INTO artifact_publication_batch_plan_items (
+           batch_reservation_id, ordinal, artifact_hash,
+           durability_tier, created_at
+         ) VALUES ($1, 0, $2, 0, $3)`,
+        [batchReservationId, artifactHash, createdAt],
+      );
+    }
   });
   return { reservationId, artifactHash };
 }
@@ -207,6 +237,9 @@ describe("artifact publication batch migration 23", () => {
     const leaseToken = "APB_00000000-0000-4000-8000-000000000002";
     const createdAt = new Date();
     const leaseExpiresAt = new Date(createdAt.getTime() + 60_000);
+    const plan = createArtifactPublicationBatchPlanBindingV1(
+      items.map((identity) => Object.freeze({ durabilityTier: 0, identity })),
+    );
     await database.sql.begin(async (transaction) => {
       await transaction.unsafe(
         `UPDATE artifact_capacity
@@ -275,6 +308,22 @@ describe("artifact publication batch migration 23", () => {
               item.hash,
             ),
           ],
+        );
+      }
+      await transaction.unsafe(
+        `INSERT INTO artifact_publication_batch_plans (
+           batch_reservation_id, plan_schema, plan_identity_hash,
+           item_count, created_at
+         ) VALUES ($1, $2, $3, $4, $5)`,
+        [batchReservationId, plan.schema, plan.planIdentityHash, plan.items.length, createdAt],
+      );
+      for (const [ordinal, item] of plan.items.entries()) {
+        await transaction.unsafe(
+          `INSERT INTO artifact_publication_batch_plan_items (
+             batch_reservation_id, ordinal, artifact_hash,
+             durability_tier, created_at
+           ) VALUES ($1, $2, $3, $4, $5)`,
+          [batchReservationId, ordinal, item.identity.hash, item.durabilityTier, createdAt],
         );
       }
     });
@@ -723,6 +772,9 @@ describe("artifact publication batch migration 23", () => {
 
   it("rejects an unjournaled extra object before adopting migration 23", async () => {
     await applyContractSpineMigrations(database.sql);
+    await rollbackArtifactPublicationBatchPlanLedgerToV25(database.sql, {
+      targetReleaseSha: "7".repeat(40),
+    });
     await database.sql.unsafe("DELETE FROM setfarm_schema_migrations WHERE version = 23");
     await database.sql.unsafe(`
       ALTER TABLE artifact_publication_batches
@@ -1024,7 +1076,7 @@ describe("artifact publication batch migration 23", () => {
     `);
     assert.equal((await verifyContractSpineMigrations(database.sql)).status, "verified");
     await assert.rejects(
-      auditArtifactPublicationBatchLedgerData(database.sql),
+      auditCurrentArtifactPublicationAuthorityLedgerData(database.sql),
       (error: unknown) => error instanceof ContractSpineMigrationError
         && error.code === "MIGRATION_ADOPTION_MISMATCH",
     );
@@ -1073,7 +1125,7 @@ describe("artifact publication batch migration 23", () => {
     `);
     assert.equal((await verifyContractSpineMigrations(database.sql)).status, "verified");
     await assert.rejects(
-      auditArtifactPublicationBatchLedgerData(database.sql),
+      auditCurrentArtifactPublicationAuthorityLedgerData(database.sql),
       (error: unknown) => error instanceof ContractSpineMigrationError
         && error.code === "MIGRATION_ADOPTION_MISMATCH"
         && error.message.includes("capacity accounting"),
@@ -1157,7 +1209,7 @@ describe("artifact publication batch migration 23", () => {
     ]) await database.sql.unsafe(statement);
     assert.equal((await verifyContractSpineMigrations(database.sql)).status, "verified");
     await assert.rejects(
-      auditArtifactPublicationBatchLedgerData(database.sql),
+      auditCurrentArtifactPublicationAuthorityLedgerData(database.sql),
       (error: unknown) => error instanceof ContractSpineMigrationError
         && error.code === "MIGRATION_ADOPTION_MISMATCH"
         && error.message.includes("identity is mismatched"),

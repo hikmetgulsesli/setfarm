@@ -50,9 +50,7 @@ describe("sealed runtime artifact reader", () => {
     await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
   });
   beforeEach(async () => {
-    await database.sql.unsafe(
-      "TRUNCATE product_packets, run_artifact_refs, artifact_publication_reservations, semantic_artifacts, execution_attempts, claim_log, runs CASCADE",
-    );
+    await database.reset();
     await database.sql.unsafe(
       `UPDATE artifact_capacity SET quota_bytes = 8388608, max_payload_bytes = 4194304,
           total_bytes = 0, reserved_bytes = 0, state = 'bootstrap_required',

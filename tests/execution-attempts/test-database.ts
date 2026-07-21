@@ -124,6 +124,12 @@ export async function createIsolatedTestDatabase(
     async seedV3ReleaseGoAdmission(releaseSha: string) {
       return seedV3ReleaseGoAdmission(db.getSql(), releaseSha);
     },
+    async reset() {
+      assert.match(database, TEST_DATABASE_PATTERN);
+      await db.getSql().unsafe("DROP SCHEMA public CASCADE");
+      await db.getSql().unsafe("CREATE SCHEMA public");
+      await db.pgMigrate({ contractSpineMode: "apply" });
+    },
     async cleanup() {
       if (cleaned) return;
       cleaned = true;

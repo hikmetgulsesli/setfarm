@@ -16,6 +16,11 @@ import {
   computeArtifactPublicationBatchIdentityHash,
 } from "./artifact-publication-batch-identity.js";
 import {
+  ArtifactStoreBatchPlanError,
+  normalizeArtifactPublicationBatchPlanBindingV1,
+  type ArtifactPublicationBatchPlanBindingV1,
+} from "./artifact-publication-batch-plan-binding.js";
+import {
   CompilerIdentityV1Schema,
   SemanticArtifactProducerV1Schema,
   Sha256Schema,
@@ -186,6 +191,22 @@ type PublicationBatchItemRow = Readonly<{
   created_at: Date | string;
 }>;
 
+type PublicationBatchPlanRow = Readonly<{
+  batch_reservation_id: string;
+  plan_schema: string;
+  plan_identity_hash: string;
+  item_count: string | number;
+  created_at: Date | string;
+}>;
+
+type PublicationBatchPlanItemRow = Readonly<{
+  batch_reservation_id: string;
+  ordinal: string | number;
+  artifact_hash: string;
+  durability_tier: string | number;
+  created_at: Date | string;
+}>;
+
 export type IndexedArtifact = Readonly<ArtifactIdentity & { createdAt: string }>;
 export type RunArtifactRef = Readonly<{
   runId: string;
@@ -245,6 +266,7 @@ export type ArtifactPublicationBatchReservation = Readonly<{
   diagnostic?: string;
   finalizedAt?: string;
   status: "already_published" | "partially_published" | "reserved";
+  plan: ArtifactPublicationBatchPlanBindingV1;
   items: readonly ArtifactPublicationBatchItem[];
   newlyReservedBytes: number;
   createdAt: string;
@@ -265,6 +287,23 @@ export type ArtifactPublicationBatchLifecycle = Readonly<{
   reservations: readonly ArtifactPublicationReservation[];
   createdAt: string;
   updatedAt: string;
+}>;
+
+export const ARTIFACT_PUBLICATION_BATCH_RECOVERY_SNAPSHOT_SCHEMA_V1 =
+  "setfarm.artifact-publication-batch-recovery-snapshot.v1" as const;
+
+export type ArtifactPublicationBatchRecoverySnapshot = Readonly<{
+  schema: typeof ARTIFACT_PUBLICATION_BATCH_RECOVERY_SNAPSHOT_SCHEMA_V1;
+  lifecycle: ArtifactPublicationBatchLifecycle;
+  plan: ArtifactPublicationBatchPlanBindingV1;
+  members: readonly Readonly<{
+    ordinal: number;
+    durabilityTier: number;
+    artifact: ArtifactIdentity;
+    authority:
+      | Readonly<{ kind: "indexed"; artifactHash: string }>
+      | Readonly<{ kind: "reservation"; reservationId: string }>;
+  }>[];
 }>;
 
 function safeInteger(value: string | number, code: string): number {
@@ -603,6 +642,154 @@ async function lockPublicationBatchAggregate(
   return Object.freeze({ batch, items: Object.freeze(items), reservations: Object.freeze(reservations) });
 }
 
+async function lockPublicationBatchPlan(
+  sql: TransactionSql,
+  batchReservationId: string,
+): Promise<Readonly<{
+  plan: PublicationBatchPlanRow;
+  items: readonly PublicationBatchPlanItemRow[];
+}>> {
+  const planRows = await sql.unsafe<PublicationBatchPlanRow[]>(
+    `SELECT * FROM artifact_publication_batch_plans
+      WHERE batch_reservation_id = $1
+      FOR UPDATE`,
+    [batchReservationId],
+  );
+  const plan = planRows[0];
+  if (!plan) {
+    throw new ArtifactIndexError(
+      "ARTIFACT_BATCH_INCOMPLETE",
+      `Artifact publication batch ${batchReservationId} has no durable recovery plan`,
+    );
+  }
+  const items = await sql.unsafe<PublicationBatchPlanItemRow[]>(
+    `SELECT * FROM artifact_publication_batch_plan_items
+      WHERE batch_reservation_id = $1
+      ORDER BY ordinal
+      FOR UPDATE`,
+    [batchReservationId],
+  );
+  return Object.freeze({ plan, items: Object.freeze(items) });
+}
+
+function mapPublicationBatchPlanBinding(
+  batch: PublicationBatchRow,
+  membershipRows: readonly PublicationBatchItemRow[],
+  planRow: PublicationBatchPlanRow,
+  planItemRows: readonly PublicationBatchPlanItemRow[],
+): ArtifactPublicationBatchPlanBindingV1 {
+  const batchReservationId = batch.batch_reservation_id;
+  try {
+    const artifactCount = safeInteger(batch.artifact_count, "ARTIFACT_BATCH_COUNT_INVALID");
+    const itemCount = safeInteger(planRow.item_count, "ARTIFACT_BATCH_PLAN_COUNT_INVALID");
+    if (
+      planRow.batch_reservation_id !== batchReservationId
+      || itemCount !== artifactCount
+      || membershipRows.length !== artifactCount
+      || planItemRows.length !== artifactCount
+      || timestamp(planRow.created_at) !== timestamp(batch.created_at)
+    ) {
+      throw new Error("ARTIFACT_BATCH_PLAN_HEADER_MISMATCH");
+    }
+
+    const membershipByHash = new Map<string, ArtifactIdentity>();
+    for (const row of membershipRows) {
+      const identity = batchIdentityFromRow(row);
+      if (
+        row.batch_reservation_id !== batchReservationId
+        || membershipByHash.has(identity.hash)
+      ) {
+        throw new Error("ARTIFACT_BATCH_PLAN_MEMBERSHIP_INVALID");
+      }
+      membershipByHash.set(identity.hash, identity);
+    }
+
+    const items = planItemRows.map((row, ordinal) => {
+      const identity = membershipByHash.get(row.artifact_hash);
+      if (
+        row.batch_reservation_id !== batchReservationId
+        || safeInteger(row.ordinal, "ARTIFACT_BATCH_PLAN_ORDINAL_INVALID") !== ordinal
+        || timestamp(row.created_at) !== timestamp(planRow.created_at)
+        || !identity
+      ) {
+        throw new Error("ARTIFACT_BATCH_PLAN_ITEM_MISMATCH");
+      }
+      return Object.freeze({
+        durabilityTier: safeInteger(
+          row.durability_tier,
+          "ARTIFACT_BATCH_PLAN_TIER_INVALID",
+        ),
+        identity,
+      });
+    });
+    if (new Set(planItemRows.map((row) => row.artifact_hash)).size !== artifactCount) {
+      throw new Error("ARTIFACT_BATCH_PLAN_MEMBERSHIP_INVALID");
+    }
+    return normalizeArtifactPublicationBatchPlanBindingV1({
+      schema: planRow.plan_schema,
+      planIdentityHash: planRow.plan_identity_hash,
+      items,
+    });
+  } catch (error) {
+    if (error instanceof ArtifactIndexError) throw error;
+    const detail = error instanceof ArtifactStoreBatchPlanError
+      ? error.message
+      : error instanceof Error ? error.message : String(error);
+    throw new ArtifactIndexError(
+      "ARTIFACT_BATCH_INCOMPLETE",
+      `Artifact publication batch ${batchReservationId} recovery plan is invalid: ${detail}`,
+    );
+  }
+}
+
+function normalizePublicationBatchPlanInput(
+  input: unknown,
+  artifacts: readonly ArtifactIdentity[],
+): ArtifactPublicationBatchPlanBindingV1 {
+  let plan: ArtifactPublicationBatchPlanBindingV1;
+  try {
+    plan = normalizeArtifactPublicationBatchPlanBindingV1(input);
+  } catch (error) {
+    const detail = error instanceof ArtifactStoreBatchPlanError ? `: ${error.message}` : "";
+    throw new ArtifactIndexError(
+      "ARTIFACT_BATCH_INVALID",
+      `Artifact publication batch recovery plan is invalid${detail}`,
+    );
+  }
+  if (plan.items.length !== artifacts.length) {
+    throw new ArtifactIndexError(
+      "ARTIFACT_BATCH_INVALID",
+      "Artifact publication batch recovery plan does not cover its exact identity set",
+    );
+  }
+  const artifactsByHash = new Map(artifacts.map((artifact) => [artifact.hash, artifact]));
+  for (const item of plan.items) {
+    const artifact = artifactsByHash.get(item.identity.hash);
+    if (!artifact || !sameIdentity(artifact, item.identity)) {
+      throw new ArtifactIndexError(
+        "ARTIFACT_BATCH_INVALID",
+        "Artifact publication batch recovery plan differs from its immutable identity set",
+      );
+    }
+  }
+  return plan;
+}
+
+function samePublicationBatchPlan(
+  left: ArtifactPublicationBatchPlanBindingV1,
+  right: ArtifactPublicationBatchPlanBindingV1,
+): boolean {
+  return left.schema === right.schema
+    && left.planIdentityHash === right.planIdentityHash
+    && left.items.length === right.items.length
+    && left.items.every((item, index) => {
+      const candidate = right.items[index];
+      return candidate !== undefined
+        && item.durabilityTier === candidate.durabilityTier
+        && sameIdentity(item.identity, candidate.identity);
+    });
+}
+
 async function lockCapacity(sql: TransactionSql): Promise<CapacityRow> {
   const rows = await sql.unsafe<CapacityRow[]>(
     "SELECT * FROM artifact_capacity WHERE capacity_key = 'semantic-artifacts' FOR UPDATE",
@@ -654,6 +841,81 @@ function createArtifactIndexWithLeaseTimeAuthority(
           aggregate.reservations,
         );
       }) as Promise<ArtifactPublicationBatchLifecycle>;
+    },
+
+    async getPublicationBatchRecoverySnapshot(input: Readonly<{
+      batchReservationId: string;
+    }>): Promise<ArtifactPublicationBatchRecoverySnapshot> {
+      const batchReservationId = ArtifactPublicationBatchReservationIdSchema.parse(
+        input.batchReservationId,
+      );
+      return sql.begin(async (transaction) => {
+        // Keep the same capacity -> aggregate -> immutable plan lock order as
+        // publication and recovery mutations.
+        await lockCapacity(transaction);
+        const aggregate = await lockPublicationBatchAggregate(transaction, batchReservationId);
+        const durablePlan = await lockPublicationBatchPlan(transaction, batchReservationId);
+        const plan = mapPublicationBatchPlanBinding(
+          aggregate.batch,
+          aggregate.items,
+          durablePlan.plan,
+          durablePlan.items,
+        );
+        const membershipByHash = new Map(
+          aggregate.items.map((item) => [item.artifact_hash, item]),
+        );
+        const reservationIds = new Set(
+          aggregate.reservations.map((reservation) => reservation.reservation_id),
+        );
+        const members = plan.items.map((item, ordinal) => {
+          const membership = membershipByHash.get(item.identity.hash);
+          if (!membership) {
+            throw new ArtifactIndexError(
+              "ARTIFACT_BATCH_INCOMPLETE",
+              `Artifact publication batch ${batchReservationId} recovery membership is incomplete`,
+            );
+          }
+          let authority: ArtifactPublicationBatchRecoverySnapshot["members"][number]["authority"];
+          if (
+            membership.indexed_artifact_hash === item.identity.hash
+            && membership.reservation_id === null
+          ) {
+            authority = Object.freeze({
+              kind: "indexed" as const,
+              artifactHash: item.identity.hash,
+            });
+          } else if (
+            membership.indexed_artifact_hash === null
+            && membership.reservation_id !== null
+            && reservationIds.has(membership.reservation_id)
+          ) {
+            authority = Object.freeze({
+              kind: "reservation" as const,
+              reservationId: membership.reservation_id,
+            });
+          } else {
+            throw new ArtifactIndexError(
+              "ARTIFACT_BATCH_INCOMPLETE",
+              `Artifact publication batch ${batchReservationId} recovery authority is invalid for ${item.identity.hash}`,
+            );
+          }
+          return Object.freeze({
+            ordinal,
+            durabilityTier: item.durabilityTier,
+            artifact: item.identity,
+            authority,
+          });
+        });
+        return Object.freeze({
+          schema: ARTIFACT_PUBLICATION_BATCH_RECOVERY_SNAPSHOT_SCHEMA_V1,
+          lifecycle: mapPublicationBatchAggregateLifecycle(
+            aggregate.batch,
+            aggregate.reservations,
+          ),
+          plan,
+          members: Object.freeze(members),
+        });
+      }) as Promise<ArtifactPublicationBatchRecoverySnapshot>;
     },
 
     async getArtifact(hash: string): Promise<IndexedArtifact | undefined> {
@@ -894,6 +1156,7 @@ function createArtifactIndexWithLeaseTimeAuthority(
     async reservePublicationBatch(input: Readonly<{
       batchReservationId: string;
       artifacts: readonly ArtifactIdentity[];
+      plan: unknown;
       ownerInstanceId: string;
       leaseToken?: string;
       leaseMs?: number;
@@ -913,6 +1176,10 @@ function createArtifactIndexWithLeaseTimeAuthority(
         );
       }
       const normalized = normalizePublicationBatchArtifacts(input.artifacts);
+      const requestedPlan = normalizePublicationBatchPlanInput(
+        input.plan,
+        normalized.artifacts,
+      );
       let replayLeaseToken: string | undefined;
       try {
         replayLeaseToken = input.leaseToken === undefined
@@ -1038,6 +1305,22 @@ function createArtifactIndexWithLeaseTimeAuthority(
                   FOR UPDATE`,
                 [reservationIds],
               );
+          const durablePlanRows = await lockPublicationBatchPlan(
+            transaction,
+            batchReservationId,
+          );
+          const durablePlan = mapPublicationBatchPlanBinding(
+            existingBatch,
+            itemRows,
+            durablePlanRows.plan,
+            durablePlanRows.items,
+          );
+          if (!samePublicationBatchPlan(durablePlan, requestedPlan)) {
+            throw new ArtifactIndexError(
+              "ARTIFACT_BATCH_ID_REUSED",
+              `Artifact publication batch ${batchReservationId} has a different immutable recovery plan`,
+            );
+          }
           if (batchLifecycle.state === "active") {
             const observedAfterAggregateLock = await artifactLeaseAuthorityNow(
               transaction,
@@ -1147,6 +1430,7 @@ function createArtifactIndexWithLeaseTimeAuthority(
             batchCreated: false,
             ...batchLifecycle,
             status: publicationBatchStatus(frozenItems),
+            plan: durablePlan,
             items: frozenItems,
             newlyReservedBytes: 0,
           });
@@ -1305,6 +1589,35 @@ function createArtifactIndexWithLeaseTimeAuthority(
             }));
           }
         }
+        await transaction.unsafe(
+          `INSERT INTO artifact_publication_batch_plans (
+             batch_reservation_id, plan_schema, plan_identity_hash,
+             item_count, created_at
+           ) VALUES ($1, $2, $3, $4, $5)`,
+          [
+            batchReservationId,
+            requestedPlan.schema,
+            requestedPlan.planIdentityHash,
+            requestedPlan.items.length,
+            now,
+          ],
+        );
+        for (let ordinal = 0; ordinal < requestedPlan.items.length; ordinal += 1) {
+          const item = requestedPlan.items[ordinal]!;
+          await transaction.unsafe(
+            `INSERT INTO artifact_publication_batch_plan_items (
+               batch_reservation_id, ordinal, artifact_hash,
+               durability_tier, created_at
+             ) VALUES ($1, $2, $3, $4, $5)`,
+            [
+              batchReservationId,
+              ordinal,
+              item.identity.hash,
+              item.durabilityTier,
+              now,
+            ],
+          );
+        }
         await transaction.unsafe("SET CONSTRAINTS ALL IMMEDIATE");
         let finalBatch = insertedBatches[0]!;
         if (initialState === "active" && leaseTimeAuthority === "database") {
@@ -1353,6 +1666,7 @@ function createArtifactIndexWithLeaseTimeAuthority(
           batchCreated: true,
           ...mapPublicationBatchLifecycle(finalBatch),
           status: publicationBatchStatus(frozenItems),
+          plan: requestedPlan,
           items: frozenItems,
           newlyReservedBytes,
         });

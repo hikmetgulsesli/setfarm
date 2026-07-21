@@ -22,16 +22,31 @@ import {
   computeArtifactPublicationBatchProducerIdentityByteLength,
   type ArtifactPublicationBatchIdentityItem,
 } from "./artifact-publication-batch-identity.js";
+import {
+  ARTIFACT_STORE_BATCH_MAX_DURABILITY_TIER_V1,
+  ARTIFACT_STORE_BATCH_PLAN_SCHEMA_V1,
+  ArtifactStoreBatchPlanError,
+  computeArtifactStoreBatchPlanIdentityHashV1,
+} from "./artifact-publication-batch-plan-binding.js";
 
-export const ARTIFACT_STORE_BATCH_PLAN_SCHEMA_V1 =
-  "setfarm.artifact-store-batch-put-plan.v1" as const;
+export {
+  ARTIFACT_PUBLICATION_BATCH_PLAN_BINDING_SCHEMA_V1,
+  ARTIFACT_STORE_BATCH_MAX_DURABILITY_TIER_V1,
+  ARTIFACT_STORE_BATCH_PLAN_SCHEMA_V1,
+  ArtifactStoreBatchPlanError,
+  computeArtifactStoreBatchPlanIdentityHashV1,
+  createArtifactPublicationBatchPlanBindingV1,
+  normalizeArtifactPublicationBatchPlanBindingV1,
+  type ArtifactPublicationBatchPlanBindingV1,
+  type ArtifactStoreBatchPlanErrorCode,
+} from "./artifact-publication-batch-plan-binding.js";
+
 export const PREPARED_ARTIFACT_STORE_BATCH_SCHEMA_V1 =
   "setfarm.prepared-artifact-store-batch.v1" as const;
 export const ARTIFACT_STORE_BATCH_PUT_RESULT_SCHEMA_V1 =
   "setfarm.artifact-store-batch-put-result.v1" as const;
 export const ARTIFACT_STORE_BATCH_MAX_OCCURRENCES_V1 =
   ARTIFACT_BATCH_CAPACITY_MAX_ITEMS_V1;
-export const ARTIFACT_STORE_BATCH_MAX_DURABILITY_TIER_V1 = 8;
 
 export type ArtifactStoreBatchPutPlanItemV1 = Readonly<{
   durabilityTier: number;
@@ -42,26 +57,6 @@ export type ArtifactStoreBatchPutPlanV1 = Readonly<{
   schema: typeof ARTIFACT_STORE_BATCH_PLAN_SCHEMA_V1;
   items: readonly ArtifactStoreBatchPutPlanItemV1[];
 }>;
-
-export type ArtifactStoreBatchPlanErrorCode =
-  | "ARTIFACT_BATCH_PLAN_INVALID"
-  | "ARTIFACT_BATCH_DUPLICATE_CONFLICT";
-
-export class ArtifactStoreBatchPlanError extends Error {
-  readonly code: ArtifactStoreBatchPlanErrorCode;
-  override readonly cause?: unknown;
-
-  constructor(
-    code: ArtifactStoreBatchPlanErrorCode,
-    message: string,
-    options: Readonly<{ cause?: unknown }> = {},
-  ) {
-    super(message);
-    this.name = "ArtifactStoreBatchPlanError";
-    this.code = code;
-    this.cause = options.cause;
-  }
-}
 
 export type PreparedArtifactStoreBatchItemViewV1 = Readonly<{
   durabilityTier: number;
@@ -386,20 +381,6 @@ function normalizedItems(items: readonly PrivatePreparedItem[]): readonly Privat
   return Object.freeze(unique);
 }
 
-function planIdentityHash(items: readonly PrivatePreparedItem[]): string {
-  const identityBytes = canonicalJsonBytesBounded({
-    schema: ARTIFACT_STORE_BATCH_PLAN_SCHEMA_V1,
-    items: items.map((item) => ({
-      durabilityTier: item.durabilityTier,
-      identity: item.identity,
-    })),
-  }, {
-    maxBytes: ARTIFACT_PUBLICATION_BATCH_MAX_CANONICAL_BYTES,
-    ...DEFAULT_CANONICAL_JSON_BOUNDED_WORK_LIMITS,
-  });
-  return createHash("sha256").update(identityBytes).digest("hex");
-}
-
 class PreparedArtifactStoreBatchV1Impl implements PreparedArtifactStoreBatchV1 {
   readonly schema = PREPARED_ARTIFACT_STORE_BATCH_SCHEMA_V1;
   readonly planIdentityHash: string;
@@ -415,11 +396,11 @@ class PreparedArtifactStoreBatchV1Impl implements PreparedArtifactStoreBatchV1 {
       invalid("Prepared artifact store batch constructor authority is unavailable");
     }
     this.occurrenceCount = occurrenceCount;
-    this.planIdentityHash = planIdentityHash(items);
     this.items = Object.freeze(items.map((item) => Object.freeze({
       durabilityTier: item.durabilityTier,
       identity: item.identity,
     })));
+    this.planIdentityHash = computeArtifactStoreBatchPlanIdentityHashV1(this.items);
     privatePreparedBatchItems.set(this, items);
     Object.freeze(this);
   }

@@ -39,4 +39,15 @@ describe("contract spine migration CLI", () => {
     assert.notEqual(result.status, 0);
     assert.match(result.stderr, /rollback-24-to-23 requires --target-release <git-sha>/);
   });
+
+  it("requires an exact release target for migration 26 rollback before opening PostgreSQL", () => {
+    const result = spawnSync(
+      process.execPath,
+      ["--import", "tsx", "scripts/contract-spine-migrate.ts", "rollback-26-to-25"],
+      { cwd: root, encoding: "utf8" },
+    );
+
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /rollback-26-to-25 requires --target-release <git-sha>/);
+  });
 });

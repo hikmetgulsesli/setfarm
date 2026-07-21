@@ -5,9 +5,10 @@ import { CONTRACT_SPINE_SEMANTIC_MIGRATION_DIGESTS } from "../../src/db/contract
 import {
   ContractSpineMigrationError,
   applyContractSpineMigrations,
-  auditCurrentArtifactStoreAuthorityLedgerData,
+  auditCurrentArtifactPublicationAuthorityLedgerData,
   planContractSpineMigrations,
-  rollbackPreparationAuthorityV2LedgerToV24,
+  rollbackArtifactPublicationBatchPlanLedgerToV25,
+  rollbackPreparationAuthorityV2LedgerToV24 as rollbackPreparationAuthorityV2LedgerToV24Raw,
   verifyContractSpineMigrations,
 } from "../../src/db/contract-spine-migrations.js";
 import {
@@ -28,6 +29,16 @@ const COMPILATION_REPORT_HASH = "d".repeat(64);
 const BASE_SHA = "e".repeat(40);
 const BASE_TREE = "f".repeat(40);
 const SLICE_HASH = "1".repeat(64);
+
+async function rollbackPreparationAuthorityV2LedgerToV24(
+  sql: TestDatabase["sql"],
+  options: Parameters<typeof rollbackPreparationAuthorityV2LedgerToV24Raw>[1],
+) {
+  await rollbackArtifactPublicationBatchPlanLedgerToV25(sql, {
+    targetReleaseSha: "9".repeat(40),
+  });
+  return rollbackPreparationAuthorityV2LedgerToV24Raw(sql, options);
+}
 
 function authority(runId: string, storyId = "US-001") {
   return createV3PreparationClaimAuthorityV2({
@@ -278,7 +289,7 @@ describe("preparation authority v2 migration 25", () => {
     );
     assert.equal((await verifyContractSpineMigrations(database.sql)).status, "verified");
     await assert.rejects(
-      auditCurrentArtifactStoreAuthorityLedgerData(database.sql),
+      auditCurrentArtifactPublicationAuthorityLedgerData(database.sql),
       (error: unknown) => error instanceof ContractSpineMigrationError
         && error.code === "MIGRATION_ADOPTION_MISMATCH",
     );

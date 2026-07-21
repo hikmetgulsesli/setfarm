@@ -9,6 +9,7 @@ import {
 import {
   ARTIFACT_STORE_BATCH_PLAN_SCHEMA_V1,
   ArtifactStoreBatchPlanError,
+  computeArtifactStoreBatchPlanIdentityHashV1,
   copyPreparedArtifactStoreBatchCanonicalItemsV1,
   prepareArtifactStoreBatchPlanV1,
 } from "../../src/product-compiler/artifact-store-batch-plan.js";
@@ -92,11 +93,37 @@ describe("artifact store prepared batch plan v1", () => {
       prepared.planIdentityHash,
       independentPlanIdentity,
     );
+    assert.equal(
+      computeArtifactStoreBatchPlanIdentityHashV1(prepared.items),
+      independentPlanIdentity,
+    );
     const copies = copyPreparedArtifactStoreBatchCanonicalItemsV1(prepared);
     assert.deepEqual(copies.map((item) => item.bytes), [
       canonicalJsonBytes(dependency),
       canonicalJsonBytes(root),
     ]);
+  });
+
+  it("rejects non-canonical recovery identity views instead of inferring a plan", () => {
+    const prepared = prepareArtifactStoreBatchPlanV1(plan([
+      { durabilityTier: 0, envelope: envelope("dependency") },
+      { durabilityTier: 1, envelope: envelope("root") },
+    ]));
+    assert.throws(
+      () => computeArtifactStoreBatchPlanIdentityHashV1([...prepared.items].reverse()),
+      (error: unknown) =>
+        error instanceof ArtifactStoreBatchPlanError
+        && error.code === "ARTIFACT_BATCH_PLAN_INVALID",
+    );
+    assert.throws(
+      () => computeArtifactStoreBatchPlanIdentityHashV1(prepared.items.map((item) => ({
+        ...item,
+        durabilityTier: item.durabilityTier + 1,
+      }))),
+      (error: unknown) =>
+        error instanceof ArtifactStoreBatchPlanError
+        && error.code === "ARTIFACT_BATCH_PLAN_INVALID",
+    );
   });
 
   it("rejects hostile outer and item containers without invoking traps or getters", () => {

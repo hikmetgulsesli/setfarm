@@ -7,6 +7,7 @@ import {
   contractSpineMigrationLockKey,
   readContractSpineMigrationAttestation,
   planContractSpineMigrations,
+  rollbackArtifactPublicationBatchPlanLedgerToV25,
   rollbackPreparationAuthorityV2LedgerToV24,
   verifyContractSpineMigrations,
 } from "../../src/db/contract-spine-migrations.js";
@@ -270,12 +271,16 @@ describe("contract spine migration journal", () => {
       "023_artifact_publication_batch_ledger",
       "024_artifact_store_authority_ledger",
       "025_v3_preparation_authority_v2_ledger",
+      "026_artifact_publication_batch_plan_ledger",
     ]);
     assert.equal((await verifyContractSpineMigrations(database.sql)).status, "verified");
   });
 
   it("upgrades agent-scoped claim indexes and backfills the exact relational claim owner", async () => {
     await applyContractSpineMigrations(database.sql);
+    await rollbackArtifactPublicationBatchPlanLedgerToV25(database.sql, {
+      targetReleaseSha: "8".repeat(40),
+    });
     await rollbackPreparationAuthorityV2LedgerToV24(database.sql, {
       targetReleaseSha: "9".repeat(40),
     });
@@ -365,6 +370,7 @@ describe("contract spine migration journal", () => {
       "019_runtime_completion_submission_evidence",
       "021_operational_failure_cause_seal",
       "025_v3_preparation_authority_v2_ledger",
+      "026_artifact_publication_batch_plan_ledger",
     ]);
     const rows = await database.sql<Array<{
       claim_id: string | null;

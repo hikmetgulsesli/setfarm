@@ -44,6 +44,14 @@ describe("contract-spine semantic migration source digests", () => {
       CONTRACT_SPINE_SEMANTIC_MIGRATION_DIGESTS[24],
       "62fd9d92eaceffee527aa734b1ae91b17594e4898750b0468bbe9d6acd9b75b4",
     );
+    assert.equal(
+      CONTRACT_SPINE_SEMANTIC_MIGRATION_DIGESTS[25],
+      "bd2aaf747f7937bddd8ccad9d6dfce9dad2eb467f3910aa01e8346cc82ce301f",
+    );
+    assert.equal(
+      CONTRACT_SPINE_SEMANTIC_MIGRATION_DIGESTS[26],
+      "ad37c7710fae8f8eb9f1ff518368e67e20599ac7c316781261eef328738a67d9",
+    );
   });
 
   it("changes v8 journal identity when the semantic apply body changes", () => {
@@ -340,6 +348,77 @@ describe("contract-spine semantic migration source digests", () => {
       computeContractSpineMigrationChecksumV1({
         ...migration,
         implementationDigest: ledgerMutation[25],
+      }),
+    );
+  });
+
+  it("binds v26 durable batch-plan recovery without rewriting historical digests", () => {
+    const baseline = computeContractSpineSemanticMigrationDigests(sourceReader);
+    const ledgerMutation = computeContractSpineSemanticMigrationDigests(replacingReader(
+      "src/db/artifact-publication-batch-plan-migration.ts",
+      (source) => replaceExactlyOnce(
+        source,
+        "artifact publication batch plan exact function authority mismatch",
+        "mutated artifact publication batch plan function diagnostic",
+      ),
+    ));
+    assert.notEqual(ledgerMutation[26], baseline[26]);
+    assert.equal(ledgerMutation[23], baseline[23]);
+    assert.equal(ledgerMutation[24], baseline[24]);
+    assert.equal(ledgerMutation[25], baseline[25]);
+
+    const bindingMutation = computeContractSpineSemanticMigrationDigests(replacingReader(
+      "src/product-compiler/artifact-publication-batch-plan-binding.ts",
+      (source) => replaceExactlyOnce(
+        source,
+        "Artifact publication batch plan binding hash does not match its exact items",
+        "Mutated artifact publication batch plan hash diagnostic",
+      ),
+    ));
+    assert.notEqual(bindingMutation[26], baseline[26]);
+    assert.equal(bindingMutation[23], baseline[23]);
+    assert.equal(bindingMutation[24], baseline[24]);
+    assert.equal(bindingMutation[25], baseline[25]);
+
+    const rollbackMutation = computeContractSpineSemanticMigrationDigests(replacingReader(
+      "src/db/contract-spine-migrations.ts",
+      (source) => replaceExactlyOnce(
+        source,
+        "Migration 26 rollback refuses to erase batch recovery-plan provenance; roll forward instead",
+        "Mutated migration 26 rollback provenance diagnostic",
+      ),
+    ));
+    assert.notEqual(rollbackMutation[26], baseline[26]);
+    assert.equal(rollbackMutation[23], baseline[23]);
+    assert.equal(rollbackMutation[24], baseline[24]);
+    assert.equal(rollbackMutation[25], baseline[25]);
+
+    for (const mutableOperationalFile of [
+      "package.json",
+      "scripts/contract-spine-migrate.ts",
+    ]) {
+      const operationalMutation = computeContractSpineSemanticMigrationDigests(
+        replacingReader(
+          mutableOperationalFile,
+          (source) => `${source}\n// simulated mutable v26 operational wiring change\n`,
+        ),
+      );
+      assert.deepEqual(operationalMutation, baseline);
+    }
+
+    const migration = {
+      version: 26,
+      name: "026_artifact_publication_batch_plan_ledger",
+      statements: ["SELECT 1"],
+    } as const;
+    assert.notEqual(
+      computeContractSpineMigrationChecksumV1({
+        ...migration,
+        implementationDigest: baseline[26],
+      }),
+      computeContractSpineMigrationChecksumV1({
+        ...migration,
+        implementationDigest: ledgerMutation[26],
       }),
     );
   });

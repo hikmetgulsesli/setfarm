@@ -13,6 +13,7 @@ import {
 import {
   ARTIFACT_STORE_BATCH_PUT_RESULT_SCHEMA_V1,
   copyPreparedArtifactStoreBatchCanonicalItemsV1,
+  createArtifactPublicationBatchPlanBindingV1,
   prepareArtifactStoreBatchPlanV1,
   type ArtifactStoreBatchPutResultV1,
   type PreparedArtifactStoreBatchCanonicalItemV1,
@@ -174,12 +175,31 @@ function assertBatchReservationMatchesPrepared(
   const expectedIdentityHash = computeArtifactPublicationBatchIdentityHash(
     preparedItems.map((item) => item.identity),
   );
+  const expectedPlan = createArtifactPublicationBatchPlanBindingV1(
+    preparedItems.map((item) => Object.freeze({
+      durabilityTier: item.durabilityTier,
+      identity: item.identity,
+    })),
+  );
   if (
     reservation.batchReservationId !== batchReservationId
     || reservation.batchIdentityHash !== expectedIdentityHash
+    || reservation.plan.planIdentityHash !== expectedPlan.planIdentityHash
+    || reservation.plan.items.length !== expectedPlan.items.length
     || reservation.items.length !== preparedItems.length
   ) {
     throw batchIncomplete("database batch identity or membership count differs from the prepared plan");
+  }
+  for (let ordinal = 0; ordinal < expectedPlan.items.length; ordinal += 1) {
+    const expected = expectedPlan.items[ordinal]!;
+    const observedPlanItem = reservation.plan.items[ordinal];
+    if (
+      !observedPlanItem
+      || observedPlanItem.durabilityTier !== expected.durabilityTier
+      || !sameIdentity(observedPlanItem.identity, expected.identity)
+    ) {
+      throw batchIncomplete("database recovery plan differs from the exact prepared tier order");
+    }
   }
   const expectedByHash = new Map(
     preparedItems.map((item) => [item.identity.hash, item.identity]),
@@ -555,6 +575,15 @@ export class IndexedArtifactPublisher {
     const batchReservationId = input.batchReservationId;
     const prepared = prepareArtifactStoreBatchPlanV1(input.plan);
     const preparedItems = copyPreparedArtifactStoreBatchCanonicalItemsV1(prepared);
+    const publicationPlan = createArtifactPublicationBatchPlanBindingV1(
+      preparedItems.map((item) => Object.freeze({
+        durabilityTier: item.durabilityTier,
+        identity: item.identity,
+      })),
+    );
+    if (publicationPlan.planIdentityHash !== prepared.planIdentityHash) {
+      throw batchIncomplete("prepared CAS plan and database recovery plan identities differ");
+    }
     const putPreparedBatch = this.store.putPreparedBatch;
     if (!putPreparedBatch) {
       throw batchIncomplete("artifact store does not expose prepared batch publication");
@@ -564,6 +593,7 @@ export class IndexedArtifactPublisher {
       reservation = await this.index.reservePublicationBatch({
         batchReservationId,
         artifacts: preparedItems.map((item) => item.identity),
+        plan: publicationPlan,
         ownerInstanceId: this.ownerInstanceId,
         leaseMs: this.leaseMs,
       });

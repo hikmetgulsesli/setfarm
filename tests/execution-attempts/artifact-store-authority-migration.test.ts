@@ -7,10 +7,11 @@ import {
   ContractSpineMigrationError,
   applyContractSpineMigrations,
   auditArtifactStoreAuthorityLedgerData as auditArtifactStoreAuthorityLedgerDataV24,
-  auditCurrentArtifactStoreAuthorityLedgerData,
+  auditCurrentArtifactPublicationAuthorityLedgerData,
   planContractSpineMigrations,
   readContractSpineMigrationAttestation,
   rollbackArtifactStoreAuthorityLedgerToV23 as rollbackArtifactStoreAuthorityLedgerToV23Raw,
+  rollbackArtifactPublicationBatchPlanLedgerToV25,
   rollbackPreparationAuthorityV2LedgerToV24,
   verifyContractSpineMigrations,
 } from "../../src/db/contract-spine-migrations.js";
@@ -22,6 +23,16 @@ const authorityId = "11111111-1111-4111-8111-111111111111";
 const rootLocatorHash = "c".repeat(64);
 
 async function rollbackPreparationAuthorityIfPresent(sql: postgres.Sql): Promise<void> {
+  const batchPlanRows = await sql.unsafe<Array<{ present: boolean }>>(
+    `SELECT EXISTS (
+       SELECT 1 FROM public.setfarm_schema_migrations WHERE version = 26
+     ) AS present`,
+  );
+  if (batchPlanRows[0]?.present) {
+    await rollbackArtifactPublicationBatchPlanLedgerToV25(sql, {
+      targetReleaseSha: "8".repeat(40),
+    });
+  }
   const rows = await sql.unsafe<Array<{ present: boolean }>>(
     `SELECT EXISTS (
        SELECT 1 FROM public.setfarm_schema_migrations WHERE version = 25
@@ -34,7 +45,13 @@ async function rollbackPreparationAuthorityIfPresent(sql: postgres.Sql): Promise
 }
 
 async function auditArtifactStoreAuthorityLedgerData(sql: postgres.Sql) {
-  return auditCurrentArtifactStoreAuthorityLedgerData(sql);
+  const current = await auditCurrentArtifactPublicationAuthorityLedgerData(sql);
+  return Object.freeze({
+    schema: "setfarm.artifact-store-authority-ledger-audit.v1" as const,
+    scope: current.scope,
+    status: current.status,
+    authority: current.authority,
+  });
 }
 
 async function rollbackArtifactStoreAuthorityLedgerToV23(
@@ -990,7 +1007,7 @@ describe("artifact store authority migration 24", () => {
              AS evil_checksum`,
       );
       assert.deepEqual(evidence[0], {
-      public_rows: 25,
+        public_rows: 26,
         evil_checksum: "0".repeat(64),
       });
     } finally {

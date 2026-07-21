@@ -98,9 +98,7 @@ describe("indexed semantic artifact publisher", () => {
   after(async () => database.cleanup());
 
   beforeEach(async () => {
-    await database.sql.unsafe(
-      "TRUNCATE product_packets, run_artifact_refs, artifact_publication_batch_items, artifact_publication_batches, artifact_publication_reservations, semantic_artifacts CASCADE",
-    );
+    await database.reset();
     await database.sql.unsafe(
       `UPDATE artifact_capacity
           SET quota_bytes = 536870912,

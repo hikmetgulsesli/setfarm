@@ -6,6 +6,7 @@ import {
   applyContractSpineMigrations,
   planContractSpineMigrations,
   rollbackArtifactPublicationBatchLedgerToV22,
+  rollbackArtifactPublicationBatchPlanLedgerToV25,
   rollbackArtifactStoreAuthorityLedgerToV23,
   rollbackPreparationAuthorityV2LedgerToV24,
   rollbackProductCompilationAttemptLedgerToV21,
@@ -35,6 +36,9 @@ describe("product compilation attempt migration 22", () => {
     const verified = await verifyContractSpineMigrations(database.sql);
     assert.equal(verified.status, "verified");
 
+    await rollbackArtifactPublicationBatchPlanLedgerToV25(database.sql, {
+      targetReleaseSha: "0".repeat(40),
+    });
     await rollbackPreparationAuthorityV2LedgerToV24(database.sql, {
       targetReleaseSha: "f".repeat(40),
     });
@@ -72,6 +76,9 @@ describe("product compilation attempt migration 22", () => {
 
   it("refuses rollback after immutable attempt evidence exists", async () => {
     await applyContractSpineMigrations(database.sql, { releaseSha: "c".repeat(40) });
+    await rollbackArtifactPublicationBatchPlanLedgerToV25(database.sql, {
+      targetReleaseSha: "0".repeat(40),
+    });
     await rollbackPreparationAuthorityV2LedgerToV24(database.sql, {
       targetReleaseSha: "f".repeat(40),
     });

@@ -7,6 +7,9 @@ import {
   createArtifactIndexForTests as createArtifactIndex,
   type ArtifactIdentity,
 } from "../../src/product-compiler/artifact-index.js";
+import {
+  createArtifactPublicationBatchPlanBindingV1,
+} from "../../src/product-compiler/artifact-publication-batch-plan-binding.js";
 import { hashCanonicalJson } from "../../src/product-compiler/canonical-json.js";
 import { createIsolatedTestDatabase, type TestDatabase } from "../execution-attempts/test-database.js";
 
@@ -29,6 +32,32 @@ function artifact(
   };
 }
 
+function batchPlan(
+  artifacts: readonly ArtifactIdentity[],
+  durabilityTiers: readonly number[] = artifacts.map(() => 0),
+) {
+  assert.equal(durabilityTiers.length, artifacts.length);
+  const byHash = new Map<string, Readonly<{
+    durabilityTier: number;
+    identity: ArtifactIdentity;
+  }>>();
+  for (let index = 0; index < artifacts.length; index += 1) {
+    const identity = artifacts[index]!;
+    const durabilityTier = durabilityTiers[index]!;
+    const previous = byHash.get(identity.hash);
+    if (previous) {
+      assert.equal(previous.durabilityTier, durabilityTier);
+      continue;
+    }
+    byHash.set(identity.hash, Object.freeze({ durabilityTier, identity }));
+  }
+  return createArtifactPublicationBatchPlanBindingV1(
+    [...byHash.values()].sort((left, right) =>
+      left.durabilityTier - right.durabilityTier
+        || (left.identity.hash < right.identity.hash ? -1 : 1)),
+  );
+}
+
 function at(offsetMs: number): Date {
   return new Date(Date.UTC(2026, 6, 13, 12, 0, 0, offsetMs));
 }
@@ -43,9 +72,7 @@ describe("durable semantic artifact index", () => {
   after(async () => database.cleanup());
 
   beforeEach(async () => {
-    await database.sql.unsafe(
-      "TRUNCATE product_packets, run_artifact_refs, artifact_publication_batch_items, artifact_publication_batches, artifact_publication_reservations, semantic_artifacts CASCADE",
-    );
+    await database.reset();
     await database.sql.unsafe(
       `UPDATE artifact_capacity
           SET quota_bytes = 536870912,
@@ -379,6 +406,7 @@ describe("durable semantic artifact index", () => {
     const reserved = await index.reservePublicationBatch({
       batchReservationId: "batch-exact",
       artifacts: [first, second, first],
+      plan: batchPlan([first, second, first]),
       ownerInstanceId: "publisher-a",
       leaseMs: 1_000,
       now: at(10),
@@ -401,6 +429,7 @@ describe("durable semantic artifact index", () => {
       index.reservePublicationBatch({
         batchReservationId: "batch-exact",
         artifacts: [second, first],
+        plan: batchPlan([second, first]),
         ownerInstanceId: "publisher-b",
         now: at(11),
       }),
@@ -411,6 +440,7 @@ describe("durable semantic artifact index", () => {
     const replay = await index.reservePublicationBatch({
       batchReservationId: "batch-exact",
       artifacts: [first, first, second],
+      plan: batchPlan([first, first, second]),
       ownerInstanceId: "publisher-a",
       leaseToken: reserved.leaseToken,
       leaseMs: 1_000,
@@ -441,6 +471,125 @@ describe("durable semantic artifact index", () => {
     );
   });
 
+  it("persists the exact tier plan and returns one coherent recovery snapshot", async () => {
+    const index = createArtifactIndex(database.sql);
+    const indexed = artifact("3", 20);
+    const pending = artifact("4", 30);
+    await index.bootstrap({
+      artifacts: [indexed],
+      quotaBytes: 100,
+      maxPayloadBytes: 80,
+      now: at(0),
+    });
+    const expectedPlan = batchPlan([indexed, pending], [1, 0]);
+    const reserved = await index.reservePublicationBatch({
+      batchReservationId: "batch-durable-plan",
+      artifacts: [indexed, pending],
+      plan: expectedPlan,
+      ownerInstanceId: "publisher-a",
+      leaseMs: 1_000,
+      now: at(10),
+    });
+    assert.deepEqual(reserved.plan, expectedPlan);
+
+    const rows = await database.sql<Array<{
+      plan_schema: string;
+      plan_identity_hash: string;
+      item_count: number;
+      ordinal: number;
+      artifact_hash: string;
+      durability_tier: number;
+      same_created_at: boolean;
+    }>>`
+      SELECT p.plan_schema, p.plan_identity_hash, p.item_count,
+             i.ordinal, i.artifact_hash, i.durability_tier,
+             p.created_at = b.created_at AND i.created_at = p.created_at AS same_created_at
+        FROM artifact_publication_batches b
+        JOIN artifact_publication_batch_plans p USING (batch_reservation_id)
+        JOIN artifact_publication_batch_plan_items i USING (batch_reservation_id)
+       WHERE b.batch_reservation_id = 'batch-durable-plan'
+       ORDER BY i.ordinal
+    `;
+    assert.deepEqual(rows.map((row) => ({ ...row })), expectedPlan.items.map((item, ordinal) => ({
+      plan_schema: expectedPlan.schema,
+      plan_identity_hash: expectedPlan.planIdentityHash,
+      item_count: expectedPlan.items.length,
+      ordinal,
+      artifact_hash: item.identity.hash,
+      durability_tier: item.durabilityTier,
+      same_created_at: true,
+    })));
+
+    const snapshot = await index.getPublicationBatchRecoverySnapshot({
+      batchReservationId: reserved.batchReservationId,
+    });
+    assert.equal(snapshot.schema, "setfarm.artifact-publication-batch-recovery-snapshot.v1");
+    assert.deepEqual(snapshot.plan, expectedPlan);
+    assert.equal(snapshot.lifecycle.batchIdentityHash, reserved.batchIdentityHash);
+    assert.deepEqual(snapshot.members.map((member) => ({
+      ordinal: member.ordinal,
+      durabilityTier: member.durabilityTier,
+      hash: member.artifact.hash,
+      authority: member.authority.kind,
+    })), [
+      { ordinal: 0, durabilityTier: 0, hash: pending.hash, authority: "reservation" },
+      { ordinal: 1, durabilityTier: 1, hash: indexed.hash, authority: "indexed" },
+    ]);
+
+    await assert.rejects(
+      index.reservePublicationBatch({
+        batchReservationId: reserved.batchReservationId,
+        artifacts: [indexed, pending],
+        plan: batchPlan([indexed, pending], [0, 1]),
+        ownerInstanceId: "publisher-a",
+        leaseToken: reserved.leaseToken,
+        leaseMs: 1_000,
+        now: at(11),
+      }),
+      (error: unknown) => error instanceof ArtifactIndexError
+        && error.code === "ARTIFACT_BATCH_ID_REUSED",
+    );
+  });
+
+  it("rejects an invalid recovery plan before any batch authority is written", async () => {
+    const index = createArtifactIndex(database.sql);
+    const target = artifact("5", 20);
+    await index.bootstrap({ artifacts: [], quotaBytes: 100, maxPayloadBytes: 80, now: at(0) });
+    const validPlan = batchPlan([target]);
+    await assert.rejects(
+      index.reservePublicationBatch({
+        batchReservationId: "batch-invalid-plan",
+        artifacts: [target],
+        plan: { ...validPlan, planIdentityHash: "0".repeat(64) },
+        ownerInstanceId: "publisher-a",
+        now: at(10),
+      }),
+      (error: unknown) => error instanceof ArtifactIndexError
+        && error.code === "ARTIFACT_BATCH_INVALID",
+    );
+    const counts = await database.sql<Array<{
+      batches: number;
+      plans: number;
+      items: number;
+      plan_items: number;
+      reservations: number;
+    }>>`
+      SELECT
+        (SELECT COUNT(*)::integer FROM artifact_publication_batches) AS batches,
+        (SELECT COUNT(*)::integer FROM artifact_publication_batch_plans) AS plans,
+        (SELECT COUNT(*)::integer FROM artifact_publication_batch_items) AS items,
+        (SELECT COUNT(*)::integer FROM artifact_publication_batch_plan_items) AS plan_items,
+        (SELECT COUNT(*)::integer FROM artifact_publication_reservations) AS reservations
+    `;
+    assert.deepEqual(counts.map((row) => ({ ...row })), [{
+      batches: 0,
+      plans: 0,
+      items: 0,
+      plan_items: 0,
+      reservations: 0,
+    }]);
+  });
+
   it("tracks mixed and later-published batch members without rewriting membership", async () => {
     const index = createArtifactIndex(database.sql);
     const existing = artifact("3", 20);
@@ -454,6 +603,7 @@ describe("durable semantic artifact index", () => {
     const mixed = await index.reservePublicationBatch({
       batchReservationId: "batch-mixed",
       artifacts: [pending, existing],
+      plan: batchPlan([pending, existing]),
       ownerInstanceId: "publisher-a",
       leaseMs: 1_000,
       now: at(10),
@@ -475,6 +625,7 @@ describe("durable semantic artifact index", () => {
     const complete = await index.reservePublicationBatch({
       batchReservationId: "batch-mixed",
       artifacts: [existing, pending],
+      plan: batchPlan([existing, pending]),
       ownerInstanceId: "publisher-b",
       now: at(12),
     });
@@ -522,6 +673,7 @@ describe("durable semantic artifact index", () => {
     const completed = await index.reservePublicationBatch({
       batchReservationId: "batch-already-indexed",
       artifacts: [second, first],
+      plan: batchPlan([second, first]),
       ownerInstanceId: "publisher-a",
       now: at(10),
     });
@@ -547,6 +699,7 @@ describe("durable semantic artifact index", () => {
     const reserved = await index.reservePublicationBatch({
       batchReservationId: "batch-v22-producer-compat",
       artifacts: [target],
+      plan: batchPlan([target]),
       ownerInstanceId: "publisher-a",
       now: at(10),
     });
@@ -575,6 +728,7 @@ describe("durable semantic artifact index", () => {
       index.reservePublicationBatch({
         batchReservationId: "batch-empty",
         artifacts: [],
+        plan: batchPlan([first]),
         ownerInstanceId: "publisher-a",
         now: at(10),
       }),
@@ -596,6 +750,7 @@ describe("durable semantic artifact index", () => {
       index.reservePublicationBatch({
         batchReservationId: "batch-proxy",
         artifacts: hostileArtifacts,
+        plan: batchPlan([first]),
         ownerInstanceId: "publisher-a",
         now: at(10),
       }),
@@ -607,6 +762,7 @@ describe("durable semantic artifact index", () => {
       index.reservePublicationBatch({
         batchReservationId: "batch-conflict",
         artifacts: [first, { ...first, artifactType: "setfarm.story-plan.v1" }],
+        plan: batchPlan([first]),
         ownerInstanceId: "publisher-a",
         now: at(11),
       }),
@@ -617,6 +773,7 @@ describe("durable semantic artifact index", () => {
       index.reservePublicationBatch({
         batchReservationId: "batch-quota",
         artifacts: [first, second],
+        plan: batchPlan([first, second]),
         ownerInstanceId: "publisher-a",
         now: at(12),
       }),
@@ -643,6 +800,7 @@ describe("durable semantic artifact index", () => {
       index.reservePublicationBatch({
         batchReservationId: "batch-race-a",
         artifacts: [shared, artifact("8", 20)],
+        plan: batchPlan([shared, artifact("8", 20)]),
         ownerInstanceId: "publisher-a",
         leaseMs: 1_000,
         now: at(10),
@@ -650,6 +808,7 @@ describe("durable semantic artifact index", () => {
       index.reservePublicationBatch({
         batchReservationId: "batch-race-b",
         artifacts: [shared, artifact("9", 20)],
+        plan: batchPlan([shared, artifact("9", 20)]),
         ownerInstanceId: "publisher-b",
         leaseMs: 1_000,
         now: at(10),
@@ -682,6 +841,7 @@ describe("durable semantic artifact index", () => {
     const batch = await index.reservePublicationBatch({
       batchReservationId: "batch-aggregate-heartbeat",
       artifacts: [first, second],
+      plan: batchPlan([first, second]),
       ownerInstanceId: "publisher-a",
       leaseMs: 60_000,
       now: liveAt(10),
@@ -769,6 +929,7 @@ describe("durable semantic artifact index", () => {
     const batch = await index.reservePublicationBatch({
       batchReservationId: "batch-concurrent-adoption",
       artifacts: [first, second],
+      plan: batchPlan([first, second]),
       ownerInstanceId: "dead-owner",
       leaseMs: 100,
       now: at(10),
@@ -815,6 +976,7 @@ describe("durable semantic artifact index", () => {
     const original = await index.reservePublicationBatch({
       batchReservationId: "batch-stale-expired-finalize-generation",
       artifacts: [target],
+      plan: batchPlan([target]),
       ownerInstanceId: "publisher-a",
       leaseMs: 100,
       now: originalNow,
@@ -872,6 +1034,7 @@ describe("durable semantic artifact index", () => {
     const batch = await index.reservePublicationBatch({
       batchReservationId: "batch-partial-recovery",
       artifacts: [first, second],
+      plan: batchPlan([first, second]),
       ownerInstanceId: "publisher-a",
       leaseMs: 100,
       now: at(10),
@@ -921,6 +1084,7 @@ describe("durable semantic artifact index", () => {
     const replay = await index.reservePublicationBatch({
       batchReservationId: batch.batchReservationId,
       artifacts: [second, first],
+      plan: batchPlan([second, first]),
       ownerInstanceId: "read-only-replay",
       now: new Date(recoveryPublishNow.getTime() + 1),
     });
@@ -940,6 +1104,7 @@ describe("durable semantic artifact index", () => {
     const batch = await index.reservePublicationBatch({
       batchReservationId: "batch-published-child-resurrection",
       artifacts: [first, second],
+      plan: batchPlan([first, second]),
       ownerInstanceId: "publisher-a",
       leaseMs: 1_000,
       now: at(10),
@@ -991,6 +1156,7 @@ describe("durable semantic artifact index", () => {
     const batch = await index.reservePublicationBatch({
       batchReservationId: "batch-publish-release-race",
       artifacts: [target],
+      plan: batchPlan([target]),
       ownerInstanceId: "publisher-a",
       leaseMs: 1_000,
       now: at(10),
@@ -1041,6 +1207,7 @@ describe("durable semantic artifact index", () => {
     const batch = await index.reservePublicationBatch({
       batchReservationId: "batch-database-coherence",
       artifacts: [target],
+      plan: batchPlan([target]),
       ownerInstanceId: "publisher-a",
       leaseMs: 1_000,
       now: at(10),
@@ -1081,6 +1248,7 @@ describe("durable semantic artifact index", () => {
     const reserved = await index.reservePublicationBatch({
       batchReservationId: "batch-database-clock",
       artifacts: [target],
+      plan: batchPlan([target]),
       ownerInstanceId: "stale-owner",
       leaseMs: 60_000,
       now: new Date("2099-01-01T00:00:00.000Z"),
@@ -1186,6 +1354,7 @@ describe("durable semantic artifact index", () => {
     const pending = index.reservePublicationBatch({
       batchReservationId: "batch-production-creation-refresh",
       artifacts: [target],
+      plan: batchPlan([target]),
       ownerInstanceId: "publisher-a",
       leaseMs: 5_000,
     });
@@ -1227,6 +1396,7 @@ describe("durable semantic artifact index", () => {
     const reserved = await index.reservePublicationBatch({
       batchReservationId: "batch-production-stale-replay",
       artifacts: [target],
+      plan: batchPlan([target]),
       ownerInstanceId: "publisher-a",
       leaseMs: 5_000,
     });
@@ -1257,6 +1427,7 @@ describe("durable semantic artifact index", () => {
     const replayOutcome = index.reservePublicationBatch({
       batchReservationId: reserved.batchReservationId,
       artifacts: [target],
+      plan: batchPlan([target]),
       ownerInstanceId: "publisher-a",
       leaseToken: reserved.leaseToken,
       leaseMs: 5_000,
@@ -1285,6 +1456,7 @@ describe("durable semantic artifact index", () => {
     const reserved = await index.reservePublicationBatch({
       batchReservationId: "batch-terminal",
       artifacts: [target],
+      plan: batchPlan([target]),
       ownerInstanceId: "publisher-a",
       leaseMs: 1_000,
       now: at(10),
@@ -1297,6 +1469,7 @@ describe("durable semantic artifact index", () => {
       index.reservePublicationBatch({
         batchReservationId: "batch-terminal",
         artifacts: [artifact("b", 20)],
+        plan: batchPlan([artifact("b", 20)]),
         ownerInstanceId: "publisher-a",
         now: at(11),
       }),
@@ -1317,6 +1490,7 @@ describe("durable semantic artifact index", () => {
       index.reservePublicationBatch({
         batchReservationId: "batch-terminal",
         artifacts: [target],
+        plan: batchPlan([target]),
         ownerInstanceId: "publisher-a",
         now: at(13),
       }),
@@ -1345,6 +1519,7 @@ describe("durable semantic artifact index", () => {
       index.reservePublicationBatch({
         batchReservationId: "batch-terminal",
         artifacts: [target],
+        plan: batchPlan([target]),
         ownerInstanceId: "publisher-a",
         now: at(16),
       }),
