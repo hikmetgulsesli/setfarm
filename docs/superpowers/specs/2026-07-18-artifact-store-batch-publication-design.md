@@ -10,6 +10,11 @@ PostgreSQL-only cross-database exclusion and the first staged-file alias model.
 The amendment is the implementation authority; activation remains prohibited
 until its full verification matrix is green.
 
+B2 is committed as `f4d990bd`. C1 now places bounded staging creation,
+inventory, abandoned-attempt cleanup, and durability barriers inside the
+writer provider's private hybrid lease. Read-only providers do not create or
+clean staging. C2 and all later activation work remain prohibited.
+
 This slice closes four coupled boundaries:
 
 1. one bounded, immutable CAS publication plan for at most nine semantic
@@ -455,6 +460,15 @@ Exceeding any bound quarantines the layout. Cleanup is fail-closed:
 - final `<hash>.json` targets are never considered staging and are never
   removed;
 - staging and root directories are synchronized after cleanup.
+
+The provider inventories and authenticates the complete bounded staging tree
+before the first unlink. Every unlink and attempt-directory removal is fenced
+by the still-live kernel lease. It then requires zero remaining entries both
+before and after the staging/root sync barriers. A recreated entry, staging
+inode replacement, mode/owner drift, external hard-link alias, or directory
+sync failure cannot be returned as success. Proven layout violations use
+`ARTIFACT_ROOT_STAGING_INVALID` and quarantine; transient filesystem failures
+remain `ARTIFACT_ROOT_AUTHORITY_UNAVAILABLE` and retryable.
 
 Inventory scanning accepts the exact authority marker and owned `.staging`
 directory only after it has acquired the same production lease, verified the

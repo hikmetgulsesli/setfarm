@@ -6,7 +6,9 @@ import {
   link,
   mkdir,
   open,
+  opendir,
   readdir,
+  rmdir,
   unlink,
 } from "node:fs/promises";
 import path from "node:path";
@@ -34,6 +36,10 @@ export const ARTIFACT_STORE_CAPACITY_LOCK_DOMAIN_V1 =
   "setfarm.semantic-artifact-filesystem-publication.v1" as const;
 export const ARTIFACT_STORE_CAPACITY_LEASE_AUTHORITY_V1 =
   "postgres-transaction+filesystem-kernel-v1" as const;
+export const ARTIFACT_STORE_STAGING_DIRECTORY_V1 = ".staging" as const;
+export const ARTIFACT_STORE_STAGING_MAX_ATTEMPTS_V1 = 64;
+export const ARTIFACT_STORE_STAGING_MAX_FILES_PER_ATTEMPT_V1 = 9;
+export const ARTIFACT_STORE_STAGING_MAX_ENTRIES_V1 = 640;
 
 const AUTHORITY_KEY = "semantic-artifacts" as const;
 const MAX_AUTHORITY_FILE_BYTES = 1_024;
@@ -116,6 +122,25 @@ type HeldRootAuthority = Readonly<{
   marker: MarkerFileIdentity;
   kernelLock: MarkerFileIdentity;
 }>;
+type StagingDirectoryIdentity = Readonly<FileIdentity & {
+  mode: number;
+  uid: number;
+}>;
+type StagingFileIdentity = Readonly<FileIdentity & {
+  mode: number;
+  uid: number;
+  nlink: number;
+}>;
+type StagingAttemptInventory = Readonly<{
+  name: string;
+  path: string;
+  identity: StagingDirectoryIdentity;
+  files: readonly Readonly<{
+    name: string;
+    path: string;
+    identity: StagingFileIdentity;
+  }>[];
+}>;
 
 export type ArtifactStoreAuthorityErrorCode =
   | "ARTIFACT_CAPACITY_AUTHORITY_DATABASE_INVALID"
@@ -129,7 +154,8 @@ export type ArtifactStoreAuthorityErrorCode =
   | "ARTIFACT_ROOT_AUTHORITY_INVALID"
   | "ARTIFACT_ROOT_AUTHORITY_UNAVAILABLE"
   | "ARTIFACT_ROOT_AUTHORITY_UNMARKED"
-  | "ARTIFACT_ROOT_AUTHORITY_WRONG_ROOT";
+  | "ARTIFACT_ROOT_AUTHORITY_WRONG_ROOT"
+  | "ARTIFACT_ROOT_STAGING_INVALID";
 
 export class ArtifactStoreAuthorityError extends Error {
   readonly code: ArtifactStoreAuthorityErrorCode;
@@ -184,6 +210,12 @@ type AuthorityTestHooks = Readonly<{
   ) => void | Promise<void>;
   afterKernelLockReleased?: (
     event: Readonly<{ pid: number; target: string; token: string }>,
+  ) => void | Promise<void>;
+  afterStagingInventory?: (
+    event: Readonly<{ stagingRoot: string; attemptCount: number; entryCount: number }>,
+  ) => void | Promise<void>;
+  beforeStagingSync?: (
+    event: Readonly<{ stagingRoot: string }>,
   ) => void | Promise<void>;
 }>;
 
@@ -378,19 +410,478 @@ async function syncDirectory(directory: string): Promise<void> {
     );
     await handle.sync();
   } catch (error) {
-    if (
-      !isNodeError(error, "EINVAL")
-      && !isNodeError(error, "ENOTSUP")
-      && !isNodeError(error, "EISDIR")
-    ) {
-      throw unavailableFilesystem(
-        `Artifact authority directory ${directory} could not be synchronized`,
-        error,
-      );
-    }
+    throw unavailableFilesystem(
+      `Artifact authority directory ${directory} could not be synchronized`,
+      error,
+    );
   } finally {
     await handle?.close();
   }
+}
+
+const STAGING_ATTEMPT_NAME_V1 =
+  /^[a-f0-9]{64}\.[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const STAGING_TEMP_NAME_V1 = /^[a-f0-9]{64}\.tmp$/;
+
+function stagingRootPath(root: string): string {
+  return path.join(root, ARTIFACT_STORE_STAGING_DIRECTORY_V1);
+}
+
+function stagingInvalid(message: string, cause?: unknown): ArtifactStoreAuthorityError {
+  return new ArtifactStoreAuthorityError(
+    "ARTIFACT_ROOT_STAGING_INVALID",
+    message,
+    cause === undefined ? {} : { cause },
+  );
+}
+
+function stagingUnavailable(message: string, cause: unknown): ArtifactStoreAuthorityError {
+  return new ArtifactStoreAuthorityError(
+    "ARTIFACT_ROOT_AUTHORITY_UNAVAILABLE",
+    message,
+    { cause },
+  );
+}
+
+function stagingFilesystemError(message: string, error: unknown): never {
+  if (error instanceof ArtifactStoreAuthorityError) throw error;
+  if (isTransientFilesystemError(error)) {
+    throw stagingUnavailable(message, error);
+  }
+  throw stagingInvalid(message, error);
+}
+
+function stagingDirectoryIdentity(stats: Stats): StagingDirectoryIdentity {
+  return Object.freeze({
+    dev: stats.dev,
+    ino: stats.ino,
+    mode: stats.mode & 0o7777,
+    uid: stats.uid,
+  });
+}
+
+function stagingFileIdentity(stats: Stats): StagingFileIdentity {
+  return Object.freeze({
+    dev: stats.dev,
+    ino: stats.ino,
+    mode: stats.mode & 0o7777,
+    uid: stats.uid,
+    nlink: stats.nlink,
+  });
+}
+
+function sameStagingDirectoryIdentity(
+  left: StagingDirectoryIdentity,
+  right: StagingDirectoryIdentity,
+): boolean {
+  return sameIdentity(left, right)
+    && left.mode === right.mode
+    && left.uid === right.uid;
+}
+
+function sameStagingFileIdentity(
+  left: StagingFileIdentity,
+  right: StagingFileIdentity,
+): boolean {
+  return sameIdentity(left, right)
+    && left.mode === right.mode
+    && left.uid === right.uid
+    && left.nlink === right.nlink;
+}
+
+function assertSecureStagingDirectory(stats: Stats, label: string): void {
+  if (
+    !stats.isDirectory()
+    || stats.isSymbolicLink()
+    || (stats.mode & 0o7777) !== 0o700
+    || (expectedUid() !== undefined && stats.uid !== expectedUid())
+  ) {
+    throw stagingInvalid(`${label} must be one private owner-controlled ordinary directory`);
+  }
+}
+
+function assertSecureStagingFile(stats: Stats, label: string): void {
+  if (
+    !stats.isFile()
+    || stats.isSymbolicLink()
+    || stats.nlink !== 1
+    || (stats.mode & 0o7777) !== 0o600
+    || (expectedUid() !== undefined && stats.uid !== expectedUid())
+  ) {
+    throw stagingInvalid(`${label} must be one private unaliased ordinary file`);
+  }
+}
+
+async function boundedDirectoryNames(
+  directoryPath: string,
+  maximumEntries: number,
+  label: string,
+): Promise<readonly string[]> {
+  let directory;
+  try {
+    directory = await opendir(directoryPath, { bufferSize: Math.min(32, maximumEntries + 1) });
+    const names: string[] = [];
+    while (true) {
+      const entry = await directory.read();
+      if (!entry) break;
+      names.push(entry.name);
+      if (names.length > maximumEntries) {
+        throw stagingInvalid(`${label} exceeds its bounded entry authority`);
+      }
+    }
+    names.sort((left, right) => left < right ? -1 : left > right ? 1 : 0);
+    return Object.freeze(names);
+  } catch (error) {
+    return stagingFilesystemError(`${label} could not be enumerated safely`, error);
+  } finally {
+    if (directory) {
+      try {
+        await directory.close();
+      } catch (error) {
+        if (!(error instanceof Error && "code" in error && error.code === "ERR_DIR_CLOSED")) {
+          throw stagingUnavailable(`${label} directory handle could not be closed`, error);
+        }
+      }
+    }
+  }
+}
+
+async function lstatStagingPath(target: string, label: string): Promise<Stats> {
+  try {
+    return await lstat(target);
+  } catch (error) {
+    stagingFilesystemError(`${label} could not be inspected safely`, error);
+  }
+}
+
+async function openStagingDirectory(
+  target: string,
+  expected: StagingDirectoryIdentity,
+  label: string,
+) {
+  let handle;
+  try {
+    handle = await open(
+      target,
+      constants.O_RDONLY
+        | constants.O_DIRECTORY
+        | constants.O_NOFOLLOW
+        | constants.O_NONBLOCK,
+    );
+    const observed = await handle.stat();
+    assertSecureStagingDirectory(observed, label);
+    if (!sameStagingDirectoryIdentity(stagingDirectoryIdentity(observed), expected)) {
+      throw stagingInvalid(`${label} changed physical identity before it was opened`);
+    }
+    return handle;
+  } catch (error) {
+    await handle?.close();
+    stagingFilesystemError(`${label} could not be opened without following links`, error);
+  }
+}
+
+async function assertStagingDirectoryCurrent(
+  target: string,
+  expected: StagingDirectoryIdentity,
+  label: string,
+): Promise<void> {
+  const observed = await lstatStagingPath(target, label);
+  assertSecureStagingDirectory(observed, label);
+  if (!sameStagingDirectoryIdentity(stagingDirectoryIdentity(observed), expected)) {
+    throw stagingInvalid(`${label} changed physical identity during the held lease`);
+  }
+}
+
+async function ensureStagingRoot(
+  root: string,
+  assertPhysicalCurrent: () => Promise<void>,
+): Promise<Readonly<{
+  path: string;
+  identity: StagingDirectoryIdentity;
+  created: boolean;
+}>> {
+  const target = stagingRootPath(root);
+  await assertPhysicalCurrent();
+  let created = false;
+  try {
+    await mkdir(target, { mode: 0o700 });
+    created = true;
+  } catch (error) {
+    if (!isNodeError(error, "EEXIST")) {
+      stagingFilesystemError("Artifact staging root could not be created safely", error);
+    }
+  }
+
+  let before = await lstatStagingPath(target, "Artifact staging root");
+  if (created) {
+    let createdHandle;
+    try {
+      createdHandle = await open(
+        target,
+        constants.O_RDONLY
+          | constants.O_DIRECTORY
+          | constants.O_NOFOLLOW
+          | constants.O_NONBLOCK,
+      );
+      await createdHandle.chmod(0o700);
+      before = await lstatStagingPath(target, "Artifact staging root");
+    } catch (error) {
+      stagingFilesystemError("New artifact staging root could not be secured", error);
+    } finally {
+      await createdHandle?.close();
+    }
+  }
+  assertSecureStagingDirectory(before, "Artifact staging root");
+  const expected = stagingDirectoryIdentity(before);
+  const handle = await openStagingDirectory(target, expected, "Artifact staging root");
+  try {
+    await assertPhysicalCurrent();
+    await assertStagingDirectoryCurrent(target, expected, "Artifact staging root");
+    const held = await handle.stat();
+    assertSecureStagingDirectory(held, "Held artifact staging root");
+    if (!sameStagingDirectoryIdentity(stagingDirectoryIdentity(held), expected)) {
+      throw stagingInvalid("Held artifact staging root changed physical identity");
+    }
+  } finally {
+    await handle.close();
+  }
+  return Object.freeze({ path: target, identity: expected, created });
+}
+
+async function inspectStagingAttempt(
+  stagingPath: string,
+  name: string,
+): Promise<StagingAttemptInventory> {
+  if (!STAGING_ATTEMPT_NAME_V1.test(name)) {
+    throw stagingInvalid(`Artifact staging contains unexpected attempt entry ${name}`);
+  }
+  const attemptPath = path.join(stagingPath, name);
+  const before = await lstatStagingPath(attemptPath, `Artifact staging attempt ${name}`);
+  assertSecureStagingDirectory(before, `Artifact staging attempt ${name}`);
+  const expected = stagingDirectoryIdentity(before);
+  const handle = await openStagingDirectory(
+    attemptPath,
+    expected,
+    `Artifact staging attempt ${name}`,
+  );
+  try {
+    const names = await boundedDirectoryNames(
+      attemptPath,
+      ARTIFACT_STORE_STAGING_MAX_FILES_PER_ATTEMPT_V1,
+      `Artifact staging attempt ${name}`,
+    );
+    const files: Array<StagingAttemptInventory["files"][number]> = [];
+    for (const fileName of names) {
+      if (!STAGING_TEMP_NAME_V1.test(fileName)) {
+        throw stagingInvalid(
+          `Artifact staging attempt ${name} contains unexpected temp entry ${fileName}`,
+        );
+      }
+      const filePath = path.join(attemptPath, fileName);
+      const stats = await lstatStagingPath(
+        filePath,
+        `Artifact staging temp ${name}/${fileName}`,
+      );
+      assertSecureStagingFile(stats, `Artifact staging temp ${name}/${fileName}`);
+      files.push(Object.freeze({
+        name: fileName,
+        path: filePath,
+        identity: stagingFileIdentity(stats),
+      }));
+    }
+    const held = await handle.stat();
+    assertSecureStagingDirectory(held, `Held artifact staging attempt ${name}`);
+    await assertStagingDirectoryCurrent(
+      attemptPath,
+      expected,
+      `Artifact staging attempt ${name}`,
+    );
+    if (!sameStagingDirectoryIdentity(stagingDirectoryIdentity(held), expected)) {
+      throw stagingInvalid(`Held artifact staging attempt ${name} changed identity`);
+    }
+    return Object.freeze({
+      name,
+      path: attemptPath,
+      identity: expected,
+      files: Object.freeze(files),
+    });
+  } finally {
+    await handle.close();
+  }
+}
+
+async function removeStagingAttempt(
+  attempt: StagingAttemptInventory,
+  assertPhysicalCurrent: () => Promise<void>,
+): Promise<void> {
+  await assertPhysicalCurrent();
+  await assertStagingDirectoryCurrent(
+    attempt.path,
+    attempt.identity,
+    `Artifact staging attempt ${attempt.name}`,
+  );
+  const handle = await openStagingDirectory(
+    attempt.path,
+    attempt.identity,
+    `Artifact staging attempt ${attempt.name}`,
+  );
+  try {
+    for (const file of attempt.files) {
+      await assertPhysicalCurrent();
+      const current = await lstatStagingPath(
+        file.path,
+        `Artifact staging temp ${attempt.name}/${file.name}`,
+      );
+      assertSecureStagingFile(
+        current,
+        `Artifact staging temp ${attempt.name}/${file.name}`,
+      );
+      if (!sameStagingFileIdentity(stagingFileIdentity(current), file.identity)) {
+        throw stagingInvalid(
+          `Artifact staging temp ${attempt.name}/${file.name} changed before cleanup`,
+        );
+      }
+      try {
+        await unlink(file.path);
+      } catch (error) {
+        stagingFilesystemError(
+          `Artifact staging temp ${attempt.name}/${file.name} could not be removed safely`,
+          error,
+        );
+      }
+    }
+    await syncDirectory(attempt.path);
+    await assertPhysicalCurrent();
+    await assertStagingDirectoryCurrent(
+      attempt.path,
+      attempt.identity,
+      `Artifact staging attempt ${attempt.name}`,
+    );
+    const held = await handle.stat();
+    assertSecureStagingDirectory(held, `Held artifact staging attempt ${attempt.name}`);
+    if (!sameStagingDirectoryIdentity(stagingDirectoryIdentity(held), attempt.identity)) {
+      throw stagingInvalid(`Held artifact staging attempt ${attempt.name} changed during cleanup`);
+    }
+  } finally {
+    await handle.close();
+  }
+  await assertPhysicalCurrent();
+  try {
+    await rmdir(attempt.path);
+  } catch (error) {
+    stagingFilesystemError(
+      `Artifact staging attempt ${attempt.name} could not be removed safely`,
+      error,
+    );
+  }
+  await assertPhysicalCurrent();
+}
+
+async function ensureAndCleanOwnedStaging(
+  root: string,
+  assertPhysicalCurrent: () => Promise<void>,
+  hooks: AuthorityTestHooks | undefined,
+): Promise<StagingDirectoryIdentity> {
+  const staging = await ensureStagingRoot(root, assertPhysicalCurrent);
+  const stagingHandle = await openStagingDirectory(
+    staging.path,
+    staging.identity,
+    "Artifact staging root",
+  );
+  try {
+    const attemptNames = await boundedDirectoryNames(
+      staging.path,
+      ARTIFACT_STORE_STAGING_MAX_ATTEMPTS_V1,
+      "Artifact staging root",
+    );
+    let entryCount = attemptNames.length;
+    const attempts: StagingAttemptInventory[] = [];
+    for (const name of attemptNames) {
+      const attempt = await inspectStagingAttempt(staging.path, name);
+      entryCount += attempt.files.length;
+      if (entryCount > ARTIFACT_STORE_STAGING_MAX_ENTRIES_V1) {
+        throw stagingInvalid("Artifact staging tree exceeds its bounded total entry authority");
+      }
+      attempts.push(attempt);
+    }
+    await hooks?.afterStagingInventory?.({
+      stagingRoot: staging.path,
+      attemptCount: attempts.length,
+      entryCount,
+    });
+    await assertPhysicalCurrent();
+    await assertStagingDirectoryCurrent(
+      staging.path,
+      staging.identity,
+      "Artifact staging root",
+    );
+    const heldBeforeCleanup = await stagingHandle.stat();
+    assertSecureStagingDirectory(heldBeforeCleanup, "Held artifact staging root");
+    if (
+      !sameStagingDirectoryIdentity(
+        stagingDirectoryIdentity(heldBeforeCleanup),
+        staging.identity,
+      )
+    ) {
+      throw stagingInvalid("Held artifact staging root changed before cleanup");
+    }
+
+    for (const attempt of attempts) {
+      await removeStagingAttempt(attempt, assertPhysicalCurrent);
+      await assertStagingDirectoryCurrent(
+        staging.path,
+        staging.identity,
+        "Artifact staging root",
+      );
+    }
+    try {
+      await hooks?.beforeStagingSync?.({ stagingRoot: staging.path });
+    } catch (error) {
+      throw stagingUnavailable("Artifact staging sync hook reported a filesystem failure", error);
+    }
+    await boundedDirectoryNames(
+      staging.path,
+      0,
+      "Clean artifact staging root",
+    );
+    await syncDirectory(staging.path);
+    await syncDirectory(root);
+    await assertPhysicalCurrent();
+    await assertStagingDirectoryCurrent(
+      staging.path,
+      staging.identity,
+      "Artifact staging root",
+    );
+    await boundedDirectoryNames(
+      staging.path,
+      0,
+      "Synchronized artifact staging root",
+    );
+    const heldAfterCleanup = await stagingHandle.stat();
+    assertSecureStagingDirectory(heldAfterCleanup, "Held artifact staging root");
+    if (
+      !sameStagingDirectoryIdentity(
+        stagingDirectoryIdentity(heldAfterCleanup),
+        staging.identity,
+      )
+    ) {
+      throw stagingInvalid("Held artifact staging root changed during cleanup");
+    }
+    return staging.identity;
+  } finally {
+    await stagingHandle.close();
+  }
+}
+
+async function verifyOwnedStagingRoot(
+  root: string,
+  expected: StagingDirectoryIdentity,
+): Promise<void> {
+  await assertStagingDirectoryCurrent(
+    stagingRootPath(root),
+    expected,
+    "Artifact staging root",
+  );
 }
 
 async function readStableRegularFile(
@@ -1703,7 +2194,8 @@ function shouldQuarantineAuthorityFailure(
 ): boolean {
   return code === "ARTIFACT_ROOT_AUTHORITY_CONFLICT"
     || code === "ARTIFACT_ROOT_AUTHORITY_INVALID"
-    || code === "ARTIFACT_ROOT_AUTHORITY_UNMARKED";
+    || code === "ARTIFACT_ROOT_AUTHORITY_UNMARKED"
+    || code === "ARTIFACT_ROOT_STAGING_INVALID";
 }
 
 export function isHybridArtifactStoreCapacityLeaseProviderV1(
@@ -1984,7 +2476,8 @@ export function createHybridArtifactStoreCapacityLeaseProviderV1(
               ));
             }, workTimeoutMs);
             timeout.unref?.();
-            const assertCurrent = async (): Promise<void> => {
+            let stagingIdentity: StagingDirectoryIdentity | undefined;
+            const assertFilesystemLeaseCurrent = async (): Promise<void> => {
               if (controller.signal.aborted) {
                 throw new ArtifactStoreAuthorityError(
                   "ARTIFACT_CAPACITY_AUTHORITY_WORK_TIMEOUT",
@@ -1994,6 +2487,42 @@ export function createHybridArtifactStoreCapacityLeaseProviderV1(
               }
               try {
                 await kernelLease.assertCurrent();
+              } catch (error) {
+                if (error instanceof ArtifactStoreAuthorityError) {
+                  throw authorityEvidence(error);
+                }
+                throw authorityEvidence(new ArtifactStoreAuthorityError(
+                  "ARTIFACT_CAPACITY_AUTHORITY_LOST",
+                  "Artifact capacity physical authority became unavailable",
+                  { cause: error },
+                ));
+              }
+            };
+            const assertPhysicalCurrent = async (): Promise<void> => {
+              await assertFilesystemLeaseCurrent();
+              try {
+                await verifyExactRootAuthority(root, current, heldRootIdentity);
+              } catch (error) {
+                if (error instanceof ArtifactStoreAuthorityError) {
+                  throw authorityEvidence(error);
+                }
+                throw authorityEvidence(new ArtifactStoreAuthorityError(
+                  "ARTIFACT_CAPACITY_AUTHORITY_LOST",
+                  "Artifact capacity physical authority became unavailable",
+                  { cause: error },
+                ));
+              }
+            };
+            const assertCurrent = async (): Promise<void> => {
+              if (controller.signal.aborted) {
+                throw new ArtifactStoreAuthorityError(
+                  "ARTIFACT_CAPACITY_AUTHORITY_WORK_TIMEOUT",
+                  "Artifact capacity lease exceeded its bounded work deadline",
+                  { cause: controller.signal.reason },
+                );
+              }
+              try {
+                await assertPhysicalCurrent();
                 await transaction.unsafe("SELECT 1");
                 await assertReadyCapacity(transaction);
                 const observed = assertAuthorityRow(await readAuthorityRow(transaction));
@@ -2009,7 +2538,9 @@ export function createHybridArtifactStoreCapacityLeaseProviderV1(
                     "Artifact store database authority changed during lease work",
                   );
                 }
-                await verifyExactRootAuthority(root, observed, heldRootIdentity);
+                if (stagingIdentity) {
+                  await verifyOwnedStagingRoot(root, stagingIdentity);
+                }
               } catch (error) {
                 if (error instanceof ArtifactStoreAuthorityError) {
                   throw authorityEvidence(error);
@@ -2037,6 +2568,25 @@ export function createHybridArtifactStoreCapacityLeaseProviderV1(
             });
             try {
               await assertCurrent();
+              if (allowInitialization) {
+                try {
+                  stagingIdentity = await ensureAndCleanOwnedStaging(
+                    root,
+                    assertFilesystemLeaseCurrent,
+                    hooks,
+                  );
+                } catch (error) {
+                  if (error instanceof ArtifactStoreAuthorityError) {
+                    throw authorityEvidence(error);
+                  }
+                  throw authorityEvidence(new ArtifactStoreAuthorityError(
+                    "ARTIFACT_CAPACITY_AUTHORITY_LOST",
+                    "Artifact staging authority became unavailable",
+                    { cause: error },
+                  ));
+                }
+                await assertCurrent();
+              }
               let value: T;
               try {
                 value = await work(lease);

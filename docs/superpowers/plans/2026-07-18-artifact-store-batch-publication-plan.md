@@ -293,12 +293,19 @@ Commit: `feat(artifacts): lease physical publication`
 
 ### Task C1: Owned staging lifecycle
 
+Implementation note (2026-07-21): staging ownership is provider pre-work under
+the hybrid DB/kernel lease, not caller/store prose. The provider performs a
+complete bounded inventory before deletion, fences every mutation, requires an
+empty post-cleanup rescan on both sides of the durability barrier, and keeps
+read-only providers side-effect free. Layout conflicts quarantine; fsync and
+other transient filesystem failures remain retryable.
+
 Files:
 
 - modify `src/product-compiler/artifact-store-authority.ts`
-- modify `src/product-compiler/artifact-store.ts`
 - add `tests/product-compiler/artifact-store-staging.test.ts`
-- modify `tests/product-compiler/artifact-store.test.ts`
+- keep `src/product-compiler/artifact-store.ts` unchanged until C2 consumes
+  current-attempt staging; C1 cleanup is provider-owned pre-work
 
 Tests first:
 
