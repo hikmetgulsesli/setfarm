@@ -20,9 +20,9 @@ payload before the first link, publishes in tier/hash order, directory-syncs
 each tier, freshly verifies every final target, and cleans only the owned
 attempt. C2 remains shadow-only. D1 now provides one immutable fresh-evidence
 set, a closed exact-type registry, ByteBundle deep closure, dependency tiers,
-and per-member publishability classifications. D2 indexed batch publication,
-D3 recovery, E1 inventory/adoption, and production activation remain
-prohibited.
+and per-member publishability classifications. D2 indexed batch publication is
+committed as `84592cbf`. D2R durable recovery-plan authority, D3 recovery, E1
+inventory/adoption, and production activation remain prohibited.
 
 This slice closes four coupled boundaries:
 
@@ -601,6 +601,54 @@ full inventory/root authority owns persistent quarantine of that terminal
 drift. The publisher also does not convert a lease loss into a new reservation.
 Expiry recovery owns that decision.
 
+## Durable recovery-plan authority
+
+D3 cannot safely recover from migration 23 alone. That ledger deliberately
+normalizes membership in artifact-hash order and stores no durability tier or
+prepared-plan identity. After process death, inferring tiers from artifact type
+would turn recovery into another growing classifier and would make every future
+dependency-bearing artifact type a core-code exception. D2R therefore adds
+migration 26 rather than changing migration 23 or guessing from prose/type.
+
+Migration 26 introduces two immutable relations:
+
+- `artifact_publication_batch_plans`: one required header per migration-23
+  batch, with schema `setfarm.artifact-publication-batch-plan-binding.v1`, the
+  exact prepared `planIdentityHash`, item count, and creation time;
+- `artifact_publication_batch_plan_items`: every-and-only batch member with a
+  dense recovery ordinal, exact artifact hash, and durability tier.
+
+The recovery ordinal is canonical `(durabilityTier, artifactHash COLLATE "C")`
+order. Tiers are integers in `0..8`, begin at zero, and are dense. Deferred
+constraints prove one header per batch, exact item count, exact migration-23
+membership, dense ordinals, and canonical tier/hash order before commit. Both
+relations reject update, delete, non-empty truncate, and post-creation membership
+changes. The migration does not rewrite migration 23's historical schema or
+checksum.
+
+`reservePublicationBatch` requires an authenticated versioned plan binding in
+addition to migration 23 identities. It inserts the batch, its children, and
+the migration-26 plan in one transaction before forcing all deferred constraints
+immediate. Replay compares schema, plan identity, full identities, tiers, and
+order; an identical artifact set with another tier assignment is a batch-ID
+reuse conflict. A default all-tier-zero binding is forbidden because it would
+launder missing authority.
+
+The database does not attempt to reproduce JavaScript Canonical JSON. The
+application exports one pure bounded computation over full identities and tiers,
+uses it during preparation, replay, and recovery reads, and requires the result
+to equal the stored plan identity. PostgreSQL owns relational completeness and
+ordering; application code owns canonical plan-hash verification. Recovery gets
+one transactionally coherent snapshot containing the generation fence, full
+migration-23 identities, and exact migration-26 tiers.
+
+There is no automatic backfill for populated migration-23 ledgers: their tier
+authority is unknowable. Migration-26 adoption is allowed only when the batch
+ledger is empty. Rollback to 25 is allowed only while no batch/plan evidence
+exists. Production currently remains before migrations 23 and 24, so this
+fail-closed rule does not require a live data rewrite; no live migration is
+applied in this implementation slice.
+
 ## Failure settlement
 
 Failure handling is based on fresh operational evidence:
@@ -713,10 +761,11 @@ The following outcomes are forbidden:
 
 Migration 23's semantic membership schema does not change. Migration 24 adds
 only database/root physical authority; it does not alter batch membership or
-semantic artifact identity. Durability tiers are
-an operational physical plan and do not alter artifact identity. The publisher
+semantic artifact identity. Migration 26 binds the operational physical plan to
+that immutable membership without altering artifact identity. The publisher
 must prove that its prepared unique identity set exactly equals migration 23's
-immutable item set before writing.
+immutable item set and that its tier plan exactly equals migration 26 before
+writing.
 
 The flat `<hash>.json` read path remains compatible. The authority marker and
 `.staging` are newly reserved internal entries and require inventory, capacity,

@@ -14,8 +14,11 @@ Base commits:
 Branch: `arch/product-semantics-v2-authority`
 
 Implementation status on 2026-07-21: slices A and B, C1, C2, D1, and D2 are
-complete and verified on the feature branch. D3, slice E, and every production
-migration/adoption/activation step remain pending and fail-closed.
+complete and verified on the feature branch. D3 investigation proved that
+migration 23 cannot reconstruct durability tiers or prepared-plan identity
+after process death. D2R is therefore the required dependency before D3. D2R,
+D3, slice E, and every production migration/adoption/activation step remain
+pending and fail-closed.
 
 ## Delivery rules
 
@@ -484,6 +487,68 @@ git diff --check
 ```
 
 Commit: `feat(artifacts): coordinate batch publication`
+
+### Task D2R: Durable batch-plan recovery authority
+
+Files:
+
+- add `src/db/artifact-publication-batch-plan-migration.ts`
+- add `tests/execution-attempts/artifact-publication-batch-plan-migration.test.ts`
+- modify `src/db/contract-spine-migrations.ts`
+- modify migration source-integrity/digest tests and generated digest manifest
+- modify `scripts/contract-spine-migrate.ts`
+- modify `src/product-compiler/artifact-store-batch-plan.ts`
+- modify `src/product-compiler/artifact-index.ts`
+- modify focused artifact-index and indexed-publisher tests
+
+Tests first:
+
+- migration 26 installs two exact permanent public relations with immutable
+  update/delete/truncate behavior and exact functions, triggers, constraints,
+  indexes, ownership, and journal checksum;
+- an unjournaled migration-26 shape is adoptable only when migration-23 batch
+  tables are empty; populated legacy batches are an adoption mismatch;
+- every batch requires exactly one plan header and every-and-only plan member in
+  the same commit;
+- item count, tier bounds, dense tiers, dense recovery ordinals, canonical
+  tier/hash order, and migration-23 membership are enforced at commit;
+- rollback to 25 succeeds only with no batch/plan evidence and refuses evidence
+  destruction;
+- batch reservation atomically writes migration-23 and migration-26 authority;
+- replay rejects another plan hash, tier assignment, ordering, identity, or
+  schema even when the artifact hash set is unchanged;
+- recovery snapshot reads one generation plus complete identities and tiers and
+  recomputes the stored plan hash;
+- no default tier, artifact-type inference, model, or prose classifier exists.
+
+Implementation:
+
+1. Export one pure bounded plan-identity function over canonical full identities
+   plus tiers and use it in prepared-plan construction.
+2. Add migration 26 plan header/item ledgers with deferred exact-completeness
+   validation and immutable evidence.
+3. Require a versioned plan binding in `reservePublicationBatch`; write it in the
+   same transaction as the migration-23 batch before constraints become
+   immediate.
+4. Compare the exact durable binding on replay and expose a transaction-safe
+   recovery snapshot API.
+5. Add explicit offline audit and rollback commands without changing migration
+   23/24/25 source-bound regions.
+
+Verification:
+
+```bash
+node --import tsx --test \
+  tests/execution-attempts/artifact-publication-batch-plan-migration.test.ts \
+  tests/product-compiler/artifact-index.test.ts \
+  tests/product-compiler/indexed-artifact-publisher.test.ts
+node --import tsx --test tests/execution-attempts/migration-source-digests.test.ts
+npm run test:product-compiler
+npx tsc --noEmit
+git diff --check
+```
+
+Commit: `feat(artifacts): persist batch recovery plans`
 
 ### Task D3: Aggregate expiry recovery
 
