@@ -919,6 +919,11 @@ describe("durable semantic artifact index", () => {
         .map((item) => item.batchReservationId),
       [batch.batchReservationId],
     );
+    await assert.rejects(
+      index.listExpiredPublicationBatches(liveAt(60_021), 0),
+      (error: unknown) => error instanceof ArtifactIndexError
+        && error.code === "ARTIFACT_BATCH_INVALID",
+    );
   });
 
   it("lets exactly one concurrent adopter rotate every remaining batch child", async () => {
@@ -939,6 +944,8 @@ describe("durable semantic artifact index", () => {
       index.adoptExpiredPublicationBatch({
         batchReservationId: batch.batchReservationId,
         batchIdentityHash: batch.batchIdentityHash,
+        expectedLeaseToken: batch.leaseToken!,
+        expectedLeaseExpiresAt: batch.leaseExpiresAt!,
         ownerInstanceId: "recovery-a",
         leaseMs: 60_000,
         now: recoveryNow,
@@ -946,6 +953,8 @@ describe("durable semantic artifact index", () => {
       index.adoptExpiredPublicationBatch({
         batchReservationId: batch.batchReservationId,
         batchIdentityHash: batch.batchIdentityHash,
+        expectedLeaseToken: batch.leaseToken!,
+        expectedLeaseExpiresAt: batch.leaseExpiresAt!,
         ownerInstanceId: "recovery-b",
         leaseMs: 60_000,
         now: recoveryNow,
@@ -957,7 +966,7 @@ describe("durable semantic artifact index", () => {
     const rejected = results.find((result) => result.status === "rejected");
     assert.ok(rejected?.status === "rejected");
     assert.ok(rejected.reason instanceof ArtifactIndexError);
-    assert.equal(rejected.reason.code, "ARTIFACT_BATCH_NOT_EXPIRED");
+    assert.equal(rejected.reason.code, "ARTIFACT_BATCH_LEASE_LOST");
     assert.equal(winner.value.reservations.every((reservation) =>
       reservation.state !== "reserved"
       || (
@@ -987,12 +996,28 @@ describe("durable semantic artifact index", () => {
     const adopted = await index.adoptExpiredPublicationBatch({
       batchReservationId: original.batchReservationId,
       batchIdentityHash: original.batchIdentityHash,
+      expectedLeaseToken: staleObservation.leaseToken!,
+      expectedLeaseExpiresAt: staleObservation.leaseExpiresAt!,
       ownerInstanceId: "recovery-b",
       leaseMs: 60_000,
       now: recoveryNow,
     });
     assert.notEqual(adopted.leaseToken, staleObservation.leaseToken);
     const adoptedExpiredNow = new Date(recoveryNow.getTime() + 60_001);
+
+    await assert.rejects(
+      index.adoptExpiredPublicationBatch({
+        batchReservationId: staleObservation.batchReservationId,
+        batchIdentityHash: staleObservation.batchIdentityHash,
+        expectedLeaseToken: staleObservation.leaseToken!,
+        expectedLeaseExpiresAt: staleObservation.leaseExpiresAt!,
+        ownerInstanceId: "stale-recovery-owner",
+        leaseMs: 60_000,
+        now: adoptedExpiredNow,
+      }),
+      (error: unknown) => error instanceof ArtifactIndexError
+        && error.code === "ARTIFACT_BATCH_LEASE_LOST",
+    );
 
     await assert.rejects(
       index.finalizeExpiredPublicationBatch({
@@ -1051,10 +1076,23 @@ describe("durable semantic artifact index", () => {
       now: at(20),
     });
     assert.equal(firstPublish.batchState, "active");
+    const partialSnapshot = await index.getPublicationBatchRecoverySnapshot({
+      batchReservationId: batch.batchReservationId,
+    });
+    assert.equal(
+      partialSnapshot.members.find((member) => member.artifact.hash === first.hash)?.authority.kind,
+      "indexed",
+    );
+    assert.equal(
+      partialSnapshot.members.find((member) => member.artifact.hash === second.hash)?.authority.kind,
+      "reservation",
+    );
     const recoveryNow = new Date();
     const adopted = await index.adoptExpiredPublicationBatch({
       batchReservationId: batch.batchReservationId,
       batchIdentityHash: batch.batchIdentityHash,
+      expectedLeaseToken: batch.leaseToken!,
+      expectedLeaseExpiresAt: batch.leaseExpiresAt!,
       ownerInstanceId: "recovery-owner",
       leaseMs: 60_000,
       now: recoveryNow,
@@ -1308,14 +1346,15 @@ describe("durable semantic artifact index", () => {
         .map((reservation) => reservation.reservationId),
       [],
     );
-    assert.deepEqual(
-      (await index.listExpiredPublicationBatches(new Date("1970-01-01T00:00:00.000Z")))
-        .map((batch) => batch.batchReservationId),
-      [reserved.batchReservationId],
-    );
+    const expiredBatch = (
+      await index.listExpiredPublicationBatches(new Date("1970-01-01T00:00:00.000Z"))
+    )[0]!;
+    assert.equal(expiredBatch.batchReservationId, reserved.batchReservationId);
     const adopted = await index.adoptExpiredPublicationBatch({
       batchReservationId: reserved.batchReservationId,
       batchIdentityHash: reserved.batchIdentityHash,
+      expectedLeaseToken: expiredBatch.leaseToken!,
+      expectedLeaseExpiresAt: expiredBatch.leaseExpiresAt!,
       ownerInstanceId: "recovery-owner",
       leaseMs: 60_000,
       now: new Date("2099-01-01T00:00:00.000Z"),

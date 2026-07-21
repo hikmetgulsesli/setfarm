@@ -27,9 +27,11 @@ import {
 } from "./artifact-closure.js";
 import {
   ArtifactIndexError,
+  MAX_EXPIRED_ARTIFACT_PUBLICATION_BATCHES_PER_RECOVERY_V1,
   createArtifactIndex,
   type ArtifactIdentity,
   type ArtifactPublicationBatchLifecycle,
+  type ArtifactPublicationBatchRecoverySnapshot,
   type ArtifactPublicationBatchReservation,
   type ArtifactPublicationReservation,
   type ArtifactCapacityState,
@@ -51,9 +53,32 @@ type ArtifactIndexClient = Pick<
   | "bootstrap"
   | "reservePublicationBatch"
   | "heartbeatPublicationBatch"
+  | "adoptExpiredPublicationBatch"
+  | "listExpiredPublicationBatches"
+  | "getPublicationBatchRecoverySnapshot"
   | "publishPublicationBatchItem"
   | "finalizeOwnedPublicationBatch"
+  | "finalizeExpiredPublicationBatch"
   | "getPublicationBatchLifecycle"
+>;
+
+type ArtifactSingleRecoveryIndexClient = Pick<
+  ArtifactIndexClient,
+  | "publish"
+  | "listExpired"
+  | "adoptExpired"
+  | "releaseExpired"
+  | "quarantineExpired"
+>;
+
+type ArtifactBatchRecoveryIndexClient = Pick<
+  ArtifactIndexClient,
+  | "adoptExpiredPublicationBatch"
+  | "listExpiredPublicationBatches"
+  | "getPublicationBatchRecoverySnapshot"
+  | "publishPublicationBatchItem"
+  | "finalizeOwnedPublicationBatch"
+  | "finalizeExpiredPublicationBatch"
 >;
 
 type ArtifactStoreClient = Pick<ContentAddressedArtifactStore, "put" | "get">
@@ -96,6 +121,35 @@ export type ArtifactRecoveryResult = Readonly<{
   reservationId: string;
   artifactHash: string;
   resolution: "published" | "released" | "quarantined" | "stale";
+  diagnostic?: string;
+}>;
+
+export const ARTIFACT_PUBLICATION_BATCH_RECOVERY_RESULT_SCHEMA_V1 =
+  "setfarm.artifact-publication-batch-recovery-result.v1" as const;
+
+export type ArtifactPublicationBatchRecoveryMemberResultV1 = Readonly<{
+  ordinal: number;
+  durabilityTier: number;
+  identity: ArtifactIdentity;
+  authorityBefore: "indexed" | "reservation";
+  observation: "not_observed" | "exact" | "missing" | "corrupt";
+  action: "none" | "already_indexed" | "published" | "released" | "quarantined";
+  diagnostic?: string;
+}>;
+
+export type ArtifactPublicationBatchRecoveryResultV1 = Readonly<{
+  schema: typeof ARTIFACT_PUBLICATION_BATCH_RECOVERY_RESULT_SCHEMA_V1;
+  batchReservationId: string;
+  batchIdentityHash: string;
+  planIdentityHash: string;
+  observedGeneration: Readonly<{
+    leaseToken: string;
+    leaseExpiresAt: string;
+  }>;
+  resolution: "completed" | "released" | "quarantined" | "stale";
+  members: readonly ArtifactPublicationBatchRecoveryMemberResultV1[];
+  closures: readonly ArtifactClosureEvidenceV1[];
+  lifecycle: ArtifactPublicationBatchLifecycle;
   diagnostic?: string;
 }>;
 
@@ -903,8 +957,477 @@ export async function bootstrapArtifactIndex(input: Readonly<{
   return { capacity, artifacts };
 }
 
+type ArtifactPublicationBatchRecoverySnapshotMember =
+  ArtifactPublicationBatchRecoverySnapshot["members"][number];
+
+type ArtifactPublicationBatchMemberObservation = Readonly<{
+  member: ArtifactPublicationBatchRecoverySnapshotMember;
+  observation: "exact" | "missing" | "corrupt";
+  stored?: ArtifactGetResult;
+  diagnostic?: string;
+}>;
+
+const DETERMINISTIC_CORRUPT_ARTIFACT_STORE_CODES = new Set([
+  "ARTIFACT_UNSAFE_FILE_TYPE",
+  "ARTIFACT_BOUNDED_READ_EXCEEDED",
+  "ARTIFACT_INVALID_ENVELOPE",
+  "ARTIFACT_HASH_COLLISION_OR_CORRUPTION",
+  "ARTIFACT_NON_CANONICAL_BYTES",
+]);
+
+function batchRecoveryStale(error: unknown): boolean {
+  return error instanceof ArtifactIndexError && [
+    "ARTIFACT_BATCH_LEASE_LOST",
+    "ARTIFACT_BATCH_NOT_EXPIRED",
+    "ARTIFACT_BATCH_TERMINAL",
+  ].includes(error.code);
+}
+
+function sameBatchRecoveryGeneration(
+  observed: ArtifactPublicationBatchLifecycle,
+  current: ArtifactPublicationBatchLifecycle,
+): boolean {
+  return observed.batchReservationId === current.batchReservationId
+    && observed.batchIdentityHash === current.batchIdentityHash
+    && observed.state === "active"
+    && current.state === "active"
+    && typeof observed.leaseToken === "string"
+    && observed.leaseToken === current.leaseToken
+    && typeof observed.leaseExpiresAt === "string"
+    && observed.leaseExpiresAt === current.leaseExpiresAt;
+}
+
+async function observeArtifactPublicationBatchMembers(
+  store: ArtifactStoreClient,
+  snapshot: ArtifactPublicationBatchRecoverySnapshot,
+): Promise<readonly ArtifactPublicationBatchMemberObservation[]> {
+  return Object.freeze(await Promise.all(snapshot.members.map(async (member) => {
+    try {
+      const stored = await store.get(member.artifact.hash);
+      assertStoredIdentity(stored, member.artifact);
+      return Object.freeze({ member, observation: "exact" as const, stored });
+    } catch (error) {
+      if (error instanceof ArtifactStoreError && error.code === "ARTIFACT_NOT_FOUND") {
+        if (member.authority.kind === "reservation") {
+          return Object.freeze({ member, observation: "missing" as const });
+        }
+        return Object.freeze({
+          member,
+          observation: "corrupt" as const,
+          diagnostic: "ARTIFACT_INDEXED_CAS_MISSING",
+        });
+      }
+      if (
+        error instanceof IndexedArtifactPublisherError
+        || (error instanceof ArtifactStoreError
+          && DETERMINISTIC_CORRUPT_ARTIFACT_STORE_CODES.has(error.code))
+      ) {
+        return Object.freeze({
+          member,
+          observation: "corrupt" as const,
+          diagnostic: error instanceof Error && "code" in error
+            ? String(error.code)
+            : "ARTIFACT_FILESYSTEM_INDEX_MISMATCH",
+        });
+      }
+      // Root replacement, in-flight file mutation, and other I/O uncertainty
+      // are not evidence that immutable bytes are corrupt. Preserve the active
+      // aggregate so another bounded recovery pass can fresh-read it.
+      throw error;
+    }
+  })));
+}
+
+function evaluateArtifactPublicationBatchRecoveryClosures(
+  snapshot: ArtifactPublicationBatchRecoverySnapshot,
+  observations: readonly ArtifactPublicationBatchMemberObservation[],
+): readonly ArtifactClosureEvidenceV1[] {
+  const evidence = prepareArtifactClosureEvidenceSetV1(
+    observations.flatMap((item) => item.observation === "exact" && item.stored
+      ? [item.stored]
+      : []),
+  );
+  const dependencyRootTypes = new Set<string>(
+    ARTIFACT_CLOSURE_REGISTRY_V1.entries
+      .filter((entry) => entry.kind === "dependency-root")
+      .map((entry) => entry.artifactType),
+  );
+  return Object.freeze(snapshot.members.map((member) => evaluateArtifactClosureV1({
+    evidence,
+    root: member.artifact,
+    role: dependencyRootTypes.has(member.artifact.artifactType)
+      ? "dependency-root"
+      : "leaf",
+  })));
+}
+
+function artifactPublicationBatchRecoveryCorruption(
+  snapshot: ArtifactPublicationBatchRecoverySnapshot,
+  observations: readonly ArtifactPublicationBatchMemberObservation[],
+  closures: readonly ArtifactClosureEvidenceV1[],
+): string | undefined {
+  const corrupt = observations.find((item) => item.observation === "corrupt");
+  if (corrupt) {
+    return `${corrupt.diagnostic ?? "ARTIFACT_RECOVERY_CORRUPT"}:${corrupt.member.artifact.hash}`;
+  }
+  const rejected = closures.find((closure) =>
+    closure.status === "rejected"
+    && closure.classification !== "ARTIFACT_CLOSURE_ROOT_MISSING"
+    && closure.classification !== "ARTIFACT_CLOSURE_DEPENDENCY_MISSING");
+  if (rejected) return `${rejected.classification}:${rejected.rootHash}`;
+
+  const planByHash = new Map(snapshot.plan.items.map((item) => [item.identity.hash, item]));
+  for (const closure of closures) {
+    if (closure.role !== "dependency-root") continue;
+    for (const member of closure.members) {
+      if (member.role !== "dependency") continue;
+      const planned = planByHash.get(member.expected.hash);
+      if (
+        !planned
+        || planned.durabilityTier !== member.durabilityTier
+        || (member.observed && !sameIdentity(planned.identity, member.observed))
+      ) {
+        return `ARTIFACT_CLOSURE_PLAN_MISMATCH:${closure.rootHash}`;
+      }
+    }
+  }
+  return undefined;
+}
+
+function artifactPublicationBatchRecoveryResult(input: Readonly<{
+  snapshot: ArtifactPublicationBatchRecoverySnapshot;
+  observed: ArtifactPublicationBatchLifecycle;
+  observations?: readonly ArtifactPublicationBatchMemberObservation[];
+  actions?: ReadonlyMap<string, ArtifactPublicationBatchRecoveryMemberResultV1["action"]>;
+  closures?: readonly ArtifactClosureEvidenceV1[];
+  lifecycle: ArtifactPublicationBatchLifecycle;
+  resolution: ArtifactPublicationBatchRecoveryResultV1["resolution"];
+  diagnostic?: string;
+}>): ArtifactPublicationBatchRecoveryResultV1 {
+  if (!input.observed.leaseToken || !input.observed.leaseExpiresAt) {
+    throw batchIncomplete("expired aggregate observation has no exact lease generation");
+  }
+  const observations = new Map(
+    input.observations?.map((item) => [item.member.artifact.hash, item]) ?? [],
+  );
+  const members = Object.freeze(input.snapshot.members.map((member) => {
+    const observation = observations.get(member.artifact.hash);
+    return Object.freeze({
+      ordinal: member.ordinal,
+      durabilityTier: member.durabilityTier,
+      identity: member.artifact,
+      authorityBefore: member.authority.kind,
+      observation: observation?.observation ?? "not_observed" as const,
+      action: input.actions?.get(member.artifact.hash) ?? "none" as const,
+      ...(observation?.diagnostic ? { diagnostic: observation.diagnostic } : {}),
+    });
+  }));
+  return Object.freeze({
+    schema: ARTIFACT_PUBLICATION_BATCH_RECOVERY_RESULT_SCHEMA_V1,
+    batchReservationId: input.snapshot.lifecycle.batchReservationId,
+    batchIdentityHash: input.snapshot.lifecycle.batchIdentityHash,
+    planIdentityHash: input.snapshot.plan.planIdentityHash,
+    observedGeneration: Object.freeze({
+      leaseToken: input.observed.leaseToken,
+      leaseExpiresAt: input.observed.leaseExpiresAt,
+    }),
+    resolution: input.resolution,
+    members,
+    closures: Object.freeze(input.closures ?? []),
+    lifecycle: input.lifecycle,
+    ...(input.diagnostic ? { diagnostic: input.diagnostic } : {}),
+  });
+}
+
+async function staleArtifactPublicationBatchRecoveryResult(input: Readonly<{
+  index: ArtifactBatchRecoveryIndexClient;
+  snapshot: ArtifactPublicationBatchRecoverySnapshot;
+  observed: ArtifactPublicationBatchLifecycle;
+  observations?: readonly ArtifactPublicationBatchMemberObservation[];
+  actions?: ReadonlyMap<string, ArtifactPublicationBatchRecoveryMemberResultV1["action"]>;
+  closures?: readonly ArtifactClosureEvidenceV1[];
+}>): Promise<ArtifactPublicationBatchRecoveryResultV1> {
+  const current = await input.index.getPublicationBatchRecoverySnapshot({
+    batchReservationId: input.snapshot.lifecycle.batchReservationId,
+  });
+  return artifactPublicationBatchRecoveryResult({
+    snapshot: input.snapshot,
+    observed: input.observed,
+    ...(input.observations ? { observations: input.observations } : {}),
+    ...(input.actions ? { actions: input.actions } : {}),
+    ...(input.closures ? { closures: input.closures } : {}),
+    lifecycle: current.lifecycle,
+    resolution: "stale",
+    diagnostic: "ARTIFACT_BATCH_RECOVERY_STALE_GENERATION",
+  });
+}
+
+export async function recoverExpiredArtifactPublicationBatches(input: Readonly<{
+  index: ArtifactBatchRecoveryIndexClient;
+  store: ArtifactStoreClient;
+  ownerInstanceId?: string;
+  leaseMs?: number;
+  maxBatches?: number;
+  now?: Date;
+}>): Promise<ArtifactPublicationBatchRecoveryResultV1[]> {
+  const owner = input.ownerInstanceId
+    ?? `artifact-batch-recovery:${process.pid}:${randomUUID()}`;
+  const now = input.now ?? new Date();
+  const maxBatches = input.maxBatches
+    ?? MAX_EXPIRED_ARTIFACT_PUBLICATION_BATCHES_PER_RECOVERY_V1;
+  if (
+    !Number.isSafeInteger(maxBatches)
+    || maxBatches < 1
+    || maxBatches > MAX_EXPIRED_ARTIFACT_PUBLICATION_BATCHES_PER_RECOVERY_V1
+  ) {
+    throw batchIncomplete(
+      `recovery batch limit must be 1..${MAX_EXPIRED_ARTIFACT_PUBLICATION_BATCHES_PER_RECOVERY_V1}`,
+    );
+  }
+  const expired = await input.index.listExpiredPublicationBatches(now, maxBatches);
+  const results: ArtifactPublicationBatchRecoveryResultV1[] = [];
+  for (const observed of expired) {
+    if (!observed.leaseToken || !observed.leaseExpiresAt) {
+      throw batchIncomplete("expired aggregate listing has no exact lease generation");
+    }
+    const snapshot = await input.index.getPublicationBatchRecoverySnapshot({
+      batchReservationId: observed.batchReservationId,
+    });
+    if (!sameBatchRecoveryGeneration(observed, snapshot.lifecycle)) {
+      results.push(await staleArtifactPublicationBatchRecoveryResult({
+        index: input.index,
+        snapshot,
+        observed,
+      }));
+      continue;
+    }
+
+    const observations = await observeArtifactPublicationBatchMembers(input.store, snapshot);
+    const closures = evaluateArtifactPublicationBatchRecoveryClosures(snapshot, observations);
+    const corruption = artifactPublicationBatchRecoveryCorruption(
+      snapshot,
+      observations,
+      closures,
+    );
+    const actions = new Map<
+      string,
+      ArtifactPublicationBatchRecoveryMemberResultV1["action"]
+    >();
+    for (const member of snapshot.members) {
+      if (member.authority.kind === "indexed") {
+        actions.set(member.artifact.hash, "already_indexed");
+      }
+    }
+
+    if (corruption) {
+      try {
+        const lifecycle = await input.index.finalizeExpiredPublicationBatch({
+          batchReservationId: observed.batchReservationId,
+          batchIdentityHash: observed.batchIdentityHash,
+          expectedLeaseToken: observed.leaseToken,
+          expectedLeaseExpiresAt: observed.leaseExpiresAt,
+          resolution: "quarantined",
+          diagnostic: corruption,
+          now,
+        });
+        for (const member of snapshot.members) {
+          if (member.authority.kind === "reservation") {
+            actions.set(member.artifact.hash, "quarantined");
+          }
+        }
+        results.push(artifactPublicationBatchRecoveryResult({
+          snapshot,
+          observed,
+          observations,
+          actions,
+          closures,
+          lifecycle,
+          resolution: "quarantined",
+          diagnostic: corruption,
+        }));
+      } catch (error) {
+        if (!batchRecoveryStale(error)) throw error;
+        results.push(await staleArtifactPublicationBatchRecoveryResult({
+          index: input.index,
+          snapshot,
+          observed,
+          observations,
+          actions,
+          closures,
+        }));
+      }
+      continue;
+    }
+
+    const observationByHash = new Map(
+      observations.map((item) => [item.member.artifact.hash, item]),
+    );
+    const closureByRoot = new Map(closures.map((item) => [item.rootHash, item]));
+    const publishable = snapshot.members.filter((member) =>
+      member.authority.kind === "reservation"
+      && observationByHash.get(member.artifact.hash)?.observation === "exact"
+      && closureByRoot.get(member.artifact.hash)?.status === "verified");
+    const remainder = snapshot.members.filter((member) =>
+      member.authority.kind === "reservation"
+      && !publishable.some((candidate) => candidate.artifact.hash === member.artifact.hash));
+    let operationOffsetMs = 0;
+    const nextOperationTime = () => new Date(now.getTime() + (++operationOffsetMs));
+
+    if (publishable.length === 0) {
+      try {
+        const lifecycle = await input.index.finalizeExpiredPublicationBatch({
+          batchReservationId: observed.batchReservationId,
+          batchIdentityHash: observed.batchIdentityHash,
+          expectedLeaseToken: observed.leaseToken,
+          expectedLeaseExpiresAt: observed.leaseExpiresAt,
+          resolution: "released",
+          diagnostic: "ARTIFACT_BATCH_RECOVERY_NO_CLOSURE_SAFE_BYTES",
+          now,
+        });
+        for (const member of remainder) actions.set(member.artifact.hash, "released");
+        results.push(artifactPublicationBatchRecoveryResult({
+          snapshot,
+          observed,
+          observations,
+          actions,
+          closures,
+          lifecycle,
+          resolution: "released",
+          diagnostic: "ARTIFACT_BATCH_RECOVERY_NO_CLOSURE_SAFE_BYTES",
+        }));
+      } catch (error) {
+        if (!batchRecoveryStale(error)) throw error;
+        results.push(await staleArtifactPublicationBatchRecoveryResult({
+          index: input.index,
+          snapshot,
+          observed,
+          observations,
+          actions,
+          closures,
+        }));
+      }
+      continue;
+    }
+
+    let leaseToken: string;
+    try {
+      const adopted = await input.index.adoptExpiredPublicationBatch({
+        batchReservationId: observed.batchReservationId,
+        batchIdentityHash: observed.batchIdentityHash,
+        expectedLeaseToken: observed.leaseToken,
+        expectedLeaseExpiresAt: observed.leaseExpiresAt,
+        ownerInstanceId: owner,
+        leaseMs: input.leaseMs,
+        now,
+      });
+      if (!adopted.leaseToken) throw batchIncomplete("adopted aggregate has no lease token");
+      leaseToken = adopted.leaseToken;
+    } catch (error) {
+      if (!batchRecoveryStale(error)) throw error;
+      results.push(await staleArtifactPublicationBatchRecoveryResult({
+        index: input.index,
+        snapshot,
+        observed,
+        observations,
+        actions,
+        closures,
+      }));
+      continue;
+    }
+
+    let stale = false;
+    try {
+      const publishableHashes = new Set(publishable.map((item) => item.artifact.hash));
+      for (const member of snapshot.members) {
+        if (!publishableHashes.has(member.artifact.hash)) continue;
+        if (member.authority.kind !== "reservation") {
+          throw batchIncomplete("publishable recovery member lost its reservation authority");
+        }
+        const published = await input.index.publishPublicationBatchItem({
+          batchReservationId: observed.batchReservationId,
+          reservationId: member.authority.reservationId,
+          artifact: member.artifact,
+          ownerInstanceId: owner,
+          leaseToken,
+          now: nextOperationTime(),
+        });
+        if (!sameIdentity(published.artifact, member.artifact)) {
+          throw batchIncomplete(`recovery published a different identity for ${member.artifact.hash}`);
+        }
+        actions.set(member.artifact.hash, "published");
+      }
+    } catch (error) {
+      if (!batchRecoveryStale(error)) throw error;
+      stale = true;
+    }
+    if (stale) {
+      results.push(await staleArtifactPublicationBatchRecoveryResult({
+        index: input.index,
+        snapshot,
+        observed,
+        observations,
+        actions,
+        closures,
+      }));
+      continue;
+    }
+
+    if (remainder.length > 0) {
+      try {
+        const lifecycle = await input.index.finalizeOwnedPublicationBatch({
+          batchReservationId: observed.batchReservationId,
+          ownerInstanceId: owner,
+          leaseToken,
+          resolution: "released",
+          diagnostic: "ARTIFACT_BATCH_RECOVERY_RELEASED_UNPUBLISHABLE_REMAINDER",
+          now: nextOperationTime(),
+        });
+        for (const member of remainder) actions.set(member.artifact.hash, "released");
+        results.push(artifactPublicationBatchRecoveryResult({
+          snapshot,
+          observed,
+          observations,
+          actions,
+          closures,
+          lifecycle,
+          resolution: "released",
+          diagnostic: "ARTIFACT_BATCH_RECOVERY_RELEASED_UNPUBLISHABLE_REMAINDER",
+        }));
+      } catch (error) {
+        if (!batchRecoveryStale(error)) throw error;
+        results.push(await staleArtifactPublicationBatchRecoveryResult({
+          index: input.index,
+          snapshot,
+          observed,
+          observations,
+          actions,
+          closures,
+        }));
+      }
+      continue;
+    }
+
+    const finalSnapshot = await input.index.getPublicationBatchRecoverySnapshot({
+      batchReservationId: observed.batchReservationId,
+    });
+    if (finalSnapshot.lifecycle.state !== "completed") {
+      throw batchIncomplete("recovery consumed every reservation without completing the aggregate");
+    }
+    results.push(artifactPublicationBatchRecoveryResult({
+      snapshot,
+      observed,
+      observations,
+      actions,
+      closures,
+      lifecycle: finalSnapshot.lifecycle,
+      resolution: "completed",
+    }));
+  }
+  return results;
+}
+
 export async function recoverExpiredArtifactPublications(input: Readonly<{
-  index: ArtifactIndexClient;
+  index: ArtifactSingleRecoveryIndexClient;
   store: ArtifactStoreClient;
   ownerInstanceId?: string;
   leaseMs?: number;

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, afterEach, before, beforeEach, describe, it } from "node:test";
@@ -13,6 +13,7 @@ import {
 import {
   ARTIFACT_STORE_BATCH_PLAN_SCHEMA_V1,
   copyPreparedArtifactStoreBatchCanonicalItemsV1,
+  createArtifactPublicationBatchPlanBindingV1,
   prepareArtifactStoreBatchPlanV1,
 } from "../../src/product-compiler/artifact-store-batch-plan.js";
 import {
@@ -25,6 +26,7 @@ import { canonicalJsonBytes } from "../../src/product-compiler/canonical-json.js
 import {
   IndexedArtifactPublisher,
   bootstrapArtifactIndex,
+  recoverExpiredArtifactPublicationBatches,
   recoverExpiredArtifactPublications,
   scanArtifactInventory,
 } from "../../src/product-compiler/indexed-artifact-publisher.js";
@@ -85,6 +87,29 @@ function byteBundlePlan(bytes = Buffer.from("indexed-bundle", "utf8")) {
 
 function at(offsetMs: number): Date {
   return new Date(Date.UTC(2026, 6, 13, 12, 0, 0, offsetMs));
+}
+
+async function reserveExpiredBatch(
+  index: ReturnType<typeof createArtifactIndex>,
+  batchReservationId: string,
+  plan: ReturnType<typeof leafPlan> | ReturnType<typeof byteBundlePlan>,
+) {
+  const recoveryNow = new Date();
+  const prepared = prepareArtifactStoreBatchPlanV1(plan);
+  const items = copyPreparedArtifactStoreBatchCanonicalItemsV1(prepared);
+  const binding = createArtifactPublicationBatchPlanBindingV1(items.map((item) => ({
+    durabilityTier: item.durabilityTier,
+    identity: item.identity,
+  })));
+  const reservation = await index.reservePublicationBatch({
+    batchReservationId,
+    artifacts: items.map((item) => item.identity),
+    plan: binding,
+    ownerInstanceId: "dead-batch-publisher",
+    leaseMs: 100,
+    now: new Date(recoveryNow.getTime() - 1_000),
+  });
+  return { prepared, items, reservation, recoveryNow };
 }
 
 describe("indexed semantic artifact publisher", () => {
@@ -828,6 +853,407 @@ describe("indexed semantic artifact publisher", () => {
       artifactStore.get(corrupt.hash),
       (error: unknown) => error instanceof ArtifactStoreError
         && error.code === "ARTIFACT_HASH_COLLISION_OR_CORRUPTION",
+    );
+  });
+
+  it("recovers an exact expired aggregate once in canonical tier order", async () => {
+    const artifactStore = await store();
+    const index = createArtifactIndex(database.sql);
+    await index.bootstrap({ artifacts: [], quotaBytes: 10_000, maxPayloadBytes: 5_000, now: at(0) });
+    const batch = await reserveExpiredBatch(
+      index,
+      "batch-recovery-exact",
+      byteBundlePlan(Buffer.from("exact recovery", "utf8")),
+    );
+    await artifactStore.putPreparedBatch(batch.prepared);
+    const published: string[] = [];
+    const recoveryIndex = {
+      ...index,
+      async publishPublicationBatchItem(input: Parameters<typeof index.publishPublicationBatchItem>[0]) {
+        published.push(input.artifact.hash);
+        return index.publishPublicationBatchItem(input);
+      },
+    };
+
+    const recovered = await recoverExpiredArtifactPublicationBatches({
+      index: recoveryIndex,
+      store: artifactStore,
+      ownerInstanceId: "batch-recovery-owner",
+      now: batch.recoveryNow,
+    });
+
+    assert.equal(recovered.length, 1);
+    assert.equal(
+      recovered[0]?.schema,
+      "setfarm.artifact-publication-batch-recovery-result.v1",
+    );
+    assert.equal(Object.isFrozen(recovered[0]), true);
+    assert.equal(Object.isFrozen(recovered[0]?.members), true);
+    assert.equal(recovered[0]?.resolution, "completed");
+    assert.deepEqual(published, batch.items.map((item) => item.identity.hash));
+    assert.deepEqual(
+      recovered[0]?.members.map((item) => [item.observation, item.action]),
+      batch.items.map(() => ["exact", "published"]),
+    );
+    assert.equal(recovered[0]?.lifecycle.state, "completed");
+    assert.equal((await index.getCapacity()).reservedBytes, 0);
+  });
+
+  it("releases an all-missing aggregate without transient adoption", async () => {
+    const artifactStore = await store();
+    const index = createArtifactIndex(database.sql);
+    await index.bootstrap({ artifacts: [], quotaBytes: 10_000, maxPayloadBytes: 5_000, now: at(0) });
+    const batch = await reserveExpiredBatch(
+      index,
+      "batch-recovery-all-missing",
+      leafPlan("all-missing"),
+    );
+    let adoptionCalls = 0;
+    const recoveryIndex = {
+      ...index,
+      async adoptExpiredPublicationBatch(
+        input: Parameters<typeof index.adoptExpiredPublicationBatch>[0],
+      ) {
+        adoptionCalls += 1;
+        return index.adoptExpiredPublicationBatch(input);
+      },
+    };
+
+    const recovered = await recoverExpiredArtifactPublicationBatches({
+      index: recoveryIndex,
+      store: artifactStore,
+      now: batch.recoveryNow,
+    });
+
+    assert.equal(adoptionCalls, 0);
+    assert.equal(recovered[0]?.resolution, "released");
+    assert.deepEqual(
+      recovered[0]?.members.map((item) => [item.observation, item.action]),
+      [["missing", "released"]],
+    );
+    assert.equal((await index.getCapacity()).reservedBytes, 0);
+  });
+
+  it("publishes an exact chunk but releases its missing bundle root", async () => {
+    const artifactStore = await store();
+    const index = createArtifactIndex(database.sql);
+    await index.bootstrap({ artifacts: [], quotaBytes: 10_000, maxPayloadBytes: 5_000, now: at(0) });
+    const plan = byteBundlePlan(Buffer.from("mixed closure recovery", "utf8"));
+    const batch = await reserveExpiredBatch(index, "batch-recovery-mixed", plan);
+    const chunkEnvelope = plan.items.find((item) => item.durabilityTier === 0)!.envelope;
+    await artifactStore.put(chunkEnvelope);
+
+    const recovered = await recoverExpiredArtifactPublicationBatches({
+      index,
+      store: artifactStore,
+      now: batch.recoveryNow,
+    });
+
+    const chunk = batch.items.find((item) => item.durabilityTier === 0)!;
+    const root = batch.items.find((item) => item.durabilityTier === 1)!;
+    assert.equal(recovered[0]?.resolution, "released");
+    assert.equal(recovered[0]?.members.find((item) => item.identity.hash === chunk.identity.hash)?.action, "published");
+    assert.equal(recovered[0]?.members.find((item) => item.identity.hash === root.identity.hash)?.action, "released");
+    assert.ok(await index.getArtifact(chunk.identity.hash));
+    assert.equal(await index.getArtifact(root.identity.hash), undefined);
+  });
+
+  it("never indexes an exact bundle root whose declared chunk is missing", async () => {
+    const artifactStore = await store();
+    const index = createArtifactIndex(database.sql);
+    await index.bootstrap({ artifacts: [], quotaBytes: 10_000, maxPayloadBytes: 5_000, now: at(0) });
+    const plan = byteBundlePlan(Buffer.from("missing chunk recovery", "utf8"));
+    const batch = await reserveExpiredBatch(index, "batch-recovery-missing-chunk", plan);
+    const rootEnvelope = plan.items.find((item) => item.durabilityTier === 1)!.envelope;
+    await artifactStore.put(rootEnvelope);
+
+    const recovered = await recoverExpiredArtifactPublicationBatches({
+      index,
+      store: artifactStore,
+      now: batch.recoveryNow,
+    });
+
+    const root = batch.items.find((item) => item.durabilityTier === 1)!;
+    assert.equal(recovered[0]?.resolution, "released");
+    assert.equal(recovered[0]?.members.find((item) => item.identity.hash === root.identity.hash)?.observation, "exact");
+    assert.equal(recovered[0]?.members.find((item) => item.identity.hash === root.identity.hash)?.action, "released");
+    assert.equal(await index.getArtifact(root.identity.hash), undefined);
+  });
+
+  it("quarantines a dependency root whose durable plan omits its declared member", async () => {
+    const artifactStore = await store();
+    const index = createArtifactIndex(database.sql);
+    await index.bootstrap({ artifacts: [], quotaBytes: 10_000, maxPayloadBytes: 5_000, now: at(0) });
+    const completePlan = byteBundlePlan(Buffer.from("plan omits dependency", "utf8"));
+    const incompletePlan = {
+      schema: ARTIFACT_STORE_BATCH_PLAN_SCHEMA_V1,
+      items: completePlan.items
+        .filter((item) => item.durabilityTier === 1)
+        .map((item) => ({ ...item, durabilityTier: 0 })),
+    };
+    const batch = await reserveExpiredBatch(
+      index,
+      "batch-recovery-plan-omits-dependency",
+      incompletePlan,
+    );
+    await artifactStore.put(incompletePlan.items[0]!.envelope);
+
+    const recovered = await recoverExpiredArtifactPublicationBatches({
+      index,
+      store: artifactStore,
+      now: batch.recoveryNow,
+    });
+
+    assert.equal(recovered[0]?.resolution, "quarantined");
+    assert.match(
+      recovered[0]?.diagnostic ?? "",
+      /^ARTIFACT_CLOSURE_PLAN_MISMATCH:/,
+    );
+    assert.equal(recovered[0]?.members[0]?.observation, "exact");
+    assert.equal(recovered[0]?.members[0]?.action, "quarantined");
+    assert.equal(await index.getArtifact(batch.items[0]!.identity.hash), undefined);
+    assert.equal((await index.getCapacity()).state, "quarantined");
+  });
+
+  it("quarantines a corrupt expired aggregate from typed CAS evidence", async () => {
+    const artifactStore = await store();
+    const index = createArtifactIndex(database.sql);
+    await index.bootstrap({ artifacts: [], quotaBytes: 10_000, maxPayloadBytes: 5_000, now: at(0) });
+    const batch = await reserveExpiredBatch(
+      index,
+      "batch-recovery-corrupt",
+      leafPlan("corrupt-batch"),
+    );
+    await mkdir(artifactStore.root, { recursive: true });
+    await writeFile(
+      artifactStore.pathFor(batch.items[0]!.identity.hash),
+      Buffer.from("corrupt", "utf8"),
+    );
+
+    const recovered = await recoverExpiredArtifactPublicationBatches({
+      index,
+      store: artifactStore,
+      now: batch.recoveryNow,
+    });
+
+    assert.equal(recovered[0]?.resolution, "quarantined");
+    assert.equal(recovered[0]?.members[0]?.observation, "corrupt");
+    assert.equal(recovered[0]?.members[0]?.action, "quarantined");
+    assert.equal((await index.getCapacity()).state, "quarantined");
+  });
+
+  it("lets one concurrent aggregate recoverer complete and reports one bounded stale result", async () => {
+    const artifactStore = await store();
+    const index = createArtifactIndex(database.sql);
+    await index.bootstrap({ artifacts: [], quotaBytes: 10_000, maxPayloadBytes: 5_000, now: at(0) });
+    const batch = await reserveExpiredBatch(
+      index,
+      "batch-recovery-concurrent",
+      leafPlan("concurrent-batch"),
+    );
+    await artifactStore.putPreparedBatch(batch.prepared);
+    let readCount = 0;
+    let releaseReads!: () => void;
+    const bothReading = new Promise<void>((resolve) => { releaseReads = resolve; });
+    const racedStore = {
+      async get(hash: string) {
+        const value = await artifactStore.get(hash);
+        readCount += 1;
+        if (readCount === 2) releaseReads();
+        await bothReading;
+        return value;
+      },
+    };
+
+    const results = await Promise.all([
+      recoverExpiredArtifactPublicationBatches({
+        index,
+        store: racedStore,
+        ownerInstanceId: "batch-recovery-a",
+        now: batch.recoveryNow,
+      }),
+      recoverExpiredArtifactPublicationBatches({
+        index,
+        store: racedStore,
+        ownerInstanceId: "batch-recovery-b",
+        now: batch.recoveryNow,
+      }),
+    ]);
+
+    assert.deepEqual(
+      results.flat().map((item) => item.resolution).sort(),
+      ["completed", "stale"],
+    );
+    assert.deepEqual(await recoverExpiredArtifactPublicationBatches({
+      index,
+      store: artifactStore,
+      now: new Date(batch.recoveryNow.getTime() + 1),
+    }), []);
+  });
+
+  it("returns stale without reading CAS when a heartbeat replaces the listed generation", async () => {
+    const artifactStore = await store();
+    const index = createArtifactIndex(database.sql);
+    await index.bootstrap({ artifacts: [], quotaBytes: 10_000, maxPayloadBytes: 5_000 });
+    const plan = leafPlan("heartbeat-race");
+    const prepared = prepareArtifactStoreBatchPlanV1(plan);
+    const items = copyPreparedArtifactStoreBatchCanonicalItemsV1(prepared);
+    const binding = createArtifactPublicationBatchPlanBindingV1(items.map((item) => ({
+      durabilityTier: item.durabilityTier,
+      identity: item.identity,
+    })));
+    const createdAt = new Date();
+    const batch = await index.reservePublicationBatch({
+      batchReservationId: "batch-recovery-heartbeat-race",
+      artifacts: items.map((item) => item.identity),
+      plan: binding,
+      ownerInstanceId: "live-heartbeat-owner",
+      leaseMs: 2_000,
+      now: createdAt,
+    });
+    let snapshotCalls = 0;
+    let casReads = 0;
+    const recoveryIndex = {
+      ...index,
+      async getPublicationBatchRecoverySnapshot(
+        input: Parameters<typeof index.getPublicationBatchRecoverySnapshot>[0],
+      ) {
+        snapshotCalls += 1;
+        if (snapshotCalls === 1) {
+          await index.heartbeatPublicationBatch({
+            batchReservationId: batch.batchReservationId,
+            ownerInstanceId: "live-heartbeat-owner",
+            leaseToken: batch.leaseToken!,
+            leaseMs: 60_000,
+            now: new Date(createdAt.getTime() + 1),
+          });
+        }
+        return index.getPublicationBatchRecoverySnapshot(input);
+      },
+    };
+
+    const recovered = await recoverExpiredArtifactPublicationBatches({
+      index: recoveryIndex,
+      store: {
+        get: async (hash) => {
+          casReads += 1;
+          return artifactStore.get(hash);
+        },
+      },
+      now: new Date(createdAt.getTime() + 3_000),
+    });
+
+    assert.equal(recovered[0]?.resolution, "stale");
+    assert.equal(recovered[0]?.diagnostic, "ARTIFACT_BATCH_RECOVERY_STALE_GENERATION");
+    assert.equal(casReads, 0);
+    assert.equal(recovered[0]?.members[0]?.observation, "not_observed");
+  });
+
+  it("treats missing CAS bytes for an already-indexed batch member as corruption", async () => {
+    const artifactStore = await store();
+    const index = createArtifactIndex(database.sql);
+    await index.bootstrap({ artifacts: [], quotaBytes: 10_000_000, maxPayloadBytes: 5_000_000 });
+    const publisher = new IndexedArtifactPublisher({
+      index: {
+        ...index,
+        publishPublicationBatchItem: async (input) => {
+          if (input.artifact.artifactType === BYTE_BUNDLE_ARTIFACT_TYPE_V1) {
+            throw new Error("injected root index failure");
+          }
+          return index.publishPublicationBatchItem(input);
+        },
+      },
+      store: artifactStore,
+      ownerInstanceId: "batch-indexed-cas-loss",
+      leaseMs: 2_000,
+    });
+    await assert.rejects(
+      publisher.putBatch({
+        batchReservationId: "batch-recovery-indexed-cas-loss",
+        plan: byteBundlePlan(Buffer.from("indexed CAS loss", "utf8")),
+      }),
+      /injected root index failure/,
+    );
+    const failedSnapshot = await index.getPublicationBatchRecoverySnapshot({
+      batchReservationId: "batch-recovery-indexed-cas-loss",
+    });
+    const indexed = failedSnapshot.members.find((member) => member.authority.kind === "indexed")!;
+    await unlink(artifactStore.pathFor(indexed.artifact.hash));
+
+    const recovered = await recoverExpiredArtifactPublicationBatches({
+      index,
+      store: artifactStore,
+      now: new Date(new Date(failedSnapshot.lifecycle.leaseExpiresAt!).getTime() + 1),
+    });
+
+    assert.equal(recovered[0]?.resolution, "quarantined");
+    assert.equal(
+      recovered[0]?.members.find((member) => member.identity.hash === indexed.artifact.hash)?.observation,
+      "corrupt",
+    );
+    assert.equal((await index.getCapacity()).state, "quarantined");
+  });
+
+  it("preserves active recovery authority when CAS observation is transiently uncertain", async () => {
+    const artifactStore = await store();
+    const index = createArtifactIndex(database.sql);
+    await index.bootstrap({ artifacts: [], quotaBytes: 10_000, maxPayloadBytes: 5_000, now: at(0) });
+    const batch = await reserveExpiredBatch(
+      index,
+      "batch-recovery-uncertain-read",
+      leafPlan("uncertain-read"),
+    );
+
+    await assert.rejects(
+      recoverExpiredArtifactPublicationBatches({
+        index,
+        store: {
+          get: async () => {
+            throw new ArtifactStoreError(
+              "ARTIFACT_FILE_CHANGED_DURING_READ",
+              "injected transient read race",
+            );
+          },
+        },
+        now: batch.recoveryNow,
+      }),
+      (error: unknown) => error instanceof ArtifactStoreError
+        && error.code === "ARTIFACT_FILE_CHANGED_DURING_READ",
+    );
+    assert.equal((await index.getPublicationBatchLifecycle({
+      batchReservationId: batch.reservation.batchReservationId,
+    })).state, "active");
+    assert.ok((await index.getCapacity()).reservedBytes > 0);
+  });
+
+  it("bounds each aggregate recovery pass and rejects invalid batch limits", async () => {
+    const artifactStore = await store();
+    const index = createArtifactIndex(database.sql);
+    await index.bootstrap({ artifacts: [], quotaBytes: 10_000, maxPayloadBytes: 5_000, now: at(0) });
+    const first = await reserveExpiredBatch(index, "batch-recovery-bound-a", leafPlan("bound-a"));
+    await reserveExpiredBatch(index, "batch-recovery-bound-b", leafPlan("bound-b"));
+
+    const one = await recoverExpiredArtifactPublicationBatches({
+      index,
+      store: artifactStore,
+      maxBatches: 1,
+      now: first.recoveryNow,
+    });
+    assert.equal(one.length, 1);
+    const two = await recoverExpiredArtifactPublicationBatches({
+      index,
+      store: artifactStore,
+      maxBatches: 1,
+      now: new Date(first.recoveryNow.getTime() + 1),
+    });
+    assert.equal(two.length, 1);
+    await assert.rejects(
+      recoverExpiredArtifactPublicationBatches({
+        index,
+        store: artifactStore,
+        maxBatches: 0,
+      }),
+      /recovery batch limit must be 1\.\.100/,
     );
   });
 });

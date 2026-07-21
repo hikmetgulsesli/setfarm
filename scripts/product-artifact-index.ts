@@ -10,6 +10,7 @@ import { ContentAddressedArtifactStore } from "../src/product-compiler/artifact-
 import { createArtifactIndex } from "../src/product-compiler/artifact-index.js";
 import {
   bootstrapArtifactIndex,
+  recoverExpiredArtifactPublicationBatches,
   recoverExpiredArtifactPublications,
   scanArtifactInventory,
 } from "../src/product-compiler/indexed-artifact-publisher.js";
@@ -167,10 +168,16 @@ async function main(): Promise<void> {
       return;
     }
     if (input.mode === "recover") {
-      const results = await recoverExpiredArtifactPublications({ index, store });
+      const batches = await recoverExpiredArtifactPublicationBatches({ index, store });
+      const reservations = await recoverExpiredArtifactPublications({ index, store });
       const refreshed = await scanArtifactInventory(store);
       const capacity = await index.verifyInventory({ artifacts: refreshed });
-      process.stdout.write(`${JSON.stringify({ mode: "recover", results, capacity }, null, 2)}\n`);
+      process.stdout.write(`${JSON.stringify({
+        mode: "recover",
+        batches,
+        reservations,
+        capacity,
+      }, null, 2)}\n`);
       return;
     }
     const capacity = await index.verifyInventory({ artifacts });

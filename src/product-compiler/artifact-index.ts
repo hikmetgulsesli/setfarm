@@ -415,6 +415,7 @@ function assertIdentity(actual: ArtifactIdentity, expected: ArtifactIdentity): v
 }
 
 const MAX_ARTIFACT_PUBLICATION_BATCH_OCCURRENCES = 9;
+export const MAX_EXPIRED_ARTIFACT_PUBLICATION_BATCHES_PER_RECOVERY_V1 = 100;
 
 function normalizePublicationBatchArtifacts(
   input: unknown,
@@ -864,8 +865,8 @@ function createArtifactIndexWithLeaseTimeAuthority(
         const membershipByHash = new Map(
           aggregate.items.map((item) => [item.artifact_hash, item]),
         );
-        const reservationIds = new Set(
-          aggregate.reservations.map((reservation) => reservation.reservation_id),
+        const reservationsById = new Map(
+          aggregate.reservations.map((reservation) => [reservation.reservation_id, reservation]),
         );
         const members = plan.items.map((item, ordinal) => {
           const membership = membershipByHash.get(item.identity.hash);
@@ -887,12 +888,24 @@ function createArtifactIndexWithLeaseTimeAuthority(
           } else if (
             membership.indexed_artifact_hash === null
             && membership.reservation_id !== null
-            && reservationIds.has(membership.reservation_id)
+            && reservationsById.has(membership.reservation_id)
           ) {
-            authority = Object.freeze({
-              kind: "reservation" as const,
-              reservationId: membership.reservation_id,
-            });
+            const reservation = reservationsById.get(membership.reservation_id)!;
+            if (!sameIdentity(identityFromRow(reservation), item.identity)) {
+              throw new ArtifactIndexError(
+                "ARTIFACT_BATCH_INCOMPLETE",
+                `Artifact publication batch ${batchReservationId} recovery reservation identity is invalid for ${item.identity.hash}`,
+              );
+            }
+            authority = reservation.state === "published"
+              ? Object.freeze({
+                  kind: "indexed" as const,
+                  artifactHash: item.identity.hash,
+                })
+              : Object.freeze({
+                  kind: "reservation" as const,
+                  reservationId: membership.reservation_id,
+                });
           } else {
             throw new ArtifactIndexError(
               "ARTIFACT_BATCH_INCOMPLETE",
@@ -1747,6 +1760,8 @@ function createArtifactIndexWithLeaseTimeAuthority(
     async adoptExpiredPublicationBatch(input: Readonly<{
       batchReservationId: string;
       batchIdentityHash: string;
+      expectedLeaseToken: string;
+      expectedLeaseExpiresAt: string;
       ownerInstanceId: string;
       leaseMs?: number;
       now?: Date;
@@ -1755,6 +1770,10 @@ function createArtifactIndexWithLeaseTimeAuthority(
         input.batchReservationId,
       );
       const batchIdentityHash = Sha256Schema.parse(input.batchIdentityHash);
+      const expectedLeaseToken = z.string().min(1).max(200).parse(input.expectedLeaseToken);
+      const expectedLeaseExpiresAt = validTime(new Date(z.string().datetime({ offset: true }).parse(
+        input.expectedLeaseExpiresAt,
+      ))).toISOString();
       const owner = OwnerIdSchema.parse(input.ownerInstanceId);
       const leaseMs = leaseDuration(input.leaseMs, leaseTimeAuthority);
       if (leaseTimeAuthority === "caller-test") validTime(input.now);
@@ -1773,6 +1792,15 @@ function createArtifactIndexWithLeaseTimeAuthority(
           throw new ArtifactIndexError(
             "ARTIFACT_BATCH_TERMINAL",
             `Artifact publication batch ${batchReservationId} is terminal in ${lifecycle.state} state`,
+          );
+        }
+        if (
+          lifecycle.leaseToken !== expectedLeaseToken
+          || lifecycle.leaseExpiresAt !== expectedLeaseExpiresAt
+        ) {
+          throw new ArtifactIndexError(
+            "ARTIFACT_BATCH_LEASE_LOST",
+            `Artifact publication batch ${batchReservationId} adoption lost its observed aggregate generation`,
           );
         }
         if (
@@ -1825,14 +1853,26 @@ function createArtifactIndexWithLeaseTimeAuthority(
 
     async listExpiredPublicationBatches(
       nowInput?: Date,
+      limitInput = MAX_EXPIRED_ARTIFACT_PUBLICATION_BATCHES_PER_RECOVERY_V1,
     ): Promise<ArtifactPublicationBatchLifecycle[]> {
       if (leaseTimeAuthority === "caller-test") validTime(nowInput);
+      if (
+        !Number.isSafeInteger(limitInput)
+        || limitInput < 1
+        || limitInput > MAX_EXPIRED_ARTIFACT_PUBLICATION_BATCHES_PER_RECOVERY_V1
+      ) {
+        throw new ArtifactIndexError(
+          "ARTIFACT_BATCH_INVALID",
+          `Expired artifact publication batch list limit must be 1..${MAX_EXPIRED_ARTIFACT_PUBLICATION_BATCHES_PER_RECOVERY_V1}`,
+        );
+      }
       const now = await artifactLeaseAuthorityNow(sql, nowInput, leaseTimeAuthority);
       const batches = await sql.unsafe<PublicationBatchRow[]>(
         `SELECT * FROM artifact_publication_batches
           WHERE state = 'active' AND lease_expires_at <= $1
-          ORDER BY lease_expires_at, batch_reservation_id`,
-        [now],
+          ORDER BY lease_expires_at, batch_reservation_id
+          LIMIT $2`,
+        [now, limitInput],
       );
       const results: ArtifactPublicationBatchLifecycle[] = [];
       for (const batch of batches) {
