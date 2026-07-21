@@ -139,6 +139,7 @@ type StagingAttemptInventory = Readonly<{
     name: string;
     path: string;
     identity: StagingFileIdentity;
+    finalAliasPath?: string;
   }>[];
 }>;
 
@@ -421,7 +422,7 @@ async function syncDirectory(directory: string): Promise<void> {
 
 const STAGING_ATTEMPT_NAME_V1 =
   /^[a-f0-9]{64}\.[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
-const STAGING_TEMP_NAME_V1 = /^[a-f0-9]{64}\.tmp$/;
+const STAGING_TEMP_NAME_V1 = /^([a-f0-9]{64})\.tmp$/;
 
 function stagingRootPath(root: string): string {
   return path.join(root, ARTIFACT_STORE_STAGING_DIRECTORY_V1);
@@ -500,15 +501,19 @@ function assertSecureStagingDirectory(stats: Stats, label: string): void {
   }
 }
 
-function assertSecureStagingFile(stats: Stats, label: string): void {
+function assertSecureStagingFile(
+  stats: Stats,
+  label: string,
+  allowedLinks: readonly number[] = [1],
+): void {
   if (
     !stats.isFile()
     || stats.isSymbolicLink()
-    || stats.nlink !== 1
+    || !allowedLinks.includes(stats.nlink)
     || (stats.mode & 0o7777) !== 0o600
     || (expectedUid() !== undefined && stats.uid !== expectedUid())
   ) {
-    throw stagingInvalid(`${label} must be one private unaliased ordinary file`);
+    throw stagingInvalid(`${label} must have one exact private ordinary-file link topology`);
   }
 }
 
@@ -649,6 +654,7 @@ async function ensureStagingRoot(
 }
 
 async function inspectStagingAttempt(
+  root: string,
   stagingPath: string,
   name: string,
 ): Promise<StagingAttemptInventory> {
@@ -672,7 +678,8 @@ async function inspectStagingAttempt(
     );
     const files: Array<StagingAttemptInventory["files"][number]> = [];
     for (const fileName of names) {
-      if (!STAGING_TEMP_NAME_V1.test(fileName)) {
+      const match = STAGING_TEMP_NAME_V1.exec(fileName);
+      if (!match) {
         throw stagingInvalid(
           `Artifact staging attempt ${name} contains unexpected temp entry ${fileName}`,
         );
@@ -682,11 +689,30 @@ async function inspectStagingAttempt(
         filePath,
         `Artifact staging temp ${name}/${fileName}`,
       );
-      assertSecureStagingFile(stats, `Artifact staging temp ${name}/${fileName}`);
+      assertSecureStagingFile(stats, `Artifact staging temp ${name}/${fileName}`, [1, 2]);
+      let finalAliasPath: string | undefined;
+      if (stats.nlink === 2) {
+        finalAliasPath = path.join(root, `${match[1]!}.json`);
+        const finalStats = await lstatStagingPath(
+          finalAliasPath,
+          `Artifact staging final alias ${match[1]}`,
+        );
+        assertSecureStagingFile(
+          finalStats,
+          `Artifact staging final alias ${match[1]}`,
+          [2],
+        );
+        if (!sameIdentity(stats, finalStats)) {
+          throw stagingInvalid(
+            `Artifact staging temp ${name}/${fileName} has a non-canonical second link`,
+          );
+        }
+      }
       files.push(Object.freeze({
         name: fileName,
         path: filePath,
         identity: stagingFileIdentity(stats),
+        ...(finalAliasPath ? { finalAliasPath } : {}),
       }));
     }
     const held = await handle.stat();
@@ -735,11 +761,28 @@ async function removeStagingAttempt(
       assertSecureStagingFile(
         current,
         `Artifact staging temp ${attempt.name}/${file.name}`,
+        [file.identity.nlink],
       );
       if (!sameStagingFileIdentity(stagingFileIdentity(current), file.identity)) {
         throw stagingInvalid(
           `Artifact staging temp ${attempt.name}/${file.name} changed before cleanup`,
         );
+      }
+      if (file.finalAliasPath) {
+        const finalAlias = await lstatStagingPath(
+          file.finalAliasPath,
+          `Artifact staging final alias for ${attempt.name}/${file.name}`,
+        );
+        assertSecureStagingFile(
+          finalAlias,
+          `Artifact staging final alias for ${attempt.name}/${file.name}`,
+          [2],
+        );
+        if (!sameIdentity(current, finalAlias)) {
+          throw stagingInvalid(
+            `Artifact staging temp ${attempt.name}/${file.name} lost its canonical final alias`,
+          );
+        }
       }
       try {
         await unlink(file.path);
@@ -748,6 +791,22 @@ async function removeStagingAttempt(
           `Artifact staging temp ${attempt.name}/${file.name} could not be removed safely`,
           error,
         );
+      }
+      if (file.finalAliasPath) {
+        const finalAlias = await lstatStagingPath(
+          file.finalAliasPath,
+          `Artifact staging finalized alias for ${attempt.name}/${file.name}`,
+        );
+        assertSecureStagingFile(
+          finalAlias,
+          `Artifact staging finalized alias for ${attempt.name}/${file.name}`,
+          [1],
+        );
+        if (!sameIdentity(finalAlias, file.identity)) {
+          throw stagingInvalid(
+            `Artifact staging final alias for ${attempt.name}/${file.name} changed during cleanup`,
+          );
+        }
       }
     }
     await syncDirectory(attempt.path);
@@ -797,7 +856,7 @@ async function ensureAndCleanOwnedStaging(
     let entryCount = attemptNames.length;
     const attempts: StagingAttemptInventory[] = [];
     for (const name of attemptNames) {
-      const attempt = await inspectStagingAttempt(staging.path, name);
+      const attempt = await inspectStagingAttempt(root, staging.path, name);
       entryCount += attempt.files.length;
       if (entryCount > ARTIFACT_STORE_STAGING_MAX_ENTRIES_V1) {
         throw stagingInvalid("Artifact staging tree exceeds its bounded total entry authority");

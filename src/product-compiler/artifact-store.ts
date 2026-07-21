@@ -5,7 +5,9 @@ import {
   link,
   mkdir,
   open,
+  opendir,
   realpath,
+  rmdir,
   stat,
   unlink,
 } from "node:fs/promises";
@@ -24,6 +26,7 @@ import {
 import {
   ArtifactCapacityError,
   DEFAULT_ARTIFACT_CAPACITY_LIMITS,
+  assessArtifactBatchCapacity,
   assessArtifactCapacity,
   measureArtifactCapacity,
   normalizeArtifactCapacityLimits,
@@ -32,9 +35,19 @@ import {
   type ArtifactCapacitySnapshot,
 } from "./artifact-capacity.js";
 import {
+  ARTIFACT_STORE_STAGING_DIRECTORY_V1,
   isHybridArtifactStoreCapacityLeaseProviderV1,
   type ArtifactStoreCapacityLeaseProvider,
 } from "./artifact-store-authority.js";
+import {
+  ARTIFACT_STORE_BATCH_PLAN_SCHEMA_V1,
+  ARTIFACT_STORE_BATCH_PUT_RESULT_SCHEMA_V1,
+  copyPreparedArtifactStoreBatchCanonicalItemsV1,
+  prepareArtifactStoreBatchPlanV1,
+  type ArtifactStoreBatchPutResultV1,
+  type PreparedArtifactStoreBatchCanonicalItemV1,
+  type PreparedArtifactStoreBatchV1,
+} from "./artifact-store-batch-plan.js";
 
 export { ArtifactCapacityError } from "./artifact-capacity.js";
 export {
@@ -103,11 +116,61 @@ type ArtifactStoreReadTestHooks = Readonly<{
     target: string;
     temp: string;
   }>) => void | Promise<void>;
+  /** Runs after every temp is exact/file-synced and before the first final link. */
+  afterBatchStaging?: (context: Readonly<{
+    planIdentityHash: string;
+    attemptPath: string;
+    items: readonly Readonly<{
+      durabilityTier: number;
+      artifactHash: string;
+      temp: string;
+    }>[];
+  }>) => void | Promise<void>;
+  /** Runs after one no-replace link/EEXIST convergence and before its tier barrier. */
+  afterBatchArtifactLink?: (context: Readonly<{
+    planIdentityHash: string;
+    durabilityTier: number;
+    artifactHash: string;
+    target: string;
+    temp: string;
+    created: boolean;
+  }>) => void | Promise<void>;
+  /** Runs only after the exact tier root-directory sync has completed. */
+  afterBatchTierSync?: (context: Readonly<{
+    planIdentityHash: string;
+    durabilityTier: number;
+  }>) => void | Promise<void>;
+  /** Runs before the mandatory fresh verification of every final target. */
+  beforeBatchFinalVerification?: (context: Readonly<{
+    planIdentityHash: string;
+  }>) => void | Promise<void>;
 }>;
 
 type ArtifactRootIdentity = Readonly<{
   dev: number;
   ino: number;
+}>;
+
+type BatchDirectoryIdentity = Readonly<ArtifactRootIdentity & {
+  mode: number;
+  uid: number;
+}>;
+
+type BatchFileIdentity = Readonly<ArtifactRootIdentity & {
+  size: number;
+  mtimeMs: number;
+  ctimeMs: number;
+  mode: number;
+  uid: number;
+  nlink: number;
+}>;
+
+type StagedBatchItem = Readonly<{
+  item: PreparedArtifactStoreBatchCanonicalItemV1;
+  publicPath: string;
+  authorityPath: string;
+  tempPath: string;
+  identity: BatchFileIdentity;
 }>;
 
 const hybridAuthorityBackedStores = new WeakSet<object>();
@@ -124,7 +187,8 @@ export function isHybridAuthorityBackedArtifactStore(
     && hybridAuthorityBackedStores.has(value)
     && Object.getPrototypeOf(value) === ContentAddressedArtifactStore.prototype
     && !Object.prototype.hasOwnProperty.call(value, "put")
-    && !Object.prototype.hasOwnProperty.call(value, "get");
+    && !Object.prototype.hasOwnProperty.call(value, "get")
+    && !Object.prototype.hasOwnProperty.call(value, "putPreparedBatch");
 }
 
 function sha256(bytes: Uint8Array): string {
@@ -183,20 +247,259 @@ function boundedCanonicalJsonBytesForPut(value: unknown, maxBytes: number): Buff
 async function syncDirectory(directory: string): Promise<void> {
   let handle;
   try {
-    handle = await open(directory, "r");
+    handle = await open(
+      directory,
+      constants.O_RDONLY
+        | constants.O_DIRECTORY
+        | constants.O_NOFOLLOW
+        | constants.O_NONBLOCK,
+    );
     await handle.sync();
-  } catch (error) {
-    // These codes mean directory fsync is unsupported by the platform. Access
-    // failures such as EACCES still propagate: publication must not claim
-    // durability when the configured artifact root cannot be synchronized.
-    if (
-      !isNodeError(error, "EINVAL")
-      && !isNodeError(error, "ENOTSUP")
-      && !isNodeError(error, "EPERM")
-      && !isNodeError(error, "EISDIR")
-    ) {
-      throw error;
+  } finally {
+    await handle?.close();
+  }
+}
+
+function currentUid(): number | undefined {
+  return typeof process.getuid === "function" ? process.getuid() : undefined;
+}
+
+function batchDirectoryIdentity(stats: Stats): BatchDirectoryIdentity {
+  return Object.freeze({
+    dev: stats.dev,
+    ino: stats.ino,
+    mode: stats.mode & 0o7777,
+    uid: stats.uid,
+  });
+}
+
+function batchFileIdentity(stats: Stats): BatchFileIdentity {
+  return Object.freeze({
+    dev: stats.dev,
+    ino: stats.ino,
+    size: stats.size,
+    mtimeMs: stats.mtimeMs,
+    ctimeMs: stats.ctimeMs,
+    mode: stats.mode & 0o7777,
+    uid: stats.uid,
+    nlink: stats.nlink,
+  });
+}
+
+function sameBatchDirectoryIdentity(
+  left: BatchDirectoryIdentity,
+  right: BatchDirectoryIdentity,
+): boolean {
+  return sameFileIdentity(left, right)
+    && left.mode === right.mode
+    && left.uid === right.uid;
+}
+
+function sameBatchFileIdentity(
+  left: BatchFileIdentity,
+  right: BatchFileIdentity,
+): boolean {
+  return sameFileIdentity(left, right)
+    && left.size === right.size
+    && left.mtimeMs === right.mtimeMs
+    && left.ctimeMs === right.ctimeMs
+    && left.mode === right.mode
+    && left.uid === right.uid
+    && left.nlink === right.nlink;
+}
+
+function assertPrivateBatchDirectory(
+  stats: Stats,
+  label: string,
+  artifactHash: string,
+): void {
+  if (
+    !stats.isDirectory()
+    || stats.isSymbolicLink()
+    || (stats.mode & 0o7777) !== 0o700
+    || (currentUid() !== undefined && stats.uid !== currentUid())
+  ) {
+    throw new ArtifactStoreError(
+      "ARTIFACT_UNSAFE_FILE_TYPE",
+      `${label} must be one private owner-controlled ordinary directory`,
+      { artifactHash },
+    );
+  }
+}
+
+function assertPrivateBatchFile(
+  stats: Stats,
+  label: string,
+  artifactHash: string,
+  allowedLinks: readonly number[],
+): void {
+  if (
+    !stats.isFile()
+    || stats.isSymbolicLink()
+    || !allowedLinks.includes(stats.nlink)
+    || (stats.mode & 0o7777) !== 0o600
+    || (currentUid() !== undefined && stats.uid !== currentUid())
+  ) {
+    throw new ArtifactStoreError(
+      "ARTIFACT_UNSAFE_FILE_TYPE",
+      `${label} must have one exact private ordinary-file link topology`,
+      { artifactHash },
+    );
+  }
+}
+
+async function openBatchDirectory(
+  target: string,
+  expected: BatchDirectoryIdentity,
+  label: string,
+  artifactHash: string,
+) {
+  let handle;
+  try {
+    handle = await open(
+      target,
+      constants.O_RDONLY
+        | constants.O_DIRECTORY
+        | constants.O_NOFOLLOW
+        | constants.O_NONBLOCK,
+    );
+    const observed = await handle.stat();
+    assertPrivateBatchDirectory(observed, label, artifactHash);
+    if (!sameBatchDirectoryIdentity(batchDirectoryIdentity(observed), expected)) {
+      throw new ArtifactStoreError(
+        "ARTIFACT_ROOT_CHANGED_DURING_OPERATION",
+        `${label} changed before its directory handle was acquired`,
+        { artifactHash },
+      );
     }
+    return handle;
+  } catch (error) {
+    await handle?.close();
+    throw error;
+  }
+}
+
+async function assertBatchDirectoryCurrent(
+  target: string,
+  expected: BatchDirectoryIdentity,
+  label: string,
+  artifactHash: string,
+): Promise<void> {
+  let observed: Stats;
+  try {
+    observed = await lstat(target);
+  } catch (error) {
+    throw new ArtifactStoreError(
+      "ARTIFACT_ROOT_CHANGED_DURING_OPERATION",
+      `${label} disappeared during batch publication`,
+      { artifactHash, cause: error },
+    );
+  }
+  assertPrivateBatchDirectory(observed, label, artifactHash);
+  if (!sameBatchDirectoryIdentity(batchDirectoryIdentity(observed), expected)) {
+    throw new ArtifactStoreError(
+      "ARTIFACT_ROOT_CHANGED_DURING_OPERATION",
+      `${label} changed during batch publication`,
+      { artifactHash },
+    );
+  }
+}
+
+async function assertBatchDirectoryEmpty(
+  target: string,
+  label: string,
+  artifactHash: string,
+): Promise<void> {
+  let directory;
+  try {
+    directory = await opendir(target, { bufferSize: 1 });
+    const entry = await directory.read();
+    if (entry) {
+      throw new ArtifactStoreError(
+        "ARTIFACT_ROOT_CHANGED_DURING_OPERATION",
+        `${label} is not empty before owned batch publication`,
+        { artifactHash },
+      );
+    }
+  } finally {
+    await directory?.close();
+  }
+}
+
+async function readExactStagedBytes(
+  target: string,
+  expectedBytes: Buffer,
+  artifactHash: string,
+  expectedIdentity?: BatchFileIdentity,
+): Promise<BatchFileIdentity> {
+  let handle;
+  try {
+    const pathBefore = await lstat(target);
+    assertPrivateBatchFile(pathBefore, "Artifact batch temp", artifactHash, [1]);
+    if (
+      !Number.isSafeInteger(pathBefore.size)
+      || pathBefore.size !== expectedBytes.length
+    ) {
+      throw new ArtifactStoreError(
+        "ARTIFACT_FILE_CHANGED_DURING_READ",
+        `Artifact batch temp ${artifactHash} has an unexpected byte length`,
+        { artifactHash },
+      );
+    }
+    const identityBefore = batchFileIdentity(pathBefore);
+    if (expectedIdentity && !sameBatchFileIdentity(identityBefore, expectedIdentity)) {
+      throw new ArtifactStoreError(
+        "ARTIFACT_FILE_CHANGED_DURING_READ",
+        `Artifact batch temp ${artifactHash} changed before publication`,
+        { artifactHash },
+      );
+    }
+    handle = await open(
+      target,
+      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+    );
+    const before = await handle.stat();
+    assertPrivateBatchFile(before, "Held artifact batch temp", artifactHash, [1]);
+    if (!sameBatchFileIdentity(batchFileIdentity(before), identityBefore)) {
+      throw new ArtifactStoreError(
+        "ARTIFACT_FILE_CHANGED_DURING_READ",
+        `Artifact batch temp ${artifactHash} changed before its exact read`,
+        { artifactHash },
+      );
+    }
+    const bytes = Buffer.allocUnsafe(before.size);
+    let offset = 0;
+    while (offset < bytes.length) {
+      const read = await handle.read(bytes, offset, bytes.length - offset, offset);
+      if (read.bytesRead === 0) break;
+      offset += read.bytesRead;
+    }
+    const probe = Buffer.allocUnsafe(1);
+    const beyond = await handle.read(probe, 0, 1, before.size);
+    const after = await handle.stat();
+    const pathAfter = await lstat(target);
+    if (
+      offset !== before.size
+      || beyond.bytesRead !== 0
+      || !sameBatchFileIdentity(batchFileIdentity(after), identityBefore)
+      || !sameBatchFileIdentity(batchFileIdentity(pathAfter), identityBefore)
+      || !bytes.equals(expectedBytes)
+      || sha256(bytes) !== artifactHash
+    ) {
+      throw new ArtifactStoreError(
+        "ARTIFACT_FILE_CHANGED_DURING_READ",
+        `Artifact batch temp ${artifactHash} failed exact staged-byte verification`,
+        { artifactHash },
+      );
+    }
+    return identityBefore;
+  } catch (error) {
+    if (error instanceof ArtifactStoreError) throw error;
+    throw new ArtifactStoreError(
+      "ARTIFACT_FILE_CHANGED_DURING_READ",
+      `Artifact batch temp ${artifactHash} could not be read safely`,
+      { artifactHash, cause: error },
+    );
   } finally {
     await handle?.close();
   }
@@ -619,11 +922,490 @@ export class ContentAddressedArtifactStore {
     return bytes;
   }
 
+  private authorityTargetPath(authorityRoot: string, hash: string): string {
+    this.pathFor(hash);
+    const target = path.resolve(authorityRoot, `${hash}.json`);
+    if (path.dirname(target) !== path.resolve(authorityRoot)) {
+      throw new ArtifactStoreError(
+        "ARTIFACT_INVALID_HASH",
+        "Artifact authority path escaped the held physical root",
+        { artifactHash: hash },
+      );
+    }
+    return target;
+  }
+
+  private async openOrCreateBatchDirectory(
+    target: string,
+    label: string,
+    planIdentityHash: string,
+    allowExisting: boolean,
+  ): Promise<Readonly<{
+    created: boolean;
+    identity: BatchDirectoryIdentity;
+    handle: Awaited<ReturnType<typeof openBatchDirectory>>;
+  }>> {
+    let created = false;
+    try {
+      await mkdir(target, { mode: 0o700 });
+      created = true;
+    } catch (error) {
+      if (!allowExisting || !isNodeError(error, "EEXIST")) throw error;
+    }
+    const observed = await lstat(target);
+    assertPrivateBatchDirectory(observed, label, planIdentityHash);
+    const identity = batchDirectoryIdentity(observed);
+    const handle = await openBatchDirectory(
+      target,
+      identity,
+      label,
+      planIdentityHash,
+    );
+    return Object.freeze({ created, identity, handle });
+  }
+
+  async #putPreparedBatch(
+    prepared: PreparedArtifactStoreBatchV1,
+  ): Promise<ArtifactStoreBatchPutResultV1> {
+    const items = copyPreparedArtifactStoreBatchCanonicalItemsV1(prepared);
+    for (const item of items) {
+      if (
+        item.identity.byteLength !== item.bytes.length
+        || sha256(item.bytes) !== item.identity.hash
+      ) {
+        throw new ArtifactStoreError(
+          "ARTIFACT_INVALID_ENVELOPE",
+          `Prepared artifact ${item.identity.hash} lost its exact byte identity`,
+          { artifactHash: item.identity.hash },
+        );
+      }
+      this.pathFor(item.identity.hash);
+      throwForArtifactCapacity(assessArtifactCapacity({
+        payloadBytes: item.bytes.length,
+        rootBytes: 0,
+        freeBytes: Number.MAX_SAFE_INTEGER,
+        limits: this.limits,
+      }));
+      // Outside-lease reads are optimization/error discovery only. Every item
+      // is read again under the physical capacity lease below.
+      await this.verifyExisting(
+        this.pathFor(item.identity.hash),
+        item.identity.hash,
+        item.bytes,
+      );
+    }
+
+    if (!this.capacityLeaseProvider) {
+      await mkdir(this.root, { recursive: true });
+    }
+    return this.withCapacityLock(prepared.planIdentityHash, async (lease) => {
+      await lease.assertCurrent();
+      const authorityTargets = new Map<string, string>();
+      const existingHashes = new Set<string>();
+      for (const item of items) {
+        const target = this.authorityTargetPath(
+          lease.authorityPath,
+          item.identity.hash,
+        );
+        authorityTargets.set(item.identity.hash, target);
+        const existing = await this.verifyExisting(
+          target,
+          item.identity.hash,
+          item.bytes,
+        );
+        if (existing) existingHashes.add(item.identity.hash);
+      }
+      const missing = items.filter((item) => !existingHashes.has(item.identity.hash));
+      if (missing.length > 0) {
+        const measured = await measureArtifactCapacity(lease.authorityPath);
+        const override = await this.measureOverride?.();
+        const capacity = override
+          ? Object.freeze({
+              rootBytes: Math.max(measured.rootBytes, override.rootBytes),
+              freeBytes: Math.min(measured.freeBytes, override.freeBytes),
+            })
+          : measured;
+        await this.testHooks?.afterCapacityMeasure?.({
+          artifactHash: prepared.planIdentityHash,
+          rootBytes: capacity.rootBytes,
+          freeBytes: capacity.freeBytes,
+        });
+        await lease.assertCurrent();
+        throwForArtifactCapacity(assessArtifactBatchCapacity({
+          missingPayloadByteLengths: missing.map((item) => item.bytes.length),
+          rootBytes: capacity.rootBytes,
+          freeBytes: capacity.freeBytes,
+          limits: this.limits,
+        }));
+      }
+
+      const createdByHash = new Map(items.map((item) => [item.identity.hash, false]));
+      const cleanupCandidates: Array<Readonly<{
+        artifactHash: string;
+        tempPath: string;
+        authorityPath: string;
+        identity: ArtifactRootIdentity;
+      }>> = [];
+      let stagingPath: string | undefined;
+      let stagingIdentity: BatchDirectoryIdentity | undefined;
+      let stagingHandle: Awaited<ReturnType<typeof openBatchDirectory>> | undefined;
+      let attemptPath: string | undefined;
+      let attemptIdentity: BatchDirectoryIdentity | undefined;
+      let attemptHandle: Awaited<ReturnType<typeof openBatchDirectory>> | undefined;
+      let operationCompleted = false;
+      let cleanupCompleted = false;
+
+      const cleanupOwnedAttempt = async (): Promise<void> => {
+        if (!attemptPath || !attemptIdentity || !attemptHandle) return;
+        await lease.assertCurrent();
+        await assertBatchDirectoryCurrent(
+          attemptPath,
+          attemptIdentity,
+          "Artifact batch attempt",
+          prepared.planIdentityHash,
+        );
+        for (const candidate of cleanupCandidates) {
+          await lease.assertCurrent();
+          const current = await lstat(candidate.tempPath);
+          if (!sameFileIdentity(current, candidate.identity)) {
+            throw new ArtifactStoreError(
+              "ARTIFACT_FILE_CHANGED_DURING_READ",
+              `Owned batch temp ${candidate.artifactHash} changed before cleanup`,
+              { artifactHash: candidate.artifactHash },
+            );
+          }
+          assertPrivateBatchFile(
+            current,
+            "Owned artifact batch temp",
+            candidate.artifactHash,
+            [1, 2],
+          );
+          if (current.nlink === 2) {
+            const final = await lstat(candidate.authorityPath);
+            assertPrivateBatchFile(
+              final,
+              "Owned artifact batch final alias",
+              candidate.artifactHash,
+              [2],
+            );
+            if (!sameFileIdentity(current, final)) {
+              throw new ArtifactStoreError(
+                "ARTIFACT_FILE_CHANGED_DURING_READ",
+                `Owned batch temp ${candidate.artifactHash} has a foreign second link`,
+                { artifactHash: candidate.artifactHash },
+              );
+            }
+          }
+          await unlink(candidate.tempPath);
+          if (current.nlink === 2) {
+            const final = await lstat(candidate.authorityPath);
+            assertPrivateBatchFile(
+              final,
+              "Finalized artifact batch alias",
+              candidate.artifactHash,
+              [1],
+            );
+            if (!sameFileIdentity(final, candidate.identity)) {
+              throw new ArtifactStoreError(
+                "ARTIFACT_FILE_CHANGED_DURING_READ",
+                `Final artifact ${candidate.artifactHash} changed during temp cleanup`,
+                { artifactHash: candidate.artifactHash },
+              );
+            }
+          }
+        }
+        await syncDirectory(attemptPath);
+        await assertBatchDirectoryCurrent(
+          attemptPath,
+          attemptIdentity,
+          "Artifact batch attempt",
+          prepared.planIdentityHash,
+        );
+        await assertBatchDirectoryEmpty(
+          attemptPath,
+          "Artifact batch attempt",
+          prepared.planIdentityHash,
+        );
+        await attemptHandle.close();
+        attemptHandle = undefined;
+        await lease.assertCurrent();
+        await rmdir(attemptPath);
+        await syncDirectory(stagingPath!);
+        await syncDirectory(lease.authorityPath);
+        cleanupCompleted = true;
+      };
+
+      try {
+        const staged: StagedBatchItem[] = [];
+        if (missing.length > 0) {
+          stagingPath = path.join(
+            lease.authorityPath,
+            ARTIFACT_STORE_STAGING_DIRECTORY_V1,
+          );
+          const staging = await this.openOrCreateBatchDirectory(
+            stagingPath,
+            "Artifact batch staging root",
+            prepared.planIdentityHash,
+            true,
+          );
+          stagingIdentity = staging.identity;
+          stagingHandle = staging.handle;
+          await assertBatchDirectoryEmpty(
+            stagingPath,
+            "Artifact batch staging root",
+            prepared.planIdentityHash,
+          );
+          attemptPath = path.join(
+            stagingPath,
+            `${prepared.planIdentityHash}.${randomUUID()}`,
+          );
+          const attempt = await this.openOrCreateBatchDirectory(
+            attemptPath,
+            "Artifact batch attempt",
+            prepared.planIdentityHash,
+            false,
+          );
+          attemptIdentity = attempt.identity;
+          attemptHandle = attempt.handle;
+
+          for (const item of missing) {
+            await lease.assertCurrent();
+            await assertBatchDirectoryCurrent(
+              stagingPath,
+              stagingIdentity,
+              "Artifact batch staging root",
+              prepared.planIdentityHash,
+            );
+            await assertBatchDirectoryCurrent(
+              attemptPath,
+              attemptIdentity,
+              "Artifact batch attempt",
+              prepared.planIdentityHash,
+            );
+            const tempPath = path.join(attemptPath, `${item.identity.hash}.tmp`);
+            let handle;
+            try {
+              handle = await open(
+                tempPath,
+                constants.O_WRONLY
+                  | constants.O_CREAT
+                  | constants.O_EXCL
+                  | constants.O_NOFOLLOW,
+                0o600,
+              );
+              await handle.chmod(0o600);
+              const created = await handle.stat();
+              assertPrivateBatchFile(
+                created,
+                "New artifact batch temp",
+                item.identity.hash,
+                [1],
+              );
+              cleanupCandidates.push(Object.freeze({
+                artifactHash: item.identity.hash,
+                tempPath,
+                authorityPath: authorityTargets.get(item.identity.hash)!,
+                identity: fileIdentity(created),
+              }));
+              await handle.writeFile(item.bytes);
+              await handle.sync();
+            } finally {
+              await handle?.close();
+            }
+            const identity = await readExactStagedBytes(
+              tempPath,
+              item.bytes,
+              item.identity.hash,
+            );
+            staged.push(Object.freeze({
+              item,
+              publicPath: this.pathFor(item.identity.hash),
+              authorityPath: authorityTargets.get(item.identity.hash)!,
+              tempPath,
+              identity,
+            }));
+          }
+          await syncDirectory(attemptPath);
+          await syncDirectory(stagingPath);
+          await syncDirectory(lease.authorityPath);
+          await lease.assertCurrent();
+          await this.testHooks?.afterBatchStaging?.({
+            planIdentityHash: prepared.planIdentityHash,
+            attemptPath,
+            items: Object.freeze(staged.map((entry) => Object.freeze({
+              durabilityTier: entry.item.durabilityTier,
+              artifactHash: entry.item.identity.hash,
+              temp: entry.tempPath,
+            }))),
+          });
+
+          const tiers = [...new Set(staged.map((entry) => entry.item.durabilityTier))];
+          for (const durabilityTier of tiers) {
+            for (const entry of staged.filter(
+              (candidate) => candidate.item.durabilityTier === durabilityTier,
+            )) {
+              await lease.assertCurrent();
+              await assertBatchDirectoryCurrent(
+                stagingPath,
+                stagingIdentity,
+                "Artifact batch staging root",
+                prepared.planIdentityHash,
+              );
+              await assertBatchDirectoryCurrent(
+                attemptPath,
+                attemptIdentity,
+                "Artifact batch attempt",
+                prepared.planIdentityHash,
+              );
+              await readExactStagedBytes(
+                entry.tempPath,
+                entry.item.bytes,
+                entry.item.identity.hash,
+                entry.identity,
+              );
+              let created = false;
+              try {
+                await link(entry.tempPath, entry.authorityPath);
+                created = true;
+                const [tempStats, finalStats] = await Promise.all([
+                  lstat(entry.tempPath),
+                  lstat(entry.authorityPath),
+                ]);
+                assertPrivateBatchFile(
+                  tempStats,
+                  "Linked artifact batch temp",
+                  entry.item.identity.hash,
+                  [2],
+                );
+                assertPrivateBatchFile(
+                  finalStats,
+                  "Linked artifact batch final",
+                  entry.item.identity.hash,
+                  [2],
+                );
+                if (!sameFileIdentity(tempStats, finalStats)) {
+                  throw new ArtifactStoreError(
+                    "ARTIFACT_FILE_CHANGED_DURING_READ",
+                    `Artifact ${entry.item.identity.hash} did not retain its staged inode`,
+                    { artifactHash: entry.item.identity.hash },
+                  );
+                }
+              } catch (error) {
+                if (!isNodeError(error, "EEXIST")) throw error;
+                const raced = await this.verifyExisting(
+                  entry.authorityPath,
+                  entry.item.identity.hash,
+                  entry.item.bytes,
+                );
+                if (!raced) {
+                  throw new ArtifactStoreError(
+                    "ARTIFACT_HASH_COLLISION_OR_CORRUPTION",
+                    `Artifact target ${entry.item.identity.hash} disappeared during batch publication`,
+                    { artifactHash: entry.item.identity.hash },
+                  );
+                }
+              }
+              createdByHash.set(entry.item.identity.hash, created);
+              await this.testHooks?.afterArtifactLink?.({
+                artifactHash: entry.item.identity.hash,
+                target: entry.publicPath,
+                temp: entry.tempPath,
+              });
+              await this.testHooks?.afterBatchArtifactLink?.({
+                planIdentityHash: prepared.planIdentityHash,
+                durabilityTier,
+                artifactHash: entry.item.identity.hash,
+                target: entry.publicPath,
+                temp: entry.tempPath,
+                created,
+              });
+            }
+            await lease.assertCurrent();
+            await syncDirectory(lease.authorityPath);
+            await lease.assertCurrent();
+            await this.testHooks?.afterBatchTierSync?.({
+              planIdentityHash: prepared.planIdentityHash,
+              durabilityTier,
+            });
+          }
+        }
+
+        await this.testHooks?.beforeBatchFinalVerification?.({
+          planIdentityHash: prepared.planIdentityHash,
+        });
+        await lease.assertCurrent();
+        for (const item of items) {
+          const verified = await this.verifyExisting(
+            authorityTargets.get(item.identity.hash)!,
+            item.identity.hash,
+            item.bytes,
+          );
+          if (!verified) {
+            throw new ArtifactStoreError(
+              "ARTIFACT_ROOT_CHANGED_DURING_OPERATION",
+              `Artifact ${item.identity.hash} disappeared before batch completion`,
+              { artifactHash: item.identity.hash },
+            );
+          }
+        }
+        await lease.assertCurrent();
+        const resultItems = Object.freeze(items.map((item) => Object.freeze({
+          durabilityTier: item.durabilityTier,
+          hash: item.identity.hash,
+          path: this.pathFor(item.identity.hash),
+          byteLength: item.identity.byteLength,
+          created: createdByHash.get(item.identity.hash) ?? false,
+        })));
+        const createdItems = resultItems.filter((item) => item.created);
+        const result = Object.freeze({
+          schema: ARTIFACT_STORE_BATCH_PUT_RESULT_SCHEMA_V1,
+          planIdentityHash: prepared.planIdentityHash,
+          createdCount: createdItems.length,
+          createdBytes: createdItems.reduce((sum, item) => sum + item.byteLength, 0),
+          items: resultItems,
+        });
+        operationCompleted = true;
+        return result;
+      } finally {
+        try {
+          await cleanupOwnedAttempt();
+        } catch (cleanupError) {
+          if (operationCompleted) throw cleanupError;
+        } finally {
+          await attemptHandle?.close();
+          await stagingHandle?.close();
+        }
+        if (
+          !this.capacityLeaseProvider
+          && stagingPath
+          && (cleanupCompleted || !attemptPath)
+        ) {
+          try {
+            await lease.assertCurrent();
+            await assertBatchDirectoryEmpty(
+              stagingPath,
+              "Artifact batch staging root",
+              prepared.planIdentityHash,
+            );
+            await rmdir(stagingPath);
+            await syncDirectory(lease.authorityPath);
+          } catch (cleanupError) {
+            if (operationCompleted) throw cleanupError;
+          }
+        }
+      }
+    });
+  }
+
+  async putPreparedBatch(
+    prepared: PreparedArtifactStoreBatchV1,
+  ): Promise<ArtifactStoreBatchPutResultV1> {
+    return this.#putPreparedBatch(prepared);
+  }
+
   async put(value: unknown): Promise<ArtifactPutResult> {
-    // Capture hostile/caller-owned input under bounded canonical authority
-    // before schema traversal. Zod only receives the plain snapshot produced by
-    // JSON.parse, never caller accessors, proxies, or concurrently mutable
-    // containers.
+    // Preserve the historical hostile-input and schema error boundary before
+    // delegating the exact normalized envelope to the private batch core.
     const sourceBytes = boundedCanonicalJsonBytesForPut(
       value,
       this.limits.maxPayloadBytes,
@@ -646,97 +1428,22 @@ export class ContentAddressedArtifactStore {
       freeBytes: Number.MAX_SAFE_INTEGER,
       limits: this.limits,
     }));
-    const hash = sha256(bytes);
-    const target = this.pathFor(hash);
-
-    const existing = await this.verifyExisting(target, hash, bytes);
-    if (existing && !this.capacityLeaseProvider) {
-      return { hash, path: target, created: false };
+    const batch = prepareArtifactStoreBatchPlanV1({
+      schema: ARTIFACT_STORE_BATCH_PLAN_SCHEMA_V1,
+      items: [{ durabilityTier: 0, envelope }],
+    }, { maxPayloadBytes: this.limits.maxPayloadBytes });
+    const result = await this.#putPreparedBatch(batch);
+    const item = result.items[0];
+    if (!item || result.items.length !== 1) {
+      throw new ArtifactStoreError(
+        "ARTIFACT_INVALID_ENVELOPE",
+        "Single artifact publication did not return one exact batch member",
+      );
     }
-
-    if (!this.capacityLeaseProvider) {
-      await mkdir(this.root, { recursive: true });
-    }
-    return this.withCapacityLock(hash, async (lease) => {
-      await lease.assertCurrent();
-      const racedExisting = await this.verifyExisting(target, hash, bytes);
-      if (racedExisting) return { hash, path: target, created: false };
-      const measured = await measureArtifactCapacity(lease.authorityPath);
-      const override = await this.measureOverride?.();
-      const capacity = override
-        ? Object.freeze({
-            // Injection is conservative-only: tests may model less capacity,
-            // but no caller can undercount the held root or overstate its disk.
-            rootBytes: Math.max(measured.rootBytes, override.rootBytes),
-            freeBytes: Math.min(measured.freeBytes, override.freeBytes),
-          })
-        : measured;
-      await this.testHooks?.afterCapacityMeasure?.({
-        artifactHash: hash,
-        rootBytes: capacity.rootBytes,
-        freeBytes: capacity.freeBytes,
-      });
-      await lease.assertCurrent();
-      throwForArtifactCapacity(assessArtifactCapacity({
-        payloadBytes: bytes.length,
-        rootBytes: capacity.rootBytes,
-        freeBytes: capacity.freeBytes,
-        limits: this.limits,
-      }));
-
-      const temp = path.join(this.root, `.${hash}.${process.pid}.${randomUUID()}.tmp`);
-      let published = false;
-      let handle;
-      let tempIdentity: Stats | undefined;
-      try {
-        await lease.assertCurrent();
-        handle = await open(temp, "wx", 0o600);
-        tempIdentity = await handle.stat();
-        await lease.assertCurrent();
-        await handle.writeFile(bytes);
-        await handle.sync();
-        await handle.close();
-        handle = undefined;
-        await lease.assertCurrent();
-
-        try {
-          // A same-directory hard link is an atomic no-replace publish. Node's
-          // rename API can overwrite an existing immutable hash target, so link
-          // preserves the stronger never-overwrite invariant during races.
-          await link(temp, target);
-          published = true;
-        } catch (error) {
-          if (!isNodeError(error, "EEXIST")) throw error;
-          const racedTarget = await this.verifyExisting(target, hash, bytes);
-          if (!racedTarget) {
-            throw new ArtifactStoreError(
-              "ARTIFACT_HASH_COLLISION_OR_CORRUPTION",
-              `Artifact target ${hash} disappeared during atomic publication`,
-              { artifactHash: hash },
-            );
-          }
-        }
-        await this.testHooks?.afterArtifactLink?.({
-          artifactHash: hash,
-          target,
-          temp,
-        });
-        await lease.assertCurrent();
-        await syncDirectory(this.root);
-        await lease.assertCurrent();
-        const verified = await this.verifyExisting(target, hash, bytes);
-        if (!verified) {
-          throw new ArtifactStoreError(
-            "ARTIFACT_ROOT_CHANGED_DURING_OPERATION",
-            `Artifact ${hash} disappeared before publication could be returned`,
-            { artifactHash: hash },
-          );
-        }
-        return { hash, path: target, created: published };
-      } finally {
-        await handle?.close();
-        await unlinkIfSameFile(temp, tempIdentity);
-      }
+    return Object.freeze({
+      hash: item.hash,
+      path: item.path,
+      created: item.created,
     });
   }
 

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { createServer } from "node:net";
 import {
   chmod,
@@ -167,6 +168,25 @@ describe("artifact store owned staging authority", () => {
 
     assert.deepEqual(await readdir(stagingRoot()), []);
     assert.equal(await readFile(finalPath, "utf8"), "preserve-final");
+  });
+
+  it("reconciles one canonical link-before-temp-unlink crash tail", async () => {
+    await initialize();
+    const bytes = Buffer.from("exact-linked-crash-tail", "utf8");
+    const hash = createHash("sha256").update(bytes).digest("hex");
+    const attempt = await createAttempt(1, 0);
+    const temp = path.join(attempt, `${hash}.tmp`);
+    const final = path.join(artifactRoot, `${hash}.json`);
+    await writeFile(temp, bytes, { mode: 0o600 });
+    await link(temp, final);
+    assert.equal((await lstat(temp)).nlink, 2);
+
+    await provider().withLease(async (lease) => lease.assertCurrent());
+
+    await assert.rejects(lstat(temp), /ENOENT/);
+    const finalStats = await lstat(final);
+    assert.equal(finalStats.nlink, 1);
+    assert.equal(await readFile(final, "utf8"), bytes.toString("utf8"));
   });
 
   it("quarantines an excessive attempt count before deleting authenticated siblings", async () => {

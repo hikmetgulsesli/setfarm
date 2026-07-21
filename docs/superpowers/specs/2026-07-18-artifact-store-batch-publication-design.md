@@ -10,10 +10,16 @@ PostgreSQL-only cross-database exclusion and the first staged-file alias model.
 The amendment is the implementation authority; activation remains prohibited
 until its full verification matrix is green.
 
-B2 is committed as `f4d990bd`. C1 now places bounded staging creation,
-inventory, abandoned-attempt cleanup, and durability barriers inside the
-writer provider's private hybrid lease. Read-only providers do not create or
-clean staging. C2 and all later activation work remain prohibited.
+B2 is committed as `f4d990bd`; C1 is committed as `5ce0a8c0`. C1 places
+bounded staging creation, inventory, abandoned-attempt cleanup, and durability
+barriers inside the writer provider's private hybrid lease. Read-only providers
+do not create or clean staging. C2 now routes both prepared batches and the
+historical single-item `put` through one private tiered publication core. It
+performs held-root aggregate admission, stages and file-syncs every missing
+payload before the first link, publishes in tier/hash order, directory-syncs
+each tier, freshly verifies every final target, and cleans only the owned
+attempt. C2 remains shadow-only: D1 closure, D2 indexed batch publication, D3
+recovery, E1 inventory/adoption, and production activation remain prohibited.
 
 This slice closes four coupled boundaries:
 
