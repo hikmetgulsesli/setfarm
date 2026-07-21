@@ -27,7 +27,7 @@ describe("artifact store production factory census", () => {
     }
   });
 
-  it("keeps every enabled publisher on a concrete hybrid provider or behind E1", async () => {
+  it("keeps every enabled publisher and inventory consumer on an explicit hybrid capability", async () => {
     const writers = [
       "src/product-compiler/runtime-packet-compiler.ts",
       "src/execution/v3-implementation-attempt.ts",
@@ -38,17 +38,23 @@ describe("artifact store production factory census", () => {
       const value = await source(file);
       assert.match(value, /hybrid-required/, file);
       assert.match(value, /createHybridArtifactStoreCapacityLeaseProviderV1/, file);
+      assert.match(value, /purpose: "writer"/, file);
       assert.match(value, /publicationAuthority/, file);
     }
 
-    assert.match(
-      await source("src/execution/activation-preflight.ts"),
-      /ARTIFACT_INDEX_AUTHORITY_E1_REQUIRED/,
-    );
-    assert.match(
-      await source("scripts/product-artifact-index.ts"),
-      /ARTIFACT_INDEX_AUTHORITY_E1_REQUIRED/,
-    );
+    const activation = await source("src/execution/activation-preflight.ts");
+    assert.match(activation, /purpose: "inventory-verify"/);
+    assert.match(activation, /purpose: "existing-writer"/);
+    assert.doesNotMatch(activation, /ARTIFACT_INDEX_AUTHORITY_E1_REQUIRED/);
+
+    const cli = await source("scripts/product-artifact-index.ts");
+    assert.match(cli, /"inventory-adoption"/);
+    assert.match(cli, /"inventory-verify"/);
+    assert.doesNotMatch(cli, /ARTIFACT_INDEX_AUTHORITY_E1_REQUIRED/);
+
+    const convergence = await source("src/evals/convergence-runner.ts");
+    assert.match(convergence, /purpose: "inventory-verify"/);
+    assert.doesNotMatch(convergence, /ARTIFACT_INDEX_AUTHORITY_E1_REQUIRED/);
   });
 
   it("makes hybrid reads and operational ports capability-checked", async () => {
@@ -59,7 +65,8 @@ describe("artifact store production factory census", () => {
     assert.doesNotMatch(store, /getWithCapacityAuthority/);
 
     const reader = await source("src/product-compiler/runtime-artifact-reader.ts");
-    assert.match(reader, /allowInitialization: false/);
+    assert.match(reader, /purpose: "reader"/);
+    assert.doesNotMatch(reader, /allowInitialization:/);
     assert.match(reader, /publicationAuthority/);
 
     const operational = await source("src/server/product-build-authority.ts");

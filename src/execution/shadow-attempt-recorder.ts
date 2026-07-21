@@ -602,6 +602,7 @@ async function createDefaultShadowRuntime(): Promise<ShadowRuntime> {
     ? artifactAuthorityModule.createHybridArtifactStoreCapacityLeaseProviderV1({
         sql,
         artifactRoot,
+        purpose: "writer",
       })
     : undefined;
   const artifactStore = new artifactModule.ContentAddressedArtifactStore(

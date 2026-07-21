@@ -225,6 +225,11 @@ export type ArtifactCapacityState = Readonly<{
   diagnostic?: string;
   updatedAt: string;
 }>;
+
+export type ArtifactBootstrapInventoryQuarantineCodeV1 =
+  | "ARTIFACT_INVENTORY_ENTRY_INVALID"
+  | "ARTIFACT_INVENTORY_CLOSURE_REJECTED"
+  | "ARTIFACT_INDEX_FILESYSTEM_MISMATCH";
 export type ArtifactPublicationReservation = Readonly<{
   reservationId: string;
   artifact: ArtifactIdentity;
@@ -1054,6 +1059,52 @@ function createArtifactIndexWithLeaseTimeAuthority(
       }) as Promise<ArtifactCapacityState>;
     },
 
+    async quarantineBootstrapInventory(input: Readonly<{
+      code: ArtifactBootstrapInventoryQuarantineCodeV1;
+      diagnostic: string;
+      now?: Date;
+    }>): Promise<ArtifactCapacityState> {
+      if (![
+        "ARTIFACT_INVENTORY_ENTRY_INVALID",
+        "ARTIFACT_INVENTORY_CLOSURE_REJECTED",
+        "ARTIFACT_INDEX_FILESYSTEM_MISMATCH",
+      ].includes(input.code)) {
+        throw new TypeError("Artifact inventory quarantine code is invalid");
+      }
+      const detail = input.diagnostic.trim();
+      if (!detail || Buffer.byteLength(detail, "utf8") > 3_800) {
+        throw new TypeError("Artifact inventory quarantine diagnostic is empty or unbounded");
+      }
+      const now = validTime(input.now);
+      const diagnostic = `${input.code}: ${detail}`.slice(0, 4_000);
+      return sql.begin(async (transaction) => {
+        const capacityRow = await lockCapacity(transaction);
+        const activeReservations = await transaction.unsafe<Array<{ reservation_id: string }>>(
+          "SELECT reservation_id FROM artifact_publication_reservations WHERE state = 'reserved' LIMIT 1",
+        );
+        const activeBatches = await transaction.unsafe<Array<{ batch_reservation_id: string }>>(
+          "SELECT batch_reservation_id FROM artifact_publication_batches WHERE state = 'active' LIMIT 1",
+        );
+        if (activeReservations[0] || activeBatches[0]) {
+          throw new ArtifactIndexError(
+            "ARTIFACT_BOOTSTRAP_ACTIVE_RESERVATIONS",
+            "Artifact inventory quarantine refuses to race an active publication generation",
+          );
+        }
+        const current = mapCapacity(capacityRow);
+        if (current.state === "quarantined") return current;
+        const updated = await transaction.unsafe<CapacityRow[]>(
+          `UPDATE artifact_capacity
+              SET state = 'quarantined', reconciled_at = $1,
+                  diagnostic = $2, updated_at = $1
+            WHERE capacity_key = 'semantic-artifacts'
+            RETURNING *`,
+          [now, diagnostic],
+        );
+        return mapCapacity(updated[0]!);
+      }) as Promise<ArtifactCapacityState>;
+    },
+
     async bootstrap(input: Readonly<{
       artifacts: readonly ArtifactIdentity[];
       quotaBytes?: number;
@@ -1121,13 +1172,6 @@ function createArtifactIndexWithLeaseTimeAuthority(
           }
         }
         if (mismatch) {
-          await transaction.unsafe(
-            `UPDATE artifact_capacity
-                SET state = 'quarantined', reconciled_at = $1,
-                    diagnostic = $2, updated_at = $1
-              WHERE capacity_key = 'semantic-artifacts'`,
-            [now, mismatch.slice(0, 4_000)],
-          );
           return { status: "mismatch" as const, diagnostic: mismatch };
         }
         for (const artifact of artifacts) {

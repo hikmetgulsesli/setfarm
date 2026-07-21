@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, rm, unlink, writeFile } from "node:fs/promises";
+import { link, mkdir, mkdtemp, readdir, rm, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, afterEach, before, beforeEach, describe, it } from "node:test";
@@ -8,8 +8,13 @@ import { after, afterEach, before, beforeEach, describe, it } from "node:test";
 import {
   ArtifactStoreError,
   ContentAddressedArtifactStore,
+  MAX_ARTIFACT_INVENTORY_FINAL_FILES_V1,
   SemanticArtifactEnvelopeV1Schema,
+  assertArtifactInventoryFinalEntryCountV1,
 } from "../../src/product-compiler/artifact-store.js";
+import {
+  createHybridArtifactStoreCapacityLeaseProviderV1,
+} from "../../src/product-compiler/artifact-store-authority.js";
 import {
   ARTIFACT_STORE_BATCH_PLAN_SCHEMA_V1,
   copyPreparedArtifactStoreBatchCanonicalItemsV1,
@@ -25,6 +30,7 @@ import { computeArtifactPublicationBatchIdentityHash } from "../../src/product-c
 import { canonicalJsonBytes } from "../../src/product-compiler/canonical-json.js";
 import {
   IndexedArtifactPublisher,
+  IndexedArtifactPublisherError,
   bootstrapArtifactIndex,
   recoverExpiredArtifactPublicationBatches,
   recoverExpiredArtifactPublications,
@@ -165,6 +171,349 @@ describe("indexed semantic artifact publisher", () => {
     assert.equal(bootstrapped.artifacts[0]!.hash, legacy.hash);
     assert.equal(bootstrapped.capacity.state, "ready");
     assert.equal((await index.getArtifact(legacy.hash))?.byteLength, bootstrapped.artifacts[0]!.byteLength);
+  });
+
+  it("acquires adoption authority and cleans staging before reading every legacy identity", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "setfarm-indexed-adoption-"));
+    roots.push(root);
+    const artifactRoot = path.join(root, "sha256");
+    const legacyStore = new ContentAddressedArtifactStore(artifactRoot);
+    const first = await legacyStore.put(envelope("adopt-first"));
+    const second = await legacyStore.put(envelope("adopt-second"));
+    const abandonedAttempt = path.join(
+      artifactRoot,
+      ".staging",
+      `${"b".repeat(64)}.00000000-0000-4000-8000-000000000002`,
+    );
+    await mkdir(abandonedAttempt, { recursive: true, mode: 0o700 });
+    const events: string[] = [];
+    const provider = createHybridArtifactStoreCapacityLeaseProviderV1({
+      sql: database.sql,
+      artifactRoot,
+      purpose: "inventory-adoption",
+      testHooks: {
+        afterStagingInventory: () => { events.push("staging-cleanup"); },
+      },
+    });
+    const adoptionStore = new ContentAddressedArtifactStore(artifactRoot, {
+      capacityLeaseProvider: provider,
+      testHooks: {
+        afterArtifactRead: ({ artifactHash }) => { events.push(`read:${artifactHash}`); },
+      },
+    });
+    const index = createArtifactIndex(database.sql);
+
+    const bootstrapped = await bootstrapArtifactIndex({
+      index,
+      store: adoptionStore,
+      quotaBytes: 10_000,
+      maxPayloadBytes: 5_000,
+      now: at(0),
+    });
+
+    assert.equal(bootstrapped.inventory.status, "verified");
+    assert.equal(bootstrapped.inventory.authority.kind, "hybrid");
+    assert.deepEqual(
+      bootstrapped.artifacts.map((artifact) => artifact.hash).sort(),
+      [first.hash, second.hash].sort(),
+    );
+    assert.equal(events[0], "staging-cleanup");
+    assert.deepEqual(
+      events.filter((event) => event.startsWith("read:")).sort(),
+      [`read:${first.hash}`, `read:${second.hash}`].sort(),
+    );
+    assert.deepEqual(await (await import("node:fs/promises")).readdir(path.join(artifactRoot, ".staging")), []);
+    assert.equal(bootstrapped.capacity.state, "ready");
+  });
+
+  it("quarantines an incomplete ByteBundle only after every final identity is read", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "setfarm-indexed-invalid-closure-"));
+    roots.push(root);
+    const artifactRoot = path.join(root, "sha256");
+    const legacyStore = new ContentAddressedArtifactStore(artifactRoot);
+    const produced = createByteBundleV1({
+      bytes: Buffer.from("bundle root without its declared chunk", "utf8"),
+      producer,
+    });
+    assert.equal(produced.status, "produced");
+    if (produced.status !== "produced") return;
+    const rootArtifact = await legacyStore.put(produced.bundle.envelope);
+    const unrelated = await legacyStore.put(envelope("unrelated-valid-leaf"));
+    const reads: string[] = [];
+    const provider = createHybridArtifactStoreCapacityLeaseProviderV1({
+      sql: database.sql,
+      artifactRoot,
+      purpose: "inventory-adoption",
+    });
+    const adoptionStore = new ContentAddressedArtifactStore(artifactRoot, {
+      capacityLeaseProvider: provider,
+      testHooks: {
+        afterArtifactRead: ({ artifactHash }) => { reads.push(artifactHash); },
+      },
+    });
+    const index = createArtifactIndex(database.sql);
+
+    await assert.rejects(
+      bootstrapArtifactIndex({
+        index,
+        store: adoptionStore,
+        quotaBytes: 10_000,
+        maxPayloadBytes: 5_000,
+        now: at(0),
+      }),
+      (error: unknown) => error instanceof IndexedArtifactPublisherError
+        && error.code === "ARTIFACT_INVENTORY_CLOSURE_REJECTED"
+        && error.inventory?.status === "rejected",
+    );
+
+    assert.deepEqual(reads.sort(), [rootArtifact.hash, unrelated.hash].sort());
+    assert.equal((await index.getCapacity()).state, "quarantined");
+    assert.equal(await index.getArtifact(rootArtifact.hash), undefined);
+    assert.equal(await index.getArtifact(unrelated.hash), undefined);
+  });
+
+  it("accepts an orphan ByteChunk as a complete leaf inventory", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "setfarm-indexed-orphan-chunk-"));
+    roots.push(root);
+    const artifactRoot = path.join(root, "sha256");
+    const legacyStore = new ContentAddressedArtifactStore(artifactRoot);
+    const produced = createByteBundleV1({
+      bytes: Buffer.from("orphan chunk remains a valid leaf", "utf8"),
+      producer,
+    });
+    assert.equal(produced.status, "produced");
+    if (produced.status !== "produced") return;
+    const orphan = await legacyStore.put(produced.chunks[0]!.envelope);
+    const provider = createHybridArtifactStoreCapacityLeaseProviderV1({
+      sql: database.sql,
+      artifactRoot,
+      purpose: "inventory-adoption",
+    });
+    const adoptionStore = new ContentAddressedArtifactStore(artifactRoot, {
+      capacityLeaseProvider: provider,
+    });
+    const index = createArtifactIndex(database.sql);
+
+    const bootstrapped = await bootstrapArtifactIndex({
+      index,
+      store: adoptionStore,
+      quotaBytes: 10_000,
+      maxPayloadBytes: 5_000,
+      now: at(0),
+    });
+
+    assert.equal(bootstrapped.inventory.status, "verified");
+    assert.equal(bootstrapped.inventory.closures[0]?.status, "verified");
+    assert.equal(bootstrapped.inventory.closures[0]?.role, "leaf");
+    assert.ok(await index.getArtifact(orphan.hash));
+  });
+
+  it("quarantines index/CAS drift outside the held adoption lease without recreating either side", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "setfarm-indexed-adoption-drift-"));
+    roots.push(root);
+    const artifactRoot = path.join(root, "sha256");
+    const legacyStore = new ContentAddressedArtifactStore(artifactRoot);
+    const filesystemOnly = await legacyStore.put(envelope("filesystem-only"));
+    const databaseOnly = identity(envelope("database-only"));
+    await database.sql.unsafe(
+      `INSERT INTO semantic_artifacts (
+         artifact_hash, artifact_type, byte_length, producer_metadata, created_at
+       ) VALUES ($1, $2, $3, $4::text::jsonb, NOW())`,
+      [
+        databaseOnly.hash,
+        databaseOnly.artifactType,
+        databaseOnly.byteLength,
+        JSON.stringify(databaseOnly.producer),
+      ],
+    );
+    const index = createArtifactIndex(database.sql);
+    const adoptionStore = new ContentAddressedArtifactStore(artifactRoot, {
+      capacityLeaseProvider: createHybridArtifactStoreCapacityLeaseProviderV1({
+        sql: database.sql,
+        artifactRoot,
+        purpose: "inventory-adoption",
+      }),
+    });
+
+    await assert.rejects(
+      bootstrapArtifactIndex({
+        index,
+        store: adoptionStore,
+        quotaBytes: 10_000,
+        maxPayloadBytes: 5_000,
+        now: at(0),
+      }),
+      (error: unknown) => error instanceof ArtifactIndexError
+        && error.code === "ARTIFACT_BOOTSTRAP_MISMATCH",
+    );
+
+    assert.equal((await index.getCapacity()).state, "quarantined");
+    assert.equal(await index.getArtifact(filesystemOnly.hash), undefined);
+    assert.equal((await index.getArtifact(databaseOnly.hash))?.hash, databaseOnly.hash);
+    assert.equal((await legacyStore.get(filesystemOnly.hash)).hash, filesystemOnly.hash);
+    await assert.rejects(legacyStore.get(databaseOnly.hash), /does not exist/);
+    assert.equal(
+      (await readdir(artifactRoot)).filter((entry) => /^[a-f0-9]{64}\.json$/.test(entry)).length,
+      1,
+    );
+    const authority = await database.sql<Array<{ state: string }>>`
+      SELECT state FROM artifact_store_authorities
+    `;
+    assert.deepEqual(Array.from(authority), [{ state: "ready" }]);
+  });
+
+  it("rejects a changed final-file generation before bootstrap and leaves it retryable", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "setfarm-indexed-adoption-generation-"));
+    roots.push(root);
+    const artifactRoot = path.join(root, "sha256");
+    const legacyStore = new ContentAddressedArtifactStore(artifactRoot);
+    const first = await legacyStore.put(envelope("generation-first"));
+    const injectedEnvelope = envelope("generation-arrived-during-read");
+    const injectedIdentity = identity(injectedEnvelope);
+    let injected = false;
+    const adoptionStore = new ContentAddressedArtifactStore(artifactRoot, {
+      capacityLeaseProvider: createHybridArtifactStoreCapacityLeaseProviderV1({
+        sql: database.sql,
+        artifactRoot,
+        purpose: "inventory-adoption",
+      }),
+      testHooks: {
+        afterArtifactRead: async () => {
+          if (injected) return;
+          injected = true;
+          await writeFile(
+            path.join(artifactRoot, `${injectedIdentity.hash}.json`),
+            canonicalJsonBytes(injectedEnvelope),
+            { flag: "wx", mode: 0o600 },
+          );
+        },
+      },
+    });
+    const index = createArtifactIndex(database.sql);
+
+    await assert.rejects(
+      bootstrapArtifactIndex({
+        index,
+        store: adoptionStore,
+        quotaBytes: 10_000,
+        maxPayloadBytes: 5_000,
+        now: at(0),
+      }),
+      (error: unknown) => error instanceof ArtifactStoreError
+        && error.code === "ARTIFACT_ROOT_CHANGED_DURING_OPERATION",
+    );
+
+    assert.equal(injected, true);
+    assert.equal((await legacyStore.get(first.hash)).hash, first.hash);
+    assert.equal(
+      (await legacyStore.get(injectedIdentity.hash)).hash,
+      injectedIdentity.hash,
+    );
+    assert.equal(await index.getArtifact(first.hash), undefined);
+    assert.equal(await index.getArtifact(injectedIdentity.hash), undefined);
+    assert.equal((await index.getCapacity()).state, "bootstrap_required");
+  });
+
+  it("rejects an externally aliased final as unsafe inventory without deleting it", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "setfarm-indexed-adoption-alias-"));
+    roots.push(root);
+    const artifactRoot = path.join(root, "sha256");
+    const legacyStore = new ContentAddressedArtifactStore(artifactRoot);
+    const aliased = await legacyStore.put(envelope("externally-aliased-final"));
+    const externalAlias = path.join(root, "external-alias.json");
+    await link(legacyStore.pathFor(aliased.hash), externalAlias);
+    const index = createArtifactIndex(database.sql);
+    const adoptionStore = new ContentAddressedArtifactStore(artifactRoot, {
+      capacityLeaseProvider: createHybridArtifactStoreCapacityLeaseProviderV1({
+        sql: database.sql,
+        artifactRoot,
+        purpose: "inventory-adoption",
+      }),
+    });
+
+    await assert.rejects(
+      bootstrapArtifactIndex({
+        index,
+        store: adoptionStore,
+        quotaBytes: 10_000,
+        maxPayloadBytes: 5_000,
+        now: at(0),
+      }),
+      (error: unknown) => error instanceof IndexedArtifactPublisherError
+        && error.code === "ARTIFACT_INVENTORY_ENTRY_INVALID"
+        && error.inventory?.entryIssues[0]?.code === "ARTIFACT_UNSAFE_FILE_TYPE",
+    );
+
+    assert.equal((await index.getCapacity()).state, "quarantined");
+    assert.equal(await index.getArtifact(aliased.hash), undefined);
+    assert.equal((await legacyStore.get(aliased.hash)).hash, aliased.hash);
+    assert.equal((await legacyStore.get(aliased.hash)).bytes.length > 0, true);
+    assert.equal((await readdir(root)).includes(path.basename(externalAlias)), true);
+  });
+
+  it("rejects aggregate inventory bytes at the configured root quota before closure or bootstrap", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "setfarm-indexed-adoption-quota-"));
+    roots.push(root);
+    const artifactRoot = path.join(root, "sha256");
+    const legacyStore = new ContentAddressedArtifactStore(artifactRoot);
+    const produced = createByteBundleV1({
+      bytes: Buffer.from("bundle root whose missing dependency must not be evaluated after quota loss", "utf8"),
+      producer,
+    });
+    assert.equal(produced.status, "produced");
+    if (produced.status !== "produced") return;
+    const bundleIdentity = identity(produced.bundle.envelope);
+    const leafEnvelope = envelope("quota-crossing-leaf");
+    const leafIdentity = identity(leafEnvelope);
+    await legacyStore.put(produced.bundle.envelope);
+    await legacyStore.put(leafEnvelope);
+    const reads: string[] = [];
+    const adoptionStore = new ContentAddressedArtifactStore(artifactRoot, {
+      limits: {
+        maxPayloadBytes: 5_000,
+        rootQuotaBytes: bundleIdentity.byteLength + leafIdentity.byteLength - 1,
+        minFreeBytes: 0,
+      },
+      capacityLeaseProvider: createHybridArtifactStoreCapacityLeaseProviderV1({
+        sql: database.sql,
+        artifactRoot,
+        purpose: "inventory-adoption",
+      }),
+      testHooks: {
+        afterArtifactRead: ({ artifactHash }) => { reads.push(artifactHash); },
+      },
+    });
+    const index = createArtifactIndex(database.sql);
+
+    await assert.rejects(
+      bootstrapArtifactIndex({
+        index,
+        store: adoptionStore,
+        quotaBytes: 10_000,
+        maxPayloadBytes: 5_000,
+        now: at(0),
+      }),
+      (error: unknown) => error instanceof ArtifactStoreError
+        && error.code === "ARTIFACT_INVENTORY_LIMIT_EXCEEDED",
+    );
+
+    assert.deepEqual(reads.sort(), [bundleIdentity.hash, leafIdentity.hash].sort());
+    assert.equal((await index.getCapacity()).state, "bootstrap_required");
+    assert.equal(await index.getArtifact(bundleIdentity.hash), undefined);
+    assert.equal(await index.getArtifact(leafIdentity.hash), undefined);
+  });
+
+  it("rejects the 100001st final entry before inventory map construction", () => {
+    assert.doesNotThrow(() => assertArtifactInventoryFinalEntryCountV1(
+      MAX_ARTIFACT_INVENTORY_FINAL_FILES_V1,
+    ));
+    assert.throws(
+      () => assertArtifactInventoryFinalEntryCountV1(
+        MAX_ARTIFACT_INVENTORY_FINAL_FILES_V1 + 1,
+      ),
+      (error: unknown) => error instanceof ArtifactStoreError
+        && error.code === "ARTIFACT_INVENTORY_LIMIT_EXCEEDED",
+    );
   });
 
   it("reserves before CAS publication and converges concurrent identical writes", async () => {
@@ -594,7 +943,13 @@ describe("indexed semantic artifact publisher", () => {
       /ARTIFACT_CLOSURE_DEPENDENCY_MISSING/,
     );
     assert.equal(publishCalls, 0);
-    assert.equal((await scanArtifactInventory(artifactStore)).length, 1);
+    await assert.rejects(
+      scanArtifactInventory(artifactStore),
+      (error: unknown) => error instanceof IndexedArtifactPublisherError
+        && error.code === "ARTIFACT_INVENTORY_CLOSURE_REJECTED",
+    );
+    const rootIdentity = identity(rootOnlyPlan.items[0]!.envelope);
+    assert.equal((await artifactStore.get(rootIdentity.hash)).hash, rootIdentity.hash);
     assert.equal((await database.sql<Array<{ count: number }>>`
       SELECT COUNT(*)::integer AS count FROM semantic_artifacts
     `)[0]?.count, 0);

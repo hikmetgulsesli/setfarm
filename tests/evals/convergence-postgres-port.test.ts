@@ -15,6 +15,7 @@ import { TaskIntentOracleV2Schema } from "../../src/evals/task-intent-oracle-v2.
 import { hashCanonicalJson } from "../../src/product-compiler/canonical-json.js";
 import { createArtifactIndex } from "../../src/product-compiler/artifact-index.js";
 import { ContentAddressedArtifactStore } from "../../src/product-compiler/artifact-store.js";
+import { createArtifactInventoryStoreV1 } from "../../src/product-compiler/artifact-inventory-store.js";
 import {
   bootstrapArtifactIndex,
   IndexedArtifactPublisher,
@@ -80,6 +81,37 @@ describe("convergence PostgreSQL port", () => {
     });
 
     assert.equal((await port.inspectPlatform()).artifactIndexReady, true);
+  });
+
+  it("verifies hybrid convergence readiness through the central inventory capability", async () => {
+    const isolated = await createIsolatedTestDatabase();
+    const root = await mkdtemp(path.join(tmpdir(), "setfarm-eval-hybrid-preflight-"));
+    const artifactRoot = path.join(root, "sha256");
+    try {
+      const adoption = createArtifactInventoryStoreV1({
+        sql: isolated.sql,
+        artifactRoot,
+        artifactLimits,
+        purpose: "inventory-adoption",
+        publicationAuthorityMode: "hybrid-required",
+      });
+      await bootstrapArtifactIndex({
+        index: createArtifactIndex(isolated.sql),
+        store: adoption.store,
+        quotaBytes: artifactLimits.rootQuotaBytes,
+        maxPayloadBytes: artifactLimits.maxPayloadBytes,
+      });
+      const port = createPostgresConvergencePort(isolated.sql, {
+        artifactRoot,
+        artifactLimits,
+        publicationAuthorityMode: "hybrid-required",
+      });
+
+      assert.equal((await port.inspectPlatform()).artifactIndexReady, true);
+    } finally {
+      await isolated.cleanup();
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it("accepts a compiler-owned typed rejection only with zero downstream product side effects", async () => {

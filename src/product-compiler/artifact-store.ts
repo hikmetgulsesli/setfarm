@@ -35,8 +35,14 @@ import {
   type ArtifactCapacitySnapshot,
 } from "./artifact-capacity.js";
 import {
+  ARTIFACT_STORE_KERNEL_LOCK_FILENAME_V1,
+  ARTIFACT_STORE_ROOT_AUTHORITY_FILENAME_V1,
   ARTIFACT_STORE_STAGING_DIRECTORY_V1,
+  MAX_ARTIFACT_INVENTORY_FINAL_FILES_V1,
+  ArtifactStoreAuthorityError,
+  artifactStoreCapacityLeaseProviderPurposeV1,
   isHybridArtifactStoreCapacityLeaseProviderV1,
+  type ArtifactStoreCapacityLeasePurposeV1,
   type ArtifactStoreCapacityLeaseProvider,
 } from "./artifact-store-authority.js";
 import {
@@ -50,6 +56,7 @@ import {
 } from "./artifact-store-batch-plan.js";
 
 export { ArtifactCapacityError } from "./artifact-capacity.js";
+export { MAX_ARTIFACT_INVENTORY_FINAL_FILES_V1 } from "./artifact-store-authority.js";
 export {
   SemanticArtifactEnvelopeV1Schema,
   type SemanticArtifactEnvelopeV1,
@@ -64,7 +71,9 @@ export type ArtifactStoreErrorCode =
   | "ARTIFACT_BOUNDED_READ_EXCEEDED"
   | "ARTIFACT_INVALID_ENVELOPE"
   | "ARTIFACT_HASH_COLLISION_OR_CORRUPTION"
-  | "ARTIFACT_NON_CANONICAL_BYTES";
+  | "ARTIFACT_NON_CANONICAL_BYTES"
+  | "ARTIFACT_INVENTORY_ENTRY_INVALID"
+  | "ARTIFACT_INVENTORY_LIMIT_EXCEEDED";
 
 export class ArtifactStoreError extends Error {
   readonly code: ArtifactStoreErrorCode;
@@ -95,6 +104,43 @@ export type ArtifactGetResult = Readonly<{
   path: string;
   envelope: SemanticArtifactEnvelopeV1;
   bytes: Buffer;
+}>;
+
+export const ARTIFACT_STORE_INVENTORY_SNAPSHOT_SCHEMA_V1 =
+  "setfarm.artifact-store-inventory-snapshot.v1" as const;
+
+export type ArtifactStoreInventoryAuthorityV1 =
+  | Readonly<{ kind: "standalone" }>
+  | Readonly<{
+      kind: "hybrid";
+      authorityId: string;
+      rootLocatorHash: string;
+    }>;
+
+export type ArtifactStoreInventoryIssueV1 = Readonly<{
+  code:
+    | "ARTIFACT_UNSAFE_FILE_TYPE"
+    | "ARTIFACT_BOUNDED_READ_EXCEEDED"
+    | "ARTIFACT_INVALID_ENVELOPE"
+    | "ARTIFACT_HASH_COLLISION_OR_CORRUPTION"
+    | "ARTIFACT_NON_CANONICAL_BYTES";
+  artifactHash: string;
+}>;
+
+/**
+ * Lease-scoped exact CAS evidence. Callers must derive durable operational
+ * evidence inside `withInventorySnapshot`; paths and mutable byte buffers are
+ * deliberately not a persistence contract.
+ */
+export type ArtifactStoreInventorySnapshotV1 = Readonly<{
+  schema: typeof ARTIFACT_STORE_INVENTORY_SNAPSHOT_SCHEMA_V1;
+  status: "verified" | "rejected";
+  authority: ArtifactStoreInventoryAuthorityV1;
+  finalEntryCount: number;
+  verifiedArtifactCount: number;
+  totalBytes: number;
+  artifacts: readonly ArtifactGetResult[];
+  issues: readonly ArtifactStoreInventoryIssueV1[];
 }>;
 
 type ArtifactStoreReadTestHooks = Readonly<{
@@ -174,6 +220,18 @@ type StagedBatchItem = Readonly<{
 }>;
 
 const hybridAuthorityBackedStores = new WeakSet<object>();
+const hybridWriterAuthorityBackedStores = new WeakSet<object>();
+const ARTIFACT_INVENTORY_OPERATION_HASH_V1 = "0".repeat(64);
+const ARTIFACT_INVENTORY_READ_CONCURRENCY_V1 = 16;
+const DETERMINISTIC_ARTIFACT_INVENTORY_ERROR_CODES_V1 = new Set<
+  ArtifactStoreInventoryIssueV1["code"]
+>([
+  "ARTIFACT_UNSAFE_FILE_TYPE",
+  "ARTIFACT_BOUNDED_READ_EXCEEDED",
+  "ARTIFACT_INVALID_ENVELOPE",
+  "ARTIFACT_HASH_COLLISION_OR_CORRUPTION",
+  "ARTIFACT_NON_CANONICAL_BYTES",
+]);
 
 /**
  * Runtime capability check. Only this module can brand the exact concrete
@@ -189,6 +247,29 @@ export function isHybridAuthorityBackedArtifactStore(
     && !Object.prototype.hasOwnProperty.call(value, "put")
     && !Object.prototype.hasOwnProperty.call(value, "get")
     && !Object.prototype.hasOwnProperty.call(value, "putPreparedBatch");
+}
+
+/** Production write capability: read/inventory providers never receive it. */
+export function isHybridWriterAuthorityBackedArtifactStore(
+  value: unknown,
+): value is ContentAddressedArtifactStore {
+  return isHybridAuthorityBackedArtifactStore(value)
+    && hybridWriterAuthorityBackedStores.has(value);
+}
+
+export function assertArtifactInventoryFinalEntryCountV1(count: number): void {
+  if (!Number.isSafeInteger(count) || count < 0) {
+    throw new ArtifactStoreError(
+      "ARTIFACT_INVENTORY_ENTRY_INVALID",
+      "Artifact inventory final-entry count must be a non-negative safe integer",
+    );
+  }
+  if (count > MAX_ARTIFACT_INVENTORY_FINAL_FILES_V1) {
+    throw new ArtifactStoreError(
+      "ARTIFACT_INVENTORY_LIMIT_EXCEEDED",
+      `Artifact inventory exceeds ${MAX_ARTIFACT_INVENTORY_FINAL_FILES_V1} final files`,
+    );
+  }
 }
 
 function sha256(bytes: Uint8Array): string {
@@ -511,6 +592,7 @@ export class ContentAddressedArtifactStore {
   private readonly measureOverride?: () => Promise<ArtifactCapacitySnapshot>;
   private readonly testHooks?: ArtifactStoreReadTestHooks;
   private readonly capacityLeaseProvider?: ArtifactStoreCapacityLeaseProvider;
+  private readonly capacityLeasePurpose?: ArtifactStoreCapacityLeasePurposeV1;
   private rootIdentity?: ArtifactRootIdentity;
   private rootAuthorityPath?: string;
 
@@ -541,8 +623,18 @@ export class ContentAddressedArtifactStore {
       if (path.resolve(options.capacityLeaseProvider.artifactRoot) !== this.root) {
         throw new TypeError("Artifact store capacity provider root does not match the store root");
       }
+      const purpose = artifactStoreCapacityLeaseProviderPurposeV1(
+        options.capacityLeaseProvider,
+      );
+      if (!purpose) {
+        throw new TypeError("Artifact store capacity provider purpose is unavailable");
+      }
       this.capacityLeaseProvider = options.capacityLeaseProvider;
+      this.capacityLeasePurpose = purpose;
       hybridAuthorityBackedStores.add(this);
+      if (purpose === "writer" || purpose === "existing-writer") {
+        hybridWriterAuthorityBackedStores.add(this);
+      }
     }
   }
 
@@ -637,6 +729,7 @@ export class ContentAddressedArtifactStore {
     artifactHash: string,
     work: (lease: Readonly<{
       authorityPath: string;
+      authority: ArtifactStoreInventoryAuthorityV1;
       assertCurrent: () => Promise<void>;
     }>) => Promise<T>,
   ): Promise<T> {
@@ -656,6 +749,11 @@ export class ContentAddressedArtifactStore {
           const authorityPath = await this.authorityPathForRoot(rootIdentity, artifactHash);
           const lease = Object.freeze({
             authorityPath,
+            authority: Object.freeze({
+              kind: "hybrid" as const,
+              authorityId: providerLease.authorityId,
+              rootLocatorHash: providerLease.rootLocatorHash,
+            }),
             assertCurrent: async () => {
               await providerLease.assertCurrent();
               await this.authorityPathForRoot(rootIdentity, artifactHash);
@@ -714,6 +812,7 @@ export class ContentAddressedArtifactStore {
       }
       const lease = Object.freeze({
         authorityPath,
+        authority: Object.freeze({ kind: "standalone" as const }),
         assertCurrent: async () => {
           await this.authorityPathForRoot(rootIdentity, artifactHash);
         },
@@ -727,6 +826,32 @@ export class ContentAddressedArtifactStore {
       } finally {
         await rootHandle.close();
       }
+    }
+  }
+
+  private assertWriteCapability(): void {
+    if (
+      this.capacityLeaseProvider
+      && this.capacityLeasePurpose !== "writer"
+      && this.capacityLeasePurpose !== "existing-writer"
+    ) {
+      throw new ArtifactStoreAuthorityError(
+        "ARTIFACT_CAPACITY_AUTHORITY_NOT_READY",
+        `Artifact store purpose ${this.capacityLeasePurpose ?? "unknown"} has no write capability`,
+      );
+    }
+  }
+
+  private assertInventoryCapability(): void {
+    if (
+      this.capacityLeaseProvider
+      && this.capacityLeasePurpose !== "inventory-verify"
+      && this.capacityLeasePurpose !== "inventory-adoption"
+    ) {
+      throw new ArtifactStoreAuthorityError(
+        "ARTIFACT_CAPACITY_AUTHORITY_NOT_READY",
+        `Artifact store purpose ${this.capacityLeasePurpose ?? "unknown"} has no inventory capability`,
+      );
     }
   }
 
@@ -753,7 +878,7 @@ export class ContentAddressedArtifactStore {
   private async readBoundedArtifactBytes(
     target: string,
     artifactHash: string,
-  ): Promise<Buffer> {
+  ): Promise<Readonly<{ bytes: Buffer; identity: BatchFileIdentity }>> {
     let rootHandle;
     let handle;
     try {
@@ -889,7 +1014,10 @@ export class ContentAddressedArtifactStore {
           { artifactHash },
         );
       }
-      return bytes;
+      return Object.freeze({
+        bytes,
+        identity: batchFileIdentity(after),
+      });
     } finally {
       try {
         await handle?.close();
@@ -906,7 +1034,7 @@ export class ContentAddressedArtifactStore {
   ): Promise<Buffer | undefined> {
     let bytes: Buffer;
     try {
-      bytes = await this.readBoundedArtifactBytes(target, expectedHash);
+      bytes = (await this.readBoundedArtifactBytes(target, expectedHash)).bytes;
     } catch (error) {
       if (isNodeError(error, "ENOENT")) return undefined;
       throw error;
@@ -1400,10 +1528,12 @@ export class ContentAddressedArtifactStore {
   async putPreparedBatch(
     prepared: PreparedArtifactStoreBatchV1,
   ): Promise<ArtifactStoreBatchPutResultV1> {
+    this.assertWriteCapability();
     return this.#putPreparedBatch(prepared);
   }
 
   async put(value: unknown): Promise<ArtifactPutResult> {
+    this.assertWriteCapability();
     // Preserve the historical hostile-input and schema error boundary before
     // delegating the exact normalized envelope to the private batch core.
     const sourceBytes = boundedCanonicalJsonBytesForPut(
@@ -1447,11 +1577,14 @@ export class ContentAddressedArtifactStore {
     });
   }
 
-  private async getUnleased(hash: string): Promise<ArtifactGetResult> {
+  private async getUnleasedSnapshot(hash: string): Promise<Readonly<{
+    stored: ArtifactGetResult;
+    identity: BatchFileIdentity;
+  }>> {
     const target = this.pathFor(hash);
-    let bytes: Buffer;
+    let readSnapshot: Readonly<{ bytes: Buffer; identity: BatchFileIdentity }>;
     try {
-      bytes = await this.readBoundedArtifactBytes(target, hash);
+      readSnapshot = await this.readBoundedArtifactBytes(target, hash);
     } catch (error) {
       if (isNodeError(error, "ENOENT")) {
         throw new ArtifactStoreError(
@@ -1462,6 +1595,7 @@ export class ContentAddressedArtifactStore {
       }
       throw error;
     }
+    const { bytes } = readSnapshot;
 
     if (sha256(bytes) !== hash) {
       throw new ArtifactStoreError(
@@ -1541,12 +1675,234 @@ export class ContentAddressedArtifactStore {
       );
     }
 
-    return {
-      hash,
-      path: target,
-      envelope: envelopeResult.data,
-      bytes,
+    return Object.freeze({
+      stored: Object.freeze({
+        hash,
+        path: target,
+        envelope: envelopeResult.data,
+        bytes,
+      }),
+      identity: readSnapshot.identity,
+    });
+  }
+
+  private async getUnleased(hash: string): Promise<ArtifactGetResult> {
+    return (await this.getUnleasedSnapshot(hash)).stored;
+  }
+
+  private async enumerateInventoryFinalHashes(
+    authority: ArtifactStoreInventoryAuthorityV1,
+  ): Promise<string[]> {
+    const hashes: string[] = [];
+    let directory;
+    try {
+      directory = await opendir(this.root, { bufferSize: 32 });
+      while (true) {
+        const entry = await directory.read();
+        if (!entry) break;
+        const match = /^([a-f0-9]{64})\.json$/.exec(entry.name);
+        if (match) {
+          if (!entry.isFile()) {
+            throw new ArtifactStoreError(
+              "ARTIFACT_INVENTORY_ENTRY_INVALID",
+              `Artifact inventory final ${entry.name} is not an ordinary file`,
+              { artifactHash: match[1] },
+            );
+          }
+          hashes.push(match[1]!);
+          assertArtifactInventoryFinalEntryCountV1(hashes.length);
+          continue;
+        }
+
+        const reservedEntryIsExact = authority.kind === "hybrid"
+          ? (
+              (entry.name === ARTIFACT_STORE_ROOT_AUTHORITY_FILENAME_V1 && entry.isFile())
+              || (entry.name === ARTIFACT_STORE_KERNEL_LOCK_FILENAME_V1 && entry.isFile())
+              || (entry.name === ARTIFACT_STORE_STAGING_DIRECTORY_V1 && entry.isDirectory())
+            )
+          : entry.name === ".capacity.lock" && entry.isFile();
+        if (!reservedEntryIsExact) {
+          throw new ArtifactStoreError(
+            "ARTIFACT_INVENTORY_ENTRY_INVALID",
+            `Artifact inventory contains non-canonical entry ${entry.name}`,
+          );
+        }
+      }
+    } finally {
+      await directory?.close();
+    }
+    hashes.sort();
+    return hashes;
+  }
+
+  private async inventorySnapshotUnleased(
+    authority: ArtifactStoreInventoryAuthorityV1,
+  ): Promise<ArtifactStoreInventorySnapshotV1> {
+    const hashes = await this.enumerateInventoryFinalHashes(authority);
+    const storedByOrdinal: Array<ArtifactGetResult | undefined> =
+      new Array(hashes.length);
+    const identityByOrdinal: Array<BatchFileIdentity | undefined> =
+      new Array(hashes.length);
+    const issues: ArtifactStoreInventoryIssueV1[] = [];
+    let retainedBytes = 0;
+    let cursor = 0;
+    let fatalError: unknown;
+    const worker = async (): Promise<void> => {
+      while (true) {
+        const ordinal = cursor;
+        cursor += 1;
+        if (ordinal >= hashes.length) return;
+        if (fatalError !== undefined) continue;
+        const artifactHash = hashes[ordinal]!;
+        try {
+          const read = await this.getUnleasedSnapshot(artifactHash);
+          if (fatalError !== undefined) continue;
+          if (
+            retainedBytes > Number.MAX_SAFE_INTEGER - read.stored.bytes.length
+            || retainedBytes + read.stored.bytes.length > this.limits.rootQuotaBytes
+          ) {
+            fatalError = new ArtifactStoreError(
+              "ARTIFACT_INVENTORY_LIMIT_EXCEEDED",
+              "Artifact inventory bytes exceed the configured root quota",
+              { artifactHash },
+            );
+            continue;
+          }
+          retainedBytes += read.stored.bytes.length;
+          storedByOrdinal[ordinal] = read.stored;
+          identityByOrdinal[ordinal] = read.identity;
+          if (
+            read.identity.nlink !== 1
+            || (read.identity.mode & 0o7777) !== 0o600
+            || (currentUid() !== undefined && read.identity.uid !== currentUid())
+          ) {
+            issues.push(Object.freeze({
+              code: "ARTIFACT_UNSAFE_FILE_TYPE",
+              artifactHash,
+            }));
+          }
+        } catch (error) {
+          if (
+            error instanceof ArtifactStoreError
+            && DETERMINISTIC_ARTIFACT_INVENTORY_ERROR_CODES_V1.has(
+              error.code as ArtifactStoreInventoryIssueV1["code"],
+            )
+          ) {
+            issues.push(Object.freeze({
+              code: error.code as ArtifactStoreInventoryIssueV1["code"],
+              artifactHash,
+            }));
+            continue;
+          }
+          fatalError ??= error;
+        }
+      }
     };
+    await Promise.all(Array.from(
+      { length: Math.min(ARTIFACT_INVENTORY_READ_CONCURRENCY_V1, hashes.length) },
+      () => worker(),
+    ));
+    if (fatalError !== undefined) throw fatalError;
+
+    const finalHashes = await this.enumerateInventoryFinalHashes(authority);
+    if (
+      finalHashes.length !== hashes.length
+      || finalHashes.some((hash, ordinal) => hash !== hashes[ordinal])
+    ) {
+      throw new ArtifactStoreError(
+        "ARTIFACT_ROOT_CHANGED_DURING_OPERATION",
+        "Artifact inventory final-entry generation changed during exact reads",
+      );
+    }
+
+    let verificationCursor = 0;
+    let generationError: unknown;
+    const verifyGeneration = async (): Promise<void> => {
+      while (true) {
+        const ordinal = verificationCursor;
+        verificationCursor += 1;
+        if (ordinal >= hashes.length) return;
+        if (generationError !== undefined) continue;
+        const expected = identityByOrdinal[ordinal];
+        if (!expected) continue;
+        const artifactHash = hashes[ordinal]!;
+        try {
+          const current = await lstat(this.pathFor(artifactHash));
+          if (!sameBatchFileIdentity(batchFileIdentity(current), expected)) {
+            throw new ArtifactStoreError(
+              "ARTIFACT_ROOT_CHANGED_DURING_OPERATION",
+              `Artifact inventory final ${artifactHash} changed after its exact read`,
+              { artifactHash },
+            );
+          }
+        } catch (error) {
+          generationError ??= error instanceof ArtifactStoreError
+            ? error
+            : new ArtifactStoreError(
+                "ARTIFACT_ROOT_CHANGED_DURING_OPERATION",
+                `Artifact inventory final ${artifactHash} became unavailable after its exact read`,
+                { artifactHash, cause: error },
+              );
+        }
+      }
+    };
+    await Promise.all(Array.from(
+      { length: Math.min(ARTIFACT_INVENTORY_READ_CONCURRENCY_V1, hashes.length) },
+      () => verifyGeneration(),
+    ));
+    if (generationError !== undefined) throw generationError;
+
+    const artifacts = storedByOrdinal.filter(
+      (stored): stored is ArtifactGetResult => stored !== undefined,
+    );
+    issues.sort((left, right) => left.artifactHash.localeCompare(right.artifactHash));
+    return Object.freeze({
+      schema: ARTIFACT_STORE_INVENTORY_SNAPSHOT_SCHEMA_V1,
+      status: issues.length === 0 ? "verified" : "rejected",
+      authority,
+      finalEntryCount: hashes.length,
+      verifiedArtifactCount: artifacts.length,
+      totalBytes: retainedBytes,
+      artifacts: Object.freeze(artifacts),
+      issues: Object.freeze(issues),
+    });
+  }
+
+  /**
+   * Enumerates and reads the complete bounded CAS generation under one held
+   * filesystem/DB authority. The callback finishes before that lease releases.
+   */
+  async withInventorySnapshot<T>(
+    work: (snapshot: ArtifactStoreInventorySnapshotV1) => Promise<T>,
+  ): Promise<T> {
+    this.assertInventoryCapability();
+    if (!this.capacityLeaseProvider) {
+      try {
+        await lstat(this.root);
+      } catch (error) {
+        if (isNodeError(error, "ENOENT")) {
+          return work(Object.freeze({
+            schema: ARTIFACT_STORE_INVENTORY_SNAPSHOT_SCHEMA_V1,
+            status: "verified",
+            authority: Object.freeze({ kind: "standalone" }),
+            finalEntryCount: 0,
+            verifiedArtifactCount: 0,
+            totalBytes: 0,
+            artifacts: Object.freeze([]),
+            issues: Object.freeze([]),
+          }));
+        }
+        throw error;
+      }
+    }
+    return this.withCapacityLock(ARTIFACT_INVENTORY_OPERATION_HASH_V1, async (lease) => {
+      await lease.assertCurrent();
+      const snapshot = await this.inventorySnapshotUnleased(lease.authority);
+      await lease.assertCurrent();
+      const result = await work(snapshot);
+      await lease.assertCurrent();
+      return result;
+    });
   }
 
   async get(hash: string): Promise<ArtifactGetResult> {

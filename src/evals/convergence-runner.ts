@@ -23,8 +23,9 @@ import {
 } from "../evidence/evidence-bundle-v2.js";
 import { AcceptedCandidateV1Schema } from "../evidence/accepted-candidate-v1.js";
 import { createArtifactIndex } from "../product-compiler/artifact-index.js";
+import { createArtifactInventoryStoreV1 } from "../product-compiler/artifact-inventory-store.js";
 import { hashCanonicalJson } from "../product-compiler/canonical-json.js";
-import { scanArtifactInventory } from "../product-compiler/indexed-artifact-publisher.js";
+import { verifyArtifactIndexInventory } from "../product-compiler/indexed-artifact-publisher.js";
 import {
   RuntimeArtifactReaderError,
   createRuntimeArtifactReader,
@@ -35,6 +36,7 @@ import {
   resolveProductArtifactCapacity,
   resolveProductArtifactDir,
   runtimeConfig,
+  type ArtifactStorePublicationAuthorityMode,
 } from "../runtime-config.js";
 import { readOpenClawConfig } from "../installer/openclaw-config.js";
 import { computeRunOperationalSnapshotHash } from "../server/run-operational-snapshot.js";
@@ -1460,6 +1462,7 @@ export function createPostgresConvergencePort(
   options: Readonly<{
     artifactRoot?: string;
     artifactLimits?: ArtifactCapacityLimits;
+    publicationAuthorityMode?: ArtifactStorePublicationAuthorityMode;
   }> = {},
 ): ConvergenceSqlPort {
   const artifactRoot = options.artifactRoot ?? resolveProductArtifactDir();
@@ -1468,9 +1471,19 @@ export function createPostgresConvergencePort(
     sql,
     artifactRoot,
     artifactLimits,
+    ...(options.publicationAuthorityMode
+      ? { publicationAuthorityMode: options.publicationAuthorityMode }
+      : {}),
   });
   const artifactStore = artifactReader.store;
   const artifactIndex = createArtifactIndex(sql);
+  const artifactInventoryStore = createArtifactInventoryStoreV1({
+    sql,
+    artifactRoot,
+    artifactLimits,
+    purpose: "inventory-verify",
+    publicationAuthorityMode: artifactReader.publicationAuthority,
+  }).store;
   return {
     async inspectPlatform() {
       let migrationVerified = false;
@@ -1485,12 +1498,11 @@ export function createPostgresConvergencePort(
         migrationVerified = false;
       }
       try {
-        if (artifactReader.publicationAuthority === "hybrid-required") {
-          throw new Error("ARTIFACT_INDEX_AUTHORITY_E1_REQUIRED");
-        }
-        const artifacts = await scanArtifactInventory(artifactStore);
-        const capacity = await artifactIndex.verifyInventory({ artifacts });
-        artifactIndexReady = capacity.state === "ready";
+        const verified = await verifyArtifactIndexInventory({
+          index: artifactIndex,
+          store: artifactInventoryStore,
+        });
+        artifactIndexReady = verified.capacity.state === "ready";
       } catch {
         artifactIndexReady = false;
       }

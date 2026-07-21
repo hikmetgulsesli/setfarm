@@ -87,7 +87,7 @@ describe("durable semantic artifact index", () => {
     );
   });
 
-  it("bootstraps from an exact inventory once and fails closed on index/filesystem drift", async () => {
+  it("keeps mismatch detection non-mutating until the recovery owner quarantines it", async () => {
     const index = createArtifactIndex(database.sql);
     const firstArtifact = artifact("a", 20);
     assert.equal((await index.getCapacity()).state, "bootstrap_required");
@@ -149,6 +149,12 @@ describe("durable semantic artifact index", () => {
       (error: unknown) => error instanceof ArtifactIndexError
         && error.code === "ARTIFACT_BOOTSTRAP_MISMATCH",
     );
+    assert.equal((await index.getCapacity()).state, "ready");
+    await index.quarantineBootstrapInventory({
+      code: "ARTIFACT_INDEX_FILESYSTEM_MISMATCH",
+      diagnostic: "exact inventory omitted the indexed artifact",
+      now: at(2),
+    });
     assert.equal((await index.getCapacity()).state, "quarantined");
     await assert.rejects(
       index.reservePublication({
@@ -181,6 +187,31 @@ describe("durable semantic artifact index", () => {
         && error.code === "ARTIFACT_INDEX_ACCOUNTING_MISMATCH",
     );
     assert.equal((await index.getCapacity()).updatedAt, before.updatedAt);
+  });
+
+  it("refuses inventory quarantine while one publication generation is active", async () => {
+    const index = createArtifactIndex(database.sql);
+    await index.bootstrap({ artifacts: [], quotaBytes: 100, maxPayloadBytes: 80, now: at(0) });
+    await index.reservePublication({
+      reservationId: "inventory-quarantine-race",
+      artifact: artifact("7", 20),
+      ownerInstanceId: "live-publisher",
+      leaseMs: 10_000,
+      now: at(1),
+    });
+
+    await assert.rejects(
+      index.quarantineBootstrapInventory({
+        code: "ARTIFACT_INVENTORY_CLOSURE_REJECTED",
+        diagnostic: "a stale scanner must not quarantine a newer writer generation",
+        now: at(2),
+      }),
+      (error: unknown) => error instanceof ArtifactIndexError
+        && error.code === "ARTIFACT_BOOTSTRAP_ACTIVE_RESERVATIONS",
+    );
+    const capacity = await index.getCapacity();
+    assert.equal(capacity.state, "ready");
+    assert.equal(capacity.reservedBytes, 20);
   });
 
   it("reserves before publication and settles exact idempotent CAS metadata", async () => {

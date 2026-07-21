@@ -6,13 +6,14 @@ import {
   planContractSpineMigrations,
   verifyContractSpineMigrations,
 } from "../src/db/contract-spine-migrations.js";
-import { ContentAddressedArtifactStore } from "../src/product-compiler/artifact-store.js";
+import { createArtifactInventoryStoreV1 } from "../src/product-compiler/artifact-inventory-store.js";
 import { createArtifactIndex } from "../src/product-compiler/artifact-index.js";
 import {
   bootstrapArtifactIndex,
   recoverExpiredArtifactPublicationBatches,
   recoverExpiredArtifactPublications,
   scanArtifactInventory,
+  verifyArtifactIndexInventory,
 } from "../src/product-compiler/indexed-artifact-publisher.js";
 import {
   resolveArtifactStorePublicationAuthorityMode,
@@ -98,35 +99,41 @@ async function assertBootstrapIdle(sql: postgres.Sql): Promise<void> {
 
 async function main(): Promise<void> {
   const input = parseArgs(process.argv.slice(2));
-  if (resolveArtifactStorePublicationAuthorityMode() === "hybrid-required") {
-    throw new Error("ARTIFACT_INDEX_AUTHORITY_E1_REQUIRED");
-  }
+  const publicationAuthority = resolveArtifactStorePublicationAuthorityMode();
   const sql = postgres(input.databaseUrl, {
     max: 4,
     connect_timeout: 10,
     idle_timeout: 2,
     onnotice: () => {},
   });
-  const store = new ContentAddressedArtifactStore(input.artifactRoot, {
-    limits: {
+  const store = createArtifactInventoryStoreV1({
+    sql,
+    artifactRoot: input.artifactRoot,
+    artifactLimits: {
       maxPayloadBytes: input.maxPayloadBytes,
       rootQuotaBytes: input.quotaBytes,
       minFreeBytes: resolveProductArtifactCapacity().minFreeBytes,
     },
-  });
+    purpose: input.mode === "bootstrap"
+      ? "inventory-adoption"
+      : "inventory-verify",
+    publicationAuthorityMode: publicationAuthority,
+  }).store;
   const index = createArtifactIndex(sql);
   try {
-    const artifacts = await scanArtifactInventory(store);
     if (input.mode === "plan") {
       const migrations = await planContractSpineMigrations(sql);
       let capacity: unknown = null;
       let verification: "verified" | "unavailable" = "unavailable";
+      let artifacts: Awaited<ReturnType<typeof scanArtifactInventory>> = [];
       const tables = await sql.unsafe<Array<{ installed: boolean }>>(
         "SELECT to_regclass('public.artifact_capacity') IS NOT NULL AS installed",
       );
       if (tables[0]?.installed) {
         try {
-          capacity = await index.verifyInventory({ artifacts });
+          const verified = await verifyArtifactIndexInventory({ index, store });
+          artifacts = verified.artifacts;
+          capacity = verified.capacity;
           verification = "verified";
         } catch (error) {
           capacity = {
@@ -136,6 +143,8 @@ async function main(): Promise<void> {
               : "ARTIFACT_INDEX_VERIFICATION_FAILED",
           };
         }
+      } else if (publicationAuthority === "standalone") {
+        artifacts = await scanArtifactInventory(store);
       }
       process.stdout.write(`${JSON.stringify({
         mode: "plan",
@@ -169,22 +178,33 @@ async function main(): Promise<void> {
     }
     if (input.mode === "recover") {
       const batches = await recoverExpiredArtifactPublicationBatches({ index, store });
-      const reservations = await recoverExpiredArtifactPublications({ index, store });
-      const refreshed = await scanArtifactInventory(store);
-      const capacity = await index.verifyInventory({ artifacts: refreshed });
+      const afterBatches = await index.getCapacity();
+      const reservationRecovery = afterBatches.state === "ready"
+        ? "executed" as const
+        : "skipped_capacity_not_ready" as const;
+      const reservations = reservationRecovery === "executed"
+        ? await recoverExpiredArtifactPublications({ index, store })
+        : [];
+      const observed = reservationRecovery === "executed"
+        ? await index.getCapacity()
+        : afterBatches;
+      const capacity = observed.state === "ready"
+        ? (await verifyArtifactIndexInventory({ index, store })).capacity
+        : observed;
       process.stdout.write(`${JSON.stringify({
         mode: "recover",
         batches,
         reservations,
+        reservationRecovery,
         capacity,
       }, null, 2)}\n`);
       return;
     }
-    const capacity = await index.verifyInventory({ artifacts });
+    const verified = await verifyArtifactIndexInventory({ index, store });
     process.stdout.write(`${JSON.stringify({
       mode: "verify",
-      artifactCount: artifacts.length,
-      capacity,
+      artifactCount: verified.artifacts.length,
+      capacity: verified.capacity,
     }, null, 2)}\n`);
   } finally {
     await sql.end({ timeout: 5 });

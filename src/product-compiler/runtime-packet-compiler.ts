@@ -105,6 +105,7 @@ export function createRuntimePacketCompiler(input: Readonly<{
     ? createHybridArtifactStoreCapacityLeaseProviderV1({
         sql: input.sql,
         artifactRoot: input.artifactRoot,
+        purpose: "writer",
       })
     : undefined;
   const store = new ContentAddressedArtifactStore(input.artifactRoot, {

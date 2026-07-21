@@ -40,6 +40,7 @@ export const ARTIFACT_STORE_STAGING_DIRECTORY_V1 = ".staging" as const;
 export const ARTIFACT_STORE_STAGING_MAX_ATTEMPTS_V1 = 64;
 export const ARTIFACT_STORE_STAGING_MAX_FILES_PER_ATTEMPT_V1 = 9;
 export const ARTIFACT_STORE_STAGING_MAX_ENTRIES_V1 = 640;
+export const MAX_ARTIFACT_INVENTORY_FINAL_FILES_V1 = 100_000;
 
 const AUTHORITY_KEY = "semantic-artifacts" as const;
 const MAX_AUTHORITY_FILE_BYTES = 1_024;
@@ -156,6 +157,7 @@ export type ArtifactStoreAuthorityErrorCode =
   | "ARTIFACT_ROOT_AUTHORITY_UNAVAILABLE"
   | "ARTIFACT_ROOT_AUTHORITY_UNMARKED"
   | "ARTIFACT_ROOT_AUTHORITY_WRONG_ROOT"
+  | "ARTIFACT_ROOT_INVENTORY_LIMIT_EXCEEDED"
   | "ARTIFACT_ROOT_STAGING_INVALID";
 
 export class ArtifactStoreAuthorityError extends Error {
@@ -190,6 +192,13 @@ export type ArtifactStoreCapacityLeaseProvider = Readonly<{
   ): Promise<T>;
 }>;
 
+export type ArtifactStoreCapacityLeasePurposeV1 =
+  | "writer"
+  | "existing-writer"
+  | "reader"
+  | "inventory-verify"
+  | "inventory-adoption";
+
 type AuthorityTestHooks = Readonly<{
   afterBindingCommit?: (
     event: Readonly<{ authorityId: string; rootLocatorHash: string }>,
@@ -221,6 +230,7 @@ type AuthorityTestHooks = Readonly<{
 }>;
 
 const hybridProviders = new WeakSet<object>();
+const hybridProviderPurposes = new WeakMap<object, ArtifactStoreCapacityLeasePurposeV1>();
 const authorityEvidenceErrors = new WeakSet<object>();
 
 function authorityEvidence<T extends ArtifactStoreAuthorityError>(error: T): T {
@@ -1351,7 +1361,10 @@ async function readAuthorityRow(sql: TransactionSql): Promise<AuthorityRow | und
   return rows[0];
 }
 
-async function assertReadyCapacity(sql: TransactionSql): Promise<void> {
+async function assertCapacityState(
+  sql: TransactionSql,
+  allowedStates: ReadonlySet<string>,
+): Promise<void> {
   const rows = await sql.unsafe<Array<{ capacity_key: string; state: string }>>(
     `SELECT capacity_key, state
        FROM public.artifact_capacity
@@ -1361,11 +1374,11 @@ async function assertReadyCapacity(sql: TransactionSql): Promise<void> {
   if (
     rows.length !== 1
     || rows[0]?.capacity_key !== AUTHORITY_KEY
-    || rows[0]?.state !== "ready"
+    || !allowedStates.has(rows[0]?.state ?? "")
   ) {
     throw new ArtifactStoreAuthorityError(
       "ARTIFACT_CAPACITY_AUTHORITY_DATABASE_INVALID",
-      "Artifact capacity singleton must be exact and ready before root authority",
+      "Artifact capacity singleton is not in a state allowed by this root authority purpose",
     );
   }
 }
@@ -2020,18 +2033,25 @@ async function assertBindingRootLayout(
   root: string,
   row: AuthorityRow,
   final: boolean,
+  policy: "empty-only" | "inventory-adoption",
 ): Promise<void> {
   const marker = markerFor(row);
   const descriptor = kernelLockFor(row);
+  const markerStageName = path.basename(
+    artifactStoreAuthorityStagePathV1(markerPath(root), marker),
+  );
+  const kernelLockStageName = path.basename(
+    artifactStoreAuthorityStagePathV1(kernelLockPath(root), descriptor),
+  );
   const allowed = new Set([
     ARTIFACT_STORE_ROOT_AUTHORITY_FILENAME_V1,
     ARTIFACT_STORE_KERNEL_LOCK_FILENAME_V1,
-    path.basename(artifactStoreAuthorityStagePathV1(markerPath(root), marker)),
-    path.basename(artifactStoreAuthorityStagePathV1(kernelLockPath(root), descriptor)),
+    markerStageName,
+    kernelLockStageName,
   ]);
-  let entries;
+  let directory;
   try {
-    entries = await readdir(root, { withFileTypes: true });
+    directory = await opendir(root);
   } catch (error) {
     if (isTransientFilesystemError(error)) {
       throw unavailableFilesystem(
@@ -2041,19 +2061,59 @@ async function assertBindingRootLayout(
     }
     throw error;
   }
-  const names = entries.map((entry) => entry.name);
-  if (names.some((name) => !allowed.has(name))) {
-    throw new ArtifactStoreAuthorityError(
-      "ARTIFACT_ROOT_AUTHORITY_UNMARKED",
-      "Artifact root contains foreign content outside the exact binding layout",
-    );
+  const observedReserved = new Set<string>();
+  let finalArtifactCount = 0;
+  try {
+    for await (const entry of directory) {
+      if (allowed.has(entry.name)) {
+        observedReserved.add(entry.name);
+        continue;
+      }
+      if (
+        policy === "inventory-adoption"
+        && entry.name === ARTIFACT_STORE_STAGING_DIRECTORY_V1
+        && entry.isDirectory()
+      ) {
+        observedReserved.add(entry.name);
+        continue;
+      }
+      if (
+        policy === "inventory-adoption"
+        && entry.isFile()
+        && /^[a-f0-9]{64}\.json$/.test(entry.name)
+      ) {
+        finalArtifactCount += 1;
+        if (finalArtifactCount > MAX_ARTIFACT_INVENTORY_FINAL_FILES_V1) {
+          throw new ArtifactStoreAuthorityError(
+            "ARTIFACT_ROOT_INVENTORY_LIMIT_EXCEEDED",
+            `Artifact root contains more than ${MAX_ARTIFACT_INVENTORY_FINAL_FILES_V1} canonical final artifacts`,
+          );
+        }
+        continue;
+      }
+      throw new ArtifactStoreAuthorityError(
+        "ARTIFACT_ROOT_AUTHORITY_UNMARKED",
+        "Artifact root contains foreign content outside the exact binding layout",
+      );
+    }
+  } catch (error) {
+    if (error instanceof ArtifactStoreAuthorityError) throw error;
+    if (isTransientFilesystemError(error)) {
+      throw unavailableFilesystem(
+        "Artifact root binding layout changed during bounded enumeration",
+        error,
+      );
+    }
+    throw error;
   }
   if (
     final
     && (
-      names.length !== 2
-      || !names.includes(ARTIFACT_STORE_ROOT_AUTHORITY_FILENAME_V1)
-      || !names.includes(ARTIFACT_STORE_KERNEL_LOCK_FILENAME_V1)
+      !observedReserved.has(ARTIFACT_STORE_ROOT_AUTHORITY_FILENAME_V1)
+      || !observedReserved.has(ARTIFACT_STORE_KERNEL_LOCK_FILENAME_V1)
+      || observedReserved.has(markerStageName)
+      || observedReserved.has(kernelLockStageName)
+      || (policy === "empty-only" && observedReserved.size !== 2)
     )
   ) {
     throw new ArtifactStoreAuthorityError(
@@ -2068,6 +2128,7 @@ async function ensureMarkerForBinding(
   row: AuthorityRow,
   hooks: AuthorityTestHooks | undefined,
   acquisitionDeadlineMs: number,
+  bindingPolicy: "empty-only" | "inventory-adoption",
 ): Promise<void> {
   const parentIdentity = await ensureParentIdentity(root);
   await withKernelLease(
@@ -2098,32 +2159,42 @@ async function ensureMarkerForBinding(
       const claim = claimFor(root, row);
       const claimPreexisted = await exactClaimExists(root, row);
       if (rootExists && !claimPreexisted) {
-        try {
-          await assertBindingRootLayout(root, row, true);
-          await verifyExactRootAuthority(root, row);
-          return;
-        } catch (error) {
-          if (
-            error instanceof ArtifactStoreAuthorityError
-            && error.code === "ARTIFACT_ROOT_AUTHORITY_UNAVAILABLE"
-          ) {
-            throw error;
+        const adoptionMayBindUnmarkedRoot = bindingPolicy === "inventory-adoption"
+          && await optionalLstat(markerPath(root)) === undefined
+          && await optionalLstat(kernelLockPath(root)) === undefined;
+        if (adoptionMayBindUnmarkedRoot) {
+          // Explicit offline adoption is the only capability allowed to bind a
+          // bounded root containing canonical finals. It still rejects every
+          // foreign entry before publishing the sibling claim or either marker.
+          await assertBindingRootLayout(root, row, false, bindingPolicy);
+        } else {
+          try {
+            await assertBindingRootLayout(root, row, true, bindingPolicy);
+            await verifyExactRootAuthority(root, row);
+            return;
+          } catch (error) {
+            if (
+              error instanceof ArtifactStoreAuthorityError
+              && error.code === "ARTIFACT_ROOT_AUTHORITY_UNAVAILABLE"
+            ) {
+              throw error;
+            }
+            if (
+              error instanceof ArtifactStoreAuthorityError
+              && (
+                error.code === "ARTIFACT_ROOT_AUTHORITY_CONFLICT"
+                || error.code === "ARTIFACT_ROOT_AUTHORITY_INVALID"
+              )
+              && (await readdir(root)).length > 0
+            ) {
+              throw error;
+            }
+            throw new ArtifactStoreAuthorityError(
+              "ARTIFACT_ROOT_AUTHORITY_UNMARKED",
+              "Existing artifact root has neither an exact binding claim nor exact authority files",
+              { cause: error },
+            );
           }
-          if (
-            error instanceof ArtifactStoreAuthorityError
-            && (
-              error.code === "ARTIFACT_ROOT_AUTHORITY_CONFLICT"
-              || error.code === "ARTIFACT_ROOT_AUTHORITY_INVALID"
-            )
-            && (await readdir(root)).length > 0
-          ) {
-            throw error;
-          }
-          throw new ArtifactStoreAuthorityError(
-            "ARTIFACT_ROOT_AUTHORITY_UNMARKED",
-            "Existing artifact root has neither an exact binding claim nor exact authority files",
-            { cause: error },
-          );
         }
       }
       if (!claimPreexisted) {
@@ -2159,7 +2230,7 @@ async function ensureMarkerForBinding(
           );
         }
       }
-      await assertBindingRootLayout(root, row, false);
+      await assertBindingRootLayout(root, row, false, bindingPolicy);
       const expectedRootIdentity = await rootIdentity(root);
       const createdMarker = await writeCanonicalNoReplace(
         markerPath(root),
@@ -2172,16 +2243,16 @@ async function ensureMarkerForBinding(
           rootLocatorHash: row.root_locator_hash,
         });
       }
-      await assertBindingRootLayout(root, row, false);
+      await assertBindingRootLayout(root, row, false, bindingPolicy);
       await writeCanonicalNoReplace(
         kernelLockPath(root),
         kernelLockFor(row),
         root,
       );
-      await assertBindingRootLayout(root, row, true);
+      await assertBindingRootLayout(root, row, true, bindingPolicy);
       await verifyExactRootAuthority(root, row, { root: expectedRootIdentity });
       await parentLease.assertCurrent();
-      await assertBindingRootLayout(root, row, true);
+      await assertBindingRootLayout(root, row, true, bindingPolicy);
     },
   );
 }
@@ -2254,6 +2325,7 @@ function shouldQuarantineAuthorityFailure(
   return code === "ARTIFACT_ROOT_AUTHORITY_CONFLICT"
     || code === "ARTIFACT_ROOT_AUTHORITY_INVALID"
     || code === "ARTIFACT_ROOT_AUTHORITY_UNMARKED"
+    || code === "ARTIFACT_ROOT_INVENTORY_LIMIT_EXCEEDED"
     || code === "ARTIFACT_ROOT_STAGING_INVALID";
 }
 
@@ -2265,12 +2337,21 @@ export function isHybridArtifactStoreCapacityLeaseProviderV1(
     && hybridProviders.has(value);
 }
 
+export function artifactStoreCapacityLeaseProviderPurposeV1(
+  value: unknown,
+): ArtifactStoreCapacityLeasePurposeV1 | undefined {
+  return typeof value === "object" && value !== null
+    ? hybridProviderPurposes.get(value)
+    : undefined;
+}
+
 export function createHybridArtifactStoreCapacityLeaseProviderV1(
   input: Readonly<{
     sql: Sql;
     artifactRoot: string;
     /** Read paths must never bootstrap physical authority as a side effect. */
     allowInitialization?: boolean;
+    purpose?: ArtifactStoreCapacityLeasePurposeV1;
     lockTimeoutMs?: number;
     workTimeoutMs?: number;
     testHooks?: AuthorityTestHooks;
@@ -2287,7 +2368,21 @@ export function createHybridArtifactStoreCapacityLeaseProviderV1(
   const lockTimeoutMs = boundedTimeout(input.lockTimeoutMs, DEFAULT_LOCK_TIMEOUT_MS);
   const workTimeoutMs = boundedTimeout(input.workTimeoutMs, DEFAULT_WORK_TIMEOUT_MS);
   const hooks = input.testHooks;
-  const allowInitialization = input.allowInitialization ?? true;
+  if (input.purpose !== undefined && input.allowInitialization !== undefined) {
+    throw new TypeError("Artifact store authority purpose cannot be combined with allowInitialization");
+  }
+  const purpose = input.purpose
+    ?? (input.allowInitialization === false ? "reader" : "writer");
+  const allowInitialization = purpose === "writer" || purpose === "inventory-adoption";
+  const allowStagingCleanup = purpose !== "reader";
+  const allowedCapacityStates = new Set<string>(
+    purpose === "inventory-adoption"
+      ? ["bootstrap_required", "ready"]
+      : ["ready"],
+  );
+  const bindingPolicy = purpose === "inventory-adoption"
+    ? "inventory-adoption" as const
+    : "empty-only" as const;
 
   async function bindDatabaseIdentity(
     acquisitionDeadlineMs: number,
@@ -2298,7 +2393,7 @@ export function createHybridArtifactStoreCapacityLeaseProviderV1(
     try {
       return await input.sql.begin(async (transaction) => {
         await configureAndAcquireLock(transaction, acquisitionDeadlineMs, workTimeoutMs);
-        await assertReadyCapacity(transaction);
+        await assertCapacityState(transaction, allowedCapacityStates);
         let row = await readAuthorityRow(transaction);
         let created = false;
         if (!row) {
@@ -2363,7 +2458,7 @@ export function createHybridArtifactStoreCapacityLeaseProviderV1(
     try {
       result = await input.sql.begin(async (transaction) => {
         await configureAndAcquireLock(transaction, acquisitionDeadlineMs, workTimeoutMs);
-        await assertReadyCapacity(transaction);
+        await assertCapacityState(transaction, allowedCapacityStates);
         const current = assertAuthorityRow(await readAuthorityRow(transaction));
         if (current.state === "quarantined") {
           return { row: current, transitioned: false };
@@ -2386,6 +2481,7 @@ export function createHybridArtifactStoreCapacityLeaseProviderV1(
               current,
               hooks,
               acquisitionDeadlineMs,
+              bindingPolicy,
             );
           } else {
             await verifyExactRootAuthority(root, current);
@@ -2495,7 +2591,7 @@ export function createHybridArtifactStoreCapacityLeaseProviderV1(
           acquisitionDeadlineMs,
           workTimeoutMs,
         );
-        await assertReadyCapacity(transaction);
+        await assertCapacityState(transaction, allowedCapacityStates);
         const observedRow = await readAuthorityRow(transaction);
         if (!observedRow) return { kind: "not-ready" as const };
         const current = assertAuthorityRow(observedRow);
@@ -2583,7 +2679,7 @@ export function createHybridArtifactStoreCapacityLeaseProviderV1(
               try {
                 await assertPhysicalCurrent();
                 await transaction.unsafe("SELECT 1");
-                await assertReadyCapacity(transaction);
+                await assertCapacityState(transaction, allowedCapacityStates);
                 const observed = assertAuthorityRow(await readAuthorityRow(transaction));
                 if (
                   observed.state !== "ready"
@@ -2627,7 +2723,7 @@ export function createHybridArtifactStoreCapacityLeaseProviderV1(
             });
             try {
               await assertCurrent();
-              if (allowInitialization) {
+              if (allowStagingCleanup) {
                 try {
                   stagingIdentity = await ensureAndCleanOwnedStaging(
                     root,
@@ -2726,5 +2822,6 @@ export function createHybridArtifactStoreCapacityLeaseProviderV1(
     },
   });
   hybridProviders.add(provider);
+  hybridProviderPurposes.set(provider, purpose);
   return provider;
 }

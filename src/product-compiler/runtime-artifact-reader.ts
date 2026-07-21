@@ -255,7 +255,7 @@ export function createRuntimeArtifactReader(input: Readonly<{
       ? createHybridArtifactStoreCapacityLeaseProviderV1({
           sql: input.sql,
           artifactRoot: input.artifactRoot,
-          allowInitialization: false,
+          purpose: "reader",
         })
       : undefined);
   const index = createArtifactIndex(input.sql);

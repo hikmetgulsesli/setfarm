@@ -38,6 +38,7 @@ import {
   ArtifactStoreError,
   ContentAddressedArtifactStore,
   isHybridAuthorityBackedArtifactStore,
+  isHybridWriterAuthorityBackedArtifactStore,
 } from "../../src/product-compiler/artifact-store.js";
 import { ARTIFACT_STORE_BATCH_PLAN_SCHEMA_V1 } from "../../src/product-compiler/artifact-store-batch-plan.js";
 import {
@@ -251,6 +252,11 @@ describe("artifact store PostgreSQL/root authority", () => {
       (await readdir(artifactRoot)).includes(`${published.hash}.json`),
       true,
     );
+    await assert.rejects(
+      store.withInventorySnapshot(async () => undefined),
+      (error: unknown) => error instanceof ArtifactStoreAuthorityError
+        && error.code === "ARTIFACT_CAPACITY_AUTHORITY_NOT_READY",
+    );
   });
 
   it("keeps read-only authority checks side-effect free until an initializer is ready", async () => {
@@ -368,6 +374,90 @@ describe("artifact store PostgreSQL/root authority", () => {
       "SELECT state FROM artifact_store_authorities",
     );
     assert.deepEqual(Array.from(authority), [{ state: "quarantined" }]);
+  });
+
+  it("adopts canonical legacy finals only through the bounded inventory authority", async () => {
+    const legacyStore = new ContentAddressedArtifactStore(artifactRoot, {
+      limits: {
+        maxPayloadBytes: 4 * 1024 * 1024,
+        rootQuotaBytes: 64 * 1024 * 1024,
+        minFreeBytes: 0,
+      },
+    });
+    const legacy = await legacyStore.put({
+      schema: "setfarm.semantic-artifact-envelope.v1",
+      artifactType: "setfarm.artifact-inventory-adoption-test.v1",
+      producer: {
+        pass: "artifact-inventory-adoption-test",
+        codeSha: "c".repeat(40),
+        toolVersions: {},
+      },
+      payload: { legacy: true },
+    });
+    const abandonedAttempt = path.join(
+      artifactRoot,
+      ".staging",
+      `${"a".repeat(64)}.00000000-0000-4000-8000-000000000001`,
+    );
+    await mkdir(abandonedAttempt, { recursive: true, mode: 0o700 });
+    await database.sql.unsafe(
+      `UPDATE artifact_capacity
+          SET state = 'bootstrap_required', total_bytes = 0,
+              reserved_bytes = 0, reconciled_at = NULL, diagnostic = NULL`,
+    );
+    const events: string[] = [];
+    const provider = createHybridArtifactStoreCapacityLeaseProviderV1({
+      sql: database.sql,
+      artifactRoot,
+      purpose: "inventory-adoption",
+      testHooks: {
+        afterStagingInventory: ({ attemptCount }) => {
+          events.push(`staging:${attemptCount}`);
+        },
+      },
+    });
+    const adoptionStore = new ContentAddressedArtifactStore(artifactRoot, {
+      limits: legacyStore.limits,
+      capacityLeaseProvider: provider,
+    });
+
+    await provider.withLease(async (lease) => {
+      events.push(`lease:${lease.authorityId}`);
+      await lease.assertCurrent();
+    });
+
+    assert.equal((await adoptionStore.get(legacy.hash)).hash, legacy.hash);
+    assert.match(events[0] ?? "", /^staging:1$/);
+    assert.equal(events.some((event) => event.startsWith("lease:")), true);
+    assert.deepEqual(await readdir(path.join(artifactRoot, ".staging")), []);
+    assert.equal((await readdir(artifactRoot)).includes(`${legacy.hash}.json`), true);
+    assert.equal((await readdir(artifactRoot)).includes(ARTIFACT_STORE_ROOT_AUTHORITY_FILENAME_V1), true);
+    assert.equal((await readdir(artifactRoot)).includes(ARTIFACT_STORE_KERNEL_LOCK_FILENAME_V1), true);
+    assert.equal(isHybridAuthorityBackedArtifactStore(adoptionStore), true);
+    assert.equal(isHybridWriterAuthorityBackedArtifactStore(adoptionStore), false);
+    assert.throws(
+      () => new IndexedArtifactPublisher({
+        index: createArtifactIndex(database.sql),
+        store: adoptionStore,
+        publicationAuthority: "hybrid-required",
+      }),
+      (error: unknown) => error instanceof IndexedArtifactPublisherError
+        && error.code === "ARTIFACT_PRODUCTION_AUTHORITY_REQUIRED",
+    );
+    await assert.rejects(
+      adoptionStore.put({
+        schema: "setfarm.semantic-artifact-envelope.v1",
+        artifactType: "setfarm.artifact-inventory-adoption-write-test.v1",
+        producer: {
+          pass: "artifact-inventory-adoption-write-test",
+          codeSha: "c".repeat(40),
+          toolVersions: {},
+        },
+        payload: { forbidden: true },
+      }),
+      (error: unknown) => error instanceof ArtifactStoreAuthorityError
+        && error.code === "ARTIFACT_CAPACITY_AUTHORITY_NOT_READY",
+    );
   });
 
   it("does not let an already-indexed replay bypass a missing ready marker", async () => {

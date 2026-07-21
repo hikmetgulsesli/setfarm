@@ -1,13 +1,15 @@
 import { createHash, randomUUID } from "node:crypto";
-import { readdir } from "node:fs/promises";
 
 import {
   ArtifactStoreError,
   ContentAddressedArtifactStore,
-  isHybridAuthorityBackedArtifactStore,
+  isHybridWriterAuthorityBackedArtifactStore,
   SemanticArtifactEnvelopeV1Schema,
   type ArtifactGetResult,
   type ArtifactPutResult,
+  type ArtifactStoreInventoryAuthorityV1,
+  type ArtifactStoreInventoryIssueV1,
+  type ArtifactStoreInventorySnapshotV1,
   type SemanticArtifactEnvelopeV1,
 } from "./artifact-store.js";
 import {
@@ -51,6 +53,7 @@ type ArtifactIndexClient = Pick<
   | "releaseExpired"
   | "quarantineExpired"
   | "bootstrap"
+  | "quarantineBootstrapInventory"
   | "reservePublicationBatch"
   | "heartbeatPublicationBatch"
   | "adoptExpiredPublicationBatch"
@@ -88,6 +91,15 @@ const concreteArtifactStorePut = ContentAddressedArtifactStore.prototype.put;
 const concreteArtifactStoreGet = ContentAddressedArtifactStore.prototype.get;
 const concreteArtifactStorePutPreparedBatch =
   ContentAddressedArtifactStore.prototype.putPreparedBatch;
+const concreteArtifactStoreWithInventorySnapshot =
+  ContentAddressedArtifactStore.prototype.withInventorySnapshot;
+
+function withConcreteArtifactInventorySnapshot<T>(
+  store: ContentAddressedArtifactStore,
+  work: (snapshot: ArtifactStoreInventorySnapshotV1) => Promise<T>,
+): Promise<T> {
+  return concreteArtifactStoreWithInventorySnapshot.call(store, work) as Promise<T>;
+}
 
 export type IndexedArtifactPublicationResult = ArtifactPutResult & Readonly<{
   identity: ArtifactIdentity;
@@ -157,21 +169,42 @@ export type IndexedArtifactPublisherErrorCode =
   | "ARTIFACT_FILESYSTEM_INDEX_MISMATCH"
   | "ARTIFACT_BATCH_PUBLICATION_INCOMPLETE"
   | "ARTIFACT_INVENTORY_ENTRY_INVALID"
+  | "ARTIFACT_INVENTORY_CLOSURE_REJECTED"
   | "ARTIFACT_PUBLICATION_BUSY_TIMEOUT"
   | "ARTIFACT_PRODUCTION_AUTHORITY_REQUIRED";
 
+export const ARTIFACT_INVENTORY_VALIDATION_SCHEMA_V1 =
+  "setfarm.artifact-inventory-validation.v1" as const;
+
+export type ArtifactInventoryValidationV1 = Readonly<{
+  schema: typeof ARTIFACT_INVENTORY_VALIDATION_SCHEMA_V1;
+  status: "verified" | "rejected";
+  authority: ArtifactStoreInventoryAuthorityV1;
+  finalEntryCount: number;
+  artifactCount: number;
+  totalBytes: number;
+  artifacts: readonly ArtifactIdentity[];
+  entryIssues: readonly ArtifactStoreInventoryIssueV1[];
+  closures: readonly ArtifactClosureEvidenceV1[];
+}>;
+
 export class IndexedArtifactPublisherError extends Error {
   readonly code: IndexedArtifactPublisherErrorCode;
+  readonly inventory?: ArtifactInventoryValidationV1;
   override readonly cause?: unknown;
 
   constructor(
     code: IndexedArtifactPublisherErrorCode,
     message: string,
-    options: Readonly<{ cause?: unknown }> = {},
+    options: Readonly<{
+      cause?: unknown;
+      inventory?: ArtifactInventoryValidationV1;
+    }> = {},
   ) {
     super(message);
     this.name = "IndexedArtifactPublisherError";
     this.code = code;
+    this.inventory = options.inventory;
     this.cause = options.cause;
   }
 }
@@ -190,6 +223,67 @@ function identityForEnvelope(
     byteLength: bytes.length,
     producer: envelope.producer,
   });
+}
+
+function validateArtifactInventorySnapshotV1(
+  snapshot: ArtifactStoreInventorySnapshotV1,
+): ArtifactInventoryValidationV1 {
+  // Snapshot construction completes every bounded exact read before this
+  // semantic closure pass can begin.
+  const evidence = prepareArtifactClosureEvidenceSetV1(snapshot.artifacts);
+  const artifacts = snapshot.artifacts.map((stored) =>
+    identityForEnvelope(stored.envelope, stored.bytes));
+  const registryKinds = new Map<string, "leaf" | "dependency-root">(
+    ARTIFACT_CLOSURE_REGISTRY_V1.entries.map((entry) => [
+      entry.artifactType,
+      entry.kind,
+    ]),
+  );
+  const closures = artifacts.map((artifact) => evaluateArtifactClosureV1({
+    evidence,
+    root: artifact,
+    role: registryKinds.get(artifact.artifactType) === "dependency-root"
+      ? "dependency-root"
+      : "leaf",
+  }));
+  const status = snapshot.status === "verified"
+    && closures.every((closure) => closure.status === "verified")
+    ? "verified" as const
+    : "rejected" as const;
+  return Object.freeze({
+    schema: ARTIFACT_INVENTORY_VALIDATION_SCHEMA_V1,
+    status,
+    authority: snapshot.authority,
+    finalEntryCount: snapshot.finalEntryCount,
+    artifactCount: artifacts.length,
+    totalBytes: snapshot.totalBytes,
+    artifacts: Object.freeze(artifacts),
+    entryIssues: snapshot.issues,
+    closures: Object.freeze(closures),
+  });
+}
+
+function rejectedArtifactInventoryError(
+  inventory: ArtifactInventoryValidationV1,
+  cause?: unknown,
+): IndexedArtifactPublisherError {
+  const rejectedClosures = inventory.closures
+    .filter((closure) => closure.status === "rejected")
+    .map((closure) => closure.classification)
+    .sort();
+  const entryCodes = inventory.entryIssues.map((issue) => issue.code).sort();
+  const code: IndexedArtifactPublisherErrorCode = rejectedClosures.length > 0
+    ? "ARTIFACT_INVENTORY_CLOSURE_REJECTED"
+    : "ARTIFACT_INVENTORY_ENTRY_INVALID";
+  const classifications = [...new Set([...entryCodes, ...rejectedClosures])];
+  return new IndexedArtifactPublisherError(
+    code,
+    `${code}: ${classifications.join(",") || "inventory rejected"}`,
+    {
+      inventory,
+      ...(cause === undefined ? {} : { cause }),
+    },
+  );
 }
 
 function sameIdentity(left: ArtifactIdentity, right: ArtifactIdentity): boolean {
@@ -502,7 +596,7 @@ export class IndexedArtifactPublisher {
     this.publicationAuthority = input.publicationAuthority ?? "standalone";
     if (
       this.publicationAuthority === "hybrid-required"
-      && !isHybridAuthorityBackedArtifactStore(input.store)
+      && !isHybridWriterAuthorityBackedArtifactStore(input.store)
     ) {
       throw new IndexedArtifactPublisherError(
         "ARTIFACT_PRODUCTION_AUTHORITY_REQUIRED",
@@ -918,43 +1012,112 @@ export class IndexedArtifactPublisher {
 export async function scanArtifactInventory(
   store: ContentAddressedArtifactStore,
 ): Promise<ArtifactIdentity[]> {
-  let entries;
+  return withConcreteArtifactInventorySnapshot(
+    store,
+    async (snapshot) => {
+      const inventory = validateArtifactInventorySnapshotV1(snapshot);
+      if (inventory.status === "rejected") {
+        throw rejectedArtifactInventoryError(inventory);
+      }
+      return [...inventory.artifacts];
+    },
+  );
+}
+
+async function quarantineRejectedArtifactInventory(
+  index: Pick<ReturnType<typeof createArtifactIndex>, "quarantineBootstrapInventory">,
+  error: IndexedArtifactPublisherError,
+  now?: Date,
+): Promise<never> {
+  if (error.inventory?.status !== "rejected") throw error;
   try {
-    entries = await readdir(store.root, { withFileTypes: true });
-  } catch (error) {
-    if (isNodeError(error, "ENOENT")) return [];
-    throw error;
+    await index.quarantineBootstrapInventory({
+      code: error.code === "ARTIFACT_INVENTORY_CLOSURE_REJECTED"
+        ? "ARTIFACT_INVENTORY_CLOSURE_REJECTED"
+        : "ARTIFACT_INVENTORY_ENTRY_INVALID",
+      diagnostic: error.message,
+      ...(now === undefined ? {} : { now }),
+    });
+  } catch (quarantineError) {
+    throw rejectedArtifactInventoryError(error.inventory, quarantineError);
   }
-  const artifacts: ArtifactIdentity[] = [];
-  for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
-    const match = /^([a-f0-9]{64})\.json$/.exec(entry.name);
-    if (!entry.isFile() || !match) {
-      throw new IndexedArtifactPublisherError(
-        "ARTIFACT_INVENTORY_ENTRY_INVALID",
-        `Artifact inventory contains non-canonical entry ${entry.name}`,
-      );
-    }
-    const stored = await store.get(match[1]!);
-    artifacts.push(identityForEnvelope(stored.envelope, stored.bytes));
-  }
-  return artifacts;
+  throw error;
+}
+
+export async function verifyArtifactIndexInventory(input: Readonly<{
+  index: Pick<ReturnType<typeof createArtifactIndex>, "verifyInventory">;
+  store: ContentAddressedArtifactStore;
+}>): Promise<Readonly<{
+  capacity: ArtifactCapacityState;
+  artifacts: ArtifactIdentity[];
+  inventory: ArtifactInventoryValidationV1;
+}>> {
+  return withConcreteArtifactInventorySnapshot(
+    input.store,
+    async (snapshot) => {
+      const inventory = validateArtifactInventorySnapshotV1(snapshot);
+      if (inventory.status === "rejected") {
+        throw rejectedArtifactInventoryError(inventory);
+      }
+      const artifacts = [...inventory.artifacts];
+      const capacity = await input.index.verifyInventory({ artifacts });
+      return Object.freeze({ capacity, artifacts, inventory });
+    },
+  );
 }
 
 export async function bootstrapArtifactIndex(input: Readonly<{
-  index: Pick<ReturnType<typeof createArtifactIndex>, "bootstrap">;
+  index: Pick<
+    ReturnType<typeof createArtifactIndex>,
+    "bootstrap" | "quarantineBootstrapInventory"
+  >;
   store: ContentAddressedArtifactStore;
   quotaBytes?: number;
   maxPayloadBytes?: number;
   now?: Date;
-}>): Promise<Readonly<{ capacity: ArtifactCapacityState; artifacts: ArtifactIdentity[] }>> {
-  const artifacts = await scanArtifactInventory(input.store);
-  const capacity = await input.index.bootstrap({
-    artifacts,
-    ...(input.quotaBytes === undefined ? {} : { quotaBytes: input.quotaBytes }),
-    ...(input.maxPayloadBytes === undefined ? {} : { maxPayloadBytes: input.maxPayloadBytes }),
-    ...(input.now === undefined ? {} : { now: input.now }),
-  });
-  return { capacity, artifacts };
+}>): Promise<Readonly<{
+  capacity: ArtifactCapacityState;
+  artifacts: ArtifactIdentity[];
+  inventory: ArtifactInventoryValidationV1;
+}>> {
+  try {
+    return await withConcreteArtifactInventorySnapshot(
+      input.store,
+      async (snapshot) => {
+        const inventory = validateArtifactInventorySnapshotV1(snapshot);
+        if (inventory.status === "rejected") {
+          throw rejectedArtifactInventoryError(inventory);
+        }
+        const artifacts = [...inventory.artifacts];
+        const capacity = await input.index.bootstrap({
+          artifacts,
+          ...(input.quotaBytes === undefined ? {} : { quotaBytes: input.quotaBytes }),
+          ...(input.maxPayloadBytes === undefined ? {} : { maxPayloadBytes: input.maxPayloadBytes }),
+          ...(input.now === undefined ? {} : { now: input.now }),
+        });
+        return Object.freeze({ capacity, artifacts, inventory });
+      },
+    );
+  } catch (error) {
+    if (
+      error instanceof ArtifactIndexError
+      && error.code === "ARTIFACT_BOOTSTRAP_MISMATCH"
+    ) {
+      await input.index.quarantineBootstrapInventory({
+        code: "ARTIFACT_INDEX_FILESYSTEM_MISMATCH",
+        diagnostic: error.message,
+        ...(input.now === undefined ? {} : { now: input.now }),
+      });
+      throw error;
+    }
+    if (
+      !(error instanceof IndexedArtifactPublisherError)
+      || error.inventory?.status !== "rejected"
+    ) {
+      throw error;
+    }
+    return quarantineRejectedArtifactInventory(input.index, error, input.now);
+  }
 }
 
 type ArtifactPublicationBatchRecoverySnapshotMember =

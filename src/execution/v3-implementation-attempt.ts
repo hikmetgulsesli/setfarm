@@ -1404,7 +1404,11 @@ function createDefaultCompiler() {
   const artifactLimits = resolveProductArtifactCapacity();
   const publicationAuthority = resolveArtifactStorePublicationAuthorityMode();
   const capacityLeaseProvider = publicationAuthority === "hybrid-required"
-    ? createHybridArtifactStoreCapacityLeaseProviderV1({ sql, artifactRoot })
+    ? createHybridArtifactStoreCapacityLeaseProviderV1({
+        sql,
+        artifactRoot,
+        purpose: "writer",
+      })
     : undefined;
   const reader = createRuntimeArtifactReader({
     sql,
