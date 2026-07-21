@@ -601,7 +601,12 @@ export function startDashboard(port = 3333, options: Readonly<{
           schema: legacyV1 ? "v1" : "v2",
           reader,
           runId,
-          refusalOptions: { sql, artifactRoot, artifactLimits },
+          refusalOptions: {
+            sql,
+            artifactRoot,
+            artifactLimits,
+            artifactReadPort: reader.store,
+          },
         });
         return json(res, authority);
       } catch (error) {

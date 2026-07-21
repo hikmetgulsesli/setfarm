@@ -23,7 +23,6 @@ import {
 } from "../evidence/evidence-bundle-v2.js";
 import { AcceptedCandidateV1Schema } from "../evidence/accepted-candidate-v1.js";
 import { createArtifactIndex } from "../product-compiler/artifact-index.js";
-import { ContentAddressedArtifactStore } from "../product-compiler/artifact-store.js";
 import { hashCanonicalJson } from "../product-compiler/canonical-json.js";
 import { scanArtifactInventory } from "../product-compiler/indexed-artifact-publisher.js";
 import {
@@ -1470,7 +1469,7 @@ export function createPostgresConvergencePort(
     artifactRoot,
     artifactLimits,
   });
-  const artifactStore = new ContentAddressedArtifactStore(artifactRoot, { limits: artifactLimits });
+  const artifactStore = artifactReader.store;
   const artifactIndex = createArtifactIndex(sql);
   return {
     async inspectPlatform() {
@@ -1486,6 +1485,9 @@ export function createPostgresConvergencePort(
         migrationVerified = false;
       }
       try {
+        if (artifactReader.publicationAuthority === "hybrid-required") {
+          throw new Error("ARTIFACT_INDEX_AUTHORITY_E1_REQUIRED");
+        }
         const artifacts = await scanArtifactInventory(artifactStore);
         const capacity = await artifactIndex.verifyInventory({ artifacts });
         artifactIndexReady = capacity.state === "ready";

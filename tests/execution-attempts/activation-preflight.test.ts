@@ -45,6 +45,23 @@ function dependencies(
 }
 
 describe("Product Compiler activation preflight", () => {
+  it("refuses hybrid activation until E1 can reconcile the complete root", () => {
+    assert.throws(
+      () => createActivationPreflightDependencies({
+        sql: {} as never,
+        artifactRoot: path.join(tmpdir(), "setfarm-e1-required", "sha256"),
+        artifactLimits: {
+          maxPayloadBytes: 4 * 1024 * 1024,
+          rootQuotaBytes: 8 * 1024 * 1024,
+          minFreeBytes: 0,
+        },
+        compilerReleaseSha: RELEASE_SHA,
+        publicationAuthorityMode: "hybrid-required",
+      }),
+      /ARTIFACT_INDEX_AUTHORITY_E1_REQUIRED/,
+    );
+  });
+
   it("produces one stored canonical pass report for a clean v3 admission", async () => {
     const result = await runActivationPreflight({
       protocol: "v3",

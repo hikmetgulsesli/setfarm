@@ -2,7 +2,15 @@ import type postgres from "postgres";
 
 import { produceRuntimeEvidenceContractV1 } from "../evidence/runtime-evidence-contract-producer-v1.js";
 import { hashRuntimeEvidenceContractV1 } from "../evidence/runtime-evidence-contract-v1.js";
+import {
+  resolveArtifactStorePublicationAuthorityMode,
+  type ArtifactStorePublicationAuthorityMode,
+} from "../runtime-config.js";
 import type { ArtifactCapacityLimits } from "./artifact-capacity.js";
+import {
+  createHybridArtifactStoreCapacityLeaseProviderV1,
+  type ArtifactStoreCapacityLeaseProvider,
+} from "./artifact-store-authority.js";
 import { ContentAddressedArtifactStore } from "./artifact-store.js";
 import { createArtifactIndex } from "./artifact-index.js";
 import { canonicalJsonStringify, hashCanonicalJson } from "./canonical-json.js";
@@ -232,10 +240,30 @@ export function createRuntimeArtifactReader(input: Readonly<{
   sql: postgres.Sql;
   artifactRoot: string;
   artifactLimits: ArtifactCapacityLimits;
+  publicationAuthorityMode?: ArtifactStorePublicationAuthorityMode;
+  capacityLeaseProvider?: ArtifactStoreCapacityLeaseProvider;
 }>) {
+  const publicationAuthority = input.publicationAuthorityMode
+    ?? resolveArtifactStorePublicationAuthorityMode();
+  if (input.capacityLeaseProvider && publicationAuthority !== "hybrid-required") {
+    throw new TypeError(
+      "Runtime artifact reader cannot combine an explicit hybrid provider with standalone mode",
+    );
+  }
+  const capacityLeaseProvider = input.capacityLeaseProvider
+    ?? (publicationAuthority === "hybrid-required"
+      ? createHybridArtifactStoreCapacityLeaseProviderV1({
+          sql: input.sql,
+          artifactRoot: input.artifactRoot,
+          allowInitialization: false,
+        })
+      : undefined);
   const index = createArtifactIndex(input.sql);
   const store = new ContentAddressedArtifactStore(input.artifactRoot, {
     limits: input.artifactLimits,
+    ...(capacityLeaseProvider
+      ? { capacityLeaseProvider }
+      : {}),
   });
 
   async function readStoredArtifact(artifactHash: string, label: string) {
@@ -961,6 +989,7 @@ export function createRuntimeArtifactReader(input: Readonly<{
   return Object.freeze({
     index,
     store,
+    publicationAuthority,
 
     async readSealedPacket(runId: string): Promise<SealedRuntimePacket> {
       return readPacket(runId, ACTIVE_PACKET_STATUSES, "RUNTIME_PACKET_NOT_ACTIVE", "active");

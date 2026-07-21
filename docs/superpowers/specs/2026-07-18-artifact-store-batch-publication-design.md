@@ -5,8 +5,10 @@
 This is the approved physical-publication continuation of
 `SETFARM_SYSTEM_AUDIT.md` section D.13.16 and the aggregate database authority
 introduced by migration 23. The architecture was approved on 2026-07-18. This
-written specification remains subject to the required written-spec review before
-implementation starts.
+specification was amended before B2 completion when adversarial tests disproved
+PostgreSQL-only cross-database exclusion and the first staged-file alias model.
+The amendment is the implementation authority; activation remains prohibited
+until its full verification matrix is green.
 
 This slice closes four coupled boundaries:
 
@@ -17,12 +19,15 @@ This slice closes four coupled boundaries:
    transactions;
 4. database-first publication and bounded aggregate recovery.
 
-It also removes a false recovery claim in the current primitive. A process that
-dies while holding the existing `.capacity.lock` can leave a permanent lock
-file. The existing store deliberately refuses to break such a lock. Production
-batch recovery therefore cannot be called convergent while it depends only on
-that persistent file. Before activation, every production single-artifact and
-batch writer must use the same PostgreSQL transaction-scoped capacity lease.
+It also removes two false recovery claims in the current primitive. A process
+that dies while holding the existing `.capacity.lock` can leave a permanent
+lock file. Conversely, a PostgreSQL advisory lock is scoped to one database:
+two restored or cloned databases can contain the same ready authority identity,
+point at the same physical root, and both acquire their database-local lock.
+Production batch recovery therefore cannot be called convergent with either
+primitive alone. Before activation, every production single-artifact and batch
+writer must use the same hybrid PostgreSQL-transaction plus shared-filesystem
+kernel lease.
 
 This design does not activate Product Semantics v2, modify a generated project,
 weaken a gate, start a Setfarm run, or claim that a set of filesystem directory
@@ -71,14 +76,23 @@ concurrent readers, root identity, and existing hash paths. An indirection-based
 generation store would be a different storage architecture and is not required
 for immutable CAS convergence. It is rejected.
 
-### Prepared tiered batch under database-backed capacity authority
+### Prepared tiered batch under a PostgreSQL-only capacity authority
+
+This is sufficient for multiple processes connected to one database, but it
+does not serialize a restored or cloned database that shares the same physical
+root. Adding a database-instance fingerprint to the marker only moves the
+problem: a physical database-cluster clone can preserve that fingerprint too.
+It is rejected as the sole physical coordinator.
+
+### Prepared tiered batch under hybrid database and filesystem authority
 
 All values are snapshotted and canonicalized before reservation or filesystem
-mutation. The database reserves the exact identities. One crash-releasing
-PostgreSQL lease then protects physical staging and publication. Missing bytes
-are admitted as one aggregate, staged completely, and linked in durability
-tiers with a directory-sync barrier between tiers. This is the selected
-approach.
+mutation. The database reserves the exact identities. One PostgreSQL advisory
+transaction lock protects database-local state and one crash-releasing kernel
+lock on a persistent canonical file inside the shared root protects the
+physical namespace across independent databases. Missing bytes are admitted as
+one aggregate, staged completely, and linked in durability tiers with a
+directory-sync barrier between tiers. This is the selected approach.
 
 ## Authoritative invariants
 
@@ -112,11 +126,21 @@ The implementation must preserve all of the following:
     database claim for bytes that were not freshly verified.
 14. A ByteBundle root is never indexed unless every referenced ByteChunk is
     freshly present and exactly matches the root manifest.
-15. All production CAS writers share one crash-releasing capacity authority.
-    Direct store calls without that authority cannot be activated in production.
+15. All production CAS writers share one hybrid crash-releasing capacity
+    authority. A database-local lock alone is not physical publication
+    authority. Direct store calls without that authority cannot be activated
+    in production.
 16. One database authority UUID is immutably bound to one configured root
     locator and one no-replace root marker. A different database authority
     cannot adopt that root by configuration alone.
+17. A wrong configured root is a non-mutating configuration failure. It cannot
+    quarantine the permanent authority row bound to the correct root.
+18. An authority file is accepted only with exact canonical bytes, private
+    owner/mode, one final link, and no surviving staging alias. A crash-tail
+    target/stage pair is reconciled to one final link before it is trusted.
+19. A binding root contains only the exact versioned authority files and their
+    authenticated crash-tail stages. Foreign content before or after marker
+    creation is never adopted.
 
 ## Versioned publication plan
 
@@ -208,9 +232,11 @@ publication algorithms.
 ## Production capacity lease
 
 The current persistent `.capacity.lock` remains a useful fail-closed standalone
-diagnostic, but it is not a crash-releasing production coordinator. The selected
-production authority combines a PostgreSQL transaction-scoped advisory lock
-with an immutable database/root binding.
+diagnostic, but it is not a crash-releasing production coordinator. A
+PostgreSQL advisory lock is crash-releasing but database-local. The selected
+production authority combines a PostgreSQL transaction-scoped advisory lock,
+an immutable database/root binding, and a kernel lock on a persistent canonical
+descriptor in the shared physical root.
 
 Migration 24 adds the exact singleton authority relation:
 
@@ -241,7 +267,10 @@ post-lock snapshot. Authoritative apply, verify, and attestation reads also
 lock the journal so a direct writer cannot make operational evidence stale.
 
 The root contains one canonical, no-replace marker named
-`.setfarm-artifact-root-authority.json`:
+`.setfarm-artifact-root-authority.json` and one canonical persistent kernel-lock
+descriptor named `.setfarm-artifact-root-kernel-lock.json`. Both bind the same
+authority ID and locator. File existence never means that the kernel lock is
+held; only the live OS lock state does.
 
 ```json
 {
@@ -251,6 +280,32 @@ The root contains one canonical, no-replace marker named
 }
 ```
 
+The marker cannot by itself distinguish an unmarked root that existed before
+binding from an empty root directory left by a process that committed the
+database `binding` row and then died between `mkdir` and marker creation. Node
+does not expose one portable primitive that creates a directory and its first
+file atomically. B2 therefore also owns one temporary, no-replace binding claim
+in the already-existing parent directory:
+
+```text
+.setfarm-artifact-root-binding.<root-basename-hash>.<root-locator-hash>.json
+```
+
+Its canonical payload uses
+`setfarm.artifact-store-root-binding-claim.v1` and binds the same authority ID,
+root locator hash, and configured-root basename hash. The claim is created only
+after the database `binding` row commits and only after a fresh check proves
+the configured root path absent. On replay, an unmarked root is eligible only
+when this exact claim exists, the authority row is still `binding`, and the
+root contains no entry other than exact owned authority targets or authenticated
+crash-tail stages. An unmarked root without the exact claim is never adopted,
+including an empty one. A conflicting claim quarantines the database authority.
+The exact claim may remain after a crash; a ready marker supersedes it and the
+next sole lease owner removes it durably. The claim is outside the artifact
+inventory and is never publication evidence. The root is enumerated immediately
+before authority publication and again before `ready`; a standalone writer that
+appears in either window is foreign evidence and makes binding fail closed.
+
 The locator hash is computed from Canonical JSON containing the normalized
 absolute configured root path and authority schema; it contains no credential.
 The database row is committed first in `binding` state. The marker is then
@@ -258,14 +313,28 @@ created with no replacement under the advisory lock, freshly verified, and the
 same row becomes `ready`. A crash after either boundary replays the same
 identity. If a marker already carries another identity or locator, the database
 row becomes quarantined and no artifact path is touched. Two databases racing
-for one unbound root therefore produce one marker winner and one typed loser,
-even though PostgreSQL advisory locks are database-local.
+with different authority identities for one unbound root therefore produce one
+marker winner and one typed loser. Two cloned databases carrying the same ready
+identity are instead serialized by the shared-root kernel lock.
+
+Canonical authority-file publication uses a deterministic private stage on the
+same filesystem as its target and a no-replace hard link. Before linking, the
+stage must be an ordinary current-user file with mode `0600`, exact bytes, and
+exactly one link. After linking, target and stage must be the same inode with
+exactly two links; the target directory is synchronized, the stage is removed,
+the stage directory is synchronized, and the final target is freshly verified
+with exactly one link. Replay accepts a target/stage pair only when those exact
+two names are the only links to the same exact inode. It completes both
+durability barriers and removes the stage before trusting the target. A stage
+with an external alias, a final target with an alias, different target/stage
+inodes, foreign ownership, wrong mode, or transiently unobservable metadata is
+never accepted.
 
 An existing unmarked root may be bound only by an explicit offline adoption
 operation that first performs complete bounded inventory and database
 reconciliation. Normal startup never adopts it merely because its path matches.
 The migration-only slice cannot grant root adoption; that operation remains
-absent until the marker capability, PostgreSQL capacity lock, and closure-aware
+absent until the marker capability, hybrid capacity lock, and closure-aware
 inventory exist together. Unbind never exists because the row is permanent
 provenance. Generic migration adoption accepts only an exact empty unjournaled
 migration 24 schema.
@@ -275,11 +344,24 @@ The advisory lock identity is the fixed versioned domain
 have one ready semantic artifact authority row. Multiple application processes
 using that database serialize on the same lock.
 
+After taking the database lock and verifying the exact ready row, the provider
+opens the canonical kernel-lock descriptor with no symlink following and passes
+that already-open descriptor to the code-owned `/usr/bin/lockf` helper on
+Darwin. The helper reports one random readiness token only after the kernel
+grants the exclusive lock and remains alive on a parent-owned pipe for the
+entire callback. Parent or helper death closes the descriptor and releases the
+kernel lock. The descriptor path, inode, canonical bytes, link count, private
+mode, helper liveness, root, marker, database connection, and row are fenced by
+`assertCurrent`. Unsupported hosts or a missing exact helper fail closed; they
+never fall back to the persistent existence lock. A Linux `flock` transport
+must receive its own versioned implementation and parity tests before Linux
+production activation.
+
 The provider interface is capability-based:
 
 ```ts
 type ArtifactStoreCapacityLease = Readonly<{
-  authority: "postgres-transaction-v1";
+  authority: "postgres-transaction+filesystem-kernel-v1";
   assertCurrent(): Promise<void>;
 }>;
 
@@ -290,22 +372,60 @@ type ArtifactStoreCapacityLeaseProvider = Readonly<{
 }>;
 ```
 
-The provider starts one bounded transaction, applies a 30-second advisory-lock
-acquisition timeout, takes the advisory transaction lock, and proves the
-`artifact_capacity` singleton and ready authority row are present and not
-quarantined. It freshly verifies the exact root marker before invoking work.
-The callback has a five-minute abort deadline, which is above the bounded
+Initialization is an explicit capability, not a side effect of evidence reads.
+Writer/initializer owners may construct a provider with initialization enabled;
+the central runtime reader always constructs a `hybrid-required` provider with
+initialization disabled. If migration 24 has no exact ready row, a read fails
+with `ARTIFACT_CAPACITY_AUTHORITY_NOT_READY` without inserting a row, creating
+the root, or publishing marker bytes. A dashboard GET, operational snapshot, or
+accepted-candidate read therefore cannot become the accidental recovery owner.
+
+The ready fast path uses one bounded transaction: it takes the advisory lock,
+proves the capacity singleton and exact ready row, verifies the root authority,
+acquires the shared-root kernel lock, invokes work, and performs final fences.
+Initial row-first binding necessarily commits before filesystem mutation and
+may use additional bounded phases, but one monotonic acquisition/work deadline
+spans every phase; three independent 30-second waits are forbidden. The
+callback has a five-minute abort deadline, which is above the bounded
 nine-artifact/36-MiB maximum but below the aggregate database lease maximum.
 The capability includes an `AbortSignal`; `assertCurrent` checks that signal,
-the transaction connection, authority row, marker, and root identity.
-Connection loss or timeout makes subsequent publication fences fail. The
-advisory lock is released automatically by commit, rollback, connection loss,
-or process death.
+the transaction connection, authority row, root, marker, kernel descriptor,
+and helper liveness. Connection loss, helper death, or timeout makes subsequent
+publication fences fail. Both locks are released automatically by transaction,
+connection, helper, or process death.
 
 The production factory must inject this provider into every
-`IndexedArtifactPublisher`, including single-artifact publication. A store
-without a PostgreSQL provider is test/bootstrap-only, carries no production
-activation authority, and cannot be selected by runtime configuration.
+`IndexedArtifactPublisher`, including single-artifact publication. Production
+selection uses a module-private runtime brand placed only on the concrete store
+constructor after it accepts the trusted hybrid provider; a duck-typed object
+cannot self-assert authority. A store without that brand is test/bootstrap-only,
+carries no production activation authority, and cannot be selected by runtime
+configuration.
+
+The same concrete brand protects reads. Public `ContentAddressedArtifactStore`
+`get` acquires the provider lease and calls a private unleased implementation;
+there is no public `getWithCapacityAuthority` side door and no reader-owned raw
+CAS bypass. `createRuntimeArtifactReader` is the default provider-selection
+factory for deployment, recovery, accepted-candidate, installer, dashboard,
+convergence, and operational-snapshot consumers. Transactional snapshot code
+receives the already-created branded read port from its outer full SQL owner;
+a structural or standalone fake port is rejected in `hybrid-required` mode.
+
+B2 lands behind a fail-closed code-owned activation switch. The switch is off
+by default while existing roots still require E1 inventory reconciliation and
+explicit offline adoption. When the switch is off, the historical standalone
+writer remains compatibility-only and no report may call it production
+authority. When the switch is on, every writer factory must construct the
+hybrid provider; silently falling back to either PostgreSQL-only or the
+persistent lock is forbidden.
+The switch is not enabled in a live environment until C1, C2, D1-D3, E1 and the
+offline adoption command are complete.
+Until E1 exists, the activation-preflight dependency factory and the artifact
+index plan/bootstrap/verify/recover CLI reject `hybrid-required` immediately
+with `ARTIFACT_INDEX_AUTHORITY_E1_REQUIRED`. They do this before opening the
+root or PostgreSQL so the first preflight cannot initialize marker files, write
+its own failure report, and then make the second preflight fail on those newly
+created reserved entries.
 
 ## Owned staging layout
 
@@ -313,6 +433,7 @@ The artifact root gains one reserved internal directory:
 
 ```text
 <root>/.setfarm-artifact-root-authority.json
+<root>/.setfarm-artifact-root-kernel-lock.json
 <root>/.staging/<planIdentityHash>.<random-token>/<artifact-hash>.tmp
 <root>/<artifact-hash>.json
 ```
@@ -442,9 +563,19 @@ New typed store/coordinator failures are limited to:
 - `ARTIFACT_BATCH_PUBLICATION_INCOMPLETE`
 - `ARTIFACT_STAGING_LAYOUT_INVALID`
 - `ARTIFACT_CAPACITY_AUTHORITY_LOST`
+- `ARTIFACT_CAPACITY_AUTHORITY_LOCK_TIMEOUT`
+- `ARTIFACT_ROOT_CONFIGURATION_MISMATCH`
+- `ARTIFACT_ROOT_AUTHORITY_UNAVAILABLE`
 
 Existing hash, envelope, root, file-change, bounded-read, quota, and free-space
 codes remain authoritative and are not reclassified by message regex.
+`ROOT_AUTHORITY_UNAVAILABLE` is retryable and never changes the permanent row;
+it covers inability to observe or synchronize state such as `EACCES`, `EMFILE`,
+`ENFILE`, `EIO`, or helper unavailability. Only freshly proven wrong canonical
+bytes/schema/type/identity/link topology, foreign unmarked content, or a missing
+ready authority target can cause terminal quarantine. A configuration locator
+mismatch is also non-mutating: it proves that this process is misconfigured,
+not that the already-bound root is corrupt.
 
 ## Aggregate recovery
 
@@ -496,8 +627,8 @@ The following outcomes are permitted:
 - concurrent identical batches converge on the same immutable targets;
 - overlapping batches share exact existing targets and charge missing bytes
   once at the filesystem layer and once through database publication identity;
-- a process crash leaves an expiring database batch, an automatically released
-  PostgreSQL capacity lease, optional owned staging, and an immutable subset of
+- a process crash leaves an expiring database batch, automatically released
+  database and kernel locks, optional owned staging, and an immutable subset of
   final targets;
 - a host crash may retain a partial current tier, but cannot retain a linked
   later tier whose prerequisite tier never crossed its durability barrier;
@@ -529,8 +660,8 @@ path-contract, migration, and cleanup updates. Existing roots containing an
 unrelated marker or `.staging` entry fail closed; they are not adopted by name
 alone.
 
-Single-artifact publication is migrated onto the same prepared batch and
-PostgreSQL capacity-provider path before batch activation. The old persistent
+Single-artifact publication is migrated onto the same prepared batch and hybrid
+capacity-provider path before batch activation. The old persistent
 file lock remains available only to isolated tests and explicit offline tools.
 There is no mixed production mode.
 
@@ -556,8 +687,9 @@ schema that has never held authority may roll back to migration 23.
 2. Add aggregate capacity assessment without changing single-payload limits.
 3. Add migration 24 database authority schema, exact verifier, source digest,
    database-only audit, exact-empty migration adoption, and empty-row rollback.
-4. Add the PostgreSQL transaction-scoped capacity provider, exact marker
-   binding, abort deadline, and production factory assertion.
+4. Add the hybrid PostgreSQL/shared-filesystem capacity provider, exact marker
+   and kernel-descriptor binding, cumulative abort deadline, and privately
+   branded production factory assertion.
 5. Add owned staging validation and bounded abandoned-staging cleanup.
 6. Refactor single `put` through the prepared one-item path.
 7. Add tiered `putPreparedBatch` and filesystem adversarial tests.
@@ -641,5 +773,5 @@ Implementation of this design is **GO** after written-spec approval. Production
 activation, migration deployment, Setfarm release, and clean product evals
 remain **NO-GO** until every dependency-order step and verification row above is
 green. The design intentionally replaces repeated root-fix behavior with one
-machine-readable publication plan, one aggregate database fence, one physical
-capacity owner, and fresh evidence-based recovery.
+machine-readable publication plan, one aggregate database fence, one
+shared-filesystem physical owner, and fresh evidence-based recovery.

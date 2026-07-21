@@ -479,6 +479,31 @@ describe("product build authority v2 schema", () => {
       fixture.refusal.refusal.failureArtifact.artifactHash,
     );
 
+    const previousAuthorityMode = process.env.SETFARM_ARTIFACT_STORE_AUTHORITY_V1;
+    process.env.SETFARM_ARTIFACT_STORE_AUTHORITY_V1 = "enabled";
+    try {
+      const standalonePort = new ContentAddressedArtifactStore(
+        fixture.options.artifactRoot,
+        { limits: ARTIFACT_LIMITS },
+      );
+      for (const artifactReadPort of [undefined, standalonePort]) {
+        await assert.rejects(
+          readProductBuildAuthorityV2(reader, RUN_ID, {
+            ...fixture.options,
+            ...(artifactReadPort ? { artifactReadPort } : {}),
+          }),
+          (error: unknown) => error instanceof ProductBuildAuthorityV2Error
+            && error.code === "PRODUCT_BUILD_REFUSAL_ARTIFACT_AUTHORITY_REQUIRED",
+        );
+      }
+    } finally {
+      if (previousAuthorityMode === undefined) {
+        delete process.env.SETFARM_ARTIFACT_STORE_AUTHORITY_V1;
+      } else {
+        process.env.SETFARM_ARTIFACT_STORE_AUTHORITY_V1 = previousAuthorityMode;
+      }
+    }
+
     const drifted = await verifiedRefusalReaderFixture({ indexedByteLengthDelta: 1 });
     await assert.rejects(
       readProductBuildAuthorityV2(reader, RUN_ID, drifted.options),

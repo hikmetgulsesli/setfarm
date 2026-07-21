@@ -14,6 +14,7 @@ import {
   scanArtifactInventory,
 } from "../src/product-compiler/indexed-artifact-publisher.js";
 import {
+  resolveArtifactStorePublicationAuthorityMode,
   resolveProductArtifactCapacity,
   resolveProductArtifactDir,
   runtimeConfig,
@@ -96,6 +97,9 @@ async function assertBootstrapIdle(sql: postgres.Sql): Promise<void> {
 
 async function main(): Promise<void> {
   const input = parseArgs(process.argv.slice(2));
+  if (resolveArtifactStorePublicationAuthorityMode() === "hybrid-required") {
+    throw new Error("ARTIFACT_INDEX_AUTHORITY_E1_REQUIRED");
+  }
   const sql = postgres(input.databaseUrl, {
     max: 4,
     connect_timeout: 10,

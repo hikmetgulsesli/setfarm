@@ -4,9 +4,14 @@ import { SemanticArtifactEnvelopeV1Schema } from "../product-compiler/artifact-s
 import { canonicalJsonStringify, hashCanonicalJson } from "../product-compiler/canonical-json.js";
 import { IndexedArtifactPublisher } from "../product-compiler/indexed-artifact-publisher.js";
 import { createRuntimeArtifactReader } from "../product-compiler/runtime-artifact-reader.js";
+import { createHybridArtifactStoreCapacityLeaseProviderV1 } from "../product-compiler/artifact-store-authority.js";
 import type { SemanticArtifactProducerV1 } from "../product-compiler/schemas/common-v1.js";
 import { ImplementationSliceV1Schema } from "../product-compiler/schemas/implementation-slice-v1.js";
-import { resolveProductArtifactCapacity, resolveProductArtifactDir } from "../runtime-config.js";
+import {
+  resolveArtifactStorePublicationAuthorityMode,
+  resolveProductArtifactCapacity,
+  resolveProductArtifactDir,
+} from "../runtime-config.js";
 import { getSql } from "../db-pg.js";
 import { createFindingRecoveryRepository } from "../recovery/finding-recovery-repository.js";
 import { createRecoveryDeliveryRepository } from "../recovery/recovery-delivery-repository.js";
@@ -392,15 +397,24 @@ let defaultRouter: ReturnType<typeof createV3GithubReviewRouter> | undefined;
 
 export function createDefaultV3GithubReviewRouter() {
   const sql = getSql();
+  const artifactRoot = resolveProductArtifactDir();
+  const artifactLimits = resolveProductArtifactCapacity();
+  const publicationAuthority = resolveArtifactStorePublicationAuthorityMode();
+  const capacityLeaseProvider = publicationAuthority === "hybrid-required"
+    ? createHybridArtifactStoreCapacityLeaseProviderV1({ sql, artifactRoot })
+    : undefined;
   const reader = createRuntimeArtifactReader({
     sql,
-    artifactRoot: resolveProductArtifactDir(),
-    artifactLimits: resolveProductArtifactCapacity(),
+    artifactRoot,
+    artifactLimits,
+    publicationAuthorityMode: publicationAuthority,
+    ...(capacityLeaseProvider ? { capacityLeaseProvider } : {}),
   });
   const publisher = new IndexedArtifactPublisher({
     index: reader.index,
     store: reader.store,
     ownerInstanceId: `github-review-router:${process.pid}`,
+    publicationAuthority,
   });
   const findings = createFindingRecoveryRepository(sql);
   const deliveries = createRecoveryDeliveryRepository(sql);

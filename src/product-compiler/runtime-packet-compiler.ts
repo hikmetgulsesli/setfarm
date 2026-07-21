@@ -2,6 +2,7 @@ import type postgres from "postgres";
 import { z } from "zod";
 
 import type { ArtifactCapacityLimits } from "./artifact-capacity.js";
+import { createHybridArtifactStoreCapacityLeaseProviderV1 } from "./artifact-store-authority.js";
 import { ContentAddressedArtifactStore } from "./artifact-store.js";
 import { createArtifactIndex } from "./artifact-index.js";
 import { IndexedArtifactPublisher } from "./indexed-artifact-publisher.js";
@@ -17,6 +18,10 @@ import {
   CompilerIdentityV1Schema,
   SemanticArtifactProducerV1Schema,
 } from "./schemas/common-v1.js";
+import {
+  resolveArtifactStorePublicationAuthorityMode,
+  type ArtifactStorePublicationAuthorityMode,
+} from "../runtime-config.js";
 
 export type RuntimePacketCompilerErrorCode =
   | "RUNTIME_PACKET_DESIGN_SOURCE_REQUIRED"
@@ -92,15 +97,26 @@ export function createRuntimePacketCompiler(input: Readonly<{
   artifactRoot: string;
   artifactLimits: ArtifactCapacityLimits;
   ownerInstanceId?: string;
+  publicationAuthorityMode?: ArtifactStorePublicationAuthorityMode;
 }>) {
+  const publicationAuthority = input.publicationAuthorityMode
+    ?? resolveArtifactStorePublicationAuthorityMode();
+  const capacityLeaseProvider = publicationAuthority === "hybrid-required"
+    ? createHybridArtifactStoreCapacityLeaseProviderV1({
+        sql: input.sql,
+        artifactRoot: input.artifactRoot,
+      })
+    : undefined;
   const store = new ContentAddressedArtifactStore(input.artifactRoot, {
     limits: input.artifactLimits,
+    ...(capacityLeaseProvider ? { capacityLeaseProvider } : {}),
   });
   const index = createArtifactIndex(input.sql);
   const publisher = new IndexedArtifactPublisher({
     index,
     store,
     ownerInstanceId: input.ownerInstanceId ?? `runtime-packet-compiler:${process.pid}`,
+    publicationAuthority,
   });
 
   async function readRun(runId: string): Promise<RunRow> {

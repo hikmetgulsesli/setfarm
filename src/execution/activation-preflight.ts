@@ -16,6 +16,10 @@ import {
   readContractSpineMigrationAttestation,
   verifyContractSpineMigrations,
 } from "../db/contract-spine-migrations.js";
+import {
+  resolveArtifactStorePublicationAuthorityMode,
+  type ArtifactStorePublicationAuthorityMode,
+} from "../runtime-config.js";
 
 const PreflightCheckV1Schema = z.object({
   id: z.enum([
@@ -269,7 +273,16 @@ export function createActivationPreflightDependencies(input: Readonly<{
   artifactRoot: string;
   artifactLimits: ArtifactCapacityLimits;
   compilerReleaseSha: string;
+  publicationAuthorityMode?: ArtifactStorePublicationAuthorityMode;
 }>): ActivationPreflightDependencies {
+  const publicationAuthority = input.publicationAuthorityMode
+    ?? resolveArtifactStorePublicationAuthorityMode();
+  if (publicationAuthority === "hybrid-required") {
+    // B2 deliberately cannot inventory/adopt an existing root. Allowing the
+    // preflight to write its own failure report would initialize authority as
+    // a side effect and make the first check pass but the next inventory fail.
+    throw new Error("ARTIFACT_INDEX_AUTHORITY_E1_REQUIRED");
+  }
   const store = new ContentAddressedArtifactStore(input.artifactRoot, {
     limits: input.artifactLimits,
   });
@@ -278,6 +291,7 @@ export function createActivationPreflightDependencies(input: Readonly<{
     index,
     store,
     ownerInstanceId: `activation-preflight:${process.pid}`,
+    publicationAuthority,
   });
   return Object.freeze({
     verifyMigrations: async () => {
@@ -401,5 +415,6 @@ export async function runDefaultActivationPreflight(input: Readonly<{
     artifactRoot: root,
     artifactLimits: limits,
     compilerReleaseSha: input.compilerReleaseSha,
+    publicationAuthorityMode: config.resolveArtifactStorePublicationAuthorityMode(env),
   }));
 }

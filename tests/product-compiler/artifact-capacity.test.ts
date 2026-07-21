@@ -13,7 +13,10 @@ import {
 import {
   ContentAddressedArtifactStore,
 } from "../../src/product-compiler/artifact-store.js";
-import { resolveProductArtifactCapacity } from "../../src/runtime-config.js";
+import {
+  resolveArtifactStorePublicationAuthorityMode,
+  resolveProductArtifactCapacity,
+} from "../../src/runtime-config.js";
 
 const roots: string[] = [];
 
@@ -67,6 +70,22 @@ describe("artifact capacity admission", () => {
     assert.throws(
       () => resolveProductArtifactCapacity({ SETFARM_ARTIFACT_ROOT_QUOTA_BYTES: "1GB" }),
       /SETFARM_ARTIFACT_ROOT_QUOTA_BYTES_INVALID/,
+    );
+  });
+
+  it("keeps hybrid artifact authority off by default and rejects ambiguous activation", () => {
+    assert.equal(resolveArtifactStorePublicationAuthorityMode({}), "standalone");
+    assert.equal(resolveArtifactStorePublicationAuthorityMode({
+      SETFARM_ARTIFACT_STORE_AUTHORITY_V1: "disabled",
+    }), "standalone");
+    assert.equal(resolveArtifactStorePublicationAuthorityMode({
+      SETFARM_ARTIFACT_STORE_AUTHORITY_V1: "enabled",
+    }), "hybrid-required");
+    assert.throws(
+      () => resolveArtifactStorePublicationAuthorityMode({
+        SETFARM_ARTIFACT_STORE_AUTHORITY_V1: "true",
+      }),
+      /SETFARM_ARTIFACT_STORE_AUTHORITY_V1_INVALID/,
     );
   });
 

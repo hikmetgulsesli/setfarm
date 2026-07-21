@@ -165,6 +165,19 @@ export function resolveProductArtifactCapacity(
   });
 }
 
+export type ArtifactStorePublicationAuthorityMode =
+  | "standalone"
+  | "hybrid-required";
+
+export function resolveArtifactStorePublicationAuthorityMode(
+  env: NodeJS.ProcessEnv = process.env,
+): ArtifactStorePublicationAuthorityMode {
+  const raw = env.SETFARM_ARTIFACT_STORE_AUTHORITY_V1?.trim();
+  if (!raw || raw === "disabled") return "standalone";
+  if (raw === "enabled") return "hybrid-required";
+  throw new Error("SETFARM_ARTIFACT_STORE_AUTHORITY_V1_INVALID");
+}
+
 export function resolveV3SealCapacity(
   env: NodeJS.ProcessEnv = process.env,
 ): V3SealCapacityLimits {

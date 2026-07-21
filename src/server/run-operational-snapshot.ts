@@ -22,6 +22,7 @@ import {
 } from "../execution/schemas/v3-project-transfer-ack-v1.js";
 import { RuntimeCompletionSubmissionEvidenceV1Schema } from "../execution/schemas/runtime-completion-submission-evidence-v1.js";
 import { hashCanonicalJson } from "../product-compiler/canonical-json.js";
+import { createRuntimeArtifactReader } from "../product-compiler/runtime-artifact-reader.js";
 import {
   resolveProductArtifactCapacity,
   resolveProductArtifactDir,
@@ -62,6 +63,7 @@ import {
 } from "./schemas/run-operational-snapshot-v3.js";
 import {
   readVerifiedDesignCandidateRefusal,
+  type OperationalArtifactReadPort,
   type VerifiedDesignCandidateRefusalReadOptions,
 } from "./product-build-authority.js";
 import { hasStopBlockingInvariant } from "../execution/run-operational-invariant-policy.js";
@@ -1484,6 +1486,7 @@ type HashableSnapshot =
 export type RunOperationalSnapshotBuildOptions = Readonly<{
   artifactRoot?: string;
   artifactLimits?: ArtifactCapacityLimits;
+  artifactReadPort?: OperationalArtifactReadPort;
 }>;
 
 function verifiedRefusalOptions(
@@ -1495,6 +1498,9 @@ function verifiedRefusalOptions(
     sql,
     artifactRoot: options.artifactRoot ?? resolveProductArtifactDir(),
     artifactLimits: options.artifactLimits ?? resolveProductArtifactCapacity(),
+    ...(options.artifactReadPort
+      ? { artifactReadPort: options.artifactReadPort }
+      : {}),
     terminationRequest,
   };
 }
@@ -2110,8 +2116,22 @@ export async function buildRunOperationalSnapshot(
   options: RunOperationalSnapshotBuildOptions = {},
 ): Promise<RunOperationalSnapshotV2 | RunOperationalSnapshotV3 | null> {
   if (!runId.trim()) throw new TypeError("RUN_OPERATIONAL_SNAPSHOT_RUN_ID_REQUIRED");
+  const artifactRoot = options.artifactRoot ?? resolveProductArtifactDir();
+  const artifactLimits = options.artifactLimits ?? resolveProductArtifactCapacity();
+  const artifactReadPort = options.artifactReadPort
+    ?? createRuntimeArtifactReader({ sql, artifactRoot, artifactLimits }).store;
+  const effectiveOptions: RunOperationalSnapshotBuildOptions = {
+    ...options,
+    artifactRoot,
+    artifactLimits,
+    artifactReadPort,
+  };
   return sql.begin(
     "isolation level repeatable read read only",
-    (transaction) => buildRunOperationalSnapshotInTransaction(transaction, runId, options),
+    (transaction) => buildRunOperationalSnapshotInTransaction(
+      transaction,
+      runId,
+      effectiveOptions,
+    ),
   ) as Promise<RunOperationalSnapshotV2 | RunOperationalSnapshotV3 | null>;
 }

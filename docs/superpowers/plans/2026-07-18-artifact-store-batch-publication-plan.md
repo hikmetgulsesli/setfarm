@@ -187,7 +187,7 @@ Commit body must explain migration/adoption/rollback boundaries.
 
 Commit: `feat(db): bind artifact store authority`
 
-### Task B2: Root marker and PostgreSQL capacity provider
+### Task B2: Root marker and hybrid PostgreSQL/filesystem capacity provider
 
 Files:
 
@@ -198,7 +198,13 @@ Files:
 - modify `src/product-compiler/runtime-packet-compiler.ts`
 - modify `src/execution/activation-preflight.ts`
 - modify `src/server/product-build-authority.ts`
+- modify `src/server/run-operational-snapshot.ts`
+- modify `src/execution/run-operational-action.ts`
+- modify `src/execution/v3-project-transfer-ack-repository.ts`
 - modify `src/evals/convergence-runner.ts`
+- modify `src/product-compiler/runtime-artifact-reader.ts`
+- modify `src/runtime-config.ts`
+- modify `scripts/product-artifact-index.ts`
 - modify other production `IndexedArtifactPublisher` factories found by `rg`
 
 Tests first:
@@ -206,15 +212,42 @@ Tests first:
 - DB row commits in `binding` before marker creation;
 - crash before marker and crash before `ready` replay the same authority ID;
 - marker creation is no-replace and exact canonical bytes;
+- a parent-directory no-replace binding claim distinguishes crash replay from
+  adoption of any pre-existing unmarked root;
+- an empty unmarked root without the exact binding claim is rejected;
+- a stale exact claim is removed durably only after the ready marker supersedes
+  it;
 - wrong authority ID, locator hash, schema, bytes, file type, or symlink
   quarantines before artifact mutation;
-- two databases racing for one root produce one marker winner and one loser;
+- two databases racing with different identities for one root produce one
+  marker winner and one loser;
+- two restored/cloned databases carrying the same ready identity and sharing
+  one root serialize on one crash-releasing filesystem kernel lock;
 - two processes in one DB serialize on the advisory transaction lock;
-- process/connection death releases the lock;
-- 30-second acquisition and five-minute work deadlines are enforced with an
-  abort signal;
-- `assertCurrent` fences transaction, row, marker, and physical-root changes;
-- production factory refuses a store without the PostgreSQL provider;
+- process, helper, or connection death releases its corresponding lock;
+- one cumulative 30-second acquisition and five-minute work deadline spans
+  initialization plus lease work; the ready fast path uses one transaction;
+- `assertCurrent` fences transaction, row, marker, kernel descriptor/helper,
+  and physical-root changes;
+- deterministic authority stages reject external hardlink aliases and replay
+  an exact link-before-unlink crash tail to one final link;
+- final marker, descriptor, and binding claim require exact canonical bytes,
+  current ownership, mode `0600`, and one link;
+- root enumeration before marker and before `ready` rejects any foreign entry;
+- transient filesystem observation failure is retryable/unavailable and never
+  terminal quarantine;
+- a wrong configured root fails without mutating or quarantining the authority
+  bound to the correct root;
+- a caller-thrown lookalike authority error cannot trigger quarantine;
+- production factory refuses a duck-typed store without the private concrete
+  hybrid-provider brand;
+- a read-only runtime provider never initializes a missing/binding authority;
+- every public provider-backed `get` acquires the hybrid lease and a missing
+  marker cannot be read through a raw store escape hatch;
+- operational refusal/snapshot consumers reject a standalone structural read
+  port when `hybrid-required` is selected;
+- activation preflight and index maintenance fail before DB/root access until
+  E1 owns reserved-entry inventory and adoption;
 - existing unmarked root is not adopted during normal startup.
 - adoption remains unavailable until the E1 bounded inventory reconciliation
   is present; B2 supplies marker/lease capability but does not guess an
@@ -224,10 +257,23 @@ Tests first:
 Implementation:
 
 1. Define exact authority marker canonical schema and locator hash.
-2. Implement bind/replay/quarantine state transitions through migration 24.
-3. Implement a capability-based PostgreSQL transaction lease provider.
-4. Make all production single and future batch publishers use the provider.
-5. Retain standalone persistent locking only for isolated/offline mode.
+2. Define the exact temporary parent binding-claim schema needed to close the
+   portable `mkdir`/marker crash gap without adopting an existing root.
+3. Implement bind/replay/quarantine state transitions through migration 24.
+4. Implement a capability-based hybrid provider: PostgreSQL transaction lock
+   for DB-local state plus a crash-releasing kernel lock on one exact persistent
+   descriptor inside the shared root. Version-forward the provider literal;
+   PostgreSQL-only authority is not production authority.
+5. Put production-authority selection behind an off-by-default fail-closed
+   activation switch until E1 reconciliation/adoption exists.
+6. Make every enabled production single and future batch publisher use the
+   privately branded concrete store/provider; never accept duck typing or fall
+   back after selection.
+7. Route public provider-backed reads through a private unleased implementation;
+   the central runtime reader uses a non-initializing hybrid provider and outer
+   SQL owners inject its exact branded port into transactional snapshots.
+8. Retain standalone persistent locking only for isolated/offline mode. Block
+   activation and maintenance in hybrid mode until E1 inventory/adoption lands.
 
 Verification:
 

@@ -572,6 +572,7 @@ async function createDefaultShadowRuntime(): Promise<ShadowRuntime> {
   const [
     db,
     artifactModule,
+    artifactAuthorityModule,
     artifactIndexModule,
     artifactPublisherModule,
     repositoryModule,
@@ -583,6 +584,7 @@ async function createDefaultShadowRuntime(): Promise<ShadowRuntime> {
   ] = await Promise.all([
     import("../db-pg.js"),
     import("../product-compiler/artifact-store.js"),
+    import("../product-compiler/artifact-store-authority.js"),
     import("../product-compiler/artifact-index.js"),
     import("../product-compiler/indexed-artifact-publisher.js"),
     import("./attempt-repository.js"),
@@ -593,16 +595,28 @@ async function createDefaultShadowRuntime(): Promise<ShadowRuntime> {
     import("../installer/observations.js"),
   ]);
   const codeSha = runtimeCodeSha();
-  const artifactStore = new artifactModule.ContentAddressedArtifactStore(
-    configModule.resolveProductArtifactDir(),
-    { limits: configModule.resolveProductArtifactCapacity() },
-  );
   const sql = db.getSql();
+  const artifactRoot = configModule.resolveProductArtifactDir();
+  const publicationAuthority = configModule.resolveArtifactStorePublicationAuthorityMode();
+  const capacityLeaseProvider = publicationAuthority === "hybrid-required"
+    ? artifactAuthorityModule.createHybridArtifactStoreCapacityLeaseProviderV1({
+        sql,
+        artifactRoot,
+      })
+    : undefined;
+  const artifactStore = new artifactModule.ContentAddressedArtifactStore(
+    artifactRoot,
+    {
+      limits: configModule.resolveProductArtifactCapacity(),
+      ...(capacityLeaseProvider ? { capacityLeaseProvider } : {}),
+    },
+  );
   const artifactIndex = artifactIndexModule.createArtifactIndex(sql);
   const artifactPublisher = new artifactPublisherModule.IndexedArtifactPublisher({
     index: artifactIndex,
     store: artifactStore,
     ownerInstanceId: `legacy-shadow-observation:${process.pid}`,
+    publicationAuthority,
   });
   const repository = repositoryModule.createAttemptRepository(sql);
   const emit = async (event: ShadowDiagnostic) => {

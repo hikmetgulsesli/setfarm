@@ -8,6 +8,7 @@ import { IndexedArtifactPublisher } from "../product-compiler/indexed-artifact-p
 import { canonicalJsonStringify, hashCanonicalJson } from "../product-compiler/canonical-json.js";
 import { SemanticArtifactEnvelopeV1Schema } from "../product-compiler/artifact-store.js";
 import { createRuntimeArtifactReader, type SealedRuntimePacket } from "../product-compiler/runtime-artifact-reader.js";
+import { createHybridArtifactStoreCapacityLeaseProviderV1 } from "../product-compiler/artifact-store-authority.js";
 import { compileImplementationSlice } from "../product-compiler/slice-compiler.js";
 import { ImplementationSliceV1Schema, type ImplementationSliceV1 } from "../product-compiler/schemas/implementation-slice-v1.js";
 import type { SemanticArtifactProducerV1 } from "../product-compiler/schemas/common-v1.js";
@@ -17,7 +18,11 @@ import type { ExecutionAttemptV1 } from "./schemas/execution-attempt-v1.js";
 import { createAttemptRepository, type AttemptReservationResult } from "./attempt-repository.js";
 import { captureShadowSourceRevision } from "./shadow-attempt-recorder.js";
 import { getSql } from "../db-pg.js";
-import { resolveProductArtifactCapacity, resolveProductArtifactDir } from "../runtime-config.js";
+import {
+  resolveArtifactStorePublicationAuthorityMode,
+  resolveProductArtifactCapacity,
+  resolveProductArtifactDir,
+} from "../runtime-config.js";
 import { compileEvidencePlanV1, type EvidencePlanV1 } from "../evidence/evidence-plan-v1.js";
 import { createRecoveryDeliveryRepository } from "../recovery/recovery-delivery-repository.js";
 import { createFindingRecoveryRepository } from "../recovery/finding-recovery-repository.js";
@@ -1395,15 +1400,24 @@ let defaultCompiler: ReturnType<typeof createV3ImplementationAttemptCompiler> | 
 
 function createDefaultCompiler() {
   const sql = getSql();
+  const artifactRoot = resolveProductArtifactDir();
+  const artifactLimits = resolveProductArtifactCapacity();
+  const publicationAuthority = resolveArtifactStorePublicationAuthorityMode();
+  const capacityLeaseProvider = publicationAuthority === "hybrid-required"
+    ? createHybridArtifactStoreCapacityLeaseProviderV1({ sql, artifactRoot })
+    : undefined;
   const reader = createRuntimeArtifactReader({
     sql,
-    artifactRoot: resolveProductArtifactDir(),
-    artifactLimits: resolveProductArtifactCapacity(),
+    artifactRoot,
+    artifactLimits,
+    publicationAuthorityMode: publicationAuthority,
+    ...(capacityLeaseProvider ? { capacityLeaseProvider } : {}),
   });
   const publisher = new IndexedArtifactPublisher({
     index: reader.index,
     store: reader.store,
     ownerInstanceId: `v3-slice-compiler:${process.pid}`,
+    publicationAuthority,
   });
   const attempts = createAttemptRepository(sql);
   const evidenceOnlyPublication = createV3EvidenceOnlyPublication(sql);

@@ -4,6 +4,7 @@ import { readdir } from "node:fs/promises";
 import {
   ArtifactStoreError,
   ContentAddressedArtifactStore,
+  isHybridAuthorityBackedArtifactStore,
   SemanticArtifactEnvelopeV1Schema,
   type ArtifactGetResult,
   type ArtifactPutResult,
@@ -32,6 +33,9 @@ type ArtifactIndexClient = Pick<
 
 type ArtifactStoreClient = Pick<ContentAddressedArtifactStore, "put" | "get">;
 
+const concreteArtifactStorePut = ContentAddressedArtifactStore.prototype.put;
+const concreteArtifactStoreGet = ContentAddressedArtifactStore.prototype.get;
+
 export type IndexedArtifactPublicationResult = ArtifactPutResult & Readonly<{
   identity: ArtifactIdentity;
   indexCreated: boolean;
@@ -47,7 +51,8 @@ export type ArtifactRecoveryResult = Readonly<{
 export type IndexedArtifactPublisherErrorCode =
   | "ARTIFACT_FILESYSTEM_INDEX_MISMATCH"
   | "ARTIFACT_INVENTORY_ENTRY_INVALID"
-  | "ARTIFACT_PUBLICATION_BUSY_TIMEOUT";
+  | "ARTIFACT_PUBLICATION_BUSY_TIMEOUT"
+  | "ARTIFACT_PRODUCTION_AUTHORITY_REQUIRED";
 
 export class IndexedArtifactPublisherError extends Error {
   readonly code: IndexedArtifactPublisherErrorCode;
@@ -121,6 +126,7 @@ export class IndexedArtifactPublisher {
   private readonly leaseMs: number;
   private readonly busyWaitMs: number;
   private readonly retryDelayMs: number;
+  private readonly publicationAuthority: "standalone" | "hybrid-required";
 
   constructor(input: Readonly<{
     index: ArtifactIndexClient;
@@ -129,14 +135,34 @@ export class IndexedArtifactPublisher {
     leaseMs?: number;
     busyWaitMs?: number;
     retryDelayMs?: number;
+    publicationAuthority?: "standalone" | "hybrid-required";
   }>) {
+    this.publicationAuthority = input.publicationAuthority ?? "standalone";
+    if (
+      this.publicationAuthority === "hybrid-required"
+      && !isHybridAuthorityBackedArtifactStore(input.store)
+    ) {
+      throw new IndexedArtifactPublisherError(
+        "ARTIFACT_PRODUCTION_AUTHORITY_REQUIRED",
+        "Production artifact publication requires the concrete trusted hybrid store",
+      );
+    }
     this.index = input.index;
-    this.store = input.store;
+    this.store = this.publicationAuthority === "hybrid-required"
+      ? Object.freeze({
+          put: concreteArtifactStorePut.bind(input.store),
+          get: concreteArtifactStoreGet.bind(input.store),
+        })
+      : input.store;
     this.ownerInstanceId = input.ownerInstanceId
       ?? `artifact-publisher:${process.pid}:${randomUUID()}`;
     this.leaseMs = Math.max(100, Math.min(Math.trunc(input.leaseMs ?? 120_000), 30 * 60_000));
     this.busyWaitMs = Math.max(0, Math.min(Math.trunc(input.busyWaitMs ?? 5_000), 30_000));
     this.retryDelayMs = Math.max(1, Math.min(Math.trunc(input.retryDelayMs ?? 20), 1_000));
+  }
+
+  private async getStored(hash: string): Promise<ArtifactGetResult> {
+    return this.store.get(hash);
   }
 
   async put(value: unknown): Promise<IndexedArtifactPublicationResult> {
@@ -162,7 +188,7 @@ export class IndexedArtifactPublisher {
               `Artifact ${identity.hash} immutable index identity differs from the requested envelope`,
             );
           }
-          const stored = await this.store.get(identity.hash);
+          const stored = await this.getStored(identity.hash);
           assertStoredIdentity(stored, identity);
           return {
             hash: identity.hash,
@@ -201,7 +227,7 @@ export class IndexedArtifactPublisher {
           `Artifact store returned ${written.hash} for reserved hash ${identity.hash}`,
         );
       }
-      const stored = await this.store.get(identity.hash);
+      const stored = await this.getStored(identity.hash);
       assertStoredIdentity(stored, identity);
       const published = await this.index.publish({
         reservationId: reservation.reservationId,
@@ -228,7 +254,7 @@ export class IndexedArtifactPublisher {
     if (!reservation.leaseToken) return;
     let resolution: "released" | "quarantined" | undefined;
     try {
-      const stored = await this.store.get(identity.hash);
+      const stored = await this.getStored(identity.hash);
       assertStoredIdentity(stored, identity);
       if (
         failure instanceof ArtifactIndexError

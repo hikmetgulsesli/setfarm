@@ -31,6 +31,10 @@ import {
   type ArtifactCapacityLimits,
   type ArtifactCapacitySnapshot,
 } from "./artifact-capacity.js";
+import {
+  isHybridArtifactStoreCapacityLeaseProviderV1,
+  type ArtifactStoreCapacityLeaseProvider,
+} from "./artifact-store-authority.js";
 
 export { ArtifactCapacityError } from "./artifact-capacity.js";
 export {
@@ -105,6 +109,23 @@ type ArtifactRootIdentity = Readonly<{
   dev: number;
   ino: number;
 }>;
+
+const hybridAuthorityBackedStores = new WeakSet<object>();
+
+/**
+ * Runtime capability check. Only this module can brand the exact concrete
+ * store instance after it accepts a trusted hybrid provider.
+ */
+export function isHybridAuthorityBackedArtifactStore(
+  value: unknown,
+): value is ContentAddressedArtifactStore {
+  return typeof value === "object"
+    && value !== null
+    && hybridAuthorityBackedStores.has(value)
+    && Object.getPrototypeOf(value) === ContentAddressedArtifactStore.prototype
+    && !Object.prototype.hasOwnProperty.call(value, "put")
+    && !Object.prototype.hasOwnProperty.call(value, "get");
+}
 
 function sha256(bytes: Uint8Array): string {
   return createHash("sha256").update(bytes).digest("hex");
@@ -186,6 +207,7 @@ export class ContentAddressedArtifactStore {
   readonly limits: ArtifactCapacityLimits;
   private readonly measureOverride?: () => Promise<ArtifactCapacitySnapshot>;
   private readonly testHooks?: ArtifactStoreReadTestHooks;
+  private readonly capacityLeaseProvider?: ArtifactStoreCapacityLeaseProvider;
   private rootIdentity?: ArtifactRootIdentity;
   private rootAuthorityPath?: string;
 
@@ -196,6 +218,7 @@ export class ContentAddressedArtifactStore {
       measure?: () => Promise<ArtifactCapacitySnapshot>;
       lockTimeoutMs?: number;
       testHooks?: ArtifactStoreReadTestHooks;
+      capacityLeaseProvider?: ArtifactStoreCapacityLeaseProvider;
     }> = {},
   ) {
     if (!root.trim()) {
@@ -208,6 +231,16 @@ export class ContentAddressedArtifactStore {
     this.measureOverride = options.measure;
     this.lockTimeoutMs = Math.max(1, Math.min(options.lockTimeoutMs ?? 5_000, 30_000));
     this.testHooks = options.testHooks;
+    if (options.capacityLeaseProvider) {
+      if (!isHybridArtifactStoreCapacityLeaseProviderV1(options.capacityLeaseProvider)) {
+        throw new TypeError("Artifact store capacity provider is not a trusted hybrid authority");
+      }
+      if (path.resolve(options.capacityLeaseProvider.artifactRoot) !== this.root) {
+        throw new TypeError("Artifact store capacity provider root does not match the store root");
+      }
+      this.capacityLeaseProvider = options.capacityLeaseProvider;
+      hybridAuthorityBackedStores.add(this);
+    }
   }
 
   private readonly lockTimeoutMs: number;
@@ -304,6 +337,34 @@ export class ContentAddressedArtifactStore {
       assertCurrent: () => Promise<void>;
     }>) => Promise<T>,
   ): Promise<T> {
+    if (this.capacityLeaseProvider) {
+      return this.capacityLeaseProvider.withLease(async (providerLease) => {
+        const rootHandle = await open(
+          this.root,
+          constants.O_RDONLY
+            | constants.O_DIRECTORY
+            | constants.O_NOFOLLOW
+            | constants.O_NONBLOCK,
+        );
+        try {
+          await providerLease.assertCurrent();
+          const rootBefore = await rootHandle.stat();
+          const rootIdentity = this.bindRootIdentity(rootBefore, artifactHash);
+          const authorityPath = await this.authorityPathForRoot(rootIdentity, artifactHash);
+          const lease = Object.freeze({
+            authorityPath,
+            assertCurrent: async () => {
+              await providerLease.assertCurrent();
+              await this.authorityPathForRoot(rootIdentity, artifactHash);
+            },
+          });
+          await lease.assertCurrent();
+          return await work(lease);
+        } finally {
+          await rootHandle.close();
+        }
+      });
+    }
     const lockPath = path.join(this.root, ".capacity.lock");
     const token = randomUUID();
     const deadline = Date.now() + this.lockTimeoutMs;
@@ -589,9 +650,13 @@ export class ContentAddressedArtifactStore {
     const target = this.pathFor(hash);
 
     const existing = await this.verifyExisting(target, hash, bytes);
-    if (existing) return { hash, path: target, created: false };
+    if (existing && !this.capacityLeaseProvider) {
+      return { hash, path: target, created: false };
+    }
 
-    await mkdir(this.root, { recursive: true });
+    if (!this.capacityLeaseProvider) {
+      await mkdir(this.root, { recursive: true });
+    }
     return this.withCapacityLock(hash, async (lease) => {
       await lease.assertCurrent();
       const racedExisting = await this.verifyExisting(target, hash, bytes);
@@ -675,7 +740,7 @@ export class ContentAddressedArtifactStore {
     });
   }
 
-  async get(hash: string): Promise<ArtifactGetResult> {
+  private async getUnleased(hash: string): Promise<ArtifactGetResult> {
     const target = this.pathFor(hash);
     let bytes: Buffer;
     try {
@@ -775,5 +840,18 @@ export class ContentAddressedArtifactStore {
       envelope: envelopeResult.data,
       bytes,
     };
+  }
+
+  async get(hash: string): Promise<ArtifactGetResult> {
+    // Reject untrusted path input before acquiring DB/kernel authority. The
+    // private implementation repeats this check before resolving its target.
+    this.pathFor(hash);
+    if (!this.capacityLeaseProvider) return this.getUnleased(hash);
+    return this.capacityLeaseProvider.withLease(async (lease) => {
+      await lease.assertCurrent();
+      const stored = await this.getUnleased(hash);
+      await lease.assertCurrent();
+      return stored;
+    });
   }
 }

@@ -1,13 +1,18 @@
 import type postgres from "postgres";
 
 import type { ArtifactCapacityLimits } from "../product-compiler/artifact-capacity.js";
-import { ContentAddressedArtifactStore } from "../product-compiler/artifact-store.js";
+import {
+  ContentAddressedArtifactStore,
+  isHybridAuthorityBackedArtifactStore,
+  type ArtifactGetResult,
+} from "../product-compiler/artifact-store.js";
 import { hashCanonicalJson } from "../product-compiler/canonical-json.js";
 import { SemanticArtifactProducerV1Schema } from "../product-compiler/schemas/common-v1.js";
 import {
   RuntimeArtifactReaderError,
   type SealedRuntimePacket,
 } from "../product-compiler/runtime-artifact-reader.js";
+import { resolveArtifactStorePublicationAuthorityMode } from "../runtime-config.js";
 import {
   DESIGN_CANDIDATE_AUTHORITY_EVIDENCE_SCHEMA_V2,
   DESIGN_CANDIDATE_AUTHORITY_REQUESTER_V2,
@@ -35,6 +40,10 @@ export type ProductBuildAuthorityReader = Readonly<{
 
 type ReadOnlySql = Pick<postgres.Sql, "unsafe">;
 
+export type OperationalArtifactReadPort = Readonly<{
+  get(artifactHash: string): Promise<ArtifactGetResult>;
+}>;
+
 export type CanonicalTerminationProjection = Readonly<{
   ref: string;
   requestId: string;
@@ -49,6 +58,7 @@ export type VerifiedDesignCandidateRefusalReadOptions = Readonly<{
   sql: ReadOnlySql;
   artifactRoot: string;
   artifactLimits: ArtifactCapacityLimits;
+  artifactReadPort?: OperationalArtifactReadPort;
   terminationRequest?: CanonicalTerminationProjection;
 }>;
 
@@ -58,6 +68,7 @@ export type ProductBuildAuthorityV2ErrorCode =
   | "PRODUCT_BUILD_REFUSAL_ARTIFACT_REF_MISSING"
   | "PRODUCT_BUILD_REFUSAL_ARTIFACT_REF_INVALID"
   | "PRODUCT_BUILD_REFUSAL_ARTIFACT_INDEX_INVALID"
+  | "PRODUCT_BUILD_REFUSAL_ARTIFACT_AUTHORITY_REQUIRED"
   | "PRODUCT_BUILD_REFUSAL_ARTIFACT_STORE_INVALID";
 
 export class ProductBuildAuthorityV2Error extends Error {
@@ -215,9 +226,19 @@ export async function readVerifiedDesignCandidateRefusal(
     );
   }
   const indexedByteLength = parseByteLength(reference.byte_length);
-  const store = new ContentAddressedArtifactStore(options.artifactRoot, {
-    limits: options.artifactLimits,
-  });
+  if (
+    resolveArtifactStorePublicationAuthorityMode() === "hybrid-required"
+    && !isHybridAuthorityBackedArtifactStore(options.artifactReadPort)
+  ) {
+    throw new ProductBuildAuthorityV2Error(
+      "PRODUCT_BUILD_REFUSAL_ARTIFACT_AUTHORITY_REQUIRED",
+      `Run ${runId} typed design refusal requires the canonical hybrid artifact read port`,
+    );
+  }
+  const store = options.artifactReadPort
+    ?? new ContentAddressedArtifactStore(options.artifactRoot, {
+      limits: options.artifactLimits,
+    });
   let stored;
   try {
     stored = await store.get(reference.artifact_hash);
