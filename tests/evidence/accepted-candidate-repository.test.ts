@@ -53,18 +53,7 @@ describe("accepted candidate repository", () => {
     await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
   });
   beforeEach(async () => {
-    await database.sql.unsafe(
-      `TRUNCATE accepted_candidate_story_evidence, accepted_candidates,
-                evidence_bundles, findings, finding_sets, recovery_cases,
-                product_packets, run_artifact_refs, artifact_publication_reservations,
-                semantic_artifacts, execution_attempts, claim_log, runs CASCADE`,
-    );
-    await database.sql.unsafe(
-      `UPDATE artifact_capacity SET quota_bytes = 8388608, max_payload_bytes = 4194304,
-          total_bytes = 0, reserved_bytes = 0, state = 'bootstrap_required',
-          reconciled_at = NULL, diagnostic = NULL, updated_at = NOW()
-        WHERE capacity_key = 'semantic-artifacts'`,
-    );
+    await database.reset();
   });
 
   async function fixture(options: Readonly<{ forgedBundleHash?: boolean }> = {}) {
