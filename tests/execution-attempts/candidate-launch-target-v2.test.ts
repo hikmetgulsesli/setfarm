@@ -529,7 +529,7 @@ test("module locators and handler exports reject absolute, traversal, NUL, Unico
   rehashCandidate(validNested);
   assert.equal(CandidateLaunchTargetV2Schema.safeParse(validNested).success, true);
 
-  for (const exportName of ["handler-name", "listen()", "işle", "bad\0name"]) {
+  for (const exportName of ["handler-name", "listen()", "i\u015fle", "bad\0name"]) {
     const candidate = launchTarget("http_handler") as unknown as {
       target: { exportName: string; exportHash: string };
       launchTargetHash: string;
