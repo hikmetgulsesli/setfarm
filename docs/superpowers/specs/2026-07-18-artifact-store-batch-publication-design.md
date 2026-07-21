@@ -18,8 +18,11 @@ historical single-item `put` through one private tiered publication core. It
 performs held-root aggregate admission, stages and file-syncs every missing
 payload before the first link, publishes in tier/hash order, directory-syncs
 each tier, freshly verifies every final target, and cleans only the owned
-attempt. C2 remains shadow-only: D1 closure, D2 indexed batch publication, D3
-recovery, E1 inventory/adoption, and production activation remain prohibited.
+attempt. C2 remains shadow-only. D1 now provides one immutable fresh-evidence
+set, a closed exact-type registry, ByteBundle deep closure, dependency tiers,
+and per-member publishability classifications. D2 indexed batch publication,
+D3 recovery, E1 inventory/adoption, and production activation remain
+prohibited.
 
 This slice closes four coupled boundaries:
 
@@ -521,6 +524,34 @@ zero or more complete earlier tiers and part of the current tier may remain.
 No artifact in a later tier was linked before the previous tier's directory
 barrier completed. This is dependency-tier convergence, not all-or-none
 filesystem atomicity.
+
+## Versioned closure evidence
+
+D1 introduces `setfarm.artifact-closure-registry.v1`. Its closed v1 entries
+classify `setfarm.byte-chunk.v1` as a leaf and
+`setfarm.byte-bundle.v1` as a dependency root owned by the ByteBundleV1
+validator. An unknown artifact explicitly declared as dependency-bearing is
+`ARTIFACT_CLOSURE_VALIDATOR_REQUIRED`; a known dependency root cannot be
+laundered through the leaf path.
+
+Fresh `ArtifactGetResult` values are first captured by
+`setfarm.prepared-artifact-closure-evidence-set.v1`. Preparation independently
+requires exact SHA-256 bytes, canonical semantic-envelope bytes, full
+publication identity, a dense unique evidence set, and at most 100,000 items.
+It retains a private parsed snapshot, not caller-owned bytes. Empty evidence is
+valid so recovery and inventory can classify an expected missing root.
+
+Evaluation emits `setfarm.artifact-closure-evidence.v1` with one typed top-level
+classification and at most nine deterministic tier/hash-ordered members. Every
+member contains expected physical identity, observed full identity when present,
+exact evidence status, durability tier, role, and a boolean `publishable`
+decision. ByteBundle validation proves each referenced chunk's type, envelope
+hash and length, schema, raw hash and length, canonical ordinal sequence, and
+the reconstructed bundle raw hash and length. Exact repeated manifest
+occurrences may share one physical chunk; conflicting metadata for the same
+hash is a typed duplicate conflict. Chunks are tier zero and independently
+publishable when exact. The bundle root is tier one and publishable only when
+the complete deep closure verifies.
 
 ## Database-first indexed publisher
 

@@ -13,10 +13,10 @@ Base commits:
 
 Branch: `arch/product-semantics-v2-authority`
 
-Implementation status on 2026-07-21: slices A and B, C1, and C2 are complete
-and verified on the feature branch. C2 is the commit described by Task C2
-below. Slice D and every production migration/adoption/activation step remain
-pending and fail-closed.
+Implementation status on 2026-07-21: slices A and B, C1, C2, and D1 are complete
+and verified on the feature branch. D1 is the commit described by Task D1
+below. D2/D3, slice E, and every production migration/adoption/activation step
+remain pending and fail-closed.
 
 ## Delivery rules
 
