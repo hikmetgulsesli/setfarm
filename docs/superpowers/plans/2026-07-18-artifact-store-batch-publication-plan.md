@@ -13,11 +13,11 @@ Base commits:
 
 Branch: `arch/product-semantics-v2-authority`
 
-Implementation status on 2026-07-21: slices A and B, C1, C2, D1, D2, and D2R
-are complete and verified on the feature branch. D2R is committed as
-`d6a6a9dd`; migration 26 now preserves the exact durability-tier plan needed
-after process death. D3, slice E, and every production
-migration/adoption/activation step remain pending and fail-closed.
+Implementation status on 2026-07-21: slices A and B, C1, C2, D1, D2, D2R, D3,
+and E1 are complete and verified on the feature branch. D2R is committed as
+`d6a6a9dd`, D3 as `9483acc8`, and E1 as `647ad5fa`. Every live migration,
+production activation, release build, and clean generated-product run remains
+pending and fail-closed.
 
 ## Delivery rules
 
@@ -628,6 +628,8 @@ Completion evidence:
 
 ### Task E1: Two-pass closure-aware inventory
 
+Status: complete in `647ad5fa` (`feat(artifacts): reconcile bounded inventories`).
+
 Files:
 
 - modify `src/product-compiler/indexed-artifact-publisher.ts`
@@ -665,7 +667,36 @@ npx tsc --noEmit
 git diff --check
 ```
 
-Commit: `fix(artifacts): validate inventory closure`
+Commit: `feat(artifacts): reconcile bounded inventories`
+
+Completion evidence:
+
+- explicit `writer`, `existing-writer`, `reader`, `inventory-verify`, and
+  `inventory-adoption` capabilities prevent inventory callers from publishing
+  and ordinary publishers from scanning or adopting a legacy root;
+- adoption accepts only canonical finals plus ordinary owned staging, bounds
+  final count at 100,000, cleans staging before reads, and binds the exact
+  migration-24 root authority before inventory;
+- one held hybrid lease performs bounded exact reads with 16-way maximum
+  concurrency, cumulative retained bytes bounded by root quota, a second name
+  enumeration, and final physical-identity checks;
+- ByteBundle is validated as a dependency root only after every final identity
+  is read; unknown or ordinary artifacts and orphan ByteChunks remain leaves;
+- closure/entry failure and index/CAS mismatch do not create, rewrite, or delete
+  semantic artifacts. The bootstrap owner quarantines outside the filesystem
+  lease and refuses to race active single or aggregate publication;
+- activation, CLI, and convergence now consume the central inventory factory.
+  Non-ready activation observes DB state without creating a marker/root, while
+  report publication uses a separate existing-writer capability;
+- Product Compiler passed 915/915; execution-attempts passed 630/630 before the
+  final aggregate-byte hardening, followed by affected activation 13/13;
+  evals passed 49/49; scripts passed 23/23; root/status/findings/evidence/recovery
+  passed 858/858, 12/12, 126/126, 77/77, and 4/4. TypeScript, migration digest,
+  path, English, and Mission Control contract checks passed;
+- `test:steps` remains a release-stage check: source migration 26 initializes
+  the isolated DB while feature-branch `dist` still recognizes only migration
+  25, yielding `MIGRATION_UNKNOWN_VERSION 26`. The build guard was not bypassed;
+  a clean merged-`main` build must refresh `dist` before this row can pass.
 
 ### Task E2: Canonical Mission Control projection
 

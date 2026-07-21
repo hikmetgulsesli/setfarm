@@ -27,8 +27,13 @@ canonical full-identity/tier plan and exposes one coherent recovery snapshot.
 D3 aggregate expiry recovery is committed as `9483acc8`: it fresh-reads every
 member, evaluates the code-owned closure registry, fences adoption and terminal
 settlement to the exact observed token/expiry generation, and emits one
-versioned operational result. E1 inventory/adoption and production activation
-remain prohibited.
+versioned operational result. E1 bounded inventory/adoption is committed as
+`647ad5fa`: it separates writer, reader, verification, adoption, and
+existing-writer capabilities; binds a legacy root only through explicit
+adoption; reads one bounded exact filesystem generation; validates dependency
+closure before database bootstrap; and quarantines only through the recovery
+owner after the filesystem lease releases. Production activation remains
+prohibited.
 
 This slice closes four coupled boundaries:
 
@@ -746,6 +751,17 @@ mismatched chunk makes bootstrap quarantine the inventory; it is never silently
 indexed and never silently deleted. Unknown future dependency-bearing types are
 not activated until they register a deterministic closure validator.
 
+The implemented E1 boundary additionally constrains retained exact bytes by the
+configured semantic root quota while reads are in progress. At most 16 reads
+may be in flight, and no over-quota snapshot reaches closure validation or the
+database. A second canonical-name enumeration plus exact file-identity check
+detects additions, removals, replacements, mode drift, owner drift, and hard
+links before the callback may bootstrap or verify the index. Verification and
+adoption stores cannot publish; ordinary writers cannot scan the whole root.
+The low-level index mismatch detector is non-mutating. Only the bootstrap owner
+may transition the capacity singleton to quarantine, outside the held
+filesystem lease and only when no publication generation is active.
+
 ## Concurrency and crash semantics
 
 The following outcomes are permitted:
@@ -896,9 +912,11 @@ the provider, store, publisher, recovery, and bootstrap consumers all use it.
 
 ## Release decision
 
-Implementation of this design is **GO** after written-spec approval. Production
+Implementation through E1 is **GO** on the feature branch. Production
 activation, migration deployment, Setfarm release, and clean product evals
-remain **NO-GO** until every dependency-order step and verification row above is
-green. The design intentionally replaces repeated root-fix behavior with one
-machine-readable publication plan, one aggregate database fence, one
-shared-filesystem physical owner, and fresh evidence-based recovery.
+remain **NO-GO** until the clean merged `main` build refreshes `dist`, the
+remaining presentation/release rows are green, and the larger Product Build
+Packet/materialization program is complete. The design intentionally replaces
+repeated root-fix behavior with one machine-readable publication plan, one
+aggregate database fence, one shared-filesystem physical owner, and fresh
+evidence-based recovery.
