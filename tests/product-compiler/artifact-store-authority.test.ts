@@ -39,6 +39,7 @@ import {
   ContentAddressedArtifactStore,
   isHybridAuthorityBackedArtifactStore,
 } from "../../src/product-compiler/artifact-store.js";
+import { ARTIFACT_STORE_BATCH_PLAN_SCHEMA_V1 } from "../../src/product-compiler/artifact-store-batch-plan.js";
 import {
   IndexedArtifactPublisher,
   IndexedArtifactPublisherError,
@@ -214,8 +215,37 @@ describe("artifact store PostgreSQL/root authority", () => {
       payload: { authority: "postgres-transaction+filesystem-kernel-v1" },
     });
     delete (store as unknown as { put?: unknown }).put;
+    Object.defineProperty(store, "putPreparedBatch", {
+      configurable: true,
+      value: async () => {
+        throw new Error("CALLER_REPLACED_BATCH_STORE_METHOD");
+      },
+    });
+    const batchPublished = await publisher.putBatch({
+      batchReservationId: "batch-production-bound-prototype",
+      plan: {
+        schema: ARTIFACT_STORE_BATCH_PLAN_SCHEMA_V1,
+        items: [{
+          durabilityTier: 0,
+          envelope: {
+            schema: "setfarm.semantic-artifact-envelope.v1",
+            artifactType: "setfarm.artifact-authority-batch-test.v1",
+            producer: {
+              pass: "artifact-authority-batch-test",
+              codeSha: "a".repeat(40),
+              toolVersions: {},
+            },
+            payload: { authority: "bound-concrete-batch-method-v1" },
+          },
+        }],
+      },
+    });
+    delete (store as unknown as { putPreparedBatch?: unknown }).putPreparedBatch;
     assert.equal(published.created, true);
     assert.equal(published.indexCreated, true);
+    assert.equal(batchPublished.lifecycle.state, "completed");
+    assert.equal(batchPublished.items[0]?.casCreated, true);
+    assert.equal(batchPublished.items[0]?.indexCreated, true);
     assert.equal(isHybridAuthorityBackedArtifactStore(store), true);
     assert.equal(
       (await readdir(artifactRoot)).includes(`${published.hash}.json`),

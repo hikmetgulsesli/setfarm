@@ -638,6 +638,24 @@ function createArtifactIndexWithLeaseTimeAuthority(
       return mapCapacity(rows[0]!);
     },
 
+    async getPublicationBatchLifecycle(input: Readonly<{
+      batchReservationId: string;
+    }>): Promise<ArtifactPublicationBatchLifecycle> {
+      const batchReservationId = ArtifactPublicationBatchReservationIdSchema.parse(
+        input.batchReservationId,
+      );
+      return sql.begin(async (transaction) => {
+        // Match every mutating batch path's capacity -> aggregate lock order.
+        // The returned lifecycle is therefore one coherent post-commit snapshot.
+        await lockCapacity(transaction);
+        const aggregate = await lockPublicationBatchAggregate(transaction, batchReservationId);
+        return mapPublicationBatchAggregateLifecycle(
+          aggregate.batch,
+          aggregate.reservations,
+        );
+      }) as Promise<ArtifactPublicationBatchLifecycle>;
+    },
+
     async getArtifact(hash: string): Promise<IndexedArtifact | undefined> {
       const parsedHash = Sha256Schema.parse(hash);
       const row = await readArtifact(sql, parsedHash);

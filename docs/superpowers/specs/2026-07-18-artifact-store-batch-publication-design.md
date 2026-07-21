@@ -584,9 +584,22 @@ It executes this state machine:
 10. Return one result that binds the database batch identity, prepared plan
     identity, CAS results, and final lifecycle.
 
+The returned operational evidence is versioned as
+`setfarm.indexed-artifact-batch-publication-result.v1`. It contains the exact
+batch reservation and identity hashes, prepared plan identity, canonical
+`setfarm.artifact-store-batch-put-result.v1` receipt, verified dependency-root
+closure results, tier/full-identity/path plus CAS/index creation decisions for
+every member, and one transactionally coherent completed migration-23
+lifecycle. Completed replay synthesizes only `created:false` CAS receipts after
+fresh reads; it never calls the write path.
+
 The publisher does not recreate an indexed artifact whose CAS target is absent.
-That is filesystem/index drift and quarantines the operation. It also does not
-convert a lease loss into a new reservation. Expiry recovery owns that decision.
+That is filesystem/index drift. A live aggregate quarantines its remaining
+reservation and capacity under the exact owner fence. A completed aggregate is
+immutable in migration 23, so replay fails closed without rewriting it; E1's
+full inventory/root authority owns persistent quarantine of that terminal
+drift. The publisher also does not convert a lease loss into a new reservation.
+Expiry recovery owns that decision.
 
 ## Failure settlement
 

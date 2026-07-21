@@ -13,10 +13,9 @@ Base commits:
 
 Branch: `arch/product-semantics-v2-authority`
 
-Implementation status on 2026-07-21: slices A and B, C1, C2, and D1 are complete
-and verified on the feature branch. D1 is the commit described by Task D1
-below. D2/D3, slice E, and every production migration/adoption/activation step
-remain pending and fail-closed.
+Implementation status on 2026-07-21: slices A and B, C1, C2, D1, and D2 are
+complete and verified on the feature branch. D3, slice E, and every production
+migration/adoption/activation step remain pending and fail-closed.
 
 ## Delivery rules
 
@@ -436,6 +435,9 @@ Commit: `feat(artifacts): validate bundle closure`
 
 ### Task D2: DB-first indexed batch publisher
 
+Status: complete in shadow mode on 2026-07-21. Production activation remains
+blocked on D3 recovery and E1 inventory/adoption.
+
 Files:
 
 - modify `src/product-compiler/indexed-artifact-publisher.ts`
@@ -443,6 +445,8 @@ Files:
 - modify `src/product-compiler/artifact-index.ts` only for transaction-safe
   batch reads required by the coordinator
 - modify `tests/product-compiler/artifact-index.test.ts`
+- modify `tests/product-compiler/artifact-store-authority.test.ts` for concrete
+  hybrid-method binding coverage
 
 Tests first:
 
