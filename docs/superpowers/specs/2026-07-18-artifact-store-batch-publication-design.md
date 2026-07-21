@@ -24,8 +24,11 @@ and per-member publishability classifications. D2 indexed batch publication is
 committed as `84592cbf`. D2R durable recovery-plan authority is committed as
 `d6a6a9dd`: migration 26 binds every migration-23 batch to one immutable,
 canonical full-identity/tier plan and exposes one coherent recovery snapshot.
-D3 recovery, E1 inventory/adoption, and production activation remain
-prohibited.
+D3 aggregate expiry recovery is committed as `9483acc8`: it fresh-reads every
+member, evaluates the code-owned closure registry, fences adoption and terminal
+settlement to the exact observed token/expiry generation, and emits one
+versioned operational result. E1 inventory/adoption and production activation
+remain prohibited.
 
 This slice closes four coupled boundaries:
 

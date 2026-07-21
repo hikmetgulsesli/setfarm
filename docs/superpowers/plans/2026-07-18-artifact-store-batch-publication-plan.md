@@ -559,6 +559,8 @@ Commit: `feat(artifacts): persist batch recovery plans`
 
 ### Task D3: Aggregate expiry recovery
 
+Status: complete in `9483acc8` (`feat(recovery): reconcile artifact batches`).
+
 Files:
 
 - modify `src/product-compiler/indexed-artifact-publisher.ts`
@@ -598,6 +600,29 @@ git diff --check
 ```
 
 Commit: `feat(recovery): reconcile artifact batches`
+
+Completion evidence:
+
+- expired listing is bounded to 100 aggregates and every adoption/finalization
+  requires the exact observed token and expiry generation;
+- fresh CAS observations distinguish exact, missing, typed corruption, and
+  transient uncertainty without parsing exception or review prose;
+- closure-safe exact members publish once in canonical plan order, all-missing
+  batches release without adoption, mixed remainder releases, and corruption
+  quarantines the aggregate;
+- a heartbeat/adoption race returns a versioned stale result without terminal
+  mutation; two concurrent recoverers converge to one completion and one stale
+  observation;
+- the recovery CLI runs aggregate recovery before legacy single reservations,
+  while hybrid production entry remains fail-closed until E1;
+- focused artifact-index/publisher integration passed 58/58; full Product
+  Compiler and execution-attempt suites exited 0; the dedicated real-PostgreSQL
+  crash-to-recovery integration passed;
+- `npx tsc --noEmit`, script tests 22/22, migration digests, path, English, and
+  Mission Control contract checks passed. Full `npm test` remains a main-build
+  release check because feature-branch step tests intentionally import the
+  generated `dist/`, which still knows migration 25 and rejects the source-built
+  migration-26 test database. The branch build guard was not bypassed.
 
 ## Slice E — Bootstrap authority, presentation, and release evidence
 
