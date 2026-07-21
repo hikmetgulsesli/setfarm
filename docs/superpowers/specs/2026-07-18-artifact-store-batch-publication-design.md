@@ -21,8 +21,11 @@ each tier, freshly verifies every final target, and cleans only the owned
 attempt. C2 remains shadow-only. D1 now provides one immutable fresh-evidence
 set, a closed exact-type registry, ByteBundle deep closure, dependency tiers,
 and per-member publishability classifications. D2 indexed batch publication is
-committed as `84592cbf`. D2R durable recovery-plan authority, D3 recovery, E1
-inventory/adoption, and production activation remain prohibited.
+committed as `84592cbf`. D2R durable recovery-plan authority is committed as
+`d6a6a9dd`: migration 26 binds every migration-23 batch to one immutable,
+canonical full-identity/tier plan and exposes one coherent recovery snapshot.
+D3 recovery, E1 inventory/adoption, and production activation remain
+prohibited.
 
 This slice closes four coupled boundaries:
 
@@ -648,6 +651,14 @@ ledger is empty. Rollback to 25 is allowed only while no batch/plan evidence
 exists. Production currently remains before migrations 23 and 24, so this
 fail-closed rule does not require a live data rewrite; no live migration is
 applied in this implementation slice.
+
+The implemented D2R evidence is commit `d6a6a9dd`. Its focused acceptance set
+passes 74/74; full Product Compiler passes 894/894; full execution-attempt
+regression exits zero; migration-23 and migration-24 full compatibility suites
+pass 34/34 and 32/32. Typecheck, source-bound migration digest, CLI, and diff
+checks pass. The feature-branch build guard refuses before compilation as
+designed and was not bypassed. This proves durable plan availability, not D3
+reconciliation, E1 adoption, live migration, or production activation.
 
 ## Failure settlement
 

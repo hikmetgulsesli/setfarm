@@ -13,12 +13,11 @@ Base commits:
 
 Branch: `arch/product-semantics-v2-authority`
 
-Implementation status on 2026-07-21: slices A and B, C1, C2, D1, and D2 are
-complete and verified on the feature branch. D3 investigation proved that
-migration 23 cannot reconstruct durability tiers or prepared-plan identity
-after process death. D2R is therefore the required dependency before D3. D2R,
-D3, slice E, and every production migration/adoption/activation step remain
-pending and fail-closed.
+Implementation status on 2026-07-21: slices A and B, C1, C2, D1, D2, and D2R
+are complete and verified on the feature branch. D2R is committed as
+`d6a6a9dd`; migration 26 now preserves the exact durability-tier plan needed
+after process death. D3, slice E, and every production
+migration/adoption/activation step remain pending and fail-closed.
 
 ## Delivery rules
 
@@ -489,6 +488,14 @@ git diff --check
 Commit: `feat(artifacts): coordinate batch publication`
 
 ### Task D2R: Durable batch-plan recovery authority
+
+Status: complete in `d6a6a9dd` (`feat(artifacts): persist batch recovery plans`).
+The focused D2R acceptance set passed 74/74, the full Product Compiler set
+passed 894/894, and the full execution-attempt set exited zero. Migration-23
+and migration-24 full compatibility suites passed 34/34 and 32/32. TypeScript,
+semantic migration digest, CLI, and diff checks passed. The ordinary build
+entrypoint correctly refused the feature branch before build work began; no
+override was used.
 
 Files:
 
