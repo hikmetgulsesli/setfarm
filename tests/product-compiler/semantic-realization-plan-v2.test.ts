@@ -41,17 +41,17 @@ import {
 const GENERATOR_CONTRACT_HASH_GOLDEN_V2 =
   "4fc036961b7449aec4eb171699f9559515820e1f5b8864c7440147082200f31b";
 const TEST_GENERATOR_CONTRACT_HASH_GOLDEN_V2 =
-  "478ecd63be81483a71d9becd769483e7c9b194c047223374eb35c0731e0c4f28";
+  "9e95027d040924582b3fec49539f729defd52f797aa5af05e3602b04c521a8fe";
 const POLICY_HASH_GOLDEN_V2 =
   "50ab59d4d93c3f01d84c3bf1ce680243be8928257f71417f31e0e2bc67183404";
 const PLAN_CONTRACT_HASH_GOLDEN_V2 =
-  "a9ec3b10e03926315d97126017a38b31de1098dcacbb8563d8a676848226585c";
+  "d3459ee59896412533dda41752c2691c595b0ef7e12c7e5dad2eb8686eb7b63c";
 const CLI_PLAN_HASH_GOLDEN_V2 =
-  "8f89a0d9a0accba2feba665c8e532be058b5c9a0980683fce1c7efe13a045ed6";
+  "15bc4122d431989c54aa74874e662b5a7b3ae6aafe3462b894d300ea1e1d3f4f";
 const API_PLAN_HASH_GOLDEN_V2 =
-  "3bc7265b858d380c4af50389ed3c9a20f0883d2d7c3d9cb280da6fc005b2f948";
+  "0933e6799c8fe0c0fee55aee8c0b3d6e709cd8c6643b169e848fe4937a8d8ff1";
 const TWO_STORY_API_PLAN_HASH_GOLDEN_V2 =
-  "02aef64b7b11d03f8431f77d0d4edf9f3bf9b5214f76e47cb2aacf4e9071831c";
+  "fda8380cb56e623e82774833b4470159a48f5bcd32b9c301dd0f70831174f368";
 const CLI_MEMBERSHIP_HASH_GOLDEN_V2 =
   "acf4b7c75f0a3729ddca7afb3fb6b7d3a56f84d5b5162b64aeda7a2fe38200c5";
 const API_MEMBERSHIP_HASH_GOLDEN_V2 =
@@ -59,7 +59,7 @@ const API_MEMBERSHIP_HASH_GOLDEN_V2 =
 const TWO_STORY_API_MEMBERSHIP_HASH_GOLDEN_V2 =
   "2ce90ba06b797b34f4c6ebbb62c34d7e9313b69113aad787eedf2dbded75e2d6";
 const ENTITY_API_PLAN_HASH_GOLDEN_V2 =
-  "13f12e37051bd81548e38526c76c6e57c6185dcee576676de5cb4e4b98af7c92";
+  "6b0f88c8e7e6e0c50a2ea4680deca248526282aeb6f11501cf72193838fa66e0";
 const ENTITY_API_MEMBERSHIP_HASH_GOLDEN_V2 =
   "f6acb5edda26ca292afc3010ce18426ef8acd01efb37a2491f80fe83df2d16ce";
 
@@ -210,7 +210,7 @@ describe("SemanticRealizationPlanV2 contract and compiler", () => {
         membershipHash: CLI_MEMBERSHIP_HASH_GOLDEN_V2,
         behaviorHashes: [
           "9d7cc59164e10dceed7c98e951b1a98a23fd36318a083b8b4233c55abaf49e97",
-          "4173068e7e7b629fbe1b843e55ed7c0f1cc9cfbdedb9794450335049eac02a3e",
+          "58d46b62baf2a91fc7ae23c478dd776efdfe4d15356889faec7030ab5c73bcc5",
         ],
         behaviorBindingCount: 1,
         entityFieldBindingCount: 0,
@@ -225,7 +225,7 @@ describe("SemanticRealizationPlanV2 contract and compiler", () => {
         membershipHash: API_MEMBERSHIP_HASH_GOLDEN_V2,
         behaviorHashes: [
           "c8a31b07122d512e4752a12860eb0c06443ab3f712c3ae44a2d92f89bfd3ae8a",
-          "8fb4fe015ad5dff1d256887e0e25c02b705be097cd8af396be8a0597cd5af7d5",
+          "363acfdc0747deffe9b18ef99216d188ce984c549ef68ce0cb8dc7e0a838a362",
         ],
         behaviorBindingCount: 1,
         entityFieldBindingCount: 0,
@@ -240,7 +240,7 @@ describe("SemanticRealizationPlanV2 contract and compiler", () => {
         membershipHash: TWO_STORY_API_MEMBERSHIP_HASH_GOLDEN_V2,
         behaviorHashes: [
           "abf0efeacee4d1bbdfc510ae553c9729d2e0f2c7c087fe380b104202c5a7c300",
-          "257f9a6e6bc24f5900a5ac9b71d13a41598340d14a870c64391ef93e52134843",
+          "e12d6c09ecde3a7c76ee2b1242fbb11e1785e0d08bc403fe43c5de9b785b1d3c",
         ],
         behaviorBindingCount: 2,
         entityFieldBindingCount: 0,
@@ -256,7 +256,7 @@ describe("SemanticRealizationPlanV2 contract and compiler", () => {
         membershipHash: ENTITY_API_MEMBERSHIP_HASH_GOLDEN_V2,
         behaviorHashes: [
           "9d637570600ea28eb4bb97a07a56da996ff5a83320c081b06d0c9d58504b29b5",
-          "815757c8dda7c0260c1682a9b70fef5792d877ebb3fb80e2eb0dafe95500e04d",
+          "2ff2e6749634f34a6405a8e470e7506a5797b6def9f81179b12ec400a73b40ef",
         ],
         behaviorBindingCount: 1,
         entityFieldBindingCount: 1,

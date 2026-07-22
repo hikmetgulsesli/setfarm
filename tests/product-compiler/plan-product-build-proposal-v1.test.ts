@@ -134,8 +134,6 @@ describe("PlanProductBuildProposalV1", () => {
     assert.deepEqual(result.runtimeBehaviorContract.readiness.blockerCodes, [
       "PRODUCT_RUNTIME_BEHAVIOR_V1_EVIDENCE_REGISTRY_UNVERIFIED",
       "PRODUCT_RUNTIME_BEHAVIOR_V1_RELEASE_MANIFEST_UNVERIFIED",
-      "PRODUCT_RUNTIME_BEHAVIOR_V1_RUNTIME_GENERATOR_INTEGRATION_UNVERIFIED",
-      "PRODUCT_RUNTIME_BEHAVIOR_V1_TEST_GENERATOR_INTEGRATION_UNVERIFIED",
     ]);
     assert.equal(result.authority.source.semanticProposalHash, result.semanticProposalHash);
     assert.deepEqual(result.authority.source, {
@@ -147,12 +145,12 @@ describe("PlanProductBuildProposalV1", () => {
       productSpecHash: "6fe621966b0d44c90e499f30a3c30e0e724c9a1589cb170da30ef49bc2510ace",
       deliverySelectionHash: "ae3158ea63fa143554617dd3049450ea4ab984398518f38603b5950a24f10289",
       runtimeBehaviorProposalHash: "18a48142bedbe8685903679e8c7ee72d4603a6aef46ccc9c90d9b4c045a95a60",
-      runtimeBehaviorContractHash: "3728d01d012bb9828e833a2cb60d402f812328763b3c41e6fcf0dc2f1a42fbda",
+      runtimeBehaviorContractHash: "5af7d165a8190a89a1dbfc449deeab5ce39b584738ca2ef7d8149615f043b340",
       referenceMapHash: "f32f95e950deba41dfe0aeccc9d665a64d8e3bbf6153858f42bb34fd4f165a04",
     });
     assert.equal(
       result.authority.authorityHash,
-      "320e6f65a3af18206bf95814880bc617381fbfc55fde600abc59f94ebd04dacc",
+      "e9330ae84642866a55e55a47a465eca68dbbf7c39cac12928c1e34c47c81e3a4",
     );
     assert.equal(
       result.authority.outputs.runtimeBehaviorContractHash,

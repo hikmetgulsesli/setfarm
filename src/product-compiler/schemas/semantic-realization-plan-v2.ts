@@ -152,9 +152,39 @@ export const NODE_PRODUCT_TEST_GENERATOR_CONTRACT_V2 = Object.freeze({
   generatorRef: "NODE_PRODUCT_TEST_GENERATOR_V2" as const,
   inputAuthority: Object.freeze({
     productSpecSchema: "setfarm.product-spec.v2" as const,
+    deliverySelectionSchema: "setfarm.product-delivery-selection.v2" as const,
+    runtimeBehaviorProposalSchema:
+      PRODUCT_RUNTIME_BEHAVIOR_PROPOSAL_SCHEMA_V1,
+    runtimeBehaviorContractSchema:
+      PRODUCT_RUNTIME_BEHAVIOR_CONTRACT_SCHEMA_V1,
     realizationPlanSchema: SEMANTIC_REALIZATION_PLAN_V2_SCHEMA,
     invocationTransportSchema: "setfarm.invocation-input-transport.v2" as const,
+    fileTreeSchema: "setfarm.file-tree-manifest.v3" as const,
+    buildTopologySchema: "setfarm.build-topology.v3" as const,
+    runtimeSourceReceiptSchema: NODE_PRODUCT_RUNTIME_SOURCE_RECEIPT_V2_SCHEMA,
+    runtimeProgramAuthority:
+      "fresh_shared_node_product_runtime_program_v2" as const,
     evidenceRelationSource: "semantic_realization_plan_v2" as const,
+  }),
+  semanticExecution: Object.freeze({
+    scenarioAuthority:
+      "product_spec_v2_exact_evidence_scenario_and_invocation_transport_v2" as const,
+    actionCoverage: "one_exact_success_test_per_action" as const,
+    evidenceCoverage:
+      "every_semantic_evidence_relation_bound_to_exact_action_test" as const,
+    supportedEvidenceKinds: Object.freeze([
+      "action_invocation",
+      "observable_outcome",
+    ] as const),
+    unsupportedEvidencePolicy: "typed_rejection_before_source_bytes" as const,
+    runtimeBehavior:
+      "initial_and_after_action_runtime_checkpoints_exercised_per_action" as const,
+    entitySnapshots:
+      "exact_entity_occurrence_exercised_by_owning_action_scenario" as const,
+    apiIsolation:
+      "fresh_exact_runtime_module_instance_per_action_scenario" as const,
+    cliPrerequisitePolicy:
+      "reject_nonempty_prerequisites_without_single_process_sequence_abi" as const,
   }),
   output: Object.freeze({
     ownership: "code_owned_whole_file" as const,
@@ -166,7 +196,8 @@ export const NODE_PRODUCT_TEST_GENERATOR_CONTRACT_V2 = Object.freeze({
     moduleSystem: "node_esm" as const,
     minimumTestCount: 1,
     zeroTestReceipt: "forbidden" as const,
-    coverage: "every_action_and_required_evidence_relation" as const,
+    coverage:
+      "every_action_evidence_relation_runtime_assertion_and_entity_binding" as const,
   }),
   profiles: Object.freeze([
     Object.freeze({

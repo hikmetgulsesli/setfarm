@@ -76,6 +76,12 @@ import {
   verifyNodeProductRuntimeSourceV2ForTest,
 } from "../../src/product-compiler/node-product-runtime-generator-v2.js";
 import {
+  NodeProductTestSourceVerificationErrorV2,
+  generateNodeProductTestSourceV2,
+  generateNodeProductTestSourceV2ForTest,
+  verifyNodeProductTestSourceV2ForTest,
+} from "../../src/product-compiler/node-product-test-generator-v2.js";
+import {
   NodeSemanticRuleGeneratorTransitionVerificationErrorV2,
   compileNodeSemanticRuleGeneratorTransitionV2,
   compileNodeSemanticRuleGeneratorTransitionV2ForTest,
@@ -177,6 +183,12 @@ import {
   hashNodeProductRuntimeSourceLogicalReceiptV2,
   hashNodeProductRuntimeSourceReceiptV2,
 } from "../../src/product-compiler/schemas/node-product-runtime-source-v2.js";
+import {
+  NodeProductTestSourceReceiptV2Schema,
+  hashNodeProductActionTestMembershipV2,
+  hashNodeProductTestSourceLogicalReceiptV2,
+  hashNodeProductTestSourceReceiptV2,
+} from "../../src/product-compiler/schemas/node-product-test-source-v2.js";
 import {
   createIsolatedTestDatabase,
   type TestDatabase,
@@ -424,6 +436,18 @@ function deliverySelectionForV2(
   return result.selection;
 }
 
+function prerequisiteNodeExpressApiProductSpecV2(): ProductSpecV2 {
+  const candidate: any = structuredClone(twoStoryNodeExpressApiProductSpecV2());
+  const noteAction = candidate.actions.find((action: any) =>
+    action.id === "ACT_CREATE_NOTE");
+  if (!noteAction) throw new Error("Expected note action fixture");
+  noteAction.evidenceScenario.prerequisiteSteps = [{
+    actionRef: "ACT_CREATE_TASK",
+    inputValues: { project: "setfarm", title: "Prerequisite task" },
+  }];
+  return ProductSpecV2Schema.parse(candidate);
+}
+
 function transpileGeneratedRuntimeV2(sourceText: string): string {
   const transpiled = ts.transpileModule(sourceText, {
     compilerOptions: {
@@ -484,6 +508,48 @@ async function typecheckGeneratedRuntimeV2(
     path.join(process.cwd(), "node_modules", "@types"),
     sourcePath,
     expressTypesPath,
+  ], {
+    encoding: "utf8",
+    env: {},
+    timeout: 10_000,
+  });
+  assert.equal(
+    execution.status,
+    0,
+    `${execution.stdout}\n${execution.stderr}`,
+  );
+}
+
+async function typecheckGeneratedTestV2(
+  sandboxRoot: string,
+  sourceText: string,
+  sourceBasename: "cli.setfarm.test.ts" | "app.setfarm.test.ts",
+): Promise<void> {
+  const root = path.join(sandboxRoot, `test-source-typecheck-${randomUUID()}`);
+  await mkdir(root, { recursive: true, mode: 0o700 });
+  const sourcePath = path.join(root, sourceBasename);
+  await Promise.all([
+    writeFile(path.join(root, "package.json"), "{\"type\":\"module\"}\n", {
+      mode: 0o600,
+    }),
+    writeFile(sourcePath, sourceText, { mode: 0o600 }),
+  ]);
+  const execution = spawnSync(process.execPath, [
+    path.join(process.cwd(), "node_modules", "typescript", "bin", "tsc"),
+    "--noEmit",
+    "--strict",
+    "--target",
+    "ES2022",
+    "--module",
+    "NodeNext",
+    "--moduleResolution",
+    "NodeNext",
+    "--verbatimModuleSyntax",
+    "--types",
+    "node",
+    "--typeRoots",
+    path.join(process.cwd(), "node_modules", "@types"),
+    sourcePath,
   ], {
     encoding: "utf8",
     env: {},
@@ -1273,9 +1339,9 @@ describe("Node scaffold private staged materializer V2", () => {
     }
 
     assert.deepEqual(manifestHashes, [
-      "9e93924d3da2acf1a349d7663dddaefa8635d0631649dca5299fd09e8c4d1de6",
-      "217b7f5ce71b88ea2c198fc1eb9b6b0dfdacab282c04eb8cd7efac4b0d0b4a6e",
-      "d51d87fd41ae3fb4bc89b1d21e54626b17b0037da772a9d5d51837392d1d7f46",
+      "e4de05ba5910f719656c21dcf2de0569300c9ff2aabd20567304eaffccd2d75d",
+      "f30c83809cbd46216973dd14a3fb6f8485975e3b54893f88e0b3e4a3a5a60f12",
+      "391d6bde7cf4d513f199cee7872f1428f185145ed1eb07b5868b156a23aa2720",
     ]);
     const cliManifest = manifests.get("cli");
     const apiManifest = manifests.get("api");
@@ -1825,9 +1891,9 @@ describe("Node scaffold private staged materializer V2", () => {
     }
 
     assert.deepEqual(logicalBuildHashes, [
-      "ea4ae65de431790bcca99ed50f9285cea934cf350d80f93bb3361f4655b99d84",
-      "094d5a9e5a2a7ab89cbbfd537fde7aabeb64e2dbc281c340b9c12ff4e48b29a5",
-      "9e97c1656bc269192925340df788e5903012f41dbe320bfd8118afe4e8d34711",
+      "4bca861764adf8af19a773c72f917120b5c2a5c50394a1ec59f644fb5b2d3f61",
+      "af7be152b7f815156af7f6ed005c5aaee56b525d62f87da2bb1c7c8aadc48a07",
+      "563e57b001b37ed888443e29f479ad9d8dffe1563d6c9512e269ec55d8b7bc69",
     ]);
   });
 
@@ -1856,6 +1922,14 @@ describe("Node scaffold private staged materializer V2", () => {
         behaviorAuthority: nodeRuntimeBehaviorAuthorityV1,
         sourceLocator: "src/app.ts",
         runtimeKind: "multi_api" as const,
+      },
+      {
+        profileId: API_PROFILE,
+        stackPackId: "node-express-api" as const,
+        productSpec: prerequisiteNodeExpressApiProductSpecV2(),
+        behaviorAuthority: nodeRuntimeBehaviorAuthorityV1,
+        sourceLocator: "src/app.ts",
+        runtimeKind: "prerequisite_api" as const,
       },
       {
         profileId: API_PROFILE,
@@ -2030,6 +2104,146 @@ describe("Node scaffold private staged materializer V2", () => {
         fixture.sourceLocator === "src/cli.ts" ? "cli.ts" : "app.ts",
       );
       const javascript = transpileGeneratedRuntimeV2(generated.sourceText);
+      const testGeneratorInput = {
+        ...generatorInput,
+        runtimeSourceText: generated.sourceText,
+        runtimeSourceReceipt: generated.receipt,
+      };
+      const generatedTest = await generateNodeProductTestSourceV2ForTest(
+        created.handle,
+        testGeneratorInput,
+      );
+      assert.equal(
+        generatedTest.status,
+        "shadow_generated",
+        generatedTest.status === "rejected"
+          ? JSON.stringify(generatedTest.diagnostics)
+          : undefined,
+      );
+      if (generatedTest.status !== "shadow_generated") {
+        throw new Error("Expected generated test source");
+      }
+      assert.equal(
+        NodeProductTestSourceReceiptV2Schema.safeParse(generatedTest.receipt)
+          .success,
+        true,
+      );
+      assert.equal(
+        generatedTest.receipt.authority.runtimeSource.logicalReceiptHash,
+        generated.receipt.logicalReceiptHash,
+      );
+      assert.equal(
+        generatedTest.receipt.authority.runtimeSource.runtimeProgramHash,
+        generated.runtimeProgramHash,
+      );
+      assert.equal(
+        generatedTest.receipt.coverage.testCount,
+        fixture.productSpec.actions.length,
+      );
+      assert.equal(
+        generatedTest.receipt.coverage.evidenceRelationCount,
+        realizationPlan.value.coverage.evidenceRelationCount,
+      );
+      assert.equal(
+        generatedTest.receipt.coverage.coverageBindingCount,
+        fixture.productSpec.actions.length
+          + realizationPlan.value.coverage.evidenceRelationCount,
+      );
+      assert.equal(
+        generatedTest.receipt.coverage.behavior.assertionBindingCount,
+        authorityInput.runtimeBehaviorContract.coverage.runtimeAssertionCount,
+      );
+      assert.equal(
+        generatedTest.receipt.coverage.behavior.entityFieldBindingCount,
+        authorityInput.runtimeBehaviorContract.coverage.entityFieldBindingCount,
+      );
+      if (fixture.runtimeKind === "entity_api") {
+        const entityBinding = generatedTest.receipt.coverage.behavior
+          .entityFieldBindings[0]!;
+        assert.equal(entityBinding.actionRef, "ACT_CREATE_TASK");
+        assert.equal(
+          generatedTest.receipt.coverage.actionTests.find((binding) =>
+            binding.actionRef === entityBinding.actionRef)
+            ?.entityFieldOccurrenceRefs.includes(entityBinding.occurrenceRef),
+          true,
+        );
+      }
+      assert.equal(generatedTest.sourceText.includes("@setfarm-test-coverage-v2"),
+        true);
+      assert.equal(generatedTest.sourceText.includes("fetch("), false);
+      assert.equal(generatedTest.sourceText.includes(".listen("), false);
+      assert.equal(generatedTest.sourceText.includes("process.env"), false);
+      const testSourceBytes = Buffer.from(generatedTest.sourceText, "utf8");
+      for (const member of generatedTest.receipt.coverage.coverageMembers) {
+        const marker = testSourceBytes.subarray(
+          member.sourceSpan.startByte,
+          member.sourceSpan.endByteExclusive,
+        ).toString("utf8");
+        assert.match(marker, new RegExp(member.coverageSymbolRef, "u"));
+        assert.match(marker, new RegExp(member.testRef, "u"));
+        assert.match(marker, new RegExp(member.subjectRef, "u"));
+      }
+      assertRecursivelyFrozen(generatedTest);
+
+      const verifiedTest = await verifyNodeProductTestSourceV2ForTest(
+        created.handle,
+        {
+          ...testGeneratorInput,
+          candidateReceipt: generatedTest.receipt,
+          candidateSourceText: generatedTest.sourceText,
+        },
+      );
+      assert.equal(verifiedTest.receipt.receiptHash,
+        generatedTest.receipt.receiptHash);
+      assert.equal(verifiedTest.sourceText, generatedTest.sourceText);
+      assertRecursivelyFrozen(verifiedTest);
+
+      await typecheckGeneratedTestV2(
+        sandbox,
+        generatedTest.sourceText,
+        fixture.sourceLocator === "src/cli.ts"
+          ? "cli.setfarm.test.ts"
+          : "app.setfarm.test.ts",
+      );
+      const generatedTestJavascript = transpileGeneratedRuntimeV2(
+        generatedTest.sourceText,
+      );
+      const proofRoot = path.join(sandbox, `generated-test-proof-${randomUUID()}`);
+      const proofDist = path.join(proofRoot, "dist");
+      await mkdir(proofDist, { recursive: true, mode: 0o700 });
+      const runtimeOutputPath = path.join(
+        proofDist,
+        fixture.sourceLocator === "src/cli.ts" ? "cli.js" : "app.js",
+      );
+      const testOutputPath = path.join(
+        proofDist,
+        fixture.sourceLocator === "src/cli.ts"
+          ? "cli.setfarm.test.js"
+          : "app.setfarm.test.js",
+      );
+      await Promise.all([
+        writeFile(path.join(proofRoot, "package.json"),
+          "{\"type\":\"module\"}\n", { mode: 0o600 }),
+        writeFile(runtimeOutputPath, javascript, { mode: 0o600 }),
+        writeFile(testOutputPath, generatedTestJavascript, { mode: 0o600 }),
+      ]);
+      const testExecution = spawnSync(process.execPath, [
+        "--test",
+        testOutputPath,
+      ], {
+        cwd: proofRoot,
+        encoding: "utf8",
+        env: {},
+        timeout: 20_000,
+      });
+      assert.equal(
+        testExecution.status,
+        0,
+        `${testExecution.stdout}\n${testExecution.stderr}`,
+      );
+      assert.equal(testExecution.stderr, "");
+      assert.match(testExecution.stdout,
+        new RegExp(`tests ${fixture.productSpec.actions.length}`, "u"));
       if (fixture.runtimeKind === "cli") {
         const modulePath = path.join(
           sandbox,
@@ -2185,6 +2399,77 @@ describe("Node scaffold private staged materializer V2", () => {
           wrongScope.diagnostics[0]?.code,
           "NODE_RUNTIME_SOURCE_V2_PRODUCTION_AUTHORITY_REQUIRED",
         );
+        const wrongTestScope = await generateNodeProductTestSourceV2(
+          created.handle,
+          testGeneratorInput,
+        );
+        assert.equal(wrongTestScope.status, "rejected");
+        assert.equal(
+          wrongTestScope.diagnostics[0]?.code,
+          "NODE_TEST_SOURCE_V2_PRODUCTION_AUTHORITY_REQUIRED",
+        );
+
+        await assert.rejects(
+          verifyNodeProductTestSourceV2ForTest(created.handle, {
+            ...testGeneratorInput,
+            candidateReceipt: generatedTest.receipt,
+            candidateSourceText: `${generatedTest.sourceText}// drift\n`,
+          }),
+          (error: unknown) =>
+            error instanceof NodeProductTestSourceVerificationErrorV2
+            && error.code
+              === "NODE_TEST_SOURCE_V2_VERIFICATION_AUTHORITY_MISMATCH",
+        );
+
+        const omittedEvidenceCoverage = structuredClone(
+          generatedTest.receipt,
+        ) as any;
+        omittedEvidenceCoverage.coverage.actionTests[0].evidenceRefs.pop();
+        omittedEvidenceCoverage.coverage.actionTestMembershipHash =
+          hashNodeProductActionTestMembershipV2(
+            omittedEvidenceCoverage.coverage.actionTests,
+          );
+        omittedEvidenceCoverage.logicalReceiptHash =
+          hashNodeProductTestSourceLogicalReceiptV2(omittedEvidenceCoverage);
+        omittedEvidenceCoverage.receiptHash =
+          hashNodeProductTestSourceReceiptV2(omittedEvidenceCoverage);
+        assert.equal(
+          NodeProductTestSourceReceiptV2Schema.safeParse(
+            omittedEvidenceCoverage,
+          ).success,
+          false,
+        );
+
+        const selfRehashedTest = structuredClone(generatedTest.receipt) as any;
+        selfRehashedTest.authority.buildTopology.logicalBuildHash = "f".repeat(64);
+        selfRehashedTest.logicalReceiptHash =
+          hashNodeProductTestSourceLogicalReceiptV2(selfRehashedTest);
+        selfRehashedTest.receiptHash =
+          hashNodeProductTestSourceReceiptV2(selfRehashedTest);
+        assert.equal(
+          NodeProductTestSourceReceiptV2Schema.safeParse(selfRehashedTest)
+            .success,
+          true,
+        );
+        await assert.rejects(
+          verifyNodeProductTestSourceV2ForTest(created.handle, {
+            ...testGeneratorInput,
+            candidateReceipt: selfRehashedTest,
+            candidateSourceText: generatedTest.sourceText,
+          }),
+          (error: unknown) =>
+            error instanceof NodeProductTestSourceVerificationErrorV2
+            && error.code
+              === "NODE_TEST_SOURCE_V2_VERIFICATION_AUTHORITY_MISMATCH",
+        );
+
+        const extraTestInput = await generateNodeProductTestSourceV2ForTest(
+          created.handle,
+          { ...testGeneratorInput, unexpected: true },
+        );
+        assert.equal(extraTestInput.status, "rejected");
+        assert.equal(extraTestInput.diagnostics[0]?.code,
+          "NODE_TEST_SOURCE_V2_INPUT_INVALID");
 
         await assert.rejects(
           verifyNodeProductRuntimeSourceV2ForTest(created.handle, {
@@ -2305,6 +2590,38 @@ describe("Node scaffold private staged materializer V2", () => {
     );
     assert.equal(rejectedUnsupported.diagnostics[0]?.path,
       "/productSpec/actions/0/navigation");
+
+    const unsupportedEvidenceSpec = twoStoryNodeExpressApiProductSpecV2({
+      memoryOnOriginalStory: true,
+    });
+    const unsupportedEvidenceCreated = await stage({ profileId: API_PROFILE });
+    const unsupportedEvidenceSelection = deliverySelectionForV2(
+      unsupportedEvidenceSpec,
+      "node-express-api",
+    );
+    const rejectedEvidence = await generateNodeProductTestSourceV2ForTest(
+      unsupportedEvidenceCreated.handle,
+      {
+        productSpec: unsupportedEvidenceSpec,
+        deliverySelection: unsupportedEvidenceSelection,
+        runtimeBehaviorProposal: {},
+        runtimeBehaviorContract: {},
+        realizationPlan: {},
+        fileTree: {},
+        buildTopology: {},
+        runtimeSourceText: "x",
+        runtimeSourceReceipt: {},
+      },
+    );
+    assert.equal(rejectedEvidence.status, "rejected");
+    assert.equal(
+      rejectedEvidence.diagnostics[0]?.code,
+      "NODE_TEST_SOURCE_V2_EVIDENCE_KIND_REJECTED",
+    );
+    assert.match(
+      rejectedEvidence.diagnostics[0]?.message ?? "",
+      /persistence_round_trip.*never fake or silently omit evidence/u,
+    );
   });
 
   it("transitions every legacy Node entrypoint slot to one generator-owned whole-file authority", async () => {

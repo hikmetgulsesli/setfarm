@@ -1002,8 +1002,6 @@ function compileInternal(
       blockerCodes: [...PRODUCT_RUNTIME_BEHAVIOR_BLOCKER_CODES_V1] as [
         typeof PRODUCT_RUNTIME_BEHAVIOR_BLOCKER_CODES_V1[0],
         typeof PRODUCT_RUNTIME_BEHAVIOR_BLOCKER_CODES_V1[1],
-        typeof PRODUCT_RUNTIME_BEHAVIOR_BLOCKER_CODES_V1[2],
-        typeof PRODUCT_RUNTIME_BEHAVIOR_BLOCKER_CODES_V1[3],
       ],
     },
     authority: {

@@ -250,7 +250,7 @@ function unsupportedBehaviorDiagnosticsV2(
   return Object.freeze(diagnostics.slice(0, MAX_DIAGNOSTICS_V2));
 }
 
-type RuntimeProgramV2 = Readonly<{
+export type NodeProductRuntimeProgramV2 = Readonly<{
   schema: "setfarm.node-product-runtime-program.v2";
   programVersion: "2.0.0";
   runtimeProgramContractHash: string;
@@ -321,12 +321,12 @@ type RuntimeProgramV2 = Readonly<{
   }>[];
 }>;
 
-function buildRuntimeProgramV2(
+export function projectNodeProductRuntimeProgramV2(
   productSpec: ProductSpecV2,
   runtimeBehaviorContract: Readonly<ProductRuntimeBehaviorContractV1>,
   transportSet: Readonly<InvocationInputTransportSetV2>,
-  profileId: RuntimeProgramV2["profileId"],
-): RuntimeProgramV2 {
+  profileId: NodeProductRuntimeProgramV2["profileId"],
+): NodeProductRuntimeProgramV2 {
   const transportByAction = new Map(transportSet.contracts.map((contract) =>
     [contract.actionRef, contract] as const));
   const assertions = runtimeBehaviorContract.invariantBindings.flatMap((binding) =>
@@ -1231,7 +1231,7 @@ function runtimeBehaviorSourceCoverageV2(
 }
 
 function generatedSourceV2(
-  program: RuntimeProgramV2,
+  program: NodeProductRuntimeProgramV2,
   memberDrafts: readonly SourceMemberDraftV2[],
 ): Readonly<{
   sourceText: string;
@@ -1510,7 +1510,7 @@ async function generateInternalV2(
       transportSet: transportResult.contractSet,
     });
 
-    const program = buildRuntimeProgramV2(
+    const program = projectNodeProductRuntimeProgramV2(
       productSpec,
       verifiedBehaviorContract,
       transportResult.contractSet,
