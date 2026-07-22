@@ -529,7 +529,7 @@ async function withProductionPrivateTree<T>(
 
 /**
  * Production operation binding only. It is intentionally not wired to the main
- * Setfarm CLI; a later root-owned bootstrap package must own process startup.
+ * Setfarm CLI; the separately installed root-owned bootstrap owns startup.
  */
 export function createProductionNodeToolchainProvisionerCliOperationsV2():
 NodeToolchainProvisionerCliOperationsV2 {

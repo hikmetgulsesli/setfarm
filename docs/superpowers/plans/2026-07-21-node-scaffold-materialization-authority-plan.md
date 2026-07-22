@@ -2,9 +2,9 @@
 
 Date: 2026-07-21
 
-Status: F1, F2A, and the F2B2c publisher/durable-receipt/F2A join are complete
-on the feature branch. The root-owned installer command state machine and real
-production-root verification remain next; production NO-GO.
+Status: F1, F2A, the F2B publisher/command/bootstrap lifecycle, and the
+official-runtime packaged-CLI rehearsal are complete on the feature branch.
+Production-root activation remains NO-GO; F3 effective npm authority is next.
 
 ## Goal
 
@@ -81,11 +81,12 @@ rewrite the static catalog into an active receipt claim.
 
 ## F2 — Exact host Node/npm toolchain admission
 
-Status: F2A identity/consumer authority began in `e22f04be`, requires the
-durable F2B2c provisioning join from `c090d816`, and now has the isolated
-inspect/plan/apply/verify/rollback authority core through `dd2dc9de`.
-Separately packaged root bootstrap/CLI, production installation, and a real
-official-tree production transition remain blocking.
+Status: F2A identity/consumer authority began in `e22f04be`, joined the durable
+F2B2c provisioner in `c090d816`, and now includes the complete isolated
+inspect/plan/apply/verify/rollback plus packaged bootstrap lifecycle through
+`e5f0b033` and `38cc9f36`. Only the controlled root-owned production transition
+remains blocking for live activation; it is not a prerequisite for implementing
+F3 in private authority fixtures.
 
 New versioned schemas:
 
@@ -153,12 +154,11 @@ can mutate the tree again.
 ### F2B — Code-owned distribution and root-owned provisioning receipt
 
 Status: F2B1 distribution verification, F2B2a archive inventory, F2B2b private
-materialization, and the F2B2c root publisher/durable receipt/F2A join are
-complete in shadow/test evidence. The pathless operational command schemas and
-inspect/plan/apply/verify/rollback core are also complete against isolated
-process-owned roots. A separately installed root bootstrap/CLI, real official
-archive-to-production-root execution, and production-root receipt remain
-required before F2 is complete.
+materialization, F2B2c root publisher/durable receipt/F2A join, the pathless
+operational command state machine, bootstrap install/rollback, and an actual
+official-runtime packaged-CLI rehearsal are complete in isolated evidence.
+Real archive-to-root:wheel activation and its production receipt remain a later
+controlled migration gate.
 
 The selected source is the official Node `22.23.1` Darwin distribution, not the
 mutable Homebrew tree. Primary distribution evidence on 2026-07-21 established:
@@ -309,12 +309,35 @@ F2B1/B2a/B2b/B2c evidence completed on 2026-07-22:
   tombstones fail closed or converge exactly. Canonical predecessor tombstones
   remain durable and are part of fresh read-only installation inspection, so an
   old target-absent plan cannot cross a later generation;
+- commits `e5f0b033` and `38cc9f36` completed the packaged bootstrap rehearsal
+  boundary. The installed entrypoint now selects production only for the fixed
+  root-owned manifest path; any other admitted package must be a schema-sealed
+  `test_fixture` under the exact private `bootstrap/`, `toolchains/`, and
+  `scratch/` sibling layout. Those directories are derived from the verified
+  package root, never accepted from launcher argv or ambient environment. Test
+  operations can issue only test-scoped plans/receipts, while their archive
+  bytes must still equal the code-owned official Node artifact length and
+  SHA-256. The entrypoint removes only Darwin's automatically injected
+  `__CF_USER_TEXT_ENCODING` before enforcing the every-and-only launcher
+  environment; every other ambient key remains a rejection;
+- the real arm64 rehearsal downloaded the official 25,962,500-byte archive and
+  reproduced SHA-256
+  `fb526811860f81dcac7dd8b2b55eca4accfc5d61c3b7c2508f2639faee8a738d`.
+  An authenticated bundle was compiled with that archive's actual Node
+  `22.23.1` runtime, prepared, installed, and invoked only through its installed
+  launcher. Eight canonical child-process outputs passed in order: initial
+  inspect, apply plan, apply, verify, rollback plan, rollback, rollback replay,
+  and final inspect. Provisioner and bootstrap rollback both completed, the
+  final classification was `target_absent`, and the process-owned rehearsal
+  root was removed exactly. Canonical rehearsal receipt hash:
+  `d8006ce2bb809bad2138dcd18d279b8edf94f7374f700de275d85196af64ab95`;
 - final command/rollback/CLI-focused evidence is 23/23; the combined distribution,
   inventory, private-tree, host, provisioning, and command chain is 56/56.
   After authenticated compile, prepared publication, isolated bootstrap
-  installation, rollback, and reinstall, the focused lifecycle file is 31/31
-  and the complete Product Compiler suite exits 0. Scripts are 24/24, with
-  TypeScript, English (1,072 files), path (600 files), and diff checks clean.
+  installation, rollback, reinstall, and official-runtime rehearsal, the
+  focused lifecycle file is 30/30 and the complete Product Compiler suite is
+  987/987 across 121 suites. Scripts are 24/24, with TypeScript, English (1,075
+  files), path (603 files), and diff checks clean.
   No production toolchain root, live DB/PR/service, generated repository, or
   Setfarm run was mutated.
 
@@ -337,8 +360,8 @@ F2B dependency chain is:
    final root, Node bytes, and normalized npm tree before `production_host`
    authority can be issued. Merely creating the fixed directory or making a
    binary self-report the expected version is invalid;
-5. **Complete isolated installation and rollback authority, pending packaged-CLI
-   rehearsal:** the separately packaged root launcher/manifest,
+5. **Complete isolated installation, rollback, and packaged-CLI rehearsal:** the
+   separately packaged root launcher/manifest,
    installed-root verifier, authenticated reproducible bundle handle,
    handle-only compiler, and private prepared-package publisher now exist. The
    prepared publisher deliberately does not impersonate an installed package:
@@ -355,12 +378,13 @@ F2B dependency chain is:
    state, aliases, source drift, stale decision expansion, forged handles and
    test-to-production promotion fail closed. `9161f681` additionally retains
    canonical predecessor tombstones, fences stale install plans across
-   generations, and provides exact rollback/rehydration/replay. All mutation
-   evidence is still process-owned test-fixture storage. The next owner must
-   execute the packaged CLI through the official runtime in a complete isolated
-   install/open/inspect/apply/verify/rollback/cleanup rehearsal before any
-   production root or OS-update transition. No installer action will run
-   automatically from a Setfarm product attempt.
+   generations, and provides exact rollback/rehydration/replay. `e5f0b033` then
+   ran the packaged CLI through the official runtime in a complete isolated
+   install/open/inspect/apply/verify/rollback/replay/cleanup rehearsal and issued
+   one versioned receipt. All mutation evidence remains process-owned
+   test-fixture storage. No installer action will run automatically from a
+   Setfarm product attempt; root:wheel activation remains a separately reviewed
+   migration operation.
 
 F2 completion does not authorize `npm ci`; it only creates the exact toolchain
 precondition consumed by F3/F4. F2A alone is deliberately insufficient.
@@ -452,12 +476,11 @@ F2-F4 additionally require focused real-filesystem, process, PostgreSQL and
 concurrency tests. A clean merged-`main` `npm run build` and full `npm test`
 remain release evidence; the feature-branch build guard is never bypassed.
 
-GO for F1 and the isolated F2B publisher/rehydration/host-join, authenticated
-bootstrap compile, prepared-package authority, and isolated bootstrap installer.
-NO-GO for production host execution, dependency installation, setup cutover,
-PacketV4, live migration, deploy and new clean product runs until bootstrap
-rollback plus official-runtime rehearsal, real-root verification, F3-F5, and
-the later packet/evidence program are complete. The feature-branch `npm run
+GO for F1 and the complete isolated F2 authority through official-runtime
+packaged bootstrap rehearsal. NO-GO for production host execution, dependency
+installation, setup cutover, PacketV4, live migration, deploy and new clean
+product runs until real-root verification, F3-F5, and the later packet/evidence
+program are complete. The feature-branch `npm run
 build` guard correctly refused `b4bc3bd9`; the resulting source-v26 versus
 committed-dist-v25 mismatch also prevents `dist`-importing full step tests from
 being release evidence on this branch. Only a clean merged-main build and full
