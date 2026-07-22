@@ -58,9 +58,14 @@ import {
   inspectNodeScaffoldExecutionEnvironmentReceiptV2,
   isProductionNodeScaffoldExecutionEnvironmentV2,
   revalidateNodeScaffoldExecutionEnvironmentV2,
+  destroyNodeScaffoldExecutionEnvironmentV2,
+  executeNodeScaffoldEnvironmentBuildV2,
   executeNodeScaffoldEnvironmentNpmCiV2,
   type NodeScaffoldExecutionEnvironmentV2,
 } from "./node-scaffold-execution-environment-v2.js";
+import type {
+  HostNodeToolchainBuildCompilerTargetV2,
+} from "./host-node-toolchain-authority-v2.js";
 import {
   BUILD_DEPENDENCY_MATERIALIZATION_RECEIPT_V2_SCHEMA,
   PRIVATE_STAGED_MATERIALIZER_AUTHORITY_REF_V2,
@@ -170,6 +175,8 @@ export type NodeScaffoldPrivateMaterializerErrorCodeV2 =
   | "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_SOURCE_ALREADY_CONSUMED"
   | "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_SOURCE_AUTHORITY_INVALID"
   | "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_SOURCE_MATERIALIZATION_FAILED"
+  | "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_BUILD_ALREADY_CONSUMED"
+  | "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_BUILD_OUTPUT_INVALID"
   | "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DESTROYED";
 
 export class NodeScaffoldPrivateMaterializerErrorV2 extends Error {
@@ -316,6 +323,37 @@ type SourceMaterializationCaptureV1 = Readonly<{
   membershipHash: string;
 }>;
 
+export type NodeCandidateBuildOutputFileV2 = Readonly<{
+  normalizedLocator:
+    | "dist/app.js"
+    | "dist/app.setfarm.test.js"
+    | "dist/cli.js"
+    | "dist/cli.setfarm.test.js";
+  mode: "0444";
+  executable: false;
+  contentHash: string;
+  byteLength: number;
+  physicalIdentityHash: string;
+}>;
+
+export type NodeCandidateBuildOutputV2 = Readonly<{
+  admissionScope: "production_host" | "test_fixture";
+  profileId: NodeScaffoldProfileIdV2;
+  pathDisclosure: "forbidden";
+  sourceMaterializationReceiptHash: string;
+  dependencyReceiptHash: string;
+  dependencyIdentityHash: string;
+  memberCount: 2;
+  files: readonly [NodeCandidateBuildOutputFileV2, NodeCandidateBuildOutputFileV2];
+  membershipHash: string;
+  tree: CanonicalRuntimeTreeV2;
+}>;
+
+type CandidateBuildOutputCaptureV2 = Readonly<{
+  value: NodeCandidateBuildOutputV2;
+  metadataProbe: CanonicalRuntimeMetadataProbeV2;
+}>;
+
 type SourceCasRevalidationAuthorityV1 = Readonly<{
   casAuthority: DeepByteBundleCasAuthorityV2;
   sources: readonly PublishedSourceArtifactAuthorityV1[];
@@ -330,12 +368,17 @@ type MutableLifecycleV2 = {
     | "dependencies_ready"
     | "source_claimed"
     | "sources_ready"
+    | "build_claimed"
+    | "building"
+    | "build_process_consumed"
+    | "build_ready"
     | "destroyed";
   dependencyReceipt?: BuildDependencyMaterializationReceiptV2;
   dependencyCapture?: DependencyMaterializationCaptureV2;
   sourceReceipt?: NodeProductSourceMaterializationReceiptV1;
   sourceCapture?: SourceMaterializationCaptureV1;
   sourceAuthority?: SourceCasRevalidationAuthorityV1;
+  buildOutput?: CandidateBuildOutputCaptureV2;
 };
 
 type PrivateStageStateV2 = Readonly<{
@@ -1776,21 +1819,25 @@ function codeOwnedDarwinMetadataProbeV2(
 const clearTestMetadataProbeV2: CanonicalRuntimeMetadataProbeV2 = () =>
   Object.freeze({ status: "clear" as const });
 
-function syncNormalizedTreeV2(absolutePath: string): void {
+function syncNormalizedTreeV2(
+  absolutePath: string,
+  errorCode: NodeScaffoldPrivateMaterializerErrorCodeV2 =
+    "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_CAPSULE_INVALID",
+): void {
   const stat = lstatSync(absolutePath);
   if (stat.isSymbolicLink()) {
     return fail(
-      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_CAPSULE_INVALID",
+      errorCode,
       "Metadata normalization encountered a forbidden symbolic link",
     );
   }
   if (stat.isDirectory()) {
     for (const name of readdirSync(absolutePath).sort()) {
-      syncNormalizedTreeV2(path.join(absolutePath, name));
+      syncNormalizedTreeV2(path.join(absolutePath, name), errorCode);
     }
   } else if (!stat.isFile()) {
     return fail(
-      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_CAPSULE_INVALID",
+      errorCode,
       "Metadata normalization encountered a forbidden special file",
     );
   }
@@ -1803,7 +1850,11 @@ function syncNormalizedTreeV2(absolutePath: string): void {
   }
 }
 
-function normalizeCodeOwnedDarwinMetadataV2(root: string): void {
+function normalizeCodeOwnedDarwinMetadataV2(
+  root: string,
+  errorCode: NodeScaffoldPrivateMaterializerErrorCodeV2 =
+    "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_CAPSULE_INVALID",
+): void {
   const environment = Object.freeze({ LANG: "C", LC_ALL: "C", PATH: "/usr/bin:/bin" });
   try {
     execFileSync("/bin/chmod", ["-RN", root], {
@@ -1827,7 +1878,7 @@ function normalizeCodeOwnedDarwinMetadataV2(root: string): void {
   } catch (error) {
     if (error instanceof NodeScaffoldPrivateMaterializerErrorV2) throw error;
     return fail(
-      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_CAPSULE_INVALID",
+      errorCode,
       "Code-owned Darwin xattr and ACL normalization failed",
     );
   }
@@ -2094,6 +2145,7 @@ function normalizeDependencyCapsuleV2(input: Readonly<{
 function captureScaffoldAssetsAfterInstallV2(
   state: PrivateStageStateV2,
   sourceState: "absent" | "present" = "absent",
+  outputState: "absent" | "present" = "absent",
 ): string {
   const root = lstatSync(state.privateRoot);
   const project = lstatSync(state.projectRoot);
@@ -2120,6 +2172,7 @@ function captureScaffoldAssetsAfterInstallV2(
         "node_modules",
         "package-lock.json",
         "package.json",
+        ...(outputState === "present" ? ["dist"] : []),
         ...(sourceState === "present" ? ["src"] : []),
         "tsconfig.json",
       ].sort(),
@@ -2133,6 +2186,9 @@ function captureScaffoldAssetsAfterInstallV2(
   assertMissingPathV2(path.join(state.projectRoot, ".npmrc"), "Installed project .npmrc");
   if (sourceState === "absent") {
     assertMissingPathV2(path.join(state.projectRoot, "src"), "Installed project source directory");
+  }
+  if (outputState === "absent") {
+    assertMissingPathV2(path.join(state.projectRoot, "dist"), "Candidate build output directory");
   }
   const assets = state.receipt.assets.map((asset) => Object.freeze({
     role: asset.role,
@@ -2909,6 +2965,8 @@ export function inspectBuildDependencyMaterializationReceiptV2(
       "dependencies_ready",
       "source_claimed",
       "sources_ready",
+      "build_process_consumed",
+      "build_ready",
     ].includes(state.lifecycle.status)
     || !state.lifecycle.dependencyReceipt
     || !state.lifecycle.dependencyCapture
@@ -2932,6 +2990,8 @@ export async function revalidateNodeScaffoldDependenciesV2(
       "dependencies_ready",
       "source_claimed",
       "sources_ready",
+      "build_process_consumed",
+      "build_ready",
     ].includes(state.lifecycle.status)
     || !receipt
     || !prior
@@ -2951,7 +3011,10 @@ export async function revalidateNodeScaffoldDependenciesV2(
     }
     const endMembership = captureScaffoldAssetsAfterInstallV2(
       state,
-      state.lifecycle.status === "sources_ready" ? "present" : "absent",
+      ["sources_ready", "build_process_consumed", "build_ready"]
+        .includes(state.lifecycle.status) ? "present" : "absent",
+      ["build_process_consumed", "build_ready"]
+        .includes(state.lifecycle.status) ? "present" : "absent",
     );
     const raw = captureRawDependenciesV2({ projectRoot: state.projectRoot, entry });
     if (
@@ -3305,6 +3368,7 @@ function capturePhysicalSourceV1(input: Readonly<{
 function captureSourceMaterializationV1(input: Readonly<{
   state: PrivateStageStateV2;
   sources: readonly NodeProductSourceMaterializationEntryV1[];
+  outputState?: "absent" | "present";
 }>): SourceMaterializationCaptureV1 {
   const dependency = input.state.lifecycle.dependencyReceipt;
   if (!dependency) {
@@ -3316,6 +3380,7 @@ function captureSourceMaterializationV1(input: Readonly<{
   const baseMembership = captureScaffoldAssetsAfterInstallV2(
     input.state,
     "present",
+    input.outputState ?? "absent",
   );
   if (baseMembership !== dependency.scaffoldBase.endBaseFileMembershipHash) {
     return fail(
@@ -3421,6 +3486,7 @@ function materializationEntryV1(
 function assertDependencyStateForSourceV1(
   state: PrivateStageStateV2,
   sourceState: "absent" | "present",
+  outputState: "absent" | "present" = "absent",
 ): void {
   const dependency = state.lifecycle.dependencyReceipt;
   const prior = state.lifecycle.dependencyCapture;
@@ -3437,7 +3503,11 @@ function assertDependencyStateForSourceV1(
       "Source materialization profile lost its code-owned dependency entry",
     );
   }
-  const baseMembership = captureScaffoldAssetsAfterInstallV2(state, sourceState);
+  const baseMembership = captureScaffoldAssetsAfterInstallV2(
+    state,
+    sourceState,
+    outputState,
+  );
   const raw = captureRawDependenciesV2({ projectRoot: state.projectRoot, entry });
   const capsule = verifyCanonicalRuntimeTreeV2({
     root: state.dependencyCapsuleRoot,
@@ -3798,8 +3868,11 @@ export async function revalidateNodeProductSourcesV1(
   const sourceAuthority = state.lifecycle.sourceAuthority;
   const dependency = state.lifecycle.dependencyReceipt;
   const dependencyCapture = state.lifecycle.dependencyCapture;
+  const outputState = ["build_process_consumed", "build_ready"]
+    .includes(state.lifecycle.status) ? "present" as const : "absent" as const;
   if (
-    state.lifecycle.status !== "sources_ready"
+    !["sources_ready", "build_process_consumed", "build_ready"]
+      .includes(state.lifecycle.status)
     || !receipt
     || !priorCapture
     || !sourceAuthority
@@ -3813,7 +3886,7 @@ export async function revalidateNodeProductSourcesV1(
   }
   const recaptured: CapturedPublishedSourceV1[] = [];
   try {
-    assertDependencyStateForSourceV1(state, "present");
+    assertDependencyStateForSourceV1(state, "present", outputState);
     const reads = await Promise.allSettled(sourceAuthority.sources.map((source) =>
       capturePublishedSourceAuthorityV1(sourceAuthority.casAuthority, source)));
     for (const result of reads) {
@@ -3830,6 +3903,7 @@ export async function revalidateNodeProductSourcesV1(
     const freshCapture = captureSourceMaterializationV1({
       state,
       sources: receipt.sources,
+      outputState,
     });
     if (
       freshCapture.directoryPhysicalIdentityHash
@@ -3876,6 +3950,420 @@ export async function revalidateNodeProductSourcesV1(
   } finally {
     for (const source of recaptured) source.bytes.fill(0);
   }
+}
+
+export type NodeScaffoldPrivateBuildScopeInternalV2 = Readonly<{
+  admissionScope: "production_host" | "test_fixture";
+  profileId: NodeScaffoldProfileIdV2;
+  projectRoot: string;
+  scaffoldBaseReceiptHash: string;
+  sourceMaterializationReceiptHash: string;
+  dependencyReceiptHash: string;
+  dependencyIdentityHash: string;
+  compilerTarget: HostNodeToolchainBuildCompilerTargetV2;
+}>;
+
+/** @internal Authenticated bridge used only by the execution-environment boundary. */
+export async function acquireNodeScaffoldPrivateBuildScopeInternalV2(
+  handle: MaterializedNodeScaffoldPrivateStageV2,
+  expectedEnvironmentReceiptHash: string,
+): Promise<NodeScaffoldPrivateBuildScopeInternalV2> {
+  const state = activeStageStateV2(handle);
+  if (state.lifecycle.status !== "sources_ready") {
+    return fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_BUILD_ALREADY_CONSUMED",
+      "Private candidate build requires one source-ready single-use stage",
+    );
+  }
+  if (state.receipt.environmentBinding.receiptHash !== expectedEnvironmentReceiptHash) {
+    return fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_ENVIRONMENT_INVALID",
+      "Private candidate build and execution environment receipts do not join",
+    );
+  }
+  const [source, dependency, environment] = await Promise.all([
+    revalidateNodeProductSourcesV1(handle),
+    revalidateNodeScaffoldDependenciesV2(handle),
+    revalidateNodeScaffoldExecutionEnvironmentV2(state.environment),
+  ]);
+  if (
+    state.lifecycle.status !== "sources_ready"
+    || environment.receiptHash !== expectedEnvironmentReceiptHash
+    || dependency.receiptHash !== source.scaffold.dependencyReceiptHash
+    || dependency.dependencyIdentityHash !== source.scaffold.dependencyIdentityHash
+  ) {
+    return fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_STATE_DRIFT",
+      "Candidate source, dependency and environment authority changed before build claim",
+    );
+  }
+  const compilers = dependency.installedBins.entries.filter((entry) =>
+    entry.commandName === "tsc"
+    && entry.packagePath === "node_modules/typescript"
+    && entry.linkLocator === "node_modules/.bin/tsc"
+    && entry.targetLocator === "node_modules/typescript/bin/tsc");
+  if (compilers.length !== 1) {
+    return fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_STATE_DRIFT",
+      "Candidate build dependency authority lacks one exact TypeScript compiler target",
+    );
+  }
+  const compiler = compilers[0]!;
+  const compilerTarget: HostNodeToolchainBuildCompilerTargetV2 = Object.freeze({
+    executableRef: "TOOL_NODE_TYPESCRIPT_TSC_V2",
+    exactVersion: "5.9.3",
+    commandName: "tsc",
+    packagePath: "node_modules/typescript",
+    linkLocator: "node_modules/.bin/tsc",
+    targetLocator: "node_modules/typescript/bin/tsc",
+    linkTargetHash: compiler.linkTargetHash,
+    targetContentHash: compiler.targetContentHash,
+    executionDisposition: "direct_target_via_authenticated_node_runtime",
+  });
+  state.lifecycle.status = "build_claimed";
+  state.lifecycle.status = "building";
+  return Object.freeze({
+    admissionScope: state.admissionScope,
+    profileId: state.profileId,
+    projectRoot: state.projectRoot,
+    scaffoldBaseReceiptHash: state.receipt.receiptHash,
+    sourceMaterializationReceiptHash: source.receiptHash,
+    dependencyReceiptHash: dependency.receiptHash,
+    dependencyIdentityHash: dependency.dependencyIdentityHash,
+    compilerTarget,
+  });
+}
+
+/** @internal Consumes the one-shot candidate-build stage lease on every process outcome. */
+export function settleNodeScaffoldPrivateBuildScopeInternalV2(
+  handle: MaterializedNodeScaffoldPrivateStageV2,
+  scaffoldBaseReceiptHash: string,
+): void {
+  const state = activeStageStateV2(handle);
+  if (
+    state.lifecycle.status !== "building"
+    || state.receipt.receiptHash !== scaffoldBaseReceiptHash
+  ) {
+    return fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_STATE_DRIFT",
+      "Private candidate-build lease cannot be settled from this state",
+    );
+  }
+  state.lifecycle.status = "build_process_consumed";
+}
+
+/** @internal Runs the only build operation through the stage-owned environment. */
+export function executeNodeCandidateBuildProcessInternalV2(
+  handle: MaterializedNodeScaffoldPrivateStageV2,
+) {
+  const state = activeStageStateV2(handle);
+  return executeNodeScaffoldEnvironmentBuildV2(state.environment, handle);
+}
+
+/** @internal Removes both authenticated private roots after a failed build attempt. */
+export function destroyNodeCandidateBuildAttemptInternalV2(
+  handle: MaterializedNodeScaffoldPrivateStageV2,
+): void {
+  const state = authenticStageStateV2(handle);
+  let stageError: unknown;
+  let environmentError: unknown;
+  try {
+    destroyNodeScaffoldPrivateStageV2(handle);
+  } catch (error) {
+    stageError = error;
+  }
+  try {
+    destroyNodeScaffoldExecutionEnvironmentV2(state.environment);
+  } catch (error) {
+    environmentError = error;
+  }
+  if (stageError !== undefined || environmentError !== undefined) {
+    return fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_STATE_DRIFT",
+      "Candidate build failure cleanup could not remove both authenticated private roots",
+      { stageError, environmentError },
+    );
+  }
+}
+
+function candidateBuildOutputNamesV2(
+  profileId: NodeScaffoldProfileIdV2,
+): readonly [string, string] {
+  return profileId === "PROFILE_NODE_CLI_STATELESS_EXACT_V2"
+    ? Object.freeze(["cli.js", "cli.setfarm.test.js"] as const)
+    : Object.freeze(["app.js", "app.setfarm.test.js"] as const);
+}
+
+function captureCandidateBuildOutputFilesV2(input: Readonly<{
+  state: PrivateStageStateV2;
+  sealed: boolean;
+}>): readonly [NodeCandidateBuildOutputFileV2, NodeCandidateBuildOutputFileV2] {
+  const root = path.join(input.state.projectRoot, "dist");
+  const owner = processOwnerV2();
+  try {
+    const rootStat = lstatSync(root);
+    const names = readdirSync(root).sort();
+    const expectedNames = candidateBuildOutputNamesV2(input.state.profileId);
+    const rootMode = modeBits(rootStat);
+    if (
+      rootStat.isSymbolicLink()
+      || !rootStat.isDirectory()
+      || realpathSync(root) !== root
+      || rootStat.uid !== owner.uid
+      || rootStat.gid !== owner.gid
+      || (input.sealed
+        ? rootMode !== 0o555
+        : ![0o700, 0o755].includes(rootMode))
+      || !sameStringsV2(names, [...expectedNames])
+    ) {
+      return fail(
+        "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_BUILD_OUTPUT_INVALID",
+        "Candidate build output root is not the exact profile-owned dist topology",
+      );
+    }
+    const files = names.map((name) => {
+      const absolutePath = path.join(root, name);
+      let descriptor: number | undefined;
+      try {
+        descriptor = openSync(
+          absolutePath,
+          constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+        );
+        const before = fstatSync(descriptor);
+        if (before.size <= 0 || before.size > 32 * 1024 * 1024) {
+          return fail(
+            "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_BUILD_OUTPUT_INVALID",
+            `Candidate build output ${name} has an invalid byte length`,
+          );
+        }
+        const bytes = readFileSync(descriptor);
+        const after = fstatSync(descriptor);
+        const pathAfter = lstatSync(absolutePath);
+        const mode = modeBits(after);
+        const fileFingerprint = fingerprint(after);
+        if (
+          !before.isFile()
+          || before.isSymbolicLink()
+          || before.nlink !== 1
+          || before.uid !== owner.uid
+          || before.gid !== owner.gid
+          || (input.sealed
+            ? mode !== 0o444
+            : ![0o600, 0o640, 0o644].includes(mode))
+          || !sameFingerprint(fingerprint(before), fileFingerprint)
+          || !sameFingerprint(fileFingerprint, fingerprint(pathAfter))
+          || bytes.byteLength !== after.size
+        ) {
+          return fail(
+            "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_BUILD_OUTPUT_INVALID",
+            `Candidate build output ${name} is not one stable process-owned regular file`,
+          );
+        }
+        const normalizedLocator = `dist/${name}` as
+          NodeCandidateBuildOutputFileV2["normalizedLocator"];
+        const contentHash = sha256(bytes);
+        return Object.freeze({
+          normalizedLocator,
+          mode: "0444" as const,
+          executable: false as const,
+          contentHash,
+          byteLength: bytes.byteLength,
+          physicalIdentityHash: hashCanonicalJson({
+            schema: "setfarm.node-candidate-build-output-physical-file.v2",
+            normalizedLocator,
+            fingerprint: fileFingerprint,
+            contentHash,
+          }),
+        });
+      } finally {
+        if (descriptor !== undefined) closeSync(descriptor);
+      }
+    });
+    return Object.freeze(files) as readonly [
+      NodeCandidateBuildOutputFileV2,
+      NodeCandidateBuildOutputFileV2,
+    ];
+  } catch (error) {
+    if (error instanceof NodeScaffoldPrivateMaterializerErrorV2) throw error;
+    return fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_BUILD_OUTPUT_INVALID",
+      "Candidate build output could not be captured",
+      error,
+    );
+  }
+}
+
+function candidateBuildOutputMembershipHashV2(
+  files: readonly NodeCandidateBuildOutputFileV2[],
+): string {
+  return hashCanonicalJson({
+    schema: "setfarm.node-candidate-build-output-membership.v2",
+    files: files.map((file) => ({
+      normalizedLocator: file.normalizedLocator,
+      contentHash: file.contentHash,
+      byteLength: file.byteLength,
+    })),
+  });
+}
+
+async function finalizeNodeCandidateBuildOutputInternalV2(
+  handle: MaterializedNodeScaffoldPrivateStageV2,
+  expectedScope: "production_host" | "test_fixture",
+): Promise<NodeCandidateBuildOutputV2> {
+  const state = activeStageStateV2(handle);
+  if (
+    state.admissionScope !== expectedScope
+    || state.lifecycle.status !== "build_process_consumed"
+    || !state.lifecycle.sourceReceipt
+    || !state.lifecycle.dependencyReceipt
+  ) {
+    return fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_BUILD_ALREADY_CONSUMED",
+      "Candidate build output finalization requires one matching consumed build process",
+    );
+  }
+  await revalidateNodeProductSourcesV1(handle);
+  const raw = captureCandidateBuildOutputFilesV2({ state, sealed: false });
+  const outputRoot = path.join(state.projectRoot, "dist");
+  const metadataProbe = expectedScope === "production_host"
+    ? codeOwnedDarwinMetadataProbeV2
+    : clearTestMetadataProbeV2;
+  if (expectedScope === "production_host") {
+    normalizeCodeOwnedDarwinMetadataV2(
+      outputRoot,
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_BUILD_OUTPUT_INVALID",
+    );
+  }
+  for (const name of candidateBuildOutputNamesV2(state.profileId)) {
+    chmodSync(path.join(outputRoot, name), 0o444);
+  }
+  chmodSync(outputRoot, 0o555);
+  syncNormalizedTreeV2(
+    outputRoot,
+    "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_BUILD_OUTPUT_INVALID",
+  );
+  const sealed = captureCandidateBuildOutputFilesV2({ state, sealed: true });
+  if (raw.some((file, index) =>
+    file.normalizedLocator !== sealed[index]?.normalizedLocator
+    || file.contentHash !== sealed[index]?.contentHash
+    || file.byteLength !== sealed[index]?.byteLength)) {
+    return fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_BUILD_OUTPUT_INVALID",
+      "Candidate build output bytes changed during normalization",
+    );
+  }
+  const tree = expectedScope === "production_host"
+    ? captureCanonicalRuntimeTreeV2({
+        root: outputRoot,
+        profile: "dist",
+        metadataProbe,
+      })
+    : captureCanonicalRuntimeTreeV2ForTest({
+        root: outputRoot,
+        profile: "dist",
+        metadataProbe,
+      });
+  const treeFiles = tree.entries.filter((entry) => entry.type === "file");
+  if (
+    tree.fileCount !== 2
+    || tree.directoryCount !== 0
+    || treeFiles.length !== 2
+    || treeFiles.some((entry, index) => {
+      const expected = sealed[index];
+      return !expected
+        || `dist/${entry.path}` !== expected.normalizedLocator
+        || entry.mode !== "0444"
+        || entry.executable !== false
+        || entry.contentHash !== expected.contentHash
+        || entry.byteLength !== expected.byteLength;
+    })
+  ) {
+    return fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_BUILD_OUTPUT_INVALID",
+      "Canonical runtime tree does not equal every-and-only profile build output",
+    );
+  }
+  const dependency = state.lifecycle.dependencyReceipt;
+  const source = state.lifecycle.sourceReceipt;
+  const value: NodeCandidateBuildOutputV2 = deepFreezeJson({
+    admissionScope: state.admissionScope,
+    profileId: state.profileId,
+    pathDisclosure: "forbidden" as const,
+    sourceMaterializationReceiptHash: source.receiptHash,
+    dependencyReceiptHash: dependency.receiptHash,
+    dependencyIdentityHash: dependency.dependencyIdentityHash,
+    memberCount: 2 as const,
+    files: sealed,
+    membershipHash: candidateBuildOutputMembershipHashV2(sealed),
+    tree,
+  });
+  state.lifecycle.buildOutput = Object.freeze({ value, metadataProbe });
+  state.lifecycle.status = "build_ready";
+  return defensiveCopy(value);
+}
+
+export function finalizeNodeCandidateBuildOutputV2(
+  handle: MaterializedNodeScaffoldPrivateStageV2,
+): Promise<NodeCandidateBuildOutputV2> {
+  if (!isProductionNodeScaffoldPrivateStageV2(handle)) {
+    return Promise.reject(new NodeScaffoldPrivateMaterializerErrorV2(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_PRODUCTION_AUTHORITY_REQUIRED",
+      "Production candidate build output requires a production private stage",
+    ));
+  }
+  return finalizeNodeCandidateBuildOutputInternalV2(handle, "production_host");
+}
+
+export function finalizeNodeCandidateBuildOutputV2ForTest(
+  handle: MaterializedNodeScaffoldPrivateStageV2,
+): Promise<NodeCandidateBuildOutputV2> {
+  if (isProductionNodeScaffoldPrivateStageV2(handle)) {
+    return Promise.reject(new NodeScaffoldPrivateMaterializerErrorV2(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_INPUT_INVALID",
+      "Test candidate build output cannot consume production authority",
+    ));
+  }
+  return finalizeNodeCandidateBuildOutputInternalV2(handle, "test_fixture");
+}
+
+export async function revalidateNodeCandidateBuildOutputV2(
+  handle: MaterializedNodeScaffoldPrivateStageV2,
+): Promise<NodeCandidateBuildOutputV2> {
+  const state = activeStageStateV2(handle);
+  const capture = state.lifecycle.buildOutput;
+  if (state.lifecycle.status !== "build_ready" || !capture) {
+    return fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_BUILD_ALREADY_CONSUMED",
+      "Candidate build output revalidation requires one completed build authority",
+    );
+  }
+  await revalidateNodeProductSourcesV1(handle);
+  const files = captureCandidateBuildOutputFilesV2({ state, sealed: true });
+  let tree: CanonicalRuntimeTreeV2;
+  try {
+    tree = verifyCanonicalRuntimeTreeV2({
+      root: path.join(state.projectRoot, "dist"),
+      candidate: capture.value.tree,
+      metadataProbe: capture.metadataProbe,
+    });
+  } catch (error) {
+    return fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_BUILD_OUTPUT_INVALID",
+      "Candidate build output canonical tree could not be freshly reproduced",
+      error,
+    );
+  }
+  if (
+    candidateBuildOutputMembershipHashV2(files) !== capture.value.membershipHash
+    || tree.treeHash !== capture.value.tree.treeHash
+    || tree.payloadHash !== capture.value.tree.payloadHash
+  ) {
+    return fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_BUILD_OUTPUT_INVALID",
+      "Candidate build output no longer reproduces its exact physical authority",
+    );
+  }
+  return defensiveCopy(capture.value);
 }
 
 export function destroyNodeScaffoldPrivateStageV2(

@@ -72,6 +72,8 @@ const NODE_PROBE_MAX_STDERR_BYTES_V2 = 4_096 as const;
 const EFFECTIVE_NPM_CONFIG_PROBE_MAX_STDOUT_BYTES_V2 = 32_768 as const;
 const NPM_SCAFFOLD_INSTALL_TIMEOUT_MS_V2 = 120_000 as const;
 const NPM_SCAFFOLD_INSTALL_MAX_OUTPUT_BYTES_V2 = 65_536 as const;
+const CANDIDATE_BUILD_TIMEOUT_MS_V2 = 120_000 as const;
+const CANDIDATE_BUILD_MAX_OUTPUT_BYTES_V2 = 1_048_576 as const;
 const HOST_PACKAGE_MAX_FILE_BYTES_V2 = 64 * 1024 * 1024;
 const OTOOL_MAX_OUTPUT_BYTES_V2 = 512 * 1024;
 const OTOOL_TIMEOUT_MS_V2 = 5_000;
@@ -147,7 +149,14 @@ export type HostNodeToolchainAuthorityErrorCodeV2 =
   | "HOST_NODE_TOOLCHAIN_V2_INSTALL_OUTPUT_LIMIT"
   | "HOST_NODE_TOOLCHAIN_V2_INSTALL_SPAWN_FAILED"
   | "HOST_NODE_TOOLCHAIN_V2_INSTALL_SIGNALLED"
-  | "HOST_NODE_TOOLCHAIN_V2_INSTALL_NONZERO";
+  | "HOST_NODE_TOOLCHAIN_V2_INSTALL_NONZERO"
+  | "HOST_NODE_TOOLCHAIN_V2_BUILD_SCOPE_INVALID"
+  | "HOST_NODE_TOOLCHAIN_V2_BUILD_TIMEOUT"
+  | "HOST_NODE_TOOLCHAIN_V2_BUILD_OUTPUT_LIMIT"
+  | "HOST_NODE_TOOLCHAIN_V2_BUILD_SPAWN_FAILED"
+  | "HOST_NODE_TOOLCHAIN_V2_BUILD_SIGNALLED"
+  | "HOST_NODE_TOOLCHAIN_V2_BUILD_NONZERO"
+  | "HOST_NODE_TOOLCHAIN_V2_BUILD_COMPILER_DRIFT";
 
 export class HostNodeToolchainAuthorityErrorV2 extends Error {
   readonly code: HostNodeToolchainAuthorityErrorCodeV2;
@@ -169,7 +178,8 @@ export type HostNodeToolchainProbeRefV2 =
   | "HOST_NODE_RUNTIME_IDENTITY_PROBE_V2"
   | "HOST_NPM_VERSION_PROBE_V2"
   | "HOST_NPM_EFFECTIVE_CONFIG_PROBE_V2"
-  | "HOST_NPM_SCAFFOLD_INSTALL_V2";
+  | "HOST_NPM_SCAFFOLD_INSTALL_V2"
+  | "HOST_NODE_PRODUCT_BUILD_V2";
 
 export type HostNodeToolchainProbeInvocationV2 = Readonly<{
   probeRef: HostNodeToolchainProbeRefV2;
@@ -180,14 +190,17 @@ export type HostNodeToolchainProbeInvocationV2 = Readonly<{
   shell: false;
   timeoutMs:
     | typeof NODE_PROBE_TIMEOUT_MS_V2
-    | typeof NPM_SCAFFOLD_INSTALL_TIMEOUT_MS_V2;
+    | typeof NPM_SCAFFOLD_INSTALL_TIMEOUT_MS_V2
+    | typeof CANDIDATE_BUILD_TIMEOUT_MS_V2;
   maxStdoutBytes:
     | typeof NODE_PROBE_MAX_STDOUT_BYTES_V2
     | typeof EFFECTIVE_NPM_CONFIG_PROBE_MAX_STDOUT_BYTES_V2
-    | typeof NPM_SCAFFOLD_INSTALL_MAX_OUTPUT_BYTES_V2;
+    | typeof NPM_SCAFFOLD_INSTALL_MAX_OUTPUT_BYTES_V2
+    | typeof CANDIDATE_BUILD_MAX_OUTPUT_BYTES_V2;
   maxStderrBytes:
     | typeof NODE_PROBE_MAX_STDERR_BYTES_V2
-    | typeof NPM_SCAFFOLD_INSTALL_MAX_OUTPUT_BYTES_V2;
+    | typeof NPM_SCAFFOLD_INSTALL_MAX_OUTPUT_BYTES_V2
+    | typeof CANDIDATE_BUILD_MAX_OUTPUT_BYTES_V2;
 }>;
 
 export type HostNodeToolchainProbeResultV2 =
@@ -282,6 +295,54 @@ export type HostNodeToolchainNpmCiEvidenceV2 = Readonly<{
   timeoutMs: 120_000;
   maxStdoutBytes: 65_536;
   maxStderrBytes: 65_536;
+  exitCode: 0;
+  signal: null;
+  stdoutHash: string;
+  stdoutBytes: number;
+  stderrHash: string;
+  stderrBytes: number;
+}>;
+
+export type HostNodeToolchainBuildCompilerTargetV2 = Readonly<{
+  executableRef: "TOOL_NODE_TYPESCRIPT_TSC_V2";
+  exactVersion: "5.9.3";
+  commandName: "tsc";
+  packagePath: "node_modules/typescript";
+  linkLocator: "node_modules/.bin/tsc";
+  targetLocator: "node_modules/typescript/bin/tsc";
+  linkTargetHash: string;
+  targetContentHash: string;
+  executionDisposition: "direct_target_via_authenticated_node_runtime";
+}>;
+
+export type HostNodeToolchainBuildInputV2 = Readonly<{
+  privateRoot: string;
+  projectRoot: string;
+  environment: HostNodeToolchainEffectiveNpmConfigProbeInputV2["environment"];
+  compilerTarget: HostNodeToolchainBuildCompilerTargetV2;
+}>;
+
+export type HostNodeToolchainBuildEvidenceV2 = Readonly<{
+  probeRef: "HOST_NODE_PRODUCT_BUILD_V2";
+  hostToolchainReceiptHash: string;
+  nodeIdentityHash: string;
+  environmentHash: string;
+  projectScopeHash: string;
+  compilerTargetIdentityHash: string;
+  directArgv: readonly [
+    "node",
+    "node_modules/typescript/bin/tsc",
+    "-p",
+    "tsconfig.json",
+  ];
+  directArgvHash: string;
+  stdin: "closed";
+  timeoutMs: 120_000;
+  maxStdoutBytes: 1_048_576;
+  maxStderrBytes: 1_048_576;
+  shell: "forbidden";
+  ambientEnvironment: "forbidden";
+  status: "exited_zero";
   exitCode: 0;
   signal: null;
   stdoutHash: string;
@@ -1162,7 +1223,7 @@ function productionProbeAdapter(
   invocation: HostNodeToolchainProbeInvocationV2,
 ): Promise<HostNodeToolchainProbeResultV2> {
   return new Promise((resolve) => {
-    execFile(invocation.executable, [...invocation.argv], {
+    const child = execFile(invocation.executable, [...invocation.argv], {
       cwd: invocation.cwd,
       encoding: "utf8",
       env: { ...invocation.env },
@@ -1211,6 +1272,7 @@ function productionProbeAdapter(
         }));
       }
     });
+    child.stdin?.end();
   });
 }
 
@@ -2689,6 +2751,320 @@ export async function executeHostNodeToolchainNpmCiV2(
     timeoutMs: NPM_SCAFFOLD_INSTALL_TIMEOUT_MS_V2,
     maxStdoutBytes: NPM_SCAFFOLD_INSTALL_MAX_OUTPUT_BYTES_V2,
     maxStderrBytes: NPM_SCAFFOLD_INSTALL_MAX_OUTPUT_BYTES_V2,
+    exitCode: 0 as const,
+    signal: null,
+    stdoutHash: sha256(result.stdout),
+    stdoutBytes: Buffer.byteLength(result.stdout, "utf8"),
+    stderrHash: sha256(result.stderr),
+    stderrBytes: Buffer.byteLength(result.stderr, "utf8"),
+  });
+}
+
+function parseBuildCompilerTargetV2(
+  value: unknown,
+): HostNodeToolchainBuildCompilerTargetV2 {
+  const keys = [
+    "commandName",
+    "exactVersion",
+    "executableRef",
+    "executionDisposition",
+    "linkLocator",
+    "linkTargetHash",
+    "packagePath",
+    "targetContentHash",
+    "targetLocator",
+  ];
+  if (
+    !isPlainRecord(value)
+    || !exactRecordKeys(value, keys)
+    || value.executableRef !== "TOOL_NODE_TYPESCRIPT_TSC_V2"
+    || value.exactVersion !== "5.9.3"
+    || value.commandName !== "tsc"
+    || value.packagePath !== "node_modules/typescript"
+    || value.linkLocator !== "node_modules/.bin/tsc"
+    || value.targetLocator !== "node_modules/typescript/bin/tsc"
+    || value.executionDisposition
+      !== "direct_target_via_authenticated_node_runtime"
+    || typeof value.linkTargetHash !== "string"
+    || !/^[a-f0-9]{64}$/u.test(value.linkTargetHash)
+    || typeof value.targetContentHash !== "string"
+    || !/^[a-f0-9]{64}$/u.test(value.targetContentHash)
+  ) {
+    return fail(
+      "HOST_NODE_TOOLCHAIN_V2_BUILD_SCOPE_INVALID",
+      "Candidate build compiler target must be the exact code-owned TypeScript target",
+    );
+  }
+  return Object.freeze({
+    executableRef: value.executableRef,
+    exactVersion: value.exactVersion,
+    commandName: value.commandName,
+    packagePath: value.packagePath,
+    linkLocator: value.linkLocator,
+    targetLocator: value.targetLocator,
+    linkTargetHash: value.linkTargetHash,
+    targetContentHash: value.targetContentHash,
+    executionDisposition: value.executionDisposition,
+  });
+}
+
+function captureCandidateBuildProjectScopeV2(projectRoot: string): string {
+  if (!path.isAbsolute(projectRoot) || path.basename(projectRoot) !== "project") {
+    return fail(
+      "HOST_NODE_TOOLCHAIN_V2_BUILD_SCOPE_INVALID",
+      "Candidate build requires one absolute private project root",
+    );
+  }
+  const owner = processOwnerV2();
+  try {
+    const root = lstatSync(projectRoot);
+    const names = readdirSync(projectRoot).sort();
+    if (
+      root.isSymbolicLink()
+      || !root.isDirectory()
+      || realpathSync(projectRoot) !== projectRoot
+      || modeBits(root) !== 0o700
+      || root.uid !== owner.uid
+      || root.gid !== owner.gid
+      || canonicalJsonKeyList(names) !== canonicalJsonKeyList([
+        "node_modules",
+        "package-lock.json",
+        "package.json",
+        "src",
+        "tsconfig.json",
+      ])
+    ) {
+      return fail(
+        "HOST_NODE_TOOLCHAIN_V2_BUILD_SCOPE_INVALID",
+        "Candidate build project is not the exact source-ready private topology",
+      );
+    }
+    assertMissingPathV2(path.join(projectRoot, ".npmrc"), "Build project .npmrc");
+    assertMissingPathV2(path.join(projectRoot, "dist"), "Build project dist");
+    return hashCanonicalJson({
+      schema: "setfarm.host-node-candidate-build-project-scope.v2",
+      root: fingerprint(root),
+      names,
+    });
+  } catch (error) {
+    if (error instanceof HostNodeToolchainAuthorityErrorV2) throw error;
+    return fail(
+      "HOST_NODE_TOOLCHAIN_V2_BUILD_SCOPE_INVALID",
+      "Candidate build project scope could not be captured",
+      error,
+    );
+  }
+}
+
+function captureCandidateBuildCompilerTargetV2(input: Readonly<{
+  projectRoot: string;
+  compilerTarget: HostNodeToolchainBuildCompilerTargetV2;
+}>): string {
+  const owner = processOwnerV2();
+  const linkPath = path.join(input.projectRoot, input.compilerTarget.linkLocator);
+  const targetPath = path.join(input.projectRoot, input.compilerTarget.targetLocator);
+  try {
+    const link = lstatSync(linkPath);
+    const linkTarget = readlinkSync(linkPath);
+    const target = readExactFile({
+      absolutePath: targetPath,
+      relativePath: input.compilerTarget.targetLocator,
+      allowedModes: [0o500, 0o555, 0o700, 0o755],
+      maxBytes: 16 * 1024 * 1024,
+      errorCode: "HOST_NODE_TOOLCHAIN_V2_BUILD_COMPILER_DRIFT",
+    });
+    if (
+      !link.isSymbolicLink()
+      || link.uid !== owner.uid
+      || link.gid !== owner.gid
+      || realpathSync(linkPath) !== targetPath
+      || sha256(linkTarget) !== input.compilerTarget.linkTargetHash
+      || target.contentHash !== input.compilerTarget.targetContentHash
+      || target.fingerprint.ownerUid !== owner.uid
+      || target.fingerprint.ownerGid !== owner.gid
+      || target.fingerprint.linkCount !== 1
+    ) {
+      return fail(
+        "HOST_NODE_TOOLCHAIN_V2_BUILD_COMPILER_DRIFT",
+        "Candidate TypeScript link and target no longer reproduce dependency authority",
+      );
+    }
+    return hashCanonicalJson({
+      schema: "setfarm.host-node-candidate-build-compiler-target.v2",
+      compilerTarget: input.compilerTarget,
+      link: fingerprint(link),
+      target: target.fingerprint,
+    });
+  } catch (error) {
+    if (error instanceof HostNodeToolchainAuthorityErrorV2) throw error;
+    return fail(
+      "HOST_NODE_TOOLCHAIN_V2_BUILD_COMPILER_DRIFT",
+      "Candidate TypeScript compiler target could not be captured",
+      error,
+    );
+  }
+}
+
+/**
+ * Executes only the BuildTopologyV3.2 direct Node/TypeScript operation. The
+ * caller contributes no argv, cwd, environment overlay, timeout or limit.
+ */
+export async function executeHostNodeToolchainBuildV2(
+  handle: HostNodeToolchainAuthorityV2,
+  input: HostNodeToolchainBuildInputV2,
+): Promise<HostNodeToolchainBuildEvidenceV2> {
+  const state = authenticState(handle);
+  if (
+    !isPlainRecord(input)
+    || !exactRecordKeys(input, [
+      "compilerTarget",
+      "environment",
+      "privateRoot",
+      "projectRoot",
+    ])
+    || typeof input.privateRoot !== "string"
+    || typeof input.projectRoot !== "string"
+  ) {
+    return fail(
+      "HOST_NODE_TOOLCHAIN_V2_BUILD_SCOPE_INVALID",
+      "Candidate build input must contain one exact environment, project and compiler target",
+    );
+  }
+  const compilerTarget = parseBuildCompilerTargetV2(input.compilerTarget);
+  const hostBefore = await revalidateHostNodeToolchainAuthorityV2(handle);
+  const environmentScope = captureEffectiveNpmConfigProbeScopeV2({
+    privateRoot: input.privateRoot,
+    environment: input.environment,
+  });
+  const projectScopeHash = captureCandidateBuildProjectScopeV2(input.projectRoot);
+  const compilerTargetIdentityHash = captureCandidateBuildCompilerTargetV2({
+    projectRoot: input.projectRoot,
+    compilerTarget,
+  });
+  const environment = Object.freeze({
+    ...environmentScope.environment,
+    PATH: path.dirname(state.captured.root.nodePath),
+  });
+  const environmentHash = hashCanonicalJson({
+    schema: "setfarm.node-scaffold-private-execution-environment.v2",
+    variables: Object.entries(environment).sort(([left], [right]) =>
+      left < right ? -1 : left > right ? 1 : 0),
+  });
+  const directArgv = Object.freeze([
+    "node",
+    "node_modules/typescript/bin/tsc",
+    "-p",
+    "tsconfig.json",
+  ] as const);
+  const invocation: HostNodeToolchainProbeInvocationV2 = Object.freeze({
+    probeRef: "HOST_NODE_PRODUCT_BUILD_V2",
+    executable: state.captured.root.nodePath,
+    argv: Object.freeze([
+      path.join(input.projectRoot, compilerTarget.targetLocator),
+      "-p",
+      "tsconfig.json",
+    ]),
+    cwd: input.projectRoot,
+    env: environment,
+    shell: false,
+    timeoutMs: CANDIDATE_BUILD_TIMEOUT_MS_V2,
+    maxStdoutBytes: CANDIDATE_BUILD_MAX_OUTPUT_BYTES_V2,
+    maxStderrBytes: CANDIDATE_BUILD_MAX_OUTPUT_BYTES_V2,
+  });
+  let result: HostNodeToolchainProbeResultV2;
+  try {
+    result = await state.probeAdapter(invocation);
+  } catch (error) {
+    const hostAfterFailure = await revalidateHostNodeToolchainAuthorityV2(handle);
+    const compilerAfterFailure = captureCandidateBuildCompilerTargetV2({
+      projectRoot: input.projectRoot,
+      compilerTarget,
+    });
+    if (
+      hostAfterFailure.receiptHash !== hostBefore.receiptHash
+      || compilerAfterFailure !== compilerTargetIdentityHash
+    ) {
+      return fail(
+        "HOST_NODE_TOOLCHAIN_V2_HOST_DRIFT",
+        "Host Node or compiler authority changed while candidate build failed to spawn",
+      );
+    }
+    return fail(
+      "HOST_NODE_TOOLCHAIN_V2_BUILD_SPAWN_FAILED",
+      "Exact candidate build adapter failed",
+      error,
+    );
+  }
+  const hostAfter = await revalidateHostNodeToolchainAuthorityV2(handle);
+  const compilerAfter = captureCandidateBuildCompilerTargetV2({
+    projectRoot: input.projectRoot,
+    compilerTarget,
+  });
+  if (hostAfter.receiptHash !== hostBefore.receiptHash) {
+    return fail(
+      "HOST_NODE_TOOLCHAIN_V2_HOST_DRIFT",
+      "Host Node authority changed during candidate build",
+    );
+  }
+  if (compilerAfter !== compilerTargetIdentityHash) {
+    return fail(
+      "HOST_NODE_TOOLCHAIN_V2_BUILD_COMPILER_DRIFT",
+      "TypeScript compiler target changed during candidate build",
+    );
+  }
+  if (
+    Buffer.byteLength(result.stdout, "utf8") > CANDIDATE_BUILD_MAX_OUTPUT_BYTES_V2
+    || Buffer.byteLength(result.stderr, "utf8") > CANDIDATE_BUILD_MAX_OUTPUT_BYTES_V2
+    || result.status === "output_limit_exceeded"
+  ) {
+    return fail(
+      "HOST_NODE_TOOLCHAIN_V2_BUILD_OUTPUT_LIMIT",
+      "Exact candidate build exceeded its output bound",
+    );
+  }
+  if (result.status === "timed_out") {
+    return fail(
+      "HOST_NODE_TOOLCHAIN_V2_BUILD_TIMEOUT",
+      "Exact candidate build exceeded its timeout",
+    );
+  }
+  if (result.status === "spawn_failed") {
+    return fail(
+      "HOST_NODE_TOOLCHAIN_V2_BUILD_SPAWN_FAILED",
+      "Exact candidate build could not be spawned",
+    );
+  }
+  if (result.signal !== null) {
+    return fail(
+      "HOST_NODE_TOOLCHAIN_V2_BUILD_SIGNALLED",
+      "Exact candidate build terminated by signal",
+    );
+  }
+  if (result.exitCode !== 0) {
+    return fail(
+      "HOST_NODE_TOOLCHAIN_V2_BUILD_NONZERO",
+      "Exact candidate build exited nonzero",
+    );
+  }
+  return deepFreezeJson({
+    probeRef: "HOST_NODE_PRODUCT_BUILD_V2" as const,
+    hostToolchainReceiptHash: hostBefore.receiptHash,
+    nodeIdentityHash: hostBefore.node.identityHash,
+    environmentHash,
+    projectScopeHash,
+    compilerTargetIdentityHash,
+    directArgv,
+    directArgvHash: hashCanonicalJson({
+      schema: "setfarm.candidate-build-direct-argv-hash.v2",
+      directArgv,
+    }),
+    stdin: "closed" as const,
+    timeoutMs: CANDIDATE_BUILD_TIMEOUT_MS_V2,
+    maxStdoutBytes: CANDIDATE_BUILD_MAX_OUTPUT_BYTES_V2,
+    maxStderrBytes: CANDIDATE_BUILD_MAX_OUTPUT_BYTES_V2,
+    shell: "forbidden" as const,
+    ambientEnvironment: "forbidden" as const,
+    status: "exited_zero" as const,
     exitCode: 0 as const,
     signal: null,
     stdoutHash: sha256(result.stdout),

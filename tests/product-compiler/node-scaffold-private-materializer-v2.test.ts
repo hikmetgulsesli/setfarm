@@ -146,6 +146,7 @@ import { IndexedArtifactPublisher } from
 import {
   createNodeScaffoldExecutionEnvironmentV2ForTest,
   destroyNodeScaffoldExecutionEnvironmentV2,
+  executeNodeScaffoldEnvironmentBuildV2,
   revalidateNodeScaffoldExecutionEnvironmentV2,
   type NodeScaffoldExecutionEnvironmentV2,
 } from "../../src/product-compiler/node-scaffold-execution-environment-v2.js";
@@ -153,6 +154,7 @@ import {
   MaterializedNodeScaffoldPrivateStageV2,
   NodeScaffoldPrivateMaterializerErrorV2,
   destroyNodeScaffoldPrivateStageV2,
+  finalizeNodeCandidateBuildOutputV2ForTest,
   getCodeOwnedPrivateStagedMaterializerAuthorityV2,
   inspectScaffoldBaseMaterializationReceiptV2,
   inspectBuildDependencyMaterializationReceiptV2,
@@ -165,6 +167,7 @@ import {
   materializeNodeScaffoldDependenciesV2,
   materializeNodeScaffoldDependenciesV2ForTest,
   revalidateNodeProductSourcesV1,
+  revalidateNodeCandidateBuildOutputV2,
   revalidateNodeScaffoldDependenciesV2,
   revalidateNodeScaffoldPrivateStageV2,
   type NodeProductSourceMaterializerCrashBoundaryV1,
@@ -368,8 +371,15 @@ type InstallControlV2 = {
   afterInstall?: (projectRoot: string) => Promise<void> | void;
 };
 
+type BuildControlV2 = {
+  result?: HostNodeToolchainProbeResultV2;
+  afterBuild?: (projectRoot: string) => Promise<void> | void;
+};
+
 const installControls = new Map<NodeScaffoldProfileIdV2, InstallControlV2>();
 const installInvocations: HostNodeToolchainProbeInvocationV2[] = [];
+const buildControls = new Map<NodeScaffoldProfileIdV2, BuildControlV2>();
+const buildInvocations: HostNodeToolchainProbeInvocationV2[] = [];
 
 function exited(stdout: string, stderr = ""): HostNodeToolchainProbeResultV2 {
   return Object.freeze({
@@ -513,6 +523,36 @@ async function fakeNpmCiV2(
   })}\n`, { mode: 0o600 });
 }
 
+async function fakeTypeScriptBuildV2(
+  profileId: NodeScaffoldProfileIdV2,
+  projectRoot: string,
+): Promise<void> {
+  const base = profileId === CLI_PROFILE ? "cli" : "app";
+  const dist = path.join(projectRoot, "dist");
+  await mkdir(dist, { mode: 0o755 });
+  for (const suffix of [".ts", ".setfarm.test.ts"] as const) {
+    const sourceName = `${base}${suffix}`;
+    const outputName = sourceName.slice(0, -3) + ".js";
+    const source = await readFile(path.join(projectRoot, "src", sourceName), "utf8");
+    const emitted = ts.transpileModule(source, {
+      compilerOptions: {
+        target: ts.ScriptTarget.ES2022,
+        module: ts.ModuleKind.NodeNext,
+        moduleResolution: ts.ModuleResolutionKind.NodeNext,
+        verbatimModuleSyntax: true,
+      },
+      fileName: sourceName,
+      reportDiagnostics: true,
+    });
+    assert.equal(
+      emitted.diagnostics?.filter((diagnostic) => diagnostic.category === ts.DiagnosticCategory.Error)
+        .length ?? 0,
+      0,
+    );
+    await writeFile(path.join(dist, outputName), emitted.outputText, { mode: 0o644 });
+  }
+}
+
 function hostAdapter(fixture: HostFixtureV2, profileId: NodeScaffoldProfileIdV2) {
   return async (invocation: HostNodeToolchainProbeInvocationV2):
   Promise<HostNodeToolchainProbeResultV2> => {
@@ -535,6 +575,14 @@ function hostAdapter(fixture: HostFixtureV2, profileId: NodeScaffoldProfileIdV2)
       await control?.afterInstall?.(invocation.cwd);
       return exited(`\nadded ${getCodeOwnedNodeScaffoldToolchainEntryV2(profileId)!
         .dependencyGraph.nodeCount} packages in 1s\n`);
+    }
+    if (invocation.probeRef === "HOST_NODE_PRODUCT_BUILD_V2") {
+      buildInvocations.push(invocation);
+      const control = buildControls.get(profileId);
+      if (control?.result) return control.result;
+      await fakeTypeScriptBuildV2(profileId, invocation.cwd);
+      await control?.afterBuild?.(invocation.cwd);
+      return exited("");
     }
     return exited(`${JSON.stringify(effectiveConfig(invocation), null, 2)}\n`);
   };
@@ -783,6 +831,8 @@ describe("Node scaffold private staged materializer V2", () => {
   afterEach(() => {
     installControls.clear();
     installInvocations.splice(0);
+    buildControls.clear();
+    buildInvocations.splice(0);
     for (const stage of activeStages.splice(0)) {
       try {
         destroyNodeScaffoldPrivateStageV2(stage);
@@ -4723,6 +4773,192 @@ describe("Node scaffold private staged materializer V2", () => {
     assert.match(
       rejectedEvidence.diagnostics[0]?.message ?? "",
       /persistence_round_trip.*never fake or silently omit evidence/u,
+    );
+  });
+
+  it("executes one exact private TypeScript build and seals every-and-only dist output", async () => {
+    const created = await stage();
+    const publication = await preparePublishedCliSourcesV1(created.handle);
+    const source = await materializeNodeProductSourcesV1ForTest(created.handle, {
+      casAuthority,
+      ...publication,
+    });
+    const evidence = await executeNodeScaffoldEnvironmentBuildV2(
+      created.environmentHandle,
+      created.handle,
+    );
+    assert.equal(evidence.probeRef, "HOST_NODE_PRODUCT_BUILD_V2");
+    assert.deepEqual(evidence.directArgv, [
+      "node",
+      "node_modules/typescript/bin/tsc",
+      "-p",
+      "tsconfig.json",
+    ]);
+    assert.equal(evidence.stdin, "closed");
+    assert.equal(evidence.timeoutMs, 120_000);
+    assert.equal(evidence.maxStdoutBytes, 1_048_576);
+    assert.equal(evidence.maxStderrBytes, 1_048_576);
+    assert.equal(evidence.shell, "forbidden");
+    assert.equal(evidence.ambientEnvironment, "forbidden");
+    assert.equal(evidence.status, "exited_zero");
+    assert.equal(buildInvocations.length, 1);
+    assert.equal(buildInvocations[0]?.shell, false);
+    assert.equal(buildInvocations[0]?.env.NODE_OPTIONS, undefined);
+    assert.match(buildInvocations[0]?.argv[0] ?? "", /node_modules\/typescript\/bin\/tsc$/u);
+
+    const output = await finalizeNodeCandidateBuildOutputV2ForTest(created.handle);
+    assert.equal(output.sourceMaterializationReceiptHash, source.receiptHash);
+    assert.equal(output.profileId, CLI_PROFILE);
+    assert.equal(output.pathDisclosure, "forbidden");
+    assert.equal(output.memberCount, 2);
+    assert.deepEqual(output.files.map((file) => file.normalizedLocator), [
+      "dist/cli.js",
+      "dist/cli.setfarm.test.js",
+    ]);
+    assert.equal(output.files.every((file) => file.mode === "0444"), true);
+    assert.equal(output.tree.profile, "dist");
+    assert.equal(output.tree.rootMode, "0555");
+    assert.equal(output.tree.fileCount, 2);
+    assert.equal(output.tree.directoryCount, 0);
+    assert.doesNotMatch(JSON.stringify(output), /\/private\/|\/var\/folders|\/Users\//u);
+    assert.equal(
+      (await revalidateNodeCandidateBuildOutputV2(created.handle)).tree.treeHash,
+      output.tree.treeHash,
+    );
+    assert.equal(
+      (await revalidateNodeProductSourcesV1(created.handle)).receiptHash,
+      source.receiptHash,
+    );
+    assert.equal(
+      (await revalidateNodeScaffoldExecutionEnvironmentV2(
+        created.environmentHandle,
+      )).receiptHash,
+      inspectScaffoldBaseMaterializationReceiptV2(created.handle)
+        .environmentBinding.receiptHash,
+    );
+    await assert.rejects(
+      executeNodeScaffoldEnvironmentBuildV2(
+        created.environmentHandle,
+        created.handle,
+      ),
+      { code: "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_BUILD_ALREADY_CONSUMED" },
+    );
+
+    const attemptRoot = await onlyAttemptRoot(created.stageParent);
+    const runtimeOutput = path.join(attemptRoot, "project", "dist", "cli.js");
+    await chmod(runtimeOutput, 0o644);
+    await writeFile(runtimeOutput, "mutated\n");
+    await chmod(runtimeOutput, 0o444);
+    await assert.rejects(revalidateNodeCandidateBuildOutputV2(created.handle), {
+      code: "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_BUILD_OUTPUT_INVALID",
+    });
+
+    const failed = await stage();
+    const failedPublication = await preparePublishedCliSourcesV1(failed.handle);
+    await materializeNodeProductSourcesV1ForTest(failed.handle, {
+      casAuthority,
+      ...failedPublication,
+    });
+    buildControls.set(CLI_PROFILE, { result: nonzero("typed fixture failure") });
+    await assert.rejects(
+      executeNodeScaffoldEnvironmentBuildV2(
+        failed.environmentHandle,
+        failed.handle,
+      ),
+      { code: "HOST_NODE_TOOLCHAIN_V2_BUILD_NONZERO" },
+    );
+    await assert.rejects(
+      executeNodeScaffoldEnvironmentBuildV2(
+        failed.environmentHandle,
+        failed.handle,
+      ),
+      { code: "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_BUILD_ALREADY_CONSUMED" },
+    );
+  });
+
+  it("classifies every candidate-build process disposition and consumes each physical attempt", async () => {
+    const cases: readonly Readonly<{
+      label: string;
+      result: HostNodeToolchainProbeResultV2;
+      code: string;
+    }>[] = [
+      {
+        label: "timeout",
+        result: { status: "timed_out", stdout: "", stderr: "" },
+        code: "HOST_NODE_TOOLCHAIN_V2_BUILD_TIMEOUT",
+      },
+      {
+        label: "output-limit",
+        result: { status: "output_limit_exceeded", stdout: "", stderr: "" },
+        code: "HOST_NODE_TOOLCHAIN_V2_BUILD_OUTPUT_LIMIT",
+      },
+      {
+        label: "spawn",
+        result: { status: "spawn_failed", stdout: "", stderr: "spawn detail" },
+        code: "HOST_NODE_TOOLCHAIN_V2_BUILD_SPAWN_FAILED",
+      },
+      {
+        label: "signal",
+        result: {
+          status: "exited",
+          exitCode: null,
+          signal: "SIGTERM",
+          stdout: "",
+          stderr: "",
+        },
+        code: "HOST_NODE_TOOLCHAIN_V2_BUILD_SIGNALLED",
+      },
+    ];
+    for (const fixture of cases) {
+      const created = await stage();
+      const publication = await preparePublishedCliSourcesV1(created.handle);
+      await materializeNodeProductSourcesV1ForTest(created.handle, {
+        casAuthority,
+        ...publication,
+      });
+      buildControls.set(CLI_PROFILE, { result: fixture.result });
+      await assert.rejects(
+        executeNodeScaffoldEnvironmentBuildV2(
+          created.environmentHandle,
+          created.handle,
+        ),
+        { code: fixture.code },
+        fixture.label,
+      );
+      await assert.rejects(
+        executeNodeScaffoldEnvironmentBuildV2(
+          created.environmentHandle,
+          created.handle,
+        ),
+        { code: "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_BUILD_ALREADY_CONSUMED" },
+      );
+      buildControls.clear();
+    }
+  });
+
+  it("serializes concurrent build claims to one process invocation", async () => {
+    const created = await stage();
+    const publication = await preparePublishedCliSourcesV1(created.handle);
+    await materializeNodeProductSourcesV1ForTest(created.handle, {
+      casAuthority,
+      ...publication,
+    });
+    const settled = await Promise.allSettled([
+      executeNodeScaffoldEnvironmentBuildV2(
+        created.environmentHandle,
+        created.handle,
+      ),
+      executeNodeScaffoldEnvironmentBuildV2(
+        created.environmentHandle,
+        created.handle,
+      ),
+    ]);
+    assert.equal(settled.filter((result) => result.status === "fulfilled").length, 1);
+    assert.equal(settled.filter((result) => result.status === "rejected").length, 1);
+    assert.equal(buildInvocations.length, 1);
+    assert.equal(
+      (await finalizeNodeCandidateBuildOutputV2ForTest(created.handle)).tree.fileCount,
+      2,
     );
   });
 

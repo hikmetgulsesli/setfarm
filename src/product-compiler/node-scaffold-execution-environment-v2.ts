@@ -24,12 +24,14 @@ import {
   inspectHostNodeToolchainReceiptV2,
   isProductionHostNodeToolchainAuthorityV2,
   executeHostNodeToolchainNpmCiV2,
+  executeHostNodeToolchainBuildV2,
   probeHostNodeToolchainEffectiveNpmConfigV2,
   revalidateHostNodeToolchainAuthorityV2,
   type HostNodeToolchainAuthorityV2,
   type HostNodeToolchainEffectiveNpmConfigProbeEvidenceV2,
   type HostNodeToolchainEffectiveNpmConfigProbeInputV2,
   type HostNodeToolchainNpmCiEvidenceV2,
+  type HostNodeToolchainBuildEvidenceV2,
 } from "./host-node-toolchain-authority-v2.js";
 import type {
   MaterializedNodeScaffoldPrivateStageV2,
@@ -90,6 +92,7 @@ export type NodeScaffoldExecutionEnvironmentErrorCodeV2 =
   | "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_HANDLE_UNAUTHENTICATED"
   | "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_STATE_DRIFT"
   | "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_INSTALL_ALREADY_CONSUMED"
+  | "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_BUILD_ALREADY_CONSUMED"
   | "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_DESTROYED";
 
 export class NodeScaffoldExecutionEnvironmentErrorV2 extends Error {
@@ -132,7 +135,14 @@ type PrivateMaterializationCaptureV2 = Readonly<{
 }>;
 
 type MutableLifecycleV2 = {
-  status: "active" | "installing" | "install_consumed" | "destroyed";
+  status:
+    | "active"
+    | "installing"
+    | "install_consumed"
+    | "install_failed"
+    | "building"
+    | "build_consumed"
+    | "destroyed";
 };
 
 type PrivateEnvironmentStateV2 = Readonly<{
@@ -1024,6 +1034,52 @@ function requireActiveStateV2(
   return state;
 }
 
+function requireRevalidatableStateV2(
+  handle: NodeScaffoldExecutionEnvironmentV2,
+): PrivateEnvironmentStateV2 {
+  const state = authenticStateV2(handle);
+  if (
+    state.lifecycle.status === "active"
+    || state.lifecycle.status === "install_consumed"
+    || state.lifecycle.status === "build_consumed"
+  ) {
+    return state;
+  }
+  if (state.lifecycle.status === "destroyed") {
+    return fail(
+      "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_DESTROYED",
+      "Execution environment authority has already been destroyed",
+    );
+  }
+  if (state.lifecycle.status === "install_failed") {
+    return fail(
+      "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_INSTALL_ALREADY_CONSUMED",
+      "Execution environment npm install authority failed and was consumed",
+    );
+  }
+  return fail(
+    "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_STATE_DRIFT",
+    "Execution environment cannot be revalidated during an owned process transition",
+  );
+}
+
+function requireBuildStateV2(
+  handle: NodeScaffoldExecutionEnvironmentV2,
+): PrivateEnvironmentStateV2 {
+  const state = authenticStateV2(handle);
+  if (state.lifecycle.status === "install_consumed") return state;
+  if (state.lifecycle.status === "destroyed") {
+    return fail(
+      "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_DESTROYED",
+      "Execution environment authority has already been destroyed",
+    );
+  }
+  return fail(
+    "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_BUILD_ALREADY_CONSUMED",
+    "Execution environment candidate build authority requires one completed install and is single-use",
+  );
+}
+
 export function inspectNodeScaffoldExecutionEnvironmentReceiptV2(
   handle: NodeScaffoldExecutionEnvironmentV2,
 ): NodeScaffoldExecutionEnvironmentReceiptV2 {
@@ -1045,7 +1101,7 @@ export function isProductionNodeScaffoldExecutionEnvironmentV2(
 export async function revalidateNodeScaffoldExecutionEnvironmentV2(
   handle: NodeScaffoldExecutionEnvironmentV2,
 ): Promise<NodeScaffoldExecutionEnvironmentReceiptV2> {
-  const state = requireActiveStateV2(handle);
+  const state = requireRevalidatableStateV2(handle);
   try {
     const materialization = capturePrivateMaterializationV2(state.privateRoot);
     if (materialization.privateIdentityHash !== state.materialization.privateIdentityHash) {
@@ -1129,6 +1185,7 @@ export async function executeNodeScaffoldEnvironmentNpmCiV2(
     );
   }
   state.lifecycle.status = "installing";
+  let installSucceeded = false;
   try {
     const evidence = await executeHostNodeToolchainNpmCiV2(state.hostToolchain, {
       privateRoot: state.privateRoot,
@@ -1148,10 +1205,88 @@ export async function executeNodeScaffoldEnvironmentNpmCiV2(
         "npm ci execution evidence does not reproduce the admitted environment",
       );
     }
+    installSucceeded = true;
     return evidence;
   } finally {
-    state.lifecycle.status = "install_consumed";
+    state.lifecycle.status = installSucceeded
+      ? "install_consumed"
+      : "install_failed";
     stageBridge.settleNodeScaffoldPrivateInstallScopeInternalV2(
+      stage,
+      scope.scaffoldBaseReceiptHash,
+    );
+  }
+}
+
+/**
+ * Joins the post-install sealed environment to one source-ready stage and
+ * consumes both build capabilities on every process outcome.
+ */
+export async function executeNodeScaffoldEnvironmentBuildV2(
+  handle: NodeScaffoldExecutionEnvironmentV2,
+  stage: MaterializedNodeScaffoldPrivateStageV2,
+): Promise<HostNodeToolchainBuildEvidenceV2> {
+  const state = requireBuildStateV2(handle);
+  const environmentReceipt = await revalidateNodeScaffoldExecutionEnvironmentV2(handle);
+  const stageBridge = await import("./node-scaffold-private-materializer-v2.js");
+  let scope: Awaited<ReturnType<
+    typeof stageBridge.acquireNodeScaffoldPrivateBuildScopeInternalV2
+  >>;
+  try {
+    scope = await stageBridge.acquireNodeScaffoldPrivateBuildScopeInternalV2(
+      stage,
+      environmentReceipt.receiptHash,
+    );
+  } catch (error) {
+    return fail(
+      "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_STATE_DRIFT",
+      "Execution environment could not acquire its authenticated candidate-build scope",
+      error,
+    );
+  }
+  if (
+    scope.admissionScope !== state.admissionScope
+    || scope.profileId !== state.profileId
+    || scope.scaffoldBaseReceiptHash !== stage.receiptHash
+  ) {
+    stageBridge.settleNodeScaffoldPrivateBuildScopeInternalV2(
+      stage,
+      scope.scaffoldBaseReceiptHash,
+    );
+    return fail(
+      "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_STATE_DRIFT",
+      "Execution environment and candidate-build scope or profile do not join",
+    );
+  }
+  state.lifecycle.status = "building";
+  try {
+    const evidence = await executeHostNodeToolchainBuildV2(state.hostToolchain, {
+      privateRoot: state.privateRoot,
+      projectRoot: scope.projectRoot,
+      environment: state.probeInput.environment,
+      compilerTarget: scope.compilerTarget,
+    });
+    if (
+      evidence.hostToolchainReceiptHash
+        !== environmentReceipt.hostToolchain.receiptHash
+      || evidence.nodeIdentityHash
+        !== environmentReceipt.hostToolchain.nodeIdentityHash
+      || evidence.environmentHash
+        !== environmentReceipt.environment.environmentHash
+      || evidence.directArgvHash !== hashCanonicalJson({
+        schema: "setfarm.candidate-build-direct-argv-hash.v2",
+        directArgv: evidence.directArgv,
+      })
+    ) {
+      return fail(
+        "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_STATE_DRIFT",
+        "Candidate build execution evidence does not reproduce the sealed environment",
+      );
+    }
+    return evidence;
+  } finally {
+    state.lifecycle.status = "build_consumed";
+    stageBridge.settleNodeScaffoldPrivateBuildScopeInternalV2(
       stage,
       scope.scaffoldBaseReceiptHash,
     );
