@@ -1929,3 +1929,63 @@ V1 fallback, or future candidate receipt may enter the pre-implementation
 plan. Candidate execution remains downstream of that plan. Atomic artifact-set
 activation, release authority, authenticated candidate evidence, retry/recovery
 ownership, Mission Control projection and clean-run eval all remain NO-GO.
+
+## F5S Canonical build and evidence receipt identity closure
+
+**Status (2026-07-21): complete in design commit `d3604d55` and code commit
+`80d65aeb`; production execution remains forbidden.** Investigation before the
+release-bound registry/evidence-plan implementation found that BuildTopologyV3
+named two receipt schemas for which no schema, issuer, verifier or consumer
+exists:
+
+```text
+setfarm.node-product-build-receipt.v3
+setfarm.node-product-test-execution-receipt.v3
+```
+
+Those identities were introduced by `19ee7109` after the strict
+`CandidateBuildReceiptV2` and `EvidenceReceiptV2` contracts had already been
+introduced by `bce647f8`. PacketV4 independently requires
+`setfarm.candidate-build-receipt.v2`. Leaving all three names in the pipeline
+would make a valid build impossible to satisfy without a caller adapter,
+classifier or alias that invents authority after execution.
+
+BuildTopology remains schema-major V3 but advances from contract version
+`3.0.0` to `3.1.0`. Every build output, candidate-module and build-command
+receipt requirement now names the one implemented
+`CandidateBuildReceiptV2`; every generated-test command now names the one
+implemented `EvidenceReceiptV2`. The two unimplemented V3 strings were removed,
+not deprecated through fallback aliases. Contract hash
+`3f4ab4b48a3eeee55d7bbd0dfc36d7d20989975c8257b1be44b6d35fc0b33614`
+pins the corrected topology. The downstream StoryPlan hashes intentionally
+changed because BuildTopology is part of their logical authority.
+
+The new pure receipt-authority test is 2/2 pass; focused BuildTopology
+integration is 1/1 pass; the five-fixture Packet/SourceMap/Slice integration is
+1/1 pass with `duration_ms 66815.703542`. The clean complete Product Compiler
+regression is 133 suites, 1,074/1,074 pass, zero
+fail/cancelled/skipped/todo, with `duration_ms 142191.549166`. TypeScript,
+version `2.3.79`, English contract (1,130 files), path contract (645 files),
+semantic migration digests, Mission Control contract generation inputs and
+diff checks pass. Normal `npm run build` correctly refused feature branch
+`arch/product-semantics-v2-authority`; the guard was not bypassed. No live run,
+live DB/PR/service, generated repository, Mission Control tree or real Setfarm
+application-support root was mutated.
+
+The next dependency-order slice is **not** a direct receipt issuer over the
+current DTO. First specify the private CandidateBuildAuthorityV2 boundary and
+resolve two remaining authority mismatches without fabricated data:
+
+1. `CandidateBuildReceiptV2` currently requires a git-shaped
+   `SourceRevisionV1`, while the authenticated generated-source stage is a
+   private content tree and does not own a git commit.
+2. Its command binding is shaped from BuildTopologyV1, while the selected
+   canonical operation is BuildTopologyV3.1's code-owned direct command.
+
+The design must choose one canonical content/source revision and one exact
+command projection, then implement fresh private build execution, source
+before/after fencing, canonical runtime-tree materialization, CAS publication
+preflight and issuer/verifier ownership. It must not mint a fake git SHA, map
+V3 through prose, expose a mutable private path, or activate production. Only
+after candidate build/runtime and verified release authority exist can
+RegistryV2 and EvidencePlanV2 be operational rather than declarative.
