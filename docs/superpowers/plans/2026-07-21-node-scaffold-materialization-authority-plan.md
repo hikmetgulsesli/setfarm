@@ -1243,6 +1243,87 @@ those four artifacts and the runtime generator, with fresh-verifier
 cross-artifact joins and no compatibility synthesis. NodeProductTestGeneratorV2
 follows only after that hash reaches generated runtime source.
 
+### F5K — runtime-behavior authority forwarding
+
+**Status (2026-07-21): complete through the runtime-source receipt as a
+freshly reproduced shadow authority; executable behavior consumption and the
+test generator remain forbidden.** Commit `d936b07b` closes the authority gap
+identified after F5J. PLAN now publishes the canonical
+`ProductRuntimeBehaviorProposalV1` bytes and its domain hash beside the
+behavior contract. The proposal is not optional metadata: the behavior
+contract verifier requires ProductSpec, proposal and candidate together to
+reproduce authority, so forwarding only a caller-supplied contract hash would
+have created another unverifiable projection.
+
+The proposal bytes/hash are written by the compiler-owned PLAN completion path
+and protected against model introduction or overwrite. PLAN observation
+evidence exposes both proposal and contract hashes. The atomic PostgreSQL
+completion test reads the stored proposal, contract and build authority back
+from run context and proves exact byte/hash equality with the one compiled
+envelope. The compatibility PRD does not regain proposal authority; old
+semantic-only claims still cannot synthesize a behavior proposal.
+
+`SemanticRealizationPlanV2` now requires ProductSpec, delivery selection,
+runtime-behavior proposal and runtime-behavior contract as one strict input.
+It invokes the behavior fresh verifier before semantic-intent realization and
+binds proposal schema/hash, contract schema/version/hash, evaluator-contract
+hash and exact invariant/entity-field binding counts into its hashed
+authority. Missing behavior is an input rejection. Cross-product behavior and
+a schema-valid self-rehashed contract are behavior-authority rejections. The
+fresh realization verifier reproduces from all four upstream inputs rather
+than accepting the candidate's embedded hashes.
+
+`FileTreeManifestV3` and `BuildTopologyV3` require the same proposal/contract
+inputs to reproduce their upstream authorities. Both artifacts expose the
+exact proposal and contract hashes in their logical identities. FileTree
+passes only ProductSpec and delivery to the strict layout/path compilers and
+the complete packet to realization, preventing unrelated authority fields
+from leaking across consumer schemas. FileTree dependency-stage verification
+and topology verification both reproduce the full chain. A schema-valid,
+self-rehashed FileTree behavior-hash forgery is rejected against fresh bytes.
+
+`NodeProductRuntimeGeneratorV2` now requires the behavior proposal and contract,
+fresh-verifies realization and topology with them, checks proposal/contract
+hash equality across realization, FileTree and topology, and records proposal,
+contract and evaluator hashes in `NodeProductRuntimeSourceReceiptV2`. The
+runtime receipt therefore identifies exactly which PLAN behavior authority was
+present when its source was generated. It cannot be replayed with another
+proposal or a self-rehashed downstream artifact.
+
+Current canonical contract hashes are
+`1dc1a10c192464c68558289f106274b0bdfbc8053382a4e19970e3ee39a405c1`
+for SemanticRealizationPlanV2,
+`013c2b2e04985fb54896d34f84e9044a3e30dff1f1297050e8d0c741462f487a`
+for FileTreeManifestV3 and
+`70276cf52b8dc844e1d60f5bf11203b17f5623126c433a184bcf301cfe231896`
+for BuildTopologyV3. The three fixture-specific realization, FileTree and
+logical-build hashes are pinned separately so changing behavior authority
+changes every intended downstream identity without changing physical-attempt
+evidence.
+
+Proof is 14/14 for SemanticRealizationPlanV2, 20/20 for the private scaffold /
+FileTree / topology / runtime chain, and 1/1 for atomic PLAN PostgreSQL
+completion. Full Product Compiler is 1052/1052 across 128 suites with
+`duration_ms 124842.146459`; full execution-attempts is 638/638 across 86 suites
+with `duration_ms 141840.459959`. TypeScript and diff checks pass. The normal
+feature-branch `npm run build` guard refused
+`arch/product-semantics-v2-authority` and was not bypassed. No live run, live
+DB, PR, service, generated repository or real Setfarm application-support tree
+was mutated.
+
+This slice proves authority forwarding, not behavior execution. The runtime
+generator still rejects any ProductSpec prose invariant before code generation,
+and its executable fixture deliberately removes invariants. It does not yet
+compile typed behavior assertions or entity snapshots into the generated state
+transition runtime. Consequently
+`PRODUCT_RUNTIME_BEHAVIOR_V1_RUNTIME_GENERATOR_INTEGRATION_UNVERIFIED` remains,
+as do the test-generator, evidence-registry and release-manifest blockers.
+Production remains NO-GO. The next dependency-order slice is to make the
+runtime program consume the freshly verified behavior contract, execute its
+assertions/entity snapshot bindings at the specified checkpoints, and produce
+receipt/evaluation evidence. Only then may the runtime-generator blocker be
+removed and NodeProductTestGeneratorV2 consume the same contract.
+
 ## Verification and release gate
 
 Every slice requires:
@@ -1259,17 +1340,16 @@ F2-F4 additionally require focused real-filesystem, process, PostgreSQL and
 concurrency tests. A clean merged-`main` `npm run build` and full `npm test`
 remain release evidence; the feature-branch build guard is never bypassed.
 
-GO for F1-F4 and F5D-F5J as isolated shadow authorities. F5A-F5C are GO only as
+GO for F1-F4 and F5D-F5K as isolated shadow authorities. F5A-F5C are GO only as
 compatibility evidence and are explicitly NO-GO as production topology. NO-GO
 for production host execution, setup cutover, PacketV4, live migration, deploy
 and new clean product runs until machine-readable runtime behavior, generated
 test source/receipt, authenticated runtime-source materialization,
 authenticated build/test/candidate evidence, evidence registry, release
 manifest, SourceMap, and the later packet/eval program are complete. The next
-dependency-order slice is downstream behavior-hash version forwarding through
-SemanticRealizationPlanV2, FileTreeV3, BuildTopologyV3 and
-NodeProductRuntimeGeneratorV2, followed by NodeProductTestGeneratorV2. The
-feature-branch
-`npm run build` guard was re-run after `21d2131e` and correctly refused branch
+dependency-order slice is executable ProductRuntimeBehaviorContract
+consumption in NodeProductRuntimeGeneratorV2, followed by the exact same
+authority in NodeProductTestGeneratorV2. The feature-branch
+`npm run build` guard was re-run after `d936b07b` and correctly refused branch
 `arch/product-semantics-v2-authority`; it was not bypassed. Only a clean
 merged-main build and full test can close that release gate.
