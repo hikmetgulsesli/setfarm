@@ -1260,6 +1260,105 @@ hashes, one leaf envelope/hash/index, leaf count, story-ID-set hash, and its
 audit path. It contains no other story leaf, global V1 witness, catalog body, or
 unrelated topology.
 
+## ProductBuildPacketV4
+
+ProductBuildPacketV4 is the one forward-only trust anchor between the complete
+semantic/source plan and the later least-privilege ImplementationSliceV2. It is
+a new artifact, not an extension, projection, or reinterpretation of
+ProductBuildPacketV1/V2/V3. The compiler accepts no historical packet, story
+plan, source map, caller-authored child reference, or compatibility witness.
+
+The canonical packet payload is `setfarm.product-build-packet.v4`, numeric
+`packetVersion: 4`, semantic version `4.0.0`, and branch
+`realization_v4`. Its stage is
+`source_map_verified_before_implementation_slice_v2`. A strict code-owned
+contract hash versions all field shapes, hash domains, blocker codes,
+validation IDs, logical/operational identity separation, and publication
+rules. The envelope producer pass is exactly
+`product-compiler-product-build-packet-v4`; its code SHA must equal the exact
+ImplementationSourceMapV2 producer code SHA. Caller-supplied release identity
+is acceptable only for this shadow compiler and remains a production blocker
+until a verified release manifest derives both producers.
+
+The packet contains these closed authorities:
+
+- the complete `ImplementationSourceMapAuthorityV2` body and its authority
+  hash, including ProductSpec, selected profile/stack, semantic intent,
+  realization, FileTreeV3, BuildTopologyV3, logical runtime/test source,
+  StoryPlanV3, design-source, and declaration identities;
+- one exact forward root binding with SourceMap artifact/schema/version/
+  contract identity, full producer, root envelope hash and byte length,
+  manifest hash, authority hash, Merkle root, leaf count, and story-ID-set
+  hash;
+- exact BuildTopologyV3 compilation, strict logical command projection, and
+  runtime target bodies together with their domain-separated contract hashes;
+- the exact logical runtime/test source-receipt hashes already named by the
+  SourceMap authority; and
+- one exact canonically ordered code-owned validation-ID set.
+
+The packet does not embed all SourceMap leaves or proofs. The root commits all
+leaves; a later ImplementationSliceV2 carries one bounded freshly verified
+story proof. SourceMap never binds a future packet, so this forward binding has
+no identity cycle. Packet authority equality requires byte equality with the
+freshly reproduced SourceMap root authority; a packet cannot copy only selected
+hashes or substitute an independently self-rehashed authority body.
+
+Packet execution identity is deliberately logical. It includes the complete
+compilation contract, logical command contract, runtime target, and logical
+runtime/test source-receipt hashes. It excludes private-stage admission scope,
+dependency receipt hash, environment/host receipt hash, source-materialization
+attempt receipt, stdout/stderr, timestamps, candidate commit/tree, and future
+build/test receipt. The packet records `CandidateBuildReceiptV2` as required
+and currently absent, with the disposition
+`future_authenticated_attempt_evidence_not_packet_identity`. Therefore two
+attempts with identical semantic source and logical build authority produce the
+same packet even when their private operational receipts differ. Those attempt
+facts join the packet only in the future candidate build/evidence chain.
+
+The readiness shape is exactly `shadow_sealed` with production use forbidden
+and these ordered blockers:
+
+```text
+PRODUCT_BUILD_PACKET_V4_ATOMIC_ARTIFACT_SET_ACTIVATION_UNVERIFIED
+PRODUCT_BUILD_PACKET_V4_AUTHENTICATED_BUILD_TEST_EVIDENCE_UNVERIFIED
+PRODUCT_BUILD_PACKET_V4_EVIDENCE_REGISTRY_V2_UNVERIFIED
+PRODUCT_BUILD_PACKET_V4_IMPLEMENTATION_SLICE_V2_UNVERIFIED
+PRODUCT_BUILD_PACKET_V4_RELEASE_MANIFEST_UNVERIFIED
+```
+
+The current no-design Node branch additionally fixes design source to `none`
+and model-authored declarations to `not_applicable` through the embedded
+SourceMap authority. Stitch/design support requires its own verified generated
+source receipts before it may widen this strict V4 schema; nullable or prose
+placeholders are forbidden.
+
+The pure compiler takes bounded `unknown`: the exact SourceMap compiler input,
+an exact SourceMap producer, an exact PacketV4 producer, and a candidate
+SourceMap root envelope. It freshly calls the production-host or test-fixture
+SourceMapV2 compiler once, requires successful shadow compilation, and requires
+canonical byte equality between the candidate and reproduced root envelope.
+It then derives every packet field from that fresh root and BuildTopologyV3,
+strictly parses the packet, creates one semantic artifact envelope, and runs
+the existing bounded tier-0 artifact-store publication preflight. It performs
+no write, activation, DB operation, source mutation, or live dispatch.
+
+The verifier takes the same bounded compiler authority plus an expected packet
+envelope hash and candidate packet envelope. It invokes the compiler fresh and
+requires both the expected hash and canonical candidate bytes to equal the
+reproduced envelope. A schema-valid packet with a recomputed local packet hash
+is therefore not authority. Both compiler and verifier reject extra inputs,
+oversized/deep work, producer drift, root substitution, execution drift,
+attempt-specific receipt injection, validation-set drift, and self-rehashed
+authority changes with typed bounded diagnostics.
+
+The packet envelope independently passes the four-MiB CAS and existing
+artifact-store batch preflight. This does not claim atomic durability for the
+SourceMap root plus as many as 5,000 leaves: the present generic batch limit is
+nine. Production activation remains forbidden until one DB/CAS artifact-set
+transaction proves every leaf durable before activating the root and packet.
+There is no small-fixture exception and the generic batch limit is not raised
+by PacketV4.
+
 ## Compiler And Verifier APIs
 
 Every public compiler/verifier accepts `unknown`, snapshots it with bounded
@@ -1287,6 +1386,8 @@ generateNodeProductRuntimeSourceV2(privateStageHandle, authorityInput)
 verifyNodeProductRuntimeSourceV2(privateStageHandle, verificationInput)
 compileImplementationSourceMapV2(authorityInput)
 verifyImplementationSourceMapStoryProofV2(verificationInput)
+compileProductBuildPacketV4(authorityInput)
+verifyProductBuildPacketV4(verificationInput)
 ```
 
 Successful results are recursively immutable and expose distinct payload hashes

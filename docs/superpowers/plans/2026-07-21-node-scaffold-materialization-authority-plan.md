@@ -1776,3 +1776,35 @@ release manifest claim support. The feature-branch `npm run build` guard was
 re-run after `117ebefa` and correctly refused branch
 `arch/product-semantics-v2-authority`; it was not bypassed. Only a clean
 merged-main build and full test can close that release gate.
+
+## F5Q ProductBuildPacketV4 implementation plan
+
+**Status (2026-07-21): approved design, implementation pending.** The exact
+wire, compiler/verifier, retry-identity boundary, publication disposition and
+production blockers are specified in
+`docs/superpowers/specs/2026-07-18-semantic-source-authority-design.md`.
+
+Implement in this dependency order:
+
+1. Export the already-authoritative SourceMapV2 authority and logical-execution
+   schemas without changing their wire bytes or contract hash.
+2. Add a strict bounded `product-build-packet-v4` schema with domain-separated
+   packet hash, exact blocker/validation sets, forward SourceMap root binding,
+   logical BuildTopology execution, attempt-receipt exclusion, and recursive
+   immutability support.
+3. Add the pure PacketV4 compiler and fresh verifier. Both accept bounded
+   `unknown`; both freshly reproduce SourceMapV2 exactly once; neither writes
+   or activates an artifact. Run individual tier-0 CAS preflight and preserve
+   the atomic artifact-set blocker.
+4. Add pure schema/compiler adversarial tests for extra input, producer/code
+   drift, candidate root substitution, logical execution drift, validation-set
+   drift, local self-rehash forgery, expected-envelope mismatch, work bounds,
+   and immutability.
+5. Extend the private-materializer integration across CLI, one-story API,
+   two-story API, prerequisite API and entity-field API fixtures. Prove exact
+   SourceMap-to-packet binding and prove sibling private attempts converge on
+   the same full PacketV4 envelope despite different operational receipts.
+6. Run focused tests, the complete Product Compiler suite, TypeScript, English,
+   path and diff checks. Re-run normal `npm run build`; record the expected
+   feature-branch refusal without bypass. Keep production NO-GO and do not
+   touch Mission Control until canonical operational evidence exists.
