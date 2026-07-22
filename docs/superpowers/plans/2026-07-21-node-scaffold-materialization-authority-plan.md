@@ -1583,6 +1583,78 @@ ImplementationSourceMapV2 and ProductBuildPacketV4. Operational adapter support
 can be claimed only later by the verified-release-derived runnable catalog and
 RegistryV2.
 
+### F5O — StoryPlanV3 semantic-to-generated-source ownership closure
+
+**Status (2026-07-22): complete as a no-design Node shadow authority in
+commit `0a8c768b`; SourceMapV2, PacketV4, authenticated build/test evidence,
+RegistryV2 and release activation remain forbidden.** StoryPlanV2 stays
+historical. The new artifact is compiled only after exact runtime and test
+source receipts exist, and neither caller-authored story prose nor V2 story
+objects are accepted.
+
+`setfarm.story-plan.v3` has a code-owned `3.0.0` contract and an exact
+4-MiB bounded canonical schema. It binds the fresh entity-aware semantic
+partition, verified `SemanticRealizationPlanV2.1`, FileTreeV3,
+BuildTopologyV3, runtime/test logical source-receipt identities and every
+explicit upstream hash join. Current Node profiles explicitly close design as
+`none`, model-authored declarations as `not_applicable`, and physical story
+grants as zero; those absences are machine-readable claims, not silently
+omitted future work. Production blockers explicitly retain SourceMapV2,
+PacketV4, authenticated build/test evidence, RegistryV2 and the verified
+release manifest.
+
+Each story carries every V2 semantic set plus entity ownership, exact
+realization/intent refs and hashes, complete runtime generated-member receipt
+objects with source spans, complete action/evidence test coverage members,
+action-test bindings, runtime/test assertion pairs, runtime/test entity-field
+pairs and two external generator-owner dependencies. Whole generated files
+remain code-owned; a story consumes exact receipt members and never pretends
+to own the file. All `storyId:null` plan realizations and runtime members are
+closed separately under an explicit product-scope section, so global
+entrypoint/runtime registration and platform contracts cannot disappear or be
+assigned to an arbitrary story.
+
+Top-level closure proves unique semantic ownership, every-and-only plan
+realization ownership, runtime/test receipt membership hashes, action-test,
+assertion and entity-field membership hashes, exact story ordering, earlier-
+only story dependencies, exact product-scope closure and exact source-owner
+joins. The compiler takes bounded `unknown`, fresh-verifies the realization
+plan and both generated source text/receipt pairs against the authenticated
+private dependency stage, reproduces StoryDefinitionsV3, then projects the
+artifact. The verifier reproduces the complete artifact and canonical-compares
+it. Consequently a locally self-rehashed omission can remain structurally
+valid for diagnostic purposes but still cannot become authority.
+
+Retry identity deliberately binds runtime/test **logical** receipt hashes and
+does not include their attempt-specific full receipt hashes. The sibling-stage
+test proves different private attempts have different BuildTopology manifests
+and operational runtime/test receipt hashes while source bytes, logical receipt
+hashes and the final StoryPlanV3 plan hash remain equal. This is the required
+boundary between stable product delta identity and per-attempt operational
+evidence.
+
+The focused private-materializer integration test passes across five fixtures:
+CLI, one-story API, two-story API, prerequisite API and entity-field API. It
+also proves wrong admission scope and extra input rejection, wrong story
+ownership schema rejection, fresh-verifier rejection of a schema-valid
+self-rehashed runtime-member omission, recursive immutability, stable golden
+contract/plan hashes and sibling-attempt identity separation. The clean focused
+result is 1/1 with `duration_ms 37719.6075`; the one test internally exercises
+all five product fixtures plus the sibling attempt. `npx tsc --noEmit`, English
+contract (1,120 files), path contract (639 files), and diff checks pass. No live
+run, live DB, PR, service, generated repository or real Setfarm application-
+support tree was mutated. The subsequent full Product Compiler regression is
+129 suites, 1,065/1,065 pass, zero fail/cancelled/skipped/todo, with
+`duration_ms 115900.86525`.
+
+This closes StoryPlanV3 only for the currently selected no-design Node slice.
+It does not claim Stitch surface/control source closure, admitted model-authored
+declarations, executable build/test evidence or operational adapter support.
+The next dependency-order slice is ImplementationSourceMapV2 root/leaves and
+canonical Merkle proofs over this exact StoryPlanV3. ProductBuildPacketV4 then
+binds that source map in the forward direction before any bounded candidate
+build/test owner can emit canonical operational evidence.
+
 ## Verification and release gate
 
 Every slice requires:
@@ -1599,15 +1671,15 @@ F2-F4 additionally require focused real-filesystem, process, PostgreSQL and
 concurrency tests. A clean merged-`main` `npm run build` and full `npm test`
 remain release evidence; the feature-branch build guard is never bypassed.
 
-GO for F1-F4 and F5D-F5N requirement/source publication/materialization as isolated shadow
+GO for F1-F4 and F5D-F5O requirement/source/story ownership as isolated shadow
 authorities. F5A-F5C are GO only as
 compatibility evidence and are explicitly NO-GO as production topology. NO-GO
 for production host execution, setup cutover, PacketV4, live migration, deploy
-and new clean product runs until StoryPlanV3, ImplementationSourceMapV2,
+and new clean product runs until ImplementationSourceMapV2,
 ProductBuildPacketV4, authenticated build/test/candidate evidence,
 EvidenceAdapterRegistryV2, release manifest, and the later eval program are
-complete. The next dependency-order slice is StoryPlanV3 over the exact
-realization/source-receipt authority. SourceMapV2 and PacketV4 follow before the
+complete. The next dependency-order slice is SourceMapV2 over the exact
+StoryPlanV3/source-receipt authority. PacketV4 follows before the
 bounded candidate build/test owner; only after authenticated execution may the
 verified-release-derived operational adapter catalog, RegistryV2 and versioned
 release manifest claim support. The feature-branch `npm run build` guard was
