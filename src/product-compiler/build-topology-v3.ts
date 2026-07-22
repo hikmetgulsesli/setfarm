@@ -1,5 +1,10 @@
 import { z } from "zod";
 
+import { EVIDENCE_RECEIPT_V2_SCHEMA } from
+  "../evidence/schemas/evidence-receipt-v2.js";
+import { CANDIDATE_BUILD_RECEIPT_V2_SCHEMA } from
+  "../execution/schemas/candidate-build-receipt-v2.js";
+
 import {
   DEFAULT_CANONICAL_JSON_BOUNDED_WORK_LIMITS,
   canonicalJsonBytesBounded,
@@ -38,8 +43,6 @@ import {
   BUILD_TOPOLOGY_VERSION_V3,
   BuildTopologyPathEntryV3Schema,
   BuildTopologyV3Schema,
-  NODE_PRODUCT_BUILD_RECEIPT_V3_SCHEMA,
-  NODE_PRODUCT_TEST_EXECUTION_RECEIPT_V3_SCHEMA,
   deriveBuildTopologyPathRefV3,
   fileTreePathProjectionForBuildTopologyV3,
   hashBuildTopologyCommandContractV3,
@@ -406,7 +409,7 @@ function buildCommandsV3(
     requiredPreconditions: BUILD_TOPOLOGY_TEST_REQUIRED_PRECONDITIONS_V3.map(
       (precondition) => ({ ...precondition }),
     ),
-    canonicalReceiptSchema: NODE_PRODUCT_TEST_EXECUTION_RECEIPT_V3_SCHEMA,
+    canonicalReceiptSchema: EVIDENCE_RECEIPT_V2_SCHEMA,
     minimumTestCount: 1 as const,
     zeroTestReceipt: "forbidden" as const,
     networkPolicy: "forbidden" as const,
@@ -457,7 +460,7 @@ function buildCommandsV3(
       ),
       runtimeSourceReceiptState: "absent",
       testSourceReceiptState: "absent",
-      buildReceiptSchema: NODE_PRODUCT_BUILD_RECEIPT_V3_SCHEMA,
+      buildReceiptSchema: CANDIDATE_BUILD_RECEIPT_V2_SCHEMA,
       buildReceiptState: "absent",
       executionStatus: "blocked_until_runtime_and_test_source_receipts",
     },
@@ -649,7 +652,7 @@ function buildTopologyV3(input: Readonly<{
         outputPathSlotRef: fresh.layout.sourceToRuntime.buildOutputPathSlotRef,
         pathToken: runtimeOutputToken.pathToken,
         tokenBindingHash: runtimeOutputToken.bindingHash,
-        requiredReceiptSchema: NODE_PRODUCT_BUILD_RECEIPT_V3_SCHEMA,
+        requiredReceiptSchema: CANDIDATE_BUILD_RECEIPT_V2_SCHEMA,
         receiptState: "absent",
       },
     },
@@ -679,7 +682,7 @@ function buildTopologyV3(input: Readonly<{
         profileSourcePathRef: testProfile.sourcePathRef,
         profileCompiledPathRef: testProfile.compiledPathRef,
         runtimeImportSpecifier: testProfile.runtimeImportSpecifier,
-        requiredReceiptSchema: NODE_PRODUCT_BUILD_RECEIPT_V3_SCHEMA,
+        requiredReceiptSchema: CANDIDATE_BUILD_RECEIPT_V2_SCHEMA,
         receiptState: "absent",
       },
     },
@@ -707,7 +710,7 @@ function buildTopologyV3(input: Readonly<{
         pathSlotRef: fresh.layout.sourceToRuntime.candidateModulePathSlotRef,
         pathToken: candidateToken.pathToken,
         tokenBindingHash: candidateToken.bindingHash,
-        requiredReceiptSchema: NODE_PRODUCT_BUILD_RECEIPT_V3_SCHEMA,
+        requiredReceiptSchema: CANDIDATE_BUILD_RECEIPT_V2_SCHEMA,
         materializationState: "absent",
       },
     },
@@ -771,7 +774,7 @@ function buildTopologyV3(input: Readonly<{
     candidate: {
       runtimeBuildOutputPathRef: runtimeBuildOutput.pathRef,
       candidateModulePathRef: candidateModule.pathRef,
-      requiredBuildReceiptSchema: NODE_PRODUCT_BUILD_RECEIPT_V3_SCHEMA,
+      requiredBuildReceiptSchema: CANDIDATE_BUILD_RECEIPT_V2_SCHEMA,
       buildReceiptState: "absent",
       materializationState: "not_materialized",
     },

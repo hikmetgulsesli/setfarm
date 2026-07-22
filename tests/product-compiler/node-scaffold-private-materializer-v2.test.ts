@@ -23,6 +23,10 @@ import { after, afterEach, before, describe, it } from "node:test";
 
 import ts from "typescript";
 
+import { EVIDENCE_RECEIPT_V2_SCHEMA } from
+  "../../src/evidence/schemas/evidence-receipt-v2.js";
+import { CANDIDATE_BUILD_RECEIPT_V2_SCHEMA } from
+  "../../src/execution/schemas/candidate-build-receipt-v2.js";
 import { createArtifactIndexForTests as createArtifactIndex } from
   "../../src/product-compiler/artifact-index.js";
 import { canonicalJsonStringify, hashCanonicalJson } from
@@ -302,7 +306,7 @@ const FILE_TREE_CONTRACT_HASH_GOLDEN_V3 =
 const BUILD_TOPOLOGY_CONTRACT_HASH_GOLDEN_V2 =
   "5ac524ec5f5c45ac3091c39c5fe959da3da970c15757196879031db55c30ef28";
 const BUILD_TOPOLOGY_CONTRACT_HASH_GOLDEN_V3 =
-  "70276cf52b8dc844e1d60f5bf11203b17f5623126c433a184bcf301cfe231896";
+  "3f4ab4b48a3eeee55d7bbd0dfc36d7d20989975c8257b1be44b6d35fc0b33614";
 const NODE_PRODUCT_RUNTIME_PROGRAM_CONTRACT_HASH_GOLDEN_V2 =
   "5443c8c68e178ec3cce5a94857918dae195848e4f33e8ec751e0154b6fc97a46";
 const NODE_ENTRYPOINT_GENERATOR_CONTRACT_HASH_GOLDEN_V2 =
@@ -1835,6 +1839,7 @@ describe("Node scaffold private staged materializer V2", () => {
         BUILD_TOPOLOGY_CONTRACT_HASH_GOLDEN_V3);
       assert.equal(Object.isFrozen(BUILD_TOPOLOGY_CONTRACT_V3), true);
       assert.equal(topology.contractHash, BUILD_TOPOLOGY_CONTRACT_HASH_GOLDEN_V3);
+      assert.equal(topology.topologyVersion, "3.1.0");
       assert.equal(topology.stage,
         "realization_sources_planned_dependencies_ready");
       assert.equal(topology.pathCount, 11);
@@ -1871,6 +1876,22 @@ describe("Node scaffold private staged materializer V2", () => {
       assert.equal(topology.commands.build.executableRef, "TOOL_NODE_RUNTIME_V2");
       assert.equal(topology.commands.build.compilerTarget.commandName, "tsc");
       assert.equal(topology.commands.build.compilerTarget.exactVersion, "5.9.3");
+      assert.equal(
+        topology.commands.build.buildReceiptSchema,
+        CANDIDATE_BUILD_RECEIPT_V2_SCHEMA,
+      );
+      assert.equal(
+        topology.compilation.candidate.requiredBuildReceiptSchema,
+        CANDIDATE_BUILD_RECEIPT_V2_SCHEMA,
+      );
+      assert.equal(
+        topology.commands.test.requiredPreconditions[0]?.receiptSchema,
+        CANDIDATE_BUILD_RECEIPT_V2_SCHEMA,
+      );
+      assert.equal(
+        topology.commands.test.canonicalReceiptSchema,
+        EVIDENCE_RECEIPT_V2_SCHEMA,
+      );
       assert.match(topology.commands.build.compilerTarget.targetContentHash,
         /^[a-f0-9]{64}$/u);
       assert.deepEqual(topology.commands.test.directArgv, fixture.testArgv);
@@ -2059,9 +2080,9 @@ describe("Node scaffold private staged materializer V2", () => {
     }
 
     assert.deepEqual(logicalBuildHashes, [
-      "d7c8252d35b65e20835ab000f9c9b32e7b956292e4a267af34697f7b72b843ae",
-      "aaab3861fe5a5220c352dad697f86606e206243ec799327a6371fbfce9b989fb",
-      "645d856e2e1efb264d13d4985592271e14d6710f6318536b6ad1c6f4e760b619",
+      "378c6ebf0f631116a85d6bb39ef7d8f6c43e042fd75404dc56535d0c34f6569d",
+      "699599c09f6cb33c20a091724af0135eac3d4d801ed74a17014929a23651610b",
+      "c2823294624bd00e05e9b9f56da945e7df408f1af188d477164f9f6d5a143b6d",
     ]);
   });
 
@@ -4065,11 +4086,11 @@ describe("Node scaffold private staged materializer V2", () => {
     }
 
     assert.deepEqual(storyPlanHashes, [
-      "ec1a715e5a7506637a602cf6b84e8ad95e390e67b24c1eb2e0f18ad216d99613",
-      "45127175ee0decddf55d4365a52dc80c298b7a951e28d8eec94f845d744b6d3c",
-      "20a2e889467c19c6c18b16840cb6f271ca2a40299a3e9a3f98ba4a5c26fe400c",
-      "fb48d08d5261b2dc57352f934be81634b16940fec5c329b862eb450511094a39",
-      "ba1168ede6ae998d270c835f3262e21337f15e557f1537fa5ae6cfd11ea510e4",
+      "8403bcea17ebee0eb322c3a3528b56b8405a209d0284127dd07a1d7dc139453b",
+      "f9f1a9b670217ac8af240be3de11fe6eaf8a5c4c2500c196f6701ae0525e214d",
+      "b763655d98f461bee69141ff8b3a214f45761a808c1e1f603590fab5221fd904",
+      "e0b3507040ca47f6502bdc4e8a12803d81f84c7ead9b20f41a8e9713204e73b8",
+      "6b30503c8f1a2f27ce8d8cc6a7c0a69bc8fea244c3a5dea35e98850198386500",
     ]);
     assert.equal(sourceMapManifestHashes.length, cases.length);
     assert.equal(new Set(sourceMapManifestHashes).size, cases.length);

@@ -1,5 +1,10 @@
 import { z } from "zod";
 
+import { EVIDENCE_RECEIPT_V2_SCHEMA } from
+  "../../evidence/schemas/evidence-receipt-v2.js";
+import { CANDIDATE_BUILD_RECEIPT_V2_SCHEMA } from
+  "../../execution/schemas/candidate-build-receipt-v2.js";
+
 import {
   DEFAULT_CANONICAL_JSON_BOUNDED_WORK_LIMITS,
   canonicalJsonBytesBounded,
@@ -47,11 +52,7 @@ import {
 } from "./path-token-v2.js";
 
 export const BUILD_TOPOLOGY_V3_SCHEMA = "setfarm.build-topology.v3" as const;
-export const BUILD_TOPOLOGY_VERSION_V3 = "3.0.0" as const;
-export const NODE_PRODUCT_BUILD_RECEIPT_V3_SCHEMA =
-  "setfarm.node-product-build-receipt.v3" as const;
-export const NODE_PRODUCT_TEST_EXECUTION_RECEIPT_V3_SCHEMA =
-  "setfarm.node-product-test-execution-receipt.v3" as const;
+export const BUILD_TOPOLOGY_VERSION_V3 = "3.1.0" as const;
 export const BUILD_TOPOLOGY_MAX_CANONICAL_BYTES_V3 = 4 * 1024 * 1024;
 export const BUILD_TOPOLOGY_BOUNDED_WORK_LIMITS_V3 = Object.freeze({
   maxDepth: DEFAULT_CANONICAL_JSON_BOUNDED_WORK_LIMITS.maxDepth + 20,
@@ -87,8 +88,8 @@ export const BUILD_TOPOLOGY_BUILD_REQUIRED_PRECONDITIONS_V3 = Object.freeze([
 
 export const BUILD_TOPOLOGY_TEST_REQUIRED_PRECONDITIONS_V3 = Object.freeze([
   Object.freeze({
-    authorityRef: "NODE_PRODUCT_BUILD_RECEIPT_V3" as const,
-    receiptSchema: NODE_PRODUCT_BUILD_RECEIPT_V3_SCHEMA,
+    authorityRef: "CANDIDATE_BUILD_RECEIPT_V2" as const,
+    receiptSchema: CANDIDATE_BUILD_RECEIPT_V2_SCHEMA,
     missingDisposition: "typed_precondition_rejection" as const,
   }),
   Object.freeze({
@@ -324,7 +325,7 @@ const RuntimeBuildOutputAuthorityV3Schema = z.object({
   ]),
   pathToken: Sha256Schema,
   tokenBindingHash: Sha256Schema,
-  requiredReceiptSchema: z.literal(NODE_PRODUCT_BUILD_RECEIPT_V3_SCHEMA),
+  requiredReceiptSchema: z.literal(CANDIDATE_BUILD_RECEIPT_V2_SCHEMA),
   receiptState: z.literal("absent"),
 }).strict();
 
@@ -342,7 +343,7 @@ const TestBuildOutputAuthorityV3Schema = z.object({
     "PATH_NODE_API_GENERATED_TEST_OUTPUT_V2",
   ]),
   runtimeImportSpecifier: z.enum(["./cli.js", "./app.js"]),
-  requiredReceiptSchema: z.literal(NODE_PRODUCT_BUILD_RECEIPT_V3_SCHEMA),
+  requiredReceiptSchema: z.literal(CANDIDATE_BUILD_RECEIPT_V2_SCHEMA),
   receiptState: z.literal("absent"),
 }).strict();
 
@@ -356,7 +357,7 @@ const CandidateModuleAuthorityV3Schema = z.object({
   ]),
   pathToken: Sha256Schema,
   tokenBindingHash: Sha256Schema,
-  requiredReceiptSchema: z.literal(NODE_PRODUCT_BUILD_RECEIPT_V3_SCHEMA),
+  requiredReceiptSchema: z.literal(CANDIDATE_BUILD_RECEIPT_V2_SCHEMA),
   materializationState: z.literal("absent"),
 }).strict();
 
@@ -601,7 +602,7 @@ const BuildCommandV3Schema = z.object({
     .length(BUILD_TOPOLOGY_BUILD_REQUIRED_PRECONDITIONS_V3.length),
   runtimeSourceReceiptState: z.literal("absent"),
   testSourceReceiptState: z.literal("absent"),
-  buildReceiptSchema: z.literal(NODE_PRODUCT_BUILD_RECEIPT_V3_SCHEMA),
+  buildReceiptSchema: z.literal(CANDIDATE_BUILD_RECEIPT_V2_SCHEMA),
   buildReceiptState: z.literal("absent"),
   executionStatus: z.literal("blocked_until_runtime_and_test_source_receipts"),
 }).strict();
@@ -614,7 +615,7 @@ const TestCommandCommonV3Shape = {
   runnerAbi: z.literal("NODE_TEST_RUNNER_DIRECT_FILE_ABI_V2"),
   requiredPreconditions: z.array(RequiredPreconditionV3Schema)
     .length(BUILD_TOPOLOGY_TEST_REQUIRED_PRECONDITIONS_V3.length),
-  canonicalReceiptSchema: z.literal(NODE_PRODUCT_TEST_EXECUTION_RECEIPT_V3_SCHEMA),
+  canonicalReceiptSchema: z.literal(EVIDENCE_RECEIPT_V2_SCHEMA),
   minimumTestCount: z.literal(1),
   zeroTestReceipt: z.literal("forbidden"),
   networkPolicy: z.literal("forbidden"),
@@ -839,7 +840,7 @@ export const BuildTopologyCompilationV3Schema = z.object({
   candidate: z.object({
     runtimeBuildOutputPathRef: PathBindingIdSchema,
     candidateModulePathRef: PathBindingIdSchema,
-    requiredBuildReceiptSchema: z.literal(NODE_PRODUCT_BUILD_RECEIPT_V3_SCHEMA),
+    requiredBuildReceiptSchema: z.literal(CANDIDATE_BUILD_RECEIPT_V2_SCHEMA),
     buildReceiptState: z.literal("absent"),
     materializationState: z.literal("not_materialized"),
   }).strict(),
