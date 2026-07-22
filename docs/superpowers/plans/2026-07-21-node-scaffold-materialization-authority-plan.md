@@ -413,6 +413,44 @@ Tests cover mixed-case environment injection, config precedence, user/global
 path aliasing, builtin npmrc drift, project `.npmrc`, proxy/CA inheritance,
 attempt-root reuse, and probe/source mutation.
 
+**Status (2026-07-22): complete as isolated authority.** Commit `5f68fb61`
+implements both receipts, one WeakMap-authenticated private environment handle,
+fresh revalidation, authenticated owned-root destruction, and a narrow F2
+execution boundary that can run only the code-owned effective-config probe.
+Executable paths never enter a receipt or caller-selected argv. The environment
+is built from an empty map with sixteen exact variables; mixed-case ambient npm
+config, `NODE_OPTIONS`, proxy/CA and credentials have no inheritance path. User
+and global npmrc files are distinct process-owned mode-0600 single-LF files,
+while the probe cwd proves `.npmrc` absent. The execution-project `.npmrc`
+claim deliberately remains `pending_file_tree_join`, so F3 cannot activate a
+project by itself.
+
+The first real npm probe exposed two previously unspecified side effects:
+successful npm startup created `cache/_logs`, and Node created
+`tmp/node-compile-cache`. The gate was not weakened. The code-owned environment
+contract advanced from 2.0.0 to 2.1.0 and now fixes
+`NPM_CONFIG_LOGS_MAX=0` plus `NODE_DISABLE_COMPILE_CACHE=1`; canonical command
+receipts, rather than mutable filesystem diagnostics, remain the process-log
+authority. A dirty Homebrew npm tree containing mutable generated Python cache
+bytes was also correctly rejected by F2 before F3. The canonical official-byte
+rehearsal therefore provisions the official distribution into a private test
+root instead of treating Homebrew presence as authority.
+
+The official arm64 rehearsal reverified the 25,962,500-byte Node archive with
+SHA-256
+`fb526811860f81dcac7dd8b2b55eca4accfc5d61c3b7c2508f2639faee8a738d`,
+provisioned it privately, admitted real Node `22.23.1` / npm `10.9.8`, ran and
+replayed the exact config probe, authenticated-destroyed the environment, and
+removed the complete rehearsal root. Canonical receipt hash:
+`cb00152d0e0a6c3877df7b2674097821ded5a6dec806ab07d69fcd2f810e2e4a`;
+environment receipt:
+`92507753dd7717029cf173719754a4e6afb909edb78f563c957ad31bd9d86624`;
+effective-config receipt:
+`7223eba47005e334aad1bdbd6aa29a9979f3b969909e8ed6fe524901acdbc4cc`.
+Production toolchain root remained absent. The focused F3 suite is 9/9; full
+Product Compiler is 996/996 across 122 suites; scripts are 24/24; TypeScript,
+English (1,080 files), path (607 files), and diff checks pass.
+
 ## F4 — Private staged scaffold and dependency materialization
 
 New versioned schemas:
@@ -476,11 +514,13 @@ F2-F4 additionally require focused real-filesystem, process, PostgreSQL and
 concurrency tests. A clean merged-`main` `npm run build` and full `npm test`
 remain release evidence; the feature-branch build guard is never bypassed.
 
-GO for F1 and the complete isolated F2 authority through official-runtime
-packaged bootstrap rehearsal. NO-GO for production host execution, dependency
-installation, setup cutover, PacketV4, live migration, deploy and new clean
-product runs until real-root verification, F3-F5, and the later packet/evidence
-program are complete. The feature-branch `npm run
+GO for F1, the complete isolated F2 authority through official-runtime packaged
+bootstrap rehearsal, and the isolated F3 environment/config authority through
+official-runtime replay and cleanup. NO-GO for production host execution,
+dependency installation, setup cutover, PacketV4, live migration, deploy and
+new clean product runs until real-root verification, F4-F5, and the later
+packet/evidence program are complete. F4 private scaffold/dependency
+materialization is the next dependency-order slice. The feature-branch `npm run
 build` guard correctly refused `b4bc3bd9`; the resulting source-v26 versus
 committed-dist-v25 mismatch also prevents `dist`-importing full step tests from
 being release evidence on this branch. Only a clean merged-main build and full
