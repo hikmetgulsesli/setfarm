@@ -306,7 +306,7 @@ const FILE_TREE_CONTRACT_HASH_GOLDEN_V3 =
 const BUILD_TOPOLOGY_CONTRACT_HASH_GOLDEN_V2 =
   "5ac524ec5f5c45ac3091c39c5fe959da3da970c15757196879031db55c30ef28";
 const BUILD_TOPOLOGY_CONTRACT_HASH_GOLDEN_V3 =
-  "3f4ab4b48a3eeee55d7bbd0dfc36d7d20989975c8257b1be44b6d35fc0b33614";
+  "409d808e65a5a2a9d974b7af5190c20309573f92f81829ab68eb2e000114c894";
 const NODE_PRODUCT_RUNTIME_PROGRAM_CONTRACT_HASH_GOLDEN_V2 =
   "5443c8c68e178ec3cce5a94857918dae195848e4f33e8ec751e0154b6fc97a46";
 const NODE_ENTRYPOINT_GENERATOR_CONTRACT_HASH_GOLDEN_V2 =
@@ -1839,7 +1839,7 @@ describe("Node scaffold private staged materializer V2", () => {
         BUILD_TOPOLOGY_CONTRACT_HASH_GOLDEN_V3);
       assert.equal(Object.isFrozen(BUILD_TOPOLOGY_CONTRACT_V3), true);
       assert.equal(topology.contractHash, BUILD_TOPOLOGY_CONTRACT_HASH_GOLDEN_V3);
-      assert.equal(topology.topologyVersion, "3.1.0");
+      assert.equal(topology.topologyVersion, "3.2.0");
       assert.equal(topology.stage,
         "realization_sources_planned_dependencies_ready");
       assert.equal(topology.pathCount, 11);
@@ -1876,6 +1876,17 @@ describe("Node scaffold private staged materializer V2", () => {
       assert.equal(topology.commands.build.executableRef, "TOOL_NODE_RUNTIME_V2");
       assert.equal(topology.commands.build.compilerTarget.commandName, "tsc");
       assert.equal(topology.commands.build.compilerTarget.exactVersion, "5.9.3");
+      assert.deepEqual(topology.commands.build.processPolicy, {
+        stdin: "closed",
+        timeoutMs: 120_000,
+        maxStdoutBytes: 1_048_576,
+        maxStderrBytes: 1_048_576,
+        shell: "forbidden",
+        ambientEnvironment: "forbidden",
+        outputLimitDisposition: "typed_build_rejection",
+        timeoutDisposition: "typed_build_rejection",
+        nonzeroOrSignalDisposition: "typed_build_rejection",
+      });
       assert.equal(
         topology.commands.build.buildReceiptSchema,
         CANDIDATE_BUILD_RECEIPT_V2_SCHEMA,
@@ -2080,9 +2091,9 @@ describe("Node scaffold private staged materializer V2", () => {
     }
 
     assert.deepEqual(logicalBuildHashes, [
-      "378c6ebf0f631116a85d6bb39ef7d8f6c43e042fd75404dc56535d0c34f6569d",
-      "699599c09f6cb33c20a091724af0135eac3d4d801ed74a17014929a23651610b",
-      "c2823294624bd00e05e9b9f56da945e7df408f1af188d477164f9f6d5a143b6d",
+      "e84797a297a091a9960d067e905a832d152cb997d83ac2a03ca0c8f08fc47a01",
+      "3783202378a7454b949397fb2946e9e8231984441a219273e5ed3dfa153f9900",
+      "4678f1ee2d9387d1795bf968a2edde0fd6bc0d61254822bef74629843f0452b4",
     ]);
   });
 
@@ -4086,11 +4097,11 @@ describe("Node scaffold private staged materializer V2", () => {
     }
 
     assert.deepEqual(storyPlanHashes, [
-      "8403bcea17ebee0eb322c3a3528b56b8405a209d0284127dd07a1d7dc139453b",
-      "f9f1a9b670217ac8af240be3de11fe6eaf8a5c4c2500c196f6701ae0525e214d",
-      "b763655d98f461bee69141ff8b3a214f45761a808c1e1f603590fab5221fd904",
-      "e0b3507040ca47f6502bdc4e8a12803d81f84c7ead9b20f41a8e9713204e73b8",
-      "6b30503c8f1a2f27ce8d8cc6a7c0a69bc8fea244c3a5dea35e98850198386500",
+      "ec88d86bdac108f77daf50710371014748a8cb1d4fb1a45e6c6b3fd6f9805408",
+      "5652228735f1018469a6f1ced468391585aa5e8b5bab245d83eaab97f024fd22",
+      "681d4661a4c13dc8256760424bed48514bdc0889a5d33213574c35dd91818c9f",
+      "f155909ff73d237f5468a034578dc2a9f8c6d9a6ccc85b82a6fdbb5a11329368",
+      "3045cdd6b4d6b6125dbed33736f5f43c3726652a3e9a5fa3c6f24561ddf709ab",
     ]);
     assert.equal(sourceMapManifestHashes.length, cases.length);
     assert.equal(new Set(sourceMapManifestHashes).size, cases.length);

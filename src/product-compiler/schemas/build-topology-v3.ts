@@ -52,7 +52,7 @@ import {
 } from "./path-token-v2.js";
 
 export const BUILD_TOPOLOGY_V3_SCHEMA = "setfarm.build-topology.v3" as const;
-export const BUILD_TOPOLOGY_VERSION_V3 = "3.1.0" as const;
+export const BUILD_TOPOLOGY_VERSION_V3 = "3.2.0" as const;
 export const BUILD_TOPOLOGY_MAX_CANONICAL_BYTES_V3 = 4 * 1024 * 1024;
 export const BUILD_TOPOLOGY_BOUNDED_WORK_LIMITS_V3 = Object.freeze({
   maxDepth: DEFAULT_CANONICAL_JSON_BOUNDED_WORK_LIMITS.maxDepth + 20,
@@ -104,6 +104,18 @@ export const BUILD_TOPOLOGY_TEST_REQUIRED_PRECONDITIONS_V3 = Object.freeze([
   }),
 ] as const);
 
+export const BUILD_TOPOLOGY_BUILD_PROCESS_POLICY_V3 = Object.freeze({
+  stdin: "closed" as const,
+  timeoutMs: 120_000 as const,
+  maxStdoutBytes: 1_048_576 as const,
+  maxStderrBytes: 1_048_576 as const,
+  shell: "forbidden" as const,
+  ambientEnvironment: "forbidden" as const,
+  outputLimitDisposition: "typed_build_rejection" as const,
+  timeoutDisposition: "typed_build_rejection" as const,
+  nonzeroOrSignalDisposition: "typed_build_rejection" as const,
+});
+
 export const BUILD_TOPOLOGY_CONTRACT_V3 = Object.freeze({
   schema: "setfarm.build-topology-contract.v3" as const,
   contractVersion: BUILD_TOPOLOGY_VERSION_V3,
@@ -140,6 +152,7 @@ export const BUILD_TOPOLOGY_CONTRACT_V3 = Object.freeze({
     install: "authenticated_completed_npm_ci_v2" as const,
     build: "direct_node_typescript_compiler_target_v3" as const,
     test: "direct_node_test_exact_compiled_file_v3" as const,
+    buildProcessPolicy: BUILD_TOPOLOGY_BUILD_PROCESS_POLICY_V3,
     shell: "forbidden" as const,
     packageScriptIndirection: "forbidden" as const,
     defaultTestDiscovery: "forbidden" as const,
@@ -598,6 +611,17 @@ const BuildCommandV3Schema = z.object({
     z.literal("tsconfig.json"),
   ]),
   shell: z.literal("forbidden"),
+  processPolicy: z.object({
+    stdin: z.literal("closed"),
+    timeoutMs: z.literal(120_000),
+    maxStdoutBytes: z.literal(1_048_576),
+    maxStderrBytes: z.literal(1_048_576),
+    shell: z.literal("forbidden"),
+    ambientEnvironment: z.literal("forbidden"),
+    outputLimitDisposition: z.literal("typed_build_rejection"),
+    timeoutDisposition: z.literal("typed_build_rejection"),
+    nonzeroOrSignalDisposition: z.literal("typed_build_rejection"),
+  }).strict(),
   requiredPreconditions: z.array(RequiredPreconditionV3Schema)
     .length(BUILD_TOPOLOGY_BUILD_REQUIRED_PRECONDITIONS_V3.length),
   runtimeSourceReceiptState: z.literal("absent"),
@@ -674,6 +698,10 @@ export const BuildTopologyCommandsV3Schema = z.object({
     || canonicalJsonStringify(value.test.requiredPreconditions)
       !== canonicalJsonStringify(BUILD_TOPOLOGY_TEST_REQUIRED_PRECONDITIONS_V3)
     || value.build.compilerTarget.targetLocator !== value.build.directArgv[1]
+    || canonicalJsonStringify(value.build.processPolicy)
+      !== canonicalJsonStringify(BUILD_TOPOLOGY_BUILD_PROCESS_POLICY_V3)
+    || value.build.processPolicy.shell !== value.build.shell
+    || value.build.processPolicy.ambientEnvironment !== value.ambientEnvironment
   ) {
     context.addIssue({
       code: "custom",
