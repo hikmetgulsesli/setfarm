@@ -629,6 +629,77 @@ export async function revalidateVerifiedNodeToolchainDistributionArchiveV2(
   }
 }
 
+function unpooledBuffer(length: number): Buffer {
+  return Buffer.allocUnsafeSlow(length);
+}
+
+/**
+ * Returns a defensive bounded byte copy only after fresh private-copy
+ * reproduction. Paths and descriptors remain module-private.
+ */
+export async function copyVerifiedNodeToolchainDistributionArchiveBytesV2(
+  handle: VerifiedNodeToolchainDistributionArchiveV2,
+): Promise<Buffer> {
+  const state = authenticState(handle);
+  await revalidateVerifiedNodeToolchainDistributionArchiveV2(handle);
+  let descriptor: number | undefined;
+  try {
+    descriptor = openSync(
+      state.privateArchivePath,
+      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+    );
+    const before = fstatSync(descriptor);
+    if (!sameFingerprint(fingerprint(before), state.privateArchiveFingerprint)) {
+      return fail(
+        "NODE_TOOLCHAIN_DISTRIBUTION_V2_PRIVATE_COPY_MISMATCH",
+        "Private distribution archive changed before defensive copy",
+      );
+    }
+    const output = unpooledBuffer(state.receipt.archive.byteLength);
+    let offset = 0;
+    while (offset < output.byteLength) {
+      const bytesRead = readSync(
+        descriptor,
+        output,
+        offset,
+        output.byteLength - offset,
+        null,
+      );
+      if (bytesRead < 1) {
+        return fail(
+          "NODE_TOOLCHAIN_DISTRIBUTION_V2_PRIVATE_COPY_MISMATCH",
+          "Private distribution archive ended before its exact byte length",
+        );
+      }
+      offset += bytesRead;
+    }
+    const eof = Buffer.allocUnsafe(1);
+    if (readSync(descriptor, eof, 0, 1, null) !== 0) {
+      return fail(
+        "NODE_TOOLCHAIN_DISTRIBUTION_V2_PRIVATE_COPY_MISMATCH",
+        "Private distribution archive exceeded its exact byte length",
+      );
+    }
+    const after = fstatSync(descriptor);
+    if (!sameFingerprint(fingerprint(before), fingerprint(after))) {
+      return fail(
+        "NODE_TOOLCHAIN_DISTRIBUTION_V2_PRIVATE_COPY_MISMATCH",
+        "Private distribution archive changed during defensive copy",
+      );
+    }
+    return output;
+  } catch (error) {
+    if (error instanceof NodeToolchainDistributionAuthorityErrorV2) throw error;
+    return fail(
+      "NODE_TOOLCHAIN_DISTRIBUTION_V2_PRIVATE_COPY_MISMATCH",
+      "Private distribution archive could not be copied defensively",
+      error,
+    );
+  } finally {
+    closeQuietly(descriptor);
+  }
+}
+
 export async function disposeVerifiedNodeToolchainDistributionArchiveV2(
   handle: VerifiedNodeToolchainDistributionArchiveV2,
 ): Promise<void> {

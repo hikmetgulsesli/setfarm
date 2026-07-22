@@ -45,7 +45,6 @@ type Fixture = Readonly<{
   npmRoot: string;
   npmCli: string;
   packageJson: string;
-  builtinNpmrc: string;
   dynamicLibrary: string;
 }>;
 
@@ -65,7 +64,6 @@ async function makeFixture(): Promise<Fixture> {
   const npmRoot = path.join(root, "lib", "node_modules", "npm");
   const npmCli = path.join(npmRoot, "bin", "npm-cli.js");
   const packageJson = path.join(npmRoot, "package.json");
-  const builtinNpmrc = path.join(npmRoot, "npmrc");
   const dynamicLibrary = path.join(root, "lib", "libnode.127.dylib");
   await mkdir(path.dirname(node), { recursive: true });
   await mkdir(path.dirname(npmCli), { recursive: true });
@@ -78,7 +76,7 @@ async function makeFixture(): Promise<Fixture> {
     version: "10.9.8",
     bin: { npm: "bin/npm-cli.js", npx: "bin/npx-cli.js" },
   })}\n`, { mode: 0o444 });
-  await writeFile(builtinNpmrc, "prefix = /fixture\n", { mode: 0o444 });
+  await writeFile(path.join(npmRoot, ".npmrc"), "", { mode: 0o444 });
   await writeFile(path.join(npmRoot, "bin", "npx-cli.js"), "// fixture\n", { mode: 0o555 });
   await writeFile(dynamicLibrary, "fixture-dylib\n", { mode: 0o555 });
   await Promise.all([
@@ -92,11 +90,11 @@ async function makeFixture(): Promise<Fixture> {
     chmod(npmCli, 0o555),
     chmod(path.join(npmRoot, "lib", "cli.js"), 0o444),
     chmod(packageJson, 0o444),
-    chmod(builtinNpmrc, 0o444),
+    chmod(path.join(npmRoot, ".npmrc"), 0o444),
     chmod(path.join(npmRoot, "bin", "npx-cli.js"), 0o555),
     chmod(dynamicLibrary, 0o555),
   ]);
-  return { root, node, npmRoot, npmCli, packageJson, builtinNpmrc, dynamicLibrary };
+  return { root, node, npmRoot, npmCli, packageJson, dynamicLibrary };
 }
 
 function exited(stdout: string, stderr = ""): HostNodeToolchainProbeResultV2 {
@@ -318,6 +316,14 @@ describe("HostNodeToolchainAuthorityV2", () => {
     await assert.rejects(authority(writableFixture), {
       code: "HOST_NODE_TOOLCHAIN_V2_PACKAGE_CLOSURE_INVALID",
     });
+
+    const builtinConfigFixture = await makeFixture();
+    await writeFile(path.join(builtinConfigFixture.npmRoot, "npmrc"), "prefix=/unexpected\n", {
+      mode: 0o444,
+    });
+    await assert.rejects(authority(builtinConfigFixture), {
+      code: "HOST_NODE_TOOLCHAIN_V2_PACKAGE_CLOSURE_INVALID",
+    });
   });
 
   it("revalidates every held identity and refuses unchanged-receipt host drift", async () => {
@@ -419,10 +425,7 @@ describe("HostNodeToolchainAuthorityV2", () => {
       receipt.npm.packageJson.contentHash,
       sha256(await readFile(fixture.packageJson)),
     );
-    assert.equal(
-      receipt.npm.builtinNpmrc.contentHash,
-      sha256(await readFile(fixture.builtinNpmrc)),
-    );
+    assert.deepEqual(receipt.npm.builtinNpmrc, { locator: "npmrc", status: "absent" });
     assert.equal(receipt.receiptHash, hashHostNodeToolchainReceiptV2(receipt));
   });
 

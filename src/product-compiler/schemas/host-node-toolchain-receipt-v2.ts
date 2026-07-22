@@ -222,8 +222,10 @@ const HostNpmPackageClosureIdentityV2Schema = z.object({
   cli: HostToolchainExactFileIdentityV2Schema,
   packageJsonLocator: z.literal("package.json"),
   packageJson: HostToolchainExactFileIdentityV2Schema,
-  builtinNpmrcLocator: z.literal("npmrc"),
-  builtinNpmrc: HostToolchainExactFileIdentityV2Schema,
+  builtinNpmrc: z.object({
+    locator: z.literal("npmrc"),
+    status: z.literal("absent"),
+  }).strict(),
   packageTree: HostNpmPackageTreeV2Schema,
 }).strict();
 

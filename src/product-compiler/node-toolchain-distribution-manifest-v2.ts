@@ -36,7 +36,7 @@ const DISTRIBUTIONS_V2: readonly DistributionDescriptorV2[] = Object.freeze([
 ]);
 
 export const NODE_TOOLCHAIN_DISTRIBUTION_MANIFEST_HASH_V2 =
-  "607c7e3e4f8c61e3d772851840b33842351374370b5ce2a7eae9e2a11fda0095" as const;
+  "afcc91a039d576bebf286150d2ababd46786980c7c6aa025c0b3334b5fb92708" as const;
 
 export class NodeToolchainDistributionManifestAuthorityErrorV2 extends Error {
   readonly code = "NODE_TOOLCHAIN_DISTRIBUTION_V2_CODE_AUTHORITY_DRIFT" as const;
@@ -73,6 +73,9 @@ function artifactV2(descriptor: DistributionDescriptorV2): NodeToolchainDistribu
       nodeExecutableLocator: "bin/node",
       npmPackageRootLocator: "lib/node_modules/npm",
       npmCliLocator: "lib/node_modules/npm/bin/npm-cli.js",
+      npmPackageJsonLocator: "lib/node_modules/npm/package.json",
+      npmBuiltinConfigLocator: "lib/node_modules/npm/npmrc",
+      npmBuiltinConfigExpectation: "absent",
       discardUnselectedArchiveEntries: true,
     },
   };
@@ -114,12 +117,13 @@ function buildManifestV2(): NodeToolchainDistributionManifestV2 {
     extraction: {
       archiveInventory: "every_member_before_extraction_v2",
       selectedClosure: "exact_node_and_bundled_npm_v2",
+      unselectedEntryPolicy: "inventory_then_discard_without_extraction_v2",
       rejectPathTraversal: true,
       rejectAbsolutePath: true,
       rejectBackslash: true,
-      rejectSymlink: true,
-      rejectHardLink: true,
-      rejectSpecialFile: true,
+      selectedClosureRejectSymlink: true,
+      selectedClosureRejectHardLink: true,
+      selectedClosureRejectSpecialFile: true,
       rejectCaseFoldCollision: true,
       finalFileModes: {
         nonExecutable: "0444",
@@ -140,7 +144,7 @@ function buildManifestV2(): NodeToolchainDistributionManifestV2 {
   }
   if (parsed.data.manifestHash !== NODE_TOOLCHAIN_DISTRIBUTION_MANIFEST_HASH_V2) {
     throw new NodeToolchainDistributionManifestAuthorityErrorV2(
-      "Code-owned Node distribution identity changed without a version/hash transition",
+      `Code-owned Node distribution identity changed without a version/hash transition (${parsed.data.manifestHash})`,
     );
   }
   return deepFreezeJson(parsed.data);

@@ -241,7 +241,6 @@ type CapturedNpmPackageV2 = Readonly<{
   version: string;
   cli: CapturedFileV2;
   packageJson: CapturedFileV2;
-  builtinNpmrc: CapturedFileV2;
 }>;
 
 type CapturedDynamicLibraryV2 = Readonly<{
@@ -695,8 +694,7 @@ function captureNpmPackage(root: string): CapturedNpmPackageV2 {
           fail("HOST_NODE_TOOLCHAIN_V2_PACKAGE_CLOSURE_INVALID", "npm package file bound exceeded");
         }
         const captureBytes = childRelative === "package.json"
-          || childRelative === "bin/npm-cli.js"
-          || childRelative === "npmrc";
+          || childRelative === "bin/npm-cli.js";
         const file = readExactFile({
           absolutePath: childAbsolute,
           relativePath: childRelative,
@@ -753,11 +751,16 @@ function captureNpmPackage(root: string): CapturedNpmPackageV2 {
     const byPath = new Map(files.map((file) => [file.relativePath, file]));
     const packageJson = byPath.get("package.json");
     const cli = byPath.get("bin/npm-cli.js");
-    const builtinNpmrc = byPath.get("npmrc");
-    if (!packageJson?.bytes || !cli?.bytes || !builtinNpmrc?.bytes) {
+    if (!packageJson?.bytes || !cli?.bytes) {
       fail(
         "HOST_NODE_TOOLCHAIN_V2_PACKAGE_CLOSURE_INVALID",
-        "npm package closure is missing package.json, bin/npm-cli.js or builtin npmrc",
+        "npm package closure is missing package.json or bin/npm-cli.js",
+      );
+    }
+    if (byPath.has("npmrc")) {
+      fail(
+        "HOST_NODE_TOOLCHAIN_V2_PACKAGE_CLOSURE_INVALID",
+        "npm package closure contains an unadmitted builtin npmrc",
       );
     }
     let parsedPackage: unknown;
@@ -808,7 +811,6 @@ function captureNpmPackage(root: string): CapturedNpmPackageV2 {
       version: parsedPackage.version,
       cli,
       packageJson,
-      builtinNpmrc,
     });
   } catch (error) {
     if (error instanceof HostNodeToolchainAuthorityErrorV2) throw error;
@@ -1425,8 +1427,10 @@ function buildReceipt(input: Readonly<{
     cli: exactFileIdentity(input.captured.npmPackage.cli),
     packageJsonLocator: "package.json" as const,
     packageJson: exactFileIdentity(input.captured.npmPackage.packageJson),
-    builtinNpmrcLocator: "npmrc" as const,
-    builtinNpmrc: exactFileIdentity(input.captured.npmPackage.builtinNpmrc),
+    builtinNpmrc: {
+      locator: "npmrc" as const,
+      status: "absent" as const,
+    },
     packageTree: {
       treeContract: "host_npm_package_tree_every_and_only_v2" as const,
       rootMode: input.captured.npmPackage.rootMode,

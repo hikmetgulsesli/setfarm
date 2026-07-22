@@ -15,6 +15,7 @@ import { afterEach, describe, it } from "node:test";
 
 import {
   NodeToolchainDistributionAuthorityErrorV2,
+  copyVerifiedNodeToolchainDistributionArchiveBytesV2,
   disposeVerifiedNodeToolchainDistributionArchiveV2,
   inspectNodeToolchainDistributionVerificationReceiptV2,
   revalidateVerifiedNodeToolchainDistributionArchiveV2,
@@ -82,6 +83,9 @@ function testArtifact(bytes: Uint8Array) {
       nodeExecutableLocator: "bin/node" as const,
       npmPackageRootLocator: "lib/node_modules/npm" as const,
       npmCliLocator: "lib/node_modules/npm/bin/npm-cli.js" as const,
+      npmPackageJsonLocator: "lib/node_modules/npm/package.json" as const,
+      npmBuiltinConfigLocator: "lib/node_modules/npm/npmrc" as const,
+      npmBuiltinConfigExpectation: "absent" as const,
       discardUnselectedArchiveEntries: true as const,
     },
   };
@@ -123,6 +127,11 @@ describe("NodeToolchainDistributionManifestV2", () => {
     assert.equal(manifest.extraction.finalFileModes.nonExecutable, "0444");
     assert.equal(manifest.extraction.finalFileModes.executable, "0555");
     assert.equal(manifest.extraction.finalDirectoryMode, "0555");
+    assert.equal(
+      manifest.extraction.unselectedEntryPolicy,
+      "inventory_then_discard_without_extraction_v2",
+    );
+    assert.equal(manifest.extraction.selectedClosureRejectSymlink, true);
   });
 });
 
@@ -145,6 +154,10 @@ describe("verified Node toolchain distribution archive", () => {
     assert.equal(NodeToolchainDistributionVerificationReceiptV2Schema.parse(receipt).receiptHash, receipt.receiptHash);
     assert.equal(Object.isFrozen(receipt), true);
     assert.doesNotMatch(JSON.stringify(receipt), /setfarm-node-dist-v2|candidate\.tar|\/private\/|\/var\//);
+    const firstCopy = await copyVerifiedNodeToolchainDistributionArchiveBytesV2(handle);
+    assert.deepEqual(firstCopy, bytes);
+    firstCopy.fill(0);
+    assert.deepEqual(await copyVerifiedNodeToolchainDistributionArchiveBytesV2(handle), bytes);
 
     await chmod(archivePath, 0o600);
     await writeFile(archivePath, randomBytes(bytes.byteLength));
@@ -248,6 +261,9 @@ describe("verified Node toolchain distribution archive", () => {
     }));
     const receipt = inspectNodeToolchainDistributionVerificationReceiptV2(handle);
     assert.throws(() => inspectNodeToolchainDistributionVerificationReceiptV2(receipt as never), {
+      code: "NODE_TOOLCHAIN_DISTRIBUTION_V2_HANDLE_UNAUTHENTICATED",
+    });
+    await assert.rejects(copyVerifiedNodeToolchainDistributionArchiveBytesV2(receipt as never), {
       code: "NODE_TOOLCHAIN_DISTRIBUTION_V2_HANDLE_UNAUTHENTICATED",
     });
     assert.throws(() => inspectNodeToolchainDistributionVerificationReceiptV2(new Proxy(handle, {}) as never), {

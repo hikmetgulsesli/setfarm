@@ -45,6 +45,9 @@ const NodeToolchainDistributionArtifactIdentityV2Schema = z.object({
     nodeExecutableLocator: z.literal("bin/node"),
     npmPackageRootLocator: z.literal("lib/node_modules/npm"),
     npmCliLocator: z.literal("lib/node_modules/npm/bin/npm-cli.js"),
+    npmPackageJsonLocator: z.literal("lib/node_modules/npm/package.json"),
+    npmBuiltinConfigLocator: z.literal("lib/node_modules/npm/npmrc"),
+    npmBuiltinConfigExpectation: z.literal("absent"),
     discardUnselectedArchiveEntries: z.literal(true),
   }).strict(),
 }).strict().superRefine((value, context) => {
@@ -121,12 +124,13 @@ const NodeToolchainDistributionManifestIdentityV2Schema = z.object({
   extraction: z.object({
     archiveInventory: z.literal("every_member_before_extraction_v2"),
     selectedClosure: z.literal("exact_node_and_bundled_npm_v2"),
+    unselectedEntryPolicy: z.literal("inventory_then_discard_without_extraction_v2"),
     rejectPathTraversal: z.literal(true),
     rejectAbsolutePath: z.literal(true),
     rejectBackslash: z.literal(true),
-    rejectSymlink: z.literal(true),
-    rejectHardLink: z.literal(true),
-    rejectSpecialFile: z.literal(true),
+    selectedClosureRejectSymlink: z.literal(true),
+    selectedClosureRejectHardLink: z.literal(true),
+    selectedClosureRejectSpecialFile: z.literal(true),
     rejectCaseFoldCollision: z.literal(true),
     finalFileModes: z.object({
       nonExecutable: z.literal("0444"),
