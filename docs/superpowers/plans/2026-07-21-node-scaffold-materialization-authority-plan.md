@@ -1399,13 +1399,81 @@ again refused `arch/product-semantics-v2-authority` and was not bypassed. No
 live run, live DB, PR, service, generated repository or real Setfarm
 application-support tree was mutated.
 
-The next dependency-order slice is authenticated publication/materialization
-of exact runtime and test source receipts into the canonical evidence registry,
-then a versioned release manifest which consumes those registry identities.
-Typed retry/supervisor ownership must consume that registry delta, and Mission
-Control must project the same operational evidence rather than agent prose.
-Only after those links exist may the remaining blockers be removed or a clean
-three-product eval start.
+The next dependency-order work has two non-interchangeable joins. First, exact
+runtime/test source bytes and their receipts must be prepared and published
+through the authenticated CAS/PostgreSQL artifact authority. Second, their
+semantic coverage must resolve against the release-bound
+`EvidenceAdapterRegistryV1`. The adapter registry stores executable evidence
+support, not source bytes. A versioned release manifest must then consume both
+identities. Typed retry/supervisor ownership must consume the resulting typed
+delta, and Mission Control must project the same operational evidence rather
+than agent prose. Only after those links exist may the remaining blockers be
+removed or a clean three-product eval start.
+
+### F5M — Node source publication and evidence-registry join
+
+**Status (2026-07-21): source publication preparation, isolated indexed write,
+and authenticated deep-read proof complete; private materialization and the
+evidence-registry/release joins remain in progress. No live publication is
+authorized.** This slice is deliberately split by authority ownership, not by
+convenience:
+
+1. `NodeProductSourcePublicationReceiptV1` fresh-generates and verifies the
+   runtime/test source pair, wraps each exact UTF-8 source in ByteBundleV1,
+   binds its original source receipt as a separate semantic artifact, and
+   prepares one atomic chunk → bundle → source-receipt → publication-receipt
+   batch per role. Both receipts carry one every-and-only two-role set
+   commitment. Compilation returns an immutable exact publication plan plus an
+   authenticated prepared view but performs no write. The public indexed
+   publisher reparses the plan under its own authority; it does not accept a
+   caller-supplied prepared object as write authority.
+2. The existing generic indexed publisher remains the only CAS/PostgreSQL
+   write owner. A later authenticated reader must deep-verify each published
+   ByteBundle and materialize both absent FileTreeV3 targets with no-replace
+   filesystem semantics before any build may execute.
+3. A separate evidence-registry join must consume fresh ProductSpecV2 evidence
+   capability bindings, invocation transports, runtime/test source receipt
+   identities and a fresh-verified release registry. Every admitted predicate
+   must resolve to exactly one complete adapter support signature. No source
+   bytes are stored in that registry artifact, and no missing adapter becomes a
+   model retry.
+
+The publication receipt is not a release manifest and cannot remove the
+evidence-registry or release-manifest blockers. It may discharge only the
+runtime/test source-receipt blockers after its compiler, verifier, isolated
+indexed publication, deep read and private no-replace materialization proofs
+all exist.
+
+Commit `a89ef17d` implements the first publication boundary with
+`setfarm.node-product-source-publication-receipt.v1`. Each role receipt binds
+the complete ProductSpec/delivery/behavior/realization/FileTree/BuildTopology
+chain, both logical/full source-receipt identities, the original source-receipt
+envelope, and the ByteBundle raw/envelope identity. The pair shares one sorted,
+every-and-only runtime/test receipt-set commitment. The verifier regenerates
+both sources and both complete batches from fresh upstream authority; candidate
+envelope order is irrelevant, but a locally schema-valid receipt whose topology,
+entry, set and receipt hashes were all recomputed is rejected against that fresh
+authority. Production and test private-stage scopes cannot cross.
+
+The CLI fixture published both exact chunk → bundle → source-receipt →
+publication-receipt plans through `IndexedArtifactPublisher` into an isolated
+PostgreSQL database and temporary CAS. `verifyDeepByteBundleFromCasV2` then
+authenticated each indexed bundle, and copied bytes reproduced the exact source
+length and SHA-256 from its generated-source receipt. This is real DB/CAS proof,
+but it is not live publication and it does not yet prove target-path ownership.
+The dedicated private materializer/runtime/test suite remains 20/20 with
+`duration_ms 55260.592708`; TypeScript and diff checks pass; full Product
+Compiler is 1057/1057 across 129 suites with
+`duration_ms 124573.9985`. No live run, live DB, PR, service, generated
+repository or real Setfarm application-support tree was mutated.
+
+The remaining source boundary is deliberately narrower and stronger: a branded
+fresh-verified publication authority must deep-read both bundles and create the
+two absent FileTreeV3 targets inside the already-owned private stage with
+no-replace semantics, then emit a pathless materialization receipt. A receipt-
+shaped caller object, a mutable path, or a merely schema-valid publication may
+not reach the filesystem. Until that proof exists, neither source-receipt
+blocker is discharged and no build command is authorized.
 
 ## Verification and release gate
 
@@ -1430,7 +1498,8 @@ and new clean product runs until authenticated runtime/test-source
 materialization, authenticated build/test/candidate evidence, evidence registry,
 release manifest, SourceMap, and the later packet/eval program are complete. The next
 dependency-order slice is authenticated source publication plus canonical
-evidence registration, followed by the versioned release manifest. The
+artifact materialization, followed by the independent evidence-adapter registry
+join and versioned release manifest. The
 feature-branch
 `npm run build` guard was re-run after `06645e02` and correctly refused branch
 `arch/product-semantics-v2-authority`; it was not bypassed. Only a clean
