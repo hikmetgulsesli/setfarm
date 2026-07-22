@@ -7,10 +7,16 @@ import { after, before, beforeEach, describe, it } from "node:test";
 
 import {
   DeepByteBundleVerificationErrorV2,
+  SemanticArtifactCasVerificationErrorV1,
   copyVerifiedDeepByteBundleBytesV2,
+  copyVerifiedSemanticArtifactEnvelopeV1,
   createDeepByteBundleCasAuthorityV2,
   verifyDeepByteBundleFromCasV2,
+  verifySemanticArtifactEnvelopeFromCasV1,
 } from "../../src/product-compiler/deep-byte-bundle-verifier-v2.js";
+import {
+  SemanticArtifactEnvelopeV1Schema,
+} from "../../src/product-compiler/artifact-envelope.js";
 import {
   createHybridArtifactStoreCapacityLeaseProviderV1,
 } from "../../src/product-compiler/artifact-store-authority.js";
@@ -40,6 +46,9 @@ import {
   hashDeepByteBundleConsumerBindingV2,
   hashDeepByteBundleVerificationReceiptV2,
 } from "../../src/product-compiler/schemas/deep-byte-bundle-verification-receipt-v2.js";
+import {
+  SemanticArtifactCasVerificationReceiptV1Schema,
+} from "../../src/product-compiler/schemas/semantic-artifact-cas-verification-receipt-v1.js";
 import {
   createIsolatedTestDatabase,
   type TestDatabase,
@@ -207,6 +216,108 @@ describe("DeepByteBundleVerificationReceiptV2 CAS authority", () => {
     const expected = Buffer.from(first);
     first.fill(0);
     assert.deepEqual(copyVerifiedDeepByteBundleBytesV2(verified), expected);
+  });
+
+  it("authenticates an exact semantic envelope through both CAS and PostgreSQL", async () => {
+    const envelope = SemanticArtifactEnvelopeV1Schema.parse({
+      schema: "setfarm.semantic-artifact-envelope.v1",
+      artifactType: "setfarm.test-semantic-authority.v1",
+      producer: TEST_PRODUCER,
+      payload: {
+        schema: "setfarm.test-semantic-authority.v1",
+        authorityHash: "d".repeat(64),
+      },
+    });
+    await publish({
+      schema: ARTIFACT_STORE_BATCH_PLAN_SCHEMA_V1,
+      items: [{ durabilityTier: 0, envelope }],
+    });
+    const verified = await verifySemanticArtifactEnvelopeFromCasV1({
+      authority: reader(),
+      expectedEnvelope: envelope,
+    });
+    assert.equal(
+      SemanticArtifactCasVerificationReceiptV1Schema.safeParse(
+        verified.receipt,
+      ).success,
+      true,
+    );
+    assert.equal(
+      verified.receipt.expected.envelopeHash,
+      sha256(canonicalJsonBytes(envelope)),
+    );
+    assert.equal(verified.receipt.expected.artifactType, envelope.artifactType);
+    assert.equal(Object.isFrozen(verified), true);
+    assert.equal(Object.isFrozen(verified.receipt), true);
+    const first = copyVerifiedSemanticArtifactEnvelopeV1(verified);
+    assert.deepEqual(first, envelope);
+    (first.payload as { authorityHash: string }).authorityHash = "e".repeat(64);
+    assert.deepEqual(copyVerifiedSemanticArtifactEnvelopeV1(verified), envelope);
+    assert.throws(
+      () => copyVerifiedSemanticArtifactEnvelopeV1({
+        receipt: verified.receipt,
+      } as never),
+      (error: unknown) =>
+        error instanceof SemanticArtifactCasVerificationErrorV1
+        && error.code === "SEMANTIC_ARTIFACT_CAS_V1_HANDLE_UNAUTHENTICATED",
+    );
+  });
+
+  it("rejects a semantic envelope that exists in CAS without immutable index authority", async () => {
+    const envelope = SemanticArtifactEnvelopeV1Schema.parse({
+      schema: "setfarm.semantic-artifact-envelope.v1",
+      artifactType: "setfarm.test-unindexed-semantic-authority.v1",
+      producer: TEST_PRODUCER,
+      payload: { status: "filesystem_only" },
+    });
+    await writer.putPreparedBatch(prepareArtifactStoreBatchPlanV1({
+      schema: ARTIFACT_STORE_BATCH_PLAN_SCHEMA_V1,
+      items: [{ durabilityTier: 0, envelope }],
+    }));
+    await assert.rejects(
+      verifySemanticArtifactEnvelopeFromCasV1({
+        authority: reader(),
+        expectedEnvelope: envelope,
+      }),
+      (error: unknown) =>
+        error instanceof SemanticArtifactCasVerificationErrorV1
+        && error.code
+          === "SEMANTIC_ARTIFACT_CAS_V1_INDEX_IDENTITY_MISMATCH",
+    );
+  });
+
+  it("rejects forged CAS authority and hostile semantic envelope input", async () => {
+    const envelope = SemanticArtifactEnvelopeV1Schema.parse({
+      schema: "setfarm.semantic-artifact-envelope.v1",
+      artifactType: "setfarm.test-hostile-semantic-authority.v1",
+      producer: TEST_PRODUCER,
+      payload: { status: "expected" },
+    });
+    await assert.rejects(
+      verifySemanticArtifactEnvelopeFromCasV1({
+        authority: Object.freeze({
+          schema: "setfarm.deep-byte-bundle-cas-authority.v2",
+        }) as never,
+        expectedEnvelope: envelope,
+      }),
+      (error: unknown) =>
+        error instanceof SemanticArtifactCasVerificationErrorV1
+        && error.code
+          === "SEMANTIC_ARTIFACT_CAS_V1_PRODUCTION_AUTHORITY_REQUIRED",
+    );
+    await assert.rejects(
+      verifySemanticArtifactEnvelopeFromCasV1({
+        authority: reader(),
+        expectedEnvelope: new Proxy(envelope, {
+          ownKeys() {
+            throw new Error("HOSTILE_SEMANTIC_ENVELOPE");
+          },
+        }),
+      }),
+      (error: unknown) =>
+        error instanceof SemanticArtifactCasVerificationErrorV1
+        && error.code === "SEMANTIC_ARTIFACT_CAS_V1_INPUT_INVALID",
+    );
   });
 
   it("reads every declared chunk before classifying a missing dependency", async () => {

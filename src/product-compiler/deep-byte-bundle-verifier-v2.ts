@@ -25,7 +25,11 @@ import {
   DEFAULT_CANONICAL_JSON_BOUNDED_WORK_LIMITS,
   canonicalJsonBytesBounded,
 } from "./bounded-canonical-json.js";
-import { hashCanonicalJson } from "./canonical-json.js";
+import { canonicalJsonBytes, hashCanonicalJson } from "./canonical-json.js";
+import {
+  SemanticArtifactEnvelopeV1Schema,
+  type SemanticArtifactEnvelopeV1,
+} from "./artifact-envelope.js";
 import {
   ArtifactPublicationBatchIdentityItemSchema,
 } from "./artifact-publication-batch-identity.js";
@@ -48,6 +52,15 @@ import {
   type DeepByteBundleExpectedRefV2,
   type DeepByteBundleVerificationReceiptV2,
 } from "./schemas/deep-byte-bundle-verification-receipt-v2.js";
+import {
+  SEMANTIC_ARTIFACT_CAS_VERIFICATION_RECEIPT_V1_SCHEMA,
+  SEMANTIC_ARTIFACT_CAS_VERIFICATION_RECEIPT_V1_VERSION,
+  SEMANTIC_ARTIFACT_CAS_VERIFIER_CONTRACT_REF_V1,
+  SEMANTIC_ARTIFACT_CAS_VERIFIER_CONTRACT_VERSION_V1,
+  SemanticArtifactCasVerificationReceiptV1Schema,
+  hashSemanticArtifactCasVerificationReceiptV1,
+  type SemanticArtifactCasVerificationReceiptV1,
+} from "./schemas/semantic-artifact-cas-verification-receipt-v1.js";
 
 export type DeepByteBundleVerificationErrorCodeV2 =
   | "DEEP_BYTE_BUNDLE_V2_INPUT_INVALID"
@@ -86,8 +99,42 @@ export class DeepByteBundleVerificationErrorV2 extends Error {
   }
 }
 
+export type SemanticArtifactCasVerificationErrorCodeV1 =
+  | "SEMANTIC_ARTIFACT_CAS_V1_INPUT_INVALID"
+  | "SEMANTIC_ARTIFACT_CAS_V1_PRODUCTION_AUTHORITY_REQUIRED"
+  | "SEMANTIC_ARTIFACT_CAS_V1_ARTIFACT_UNAVAILABLE"
+  | "SEMANTIC_ARTIFACT_CAS_V1_IDENTITY_MISMATCH"
+  | "SEMANTIC_ARTIFACT_CAS_V1_INDEX_UNAVAILABLE"
+  | "SEMANTIC_ARTIFACT_CAS_V1_INDEX_IDENTITY_MISMATCH"
+  | "SEMANTIC_ARTIFACT_CAS_V1_RECEIPT_INVALID"
+  | "SEMANTIC_ARTIFACT_CAS_V1_HANDLE_UNAUTHENTICATED";
+
+export class SemanticArtifactCasVerificationErrorV1 extends Error {
+  readonly code: SemanticArtifactCasVerificationErrorCodeV1;
+  readonly artifactHash?: string;
+  override readonly cause?: unknown;
+
+  constructor(
+    code: SemanticArtifactCasVerificationErrorCodeV1,
+    message: string,
+    options: Readonly<{ artifactHash?: string; cause?: unknown }> = {},
+  ) {
+    super(message.slice(0, 1_500),
+      options.cause === undefined ? undefined : { cause: options.cause });
+    this.name = "SemanticArtifactCasVerificationErrorV1";
+    this.code = code;
+    this.artifactHash = options.artifactHash;
+    this.cause = options.cause;
+  }
+}
+
 const verifiedHandleConstructorCapabilityV2 = Object.freeze({});
 const privateVerifiedBytesV2 = new WeakMap<object, Buffer>();
+const verifiedSemanticArtifactConstructorCapabilityV1 = Object.freeze({});
+const privateVerifiedSemanticArtifactsV1 = new WeakMap<
+  object,
+  SemanticArtifactEnvelopeV1
+>();
 const casAuthorityConstructorCapabilityV2 = Object.freeze({});
 const privateCasAuthorityStateV2 = new WeakMap<object, Readonly<{
   store: ContentAddressedArtifactStore;
@@ -190,6 +237,29 @@ export class VerifiedDeepByteBundleV2 {
   }
 }
 
+export class VerifiedSemanticArtifactEnvelopeV1 {
+  readonly receipt: Readonly<SemanticArtifactCasVerificationReceiptV1>;
+
+  constructor(
+    capability: object,
+    receipt: SemanticArtifactCasVerificationReceiptV1,
+    envelope: SemanticArtifactEnvelopeV1,
+  ) {
+    if (capability !== verifiedSemanticArtifactConstructorCapabilityV1) {
+      throw new SemanticArtifactCasVerificationErrorV1(
+        "SEMANTIC_ARTIFACT_CAS_V1_HANDLE_UNAUTHENTICATED",
+        "Verified semantic artifact constructor capability is unavailable",
+      );
+    }
+    this.receipt = deepFreezeJson(structuredClone(receipt));
+    privateVerifiedSemanticArtifactsV1.set(
+      this,
+      deepFreezeJson(structuredClone(envelope)),
+    );
+    Object.freeze(this);
+  }
+}
+
 export function copyVerifiedDeepByteBundleBytesV2(
   handle: VerifiedDeepByteBundleV2,
 ): Buffer {
@@ -212,6 +282,31 @@ export function copyVerifiedDeepByteBundleBytesV2(
     );
   }
   return unpooledBufferCopy(bytes);
+}
+
+export function copyVerifiedSemanticArtifactEnvelopeV1(
+  handle: VerifiedSemanticArtifactEnvelopeV1,
+): SemanticArtifactEnvelopeV1 {
+  if (
+    typeof handle !== "object"
+    || handle === null
+    || isProxy(handle)
+    || Object.getPrototypeOf(handle)
+      !== VerifiedSemanticArtifactEnvelopeV1.prototype
+  ) {
+    throw new SemanticArtifactCasVerificationErrorV1(
+      "SEMANTIC_ARTIFACT_CAS_V1_HANDLE_UNAUTHENTICATED",
+      "Verified semantic artifact access requires an authentic handle",
+    );
+  }
+  const envelope = privateVerifiedSemanticArtifactsV1.get(handle);
+  if (!envelope) {
+    throw new SemanticArtifactCasVerificationErrorV1(
+      "SEMANTIC_ARTIFACT_CAS_V1_HANDLE_UNAUTHENTICATED",
+      "Verified semantic artifact access requires an authentic handle",
+    );
+  }
+  return structuredClone(envelope);
 }
 
 function sha256(bytes: Uint8Array): string {
@@ -550,4 +645,188 @@ export async function verifyDeepByteBundleFromCasV2(
   );
   rawBytes.fill(0);
   return handle;
+}
+
+function exactSemanticArtifactInputV1(input: unknown): Readonly<{
+  authority: unknown;
+  expectedEnvelope: unknown;
+}> {
+  try {
+    if (
+      input === null
+      || typeof input !== "object"
+      || Array.isArray(input)
+      || isProxy(input)
+    ) throw new TypeError("input must be one non-proxied plain object");
+    const prototype = Object.getPrototypeOf(input);
+    if (prototype !== Object.prototype && prototype !== null) {
+      throw new TypeError("input must use the ordinary or null object prototype");
+    }
+    const keys = Reflect.ownKeys(input);
+    const exactKeys = ["authority", "expectedEnvelope"];
+    if (
+      keys.length !== exactKeys.length
+      || keys.some((key) =>
+        typeof key !== "string" || !exactKeys.includes(key))
+    ) {
+      throw new TypeError("input must contain exactly authority and expectedEnvelope");
+    }
+    const values = new Map<string, unknown>();
+    for (const key of exactKeys) {
+      const descriptor = Object.getOwnPropertyDescriptor(input, key);
+      if (!descriptor || !("value" in descriptor) || !descriptor.enumerable) {
+        throw new TypeError(`input.${key} must be an enumerable data property`);
+      }
+      values.set(key, descriptor.value);
+    }
+    return Object.freeze({
+      authority: values.get("authority"),
+      expectedEnvelope: values.get("expectedEnvelope"),
+    });
+  } catch (error) {
+    throw new SemanticArtifactCasVerificationErrorV1(
+      "SEMANTIC_ARTIFACT_CAS_V1_INPUT_INVALID",
+      "Semantic artifact CAS verification input is invalid",
+      { cause: error },
+    );
+  }
+}
+
+function snapshotSemanticArtifactEnvelopeV1(
+  value: unknown,
+): SemanticArtifactEnvelopeV1 {
+  try {
+    const bytes = canonicalJsonBytesBounded(value, {
+      maxBytes: 4 * 1024 * 1024,
+      maxDepth: DEFAULT_CANONICAL_JSON_BOUNDED_WORK_LIMITS.maxDepth + 8,
+      maxNodes: (4 * 1024 * 1024) + 65_536,
+      maxContainerEntries:
+        DEFAULT_CANONICAL_JSON_BOUNDED_WORK_LIMITS.maxContainerEntries,
+      maxWorkUnits: (32 * 1024 * 1024) + (2 * 1024 * 1024),
+    });
+    return SemanticArtifactEnvelopeV1Schema.parse(
+      JSON.parse(bytes.toString("utf8")),
+    );
+  } catch (error) {
+    throw new SemanticArtifactCasVerificationErrorV1(
+      "SEMANTIC_ARTIFACT_CAS_V1_INPUT_INVALID",
+      "Expected semantic artifact envelope is invalid or exceeds its bounded budget",
+      { cause: error },
+    );
+  }
+}
+
+/**
+ * Authenticates one exact semantic envelope against both immutable storage
+ * layers. A caller-held envelope or receipt is data only; the returned
+ * process-local handle proves the canonical bytes were read from CAS and that
+ * the same producer/type/length identity exists in PostgreSQL.
+ */
+export async function verifySemanticArtifactEnvelopeFromCasV1(
+  input: Readonly<{
+    authority: DeepByteBundleCasAuthorityV2;
+    expectedEnvelope: SemanticArtifactEnvelopeV1;
+  }>,
+): Promise<VerifiedSemanticArtifactEnvelopeV1> {
+  const outer = exactSemanticArtifactInputV1(input);
+  const state = typeof outer.authority === "object"
+    && outer.authority !== null
+    && !isProxy(outer.authority)
+    && Object.getPrototypeOf(outer.authority)
+      === DeepByteBundleCasAuthorityV2.prototype
+    ? privateCasAuthorityStateV2.get(outer.authority)
+    : undefined;
+  if (!state) {
+    throw new SemanticArtifactCasVerificationErrorV1(
+      "SEMANTIC_ARTIFACT_CAS_V1_PRODUCTION_AUTHORITY_REQUIRED",
+      "Semantic artifact verification requires an authenticated hybrid CAS and Postgres index authority",
+    );
+  }
+  const expectedEnvelope = snapshotSemanticArtifactEnvelopeV1(
+    outer.expectedEnvelope,
+  );
+  const expectedBytes = canonicalJsonBytes(expectedEnvelope);
+  const expectedHash = hashCanonicalJson(expectedEnvelope);
+  let stored: ArtifactGetResult;
+  try {
+    stored = await concreteArtifactStoreGet.call(state.store, expectedHash);
+  } catch (error) {
+    throw new SemanticArtifactCasVerificationErrorV1(
+      "SEMANTIC_ARTIFACT_CAS_V1_ARTIFACT_UNAVAILABLE",
+      `Semantic artifact ${expectedHash} is unavailable from the exact CAS reader`,
+      { artifactHash: expectedHash, cause: error },
+    );
+  }
+  if (
+    stored.hash !== expectedHash
+    || stored.bytes.byteLength !== expectedBytes.byteLength
+    || !stored.bytes.equals(expectedBytes)
+    || hashCanonicalJson(stored.envelope) !== expectedHash
+    || stored.envelope.artifactType !== expectedEnvelope.artifactType
+    || hashCanonicalJson(stored.envelope.payload)
+      !== hashCanonicalJson(expectedEnvelope.payload)
+    || hashCanonicalJson(stored.envelope.producer)
+      !== hashCanonicalJson(expectedEnvelope.producer)
+  ) {
+    throw new SemanticArtifactCasVerificationErrorV1(
+      "SEMANTIC_ARTIFACT_CAS_V1_IDENTITY_MISMATCH",
+      `Semantic artifact ${expectedHash} differs from its exact expected canonical envelope`,
+      { artifactHash: expectedHash },
+    );
+  }
+  let indexed: ArtifactIdentity | undefined;
+  try {
+    indexed = await state.index.getArtifact(expectedHash);
+  } catch (error) {
+    throw new SemanticArtifactCasVerificationErrorV1(
+      "SEMANTIC_ARTIFACT_CAS_V1_INDEX_UNAVAILABLE",
+      `Semantic artifact index lookup for ${expectedHash} failed`,
+      { artifactHash: expectedHash, cause: error },
+    );
+  }
+  const storedIdentity = rootIdentity(stored);
+  if (!sameIndexedIdentity(storedIdentity, indexed)) {
+    throw new SemanticArtifactCasVerificationErrorV1(
+      "SEMANTIC_ARTIFACT_CAS_V1_INDEX_IDENTITY_MISMATCH",
+      `Semantic artifact ${expectedHash} is absent or differs in the immutable index`,
+      { artifactHash: expectedHash },
+    );
+  }
+  const receiptIdentity = {
+    schema: SEMANTIC_ARTIFACT_CAS_VERIFICATION_RECEIPT_V1_SCHEMA,
+    receiptVersion: SEMANTIC_ARTIFACT_CAS_VERIFICATION_RECEIPT_V1_VERSION,
+    status: "verified" as const,
+    verifier: {
+      contractRef: SEMANTIC_ARTIFACT_CAS_VERIFIER_CONTRACT_REF_V1,
+      contractVersion:
+        SEMANTIC_ARTIFACT_CAS_VERIFIER_CONTRACT_VERSION_V1,
+      casReadAuthority: "hybrid-postgres-filesystem-v1" as const,
+      indexReadAuthority: "semantic-artifacts-postgres-v1" as const,
+      comparison: "exact-canonical-envelope-bytes-v1" as const,
+    },
+    expected: {
+      artifactType: expectedEnvelope.artifactType,
+      envelopeHash: expectedHash,
+      envelopeByteLength: expectedBytes.byteLength,
+      payloadHash: hashCanonicalJson(expectedEnvelope.payload),
+      producerHash: hashCanonicalJson(expectedEnvelope.producer),
+    },
+  };
+  const parsed = SemanticArtifactCasVerificationReceiptV1Schema.safeParse({
+    ...receiptIdentity,
+    receiptHash:
+      hashSemanticArtifactCasVerificationReceiptV1(receiptIdentity),
+  });
+  if (!parsed.success) {
+    throw new SemanticArtifactCasVerificationErrorV1(
+      "SEMANTIC_ARTIFACT_CAS_V1_RECEIPT_INVALID",
+      "Semantic artifact CAS verifier produced an invalid canonical receipt",
+      { artifactHash: expectedHash, cause: parsed.error },
+    );
+  }
+  return new VerifiedSemanticArtifactEnvelopeV1(
+    verifiedSemanticArtifactConstructorCapabilityV1,
+    parsed.data,
+    stored.envelope,
+  );
 }
