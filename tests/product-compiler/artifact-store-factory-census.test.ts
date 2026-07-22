@@ -72,5 +72,18 @@ describe("artifact store production factory census", () => {
     const operational = await source("src/server/product-build-authority.ts");
     assert.match(operational, /isHybridAuthorityBackedArtifactStore/);
     assert.match(operational, /PRODUCT_BUILD_REFUSAL_ARTIFACT_AUTHORITY_REQUIRED/);
+
+    const deepBundle = await source(
+      "src/product-compiler/deep-byte-bundle-verifier-v2.ts",
+    );
+    assert.match(deepBundle, /createDeepByteBundleCasAuthorityV2/);
+    assert.match(deepBundle, /purpose: "reader"/);
+    assert.match(deepBundle, /createArtifactIndex\(input\.sql\)/);
+    assert.match(deepBundle, /privateCasAuthorityStateV2/);
+    assert.match(deepBundle, /authority: DeepByteBundleCasAuthorityV2/);
+    assert.doesNotMatch(
+      deepBundle,
+      /input: Readonly<\{\s*store: ContentAddressedArtifactStore;/,
+    );
   });
 });

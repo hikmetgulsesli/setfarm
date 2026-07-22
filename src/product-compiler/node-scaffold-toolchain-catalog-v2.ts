@@ -9,6 +9,16 @@ import {
 } from "./bounded-canonical-json.js";
 import { canonicalJsonStringify, hashCanonicalJson } from "./canonical-json.js";
 import {
+  verifyDeepByteBundleFromCasV2,
+  type DeepByteBundleCasAuthorityV2,
+  type VerifiedDeepByteBundleV2,
+} from "./deep-byte-bundle-verifier-v2.js";
+import type { SemanticArtifactEnvelopeV1 } from "./artifact-store.js";
+import {
+  ARTIFACT_STORE_BATCH_PLAN_SCHEMA_V1,
+  prepareArtifactStoreBatchPlanV1,
+} from "./artifact-store-batch-plan.js";
+import {
   NODE_CLI_PACKAGE_JSON_TEXT_V2,
   NODE_CLI_PACKAGE_LOCK_JSON_TEXT_V2,
   NODE_CLI_TSCONFIG_JSON_TEXT_V2,
@@ -29,7 +39,12 @@ import {
 import {
   BYTE_BUNDLE_ARTIFACT_TYPE_V1,
   createByteBundleV1,
+  type ByteBundleBuildResultV1,
 } from "./schemas/byte-bundle-v1.js";
+import {
+  hashDeepByteBundleConsumerBindingV2,
+  type DeepByteBundleConsumerBindingV2,
+} from "./schemas/deep-byte-bundle-verification-receipt-v2.js";
 import {
   NODE_SCAFFOLD_ASSET_CODE_SHA_V2,
   NODE_SCAFFOLD_BUILD_REQUIRED_PRECONDITIONS_V2,
@@ -232,6 +247,24 @@ type EntryDescriptorV2 = Readonly<{
   sourceExports: readonly [string, string, string];
 }>;
 
+export type NodeScaffoldAssetRoleV2 =
+  | "package_manifest"
+  | "dependency_lock_manifest"
+  | "typescript_compiler_config";
+
+export type NodeScaffoldProfileIdV2 = EntryDescriptorV2["profileId"];
+
+type NodeScaffoldAssetDefinitionV2 = Readonly<{
+  role: NodeScaffoldAssetRoleV2;
+  pathSlotRef:
+    | "PATH_SLOT_NODE_PACKAGE_JSON_V2"
+    | "PATH_SLOT_NODE_PACKAGE_LOCK_JSON_V2"
+    | "PATH_SLOT_NODE_TSCONFIG_JSON_V2";
+  normalizedLocator: "package.json" | "package-lock.json" | "tsconfig.json";
+  sourceExportRef: string;
+  text: string;
+}>;
+
 const ENTRY_DESCRIPTORS_V2: readonly EntryDescriptorV2[] = Object.freeze([
   Object.freeze({
     entryRef: NODE_SCAFFOLD_TOOLCHAIN_ENTRY_REFS_V2[0],
@@ -266,6 +299,34 @@ const ENTRY_DESCRIPTORS_V2: readonly EntryDescriptorV2[] = Object.freeze([
     ]) as readonly [string, string, string],
   }),
 ]);
+
+function descriptorAssetDefinitionsV2(
+  descriptor: EntryDescriptorV2,
+): readonly NodeScaffoldAssetDefinitionV2[] {
+  return Object.freeze([
+    Object.freeze({
+      role: "package_manifest" as const,
+      pathSlotRef: "PATH_SLOT_NODE_PACKAGE_JSON_V2" as const,
+      normalizedLocator: "package.json" as const,
+      sourceExportRef: descriptor.sourceExports[0],
+      text: descriptor.packageJson,
+    }),
+    Object.freeze({
+      role: "dependency_lock_manifest" as const,
+      pathSlotRef: "PATH_SLOT_NODE_PACKAGE_LOCK_JSON_V2" as const,
+      normalizedLocator: "package-lock.json" as const,
+      sourceExportRef: descriptor.sourceExports[1],
+      text: descriptor.packageLockJson,
+    }),
+    Object.freeze({
+      role: "typescript_compiler_config" as const,
+      pathSlotRef: "PATH_SLOT_NODE_TSCONFIG_JSON_V2" as const,
+      normalizedLocator: "tsconfig.json" as const,
+      sourceExportRef: descriptor.sourceExports[2],
+      text: descriptor.tsconfigJson,
+    }),
+  ]);
+}
 
 const EXPECTED_NODE_SCAFFOLD_TOOLCHAIN_IDENTITY_V2 = Object.freeze({
   catalogVersion: "2.0.0" as const,
@@ -578,16 +639,15 @@ function buildDependencyGraphV2(
   } as NodeScaffoldDependencyGraphV2;
 }
 
-function buildAssetRefV2(
-  role: "package_manifest" | "dependency_lock_manifest" | "typescript_compiler_config",
-  pathSlotRef:
-    | "PATH_SLOT_NODE_PACKAGE_JSON_V2"
-    | "PATH_SLOT_NODE_PACKAGE_LOCK_JSON_V2"
-    | "PATH_SLOT_NODE_TSCONFIG_JSON_V2",
-  normalizedLocator: "package.json" | "package-lock.json" | "tsconfig.json",
+type ProducedByteBundleV1 = Extract<
+  ByteBundleBuildResultV1,
+  { status: "produced" }
+>;
+
+function buildAssetByteBundleV2(
   sourceExportRef: string,
   text: string,
-) {
+): ProducedByteBundleV1 {
   const byteBundle = createByteBundleV1({
     bytes: Buffer.from(text, "utf8"),
     producer: ASSET_PRODUCER_V2,
@@ -597,6 +657,16 @@ function buildAssetRefV2(
       `${sourceExportRef} cannot produce ByteBundleV1: ${byteBundle.rejectionCode}`,
     );
   }
+  return byteBundle;
+}
+
+function buildAssetRefV2(
+  definition: NodeScaffoldAssetDefinitionV2,
+) {
+  const byteBundle = buildAssetByteBundleV2(
+    definition.sourceExportRef,
+    definition.text,
+  );
   const bundleRef: NodeScaffoldByteBundleRefV2 = {
     artifactType: BYTE_BUNDLE_ARTIFACT_TYPE_V1,
     envelopeHash: byteBundle.bundle.envelopeHash,
@@ -605,11 +675,11 @@ function buildAssetRefV2(
     rawByteLength: byteBundle.rawByteLength,
   };
   return {
-    role,
-    pathSlotRef,
-    normalizedLocator,
+    role: definition.role,
+    pathSlotRef: definition.pathSlotRef,
+    normalizedLocator: definition.normalizedLocator,
     mediaType: "application/json" as const,
-    sourceExportRef,
+    sourceExportRef: definition.sourceExportRef,
     rawHash: byteBundle.rawHash,
     rawByteLength: byteBundle.rawByteLength,
     byteBundle: bundleRef,
@@ -653,29 +723,7 @@ function buildEntryV2(
     );
   }
   parseCanonicalJsonAsset(descriptor.tsconfigJson, "tsconfig.json");
-  const files = [
-    buildAssetRefV2(
-      "package_manifest",
-      "PATH_SLOT_NODE_PACKAGE_JSON_V2",
-      "package.json",
-      descriptor.sourceExports[0],
-      descriptor.packageJson,
-    ),
-    buildAssetRefV2(
-      "dependency_lock_manifest",
-      "PATH_SLOT_NODE_PACKAGE_LOCK_JSON_V2",
-      "package-lock.json",
-      descriptor.sourceExports[1],
-      descriptor.packageLockJson,
-    ),
-    buildAssetRefV2(
-      "typescript_compiler_config",
-      "PATH_SLOT_NODE_TSCONFIG_JSON_V2",
-      "tsconfig.json",
-      descriptor.sourceExports[2],
-      descriptor.tsconfigJson,
-    ),
-  ];
+  const files = descriptorAssetDefinitionsV2(descriptor).map(buildAssetRefV2);
   const executionEnvironment = buildPlannedExecutionEnvironmentV2();
   const withoutHash: NodeScaffoldToolchainEntryHashPayloadV2 = {
     schema: NODE_SCAFFOLD_TOOLCHAIN_ENTRY_V2_SCHEMA,
@@ -922,6 +970,177 @@ export function getCodeOwnedNodeScaffoldToolchainEntryV2(
 ): Readonly<NodeScaffoldToolchainEntryV2> | null {
   return buildCodeOwnedNodeScaffoldToolchainCatalogV2().entries.find((entry) =>
     entry.profileBinding.profileId === profileId) ?? null;
+}
+
+export const NODE_SCAFFOLD_ASSET_PUBLICATION_V2_SCHEMA =
+  "setfarm.node-scaffold-asset-publication.v2" as const;
+
+export type NodeScaffoldAssetPublicationFileV2 = Readonly<{
+  entryRef: NodeScaffoldToolchainEntryV2["entryRef"];
+  entryHash: string;
+  profileId: NodeScaffoldProfileIdV2;
+  role: NodeScaffoldAssetRoleV2;
+  normalizedLocator: "package.json" | "package-lock.json" | "tsconfig.json";
+  sourceExportRef: string;
+  rawHash: string;
+  rawByteLength: number;
+  byteBundle: NodeScaffoldByteBundleRefV2;
+  binding: DeepByteBundleConsumerBindingV2;
+}>;
+
+export type NodeScaffoldAssetPublicationV2 = Readonly<{
+  schema: typeof NODE_SCAFFOLD_ASSET_PUBLICATION_V2_SCHEMA;
+  catalogHash: string;
+  assetCodeSha: string;
+  fileCount: number;
+  files: readonly NodeScaffoldAssetPublicationFileV2[];
+  batchCount: number;
+  batches: readonly Readonly<{
+    profileId: NodeScaffoldProfileIdV2;
+    planIdentityHash: string;
+    plan: Readonly<{
+      schema: typeof ARTIFACT_STORE_BATCH_PLAN_SCHEMA_V1;
+      items: readonly Readonly<{
+        durabilityTier: 0 | 1;
+        envelope: SemanticArtifactEnvelopeV1;
+      }>[];
+    }>;
+  }>[];
+}>;
+
+function nodeScaffoldAssetSubjectHashV2(input: Readonly<{
+  catalogHash: string;
+  entryRef: string;
+  entryHash: string;
+  profileId: string;
+  file: NodeScaffoldToolchainEntryV2["scaffold"]["files"][number];
+}>): string {
+  return hashCanonicalJson({
+    schema: "setfarm.node-scaffold-asset-subject-hash.v2",
+    ...input,
+  });
+}
+
+/**
+ * Fresh-reproduces every code-owned scaffold ByteBundle occurrence. This is a
+ * shadow publication plan only; callers must still use the DB-first indexed
+ * batch publisher before any deep verification or materialization.
+ */
+export function getCodeOwnedNodeScaffoldAssetPublicationV2():
+Readonly<NodeScaffoldAssetPublicationV2> {
+  const catalog = buildCodeOwnedNodeScaffoldToolchainCatalogV2();
+  const files: NodeScaffoldAssetPublicationFileV2[] = [];
+  const batches: Array<NodeScaffoldAssetPublicationV2["batches"][number]> = [];
+  for (const descriptor of ENTRY_DESCRIPTORS_V2) {
+    const items: Array<Readonly<{
+      durabilityTier: 0 | 1;
+      envelope: SemanticArtifactEnvelopeV1;
+    }>> = [];
+    const entry = catalog.entries.find((candidate) =>
+      candidate.entryRef === descriptor.entryRef);
+    if (!entry) {
+      throw new NodeScaffoldToolchainCodeAuthorityErrorV2(
+        `${descriptor.entryRef} is absent from the fresh scaffold catalog`,
+      );
+    }
+    for (const definition of descriptorAssetDefinitionsV2(descriptor)) {
+      const file = entry.scaffold.files.find((candidate) =>
+        candidate.role === definition.role);
+      if (!file) {
+        throw new NodeScaffoldToolchainCodeAuthorityErrorV2(
+          `${descriptor.entryRef} lacks ${definition.role}`,
+        );
+      }
+      const produced = buildAssetByteBundleV2(
+        definition.sourceExportRef,
+        definition.text,
+      );
+      const expectedFile = buildAssetRefV2(definition);
+      if (canonicalJsonStringify(file) !== canonicalJsonStringify(expectedFile)) {
+        throw new NodeScaffoldToolchainCodeAuthorityErrorV2(
+          `${descriptor.entryRef} ${definition.role} differs from fresh byte authority`,
+        );
+      }
+      const subjectHash = nodeScaffoldAssetSubjectHashV2({
+        catalogHash: catalog.catalogHash,
+        entryRef: entry.entryRef,
+        entryHash: entry.entryHash,
+        profileId: descriptor.profileId,
+        file,
+      });
+      const bindingIdentity = {
+        authoritySchema: catalog.schema,
+        authorityHash: catalog.catalogHash,
+        subjectRef: `${entry.entryRef}/${definition.role}`,
+        subjectHash,
+      };
+      files.push(Object.freeze({
+        entryRef: entry.entryRef,
+        entryHash: entry.entryHash,
+        profileId: descriptor.profileId,
+        role: definition.role,
+        normalizedLocator: definition.normalizedLocator,
+        sourceExportRef: definition.sourceExportRef,
+        rawHash: produced.rawHash,
+        rawByteLength: produced.rawByteLength,
+        byteBundle: file.byteBundle,
+        binding: {
+          ...bindingIdentity,
+          bindingHash: hashDeepByteBundleConsumerBindingV2(bindingIdentity),
+        },
+      }));
+      produced.chunks.forEach((chunk) => items.push(Object.freeze({
+        durabilityTier: 0,
+        envelope: chunk.envelope,
+      })));
+      items.push(Object.freeze({
+        durabilityTier: 1,
+        envelope: produced.bundle.envelope,
+      }));
+    }
+    const plan = deepFreezeJson({
+      schema: ARTIFACT_STORE_BATCH_PLAN_SCHEMA_V1,
+      items,
+    });
+    const prepared = prepareArtifactStoreBatchPlanV1(plan);
+    batches.push(Object.freeze({
+      profileId: descriptor.profileId,
+      planIdentityHash: prepared.planIdentityHash,
+      plan,
+    }));
+  }
+  return deepFreezeJson({
+    schema: NODE_SCAFFOLD_ASSET_PUBLICATION_V2_SCHEMA,
+    catalogHash: catalog.catalogHash,
+    assetCodeSha: catalog.sourceAuthority.codeSha,
+    fileCount: files.length,
+    files,
+    batchCount: batches.length,
+    batches,
+  });
+}
+
+/** Fresh code-owned selection prevents valid cross-profile bundle substitution. */
+export async function verifyCodeOwnedNodeScaffoldAssetByteBundleV2(
+  input: Readonly<{
+    authority: DeepByteBundleCasAuthorityV2;
+    profileId: NodeScaffoldProfileIdV2;
+    role: NodeScaffoldAssetRoleV2;
+  }>,
+): Promise<VerifiedDeepByteBundleV2> {
+  const publication = getCodeOwnedNodeScaffoldAssetPublicationV2();
+  const file = publication.files.find((candidate) =>
+    candidate.profileId === input.profileId && candidate.role === input.role);
+  if (!file) {
+    throw new NodeScaffoldToolchainCodeAuthorityErrorV2(
+      `No code-owned scaffold bundle exists for ${String(input.profileId)}/${String(input.role)}`,
+    );
+  }
+  return verifyDeepByteBundleFromCasV2({
+    authority: input.authority,
+    binding: file.binding,
+    bundle: file.byteBundle,
+  });
 }
 
 export type NodeScaffoldToolchainCatalogVerificationErrorCodeV2 =
