@@ -469,7 +469,7 @@ export const ProductStoryV3Schema = ProductStoryIdentityV3Schema.extend({
 
 export type ProductStoryV3 = z.infer<typeof ProductStoryV3Schema>;
 
-const ProductScopeV3Schema = z.object({
+export const ProductScopeV3Schema = z.object({
   realizationCount: z.number().int().nonnegative().max(20_000),
   realizations: z.array(StoryRealizationBindingV3Schema).max(20_000),
   realizationMembershipHash: Sha256Schema,
@@ -514,6 +514,8 @@ const ProductScopeV3Schema = z.object({
     });
   }
 });
+
+export type ProductScopeV3 = z.infer<typeof ProductScopeV3Schema>;
 
 const PlanIdentityV3Schema = z.object({
   schema: z.literal(STORY_PLAN_V3_SCHEMA),

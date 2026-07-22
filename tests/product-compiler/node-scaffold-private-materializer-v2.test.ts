@@ -25,8 +25,11 @@ import ts from "typescript";
 
 import { createArtifactIndexForTests as createArtifactIndex } from
   "../../src/product-compiler/artifact-index.js";
-import { canonicalJsonStringify } from
+import { canonicalJsonStringify, hashCanonicalJson } from
   "../../src/product-compiler/canonical-json.js";
+import {
+  copyPreparedArtifactStoreBatchCanonicalItemsV1,
+} from "../../src/product-compiler/artifact-store-batch-plan.js";
 import {
   createHybridArtifactStoreCapacityLeaseProviderV1,
 } from "../../src/product-compiler/artifact-store-authority.js";
@@ -89,6 +92,12 @@ import {
   compileStoryPlanV3ForTest,
   verifyStoryPlanV3ForTest,
 } from "../../src/product-compiler/story-plan-v3.js";
+import {
+  ImplementationSourceMapStoryProofVerificationErrorV2,
+  compileImplementationSourceMapV2,
+  compileImplementationSourceMapV2ForTest,
+  verifyImplementationSourceMapStoryProofV2ForTest,
+} from "../../src/product-compiler/implementation-source-map-v2.js";
 import {
   NodeProductSourcePublicationVerificationErrorV1,
   compileNodeProductSourcePublicationV1,
@@ -216,6 +225,15 @@ import {
   hashStoryMembershipV3,
   hashStoryPlanV3,
 } from "../../src/product-compiler/schemas/story-plan-v3.js";
+import {
+  IMPLEMENTATION_SOURCE_MAP_CONTRACT_HASH_V2,
+  ImplementationSourceMapEnvelopeV2Schema,
+  ImplementationSourceMapStoryProofV2Schema,
+  hashImplementationSourceMapManifestV2,
+  hashImplementationSourceMapStoryLeafV2,
+  hashImplementationSourceMapStoryProofV2,
+  implementationSourceMapMerkleRootV2,
+} from "../../src/product-compiler/schemas/implementation-source-map-v2.js";
 import {
   NodeProductSourcePublicationReceiptSetV1Schema,
   NodeProductSourcePublicationReceiptV1Schema,
@@ -2065,6 +2083,7 @@ describe("Node scaffold private staged materializer V2", () => {
       },
     ];
     const storyPlanHashes: string[] = [];
+    const sourceMapManifestHashes: string[] = [];
 
     for (const [caseIndex, fixture] of cases.entries()) {
       const created = await stage({ profileId: fixture.profileId });
@@ -2400,7 +2419,210 @@ describe("Node scaffold private staged materializer V2", () => {
       assert.equal(verifiedStoryPlan.value.planHash, storyPlan.value.planHash);
       assertRecursivelyFrozen(verifiedStoryPlan);
 
+      const sourceMapProducer = {
+        pass: "product-compiler-implementation-source-map-v2" as const,
+        codeSha: "abcdef0123456789",
+        toolVersions: {
+          implementationSourceMap: "2.0.0" as const,
+          storyPlan: "3.0.0" as const,
+        },
+      };
+      const sourceMapInput = {
+        ...storyPlanInput,
+        producer: sourceMapProducer,
+        storyPlan: storyPlan.value,
+      };
+      const sourceMap = await compileImplementationSourceMapV2ForTest(
+        created.handle,
+        sourceMapInput,
+      );
+      assert.equal(
+        sourceMap.status,
+        "shadow_compiled",
+        sourceMap.status === "rejected"
+          ? JSON.stringify(sourceMap.diagnostics)
+          : undefined,
+      );
+      if (sourceMap.status !== "shadow_compiled") {
+        throw new Error("Expected ImplementationSourceMapV2");
+      }
+      assert.equal(
+        ImplementationSourceMapEnvelopeV2Schema.safeParse(
+          sourceMap.root.envelope,
+        ).success,
+        true,
+      );
+      assert.equal(
+        sourceMap.root.value.contractHash,
+        IMPLEMENTATION_SOURCE_MAP_CONTRACT_HASH_V2,
+      );
+      assert.equal(sourceMap.root.value.leafCount, storyPlan.value.storyCount);
+      assert.equal(sourceMap.leaves.length, storyPlan.value.storyCount);
+      assert.equal(sourceMap.proofs.length, storyPlan.value.storyCount);
+      assert.equal(
+        sourceMap.root.value.authority.storyPlan.planHash,
+        storyPlan.value.planHash,
+      );
+      assert.equal(
+        sourceMap.root.value.authority.runtimeSource.logicalReceiptHash,
+        generated.receipt.logicalReceiptHash,
+      );
+      assert.equal(
+        sourceMap.root.value.authority.testSource.logicalReceiptHash,
+        generatedTest.receipt.logicalReceiptHash,
+      );
+      assert.deepEqual(
+        sourceMap.leaves.map((leaf) => leaf.reference.storyId),
+        storyPlan.value.stories.map((story) => story.storyId),
+      );
+      assert.ok(sourceMap.leaves.every((leaf, index) =>
+        leaf.value.story.storyHash === storyPlan.value.stories[index]!.storyHash
+        && leaf.value.evidenceBindings.length
+          === storyPlan.value.stories[index]!.evidenceRefs.length
+        && leaf.value.execution.commandContractHash
+          === buildTopology.value.authority.commandContractHash));
+      assert.ok([
+        ...sourceMap.leaves.map((leaf) => leaf.publicationPreflight),
+        sourceMap.root.publicationPreflight,
+      ].every((preflight) =>
+        copyPreparedArtifactStoreBatchCanonicalItemsV1(
+          preflight.preparedPublication,
+        ).length === 1
+        && preflight.durabilityTier === 0));
+      const sourceMapJson = canonicalJsonStringify({
+        root: sourceMap.root.envelope,
+        leaves: sourceMap.leaves.map((leaf) => leaf.envelope),
+      });
+      assert.equal(sourceMapJson.includes(generated.receipt.receiptHash), false);
+      assert.equal(
+        sourceMapJson.includes(generatedTest.receipt.receiptHash),
+        false,
+      );
+      sourceMapManifestHashes.push(sourceMap.root.value.manifestHash);
+      assertRecursivelyFrozen(sourceMap);
+
+      if (caseIndex === 0 || caseIndex === 2) {
+        const proofIndex = caseIndex === 2
+          ? sourceMap.proofs.length - 1
+          : 0;
+        const verifiedProof =
+          await verifyImplementationSourceMapStoryProofV2ForTest(
+            created.handle,
+            {
+              ...sourceMapInput,
+              expectedRootEnvelopeHash: sourceMap.root.envelopeHash,
+              rootEnvelope: sourceMap.root.envelope,
+              proof: sourceMap.proofs[proofIndex],
+            },
+          );
+        assert.equal(
+          verifiedProof.leafReference.storyId,
+          storyPlan.value.stories[proofIndex]!.storyId,
+        );
+        assert.equal(
+          verifiedProof.rootEnvelopeHash,
+          sourceMap.root.envelopeHash,
+        );
+        assertRecursivelyFrozen(verifiedProof);
+        if (caseIndex === 2) {
+          const wrongDirection = structuredClone(
+            sourceMap.proofs[proofIndex],
+          ) as any;
+          assert.equal(wrongDirection.auditPath[0].kind, "left");
+          wrongDirection.auditPath[0].kind = "right";
+          wrongDirection.proofHash =
+            hashImplementationSourceMapStoryProofV2(wrongDirection);
+          assert.equal(
+            ImplementationSourceMapStoryProofV2Schema.safeParse(
+              wrongDirection,
+            ).success,
+            false,
+          );
+        }
+      }
+
       if (caseIndex === 0) {
+        const wrongSourceMapScope = await compileImplementationSourceMapV2(
+          created.handle,
+          sourceMapInput,
+        );
+        assert.equal(wrongSourceMapScope.status, "rejected");
+        assert.equal(
+          wrongSourceMapScope.diagnostics[0]?.code,
+          "IMPLEMENTATION_SOURCE_MAP_V2_STORY_PLAN_REJECTED",
+        );
+        const extraSourceMapInput =
+          await compileImplementationSourceMapV2ForTest(created.handle, {
+            ...sourceMapInput,
+            unexpected: true,
+          });
+        assert.equal(extraSourceMapInput.status, "rejected");
+        assert.equal(
+          extraSourceMapInput.diagnostics[0]?.code,
+          "IMPLEMENTATION_SOURCE_MAP_V2_INPUT_INVALID",
+        );
+
+        const forgedRootEnvelope = structuredClone(
+          sourceMap.root.envelope,
+        ) as any;
+        const forgedProof = structuredClone(sourceMap.proofs[0]) as any;
+        forgedProof.leaf.envelope.payload.authority.productSpecHash =
+          "f".repeat(64);
+        forgedProof.leaf.envelope.payload.leafHash =
+          hashImplementationSourceMapStoryLeafV2(
+            forgedProof.leaf.envelope.payload,
+          );
+        forgedProof.leaf.reference.leafEnvelopeHash = hashCanonicalJson(
+          forgedProof.leaf.envelope,
+        );
+        forgedProof.leaf.reference.byteLength = Buffer.byteLength(
+          canonicalJsonStringify(forgedProof.leaf.envelope),
+          "utf8",
+        );
+        forgedRootEnvelope.payload.leaves[0] = forgedProof.leaf.reference;
+        forgedRootEnvelope.payload.merkleRoot =
+          implementationSourceMapMerkleRootV2(
+            forgedRootEnvelope.payload.leaves,
+          );
+        forgedRootEnvelope.payload.manifestHash =
+          hashImplementationSourceMapManifestV2(
+            forgedRootEnvelope.payload,
+          );
+        const forgedRootEnvelopeHash = hashCanonicalJson(forgedRootEnvelope);
+        forgedProof.root.envelopeHash = forgedRootEnvelopeHash;
+        forgedProof.root.manifestHash =
+          forgedRootEnvelope.payload.manifestHash;
+        forgedProof.root.merkleRoot = forgedRootEnvelope.payload.merkleRoot;
+        forgedProof.proofHash =
+          hashImplementationSourceMapStoryProofV2(forgedProof);
+        assert.equal(
+          ImplementationSourceMapEnvelopeV2Schema.safeParse(
+            forgedRootEnvelope,
+          ).success,
+          true,
+        );
+        assert.equal(
+          ImplementationSourceMapStoryProofV2Schema.safeParse(forgedProof)
+            .success,
+          true,
+        );
+        await assert.rejects(
+          verifyImplementationSourceMapStoryProofV2ForTest(
+            created.handle,
+            {
+              ...sourceMapInput,
+              expectedRootEnvelopeHash: forgedRootEnvelopeHash,
+              rootEnvelope: forgedRootEnvelope,
+              proof: forgedProof,
+            },
+          ),
+          (error: unknown) =>
+            error instanceof
+              ImplementationSourceMapStoryProofVerificationErrorV2
+            && error.code
+              === "IMPLEMENTATION_SOURCE_MAP_V2_PROOF_AUTHORITY_MISMATCH",
+        );
+
         const wrongScope = await compileStoryPlanV3(
           created.handle,
           storyPlanInput,
@@ -3055,21 +3277,40 @@ describe("Node scaffold private staged materializer V2", () => {
           siblingGeneratedTest.receipt.receiptHash,
           generatedTest.receipt.receiptHash,
         );
+        const siblingStoryPlanInput = {
+          ...siblingGeneratorInput,
+          runtimeSourceText: siblingGenerated.sourceText,
+          runtimeSourceReceipt: siblingGenerated.receipt,
+          testSourceText: siblingGeneratedTest.sourceText,
+          testSourceReceipt: siblingGeneratedTest.receipt,
+        };
         const siblingStoryPlan = await compileStoryPlanV3ForTest(
           sibling.handle,
-          {
-            ...siblingGeneratorInput,
-            runtimeSourceText: siblingGenerated.sourceText,
-            runtimeSourceReceipt: siblingGenerated.receipt,
-            testSourceText: siblingGeneratedTest.sourceText,
-            testSourceReceipt: siblingGeneratedTest.receipt,
-          },
+          siblingStoryPlanInput,
         );
         assert.equal(siblingStoryPlan.status, "shadow_compiled");
         if (siblingStoryPlan.status !== "shadow_compiled") {
           throw new Error("Expected sibling StoryPlanV3");
         }
         assert.equal(siblingStoryPlan.value.planHash, storyPlan.value.planHash);
+        const siblingSourceMap =
+          await compileImplementationSourceMapV2ForTest(sibling.handle, {
+            ...siblingStoryPlanInput,
+            producer: sourceMapProducer,
+            storyPlan: siblingStoryPlan.value,
+          });
+        assert.equal(siblingSourceMap.status, "shadow_compiled");
+        if (siblingSourceMap.status !== "shadow_compiled") {
+          throw new Error("Expected sibling ImplementationSourceMapV2");
+        }
+        assert.equal(
+          siblingSourceMap.root.value.manifestHash,
+          sourceMap.root.value.manifestHash,
+        );
+        assert.equal(
+          siblingSourceMap.root.envelopeHash,
+          sourceMap.root.envelopeHash,
+        );
 
         assert.ok(sourceMaterializationInput);
         await assert.rejects(
@@ -3167,6 +3408,8 @@ describe("Node scaffold private staged materializer V2", () => {
       "fb48d08d5261b2dc57352f934be81634b16940fec5c329b862eb450511094a39",
       "ba1168ede6ae998d270c835f3262e21337f15e557f1537fa5ae6cfd11ea510e4",
     ]);
+    assert.equal(sourceMapManifestHashes.length, cases.length);
+    assert.equal(new Set(sourceMapManifestHashes).size, cases.length);
 
     const unsupportedCandidate: any = structuredClone(
       genuineNodeExpressApiProductSpecV2(),

@@ -686,7 +686,28 @@ export type BuildTopologyCommandsV3 = z.infer<
   typeof BuildTopologyCommandsV3Schema
 >;
 
-function commandContractProjectionV3(value: BuildTopologyCommandsV3) {
+export const BuildTopologyCommandContractV3Schema = z.object({
+  environmentContractHash: Sha256Schema,
+  effectiveConfigHash: Sha256Schema,
+  nodeIdentityHash: Sha256Schema,
+  ambientEnvironment: z.literal("forbidden"),
+  install: BuildTopologyCommandsV3Schema.shape.install.pick({
+    commandRef: true,
+    executableRef: true,
+    cwdRootRef: true,
+    directArgv: true,
+  }),
+  build: BuildTopologyCommandsV3Schema.shape.build,
+  test: BuildTopologyCommandsV3Schema.shape.test,
+}).strict();
+
+export type BuildTopologyCommandContractV3 = z.infer<
+  typeof BuildTopologyCommandContractV3Schema
+>;
+
+function rawBuildTopologyCommandContractProjectionV3(
+  value: BuildTopologyCommandsV3,
+) {
   return {
     environmentContractHash: value.environmentContractHash,
     effectiveConfigHash: value.effectiveConfigHash,
@@ -703,12 +724,25 @@ function commandContractProjectionV3(value: BuildTopologyCommandsV3) {
   };
 }
 
-export function hashBuildTopologyCommandContractV3(
+export function projectBuildTopologyCommandContractV3(
   value: BuildTopologyCommandsV3,
+): BuildTopologyCommandContractV3 {
+  return BuildTopologyCommandContractV3Schema.parse(
+    rawBuildTopologyCommandContractProjectionV3(value),
+  );
+}
+
+export function hashBuildTopologyCommandContractV3(
+  value: BuildTopologyCommandsV3 | BuildTopologyCommandContractV3,
 ): string {
+  const commands = "dependencyReceiptHash" in value.install
+    ? rawBuildTopologyCommandContractProjectionV3(
+        value as BuildTopologyCommandsV3,
+      )
+    : value;
   return hashCanonicalJson({
     schema: "setfarm.build-topology-command-contract-hash.v3",
-    commands: commandContractProjectionV3(value),
+    commands,
   });
 }
 
