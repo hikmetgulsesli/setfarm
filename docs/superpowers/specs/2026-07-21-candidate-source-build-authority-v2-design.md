@@ -111,8 +111,8 @@ CandidateSourceReceiptV1 has two deliberately different identities.
 - for each entry: FileTree path ref, owner ref, role, normalized locator,
   media type, mode, content hash and byte length;
 - the exact `.npmrc` absence commitment from FileTreeV3;
-- FileTree manifest, BuildTopology logical build, PacketV4 envelope and
-  product-level ImplementationClosureV2 joins;
+- FileTree manifest, BuildTopology logical build/command/compilation contracts,
+  PacketV4 envelope and product-level ImplementationClosureV2 joins;
 - runtime/test logical receipt and source-identity hashes;
 - a domain-separated entry membership hash and `revisionHash`.
 
@@ -121,9 +121,11 @@ the verified dependency identity, toolchain and environment. This prevents a
 physical npm attempt from changing semantic source retry identity.
 
 `revisionHash` excludes private roots, device/inode values, timestamps,
-materialization receipt hashes, stdout/stderr and attempt identifiers. Two
-private attempts containing the same five bytes and absence commitment must
-produce the same revision hash.
+materialization receipt hashes, the operational BuildTopology manifest hash,
+stdout/stderr and attempt identifiers. BuildTopology's manifest includes the
+physical dependency receipt and therefore cannot define unchanged-source
+identity. Two private attempts containing the same five bytes, stable logical
+contracts and absence commitment must produce the same revision hash.
 
 ### Operational materialization evidence
 
@@ -145,6 +147,11 @@ an authentic `MaterializedNodeScaffoldPrivateStageV2`. It fresh-verifies the
 closure, requires the every-story no-model-dispatch disposition, revalidates
 the private source materialization and derives every source entry itself. It
 accepts no caller path, source entry, revision hash, Git SHA or receipt body.
+
+Every serialized content entry uses the canonical FileTreeV3 repository
+`pathRef`. The test generator's separate code-owned profile source ref is
+fresh-joined through the FileTree test-target authority but is not substituted
+for physical path identity. A self-rehashed alternate path ref is invalid.
 
 The verifier repeats compilation and requires canonical byte equality with the
 candidate receipt/envelope. On success it returns an opaque
@@ -244,6 +251,13 @@ unexpected output or capture failure destroys only the authenticated private
 attempt. No failed stage returns to `sources_ready`, and no retry runs unchanged
 source in the same physical attempt.
 
+Dependency inspection and revalidation remain read-only at `sources_ready`.
+At that lifecycle point the dependency-owned topology admits exactly the
+expected `src` directory while source authority separately verifies its exact
+two members, bytes, modes and physical identities. Expected source
+materialization is not dependency drift, and dependency revalidation never
+becomes authority for source contents.
+
 The materializer owns project-root topology and source/output filesystem
 capture. The execution-environment boundary owns the deny-all-then-exact-set
 environment. The host-toolchain boundary owns the real Node executable. The
@@ -284,12 +298,12 @@ serialized tree summary alone is never runnable.
 ## Compiler, Issuer and Verifier APIs
 
 ```ts
-compileCandidateSourceReceiptV1(
+compileCandidateSourceV1(
   stage,
   { closureVerificationInput }
 ): Promise<CandidateSourceCompilationResultV1>;
 
-verifyCandidateSourceReceiptV1(
+verifyCandidateSourceV1(
   stage,
   { closureVerificationInput, candidateEnvelope, expectedEnvelopeHash }
 ): Promise<VerifiedCandidateSourceResultV1>;
@@ -388,8 +402,9 @@ Pure source tests pin schema/contract hashes, exact entry order, content
 revision determinism, operational receipt separation, strict parsing,
 self-rehash rejection, bounded work and immutability.
 
-Source integration tests cover fresh SliceV2 reproduction, current no-dispatch
-disposition, five exact source files plus `.npmrc` absence, source/CAS/base/
+Source integration tests cover fresh every-story ImplementationClosureV2
+reproduction, current no-dispatch disposition, five exact source files plus
+`.npmrc` absence, source/CAS/base/
 dependency drift, cross-profile/cross-scope handles, sibling-attempt revision
 convergence and consumed-handle replay.
 
@@ -412,8 +427,9 @@ distinct physical receipt hashes.
 
 ## Cutover Decision
 
-Design and isolated shadow implementation are **GO**. Production build,
-EvidencePlanV2 execution, runtime launch, DB activation and clean-run success
-claims are **NO-GO** until candidate source/build/runtime brands, verified
+CandidateSourceReceiptV1 design and isolated shadow implementation are **GO**.
+CandidateBuildV2, production build, EvidencePlanV2 execution, runtime launch,
+DB activation and clean-run success claims are **NO-GO** until candidate
+build/runtime brands, verified
 release/RegistryV2, EvidencePlanV2, atomic artifact activation, typed recovery
 and three-class convergence evals all close.

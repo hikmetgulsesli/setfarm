@@ -61,6 +61,22 @@ import {
   type ProductBuildPacketEnvelopeV4,
 } from "./schemas/product-build-packet-v4.js";
 import { Sha256Schema, StoryIdSchema } from "./schemas/common-v1.js";
+import {
+  BuildTopologyV3Schema,
+  type BuildTopologyV3,
+} from "./schemas/build-topology-v3.js";
+import {
+  FileTreeManifestV3Schema,
+  type FileTreeManifestV3,
+} from "./schemas/file-tree-manifest-v3.js";
+import {
+  NodeProductRuntimeSourceReceiptV2Schema,
+  type NodeProductRuntimeSourceReceiptV2,
+} from "./schemas/node-product-runtime-source-v2.js";
+import {
+  NodeProductTestSourceReceiptV2Schema,
+  type NodeProductTestSourceReceiptV2,
+} from "./schemas/node-product-test-source-v2.js";
 
 const COMPILER_INPUT_MAX_CANONICAL_BYTES_V2 = 96 * 1024 * 1024;
 const VERIFIER_INPUT_MAX_CANONICAL_BYTES_V2 = 104 * 1024 * 1024;
@@ -159,6 +175,10 @@ export type ImplementationClosurePublicationPreflightV2 = Readonly<{
 
 export type VerifiedImplementationClosureContextAttachmentsV2 = Readonly<{
   packetEnvelope: Readonly<ProductBuildPacketEnvelopeV4>;
+  fileTree: Readonly<FileTreeManifestV3>;
+  buildTopology: Readonly<BuildTopologyV3>;
+  runtimeSourceReceipt: Readonly<NodeProductRuntimeSourceReceiptV2>;
+  testSourceReceipt: Readonly<NodeProductTestSourceReceiptV2>;
   sourceMapRootEnvelope: Readonly<
     z.infer<typeof ImplementationSourceMapEnvelopeV2Schema>
   >;
@@ -611,6 +631,14 @@ async function compileInternalV2(
     });
     const contextAttachments = recursivelyFreezeImplementationClosureV2({
       packetEnvelope: packet.envelope,
+      fileTree: FileTreeManifestV3Schema.parse(parsed.data.fileTree),
+      buildTopology: BuildTopologyV3Schema.parse(parsed.data.buildTopology),
+      runtimeSourceReceipt: NodeProductRuntimeSourceReceiptV2Schema.parse(
+        parsed.data.runtimeSourceReceipt,
+      ),
+      testSourceReceipt: NodeProductTestSourceReceiptV2Schema.parse(
+        parsed.data.testSourceReceipt,
+      ),
       sourceMapRootEnvelope: sourceMap.root.envelope,
       storyProofs: sourceMap.proofs,
       storyLeafEnvelopes: sourceMap.proofs.map((proof) => proof.leaf.envelope),

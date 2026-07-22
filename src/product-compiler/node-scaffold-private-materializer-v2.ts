@@ -2905,7 +2905,11 @@ export function inspectBuildDependencyMaterializationReceiptV2(
 ): BuildDependencyMaterializationReceiptV2 {
   const state = activeStageStateV2(handle);
   if (
-    !["dependencies_ready", "source_claimed"].includes(state.lifecycle.status)
+    ![
+      "dependencies_ready",
+      "source_claimed",
+      "sources_ready",
+    ].includes(state.lifecycle.status)
     || !state.lifecycle.dependencyReceipt
     || !state.lifecycle.dependencyCapture
   ) {
@@ -2924,7 +2928,11 @@ export async function revalidateNodeScaffoldDependenciesV2(
   const receipt = state.lifecycle.dependencyReceipt;
   const prior = state.lifecycle.dependencyCapture;
   if (
-    !["dependencies_ready", "source_claimed"].includes(state.lifecycle.status)
+    ![
+      "dependencies_ready",
+      "source_claimed",
+      "sources_ready",
+    ].includes(state.lifecycle.status)
     || !receipt
     || !prior
   ) {
@@ -2941,7 +2949,10 @@ export async function revalidateNodeScaffoldDependenciesV2(
         "Dependency profile no longer has code-owned authority",
       );
     }
-    const endMembership = captureScaffoldAssetsAfterInstallV2(state);
+    const endMembership = captureScaffoldAssetsAfterInstallV2(
+      state,
+      state.lifecycle.status === "sources_ready" ? "present" : "absent",
+    );
     const raw = captureRawDependenciesV2({ projectRoot: state.projectRoot, entry });
     if (
       endMembership !== receipt.scaffoldBase.endBaseFileMembershipHash

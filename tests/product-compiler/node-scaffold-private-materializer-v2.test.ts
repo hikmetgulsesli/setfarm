@@ -27,6 +27,18 @@ import { EVIDENCE_RECEIPT_V2_SCHEMA } from
   "../../src/evidence/schemas/evidence-receipt-v2.js";
 import { CANDIDATE_BUILD_RECEIPT_V2_SCHEMA } from
   "../../src/execution/schemas/candidate-build-receipt-v2.js";
+import {
+  compileCandidateSourceV1,
+  compileCandidateSourceV1ForTest,
+  revalidateVerifiedCandidateSourceAuthorityV1,
+  verifyCandidateSourceV1ForTest,
+} from "../../src/execution/candidate-source-v1.js";
+import {
+  CANDIDATE_SOURCE_RECEIPT_CONTRACT_HASH_V1,
+  CandidateSourceEnvelopeV1Schema,
+  CandidateSourceReceiptV1Schema,
+  hashCandidateSourceReceiptV1,
+} from "../../src/execution/schemas/candidate-source-receipt-v1.js";
 import { createArtifactIndexForTests as createArtifactIndex } from
   "../../src/product-compiler/artifact-index.js";
 import { canonicalJsonStringify, hashCanonicalJson } from
@@ -2185,7 +2197,8 @@ describe("Node scaffold private staged materializer V2", () => {
       if (fileTree.status !== "shadow_compiled") {
         throw new Error("Expected runtime-generator FileTreeV3");
       }
-      await materializeNodeScaffoldDependenciesV2ForTest(created.handle);
+      const dependency =
+        await materializeNodeScaffoldDependenciesV2ForTest(created.handle);
       const buildTopology = await compileBuildTopologyV3ForTest(created.handle, {
         ...authorityInput,
         fileTree: fileTree.value,
@@ -4283,20 +4296,21 @@ describe("Node scaffold private staged materializer V2", () => {
           siblingSlices[0]!.slice.envelopeHash,
           compiledSlices[0]!.slice.envelopeHash,
         );
+        const siblingClosureInput = {
+          ...siblingPacketInput,
+          closureProducer,
+          sliceProducer,
+          expectedPacketEnvelopeHash: siblingPacket.packet.envelopeHash,
+          candidatePacketEnvelope: siblingPacket.packet.envelope,
+          sliceCandidates: siblingSlices.map((siblingSlice) => ({
+            storyId: siblingSlice.slice.value.story.storyId,
+            expectedSliceEnvelopeHash: siblingSlice.slice.envelopeHash,
+            candidateSliceEnvelope: siblingSlice.slice.envelope,
+          })),
+        };
         const siblingClosure = await compileImplementationClosureV2ForTest(
           sibling.handle,
-          {
-            ...siblingPacketInput,
-            closureProducer,
-            sliceProducer,
-            expectedPacketEnvelopeHash: siblingPacket.packet.envelopeHash,
-            candidatePacketEnvelope: siblingPacket.packet.envelope,
-            sliceCandidates: siblingSlices.map((siblingSlice) => ({
-              storyId: siblingSlice.slice.value.story.storyId,
-              expectedSliceEnvelopeHash: siblingSlice.slice.envelopeHash,
-              candidateSliceEnvelope: siblingSlice.slice.envelope,
-            })),
-          },
+          siblingClosureInput,
         );
         assert.equal(siblingClosure.status, "shadow_closed");
         if (siblingClosure.status !== "shadow_closed") {
@@ -4309,6 +4323,42 @@ describe("Node scaffold private staged materializer V2", () => {
         assert.equal(
           siblingClosure.closure.envelopeHash,
           compiledClosure.closure.envelopeHash,
+        );
+
+        const siblingSourcePublicationInput = {
+          producer: NODE_SOURCE_PUBLICATION_PRODUCER_V1,
+          ...siblingGeneratorInput,
+        };
+        const siblingSourcePublication =
+          await compileNodeProductSourcePublicationV1ForTest(
+            sibling.handle,
+            siblingSourcePublicationInput,
+          );
+        assert.equal(siblingSourcePublication.status, "shadow_prepared");
+        if (siblingSourcePublication.status !== "shadow_prepared") {
+          throw new Error("Expected sibling source publication");
+        }
+        for (const publication of siblingSourcePublication.publications) {
+          const indexed = await sourcePublisher.putBatch({
+            batchReservationId: randomUUID(),
+            plan: publication.publicationPlan,
+          });
+          assert.equal(indexed.lifecycle.state, "completed");
+        }
+        const siblingCandidatePublications =
+          siblingSourcePublication.publications.map((publication) => ({
+            sourceRole: publication.sourceRole,
+            envelopes: [...publication.publicationEnvelopes].reverse(),
+          }));
+        const siblingMaterializedSources =
+          await materializeNodeProductSourcesV1ForTest(sibling.handle, {
+            casAuthority,
+            compilerInput: siblingSourcePublicationInput,
+            candidatePublications: siblingCandidatePublications,
+          });
+        assert.equal(
+          siblingMaterializedSources.status,
+          "sources_materialized_verified",
         );
 
         assert.ok(sourceMaterializationInput);
@@ -4352,6 +4402,201 @@ describe("Node scaffold private staged materializer V2", () => {
           JSON.stringify(materializedSources),
           /setfarm-f4-stage-v2|\/private\/|\/var\/folders|\/Users\//,
         );
+        assert.equal(
+          (await revalidateNodeScaffoldDependenciesV2(created.handle)).receiptHash,
+          dependency.receiptHash,
+        );
+        const closureVerificationInput = {
+          ...closureInput,
+          expectedClosureEnvelopeHash: compiledClosure.closure.envelopeHash,
+          candidateClosureEnvelope: compiledClosure.closure.envelope,
+        };
+        const candidateSourceInput = { closureVerificationInput };
+        const wrongCandidateSourceScope = await compileCandidateSourceV1(
+          created.handle,
+          candidateSourceInput,
+        );
+        assert.equal(wrongCandidateSourceScope.status, "rejected");
+        assert.equal(
+          wrongCandidateSourceScope.diagnostics[0]?.code,
+          "CANDIDATE_SOURCE_V1_SCOPE_REJECTED",
+        );
+        const compiledCandidateSource = await compileCandidateSourceV1ForTest(
+          created.handle,
+          candidateSourceInput,
+        );
+        assert.equal(
+          compiledCandidateSource.status,
+          "shadow_verified_source",
+          compiledCandidateSource.status === "rejected"
+            ? JSON.stringify(compiledCandidateSource.diagnostics)
+            : undefined,
+        );
+        if (compiledCandidateSource.status !== "shadow_verified_source") {
+          throw new Error("Expected authenticated CandidateSourceV1");
+        }
+        const candidateSource = compiledCandidateSource.candidateSource.value;
+        assert.equal(
+          CandidateSourceReceiptV1Schema.safeParse(candidateSource).success,
+          true,
+        );
+        assert.equal(
+          CandidateSourceEnvelopeV1Schema.safeParse(
+            compiledCandidateSource.candidateSource.envelope,
+          ).success,
+          true,
+        );
+        assert.equal(
+          candidateSource.contractHash,
+          CANDIDATE_SOURCE_RECEIPT_CONTRACT_HASH_V1,
+        );
+        assert.equal(
+          candidateSource.semanticRevision.authority.implementationClosure
+            .closureHash,
+          compiledClosure.closure.value.closureHash,
+        );
+        assert.equal(
+          candidateSource.semanticRevision.authority.implementationClosure
+            .storyCount,
+          sourceMap.root.value.leafCount,
+        );
+        assert.deepEqual(
+          candidateSource.semanticRevision.contentTree.entries.map((entry) =>
+            entry.normalizedLocator),
+          [
+            "package-lock.json",
+            "package.json",
+            "src/cli.setfarm.test.ts",
+            "src/cli.ts",
+            "tsconfig.json",
+          ],
+        );
+        assert.equal(
+          candidateSource.semanticRevision.contentTree.absences[0]
+            .normalizedLocator,
+          ".npmrc",
+        );
+        assert.equal(
+          candidateSource.materialization.sourceMaterialization.receiptHash,
+          materializedSources.receiptHash,
+        );
+        assert.equal(
+          compiledCandidateSource.semanticRevisionHash,
+          candidateSource.semanticRevision.revisionHash,
+        );
+        assert.equal(
+          compiledCandidateSource.operationalReceiptHash,
+          candidateSource.receiptHash,
+        );
+        assert.doesNotMatch(
+          compiledCandidateSource.candidateSource.canonicalBytes,
+          /setfarm-f4-stage-v2|\/private\/|\/var\/folders|\/Users\//,
+        );
+        assertRecursivelyFrozen(compiledCandidateSource);
+
+        const verifiedCandidateSource = await verifyCandidateSourceV1ForTest(
+          created.handle,
+          {
+            ...candidateSourceInput,
+            expectedCandidateSourceEnvelopeHash:
+              compiledCandidateSource.candidateSource.envelopeHash,
+            candidateSourceEnvelope:
+              compiledCandidateSource.candidateSource.envelope,
+          },
+        );
+        assert.equal(
+          verifiedCandidateSource.status,
+          "verified_shadow",
+          verifiedCandidateSource.status === "rejected"
+            ? JSON.stringify(verifiedCandidateSource.diagnostics)
+            : undefined,
+        );
+        if (verifiedCandidateSource.status !== "verified_shadow") {
+          throw new Error("Expected verified CandidateSourceV1 authority");
+        }
+        assert.deepEqual(Object.keys(verifiedCandidateSource.authority), [
+          "receiptHash",
+          "semanticRevisionHash",
+          "implementationClosureHash",
+          "admissionScope",
+        ]);
+        assert.equal(
+          verifiedCandidateSource.authority.semanticRevisionHash,
+          candidateSource.semanticRevision.revisionHash,
+        );
+        const revalidatedCandidateSource =
+          await revalidateVerifiedCandidateSourceAuthorityV1(
+            verifiedCandidateSource.authority,
+          );
+        assert.equal(
+          revalidatedCandidateSource.receiptHash,
+          candidateSource.receiptHash,
+        );
+
+        const siblingClosureVerificationInput = {
+          ...siblingClosureInput,
+          expectedClosureEnvelopeHash: siblingClosure.closure.envelopeHash,
+          candidateClosureEnvelope: siblingClosure.closure.envelope,
+        };
+        const siblingCandidateSource = await compileCandidateSourceV1ForTest(
+          sibling.handle,
+          { closureVerificationInput: siblingClosureVerificationInput },
+        );
+        assert.equal(
+          siblingCandidateSource.status,
+          "shadow_verified_source",
+          siblingCandidateSource.status === "rejected"
+            ? JSON.stringify(siblingCandidateSource.diagnostics)
+            : undefined,
+        );
+        if (siblingCandidateSource.status !== "shadow_verified_source") {
+          throw new Error("Expected sibling CandidateSourceV1");
+        }
+        assert.equal(
+          siblingCandidateSource.semanticRevisionHash,
+          compiledCandidateSource.semanticRevisionHash,
+        );
+        assert.equal(
+          siblingCandidateSource.candidateSource.value.semanticRevision
+            .contentTree.contentTreeHash,
+          candidateSource.semanticRevision.contentTree.contentTreeHash,
+        );
+        assert.notEqual(
+          siblingCandidateSource.operationalReceiptHash,
+          compiledCandidateSource.operationalReceiptHash,
+        );
+        assert.notEqual(
+          siblingCandidateSource.candidateSource.envelopeHash,
+          compiledCandidateSource.candidateSource.envelopeHash,
+        );
+
+        const selfRehashedCandidateSource = structuredClone(
+          compiledCandidateSource.candidateSource.envelope,
+        );
+        selfRehashedCandidateSource.payload.materialization.sourceMaterialization
+          .receiptHash = "f".repeat(64);
+        selfRehashedCandidateSource.payload.receiptHash =
+          hashCandidateSourceReceiptV1(selfRehashedCandidateSource.payload);
+        assert.equal(
+          CandidateSourceEnvelopeV1Schema.safeParse(selfRehashedCandidateSource)
+            .success,
+          true,
+        );
+        const rejectedCandidateSource = await verifyCandidateSourceV1ForTest(
+          created.handle,
+          {
+            ...candidateSourceInput,
+            expectedCandidateSourceEnvelopeHash:
+              compiledCandidateSource.candidateSource.envelopeHash,
+            candidateSourceEnvelope: selfRehashedCandidateSource,
+          },
+        );
+        assert.equal(rejectedCandidateSource.status, "rejected");
+        assert.equal(
+          rejectedCandidateSource.diagnostics[0]?.code,
+          "CANDIDATE_SOURCE_V1_CANDIDATE_MISMATCH",
+        );
+
         const attemptRoot = await onlyAttemptRoot(created.stageParent);
         const sourceRoot = path.join(attemptRoot, "project", "src");
         assert.deepEqual(await readdir(sourceRoot), [
