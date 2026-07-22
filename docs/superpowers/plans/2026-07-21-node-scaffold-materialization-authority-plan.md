@@ -12,8 +12,11 @@ runtime authority. F5K carries the PLAN behavior authority to runtime source;
 F5L executes that authority in the shared runtime program and generates an
 exact test program/source receipt from the same projection. The V2
 FileTree/BuildTopology/entrypoint-only transition must not be promoted.
-Production-root activation remains NO-GO; authenticated source publication,
-the evidence registry, release manifest and clean multi-product eval remain.
+F5M now closes authenticated source publication, semantic-envelope DB/CAS
+verification and private no-replace source materialization. Production-root
+activation remains NO-GO; authenticated build/test/candidate execution,
+release-derived EvidenceAdapterRegistryV2, release manifest and clean
+multi-product eval remain.
 
 ## Goal
 
@@ -33,7 +36,10 @@ code-owned scaffold catalog
   -> FileTreeManifestV3
   -> BuildTopologyV3
   -> NodeProductRuntimeGeneratorV2 / NodeProductTestGeneratorV2
-  -> runtime/test source receipts and evidence registry
+  -> runtime/test source receipts
+  -> indexed source publication and private no-replace materialization
+  -> authenticated build/test/candidate execution
+  -> release-derived EvidenceAdapterRegistryV2
 ```
 
 No stage may infer success from command prose, PATH lookup alone, a caller-
@@ -1379,11 +1385,12 @@ scope, source drift, a self-rehashed receipt, extra input, unsupported
 persistence evidence and standalone receipt omission. Generated runtime and
 test source both typecheck before execution.
 
-The runtime/test integration blockers are removed only because both exact
-consumers and their fresh verifiers now exist. The evidence-registry and
-release-manifest blockers remain. Production consumption is still forbidden;
-neither source has yet been published through an authenticated CAS/materializer
-receipt or registered as canonical operational evidence.
+At the F5L checkpoint, the runtime/test integration blockers were removed only
+because both exact consumers and their fresh verifiers existed. The evidence-
+registry and release-manifest blockers remained. Production consumption stayed
+forbidden because neither source had yet been published through an authenticated
+CAS/materializer receipt or registered as canonical operational evidence. F5M
+below supersedes only that source-publication/materialization gap.
 
 Current test-generator contract hash is
 `9e95027d040924582b3fec49539f729defd52f797aa5af05e3602b04c521a8fe`;
@@ -1399,24 +1406,25 @@ again refused `arch/product-semantics-v2-authority` and was not bypassed. No
 live run, live DB, PR, service, generated repository or real Setfarm
 application-support tree was mutated.
 
-The next dependency-order work has two non-interchangeable joins. First, exact
-runtime/test source bytes and their receipts must be prepared and published
-through the authenticated CAS/PostgreSQL artifact authority. Second, their
-semantic coverage must resolve against the release-bound
-`EvidenceAdapterRegistryV1`. The adapter registry stores executable evidence
-support, not source bytes. A versioned release manifest must then consume both
-identities. Typed retry/supervisor ownership must consume the resulting typed
-delta, and Mission Control must project the same operational evidence rather
-than agent prose. Only after those links exist may the remaining blockers be
-removed or a clean three-product eval start.
+The F5L checkpoint therefore identified two non-interchangeable joins. F5M now
+closes the first: exact runtime/test source bytes and their receipts are prepared,
+published through authenticated CAS/PostgreSQL authority in isolation, and
+materialized by the private owner. The second remains: semantic coverage must
+resolve against release-derived `EvidenceAdapterRegistryV2`. The adapter
+registry stores executable evidence support, not source bytes. A versioned
+release manifest must consume both identities. Typed retry/supervisor ownership
+must consume the resulting typed delta, and Mission Control must project the
+same operational evidence rather than agent prose. Only after those links exist
+may the remaining blockers be removed or a clean three-product eval start.
 
 ### F5M — Node source publication and evidence-registry join
 
 **Status (2026-07-21): source publication preparation, isolated indexed write,
-and authenticated deep-read proof complete; private materialization and the
-evidence-registry/release joins remain in progress. No live publication is
-authorized.** This slice is deliberately split by authority ownership, not by
-convenience:
+authenticated semantic-envelope and ByteBundle deep reads, and private
+no-replace materialization are complete. Authenticated build/test/candidate
+execution and the release-derived EvidenceAdapterRegistryV2/release joins
+remain in progress. No live publication is authorized.** This slice is
+deliberately split by authority ownership, not by convenience:
 
 1. `NodeProductSourcePublicationReceiptV1` fresh-generates and verifies the
    runtime/test source pair, wraps each exact UTF-8 source in ByteBundleV1,
@@ -1428,15 +1436,16 @@ convenience:
    publisher reparses the plan under its own authority; it does not accept a
    caller-supplied prepared object as write authority.
 2. The existing generic indexed publisher remains the only CAS/PostgreSQL
-   write owner. A later authenticated reader must deep-verify each published
-   ByteBundle and materialize both absent FileTreeV3 targets with no-replace
-   filesystem semantics before any build may execute.
-3. A separate evidence-registry join must consume fresh ProductSpecV2 evidence
-   capability bindings, invocation transports, runtime/test source receipt
-   identities and a fresh-verified release registry. Every admitted predicate
-   must resolve to exactly one complete adapter support signature. No source
-   bytes are stored in that registry artifact, and no missing adapter becomes a
-   model retry.
+   write owner. The authenticated source materializer deep-verifies both
+   semantic receipt envelopes and each published ByteBundle, then materializes
+   both absent FileTreeV3 targets with no-replace filesystem semantics.
+3. A separate V2 evidence-registry join must consume fresh ProductSpecV2
+   evidence capability bindings, invocation transports, runtime/test source
+   receipt identities and a fresh-verified release-derived operational adapter
+   catalog. Every admitted predicate must resolve to exactly one complete
+   adapter support signature. No source bytes are stored in that registry
+   artifact, and no missing adapter becomes a model retry. RegistryV1 remains
+   historical and is not extended with caller-authored V2 authority.
 
 The publication receipt is not a release manifest and cannot remove the
 evidence-registry or release-manifest blockers. It may discharge only the
@@ -1467,13 +1476,36 @@ Compiler is 1057/1057 across 129 suites with
 `duration_ms 124573.9985`. No live run, live DB, PR, service, generated
 repository or real Setfarm application-support tree was mutated.
 
-The remaining source boundary is deliberately narrower and stronger: a branded
-fresh-verified publication authority must deep-read both bundles and create the
-two absent FileTreeV3 targets inside the already-owned private stage with
-no-replace semantics, then emit a pathless materialization receipt. A receipt-
-shaped caller object, a mutable path, or a merely schema-valid publication may
-not reach the filesystem. Until that proof exists, neither source-receipt
-blocker is discharged and no build command is authorized.
+Commit `29edbe08` adds the reusable semantic-artifact CAS verifier. It requires
+both exact canonical envelope bytes in the held CAS authority and the immutable
+PostgreSQL index identity; a CAS-only artifact, forged authority, hostile
+envelope or receipt-shaped handle is rejected. Focused verifier proof is 11/11.
+
+Commit `a824177f` closes the remaining source boundary with
+`setfarm.node-product-source-materialization-receipt.v1`. The private owner
+preclaims the dependency-ready stage before its first await, fresh-reproduces
+the publication pair, authenticates the publication/source-receipt envelopes
+and ByteBundles through DB/CAS, and revalidates dependency/capsule authority
+before and after filesystem mutation. It creates only the code-owned absent
+`src` members using `O_CREAT|O_EXCL|O_NOFOLLOW`, full descriptor writes, `0444`
+files and fsync barriers. It freshly captures physical identity and emits a
+pathless exact two-member receipt. A second attempt, scope crossing, missing
+tier-three publication authority, physical-mode drift and a crash after the
+runtime fsync all fail closed; failed attempts remove only their authenticated
+owned private root and preserve foreign siblings.
+
+The focused private materializer suite is 22/22. Full Product Compiler is
+1062/1062 across 129 suites with `duration_ms 114937.042167`; `npx tsc --noEmit`
+and diff checks pass. The normal feature-branch build guard again refused
+`arch/product-semantics-v2-authority` and was not bypassed. No live run, live DB,
+PR, service, generated repository or real Setfarm application-support tree was
+mutated.
+
+The next boundary is not more source plumbing. It is authenticated execution:
+the exact materialization receipt must be consumed by bounded build and test
+runners that emit canonical ReceiptV2 evidence. Only a verified platform
+release may then derive the runnable adapter catalog and
+EvidenceAdapterRegistryV2; RegistryV1 caller claims cannot authorize that join.
 
 ## Verification and release gate
 
@@ -1491,16 +1523,16 @@ F2-F4 additionally require focused real-filesystem, process, PostgreSQL and
 concurrency tests. A clean merged-`main` `npm run build` and full `npm test`
 remain release evidence; the feature-branch build guard is never bypassed.
 
-GO for F1-F4 and F5D-F5L as isolated shadow authorities. F5A-F5C are GO only as
+GO for F1-F4 and F5D-F5M source publication/materialization as isolated shadow
+authorities. F5A-F5C are GO only as
 compatibility evidence and are explicitly NO-GO as production topology. NO-GO
 for production host execution, setup cutover, PacketV4, live migration, deploy
-and new clean product runs until authenticated runtime/test-source
-materialization, authenticated build/test/candidate evidence, evidence registry,
-release manifest, SourceMap, and the later packet/eval program are complete. The next
-dependency-order slice is authenticated source publication plus canonical
-artifact materialization, followed by the independent evidence-adapter registry
-join and versioned release manifest. The
-feature-branch
-`npm run build` guard was re-run after `06645e02` and correctly refused branch
+and new clean product runs until authenticated build/test/candidate evidence,
+EvidenceAdapterRegistryV2, release manifest, SourceMap, and the later packet/eval
+program are complete. The next dependency-order slice is a bounded authenticated
+build/test execution owner consuming the exact source-materialization receipt,
+followed by the verified-release-derived operational adapter catalog, RegistryV2
+and versioned release manifest. The feature-branch `npm run build` guard was
+re-run after `a824177f` and correctly refused branch
 `arch/product-semantics-v2-authority`; it was not bypassed. Only a clean
 merged-main build and full test can close that release gate.
