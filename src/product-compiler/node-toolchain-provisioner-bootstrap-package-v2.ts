@@ -14,7 +14,7 @@ import path from "node:path";
 import { isProxy } from "node:util/types";
 
 import { canonicalJsonBytes } from "./canonical-json.js";
-import { renderNodeToolchainProvisionerBootstrapLauncherV2 } from "./node-toolchain-provisioner-bootstrap-v2.js";
+import { renderNodeToolchainProvisionerBootstrapLauncherV2 } from "./node-toolchain-provisioner-bootstrap-launcher-v2.js";
 import {
   NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_BUNDLE_LOCATOR_V2,
   NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_LAUNCHER_LOCATOR_V2,

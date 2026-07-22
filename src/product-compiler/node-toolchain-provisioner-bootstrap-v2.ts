@@ -1,39 +1,53 @@
 import { createHash } from "node:crypto";
-import path from "node:path";
 import { isProxy } from "node:util/types";
 
 import { canonicalJsonBytes } from "./canonical-json.js";
 import {
+  renderNodeToolchainProvisionerBootstrapLauncherV2,
+} from "./node-toolchain-provisioner-bootstrap-launcher-v2.js";
+export {
+  renderNodeToolchainProvisionerBootstrapLauncherV2,
+} from "./node-toolchain-provisioner-bootstrap-launcher-v2.js";
+import {
+  copyBuiltNodeToolchainProvisionerBundleV2,
+  type BuiltNodeToolchainProvisionerBundleV2,
+} from "./node-toolchain-provisioner-bundle-authority-v2.js";
+import {
+  copyMaterializedNodeToolchainPrivateTreeBundleV2,
+  inspectNodeToolchainPrivateTreeReceiptV2,
+  type MaterializedNodeToolchainPrivateTreeV2,
+  type NodeToolchainPrivateTreeBundleV2,
+} from "./node-toolchain-private-tree-v2.js";
+import {
   NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_AUTHORITY_REF_V2,
   NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_BUNDLE_LOCATOR_V2,
   NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_ENTRYPOINT_SOURCE_LOCATOR_V2,
-  NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_FAILURE_V2_SCHEMA,
   NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_LAUNCHER_LOCATOR_V2,
   NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_MANIFEST_LOCATOR_V2,
   NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_MANIFEST_V2_SCHEMA,
   NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_MAX_BUNDLE_BYTES_V2,
-  NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_MAX_LAUNCHER_BYTES_V2,
   NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_MAX_MANIFEST_BYTES_V2,
   NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_MAX_RUNTIME_BYTES_V2,
   NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_RUNTIME_LOCATOR_V2,
+  NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_ROOT_V2,
   NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_VERSION_V2,
-  NodeToolchainProvisionerBootstrapFailureV2Schema,
   NodeToolchainProvisionerBootstrapManifestV2Schema,
   hashNodeToolchainProvisionerBootstrapBuildV2,
-  hashNodeToolchainProvisionerBootstrapFailureV2,
   hashNodeToolchainProvisionerBootstrapManifestV2,
   type NodeToolchainProvisionerBootstrapBuildHashPayloadV2,
-  type NodeToolchainProvisionerBootstrapFailureCodeV2,
-  type NodeToolchainProvisionerBootstrapFailureHashPayloadV2,
   type NodeToolchainProvisionerBootstrapManifestHashPayloadV2,
   type NodeToolchainProvisionerBootstrapManifestV2,
 } from "./schemas/node-toolchain-provisioner-bootstrap-v2.js";
+import type {
+  NodeToolchainProvisionerBundleAuthorityReceiptV2,
+} from "./schemas/node-toolchain-provisioner-bundle-authority-v2.js";
 import {
   NodeToolchainPrivateTreeReceiptV2Schema,
   type NodeToolchainPrivateTreeReceiptV2,
 } from "./schemas/node-toolchain-private-tree-v2.js";
 
 const ENTRYPOINT_SOURCE_MAX_BYTES_V2 = 1024 * 1024;
+const PACKAGE_JSON_SOURCE_MAX_BYTES_V2 = 1024 * 1024;
 const PACKAGE_LOCK_SOURCE_MAX_BYTES_V2 = 16 * 1024 * 1024;
 
 export class NodeToolchainProvisionerBootstrapAuthorityErrorV2 extends Error {
@@ -52,6 +66,7 @@ export type NodeToolchainProvisionerBootstrapReleaseInputV2 = Readonly<{
   sourceTreeHash: string;
   packageVersion: string;
   entrypointSourceBytes: Uint8Array;
+  packageJsonSourceBytes: Uint8Array;
   packageLockSourceBytes: Uint8Array;
   bundleBytes: Uint8Array;
   runtimeBytes: Uint8Array;
@@ -70,6 +85,7 @@ const BOOTSTRAP_INPUT_KEYS_V2 = Object.freeze([
   "bundleBytes",
   "codeSha",
   "entrypointSourceBytes",
+  "packageJsonSourceBytes",
   "packageLockSourceBytes",
   "packageVersion",
   "runtimeBytes",
@@ -145,6 +161,7 @@ function snapshotInput(input: unknown): NodeToolchainProvisionerBootstrapRelease
       sourceTreeHash: values.sourceTreeHash,
       packageVersion: values.packageVersion,
       entrypointSourceBytes: values.entrypointSourceBytes as Uint8Array,
+      packageJsonSourceBytes: values.packageJsonSourceBytes as Uint8Array,
       packageLockSourceBytes: values.packageLockSourceBytes as Uint8Array,
       bundleBytes: values.bundleBytes as Uint8Array,
       runtimeBytes: values.runtimeBytes as Uint8Array,
@@ -170,131 +187,16 @@ function deepFreezeJson<T>(value: T): T {
   return value;
 }
 
-function shellQuote(value: string): string {
-  return `'${value.replaceAll("'", `'"'"'`)}'`;
-}
-
-function bootstrapFailure(code: NodeToolchainProvisionerBootstrapFailureCodeV2): string {
-  const identity: NodeToolchainProvisionerBootstrapFailureHashPayloadV2 = {
-    schema: NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_FAILURE_V2_SCHEMA,
-    failureVersion: NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_VERSION_V2,
-    authorityRef: NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_AUTHORITY_REF_V2,
-    failureCode: code,
-    exitCode: 70,
-  };
-  return canonicalJsonBytes(NodeToolchainProvisionerBootstrapFailureV2Schema.parse({
-    ...identity,
-    failureHash: hashNodeToolchainProvisionerBootstrapFailureV2(identity),
-  })).toString("utf8");
-}
-
-type LauncherInputV2 = Readonly<{
-  rootLocator: string;
-  expectedOwnerUid: number;
-  expectedOwnerGid: number;
-  bundleSha256: string;
-  bundleByteLength: number;
-  runtimeSha256: string;
-  runtimeByteLength: number;
-}>;
-
-export function renderNodeToolchainProvisionerBootstrapLauncherV2(
-  input: LauncherInputV2,
-): Buffer {
-  const root = path.normalize(input.rootLocator);
-  if (
-    !path.isAbsolute(root)
-    || root !== input.rootLocator
-    || root.includes("\0")
-    || root.includes("\n")
-    || root.includes("\r")
-    || root.includes("'")
-    || !Number.isSafeInteger(input.expectedOwnerUid)
-    || input.expectedOwnerUid < 0
-    || !Number.isSafeInteger(input.expectedOwnerGid)
-    || input.expectedOwnerGid < 0
-    || !/^[a-f0-9]{64}$/.test(input.bundleSha256)
-    || input.bundleByteLength < 1
-    || input.bundleByteLength > NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_MAX_BUNDLE_BYTES_V2
-    || !/^[a-f0-9]{64}$/.test(input.runtimeSha256)
-    || input.runtimeByteLength < 1
-    || input.runtimeByteLength > NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_MAX_RUNTIME_BYTES_V2
-  ) {
-    return fail("Bootstrap launcher input is outside its exact bounded contract");
-  }
-  const rootRequired = shellQuote(bootstrapFailure(
-    "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_V2_ROOT_REQUIRED",
-  ));
-  const fileInvalid = shellQuote(bootstrapFailure(
-    "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_V2_PACKAGE_FILE_INVALID",
-  ));
-  const fileMismatch = shellQuote(bootstrapFailure(
-    "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_V2_PACKAGE_FILE_MISMATCH",
-  ));
-  const manifest = path.join(root, NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_MANIFEST_LOCATOR_V2);
-  const bundle = path.join(root, NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_BUNDLE_LOCATOR_V2);
-  const runtime = path.join(root, NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_RUNTIME_LOCATOR_V2);
-  const lines = [
-    "#!/bin/sh",
-    "set -fu",
-    "umask 077",
-    `ROOT=${shellQuote(root)}`,
-    `MANIFEST=${shellQuote(manifest)}`,
-    `BUNDLE=${shellQuote(bundle)}`,
-    `RUNTIME=${shellQuote(runtime)}`,
-    `FAIL_ROOT=${rootRequired}`,
-    `FAIL_FILE=${fileInvalid}`,
-    `FAIL_MISMATCH=${fileMismatch}`,
-    "fail() {",
-    "  /usr/bin/printf '%s' \"$1\"",
-    "  exit 70",
-    "}",
-    "verify_file() {",
-    "  file=$1",
-    "  mode=$2",
-    "  length=$3",
-    "  digest=$4",
-    "  metadata=$(/usr/bin/stat -f '%HT|%u|%g|%Lp|%l|%z' \"$file\" 2>/dev/null) || fail \"$FAIL_FILE\"",
-    `  expected="Regular File|${input.expectedOwnerUid}|${input.expectedOwnerGid}|$mode|1|$length"`,
-    "  [ \"$metadata\" = \"$expected\" ] || fail \"$FAIL_FILE\"",
-    "  observed=$(/usr/bin/shasum -a 256 \"$file\" 2>/dev/null) || fail \"$FAIL_FILE\"",
-    "  observed=${observed%% *}",
-    "  [ \"$observed\" = \"$digest\" ] || fail \"$FAIL_MISMATCH\"",
-    "}",
-    "verify_manifest() {",
-    "  metadata=$(/usr/bin/stat -f '%HT|%u|%g|%Lp|%l|%z' \"$MANIFEST\" 2>/dev/null) || fail \"$FAIL_FILE\"",
-    "  old_ifs=$IFS",
-    "  IFS='|'",
-    "  set -- $metadata",
-    "  IFS=$old_ifs",
-    "  [ \"$#\" -eq 6 ] || fail \"$FAIL_FILE\"",
-    `  [ \"$1\" = 'Regular File' ] && [ \"$2\" = '${input.expectedOwnerUid}' ] && [ \"$3\" = '${input.expectedOwnerGid}' ] || fail \"$FAIL_FILE\"`,
-    "  [ \"$4\" = '444' ] && [ \"$5\" = '1' ] || fail \"$FAIL_FILE\"",
-    `  [ \"$6\" -ge 1 ] 2>/dev/null && [ \"$6\" -le ${NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_MAX_MANIFEST_BYTES_V2} ] 2>/dev/null || fail \"$FAIL_FILE\"`,
-    "}",
-    `[ \"$(/usr/bin/id -u 2>/dev/null)\" = '${input.expectedOwnerUid}' ] || fail \"$FAIL_ROOT\"`,
-    "verify_manifest",
-    `verify_file \"$BUNDLE\" 444 ${input.bundleByteLength} ${input.bundleSha256}`,
-    `verify_file \"$RUNTIME\" 555 ${input.runtimeByteLength} ${input.runtimeSha256}`,
-    "cd \"$ROOT\" || fail \"$FAIL_FILE\"",
-    "exec /usr/bin/env -i \\",
-    "  HOME=/var/empty \\",
-    "  LANG=C \\",
-    "  LC_ALL=C \\",
-    "  NO_COLOR=1 \\",
-    "  TMPDIR=/private/var/tmp \\",
-    "  TZ=UTC \\",
-    "  SETFARM_NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_V2=1 \\",
-    "  SETFARM_NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_MANIFEST_V2=\"$MANIFEST\" \\",
-    "  \"$RUNTIME\" \"$BUNDLE\" \"$@\"",
-    "",
-  ];
-  const bytes = Buffer.from(lines.join("\n"), "utf8");
-  if (bytes.byteLength > NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_MAX_LAUNCHER_BYTES_V2) {
-    return fail("Rendered bootstrap launcher exceeds its byte bound");
-  }
-  return bytes;
-}
+type BootstrapBuildAuthorityV2 =
+  | Readonly<{
+    kind: "raw_test_fixture";
+    authorityRef: "TEST_NODE_TOOLCHAIN_PROVISIONER_BUNDLE_INPUT_V2";
+    admissionScope: "test_fixture";
+  }>
+  | Readonly<{
+    kind: "authenticated_bundle";
+    receipt: NodeToolchainProvisionerBundleAuthorityReceiptV2;
+  }>;
 
 function compile(
   untrustedInput: unknown,
@@ -304,6 +206,7 @@ function compile(
     expectedOwnerUid: number;
     expectedOwnerGid: number;
   }>,
+  authority: BootstrapBuildAuthorityV2,
 ): CompiledNodeToolchainProvisionerBootstrapV2 {
   const input = snapshotInput(untrustedInput);
   let sourcePrivateTree: NodeToolchainPrivateTreeReceiptV2;
@@ -316,6 +219,11 @@ function compile(
     input.entrypointSourceBytes,
     "Bootstrap entrypoint source",
     ENTRYPOINT_SOURCE_MAX_BYTES_V2,
+  );
+  const packageJsonSourceBytes = ownedBytes(
+    input.packageJsonSourceBytes,
+    "Bootstrap package.json source",
+    PACKAGE_JSON_SOURCE_MAX_BYTES_V2,
   );
   const packageLockSourceBytes = ownedBytes(
     input.packageLockSourceBytes,
@@ -348,6 +256,13 @@ function compile(
       byteLength: entrypointSourceBytes.byteLength,
       hash: sha256(entrypointSourceBytes),
     },
+    packageJsonSource: {
+      schema: "setfarm.source-artifact-ref.v1",
+      locator: "package.json",
+      mediaType: "application/json",
+      byteLength: packageJsonSourceBytes.byteLength,
+      hash: sha256(packageJsonSourceBytes),
+    },
     packageLockSource: {
       schema: "setfarm.source-artifact-ref.v1",
       locator: "package-lock.json",
@@ -355,6 +270,7 @@ function compile(
       byteLength: packageLockSourceBytes.byteLength,
       hash: sha256(packageLockSourceBytes),
     },
+    authority,
     bundler: {
       packageName: "esbuild",
       version: "0.28.1",
@@ -398,8 +314,12 @@ function compile(
     release: {
       codeSha: input.codeSha,
       sourceTreeHash: input.sourceTreeHash,
-      branch: "main",
-      dirty: false,
+      branch: authority.kind === "authenticated_bundle"
+        ? authority.receipt.release.branch
+        : "test_fixture",
+      dirty: authority.kind === "authenticated_bundle"
+        ? authority.receipt.release.dirty
+        : true,
       packageName: "setfarm",
       packageVersion: input.packageVersion,
     },
@@ -516,7 +436,125 @@ export function compileNodeToolchainProvisionerBootstrapV2ForTest(
   if (typeof process.getuid !== "function" || typeof process.getgid !== "function") {
     return fail("Test bootstrap compilation requires POSIX owner identity");
   }
-  return compile(input, {
+  return compile(
+    input,
+    {
+      admissionScope: "test_fixture",
+      rootLocator: testRoot,
+      expectedOwnerUid: process.getuid(),
+      expectedOwnerGid: process.getgid(),
+    },
+    {
+      kind: "raw_test_fixture",
+      authorityRef: "TEST_NODE_TOOLCHAIN_PROVISIONER_BUNDLE_INPUT_V2",
+      admissionScope: "test_fixture",
+    },
+  );
+}
+
+function zeroBundleSnapshot(
+  snapshot: ReturnType<typeof copyBuiltNodeToolchainProvisionerBundleV2> | undefined,
+): void {
+  if (!snapshot) return;
+  snapshot.bundleBytes.fill(0);
+  snapshot.entrypointSourceBytes.fill(0);
+  snapshot.packageJsonSourceBytes.fill(0);
+  snapshot.packageLockSourceBytes.fill(0);
+}
+
+function zeroPrivateTreeBundle(bundle: NodeToolchainPrivateTreeBundleV2 | undefined): void {
+  if (!bundle) return;
+  for (const entry of bundle.entries) entry.bytes?.fill(0);
+}
+
+async function compileFromAuthenticatedAuthorities(
+  bundleHandle: BuiltNodeToolchainProvisionerBundleV2,
+  privateTreeHandle: MaterializedNodeToolchainPrivateTreeV2,
+  scope: Readonly<{
+    admissionScope: "production_root" | "test_fixture";
+    rootLocator: string;
+    expectedOwnerUid: number;
+    expectedOwnerGid: number;
+  }>,
+): Promise<CompiledNodeToolchainProvisionerBootstrapV2> {
+  let snapshot: ReturnType<typeof copyBuiltNodeToolchainProvisionerBundleV2> | undefined;
+  let privateBundle: NodeToolchainPrivateTreeBundleV2 | undefined;
+  try {
+    snapshot = copyBuiltNodeToolchainProvisionerBundleV2(bundleHandle);
+    const privateTreeReceipt = inspectNodeToolchainPrivateTreeReceiptV2(privateTreeHandle);
+    const expectedBundleScope = scope.admissionScope === "production_root"
+      ? "production_release"
+      : "test_fixture";
+    const expectedTreeScope = scope.admissionScope === "production_root"
+      ? "production_distribution"
+      : "test_fixture";
+    if (
+      snapshot.receipt.admissionScope !== expectedBundleScope
+      || privateTreeReceipt.admissionScope !== expectedTreeScope
+      || snapshot.receipt.runtime.sourcePrivateTree.receiptHash
+        !== privateTreeReceipt.receiptHash
+    ) {
+      return fail(
+        "Authenticated bundle and private-tree handles do not belong to one bootstrap scope",
+      );
+    }
+    privateBundle = await copyMaterializedNodeToolchainPrivateTreeBundleV2(privateTreeHandle);
+    const runtime = privateBundle.entries.find((entry) => entry.locator === "bin/node");
+    if (
+      !runtime?.bytes
+      || runtime.contentHash !== privateTreeReceipt.tree.node.contentHash
+      || runtime.byteLength !== privateTreeReceipt.tree.node.byteLength
+    ) {
+      return fail("Authenticated private tree did not reproduce its exact bootstrap runtime");
+    }
+    return compile(
+      {
+        codeSha: snapshot.receipt.release.codeSha,
+        sourceTreeHash: snapshot.receipt.release.sourceTreeHash,
+        packageVersion: snapshot.receipt.release.packageVersion,
+        entrypointSourceBytes: snapshot.entrypointSourceBytes,
+        packageJsonSourceBytes: snapshot.packageJsonSourceBytes,
+        packageLockSourceBytes: snapshot.packageLockSourceBytes,
+        bundleBytes: snapshot.bundleBytes,
+        runtimeBytes: runtime.bytes,
+        sourcePrivateTree: privateBundle.receipt,
+      },
+      scope,
+      {
+        kind: "authenticated_bundle",
+        receipt: snapshot.receipt,
+      },
+    );
+  } catch (error) {
+    if (error instanceof NodeToolchainProvisionerBootstrapAuthorityErrorV2) throw error;
+    return fail("Authenticated bootstrap authorities could not be joined", error);
+  } finally {
+    zeroBundleSnapshot(snapshot);
+    zeroPrivateTreeBundle(privateBundle);
+  }
+}
+
+export async function compileNodeToolchainProvisionerBootstrapV2(
+  bundleHandle: BuiltNodeToolchainProvisionerBundleV2,
+  privateTreeHandle: MaterializedNodeToolchainPrivateTreeV2,
+): Promise<CompiledNodeToolchainProvisionerBootstrapV2> {
+  return compileFromAuthenticatedAuthorities(bundleHandle, privateTreeHandle, {
+    admissionScope: "production_root",
+    rootLocator: NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_ROOT_V2,
+    expectedOwnerUid: 0,
+    expectedOwnerGid: 0,
+  });
+}
+
+export async function compileNodeToolchainProvisionerBootstrapV2ForTestFromAuthority(
+  bundleHandle: BuiltNodeToolchainProvisionerBundleV2,
+  privateTreeHandle: MaterializedNodeToolchainPrivateTreeV2,
+  testRoot: string,
+): Promise<CompiledNodeToolchainProvisionerBootstrapV2> {
+  if (typeof process.getuid !== "function" || typeof process.getgid !== "function") {
+    return fail("Test bootstrap compilation requires POSIX owner identity");
+  }
+  return compileFromAuthenticatedAuthorities(bundleHandle, privateTreeHandle, {
     admissionScope: "test_fixture",
     rootLocator: testRoot,
     expectedOwnerUid: process.getuid(),

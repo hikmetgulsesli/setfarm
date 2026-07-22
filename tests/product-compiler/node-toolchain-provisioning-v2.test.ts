@@ -51,7 +51,9 @@ import {
 } from "../../src/product-compiler/node-toolchain-target-registry-v2.js";
 import {
   NodeToolchainProvisionerBootstrapAuthorityErrorV2,
+  compileNodeToolchainProvisionerBootstrapV2,
   compileNodeToolchainProvisionerBootstrapV2ForTest,
+  compileNodeToolchainProvisionerBootstrapV2ForTestFromAuthority,
   renderNodeToolchainProvisionerBootstrapLauncherV2,
 } from "../../src/product-compiler/node-toolchain-provisioner-bootstrap-v2.js";
 import {
@@ -102,6 +104,7 @@ import {
 import {
   NodeToolchainProvisionerBootstrapFailureV2Schema,
   NodeToolchainProvisionerBootstrapManifestV2Schema,
+  hashNodeToolchainProvisionerBootstrapBuildV2,
   hashNodeToolchainProvisionerBootstrapManifestV2,
 } from "../../src/product-compiler/schemas/node-toolchain-provisioner-bootstrap-v2.js";
 import {
@@ -1364,6 +1367,36 @@ describe("NodeToolchainProvisionerCommandV2 inspection and planning", () => {
       NodeToolchainProvisionerBundleAuthorityReceiptV2Schema.parse(receipt),
       receipt,
     );
+    const bootstrapRoot = await realpath(await privateParent());
+    const compiled = await compileNodeToolchainProvisionerBootstrapV2ForTestFromAuthority(
+      handle,
+      tree,
+      bootstrapRoot,
+    );
+    assert.equal(compiled.manifest.build.authority.kind, "authenticated_bundle");
+    assert.equal(compiled.manifest.release.branch, receipt.release.branch);
+    assert.equal(compiled.manifest.release.dirty, receipt.release.dirty);
+    if (compiled.manifest.build.authority.kind === "authenticated_bundle") {
+      assert.equal(compiled.manifest.build.authority.receipt.receiptHash, receipt.receiptHash);
+    }
+    assert.equal(compiled.manifest.files.bundle.sha256, receipt.output.sha256);
+    assert.deepEqual(compiled.bundleBytes, snapshot.bundleBytes);
+    const joinedSourceDrift = structuredClone(compiled.manifest);
+    joinedSourceDrift.build.packageLockSource.hash = "d".repeat(64);
+    joinedSourceDrift.build.buildContractHash = hashNodeToolchainProvisionerBootstrapBuildV2(
+      joinedSourceDrift.build,
+    );
+    joinedSourceDrift.manifestHash = hashNodeToolchainProvisionerBootstrapManifestV2(
+      joinedSourceDrift,
+    );
+    assert.equal(
+      NodeToolchainProvisionerBootstrapManifestV2Schema.safeParse(joinedSourceDrift).success,
+      false,
+    );
+    await assert.rejects(
+      compileNodeToolchainProvisionerBootstrapV2(handle, tree),
+      (error: unknown) => error instanceof NodeToolchainProvisionerBootstrapAuthorityErrorV2,
+    );
 
     const rehashedDrift = structuredClone(receipt);
     rehashedDrift.output.sha256 = "f".repeat(64);
@@ -1423,6 +1456,7 @@ describe("NodeToolchainProvisionerCommandV2 inspection and planning", () => {
       sourceTreeHash: "2".repeat(40),
       packageVersion: "2.3.79",
       entrypointSourceBytes: Buffer.from("export {};\n"),
+      packageJsonSourceBytes: Buffer.from("{\"name\":\"setfarm\",\"version\":\"2.3.79\"}\n"),
       packageLockSourceBytes: Buffer.from("{\"lockfileVersion\":3}\n"),
       bundleBytes: Buffer.from("process.stdout.write('{}');\n"),
       runtimeBytes: runtimeEntry.bytes,
@@ -1432,6 +1466,8 @@ describe("NodeToolchainProvisionerCommandV2 inspection and planning", () => {
     const second = compileNodeToolchainProvisionerBootstrapV2ForTest(input, packageRoot);
 
     assert.deepEqual(second.manifest, first.manifest);
+    assert.equal(first.manifest.release.branch, "test_fixture");
+    assert.equal(first.manifest.release.dirty, true);
     assert.deepEqual(second.launcherBytes, first.launcherBytes);
     assert.deepEqual(first.manifestBytes, canonicalJsonBytes(first.manifest));
     assert.equal(first.manifestBytes.at(-1), "}".charCodeAt(0));

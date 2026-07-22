@@ -68,6 +68,10 @@ describe("Node toolchain provisioner bootstrap bundle", () => {
       assert.ok(receipt.externalNodeBuiltins.every((entry) => entry.startsWith("node:")));
       assert.equal(statSync(firstPath).mode & 0o7777, 0o600);
       assert.doesNotMatch(firstBytes.toString("utf8"), /require\(["'](?:zod|tsx|esbuild)["']\)/);
+      assert.doesNotMatch(
+        firstBytes.toString("utf8"),
+        /Production bundle authority requires clean main equal to origin\/main/,
+      );
 
       const rerun = buildBundle(firstPath);
       assert.equal(rerun.status, 1);

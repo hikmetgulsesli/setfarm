@@ -3,6 +3,9 @@ import { z } from "zod";
 import { hashCanonicalJson } from "../canonical-json.js";
 import { GitObjectHashSchema, Sha256Schema } from "./common-v1.js";
 import { NodeToolchainPrivateTreeReceiptV2Schema } from "./node-toolchain-private-tree-v2.js";
+import {
+  NodeToolchainProvisionerBundleAuthorityReceiptV2Schema,
+} from "./node-toolchain-provisioner-bundle-authority-v2.js";
 
 export const NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_MANIFEST_V2_SCHEMA =
   "setfarm.node-toolchain-provisioner-bootstrap-manifest.v2" as const;
@@ -48,13 +51,14 @@ const ExactSourceRefV2Schema = z.object({
   schema: z.literal("setfarm.source-artifact-ref.v1"),
   locator: z.enum([
     NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_ENTRYPOINT_SOURCE_LOCATOR_V2,
+    "package.json",
     "package-lock.json",
   ]),
   mediaType: z.enum(["text/typescript", "application/json"]),
   byteLength: ByteLengthV2Schema.max(16 * 1024 * 1024),
   hash: Sha256Schema,
 }).strict().superRefine((value, context) => {
-  const expectedMediaType = value.locator === "package-lock.json"
+  const expectedMediaType = value.locator === "package-lock.json" || value.locator === "package.json"
     ? "application/json"
     : "text/typescript";
   if (value.mediaType !== expectedMediaType) {
@@ -102,7 +106,19 @@ const NodeToolchainProvisionerBootstrapBuildIdentityV2Schema = z.object({
   contractRef: z.literal("BUILD_NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_V2"),
   sourceTreeHash: GitObjectHashSchema,
   entrypointSource: ExactSourceRefV2Schema,
+  packageJsonSource: ExactSourceRefV2Schema,
   packageLockSource: ExactSourceRefV2Schema,
+  authority: z.discriminatedUnion("kind", [
+    z.object({
+      kind: z.literal("raw_test_fixture"),
+      authorityRef: z.literal("TEST_NODE_TOOLCHAIN_PROVISIONER_BUNDLE_INPUT_V2"),
+      admissionScope: z.literal("test_fixture"),
+    }).strict(),
+    z.object({
+      kind: z.literal("authenticated_bundle"),
+      receipt: NodeToolchainProvisionerBundleAuthorityReceiptV2Schema,
+    }).strict(),
+  ]),
   bundler: z.object({
     packageName: z.literal("esbuild"),
     version: z.literal("0.28.1"),
@@ -139,7 +155,11 @@ export const NodeToolchainProvisionerBootstrapBuildV2Schema =
   NodeToolchainProvisionerBootstrapBuildIdentityV2Schema.safeExtend({
     buildContractHash: Sha256Schema,
   }).strict().superRefine((value, context) => {
-    if (value.entrypointSource.locator === value.packageLockSource.locator
+    if (
+      value.entrypointSource.locator
+        !== NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_ENTRYPOINT_SOURCE_LOCATOR_V2
+      || value.packageJsonSource.locator !== "package.json"
+      || value.packageLockSource.locator !== "package-lock.json"
       || value.buildContractHash !== hashNodeToolchainProvisionerBootstrapBuildV2(value)) {
       context.addIssue({
         code: "custom",
@@ -160,8 +180,8 @@ const NodeToolchainProvisionerBootstrapManifestIdentityV2Schema = z.object({
   release: z.object({
     codeSha: GitObjectHashSchema,
     sourceTreeHash: GitObjectHashSchema,
-    branch: z.literal("main"),
-    dirty: z.literal(false),
+    branch: z.string().min(1).max(255),
+    dirty: z.boolean(),
     packageName: z.literal("setfarm"),
     packageVersion: PackageVersionV2Schema,
   }).strict(),
@@ -264,6 +284,7 @@ export const NodeToolchainProvisionerBootstrapManifestV2Schema =
     const ownerUid = value.layout.expectedOwnerUid;
     const ownerGid = value.layout.expectedOwnerGid;
     const files = [value.files.launcher, value.files.bundle, value.files.bootstrapRuntime];
+    const buildAuthority = value.build.authority;
     if (
       value.release.sourceTreeHash !== value.build.sourceTreeHash
       || value.distribution.manifestHash !== source.inventory.distribution.manifest.manifestHash
@@ -279,18 +300,51 @@ export const NodeToolchainProvisionerBootstrapManifestV2Schema =
         message: "Bootstrap manifest must join one source tree, distribution, Node member and owner",
       });
     }
+    if (buildAuthority.kind === "authenticated_bundle") {
+      const bundle = buildAuthority.receipt;
+      if (
+        value.release.codeSha !== bundle.release.codeSha
+        || value.release.sourceTreeHash !== bundle.release.sourceTreeHash
+        || value.release.branch !== bundle.release.branch
+        || value.release.dirty !== bundle.release.dirty
+        || value.release.packageVersion !== bundle.release.packageVersion
+        || value.build.entrypointSource.hash !== bundle.sources.entrypoint.hash
+        || value.build.entrypointSource.byteLength !== bundle.sources.entrypoint.byteLength
+        || value.build.packageJsonSource.hash !== bundle.sources.packageJson.hash
+        || value.build.packageJsonSource.byteLength !== bundle.sources.packageJson.byteLength
+        || value.build.packageLockSource.hash !== bundle.sources.packageLock.hash
+        || value.build.packageLockSource.byteLength !== bundle.sources.packageLock.byteLength
+        || value.files.bundle.sha256 !== bundle.output.sha256
+        || value.files.bundle.byteLength !== bundle.output.byteLength
+        || source.receiptHash !== bundle.runtime.sourcePrivateTree.receiptHash
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: ["build", "authority"],
+          message: "Bootstrap manifest must exactly reproduce its authenticated bundle authority",
+        });
+      }
+    }
     if (
       (value.admissionScope === "production_root"
         && (
           value.layout.rootLocator !== NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_ROOT_V2
           || ownerUid !== 0
           || ownerGid !== 0
+          || value.release.branch !== "main"
+          || value.release.dirty
           || source.admissionScope !== "production_distribution"
+          || buildAuthority.kind !== "authenticated_bundle"
+          || buildAuthority.receipt.admissionScope !== "production_release"
         ))
       || (value.admissionScope === "test_fixture"
         && (
           value.layout.rootLocator === NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_ROOT_V2
           || source.admissionScope !== "test_fixture"
+          || (buildAuthority.kind === "raw_test_fixture"
+            && (value.release.branch !== "test_fixture" || !value.release.dirty))
+          || (buildAuthority.kind === "authenticated_bundle"
+            && buildAuthority.receipt.admissionScope !== "test_fixture")
         ))
     ) {
       context.addIssue({
