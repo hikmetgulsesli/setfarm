@@ -149,9 +149,9 @@ can mutate the tree again.
 
 ### F2B — Code-owned distribution and root-owned provisioning receipt
 
-Status: F2B1 distribution verification and F2B2a archive inventory are
-complete; selected extraction, root-owned publication and provisioning-receipt
-join remain required before F2 is complete.
+Status: F2B1 distribution verification, F2B2a archive inventory and F2B2b
+selected private materialization are complete; root-owned publication and the
+durable provisioning-receipt/F2A join remain required before F2 is complete.
 
 The selected source is the official Node `22.23.1` Darwin distribution, not the
 mutable Homebrew tree. Primary distribution evidence on 2026-07-21 established:
@@ -168,7 +168,7 @@ mutable Homebrew tree. Primary distribution evidence on 2026-07-21 established:
   produced `0600/0700`, proving the installer must normalize modes rather than
   treating extraction mode as authority.
 
-F2B1/B2a evidence completed on 2026-07-22:
+F2B1/B2a/B2b evidence completed on 2026-07-22:
 
 - commit `7809dd94` added a pathless authenticated distribution archive handle
   over the code-owned official URL, exact length and SHA-256. Candidate paths
@@ -189,28 +189,43 @@ F2B1/B2a evidence completed on 2026-07-22:
 - the official npm tree has package-root `.npmrc` but no builtin `npmrc`.
   Inventory and F2A now bind that absence explicitly instead of inheriting the
   Homebrew-generated `npmrc` topology;
+- commit `b596794e` added
+  `setfarm.node-toolchain-private-tree-receipt.v2`. It extracts only the
+  authenticated NUL-delimited selected-member list into process-private scratch,
+  rejects any missing/extra/link/special member, and then writes a second tree
+  with exclusive descriptors, normalized `0444/0555` modes, fsync and fresh-read
+  content/topology verification. The authority remains a pathless WeakMap handle;
 - a fresh official arm64 production smoke inventoried 5,866 members: 4,750
   files, 1,113 directories, three discarded symlinks, zero hard links and zero
-  special entries. It selected 2,463 npm descendants, produced inventory hash
-  `6672fb908a0fa779dfa309327cb7b0553eb27a20960149cd4acefe10fce3a904`
-  and npm closure hash
-  `54302e6eea0fcf94490373fbd418f49d2003ce8f80be36e07ac56efb9c704924`;
-- final Product Compiler evidence is 949/949 with TypeScript, English (1,043
-  files), path (573 files), diff and private-temp-residue checks clean.
+  special entries. It selected 2,469 total members including 2,463 npm
+  descendants, produced mode-aware inventory hash
+  `256c518a5be70e09be1dc4f1c7183050f79ed3ccd0755b7bc5099468bad71441`,
+  npm closure hash
+  `7a00f1a8b956978df77a5405c36e65d2eadeae3666481d1b67c4950c04e429f3`
+  and normalized tree hash
+  `294b293fc2fe1e1aba2399b2478c38297cd5bfd953879add166c3e8df33ad7e6`;
+- a fresh official x64 production smoke selected the same 2,469-member topology
+  and produced the same npm closure/tree hash while binding its distinct Node
+  bytes and whole-tree hash. Both receipts were pathless and left zero private
+  stage residue;
+- final Product Compiler evidence is 957/957 across 119 suites with TypeScript,
+  English (1,046 files), path (575 files), diff and private-temp-residue checks
+  clean.
 
 F2B dependency chain is:
 
 1. **Complete:** `setfarm.node-toolchain-distribution-manifest.v2`, a code-owned architecture
    catalog binding exact URL, filename, byte length, SHA-256, expected Node/npm/
    ABI/N-API identities, selected archive roots and extraction policy;
-2. **In progress:** `setfarm.node-toolchain-provisioning-receipt.v2`, binding distribution
-   manifest, downloaded archive bytes, safe every-member archive inventory,
-   selected Node/npm closure, normalized modes, fsync/no-replace publication,
-   root owner/group and final directory identity;
-3. **Pending:** a root-owned separately installed provisioning command. It stages outside
+2. **Complete:** `setfarm.node-toolchain-private-tree-receipt.v2`, binding the
+   distribution receipt, safe every-member archive inventory, exact selected
+   Node/npm closure, normalized modes and verified every-and-only private tree;
+3. **Pending:** `setfarm.node-toolchain-provisioning-receipt.v2` and a root-owned
+   separately installed provisioning command. It stages outside
    the final root, rejects traversal/symlink/hard-link/special/case-collision
    entries, copies only exact selected closure, normalizes files to `0444/0555`
-   and directories to `0555`, verifies again, then publishes with no replace;
+   and directories to `0555`, verifies again, then publishes with no replace and
+   binds root owner/group plus final directory identity;
 4. **Pending:** an F2A join requiring the exact provisioning receipt and final tree identity
    before `production_host` authority can be issued. Merely creating the fixed
    directory or making a binary self-report the expected version is invalid;
