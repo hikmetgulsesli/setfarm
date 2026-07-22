@@ -295,14 +295,28 @@ F2B1/B2a/B2b/B2c evidence completed on 2026-07-22:
   `admin` (`gid=80`).
   The system ancestor therefore requires root ownership plus exact non-writable
   mode, while Setfarm-created directories remain exact `root:wheel`;
+- commit `9161f681` completed generation-bound bootstrap rollback. The strict
+  plan/claim/tombstone schemas bind the installation receipt/claim/intent,
+  prepared source, manifest, architecture, predecessor rollback-history fence,
+  physical root device/inode/tree, exact eight-member removal set, all rollback
+  locators, and the real lease tool evidence. The mutator publishes the claim
+  before quarantine rename, removes only a fully recaptured every-only tree,
+  publishes a content-addressed tombstone receipt-last, and removes the claim
+  last. Eleven destructive crash boundaries converge; concurrent holders,
+  missing members, foreign quarantine data, external hard-link aliases,
+  missing lock, lost quarantine, stale plans, self-rehashed evidence, inode
+  reuse simulation, reinstall generations, missing history, and transplanted
+  tombstones fail closed or converge exactly. Canonical predecessor tombstones
+  remain durable and are part of fresh read-only installation inspection, so an
+  old target-absent plan cannot cross a later generation;
 - final command/rollback/CLI-focused evidence is 23/23; the combined distribution,
   inventory, private-tree, host, provisioning, and command chain is 56/56.
-  After authenticated compile, prepared publication, and isolated bootstrap
-  installation, final Product Compiler evidence is 983/983 across 121
-  suites, scripts are 24/24, with TypeScript, English (1,071 files), path (599
-  files), diff and isolated scratch-residue
-  checks clean. No production toolchain root, live DB/PR/service, generated
-  repository, or Setfarm run was mutated.
+  After authenticated compile, prepared publication, isolated bootstrap
+  installation, rollback, and reinstall, the focused lifecycle file is 31/31
+  and the complete Product Compiler suite exits 0. Scripts are 24/24, with
+  TypeScript, English (1,072 files), path (600 files), and diff checks clean.
+  No production toolchain root, live DB/PR/service, generated repository, or
+  Setfarm run was mutated.
 
 F2B dependency chain is:
 
@@ -323,8 +337,8 @@ F2B dependency chain is:
    final root, Node bytes, and normalized npm tree before `production_host`
    authority can be issued. Merely creating the fixed directory or making a
    binary self-report the expected version is invalid;
-5. **Complete isolated installation authority, pending privileged rollback and
-   packaged-CLI rehearsal:** the separately packaged root launcher/manifest,
+5. **Complete isolated installation and rollback authority, pending packaged-CLI
+   rehearsal:** the separately packaged root launcher/manifest,
    installed-root verifier, authenticated reproducible bundle handle,
    handle-only compiler, and private prepared-package publisher now exist. The
    prepared publisher deliberately does not impersonate an installed package:
@@ -336,15 +350,17 @@ F2B dependency chain is:
    claim-before-root publication, prepared-handle-only defensive copy,
    same-filesystem hard-link no-replace files, manifest-last sealing, receipt-last
    durability, exact-claim recovery, and durable installed-handle rehydration.
-   Eight injected publication crash boundaries converge; foreign/unclaimed
+   Eight injected installation-publication and eleven destructive rollback
+   boundaries converge; foreign/unclaimed
    state, aliases, source drift, stale decision expansion, forged handles and
-   test-to-production promotion fail closed. All mutation evidence is still
-   process-owned test-fixture storage. The next owner must add generation-bound
-   bootstrap uninstall/rollback, then execute the packaged CLI through the
-   official runtime in a complete isolated install/open/inspect/apply/verify/
-   rollback/cleanup rehearsal before any production root or OS-update
-   transition. No installer action will run automatically from a Setfarm
-   product attempt.
+   test-to-production promotion fail closed. `9161f681` additionally retains
+   canonical predecessor tombstones, fences stale install plans across
+   generations, and provides exact rollback/rehydration/replay. All mutation
+   evidence is still process-owned test-fixture storage. The next owner must
+   execute the packaged CLI through the official runtime in a complete isolated
+   install/open/inspect/apply/verify/rollback/cleanup rehearsal before any
+   production root or OS-update transition. No installer action will run
+   automatically from a Setfarm product attempt.
 
 F2 completion does not authorize `npm ci`; it only creates the exact toolchain
 precondition consumed by F3/F4. F2A alone is deliberately insufficient.
