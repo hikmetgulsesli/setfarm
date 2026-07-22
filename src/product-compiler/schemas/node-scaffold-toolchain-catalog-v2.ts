@@ -391,6 +391,9 @@ const DependencyEdgeV2Schema = z.object({
   resolvedVersion: ExactVersionSchema,
 }).strict();
 
+export const NodeScaffoldDependencyNodeV2Schema = LockPackageNodeV2Schema;
+export const NodeScaffoldDependencyEdgeV2Schema = DependencyEdgeV2Schema;
+
 type VersionTuple = readonly [bigint, bigint, bigint];
 
 function parseVersion(value: string): VersionTuple | null {
