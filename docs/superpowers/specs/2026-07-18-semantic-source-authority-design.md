@@ -996,12 +996,23 @@ The plan has `modelWriteGrantCount: 0`. CLI and API ABI remain distinct and
 exact; generated output is forbidden from owning the API listener or calling
 `listen()`.
 
+The plan also pins `setfarm.node-product-test-generator-contract.v2` and the
+exact selected test profile. The code-owned contract binds CLI test source/
+output to `src/cli.setfarm.test.ts` / `dist/cli.setfarm.test.js` and API to
+`src/app.setfarm.test.ts` / `dist/app.setfarm.test.js`. Both use a direct
+`node --test <compiled-file>` ABI. CLI may spawn only its exact same-runtime
+module; API subprocesses and all network-based test execution are forbidden.
+The test source is a code-owned whole file, model writes and zero-test receipts
+are forbidden, and coverage must include every action plus every required
+evidence relation.
+
 The schema closes counts, uniqueness, canonical order, policy/member equality,
 membership hash and complete plan hash. The verifier still fresh-reproduces the
 entire artifact, because a locally self-rehashed omission can be structurally
 valid. Stable identity excludes private roots, mutable paths and attempt
 receipts. Production remains blocked on FileTreeV3, BuildTopologyV3, runtime and
-test generators, evidence registry, source receipt and release manifest.
+test generator implementations, evidence registry, runtime/test source receipts
+and release manifest.
 
 ## SemanticSourceDeclarationsV1 (Future Model-Authored Realizations Only)
 
@@ -1172,8 +1183,9 @@ new-write release; it does not translate V3 attempts into historical attempts.
     authority across CLI, one-route API and two-route API fixtures.
 11. Implement realization-driven FileTreeManifestV3 and BuildTopologyV3 without
     adapting V2 semantic writable paths.
-12. Implement NodeProductRuntimeGeneratorV2, generated test authority,
-    every-member source receipt, evidence-registry join and release manifest.
+12. Implement NodeProductRuntimeGeneratorV2 and NodeProductTestGeneratorV2 from
+    their pinned contracts, then every-member runtime/test source receipts,
+    evidence-registry join and release manifest.
 13. Implement StoryPlanV3, SourceMapV2 root/leaves/proofs and least-privilege
     story proof verification; declarations remain conditional on a future
     explicit ProductSpec opaque-behavior contract.

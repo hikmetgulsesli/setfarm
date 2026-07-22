@@ -798,16 +798,18 @@ and untracked diff checks pass.
 ### F5D — SemanticRealizationPlanV2
 
 **Status (2026-07-22): complete as a shadow, production-forbidden planning
-authority.** Commits `a89bc494` and `1d514c3b` add
+authority.** Commits `a89bc494`, `1d514c3b`, and `8d53f53f` add
 `setfarm.semantic-realization-plan.v2`, a code-owned Node realization policy and
-`setfarm.node-product-runtime-generator-contract.v2`. Their final hashes are:
+the code-owned runtime/test generator contracts. Their final hashes are:
 
 - realization-plan contract:
-  `118e8cf9a2f0811b55782e693384d778948e462d589f0d4b1762d6538543b765`;
+  `fcb011c9bcd79d4178415f0b7b419572d8a57eb38a94a8ece54d8a68f07d645e`;
 - realization policy:
   `9dc1212f1c7fd1a6801dfbd9d3a2823b68292f76cdb9d8c7501fa8ac5beb120e`;
 - runtime generator contract:
-  `2f36ccaf6ccc5d88d89c770ea01daf139afc18b3736c4b282f9e01fea005b41f`.
+  `2f36ccaf6ccc5d88d89c770ea01daf139afc18b3736c4b282f9e01fea005b41f`;
+- test generator contract:
+  `478ecd63be81483a71d9becd769483e7c9b194c047223374eb35c0731e0c4f28`.
 
 The compiler treats `SemanticSourceIntentSetV1` as an obligation inventory, not
 an implementation decision. It fresh-reproduces that set and assigns every
@@ -826,7 +828,18 @@ change therefore fails closed instead of silently inheriting policy. CLI keeps
 its process-module ABI with no named export. API exposes exactly
 `setfarmHttpHandlerV2`, forbids candidate `listen()`, and leaves server/listener/
 socket ownership to the platform. The plan includes no normalized locator,
-private root, mutable path, source byte, or operational-attempt identity.
+private root, mutable path, source byte, or operational-attempt identity. It
+does pin the exact selected test-generator profile hash so a downstream V3
+consumer resolves paths only from that code-owned contract.
+
+The selected test profile owns one whole generated TypeScript test file and
+forbids model writes, zero-test receipts, network access, ambient discovery,
+clock and randomness. CLI binds `src/cli.setfarm.test.ts` to
+`dist/cli.setfarm.test.js`, imports `./cli.js`, and may spawn only that exact
+same-runtime CLI module. API binds `src/app.setfarm.test.ts` to
+`dist/app.setfarm.test.js`, imports `./app.js`, and forbids subprocesses. Both
+use the direct `node --test <compiled-file>` ABI; no npm/default test discovery
+is authoritative.
 
 Every-and-only coverage is exact for three independent shapes:
 
@@ -835,9 +848,9 @@ Every-and-only coverage is exact for three independent shapes:
 - two-route API: 32 = 20 + 6 + 2 + 4.
 
 Their final plan hashes are respectively
-`b037f9afa6adaab57ba0ea130b8c3f358e75e6c5533f10cc985e804774a9f704`,
-`a90ef146452bc0ac85329ab288ad21d640dc812c0c2010674806a9bb064bd05f`
-and `1c0cc2e03de91a39afb0b4ba8931a47bb173e91e5e32efb9f5b070b669102ffe`.
+`4bf2b8117db2b84cecefb8b50ed5230c31fdac0350f97277a51816b69d30a191`,
+`a650d4b1923d098171181dd2de466df2cbce025782b556902cb5fc24e711a6c2`
+and `7584d7e0c06858154ceaadba0707f0b01e0b56c320f362438f1ec8e9f0f6f16a`.
 The two-route runtime-data obligations remain two separately traceable generator
 members rather than two stories receiving permission to edit one aggregate
 file. Memory persistence resolves explicitly to the generated state-runtime
@@ -846,17 +859,19 @@ member.
 Schema-local hashes are not treated as authority. A test removes one evidence
 relation, adjusts every count, recomputes membership and plan hashes, proves the
 forgery is structurally schema-valid, and then proves the fresh verifier rejects
-it. A changed policy member is rejected structurally. Strict extra fields,
-stale ProductSpec/selection authority, proxies, accessors, cycles, sparse arrays
-and oversized inputs all fail closed without executing caller traps. The final
-focused suite is 11/11; TypeScript, English (1,095 files), path contract (619
-files) and diff checks pass. Full Product Compiler is 1025/1025 across 126
+it. Changed policy members and a self-rehashed cross-profile test path are
+rejected structurally. Strict extra fields, stale ProductSpec/selection
+authority, proxies, accessors, cycles, sparse arrays and oversized inputs all
+fail closed without executing caller traps. The final focused suite is 13/13;
+TypeScript, English (1,095 files), path contract (619 files) and diff checks
+pass. Full Product Compiler is 1027/1027 across 126
 suites. No live run, DB, PR, service, generated repository or real Setfarm
 application-support tree was mutated.
 
-The artifact has seven exact blockers: realization-driven FileTreeV3,
-BuildTopologyV3, the runtime generator, generated test authority, evidence
-registry join, source receipt and release manifest. `SemanticSourceDeclarationsV1`
+The artifact has eight exact blockers: realization-driven FileTreeV3,
+BuildTopologyV3, runtime generator implementation, test generator
+implementation, evidence-registry join, runtime source receipt, test source
+receipt and release manifest. `SemanticSourceDeclarationsV1`
 is no longer the next Node step: it assumed model-owned handler/adapter/state
 modules and would reproduce the V1 ownership error. For current Node profiles,
 the realization plan is the pre-source declaration and
