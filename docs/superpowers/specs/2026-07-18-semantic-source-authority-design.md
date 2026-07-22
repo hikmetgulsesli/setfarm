@@ -690,13 +690,26 @@ content-addressed rollback tombstone, and canonical execution-start evidence.
 Receipt-link and destructive rollback crash tails converge only under their
 exact claim; old plans cannot remove a later physical generation.
 
+Commit `354cdcec` adds the separate command protocol library. Its exact argv
+grammar cannot accept an architecture, target root, expected hash, shell
+fragment, or option reordering. Apply and rollback consume only a normalized
+absolute plan-file locator whose descriptor is no-follow, bounded to 16 MiB,
+single-link, regular, physically unchanged across the read, strict-schema valid,
+and byte-for-byte canonical. Every success is exactly one canonical inspection,
+plan, or operation receipt on stdout; every failure is a canonical
+`setfarm.node-toolchain-provisioner-cli-failure.v2` binding the inferred command,
+ordered typed causes, failure class, exit code, and its own hash. The production
+adapter closes archive verification, inventory, private-tree materialization,
+disposal, and the existing command functions, but deliberately exports no
+process entrypoint and is not wired into the ambient `setfarm` CLI.
+
 F2 nevertheless remains production NO-GO. The publisher and operational core
 have only run against isolated process-owned test roots; no `/Library/Application
 Support/Setfarm` state was created or changed. A separately installed root-owned
-bootstrap/CLI, a real official-archive-to-production-root apply/verify/rollback
-rehearsal, and an OS-update transition are still absent. The process-owned
-private materialization remains evidence for that installer boundary, not
-permission for product-attempt code to provision.
+startup/bootstrap package, a real official-archive-to-production-root
+apply/verify/rollback rehearsal, and an OS-update transition are still absent.
+The process-owned private materialization remains evidence for that installer
+boundary, not permission for product-attempt code to provision.
 
 The live host supports the design but is not production authority. Default PATH
 selects Node 26/npm 11. An alternate Homebrew Node 22.23.1/npm 10.9.8 exists,

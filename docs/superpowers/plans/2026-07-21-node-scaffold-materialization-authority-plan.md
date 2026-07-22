@@ -247,15 +247,22 @@ F2B1/B2a/B2b/B2c evidence completed on 2026-07-22:
   last. Ten destructive crash boundaries, concurrent rollback, old-plan versus
   later-generation, missing-member, foreign-quarantine, receipt-link recovery,
   and self-rehashed evidence cases fail closed or converge exactly;
+- commit `354cdcec` added the pathless provisioner CLI protocol without
+  attaching it to the ambient Setfarm process. Exact argv shapes expose only
+  `inspect`, `plan apply`, `plan rollback`, `apply`, `verify`, and `rollback`;
+  plan files are bounded canonical single-link regular files, stdout is one
+  canonical artifact, and typed failure artifacts bind command, ordered cause,
+  failure kind, exit code, and hash. The production operation adapter derives
+  architecture from the executing runtime and still has no process entrypoint;
 - live read-only inspection corrected a false macOS assumption: the
   `/Library/Application Support` ancestor is root-owned mode `0755` but group
   `admin` (`gid=80`).
   The system ancestor therefore requires root ownership plus exact non-writable
   mode, while Setfarm-created directories remain exact `root:wheel`;
-- final command/rollback-focused evidence is 22/22; the combined distribution,
+- final command/rollback/CLI-focused evidence is 23/23; the combined distribution,
   inventory, private-tree, host, provisioning, and command chain is 56/56.
-  Final Product Compiler evidence is 979/979 across 121 suites with TypeScript,
-  English (1,052 files), path (580 files), diff and isolated scratch-residue
+  Final Product Compiler evidence is 980/980 across 121 suites with TypeScript,
+  English (1,054 files), path (582 files), diff and isolated scratch-residue
   checks clean. No production toolchain root, live DB/PR/service, generated
   repository, or Setfarm run was mutated.
 
@@ -272,15 +279,17 @@ F2B dependency chain is:
    claim-before-root, deterministic staged hard-link publication, receipt-last
    durability, bounded exact-claim recovery, owner/mode enforcement, durable
    rehydration, foreign-state refusal, pathless inspect/plan/apply/verify, and
-   generation-bound rollback with a durable exact tombstone;
+   generation-bound rollback with a durable exact tombstone. The exact CLI
+   invocation and canonical artifact/failure protocol is complete as a library;
 4. **Complete:** the F2A join requires the exact provisioning receipt, physical
    final root, Node bytes, and normalized npm tree before `production_host`
    authority can be issued. Merely creating the fixed directory or making a
    binary self-report the expected version is invalid;
-5. **Pending:** package the command behind a separately installed root-owned
-   bootstrap/CLI, execute the official tree through a real production-root
-   apply/verify/rollback rehearsal, and define the OS-update transition. No
-   installer action will run automatically from a Setfarm product attempt.
+5. **Pending:** package that protocol behind a separately installed root-owned
+   startup/bootstrap launcher, execute the official tree through a real
+   production-root apply/verify/rollback rehearsal, and define the OS-update
+   transition. No installer action will run automatically from a Setfarm
+   product attempt.
 
 F2 completion does not authorize `npm ci`; it only creates the exact toolchain
 precondition consumed by F3/F4. F2A alone is deliberately insufficient.
