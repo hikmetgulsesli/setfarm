@@ -23,8 +23,13 @@ import {
 import path from "node:path";
 import { isProxy } from "node:util/types";
 
+import type { SemanticArtifactEnvelopeV1 } from "./artifact-envelope.js";
 import {
   copyVerifiedDeepByteBundleBytesV2,
+  copyVerifiedSemanticArtifactEnvelopeV1,
+  verifyDeepByteBundleFromCasV2,
+  verifySemanticArtifactEnvelopeFromCasV1,
+  type DeepByteBundleCasAuthorityV2,
   type VerifiedDeepByteBundleV2,
 } from "./deep-byte-bundle-verifier-v2.js";
 import { hashCanonicalJson } from "./canonical-json.js";
@@ -46,6 +51,9 @@ import {
   type NodeScaffoldAssetRoleV2,
   type NodeScaffoldProfileIdV2,
 } from "./node-scaffold-toolchain-catalog-v2.js";
+import type {
+  PreparedNodeProductSourcePublicationV1,
+} from "./node-product-source-publication-v1.js";
 import {
   inspectNodeScaffoldExecutionEnvironmentReceiptV2,
   isProductionNodeScaffoldExecutionEnvironmentV2,
@@ -80,6 +88,39 @@ import {
 import {
   HOST_NODE_TOOLCHAIN_RECEIPT_V2_SCHEMA,
 } from "./schemas/host-node-toolchain-receipt-v2.js";
+import {
+  DEEP_BYTE_BUNDLE_VERIFICATION_RECEIPT_V2_SCHEMA,
+  hashDeepByteBundleConsumerBindingV2,
+} from "./schemas/deep-byte-bundle-verification-receipt-v2.js";
+import {
+  NodeProductRuntimeSourceReceiptV2Schema,
+  type NodeProductRuntimeSourceReceiptV2,
+} from "./schemas/node-product-runtime-source-v2.js";
+import {
+  NodeProductTestSourceReceiptV2Schema,
+  type NodeProductTestSourceReceiptV2,
+} from "./schemas/node-product-test-source-v2.js";
+import {
+  NODE_PRODUCT_SOURCE_PUBLICATION_RECEIPT_V1_SCHEMA,
+  NodeProductSourcePublicationReceiptV1Schema,
+  type NodeProductSourcePublicationReceiptV1,
+  type NodeProductSourceRoleV1,
+} from "./schemas/node-product-source-publication-v1.js";
+import {
+  NODE_PRODUCT_SOURCE_MATERIALIZATION_BLOCKER_CODES_V1,
+  NODE_PRODUCT_SOURCE_MATERIALIZATION_RECEIPT_V1_SCHEMA,
+  NODE_PRODUCT_SOURCE_MATERIALIZATION_RECEIPT_V1_VERSION,
+  NODE_PRODUCT_SOURCE_MATERIALIZER_AUTHORITY_REF_V1,
+  NODE_PRODUCT_SOURCE_MATERIALIZER_CONTRACT_HASH_V1,
+  NodeProductSourceMaterializationReceiptV1Schema,
+  hashNodeProductSourceMaterializationMembershipV1,
+  hashNodeProductSourceMaterializationReceiptV1,
+  type NodeProductSourceMaterializationEntryV1,
+  type NodeProductSourceMaterializationReceiptV1,
+} from "./schemas/node-product-source-materialization-v1.js";
+import {
+  SEMANTIC_ARTIFACT_CAS_VERIFICATION_RECEIPT_V1_SCHEMA,
+} from "./schemas/semantic-artifact-cas-verification-receipt-v1.js";
 import {
   NODE_SCAFFOLD_TOOLCHAIN_CATALOG_V2_SCHEMA,
   NODE_SCAFFOLD_TOOLCHAIN_ENTRY_V2_SCHEMA,
@@ -126,6 +167,9 @@ export type NodeScaffoldPrivateMaterializerErrorCodeV2 =
   | "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_INSTALL_FAILED"
   | "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_GRAPH_INVALID"
   | "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_CAPSULE_INVALID"
+  | "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_SOURCE_ALREADY_CONSUMED"
+  | "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_SOURCE_AUTHORITY_INVALID"
+  | "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_SOURCE_MATERIALIZATION_FAILED"
   | "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DESTROYED";
 
 export class NodeScaffoldPrivateMaterializerErrorV2 extends Error {
@@ -224,6 +268,59 @@ type DependencyMaterializationCaptureV2 = Readonly<{
     | "test_fixture_clear_probe";
 }>;
 
+type SourceReceiptV1 = NodeProductRuntimeSourceReceiptV2
+  | NodeProductTestSourceReceiptV2;
+
+type PublishedSourceArtifactAuthorityV1 = Pick<
+  PreparedNodeProductSourcePublicationV1,
+  | "sourceRole"
+  | "receipt"
+  | "receiptEnvelope"
+  | "receiptArtifactHash"
+  | "receiptArtifactByteLength"
+  | "sourceReceipt"
+  | "sourceReceiptEnvelope"
+  | "sourceReceiptArtifactHash"
+  | "sourceReceiptArtifactByteLength"
+>;
+
+type CapturedPublishedSourceV1 = Readonly<{
+  sourceRole: NodeProductSourceRoleV1;
+  publicationReceipt: NodeProductSourcePublicationReceiptV1;
+  publicationReceiptEnvelope: Readonly<SemanticArtifactEnvelopeV1>;
+  publicationReceiptArtifactHash: string;
+  publicationReceiptArtifactByteLength: number;
+  publicationCasVerificationReceiptHash: string;
+  sourceReceipt: SourceReceiptV1;
+  sourceReceiptEnvelope: Readonly<SemanticArtifactEnvelopeV1>;
+  sourceReceiptArtifactHash: string;
+  sourceReceiptArtifactByteLength: number;
+  sourceReceiptCasVerificationReceiptHash: string;
+  deepVerificationReceiptHash: string;
+  consumerBindingHash: string;
+  bytes: Buffer;
+}>;
+
+type PhysicalSourceCaptureV1 = Readonly<{
+  sourceRole: NodeProductSourceRoleV1;
+  normalizedLocator: string;
+  fingerprint: FingerprintV2;
+  contentHash: string;
+  physicalIdentityHash: string;
+}>;
+
+type SourceMaterializationCaptureV1 = Readonly<{
+  directoryFingerprint: FingerprintV2;
+  directoryPhysicalIdentityHash: string;
+  sources: readonly PhysicalSourceCaptureV1[];
+  membershipHash: string;
+}>;
+
+type SourceCasRevalidationAuthorityV1 = Readonly<{
+  casAuthority: DeepByteBundleCasAuthorityV2;
+  sources: readonly PublishedSourceArtifactAuthorityV1[];
+}>;
+
 type MutableLifecycleV2 = {
   status:
     | "base_ready"
@@ -231,9 +328,14 @@ type MutableLifecycleV2 = {
     | "installing"
     | "install_consumed"
     | "dependencies_ready"
+    | "source_claimed"
+    | "sources_ready"
     | "destroyed";
   dependencyReceipt?: BuildDependencyMaterializationReceiptV2;
   dependencyCapture?: DependencyMaterializationCaptureV2;
+  sourceReceipt?: NodeProductSourceMaterializationReceiptV1;
+  sourceCapture?: SourceMaterializationCaptureV1;
+  sourceAuthority?: SourceCasRevalidationAuthorityV1;
 };
 
 type PrivateStageStateV2 = Readonly<{
@@ -278,6 +380,19 @@ export type NodeScaffoldPrivateMaterializerCrashBoundaryV2 =
 
 export type NodeScaffoldPrivateMaterializerTestHooksV2 = Readonly<{
   afterBoundary?: (boundary: NodeScaffoldPrivateMaterializerCrashBoundaryV2) => void;
+}>;
+
+export type NodeProductSourceMaterializerCrashBoundaryV1 =
+  | "after_source_preclaim"
+  | "after_source_authority_verification"
+  | "after_source_directory_fsync"
+  | "after_runtime_source_fsync"
+  | "after_test_source_fsync"
+  | "after_source_project_fsync"
+  | "after_source_final_capture";
+
+export type NodeProductSourceMaterializerTestHooksV1 = Readonly<{
+  afterBoundary?: (boundary: NodeProductSourceMaterializerCrashBoundaryV1) => void;
 }>;
 
 function fail(
@@ -1976,7 +2091,10 @@ function normalizeDependencyCapsuleV2(input: Readonly<{
   }
 }
 
-function captureScaffoldAssetsAfterInstallV2(state: PrivateStageStateV2): string {
+function captureScaffoldAssetsAfterInstallV2(
+  state: PrivateStageStateV2,
+  sourceState: "absent" | "present" = "absent",
+): string {
   const root = lstatSync(state.privateRoot);
   const project = lstatSync(state.projectRoot);
   const capsule = lstatSync(state.dependencyCapsuleRoot);
@@ -1996,12 +2114,16 @@ function captureScaffoldAssetsAfterInstallV2(state: PrivateStageStateV2): string
     || realpathSync(state.dependencyCapsuleRoot) !== state.dependencyCapsuleRoot
     || modeBits(capsule) !== 0o555
     || !sameStringsV2(readdirSync(state.privateRoot).sort(), [...ROOT_MEMBER_NAMES_V2])
-    || !sameStringsV2(readdirSync(state.projectRoot).sort(), [
-      "node_modules",
-      "package-lock.json",
-      "package.json",
-      "tsconfig.json",
-    ])
+    || !sameStringsV2(
+      readdirSync(state.projectRoot).sort(),
+      [
+        "node_modules",
+        "package-lock.json",
+        "package.json",
+        ...(sourceState === "present" ? ["src"] : []),
+        "tsconfig.json",
+      ].sort(),
+    )
   ) {
     return fail(
       "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_STATE_DRIFT",
@@ -2009,7 +2131,9 @@ function captureScaffoldAssetsAfterInstallV2(state: PrivateStageStateV2): string
     );
   }
   assertMissingPathV2(path.join(state.projectRoot, ".npmrc"), "Installed project .npmrc");
-  assertMissingPathV2(path.join(state.projectRoot, "src"), "Installed project source directory");
+  if (sourceState === "absent") {
+    assertMissingPathV2(path.join(state.projectRoot, "src"), "Installed project source directory");
+  }
   const assets = state.receipt.assets.map((asset) => Object.freeze({
     role: asset.role,
     normalizedLocator: asset.normalizedLocator,
@@ -2781,7 +2905,7 @@ export function inspectBuildDependencyMaterializationReceiptV2(
 ): BuildDependencyMaterializationReceiptV2 {
   const state = activeStageStateV2(handle);
   if (
-    state.lifecycle.status !== "dependencies_ready"
+    !["dependencies_ready", "source_claimed"].includes(state.lifecycle.status)
     || !state.lifecycle.dependencyReceipt
     || !state.lifecycle.dependencyCapture
   ) {
@@ -2799,7 +2923,11 @@ export async function revalidateNodeScaffoldDependenciesV2(
   const state = activeStageStateV2(handle);
   const receipt = state.lifecycle.dependencyReceipt;
   const prior = state.lifecycle.dependencyCapture;
-  if (state.lifecycle.status !== "dependencies_ready" || !receipt || !prior) {
+  if (
+    !["dependencies_ready", "source_claimed"].includes(state.lifecycle.status)
+    || !receipt
+    || !prior
+  ) {
     return fail(
       "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_INSTALL_ALREADY_CONSUMED",
       "Dependency revalidation requires one completed verified materialization",
@@ -2860,6 +2988,882 @@ export async function revalidateNodeScaffoldDependenciesV2(
       "Dependency materialization could not be freshly reproduced",
       error,
     );
+  }
+}
+
+async function capturePublishedSourceAuthorityV1(
+  casAuthority: DeepByteBundleCasAuthorityV2,
+  publication: PublishedSourceArtifactAuthorityV1,
+): Promise<CapturedPublishedSourceV1> {
+  const publicationReceipt = NodeProductSourcePublicationReceiptV1Schema.parse(
+    publication.receipt,
+  );
+  if (publicationReceipt.authority.sourceRole !== publication.sourceRole) {
+    return fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_SOURCE_AUTHORITY_INVALID",
+      "Source publication role changed before private materialization",
+    );
+  }
+  const sourceReceipt = publication.sourceRole === "runtime"
+    ? NodeProductRuntimeSourceReceiptV2Schema.parse(publication.sourceReceipt)
+    : NodeProductTestSourceReceiptV2Schema.parse(publication.sourceReceipt);
+  const bindingIdentity = {
+    authoritySchema: publicationReceipt.schema,
+    authorityHash: publicationReceipt.receiptHash,
+    subjectRef:
+      `${publication.sourceRole}:${publicationReceipt.authority.source.pathRef}`,
+    subjectHash: publicationReceipt.authority.source.sourceIdentityHash,
+  };
+  const reads = await Promise.allSettled([
+    verifySemanticArtifactEnvelopeFromCasV1({
+      authority: casAuthority,
+      expectedEnvelope: publication.receiptEnvelope,
+    }),
+    verifySemanticArtifactEnvelopeFromCasV1({
+      authority: casAuthority,
+      expectedEnvelope: publication.sourceReceiptEnvelope,
+    }),
+    verifyDeepByteBundleFromCasV2({
+      authority: casAuthority,
+      binding: {
+        ...bindingIdentity,
+        bindingHash: hashDeepByteBundleConsumerBindingV2(bindingIdentity),
+      },
+      bundle: publicationReceipt.authority.sourceBundle,
+    }),
+  ] as const);
+  const rejected = reads.find((result) => result.status === "rejected");
+  if (rejected?.status === "rejected") throw rejected.reason;
+  const publicationArtifact = reads[0];
+  const sourceReceiptArtifact = reads[1];
+  const sourceBundle = reads[2];
+  if (
+    publicationArtifact.status !== "fulfilled"
+    || sourceReceiptArtifact.status !== "fulfilled"
+    || sourceBundle.status !== "fulfilled"
+  ) {
+    return fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_SOURCE_AUTHORITY_INVALID",
+      "Source publication artifact reads did not settle completely",
+    );
+  }
+  const publicationEnvelope = copyVerifiedSemanticArtifactEnvelopeV1(
+    publicationArtifact.value,
+  );
+  const sourceReceiptEnvelope = copyVerifiedSemanticArtifactEnvelopeV1(
+    sourceReceiptArtifact.value,
+  );
+  const parsedPublicationPayload = NodeProductSourcePublicationReceiptV1Schema.parse(
+    publicationEnvelope.payload,
+  );
+  const parsedSourcePayload = publication.sourceRole === "runtime"
+    ? NodeProductRuntimeSourceReceiptV2Schema.parse(sourceReceiptEnvelope.payload)
+    : NodeProductTestSourceReceiptV2Schema.parse(sourceReceiptEnvelope.payload);
+  const bytes = copyVerifiedDeepByteBundleBytesV2(sourceBundle.value);
+  const publicationCasReceipt = publicationArtifact.value.receipt;
+  const sourceCasReceipt = sourceReceiptArtifact.value.receipt;
+  const deepReceipt = sourceBundle.value.receipt;
+  if (
+    hashCanonicalJson(parsedPublicationPayload)
+      !== hashCanonicalJson(publicationReceipt)
+    || hashCanonicalJson(parsedSourcePayload) !== hashCanonicalJson(sourceReceipt)
+    || publicationCasReceipt.expected.envelopeHash
+      !== publication.receiptArtifactHash
+    || publicationCasReceipt.expected.envelopeByteLength
+      !== publication.receiptArtifactByteLength
+    || sourceCasReceipt.expected.envelopeHash
+      !== publication.sourceReceiptArtifactHash
+    || sourceCasReceipt.expected.envelopeByteLength
+      !== publication.sourceReceiptArtifactByteLength
+    || publicationReceipt.authority.sourceReceiptArtifact.envelopeHash
+      !== publication.sourceReceiptArtifactHash
+    || publicationReceipt.authority.sourceReceiptArtifact.receiptHash
+      !== sourceReceipt.receiptHash
+    || deepReceipt.bundle.envelopeHash
+      !== publicationReceipt.authority.sourceBundle.envelopeHash
+    || deepReceipt.bundle.rawHash !== sourceReceipt.source.contentHash
+    || deepReceipt.bundle.rawByteLength !== sourceReceipt.source.byteLength
+    || deepReceipt.binding.authorityHash !== publicationReceipt.receiptHash
+    || deepReceipt.binding.subjectHash !== sourceReceipt.source.sourceIdentityHash
+    || bytes.byteLength !== sourceReceipt.source.byteLength
+    || sha256(bytes) !== sourceReceipt.source.contentHash
+  ) {
+    bytes.fill(0);
+    return fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_SOURCE_AUTHORITY_INVALID",
+      `${publication.sourceRole} source publication, indexed receipts and ByteBundle do not join`,
+    );
+  }
+  return Object.freeze({
+    sourceRole: publication.sourceRole,
+    publicationReceipt,
+    publicationReceiptEnvelope: publicationEnvelope,
+    publicationReceiptArtifactHash:
+      publicationCasReceipt.expected.envelopeHash,
+    publicationReceiptArtifactByteLength:
+      publicationCasReceipt.expected.envelopeByteLength,
+    publicationCasVerificationReceiptHash: publicationCasReceipt.receiptHash,
+    sourceReceipt,
+    sourceReceiptEnvelope,
+    sourceReceiptArtifactHash: sourceCasReceipt.expected.envelopeHash,
+    sourceReceiptArtifactByteLength:
+      sourceCasReceipt.expected.envelopeByteLength,
+    sourceReceiptCasVerificationReceiptHash: sourceCasReceipt.receiptHash,
+    deepVerificationReceiptHash: deepReceipt.receiptHash,
+    consumerBindingHash: deepReceipt.binding.bindingHash,
+    bytes,
+  });
+}
+
+function sourceMemberNamesV1(
+  profileId: NodeScaffoldProfileIdV2,
+): readonly [string, string] {
+  return profileId === "PROFILE_NODE_CLI_STATELESS_EXACT_V2"
+    ? ["cli.setfarm.test.ts", "cli.ts"]
+    : ["app.setfarm.test.ts", "app.ts"];
+}
+
+function expectedSourceLocatorV1(
+  profileId: NodeScaffoldProfileIdV2,
+  role: NodeProductSourceRoleV1,
+): string {
+  if (profileId === "PROFILE_NODE_CLI_STATELESS_EXACT_V2") {
+    return role === "runtime" ? "src/cli.ts" : "src/cli.setfarm.test.ts";
+  }
+  return role === "runtime" ? "src/app.ts" : "src/app.setfarm.test.ts";
+}
+
+function writeExclusivePublishedSourceV1(input: Readonly<{
+  state: PrivateStageStateV2;
+  source: CapturedPublishedSourceV1;
+}>): PhysicalSourceCaptureV1 {
+  const expectedLocator = expectedSourceLocatorV1(
+    input.state.profileId,
+    input.source.sourceRole,
+  );
+  const locator = input.source.sourceReceipt.source.normalizedLocator;
+  if (
+    locator !== expectedLocator
+    || path.posix.dirname(locator) !== "src"
+    || path.posix.basename(locator) !== locator.slice(4)
+  ) {
+    return fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_SOURCE_AUTHORITY_INVALID",
+      `${input.source.sourceRole} source locator differs from its code-owned profile target`,
+    );
+  }
+  const absolutePath = path.join(input.state.projectRoot, locator);
+  let descriptor: number | undefined;
+  try {
+    descriptor = openSync(
+      absolutePath,
+      constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW,
+      0o600,
+    );
+    let offset = 0;
+    while (offset < input.source.bytes.byteLength) {
+      const written = writeSync(
+        descriptor,
+        input.source.bytes,
+        offset,
+        input.source.bytes.byteLength - offset,
+        null,
+      );
+      if (written < 1) {
+        return fail(
+          "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_SOURCE_MATERIALIZATION_FAILED",
+          `Exclusive ${input.source.sourceRole} source write ended early`,
+        );
+      }
+      offset += written;
+    }
+    fchmodSync(descriptor, 0o444);
+    fsyncSync(descriptor);
+    const stat = fstatSync(descriptor);
+    const fileFingerprint = fingerprint(stat);
+    if (
+      !stat.isFile()
+      || stat.isSymbolicLink()
+      || stat.nlink !== 1
+      || modeBits(stat) !== 0o444
+      || stat.uid !== processOwnerV2().uid
+      || stat.gid !== processOwnerV2().gid
+      || stat.size !== input.source.sourceReceipt.source.byteLength
+    ) {
+      return fail(
+        "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_SOURCE_MATERIALIZATION_FAILED",
+        `Exclusive ${input.source.sourceRole} source metadata is invalid`,
+      );
+    }
+    return Object.freeze({
+      sourceRole: input.source.sourceRole,
+      normalizedLocator: locator,
+      fingerprint: fileFingerprint,
+      contentHash: input.source.sourceReceipt.source.contentHash,
+      physicalIdentityHash: hashCanonicalJson({
+        schema: "setfarm.node-product-source-physical-file-identity.v1",
+        sourceRole: input.source.sourceRole,
+        normalizedLocator: locator,
+        fingerprint: fileFingerprint,
+        contentHash: input.source.sourceReceipt.source.contentHash,
+      }),
+    });
+  } catch (error) {
+    if (error instanceof NodeScaffoldPrivateMaterializerErrorV2) throw error;
+    return fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_SOURCE_MATERIALIZATION_FAILED",
+      `${input.source.sourceRole} source could not be written exclusively`,
+      error,
+    );
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
+  }
+}
+
+function capturePhysicalSourceV1(input: Readonly<{
+  state: PrivateStageStateV2;
+  sourceRole: NodeProductSourceRoleV1;
+  normalizedLocator: string;
+  contentHash: string;
+  byteLength: number;
+}>): PhysicalSourceCaptureV1 {
+  const expectedLocator = expectedSourceLocatorV1(
+    input.state.profileId,
+    input.sourceRole,
+  );
+  if (input.normalizedLocator !== expectedLocator) {
+    return fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_STATE_DRIFT",
+      `${input.sourceRole} source locator changed after materialization`,
+    );
+  }
+  const absolutePath = path.join(input.state.projectRoot, input.normalizedLocator);
+  let descriptor: number | undefined;
+  try {
+    descriptor = openSync(
+      absolutePath,
+      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+    );
+    const before = fstatSync(descriptor);
+    const bytes = readFileSync(descriptor);
+    const after = fstatSync(descriptor);
+    const pathAfter = lstatSync(absolutePath);
+    const fileFingerprint = fingerprint(after);
+    if (
+      !before.isFile()
+      || before.isSymbolicLink()
+      || before.nlink !== 1
+      || modeBits(before) !== 0o444
+      || before.uid !== processOwnerV2().uid
+      || before.gid !== processOwnerV2().gid
+      || !sameFingerprint(fingerprint(before), fileFingerprint)
+      || !sameFingerprint(fileFingerprint, fingerprint(pathAfter))
+      || bytes.byteLength !== input.byteLength
+      || sha256(bytes) !== input.contentHash
+    ) {
+      return fail(
+        "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_STATE_DRIFT",
+        `${input.sourceRole} source changed after materialization`,
+      );
+    }
+    return Object.freeze({
+      sourceRole: input.sourceRole,
+      normalizedLocator: input.normalizedLocator,
+      fingerprint: fileFingerprint,
+      contentHash: input.contentHash,
+      physicalIdentityHash: hashCanonicalJson({
+        schema: "setfarm.node-product-source-physical-file-identity.v1",
+        sourceRole: input.sourceRole,
+        normalizedLocator: input.normalizedLocator,
+        fingerprint: fileFingerprint,
+        contentHash: input.contentHash,
+      }),
+    });
+  } catch (error) {
+    if (error instanceof NodeScaffoldPrivateMaterializerErrorV2) throw error;
+    return fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_STATE_DRIFT",
+      `${input.sourceRole} source could not be fresh-read`,
+      error,
+    );
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
+  }
+}
+
+function captureSourceMaterializationV1(input: Readonly<{
+  state: PrivateStageStateV2;
+  sources: readonly NodeProductSourceMaterializationEntryV1[];
+}>): SourceMaterializationCaptureV1 {
+  const dependency = input.state.lifecycle.dependencyReceipt;
+  if (!dependency) {
+    return fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_STATE_DRIFT",
+      "Source capture lost its dependency materialization receipt",
+    );
+  }
+  const baseMembership = captureScaffoldAssetsAfterInstallV2(
+    input.state,
+    "present",
+  );
+  if (baseMembership !== dependency.scaffoldBase.endBaseFileMembershipHash) {
+    return fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_STATE_DRIFT",
+      "Scaffold base changed while source targets were materialized",
+    );
+  }
+  const sourceRoot = path.join(input.state.projectRoot, "src");
+  const memberNames = sourceMemberNamesV1(input.state.profileId);
+  const directoryFingerprint = captureDirectoryV2({
+    absolutePath: sourceRoot,
+    expectedNames: memberNames,
+    label: "Private generated source directory",
+  });
+  const sources = Object.freeze(input.sources.map((source) =>
+    capturePhysicalSourceV1({
+      state: input.state,
+      sourceRole: source.sourceRole,
+      normalizedLocator: source.source.normalizedLocator,
+      contentHash: source.source.contentHash,
+      byteLength: source.source.byteLength,
+    })));
+  const membershipHash = hashNodeProductSourceMaterializationMembershipV1(
+    input.sources,
+  );
+  const directoryPhysicalIdentityHash = hashCanonicalJson({
+    schema: "setfarm.node-product-source-directory-physical-identity.v1",
+    fingerprint: directoryFingerprint,
+    memberNames,
+    sources: sources.map((source) => ({
+      sourceRole: source.sourceRole,
+      physicalIdentityHash: source.physicalIdentityHash,
+    })),
+  });
+  return Object.freeze({
+    directoryFingerprint,
+    directoryPhysicalIdentityHash,
+    sources,
+    membershipHash,
+  });
+}
+
+function materializationEntryV1(
+  source: CapturedPublishedSourceV1,
+  physical: PhysicalSourceCaptureV1,
+): NodeProductSourceMaterializationEntryV1 {
+  return {
+    sourceRole: source.sourceRole,
+    sourceReceipt: {
+      schema: source.sourceReceipt.schema,
+      logicalReceiptHash: source.sourceReceipt.logicalReceiptHash,
+      receiptHash: source.sourceReceipt.receiptHash,
+      artifactHash: source.sourceReceiptArtifactHash,
+      artifactByteLength: source.sourceReceiptArtifactByteLength,
+      casVerificationReceiptSchema:
+        SEMANTIC_ARTIFACT_CAS_VERIFICATION_RECEIPT_V1_SCHEMA,
+      casVerificationReceiptHash:
+        source.sourceReceiptCasVerificationReceiptHash,
+    },
+    publicationReceipt: {
+      schema: NODE_PRODUCT_SOURCE_PUBLICATION_RECEIPT_V1_SCHEMA,
+      receiptHash: source.publicationReceipt.receiptHash,
+      entryCommitmentHash: source.publicationReceipt.entryCommitmentHash,
+      receiptSetCommitmentHash:
+        source.publicationReceipt.receiptSet.commitmentHash,
+      fileTreeManifestHash:
+        source.publicationReceipt.authority.fileTreeManifestHash,
+      logicalBuildHash:
+        source.publicationReceipt.authority.buildTopology.logicalBuildHash,
+      buildTopologyManifestHash:
+        source.publicationReceipt.authority.buildTopology.manifestHash,
+      artifactHash: source.publicationReceiptArtifactHash,
+      artifactByteLength: source.publicationReceiptArtifactByteLength,
+      casVerificationReceiptSchema:
+        SEMANTIC_ARTIFACT_CAS_VERIFICATION_RECEIPT_V1_SCHEMA,
+      casVerificationReceiptHash:
+        source.publicationCasVerificationReceiptHash,
+    },
+    source: {
+      pathRef: source.sourceReceipt.source.pathRef,
+      normalizedLocator: source.sourceReceipt.source.normalizedLocator,
+      contentHash: source.sourceReceipt.source.contentHash,
+      byteLength: source.sourceReceipt.source.byteLength,
+      sourceIdentityHash: source.sourceReceipt.source.sourceIdentityHash,
+      mode: "0444",
+      physicalIdentityHash: physical.physicalIdentityHash,
+    },
+    bundle: {
+      envelopeHash: source.publicationReceipt.authority.sourceBundle.envelopeHash,
+      envelopeByteLength:
+        source.publicationReceipt.authority.sourceBundle.envelopeByteLength,
+      rawHash: source.publicationReceipt.authority.sourceBundle.rawHash,
+      rawByteLength:
+        source.publicationReceipt.authority.sourceBundle.rawByteLength,
+      deepVerificationReceiptSchema:
+        DEEP_BYTE_BUNDLE_VERIFICATION_RECEIPT_V2_SCHEMA,
+      deepVerificationReceiptHash: source.deepVerificationReceiptHash,
+      consumerBindingHash: source.consumerBindingHash,
+    },
+  };
+}
+
+function assertDependencyStateForSourceV1(
+  state: PrivateStageStateV2,
+  sourceState: "absent" | "present",
+): void {
+  const dependency = state.lifecycle.dependencyReceipt;
+  const prior = state.lifecycle.dependencyCapture;
+  if (!dependency || !prior) {
+    return fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_STATE_DRIFT",
+      "Source lifecycle lost its verified dependency authority",
+    );
+  }
+  const entry = getCodeOwnedNodeScaffoldToolchainEntryV2(state.profileId);
+  if (!entry) {
+    return fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_STATE_DRIFT",
+      "Source materialization profile lost its code-owned dependency entry",
+    );
+  }
+  const baseMembership = captureScaffoldAssetsAfterInstallV2(state, sourceState);
+  const raw = captureRawDependenciesV2({ projectRoot: state.projectRoot, entry });
+  const capsule = verifyCanonicalRuntimeTreeV2({
+    root: state.dependencyCapsuleRoot,
+    candidate: dependency.dependencyCapsule,
+    metadataProbe: prior.metadataProbe,
+  });
+  const environment = inspectNodeScaffoldExecutionEnvironmentReceiptV2(
+    state.environment,
+  );
+  const materializerAuthority = codeOwnedMaterializerAuthorityV2();
+  if (
+    baseMembership !== dependency.scaffoldBase.endBaseFileMembershipHash
+    || hashCanonicalJson(raw) !== hashCanonicalJson(prior.raw)
+    || capsule.payloadHash !== prior.capsule.payloadHash
+    || environment.receiptHash !== dependency.environmentBinding.receiptHash
+    || materializerAuthority.authorityHash
+      !== dependency.materializerAuthority.authorityHash
+    || prior.metadataAuthority
+      !== dependency.dependencyCapsuleAuthority.metadataProbe
+    || getCodeOwnedNodeScaffoldToolchainCatalogV2().catalogHash
+      !== dependency.catalogBinding.catalogHash
+  ) {
+    return fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_STATE_DRIFT",
+      "Dependency, environment or scaffold authority changed across source materialization",
+    );
+  }
+}
+
+function sourceMaterializerHooksV1(
+  value: unknown,
+): NodeProductSourceMaterializerTestHooksV1 | undefined {
+  if (value === undefined) return undefined;
+  if (
+    !isPlainRecord(value)
+    || Reflect.ownKeys(value).some((key) => key !== "afterBoundary")
+    || (
+      value.afterBoundary !== undefined
+      && typeof value.afterBoundary !== "function"
+    )
+  ) {
+    return fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_INPUT_INVALID",
+      "Node product source materializer test hooks are invalid",
+    );
+  }
+  return value as NodeProductSourceMaterializerTestHooksV1;
+}
+
+async function materializeNodeProductSourcesInternalV1(input: Readonly<{
+  handle: MaterializedNodeScaffoldPrivateStageV2;
+  casAuthority: DeepByteBundleCasAuthorityV2;
+  compilerInput: unknown;
+  candidatePublications: unknown;
+  expectedScope: "production_host" | "test_fixture";
+  hooks?: NodeProductSourceMaterializerTestHooksV1;
+}>): Promise<NodeProductSourceMaterializationReceiptV1> {
+  const state = activeStageStateV2(input.handle);
+  if (state.admissionScope !== input.expectedScope) {
+    return fail(
+      input.expectedScope === "production_host"
+        ? "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_PRODUCTION_AUTHORITY_REQUIRED"
+        : "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_INPUT_INVALID",
+      "Source materializer cannot promote, downgrade or cross private-stage scope",
+    );
+  }
+  if (
+    state.lifecycle.status !== "dependencies_ready"
+    || !state.lifecycle.dependencyReceipt
+    || !state.lifecycle.dependencyCapture
+  ) {
+    return fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_SOURCE_ALREADY_CONSUMED",
+      "Source materialization is single-use after one verified dependency stage",
+    );
+  }
+  state.lifecycle.status = "source_claimed";
+  const captured: CapturedPublishedSourceV1[] = [];
+  let filesystemStarted = false;
+  try {
+    input.hooks?.afterBoundary?.("after_source_preclaim");
+    // Source generators depend on this private-stage authority. Resolve the
+    // higher-level fresh verifier only after this module is initialized, as the
+    // execution-environment bridge does, so filesystem ownership stays here
+    // without introducing an eager ESM dependency cycle.
+    const sourcePublication = await import(
+      "./node-product-source-publication-v1.js"
+    );
+    const verified = input.expectedScope === "production_host"
+      ? await sourcePublication.verifyNodeProductSourcePublicationV1(
+          input.handle,
+          {
+            compilerInput: input.compilerInput,
+            candidatePublications: input.candidatePublications,
+          },
+        )
+      : await sourcePublication.verifyNodeProductSourcePublicationV1ForTest(
+          input.handle,
+          {
+            compilerInput: input.compilerInput,
+            candidatePublications: input.candidatePublications,
+          },
+        );
+    if (
+      verified.publications.length !== 2
+      || verified.publications[0]?.sourceRole !== "runtime"
+      || verified.publications[1]?.sourceRole !== "test"
+    ) {
+      return fail(
+        "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_SOURCE_AUTHORITY_INVALID",
+        "Fresh source publication verifier did not return runtime then test exactly once",
+      );
+    }
+    const reads = await Promise.allSettled(
+      verified.publications.map((publication) =>
+        capturePublishedSourceAuthorityV1(input.casAuthority, publication)),
+    );
+    for (const result of reads) {
+      if (result.status === "fulfilled") captured.push(result.value);
+    }
+    const rejected = reads.find((result) => result.status === "rejected");
+    if (rejected?.status === "rejected") throw rejected.reason;
+    if (
+      captured.length !== 2
+      || captured[0]?.sourceRole !== "runtime"
+      || captured[1]?.sourceRole !== "test"
+    ) {
+      return fail(
+        "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_SOURCE_AUTHORITY_INVALID",
+        "Authenticated CAS reads did not return both exact source roles",
+      );
+    }
+    await revalidateNodeScaffoldDependenciesV2(input.handle);
+    input.hooks?.afterBoundary?.("after_source_authority_verification");
+    const sourceRoot = path.join(state.projectRoot, "src");
+    filesystemStarted = true;
+    assertMissingPathV2(sourceRoot, "Generated source directory");
+    mkdirSync(sourceRoot, { mode: 0o700 });
+    chmodSync(sourceRoot, 0o700);
+    syncDirectoryV2(sourceRoot);
+    syncDirectoryV2(state.projectRoot);
+    input.hooks?.afterBoundary?.("after_source_directory_fsync");
+
+    const written = captured.map((source) => {
+      const physical = writeExclusivePublishedSourceV1({ state, source });
+      input.hooks?.afterBoundary?.(
+        source.sourceRole === "runtime"
+          ? "after_runtime_source_fsync"
+          : "after_test_source_fsync",
+      );
+      return physical;
+    });
+    syncDirectoryV2(sourceRoot);
+    syncDirectoryV2(state.projectRoot);
+    syncDirectoryV2(state.privateRoot);
+    input.hooks?.afterBoundary?.("after_source_project_fsync");
+    assertDependencyStateForSourceV1(state, "present");
+
+    const entries = captured.map((source, index) =>
+      materializationEntryV1(source, written[index]!));
+    const capture = captureSourceMaterializationV1({
+      state,
+      sources: entries,
+    });
+    if (
+      capture.sources.some((source, index) =>
+        source.physicalIdentityHash !== written[index]?.physicalIdentityHash)
+    ) {
+      return fail(
+        "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_STATE_DRIFT",
+        "Generated source physical identity changed between write and fresh capture",
+      );
+    }
+    input.hooks?.afterBoundary?.("after_source_final_capture");
+    const firstPublication = captured[0]!.publicationReceipt;
+    const dependency = state.lifecycle.dependencyReceipt;
+    const receiptWithoutHash = {
+      schema: NODE_PRODUCT_SOURCE_MATERIALIZATION_RECEIPT_V1_SCHEMA,
+      receiptVersion: NODE_PRODUCT_SOURCE_MATERIALIZATION_RECEIPT_V1_VERSION,
+      authorityRef: NODE_PRODUCT_SOURCE_MATERIALIZER_AUTHORITY_REF_V1,
+      materializerContractHash:
+        NODE_PRODUCT_SOURCE_MATERIALIZER_CONTRACT_HASH_V1,
+      status: "sources_materialized_verified" as const,
+      admissionScope: state.admissionScope,
+      productionUse:
+        "forbidden_until_build_test_evidence_registry_and_release_manifest" as const,
+      readiness: {
+        blockerCodes: [...NODE_PRODUCT_SOURCE_MATERIALIZATION_BLOCKER_CODES_V1] as [
+          typeof NODE_PRODUCT_SOURCE_MATERIALIZATION_BLOCKER_CODES_V1[0],
+          typeof NODE_PRODUCT_SOURCE_MATERIALIZATION_BLOCKER_CODES_V1[1],
+          typeof NODE_PRODUCT_SOURCE_MATERIALIZATION_BLOCKER_CODES_V1[2],
+          typeof NODE_PRODUCT_SOURCE_MATERIALIZATION_BLOCKER_CODES_V1[3],
+        ],
+      },
+      profileId: state.profileId,
+      privateAttempt: {
+        rootIdentityHash: state.receipt.privateAttempt.rootIdentityHash,
+        sourceDirectoryMode: "0700" as const,
+        sourceFileMode: "0444" as const,
+        pathDisclosure: "forbidden" as const,
+        failureCleanup: "authenticated_owned_attempt_only_v1" as const,
+      },
+      scaffold: {
+        baseReceiptSchema: state.receipt.schema,
+        baseReceiptHash: state.receipt.receiptHash,
+        dependencyReceiptSchema: dependency.schema,
+        dependencyReceiptHash: dependency.receiptHash,
+        dependencyIdentityHash: dependency.dependencyIdentityHash,
+      },
+      publication: {
+        receiptSetSchema: firstPublication.receiptSet.schema,
+        receiptSetCommitmentHash:
+          firstPublication.receiptSet.commitmentHash,
+        publicationReceiptCount: 2 as const,
+        verificationDisposition:
+          "fresh-reproduced-every-and-only-runtime-test-pair" as const,
+      },
+      buildTopology: {
+        fileTreeManifestHash:
+          firstPublication.authority.fileTreeManifestHash,
+        logicalBuildHash:
+          firstPublication.authority.buildTopology.logicalBuildHash,
+        manifestHash: firstPublication.authority.buildTopology.manifestHash,
+      },
+      sourceDirectory: {
+        memberCount: 2 as const,
+        memberNames: [...sourceMemberNamesV1(state.profileId)],
+        membershipHash: capture.membershipHash,
+        physicalIdentityHash: capture.directoryPhysicalIdentityHash,
+      },
+      sourceCount: 2 as const,
+      sources: entries,
+    };
+    const receipt = NodeProductSourceMaterializationReceiptV1Schema.parse({
+      ...receiptWithoutHash,
+      receiptHash:
+        hashNodeProductSourceMaterializationReceiptV1(receiptWithoutHash),
+    });
+    state.lifecycle.sourceReceipt = receipt;
+    state.lifecycle.sourceCapture = capture;
+    state.lifecycle.sourceAuthority = Object.freeze({
+      casAuthority: input.casAuthority,
+      sources: Object.freeze(verified.publications.map((publication) =>
+        Object.freeze({
+          sourceRole: publication.sourceRole,
+          receipt: publication.receipt,
+          receiptEnvelope: publication.receiptEnvelope,
+          receiptArtifactHash: publication.receiptArtifactHash,
+          receiptArtifactByteLength: publication.receiptArtifactByteLength,
+          sourceReceipt: publication.sourceReceipt,
+          sourceReceiptEnvelope: publication.sourceReceiptEnvelope,
+          sourceReceiptArtifactHash: publication.sourceReceiptArtifactHash,
+          sourceReceiptArtifactByteLength:
+            publication.sourceReceiptArtifactByteLength,
+        }))),
+    });
+    state.lifecycle.status = "sources_ready";
+    return defensiveCopy(receipt);
+  } catch (error) {
+    let cleanupError: unknown;
+    try {
+      destroyNodeScaffoldPrivateStageV2(input.handle);
+    } catch (candidate) {
+      cleanupError = candidate;
+    }
+    if (cleanupError !== undefined) {
+      return fail(
+        "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_STATE_DRIFT",
+        "Failed source attempt could not clean only its authenticated private root",
+        { sourceError: error, cleanupError },
+      );
+    }
+    if (error instanceof NodeScaffoldPrivateMaterializerErrorV2) throw error;
+    return fail(
+      filesystemStarted
+        ? "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_SOURCE_MATERIALIZATION_FAILED"
+        : "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_SOURCE_AUTHORITY_INVALID",
+      filesystemStarted
+        ? "Private source filesystem materialization failed and its authenticated attempt was removed"
+        : "Authenticated source publication was rejected and its private attempt was removed",
+      error,
+    );
+  } finally {
+    for (const source of captured) source.bytes.fill(0);
+  }
+}
+
+export async function materializeNodeProductSourcesV1(
+  handle: MaterializedNodeScaffoldPrivateStageV2,
+  input: unknown,
+): Promise<NodeProductSourceMaterializationReceiptV1> {
+  const values = exactDataRecord(input, [
+    "candidatePublications",
+    "casAuthority",
+    "compilerInput",
+  ]);
+  return materializeNodeProductSourcesInternalV1({
+    handle,
+    casAuthority: values.casAuthority as DeepByteBundleCasAuthorityV2,
+    compilerInput: values.compilerInput,
+    candidatePublications: values.candidatePublications,
+    expectedScope: "production_host",
+  });
+}
+
+export type MaterializeNodeProductSourcesV1ForTestInput = Readonly<{
+  casAuthority: DeepByteBundleCasAuthorityV2;
+  compilerInput: unknown;
+  candidatePublications: unknown;
+  testHooks?: NodeProductSourceMaterializerTestHooksV1;
+}>;
+
+export async function materializeNodeProductSourcesV1ForTest(
+  handle: MaterializedNodeScaffoldPrivateStageV2,
+  input: MaterializeNodeProductSourcesV1ForTestInput,
+): Promise<NodeProductSourceMaterializationReceiptV1> {
+  const expectedKeys = isPlainRecord(input)
+    && Object.prototype.hasOwnProperty.call(input, "testHooks")
+    ? ["candidatePublications", "casAuthority", "compilerInput", "testHooks"]
+    : ["candidatePublications", "casAuthority", "compilerInput"];
+  const values = exactDataRecord(input, expectedKeys);
+  return materializeNodeProductSourcesInternalV1({
+    handle,
+    casAuthority: values.casAuthority as DeepByteBundleCasAuthorityV2,
+    compilerInput: values.compilerInput,
+    candidatePublications: values.candidatePublications,
+    expectedScope: "test_fixture",
+    ...(values.testHooks === undefined
+      ? {}
+      : { hooks: sourceMaterializerHooksV1(values.testHooks) }),
+  });
+}
+
+export function inspectNodeProductSourceMaterializationReceiptV1(
+  handle: MaterializedNodeScaffoldPrivateStageV2,
+): NodeProductSourceMaterializationReceiptV1 {
+  const state = activeStageStateV2(handle);
+  if (
+    state.lifecycle.status !== "sources_ready"
+    || !state.lifecycle.sourceReceipt
+    || !state.lifecycle.sourceCapture
+    || !state.lifecycle.sourceAuthority
+  ) {
+    return fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_SOURCE_ALREADY_CONSUMED",
+      "Verified source materialization is not available for this stage",
+    );
+  }
+  return defensiveCopy(state.lifecycle.sourceReceipt);
+}
+
+export async function revalidateNodeProductSourcesV1(
+  handle: MaterializedNodeScaffoldPrivateStageV2,
+): Promise<NodeProductSourceMaterializationReceiptV1> {
+  const state = activeStageStateV2(handle);
+  const receipt = state.lifecycle.sourceReceipt;
+  const priorCapture = state.lifecycle.sourceCapture;
+  const sourceAuthority = state.lifecycle.sourceAuthority;
+  const dependency = state.lifecycle.dependencyReceipt;
+  const dependencyCapture = state.lifecycle.dependencyCapture;
+  if (
+    state.lifecycle.status !== "sources_ready"
+    || !receipt
+    || !priorCapture
+    || !sourceAuthority
+    || !dependency
+    || !dependencyCapture
+  ) {
+    return fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_SOURCE_ALREADY_CONSUMED",
+      "Source revalidation requires one completed verified materialization",
+    );
+  }
+  const recaptured: CapturedPublishedSourceV1[] = [];
+  try {
+    assertDependencyStateForSourceV1(state, "present");
+    const reads = await Promise.allSettled(sourceAuthority.sources.map((source) =>
+      capturePublishedSourceAuthorityV1(sourceAuthority.casAuthority, source)));
+    for (const result of reads) {
+      if (result.status === "fulfilled") recaptured.push(result.value);
+    }
+    const rejected = reads.find((result) => result.status === "rejected");
+    if (rejected?.status === "rejected") throw rejected.reason;
+    if (recaptured.length !== 2) {
+      return fail(
+        "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_STATE_DRIFT",
+        "Published source CAS authority could not be completely replayed",
+      );
+    }
+    const freshCapture = captureSourceMaterializationV1({
+      state,
+      sources: receipt.sources,
+    });
+    if (
+      freshCapture.directoryPhysicalIdentityHash
+        !== priorCapture.directoryPhysicalIdentityHash
+      || freshCapture.membershipHash !== priorCapture.membershipHash
+      || receipt.sourceDirectory.physicalIdentityHash
+        !== freshCapture.directoryPhysicalIdentityHash
+      || receipt.sourceDirectory.membershipHash !== freshCapture.membershipHash
+      || recaptured.some((source, index) => {
+        const expected = receipt.sources[index];
+        return !expected
+          || source.sourceRole !== expected.sourceRole
+          || source.publicationReceipt.receiptHash
+            !== expected.publicationReceipt.receiptHash
+          || source.publicationCasVerificationReceiptHash
+            !== expected.publicationReceipt.casVerificationReceiptHash
+          || source.sourceReceipt.receiptHash
+            !== expected.sourceReceipt.receiptHash
+          || source.sourceReceiptCasVerificationReceiptHash
+            !== expected.sourceReceipt.casVerificationReceiptHash
+          || source.deepVerificationReceiptHash
+            !== expected.bundle.deepVerificationReceiptHash
+          || source.consumerBindingHash !== expected.bundle.consumerBindingHash;
+      })
+      || NodeProductSourceMaterializationReceiptV1Schema.parse(receipt)
+        .receiptHash !== receipt.receiptHash
+    ) {
+      return fail(
+        "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_STATE_DRIFT",
+        "Source materialization no longer reproduces its issued physical and CAS identity",
+      );
+    }
+    return defensiveCopy(receipt);
+  } catch (error) {
+    if (
+      error instanceof NodeScaffoldPrivateMaterializerErrorV2
+      && error.code === "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_STATE_DRIFT"
+    ) throw error;
+    return fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_STATE_DRIFT",
+      "Source materialization could not be freshly reproduced",
+      error,
+    );
+  } finally {
+    for (const source of recaptured) source.bytes.fill(0);
   }
 }
 

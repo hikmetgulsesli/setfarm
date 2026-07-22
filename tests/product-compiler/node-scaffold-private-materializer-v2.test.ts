@@ -110,13 +110,18 @@ import {
   getCodeOwnedPrivateStagedMaterializerAuthorityV2,
   inspectScaffoldBaseMaterializationReceiptV2,
   inspectBuildDependencyMaterializationReceiptV2,
+  inspectNodeProductSourceMaterializationReceiptV1,
   isProductionNodeScaffoldPrivateStageV2,
+  materializeNodeProductSourcesV1,
+  materializeNodeProductSourcesV1ForTest,
   materializeNodeScaffoldPrivateStageV2,
   materializeNodeScaffoldPrivateStageV2ForTest,
   materializeNodeScaffoldDependenciesV2,
   materializeNodeScaffoldDependenciesV2ForTest,
+  revalidateNodeProductSourcesV1,
   revalidateNodeScaffoldDependenciesV2,
   revalidateNodeScaffoldPrivateStageV2,
+  type NodeProductSourceMaterializerCrashBoundaryV1,
   type NodeScaffoldPrivateMaterializerCrashBoundaryV2,
 } from "../../src/product-compiler/node-scaffold-private-materializer-v2.js";
 import {
@@ -205,6 +210,10 @@ import {
   hashNodeProductSourcePublicationReceiptV1,
   nodeProductSourcePublicationReceiptRefV1,
 } from "../../src/product-compiler/schemas/node-product-source-publication-v1.js";
+import {
+  NODE_PRODUCT_SOURCE_MATERIALIZER_CONTRACT_HASH_V1,
+  NodeProductSourceMaterializationReceiptV1Schema,
+} from "../../src/product-compiler/schemas/node-product-source-materialization-v1.js";
 import {
   hashDeepByteBundleConsumerBindingV2,
 } from "../../src/product-compiler/schemas/deep-byte-bundle-verification-receipt-v2.js";
@@ -746,6 +755,76 @@ describe("Node scaffold private staged materializer V2", () => {
     const names = await readdir(parent);
     assert.equal(names.length, 1);
     return path.join(parent, names[0]!);
+  }
+
+  async function preparePublishedCliSourcesV1(
+    handle: MaterializedNodeScaffoldPrivateStageV2,
+    publicationMode: "complete" | "without_publication_receipt" = "complete",
+  ) {
+    const productSpec = genuineNodeCliProductSpecV2();
+    const deliverySelection = deliverySelectionForV2(productSpec, "node-cli");
+    const authorityInput = {
+      productSpec,
+      deliverySelection,
+      ...nodeRuntimeBehaviorAuthorityV1(productSpec),
+    };
+    const realizationPlan = compileSemanticRealizationPlanV2(authorityInput);
+    assert.equal(realizationPlan.status, "shadow_compiled");
+    if (realizationPlan.status !== "shadow_compiled") {
+      throw new Error("Expected source-materializer realization plan");
+    }
+    const fileTree = await compileFileTreeManifestV3ForTest(
+      handle,
+      authorityInput,
+    );
+    assert.equal(fileTree.status, "shadow_compiled");
+    if (fileTree.status !== "shadow_compiled") {
+      throw new Error("Expected source-materializer FileTreeV3");
+    }
+    await materializeNodeScaffoldDependenciesV2ForTest(handle);
+    const buildTopology = await compileBuildTopologyV3ForTest(handle, {
+      ...authorityInput,
+      fileTree: fileTree.value,
+    });
+    assert.equal(buildTopology.status, "shadow_compiled");
+    if (buildTopology.status !== "shadow_compiled") {
+      throw new Error("Expected source-materializer BuildTopologyV3");
+    }
+    const compilerInput = {
+      producer: NODE_SOURCE_PUBLICATION_PRODUCER_V1,
+      ...authorityInput,
+      realizationPlan: realizationPlan.value,
+      fileTree: fileTree.value,
+      buildTopology: buildTopology.value,
+    };
+    const publication = await compileNodeProductSourcePublicationV1ForTest(
+      handle,
+      compilerInput,
+    );
+    assert.equal(publication.status, "shadow_prepared");
+    if (publication.status !== "shadow_prepared") {
+      throw new Error("Expected prepared source publication");
+    }
+    for (const source of publication.publications) {
+      const plan = publicationMode === "complete"
+        ? source.publicationPlan
+        : {
+            schema: source.publicationPlan.schema,
+            items: source.publicationPlan.items.filter((item) =>
+              item.durabilityTier !== 3),
+          };
+      await sourcePublisher.putBatch({
+        batchReservationId: randomUUID(),
+        plan,
+      });
+    }
+    return Object.freeze({
+      compilerInput,
+      candidatePublications: publication.publications.map((source) => ({
+        sourceRole: source.sourceRole,
+        envelopes: [...source.publicationEnvelopes].reverse(),
+      })),
+    });
   }
 
   it("materializes three authenticated assets into one pathless, replayable base receipt", async () => {
@@ -2011,6 +2090,10 @@ describe("Node scaffold private staged materializer V2", () => {
         fileTree: fileTree.value,
         buildTopology: buildTopology.value,
       };
+      let sourceMaterializationInput: Readonly<{
+        compilerInput: unknown;
+        candidatePublications: unknown;
+      }> | undefined;
       const generated = await generateNodeProductRuntimeSourceV2ForTest(
         created.handle,
         generatorInput,
@@ -2410,6 +2493,10 @@ describe("Node scaffold private staged materializer V2", () => {
               publication.sourceContentHash,
             );
           }
+          sourceMaterializationInput = Object.freeze({
+            compilerInput: sourcePublicationInput,
+            candidatePublications,
+          });
 
           const wrongPublicationScope =
             await compileNodeProductSourcePublicationV1(
@@ -2794,6 +2881,93 @@ describe("Node scaffold private staged materializer V2", () => {
           siblingGenerated.receipt.receiptHash,
           generated.receipt.receiptHash,
         );
+
+        assert.ok(sourceMaterializationInput);
+        await assert.rejects(
+          materializeNodeProductSourcesV1(created.handle, {
+            casAuthority,
+            ...sourceMaterializationInput,
+          }),
+          {
+            code:
+              "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_PRODUCTION_AUTHORITY_REQUIRED",
+          },
+        );
+        const materializedSources =
+          await materializeNodeProductSourcesV1ForTest(created.handle, {
+            casAuthority,
+            ...sourceMaterializationInput,
+          });
+        assert.equal(
+          NodeProductSourceMaterializationReceiptV1Schema.safeParse(
+            materializedSources,
+          ).success,
+          true,
+        );
+        assert.equal(
+          materializedSources.materializerContractHash,
+          NODE_PRODUCT_SOURCE_MATERIALIZER_CONTRACT_HASH_V1,
+        );
+        assert.equal(materializedSources.status,
+          "sources_materialized_verified");
+        assert.equal(materializedSources.admissionScope, "test_fixture");
+        assert.deepEqual(
+          materializedSources.sources.map((source) => source.sourceRole),
+          ["runtime", "test"],
+        );
+        assert.ok(materializedSources.sources.every((source) =>
+          source.sourceReceipt.casVerificationReceiptHash.length === 64
+          && source.publicationReceipt.casVerificationReceiptHash.length === 64
+          && source.bundle.deepVerificationReceiptHash.length === 64));
+        assert.doesNotMatch(
+          JSON.stringify(materializedSources),
+          /setfarm-f4-stage-v2|\/private\/|\/var\/folders|\/Users\//,
+        );
+        const attemptRoot = await onlyAttemptRoot(created.stageParent);
+        const sourceRoot = path.join(attemptRoot, "project", "src");
+        assert.deepEqual(await readdir(sourceRoot), [
+          "cli.setfarm.test.ts",
+          "cli.ts",
+        ]);
+        const materializedRuntimePath = path.join(sourceRoot, "cli.ts");
+        const materializedTestPath = path.join(
+          sourceRoot,
+          "cli.setfarm.test.ts",
+        );
+        assert.equal(
+          (await readFile(materializedRuntimePath, "utf8")),
+          generated.sourceText,
+        );
+        assert.equal(
+          (await readFile(materializedTestPath, "utf8")),
+          generatedTest.sourceText,
+        );
+        assert.equal((await stat(sourceRoot)).mode & 0o7777, 0o700);
+        assert.equal((await stat(materializedRuntimePath)).mode & 0o7777, 0o444);
+        assert.equal((await stat(materializedTestPath)).mode & 0o7777, 0o444);
+        assert.equal(
+          inspectNodeProductSourceMaterializationReceiptV1(created.handle)
+            .receiptHash,
+          materializedSources.receiptHash,
+        );
+        assert.equal(
+          (await revalidateNodeProductSourcesV1(created.handle)).receiptHash,
+          materializedSources.receiptHash,
+        );
+        await assert.rejects(
+          materializeNodeProductSourcesV1ForTest(created.handle, {
+            casAuthority,
+            ...sourceMaterializationInput,
+          }),
+          {
+            code:
+              "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_SOURCE_ALREADY_CONSUMED",
+          },
+        );
+        await chmod(materializedRuntimePath, 0o644);
+        await assert.rejects(revalidateNodeProductSourcesV1(created.handle), {
+          code: "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_STATE_DRIFT",
+        });
       }
     }
 
@@ -2860,6 +3034,56 @@ describe("Node scaffold private staged materializer V2", () => {
       rejectedEvidence.diagnostics[0]?.message ?? "",
       /persistence_round_trip.*never fake or silently omit evidence/u,
     );
+  });
+
+  it("rejects source bytes when the exact publication receipts lack DB/CAS authority", async () => {
+    const stageParent = await privateParent("source-receipt-missing");
+    const sentinel = path.join(stageParent, "sentinel");
+    await writeFile(sentinel, "foreign\n", { mode: 0o600 });
+    const created = await stage({ stageParent });
+    const publication = await preparePublishedCliSourcesV1(
+      created.handle,
+      "without_publication_receipt",
+    );
+    await assert.rejects(
+      materializeNodeProductSourcesV1ForTest(created.handle, {
+        casAuthority,
+        ...publication,
+      }),
+      {
+        code:
+          "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_SOURCE_AUTHORITY_INVALID",
+      },
+    );
+    assert.deepEqual(await readdir(stageParent), ["sentinel"]);
+  });
+
+  it("removes a partial source tree after a post-runtime-write crash", async () => {
+    const stageParent = await privateParent("source-partial-crash");
+    const sentinel = path.join(stageParent, "sentinel");
+    await writeFile(sentinel, "foreign\n", { mode: 0o600 });
+    const created = await stage({ stageParent });
+    const publication = await preparePublishedCliSourcesV1(created.handle);
+    const crashBoundary: NodeProductSourceMaterializerCrashBoundaryV1 =
+      "after_runtime_source_fsync";
+    await assert.rejects(
+      materializeNodeProductSourcesV1ForTest(created.handle, {
+        casAuthority,
+        ...publication,
+        testHooks: {
+          afterBoundary(boundary) {
+            if (boundary === crashBoundary) {
+              throw new Error(`CRASH:${crashBoundary}`);
+            }
+          },
+        },
+      }),
+      {
+        code:
+          "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_SOURCE_MATERIALIZATION_FAILED",
+      },
+    );
+    assert.deepEqual(await readdir(stageParent), ["sentinel"]);
   });
 
   it("transitions every legacy Node entrypoint slot to one generator-owned whole-file authority", async () => {
