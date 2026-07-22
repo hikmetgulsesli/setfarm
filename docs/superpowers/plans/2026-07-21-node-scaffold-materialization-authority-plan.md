@@ -269,6 +269,14 @@ F2B1/B2a/B2b/B2c evidence completed on 2026-07-22:
   fresh process executions to emit byte-identical bundle and canonical
   metadata. Test adapters are permanently marked `test_fixture` and cannot be
   rehashed into production authority;
+- commit `89fecb3e` joined the bundle and private-tree capabilities into the
+  bootstrap manifest compiler. The production API accepts only
+  `BuiltNodeToolchainProvisionerBundleV2` plus
+  `MaterializedNodeToolchainPrivateTreeV2`; release branch/dirty/source refs,
+  bundle bytes, runtime bytes, and both receipts must agree. Raw bytes remain a
+  visibly dirty `test_fixture` path only. The root launcher renderer was split
+  into a runtime-safe module so the packaged CJS contains neither Git/esbuild
+  build authority nor the bootstrap compiler itself;
 - live read-only inspection corrected a false macOS assumption: the
   `/Library/Application Support` ancestor is root-owned mode `0755` but group
   `admin` (`gid=80`).
@@ -276,8 +284,9 @@ F2B1/B2a/B2b/B2c evidence completed on 2026-07-22:
   mode, while Setfarm-created directories remain exact `root:wheel`;
 - final command/rollback/CLI-focused evidence is 23/23; the combined distribution,
   inventory, private-tree, host, provisioning, and command chain is 56/56.
-  After bundle authority, final Product Compiler evidence is 982/982 across 121
-  suites, scripts are 24/24, with TypeScript, English (1,063 files), path (591
+  After the bootstrap authority join, final Product Compiler evidence is
+  982/982 across 121
+  suites, scripts are 24/24, with TypeScript, English (1,064 files), path (592
   files), diff and isolated scratch-residue
   checks clean. No production toolchain root, live DB/PR/service, generated
   repository, or Setfarm run was mutated.
@@ -301,14 +310,14 @@ F2B dependency chain is:
    final root, Node bytes, and normalized npm tree before `production_host`
    authority can be issued. Merely creating the fixed directory or making a
    binary self-report the expected version is invalid;
-5. **Complete preparation authority, pending installation rehearsal:** the
-   separately packaged root launcher/manifest/verifier and authenticated
-   reproducible bundle handle now exist. The production bootstrap compiler must
-   next consume only that bundle handle plus the authenticated private-tree
-   handle, publish a prepared package without caller bytes, and execute the
-   official tree through isolated apply/verify/rollback before any production
-   root or OS-update transition. No installer action will run automatically
-   from a Setfarm product attempt.
+5. **Complete compile authority, pending package publication/rehearsal:** the
+   separately packaged root launcher/manifest/verifier, authenticated
+   reproducible bundle handle, and handle-only production bootstrap compiler now
+   exist. The next owner must publish those compiled bytes into a fresh private
+   prepared package without replacement, reopen it through the package verifier,
+   and execute the official tree through isolated apply/verify/rollback before
+   any production root or OS-update transition. No installer action will run
+   automatically from a Setfarm product attempt.
 
 F2 completion does not authorize `npm ci`; it only creates the exact toolchain
 precondition consumed by F3/F4. F2A alone is deliberately insufficient.
