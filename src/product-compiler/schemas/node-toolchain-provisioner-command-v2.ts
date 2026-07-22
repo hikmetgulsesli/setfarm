@@ -13,6 +13,8 @@ export const NODE_TOOLCHAIN_PROVISIONER_INSPECTION_V2_SCHEMA =
   "setfarm.node-toolchain-provisioner-inspection.v2" as const;
 export const NODE_TOOLCHAIN_PROVISIONER_PLAN_V2_SCHEMA =
   "setfarm.node-toolchain-provisioner-plan.v2" as const;
+export const NODE_TOOLCHAIN_PROVISIONER_OPERATION_RECEIPT_V2_SCHEMA =
+  "setfarm.node-toolchain-provisioner-operation-receipt.v2" as const;
 export const NODE_TOOLCHAIN_PROVISIONER_COMMAND_VERSION_V2 = "2.0.0" as const;
 export const NODE_TOOLCHAIN_PROVISIONER_COMMAND_AUTHORITY_REF_V2 =
   "AUTH_NODE_TOOLCHAIN_PROVISIONER_COMMAND_V2" as const;
@@ -373,4 +375,140 @@ export const NodeToolchainProvisionerPlanV2Schema =
 
 export type NodeToolchainProvisionerPlanV2 = z.infer<
   typeof NodeToolchainProvisionerPlanV2Schema
+>;
+
+const ExactGenerationV2Schema = z.object({
+  receiptHash: Sha256Schema,
+  intentHash: Sha256Schema,
+  targetRef: TargetRefV2Schema,
+  rootDevice: FilesystemIdentityNumberV2Schema,
+  rootInode: FilesystemIdentityNumberV2Schema,
+  treeHash: Sha256Schema,
+}).strict();
+
+const ApplyOperationReceiptIdentityV2Schema = z.object({
+  schema: z.literal(NODE_TOOLCHAIN_PROVISIONER_OPERATION_RECEIPT_V2_SCHEMA),
+  operationVersion: z.literal(NODE_TOOLCHAIN_PROVISIONER_COMMAND_VERSION_V2),
+  authorityRef: z.literal(NODE_TOOLCHAIN_PROVISIONER_COMMAND_AUTHORITY_REF_V2),
+  operation: z.literal("apply"),
+  admissionScope: AdmissionScopeV2Schema,
+  architecture: ArchitectureV2Schema,
+  plan: NodeToolchainProvisionerPlanV2Schema,
+  beforeInspectionHash: Sha256Schema,
+  afterInspection: NodeToolchainProvisionerInspectionV2Schema,
+  result: z.enum([
+    "applied_exact_generation",
+    "recovered_exact_generation",
+    "verified_existing_generation",
+  ]),
+  generation: ExactGenerationV2Schema,
+}).strict();
+
+const VerifyOperationReceiptIdentityV2Schema = z.object({
+  schema: z.literal(NODE_TOOLCHAIN_PROVISIONER_OPERATION_RECEIPT_V2_SCHEMA),
+  operationVersion: z.literal(NODE_TOOLCHAIN_PROVISIONER_COMMAND_VERSION_V2),
+  authorityRef: z.literal(NODE_TOOLCHAIN_PROVISIONER_COMMAND_AUTHORITY_REF_V2),
+  operation: z.literal("verify"),
+  admissionScope: AdmissionScopeV2Schema,
+  architecture: ArchitectureV2Schema,
+  plan: z.null(),
+  beforeInspectionHash: Sha256Schema,
+  afterInspection: NodeToolchainProvisionerInspectionV2Schema,
+  result: z.literal("verified_exact_generation"),
+  generation: ExactGenerationV2Schema,
+}).strict();
+
+const NodeToolchainProvisionerOperationReceiptIdentityV2Schema = z.discriminatedUnion(
+  "operation",
+  [ApplyOperationReceiptIdentityV2Schema, VerifyOperationReceiptIdentityV2Schema],
+);
+
+export type NodeToolchainProvisionerOperationReceiptHashPayloadV2 = z.infer<
+  typeof NodeToolchainProvisionerOperationReceiptIdentityV2Schema
+>;
+
+export function hashNodeToolchainProvisionerOperationReceiptV2(
+  value:
+    | NodeToolchainProvisionerOperationReceiptHashPayloadV2
+    | NodeToolchainProvisionerOperationReceiptV2,
+): string {
+  const receipt = { ...value } as Record<string, unknown>;
+  delete receipt.operationReceiptHash;
+  return hashCanonicalJson({
+    schema: "setfarm.node-toolchain-provisioner-operation-receipt-hash.v2",
+    receipt,
+  });
+}
+
+export const NodeToolchainProvisionerOperationReceiptV2Schema =
+  NodeToolchainProvisionerOperationReceiptIdentityV2Schema.and(z.object({
+    operationReceiptHash: Sha256Schema,
+  }).strict()).superRefine((value, context) => {
+    const after = value.afterInspection;
+    const canonicalReceipt = after.canonical.receipt;
+    if (
+      value.admissionScope !== after.admissionScope
+      || value.architecture !== after.architecture
+      || after.classification !== "ready_verified"
+      || canonicalReceipt.status !== "valid"
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["afterInspection"],
+        message: "Successful apply or verify must end at one freshly verified ready generation",
+      });
+    } else if (
+      value.generation.receiptHash !== canonicalReceipt.receipt.receiptHash
+      || value.generation.intentHash !== canonicalReceipt.receipt.intent.intentHash
+      || value.generation.targetRef !== canonicalReceipt.receipt.finalRoot.targetRef
+      || value.generation.rootDevice !== canonicalReceipt.receipt.finalRoot.device
+      || value.generation.rootInode !== canonicalReceipt.receipt.finalRoot.inode
+      || value.generation.treeHash !== canonicalReceipt.receipt.finalRoot.treeHash
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["generation"],
+        message: "Operation generation must equal the fresh durable provisioning receipt",
+      });
+    }
+    if (value.operation === "apply") {
+      const expectedResult = value.plan.operation === "apply"
+        ? value.plan.decision === "publish"
+          ? "applied_exact_generation"
+          : value.plan.decision === "recover_exact_claim"
+            ? "recovered_exact_generation"
+            : "verified_existing_generation"
+        : null;
+      if (
+        value.plan.operation !== "apply"
+        || value.plan.admissionScope !== value.admissionScope
+        || value.plan.architecture !== value.architecture
+        || value.beforeInspectionHash !== value.plan.inspection.inspectionHash
+        || value.result !== expectedResult
+        || value.generation.intentHash !== value.plan.intent.intentHash
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: ["plan"],
+          message: "Apply operation receipt must equal its exact precondition, decision and intent",
+        });
+      }
+    } else if (value.beforeInspectionHash !== value.afterInspection.inspectionHash) {
+      context.addIssue({
+        code: "custom",
+        path: ["beforeInspectionHash"],
+        message: "Read-only verify must reproduce one unchanged inspection",
+      });
+    }
+    if (value.operationReceiptHash !== hashNodeToolchainProvisionerOperationReceiptV2(value)) {
+      context.addIssue({
+        code: "custom",
+        path: ["operationReceiptHash"],
+        message: "Node toolchain provisioner operation receipt hash mismatch",
+      });
+    }
+  });
+
+export type NodeToolchainProvisionerOperationReceiptV2 = z.infer<
+  typeof NodeToolchainProvisionerOperationReceiptV2Schema
 >;

@@ -21,6 +21,9 @@ import {
   openProductionProvisionedNodeToolchainV2,
   openProvisionedNodeToolchainV2ForTest,
   inspectNodeToolchainProvisioningReceiptV2,
+  provisionNodeToolchainV2,
+  provisionNodeToolchainV2ForTest,
+  revalidateProvisionedNodeToolchainV2,
 } from "./node-toolchain-provisioning-v2.js";
 import {
   NODE_TOOLCHAIN_PROVISIONING_LOCK_BASENAME_V2,
@@ -35,15 +38,20 @@ import {
   NODE_TOOLCHAIN_PROVISIONER_COMMAND_AUTHORITY_REF_V2,
   NODE_TOOLCHAIN_PROVISIONER_COMMAND_VERSION_V2,
   NODE_TOOLCHAIN_PROVISIONER_INSPECTION_V2_SCHEMA,
+  NODE_TOOLCHAIN_PROVISIONER_OPERATION_RECEIPT_V2_SCHEMA,
   NODE_TOOLCHAIN_PROVISIONER_PLAN_V2_SCHEMA,
   NodeToolchainProvisionerInspectionV2Schema,
+  NodeToolchainProvisionerOperationReceiptV2Schema,
   NodeToolchainProvisionerPlanV2Schema,
   hashNodeToolchainProvisionerInspectionV2,
+  hashNodeToolchainProvisionerOperationReceiptV2,
   hashNodeToolchainProvisionerPlanV2,
   type NodeToolchainProvisionerConflictCodeV2,
   type NodeToolchainProvisionerFilesystemEntryV2,
   type NodeToolchainProvisionerInspectionHashPayloadV2,
   type NodeToolchainProvisionerInspectionV2,
+  type NodeToolchainProvisionerOperationReceiptHashPayloadV2,
+  type NodeToolchainProvisionerOperationReceiptV2,
   type NodeToolchainProvisionerPlanHashPayloadV2,
   type NodeToolchainProvisionerPlanV2,
 } from "./schemas/node-toolchain-provisioner-command-v2.js";
@@ -93,6 +101,10 @@ export type NodeToolchainProvisionerCommandErrorCodeV2 =
   | "NODE_TOOLCHAIN_PROVISIONER_V2_INSPECTION_FAILED"
   | "NODE_TOOLCHAIN_PROVISIONER_V2_HANDLE_UNAUTHENTICATED"
   | "NODE_TOOLCHAIN_PROVISIONER_V2_PLAN_CONFLICT"
+  | "NODE_TOOLCHAIN_PROVISIONER_V2_PLAN_INVALID"
+  | "NODE_TOOLCHAIN_PROVISIONER_V2_PRECONDITION_CHANGED"
+  | "NODE_TOOLCHAIN_PROVISIONER_V2_APPLY_FAILED"
+  | "NODE_TOOLCHAIN_PROVISIONER_V2_VERIFY_FAILED"
   | "NODE_TOOLCHAIN_PROVISIONER_V2_SCHEMA_INVALID";
 
 export class NodeToolchainProvisionerCommandErrorV2 extends Error {
@@ -995,4 +1007,263 @@ export function planNodeToolchainRollbackV2(
     );
   }
   return defensiveCopy(parsed.data);
+}
+
+function parseApplyPlan(input: unknown): Extract<NodeToolchainProvisionerPlanV2, {
+  operation: "apply";
+}> {
+  let parsed: ReturnType<typeof NodeToolchainProvisionerPlanV2Schema.safeParse>;
+  try {
+    parsed = NodeToolchainProvisionerPlanV2Schema.safeParse(input);
+  } catch (error) {
+    return fail(
+      "NODE_TOOLCHAIN_PROVISIONER_V2_PLAN_INVALID",
+      "Apply requires one bounded strict provisioner plan",
+      error,
+    );
+  }
+  if (!parsed.success || parsed.data.operation !== "apply") {
+    return fail(
+      "NODE_TOOLCHAIN_PROVISIONER_V2_PLAN_INVALID",
+      "Apply requires one strict apply plan",
+      parsed.success ? undefined : parsed.error,
+    );
+  }
+  return deepFreezeJson(parsed.data);
+}
+
+function exactGeneration(receipt: NodeToolchainProvisioningReceiptV2) {
+  return Object.freeze({
+    receiptHash: receipt.receiptHash,
+    intentHash: receipt.intent.intentHash,
+    targetRef: receipt.finalRoot.targetRef,
+    rootDevice: receipt.finalRoot.device,
+    rootInode: receipt.finalRoot.inode,
+    treeHash: receipt.finalRoot.treeHash,
+  });
+}
+
+function buildOperationReceipt(
+  identity: NodeToolchainProvisionerOperationReceiptHashPayloadV2,
+): NodeToolchainProvisionerOperationReceiptV2 {
+  const parsed = NodeToolchainProvisionerOperationReceiptV2Schema.safeParse({
+    ...identity,
+    operationReceiptHash: hashNodeToolchainProvisionerOperationReceiptV2(identity),
+  });
+  if (!parsed.success) {
+    return fail(
+      "NODE_TOOLCHAIN_PROVISIONER_V2_SCHEMA_INVALID",
+      "Fresh provisioner operation receipt failed its strict canonical schema",
+      parsed.error,
+    );
+  }
+  return defensiveCopy(parsed.data);
+}
+
+async function applyPlan(input: Readonly<{
+  plan: unknown;
+  privateTree: MaterializedNodeToolchainPrivateTreeV2;
+  admissionScope: AdmissionScopeV2;
+  architecture: NodeToolchainTargetArchitectureV2;
+  inspectFresh: () => Promise<InspectedNodeToolchainProvisionerStateV2>;
+  provision: () => ReturnType<typeof provisionNodeToolchainV2>;
+}>): Promise<NodeToolchainProvisionerOperationReceiptV2> {
+  const plan = parseApplyPlan(input.plan);
+  if (plan.admissionScope !== input.admissionScope || plan.architecture !== input.architecture) {
+    return fail(
+      "NODE_TOOLCHAIN_PROVISIONER_V2_PLAN_INVALID",
+      "Apply plan cannot cross its production/test scope or target architecture",
+    );
+  }
+  const freshHandle = await input.inspectFresh();
+  const fresh = authenticInspectionState(freshHandle).inspection;
+  if (fresh.inspectionHash !== plan.inspection.inspectionHash) {
+    return fail(
+      "NODE_TOOLCHAIN_PROVISIONER_V2_PRECONDITION_CHANGED",
+      "Provisioning target changed after the exact apply plan was issued",
+    );
+  }
+  const reproduced = planNodeToolchainProvisioningV2(freshHandle, input.privateTree);
+  if (reproduced.planHash !== plan.planHash) {
+    return fail(
+      "NODE_TOOLCHAIN_PROVISIONER_V2_PLAN_INVALID",
+      "Apply plan does not equal the freshly reproduced source, intent and target decision",
+    );
+  }
+
+  let receipt: NodeToolchainProvisioningReceiptV2;
+  try {
+    if (plan.decision === "verify_existing") {
+      const ready = input.admissionScope === "production_root"
+        ? await openProductionProvisionedNodeToolchainV2()
+        : await openProvisionedNodeToolchainV2ForTest({
+            parent: authenticInspectionState(freshHandle).parent,
+            architecture: input.architecture,
+          });
+      receipt = await revalidateProvisionedNodeToolchainV2(ready);
+    } else {
+      const provisioned = await input.provision();
+      receipt = await revalidateProvisionedNodeToolchainV2(provisioned);
+    }
+  } catch (error) {
+    return fail(
+      "NODE_TOOLCHAIN_PROVISIONER_V2_APPLY_FAILED",
+      "Exact provisioner apply did not converge through the publisher authority",
+      error,
+    );
+  }
+  if (
+    receipt.intent.intentHash !== plan.intent.intentHash
+    || receipt.source.receiptHash !== plan.source.receiptHash
+  ) {
+    return fail(
+      "NODE_TOOLCHAIN_PROVISIONER_V2_APPLY_FAILED",
+      "Publisher returned a generation outside the exact apply plan",
+    );
+  }
+  const afterHandle = await input.inspectFresh();
+  const after = authenticInspectionState(afterHandle).inspection;
+  if (
+    after.classification !== "ready_verified"
+    || after.canonical.receipt.status !== "valid"
+    || after.canonical.receipt.receipt.receiptHash !== receipt.receiptHash
+  ) {
+    return fail(
+      "NODE_TOOLCHAIN_PROVISIONER_V2_APPLY_FAILED",
+      "Applied generation could not be reproduced by a fresh command inspection",
+    );
+  }
+  const result = plan.decision === "publish"
+    ? "applied_exact_generation" as const
+    : plan.decision === "recover_exact_claim"
+      ? "recovered_exact_generation" as const
+      : "verified_existing_generation" as const;
+  return buildOperationReceipt({
+    schema: NODE_TOOLCHAIN_PROVISIONER_OPERATION_RECEIPT_V2_SCHEMA,
+    operationVersion: NODE_TOOLCHAIN_PROVISIONER_COMMAND_VERSION_V2,
+    authorityRef: NODE_TOOLCHAIN_PROVISIONER_COMMAND_AUTHORITY_REF_V2,
+    operation: "apply",
+    admissionScope: input.admissionScope,
+    architecture: input.architecture,
+    plan,
+    beforeInspectionHash: fresh.inspectionHash,
+    afterInspection: after,
+    result,
+    generation: exactGeneration(receipt),
+  });
+}
+
+export async function applyProductionNodeToolchainProvisionerPlanV2(
+  plan: unknown,
+  privateTree: MaterializedNodeToolchainPrivateTreeV2,
+): Promise<NodeToolchainProvisionerOperationReceiptV2> {
+  assertProductionSystemBoundary();
+  return applyPlan({
+    plan,
+    privateTree,
+    admissionScope: "production_root",
+    architecture: process.arch as NodeToolchainTargetArchitectureV2,
+    inspectFresh: inspectProductionNodeToolchainProvisionerV2,
+    provision: () => provisionNodeToolchainV2(privateTree),
+  });
+}
+
+export async function applyNodeToolchainProvisionerPlanV2ForTest(input: Readonly<{
+  parent: string;
+  plan: unknown;
+  privateTree: MaterializedNodeToolchainPrivateTreeV2;
+}>): Promise<NodeToolchainProvisionerOperationReceiptV2> {
+  const parsedPlan = parseApplyPlan(input?.plan);
+  if (parsedPlan.admissionScope !== "test_fixture") {
+    return fail(
+      "NODE_TOOLCHAIN_PROVISIONER_V2_PLAN_INVALID",
+      "Test apply requires one permanently test-scoped plan",
+    );
+  }
+  return applyPlan({
+    plan: parsedPlan,
+    privateTree: input.privateTree,
+    admissionScope: "test_fixture",
+    architecture: parsedPlan.architecture,
+    inspectFresh: () => inspectNodeToolchainProvisionerV2ForTest({
+      parent: input.parent,
+      architecture: parsedPlan.architecture,
+    }),
+    provision: () => provisionNodeToolchainV2ForTest(input.privateTree, { parent: input.parent }),
+  });
+}
+
+async function verifyReady(input: Readonly<{
+  admissionScope: AdmissionScopeV2;
+  architecture: NodeToolchainTargetArchitectureV2;
+  inspectFresh: () => Promise<InspectedNodeToolchainProvisionerStateV2>;
+  openReady: () => ReturnType<typeof openProductionProvisionedNodeToolchainV2>;
+}>): Promise<NodeToolchainProvisionerOperationReceiptV2> {
+  const beforeHandle = await input.inspectFresh();
+  const before = authenticInspectionState(beforeHandle).inspection;
+  if (before.classification !== "ready_verified") {
+    return fail(
+      "NODE_TOOLCHAIN_PROVISIONER_V2_VERIFY_FAILED",
+      "Verify requires one ready provisioned generation",
+    );
+  }
+  let receipt: NodeToolchainProvisioningReceiptV2;
+  try {
+    receipt = await revalidateProvisionedNodeToolchainV2(await input.openReady());
+  } catch (error) {
+    return fail(
+      "NODE_TOOLCHAIN_PROVISIONER_V2_VERIFY_FAILED",
+      "Ready generation failed durable provisioning revalidation",
+      error,
+    );
+  }
+  const afterHandle = await input.inspectFresh();
+  const after = authenticInspectionState(afterHandle).inspection;
+  if (
+    after.inspectionHash !== before.inspectionHash
+    || after.classification !== "ready_verified"
+    || after.canonical.receipt.status !== "valid"
+    || after.canonical.receipt.receipt.receiptHash !== receipt.receiptHash
+  ) {
+    return fail(
+      "NODE_TOOLCHAIN_PROVISIONER_V2_VERIFY_FAILED",
+      "Verify observed target drift across its fresh reproduction window",
+    );
+  }
+  return buildOperationReceipt({
+    schema: NODE_TOOLCHAIN_PROVISIONER_OPERATION_RECEIPT_V2_SCHEMA,
+    operationVersion: NODE_TOOLCHAIN_PROVISIONER_COMMAND_VERSION_V2,
+    authorityRef: NODE_TOOLCHAIN_PROVISIONER_COMMAND_AUTHORITY_REF_V2,
+    operation: "verify",
+    admissionScope: input.admissionScope,
+    architecture: input.architecture,
+    plan: null,
+    beforeInspectionHash: before.inspectionHash,
+    afterInspection: after,
+    result: "verified_exact_generation",
+    generation: exactGeneration(receipt),
+  });
+}
+
+export async function verifyProductionNodeToolchainProvisionerV2():
+Promise<NodeToolchainProvisionerOperationReceiptV2> {
+  assertProductionSystemBoundary();
+  return verifyReady({
+    admissionScope: "production_root",
+    architecture: process.arch as NodeToolchainTargetArchitectureV2,
+    inspectFresh: inspectProductionNodeToolchainProvisionerV2,
+    openReady: openProductionProvisionedNodeToolchainV2,
+  });
+}
+
+export async function verifyNodeToolchainProvisionerV2ForTest(input: Readonly<{
+  parent: string;
+  architecture: NodeToolchainTargetArchitectureV2;
+}>): Promise<NodeToolchainProvisionerOperationReceiptV2> {
+  return verifyReady({
+    admissionScope: "test_fixture",
+    architecture: input.architecture,
+    inspectFresh: () => inspectNodeToolchainProvisionerV2ForTest(input),
+    openReady: () => openProvisionedNodeToolchainV2ForTest(input),
+  });
 }

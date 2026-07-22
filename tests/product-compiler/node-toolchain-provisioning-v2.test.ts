@@ -44,10 +44,12 @@ import {
   getCodeOwnedNodeToolchainTargetV2,
 } from "../../src/product-compiler/node-toolchain-target-registry-v2.js";
 import {
+  applyNodeToolchainProvisionerPlanV2ForTest,
   inspectNodeToolchainProvisionerInspectionV2,
   inspectNodeToolchainProvisionerV2ForTest,
   planNodeToolchainProvisioningV2,
   planNodeToolchainRollbackV2,
+  verifyNodeToolchainProvisionerV2ForTest,
 } from "../../src/product-compiler/node-toolchain-provisioner-command-v2.js";
 import {
   disposeVerifiedNodeToolchainDistributionArchiveV2,
@@ -63,7 +65,9 @@ import {
   hashNodeToolchainProvisioningReceiptV2,
 } from "../../src/product-compiler/schemas/node-toolchain-provisioning-v2.js";
 import {
+  NodeToolchainProvisionerOperationReceiptV2Schema,
   NodeToolchainProvisionerPlanV2Schema,
+  hashNodeToolchainProvisionerOperationReceiptV2,
   hashNodeToolchainProvisionerPlanV2,
 } from "../../src/product-compiler/schemas/node-toolchain-provisioner-command-v2.js";
 
@@ -592,5 +596,145 @@ describe("NodeToolchainProvisionerCommandV2 inspection and planning", () => {
     forged.decision = "verify_existing";
     forged.planHash = hashNodeToolchainProvisionerPlanV2(forged);
     assert.equal(NodeToolchainProvisionerPlanV2Schema.safeParse(forged).success, false);
+  });
+
+  it("rechecks exact preconditions before apply and emits fresh canonical operation evidence", async () => {
+    const parent = await privateParent();
+    const tree = await privateTree();
+    const absentHandle = await inspectNodeToolchainProvisionerV2ForTest({
+      parent,
+      architecture: "arm64",
+    });
+    const publishPlan = planNodeToolchainProvisioningV2(absentHandle, tree);
+    const applied = await applyNodeToolchainProvisionerPlanV2ForTest({
+      parent,
+      plan: publishPlan,
+      privateTree: tree,
+    });
+    assert.equal(applied.operation, "apply");
+    assert.equal(applied.result, "applied_exact_generation");
+    assert.equal(applied.afterInspection.classification, "ready_verified");
+    assert.equal(applied.generation.intentHash, publishPlan.operation === "apply"
+      ? publishPlan.intent.intentHash
+      : "");
+    assert.equal(NodeToolchainProvisionerOperationReceiptV2Schema.safeParse(applied).success, true);
+
+    await assert.rejects(
+      applyNodeToolchainProvisionerPlanV2ForTest({
+        parent,
+        plan: publishPlan,
+        privateTree: tree,
+      }),
+      { code: "NODE_TOOLCHAIN_PROVISIONER_V2_PRECONDITION_CHANGED" },
+    );
+
+    const readyHandle = await inspectNodeToolchainProvisionerV2ForTest({
+      parent,
+      architecture: "arm64",
+    });
+    const verifyPlan = planNodeToolchainProvisioningV2(readyHandle, tree);
+    const replay = await applyNodeToolchainProvisionerPlanV2ForTest({
+      parent,
+      plan: verifyPlan,
+      privateTree: tree,
+    });
+    assert.equal(replay.result, "verified_existing_generation");
+    assert.equal(replay.generation.receiptHash, applied.generation.receiptHash);
+
+    const verified = await verifyNodeToolchainProvisionerV2ForTest({
+      parent,
+      architecture: "arm64",
+    });
+    assert.equal(verified.operation, "verify");
+    assert.equal(verified.result, "verified_exact_generation");
+    assert.equal(verified.generation.receiptHash, applied.generation.receiptHash);
+
+    const forged = structuredClone(verified);
+    forged.generation.treeHash = "f".repeat(64);
+    forged.operationReceiptHash = hashNodeToolchainProvisionerOperationReceiptV2(forged);
+    assert.equal(
+      NodeToolchainProvisionerOperationReceiptV2Schema.safeParse(forged).success,
+      false,
+    );
+  });
+
+  it("rejects stale and source-substituted plans before the publisher mutates the target", async () => {
+    const parent = await privateParent();
+    const tree = await privateTree();
+    const absentHandle = await inspectNodeToolchainProvisionerV2ForTest({
+      parent,
+      architecture: "arm64",
+    });
+    const plan = planNodeToolchainProvisioningV2(absentHandle, tree);
+    const differentTree = await privateTree("source-substitution\n");
+    await assert.rejects(
+      applyNodeToolchainProvisionerPlanV2ForTest({
+        parent,
+        plan,
+        privateTree: differentTree,
+      }),
+      { code: "NODE_TOOLCHAIN_PROVISIONER_V2_PLAN_INVALID" },
+    );
+    const target = getCodeOwnedNodeToolchainTargetV2("arm64");
+    await assert.rejects(lstat(path.join(parent, target.rootBasename)), { code: "ENOENT" });
+
+    await writeFile(path.join(parent, "operator-created-after-plan"), "state changed\n", {
+      mode: 0o600,
+    });
+    await assert.rejects(
+      applyNodeToolchainProvisionerPlanV2ForTest({
+        parent,
+        plan,
+        privateTree: tree,
+      }),
+      { code: "NODE_TOOLCHAIN_PROVISIONER_V2_PRECONDITION_CHANGED" },
+    );
+    await assert.rejects(lstat(path.join(parent, target.rootBasename)), { code: "ENOENT" });
+  });
+
+  it("applies an exact interrupted recovery plan and does not relabel it as a new publish", async () => {
+    const parent = await privateParent();
+    const tree = await privateTree();
+    await assert.rejects(
+      provisionNodeToolchainV2ForTest(tree, {
+        parent,
+        hooks: { afterStage: async () => { throw new Error("CRASH_AFTER_COMMAND_STAGE"); } },
+      }),
+      /CRASH_AFTER_COMMAND_STAGE/,
+    );
+    const interrupted = await inspectNodeToolchainProvisionerV2ForTest({
+      parent,
+      architecture: "arm64",
+    });
+    const plan = planNodeToolchainProvisioningV2(interrupted, tree);
+    assert.equal(plan.operation, "apply");
+    if (plan.operation !== "apply") assert.fail("expected apply plan");
+    assert.equal(plan.decision, "recover_exact_claim");
+    const recovered = await applyNodeToolchainProvisionerPlanV2ForTest({
+      parent,
+      plan,
+      privateTree: tree,
+    });
+    assert.equal(recovered.result, "recovered_exact_generation");
+    assert.equal(recovered.afterInspection.classification, "ready_verified");
+  });
+
+  it("lets concurrent holders of one unchanged apply plan converge to one physical generation", async () => {
+    const parent = await privateParent();
+    const tree = await privateTree();
+    const inspection = await inspectNodeToolchainProvisionerV2ForTest({
+      parent,
+      architecture: "arm64",
+    });
+    const plan = planNodeToolchainProvisioningV2(inspection, tree);
+    const [left, right] = await Promise.all([
+      applyNodeToolchainProvisionerPlanV2ForTest({ parent, plan, privateTree: tree }),
+      applyNodeToolchainProvisionerPlanV2ForTest({ parent, plan, privateTree: tree }),
+    ]);
+    assert.equal(left.result, "applied_exact_generation");
+    assert.equal(right.result, "applied_exact_generation");
+    assert.equal(left.generation.receiptHash, right.generation.receiptHash);
+    assert.equal(left.generation.rootDevice, right.generation.rootDevice);
+    assert.equal(left.generation.rootInode, right.generation.rootInode);
   });
 });
