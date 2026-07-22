@@ -7829,6 +7829,10 @@ export async function completeStep(
         nativeV3PlanAuthority.planProductBuildAuthorityCanonicalBytes;
       context["plan_product_build_authority_hash"] =
         nativeV3PlanAuthority.planProductBuildAuthority.authorityHash;
+      context["product_runtime_behavior_proposal"] =
+        nativeV3PlanAuthority.runtimeBehaviorProposalCanonicalBytes;
+      context["product_runtime_behavior_proposal_hash"] =
+        nativeV3PlanAuthority.runtimeBehaviorProposalHash;
       context["product_runtime_behavior_contract"] =
         nativeV3PlanAuthority.runtimeBehaviorCanonicalBytes;
       context["product_runtime_behavior_contract_hash"] =

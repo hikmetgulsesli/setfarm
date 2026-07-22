@@ -184,6 +184,7 @@ import {
 import {
   genuineNodeCliProductSpecV2,
   genuineNodeExpressApiProductSpecV2,
+  nodeRuntimeBehaviorAuthorityV1,
   twoStoryNodeExpressApiProductSpecV2,
 } from "./fixtures/no-design-product-semantics-v2.js";
 
@@ -197,11 +198,11 @@ const API_PROFILE = "PROFILE_NODE_EXPRESS_API_STATELESS_EXACT_V2" as const;
 const FILE_TREE_CONTRACT_HASH_GOLDEN_V2 =
   "c882764fc3790d7a7815c0ba802d0201d76e3ff874c878e0bf13f1b9d727756c";
 const FILE_TREE_CONTRACT_HASH_GOLDEN_V3 =
-  "935102110da37a941d1859c6ff99ea05112894f872495b61ddc0673601b4704c";
+  "013c2b2e04985fb54896d34f84e9044a3e30dff1f1297050e8d0c741462f487a";
 const BUILD_TOPOLOGY_CONTRACT_HASH_GOLDEN_V2 =
   "5ac524ec5f5c45ac3091c39c5fe959da3da970c15757196879031db55c30ef28";
 const BUILD_TOPOLOGY_CONTRACT_HASH_GOLDEN_V3 =
-  "85c5d6ab2546862383a3b1622a8f9360eed79af0bd5205e2cd1dea6bd911407f";
+  "70276cf52b8dc844e1d60f5bf11203b17f5623126c433a184bcf301cfe231896";
 const NODE_PRODUCT_RUNTIME_PROGRAM_CONTRACT_HASH_GOLDEN_V2 =
   "bc034f20c1c56ed094a2bebe6ea83cace9c861a299fbba0d44a7482803034bd5";
 const NODE_ENTRYPOINT_GENERATOR_CONTRACT_HASH_GOLDEN_V2 =
@@ -833,7 +834,10 @@ describe("Node scaffold private staged materializer V2", () => {
         fixture.productSpec,
         fixture.stackPackId,
       );
-      const input = { productSpec: fixture.productSpec, deliverySelection };
+      const input = {
+        productSpec: fixture.productSpec,
+        deliverySelection,
+      };
       const compiled = await compileFileTreeManifestV2ForTest(created.handle, input);
       assert.equal(
         compiled.status,
@@ -1038,7 +1042,11 @@ describe("Node scaffold private staged materializer V2", () => {
         fixture.productSpec,
         fixture.stackPackId,
       );
-      const input = { productSpec: fixture.productSpec, deliverySelection };
+      const input = {
+        productSpec: fixture.productSpec,
+        deliverySelection,
+        ...nodeRuntimeBehaviorAuthorityV1(fixture.productSpec),
+      };
       const compiled = await compileFileTreeManifestV3ForTest(created.handle, input);
       assert.equal(
         compiled.status,
@@ -1059,6 +1067,14 @@ describe("Node scaffold private staged materializer V2", () => {
       assert.equal(manifest.contractHash, FILE_TREE_CONTRACT_HASH_GOLDEN_V3);
       assert.equal(manifest.authority.profileId, fixture.profileId);
       assert.equal(manifest.authority.stackPackId, fixture.stackPackId);
+      assert.equal(
+        manifest.authority.semanticRealizationPlan.runtimeBehaviorProposalHash,
+        input.runtimeBehaviorContract.authority.proposalHash,
+      );
+      assert.equal(
+        manifest.authority.semanticRealizationPlan.runtimeBehaviorContractHash,
+        input.runtimeBehaviorContract.contractHash,
+      );
       assert.equal(manifest.pathCount, 6);
       assert.equal(manifest.ownerCount, 3);
       assert.deepEqual(manifest.owners.map((owner) => owner.ownerRef), [
@@ -1178,6 +1194,24 @@ describe("Node scaffold private staged materializer V2", () => {
       );
 
       if (caseIndex === 0) {
+        const forgedBehavior = structuredClone(manifest) as any;
+        forgedBehavior.authority.semanticRealizationPlan
+          .runtimeBehaviorContractHash = "f".repeat(64);
+        forgedBehavior.manifestHash = hashFileTreeManifestV3(forgedBehavior);
+        assert.equal(
+          FileTreeManifestV3Schema.safeParse(forgedBehavior).success,
+          true,
+        );
+        await assert.rejects(
+          verifyFileTreeManifestV3ForTest(created.handle, {
+            ...input,
+            candidate: forgedBehavior,
+          }),
+          (error: unknown) =>
+            error instanceof FileTreeManifestVerificationErrorV3
+            && error.code === "FILE_TREE_V3_VERIFICATION_AUTHORITY_MISMATCH",
+        );
+
         const sibling = await stage({ profileId: CLI_PROFILE });
         const siblingCompiled = await compileFileTreeManifestV3ForTest(
           sibling.handle,
@@ -1247,9 +1281,9 @@ describe("Node scaffold private staged materializer V2", () => {
     }
 
     assert.deepEqual(manifestHashes, [
-      "9f2355ab210b1d69d6ef4b523afcbdf065baf459e9d7fe61219409cb36399ae4",
-      "5641aaa0e8906a447ad820db88b32c2308a8c2ffaecad3fc05e468f51ca62fb7",
-      "4e3dfd610cf41f58037f9d2891f6caa0de4d7aa6e5ed16138e480f19b18eacd1",
+      "ec6473afdf2b1a56a1b42b6f7390f000cbbf3597ea1b8c4eb4d3c0519df9f6c3",
+      "84fa7f3e0aaf472555117997d5860155f3f2773c9b8c822e41624e1bc2997e2d",
+      "8ce61450b06fe7442fc222976ec32edc5dbe23d0c84c0db94bc40439e0389f39",
     ]);
     const cliManifest = manifests.get("cli");
     const apiManifest = manifests.get("api");
@@ -1541,6 +1575,7 @@ describe("Node scaffold private staged materializer V2", () => {
       const authorityInput = {
         productSpec: fixture.productSpec,
         deliverySelection,
+        ...nodeRuntimeBehaviorAuthorityV1(fixture.productSpec),
       };
       const fileTree = await compileFileTreeManifestV3ForTest(
         created.handle,
@@ -1583,6 +1618,14 @@ describe("Node scaffold private staged materializer V2", () => {
         entry.writeGrantOwnerRefs.length === 0), true);
       assert.equal(topology.authority.fileTree.manifestHash,
         fileTree.value.manifestHash);
+      assert.equal(
+        topology.authority.fileTree.runtimeBehaviorProposalHash,
+        authorityInput.runtimeBehaviorContract.authority.proposalHash,
+      );
+      assert.equal(
+        topology.authority.fileTree.runtimeBehaviorContractHash,
+        authorityInput.runtimeBehaviorContract.contractHash,
+      );
       assert.equal(topology.operationalEvidence.dependencyReceiptHash,
         dependency.receiptHash);
       assert.equal(topology.compilation.runtime.realizationCount,
@@ -1790,9 +1833,9 @@ describe("Node scaffold private staged materializer V2", () => {
     }
 
     assert.deepEqual(logicalBuildHashes, [
-      "f97a1706091602ee52754ce984d8e8e02e7d1495c76bf46b6cce1f19b26cd8bc",
-      "a37c780c70f51974503ff2d27cf52f02c76379fbc4a3405b46b81d19f1d3ed6d",
-      "7c94b8bda249c4138e0aa313ae4cd119dada708558809b38c59b67b6f4e1253b",
+      "5e2b34459d4a1634e2f3b61322e03dc377eb86a5e74bd1766e850228516e71e8",
+      "2162f30bf3ae99aaa8bc4d382a3effd4de6320586a140f0028312a54af3342c1",
+      "8015cc1e78b1682e003c44fd88476aef5075f095145678b45a6b2c6637aeacd4",
     ]);
   });
 
@@ -1836,6 +1879,7 @@ describe("Node scaffold private staged materializer V2", () => {
       const authorityInput = {
         productSpec: fixture.productSpec,
         deliverySelection,
+        ...nodeRuntimeBehaviorAuthorityV1(fixture.productSpec),
       };
       const realizationPlan = compileSemanticRealizationPlanV2(authorityInput);
       assert.equal(realizationPlan.status, "shadow_compiled");
@@ -1894,6 +1938,14 @@ describe("Node scaffold private staged materializer V2", () => {
       assert.equal(
         generated.receipt.authority.runtimeProgramContractHash,
         NODE_PRODUCT_RUNTIME_PROGRAM_CONTRACT_HASH_V2,
+      );
+      assert.equal(
+        generated.receipt.authority.runtimeBehavior.proposalHash,
+        authorityInput.runtimeBehaviorContract.authority.proposalHash,
+      );
+      assert.equal(
+        generated.receipt.authority.runtimeBehavior.contractHash,
+        authorityInput.runtimeBehaviorContract.contractHash,
       );
       assert.equal(
         NODE_PRODUCT_RUNTIME_PROGRAM_CONTRACT_HASH_V2,
@@ -2120,6 +2172,7 @@ describe("Node scaffold private staged materializer V2", () => {
       {
         productSpec: opaqueSpec,
         deliverySelection: opaqueSelection,
+        ...nodeRuntimeBehaviorAuthorityV1(opaqueSpec),
         realizationPlan: {},
         fileTree: {},
         buildTopology: {},

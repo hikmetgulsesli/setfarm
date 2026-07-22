@@ -68,6 +68,8 @@ export const FILE_TREE_MANIFEST_CONTRACT_V3 = Object.freeze({
   nativeSourceAuthorities: Object.freeze([
     "product_spec_v2",
     "product_delivery_selection_v2",
+    "product_runtime_behavior_proposal_v1",
+    "product_runtime_behavior_contract_v1",
     "semantic_realization_plan_v2",
     "node_execution_layout_v2",
     "node_execution_path_token_set_v2",
@@ -547,6 +549,8 @@ const FileTreeManifestIdentityV3Schema = z.object({
       generatorMemberCount: z.number().int().positive().max(20_000),
       evidenceRelationCount: z.number().int().positive().max(20_000),
       modelWriteGrantCount: z.literal(0),
+      runtimeBehaviorProposalHash: Sha256Schema,
+      runtimeBehaviorContractHash: Sha256Schema,
     }).strict(),
     runtimeGeneratorContractHash: z.literal(
       NODE_PRODUCT_RUNTIME_GENERATOR_CONTRACT_HASH_V2,

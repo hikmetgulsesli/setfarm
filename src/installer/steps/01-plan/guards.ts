@@ -480,6 +480,8 @@ export async function onComplete(ctx: CompleteContext): Promise<void> {
         sourceProposalHash: context["plan_source_proposal_hash"] || null,
         semanticProposalHash: context["plan_semantic_proposal_hash"] || null,
         planProductBuildAuthorityHash: context["plan_product_build_authority_hash"] || null,
+        runtimeBehaviorProposalHash:
+          context["product_runtime_behavior_proposal_hash"] || null,
         runtimeBehaviorContractHash: context["product_runtime_behavior_contract_hash"] || null,
         deliveryProfileId: context["product_delivery_profile_id"] || null,
         deliverySelectionHash: context["product_delivery_selection_hash"] || null,

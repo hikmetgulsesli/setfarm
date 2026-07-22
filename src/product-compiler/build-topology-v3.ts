@@ -119,6 +119,8 @@ const EMPTY_DIAGNOSTICS = Object.freeze([]) as readonly [];
 const CompilerInputV3Schema = z.object({
   productSpec: z.unknown(),
   deliverySelection: z.unknown(),
+  runtimeBehaviorProposal: z.unknown(),
+  runtimeBehaviorContract: z.unknown(),
   fileTree: z.unknown(),
 }).strict();
 
@@ -807,6 +809,10 @@ function buildTopologyV3(input: Readonly<{
         ownerMembershipHash: fileTree.ownerMembershipHash,
         semanticRealizationPlanHash:
           fileTree.authority.semanticRealizationPlan.planHash,
+        runtimeBehaviorProposalHash:
+          fileTree.authority.semanticRealizationPlan.runtimeBehaviorProposalHash,
+        runtimeBehaviorContractHash:
+          fileTree.authority.semanticRealizationPlan.runtimeBehaviorContractHash,
         runtimeRealizationMembershipHash:
           fileTree.coverage.runtimeRealizationMembershipHash,
         testCoverageMembershipHash: fileTree.coverage.testCoverageMembershipHash,
@@ -905,11 +911,15 @@ async function compileInternalV3(
       ? await verifyFileTreeManifestV3AtDependencyStage(handle, {
           productSpec: parsed.data.productSpec,
           deliverySelection: parsed.data.deliverySelection,
+          runtimeBehaviorProposal: parsed.data.runtimeBehaviorProposal,
+          runtimeBehaviorContract: parsed.data.runtimeBehaviorContract,
           candidate: parsed.data.fileTree,
         })
       : await verifyFileTreeManifestV3AtDependencyStageForTest(handle, {
           productSpec: parsed.data.productSpec,
           deliverySelection: parsed.data.deliverySelection,
+          runtimeBehaviorProposal: parsed.data.runtimeBehaviorProposal,
+          runtimeBehaviorContract: parsed.data.runtimeBehaviorContract,
           candidate: parsed.data.fileTree,
         });
     const dependency = await revalidateNodeScaffoldDependenciesV2(handle);
@@ -1039,6 +1049,8 @@ async function verifyInternalV3(
   const reproduced = await compileInternalV3(handle, {
     productSpec: parsed.data.productSpec,
     deliverySelection: parsed.data.deliverySelection,
+    runtimeBehaviorProposal: parsed.data.runtimeBehaviorProposal,
+    runtimeBehaviorContract: parsed.data.runtimeBehaviorContract,
     fileTree: parsed.data.fileTree,
   }, expectedScope);
   if (reproduced.status !== "shadow_compiled") {

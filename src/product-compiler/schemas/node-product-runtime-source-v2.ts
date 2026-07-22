@@ -282,6 +282,11 @@ const RuntimeSourceReceiptLogicalIdentityV2Schema = z.object({
       membershipHash: Sha256Schema,
       contractCount: z.number().int().positive().max(2_000),
     }).strict(),
+    runtimeBehavior: z.object({
+      proposalHash: Sha256Schema,
+      contractHash: Sha256Schema,
+      evaluatorContractHash: Sha256Schema,
+    }).strict(),
     semanticRealizationPlan: z.object({
       schema: z.literal("setfarm.semantic-realization-plan.v2"),
       planHash: Sha256Schema,

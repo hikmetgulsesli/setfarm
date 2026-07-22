@@ -7,10 +7,14 @@ import {
 import { canonicalJsonStringify } from "./canonical-json.js";
 import { compileSemanticSourceIntentSetV1 } from
   "./semantic-source-intent-set-v1.js";
+import { verifyProductRuntimeBehaviorContractV1 } from
+  "./product-runtime-behavior-contract-v1.js";
 import { getCodeOwnedStackSemanticSourceRuleSetV1 } from
   "./stack-semantic-source-rules-catalog-v1.js";
 import type { SemanticSourceIntentV1, SemanticSourceIntentSetV1 } from
   "./schemas/semantic-source-intent-set-v1.js";
+import type { ProductRuntimeBehaviorContractV1 } from
+  "./schemas/product-runtime-behavior-contract-v1.js";
 import {
   NODE_PRODUCT_RUNTIME_GENERATOR_CONTRACT_HASH_V2,
   NODE_PRODUCT_RUNTIME_GENERATOR_CONTRACT_V2,
@@ -66,6 +70,8 @@ const EMPTY_DIAGNOSTICS = Object.freeze([]) as readonly [];
 const CompilerInputV2Schema = z.object({
   productSpec: z.unknown(),
   deliverySelection: z.unknown(),
+  runtimeBehaviorProposal: z.unknown(),
+  runtimeBehaviorContract: z.unknown(),
 }).strict();
 
 const VerifierInputV2Schema = CompilerInputV2Schema.extend({
@@ -91,6 +97,7 @@ function boundedSnapshot(
 
 export type SemanticRealizationPlanDiagnosticCodeV2 =
   | "SEMANTIC_REALIZATION_V2_ARTIFACT_INVALID"
+  | "SEMANTIC_REALIZATION_V2_BEHAVIOR_AUTHORITY_REJECTED"
   | "SEMANTIC_REALIZATION_V2_INPUT_INVALID"
   | "SEMANTIC_REALIZATION_V2_INTENT_COMPILATION_REJECTED"
   | "SEMANTIC_REALIZATION_V2_OUTPUT_LIMIT_EXCEEDED"
@@ -329,7 +336,11 @@ function buildRealizationV2(
 
 function buildPlanV2(
   intentSet: Readonly<SemanticSourceIntentSetV1>,
+  runtimeBehavior: Readonly<ProductRuntimeBehaviorContractV1>,
 ): SemanticRealizationPlanV2 {
+  if (runtimeBehavior.authority.productSpecHash !== intentSet.authority.productSpecHash) {
+    policyFailure("Runtime behavior and semantic intent ProductSpec authority do not join");
+  }
   const profile = NODE_SEMANTIC_REALIZATION_POLICY_V2.profiles.find((candidate) =>
     candidate.profileId === intentSet.authority.deliverySelection.profileId
     && candidate.stackPackId === intentSet.authority.stackPackBinding.stackPackId);
@@ -416,6 +427,17 @@ function buildPlanV2(
         ruleSetVersion: "1.0.0",
         ruleSetHash: ruleSet.ruleSetHash,
       },
+      runtimeBehavior: {
+        proposalSchema: runtimeBehavior.authority.proposalSchema,
+        proposalHash: runtimeBehavior.authority.proposalHash,
+        contractSchema: runtimeBehavior.schema,
+        contractVersion: runtimeBehavior.contractVersion,
+        contractHash: runtimeBehavior.contractHash,
+        evaluatorContractHash: runtimeBehavior.authority.evaluatorContractHash,
+        invariantBindingCount: runtimeBehavior.invariantBindings.length,
+        entityFieldBindingCount: runtimeBehavior.entityFieldBindings.length,
+        verification: "fresh_product_spec_plus_proposal_reproduction",
+      },
       generatorProfile: {
         generatorRef: "NODE_PRODUCT_RUNTIME_GENERATOR_V2",
         generatorProfileHash:
@@ -479,6 +501,20 @@ export function compileSemanticRealizationPlanV2(
       parsed.error.issues[0]?.message ?? "Semantic realization input is invalid",
     );
   }
+  let runtimeBehavior: Readonly<ProductRuntimeBehaviorContractV1>;
+  try {
+    runtimeBehavior = verifyProductRuntimeBehaviorContractV1({
+      productSpec: parsed.data.productSpec,
+      proposal: parsed.data.runtimeBehaviorProposal,
+      candidate: parsed.data.runtimeBehaviorContract,
+    });
+  } catch (error) {
+    return rejected(
+      "SEMANTIC_REALIZATION_V2_BEHAVIOR_AUTHORITY_REJECTED",
+      "/runtimeBehaviorContract",
+      errorMessage(error),
+    );
+  }
   const intentResult = compileSemanticSourceIntentSetV1({
     productSpec: parsed.data.productSpec,
     deliverySelection: parsed.data.deliverySelection,
@@ -494,7 +530,7 @@ export function compileSemanticRealizationPlanV2(
   }
   try {
     const value = recursivelyFreezeSemanticRealizationPlanV2(
-      buildPlanV2(intentResult.intentSet),
+      buildPlanV2(intentResult.intentSet, runtimeBehavior),
     );
     let canonicalBytes: Buffer;
     try {
@@ -584,6 +620,8 @@ export function verifySemanticRealizationPlanV2(
   const reproduced = compileSemanticRealizationPlanV2({
     productSpec: parsed.data.productSpec,
     deliverySelection: parsed.data.deliverySelection,
+    runtimeBehaviorProposal: parsed.data.runtimeBehaviorProposal,
+    runtimeBehaviorContract: parsed.data.runtimeBehaviorContract,
   });
   if (reproduced.status !== "shadow_compiled") {
     throw new SemanticRealizationPlanVerificationErrorV2(

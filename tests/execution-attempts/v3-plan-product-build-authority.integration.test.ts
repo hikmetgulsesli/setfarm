@@ -191,6 +191,8 @@ test("atomic PLAN completion persists exact build and behavior authority", async
       output_authority_version: string;
       build_authority: string;
       build_authority_hash: string;
+      behavior_proposal: string;
+      behavior_proposal_hash: string;
       behavior_contract: string;
       behavior_contract_hash: string;
       semantics_version: string;
@@ -210,6 +212,8 @@ test("atomic PLAN completion persists exact build and behavior authority", async
              run.context::jsonb ->> 'plan_output_authority_version' AS output_authority_version,
              run.context::jsonb ->> 'plan_product_build_authority' AS build_authority,
              run.context::jsonb ->> 'plan_product_build_authority_hash' AS build_authority_hash,
+             run.context::jsonb ->> 'product_runtime_behavior_proposal' AS behavior_proposal,
+             run.context::jsonb ->> 'product_runtime_behavior_proposal_hash' AS behavior_proposal_hash,
              run.context::jsonb ->> 'product_runtime_behavior_contract' AS behavior_contract,
              run.context::jsonb ->> 'product_runtime_behavior_contract_hash' AS behavior_contract_hash,
              run.context::jsonb ->> 'product_semantics_version' AS semantics_version,
@@ -237,6 +241,14 @@ test("atomic PLAN completion persists exact build and behavior authority", async
     assert.equal(row.output_authority_version, "product_build_v1");
     assert.equal(row.build_authority, expected.planProductBuildAuthorityCanonicalBytes);
     assert.equal(row.build_authority_hash, expected.planProductBuildAuthority.authorityHash);
+    assert.equal(
+      row.behavior_proposal,
+      expected.runtimeBehaviorProposalCanonicalBytes,
+    );
+    assert.equal(
+      row.behavior_proposal_hash,
+      expected.runtimeBehaviorProposalHash,
+    );
     assert.equal(row.behavior_contract, expected.runtimeBehaviorCanonicalBytes);
     assert.equal(row.behavior_contract_hash, expected.runtimeBehaviorContract.contractHash);
     assert.equal(row.semantics_version, "v2");
@@ -254,6 +266,10 @@ test("atomic PLAN completion persists exact build and behavior authority", async
     assert.match(row.canonical_prd, /```product-spec-v2/u);
     assert.doesNotMatch(row.canonical_prd, /product-runtime-behavior-contract-v1/u);
     assert.doesNotMatch(row.canonical_prd, /plan-product-build-authority-v1/u);
+    assert.equal(
+      JSON.parse(row.behavior_proposal).schema,
+      "setfarm.product-runtime-behavior-proposal.v1",
+    );
     assert.equal(
       JSON.parse(row.behavior_contract).schema,
       "setfarm.product-runtime-behavior-contract.v1",
@@ -281,6 +297,10 @@ test("atomic PLAN completion persists exact build and behavior authority", async
     assert.equal(
       evidence.planProductBuildAuthorityHash,
       expected.planProductBuildAuthority.authorityHash,
+    );
+    assert.equal(
+      evidence.runtimeBehaviorProposalHash,
+      expected.runtimeBehaviorProposalHash,
     );
     assert.equal(
       evidence.runtimeBehaviorContractHash,

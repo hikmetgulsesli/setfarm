@@ -67,6 +67,8 @@ export const COMPILER_OWNED_CONTEXT_KEYS = new Set([
   "plan_output_authority_version",
   "plan_product_build_authority",
   "plan_product_build_authority_hash",
+  "product_runtime_behavior_proposal",
+  "product_runtime_behavior_proposal_hash",
   "product_runtime_behavior_contract",
   "product_runtime_behavior_contract_hash",
 ]);

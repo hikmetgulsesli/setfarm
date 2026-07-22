@@ -84,6 +84,8 @@ const EMPTY_DIAGNOSTICS = Object.freeze([]) as readonly [];
 const GeneratorInputV2Schema = z.object({
   productSpec: z.unknown(),
   deliverySelection: z.unknown(),
+  runtimeBehaviorProposal: z.unknown(),
+  runtimeBehaviorContract: z.unknown(),
   realizationPlan: z.unknown(),
   fileTree: z.unknown(),
   buildTopology: z.unknown(),
@@ -977,8 +979,20 @@ function assertAuthorityJoinsV2(input: Readonly<{
     ["file_tree_realization_plan",
       input.fileTree.authority.semanticRealizationPlan.planHash
         === input.realizationPlan.planHash],
+    ["file_tree_behavior_proposal",
+      input.fileTree.authority.semanticRealizationPlan.runtimeBehaviorProposalHash
+        === input.realizationPlan.authority.runtimeBehavior.proposalHash],
+    ["file_tree_behavior_contract",
+      input.fileTree.authority.semanticRealizationPlan.runtimeBehaviorContractHash
+        === input.realizationPlan.authority.runtimeBehavior.contractHash],
     ["topology_file_tree", input.buildTopology.authority.fileTree.manifestHash
       === input.fileTree.manifestHash],
+    ["topology_behavior_proposal",
+      input.buildTopology.authority.fileTree.runtimeBehaviorProposalHash
+        === input.realizationPlan.authority.runtimeBehavior.proposalHash],
+    ["topology_behavior_contract",
+      input.buildTopology.authority.fileTree.runtimeBehaviorContractHash
+        === input.realizationPlan.authority.runtimeBehavior.contractHash],
     ["transport_product_spec", input.transportSet.productSpecHash
       === input.buildTopology.authority.productSpecHash],
     ["transport_delivery", input.transportSet.deliverySelectionHash
@@ -1094,18 +1108,24 @@ async function generateInternalV2(
     const verifiedPlan = verifySemanticRealizationPlanV2({
       productSpec,
       deliverySelection: selection,
+      runtimeBehaviorProposal: parsed.data.runtimeBehaviorProposal,
+      runtimeBehaviorContract: parsed.data.runtimeBehaviorContract,
       candidate: parsed.data.realizationPlan,
     });
     const verifiedTopology = expectedScope === "production_host"
       ? await verifyBuildTopologyV3(handle, {
           productSpec,
           deliverySelection: selection,
+          runtimeBehaviorProposal: parsed.data.runtimeBehaviorProposal,
+          runtimeBehaviorContract: parsed.data.runtimeBehaviorContract,
           fileTree: parsed.data.fileTree,
           candidate: parsed.data.buildTopology,
         })
       : await verifyBuildTopologyV3ForTest(handle, {
           productSpec,
           deliverySelection: selection,
+          runtimeBehaviorProposal: parsed.data.runtimeBehaviorProposal,
+          runtimeBehaviorContract: parsed.data.runtimeBehaviorContract,
           fileTree: parsed.data.fileTree,
           candidate: parsed.data.buildTopology,
         });
@@ -1221,6 +1241,12 @@ async function generateInternalV2(
           contractSetHash: transportResult.contractSetHash,
           membershipHash: transportResult.membershipHash,
           contractCount: transportResult.contractSet.contractCount,
+        },
+        runtimeBehavior: {
+          proposalHash: verifiedPlan.value.authority.runtimeBehavior.proposalHash,
+          contractHash: verifiedPlan.value.authority.runtimeBehavior.contractHash,
+          evaluatorContractHash:
+            verifiedPlan.value.authority.runtimeBehavior.evaluatorContractHash,
         },
         semanticRealizationPlan: {
           schema: "setfarm.semantic-realization-plan.v2",
@@ -1385,6 +1411,8 @@ async function verifyInternalV2(
   const reproduced = await generateInternalV2(handle, {
     productSpec: parsed.data.productSpec,
     deliverySelection: parsed.data.deliverySelection,
+    runtimeBehaviorProposal: parsed.data.runtimeBehaviorProposal,
+    runtimeBehaviorContract: parsed.data.runtimeBehaviorContract,
     realizationPlan: parsed.data.realizationPlan,
     fileTree: parsed.data.fileTree,
     buildTopology: parsed.data.buildTopology,

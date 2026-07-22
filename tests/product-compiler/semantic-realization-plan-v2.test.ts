@@ -25,11 +25,14 @@ import {
   hashSemanticRealizationV2,
   type SemanticRealizationPlanV2,
 } from "../../src/product-compiler/schemas/semantic-realization-plan-v2.js";
+import { hashProductRuntimeBehaviorContractV1 } from
+  "../../src/product-compiler/schemas/product-runtime-behavior-contract-v1.js";
 import type { ProductSpecV2 } from
   "../../src/product-compiler/schemas/product-spec-v2.js";
 import {
   genuineNodeCliProductSpecV2,
   genuineNodeExpressApiProductSpecV2,
+  nodeRuntimeBehaviorAuthorityV1,
   twoStoryNodeExpressApiProductSpecV2,
 } from "./fixtures/no-design-product-semantics-v2.js";
 
@@ -40,13 +43,13 @@ const TEST_GENERATOR_CONTRACT_HASH_GOLDEN_V2 =
 const POLICY_HASH_GOLDEN_V2 =
   "9dc1212f1c7fd1a6801dfbd9d3a2823b68292f76cdb9d8c7501fa8ac5beb120e";
 const PLAN_CONTRACT_HASH_GOLDEN_V2 =
-  "fcb011c9bcd79d4178415f0b7b419572d8a57eb38a94a8ece54d8a68f07d645e";
+  "1dc1a10c192464c68558289f106274b0bdfbc8053382a4e19970e3ee39a405c1";
 const CLI_PLAN_HASH_GOLDEN_V2 =
-  "4bf2b8117db2b84cecefb8b50ed5230c31fdac0350f97277a51816b69d30a191";
+  "317786c21f97c6a2412879b722d78d9e88118a20dceb9cfe42ae0c32a6d63cf8";
 const API_PLAN_HASH_GOLDEN_V2 =
-  "a650d4b1923d098171181dd2de466df2cbce025782b556902cb5fc24e711a6c2";
+  "b39e52d4df7876798b231f49e5b180dcfadc5bf4a7b80ac89111f7d36ea5bdc4";
 const TWO_STORY_API_PLAN_HASH_GOLDEN_V2 =
-  "7584d7e0c06858154ceaadba0707f0b01e0b56c320f362438f1ec8e9f0f6f16a";
+  "44af0e1f75716098a1e36d4aa3961cae02a58187caa303fb936b96bf1db5a40d";
 const CLI_MEMBERSHIP_HASH_GOLDEN_V2 =
   "da6de6fa7a1c2005be03459827dcb0dffccf917ac56acd6b4d11f9cbec370875";
 const API_MEMBERSHIP_HASH_GOLDEN_V2 =
@@ -78,9 +81,11 @@ function compiled(
   requestedStackPackId: SupportedStackPackIdV2,
 ) {
   const deliverySelection = selectionFor(productSpec, requestedStackPackId);
+  const runtimeBehavior = nodeRuntimeBehaviorAuthorityV1(productSpec);
   const result = compileSemanticRealizationPlanV2({
     productSpec,
     deliverySelection,
+    ...runtimeBehavior,
   });
   assert.equal(
     result.status,
@@ -91,6 +96,7 @@ function compiled(
   return {
     productSpec,
     deliverySelection,
+    ...runtimeBehavior,
     value: result.value,
     canonicalBytes: result.canonicalBytes,
   };
@@ -194,6 +200,11 @@ describe("SemanticRealizationPlanV2 contract and compiler", () => {
         coverage: [17, 10, 4, 1, 2],
         planHash: CLI_PLAN_HASH_GOLDEN_V2,
         membershipHash: CLI_MEMBERSHIP_HASH_GOLDEN_V2,
+        behaviorHashes: [
+          "9d7cc59164e10dceed7c98e951b1a98a23fd36318a083b8b4233c55abaf49e97",
+          "4173068e7e7b629fbe1b843e55ed7c0f1cc9cfbdedb9794450335049eac02a3e",
+        ],
+        behaviorBindingCount: 1,
       },
       {
         compiled: compiled(
@@ -203,6 +214,11 @@ describe("SemanticRealizationPlanV2 contract and compiler", () => {
         coverage: [19, 11, 5, 1, 2],
         planHash: API_PLAN_HASH_GOLDEN_V2,
         membershipHash: API_MEMBERSHIP_HASH_GOLDEN_V2,
+        behaviorHashes: [
+          "c8a31b07122d512e4752a12860eb0c06443ab3f712c3ae44a2d92f89bfd3ae8a",
+          "8fb4fe015ad5dff1d256887e0e25c02b705be097cd8af396be8a0597cd5af7d5",
+        ],
+        behaviorBindingCount: 1,
       },
       {
         compiled: compiled(
@@ -212,6 +228,11 @@ describe("SemanticRealizationPlanV2 contract and compiler", () => {
         coverage: [32, 20, 6, 2, 4],
         planHash: TWO_STORY_API_PLAN_HASH_GOLDEN_V2,
         membershipHash: TWO_STORY_API_MEMBERSHIP_HASH_GOLDEN_V2,
+        behaviorHashes: [
+          "abf0efeacee4d1bbdfc510ae553c9729d2e0f2c7c087fe380b104202c5a7c300",
+          "257f9a6e6bc24f5900a5ac9b71d13a41598340d14a870c64391ef93e52134843",
+        ],
+        behaviorBindingCount: 2,
       },
     ] as const;
 
@@ -231,6 +252,19 @@ describe("SemanticRealizationPlanV2 contract and compiler", () => {
       assert.equal(value.coverage.modelWriteGrantCount, 0);
       assert.equal(value.planHash, testCase.planHash);
       assert.equal(value.realizationMembershipHash, testCase.membershipHash);
+      assert.deepEqual([
+        value.authority.runtimeBehavior.proposalHash,
+        value.authority.runtimeBehavior.contractHash,
+      ], testCase.behaviorHashes);
+      assert.equal(
+        value.authority.runtimeBehavior.invariantBindingCount,
+        testCase.behaviorBindingCount,
+      );
+      assert.equal(value.authority.runtimeBehavior.entityFieldBindingCount, 0);
+      assert.equal(
+        value.authority.runtimeBehavior.verification,
+        "fresh_product_spec_plus_proposal_reproduction",
+      );
       assert.equal(SemanticRealizationPlanV2Schema.safeParse(value).success, true);
     }
   });
@@ -373,6 +407,8 @@ describe("SemanticRealizationPlanV2 contract and compiler", () => {
     const verified = verifySemanticRealizationPlanV2({
       productSpec: first.productSpec,
       deliverySelection: first.deliverySelection,
+      runtimeBehaviorProposal: first.runtimeBehaviorProposal,
+      runtimeBehaviorContract: first.runtimeBehaviorContract,
       candidate: first.value,
     });
     assert.equal(verified.status, "verified_shadow");
@@ -398,6 +434,8 @@ describe("SemanticRealizationPlanV2 contract and compiler", () => {
     assertVerificationError(() => verifySemanticRealizationPlanV2({
       productSpec: authority.productSpec,
       deliverySelection: authority.deliverySelection,
+      runtimeBehaviorProposal: authority.runtimeBehaviorProposal,
+      runtimeBehaviorContract: authority.runtimeBehaviorContract,
       candidate,
     }), "SEMANTIC_REALIZATION_V2_VERIFICATION_AUTHORITY_MISMATCH");
   });
@@ -423,6 +461,56 @@ describe("SemanticRealizationPlanV2 contract and compiler", () => {
     assert.equal(SemanticRealizationPlanV2Schema.safeParse(candidate).success, false);
   });
 
+  it("requires one fresh, exact runtime-behavior proposal and contract join", () => {
+    const cli = compiled(genuineNodeCliProductSpecV2(), "node-cli");
+    const api = compiled(
+      genuineNodeExpressApiProductSpecV2(),
+      "node-express-api",
+    );
+    const missing = compileSemanticRealizationPlanV2({
+      productSpec: cli.productSpec,
+      deliverySelection: cli.deliverySelection,
+    });
+    assert.equal(missing.status, "rejected");
+    if (missing.status === "rejected") {
+      assert.equal(
+        missing.diagnostics[0]?.code,
+        "SEMANTIC_REALIZATION_V2_INPUT_INVALID",
+      );
+    }
+
+    const crossJoined = compileSemanticRealizationPlanV2({
+      productSpec: cli.productSpec,
+      deliverySelection: cli.deliverySelection,
+      runtimeBehaviorProposal: api.runtimeBehaviorProposal,
+      runtimeBehaviorContract: api.runtimeBehaviorContract,
+    });
+    assert.equal(crossJoined.status, "rejected");
+    if (crossJoined.status === "rejected") {
+      assert.equal(
+        crossJoined.diagnostics[0]?.code,
+        "SEMANTIC_REALIZATION_V2_BEHAVIOR_AUTHORITY_REJECTED",
+      );
+    }
+
+    const selfRehashed = structuredClone(cli.runtimeBehaviorContract) as any;
+    selfRehashed.authority.proposalHash = "f".repeat(64);
+    selfRehashed.contractHash = hashProductRuntimeBehaviorContractV1(selfRehashed);
+    const forged = compileSemanticRealizationPlanV2({
+      productSpec: cli.productSpec,
+      deliverySelection: cli.deliverySelection,
+      runtimeBehaviorProposal: cli.runtimeBehaviorProposal,
+      runtimeBehaviorContract: selfRehashed,
+    });
+    assert.equal(forged.status, "rejected");
+    if (forged.status === "rejected") {
+      assert.equal(
+        forged.diagnostics[0]?.code,
+        "SEMANTIC_REALIZATION_V2_BEHAVIOR_AUTHORITY_REJECTED",
+      );
+    }
+  });
+
   it("rejects stale candidates and caller-authored upstream authority", () => {
     const cli = compiled(genuineNodeCliProductSpecV2(), "node-cli");
     const changedSpec = structuredClone(cli.productSpec);
@@ -430,6 +518,8 @@ describe("SemanticRealizationPlanV2 contract and compiler", () => {
     assertVerificationError(() => verifySemanticRealizationPlanV2({
       productSpec: changedSpec,
       deliverySelection: cli.deliverySelection,
+      runtimeBehaviorProposal: cli.runtimeBehaviorProposal,
+      runtimeBehaviorContract: cli.runtimeBehaviorContract,
       candidate: cli.value,
     }), "SEMANTIC_REALIZATION_V2_VERIFICATION_REPRODUCTION_REJECTED");
 
@@ -437,6 +527,8 @@ describe("SemanticRealizationPlanV2 contract and compiler", () => {
       const result = compileSemanticRealizationPlanV2({
         productSpec: cli.productSpec,
         deliverySelection: cli.deliverySelection,
+        runtimeBehaviorProposal: cli.runtimeBehaviorProposal,
+        runtimeBehaviorContract: cli.runtimeBehaviorContract,
         [field]: "caller-owned",
       });
       assert.equal(result.status, "rejected", field);
@@ -501,6 +593,8 @@ describe("SemanticRealizationPlanV2 bounded hostile inputs", () => {
     assertVerificationError(() => verifySemanticRealizationPlanV2({
       productSpec: authority.productSpec,
       deliverySelection: authority.deliverySelection,
+      runtimeBehaviorProposal: authority.runtimeBehaviorProposal,
+      runtimeBehaviorContract: authority.runtimeBehaviorContract,
       candidate,
     }), "SEMANTIC_REALIZATION_V2_VERIFICATION_INPUT_INVALID");
     assert.equal(proxyTrapCalls, 0);

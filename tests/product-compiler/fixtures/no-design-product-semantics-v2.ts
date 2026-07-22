@@ -1,4 +1,10 @@
 import { extractTaskRequirementLedgerV1 } from "../../../src/product-compiler/requirements/task-requirements-v1.js";
+import { hashCanonicalJson } from
+  "../../../src/product-compiler/canonical-json.js";
+import { compileProductRuntimeBehaviorContractV1 } from
+  "../../../src/product-compiler/product-runtime-behavior-contract-v1.js";
+import type { ProductRuntimeBehaviorProposalV1 } from
+  "../../../src/product-compiler/schemas/product-runtime-behavior-contract-v1.js";
 import {
   ProductSpecV2Schema,
   deriveActionInvocationEvidenceIdV2,
@@ -29,6 +35,74 @@ function requirementClassifications(task: string) {
 
 function compareUtf16(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function stateRequirementRefs(
+  productSpec: ProductSpecV2,
+  stateRef: string,
+): string[] {
+  const binding = productSpec.traceability.bindings.find((candidate) =>
+    candidate.semanticKind === "state" && candidate.semanticRef === stateRef);
+  if (!binding) throw new Error(`Missing state traceability for ${stateRef}`);
+  return [...binding.requirementRefs];
+}
+
+function nonEmptyStringAssertions(
+  stateRef: string,
+  itemPath: string,
+) {
+  const subject = {
+    kind: "state_each" as const,
+    stateRef,
+    collectionPath: "",
+    itemPath,
+  };
+  return [
+    { subject, predicate: { operator: "type_is" as const, expected: "string" as const } },
+    { subject, predicate: { operator: "min_length" as const, expected: 1 } },
+  ];
+}
+
+export function nodeRuntimeBehaviorProposalV1(
+  productSpec: ProductSpecV2,
+): ProductRuntimeBehaviorProposalV1 {
+  return {
+    schema: "setfarm.product-runtime-behavior-proposal.v1",
+    productSpecHash: hashCanonicalJson(productSpec),
+    invariantBindings: productSpec.states.flatMap((state) =>
+      state.invariants.map((_invariant, invariantOrdinal) => ({
+        stateRef: state.id,
+        invariantOrdinal,
+        requirementRefs: stateRequirementRefs(productSpec, state.id),
+        disposition: {
+          kind: "runtime_assertions" as const,
+          assertions: productSpec.delivery.platform === "cli"
+            ? nonEmptyStringAssertions(state.id, "")
+            : state.id === "STATE_NOTES"
+              ? nonEmptyStringAssertions(state.id, "/title")
+              : [
+                  ...nonEmptyStringAssertions(state.id, "/project"),
+                  ...nonEmptyStringAssertions(state.id, "/title"),
+                ],
+        },
+      }))),
+    entityFieldBindings: [],
+  };
+}
+
+export function nodeRuntimeBehaviorAuthorityV1(productSpec: ProductSpecV2) {
+  const runtimeBehaviorProposal = nodeRuntimeBehaviorProposalV1(productSpec);
+  const compiled = compileProductRuntimeBehaviorContractV1({
+    productSpec,
+    proposal: runtimeBehaviorProposal,
+  });
+  if (compiled.status !== "shadow_compiled") {
+    throw new Error(JSON.stringify(compiled.diagnostics));
+  }
+  return {
+    runtimeBehaviorProposal,
+    runtimeBehaviorContract: compiled.contract,
+  };
 }
 
 export function nodeCliPlanProposalV2(): any {

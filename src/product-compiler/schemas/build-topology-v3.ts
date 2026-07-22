@@ -109,6 +109,8 @@ export const BUILD_TOPOLOGY_CONTRACT_V3 = Object.freeze({
   stage: "realization_sources_planned_dependencies_ready" as const,
   nativeSourceAuthorities: Object.freeze([
     "verified_file_tree_manifest_v3",
+    "fresh_product_runtime_behavior_proposal_v1",
+    "fresh_product_runtime_behavior_contract_v1",
     "fresh_node_execution_layout_v2",
     "fresh_node_execution_path_token_set_v2",
     "code_owned_runtime_generator_profile_v2",
@@ -851,6 +853,8 @@ const BuildTopologyLogicalIdentityV3Schema = z.object({
       pathMembershipHash: Sha256Schema,
       ownerMembershipHash: Sha256Schema,
       semanticRealizationPlanHash: Sha256Schema,
+      runtimeBehaviorProposalHash: Sha256Schema,
+      runtimeBehaviorContractHash: Sha256Schema,
       runtimeRealizationMembershipHash: Sha256Schema,
       testCoverageMembershipHash: Sha256Schema,
     }).strict(),

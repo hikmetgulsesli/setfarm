@@ -52,6 +52,14 @@ describe("PLAN v3 product semantics v2 output authority", () => {
     assert.equal(authority.sourceProposalHash.length, 64);
     if (authority.sourceTransport !== "product_build_proposal_v1") return;
     assert.equal(authority.sourceSemanticProposalHash.length, 64);
+    assert.equal(
+      authority.runtimeBehaviorProposalCanonicalBytes,
+      canonicalJsonStringify(authority.runtimeBehaviorProposal),
+    );
+    assert.equal(
+      authority.runtimeBehaviorProposalHash,
+      authority.runtimeBehaviorContract.authority.proposalHash,
+    );
     assert.equal(authority.runtimeBehaviorContract.schema,
       "setfarm.product-runtime-behavior-contract.v1");
     assert.equal(authority.planProductBuildAuthority.schema,

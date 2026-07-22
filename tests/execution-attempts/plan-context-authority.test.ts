@@ -18,12 +18,15 @@ describe("PLAN compiler-owned context authority", () => {
 
     context.plan_output_authority_version = "product_build_v1";
     context.product_runtime_behavior_contract_hash = "a".repeat(64);
+    context.product_runtime_behavior_proposal_hash = "c".repeat(64);
     mergeContextSafe(context, {
       plan_output_authority_version: "semantic_only_v2",
       product_runtime_behavior_contract_hash: "b".repeat(64),
+      product_runtime_behavior_proposal_hash: "d".repeat(64),
     });
     assert.equal(context.plan_output_authority_version, "product_build_v1");
     assert.equal(context.product_runtime_behavior_contract_hash, "a".repeat(64));
+    assert.equal(context.product_runtime_behavior_proposal_hash, "c".repeat(64));
   });
 
   it("preserves legacy initialize-once behavior for non-compiler protected keys", () => {

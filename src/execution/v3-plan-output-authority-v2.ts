@@ -60,6 +60,8 @@ export type V3PlanOutputAuthorityV2 =
       sourceProposalHash: string;
       sourceSemanticProposalHash: string;
       runtimeBehaviorProposal: ProductRuntimeBehaviorProposalV1;
+      runtimeBehaviorProposalCanonicalBytes: string;
+      runtimeBehaviorProposalHash: string;
       runtimeBehaviorContract: ProductRuntimeBehaviorContractV1;
       runtimeBehaviorCanonicalBytes: string;
       planProductBuildReferenceMap: PlanProductBuildReferenceMapV1;
@@ -229,6 +231,10 @@ export function resolveV3PlanOutputAuthorityV2(input: Readonly<{
       sourceProposalHash: compiled.authority.source.envelopeHash,
       sourceSemanticProposalHash: compiled.semanticProposalHash,
       runtimeBehaviorProposal: compiled.runtimeBehaviorProposal,
+      runtimeBehaviorProposalCanonicalBytes:
+        canonicalJsonStringify(compiled.runtimeBehaviorProposal),
+      runtimeBehaviorProposalHash:
+        compiled.runtimeBehaviorContract.authority.proposalHash,
       runtimeBehaviorContract: compiled.runtimeBehaviorContract,
       runtimeBehaviorCanonicalBytes: canonicalJsonStringify(compiled.runtimeBehaviorContract),
       planProductBuildReferenceMap: compiled.referenceMap,

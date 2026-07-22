@@ -102,6 +102,8 @@ const EMPTY_DIAGNOSTICS = Object.freeze([]) as readonly [];
 const CompilerInputV3Schema = z.object({
   productSpec: z.unknown(),
   deliverySelection: z.unknown(),
+  runtimeBehaviorProposal: z.unknown(),
+  runtimeBehaviorContract: z.unknown(),
 }).strict();
 
 const VerifierInputV3Schema = CompilerInputV3Schema.extend({
@@ -203,12 +205,18 @@ type FreshAuthorityV3 = Readonly<{
 function reproduceFreshAuthorityV3(input: Readonly<{
   productSpec: unknown;
   deliverySelection: unknown;
+  runtimeBehaviorProposal: unknown;
+  runtimeBehaviorContract: unknown;
 }>): FreshAuthorityV3 {
-  const layout = resolveNodeExecutionLayoutV2(input);
+  const productAuthority = {
+    productSpec: input.productSpec,
+    deliverySelection: input.deliverySelection,
+  };
+  const layout = resolveNodeExecutionLayoutV2(productAuthority);
   if (layout.status !== "shadow_resolved") {
     upstreamFailure(layout.diagnostics[0]?.message ?? "Node layout was rejected");
   }
-  const nodePaths = compileNodeExecutionPathTokenSetV2(input);
+  const nodePaths = compileNodeExecutionPathTokenSetV2(productAuthority);
   if (nodePaths.status !== "shadow_compiled") {
     upstreamFailure(
       nodePaths.diagnostics[0]?.message ?? "Node path tokens were rejected",
@@ -610,6 +618,10 @@ function buildManifestV3(
         generatorMemberCount: plan.coverage.generatorMemberCount,
         evidenceRelationCount: plan.coverage.evidenceRelationCount,
         modelWriteGrantCount: 0,
+        runtimeBehaviorProposalHash:
+          plan.authority.runtimeBehavior.proposalHash,
+        runtimeBehaviorContractHash:
+          plan.authority.runtimeBehavior.contractHash,
       },
       runtimeGeneratorContractHash:
         NODE_PRODUCT_RUNTIME_GENERATOR_CONTRACT_HASH_V2,
@@ -833,6 +845,8 @@ async function verifyInternalV3(
   const reproduced = await compileInternalV3(handle, {
     productSpec: parsed.data.productSpec,
     deliverySelection: parsed.data.deliverySelection,
+    runtimeBehaviorProposal: parsed.data.runtimeBehaviorProposal,
+    runtimeBehaviorContract: parsed.data.runtimeBehaviorContract,
   }, expectedScope);
   if (reproduced.status !== "shadow_compiled") {
     throw new FileTreeManifestVerificationErrorV3(
@@ -916,6 +930,8 @@ async function verifyAtDependencyStageInternalV3(
     const fresh = reproduceFreshAuthorityV3({
       productSpec: parsed.data.productSpec,
       deliverySelection: parsed.data.deliverySelection,
+      runtimeBehaviorProposal: parsed.data.runtimeBehaviorProposal,
+      runtimeBehaviorContract: parsed.data.runtimeBehaviorContract,
     });
     assertBaseReceiptJoinsV3(fresh, base, expectedScope);
     const reproduced = recursivelyFreezeFileTreeManifestV3(

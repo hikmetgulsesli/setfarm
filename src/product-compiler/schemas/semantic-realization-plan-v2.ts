@@ -17,6 +17,12 @@ import {
   SEMANTIC_SOURCE_INTENT_SET_SCHEMA_V1,
 } from "./semantic-source-intent-set-v1.js";
 import {
+  PRODUCT_RUNTIME_BEHAVIOR_CONTRACT_SCHEMA_V1,
+  PRODUCT_RUNTIME_BEHAVIOR_CONTRACT_VERSION_V1,
+  PRODUCT_RUNTIME_BEHAVIOR_EVALUATOR_CONTRACT_HASH_V1,
+  PRODUCT_RUNTIME_BEHAVIOR_PROPOSAL_SCHEMA_V1,
+} from "./product-runtime-behavior-contract-v1.js";
+import {
   SemanticSourceResponsibilityV1Schema,
   SemanticSourceSubjectKindV1Schema,
 } from "./stack-semantic-source-rules-v1.js";
@@ -408,7 +414,15 @@ export const SEMANTIC_REALIZATION_PLAN_CONTRACT_V2 = Object.freeze({
   schema: "setfarm.semantic-realization-plan-contract.v2" as const,
   contractVersion: SEMANTIC_REALIZATION_PLAN_V2_VERSION,
   artifactSchema: SEMANTIC_REALIZATION_PLAN_V2_SCHEMA,
-  inputAuthority: SEMANTIC_SOURCE_INTENT_SET_SCHEMA_V1,
+  inputAuthority: Object.freeze({
+    semanticIntentSetSchema: SEMANTIC_SOURCE_INTENT_SET_SCHEMA_V1,
+    runtimeBehaviorProposalSchema:
+      PRODUCT_RUNTIME_BEHAVIOR_PROPOSAL_SCHEMA_V1,
+    runtimeBehaviorContractSchema:
+      PRODUCT_RUNTIME_BEHAVIOR_CONTRACT_SCHEMA_V1,
+    runtimeBehaviorVerification:
+      "fresh_product_spec_plus_proposal_reproduction" as const,
+  }),
   policySchema: NODE_SEMANTIC_REALIZATION_POLICY_V2.schema,
   policyHash: NODE_SEMANTIC_REALIZATION_POLICY_HASH_V2,
   generatorContractSchema: NODE_PRODUCT_RUNTIME_GENERATOR_CONTRACT_V2_SCHEMA,
@@ -640,6 +654,19 @@ const PlanIdentityV2Schema = z.object({
       ruleSetRef: StableReferenceSchema,
       ruleSetVersion: z.literal("1.0.0"),
       ruleSetHash: Sha256Schema,
+    }).strict(),
+    runtimeBehavior: z.object({
+      proposalSchema: z.literal(PRODUCT_RUNTIME_BEHAVIOR_PROPOSAL_SCHEMA_V1),
+      proposalHash: Sha256Schema,
+      contractSchema: z.literal(PRODUCT_RUNTIME_BEHAVIOR_CONTRACT_SCHEMA_V1),
+      contractVersion: z.literal(PRODUCT_RUNTIME_BEHAVIOR_CONTRACT_VERSION_V1),
+      contractHash: Sha256Schema,
+      evaluatorContractHash: z.literal(
+        PRODUCT_RUNTIME_BEHAVIOR_EVALUATOR_CONTRACT_HASH_V1,
+      ),
+      invariantBindingCount: z.number().int().nonnegative().max(20_000),
+      entityFieldBindingCount: z.number().int().nonnegative().max(20_000),
+      verification: z.literal("fresh_product_spec_plus_proposal_reproduction"),
     }).strict(),
     generatorProfile: z.object({
       generatorRef: z.literal("NODE_PRODUCT_RUNTIME_GENERATOR_V2"),
