@@ -29,6 +29,33 @@ export type ClaimRuntimePublication = Readonly<{
   runtime?: Readonly<{ sessionId: string; ownerInstanceId: string }>;
 }>;
 
+type PlanAuthoritySeal = Readonly<{
+  productSemanticsVersion: "v2";
+  outputAuthorityVersion: "product_build_v1";
+}>;
+
+function parsePlanAuthoritySeal(value: unknown): PlanAuthoritySeal | undefined {
+  if (value === undefined) return undefined;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("PLAN_AUTHORITY_SEAL_INVALID");
+  }
+  const record = value as Record<string, unknown>;
+  const keys = Object.keys(record).sort();
+  if (
+    keys.length !== 2
+    || keys[0] !== "outputAuthorityVersion"
+    || keys[1] !== "productSemanticsVersion"
+    || record["productSemanticsVersion"] !== "v2"
+    || record["outputAuthorityVersion"] !== "product_build_v1"
+  ) {
+    throw new Error("PLAN_AUTHORITY_SEAL_INVALID");
+  }
+  return {
+    productSemanticsVersion: "v2",
+    outputAuthorityVersion: "product_build_v1",
+  };
+}
+
 function validTime(value?: Date): Date {
   const result = value ? new Date(value) : new Date();
   if (!Number.isFinite(result.getTime())) throw new Error("CLAIM_PUBLICATION_TIME_INVALID");
@@ -481,10 +508,12 @@ export async function publishSingleClaimRuntime(
     workflowStepId: string;
     claimAgentId: string;
     runtimeIntent?: RuntimeClaimIntentV1;
+    planAuthoritySeal?: PlanAuthoritySeal;
     now?: Date;
   }>,
 ): Promise<ClaimRuntimePublication | undefined> {
   validTime(rawInput.now);
+  const planAuthoritySeal = parsePlanAuthoritySeal(rawInput.planAuthoritySeal);
   const runtimeIntent = rawInput.runtimeIntent
     ? parseRuntimeClaimIntentV1(rawInput.runtimeIntent)
     : undefined;
@@ -492,8 +521,9 @@ export async function publishSingleClaimRuntime(
     const runs = await transaction.unsafe<Array<{
       status: string;
       protocol: "legacy" | "shadow" | "v3";
+      context: string;
     }>>(
-      "SELECT status, protocol FROM runs WHERE id = $1 FOR UPDATE",
+      "SELECT status, protocol, context FROM runs WHERE id = $1 FOR UPDATE",
       [rawInput.runId],
     );
     const run = runs[0];
@@ -505,6 +535,37 @@ export async function publishSingleClaimRuntime(
     if (requests.length > 0) return undefined;
     if (run.protocol !== "legacy" && !runtimeIntent) {
       throw new Error("COMPILER_RUNTIME_CLAIM_INTENT_REQUIRED");
+    }
+    let sealedPlanContext: string | undefined;
+    if (planAuthoritySeal) {
+      if (run.protocol !== "v3" || rawInput.workflowStepId !== "plan") {
+        throw new Error("PLAN_AUTHORITY_SEAL_SCOPE_INVALID");
+      }
+      let context: Record<string, unknown>;
+      try {
+        const parsed = JSON.parse(run.context);
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+          throw new Error("not an object");
+        }
+        context = parsed as Record<string, unknown>;
+      } catch {
+        throw new Error("PLAN_AUTHORITY_SEAL_CONTEXT_INVALID");
+      }
+      if (
+        context["product_semantics_version"] !== undefined
+        && context["product_semantics_version"] !== planAuthoritySeal.productSemanticsVersion
+      ) {
+        throw new Error("PLAN_AUTHORITY_SEAL_SEMANTICS_VERSION_CONFLICT");
+      }
+      if (
+        context["plan_output_authority_version"] !== undefined
+        && context["plan_output_authority_version"] !== planAuthoritySeal.outputAuthorityVersion
+      ) {
+        throw new Error("PLAN_AUTHORITY_SEAL_OUTPUT_VERSION_CONFLICT");
+      }
+      context["product_semantics_version"] = planAuthoritySeal.productSemanticsVersion;
+      context["plan_output_authority_version"] = planAuthoritySeal.outputAuthorityVersion;
+      sealedPlanContext = JSON.stringify(context);
     }
     const unreleased = await transaction.unsafe<Array<{ session_id: string }>>(
       `SELECT session_id FROM runtime_sessions
@@ -556,6 +617,13 @@ export async function publishSingleClaimRuntime(
         now,
       });
       runtime = { sessionId: runtimeIntent.sessionId, ownerInstanceId: runtimeIntent.ownerInstanceId };
+    }
+    if (sealedPlanContext !== undefined) {
+      const sealed = await transaction.unsafe<Array<{ id: string }>>(
+        "UPDATE runs SET context = $1, updated_at = $2 WHERE id = $3 RETURNING id",
+        [sealedPlanContext, now, rawInput.runId],
+      );
+      if (sealed.length !== 1) throw new Error("PLAN_AUTHORITY_SEAL_RUN_CAS_LOST");
     }
     return { claimId, protocol: run.protocol, runtime };
   }) as Promise<ClaimRuntimePublication | undefined>;

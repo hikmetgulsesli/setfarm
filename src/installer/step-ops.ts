@@ -17,6 +17,7 @@ import {
   RUN_STATUS,
   STORY_STATUS,
   PROTECTED_CONTEXT_KEYS,
+  isStepOutputContextKeyProtected,
   OPTIONAL_TEMPLATE_VARS,
   PR_REVIEW_DELAY_MS,
 } from "./constants.js";
@@ -4634,7 +4635,7 @@ async function injectVerifyContext(
   if (nextUnverified.output) {
     const storyOutput = parseOutputKeyValues(nextUnverified.output);
     for (const [key, value] of Object.entries(storyOutput)) {
-      if (PROTECTED_CONTEXT_KEYS.has(key) && context[key]) continue;
+      if (isStepOutputContextKeyProtected(key, context)) continue;
       context[key] = value;
     }
   }
@@ -4810,6 +4811,10 @@ async function publishSingleClaimAndRuntime(
   step: StepRow,
   claimAgentId: string,
   rawRuntimeIntent?: RuntimeClaimIntentV1,
+  planAuthoritySeal?: Readonly<{
+    productSemanticsVersion: "v2";
+    outputAuthorityVersion: "product_build_v1";
+  }>,
 ): Promise<Readonly<{
   claimId: number;
   protocol: "legacy" | "shadow" | "v3";
@@ -4821,6 +4826,7 @@ async function publishSingleClaimAndRuntime(
     workflowStepId: step.step_id,
     claimAgentId,
     runtimeIntent: rawRuntimeIntent,
+    planAuthoritySeal,
   });
 }
 
@@ -5341,10 +5347,33 @@ async function claimSingleStep(
     }
     logger.info(`[claim-idempotent] Re-issued running step ${step.step_id} to ${agentId}`, { runId: step.run_id, stepId: step.step_id });
   } else {
-    const publication = await publishSingleClaimAndRuntime(step, agentId, runtimeIntent);
+    const productSemanticsVersion = context["product_semantics_version"] === "v1"
+      || context["product_semantics_version"] === "v2"
+      ? context["product_semantics_version"]
+      : process.env.SETFARM_PRODUCT_SEMANTICS_VERSION === "v1"
+        ? "v1"
+        : "v2";
+    const planAuthoritySeal = runProtocol?.protocol === "v3"
+      && step.step_id === "plan"
+      && productSemanticsVersion === "v2"
+      ? {
+          productSemanticsVersion: "v2" as const,
+          outputAuthorityVersion: "product_build_v1" as const,
+        }
+      : undefined;
+    const publication = await publishSingleClaimAndRuntime(
+      step,
+      agentId,
+      runtimeIntent,
+      planAuthoritySeal,
+    );
     if (!publication) return { found: false };
     singleStepClaimId = publication.claimId;
     singleStepRuntime = publication.runtime;
+    if (planAuthoritySeal) {
+      context["product_semantics_version"] = "v2";
+      context["plan_output_authority_version"] = "product_build_v1";
+    }
     logger.info(`Step claimed by ${agentId}`, { runId: step.run_id, stepId: step.step_id });
     shouldRecordSingleStepTransition = true;
   }
@@ -7727,6 +7756,9 @@ export async function completeStep(
       const planInput = {
         task: context["task"] || "",
         parsed,
+        ...(context["plan_output_authority_version"] !== "product_build_v1"
+          ? { allowSemanticOnlyCompatibility: true }
+          : {}),
         ...(context["requested_stack_prefix"] && context["stack_pack_id"]
           ? { requestedStackPackId: context["stack_pack_id"] }
           : {}),
@@ -7736,7 +7768,7 @@ export async function completeStep(
         ? resolveV3PlanOutputAuthorityV2(planInput)
         : resolveV3PlanOutputAuthorityV1(planInput);
       if (nativeV3PlanAuthority.status === "proposal") {
-        parsed.prd = semanticsV2
+        const canonicalPrd = semanticsV2
           ? projectCanonicalV3PlanParsedOutputV2({
               parsed,
               authority: nativeV3PlanAuthority as Extract<V3PlanOutputAuthorityV2, { status: "proposal" }>,
@@ -7745,6 +7777,13 @@ export async function completeStep(
               parsed,
               authority: nativeV3PlanAuthority as Extract<V3PlanOutputAuthorityV1, { status: "proposal" }>,
             }).prd;
+        // The typed proposal is the only model-owned PLAN payload. Legacy
+        // KEY:value siblings are neither specification nor operational
+        // authority, so do not let them enter run context even transiently.
+        for (const key of Object.keys(parsed)) {
+          if (key !== "status" && key !== "prd") delete parsed[key];
+        }
+        parsed.prd = canonicalPrd;
       }
     } catch (error) {
       // A malformed or semantically invalid typed PLAN proposal is an agent
@@ -7784,6 +7823,17 @@ export async function completeStep(
     const delivery = nativeV3PlanAuthority.deliverySelection;
     context["plan_source_transport"] = nativeV3PlanAuthority.sourceTransport;
     context["plan_source_proposal_hash"] = nativeV3PlanAuthority.sourceProposalHash;
+    if (nativeV3PlanAuthority.sourceTransport === "product_build_proposal_v1") {
+      context["plan_semantic_proposal_hash"] = nativeV3PlanAuthority.sourceSemanticProposalHash;
+      context["plan_product_build_authority"] =
+        nativeV3PlanAuthority.planProductBuildAuthorityCanonicalBytes;
+      context["plan_product_build_authority_hash"] =
+        nativeV3PlanAuthority.planProductBuildAuthority.authorityHash;
+      context["product_runtime_behavior_contract"] =
+        nativeV3PlanAuthority.runtimeBehaviorCanonicalBytes;
+      context["product_runtime_behavior_contract_hash"] =
+        nativeV3PlanAuthority.runtimeBehaviorContract.contractHash;
+    }
     context["product_semantics_version"] = nativeV3PlanAuthority.productSpec.schema === "setfarm.product-spec.v2"
       ? "v2"
       : "v1";
@@ -7807,7 +7857,7 @@ export async function completeStep(
   }
   if (!isNativeV3ImplementCompletion) {
     for (const [key, value] of Object.entries(parsed)) {
-      if (PROTECTED_CONTEXT_KEYS.has(key) && context[key]) {
+      if (isStepOutputContextKeyProtected(key, context)) {
         logger.warn(`[context] Blocked overwrite of protected key "${key}" (current: "${context[key]}", attempted: "${value}")`, { runId: step.run_id });
         continue;
       }
@@ -12581,7 +12631,7 @@ async function handleVerifyEachCompletion(
     if (nextUnverifiedStory.output) {
       const storyOut = parseOutputKeyValues(nextUnverifiedStory.output);
       for (const [key, value] of Object.entries(storyOut)) {
-        if (PROTECTED_CONTEXT_KEYS.has(key) && context[key]) continue;
+        if (isStepOutputContextKeyProtected(key, context)) continue;
         context[key] = value;
       }
     }

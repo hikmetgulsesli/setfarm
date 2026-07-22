@@ -11,7 +11,7 @@ import { canonicalJsonStringify } from "../../src/product-compiler/canonical-jso
 import { extractTaskRequirementLedgerV1 } from "../../src/product-compiler/requirements/task-requirements-v1.js";
 import {
   CONTAINED_GAME_TASK,
-  containedGamePlanProposalV2,
+  containedGamePlanProductBuildProposalV1,
 } from "./fixtures/product-semantics-v2.js";
 
 describe("PLAN product semantics v2 integration", () => {
@@ -27,7 +27,11 @@ describe("PLAN product semantics v2 integration", () => {
         v3_requirement_ledger: canonicalJsonStringify(ledger),
       },
     });
-    assert.match(prompt, /plan-semantic-proposal-v2/);
+    assert.match(prompt, /plan-product-build-proposal-v1/);
+    assert.match(prompt, /runtimeBehavior/);
+    assert.match(prompt, /every semantics\.states\[\]\.invariants occurrence exactly once/i);
+    assert.match(prompt, /entity_field state-delta occurrence exactly once/i);
+    assert.match(prompt, /Prose invariants remain provenance, not executable instructions/);
     assert.match(prompt, /controlPlacements/);
     assert.match(prompt, /affectedSurfaceKeys are behavior\/effect scope and never imply a rendered control/);
     assert.match(prompt, /exactly one route_root surface/);
@@ -52,12 +56,17 @@ describe("PLAN product semantics v2 integration", () => {
     assert.doesNotMatch(prompt, /Every user action declares exact controlPlacements/);
     assert.doesNotMatch(prompt, /Declare an input only when an input or inputs valueFrom consumes it/);
     assert.doesNotMatch(prompt, /Emit exactly one plan-semantic-proposal-v1 JSON fence/);
+    assert.doesNotMatch(prompt, /Emit exactly one plan-semantic-proposal-v2 JSON fence/);
+    assert.ok(
+      Buffer.byteLength(prompt, "utf8") < 192_000,
+      `atomic PLAN prompt exceeds budget: ${Buffer.byteLength(prompt, "utf8")}`,
+    );
   });
 
-  it("accepts only the compiler-owned canonical ProductSpec v2 projection", () => {
+  it("accepts the atomic envelope and validates its compiler-owned projection", () => {
     const parsed = {
       status: "done",
-      prd: `\`\`\`plan-semantic-proposal-v2\n${JSON.stringify(containedGamePlanProposalV2(), null, 2)}\n\`\`\``,
+      prd: `\`\`\`plan-product-build-proposal-v1\n${JSON.stringify(containedGamePlanProductBuildProposalV1(), null, 2)}\n\`\`\``,
     };
     const authority = resolveV3PlanOutputAuthorityV2({
       task: CONTAINED_GAME_TASK,
@@ -81,7 +90,7 @@ describe("PLAN product semantics v2 integration", () => {
     const authority = resolveV3PlanOutputAuthorityV2({
       task: CONTAINED_GAME_TASK,
       parsed: {
-        prd: `\`\`\`plan-semantic-proposal-v2\n${JSON.stringify(containedGamePlanProposalV2())}\n\`\`\``,
+        prd: `\`\`\`plan-product-build-proposal-v1\n${JSON.stringify(containedGamePlanProductBuildProposalV1())}\n\`\`\``,
       },
     });
     assert.equal(authority.status, "proposal");

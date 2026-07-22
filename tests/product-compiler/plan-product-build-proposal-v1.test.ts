@@ -125,6 +125,18 @@ describe("PlanProductBuildProposalV1", () => {
     const result = compileOrThrow(envelope);
     assert.equal(PlanProductBuildAuthorityV1Schema.safeParse(result.authority).success, true);
     assert.equal(result.authority.readiness.productionConsumption, "forbidden");
+    assert.deepEqual(result.authority.readiness.blockerCodes, [
+      "PLAN_PRODUCT_BUILD_V1_DOWNSTREAM_HASH_INTEGRATION_UNVERIFIED",
+      "PLAN_PRODUCT_BUILD_V1_EVAL_UNVERIFIED",
+      "PLAN_PRODUCT_BUILD_V1_RELEASE_MANIFEST_UNVERIFIED",
+      "PLAN_PRODUCT_BUILD_V1_STANDALONE_NODE_COMPILER_UNVERIFIED",
+    ]);
+    assert.deepEqual(result.runtimeBehaviorContract.readiness.blockerCodes, [
+      "PRODUCT_RUNTIME_BEHAVIOR_V1_EVIDENCE_REGISTRY_UNVERIFIED",
+      "PRODUCT_RUNTIME_BEHAVIOR_V1_RELEASE_MANIFEST_UNVERIFIED",
+      "PRODUCT_RUNTIME_BEHAVIOR_V1_RUNTIME_GENERATOR_INTEGRATION_UNVERIFIED",
+      "PRODUCT_RUNTIME_BEHAVIOR_V1_TEST_GENERATOR_INTEGRATION_UNVERIFIED",
+    ]);
     assert.equal(result.authority.source.semanticProposalHash, result.semanticProposalHash);
     assert.deepEqual(result.authority.source, {
       sourceTaskHash: "44bcb94306d41edb2f9034c11fa601b3b5b176eff24bd3ac484f390b0dc53912",
@@ -135,12 +147,12 @@ describe("PlanProductBuildProposalV1", () => {
       productSpecHash: "6fe621966b0d44c90e499f30a3c30e0e724c9a1589cb170da30ef49bc2510ace",
       deliverySelectionHash: "ae3158ea63fa143554617dd3049450ea4ab984398518f38603b5950a24f10289",
       runtimeBehaviorProposalHash: "18a48142bedbe8685903679e8c7ee72d4603a6aef46ccc9c90d9b4c045a95a60",
-      runtimeBehaviorContractHash: "a17cee4be7f4d021b6c189173a5e4e9910481049438c0860771520b979ac2f0b",
+      runtimeBehaviorContractHash: "3728d01d012bb9828e833a2cb60d402f812328763b3c41e6fcf0dc2f1a42fbda",
       referenceMapHash: "f32f95e950deba41dfe0aeccc9d665a64d8e3bbf6153858f42bb34fd4f165a04",
     });
     assert.equal(
       result.authority.authorityHash,
-      "bfc556ceb445ec936f59755292ba9a05674af7393ca82093ccd377661708eab4",
+      "320e6f65a3af18206bf95814880bc617381fbfc55fde600abc59f94ebd04dacc",
     );
     assert.equal(
       result.authority.outputs.runtimeBehaviorContractHash,

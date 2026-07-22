@@ -53,6 +53,33 @@ async function seedSingle(
   return stepDbId;
 }
 
+async function seedV3PlanSingle(
+  database: Awaited<ReturnType<typeof createIsolatedTestDatabase>>,
+  runId: string,
+  context: Readonly<Record<string, unknown>>,
+) {
+  const releaseSha = "4".repeat(40);
+  const releaseAdmissionHash = await database.seedV3ReleaseGoAdmission(releaseSha);
+  await database.sql`
+    INSERT INTO runs (
+      id, workflow_id, task, status, context, protocol,
+      compiler_release_sha, activation_preflight_hash, release_admission_hash
+    ) VALUES (
+      ${runId}, 'feature-dev', 'atomic plan authority', 'running',
+      ${JSON.stringify(context)}, 'v3', ${releaseSha}, ${"e".repeat(64)},
+      ${releaseAdmissionHash}
+    )
+  `;
+  const stepDbId = `${runId}-step`;
+  await database.sql`
+    INSERT INTO steps
+      (id, run_id, step_id, agent_id, step_index, input_template, expects, status)
+    VALUES
+      (${stepDbId}, ${runId}, 'plan', 'feature-dev_planner', 1, '', '', 'pending')
+  `;
+  return stepDbId;
+}
+
 async function seedLoop(
   database: Awaited<ReturnType<typeof createIsolatedTestDatabase>>,
   runId: string,
@@ -256,6 +283,219 @@ describe("atomic claim and durable runtime publication", () => {
         claim_id: result!.claimId,
         session_claim_id: result!.claimId,
         session_state: "reserved",
+      });
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("atomically seals the PLAN output authority with its new v3 claim", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const runId = "run-single-plan-authority-seal";
+      const stepDbId = await seedV3PlanSingle(database, runId, {
+        task: "atomic plan authority",
+      });
+      const result = await publishSingleClaimRuntime(database.sql, {
+        runId,
+        stepDbId,
+        workflowStepId: "plan",
+        claimAgentId: "feature-dev_planner",
+        runtimeIntent: runtimeIntent("RTS_single-plan-authority-seal"),
+        planAuthoritySeal: {
+          productSemanticsVersion: "v2",
+          outputAuthorityVersion: "product_build_v1",
+        },
+      });
+      assert.ok(result);
+      const rows = await database.sql<Array<{
+        step_status: string;
+        claim_count: number;
+        session_count: number;
+        semantics_version: string;
+        authority_version: string;
+      }>>`
+        SELECT step.status AS step_status,
+               (SELECT COUNT(*)::integer FROM claim_log WHERE run_id = run.id) AS claim_count,
+               (SELECT COUNT(*)::integer FROM runtime_sessions WHERE run_id = run.id) AS session_count,
+               run.context::jsonb ->> 'product_semantics_version' AS semantics_version,
+               run.context::jsonb ->> 'plan_output_authority_version' AS authority_version
+          FROM runs run
+          JOIN steps step ON step.id = ${stepDbId}
+         WHERE run.id = ${runId}
+      `;
+      assert.deepEqual({ ...rows[0] }, {
+        step_status: "running",
+        claim_count: 1,
+        session_count: 1,
+        semantics_version: "v2",
+        authority_version: "product_build_v1",
+      });
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("rolls back PLAN publication when its authority seal conflicts", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const runId = "run-single-plan-authority-conflict";
+      const stepDbId = await seedV3PlanSingle(database, runId, {
+        product_semantics_version: "v1",
+      });
+      await assert.rejects(
+        publishSingleClaimRuntime(database.sql, {
+          runId,
+          stepDbId,
+          workflowStepId: "plan",
+          claimAgentId: "feature-dev_planner",
+          runtimeIntent: runtimeIntent("RTS_single-plan-authority-conflict"),
+          planAuthoritySeal: {
+            productSemanticsVersion: "v2",
+            outputAuthorityVersion: "product_build_v1",
+          },
+        }),
+        /PLAN_AUTHORITY_SEAL_SEMANTICS_VERSION_CONFLICT/u,
+      );
+      const rows = await database.sql<Array<{
+        step_status: string;
+        claim_count: number;
+        session_count: number;
+        authority_version: string | null;
+      }>>`
+        SELECT step.status AS step_status,
+               (SELECT COUNT(*)::integer FROM claim_log WHERE run_id = run.id) AS claim_count,
+               (SELECT COUNT(*)::integer FROM runtime_sessions WHERE run_id = run.id) AS session_count,
+               run.context::jsonb ->> 'plan_output_authority_version' AS authority_version
+          FROM runs run
+          JOIN steps step ON step.id = ${stepDbId}
+         WHERE run.id = ${runId}
+      `;
+      assert.deepEqual({ ...rows[0] }, {
+        step_status: "pending",
+        claim_count: 0,
+        session_count: 0,
+        authority_version: null,
+      });
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("rejects malformed PLAN authority seals before publication", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const runId = "run-single-plan-authority-invalid";
+      const stepDbId = await seedV3PlanSingle(database, runId, {
+        task: "invalid plan authority",
+      });
+      const baseInput = {
+        runId,
+        stepDbId,
+        workflowStepId: "plan",
+        claimAgentId: "feature-dev_planner",
+        runtimeIntent: runtimeIntent("RTS_single-plan-authority-invalid"),
+      };
+      await assert.rejects(
+        publishSingleClaimRuntime(database.sql, {
+          ...baseInput,
+          planAuthoritySeal: {
+            productSemanticsVersion: "v1",
+            outputAuthorityVersion: "product_build_v1",
+          } as never,
+        }),
+        /PLAN_AUTHORITY_SEAL_INVALID/u,
+      );
+      await assert.rejects(
+        publishSingleClaimRuntime(database.sql, {
+          ...baseInput,
+          planAuthoritySeal: {
+            productSemanticsVersion: "v2",
+            outputAuthorityVersion: "product_build_v1",
+            forged: true,
+          } as never,
+        }),
+        /PLAN_AUTHORITY_SEAL_INVALID/u,
+      );
+      const rows = await database.sql<Array<{
+        step_status: string;
+        claim_count: number;
+        session_count: number;
+        semantics_version: string | null;
+        authority_version: string | null;
+      }>>`
+        SELECT step.status AS step_status,
+               (SELECT COUNT(*)::integer FROM claim_log WHERE run_id = run.id) AS claim_count,
+               (SELECT COUNT(*)::integer FROM runtime_sessions WHERE run_id = run.id) AS session_count,
+               run.context::jsonb ->> 'product_semantics_version' AS semantics_version,
+               run.context::jsonb ->> 'plan_output_authority_version' AS authority_version
+          FROM runs run
+          JOIN steps step ON step.id = ${stepDbId}
+         WHERE run.id = ${runId}
+      `;
+      assert.deepEqual({ ...rows[0] }, {
+        step_status: "pending",
+        claim_count: 0,
+        session_count: 0,
+        semantics_version: null,
+        authority_version: null,
+      });
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("rolls back the PLAN authority seal when runtime reservation fails", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const firstRun = "run-plan-seal-runtime-fault-a";
+      const firstStep = await seedSingle(database, firstRun);
+      const duplicateSessionId = "RTS_plan-seal-runtime-fault";
+      await publishSingleClaimRuntime(database.sql, {
+        runId: firstRun,
+        stepDbId: firstStep,
+        workflowStepId: "plan",
+        claimAgentId: "feature-dev_planner",
+        runtimeIntent: runtimeIntent(duplicateSessionId),
+      });
+
+      const secondRun = "run-plan-seal-runtime-fault-b";
+      const secondStep = await seedV3PlanSingle(database, secondRun, {
+        task: "atomic rollback",
+      });
+      await assert.rejects(
+        publishSingleClaimRuntime(database.sql, {
+          runId: secondRun,
+          stepDbId: secondStep,
+          workflowStepId: "plan",
+          claimAgentId: "feature-dev_planner",
+          runtimeIntent: runtimeIntent(duplicateSessionId),
+          planAuthoritySeal: {
+            productSemanticsVersion: "v2",
+            outputAuthorityVersion: "product_build_v1",
+          },
+        }),
+        /duplicate key value|unique constraint/i,
+      );
+      const rows = await database.sql<Array<{
+        step_status: string;
+        claim_count: number;
+        semantics_version: string | null;
+        authority_version: string | null;
+      }>>`
+        SELECT step.status AS step_status,
+               (SELECT COUNT(*)::integer FROM claim_log WHERE run_id = run.id) AS claim_count,
+               run.context::jsonb ->> 'product_semantics_version' AS semantics_version,
+               run.context::jsonb ->> 'plan_output_authority_version' AS authority_version
+          FROM runs run
+          JOIN steps step ON step.id = ${secondStep}
+         WHERE run.id = ${secondRun}
+      `;
+      assert.deepEqual({ ...rows[0] }, {
+        step_status: "pending",
+        claim_count: 0,
+        semantics_version: null,
+        authority_version: null,
       });
     } finally {
       await database.cleanup();

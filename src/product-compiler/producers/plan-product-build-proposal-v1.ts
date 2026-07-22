@@ -694,7 +694,6 @@ function compileInternal(input: unknown): PlanProductBuildCompilationResultV1 {
         typeof PLAN_PRODUCT_BUILD_BLOCKER_CODES_V1[1],
         typeof PLAN_PRODUCT_BUILD_BLOCKER_CODES_V1[2],
         typeof PLAN_PRODUCT_BUILD_BLOCKER_CODES_V1[3],
-        typeof PLAN_PRODUCT_BUILD_BLOCKER_CODES_V1[4],
       ],
     },
     source: {

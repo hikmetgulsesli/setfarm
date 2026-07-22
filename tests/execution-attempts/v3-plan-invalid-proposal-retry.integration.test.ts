@@ -315,6 +315,19 @@ test("invalid PLAN v3 proposal closes the exact claim and settles as a bounded r
       /cannot be upgraded/i,
     );
     assert.equal(retryClaim.resolvedInput, planInstruction);
+    const retrySeal = await database.sql<Array<{
+      semantics_version: string;
+      authority_version: string;
+    }>>`
+      SELECT context::jsonb ->> 'product_semantics_version' AS semantics_version,
+             context::jsonb ->> 'plan_output_authority_version' AS authority_version
+        FROM runs
+       WHERE id = ${runId}
+    `;
+    assert.deepEqual({ ...retrySeal[0] }, {
+      semantics_version: "v2",
+      authority_version: "product_build_v1",
+    });
     if (!retryClaim.claimId || !retryClaim.runtimeSessionId) {
       throw new Error("retry claim authority missing");
     }

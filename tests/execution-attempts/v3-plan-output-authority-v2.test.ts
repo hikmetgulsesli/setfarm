@@ -11,6 +11,7 @@ import { canonicalJsonStringify } from "../../src/product-compiler/canonical-jso
 import { extractTaskRequirementLedgerV1 } from "../../src/product-compiler/requirements/task-requirements-v1.js";
 import {
   CONTAINED_GAME_TASK,
+  containedGamePlanProductBuildProposalV1,
   containedGamePlanProposalV2,
 } from "../product-compiler/fixtures/product-semantics-v2.js";
 
@@ -33,11 +34,11 @@ function typedRejection(overrides: Record<string, unknown> = {}): any {
 }
 
 describe("PLAN v3 product semantics v2 output authority", () => {
-  it("compiles one primary v2 proposal and projects immutable compiler-owned ProductSpec v2 bytes", () => {
-    const proposal = containedGamePlanProposalV2();
+  it("compiles one atomic build proposal and projects all compiler-owned authority bytes", () => {
+    const proposal = containedGamePlanProductBuildProposalV1();
     const parsed = {
       status: "done",
-      prd: `Planner preface\n${block("plan-semantic-proposal-v2", proposal)}\nPlanner suffix`,
+      prd: `Planner preface\n${block("plan-product-build-proposal-v1", proposal)}\nPlanner suffix`,
     };
     const original = structuredClone(parsed);
 
@@ -47,8 +48,18 @@ describe("PLAN v3 product semantics v2 output authority", () => {
     });
     assert.equal(authority.status, "proposal");
     if (authority.status !== "proposal") return;
-    assert.equal(authority.sourceTransport, "semantic_proposal_v2");
+    assert.equal(authority.sourceTransport, "product_build_proposal_v1");
     assert.equal(authority.sourceProposalHash.length, 64);
+    if (authority.sourceTransport !== "product_build_proposal_v1") return;
+    assert.equal(authority.sourceSemanticProposalHash.length, 64);
+    assert.equal(authority.runtimeBehaviorContract.schema,
+      "setfarm.product-runtime-behavior-contract.v1");
+    assert.equal(authority.planProductBuildAuthority.schema,
+      "setfarm.plan-product-build-authority.v1");
+    assert.equal(
+      authority.planProductBuildAuthority.outputs.runtimeBehaviorContractHash,
+      authority.runtimeBehaviorContract.contractHash,
+    );
     assert.equal(authority.productSpec.schema, "setfarm.product-spec.v2");
     assert.equal(authority.productSpec.routes[0]?.rootSurfaceRef, "SURF_PLAY_PAGE");
     assert.deepEqual(authority.productSpec.actions[0]?.controlPlacements, [{
@@ -63,12 +74,53 @@ describe("PLAN v3 product semantics v2 output authority", () => {
     assert.equal(authority.canonicalBytes, canonicalJsonStringify(authority.productSpec));
 
     const projected = projectCanonicalV3PlanParsedOutputV2({ parsed, authority });
-    assert.doesNotMatch(projected.prd, /plan-semantic-proposal-v2/);
+    assert.doesNotMatch(projected.prd, /plan-product-build-proposal-v1/);
     assert.match(projected.prd, /```product-spec-v2/);
+    assert.match(projected.prd, /```product-runtime-behavior-contract-v1/);
+    assert.match(projected.prd, /```plan-product-build-authority-v1/);
     assert.match(projected.prd, new RegExp(
       authority.canonicalBytes.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
     ));
+    assert.match(projected.prd, new RegExp(
+      authority.runtimeBehaviorCanonicalBytes.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+    ));
+    assert.match(projected.prd, new RegExp(
+      authority.planProductBuildAuthorityCanonicalBytes.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+    ));
     assert.deepEqual(parsed, original);
+    assert.throws(
+      () => projectCanonicalV3PlanParsedOutputV2({
+        parsed: {
+          ...parsed,
+          prd: `${parsed.prd}\n${block("product-spec-v2", authority.productSpec)}`,
+        },
+        authority,
+      }),
+      /V3_PLAN_V2_CANONICAL_PROJECTION_SOURCE_MISMATCH/u,
+    );
+  });
+
+  it("reads semantic-only v2 as explicit compatibility without fabricating behavior", () => {
+    const parsed = {
+      status: "done",
+      prd: block("plan-semantic-proposal-v2", containedGamePlanProposalV2()),
+    };
+    assert.throws(
+      () => resolveV3PlanOutputAuthorityV2({ task: CONTAINED_GAME_TASK, parsed }),
+      /V3_PLAN_V2_SEMANTIC_ONLY_COMPATIBILITY_NOT_AUTHORIZED/u,
+    );
+    const authority = resolveV3PlanOutputAuthorityV2({
+      task: CONTAINED_GAME_TASK,
+      parsed,
+      allowSemanticOnlyCompatibility: true,
+    });
+    assert.equal(authority.status, "proposal");
+    if (authority.status !== "proposal") return;
+    assert.equal(authority.sourceTransport, "semantic_proposal_v2");
+    assert.equal("runtimeBehaviorContract" in authority, false);
+    const projected = projectCanonicalV3PlanParsedOutputV2({ parsed, authority });
+    assert.match(projected.prd, /```product-spec-v2/);
+    assert.doesNotMatch(projected.prd, /product-runtime-behavior-contract-v1/);
   });
 
   it("rejects lossy v1 semantics instead of inventing control placement authority", () => {
@@ -92,7 +144,12 @@ describe("PLAN v3 product semantics v2 output authority", () => {
   it("rejects planner-owned ProductSpec v2 even when its bytes were previously compiled", () => {
     const proposalAuthority = resolveV3PlanOutputAuthorityV2({
       task: CONTAINED_GAME_TASK,
-      parsed: { prd: block("plan-semantic-proposal-v2", containedGamePlanProposalV2()) },
+      parsed: {
+        prd: block(
+          "plan-product-build-proposal-v1",
+          containedGamePlanProductBuildProposalV1(),
+        ),
+      },
     });
     assert.equal(proposalAuthority.status, "proposal");
     if (proposalAuthority.status !== "proposal") return;
@@ -146,6 +203,30 @@ describe("PLAN v3 product semantics v2 output authority", () => {
       }),
       /V3_PLAN_V2_TYPED_ARTIFACT_REQUIRED:1:1/,
     );
+    assert.throws(
+      () => resolveV3PlanOutputAuthorityV2({
+        task: CONTAINED_GAME_TASK,
+        parsed: {
+          prd: [
+            block("plan-product-build-proposal-v1", containedGamePlanProductBuildProposalV1()),
+            block("plan-semantic-proposal-v2", containedGamePlanProposalV2()),
+          ].join("\n"),
+        },
+      }),
+      /V3_PLAN_V2_TYPED_ARTIFACT_REQUIRED:2:0/,
+    );
+    assert.throws(
+      () => resolveV3PlanOutputAuthorityV2({
+        task: CONTAINED_GAME_TASK,
+        parsed: {
+          prd: block(
+            "plan-runtime-behavior-proposal-v1",
+            containedGamePlanProductBuildProposalV1().runtimeBehavior,
+          ),
+        },
+      }),
+      /V3_PLAN_V2_SPLIT_BEHAVIOR_FORBIDDEN/,
+    );
   });
 
   it("bounds PLAN prose before regex and JSON parsing and saturates cardinality", () => {
@@ -176,7 +257,12 @@ describe("PLAN v3 product semantics v2 output authority", () => {
 
     const authority = resolveV3PlanOutputAuthorityV2({
       task: CONTAINED_GAME_TASK,
-      parsed: { prd: block("plan-semantic-proposal-v2", containedGamePlanProposalV2()) },
+      parsed: {
+        prd: block(
+          "plan-product-build-proposal-v1",
+          containedGamePlanProductBuildProposalV1(),
+        ),
+      },
     });
     assert.equal(authority.status, "proposal");
     if (authority.status === "proposal") {
@@ -193,7 +279,12 @@ describe("PLAN v3 product semantics v2 output authority", () => {
   it("bypasses the legacy supervisor only for an accepted v2 PLAN proposal", () => {
     const proposal = resolveV3PlanOutputAuthorityV2({
       task: CONTAINED_GAME_TASK,
-      parsed: { prd: block("plan-semantic-proposal-v2", containedGamePlanProposalV2()) },
+      parsed: {
+        prd: block(
+          "plan-product-build-proposal-v1",
+          containedGamePlanProductBuildProposalV1(),
+        ),
+      },
     });
     const refusal = resolveV3PlanOutputAuthorityV2({
       task: CONTAINED_GAME_TASK,

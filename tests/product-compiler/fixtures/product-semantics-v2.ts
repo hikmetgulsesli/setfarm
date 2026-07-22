@@ -4,6 +4,9 @@ import {
   ProductSpecV2Schema,
   type ProductSpecV2,
 } from "../../../src/product-compiler/schemas/product-spec-v2.js";
+import type {
+  PlanProductBuildProposalV1,
+} from "../../../src/product-compiler/schemas/plan-product-build-proposal-v1.js";
 
 export const CONTAINED_GAME_TASK = "Build a browser game with one Start Game control on the play page; starting the game updates the contained game canvas and status panel.";
 
@@ -143,6 +146,29 @@ export function containedGamePlanProposalV2(): any {
       requirementRefs,
     }],
     assumptions: [],
+  };
+}
+
+export function containedGamePlanProductBuildProposalV1(): PlanProductBuildProposalV1 {
+  return {
+    schema: "setfarm.plan-product-build-proposal.v1",
+    semantics: containedGamePlanProposalV2(),
+    runtimeBehavior: {
+      schema: "setfarm.plan-runtime-behavior-proposal.v1",
+      invariantBindings: [{
+        stateKey: "game_phase",
+        invariantOrdinal: 0,
+        disposition: {
+          kind: "structured_semantic_coverage",
+          coverageRefs: [{
+            kind: "action_delta",
+            actionKey: "start_game",
+            stateDeltaKey: "start_phase",
+          }],
+        },
+      }],
+      entityFieldBindings: [],
+    },
   };
 }
 

@@ -24,8 +24,9 @@ export async function injectContext(ctx: ClaimContext): Promise<void> {
       ? (ctx.context["stack_pack_id"] || "")
       : "";
     if (ctx.retryCount === 0 && !ctx.context["previous_failure"]) {
-      ctx.context["previous_failure"] =
-        `V3 PLAN requires exactly one PlanSemanticProposal ${ctx.context["product_semantics_version"]}. Propose primary behavior, exact requirement refs, and in v2 exactly one typed invocationInterface per action; Setfarm compiles delivery, global IDs, source bytes, evidence identities/capabilities, traceability, persistence payloads, and canonical ProductSpec but never invents product ABI. In v2, rendered controlPlacements, affected surfaces, and non-rendered invocation/output/failure contracts are separate authority. Emit a typed rejection when primary semantics are ambiguous or unsupported.`;
+      ctx.context["previous_failure"] = ctx.context["product_semantics_version"] === "v2"
+        ? "V3 PLAN requires exactly one PlanProductBuildProposalV1 envelope. Propose primary semantics and every runtime invariant/entity-field binding together through local keys; Setfarm derives delivery, global IDs, requirement/evidence joins, persistence payloads, canonical ProductSpec, runtime behavior contract and build authority but never invents product ABI or joins later prose. Rendered control placements, affected surfaces, non-rendered invocation/output/failure contracts and executable invariant dispositions are separate typed authority. Emit a typed rejection when primary semantics or behavior are ambiguous or unsupported."
+        : "V3 PLAN requires exactly one PlanSemanticProposal v1. Propose primary behavior and exact requirement refs; Setfarm compiles delivery, global IDs, source bytes, evidence identities/capabilities, traceability, persistence payloads and canonical ProductSpec but never invents product ABI. Emit a typed rejection when primary semantics are ambiguous or unsupported.";
     }
     return;
   }

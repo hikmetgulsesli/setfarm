@@ -7,7 +7,7 @@ import { injectContext } from "./context.js";
 import { normalize, validateOutput, onComplete } from "./guards.js";
 import { preClaim } from "./preclaim.js";
 import { PlanSemanticProposalV1Schema } from "../../../product-compiler/schemas/plan-semantic-proposal-v1.js";
-import { PlanSemanticProposalV2Schema } from "../../../product-compiler/schemas/plan-semantic-proposal-v2.js";
+import { PlanProductBuildProposalV1Schema } from "../../../product-compiler/schemas/plan-product-build-proposal-v1.js";
 import { TaskRequirementLedgerV1Schema } from "../../../product-compiler/requirements/task-requirements-v1.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -20,8 +20,8 @@ const semanticProposalJsonSchema = JSON.stringify(z.toJSONSchema(
   PlanSemanticProposalV1Schema,
   { reused: "ref" },
 ), null, 2);
-const semanticProposalV2JsonSchema = JSON.stringify(z.toJSONSchema(
-  PlanSemanticProposalV2Schema,
+const productBuildProposalV1JsonSchema = JSON.stringify(z.toJSONSchema(
+  PlanProductBuildProposalV1Schema,
   { reused: "ref" },
 ), null, 2);
 
@@ -45,17 +45,24 @@ function buildV3Prompt(ctx: PromptContext): string {
   const productSemanticsVersion = ctx.context["product_semantics_version"] === "v2"
     ? "v2"
     : "v1";
-  const proposalFence = `plan-semantic-proposal-${productSemanticsVersion}`;
+  const atomicBuildProposal = productSemanticsVersion === "v2";
+  const proposalFence = atomicBuildProposal
+    ? "plan-product-build-proposal-v1"
+    : "plan-semantic-proposal-v1";
   const proposalSchema = productSemanticsVersion === "v2"
-    ? semanticProposalV2JsonSchema
+    ? productBuildProposalV1JsonSchema
     : semanticProposalJsonSchema;
   const task = ctx.context["task"] || ctx.task || "";
   const requirementLedger = ctx.context["v3_requirement_ledger"] || "";
   const requestedStackPackId = ctx.context["v3_requested_stack_pack_id"] || "";
   return [
-    "PLAN v3 - primary semantic proposal",
+    atomicBuildProposal
+      ? "PLAN v3 - atomic product build proposal"
+      : "PLAN v3 - primary semantic proposal",
     "",
-    "You propose primary product semantics, exact requirement references, and each action's typed invocation interface. Setfarm compiles all global IDs, delivery profiles, source bytes, persistence runtime ownership/durability/payloads, evidence identities/capabilities, traceability, canonical JSON, runtime identity, and verdicts; it never invents a missing product ABI.",
+    atomicBuildProposal
+      ? "You propose primary product semantics and runtime behavior together in one envelope. Setfarm compiles all global IDs, requirement/evidence joins, delivery profiles, source bytes, persistence runtime ownership/durability/payloads, canonical runtime assertions, traceability, canonical JSON, runtime identity, and verdicts; it never invents a missing product ABI or joins behavior from later prose."
+      : "You propose primary product semantics, exact requirement references, and each action's typed invocation interface. Setfarm compiles all global IDs, delivery profiles, source bytes, persistence runtime ownership/durability/payloads, evidence identities/capabilities, traceability, canonical JSON, runtime identity, and verdicts; it never invents a missing product ABI.",
     "",
     "## Exact task",
     task,
@@ -74,6 +81,16 @@ function buildV3Prompt(ctx: PromptContext): string {
     "",
     "## Proposal rules",
     `- Emit exactly one ${proposalFence} JSON fence. Pretty or unsorted JSON is allowed.`,
+    ...(atomicBuildProposal
+      ? [
+          "- The envelope schema is setfarm.plan-product-build-proposal.v1. Put the complete PlanSemanticProposalV2 under semantics and the complete setfarm.plan-runtime-behavior-proposal.v1 under runtimeBehavior; never emit either half as a separate fence.",
+          "- Bind every semantics.states[].invariants occurrence exactly once by stateKey plus zero-based invariantOrdinal. Use runtime_assertions for executable state predicates, structured_semantic_coverage only when an exact declared delta/precondition/observable/persistence intent already enforces it, and non_runtime_requirement only for constraint/non-goal requirements with exact local evidence refs.",
+          "- Runtime assertion subjects are relative to their owning state; do not repeat a state key inside the subject. Use only the code-owned predicate operators and checkpoints admitted by the schema.",
+          "- Bind every entity_field state-delta occurrence exactly once by actionKey plus stateDeltaKey to one declared state snapshot and singleton or match_input selection. A schema field without an exact runtime instance selection is incomplete.",
+          "- Runtime behavior references only semantic local keys and exact zero-based ordinals. Do not emit requirementRefs, evidence IDs, ProductSpec IDs, hashes, filenames, selectors, or implementation choices in runtimeBehavior; Setfarm derives them.",
+          "- Prose invariants remain provenance, not executable instructions. The structured runtimeBehavior disposition is the primary implementation and test authority for each occurrence.",
+        ]
+      : []),
     "- Use lowercase local keys only. Do not emit PROD_/STATE_/ACT_/EVID_/SURF_ or any other global ID.",
     "- Every goal, non-goal, entity, state, persistence policy, route, surface, action, observable, and assumption cites exact requirementRefs.",
     ...(productSemanticsVersion === "v2"
@@ -99,7 +116,9 @@ function buildV3Prompt(ctx: PromptContext): string {
     "- Use an empty or RFC 6901 path beginning with '/'; escape '~' as '~0' and '/' within a token as '~1'.",
     "- If primary semantics are ambiguous, contradictory, missing, or outside activated product classes, emit the typed rejection instead of guessing.",
     "",
-    "## PlanSemanticProposal JSON Schema",
+    atomicBuildProposal
+      ? "## PlanProductBuildProposal JSON Schema"
+      : "## PlanSemanticProposal JSON Schema",
     "```json",
     proposalSchema,
     "```",
@@ -109,7 +128,9 @@ function buildV3Prompt(ctx: PromptContext): string {
     "STATUS: done",
     "PRD:",
     `\`\`\`${proposalFence}`,
-    "{ ...one primary semantic proposal... }",
+    atomicBuildProposal
+      ? "{ ...one complete atomic semantic and runtime-behavior proposal... }"
+      : "{ ...one primary semantic proposal... }",
     "```",
     "```",
     "",

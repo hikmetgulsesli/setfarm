@@ -10,7 +10,7 @@ import os from "node:os";
 import path from "node:path";
 import { pgGet, pgQuery } from "../db-pg.js";
 import { logger } from "../lib/logger.js";
-import { OPTIONAL_TEMPLATE_VARS, PROTECTED_CONTEXT_KEYS, PROJECT_MEMORY_MAX_LINES, STEP_CONTEXT_ALLOWLIST, PROTECTED_OUTBOUND_KEYS } from "./constants.js";
+import { OPTIONAL_TEMPLATE_VARS, PROJECT_MEMORY_MAX_LINES, STEP_CONTEXT_ALLOWLIST, PROTECTED_OUTBOUND_KEYS, isStepOutputContextKeyProtected } from "./constants.js";
 import { getAgentWorkspacePath } from "./worktree-ops.js";
 
 // ── Path Utilities ────────────────────────────────────────────────
@@ -135,7 +135,7 @@ export function mergeContextSafe(
   opts?: { runId?: string }
 ): void {
   for (const [key, value] of Object.entries(parsed)) {
-    if (PROTECTED_CONTEXT_KEYS.has(key) && context[key]) {
+    if (isStepOutputContextKeyProtected(key, context)) {
       logger.warn(`[context] Blocked overwrite of protected key "${key}" (current: "${context[key]}", attempted: "${value}")`, { runId: opts?.runId ?? "" });
       continue; // skip copying the original value — blank was set above
     }
