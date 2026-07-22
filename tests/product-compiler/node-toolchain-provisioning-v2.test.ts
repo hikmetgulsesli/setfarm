@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
 import {
   chmod,
   link,
@@ -76,6 +77,15 @@ import {
   revalidateNodeToolchainProvisionerBootstrapPackageV2,
 } from "../../src/product-compiler/node-toolchain-provisioner-bootstrap-package-v2.js";
 import {
+  PreparedNodeToolchainProvisionerBootstrapPackageV2,
+  NodeToolchainProvisionerBootstrapPreparedPackageErrorV2,
+  disposeNodeToolchainProvisionerBootstrapPreparedPackageV2,
+  inspectNodeToolchainProvisionerBootstrapPreparedPackageReceiptV2,
+  prepareNodeToolchainProvisionerBootstrapPackageV2,
+  prepareNodeToolchainProvisionerBootstrapPackageV2ForTest,
+  revalidateNodeToolchainProvisionerBootstrapPreparedPackageV2,
+} from "../../src/product-compiler/node-toolchain-provisioner-bootstrap-prepared-package-v2.js";
+import {
   runNodeToolchainProvisionerCliV2,
   type NodeToolchainProvisionerCliOperationsV2,
 } from "../../src/product-compiler/node-toolchain-provisioner-cli-v2.js";
@@ -111,6 +121,10 @@ import {
   hashNodeToolchainProvisionerBootstrapBuildV2,
   hashNodeToolchainProvisionerBootstrapManifestV2,
 } from "../../src/product-compiler/schemas/node-toolchain-provisioner-bootstrap-v2.js";
+import {
+  NodeToolchainProvisionerBootstrapPreparedPackageReceiptV2Schema,
+  hashNodeToolchainProvisionerBootstrapPreparedPackageReceiptV2,
+} from "../../src/product-compiler/schemas/node-toolchain-provisioner-bootstrap-prepared-package-v2.js";
 import {
   NodeToolchainProvisionerBundleAuthorityReceiptV2Schema,
   hashNodeToolchainProvisionerBundleAuthorityReceiptV2,
@@ -1347,7 +1361,7 @@ describe("NodeToolchainProvisionerCommandV2 inspection and planning", () => {
     );
   });
 
-  it("issues bundle authority only from an exact Git, dependency and private-runtime join", async () => {
+  it("issues bundle, compile and prepared authority only from one exact source join", async () => {
     const tree = await privateTree();
     const handle = await buildNodeToolchainProvisionerBundleAuthorityV2ForTest(
       tree,
@@ -1402,6 +1416,142 @@ describe("NodeToolchainProvisionerCommandV2 inspection and planning", () => {
         Object.create(CompiledNodeToolchainProvisionerBootstrapV2.prototype),
       ),
       (error: unknown) => error instanceof NodeToolchainProvisionerBootstrapAuthorityErrorV2,
+    );
+    const preparedParent = await realpath(await privateParent());
+    assert.throws(
+      () => prepareNodeToolchainProvisionerBootstrapPackageV2ForTest(
+        compiledHandle,
+        {
+          scratchParent: preparedParent,
+          testHooks: {
+            beforeManifest: () => {
+              throw new Error("injected-before-manifest-crash");
+            },
+          },
+        },
+      ),
+      (error: unknown) =>
+        error instanceof NodeToolchainProvisionerBootstrapPreparedPackageErrorV2
+        && error.code === "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_PREPARED_V2_PUBLICATION_FAILED",
+    );
+    assert.deepEqual(await readdir(preparedParent), []);
+    let preparedPayloadRoot = "";
+    const prepared = prepareNodeToolchainProvisionerBootstrapPackageV2ForTest(
+      compiledHandle,
+      {
+        scratchParent: preparedParent,
+        testHooks: {
+          beforeManifest: ({ payloadRoot }) => {
+            preparedPayloadRoot = payloadRoot;
+            assert.equal(
+              existsSync(path.join(
+                payloadRoot,
+                "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_MANIFEST.v2.json",
+              )),
+              false,
+            );
+          },
+        },
+      },
+    );
+    const preparedReceipt =
+      inspectNodeToolchainProvisionerBootstrapPreparedPackageReceiptV2(prepared);
+    assert.equal(prepared.receiptHash, preparedReceipt.receiptHash);
+    assert.equal(prepared.admissionScope, "test_fixture");
+    assert.equal(preparedReceipt.status, "prepared_payload_verified");
+    assert.equal(preparedReceipt.installationStatus, "not_installed_unprivileged_payload");
+    assert.equal(preparedReceipt.target.rootLocator, bootstrapRoot);
+    assert.equal(preparedReceipt.storage.rootMode, "0700");
+    assert.equal(preparedReceipt.members.bundle.storageMode, "0400");
+    assert.equal(preparedReceipt.members.bundle.targetMode, "0444");
+    assert.equal(preparedReceipt.publication.manifestPublishedLast, true);
+    assert.equal(preparedReceipt.publication.targetRootAccess, "none");
+    assert.equal(preparedReceipt.source.bundleAuthorityReceiptHash, receipt.receiptHash);
+    assert.equal(
+      NodeToolchainProvisionerBootstrapPreparedPackageReceiptV2Schema.parse(preparedReceipt)
+        .receiptHash,
+      preparedReceipt.receiptHash,
+    );
+    assert.equal(
+      revalidateNodeToolchainProvisionerBootstrapPreparedPackageV2(prepared).receiptHash,
+      preparedReceipt.receiptHash,
+    );
+    assert.deepEqual(await readdir(bootstrapRoot), []);
+    assert.throws(
+      () => prepareNodeToolchainProvisionerBootstrapPackageV2(compiledHandle),
+      (error: unknown) =>
+        error instanceof NodeToolchainProvisionerBootstrapPreparedPackageErrorV2
+        && error.code === "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_PREPARED_V2_INPUT_INVALID",
+    );
+    assert.throws(
+      () => prepareNodeToolchainProvisionerBootstrapPackageV2ForTest(
+        compiled as never,
+        { scratchParent: preparedParent },
+      ),
+      (error: unknown) =>
+        error instanceof NodeToolchainProvisionerBootstrapPreparedPackageErrorV2
+        && error.code === "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_PREPARED_V2_INPUT_INVALID",
+    );
+    assert.throws(
+      () => inspectNodeToolchainProvisionerBootstrapPreparedPackageReceiptV2(
+        Object.create(PreparedNodeToolchainProvisionerBootstrapPackageV2.prototype),
+      ),
+      (error: unknown) =>
+        error instanceof NodeToolchainProvisionerBootstrapPreparedPackageErrorV2
+        && error.code
+          === "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_PREPARED_V2_HANDLE_UNAUTHENTICATED",
+    );
+    const rehashedPreparedDrift = structuredClone(preparedReceipt);
+    rehashedPreparedDrift.source.manifestSha256 = "9".repeat(64);
+    rehashedPreparedDrift.receiptHash =
+      hashNodeToolchainProvisionerBootstrapPreparedPackageReceiptV2(rehashedPreparedDrift);
+    assert.equal(
+      NodeToolchainProvisionerBootstrapPreparedPackageReceiptV2Schema
+        .safeParse(rehashedPreparedDrift).success,
+      false,
+    );
+    assert.ok(preparedPayloadRoot.startsWith(preparedParent));
+    disposeNodeToolchainProvisionerBootstrapPreparedPackageV2(prepared);
+    assert.deepEqual(await readdir(preparedParent), []);
+    assert.throws(
+      () => revalidateNodeToolchainProvisionerBootstrapPreparedPackageV2(prepared),
+      (error: unknown) =>
+        error instanceof NodeToolchainProvisionerBootstrapPreparedPackageErrorV2
+        && error.code === "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_PREPARED_V2_HANDLE_DISPOSED",
+    );
+    disposeNodeToolchainProvisionerBootstrapPreparedPackageV2(prepared);
+
+    let driftPayloadRoot = "";
+    const driftPrepared = prepareNodeToolchainProvisionerBootstrapPackageV2ForTest(
+      compiledHandle,
+      {
+        scratchParent: preparedParent,
+        testHooks: {
+          beforeManifest: ({ payloadRoot }) => {
+            driftPayloadRoot = payloadRoot;
+          },
+        },
+      },
+    );
+    assert.equal(
+      inspectNodeToolchainProvisionerBootstrapPreparedPackageReceiptV2(driftPrepared).receiptHash,
+      preparedReceipt.receiptHash,
+    );
+    const preparedBundlePath = path.join(
+      driftPayloadRoot,
+      "lib/node-toolchain-provisioner-v2.cjs",
+    );
+    await chmod(preparedBundlePath, 0o600);
+    await writeFile(
+      preparedBundlePath,
+      Buffer.alloc(preparedReceipt.members.bundle.byteLength, 0x61),
+    );
+    await chmod(preparedBundlePath, 0o400);
+    assert.throws(
+      () => revalidateNodeToolchainProvisionerBootstrapPreparedPackageV2(driftPrepared),
+      (error: unknown) =>
+        error instanceof NodeToolchainProvisionerBootstrapPreparedPackageErrorV2
+        && error.code === "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_PREPARED_V2_PACKAGE_INVALID",
     );
     const joinedSourceDrift = structuredClone(compiled.manifest);
     joinedSourceDrift.build.packageLockSource.hash = "d".repeat(64);
