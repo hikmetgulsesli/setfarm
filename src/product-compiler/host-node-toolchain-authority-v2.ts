@@ -24,6 +24,12 @@ import path from "node:path";
 import { isProxy } from "node:util/types";
 
 import { hashCanonicalJson } from "./canonical-json.js";
+import {
+  openProductionProvisionedNodeToolchainV2,
+  revalidateProvisionedNodeToolchainV2,
+  type ProvisionedNodeToolchainV2,
+} from "./node-toolchain-provisioning-v2.js";
+import { getCodeOwnedNodeToolchainTargetV2 } from "./node-toolchain-target-registry-v2.js";
 import { canonicalRuntimePathIssuesV2 } from "../execution/schemas/canonical-runtime-tree-v2.js";
 import {
   getCodeOwnedNodeScaffoldToolchainCatalogV2,
@@ -52,6 +58,9 @@ import {
   type HostNodeToolchainRequirementV2,
   type HostToolchainExactFileIdentityV2,
 } from "./schemas/host-node-toolchain-receipt-v2.js";
+import type {
+  NodeToolchainProvisioningReceiptV2,
+} from "./schemas/node-toolchain-provisioning-v2.js";
 import {
   NODE_SCAFFOLD_TOOLCHAIN_CATALOG_V2_SCHEMA,
   NODE_SCAFFOLD_TOOLCHAIN_ENTRY_V2_SCHEMA,
@@ -107,21 +116,6 @@ const COMMAND_PATH_PROJECTION_HASH_V2 = hashCanonicalJson({
   orderedExecutableRefs: ["TOOL_NODE_RUNTIME_V2", "TOOL_NODE_NPM_CLI_V2"],
 });
 
-const CODE_OWNED_DARWIN_CANDIDATES_V2 = Object.freeze([
-  Object.freeze({
-    architecture: "arm64" as const,
-    candidateRef: "SETFARM_ROOT_NODE_22_23_1_NPM_10_9_8_ARM64_V2" as const,
-    logicalRoot:
-      "/Library/Application Support/Setfarm/toolchains/node-22.23.1-npm-10.9.8-darwin-arm64" as const,
-  }),
-  Object.freeze({
-    architecture: "x64" as const,
-    candidateRef: "SETFARM_ROOT_NODE_22_23_1_NPM_10_9_8_X64_V2" as const,
-    logicalRoot:
-      "/Library/Application Support/Setfarm/toolchains/node-22.23.1-npm-10.9.8-darwin-x64" as const,
-  }),
-] as const);
-
 export type HostNodeToolchainAuthorityErrorCodeV2 =
   | "HOST_NODE_TOOLCHAIN_V2_INPUT_INVALID"
   | "HOST_NODE_TOOLCHAIN_V2_NO_ADMITTED_CANDIDATE"
@@ -141,6 +135,7 @@ export type HostNodeToolchainAuthorityErrorCodeV2 =
   | "HOST_NODE_TOOLCHAIN_V2_RECEIPT_INVALID"
   | "HOST_NODE_TOOLCHAIN_V2_HANDLE_UNAUTHENTICATED"
   | "HOST_NODE_TOOLCHAIN_V2_PRODUCTION_AUTHORITY_REQUIRED"
+  | "HOST_NODE_TOOLCHAIN_V2_PROVISIONING_AUTHORITY_INVALID"
   | "HOST_NODE_TOOLCHAIN_V2_HOST_DRIFT";
 
 export class HostNodeToolchainAuthorityErrorV2 extends Error {
@@ -236,6 +231,7 @@ type CapturedNpmPackageV2 = Readonly<{
   directoryCount: number;
   totalBytes: number;
   treeHash: string;
+  normalizedTreeHash: string;
   privateIdentityHash: string;
   packageName: "npm";
   version: string;
@@ -258,6 +254,7 @@ type ResolvedRootV2 = Readonly<{
   rootOwnerUid: number;
   rootOwnerGid: number;
   rootMode: number;
+  rootFingerprint: FingerprintV2;
   rootIdentityHash: string;
 }>;
 
@@ -281,6 +278,8 @@ type PrivateAuthorityStateV2 = Readonly<{
   }>;
   testDynamicLibraryPaths?: readonly string[];
   probeAdapter: HostNodeToolchainProbeAdapterV2;
+  provisionedToolchain?: ProvisionedNodeToolchainV2;
+  provisioningReceipt?: NodeToolchainProvisioningReceiptV2;
   captured: CapturedAuthorityStateV2;
   receipt: HostNodeToolchainReceiptV2;
 }>;
@@ -526,6 +525,7 @@ function resolveCandidateRoot(input: Readonly<{
     rootOwnerUid: resolvedRootStat.uid,
     rootOwnerGid: resolvedRootStat.gid,
     rootMode: modeBits(resolvedRootStat),
+    rootFingerprint: fingerprint(resolvedRootStat),
     rootIdentityHash,
   });
 }
@@ -740,6 +740,20 @@ function captureNpmPackage(root: string): CapturedNpmPackageV2 {
     if (rootMode !== "0555" && rootMode !== "0755") {
       fail("HOST_NODE_TOOLCHAIN_V2_PACKAGE_CLOSURE_INVALID", "npm package root mode is not admitted");
     }
+    const normalizedTreeHash = hashCanonicalJson({
+      schema: "setfarm.node-toolchain-normalized-npm-tree.v2",
+      entries: [
+        { locator: ".", type: "directory" as const, mode: rootMode },
+        ...treeEntries.map((entry) => ({
+          locator: entry.path,
+          type: entry.type,
+          mode: entry.mode,
+          ...(entry.type === "file"
+            ? { byteLength: entry.byteLength, contentHash: entry.contentHash }
+            : {}),
+        })),
+      ],
+    });
     const treeHash = hashCanonicalJson({
       schema: "setfarm.host-npm-package-tree-content.v2",
       rootMode,
@@ -806,6 +820,7 @@ function captureNpmPackage(root: string): CapturedNpmPackageV2 {
       directoryCount: directories.length,
       totalBytes,
       treeHash,
+      normalizedTreeHash,
       privateIdentityHash,
       packageName: "npm",
       version: parsedPackage.version,
@@ -1380,12 +1395,76 @@ async function captureAuthorityState(input: Readonly<{
   return Object.freeze({ root, nodeFile, npmPackage, dynamicLibraries, privateIdentityHash });
 }
 
+function assertProvisioningJoin(input: Readonly<{
+  admissionScope: "production_host" | "test_fixture";
+  host: HostIdentityV2;
+  captured: CapturedAuthorityStateV2;
+  receipt: NodeToolchainProvisioningReceiptV2;
+}>): void {
+  const expectedProvisioningScope = input.admissionScope === "production_host"
+    ? "production_root"
+    : "test_fixture";
+  const root = input.captured.root.rootFingerprint;
+  const source = input.receipt.source.tree;
+  if (
+    input.receipt.admissionScope !== expectedProvisioningScope
+    || input.receipt.intent.architecture !== input.host.architecture
+    || input.receipt.source.inventory.distribution.artifact.architecture !== input.host.architecture
+    || input.receipt.finalRoot.device !== root.device
+    || input.receipt.finalRoot.inode !== root.inode
+    || input.receipt.finalRoot.ownerUid !== root.ownerUid
+    || input.receipt.finalRoot.ownerGid !== root.ownerGid
+    || input.receipt.finalRoot.mode !== modeTextFromBits(root.mode)
+    || input.receipt.finalRoot.nodeContentHash !== input.captured.nodeFile.contentHash
+    || input.receipt.finalRoot.npmTreeHash !== input.captured.npmPackage.normalizedTreeHash
+    || source.node.contentHash !== input.captured.nodeFile.contentHash
+    || source.npm.treeHash !== input.captured.npmPackage.normalizedTreeHash
+    || source.npm.fileCount !== input.captured.npmPackage.fileCount
+    || source.npm.directoryCount !== input.captured.npmPackage.directoryCount
+    || source.npm.totalBytes !== input.captured.npmPackage.totalBytes
+    || source.npm.cli.contentHash !== input.captured.npmPackage.cli.contentHash
+    || source.npm.packageJson.contentHash !== input.captured.npmPackage.packageJson.contentHash
+  ) {
+    return fail(
+      "HOST_NODE_TOOLCHAIN_V2_PROVISIONING_AUTHORITY_INVALID",
+      "Host Node/npm capture does not join the exact durable provisioning authority",
+    );
+  }
+}
+
+async function requireProvisioningReceipt(input: Readonly<{
+  admissionScope: "production_host" | "test_fixture";
+  handle: ProvisionedNodeToolchainV2;
+}>): Promise<NodeToolchainProvisioningReceiptV2> {
+  try {
+    const receipt = await revalidateProvisionedNodeToolchainV2(input.handle);
+    const expectedScope = input.admissionScope === "production_host"
+      ? "production_root"
+      : "test_fixture";
+    if (receipt.admissionScope !== expectedScope) {
+      return fail(
+        "HOST_NODE_TOOLCHAIN_V2_PROVISIONING_AUTHORITY_INVALID",
+        "Host authority cannot promote a provisioning authority from another admission scope",
+      );
+    }
+    return receipt;
+  } catch (error) {
+    if (error instanceof HostNodeToolchainAuthorityErrorV2) throw error;
+    return fail(
+      "HOST_NODE_TOOLCHAIN_V2_PROVISIONING_AUTHORITY_INVALID",
+      "Durable Node provisioning authority could not be reproduced",
+      error,
+    );
+  }
+}
+
 function buildReceipt(input: Readonly<{
   admissionScope: "production_host" | "test_fixture";
   requirement: HostNodeToolchainRequirementV2;
   host: HostIdentityV2;
   captured: CapturedAuthorityStateV2;
   nodeProbe: NodeProbeIdentityV2;
+  provisioningReceipt?: NodeToolchainProvisioningReceiptV2;
 }>): HostNodeToolchainReceiptV2 {
   const dynamicIdentity = {
     resolutionPolicy: "darwin_recursive_loader_graph_v2" as const,
@@ -1438,6 +1517,7 @@ function buildReceipt(input: Readonly<{
       directoryCount: input.captured.npmPackage.directoryCount,
       totalBytes: input.captured.npmPackage.totalBytes,
       treeHash: input.captured.npmPackage.treeHash,
+      normalizedTreeHash: input.captured.npmPackage.normalizedTreeHash,
     },
   };
   const npm = {
@@ -1454,6 +1534,40 @@ function buildReceipt(input: Readonly<{
     filesystemProtection: input.admissionScope === "production_host"
       ? "root_owned_runtime_read_only" as const
       : "test_fixture_only" as const,
+    installationRoot: {
+      device: input.captured.root.rootFingerprint.device,
+      inode: input.captured.root.rootFingerprint.inode,
+      ownerUid: input.captured.root.rootFingerprint.ownerUid,
+      ownerGid: input.captured.root.rootFingerprint.ownerGid,
+      mode: modeTextFromBits(input.captured.root.rootFingerprint.mode) as "0555" | "0700" | "0755",
+    },
+    provisioning: input.provisioningReceipt
+      ? {
+          policy: "durable_provisioning_receipt_required_v2" as const,
+          status: "provisioned_verified" as const,
+          receiptSchema: input.provisioningReceipt.schema,
+          authorityRef: input.provisioningReceipt.authorityRef,
+          admissionScope: input.provisioningReceipt.admissionScope,
+          receiptHash: input.provisioningReceipt.receiptHash,
+          sourcePrivateTreeReceiptHash: input.provisioningReceipt.source.receiptHash,
+          targetRef: input.provisioningReceipt.finalRoot.targetRef,
+          rootLocatorHash: input.provisioningReceipt.finalRoot.rootLocatorHash,
+          rootDevice: input.provisioningReceipt.finalRoot.device,
+          rootInode: input.provisioningReceipt.finalRoot.inode,
+          treeHash: input.provisioningReceipt.finalRoot.treeHash,
+          fileCount: input.provisioningReceipt.finalRoot.fileCount,
+          directoryCount: input.provisioningReceipt.finalRoot.directoryCount,
+          totalBytes: input.provisioningReceipt.finalRoot.totalBytes,
+          nodeContentHash: input.provisioningReceipt.finalRoot.nodeContentHash,
+          npmTreeHash: input.provisioningReceipt.finalRoot.npmTreeHash,
+          npmFileCount: input.provisioningReceipt.source.tree.npm.fileCount,
+          npmDirectoryCount: input.provisioningReceipt.source.tree.npm.directoryCount,
+          npmTotalBytes: input.provisioningReceipt.source.tree.npm.totalBytes,
+        }
+      : {
+          policy: "test_fixture_unprovisioned_v2" as const,
+          status: "not_applicable" as const,
+        },
     requirement: input.requirement,
     host: input.host,
     node,
@@ -1537,8 +1651,21 @@ async function buildAuthority(input: Readonly<{
   candidate: PrivateAuthorityStateV2["candidate"];
   testDynamicLibraryPaths?: readonly string[];
   probeAdapter: HostNodeToolchainProbeAdapterV2;
+  provisionedToolchain?: ProvisionedNodeToolchainV2;
 }>): Promise<HostNodeToolchainAuthorityV2> {
   const requirement = requirementForProfile(input.profileId);
+  if (input.admissionScope === "production_host" && !input.provisionedToolchain) {
+    return fail(
+      "HOST_NODE_TOOLCHAIN_V2_PROVISIONING_AUTHORITY_INVALID",
+      "Production host authority requires one durable production provisioning authority",
+    );
+  }
+  let provisioningReceipt = input.provisionedToolchain
+    ? await requireProvisioningReceipt({
+        admissionScope: input.admissionScope,
+        handle: input.provisionedToolchain,
+      })
+    : undefined;
   const captured = await captureAuthorityState({
     candidate: input.candidate,
     ...(input.testDynamicLibraryPaths
@@ -1559,18 +1686,46 @@ async function buildAuthority(input: Readonly<{
       "Production Node/npm and every non-system dynamic library must be root-owned",
     );
   }
+  if (provisioningReceipt) {
+    assertProvisioningJoin({
+      admissionScope: input.admissionScope,
+      host: input.host,
+      captured,
+      receipt: provisioningReceipt,
+    });
+  }
   const nodeProbe = await probeToolchain({
     root: captured.root,
     npmPackage: captured.npmPackage,
     host: input.host,
     probeAdapter: input.probeAdapter,
   });
+  if (input.provisionedToolchain) {
+    const freshProvisioningReceipt = await requireProvisioningReceipt({
+      admissionScope: input.admissionScope,
+      handle: input.provisionedToolchain,
+    });
+    if (freshProvisioningReceipt.receiptHash !== provisioningReceipt?.receiptHash) {
+      return fail(
+        "HOST_NODE_TOOLCHAIN_V2_PROVISIONING_AUTHORITY_INVALID",
+        "Durable provisioning receipt changed during host toolchain admission",
+      );
+    }
+    assertProvisioningJoin({
+      admissionScope: input.admissionScope,
+      host: input.host,
+      captured,
+      receipt: freshProvisioningReceipt,
+    });
+    provisioningReceipt = freshProvisioningReceipt;
+  }
   const receipt = buildReceipt({
     admissionScope: input.admissionScope,
     requirement,
     host: input.host,
     captured,
     nodeProbe,
+    ...(provisioningReceipt ? { provisioningReceipt } : {}),
   });
   const state: PrivateAuthorityStateV2 = Object.freeze({
     admissionScope: input.admissionScope,
@@ -1585,6 +1740,12 @@ async function buildAuthority(input: Readonly<{
       ? { testDynamicLibraryPaths: Object.freeze([...input.testDynamicLibraryPaths]) }
       : {}),
     probeAdapter: input.probeAdapter,
+    ...(input.provisionedToolchain
+      ? {
+          provisionedToolchain: input.provisionedToolchain,
+          provisioningReceipt,
+        }
+      : {}),
     captured,
     receipt,
   });
@@ -1637,12 +1798,15 @@ export async function createHostNodeToolchainAuthorityV2(input: unknown):
 Promise<HostNodeToolchainAuthorityV2> {
   const profileId = parseProductionInput(input);
   const host = productionHostIdentity();
-  const candidate = CODE_OWNED_DARWIN_CANDIDATES_V2.find((entry) =>
-    entry.architecture === host.architecture);
-  if (!candidate) {
+  const candidate = getCodeOwnedNodeToolchainTargetV2(host.architecture);
+  let provisionedToolchain: ProvisionedNodeToolchainV2;
+  try {
+    provisionedToolchain = await openProductionProvisionedNodeToolchainV2();
+  } catch (error) {
     return fail(
-      "HOST_NODE_TOOLCHAIN_V2_NO_ADMITTED_CANDIDATE",
-      "No code-owned Node 22 candidate exists for this host architecture",
+      "HOST_NODE_TOOLCHAIN_V2_PROVISIONING_AUTHORITY_INVALID",
+      "Code-owned durable Node provisioning authority is unavailable",
+      error,
     );
   }
   return buildAuthority({
@@ -1654,6 +1818,7 @@ Promise<HostNodeToolchainAuthorityV2> {
       productionRootPolicy: "root_owned_direct_exact_v2",
     },
     probeAdapter: productionProbeAdapter,
+    provisionedToolchain,
   });
 }
 
@@ -1665,6 +1830,7 @@ export type HostNodeToolchainAuthorityV2TestInput = Readonly<{
     nonSystemDynamicLibraryPaths?: readonly string[];
   }>;
   probeAdapter?: HostNodeToolchainProbeAdapterV2;
+  provisionedToolchain?: ProvisionedNodeToolchainV2;
 }>;
 
 /**
@@ -1683,6 +1849,9 @@ export async function createHostNodeToolchainAuthorityV2ForTest(
       ? { testDynamicLibraryPaths: input.fixture.nonSystemDynamicLibraryPaths }
       : {}),
     probeAdapter: input.probeAdapter ?? productionProbeAdapter,
+    ...(input.provisionedToolchain
+      ? { provisionedToolchain: input.provisionedToolchain }
+      : {}),
   });
 }
 
@@ -1708,6 +1877,30 @@ export async function revalidateHostNodeToolchainAuthorityV2(
 ): Promise<HostNodeToolchainReceiptV2> {
   const state = authenticState(handle);
   try {
+    const provisioningReceipt = state.provisionedToolchain
+      ? await requireProvisioningReceipt({
+          admissionScope: state.admissionScope,
+          handle: state.provisionedToolchain,
+        })
+      : undefined;
+    if (
+      state.admissionScope === "production_host"
+      && (!provisioningReceipt || !state.provisioningReceipt)
+    ) {
+      fail(
+        "HOST_NODE_TOOLCHAIN_V2_HOST_DRIFT",
+        "Production host authority lost its durable provisioning authority",
+      );
+    }
+    if (
+      provisioningReceipt
+      && provisioningReceipt.receiptHash !== state.provisioningReceipt?.receiptHash
+    ) {
+      fail(
+        "HOST_NODE_TOOLCHAIN_V2_HOST_DRIFT",
+        "Durable provisioning receipt changed after host authority issuance",
+      );
+    }
     const fresh = await captureAuthorityState({
       candidate: state.candidate,
       ...(state.testDynamicLibraryPaths
@@ -1719,6 +1912,14 @@ export async function revalidateHostNodeToolchainAuthorityV2(
         "HOST_NODE_TOOLCHAIN_V2_HOST_DRIFT",
         "Host Node/npm bytes, topology or held POSIX identity changed after admission",
       );
+    }
+    if (provisioningReceipt) {
+      assertProvisioningJoin({
+        admissionScope: state.admissionScope,
+        host: state.host,
+        captured: fresh,
+        receipt: provisioningReceipt,
+      });
     }
     return defensiveReceiptCopy(state.receipt);
   } catch (error) {

@@ -401,7 +401,17 @@ describe("HostNodeToolchainAuthorityV2", () => {
       path.resolve("src/product-compiler/host-node-toolchain-authority-v2.ts"),
       "utf8",
     );
-    assert.match(source, /\/Library\/Application Support\/Setfarm\/toolchains\/node-22\.23\.1-npm-10\.9\.8/);
+    const registrySource = await readFile(
+      path.resolve("src/product-compiler/node-toolchain-target-registry-v2.ts"),
+      "utf8",
+    );
+    assert.match(
+      registrySource,
+      /\/Library\/Application Support\/Setfarm\/toolchains/,
+    );
+    assert.match(registrySource, /node-22\.23\.1-npm-10\.9\.8-darwin-arm64/);
+    assert.match(source, /getCodeOwnedNodeToolchainTargetV2\(host\.architecture\)/);
+    assert.match(source, /openProductionProvisionedNodeToolchainV2\(\)/);
     assert.doesNotMatch(source, /logicalRoot:\s*"\/opt\/homebrew\/opt\/node@22"/);
     assert.doesNotMatch(source, /logicalRoot:\s*"\/usr\/local\/opt\/node@22"/);
     assert.match(source, /createHostNodeToolchainAuthorityV2\(input: unknown\)/);

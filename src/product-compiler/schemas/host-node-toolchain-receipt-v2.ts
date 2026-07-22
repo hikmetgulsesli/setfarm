@@ -6,6 +6,10 @@ import {
   NODE_SCAFFOLD_TOOLCHAIN_CATALOG_V2_SCHEMA,
   NODE_SCAFFOLD_TOOLCHAIN_ENTRY_V2_SCHEMA,
 } from "./node-scaffold-toolchain-catalog-v2.js";
+import {
+  NODE_TOOLCHAIN_PROVISIONING_AUTHORITY_REF_V2,
+  NODE_TOOLCHAIN_PROVISIONING_RECEIPT_V2_SCHEMA,
+} from "./node-toolchain-provisioning-v2.js";
 
 export const HOST_NODE_TOOLCHAIN_RECEIPT_V2_SCHEMA =
   "setfarm.host-node-toolchain-receipt.v2" as const;
@@ -27,8 +31,10 @@ const VersionIdentityV2Schema = z.string().min(1).max(80)
 const DecimalIdentityV2Schema = z.string().min(1).max(20)
   .regex(/^(?:0|[1-9][0-9]*)$/, "Expected one canonical decimal identity");
 const PosixIdentityV2Schema = z.number().int().nonnegative().max(4_294_967_294);
+const FilesystemIdentityNumberV2Schema = z.number().int().nonnegative().safe();
 const ReadOnlyFileModeV2Schema = z.enum(["0444", "0555"]);
 const ReadOnlyOrTraversableDirectoryModeV2Schema = z.enum(["0555", "0755"]);
+const InstallationRootModeV2Schema = z.enum(["0555", "0700", "0755"]);
 
 const HostNodeToolchainRequirementIdentityV2Schema = z.object({
   catalogSchema: z.literal(NODE_SCAFFOLD_TOOLCHAIN_CATALOG_V2_SCHEMA),
@@ -209,7 +215,40 @@ const HostNpmPackageTreeV2Schema = z.object({
   directoryCount: z.number().int().nonnegative().max(HOST_NPM_PACKAGE_MAX_DIRECTORIES_V2),
   totalBytes: z.number().int().positive().max(HOST_NPM_PACKAGE_MAX_TOTAL_BYTES_V2),
   treeHash: Sha256Schema,
+  normalizedTreeHash: Sha256Schema,
 }).strict();
+
+const HostNodeToolchainProvisioningJoinV2Schema = z.discriminatedUnion("policy", [
+  z.object({
+    policy: z.literal("durable_provisioning_receipt_required_v2"),
+    status: z.literal("provisioned_verified"),
+    receiptSchema: z.literal(NODE_TOOLCHAIN_PROVISIONING_RECEIPT_V2_SCHEMA),
+    authorityRef: z.literal(NODE_TOOLCHAIN_PROVISIONING_AUTHORITY_REF_V2),
+    admissionScope: z.enum(["production_root", "test_fixture"]),
+    receiptHash: Sha256Schema,
+    sourcePrivateTreeReceiptHash: Sha256Schema,
+    targetRef: z.enum([
+      "SETFARM_ROOT_NODE_22_23_1_NPM_10_9_8_ARM64_V2",
+      "SETFARM_ROOT_NODE_22_23_1_NPM_10_9_8_X64_V2",
+    ]),
+    rootLocatorHash: Sha256Schema,
+    rootDevice: FilesystemIdentityNumberV2Schema,
+    rootInode: FilesystemIdentityNumberV2Schema,
+    treeHash: Sha256Schema,
+    fileCount: z.number().int().positive().max(20_000),
+    directoryCount: z.number().int().positive().max(5_000),
+    totalBytes: z.number().int().positive().max(512 * 1024 * 1024),
+    nodeContentHash: Sha256Schema,
+    npmTreeHash: Sha256Schema,
+    npmFileCount: z.number().int().positive().max(HOST_NPM_PACKAGE_MAX_FILES_V2),
+    npmDirectoryCount: z.number().int().nonnegative().max(HOST_NPM_PACKAGE_MAX_DIRECTORIES_V2),
+    npmTotalBytes: z.number().int().positive().max(HOST_NPM_PACKAGE_MAX_TOTAL_BYTES_V2),
+  }).strict(),
+  z.object({
+    policy: z.literal("test_fixture_unprovisioned_v2"),
+    status: z.literal("not_applicable"),
+  }).strict(),
+]);
 
 const HostNpmPackageClosureIdentityV2Schema = z.object({
   schema: z.literal(HOST_NPM_PACKAGE_CLOSURE_V2_SCHEMA),
@@ -271,6 +310,14 @@ const HostNodeToolchainReceiptIdentityV2Schema = z.object({
     "root_owned_runtime_read_only",
     "test_fixture_only",
   ]),
+  installationRoot: z.object({
+    device: FilesystemIdentityNumberV2Schema,
+    inode: FilesystemIdentityNumberV2Schema,
+    ownerUid: PosixIdentityV2Schema,
+    ownerGid: PosixIdentityV2Schema,
+    mode: InstallationRootModeV2Schema,
+  }).strict(),
+  provisioning: HostNodeToolchainProvisioningJoinV2Schema,
   requirement: HostNodeToolchainRequirementV2Schema,
   host: z.object({
     platform: z.literal("darwin"),
@@ -333,14 +380,45 @@ export const HostNodeToolchainReceiptV2Schema =
     }
     if (
       (value.admissionScope === "production_host"
-        && value.filesystemProtection !== "root_owned_runtime_read_only")
+        && (
+          value.filesystemProtection !== "root_owned_runtime_read_only"
+          || value.installationRoot.ownerUid !== 0
+          || value.installationRoot.ownerGid !== 0
+          || value.installationRoot.mode !== "0555"
+          || value.provisioning.policy !== "durable_provisioning_receipt_required_v2"
+          || value.provisioning.admissionScope !== "production_root"
+        ))
       || (value.admissionScope === "test_fixture"
-        && value.filesystemProtection !== "test_fixture_only")
+        && (
+          value.filesystemProtection !== "test_fixture_only"
+          || (value.provisioning.policy === "durable_provisioning_receipt_required_v2"
+            && value.provisioning.admissionScope !== "test_fixture")
+        ))
     ) {
       context.addIssue({
         code: "custom",
         path: ["filesystemProtection"],
         message: "Host toolchain filesystem protection must match its admission scope",
+      });
+    }
+    if (
+      value.provisioning.policy === "durable_provisioning_receipt_required_v2"
+      && (
+        value.provisioning.rootDevice !== value.installationRoot.device
+        || value.provisioning.rootInode !== value.installationRoot.inode
+        || value.provisioning.nodeContentHash !== value.node.executable.contentHash
+        || value.provisioning.npmTreeHash !== value.npm.packageTree.normalizedTreeHash
+        || value.provisioning.npmFileCount !== value.npm.packageTree.fileCount
+        || value.provisioning.npmDirectoryCount !== value.npm.packageTree.directoryCount
+        || value.provisioning.npmTotalBytes !== value.npm.packageTree.totalBytes
+        || (value.host.architecture === "arm64" && !value.provisioning.targetRef.endsWith("ARM64_V2"))
+        || (value.host.architecture === "x64" && !value.provisioning.targetRef.endsWith("X64_V2"))
+      )
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["provisioning"],
+        message: "Host toolchain must join the exact provisioned root, Node and normalized npm closure",
       });
     }
     if (

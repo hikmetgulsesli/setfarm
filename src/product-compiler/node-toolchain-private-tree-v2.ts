@@ -325,8 +325,8 @@ function syncDirectory(absolutePath: string): void {
   }
 }
 
-function removeStageBestEffort(stageRoot: string | undefined): void {
-  if (!stageRoot || !stageRoot.startsWith(PRIVATE_ROOT_PREFIX_V2)) return;
+function removeStageBestEffort(stageRoot: string | undefined, stagePrefix: string): void {
+  if (!stageRoot || !stageRoot.startsWith(stagePrefix)) return;
   try {
     const root = lstatSync(stageRoot);
     if (root.isSymbolicLink() || !root.isDirectory()) return;
@@ -363,6 +363,7 @@ function createStage(input: Readonly<{
   archiveBytes: Buffer;
   archiveSha256: string;
   selectedMembers: readonly NodeToolchainSelectedArchiveMemberV2[];
+  stagePrefix: string;
 }>): StageV2 {
   if (sha256(input.archiveBytes) !== input.archiveSha256) {
     return fail(
@@ -373,7 +374,7 @@ function createStage(input: Readonly<{
   let stageRoot: string | undefined;
   let completed = false;
   try {
-    stageRoot = mkdtempSync(PRIVATE_ROOT_PREFIX_V2);
+    stageRoot = mkdtempSync(input.stagePrefix);
     chmodSync(stageRoot, 0o700);
     const archivePath = path.join(stageRoot, "archive.tar.xz");
     const selectionPath = path.join(stageRoot, "selected-members.nul");
@@ -425,7 +426,7 @@ function createStage(input: Readonly<{
     if (error instanceof NodeToolchainPrivateTreeErrorV2) throw error;
     return fail("NODE_TOOLCHAIN_PRIVATE_TREE_V2_STAGE_INVALID", "Private materialization stage failed", error);
   } finally {
-    if (!completed) removeStageBestEffort(stageRoot);
+    if (!completed) removeStageBestEffort(stageRoot, input.stagePrefix);
   }
 }
 
@@ -1055,6 +1056,7 @@ function cleanupInputs(
 async function materialize(input: Readonly<{
   inventoryHandle: InventoriedNodeToolchainDistributionV2;
   extractorAdapter: NodeToolchainPrivateTreeExtractorAdapterV2;
+  stagePrefix: string;
   testHooks?: TestHooksV2;
 }>): Promise<MaterializedNodeToolchainPrivateTreeV2> {
   const source = await copyInventoriedNodeToolchainMaterializationSourceV2(input.inventoryHandle);
@@ -1066,6 +1068,7 @@ async function materialize(input: Readonly<{
       archiveBytes: source.archiveBytes,
       archiveSha256: source.receipt.distribution.archive.sha256,
       selectedMembers: source.selectedMembers,
+      stagePrefix: input.stagePrefix,
     });
     let extraction: NodeToolchainPrivateTreeExtractionResultV2;
     try {
@@ -1140,20 +1143,58 @@ async function materialize(input: Readonly<{
   } finally {
     source.archiveBytes.fill(0);
     for (const file of rawFiles) file.bytes.fill(0);
-    if (!completed) removeStageBestEffort(stage?.stageRoot);
+    if (!completed) removeStageBestEffort(stage?.stageRoot, input.stagePrefix);
   }
 }
 
 export async function materializeInventoriedNodeToolchainPrivateTreeV2(
   inventoryHandle: InventoriedNodeToolchainDistributionV2,
 ): Promise<MaterializedNodeToolchainPrivateTreeV2> {
-  return materialize({ inventoryHandle, extractorAdapter: productionExtractorAdapter });
+  return materialize({
+    inventoryHandle,
+    extractorAdapter: productionExtractorAdapter,
+    stagePrefix: PRIVATE_ROOT_PREFIX_V2,
+  });
+}
+
+function testStagePrefix(scratchParent: string | undefined): string {
+  if (scratchParent === undefined) return PRIVATE_ROOT_PREFIX_V2;
+  if (
+    typeof scratchParent !== "string"
+    || !path.isAbsolute(scratchParent)
+    || path.normalize(scratchParent) !== scratchParent
+    || scratchParent.includes("\0")
+  ) {
+    return fail(
+      "NODE_TOOLCHAIN_PRIVATE_TREE_V2_INPUT_INVALID",
+      "Test private-tree scratch parent must be one normalized absolute path",
+    );
+  }
+  const stat = lstatSync(scratchParent);
+  const expectedUid = typeof process.geteuid === "function" ? process.geteuid() : undefined;
+  const expectedGid = typeof process.getegid === "function" ? process.getegid() : undefined;
+  if (
+    stat.isSymbolicLink()
+    || !stat.isDirectory()
+    || modeBits(stat) !== 0o700
+    || expectedUid === undefined
+    || expectedGid === undefined
+    || stat.uid !== expectedUid
+    || stat.gid !== expectedGid
+  ) {
+    return fail(
+      "NODE_TOOLCHAIN_PRIVATE_TREE_V2_INPUT_INVALID",
+      "Test private-tree scratch parent must be one direct process-owned 0700 directory",
+    );
+  }
+  return path.join(scratchParent, "setfarm-node-toolchain-tree-v2-");
 }
 
 export async function materializeInventoriedNodeToolchainPrivateTreeV2ForTest(
   inventoryHandle: InventoriedNodeToolchainDistributionV2,
   input: Readonly<{
     extractorAdapter?: NodeToolchainPrivateTreeExtractorAdapterV2;
+    scratchParent?: string;
     testHooks?: TestHooksV2;
   }>,
 ): Promise<MaterializedNodeToolchainPrivateTreeV2> {
@@ -1167,6 +1208,7 @@ export async function materializeInventoriedNodeToolchainPrivateTreeV2ForTest(
   return materialize({
     inventoryHandle,
     extractorAdapter: input.extractorAdapter ?? productionExtractorAdapter,
+    stagePrefix: testStagePrefix(input.scratchParent),
     ...(input.testHooks ? { testHooks: input.testHooks } : {}),
   });
 }
