@@ -8,7 +8,9 @@ import {
   NormalizedRelativeLocatorSchema,
   PathBindingIdSchema,
 } from "../product-compiler/schemas/common-v1.js";
-import type { CurrentImplementationFileSnapshotV2 } from "../product-compiler/slice-compiler-v2.js";
+import type {
+  LegacyCurrentImplementationFileSnapshotV2 as CurrentImplementationFileSnapshotV2,
+} from "../product-compiler/slice-compiler-v2-legacy.js";
 
 export const V3_SOURCE_SNAPSHOT_V2_DEFAULT_LIMITS = Object.freeze({
   maxFiles: 20_000,

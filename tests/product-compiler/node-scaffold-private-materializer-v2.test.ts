@@ -104,6 +104,11 @@ import {
   verifyProductBuildPacketV4ForTest,
 } from "../../src/product-compiler/product-build-packet-v4.js";
 import {
+  compileImplementationSliceV2,
+  compileImplementationSliceV2ForTest,
+  verifyImplementationSliceV2ForTest,
+} from "../../src/product-compiler/slice-compiler-v2.js";
+import {
   NodeProductSourcePublicationVerificationErrorV1,
   compileNodeProductSourcePublicationV1,
   compileNodeProductSourcePublicationV1ForTest,
@@ -245,6 +250,16 @@ import {
   ProductBuildPacketEnvelopeV4Schema,
   hashProductBuildPacketV4,
 } from "../../src/product-compiler/schemas/product-build-packet-v4.js";
+import {
+  IMPLEMENTATION_SLICE_CONTRACT_HASH_V2,
+  ImplementationSliceEnvelopeV2Schema,
+  ImplementationSliceV2Schema,
+  hashImplementationSlicePacketBindingV2,
+  hashImplementationSliceV2,
+} from "../../src/product-compiler/schemas/implementation-slice-v2.js";
+import {
+  LegacyImplementationSliceV2Schema,
+} from "../../src/product-compiler/schemas/implementation-slice-v2-legacy.js";
 import {
   NodeProductSourcePublicationReceiptSetV1Schema,
   NodeProductSourcePublicationReceiptV1Schema,
@@ -2096,6 +2111,8 @@ describe("Node scaffold private staged materializer V2", () => {
     const storyPlanHashes: string[] = [];
     const sourceMapManifestHashes: string[] = [];
     const packetEnvelopeHashes: string[] = [];
+    const sliceEnvelopeHashes: string[] = [];
+    let expectedSliceCount = 0;
 
     for (const [caseIndex, fixture] of cases.entries()) {
       const created = await stage({ profileId: fixture.profileId });
@@ -2471,6 +2488,7 @@ describe("Node scaffold private staged materializer V2", () => {
       assert.equal(sourceMap.root.value.leafCount, storyPlan.value.storyCount);
       assert.equal(sourceMap.leaves.length, storyPlan.value.storyCount);
       assert.equal(sourceMap.proofs.length, storyPlan.value.storyCount);
+      expectedSliceCount += sourceMap.proofs.length;
       assert.equal(
         sourceMap.root.value.authority.storyPlan.planHash,
         storyPlan.value.planHash,
@@ -2613,6 +2631,287 @@ describe("Node scaffold private staged materializer V2", () => {
       );
       packetEnvelopeHashes.push(packet.packet.envelopeHash);
       assertRecursivelyFrozen(packet);
+
+      const sliceProducer = {
+        pass: "product-compiler-implementation-slice-v2" as const,
+        codeSha: packetProducer.codeSha,
+        toolVersions: {
+          implementationSlice: "2.0.0" as const,
+          implementationSourceMap: "2.0.0" as const,
+          productBuildPacket: "4.0.0" as const,
+        },
+      };
+      const compiledSlices = [];
+      const sliceInputs = [];
+      for (const [proofIndex, sourceMapProof] of sourceMap.proofs.entries()) {
+        const sliceInput = {
+          ...packetInput,
+          sliceProducer,
+          storyId: storyPlan.value.stories[proofIndex]!.storyId,
+          sourceMapProof,
+          expectedPacketEnvelopeHash: packet.packet.envelopeHash,
+          candidatePacketEnvelope: packet.packet.envelope,
+        };
+        const compiledSlice = await compileImplementationSliceV2ForTest(
+          created.handle,
+          sliceInput,
+        );
+        assert.equal(
+          compiledSlice.status,
+          "shadow_sealed",
+          compiledSlice.status === "rejected"
+            ? JSON.stringify(compiledSlice.diagnostics)
+            : undefined,
+        );
+        if (compiledSlice.status !== "shadow_sealed") {
+          throw new Error("Expected V4-native ImplementationSliceV2");
+        }
+        const slice = compiledSlice.slice.value;
+        const proof = sourceMap.proofs[proofIndex]!;
+        const story = storyPlan.value.stories[proofIndex]!;
+        assert.equal(
+          ImplementationSliceEnvelopeV2Schema.safeParse(
+            compiledSlice.slice.envelope,
+          ).success,
+          true,
+        );
+        assert.equal(ImplementationSliceV2Schema.safeParse(slice).success, true);
+        assert.equal(LegacyImplementationSliceV2Schema.safeParse(slice).success,
+          false);
+        assert.equal(slice.contractHash, IMPLEMENTATION_SLICE_CONTRACT_HASH_V2);
+        assert.equal(slice.sliceVersion, "2.0.0");
+        assert.equal(slice.packet.envelopeHash, packet.packet.envelopeHash);
+        assert.equal(
+          slice.packet.sourceMapRoot.envelopeHash,
+          sourceMap.root.envelopeHash,
+        );
+        assert.equal(slice.storyProof.proofHash, proof.proofHash);
+        assert.equal(
+          slice.storyProof.leaf.reference.leafEnvelopeHash,
+          proof.leaf.reference.leafEnvelopeHash,
+        );
+        assert.equal(
+          slice.storyProof.leaf.leafHash,
+          proof.leaf.envelope.payload.leafHash,
+        );
+        assert.equal(slice.story.storyId, story.storyId);
+        assert.equal(slice.story.storyHash, story.storyHash);
+        assert.equal(
+          slice.implementation.mode,
+          "generated_sources_complete_no_model_dispatch",
+        );
+        assert.equal(slice.implementation.modelDispatch, "forbidden");
+        assert.deepEqual(slice.implementation.modelWritablePathRefs, []);
+        assert.equal(
+          slice.implementation.runtimeSource.logicalReceiptHash,
+          generated.receipt.logicalReceiptHash,
+        );
+        assert.equal(
+          slice.implementation.testSource.logicalReceiptHash,
+          generatedTest.receipt.logicalReceiptHash,
+        );
+        assert.equal(
+          canonicalJsonStringify(compiledSlice.contextAttachments.packetEnvelope),
+          canonicalJsonStringify(packet.packet.envelope),
+        );
+        assert.equal(
+          canonicalJsonStringify(compiledSlice.contextAttachments.storyProof),
+          canonicalJsonStringify(proof),
+        );
+        assert.equal(
+          compiledSlice.contextAttachments.storyLeafEnvelope.payload.leafHash,
+          proof.leaf.envelope.payload.leafHash,
+        );
+        assert.equal(
+          compiledSlice.slice.canonicalBytes.includes(story.title),
+          false,
+        );
+        assert.equal(
+          compiledSlice.slice.canonicalBytes.includes(
+            packet.packet.value.candidateBuild.disposition,
+          ),
+          false,
+        );
+        assert.equal(
+          compiledSlice.slice.canonicalBytes.includes(generated.receipt.receiptHash),
+          false,
+        );
+        assert.equal(
+          compiledSlice.slice.canonicalBytes.includes(
+            buildTopology.value.operationalEvidence.dependencyReceiptHash,
+          ),
+          false,
+        );
+        assert.ok(
+          Buffer.byteLength(compiledSlice.slice.canonicalBytes, "utf8")
+            < 4 * 1024 * 1024,
+        );
+        assert.equal(
+          copyPreparedArtifactStoreBatchCanonicalItemsV1(
+            compiledSlice.slice.publicationPreflight.preparedPublication,
+          ).length,
+          1,
+        );
+        assertRecursivelyFrozen(compiledSlice);
+        sliceEnvelopeHashes.push(compiledSlice.slice.envelopeHash);
+        compiledSlices.push(compiledSlice);
+        sliceInputs.push(sliceInput);
+      }
+
+      if (caseIndex === 0 || caseIndex === 2) {
+        const verifyIndex = caseIndex === 2 ? compiledSlices.length - 1 : 0;
+        const verifiedSlice = await verifyImplementationSliceV2ForTest(
+          created.handle,
+          {
+            ...sliceInputs[verifyIndex]!,
+            expectedSliceEnvelopeHash:
+              compiledSlices[verifyIndex]!.slice.envelopeHash,
+            candidateSliceEnvelope:
+              compiledSlices[verifyIndex]!.slice.envelope,
+          },
+        );
+        assert.equal(
+          verifiedSlice.status,
+          "verified_shadow",
+          verifiedSlice.status === "rejected"
+            ? JSON.stringify(verifiedSlice.diagnostics)
+            : undefined,
+        );
+        if (verifiedSlice.status !== "verified_shadow") {
+          throw new Error("Expected verified V4-native ImplementationSliceV2");
+        }
+        assert.equal(
+          verifiedSlice.implementationDisposition,
+          "generated_sources_complete_no_model_dispatch",
+        );
+        assertRecursivelyFrozen(verifiedSlice);
+      }
+
+      if (caseIndex === 0) {
+        const wrongSliceScope = await compileImplementationSliceV2(
+          created.handle,
+          sliceInputs[0]!,
+        );
+        assert.equal(wrongSliceScope.status, "rejected");
+        assert.equal(
+          wrongSliceScope.diagnostics[0]?.code,
+          "IMPLEMENTATION_SLICE_V2_PACKET_REJECTED",
+        );
+        const extraSliceInput = await compileImplementationSliceV2ForTest(
+          created.handle,
+          { ...sliceInputs[0]!, unexpected: true },
+        );
+        assert.equal(extraSliceInput.status, "rejected");
+        assert.equal(
+          extraSliceInput.diagnostics[0]?.code,
+          "IMPLEMENTATION_SLICE_V2_INPUT_INVALID",
+        );
+        const sliceProducerDrift = await compileImplementationSliceV2ForTest(
+          created.handle,
+          {
+            ...sliceInputs[0]!,
+            sliceProducer: { ...sliceProducer, codeSha: "f".repeat(16) },
+          },
+        );
+        assert.equal(sliceProducerDrift.status, "rejected");
+        assert.equal(
+          sliceProducerDrift.diagnostics[0]?.code,
+          "IMPLEMENTATION_SLICE_V2_PRODUCER_REJECTED",
+        );
+        const wrongStory = await compileImplementationSliceV2ForTest(
+          created.handle,
+          { ...sliceInputs[0]!, storyId: "US-WRONG" },
+        );
+        assert.equal(wrongStory.status, "rejected");
+        assert.equal(
+          wrongStory.diagnostics[0]?.code,
+          "IMPLEMENTATION_SLICE_V2_CROSS_AUTHORITY_MISMATCH",
+        );
+
+        const modelWriteInjection = structuredClone(
+          compiledSlices[0]!.slice.envelope,
+        ) as any;
+        modelWriteInjection.payload.implementation.modelWritablePathRefs = [
+          generated.receipt.source.pathRef,
+        ];
+        modelWriteInjection.payload.sliceHash =
+          hashImplementationSliceV2(modelWriteInjection.payload);
+        assert.equal(
+          ImplementationSliceEnvelopeV2Schema.safeParse(modelWriteInjection)
+            .success,
+          false,
+        );
+        const operationalInjection = structuredClone(
+          compiledSlices[0]!.slice.envelope,
+        ) as any;
+        operationalInjection.payload.sourceRevision = {
+          sha: "f".repeat(40),
+          treeHash: "e".repeat(40),
+        };
+        operationalInjection.payload.sliceHash =
+          hashImplementationSliceV2(operationalInjection.payload);
+        assert.equal(
+          ImplementationSliceEnvelopeV2Schema.safeParse(operationalInjection)
+            .success,
+          false,
+        );
+
+        const selfRehashedSlice = structuredClone(
+          compiledSlices[0]!.slice.envelope,
+        ) as any;
+        selfRehashedSlice.payload.packet.envelopeHash = "f".repeat(64);
+        selfRehashedSlice.payload.packet.bindingHash =
+          hashImplementationSlicePacketBindingV2(
+            selfRehashedSlice.payload.packet,
+          );
+        selfRehashedSlice.payload.sliceHash =
+          hashImplementationSliceV2(selfRehashedSlice.payload);
+        assert.equal(
+          ImplementationSliceEnvelopeV2Schema.safeParse(selfRehashedSlice)
+            .success,
+          true,
+        );
+        const selfRehashedSliceEnvelopeHash = hashCanonicalJson(
+          selfRehashedSlice,
+        );
+        const rejectedSelfRehashedSlice =
+          await verifyImplementationSliceV2ForTest(created.handle, {
+            ...sliceInputs[0]!,
+            expectedSliceEnvelopeHash: selfRehashedSliceEnvelopeHash,
+            candidateSliceEnvelope: selfRehashedSlice,
+          });
+        assert.equal(rejectedSelfRehashedSlice.status, "rejected");
+        assert.equal(
+          rejectedSelfRehashedSlice.diagnostics[0]?.code,
+          "IMPLEMENTATION_SLICE_V2_EXPECTED_HASH_MISMATCH",
+        );
+        const rejectedSliceCandidateMismatch =
+          await verifyImplementationSliceV2ForTest(created.handle, {
+            ...sliceInputs[0]!,
+            expectedSliceEnvelopeHash:
+              compiledSlices[0]!.slice.envelopeHash,
+            candidateSliceEnvelope: selfRehashedSlice,
+          });
+        assert.equal(rejectedSliceCandidateMismatch.status, "rejected");
+        assert.equal(
+          rejectedSliceCandidateMismatch.diagnostics[0]?.code,
+          "IMPLEMENTATION_SLICE_V2_CANDIDATE_MISMATCH",
+        );
+
+        let deepSliceProducer: unknown = { value: true };
+        for (let depth = 0; depth < 220; depth += 1) {
+          deepSliceProducer = { nested: deepSliceProducer };
+        }
+        const boundedSliceInput = await compileImplementationSliceV2ForTest(
+          created.handle,
+          { ...sliceInputs[0]!, sliceProducer: deepSliceProducer },
+        );
+        assert.equal(boundedSliceInput.status, "rejected");
+        assert.equal(
+          boundedSliceInput.diagnostics[0]?.code,
+          "IMPLEMENTATION_SLICE_V2_INPUT_INVALID",
+        );
+      }
 
       if (caseIndex === 0 || caseIndex === 2) {
         const verifiedPacket = await verifyProductBuildPacketV4ForTest(
@@ -3647,6 +3946,34 @@ describe("Node scaffold private staged materializer V2", () => {
           siblingPacket.packet.envelopeHash,
           packet.packet.envelopeHash,
         );
+        const siblingSlice = await compileImplementationSliceV2ForTest(
+          sibling.handle,
+          {
+            ...siblingStoryPlanInput,
+            sliceProducer,
+            packetProducer,
+            sourceMapProducer,
+            storyId: siblingStoryPlan.value.stories[0]!.storyId,
+            storyPlan: siblingStoryPlan.value,
+            sourceMapRootEnvelope: siblingSourceMap.root.envelope,
+            sourceMapProof: siblingSourceMap.proofs[0],
+            expectedPacketEnvelopeHash:
+              siblingPacket.packet.envelopeHash,
+            candidatePacketEnvelope: siblingPacket.packet.envelope,
+          },
+        );
+        assert.equal(siblingSlice.status, "shadow_sealed");
+        if (siblingSlice.status !== "shadow_sealed") {
+          throw new Error("Expected sibling V4-native ImplementationSliceV2");
+        }
+        assert.equal(
+          siblingSlice.slice.value.sliceHash,
+          compiledSlices[0]!.slice.value.sliceHash,
+        );
+        assert.equal(
+          siblingSlice.slice.envelopeHash,
+          compiledSlices[0]!.slice.envelopeHash,
+        );
 
         assert.ok(sourceMaterializationInput);
         await assert.rejects(
@@ -3748,6 +4075,8 @@ describe("Node scaffold private staged materializer V2", () => {
     assert.equal(new Set(sourceMapManifestHashes).size, cases.length);
     assert.equal(packetEnvelopeHashes.length, cases.length);
     assert.equal(new Set(packetEnvelopeHashes).size, cases.length);
+    assert.equal(sliceEnvelopeHashes.length, expectedSliceCount);
+    assert.equal(new Set(sliceEnvelopeHashes).size, expectedSliceCount);
 
     const unsupportedCandidate: any = structuredClone(
       genuineNodeExpressApiProductSpecV2(),

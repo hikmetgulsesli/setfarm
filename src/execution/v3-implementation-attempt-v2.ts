@@ -10,14 +10,14 @@ import { ProductCompilationReportV3Schema } from "../product-compiler/schemas/co
 import {
   ImplementationDependencyOutputV2Schema,
   type ImplementationDependencyOutputV2,
-  type ImplementationSliceV2,
-} from "../product-compiler/schemas/implementation-slice-v2.js";
+  type LegacyImplementationSliceV2 as ImplementationSliceV2,
+} from "../product-compiler/schemas/implementation-slice-v2-legacy.js";
 import {
-  compileImplementationSliceV2,
-  verifyImplementationSliceV2,
-  type ImplementationSliceCompilerInputV2,
-  type ImplementationSliceVerificationInputV2,
-} from "../product-compiler/slice-compiler-v2.js";
+  compileLegacyImplementationSliceV2 as compileImplementationSliceV2,
+  verifyLegacyImplementationSliceV2 as verifyImplementationSliceV2,
+  type LegacyImplementationSliceCompilerInputV2 as ImplementationSliceCompilerInputV2,
+  type LegacyImplementationSliceVerificationInputV2 as ImplementationSliceVerificationInputV2,
+} from "../product-compiler/slice-compiler-v2-legacy.js";
 import type { SemanticArtifactEnvelopeV1 } from "../product-compiler/artifact-store.js";
 import type { SourceRevisionV1 } from "./schemas/execution-attempt-v1.js";
 import { resolveV3GitRevision } from "./v3-git-revision.js";
