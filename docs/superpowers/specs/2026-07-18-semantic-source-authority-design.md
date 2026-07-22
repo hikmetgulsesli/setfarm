@@ -644,6 +644,27 @@ original prose remains provenance only after this contract exists; it is never
 an evaluator input. Runtime/test generators consume the exact behavior-contract
 hash, so there is one execution authority and no prose classifier fallback.
 
+The isolated shadow implementation landed in `26852450`. Its proposal and
+contract schemas are strict and bounded; its evaluator contract hash is
+`b067de2365e0ea413f632073c082a077c67de2e091fccddd7cb29e653eee990f`.
+The compiler checks canonical initial state, exact traceability and each of the
+three dispositions. The evaluator fresh-verifies authority and owns
+checkpoint/pointer/predicate/cardinality semantics. The entity resolver reads
+only state-before-action snapshots, validates every declared action input
+including enum domains, validates every collection member and requires exactly
+one canonical match. Candidate self-rehashing cannot create authority.
+
+This implementation deliberately retains the PLAN integration blocker. The
+current planner emits one `PlanSemanticProposalV2` and does not emit the
+behavior proposal; accepting an ad hoc caller proposal in production would
+recreate the split-authority failure this design is intended to remove. The
+next boundary is therefore one atomic `PlanProductBuildProposalV1` envelope
+whose semantic and local-key behavior halves compile together. The compiler,
+not the planner, maps local keys to ProductSpec global refs and seals both
+hashes. Natural-language equivalence is not claimed by the V1 compiler; the
+structured behavior becomes primary PLAN authority and prose remains
+provenance, with cross-product evals required before activation.
+
 `SemanticSourceDeclarationsV1` is consequently not a prerequisite for current
 Node generation. If retained for a future explicitly model-authored realization,
 it is downstream of realization-driven topology and covers only that admitted
@@ -1321,10 +1342,12 @@ new-write release; it does not translate V3 attempts into historical attempts.
     semantic writable paths, then implement BuildTopologyV3 from its
     dependency-stage fresh verifier.
 12. Preserve NodeProductRuntimeGeneratorV2 as executable-subset shadow proof.
-    Implement ProductRuntimeBehaviorContractV1, bind every opaque invariant and
-    entity-field snapshot occurrence, then version-forward the realization,
-    FileTree, BuildTopology and runtime generator authority to consume its exact
-    hash. No prose parser or compatibility adapter is permitted.
+    ProductRuntimeBehaviorContractV1 now binds every opaque invariant and
+    entity-field snapshot occurrence in isolation. Implement the atomic
+    PlanProductBuildProposalV1 producer/integration, then version-forward the
+    realization, FileTree, BuildTopology and runtime generator authority to
+    consume its exact hash. No prose parser or compatibility adapter is
+    permitted.
 13. Implement NodeProductTestGeneratorV2 from the same runtime program and
     behavior authority, then every-member test source receipt,
     evidence-registry join and release manifest.
@@ -1400,9 +1423,12 @@ tampering, logical self-rehash forgery and sibling-attempt identity separation.
 Positive tests intentionally clear prose invariants and therefore prove only the
 machine-executable ProductSpec V2 subset. Non-empty prose invariants and unbound
 entity-field reads fail with typed pre-source diagnostics. Behavior-contract
-tests must next prove every-and-only opaque occurrence coverage, functional
+tests now prove every-and-only opaque occurrence coverage, functional
 disposition anti-laundering, bounded evaluator work, state/path/type compatibility,
-snapshot selection determinism, fresh-verifier rejection and hostile input.
+snapshot selection determinism, enum-domain and malformed-member rejection,
+fresh-verifier rejection and hostile input. PLAN integration tests must next
+prove atomic semantic/behavior cardinality, local-key mapping and cross-proposal
+substitution rejection.
 
 Conditional declaration tests cover only explicitly model-authored realizations:
 every-and-only topology joins, ownership/grants, current base hashes, absent
@@ -1427,12 +1453,14 @@ evidence.
 
 ## GO / NO-GO
 
-GO for the isolated shadow authority chain through BuildTopologyV3 and
-NodeProductRuntimeGeneratorV2's machine-executable subset, including its
-fixture/adversarial and real-process proof.
+GO for the isolated shadow authority chain through BuildTopologyV3,
+NodeProductRuntimeGeneratorV2's machine-executable subset and the standalone
+ProductRuntimeBehaviorContractV1 compiler/evaluator, including their fixture,
+adversarial and real-process proof.
 
 NO-GO for source intent activation, setup topology replacement, packet/slice
 version cutover, model dispatch, runtime evidence, retry, supervisor, Mission
-Control, deploy, or live runs until ProductRuntimeBehaviorContractV1, generated
-test/source materialization, authenticated build/test/candidate evidence and
-their later dependency stages pass independently.
+Control, deploy, or live runs until the atomic PLAN producer, behavior-hash
+version forwarding, generated test/source materialization, authenticated
+build/test/candidate evidence and their later dependency stages pass
+independently.

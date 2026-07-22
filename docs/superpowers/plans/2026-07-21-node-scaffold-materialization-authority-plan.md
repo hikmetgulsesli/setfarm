@@ -1050,6 +1050,69 @@ consume the behavior-contract hash. Only after that upstream behavior
 contract is closed should NodeProductTestGeneratorV2 generate every action and
 evidence-relation test from the same runtime program.
 
+### F5H — ProductRuntimeBehaviorContractV1
+
+**Status (2026-07-21): complete as an isolated shadow compiler, verifier,
+evaluator and entity-snapshot resolver; production integration remains
+forbidden.** Commit `26852450` adds
+`setfarm.product-runtime-behavior-proposal.v1` and
+`setfarm.product-runtime-behavior-contract.v1` version `1.0.0`. The pinned
+code-owned evaluator contract hash is
+`b067de2365e0ea413f632073c082a077c67de2e091fccddd7cb29e653eee990f`.
+
+The compiler binds one exact ProductSpecV2 hash/source-task hash, one canonical
+proposal hash and the evaluator hash. Every-and-only prose invariant occurrence
+is identified from state ref, invariant ordinal and prose-text hash, then must
+receive exactly one of three dispositions: bounded executable assertions;
+exact existing action delta/precondition/observable/persistence-effect
+coverage; or a non-runtime constraint/non-goal disposition with exact required
+evidence. Each invariant retains its owning state's full traceability
+requirement set. A functional requirement cannot be reclassified as
+non-runtime, and prose is retained only through its hash rather than becoming
+evaluator input.
+
+The evaluator owns fixed `initial`, `after_action` and `after_rehydration`
+checkpoints, RFC 6901 pointer semantics, canonical JSON equality, typed missing
+values, vacuous every, exact truthiness/string-length/number/array behavior and
+bounded collection/visit work. Results contain observation hashes rather than
+raw state values. The compiler evaluates canonical initial state before issuing
+a contract; the public evaluator fresh-verifies the candidate against both
+ProductSpec and proposal before evaluating any snapshot.
+
+Every `entity_field` delta occurrence now has exactly one derived occurrence
+ref and snapshot binding. Selection is either one singleton object or one
+canonical match from a state-before-action collection using a required typed
+action input. Initial collections must be bounded, object-only, typed and
+canonically unique. Runtime resolution requires every-and-only declared inputs
+and states, enforces enum domains, rejects any malformed collection member, and
+returns a typed missing/ambiguous/invalid action failure rather than guessing an
+entity instance.
+
+Fresh verification reproduces the full contract and compares canonical bytes.
+A schema-valid self-rehash with a forged proposal hash is rejected. Strict
+extras, stale ProductSpec hashes, proxies, accessors, cycles, sparse arrays and
+oversized work fail closed. The focused suite is 12/12. Full Product Compiler
+is 1042/1042 across 127 suites; TypeScript, English (1,104 files), path contract
+(627 files), version, migration digests, eight Mission Control artifacts and
+diff checks pass. The normal feature-branch `npm run build` guard refused
+`arch/product-semantics-v2-authority` and was not bypassed. No live run, DB, PR,
+service, generated repository or real Setfarm application-support tree was
+mutated.
+
+This slice does not prove that a model-authored structured assertion is the
+correct semantic interpretation of arbitrary natural-language prose. More
+importantly, current PLAN output accepts exactly one
+`plan-semantic-proposal-v2`; it has no canonical producer for the behavior
+proposal. Therefore caller-supplied test proposals are isolated proof, not a
+production source of truth. The next dependency-order slice is one atomic
+`PlanProductBuildProposalV1` envelope containing both primary semantic proposal
+and local-key runtime behavior proposal. Setfarm must compile the semantic half
+to ProductSpecV2, deterministically map local state/action/delta/observable/
+entity keys into canonical refs, compile the behavior contract in the same
+authority transaction, and reject partial or cross-proposal joins. Only then
+may realization, FileTreeV3, BuildTopologyV3 and the runtime/test generators be
+version-forwarded to consume the exact behavior-contract hash.
+
 ## Verification and release gate
 
 Every slice requires:
@@ -1066,15 +1129,16 @@ F2-F4 additionally require focused real-filesystem, process, PostgreSQL and
 concurrency tests. A clean merged-`main` `npm run build` and full `npm test`
 remain release evidence; the feature-branch build guard is never bypassed.
 
-GO for F1-F4 and F5D-F5G as isolated shadow authorities. F5A-F5C are GO only as
+GO for F1-F4 and F5D-F5H as isolated shadow authorities. F5A-F5C are GO only as
 compatibility evidence and are explicitly NO-GO as production topology. NO-GO
 for production host execution, setup cutover, PacketV4, live migration, deploy
 and new clean product runs until machine-readable runtime behavior, generated
 test source/receipt, authenticated runtime-source materialization,
 authenticated build/test/candidate evidence, evidence registry, release
 manifest, SourceMap, and the later packet/eval program are complete. The next
-dependency-order slice is ProductRuntimeBehaviorContractV1, followed by
-NodeProductTestGeneratorV2. The feature-branch
+dependency-order slice is the atomic PlanProductBuildProposalV1 producer and
+PLAN authority integration, followed by downstream behavior-hash version
+forwarding and NodeProductTestGeneratorV2. The feature-branch
 `npm run build` guard was re-run after `19ee7109` and correctly refused branch
 `arch/product-semantics-v2-authority`; it was not bypassed. Only a clean
 merged-main build and full test can close that release gate.
