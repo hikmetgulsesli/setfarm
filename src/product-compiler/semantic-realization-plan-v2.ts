@@ -4,17 +4,25 @@ import {
   DEFAULT_CANONICAL_JSON_BOUNDED_WORK_LIMITS,
   canonicalJsonBytesBounded,
 } from "./bounded-canonical-json.js";
-import { canonicalJsonStringify } from "./canonical-json.js";
+import { canonicalJsonStringify, hashCanonicalJson } from "./canonical-json.js";
 import { compileSemanticSourceIntentSetV1 } from
   "./semantic-source-intent-set-v1.js";
 import { verifyProductRuntimeBehaviorContractV1 } from
   "./product-runtime-behavior-contract-v1.js";
 import { getCodeOwnedStackSemanticSourceRuleSetV1 } from
   "./stack-semantic-source-rules-catalog-v1.js";
+import {
+  getEvidenceAdapterDefinitionCatalogV2,
+  type EvidenceAdapterRequirementDefinitionV2,
+} from "../evidence/schemas/evidence-adapter-definition-catalog-v2.js";
 import type { SemanticSourceIntentV1, SemanticSourceIntentSetV1 } from
   "./schemas/semantic-source-intent-set-v1.js";
 import type { ProductRuntimeBehaviorContractV1 } from
   "./schemas/product-runtime-behavior-contract-v1.js";
+import {
+  ProductSpecV2Schema,
+  type ProductSpecV2,
+} from "./schemas/product-spec-v2.js";
 import {
   NODE_PRODUCT_RUNTIME_GENERATOR_CONTRACT_HASH_V2,
   NODE_PRODUCT_RUNTIME_GENERATOR_CONTRACT_V2,
@@ -66,6 +74,8 @@ const NO_DESIGN_CLOSURE_V2 = Object.freeze({
   reason: "product_delivery_design_not_required" as const,
 });
 const EMPTY_DIAGNOSTICS = Object.freeze([]) as readonly [];
+const CODE_OWNED_EVIDENCE_ADAPTER_DEFINITION_CATALOG_V2 =
+  getEvidenceAdapterDefinitionCatalogV2();
 
 const CompilerInputV2Schema = z.object({
   productSpec: z.unknown(),
@@ -231,10 +241,134 @@ function requireLegacyGeneratorSourceV2(intent: SemanticSourceIntentV1): void {
   }
 }
 
+type EvidenceRelationTargetV2 = Extract<
+  SemanticRealizationV2["target"],
+  { kind: "evidence_relation" }
+>;
+type EvidencePredicateBindingV2 =
+  EvidenceRelationTargetV2["predicateBinding"];
+
+function evidencePredicateContractHashV2(
+  predicate: ProductSpecV2["evidencePredicates"][number],
+): string {
+  return hashCanonicalJson({
+    schema: "setfarm.semantic-source-evidence-predicate-contract-hash.v1",
+    value: predicate,
+  });
+}
+
+function exactEvidencePredicateBindingV2(
+  intent: SemanticSourceIntentV1,
+  productSpec: ProductSpecV2,
+): EvidencePredicateBindingV2 {
+  if (intent.subjectOrigin.originKind !== "evidence_predicate") {
+    return policyFailure(
+      `Evidence realization ${intent.intentRef} lacks evidence-predicate origin authority`,
+    );
+  }
+  const matches = productSpec.evidencePredicates.filter((predicate) =>
+    predicate.id === intent.subjectRef);
+  if (matches.length !== 1) {
+    return policyFailure(
+      `Evidence realization ${intent.intentRef} does not resolve one exact ProductSpec predicate`,
+    );
+  }
+  const predicate = matches[0]!;
+  const predicateContractHash = evidencePredicateContractHashV2(predicate);
+  if (
+    intent.subjectOrigin.evidenceRef !== predicate.id
+    || intent.subjectOrigin.predicateSubjectRef !== predicate.subjectRef
+    || intent.subjectOrigin.required !== predicate.required
+    || intent.subjectOrigin.contractHash !== predicateContractHash
+  ) {
+    return policyFailure(
+      `Evidence realization ${intent.intentRef} does not match its fresh ProductSpec predicate`,
+    );
+  }
+  if (predicate.kind === "action_invocation") {
+    return {
+      evidenceRef: predicate.id,
+      predicateKind: predicate.kind,
+      predicateSubjectRef: predicate.subjectRef,
+      predicateContractHash,
+      selector: {
+        kind: "action_subject",
+        actionRef: predicate.subjectRef,
+      },
+    };
+  }
+  if (predicate.kind !== "observable_outcome") {
+    return {
+      evidenceRef: predicate.id,
+      predicateKind: predicate.kind,
+      predicateSubjectRef: predicate.subjectRef,
+      predicateContractHash,
+      selector: {
+        kind: "predicate_subject",
+        subjectRef: predicate.subjectRef,
+      },
+    };
+  }
+  const observableMatches = productSpec.actions.flatMap((action) =>
+    action.observableEffects.filter((effect) =>
+      effect.id === predicate.subjectRef
+      && effect.evidenceRef === predicate.id));
+  if (observableMatches.length !== 1) {
+    return policyFailure(
+      `Evidence predicate ${predicate.id} lacks one exact observable selector`,
+    );
+  }
+  const selector = observableMatches[0]!.selector;
+  if (selector.kind !== "invocation_output") {
+    return {
+      evidenceRef: predicate.id,
+      predicateKind: predicate.kind,
+      predicateSubjectRef: predicate.subjectRef,
+      predicateContractHash,
+      selector: {
+        kind: "predicate_subject",
+        subjectRef: predicate.subjectRef,
+      },
+    };
+  }
+  return {
+    evidenceRef: predicate.id,
+    predicateKind: predicate.kind,
+    predicateSubjectRef: predicate.subjectRef,
+    predicateContractHash,
+    selector: {
+      kind: selector.kind,
+      observableRef: predicate.subjectRef,
+      coordinate: selector.coordinate,
+      pointer: selector.pointer,
+      valueContract: structuredClone(selector.valueContract),
+    },
+  };
+}
+
+function evidenceRequirementDefinitionV2(
+  profileId: SemanticRealizationPlanV2["authority"]["profileId"],
+  predicateBinding: EvidencePredicateBindingV2,
+): EvidenceAdapterRequirementDefinitionV2 | null {
+  const matches = CODE_OWNED_EVIDENCE_ADAPTER_DEFINITION_CATALOG_V2.definitions
+    .filter((definition) =>
+      definition.profileRequirement.profileId === profileId
+      && definition.checkRequirement.predicateKind
+        === predicateBinding.predicateKind
+      && definition.checkRequirement.selectorRequirement
+        === predicateBinding.selector.kind);
+  if (matches.length === 0) return null;
+  if (matches.length !== 1) return policyFailure(
+    `Multiple V2 evidence-adapter requirements exist for ${profileId}/${predicateBinding.predicateKind}/${predicateBinding.selector.kind}`,
+  );
+  return structuredClone(matches[0]!);
+}
+
 function buildTargetV2(
   intent: SemanticSourceIntentV1,
   rule: PolicyRuleV2,
   intentSet: Readonly<SemanticSourceIntentSetV1>,
+  productSpec: ProductSpecV2,
 ): SemanticRealizationV2["target"] {
   const policyRuleHash = hashSemanticRealizationPolicyRuleV2(rule);
   if (rule.realization.kind === "node_product_runtime_generator_member") {
@@ -297,17 +431,42 @@ function buildTargetV2(
   if (intent.target.kind !== "predicate_requirement") {
     return policyFailure(`Evidence realization ${intent.intentRef} lost its target`);
   }
+  const predicateBinding = exactEvidencePredicateBindingV2(intent, productSpec);
+  const requirementDefinition = evidenceRequirementDefinitionV2(
+    intentSet.authority.deliverySelection.profileId,
+    predicateBinding,
+  );
   return {
     kind: "evidence_relation",
     policyRuleRef: rule.policyRuleRef,
     policyRuleHash,
-    registryArtifactType:
-      intent.target.bindingResolution.registryArtifactType,
-    supportSignatureSchema:
-      intent.target.bindingResolution.supportSignatureSchema,
-    resolutionContractRef:
-      intent.target.bindingResolution.resolutionContractRef,
-    resolutionState: "unresolved_shadow",
+    predicateBinding,
+    definitionCatalog: {
+      schema: CODE_OWNED_EVIDENCE_ADAPTER_DEFINITION_CATALOG_V2.schema,
+      version: CODE_OWNED_EVIDENCE_ADAPTER_DEFINITION_CATALOG_V2.version,
+      catalogHash: CODE_OWNED_EVIDENCE_ADAPTER_DEFINITION_CATALOG_V2.catalogHash,
+      readiness: CODE_OWNED_EVIDENCE_ADAPTER_DEFINITION_CATALOG_V2.readiness,
+      productionUse:
+        CODE_OWNED_EVIDENCE_ADAPTER_DEFINITION_CATALOG_V2.productionUse,
+    },
+    requirementResolution: requirementDefinition
+      ? {
+          status: "requirement_defined",
+          requirementDefinition,
+          requiredOperationalRegistrySchema:
+            "setfarm.evidence-adapter-registry.v2",
+          resolutionContractRef:
+            "EVIDENCE_ADAPTER_REQUIREMENT_TO_VERIFIED_REGISTRY_V2",
+          resolutionState:
+            "requirement_only_operational_registry_unmaterialized",
+        }
+      : {
+          status: "requirement_definition_missing",
+          blockerCode: "EVIDENCE_ADAPTER_V2_REQUIREMENT_DEFINITION_MISSING",
+          requiredOperationalRegistrySchema:
+            "setfarm.evidence-adapter-registry.v2",
+          resolutionState: "blocked_requirement_definition_missing",
+        },
     modelWriteAuthority: "forbidden",
   };
 }
@@ -316,8 +475,9 @@ function buildRealizationV2(
   intent: SemanticSourceIntentV1,
   rule: PolicyRuleV2,
   intentSet: Readonly<SemanticSourceIntentSetV1>,
+  productSpec: ProductSpecV2,
 ): SemanticRealizationV2 {
-  const target = buildTargetV2(intent, rule, intentSet);
+  const target = buildTargetV2(intent, rule, intentSet, productSpec);
   const realizationRef = deriveSemanticRealizationRefV2({
     policyHash: NODE_SEMANTIC_REALIZATION_POLICY_HASH_V2,
     policyRuleRef: rule.policyRuleRef,
@@ -337,6 +497,7 @@ function buildRealizationV2(
 function buildPlanV2(
   intentSet: Readonly<SemanticSourceIntentSetV1>,
   runtimeBehavior: Readonly<ProductRuntimeBehaviorContractV1>,
+  productSpec: ProductSpecV2,
 ): SemanticRealizationPlanV2 {
   if (runtimeBehavior.authority.productSpecHash !== intentSet.authority.productSpecHash) {
     policyFailure("Runtime behavior and semantic intent ProductSpec authority do not join");
@@ -383,7 +544,12 @@ function buildPlanV2(
     policyFailure("Active semantic realization policy contains duplicate rules");
   }
   const realizations = intentSet.intents.map((intent) =>
-    buildRealizationV2(intent, exactPolicyRuleV2(profile, intent), intentSet))
+    buildRealizationV2(
+      intent,
+      exactPolicyRuleV2(profile, intent),
+      intentSet,
+      productSpec,
+    ))
     .sort((left, right) => compareUtf16(left.realizationRef, right.realizationRef));
   const generatorCount = realizations.filter((entry) =>
     entry.target.kind === "node_product_runtime_generator_member").length;
@@ -393,6 +559,13 @@ function buildPlanV2(
     entry.target.kind === "typed_exemption").length;
   const evidenceCount = realizations.filter((entry) =>
     entry.target.kind === "evidence_relation").length;
+  const evidenceDefinitionCount = realizations.filter((entry) =>
+    entry.target.kind === "evidence_relation"
+    && entry.target.requirementResolution.status === "requirement_defined").length;
+  const evidenceMissingCount = realizations.filter((entry) =>
+    entry.target.kind === "evidence_relation"
+    && entry.target.requirementResolution.status
+      === "requirement_definition_missing").length;
   if (generatorCount < 1 || evidenceCount < 1) {
     policyFailure("Node realization requires generator members and evidence relations");
   }
@@ -453,6 +626,15 @@ function buildPlanV2(
         compiledPathRef: testGeneratorProfile.compiledPathRef,
         runnerAbi: testGeneratorProfile.execution.runnerAbi,
       },
+      evidenceAdapterDefinitions: {
+        schema: CODE_OWNED_EVIDENCE_ADAPTER_DEFINITION_CATALOG_V2.schema,
+        version: CODE_OWNED_EVIDENCE_ADAPTER_DEFINITION_CATALOG_V2.version,
+        catalogHash:
+          CODE_OWNED_EVIDENCE_ADAPTER_DEFINITION_CATALOG_V2.catalogHash,
+        readiness: CODE_OWNED_EVIDENCE_ADAPTER_DEFINITION_CATALOG_V2.readiness,
+        productionUse:
+          CODE_OWNED_EVIDENCE_ADAPTER_DEFINITION_CATALOG_V2.productionUse,
+      },
     },
     coverage: {
       sourceIntentCount: realizations.length,
@@ -460,6 +642,8 @@ function buildPlanV2(
       platformBindingCount: platformCount,
       typedExemptionCount: exemptionCount,
       evidenceRelationCount: evidenceCount,
+      evidenceRequirementDefinitionCount: evidenceDefinitionCount,
+      evidenceRequirementMissingCount: evidenceMissingCount,
       supersededLegacyModelWriteCount: generatorCount,
       modelWriteGrantCount: 0,
       disposition: "every_semantic_intent_realized_exactly_once",
@@ -501,10 +685,20 @@ export function compileSemanticRealizationPlanV2(
       parsed.error.issues[0]?.message ?? "Semantic realization input is invalid",
     );
   }
+  const productSpecResult = ProductSpecV2Schema.safeParse(parsed.data.productSpec);
+  if (!productSpecResult.success) {
+    return rejected(
+      "SEMANTIC_REALIZATION_V2_INPUT_INVALID",
+      `/productSpec/${productSpecResult.error.issues[0]?.path.map(String).join("/") ?? ""}`
+        .replace(/\/$/u, "") || "/productSpec",
+      productSpecResult.error.issues[0]?.message ?? "ProductSpecV2 is invalid",
+    );
+  }
+  const productSpec = productSpecResult.data;
   let runtimeBehavior: Readonly<ProductRuntimeBehaviorContractV1>;
   try {
     runtimeBehavior = verifyProductRuntimeBehaviorContractV1({
-      productSpec: parsed.data.productSpec,
+      productSpec,
       proposal: parsed.data.runtimeBehaviorProposal,
       candidate: parsed.data.runtimeBehaviorContract,
     });
@@ -516,7 +710,7 @@ export function compileSemanticRealizationPlanV2(
     );
   }
   const intentResult = compileSemanticSourceIntentSetV1({
-    productSpec: parsed.data.productSpec,
+    productSpec,
     deliverySelection: parsed.data.deliverySelection,
     designSourceClosure: NO_DESIGN_CLOSURE_V2,
     runtimeBehaviorProposal: parsed.data.runtimeBehaviorProposal,
@@ -532,7 +726,7 @@ export function compileSemanticRealizationPlanV2(
   }
   try {
     const value = recursivelyFreezeSemanticRealizationPlanV2(
-      buildPlanV2(intentResult.intentSet, runtimeBehavior),
+      buildPlanV2(intentResult.intentSet, runtimeBehavior, productSpec),
     );
     let canonicalBytes: Buffer;
     try {

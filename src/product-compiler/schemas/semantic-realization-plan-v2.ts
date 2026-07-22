@@ -4,7 +4,13 @@ import {
   DEFAULT_CANONICAL_JSON_BOUNDED_WORK_LIMITS,
   canonicalJsonBytesBounded,
 } from "../bounded-canonical-json.js";
-import { hashCanonicalJson } from "../canonical-json.js";
+import { canonicalJsonStringify, hashCanonicalJson } from "../canonical-json.js";
+import {
+  EVIDENCE_ADAPTER_DEFINITION_CATALOG_V2_SCHEMA,
+  EVIDENCE_ADAPTER_DEFINITION_CATALOG_V2_VERSION,
+  EvidenceAdapterRequirementDefinitionV2Schema,
+  getEvidenceAdapterDefinitionCatalogV2,
+} from "../../evidence/schemas/evidence-adapter-definition-catalog-v2.js";
 import {
   CapabilityIdSchema,
   ProductIdSchema,
@@ -26,10 +32,16 @@ import {
   SemanticSourceResponsibilityV1Schema,
   SemanticSourceSubjectKindV1Schema,
 } from "./stack-semantic-source-rules-v1.js";
+import {
+  ProductInvocationResultValueContractV1Schema,
+} from "./action-invocation-interface-intent-v1.js";
+import { EvidencePredicateV2Schema } from "./product-spec-v2.js";
 
 export const SEMANTIC_REALIZATION_PLAN_V2_SCHEMA =
   "setfarm.semantic-realization-plan.v2" as const;
-export const SEMANTIC_REALIZATION_PLAN_V2_VERSION = "2.0.0" as const;
+export const SEMANTIC_REALIZATION_PLAN_V2_VERSION = "2.1.0" as const;
+export const SEMANTIC_REALIZATION_REQUIRED_EVIDENCE_REGISTRY_SCHEMA_V2 =
+  "setfarm.evidence-adapter-registry.v2" as const;
 export const NODE_PRODUCT_RUNTIME_GENERATOR_CONTRACT_V2_SCHEMA =
   "setfarm.node-product-runtime-generator-contract.v2" as const;
 export const NODE_PRODUCT_RUNTIME_SOURCE_RECEIPT_V2_SCHEMA =
@@ -60,6 +72,9 @@ export const SEMANTIC_REALIZATION_PLAN_V2_BLOCKER_CODES = Object.freeze([
   "SEMANTIC_REALIZATION_V2_TEST_GENERATOR_UNVERIFIED",
   "SEMANTIC_REALIZATION_V2_TEST_SOURCE_RECEIPT_UNVERIFIED",
 ] as const);
+
+const CODE_OWNED_EVIDENCE_ADAPTER_DEFINITION_CATALOG_V2 =
+  getEvidenceAdapterDefinitionCatalogV2();
 
 export const NODE_PRODUCT_RUNTIME_GENERATOR_CONTRACT_V2 = Object.freeze({
   schema: NODE_PRODUCT_RUNTIME_GENERATOR_CONTRACT_V2_SCHEMA,
@@ -394,6 +409,17 @@ export const NODE_SEMANTIC_REALIZATION_POLICY_V2 = Object.freeze({
   policyVersion: SEMANTIC_REALIZATION_PLAN_V2_VERSION,
   sourceAuthority: "semantic_obligation_not_legacy_target" as const,
   legacyTargetPolicy: "compatibility_evidence_only" as const,
+  evidenceAuthority: Object.freeze({
+    definitionCatalogSchema: EVIDENCE_ADAPTER_DEFINITION_CATALOG_V2_SCHEMA,
+    definitionCatalogVersion: EVIDENCE_ADAPTER_DEFINITION_CATALOG_V2_VERSION,
+    definitionCatalogHash:
+      CODE_OWNED_EVIDENCE_ADAPTER_DEFINITION_CATALOG_V2.catalogHash,
+    relationAuthority:
+      "exact_product_spec_predicate_plus_code_owned_requirement_definition_v2" as const,
+    requiredOperationalRegistrySchema:
+      SEMANTIC_REALIZATION_REQUIRED_EVIDENCE_REGISTRY_SCHEMA_V2,
+    operationalSupportClaim: "forbidden_until_verified_release_registry_v2" as const,
+  }),
   modelWritePolicy:
     "forbidden_without_versioned_product_spec_behavior_contract" as const,
   profiles: Object.freeze([
@@ -470,6 +496,11 @@ export const SEMANTIC_REALIZATION_PLAN_CONTRACT_V2 = Object.freeze({
     semanticIntentTarget: "compatibility_evidence_only" as const,
     realizationPlan: "only_native_implementation_authority" as const,
     fileTreeConsumer: "realization_driven_file_tree_v3" as const,
+    evidenceRelation:
+      "product_spec_predicate_to_code_owned_requirement_definition_v2" as const,
+    evidenceOperationalResolution:
+      "verified_release_derived_registry_v2_required" as const,
+    evidenceSupportSignatureClaim: "forbidden" as const,
   }),
   blockerCodes: SEMANTIC_REALIZATION_PLAN_V2_BLOCKER_CODES,
 } as const);
@@ -580,20 +611,165 @@ const TypedExemptionTargetV2Schema = z.object({
   modelWriteAuthority: z.literal("forbidden"),
 }).strict();
 
+const EvidenceAdapterDefinitionCatalogBindingV2Schema = z.object({
+  schema: z.literal(EVIDENCE_ADAPTER_DEFINITION_CATALOG_V2_SCHEMA),
+  version: z.literal(EVIDENCE_ADAPTER_DEFINITION_CATALOG_V2_VERSION),
+  catalogHash: Sha256Schema,
+  readiness: z.literal("shadow_blocked"),
+  productionUse: z.literal("forbidden"),
+}).strict().superRefine((value, context) => {
+  if (
+    value.catalogHash
+      !== CODE_OWNED_EVIDENCE_ADAPTER_DEFINITION_CATALOG_V2.catalogHash
+  ) {
+    context.addIssue({
+      code: "custom",
+      path: ["catalogHash"],
+      message: "Evidence relation must bind the exact code-owned V2 definition catalog",
+    });
+  }
+});
+
+const CodeOwnedEvidenceAdapterRequirementDefinitionV2Schema =
+  EvidenceAdapterRequirementDefinitionV2Schema.superRefine((value, context) => {
+    const expected = CODE_OWNED_EVIDENCE_ADAPTER_DEFINITION_CATALOG_V2.definitions
+      .find((definition) => definition.definitionRef === value.definitionRef);
+    if (
+      !expected
+      || canonicalJsonStringify(expected) !== canonicalJsonStringify(value)
+    ) {
+      context.addIssue({
+        code: "custom",
+        message:
+          "Evidence relation requirement must equal one exact code-owned V2 definition",
+      });
+    }
+  });
+
+const EvidencePredicateBindingV2Schema = z.object({
+  evidenceRef: StableReferenceSchema,
+  predicateKind: EvidencePredicateV2Schema.shape.kind,
+  predicateSubjectRef: StableReferenceSchema,
+  predicateContractHash: Sha256Schema,
+  selector: z.discriminatedUnion("kind", [
+    z.object({
+      kind: z.literal("action_subject"),
+      actionRef: StableReferenceSchema,
+    }).strict(),
+    z.object({
+      kind: z.literal("invocation_output"),
+      observableRef: StableReferenceSchema,
+      coordinate: z.literal("result_value"),
+      pointer: z.string().max(500).refine(
+        (value) => /^(?:\/(?:[^~]|~[01])*)*$/u.test(value),
+        "Expected an empty or RFC 6901 JSON Pointer",
+      ),
+      valueContract: ProductInvocationResultValueContractV1Schema,
+    }).strict(),
+    z.object({
+      kind: z.literal("predicate_subject"),
+      subjectRef: StableReferenceSchema,
+    }).strict(),
+  ]),
+}).strict().superRefine((value, context) => {
+  if (
+    value.predicateKind === "action_invocation"
+    && (
+      value.selector.kind !== "action_subject"
+      || value.selector.actionRef !== value.predicateSubjectRef
+    )
+  ) {
+    context.addIssue({
+      code: "custom",
+      path: ["selector"],
+      message: "Action-invocation evidence must bind its exact action subject",
+    });
+  }
+  if (
+    value.predicateKind === "observable_outcome"
+    && (
+      (
+        value.selector.kind === "invocation_output"
+        && value.selector.observableRef !== value.predicateSubjectRef
+      )
+      || (
+        value.selector.kind === "predicate_subject"
+        && value.selector.subjectRef !== value.predicateSubjectRef
+      )
+      || value.selector.kind === "action_subject"
+    )
+  ) {
+    context.addIssue({
+      code: "custom",
+      path: ["selector"],
+      message: "Observable evidence must bind its exact observable selector authority",
+    });
+  }
+  if (
+    value.predicateKind !== "action_invocation"
+    && value.predicateKind !== "observable_outcome"
+    && (
+      value.selector.kind !== "predicate_subject"
+      || value.selector.subjectRef !== value.predicateSubjectRef
+    )
+  ) {
+    context.addIssue({
+      code: "custom",
+      path: ["selector"],
+      message: "Unsupported evidence must retain its exact predicate subject",
+    });
+  }
+});
+
+const EvidenceRequirementResolutionV2Schema = z.discriminatedUnion("status", [
+  z.object({
+    status: z.literal("requirement_defined"),
+    requirementDefinition: CodeOwnedEvidenceAdapterRequirementDefinitionV2Schema,
+    requiredOperationalRegistrySchema: z.literal(
+      SEMANTIC_REALIZATION_REQUIRED_EVIDENCE_REGISTRY_SCHEMA_V2,
+    ),
+    resolutionContractRef: z.literal(
+      "EVIDENCE_ADAPTER_REQUIREMENT_TO_VERIFIED_REGISTRY_V2",
+    ),
+    resolutionState: z.literal(
+      "requirement_only_operational_registry_unmaterialized",
+    ),
+  }).strict(),
+  z.object({
+    status: z.literal("requirement_definition_missing"),
+    blockerCode: z.literal("EVIDENCE_ADAPTER_V2_REQUIREMENT_DEFINITION_MISSING"),
+    requiredOperationalRegistrySchema: z.literal(
+      SEMANTIC_REALIZATION_REQUIRED_EVIDENCE_REGISTRY_SCHEMA_V2,
+    ),
+    resolutionState: z.literal("blocked_requirement_definition_missing"),
+  }).strict(),
+]);
+
 const EvidenceRelationTargetV2Schema = z.object({
   kind: z.literal("evidence_relation"),
   policyRuleRef: StableReferenceSchema,
   policyRuleHash: Sha256Schema,
-  registryArtifactType: z.literal("setfarm.evidence-adapter-registry.v1"),
-  supportSignatureSchema: z.literal(
-    "setfarm.evidence-adapter-support-signature.v1",
-  ),
-  resolutionContractRef: z.literal(
-    "EVIDENCE_ADAPTER_EXACT_SUPPORT_SIGNATURE_V1",
-  ),
-  resolutionState: z.literal("unresolved_shadow"),
+  predicateBinding: EvidencePredicateBindingV2Schema,
+  definitionCatalog: EvidenceAdapterDefinitionCatalogBindingV2Schema,
+  requirementResolution: EvidenceRequirementResolutionV2Schema,
   modelWriteAuthority: z.literal("forbidden"),
-}).strict();
+}).strict().superRefine((value, context) => {
+  if (value.requirementResolution.status !== "requirement_defined") return;
+  const definition = value.requirementResolution.requirementDefinition;
+  if (
+    definition.checkRequirement.predicateKind
+      !== value.predicateBinding.predicateKind
+    || definition.checkRequirement.selectorRequirement
+      !== value.predicateBinding.selector.kind
+  ) {
+    context.addIssue({
+      code: "custom",
+      path: ["requirementDefinition", "checkRequirement"],
+      message:
+        "Evidence predicate and selector must equal the exact V2 adapter requirement",
+    });
+  }
+});
 
 export const SemanticRealizationTargetV2Schema = z.discriminatedUnion("kind", [
   GeneratorMemberTargetV2Schema,
@@ -638,6 +814,22 @@ export const SemanticRealizationV2Schema = RealizationIdentityV2Schema.extend({
       code: "custom",
       path: ["realizationHash"],
       message: "Semantic realization identity must bind the exact policy and intent",
+    });
+  }
+  if (
+    value.target.kind === "evidence_relation"
+    && (
+      value.sourceIntent.subjectKind !== "evidence_predicate"
+      || value.sourceIntent.responsibility !== "predicate_source_binding"
+      || value.target.predicateBinding.evidenceRef
+        !== value.sourceIntent.subjectRef
+    )
+  ) {
+    context.addIssue({
+      code: "custom",
+      path: ["target", "predicateBinding"],
+      message:
+        "Evidence realization must bind the exact source-intent evidence predicate",
     });
   }
 });
@@ -727,6 +919,7 @@ const PlanIdentityV2Schema = z.object({
       ]),
       runnerAbi: z.literal("NODE_TEST_RUNNER_DIRECT_FILE_ABI_V2"),
     }).strict(),
+    evidenceAdapterDefinitions: EvidenceAdapterDefinitionCatalogBindingV2Schema,
   }).strict(),
   coverage: z.object({
     sourceIntentCount: z.number().int().nonnegative().max(
@@ -742,6 +935,12 @@ const PlanIdentityV2Schema = z.object({
       SEMANTIC_REALIZATION_PLAN_V2_MAX_ENTRIES,
     ),
     evidenceRelationCount: z.number().int().nonnegative().max(
+      SEMANTIC_REALIZATION_PLAN_V2_MAX_ENTRIES,
+    ),
+    evidenceRequirementDefinitionCount: z.number().int().nonnegative().max(
+      SEMANTIC_REALIZATION_PLAN_V2_MAX_ENTRIES,
+    ),
+    evidenceRequirementMissingCount: z.number().int().nonnegative().max(
       SEMANTIC_REALIZATION_PLAN_V2_MAX_ENTRIES,
     ),
     supersededLegacyModelWriteCount: z.number().int().nonnegative().max(
@@ -862,6 +1061,13 @@ function addPlanClosureIssuesV2(
     entry.target.kind === "typed_exemption").length;
   const evidenceCount = value.realizations.filter((entry) =>
     entry.target.kind === "evidence_relation").length;
+  const evidenceDefinitionCount = value.realizations.filter((entry) =>
+    entry.target.kind === "evidence_relation"
+    && entry.target.requirementResolution.status === "requirement_defined").length;
+  const evidenceMissingCount = value.realizations.filter((entry) =>
+    entry.target.kind === "evidence_relation"
+    && entry.target.requirementResolution.status
+      === "requirement_definition_missing").length;
   if (
     value.realizationCount !== value.realizations.length
     || value.authority.semanticIntentSet.intentCount !== value.realizations.length
@@ -870,6 +1076,10 @@ function addPlanClosureIssuesV2(
     || value.coverage.platformBindingCount !== platformCount
     || value.coverage.typedExemptionCount !== exemptionCount
     || value.coverage.evidenceRelationCount !== evidenceCount
+    || value.coverage.evidenceRequirementDefinitionCount
+      !== evidenceDefinitionCount
+    || value.coverage.evidenceRequirementMissingCount !== evidenceMissingCount
+    || evidenceDefinitionCount + evidenceMissingCount !== evidenceCount
     || value.coverage.supersededLegacyModelWriteCount !== generatorCount
     || generatorCount + platformCount + exemptionCount + evidenceCount
       !== value.realizations.length
@@ -916,6 +1126,34 @@ function addPlanClosureIssuesV2(
           path: ["realizations", index],
           message: "Every realization must equal one exact active policy rule",
         });
+      }
+      if (entry.target.kind === "evidence_relation") {
+        const evidenceTarget = entry.target;
+        const matchingDefinitions =
+          CODE_OWNED_EVIDENCE_ADAPTER_DEFINITION_CATALOG_V2.definitions.filter(
+            (definition) =>
+              definition.profileRequirement.profileId
+                === value.authority.profileId
+              && definition.checkRequirement.predicateKind
+                === evidenceTarget.predicateBinding.predicateKind
+              && definition.checkRequirement.selectorRequirement
+                === evidenceTarget.predicateBinding.selector.kind,
+          );
+        const resolution = evidenceTarget.requirementResolution;
+        const resolutionMismatch =
+          resolution.status === "requirement_defined"
+            ? matchingDefinitions.length !== 1
+              || resolution.requirementDefinition.definitionHash
+                !== matchingDefinitions[0]?.definitionHash
+            : matchingDefinitions.length !== 0;
+        if (resolutionMismatch) {
+          context.addIssue({
+            code: "custom",
+            path: ["realizations", index, "target", "requirementResolution"],
+            message:
+              "Evidence requirement availability must equal the selected profile and code-owned catalog",
+          });
+        }
       }
     });
   }

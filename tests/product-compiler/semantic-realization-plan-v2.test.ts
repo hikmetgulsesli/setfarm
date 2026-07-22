@@ -27,6 +27,10 @@ import {
 } from "../../src/product-compiler/schemas/semantic-realization-plan-v2.js";
 import { hashProductRuntimeBehaviorContractV1 } from
   "../../src/product-compiler/schemas/product-runtime-behavior-contract-v1.js";
+import {
+  getEvidenceAdapterDefinitionCatalogV2,
+  hashEvidenceAdapterRequirementDefinitionV2,
+} from "../../src/evidence/schemas/evidence-adapter-definition-catalog-v2.js";
 import type { ProductSpecV2 } from
   "../../src/product-compiler/schemas/product-spec-v2.js";
 import {
@@ -39,29 +43,29 @@ import {
 } from "./fixtures/no-design-product-semantics-v2.js";
 
 const GENERATOR_CONTRACT_HASH_GOLDEN_V2 =
-  "4fc036961b7449aec4eb171699f9559515820e1f5b8864c7440147082200f31b";
+  "9e2088447e943be9cff3550d9984606051e7b2048998e15a3c3887db7e4d24cc";
 const TEST_GENERATOR_CONTRACT_HASH_GOLDEN_V2 =
-  "9e95027d040924582b3fec49539f729defd52f797aa5af05e3602b04c521a8fe";
+  "abefe8ed28a8ac3cd69e38d7f80011b7392eb0a66473b64564638bd95f3c17f0";
 const POLICY_HASH_GOLDEN_V2 =
-  "50ab59d4d93c3f01d84c3bf1ce680243be8928257f71417f31e0e2bc67183404";
+  "03764bc5ed420e9ae5c8a674942c2659bef3717f83bae5f8272510bd22c3eee5";
 const PLAN_CONTRACT_HASH_GOLDEN_V2 =
-  "d3459ee59896412533dda41752c2691c595b0ef7e12c7e5dad2eb8686eb7b63c";
+  "a6c673c06a45f9ac8e5eae6c13d770678d58c136e51fbc298a9cac0dc852d9c8";
 const CLI_PLAN_HASH_GOLDEN_V2 =
-  "15bc4122d431989c54aa74874e662b5a7b3ae6aafe3462b894d300ea1e1d3f4f";
+  "d8ebede65efe6587f765fbfaf8ae252bb0d429b2b8aa60b1241822b30527f606";
 const API_PLAN_HASH_GOLDEN_V2 =
-  "0933e6799c8fe0c0fee55aee8c0b3d6e709cd8c6643b169e848fe4937a8d8ff1";
+  "92d44d9da16c4b893a099abcec0990e372bf026decde33654437b8afa1381827";
 const TWO_STORY_API_PLAN_HASH_GOLDEN_V2 =
-  "fda8380cb56e623e82774833b4470159a48f5bcd32b9c301dd0f70831174f368";
+  "0cc880893675617256443e6f722240694cad9c3ff45c1f651710fd9697e40172";
 const CLI_MEMBERSHIP_HASH_GOLDEN_V2 =
-  "acf4b7c75f0a3729ddca7afb3fb6b7d3a56f84d5b5162b64aeda7a2fe38200c5";
+  "739c187e343e8625470b21f60361d0755e41e3332c19dd97a51c3f01c277edda";
 const API_MEMBERSHIP_HASH_GOLDEN_V2 =
-  "a44103f6212a494c0c00651b8c8927a14a71961fab0998d24ffebb153357c35d";
+  "ba081c8b4b20f214253e23b532f5c4f16cf6e607ada3378b6e9b9aea91adcd05";
 const TWO_STORY_API_MEMBERSHIP_HASH_GOLDEN_V2 =
-  "2ce90ba06b797b34f4c6ebbb62c34d7e9313b69113aad787eedf2dbded75e2d6";
+  "cc029a6feb7cd3a45f3f19e05f3598bae254ea1949b9c09b22c99fcb63fe3e56";
 const ENTITY_API_PLAN_HASH_GOLDEN_V2 =
-  "6b0f88c8e7e6e0c50a2ea4680deca248526282aeb6f11501cf72193838fa66e0";
+  "8b69f4dd7db719a573eb877bd2b61aaaca60ce0aca124474f41fbaa31f9053d8";
 const ENTITY_API_MEMBERSHIP_HASH_GOLDEN_V2 =
-  "f6acb5edda26ca292afc3010ce18426ef8acd01efb37a2491f80fe83df2d16ce";
+  "f6d6405feb6cf6a68dd1964b69a075509800014cb42dc29dd96f65acb2a2609a";
 
 type SupportedStackPackIdV2 = "node-cli" | "node-express-api";
 
@@ -277,6 +281,11 @@ describe("SemanticRealizationPlanV2 contract and compiler", () => {
       assert.equal(value.coverage.supersededLegacyModelWriteCount,
         value.coverage.generatorMemberCount);
       assert.equal(value.coverage.modelWriteGrantCount, 0);
+      assert.equal(
+        value.coverage.evidenceRequirementDefinitionCount,
+        value.coverage.evidenceRelationCount,
+      );
+      assert.equal(value.coverage.evidenceRequirementMissingCount, 0);
       assert.equal(value.planHash, testCase.planHash);
       assert.equal(value.realizationMembershipHash, testCase.membershipHash);
       assert.deepEqual([
@@ -347,6 +356,61 @@ describe("SemanticRealizationPlanV2 contract and compiler", () => {
     assert.equal(canonicalBytes.includes("/Users/"), false);
     assert.equal(canonicalBytes.includes("/Library/Application Support/Setfarm"), false);
     assert.equal(canonicalBytes.includes("model_writable"), false);
+  });
+
+  it("binds every supported predicate to exact V2 requirement authority", () => {
+    const catalog = getEvidenceAdapterDefinitionCatalogV2();
+    const cases = [
+      compiled(genuineNodeCliProductSpecV2(), "node-cli"),
+      compiled(genuineNodeExpressApiProductSpecV2(), "node-express-api"),
+    ];
+    for (const authority of cases) {
+      assert.equal(authority.value.planVersion, "2.1.0");
+      assert.deepEqual(authority.value.authority.evidenceAdapterDefinitions, {
+        schema: catalog.schema,
+        version: catalog.version,
+        catalogHash: catalog.catalogHash,
+        readiness: "shadow_blocked",
+        productionUse: "forbidden",
+      });
+      const relations = authority.value.realizations.filter((entry) =>
+        entry.target.kind === "evidence_relation");
+      assert.equal(relations.length, 2);
+      for (const relation of relations) {
+        if (relation.target.kind !== "evidence_relation") {
+          throw new Error("Expected evidence relation");
+        }
+        const target = relation.target;
+        assert.equal(target.predicateBinding.evidenceRef,
+          relation.sourceIntent.subjectRef);
+        assert.equal(target.definitionCatalog.catalogHash, catalog.catalogHash);
+        assert.equal(target.requirementResolution.status, "requirement_defined");
+        if (target.requirementResolution.status !== "requirement_defined") {
+          throw new Error("Expected defined evidence requirement");
+        }
+        const definition = target.requirementResolution.requirementDefinition;
+        assert.equal(definition.profileRequirement.profileId,
+          authority.value.authority.profileId);
+        assert.equal(definition.checkRequirement.predicateKind,
+          target.predicateBinding.predicateKind);
+        assert.equal(definition.checkRequirement.selectorRequirement,
+          target.predicateBinding.selector.kind);
+        assert.equal(
+          target.requirementResolution.requiredOperationalRegistrySchema,
+          "setfarm.evidence-adapter-registry.v2",
+        );
+        assert.equal(
+          target.requirementResolution.resolutionState,
+          "requirement_only_operational_registry_unmaterialized",
+        );
+      }
+      assert.equal(authority.canonicalBytes.includes(
+        "setfarm.evidence-adapter-registry.v1"), false);
+      assert.equal(authority.canonicalBytes.includes(
+        "setfarm.evidence-adapter-support-signature.v1"), false);
+      assert.equal(authority.canonicalBytes.includes(
+        "EVIDENCE_ADAPTER_EXACT_SUPPORT_SIGNATURE_V1"), false);
+    }
   });
 
   it("keeps the generated CLI and API runtime ABI exact", () => {
@@ -446,6 +510,24 @@ describe("SemanticRealizationPlanV2 contract and compiler", () => {
     assert.equal(target.backingResponsibility, "state_store");
     assert.equal(target.backingResolutionState, "generated_runtime_member");
     assert.equal(value.coverage.modelWriteGrantCount, 0);
+    assert.equal(value.coverage.evidenceRequirementMissingCount, 1);
+    const missing = value.realizations.filter((entry) =>
+      entry.target.kind === "evidence_relation"
+      && entry.target.requirementResolution.status
+        === "requirement_definition_missing");
+    assert.equal(missing.length, 1);
+    assert.equal(missing[0]!.target.kind, "evidence_relation");
+    if (missing[0]!.target.kind !== "evidence_relation") {
+      throw new Error("Expected evidence relation");
+    }
+    assert.equal(missing[0]!.target.predicateBinding.predicateKind,
+      "persistence_round_trip");
+    assert.deepEqual(missing[0]!.target.requirementResolution, {
+      status: "requirement_definition_missing",
+      blockerCode: "EVIDENCE_ADAPTER_V2_REQUIREMENT_DEFINITION_MISSING",
+      requiredOperationalRegistrySchema: "setfarm.evidence-adapter-registry.v2",
+      resolutionState: "blocked_requirement_definition_missing",
+    });
   });
 
   it("is deterministic, recursively frozen, and freshly reproducible", () => {
@@ -475,11 +557,16 @@ describe("SemanticRealizationPlanV2 contract and compiler", () => {
     const removedIndex = candidate.realizations.findIndex((entry: any) =>
       entry.target.kind === "evidence_relation");
     assert.notEqual(removedIndex, -1);
-    candidate.realizations.splice(removedIndex, 1);
+    const [removed] = candidate.realizations.splice(removedIndex, 1);
     candidate.realizationCount = candidate.realizations.length;
     candidate.authority.semanticIntentSet.intentCount = candidate.realizations.length;
     candidate.coverage.sourceIntentCount = candidate.realizations.length;
     candidate.coverage.evidenceRelationCount -= 1;
+    if (removed.target.requirementResolution.status === "requirement_defined") {
+      candidate.coverage.evidenceRequirementDefinitionCount -= 1;
+    } else {
+      candidate.coverage.evidenceRequirementMissingCount -= 1;
+    }
     rehashPlan(candidate);
     assert.equal(SemanticRealizationPlanV2Schema.safeParse(candidate).success, true);
 
@@ -502,6 +589,75 @@ describe("SemanticRealizationPlanV2 contract and compiler", () => {
     action.realizationHash = hashSemanticRealizationV2(action);
     rehashPlan(candidate);
     assert.equal(SemanticRealizationPlanV2Schema.safeParse(candidate).success, false);
+  });
+
+  it("rejects self-rehashed evidence definition and profile substitutions", () => {
+    const authority = compiled(genuineNodeCliProductSpecV2(), "node-cli");
+    const catalog = getEvidenceAdapterDefinitionCatalogV2();
+
+    const forgedBody = structuredClone(authority.value) as any;
+    const forgedRelation = forgedBody.realizations.find((entry: any) =>
+      entry.target.kind === "evidence_relation"
+      && entry.target.requirementResolution.status === "requirement_defined");
+    assert.ok(forgedRelation);
+    const forgedDefinition =
+      forgedRelation.target.requirementResolution.requirementDefinition;
+    forgedDefinition.profileRequirement.profileHash = "f".repeat(64);
+    forgedDefinition.definitionHash =
+      hashEvidenceAdapterRequirementDefinitionV2(forgedDefinition);
+    forgedRelation.realizationHash = hashSemanticRealizationV2(forgedRelation);
+    rehashPlan(forgedBody);
+    assert.equal(
+      SemanticRealizationPlanV2Schema.safeParse(forgedBody).success,
+      false,
+    );
+
+    const crossProfile = structuredClone(authority.value) as any;
+    const crossRelation = crossProfile.realizations.find((entry: any) =>
+      entry.target.kind === "evidence_relation"
+      && entry.target.requirementResolution.status === "requirement_defined");
+    assert.ok(crossRelation);
+    const currentDefinition =
+      crossRelation.target.requirementResolution.requirementDefinition;
+    const apiDefinition = catalog.definitions.find((definition) =>
+      definition.profileRequirement.profileId
+        === "PROFILE_NODE_EXPRESS_API_STATELESS_EXACT_V2"
+      && definition.checkRequirement.predicateKind
+        === currentDefinition.checkRequirement.predicateKind
+      && definition.checkRequirement.selectorRequirement
+        === currentDefinition.checkRequirement.selectorRequirement);
+    assert.ok(apiDefinition);
+    crossRelation.target.requirementResolution.requirementDefinition =
+      structuredClone(apiDefinition);
+    crossRelation.realizationHash = hashSemanticRealizationV2(crossRelation);
+    rehashPlan(crossProfile);
+    assert.equal(
+      SemanticRealizationPlanV2Schema.safeParse(crossProfile).success,
+      false,
+    );
+  });
+
+  it("rejects laundering a catalog-backed requirement into a missing blocker", () => {
+    const authority = compiled(genuineNodeCliProductSpecV2(), "node-cli");
+    const candidate = structuredClone(authority.value) as any;
+    const relation = candidate.realizations.find((entry: any) =>
+      entry.target.kind === "evidence_relation"
+      && entry.target.requirementResolution.status === "requirement_defined");
+    assert.ok(relation);
+    relation.target.requirementResolution = {
+      status: "requirement_definition_missing",
+      blockerCode: "EVIDENCE_ADAPTER_V2_REQUIREMENT_DEFINITION_MISSING",
+      requiredOperationalRegistrySchema: "setfarm.evidence-adapter-registry.v2",
+      resolutionState: "blocked_requirement_definition_missing",
+    };
+    relation.realizationHash = hashSemanticRealizationV2(relation);
+    candidate.coverage.evidenceRequirementDefinitionCount -= 1;
+    candidate.coverage.evidenceRequirementMissingCount += 1;
+    rehashPlan(candidate);
+    assert.equal(
+      SemanticRealizationPlanV2Schema.safeParse(candidate).success,
+      false,
+    );
   });
 
   it("rejects a self-rehashed cross-profile test path forgery", () => {

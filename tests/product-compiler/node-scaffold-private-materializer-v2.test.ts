@@ -1449,9 +1449,9 @@ describe("Node scaffold private staged materializer V2", () => {
     }
 
     assert.deepEqual(manifestHashes, [
-      "e4de05ba5910f719656c21dcf2de0569300c9ff2aabd20567304eaffccd2d75d",
-      "f30c83809cbd46216973dd14a3fb6f8485975e3b54893f88e0b3e4a3a5a60f12",
-      "391d6bde7cf4d513f199cee7872f1428f185145ed1eb07b5868b156a23aa2720",
+      "a736734317268c34e9b5634c1b7f1f0ac93211aa2cfcd881a50d3d382e36e7a7",
+      "90a9ebadceadeed285e5876cc6d5a6d6723498335d944e501bc46e07191c3135",
+      "6fe2747e23370a19c5a14b73054c358a0c26abf02d22fc75d83ef8580de089e9",
     ]);
     const cliManifest = manifests.get("cli");
     const apiManifest = manifests.get("api");
@@ -2001,9 +2001,9 @@ describe("Node scaffold private staged materializer V2", () => {
     }
 
     assert.deepEqual(logicalBuildHashes, [
-      "4bca861764adf8af19a773c72f917120b5c2a5c50394a1ec59f644fb5b2d3f61",
-      "af7be152b7f815156af7f6ed005c5aaee56b525d62f87da2bb1c7c8aadc48a07",
-      "563e57b001b37ed888443e29f479ad9d8dffe1563d6c9512e269ec55d8b7bc69",
+      "d7c8252d35b65e20835ab000f9c9b32e7b956292e4a267af34697f7b72b843ae",
+      "aaab3861fe5a5220c352dad697f86606e206243ec799327a6371fbfce9b989fb",
+      "645d856e2e1efb264d13d4985592271e14d6710f6318536b6ad1c6f4e760b619",
     ]);
   });
 
