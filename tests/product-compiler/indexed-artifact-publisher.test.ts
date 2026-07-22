@@ -32,6 +32,7 @@ import {
   IndexedArtifactPublisher,
   IndexedArtifactPublisherError,
   bootstrapArtifactIndex,
+  inspectIndexedArtifactPublisherAuthorityV1,
   recoverExpiredArtifactPublicationBatches,
   recoverExpiredArtifactPublications,
   scanArtifactInventory,
@@ -153,6 +154,28 @@ describe("indexed semantic artifact publisher", () => {
     roots.push(root);
     return new ContentAddressedArtifactStore(path.join(root, "sha256"));
   }
+
+  it("authenticates only exact non-proxied publisher instances", async () => {
+    const publisher = new IndexedArtifactPublisher({
+      index: createArtifactIndex(database.sql),
+      store: await store(),
+    });
+    assert.deepEqual(inspectIndexedArtifactPublisherAuthorityV1(publisher), {
+      publicationAuthority: "standalone",
+    });
+    const forged = Object.create(IndexedArtifactPublisher.prototype);
+    assert.throws(
+      () => inspectIndexedArtifactPublisherAuthorityV1(forged),
+      (error: unknown) => error instanceof IndexedArtifactPublisherError
+        && error.code === "ARTIFACT_PRODUCTION_AUTHORITY_REQUIRED",
+    );
+    const proxied = new Proxy(publisher, {});
+    assert.throws(
+      () => inspectIndexedArtifactPublisherAuthorityV1(proxied),
+      (error: unknown) => error instanceof IndexedArtifactPublisherError
+        && error.code === "ARTIFACT_PRODUCTION_AUTHORITY_REQUIRED",
+    );
+  });
 
   it("bootstraps the exact canonical filesystem inventory before indexed writes", async () => {
     const artifactStore = await store();

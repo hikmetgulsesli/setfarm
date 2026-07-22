@@ -66,6 +66,8 @@ export const CANDIDATE_BUILD_RECEIPT_CONTRACT_V2 = Object.freeze({
     "build_topology_v3_2_direct_authenticated_node_typescript_target" as const,
   environmentAuthority: "deny_all_then_exact_set_v2" as const,
   processOutcome: "typed_bounded_exited_zero_only" as const,
+  processEvidenceBinding:
+    "authenticated_host_environment_compiler_argv_and_project_scope" as const,
   outputAuthority:
     "every_and_only_profile_dist_members_canonical_runtime_tree_v2" as const,
   pathDisclosure: "forbidden" as const,
@@ -483,7 +485,12 @@ const CandidateBuildReceiptIdentityV2Schema = z.object({
       installedBinsMembershipHash: Sha256Schema,
       compilerTarget: TypeScriptCompilerTargetV2Schema,
     }).strict(),
-    projectScopeHash: Sha256Schema,
+    processBinding: z.object({
+      probeRef: z.literal("HOST_NODE_PRODUCT_BUILD_V2"),
+      projectScopeHash: Sha256Schema,
+      compilerTargetIdentityHash: Sha256Schema,
+      directArgvHash: Sha256Schema,
+    }).strict(),
   }).strict(),
   sourceBefore: CandidateBuildSourceCheckpointV2Schema,
   sourceAfter: CandidateBuildSourceCheckpointV2Schema,
@@ -535,6 +542,11 @@ export const CandidateBuildReceiptV2Schema =
         !== value.executionAuthority.dependency.receiptHash
       || before.dependencyIdentityHash
         !== value.executionAuthority.dependency.dependencyIdentityHash
+      || value.executionAuthority.processBinding.directArgvHash
+        !== hashCanonicalJson({
+          schema: "setfarm.candidate-build-direct-argv-hash.v2",
+          directArgv: value.operation.directArgv,
+        })
     ) {
       context.addIssue({
         code: "custom",

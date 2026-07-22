@@ -3846,7 +3846,8 @@ export function inspectNodeProductSourceMaterializationReceiptV1(
 ): NodeProductSourceMaterializationReceiptV1 {
   const state = activeStageStateV2(handle);
   if (
-    state.lifecycle.status !== "sources_ready"
+    !["sources_ready", "build_process_consumed", "build_ready"]
+      .includes(state.lifecycle.status)
     || !state.lifecycle.sourceReceipt
     || !state.lifecycle.sourceCapture
     || !state.lifecycle.sourceAuthority

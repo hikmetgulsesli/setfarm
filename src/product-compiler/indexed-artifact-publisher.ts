@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { isProxy } from "node:util/types";
 
 import {
   ArtifactStoreError,
@@ -575,6 +576,10 @@ function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
+const indexedArtifactPublisherAuthorityV1 = new WeakMap<object, Readonly<{
+  publicationAuthority: "standalone" | "hybrid-required";
+}>>();
+
 export class IndexedArtifactPublisher {
   private readonly index: ArtifactIndexClient;
   private readonly store: ArtifactStoreClient;
@@ -616,6 +621,9 @@ export class IndexedArtifactPublisher {
     this.leaseMs = Math.max(100, Math.min(Math.trunc(input.leaseMs ?? 120_000), 30 * 60_000));
     this.busyWaitMs = Math.max(0, Math.min(Math.trunc(input.busyWaitMs ?? 5_000), 30_000));
     this.retryDelayMs = Math.max(1, Math.min(Math.trunc(input.retryDelayMs ?? 20), 1_000));
+    indexedArtifactPublisherAuthorityV1.set(this, Object.freeze({
+      publicationAuthority: this.publicationAuthority,
+    }));
   }
 
   private async getStored(hash: string): Promise<ArtifactGetResult> {
@@ -1007,6 +1015,30 @@ export class IndexedArtifactPublisher {
       // lease is handled by the durable expired-reservation reconciler.
     }
   }
+}
+
+export function inspectIndexedArtifactPublisherAuthorityV1(
+  publisher: IndexedArtifactPublisher,
+): Readonly<{ publicationAuthority: "standalone" | "hybrid-required" }> {
+  if (
+    typeof publisher !== "object"
+    || publisher === null
+    || isProxy(publisher)
+    || Object.getPrototypeOf(publisher) !== IndexedArtifactPublisher.prototype
+  ) {
+    throw new IndexedArtifactPublisherError(
+      "ARTIFACT_PRODUCTION_AUTHORITY_REQUIRED",
+      "Artifact publication requires one authentic indexed publisher",
+    );
+  }
+  const state = indexedArtifactPublisherAuthorityV1.get(publisher);
+  if (!state) {
+    throw new IndexedArtifactPublisherError(
+      "ARTIFACT_PRODUCTION_AUTHORITY_REQUIRED",
+      "Artifact publication requires one authentic indexed publisher",
+    );
+  }
+  return state;
 }
 
 export async function scanArtifactInventory(

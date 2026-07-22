@@ -933,3 +933,31 @@ export async function revalidateVerifiedCandidateSourceAuthorityV1(
     envelopeHash: reproduced.candidateSource.envelopeHash,
   });
 }
+
+export type VerifiedCandidateSourceBuildContextInternalV1 = Readonly<{
+  stage: MaterializedNodeScaffoldPrivateStageV2;
+  closureVerificationInput: unknown;
+  expectedScope: "production_host" | "test_fixture";
+  envelope: Readonly<CandidateSourceEnvelopeV1>;
+  envelopeHash: string;
+}>;
+
+/**
+ * @internal Authenticated bridge for CandidateBuildAuthorityV2. It exposes no
+ * filesystem path or caller-selected source bytes; only the original private
+ * stage capability and bounded closure input retained by the verified brand.
+ */
+export async function acquireVerifiedCandidateSourceBuildContextInternalV1(
+  authority: VerifiedCandidateSourceAuthorityV1,
+): Promise<VerifiedCandidateSourceBuildContextInternalV1> {
+  const revalidated = await revalidateVerifiedCandidateSourceAuthorityV1(authority);
+  const state = verifiedCandidateSourceAuthorityStateV1.get(authority);
+  if (!state) throw new Error("Candidate source authority is unauthenticated");
+  return Object.freeze({
+    stage: state.handle,
+    closureVerificationInput: state.compilerInput.closureVerificationInput,
+    expectedScope: state.expectedScope,
+    envelope: state.envelope,
+    envelopeHash: revalidated.envelopeHash,
+  });
+}

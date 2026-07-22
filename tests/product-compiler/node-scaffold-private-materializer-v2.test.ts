@@ -25,8 +25,15 @@ import ts from "typescript";
 
 import { EVIDENCE_RECEIPT_V2_SCHEMA } from
   "../../src/evidence/schemas/evidence-receipt-v2.js";
-import { CANDIDATE_BUILD_RECEIPT_V2_SCHEMA } from
-  "../../src/execution/schemas/candidate-build-receipt-v2.js";
+import {
+  CANDIDATE_BUILD_RECEIPT_V2_SCHEMA,
+  CandidateBuildReceiptV2Schema,
+} from "../../src/execution/schemas/candidate-build-receipt-v2.js";
+import {
+  CandidateBuildErrorV2,
+  buildCandidateV2ForTest,
+  verifyCandidateBuildV2ForTest,
+} from "../../src/execution/candidate-build-v2.js";
 import {
   compileCandidateSourceV1,
   compileCandidateSourceV1ForTest,
@@ -895,12 +902,18 @@ describe("Node scaffold private staged materializer V2", () => {
     return path.join(parent, names[0]!);
   }
 
-  async function preparePublishedCliSourcesV1(
+  async function preparePublishedNodeSourcesV1(
     handle: MaterializedNodeScaffoldPrivateStageV2,
     publicationMode: "complete" | "without_publication_receipt" = "complete",
+    profileId: NodeScaffoldProfileIdV2 = CLI_PROFILE,
   ) {
-    const productSpec = genuineNodeCliProductSpecV2();
-    const deliverySelection = deliverySelectionForV2(productSpec, "node-cli");
+    const productSpec = profileId === CLI_PROFILE
+      ? genuineNodeCliProductSpecV2()
+      : genuineNodeExpressApiProductSpecV2();
+    const deliverySelection = deliverySelectionForV2(
+      productSpec,
+      profileId === CLI_PROFILE ? "node-cli" : "node-express-api",
+    );
     const authorityInput = {
       productSpec,
       deliverySelection,
@@ -4619,6 +4632,18 @@ describe("Node scaffold private staged materializer V2", () => {
           siblingCandidateSource.candidateSource.envelopeHash,
           compiledCandidateSource.candidateSource.envelopeHash,
         );
+        const verifiedSiblingCandidateSource =
+          await verifyCandidateSourceV1ForTest(sibling.handle, {
+            closureVerificationInput: siblingClosureVerificationInput,
+            expectedCandidateSourceEnvelopeHash:
+              siblingCandidateSource.candidateSource.envelopeHash,
+            candidateSourceEnvelope:
+              siblingCandidateSource.candidateSource.envelope,
+          });
+        assert.equal(verifiedSiblingCandidateSource.status, "verified_shadow");
+        if (verifiedSiblingCandidateSource.status !== "verified_shadow") {
+          throw new Error("Expected verified sibling CandidateSourceV1 authority");
+        }
 
         const selfRehashedCandidateSource = structuredClone(
           compiledCandidateSource.candidateSource.envelope,
@@ -4645,6 +4670,99 @@ describe("Node scaffold private staged materializer V2", () => {
         assert.equal(
           rejectedCandidateSource.diagnostics[0]?.code,
           "CANDIDATE_SOURCE_V1_CANDIDATE_MISMATCH",
+        );
+
+        const buildInvocationCount = buildInvocations.length;
+        const candidateBuild = await buildCandidateV2ForTest({
+          sourceAuthority: verifiedCandidateSource.authority,
+          artifactAuthority: sourcePublisher,
+        });
+        const siblingCandidateBuild = await buildCandidateV2ForTest({
+          sourceAuthority: verifiedSiblingCandidateSource.authority,
+          artifactAuthority: sourcePublisher,
+        });
+        assert.equal(buildInvocations.length, buildInvocationCount + 2);
+        assert.equal(
+          CandidateBuildReceiptV2Schema.safeParse(candidateBuild.receipt).success,
+          true,
+        );
+        assert.equal(candidateBuild.receipt.executionAuthority.pathDisclosure,
+          "forbidden");
+        assert.equal(candidateBuild.receipt.processOutcome.status, "exited_zero");
+        assert.equal(candidateBuild.receipt.outputTree.memberCount, 2);
+        assert.equal(candidateBuild.receipt.outputTree.fileCount, 2);
+        assert.equal(candidateBuild.receipt.outputTree.directoryCount, 0);
+        assert.deepEqual(
+          candidateBuild.receipt.outputTree.files.map((file) =>
+            file.normalizedLocator),
+          ["dist/cli.js", "dist/cli.setfarm.test.js"],
+        );
+        assert.equal(
+          candidateBuild.authority.semanticRevisionHash,
+          compiledCandidateSource.semanticRevisionHash,
+        );
+        assert.equal(
+          siblingCandidateBuild.authority.semanticRevisionHash,
+          candidateBuild.authority.semanticRevisionHash,
+        );
+        assert.equal(
+          siblingCandidateBuild.outputTreeEnvelopeHash,
+          candidateBuild.outputTreeEnvelopeHash,
+        );
+        assert.equal(
+          siblingCandidateBuild.receipt.outputTree.treeHash,
+          candidateBuild.receipt.outputTree.treeHash,
+        );
+        assert.notEqual(
+          siblingCandidateBuild.receipt.receiptHash,
+          candidateBuild.receipt.receiptHash,
+        );
+        const verifiedCandidateBuild = await verifyCandidateBuildV2ForTest({
+          buildAuthority: candidateBuild.authority,
+          expectedReceiptHash: candidateBuild.receipt.receiptHash,
+        });
+        assert.equal(verifiedCandidateBuild.status, "verified_shadow");
+        assert.equal(
+          verifiedCandidateBuild.outputTreeEnvelopeHash,
+          candidateBuild.outputTreeEnvelopeHash,
+        );
+        await assert.rejects(
+          verifyCandidateBuildV2ForTest({
+            buildAuthority: { ...candidateBuild.authority },
+            expectedReceiptHash: candidateBuild.receipt.receiptHash,
+          }),
+          (error: unknown) => error instanceof CandidateBuildErrorV2
+            && error.code === "CANDIDATE_BUILD_V2_AUTHORITY_UNAUTHENTICATED",
+        );
+        await assert.rejects(
+          verifyCandidateBuildV2ForTest({
+            buildAuthority: candidateBuild.authority,
+            expectedReceiptHash: "f".repeat(64),
+          }),
+          (error: unknown) => error instanceof CandidateBuildErrorV2
+            && error.code === "CANDIDATE_BUILD_V2_EXPECTED_HASH_MISMATCH",
+        );
+        await rm(
+          path.join(
+            artifactRoot,
+            `${candidateBuild.outputTreeEnvelopeHash}.json`,
+          ),
+        );
+        await assert.rejects(
+          verifyCandidateBuildV2ForTest({
+            buildAuthority: candidateBuild.authority,
+            expectedReceiptHash: candidateBuild.receipt.receiptHash,
+          }),
+          (error: unknown) => error instanceof CandidateBuildErrorV2
+            && error.code === "CANDIDATE_BUILD_V2_PUBLICATION_REJECTED",
+        );
+        await assert.rejects(
+          buildCandidateV2ForTest({
+            sourceAuthority: verifiedSiblingCandidateSource.authority,
+            artifactAuthority: sourcePublisher,
+          }),
+          (error: unknown) => error instanceof CandidateBuildErrorV2
+            && error.code === "CANDIDATE_BUILD_V2_ALREADY_CONSUMED",
         );
 
         const attemptRoot = await onlyAttemptRoot(created.stageParent);
@@ -4689,6 +4807,14 @@ describe("Node scaffold private staged materializer V2", () => {
           },
         );
         await chmod(materializedRuntimePath, 0o644);
+        await assert.rejects(
+          verifyCandidateBuildV2ForTest({
+            buildAuthority: candidateBuild.authority,
+            expectedReceiptHash: candidateBuild.receipt.receiptHash,
+          }),
+          (error: unknown) => error instanceof CandidateBuildErrorV2
+            && error.code === "CANDIDATE_BUILD_V2_SOURCE_REJECTED",
+        );
         await assert.rejects(revalidateNodeProductSourcesV1(created.handle), {
           code: "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_STATE_DRIFT",
         });
@@ -4778,7 +4904,7 @@ describe("Node scaffold private staged materializer V2", () => {
 
   it("executes one exact private TypeScript build and seals every-and-only dist output", async () => {
     const created = await stage();
-    const publication = await preparePublishedCliSourcesV1(created.handle);
+    const publication = await preparePublishedNodeSourcesV1(created.handle);
     const source = await materializeNodeProductSourcesV1ForTest(created.handle, {
       casAuthority,
       ...publication,
@@ -4844,6 +4970,32 @@ describe("Node scaffold private staged materializer V2", () => {
       { code: "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_BUILD_ALREADY_CONSUMED" },
     );
 
+    const api = await stage({ profileId: API_PROFILE });
+    const apiPublication = await preparePublishedNodeSourcesV1(
+      api.handle,
+      "complete",
+      API_PROFILE,
+    );
+    await materializeNodeProductSourcesV1ForTest(api.handle, {
+      casAuthority,
+      ...apiPublication,
+    });
+    const apiEvidence = await executeNodeScaffoldEnvironmentBuildV2(
+      api.environmentHandle,
+      api.handle,
+    );
+    assert.equal(apiEvidence.status, "exited_zero");
+    const apiOutput = await finalizeNodeCandidateBuildOutputV2ForTest(
+      api.handle,
+    );
+    assert.equal(apiOutput.profileId, API_PROFILE);
+    assert.deepEqual(apiOutput.files.map((file) => file.normalizedLocator), [
+      "dist/app.js",
+      "dist/app.setfarm.test.js",
+    ]);
+    assert.equal(apiOutput.tree.fileCount, 2);
+    assert.equal(apiOutput.tree.directoryCount, 0);
+
     const attemptRoot = await onlyAttemptRoot(created.stageParent);
     const runtimeOutput = path.join(attemptRoot, "project", "dist", "cli.js");
     await chmod(runtimeOutput, 0o644);
@@ -4854,7 +5006,7 @@ describe("Node scaffold private staged materializer V2", () => {
     });
 
     const failed = await stage();
-    const failedPublication = await preparePublishedCliSourcesV1(failed.handle);
+    const failedPublication = await preparePublishedNodeSourcesV1(failed.handle);
     await materializeNodeProductSourcesV1ForTest(failed.handle, {
       casAuthority,
       ...failedPublication,
@@ -4911,7 +5063,7 @@ describe("Node scaffold private staged materializer V2", () => {
     ];
     for (const fixture of cases) {
       const created = await stage();
-      const publication = await preparePublishedCliSourcesV1(created.handle);
+      const publication = await preparePublishedNodeSourcesV1(created.handle);
       await materializeNodeProductSourcesV1ForTest(created.handle, {
         casAuthority,
         ...publication,
@@ -4938,7 +5090,7 @@ describe("Node scaffold private staged materializer V2", () => {
 
   it("serializes concurrent build claims to one process invocation", async () => {
     const created = await stage();
-    const publication = await preparePublishedCliSourcesV1(created.handle);
+    const publication = await preparePublishedNodeSourcesV1(created.handle);
     await materializeNodeProductSourcesV1ForTest(created.handle, {
       casAuthority,
       ...publication,
@@ -4967,7 +5119,7 @@ describe("Node scaffold private staged materializer V2", () => {
     const sentinel = path.join(stageParent, "sentinel");
     await writeFile(sentinel, "foreign\n", { mode: 0o600 });
     const created = await stage({ stageParent });
-    const publication = await preparePublishedCliSourcesV1(
+    const publication = await preparePublishedNodeSourcesV1(
       created.handle,
       "without_publication_receipt",
     );
@@ -4989,7 +5141,7 @@ describe("Node scaffold private staged materializer V2", () => {
     const sentinel = path.join(stageParent, "sentinel");
     await writeFile(sentinel, "foreign\n", { mode: 0o600 });
     const created = await stage({ stageParent });
-    const publication = await preparePublishedCliSourcesV1(created.handle);
+    const publication = await preparePublishedNodeSourcesV1(created.handle);
     const crashBoundary: NodeProductSourceMaterializerCrashBoundaryV1 =
       "after_runtime_source_fsync";
     await assert.rejects(

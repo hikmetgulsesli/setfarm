@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
 
-import { canonicalJsonBytes } from "../../src/product-compiler/canonical-json.js";
+import { canonicalJsonBytes, hashCanonicalJson } from
+  "../../src/product-compiler/canonical-json.js";
 import * as buildModule from "../../src/execution/schemas/candidate-build-receipt-v2.js";
 import {
   CANDIDATE_BUILD_OPERATION_V2_SCHEMA,
@@ -339,7 +340,15 @@ function createBuildReceipt(): CandidateBuildReceiptV2 {
         installedBinsMembershipHash: sha("installed-bins"),
         compilerTarget: clone(operation.compilerTarget),
       },
-      projectScopeHash: sha("build-project-scope"),
+      processBinding: {
+        probeRef: "HOST_NODE_PRODUCT_BUILD_V2",
+        projectScopeHash: sha("build-project-scope"),
+        compilerTargetIdentityHash: sha("compiler-target-identity"),
+        directArgvHash: hashCanonicalJson({
+          schema: "setfarm.candidate-build-direct-argv-hash.v2",
+          directArgv: operation.directArgv,
+        }),
+      },
     },
     sourceBefore: source,
     sourceAfter: clone(source),
@@ -671,14 +680,14 @@ test("candidate build superseding-wire hash domains stay deterministic and separ
     bundleHash: bundle.bundleHash,
   };
   assert.deepEqual(hashes, {
-    contractHash: "bd7e6c6ab0ef8e53f7d7f5d0c9461ab3f9fa5ac488bb48a707e1d5b800a952dc",
+    contractHash: "692d50995d31be1902960fa77161544d61da9c0f813be12b2e2379c7c2ab273d",
     operationHash: "d313ee9852a169e8d677ee7c3289822c45723ed85d7cdba2ed3be39c0e124c05",
     sourceCheckpointHash: "494c933edb52015d324aba924152aad6be096e4c8a27c1ede416f8d83995c703",
     processOutcomeHash: "807438076500934b4c29071070981064428d7d238826cadcd6ae5009437ff71f",
     outputMembershipHash: "57b1e3351dd9efdb1c2b057bcebb2e1f8d27a8ce94980010d6ec8ab88e296c86",
     outputBindingHash: "8c28e7c8ba629e8a37b58480daea553f25efff18ca9191863049e7a2d242b7b0",
-    buildReceiptHash: "395d7af831d19ce6b238bb270e40b6eb0c289b3d29627bbe3aa23399ad7f7f29",
-    bundleHash: "4480dd09e4a5d478ff5d78f2b39ccd61a2fbe960d04ba4a39edc97d118802981",
+    buildReceiptHash: "881efc30b79bf0c8b6234fecae3484d8712718b48ea39a75923070fa483a29ea",
+    bundleHash: "cf319a21f7064fc7e1cc4fba34145dad965c94a2eaffaa53475e7a232fbb742f",
   });
   assert.equal(new Set(Object.values(hashes)).size, Object.keys(hashes).length);
 });
