@@ -81,7 +81,7 @@ export function getCodeOwnedNodeToolchainTargetV2(
 }
 
 export function hashNodeToolchainOperationalLocatorV2(
-  kind: "root" | "receipt" | "parent",
+  kind: "root" | "receipt" | "parent" | "claim" | "lock" | "staging",
   absoluteLocator: string,
 ): string {
   if (!path.isAbsolute(absoluteLocator) || path.normalize(absoluteLocator) !== absoluteLocator) {

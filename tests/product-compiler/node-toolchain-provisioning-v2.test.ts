@@ -44,6 +44,12 @@ import {
   getCodeOwnedNodeToolchainTargetV2,
 } from "../../src/product-compiler/node-toolchain-target-registry-v2.js";
 import {
+  inspectNodeToolchainProvisionerInspectionV2,
+  inspectNodeToolchainProvisionerV2ForTest,
+  planNodeToolchainProvisioningV2,
+  planNodeToolchainRollbackV2,
+} from "../../src/product-compiler/node-toolchain-provisioner-command-v2.js";
+import {
   disposeVerifiedNodeToolchainDistributionArchiveV2,
   verifyNodeToolchainDistributionArchiveV2ForTest,
   type VerifiedNodeToolchainDistributionArchiveV2,
@@ -56,6 +62,10 @@ import {
   NodeToolchainProvisioningReceiptV2Schema,
   hashNodeToolchainProvisioningReceiptV2,
 } from "../../src/product-compiler/schemas/node-toolchain-provisioning-v2.js";
+import {
+  NodeToolchainProvisionerPlanV2Schema,
+  hashNodeToolchainProvisionerPlanV2,
+} from "../../src/product-compiler/schemas/node-toolchain-provisioner-command-v2.js";
 
 const ARCHIVE_ROOT = "node-v22.23.1-darwin-arm64";
 const roots: string[] = [];
@@ -470,5 +480,117 @@ describe("NodeToolchainProvisioningV2", () => {
     await assert.rejects(revalidateProvisionedNodeToolchainV2(handle), {
       code: "NODE_TOOLCHAIN_PROVISIONING_V2_HOST_DRIFT",
     });
+  });
+});
+
+describe("NodeToolchainProvisionerCommandV2 inspection and planning", () => {
+  it("turns absent and ready targets into pathless exact apply and rollback plans", async () => {
+    const parent = await privateParent();
+    const tree = await privateTree();
+    const absentHandle = await inspectNodeToolchainProvisionerV2ForTest({
+      parent,
+      architecture: "arm64",
+    });
+    const absent = inspectNodeToolchainProvisionerInspectionV2(absentHandle);
+    assert.equal(absent.classification, "target_absent");
+    assert.deepEqual(absent.conflicts, []);
+    assert.doesNotMatch(JSON.stringify(absent), /setfarm-node-provisioning-parent-v2-/);
+
+    const publishPlan = planNodeToolchainProvisioningV2(absentHandle, tree);
+    assert.equal(publishPlan.operation, "apply");
+    if (publishPlan.operation !== "apply") assert.fail("expected apply plan");
+    assert.equal(publishPlan.decision, "publish");
+    assert.equal(publishPlan.inspection.inspectionHash, absent.inspectionHash);
+    assert.equal(publishPlan.intent.source.privateTreeReceiptHash, publishPlan.source.receiptHash);
+    assert.equal(NodeToolchainProvisionerPlanV2Schema.safeParse(publishPlan).success, true);
+
+    const provisionedHandle = await provisionNodeToolchainV2ForTest(tree, { parent });
+    provisioned.push(provisionedHandle);
+    const readyHandle = await inspectNodeToolchainProvisionerV2ForTest({
+      parent,
+      architecture: "arm64",
+    });
+    const ready = inspectNodeToolchainProvisionerInspectionV2(readyHandle);
+    assert.equal(ready.classification, "ready_verified");
+    assert.equal(ready.canonical.receipt.status, "valid");
+
+    const verifyPlan = planNodeToolchainProvisioningV2(readyHandle, tree);
+    assert.equal(verifyPlan.operation, "apply");
+    if (verifyPlan.operation !== "apply") assert.fail("expected apply plan");
+    assert.equal(verifyPlan.decision, "verify_existing");
+
+    const rollbackPlan = planNodeToolchainRollbackV2(readyHandle);
+    assert.equal(rollbackPlan.operation, "rollback");
+    if (rollbackPlan.operation !== "rollback") assert.fail("expected rollback plan");
+    assert.equal(rollbackPlan.decision, "remove_exact_generation");
+    assert.equal(
+      rollbackPlan.generation.receiptHash,
+      inspectNodeToolchainProvisioningReceiptV2(provisionedHandle).receiptHash,
+    );
+    assert.doesNotMatch(JSON.stringify(rollbackPlan), /setfarm-node-provisioning-parent-v2-/);
+  });
+
+  it("plans recovery only for the exact immutable claim and source", async () => {
+    const parent = await privateParent();
+    const tree = await privateTree();
+    await assert.rejects(
+      provisionNodeToolchainV2ForTest(tree, {
+        parent,
+        hooks: { afterClaim: async () => { throw new Error("CRASH_AFTER_EXACT_CLAIM"); } },
+      }),
+      /CRASH_AFTER_EXACT_CLAIM/,
+    );
+    const interruptedHandle = await inspectNodeToolchainProvisionerV2ForTest({
+      parent,
+      architecture: "arm64",
+    });
+    const interrupted = inspectNodeToolchainProvisionerInspectionV2(interruptedHandle);
+    assert.equal(interrupted.classification, "interrupted_claimed");
+    assert.equal(interrupted.canonical.claim.status, "valid");
+    const recoveryPlan = planNodeToolchainProvisioningV2(interruptedHandle, tree);
+    assert.equal(recoveryPlan.operation, "apply");
+    if (recoveryPlan.operation !== "apply") assert.fail("expected apply plan");
+    assert.equal(recoveryPlan.decision, "recover_exact_claim");
+
+    const differentTree = await privateTree("different-node-binary\n");
+    assert.throws(
+      () => planNodeToolchainProvisioningV2(interruptedHandle, differentTree),
+      { code: "NODE_TOOLCHAIN_PROVISIONER_V2_PLAN_CONFLICT" },
+    );
+  });
+
+  it("preserves conflicts, rejects forged handles and rejects self-rehashed decision drift", async () => {
+    const parent = await privateParent();
+    const target = getCodeOwnedNodeToolchainTargetV2("arm64");
+    await mkdir(path.join(parent, target.rootBasename), { mode: 0o700 });
+    const conflictHandle = await inspectNodeToolchainProvisionerV2ForTest({
+      parent,
+      architecture: "arm64",
+    });
+    const conflict = inspectNodeToolchainProvisionerInspectionV2(conflictHandle);
+    assert.equal(conflict.classification, "conflict");
+    assert.equal(conflict.conflicts.includes("ROOT_WITHOUT_EXACT_CLAIM"), true);
+    const tree = await privateTree();
+    assert.throws(
+      () => planNodeToolchainProvisioningV2(conflictHandle, tree),
+      { code: "NODE_TOOLCHAIN_PROVISIONER_V2_PLAN_CONFLICT" },
+    );
+    assert.throws(
+      () => inspectNodeToolchainProvisionerInspectionV2(conflict as never),
+      { code: "NODE_TOOLCHAIN_PROVISIONER_V2_HANDLE_UNAUTHENTICATED" },
+    );
+
+    await rm(path.join(parent, target.rootBasename), { recursive: true });
+    const absentHandle = await inspectNodeToolchainProvisionerV2ForTest({
+      parent,
+      architecture: "arm64",
+    });
+    const plan = planNodeToolchainProvisioningV2(absentHandle, tree);
+    assert.equal(plan.operation, "apply");
+    if (plan.operation !== "apply") assert.fail("expected apply plan");
+    const forged = structuredClone(plan);
+    forged.decision = "verify_existing";
+    forged.planHash = hashNodeToolchainProvisionerPlanV2(forged);
+    assert.equal(NodeToolchainProvisionerPlanV2Schema.safeParse(forged).success, false);
   });
 });
