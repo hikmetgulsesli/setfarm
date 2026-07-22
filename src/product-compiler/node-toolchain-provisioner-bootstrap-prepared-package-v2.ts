@@ -134,6 +134,14 @@ export type NodeToolchainProvisionerBootstrapPreparedPackageTestHooksV2 = Readon
   }>) => void;
 }>;
 
+export type NodeToolchainProvisionerBootstrapPreparedPackageSnapshotV2 = Readonly<{
+  manifest: NodeToolchainProvisionerBootstrapManifestV2;
+  manifestBytes: Buffer;
+  launcherBytes: Buffer;
+  bundleBytes: Buffer;
+  runtimeBytes: Buffer;
+}>;
+
 const handleCapabilityV2 = Object.freeze({});
 const preparedPackageStatesV2 = new WeakMap<object, PreparedPackageStateV2>();
 const disposedPreparedPackageHandlesV2 = new WeakSet<object>();
@@ -1210,6 +1218,73 @@ export function revalidateNodeToolchainProvisionerBootstrapPreparedPackageV2(
     );
   }
   return deepFreezeJson(structuredClone(receipt));
+}
+
+export function copyNodeToolchainProvisionerBootstrapPreparedPackageV2(
+  handle: PreparedNodeToolchainProvisionerBootstrapPackageV2,
+): NodeToolchainProvisionerBootstrapPreparedPackageSnapshotV2 {
+  const state = authenticState(handle);
+  revalidateNodeToolchainProvisionerBootstrapPreparedPackageV2(handle);
+  const owner = { uid: state.ownerUid, gid: state.ownerGid };
+  const manifestRead = readExactFile({
+    payloadRoot: state.payloadRoot,
+    locator: NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_MANIFEST_LOCATOR_V2,
+    expectedMode: 0o400,
+    expectedLength: state.receipt.members.manifest.byteLength,
+    expectedSha256: state.receipt.members.manifest.sha256,
+    maxLength: NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_MAX_MANIFEST_BYTES_V2,
+    owner,
+  });
+  const copied = new Map<string, Buffer>();
+  let released = false;
+  try {
+    for (const spec of fileSpecs(state.manifest)) {
+      const read = readExactFile({
+        payloadRoot: state.payloadRoot,
+        locator: spec.locator,
+        expectedMode: spec.storageMode,
+        expectedLength: spec.byteLength,
+        expectedSha256: spec.sha256,
+        maxLength: spec.maxLength,
+        owner,
+      });
+      copied.set(spec.locator, read.bytes);
+    }
+    const fresh = verifyPreparedStage({
+      stageRoot: state.stageRoot,
+      payloadRoot: state.payloadRoot,
+      owner,
+      expectedManifest: state.manifest,
+    });
+    if (!sameCapture(state, fresh)) {
+      return fail(
+        "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_PREPARED_V2_PACKAGE_DRIFT",
+        "Prepared bootstrap package changed while its defensive snapshot was copied",
+      );
+    }
+    const launcherBytes = copied.get(NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_LAUNCHER_LOCATOR_V2);
+    const bundleBytes = copied.get(NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_BUNDLE_LOCATOR_V2);
+    const runtimeBytes = copied.get(NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_RUNTIME_LOCATOR_V2);
+    if (!launcherBytes || !bundleBytes || !runtimeBytes) {
+      return fail(
+        "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_PREPARED_V2_PACKAGE_INVALID",
+        "Prepared bootstrap defensive snapshot is missing one exact member",
+      );
+    }
+    released = true;
+    return Object.freeze({
+      manifest: deepFreezeJson(structuredClone(state.manifest)),
+      manifestBytes: manifestRead.bytes,
+      launcherBytes,
+      bundleBytes,
+      runtimeBytes,
+    });
+  } finally {
+    if (!released) {
+      manifestRead.bytes.fill(0);
+      for (const bytes of copied.values()) bytes.fill(0);
+    }
+  }
 }
 
 function cleanupExactPackage(state: PreparedPackageStateV2): void {

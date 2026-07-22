@@ -1,7 +1,16 @@
-import { lstatSync, type Stats } from "node:fs";
+import {
+  closeSync,
+  constants,
+  fstatSync,
+  lstatSync,
+  openSync,
+  readdirSync,
+  readSync,
+  type Stats,
+} from "node:fs";
 import path from "node:path";
 
-import { hashCanonicalJson } from "./canonical-json.js";
+import { canonicalJsonBytes, hashCanonicalJson } from "./canonical-json.js";
 import {
   openNodeToolchainProvisionerBootstrapPackageV2ForTest,
   openProductionNodeToolchainProvisionerBootstrapPackageV2,
@@ -17,14 +26,8 @@ import {
 } from "./schemas/node-toolchain-provisioner-bootstrap-v2.js";
 import {
   NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_AUTHORITY_REF_V2,
-  NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_CLAIM_BASENAME_V2,
   NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_INSPECTION_V2_SCHEMA,
-  NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_LOCK_BASENAME_V2,
   NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_PLAN_V2_SCHEMA,
-  NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_RECEIPT_BASENAME_V2,
-  NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_SETFARM_ROOT_V2,
-  NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_STAGING_BASENAME_V2,
-  NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_SYSTEM_ANCESTOR_V2,
   NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_VERSION_V2,
   NodeToolchainProvisionerBootstrapInstallationInspectionV2Schema,
   NodeToolchainProvisionerBootstrapInstallationPlanV2Schema,
@@ -38,6 +41,15 @@ import {
   type NodeToolchainProvisionerBootstrapInstallationPlanV2,
   type NodeToolchainProvisionerBootstrapInstallationLocatorRoleV2,
 } from "./schemas/node-toolchain-provisioner-bootstrap-installation-plan-v2.js";
+import {
+  NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_CLAIM_STAGE_BASENAME_V2,
+  NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_LOCK_CONTENT_V2,
+  NodeToolchainProvisionerBootstrapInstallationClaimV2Schema,
+  NodeToolchainProvisionerBootstrapInstallationReceiptV2Schema,
+  buildNodeToolchainProvisionerBootstrapInstallationClaimV2,
+  buildNodeToolchainProvisionerBootstrapInstallationIntentV2,
+  getNodeToolchainProvisionerBootstrapInstallationPathsV2,
+} from "./schemas/node-toolchain-provisioner-bootstrap-installation-state-v2.js";
 
 export type NodeToolchainProvisionerBootstrapInstallationPlanErrorCodeV2 =
   | "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_INPUT_INVALID"
@@ -83,17 +95,6 @@ type FingerprintV2 = Readonly<{
   byteLength: number;
   modifiedMs: number;
   changedMs: number;
-}>;
-
-type InstallationPathsV2 = Readonly<{
-  systemAncestor: string;
-  setfarmRoot: string;
-  parent: string;
-  root: string;
-  receipt: string;
-  claim: string;
-  lock: string;
-  staging: string;
 }>;
 
 function fail(
@@ -237,6 +238,83 @@ function sameEntry(left: InstallationEntryV2, right: InstallationEntryV2): boole
         && left.physicalFingerprint === right.physicalFingerprint));
 }
 
+function readOperationalBytes(input: Readonly<{
+  role: NodeToolchainProvisionerBootstrapInstallationLocatorRoleV2;
+  absoluteLocator: string;
+  entry: InstallationEntryV2;
+  expectedOwner: Readonly<{ uid: number; gid: number }>;
+  allowedModes: readonly number[];
+  allowedLinks: readonly number[];
+  maxBytes: number;
+}>): Buffer {
+  if (
+    input.entry.state !== "present"
+    || input.entry.type !== "file"
+    || input.entry.ownerUid !== input.expectedOwner.uid
+    || input.entry.ownerGid !== input.expectedOwner.gid
+    || !input.allowedModes.includes(Number.parseInt(input.entry.mode, 8))
+    || !input.allowedLinks.includes(input.entry.linkCount)
+    || input.entry.byteLength < 1
+    || input.entry.byteLength > input.maxBytes
+  ) {
+    throw new Error("operational metadata mismatch");
+  }
+  let descriptor: number | undefined;
+  let bytes: Buffer | undefined;
+  let released = false;
+  try {
+    const before = lstatSync(input.absoluteLocator);
+    descriptor = openSync(
+      input.absoluteLocator,
+      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+    );
+    const opened = fstatSync(descriptor);
+    if (!sameFingerprint(fingerprint(before), fingerprint(opened))) {
+      throw new Error("operational file changed before read");
+    }
+    bytes = Buffer.allocUnsafeSlow(opened.size);
+    let offset = 0;
+    while (offset < bytes.byteLength) {
+      const count = readSync(descriptor, bytes, offset, bytes.byteLength - offset, null);
+      if (count < 1) throw new Error("operational file ended early");
+      offset += count;
+    }
+    const eof = Buffer.allocUnsafe(1);
+    if (readSync(descriptor, eof, 0, 1, null) !== 0) {
+      throw new Error("operational file exceeded bound");
+    }
+    const after = fstatSync(descriptor);
+    const pathAfter = lstatSync(input.absoluteLocator);
+    const recaptured = captureEntry(input.role, input.absoluteLocator);
+    if (
+      !sameFingerprint(fingerprint(opened), fingerprint(after))
+      || !sameFingerprint(fingerprint(after), fingerprint(pathAfter))
+      || !sameEntry(input.entry, recaptured)
+    ) {
+      throw new Error("operational file changed during read");
+    }
+    released = true;
+    return bytes;
+  } finally {
+    if (!released) bytes?.fill(0);
+    if (descriptor !== undefined) closeSync(descriptor);
+  }
+}
+
+function parseCanonicalOperational<T>(input: Readonly<{
+  bytes: Buffer;
+  schema: { safeParse(value: unknown): { success: true; data: T } | { success: false } };
+}>): T | undefined {
+  try {
+    const raw = JSON.parse(input.bytes.toString("utf8"));
+    const parsed = input.schema.safeParse(raw);
+    if (!parsed.success || !input.bytes.equals(canonicalJsonBytes(parsed.data))) return undefined;
+    return parsed.data;
+  } catch {
+    return undefined;
+  }
+}
+
 function exactDirectory(
   entry: InstallationEntryV2,
   expected: Readonly<{ uid: number; gid?: number; mode: "0700" | "0755" }>,
@@ -246,39 +324,6 @@ function exactDirectory(
     && entry.ownerUid === expected.uid
     && (expected.gid === undefined || entry.ownerGid === expected.gid)
     && entry.mode === expected.mode;
-}
-
-function pathsFor(input: Readonly<{
-  admissionScope: "production_release" | "test_fixture";
-  root: string;
-}>): InstallationPathsV2 {
-  if (
-    !path.isAbsolute(input.root)
-    || path.normalize(input.root) !== input.root
-    || input.root.includes("\0")
-  ) {
-    return fail(
-      "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_INPUT_INVALID",
-      "Prepared bootstrap target root is not one normalized absolute locator",
-    );
-  }
-  const parent = path.dirname(input.root);
-  const systemAncestor = input.admissionScope === "production_release"
-    ? NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_SYSTEM_ANCESTOR_V2
-    : parent;
-  const setfarmRoot = input.admissionScope === "production_release"
-    ? NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_SETFARM_ROOT_V2
-    : parent;
-  return Object.freeze({
-    systemAncestor,
-    setfarmRoot,
-    parent,
-    root: input.root,
-    receipt: path.join(parent, NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_RECEIPT_BASENAME_V2),
-    claim: path.join(parent, NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_CLAIM_BASENAME_V2),
-    lock: path.join(parent, NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_LOCK_BASENAME_V2),
-    staging: path.join(parent, NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_STAGING_BASENAME_V2),
-  });
 }
 
 function deepFreezeJson<T>(value: T): T {
@@ -312,10 +357,9 @@ export function inspectNodeToolchainProvisionerBootstrapInstallationV2(
       "Prepared bootstrap receipt and manifest do not identify one installation source",
     );
   }
-  const paths = pathsFor({
-    admissionScope: source.admissionScope,
-    root: source.target.rootLocator,
-  });
+  const intent = buildNodeToolchainProvisionerBootstrapInstallationIntentV2(source);
+  const expectedClaim = buildNodeToolchainProvisionerBootstrapInstallationClaimV2(intent);
+  const paths = getNodeToolchainProvisionerBootstrapInstallationPathsV2(source);
   if (
     source.admissionScope === "production_release"
     && paths.root !== NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_ROOT_V2
@@ -338,6 +382,171 @@ export function inspectNodeToolchainProvisionerBootstrapInstallationV2(
   const expectedOwner = {
     uid: source.target.expectedOwnerUid,
     gid: source.target.expectedOwnerGid,
+  };
+  const lockObservation = filesystem.lock.state === "absent"
+    ? Object.freeze({ status: "absent" as const })
+    : (() => {
+        let bytes: Buffer | undefined;
+        try {
+          bytes = readOperationalBytes({
+            role: "lock",
+            absoluteLocator: paths.lock,
+            entry: filesystem.lock,
+            expectedOwner,
+            allowedModes: [0o600],
+            allowedLinks: [1],
+            maxBytes: 4_096,
+          });
+          return bytes.equals(Buffer.from(
+            NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_LOCK_CONTENT_V2,
+            "utf8",
+          ))
+            ? Object.freeze({ status: "verified" as const })
+            : Object.freeze({
+                status: "invalid" as const,
+                failureKind: "content_mismatch" as const,
+              });
+        } catch {
+          return Object.freeze({
+            status: "invalid" as const,
+            failureKind: "metadata_mismatch" as const,
+          });
+        } finally {
+          bytes?.fill(0);
+        }
+      })();
+  const claimObservation = filesystem.claim.state === "absent"
+    ? Object.freeze({ status: "absent" as const })
+    : (() => {
+        let bytes: Buffer | undefined;
+        try {
+          bytes = readOperationalBytes({
+            role: "claim",
+            absoluteLocator: paths.claim,
+            entry: filesystem.claim,
+            expectedOwner,
+            allowedModes: [0o444],
+            allowedLinks: [1, 2],
+            maxBytes: 16 * 1024 * 1024,
+          });
+          const claim = parseCanonicalOperational({
+            bytes,
+            schema: NodeToolchainProvisionerBootstrapInstallationClaimV2Schema,
+          });
+          return claim
+            ? Object.freeze({
+                status: "verified" as const,
+                claimHash: claim.claimHash,
+                sourceMatch: claim.claimHash === expectedClaim.claimHash,
+              })
+            : Object.freeze({
+                status: "invalid" as const,
+                failureKind: "contract_mismatch" as const,
+              });
+        } catch {
+          return Object.freeze({
+            status: "invalid" as const,
+            failureKind: "metadata_mismatch" as const,
+          });
+        } finally {
+          bytes?.fill(0);
+        }
+      })();
+  const receiptObservation = filesystem.receipt.state === "absent"
+    ? Object.freeze({ status: "absent" as const })
+    : (() => {
+        let bytes: Buffer | undefined;
+        try {
+          bytes = readOperationalBytes({
+            role: "receipt",
+            absoluteLocator: paths.receipt,
+            entry: filesystem.receipt,
+            expectedOwner,
+            allowedModes: [0o444],
+            allowedLinks: [1, 2],
+            maxBytes: 16 * 1024 * 1024,
+          });
+          const receipt = parseCanonicalOperational({
+            bytes,
+            schema: NodeToolchainProvisionerBootstrapInstallationReceiptV2Schema,
+          });
+          return receipt
+            ? Object.freeze({
+                status: "verified" as const,
+                receiptHash: receipt.receiptHash,
+                claimHash: receipt.claim.claimHash,
+                sourceMatch: receipt.claim.claimHash === expectedClaim.claimHash,
+              })
+            : Object.freeze({
+                status: "invalid" as const,
+                failureKind: "contract_mismatch" as const,
+              });
+        } catch {
+          return Object.freeze({
+            status: "invalid" as const,
+            failureKind: "metadata_mismatch" as const,
+          });
+        } finally {
+          bytes?.fill(0);
+        }
+      })();
+  const stagingObservation = filesystem.staging.state === "absent"
+    ? Object.freeze({ status: "absent" as const })
+    : (() => {
+        let bytes: Buffer | undefined;
+        try {
+          if (
+            filesystem.staging.type !== "directory"
+            || filesystem.staging.ownerUid !== expectedOwner.uid
+            || filesystem.staging.ownerGid !== expectedOwner.gid
+            || filesystem.staging.mode !== "0700"
+          ) {
+            return Object.freeze({ status: "present_unverified" as const });
+          }
+          const names = readdirSync(paths.staging).sort();
+          if (
+            names.length !== 1
+            || names[0]
+              !== NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_CLAIM_STAGE_BASENAME_V2
+          ) {
+            return Object.freeze({ status: "present_unverified" as const });
+          }
+          const claimStagePath = path.join(
+            paths.staging,
+            NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_CLAIM_STAGE_BASENAME_V2,
+          );
+          const claimStageEntry = captureEntry("staging", claimStagePath);
+          bytes = readOperationalBytes({
+            role: "staging",
+            absoluteLocator: claimStagePath,
+            entry: claimStageEntry,
+            expectedOwner,
+            allowedModes: [0o444],
+            allowedLinks: [1],
+            maxBytes: 16 * 1024 * 1024,
+          });
+          const stagedClaim = parseCanonicalOperational({
+            bytes,
+            schema: NodeToolchainProvisionerBootstrapInstallationClaimV2Schema,
+          });
+          return stagedClaim
+            ? Object.freeze({
+                status: "claim_stage_verified" as const,
+                claimHash: stagedClaim.claimHash,
+                sourceMatch: stagedClaim.claimHash === expectedClaim.claimHash,
+              })
+            : Object.freeze({ status: "present_unverified" as const });
+        } catch {
+          return Object.freeze({ status: "present_unverified" as const });
+        } finally {
+          bytes?.fill(0);
+        }
+      })();
+  const operational = {
+    lock: lockObservation,
+    claim: claimObservation,
+    receipt: receiptObservation,
+    staging: stagingObservation,
   };
   const packageObservation = filesystem.root.state === "absent"
     ? Object.freeze({ status: "absent" as const })
@@ -416,32 +625,61 @@ export function inspectNodeToolchainProvisionerBootstrapInstallationV2(
   })) {
     conflicts.push("package_parent_invalid");
   }
-  if (packageObservation.status === "verified" && packageObservation.sourceMatch) {
-    conflicts.push("target_exact_but_unclaimed");
-  } else if (packageObservation.status !== "absent") {
-    conflicts.push("target_package_invalid");
-  }
-  if (filesystem.receipt.state !== "absent") {
-    conflicts.push("installation_receipt_present_without_v2_authority");
-  }
-  if (filesystem.claim.state !== "absent") {
-    conflicts.push("installation_claim_present_without_v2_authority");
-  }
-  if (filesystem.lock.state !== "absent") {
+  const matchingClaim = operational.claim.status === "verified"
+    && operational.claim.sourceMatch;
+  const matchingReceipt = operational.receipt.status === "verified"
+    && operational.receipt.sourceMatch;
+  const matchingStagedClaim = operational.staging.status === "claim_stage_verified"
+    && operational.staging.sourceMatch;
+  const matchingPackage = packageObservation.status === "verified"
+    && packageObservation.sourceMatch;
+  if (operational.lock.status === "invalid") {
     conflicts.push("installation_lock_present_without_v2_authority");
   }
-  if (filesystem.staging.state !== "absent") {
+  if (
+    operational.claim.status === "invalid"
+    || (operational.claim.status === "verified" && !operational.claim.sourceMatch)
+  ) {
+    conflicts.push("installation_claim_present_without_v2_authority");
+  }
+  if (
+    operational.receipt.status === "invalid"
+    || (operational.receipt.status === "verified" && !operational.receipt.sourceMatch)
+  ) {
+    conflicts.push("installation_receipt_present_without_v2_authority");
+  }
+  if (
+    filesystem.staging.state !== "absent"
+    && !matchingClaim
+    && !matchingStagedClaim
+  ) {
     conflicts.push("installation_staging_present_without_v2_authority");
   }
+  if (matchingReceipt) {
+    if (!matchingClaim) conflicts.push("installation_claim_present_without_v2_authority");
+    if (!matchingPackage) conflicts.push("target_package_invalid");
+  } else if (!matchingClaim) {
+    if (matchingPackage) conflicts.push("target_exact_but_unclaimed");
+    else if (packageObservation.status !== "absent") conflicts.push("target_package_invalid");
+  }
   const sortedConflicts = [...new Set(conflicts)].sort();
-  const classification = sortedConflicts.length === 0
-    ? "target_absent_clean" as const
-    : packageObservation.status === "verified"
-      && packageObservation.sourceMatch
-      && sortedConflicts.length === 1
-      && sortedConflicts[0] === "target_exact_but_unclaimed"
+  const classification = sortedConflicts.length > 0
+    ? sortedConflicts.length === 1 && sortedConflicts[0] === "target_exact_but_unclaimed"
       ? "target_exact_unclaimed" as const
-      : "conflict" as const;
+      : "conflict" as const
+    : matchingReceipt && matchingClaim && matchingPackage
+      ? filesystem.staging.state === "absent"
+        ? "ready_verified" as const
+        : "claimed_recovery_candidate" as const
+      : (matchingClaim || matchingStagedClaim)
+        && operational.receipt.status === "absent"
+        ? "claimed_recovery_candidate" as const
+        : packageObservation.status === "absent"
+          && operational.claim.status === "absent"
+          && operational.receipt.status === "absent"
+          && filesystem.staging.state === "absent"
+          ? "target_absent_clean" as const
+          : "conflict" as const;
   const target = {
     rootLocatorHash: locatorHash("root", paths.root),
     parentLocatorHash: locatorHash("parent", paths.parent),
@@ -480,6 +718,7 @@ export function inspectNodeToolchainProvisionerBootstrapInstallationV2(
           packageParent,
         },
     filesystem,
+    operational,
     package: packageObservation,
     classification,
     conflicts: sortedConflicts,
@@ -502,27 +741,22 @@ export function planNodeToolchainProvisionerBootstrapInstallationV2(
   preparedHandle: PreparedNodeToolchainProvisionerBootstrapPackageV2,
 ): NodeToolchainProvisionerBootstrapInstallationPlanV2 {
   const source = revalidateNodeToolchainProvisionerBootstrapPreparedPackageV2(preparedHandle);
+  const intent = buildNodeToolchainProvisionerBootstrapInstallationIntentV2(source);
   const inspection = inspectNodeToolchainProvisionerBootstrapInstallationV2(preparedHandle);
   const identity: NodeToolchainProvisionerBootstrapInstallationPlanHashPayloadV2 = {
     schema: NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_PLAN_V2_SCHEMA,
     planVersion: NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_VERSION_V2,
     authorityRef: NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_AUTHORITY_REF_V2,
     operation: "install_bootstrap_package",
-    admissionScope: source.admissionScope,
-    source,
+    intent,
     inspection,
     decision: inspection.classification === "target_absent_clean"
       ? "publish_new"
-      : "no_mutation_blocked",
-    protocol: {
-      serialization: "darwin_parent_descriptor_lockf_v2",
-      claim: "canonical_no_replace_claim_before_root_v2",
-      root: "exclusive_inaccessible_root_then_read_only_v2",
-      files: "exclusive_copy_fchown_fchmod_fsync_v2",
-      manifest: "manifest_last_v2",
-      receipt: "canonical_no_replace_receipt_after_verified_root_v2",
-      recovery: "exact_claim_bounded_rebuild_v2",
-    },
+      : inspection.classification === "ready_verified"
+        ? "return_ready"
+        : inspection.classification === "claimed_recovery_candidate"
+          ? "recover_claimed"
+          : "no_mutation_blocked",
   };
   const parsed = NodeToolchainProvisionerBootstrapInstallationPlanV2Schema.safeParse({
     ...identity,

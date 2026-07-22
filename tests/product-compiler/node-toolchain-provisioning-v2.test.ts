@@ -79,12 +79,23 @@ import {
 import {
   PreparedNodeToolchainProvisionerBootstrapPackageV2,
   NodeToolchainProvisionerBootstrapPreparedPackageErrorV2,
+  copyNodeToolchainProvisionerBootstrapPreparedPackageV2,
   disposeNodeToolchainProvisionerBootstrapPreparedPackageV2,
   inspectNodeToolchainProvisionerBootstrapPreparedPackageReceiptV2,
   prepareNodeToolchainProvisionerBootstrapPackageV2,
   prepareNodeToolchainProvisionerBootstrapPackageV2ForTest,
   revalidateNodeToolchainProvisionerBootstrapPreparedPackageV2,
 } from "../../src/product-compiler/node-toolchain-provisioner-bootstrap-prepared-package-v2.js";
+import {
+  InstalledNodeToolchainProvisionerBootstrapV2,
+  NodeToolchainProvisionerBootstrapInstallationErrorV2,
+  inspectNodeToolchainProvisionerBootstrapInstallationReceiptV2,
+  installNodeToolchainProvisionerBootstrapV2,
+  installNodeToolchainProvisionerBootstrapV2ForTest,
+  openInstalledNodeToolchainProvisionerBootstrapV2ForTest,
+  revalidateInstalledNodeToolchainProvisionerBootstrapV2,
+  type NodeToolchainProvisionerBootstrapInstallationTestHooksV2,
+} from "../../src/product-compiler/node-toolchain-provisioner-bootstrap-installation-v2.js";
 import {
   inspectNodeToolchainProvisionerBootstrapInstallationV2,
   planNodeToolchainProvisionerBootstrapInstallationV2,
@@ -135,6 +146,14 @@ import {
   NodeToolchainProvisionerBootstrapInstallationPlanV2Schema,
   hashNodeToolchainProvisionerBootstrapInstallationPlanV2,
 } from "../../src/product-compiler/schemas/node-toolchain-provisioner-bootstrap-installation-plan-v2.js";
+import {
+  NodeToolchainProvisionerBootstrapInstallationClaimV2Schema,
+  NodeToolchainProvisionerBootstrapInstallationIntentV2Schema,
+  NodeToolchainProvisionerBootstrapInstallationReceiptV2Schema,
+  buildNodeToolchainProvisionerBootstrapInstallationClaimV2,
+  buildNodeToolchainProvisionerBootstrapInstallationIntentV2,
+  getNodeToolchainProvisionerBootstrapInstallationPathsV2,
+} from "../../src/product-compiler/schemas/node-toolchain-provisioner-bootstrap-installation-state-v2.js";
 import {
   NodeToolchainProvisionerBundleAuthorityReceiptV2Schema,
   hashNodeToolchainProvisionerBundleAuthorityReceiptV2,
@@ -1500,7 +1519,7 @@ describe("NodeToolchainProvisionerCommandV2 inspection and planning", () => {
     );
     const cleanPlan = planNodeToolchainProvisionerBootstrapInstallationV2(prepared);
     assert.equal(cleanPlan.decision, "publish_new");
-    assert.equal(cleanPlan.source.receiptHash, preparedReceipt.receiptHash);
+    assert.equal(cleanPlan.intent.source.receiptHash, preparedReceipt.receiptHash);
     assert.equal(cleanPlan.inspection.inspectionHash, cleanInspection.inspectionHash);
     assert.deepEqual(
       NodeToolchainProvisionerBootstrapInstallationPlanV2Schema.parse(cleanPlan),
@@ -1591,6 +1610,163 @@ describe("NodeToolchainProvisionerCommandV2 inspection and planning", () => {
     await chmod(path.join(bootstrapRoot, "runtime"), 0o700);
     await rm(bootstrapRoot, { recursive: true, force: true });
     assert.equal(existsSync(bootstrapRoot), false);
+
+    await writeFile(bootstrapRoot, "unclaimed-install-target\n", { mode: 0o600 });
+    await assert.rejects(
+      installNodeToolchainProvisionerBootstrapV2ForTest({
+        preparedHandle: prepared,
+        plan: cleanPlan,
+      }),
+      (error: unknown) =>
+        error instanceof NodeToolchainProvisionerBootstrapInstallationErrorV2
+        && error.code === "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_CONFLICT",
+    );
+    assert.equal(await readFile(bootstrapRoot, "utf8"), "unclaimed-install-target\n");
+    await unlink(bootstrapRoot);
+
+    const preparedCopy = copyNodeToolchainProvisionerBootstrapPreparedPackageV2(prepared);
+    const preparedBundleHash = sha256(preparedCopy.bundleBytes);
+    preparedCopy.bundleBytes.fill(0);
+    preparedCopy.manifestBytes.fill(0);
+    preparedCopy.launcherBytes.fill(0);
+    preparedCopy.runtimeBytes.fill(0);
+    const preparedCopyAgain = copyNodeToolchainProvisionerBootstrapPreparedPackageV2(prepared);
+    assert.equal(sha256(preparedCopyAgain.bundleBytes), preparedBundleHash);
+    preparedCopyAgain.manifestBytes.fill(0);
+    preparedCopyAgain.launcherBytes.fill(0);
+    preparedCopyAgain.bundleBytes.fill(0);
+    preparedCopyAgain.runtimeBytes.fill(0);
+
+    const installationIntent =
+      buildNodeToolchainProvisionerBootstrapInstallationIntentV2(preparedReceipt);
+    const installationClaim =
+      buildNodeToolchainProvisionerBootstrapInstallationClaimV2(installationIntent);
+    assert.equal(
+      NodeToolchainProvisionerBootstrapInstallationIntentV2Schema.parse(installationIntent)
+        .intentHash,
+      cleanPlan.intent.intentHash,
+    );
+    assert.equal(
+      NodeToolchainProvisionerBootstrapInstallationClaimV2Schema.parse(installationClaim)
+        .intent.intentHash,
+      installationIntent.intentHash,
+    );
+    assert.ok(installationIntent.target.stagingBasename.endsWith(preparedReceipt.receiptHash));
+    await assert.rejects(
+      installNodeToolchainProvisionerBootstrapV2ForTest({
+        preparedHandle: prepared,
+        plan: cleanPlan,
+        testHooks: {
+          afterSecondMemberLinked: () => {
+            throw new Error("injected-after-second-member-link");
+          },
+        },
+      }),
+      (error: unknown) =>
+        error instanceof NodeToolchainProvisionerBootstrapInstallationErrorV2
+        && error.code
+          === "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_PUBLICATION_FAILED",
+    );
+    const installed = await installNodeToolchainProvisionerBootstrapV2ForTest({
+      preparedHandle: prepared,
+      plan: cleanPlan,
+    });
+    const installationReceipt =
+      inspectNodeToolchainProvisionerBootstrapInstallationReceiptV2(installed);
+    assert.equal(installed.admissionScope, "test_fixture");
+    assert.equal(installationReceipt.status, "installed_verified");
+    assert.equal(installationReceipt.claim.claimHash, installationClaim.claimHash);
+    assert.equal(installationReceipt.finalRoot.manifestHash, preparedReceipt.source.manifestHash);
+    assert.deepEqual(
+      NodeToolchainProvisionerBootstrapInstallationReceiptV2Schema.parse(installationReceipt),
+      installationReceipt,
+    );
+    assert.equal(
+      revalidateInstalledNodeToolchainProvisionerBootstrapV2(installed).receiptHash,
+      installationReceipt.receiptHash,
+    );
+    const readyPlan = planNodeToolchainProvisionerBootstrapInstallationV2(prepared);
+    assert.equal(readyPlan.inspection.classification, "ready_verified");
+    assert.equal(readyPlan.decision, "return_ready");
+    const reopened = openInstalledNodeToolchainProvisionerBootstrapV2ForTest({
+      root: bootstrapRoot,
+      expectedOwner: {
+        uid: process.getuid?.() ?? 0,
+        gid: process.getgid?.() ?? 0,
+      },
+    });
+    assert.equal(
+      inspectNodeToolchainProvisionerBootstrapInstallationReceiptV2(reopened).receiptHash,
+      installationReceipt.receiptHash,
+    );
+    const concurrentReady = await Promise.all([
+      installNodeToolchainProvisionerBootstrapV2ForTest({
+        preparedHandle: prepared,
+        plan: readyPlan,
+      }),
+      installNodeToolchainProvisionerBootstrapV2ForTest({
+        preparedHandle: prepared,
+        plan: readyPlan,
+      }),
+    ]);
+    assert.deepEqual(
+      concurrentReady.map((handle) =>
+        inspectNodeToolchainProvisionerBootstrapInstallationReceiptV2(handle).receiptHash),
+      [installationReceipt.receiptHash, installationReceipt.receiptHash],
+    );
+    await assert.rejects(
+      installNodeToolchainProvisionerBootstrapV2(prepared, cleanPlan),
+      (error: unknown) =>
+        error instanceof NodeToolchainProvisionerBootstrapInstallationErrorV2
+        && error.code === "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_SCOPE_INVALID",
+    );
+    assert.throws(
+      () => inspectNodeToolchainProvisionerBootstrapInstallationReceiptV2(
+        Object.create(InstalledNodeToolchainProvisionerBootstrapV2.prototype),
+      ),
+      (error: unknown) =>
+        error instanceof NodeToolchainProvisionerBootstrapInstallationErrorV2
+        && error.code
+          === "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_HANDLE_UNAUTHENTICATED",
+    );
+    const installedBundlePath = path.join(
+      bootstrapRoot,
+      compiled.manifest.files.bundle.locator,
+    );
+    await chmod(installedBundlePath, 0o644);
+    await writeFile(
+      installedBundlePath,
+      Buffer.alloc(compiled.manifest.files.bundle.byteLength, 0x61),
+    );
+    await chmod(installedBundlePath, 0o444);
+    assert.throws(
+      () => revalidateInstalledNodeToolchainProvisionerBootstrapV2(installed),
+      (error: unknown) =>
+        error instanceof NodeToolchainProvisionerBootstrapInstallationErrorV2,
+    );
+    const installationPaths = getNodeToolchainProvisionerBootstrapInstallationPathsV2(
+      preparedReceipt,
+    );
+    await chmod(bootstrapRoot, 0o700);
+    await chmod(path.join(bootstrapRoot, "bin"), 0o700);
+    await chmod(path.join(bootstrapRoot, "lib"), 0o700);
+    await chmod(path.join(bootstrapRoot, "runtime"), 0o700);
+    await rm(bootstrapRoot, { recursive: true, force: true });
+    await unlink(installationPaths.claim);
+    await unlink(installationPaths.receipt);
+    await assert.rejects(
+      installNodeToolchainProvisionerBootstrapV2ForTest({
+        preparedHandle: prepared,
+        plan: readyPlan,
+      }),
+      (error: unknown) =>
+        error instanceof NodeToolchainProvisionerBootstrapInstallationErrorV2
+        && error.code
+          === "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_PRECONDITION_CHANGED",
+    );
+    assert.equal(existsSync(bootstrapRoot), false);
+    assert.equal(existsSync(installationPaths.claim), false);
+    assert.equal(existsSync(installationPaths.receipt), false);
     assert.throws(
       () => prepareNodeToolchainProvisionerBootstrapPackageV2(compiledHandle),
       (error: unknown) =>
@@ -1734,6 +1910,121 @@ describe("NodeToolchainProvisionerCommandV2 inspection and planning", () => {
       (error: unknown) => error instanceof NodeToolchainProvisionerBootstrapAuthorityErrorV2,
     );
     disposeCompiledNodeToolchainProvisionerBootstrapV2(compiledHandle);
+  });
+
+  it("recovers every bootstrap installation publication crash under one exact claim", async () => {
+    const tree = await privateTree();
+    const bundleHandle = await buildNodeToolchainProvisionerBundleAuthorityV2ForTest(
+      tree,
+      executingProvisionerBundleBuilderAdapter(),
+    );
+    const crashBoundaries = [
+      "afterClaimStage",
+      "afterClaimPublished",
+      "afterPayloadStaged",
+      "afterRootCreated",
+      "afterSecondMemberLinked",
+      "afterRootVerified",
+      "afterReceiptStage",
+      "afterReceiptPublished",
+    ] as const satisfies readonly (keyof NodeToolchainProvisionerBootstrapInstallationTestHooksV2)[];
+
+    for (const crashBoundary of crashBoundaries) {
+      const bootstrapParent = await realpath(await privateParent());
+      const bootstrapRoot = path.join(bootstrapParent, "node-toolchain-provisioner-v2");
+      const compiledHandle = await compileNodeToolchainProvisionerBootstrapV2ForTestFromAuthority(
+        bundleHandle,
+        tree,
+        bootstrapRoot,
+      );
+      const preparedParent = await realpath(await privateParent());
+      const prepared = prepareNodeToolchainProvisionerBootstrapPackageV2ForTest(
+        compiledHandle,
+        { scratchParent: preparedParent },
+      );
+      const preparedReceipt =
+        inspectNodeToolchainProvisionerBootstrapPreparedPackageReceiptV2(prepared);
+      const plan = planNodeToolchainProvisionerBootstrapInstallationV2(prepared);
+      const testHooks = {
+        [crashBoundary]: () => {
+          throw new Error(`injected-${crashBoundary}`);
+        },
+      } as NodeToolchainProvisionerBootstrapInstallationTestHooksV2;
+      await assert.rejects(
+        installNodeToolchainProvisionerBootstrapV2ForTest({
+          preparedHandle: prepared,
+          plan,
+          testHooks,
+        }),
+        (error: unknown) =>
+          error instanceof NodeToolchainProvisionerBootstrapInstallationErrorV2
+          && error.code
+            === "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_PUBLICATION_FAILED",
+      );
+      const recoveryPlan = planNodeToolchainProvisionerBootstrapInstallationV2(prepared);
+      assert.equal(recoveryPlan.inspection.classification, "claimed_recovery_candidate");
+      assert.equal(recoveryPlan.decision, "recover_claimed");
+      const recovered = await installNodeToolchainProvisionerBootstrapV2ForTest({
+        preparedHandle: prepared,
+        plan: recoveryPlan,
+      });
+      const receipt = inspectNodeToolchainProvisionerBootstrapInstallationReceiptV2(recovered);
+      assert.equal(receipt.finalRoot.manifestHash, preparedReceipt.source.manifestHash);
+      assert.equal(
+        revalidateInstalledNodeToolchainProvisionerBootstrapV2(recovered).receiptHash,
+        receipt.receiptHash,
+      );
+      const paths = getNodeToolchainProvisionerBootstrapInstallationPathsV2(preparedReceipt);
+      assert.equal(existsSync(paths.staging), false);
+      const readyPlan = planNodeToolchainProvisionerBootstrapInstallationV2(prepared);
+      assert.equal(readyPlan.decision, "return_ready");
+      assert.deepEqual((await readdir(bootstrapParent)).sort(), [
+        path.basename(paths.claim),
+        path.basename(paths.lock),
+        path.basename(paths.receipt),
+        path.basename(paths.root),
+      ].sort());
+      disposeNodeToolchainProvisionerBootstrapPreparedPackageV2(prepared);
+      disposeCompiledNodeToolchainProvisionerBootstrapV2(compiledHandle);
+    }
+
+    const foreignParent = await realpath(await privateParent());
+    const foreignRoot = path.join(foreignParent, "node-toolchain-provisioner-v2");
+    const foreignCompiled = await compileNodeToolchainProvisionerBootstrapV2ForTestFromAuthority(
+      bundleHandle,
+      tree,
+      foreignRoot,
+    );
+    const foreignPreparedParent = await realpath(await privateParent());
+    const foreignPrepared = prepareNodeToolchainProvisionerBootstrapPackageV2ForTest(
+      foreignCompiled,
+      { scratchParent: foreignPreparedParent },
+    );
+    const foreignPlan = planNodeToolchainProvisionerBootstrapInstallationV2(foreignPrepared);
+    const foreignPaths = getNodeToolchainProvisionerBootstrapInstallationPathsV2(
+      inspectNodeToolchainProvisionerBootstrapPreparedPackageReceiptV2(foreignPrepared),
+    );
+    await mkdir(foreignPaths.staging, { mode: 0o700 });
+    const foreignMember = path.join(foreignPaths.staging, "foreign-member");
+    await writeFile(foreignMember, "preserve\n", { mode: 0o600 });
+    const blocked = planNodeToolchainProvisionerBootstrapInstallationV2(foreignPrepared);
+    assert.equal(blocked.decision, "no_mutation_blocked");
+    assert.deepEqual(
+      blocked.inspection.conflicts,
+      ["installation_staging_present_without_v2_authority"],
+    );
+    await assert.rejects(
+      installNodeToolchainProvisionerBootstrapV2ForTest({
+        preparedHandle: foreignPrepared,
+        plan: foreignPlan,
+      }),
+      (error: unknown) =>
+        error instanceof NodeToolchainProvisionerBootstrapInstallationErrorV2
+        && error.code === "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_CONFLICT",
+    );
+    assert.equal(await readFile(foreignMember, "utf8"), "preserve\n");
+    disposeNodeToolchainProvisionerBootstrapPreparedPackageV2(foreignPrepared);
+    disposeCompiledNodeToolchainProvisionerBootstrapV2(foreignCompiled);
   });
 
   it("compiles one exact bootstrap manifest and a fail-closed root launcher", async () => {

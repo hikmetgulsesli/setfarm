@@ -1,60 +1,39 @@
 import { z } from "zod";
-import path from "node:path";
 
 import { hashCanonicalJson } from "../canonical-json.js";
 import { Sha256Schema } from "./common-v1.js";
 import {
-  NodeToolchainProvisionerBootstrapPreparedPackageReceiptV2Schema,
-} from "./node-toolchain-provisioner-bootstrap-prepared-package-v2.js";
+  NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_AUTHORITY_REF_V2,
+  NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_CLAIM_BASENAME_V2,
+  NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_LOCK_BASENAME_V2,
+  NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_RECEIPT_BASENAME_V2,
+  NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_SETFARM_ROOT_V2,
+  NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_STAGING_PREFIX_V2,
+  NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_SYSTEM_ANCESTOR_V2,
+  NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_VERSION_V2,
+  NodeToolchainProvisionerBootstrapInstallationIntentV2Schema,
+  buildNodeToolchainProvisionerBootstrapInstallationClaimV2,
+  hashNodeToolchainProvisionerBootstrapInstallationLocatorV2,
+  type NodeToolchainProvisionerBootstrapInstallationLocatorRoleV2,
+} from "./node-toolchain-provisioner-bootstrap-installation-state-v2.js";
+
+export {
+  NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_AUTHORITY_REF_V2,
+  NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_CLAIM_BASENAME_V2,
+  NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_LOCK_BASENAME_V2,
+  NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_RECEIPT_BASENAME_V2,
+  NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_SETFARM_ROOT_V2,
+  NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_STAGING_PREFIX_V2,
+  NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_SYSTEM_ANCESTOR_V2,
+  NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_VERSION_V2,
+  hashNodeToolchainProvisionerBootstrapInstallationLocatorV2,
+  type NodeToolchainProvisionerBootstrapInstallationLocatorRoleV2,
+} from "./node-toolchain-provisioner-bootstrap-installation-state-v2.js";
 
 export const NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_INSPECTION_V2_SCHEMA =
   "setfarm.node-toolchain-provisioner-bootstrap-installation-inspection.v2" as const;
 export const NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_PLAN_V2_SCHEMA =
   "setfarm.node-toolchain-provisioner-bootstrap-installation-plan.v2" as const;
-export const NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_VERSION_V2 = "2.0.0" as const;
-export const NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_AUTHORITY_REF_V2 =
-  "AUTH_NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2" as const;
-export const NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_RECEIPT_BASENAME_V2 =
-  "node-toolchain-provisioner-v2.installation-receipt.v2.json" as const;
-export const NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_CLAIM_BASENAME_V2 =
-  ".setfarm-node-toolchain-provisioner-installation-v2.claim.json" as const;
-export const NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_LOCK_BASENAME_V2 =
-  ".setfarm-node-toolchain-provisioner-installation-v2.lock" as const;
-export const NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_STAGING_BASENAME_V2 =
-  ".setfarm-node-toolchain-provisioner-installation-v2.staging" as const;
-export const NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_SYSTEM_ANCESTOR_V2 =
-  "/Library/Application Support" as const;
-export const NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_SETFARM_ROOT_V2 =
-  "/Library/Application Support/Setfarm" as const;
-
-export type NodeToolchainProvisionerBootstrapInstallationLocatorRoleV2 =
-  | "systemAncestor"
-  | "setfarmRoot"
-  | "parent"
-  | "root"
-  | "receipt"
-  | "claim"
-  | "lock"
-  | "staging";
-
-export function hashNodeToolchainProvisionerBootstrapInstallationLocatorV2(
-  role: NodeToolchainProvisionerBootstrapInstallationLocatorRoleV2,
-  absoluteLocator: string,
-): string {
-  if (
-    !path.isAbsolute(absoluteLocator)
-    || path.normalize(absoluteLocator) !== absoluteLocator
-    || absoluteLocator.includes("\0")
-  ) {
-    throw new TypeError("Bootstrap installation locator must be one normalized absolute path");
-  }
-  return hashCanonicalJson({
-    schema: "setfarm.node-toolchain-provisioner-bootstrap-installation-locator-hash.v2",
-    role,
-    absoluteLocator,
-  });
-}
-
 const PosixIdentityV2Schema = z.number().int().nonnegative().max(2_147_483_647);
 const FilesystemIdentityV2Schema = z.number().int().nonnegative().safe();
 const ModeV2Schema = z.string().regex(/^[0-7]{4}$/);
@@ -109,6 +88,52 @@ const ConflictV2Schema = z.enum([
   "installation_staging_present_without_v2_authority",
 ]);
 
+const LockObservationV2Schema = z.discriminatedUnion("status", [
+  z.object({ status: z.literal("absent") }).strict(),
+  z.object({ status: z.literal("verified") }).strict(),
+  z.object({
+    status: z.literal("invalid"),
+    failureKind: z.enum(["metadata_mismatch", "content_mismatch"]),
+  }).strict(),
+]);
+
+const ClaimObservationV2Schema = z.discriminatedUnion("status", [
+  z.object({ status: z.literal("absent") }).strict(),
+  z.object({
+    status: z.literal("verified"),
+    claimHash: Sha256Schema,
+    sourceMatch: z.boolean(),
+  }).strict(),
+  z.object({
+    status: z.literal("invalid"),
+    failureKind: z.enum(["metadata_mismatch", "contract_mismatch"]),
+  }).strict(),
+]);
+
+const ReceiptObservationV2Schema = z.discriminatedUnion("status", [
+  z.object({ status: z.literal("absent") }).strict(),
+  z.object({
+    status: z.literal("verified"),
+    receiptHash: Sha256Schema,
+    claimHash: Sha256Schema,
+    sourceMatch: z.boolean(),
+  }).strict(),
+  z.object({
+    status: z.literal("invalid"),
+    failureKind: z.enum(["metadata_mismatch", "contract_mismatch"]),
+  }).strict(),
+]);
+
+const StagingObservationV2Schema = z.discriminatedUnion("status", [
+  z.object({ status: z.literal("absent") }).strict(),
+  z.object({
+    status: z.literal("claim_stage_verified"),
+    claimHash: Sha256Schema,
+    sourceMatch: z.boolean(),
+  }).strict(),
+  z.object({ status: z.literal("present_unverified") }).strict(),
+]);
+
 const PackageObservationV2Schema = z.discriminatedUnion("status", [
   z.object({ status: z.literal("absent") }).strict(),
   z.object({
@@ -155,8 +180,20 @@ const InspectionIdentityV2Schema = z.object({
     lock: NodeToolchainProvisionerBootstrapInstallationEntryV2Schema,
     staging: NodeToolchainProvisionerBootstrapInstallationEntryV2Schema,
   }).strict(),
+  operational: z.object({
+    lock: LockObservationV2Schema,
+    claim: ClaimObservationV2Schema,
+    receipt: ReceiptObservationV2Schema,
+    staging: StagingObservationV2Schema,
+  }).strict(),
   package: PackageObservationV2Schema,
-  classification: z.enum(["target_absent_clean", "target_exact_unclaimed", "conflict"]),
+  classification: z.enum([
+    "target_absent_clean",
+    "target_exact_unclaimed",
+    "ready_verified",
+    "claimed_recovery_candidate",
+    "conflict",
+  ]),
   conflicts: z.array(ConflictV2Schema).max(9),
 }).strict();
 
@@ -216,33 +253,67 @@ export const NodeToolchainProvisionerBootstrapInstallationInspectionV2Schema =
     )) {
       expectedConflicts.push("package_parent_invalid");
     }
-    if (value.package.status === "verified" && value.package.sourceMatch) {
-      expectedConflicts.push("target_exact_but_unclaimed");
-    } else if (value.package.status !== "absent") {
-      expectedConflicts.push("target_package_invalid");
+    const matchingClaim = value.operational.claim.status === "verified"
+      && value.operational.claim.sourceMatch;
+    const matchingReceipt = value.operational.receipt.status === "verified"
+      && value.operational.receipt.sourceMatch;
+    const matchingStagedClaim = value.operational.staging.status === "claim_stage_verified"
+      && value.operational.staging.sourceMatch;
+    const matchingPackage = value.package.status === "verified" && value.package.sourceMatch;
+    if (value.operational.lock.status === "invalid") {
+      expectedConflicts.push("installation_lock_present_without_v2_authority");
     }
-    const operationalConflicts = [
-      [value.filesystem.receipt, "installation_receipt_present_without_v2_authority"],
-      [value.filesystem.claim, "installation_claim_present_without_v2_authority"],
-      [value.filesystem.lock, "installation_lock_present_without_v2_authority"],
-      [value.filesystem.staging, "installation_staging_present_without_v2_authority"],
-    ] as const;
-    for (const [entry, conflict] of operationalConflicts) {
-      if (entry.state !== "absent") expectedConflicts.push(conflict);
+    if (
+      value.operational.claim.status === "invalid"
+      || (value.operational.claim.status === "verified" && !value.operational.claim.sourceMatch)
+    ) {
+      expectedConflicts.push("installation_claim_present_without_v2_authority");
     }
-    expectedConflicts.sort();
-    const derivedClassification = expectedConflicts.length === 0
-      ? "target_absent_clean"
-      : value.package.status === "verified"
-        && value.package.sourceMatch
-        && expectedConflicts.length === 1
-        && expectedConflicts[0] === "target_exact_but_unclaimed"
+    if (
+      value.operational.receipt.status === "invalid"
+      || (value.operational.receipt.status === "verified" && !value.operational.receipt.sourceMatch)
+    ) {
+      expectedConflicts.push("installation_receipt_present_without_v2_authority");
+    }
+    if (
+      value.filesystem.staging.state !== "absent"
+      && !matchingClaim
+      && !matchingStagedClaim
+    ) {
+      expectedConflicts.push("installation_staging_present_without_v2_authority");
+    }
+    if (matchingReceipt) {
+      if (!matchingClaim) {
+        expectedConflicts.push("installation_claim_present_without_v2_authority");
+      }
+      if (!matchingPackage) expectedConflicts.push("target_package_invalid");
+    } else if (!matchingClaim) {
+      if (matchingPackage) expectedConflicts.push("target_exact_but_unclaimed");
+      else if (value.package.status !== "absent") expectedConflicts.push("target_package_invalid");
+    }
+    const normalizedExpectedConflicts = [...new Set(expectedConflicts)].sort();
+    const derivedClassification = normalizedExpectedConflicts.length > 0
+      ? normalizedExpectedConflicts.length === 1
+        && normalizedExpectedConflicts[0] === "target_exact_but_unclaimed"
         ? "target_exact_unclaimed"
-        : "conflict";
+        : "conflict"
+      : matchingReceipt && matchingClaim && matchingPackage
+        ? value.filesystem.staging.state === "absent"
+          ? "ready_verified"
+          : "claimed_recovery_candidate"
+        : (matchingClaim || matchingStagedClaim)
+          && value.operational.receipt.status === "absent"
+          ? "claimed_recovery_candidate"
+          : value.package.status === "absent"
+            && value.operational.claim.status === "absent"
+            && value.operational.receipt.status === "absent"
+            && value.filesystem.staging.state === "absent"
+            ? "target_absent_clean"
+            : "conflict";
     if (
       new Set(value.conflicts).size !== value.conflicts.length
-      || expectedConflicts.length !== value.conflicts.length
-      || expectedConflicts.some((entry, index) => entry !== value.conflicts[index])
+      || normalizedExpectedConflicts.length !== value.conflicts.length
+      || normalizedExpectedConflicts.some((entry, index) => entry !== value.conflicts[index])
     ) {
       context.addIssue({
         code: "custom",
@@ -270,6 +341,21 @@ export const NodeToolchainProvisionerBootstrapInstallationInspectionV2Schema =
         && value.boundary.packageParent.locatorHash !== value.target.parentLocatorHash)
       || (value.filesystem.root.state === "absent" && value.package.status !== "absent")
       || (value.filesystem.root.state === "present" && value.package.status === "absent")
+      || (value.filesystem.lock.state === "absent" && value.operational.lock.status !== "absent")
+      || (value.filesystem.lock.state === "present" && value.operational.lock.status === "absent")
+      || (value.filesystem.claim.state === "absent" && value.operational.claim.status !== "absent")
+      || (value.filesystem.claim.state === "present" && value.operational.claim.status === "absent")
+      || (value.filesystem.receipt.state === "absent"
+        && value.operational.receipt.status !== "absent")
+      || (value.filesystem.receipt.state === "present"
+        && value.operational.receipt.status === "absent")
+      || (value.operational.receipt.status === "verified"
+        && value.operational.claim.status === "verified"
+        && value.operational.receipt.claimHash !== value.operational.claim.claimHash)
+      || (value.filesystem.staging.state === "absent"
+        && value.operational.staging.status !== "absent")
+      || (value.filesystem.staging.state === "present"
+        && value.operational.staging.status === "absent")
       || value.classification !== derivedClassification
     ) {
       context.addIssue({
@@ -296,19 +382,14 @@ const PlanIdentityV2Schema = z.object({
   planVersion: z.literal(NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_VERSION_V2),
   authorityRef: z.literal(NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_AUTHORITY_REF_V2),
   operation: z.literal("install_bootstrap_package"),
-  admissionScope: z.enum(["production_release", "test_fixture"]),
-  source: NodeToolchainProvisionerBootstrapPreparedPackageReceiptV2Schema,
+  intent: NodeToolchainProvisionerBootstrapInstallationIntentV2Schema,
   inspection: NodeToolchainProvisionerBootstrapInstallationInspectionV2Schema,
-  decision: z.enum(["publish_new", "no_mutation_blocked"]),
-  protocol: z.object({
-    serialization: z.literal("darwin_parent_descriptor_lockf_v2"),
-    claim: z.literal("canonical_no_replace_claim_before_root_v2"),
-    root: z.literal("exclusive_inaccessible_root_then_read_only_v2"),
-    files: z.literal("exclusive_copy_fchown_fchmod_fsync_v2"),
-    manifest: z.literal("manifest_last_v2"),
-    receipt: z.literal("canonical_no_replace_receipt_after_verified_root_v2"),
-    recovery: z.literal("exact_claim_bounded_rebuild_v2"),
-  }).strict(),
+  decision: z.enum([
+    "publish_new",
+    "return_ready",
+    "recover_claimed",
+    "no_mutation_blocked",
+  ]),
 }).strict();
 
 export type NodeToolchainProvisionerBootstrapInstallationPlanHashPayloadV2 = z.infer<
@@ -332,57 +413,53 @@ export const NodeToolchainProvisionerBootstrapInstallationPlanV2Schema =
   PlanIdentityV2Schema.safeExtend({
     planHash: Sha256Schema,
   }).strict().superRefine((value, context) => {
-    const root = value.source.target.rootLocator;
-    const parent = path.dirname(root);
-    const production = value.admissionScope === "production_release";
-    const setfarmRoot = production
-      ? NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_SETFARM_ROOT_V2
-      : parent;
-    const systemAncestor = production
-      ? NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_SYSTEM_ANCESTOR_V2
-      : parent;
     const expectedLocators = {
-      rootLocatorHash: hashNodeToolchainProvisionerBootstrapInstallationLocatorV2("root", root),
-      parentLocatorHash: hashNodeToolchainProvisionerBootstrapInstallationLocatorV2("parent", parent),
-      setfarmRootLocatorHash: hashNodeToolchainProvisionerBootstrapInstallationLocatorV2(
-        "setfarmRoot",
-        setfarmRoot,
-      ),
-      systemAncestorLocatorHash: hashNodeToolchainProvisionerBootstrapInstallationLocatorV2(
-        "systemAncestor",
-        systemAncestor,
-      ),
-      receiptLocatorHash: hashNodeToolchainProvisionerBootstrapInstallationLocatorV2(
-        "receipt",
-        path.join(parent, NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_RECEIPT_BASENAME_V2),
-      ),
-      claimLocatorHash: hashNodeToolchainProvisionerBootstrapInstallationLocatorV2(
-        "claim",
-        path.join(parent, NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_CLAIM_BASENAME_V2),
-      ),
-      lockLocatorHash: hashNodeToolchainProvisionerBootstrapInstallationLocatorV2(
-        "lock",
-        path.join(parent, NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_LOCK_BASENAME_V2),
-      ),
-      stagingLocatorHash: hashNodeToolchainProvisionerBootstrapInstallationLocatorV2(
-        "staging",
-        path.join(parent, NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_STAGING_BASENAME_V2),
-      ),
+      rootLocatorHash: value.intent.target.rootLocatorHash,
+      parentLocatorHash: value.intent.target.parentLocatorHash,
+      setfarmRootLocatorHash: value.intent.target.setfarmRootLocatorHash,
+      systemAncestorLocatorHash: value.intent.target.systemAncestorLocatorHash,
+      receiptLocatorHash: value.intent.target.receiptLocatorHash,
+      claimLocatorHash: value.intent.target.claimLocatorHash,
+      lockLocatorHash: value.intent.target.lockLocatorHash,
+      stagingLocatorHash: value.intent.target.stagingLocatorHash,
     };
+    const expectedClaimHash =
+      buildNodeToolchainProvisionerBootstrapInstallationClaimV2(value.intent).claimHash;
+    const claimMatchIsExact = value.inspection.operational.claim.status !== "verified"
+      || value.inspection.operational.claim.sourceMatch
+        === (value.inspection.operational.claim.claimHash === expectedClaimHash);
+    const receiptMatchIsExact = value.inspection.operational.receipt.status !== "verified"
+      || value.inspection.operational.receipt.sourceMatch
+        === (value.inspection.operational.receipt.claimHash === expectedClaimHash);
+    const stagingMatchIsExact =
+      value.inspection.operational.staging.status !== "claim_stage_verified"
+      || value.inspection.operational.staging.sourceMatch
+        === (value.inspection.operational.staging.claimHash === expectedClaimHash);
+    const packageMatchIsExact = value.inspection.package.status !== "verified"
+      || value.inspection.package.sourceMatch
+        === (value.inspection.package.manifestHash === value.intent.source.source.manifestHash);
     if (
-      value.admissionScope !== value.source.admissionScope
-      || value.admissionScope !== value.inspection.admissionScope
-      || value.source.receiptHash !== value.inspection.source.preparedReceiptHash
-      || value.source.source.manifestHash !== value.inspection.source.manifestHash
-      || value.source.source.architecture !== value.inspection.source.architecture
+      value.intent.admissionScope !== value.inspection.admissionScope
+      || value.intent.source.receiptHash !== value.inspection.source.preparedReceiptHash
+      || value.intent.source.source.manifestHash !== value.inspection.source.manifestHash
+      || value.intent.source.source.architecture !== value.inspection.source.architecture
       || Object.entries(expectedLocators).some(([key, hash]) =>
         value.inspection.target[key as keyof typeof expectedLocators] !== hash)
-      || value.inspection.target.expectedOwnerUid !== value.source.target.expectedOwnerUid
-      || value.inspection.target.expectedOwnerGid !== value.source.target.expectedOwnerGid
-      || (value.decision === "publish_new"
-        && value.inspection.classification !== "target_absent_clean")
-      || (value.decision === "no_mutation_blocked"
-        && value.inspection.classification === "target_absent_clean")
+      || value.inspection.target.expectedOwnerUid !== value.intent.target.expectedOwnerUid
+      || value.inspection.target.expectedOwnerGid !== value.intent.target.expectedOwnerGid
+      || !claimMatchIsExact
+      || !receiptMatchIsExact
+      || !stagingMatchIsExact
+      || !packageMatchIsExact
+      || value.decision !== (
+        value.inspection.classification === "target_absent_clean"
+          ? "publish_new"
+          : value.inspection.classification === "ready_verified"
+            ? "return_ready"
+            : value.inspection.classification === "claimed_recovery_candidate"
+              ? "recover_claimed"
+              : "no_mutation_blocked"
+      )
       || value.planHash !== hashNodeToolchainProvisionerBootstrapInstallationPlanV2(value)
     ) {
       context.addIssue({
