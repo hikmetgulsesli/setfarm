@@ -1761,25 +1761,28 @@ F2-F4 additionally require focused real-filesystem, process, PostgreSQL and
 concurrency tests. A clean merged-`main` `npm run build` and full `npm test`
 remain release evidence; the feature-branch build guard is never bypassed.
 
-GO for F1-F4 and F5D-F5P requirement/source/story-map ownership as isolated
+GO for F1-F4 and F5D-F5Q requirement/source/story-map/packet ownership as isolated
 shadow authorities. F5A-F5C are GO only as
 compatibility evidence and are explicitly NO-GO as production topology. NO-GO
 for production host execution, setup cutover, live migration, deploy and new
-clean product runs until ProductBuildPacketV4, atomic SourceMap artifact-set
-activation, authenticated build/test/candidate evidence,
+clean product runs until the superseding ImplementationSliceV2, atomic
+SourceMap artifact-set activation, authenticated build/test/candidate evidence,
 EvidenceAdapterRegistryV2, release manifest, and the later eval program are
-complete. The next dependency-order slice is PacketV4 over the exact
-SourceMapV2 root and upstream authority. It precedes the bounded candidate
-build/test owner; only after authenticated execution may the
+complete. PacketV4 now binds the exact SourceMapV2 root and upstream authority.
+The next dependency-order slice is the superseding ImplementationSliceV2 with
+one exact PacketV4 plus one freshly verified SourceMapV2 story proof. It
+precedes EvidencePlanV2 and the bounded candidate build/test owner; only after
+authenticated execution may the
 verified-release-derived operational adapter catalog, RegistryV2 and versioned
 release manifest claim support. The feature-branch `npm run build` guard was
-re-run after `117ebefa` and correctly refused branch
+re-run after `0d25eff0` and correctly refused branch
 `arch/product-semantics-v2-authority`; it was not bypassed. Only a clean
 merged-main build and full test can close that release gate.
 
 ## F5Q ProductBuildPacketV4 implementation plan
 
-**Status (2026-07-21): approved design, implementation pending.** The exact
+**Status (2026-07-21): complete as an isolated shadow authority in commit
+`0d25eff0`; production activation remains forbidden.** The exact
 wire, compiler/verifier, retry-identity boundary, publication disposition and
 production blockers are specified in
 `docs/superpowers/specs/2026-07-18-semantic-source-authority-design.md`.
@@ -1808,3 +1811,48 @@ Implement in this dependency order:
    path and diff checks. Re-run normal `npm run build`; record the expected
    feature-branch refusal without bypass. Keep production NO-GO and do not
    touch Mission Control until canonical operational evidence exists.
+
+Implementation exports the previously private SourceMap authority and logical
+execution schemas without changing their bytes or the pinned SourceMap contract
+hash. The new strict PacketV4 contract hash is
+`27baefc41281d6892e5d962ecf17988c34ee850fe2db60a0b538d2b5ab9d528e`.
+The packet binds the complete SourceMap authority, exact root envelope/manifest/
+Merkle/story-set identity, logical BuildTopology compilation/commands/runtime,
+logical runtime/test source receipts, exact blocker and validation sets, and a
+typed absent CandidateBuildReceiptV2 prerequisite. It carries no private
+dependency/source attempt receipt, timestamp, candidate commit/tree, or future
+build/test evidence.
+
+Both compiler and verifier take bounded strict `unknown`. The compiler freshly
+reproduces SourceMapV2 once and canonical-compares the caller's candidate root
+before deriving the packet. The verifier invokes that compiler fresh and
+requires both the expected envelope hash and candidate canonical bytes to equal
+the reproduction. A self-consistently rehashed ProductSpec authority or logical
+execution body is schema-valid but not authoritative and is rejected. The
+packet envelope independently passes exact tier-zero artifact-store preflight;
+the nine-item versus 5,000-leaf atomic activation gap remains an explicit
+blocker.
+
+The focused private-materializer integration covers CLI, one-story API,
+two-story API, prerequisite API and entity-field API. It proves every root
+binding, logical receipt inclusion, full operational receipt exclusion,
+preflight, immutability, wrong scope, strict extra input, producer drift, valid
+root substitution, validation drift, operational-field injection, bounded
+hostile depth, expected-hash/candidate mismatch, and fresh rejection of two
+schema-valid self-rehash classes. Two private CLI attempts have different
+topology/source operational receipt hashes yet the same StoryPlan, SourceMap
+root and full PacketV4 envelope hash.
+
+The final focused integration is 1/1 pass with
+`duration_ms 51149.233542`; pure Packet/SourceMap contract tests are 5/5 pass.
+The clean full Product Compiler regression is 131 suites, 1,070/1,070 pass,
+zero fail/cancelled/skipped/todo, with `duration_ms 127912.298458`.
+TypeScript, English contract (1,126 files), path contract (643 files) and diff
+checks pass. Normal `npm run build` correctly refused the feature branch and
+was not bypassed. No live run, live DB/PR/service, generated repository,
+Mission Control tree, or real Setfarm application-support tree was mutated.
+
+The next dependency-order slice is not candidate execution. It is the
+superseding ImplementationSliceV2 wire: one exact PacketV4 envelope/hash plus
+one bounded SourceMapV2 story proof, with no PacketV3, StoryPlanV2, SourceMapV1,
+global witness, operational attempt receipt, or prose recovery directive.
