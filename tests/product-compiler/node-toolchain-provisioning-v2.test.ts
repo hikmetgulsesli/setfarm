@@ -55,6 +55,15 @@ import {
   renderNodeToolchainProvisionerBootstrapLauncherV2,
 } from "../../src/product-compiler/node-toolchain-provisioner-bootstrap-v2.js";
 import {
+  BuiltNodeToolchainProvisionerBundleV2,
+  NodeToolchainProvisionerBundleAuthorityErrorV2,
+  buildNodeToolchainProvisionerBundleAuthorityV2,
+  buildNodeToolchainProvisionerBundleAuthorityV2ForTest,
+  copyBuiltNodeToolchainProvisionerBundleV2,
+  inspectNodeToolchainProvisionerBundleAuthorityReceiptV2,
+  type NodeToolchainProvisionerBundleBuilderAdapterV2,
+} from "../../src/product-compiler/node-toolchain-provisioner-bundle-authority-v2.js";
+import {
   NodeToolchainProvisionerBootstrapPackageErrorV2,
   inspectNodeToolchainProvisionerBootstrapPackageV2,
   openNodeToolchainProvisionerBootstrapPackageV2ForTest,
@@ -95,6 +104,11 @@ import {
   NodeToolchainProvisionerBootstrapManifestV2Schema,
   hashNodeToolchainProvisionerBootstrapManifestV2,
 } from "../../src/product-compiler/schemas/node-toolchain-provisioner-bootstrap-v2.js";
+import {
+  NodeToolchainProvisionerBundleAuthorityReceiptV2Schema,
+  hashNodeToolchainProvisionerBundleAuthorityReceiptV2,
+  hashNodeToolchainProvisionerBundleDependencyClosureV2,
+} from "../../src/product-compiler/schemas/node-toolchain-provisioner-bundle-authority-v2.js";
 import {
   NodeToolchainProvisionerOperationReceiptV2Schema,
   NodeToolchainProvisionerPlanV2Schema,
@@ -207,6 +221,58 @@ async function privateParent(): Promise<string> {
   roots.push(root);
   await chmod(root, 0o700);
   return root;
+}
+
+function provisionerBundleBuilderAdapter(
+  bundleForExecution: (executionRef: "first" | "second") => Buffer = () =>
+    Buffer.from("'use strict';\nprocess.stdout.write('{}');\n"),
+): NodeToolchainProvisionerBundleBuilderAdapterV2 {
+  return async (invocation) => {
+    const bundle = bundleForExecution(invocation.executionRef);
+    const metadata = canonicalJsonBytes({
+      schema: "setfarm.node-toolchain-provisioner-bundle-build-metadata.v2",
+      esbuildVersion: "0.28.1",
+      inputLocators: [
+        "src/product-compiler/node-toolchain-provisioner-bootstrap-entry-v2.ts",
+      ],
+      externalNodeBuiltins: ["node:fs"],
+      bundle: {
+        sha256: sha256(bundle),
+        byteLength: bundle.byteLength,
+      },
+    });
+    await writeFile(invocation.outputLocator, bundle, { flag: "wx", mode: 0o600 });
+    await writeFile(invocation.metadataLocator, metadata, { flag: "wx", mode: 0o600 });
+    return {
+      status: "exited",
+      exitCode: 0,
+      signal: null,
+      stdout: Buffer.alloc(0),
+      stderr: Buffer.alloc(0),
+    };
+  };
+}
+
+function executingProvisionerBundleBuilderAdapter(): NodeToolchainProvisionerBundleBuilderAdapterV2 {
+  return async (invocation) => {
+    const argv = [...invocation.argv];
+    argv[2] = process.execPath;
+    const result = spawnSync(process.execPath, argv, {
+      cwd: invocation.cwd,
+      env: { ...invocation.env },
+      encoding: "buffer",
+      maxBuffer: Math.max(invocation.maxStdoutBytes, invocation.maxStderrBytes),
+      timeout: invocation.timeoutMs,
+      shell: false,
+    });
+    return {
+      status: result.error ? "spawn_failed" : "exited",
+      exitCode: result.status,
+      signal: result.signal,
+      stdout: Buffer.from(result.stdout ?? Buffer.alloc(0)),
+      stderr: Buffer.from(result.stderr ?? Buffer.alloc(0)),
+    };
+  };
 }
 
 async function makeDirectoriesWritable(root: string): Promise<void> {
@@ -1271,6 +1337,77 @@ describe("NodeToolchainProvisionerCommandV2 inspection and planning", () => {
         JSON.parse(hostile.bytes.toString("utf8")),
       ).commandRef,
       "invalid_invocation",
+    );
+  });
+
+  it("issues bundle authority only from an exact Git, dependency and private-runtime join", async () => {
+    const tree = await privateTree();
+    const handle = await buildNodeToolchainProvisionerBundleAuthorityV2ForTest(
+      tree,
+      executingProvisionerBundleBuilderAdapter(),
+    );
+    const receipt = inspectNodeToolchainProvisionerBundleAuthorityReceiptV2(handle);
+    const snapshot = copyBuiltNodeToolchainProvisionerBundleV2(handle);
+
+    assert.equal(receipt.admissionScope, "test_fixture");
+    assert.equal(receipt.status, "built_reproducible_verified");
+    assert.equal(receipt.dependencyClosure.esbuild.version, "0.28.1");
+    assert.equal(receipt.dependencyClosure.zod.version, "4.4.3");
+    assert.equal(receipt.build.executionAuthority, "test_adapter");
+    assert.equal(receipt.runtime.sourcePrivateTree.receiptHash, inspectNodeToolchainPrivateTreeReceiptV2(tree).receiptHash);
+    assert.equal(receipt.build.executions[0].outputHash, receipt.build.executions[1].outputHash);
+    assert.equal(receipt.output.sha256, sha256(snapshot.bundleBytes));
+    assert.ok(receipt.output.inputLocators.some((locator) => locator.startsWith("node_modules/zod/")));
+    assert.ok(snapshot.bundleBytes.byteLength > 100_000);
+    assert.doesNotMatch(snapshot.bundleBytes.toString("utf8"), /require\(["'](?:zod|esbuild)["']\)/);
+    assert.deepEqual(
+      NodeToolchainProvisionerBundleAuthorityReceiptV2Schema.parse(receipt),
+      receipt,
+    );
+
+    const rehashedDrift = structuredClone(receipt);
+    rehashedDrift.output.sha256 = "f".repeat(64);
+    rehashedDrift.receiptHash = hashNodeToolchainProvisionerBundleAuthorityReceiptV2(
+      rehashedDrift,
+    );
+    assert.equal(
+      NodeToolchainProvisionerBundleAuthorityReceiptV2Schema.safeParse(rehashedDrift).success,
+      false,
+    );
+    const dependencyDrift = structuredClone(receipt);
+    dependencyDrift.dependencyClosure.zod.registryTarballSha256 = "e".repeat(64);
+    dependencyDrift.dependencyClosure.closureHash =
+      hashNodeToolchainProvisionerBundleDependencyClosureV2(
+        dependencyDrift.dependencyClosure,
+      );
+    dependencyDrift.receiptHash = hashNodeToolchainProvisionerBundleAuthorityReceiptV2(
+      dependencyDrift,
+    );
+    assert.equal(
+      NodeToolchainProvisionerBundleAuthorityReceiptV2Schema.safeParse(dependencyDrift).success,
+      false,
+    );
+    assert.throws(
+      () => inspectNodeToolchainProvisionerBundleAuthorityReceiptV2(
+        Object.create(BuiltNodeToolchainProvisionerBundleV2.prototype),
+      ),
+      (error: unknown) => error instanceof NodeToolchainProvisionerBundleAuthorityErrorV2
+        && error.code === "NODE_TOOLCHAIN_PROVISIONER_BUNDLE_V2_HANDLE_UNAUTHENTICATED",
+    );
+    await assert.rejects(
+      buildNodeToolchainProvisionerBundleAuthorityV2(tree),
+      (error: unknown) => error instanceof NodeToolchainProvisionerBundleAuthorityErrorV2
+        && error.code === "NODE_TOOLCHAIN_PROVISIONER_BUNDLE_V2_INPUT_INVALID",
+    );
+    await assert.rejects(
+      buildNodeToolchainProvisionerBundleAuthorityV2ForTest(
+        tree,
+        provisionerBundleBuilderAdapter((executionRef) => Buffer.from(
+          executionRef === "first" ? "first\n" : "second\n",
+        )),
+      ),
+      (error: unknown) => error instanceof NodeToolchainProvisionerBundleAuthorityErrorV2
+        && error.code === "NODE_TOOLCHAIN_PROVISIONER_BUNDLE_V2_NONDETERMINISTIC",
     );
   });
 
