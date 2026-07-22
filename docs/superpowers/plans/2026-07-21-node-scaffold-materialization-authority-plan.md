@@ -14,7 +14,8 @@ exact test program/source receipt from the same projection. The V2
 FileTree/BuildTopology/entrypoint-only transition must not be promoted.
 F5M now closes authenticated source publication, semantic-envelope DB/CAS
 verification and private no-replace source materialization. Production-root
-activation remains NO-GO; authenticated build/test/candidate execution,
+activation remains NO-GO; StoryPlanV3, ImplementationSourceMapV2,
+ProductBuildPacketV4, authenticated build/test/candidate execution,
 release-derived EvidenceAdapterRegistryV2, release manifest and clean
 multi-product eval remain.
 
@@ -38,6 +39,7 @@ code-owned scaffold catalog
   -> NodeProductRuntimeGeneratorV2 / NodeProductTestGeneratorV2
   -> runtime/test source receipts
   -> indexed source publication and private no-replace materialization
+  -> StoryPlanV3 / ImplementationSourceMapV2 / ProductBuildPacketV4
   -> authenticated build/test/candidate execution
   -> release-derived EvidenceAdapterRegistryV2
 ```
@@ -1421,10 +1423,11 @@ may the remaining blockers be removed or a clean three-product eval start.
 
 **Status (2026-07-21): source publication preparation, isolated indexed write,
 authenticated semantic-envelope and ByteBundle deep reads, and private
-no-replace materialization are complete. Authenticated build/test/candidate
-execution and the release-derived EvidenceAdapterRegistryV2/release joins
-remain in progress. No live publication is authorized.** This slice is
-deliberately split by authority ownership, not by convenience:
+no-replace materialization are complete. StoryPlanV3, SourceMapV2, PacketV4,
+authenticated build/test/candidate execution and the release-derived
+EvidenceAdapterRegistryV2/release joins remain in progress. No live publication
+is authorized.** This slice is deliberately split by authority ownership, not
+by convenience:
 
 1. `NodeProductSourcePublicationReceiptV1` fresh-generates and verifies the
    runtime/test source pair, wraps each exact UTF-8 source in ByteBundleV1,
@@ -1501,11 +1504,18 @@ and diff checks pass. The normal feature-branch build guard again refused
 PR, service, generated repository or real Setfarm application-support tree was
 mutated.
 
-The next boundary is not more source plumbing. It is authenticated execution:
-the exact materialization receipt must be consumed by bounded build and test
-runners that emit canonical ReceiptV2 evidence. Only a verified platform
-release may then derive the runnable adapter catalog and
-EvidenceAdapterRegistryV2; RegistryV1 caller claims cannot authorize that join.
+**Dependency-order correction after F5M:** Authenticated execution cannot be the
+immediate next slice. The approved target architecture requires the realized
+source receipts to close first through StoryPlanV3,
+ImplementationSourceMapV2 and ProductBuildPacketV4. `CandidateBuildReceiptV2`
+already exists only as a `candidate_unverified` schema DTO and explicitly binds
+PacketV4; treating the source-materialization receipt as a substitute packet
+would create another parallel, locally coherent authority. The next slice is
+therefore StoryPlanV3. SourceMapV2 and PacketV4 follow; only then may the exact
+materialization handle be consumed by bounded build/test runners that emit
+canonical ReceiptV2 evidence. Only a verified platform release may derive the
+runnable adapter catalog and EvidenceAdapterRegistryV2; RegistryV1 caller claims
+cannot authorize that join.
 
 ## Verification and release gate
 
@@ -1527,12 +1537,14 @@ GO for F1-F4 and F5D-F5M source publication/materialization as isolated shadow
 authorities. F5A-F5C are GO only as
 compatibility evidence and are explicitly NO-GO as production topology. NO-GO
 for production host execution, setup cutover, PacketV4, live migration, deploy
-and new clean product runs until authenticated build/test/candidate evidence,
-EvidenceAdapterRegistryV2, release manifest, SourceMap, and the later packet/eval
-program are complete. The next dependency-order slice is a bounded authenticated
-build/test execution owner consuming the exact source-materialization receipt,
-followed by the verified-release-derived operational adapter catalog, RegistryV2
-and versioned release manifest. The feature-branch `npm run build` guard was
+and new clean product runs until StoryPlanV3, ImplementationSourceMapV2,
+ProductBuildPacketV4, authenticated build/test/candidate evidence,
+EvidenceAdapterRegistryV2, release manifest, and the later eval program are
+complete. The next dependency-order slice is StoryPlanV3 over the exact
+realization/source-receipt authority. SourceMapV2 and PacketV4 follow before the
+bounded candidate build/test owner; only after authenticated execution may the
+verified-release-derived operational adapter catalog, RegistryV2 and versioned
+release manifest claim support. The feature-branch `npm run build` guard was
 re-run after `a824177f` and correctly refused branch
 `arch/product-semantics-v2-authority`; it was not bypassed. Only a clean
 merged-main build and full test can close that release gate.
