@@ -22,6 +22,8 @@ import { after, afterEach, before, describe, it } from "node:test";
 
 import { createArtifactIndexForTests as createArtifactIndex } from
   "../../src/product-compiler/artifact-index.js";
+import { canonicalJsonStringify } from
+  "../../src/product-compiler/canonical-json.js";
 import {
   createHybridArtifactStoreCapacityLeaseProviderV1,
 } from "../../src/product-compiler/artifact-store-authority.js";
@@ -38,6 +40,12 @@ import {
   type HostNodeToolchainProbeInvocationV2,
   type HostNodeToolchainProbeResultV2,
 } from "../../src/product-compiler/host-node-toolchain-authority-v2.js";
+import {
+  FileTreeManifestVerificationErrorV2,
+  compileFileTreeManifestV2,
+  compileFileTreeManifestV2ForTest,
+  verifyFileTreeManifestV2ForTest,
+} from "../../src/product-compiler/file-tree-manifest-v2.js";
 import { IndexedArtifactPublisher } from
   "../../src/product-compiler/indexed-artifact-publisher.js";
 import {
@@ -75,9 +83,27 @@ import {
   ScaffoldBaseMaterializationReceiptV2Schema,
 } from "../../src/product-compiler/schemas/node-scaffold-private-materialization-v2.js";
 import {
+  FILE_TREE_MANIFEST_CONTRACT_HASH_V2,
+  FILE_TREE_MANIFEST_CONTRACT_V2,
+  FileTreeManifestV2Schema,
+  hashFileTreeManifestV2,
+  hashFileTreePathEntryV2,
+  hashFileTreePathMembershipV2,
+} from "../../src/product-compiler/schemas/file-tree-manifest-v2.js";
+import {
+  resolveProductDeliverySelectionV2,
+} from "../../src/product-compiler/product-delivery-profile-catalog-v2.js";
+import type { ProductSpecV2 } from
+  "../../src/product-compiler/schemas/product-spec-v2.js";
+import {
   createIsolatedTestDatabase,
   type TestDatabase,
 } from "../execution-attempts/test-database.js";
+import {
+  genuineNodeCliProductSpecV2,
+  genuineNodeExpressApiProductSpecV2,
+  twoStoryNodeExpressApiProductSpecV2,
+} from "./fixtures/no-design-product-semantics-v2.js";
 
 const LIMITS = Object.freeze({
   maxPayloadBytes: 4 * 1024 * 1024,
@@ -86,6 +112,8 @@ const LIMITS = Object.freeze({
 });
 const CLI_PROFILE = "PROFILE_NODE_CLI_STATELESS_EXACT_V2" as const;
 const API_PROFILE = "PROFILE_NODE_EXPRESS_API_STATELESS_EXACT_V2" as const;
+const FILE_TREE_CONTRACT_HASH_GOLDEN_V2 =
+  "c882764fc3790d7a7815c0ba802d0201d76e3ff874c878e0bf13f1b9d727756c";
 const ROLES = Object.freeze([
   "package_manifest",
   "dependency_lock_manifest",
@@ -280,6 +308,29 @@ function hostAdapter(fixture: HostFixtureV2, profileId: NodeScaffoldProfileIdV2)
     }
     return exited(`${JSON.stringify(effectiveConfig(invocation), null, 2)}\n`);
   };
+}
+
+function deliverySelectionForV2(
+  productSpec: ProductSpecV2,
+  stackPackId: "node-cli" | "node-express-api",
+) {
+  const result = resolveProductDeliverySelectionV2({
+    productSpec,
+    requestedStackPackId: stackPackId,
+  });
+  assert.equal(
+    result.status,
+    "shadow_selected",
+    result.status === "rejected" ? JSON.stringify(result.diagnostics) : undefined,
+  );
+  if (result.status !== "shadow_selected") throw new Error("Expected delivery selection");
+  return result.selection;
+}
+
+function assertRecursivelyFrozen(value: unknown): void {
+  if (value === null || typeof value !== "object") return;
+  assert.equal(Object.isFrozen(value), true);
+  Object.values(value).forEach(assertRecursivelyFrozen);
 }
 
 describe("Node scaffold private staged materializer V2", () => {
@@ -558,6 +609,211 @@ describe("Node scaffold private staged materializer V2", () => {
       assert.equal(invocation.maxStderrBytes, 65_536);
       assert.equal(invocation.env.NPM_CONFIG_ENGINE_STRICT, "true");
       assert.equal(invocation.env.NODE_OPTIONS, undefined);
+    }
+  });
+
+  it("derives and freshly verifies exact CLI/API scaffold-base FileTreeV2 authority", async () => {
+    const cases = [
+      {
+        profileId: CLI_PROFILE,
+        stackPackId: "node-cli" as const,
+        productSpec: genuineNodeCliProductSpecV2(),
+        semanticPathCount: 7,
+        semanticIntentCount: 7,
+        externalRequirementCount: 3,
+        historicalPathCount: 1,
+        totalPathCount: 13,
+        ownerCount: 3,
+        manifestHash: "687630f5caa489a64bd978891fe548e86ccc5e5e20a21cc912a3a1a9f5febbb2",
+      },
+      {
+        profileId: API_PROFILE,
+        stackPackId: "node-express-api" as const,
+        productSpec: genuineNodeExpressApiProductSpecV2(),
+        semanticPathCount: 8,
+        semanticIntentCount: 8,
+        externalRequirementCount: 3,
+        historicalPathCount: 2,
+        totalPathCount: 15,
+        ownerCount: 3,
+        manifestHash: "3a69a3859bc9c5108b37dc84906dbe35eba962c9e5151bf419b187d9d9a06a10",
+      },
+      {
+        profileId: API_PROFILE,
+        stackPackId: "node-express-api" as const,
+        productSpec: twoStoryNodeExpressApiProductSpecV2(),
+        semanticPathCount: 15,
+        semanticIntentCount: 16,
+        externalRequirementCount: 4,
+        historicalPathCount: 2,
+        totalPathCount: 22,
+        ownerCount: 4,
+        manifestHash: "79359b2225813271d06f3a8f34335ab37def435df793616fd73dba4acaa6b0dd",
+      },
+    ];
+    for (const fixture of cases) {
+      const created = await stage({ profileId: fixture.profileId });
+      const deliverySelection = deliverySelectionForV2(
+        fixture.productSpec,
+        fixture.stackPackId,
+      );
+      const input = { productSpec: fixture.productSpec, deliverySelection };
+      const compiled = await compileFileTreeManifestV2ForTest(created.handle, input);
+      assert.equal(
+        compiled.status,
+        "shadow_compiled",
+        compiled.status === "rejected"
+          ? JSON.stringify(compiled.diagnostics)
+          : undefined,
+      );
+      if (compiled.status !== "shadow_compiled") throw new Error("Expected FileTreeV2");
+      const manifest = compiled.value;
+      assert.equal(FILE_TREE_MANIFEST_CONTRACT_HASH_V2,
+        FILE_TREE_CONTRACT_HASH_GOLDEN_V2);
+      assert.equal(Object.isFrozen(FILE_TREE_MANIFEST_CONTRACT_V2), true);
+      assert.equal(manifest.contractHash, FILE_TREE_CONTRACT_HASH_GOLDEN_V2);
+      assert.equal(manifest.manifestHash, fixture.manifestHash);
+      assert.equal(Object.hasOwn(manifest.authority, "admissionScope"), false);
+      assert.equal(manifest.authority.profileId, fixture.profileId);
+      assert.equal(manifest.authority.stackPackId, fixture.stackPackId);
+      assert.equal(manifest.pathCount, fixture.totalPathCount);
+      assert.equal(manifest.paths.filter((entry) =>
+        entry.classification === "config").length, 3);
+      assert.equal(manifest.paths.filter((entry) =>
+        entry.classification === "source").length, fixture.semanticPathCount);
+      assert.equal(manifest.paths.filter((entry) =>
+        entry.classification === "compatibility_rejected").length,
+      fixture.historicalPathCount);
+      assert.equal(manifest.semanticCoverage.semanticTokenIntentCount,
+        fixture.semanticIntentCount);
+      assert.equal(manifest.semanticCoverage.externalRequirementIntentCount,
+        fixture.externalRequirementCount);
+      assert.equal(manifest.ownerCount, fixture.ownerCount);
+      assert.equal(manifest.stage, "scaffold_base_ready");
+      assert.equal(manifest.authority.projectInventory.nodeModulesState, "absent");
+      assert.equal(JSON.stringify(manifest.paths).includes('"build_output"'), false);
+      assert.equal(manifest.paths.find((entry) =>
+        entry.classification === "entrypoint_generated")?.access,
+      "generator_whole_file_future");
+      assert.equal(manifest.paths.find((entry) =>
+        entry.normalizedLocator === ".npmrc")?.currentState.state, "absent");
+      assert.doesNotMatch(
+        JSON.stringify(manifest),
+        /admissionScope|privateRootIdentityHash|physicalIdentityHash|scaffoldBaseReceiptHash|executionEnvironmentReceiptHash/,
+      );
+      assert.doesNotMatch(
+        JSON.stringify(manifest),
+        /setfarm-f4-stage-v2|\/private\/|\/var\/folders|\/Users\//,
+      );
+      if (fixture.semanticIntentCount > fixture.semanticPathCount) {
+        const aggregate = manifest.paths.find((entry) =>
+          entry.authority.kind === "semantic_source_path"
+          && entry.authority.materialization.kind === "shared_catalog_aggregate");
+        assert.equal(aggregate?.authority.kind, "semantic_source_path");
+        if (aggregate?.authority.kind !== "semantic_source_path") {
+          throw new Error("Expected shared semantic aggregate");
+        }
+        assert.equal(aggregate.authority.intentBindingCount, 2);
+        assert.equal(aggregate.writeGrantOwnerRefs.length, 2);
+      }
+      assert.equal(FileTreeManifestV2Schema.safeParse(manifest).success, true);
+      assert.equal(compiled.canonicalBytes, canonicalJsonStringify(manifest));
+      assertRecursivelyFrozen(compiled);
+
+      const verified = await verifyFileTreeManifestV2ForTest(created.handle, {
+        ...input,
+        candidate: manifest,
+      });
+      assert.equal(verified.value.manifestHash, manifest.manifestHash);
+      assertRecursivelyFrozen(verified);
+
+      const wrongScope = await compileFileTreeManifestV2(created.handle, input);
+      assert.equal(wrongScope.status, "rejected");
+      assert.equal(wrongScope.diagnostics[0]?.code,
+        "FILE_TREE_V2_PRODUCTION_AUTHORITY_REQUIRED");
+
+      const selfRehashed = structuredClone(manifest) as any;
+      selfRehashed.authority.nodePathTokenSetHash = "f".repeat(64);
+      selfRehashed.manifestHash = hashFileTreeManifestV2(selfRehashed);
+      assert.equal(FileTreeManifestV2Schema.safeParse(selfRehashed).success, true);
+      await assert.rejects(
+        verifyFileTreeManifestV2ForTest(created.handle, {
+          ...input,
+          candidate: selfRehashed,
+        }),
+        (error: unknown) =>
+          error instanceof FileTreeManifestVerificationErrorV2
+          && error.code === "FILE_TREE_V2_VERIFICATION_AUTHORITY_MISMATCH",
+      );
+
+      const forgedOwnership = structuredClone(manifest) as any;
+      const exclusive = forgedOwnership.paths.find((entry: any) =>
+        entry.authority.kind === "semantic_source_path"
+        && entry.authority.materialization.kind === "exclusive_file");
+      assert.ok(exclusive);
+      exclusive.ownerRef = "OWNER_SETUP_V2";
+      exclusive.entryHash = hashFileTreePathEntryV2(exclusive);
+      forgedOwnership.pathMembershipHash = hashFileTreePathMembershipV2(
+        forgedOwnership.paths,
+      );
+      forgedOwnership.manifestHash = hashFileTreeManifestV2(forgedOwnership);
+      assert.equal(FileTreeManifestV2Schema.safeParse(forgedOwnership).success, false);
+
+      if (fixture.profileId === CLI_PROFILE) {
+        const sibling = await stage({ profileId: CLI_PROFILE });
+        const siblingCompiled = await compileFileTreeManifestV2ForTest(
+          sibling.handle,
+          input,
+        );
+        assert.equal(siblingCompiled.status, "shadow_compiled");
+        if (siblingCompiled.status !== "shadow_compiled") {
+          throw new Error("Expected stable sibling FileTreeV2");
+        }
+        const firstBase = inspectScaffoldBaseMaterializationReceiptV2(created.handle);
+        const siblingBase = inspectScaffoldBaseMaterializationReceiptV2(sibling.handle);
+        assert.notEqual(firstBase.receiptHash, siblingBase.receiptHash);
+        assert.equal(firstBase.semanticInputHash, siblingBase.semanticInputHash);
+        assert.equal(manifest.manifestHash, siblingCompiled.value.manifestHash);
+        assert.equal(compiled.canonicalBytes, siblingCompiled.canonicalBytes);
+
+        const upstreamRejected = await compileFileTreeManifestV2ForTest(
+          created.handle,
+          { productSpec: {}, deliverySelection },
+        );
+        assert.equal(upstreamRejected.status, "rejected");
+        assert.equal(upstreamRejected.diagnostics[0]?.code,
+          "FILE_TREE_V2_UPSTREAM_AUTHORITY_REJECTED");
+
+        let getterInvoked = false;
+        const accessorInput = Object.defineProperty({ deliverySelection }, "productSpec", {
+          enumerable: true,
+          get() {
+            getterInvoked = true;
+            return fixture.productSpec;
+          },
+        });
+        const accessorRejected = await compileFileTreeManifestV2ForTest(
+          created.handle,
+          accessorInput,
+        );
+        assert.equal(accessorRejected.status, "rejected");
+        assert.equal(accessorRejected.diagnostics[0]?.code, "FILE_TREE_V2_INPUT_INVALID");
+        assert.equal(getterInvoked, false);
+
+        const attemptRoot = await onlyAttemptRoot(created.stageParent);
+        await chmod(path.join(
+          attemptRoot,
+          "project",
+          "package.json",
+        ), 0o666);
+        const driftRejected = await compileFileTreeManifestV2ForTest(
+          created.handle,
+          input,
+        );
+        assert.equal(driftRejected.status, "rejected");
+        assert.equal(driftRejected.diagnostics[0]?.code,
+          "FILE_TREE_V2_PRIVATE_STAGE_INVALID");
+      }
     }
   });
 
