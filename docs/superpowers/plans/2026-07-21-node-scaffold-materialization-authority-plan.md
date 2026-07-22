@@ -4,10 +4,10 @@ Date: 2026-07-21
 
 Status: F1, F2A, the F2B publisher/command/bootstrap lifecycle, F3 effective
 npm authority, the complete F4 private scaffold/dependency materializer, F5A
-FileTreeManifestV2 and F5B dependency-ready BuildTopologyV2 are complete on the
-feature branch. Production-root activation remains NO-GO; the Node semantic-rule
-generator transition, source receipts, declarations and SourceMap sealing are
-next.
+FileTreeManifestV2, F5B dependency-ready BuildTopologyV2 and F5C Node
+semantic-rule generator transition are complete on the feature branch.
+Production-root activation remains NO-GO; semantic source declarations, the
+entrypoint generator/source receipt and SourceMap sealing are next.
 
 ## Goal
 
@@ -23,6 +23,9 @@ code-owned scaffold catalog
   -> private no-replace scaffold stage
   -> exact dependency-tree receipt
   -> FileTreeManifestV2 / BuildTopologyV2
+  -> NodeSemanticRuleGeneratorTransitionV2
+  -> SemanticSourceDeclarationsV1
+  -> NodeEntrypointSourceReceiptV2
 ```
 
 No stage may infer success from command prose, PATH lookup alone, a caller-
@@ -719,6 +722,60 @@ leakage. Materializer integration is 16/16; full Product Compiler is 1013/1013
 across 124 suites; TypeScript, English (1,090 files), path contract (615 files)
 and diff checks pass.
 
+### F5C — Node V1 rule-to-generator transition
+
+**Status (2026-07-22): complete as a shadow, production-forbidden authority.**
+Commit `5c26ec59` adds
+`setfarm.node-semantic-rule-generator-transition.v2` version `2.0.0` and the
+separate `setfarm.node-entrypoint-generator-contract.v2`. Their code-owned
+contract hashes are respectively
+`6ea5bb30efdd5b98229bb0ca7e13bffbbc8601eadcd7a76b362cbd2d7bc0f10a`
+and `52b95411113b302c8993e8d3debc712831955cb72a8b91a0226e40941a86933a`.
+
+This slice does not relabel or activate V1. It fresh-reproduces the exact V1
+rule set, semantic intent set and path-token set, fresh-verifies FileTree and
+BuildTopology, and creates one transition for every and only FileTree
+entrypoint requirement. Each transition retains the complete historical ABI:
+rule-set/rule versions and hashes, intent/requirement/projection hashes,
+subject/scope/story/owner, cardinality/domain, TypeScript parser contract,
+structural slot, model-write policy and postcondition. Its target is one
+code-owned deterministic whole-file generator with zero model write authority.
+
+The generator contract binds two exact profiles. The CLI target is a Node ESM
+process module with no named export and transport argv appended after the
+module. The API target exports only `setfarmHttpHandlerV2`; server, listener and
+socket remain platform-owned and candidate `listen()` is forbidden. Runtime
+registration transitions to an ABI surface, not an invented CLI export.
+
+Completeness is bounded by the inherited V1 catalog: exactly one entrypoint
+registration, one to 500 route registrations and exactly one runtime
+registration, for at most 502 transitions. The schema and producer enforce the
+same bound. A transition's stable hash binds `logicalBuildHash`, while the
+fresh verifier still checks the current operational BuildTopology. Private
+root, dependency receipt, admission scope and operational manifest hash are
+excluded from transition identity, so a new physical attempt cannot manufacture
+a semantic delta.
+
+The artifact remains `shadow_blocked` by five exact facts: generator
+implementation, release manifest, rule activation, semantic declarations and
+source receipt are all unverified. Declarations intentionally precede the real
+generator: they must define exact versioned module/export ABI for the semantic
+sources the generated entrypoint imports. The generator then emits deterministic
+whole-file bytes plus `NodeEntrypointSourceReceiptV2`; it cannot infer imports
+from filenames or prose.
+
+Focused proof covers CLI, one-route API and two-route API. Their stable
+transition hashes are
+`dd9383168e399304d444e47d79363c47f710d9162a87caff034c1a75fbd8a5c1`,
+`230bae76845629959fcebf10009d1c8bbb3361fe073d899c797ee87bca381a7c`
+and `dbae4dd6890ee1ca3fadf060767e87c64875c539ee90ccc2762e984cabadbc85`.
+Tests reject wrong scope, strict-input extras, schema-valid self-rehashed
+logical authority and a schema-valid omitted route; an independent CLI attempt
+keeps the same transition hash despite a different operational topology.
+Materializer integration is 17/17; full Product Compiler is 1014/1014 across
+124 suites; TypeScript, English (1,092 files), path contract (617 files), tracked
+and untracked diff checks pass.
+
 ## Verification and release gate
 
 Every slice requires:
@@ -738,13 +795,14 @@ remain release evidence; the feature-branch build guard is never bypassed.
 GO for F1, the complete isolated F2 authority through official-runtime packaged
 bootstrap rehearsal, the isolated F3 environment/config authority, the
 complete isolated F4 scaffold/dependency authority, F5A FileTreeManifestV2 and
-F5B dependency-ready BuildTopologyV2. NO-GO for production host execution,
-setup cutover, PacketV4, live migration, deploy and new clean product runs until
-the Node rule-to-generator transition, generated entrypoint receipt,
-declarations, ExecutableSourceContractV2, SourceMap and later packet/evidence
-program are complete. The next dependency-order slice transitions the current
-Node V1 model-writable shared AST-slot rules to one generator-owned entrypoint
-ABI before implementing NodeEntrypointGeneratorV2. The feature-branch
+F5B dependency-ready BuildTopologyV2 and F5C Node rule-to-generator transition.
+NO-GO for production host execution, setup cutover, PacketV4, live migration,
+deploy and new clean product runs until semantic declarations, the generated
+entrypoint receipt, ExecutableSourceContractV2, SourceMap and the later
+packet/evidence program are complete. The next dependency-order slice is
+SemanticSourceDeclarationsV1; only after it closes exact versioned module/export
+ABI may NodeEntrypointGeneratorV2 generate the importing entrypoint. The
+feature-branch
 `npm run build` guard correctly
 refused `b4bc3bd9`; the resulting source-v26 versus committed-dist-v25 mismatch
 also prevents `dist`-importing full step tests from being release evidence on

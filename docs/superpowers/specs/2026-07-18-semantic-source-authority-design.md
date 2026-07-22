@@ -578,6 +578,24 @@ build produce `dist/cli.js` or `dist/app.js`. The old shared-entrypoint parser
 requirement remains a compatibility blocker rather than being implemented only
 to preserve an unsafe central-file mutation model.
 
+The version-forward boundary is now an explicit
+`NodeSemanticRuleGeneratorTransitionV2`, not an in-place V1 mutation. It
+fresh-binds every and only V1 entrypoint/route/runtime requirement to one
+generator-owned whole-file target while retaining the complete historical rule
+ABI as evidence. Its stable identity uses BuildTopology's logical build hash,
+but its verifier still requires the current operational topology. The artifact
+is shadow-only until declarations, generator implementation/release, activation
+and source receipt all exist.
+
+`SemanticSourceDeclarationsV1` must precede actual entrypoint generation. It
+declares the exact versioned module/export ABI of model-owned handler, adapter,
+state and test sources and projects each transitioned registration obligation
+as generator input. `NodeEntrypointGeneratorV2` then consumes those verified
+declarations and the transition artifact; it may not discover imports from the
+filesystem, filename conventions or prose. This ordering removes the circular
+alternative in which declarations would require an entrypoint receipt that can
+only be produced after declarations identify its imports.
+
 The first scaffold catalog remains shadow schema/compiler/verifier authority.
 Deep ByteBundle CAS reassembly and host Node/npm identity now have independently
 authenticated shadow authorities described below. Exact toolchain distribution
@@ -897,6 +915,31 @@ declarations are explicitly classified as setup, config, test, asset,
 generated-readonly, dependency-readonly, raw build input, candidate target, or
 build output.
 
+## NodeSemanticRuleGeneratorTransitionV2
+
+The transition compiler fresh-reproduces the V1 rule, intent and path-token
+authorities and fresh-verifies FileTreeV2 plus BuildTopologyV2. It emits exactly
+one transition per FileTree entrypoint requirement, retaining V1 rule-set/rule,
+subject, scope, story, owner, parser, locator, cardinality, output policy and
+postcondition identity. Missing, extra or duplicated requirements fail closed.
+The inherited bound is one entrypoint registration, one to 500 route
+registrations and one runtime registration, for at most 502 transitions.
+
+Every target points to the same profile-selected entrypoint and changes
+authority from setup-owned/model-writable AST slots to a code-owned,
+deterministic whole-file generator with model writes forbidden. CLI is a Node
+ESM process module with no named export. API exposes exactly
+`setfarmHttpHandlerV2`; listener/server/socket ownership stays in the platform
+and candidate `listen()` remains forbidden. The V1 artifact stays historical
+and production-ineligible.
+
+The transition hash binds stable semantic authority and `logicalBuildHash`.
+Operational manifest, admission scope, dependency receipt and private paths are
+fresh-verified but excluded from that identity. A new private attempt therefore
+cannot appear to be a new semantic delta. Five exact blockers remain:
+declarations, generator implementation, generator release manifest, rule
+activation and the generated source receipt.
+
 ## SemanticSourceDeclarationsV1
 
 The declaration compiler fresh-reproduces intents and joins them to exact
@@ -906,7 +949,8 @@ materialized topology. A declaration binds:
 - story, owner, path ref, normalized path, and access mode;
 - current base presence and current base content/absence hash;
 - exact structural locator and parser contract;
-- generated receipt identity when applicable;
+- existing generated receipt identity when already authoritative, or an exact
+  generator-transition ref and planned receipt schema for a future entrypoint;
 - aggregation group and unique slot key when applicable; and
 - structural postcondition, without a future writable content hash.
 
@@ -915,6 +959,12 @@ writable declaration resolves to one owned or write-granted path. Every
 writable/granted path is closed by declarations. Missing, extra, duplicate,
 ambiguous, overlapping structural slots, unowned paths, and undeclared writable
 paths are compile blockers.
+
+For the Node entrypoint, declarations do not claim writable source slots or
+future content bytes. They bind the transition refs and exact versioned exports
+that the generator will import, while the entrypoint source receipt remains
+absent and typed-blocked. `ExecutableSourceContractV2` later joins declarations
+to the generated receipt without rewriting either artifact.
 
 The pair `(pathRef, locatorCanonicalHash)` is globally unique. An exclusive-file
 locator cannot coexist with another writable declaration on that file. Shared
@@ -983,6 +1033,8 @@ resolveProductDeliverySelectionV2(selectionInput)
 verifyProductDeliverySelectionV2(verificationInput)
 deriveSemanticSourceIntentSetV1(authorityInput)
 verifySemanticSourceIntentSetV1(verificationInput)
+compileNodeSemanticRuleGeneratorTransitionV2(authorityInput)
+verifyNodeSemanticRuleGeneratorTransitionV2(verificationInput)
 compileSemanticSourceDeclarationsV1(authorityInput)
 verifySemanticSourceDeclarationsV1(verificationInput)
 compileImplementationSourceMapV2(authorityInput)
@@ -1056,9 +1108,10 @@ new-write release; it does not translate V3 attempts into historical attempts.
 8. Implement ByteBundle deep CAS verification, host-toolchain admission, exact
    build-dependency receipt, and private staged scaffold materializer.
 9. Implement FileTreeManifestV2 and BuildTopologyV2, then the Node semantic-rule
-   version transition and NodeEntrypointGeneratorV2 receipt.
+   version transition without mutating V1.
 10. Implement SemanticSourceDeclarationsV1 and concurrent artifact-batch
-   publication authority.
+   publication authority, then NodeEntrypointGeneratorV2 and its source receipt
+   from those exact declarations.
 11. Implement StoryPlanV3, SourceMapV2 root/leaves/proofs, and least-privilege
    story proof verification.
 12. Finalize ProductBuildPacketV3/ImplementationSliceV2 field replacement before
