@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, renameSync } from "node:fs";
 import {
   chmod,
@@ -33,7 +33,9 @@ import {
 import { ContentAddressedArtifactStore } from
   "../../src/product-compiler/artifact-store.js";
 import {
+  copyVerifiedDeepByteBundleBytesV2,
   createDeepByteBundleCasAuthorityV2,
+  verifyDeepByteBundleFromCasV2,
   type DeepByteBundleCasAuthorityV2,
   type VerifiedDeepByteBundleV2,
 } from "../../src/product-compiler/deep-byte-bundle-verifier-v2.js";
@@ -81,6 +83,12 @@ import {
   generateNodeProductTestSourceV2ForTest,
   verifyNodeProductTestSourceV2ForTest,
 } from "../../src/product-compiler/node-product-test-generator-v2.js";
+import {
+  NodeProductSourcePublicationVerificationErrorV1,
+  compileNodeProductSourcePublicationV1,
+  compileNodeProductSourcePublicationV1ForTest,
+  verifyNodeProductSourcePublicationV1ForTest,
+} from "../../src/product-compiler/node-product-source-publication-v1.js";
 import {
   NodeSemanticRuleGeneratorTransitionVerificationErrorV2,
   compileNodeSemanticRuleGeneratorTransitionV2,
@@ -190,6 +198,17 @@ import {
   hashNodeProductTestSourceReceiptV2,
 } from "../../src/product-compiler/schemas/node-product-test-source-v2.js";
 import {
+  NodeProductSourcePublicationReceiptSetV1Schema,
+  NodeProductSourcePublicationReceiptV1Schema,
+  hashNodeProductSourcePublicationEntryCommitmentV1,
+  hashNodeProductSourcePublicationReceiptSetV1,
+  hashNodeProductSourcePublicationReceiptV1,
+  nodeProductSourcePublicationReceiptRefV1,
+} from "../../src/product-compiler/schemas/node-product-source-publication-v1.js";
+import {
+  hashDeepByteBundleConsumerBindingV2,
+} from "../../src/product-compiler/schemas/deep-byte-bundle-verification-receipt-v2.js";
+import {
   createIsolatedTestDatabase,
   type TestDatabase,
 } from "../execution-attempts/test-database.js";
@@ -223,6 +242,11 @@ const NODE_ENTRYPOINT_GENERATOR_CONTRACT_HASH_GOLDEN_V2 =
   "52b95411113b302c8993e8d3debc712831955cb72a8b91a0226e40941a86933a";
 const NODE_RULE_GENERATOR_TRANSITION_CONTRACT_HASH_GOLDEN_V2 =
   "6ea5bb30efdd5b98229bb0ca7e13bffbbc8601eadcd7a76b362cbd2d7bc0f10a";
+const NODE_SOURCE_PUBLICATION_PRODUCER_V1 = Object.freeze({
+  pass: "node-product-source-publication-v1",
+  codeSha: "a".repeat(64),
+  toolVersions: Object.freeze({ node: "22.18.0" }),
+});
 const ROLES = Object.freeze([
   "package_manifest",
   "dependency_lock_manifest",
@@ -573,6 +597,7 @@ describe("Node scaffold private staged materializer V2", () => {
   let sandbox: string;
   let artifactRoot: string;
   let casAuthority: DeepByteBundleCasAuthorityV2;
+  let sourcePublisher: IndexedArtifactPublisher;
   let hostFixture: HostFixtureV2;
   const hosts = new Map<NodeScaffoldProfileIdV2, HostNodeToolchainAuthorityV2>();
   const assetSets = new Map<NodeScaffoldProfileIdV2, AssetSetV2>();
@@ -611,6 +636,12 @@ describe("Node scaffold private staged materializer V2", () => {
         plan: batch.plan,
       });
     }
+    sourcePublisher = new IndexedArtifactPublisher({
+      index,
+      store: writer,
+      ownerInstanceId: `node-source-publication-v1-${randomUUID()}`,
+      publicationAuthority: "hybrid-required",
+    });
     casAuthority = createDeepByteBundleCasAuthorityV2({
       sql: database.sql,
       artifactRoot,
@@ -2244,6 +2275,213 @@ describe("Node scaffold private staged materializer V2", () => {
       assert.equal(testExecution.stderr, "");
       assert.match(testExecution.stdout,
         new RegExp(`tests ${fixture.productSpec.actions.length}`, "u"));
+
+      if (caseIndex < 2) {
+        const sourcePublicationInput = {
+          producer: NODE_SOURCE_PUBLICATION_PRODUCER_V1,
+          ...generatorInput,
+        };
+        const sourcePublication =
+          await compileNodeProductSourcePublicationV1ForTest(
+            created.handle,
+            sourcePublicationInput,
+          );
+        assert.equal(
+          sourcePublication.status,
+          "shadow_prepared",
+          sourcePublication.status === "rejected"
+            ? JSON.stringify(sourcePublication.diagnostics)
+            : undefined,
+        );
+        if (sourcePublication.status !== "shadow_prepared") {
+          throw new Error("Expected prepared runtime/test source publication");
+        }
+        assert.equal(
+          NodeProductSourcePublicationReceiptSetV1Schema.safeParse(
+            sourcePublication.receiptSet,
+          ).success,
+          true,
+        );
+        assert.deepEqual(
+          sourcePublication.publications.map((publication) =>
+            publication.sourceRole),
+          ["runtime", "test"],
+        );
+        assert.deepEqual(
+          sourcePublication.receiptSet.entries.map((entry) => entry.sourceRole),
+          ["runtime", "test"],
+        );
+        for (const publication of sourcePublication.publications) {
+          assert.equal(
+            NodeProductSourcePublicationReceiptV1Schema.safeParse(
+              publication.receipt,
+            ).success,
+            true,
+          );
+          assert.equal(
+            publication.receipt.receiptSet.commitmentHash,
+            sourcePublication.receiptSet.commitmentHash,
+          );
+          assert.equal(
+            publication.sourceBundleArtifactHash,
+            publication.receipt.authority.sourceBundle.envelopeHash,
+          );
+          assert.equal(
+            publication.sourceContentHash,
+            publication.receipt.authority.sourceBundle.rawHash,
+          );
+          assert.equal(
+            publication.sourceReceiptArtifactHash,
+            publication.receipt.authority.sourceReceiptArtifact.envelopeHash,
+          );
+          assert.equal(
+            publication.preparedPublication.occurrenceCount,
+            publication.publicationEnvelopes.length,
+          );
+          assert.equal(
+            publication.preparedPublication.items.filter((item) =>
+              item.durabilityTier === 1).length,
+            1,
+          );
+          assert.equal(
+            publication.preparedPublication.items.filter((item) =>
+              item.durabilityTier === 2).length,
+            1,
+          );
+          assert.equal(
+            publication.preparedPublication.items.filter((item) =>
+              item.durabilityTier === 3).length,
+            1,
+          );
+        }
+        assertRecursivelyFrozen(sourcePublication.receiptSet);
+        const candidatePublications = sourcePublication.publications.map(
+          (publication) => ({
+            sourceRole: publication.sourceRole,
+            envelopes: [...publication.publicationEnvelopes].reverse(),
+          }),
+        );
+        const verifiedPublication =
+          await verifyNodeProductSourcePublicationV1ForTest(
+            created.handle,
+            {
+              compilerInput: sourcePublicationInput,
+              candidatePublications,
+            },
+          );
+        assert.equal(verifiedPublication.status, "verified_shadow");
+        assert.equal(
+          verifiedPublication.receiptSet.commitmentHash,
+          sourcePublication.receiptSet.commitmentHash,
+        );
+
+        if (caseIndex === 0) {
+          for (const publication of sourcePublication.publications) {
+            const indexed = await sourcePublisher.putBatch({
+              batchReservationId: randomUUID(),
+              plan: publication.publicationPlan,
+            });
+            assert.equal(indexed.lifecycle.state, "completed");
+            assert.equal(
+              indexed.items.length,
+              publication.preparedPublication.occurrenceCount,
+            );
+            const bindingIdentity = {
+              authoritySchema: publication.receipt.schema,
+              authorityHash: publication.receipt.receiptHash,
+              subjectRef:
+                `${publication.sourceRole}:${publication.receipt.authority.source.pathRef}`,
+              subjectHash:
+                publication.receipt.authority.source.sourceIdentityHash,
+            };
+            const verifiedBundle = await verifyDeepByteBundleFromCasV2({
+              authority: casAuthority,
+              binding: {
+                ...bindingIdentity,
+                bindingHash:
+                  hashDeepByteBundleConsumerBindingV2(bindingIdentity),
+              },
+              bundle: publication.receipt.authority.sourceBundle,
+            });
+            const sourceBytes = copyVerifiedDeepByteBundleBytesV2(verifiedBundle);
+            assert.equal(sourceBytes.byteLength, publication.sourceByteLength);
+            assert.equal(
+              createHash("sha256").update(sourceBytes).digest("hex"),
+              publication.sourceContentHash,
+            );
+          }
+
+          const wrongPublicationScope =
+            await compileNodeProductSourcePublicationV1(
+              created.handle,
+              sourcePublicationInput,
+            );
+          assert.equal(wrongPublicationScope.status, "rejected");
+          assert.equal(
+            wrongPublicationScope.diagnostics[0]?.code,
+            "NODE_SOURCE_PUBLICATION_V1_RUNTIME_SOURCE_REJECTED",
+          );
+
+          const forgedRuntimeEnvelopes = structuredClone(
+            sourcePublication.publications[0]!.publicationEnvelopes,
+          ) as any[];
+          const forgedEnvelope = forgedRuntimeEnvelopes.find((envelope) =>
+            envelope.artifactType
+              === "setfarm.node-product-source-publication-receipt.v1");
+          assert.ok(forgedEnvelope);
+          const forgedReceipt = forgedEnvelope.payload;
+          forgedReceipt.authority.buildTopology.logicalBuildHash = "f".repeat(64);
+          forgedReceipt.entryCommitmentHash =
+            hashNodeProductSourcePublicationEntryCommitmentV1(
+              forgedReceipt.authority,
+            );
+          forgedReceipt.receiptRef = nodeProductSourcePublicationReceiptRefV1(
+            forgedReceipt.entryCommitmentHash,
+          );
+          forgedReceipt.receiptSet.entries[0].entryCommitmentHash =
+            forgedReceipt.entryCommitmentHash;
+          forgedReceipt.receiptSet.commitmentHash =
+            hashNodeProductSourcePublicationReceiptSetV1(
+              forgedReceipt.receiptSet,
+            );
+          forgedReceipt.receiptHash =
+            hashNodeProductSourcePublicationReceiptV1(forgedReceipt);
+          assert.equal(
+            NodeProductSourcePublicationReceiptV1Schema.safeParse(
+              forgedReceipt,
+            ).success,
+            true,
+          );
+          await assert.rejects(
+            verifyNodeProductSourcePublicationV1ForTest(created.handle, {
+              compilerInput: sourcePublicationInput,
+              candidatePublications: [
+                {
+                  sourceRole: "runtime",
+                  envelopes: forgedRuntimeEnvelopes,
+                },
+                candidatePublications[1],
+              ],
+            }),
+            (error: unknown) =>
+              error instanceof NodeProductSourcePublicationVerificationErrorV1
+              && error.code
+                === "NODE_SOURCE_PUBLICATION_V1_VERIFICATION_AUTHORITY_MISMATCH",
+          );
+
+          const extraPublicationInput =
+            await compileNodeProductSourcePublicationV1ForTest(
+              created.handle,
+              { ...sourcePublicationInput, unexpected: true },
+            );
+          assert.equal(extraPublicationInput.status, "rejected");
+          assert.equal(
+            extraPublicationInput.diagnostics[0]?.code,
+            "NODE_SOURCE_PUBLICATION_V1_INPUT_INVALID",
+          );
+        }
+      }
+
       if (fixture.runtimeKind === "cli") {
         const modulePath = path.join(
           sandbox,
