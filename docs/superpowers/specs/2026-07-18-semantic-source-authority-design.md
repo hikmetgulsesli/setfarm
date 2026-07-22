@@ -887,10 +887,15 @@ semantic token, selected entrypoint, generated receipt, or fixed release path.
 It cannot accept legacy `scope_targets` as native authority.
 
 `BuildTopologyV2` preserves physical path, owner, grant, entrypoint, command,
-capability, and current base authority, and adds exact semantic declaration
-refs per path. Shared writable paths require parser-owned unique locator slots.
-Paths without semantic declarations are explicitly classified as setup,
-config, test, asset, generated-readonly, dependency-readonly, or build output.
+capability, current base and authenticated dependency authority. It is the
+pre-declaration planned-executable artifact and therefore does not contain
+future declaration refs. `SemanticSourceDeclarationsV1` consumes the exact
+topology and creates the declaration join; `ExecutableSourceContractV2` later
+binds both without mutating or reinterpreting either artifact. Shared writable
+paths require parser-owned unique locator slots. Paths without semantic
+declarations are explicitly classified as setup, config, test, asset,
+generated-readonly, dependency-readonly, raw build input, candidate target, or
+build output.
 
 ## SemanticSourceDeclarationsV1
 

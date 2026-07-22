@@ -3,9 +3,11 @@
 Date: 2026-07-21
 
 Status: F1, F2A, the F2B publisher/command/bootstrap lifecycle, F3 effective
-npm authority, and the complete F4 private scaffold/dependency materializer are
-complete on the feature branch. Production-root activation remains NO-GO; F5
-FileTreeV2/BuildTopologyV2/SourceMap sealing is next.
+npm authority, the complete F4 private scaffold/dependency materializer, F5A
+FileTreeManifestV2 and F5B dependency-ready BuildTopologyV2 are complete on the
+feature branch. Production-root activation remains NO-GO; the Node semantic-rule
+generator transition, source receipts, declarations and SourceMap sealing are
+next.
 
 ## Goal
 
@@ -661,6 +663,62 @@ The old setup installer, ambient worktree `npm install`, legacy Node entrypoint
 rules and V1 BuildTopology remain compatibility observations. They are never
 promoted into this authority chain.
 
+### F5B — Dependency-ready BuildTopologyV2
+
+**Status (2026-07-22): complete as a shadow, production-forbidden authority.**
+Commit `8c520a2d` introduces `setfarm.build-topology.v2` version `2.0.0`
+and a separately hashed code-owned contract. The contract hash is
+`5ac524ec5f5c45ac3091c39c5fe959da3da970c15757196879031db55c30ef28`.
+
+BuildTopology accepts no caller-authored path, command, runtime ABI or receipt
+body. It fresh-verifies the complete FileTree at the dependency-ready F4 stage,
+fresh-reproduces Node layout/path-token/scaffold authority, and revalidates the
+authenticated dependency materialization receipt before producing an artifact.
+It projects every-and-only FileTree path, then adds exactly four roles:
+
+- disposable repository `node_modules` as compiler input, including verified
+  npm-generated command links;
+- the separate read-only dependency capsule as a future candidate-runtime copy
+  source, explicitly excluding those generated links;
+- the canonical build output, proven physically absent at this pre-build stage;
+  and
+- the candidate module path as a logical future materialization target, not a
+  false filesystem-absence claim.
+
+The topology binds the exact install/build/test direct argv, shared effective
+environment, typed preconditions, non-zero-test rule, CLI module ABI or Express
+named-handler ABI, source-to-output-to-candidate path chain and platform-owned
+HTTP listener boundary. Build and test remain typed-blocked; this slice executes
+neither command and does not invent a source, output or candidate byte hash.
+
+Identity is deliberately split. `logicalBuildHash` binds stable product,
+FileTree, content/toolchain/dependency, path, command and ABI authority used by
+semantic comparison and retry dedupe. `manifestHash` additionally binds the
+current authenticated F4 operational receipt, scope, stdout/stderr and private
+project execution evidence. Random attempt identity, absolute paths and current
+receipt hashes cannot perturb the logical identity. Two independent CLI F4
+attempts therefore have different dependency receipt and topology manifest
+hashes but the same logical build and logical dependency hashes.
+
+The exact blocker set retains build execution, candidate materialization,
+entrypoint source receipt, Node rule-to-generator transition, release
+activation, semantic declarations and test-source authority. BuildTopology is
+the pre-declaration planned-executable artifact; it does not claim declaration
+refs. SemanticSourceDeclarationsV1 and the later ExecutableSourceContractV2 are
+the downstream typed joins that discharge source completeness without mutating
+or reinterpreting this artifact.
+
+Focused coverage uses CLI, one-story API and two-story API fixtures. Their
+stable logical build hashes are respectively
+`3dbaab775f1d4f5b338923a9c032e536adf97dab974e94f5ab3fed52cc6d8a4b`,
+`bbd4d9cafa4b3779196f7fa707c726c6494c39a01c8cd18de89ea5455b4755f6`
+and `0f87d72f4e6541f13febf0d4eb3396705ec2cd8eede13dfb0329206523da7a4c`.
+The test also rejects production/test scope confusion, schema-valid
+self-rehashed logical and operational forgeries, and absolute/private-path
+leakage. Materializer integration is 16/16; full Product Compiler is 1013/1013
+across 124 suites; TypeScript, English (1,090 files), path contract (615 files)
+and diff checks pass.
+
 ## Verification and release gate
 
 Every slice requires:
@@ -679,12 +737,15 @@ remain release evidence; the feature-branch build guard is never bypassed.
 
 GO for F1, the complete isolated F2 authority through official-runtime packaged
 bootstrap rehearsal, the isolated F3 environment/config authority, the
-complete isolated F4 scaffold/dependency authority and F5A logical
-FileTreeManifestV2. NO-GO for production host execution, setup cutover,
-PacketV4, live migration, deploy and new clean product runs until BuildTopology,
-declarations, SourceMap and the later packet/evidence program are complete. F5B
-generated entrypoint authority and BuildTopologyV2 are the next dependency-order
-slices. The feature-branch `npm run build` guard correctly
+complete isolated F4 scaffold/dependency authority, F5A FileTreeManifestV2 and
+F5B dependency-ready BuildTopologyV2. NO-GO for production host execution,
+setup cutover, PacketV4, live migration, deploy and new clean product runs until
+the Node rule-to-generator transition, generated entrypoint receipt,
+declarations, ExecutableSourceContractV2, SourceMap and later packet/evidence
+program are complete. The next dependency-order slice transitions the current
+Node V1 model-writable shared AST-slot rules to one generator-owned entrypoint
+ABI before implementing NodeEntrypointGeneratorV2. The feature-branch
+`npm run build` guard correctly
 refused `b4bc3bd9`; the resulting source-v26 versus committed-dist-v25 mismatch
 also prevents `dist`-importing full step tests from being release evidence on
 this branch. Only a clean merged-main build and full test can close that release
