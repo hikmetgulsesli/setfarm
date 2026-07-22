@@ -282,6 +282,176 @@ function exactPacketProofRootV2(
     && proof.root.storyIdSetHash === packetRoot.storyIdSetHash;
 }
 
+export type ImplementationSliceCandidateDerivationInputV2 = Readonly<{
+  producer: ImplementationSliceProducerV2;
+  packetEnvelope: ProductBuildPacketEnvelopeV4;
+  packetEnvelopeHash: string;
+  storyProof: ImplementationSourceMapStoryProofV2;
+}>;
+
+/**
+ * Deterministically derives a compact SliceV2 candidate from already-fresh
+ * PacketV4 and SourceMap proof inputs. This pure sealer does not establish
+ * freshness on its own; public authority still comes only from the compiler
+ * and verifier entrypoints that reproduce those inputs.
+ */
+export function deriveImplementationSliceCandidateV2(
+  input: ImplementationSliceCandidateDerivationInputV2,
+): CompiledImplementationSliceV2 {
+  const producer = ImplementationSliceProducerV2Schema.parse(input.producer);
+  const packetEnvelope = ProductBuildPacketEnvelopeV4Schema.parse(
+    input.packetEnvelope,
+  );
+  const proof = ImplementationSourceMapStoryProofV2Schema.parse(
+    input.storyProof,
+  );
+  const packetEnvelopeHash = hashCanonicalJson(packetEnvelope);
+  const packetValue = packetEnvelope.payload;
+  const leaf = proof.leaf.envelope.payload;
+  const story = leaf.story;
+  if (
+    packetEnvelopeHash !== input.packetEnvelopeHash
+    || producer.codeSha !== packetEnvelope.producer.codeSha
+    || proof.leaf.envelope.producer.codeSha !== packetEnvelope.producer.codeSha
+    || !exactPacketProofRootV2(packetEnvelope, proof)
+    || leaf.authority.sourceMapAuthorityHash
+      !== packetValue.sourceMapAuthorityHash
+    || canonicalJsonStringify(leaf.execution)
+      !== canonicalJsonStringify(packetValue.execution)
+    || story.sourceDependencies.runtime.logicalReceiptHash
+      !== packetValue.logicalSourceAuthority.runtimeLogicalReceiptHash
+    || story.sourceDependencies.test.logicalReceiptHash
+      !== packetValue.logicalSourceAuthority.testLogicalReceiptHash
+    || story.physicalSharedGrantRefs.length !== 0
+    || leaf.designSource.kind !== "none"
+    || leaf.modelAuthoredDeclarations.status !== "not_applicable"
+  ) {
+    throw new Error(
+      "PacketV4, story proof, source ownership and execution authority differ",
+    );
+  }
+
+  const packetEnvelopeBytes = canonicalJsonBytesBounded(packetEnvelope, {
+    maxBytes: 4 * 1024 * 1024,
+    ...DEFAULT_CANONICAL_JSON_BOUNDED_WORK_LIMITS,
+  });
+  const packetRoot = packetValue.sourceMapRoot;
+  const packetBindingIdentity = {
+    artifactType: packetEnvelope.artifactType,
+    schema: packetValue.schema,
+    version: packetValue.semanticVersion,
+    contractHash: packetValue.contractHash,
+    producer: packetEnvelope.producer,
+    packetHash: packetValue.packetHash,
+    envelopeHash: packetEnvelopeHash,
+    envelopeByteLength: packetEnvelopeBytes.byteLength,
+    sourceMapRoot: {
+      artifactType: packetRoot.artifactType,
+      envelopeHash: packetRoot.rootEnvelopeHash,
+      manifestHash: packetRoot.manifestHash,
+      authorityHash: packetRoot.authorityHash,
+      merkleRoot: packetRoot.merkleRoot,
+      leafCount: packetRoot.leafCount,
+      storyIdSetHash: packetRoot.storyIdSetHash,
+    },
+  };
+  const packetBinding = {
+    ...packetBindingIdentity,
+    bindingHash: hashImplementationSlicePacketBindingV2(packetBindingIdentity),
+  };
+  const proofBindingIdentity = {
+    schema: "setfarm.implementation-source-map-story-proof-binding.v2" as const,
+    proofSchema: proof.schema,
+    proofVersion: proof.proofVersion,
+    proofHash: proof.proofHash,
+    root: proof.root,
+    leaf: {
+      artifactType: proof.leaf.envelope.artifactType,
+      schema: proof.leaf.envelope.payload.schema,
+      reference: proof.leaf.reference,
+      leafHash: leaf.leafHash,
+    },
+    auditPath: proof.auditPath,
+  };
+  const proofBinding = {
+    ...proofBindingIdentity,
+    bindingHash: hashImplementationSliceProofBindingV2(proofBindingIdentity),
+  };
+  const dispositionIdentity = {
+    mode: "generated_sources_complete_no_model_dispatch" as const,
+    modelDispatch: "forbidden" as const,
+    modelWritablePathRefs: [] as [],
+    runtimeSource: {
+      ownerRef: story.sourceDependencies.runtime.ownerRef,
+      pathRef: story.sourceDependencies.runtime.pathRef,
+      logicalReceiptHash: story.sourceDependencies.runtime.logicalReceiptHash,
+      sourceIdentityHash: story.sourceDependencies.runtime.sourceIdentityHash,
+    },
+    testSource: {
+      ownerRef: story.sourceDependencies.test.ownerRef,
+      pathRef: story.sourceDependencies.test.pathRef,
+      logicalReceiptHash: story.sourceDependencies.test.logicalReceiptHash,
+      sourceIdentityHash: story.sourceDependencies.test.sourceIdentityHash,
+    },
+    execution: {
+      compilationContractHash: leaf.execution.compilationContractHash,
+      commandContractHash: leaf.execution.commandContractHash,
+      runtimeContractHash: leaf.execution.runtimeContractHash,
+    },
+    evidenceBindingCount: leaf.evidenceBindings.length,
+  };
+  const implementation = {
+    ...dispositionIdentity,
+    dispositionHash: hashImplementationSliceDispositionV2(dispositionIdentity),
+  };
+  const identity = {
+    schema: IMPLEMENTATION_SLICE_V2_SCHEMA,
+    sliceVersion: IMPLEMENTATION_SLICE_V2_VERSION,
+    contractHash: IMPLEMENTATION_SLICE_CONTRACT_HASH_V2,
+    stage: "packet_v4_and_story_proof_verified_before_evidence_plan_v2" as const,
+    readiness: {
+      status: "shadow_sealed" as const,
+      productionUse: "forbidden" as const,
+      blockerCodes: [...IMPLEMENTATION_SLICE_V2_BLOCKER_CODES],
+    },
+    packet: packetBinding,
+    storyProof: proofBinding,
+    story: {
+      storyId: story.storyId,
+      storyHash: story.storyHash,
+      order: story.order,
+    },
+    implementation,
+    validationIds: [...IMPLEMENTATION_SLICE_V2_VALIDATION_IDS],
+  };
+  const value = recursivelyFreezeImplementationSliceV2(
+    ImplementationSliceV2Schema.parse({
+      ...identity,
+      sliceHash: hashImplementationSliceV2(identity),
+    }),
+  );
+  const envelope = recursivelyFreezeImplementationSliceV2(
+    ImplementationSliceEnvelopeV2Schema.parse({
+      schema: "setfarm.semantic-artifact-envelope.v1",
+      artifactType: IMPLEMENTATION_SLICE_ARTIFACT_TYPE_V2,
+      producer,
+      payload: value,
+    }),
+  );
+  const bytes = canonicalJsonBytesBounded(envelope, {
+    maxBytes: IMPLEMENTATION_SLICE_V2_MAX_CANONICAL_BYTES,
+    ...IMPLEMENTATION_SLICE_V2_BOUNDED_WORK_LIMITS,
+  });
+  const publicationPreflight = slicePublicationPreflightV2(envelope, bytes);
+  return Object.freeze({
+    value,
+    envelope,
+    envelopeHash: publicationPreflight.envelopeHash,
+    canonicalBytes: bytes.toString("utf8"),
+    publicationPreflight,
+  });
+}
+
 async function compileInternalV2(
   handle: MaterializedNodeScaffoldPrivateStageV2,
   input: unknown,
@@ -412,135 +582,11 @@ async function compileInternalV2(
   }
 
   try {
-    const producer: ImplementationSliceProducerV2 = sliceProducer.data;
-    const packetEnvelopeBytes = canonicalJsonBytesBounded(packet.envelope, {
-      maxBytes: 4 * 1024 * 1024,
-      ...DEFAULT_CANONICAL_JSON_BOUNDED_WORK_LIMITS,
-    });
-    const packetRoot = packetValue.sourceMapRoot;
-    const packetBindingIdentity = {
-      artifactType: packet.envelope.artifactType,
-      schema: packetValue.schema,
-      version: packetValue.semanticVersion,
-      contractHash: packetValue.contractHash,
-      producer: packet.envelope.producer,
-      packetHash: packetValue.packetHash,
-      envelopeHash: packet.envelopeHash,
-      envelopeByteLength: packetEnvelopeBytes.byteLength,
-      sourceMapRoot: {
-        artifactType: packetRoot.artifactType,
-        envelopeHash: packetRoot.rootEnvelopeHash,
-        manifestHash: packetRoot.manifestHash,
-        authorityHash: packetRoot.authorityHash,
-        merkleRoot: packetRoot.merkleRoot,
-        leafCount: packetRoot.leafCount,
-        storyIdSetHash: packetRoot.storyIdSetHash,
-      },
-    };
-    const packetBinding = {
-      ...packetBindingIdentity,
-      bindingHash: hashImplementationSlicePacketBindingV2(
-        packetBindingIdentity,
-      ),
-    };
-    const proofBindingIdentity = {
-      schema:
-        "setfarm.implementation-source-map-story-proof-binding.v2" as const,
-      proofSchema: proof.schema,
-      proofVersion: proof.proofVersion,
-      proofHash: proof.proofHash,
-      root: proof.root,
-      leaf: {
-        artifactType: proof.leaf.envelope.artifactType,
-        schema: proof.leaf.envelope.payload.schema,
-        reference: proof.leaf.reference,
-        leafHash: leaf.leafHash,
-      },
-      auditPath: proof.auditPath,
-    };
-    const proofBinding = {
-      ...proofBindingIdentity,
-      bindingHash: hashImplementationSliceProofBindingV2(
-        proofBindingIdentity,
-      ),
-    };
-    const dispositionIdentity = {
-      mode: "generated_sources_complete_no_model_dispatch" as const,
-      modelDispatch: "forbidden" as const,
-      modelWritablePathRefs: [] as [],
-      runtimeSource: {
-        ownerRef: story.sourceDependencies.runtime.ownerRef,
-        pathRef: story.sourceDependencies.runtime.pathRef,
-        logicalReceiptHash:
-          story.sourceDependencies.runtime.logicalReceiptHash,
-        sourceIdentityHash:
-          story.sourceDependencies.runtime.sourceIdentityHash,
-      },
-      testSource: {
-        ownerRef: story.sourceDependencies.test.ownerRef,
-        pathRef: story.sourceDependencies.test.pathRef,
-        logicalReceiptHash: story.sourceDependencies.test.logicalReceiptHash,
-        sourceIdentityHash: story.sourceDependencies.test.sourceIdentityHash,
-      },
-      execution: {
-        compilationContractHash: leaf.execution.compilationContractHash,
-        commandContractHash: leaf.execution.commandContractHash,
-        runtimeContractHash: leaf.execution.runtimeContractHash,
-      },
-      evidenceBindingCount: leaf.evidenceBindings.length,
-    };
-    const implementation = {
-      ...dispositionIdentity,
-      dispositionHash: hashImplementationSliceDispositionV2(
-        dispositionIdentity,
-      ),
-    };
-    const identity = {
-      schema: IMPLEMENTATION_SLICE_V2_SCHEMA,
-      sliceVersion: IMPLEMENTATION_SLICE_V2_VERSION,
-      contractHash: IMPLEMENTATION_SLICE_CONTRACT_HASH_V2,
-      stage:
-        "packet_v4_and_story_proof_verified_before_evidence_plan_v2" as const,
-      readiness: {
-        status: "shadow_sealed" as const,
-        productionUse: "forbidden" as const,
-        blockerCodes: [...IMPLEMENTATION_SLICE_V2_BLOCKER_CODES],
-      },
-      packet: packetBinding,
-      storyProof: proofBinding,
-      story: {
-        storyId: story.storyId,
-        storyHash: story.storyHash,
-        order: story.order,
-      },
-      implementation,
-      validationIds: [...IMPLEMENTATION_SLICE_V2_VALIDATION_IDS],
-    };
-    const value = recursivelyFreezeImplementationSliceV2(
-      ImplementationSliceV2Schema.parse({
-        ...identity,
-        sliceHash: hashImplementationSliceV2(identity),
-      }),
-    );
-    const envelope = recursivelyFreezeImplementationSliceV2(
-      ImplementationSliceEnvelopeV2Schema.parse({
-        schema: "setfarm.semantic-artifact-envelope.v1",
-        artifactType: IMPLEMENTATION_SLICE_ARTIFACT_TYPE_V2,
-        producer,
-        payload: value,
-      }),
-    );
-    const bytes = canonicalJsonBytesBounded(envelope, {
-      maxBytes: IMPLEMENTATION_SLICE_V2_MAX_CANONICAL_BYTES,
-      ...IMPLEMENTATION_SLICE_V2_BOUNDED_WORK_LIMITS,
-    });
-    const publicationPreflight = slicePublicationPreflightV2(envelope, bytes);
-    const slice = Object.freeze({
-      value,
-      envelope,
-      envelopeHash: publicationPreflight.envelopeHash,
-      canonicalBytes: bytes.toString("utf8"),
-      publicationPreflight,
+    const slice = deriveImplementationSliceCandidateV2({
+      producer: sliceProducer.data,
+      packetEnvelope: packet.envelope,
+      packetEnvelopeHash: packet.envelopeHash,
+      storyProof: proof,
     });
     const contextAttachments = recursivelyFreezeImplementationSliceV2({
       packetEnvelope: packet.envelope,

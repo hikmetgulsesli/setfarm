@@ -119,10 +119,14 @@ The compiler receives one bounded strict object containing:
 - a bounded canonical array of candidate slice envelope/hash pairs.
 
 The caller does not supply proof bodies for each candidate. The closure
-compiler freshly reproduces SourceMapV2 once and uses its canonical proof array
-as the only proof source. For each exact index it invokes the existing SliceV2
-verifier with that reproduced proof and the candidate slice. This prevents a
-caller from choosing a different valid proof/story subset.
+compiler obtains the canonical proof array from one explicit fresh SourceMapV2
+reproduction; the independent PacketV4 verifier rechecks that same root. For
+each exact index the closure uses the same pure SliceV2 sealer as the existing
+compiler, then requires the candidate slice hash and canonical bytes to equal
+that derivation. The sealer does not create authority by itself; only its use
+behind these fresh upstream verifiers does. This prevents a caller from
+choosing a different valid proof/story subset without making multi-story
+verification quadratic.
 
 The verifier accepts the same compiler authority plus expected closure-envelope
 hash and candidate closure envelope. It compiles fresh, then requires envelope
