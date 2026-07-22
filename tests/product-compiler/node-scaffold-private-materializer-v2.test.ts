@@ -53,6 +53,12 @@ import {
   compileBuildTopologyV2ForTest,
   verifyBuildTopologyV2ForTest,
 } from "../../src/product-compiler/build-topology-v2.js";
+import {
+  NodeSemanticRuleGeneratorTransitionVerificationErrorV2,
+  compileNodeSemanticRuleGeneratorTransitionV2,
+  compileNodeSemanticRuleGeneratorTransitionV2ForTest,
+  verifyNodeSemanticRuleGeneratorTransitionV2ForTest,
+} from "../../src/product-compiler/node-semantic-rule-generator-transition-v2.js";
 import { IndexedArtifactPublisher } from
   "../../src/product-compiler/indexed-artifact-publisher.js";
 import {
@@ -97,6 +103,17 @@ import {
   hashBuildTopologyManifestV2,
 } from "../../src/product-compiler/schemas/build-topology-v2.js";
 import {
+  NODE_ENTRYPOINT_GENERATOR_CONTRACT_HASH_V2,
+  NODE_ENTRYPOINT_GENERATOR_CONTRACT_V2,
+  NODE_SEMANTIC_RULE_GENERATOR_TRANSITION_CONTRACT_HASH_V2,
+  NODE_SEMANTIC_RULE_GENERATOR_TRANSITION_CONTRACT_V2,
+  NODE_SEMANTIC_RULE_GENERATOR_TRANSITION_MAX_COUNT_V2,
+  NODE_SEMANTIC_RULE_GENERATOR_TRANSITION_MAX_ROUTE_COUNT_V2,
+  NodeSemanticRuleGeneratorTransitionV2Schema,
+  hashNodeSemanticRuleGeneratorTransitionMembershipV2,
+  hashNodeSemanticRuleGeneratorTransitionV2,
+} from "../../src/product-compiler/schemas/node-semantic-rule-generator-transition-v2.js";
+import {
   FILE_TREE_MANIFEST_CONTRACT_HASH_V2,
   FILE_TREE_MANIFEST_CONTRACT_V2,
   FileTreeManifestV2Schema,
@@ -130,6 +147,10 @@ const FILE_TREE_CONTRACT_HASH_GOLDEN_V2 =
   "c882764fc3790d7a7815c0ba802d0201d76e3ff874c878e0bf13f1b9d727756c";
 const BUILD_TOPOLOGY_CONTRACT_HASH_GOLDEN_V2 =
   "5ac524ec5f5c45ac3091c39c5fe959da3da970c15757196879031db55c30ef28";
+const NODE_ENTRYPOINT_GENERATOR_CONTRACT_HASH_GOLDEN_V2 =
+  "52b95411113b302c8993e8d3debc712831955cb72a8b91a0226e40941a86933a";
+const NODE_RULE_GENERATOR_TRANSITION_CONTRACT_HASH_GOLDEN_V2 =
+  "6ea5bb30efdd5b98229bb0ca7e13bffbbc8601eadcd7a76b362cbd2d7bc0f10a";
 const ROLES = Object.freeze([
   "package_manifest",
   "dependency_lock_manifest",
@@ -1046,6 +1067,283 @@ describe("Node scaffold private staged materializer V2", () => {
           siblingTopology.value.logicalBuildHash);
         assert.equal(topology.authority.logicalDependencyHash,
           siblingTopology.value.authority.logicalDependencyHash);
+      }
+    }
+  });
+
+  it("transitions every legacy Node entrypoint slot to one generator-owned whole-file authority", async () => {
+    const cases = [
+      {
+        profileId: CLI_PROFILE,
+        stackPackId: "node-cli" as const,
+        productSpec: genuineNodeCliProductSpecV2(),
+        entrypointKind: "cli",
+        sourcePath: "src/cli.ts",
+        routeCount: 1,
+        transitionHash: "dd9383168e399304d444e47d79363c47f710d9162a87caff034c1a75fbd8a5c1",
+      },
+      {
+        profileId: API_PROFILE,
+        stackPackId: "node-express-api" as const,
+        productSpec: genuineNodeExpressApiProductSpecV2(),
+        entrypointKind: "api",
+        sourcePath: "src/app.ts",
+        routeCount: 1,
+        transitionHash: "230bae76845629959fcebf10009d1c8bbb3361fe073d899c797ee87bca381a7c",
+      },
+      {
+        profileId: API_PROFILE,
+        stackPackId: "node-express-api" as const,
+        productSpec: twoStoryNodeExpressApiProductSpecV2(),
+        entrypointKind: "api",
+        sourcePath: "src/app.ts",
+        routeCount: 2,
+        transitionHash: "dbae4dd6890ee1ca3fadf060767e87c64875c539ee90ccc2762e984cabadbc85",
+      },
+    ];
+    for (const fixture of cases) {
+      const created = await stage({ profileId: fixture.profileId });
+      const deliverySelection = deliverySelectionForV2(
+        fixture.productSpec,
+        fixture.stackPackId,
+      );
+      const authorityInput = {
+        productSpec: fixture.productSpec,
+        deliverySelection,
+      };
+      const fileTree = await compileFileTreeManifestV2ForTest(
+        created.handle,
+        authorityInput,
+      );
+      assert.equal(fileTree.status, "shadow_compiled");
+      if (fileTree.status !== "shadow_compiled") {
+        throw new Error("Expected FileTreeV2 before Node transition");
+      }
+      const dependency = await materializeNodeScaffoldDependenciesV2ForTest(
+        created.handle,
+      );
+      const buildTopology = await compileBuildTopologyV2ForTest(created.handle, {
+        ...authorityInput,
+        fileTree: fileTree.value,
+      });
+      assert.equal(buildTopology.status, "shadow_compiled");
+      if (buildTopology.status !== "shadow_compiled") {
+        throw new Error("Expected BuildTopologyV2 before Node transition");
+      }
+      const compiled = await compileNodeSemanticRuleGeneratorTransitionV2ForTest(
+        created.handle,
+        {
+          ...authorityInput,
+          fileTree: fileTree.value,
+          buildTopology: buildTopology.value,
+        },
+      );
+      assert.equal(
+        compiled.status,
+        "shadow_compiled",
+        compiled.status === "rejected"
+          ? JSON.stringify(compiled.diagnostics)
+          : undefined,
+      );
+      if (compiled.status !== "shadow_compiled") {
+        throw new Error("Expected Node rule generator transition");
+      }
+      const transition = compiled.value;
+      assert.equal(
+        NODE_ENTRYPOINT_GENERATOR_CONTRACT_HASH_V2,
+        NODE_ENTRYPOINT_GENERATOR_CONTRACT_HASH_GOLDEN_V2,
+      );
+      assert.equal(
+        NODE_SEMANTIC_RULE_GENERATOR_TRANSITION_CONTRACT_HASH_V2,
+        NODE_RULE_GENERATOR_TRANSITION_CONTRACT_HASH_GOLDEN_V2,
+      );
+      assert.equal(Object.isFrozen(NODE_ENTRYPOINT_GENERATOR_CONTRACT_V2), true);
+      assert.equal(
+        Object.isFrozen(NODE_SEMANTIC_RULE_GENERATOR_TRANSITION_CONTRACT_V2),
+        true,
+      );
+      assert.equal(NODE_SEMANTIC_RULE_GENERATOR_TRANSITION_MAX_ROUTE_COUNT_V2, 500);
+      assert.equal(NODE_SEMANTIC_RULE_GENERATOR_TRANSITION_MAX_COUNT_V2, 502);
+      assert.equal(
+        NODE_SEMANTIC_RULE_GENERATOR_TRANSITION_CONTRACT_V2
+          .completeness.maximumTransitionCount,
+        502,
+      );
+      assert.equal(transition.transitionHash, fixture.transitionHash);
+      assert.equal(transition.authority.entrypoint.entrypointKind,
+        fixture.entrypointKind);
+      assert.equal(transition.coverage.entrypointRegistrationCount, 1);
+      assert.equal(transition.coverage.routeRegistrationCount,
+        fixture.routeCount);
+      assert.equal(transition.coverage.runtimeRegistrationCount, 1);
+      assert.equal(transition.transitionCount, fixture.routeCount + 2);
+      assert.equal(transition.transitions.every((entry) =>
+        entry.source.compatibilityStatus
+          === "current_v1_rule_unmigrated_v2_activation_forbidden"
+        && entry.source.outputPolicy === "model_writable"
+        && entry.target.ownerRef === "OWNER_NODE_ENTRYPOINT_GENERATOR_V2"
+        && entry.target.modelWriteAuthority === "forbidden"
+        && entry.target.outputPolicy === "deterministic_generated"
+        && entry.target.declarationState === "required_unverified"), true);
+      assert.equal(new Set(transition.transitions.map((entry) =>
+        entry.target.entrypointPathRef)).size, 1);
+      const sourcePath = fileTree.value.paths.find((entry) =>
+        entry.pathRef === transition.authority.entrypoint.pathRef);
+      assert.equal(sourcePath?.normalizedLocator, fixture.sourcePath);
+      assert.equal(
+        JSON.stringify(transition).includes(buildTopology.value.manifestHash),
+        false,
+      );
+      assert.equal(
+        JSON.stringify(transition).includes(dependency.receiptHash),
+        false,
+      );
+      assert.doesNotMatch(
+        JSON.stringify(transition),
+        /setfarm-f4-stage-v2|\/private\/|\/var\/folders|\/Users\//,
+      );
+      assert.equal(
+        NodeSemanticRuleGeneratorTransitionV2Schema.safeParse(transition).success,
+        true,
+      );
+      assert.equal(compiled.canonicalBytes, canonicalJsonStringify(transition));
+      assertRecursivelyFrozen(compiled);
+
+      const verified =
+        await verifyNodeSemanticRuleGeneratorTransitionV2ForTest(created.handle, {
+          ...authorityInput,
+          fileTree: fileTree.value,
+          buildTopology: buildTopology.value,
+          candidate: transition,
+        });
+      assert.equal(verified.value.transitionHash, transition.transitionHash);
+      assertRecursivelyFrozen(verified);
+
+      const wrongScope = await compileNodeSemanticRuleGeneratorTransitionV2(
+        created.handle,
+        {
+          ...authorityInput,
+          fileTree: fileTree.value,
+          buildTopology: buildTopology.value,
+        },
+      );
+      assert.equal(wrongScope.status, "rejected");
+      assert.equal(
+        wrongScope.diagnostics[0]?.code,
+        "NODE_RULE_GENERATOR_TRANSITION_V2_PRODUCTION_AUTHORITY_REQUIRED",
+      );
+
+      if (fixture.profileId === CLI_PROFILE) {
+        const extraInput =
+          await compileNodeSemanticRuleGeneratorTransitionV2ForTest(
+            created.handle,
+            {
+              ...authorityInput,
+              fileTree: fileTree.value,
+              buildTopology: buildTopology.value,
+              rules: [],
+            },
+          );
+        assert.equal(extraInput.status, "rejected");
+        assert.equal(
+          extraInput.diagnostics[0]?.code,
+          "NODE_RULE_GENERATOR_TRANSITION_V2_INPUT_INVALID",
+        );
+      }
+
+      const selfRehashedLogical = structuredClone(transition) as any;
+      selfRehashedLogical.authority.buildTopology.logicalBuildHash = "f".repeat(64);
+      selfRehashedLogical.transitionHash =
+        hashNodeSemanticRuleGeneratorTransitionV2(selfRehashedLogical);
+      assert.equal(
+        NodeSemanticRuleGeneratorTransitionV2Schema.safeParse(
+          selfRehashedLogical,
+        ).success,
+        true,
+      );
+      await assert.rejects(
+        verifyNodeSemanticRuleGeneratorTransitionV2ForTest(created.handle, {
+          ...authorityInput,
+          fileTree: fileTree.value,
+          buildTopology: buildTopology.value,
+          candidate: selfRehashedLogical,
+        }),
+        (error: unknown) =>
+          error instanceof NodeSemanticRuleGeneratorTransitionVerificationErrorV2
+          && error.code
+            === "NODE_RULE_GENERATOR_TRANSITION_V2_VERIFICATION_AUTHORITY_MISMATCH",
+      );
+
+      if (fixture.routeCount > 1) {
+        const omitted = structuredClone(transition) as any;
+        const routeIndex = omitted.transitions.findIndex((entry: any) =>
+          entry.source.responsibility === "route_registration");
+        omitted.transitions.splice(routeIndex, 1);
+        omitted.transitionCount = omitted.transitions.length;
+        omitted.coverage.sourceRequirementCount = omitted.transitions.length;
+        omitted.coverage.transitionCount = omitted.transitions.length;
+        omitted.coverage.routeRegistrationCount -= 1;
+        omitted.authority.entrypoint.requirementCount = omitted.transitions.length;
+        omitted.transitionMembershipHash =
+          hashNodeSemanticRuleGeneratorTransitionMembershipV2(
+            omitted.transitions,
+          );
+        omitted.transitionHash = hashNodeSemanticRuleGeneratorTransitionV2(omitted);
+        assert.equal(
+          NodeSemanticRuleGeneratorTransitionV2Schema.safeParse(omitted).success,
+          true,
+        );
+        await assert.rejects(
+          verifyNodeSemanticRuleGeneratorTransitionV2ForTest(created.handle, {
+            ...authorityInput,
+            fileTree: fileTree.value,
+            buildTopology: buildTopology.value,
+            candidate: omitted,
+          }),
+          (error: unknown) =>
+            error instanceof NodeSemanticRuleGeneratorTransitionVerificationErrorV2
+            && error.code
+              === "NODE_RULE_GENERATOR_TRANSITION_V2_VERIFICATION_AUTHORITY_MISMATCH",
+        );
+      }
+
+      if (fixture.profileId === CLI_PROFILE) {
+        const sibling = await stage({ profileId: CLI_PROFILE });
+        const siblingFileTree = await compileFileTreeManifestV2ForTest(
+          sibling.handle,
+          authorityInput,
+        );
+        assert.equal(siblingFileTree.status, "shadow_compiled");
+        if (siblingFileTree.status !== "shadow_compiled") {
+          throw new Error("Expected sibling FileTreeV2");
+        }
+        await materializeNodeScaffoldDependenciesV2ForTest(sibling.handle);
+        const siblingTopology = await compileBuildTopologyV2ForTest(sibling.handle, {
+          ...authorityInput,
+          fileTree: siblingFileTree.value,
+        });
+        assert.equal(siblingTopology.status, "shadow_compiled");
+        if (siblingTopology.status !== "shadow_compiled") {
+          throw new Error("Expected sibling BuildTopologyV2");
+        }
+        const siblingTransition =
+          await compileNodeSemanticRuleGeneratorTransitionV2ForTest(sibling.handle, {
+            ...authorityInput,
+            fileTree: siblingFileTree.value,
+            buildTopology: siblingTopology.value,
+          });
+        assert.equal(siblingTransition.status, "shadow_compiled");
+        if (siblingTransition.status !== "shadow_compiled") {
+          throw new Error("Expected sibling Node transition");
+        }
+        assert.notEqual(
+          siblingTopology.value.manifestHash,
+          buildTopology.value.manifestHash,
+        );
+        assert.equal(
+          siblingTransition.value.transitionHash,
+          transition.transitionHash,
+        );
       }
     }
   });
