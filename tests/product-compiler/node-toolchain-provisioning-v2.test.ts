@@ -41,6 +41,7 @@ import {
   type ProvisionedNodeToolchainV2,
 } from "../../src/product-compiler/node-toolchain-provisioning-v2.js";
 import {
+  NODE_TOOLCHAIN_PROVISIONING_STAGING_BASENAME_V2,
   getCodeOwnedNodeToolchainTargetV2,
 } from "../../src/product-compiler/node-toolchain-target-registry-v2.js";
 import {
@@ -49,6 +50,7 @@ import {
   inspectNodeToolchainProvisionerV2ForTest,
   planNodeToolchainProvisioningV2,
   planNodeToolchainRollbackV2,
+  rollbackNodeToolchainProvisionerPlanV2ForTest,
   verifyNodeToolchainProvisionerV2ForTest,
 } from "../../src/product-compiler/node-toolchain-provisioner-command-v2.js";
 import {
@@ -67,6 +69,9 @@ import {
 import {
   NodeToolchainProvisionerOperationReceiptV2Schema,
   NodeToolchainProvisionerPlanV2Schema,
+  hashNodeToolchainProvisionerRollbackClaimV2,
+  hashNodeToolchainProvisionerRollbackReceiptV2,
+  hashNodeToolchainProvisionerRollbackTreeEntriesV2,
   hashNodeToolchainProvisionerOperationReceiptV2,
   hashNodeToolchainProvisionerPlanV2,
 } from "../../src/product-compiler/schemas/node-toolchain-provisioner-command-v2.js";
@@ -79,6 +84,17 @@ const provisioned: ProvisionedNodeToolchainV2[] = [];
 
 function sha256(bytes: Uint8Array | string): string {
   return createHash("sha256").update(bytes).digest("hex");
+}
+
+function errorChainContains(error: unknown, pattern: RegExp): boolean {
+  let current = error;
+  const seen = new Set<unknown>();
+  while (current instanceof Error && !seen.has(current)) {
+    if (pattern.test(current.message)) return true;
+    seen.add(current);
+    current = "cause" in current ? current.cause : undefined;
+  }
+  return false;
 }
 
 function testArtifact(bytes: Uint8Array) {
@@ -563,6 +579,40 @@ describe("NodeToolchainProvisionerCommandV2 inspection and planning", () => {
     );
   });
 
+  it("recovers the exact receipt-link crash tail instead of misclassifying it as ready conflict", async () => {
+    const parent = await privateParent();
+    const tree = await privateTree();
+    await assert.rejects(
+      provisionNodeToolchainV2ForTest(tree, {
+        parent,
+        hooks: { afterReceiptLink: () => { throw new Error("CRASH_AFTER_RECEIPT_LINK"); } },
+      }),
+      /CRASH_AFTER_RECEIPT_LINK/,
+    );
+
+    const interruptedHandle = await inspectNodeToolchainProvisionerV2ForTest({
+      parent,
+      architecture: "arm64",
+    });
+    const interrupted = inspectNodeToolchainProvisionerInspectionV2(interruptedHandle);
+    assert.equal(interrupted.classification, "interrupted_claimed");
+    assert.equal(interrupted.canonical.claim.status, "valid");
+    assert.equal(interrupted.canonical.receipt.status, "valid");
+
+    const recoveryPlan = planNodeToolchainProvisioningV2(interruptedHandle, tree);
+    assert.equal(recoveryPlan.operation, "apply");
+    if (recoveryPlan.operation !== "apply") assert.fail("expected apply plan");
+    assert.equal(recoveryPlan.decision, "recover_exact_claim");
+    const recovered = await applyNodeToolchainProvisionerPlanV2ForTest({
+      parent,
+      plan: recoveryPlan,
+      privateTree: tree,
+    });
+    assert.equal(recovered.operation, "apply");
+    assert.equal(recovered.result, "recovered_exact_generation");
+    assert.equal(recovered.afterInspection.classification, "ready_verified");
+  });
+
   it("preserves conflicts, rejects forged handles and rejects self-rehashed decision drift", async () => {
     const parent = await privateParent();
     const target = getCodeOwnedNodeToolchainTargetV2("arm64");
@@ -736,5 +786,258 @@ describe("NodeToolchainProvisionerCommandV2 inspection and planning", () => {
     assert.equal(left.generation.receiptHash, right.generation.receiptHash);
     assert.equal(left.generation.rootDevice, right.generation.rootDevice);
     assert.equal(left.generation.rootInode, right.generation.rootInode);
+  });
+
+  it("rolls back only the planned physical generation and replays through its durable tombstone", async () => {
+    const parent = await privateParent();
+    const tree = await privateTree();
+    const provisionedHandle = await provisionNodeToolchainV2ForTest(tree, { parent });
+    provisioned.push(provisionedHandle);
+    const ready = await inspectNodeToolchainProvisionerV2ForTest({
+      parent,
+      architecture: "arm64",
+    });
+    const rollbackPlan = planNodeToolchainRollbackV2(ready);
+    const rolledBack = await rollbackNodeToolchainProvisionerPlanV2ForTest({
+      parent,
+      plan: rollbackPlan,
+    });
+    assert.equal(rolledBack.operation, "rollback");
+    assert.equal(rolledBack.result, "rolled_back_exact_generation");
+    assert.equal(rolledBack.executionInspection.classification, "ready_verified");
+    assert.equal(rolledBack.beforeInspectionHash, rolledBack.executionInspection.inspectionHash);
+    assert.equal(rolledBack.afterInspection.classification, "target_absent");
+    assert.equal(rolledBack.durableRollback.planHash, rollbackPlan.planHash);
+    assert.equal(
+      rolledBack.durableRollback.removedGeneration.receiptHash,
+      rollbackPlan.operation === "rollback" ? rollbackPlan.generation.receiptHash : "",
+    );
+    assert.equal(
+      NodeToolchainProvisionerOperationReceiptV2Schema.safeParse(rolledBack).success,
+      true,
+    );
+
+    const replay = await rollbackNodeToolchainProvisionerPlanV2ForTest({
+      parent,
+      plan: rollbackPlan,
+    });
+    assert.equal(replay.result, "verified_existing_rollback");
+    assert.equal(replay.executionInspection.classification, "target_absent");
+    assert.equal(replay.beforeInspectionHash, replay.executionInspection.inspectionHash);
+    assert.equal(replay.durableRollback.receiptHash, rolledBack.durableRollback.receiptHash);
+
+    const forged = structuredClone(rolledBack);
+    if (forged.operation !== "rollback") assert.fail("expected rollback receipt");
+    const executable = forged.durableRollback.claim.treeEntries.find(
+      (entry) => entry.locator === "bin/node" && entry.type === "file",
+    );
+    if (!executable) assert.fail("expected exact node rollback member");
+    executable.contentHash = "f".repeat(64);
+    forged.durableRollback.claim.treeEntriesHash =
+      hashNodeToolchainProvisionerRollbackTreeEntriesV2(
+        forged.durableRollback.claim.treeEntries,
+      );
+    forged.durableRollback.claim.claimHash = hashNodeToolchainProvisionerRollbackClaimV2(
+      forged.durableRollback.claim,
+    );
+    forged.durableRollback.receiptHash = hashNodeToolchainProvisionerRollbackReceiptV2(
+      forged.durableRollback,
+    );
+    forged.operationReceiptHash = hashNodeToolchainProvisionerOperationReceiptV2(forged);
+    assert.equal(NodeToolchainProvisionerOperationReceiptV2Schema.safeParse(forged).success, false);
+  });
+
+  it("recovers the exact rollback claim at every destructive crash boundary", async () => {
+    const phases = [
+      { afterRollbackClaimLink: () => { throw new Error("CRASH_ROLLBACK_CLAIM_LINK"); } },
+      { afterRollbackClaim: async () => { throw new Error("CRASH_ROLLBACK_CLAIM"); } },
+      { afterQuarantineCreate: async () => { throw new Error("CRASH_ROLLBACK_QUARANTINE"); } },
+      { afterRootWritable: async () => { throw new Error("CRASH_ROLLBACK_ROOT_WRITABLE"); } },
+      { afterRootRename: async () => { throw new Error("CRASH_ROLLBACK_RENAME"); } },
+      {
+        afterProvisioningReceiptRemove: async () => {
+          throw new Error("CRASH_ROLLBACK_PROVISIONING_RECEIPT");
+        },
+      },
+      {
+        afterRemovedEntry: async ({ removedCount }: { removedCount: number }) => {
+          if (removedCount === 1) throw new Error("CRASH_ROLLBACK_PARTIAL_DELETE");
+        },
+      },
+      { afterRollbackReceiptLink: () => { throw new Error("CRASH_ROLLBACK_RECEIPT_LINK"); } },
+      {
+        afterRollbackReceiptPublish: async () => {
+          throw new Error("CRASH_ROLLBACK_RECEIPT_PUBLISH");
+        },
+      },
+      {
+        afterRollbackClaimRemove: async () => {
+          throw new Error("CRASH_ROLLBACK_CLAIM_REMOVE");
+        },
+      },
+    ];
+    for (const hooks of phases) {
+      const parent = await privateParent();
+      const tree = await privateTree();
+      const provisionedHandle = await provisionNodeToolchainV2ForTest(tree, { parent });
+      provisioned.push(provisionedHandle);
+      const ready = await inspectNodeToolchainProvisionerV2ForTest({
+        parent,
+        architecture: "arm64",
+      });
+      const rollbackPlan = planNodeToolchainRollbackV2(ready);
+      await assert.rejects(
+        rollbackNodeToolchainProvisionerPlanV2ForTest({ parent, plan: rollbackPlan, hooks }),
+        (error) => errorChainContains(error, /CRASH_ROLLBACK_/),
+      );
+      const interrupted = inspectNodeToolchainProvisionerInspectionV2(
+        await inspectNodeToolchainProvisionerV2ForTest({ parent, architecture: "arm64" }),
+      );
+      assert.equal(
+        interrupted.classification === "rollback_interrupted"
+          || interrupted.classification === "target_absent",
+        true,
+      );
+      const recovered = await rollbackNodeToolchainProvisionerPlanV2ForTest({
+        parent,
+        plan: rollbackPlan,
+      });
+      assert.equal(
+        recovered.result === "recovered_exact_rollback"
+          || recovered.result === "verified_existing_rollback",
+        true,
+      );
+      assert.equal(recovered.beforeInspectionHash, recovered.executionInspection.inspectionHash);
+      assert.equal(
+        recovered.executionInspection.classification === "rollback_interrupted"
+          || recovered.executionInspection.classification === "target_absent",
+        true,
+      );
+      assert.equal(recovered.afterInspection.classification, "target_absent");
+    }
+  });
+
+  it("never lets an old rollback plan delete a later physical generation", async () => {
+    const parent = await privateParent();
+    const tree = await privateTree();
+    const first = await provisionNodeToolchainV2ForTest(tree, { parent });
+    provisioned.push(first);
+    const firstReady = await inspectNodeToolchainProvisionerV2ForTest({
+      parent,
+      architecture: "arm64",
+    });
+    const oldPlan = planNodeToolchainRollbackV2(firstReady);
+    await rollbackNodeToolchainProvisionerPlanV2ForTest({ parent, plan: oldPlan });
+
+    const second = await provisionNodeToolchainV2ForTest(tree, { parent });
+    provisioned.push(second);
+    const secondReceipt = inspectNodeToolchainProvisioningReceiptV2(second);
+    assert.notEqual(
+      secondReceipt.finalRoot.inode,
+      oldPlan.operation === "rollback" ? oldPlan.generation.rootInode : -1,
+    );
+    await assert.rejects(
+      rollbackNodeToolchainProvisionerPlanV2ForTest({ parent, plan: oldPlan }),
+      { code: "NODE_TOOLCHAIN_PROVISIONER_V2_PRECONDITION_CHANGED" },
+    );
+    assert.equal(
+      (await revalidateProvisionedNodeToolchainV2(second)).receiptHash,
+      secondReceipt.receiptHash,
+    );
+  });
+
+  it("preserves a live generation that loses a claimed member before quarantine", async () => {
+    const parent = await privateParent();
+    const tree = await privateTree();
+    const provisionedHandle = await provisionNodeToolchainV2ForTest(tree, { parent });
+    provisioned.push(provisionedHandle);
+    const target = getCodeOwnedNodeToolchainTargetV2("arm64");
+    const root = path.join(parent, target.rootBasename);
+    const ready = await inspectNodeToolchainProvisionerV2ForTest({
+      parent,
+      architecture: "arm64",
+    });
+    const plan = planNodeToolchainRollbackV2(ready);
+    await assert.rejects(
+      rollbackNodeToolchainProvisionerPlanV2ForTest({
+        parent,
+        plan,
+        hooks: { afterRootWritable: async () => { throw new Error("CRASH_ROOT_WRITABLE"); } },
+      }),
+      (error) => errorChainContains(error, /CRASH_ROOT_WRITABLE/),
+    );
+    await chmod(path.join(root, "bin"), 0o700);
+    await rm(path.join(root, "bin", "node"));
+
+    await assert.rejects(
+      rollbackNodeToolchainProvisionerPlanV2ForTest({ parent, plan }),
+      (error) => errorChainContains(error, /lost a claimed member/),
+    );
+    assert.equal((await lstat(root)).isDirectory(), true);
+    assert.equal(
+      (await lstat(path.join(root, "lib", "node_modules", "npm", "package.json"))).isFile(),
+      true,
+    );
+    assert.equal((await lstat(path.join(parent, target.receiptBasename))).isFile(), true);
+  });
+
+  it("rejects and preserves a foreign quarantine member during exact rollback recovery", async () => {
+    const parent = await privateParent();
+    const tree = await privateTree();
+    const provisionedHandle = await provisionNodeToolchainV2ForTest(tree, { parent });
+    provisioned.push(provisionedHandle);
+    const target = getCodeOwnedNodeToolchainTargetV2("arm64");
+    const ready = await inspectNodeToolchainProvisionerV2ForTest({
+      parent,
+      architecture: "arm64",
+    });
+    const plan = planNodeToolchainRollbackV2(ready);
+    if (plan.operation !== "rollback") assert.fail("expected rollback plan");
+    const quarantineRoot = path.join(
+      parent,
+      NODE_TOOLCHAIN_PROVISIONING_STAGING_BASENAME_V2,
+      `${plan.planHash}.rollback`,
+      target.rootBasename,
+    );
+    await assert.rejects(
+      rollbackNodeToolchainProvisionerPlanV2ForTest({
+        parent,
+        plan,
+        hooks: { afterRootRename: async () => { throw new Error("CRASH_ROOT_RENAMED"); } },
+      }),
+      (error) => errorChainContains(error, /CRASH_ROOT_RENAMED/),
+    );
+    const foreign = path.join(quarantineRoot, "foreign-member");
+    await writeFile(foreign, "foreign\n", { mode: 0o600 });
+
+    await assert.rejects(
+      rollbackNodeToolchainProvisionerPlanV2ForTest({ parent, plan }),
+      (error) => errorChainContains(error, /foreign entry/),
+    );
+    assert.equal(await readFile(foreign, "utf8"), "foreign\n");
+    assert.equal((await lstat(path.join(parent, target.receiptBasename))).isFile(), true);
+  });
+
+  it("serializes concurrent exact rollbacks and returns one durable tombstone", async () => {
+    const parent = await privateParent();
+    const tree = await privateTree();
+    const provisionedHandle = await provisionNodeToolchainV2ForTest(tree, { parent });
+    provisioned.push(provisionedHandle);
+    const ready = await inspectNodeToolchainProvisionerV2ForTest({
+      parent,
+      architecture: "arm64",
+    });
+    const plan = planNodeToolchainRollbackV2(ready);
+    const [left, right] = await Promise.all([
+      rollbackNodeToolchainProvisionerPlanV2ForTest({ parent, plan }),
+      rollbackNodeToolchainProvisionerPlanV2ForTest({ parent, plan }),
+    ]);
+    assert.equal(
+      new Set([left.result, right.result]).has("rolled_back_exact_generation"),
+      true,
+    );
+    assert.equal(left.durableRollback.receiptHash, right.durableRollback.receiptHash);
+    assert.equal(left.afterInspection.classification, "target_absent");
+    assert.equal(right.afterInspection.classification, "target_absent");
   });
 });

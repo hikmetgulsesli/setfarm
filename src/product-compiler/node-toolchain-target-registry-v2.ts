@@ -26,9 +26,13 @@ export type NodeToolchainTargetV2 = Readonly<{
   claimBasename:
     | ".setfarm-node-toolchain-provisioning-arm64-v2.claim.json"
     | ".setfarm-node-toolchain-provisioning-x64-v2.claim.json";
+  rollbackClaimBasename:
+    | ".setfarm-node-toolchain-rollback-arm64-v2.claim.json"
+    | ".setfarm-node-toolchain-rollback-x64-v2.claim.json";
   logicalRoot: string;
   logicalReceipt: string;
   logicalClaim: string;
+  logicalRollbackClaim: string;
 }>;
 
 const TARGETS_V2: readonly NodeToolchainTargetV2[] = Object.freeze([
@@ -38,6 +42,7 @@ const TARGETS_V2: readonly NodeToolchainTargetV2[] = Object.freeze([
     rootBasename: "node-22.23.1-npm-10.9.8-darwin-arm64",
     receiptBasename: "node-22.23.1-npm-10.9.8-darwin-arm64.provisioning-v2.json",
     claimBasename: ".setfarm-node-toolchain-provisioning-arm64-v2.claim.json",
+    rollbackClaimBasename: ".setfarm-node-toolchain-rollback-arm64-v2.claim.json",
     logicalRoot: path.join(
       NODE_TOOLCHAIN_ROOT_PARENT_V2,
       "node-22.23.1-npm-10.9.8-darwin-arm64",
@@ -50,6 +55,10 @@ const TARGETS_V2: readonly NodeToolchainTargetV2[] = Object.freeze([
       NODE_TOOLCHAIN_ROOT_PARENT_V2,
       ".setfarm-node-toolchain-provisioning-arm64-v2.claim.json",
     ),
+    logicalRollbackClaim: path.join(
+      NODE_TOOLCHAIN_ROOT_PARENT_V2,
+      ".setfarm-node-toolchain-rollback-arm64-v2.claim.json",
+    ),
   }),
   Object.freeze({
     architecture: "x64",
@@ -57,6 +66,7 @@ const TARGETS_V2: readonly NodeToolchainTargetV2[] = Object.freeze([
     rootBasename: "node-22.23.1-npm-10.9.8-darwin-x64",
     receiptBasename: "node-22.23.1-npm-10.9.8-darwin-x64.provisioning-v2.json",
     claimBasename: ".setfarm-node-toolchain-provisioning-x64-v2.claim.json",
+    rollbackClaimBasename: ".setfarm-node-toolchain-rollback-x64-v2.claim.json",
     logicalRoot: path.join(
       NODE_TOOLCHAIN_ROOT_PARENT_V2,
       "node-22.23.1-npm-10.9.8-darwin-x64",
@@ -68,6 +78,10 @@ const TARGETS_V2: readonly NodeToolchainTargetV2[] = Object.freeze([
     logicalClaim: path.join(
       NODE_TOOLCHAIN_ROOT_PARENT_V2,
       ".setfarm-node-toolchain-provisioning-x64-v2.claim.json",
+    ),
+    logicalRollbackClaim: path.join(
+      NODE_TOOLCHAIN_ROOT_PARENT_V2,
+      ".setfarm-node-toolchain-rollback-x64-v2.claim.json",
     ),
   }),
 ]);
@@ -81,7 +95,15 @@ export function getCodeOwnedNodeToolchainTargetV2(
 }
 
 export function hashNodeToolchainOperationalLocatorV2(
-  kind: "root" | "receipt" | "parent" | "claim" | "lock" | "staging",
+  kind:
+    | "root"
+    | "receipt"
+    | "parent"
+    | "claim"
+    | "rollback_claim"
+    | "rollback_receipt"
+    | "lock"
+    | "staging",
   absoluteLocator: string,
 ): string {
   if (!path.isAbsolute(absoluteLocator) || path.normalize(absoluteLocator) !== absoluteLocator) {

@@ -16,6 +16,7 @@ import {
   readFileSync,
   readdirSync,
   readSync,
+  renameSync,
   rmdirSync,
   unlinkSync,
   writeSync,
@@ -58,6 +59,23 @@ import {
   type NodeToolchainProvisioningReceiptHashPayloadV2,
   type NodeToolchainProvisioningReceiptV2,
 } from "./schemas/node-toolchain-provisioning-v2.js";
+import {
+  NODE_TOOLCHAIN_PROVISIONER_COMMAND_AUTHORITY_REF_V2,
+  NODE_TOOLCHAIN_PROVISIONER_COMMAND_VERSION_V2,
+  NODE_TOOLCHAIN_PROVISIONER_ROLLBACK_CLAIM_V2_SCHEMA,
+  NODE_TOOLCHAIN_PROVISIONER_ROLLBACK_RECEIPT_V2_SCHEMA,
+  NodeToolchainProvisionerPlanV2Schema,
+  NodeToolchainProvisionerRollbackClaimV2Schema,
+  NodeToolchainProvisionerRollbackReceiptV2Schema,
+  hashNodeToolchainProvisionerRollbackClaimV2,
+  hashNodeToolchainProvisionerRollbackReceiptV2,
+  hashNodeToolchainProvisionerRollbackTreeEntriesV2,
+  type NodeToolchainProvisionerPlanV2,
+  type NodeToolchainProvisionerRollbackClaimHashPayloadV2,
+  type NodeToolchainProvisionerRollbackClaimV2,
+  type NodeToolchainProvisionerRollbackReceiptHashPayloadV2,
+  type NodeToolchainProvisionerRollbackReceiptV2,
+} from "./schemas/node-toolchain-provisioner-command-v2.js";
 
 const LOCKF_PATH_V2 = "/usr/bin/lockf" as const;
 const LOCK_HELPER_PATH_V2 = "/bin/cat" as const;
@@ -65,6 +83,7 @@ const LOCK_FILE_BYTES_V2 = Buffer.from("setfarm.node-toolchain-provisioning-lock
 const LOCK_ACQUISITION_TIMEOUT_SECONDS_V2 = 10;
 const LOCK_PROTOCOL_TIMEOUT_MS_V2 = 12_000;
 const CANONICAL_FILE_MAX_BYTES_V2 = 1024 * 1024;
+const ROLLBACK_CANONICAL_FILE_MAX_BYTES_V2 = 16 * 1024 * 1024;
 const MAX_TOOL_BYTES_V2 = 4 * 1024 * 1024;
 const MAX_TREE_DEPTH_V2 = 64;
 
@@ -86,7 +105,9 @@ export type NodeToolchainProvisioningErrorCodeV2 =
   | "NODE_TOOLCHAIN_PROVISIONING_V2_RECEIPT_CONFLICT"
   | "NODE_TOOLCHAIN_PROVISIONING_V2_RECEIPT_INVALID"
   | "NODE_TOOLCHAIN_PROVISIONING_V2_HANDLE_UNAUTHENTICATED"
-  | "NODE_TOOLCHAIN_PROVISIONING_V2_HOST_DRIFT";
+  | "NODE_TOOLCHAIN_PROVISIONING_V2_HOST_DRIFT"
+  | "NODE_TOOLCHAIN_PROVISIONING_V2_ROLLBACK_CONFLICT"
+  | "NODE_TOOLCHAIN_PROVISIONING_V2_ROLLBACK_FAILED";
 
 export class NodeToolchainProvisioningErrorV2 extends Error {
   readonly code: NodeToolchainProvisioningErrorCodeV2;
@@ -1331,11 +1352,12 @@ function readCanonicalFile<T>(input: Readonly<{
   expectedOwner: ExpectedOwnerV2;
   allowedMode: number;
   allowedLinks?: readonly number[];
+  maxBytes?: number;
   errorCode: NodeToolchainProvisioningErrorCodeV2;
 }>): Readonly<{ value: T; fingerprint: FingerprintV2; bytes: Buffer }> {
   const captured = stableFileBytes({
     absolutePath: input.absolutePath,
-    maxBytes: CANONICAL_FILE_MAX_BYTES_V2,
+    maxBytes: input.maxBytes ?? CANONICAL_FILE_MAX_BYTES_V2,
     expectedOwner: input.expectedOwner,
     allowedModes: [input.allowedMode],
     allowedLinks: input.allowedLinks ?? [1],
@@ -1382,11 +1404,16 @@ function publishCanonicalNoReplace<T>(input: Readonly<{
   schema: { safeParse(value: unknown): { success: true; data: T } | { success: false; error: unknown } };
   mode: number;
   expectedOwner: ExpectedOwnerV2;
+  maxBytes?: number;
   errorCode: NodeToolchainProvisioningErrorCodeV2;
   afterLink?: () => void;
 }>): Readonly<{ created: boolean; fingerprint: FingerprintV2 }> {
   const bytes = canonicalJsonBytes(input.value);
   try {
+    const maxBytes = input.maxBytes ?? CANONICAL_FILE_MAX_BYTES_V2;
+    if (bytes.byteLength > maxBytes) {
+      return fail(input.errorCode, "Provisioning canonical authority exceeds its bounded size");
+    }
     const existingTarget = optionalFingerprint(input.target);
     const existingStageAtStart = optionalFingerprint(input.stage);
     if (existingTarget) {
@@ -1397,6 +1424,7 @@ function publishCanonicalNoReplace<T>(input: Readonly<{
           expectedOwner: input.expectedOwner,
           allowedMode: input.mode,
           allowedLinks: [2],
+          maxBytes,
           errorCode: input.errorCode,
         });
         const stagePair = readCanonicalFile({
@@ -1405,6 +1433,7 @@ function publishCanonicalNoReplace<T>(input: Readonly<{
           expectedOwner: input.expectedOwner,
           allowedMode: input.mode,
           allowedLinks: [2],
+          maxBytes,
           errorCode: input.errorCode,
         });
         try {
@@ -1424,6 +1453,7 @@ function publishCanonicalNoReplace<T>(input: Readonly<{
             expectedOwner: input.expectedOwner,
             allowedMode: input.mode,
             allowedLinks: [1],
+            maxBytes,
             errorCode: input.errorCode,
           });
           try {
@@ -1444,6 +1474,7 @@ function publishCanonicalNoReplace<T>(input: Readonly<{
         schema: input.schema,
         expectedOwner: input.expectedOwner,
         allowedMode: input.mode,
+        maxBytes,
         errorCode: input.errorCode,
       });
       try {
@@ -1459,7 +1490,7 @@ function publishCanonicalNoReplace<T>(input: Readonly<{
     if (existingStage) {
       const staged = stableFileBytes({
         absolutePath: input.stage,
-        maxBytes: CANONICAL_FILE_MAX_BYTES_V2,
+        maxBytes,
         expectedOwner: input.expectedOwner,
         allowedModes: [input.mode, 0o600],
         allowedLinks: [1],
@@ -1490,7 +1521,7 @@ function publishCanonicalNoReplace<T>(input: Readonly<{
     }
     const stageBefore = stableFileBytes({
       absolutePath: input.stage,
-      maxBytes: CANONICAL_FILE_MAX_BYTES_V2,
+      maxBytes,
       expectedOwner: input.expectedOwner,
       allowedModes: [input.mode],
       allowedLinks: [1],
@@ -1510,6 +1541,7 @@ function publishCanonicalNoReplace<T>(input: Readonly<{
           schema: input.schema,
           expectedOwner: input.expectedOwner,
           allowedMode: input.mode,
+          maxBytes,
           errorCode: input.errorCode,
         });
         try {
@@ -1543,7 +1575,7 @@ function publishCanonicalNoReplace<T>(input: Readonly<{
       syncDirectory(path.dirname(input.stage));
       const final = stableFileBytes({
         absolutePath: input.target,
-        maxBytes: CANONICAL_FILE_MAX_BYTES_V2,
+        maxBytes,
         expectedOwner: input.expectedOwner,
         allowedModes: [input.mode],
         allowedLinks: [1],
@@ -2760,4 +2792,894 @@ export async function revalidateProvisionedNodeToolchainV2(
       error,
     );
   }
+}
+
+type RollbackPathsV2 = Readonly<{
+  rollbackClaim: string;
+  rollbackClaimStage: string;
+  rollbackStage: string;
+  quarantineRoot: string;
+  rollbackReceipt: string;
+  rollbackReceiptStage: string;
+}>;
+
+export type NodeToolchainRollbackTestHooksV2 = Readonly<{
+  afterRollbackClaimLink?: () => void;
+  afterRollbackClaim?: () => void | Promise<void>;
+  afterQuarantineCreate?: () => void | Promise<void>;
+  afterRootWritable?: () => void | Promise<void>;
+  afterRootRename?: () => void | Promise<void>;
+  afterProvisioningReceiptRemove?: () => void | Promise<void>;
+  afterRemovedEntry?: (input: Readonly<{ locator: string; removedCount: number }>) =>
+    void | Promise<void>;
+  afterRollbackReceiptLink?: () => void;
+  afterRollbackReceiptPublish?: () => void | Promise<void>;
+  afterRollbackClaimRemove?: () => void | Promise<void>;
+}>;
+
+export type NodeToolchainRollbackResultV2 = Readonly<{
+  rollbackReceipt: NodeToolchainProvisionerRollbackReceiptV2;
+  disposition: "rolled_back" | "recovered" | "already_complete";
+}>;
+
+function parseRollbackPlan(input: unknown, expected: Readonly<{
+  admissionScope: AdmissionScopeV2;
+  architecture: "arm64" | "x64";
+}>): Extract<NodeToolchainProvisionerPlanV2, { operation: "rollback" }> {
+  const parsed = NodeToolchainProvisionerPlanV2Schema.safeParse(input);
+  if (
+    !parsed.success
+    || parsed.data.operation !== "rollback"
+    || parsed.data.admissionScope !== expected.admissionScope
+    || parsed.data.architecture !== expected.architecture
+  ) {
+    return fail(
+      "NODE_TOOLCHAIN_PROVISIONING_V2_ROLLBACK_CONFLICT",
+      "Rollback requires one exact target-scoped rollback plan",
+      parsed.success ? undefined : parsed.error,
+    );
+  }
+  return deepFreezeJson(parsed.data);
+}
+
+function rollbackPaths(
+  paths: PublicationPathsV2,
+  target: NodeToolchainTargetV2,
+  plan: Extract<NodeToolchainProvisionerPlanV2, { operation: "rollback" }>,
+): RollbackPathsV2 {
+  const rollbackReceiptBasename =
+    `.setfarm-node-toolchain-rollback-${plan.architecture}-${plan.generation.receiptHash}.receipt-v2.json`;
+  const rollbackStage = path.join(paths.staging, `${plan.planHash}.rollback`);
+  return Object.freeze({
+    rollbackClaim: path.join(paths.parent, target.rollbackClaimBasename),
+    rollbackClaimStage: path.join(paths.staging, `${plan.planHash}.rollback-claim.tmp`),
+    rollbackStage,
+    quarantineRoot: path.join(rollbackStage, target.rootBasename),
+    rollbackReceipt: path.join(paths.parent, rollbackReceiptBasename),
+    rollbackReceiptStage: path.join(paths.staging, `${plan.planHash}.rollback-receipt.tmp`),
+  });
+}
+
+function assertRollbackStagingCensus(input: Readonly<{
+  paths: PublicationPathsV2;
+  rollback: RollbackPathsV2;
+  expectedOwner: ExpectedOwnerV2;
+  allowCurrentPlanArtifacts: boolean;
+}>): void {
+  const before = assertDirectory({
+    absolutePath: input.paths.staging,
+    expectedOwner: input.expectedOwner,
+    allowedModes: [0o700],
+    errorCode: "NODE_TOOLCHAIN_PROVISIONING_V2_ROLLBACK_CONFLICT",
+  });
+  const names = readdirSync(input.paths.staging).sort();
+  const after = assertDirectory({
+    absolutePath: input.paths.staging,
+    expectedOwner: input.expectedOwner,
+    allowedModes: [0o700],
+    errorCode: "NODE_TOOLCHAIN_PROVISIONING_V2_ROLLBACK_CONFLICT",
+  });
+  const allowed = input.allowCurrentPlanArtifacts
+    ? new Set([
+        path.basename(input.rollback.rollbackClaimStage),
+        path.basename(input.rollback.rollbackStage),
+        path.basename(input.rollback.rollbackReceiptStage),
+      ])
+    : new Set<string>();
+  if (
+    !sameFingerprint(before, after)
+    || names.some((name) => !allowed.has(name))
+  ) {
+    return fail(
+      "NODE_TOOLCHAIN_PROVISIONING_V2_ROLLBACK_CONFLICT",
+      "Rollback staging contains a foreign or concurrently changed member",
+    );
+  }
+}
+
+function rollbackTreeEntries(
+  entries: readonly NodeToolchainPrivateTreeBundleEntryV2[],
+) {
+  return entries.map((entry) => Object.freeze({
+    locator: entry.locator,
+    type: entry.type,
+    mode: entry.mode,
+    byteLength: entry.byteLength,
+    contentHash: entry.contentHash,
+  }));
+}
+
+function exactRollbackGeneration(
+  receipt: NodeToolchainProvisioningReceiptV2,
+) {
+  return Object.freeze({
+    receiptHash: receipt.receiptHash,
+    intentHash: receipt.intent.intentHash,
+    targetRef: receipt.finalRoot.targetRef,
+    rootDevice: receipt.finalRoot.device,
+    rootInode: receipt.finalRoot.inode,
+    treeHash: receipt.finalRoot.treeHash,
+  });
+}
+
+function buildRollbackClaim(input: Readonly<{
+  plan: Extract<NodeToolchainProvisionerPlanV2, { operation: "rollback" }>;
+  receipt: NodeToolchainProvisioningReceiptV2;
+  entries: readonly NodeToolchainPrivateTreeBundleEntryV2[];
+}>): NodeToolchainProvisionerRollbackClaimV2 {
+  const treeEntries = rollbackTreeEntries(input.entries);
+  const identity: NodeToolchainProvisionerRollbackClaimHashPayloadV2 = {
+    schema: NODE_TOOLCHAIN_PROVISIONER_ROLLBACK_CLAIM_V2_SCHEMA,
+    claimVersion: NODE_TOOLCHAIN_PROVISIONER_COMMAND_VERSION_V2,
+    authorityRef: NODE_TOOLCHAIN_PROVISIONER_COMMAND_AUTHORITY_REF_V2,
+    status: "removing_exact_generation",
+    plan: input.plan,
+    generation: exactRollbackGeneration(input.receipt),
+    treeEntries,
+    treeEntriesHash: hashNodeToolchainProvisionerRollbackTreeEntriesV2(treeEntries),
+    protocol: {
+      serializationPolicy: "darwin_parent_descriptor_lockf_v2",
+      claimPolicy: "canonical_no_replace_rollback_claim_before_rename_v2",
+      quarantinePolicy: "claimed_root_writable_then_private_stage_atomic_rename_v2",
+      removalPolicy: "every_only_restartable_bottom_up_v2",
+      completionPolicy: "content_addressed_tombstone_then_claim_last_v2",
+    },
+  };
+  const parsed = NodeToolchainProvisionerRollbackClaimV2Schema.safeParse({
+    ...identity,
+    claimHash: hashNodeToolchainProvisionerRollbackClaimV2(identity),
+  });
+  if (!parsed.success) {
+    return fail(
+      "NODE_TOOLCHAIN_PROVISIONING_V2_ROLLBACK_CONFLICT",
+      "Fresh rollback claim failed its exact canonical schema",
+      parsed.error,
+    );
+  }
+  return deepFreezeJson(parsed.data);
+}
+
+function readRollbackClaim(input: Readonly<{
+  rollback: RollbackPathsV2;
+  expectedOwner: ExpectedOwnerV2;
+  planHash: string;
+}>): Readonly<{
+  value: NodeToolchainProvisionerRollbackClaimV2;
+  fingerprint: FingerprintV2;
+}> {
+  const captured = readCanonicalFile({
+    absolutePath: input.rollback.rollbackClaim,
+    schema: NodeToolchainProvisionerRollbackClaimV2Schema,
+    expectedOwner: input.expectedOwner,
+    allowedMode: 0o600,
+    allowedLinks: [1, 2],
+    maxBytes: ROLLBACK_CANONICAL_FILE_MAX_BYTES_V2,
+    errorCode: "NODE_TOOLCHAIN_PROVISIONING_V2_ROLLBACK_CONFLICT",
+  });
+  try {
+    if (captured.value.plan.planHash !== input.planHash) {
+      return fail(
+        "NODE_TOOLCHAIN_PROVISIONING_V2_ROLLBACK_CONFLICT",
+        "Existing rollback claim belongs to another immutable plan",
+      );
+    }
+    return Object.freeze({ value: captured.value, fingerprint: captured.fingerprint });
+  } finally {
+    captured.bytes.fill(0);
+  }
+}
+
+function buildRollbackReceipt(input: Readonly<{
+  plan: Extract<NodeToolchainProvisionerPlanV2, { operation: "rollback" }>;
+  claim: NodeToolchainProvisionerRollbackClaimV2;
+  rollback: RollbackPathsV2;
+  expectedOwner: ExpectedOwnerV2;
+}>): NodeToolchainProvisionerRollbackReceiptV2 {
+  const identity: NodeToolchainProvisionerRollbackReceiptHashPayloadV2 = {
+    schema: NODE_TOOLCHAIN_PROVISIONER_ROLLBACK_RECEIPT_V2_SCHEMA,
+    receiptVersion: NODE_TOOLCHAIN_PROVISIONER_COMMAND_VERSION_V2,
+    authorityRef: NODE_TOOLCHAIN_PROVISIONER_COMMAND_AUTHORITY_REF_V2,
+    status: "rolled_back_verified",
+    admissionScope: input.plan.admissionScope,
+    architecture: input.plan.architecture,
+    planHash: input.plan.planHash,
+    claim: input.claim,
+    removedGeneration: input.claim.generation,
+    receiptFile: {
+      receiptLocatorHash: hashNodeToolchainOperationalLocatorV2(
+        "rollback_receipt",
+        input.rollback.rollbackReceipt,
+      ),
+      mode: "0444",
+      ownerUid: input.expectedOwner.uid,
+      ownerGid: input.expectedOwner.gid,
+      linkCount: 1,
+      publicationPolicy: "content_addressed_canonical_no_replace_fsync_v2",
+    },
+  };
+  const parsed = NodeToolchainProvisionerRollbackReceiptV2Schema.safeParse({
+    ...identity,
+    receiptHash: hashNodeToolchainProvisionerRollbackReceiptV2(identity),
+  });
+  if (!parsed.success) {
+    return fail(
+      "NODE_TOOLCHAIN_PROVISIONING_V2_ROLLBACK_CONFLICT",
+      "Fresh rollback tombstone failed its exact canonical schema",
+      parsed.error,
+    );
+  }
+  return deepFreezeJson(parsed.data);
+}
+
+function readRollbackReceipt(input: Readonly<{
+  rollback: RollbackPathsV2;
+  expectedOwner: ExpectedOwnerV2;
+  plan: Extract<NodeToolchainProvisionerPlanV2, { operation: "rollback" }>;
+  expected?: NodeToolchainProvisionerRollbackReceiptV2;
+}>): NodeToolchainProvisionerRollbackReceiptV2 {
+  const captured = readCanonicalFile({
+    absolutePath: input.rollback.rollbackReceipt,
+    schema: NodeToolchainProvisionerRollbackReceiptV2Schema,
+    expectedOwner: input.expectedOwner,
+    allowedMode: 0o444,
+    allowedLinks: [1, 2],
+    maxBytes: ROLLBACK_CANONICAL_FILE_MAX_BYTES_V2,
+    errorCode: "NODE_TOOLCHAIN_PROVISIONING_V2_ROLLBACK_CONFLICT",
+  });
+  try {
+    if (
+      (input.expected && captured.value.receiptHash !== input.expected.receiptHash)
+      || captured.value.planHash !== input.plan.planHash
+      || captured.value.admissionScope !== input.plan.admissionScope
+      || captured.value.architecture !== input.plan.architecture
+      || captured.value.removedGeneration.receiptHash !== input.plan.generation.receiptHash
+      || captured.value.removedGeneration.intentHash !== input.plan.generation.intentHash
+      || captured.value.removedGeneration.rootDevice !== input.plan.generation.rootDevice
+      || captured.value.removedGeneration.rootInode !== input.plan.generation.rootInode
+      || captured.value.removedGeneration.treeHash !== input.plan.generation.treeHash
+      || captured.value.receiptFile.receiptLocatorHash !== hashNodeToolchainOperationalLocatorV2(
+        "rollback_receipt",
+        input.rollback.rollbackReceipt,
+      )
+    ) {
+      return fail(
+        "NODE_TOOLCHAIN_PROVISIONING_V2_ROLLBACK_CONFLICT",
+        "Existing rollback tombstone belongs to another immutable generation",
+      );
+    }
+    return captured.value;
+  } finally {
+    captured.bytes.fill(0);
+  }
+}
+
+function validatePartialRollbackTree(input: Readonly<{
+  root: string;
+  claim: NodeToolchainProvisionerRollbackClaimV2;
+  expectedOwner: ExpectedOwnerV2;
+}>): void {
+  const root = optionalFingerprint(input.root);
+  if (!root) return;
+  if (
+    root.device !== input.claim.generation.rootDevice
+    || root.inode !== input.claim.generation.rootInode
+    || root.ownerUid !== input.expectedOwner.uid
+    || root.ownerGid !== input.expectedOwner.gid
+    || (modeBits(root) !== 0o555 && modeBits(root) !== 0o700)
+  ) {
+    return fail(
+      "NODE_TOOLCHAIN_PROVISIONING_V2_ROLLBACK_CONFLICT",
+      "Rollback quarantine root does not equal the claimed physical generation",
+    );
+  }
+  const expected = new Map(input.claim.treeEntries.map((entry) => [entry.locator, entry]));
+  const visit = (absoluteDirectory: string, locator: "." | string): void => {
+    const before = fingerprint(lstatSync(absoluteDirectory));
+    const namesBefore = readdirSync(absoluteDirectory).sort();
+    for (const name of namesBefore) {
+      const childLocator = locator === "." ? name : `${locator}/${name}`;
+      const expectedEntry = expected.get(childLocator);
+      if (!expectedEntry) {
+        return fail(
+          "NODE_TOOLCHAIN_PROVISIONING_V2_ROLLBACK_CONFLICT",
+          "Rollback quarantine contains a foreign entry",
+        );
+      }
+      const absoluteChild = path.join(absoluteDirectory, name);
+      const stat = lstatSync(absoluteChild);
+      if (
+        stat.isSymbolicLink()
+        || stat.uid !== input.expectedOwner.uid
+        || stat.gid !== input.expectedOwner.gid
+      ) {
+        return fail(
+          "NODE_TOOLCHAIN_PROVISIONING_V2_ROLLBACK_CONFLICT",
+          "Rollback quarantine member identity is foreign",
+        );
+      }
+      if (stat.isDirectory()) {
+        if (
+          expectedEntry.type !== "directory"
+          || (modeBits(stat) !== 0o555 && modeBits(stat) !== 0o700)
+        ) {
+          return fail(
+            "NODE_TOOLCHAIN_PROVISIONING_V2_ROLLBACK_CONFLICT",
+            "Rollback quarantine directory differs from its claim",
+          );
+        }
+        visit(absoluteChild, childLocator);
+        continue;
+      }
+      if (expectedEntry.type !== "file" || !stat.isFile() || stat.nlink !== 1) {
+        return fail(
+          "NODE_TOOLCHAIN_PROVISIONING_V2_ROLLBACK_CONFLICT",
+          "Rollback quarantine file type or link count differs from its claim",
+        );
+      }
+      const captured = stableFileHash({
+        absolutePath: absoluteChild,
+        maxBytes: expectedEntry.byteLength,
+        expectedOwner: input.expectedOwner,
+        allowedModes: [expectedEntry.mode === "0555" ? 0o555 : 0o444],
+        allowedLinks: [1],
+        errorCode: "NODE_TOOLCHAIN_PROVISIONING_V2_ROLLBACK_CONFLICT",
+      });
+      if (
+        captured.fingerprint.byteLength !== expectedEntry.byteLength
+        || captured.contentHash !== expectedEntry.contentHash
+      ) {
+        return fail(
+          "NODE_TOOLCHAIN_PROVISIONING_V2_ROLLBACK_CONFLICT",
+          "Rollback quarantine file bytes differ from its claim",
+        );
+      }
+    }
+    const after = fingerprint(lstatSync(absoluteDirectory));
+    const namesAfter = readdirSync(absoluteDirectory).sort();
+    if (
+      !sameFingerprint(before, after)
+      || namesBefore.length !== namesAfter.length
+      || namesBefore.some((name, index) => name !== namesAfter[index])
+    ) {
+      return fail(
+        "NODE_TOOLCHAIN_PROVISIONING_V2_ROLLBACK_CONFLICT",
+        "Rollback quarantine changed during its every-only census",
+      );
+    }
+  };
+  visit(input.root, ".");
+}
+
+function assertCompleteRollbackTree(input: Readonly<{
+  root: string;
+  claim: NodeToolchainProvisionerRollbackClaimV2;
+  expectedOwner: ExpectedOwnerV2;
+}>): void {
+  validatePartialRollbackTree(input);
+  for (const entry of input.claim.treeEntries) {
+    if (!optionalFingerprint(absoluteEntryPath(input.root, entry.locator))) {
+      return fail(
+        "NODE_TOOLCHAIN_PROVISIONING_V2_ROLLBACK_CONFLICT",
+        "Live rollback source lost a claimed member before quarantine rename",
+      );
+    }
+  }
+}
+
+async function removePartialRollbackTree(input: Readonly<{
+  root: string;
+  claim: NodeToolchainProvisionerRollbackClaimV2;
+  expectedOwner: ExpectedOwnerV2;
+  hooks?: NodeToolchainRollbackTestHooksV2;
+}>): Promise<void> {
+  validatePartialRollbackTree(input);
+  if (!optionalFingerprint(input.root)) return;
+  const directories = input.claim.treeEntries
+    .filter((entry) => entry.type === "directory")
+    .sort((left, right) => left.locator.split("/").length - right.locator.split("/").length);
+  for (const entry of directories) {
+    const absolutePath = absoluteEntryPath(input.root, entry.locator);
+    const stat = optionalFingerprint(absolutePath);
+    if (!stat) continue;
+    if (
+      stat.ownerUid !== input.expectedOwner.uid
+      || stat.ownerGid !== input.expectedOwner.gid
+      || (modeBits(stat) !== 0o555 && modeBits(stat) !== 0o700)
+    ) {
+      return fail(
+        "NODE_TOOLCHAIN_PROVISIONING_V2_ROLLBACK_CONFLICT",
+        "Rollback directory changed before writable transition",
+      );
+    }
+    if (modeBits(stat) !== 0o700) chmodSync(absolutePath, 0o700);
+  }
+  let removedCount = 0;
+  const files = input.claim.treeEntries
+    .filter((entry) => entry.type === "file")
+    .sort((left, right) => right.locator.length - left.locator.length);
+  for (const entry of files) {
+    const absolutePath = absoluteEntryPath(input.root, entry.locator);
+    const stat = optionalFingerprint(absolutePath);
+    if (!stat) continue;
+    const captured = stableFileHash({
+      absolutePath,
+      maxBytes: entry.byteLength,
+      expectedOwner: input.expectedOwner,
+      allowedModes: [entry.mode === "0555" ? 0o555 : 0o444],
+      allowedLinks: [1],
+      errorCode: "NODE_TOOLCHAIN_PROVISIONING_V2_ROLLBACK_CONFLICT",
+    });
+    if (
+      captured.fingerprint.byteLength !== entry.byteLength
+      || captured.contentHash !== entry.contentHash
+    ) {
+      return fail(
+        "NODE_TOOLCHAIN_PROVISIONING_V2_ROLLBACK_CONFLICT",
+        "Rollback file changed before exact removal",
+      );
+    }
+    unlinkStableFile(
+      absolutePath,
+      captured.fingerprint,
+      "NODE_TOOLCHAIN_PROVISIONING_V2_ROLLBACK_CONFLICT",
+    );
+    removedCount += 1;
+    await input.hooks?.afterRemovedEntry?.({ locator: entry.locator, removedCount });
+  }
+  const childDirectories = input.claim.treeEntries
+    .filter((entry) => entry.type === "directory" && entry.locator !== ".")
+    .sort((left, right) => right.locator.split("/").length - left.locator.split("/").length);
+  for (const entry of childDirectories) {
+    const absolutePath = absoluteEntryPath(input.root, entry.locator);
+    const stat = optionalFingerprint(absolutePath);
+    if (!stat) continue;
+    if (
+      stat.ownerUid !== input.expectedOwner.uid
+      || stat.ownerGid !== input.expectedOwner.gid
+      || modeBits(stat) !== 0o700
+    ) {
+      return fail(
+        "NODE_TOOLCHAIN_PROVISIONING_V2_ROLLBACK_CONFLICT",
+        "Rollback directory changed before exact removal",
+      );
+    }
+    rmdirSync(absolutePath);
+    removedCount += 1;
+    await input.hooks?.afterRemovedEntry?.({ locator: entry.locator, removedCount });
+  }
+  const root = optionalFingerprint(input.root);
+  if (root) {
+    if (
+      root.device !== input.claim.generation.rootDevice
+      || root.inode !== input.claim.generation.rootInode
+      || root.ownerUid !== input.expectedOwner.uid
+      || root.ownerGid !== input.expectedOwner.gid
+      || modeBits(root) !== 0o700
+    ) {
+      return fail(
+        "NODE_TOOLCHAIN_PROVISIONING_V2_ROLLBACK_CONFLICT",
+        "Rollback root changed before exact removal",
+      );
+    }
+    rmdirSync(input.root);
+    removedCount += 1;
+    await input.hooks?.afterRemovedEntry?.({ locator: ".", removedCount });
+  }
+}
+
+async function rollback(input: Readonly<{
+  admissionScope: AdmissionScopeV2;
+  architecture: "arm64" | "x64";
+  parent: string;
+  expectedOwner: ExpectedOwnerV2;
+  plan: unknown;
+  hooks?: NodeToolchainRollbackTestHooksV2;
+}>): Promise<NodeToolchainRollbackResultV2> {
+  const plan = parseRollbackPlan(input.plan, input);
+  const target = getCodeOwnedNodeToolchainTargetV2(input.architecture);
+  const paths = publicationPaths({ parent: input.parent, target, intentHash: plan.generation.intentHash });
+  const rollbackPathsV2 = rollbackPaths(paths, target, plan);
+  await ensureLockAndStaging(paths, input.expectedOwner);
+  const lease = await acquireKernelLease(paths, input.expectedOwner);
+  try {
+    lease.assertCurrent();
+    const rollbackClaimExistsAtStart = optionalFingerprint(rollbackPathsV2.rollbackClaim) !== undefined;
+    if (optionalFingerprint(rollbackPathsV2.rollbackReceipt)) {
+      const observed = readRollbackReceipt({
+        rollback: rollbackPathsV2,
+        expectedOwner: input.expectedOwner,
+        plan,
+      });
+      const reconciledReceipt = publishCanonicalNoReplace({
+        target: rollbackPathsV2.rollbackReceipt,
+        stage: rollbackPathsV2.rollbackReceiptStage,
+        value: observed,
+        schema: NodeToolchainProvisionerRollbackReceiptV2Schema,
+        mode: 0o444,
+        expectedOwner: input.expectedOwner,
+        maxBytes: ROLLBACK_CANONICAL_FILE_MAX_BYTES_V2,
+        errorCode: "NODE_TOOLCHAIN_PROVISIONING_V2_ROLLBACK_CONFLICT",
+      });
+      const existing = readRollbackReceipt({
+        rollback: rollbackPathsV2,
+        expectedOwner: input.expectedOwner,
+        plan,
+        expected: observed,
+      });
+      if (!sameFingerprint(
+        reconciledReceipt.fingerprint,
+        fingerprint(lstatSync(rollbackPathsV2.rollbackReceipt)),
+      )) {
+        return fail(
+          "NODE_TOOLCHAIN_PROVISIONING_V2_ROLLBACK_CONFLICT",
+          "Rollback tombstone changed during crash-tail reconciliation",
+        );
+      }
+      if (
+        optionalFingerprint(paths.root)
+        || optionalFingerprint(paths.receipt)
+        || optionalFingerprint(paths.claim)
+        || optionalFingerprint(rollbackPathsV2.rollbackStage)
+      ) {
+        return fail(
+          "NODE_TOOLCHAIN_PROVISIONING_V2_ROLLBACK_CONFLICT",
+          "Completed rollback tombstone coexists with live generation state",
+        );
+      }
+      if (rollbackClaimExistsAtStart) {
+        const existingClaim = readRollbackClaim({
+          rollback: rollbackPathsV2,
+          expectedOwner: input.expectedOwner,
+          planHash: plan.planHash,
+        });
+        if (existing.claim.claimHash !== existingClaim.value.claimHash) {
+          return fail(
+            "NODE_TOOLCHAIN_PROVISIONING_V2_ROLLBACK_CONFLICT",
+            "Rollback tombstone and retained claim identify different operations",
+          );
+        }
+        unlinkStableFile(
+          rollbackPathsV2.rollbackClaim,
+          existingClaim.fingerprint,
+          "NODE_TOOLCHAIN_PROVISIONING_V2_ROLLBACK_CONFLICT",
+        );
+        syncDirectory(paths.parent);
+        await input.hooks?.afterRollbackClaimRemove?.();
+      }
+      assertRollbackStagingCensus({
+        paths,
+        rollback: rollbackPathsV2,
+        expectedOwner: input.expectedOwner,
+        allowCurrentPlanArtifacts: false,
+      });
+      return Object.freeze({
+        rollbackReceipt: deepFreezeJson(structuredClone(existing)),
+        disposition: rollbackClaimExistsAtStart ? "recovered" : "already_complete",
+      });
+    }
+
+    let claim: NodeToolchainProvisionerRollbackClaimV2;
+    let claimFingerprint: FingerprintV2;
+    if (rollbackClaimExistsAtStart) {
+      const existing = readRollbackClaim({
+        rollback: rollbackPathsV2,
+        expectedOwner: input.expectedOwner,
+        planHash: plan.planHash,
+      });
+      claim = existing.value;
+      const reconciled = publishCanonicalNoReplace({
+        target: rollbackPathsV2.rollbackClaim,
+        stage: rollbackPathsV2.rollbackClaimStage,
+        value: claim,
+        schema: NodeToolchainProvisionerRollbackClaimV2Schema,
+        mode: 0o600,
+        expectedOwner: input.expectedOwner,
+        maxBytes: ROLLBACK_CANONICAL_FILE_MAX_BYTES_V2,
+        errorCode: "NODE_TOOLCHAIN_PROVISIONING_V2_ROLLBACK_CONFLICT",
+      });
+      claimFingerprint = reconciled.fingerprint;
+    } else {
+      if (optionalFingerprint(paths.claim)) {
+        return fail(
+          "NODE_TOOLCHAIN_PROVISIONING_V2_ROLLBACK_CONFLICT",
+          "Rollback cannot start while a provisioning claim exists",
+        );
+      }
+      assertRollbackStagingCensus({
+        paths,
+        rollback: rollbackPathsV2,
+        expectedOwner: input.expectedOwner,
+        allowCurrentPlanArtifacts: false,
+      });
+      const receipt = readExistingReceipt(
+        paths,
+        input.expectedOwner,
+        plan.inspection.canonical.receipt.status === "valid"
+          ? plan.inspection.canonical.receipt.receipt.intent
+          : fail(
+              "NODE_TOOLCHAIN_PROVISIONING_V2_ROLLBACK_CONFLICT",
+              "Rollback plan lost its ready provisioning receipt",
+            ),
+      );
+      if (receipt.value.receiptHash !== plan.generation.receiptHash) {
+        return fail(
+          "NODE_TOOLCHAIN_PROVISIONING_V2_ROLLBACK_CONFLICT",
+          "Ready provisioning receipt changed after rollback planning",
+        );
+      }
+      const discovered = discoverReadyTree({
+        paths,
+        expectedOwner: input.expectedOwner,
+        receipt: receipt.value,
+      });
+      claim = buildRollbackClaim({ plan, receipt: receipt.value, entries: discovered.entries });
+      const published = publishCanonicalNoReplace({
+        target: rollbackPathsV2.rollbackClaim,
+        stage: rollbackPathsV2.rollbackClaimStage,
+        value: claim,
+        schema: NodeToolchainProvisionerRollbackClaimV2Schema,
+        mode: 0o600,
+        expectedOwner: input.expectedOwner,
+        maxBytes: ROLLBACK_CANONICAL_FILE_MAX_BYTES_V2,
+        errorCode: "NODE_TOOLCHAIN_PROVISIONING_V2_ROLLBACK_CONFLICT",
+        ...(input.hooks?.afterRollbackClaimLink
+          ? { afterLink: input.hooks.afterRollbackClaimLink }
+          : {}),
+      });
+      claimFingerprint = published.fingerprint;
+      await input.hooks?.afterRollbackClaim?.();
+    }
+    lease.assertCurrent();
+    assertRollbackStagingCensus({
+      paths,
+      rollback: rollbackPathsV2,
+      expectedOwner: input.expectedOwner,
+      allowCurrentPlanArtifacts: true,
+    });
+
+    if (!optionalFingerprint(rollbackPathsV2.rollbackStage)) {
+      createOwnedDirectory({
+        absolutePath: rollbackPathsV2.rollbackStage,
+        mode: 0o700,
+        expectedOwner: input.expectedOwner,
+        errorCode: "NODE_TOOLCHAIN_PROVISIONING_V2_ROLLBACK_CONFLICT",
+      });
+      syncDirectory(paths.staging);
+      await input.hooks?.afterQuarantineCreate?.();
+    }
+    assertDirectory({
+      absolutePath: rollbackPathsV2.rollbackStage,
+      expectedOwner: input.expectedOwner,
+      allowedModes: [0o700],
+      errorCode: "NODE_TOOLCHAIN_PROVISIONING_V2_ROLLBACK_CONFLICT",
+    });
+
+    const rootExists = optionalFingerprint(paths.root) !== undefined;
+    const quarantineExists = optionalFingerprint(rollbackPathsV2.quarantineRoot) !== undefined;
+    if (rootExists && quarantineExists) {
+      return fail(
+        "NODE_TOOLCHAIN_PROVISIONING_V2_ROLLBACK_CONFLICT",
+        "Rollback cannot choose between live and quarantined roots",
+      );
+    }
+    if (rootExists) {
+      assertCompleteRollbackTree({
+        root: paths.root,
+        claim,
+        expectedOwner: input.expectedOwner,
+      });
+      if (readdirSync(rollbackPathsV2.rollbackStage).length !== 0) {
+        return fail(
+          "NODE_TOOLCHAIN_PROVISIONING_V2_ROLLBACK_CONFLICT",
+          "Rollback quarantine destination is not empty before root rename",
+        );
+      }
+      const liveRoot = fingerprint(lstatSync(paths.root));
+      if (modeBits(liveRoot) !== 0o700) {
+        chmodSync(paths.root, 0o700);
+        syncDirectory(paths.root);
+        syncDirectory(paths.parent);
+        await input.hooks?.afterRootWritable?.();
+      }
+      renameSync(paths.root, rollbackPathsV2.quarantineRoot);
+      syncDirectory(paths.parent);
+      syncDirectory(rollbackPathsV2.rollbackStage);
+      await input.hooks?.afterRootRename?.();
+    }
+    validatePartialRollbackTree({
+      root: rollbackPathsV2.quarantineRoot,
+      claim,
+      expectedOwner: input.expectedOwner,
+    });
+    if (
+      !optionalFingerprint(rollbackPathsV2.quarantineRoot)
+      && optionalFingerprint(paths.receipt)
+    ) {
+      return fail(
+        "NODE_TOOLCHAIN_PROVISIONING_V2_ROLLBACK_CONFLICT",
+        "Rollback lost both roots before removing the live receipt",
+      );
+    }
+
+    const provisioningReceiptFingerprint = optionalFingerprint(paths.receipt);
+    if (provisioningReceiptFingerprint) {
+      const current = readCanonicalFile({
+        absolutePath: paths.receipt,
+        schema: NodeToolchainProvisioningReceiptV2Schema,
+        expectedOwner: input.expectedOwner,
+        allowedMode: 0o444,
+        errorCode: "NODE_TOOLCHAIN_PROVISIONING_V2_ROLLBACK_CONFLICT",
+      });
+      try {
+        if (current.value.receiptHash !== claim.generation.receiptHash) {
+          return fail(
+            "NODE_TOOLCHAIN_PROVISIONING_V2_ROLLBACK_CONFLICT",
+            "Rollback provisioning receipt differs from its exact claim",
+          );
+        }
+        unlinkStableFile(
+          paths.receipt,
+          current.fingerprint,
+          "NODE_TOOLCHAIN_PROVISIONING_V2_ROLLBACK_CONFLICT",
+        );
+      } finally {
+        current.bytes.fill(0);
+      }
+      syncDirectory(paths.parent);
+      await input.hooks?.afterProvisioningReceiptRemove?.();
+    }
+
+    await removePartialRollbackTree({
+      root: rollbackPathsV2.quarantineRoot,
+      claim,
+      expectedOwner: input.expectedOwner,
+      ...(input.hooks ? { hooks: input.hooks } : {}),
+    });
+    if (optionalFingerprint(rollbackPathsV2.rollbackStage)) {
+      rmdirSync(rollbackPathsV2.rollbackStage);
+      syncDirectory(paths.staging);
+    }
+    lease.assertCurrent();
+    const rollbackReceipt = buildRollbackReceipt({
+      plan,
+      claim,
+      rollback: rollbackPathsV2,
+      expectedOwner: input.expectedOwner,
+    });
+    const publishedReceipt = publishCanonicalNoReplace({
+      target: rollbackPathsV2.rollbackReceipt,
+      stage: rollbackPathsV2.rollbackReceiptStage,
+      value: rollbackReceipt,
+      schema: NodeToolchainProvisionerRollbackReceiptV2Schema,
+      mode: 0o444,
+      expectedOwner: input.expectedOwner,
+      maxBytes: ROLLBACK_CANONICAL_FILE_MAX_BYTES_V2,
+      errorCode: "NODE_TOOLCHAIN_PROVISIONING_V2_ROLLBACK_CONFLICT",
+      ...(input.hooks?.afterRollbackReceiptLink
+        ? { afterLink: input.hooks.afterRollbackReceiptLink }
+        : {}),
+    });
+    await input.hooks?.afterRollbackReceiptPublish?.();
+    unlinkStableFile(
+      rollbackPathsV2.rollbackClaim,
+      claimFingerprint,
+      "NODE_TOOLCHAIN_PROVISIONING_V2_ROLLBACK_CONFLICT",
+    );
+    syncDirectory(paths.parent);
+    await input.hooks?.afterRollbackClaimRemove?.();
+    assertRollbackStagingCensus({
+      paths,
+      rollback: rollbackPathsV2,
+      expectedOwner: input.expectedOwner,
+      allowCurrentPlanArtifacts: false,
+    });
+    if (
+      optionalFingerprint(paths.root)
+      || optionalFingerprint(paths.receipt)
+      || optionalFingerprint(paths.claim)
+      || optionalFingerprint(rollbackPathsV2.rollbackClaim)
+      || optionalFingerprint(rollbackPathsV2.rollbackStage)
+    ) {
+      return fail(
+        "NODE_TOOLCHAIN_PROVISIONING_V2_ROLLBACK_FAILED",
+        "Rollback completion retained live generation state",
+      );
+    }
+    const durable = readRollbackReceipt({
+      rollback: rollbackPathsV2,
+      expectedOwner: input.expectedOwner,
+      plan,
+      expected: rollbackReceipt,
+    });
+    if (!sameFingerprint(publishedReceipt.fingerprint, fingerprint(lstatSync(rollbackPathsV2.rollbackReceipt)))) {
+      return fail(
+        "NODE_TOOLCHAIN_PROVISIONING_V2_ROLLBACK_FAILED",
+        "Rollback tombstone changed before operation completion",
+      );
+    }
+    return Object.freeze({
+      rollbackReceipt: deepFreezeJson(structuredClone(durable)),
+      disposition: rollbackClaimExistsAtStart ? "recovered" : "rolled_back",
+    });
+  } catch (error) {
+    if (error instanceof NodeToolchainProvisioningErrorV2) throw error;
+    return fail(
+      "NODE_TOOLCHAIN_PROVISIONING_V2_ROLLBACK_FAILED",
+      "Rollback state machine failed before exact completion",
+      error,
+    );
+  } finally {
+    await lease.release();
+  }
+}
+
+/** Production rollback is root-only and accepts no caller-selected target path or architecture. */
+export async function rollbackProductionProvisionedNodeToolchainV2(
+  plan: unknown,
+): Promise<NodeToolchainRollbackResultV2> {
+  if (typeof process.geteuid !== "function" || process.geteuid() !== 0) {
+    return fail(
+      "NODE_TOOLCHAIN_PROVISIONING_V2_ROOT_PRIVILEGE_REQUIRED",
+      "Production Node toolchain rollback requires effective UID 0",
+    );
+  }
+  if (process.arch !== "arm64" && process.arch !== "x64") {
+    return fail(
+      "NODE_TOOLCHAIN_PROVISIONING_V2_PLATFORM_UNSUPPORTED",
+      "Production Node toolchain rollback supports arm64 or x64 only",
+    );
+  }
+  const expectedOwner = inspectProductionParent();
+  return rollback({
+    admissionScope: "production_root",
+    architecture: process.arch,
+    parent: NODE_TOOLCHAIN_ROOT_PARENT_V2,
+    expectedOwner,
+    plan,
+  });
+}
+
+/** Test-only rollback; its explicit process-owned parent can never authorize production state. */
+export async function rollbackProvisionedNodeToolchainV2ForTest(input: Readonly<{
+  parent: string;
+  plan: unknown;
+  hooks?: NodeToolchainRollbackTestHooksV2;
+}>): Promise<NodeToolchainRollbackResultV2> {
+  const parent = testParent(input.parent);
+  const parsed = NodeToolchainProvisionerPlanV2Schema.safeParse(input.plan);
+  if (!parsed.success || parsed.data.operation !== "rollback") {
+    return fail(
+      "NODE_TOOLCHAIN_PROVISIONING_V2_ROLLBACK_CONFLICT",
+      "Test rollback requires one strict rollback plan",
+      parsed.success ? undefined : parsed.error,
+    );
+  }
+  return rollback({
+    admissionScope: "test_fixture",
+    architecture: parsed.data.architecture,
+    parent: parent.parent,
+    expectedOwner: parent.expectedOwner,
+    plan: parsed.data,
+    ...(input.hooks ? { hooks: input.hooks } : {}),
+  });
 }

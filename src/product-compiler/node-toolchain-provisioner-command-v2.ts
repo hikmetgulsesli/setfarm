@@ -24,6 +24,10 @@ import {
   provisionNodeToolchainV2,
   provisionNodeToolchainV2ForTest,
   revalidateProvisionedNodeToolchainV2,
+  rollbackProductionProvisionedNodeToolchainV2,
+  rollbackProvisionedNodeToolchainV2ForTest,
+  type NodeToolchainRollbackResultV2,
+  type NodeToolchainRollbackTestHooksV2,
 } from "./node-toolchain-provisioning-v2.js";
 import {
   NODE_TOOLCHAIN_PROVISIONING_LOCK_BASENAME_V2,
@@ -43,6 +47,7 @@ import {
   NodeToolchainProvisionerInspectionV2Schema,
   NodeToolchainProvisionerOperationReceiptV2Schema,
   NodeToolchainProvisionerPlanV2Schema,
+  NodeToolchainProvisionerRollbackClaimV2Schema,
   hashNodeToolchainProvisionerInspectionV2,
   hashNodeToolchainProvisionerOperationReceiptV2,
   hashNodeToolchainProvisionerPlanV2,
@@ -54,6 +59,7 @@ import {
   type NodeToolchainProvisionerOperationReceiptV2,
   type NodeToolchainProvisionerPlanHashPayloadV2,
   type NodeToolchainProvisionerPlanV2,
+  type NodeToolchainProvisionerRollbackClaimV2,
 } from "./schemas/node-toolchain-provisioner-command-v2.js";
 import {
   NODE_TOOLCHAIN_PROVISIONING_AUTHORITY_REF_V2,
@@ -69,7 +75,7 @@ import {
   type NodeToolchainProvisioningReceiptV2,
 } from "./schemas/node-toolchain-provisioning-v2.js";
 
-const CANONICAL_FILE_MAX_BYTES_V2 = 1024 * 1024;
+const CANONICAL_FILE_MAX_BYTES_V2 = 16 * 1024 * 1024;
 const LOCK_FILE_BYTES_V2 = Buffer.from("setfarm.node-toolchain-provisioning-lock.v2\n", "utf8");
 
 type AdmissionScopeV2 = "production_root" | "test_fixture";
@@ -81,6 +87,7 @@ type PathsV2 = Readonly<{
   root: string;
   receipt: string;
   claim: string;
+  rollbackClaim: string;
   lock: string;
   staging: string;
 }>;
@@ -105,6 +112,7 @@ export type NodeToolchainProvisionerCommandErrorCodeV2 =
   | "NODE_TOOLCHAIN_PROVISIONER_V2_PRECONDITION_CHANGED"
   | "NODE_TOOLCHAIN_PROVISIONER_V2_APPLY_FAILED"
   | "NODE_TOOLCHAIN_PROVISIONER_V2_VERIFY_FAILED"
+  | "NODE_TOOLCHAIN_PROVISIONER_V2_ROLLBACK_FAILED"
   | "NODE_TOOLCHAIN_PROVISIONER_V2_SCHEMA_INVALID";
 
 export class NodeToolchainProvisionerCommandErrorV2 extends Error {
@@ -337,6 +345,7 @@ function pathsFor(parent: string, target: NodeToolchainTargetV2): PathsV2 {
     root: path.join(parent, target.rootBasename),
     receipt: path.join(parent, target.receiptBasename),
     claim: path.join(parent, target.claimBasename),
+    rollbackClaim: path.join(parent, target.rollbackClaimBasename),
     lock: path.join(parent, NODE_TOOLCHAIN_PROVISIONING_LOCK_BASENAME_V2),
     staging: path.join(parent, NODE_TOOLCHAIN_PROVISIONING_STAGING_BASENAME_V2),
   });
@@ -347,6 +356,7 @@ function readCanonicalState<T>(input: Readonly<{
   entry: NodeToolchainProvisionerFilesystemEntryV2;
   expectedOwner: ExpectedOwnerV2;
   expectedMode: "0444" | "0600";
+  allowedLinks?: readonly number[];
   schema: { safeParse(value: unknown): { success: true; data: T } | { success: false } };
 }>):
   | Readonly<{ status: "absent" }>
@@ -363,7 +373,7 @@ function readCanonicalState<T>(input: Readonly<{
     input.entry.ownerUid !== input.expectedOwner.uid
     || input.entry.ownerGid !== input.expectedOwner.gid
     || input.entry.mode !== input.expectedMode
-    || input.entry.linkCount !== 1
+    || !(input.allowedLinks ?? [1]).includes(input.entry.linkCount)
   ) {
     return Object.freeze({ status: "invalid", reason: "identity_invalid" });
   }
@@ -443,6 +453,10 @@ function inspectStaging(input: Readonly<{
     | Readonly<{ status: "absent" }>
     | Readonly<{ status: "valid"; value: NodeToolchainProvisioningClaimV2 }>
     | Readonly<{ status: "invalid"; reason: string }>;
+  rollbackClaim:
+    | Readonly<{ status: "absent" }>
+    | Readonly<{ status: "valid"; value: NodeToolchainProvisionerRollbackClaimV2 }>
+    | Readonly<{ status: "invalid"; reason: string }>;
 }>): Readonly<{
   status: "absent" | "empty" | "exact_interrupted" | "foreign_or_invalid";
   memberCount: number;
@@ -486,19 +500,33 @@ function inspectStaging(input: Readonly<{
   if (names.length === 0) {
     return Object.freeze({ status: "empty", memberCount: 0, memberNamesHash });
   }
-  if (input.claim.status !== "valid") {
+  if (input.claim.status !== "valid" && input.rollbackClaim.status !== "valid") {
     return Object.freeze({
       status: "foreign_or_invalid",
       memberCount: names.length,
       memberNamesHash,
     });
   }
-  const intentHash = input.claim.value.intent.intentHash;
-  const allowed = new Set([
-    `${intentHash}.tree`,
-    `${intentHash}.claim.tmp`,
-    `${intentHash}.receipt.tmp`,
-  ]);
+  let allowed: ReadonlySet<string>;
+  if (input.claim.status === "valid") {
+    allowed = new Set([
+      `${input.claim.value.intent.intentHash}.tree`,
+      `${input.claim.value.intent.intentHash}.claim.tmp`,
+      `${input.claim.value.intent.intentHash}.receipt.tmp`,
+    ]);
+  } else if (input.rollbackClaim.status === "valid") {
+    allowed = new Set([
+      `${input.rollbackClaim.value.plan.planHash}.rollback`,
+      `${input.rollbackClaim.value.plan.planHash}.rollback-claim.tmp`,
+      `${input.rollbackClaim.value.plan.planHash}.rollback-receipt.tmp`,
+    ]);
+  } else {
+    return Object.freeze({
+      status: "foreign_or_invalid",
+      memberCount: names.length,
+      memberNamesHash,
+    });
+  }
   return Object.freeze({
     status: names.every((name) => allowed.has(name)) ? "exact_interrupted" : "foreign_or_invalid",
     memberCount: names.length,
@@ -537,6 +565,10 @@ function targetLocatorProjection(paths: PathsV2, target: NodeToolchainTargetV2) 
     rootLocatorHash: hashNodeToolchainOperationalLocatorV2("root", paths.root),
     receiptLocatorHash: hashNodeToolchainOperationalLocatorV2("receipt", paths.receipt),
     claimLocatorHash: hashNodeToolchainOperationalLocatorV2("claim", paths.claim),
+    rollbackClaimLocatorHash: hashNodeToolchainOperationalLocatorV2(
+      "rollback_claim",
+      paths.rollbackClaim,
+    ),
     lockLocatorHash: hashNodeToolchainOperationalLocatorV2("lock", paths.lock),
     stagingLocatorHash: hashNodeToolchainOperationalLocatorV2("staging", paths.staging),
   });
@@ -567,6 +599,9 @@ async function inspect(input: Readonly<{
   const rootEntry = parentEntry.state === "absent" ? absentEntry() : inspectEntry(paths.root);
   const receiptEntry = parentEntry.state === "absent" ? absentEntry() : inspectEntry(paths.receipt);
   const claimEntry = parentEntry.state === "absent" ? absentEntry() : inspectEntry(paths.claim);
+  const rollbackClaimEntry = parentEntry.state === "absent"
+    ? absentEntry()
+    : inspectEntry(paths.rollbackClaim);
   const lockEntry = parentEntry.state === "absent" ? absentEntry() : inspectEntry(paths.lock);
   const stagingEntry = parentEntry.state === "absent" ? absentEntry() : inspectEntry(paths.staging);
 
@@ -575,6 +610,7 @@ async function inspect(input: Readonly<{
     entry: receiptEntry,
     expectedOwner: input.expectedOwner,
     expectedMode: "0444",
+    allowedLinks: [1, 2],
     schema: NodeToolchainProvisioningReceiptV2Schema,
   });
   const claimRead = readCanonicalState({
@@ -582,13 +618,23 @@ async function inspect(input: Readonly<{
     entry: claimEntry,
     expectedOwner: input.expectedOwner,
     expectedMode: "0600",
+    allowedLinks: [1, 2],
     schema: NodeToolchainProvisioningClaimV2Schema,
+  });
+  const rollbackClaimRead = readCanonicalState({
+    absolutePath: paths.rollbackClaim,
+    entry: rollbackClaimEntry,
+    expectedOwner: input.expectedOwner,
+    expectedMode: "0600",
+    allowedLinks: [1, 2],
+    schema: NodeToolchainProvisionerRollbackClaimV2Schema,
   });
   const staging = inspectStaging({
     paths,
     entry: stagingEntry,
     expectedOwner: input.expectedOwner,
     claim: claimRead,
+    rollbackClaim: rollbackClaimRead,
   });
   const lockValid = lockEntry.state === "absent" || (
     expectedEntryIdentity(lockEntry, {
@@ -611,6 +657,7 @@ async function inspect(input: Readonly<{
   if (!rootTypeValid) conflicts.add("ROOT_TYPE_INVALID");
   if (receiptRead.status === "invalid") conflicts.add("RECEIPT_INVALID");
   if (claimRead.status === "invalid") conflicts.add("CLAIM_INVALID");
+  if (rollbackClaimRead.status === "invalid") conflicts.add("ROLLBACK_CLAIM_INVALID");
   if (!lockValid) conflicts.add("LOCK_INVALID");
   if (staging.status === "foreign_or_invalid") {
     conflicts.add(stagingEntry.state === "present" && stagingEntry.type === "directory"
@@ -635,7 +682,35 @@ async function inspect(input: Readonly<{
     && receiptRead.value.intent.target.rootLocatorHash === targetProjection.rootLocatorHash
     && receiptRead.value.intent.target.receiptLocatorHash === targetProjection.receiptLocatorHash
   );
-  if (!claimTargetsInspection || !receiptTargetsInspection) {
+  const receiptClaimCrashTailMatches = receiptRead.status !== "valid"
+    || claimRead.status !== "valid"
+    || (
+      receiptRead.value.publisher.claimHash === claimRead.value.claimHash
+      && receiptRead.value.intent.intentHash === claimRead.value.intent.intentHash
+      && rootEntry.state === "present"
+      && rootEntry.type === "directory"
+      && rootEntry.device === receiptRead.value.finalRoot.device
+      && rootEntry.inode === receiptRead.value.finalRoot.inode
+      && rootEntry.mode === receiptRead.value.finalRoot.mode
+      && rootEntry.ownerUid === receiptRead.value.finalRoot.ownerUid
+      && rootEntry.ownerGid === receiptRead.value.finalRoot.ownerGid
+    );
+  const rollbackClaimTargetsInspection = rollbackClaimRead.status !== "valid" || (
+    rollbackClaimRead.value.plan.admissionScope === input.admissionScope
+    && rollbackClaimRead.value.plan.architecture === input.architecture
+    && rollbackClaimRead.value.plan.inspection.target.targetRef === target.targetRef
+    && rollbackClaimRead.value.plan.inspection.target.parentLocatorHash
+      === targetProjection.parentLocatorHash
+    && rollbackClaimRead.value.plan.inspection.target.rootLocatorHash === targetProjection.rootLocatorHash
+    && rollbackClaimRead.value.plan.inspection.target.receiptLocatorHash
+      === targetProjection.receiptLocatorHash
+  );
+  if (
+    !claimTargetsInspection
+    || !receiptTargetsInspection
+    || !receiptClaimCrashTailMatches
+    || !rollbackClaimTargetsInspection
+  ) {
     conflicts.add("INTERRUPTED_STATE_MISMATCH");
   }
 
@@ -650,6 +725,7 @@ async function inspect(input: Readonly<{
     && rootAbsent
     && receiptAbsent
     && claimAbsent
+    && rollbackClaimRead.status === "absent"
     && stagingClean
   ) {
     classification = "target_absent";
@@ -659,6 +735,7 @@ async function inspect(input: Readonly<{
     && rootEntry.state === "present"
     && rootEntry.type === "directory"
     && claimAbsent
+    && rollbackClaimRead.status === "absent"
     && stagingClean
   ) {
     try {
@@ -679,16 +756,21 @@ async function inspect(input: Readonly<{
     }
   } else if (
     conflicts.size === 0
-    && receiptAbsent
     && claimRead.status === "valid"
+    && (receiptAbsent || receiptRead.status === "valid")
+    && rollbackClaimRead.status === "absent"
     && (stagingClean || staging.status === "exact_interrupted")
   ) {
     classification = "interrupted_claimed";
+  } else if (
+    conflicts.size === 0
+    && claimAbsent
+    && rollbackClaimRead.status === "valid"
+    && (stagingClean || staging.status === "exact_interrupted")
+  ) {
+    classification = "rollback_interrupted";
   } else {
     if (receiptRead.status === "valid" && rootAbsent) conflicts.add("RECEIPT_WITHOUT_ROOT");
-    if (receiptRead.status === "valid" && claimRead.status === "valid") {
-      conflicts.add("READY_RECEIPT_WITH_CLAIM");
-    }
     if (!rootAbsent && receiptAbsent && claimRead.status !== "valid") {
       conflicts.add("ROOT_WITHOUT_EXACT_CLAIM");
     }
@@ -707,6 +789,7 @@ async function inspect(input: Readonly<{
       root: rootEntry,
       receipt: receiptEntry,
       claim: claimEntry,
+      rollbackClaim: rollbackClaimEntry,
       lock: lockEntry,
       staging: stagingEntry,
     },
@@ -717,6 +800,14 @@ async function inspect(input: Readonly<{
       claim: claimRead.status === "valid"
         ? { status: "valid", claim: claimRead.value }
         : claimRead,
+      rollbackClaim: rollbackClaimRead.status === "valid"
+        ? {
+            status: "valid",
+            claimHash: rollbackClaimRead.value.claimHash,
+            planHash: rollbackClaimRead.value.plan.planHash,
+            generationReceiptHash: rollbackClaimRead.value.generation.receiptHash,
+          }
+        : rollbackClaimRead,
       lock: { status: lockEntry.state === "absent" ? "absent" : lockValid ? "valid" : "invalid" },
       staging,
     },
@@ -1265,5 +1356,148 @@ export async function verifyNodeToolchainProvisionerV2ForTest(input: Readonly<{
     architecture: input.architecture,
     inspectFresh: () => inspectNodeToolchainProvisionerV2ForTest(input),
     openReady: () => openProvisionedNodeToolchainV2ForTest(input),
+  });
+}
+
+function parseRollbackCommandPlan(input: unknown): Extract<NodeToolchainProvisionerPlanV2, {
+  operation: "rollback";
+}> {
+  let parsed: ReturnType<typeof NodeToolchainProvisionerPlanV2Schema.safeParse>;
+  try {
+    parsed = NodeToolchainProvisionerPlanV2Schema.safeParse(input);
+  } catch (error) {
+    return fail(
+      "NODE_TOOLCHAIN_PROVISIONER_V2_PLAN_INVALID",
+      "Rollback requires one bounded strict provisioner plan",
+      error,
+    );
+  }
+  if (!parsed.success || parsed.data.operation !== "rollback") {
+    return fail(
+      "NODE_TOOLCHAIN_PROVISIONER_V2_PLAN_INVALID",
+      "Rollback requires one strict rollback plan",
+      parsed.success ? undefined : parsed.error,
+    );
+  }
+  return deepFreezeJson(parsed.data);
+}
+
+async function rollbackPlan(input: Readonly<{
+  plan: unknown;
+  admissionScope: AdmissionScopeV2;
+  architecture: NodeToolchainTargetArchitectureV2;
+  inspectFresh: () => Promise<InspectedNodeToolchainProvisionerStateV2>;
+  rollback: () => Promise<NodeToolchainRollbackResultV2>;
+}>): Promise<NodeToolchainProvisionerOperationReceiptV2> {
+  const plan = parseRollbackCommandPlan(input.plan);
+  if (plan.admissionScope !== input.admissionScope || plan.architecture !== input.architecture) {
+    return fail(
+      "NODE_TOOLCHAIN_PROVISIONER_V2_PLAN_INVALID",
+      "Rollback plan cannot cross its production/test scope or target architecture",
+    );
+  }
+  const beforeHandle = await input.inspectFresh();
+  const before = authenticInspectionState(beforeHandle).inspection;
+  const retryMatches = before.classification === "rollback_interrupted"
+    && before.canonical.rollbackClaim.status === "valid"
+    && before.canonical.rollbackClaim.planHash === plan.planHash
+    && before.canonical.rollbackClaim.generationReceiptHash === plan.generation.receiptHash;
+  if (
+    !(before.classification === "ready_verified" && before.inspectionHash === plan.inspection.inspectionHash)
+    && !retryMatches
+    && before.classification !== "target_absent"
+  ) {
+    return fail(
+      "NODE_TOOLCHAIN_PROVISIONER_V2_PRECONDITION_CHANGED",
+      "Rollback target no longer equals its plan or exact interrupted claim",
+    );
+  }
+  let result: NodeToolchainRollbackResultV2;
+  try {
+    result = await input.rollback();
+  } catch (error) {
+    return fail(
+      "NODE_TOOLCHAIN_PROVISIONER_V2_ROLLBACK_FAILED",
+      "Rollback did not converge through its exact claim and tombstone authority",
+      error,
+    );
+  }
+  if (
+    result.rollbackReceipt.planHash !== plan.planHash
+    || result.rollbackReceipt.removedGeneration.receiptHash !== plan.generation.receiptHash
+  ) {
+    return fail(
+      "NODE_TOOLCHAIN_PROVISIONER_V2_ROLLBACK_FAILED",
+      "Rollback core returned evidence outside its exact plan generation",
+    );
+  }
+  const afterHandle = await input.inspectFresh();
+  const after = authenticInspectionState(afterHandle).inspection;
+  if (after.classification !== "target_absent") {
+    return fail(
+      "NODE_TOOLCHAIN_PROVISIONER_V2_ROLLBACK_FAILED",
+      "Rollback completion did not reproduce an absent current target",
+    );
+  }
+  const operationResult = result.disposition === "rolled_back"
+    ? "rolled_back_exact_generation" as const
+    : result.disposition === "recovered"
+      ? "recovered_exact_rollback" as const
+      : "verified_existing_rollback" as const;
+  return buildOperationReceipt({
+    schema: NODE_TOOLCHAIN_PROVISIONER_OPERATION_RECEIPT_V2_SCHEMA,
+    operationVersion: NODE_TOOLCHAIN_PROVISIONER_COMMAND_VERSION_V2,
+    authorityRef: NODE_TOOLCHAIN_PROVISIONER_COMMAND_AUTHORITY_REF_V2,
+    operation: "rollback",
+    admissionScope: input.admissionScope,
+    architecture: input.architecture,
+    plan,
+    beforeInspectionHash: before.inspectionHash,
+    executionInspection: before,
+    afterInspection: after,
+    result: operationResult,
+    generation: plan.generation,
+    durableRollback: result.rollbackReceipt,
+  });
+}
+
+export async function rollbackProductionNodeToolchainProvisionerPlanV2(
+  plan: unknown,
+): Promise<NodeToolchainProvisionerOperationReceiptV2> {
+  assertProductionSystemBoundary();
+  return rollbackPlan({
+    plan,
+    admissionScope: "production_root",
+    architecture: process.arch as NodeToolchainTargetArchitectureV2,
+    inspectFresh: inspectProductionNodeToolchainProvisionerV2,
+    rollback: () => rollbackProductionProvisionedNodeToolchainV2(plan),
+  });
+}
+
+export async function rollbackNodeToolchainProvisionerPlanV2ForTest(input: Readonly<{
+  parent: string;
+  plan: unknown;
+  hooks?: NodeToolchainRollbackTestHooksV2;
+}>): Promise<NodeToolchainProvisionerOperationReceiptV2> {
+  const plan = parseRollbackCommandPlan(input?.plan);
+  if (plan.admissionScope !== "test_fixture") {
+    return fail(
+      "NODE_TOOLCHAIN_PROVISIONER_V2_PLAN_INVALID",
+      "Test rollback requires one permanently test-scoped plan",
+    );
+  }
+  return rollbackPlan({
+    plan,
+    admissionScope: "test_fixture",
+    architecture: plan.architecture,
+    inspectFresh: () => inspectNodeToolchainProvisionerV2ForTest({
+      parent: input.parent,
+      architecture: plan.architecture,
+    }),
+    rollback: () => rollbackProvisionedNodeToolchainV2ForTest({
+      parent: input.parent,
+      plan,
+      ...(input.hooks ? { hooks: input.hooks } : {}),
+    }),
   });
 }
