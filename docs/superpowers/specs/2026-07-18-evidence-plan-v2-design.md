@@ -1,16 +1,16 @@
 # Evidence Plan V2 Design
 
 Date: 2026-07-18
-Status: Approved for shadow implementation
+Status: Superseded registry boundary approved for shadow implementation
 Scope: Release-bound evidence adapter authority and compiler-owned typed evidence graph
 
 ## Context
 
-The historical branch-only `ImplementationSliceV2` closes PacketV3, story,
-product, design, build, current source, dependency, and typed browser-input
-authority. It does not yet carry the superseding semantic-source declarations
-or a projectable SourceMapV2 proof, and it does not make the current evidence
-path safe.
+The canonical string-version `ImplementationSliceV2` now closes PacketV4 and
+one freshly verified SourceMapV2 story proof as a compact manifest. The
+historical numeric-version PacketV3 slice remains explicit legacy read/replay
+only. The canonical slice does not by itself make the current evidence path
+safe.
 `EvidencePlanV1` accepts only SliceV1 and lowers
 semantics to generic interactions. The V1 runner can therefore associate a
 predicate with the first command of the same kind, cannot prove several
@@ -27,7 +27,8 @@ Use one superseding evidence chain for new writes:
 
 ```text
 fresh-verified ImplementationSliceV2
-  + release-bound EvidenceAdapterRegistryV1
+  + VerifiedPlatformReleaseV2
+  + verified-release-derived, activation-bound EvidenceAdapterRegistryV2
     -> EvidencePlanV2                     # before implementation
     -> implementation
     -> CandidateSourceReceiptV1           # after implementation
@@ -128,124 +129,33 @@ fresh-verification plumbing but must return the typed blocker
 `EVIDENCE_PLAN_V2_SOURCE_MAP_V2_REQUIRED`. It must never fall back to
 SourceMapV1, inferred filenames, selectors, regexes, or prose.
 
-## EvidenceAdapterRegistryV1
+## EvidenceAdapterRegistryV2
 
-The registry is an immutable release artifact, not runtime discovery. It binds
-adapter selection to the Setfarm code release, platform byte bundle, resolved
-external dependencies, and environment capsule.
+RegistryV1 is historical read/replay only. Its caller-supplied producer,
+release hashes, adapter descriptors, runner refs and toolchain hashes cannot be
+inputs to PlanV2 and are never projected into V2.
 
-```ts
-type EvidenceAdapterRegistryV1 = {
-  schema: "setfarm.evidence-adapter-registry.v1";
-  registryVersion: 1;
-  producer: SemanticArtifactProducerV1;
-  releaseAuthority: {
-    codeSha: GitCodeSha;
-    platformBundleHash: Sha256;
-    externalResolutionHash: Sha256;
-    environmentCapsuleHash: Sha256;
-  };
-  adapters: EvidenceAdapterDescriptorV1[];
-  registryPayloadHash: Sha256;
-};
-
-type EvidenceAdapterDescriptorV1 = {
-  adapterRef: StableReference;
-  adapterVersion: string;
-  owner: "setfarm-orchestrator";
-  supportSignatures: EvidenceAdapterSupportSignatureV1[];
-  receiptSchema: "setfarm.evidence-receipt.v2";
-  runtimeDependencyRefs: StableReference[];
-  toolchainHash: Sha256;
-  runnerEntrypointRef: StableReference;
-  adapterEntryHash: Sha256;
-};
-
-type EvidenceAdapterSupportSignatureV1 = {
-  schema: "setfarm.evidence-adapter-support-signature.v1";
-  stackPackBinding: {
-    stackPackId: LowercaseStackPackId;
-    stackPackVersion: string;
-    stackPackContentHash: Sha256;
-  };
-  deliveryBinding:
-    | { kind: "unprofiled" }
-    | {
-        kind: "profile";
-        profileId: UppercaseProfileId;
-        catalogVersion: string;
-        catalogHash: Sha256;
-      };
-  invocationKind:
-    | "command"
-    | "browser_dom"
-    | "cli_process"
-    | "http_service"
-    | "state_probe"
-    | "persistence_lifecycle"
-    | "visual"
-    | "download";
-  predicateKind: EvidencePredicateKindV1;
-  evidenceCapabilityRefs: CapabilityId[];
-  inputTransportSchemaRefs: string[];
-  checkKind: EvidenceCheckKindReferenceV1;
-  lifecycleMode:
-    | "none"
-    | "reload"
-    | "process_restart"
-    | "durable_readback"
-    | "flow_isolation"
-    | "download_completion";
-  supportSignatureHash: Sha256;
-};
-```
-
-Registry invariants:
-
-- `releaseAuthority.codeSha` equals `producer.codeSha`.
-- `registryPayloadHash` binds the exact strict payload without that field. The
-  compiler separately returns `registryArtifactHash`, the SHA-256 identity of
-  the full SemanticArtifactEnvelopeV1 bytes used by CAS/index/DB authority.
-- Adapter refs are unique and canonically UTF-16 sorted. One release registry
-  contains at most one active version for an adapter ref.
-- Each support signature is one exact tuple. Independent support arrays are
-  forbidden because their Cartesian product would authorize undeclared
-  predicate/check/capability/lifecycle combinations.
-- Support-signature hashes and adapter-entry hashes are domain-separated.
-  Signatures are canonical by hash; one signature has exactly one adapter owner
-  across the whole registry.
-- One logical `(stackPackId, version)` or `(profileId, catalogVersion)` cannot
-  carry conflicting hashes. Stack/profile identities and enabled capabilities
-  must reproduce from canonical release catalogs.
-- Input transports, check kinds, runner entrypoints, and runtime dependency
-  refs come from exact code-owned enums; syntactically plausible unknown refs
-  are rejected.
-- The exported runner ABI binds each runner entrypoint to one invocation kind
-  and an exact runtime-dependency profile. The exported exhaustive
-  predicate-to-check mapping is the sole mapping PlanV2 may use.
-- Compiler and verifier inputs are bounded canonical snapshots before Zod;
-  proxies, accessors, cycles, sparse containers, excessive depth/work/bytes,
-  and publication-incompatible Unicode become typed rejection results.
-- The full envelope must pass artifact-store batch preparation, including the
-  four-MiB CAS limit and DB producer identity rules. Returned payload/envelope
-  snapshots are recursively immutable.
-- Registry validation performs no filesystem scan, network discovery,
-  environment probing, or fallback.
+RegistryV2 is derived only from an authentic `VerifiedPlatformReleaseV2`
+handle as specified by
+`2026-07-18-platform-release-adapter-authority-v2-design.md`. The verified
+release fresh-enumerates the immutable release tree and joins exact launcher,
+runner, profile, invocation transport, receipt ABI, external runtime and sealed
+environment bytes. The registry compiler accepts no caller-authored support
+field. Its verifier derives the registry again from the same brand and requires
+canonical envelope equality.
 
 An EvidencePlan node has one exact requirement signature formed from its stack
 pack, discriminated delivery binding, invocation kind, predicate kind, exact
 capability set, exact input transport set, check kind, and lifecycle mode. An
-adapter matches only when the complete canonical tuple equals one declared
-signature. Cardinality zero is `EVIDENCE_PLAN_V2_ADAPTER_MISSING`. Duplicate
-ownership is rejected while compiling or verifying RegistryV1, before PlanV2
-selection; ordering never breaks a tie. A defensive internal `>1` assertion may
-remain, but it is not a reachable public state under fresh registry authority.
+adapter matches only when the complete canonical tuple equals one runnable
+release-derived support signature. Cardinality zero is
+`EVIDENCE_PLAN_V2_ADAPTER_MISSING`; duplicate support ownership is an invalid
+RegistryV2 release artifact and ordering never breaks a tie.
 
-The shadow compiler currently reproduces stack/profile catalogs and publication
-compatibility. Production admission remains blocked until
-`platformBundleHash`, `externalResolutionHash`, `environmentCapsuleHash`,
-toolchain hashes, runner entrypoints, and runtime dependency refs are derived
-from typed verified release manifests rather than supplied as compiler input.
+RegistryV2 remains unavailable while the code-owned operational adapter catalog
+is empty or the release is only a requirements catalog. A schema-valid manifest,
+RegistryV1 envelope, caller code SHA, runtime filesystem scan or process-local
+module import cannot remove this blocker.
 
 ## EvidencePlanV2
 
@@ -318,21 +228,23 @@ a serialized `{ verified: true }` marker.
 ```ts
 compileEvidencePlanV2(input: {
   sliceVerificationInput: ImplementationSliceVerificationInputV2;
-  adapterRegistryVerificationInput: EvidenceAdapterRegistryVerificationInputV1;
+  verifiedRelease: VerifiedPlatformReleaseV2;
+  candidateRegistryEnvelope: unknown;
 }): EvidencePlanCompilationResultV2;
 
 verifyEvidencePlanV2(input: {
   sliceVerificationInput: ImplementationSliceVerificationInputV2;
-  adapterRegistryVerificationInput: EvidenceAdapterRegistryVerificationInputV1;
+  verifiedRelease: VerifiedPlatformReleaseV2;
+  candidateRegistryEnvelope: unknown;
   candidatePlan: unknown;
 }): EvidencePlanVerificationResultV2;
 ```
 
 Both APIs call `verifyImplementationSliceV2` and
-`verifyEvidenceAdapterRegistryV1` themselves. Registry verification fresh
-reproduces the candidate envelope from the release compiler input supplied by
-verified release admission; a self-consistent envelope/hash is not sufficient
-authority. The compiler then verifies exact release/stack/profile authority,
+`verifyEvidenceAdapterRegistryV2` themselves. Registry verification fresh
+reproduces the candidate envelope from the authentic verified-release brand; a
+self-consistent envelope/hash is not sufficient authority. The compiler then
+verifies exact release/stack/profile authority,
 verifies the SourceMapV2 story proof, derives
 coverage and graph, checks adapter cardinality, validates DAG/cardinality, and
 emits a semantic artifact envelope. The verifier performs a fresh compile and
@@ -405,29 +317,31 @@ it does not rewrite them as V1.
 ## Module Order
 
 1. Add this design and correct the audit temporal wording.
-2. Implement strict `EvidenceAdapterRegistryV1` schema, hash/reproduction
-   validator, envelope helper, and adversarial tests. Keep it unreferenced by
-   production runtime.
+2. Retain strict `EvidenceAdapterRegistryV1` only for historical read/replay;
+   do not extend or project it.
 3. Implement semantic source rules, intents, declarations, StoryPlanV3,
    SourceMapV2 planned slot authority, and projectable story proof.
 4. Replace the branch-only ProductBuildPacketV3 and ImplementationSliceV2
    V1-source-map fields with PacketV4 and one exact SourceMapV2 story proof
-   before their first live write, then implement
-   EvidencePlanV2 schema/compiler/verifier with no V1 fallback.
-5. Implement CandidateSourceReceiptV1 and versioned source-slot parsers.
-6. Implement CandidateEvidenceContractV2, EvidenceReceiptV2, adapters, DAG
+   before their first live write.
+5. Complete the private candidate build/runtime authority, real launcher and
+   runner exports, sealed environment enforcement, PlatformReleaseManifestV2
+   builder/fresh verifier and release-derived EvidenceAdapterRegistryV2.
+6. Implement EvidencePlanV2 schema/compiler/verifier with no V1 fallback.
+7. Implement CandidateSourceReceiptV1 and versioned source-slot parsers.
+8. Implement CandidateEvidenceContractV2, EvidenceReceiptV2, adapters, DAG
    runner, BundleV3, and AcceptedCandidateV2.
-7. Add HandoffV2/ContextV2 and atomically wire PacketV4 through evidence
+9. Add HandoffV2/ContextV2 and atomically wire PacketV4 through evidence
    planning before any model dispatch.
-8. Add immutable DB contract rows, typed retry/recovery ownership, Mission
+10. Add immutable DB contract rows, typed retry/recovery ownership, Mission
    Control projection, cutover drain, and three-class clean-run evaluation.
 
 ## Test Matrix
 
-Registry unit tests cover strict parsing, deterministic hash, canonical
-ordering, duplicate refs/bindings, producer/release drift, tamper, unknown
-fields, invalid capability/input/check/lifecycle values, and exact envelope
-reproduction.
+RegistryV2 tests cover derivation from one authentic verified release, strict
+parsing, deterministic hash, canonical ordering, duplicate support ownership,
+release/module/environment drift, tamper, hostile input and exact envelope
+reproduction. RegistryV1 and fabricated handles must be rejected.
 
 Plan compiler tests cover fresh SliceV2 verification, SourceMapV2 prerequisite,
 exact semantic set equality, deterministic graph/hash, missing adapter and
@@ -444,8 +358,9 @@ operations/data, and browser-game runs without new project-specific guards.
 
 ## Cutover Decision
 
-Shadow registry/schema work is GO. Production evidence and implement dispatch
-remain NO-GO until SourceMapV2, PlanV2, CandidateSourceReceiptV1,
+Shadow release/registry/plan work is GO in dependency order. Production evidence
+and implement dispatch remain NO-GO until SourceMapV2, PlatformReleaseManifestV2,
+RegistryV2, PlanV2, CandidateSourceReceiptV1,
 CandidateEvidenceContractV2, HandoffV2/ContextV2, immutable DB provenance, and
 typed runtime receipts are implemented and reproduced. Missing adapter or
 missing source authority is a blocker, never an excuse to run V1 silently.

@@ -20,7 +20,7 @@ clean main source tree
   -> terminal PlatformReleaseManifestV2
   -> immutable release directory
   -> fresh verifier and in-memory authority brand
-  -> activation-derived EvidenceAdapterRegistryV2
+  -> verified-release-derived EvidenceAdapterRegistryV2
   -> atomic CAS publication and append-only activation request/acknowledgement
 ```
 
@@ -760,6 +760,31 @@ no `verify`, `issue`, `materialize`, `activate`, branded handle or runnable
 function. A self-consistent caller candidate is data until the later
 filesystem/toolchain verifier reproduces it. This prevents an early DTO from
 becoming production authority merely because its hash is internally consistent.
+
+### Superseding build/test receipt identity correction
+
+`CandidateBuildReceiptV2` is the only canonical candidate build receipt for
+the V2 chain. ProductBuildPacketV4 already names
+`setfarm.candidate-build-receipt.v2`; BuildTopologyV3 must name the same strict
+schema and must not mint a parallel `setfarm.node-product-build-receipt.v3`
+literal with no schema, compiler or verifier. The private candidate builder
+freshly verifies PacketV4, BuildTopologyV3, materialized sources, the direct
+compiler target and source-before/source-after fences before it may brand the
+receipt and output-tree authority.
+
+`EvidenceReceiptV2` is the only canonical operational test/evidence receipt.
+BuildTopologyV3 may plan its exact direct generated-test command, but it must
+name `setfarm.evidence-receipt.v2` rather than an unimplemented parallel
+`setfarm.node-product-test-execution-receipt.v3`. The future command runner
+binds the generated-test operation and CandidateBuildReceiptV2 into one typed
+EvidenceReceiptV2; it cannot turn an exit code or log line into acceptance.
+
+This correction advances the shadow BuildTopology payload from `3.0.0` to
+`3.1.0` before any live write. Downstream StoryPlanV3, SourceMapV2, PacketV4 and
+SliceV2 identities must be reproduced from that version-forward contract. No
+dual parser, alias artifact, V3-to-V2 receipt projection or runtime fallback is
+allowed. Historical Git bytes remain readable; there are no durable V3
+build/test receipt artifacts to migrate.
 
 ## EvidenceReceiptV2
 
