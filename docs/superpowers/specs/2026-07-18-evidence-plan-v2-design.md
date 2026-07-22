@@ -6,7 +6,7 @@ Scope: Release-bound evidence adapter authority and compiler-owned typed evidenc
 
 ## Context
 
-The current branch-only `ImplementationSliceV2` closes PacketV3, story,
+The historical branch-only `ImplementationSliceV2` closes PacketV3, story,
 product, design, build, current source, dependency, and typed browser-input
 authority. It does not yet carry the superseding semantic-source declarations
 or a projectable SourceMapV2 proof, and it does not make the current evidence
@@ -106,10 +106,13 @@ ImplementationSliceV2 wire contract, including one projectable
 `ImplementationSourceMapStoryProofV2`. SourceMapV2 must provide planned
 semantic source slots for design and no-design products, including entrypoint,
 action, state, persistence, predicate, and platform registration ownership.
-The proof must reproduce from ProductBuildPacketV3, StoryPlanV3,
-BuildTopologyV2, SemanticSourceDeclarationsV1, and the code-owned semantic-rule
-catalog. The current V1-witness SliceV2 shape is replaced before its first live
-write; a separately attached proof or dual wire shape is not authority.
+The proof must reproduce from ProductBuildPacketV4's forward-bound SourceMapV2
+root, StoryPlanV3, BuildTopologyV3, exact generated source receipts, optional
+future SemanticSourceDeclarationsV1, and the code-owned semantic-rule catalog.
+The current V1-witness SliceV2 shape is retained only under explicit legacy
+modules. The canonical compact SliceV2 binds one proof/leaf CAS identity and
+returns its freshly verified body as a compiler attachment; an unverified
+separately attached proof or a generic dual-wire parser is not authority.
 
 The current `ImplementationStorySourceMapV1` is not sufficient:
 
@@ -383,10 +386,12 @@ Compatibility is discriminated, not projected:
 
 ```text
 historical read/replay only:
-  SliceV1 + PlanV1 + BundleV2 + AcceptedCandidateV1
+  SliceV1 + numeric-version PacketV3 SliceV2 + PlanV1
+  + BundleV2 + AcceptedCandidateV1
 
 new-write branch after cutover:
-  PacketV3 + SliceV2 + PlanV2 + CandidateSourceReceiptV1
+  PacketV4 + SourceMapV2 story proof + string-version SliceV2
+  + PlanV2 + CandidateSourceReceiptV1
   + CandidateEvidenceContractV2 + ReceiptV2 + BundleV3
   + AcceptedCandidateV2
 ```
@@ -406,12 +411,13 @@ it does not rewrite them as V1.
 3. Implement semantic source rules, intents, declarations, StoryPlanV3,
    SourceMapV2 planned slot authority, and projectable story proof.
 4. Replace the branch-only ProductBuildPacketV3 and ImplementationSliceV2
-   V1-source-map fields before their first live write, then implement
+   V1-source-map fields with PacketV4 and one exact SourceMapV2 story proof
+   before their first live write, then implement
    EvidencePlanV2 schema/compiler/verifier with no V1 fallback.
 5. Implement CandidateSourceReceiptV1 and versioned source-slot parsers.
 6. Implement CandidateEvidenceContractV2, EvidenceReceiptV2, adapters, DAG
    runner, BundleV3, and AcceptedCandidateV2.
-7. Add HandoffV2/ContextV2 and atomically wire PacketV3 through evidence
+7. Add HandoffV2/ContextV2 and atomically wire PacketV4 through evidence
    planning before any model dispatch.
 8. Add immutable DB contract rows, typed retry/recovery ownership, Mission
    Control projection, cutover drain, and three-class clean-run evaluation.
@@ -429,7 +435,7 @@ duplicate registry ownership, exact stack/profile/runner resolution, input trans
 orphan nodes/checks, candidate tamper, and rejection of future source/runtime
 fields.
 
-Integration tests cover PacketV3 -> PreparationAuthorityV2 -> SliceV2 ->
+Integration tests cover PacketV4 -> SourceMapV2 proof -> SliceV2 ->
 PlanV2 -> HandoffV2 -> ContextV2 atomicity, final source receipt resolution,
 typed evidence receipts, unchanged-source retry suppression, and recovery
 ownership. Concurrency tests prove one immutable plan/contract branch per
