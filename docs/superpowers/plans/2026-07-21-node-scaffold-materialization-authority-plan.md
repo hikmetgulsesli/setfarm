@@ -3,11 +3,12 @@
 Date: 2026-07-21
 
 Status: F1, F2A, the F2B publisher/command/bootstrap lifecycle, F3 effective
-npm authority, the complete F4 private scaffold/dependency materializer, F5A
-FileTreeManifestV2, F5B dependency-ready BuildTopologyV2 and F5C Node
-semantic-rule generator transition are complete on the feature branch.
-Production-root activation remains NO-GO; semantic source declarations, the
-entrypoint generator/source receipt and SourceMap sealing are next.
+npm authority, the complete F4 private scaffold/dependency materializer, and
+the F5A-F5C compatibility experiments are complete on the feature branch. F5D
+SemanticRealizationPlanV2 is the corrected target-architecture boundary. The
+V2 FileTree/BuildTopology/entrypoint-only transition must not be promoted.
+Production-root activation remains NO-GO; realization-driven FileTreeV3 and
+BuildTopologyV3 are next.
 
 ## Goal
 
@@ -22,10 +23,11 @@ code-owned scaffold catalog
   -> isolated effective npm configuration
   -> private no-replace scaffold stage
   -> exact dependency-tree receipt
-  -> FileTreeManifestV2 / BuildTopologyV2
-  -> NodeSemanticRuleGeneratorTransitionV2
-  -> SemanticSourceDeclarationsV1
-  -> NodeEntrypointSourceReceiptV2
+  -> SemanticSourceIntentSetV1 (obligations only)
+  -> SemanticRealizationPlanV2
+  -> FileTreeManifestV3 / BuildTopologyV3
+  -> NodeProductRuntimeGeneratorV2
+  -> NodeProductRuntimeSourceReceiptV2
 ```
 
 No stage may infer success from command prose, PATH lookup alone, a caller-
@@ -600,6 +602,18 @@ checks pass. No live DB, PR, service, generated repository, Setfarm run or real
 
 ## F5 — Join to FileTreeV2 and BuildTopologyV2
 
+**Architecture correction (2026-07-22):** F5A-F5C remain useful, immutable
+shadow evidence about the legacy V1 target model, private materialization and
+stable logical identity. They are not the production topology. FileTreeV2
+materialized V1's target decision before asking whether each semantic obligation
+should be model-written, generated, platform-bound, or exempt. In particular,
+it turned product-level aggregation of per-story `runtime_data_fixture` intents
+into one setup-owned file with multiple model write grants even though the
+upstream V1 rule still declared `exclusive_file`. Adding declarations after that
+join would preserve the contradiction in a more elaborate artifact. F5D moves
+the realization decision ahead of physical topology; FileTreeV3 must consume
+that new authority and cannot reinterpret FileTreeV2 as native input.
+
 F4's scaffold-base receipt becomes an input to FileTreeManifestV2; it is not a
 substitute for that artifact. FileTreeV2 adds exact source/test/generated path
 ownership and `.npmrc` absence. BuildTopologyV2 then binds build outputs and
@@ -764,6 +778,11 @@ sources the generated entrypoint imports. The generator then emits deterministic
 whole-file bytes plus `NodeEntrypointSourceReceiptV2`; it cannot infer imports
 from filenames or prose.
 
+This was the locally coherent F5C ordering before the whole intent inventory was
+reclassified. F5D supersedes it: current Node behavior has no justified
+model-owned handler/adapter/state module to declare or import. Do not implement
+this paragraph as the target path.
+
 Focused proof covers CLI, one-route API and two-route API. Their stable
 transition hashes are
 `dd9383168e399304d444e47d79363c47f710d9162a87caff034c1a75fbd8a5c1`,
@@ -775,6 +794,76 @@ keeps the same transition hash despite a different operational topology.
 Materializer integration is 17/17; full Product Compiler is 1014/1014 across
 124 suites; TypeScript, English (1,092 files), path contract (617 files), tracked
 and untracked diff checks pass.
+
+### F5D — SemanticRealizationPlanV2
+
+**Status (2026-07-22): complete as a shadow, production-forbidden planning
+authority.** Commits `a89bc494` and `1d514c3b` add
+`setfarm.semantic-realization-plan.v2`, a code-owned Node realization policy and
+`setfarm.node-product-runtime-generator-contract.v2`. Their final hashes are:
+
+- realization-plan contract:
+  `118e8cf9a2f0811b55782e693384d778948e462d589f0d4b1762d6538543b765`;
+- realization policy:
+  `9dc1212f1c7fd1a6801dfbd9d3a2823b68292f76cdb9d8c7501fa8ac5beb120e`;
+- runtime generator contract:
+  `2f36ccaf6ccc5d88d89c770ea01daf139afc18b3736c4b282f9e01fea005b41f`.
+
+The compiler treats `SemanticSourceIntentSetV1` as an obligation inventory, not
+an implementation decision. It fresh-reproduces that set and assigns every
+intent exactly once to one of four target classes: a generated runtime member,
+an exact platform contract binding, a typed exemption, or an evidence relation.
+The historical V1 target is retained only as hashed compatibility evidence. No
+current Node CLI/API semantic obligation receives a model write grant. Action
+reducers, input/output codecs, route/runtime/entrypoint registration, state,
+runtime data, observables and non-rendered surfaces are all members of one
+code-owned whole-file generator. Opaque behavior is rejected unless a future
+versioned ProductSpec behavior contract explicitly authorizes it.
+
+The policy pins the exact delivery profile hash, stack-pack version/content hash
+and V1 rule-set hash for both supported Node profiles. A same-ID upstream body
+change therefore fails closed instead of silently inheriting policy. CLI keeps
+its process-module ABI with no named export. API exposes exactly
+`setfarmHttpHandlerV2`, forbids candidate `listen()`, and leaves server/listener/
+socket ownership to the platform. The plan includes no normalized locator,
+private root, mutable path, source byte, or operational-attempt identity.
+
+Every-and-only coverage is exact for three independent shapes:
+
+- CLI: 17 intents = 10 generator + 4 platform + 1 exemption + 2 evidence;
+- one-route API: 19 = 11 + 5 + 1 + 2;
+- two-route API: 32 = 20 + 6 + 2 + 4.
+
+Their final plan hashes are respectively
+`b037f9afa6adaab57ba0ea130b8c3f358e75e6c5533f10cc985e804774a9f704`,
+`a90ef146452bc0ac85329ab288ad21d640dc812c0c2010674806a9bb064bd05f`
+and `1c0cc2e03de91a39afb0b4ba8931a47bb173e91e5e32efb9f5b070b669102ffe`.
+The two-route runtime-data obligations remain two separately traceable generator
+members rather than two stories receiving permission to edit one aggregate
+file. Memory persistence resolves explicitly to the generated state-runtime
+member.
+
+Schema-local hashes are not treated as authority. A test removes one evidence
+relation, adjusts every count, recomputes membership and plan hashes, proves the
+forgery is structurally schema-valid, and then proves the fresh verifier rejects
+it. A changed policy member is rejected structurally. Strict extra fields,
+stale ProductSpec/selection authority, proxies, accessors, cycles, sparse arrays
+and oversized inputs all fail closed without executing caller traps. The final
+focused suite is 11/11; TypeScript, English (1,095 files), path contract (619
+files) and diff checks pass. Full Product Compiler is 1025/1025 across 126
+suites. No live run, DB, PR, service, generated repository or real Setfarm
+application-support tree was mutated.
+
+The artifact has seven exact blockers: realization-driven FileTreeV3,
+BuildTopologyV3, the runtime generator, generated test authority, evidence
+registry join, source receipt and release manifest. `SemanticSourceDeclarationsV1`
+is no longer the next Node step: it assumed model-owned handler/adapter/state
+modules and would reproduce the V1 ownership error. For current Node profiles,
+the realization plan is the pre-source declaration and
+`NodeProductRuntimeSourceReceiptV2` will provide post-generation every-member
+source evidence. A future genuinely opaque/model-authored behavior may enter a
+declaration path only through an explicit versioned ProductSpec behavior
+contract; absence of that contract is rejection, not permission to improvise.
 
 ## Verification and release gate
 
@@ -792,19 +881,14 @@ F2-F4 additionally require focused real-filesystem, process, PostgreSQL and
 concurrency tests. A clean merged-`main` `npm run build` and full `npm test`
 remain release evidence; the feature-branch build guard is never bypassed.
 
-GO for F1, the complete isolated F2 authority through official-runtime packaged
-bootstrap rehearsal, the isolated F3 environment/config authority, the
-complete isolated F4 scaffold/dependency authority, F5A FileTreeManifestV2 and
-F5B dependency-ready BuildTopologyV2 and F5C Node rule-to-generator transition.
-NO-GO for production host execution, setup cutover, PacketV4, live migration,
-deploy and new clean product runs until semantic declarations, the generated
-entrypoint receipt, ExecutableSourceContractV2, SourceMap and the later
-packet/evidence program are complete. The next dependency-order slice is
-SemanticSourceDeclarationsV1; only after it closes exact versioned module/export
-ABI may NodeEntrypointGeneratorV2 generate the importing entrypoint. The
-feature-branch
-`npm run build` guard correctly
-refused `b4bc3bd9`; the resulting source-v26 versus committed-dist-v25 mismatch
-also prevents `dist`-importing full step tests from being release evidence on
-this branch. Only a clean merged-main build and full test can close that release
-gate; it must not be bypassed.
+GO for F1-F4 and F5D as isolated shadow authorities. F5A-F5C are GO only as
+compatibility evidence and are explicitly NO-GO as production topology. NO-GO
+for production host execution, setup cutover, PacketV4, live migration, deploy
+and new clean product runs until FileTreeV3, BuildTopologyV3, generated runtime
+and test receipts, evidence registry, release manifest, SourceMap and the later
+packet/eval program are complete. The next dependency-order slice is
+realization-driven FileTreeManifestV3, followed by BuildTopologyV3 and then
+NodeProductRuntimeGeneratorV2. The feature-branch `npm run build` guard was
+re-run after `a89bc494` and correctly refused branch
+`arch/product-semantics-v2-authority`; it was not bypassed. Only a clean
+merged-main build and full test can close that release gate.

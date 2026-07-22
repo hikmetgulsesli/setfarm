@@ -1,8 +1,8 @@
 # Semantic Source Authority Design
 
 Date: 2026-07-18
-Status: Approved for shadow implementation
-Scope: Release-bound semantic source rules, planned source intents, exact declarations, and projectable story proofs
+Status: Approved for shadow implementation; realization boundary corrected 2026-07-22
+Scope: Release-bound semantic obligations, explicit realization choices, source receipts, and projectable story proofs
 
 ## Context
 
@@ -31,25 +31,29 @@ Use one release-owned source-authority chain:
 StackSemanticSourceRulesCatalogV1
   + ProductDeliveryProfileV2
   + ProductSpecV2 partition
-    -> SemanticSourceIntentSetV1            # before physical setup
-    -> FileTreeManifestV2 / BuildTopologyV2 # materialized exact paths
-    -> SemanticSourceDeclarationsV1         # every-and-only closure
-    -> StoryPlanV3                           # semantic + source ownership
+    -> SemanticSourceIntentSetV1             # obligations, not targets
+    -> SemanticRealizationPlanV2             # every-only realization choice
+    -> FileTreeManifestV3 / BuildTopologyV3  # realization-driven topology
+    -> Generated or model-authored producer  # selected by realization
+    -> SemanticRealizationSourceReceiptV2    # every-only materialized proof
+    -> StoryPlanV3                            # semantic + source ownership
     -> ImplementationSourceMapV2 root/leaves
-    -> ImplementationSourceMapStoryProofV2  # least-privilege projection
+    -> ImplementationSourceMapStoryProofV2   # least-privilege projection
 ```
 
-The implement agent receives a verified story proof and exact writable
-declarations. It does not receive the global source map, caller-authored path
-maps, catalog rules, unrelated story leaves, or inferred filenames.
+An implement agent receives a verified story proof only for realizations whose
+versioned ProductSpec behavior contract explicitly selects model authorship.
+Generated realizations produce no model write grant. No agent receives the
+global source map, caller-authored path maps, catalog rules, unrelated story
+leaves, or inferred filenames.
 
 The current PacketV3 and SliceV2 shapes are branch-only and have not been
-persisted or activated in the live artifact store. Their V1 source-map fields
-are therefore replaced before the first production write, as one wire shape,
-rather than retained as a dual branch. Optional V2 fields are forbidden. The
-live cutover preflight must reproduce that the count of persisted/activated
-PacketV3 plus V1-source-map authority is still zero; any nonzero count forces a
-packet/report/slice version bump before proceeding.
+persisted or activated in the live artifact store. The realization-driven chain
+uses ProductBuildPacketV4 instead of reinterpreting PacketV3. Optional dual
+authority fields are forbidden. The live cutover preflight must reproduce that
+the count of persisted/activated PacketV3/V4 plus V1-source-map authority is
+still zero; any nonzero unexpected count stops cutover and requires an explicit
+migration decision.
 
 ## Considered Approaches
 
@@ -72,13 +76,14 @@ first matching entrypoint are mutable observations, not release authority.
 They are exactly the mechanisms that made new product classes create new guard
 classes.
 
-### Release rules -> compiler intents -> setup declarations
+### Release obligations -> realization plan -> materialization
 
-Selected. Rules define the complete source obligations for a stack/profile.
-The compiler derives intents only from sealed product authority. Setup
-materializes those intents, and a separate compiler reproduces every
-declaration from rules plus exact topology. No stage accepts a replacement
-mapping from the caller.
+Selected. Rules define the complete obligations for a stack/profile. The
+compiler derives intents only from sealed product authority, then a separately
+versioned policy chooses generated, platform, exempt, evidence-only, or
+explicitly model-authored realization before setup creates a path. Setup and
+source production consume that plan. No stage accepts a replacement mapping
+from the caller, and a legacy intent target is compatibility evidence only.
 
 ## Core Invariants
 
@@ -89,6 +94,11 @@ mapping from the caller.
   provide rule bodies, path templates, cardinality, or locator contracts.
 - Every required semantic responsibility produces exactly one intent unless a
   rule explicitly declares bounded aggregation or a typed exemption.
+- Every intent has exactly one realization. FileTree and BuildTopology consume
+  that realization; they never treat a legacy intent target as implementation
+  authority.
+- Model write authority is forbidden unless ProductSpec carries an explicit,
+  versioned opaque-behavior contract and the realization policy selects it.
 - Titles, descriptions, labels, entity names, route prose, story prose,
   `domain_slug`, `target_slug`, regexes, glob discovery, and arbitrary caller
   fragments never participate in path or slot identity.
@@ -96,9 +106,9 @@ mapping from the caller.
   current base presence/hash after physical materialization.
 - A generated immutable source may bind a known output hash only through its
   verified generation receipt.
-- Every writable or granted implementation path has at least one declaration.
-  Setup/config/asset/generated/dependency paths have an explicit non-writable
-  classification.
+- Every model-writable path, when such a realization is explicitly admitted,
+  has one declaration. Setup/config/asset/generated/dependency paths have an
+  explicit non-writable classification.
 - Multiple declarations may share one file only through a catalog-declared
   aggregation policy and unique structural locator slots.
 - SourceMapV2 roots and story proofs are freshly reproducible. A serialized
@@ -564,37 +574,43 @@ an unversioned audit is not production authority; deep tarball/CAS verification
 and transitive Node-engine compatibility each retain their own exact blocker
 code.
 
-The current Node V1 rules cannot be activated under this lifecycle: they call
-entrypoint/route/runtime registration a model-writable shared AST slot, while
-their parser contract has metadata but no implemented grammar or locator. Node
-rules must version forward. Model-owned stories produce exclusive handler,
-adapter, state, and test sources; a later code-owned
-`NodeEntrypointGeneratorV2` consumes every verified registration obligation and
-emits the entire canonical `src/cli.ts` or `src/app.ts` plus a
-`NodeEntrypointSourceReceiptV2`. That receipt binds the exact execution-layout
-token, semantic subjects, handler declarations, invocation transport, release
-generator identity, output bytes, and CLI/API ABI. Only then may the actual
-build produce `dist/cli.js` or `dist/app.js`. The old shared-entrypoint parser
-requirement remains a compatibility blocker rather than being implemented only
-to preserve an unsafe central-file mutation model.
+The current Node V1 rules cannot be activated under this lifecycle. They encode
+implementation choices inside an obligation artifact: entrypoint/route/runtime
+are model-writable shared AST slots, action/state/adapter/runtime-data are
+model-writable source files, and their parser/locator contracts do not provide
+the executable completeness needed to make those choices safe. The later V2
+path layer compounds this by aggregating multiple per-story runtime-data
+obligations into one physical path while the V1 rule still says
+`exclusive_file`. No declaration layer can repair that contradiction after
+physical topology has already granted writes.
 
-The version-forward boundary is now an explicit
-`NodeSemanticRuleGeneratorTransitionV2`, not an in-place V1 mutation. It
-fresh-binds every and only V1 entrypoint/route/runtime requirement to one
-generator-owned whole-file target while retaining the complete historical rule
-ABI as evidence. Its stable identity uses BuildTopology's logical build hash,
-but its verifier still requires the current operational topology. The artifact
-is shadow-only until declarations, generator implementation/release, activation
-and source receipt all exist.
+The corrected version-forward boundary is
+`SemanticRealizationPlanV2`. It fresh-reproduces all current Node semantic
+intents and treats their V1 targets only as compatibility evidence. Each intent
+is assigned exactly once to a generated runtime member, platform binding, typed
+exemption, or evidence relation. For the supported CLI/API ProductSpec V2
+language, action state deltas, invocation transports, output projections,
+runtime state/data and registration are declarative; therefore every former
+model-writable source obligation is generated and model writes are zero. If a
+future product needs opaque behavior, ProductSpec must version that behavior
+contract first. The model is never asked to invent missing semantics.
 
-`SemanticSourceDeclarationsV1` must precede actual entrypoint generation. It
-declares the exact versioned module/export ABI of model-owned handler, adapter,
-state and test sources and projects each transitioned registration obligation
-as generator input. `NodeEntrypointGeneratorV2` then consumes those verified
-declarations and the transition artifact; it may not discover imports from the
-filesystem, filename conventions or prose. This ordering removes the circular
-alternative in which declarations would require an entrypoint receipt that can
-only be produced after declarations identify its imports.
+`NodeSemanticRuleGeneratorTransitionV2`, FileTreeV2 and BuildTopologyV2 remain
+immutable compatibility experiments. They prove stable logical/operational
+identity separation and preserve legacy ABI evidence, but they are not promoted
+or consumed as the production topology. FileTreeV3 and BuildTopologyV3 must be
+compiled from the realization plan. `NodeProductRuntimeGeneratorV2` then emits
+one canonical `src/cli.ts` or `src/app.ts` and a
+`NodeProductRuntimeSourceReceiptV2` mapping every generated member back to its
+realization and ProductSpec authority. There are no model-owned handler imports
+to declare for the current profiles.
+
+`SemanticSourceDeclarationsV1` is consequently not a prerequisite for current
+Node generation. If retained for a future explicitly model-authored realization,
+it is downstream of realization-driven topology and covers only that admitted
+source. The realization plan is the pre-source declaration for generated Node
+behavior; the source receipt is its post-generation proof. Neither filenames,
+filesystem discovery nor prose can create a missing member.
 
 The first scaffold catalog remains shadow schema/compiler/verifier authority.
 Deep ByteBundle CAS reassembly and host Node/npm identity now have independently
@@ -877,8 +893,13 @@ is not falsely equated with physical file count. Only a code-owned catalog
 aggregate may share one exact origin/path across multiple intent bindings. The
 first such case is product-level runtime-data fixture aggregation; all exclusive
 subjects remain path-unique. The set publishes exact `uniquePathCount`, and
-FileTree later materializes the aggregate once while declarations assign unique
-structural slots to its contributing intents.
+FileTreeV2 historically materialized the aggregate once. That result is now
+compatibility evidence, not production authority: the V1 runtime-data rule says
+`exclusive_file` and supplies no shared structural locator capable of making
+multiple write grants safe. SemanticRealizationPlanV2 instead keeps every
+contributing runtime-data obligation separately traceable and realizes each as
+a member of one code-owned runtime generator. FileTreeV3 therefore grants no
+story a write to an aggregate runtime-data file.
 
 The path-identity contract is separate from a code-owned set compiler contract.
 The latter versions the token/external partition, supported semantic projection,
@@ -897,7 +918,7 @@ canonical equality. The artifact remains shadow and production-forbidden until
 FileTree, declarations, release activation, and all external path requirements
 are verified.
 
-## FileTreeManifestV2 And BuildTopologyV2
+## FileTreeManifestV2 And BuildTopologyV2 (Compatibility Evidence)
 
 Setup materializes only compiler intents and release-owned setup paths.
 `FileTreeManifestV2` records each intent-to-path resolution and its source:
@@ -907,15 +928,25 @@ It cannot accept legacy `scope_targets` as native authority.
 `BuildTopologyV2` preserves physical path, owner, grant, entrypoint, command,
 capability, current base and authenticated dependency authority. It is the
 pre-declaration planned-executable artifact and therefore does not contain
-future declaration refs. `SemanticSourceDeclarationsV1` consumes the exact
-topology and creates the declaration join; `ExecutableSourceContractV2` later
-binds both without mutating or reinterpreting either artifact. Shared writable
-paths require parser-owned unique locator slots. Paths without semantic
-declarations are explicitly classified as setup, config, test, asset,
-generated-readonly, dependency-readonly, raw build input, candidate target, or
-build output.
+future declaration refs. The historical design expected
+`SemanticSourceDeclarationsV1` to consume this topology and
+`ExecutableSourceContractV2` to join them. That path is superseded by the
+realization boundary below. Its local invariant remains useful evidence: shared
+writable paths would require parser-owned unique locator slots, and paths
+without semantic declarations are explicitly classified as setup, config,
+test, asset, generated-readonly, dependency-readonly, raw build input,
+candidate target, or build output.
 
-## NodeSemanticRuleGeneratorTransitionV2
+These V2 artifacts were compiled before the realization decision existed and
+must not be activated. `FileTreeManifestV3` fresh-verifies
+SemanticRealizationPlanV2 and materializes only its selected targets. For the
+current Node profiles this means scaffold/config paths plus one code-owned
+generated runtime source target and generated test targets, with zero semantic
+story write grants. `BuildTopologyV3` binds that V3 tree to the existing exact
+dependency, command and runtime ABI authorities. Neither V3 artifact may adapt,
+reinterpret, or copy V2 semantic writable paths.
+
+## NodeSemanticRuleGeneratorTransitionV2 (Compatibility Evidence)
 
 The transition compiler fresh-reproduces the V1 rule, intent and path-token
 authorities and fresh-verifies FileTreeV2 plus BuildTopologyV2. It emits exactly
@@ -940,44 +971,66 @@ cannot appear to be a new semantic delta. Five exact blockers remain:
 declarations, generator implementation, generator release manifest, rule
 activation and the generated source receipt.
 
-## SemanticSourceDeclarationsV1
+## SemanticRealizationPlanV2
 
-The declaration compiler fresh-reproduces intents and joins them to exact
-materialized topology. A declaration binds:
+`setfarm.semantic-realization-plan.v2` is the only native implementation-choice
+authority for the current Node profiles. Its producer fresh-recompiles
+ProductSpecV2, ProductDeliverySelectionV2 and SemanticSourceIntentSetV1; callers
+cannot provide intents, policies, paths or realizations. The code-owned policy
+pins exact delivery-profile, stack-pack version/content and V1 rule-set hashes.
+Same-name upstream drift therefore rejects until the policy is intentionally
+versioned.
 
-- intent/rule/subject/responsibility identity;
+Every semantic intent is realized exactly once as:
+
+- `node_product_runtime_generator_member`;
+- `platform_contract_binding`;
+- `typed_exemption`; or
+- `evidence_relation`.
+
+Legacy target kind/hash remains `compatibility_evidence_only`. Current Node
+action handlers, input/output codecs, state runtime, runtime-data seeds,
+observable projection, non-rendered surface and route/runtime/entrypoint
+registration all become members of one code-owned whole-file runtime generator.
+The plan has `modelWriteGrantCount: 0`. CLI and API ABI remain distinct and
+exact; generated output is forbidden from owning the API listener or calling
+`listen()`.
+
+The schema closes counts, uniqueness, canonical order, policy/member equality,
+membership hash and complete plan hash. The verifier still fresh-reproduces the
+entire artifact, because a locally self-rehashed omission can be structurally
+valid. Stable identity excludes private roots, mutable paths and attempt
+receipts. Production remains blocked on FileTreeV3, BuildTopologyV3, runtime and
+test generators, evidence registry, source receipt and release manifest.
+
+## SemanticSourceDeclarationsV1 (Future Model-Authored Realizations Only)
+
+This artifact is not part of current Node CLI/API generation. If ProductSpec is
+later versioned with an explicit opaque-behavior contract and realization policy
+selects model authorship, a declaration compiler may fresh-reproduce only those
+admitted realizations and join them to FileTreeV3. Such a declaration binds:
+
+- realization/intent/rule/subject/responsibility identity;
 - story, owner, path ref, normalized path, and access mode;
 - current base presence and current base content/absence hash;
-- exact structural locator and parser contract;
-- existing generated receipt identity when already authoritative, or an exact
-  generator-transition ref and planned receipt schema for a future entrypoint;
-- aggregation group and unique slot key when applicable; and
-- structural postcondition, without a future writable content hash.
+- exact structural locator and parser contract; and
+- structural postcondition without a future writable content hash.
 
-Every intent has exactly one declaration or its exact typed exemption. Every
-writable declaration resolves to one owned or write-granted path. Every
-writable/granted path is closed by declarations. Missing, extra, duplicate,
-ambiguous, overlapping structural slots, unowned paths, and undeclared writable
-paths are compile blockers.
-
-For the Node entrypoint, declarations do not claim writable source slots or
-future content bytes. They bind the transition refs and exact versioned exports
-that the generator will import, while the entrypoint source receipt remains
-absent and typed-blocked. `ExecutableSourceContractV2` later joins declarations
-to the generated receipt without rewriting either artifact.
-
-The pair `(pathRef, locatorCanonicalHash)` is globally unique. An exclusive-file
-locator cannot coexist with another writable declaration on that file. Shared
-files require catalog-bounded aggregation, exact write grants, unique slot keys,
-and parser-proven non-overlapping structural locators.
+Every admitted model-writable realization resolves to one owned or explicitly
+granted path, and every such path is declaration-closed. Missing, extra,
+duplicate, ambiguous, overlapping structural slots, unowned paths, and
+undeclared writable paths are compile blockers. Shared files require a
+versioned aggregation rule, exact grants, unique slot keys and parser-proven
+non-overlap. The V1 declaration design cannot be applied to V2 paths or used to
+manufacture model ownership absent the ProductSpec behavior contract.
 
 ## StoryPlanV3
 
-StoryPlanV3 is produced after declarations. Each story retains its V2 semantic
-sets and adds exact `sourceDeclarationRefs`, `sourceIntentRefs`, and declaration
-set hash. Dependency edges include semantic shared-slot ownership as well as
-physical shared grants. A story cannot consume a declaration owned by a later
-or unrelated story.
+StoryPlanV3 is produced after generated source receipts and any explicitly
+admitted model-authored declarations. Each story retains its V2 semantic sets
+and adds exact realization, intent, receipt and optional declaration refs.
+Dependency edges include source ownership as well as physical shared grants. A
+story cannot consume a realization owned by a later or unrelated story.
 
 V2 story plans remain historical. V3 is not obtained by adding declaration
 refs to an already sealed V2 object.
@@ -987,21 +1040,23 @@ refs to an already sealed V2 object.
 SourceMapV2 is a root artifact plus one artifact per story leaf.
 
 The root manifest binds exact ProductSpecV2, ProductDeliveryProfileV2,
-SemanticSourceIntentSetV1, BuildTopologyV2,
-SemanticSourceDeclarationsV1, StoryPlanV3, and verified design-source hashes.
+SemanticSourceIntentSetV1, SemanticRealizationPlanV2, BuildTopologyV3,
+realization source receipts, any admitted declarations, StoryPlanV3, and
+verified design-source hashes.
 It contains canonical leaf refs with `(index, storyId, storyHash,
 leafEnvelopeHash, byteLength)` and one Merkle commitment, not every leaf
-payload. The manifest does not bind its future packet hash; PacketV3 binds the
+payload. The manifest does not bind its future packet hash; PacketV4 binds the
 manifest envelope hash, root, leaf count, and story-ID-set hash in the forward
 direction so no identity cycle exists.
 
 Each story leaf contains every and only:
 
 - the story's semantic subject sets;
-- exact planned source declarations;
+- exact realization refs and source-receipt bindings;
+- optional declarations only for explicitly admitted model-authored behavior;
 - generated design source bindings;
 - entrypoint and command refs required by that story;
-- evidence-predicate-to-source-declaration bindings; and
+- evidence-predicate-to-realization evidence bindings; and
 - exact source coverage/cardinality hashes.
 
 Leaf, pair-node, and unary-node hashes use separate canonical domains. Leaves
@@ -1031,12 +1086,16 @@ compileStackSemanticSourceRulesCatalogV1(releaseInput)
 verifyStackSemanticSourceRulesCatalogV1(verificationInput)
 resolveProductDeliverySelectionV2(selectionInput)
 verifyProductDeliverySelectionV2(verificationInput)
-deriveSemanticSourceIntentSetV1(authorityInput)
+compileSemanticSourceIntentSetV1(authorityInput)
 verifySemanticSourceIntentSetV1(verificationInput)
-compileNodeSemanticRuleGeneratorTransitionV2(authorityInput)
-verifyNodeSemanticRuleGeneratorTransitionV2(verificationInput)
-compileSemanticSourceDeclarationsV1(authorityInput)
-verifySemanticSourceDeclarationsV1(verificationInput)
+compileSemanticRealizationPlanV2(authorityInput)
+verifySemanticRealizationPlanV2(verificationInput)
+compileFileTreeManifestV3(authorityInput)
+verifyFileTreeManifestV3(verificationInput)
+compileBuildTopologyV3(authorityInput)
+verifyBuildTopologyV3(verificationInput)
+generateNodeProductRuntimeV2(authorityInput)
+verifyNodeProductRuntimeSourceReceiptV2(verificationInput)
 compileImplementationSourceMapV2(authorityInput)
 verifyImplementationSourceMapStoryProofV2(verificationInput)
 ```
@@ -1072,15 +1131,15 @@ ProductBuildPacketV1/V2 + StoryPlanV1 + ImplementationSliceV1
 New-write branch after activation:
 
 ```text
-ProductBuildPacketV3 + StoryPlanV3 + ImplementationSourceMapV2 proof
+ProductBuildPacketV4 + StoryPlanV3 + ImplementationSourceMapV2 proof
   + ImplementationSliceV2 + EvidencePlanV2 + HandoffV2 + ContextV2
 ```
 
-PacketV3 and SliceV2 are not implemented in the first catalog slice. Before
-their first live write, their current branch-only V1 witness fields are removed
-and replaced by the one final V2 proof contract. Historical V1/V2 packet and
-SliceV1 read/replay remains discriminated. No historical artifact is rewritten,
-promoted, or silently projected into the new branch.
+PacketV3 is not promoted into the realization-driven branch. PacketV4 binds the
+exact realization plan, V3 topology, source receipts and SourceMap proof before
+its first live write. Historical V1/V2/V3 packet and SliceV1 read/replay remains
+discriminated. No historical artifact is rewritten, promoted, or silently
+projected into the new branch.
 
 Rollback before cutover removes only shadow artifact refs and profile-selection
 enablement.
@@ -1107,18 +1166,21 @@ new-write release; it does not translate V3 attempts into historical attempts.
    NodeScaffoldToolchainCatalogV2 exact bytes/build graph and its fresh resolver.
 8. Implement ByteBundle deep CAS verification, host-toolchain admission, exact
    build-dependency receipt, and private staged scaffold materializer.
-9. Implement FileTreeManifestV2 and BuildTopologyV2, then the Node semantic-rule
-   version transition without mutating V1.
-10. Implement SemanticSourceDeclarationsV1 and concurrent artifact-batch
-   publication authority, then NodeEntrypointGeneratorV2 and its source receipt
-   from those exact declarations.
-11. Implement StoryPlanV3, SourceMapV2 root/leaves/proofs, and least-privilege
-   story proof verification.
-12. Finalize ProductBuildPacketV3/ImplementationSliceV2 field replacement before
-   their first live write and then resume
-   EvidencePlanV2 -> HandoffV2 -> ContextV2.
-13. Only after release manifests, DB provenance, typed receipts, recovery, and
-   three-class clean evals may the new-write branch cut over.
+9. Preserve FileTreeManifestV2, BuildTopologyV2 and the Node entrypoint
+   transition as compatibility evidence; do not activate them.
+10. Implement SemanticRealizationPlanV2 and prove zero implicit model-write
+    authority across CLI, one-route API and two-route API fixtures.
+11. Implement realization-driven FileTreeManifestV3 and BuildTopologyV3 without
+    adapting V2 semantic writable paths.
+12. Implement NodeProductRuntimeGeneratorV2, generated test authority,
+    every-member source receipt, evidence-registry join and release manifest.
+13. Implement StoryPlanV3, SourceMapV2 root/leaves/proofs and least-privilege
+    story proof verification; declarations remain conditional on a future
+    explicit ProductSpec opaque-behavior contract.
+14. Seal ProductBuildPacketV4 and ImplementationSliceV2 before their first live
+    write, then resume EvidencePlanV2 -> HandoffV2 -> ContextV2.
+15. Only after DB provenance, typed retry deltas, bounded supervisor recovery and
+    three-class clean evals may the new-write branch cut over.
 
 ## Test Matrix
 
@@ -1160,9 +1222,16 @@ Intent tests cover exact semantic obligation closure, title/slug independence,
 determinism, missing/extra/duplicate subjects, persistence exemptions, generated
 source receipts, shared structural slots, and unsupported stack blockers.
 
-Declaration tests cover every-and-only topology joins, ownership/grants,
-current base hashes, absent paths, generated immutable hashes, overlapping
-locators, undeclared writable paths, and no future writable hash.
+Realization tests cover every-and-only policy matching, exact upstream hash
+pins, zero implicit model writes, CLI/API ABI separation, multi-story runtime
+data, memory-state backing, stale authority, self-rehashed omissions, policy
+forgeries and bounded hostile inputs. FileTreeV3 tests must prove V2 writable
+paths and grants cannot be adapted into the new artifact.
+
+Conditional declaration tests cover only explicitly model-authored realizations:
+every-and-only topology joins, ownership/grants, current base hashes, absent
+paths, overlapping locators, undeclared writable paths and no future writable
+hash.
 
 Proof tests cover one/two/non-power-of-two story sets, reordered leaves, forged
 root/leaf/sibling/index/count, global witness leakage, bounded proof work, and
