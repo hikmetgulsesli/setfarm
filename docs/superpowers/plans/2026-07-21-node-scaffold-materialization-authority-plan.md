@@ -1113,6 +1113,55 @@ authority transaction, and reject partial or cross-proposal joins. Only then
 may realization, FileTreeV3, BuildTopologyV3 and the runtime/test generators be
 version-forwarded to consume the exact behavior-contract hash.
 
+### F5I — PlanProductBuildProposalV1 atomic compiler
+
+**Status (2026-07-21): complete as an isolated shadow compiler and fresh
+verifier; PLAN prompt/resolver integration remains forbidden.** Commit
+`7f44c8e2` adds one strict `setfarm.plan-product-build-proposal.v1` envelope
+containing `PlanSemanticProposalV2` and one local-key
+`PlanRuntimeBehaviorProposalV1`. The planner does not author ProductSpec global
+IDs, requirement joins, evidence IDs, ordinals or output hashes. The compiler
+first reproduces ProductSpecV2 and delivery selection, derives a canonical
+local-to-global reference map, then compiles ProductRuntimeBehaviorContractV1
+inside the same bounded authority operation.
+
+The reference map binds every state, entity, field, action, state-delta,
+observable and persistence intent to exact compiler-owned refs, ordinals and
+required evidence. It rechecks exact ordered precondition, state-delta and
+persistence-effect projections rather than trusting matching counts. Runtime
+assertion subjects inherit their owning state; invariant requirement refs are
+derived from canonical ProductSpec traceability; structured coverage,
+non-runtime evidence and entity snapshot selections are mapped only through
+declared local keys. Missing, duplicate, unresolved or global-ID-shaped local
+behavior fails before behavior compilation.
+
+The resulting `setfarm.plan-product-build-authority.v1` binds the task,
+envelope, semantic proposal, ProductSpec, delivery selection, runtime behavior
+proposal, runtime behavior contract and canonical reference-map hashes plus
+exact coverage counts. Fresh verification recompiles from the task and complete
+envelope and compares canonical bytes, so rehashing a candidate or reusing it
+with another envelope does not grant authority. Inputs are strict, bounded and
+snapshotted without invoking Proxy/accessor traps; outputs are recursively
+frozen.
+
+Focused proof is 9/9, including evaluator pass/fail, entity-field instance
+mapping, persistence evidence, functional anti-laundering, partial and
+cross-envelope rejection, canonical-order forgery and hostile input. Full
+Product Compiler is 1051/1051 across 128 suites with zero failures and
+`duration_ms 126019.890958`; TypeScript, English (1,107 files), path contract
+(629 files), version, migration digests, eight Mission Control artifacts and
+diff checks pass. The clean feature-branch `npm run build` guard refused
+`arch/product-semantics-v2-authority` and was not bypassed.
+
+This is not yet the PLAN production path. The installed PLAN prompt still asks
+for `plan-semantic-proposal-v2`, and the runtime resolver still consumes that
+legacy fence. The new authority also deliberately retains the standalone Node
+compiler, downstream behavior-hash integration, eval and release blockers.
+Next, version the PLAN resolver output as a discriminated legacy/build
+authority result, require the atomic envelope from new v2 prompts, project the
+canonical ProductSpec, behavior contract and build authority together, and
+retain the old semantic-only input only as explicit historical compatibility.
+
 ## Verification and release gate
 
 Every slice requires:
@@ -1129,16 +1178,16 @@ F2-F4 additionally require focused real-filesystem, process, PostgreSQL and
 concurrency tests. A clean merged-`main` `npm run build` and full `npm test`
 remain release evidence; the feature-branch build guard is never bypassed.
 
-GO for F1-F4 and F5D-F5H as isolated shadow authorities. F5A-F5C are GO only as
+GO for F1-F4 and F5D-F5I as isolated shadow authorities. F5A-F5C are GO only as
 compatibility evidence and are explicitly NO-GO as production topology. NO-GO
 for production host execution, setup cutover, PacketV4, live migration, deploy
 and new clean product runs until machine-readable runtime behavior, generated
 test source/receipt, authenticated runtime-source materialization,
 authenticated build/test/candidate evidence, evidence registry, release
 manifest, SourceMap, and the later packet/eval program are complete. The next
-dependency-order slice is the atomic PlanProductBuildProposalV1 producer and
-PLAN authority integration, followed by downstream behavior-hash version
-forwarding and NodeProductTestGeneratorV2. The feature-branch
+dependency-order slice is PLAN prompt/resolver integration for the implemented
+PlanProductBuildProposalV1 authority, followed by downstream behavior-hash
+version forwarding and NodeProductTestGeneratorV2. The feature-branch
 `npm run build` guard was re-run after `19ee7109` and correctly refused branch
 `arch/product-semantics-v2-authority`; it was not bypassed. Only a clean
 merged-main build and full test can close that release gate.

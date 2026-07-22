@@ -665,6 +665,27 @@ hashes. Natural-language equivalence is not claimed by the V1 compiler; the
 structured behavior becomes primary PLAN authority and prose remains
 provenance, with cross-product evals required before activation.
 
+The isolated atomic compiler landed in `7f44c8e2`. Its
+`PlanProductBuildProposalV1` is the single strict model-authored envelope for
+semantic local keys and runtime-behavior local keys. Setfarm compiles the
+semantic half first, derives and validates one canonical reference map, derives
+requirement/evidence/global identity from ProductSpec rather than accepting it
+from the planner, and compiles ProductRuntimeBehaviorContractV1 in the same
+operation. `PlanProductBuildAuthorityV1` seals the task, envelope, semantic,
+ProductSpec, delivery, behavior-proposal, behavior-contract and reference-map
+hashes with exact coverage cardinality. Its fresh verifier recompiles from the
+task plus whole envelope and rejects schema-valid self-rehash and cross-envelope
+reuse.
+
+This moves the source-of-truth boundary but does not activate it. Current PLAN
+prompting and `V3PlanOutputAuthorityV2` still accept the semantic-only fence;
+they must next gain a discriminated atomic-build path and project ProductSpec,
+ProductRuntimeBehaviorContract and PlanProductBuildAuthority together. The
+semantic-only path may remain readable for historical artifacts but cannot be
+silently upgraded by fabricating behavior. Standalone Node PLAN compilation,
+downstream behavior-hash version forwarding, cross-product eval and release
+authority remain explicit blockers.
+
 `SemanticSourceDeclarationsV1` is consequently not a prerequisite for current
 Node generation. If retained for a future explicitly model-authored realization,
 it is downstream of realization-driven topology and covers only that admitted
@@ -1426,9 +1447,11 @@ entity-field reads fail with typed pre-source diagnostics. Behavior-contract
 tests now prove every-and-only opaque occurrence coverage, functional
 disposition anti-laundering, bounded evaluator work, state/path/type compatibility,
 snapshot selection determinism, enum-domain and malformed-member rejection,
-fresh-verifier rejection and hostile input. PLAN integration tests must next
-prove atomic semantic/behavior cardinality, local-key mapping and cross-proposal
-substitution rejection.
+fresh-verifier rejection and hostile input. Atomic proposal tests now prove
+semantic/behavior cardinality, local-key mapping, exact reference/evidence joins
+and cross-proposal substitution rejection. PLAN output integration tests must
+next prove fence cardinality, typed legacy compatibility and projection of all
+three canonical artifacts.
 
 Conditional declaration tests cover only explicitly model-authored realizations:
 every-and-only topology joins, ownership/grants, current base hashes, absent
@@ -1454,8 +1477,9 @@ evidence.
 ## GO / NO-GO
 
 GO for the isolated shadow authority chain through BuildTopologyV3,
-NodeProductRuntimeGeneratorV2's machine-executable subset and the standalone
-ProductRuntimeBehaviorContractV1 compiler/evaluator, including their fixture,
+NodeProductRuntimeGeneratorV2's machine-executable subset, the standalone
+ProductRuntimeBehaviorContractV1 compiler/evaluator and the atomic
+PlanProductBuildProposalV1 compiler/verifier, including their fixture,
 adversarial and real-process proof.
 
 NO-GO for source intent activation, setup topology replacement, packet/slice
