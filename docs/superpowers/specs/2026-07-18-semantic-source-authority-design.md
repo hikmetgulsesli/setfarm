@@ -591,9 +591,13 @@ is assigned exactly once to a generated runtime member, platform binding, typed
 exemption, or evidence relation. For the supported CLI/API ProductSpec V2
 language, action state deltas, invocation transports, output projections,
 runtime state/data and registration are declarative; therefore every former
-model-writable source obligation is generated and model writes are zero. If a
-future product needs opaque behavior, ProductSpec must version that behavior
-contract first. The model is never asked to invent missing semantics.
+model-writable source obligation is generated and model writes are zero. This
+claim applies only to the machine-executable subset. ProductSpec V2 still
+inherits prose-only `states[].invariants` and admits an `entity_field` value
+source that identifies a schema field but no entity instance or snapshot.
+Those forms are not executable semantics and must fail before source generation.
+They are closed by the versioned ProductRuntimeBehaviorContractV1 described
+below; the generator must never interpret their prose or guess a snapshot.
 
 `NodeSemanticRuleGeneratorTransitionV2`, FileTreeV2 and BuildTopologyV2 remain
 immutable compatibility experiments. They prove stable logical/operational
@@ -604,6 +608,41 @@ one canonical `src/cli.ts` or `src/app.ts` and a
 `NodeProductRuntimeSourceReceiptV2` mapping every generated member back to its
 realization and ProductSpec authority. There are no model-owned handler imports
 to declare for the current profiles.
+
+The implemented shadow generator API is
+`generateNodeProductRuntimeSourceV2(handle, input)` and its fresh verifier is
+`verifyNodeProductRuntimeSourceV2(handle, input)`. The separately supplied
+private-stage capability is not serializable input authority. The generator
+freshly verifies ProductSpec selection, SemanticRealizationPlanV2, FileTreeV3,
+BuildTopologyV3 and every-action InvocationInputTransportSetV2 before returning
+bytes. One code-owned runtime program implements strict inverse transport
+decoding, transactional state transitions, preconditions, state deltas and
+declared CLI/API result ABIs. Its receipt separates byte-stable source identity,
+logical semantic/build identity and attempt-specific operational topology
+identity. Fresh verification regenerates the full source and receipt rather
+than accepting a self-rehashed candidate.
+
+ProductRuntimeBehaviorContractV1 is a companion semantic authority, not a
+post-review patch. It binds one exact ProductSpec V2 payload and inventories
+every opaque invariant occurrence by a compiler-derived ref over state ref,
+ordinal and text hash. Every occurrence receives exactly one disposition:
+
+- bounded executable state assertions over explicit JSON-pointer subjects and
+  code-owned operators/phases;
+- exact coverage by already-structured ProductSpec action/delta/observable
+  semantics; or
+- a non-runtime requirement disposition bound to exact constraint/non-goal
+  requirement and required evidence refs.
+
+Functional requirements cannot be laundered into the non-runtime disposition.
+Every `entity_field` delta occurrence additionally requires one exact runtime
+snapshot binding that names the state snapshot, entity selection rule and field
+projection; a schema field alone never authorizes a read. The compiler checks
+every-and-only coverage, type compatibility, requirement traceability, canonical
+ordering and bounded work, then publishes an immutable contract hash. The
+original prose remains provenance only after this contract exists; it is never
+an evaluator input. Runtime/test generators consume the exact behavior-contract
+hash, so there is one execution authority and no prose classifier fallback.
 
 `SemanticSourceDeclarationsV1` is consequently not a prerequisite for current
 Node generation. If retained for a future explicitly model-authored realization,
@@ -1200,8 +1239,10 @@ compileFileTreeManifestV3(authorityInput)
 verifyFileTreeManifestV3(verificationInput)
 compileBuildTopologyV3(authorityInput)
 verifyBuildTopologyV3(verificationInput)
-generateNodeProductRuntimeV2(authorityInput)
-verifyNodeProductRuntimeSourceReceiptV2(verificationInput)
+compileProductRuntimeBehaviorContractV1(authorityInput)
+verifyProductRuntimeBehaviorContractV1(verificationInput)
+generateNodeProductRuntimeSourceV2(privateStageHandle, authorityInput)
+verifyNodeProductRuntimeSourceV2(privateStageHandle, verificationInput)
 compileImplementationSourceMapV2(authorityInput)
 verifyImplementationSourceMapStoryProofV2(verificationInput)
 ```
@@ -1279,15 +1320,20 @@ new-write release; it does not translate V3 attempts into historical attempts.
 11. Implement realization-driven FileTreeManifestV3 without adapting V2
     semantic writable paths, then implement BuildTopologyV3 from its
     dependency-stage fresh verifier.
-12. Implement NodeProductRuntimeGeneratorV2 and NodeProductTestGeneratorV2 from
-    their pinned contracts, then every-member runtime/test source receipts,
+12. Preserve NodeProductRuntimeGeneratorV2 as executable-subset shadow proof.
+    Implement ProductRuntimeBehaviorContractV1, bind every opaque invariant and
+    entity-field snapshot occurrence, then version-forward the realization,
+    FileTree, BuildTopology and runtime generator authority to consume its exact
+    hash. No prose parser or compatibility adapter is permitted.
+13. Implement NodeProductTestGeneratorV2 from the same runtime program and
+    behavior authority, then every-member test source receipt,
     evidence-registry join and release manifest.
-13. Implement StoryPlanV3, SourceMapV2 root/leaves/proofs and least-privilege
+14. Implement StoryPlanV3, SourceMapV2 root/leaves/proofs and least-privilege
     story proof verification; declarations remain conditional on a future
-    explicit ProductSpec opaque-behavior contract.
-14. Seal ProductBuildPacketV4 and ImplementationSliceV2 before their first live
+    explicitly model-authored realization and never carry opaque behavior.
+15. Seal ProductBuildPacketV4 and ImplementationSliceV2 before their first live
     write, then resume EvidencePlanV2 -> HandoffV2 -> ContextV2.
-15. Only after DB provenance, typed retry deltas, bounded supervisor recovery and
+16. Only after DB provenance, typed retry deltas, bounded supervisor recovery and
     three-class clean evals may the new-write branch cut over.
 
 ## Test Matrix
@@ -1347,6 +1393,17 @@ npm test discovery, V2/entrypoint/story leakage, private-path leakage, strict
 input extras, accessors, proxies, schema-valid logical and operational
 self-rehashes, and cross-profile topology substitution.
 
+Runtime-source tests cover CLI, one-route API and two-route API generation,
+every-member marker spans, strict TypeScript semantic checking, real CLI process
+execution, direct API-handler execution, typed invalid-input failure, source
+tampering, logical self-rehash forgery and sibling-attempt identity separation.
+Positive tests intentionally clear prose invariants and therefore prove only the
+machine-executable ProductSpec V2 subset. Non-empty prose invariants and unbound
+entity-field reads fail with typed pre-source diagnostics. Behavior-contract
+tests must next prove every-and-only opaque occurrence coverage, functional
+disposition anti-laundering, bounded evaluator work, state/path/type compatibility,
+snapshot selection determinism, fresh-verifier rejection and hostile input.
+
 Conditional declaration tests cover only explicitly model-authored realizations:
 every-and-only topology joins, ownership/grants, current base hashes, absent
 paths, overlapping locators, undeclared writable paths and no future writable
@@ -1370,9 +1427,12 @@ evidence.
 
 ## GO / NO-GO
 
-GO for the isolated shadow authority chain through BuildTopologyV3 and its
-fixture/adversarial proof.
+GO for the isolated shadow authority chain through BuildTopologyV3 and
+NodeProductRuntimeGeneratorV2's machine-executable subset, including its
+fixture/adversarial and real-process proof.
 
 NO-GO for source intent activation, setup topology replacement, packet/slice
 version cutover, model dispatch, runtime evidence, retry, supervisor, Mission
-Control, deploy, or live runs until their dependency stages pass independently.
+Control, deploy, or live runs until ProductRuntimeBehaviorContractV1, generated
+test/source materialization, authenticated build/test/candidate evidence and
+their later dependency stages pass independently.

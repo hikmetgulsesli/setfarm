@@ -982,6 +982,74 @@ execution, candidate materialization, test execution, evidence-registry join,
 and release manifest. BuildTopologyV3 plans and verifies these joins; it does
 not execute a command or manufacture success evidence.
 
+### F5G — NodeProductRuntimeGeneratorV2 and source receipt
+
+**Status (2026-07-21): complete for the machine-executable ProductSpecV2
+subset as a shadow, production-forbidden source authority.** Commit `f8281b98`
+adds the code-owned whole-file generator and
+`setfarm.node-product-runtime-source-receipt.v2`. The pinned runtime-program
+contract hash is
+`bc034f20c1c56ed094a2bebe6ea83cace9c861a299fbba0d44a7482803034bd5`.
+
+The generator accepts no path, source fragment, model output, command, runtime
+result, or release claim. It receives a private-stage capability separately
+and bounded JSON containing ProductSpecV2, delivery selection,
+SemanticRealizationPlanV2, FileTreeV3 and BuildTopologyV3. It freshly verifies
+selection, realization and current operational topology, freshly compiles the
+every-action InvocationInputTransportSetV2, and requires every product,
+profile, path, realization-membership, compilation and logical-build join to
+match before source bytes exist.
+
+One canonical runtime program implements the exact supported semantics:
+strict inverse transport decoding; transactional state snapshots; ProductSpec
+preconditions; ordered set/merge/append/remove/clear/upsert deltas; canonical
+JSON equality; input/literal invocation-output projection; declared success
+and failure ABIs; CLI process output; and the platform-owned Express handler
+export. The template has no clock, randomness, network, ambient environment,
+filesystem discovery, candidate listener or semantic auxiliary file. Every
+runtime realization has one content-derived `GENMEM_...` symbol and one exact
+line/byte/hash marker span in the generated file.
+
+The receipt separates three identities. Source content/program identity is
+byte-stable. Logical receipt identity adds ProductSpec, transport, realization,
+FileTree and `logicalBuildHash`. Full receipt identity additionally binds the
+current operational BuildTopology manifest and admission scope. A sibling
+private attempt therefore has different dependency/topology/full-receipt
+identity but byte-identical source and logical receipt. A fresh verifier
+regenerates both the complete source string and canonical receipt; local
+self-rehash is not authority.
+
+The behavior proof is not merely syntactic. Generated CLI and API source pass
+strict TypeScript semantic checking in isolated projects. The CLI executes in
+a real Node subprocess and returns its exact declared JSON result. The API
+handler executes directly, returns the exact declared 201 result, and rejects
+an extra request-body field through the declared typed 400 failure ABI. The
+same generator covers CLI, one-route API and two-route API without a new
+project-specific branch or guard. The private materializer suite is 20/20 and
+full Product Compiler is 1030/1030 across 126 suites.
+
+This slice also proves a new upstream blocker rather than hiding it. Current
+`ProductSpecV2.states[].invariants` are prose strings, and `entity_field` deltas
+carry no runtime entity-snapshot binding. The generator contract says opaque
+behavior must be rejected, so non-empty prose invariants, unbound entity-field
+sources, non-`stay` CLI/API navigation, overlapping output pointers and
+before-phase invocation outputs receive typed pre-source rejection. The
+positive runtime tests deliberately remove prose invariants; this is a test of
+the executable subset, not a claim that current planner output is production
+ready.
+
+The next dependency-order slice is therefore not allowed to route this blocker
+to review/retry or teach the generator invariant prose. Add the versioned,
+machine-readable ProductRuntimeBehaviorContractV1 and its bounded evaluator.
+Bind every current prose invariant to exactly one executable assertion set,
+existing structured ProductSpec semantic coverage, or explicit non-runtime
+constraint/non-goal plus required evidence disposition. Bind every
+`entity_field` occurrence to an exact runtime snapshot and selection rule.
+Version-forward realization, FileTree, BuildTopology and generator authority to
+consume the behavior-contract hash. Only after that upstream behavior
+contract is closed should NodeProductTestGeneratorV2 generate every action and
+evidence-relation test from the same runtime program.
+
 ## Verification and release gate
 
 Every slice requires:
@@ -998,14 +1066,15 @@ F2-F4 additionally require focused real-filesystem, process, PostgreSQL and
 concurrency tests. A clean merged-`main` `npm run build` and full `npm test`
 remain release evidence; the feature-branch build guard is never bypassed.
 
-GO for F1-F4 and F5D-F5F as isolated shadow authorities. F5A-F5C are GO only as
+GO for F1-F4 and F5D-F5G as isolated shadow authorities. F5A-F5C are GO only as
 compatibility evidence and are explicitly NO-GO as production topology. NO-GO
 for production host execution, setup cutover, PacketV4, live migration, deploy
-and new clean product runs until generated runtime and test sources/receipts,
+and new clean product runs until machine-readable runtime behavior, generated
+test source/receipt, authenticated runtime-source materialization,
 authenticated build/test/candidate evidence, evidence registry, release
 manifest, SourceMap, and the later packet/eval program are complete. The next
-dependency-order slice is NodeProductRuntimeGeneratorV2, followed by
-NodeProductTestGeneratorV2 and their source-receipt pair. The feature-branch
+dependency-order slice is ProductRuntimeBehaviorContractV1, followed by
+NodeProductTestGeneratorV2. The feature-branch
 `npm run build` guard was re-run after `19ee7109` and correctly refused branch
 `arch/product-semantics-v2-authority`; it was not bypassed. Only a clean
 merged-main build and full test can close that release gate.
