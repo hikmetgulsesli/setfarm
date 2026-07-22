@@ -20,6 +20,8 @@ import {
   isProductionNodeScaffoldPrivateStageV2,
   type MaterializedNodeScaffoldPrivateStageV2,
 } from "./node-scaffold-private-materializer-v2.js";
+import { verifyProductRuntimeBehaviorContractV1 } from
+  "./product-runtime-behavior-contract-v1.js";
 import {
   hashProductDeliverySelectionV2,
   verifyProductDeliverySelectionV2,
@@ -45,16 +47,27 @@ import {
   hashNodeProductRuntimeSourceIdentityV2,
   hashNodeProductRuntimeSourceLogicalReceiptV2,
   hashNodeProductRuntimeSourceReceiptV2,
+  hashRuntimeBehaviorAssertionSourceMembershipV2,
+  hashRuntimeBehaviorEntityFieldSourceMembershipV2,
   recursivelyFreezeNodeProductRuntimeSourceV2,
   type NodeProductRuntimeGeneratedMemberBindingV2,
   type NodeProductRuntimeSourceReceiptHashPayloadV2,
   type NodeProductRuntimeSourceReceiptLogicalIdentityV2,
   type NodeProductRuntimeSourceReceiptV2,
+  type RuntimeBehaviorAssertionSourceBindingV2,
+  type RuntimeBehaviorEntityFieldSourceBindingV2,
 } from "./schemas/node-product-runtime-source-v2.js";
 import {
   ProductSpecV2Schema,
   type ProductSpecV2,
 } from "./schemas/product-spec-v2.js";
+import {
+  PRODUCT_RUNTIME_BEHAVIOR_EVALUATOR_CONTRACT_V1,
+  type ProductRuntimeBehaviorContractV1,
+  type ProductRuntimeBehaviorPredicateV1,
+  type ProductRuntimeBehaviorSubjectV1,
+  type ProductRuntimeEntitySnapshotV1,
+} from "./schemas/product-runtime-behavior-contract-v1.js";
 import {
   NODE_PRODUCT_RUNTIME_GENERATOR_CONTRACT_HASH_V2,
   NODE_PRODUCT_RUNTIME_GENERATOR_CONTRACT_V2,
@@ -123,7 +136,7 @@ export type NodeProductRuntimeSourceDiagnosticCodeV2 =
   | "NODE_RUNTIME_SOURCE_V2_ARTIFACT_INVALID"
   | "NODE_RUNTIME_SOURCE_V2_BUILD_TOPOLOGY_REJECTED"
   | "NODE_RUNTIME_SOURCE_V2_INPUT_INVALID"
-  | "NODE_RUNTIME_SOURCE_V2_OPAQUE_BEHAVIOR_REJECTED"
+  | "NODE_RUNTIME_SOURCE_V2_UNSUPPORTED_BEHAVIOR_REJECTED"
   | "NODE_RUNTIME_SOURCE_V2_OUTPUT_LIMIT_EXCEEDED"
   | "NODE_RUNTIME_SOURCE_V2_PRODUCTION_AUTHORITY_REQUIRED"
   | "NODE_RUNTIME_SOURCE_V2_REALIZATION_PLAN_REJECTED"
@@ -196,30 +209,14 @@ function pointersOverlap(left: string, right: string): boolean {
   return true;
 }
 
-function opaqueBehaviorDiagnosticsV2(
+function unsupportedBehaviorDiagnosticsV2(
   productSpec: ProductSpecV2,
 ): readonly NodeProductRuntimeSourceDiagnosticV2[] {
   const diagnostics: NodeProductRuntimeSourceDiagnosticV2[] = [];
-  productSpec.states.forEach((state, stateIndex) => {
-    if (state.invariants.length === 0) return;
-    diagnostics.push(diagnostic(
-      "NODE_RUNTIME_SOURCE_V2_OPAQUE_BEHAVIOR_REJECTED",
-      `/productSpec/states/${stateIndex}/invariants`,
-      `${state.id} has prose-only invariants; a versioned machine-readable invariant contract is required before runtime generation`,
-    ));
-  });
   productSpec.actions.forEach((action, actionIndex) => {
-    action.stateDeltas.forEach((delta, deltaIndex) => {
-      if (delta.valueFrom.kind !== "entity_field") return;
-      diagnostics.push(diagnostic(
-        "NODE_RUNTIME_SOURCE_V2_OPAQUE_BEHAVIOR_REJECTED",
-        `/productSpec/actions/${actionIndex}/stateDeltas/${deltaIndex}/valueFrom`,
-        `${action.id} references ${delta.valueFrom.entityRef}.${delta.valueFrom.fieldRef} without a versioned entity snapshot binding`,
-      ));
-    });
     if (action.navigation.kind !== "stay") {
       diagnostics.push(diagnostic(
-        "NODE_RUNTIME_SOURCE_V2_OPAQUE_BEHAVIOR_REJECTED",
+        "NODE_RUNTIME_SOURCE_V2_UNSUPPORTED_BEHAVIOR_REJECTED",
         `/productSpec/actions/${actionIndex}/navigation`,
         `${action.id} declares ${action.navigation.kind} navigation but the selected CLI/API runtime owns no navigation environment`,
       ));
@@ -235,7 +232,7 @@ function opaqueBehaviorDiagnosticsV2(
           projections[right]!.pointer,
         )) continue;
         diagnostics.push(diagnostic(
-          "NODE_RUNTIME_SOURCE_V2_OPAQUE_BEHAVIOR_REJECTED",
+          "NODE_RUNTIME_SOURCE_V2_UNSUPPORTED_BEHAVIOR_REJECTED",
           `/productSpec/actions/${actionIndex}/observableEffects/${projections[right]!.effectIndex}/selector/pointer`,
           `${action.id} output pointer ${projections[right]!.pointer} overlaps ${projections[left]!.pointer}`,
         ));
@@ -244,7 +241,7 @@ function opaqueBehaviorDiagnosticsV2(
     action.observableEffects.forEach((effect, effectIndex) => {
       if (effect.assertions.every((assertion) => assertion.phase === "after")) return;
       diagnostics.push(diagnostic(
-        "NODE_RUNTIME_SOURCE_V2_OPAQUE_BEHAVIOR_REJECTED",
+        "NODE_RUNTIME_SOURCE_V2_UNSUPPORTED_BEHAVIOR_REJECTED",
         `/productSpec/actions/${actionIndex}/observableEffects/${effectIndex}/assertions`,
         `${action.id} invocation output contains a before-phase assertion with no pre-invocation output coordinate`,
       ));
@@ -266,6 +263,42 @@ type RuntimeProgramV2 = Readonly<{
     initialValue: unknown;
   }>[];
   persistencePolicies: Readonly<ProductSpecV2["persistencePolicies"]>;
+  runtimeBehavior: Readonly<{
+    schema: "setfarm.node-product-runtime-behavior-program.v1";
+    contractHash: string;
+    evaluatorContractHash: string;
+    bounds: Readonly<{
+      maxCollectionItemsPerAssertion: number;
+      maxSubjectVisits: number;
+    }>;
+    assertions: readonly Readonly<{
+      invariantRef: string;
+      assertionRef: string;
+      assertionHash: string;
+      stateRef: string;
+      subject: Readonly<ProductRuntimeBehaviorSubjectV1>;
+      predicate: Readonly<ProductRuntimeBehaviorPredicateV1>;
+    }>[];
+    entityFieldBindings: readonly Readonly<{
+      occurrenceRef: string;
+      snapshotBindingHash: string;
+      actionRef: string;
+      deltaOrdinal: number;
+      entityRef: string;
+      fieldRef: string;
+      snapshot: Readonly<ProductRuntimeEntitySnapshotV1>;
+      projectedField: Readonly<{
+        name: string;
+        valueType: string;
+        enumValues: readonly string[] | null;
+      }>;
+      matchField: Readonly<{
+        name: string;
+        valueType: string;
+        enumValues: readonly string[] | null;
+      }> | null;
+    }>[];
+  }>;
   actions: readonly Readonly<{
     actionRef: string;
     affectedSurfaceRefs: readonly string[];
@@ -290,11 +323,64 @@ type RuntimeProgramV2 = Readonly<{
 
 function buildRuntimeProgramV2(
   productSpec: ProductSpecV2,
+  runtimeBehaviorContract: Readonly<ProductRuntimeBehaviorContractV1>,
   transportSet: Readonly<InvocationInputTransportSetV2>,
   profileId: RuntimeProgramV2["profileId"],
 ): RuntimeProgramV2 {
   const transportByAction = new Map(transportSet.contracts.map((contract) =>
     [contract.actionRef, contract] as const));
+  const assertions = runtimeBehaviorContract.invariantBindings.flatMap((binding) =>
+    binding.disposition.kind === "runtime_assertions"
+      ? binding.disposition.assertions.map((assertion) => Object.freeze({
+          invariantRef: binding.invariantRef,
+          assertionRef: assertion.assertionRef,
+          assertionHash: assertion.assertionHash,
+          stateRef: binding.stateRef,
+          subject: Object.freeze(structuredClone(assertion.subject)),
+          predicate: Object.freeze(structuredClone(assertion.predicate)),
+        }))
+      : []).sort((left, right) => compareUtf16(left.assertionRef, right.assertionRef));
+  const entityFieldBindings = runtimeBehaviorContract.entityFieldBindings.map((binding) => {
+    const entity = productSpec.entities.find((candidate) =>
+      candidate.id === binding.entityRef);
+    const projectedField = entity?.fields.find((candidate) =>
+      candidate.id === binding.fieldRef);
+    const selection = binding.snapshot.selection;
+    const matchField = selection.kind === "match_input"
+      ? entity?.fields.find((candidate) =>
+          candidate.id === selection.matchFieldRef)
+      : undefined;
+    if (!entity || !projectedField || (
+      selection.kind === "match_input" && !matchField
+    )) {
+      throw new Error(`Verified entity snapshot ${binding.occurrenceRef} lost ProductSpec field authority`);
+    }
+    const fieldProjection = (field: typeof projectedField) => Object.freeze({
+      name: field.name,
+      valueType: field.valueType,
+      enumValues: field.enumValues
+        ? Object.freeze([...field.enumValues])
+        : null,
+    });
+    return Object.freeze({
+      occurrenceRef: binding.occurrenceRef,
+      snapshotBindingHash: binding.snapshotBindingHash,
+      actionRef: binding.actionRef,
+      deltaOrdinal: binding.deltaOrdinal,
+      entityRef: binding.entityRef,
+      fieldRef: binding.fieldRef,
+      snapshot: Object.freeze(structuredClone(binding.snapshot)),
+      projectedField: fieldProjection(projectedField),
+      matchField: matchField ? fieldProjection(matchField) : null,
+    });
+  }).sort((left, right) => compareUtf16(left.occurrenceRef, right.occurrenceRef));
+  if (
+    assertions.length !== runtimeBehaviorContract.coverage.runtimeAssertionCount
+    || entityFieldBindings.length
+      !== runtimeBehaviorContract.coverage.entityFieldBindingCount
+  ) {
+    throw new Error("Verified runtime behavior coverage does not close over its executable projection");
+  }
   return Object.freeze({
     schema: "setfarm.node-product-runtime-program.v2" as const,
     programVersion: "2.0.0" as const,
@@ -310,6 +396,21 @@ function buildRuntimeProgramV2(
     persistencePolicies: Object.freeze([...productSpec.persistencePolicies]
       .sort((left, right) => compareUtf16(left.id, right.id))
       .map((policy) => Object.freeze(structuredClone(policy)))),
+    runtimeBehavior: Object.freeze({
+      schema: "setfarm.node-product-runtime-behavior-program.v1" as const,
+      contractHash: runtimeBehaviorContract.contractHash,
+      evaluatorContractHash:
+        runtimeBehaviorContract.authority.evaluatorContractHash,
+      bounds: Object.freeze({
+        maxCollectionItemsPerAssertion:
+          PRODUCT_RUNTIME_BEHAVIOR_EVALUATOR_CONTRACT_V1.bounds
+            .maxCollectionItemsPerAssertion,
+        maxSubjectVisits:
+          PRODUCT_RUNTIME_BEHAVIOR_EVALUATOR_CONTRACT_V1.bounds.maxSubjectVisits,
+      }),
+      assertions: Object.freeze(assertions),
+      entityFieldBindings: Object.freeze(entityFieldBindings),
+    }),
     actions: Object.freeze([...productSpec.actions]
       .sort((left, right) => compareUtf16(left.id, right.id))
       .map((action) => {
@@ -571,7 +672,203 @@ function preconditionsPassV2(action: any, before: JsonRecordV2): boolean {
   return true;
 }
 
-function sourceValueV2(source: any, inputs: JsonRecordV2, before: JsonRecordV2): any {
+type BehaviorResolutionV2 = { exists: true; value: any } | { exists: false };
+
+function behaviorResolutionV2(root: any, pointer: string): BehaviorResolutionV2 {
+  let current = root;
+  for (const segment of segmentsV2(pointer)) {
+    if (current === null || typeof current !== "object" || !ownV2(current, segment)) {
+      return { exists: false };
+    }
+    current = current[segment];
+  }
+  return { exists: true, value: current };
+}
+
+function behaviorJsonTypeV2(value: any): string {
+  if (value === null) return "null";
+  if (Array.isArray(value)) return "array";
+  return typeof value;
+}
+
+function behaviorTruthyV2(value: any): boolean {
+  return !(value === null || value === false || value === 0 || value === "");
+}
+
+function behaviorPredicatePassesV2(resolution: BehaviorResolutionV2, predicate: any): boolean {
+  if (predicate.operator === "exists") return resolution.exists;
+  if (predicate.operator === "not_exists") return !resolution.exists;
+  if (!resolution.exists) return false;
+  const value = resolution.value;
+  if (predicate.operator === "equals") return deepEqualV2(value, predicate.expected);
+  if (predicate.operator === "not_equals") return !deepEqualV2(value, predicate.expected);
+  if (predicate.operator === "truthy") return behaviorTruthyV2(value);
+  if (predicate.operator === "falsy") return !behaviorTruthyV2(value);
+  if (predicate.operator === "type_is") return behaviorJsonTypeV2(value) === predicate.expected;
+  if (predicate.operator === "one_of") {
+    return predicate.expected.some((expected: any) => deepEqualV2(value, expected));
+  }
+  if (predicate.operator === "min_length") return typeof value === "string" && value.length >= predicate.expected;
+  if (predicate.operator === "max_length") return typeof value === "string" && value.length <= predicate.expected;
+  if (predicate.operator === "minimum") return typeof value === "number" && value >= predicate.expected;
+  if (predicate.operator === "maximum") return typeof value === "number" && value <= predicate.expected;
+  if (predicate.operator === "min_items") return Array.isArray(value) && value.length >= predicate.expected;
+  if (predicate.operator === "max_items") return Array.isArray(value) && value.length <= predicate.expected;
+  throw new RuntimeFailureV2("action_failure", "RUNTIME_BEHAVIOR_PREDICATE_UNKNOWN");
+}
+
+function behaviorFailureV2(code: string, reference: string): never {
+  throw new RuntimeFailureV2("action_failure", code + ":" + reference);
+}
+
+function assertBehaviorCheckpointV2(checkpoint: "initial" | "after_action", actionRef: string | null, snapshot: JsonRecordV2): void {
+  let visits = 0;
+  for (const assertion of PROGRAM_V2.runtimeBehavior.assertions) {
+    let passed = false;
+    let assertionVisits = 1;
+    if (assertion.subject.kind === "state_path") {
+      const state = ownV2(snapshot, assertion.subject.stateRef)
+        ? { exists: true as const, value: snapshot[assertion.subject.stateRef] }
+        : { exists: false as const };
+      const resolution = state.exists
+        ? behaviorResolutionV2(state.value, assertion.subject.path)
+        : state;
+      passed = behaviorPredicatePassesV2(resolution, assertion.predicate);
+    } else {
+      const state = ownV2(snapshot, assertion.subject.stateRef)
+        ? { exists: true as const, value: snapshot[assertion.subject.stateRef] }
+        : { exists: false as const };
+      const collection = state.exists
+        ? behaviorResolutionV2(state.value, assertion.subject.collectionPath)
+        : state;
+      if (!collection.exists || !Array.isArray(collection.value)) {
+        passed = false;
+      } else {
+        if (collection.value.length > PROGRAM_V2.runtimeBehavior.bounds.maxCollectionItemsPerAssertion) {
+          behaviorFailureV2("RUNTIME_BEHAVIOR_COLLECTION_LIMIT_EXCEEDED", assertion.assertionRef);
+        }
+        assertionVisits = Math.max(1, collection.value.length);
+        passed = collection.value.every((item: any) =>
+          behaviorPredicatePassesV2(
+            behaviorResolutionV2(item, assertion.subject.itemPath),
+            assertion.predicate,
+          ));
+      }
+    }
+    visits += assertionVisits;
+    if (visits > PROGRAM_V2.runtimeBehavior.bounds.maxSubjectVisits) {
+      behaviorFailureV2("RUNTIME_BEHAVIOR_VISIT_LIMIT_EXCEEDED", assertion.assertionRef);
+    }
+    if (!passed) {
+      behaviorFailureV2(
+        "RUNTIME_INVARIANT_ASSERTION_FAILED_" + checkpoint.toUpperCase()
+          + (actionRef === null ? "" : "_" + actionRef),
+        assertion.assertionRef,
+      );
+    }
+  }
+}
+
+function validGregorianDateBehaviorV2(value: string): boolean {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return false;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  if (!Number.isInteger(year) || year < 1 || year > 9999 || month < 1 || month > 12 || day < 1) return false;
+  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const maximum = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1]!;
+  return day <= maximum;
+}
+
+function behaviorFieldValuePassesV2(field: any, value: any): boolean {
+  let valid = false;
+  if (field.valueType === "number") valid = typeof value === "number" && Number.isFinite(value);
+  else if (field.valueType === "boolean") valid = typeof value === "boolean";
+  else if (field.valueType === "object") valid = recordV2(value);
+  else if (field.valueType === "array") valid = Array.isArray(value);
+  else if (field.valueType === "date") valid = typeof value === "string" && validGregorianDateBehaviorV2(value);
+  else if (field.valueType === "datetime") {
+    if (typeof value === "string") {
+      const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|[+-](\d{2}):(\d{2}))$/.exec(value);
+      if (match) {
+        const [, year, month, day, hour, minute, second, offsetHour, offsetMinute] = match;
+        valid = validGregorianDateBehaviorV2(year + "-" + month + "-" + day)
+          && Number(hour) <= 23
+          && Number(minute) <= 59
+          && Number(second) <= 59
+          && (offsetHour === undefined || Number(offsetHour) <= 23)
+          && (offsetMinute === undefined || Number(offsetMinute) <= 59)
+          && !Number.isNaN(Date.parse(value));
+      }
+    }
+  } else valid = typeof value === "string" && wellFormedV2(value);
+  return valid && (
+    field.valueType !== "enum"
+    || (Array.isArray(field.enumValues) && field.enumValues.includes(value))
+  );
+}
+
+function entityFieldValueV2(binding: any, inputs: JsonRecordV2, before: JsonRecordV2): any {
+  if (!ownV2(before, binding.snapshot.stateRef)) {
+    behaviorFailureV2("ENTITY_SNAPSHOT_STATE_MISSING", binding.occurrenceRef);
+  }
+  const collection = behaviorResolutionV2(
+    before[binding.snapshot.stateRef],
+    binding.snapshot.collectionPath,
+  );
+  let selected: any;
+  if (binding.snapshot.selection.kind === "singleton") {
+    if (!collection.exists || !recordV2(collection.value)) {
+      behaviorFailureV2("ENTITY_SNAPSHOT_SINGLETON_MISSING", binding.occurrenceRef);
+    }
+    selected = collection.value;
+  } else {
+    if (!collection.exists || !Array.isArray(collection.value)) {
+      behaviorFailureV2("ENTITY_SNAPSHOT_COLLECTION_MISSING", binding.occurrenceRef);
+    }
+    if (collection.value.length > PROGRAM_V2.runtimeBehavior.bounds.maxCollectionItemsPerAssertion) {
+      behaviorFailureV2("ENTITY_SNAPSHOT_COLLECTION_LIMIT_EXCEEDED", binding.occurrenceRef);
+    }
+    const matches: any[] = [];
+    for (const candidate of collection.value) {
+      if (!recordV2(candidate)) {
+        behaviorFailureV2("ENTITY_SNAPSHOT_MEMBER_INVALID", binding.occurrenceRef);
+      }
+      if (!ownV2(candidate, binding.matchField.name)
+        || !behaviorFieldValuePassesV2(binding.matchField, candidate[binding.matchField.name])) {
+        behaviorFailureV2("ENTITY_SNAPSHOT_MATCH_FIELD_INVALID", binding.occurrenceRef);
+      }
+      if (!ownV2(candidate, binding.projectedField.name)
+        || !behaviorFieldValuePassesV2(binding.projectedField, candidate[binding.projectedField.name])) {
+        behaviorFailureV2("ENTITY_SNAPSHOT_FIELD_TYPE_INVALID", binding.occurrenceRef);
+      }
+      if (deepEqualV2(
+        candidate[binding.matchField.name],
+        inputs[binding.snapshot.selection.inputField],
+      )) matches.push(candidate);
+    }
+    if (matches.length !== 1) {
+      behaviorFailureV2(
+        matches.length === 0
+          ? "ENTITY_SNAPSHOT_MATCH_MISSING"
+          : "ENTITY_SNAPSHOT_MATCH_AMBIGUOUS",
+        binding.occurrenceRef,
+      );
+    }
+    selected = matches[0];
+  }
+  if (!recordV2(selected) || !ownV2(selected, binding.projectedField.name)) {
+    behaviorFailureV2("ENTITY_SNAPSHOT_FIELD_MISSING", binding.occurrenceRef);
+  }
+  const value = selected[binding.projectedField.name];
+  if (!behaviorFieldValuePassesV2(binding.projectedField, value)) {
+    behaviorFailureV2("ENTITY_SNAPSHOT_FIELD_TYPE_INVALID", binding.occurrenceRef);
+  }
+  return cloneV2(value);
+}
+
+function sourceValueV2(source: any, inputs: JsonRecordV2, before: JsonRecordV2, actionRef: string, deltaOrdinal: number): any {
   if (source.kind === "literal") return cloneV2(source.value);
   if (source.kind === "input") return cloneV2(inputs[source.field]);
   if (source.kind === "inputs") {
@@ -585,12 +882,18 @@ function sourceValueV2(source: any, inputs: JsonRecordV2, before: JsonRecordV2):
     if (value === undefined) throw new RuntimeFailureV2("action_failure", "State source pointer is absent");
     return cloneV2(value);
   }
+  if (source.kind === "entity_field") {
+    const binding = PROGRAM_V2.runtimeBehavior.entityFieldBindings.find((candidate: any) =>
+      candidate.actionRef === actionRef && candidate.deltaOrdinal === deltaOrdinal);
+    if (!binding) behaviorFailureV2("ENTITY_SNAPSHOT_BINDING_MISSING", actionRef + ":" + deltaOrdinal);
+    return entityFieldValueV2(binding, inputs, before);
+  }
   throw new RuntimeFailureV2("action_failure", "Unsupported opaque value source");
 }
 
-function applyDeltaV2(delta: any, inputs: JsonRecordV2, before: JsonRecordV2, draft: JsonRecordV2): void {
+function applyDeltaV2(delta: any, deltaOrdinal: number, actionRef: string, inputs: JsonRecordV2, before: JsonRecordV2, draft: JsonRecordV2): void {
   if (!ownV2(draft, delta.stateRef)) throw new RuntimeFailureV2("action_failure", "State delta target is absent");
-  const expected = sourceValueV2(delta.valueFrom, inputs, before);
+  const expected = sourceValueV2(delta.valueFrom, inputs, before, actionRef, deltaOrdinal);
   const current = readPointerV2(draft[delta.stateRef], delta.path);
   let next: any;
   if (delta.operation === "set" || delta.operation === "clear") next = expected;
@@ -638,7 +941,9 @@ function executeActionV2(action: any, inputs: JsonRecordV2): any {
   const before = cloneV2(runtimeStateV2);
   if (!preconditionsPassV2(action, before)) throw new RuntimeFailureV2("precondition", "Action precondition failed");
   const draft = cloneV2(before);
-  for (const delta of action.stateDeltas) applyDeltaV2(delta, inputs, before, draft);
+  action.stateDeltas.forEach((delta: any, deltaOrdinal: number) =>
+    applyDeltaV2(delta, deltaOrdinal, action.actionRef, inputs, before, draft));
+  assertBehaviorCheckpointV2("after_action", action.actionRef, draft);
   runtimeStateV2 = draft;
   const resultValue = documentV2(action.outputProjections.map((projection: any) => ({
     pointer: projection.pointer,
@@ -646,6 +951,8 @@ function executeActionV2(action: any, inputs: JsonRecordV2): any {
   })));
   return documentV2([{ pointer: action.transport.result.valuePointer, value: resultValue }]);
 }
+
+assertBehaviorCheckpointV2("initial", null, runtimeStateV2);
 
 function failureForV2(action: any, kind: RuntimeFailureKindV2, message: string): { code: number; body: any } {
   const failure = action.transport.result.failureCases.find((candidate: any) => candidate.kind === kind)
@@ -887,6 +1194,42 @@ function sourceMembersV2(
     compareUtf16(left.realizationRef, right.realizationRef)));
 }
 
+function runtimeBehaviorSourceCoverageV2(
+  contract: Readonly<ProductRuntimeBehaviorContractV1>,
+): Readonly<{
+  runtimeAssertions: readonly RuntimeBehaviorAssertionSourceBindingV2[];
+  entityFieldBindings: readonly RuntimeBehaviorEntityFieldSourceBindingV2[];
+}> {
+  const runtimeAssertions = contract.invariantBindings.flatMap((binding) =>
+    binding.disposition.kind === "runtime_assertions"
+      ? binding.disposition.assertions.map((assertion) => Object.freeze({
+          invariantRef: binding.invariantRef,
+          assertionRef: assertion.assertionRef,
+          assertionHash: assertion.assertionHash,
+          stateRef: binding.stateRef,
+        }))
+      : []).sort((left, right) => compareUtf16(left.assertionRef, right.assertionRef));
+  const entityFieldBindings = contract.entityFieldBindings.map((binding) =>
+    Object.freeze({
+      occurrenceRef: binding.occurrenceRef,
+      snapshotBindingHash: binding.snapshotBindingHash,
+      actionRef: binding.actionRef,
+      deltaOrdinal: binding.deltaOrdinal,
+      entityRef: binding.entityRef,
+      fieldRef: binding.fieldRef,
+    })).sort((left, right) => compareUtf16(left.occurrenceRef, right.occurrenceRef));
+  if (
+    runtimeAssertions.length !== contract.coverage.runtimeAssertionCount
+    || entityFieldBindings.length !== contract.coverage.entityFieldBindingCount
+  ) {
+    throw new Error("Runtime behavior source coverage differs from verified contract counts");
+  }
+  return Object.freeze({
+    runtimeAssertions: Object.freeze(runtimeAssertions),
+    entityFieldBindings: Object.freeze(entityFieldBindings),
+  });
+}
+
 function generatedSourceV2(
   program: RuntimeProgramV2,
   memberDrafts: readonly SourceMemberDraftV2[],
@@ -943,6 +1286,7 @@ function exactRuntimeTargetV2(fileTree: Readonly<FileTreeManifestV3>) {
 function assertAuthorityJoinsV2(input: Readonly<{
   productSpec: ProductSpecV2;
   deliverySelectionHash: string;
+  runtimeBehaviorContract: Readonly<ProductRuntimeBehaviorContractV1>;
   realizationPlan: Readonly<SemanticRealizationPlanV2>;
   fileTree: Readonly<FileTreeManifestV3>;
   buildTopology: Readonly<BuildTopologyV3>;
@@ -968,6 +1312,15 @@ function assertAuthorityJoinsV2(input: Readonly<{
   const runtimeBuildPath = input.buildTopology.paths.find((entry) =>
     entry.pathRef === runtimeTarget.pathRef);
   const joins = [
+    ["behavior_product_spec", input.runtimeBehaviorContract.authority.productSpecHash
+      === input.realizationPlan.authority.productSpecHash],
+    ["behavior_proposal", input.runtimeBehaviorContract.authority.proposalHash
+      === input.realizationPlan.authority.runtimeBehavior.proposalHash],
+    ["behavior_contract", input.runtimeBehaviorContract.contractHash
+      === input.realizationPlan.authority.runtimeBehavior.contractHash],
+    ["behavior_evaluator",
+      input.runtimeBehaviorContract.authority.evaluatorContractHash
+        === input.realizationPlan.authority.runtimeBehavior.evaluatorContractHash],
     ["realization_product_spec", input.realizationPlan.authority.productSpecHash
       === input.buildTopology.authority.productSpecHash],
     ["realization_delivery", input.realizationPlan.authority.deliverySelectionHash
@@ -1090,10 +1443,15 @@ async function generateInternalV2(
     );
   }
   const productSpec = productSpecResult.data;
-  const opaqueDiagnostics = opaqueBehaviorDiagnosticsV2(productSpec);
-  if (opaqueDiagnostics.length > 0) return rejected(opaqueDiagnostics);
+  const unsupportedDiagnostics = unsupportedBehaviorDiagnosticsV2(productSpec);
+  if (unsupportedDiagnostics.length > 0) return rejected(unsupportedDiagnostics);
 
   try {
+    const verifiedBehaviorContract = verifyProductRuntimeBehaviorContractV1({
+      productSpec,
+      proposal: parsed.data.runtimeBehaviorProposal,
+      candidate: parsed.data.runtimeBehaviorContract,
+    });
     const selection = verifyProductDeliverySelectionV2({
       productSpec,
       requestedStackPackId: parsed.data.deliverySelection
@@ -1145,6 +1503,7 @@ async function generateInternalV2(
     assertAuthorityJoinsV2({
       productSpec,
       deliverySelectionHash,
+      runtimeBehaviorContract: verifiedBehaviorContract,
       realizationPlan: verifiedPlan.value,
       fileTree,
       buildTopology: verifiedTopology.value,
@@ -1153,6 +1512,7 @@ async function generateInternalV2(
 
     const program = buildRuntimeProgramV2(
       productSpec,
+      verifiedBehaviorContract,
       transportResult.contractSet,
       selection.profileId,
     );
@@ -1161,6 +1521,9 @@ async function generateInternalV2(
       program,
     });
     const memberDrafts = sourceMembersV2(verifiedPlan.value);
+    const runtimeBehaviorCoverage = runtimeBehaviorSourceCoverageV2(
+      verifiedBehaviorContract,
+    );
     const generated = generatedSourceV2(program, memberDrafts);
     const sourceBytes = Buffer.from(generated.sourceText, "utf8");
     if (
@@ -1243,10 +1606,10 @@ async function generateInternalV2(
           contractCount: transportResult.contractSet.contractCount,
         },
         runtimeBehavior: {
-          proposalHash: verifiedPlan.value.authority.runtimeBehavior.proposalHash,
-          contractHash: verifiedPlan.value.authority.runtimeBehavior.contractHash,
+          proposalHash: verifiedBehaviorContract.authority.proposalHash,
+          contractHash: verifiedBehaviorContract.contractHash,
           evaluatorContractHash:
-            verifiedPlan.value.authority.runtimeBehavior.evaluatorContractHash,
+            verifiedBehaviorContract.authority.evaluatorContractHash,
         },
         semanticRealizationPlan: {
           schema: "setfarm.semantic-realization-plan.v2",
@@ -1290,6 +1653,37 @@ async function generateInternalV2(
         generatedMemberMembershipHash:
           hashNodeProductRuntimeGeneratedMemberMembershipV2(generated.members),
         opaqueBehaviorCount: 0,
+        runtimeBehavior: {
+          contractHash: verifiedBehaviorContract.contractHash,
+          runtimeAssertionCount:
+            runtimeBehaviorCoverage.runtimeAssertions.length,
+          runtimeAssertions: [...runtimeBehaviorCoverage.runtimeAssertions],
+          runtimeAssertionMembershipHash:
+            hashRuntimeBehaviorAssertionSourceMembershipV2(
+              runtimeBehaviorCoverage.runtimeAssertions,
+            ),
+          entityFieldBindingCount:
+            runtimeBehaviorCoverage.entityFieldBindings.length,
+          entityFieldBindings: [...runtimeBehaviorCoverage.entityFieldBindings],
+          entityFieldBindingMembershipHash:
+            hashRuntimeBehaviorEntityFieldSourceMembershipV2(
+              runtimeBehaviorCoverage.entityFieldBindings,
+            ),
+          checkpoints: {
+            initial: "generated_before_public_runtime_entrypoint",
+            afterAction: "generated_before_transaction_commit",
+            afterRehydration:
+              "not_applicable_selected_profiles_forbid_durable_rehydration",
+          },
+          failureAbi: {
+            invariant:
+              "declared_action_failure_with_assertion_ref_message",
+            entitySnapshot:
+              "declared_action_failure_with_occurrence_ref_message",
+          },
+          disposition:
+            "every_runtime_assertion_and_entity_snapshot_binding_projected_into_hashed_runtime_program",
+        },
         disposition:
           "every_generator_realization_bound_to_exact_generated_source_marker",
       },

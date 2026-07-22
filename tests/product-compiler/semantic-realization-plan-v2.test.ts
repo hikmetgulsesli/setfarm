@@ -30,6 +30,8 @@ import { hashProductRuntimeBehaviorContractV1 } from
 import type { ProductSpecV2 } from
   "../../src/product-compiler/schemas/product-spec-v2.js";
 import {
+  entityFieldNodeExpressApiProductSpecV2,
+  entityFieldNodeRuntimeBehaviorAuthorityV1,
   genuineNodeCliProductSpecV2,
   genuineNodeExpressApiProductSpecV2,
   nodeRuntimeBehaviorAuthorityV1,
@@ -37,25 +39,29 @@ import {
 } from "./fixtures/no-design-product-semantics-v2.js";
 
 const GENERATOR_CONTRACT_HASH_GOLDEN_V2 =
-  "2f36ccaf6ccc5d88d89c770ea01daf139afc18b3736c4b282f9e01fea005b41f";
+  "4fc036961b7449aec4eb171699f9559515820e1f5b8864c7440147082200f31b";
 const TEST_GENERATOR_CONTRACT_HASH_GOLDEN_V2 =
   "478ecd63be81483a71d9becd769483e7c9b194c047223374eb35c0731e0c4f28";
 const POLICY_HASH_GOLDEN_V2 =
-  "9dc1212f1c7fd1a6801dfbd9d3a2823b68292f76cdb9d8c7501fa8ac5beb120e";
+  "50ab59d4d93c3f01d84c3bf1ce680243be8928257f71417f31e0e2bc67183404";
 const PLAN_CONTRACT_HASH_GOLDEN_V2 =
-  "1dc1a10c192464c68558289f106274b0bdfbc8053382a4e19970e3ee39a405c1";
+  "a9ec3b10e03926315d97126017a38b31de1098dcacbb8563d8a676848226585c";
 const CLI_PLAN_HASH_GOLDEN_V2 =
-  "317786c21f97c6a2412879b722d78d9e88118a20dceb9cfe42ae0c32a6d63cf8";
+  "8f89a0d9a0accba2feba665c8e532be058b5c9a0980683fce1c7efe13a045ed6";
 const API_PLAN_HASH_GOLDEN_V2 =
-  "b39e52d4df7876798b231f49e5b180dcfadc5bf4a7b80ac89111f7d36ea5bdc4";
+  "3bc7265b858d380c4af50389ed3c9a20f0883d2d7c3d9cb280da6fc005b2f948";
 const TWO_STORY_API_PLAN_HASH_GOLDEN_V2 =
-  "44af0e1f75716098a1e36d4aa3961cae02a58187caa303fb936b96bf1db5a40d";
+  "02aef64b7b11d03f8431f77d0d4edf9f3bf9b5214f76e47cb2aacf4e9071831c";
 const CLI_MEMBERSHIP_HASH_GOLDEN_V2 =
-  "da6de6fa7a1c2005be03459827dcb0dffccf917ac56acd6b4d11f9cbec370875";
+  "acf4b7c75f0a3729ddca7afb3fb6b7d3a56f84d5b5162b64aeda7a2fe38200c5";
 const API_MEMBERSHIP_HASH_GOLDEN_V2 =
-  "f1ca02a8a6709b51efc79165b89516789c2e6fefd8f84197717dc80a88ecb342";
+  "a44103f6212a494c0c00651b8c8927a14a71961fab0998d24ffebb153357c35d";
 const TWO_STORY_API_MEMBERSHIP_HASH_GOLDEN_V2 =
-  "8526fcb2f070e794a6df705abe0a4e9f0c2c2f7e64f98945aad80cebc232222e";
+  "2ce90ba06b797b34f4c6ebbb62c34d7e9313b69113aad787eedf2dbded75e2d6";
+const ENTITY_API_PLAN_HASH_GOLDEN_V2 =
+  "13f12e37051bd81548e38526c76c6e57c6185dcee576676de5cb4e4b98af7c92";
+const ENTITY_API_MEMBERSHIP_HASH_GOLDEN_V2 =
+  "f6acb5edda26ca292afc3010ce18426ef8acd01efb37a2491f80fe83df2d16ce";
 
 type SupportedStackPackIdV2 = "node-cli" | "node-express-api";
 
@@ -79,9 +85,11 @@ function selectionFor(
 function compiled(
   productSpec: ProductSpecV2,
   requestedStackPackId: SupportedStackPackIdV2,
+  runtimeBehaviorAuthority: typeof nodeRuntimeBehaviorAuthorityV1 =
+    nodeRuntimeBehaviorAuthorityV1,
 ) {
   const deliverySelection = selectionFor(productSpec, requestedStackPackId);
-  const runtimeBehavior = nodeRuntimeBehaviorAuthorityV1(productSpec);
+  const runtimeBehavior = runtimeBehaviorAuthority(productSpec);
   const result = compileSemanticRealizationPlanV2({
     productSpec,
     deliverySelection,
@@ -158,7 +166,7 @@ describe("SemanticRealizationPlanV2 contract and compiler", () => {
     assert.equal(
       NODE_PRODUCT_RUNTIME_GENERATOR_CONTRACT_V2.semanticExecution
         .opaqueBehaviorPolicy,
-      "reject_without_versioned_product_spec_behavior_contract",
+      "require_fresh_verified_versioned_behavior_contract_projection",
     );
     assert.deepEqual(
       NODE_SEMANTIC_REALIZATION_POLICY_V2.profiles.map((profile) => ({
@@ -205,6 +213,7 @@ describe("SemanticRealizationPlanV2 contract and compiler", () => {
           "4173068e7e7b629fbe1b843e55ed7c0f1cc9cfbdedb9794450335049eac02a3e",
         ],
         behaviorBindingCount: 1,
+        entityFieldBindingCount: 0,
       },
       {
         compiled: compiled(
@@ -219,6 +228,7 @@ describe("SemanticRealizationPlanV2 contract and compiler", () => {
           "8fb4fe015ad5dff1d256887e0e25c02b705be097cd8af396be8a0597cd5af7d5",
         ],
         behaviorBindingCount: 1,
+        entityFieldBindingCount: 0,
       },
       {
         compiled: compiled(
@@ -233,6 +243,23 @@ describe("SemanticRealizationPlanV2 contract and compiler", () => {
           "257f9a6e6bc24f5900a5ac9b71d13a41598340d14a870c64391ef93e52134843",
         ],
         behaviorBindingCount: 2,
+        entityFieldBindingCount: 0,
+      },
+      {
+        compiled: compiled(
+          entityFieldNodeExpressApiProductSpecV2(),
+          "node-express-api",
+          entityFieldNodeRuntimeBehaviorAuthorityV1,
+        ),
+        coverage: [21, 13, 5, 1, 2],
+        planHash: ENTITY_API_PLAN_HASH_GOLDEN_V2,
+        membershipHash: ENTITY_API_MEMBERSHIP_HASH_GOLDEN_V2,
+        behaviorHashes: [
+          "9d637570600ea28eb4bb97a07a56da996ff5a83320c081b06d0c9d58504b29b5",
+          "815757c8dda7c0260c1682a9b70fef5792d877ebb3fb80e2eb0dafe95500e04d",
+        ],
+        behaviorBindingCount: 1,
+        entityFieldBindingCount: 1,
       },
     ] as const;
 
@@ -260,12 +287,37 @@ describe("SemanticRealizationPlanV2 contract and compiler", () => {
         value.authority.runtimeBehavior.invariantBindingCount,
         testCase.behaviorBindingCount,
       );
-      assert.equal(value.authority.runtimeBehavior.entityFieldBindingCount, 0);
+      assert.equal(
+        value.authority.runtimeBehavior.entityFieldBindingCount,
+        testCase.entityFieldBindingCount,
+      );
       assert.equal(
         value.authority.runtimeBehavior.verification,
         "fresh_product_spec_plus_proposal_reproduction",
       );
       assert.equal(SemanticRealizationPlanV2Schema.safeParse(value).success, true);
+    }
+  });
+
+  it("realizes exact entity ownership as one generated runtime member", () => {
+    const value = compiled(
+      entityFieldNodeExpressApiProductSpecV2(),
+      "node-express-api",
+      entityFieldNodeRuntimeBehaviorAuthorityV1,
+    ).value;
+    const entityRealizations = value.realizations.filter((entry) =>
+      entry.sourceIntent.subjectKind === "entity");
+    assert.equal(entityRealizations.length, 1);
+    assert.equal(entityRealizations[0]!.sourceIntent.subjectRef,
+      "ENTITY_TASK_CATALOG_ENTRY");
+    assert.equal(entityRealizations[0]!.sourceIntent.storyId, "US-001");
+    assert.equal(
+      entityRealizations[0]!.target.kind,
+      "node_product_runtime_generator_member",
+    );
+    if (entityRealizations[0]!.target.kind === "node_product_runtime_generator_member") {
+      assert.equal(entityRealizations[0]!.target.memberKind, "entity_model");
+      assert.equal(entityRealizations[0]!.target.modelWriteAuthority, "forbidden");
     }
   });
 

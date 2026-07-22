@@ -39,6 +39,11 @@ import {
   SemanticSourceSubjectContractResolutionV1Schema,
   SemanticSourceSubjectKindV1Schema,
 } from "./stack-semantic-source-rules-v1.js";
+import {
+  PRODUCT_RUNTIME_BEHAVIOR_CONTRACT_SCHEMA_V1,
+  PRODUCT_RUNTIME_BEHAVIOR_CONTRACT_VERSION_V1,
+  PRODUCT_RUNTIME_BEHAVIOR_PROPOSAL_SCHEMA_V1,
+} from "./product-runtime-behavior-contract-v1.js";
 
 export const SEMANTIC_SOURCE_INTENT_SET_SCHEMA_V1 =
   "setfarm.semantic-source-intent-set.v1" as const;
@@ -627,6 +632,68 @@ export function hashSemanticStoryPartitionV2(
   });
 }
 
+export const SemanticStoryPartitionBindingV3Schema =
+  SemanticStoryPartitionBindingV2Schema.extend({
+    entityRefs: canonicalReferenceArray(
+      EntityIdSchema,
+      2_000,
+      "Story entity refs",
+    ),
+  }).strict().superRefine((value, context) => {
+    const componentHash = hashSemanticStoryPartitionComponentV3(value);
+    if (value.componentHash !== componentHash) {
+      context.addIssue({
+        code: "custom",
+        path: ["componentHash"],
+        message: "V3 story component hash must bind exact entity-aware semantics",
+      });
+    }
+  });
+
+export type SemanticStoryPartitionBindingV3 = z.infer<
+  typeof SemanticStoryPartitionBindingV3Schema
+>;
+
+export function hashSemanticStoryPartitionComponentV3(
+  value: Readonly<{
+    routeRefs: readonly string[];
+    surfaceRefs: readonly string[];
+    controlSlotRefs: readonly string[];
+    controlRefs: readonly string[];
+    actionRefs: readonly string[];
+    observableRefs: readonly string[];
+    stateRefs: readonly string[];
+    persistenceRefs: readonly string[];
+    evidenceRefs: readonly string[];
+    entityRefs: readonly string[];
+  }>,
+): string {
+  return hashCanonicalJson({
+    schema: "setfarm.story-partition-component.v3",
+    component: {
+      routeRefs: value.routeRefs,
+      surfaceRefs: value.surfaceRefs,
+      controlSlotRefs: value.controlSlotRefs,
+      controlRefs: value.controlRefs,
+      actionRefs: value.actionRefs,
+      observableRefs: value.observableRefs,
+      stateRefs: value.stateRefs,
+      persistenceRefs: value.persistenceRefs,
+      evidenceRefs: value.evidenceRefs,
+      entityRefs: value.entityRefs,
+    },
+  });
+}
+
+export function hashSemanticStoryPartitionV3(
+  stories: readonly SemanticStoryPartitionBindingV3[],
+): string {
+  return hashCanonicalJson({
+    schema: "setfarm.semantic-story-partition-hash.v3",
+    stories,
+  });
+}
+
 export const InvocationTransportIntentBindingV2Schema = z.object({
   actionRef: ActionIdSchema,
   transportKind: z.enum(["cli_command", "http_request"]),
@@ -683,10 +750,20 @@ const IntentSetAuthorityV1Schema = z.object({
     closureHash: Sha256Schema,
   }).strict(),
   semanticRuleSet: SemanticRuleSetBindingV1Schema,
+  runtimeBehavior: z.object({
+    proposalSchema: z.literal(PRODUCT_RUNTIME_BEHAVIOR_PROPOSAL_SCHEMA_V1),
+    proposalHash: Sha256Schema,
+    contractSchema: z.literal(PRODUCT_RUNTIME_BEHAVIOR_CONTRACT_SCHEMA_V1),
+    contractVersion: z.literal(PRODUCT_RUNTIME_BEHAVIOR_CONTRACT_VERSION_V1),
+    contractHash: Sha256Schema,
+    evaluatorContractHash: Sha256Schema,
+  }).strict().nullable(),
   storyPartition: z.object({
+    schema: z.literal("setfarm.semantic-story-partition.v3"),
+    partitionVersion: z.literal(3),
     partitionHash: Sha256Schema,
     storyCount: z.number().int().positive().max(5_000),
-    stories: z.array(SemanticStoryPartitionBindingV2Schema).min(1).max(5_000),
+    stories: z.array(SemanticStoryPartitionBindingV3Schema).min(1).max(5_000),
   }).strict(),
   invocationTransportSet: z.object({
     setHash: Sha256Schema,
@@ -772,7 +849,7 @@ export const SemanticSourceIntentSetV1Schema =
       || stories.some((story, index) => story.order !== index + 1)
       || !hasUniqueStrings(stories.map((story) => story.storyId))
       || value.authority.storyPartition.partitionHash
-        !== hashSemanticStoryPartitionV2(stories)
+        !== hashSemanticStoryPartitionV3(stories)
     ) {
       context.addIssue({
         code: "custom",

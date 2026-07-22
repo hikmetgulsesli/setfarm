@@ -182,6 +182,8 @@ import {
   type TestDatabase,
 } from "../execution-attempts/test-database.js";
 import {
+  entityFieldNodeExpressApiProductSpecV2,
+  entityFieldNodeRuntimeBehaviorAuthorityV1,
   genuineNodeCliProductSpecV2,
   genuineNodeExpressApiProductSpecV2,
   nodeRuntimeBehaviorAuthorityV1,
@@ -204,7 +206,7 @@ const BUILD_TOPOLOGY_CONTRACT_HASH_GOLDEN_V2 =
 const BUILD_TOPOLOGY_CONTRACT_HASH_GOLDEN_V3 =
   "70276cf52b8dc844e1d60f5bf11203b17f5623126c433a184bcf301cfe231896";
 const NODE_PRODUCT_RUNTIME_PROGRAM_CONTRACT_HASH_GOLDEN_V2 =
-  "bc034f20c1c56ed094a2bebe6ea83cace9c861a299fbba0d44a7482803034bd5";
+  "5443c8c68e178ec3cce5a94857918dae195848e4f33e8ec751e0154b6fc97a46";
 const NODE_ENTRYPOINT_GENERATOR_CONTRACT_HASH_GOLDEN_V2 =
   "52b95411113b302c8993e8d3debc712831955cb72a8b91a0226e40941a86933a";
 const NODE_RULE_GENERATOR_TRANSITION_CONTRACT_HASH_GOLDEN_V2 =
@@ -420,16 +422,6 @@ function deliverySelectionForV2(
   );
   if (result.status !== "shadow_selected") throw new Error("Expected delivery selection");
   return result.selection;
-}
-
-function executableRuntimeProductSpecV2(
-  productSpec: ProductSpecV2,
-): ProductSpecV2 {
-  const candidate = structuredClone(productSpec);
-  candidate.states.forEach((state) => {
-    state.invariants = [];
-  });
-  return ProductSpecV2Schema.parse(candidate);
 }
 
 function transpileGeneratedRuntimeV2(sourceText: string): string {
@@ -801,7 +793,7 @@ describe("Node scaffold private staged materializer V2", () => {
         historicalPathCount: 1,
         totalPathCount: 13,
         ownerCount: 3,
-        manifestHash: "687630f5caa489a64bd978891fe548e86ccc5e5e20a21cc912a3a1a9f5febbb2",
+        manifestHash: "701124755e7d699c7e7253335f42cb76acb912f4612e7d78d9740adb705523ce",
       },
       {
         profileId: API_PROFILE,
@@ -813,7 +805,7 @@ describe("Node scaffold private staged materializer V2", () => {
         historicalPathCount: 2,
         totalPathCount: 15,
         ownerCount: 3,
-        manifestHash: "3a69a3859bc9c5108b37dc84906dbe35eba962c9e5151bf419b187d9d9a06a10",
+        manifestHash: "c5732d5837f119cf9422c567c9b5e3900e62afc2cf050a4edc3ab6e72afe2159",
       },
       {
         profileId: API_PROFILE,
@@ -825,7 +817,7 @@ describe("Node scaffold private staged materializer V2", () => {
         historicalPathCount: 2,
         totalPathCount: 22,
         ownerCount: 4,
-        manifestHash: "79359b2225813271d06f3a8f34335ab37def435df793616fd73dba4acaa6b0dd",
+        manifestHash: "2bfe379185522947a908803b4a99794852bdd2e31930d0f60049b85850276dee",
       },
     ];
     for (const fixture of cases) {
@@ -1281,9 +1273,9 @@ describe("Node scaffold private staged materializer V2", () => {
     }
 
     assert.deepEqual(manifestHashes, [
-      "ec6473afdf2b1a56a1b42b6f7390f000cbbf3597ea1b8c4eb4d3c0519df9f6c3",
-      "84fa7f3e0aaf472555117997d5860155f3f2773c9b8c822e41624e1bc2997e2d",
-      "8ce61450b06fe7442fc222976ec32edc5dbe23d0c84c0db94bc40439e0389f39",
+      "9e93924d3da2acf1a349d7663dddaefa8635d0631649dca5299fd09e8c4d1de6",
+      "217b7f5ce71b88ea2c198fc1eb9b6b0dfdacab282c04eb8cd7efac4b0d0b4a6e",
+      "d51d87fd41ae3fb4bc89b1d21e54626b17b0037da772a9d5d51837392d1d7f46",
     ]);
     const cliManifest = manifests.get("cli");
     const apiManifest = manifests.get("api");
@@ -1318,7 +1310,7 @@ describe("Node scaffold private staged materializer V2", () => {
         outputPath: "dist/cli.js",
         candidatePath: "candidate-bundle/application/cli.js",
         runtimeKind: "cli",
-        logicalBuildHash: "3dbaab775f1d4f5b338923a9c032e536adf97dab974e94f5ab3fed52cc6d8a4b",
+        logicalBuildHash: "9f682c0f693999e01ccec6eb09ee07651b1056c198ddbb26c61ad52b4a5960b9",
       },
       {
         profileId: API_PROFILE,
@@ -1328,7 +1320,7 @@ describe("Node scaffold private staged materializer V2", () => {
         outputPath: "dist/app.js",
         candidatePath: "candidate-bundle/application/app.js",
         runtimeKind: "http_handler",
-        logicalBuildHash: "bbd4d9cafa4b3779196f7fa707c726c6494c39a01c8cd18de89ea5455b4755f6",
+        logicalBuildHash: "7c645d797803ce1b7a8a0f30c9c2e3f20c5ba3ed617312edf252f3def9135cfa",
       },
       {
         profileId: API_PROFILE,
@@ -1338,7 +1330,7 @@ describe("Node scaffold private staged materializer V2", () => {
         outputPath: "dist/app.js",
         candidatePath: "candidate-bundle/application/app.js",
         runtimeKind: "http_handler",
-        logicalBuildHash: "0f87d72f4e6541f13febf0d4eb3396705ec2cd8eede13dfb0329206523da7a4c",
+        logicalBuildHash: "6f551d90c14837a8c1ac70e8fdd071413a71b80efea7134b4a12d51eef318c11",
       },
     ];
     for (const fixture of cases) {
@@ -1833,9 +1825,9 @@ describe("Node scaffold private staged materializer V2", () => {
     }
 
     assert.deepEqual(logicalBuildHashes, [
-      "5e2b34459d4a1634e2f3b61322e03dc377eb86a5e74bd1766e850228516e71e8",
-      "2162f30bf3ae99aaa8bc4d382a3effd4de6320586a140f0028312a54af3342c1",
-      "8015cc1e78b1682e003c44fd88476aef5075f095145678b45a6b2c6637aeacd4",
+      "ea4ae65de431790bcca99ed50f9285cea934cf350d80f93bb3361f4655b99d84",
+      "094d5a9e5a2a7ab89cbbfd537fde7aabeb64e2dbc281c340b9c12ff4e48b29a5",
+      "9e97c1656bc269192925340df788e5903012f41dbe320bfd8118afe4e8d34711",
     ]);
   });
 
@@ -1844,29 +1836,34 @@ describe("Node scaffold private staged materializer V2", () => {
       {
         profileId: CLI_PROFILE,
         stackPackId: "node-cli" as const,
-        productSpec: executableRuntimeProductSpecV2(
-          genuineNodeCliProductSpecV2(),
-        ),
+        productSpec: genuineNodeCliProductSpecV2(),
+        behaviorAuthority: nodeRuntimeBehaviorAuthorityV1,
         sourceLocator: "src/cli.ts",
         runtimeKind: "cli" as const,
       },
       {
         profileId: API_PROFILE,
         stackPackId: "node-express-api" as const,
-        productSpec: executableRuntimeProductSpecV2(
-          genuineNodeExpressApiProductSpecV2(),
-        ),
+        productSpec: genuineNodeExpressApiProductSpecV2(),
+        behaviorAuthority: nodeRuntimeBehaviorAuthorityV1,
         sourceLocator: "src/app.ts",
         runtimeKind: "api" as const,
       },
       {
         profileId: API_PROFILE,
         stackPackId: "node-express-api" as const,
-        productSpec: executableRuntimeProductSpecV2(
-          twoStoryNodeExpressApiProductSpecV2(),
-        ),
+        productSpec: twoStoryNodeExpressApiProductSpecV2(),
+        behaviorAuthority: nodeRuntimeBehaviorAuthorityV1,
         sourceLocator: "src/app.ts",
         runtimeKind: "multi_api" as const,
+      },
+      {
+        profileId: API_PROFILE,
+        stackPackId: "node-express-api" as const,
+        productSpec: entityFieldNodeExpressApiProductSpecV2(),
+        behaviorAuthority: entityFieldNodeRuntimeBehaviorAuthorityV1,
+        sourceLocator: "src/app.ts",
+        runtimeKind: "entity_api" as const,
       },
     ];
 
@@ -1879,7 +1876,7 @@ describe("Node scaffold private staged materializer V2", () => {
       const authorityInput = {
         productSpec: fixture.productSpec,
         deliverySelection,
-        ...nodeRuntimeBehaviorAuthorityV1(fixture.productSpec),
+        ...fixture.behaviorAuthority(fixture.productSpec),
       };
       const realizationPlan = compileSemanticRealizationPlanV2(authorityInput);
       assert.equal(realizationPlan.status, "shadow_compiled");
@@ -1960,6 +1957,44 @@ describe("Node scaffold private staged materializer V2", () => {
         realizationPlan.value.coverage.generatorMemberCount,
       );
       assert.equal(generated.receipt.coverage.opaqueBehaviorCount, 0);
+      assert.equal(
+        generated.receipt.coverage.runtimeBehavior.contractHash,
+        authorityInput.runtimeBehaviorContract.contractHash,
+      );
+      assert.equal(
+        generated.receipt.coverage.runtimeBehavior.runtimeAssertionCount,
+        authorityInput.runtimeBehaviorContract.coverage.runtimeAssertionCount,
+      );
+      assert.equal(
+        generated.receipt.coverage.runtimeBehavior.runtimeAssertions.length,
+        authorityInput.runtimeBehaviorContract.coverage.runtimeAssertionCount,
+      );
+      assert.equal(
+        generated.receipt.coverage.runtimeBehavior.entityFieldBindingCount,
+        authorityInput.runtimeBehaviorContract.coverage.entityFieldBindingCount,
+      );
+      assert.equal(
+        generated.receipt.coverage.runtimeBehavior.checkpoints.afterAction,
+        "generated_before_transaction_commit",
+      );
+      assert.equal(
+        generated.sourceText.includes(authorityInput.runtimeBehaviorContract.contractHash),
+        true,
+      );
+      if (fixture.runtimeKind === "entity_api") {
+        assert.equal(
+          generated.receipt.coverage.runtimeBehavior.entityFieldBindingCount,
+          1,
+        );
+        const occurrenceRef = authorityInput.runtimeBehaviorContract
+          .entityFieldBindings[0]!.occurrenceRef;
+        assert.equal(
+          generated.receipt.coverage.runtimeBehavior.entityFieldBindings[0]!
+            .occurrenceRef,
+          occurrenceRef,
+        );
+        assert.equal(generated.sourceText.includes(occurrenceRef), true);
+      }
       assert.equal(generated.sourceText.includes("Math.random"), false);
       assert.equal(generated.sourceText.includes("Date.now"), false);
       assert.equal(generated.sourceText.includes("process.env"), false);
@@ -2016,6 +2051,22 @@ describe("Node scaffold private staged materializer V2", () => {
         assert.deepEqual(JSON.parse(execution.stdout), {
           task: { title: "Runtime proof" },
         });
+        const invariantFailure = spawnSync(process.execPath, [
+          modulePath,
+          "add",
+          "--title",
+          "",
+        ], {
+          encoding: "utf8",
+          env: {},
+          timeout: 5_000,
+        });
+        assert.notEqual(invariantFailure.status, 0);
+        assert.equal(invariantFailure.stdout, "");
+        assert.match(
+          invariantFailure.stderr,
+          /RUNTIME_INVARIANT_ASSERTION_FAILED_AFTER_ACTION_ACT_ADD_TASK:RASSERT_/u,
+        );
       } else if (fixture.runtimeKind === "api") {
         const encoded = Buffer.from(javascript, "utf8").toString("base64");
         const runtime = await import(
@@ -2036,6 +2087,20 @@ describe("Node scaffold private staged materializer V2", () => {
             return this;
           },
         };
+        runtime.setfarmHttpHandlerV2({
+          method: "POST",
+          originalUrl: "/tasks/setfarm",
+          url: "/tasks/setfarm",
+          body: { title: "" },
+        }, response, (error?: unknown) => {
+          nextError = error ?? "NEXT_WITHOUT_ERROR";
+        });
+        assert.equal(nextError, undefined);
+        assert.match(
+          JSON.stringify(responseBody),
+          /RUNTIME_INVARIANT_ASSERTION_FAILED_AFTER_ACTION_ACT_CREATE_TASK:RASSERT_/u,
+        );
+
         runtime.setfarmHttpHandlerV2({
           method: "POST",
           originalUrl: "/tasks/setfarm",
@@ -2063,6 +2128,51 @@ describe("Node scaffold private staged materializer V2", () => {
           (responseBody as any).error.code,
           "INPUT_VALIDATION_FAILED",
         );
+      } else if (fixture.runtimeKind === "entity_api") {
+        const encoded = Buffer.from(javascript, "utf8").toString("base64");
+        const runtime = await import(
+          `data:text/javascript;base64,${encoded}#${randomUUID()}`
+        ) as { setfarmHttpHandlerV2: Function };
+        let statusCode = 0;
+        let responseBody: unknown;
+        let nextError: unknown;
+        const response = {
+          status(code: number) {
+            statusCode = code;
+            return this;
+          },
+          json(body: unknown) {
+            responseBody = body;
+            return this;
+          },
+        };
+
+        runtime.setfarmHttpHandlerV2({
+          method: "POST",
+          originalUrl: "/tasks/missing",
+          url: "/tasks/missing",
+          body: { title: "Ignored transport title" },
+        }, response, (error?: unknown) => {
+          nextError = error ?? "NEXT_WITHOUT_ERROR";
+        });
+        assert.equal(nextError, undefined);
+        assert.equal(statusCode, 500);
+        assert.match(
+          JSON.stringify(responseBody),
+          /ENTITY_SNAPSHOT_MATCH_MISSING:ENTITYSRC_/u,
+        );
+
+        runtime.setfarmHttpHandlerV2({
+          method: "POST",
+          originalUrl: "/tasks/setfarm",
+          url: "/tasks/setfarm",
+          body: { title: "" },
+        }, response, (error?: unknown) => {
+          nextError = error ?? "NEXT_WITHOUT_ERROR";
+        });
+        assert.equal(nextError, undefined);
+        assert.equal(statusCode, 201);
+        assert.deepEqual(responseBody, { task: { title: "" } });
       }
 
       if (caseIndex === 0) {
@@ -2164,27 +2274,37 @@ describe("Node scaffold private staged materializer V2", () => {
       }
     }
 
-    const opaqueSpec = genuineNodeCliProductSpecV2();
-    const opaqueCreated = await stage({ profileId: CLI_PROFILE });
-    const opaqueSelection = deliverySelectionForV2(opaqueSpec, "node-cli");
-    const rejectedOpaque = await generateNodeProductRuntimeSourceV2ForTest(
-      opaqueCreated.handle,
+    const unsupportedCandidate: any = structuredClone(
+      genuineNodeExpressApiProductSpecV2(),
+    );
+    unsupportedCandidate.actions[0].navigation = {
+      kind: "route",
+      routeRef: unsupportedCandidate.routes[0].id,
+    };
+    const unsupportedSpec = ProductSpecV2Schema.parse(unsupportedCandidate);
+    const unsupportedCreated = await stage({ profileId: API_PROFILE });
+    const unsupportedSelection = deliverySelectionForV2(
+      unsupportedSpec,
+      "node-express-api",
+    );
+    const rejectedUnsupported = await generateNodeProductRuntimeSourceV2ForTest(
+      unsupportedCreated.handle,
       {
-        productSpec: opaqueSpec,
-        deliverySelection: opaqueSelection,
-        ...nodeRuntimeBehaviorAuthorityV1(opaqueSpec),
+        productSpec: unsupportedSpec,
+        deliverySelection: unsupportedSelection,
+        ...nodeRuntimeBehaviorAuthorityV1(unsupportedSpec),
         realizationPlan: {},
         fileTree: {},
         buildTopology: {},
       },
     );
-    assert.equal(rejectedOpaque.status, "rejected");
+    assert.equal(rejectedUnsupported.status, "rejected");
     assert.equal(
-      rejectedOpaque.diagnostics[0]?.code,
-      "NODE_RUNTIME_SOURCE_V2_OPAQUE_BEHAVIOR_REJECTED",
+      rejectedUnsupported.diagnostics[0]?.code,
+      "NODE_RUNTIME_SOURCE_V2_UNSUPPORTED_BEHAVIOR_REJECTED",
     );
-    assert.equal(rejectedOpaque.diagnostics[0]?.path,
-      "/productSpec/states/0/invariants");
+    assert.equal(rejectedUnsupported.diagnostics[0]?.path,
+      "/productSpec/actions/0/navigation");
   });
 
   it("transitions every legacy Node entrypoint slot to one generator-owned whole-file authority", async () => {
@@ -2196,7 +2316,7 @@ describe("Node scaffold private staged materializer V2", () => {
         entrypointKind: "cli",
         sourcePath: "src/cli.ts",
         routeCount: 1,
-        transitionHash: "dd9383168e399304d444e47d79363c47f710d9162a87caff034c1a75fbd8a5c1",
+        transitionHash: "cd8014a004d21f00ea38169f78a26a5c9790789540a0bf6d8f93e53fd99f148d",
       },
       {
         profileId: API_PROFILE,
@@ -2205,7 +2325,7 @@ describe("Node scaffold private staged materializer V2", () => {
         entrypointKind: "api",
         sourcePath: "src/app.ts",
         routeCount: 1,
-        transitionHash: "230bae76845629959fcebf10009d1c8bbb3361fe073d899c797ee87bca381a7c",
+        transitionHash: "73bddefb895694fc7d5a0b50151573377c8aa24027f11c45bb86bef79ceafcf5",
       },
       {
         profileId: API_PROFILE,
@@ -2214,7 +2334,7 @@ describe("Node scaffold private staged materializer V2", () => {
         entrypointKind: "api",
         sourcePath: "src/app.ts",
         routeCount: 2,
-        transitionHash: "dbae4dd6890ee1ca3fadf060767e87c64875c539ee90ccc2762e984cabadbc85",
+        transitionHash: "4a535961087f8a3e91603bafbeb48fb73b9c0fef5c5e440c93b9c86b3bc13f15",
       },
     ];
     for (const fixture of cases) {

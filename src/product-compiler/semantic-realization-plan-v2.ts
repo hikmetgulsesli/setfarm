@@ -519,6 +519,8 @@ export function compileSemanticRealizationPlanV2(
     productSpec: parsed.data.productSpec,
     deliverySelection: parsed.data.deliverySelection,
     designSourceClosure: NO_DESIGN_CLOSURE_V2,
+    runtimeBehaviorProposal: parsed.data.runtimeBehaviorProposal,
+    runtimeBehaviorContract: runtimeBehavior,
   });
   if (intentResult.status !== "shadow_compiled") {
     return rejected(

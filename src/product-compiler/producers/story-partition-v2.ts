@@ -306,7 +306,10 @@ function entityConsumers(productSpec: ProductSpecV2): Map<string, string[]> {
  * identities. Affected surfaces create semantic connectivity, never slots or
  * physical controls.
  */
-export function produceStoryPartitionV2(input: unknown): StoryPartitionResultV2 {
+function produceStoryPartitionInternalV2(
+  input: unknown,
+  deferClosedComponentValidation: boolean,
+): StoryPartitionResultV2 {
   const parsed = StoryPartitionInputV2Schema.safeParse(input);
   if (!parsed.success) {
     return reject(parsed.error.issues.slice(0, 200).map((issue) => diagnostic({
@@ -446,7 +449,7 @@ export function produceStoryPartitionV2(input: unknown): StoryPartitionResultV2 
     || compareUtf16(left.actionRefs[0] ?? "", right.actionRefs[0] ?? "")
     || compareUtf16(left.componentHash, right.componentHash));
 
-  components.forEach((component) => {
+  if (!deferClosedComponentValidation) components.forEach((component) => {
     if (component.actionRefs.length === 0) {
       diagnostics.push(diagnostic({
         code: "STORY_PARTITION_V2_COMPONENT_ACTION_MISSING",
@@ -475,4 +478,15 @@ export function produceStoryPartitionV2(input: unknown): StoryPartitionResultV2 
   // affected surface contributed only connectivity: slots and controls came
   // exclusively from controlPlacements and graph controls.
   return { status: "produced", productSpec, designGraph, components, diagnostics: [] };
+}
+
+export function produceStoryPartitionV2(input: unknown): StoryPartitionResultV2 {
+  return produceStoryPartitionInternalV2(input, false);
+}
+
+/** Internal dependency stage for V3; V3 must close every deferred component. */
+export function produceStoryPartitionBaseV2ForV3(
+  input: unknown,
+): StoryPartitionResultV2 {
+  return produceStoryPartitionInternalV2(input, true);
 }

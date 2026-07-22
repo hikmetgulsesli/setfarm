@@ -76,15 +76,19 @@ export const NODE_PRODUCT_RUNTIME_GENERATOR_CONTRACT_V2 = Object.freeze({
     semanticAuxiliarySourceFiles: "forbidden" as const,
   }),
   semanticExecution: Object.freeze({
-    sourceAuthority: "verified_product_spec_v2" as const,
-    actionExecution: "generated_product_spec_state_delta_reducer_v2" as const,
+    sourceAuthority:
+      "verified_product_spec_v2_and_product_runtime_behavior_contract_v1" as const,
+    actionExecution:
+      "generated_product_spec_state_delta_and_behavior_reducer_v2" as const,
     inputTransport: "verified_invocation_input_transport_v2" as const,
     outputTransport: "generated_invocation_result_codec_v2" as const,
     stateRuntime: "generated_from_product_spec_state_contracts_v2" as const,
     runtimeData: "generated_from_product_spec_runtime_data_contracts_v2" as const,
     observableProjection: "generated_invocation_output_projection_v2" as const,
+    runtimeBehavior:
+      "generated_verified_assertions_and_pre_action_entity_snapshots_v1" as const,
     opaqueBehaviorPolicy:
-      "reject_without_versioned_product_spec_behavior_contract" as const,
+      "require_fresh_verified_versioned_behavior_contract_projection" as const,
   }),
   profiles: Object.freeze([
     Object.freeze({
@@ -226,6 +230,7 @@ export function hashNodeProductTestGeneratorProfileV2(
 
 export const GeneratorMemberKindV2Schema = z.enum([
   "action_reducer",
+  "entity_model",
   "input_codec",
   "non_rendered_surface",
   "observable_projection",
@@ -334,6 +339,7 @@ function nodeRules(
   return Object.freeze([
     sourceRule(prefix, "action", "action_handler", "action_reducer"),
     sourceRule(prefix, "action_input", "action_input_transport", "input_codec"),
+    sourceRule(prefix, "entity", "entity_model", "entity_model"),
     sourceRule(prefix, "entrypoint", "entrypoint_registration",
       "entrypoint_registration"),
     sourceRule(prefix, "observable", "observable_projection",

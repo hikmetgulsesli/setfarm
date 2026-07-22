@@ -29,6 +29,8 @@ import {
   type SemanticSourceIntentV1,
 } from "../../src/product-compiler/schemas/semantic-source-intent-set-v1.js";
 import {
+  entityFieldNodeExpressApiProductSpecV2,
+  entityFieldNodeRuntimeBehaviorAuthorityV1,
   genuineNodeCliProductSpecV2,
   genuineNodeExpressApiProductSpecV2,
   twoStoryNodeExpressApiProductSpecV2,
@@ -41,9 +43,9 @@ const NO_DESIGN_CLOSURE = Object.freeze({
 });
 
 const CLI_INTENT_SET_HASH_GOLDEN_V1 =
-  "971ef9694646aef3742f369781926d5951e4d82ec9ccfe848ece6b70a9b1c948";
+  "14b02148f3c93b0ac647a35468e970623120e889b6a40a2868c1f9392e406e59";
 const API_INTENT_SET_HASH_GOLDEN_V1 =
-  "7e2e95406730347eb6f9f24dc29c82ec08b8c5350a0fdfdfa52f15b69fb49ec9";
+  "bcdc10ec06a2536bc107c6bb069777793521d9484c12cacec0d7eb28bab50249";
 
 function compareUtf16(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
@@ -123,6 +125,14 @@ describe("SemanticSourceIntentSetV1 shadow compiler", () => {
     assert.deepEqual(intentSet.blockerCodes, SEMANTIC_SOURCE_INTENT_BLOCKER_CODES_V1);
     assert.equal(intentSet.intentCount, 17);
     assert.equal(intentSet.intentSetHash, CLI_INTENT_SET_HASH_GOLDEN_V1);
+    assert.equal(intentSet.authority.runtimeBehavior, null);
+    assert.equal(
+      intentSet.authority.storyPartition.schema,
+      "setfarm.semantic-story-partition.v3",
+    );
+    assert.equal(intentSet.authority.storyPartition.partitionVersion, 3);
+    assert.ok(intentSet.authority.storyPartition.stories.every((story) =>
+      story.entityRefs.length === 0));
     assert.equal(result.intentSetHash, intentSet.intentSetHash);
     assert.equal(result.canonicalBytes, canonicalJsonStringify(intentSet));
     assert.equal(SemanticSourceIntentSetV1Schema.parse(intentSet).intentSetHash, intentSet.intentSetHash);
@@ -363,7 +373,7 @@ describe("SemanticSourceIntentSetV1 shadow compiler", () => {
     assert.equal(closureWithProse.status, "rejected");
   });
 
-  it("rejects wrong selection authority and entity ownership inference", () => {
+  it("rejects wrong selection authority and entity ownership without behavior authority", () => {
     const cli = genuineNodeCliProductSpecV2();
     const api = genuineNodeExpressApiProductSpecV2();
     const apiSelection = selectionFor(api, "node-express-api");
@@ -414,9 +424,79 @@ describe("SemanticSourceIntentSetV1 shadow compiler", () => {
     if (entityResult.status === "rejected") {
       assert.equal(
         entityResult.diagnostics[0]!.code,
-        "SEMANTIC_SOURCE_INTENT_V1_SUBJECT_PROJECTION_UNSUPPORTED",
+        "SEMANTIC_SOURCE_INTENT_V1_STORY_PARTITION_REJECTED",
+      );
+      assert.match(
+        entityResult.diagnostics[0]!.message,
+        /behavior authority/i,
       );
     }
+  });
+
+  it("binds entity ownership to exact StoryPartitionV3 behavior authority", () => {
+    const productSpec = entityFieldNodeExpressApiProductSpecV2();
+    const selection = selectionFor(productSpec, "node-express-api");
+    const behavior = entityFieldNodeRuntimeBehaviorAuthorityV1(productSpec);
+    const result = compileSemanticSourceIntentSetV1({
+      productSpec,
+      deliverySelection: selection,
+      designSourceClosure: NO_DESIGN_CLOSURE,
+      ...behavior,
+    });
+    assert.equal(
+      result.status,
+      "shadow_compiled",
+      result.status === "rejected" ? JSON.stringify(result.diagnostics) : undefined,
+    );
+    if (result.status !== "shadow_compiled") return;
+
+    assert.deepEqual(result.intentSet.authority.runtimeBehavior, {
+      proposalSchema: "setfarm.product-runtime-behavior-proposal.v1",
+      proposalHash: behavior.runtimeBehaviorContract.authority.proposalHash,
+      contractSchema: "setfarm.product-runtime-behavior-contract.v1",
+      contractVersion: "1.0.0",
+      contractHash: behavior.runtimeBehaviorContract.contractHash,
+      evaluatorContractHash:
+        behavior.runtimeBehaviorContract.authority.evaluatorContractHash,
+    });
+    assert.equal(
+      result.intentSet.authority.storyPartition.schema,
+      "setfarm.semantic-story-partition.v3",
+    );
+    assert.equal(result.intentSet.authority.storyPartition.partitionVersion, 3);
+    assert.equal(result.intentSet.authority.storyPartition.storyCount, 1);
+    assert.deepEqual(
+      result.intentSet.authority.storyPartition.stories[0]!.entityRefs,
+      ["ENTITY_TASK_CATALOG_ENTRY"],
+    );
+    const entityIntent = result.intentSet.intents.find((intent) =>
+      intent.subjectKind === "entity");
+    assert.ok(entityIntent);
+    assert.equal(entityIntent.responsibility, "entity_model");
+    assert.equal(entityIntent.semanticScope.kind, "story");
+    assert.equal(entityIntent.semanticScope.storyId, "US-001");
+    assert.deepEqual(entityIntent.subjectOrigin, {
+      originKind: "entity",
+      entityRef: "ENTITY_TASK_CATALOG_ENTRY",
+      entityContractHash:
+        "0d05518c46ee000093f35e6d745783d3d0e213b049b2c5b1d7b12f1073bca15f",
+      fieldRefs: [
+        "FIELD_TASK_CATALOG_PROJECT",
+        "FIELD_TASK_CATALOG_TASK",
+      ],
+      fieldContractHash:
+        "7808e55dcdd91e564a09be2a4b67e80e18f40c4dbdb3383b35c977f8561cba38",
+    });
+
+    const verified = verifySemanticSourceIntentSetV1({
+      productSpec,
+      deliverySelection: selection,
+      designSourceClosure: NO_DESIGN_CLOSURE,
+      ...behavior,
+      candidate: result.intentSet,
+    });
+    assert.equal(verified.status, "verified_shadow");
+    assert.equal(verified.intentSetHash, result.intentSetHash);
   });
 
   it("fresh-verifies and rejects self-consistently rehashed missing or mutated intents", () => {

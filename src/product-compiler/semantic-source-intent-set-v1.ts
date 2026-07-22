@@ -10,6 +10,8 @@ import { canonicalJsonStringify, hashCanonicalJson } from "./canonical-json.js";
 import {
   compileInvocationInputTransportSetV2,
 } from "./invocation-input-transport-v2.js";
+import { verifyProductRuntimeBehaviorContractV1 } from
+  "./product-runtime-behavior-contract-v1.js";
 import {
   ProductDeliverySelectionV2Schema,
   ProductDeliverySelectionVerificationErrorV2,
@@ -18,9 +20,9 @@ import {
   type ProductDeliverySelectionV2,
 } from "./product-delivery-profile-catalog-v2.js";
 import {
-  produceStoryDefinitionsV2,
-  type ProductStoryDefinitionV2,
-} from "./producers/story-definitions-v2.js";
+  produceStoryDefinitionsV3,
+  type ProductStoryDefinitionV3,
+} from "./producers/story-definitions-v3.js";
 import {
   DesignSourceClosureV2Schema,
 } from "./schemas/design-source-closure-v2.js";
@@ -28,6 +30,8 @@ import {
   ProductSpecV2Schema,
   type ProductSpecV2,
 } from "./schemas/product-spec-v2.js";
+import type { ProductRuntimeBehaviorContractV1 } from
+  "./schemas/product-runtime-behavior-contract-v1.js";
 import type { InvocationInputTransportV2 } from "./schemas/invocation-input-transport-v2.js";
 import {
   SEMANTIC_SOURCE_INTENT_BLOCKER_CODES_V1,
@@ -44,14 +48,14 @@ import {
   hashSemanticSourceIntentSetV1,
   hashSemanticSourceIntentV1,
   hashSemanticSourceSubjectOriginV1,
-  hashSemanticStoryPartitionV2,
+  hashSemanticStoryPartitionV3,
   recursivelyFreezeSemanticSourceIntentV1,
   type InvocationTransportIntentBindingV2,
   type SemanticSourceIntentSetV1,
   type SemanticSourceIntentV1,
   type SemanticSourceScopeV1,
   type SemanticSourceSubjectOriginV1,
-  type SemanticStoryPartitionBindingV2,
+  type SemanticStoryPartitionBindingV3,
 } from "./schemas/semantic-source-intent-set-v1.js";
 import {
   type SemanticSourceActivationAtomV1,
@@ -76,18 +80,45 @@ const CompilerInputV1Schema = z.object({
   productSpec: z.unknown(),
   deliverySelection: z.unknown(),
   designSourceClosure: z.unknown(),
-}).strict();
+  runtimeBehaviorProposal: z.unknown().optional(),
+  runtimeBehaviorContract: z.unknown().optional(),
+}).strict().superRefine((value, context) => {
+  if (
+    (value.runtimeBehaviorProposal === undefined)
+      !== (value.runtimeBehaviorContract === undefined)
+  ) {
+    context.addIssue({
+      code: "custom",
+      path: ["runtimeBehaviorContract"],
+      message: "Behavior proposal and contract must be supplied together",
+    });
+  }
+});
 
 const VerificationInputV1Schema = z.object({
   productSpec: z.unknown(),
   deliverySelection: z.unknown(),
   designSourceClosure: z.unknown(),
+  runtimeBehaviorProposal: z.unknown().optional(),
+  runtimeBehaviorContract: z.unknown().optional(),
   candidate: z.unknown(),
-}).strict();
+}).strict().superRefine((value, context) => {
+  if (
+    (value.runtimeBehaviorProposal === undefined)
+      !== (value.runtimeBehaviorContract === undefined)
+  ) {
+    context.addIssue({
+      code: "custom",
+      path: ["runtimeBehaviorContract"],
+      message: "Behavior proposal and contract must be supplied together",
+    });
+  }
+});
 
 export type SemanticSourceIntentCompilationDiagnosticCodeV1 =
   | "SEMANTIC_SOURCE_INTENT_V1_INPUT_INVALID"
   | "SEMANTIC_SOURCE_INTENT_V1_PRODUCT_SPEC_INVALID"
+  | "SEMANTIC_SOURCE_INTENT_V1_BEHAVIOR_AUTHORITY_MISMATCH"
   | "SEMANTIC_SOURCE_INTENT_V1_DELIVERY_SELECTION_INVALID"
   | "SEMANTIC_SOURCE_INTENT_V1_DELIVERY_SELECTION_AUTHORITY_MISMATCH"
   | "SEMANTIC_SOURCE_INTENT_V1_DESIGN_SOURCE_CLOSURE_INVALID"
@@ -247,7 +278,7 @@ function derivedSubjectRef(prefix: string, domain: string, identity: unknown): s
   return `${prefix}_${hashCanonicalJson({ schema: domain, identity }).toUpperCase()}`;
 }
 
-function storyBinding(story: ProductStoryDefinitionV2): SemanticStoryPartitionBindingV2 {
+function storyBinding(story: ProductStoryDefinitionV3): SemanticStoryPartitionBindingV3 {
   return {
     storyId: story.id,
     order: story.order,
@@ -261,11 +292,12 @@ function storyBinding(story: ProductStoryDefinitionV2): SemanticStoryPartitionBi
     stateRefs: [...story.stateRefs],
     persistenceRefs: [...story.persistenceRefs],
     evidenceRefs: [...story.evidenceRefs],
+    entityRefs: [...story.entityRefs],
   };
 }
 
 function storyScope(
-  story: SemanticStoryPartitionBindingV2,
+  story: SemanticStoryPartitionBindingV3,
   productRef: string,
 ): SemanticSourceScopeV1 {
   return {
@@ -296,7 +328,7 @@ function subjectContractHash(kind: string, value: unknown): string {
 }
 
 function exactStoryOwnerMap(
-  stories: readonly SemanticStoryPartitionBindingV2[],
+  stories: readonly SemanticStoryPartitionBindingV3[],
   field:
     | "routeRefs"
     | "surfaceRefs"
@@ -306,9 +338,10 @@ function exactStoryOwnerMap(
     | "observableRefs"
     | "stateRefs"
     | "persistenceRefs"
-    | "evidenceRefs",
-): Map<string, SemanticStoryPartitionBindingV2> | null {
-  const result = new Map<string, SemanticStoryPartitionBindingV2>();
+    | "evidenceRefs"
+    | "entityRefs",
+): Map<string, SemanticStoryPartitionBindingV3> | null {
+  const result = new Map<string, SemanticStoryPartitionBindingV3>();
   for (const story of stories) {
     for (const reference of story[field]) {
       if (result.has(reference)) return null;
@@ -320,12 +353,13 @@ function exactStoryOwnerMap(
 
 function runtimeDataContractHash(
   productSpec: ProductSpecV2,
-  story: SemanticStoryPartitionBindingV2,
+  story: SemanticStoryPartitionBindingV3,
   authorities: Readonly<{
     actionById: ReadonlyMap<string, ProductSpecV2["actions"][number]>;
     stateById: ReadonlyMap<string, ProductSpecV2["states"][number]>;
     persistenceById: ReadonlyMap<string, ProductSpecV2["persistencePolicies"][number]>;
     evidenceById: ReadonlyMap<string, ProductSpecV2["evidencePredicates"][number]>;
+    entityById: ReadonlyMap<string, ProductSpecV2["entities"][number]>;
   }>,
 ): string {
   return hashCanonicalJson({
@@ -344,13 +378,15 @@ function runtimeDataContractHash(
     })),
     evidencePredicates: story.evidenceRefs.map((reference) =>
       authorities.evidenceById.get(reference)),
+    entities: story.entityRefs.map((reference) =>
+      authorities.entityById.get(reference)),
   });
 }
 
 function deriveSubjects(input: Readonly<{
   productSpec: ProductSpecV2;
   selection: ProductDeliverySelectionV2;
-  stories: readonly SemanticStoryPartitionBindingV2[];
+  stories: readonly SemanticStoryPartitionBindingV3[];
   transportContracts: readonly InvocationInputTransportV2[];
 }>):
   | Readonly<{ status: "derived"; subjects: readonly SubjectAuthorityV1[] }>
@@ -359,17 +395,6 @@ function deriveSubjects(input: Readonly<{
       diagnostics: readonly SemanticSourceIntentCompilationDiagnosticV1[];
     }> {
   const { productSpec, selection, stories } = input;
-  if (productSpec.entities.length > 0) {
-    return {
-      status: "rejected",
-      diagnostics: [diagnostic(
-        "SEMANTIC_SOURCE_INTENT_V1_SUBJECT_PROJECTION_UNSUPPORTED",
-        "/productSpec/entities",
-        "Entity source ownership requires StoryPartitionV3 entity refs; consumer inference is not authority",
-      )],
-    };
-  }
-
   const routeOwner = exactStoryOwnerMap(stories, "routeRefs");
   const surfaceOwner = exactStoryOwnerMap(stories, "surfaceRefs");
   const controlSlotOwner = exactStoryOwnerMap(stories, "controlSlotRefs");
@@ -378,9 +403,11 @@ function deriveSubjects(input: Readonly<{
   const stateOwner = exactStoryOwnerMap(stories, "stateRefs");
   const persistenceOwner = exactStoryOwnerMap(stories, "persistenceRefs");
   const evidenceOwner = exactStoryOwnerMap(stories, "evidenceRefs");
+  const entityOwner = exactStoryOwnerMap(stories, "entityRefs");
   if (
     !routeOwner || !surfaceOwner || !controlSlotOwner || !actionOwner
     || !observableOwner || !stateOwner || !persistenceOwner || !evidenceOwner
+    || !entityOwner
   ) {
     return {
       status: "rejected",
@@ -399,7 +426,7 @@ function deriveSubjects(input: Readonly<{
     entrypoint_kind: selection.delivery.platform,
   };
   const addStorySubject = (inputSubject: Omit<SubjectAuthorityV1, "semanticScope"> & {
-    story: SemanticStoryPartitionBindingV2 | undefined;
+    story: SemanticStoryPartitionBindingV3 | undefined;
     path: string;
   }): void => {
     if (!inputSubject.story) {
@@ -585,6 +612,21 @@ function deriveSubjects(input: Readonly<{
     facts: globalFacts,
   }));
 
+  productSpec.entities.forEach((entity, index) => addStorySubject({
+    subjectKind: "entity",
+    subjectRef: entity.id,
+    story: entityOwner.get(entity.id),
+    path: `/productSpec/entities/${index}`,
+    subjectOrigin: {
+      originKind: "entity",
+      entityRef: entity.id,
+      entityContractHash: subjectContractHash("entity", entity),
+      fieldRefs: entity.fields.map((field) => field.id).sort(compareUtf16),
+      fieldContractHash: subjectContractHash("entity-fields", entity.fields),
+    },
+    facts: globalFacts,
+  }));
+
   stories.filter((story) => story.persistenceRefs.length === 0).forEach((story) => {
     const persistenceRef = derivedSubjectRef(
       "PERSIST_NONE",
@@ -634,9 +676,9 @@ function deriveSubjects(input: Readonly<{
     },
   }));
 
-  const directSemanticOwner = new Map<string, SemanticStoryPartitionBindingV2>();
+  const directSemanticOwner = new Map<string, SemanticStoryPartitionBindingV3>();
   [routeOwner, surfaceOwner, controlSlotOwner, actionOwner, observableOwner, stateOwner,
-    persistenceOwner].forEach((owners) => owners.forEach((story, ref) => {
+    persistenceOwner, entityOwner].forEach((owners) => owners.forEach((story, ref) => {
     const existing = directSemanticOwner.get(ref);
     if (existing && existing.storyId !== story.storyId) {
       diagnostics.push(diagnostic(
@@ -675,7 +717,7 @@ function deriveSubjects(input: Readonly<{
       declaredOwner,
       subjectOwner,
       ...actionReferenceOwners,
-    ].filter((owner): owner is SemanticStoryPartitionBindingV2 => owner !== undefined);
+    ].filter((owner): owner is SemanticStoryPartitionBindingV3 => owner !== undefined);
     const ownerStoryIds = new Set(ownerCandidates.map((owner) => owner.storyId));
     if (ownerStoryIds.size > 1) {
       diagnostics.push(diagnostic(
@@ -710,6 +752,8 @@ function deriveSubjects(input: Readonly<{
       [policy.id, policy] as const)),
     evidenceById: new Map(productSpec.evidencePredicates.map((predicate) =>
       [predicate.id, predicate] as const)),
+    entityById: new Map(productSpec.entities.map((entity) =>
+      [entity.id, entity] as const)),
   };
   stories.forEach((story) => {
     const runtimeDataRef = derivedSubjectRef(
@@ -1096,12 +1140,21 @@ export function compileSemanticSourceIntentSetV1(
     ));
   }
   const productSpec = productSpecResult.data;
-  if (productSpec.entities.length > 0) {
-    return singleRejected(
-      "SEMANTIC_SOURCE_INTENT_V1_SUBJECT_PROJECTION_UNSUPPORTED",
-      "/productSpec/entities",
-      "Entity source ownership requires StoryPartitionV3 entity refs; consumer inference is not authority",
-    );
+  let runtimeBehavior: Readonly<ProductRuntimeBehaviorContractV1> | null = null;
+  if (outer.data.runtimeBehaviorContract !== undefined) {
+    try {
+      runtimeBehavior = verifyProductRuntimeBehaviorContractV1({
+        productSpec,
+        proposal: outer.data.runtimeBehaviorProposal,
+        candidate: outer.data.runtimeBehaviorContract,
+      });
+    } catch (error) {
+      return singleRejected(
+        "SEMANTIC_SOURCE_INTENT_V1_BEHAVIOR_AUTHORITY_MISMATCH",
+        "/runtimeBehaviorContract",
+        errorMessage(error),
+      );
+    }
   }
   const selectionResult = exactDeliverySelection(productSpec, outer.data.deliverySelection);
   if (selectionResult.status === "rejected") return selectionResult.result;
@@ -1154,7 +1207,16 @@ export function compileSemanticSourceIntentSetV1(
     );
   }
 
-  const storyResult = produceStoryDefinitionsV2({ productSpec, designGraph: null });
+  const storyResult = produceStoryDefinitionsV3({
+    productSpec,
+    designGraph: null,
+    ...(runtimeBehavior
+      ? {
+          runtimeBehaviorProposal: outer.data.runtimeBehaviorProposal,
+          runtimeBehaviorContract: runtimeBehavior,
+        }
+      : {}),
+  });
   if (storyResult.status === "rejected") {
     return singleRejected(
       "SEMANTIC_SOURCE_INTENT_V1_STORY_PARTITION_REJECTED",
@@ -1233,8 +1295,21 @@ export function compileSemanticSourceIntentSetV1(
         closureHash: hashSemanticDesignSourceClosureV2(closureResult.data),
       },
       semanticRuleSet: structuredClone(selection.semanticSourceRules),
+      runtimeBehavior: runtimeBehavior
+        ? {
+            proposalSchema: "setfarm.product-runtime-behavior-proposal.v1" as const,
+            proposalHash: runtimeBehavior.authority.proposalHash,
+            contractSchema: runtimeBehavior.schema,
+            contractVersion: runtimeBehavior.contractVersion,
+            contractHash: runtimeBehavior.contractHash,
+            evaluatorContractHash:
+              runtimeBehavior.authority.evaluatorContractHash,
+          }
+        : null,
       storyPartition: {
-        partitionHash: hashSemanticStoryPartitionV2(stories),
+        schema: "setfarm.semantic-story-partition.v3" as const,
+        partitionVersion: 3 as const,
+        partitionHash: hashSemanticStoryPartitionV3(stories),
         storyCount: stories.length,
         stories,
       },
@@ -1328,6 +1403,12 @@ export function verifySemanticSourceIntentSetV1(
     productSpec: outer.data.productSpec,
     deliverySelection: outer.data.deliverySelection,
     designSourceClosure: outer.data.designSourceClosure,
+    ...(outer.data.runtimeBehaviorContract !== undefined
+      ? {
+          runtimeBehaviorProposal: outer.data.runtimeBehaviorProposal,
+          runtimeBehaviorContract: outer.data.runtimeBehaviorContract,
+        }
+      : {}),
   });
   if (reproduced.status === "rejected") {
     throw new SemanticSourceIntentVerificationErrorV1(

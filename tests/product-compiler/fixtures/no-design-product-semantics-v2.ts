@@ -709,6 +709,90 @@ export function genuineNodeExpressApiProductSpecV2(): ProductSpecV2 {
   return ProductSpecV2Schema.parse(value);
 }
 
+export function entityFieldNodeExpressApiProductSpecV2(): ProductSpecV2 {
+  const value: any = structuredClone(genuineNodeExpressApiProductSpecV2());
+  value.entities = [{
+    id: "ENTITY_TASK_CATALOG_ENTRY",
+    name: "Task catalog entry",
+    fields: [
+      {
+        id: "FIELD_TASK_CATALOG_PROJECT",
+        name: "project",
+        valueType: "string",
+        required: true,
+      },
+      {
+        id: "FIELD_TASK_CATALOG_TASK",
+        name: "task",
+        valueType: "object",
+        required: true,
+      },
+    ],
+  }];
+  value.states.push({
+    id: "STATE_TASK_CATALOG",
+    name: "Task catalog",
+    kind: "domain",
+    initialValue: [{
+      project: "setfarm",
+      task: { project: "setfarm", title: "Stored title" },
+    }],
+    invariants: [],
+  });
+  value.actions[0].stateDeltas[0].valueFrom = {
+    kind: "entity_field",
+    entityRef: "ENTITY_TASK_CATALOG_ENTRY",
+    fieldRef: "FIELD_TASK_CATALOG_TASK",
+  };
+  const requirementRefs = stateRequirementRefs(value, "STATE_TASKS");
+  value.traceability.bindings.push(
+    {
+      semanticKind: "entity",
+      semanticRef: "ENTITY_TASK_CATALOG_ENTRY",
+      requirementRefs,
+    },
+    {
+      semanticKind: "state",
+      semanticRef: "STATE_TASK_CATALOG",
+      requirementRefs,
+    },
+  );
+  return ProductSpecV2Schema.parse(value);
+}
+
+export function entityFieldNodeRuntimeBehaviorAuthorityV1(
+  productSpec: ProductSpecV2,
+) {
+  const base = nodeRuntimeBehaviorProposalV1(productSpec);
+  const runtimeBehaviorProposal: ProductRuntimeBehaviorProposalV1 = {
+    ...base,
+    entityFieldBindings: [{
+      actionRef: "ACT_CREATE_TASK",
+      deltaOrdinal: 0,
+      snapshot: {
+        stateRef: "STATE_TASK_CATALOG",
+        collectionPath: "",
+        selection: {
+          kind: "match_input",
+          matchFieldRef: "FIELD_TASK_CATALOG_PROJECT",
+          inputField: "project",
+        },
+      },
+    }],
+  };
+  const compiled = compileProductRuntimeBehaviorContractV1({
+    productSpec,
+    proposal: runtimeBehaviorProposal,
+  });
+  if (compiled.status !== "shadow_compiled") {
+    throw new Error(JSON.stringify(compiled.diagnostics));
+  }
+  return {
+    runtimeBehaviorProposal,
+    runtimeBehaviorContract: compiled.contract,
+  };
+}
+
 /**
  * Genuine two-story API authority used by every-only and ownership regressions.
  * Options deliberately exercise mixed persistence and cross-story evidence

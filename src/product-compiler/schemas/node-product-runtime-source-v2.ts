@@ -6,10 +6,14 @@ import {
 } from "../bounded-canonical-json.js";
 import { hashCanonicalJson } from "../canonical-json.js";
 import {
+  ActionIdSchema,
+  EntityFieldIdSchema,
+  EntityIdSchema,
   NormalizedRelativeLocatorSchema,
   PathBindingIdSchema,
   ProductIdSchema,
   Sha256Schema,
+  StateIdSchema,
   StableReferenceSchema,
   StoryIdSchema,
   hasUniqueStrings,
@@ -54,14 +58,17 @@ export const NODE_PRODUCT_RUNTIME_PROGRAM_CONTRACT_V2 = Object.freeze({
   schema: "setfarm.node-product-runtime-program-contract.v2" as const,
   contractVersion: NODE_PRODUCT_RUNTIME_SOURCE_RECEIPT_VERSION_V2,
   sourceAuthority: Object.freeze({
-    productBehavior: "product_spec_v2_machine_readable_fields_only" as const,
+    productBehavior:
+      "fresh_product_spec_v2_and_product_runtime_behavior_contract_v1" as const,
     invocationInput: "fresh_invocation_input_transport_set_v2" as const,
     semanticCoverage: "fresh_semantic_realization_plan_v2" as const,
     physicalTarget: "fresh_file_tree_v3_and_build_topology_v3" as const,
   }),
   admission: Object.freeze({
-    proseStateInvariants: "reject_opaque_behavior" as const,
-    entityFieldValueSources: "reject_without_entity_snapshot_binding" as const,
+    proseStateInvariants:
+      "require_exact_verified_runtime_assertion_or_evidence_disposition" as const,
+    entityFieldValueSources:
+      "require_exact_verified_pre_action_entity_snapshot_binding" as const,
     nonStayNavigation: "reject_without_delivery_navigation_runtime" as const,
     optionalInputs: "rejected_by_invocation_transport_v2" as const,
     temporalInputs: "rejected_by_invocation_transport_v2" as const,
@@ -88,6 +95,30 @@ export const NODE_PRODUCT_RUNTIME_PROGRAM_CONTRACT_V2 = Object.freeze({
       "filter_deep_equal_or_match_field_deep_equal" as const,
     upsertSemantics:
       "replace_first_match_or_append_using_match_field" as const,
+  }),
+  runtimeBehavior: Object.freeze({
+    authority:
+      "fresh_verified_product_runtime_behavior_contract_v1_projection" as const,
+    invariantEvaluation:
+      "exact_contract_assertion_dsl_without_product_prose" as const,
+    initialCheckpoint: "before_public_runtime_entrypoint" as const,
+    afterActionCheckpoint: "before_transaction_commit" as const,
+    afterRehydrationCheckpoint:
+      "not_applicable_selected_profiles_forbid_durable_rehydration" as const,
+    failedInvariant:
+      "rollback_then_declared_action_failure_with_assertion_ref" as const,
+    entitySnapshot: Object.freeze({
+      source: "exact_state_before_action" as const,
+      singleton: "one_typed_plain_object" as const,
+      matchInput:
+        "every_member_typed_then_exactly_one_canonical_equal_match" as const,
+      missingOrAmbiguous:
+        "rollback_then_declared_action_failure_with_occurrence_ref" as const,
+    }),
+    bounds: Object.freeze({
+      maxCollectionItemsPerAssertion: 10_000,
+      maxSubjectVisits: 100_000,
+    }),
   }),
   invocation: Object.freeze({
     cli: "exact_subcommand_then_canonical_transport_suffix_and_stdin" as const,
@@ -221,6 +252,48 @@ export function hashNodeProductRuntimeGeneratedMemberMembershipV2(
   });
 }
 
+const RuntimeBehaviorAssertionSourceBindingV2Schema = z.object({
+  invariantRef: StableReferenceSchema,
+  assertionRef: StableReferenceSchema,
+  assertionHash: Sha256Schema,
+  stateRef: StateIdSchema,
+}).strict();
+
+export type RuntimeBehaviorAssertionSourceBindingV2 = z.infer<
+  typeof RuntimeBehaviorAssertionSourceBindingV2Schema
+>;
+
+export function hashRuntimeBehaviorAssertionSourceMembershipV2(
+  bindings: readonly RuntimeBehaviorAssertionSourceBindingV2[],
+): string {
+  return hashCanonicalJson({
+    schema: "setfarm.node-product-runtime-assertion-source-membership.v2",
+    bindings,
+  });
+}
+
+const RuntimeBehaviorEntityFieldSourceBindingV2Schema = z.object({
+  occurrenceRef: StableReferenceSchema,
+  snapshotBindingHash: Sha256Schema,
+  actionRef: ActionIdSchema,
+  deltaOrdinal: z.number().int().nonnegative().max(499),
+  entityRef: EntityIdSchema,
+  fieldRef: EntityFieldIdSchema,
+}).strict();
+
+export type RuntimeBehaviorEntityFieldSourceBindingV2 = z.infer<
+  typeof RuntimeBehaviorEntityFieldSourceBindingV2Schema
+>;
+
+export function hashRuntimeBehaviorEntityFieldSourceMembershipV2(
+  bindings: readonly RuntimeBehaviorEntityFieldSourceBindingV2[],
+): string {
+  return hashCanonicalJson({
+    schema: "setfarm.node-product-runtime-entity-field-source-membership.v2",
+    bindings,
+  });
+}
+
 const RuntimeSourceIdentityV2Schema = z.object({
   pathRef: PathBindingIdSchema,
   normalizedLocator: z.enum(["src/cli.ts", "src/app.ts"]),
@@ -313,6 +386,35 @@ const RuntimeSourceReceiptLogicalIdentityV2Schema = z.object({
     realizationBindingMembershipHash: Sha256Schema,
     generatedMemberMembershipHash: Sha256Schema,
     opaqueBehaviorCount: z.literal(0),
+    runtimeBehavior: z.object({
+      contractHash: Sha256Schema,
+      runtimeAssertionCount: z.number().int().nonnegative().max(2_000_000),
+      runtimeAssertions: z.array(RuntimeBehaviorAssertionSourceBindingV2Schema)
+        .max(2_000_000),
+      runtimeAssertionMembershipHash: Sha256Schema,
+      entityFieldBindingCount: z.number().int().nonnegative().max(20_000),
+      entityFieldBindings: z.array(RuntimeBehaviorEntityFieldSourceBindingV2Schema)
+        .max(20_000),
+      entityFieldBindingMembershipHash: Sha256Schema,
+      checkpoints: z.object({
+        initial: z.literal("generated_before_public_runtime_entrypoint"),
+        afterAction: z.literal("generated_before_transaction_commit"),
+        afterRehydration: z.literal(
+          "not_applicable_selected_profiles_forbid_durable_rehydration",
+        ),
+      }).strict(),
+      failureAbi: z.object({
+        invariant: z.literal(
+          "declared_action_failure_with_assertion_ref_message",
+        ),
+        entitySnapshot: z.literal(
+          "declared_action_failure_with_occurrence_ref_message",
+        ),
+      }).strict(),
+      disposition: z.literal(
+        "every_runtime_assertion_and_entity_snapshot_binding_projected_into_hashed_runtime_program",
+      ),
+    }).strict(),
     disposition: z.literal(
       "every_generator_realization_bound_to_exact_generated_source_marker",
     ),
@@ -394,6 +496,35 @@ function addReceiptClosureIssuesV2(
       code: "custom",
       path: ["authority", "profileId"],
       message: "Runtime source profile, stack, locator and source identity must join",
+    });
+  }
+  const runtimeBehavior = value.coverage.runtimeBehavior;
+  const runtimeAssertionRefs = runtimeBehavior.runtimeAssertions.map((binding) =>
+    binding.assertionRef);
+  const entityOccurrenceRefs = runtimeBehavior.entityFieldBindings.map((binding) =>
+    binding.occurrenceRef);
+  if (
+    runtimeBehavior.contractHash !== value.authority.runtimeBehavior.contractHash
+    || runtimeBehavior.runtimeAssertionCount
+      !== runtimeBehavior.runtimeAssertions.length
+    || !canonicalStrings(runtimeAssertionRefs)
+    || runtimeBehavior.runtimeAssertionMembershipHash
+      !== hashRuntimeBehaviorAssertionSourceMembershipV2(
+        runtimeBehavior.runtimeAssertions,
+      )
+    || runtimeBehavior.entityFieldBindingCount
+      !== runtimeBehavior.entityFieldBindings.length
+    || !canonicalStrings(entityOccurrenceRefs)
+    || runtimeBehavior.entityFieldBindingMembershipHash
+      !== hashRuntimeBehaviorEntityFieldSourceMembershipV2(
+        runtimeBehavior.entityFieldBindings,
+      )
+  ) {
+    context.addIssue({
+      code: "custom",
+      path: ["coverage", "runtimeBehavior"],
+      message:
+        "Runtime behavior source coverage must be complete, canonical, hashed and joined to contract authority",
     });
   }
 
