@@ -2,9 +2,10 @@
 
 Date: 2026-07-21
 
-Status: F1, F2A, the F2B publisher/command/bootstrap lifecycle, and the
-official-runtime packaged-CLI rehearsal are complete on the feature branch.
-Production-root activation remains NO-GO; F3 effective npm authority is next.
+Status: F1, F2A, the F2B publisher/command/bootstrap lifecycle, F3 effective
+npm authority, and F4A private scaffold-base materialization are complete on
+the feature branch. Production-root activation remains NO-GO; F4B exact npm
+install and dependency-capsule authority is next.
 
 ## Goal
 
@@ -486,6 +487,38 @@ crashes after each fsync/rename boundary, source mutation during install,
 dependency output mutation, stage replacement, process timeout and cleanup of
 only authenticated owned roots.
 
+**F4A status (2026-07-22): complete as an isolated scaffold-base authority.**
+Commit `b036569b` adds all three versioned schema boundaries but exposes only
+the scaffold-base producer. The code-owned materializer authority is explicitly
+`scaffold_base_only_dependency_install_blocked`; no dependency receipt can yet
+be produced. F1-authenticated package manifest, lock manifest and TypeScript
+config handles are joined to the exact profile publication, copied through
+exclusive descriptors, normalized to mode `0444`, fsynced and fresh-read into
+one process-private root containing only `project/` and an empty
+`dependency-capsule/`. Project `.npmrc`, `node_modules` and `src` are proven
+absent before receipt issuance. Public receipts contain neither paths nor
+bytes.
+
+The base receipt deliberately separates `semanticInputHash` from physical
+attempt identity. Separate clean F3 environments and concurrent F4 roots with
+the same catalog, normalized effective npm config and authenticated assets
+produce the same semantic input and base-state hashes, while their environment
+receipt, inode-bound root identity and materialization receipt remain distinct.
+This is the required basis for later unchanged-source retry suppression without
+weakening physical freshness.
+
+Focused F4A evidence is 9/9. It covers both Node product profiles,
+cross-profile and receipt-shaped byte substitution, forged handles,
+accessor/extra input, unsafe scratch parents, test-to-production promotion,
+file/mode/topology/npmrc/hard-link drift, two concurrent independent attempts,
+seven injected fsync crash boundaries, replacement during failure cleanup and
+replacement before authenticated destruction. Full Product Compiler is
+1005/1005 across 123 suites; scripts are 24/24; TypeScript, English (1,083
+files), path (609 files), and diff checks pass. F4B remains blocking: exact npm
+execution, raw install census, every-and-only lock replay, bin validation,
+engine/lifecycle enforcement and `CanonicalRuntimeTreeV2(dependencies)`
+capture do not yet exist.
+
 ## F5 — Join to FileTreeV2 and BuildTopologyV2
 
 F4's scaffold-base receipt becomes an input to FileTreeManifestV2; it is not a
@@ -516,12 +549,13 @@ remain release evidence; the feature-branch build guard is never bypassed.
 
 GO for F1, the complete isolated F2 authority through official-runtime packaged
 bootstrap rehearsal, and the isolated F3 environment/config authority through
-official-runtime replay and cleanup. NO-GO for production host execution,
-dependency installation, setup cutover, PacketV4, live migration, deploy and
-new clean product runs until real-root verification, F4-F5, and the later
-packet/evidence program are complete. F4 private scaffold/dependency
-materialization is the next dependency-order slice. The feature-branch `npm run
-build` guard correctly refused `b4bc3bd9`; the resulting source-v26 versus
-committed-dist-v25 mismatch also prevents `dist`-importing full step tests from
-being release evidence on this branch. Only a clean merged-main build and full
-test can close that release gate; it must not be bypassed.
+official-runtime replay and cleanup, plus isolated F4A private scaffold-base
+materialization. NO-GO for production host execution, dependency installation,
+setup cutover, PacketV4, live migration, deploy and new clean product runs until
+real-root verification, F4B-F5, and the later packet/evidence program are
+complete. F4B exact install/dependency-capsule materialization is the next
+dependency-order slice. The feature-branch `npm run build` guard correctly
+refused `b4bc3bd9`; the resulting source-v26 versus committed-dist-v25 mismatch
+also prevents `dist`-importing full step tests from being release evidence on
+this branch. Only a clean merged-main build and full test can close that release
+gate; it must not be bypassed.
