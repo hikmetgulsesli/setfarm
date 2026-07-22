@@ -3,9 +3,9 @@
 Date: 2026-07-21
 
 Status: F1, F2A, the F2B publisher/command/bootstrap lifecycle, F3 effective
-npm authority, and F4A private scaffold-base materialization are complete on
-the feature branch. Production-root activation remains NO-GO; F4B exact npm
-install and dependency-capsule authority is next.
+npm authority, and the complete F4 private scaffold/dependency materializer are
+complete on the feature branch. Production-root activation remains NO-GO; F5
+FileTreeV2/BuildTopologyV2/SourceMap sealing is next.
 
 ## Goal
 
@@ -419,7 +419,7 @@ implements both receipts, one WeakMap-authenticated private environment handle,
 fresh revalidation, authenticated owned-root destruction, and a narrow F2
 execution boundary that can run only the code-owned effective-config probe.
 Executable paths never enter a receipt or caller-selected argv. The environment
-is built from an empty map with sixteen exact variables; mixed-case ambient npm
+is built from an empty map with seventeen exact variables; mixed-case ambient npm
 config, `NODE_OPTIONS`, proxy/CA and credentials have no inheritance path. User
 and global npmrc files are distinct process-owned mode-0600 single-LF files,
 while the probe cwd proves `.npmrc` absent. The execution-project `.npmrc`
@@ -429,7 +429,7 @@ project by itself.
 The first real npm probe exposed two previously unspecified side effects:
 successful npm startup created `cache/_logs`, and Node created
 `tmp/node-compile-cache`. The gate was not weakened. The code-owned environment
-contract advanced from 2.0.0 to 2.1.0 and now fixes
+contract first advanced from 2.0.0 to 2.1.0 and fixed
 `NPM_CONFIG_LOGS_MAX=0` plus `NODE_DISABLE_COMPILE_CACHE=1`; canonical command
 receipts, rather than mutable filesystem diagnostics, remain the process-log
 authority. A dirty Homebrew npm tree containing mutable generated Python cache
@@ -437,17 +437,24 @@ bytes was also correctly rejected by F2 before F3. The canonical official-byte
 rehearsal therefore provisions the official distribution into a private test
 root instead of treating Homebrew presence as authority.
 
+F4B then made engine compatibility executable authority rather than a lockfile
+claim. Catalog environment contract `2.2.0` and F3 receipt `2.1.0` add exact
+`NPM_CONFIG_ENGINE_STRICT=true`; the effective npm probe requires
+`engine-strict=true`, and every install runs with the same environment hash.
+
 The official arm64 rehearsal reverified the 25,962,500-byte Node archive with
 SHA-256
 `fb526811860f81dcac7dd8b2b55eca4accfc5d61c3b7c2508f2639faee8a738d`,
 provisioned it privately, admitted real Node `22.23.1` / npm `10.9.8`, ran and
 replayed the exact config probe, authenticated-destroyed the environment, and
-removed the complete rehearsal root. Canonical receipt hash:
-`cb00152d0e0a6c3877df7b2674097821ded5a6dec806ab07d69fcd2f810e2e4a`;
-environment receipt:
-`92507753dd7717029cf173719754a4e6afb909edb78f563c957ad31bd9d86624`;
-effective-config receipt:
-`7223eba47005e334aad1bdbd6aa29a9979f3b969909e8ed6fe524901acdbc4cc`.
+removed the complete rehearsal root. After the engine-strict contract
+transition, the canonical rehearsal receipt is
+`0cb113a566565a19e288bebdb6c2a61839d4f3ce816f1a8b4055394874e57da6`;
+environment receipt is
+`b9e51c2a00a23d8e90ecd1825d10d388c7d5b62fbbe6d9d6d26bb30661e0137c`;
+effective-config receipt/hash are
+`bd6b39e6f4d2238ffbaa5145c7ec1bcb8ea41ed44e8b7745f7f56300412cec48` /
+`185e411e07f6dfeb696dd1d7a199f9fe4b6b09f15af9020aa4574f19e15b7534`.
 Production toolchain root remained absent. The focused F3 suite is 9/9; full
 Product Compiler is 996/996 across 122 suites; scripts are 24/24; TypeScript,
 English (1,080 files), path (607 files), and diff checks pass.
@@ -514,10 +521,77 @@ file/mode/topology/npmrc/hard-link drift, two concurrent independent attempts,
 seven injected fsync crash boundaries, replacement during failure cleanup and
 replacement before authenticated destruction. Full Product Compiler is
 1005/1005 across 123 suites; scripts are 24/24; TypeScript, English (1,083
-files), path (609 files), and diff checks pass. F4B remains blocking: exact npm
-execution, raw install census, every-and-only lock replay, bin validation,
-engine/lifecycle enforcement and `CanonicalRuntimeTreeV2(dependencies)`
-capture do not yet exist.
+files), path (609 files), and diff checks pass. At the F4A commit boundary F4B
+was still blocking; the following slice closes those missing authorities.
+
+### F4B — Exact install, dependency census and immutable capsule
+
+**Status (2026-07-22): complete as isolated authority in `5bf231b3`.** The
+materializer authority advances from `2.0.0` to `2.1.0` and changes activation
+from scaffold-base-only to
+`dependency_materialization_verified_file_tree_blocked`. It still cannot claim
+production readiness before F5 joins source, ownership and build topology.
+
+The F2 boundary now admits only exact direct argv
+`npm ci --include=dev --ignore-scripts --no-audit --no-fund`, direct Node plus
+the private npm CLI, shell=false, a 120-second timeout, and independent 65,536
+byte stdout/stderr bounds. It fresh-verifies the official host authority before
+and after every process outcome, validates the private scaffold with
+`O_NOFOLLOW` descriptors, and returns a pathless project-scope hash. F3 and F4
+each synchronously preclaim a single-use lifecycle before the first await; one
+physical process consumes both capabilities on success, nonzero, timeout,
+output overflow, signal or spawn failure. An unchanged stage therefore cannot
+run npm twice.
+
+After exit zero, F4 captures a bounded every-and-only raw `node_modules` census.
+It fresh-reads the root lock, npm hidden lock and every installed package
+manifest; requires exact catalog graph membership and version/resolved/integrity
+joins; validates every node_modules container and package root; rejects special
+files and hard links; and requires every-and-only npm `.bin` link with its exact
+relative target and executable target bytes. Lifecycle authority is the exact
+`--ignore-scripts` argv barrier, engine authority is
+`NPM_CONFIG_ENGINE_STRICT=true` plus exit zero, and integrity authority is the
+pinned npm 10.9.8 lock enforcement. These claims are explicit; the receipt does
+not invent an observed lifecycle process count.
+
+The raw install remains disposable operational state. A separate capsule copies
+only regular dependency directories/files, excludes the hidden lock and
+generated `.bin` links, clears ACLs and all removable xattrs while writable,
+then seals directories to `0555` and files to `0444/0555`, fsyncs recursively,
+and captures `CanonicalRuntimeTreeV2(dependencies)`. Darwin on this development
+host attaches non-removable `com.apple.provenance` to every newly created path:
+both `xattr -cr` and `xattr -d` return success while it remains. The gate now
+discloses exactly
+`com.apple.provenance_only_not_in_canonical_tree_v2`; every other xattr and any
+ACL still fail closed. This is a versioned host-metadata exclusion on Setfarm's
+exclusive private copy, not a general metadata bypass.
+
+The official arm64 rehearsal reverified the 25,962,500-byte archive, privately
+provisioned Node `22.23.1` / npm `10.9.8`, ran real npm against both code-owned
+profiles, fresh-replayed both receipts, authenticated-destroyed both stage and
+environment roots, removed the rehearsal root and left the production root
+untouched. Canonical rehearsal receipt:
+`3bffc070c6da242a59a0ac95114243b3f8ce8978ac432bb4bca12d6cf5b12870`.
+
+- CLI: graph 3 nodes/3 edges; raw 247 files, 29 directories, 2 links and
+  26,131,278 bytes; capsule 246 files, 28 directories and 26,129,998 bytes;
+  capsule tree
+  `37c1fd0f7db7098b91c7147311bd7025899d4092f6ac8cad18d4ad379ab7266a`;
+  dependency receipt
+  `1be1228f863bf0057d330316b332161751ceff79285a3fad46f211f839cb8e3d`.
+- Express API: graph 79 nodes/141 edges; raw 877 files, 168 directories, 2
+  links and 28,429,632 bytes; capsule 876 files, 167 directories and
+  28,394,927 bytes; capsule tree
+  `3e93a750679ed14f23c308d2bb65df8ea340f8ad3ee93caa67eceef2b56cb402`;
+  dependency receipt
+  `3f97526faff3446a6fe329570237415e79dd9ca80f60c414ae638182ff35bb76`.
+
+Focused host/F3/catalog/F4 verification is 51/51 across seven suites; the F4
+materializer itself is 14/14 and the rehearsal receipt tamper suite adds one
+more test. Full Product Compiler is 1011/1011 across 124 suites; scripts are
+24/24; TypeScript, English (1,086 files), path (611 files), diff and residue
+checks pass. No live DB, PR, service, generated repository, Setfarm run or real
+`/Library/Application Support/Setfarm` tree was mutated.
 
 ## F5 — Join to FileTreeV2 and BuildTopologyV2
 
@@ -548,12 +622,11 @@ concurrency tests. A clean merged-`main` `npm run build` and full `npm test`
 remain release evidence; the feature-branch build guard is never bypassed.
 
 GO for F1, the complete isolated F2 authority through official-runtime packaged
-bootstrap rehearsal, and the isolated F3 environment/config authority through
-official-runtime replay and cleanup, plus isolated F4A private scaffold-base
-materialization. NO-GO for production host execution, dependency installation,
-setup cutover, PacketV4, live migration, deploy and new clean product runs until
-real-root verification, F4B-F5, and the later packet/evidence program are
-complete. F4B exact install/dependency-capsule materialization is the next
+bootstrap rehearsal, the isolated F3 environment/config authority, and the
+complete isolated F4 scaffold/dependency authority. NO-GO for production host
+execution, setup cutover, PacketV4, live migration, deploy and new clean product
+runs until real-root verification, F5 and the later packet/evidence program are
+complete. F5 FileTreeV2/BuildTopologyV2/SourceMap sealing is the next
 dependency-order slice. The feature-branch `npm run build` guard correctly
 refused `b4bc3bd9`; the resulting source-v26 versus committed-dist-v25 mismatch
 also prevents `dist`-importing full step tests from being release evidence on
