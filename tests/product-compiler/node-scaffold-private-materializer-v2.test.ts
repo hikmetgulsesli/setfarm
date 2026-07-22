@@ -84,6 +84,12 @@ import {
   verifyNodeProductTestSourceV2ForTest,
 } from "../../src/product-compiler/node-product-test-generator-v2.js";
 import {
+  StoryPlanVerificationErrorV3,
+  compileStoryPlanV3,
+  compileStoryPlanV3ForTest,
+  verifyStoryPlanV3ForTest,
+} from "../../src/product-compiler/story-plan-v3.js";
+import {
   NodeProductSourcePublicationVerificationErrorV1,
   compileNodeProductSourcePublicationV1,
   compileNodeProductSourcePublicationV1ForTest,
@@ -193,6 +199,7 @@ import { ProductSpecV2Schema } from
 import {
   NODE_PRODUCT_RUNTIME_PROGRAM_CONTRACT_HASH_V2,
   NodeProductRuntimeSourceReceiptV2Schema,
+  hashNodeProductRuntimeGeneratedMemberMembershipV2,
   hashNodeProductRuntimeSourceLogicalReceiptV2,
   hashNodeProductRuntimeSourceReceiptV2,
 } from "../../src/product-compiler/schemas/node-product-runtime-source-v2.js";
@@ -202,6 +209,13 @@ import {
   hashNodeProductTestSourceLogicalReceiptV2,
   hashNodeProductTestSourceReceiptV2,
 } from "../../src/product-compiler/schemas/node-product-test-source-v2.js";
+import {
+  STORY_PLAN_CONTRACT_HASH_V3,
+  StoryPlanV3Schema,
+  hashProductStoryV3,
+  hashStoryMembershipV3,
+  hashStoryPlanV3,
+} from "../../src/product-compiler/schemas/story-plan-v3.js";
 import {
   NodeProductSourcePublicationReceiptSetV1Schema,
   NodeProductSourcePublicationReceiptV1Schema,
@@ -2050,6 +2064,7 @@ describe("Node scaffold private staged materializer V2", () => {
         runtimeKind: "entity_api" as const,
       },
     ];
+    const storyPlanHashes: string[] = [];
 
     for (const [caseIndex, fixture] of cases.entries()) {
       const created = await stage({ profileId: fixture.profileId });
@@ -2311,6 +2326,140 @@ describe("Node scaffold private staged materializer V2", () => {
         generatedTest.receipt.receiptHash);
       assert.equal(verifiedTest.sourceText, generatedTest.sourceText);
       assertRecursivelyFrozen(verifiedTest);
+
+      const storyPlanInput = {
+        ...testGeneratorInput,
+        testSourceText: generatedTest.sourceText,
+        testSourceReceipt: generatedTest.receipt,
+      };
+      const storyPlan = await compileStoryPlanV3ForTest(
+        created.handle,
+        storyPlanInput,
+      );
+      assert.equal(
+        storyPlan.status,
+        "shadow_compiled",
+        storyPlan.status === "rejected"
+          ? JSON.stringify(storyPlan.diagnostics)
+          : undefined,
+      );
+      if (storyPlan.status !== "shadow_compiled") {
+        throw new Error("Expected StoryPlanV3");
+      }
+      assert.equal(StoryPlanV3Schema.safeParse(storyPlan.value).success, true);
+      assert.equal(storyPlan.value.contractHash, STORY_PLAN_CONTRACT_HASH_V3);
+      assert.equal(
+        STORY_PLAN_CONTRACT_HASH_V3,
+        "6755eac245ae58aff6babff05be6ff80ccbef346e098603fd2c75cd8d2351254",
+      );
+      assert.equal(
+        storyPlan.value.coverage.storyScopedRealizationCount
+          + storyPlan.value.coverage.productScopedRealizationCount,
+        realizationPlan.value.realizationCount,
+      );
+      assert.equal(
+        storyPlan.value.coverage.runtimeMemberCount,
+        generated.receipt.coverage.members.length,
+      );
+      assert.equal(
+        storyPlan.value.coverage.testCoverageMemberCount,
+        generatedTest.receipt.coverage.coverageMembers.length,
+      );
+      assert.equal(
+        storyPlan.value.stories.flatMap((story) => story.actionRefs).length,
+        fixture.productSpec.actions.length,
+      );
+      assert.equal(storyPlan.value.productScope.realizations.length > 0, true);
+      assert.ok(storyPlan.value.stories.every((story) =>
+        story.physicalSharedGrantRefs.length === 0
+        && story.sourceDependencies.runtime.ownerRef
+          === "OWNER_NODE_PRODUCT_RUNTIME_GENERATOR_V2"
+        && story.sourceDependencies.test.ownerRef
+          === "OWNER_NODE_PRODUCT_TEST_GENERATOR_V2"));
+      assert.equal(
+        storyPlan.canonicalBytes.includes(generated.receipt.logicalReceiptHash),
+        true,
+      );
+      assert.equal(
+        storyPlan.canonicalBytes.includes(generatedTest.receipt.logicalReceiptHash),
+        true,
+      );
+      assert.equal(
+        storyPlan.canonicalBytes.includes(generated.receipt.receiptHash),
+        false,
+      );
+      assert.equal(
+        storyPlan.canonicalBytes.includes(generatedTest.receipt.receiptHash),
+        false,
+      );
+      storyPlanHashes.push(storyPlan.value.planHash);
+      const verifiedStoryPlan = await verifyStoryPlanV3ForTest(
+        created.handle,
+        { ...storyPlanInput, candidate: storyPlan.value },
+      );
+      assert.equal(verifiedStoryPlan.value.planHash, storyPlan.value.planHash);
+      assertRecursivelyFrozen(verifiedStoryPlan);
+
+      if (caseIndex === 0) {
+        const wrongScope = await compileStoryPlanV3(
+          created.handle,
+          storyPlanInput,
+        );
+        assert.equal(wrongScope.status, "rejected");
+        assert.equal(
+          wrongScope.diagnostics[0]?.code,
+          "STORY_PLAN_V3_SOURCE_AUTHORITY_REJECTED",
+        );
+        const extraInput = await compileStoryPlanV3ForTest(created.handle, {
+          ...storyPlanInput,
+          unexpected: true,
+        });
+        assert.equal(extraInput.status, "rejected");
+        assert.equal(
+          extraInput.diagnostics[0]?.code,
+          "STORY_PLAN_V3_INPUT_INVALID",
+        );
+        const wrongStoryOwner = structuredClone(storyPlan.value) as any;
+        wrongStoryOwner.stories[0].runtimeSourceMembers[0].storyId = "US-999";
+        assert.equal(
+          StoryPlanV3Schema.safeParse(wrongStoryOwner).success,
+          false,
+        );
+        const omittedMember = structuredClone(storyPlan.value) as any;
+        const omittedStory = omittedMember.stories[0];
+        assert.equal(omittedStory.runtimeSourceMembers.length > 1, true);
+        omittedStory.runtimeSourceMembers.pop();
+        omittedStory.sourceDependencies.runtime.generatedSymbolRefs =
+          omittedStory.runtimeSourceMembers.map((member: any) =>
+            member.generatedSymbolRef).sort();
+        omittedStory.storyHash = hashProductStoryV3(omittedStory);
+        omittedMember.storyMembershipHash = hashStoryMembershipV3(
+          omittedMember.stories,
+        );
+        omittedMember.coverage.runtimeMemberCount -= 1;
+        const remainingRuntimeMembers = [
+          ...omittedMember.stories.flatMap((story: any) =>
+            story.runtimeSourceMembers),
+          ...omittedMember.productScope.runtimeSourceMembers,
+        ].sort((left: any, right: any) =>
+          left.realizationRef.localeCompare(right.realizationRef));
+        omittedMember.authority.runtimeSource.generatedMemberMembershipHash =
+          hashNodeProductRuntimeGeneratedMemberMembershipV2(
+            remainingRuntimeMembers,
+          );
+        omittedMember.planHash = hashStoryPlanV3(omittedMember);
+        assert.equal(StoryPlanV3Schema.safeParse(omittedMember).success, true);
+        await assert.rejects(
+          verifyStoryPlanV3ForTest(created.handle, {
+            ...storyPlanInput,
+            candidate: omittedMember,
+          }),
+          (error: unknown) =>
+            error instanceof StoryPlanVerificationErrorV3
+            && error.code
+              === "STORY_PLAN_V3_VERIFICATION_AUTHORITY_MISMATCH",
+        );
+      }
 
       await typecheckGeneratedTestV2(
         sandbox,
@@ -2881,6 +3030,46 @@ describe("Node scaffold private staged materializer V2", () => {
           siblingGenerated.receipt.receiptHash,
           generated.receipt.receiptHash,
         );
+        const siblingGeneratorInput = {
+          ...authorityInput,
+          realizationPlan: realizationPlan.value,
+          fileTree: siblingFileTree.value,
+          buildTopology: siblingTopology.value,
+        };
+        const siblingGeneratedTest =
+          await generateNodeProductTestSourceV2ForTest(sibling.handle, {
+            ...siblingGeneratorInput,
+            runtimeSourceText: siblingGenerated.sourceText,
+            runtimeSourceReceipt: siblingGenerated.receipt,
+          });
+        assert.equal(siblingGeneratedTest.status, "shadow_generated");
+        if (siblingGeneratedTest.status !== "shadow_generated") {
+          throw new Error("Expected sibling generated test source");
+        }
+        assert.equal(siblingGeneratedTest.sourceText, generatedTest.sourceText);
+        assert.equal(
+          siblingGeneratedTest.receipt.logicalReceiptHash,
+          generatedTest.receipt.logicalReceiptHash,
+        );
+        assert.notEqual(
+          siblingGeneratedTest.receipt.receiptHash,
+          generatedTest.receipt.receiptHash,
+        );
+        const siblingStoryPlan = await compileStoryPlanV3ForTest(
+          sibling.handle,
+          {
+            ...siblingGeneratorInput,
+            runtimeSourceText: siblingGenerated.sourceText,
+            runtimeSourceReceipt: siblingGenerated.receipt,
+            testSourceText: siblingGeneratedTest.sourceText,
+            testSourceReceipt: siblingGeneratedTest.receipt,
+          },
+        );
+        assert.equal(siblingStoryPlan.status, "shadow_compiled");
+        if (siblingStoryPlan.status !== "shadow_compiled") {
+          throw new Error("Expected sibling StoryPlanV3");
+        }
+        assert.equal(siblingStoryPlan.value.planHash, storyPlan.value.planHash);
 
         assert.ok(sourceMaterializationInput);
         await assert.rejects(
@@ -2970,6 +3159,14 @@ describe("Node scaffold private staged materializer V2", () => {
         });
       }
     }
+
+    assert.deepEqual(storyPlanHashes, [
+      "ec1a715e5a7506637a602cf6b84e8ad95e390e67b24c1eb2e0f18ad216d99613",
+      "45127175ee0decddf55d4365a52dc80c298b7a951e28d8eec94f845d744b6d3c",
+      "20a2e889467c19c6c18b16840cb6f271ca2a40299a3e9a3f98ba4a5c26fe400c",
+      "fb48d08d5261b2dc57352f934be81634b16940fec5c329b862eb450511094a39",
+      "ba1168ede6ae998d270c835f3262e21337f15e557f1537fa5ae6cfd11ea510e4",
+    ]);
 
     const unsupportedCandidate: any = structuredClone(
       genuineNodeExpressApiProductSpecV2(),
