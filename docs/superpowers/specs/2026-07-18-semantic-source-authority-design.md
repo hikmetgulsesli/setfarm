@@ -579,9 +579,9 @@ requirement remains a compatibility blocker rather than being implemented only
 to preserve an unsafe central-file mutation model.
 
 The first scaffold catalog remains shadow schema/compiler/verifier authority.
-Deep ByteBundle CAS reassembly now has the independently authenticated shadow
-authority described below. Exact build-dependency materialization receipt,
-host toolchain resolution, private no-replace staged filesystem materializer,
+Deep ByteBundle CAS reassembly and host Node/npm identity now have independently
+authenticated shadow authorities described below. Exact toolchain distribution
+provisioning, build-dependency materialization receipt, private no-replace staged filesystem materializer,
 FileTree/BuildTopology, entrypoint generator, candidate build/runtime ABI,
 activation, and setup-flow cutover remain independently blocking. In
 particular, deep-verifying exact byte refs does not make the current ambient
@@ -630,10 +630,57 @@ cannot satisfy a CLI file and a filesystem-complete but unindexed closure
 cannot satisfy DB-first authority.
 
 This closes deep scaffold source-byte consumption only. Host Node/npm
-resolution, builtin/effective npm config, execution environment, private stage,
+provisioning, builtin/effective npm config, execution environment, private stage,
 dependency tree and materialization receipts are still absent; catalog
 `productionUse` remains forbidden. The receipt is process-local and is not yet
 persisted as the later durable materialization/operational receipt.
+
+### Host Node/npm identity authority (F2A implemented 2026-07-21)
+
+Commit `e22f04be` adds a fresh, authenticated host identity consumer without
+promoting an ambient executable or a self-rehashed receipt. The public factory
+accepts exactly one code-owned Node scaffold `profileId`; it accepts no path,
+executable, expected version, process adapter, npm package root or PATH value.
+Production resolution names only an architecture-specific, exact-versioned
+Setfarm root below `/Library/Application Support/Setfarm/toolchains`. Ambient
+PATH and Homebrew opt roots are not fallback candidates.
+
+`HostNodeToolchainReceiptV2` joins the fresh scaffold catalog/entry requirement,
+exact macOS build and architecture, Node version/ABI/N-API plus executable
+identity, recursive non-system Mach-O closure, npm package version and every-
+and-only tree, exact CLI/package JSON/builtin npmrc identities, bounded probe
+contract and ordered logical command-path projection. It contains no host path,
+probe scratch path or byte buffer. Production receipts require root-owned Node,
+npm and non-system library identities. Test receipts are permanently marked
+`test_fixture_only` and cannot cross the production pre-spawn gate.
+
+The npm closure rejects symlink, hard link, special file, writable file, owner
+split, non-portable/case-colliding path, bound overflow and concurrent directory
+drift. Node is executed by exact realpath with direct argv and a deny-all then
+exact environment. npm is never executed through its `/usr/bin/env` shebang;
+the admitted Node executable receives the exact npm CLI module as argv. Timeout,
+output overflow, signal, nonzero exit and malformed output are distinct typed
+failures. Before a later spawn, the authority fresh-recaptures root target,
+device/inode/mode/owner/length/timestamps, bytes, complete npm topology and the
+recursive dylib closure; drift invalidates the handle rather than creating
+implementation retry prose.
+
+F2A does not yet prove supply-chain provenance. Exact hashes freshly observed
+from a root-owned directory identify those bytes but do not prove that the bytes
+came from the selected official distribution. Therefore no production root is
+currently installed and F2 remains incomplete. F2B must bind the code-owned
+official Node archive SHA-256/length, safe archive inventory, selected Node/npm
+closure, normalized modes and no-replace root-owned publication into
+`NodeToolchainDistributionManifestV2` plus
+`NodeToolchainProvisioningReceiptV2`. F2A may issue `production_host` only after
+joining that exact receipt and final filesystem identity.
+
+The live host supports the design but is not production authority. Default PATH
+selects Node 26/npm 11. An alternate Homebrew Node 22.23.1/npm 10.9.8 exists,
+but its small launcher has a mutable Homebrew dylib graph and its npm tree has
+post-install writable Python bytecode. Local deletion would only hide the
+shared same-UID mutation channel. A direct production smoke therefore correctly
+returns `HOST_NODE_TOOLCHAIN_V2_NO_ADMITTED_CANDIDATE` instead of falling back.
 
 ## SemanticSourceIntentSetV1
 
