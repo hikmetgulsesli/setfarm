@@ -61,6 +61,12 @@ import {
   verifyBuildTopologyV2ForTest,
 } from "../../src/product-compiler/build-topology-v2.js";
 import {
+  BuildTopologyVerificationErrorV3,
+  compileBuildTopologyV3,
+  compileBuildTopologyV3ForTest,
+  verifyBuildTopologyV3ForTest,
+} from "../../src/product-compiler/build-topology-v3.js";
+import {
   NodeSemanticRuleGeneratorTransitionVerificationErrorV2,
   compileNodeSemanticRuleGeneratorTransitionV2,
   compileNodeSemanticRuleGeneratorTransitionV2ForTest,
@@ -109,6 +115,14 @@ import {
   hashBuildTopologyLogicalBuildV2,
   hashBuildTopologyManifestV2,
 } from "../../src/product-compiler/schemas/build-topology-v2.js";
+import {
+  BUILD_TOPOLOGY_CONTRACT_HASH_V3,
+  BUILD_TOPOLOGY_CONTRACT_V3,
+  BuildTopologyV3Schema,
+  hashBuildTopologyCommandContractV3,
+  hashBuildTopologyLogicalBuildV3,
+  hashBuildTopologyManifestV3,
+} from "../../src/product-compiler/schemas/build-topology-v3.js";
 import {
   NODE_ENTRYPOINT_GENERATOR_CONTRACT_HASH_V2,
   NODE_ENTRYPOINT_GENERATOR_CONTRACT_V2,
@@ -166,6 +180,8 @@ const FILE_TREE_CONTRACT_HASH_GOLDEN_V3 =
   "935102110da37a941d1859c6ff99ea05112894f872495b61ddc0673601b4704c";
 const BUILD_TOPOLOGY_CONTRACT_HASH_GOLDEN_V2 =
   "5ac524ec5f5c45ac3091c39c5fe959da3da970c15757196879031db55c30ef28";
+const BUILD_TOPOLOGY_CONTRACT_HASH_GOLDEN_V3 =
+  "85c5d6ab2546862383a3b1622a8f9360eed79af0bd5205e2cd1dea6bd911407f";
 const NODE_ENTRYPOINT_GENERATOR_CONTRACT_HASH_GOLDEN_V2 =
   "52b95411113b302c8993e8d3debc712831955cb72a8b91a0226e40941a86933a";
 const NODE_RULE_GENERATOR_TRANSITION_CONTRACT_HASH_GOLDEN_V2 =
@@ -1369,6 +1385,311 @@ describe("Node scaffold private staged materializer V2", () => {
           siblingTopology.value.authority.logicalDependencyHash);
       }
     }
+  });
+
+  it("binds FileTreeV3 to direct build and exact generated-test topology", async () => {
+    const cases = [
+      {
+        profileId: CLI_PROFILE,
+        stackPackId: "node-cli" as const,
+        productSpec: genuineNodeCliProductSpecV2(),
+        runtimeOutput: "dist/cli.js",
+        testOutput: "dist/cli.setfarm.test.js",
+        candidatePath: "candidate-bundle/application/cli.js",
+        testArgv: ["node", "--test", "dist/cli.setfarm.test.js"],
+        runtimeKind: "cli",
+        runtimeRealizationCount: 10,
+        testCoverageCount: 3,
+      },
+      {
+        profileId: API_PROFILE,
+        stackPackId: "node-express-api" as const,
+        productSpec: genuineNodeExpressApiProductSpecV2(),
+        runtimeOutput: "dist/app.js",
+        testOutput: "dist/app.setfarm.test.js",
+        candidatePath: "candidate-bundle/application/app.js",
+        testArgv: ["node", "--test", "dist/app.setfarm.test.js"],
+        runtimeKind: "http_handler",
+        runtimeRealizationCount: 11,
+        testCoverageCount: 3,
+      },
+      {
+        profileId: API_PROFILE,
+        stackPackId: "node-express-api" as const,
+        productSpec: twoStoryNodeExpressApiProductSpecV2(),
+        runtimeOutput: "dist/app.js",
+        testOutput: "dist/app.setfarm.test.js",
+        candidatePath: "candidate-bundle/application/app.js",
+        testArgv: ["node", "--test", "dist/app.setfarm.test.js"],
+        runtimeKind: "http_handler",
+        runtimeRealizationCount: 20,
+        testCoverageCount: 6,
+      },
+    ];
+    const logicalBuildHashes: string[] = [];
+
+    for (const [caseIndex, fixture] of cases.entries()) {
+      const created = await stage({ profileId: fixture.profileId });
+      const deliverySelection = deliverySelectionForV2(
+        fixture.productSpec,
+        fixture.stackPackId,
+      );
+      const authorityInput = {
+        productSpec: fixture.productSpec,
+        deliverySelection,
+      };
+      const fileTree = await compileFileTreeManifestV3ForTest(
+        created.handle,
+        authorityInput,
+      );
+      assert.equal(fileTree.status, "shadow_compiled");
+      if (fileTree.status !== "shadow_compiled") {
+        throw new Error("Expected V3 FileTree before dependency materialization");
+      }
+      const dependency = await materializeNodeScaffoldDependenciesV2ForTest(
+        created.handle,
+      );
+      const compiled = await compileBuildTopologyV3ForTest(created.handle, {
+        ...authorityInput,
+        fileTree: fileTree.value,
+      });
+      assert.equal(
+        compiled.status,
+        "shadow_compiled",
+        compiled.status === "rejected"
+          ? JSON.stringify(compiled.diagnostics)
+          : undefined,
+      );
+      if (compiled.status !== "shadow_compiled") {
+        throw new Error("Expected BuildTopologyV3");
+      }
+      const topology = compiled.value;
+      logicalBuildHashes.push(topology.logicalBuildHash);
+
+      assert.equal(BUILD_TOPOLOGY_CONTRACT_HASH_V3,
+        BUILD_TOPOLOGY_CONTRACT_HASH_GOLDEN_V3);
+      assert.equal(Object.isFrozen(BUILD_TOPOLOGY_CONTRACT_V3), true);
+      assert.equal(topology.contractHash, BUILD_TOPOLOGY_CONTRACT_HASH_GOLDEN_V3);
+      assert.equal(topology.stage,
+        "realization_sources_planned_dependencies_ready");
+      assert.equal(topology.pathCount, 11);
+      assert.equal(topology.paths.filter((entry) =>
+        entry.authority.kind === "file_tree_v3_path").length, 6);
+      assert.equal(topology.paths.every((entry) =>
+        entry.writeGrantOwnerRefs.length === 0), true);
+      assert.equal(topology.authority.fileTree.manifestHash,
+        fileTree.value.manifestHash);
+      assert.equal(topology.operationalEvidence.dependencyReceiptHash,
+        dependency.receiptHash);
+      assert.equal(topology.compilation.runtime.realizationCount,
+        fixture.runtimeRealizationCount);
+      assert.equal(topology.compilation.test.coverageCount,
+        fixture.testCoverageCount);
+      assert.equal(topology.compilation.runtime.sourceReceipt.state, "absent");
+      assert.equal(topology.compilation.test.sourceReceipt.state, "absent");
+      assert.equal(topology.runtimeTarget.kind, fixture.runtimeKind);
+
+      assert.deepEqual(topology.commands.build.directArgv, [
+        "node",
+        "node_modules/typescript/bin/tsc",
+        "-p",
+        "tsconfig.json",
+      ]);
+      assert.equal(topology.commands.build.executableRef, "TOOL_NODE_RUNTIME_V2");
+      assert.equal(topology.commands.build.compilerTarget.commandName, "tsc");
+      assert.equal(topology.commands.build.compilerTarget.exactVersion, "5.9.3");
+      assert.match(topology.commands.build.compilerTarget.targetContentHash,
+        /^[a-f0-9]{64}$/u);
+      assert.deepEqual(topology.commands.test.directArgv, fixture.testArgv);
+      assert.equal(topology.commands.test.executableRef, "TOOL_NODE_RUNTIME_V2");
+      assert.equal(topology.commands.test.minimumTestCount, 1);
+      assert.equal(topology.commands.test.zeroTestReceipt, "forbidden");
+
+      assert.equal(topology.paths.find((entry) =>
+        entry.classification === "runtime_build_output")?.normalizedLocator,
+      fixture.runtimeOutput);
+      assert.equal(topology.paths.find((entry) =>
+        entry.classification === "test_build_output")?.normalizedLocator,
+      fixture.testOutput);
+      assert.equal(topology.paths.find((entry) =>
+        entry.classification === "candidate_module")?.normalizedLocator,
+      fixture.candidatePath);
+      const raw = topology.paths.find((entry) =>
+        entry.classification === "raw_dependency_build_input");
+      const capsule = topology.paths.find((entry) =>
+        entry.classification === "readonly_dependency_runtime_capsule");
+      assert.equal(raw?.physicalSpace, "repository");
+      assert.equal(capsule?.physicalSpace, "dependency_capsule");
+      assert.notEqual(raw?.pathRef, capsule?.pathRef);
+      assert.equal(
+        JSON.stringify(topology.authority).includes(dependency.receiptHash),
+        false,
+      );
+      const serialized = JSON.stringify(topology);
+      assert.equal(serialized.includes('["npm","run","build"]'), false);
+      assert.equal(serialized.includes('["npm","test"]'), false);
+      assert.doesNotMatch(serialized,
+        /node-entrypoint-source-receipt|NODE_ENTRYPOINT_GENERATOR_V2/);
+      assert.doesNotMatch(serialized,
+        /model_owned_writable|model_granted_writable|OWNER_STORY_/);
+      assert.doesNotMatch(serialized,
+        /setfarm-f4-stage-v2|\/private\/|\/var\/folders|\/Users\//);
+      assert.equal(BuildTopologyV3Schema.safeParse(topology).success, true);
+      assert.equal(compiled.canonicalBytes, canonicalJsonStringify(topology));
+      assertRecursivelyFrozen(compiled);
+
+      const verified = await verifyBuildTopologyV3ForTest(created.handle, {
+        ...authorityInput,
+        fileTree: fileTree.value,
+        candidate: topology,
+      });
+      assert.equal(verified.value.manifestHash, topology.manifestHash);
+      assertRecursivelyFrozen(verified);
+
+      const wrongScope = await compileBuildTopologyV3(created.handle, {
+        ...authorityInput,
+        fileTree: fileTree.value,
+      });
+      assert.equal(wrongScope.status, "rejected");
+      assert.equal(wrongScope.diagnostics[0]?.code,
+        "BUILD_TOPOLOGY_V3_PRODUCTION_AUTHORITY_REQUIRED");
+
+      const selfRehashedLogical = structuredClone(topology) as any;
+      selfRehashedLogical.authority.pathTokenSetHash = "f".repeat(64);
+      selfRehashedLogical.logicalBuildHash = hashBuildTopologyLogicalBuildV3(
+        selfRehashedLogical,
+      );
+      selfRehashedLogical.manifestHash = hashBuildTopologyManifestV3(
+        selfRehashedLogical,
+      );
+      assert.equal(BuildTopologyV3Schema.safeParse(selfRehashedLogical).success,
+        true);
+      await assert.rejects(
+        verifyBuildTopologyV3ForTest(created.handle, {
+          ...authorityInput,
+          fileTree: fileTree.value,
+          candidate: selfRehashedLogical,
+        }),
+        (error: unknown) =>
+          error instanceof BuildTopologyVerificationErrorV3
+          && error.code === "BUILD_TOPOLOGY_V3_VERIFICATION_AUTHORITY_MISMATCH",
+      );
+
+      const selfRehashedOperational = structuredClone(topology) as any;
+      selfRehashedOperational.operationalEvidence.projectScopeHash = "a".repeat(64);
+      selfRehashedOperational.manifestHash = hashBuildTopologyManifestV3(
+        selfRehashedOperational,
+      );
+      assert.equal(selfRehashedOperational.logicalBuildHash,
+        topology.logicalBuildHash);
+      assert.equal(
+        BuildTopologyV3Schema.safeParse(selfRehashedOperational).success,
+        true,
+      );
+      await assert.rejects(
+        verifyBuildTopologyV3ForTest(created.handle, {
+          ...authorityInput,
+          fileTree: fileTree.value,
+          candidate: selfRehashedOperational,
+        }),
+        (error: unknown) =>
+          error instanceof BuildTopologyVerificationErrorV3
+          && error.code === "BUILD_TOPOLOGY_V3_VERIFICATION_AUTHORITY_MISMATCH",
+      );
+
+      const npmDiscoveryForgery = structuredClone(topology) as any;
+      npmDiscoveryForgery.commands.test.directArgv = ["npm", "test"];
+      npmDiscoveryForgery.authority.commandContractHash =
+        hashBuildTopologyCommandContractV3(npmDiscoveryForgery.commands);
+      npmDiscoveryForgery.logicalBuildHash = hashBuildTopologyLogicalBuildV3(
+        npmDiscoveryForgery,
+      );
+      npmDiscoveryForgery.manifestHash = hashBuildTopologyManifestV3(
+        npmDiscoveryForgery,
+      );
+      assert.equal(BuildTopologyV3Schema.safeParse(npmDiscoveryForgery).success,
+        false);
+
+      if (caseIndex === 0) {
+        const extraInput = await compileBuildTopologyV3ForTest(created.handle, {
+          ...authorityInput,
+          fileTree: fileTree.value,
+          unexpected: true,
+        });
+        assert.equal(extraInput.status, "rejected");
+        assert.equal(extraInput.diagnostics[0]?.code,
+          "BUILD_TOPOLOGY_V3_INPUT_INVALID");
+
+        let getterInvoked = false;
+        const accessorInput = Object.defineProperty({
+          productSpec: fixture.productSpec,
+          deliverySelection,
+        }, "fileTree", {
+          enumerable: true,
+          get() {
+            getterInvoked = true;
+            return fileTree.value;
+          },
+        });
+        const accessorRejected = await compileBuildTopologyV3ForTest(
+          created.handle,
+          accessorInput,
+        );
+        assert.equal(accessorRejected.status, "rejected");
+        assert.equal(accessorRejected.diagnostics[0]?.code,
+          "BUILD_TOPOLOGY_V3_INPUT_INVALID");
+        assert.equal(getterInvoked, false);
+
+        const proxyInput = new Proxy({
+          ...authorityInput,
+          fileTree: fileTree.value,
+        }, {
+          ownKeys() {
+            throw new Error("proxy ownKeys trap");
+          },
+        });
+        const proxyRejected = await compileBuildTopologyV3ForTest(
+          created.handle,
+          proxyInput,
+        );
+        assert.equal(proxyRejected.status, "rejected");
+        assert.equal(proxyRejected.diagnostics[0]?.code,
+          "BUILD_TOPOLOGY_V3_INPUT_INVALID");
+
+        const sibling = await stage({ profileId: CLI_PROFILE });
+        const siblingFileTree = await compileFileTreeManifestV3ForTest(
+          sibling.handle,
+          authorityInput,
+        );
+        assert.equal(siblingFileTree.status, "shadow_compiled");
+        if (siblingFileTree.status !== "shadow_compiled") {
+          throw new Error("Expected sibling FileTreeV3");
+        }
+        const siblingDependency = await materializeNodeScaffoldDependenciesV2ForTest(
+          sibling.handle,
+        );
+        const siblingTopology = await compileBuildTopologyV3ForTest(
+          sibling.handle,
+          { ...authorityInput, fileTree: siblingFileTree.value },
+        );
+        assert.equal(siblingTopology.status, "shadow_compiled");
+        if (siblingTopology.status !== "shadow_compiled") {
+          throw new Error("Expected sibling BuildTopologyV3");
+        }
+        assert.notEqual(dependency.receiptHash, siblingDependency.receiptHash);
+        assert.notEqual(topology.manifestHash, siblingTopology.value.manifestHash);
+        assert.equal(topology.logicalBuildHash,
+          siblingTopology.value.logicalBuildHash);
+        assert.equal(topology.authority.logicalDependencyHash,
+          siblingTopology.value.authority.logicalDependencyHash);
+      }
+    }
+
+    assert.deepEqual(logicalBuildHashes, [
+      "f97a1706091602ee52754ce984d8e8e02e7d1495c76bf46b6cce1f19b26cd8bc",
+      "a37c780c70f51974503ff2d27cf52f02c76379fbc4a3405b46b81d19f1d3ed6d",
+      "7c94b8bda249c4138e0aa313ae4cd119dada708558809b38c59b67b6f4e1253b",
+    ]);
   });
 
   it("transitions every legacy Node entrypoint slot to one generator-owned whole-file authority", async () => {
