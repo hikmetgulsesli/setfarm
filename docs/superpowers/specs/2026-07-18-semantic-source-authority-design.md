@@ -985,6 +985,62 @@ BuildTopologyV3, evidence registry, runtime and test generators, both source
 receipts and release manifest. A locally schema-valid self-rehash is never
 sufficient authority.
 
+## BuildTopologyV3
+
+BuildTopologyV3 is the executable-plan boundary after dependency
+materialization. Its only physical-topology input is a FileTreeV3 candidate
+accepted by the dependency-stage fresh verifier. It separately revalidates the
+private dependency receipt, base receipt, current layout/path-token authority,
+scaffold catalog entry, and runtime/test generator profiles. FileTreeV2,
+BuildTopologyV2, the entrypoint-only transition/receipt, story grants, package
+script discovery, and caller-supplied paths are forbidden native authority.
+
+The topology contains exactly 11 collision-checked paths in three physical
+spaces:
+
+- six exact repository projections from FileTreeV3;
+- repository `node_modules` as disposable compile-only input;
+- a separate readonly dependency-capsule `node_modules` identity;
+- the runtime and generated-test JavaScript outputs; and
+- the candidate runtime module.
+
+All write-grant lists are empty. Runtime and test outputs belong to the build
+executor, and the candidate belongs to its future materializer. Their current
+states are absent or not materialized and name the exact future receipt schema;
+the topology never treats a planned path as evidence that bytes exist.
+
+Build command authority is direct Node execution of the exact TypeScript target
+proved by the authenticated installed-bin receipt:
+`node node_modules/typescript/bin/tsc -p tsconfig.json`. The generated npm link
+is verified dependency evidence but never execution authority. Test command
+authority is direct Node test execution of exactly one profile-selected
+compiled test file. CLI permits only the exact same-runtime CLI module
+subprocess required by its product ABI; API subprocesses are forbidden.
+Neither `npm run build`, `npm test`, shell strings, PATH/default test discovery,
+ambient environment, nor a zero-test receipt can satisfy this contract.
+
+The compilation graph joins FileTreeV3 runtime realization membership and test
+coverage membership to their exact TypeScript sources, JavaScript outputs,
+runtime import, candidate, generator profiles, and CLI/API runtime ABI. Runtime
+and test source receipts are typed absent preconditions. Build, candidate,
+test-execution, evidence-registry, and release evidence remain typed blockers;
+BuildTopologyV3 performs no command execution.
+
+`logicalBuildHash` contains the semantic/file-tree/layout/path/dependency,
+command, compilation, and runtime contracts. It excludes admission scope,
+attempt-specific receipt identity, project scope, host/environment receipts,
+and stdout/stderr hashes. `manifestHash` binds that operational evidence. This
+lets unchanged source keep one retry identity across physical attempts without
+discarding the evidence needed to authorize a particular execution.
+
+The implemented shadow contract is `setfarm.build-topology.v3` version `3.0.0`
+with contract hash
+`85c5d6ab2546862383a3b1622a8f9360eed79af0bd5205e2cd1dea6bd911407f`.
+Its producer and verifier are bounded, strict, scope-separated, recursively
+immutable, and require canonical equality to fresh reproduction. This artifact
+is not eligible for production until the downstream source/build/test/
+candidate/evidence/release receipts exist and are independently verified.
+
 ## NodeSemanticRuleGeneratorTransitionV2 (Compatibility Evidence)
 
 The transition compiler fresh-reproduces the V1 rule, intent and path-token
@@ -1283,6 +1339,14 @@ obligation has one target, physical attempts preserve stable logical identity,
 and base/dependency-stage fresh verification rejects self-rehashed omissions
 and cross-profile substitutions.
 
+BuildTopologyV3 tests cover all 11 path roles, direct authenticated compiler
+execution, exact direct CLI/API test files, source/output/candidate closure,
+runtime and test membership, empty grants, scope separation, stable logical
+identity across physical attempts, and fresh canonical verification. They reject
+npm test discovery, V2/entrypoint/story leakage, private-path leakage, strict
+input extras, accessors, proxies, schema-valid logical and operational
+self-rehashes, and cross-profile topology substitution.
+
 Conditional declaration tests cover only explicitly model-authored realizations:
 every-and-only topology joins, ownership/grants, current base hashes, absent
 paths, overlapping locators, undeclared writable paths and no future writable
@@ -1306,7 +1370,8 @@ evidence.
 
 ## GO / NO-GO
 
-GO for the isolated catalog schema/compiler/verifier and fixture slice.
+GO for the isolated shadow authority chain through BuildTopologyV3 and its
+fixture/adversarial proof.
 
 NO-GO for source intent activation, setup topology replacement, packet/slice
 version cutover, model dispatch, runtime evidence, retry, supervisor, Mission

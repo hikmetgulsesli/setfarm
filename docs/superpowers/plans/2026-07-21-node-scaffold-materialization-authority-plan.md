@@ -5,10 +5,13 @@ Date: 2026-07-21
 Status: F1, F2A, the F2B publisher/command/bootstrap lifecycle, F3 effective
 npm authority, the complete F4 private scaffold/dependency materializer, and
 the F5A-F5C compatibility experiments are complete on the feature branch. F5D
-SemanticRealizationPlanV2 is the corrected target-architecture boundary and F5E
-FileTreeManifestV3 now projects its exact physical targets. The V2
+SemanticRealizationPlanV2 is the corrected target-architecture boundary, F5E
+FileTreeManifestV3 projects its exact physical targets, and F5F
+BuildTopologyV3 binds those targets to dependency, compilation, command, and
+runtime authority. The V2
 FileTree/BuildTopology/entrypoint-only transition must not be promoted.
-Production-root activation remains NO-GO; BuildTopologyV3 is next.
+Production-root activation remains NO-GO; the runtime and test generators are
+next.
 
 ## Goal
 
@@ -922,9 +925,62 @@ contract (621 files), version, migration-digest, Mission Control contract and
 diff checks pass. No live run, DB, PR, service, generated repository or real
 Setfarm application-support tree was mutated.
 
-Seven exact blockers remain: BuildTopologyV3, evidence registry, runtime/test
-generators, runtime/test source receipts and release manifest. FileTreeV3 plans
-targets; it does not create source bytes or claim executable success.
+At the FileTreeV3 boundary seven exact downstream facts were still absent; the
+first was BuildTopologyV3. FileTreeV3 itself plans targets; it does not create
+source bytes or claim executable success. F5F closes only that next planning
+boundary.
+
+### F5F — BuildTopologyV3
+
+**Status (2026-07-21): complete as a shadow, production-forbidden executable
+plan.** Commit `19ee7109` adds `setfarm.build-topology.v3` version `3.0.0`.
+Its code-owned contract hash is
+`85c5d6ab2546862383a3b1622a8f9360eed79af0bd5205e2cd1dea6bd911407f`.
+
+The topology consumes FileTreeV3 only through its dependency-stage fresh
+verifier and revalidates the authenticated dependency receipt. It has exactly
+11 paths: all six FileTreeV3 projections, the disposable repository
+`node_modules` compile input, a distinct readonly dependency capsule, runtime
+and test build outputs, and the candidate module. Every write-grant tuple stays
+empty. FileTreeV2, BuildTopologyV2, the entrypoint-only transition/receipt,
+story grants, `npm run build`, and `npm test` are forbidden native authority.
+
+Build is exact direct argv
+`node node_modules/typescript/bin/tsc -p tsconfig.json`; the compiler target is
+the authenticated `node_modules/typescript/bin/tsc` byte target from the
+dependency receipt, not the generated npm link or PATH discovery. Tests are
+exact direct argv `node --test dist/cli.setfarm.test.js` or
+`node --test dist/app.setfarm.test.js`. The source-to-output-to-candidate graph
+binds runtime realization and test coverage membership from FileTreeV3, while
+both source receipts, the build receipt, test execution, candidate, evidence,
+and release state remain explicitly absent or blocked.
+
+Logical identity excludes attempt-specific dependency receipt, scope, project,
+stdout/stderr, and host evidence hashes, while the operational manifest binds
+all of them. Independent CLI private stages therefore produce different
+dependency receipts and manifest hashes but the same logical dependency and
+logical build hashes. Golden logical build hashes for CLI, one-route API, and
+two-route API are respectively
+`f97a1706091602ee52754ce984d8e8e02e7d1495c76bf46b6cce1f19b26cd8bc`,
+`a37c780c70f51974503ff2d27cf52f02c76379fbc4a3405b46b81d19f1d3ed6d`,
+and `7c94b8bda249c4138e0aa313ae4cd119dada708558809b38c59b67b6f4e1253b`.
+
+Tests reject production/test authority promotion, strict extras, accessors,
+hostile proxies, npm test discovery, a schema-valid self-rehashed logical
+authority mutation, and a schema-valid self-rehashed operational mutation.
+Fresh verification requires canonical equality to a newly reproduced artifact.
+The private materializer suite is 19/19; full Product Compiler is 1029/1029
+across 126 suites. TypeScript, English (1,099 files), path contract (623 files),
+version, migration-digest, Mission Control contract, and diff checks pass. The
+feature-branch build guard correctly refused the non-main branch and was not
+bypassed. No live run, DB, PR, service, generated repository, or real Setfarm
+application-support tree was mutated.
+
+Seven explicit blockers now belong to the executable lifecycle rather than an
+unspecified command: runtime and test source receipts, authenticated build
+execution, candidate materialization, test execution, evidence-registry join,
+and release manifest. BuildTopologyV3 plans and verifies these joins; it does
+not execute a command or manufacture success evidence.
 
 ## Verification and release gate
 
@@ -942,14 +998,14 @@ F2-F4 additionally require focused real-filesystem, process, PostgreSQL and
 concurrency tests. A clean merged-`main` `npm run build` and full `npm test`
 remain release evidence; the feature-branch build guard is never bypassed.
 
-GO for F1-F4 and F5D-F5E as isolated shadow authorities. F5A-F5C are GO only as
+GO for F1-F4 and F5D-F5F as isolated shadow authorities. F5A-F5C are GO only as
 compatibility evidence and are explicitly NO-GO as production topology. NO-GO
 for production host execution, setup cutover, PacketV4, live migration, deploy
-and new clean product runs until BuildTopologyV3, generated runtime
-and test receipts, evidence registry, release manifest, SourceMap and the later
-packet/eval program are complete. The next dependency-order slice is
-BuildTopologyV3, followed by NodeProductRuntimeGeneratorV2 and the generated
-test/runtime receipt pair. The feature-branch `npm run build` guard was re-run
-after `e6bebd7c` and correctly refused branch
+and new clean product runs until generated runtime and test sources/receipts,
+authenticated build/test/candidate evidence, evidence registry, release
+manifest, SourceMap, and the later packet/eval program are complete. The next
+dependency-order slice is NodeProductRuntimeGeneratorV2, followed by
+NodeProductTestGeneratorV2 and their source-receipt pair. The feature-branch
+`npm run build` guard was re-run after `19ee7109` and correctly refused branch
 `arch/product-semantics-v2-authority`; it was not bypassed. Only a clean
 merged-main build and full test can close that release gate.
