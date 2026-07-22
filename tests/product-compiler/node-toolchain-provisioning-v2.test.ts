@@ -50,10 +50,14 @@ import {
   getCodeOwnedNodeToolchainTargetV2,
 } from "../../src/product-compiler/node-toolchain-target-registry-v2.js";
 import {
+  CompiledNodeToolchainProvisionerBootstrapV2,
   NodeToolchainProvisionerBootstrapAuthorityErrorV2,
   compileNodeToolchainProvisionerBootstrapV2,
   compileNodeToolchainProvisionerBootstrapV2ForTest,
   compileNodeToolchainProvisionerBootstrapV2ForTestFromAuthority,
+  copyCompiledNodeToolchainProvisionerBootstrapV2,
+  disposeCompiledNodeToolchainProvisionerBootstrapV2,
+  inspectCompiledNodeToolchainProvisionerBootstrapManifestV2,
   renderNodeToolchainProvisionerBootstrapLauncherV2,
 } from "../../src/product-compiler/node-toolchain-provisioner-bootstrap-v2.js";
 import {
@@ -1368,10 +1372,17 @@ describe("NodeToolchainProvisionerCommandV2 inspection and planning", () => {
       receipt,
     );
     const bootstrapRoot = await realpath(await privateParent());
-    const compiled = await compileNodeToolchainProvisionerBootstrapV2ForTestFromAuthority(
+    const compiledHandle = await compileNodeToolchainProvisionerBootstrapV2ForTestFromAuthority(
       handle,
       tree,
       bootstrapRoot,
+    );
+    const compiled = copyCompiledNodeToolchainProvisionerBootstrapV2(compiledHandle);
+    assert.equal(compiledHandle.manifestHash, compiled.manifest.manifestHash);
+    assert.equal(compiledHandle.admissionScope, "test_fixture");
+    assert.equal(
+      inspectCompiledNodeToolchainProvisionerBootstrapManifestV2(compiledHandle).manifestHash,
+      compiled.manifest.manifestHash,
     );
     assert.equal(compiled.manifest.build.authority.kind, "authenticated_bundle");
     assert.equal(compiled.manifest.release.branch, receipt.release.branch);
@@ -1381,6 +1392,17 @@ describe("NodeToolchainProvisionerCommandV2 inspection and planning", () => {
     }
     assert.equal(compiled.manifest.files.bundle.sha256, receipt.output.sha256);
     assert.deepEqual(compiled.bundleBytes, snapshot.bundleBytes);
+    compiled.bundleBytes.fill(0);
+    assert.equal(
+      copyCompiledNodeToolchainProvisionerBootstrapV2(compiledHandle).manifest.files.bundle.sha256,
+      receipt.output.sha256,
+    );
+    assert.throws(
+      () => copyCompiledNodeToolchainProvisionerBootstrapV2(
+        Object.create(CompiledNodeToolchainProvisionerBootstrapV2.prototype),
+      ),
+      (error: unknown) => error instanceof NodeToolchainProvisionerBootstrapAuthorityErrorV2,
+    );
     const joinedSourceDrift = structuredClone(compiled.manifest);
     joinedSourceDrift.build.packageLockSource.hash = "d".repeat(64);
     joinedSourceDrift.build.buildContractHash = hashNodeToolchainProvisionerBootstrapBuildV2(
@@ -1442,6 +1464,12 @@ describe("NodeToolchainProvisionerCommandV2 inspection and planning", () => {
       (error: unknown) => error instanceof NodeToolchainProvisionerBundleAuthorityErrorV2
         && error.code === "NODE_TOOLCHAIN_PROVISIONER_BUNDLE_V2_NONDETERMINISTIC",
     );
+    disposeCompiledNodeToolchainProvisionerBootstrapV2(compiledHandle);
+    assert.throws(
+      () => copyCompiledNodeToolchainProvisionerBootstrapV2(compiledHandle),
+      (error: unknown) => error instanceof NodeToolchainProvisionerBootstrapAuthorityErrorV2,
+    );
+    disposeCompiledNodeToolchainProvisionerBootstrapV2(compiledHandle);
   });
 
   it("compiles one exact bootstrap manifest and a fail-closed root launcher", async () => {

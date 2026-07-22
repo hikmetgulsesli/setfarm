@@ -73,13 +73,38 @@ export type NodeToolchainProvisionerBootstrapReleaseInputV2 = Readonly<{
   sourcePrivateTree: NodeToolchainPrivateTreeReceiptV2;
 }>;
 
-export type CompiledNodeToolchainProvisionerBootstrapV2 = Readonly<{
+export type CompiledNodeToolchainProvisionerBootstrapSnapshotV2 = Readonly<{
   manifest: NodeToolchainProvisionerBootstrapManifestV2;
   manifestBytes: Buffer;
   launcherBytes: Buffer;
   bundleBytes: Buffer;
   runtimeBytes: Buffer;
 }>;
+
+type CompiledBootstrapStateV2 = Readonly<{
+  snapshot: CompiledNodeToolchainProvisionerBootstrapSnapshotV2;
+}>;
+
+const compiledHandleCapabilityV2 = Object.freeze({});
+const compiledBootstrapStatesV2 = new WeakMap<object, CompiledBootstrapStateV2>();
+const disposedCompiledBootstrapHandlesV2 = new WeakSet<object>();
+
+export class CompiledNodeToolchainProvisionerBootstrapV2 {
+  readonly manifestHash: string;
+  readonly admissionScope: "production_root" | "test_fixture";
+
+  constructor(capability: object, state: CompiledBootstrapStateV2) {
+    if (capability !== compiledHandleCapabilityV2) {
+      throw new NodeToolchainProvisionerBootstrapAuthorityErrorV2(
+        "Compiled bootstrap constructor capability is unavailable",
+      );
+    }
+    this.manifestHash = state.snapshot.manifest.manifestHash;
+    this.admissionScope = state.snapshot.manifest.admissionScope;
+    compiledBootstrapStatesV2.set(this, state);
+    Object.freeze(this);
+  }
+}
 
 const BOOTSTRAP_INPUT_KEYS_V2 = Object.freeze([
   "bundleBytes",
@@ -207,7 +232,7 @@ function compile(
     expectedOwnerGid: number;
   }>,
   authority: BootstrapBuildAuthorityV2,
-): CompiledNodeToolchainProvisionerBootstrapV2 {
+): CompiledNodeToolchainProvisionerBootstrapSnapshotV2 {
   const input = snapshotInput(untrustedInput);
   let sourcePrivateTree: NodeToolchainPrivateTreeReceiptV2;
   try {
@@ -432,7 +457,7 @@ function compile(
 export function compileNodeToolchainProvisionerBootstrapV2ForTest(
   input: unknown,
   testRoot: string,
-): CompiledNodeToolchainProvisionerBootstrapV2 {
+): CompiledNodeToolchainProvisionerBootstrapSnapshotV2 {
   if (typeof process.getuid !== "function" || typeof process.getgid !== "function") {
     return fail("Test bootstrap compilation requires POSIX owner identity");
   }
@@ -467,6 +492,167 @@ function zeroPrivateTreeBundle(bundle: NodeToolchainPrivateTreeBundleV2 | undefi
   for (const entry of bundle.entries) entry.bytes?.fill(0);
 }
 
+function zeroCompiledSnapshot(
+  snapshot: CompiledNodeToolchainProvisionerBootstrapSnapshotV2 | undefined,
+): void {
+  if (!snapshot) return;
+  snapshot.manifestBytes.fill(0);
+  snapshot.launcherBytes.fill(0);
+  snapshot.bundleBytes.fill(0);
+  snapshot.runtimeBytes.fill(0);
+}
+
+function validatedCompiledSnapshot(
+  snapshot: CompiledNodeToolchainProvisionerBootstrapSnapshotV2,
+): CompiledNodeToolchainProvisionerBootstrapSnapshotV2 {
+  let manifest: NodeToolchainProvisionerBootstrapManifestV2;
+  try {
+    manifest = NodeToolchainProvisionerBootstrapManifestV2Schema.parse(snapshot.manifest);
+  } catch (error) {
+    return fail("Authenticated compiled bootstrap manifest is invalid", error);
+  }
+  if (manifest.build.authority.kind !== "authenticated_bundle") {
+    return fail("Raw test bootstrap output cannot become compiled authority");
+  }
+  const manifestBytes = ownedBytes(
+    snapshot.manifestBytes,
+    "Compiled bootstrap manifest",
+    NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_MAX_MANIFEST_BYTES_V2,
+  );
+  const launcherBytes = ownedBytes(
+    snapshot.launcherBytes,
+    "Compiled bootstrap launcher",
+    64 * 1024,
+  );
+  const bundleBytes = ownedBytes(
+    snapshot.bundleBytes,
+    "Compiled bootstrap bundle",
+    NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_MAX_BUNDLE_BYTES_V2,
+  );
+  const runtimeBytes = ownedBytes(
+    snapshot.runtimeBytes,
+    "Compiled bootstrap runtime",
+    NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_MAX_RUNTIME_BYTES_V2,
+  );
+  const expectedLauncher = renderNodeToolchainProvisionerBootstrapLauncherV2({
+    rootLocator: manifest.layout.rootLocator,
+    expectedOwnerUid: manifest.layout.expectedOwnerUid,
+    expectedOwnerGid: manifest.layout.expectedOwnerGid,
+    bundleSha256: manifest.files.bundle.sha256,
+    bundleByteLength: manifest.files.bundle.byteLength,
+    runtimeSha256: manifest.files.bootstrapRuntime.sha256,
+    runtimeByteLength: manifest.files.bootstrapRuntime.byteLength,
+  });
+  let released = false;
+  try {
+    if (
+      !manifestBytes.equals(canonicalJsonBytes(manifest))
+      || manifest.files.launcher.sha256 !== sha256(launcherBytes)
+      || manifest.files.launcher.byteLength !== launcherBytes.byteLength
+      || manifest.files.bundle.sha256 !== sha256(bundleBytes)
+      || manifest.files.bundle.byteLength !== bundleBytes.byteLength
+      || manifest.files.bootstrapRuntime.sha256 !== sha256(runtimeBytes)
+      || manifest.files.bootstrapRuntime.byteLength !== runtimeBytes.byteLength
+      || !launcherBytes.equals(expectedLauncher)
+    ) {
+      return fail("Compiled bootstrap bytes do not equal their authenticated manifest");
+    }
+    const result = Object.freeze({
+      manifest: deepFreezeJson(structuredClone(manifest)),
+      manifestBytes,
+      launcherBytes,
+      bundleBytes,
+      runtimeBytes,
+    });
+    released = true;
+    return result;
+  } catch (error) {
+    if (error instanceof NodeToolchainProvisionerBootstrapAuthorityErrorV2) throw error;
+    return fail("Compiled bootstrap bytes could not be validated safely", error);
+  } finally {
+    expectedLauncher.fill(0);
+    if (!released) {
+      manifestBytes.fill(0);
+      launcherBytes.fill(0);
+      bundleBytes.fill(0);
+      runtimeBytes.fill(0);
+    }
+  }
+}
+
+function issueCompiledBootstrapAuthority(
+  snapshot: CompiledNodeToolchainProvisionerBootstrapSnapshotV2,
+): CompiledNodeToolchainProvisionerBootstrapV2 {
+  const validated = validatedCompiledSnapshot(snapshot);
+  const state = Object.freeze({ snapshot: validated });
+  return new CompiledNodeToolchainProvisionerBootstrapV2(compiledHandleCapabilityV2, state);
+}
+
+function authenticCompiledState(
+  handle: CompiledNodeToolchainProvisionerBootstrapV2,
+): CompiledBootstrapStateV2 {
+  if (
+    typeof handle !== "object"
+    || handle === null
+    || isProxy(handle)
+    || Object.getPrototypeOf(handle) !== CompiledNodeToolchainProvisionerBootstrapV2.prototype
+    || disposedCompiledBootstrapHandlesV2.has(handle)
+  ) {
+    return fail("Compiled bootstrap operation requires one live authentic handle");
+  }
+  const state = compiledBootstrapStatesV2.get(handle);
+  if (!state) return fail("Compiled bootstrap handle was not issued by the authority compiler");
+  return state;
+}
+
+export function copyCompiledNodeToolchainProvisionerBootstrapV2(
+  handle: CompiledNodeToolchainProvisionerBootstrapV2,
+): CompiledNodeToolchainProvisionerBootstrapSnapshotV2 {
+  const validated = validatedCompiledSnapshot(authenticCompiledState(handle).snapshot);
+  try {
+    return Object.freeze({
+      manifest: deepFreezeJson(structuredClone(validated.manifest)),
+      manifestBytes: Buffer.from(validated.manifestBytes),
+      launcherBytes: Buffer.from(validated.launcherBytes),
+      bundleBytes: Buffer.from(validated.bundleBytes),
+      runtimeBytes: Buffer.from(validated.runtimeBytes),
+    });
+  } finally {
+    zeroCompiledSnapshot(validated);
+  }
+}
+
+export function inspectCompiledNodeToolchainProvisionerBootstrapManifestV2(
+  handle: CompiledNodeToolchainProvisionerBootstrapV2,
+): NodeToolchainProvisionerBootstrapManifestV2 {
+  const state = authenticCompiledState(handle);
+  const validated = validatedCompiledSnapshot(state.snapshot);
+  try {
+    return deepFreezeJson(structuredClone(validated.manifest));
+  } finally {
+    zeroCompiledSnapshot(validated);
+  }
+}
+
+export function disposeCompiledNodeToolchainProvisionerBootstrapV2(
+  handle: CompiledNodeToolchainProvisionerBootstrapV2,
+): void {
+  if (
+    typeof handle !== "object"
+    || handle === null
+    || isProxy(handle)
+    || Object.getPrototypeOf(handle) !== CompiledNodeToolchainProvisionerBootstrapV2.prototype
+  ) {
+    return fail("Compiled bootstrap disposal requires one authentic handle");
+  }
+  if (disposedCompiledBootstrapHandlesV2.has(handle)) return;
+  const state = compiledBootstrapStatesV2.get(handle);
+  if (!state) return fail("Compiled bootstrap disposal requires one authentic handle");
+  zeroCompiledSnapshot(state.snapshot);
+  compiledBootstrapStatesV2.delete(handle);
+  disposedCompiledBootstrapHandlesV2.add(handle);
+}
+
 async function compileFromAuthenticatedAuthorities(
   bundleHandle: BuiltNodeToolchainProvisionerBundleV2,
   privateTreeHandle: MaterializedNodeToolchainPrivateTreeV2,
@@ -479,6 +665,7 @@ async function compileFromAuthenticatedAuthorities(
 ): Promise<CompiledNodeToolchainProvisionerBootstrapV2> {
   let snapshot: ReturnType<typeof copyBuiltNodeToolchainProvisionerBundleV2> | undefined;
   let privateBundle: NodeToolchainPrivateTreeBundleV2 | undefined;
+  let compiled: CompiledNodeToolchainProvisionerBootstrapSnapshotV2 | undefined;
   try {
     snapshot = copyBuiltNodeToolchainProvisionerBundleV2(bundleHandle);
     const privateTreeReceipt = inspectNodeToolchainPrivateTreeReceiptV2(privateTreeHandle);
@@ -507,7 +694,7 @@ async function compileFromAuthenticatedAuthorities(
     ) {
       return fail("Authenticated private tree did not reproduce its exact bootstrap runtime");
     }
-    return compile(
+    compiled = compile(
       {
         codeSha: snapshot.receipt.release.codeSha,
         sourceTreeHash: snapshot.receipt.release.sourceTreeHash,
@@ -525,12 +712,14 @@ async function compileFromAuthenticatedAuthorities(
         receipt: snapshot.receipt,
       },
     );
+    return issueCompiledBootstrapAuthority(compiled);
   } catch (error) {
     if (error instanceof NodeToolchainProvisionerBootstrapAuthorityErrorV2) throw error;
     return fail("Authenticated bootstrap authorities could not be joined", error);
   } finally {
     zeroBundleSnapshot(snapshot);
     zeroPrivateTreeBundle(privateBundle);
+    zeroCompiledSnapshot(compiled);
   }
 }
 
