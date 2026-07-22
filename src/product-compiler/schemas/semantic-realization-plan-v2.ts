@@ -218,7 +218,7 @@ export function hashNodeProductTestGeneratorProfileV2(
   });
 }
 
-const GeneratorMemberKindV2Schema = z.enum([
+export const GeneratorMemberKindV2Schema = z.enum([
   "action_reducer",
   "input_codec",
   "non_rendered_surface",

@@ -48,6 +48,13 @@ import {
   verifyFileTreeManifestV2ForTest,
 } from "../../src/product-compiler/file-tree-manifest-v2.js";
 import {
+  FileTreeManifestVerificationErrorV3,
+  compileFileTreeManifestV3,
+  compileFileTreeManifestV3ForTest,
+  verifyFileTreeManifestV3AtDependencyStageForTest,
+  verifyFileTreeManifestV3ForTest,
+} from "../../src/product-compiler/file-tree-manifest-v3.js";
+import {
   BuildTopologyVerificationErrorV2,
   compileBuildTopologyV2,
   compileBuildTopologyV2ForTest,
@@ -122,6 +129,16 @@ import {
   hashFileTreePathMembershipV2,
 } from "../../src/product-compiler/schemas/file-tree-manifest-v2.js";
 import {
+  FILE_TREE_MANIFEST_CONTRACT_HASH_V3,
+  FILE_TREE_MANIFEST_CONTRACT_V3,
+  FileTreeManifestV3Schema,
+  hashFileTreeManifestV3,
+  hashFileTreePathEntryV3,
+  hashFileTreePathMembershipV3,
+  hashFileTreeRuntimeBindingMembershipV3,
+  type FileTreeManifestV3,
+} from "../../src/product-compiler/schemas/file-tree-manifest-v3.js";
+import {
   resolveProductDeliverySelectionV2,
 } from "../../src/product-compiler/product-delivery-profile-catalog-v2.js";
 import type { ProductSpecV2 } from
@@ -145,6 +162,8 @@ const CLI_PROFILE = "PROFILE_NODE_CLI_STATELESS_EXACT_V2" as const;
 const API_PROFILE = "PROFILE_NODE_EXPRESS_API_STATELESS_EXACT_V2" as const;
 const FILE_TREE_CONTRACT_HASH_GOLDEN_V2 =
   "c882764fc3790d7a7815c0ba802d0201d76e3ff874c878e0bf13f1b9d727756c";
+const FILE_TREE_CONTRACT_HASH_GOLDEN_V3 =
+  "935102110da37a941d1859c6ff99ea05112894f872495b61ddc0673601b4704c";
 const BUILD_TOPOLOGY_CONTRACT_HASH_GOLDEN_V2 =
   "5ac524ec5f5c45ac3091c39c5fe959da3da970c15757196879031db55c30ef28";
 const NODE_ENTRYPOINT_GENERATOR_CONTRACT_HASH_GOLDEN_V2 =
@@ -852,6 +871,287 @@ describe("Node scaffold private staged materializer V2", () => {
           "FILE_TREE_V2_PRIVATE_STAGE_INVALID");
       }
     }
+  });
+
+  it("derives exact six-path FileTreeV3 realization authority for three product fixtures", async () => {
+    const cases = [
+      {
+        profileId: CLI_PROFILE,
+        stackPackId: "node-cli" as const,
+        productSpec: genuineNodeCliProductSpecV2(),
+        runtimeLocator: "src/cli.ts",
+        testLocator: "src/cli.setfarm.test.ts",
+        runtimeRealizationCount: 10,
+        actionCount: 1,
+        evidenceRelationCount: 2,
+        testCoverageCount: 3,
+      },
+      {
+        profileId: API_PROFILE,
+        stackPackId: "node-express-api" as const,
+        productSpec: genuineNodeExpressApiProductSpecV2(),
+        runtimeLocator: "src/app.ts",
+        testLocator: "src/app.setfarm.test.ts",
+        runtimeRealizationCount: 11,
+        actionCount: 1,
+        evidenceRelationCount: 2,
+        testCoverageCount: 3,
+      },
+      {
+        profileId: API_PROFILE,
+        stackPackId: "node-express-api" as const,
+        productSpec: twoStoryNodeExpressApiProductSpecV2(),
+        runtimeLocator: "src/app.ts",
+        testLocator: "src/app.setfarm.test.ts",
+        runtimeRealizationCount: 20,
+        actionCount: 2,
+        evidenceRelationCount: 4,
+        testCoverageCount: 6,
+      },
+    ];
+    const manifests = new Map<string, Readonly<FileTreeManifestV3>>();
+    const manifestHashes: string[] = [];
+
+    for (const [caseIndex, fixture] of cases.entries()) {
+      const created = await stage({ profileId: fixture.profileId });
+      const deliverySelection = deliverySelectionForV2(
+        fixture.productSpec,
+        fixture.stackPackId,
+      );
+      const input = { productSpec: fixture.productSpec, deliverySelection };
+      const compiled = await compileFileTreeManifestV3ForTest(created.handle, input);
+      assert.equal(
+        compiled.status,
+        "shadow_compiled",
+        compiled.status === "rejected"
+          ? JSON.stringify(compiled.diagnostics)
+          : undefined,
+      );
+      if (compiled.status !== "shadow_compiled") throw new Error("Expected FileTreeV3");
+      const manifest = compiled.value;
+      manifests.set(caseIndex === 0 ? "cli" : caseIndex === 1 ? "api" : "api-two",
+        manifest);
+      manifestHashes.push(manifest.manifestHash);
+
+      assert.equal(FILE_TREE_MANIFEST_CONTRACT_HASH_V3,
+        FILE_TREE_CONTRACT_HASH_GOLDEN_V3);
+      assert.equal(Object.isFrozen(FILE_TREE_MANIFEST_CONTRACT_V3), true);
+      assert.equal(manifest.contractHash, FILE_TREE_CONTRACT_HASH_GOLDEN_V3);
+      assert.equal(manifest.authority.profileId, fixture.profileId);
+      assert.equal(manifest.authority.stackPackId, fixture.stackPackId);
+      assert.equal(manifest.pathCount, 6);
+      assert.equal(manifest.ownerCount, 3);
+      assert.deepEqual(manifest.owners.map((owner) => owner.ownerRef), [
+        "OWNER_NODE_PRODUCT_RUNTIME_GENERATOR_V2",
+        "OWNER_NODE_PRODUCT_TEST_GENERATOR_V2",
+        "OWNER_SETUP_V3",
+      ]);
+      assert.deepEqual(
+        manifest.paths.map((entry) => entry.classification).sort(),
+        [
+          "config",
+          "config",
+          "config",
+          "config_absence",
+          "generated_runtime_source",
+          "generated_test_source",
+        ],
+      );
+      assert.equal(manifest.paths.every((entry) =>
+        entry.writeGrantOwnerRefs.length === 0), true);
+      assert.equal(manifest.coverage.modelWriteGrantCount, 0);
+      assert.equal(manifest.coverage.storyOwnerCount, 0);
+      assert.equal(manifest.coverage.runtimeRealizationCount,
+        fixture.runtimeRealizationCount);
+      assert.equal(manifest.coverage.actionCount, fixture.actionCount);
+      assert.equal(manifest.coverage.evidenceRelationCount,
+        fixture.evidenceRelationCount);
+      assert.equal(manifest.coverage.testCoverageCount,
+        fixture.testCoverageCount);
+
+      const runtimeEntry = manifest.paths.find((entry) =>
+        entry.authority.kind === "generated_runtime_source_target");
+      assert.equal(runtimeEntry?.normalizedLocator, fixture.runtimeLocator);
+      assert.equal(runtimeEntry?.authority.kind, "generated_runtime_source_target");
+      if (runtimeEntry?.authority.kind !== "generated_runtime_source_target") {
+        throw new Error("Expected generated runtime source target");
+      }
+      assert.equal(runtimeEntry.authority.realizationBindingCount,
+        fixture.runtimeRealizationCount);
+      assert.equal(runtimeEntry.authority.realizationBindings.length,
+        fixture.runtimeRealizationCount);
+
+      const testEntry = manifest.paths.find((entry) =>
+        entry.authority.kind === "generated_test_source_target");
+      assert.equal(testEntry?.normalizedLocator, fixture.testLocator);
+      assert.equal(testEntry?.authority.kind, "generated_test_source_target");
+      if (testEntry?.authority.kind !== "generated_test_source_target") {
+        throw new Error("Expected generated test source target");
+      }
+      assert.equal(testEntry.authority.coverageBindingCount,
+        fixture.testCoverageCount);
+      assert.equal(testEntry.authority.coverageBindings.filter((binding) =>
+        binding.coverageKind === "action").length, fixture.actionCount);
+      assert.equal(testEntry.authority.coverageBindings.filter((binding) =>
+        binding.coverageKind === "evidence_relation").length,
+      fixture.evidenceRelationCount);
+
+      const serialized = JSON.stringify(manifest);
+      assert.doesNotMatch(serialized,
+        /semanticPathTokenSetHash|model_owned_writable|model_granted_writable/);
+      assert.doesNotMatch(serialized,
+        /OWNER_STORY_|NODE_ENTRYPOINT_GENERATOR_V2|story_write_grants/);
+      assert.doesNotMatch(serialized,
+        /admissionScope|privateRootIdentityHash|physicalIdentityHash|scaffoldBaseReceiptHash|executionEnvironmentReceiptHash/);
+      assert.doesNotMatch(serialized,
+        /setfarm-f4-stage-v2|\/private\/|\/var\/folders|\/Users\//);
+      assert.equal(FileTreeManifestV3Schema.safeParse(manifest).success, true);
+      assert.equal(compiled.canonicalBytes, canonicalJsonStringify(manifest));
+      assertRecursivelyFrozen(compiled);
+
+      const verified = await verifyFileTreeManifestV3ForTest(created.handle, {
+        ...input,
+        candidate: manifest,
+      });
+      assert.equal(verified.value.manifestHash, manifest.manifestHash);
+      assertRecursivelyFrozen(verified);
+
+      const wrongScope = await compileFileTreeManifestV3(created.handle, input);
+      assert.equal(wrongScope.status, "rejected");
+      assert.equal(wrongScope.diagnostics[0]?.code,
+        "FILE_TREE_V3_PRODUCTION_AUTHORITY_REQUIRED");
+
+      const omittedRuntimeBinding = structuredClone(manifest) as any;
+      const omittedRuntimeEntry = omittedRuntimeBinding.paths.find((entry: any) =>
+        entry.authority.kind === "generated_runtime_source_target");
+      omittedRuntimeEntry.authority.realizationBindings.pop();
+      omittedRuntimeEntry.authority.realizationBindingCount =
+        omittedRuntimeEntry.authority.realizationBindings.length;
+      omittedRuntimeEntry.authority.realizationBindingMembershipHash =
+        hashFileTreeRuntimeBindingMembershipV3(
+          omittedRuntimeEntry.authority.realizationBindings,
+        );
+      omittedRuntimeBinding.coverage.runtimeRealizationCount =
+        omittedRuntimeEntry.authority.realizationBindingCount;
+      omittedRuntimeBinding.coverage.runtimeRealizationMembershipHash =
+        omittedRuntimeEntry.authority.realizationBindingMembershipHash;
+      omittedRuntimeBinding.authority.semanticRealizationPlan.generatorMemberCount =
+        omittedRuntimeEntry.authority.realizationBindingCount;
+      omittedRuntimeEntry.entryHash = hashFileTreePathEntryV3(omittedRuntimeEntry);
+      omittedRuntimeBinding.pathMembershipHash = hashFileTreePathMembershipV3(
+        omittedRuntimeBinding.paths,
+      );
+      omittedRuntimeBinding.manifestHash =
+        hashFileTreeManifestV3(omittedRuntimeBinding);
+      assert.equal(
+        FileTreeManifestV3Schema.safeParse(omittedRuntimeBinding).success,
+        true,
+      );
+      await assert.rejects(
+        verifyFileTreeManifestV3ForTest(created.handle, {
+          ...input,
+          candidate: omittedRuntimeBinding,
+        }),
+        (error: unknown) =>
+          error instanceof FileTreeManifestVerificationErrorV3
+          && error.code === "FILE_TREE_V3_VERIFICATION_AUTHORITY_MISMATCH",
+      );
+
+      if (caseIndex === 0) {
+        const sibling = await stage({ profileId: CLI_PROFILE });
+        const siblingCompiled = await compileFileTreeManifestV3ForTest(
+          sibling.handle,
+          input,
+        );
+        assert.equal(siblingCompiled.status, "shadow_compiled");
+        if (siblingCompiled.status !== "shadow_compiled") {
+          throw new Error("Expected stable sibling FileTreeV3");
+        }
+        const firstBase = inspectScaffoldBaseMaterializationReceiptV2(created.handle);
+        const siblingBase = inspectScaffoldBaseMaterializationReceiptV2(sibling.handle);
+        assert.notEqual(firstBase.receiptHash, siblingBase.receiptHash);
+        assert.equal(firstBase.semanticInputHash, siblingBase.semanticInputHash);
+        assert.equal(manifest.manifestHash, siblingCompiled.value.manifestHash);
+        assert.equal(compiled.canonicalBytes, siblingCompiled.canonicalBytes);
+
+        const extraInput = await compileFileTreeManifestV3ForTest(created.handle, {
+          ...input,
+          unexpected: true,
+        });
+        assert.equal(extraInput.status, "rejected");
+        assert.equal(extraInput.diagnostics[0]?.code, "FILE_TREE_V3_INPUT_INVALID");
+
+        let getterInvoked = false;
+        const accessorInput = Object.defineProperty(
+          { deliverySelection },
+          "productSpec",
+          {
+            enumerable: true,
+            get() {
+              getterInvoked = true;
+              return fixture.productSpec;
+            },
+          },
+        );
+        const accessorRejected = await compileFileTreeManifestV3ForTest(
+          created.handle,
+          accessorInput,
+        );
+        assert.equal(accessorRejected.status, "rejected");
+        assert.equal(accessorRejected.diagnostics[0]?.code,
+          "FILE_TREE_V3_INPUT_INVALID");
+        assert.equal(getterInvoked, false);
+
+        const proxyInput = new Proxy(input, {
+          ownKeys() {
+            throw new Error("proxy ownKeys trap");
+          },
+        });
+        const proxyRejected = await compileFileTreeManifestV3ForTest(
+          created.handle,
+          proxyInput,
+        );
+        assert.equal(proxyRejected.status, "rejected");
+        assert.equal(proxyRejected.diagnostics[0]?.code,
+          "FILE_TREE_V3_INPUT_INVALID");
+
+        await materializeNodeScaffoldDependenciesV2ForTest(created.handle);
+        const dependencyVerified =
+          await verifyFileTreeManifestV3AtDependencyStageForTest(created.handle, {
+            ...input,
+            candidate: manifest,
+          });
+        assert.equal(dependencyVerified.value.manifestHash, manifest.manifestHash);
+        assertRecursivelyFrozen(dependencyVerified);
+      }
+    }
+
+    assert.deepEqual(manifestHashes, [
+      "9f2355ab210b1d69d6ef4b523afcbdf065baf459e9d7fe61219409cb36399ae4",
+      "5641aaa0e8906a447ad820db88b32c2308a8c2ffaecad3fc05e468f51ca62fb7",
+      "4e3dfd610cf41f58037f9d2891f6caa0de4d7aa6e5ed16138e480f19b18eacd1",
+    ]);
+    const cliManifest = manifests.get("cli");
+    const apiManifest = manifests.get("api");
+    assert.ok(cliManifest);
+    assert.ok(apiManifest);
+    const crossProfile = structuredClone(cliManifest) as any;
+    const cliTestIndex = crossProfile.paths.findIndex((entry: any) =>
+      entry.authority.kind === "generated_test_source_target");
+    const apiTestEntry = structuredClone(apiManifest.paths.find((entry) =>
+      entry.authority.kind === "generated_test_source_target"));
+    assert.notEqual(cliTestIndex, -1);
+    assert.ok(apiTestEntry);
+    crossProfile.paths[cliTestIndex] = apiTestEntry;
+    crossProfile.paths.sort((left: any, right: any) =>
+      left.normalizedLocator < right.normalizedLocator
+        ? -1
+        : left.normalizedLocator > right.normalizedLocator ? 1 : 0);
+    crossProfile.pathMembershipHash = hashFileTreePathMembershipV3(
+      crossProfile.paths,
+    );
+    crossProfile.manifestHash = hashFileTreeManifestV3(crossProfile);
+    assert.equal(FileTreeManifestV3Schema.safeParse(crossProfile).success, false);
   });
 
   it("joins FileTree and dependency-ready F4 evidence into stable BuildTopologyV2 authority", async () => {
