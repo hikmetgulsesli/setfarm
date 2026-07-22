@@ -1856,3 +1856,76 @@ The next dependency-order slice is not candidate execution. It is the
 superseding ImplementationSliceV2 wire: one exact PacketV4 envelope/hash plus
 one bounded SourceMapV2 story proof, with no PacketV3, StoryPlanV2, SourceMapV1,
 global witness, operational attempt receipt, or prose recovery directive.
+
+## F5R V4-native ImplementationSliceV2 implementation closure
+
+**Status (2026-07-21): complete as an isolated shadow authority in commit
+`c0ab51cc`; production activation and model dispatch remain forbidden.** The
+exact superseding wire and compatibility boundary are specified in
+`docs/superpowers/specs/2026-07-16-implementation-slice-v2-design.md`.
+
+The historical numeric-version PacketV3 slice remains byte- and behavior-
+compatible under explicit `implementation-slice-v2-legacy` and
+`slice-compiler-v2-legacy` modules. Current PacketV3 execution and source-
+snapshot code import those legacy modules directly. The canonical path now
+owns only the string-version `"2.0.0"` PacketV4/SourceMapV2 manifest; each
+schema rejects the other wire. The only compatibility export retained at the
+canonical schema path is the historical dependency-output leaf needed to keep
+the immutable V25 preparation-authority migration source digest unchanged.
+The generated V25 checksum was not rewritten.
+
+The strict canonical contract hash is
+`e707124affc1e85034e40d6dd0b474316ccff48590a5d8561a3bfaaaea8778f8`.
+The compact payload binds the exact PacketV4 CAS envelope and SourceMap root,
+one proof hash/leaf CAS reference/Merkle audit path, story identity, logical
+runtime/test source identities, and logical execution hashes. It excludes the
+full Packet, full leaf/proof body, unrelated stories, source revision,
+worktree/dependency/source-attempt receipts, candidate commit/tree, recovery
+prose, and every model-writable path.
+
+The compiler freshly verifies PacketV4 and the selected SourceMapV2 story
+proof before deriving any slice field. It admits only the current code-owned
+Node disposition:
+
+```text
+generated_sources_complete_no_model_dispatch
+modelDispatch = forbidden
+modelWritablePathRefs = []
+```
+
+The compiler returns the exact fresh Packet/proof/leaf bodies as recursively
+immutable context attachments outside the compact CAS payload. It performs one
+exact tier-zero artifact-store preflight but does not write or activate. The
+verifier recompiles fresh and requires both the expected envelope hash and
+candidate canonical bytes to match. Schema-valid locally rehashed candidates
+remain non-authoritative.
+
+The focused five-fixture integration is 1/1 pass with
+`duration_ms 67093.7445`. It covers CLI, one-story API, two-story API,
+prerequisite API and entity-field API; every SourceMap story produces one
+unique SliceV2, and a sibling private attempt converges to the same complete
+slice identity despite different operational receipts. It also proves strict
+legacy discrimination, exact Packet/root/proof/leaf/story/source/execution
+joins, no model writes, four-MiB safety, immutable attachments, individual CAS
+preflight, wrong scope/story/producer rejection, extra and operational-field
+injection rejection, work bounds, and fresh rejection of schema-valid
+self-rehashes.
+
+The current PacketV3 execution regression is 7/7 pass. The clean complete
+Product Compiler regression is 132 suites, 1,072/1,072 pass, zero
+fail/cancelled/skipped/todo, with `duration_ms 143919.251791`. TypeScript,
+version `2.3.79`, English contract (1,129 files), path contract (645 files),
+semantic migration digests, Mission Control contract generation inputs and
+diff checks pass. Normal `npm run build` correctly refused feature branch
+`arch/product-semantics-v2-authority`; the guard was not bypassed. No live run,
+live DB/PR/service, generated repository, Mission Control tree, or real Setfarm
+application-support tree was mutated.
+
+The next dependency-order slice is EvidencePlanV2 over this exact fresh slice
+and a release-bound evidence-adapter authority. Before implementation starts,
+the design must resolve the current RegistryV1/V2 naming and release-manifest
+authority consistently; no caller code SHA, runtime discovery, prose adapter,
+V1 fallback, or future candidate receipt may enter the pre-implementation
+plan. Candidate execution remains downstream of that plan. Atomic artifact-set
+activation, release authority, authenticated candidate evidence, retry/recovery
+ownership, Mission Control projection and clean-run eval all remain NO-GO.
