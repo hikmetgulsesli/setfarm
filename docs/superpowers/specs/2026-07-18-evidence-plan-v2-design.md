@@ -43,6 +43,15 @@ contain a future source hash, final tree, runtime session, candidate receipt, or
 timestamp. `CandidateEvidenceContractV2` is the later authority that joins the
 verified plan to the actual final source receipt and runtime authority.
 
+CandidateSourceReceiptV1 uses a canonical content-tree revision, not a
+universally required Git SHA. For the current no-model-dispatch Node branch it
+is derived from the already-final authenticated generated private source. A
+future repository-backed producer may carry Git commit/tree as origin evidence
+under an explicitly versioned source-receipt branch, but must resolve the final
+planned source slots to the same content identity before build/evidence. The
+source/build boundary is specified by
+`2026-07-21-candidate-source-build-authority-v2-design.md`.
+
 This temporal split supersedes any design in which EvidencePlanV2 consumes
 `CandidateSourceReceiptV1`. Such a plan would either be unavailable to the
 implement agent or would fabricate future source identity.
@@ -266,13 +275,14 @@ After implementation, a separate compiler consumes:
 compileCandidateEvidenceContractV2({
   planVerificationInput,
   candidateSourceReceiptVerificationInput,
-  finalSourceRevision,
+  finalContentRevision,
   runtimeAuthority,
 });
 ```
 
 The result binds exact PlanV2 and registry hashes, CandidateSourceReceiptV1,
-final source commit/tree, resolved source slots, runtime release/environment
+final content-tree revision, optional origin-specific revision evidence,
+resolved source slots, runtime release/environment
 authority, and exact scenario/node/check set hashes. It cannot add, remove, or
 weaken PlanV2 checks. A candidate with missing, duplicate, ambiguous, or
 unplanned source slots is rejected before evidence execution.

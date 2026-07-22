@@ -689,9 +689,15 @@ exact admitted candidate source
   -> EvidenceOutcomeV2 / EvidenceReceiptV2
 ```
 
-`CandidateBuildReceiptV2` binds source commit/tree, Product Build Packet,
+`CandidateBuildReceiptV2` binds one fresh-verified CandidateSourceReceiptV1
+content-tree revision, Product Build Packet, ImplementationSliceV2,
 BuildTopology, exact code-owned build command/toolchain/environment, start/end
-source identity and the fresh output-tree hash. `CandidateRuntimeBundleV2`
+source fences and the fresh output-tree hash. A Git commit/tree is valid only
+as origin evidence for a repository-backed source producer; it is not required
+or fabricated for the current generated private source stage. The exact source
+and private build boundary is specified by
+`2026-07-21-candidate-source-build-authority-v2-design.md`.
+`CandidateRuntimeBundleV2`
 materializes build output plus exact candidate production dependencies into an
 attempt-scoped private read-only root and binds a fresh canonical full-tree
 identity; it does not symlink the worktree. `CandidateLaunchTargetV2` binds that
@@ -730,10 +736,11 @@ lockfile, observed npm identity, graph and produced tree remain candidate claims
 until the later private materializer/verifier reproduces them.
 
 These DTOs contain logical locators and content identities, never a mutable
-worktree path or an absolute attempt directory. Candidate build requires
-`sourceBefore === sourceAfter`, one exact selected topology build command,
-packet-envelope and topology hashes, exact environment/toolchain bindings, exit
-code zero and a bounded domain-separated receipt hash. Filesystem roots and held
+worktree path or an absolute attempt directory. Candidate build requires one
+stable CandidateSourceReceiptV1 semantic revision across two freshly reproduced
+physical fences, one exact selected topology build command and process policy,
+packet/slice/topology hashes, exact environment/toolchain bindings, exit code
+zero and a bounded domain-separated receipt hash. Filesystem roots and held
 descriptors remain private records behind the later candidate verifier brand.
 
 For API, the launch target contains `HttpHandlerExportV2`: exact bundled module,
@@ -748,7 +755,7 @@ candidate launch target plus a `CurrentActivatedPlatformReleaseLeaseV2`; source
 revision alone cannot authorize ignored/stale generated output or dependencies.
 
 Fresh verification issues a private `CandidateExecutionLeaseV2` binding the
-exact source revision, held runtime-root descriptors, candidate build/runtime/
+exact content-tree source revision, held runtime-root descriptors, candidate build/runtime/
 launch hashes, host-admission generation and current release-activation
 generation. The runner revalidates that same lease immediately before spawn and
 again in the evidence-publication compare-and-set. Source, host or activation
@@ -794,8 +801,9 @@ Every runner returns one strict receipt that binds:
   profile, topology, transport, candidate build/runtime/launch, environment,
   and toolchain hashes;
 - run/attempt/story/slice/evidence predicate identity;
-- exact source commit and tree before execution and exact post-execution source
-  identity;
+- exact CandidateSource content-tree revision before execution and exact
+  post-execution source fence, plus origin-specific revision evidence when the
+  source producer owns it;
 - start/end timestamps and bounded duration;
 - exact invocation request hash and redacted response/capture artifact refs;
 - check kind, typed observed result, pass/fail, and failure owner;
