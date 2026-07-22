@@ -1517,6 +1517,72 @@ canonical ReceiptV2 evidence. Only a verified platform release may derive the
 runnable adapter catalog and EvidenceAdapterRegistryV2; RegistryV1 caller claims
 cannot authorize that join.
 
+### F5N — RegistryV2 requirement authority before StoryPlanV3
+
+**Status (2026-07-22): complete as a version-forward shadow correction in
+commit `c1dc2534`; operational RegistryV2, verified release and production use
+remain forbidden.** The F5M “next StoryPlanV3” statement exposed one final
+upstream contradiction before the story artifact could safely seal its inputs.
+The release architecture and code-owned
+`EvidenceAdapterDefinitionCatalogV2` existed on 2026-07-18 (`bce647f8`,
+`c8ce771c`), but `SemanticRealizationPlanV2` was added later on 2026-07-22 in
+`a89bc494` with native evidence targets copied from the historical RegistryV1
+support-signature shape. StoryPlanV3 would therefore have made the wrong
+registry authority transitively canonical even though the legacy target was
+nominally labelled compatibility evidence.
+
+The correction does not create a V1-to-V2 bridge or claim that an adapter can
+run. `setfarm.semantic-realization-plan.v2` advances explicitly from `2.0.0`
+to `2.1.0`. Its code-owned policy now binds the exact V2 definition-catalog
+schema, version and catalog hash, requires
+`setfarm.evidence-adapter-registry.v2`, and forbids an operational support claim
+until that registry is derived from a verified release. The native relation no
+longer contains `setfarm.evidence-adapter-registry.v1`,
+`setfarm.evidence-adapter-support-signature.v1`, or
+`EVIDENCE_ADAPTER_EXACT_SUPPORT_SIGNATURE_V1`; the inherited V1 target survives
+only as the opaque `legacyTargetHash` already marked
+`compatibility_evidence_only`.
+
+Every supported relation now carries the exact ProductSpec evidence ref, kind,
+subject, predicate-contract hash and selector authority. It also carries one
+exact code-owned `EvidenceAdapterRequirementDefinitionV2` and an explicit
+`requirement_only_operational_registry_unmaterialized` state. CLI/API
+`action_invocation` and invocation-output `observable_outcome` requirements
+resolve to the exact selected profile definition. A predicate that has no
+catalog definition is not dropped, guessed, or sent to a model: it remains an
+every-and-only relation with
+`EVIDENCE_ADAPTER_V2_REQUIREMENT_DEFINITION_MISSING`. The current memory-
+persistence fixture proves that `persistence_round_trip` is retained as this
+typed blocker rather than laundered into support. Defined and missing counts
+close exactly to the evidence-relation count.
+
+Schema closure rejects a self-rehashed definition body, a genuine definition
+from the wrong delivery profile, and changing a catalog-backed requirement into
+a missing blocker. Fresh reproduction still rejects a schema-valid self-
+rehashed omission. The stable contract hashes after the intentional 2.1
+version-forward change are:
+
+- runtime generator: `9e2088447e943be9cff3550d9984606051e7b2048998e15a3c3887db7e4d24cc`;
+- test generator: `abefe8ed28a8ac3cd69e38d7f80011b7392eb0a66473b64564638bd95f3c17f0`;
+- realization policy: `03764bc5ed420e9ae5c8a674942c2659bef3717f83bae5f8272510bd22c3eee5`;
+- realization-plan contract: `a6c673c06a45f9ac8e5eae6c13d770678d58c136e51fbc298a9cac0dc852d9c8`.
+
+Focused realization proof is 18/18. The downstream FileTreeV3 and
+BuildTopologyV3 lineage proof is 2/2. Full Product Compiler is 1065/1065 across
+129 suites with `duration_ms 111976.387167`; TypeScript, English contract
+(1,118 files), path contract (637 files), and diff checks pass. The normal
+feature-branch build guard refused `arch/product-semantics-v2-authority` and was
+not bypassed. No live run, live DB, PR, service, generated repository or real
+Setfarm application-support tree was mutated.
+
+This is a dependency-order correction, not a new product-specific guard.
+StoryPlanV3 may now consume only exact requirement authority or an explicit
+missing-definition blocker; it cannot accidentally canonize RegistryV1 prose
+as executable evidence. The next slice remains StoryPlanV3, followed by
+ImplementationSourceMapV2 and ProductBuildPacketV4. Operational adapter support
+can be claimed only later by the verified-release-derived runnable catalog and
+RegistryV2.
+
 ## Verification and release gate
 
 Every slice requires:
@@ -1533,7 +1599,7 @@ F2-F4 additionally require focused real-filesystem, process, PostgreSQL and
 concurrency tests. A clean merged-`main` `npm run build` and full `npm test`
 remain release evidence; the feature-branch build guard is never bypassed.
 
-GO for F1-F4 and F5D-F5M source publication/materialization as isolated shadow
+GO for F1-F4 and F5D-F5N requirement/source publication/materialization as isolated shadow
 authorities. F5A-F5C are GO only as
 compatibility evidence and are explicitly NO-GO as production topology. NO-GO
 for production host execution, setup cutover, PacketV4, live migration, deploy
@@ -1545,6 +1611,6 @@ realization/source-receipt authority. SourceMapV2 and PacketV4 follow before the
 bounded candidate build/test owner; only after authenticated execution may the
 verified-release-derived operational adapter catalog, RegistryV2 and versioned
 release manifest claim support. The feature-branch `npm run build` guard was
-re-run after `a824177f` and correctly refused branch
+re-run after `c1dc2534` and correctly refused branch
 `arch/product-semantics-v2-authority`; it was not bypassed. Only a clean
 merged-main build and full test can close that release gate.
