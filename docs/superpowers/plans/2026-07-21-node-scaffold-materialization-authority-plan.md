@@ -1655,6 +1655,96 @@ canonical Merkle proofs over this exact StoryPlanV3. ProductBuildPacketV4 then
 binds that source map in the forward direction before any bounded candidate
 build/test owner can emit canonical operational evidence.
 
+### F5P — ImplementationSourceMapV2 root, story leaves and bounded proofs
+
+**Status (2026-07-22): complete as a no-design Node shadow authority in
+commit `117ebefa`; ProductBuildPacketV4, atomic artifact-set activation,
+authenticated build/test evidence, operational RegistryV2 and release
+activation remain forbidden.** SourceMapV1 stays historical. The V2 compiler
+accepts only the freshly verified StoryPlanV3/source chain and produces a new
+root plus one semantic artifact envelope per exact story; it never adapts a V1
+map, caller-authored leaf or caller-authored Merkle root.
+
+`setfarm.implementation-source-map.v2` has a code-owned `2.0.0` contract with
+stable hash
+`228602d6fd20d0dc2c73a8e2d07b676422cd677329f48a91f9928ad9c6b095f7`.
+The root authority binds ProductSpecV2, selected delivery profile and stack,
+SemanticSourceIntentSetV1, SemanticRealizationPlanV2.1, FileTreeV3 logical
+identity, BuildTopologyV3 logical compilation/command/runtime contracts,
+runtime and test logical source receipts, StoryPlanV3, explicit no-design
+authority and explicit non-applicability of model-authored declarations. It
+contains only canonical leaf references `(index, storyId, storyHash,
+leafEnvelopeHash, byteLength)`, a domain-separated story-ID-set hash and one
+Merkle root; it does not point backward to a future PacketV4.
+
+Each leaf carries the complete exact StoryPlanV3 story, full matching
+realization definitions, full unscoped product realization definitions,
+runtime/test receipt members and source spans inherited by the story, the
+BuildTopology compilation and runtime targets, the **logical** command
+contract, and one exact evidence-predicate → realization → generated test
+member join per evidence ref. Coverage counts are recomputed from those
+collections. Schema closure rejects missing or foreign realizations, source
+members, evidence bindings, story identities, execution hashes and local
+rehash drift.
+
+The command distinction is intentional. The first sibling-attempt test
+failed because a full BuildTopology command object includes the operational
+dependency-receipt hash. Although BuildTopology already excluded that field
+from its logical command hash, carrying the full object in a story leaf made
+two unchanged products produce different SourceMap roots. Commit `117ebefa`
+therefore promotes the existing logical command projection to a strict public
+schema while preserving the historical non-validating hash helper used by
+negative tests. SourceMap consumes that logical projection. Different private
+attempts now retain different operational topology/source receipts while
+producing the same StoryPlan, SourceMap manifest and full root-envelope hash.
+This is a platform identity correction, not a project-specific exception.
+
+Leaf, pair and odd-child hashes use separate canonical domains. Leaves are
+UTF-16 story-ID ordered; an unpaired child is wrapped once in a unary node and
+is never duplicated or padded. A story proof contains one leaf envelope and
+its reference, root identities, leaf count, story-ID-set hash and only the
+required `left`, `right` or `unary` path. Schema validation derives the only
+legal direction and path length from index/count. The verifier then treats the
+expected root-envelope hash as the future PacketV4 trust anchor, freshly
+verifies StoryPlanV3 and its generated source bytes, reproduces only the
+requested leaf, and canonical-compares it. A completely rehashed leaf/root/
+proof whose leaf ProductSpec authority was changed remains structurally valid
+but is rejected by fresh reproduction.
+
+The existing artifact-store batch capability admits at most nine occurrences,
+while SourceMapV2 permits up to 5,000 leaves. The implementation does not hide
+that mismatch behind a small-fixture assumption or enlarge the generic batch
+limit. Every root/leaf envelope independently passes the exact bounded
+artifact-store batch preflight, and the compiler has a 128-MiB aggregate
+return bound, but production activation is explicitly blocked by
+`IMPLEMENTATION_SOURCE_MAP_V2_ATOMIC_ARTIFACT_SET_ACTIVATION_UNVERIFIED`.
+PacketV4 and a future atomic artifact-set/index transaction must prove that all
+referenced leaves are durable before the root becomes active.
+
+The focused private-materializer test passes across CLI, one-story API,
+two-story API, prerequisite API and entity-field API fixtures. It proves exact
+root/leaf cardinality, logical receipt binding, absence of full operational
+receipt hashes, individual CAS preflight, recursive immutability, two bounded
+proof verifications, wrong-direction rejection, fresh-verifier rejection of a
+schema-valid self-rehashed leaf, wrong admission scope, strict extra-input
+rejection and sibling-attempt root identity convergence. The clean focused
+result is 1/1 with `duration_ms 43284.717375`; the pure Merkle suite is 3/3.
+The clean full Product Compiler regression is 130 suites, 1,068/1,068 pass,
+zero fail/cancelled/skipped/todo, with `duration_ms 120102.989875`.
+TypeScript, English contract (1,123 files), path contract (641 files) and diff
+checks pass. The normal feature-branch build guard refused
+`arch/product-semantics-v2-authority` and was not bypassed. No live run, live
+DB, PR, service, generated repository, Mission Control tree or real Setfarm
+application-support tree was mutated.
+
+This slice remains shadow-only. The expected root hash is not production trust
+until PacketV4 binds it in the forward direction, and independent preflight is
+not atomic durability. The next dependency-order slice is therefore
+ProductBuildPacketV4: it must bind this exact root envelope hash, manifest hash,
+Merkle root, leaf count and story-ID-set hash together with the exact upstream
+artifact refs. Only then may bounded candidate build/test owners consume a
+verified story proof and emit canonical operational receipts.
+
 ## Verification and release gate
 
 Every slice requires:
@@ -1671,18 +1761,18 @@ F2-F4 additionally require focused real-filesystem, process, PostgreSQL and
 concurrency tests. A clean merged-`main` `npm run build` and full `npm test`
 remain release evidence; the feature-branch build guard is never bypassed.
 
-GO for F1-F4 and F5D-F5O requirement/source/story ownership as isolated shadow
-authorities. F5A-F5C are GO only as
+GO for F1-F4 and F5D-F5P requirement/source/story-map ownership as isolated
+shadow authorities. F5A-F5C are GO only as
 compatibility evidence and are explicitly NO-GO as production topology. NO-GO
-for production host execution, setup cutover, PacketV4, live migration, deploy
-and new clean product runs until ImplementationSourceMapV2,
-ProductBuildPacketV4, authenticated build/test/candidate evidence,
+for production host execution, setup cutover, live migration, deploy and new
+clean product runs until ProductBuildPacketV4, atomic SourceMap artifact-set
+activation, authenticated build/test/candidate evidence,
 EvidenceAdapterRegistryV2, release manifest, and the later eval program are
-complete. The next dependency-order slice is SourceMapV2 over the exact
-StoryPlanV3/source-receipt authority. PacketV4 follows before the
-bounded candidate build/test owner; only after authenticated execution may the
+complete. The next dependency-order slice is PacketV4 over the exact
+SourceMapV2 root and upstream authority. It precedes the bounded candidate
+build/test owner; only after authenticated execution may the
 verified-release-derived operational adapter catalog, RegistryV2 and versioned
 release manifest claim support. The feature-branch `npm run build` guard was
-re-run after `c1dc2534` and correctly refused branch
+re-run after `117ebefa` and correctly refused branch
 `arch/product-semantics-v2-authority`; it was not bypassed. Only a clean
 merged-main build and full test can close that release gate.
