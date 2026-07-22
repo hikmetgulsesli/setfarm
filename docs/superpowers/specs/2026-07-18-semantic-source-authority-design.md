@@ -941,10 +941,49 @@ These V2 artifacts were compiled before the realization decision existed and
 must not be activated. `FileTreeManifestV3` fresh-verifies
 SemanticRealizationPlanV2 and materializes only its selected targets. For the
 current Node profiles this means scaffold/config paths plus one code-owned
-generated runtime source target and generated test targets, with zero semantic
+generated runtime source target and one generated test target, with zero semantic
 story write grants. `BuildTopologyV3` binds that V3 tree to the existing exact
 dependency, command and runtime ABI authorities. Neither V3 artifact may adapt,
 reinterpret, or copy V2 semantic writable paths.
+
+## FileTreeManifestV3
+
+FileTreeManifestV3 is the realization-to-physical-target boundary, not a copy
+of historical topology. Its native authorities are ProductSpecV2, the exact
+delivery selection, SemanticRealizationPlanV2, NodeExecutionLayoutV2 and
+NodeExecutionPathTokenSetV2. FileTreeManifestV2,
+SemanticSourcePathTokenSetV2 and story write grants are forbidden native
+inputs. The F4 scaffold catalog and private base receipt remain compatibility
+evidence only for three exact config byte identities and proven absences.
+
+The Node profile closure has exactly six repository paths and three owners:
+
+- setup owns readonly `package.json`, `package-lock.json`, `tsconfig.json` and
+  the forbidden `.npmrc` absence;
+- NodeProductRuntimeGeneratorV2 owns one absent whole-file runtime source
+  target and binds every generator-member realization; and
+- NodeProductTestGeneratorV2 owns one absent whole-file test source target and
+  binds every action plus every required evidence relation.
+
+All `writeGrantOwnerRefs` are empty. Story-owner and model-write counts are
+zero. Generator profile hashes bind the complete code-owned profile, including
+runtime ABI or exact test source/output/import/runner/process policy. The
+manifest does not materialize build outputs, test outputs, candidate modules,
+commands, dependency receipts or capsules; BuildTopologyV3 owns those joins.
+
+Logical manifest identity excludes admission scope, private/physical identity
+and attempt receipt hashes. Present config entries still bind exact deep-CAS
+verification and consumer hashes, while absent source targets bind canonical
+path-specific absence hashes. A verifier must revalidate the authenticated
+private base, freshly reproduce every native authority and require canonical
+candidate equality. A separate dependency-stage verifier must additionally
+prove that dependency materialization preserved that same base before
+BuildTopologyV3 consumes it.
+
+The artifact stays `shadow_blocked` on exactly seven downstream facts:
+BuildTopologyV3, evidence registry, runtime and test generators, both source
+receipts and release manifest. A locally schema-valid self-rehash is never
+sufficient authority.
 
 ## NodeSemanticRuleGeneratorTransitionV2 (Compatibility Evidence)
 
@@ -1181,8 +1220,9 @@ new-write release; it does not translate V3 attempts into historical attempts.
    transition as compatibility evidence; do not activate them.
 10. Implement SemanticRealizationPlanV2 and prove zero implicit model-write
     authority across CLI, one-route API and two-route API fixtures.
-11. Implement realization-driven FileTreeManifestV3 and BuildTopologyV3 without
-    adapting V2 semantic writable paths.
+11. Implement realization-driven FileTreeManifestV3 without adapting V2
+    semantic writable paths, then implement BuildTopologyV3 from its
+    dependency-stage fresh verifier.
 12. Implement NodeProductRuntimeGeneratorV2 and NodeProductTestGeneratorV2 from
     their pinned contracts, then every-member runtime/test source receipts,
     evidence-registry join and release manifest.
@@ -1237,8 +1277,11 @@ source receipts, shared structural slots, and unsupported stack blockers.
 Realization tests cover every-and-only policy matching, exact upstream hash
 pins, zero implicit model writes, CLI/API ABI separation, multi-story runtime
 data, memory-state backing, stale authority, self-rehashed omissions, policy
-forgeries and bounded hostile inputs. FileTreeV3 tests must prove V2 writable
-paths and grants cannot be adapted into the new artifact.
+forgeries and bounded hostile inputs. FileTreeV3 tests prove V2 writable paths
+and grants cannot be adapted into the new artifact, every runtime/test
+obligation has one target, physical attempts preserve stable logical identity,
+and base/dependency-stage fresh verification rejects self-rehashed omissions
+and cross-profile substitutions.
 
 Conditional declaration tests cover only explicitly model-authored realizations:
 every-and-only topology joins, ownership/grants, current base hashes, absent

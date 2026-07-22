@@ -5,10 +5,10 @@ Date: 2026-07-21
 Status: F1, F2A, the F2B publisher/command/bootstrap lifecycle, F3 effective
 npm authority, the complete F4 private scaffold/dependency materializer, and
 the F5A-F5C compatibility experiments are complete on the feature branch. F5D
-SemanticRealizationPlanV2 is the corrected target-architecture boundary. The
-V2 FileTree/BuildTopology/entrypoint-only transition must not be promoted.
-Production-root activation remains NO-GO; realization-driven FileTreeV3 and
-BuildTopologyV3 are next.
+SemanticRealizationPlanV2 is the corrected target-architecture boundary and F5E
+FileTreeManifestV3 now projects its exact physical targets. The V2
+FileTree/BuildTopology/entrypoint-only transition must not be promoted.
+Production-root activation remains NO-GO; BuildTopologyV3 is next.
 
 ## Goal
 
@@ -25,9 +25,10 @@ code-owned scaffold catalog
   -> exact dependency-tree receipt
   -> SemanticSourceIntentSetV1 (obligations only)
   -> SemanticRealizationPlanV2
-  -> FileTreeManifestV3 / BuildTopologyV3
-  -> NodeProductRuntimeGeneratorV2
-  -> NodeProductRuntimeSourceReceiptV2
+  -> FileTreeManifestV3
+  -> BuildTopologyV3
+  -> NodeProductRuntimeGeneratorV2 / NodeProductTestGeneratorV2
+  -> runtime/test source receipts and evidence registry
 ```
 
 No stage may infer success from command prose, PATH lookup alone, a caller-
@@ -880,6 +881,51 @@ source evidence. A future genuinely opaque/model-authored behavior may enter a
 declaration path only through an explicit versioned ProductSpec behavior
 contract; absence of that contract is rejection, not permission to improvise.
 
+### F5E — FileTreeManifestV3
+
+**Status (2026-07-22): complete as a shadow, production-forbidden physical
+target authority.** Commit `e6bebd7c` adds
+`setfarm.file-tree-manifest.v3` version `3.0.0`. Its code-owned contract hash is
+`935102110da37a941d1859c6ff99ea05112894f872495b61ddc0673601b4704c`.
+
+The manifest contains exactly six repository paths: three authenticated
+readonly F4 config files, a forbidden `.npmrc` absence, one absent generated
+runtime source target, and one absent generated test source target. Exactly
+three owners exist: setup, the runtime generator, and the test generator.
+Story owners, write grants and model writes are exactly zero. Runtime source
+authority carries every generator-member realization. Test source authority
+carries every action and every evidence-relation obligation.
+
+V3 does not adapt FileTreeV2, SemanticSourcePathTokenSetV2 or story grants. It
+fresh-reproduces ProductSpecV2, delivery selection, SemanticRealizationPlanV2,
+NodeExecutionLayoutV2 and NodeExecutionPathTokenSetV2. The F4 catalog/base is
+consumed only as authenticated scaffold-byte and absence evidence. Runtime/test
+outputs, candidate module, commands and dependency capsule remain delegated to
+BuildTopologyV3 rather than being invented at the base stage.
+
+Logical identity excludes admission scope, private/physical identities and the
+attempt-specific scaffold receipt hash. Two independent CLI private attempts
+therefore have different receipts but byte-identical FileTreeV3 authority.
+Both base-stage and dependency-stage verifiers reproduce fresh authority and
+require canonical equality.
+
+Stable manifest hashes for CLI, one-route API and two-route API are
+`9f2355ab210b1d69d6ef4b523afcbdf065baf459e9d7fe61219409cb36399ae4`,
+`5641aaa0e8906a447ad820db88b32c2308a8c2ffaecad3fc05e468f51ca62fb7`
+and `4e3dfd610cf41f58037f9d2891f6caa0de4d7aa6e5ed16138e480f19b18eacd1`.
+The three fixtures bind 10/11/20 runtime realizations, 1/1/2 actions and 2/2/4
+evidence relations. Tests reject wrong scope, strict extras, accessors, hostile
+proxies, cross-profile test substitution and a schema-valid self-rehashed
+runtime-binding omission. The private materializer suite is 18/18; full Product
+Compiler is 1028/1028 across 126 suites. TypeScript, English (1,097 files), path
+contract (621 files), version, migration-digest, Mission Control contract and
+diff checks pass. No live run, DB, PR, service, generated repository or real
+Setfarm application-support tree was mutated.
+
+Seven exact blockers remain: BuildTopologyV3, evidence registry, runtime/test
+generators, runtime/test source receipts and release manifest. FileTreeV3 plans
+targets; it does not create source bytes or claim executable success.
+
 ## Verification and release gate
 
 Every slice requires:
@@ -896,14 +942,14 @@ F2-F4 additionally require focused real-filesystem, process, PostgreSQL and
 concurrency tests. A clean merged-`main` `npm run build` and full `npm test`
 remain release evidence; the feature-branch build guard is never bypassed.
 
-GO for F1-F4 and F5D as isolated shadow authorities. F5A-F5C are GO only as
+GO for F1-F4 and F5D-F5E as isolated shadow authorities. F5A-F5C are GO only as
 compatibility evidence and are explicitly NO-GO as production topology. NO-GO
 for production host execution, setup cutover, PacketV4, live migration, deploy
-and new clean product runs until FileTreeV3, BuildTopologyV3, generated runtime
+and new clean product runs until BuildTopologyV3, generated runtime
 and test receipts, evidence registry, release manifest, SourceMap and the later
 packet/eval program are complete. The next dependency-order slice is
-realization-driven FileTreeManifestV3, followed by BuildTopologyV3 and then
-NodeProductRuntimeGeneratorV2. The feature-branch `npm run build` guard was
-re-run after `a89bc494` and correctly refused branch
+BuildTopologyV3, followed by NodeProductRuntimeGeneratorV2 and the generated
+test/runtime receipt pair. The feature-branch `npm run build` guard was re-run
+after `e6bebd7c` and correctly refused branch
 `arch/product-semantics-v2-authority`; it was not bypassed. Only a clean
 merged-main build and full test can close that release gate.
