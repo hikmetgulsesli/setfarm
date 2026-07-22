@@ -15,6 +15,7 @@ import {
   readFileSync,
   readdirSync,
   readSync,
+  renameSync,
   rmdirSync,
   unlinkSync,
   writeSync,
@@ -59,6 +60,7 @@ import {
   NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_VERSION_V2,
   NodeToolchainProvisionerBootstrapInstallationClaimV2Schema,
   NodeToolchainProvisionerBootstrapInstallationReceiptV2Schema,
+  buildNodeToolchainProvisionerBootstrapRollbackHistoryV2,
   buildNodeToolchainProvisionerBootstrapInstallationClaimV2,
   buildNodeToolchainProvisionerBootstrapInstallationIntentV2,
   getNodeToolchainProvisionerBootstrapInstallationPathsV2,
@@ -68,7 +70,26 @@ import {
   type NodeToolchainProvisionerBootstrapInstallationPathsV2,
   type NodeToolchainProvisionerBootstrapInstallationReceiptHashPayloadV2,
   type NodeToolchainProvisionerBootstrapInstallationReceiptV2,
+  type NodeToolchainProvisionerBootstrapRollbackHistoryEntryV2,
+  type NodeToolchainProvisionerBootstrapRollbackHistoryV2,
 } from "./schemas/node-toolchain-provisioner-bootstrap-installation-state-v2.js";
+import {
+  NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_ROLLBACK_CLAIM_STAGE_BASENAME_V2,
+  NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_ROLLBACK_RECEIPT_BASENAME_REGEX_V2,
+  NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_ROLLBACK_RECEIPT_STAGE_BASENAME_V2,
+  NodeToolchainProvisionerBootstrapRollbackClaimV2Schema,
+  NodeToolchainProvisionerBootstrapRollbackPlanV2Schema,
+  NodeToolchainProvisionerBootstrapRollbackReceiptV2Schema,
+  buildNodeToolchainProvisionerBootstrapRollbackClaimV2,
+  buildNodeToolchainProvisionerBootstrapRollbackPlanV2,
+  buildNodeToolchainProvisionerBootstrapRollbackReceiptV2,
+  getNodeToolchainProvisionerBootstrapRollbackPathsV2,
+  type NodeToolchainProvisionerBootstrapRollbackClaimV2,
+  type NodeToolchainProvisionerBootstrapRollbackPathsV2,
+  type NodeToolchainProvisionerBootstrapRollbackPlanV2,
+  type NodeToolchainProvisionerBootstrapRollbackReceiptV2,
+  type NodeToolchainProvisionerBootstrapRollbackTreeEntryV2,
+} from "./schemas/node-toolchain-provisioner-bootstrap-rollback-v2.js";
 import {
   NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_BUNDLE_LOCATOR_V2,
   NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_LAUNCHER_LOCATOR_V2,
@@ -88,6 +109,9 @@ const RECEIPT_STAGE_BASENAME_V2 =
 const PAYLOAD_STAGE_BASENAME_V2 =
   NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_PAYLOAD_STAGE_BASENAME_V2;
 const MAX_CANONICAL_BYTES_V2 = 16 * 1024 * 1024;
+const ROLLBACK_RECEIPT_BASENAME_PATTERN_V2 = new RegExp(
+  NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_ROLLBACK_RECEIPT_BASENAME_REGEX_V2,
+);
 
 export type NodeToolchainProvisionerBootstrapInstallationErrorCodeV2 =
   | "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_INPUT_INVALID"
@@ -101,7 +125,9 @@ export type NodeToolchainProvisionerBootstrapInstallationErrorCodeV2 =
   | "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_RECEIPT_INVALID"
   | "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_PACKAGE_INVALID"
   | "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_HANDLE_UNAUTHENTICATED"
-  | "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_DRIFT";
+  | "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_DRIFT"
+  | "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_ROLLBACK_CONFLICT"
+  | "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_ROLLBACK_FAILED";
 
 export class NodeToolchainProvisionerBootstrapInstallationErrorV2 extends Error {
   readonly code: NodeToolchainProvisionerBootstrapInstallationErrorCodeV2;
@@ -534,7 +560,7 @@ function assertParentCensus(
   paths: NodeToolchainProvisionerBootstrapInstallationPathsV2,
   expectedOwner: OwnerV2,
   parentMode: 0o700 | 0o755,
-): void {
+): NodeToolchainProvisionerBootstrapRollbackHistoryV2 {
   try {
     const before = assertDirectory({
       absolutePath: paths.parent,
@@ -550,22 +576,64 @@ function assertParentCensus(
       path.basename(paths.lock),
       path.basename(paths.staging),
     ]);
+    const rollbackHistoryEntries: NodeToolchainProvisionerBootstrapRollbackHistoryEntryV2[] = [];
+    const rollbackReceiptCaptures: Readonly<{
+      absolutePath: string;
+      fingerprint: FingerprintV2;
+    }>[] = [];
     const after = assertDirectory({
       absolutePath: paths.parent,
       expectedOwner,
       allowedModes: [parentMode],
       errorCode: "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_PARENT_INVALID",
     });
+    for (const name of names) {
+      if (allowed.has(name)) continue;
+      if (!ROLLBACK_RECEIPT_BASENAME_PATTERN_V2.test(name)) {
+        return fail(
+          "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_CONFLICT",
+          "Bootstrap installation parent contains an artifact outside the exact source lifecycle",
+        );
+      }
+      const absolutePath = path.join(paths.parent, name);
+      const rollbackReceipt = assertHistoricalBootstrapRollbackReceipt({
+        absolutePath,
+        parent: paths.parent,
+        expectedOwner,
+        errorCode: "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_CONFLICT",
+      });
+      rollbackHistoryEntries.push({
+        installationReceiptHash:
+          rollbackReceipt.value.removedGeneration.installationReceiptHash,
+        rollbackReceiptHash: rollbackReceipt.value.receiptHash,
+        rollbackReceiptLocatorHash: rollbackReceipt.value.receiptFile.locatorHash,
+      });
+      rollbackReceiptCaptures.push({
+        absolutePath,
+        fingerprint: rollbackReceipt.fingerprint,
+      });
+    }
+    const finalNames = readdirSync(paths.parent).sort();
+    const final = assertDirectory({
+      absolutePath: paths.parent,
+      expectedOwner,
+      allowedModes: [parentMode],
+      errorCode: "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_PARENT_INVALID",
+    });
     if (
-      !samePhysicalIdentity(before, after)
-      || names.some((name) => !allowed.has(name))
-      || names.length > allowed.size
+      !sameFingerprint(before, after)
+      || !sameFingerprint(after, final)
+      || names.length !== finalNames.length
+      || names.some((name, index) => name !== finalNames[index])
+      || rollbackReceiptCaptures.some((capture) =>
+        !sameFingerprint(capture.fingerprint, fingerprint(lstatSync(capture.absolutePath))))
     ) {
       return fail(
         "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_CONFLICT",
-        "Bootstrap installation parent contains an artifact outside the exact source lifecycle",
+        "Bootstrap installation parent changed during its exact lifecycle census",
       );
     }
+    return buildNodeToolchainProvisionerBootstrapRollbackHistoryV2(rollbackHistoryEntries);
   } catch (error) {
     if (error instanceof NodeToolchainProvisionerBootstrapInstallationErrorV2) throw error;
     return fail(
@@ -631,9 +699,17 @@ function assertPlanDecisionCurrent(
   submitted: NodeToolchainProvisionerBootstrapInstallationPlanV2,
   current: NodeToolchainProvisionerBootstrapInstallationPlanV2,
 ): void {
+  const submittedRollbackHistory = submitted.inspection.predecessorRollbackHistory;
+  const currentRollbackHistory = current.inspection.predecessorRollbackHistory;
   if (
     current.intent.intentHash !== submitted.intent.intentHash
     || !canonicalJsonBytes(current.intent).equals(canonicalJsonBytes(submitted.intent))
+    || submittedRollbackHistory.status !== "verified"
+    || currentRollbackHistory.status !== "verified"
+    || !sameRollbackHistory(
+      submittedRollbackHistory.summary,
+      currentRollbackHistory.summary,
+    )
   ) {
     return fail(
       "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_PRECONDITION_CHANGED",
@@ -798,11 +874,67 @@ function readCanonicalFile<T>(input: Readonly<{
   }
 }
 
+function assertHistoricalBootstrapRollbackReceipt(input: Readonly<{
+  absolutePath: string;
+  parent: string;
+  expectedOwner: OwnerV2;
+  activeReceiptStage?: string;
+  errorCode: NodeToolchainProvisionerBootstrapInstallationErrorCodeV2;
+}>): Readonly<{
+  value: NodeToolchainProvisionerBootstrapRollbackReceiptV2;
+  fingerprint: FingerprintV2;
+}> {
+  const allowStageAlias = input.activeReceiptStage !== undefined;
+  const captured = readCanonicalFile({
+    absolutePath: input.absolutePath,
+    expectedOwner: input.expectedOwner,
+    schema: NodeToolchainProvisionerBootstrapRollbackReceiptV2Schema,
+    allowedLinks: allowStageAlias ? [1, 2] : [1],
+    errorCode: input.errorCode,
+  });
+  try {
+    const receiptPaths = getNodeToolchainProvisionerBootstrapRollbackPathsV2(
+      captured.value.claim.plan.installed,
+    );
+    if (
+      receiptPaths.parent !== input.parent
+      || receiptPaths.rollbackReceipt !== input.absolutePath
+      || captured.value.receiptFile.ownerUid !== input.expectedOwner.uid
+      || captured.value.receiptFile.ownerGid !== input.expectedOwner.gid
+      || (captured.fingerprint.linkCount === 2
+        && (
+          input.activeReceiptStage !== receiptPaths.rollbackReceiptStage
+          || !optionalFingerprint(receiptPaths.rollbackReceiptStage)
+          || !samePhysicalIdentity(
+            captured.fingerprint,
+            fingerprint(lstatSync(receiptPaths.rollbackReceiptStage)),
+          )
+        ))
+    ) {
+      return fail(
+        input.errorCode,
+        "Bootstrap rollback tombstone is not bound to this exact parent and publication inode",
+      );
+    }
+    return Object.freeze({ value: captured.value, fingerprint: captured.fingerprint });
+  } finally {
+    captured.bytes.fill(0);
+  }
+}
+
 function sameClaim(
   left: NodeToolchainProvisionerBootstrapInstallationClaimV2,
   right: NodeToolchainProvisionerBootstrapInstallationClaimV2,
 ): boolean {
   return left.claimHash === right.claimHash;
+}
+
+function sameRollbackHistory(
+  left: NodeToolchainProvisionerBootstrapRollbackHistoryV2,
+  right: NodeToolchainProvisionerBootstrapRollbackHistoryV2,
+): boolean {
+  return left.receiptCount === right.receiptCount
+    && left.historyHash === right.historyHash;
 }
 
 function openInstalledPackage(
@@ -830,6 +962,7 @@ function openInstalledPackage(
 function buildReceipt(input: Readonly<{
   claim: NodeToolchainProvisionerBootstrapInstallationClaimV2;
   rootFingerprint: FingerprintV2;
+  predecessorRollbackHistory: NodeToolchainProvisionerBootstrapRollbackHistoryV2;
   lease: DarwinParentDescriptorLeaseV2;
 }>): NodeToolchainProvisionerBootstrapInstallationReceiptV2 {
   const intent = input.claim.intent;
@@ -840,6 +973,7 @@ function buildReceipt(input: Readonly<{
     status: "installed_verified",
     admissionScope: intent.admissionScope,
     claim: input.claim,
+    predecessorRollbackHistory: input.predecessorRollbackHistory,
     publisher: {
       contractRef: "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLER_V2",
       lockExecutionPolicy: input.lease.evidence.executionPolicy,
@@ -1221,6 +1355,7 @@ function receiptMatchesReadyRoot(input: Readonly<{
   claim: NodeToolchainProvisionerBootstrapInstallationClaimV2;
   paths: NodeToolchainProvisionerBootstrapInstallationPathsV2;
   expectedOwner: OwnerV2;
+  predecessorRollbackHistory: NodeToolchainProvisionerBootstrapRollbackHistoryV2;
 }>): FingerprintV2 {
   if (!sameClaim(input.receipt.claim, input.claim)) {
     return fail(
@@ -1241,6 +1376,10 @@ function receiptMatchesReadyRoot(input: Readonly<{
   });
   if (
     manifestHash !== input.receipt.finalRoot.manifestHash
+    || !sameRollbackHistory(
+      input.receipt.predecessorRollbackHistory,
+      input.predecessorRollbackHistory,
+    )
     || root.device !== input.receipt.finalRoot.device
     || root.inode !== input.receipt.finalRoot.inode
   ) {
@@ -1294,7 +1433,11 @@ async function install(input: Readonly<{
       allowedParentModes: [boundary.parentMode],
     });
     lease.assertCurrent();
-    assertParentCensus(paths, boundary.expectedOwner, boundary.parentMode);
+    const predecessorRollbackHistory = assertParentCensus(
+      paths,
+      boundary.expectedOwner,
+      boundary.parentMode,
+    );
     const freshSource = revalidateNodeToolchainProvisionerBootstrapPreparedPackageV2(
       input.preparedHandle,
     );
@@ -1308,6 +1451,16 @@ async function install(input: Readonly<{
       input.preparedHandle,
     );
     assertPlanDecisionCurrent(plan, currentPlan);
+    const currentRollbackHistory = currentPlan.inspection.predecessorRollbackHistory;
+    if (
+      currentRollbackHistory.status !== "verified"
+      || !sameRollbackHistory(currentRollbackHistory.summary, predecessorRollbackHistory)
+    ) {
+      return fail(
+        "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_PRECONDITION_CHANGED",
+        "Bootstrap installation rollback history differs between plan and parent census",
+      );
+    }
     snapshot = copyNodeToolchainProvisionerBootstrapPreparedPackageV2(input.preparedHandle);
 
     if (optionalFingerprint(paths.receipt)) {
@@ -1337,6 +1490,7 @@ async function install(input: Readonly<{
           claim,
           paths,
           expectedOwner: boundary.expectedOwner,
+          predecessorRollbackHistory,
         });
         if (optionalFingerprint(paths.staging)) {
           const receiptBytes = canonicalJsonBytes(receiptRead.value);
@@ -1411,7 +1565,12 @@ async function install(input: Readonly<{
         completeRoot = false;
       }
       if (completeRoot && rootFingerprint) {
-        const receipt = buildReceipt({ claim, rootFingerprint, lease });
+        const receipt = buildReceipt({
+          claim,
+          rootFingerprint,
+          predecessorRollbackHistory,
+          lease,
+        });
         const receiptBytes = canonicalJsonBytes(receipt);
         try {
           if (optionalFingerprint(paths.staging)) {
@@ -1565,7 +1724,12 @@ async function install(input: Readonly<{
       errorCode: "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_PACKAGE_INVALID",
     });
     input.hooks?.afterRootVerified?.();
-    const receipt = buildReceipt({ claim, rootFingerprint, lease });
+    const receipt = buildReceipt({
+      claim,
+      rootFingerprint,
+      predecessorRollbackHistory,
+      lease,
+    });
     const receiptBytes = canonicalJsonBytes(receipt);
     try {
       publishCanonicalNoReplace({
@@ -1582,7 +1746,17 @@ async function install(input: Readonly<{
     rmdirSync(paths.staging);
     syncDirectory(paths.parent);
     lease.assertCurrent();
-    assertParentCensus(paths, boundary.expectedOwner, boundary.parentMode);
+    const finalRollbackHistory = assertParentCensus(
+      paths,
+      boundary.expectedOwner,
+      boundary.parentMode,
+    );
+    if (!sameRollbackHistory(finalRollbackHistory, predecessorRollbackHistory)) {
+      return fail(
+        "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_DRIFT",
+        "Bootstrap rollback history changed during installation publication",
+      );
+    }
     return makeHandle({
       admissionScope: input.expectedScope,
       paths,
@@ -1677,7 +1851,11 @@ function openDurable(input: Readonly<{
   expectedOwner: OwnerV2;
   parentMode: 0o700 | 0o755;
 }>): InstalledNodeToolchainProvisionerBootstrapV2 {
-  assertParentCensus(input.paths, input.expectedOwner, input.parentMode);
+  const predecessorRollbackHistory = assertParentCensus(
+    input.paths,
+    input.expectedOwner,
+    input.parentMode,
+  );
   const lock = stableFileBytes({
     absolutePath: input.paths.lock,
     expectedOwner: input.expectedOwner,
@@ -1735,6 +1913,7 @@ function openDurable(input: Readonly<{
       claim: claimRead.value,
       paths: input.paths,
       expectedOwner: input.expectedOwner,
+      predecessorRollbackHistory,
     });
     return makeHandle({
       admissionScope: input.admissionScope,
@@ -1864,4 +2043,1115 @@ export function revalidateInstalledNodeToolchainProvisionerBootstrapV2(
     );
   }
   return deepFreezeJson(structuredClone(freshState.receipt));
+}
+
+export type NodeToolchainProvisionerBootstrapRollbackTestHooksV2 = Readonly<{
+  afterRollbackClaimStage?: () => void;
+  afterRollbackClaimPublished?: () => void;
+  afterQuarantineCreated?: () => void;
+  afterRootWritable?: () => void;
+  afterRootRenamed?: () => void;
+  afterInstallationReceiptRemoved?: () => void;
+  afterInstallationClaimRemoved?: () => void;
+  afterRemovedEntry?: (input: Readonly<{ locator: string; removedCount: number }>) => void;
+  afterRollbackReceiptStage?: () => void;
+  afterRollbackReceiptPublished?: () => void;
+  afterRollbackClaimRemoved?: () => void;
+}>;
+
+export type NodeToolchainProvisionerBootstrapRollbackResultV2 = Readonly<{
+  rollbackReceipt: NodeToolchainProvisionerBootstrapRollbackReceiptV2;
+  disposition: "rolled_back" | "recovered" | "already_complete";
+}>;
+
+export function planNodeToolchainProvisionerBootstrapRollbackV2(
+  handle: InstalledNodeToolchainProvisionerBootstrapV2,
+): NodeToolchainProvisionerBootstrapRollbackPlanV2 {
+  return deepFreezeJson(buildNodeToolchainProvisionerBootstrapRollbackPlanV2(
+    revalidateInstalledNodeToolchainProvisionerBootstrapV2(handle),
+  ));
+}
+
+function parseRollbackPlan(
+  value: unknown,
+  expectedScope: AdmissionScopeV2,
+): NodeToolchainProvisionerBootstrapRollbackPlanV2 {
+  try {
+    const parsed = NodeToolchainProvisionerBootstrapRollbackPlanV2Schema.safeParse(value);
+    if (!parsed.success || parsed.data.admissionScope !== expectedScope) {
+      return fail(
+        "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_ROLLBACK_CONFLICT",
+        "Bootstrap rollback requires one exact scope-bound rollback plan",
+        parsed.success ? undefined : parsed.error,
+      );
+    }
+    return deepFreezeJson(parsed.data);
+  } catch (error) {
+    if (error instanceof NodeToolchainProvisionerBootstrapInstallationErrorV2) throw error;
+    return fail(
+      "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_ROLLBACK_CONFLICT",
+      "Bootstrap rollback plan could not be inspected safely",
+      error,
+    );
+  }
+}
+
+function rollbackBoundary(
+  plan: NodeToolchainProvisionerBootstrapRollbackPlanV2,
+): Readonly<{
+  paths: NodeToolchainProvisionerBootstrapRollbackPathsV2;
+  expectedOwner: OwnerV2;
+  parentMode: 0o700 | 0o755;
+}> {
+  const paths = getNodeToolchainProvisionerBootstrapRollbackPathsV2(plan.installed);
+  const installationPaths = getNodeToolchainProvisionerBootstrapInstallationPathsV2(
+    plan.installed.claim.intent.source,
+  );
+  const boundary = plan.admissionScope === "production_release"
+    ? (() => {
+        if (
+          installationPaths.root !== NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_ROOT_V2
+          || typeof process.getuid !== "function"
+          || typeof process.getgid !== "function"
+          || process.getuid() !== 0
+          || process.getgid() !== 0
+        ) {
+          return fail(
+            "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_SCOPE_INVALID",
+            "Production bootstrap rollback requires root and the fixed installed target",
+          );
+        }
+        const system = lstatSync(installationPaths.systemAncestor);
+        if (
+          system.isSymbolicLink()
+          || !system.isDirectory()
+          || system.uid !== 0
+          || modeBits(system) !== 0o755
+        ) {
+          return fail(
+            "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_PARENT_INVALID",
+            "Production bootstrap rollback system ancestor is invalid",
+          );
+        }
+        const expectedOwner = Object.freeze({ uid: 0, gid: 0 });
+        for (const directory of [installationPaths.setfarmRoot, installationPaths.parent]) {
+          assertDirectory({
+            absolutePath: directory,
+            expectedOwner,
+            allowedModes: [0o755],
+            errorCode: "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_PARENT_INVALID",
+          });
+        }
+        return Object.freeze({ expectedOwner, parentMode: 0o755 as const });
+      })()
+    : testParent(installationPaths);
+  return Object.freeze({ paths, ...boundary });
+}
+
+function assertRollbackLock(input: Readonly<{
+  paths: NodeToolchainProvisionerBootstrapRollbackPathsV2;
+  expectedOwner: OwnerV2;
+}>): void {
+  const lock = stableFileBytes({
+    absolutePath: input.paths.lock,
+    expectedOwner: input.expectedOwner,
+    allowedModes: [0o600],
+    allowedLinks: [1],
+    maxBytes: LOCK_FILE_BYTES_V2.byteLength,
+    expectedBytes: LOCK_FILE_BYTES_V2,
+    errorCode: "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_ROLLBACK_CONFLICT",
+  });
+  lock.bytes.fill(0);
+}
+
+function assertRollbackParentCensus(input: Readonly<{
+  paths: NodeToolchainProvisionerBootstrapRollbackPathsV2;
+  expectedOwner: OwnerV2;
+  parentMode: 0o700 | 0o755;
+}>): NodeToolchainProvisionerBootstrapRollbackHistoryV2 {
+  try {
+    const before = assertDirectory({
+      absolutePath: input.paths.parent,
+      expectedOwner: input.expectedOwner,
+      allowedModes: [input.parentMode],
+      errorCode: "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_ROLLBACK_CONFLICT",
+    });
+    const allowed = new Set([
+      path.basename(input.paths.root),
+      path.basename(input.paths.installationReceipt),
+      path.basename(input.paths.installationClaim),
+      path.basename(input.paths.lock),
+      path.basename(input.paths.staging),
+      path.basename(input.paths.rollbackClaim),
+    ]);
+    const names = readdirSync(input.paths.parent).sort();
+    const rollbackHistoryEntries: NodeToolchainProvisionerBootstrapRollbackHistoryEntryV2[] = [];
+    const rollbackReceiptCaptures: Readonly<{
+      absolutePath: string;
+      fingerprint: FingerprintV2;
+    }>[] = [];
+    const after = assertDirectory({
+      absolutePath: input.paths.parent,
+      expectedOwner: input.expectedOwner,
+      allowedModes: [input.parentMode],
+      errorCode: "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_ROLLBACK_CONFLICT",
+    });
+    for (const name of names) {
+      if (allowed.has(name)) continue;
+      if (!ROLLBACK_RECEIPT_BASENAME_PATTERN_V2.test(name)) {
+        return fail(
+          "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_ROLLBACK_CONFLICT",
+          "Bootstrap rollback parent contains state outside one exact generation",
+        );
+      }
+      const absolutePath = path.join(input.paths.parent, name);
+      const rollbackReceipt = assertHistoricalBootstrapRollbackReceipt({
+        absolutePath,
+        parent: input.paths.parent,
+        expectedOwner: input.expectedOwner,
+        ...(absolutePath === input.paths.rollbackReceipt
+          ? { activeReceiptStage: input.paths.rollbackReceiptStage }
+          : {}),
+        errorCode: "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_ROLLBACK_CONFLICT",
+      });
+      rollbackHistoryEntries.push({
+        installationReceiptHash:
+          rollbackReceipt.value.removedGeneration.installationReceiptHash,
+        rollbackReceiptHash: rollbackReceipt.value.receiptHash,
+        rollbackReceiptLocatorHash: rollbackReceipt.value.receiptFile.locatorHash,
+      });
+      rollbackReceiptCaptures.push({
+        absolutePath,
+        fingerprint: rollbackReceipt.fingerprint,
+      });
+    }
+    const finalNames = readdirSync(input.paths.parent).sort();
+    const final = assertDirectory({
+      absolutePath: input.paths.parent,
+      expectedOwner: input.expectedOwner,
+      allowedModes: [input.parentMode],
+      errorCode: "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_ROLLBACK_CONFLICT",
+    });
+    if (
+      !sameFingerprint(before, after)
+      || !sameFingerprint(after, final)
+      || names.length !== finalNames.length
+      || names.some((name, index) => name !== finalNames[index])
+      || rollbackReceiptCaptures.some((capture) =>
+        !sameFingerprint(capture.fingerprint, fingerprint(lstatSync(capture.absolutePath))))
+    ) {
+      return fail(
+        "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_ROLLBACK_CONFLICT",
+        "Bootstrap rollback parent changed during its exact generation census",
+      );
+    }
+    return buildNodeToolchainProvisionerBootstrapRollbackHistoryV2(rollbackHistoryEntries);
+  } catch (error) {
+    if (error instanceof NodeToolchainProvisionerBootstrapInstallationErrorV2) throw error;
+    return fail(
+      "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_ROLLBACK_CONFLICT",
+      "Bootstrap rollback parent census failed",
+      error,
+    );
+  }
+}
+
+function ensureRollbackStaging(input: Readonly<{
+  paths: NodeToolchainProvisionerBootstrapRollbackPathsV2;
+  expectedOwner: OwnerV2;
+}>): void {
+  if (!optionalFingerprint(input.paths.staging)) {
+    createOwnedDirectory({
+      absolutePath: input.paths.staging,
+      mode: 0o700,
+      expectedOwner: input.expectedOwner,
+      errorCode: "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_ROLLBACK_CONFLICT",
+    });
+  }
+  assertDirectory({
+    absolutePath: input.paths.staging,
+    expectedOwner: input.expectedOwner,
+    allowedModes: [0o700],
+    errorCode: "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_ROLLBACK_CONFLICT",
+  });
+}
+
+function assertRollbackStagingCensus(input: Readonly<{
+  paths: NodeToolchainProvisionerBootstrapRollbackPathsV2;
+  expectedOwner: OwnerV2;
+  allowAbsent: boolean;
+}>): void {
+  if (!optionalFingerprint(input.paths.staging)) {
+    if (input.allowAbsent) return;
+    return fail(
+      "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_ROLLBACK_CONFLICT",
+      "Bootstrap rollback staging root is unexpectedly absent",
+    );
+  }
+  const before = assertDirectory({
+    absolutePath: input.paths.staging,
+    expectedOwner: input.expectedOwner,
+    allowedModes: [0o700],
+    errorCode: "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_ROLLBACK_CONFLICT",
+  });
+  const allowed = new Set([
+    NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_ROLLBACK_CLAIM_STAGE_BASENAME_V2,
+    NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_ROLLBACK_RECEIPT_STAGE_BASENAME_V2,
+    path.basename(input.paths.rollbackStage),
+  ]);
+  const names = readdirSync(input.paths.staging).sort();
+  const after = assertDirectory({
+    absolutePath: input.paths.staging,
+    expectedOwner: input.expectedOwner,
+    allowedModes: [0o700],
+    errorCode: "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_ROLLBACK_CONFLICT",
+  });
+  if (
+    !sameFingerprint(before, after)
+    || names.length > allowed.size
+    || names.some((name) => !allowed.has(name))
+  ) {
+    return fail(
+      "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_ROLLBACK_CONFLICT",
+      "Bootstrap rollback staging contains a foreign or changing member",
+    );
+  }
+  if (optionalFingerprint(input.paths.rollbackStage)) {
+    const rollbackStage = assertDirectory({
+      absolutePath: input.paths.rollbackStage,
+      expectedOwner: input.expectedOwner,
+      allowedModes: [0o700],
+      errorCode: "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_ROLLBACK_CONFLICT",
+    });
+    const rollbackNames = readdirSync(input.paths.rollbackStage).sort();
+    const rollbackStageAfter = assertDirectory({
+      absolutePath: input.paths.rollbackStage,
+      expectedOwner: input.expectedOwner,
+      allowedModes: [0o700],
+      errorCode: "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_ROLLBACK_CONFLICT",
+    });
+    if (
+      !sameFingerprint(rollbackStage, rollbackStageAfter)
+      || rollbackNames.length > 1
+      || rollbackNames.some((name) => name !== path.basename(input.paths.quarantineRoot))
+    ) {
+      return fail(
+        "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_ROLLBACK_CONFLICT",
+        "Bootstrap rollback quarantine contains a foreign sibling",
+      );
+    }
+  }
+}
+
+function readRollbackClaim(input: Readonly<{
+  paths: NodeToolchainProvisionerBootstrapRollbackPathsV2;
+  expectedOwner: OwnerV2;
+  plan: NodeToolchainProvisionerBootstrapRollbackPlanV2;
+}>): Readonly<{
+  value: NodeToolchainProvisionerBootstrapRollbackClaimV2;
+  fingerprint: FingerprintV2;
+}> {
+  const captured = readCanonicalFile({
+    absolutePath: input.paths.rollbackClaim,
+    expectedOwner: input.expectedOwner,
+    schema: NodeToolchainProvisionerBootstrapRollbackClaimV2Schema,
+    allowedLinks: [1, 2],
+    errorCode: "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_ROLLBACK_CONFLICT",
+  });
+  try {
+    const stage = optionalFingerprint(input.paths.rollbackClaimStage);
+    if (
+      captured.value.plan.planHash !== input.plan.planHash
+      || (captured.fingerprint.linkCount === 2
+        && (!stage || !samePhysicalIdentity(captured.fingerprint, stage)))
+      || (captured.fingerprint.linkCount === 1 && stage !== undefined)
+    ) {
+      return fail(
+        "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_ROLLBACK_CONFLICT",
+        "Existing bootstrap rollback claim or stage alias belongs to another plan",
+      );
+    }
+    return Object.freeze({ value: captured.value, fingerprint: captured.fingerprint });
+  } finally {
+    captured.bytes.fill(0);
+  }
+}
+
+function readRollbackReceipt(input: Readonly<{
+  paths: NodeToolchainProvisionerBootstrapRollbackPathsV2;
+  expectedOwner: OwnerV2;
+  plan: NodeToolchainProvisionerBootstrapRollbackPlanV2;
+  allowedLinks?: readonly (1 | 2)[];
+}>): Readonly<{
+  value: NodeToolchainProvisionerBootstrapRollbackReceiptV2;
+  fingerprint: FingerprintV2;
+}> {
+  const captured = readCanonicalFile({
+    absolutePath: input.paths.rollbackReceipt,
+    expectedOwner: input.expectedOwner,
+    schema: NodeToolchainProvisionerBootstrapRollbackReceiptV2Schema,
+    allowedLinks: input.allowedLinks ?? [1],
+    errorCode: "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_ROLLBACK_CONFLICT",
+  });
+  try {
+    const stage = optionalFingerprint(input.paths.rollbackReceiptStage);
+    if (
+      captured.value.planHash !== input.plan.planHash
+      || captured.value.removedGeneration.installationReceiptHash
+        !== input.plan.generation.installationReceiptHash
+      || captured.value.removedGeneration.rootDevice !== input.plan.generation.rootDevice
+      || captured.value.removedGeneration.rootInode !== input.plan.generation.rootInode
+      || (captured.fingerprint.linkCount === 2
+        && (!stage || !samePhysicalIdentity(captured.fingerprint, stage)))
+      || (captured.fingerprint.linkCount === 1 && stage !== undefined)
+    ) {
+      return fail(
+        "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_ROLLBACK_CONFLICT",
+        "Existing bootstrap rollback tombstone belongs to another generation",
+      );
+    }
+    return Object.freeze({ value: captured.value, fingerprint: captured.fingerprint });
+  } finally {
+    captured.bytes.fill(0);
+  }
+}
+
+function unlinkCapturedFile(input: Readonly<{
+  absolutePath: string;
+  expected: FingerprintV2;
+}>): void {
+  const current = fingerprint(lstatSync(input.absolutePath));
+  if (!sameFingerprint(current, input.expected)) {
+    return fail(
+      "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_ROLLBACK_CONFLICT",
+      "Bootstrap rollback file changed before exact unlink",
+    );
+  }
+  unlinkSync(input.absolutePath);
+  syncDirectory(path.dirname(input.absolutePath));
+}
+
+function rollbackEntryPath(root: string, locator: string): string {
+  return locator === "." ? root : path.join(root, locator);
+}
+
+function validatePartialRollbackTree(input: Readonly<{
+  root: string;
+  claim: NodeToolchainProvisionerBootstrapRollbackClaimV2;
+  expectedOwner: OwnerV2;
+}>): void {
+  const root = optionalFingerprint(input.root);
+  if (!root) return;
+  if (
+    root.device !== input.claim.generation.rootDevice
+    || root.inode !== input.claim.generation.rootInode
+    || root.ownerUid !== input.expectedOwner.uid
+    || root.ownerGid !== input.expectedOwner.gid
+    || (modeBits(root) !== 0o555 && modeBits(root) !== 0o700)
+  ) {
+    return fail(
+      "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_ROLLBACK_CONFLICT",
+      "Bootstrap rollback root differs from its claimed physical generation",
+    );
+  }
+  const expected = new Map<string, NodeToolchainProvisionerBootstrapRollbackTreeEntryV2>(
+    input.claim.treeEntries.map((entry) => [entry.locator, entry]),
+  );
+  const visit = (absoluteDirectory: string, locator: string): void => {
+    const directoryEntry = expected.get(locator);
+    const before = lstatSync(absoluteDirectory);
+    if (
+      !directoryEntry
+      || directoryEntry.type !== "directory"
+      || before.isSymbolicLink()
+      || !before.isDirectory()
+      || before.uid !== input.expectedOwner.uid
+      || before.gid !== input.expectedOwner.gid
+      || (modeBits(before) !== 0o555 && modeBits(before) !== 0o700)
+    ) {
+      return fail(
+        "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_ROLLBACK_CONFLICT",
+        "Bootstrap rollback directory differs from its claim",
+      );
+    }
+    const namesBefore = readdirSync(absoluteDirectory).sort();
+    for (const name of namesBefore) {
+      const childLocator = locator === "." ? name : `${locator}/${name}`;
+      const entry = expected.get(childLocator);
+      if (!entry) {
+        return fail(
+          "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_ROLLBACK_CONFLICT",
+          "Bootstrap rollback quarantine contains a foreign member",
+        );
+      }
+      const absoluteChild = path.join(absoluteDirectory, name);
+      const stat = lstatSync(absoluteChild);
+      if (
+        stat.isSymbolicLink()
+        || stat.uid !== input.expectedOwner.uid
+        || stat.gid !== input.expectedOwner.gid
+      ) {
+        return fail(
+          "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_ROLLBACK_CONFLICT",
+          "Bootstrap rollback member ownership or type is foreign",
+        );
+      }
+      if (entry.type === "directory") {
+        visit(absoluteChild, childLocator);
+        continue;
+      }
+      if (
+        !stat.isFile()
+        || stat.nlink !== 1
+        || modeBits(stat) !== Number.parseInt(entry.mode, 8)
+        || stat.size !== entry.byteLength
+      ) {
+        return fail(
+          "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_ROLLBACK_CONFLICT",
+          "Bootstrap rollback file metadata differs from its claim",
+        );
+      }
+      const captured = stableFileBytes({
+        absolutePath: absoluteChild,
+        expectedOwner: input.expectedOwner,
+        allowedModes: [Number.parseInt(entry.mode, 8)],
+        allowedLinks: [1],
+        maxBytes: Math.max(entry.byteLength, 1),
+        errorCode: "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_ROLLBACK_CONFLICT",
+      });
+      try {
+        if (captured.bytes.byteLength !== entry.byteLength || sha256(captured.bytes) !== entry.contentHash) {
+          return fail(
+            "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_ROLLBACK_CONFLICT",
+            "Bootstrap rollback file bytes differ from its claim",
+          );
+        }
+      } finally {
+        captured.bytes.fill(0);
+      }
+    }
+    const after = lstatSync(absoluteDirectory);
+    const namesAfter = readdirSync(absoluteDirectory).sort();
+    if (
+      !sameFingerprint(fingerprint(before), fingerprint(after))
+      || namesBefore.length !== namesAfter.length
+      || namesBefore.some((name, index) => name !== namesAfter[index])
+    ) {
+      return fail(
+        "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_ROLLBACK_CONFLICT",
+        "Bootstrap rollback tree changed during its every-only census",
+      );
+    }
+  };
+  visit(input.root, ".");
+}
+
+function assertCompleteRollbackTree(input: Readonly<{
+  root: string;
+  claim: NodeToolchainProvisionerBootstrapRollbackClaimV2;
+  expectedOwner: OwnerV2;
+}>): void {
+  validatePartialRollbackTree(input);
+  for (const entry of input.claim.treeEntries) {
+    if (!optionalFingerprint(rollbackEntryPath(input.root, entry.locator))) {
+      return fail(
+        "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_ROLLBACK_CONFLICT",
+        "Live bootstrap generation lost a claimed member before quarantine",
+      );
+    }
+  }
+}
+
+function removePartialRollbackTree(input: Readonly<{
+  root: string;
+  claim: NodeToolchainProvisionerBootstrapRollbackClaimV2;
+  expectedOwner: OwnerV2;
+  hooks?: NodeToolchainProvisionerBootstrapRollbackTestHooksV2;
+}>): void {
+  validatePartialRollbackTree(input);
+  if (!optionalFingerprint(input.root)) return;
+  const directories = input.claim.treeEntries
+    .filter((entry): entry is NodeToolchainProvisionerBootstrapRollbackTreeEntryV2 & {
+      type: "directory";
+    } => entry.type === "directory")
+    .sort((left, right) => left.locator.split("/").length - right.locator.split("/").length);
+  for (const entry of directories) {
+    const absolutePath = rollbackEntryPath(input.root, entry.locator);
+    const current = optionalFingerprint(absolutePath);
+    if (!current) continue;
+    if (
+      current.ownerUid !== input.expectedOwner.uid
+      || current.ownerGid !== input.expectedOwner.gid
+      || (modeBits(current) !== 0o555 && modeBits(current) !== 0o700)
+    ) {
+      return fail(
+        "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_ROLLBACK_CONFLICT",
+        "Bootstrap rollback directory changed before writable transition",
+      );
+    }
+    if (modeBits(current) !== 0o700) {
+      chmodSync(absolutePath, 0o700);
+      syncDirectory(absolutePath);
+    }
+  }
+  let removedCount = 0;
+  for (const entry of input.claim.treeEntries.filter((candidate) => candidate.type === "file")) {
+    const absolutePath = rollbackEntryPath(input.root, entry.locator);
+    if (!optionalFingerprint(absolutePath)) continue;
+    const captured = stableFileBytes({
+      absolutePath,
+      expectedOwner: input.expectedOwner,
+      allowedModes: [Number.parseInt(entry.mode, 8)],
+      allowedLinks: [1],
+      maxBytes: Math.max(entry.byteLength, 1),
+      errorCode: "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_ROLLBACK_CONFLICT",
+    });
+    try {
+      if (captured.bytes.byteLength !== entry.byteLength || sha256(captured.bytes) !== entry.contentHash) {
+        return fail(
+          "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_ROLLBACK_CONFLICT",
+          "Bootstrap rollback file changed before exact removal",
+        );
+      }
+      unlinkCapturedFile({ absolutePath, expected: captured.fingerprint });
+    } finally {
+      captured.bytes.fill(0);
+    }
+    removedCount += 1;
+    input.hooks?.afterRemovedEntry?.({ locator: entry.locator, removedCount });
+  }
+  const childDirectories = directories
+    .filter((entry) => entry.locator !== ".")
+    .sort((left, right) => right.locator.split("/").length - left.locator.split("/").length);
+  for (const entry of childDirectories) {
+    const absolutePath = rollbackEntryPath(input.root, entry.locator);
+    if (!optionalFingerprint(absolutePath)) continue;
+    rmdirSync(absolutePath);
+    syncDirectory(path.dirname(absolutePath));
+    removedCount += 1;
+    input.hooks?.afterRemovedEntry?.({ locator: entry.locator, removedCount });
+  }
+  const root = optionalFingerprint(input.root);
+  if (root) {
+    if (
+      root.device !== input.claim.generation.rootDevice
+      || root.inode !== input.claim.generation.rootInode
+      || root.ownerUid !== input.expectedOwner.uid
+      || root.ownerGid !== input.expectedOwner.gid
+      || modeBits(root) !== 0o700
+    ) {
+      return fail(
+        "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_ROLLBACK_CONFLICT",
+        "Bootstrap rollback root changed before exact removal",
+      );
+    }
+    rmdirSync(input.root);
+    syncDirectory(path.dirname(input.root));
+    removedCount += 1;
+    input.hooks?.afterRemovedEntry?.({ locator: ".", removedCount });
+  }
+}
+
+function readReadyRollbackGeneration(input: Readonly<{
+  plan: NodeToolchainProvisionerBootstrapRollbackPlanV2;
+  paths: NodeToolchainProvisionerBootstrapRollbackPathsV2;
+  expectedOwner: OwnerV2;
+}>): FingerprintV2 {
+  const claimRead = readCanonicalFile({
+    absolutePath: input.paths.installationClaim,
+    expectedOwner: input.expectedOwner,
+    schema: NodeToolchainProvisionerBootstrapInstallationClaimV2Schema,
+    errorCode: "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_ROLLBACK_CONFLICT",
+  });
+  const receiptRead = readCanonicalFile({
+    absolutePath: input.paths.installationReceipt,
+    expectedOwner: input.expectedOwner,
+    schema: NodeToolchainProvisionerBootstrapInstallationReceiptV2Schema,
+    errorCode: "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_ROLLBACK_CONFLICT",
+  });
+  try {
+    if (
+      claimRead.value.claimHash !== input.plan.generation.installationClaimHash
+      || receiptRead.value.receiptHash !== input.plan.generation.installationReceiptHash
+      || receiptRead.value.claim.claimHash !== claimRead.value.claimHash
+    ) {
+      return fail(
+        "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_ROLLBACK_CONFLICT",
+        "Live bootstrap installation authority changed after rollback planning",
+      );
+    }
+    return receiptMatchesReadyRoot({
+      receipt: receiptRead.value,
+      claim: claimRead.value,
+      paths: getNodeToolchainProvisionerBootstrapInstallationPathsV2(
+        input.plan.installed.claim.intent.source,
+      ),
+      expectedOwner: input.expectedOwner,
+      predecessorRollbackHistory: input.plan.installed.predecessorRollbackHistory,
+    });
+  } finally {
+    claimRead.bytes.fill(0);
+    receiptRead.bytes.fill(0);
+  }
+}
+
+function removeInstallationAuthorityFile<T extends object>(input: Readonly<{
+  absolutePath: string;
+  expectedOwner: OwnerV2;
+  schema: {
+    safeParse(value: unknown):
+      | { success: true; data: T }
+      | { success: false; error: unknown };
+  };
+  expectedHash: string;
+  readHash: (value: T) => string;
+}>): void {
+  if (!optionalFingerprint(input.absolutePath)) return;
+  const captured = readCanonicalFile({
+    absolutePath: input.absolutePath,
+    expectedOwner: input.expectedOwner,
+    schema: input.schema,
+    errorCode: "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_ROLLBACK_CONFLICT",
+  });
+  try {
+    if (input.readHash(captured.value) !== input.expectedHash) {
+      return fail(
+        "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_ROLLBACK_CONFLICT",
+        "Bootstrap installation authority differs from the rollback claim",
+      );
+    }
+    unlinkCapturedFile({ absolutePath: input.absolutePath, expected: captured.fingerprint });
+  } finally {
+    captured.bytes.fill(0);
+  }
+}
+
+async function rollbackBootstrap(input: Readonly<{
+  expectedScope: AdmissionScopeV2;
+  plan: unknown;
+  hooks?: NodeToolchainProvisionerBootstrapRollbackTestHooksV2;
+}>): Promise<NodeToolchainProvisionerBootstrapRollbackResultV2> {
+  const plan = parseRollbackPlan(input.plan, input.expectedScope);
+  const boundary = rollbackBoundary(plan);
+  const { paths } = boundary;
+  assertRollbackParentCensus(boundary);
+  assertRollbackLock({ paths, expectedOwner: boundary.expectedOwner });
+  let lease: DarwinParentDescriptorLeaseV2 | undefined;
+  try {
+    lease = await acquireDarwinParentDescriptorLeaseV2({
+      parentPath: paths.parent,
+      lockPath: paths.lock,
+      lockBytes: LOCK_FILE_BYTES_V2,
+      expectedOwner: boundary.expectedOwner,
+      allowedParentModes: [boundary.parentMode],
+    });
+    lease.assertCurrent();
+    const observedRollbackHistory = assertRollbackParentCensus(boundary);
+    const rollbackClaimExistsAtStart = optionalFingerprint(paths.rollbackClaim) !== undefined;
+    const rollbackOperationalStateExistsAtStart = rollbackClaimExistsAtStart
+      || optionalFingerprint(paths.staging) !== undefined;
+    const rollbackReceiptExistsAtStart = optionalFingerprint(paths.rollbackReceipt) !== undefined;
+    if (
+      !rollbackReceiptExistsAtStart
+      && !sameRollbackHistory(
+        observedRollbackHistory,
+        plan.installed.predecessorRollbackHistory,
+      )
+    ) {
+      return fail(
+        "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_ROLLBACK_CONFLICT",
+        "Bootstrap rollback predecessor history changed after generation planning",
+      );
+    }
+
+    if (rollbackReceiptExistsAtStart) {
+      const observed = readRollbackReceipt({
+        paths,
+        expectedOwner: boundary.expectedOwner,
+        plan,
+        allowedLinks: [1, 2],
+      });
+      const receiptBytes = canonicalJsonBytes(observed.value);
+      try {
+        if (optionalFingerprint(paths.rollbackReceiptStage)) {
+          publishCanonicalNoReplace({
+            stagePath: paths.rollbackReceiptStage,
+            targetPath: paths.rollbackReceipt,
+            bytes: receiptBytes,
+            expectedOwner: boundary.expectedOwner,
+          });
+        }
+      } finally {
+        receiptBytes.fill(0);
+      }
+      if (rollbackClaimExistsAtStart) {
+        const claimRead = readRollbackClaim({
+          paths,
+          expectedOwner: boundary.expectedOwner,
+          plan,
+        });
+        if (claimRead.value.claimHash !== observed.value.claim.claimHash) {
+          return fail(
+            "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_ROLLBACK_CONFLICT",
+            "Bootstrap rollback tombstone and retained claim disagree",
+          );
+        }
+        if (optionalFingerprint(paths.rollbackClaimStage)) {
+          const claimBytes = canonicalJsonBytes(claimRead.value);
+          try {
+            publishCanonicalNoReplace({
+              stagePath: paths.rollbackClaimStage,
+              targetPath: paths.rollbackClaim,
+              bytes: claimBytes,
+              expectedOwner: boundary.expectedOwner,
+            });
+          } finally {
+            claimBytes.fill(0);
+          }
+        }
+        const freshClaim = readRollbackClaim({
+          paths,
+          expectedOwner: boundary.expectedOwner,
+          plan,
+        });
+        unlinkCapturedFile({
+          absolutePath: paths.rollbackClaim,
+          expected: freshClaim.fingerprint,
+        });
+        input.hooks?.afterRollbackClaimRemoved?.();
+      }
+      if (
+        optionalFingerprint(paths.root)
+        || optionalFingerprint(paths.installationReceipt)
+        || optionalFingerprint(paths.installationClaim)
+        || optionalFingerprint(paths.quarantineRoot)
+      ) {
+        return fail(
+          "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_ROLLBACK_CONFLICT",
+          "Completed bootstrap rollback tombstone coexists with live generation state",
+        );
+      }
+      if (optionalFingerprint(paths.rollbackStage)) {
+        if (readdirSync(paths.rollbackStage).length !== 0) {
+          return fail(
+            "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_ROLLBACK_CONFLICT",
+            "Completed bootstrap rollback retained quarantine state",
+          );
+        }
+        rmdirSync(paths.rollbackStage);
+        syncDirectory(paths.staging);
+      }
+      assertRollbackStagingCensus({
+        paths,
+        expectedOwner: boundary.expectedOwner,
+        allowAbsent: true,
+      });
+      if (optionalFingerprint(paths.staging)) {
+        if (readdirSync(paths.staging).length !== 0) {
+          return fail(
+            "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_ROLLBACK_CONFLICT",
+            "Completed bootstrap rollback retained operational stage files",
+          );
+        }
+        rmdirSync(paths.staging);
+        syncDirectory(paths.parent);
+      }
+      const durable = readRollbackReceipt({
+        paths,
+        expectedOwner: boundary.expectedOwner,
+        plan,
+      });
+      return Object.freeze({
+        rollbackReceipt: deepFreezeJson(structuredClone(durable.value)),
+        disposition: rollbackOperationalStateExistsAtStart ? "recovered" : "already_complete",
+      });
+    }
+
+    const expectedClaim = buildNodeToolchainProvisionerBootstrapRollbackClaimV2(plan);
+    let claim: NodeToolchainProvisionerBootstrapRollbackClaimV2;
+    if (rollbackClaimExistsAtStart) {
+      const existing = readRollbackClaim({
+        paths,
+        expectedOwner: boundary.expectedOwner,
+        plan,
+      });
+      if (existing.value.claimHash !== expectedClaim.claimHash) {
+        return fail(
+          "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_ROLLBACK_CONFLICT",
+          "Existing bootstrap rollback claim differs from its deterministic plan",
+        );
+      }
+      claim = existing.value;
+      ensureRollbackStaging({ paths, expectedOwner: boundary.expectedOwner });
+      if (optionalFingerprint(paths.rollbackClaimStage)) {
+        const claimBytes = canonicalJsonBytes(claim);
+        try {
+          publishCanonicalNoReplace({
+            stagePath: paths.rollbackClaimStage,
+            targetPath: paths.rollbackClaim,
+            bytes: claimBytes,
+            expectedOwner: boundary.expectedOwner,
+          });
+        } finally {
+          claimBytes.fill(0);
+        }
+      }
+    } else {
+      const rootFingerprint = readReadyRollbackGeneration({
+        plan,
+        paths,
+        expectedOwner: boundary.expectedOwner,
+      });
+      if (
+        rootFingerprint.device !== plan.generation.rootDevice
+        || rootFingerprint.inode !== plan.generation.rootInode
+      ) {
+        return fail(
+          "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_ROLLBACK_CONFLICT",
+          "Bootstrap rollback plan no longer identifies the live physical root",
+        );
+      }
+      assertCompleteRollbackTree({
+        root: paths.root,
+        claim: expectedClaim,
+        expectedOwner: boundary.expectedOwner,
+      });
+      ensureRollbackStaging({ paths, expectedOwner: boundary.expectedOwner });
+      assertRollbackStagingCensus({
+        paths,
+        expectedOwner: boundary.expectedOwner,
+        allowAbsent: false,
+      });
+      const claimBytes = canonicalJsonBytes(expectedClaim);
+      try {
+        publishCanonicalNoReplace({
+          stagePath: paths.rollbackClaimStage,
+          targetPath: paths.rollbackClaim,
+          bytes: claimBytes,
+          expectedOwner: boundary.expectedOwner,
+          afterStage: input.hooks?.afterRollbackClaimStage,
+          afterLink: input.hooks?.afterRollbackClaimPublished,
+        });
+      } finally {
+        claimBytes.fill(0);
+      }
+      claim = expectedClaim;
+    }
+
+    lease.assertCurrent();
+    assertRollbackStagingCensus({
+      paths,
+      expectedOwner: boundary.expectedOwner,
+      allowAbsent: false,
+    });
+    if (!optionalFingerprint(paths.rollbackStage)) {
+      createOwnedDirectory({
+        absolutePath: paths.rollbackStage,
+        mode: 0o700,
+        expectedOwner: boundary.expectedOwner,
+        errorCode: "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_ROLLBACK_CONFLICT",
+      });
+      syncDirectory(paths.staging);
+      input.hooks?.afterQuarantineCreated?.();
+    }
+    const rootExists = optionalFingerprint(paths.root) !== undefined;
+    const quarantineExists = optionalFingerprint(paths.quarantineRoot) !== undefined;
+    if (rootExists && quarantineExists) {
+      return fail(
+        "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_ROLLBACK_CONFLICT",
+        "Bootstrap rollback cannot choose between live and quarantined roots",
+      );
+    }
+    if (rootExists) {
+      assertCompleteRollbackTree({
+        root: paths.root,
+        claim,
+        expectedOwner: boundary.expectedOwner,
+      });
+      if (readdirSync(paths.rollbackStage).length !== 0) {
+        return fail(
+          "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_ROLLBACK_CONFLICT",
+          "Bootstrap rollback quarantine is not empty before atomic rename",
+        );
+      }
+      chmodSync(paths.root, 0o700);
+      syncDirectory(paths.root);
+      syncDirectory(paths.parent);
+      input.hooks?.afterRootWritable?.();
+      renameSync(paths.root, paths.quarantineRoot);
+      syncDirectory(paths.parent);
+      syncDirectory(paths.rollbackStage);
+      input.hooks?.afterRootRenamed?.();
+    }
+    validatePartialRollbackTree({
+      root: paths.quarantineRoot,
+      claim,
+      expectedOwner: boundary.expectedOwner,
+    });
+    if (
+      !optionalFingerprint(paths.quarantineRoot)
+      && (
+        optionalFingerprint(paths.installationReceipt)
+        || optionalFingerprint(paths.installationClaim)
+      )
+    ) {
+      return fail(
+        "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_ROLLBACK_CONFLICT",
+        "Bootstrap rollback lost both roots before authority removal",
+      );
+    }
+    removeInstallationAuthorityFile({
+      absolutePath: paths.installationReceipt,
+      expectedOwner: boundary.expectedOwner,
+      schema: NodeToolchainProvisionerBootstrapInstallationReceiptV2Schema,
+      expectedHash: claim.generation.installationReceiptHash,
+      readHash: (value) => value.receiptHash,
+    });
+    input.hooks?.afterInstallationReceiptRemoved?.();
+    removeInstallationAuthorityFile({
+      absolutePath: paths.installationClaim,
+      expectedOwner: boundary.expectedOwner,
+      schema: NodeToolchainProvisionerBootstrapInstallationClaimV2Schema,
+      expectedHash: claim.generation.installationClaimHash,
+      readHash: (value) => value.claimHash,
+    });
+    input.hooks?.afterInstallationClaimRemoved?.();
+    removePartialRollbackTree({
+      root: paths.quarantineRoot,
+      claim,
+      expectedOwner: boundary.expectedOwner,
+      ...(input.hooks ? { hooks: input.hooks } : {}),
+    });
+    if (optionalFingerprint(paths.rollbackStage)) {
+      rmdirSync(paths.rollbackStage);
+      syncDirectory(paths.staging);
+    }
+    lease.assertCurrent();
+    const rollbackReceipt = buildNodeToolchainProvisionerBootstrapRollbackReceiptV2({
+      claim,
+      publisher: lease.evidence,
+    });
+    const rollbackReceiptBytes = canonicalJsonBytes(rollbackReceipt);
+    try {
+      publishCanonicalNoReplace({
+        stagePath: paths.rollbackReceiptStage,
+        targetPath: paths.rollbackReceipt,
+        bytes: rollbackReceiptBytes,
+        expectedOwner: boundary.expectedOwner,
+        afterStage: input.hooks?.afterRollbackReceiptStage,
+        afterLink: input.hooks?.afterRollbackReceiptPublished,
+      });
+    } finally {
+      rollbackReceiptBytes.fill(0);
+    }
+    const finalClaim = readRollbackClaim({
+      paths,
+      expectedOwner: boundary.expectedOwner,
+      plan,
+    });
+    unlinkCapturedFile({ absolutePath: paths.rollbackClaim, expected: finalClaim.fingerprint });
+    input.hooks?.afterRollbackClaimRemoved?.();
+    assertRollbackStagingCensus({
+      paths,
+      expectedOwner: boundary.expectedOwner,
+      allowAbsent: false,
+    });
+    if (readdirSync(paths.staging).length !== 0) {
+      return fail(
+        "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_ROLLBACK_FAILED",
+        "Bootstrap rollback retained operational stage files",
+      );
+    }
+    rmdirSync(paths.staging);
+    syncDirectory(paths.parent);
+    if (
+      optionalFingerprint(paths.root)
+      || optionalFingerprint(paths.installationReceipt)
+      || optionalFingerprint(paths.installationClaim)
+      || optionalFingerprint(paths.rollbackClaim)
+      || optionalFingerprint(paths.rollbackStage)
+    ) {
+      return fail(
+        "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_ROLLBACK_FAILED",
+        "Bootstrap rollback completion retained live generation state",
+      );
+    }
+    const durable = readRollbackReceipt({
+      paths,
+      expectedOwner: boundary.expectedOwner,
+      plan,
+    });
+    return Object.freeze({
+      rollbackReceipt: deepFreezeJson(structuredClone(durable.value)),
+      disposition: rollbackOperationalStateExistsAtStart ? "recovered" : "rolled_back",
+    });
+  } catch (error) {
+    if (error instanceof NodeToolchainProvisionerBootstrapInstallationErrorV2) throw error;
+    if (error instanceof DarwinParentDescriptorLeaseErrorV2) {
+      return fail(
+        "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_LOCK_FAILED",
+        "Bootstrap rollback lost its Darwin parent descriptor lease",
+        error,
+      );
+    }
+    return fail(
+      "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_ROLLBACK_FAILED",
+      "Bootstrap rollback state machine failed before exact completion",
+      error,
+    );
+  } finally {
+    try {
+      await lease?.release();
+    } catch (error) {
+      return fail(
+        "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_LOCK_FAILED",
+        "Bootstrap rollback lease could not be released exactly",
+        error,
+      );
+    }
+  }
+}
+
+export async function rollbackNodeToolchainProvisionerBootstrapV2(
+  plan: NodeToolchainProvisionerBootstrapRollbackPlanV2,
+): Promise<NodeToolchainProvisionerBootstrapRollbackResultV2> {
+  return rollbackBootstrap({ expectedScope: "production_release", plan });
+}
+
+export async function rollbackNodeToolchainProvisionerBootstrapV2ForTest(input: Readonly<{
+  plan: NodeToolchainProvisionerBootstrapRollbackPlanV2;
+  testHooks?: NodeToolchainProvisionerBootstrapRollbackTestHooksV2;
+}>): Promise<NodeToolchainProvisionerBootstrapRollbackResultV2> {
+  return rollbackBootstrap({
+    expectedScope: "test_fixture",
+    plan: input.plan,
+    ...(input.testHooks ? { hooks: input.testHooks } : {}),
+  });
+}
+
+export function revalidateNodeToolchainProvisionerBootstrapRollbackReceiptV2(
+  planInput: NodeToolchainProvisionerBootstrapRollbackPlanV2,
+): NodeToolchainProvisionerBootstrapRollbackReceiptV2 {
+  const plan = NodeToolchainProvisionerBootstrapRollbackPlanV2Schema.parse(planInput);
+  const boundary = rollbackBoundary(plan);
+  assertRollbackParentCensus(boundary);
+  assertRollbackLock({ paths: boundary.paths, expectedOwner: boundary.expectedOwner });
+  if (
+    optionalFingerprint(boundary.paths.root)
+    || optionalFingerprint(boundary.paths.installationReceipt)
+    || optionalFingerprint(boundary.paths.installationClaim)
+    || optionalFingerprint(boundary.paths.rollbackClaim)
+    || optionalFingerprint(boundary.paths.staging)
+  ) {
+    return fail(
+      "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_ROLLBACK_CONFLICT",
+      "Durable bootstrap rollback tombstone coexists with live operation state",
+    );
+  }
+  const durable = readRollbackReceipt({
+    paths: boundary.paths,
+    expectedOwner: boundary.expectedOwner,
+    plan,
+  });
+  return deepFreezeJson(structuredClone(durable.value));
 }

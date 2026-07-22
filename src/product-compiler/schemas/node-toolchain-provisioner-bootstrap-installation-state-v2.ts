@@ -383,6 +383,52 @@ const ExactSystemToolV2Schema = z.object({
   linkCount: z.literal(1),
 }).strict();
 
+export const NodeToolchainProvisionerBootstrapRollbackHistoryEntryV2Schema = z.object({
+  installationReceiptHash: Sha256Schema,
+  rollbackReceiptHash: Sha256Schema,
+  rollbackReceiptLocatorHash: Sha256Schema,
+}).strict();
+
+export type NodeToolchainProvisionerBootstrapRollbackHistoryEntryV2 = z.infer<
+  typeof NodeToolchainProvisionerBootstrapRollbackHistoryEntryV2Schema
+>;
+
+export const NodeToolchainProvisionerBootstrapRollbackHistoryV2Schema = z.object({
+  receiptCount: z.number().int().nonnegative().max(1_000_000),
+  historyHash: Sha256Schema,
+}).strict();
+
+export type NodeToolchainProvisionerBootstrapRollbackHistoryV2 = z.infer<
+  typeof NodeToolchainProvisionerBootstrapRollbackHistoryV2Schema
+>;
+
+export function buildNodeToolchainProvisionerBootstrapRollbackHistoryV2(
+  input: readonly NodeToolchainProvisionerBootstrapRollbackHistoryEntryV2[],
+): NodeToolchainProvisionerBootstrapRollbackHistoryV2 {
+  const entries = input
+    .map((entry) => NodeToolchainProvisionerBootstrapRollbackHistoryEntryV2Schema.parse(entry))
+    .sort((left, right) =>
+      left.rollbackReceiptLocatorHash < right.rollbackReceiptLocatorHash
+        ? -1
+        : left.rollbackReceiptLocatorHash > right.rollbackReceiptLocatorHash
+          ? 1
+          : 0);
+  if (
+    new Set(entries.map((entry) => entry.rollbackReceiptLocatorHash)).size !== entries.length
+    || new Set(entries.map((entry) => entry.rollbackReceiptHash)).size !== entries.length
+    || new Set(entries.map((entry) => entry.installationReceiptHash)).size !== entries.length
+  ) {
+    throw new TypeError("Bootstrap rollback history entries must identify unique generations");
+  }
+  return NodeToolchainProvisionerBootstrapRollbackHistoryV2Schema.parse({
+    receiptCount: entries.length,
+    historyHash: hashCanonicalJson({
+      schema: "setfarm.node-toolchain-provisioner-bootstrap-rollback-history.v2",
+      entries,
+    }),
+  });
+}
+
 const InstallationReceiptIdentityV2Schema = z.object({
   schema: z.literal(NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_RECEIPT_V2_SCHEMA),
   receiptVersion: z.literal(NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_VERSION_V2),
@@ -390,6 +436,7 @@ const InstallationReceiptIdentityV2Schema = z.object({
   status: z.literal("installed_verified"),
   admissionScope: AdmissionScopeV2Schema,
   claim: NodeToolchainProvisionerBootstrapInstallationClaimV2Schema,
+  predecessorRollbackHistory: NodeToolchainProvisionerBootstrapRollbackHistoryV2Schema,
   publisher: z.object({
     contractRef: z.literal("NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLER_V2"),
     lockExecutionPolicy: z.literal("exact_lockf_fd_then_exact_cat_pipe_v2"),

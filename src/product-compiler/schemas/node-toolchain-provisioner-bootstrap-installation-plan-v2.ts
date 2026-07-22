@@ -12,6 +12,7 @@ import {
   NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_SYSTEM_ANCESTOR_V2,
   NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_VERSION_V2,
   NodeToolchainProvisionerBootstrapInstallationIntentV2Schema,
+  NodeToolchainProvisionerBootstrapRollbackHistoryV2Schema,
   buildNodeToolchainProvisionerBootstrapInstallationClaimV2,
   hashNodeToolchainProvisionerBootstrapInstallationLocatorV2,
   type NodeToolchainProvisionerBootstrapInstallationLocatorRoleV2,
@@ -86,6 +87,23 @@ const ConflictV2Schema = z.enum([
   "installation_claim_present_without_v2_authority",
   "installation_lock_present_without_v2_authority",
   "installation_staging_present_without_v2_authority",
+  "rollback_history_invalid",
+]);
+
+const RollbackHistoryObservationV2Schema = z.discriminatedUnion("status", [
+  z.object({
+    status: z.literal("verified"),
+    summary: NodeToolchainProvisionerBootstrapRollbackHistoryV2Schema,
+  }).strict(),
+  z.object({
+    status: z.literal("invalid"),
+    failureKind: z.enum([
+      "metadata_mismatch",
+      "contract_mismatch",
+      "foreign_member",
+      "changing_census",
+    ]),
+  }).strict(),
 ]);
 
 const LockObservationV2Schema = z.discriminatedUnion("status", [
@@ -186,6 +204,7 @@ const InspectionIdentityV2Schema = z.object({
     receipt: ReceiptObservationV2Schema,
     staging: StagingObservationV2Schema,
   }).strict(),
+  predecessorRollbackHistory: RollbackHistoryObservationV2Schema,
   package: PackageObservationV2Schema,
   classification: z.enum([
     "target_absent_clean",
@@ -194,7 +213,7 @@ const InspectionIdentityV2Schema = z.object({
     "claimed_recovery_candidate",
     "conflict",
   ]),
-  conflicts: z.array(ConflictV2Schema).max(9),
+  conflicts: z.array(ConflictV2Schema).max(10),
 }).strict();
 
 export type NodeToolchainProvisionerBootstrapInstallationInspectionHashPayloadV2 = z.infer<
@@ -262,6 +281,9 @@ export const NodeToolchainProvisionerBootstrapInstallationInspectionV2Schema =
     const matchingPackage = value.package.status === "verified" && value.package.sourceMatch;
     if (value.operational.lock.status === "invalid") {
       expectedConflicts.push("installation_lock_present_without_v2_authority");
+    }
+    if (value.predecessorRollbackHistory.status === "invalid") {
+      expectedConflicts.push("rollback_history_invalid");
     }
     if (
       value.operational.claim.status === "invalid"

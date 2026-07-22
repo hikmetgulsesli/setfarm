@@ -46,10 +46,23 @@ import {
   NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_LOCK_CONTENT_V2,
   NodeToolchainProvisionerBootstrapInstallationClaimV2Schema,
   NodeToolchainProvisionerBootstrapInstallationReceiptV2Schema,
+  buildNodeToolchainProvisionerBootstrapRollbackHistoryV2,
   buildNodeToolchainProvisionerBootstrapInstallationClaimV2,
   buildNodeToolchainProvisionerBootstrapInstallationIntentV2,
   getNodeToolchainProvisionerBootstrapInstallationPathsV2,
+  type NodeToolchainProvisionerBootstrapInstallationPathsV2,
+  type NodeToolchainProvisionerBootstrapRollbackHistoryEntryV2,
+  type NodeToolchainProvisionerBootstrapRollbackHistoryV2,
 } from "./schemas/node-toolchain-provisioner-bootstrap-installation-state-v2.js";
+import {
+  NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_ROLLBACK_RECEIPT_BASENAME_REGEX_V2,
+  NodeToolchainProvisionerBootstrapRollbackReceiptV2Schema,
+  getNodeToolchainProvisionerBootstrapRollbackPathsV2,
+} from "./schemas/node-toolchain-provisioner-bootstrap-rollback-v2.js";
+
+const ROLLBACK_RECEIPT_BASENAME_PATTERN_V2 = new RegExp(
+  NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_ROLLBACK_RECEIPT_BASENAME_REGEX_V2,
+);
 
 export type NodeToolchainProvisionerBootstrapInstallationPlanErrorCodeV2 =
   | "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_INPUT_INVALID"
@@ -83,7 +96,8 @@ type InstallationConflictV2 =
   | "installation_receipt_present_without_v2_authority"
   | "installation_claim_present_without_v2_authority"
   | "installation_lock_present_without_v2_authority"
-  | "installation_staging_present_without_v2_authority";
+  | "installation_staging_present_without_v2_authority"
+  | "rollback_history_invalid";
 
 type FingerprintV2 = Readonly<{
   device: number;
@@ -340,6 +354,134 @@ function deepFreezeJson<T>(value: T): T {
   return value;
 }
 
+type RollbackHistoryObservationV2 =
+  | Readonly<{
+      status: "verified";
+      summary: NodeToolchainProvisionerBootstrapRollbackHistoryV2;
+    }>
+  | Readonly<{
+      status: "invalid";
+      failureKind:
+        | "metadata_mismatch"
+        | "contract_mismatch"
+        | "foreign_member"
+        | "changing_census";
+    }>;
+
+function invalidRollbackHistory(
+  failureKind: Extract<RollbackHistoryObservationV2, { status: "invalid" }>["failureKind"],
+): RollbackHistoryObservationV2 {
+  return Object.freeze({ status: "invalid" as const, failureKind });
+}
+
+function inspectPredecessorRollbackHistory(input: Readonly<{
+  paths: NodeToolchainProvisionerBootstrapInstallationPathsV2;
+  packageParent: InstallationEntryV2;
+  expectedOwner: Readonly<{ uid: number; gid: number }>;
+  parentMode: "0700" | "0755";
+}>): RollbackHistoryObservationV2 {
+  if (input.packageParent.state === "absent") {
+    return Object.freeze({
+      status: "verified" as const,
+      summary: buildNodeToolchainProvisionerBootstrapRollbackHistoryV2([]),
+    });
+  }
+  if (
+    input.packageParent.type !== "directory"
+    || input.packageParent.ownerUid !== input.expectedOwner.uid
+    || input.packageParent.ownerGid !== input.expectedOwner.gid
+    || input.packageParent.mode !== input.parentMode
+  ) {
+    return invalidRollbackHistory("metadata_mismatch");
+  }
+  try {
+    const before = lstatSync(input.paths.parent);
+    const namesBefore = readdirSync(input.paths.parent).sort();
+    const allowed = new Set([
+      path.basename(input.paths.root),
+      path.basename(input.paths.receipt),
+      path.basename(input.paths.claim),
+      path.basename(input.paths.lock),
+      path.basename(input.paths.staging),
+    ]);
+    const historyEntries: NodeToolchainProvisionerBootstrapRollbackHistoryEntryV2[] = [];
+    const historyCaptures: Readonly<{
+      absolutePath: string;
+      entry: InstallationEntryV2;
+    }>[] = [];
+    for (const name of namesBefore) {
+      if (allowed.has(name)) continue;
+      if (!ROLLBACK_RECEIPT_BASENAME_PATTERN_V2.test(name)) {
+        return invalidRollbackHistory("foreign_member");
+      }
+      const absolutePath = path.join(input.paths.parent, name);
+      const entry = captureEntry("receipt", absolutePath);
+      let bytes: Buffer | undefined;
+      try {
+        bytes = readOperationalBytes({
+          role: "receipt",
+          absoluteLocator: absolutePath,
+          entry,
+          expectedOwner: input.expectedOwner,
+          allowedModes: [0o444],
+          allowedLinks: [1],
+          maxBytes: 16 * 1024 * 1024,
+        });
+      } catch {
+        return invalidRollbackHistory("metadata_mismatch");
+      }
+      try {
+        const rollbackReceipt = parseCanonicalOperational({
+          bytes,
+          schema: NodeToolchainProvisionerBootstrapRollbackReceiptV2Schema,
+        });
+        if (!rollbackReceipt) return invalidRollbackHistory("contract_mismatch");
+        const receiptPaths = getNodeToolchainProvisionerBootstrapRollbackPathsV2(
+          rollbackReceipt.claim.plan.installed,
+        );
+        if (
+          receiptPaths.parent !== input.paths.parent
+          || receiptPaths.rollbackReceipt !== absolutePath
+          || rollbackReceipt.receiptFile.ownerUid !== input.expectedOwner.uid
+          || rollbackReceipt.receiptFile.ownerGid !== input.expectedOwner.gid
+        ) {
+          return invalidRollbackHistory("contract_mismatch");
+        }
+        historyEntries.push({
+          installationReceiptHash:
+            rollbackReceipt.removedGeneration.installationReceiptHash,
+          rollbackReceiptHash: rollbackReceipt.receiptHash,
+          rollbackReceiptLocatorHash: rollbackReceipt.receiptFile.locatorHash,
+        });
+        historyCaptures.push({ absolutePath, entry });
+      } finally {
+        bytes.fill(0);
+      }
+    }
+    const namesAfter = readdirSync(input.paths.parent).sort();
+    const after = lstatSync(input.paths.parent);
+    if (
+      !sameFingerprint(fingerprint(before), fingerprint(after))
+      || namesBefore.length !== namesAfter.length
+      || namesBefore.some((name, index) => name !== namesAfter[index])
+      || historyCaptures.some((capture) =>
+        !sameEntry(capture.entry, captureEntry("receipt", capture.absolutePath)))
+    ) {
+      return invalidRollbackHistory("changing_census");
+    }
+    try {
+      return Object.freeze({
+        status: "verified" as const,
+        summary: buildNodeToolchainProvisionerBootstrapRollbackHistoryV2(historyEntries),
+      });
+    } catch {
+      return invalidRollbackHistory("contract_mismatch");
+    }
+  } catch {
+    return invalidRollbackHistory("metadata_mismatch");
+  }
+}
+
 export function inspectNodeToolchainProvisionerBootstrapInstallationV2(
   preparedHandle: PreparedNodeToolchainProvisionerBootstrapPackageV2,
 ): NodeToolchainProvisionerBootstrapInstallationInspectionV2 {
@@ -383,6 +525,12 @@ export function inspectNodeToolchainProvisionerBootstrapInstallationV2(
     uid: source.target.expectedOwnerUid,
     gid: source.target.expectedOwnerGid,
   };
+  const predecessorRollbackHistory = inspectPredecessorRollbackHistory({
+    paths,
+    packageParent,
+    expectedOwner,
+    parentMode: source.admissionScope === "production_release" ? "0755" : "0700",
+  });
   const lockObservation = filesystem.lock.state === "absent"
     ? Object.freeze({ status: "absent" as const })
     : (() => {
@@ -636,6 +784,9 @@ export function inspectNodeToolchainProvisionerBootstrapInstallationV2(
   if (operational.lock.status === "invalid") {
     conflicts.push("installation_lock_present_without_v2_authority");
   }
+  if (predecessorRollbackHistory.status === "invalid") {
+    conflicts.push("rollback_history_invalid");
+  }
   if (
     operational.claim.status === "invalid"
     || (operational.claim.status === "verified" && !operational.claim.sourceMatch)
@@ -719,6 +870,7 @@ export function inspectNodeToolchainProvisionerBootstrapInstallationV2(
         },
     filesystem,
     operational,
+    predecessorRollbackHistory,
     package: packageObservation,
     classification,
     conflicts: sortedConflicts,

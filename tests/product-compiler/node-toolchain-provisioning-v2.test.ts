@@ -93,8 +93,13 @@ import {
   installNodeToolchainProvisionerBootstrapV2,
   installNodeToolchainProvisionerBootstrapV2ForTest,
   openInstalledNodeToolchainProvisionerBootstrapV2ForTest,
+  planNodeToolchainProvisionerBootstrapRollbackV2,
   revalidateInstalledNodeToolchainProvisionerBootstrapV2,
+  revalidateNodeToolchainProvisionerBootstrapRollbackReceiptV2,
+  rollbackNodeToolchainProvisionerBootstrapV2,
+  rollbackNodeToolchainProvisionerBootstrapV2ForTest,
   type NodeToolchainProvisionerBootstrapInstallationTestHooksV2,
+  type NodeToolchainProvisionerBootstrapRollbackTestHooksV2,
 } from "../../src/product-compiler/node-toolchain-provisioner-bootstrap-installation-v2.js";
 import {
   inspectNodeToolchainProvisionerBootstrapInstallationV2,
@@ -153,7 +158,18 @@ import {
   buildNodeToolchainProvisionerBootstrapInstallationClaimV2,
   buildNodeToolchainProvisionerBootstrapInstallationIntentV2,
   getNodeToolchainProvisionerBootstrapInstallationPathsV2,
+  hashNodeToolchainProvisionerBootstrapInstallationReceiptV2,
 } from "../../src/product-compiler/schemas/node-toolchain-provisioner-bootstrap-installation-state-v2.js";
+import {
+  NodeToolchainProvisionerBootstrapRollbackClaimV2Schema,
+  NodeToolchainProvisionerBootstrapRollbackPlanV2Schema,
+  NodeToolchainProvisionerBootstrapRollbackReceiptV2Schema,
+  getNodeToolchainProvisionerBootstrapRollbackPathsV2,
+  hashNodeToolchainProvisionerBootstrapRollbackClaimV2,
+  hashNodeToolchainProvisionerBootstrapRollbackPlanV2,
+  hashNodeToolchainProvisionerBootstrapRollbackReceiptV2,
+  hashNodeToolchainProvisionerBootstrapRollbackTreeEntriesV2,
+} from "../../src/product-compiler/schemas/node-toolchain-provisioner-bootstrap-rollback-v2.js";
 import {
   NodeToolchainProvisionerBundleAuthorityReceiptV2Schema,
   hashNodeToolchainProvisionerBundleAuthorityReceiptV2,
@@ -2025,6 +2041,523 @@ describe("NodeToolchainProvisionerCommandV2 inspection and planning", () => {
     assert.equal(await readFile(foreignMember, "utf8"), "preserve\n");
     disposeNodeToolchainProvisionerBootstrapPreparedPackageV2(foreignPrepared);
     disposeCompiledNodeToolchainProvisionerBootstrapV2(foreignCompiled);
+  });
+
+  it("rolls back only one bootstrap generation across every destructive crash boundary", async () => {
+    const tree = await privateTree();
+    const bundleHandle = await buildNodeToolchainProvisionerBundleAuthorityV2ForTest(
+      tree,
+      executingProvisionerBundleBuilderAdapter(),
+    );
+    const crashBoundaries = [
+      "afterRollbackClaimStage",
+      "afterRollbackClaimPublished",
+      "afterQuarantineCreated",
+      "afterRootWritable",
+      "afterRootRenamed",
+      "afterInstallationReceiptRemoved",
+      "afterInstallationClaimRemoved",
+      "afterFirstRemovedEntry",
+      "afterRollbackReceiptStage",
+      "afterRollbackReceiptPublished",
+      "afterRollbackClaimRemoved",
+    ] as const;
+
+    for (const crashBoundary of crashBoundaries) {
+      const bootstrapParent = await realpath(await privateParent());
+      const bootstrapRoot = path.join(bootstrapParent, "node-toolchain-provisioner-v2");
+      const compiledHandle = await compileNodeToolchainProvisionerBootstrapV2ForTestFromAuthority(
+        bundleHandle,
+        tree,
+        bootstrapRoot,
+      );
+      const preparedParent = await realpath(await privateParent());
+      const prepared = prepareNodeToolchainProvisionerBootstrapPackageV2ForTest(
+        compiledHandle,
+        { scratchParent: preparedParent },
+      );
+      const installPlan = planNodeToolchainProvisionerBootstrapInstallationV2(prepared);
+      const installed = await installNodeToolchainProvisionerBootstrapV2ForTest({
+        preparedHandle: prepared,
+        plan: installPlan,
+      });
+      const rollbackPlan = planNodeToolchainProvisionerBootstrapRollbackV2(installed);
+      assert.deepEqual(
+        NodeToolchainProvisionerBootstrapRollbackPlanV2Schema.parse(rollbackPlan),
+        rollbackPlan,
+      );
+      const injected = (): never => {
+        throw new Error(`injected-${crashBoundary}`);
+      };
+      const testHooks: NodeToolchainProvisionerBootstrapRollbackTestHooksV2 =
+        crashBoundary === "afterFirstRemovedEntry"
+          ? {
+              afterRemovedEntry: ({ removedCount }) => {
+                if (removedCount === 1) injected();
+              },
+            }
+          : { [crashBoundary]: injected };
+      await assert.rejects(
+        rollbackNodeToolchainProvisionerBootstrapV2ForTest({
+          plan: rollbackPlan,
+          testHooks,
+        }),
+        (error: unknown) =>
+          error instanceof NodeToolchainProvisionerBootstrapInstallationErrorV2
+          && error.code
+            === "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_ROLLBACK_FAILED",
+      );
+      const recovered = await rollbackNodeToolchainProvisionerBootstrapV2ForTest({
+        plan: rollbackPlan,
+      });
+      assert.equal(recovered.disposition, "recovered");
+      assert.deepEqual(
+        NodeToolchainProvisionerBootstrapRollbackReceiptV2Schema.parse(
+          recovered.rollbackReceipt,
+        ),
+        recovered.rollbackReceipt,
+      );
+      assert.deepEqual(
+        NodeToolchainProvisionerBootstrapRollbackClaimV2Schema.parse(
+          recovered.rollbackReceipt.claim,
+        ),
+        recovered.rollbackReceipt.claim,
+      );
+      assert.equal(
+        revalidateNodeToolchainProvisionerBootstrapRollbackReceiptV2(rollbackPlan).receiptHash,
+        recovered.rollbackReceipt.receiptHash,
+      );
+      const paths = getNodeToolchainProvisionerBootstrapRollbackPathsV2(
+        rollbackPlan.installed,
+      );
+      for (const absentPath of [
+        paths.root,
+        paths.installationReceipt,
+        paths.installationClaim,
+        paths.rollbackClaim,
+        paths.rollbackStage,
+        paths.staging,
+      ]) {
+        assert.equal(existsSync(absentPath), false, absentPath);
+      }
+      assert.equal(existsSync(paths.rollbackReceipt), true);
+      const replay = await rollbackNodeToolchainProvisionerBootstrapV2ForTest({
+        plan: rollbackPlan,
+      });
+      assert.equal(replay.disposition, "already_complete");
+      assert.equal(replay.rollbackReceipt.receiptHash, recovered.rollbackReceipt.receiptHash);
+      assert.deepEqual((await readdir(bootstrapParent)).sort(), [
+        path.basename(paths.lock),
+        path.basename(paths.rollbackReceipt),
+      ].sort());
+      await assert.rejects(
+        rollbackNodeToolchainProvisionerBootstrapV2(rollbackPlan),
+        (error: unknown) =>
+          error instanceof NodeToolchainProvisionerBootstrapInstallationErrorV2
+          && error.code
+            === "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_ROLLBACK_CONFLICT",
+      );
+      disposeNodeToolchainProvisionerBootstrapPreparedPackageV2(prepared);
+      disposeCompiledNodeToolchainProvisionerBootstrapV2(compiledHandle);
+    }
+  });
+
+  it("serializes bootstrap rollback and preserves changed or foreign claimed state", async () => {
+    const tree = await privateTree();
+    const bundleHandle = await buildNodeToolchainProvisionerBundleAuthorityV2ForTest(
+      tree,
+      executingProvisionerBundleBuilderAdapter(),
+    );
+    const installedFixture = async () => {
+      const bootstrapParent = await realpath(await privateParent());
+      const bootstrapRoot = path.join(bootstrapParent, "node-toolchain-provisioner-v2");
+      const compiledHandle = await compileNodeToolchainProvisionerBootstrapV2ForTestFromAuthority(
+        bundleHandle,
+        tree,
+        bootstrapRoot,
+      );
+      const preparedParent = await realpath(await privateParent());
+      const prepared = prepareNodeToolchainProvisionerBootstrapPackageV2ForTest(
+        compiledHandle,
+        { scratchParent: preparedParent },
+      );
+      const installed = await installNodeToolchainProvisionerBootstrapV2ForTest({
+        preparedHandle: prepared,
+        plan: planNodeToolchainProvisionerBootstrapInstallationV2(prepared),
+      });
+      const plan = planNodeToolchainProvisionerBootstrapRollbackV2(installed);
+      return { bootstrapParent, compiledHandle, prepared, plan };
+    };
+
+    const concurrent = await installedFixture();
+    const concurrentResults = await Promise.all([
+      rollbackNodeToolchainProvisionerBootstrapV2ForTest({ plan: concurrent.plan }),
+      rollbackNodeToolchainProvisionerBootstrapV2ForTest({ plan: concurrent.plan }),
+    ]);
+    assert.equal(
+      concurrentResults[0]!.rollbackReceipt.receiptHash,
+      concurrentResults[1]!.rollbackReceipt.receiptHash,
+    );
+    assert.deepEqual(
+      new Set(concurrentResults.map((result) => result.disposition)),
+      new Set(["rolled_back", "already_complete"]),
+    );
+    disposeNodeToolchainProvisionerBootstrapPreparedPackageV2(concurrent.prepared);
+    disposeCompiledNodeToolchainProvisionerBootstrapV2(concurrent.compiledHandle);
+
+    const missing = await installedFixture();
+    await assert.rejects(
+      rollbackNodeToolchainProvisionerBootstrapV2ForTest({
+        plan: missing.plan,
+        testHooks: {
+          afterRollbackClaimPublished: () => {
+            throw new Error("injected-before-missing-member");
+          },
+        },
+      }),
+      (error: unknown) =>
+        error instanceof NodeToolchainProvisionerBootstrapInstallationErrorV2
+        && error.code
+          === "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_ROLLBACK_FAILED",
+    );
+    const missingPaths = getNodeToolchainProvisionerBootstrapRollbackPathsV2(
+      missing.plan.installed,
+    );
+    const missingMember = path.join(
+      missingPaths.root,
+      missing.plan.installed.claim.intent.source.members.bundle.locator,
+    );
+    await chmod(path.dirname(missingMember), 0o700);
+    await unlink(missingMember);
+    await assert.rejects(
+      rollbackNodeToolchainProvisionerBootstrapV2ForTest({ plan: missing.plan }),
+      (error: unknown) =>
+        error instanceof NodeToolchainProvisionerBootstrapInstallationErrorV2
+        && error.code
+          === "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_ROLLBACK_CONFLICT",
+    );
+    assert.equal(existsSync(missingPaths.root), true);
+    assert.equal(existsSync(missingMember), false);
+    disposeNodeToolchainProvisionerBootstrapPreparedPackageV2(missing.prepared);
+    disposeCompiledNodeToolchainProvisionerBootstrapV2(missing.compiledHandle);
+
+    const foreign = await installedFixture();
+    await assert.rejects(
+      rollbackNodeToolchainProvisionerBootstrapV2ForTest({
+        plan: foreign.plan,
+        testHooks: {
+          afterRootRenamed: () => {
+            throw new Error("injected-before-foreign-quarantine-member");
+          },
+        },
+      }),
+      (error: unknown) =>
+        error instanceof NodeToolchainProvisionerBootstrapInstallationErrorV2
+        && error.code
+          === "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_ROLLBACK_FAILED",
+    );
+    const foreignPaths = getNodeToolchainProvisionerBootstrapRollbackPathsV2(
+      foreign.plan.installed,
+    );
+    const foreignMember = path.join(foreignPaths.quarantineRoot, "foreign-member");
+    await writeFile(foreignMember, "preserve\n", { mode: 0o600 });
+    await assert.rejects(
+      rollbackNodeToolchainProvisionerBootstrapV2ForTest({ plan: foreign.plan }),
+      (error: unknown) =>
+        error instanceof NodeToolchainProvisionerBootstrapInstallationErrorV2
+        && error.code
+          === "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_ROLLBACK_CONFLICT",
+    );
+    assert.equal(await readFile(foreignMember, "utf8"), "preserve\n");
+    disposeNodeToolchainProvisionerBootstrapPreparedPackageV2(foreign.prepared);
+    disposeCompiledNodeToolchainProvisionerBootstrapV2(foreign.compiledHandle);
+
+    const aliased = await installedFixture();
+    await assert.rejects(
+      rollbackNodeToolchainProvisionerBootstrapV2ForTest({
+        plan: aliased.plan,
+        testHooks: {
+          afterQuarantineCreated: () => {
+            throw new Error("injected-before-external-claim-alias");
+          },
+        },
+      }),
+      (error: unknown) =>
+        error instanceof NodeToolchainProvisionerBootstrapInstallationErrorV2
+        && error.code
+          === "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_ROLLBACK_FAILED",
+    );
+    const aliasedPaths = getNodeToolchainProvisionerBootstrapRollbackPathsV2(
+      aliased.plan.installed,
+    );
+    const aliasParent = await realpath(await privateParent());
+    const claimAlias = path.join(aliasParent, "rollback-claim-alias");
+    await link(aliasedPaths.rollbackClaim, claimAlias);
+    await assert.rejects(
+      rollbackNodeToolchainProvisionerBootstrapV2ForTest({ plan: aliased.plan }),
+      (error: unknown) =>
+        error instanceof NodeToolchainProvisionerBootstrapInstallationErrorV2
+        && error.code
+          === "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_ROLLBACK_CONFLICT",
+    );
+    assert.equal(existsSync(claimAlias), true);
+    assert.equal(existsSync(aliasedPaths.root), true);
+    disposeNodeToolchainProvisionerBootstrapPreparedPackageV2(aliased.prepared);
+    disposeCompiledNodeToolchainProvisionerBootstrapV2(aliased.compiledHandle);
+
+    const lockless = await installedFixture();
+    const locklessPaths = getNodeToolchainProvisionerBootstrapRollbackPathsV2(
+      lockless.plan.installed,
+    );
+    await unlink(locklessPaths.lock);
+    await assert.rejects(
+      rollbackNodeToolchainProvisionerBootstrapV2ForTest({ plan: lockless.plan }),
+      (error: unknown) =>
+        error instanceof NodeToolchainProvisionerBootstrapInstallationErrorV2
+        && error.code
+          === "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_ROLLBACK_CONFLICT",
+    );
+    assert.equal(existsSync(locklessPaths.lock), false);
+    assert.equal(existsSync(locklessPaths.root), true);
+    disposeNodeToolchainProvisionerBootstrapPreparedPackageV2(lockless.prepared);
+    disposeCompiledNodeToolchainProvisionerBootstrapV2(lockless.compiledHandle);
+
+    const lostQuarantine = await installedFixture();
+    await assert.rejects(
+      rollbackNodeToolchainProvisionerBootstrapV2ForTest({
+        plan: lostQuarantine.plan,
+        testHooks: {
+          afterInstallationReceiptRemoved: () => {
+            throw new Error("injected-before-quarantine-loss");
+          },
+        },
+      }),
+      (error: unknown) =>
+        error instanceof NodeToolchainProvisionerBootstrapInstallationErrorV2
+        && error.code
+          === "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_ROLLBACK_FAILED",
+    );
+    const lostQuarantinePaths = getNodeToolchainProvisionerBootstrapRollbackPathsV2(
+      lostQuarantine.plan.installed,
+    );
+    for (const locator of ["runtime", "lib", "bin", "."] as const) {
+      await chmod(
+        locator === "."
+          ? lostQuarantinePaths.quarantineRoot
+          : path.join(lostQuarantinePaths.quarantineRoot, locator),
+        0o700,
+      );
+    }
+    await rm(lostQuarantinePaths.quarantineRoot, { recursive: true, force: true });
+    await assert.rejects(
+      rollbackNodeToolchainProvisionerBootstrapV2ForTest({ plan: lostQuarantine.plan }),
+      (error: unknown) =>
+        error instanceof NodeToolchainProvisionerBootstrapInstallationErrorV2
+        && error.code
+          === "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_ROLLBACK_CONFLICT",
+    );
+    assert.equal(existsSync(lostQuarantinePaths.installationReceipt), false);
+    assert.equal(existsSync(lostQuarantinePaths.installationClaim), true);
+    assert.equal(existsSync(lostQuarantinePaths.rollbackClaim), true);
+    disposeNodeToolchainProvisionerBootstrapPreparedPackageV2(lostQuarantine.prepared);
+    disposeCompiledNodeToolchainProvisionerBootstrapV2(lostQuarantine.compiledHandle);
+  });
+
+  it("retains exact rollback history across reinstall generations and rejects transplanted tombstones", async () => {
+    const tree = await privateTree();
+    const bundleHandle = await buildNodeToolchainProvisionerBundleAuthorityV2ForTest(
+      tree,
+      executingProvisionerBundleBuilderAdapter(),
+    );
+    const bootstrapParent = await realpath(await privateParent());
+    const bootstrapRoot = path.join(bootstrapParent, "node-toolchain-provisioner-v2");
+    const compiledHandle = await compileNodeToolchainProvisionerBootstrapV2ForTestFromAuthority(
+      bundleHandle,
+      tree,
+      bootstrapRoot,
+    );
+    const preparedParent = await realpath(await privateParent());
+    const prepared = prepareNodeToolchainProvisionerBootstrapPackageV2ForTest(
+      compiledHandle,
+      { scratchParent: preparedParent },
+    );
+
+    const firstInstallPlan = planNodeToolchainProvisionerBootstrapInstallationV2(prepared);
+    const firstInstalled = await installNodeToolchainProvisionerBootstrapV2ForTest({
+      preparedHandle: prepared,
+      plan: firstInstallPlan,
+    });
+    const firstRollbackPlan = planNodeToolchainProvisionerBootstrapRollbackV2(firstInstalled);
+    const rehashedPlanDrift = structuredClone(firstRollbackPlan);
+    rehashedPlanDrift.generation.rootInode += 1;
+    rehashedPlanDrift.planHash =
+      hashNodeToolchainProvisionerBootstrapRollbackPlanV2(rehashedPlanDrift);
+    assert.equal(
+      NodeToolchainProvisionerBootstrapRollbackPlanV2Schema.safeParse(rehashedPlanDrift).success,
+      false,
+    );
+    const firstRollback = await rollbackNodeToolchainProvisionerBootstrapV2ForTest({
+      plan: firstRollbackPlan,
+    });
+    const rehashedReceiptDrift = structuredClone(firstRollback.rollbackReceipt);
+    const driftedMember = rehashedReceiptDrift.claim.treeEntries.find(
+      (entry) => entry.type === "file" && entry.locator.endsWith(".cjs"),
+    );
+    if (!driftedMember) assert.fail("expected bootstrap rollback bundle member");
+    driftedMember.contentHash = "f".repeat(64);
+    rehashedReceiptDrift.claim.treeEntriesHash =
+      hashNodeToolchainProvisionerBootstrapRollbackTreeEntriesV2(
+        rehashedReceiptDrift.claim.treeEntries,
+      );
+    rehashedReceiptDrift.claim.claimHash =
+      hashNodeToolchainProvisionerBootstrapRollbackClaimV2(rehashedReceiptDrift.claim);
+    rehashedReceiptDrift.receiptHash =
+      hashNodeToolchainProvisionerBootstrapRollbackReceiptV2(rehashedReceiptDrift);
+    assert.equal(
+      NodeToolchainProvisionerBootstrapRollbackReceiptV2Schema
+        .safeParse(rehashedReceiptDrift).success,
+      false,
+    );
+    const firstRollbackPaths = getNodeToolchainProvisionerBootstrapRollbackPathsV2(
+      firstRollbackPlan.installed,
+    );
+
+    await assert.rejects(
+      installNodeToolchainProvisionerBootstrapV2ForTest({
+        preparedHandle: prepared,
+        plan: firstInstallPlan,
+      }),
+      (error: unknown) =>
+        error instanceof NodeToolchainProvisionerBootstrapInstallationErrorV2
+        && error.code
+          === "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_PRECONDITION_CHANGED",
+    );
+    assert.equal(existsSync(firstRollbackPaths.root), false);
+    const postRollbackInspection =
+      inspectNodeToolchainProvisionerBootstrapInstallationV2(prepared);
+    assert.equal(postRollbackInspection.predecessorRollbackHistory.status, "verified");
+    if (postRollbackInspection.predecessorRollbackHistory.status !== "verified") {
+      assert.fail("expected verified predecessor rollback history");
+    }
+    assert.equal(postRollbackInspection.predecessorRollbackHistory.summary.receiptCount, 1);
+
+    const reinstallPlan = planNodeToolchainProvisionerBootstrapInstallationV2(prepared);
+    assert.equal(reinstallPlan.decision, "publish_new");
+    const secondInstalled = await installNodeToolchainProvisionerBootstrapV2ForTest({
+      preparedHandle: prepared,
+      plan: reinstallPlan,
+    });
+    assert.equal(existsSync(firstRollbackPaths.rollbackReceipt), true);
+    const firstInstallationReceipt = firstRollbackPlan.installed;
+    const secondInstallationReceipt =
+      inspectNodeToolchainProvisionerBootstrapInstallationReceiptV2(secondInstalled);
+    assert.equal(firstInstallationReceipt.predecessorRollbackHistory.receiptCount, 0);
+    assert.equal(secondInstallationReceipt.predecessorRollbackHistory.receiptCount, 1);
+    assert.notEqual(
+      firstInstallationReceipt.predecessorRollbackHistory.historyHash,
+      secondInstallationReceipt.predecessorRollbackHistory.historyHash,
+    );
+    const simulatedInodeReuse = structuredClone(secondInstallationReceipt);
+    simulatedInodeReuse.finalRoot.device = firstInstallationReceipt.finalRoot.device;
+    simulatedInodeReuse.finalRoot.inode = firstInstallationReceipt.finalRoot.inode;
+    simulatedInodeReuse.receiptHash =
+      hashNodeToolchainProvisionerBootstrapInstallationReceiptV2(simulatedInodeReuse);
+    assert.equal(
+      NodeToolchainProvisionerBootstrapInstallationReceiptV2Schema
+        .safeParse(simulatedInodeReuse).success,
+      true,
+    );
+    assert.notEqual(simulatedInodeReuse.receiptHash, firstInstallationReceipt.receiptHash);
+    assert.equal(
+      revalidateInstalledNodeToolchainProvisionerBootstrapV2(secondInstalled).receiptHash,
+      secondInstallationReceipt.receiptHash,
+    );
+    const predecessorTombstoneBytes = await readFile(firstRollbackPaths.rollbackReceipt);
+    await unlink(firstRollbackPaths.rollbackReceipt);
+    await assert.rejects(
+      Promise.resolve().then(() =>
+        revalidateInstalledNodeToolchainProvisionerBootstrapV2(secondInstalled)),
+      (error: unknown) =>
+        error instanceof NodeToolchainProvisionerBootstrapInstallationErrorV2
+        && error.code
+          === "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_RECEIPT_INVALID",
+    );
+    await writeFile(
+      firstRollbackPaths.rollbackReceipt,
+      predecessorTombstoneBytes,
+      { flag: "wx", mode: 0o444 },
+    );
+    await chmod(firstRollbackPaths.rollbackReceipt, 0o444);
+    assert.equal(
+      revalidateInstalledNodeToolchainProvisionerBootstrapV2(secondInstalled).receiptHash,
+      secondInstallationReceipt.receiptHash,
+    );
+
+    const secondRollbackPlan = planNodeToolchainProvisionerBootstrapRollbackV2(secondInstalled);
+    assert.notEqual(
+      firstRollbackPlan.generation.installationReceiptHash,
+      secondRollbackPlan.generation.installationReceiptHash,
+    );
+    const secondRollbackPaths = getNodeToolchainProvisionerBootstrapRollbackPathsV2(
+      secondRollbackPlan.installed,
+    );
+    assert.notEqual(firstRollbackPaths.rollbackReceipt, secondRollbackPaths.rollbackReceipt);
+    await rollbackNodeToolchainProvisionerBootstrapV2ForTest({ plan: secondRollbackPlan });
+    assert.equal(
+      revalidateNodeToolchainProvisionerBootstrapRollbackReceiptV2(firstRollbackPlan).planHash,
+      firstRollbackPlan.planHash,
+    );
+    assert.equal(
+      revalidateNodeToolchainProvisionerBootstrapRollbackReceiptV2(secondRollbackPlan).planHash,
+      secondRollbackPlan.planHash,
+    );
+    assert.deepEqual((await readdir(bootstrapParent)).sort(), [
+      path.basename(firstRollbackPaths.lock),
+      path.basename(firstRollbackPaths.rollbackReceipt),
+      path.basename(secondRollbackPaths.rollbackReceipt),
+    ].sort());
+
+    const foreignParent = await realpath(await privateParent());
+    const foreignRoot = path.join(foreignParent, "node-toolchain-provisioner-v2");
+    const foreignCompiled = await compileNodeToolchainProvisionerBootstrapV2ForTestFromAuthority(
+      bundleHandle,
+      tree,
+      foreignRoot,
+    );
+    const foreignPreparedParent = await realpath(await privateParent());
+    const foreignPrepared = prepareNodeToolchainProvisionerBootstrapPackageV2ForTest(
+      foreignCompiled,
+      { scratchParent: foreignPreparedParent },
+    );
+    const foreignInstalled = await installNodeToolchainProvisionerBootstrapV2ForTest({
+      preparedHandle: foreignPrepared,
+      plan: planNodeToolchainProvisionerBootstrapInstallationV2(foreignPrepared),
+    });
+    const transplantedPath = path.join(
+      foreignParent,
+      path.basename(firstRollbackPaths.rollbackReceipt),
+    );
+    const transplantedBytes = await readFile(firstRollbackPaths.rollbackReceipt);
+    await writeFile(transplantedPath, transplantedBytes, { flag: "wx", mode: 0o444 });
+    await chmod(transplantedPath, 0o444);
+    const transplantedPlan = planNodeToolchainProvisionerBootstrapInstallationV2(
+      foreignPrepared,
+    );
+    assert.equal(transplantedPlan.decision, "no_mutation_blocked");
+    assert.equal(transplantedPlan.inspection.conflicts.includes("rollback_history_invalid"), true);
+    await assert.rejects(
+      Promise.resolve().then(() =>
+        revalidateInstalledNodeToolchainProvisionerBootstrapV2(foreignInstalled)),
+      (error: unknown) =>
+        error instanceof NodeToolchainProvisionerBootstrapInstallationErrorV2
+        && error.code === "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_CONFLICT",
+    );
+    assert.deepEqual(await readFile(transplantedPath), transplantedBytes);
+
+    disposeNodeToolchainProvisionerBootstrapPreparedPackageV2(foreignPrepared);
+    disposeCompiledNodeToolchainProvisionerBootstrapV2(foreignCompiled);
+    disposeNodeToolchainProvisionerBootstrapPreparedPackageV2(prepared);
+    disposeCompiledNodeToolchainProvisionerBootstrapV2(compiledHandle);
   });
 
   it("compiles one exact bootstrap manifest and a fail-closed root launcher", async () => {
