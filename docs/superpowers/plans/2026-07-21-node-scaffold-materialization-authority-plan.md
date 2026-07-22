@@ -277,6 +277,19 @@ F2B1/B2a/B2b/B2c evidence completed on 2026-07-22:
   visibly dirty `test_fixture` path only. The root launcher renderer was split
   into a runtime-safe module so the packaged CJS contains neither Git/esbuild
   build authority nor the bootstrap compiler itself;
+- commit `dae76fc3` made the authenticated compiler result an unforgeable,
+  disposable `CompiledNodeToolchainProvisionerBootstrapV2` capability. Only the
+  raw test-fixture compiler returns a caller-visible snapshot; production and
+  authority-backed test compilation expose bytes only as defensive copies from
+  a live WeakMap-backed handle;
+- commit `5f579cd1` added
+  `setfarm.node-toolchain-provisioner-bootstrap-prepared-package-receipt.v2`
+  and the private prepared-package publisher. It creates a fresh process-owned
+  mode-0700 stage, writes every member exclusively at storage modes 0400/0500,
+  fsyncs files and directories, publishes the manifest last, then reopens and
+  revalidates the every-only physical tree before issuing a disposable handle.
+  The receipt explicitly says `not_installed_unprivileged_payload`, records no
+  stage path, and records zero access to the future target root;
 - live read-only inspection corrected a false macOS assumption: the
   `/Library/Application Support` ancestor is root-owned mode `0755` but group
   `admin` (`gid=80`).
@@ -284,9 +297,9 @@ F2B1/B2a/B2b/B2c evidence completed on 2026-07-22:
   mode, while Setfarm-created directories remain exact `root:wheel`;
 - final command/rollback/CLI-focused evidence is 23/23; the combined distribution,
   inventory, private-tree, host, provisioning, and command chain is 56/56.
-  After the bootstrap authority join, final Product Compiler evidence is
+  After authenticated compile and prepared publication, final Product Compiler evidence is
   982/982 across 121
-  suites, scripts are 24/24, with TypeScript, English (1,064 files), path (592
+  suites, scripts are 24/24, with TypeScript, English (1,066 files), path (594
   files), diff and isolated scratch-residue
   checks clean. No production toolchain root, live DB/PR/service, generated
   repository, or Setfarm run was mutated.
@@ -310,14 +323,19 @@ F2B dependency chain is:
    final root, Node bytes, and normalized npm tree before `production_host`
    authority can be issued. Merely creating the fixed directory or making a
    binary self-report the expected version is invalid;
-5. **Complete compile authority, pending package publication/rehearsal:** the
-   separately packaged root launcher/manifest/verifier, authenticated
-   reproducible bundle handle, and handle-only production bootstrap compiler now
-   exist. The next owner must publish those compiled bytes into a fresh private
-   prepared package without replacement, reopen it through the package verifier,
-   and execute the official tree through isolated apply/verify/rollback before
-   any production root or OS-update transition. No installer action will run
-   automatically from a Setfarm product attempt.
+5. **Complete unprivileged preparation authority, pending privileged
+   installation rehearsal:** the separately packaged root launcher/manifest,
+   installed-root verifier, authenticated reproducible bundle handle,
+   handle-only compiler, and private prepared-package publisher now exist. The
+   prepared publisher deliberately does not impersonate an installed package:
+   its process-owned storage root cannot satisfy the manifest's future
+   root:wheel locator/owner contract. A dedicated prepared-payload verifier
+   therefore reopens exact storage bytes, while the existing installed-package
+   verifier remains reserved for the eventual final root. The next owner must
+   consume only the prepared handle and execute isolated install/open/CLI
+   inspect/apply/verify/rollback/cleanup rehearsal before any production root or
+   OS-update transition. No installer action will run automatically from a
+   Setfarm product attempt.
 
 F2 completion does not authorize `npm ci`; it only creates the exact toolchain
 precondition consumed by F3/F4. F2A alone is deliberately insufficient.
@@ -409,7 +427,8 @@ F2-F4 additionally require focused real-filesystem, process, PostgreSQL and
 concurrency tests. A clean merged-`main` `npm run build` and full `npm test`
 remain release evidence; the feature-branch build guard is never bypassed.
 
-GO for F1 and the isolated F2B2c publisher/rehydration/host-join authority.
+GO for F1 and the isolated F2B publisher/rehydration/host-join, authenticated
+bootstrap compile, and unprivileged prepared-package authority.
 NO-GO for production host execution, dependency installation, setup cutover,
 PacketV4, live migration, deploy and new clean product runs until the explicit
 installer state machine, real-root verification, F3-F5, and later packet/
