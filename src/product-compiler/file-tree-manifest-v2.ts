@@ -10,8 +10,10 @@ import {
 } from "./node-execution-layout-catalog-v2.js";
 import {
   NodeScaffoldPrivateMaterializerErrorV2,
+  inspectBuildDependencyMaterializationReceiptV2,
   inspectScaffoldBaseMaterializationReceiptV2,
   isProductionNodeScaffoldPrivateStageV2,
+  revalidateNodeScaffoldDependenciesV2,
   revalidateNodeScaffoldPrivateStageV2,
   type MaterializedNodeScaffoldPrivateStageV2,
 } from "./node-scaffold-private-materializer-v2.js";
@@ -933,6 +935,97 @@ async function verifyInternalV2(
   });
 }
 
+async function verifyAtDependencyStageInternalV2(
+  handle: MaterializedNodeScaffoldPrivateStageV2,
+  input: unknown,
+  expectedScope: "production_host" | "test_fixture",
+): Promise<VerifiedShadowFileTreeManifestV2> {
+  let snapshot: unknown;
+  try {
+    snapshot = boundedSnapshot(
+      input,
+      VERIFIER_INPUT_MAX_CANONICAL_BYTES_V2,
+      VERIFIER_BOUNDED_WORK_LIMITS_V2,
+    );
+  } catch (error) {
+    throw new FileTreeManifestVerificationErrorV2(
+      "FILE_TREE_V2_VERIFICATION_INPUT_INVALID",
+      errorMessage(error),
+    );
+  }
+  const parsed = VerifierInputV2Schema.safeParse(snapshot);
+  if (!parsed.success) {
+    throw new FileTreeManifestVerificationErrorV2(
+      "FILE_TREE_V2_VERIFICATION_INPUT_INVALID",
+      parsed.error.issues[0]?.message ?? "File-tree verifier input is invalid",
+    );
+  }
+  const candidate = FileTreeManifestV2Schema.safeParse(parsed.data.candidate);
+  if (!candidate.success) {
+    throw new FileTreeManifestVerificationErrorV2(
+      "FILE_TREE_V2_VERIFICATION_CANDIDATE_INVALID",
+      candidate.error.issues[0]?.message ?? "File-tree candidate is invalid",
+    );
+  }
+  try {
+    const production = isProductionNodeScaffoldPrivateStageV2(handle);
+    if (
+      (expectedScope === "production_host" && !production)
+      || (expectedScope === "test_fixture" && production)
+    ) {
+      throw new FileTreeUpstreamAuthorityErrorV2(
+        "Dependency-stage FileTree verification cannot promote or downgrade authority",
+      );
+    }
+    const dependency = await revalidateNodeScaffoldDependenciesV2(handle);
+    const inspectedDependency = inspectBuildDependencyMaterializationReceiptV2(handle);
+    const base = inspectScaffoldBaseMaterializationReceiptV2(handle);
+    if (
+      dependency.receiptHash !== inspectedDependency.receiptHash
+      || dependency.admissionScope !== expectedScope
+      || dependency.scaffoldBase.receiptHash !== base.receiptHash
+      || dependency.scaffoldBase.semanticInputHash !== base.semanticInputHash
+      || dependency.scaffoldBase.startBaseStateHash !== base.baseStateHash
+      || dependency.scaffoldBase.endBaseFileMembershipHash
+        !== base.baseState.fileMembershipHash
+      || dependency.scaffoldBase.projectNpmrcState !== "absent"
+    ) {
+      throw new FileTreeUpstreamAuthorityErrorV2(
+        "Dependency receipt does not preserve its exact authenticated scaffold base",
+      );
+    }
+    const fresh = reproduceFreshAuthorityV2({
+      productSpec: parsed.data.productSpec,
+      deliverySelection: parsed.data.deliverySelection,
+    });
+    assertBaseReceiptJoinsV2(fresh, base, expectedScope);
+    const reproduced = recursivelyFreezeFileTreeManifestV2(
+      buildManifestV2(fresh, base),
+    );
+    const canonicalBytes = canonicalJsonBytesBounded(reproduced, {
+      maxBytes: FILE_TREE_MANIFEST_MAX_CANONICAL_BYTES_V2,
+      ...FILE_TREE_MANIFEST_BOUNDED_WORK_LIMITS_V2,
+    }).toString("utf8");
+    if (canonicalJsonStringify(candidate.data) !== canonicalBytes) {
+      throw new FileTreeManifestVerificationErrorV2(
+        "FILE_TREE_V2_VERIFICATION_AUTHORITY_MISMATCH",
+        "FileTree candidate does not equal fresh product, layout, semantic and dependency-stage F4 authority",
+      );
+    }
+    return recursivelyFreezeFileTreeManifestV2({
+      status: "verified_shadow" as const,
+      value: reproduced,
+      canonicalBytes,
+    });
+  } catch (error) {
+    if (error instanceof FileTreeManifestVerificationErrorV2) throw error;
+    throw new FileTreeManifestVerificationErrorV2(
+      "FILE_TREE_V2_VERIFICATION_REPRODUCTION_REJECTED",
+      errorMessage(error),
+    );
+  }
+}
+
 export function verifyFileTreeManifestV2(
   handle: MaterializedNodeScaffoldPrivateStageV2,
   input: unknown,
@@ -945,4 +1038,18 @@ export function verifyFileTreeManifestV2ForTest(
   input: unknown,
 ): Promise<VerifiedShadowFileTreeManifestV2> {
   return verifyInternalV2(handle, input, "test_fixture");
+}
+
+export function verifyFileTreeManifestV2AtDependencyStage(
+  handle: MaterializedNodeScaffoldPrivateStageV2,
+  input: unknown,
+): Promise<VerifiedShadowFileTreeManifestV2> {
+  return verifyAtDependencyStageInternalV2(handle, input, "production_host");
+}
+
+export function verifyFileTreeManifestV2AtDependencyStageForTest(
+  handle: MaterializedNodeScaffoldPrivateStageV2,
+  input: unknown,
+): Promise<VerifiedShadowFileTreeManifestV2> {
+  return verifyAtDependencyStageInternalV2(handle, input, "test_fixture");
 }

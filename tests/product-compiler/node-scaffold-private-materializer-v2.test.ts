@@ -44,8 +44,15 @@ import {
   FileTreeManifestVerificationErrorV2,
   compileFileTreeManifestV2,
   compileFileTreeManifestV2ForTest,
+  verifyFileTreeManifestV2AtDependencyStageForTest,
   verifyFileTreeManifestV2ForTest,
 } from "../../src/product-compiler/file-tree-manifest-v2.js";
+import {
+  BuildTopologyVerificationErrorV2,
+  compileBuildTopologyV2,
+  compileBuildTopologyV2ForTest,
+  verifyBuildTopologyV2ForTest,
+} from "../../src/product-compiler/build-topology-v2.js";
 import { IndexedArtifactPublisher } from
   "../../src/product-compiler/indexed-artifact-publisher.js";
 import {
@@ -83,6 +90,13 @@ import {
   ScaffoldBaseMaterializationReceiptV2Schema,
 } from "../../src/product-compiler/schemas/node-scaffold-private-materialization-v2.js";
 import {
+  BUILD_TOPOLOGY_CONTRACT_HASH_V2,
+  BUILD_TOPOLOGY_CONTRACT_V2,
+  BuildTopologyV2Schema,
+  hashBuildTopologyLogicalBuildV2,
+  hashBuildTopologyManifestV2,
+} from "../../src/product-compiler/schemas/build-topology-v2.js";
+import {
   FILE_TREE_MANIFEST_CONTRACT_HASH_V2,
   FILE_TREE_MANIFEST_CONTRACT_V2,
   FileTreeManifestV2Schema,
@@ -114,6 +128,8 @@ const CLI_PROFILE = "PROFILE_NODE_CLI_STATELESS_EXACT_V2" as const;
 const API_PROFILE = "PROFILE_NODE_EXPRESS_API_STATELESS_EXACT_V2" as const;
 const FILE_TREE_CONTRACT_HASH_GOLDEN_V2 =
   "c882764fc3790d7a7815c0ba802d0201d76e3ff874c878e0bf13f1b9d727756c";
+const BUILD_TOPOLOGY_CONTRACT_HASH_GOLDEN_V2 =
+  "5ac524ec5f5c45ac3091c39c5fe959da3da970c15757196879031db55c30ef28";
 const ROLES = Object.freeze([
   "package_manifest",
   "dependency_lock_manifest",
@@ -813,6 +829,223 @@ describe("Node scaffold private staged materializer V2", () => {
         assert.equal(driftRejected.status, "rejected");
         assert.equal(driftRejected.diagnostics[0]?.code,
           "FILE_TREE_V2_PRIVATE_STAGE_INVALID");
+      }
+    }
+  });
+
+  it("joins FileTree and dependency-ready F4 evidence into stable BuildTopologyV2 authority", async () => {
+    const cases = [
+      {
+        profileId: CLI_PROFILE,
+        stackPackId: "node-cli" as const,
+        productSpec: genuineNodeCliProductSpecV2(),
+        fileTreePathCount: 13,
+        outputPath: "dist/cli.js",
+        candidatePath: "candidate-bundle/application/cli.js",
+        runtimeKind: "cli",
+        logicalBuildHash: "3dbaab775f1d4f5b338923a9c032e536adf97dab974e94f5ab3fed52cc6d8a4b",
+      },
+      {
+        profileId: API_PROFILE,
+        stackPackId: "node-express-api" as const,
+        productSpec: genuineNodeExpressApiProductSpecV2(),
+        fileTreePathCount: 15,
+        outputPath: "dist/app.js",
+        candidatePath: "candidate-bundle/application/app.js",
+        runtimeKind: "http_handler",
+        logicalBuildHash: "bbd4d9cafa4b3779196f7fa707c726c6494c39a01c8cd18de89ea5455b4755f6",
+      },
+      {
+        profileId: API_PROFILE,
+        stackPackId: "node-express-api" as const,
+        productSpec: twoStoryNodeExpressApiProductSpecV2(),
+        fileTreePathCount: 22,
+        outputPath: "dist/app.js",
+        candidatePath: "candidate-bundle/application/app.js",
+        runtimeKind: "http_handler",
+        logicalBuildHash: "0f87d72f4e6541f13febf0d4eb3396705ec2cd8eede13dfb0329206523da7a4c",
+      },
+    ];
+    for (const fixture of cases) {
+      const created = await stage({ profileId: fixture.profileId });
+      const deliverySelection = deliverySelectionForV2(
+        fixture.productSpec,
+        fixture.stackPackId,
+      );
+      const authorityInput = {
+        productSpec: fixture.productSpec,
+        deliverySelection,
+      };
+      const fileTreeResult = await compileFileTreeManifestV2ForTest(
+        created.handle,
+        authorityInput,
+      );
+      assert.equal(fileTreeResult.status, "shadow_compiled");
+      if (fileTreeResult.status !== "shadow_compiled") {
+        throw new Error("Expected dependency-ready FileTree input");
+      }
+      const dependency = await materializeNodeScaffoldDependenciesV2ForTest(
+        created.handle,
+      );
+      const dependencyStageFileTree =
+        await verifyFileTreeManifestV2AtDependencyStageForTest(created.handle, {
+          ...authorityInput,
+          candidate: fileTreeResult.value,
+        });
+      assert.equal(
+        dependencyStageFileTree.value.manifestHash,
+        fileTreeResult.value.manifestHash,
+      );
+
+      const compiled = await compileBuildTopologyV2ForTest(created.handle, {
+        ...authorityInput,
+        fileTree: fileTreeResult.value,
+      });
+      assert.equal(
+        compiled.status,
+        "shadow_compiled",
+        compiled.status === "rejected"
+          ? JSON.stringify(compiled.diagnostics)
+          : undefined,
+      );
+      if (compiled.status !== "shadow_compiled") {
+        throw new Error("Expected BuildTopologyV2");
+      }
+      const topology = compiled.value;
+      assert.equal(BUILD_TOPOLOGY_CONTRACT_HASH_V2,
+        BUILD_TOPOLOGY_CONTRACT_HASH_GOLDEN_V2);
+      assert.equal(Object.isFrozen(BUILD_TOPOLOGY_CONTRACT_V2), true);
+      assert.equal(topology.contractHash, BUILD_TOPOLOGY_CONTRACT_HASH_GOLDEN_V2);
+      assert.equal(topology.stage, "dependencies_ready");
+      assert.equal(topology.pathCount, fixture.fileTreePathCount + 4);
+      assert.equal(topology.authority.fileTree.manifestHash,
+        fileTreeResult.value.manifestHash);
+      assert.equal(topology.operationalEvidence.dependencyReceiptHash,
+        dependency.receiptHash);
+      assert.equal(topology.logicalBuildHash, fixture.logicalBuildHash);
+      assert.equal(topology.runtimeTarget.kind, fixture.runtimeKind);
+      assert.equal(topology.commands.install.executionStatus,
+        "verified_exited_zero");
+      assert.equal(topology.commands.build.executionStatus,
+        "blocked_until_source_declarations_and_receipt");
+      assert.equal(topology.commands.test.minimumTestCount, 1);
+      assert.equal(topology.commands.test.zeroTestReceipt, "forbidden");
+      assert.equal(topology.entrypoint.sourceReceipt.state, "absent");
+      assert.equal(topology.paths.filter((entry) =>
+        entry.authority.kind === "file_tree_path").length,
+      fixture.fileTreePathCount);
+      assert.equal(topology.paths.find((entry) =>
+        entry.classification === "build_output")?.normalizedLocator,
+      fixture.outputPath);
+      assert.equal(topology.paths.find((entry) =>
+        entry.classification === "candidate_module")?.normalizedLocator,
+      fixture.candidatePath);
+      const raw = topology.paths.find((entry) =>
+        entry.classification === "raw_dependency_build_input");
+      const capsule = topology.paths.find((entry) =>
+        entry.classification === "readonly_dependency_runtime_capsule");
+      assert.equal(raw?.physicalSpace, "repository");
+      assert.equal(raw?.normalizedLocator, "node_modules");
+      assert.equal(capsule?.physicalSpace, "dependency_capsule");
+      assert.equal(capsule?.normalizedLocator, "node_modules");
+      assert.notEqual(raw?.pathRef, capsule?.pathRef);
+      assert.equal(
+        JSON.stringify(topology.authority).includes(dependency.receiptHash),
+        false,
+      );
+      assert.doesNotMatch(
+        JSON.stringify(topology),
+        /setfarm-f4-stage-v2|\/private\/|\/var\/folders|\/Users\//,
+      );
+      assert.equal(BuildTopologyV2Schema.safeParse(topology).success, true);
+      assert.equal(compiled.canonicalBytes, canonicalJsonStringify(topology));
+      assertRecursivelyFrozen(compiled);
+
+      const verified = await verifyBuildTopologyV2ForTest(created.handle, {
+        ...authorityInput,
+        fileTree: fileTreeResult.value,
+        candidate: topology,
+      });
+      assert.equal(verified.value.manifestHash, topology.manifestHash);
+      assertRecursivelyFrozen(verified);
+
+      const wrongScope = await compileBuildTopologyV2(created.handle, {
+        ...authorityInput,
+        fileTree: fileTreeResult.value,
+      });
+      assert.equal(wrongScope.status, "rejected");
+      assert.equal(wrongScope.diagnostics[0]?.code,
+        "BUILD_TOPOLOGY_V2_PRODUCTION_AUTHORITY_REQUIRED");
+
+      const selfRehashedLogical = structuredClone(topology) as any;
+      selfRehashedLogical.authority.pathTokenSetHash = "f".repeat(64);
+      selfRehashedLogical.logicalBuildHash = hashBuildTopologyLogicalBuildV2(
+        selfRehashedLogical,
+      );
+      selfRehashedLogical.manifestHash = hashBuildTopologyManifestV2(
+        selfRehashedLogical,
+      );
+      assert.equal(BuildTopologyV2Schema.safeParse(selfRehashedLogical).success, true);
+      await assert.rejects(
+        verifyBuildTopologyV2ForTest(created.handle, {
+          ...authorityInput,
+          fileTree: fileTreeResult.value,
+          candidate: selfRehashedLogical,
+        }),
+        (error: unknown) =>
+          error instanceof BuildTopologyVerificationErrorV2
+          && error.code === "BUILD_TOPOLOGY_V2_VERIFICATION_AUTHORITY_MISMATCH",
+      );
+
+      const selfRehashedOperational = structuredClone(topology) as any;
+      selfRehashedOperational.operationalEvidence.projectScopeHash = "a".repeat(64);
+      selfRehashedOperational.manifestHash = hashBuildTopologyManifestV2(
+        selfRehashedOperational,
+      );
+      assert.equal(
+        selfRehashedOperational.logicalBuildHash,
+        topology.logicalBuildHash,
+      );
+      assert.equal(BuildTopologyV2Schema.safeParse(selfRehashedOperational).success,
+        true);
+      await assert.rejects(
+        verifyBuildTopologyV2ForTest(created.handle, {
+          ...authorityInput,
+          fileTree: fileTreeResult.value,
+          candidate: selfRehashedOperational,
+        }),
+        (error: unknown) =>
+          error instanceof BuildTopologyVerificationErrorV2
+          && error.code === "BUILD_TOPOLOGY_V2_VERIFICATION_AUTHORITY_MISMATCH",
+      );
+
+      if (fixture.profileId === CLI_PROFILE) {
+        const sibling = await stage({ profileId: CLI_PROFILE });
+        const siblingFileTree = await compileFileTreeManifestV2ForTest(
+          sibling.handle,
+          authorityInput,
+        );
+        assert.equal(siblingFileTree.status, "shadow_compiled");
+        if (siblingFileTree.status !== "shadow_compiled") {
+          throw new Error("Expected sibling FileTreeV2");
+        }
+        const siblingDependency = await materializeNodeScaffoldDependenciesV2ForTest(
+          sibling.handle,
+        );
+        const siblingTopology = await compileBuildTopologyV2ForTest(sibling.handle, {
+          ...authorityInput,
+          fileTree: siblingFileTree.value,
+        });
+        assert.equal(siblingTopology.status, "shadow_compiled");
+        if (siblingTopology.status !== "shadow_compiled") {
+          throw new Error("Expected sibling BuildTopologyV2");
+        }
+        assert.notEqual(dependency.receiptHash, siblingDependency.receiptHash);
+        assert.notEqual(topology.manifestHash, siblingTopology.value.manifestHash);
+        assert.equal(topology.logicalBuildHash,
+          siblingTopology.value.logicalBuildHash);
+        assert.equal(topology.authority.logicalDependencyHash,
+          siblingTopology.value.authority.logicalDependencyHash);
       }
     }
   });
