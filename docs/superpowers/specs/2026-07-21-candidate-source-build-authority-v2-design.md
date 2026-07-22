@@ -6,19 +6,25 @@ Scope: Content-addressed candidate source authority and one-shot private Node bu
 
 ## Context
 
-The current no-design Node pipeline now closes:
+The current no-design Node pipeline now produces:
 
 ```text
 ProductSemanticsV2
   -> StoryPlanV3
   -> ImplementationSourceMapV2
   -> ProductBuildPacketV4
-  -> ImplementationSliceV2
+  -> every story ImplementationSliceV2
 ```
 
-The slice correctly selects
+Each slice correctly selects
 `generated_sources_complete_no_model_dispatch`, but there is no authenticated
-consumer that turns the private generated source tree into a candidate build.
+product-level completion authority or consumer that turns the private
+generated source tree into a candidate build. A single story slice cannot
+prove that every story in a multi-story PacketV4 has one fresh, exact slice.
+`ImplementationClosureV2` therefore closes every-and-only SourceMap story
+before candidate source authority. Its design is specified in
+`2026-07-21-implementation-closure-v2-design.md`.
+
 The existing `CandidateBuildReceiptV2` is only a strict caller DTO. It has no
 issuer, fresh verifier, private filesystem authority or runnable handle.
 
@@ -41,10 +47,11 @@ cannot prove an operation more precise than the operation contract it cites.
 
 ## Decision
 
-Use one content-first source and build authority chain:
+Use one product-complete, content-first source and build authority chain:
 
 ```text
-fresh ImplementationSliceV2
+every fresh ImplementationSliceV2
+  -> fresh ImplementationClosureV2
   + authenticated private source materialization
     -> CandidateSourceReceiptV1
     -> VerifiedCandidateSourceAuthorityV1       # branded, pathless
@@ -69,11 +76,12 @@ unimplemented union branch.
 ## Temporal Placement
 
 EvidencePlanV2 is still compiled before model implementation. Candidate source
-authority is produced after the source for the selected slice is final:
+authority is produced only after the source for the complete product closure
+is final:
 
-- for the current generated Node branch, final source already exists and the
-  slice forbids model dispatch, so CandidateSourceReceiptV1 can be produced
-  immediately after the pre-implementation plan boundary;
+- for the current generated Node branch, final source already exists and every
+  slice forbids model dispatch, so ImplementationClosureV2 and then
+  CandidateSourceReceiptV1 can be produced after all story slices verify;
 - for a future model-authored branch, the corresponding versioned source
   receipt is produced only after the implementation attempt closes its exact
   source slots.
@@ -103,7 +111,8 @@ CandidateSourceReceiptV1 has two deliberately different identities.
 - for each entry: FileTree path ref, owner ref, role, normalized locator,
   media type, mode, content hash and byte length;
 - the exact `.npmrc` absence commitment from FileTreeV3;
-- FileTree manifest, BuildTopology logical build and PacketV4 envelope joins;
+- FileTree manifest, BuildTopology logical build, PacketV4 envelope and
+  product-level ImplementationClosureV2 joins;
 - runtime/test logical receipt and source-identity hashes;
 - a domain-separated entry membership hash and `revisionHash`.
 
@@ -131,11 +140,11 @@ equivalent private attempts may therefore have different receipt hashes while
 retaining one revision hash. Retry, dedupe and unchanged-source suppression use
 the revision hash, never the outer operational receipt hash.
 
-The V1 compiler accepts a full ImplementationSliceV2 verification input and an
-authentic `MaterializedNodeScaffoldPrivateStageV2`. It fresh-verifies the slice,
-requires the no-model-dispatch disposition, revalidates the private source
-materialization and derives every source entry itself. It accepts no caller
-path, source entry, revision hash, Git SHA or receipt body.
+The V1 compiler accepts a full ImplementationClosureV2 verification input and
+an authentic `MaterializedNodeScaffoldPrivateStageV2`. It fresh-verifies the
+closure, requires the every-story no-model-dispatch disposition, revalidates
+the private source materialization and derives every source entry itself. It
+accepts no caller path, source entry, revision hash, Git SHA or receipt body.
 
 The verifier repeats compilation and requires canonical byte equality with the
 candidate receipt/envelope. On success it returns an opaque
@@ -193,7 +202,7 @@ the superseding wire.
 
 The receipt binds:
 
-- PacketV4 envelope/hash and SliceV2 envelope/hash;
+- PacketV4 envelope/hash and ImplementationClosureV2 envelope/hash;
 - CandidateSourceReceiptV1 receipt hash and stable semantic revision hash;
 - BuildTopology V3.2 manifest/logical/command/compilation hashes;
 - an exact V3.2 build-operation projection, not a BuildTopologyV1 shape;
@@ -277,12 +286,12 @@ serialized tree summary alone is never runnable.
 ```ts
 compileCandidateSourceReceiptV1(
   stage,
-  { sliceVerificationInput }
+  { closureVerificationInput }
 ): Promise<CandidateSourceCompilationResultV1>;
 
 verifyCandidateSourceReceiptV1(
   stage,
-  { sliceVerificationInput, candidateEnvelope, expectedEnvelopeHash }
+  { closureVerificationInput, candidateEnvelope, expectedEnvelopeHash }
 ): Promise<VerifiedCandidateSourceResultV1>;
 
 buildCandidateV2({
@@ -310,7 +319,7 @@ and all upstream brands; it does not merely parse and rehash the receipt.
 At minimum the source boundary emits typed failures for:
 
 - invalid or hostile input;
-- SliceV2/PacketV4/proof reproduction failure;
+- ImplementationClosureV2/SliceV2/PacketV4/proof reproduction failure;
 - unsupported implementation disposition;
 - source materialization/CAS drift;
 - source entry or FileTree closure mismatch;
@@ -355,21 +364,22 @@ that failed.
    origin-specific evidence, not universal candidate identity.
 2. Add the BuildTopologyV3.2 process policy and update exact golden/downstream
    hashes.
-3. Add CandidateSourceReceiptV1 schema, domain hashes and adversarial pure
-   tests.
-4. Add the fresh source compiler/verifier and branded pathless handle over the
+3. Add ImplementationClosureV2 every-and-only story completeness authority.
+4. Add CandidateSourceReceiptV1 schema, domain hashes and adversarial pure
+   tests binding that closure.
+5. Add the fresh source compiler/verifier and branded pathless handle over the
    current private materializer.
-5. Replace CandidateBuildReceiptV2's schema-only V1-command/Git fields with the
+6. Replace CandidateBuildReceiptV2's schema-only V1-command/Git fields with the
    exact source receipt and V3.2 operation bindings.
-6. Add one-shot build lifecycle, private scope bridge, exact host Node/tsc
+7. Add one-shot build lifecycle, private scope bridge, exact host Node/tsc
    runner, bounded typed process outcome and cleanup.
-7. Add exact `dist` normalization/capture, CAS publication and branded build
+8. Add exact `dist` normalization/capture, CAS publication and branded build
    authority.
-8. Integrate CLI/API and sibling-attempt fixtures; prove stable semantic source
+9. Integrate CLI/API and sibling-attempt fixtures; prove stable semantic source
    revision with distinct operational receipts.
-9. Run focused, complete Product Compiler, execution component, TypeScript,
+10. Run focused, complete Product Compiler, execution component, TypeScript,
    contract and feature-branch guard checks. Keep production NO-GO.
-10. Continue to CandidateRuntimeBundleV2 and launch authority only after this
+11. Continue to CandidateRuntimeBundleV2 and launch authority only after this
     slice closes.
 
 ## Test Matrix
@@ -393,10 +403,12 @@ output, symlink/hard-link/mode/metadata attacks, nonzero, timeout, output limit,
 spawn failure, crash-boundary cleanup and single-use concurrency.
 
 End-to-end shadow integration reproduces
-SliceV2 -> CandidateSourceReceiptV1 -> CandidateBuildReceiptV2 across at least
+every SliceV2 -> ImplementationClosureV2 -> CandidateSourceReceiptV1 ->
+CandidateBuildReceiptV2 across at least
 the CLI, one-story API, prerequisite API and entity-field API fixtures. Two
-identical private attempts must have the same source revision, Packet/Slice and
-build output tree identities while retaining distinct physical receipt hashes.
+identical private attempts must have the same source revision, Packet, slice
+set, ImplementationClosure and build output tree identities while retaining
+distinct physical receipt hashes.
 
 ## Cutover Decision
 

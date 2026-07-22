@@ -141,6 +141,12 @@ authority merely because its hash matches the manifest. Production activation
 requires one artifact-set transaction proving PacketV4, SourceMap root, exact
 leaf, and slice durability together.
 
+One story slice is also not product-level implementation completeness.
+Candidate source/build authority may consume only the every-and-only
+`ImplementationClosureV2` defined in
+`2026-07-21-implementation-closure-v2-design.md`; it may not select an
+arbitrary valid slice as a proxy for the complete product.
+
 ## Current Node Implementation Disposition
 
 Current no-design Node CLI/API realizations are completely owned by the
@@ -239,5 +245,7 @@ slices. Historical artifacts remain immutable.
 GO for isolated implementation of the compact V4-native slice plus explicit
 legacy relocation. NO-GO for live runtime import, DB activation, model dispatch,
 EvidencePlanV2 production use, Mission Control, deploy, or a new Setfarm run.
-The next slice after verified completion is EvidencePlanV2 over this exact
-fresh slice authority; candidate execution remains downstream of the plan.
+The next product-level authority after verified story slices is
+ImplementationClosureV2. EvidencePlanV2 remains predicate/story scoped, while
+candidate source/build execution consumes the complete closure and stays
+downstream of the plan.
