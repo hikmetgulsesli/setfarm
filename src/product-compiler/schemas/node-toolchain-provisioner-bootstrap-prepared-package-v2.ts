@@ -125,6 +125,7 @@ const PreparedReceiptIdentityV2Schema = z.object({
     codeSha: GitObjectHashSchema,
     sourceTreeHash: GitObjectHashSchema,
     packageVersion: PackageVersionV2Schema,
+    architecture: z.enum(["arm64", "x64"]),
     manifestHash: Sha256Schema,
     manifestSha256: Sha256Schema,
     manifestByteLength: ByteLengthV2Schema,

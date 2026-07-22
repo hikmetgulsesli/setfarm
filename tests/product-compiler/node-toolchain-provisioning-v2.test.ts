@@ -86,6 +86,10 @@ import {
   revalidateNodeToolchainProvisionerBootstrapPreparedPackageV2,
 } from "../../src/product-compiler/node-toolchain-provisioner-bootstrap-prepared-package-v2.js";
 import {
+  inspectNodeToolchainProvisionerBootstrapInstallationV2,
+  planNodeToolchainProvisionerBootstrapInstallationV2,
+} from "../../src/product-compiler/node-toolchain-provisioner-bootstrap-installation-plan-v2.js";
+import {
   runNodeToolchainProvisionerCliV2,
   type NodeToolchainProvisionerCliOperationsV2,
 } from "../../src/product-compiler/node-toolchain-provisioner-cli-v2.js";
@@ -125,6 +129,12 @@ import {
   NodeToolchainProvisionerBootstrapPreparedPackageReceiptV2Schema,
   hashNodeToolchainProvisionerBootstrapPreparedPackageReceiptV2,
 } from "../../src/product-compiler/schemas/node-toolchain-provisioner-bootstrap-prepared-package-v2.js";
+import {
+  NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_LOCK_BASENAME_V2,
+  NodeToolchainProvisionerBootstrapInstallationInspectionV2Schema,
+  NodeToolchainProvisionerBootstrapInstallationPlanV2Schema,
+  hashNodeToolchainProvisionerBootstrapInstallationPlanV2,
+} from "../../src/product-compiler/schemas/node-toolchain-provisioner-bootstrap-installation-plan-v2.js";
 import {
   NodeToolchainProvisionerBundleAuthorityReceiptV2Schema,
   hashNodeToolchainProvisionerBundleAuthorityReceiptV2,
@@ -1385,7 +1395,8 @@ describe("NodeToolchainProvisionerCommandV2 inspection and planning", () => {
       NodeToolchainProvisionerBundleAuthorityReceiptV2Schema.parse(receipt),
       receipt,
     );
-    const bootstrapRoot = await realpath(await privateParent());
+    const bootstrapParent = await realpath(await privateParent());
+    const bootstrapRoot = path.join(bootstrapParent, "node-toolchain-provisioner-v2");
     const compiledHandle = await compileNodeToolchainProvisionerBootstrapV2ForTestFromAuthority(
       handle,
       tree,
@@ -1461,6 +1472,7 @@ describe("NodeToolchainProvisionerCommandV2 inspection and planning", () => {
     assert.equal(preparedReceipt.status, "prepared_payload_verified");
     assert.equal(preparedReceipt.installationStatus, "not_installed_unprivileged_payload");
     assert.equal(preparedReceipt.target.rootLocator, bootstrapRoot);
+    assert.equal(preparedReceipt.source.architecture, compiled.manifest.distribution.architecture);
     assert.equal(preparedReceipt.storage.rootMode, "0700");
     assert.equal(preparedReceipt.members.bundle.storageMode, "0400");
     assert.equal(preparedReceipt.members.bundle.targetMode, "0444");
@@ -1476,7 +1488,109 @@ describe("NodeToolchainProvisionerCommandV2 inspection and planning", () => {
       revalidateNodeToolchainProvisionerBootstrapPreparedPackageV2(prepared).receiptHash,
       preparedReceipt.receiptHash,
     );
-    assert.deepEqual(await readdir(bootstrapRoot), []);
+    assert.equal(existsSync(bootstrapRoot), false);
+    const cleanInspection = inspectNodeToolchainProvisionerBootstrapInstallationV2(prepared);
+    assert.equal(cleanInspection.classification, "target_absent_clean");
+    assert.deepEqual(cleanInspection.conflicts, []);
+    assert.equal(cleanInspection.boundary.kind, "test_private_boundary");
+    assert.equal(cleanInspection.filesystem.root.state, "absent");
+    assert.deepEqual(
+      NodeToolchainProvisionerBootstrapInstallationInspectionV2Schema.parse(cleanInspection),
+      cleanInspection,
+    );
+    const cleanPlan = planNodeToolchainProvisionerBootstrapInstallationV2(prepared);
+    assert.equal(cleanPlan.decision, "publish_new");
+    assert.equal(cleanPlan.source.receiptHash, preparedReceipt.receiptHash);
+    assert.equal(cleanPlan.inspection.inspectionHash, cleanInspection.inspectionHash);
+    assert.deepEqual(
+      NodeToolchainProvisionerBootstrapInstallationPlanV2Schema.parse(cleanPlan),
+      cleanPlan,
+    );
+    const rehashedPlanDrift = structuredClone(cleanPlan);
+    rehashedPlanDrift.decision = "no_mutation_blocked";
+    rehashedPlanDrift.planHash =
+      hashNodeToolchainProvisionerBootstrapInstallationPlanV2(rehashedPlanDrift);
+    assert.equal(
+      NodeToolchainProvisionerBootstrapInstallationPlanV2Schema
+        .safeParse(rehashedPlanDrift).success,
+      false,
+    );
+
+    const lockPath = path.join(
+      bootstrapParent,
+      NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_LOCK_BASENAME_V2,
+    );
+    await writeFile(lockPath, "foreign-lock\n", { mode: 0o600 });
+    const lockConflict = planNodeToolchainProvisionerBootstrapInstallationV2(prepared);
+    assert.equal(lockConflict.decision, "no_mutation_blocked");
+    assert.deepEqual(
+      lockConflict.inspection.conflicts,
+      ["installation_lock_present_without_v2_authority"],
+    );
+    await unlink(lockPath);
+
+    await writeFile(bootstrapRoot, "foreign-target\n", { mode: 0o600 });
+    const foreignTarget = planNodeToolchainProvisionerBootstrapInstallationV2(prepared);
+    assert.equal(foreignTarget.decision, "no_mutation_blocked");
+    assert.deepEqual(foreignTarget.inspection.conflicts, ["target_package_invalid"]);
+    await unlink(bootstrapRoot);
+
+    const installable = copyCompiledNodeToolchainProvisionerBootstrapV2(compiledHandle);
+    await mkdir(bootstrapRoot, { mode: 0o700 });
+    await mkdir(path.join(bootstrapRoot, "bin"), { mode: 0o700 });
+    await mkdir(path.join(bootstrapRoot, "lib"), { mode: 0o700 });
+    await mkdir(path.join(bootstrapRoot, "runtime"), { mode: 0o700 });
+    await writeFile(
+      path.join(bootstrapRoot, installable.manifest.files.launcher.locator),
+      installable.launcherBytes,
+      { mode: 0o555 },
+    );
+    await writeFile(
+      path.join(bootstrapRoot, installable.manifest.files.bundle.locator),
+      installable.bundleBytes,
+      { mode: 0o444 },
+    );
+    await writeFile(
+      path.join(bootstrapRoot, installable.manifest.files.bootstrapRuntime.locator),
+      installable.runtimeBytes,
+      { mode: 0o555 },
+    );
+    await writeFile(
+      path.join(bootstrapRoot, installable.manifest.layout.manifestLocator),
+      installable.manifestBytes,
+      { mode: 0o444 },
+    );
+    await chmod(path.join(bootstrapRoot, installable.manifest.files.launcher.locator), 0o555);
+    await chmod(path.join(bootstrapRoot, installable.manifest.files.bundle.locator), 0o444);
+    await chmod(
+      path.join(bootstrapRoot, installable.manifest.files.bootstrapRuntime.locator),
+      0o555,
+    );
+    await chmod(path.join(bootstrapRoot, installable.manifest.layout.manifestLocator), 0o444);
+    await chmod(path.join(bootstrapRoot, "bin"), 0o555);
+    await chmod(path.join(bootstrapRoot, "lib"), 0o555);
+    await chmod(path.join(bootstrapRoot, "runtime"), 0o555);
+    await chmod(bootstrapRoot, 0o555);
+    installable.manifestBytes.fill(0);
+    installable.launcherBytes.fill(0);
+    installable.bundleBytes.fill(0);
+    installable.runtimeBytes.fill(0);
+    const exactUnclaimed = planNodeToolchainProvisionerBootstrapInstallationV2(prepared);
+    assert.equal(exactUnclaimed.decision, "no_mutation_blocked");
+    assert.equal(exactUnclaimed.inspection.classification, "target_exact_unclaimed");
+    assert.deepEqual(exactUnclaimed.inspection.conflicts, ["target_exact_but_unclaimed"]);
+    assert.equal(
+      exactUnclaimed.inspection.package.status === "verified"
+        ? exactUnclaimed.inspection.package.manifestHash
+        : "",
+      preparedReceipt.source.manifestHash,
+    );
+    await chmod(bootstrapRoot, 0o700);
+    await chmod(path.join(bootstrapRoot, "bin"), 0o700);
+    await chmod(path.join(bootstrapRoot, "lib"), 0o700);
+    await chmod(path.join(bootstrapRoot, "runtime"), 0o700);
+    await rm(bootstrapRoot, { recursive: true, force: true });
+    assert.equal(existsSync(bootstrapRoot), false);
     assert.throws(
       () => prepareNodeToolchainProvisionerBootstrapPackageV2(compiledHandle),
       (error: unknown) =>

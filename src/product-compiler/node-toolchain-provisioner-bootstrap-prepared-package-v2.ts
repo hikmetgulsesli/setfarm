@@ -835,6 +835,7 @@ function buildReceipt(
       codeSha: manifest.release.codeSha,
       sourceTreeHash: manifest.release.sourceTreeHash,
       packageVersion: manifest.release.packageVersion,
+      architecture: manifest.distribution.architecture,
       manifestHash: manifest.manifestHash,
       manifestSha256: members.manifest.sha256,
       manifestByteLength: members.manifest.byteLength,
@@ -1181,6 +1182,14 @@ export function inspectNodeToolchainProvisionerBootstrapPreparedPackageReceiptV2
   handle: PreparedNodeToolchainProvisionerBootstrapPackageV2,
 ): NodeToolchainProvisionerBootstrapPreparedPackageReceiptV2 {
   return deepFreezeJson(structuredClone(authenticState(handle).receipt));
+}
+
+export function inspectNodeToolchainProvisionerBootstrapPreparedPackageManifestV2(
+  handle: PreparedNodeToolchainProvisionerBootstrapPackageV2,
+): NodeToolchainProvisionerBootstrapManifestV2 {
+  const state = authenticState(handle);
+  revalidateNodeToolchainProvisionerBootstrapPreparedPackageV2(handle);
+  return deepFreezeJson(structuredClone(state.manifest));
 }
 
 export function revalidateNodeToolchainProvisionerBootstrapPreparedPackageV2(
