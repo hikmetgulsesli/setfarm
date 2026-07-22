@@ -5,37 +5,46 @@ import test from "node:test";
 import { canonicalJsonBytes } from "../../src/product-compiler/canonical-json.js";
 import * as buildModule from "../../src/execution/schemas/candidate-build-receipt-v2.js";
 import {
-  CANDIDATE_BUILD_COMMAND_BINDING_V2_SCHEMA,
+  CANDIDATE_BUILD_OPERATION_V2_SCHEMA,
+  CANDIDATE_BUILD_OUTPUT_FILE_V2_SCHEMA,
   CANDIDATE_BUILD_OUTPUT_TREE_BINDING_V2_SCHEMA,
+  CANDIDATE_BUILD_PROCESS_OUTCOME_V2_SCHEMA,
+  CANDIDATE_BUILD_PROCESS_POLICY_V2,
+  CANDIDATE_BUILD_RECEIPT_CONTRACT_HASH_V2,
+  CANDIDATE_BUILD_RECEIPT_V2_BLOCKER_CODES,
   CANDIDATE_BUILD_RECEIPT_V2_MAX_CANONICAL_BYTES,
   CANDIDATE_BUILD_RECEIPT_V2_SCHEMA,
+  CANDIDATE_BUILD_RECEIPT_V2_VERSION,
+  CANDIDATE_BUILD_SOURCE_CHECKPOINT_V2_SCHEMA,
   CANDIDATE_CANONICAL_RUNTIME_TREE_ARTIFACT_REF_V2_SCHEMA,
   CandidateBuildReceiptV2Schema,
-  hashCandidateBuildCommandArgvV2,
-  hashCandidateBuildCommandBindingV2,
-  hashCandidateBuildCommandCapabilityRefsV2,
-  hashCandidateBuildCommandEnvironmentRefsV2,
+  hashCandidateBuildOperationV2,
+  hashCandidateBuildOutputMembershipV2,
   hashCandidateBuildOutputTreeBindingV2,
+  hashCandidateBuildProcessOutcomeV2,
   hashCandidateBuildReceiptV2,
+  hashCandidateBuildSourceCheckpointV2,
   parseCandidateBuildReceiptV2,
-  type CandidateBuildCommandBindingHashPayloadV2,
+  type CandidateBuildOperationHashPayloadV2,
   type CandidateBuildOutputTreeBindingHashPayloadV2,
+  type CandidateBuildProcessOutcomeHashPayloadV2,
   type CandidateBuildReceiptHashPayloadV2,
   type CandidateBuildReceiptV2,
+  type CandidateBuildSourceCheckpointHashPayloadV2,
   type CandidateCanonicalRuntimeTreeArtifactRefV2,
 } from "../../src/execution/schemas/candidate-build-receipt-v2.js";
 import * as bundleModule from "../../src/execution/schemas/candidate-runtime-bundle-v2.js";
 import {
-  CANDIDATE_NPM_MATERIALIZATION_RECEIPT_V2_SCHEMA,
   CANDIDATE_NPM_MATERIALIZATION_RECEIPT_ABI_POLICY_V2,
+  CANDIDATE_NPM_MATERIALIZATION_RECEIPT_V2_SCHEMA,
   CANDIDATE_NPM_PRODUCTION_MATERIALIZATION_CONFIG_V2,
   CANDIDATE_NPM_PRODUCTION_MATERIALIZATION_RECIPE_V2,
-  CANDIDATE_NPM_PRODUCTION_MATERIALIZATION_RECIPE_V2_SCHEMA,
   CANDIDATE_RUNTIME_APPLICATION_TREE_BINDING_V2_SCHEMA,
   CANDIDATE_RUNTIME_BUNDLE_V2_MAX_CANONICAL_BYTES,
   CANDIDATE_RUNTIME_BUNDLE_V2_SCHEMA,
   CANDIDATE_RUNTIME_DEPENDENCY_TREE_BINDING_V2_SCHEMA,
   CANDIDATE_RUNTIME_PACKAGE_JSON_REF_V2_SCHEMA,
+  CANDIDATE_RUNTIME_SOURCE_BINDING_V2_SCHEMA,
   CandidateRuntimeBundleV2Schema,
   hashCandidateNpmMaterializationReceiptV2,
   hashCandidateNpmMaterializationReceiptAbiPolicyV2,
@@ -80,32 +89,44 @@ function assertRecursivelyFrozen(value: unknown): void {
   }
 }
 
+function producer() {
+  return {
+    pass: "candidate-build-authority-v2" as const,
+    codeSha: "abcdef0",
+    toolVersions: {
+      candidateBuild: CANDIDATE_BUILD_RECEIPT_V2_VERSION,
+      candidateSource: "1.0.0" as const,
+      buildTopology: "3.2.0" as const,
+      canonicalRuntimeTree: "2.0.0" as const,
+    },
+  };
+}
+
 function createApplicationTree(): CanonicalRuntimeTreeV2 {
   return createCanonicalRuntimeTreeV2({
     schema: CANONICAL_RUNTIME_TREE_V2_SCHEMA,
     profile: "dist",
     rootMode: "0555",
     entries: [
-      { path: "assets", type: "directory", mode: "0555" },
       {
-        path: "assets/app.css",
-        type: "file",
-        mode: "0444",
-        executable: false,
-        byteLength: 7,
-        contentHash: sha("candidate-css"),
-      },
-      {
-        path: "index.js",
+        path: "cli.js",
         type: "file",
         mode: "0444",
         executable: false,
         byteLength: 11,
-        contentHash: sha("candidate-index"),
+        contentHash: sha("candidate-cli"),
+      },
+      {
+        path: "cli.setfarm.test.js",
+        type: "file",
+        mode: "0444",
+        executable: false,
+        byteLength: 7,
+        contentHash: sha("candidate-cli-test"),
       },
     ],
     fileCount: 2,
-    directoryCount: 1,
+    directoryCount: 0,
     totalBytes: 18,
   });
 }
@@ -116,28 +137,19 @@ function createDependencyTree(): CanonicalRuntimeTreeV2 {
     profile: "dependencies",
     rootMode: "0555",
     entries: [
-      { path: "@scope", type: "directory", mode: "0555" },
-      { path: "@scope/pkg", type: "directory", mode: "0555" },
+      { path: "pkg", type: "directory", mode: "0555" },
       {
-        path: "@scope/pkg/index.js",
+        path: "pkg/index.js",
         type: "file",
         mode: "0444",
         executable: false,
         byteLength: 5,
         contentHash: sha("dependency-index"),
       },
-      {
-        path: "package.json",
-        type: "file",
-        mode: "0444",
-        executable: false,
-        byteLength: 2,
-        contentHash: sha("dependency-package"),
-      },
     ],
-    fileCount: 2,
-    directoryCount: 2,
-    totalBytes: 7,
+    fileCount: 1,
+    directoryCount: 1,
+    totalBytes: 5,
   });
 }
 
@@ -147,69 +159,191 @@ function treeArtifact(label: string): CandidateCanonicalRuntimeTreeArtifactRefV2
     artifactType: CANONICAL_RUNTIME_TREE_V2_SCHEMA,
     envelopeHash: sha(`${label}-envelope`),
     envelopeByteLength: 1_024,
+    producer: producer(),
   };
+}
+
+function compilerTarget() {
+  return {
+    executableRef: "TOOL_NODE_TYPESCRIPT_TSC_V2" as const,
+    exactVersion: "5.9.3" as const,
+    commandName: "tsc" as const,
+    packagePath: "node_modules/typescript" as const,
+    linkLocator: "node_modules/.bin/tsc" as const,
+    targetLocator: "node_modules/typescript/bin/tsc" as const,
+    linkTargetHash: sha("tsc-link-target"),
+    targetContentHash: sha("tsc-target-content"),
+    executionDisposition:
+      "direct_target_via_authenticated_node_runtime" as const,
+  };
+}
+
+function createBuildOperation() {
+  const identity: CandidateBuildOperationHashPayloadV2 = {
+    schema: CANDIDATE_BUILD_OPERATION_V2_SCHEMA,
+    topologySchema: "setfarm.build-topology.v3",
+    topologyVersion: "3.2.0",
+    commandRef: "CMD_NODE_PRODUCT_BUILD_V3",
+    executableRef: "TOOL_NODE_RUNTIME_V2",
+    compilerExecutableRef: "TOOL_NODE_TYPESCRIPT_TSC_V2",
+    compilerTarget: compilerTarget(),
+    cwdRootRef: "PATH_ROOT_NODE_REPOSITORY_V2",
+    directArgv: [
+      "node",
+      "node_modules/typescript/bin/tsc",
+      "-p",
+      "tsconfig.json",
+    ],
+    shell: "forbidden",
+    processPolicy: { ...CANDIDATE_BUILD_PROCESS_POLICY_V2 },
+    commandContractHash: sha("command-contract"),
+    compilationContractHash: sha("compilation-contract"),
+  };
+  return { ...identity, operationHash: hashCandidateBuildOperationV2(identity) };
+}
+
+function createSourceCheckpoint() {
+  const identity: CandidateBuildSourceCheckpointHashPayloadV2 = {
+    schema: CANDIDATE_BUILD_SOURCE_CHECKPOINT_V2_SCHEMA,
+    candidateSourceEnvelopeHash: sha("candidate-source-envelope"),
+    candidateSourceReceiptHash: sha("candidate-source-receipt"),
+    semanticRevisionHash: sha("candidate-source-semantic-revision"),
+    sourceMaterializationReceiptHash: sha("source-materialization-receipt"),
+    sourceDirectoryPhysicalIdentityHash: sha("source-directory-physical"),
+    dependencyReceiptHash: sha("dependency-receipt"),
+    dependencyIdentityHash: sha("dependency-identity"),
+  };
+  return {
+    ...identity,
+    checkpointHash: hashCandidateBuildSourceCheckpointV2(identity),
+  };
+}
+
+function createProcessOutcome() {
+  const identity: CandidateBuildProcessOutcomeHashPayloadV2 = {
+    schema: CANDIDATE_BUILD_PROCESS_OUTCOME_V2_SCHEMA,
+    status: "exited_zero",
+    exitCode: 0,
+    signal: null,
+    stdoutHash: sha("build-stdout"),
+    stdoutBytes: 0,
+    stderrHash: sha("build-stderr"),
+    stderrBytes: 0,
+  };
+  return { ...identity, outcomeHash: hashCandidateBuildProcessOutcomeV2(identity) };
 }
 
 function createBuildOutput(
   tree = createApplicationTree(),
 ): CandidateBuildOutputTreeBindingHashPayloadV2 & { bindingHash: string } {
+  const files = [
+    {
+      schema: CANDIDATE_BUILD_OUTPUT_FILE_V2_SCHEMA,
+      normalizedLocator: "dist/cli.js",
+      mode: "0444",
+      executable: false,
+      contentHash: tree.entries[0]!.contentHash!,
+      byteLength: tree.entries[0]!.byteLength!,
+    },
+    {
+      schema: CANDIDATE_BUILD_OUTPUT_FILE_V2_SCHEMA,
+      normalizedLocator: "dist/cli.setfarm.test.js",
+      mode: "0444",
+      executable: false,
+      contentHash: tree.entries[1]!.contentHash!,
+      byteLength: tree.entries[1]!.byteLength!,
+    },
+  ] as const;
   const identity: CandidateBuildOutputTreeBindingHashPayloadV2 = {
     schema: CANDIDATE_BUILD_OUTPUT_TREE_BINDING_V2_SCHEMA,
+    profileId: "PROFILE_NODE_CLI_STATELESS_EXACT_V2",
     treeSchema: tree.schema,
     profile: "dist",
     logicalRoot: "candidate-build-output",
+    rootMode: "0555",
+    memberCount: 2,
+    files,
+    membershipHash: hashCandidateBuildOutputMembershipV2(files),
     treeArtifact: treeArtifact("application"),
     treeHash: tree.treeHash,
     treePayloadHash: tree.payloadHash,
-    fileCount: tree.fileCount,
-    directoryCount: tree.directoryCount,
+    fileCount: 2,
+    directoryCount: 0,
     totalBytes: tree.totalBytes,
   };
   return { ...identity, bindingHash: hashCandidateBuildOutputTreeBindingV2(identity) };
 }
 
-function createBuildCommand(): CandidateBuildCommandBindingHashPayloadV2 & {
-  commandBindingHash: string;
-} {
-  const identity: CandidateBuildCommandBindingHashPayloadV2 = {
-    schema: CANDIDATE_BUILD_COMMAND_BINDING_V2_SCHEMA,
-    commandId: "CMD_BUILD_PRODUCTION",
-    kind: "build",
-    invocationMode: "direct_argv",
-    argvHash: hashCandidateBuildCommandArgvV2(["npm", "run", "build"]),
-    cwd: ".",
-    timeoutMs: 120_000,
-    capabilityRefsHash: hashCandidateBuildCommandCapabilityRefsV2([
-      "CAP_TEST_RUNNER",
-    ]),
-    environmentRefsHash: hashCandidateBuildCommandEnvironmentRefsV2([
-      "CI",
-      "NODE_ENV",
-    ]),
-    catalogCommandRef: "STACK_NODE_WEB_CMD_BUILD_V2",
-    catalogCommandHash: sha("catalog-build-command"),
-  };
-  return { ...identity, commandBindingHash: hashCandidateBuildCommandBindingV2(identity) };
-}
-
 function createBuildReceipt(): CandidateBuildReceiptV2 {
-  const sourceRevision = {
-    sha: sha("candidate-source-commit"),
-    treeHash: sha("candidate-source-tree"),
-  };
+  const operation = createBuildOperation();
+  const source = createSourceCheckpoint();
   const identity: CandidateBuildReceiptHashPayloadV2 = {
     schema: CANDIDATE_BUILD_RECEIPT_V2_SCHEMA,
-    version: "2.0.0",
-    authorityState: "candidate_unverified",
-    productionUse: "forbidden",
-    packetEnvelopeHash: sha("packet-envelope"),
-    buildTopologyHash: sha("build-topology"),
-    sourceBefore: sourceRevision,
-    sourceAfter: clone(sourceRevision),
-    selectedBuildCommand: createBuildCommand(),
-    toolchainHash: sha("candidate-build-toolchain"),
-    environmentCapsuleHash: sha("candidate-build-environment"),
-    exitCode: 0,
+    receiptVersion: CANDIDATE_BUILD_RECEIPT_V2_VERSION,
+    contractHash: CANDIDATE_BUILD_RECEIPT_CONTRACT_HASH_V2,
+    stage: "private_candidate_build_verified",
+    readiness: {
+      status: "verified_private_shadow",
+      productionUse: "forbidden",
+      blockerCodes: [...CANDIDATE_BUILD_RECEIPT_V2_BLOCKER_CODES],
+    },
+    producer: producer(),
+    authority: {
+      productRef: "PROD_FIXTURE",
+      packet: {
+        schema: "setfarm.product-build-packet.v4",
+        version: "4.0.0",
+        envelopeHash: sha("packet-envelope"),
+        packetHash: sha("packet"),
+      },
+      implementationClosure: {
+        artifactType: "setfarm.implementation-closure.v2",
+        schema: "setfarm.implementation-closure.v2",
+        version: "2.0.0",
+        envelopeHash: sha("implementation-closure-envelope"),
+        closureHash: sha("implementation-closure"),
+      },
+      candidateSource: {
+        schema: "setfarm.candidate-source-receipt.v1",
+        version: "1.0.0",
+        envelopeHash: source.candidateSourceEnvelopeHash,
+        receiptHash: source.candidateSourceReceiptHash,
+        semanticRevisionHash: source.semanticRevisionHash,
+      },
+      buildTopology: {
+        schema: "setfarm.build-topology.v3",
+        version: "3.2.0",
+        manifestHash: sha("build-topology-manifest"),
+        logicalBuildHash: sha("logical-build"),
+        commandContractHash: operation.commandContractHash,
+        compilationContractHash: operation.compilationContractHash,
+      },
+    },
+    operation,
+    executionAuthority: {
+      admissionScope: "test_fixture",
+      pathDisclosure: "forbidden",
+      hostToolchain: {
+        receiptHash: sha("host-toolchain-receipt"),
+        nodeIdentityHash: sha("node-identity"),
+      },
+      environment: {
+        receiptHash: sha("environment-receipt"),
+        environmentContractHash: sha("environment-contract"),
+        effectiveConfigHash: sha("effective-config"),
+        environmentHash: sha("environment"),
+      },
+      dependency: {
+        receiptHash: source.dependencyReceiptHash,
+        dependencyIdentityHash: source.dependencyIdentityHash,
+        installedBinsMembershipHash: sha("installed-bins"),
+        compilerTarget: clone(operation.compilerTarget),
+      },
+      projectScopeHash: sha("build-project-scope"),
+    },
+    sourceBefore: source,
+    sourceAfter: clone(source),
+    processOutcome: createProcessOutcome(),
     outputTree: createBuildOutput(),
   };
   return { ...identity, receiptHash: hashCandidateBuildReceiptV2(identity) };
@@ -237,9 +371,8 @@ function createApplicationBinding(
   };
 }
 
-function createDependencyBinding(
-  tree = createDependencyTree(),
-): CandidateRuntimeDependencyTreeBindingHashPayloadV2 & { bindingHash: string } {
+function createDependencyBinding() {
+  const tree = createDependencyTree();
   const identity: CandidateRuntimeDependencyTreeBindingHashPayloadV2 = {
     schema: CANDIDATE_RUNTIME_DEPENDENCY_TREE_BINDING_V2_SCHEMA,
     treeSchema: tree.schema,
@@ -271,7 +404,7 @@ function createPackageJson(): CandidateRuntimePackageJsonRefV2 {
 
 function createNpmReceipt(
   dependencyTree: ReturnType<typeof createDependencyBinding>,
-): CandidateNpmMaterializationReceiptHashPayloadV2 & { receiptHash: string } {
+) {
   const installRecipe = clone(CANDIDATE_NPM_PRODUCTION_MATERIALIZATION_RECIPE_V2);
   const identity: CandidateNpmMaterializationReceiptHashPayloadV2 = {
     schema: CANDIDATE_NPM_MATERIALIZATION_RECEIPT_V2_SCHEMA,
@@ -287,7 +420,7 @@ function createNpmReceipt(
     recipeHash: installRecipe.recipeHash,
     npmIdentity: {
       packageName: "npm",
-      version: "10.8.2",
+      version: "10.9.8",
       executableRef: "HOST_NPM_EXECUTABLE_V2",
       executableHash: sha("candidate-npm-executable"),
       packageTreeHash: sha("candidate-npm-package-tree"),
@@ -300,10 +433,7 @@ function createNpmReceipt(
     lifecycleScripts: "forbidden",
     exitCode: 0,
   };
-  return {
-    ...identity,
-    receiptHash: hashCandidateNpmMaterializationReceiptV2(identity),
-  };
+  return { ...identity, receiptHash: hashCandidateNpmMaterializationReceiptV2(identity) };
 }
 
 function createRuntimeBundle(): CandidateRuntimeBundleV2 {
@@ -311,22 +441,29 @@ function createRuntimeBundle(): CandidateRuntimeBundleV2 {
   const dependencyTree = createDependencyBinding();
   const identityWithoutClosure = {
     schema: CANDIDATE_RUNTIME_BUNDLE_V2_SCHEMA,
-    version: "2.0.0",
-    authorityState: "candidate_unverified",
-    productionUse: "forbidden",
-    packetEnvelopeHash: buildReceipt.packetEnvelopeHash,
-    buildTopologyHash: buildReceipt.buildTopologyHash,
-    sourceRevision: clone(buildReceipt.sourceAfter),
+    version: "2.0.0" as const,
+    authorityState: "candidate_unverified" as const,
+    productionUse: "forbidden" as const,
+    packetEnvelopeHash: buildReceipt.authority.packet.envelopeHash,
+    buildTopologyHash: buildReceipt.authority.buildTopology.manifestHash,
+    sourceAuthority: {
+      schema: CANDIDATE_RUNTIME_SOURCE_BINDING_V2_SCHEMA,
+      candidateSourceEnvelopeHash:
+        buildReceipt.sourceAfter.candidateSourceEnvelopeHash,
+      candidateSourceReceiptHash:
+        buildReceipt.sourceAfter.candidateSourceReceiptHash,
+      semanticRevisionHash: buildReceipt.sourceAfter.semanticRevisionHash,
+    },
     buildReceiptHash: buildReceipt.receiptHash,
     buildReceipt,
-    logicalRoot: "candidate-bundle",
-    rootMode: "0555",
+    logicalRoot: "candidate-bundle" as const,
+    rootMode: "0555" as const,
     allowedRootEntries: ["application", "node_modules", "package.json"] as const,
     applicationTree: createApplicationBinding(buildReceipt),
     dependencyTree,
     packageJson: createPackageJson(),
     npmMaterializationReceipt: createNpmReceipt(dependencyTree),
-  } as const;
+  };
   const bundleClosureHash = hashCandidateRuntimeBundleClosureV2(identityWithoutClosure);
   const identity: CandidateRuntimeBundleHashPayloadV2 = {
     ...identityWithoutClosure,
@@ -346,65 +483,43 @@ function rehashRuntimeBundle(candidate: CandidateRuntimeBundleV2): void {
   candidate.bundleHash = hashCandidateRuntimeBundleV2(candidate);
 }
 
-test("candidate build and runtime literals, hashes, exact bindings, and frozen parsers are deterministic", () => {
+test("superseding candidate build wire is content-first, exact, deterministic and frozen", () => {
   const build = createBuildReceipt();
   const bundle = createRuntimeBundle();
   assert.equal(CandidateBuildReceiptV2Schema.safeParse(build).success, true);
   assert.equal(CandidateRuntimeBundleV2Schema.safeParse(bundle).success, true);
-  assert.equal(build.schema, "setfarm.candidate-build-receipt.v2");
-  assert.equal(build.authorityState, "candidate_unverified");
-  assert.equal(build.productionUse, "forbidden");
-  assert.equal(build.outputTree.logicalRoot, "candidate-build-output");
-  assert.equal(build.outputTree.profile, "dist");
-  assert.equal(build.selectedBuildCommand.kind, "build");
-  assert.equal(build.selectedBuildCommand.invocationMode, "direct_argv");
-  assert.equal(bundle.logicalRoot, "candidate-bundle");
-  assert.equal(bundle.authorityState, "candidate_unverified");
-  assert.equal(bundle.productionUse, "forbidden");
-  assert.equal(bundle.rootMode, "0555");
-  assert.deepEqual(bundle.allowedRootEntries, [
-    "application",
-    "node_modules",
-    "package.json",
+  assert.equal(build.receiptVersion, "2.1.0");
+  assert.equal(build.stage, "private_candidate_build_verified");
+  assert.equal(build.readiness.productionUse, "forbidden");
+  assert.equal(build.operation.commandRef, "CMD_NODE_PRODUCT_BUILD_V3");
+  assert.deepEqual(build.operation.directArgv, [
+    "node",
+    "node_modules/typescript/bin/tsc",
+    "-p",
+    "tsconfig.json",
   ]);
-  assert.equal(bundle.applicationTree.logicalRoot, "candidate-bundle/application");
-  assert.equal(bundle.applicationTree.profile, "dist");
-  assert.equal(bundle.dependencyTree.logicalRoot, "candidate-bundle/node_modules");
-  assert.equal(bundle.dependencyTree.profile, "dependencies");
-  assert.equal(bundle.packageJson.mode, "0444");
-  assert.equal(bundle.npmMaterializationReceipt.lifecycleScripts, "forbidden");
-  assert.equal(bundle.npmMaterializationReceipt.exitCode, 0);
-  assert.equal(bundle.npmMaterializationReceipt.recipeHash,
-    bundle.npmMaterializationReceipt.installRecipe.recipeHash);
-  assert.equal(bundle.npmMaterializationReceipt.installRecipe.recipeHash,
-    hashCandidateNpmProductionMaterializationRecipeV2(
-      bundle.npmMaterializationReceipt.installRecipe,
-    ));
-  assert.equal(bundle.npmMaterializationReceipt.installRecipe.subcommand, "ci");
-  assert.deepEqual(bundle.npmMaterializationReceipt.installRecipe.arguments, [
-    "--omit=dev",
-    "--ignore-scripts",
-    "--no-audit",
-    "--no-fund",
+  assert.deepEqual(build.operation.processPolicy, CANDIDATE_BUILD_PROCESS_POLICY_V2);
+  assert.deepEqual(build.outputTree.files.map((file) => file.normalizedLocator), [
+    "dist/cli.js",
+    "dist/cli.setfarm.test.js",
   ]);
-  assert.equal(bundle.npmMaterializationReceipt.installRecipe.dependencySelection,
-    "production_only");
-  assert.equal(bundle.npmMaterializationReceipt.installRecipe.outputRoot,
-    bundle.npmMaterializationReceipt.outputRoot);
-  assert.equal(bundle.npmMaterializationReceipt.installRecipe.lifecycleScripts,
-    bundle.npmMaterializationReceipt.lifecycleScripts);
-  assert.equal(
-    bundle.npmMaterializationReceipt.installRecipe.materializationReceiptSchema,
-    CANDIDATE_NPM_MATERIALIZATION_RECEIPT_V2_SCHEMA,
-  );
-  assert.equal(
-    bundle.npmMaterializationReceipt.installRecipe.materializationReceiptSchemaHash,
-    CANDIDATE_NPM_MATERIALIZATION_RECEIPT_ABI_POLICY_V2.policyHash,
-  );
-  assert.equal(
-    bundle.npmMaterializationReceipt.installRecipe.configHash,
-    CANDIDATE_NPM_PRODUCTION_MATERIALIZATION_CONFIG_V2.configHash,
-  );
+  assert.equal(build.sourceBefore.semanticRevisionHash,
+    build.sourceAfter.semanticRevisionHash);
+  assert.equal("sha" in build.sourceBefore, false);
+  assert.equal("treeHash" in build.sourceBefore, false);
+  assert.equal("cwd" in build.operation, false);
+  assert.equal("environmentRefs" in build.operation, false);
+  assert.equal("worktree" in build, false);
+  assert.equal("createdAt" in build, false);
+
+  const parsedBuild = parseCandidateBuildReceiptV2(clone(build));
+  const parsedBundle = parseCandidateRuntimeBundleV2(clone(bundle));
+  assert.deepEqual(parsedBuild, build);
+  assert.deepEqual(parsedBundle, bundle);
+  assertRecursivelyFrozen(parsedBuild);
+  assertRecursivelyFrozen(parsedBundle);
+  assertRecursivelyFrozen(CANDIDATE_NPM_PRODUCTION_MATERIALIZATION_CONFIG_V2);
+  assertRecursivelyFrozen(CANDIDATE_NPM_MATERIALIZATION_RECEIPT_ABI_POLICY_V2);
   assert.equal(
     CANDIDATE_NPM_PRODUCTION_MATERIALIZATION_CONFIG_V2.configHash,
     hashCandidateNpmProductionMaterializationConfigV2(
@@ -417,106 +532,78 @@ test("candidate build and runtime literals, hashes, exact bindings, and frozen p
       CANDIDATE_NPM_MATERIALIZATION_RECEIPT_ABI_POLICY_V2,
     ),
   );
-  assertRecursivelyFrozen(CANDIDATE_NPM_PRODUCTION_MATERIALIZATION_CONFIG_V2);
-  assertRecursivelyFrozen(CANDIDATE_NPM_MATERIALIZATION_RECEIPT_ABI_POLICY_V2);
-  assertRecursivelyFrozen(CANDIDATE_NPM_PRODUCTION_MATERIALIZATION_RECIPE_V2);
-  assert.equal("entries" in build.outputTree, false);
-  assert.equal("entries" in bundle.applicationTree, false);
-  assert.equal("entries" in bundle.dependencyTree, false);
-  assert.equal("worktree" in build, false);
-  assert.equal("worktree" in bundle, false);
-  assert.equal("createdAt" in build, false);
-  assert.equal("createdAt" in bundle, false);
-
-  const parsedBuild = parseCandidateBuildReceiptV2(clone(build));
-  const parsedBundle = parseCandidateRuntimeBundleV2(clone(bundle));
-  assert.deepEqual(parsedBuild, build);
-  assert.deepEqual(parsedBundle, bundle);
-  assert.notStrictEqual(parsedBuild, build);
-  assert.notStrictEqual(parsedBundle, bundle);
-  assertRecursivelyFrozen(parsedBuild);
-  assertRecursivelyFrozen(parsedBundle);
 });
 
-test("candidate build receipt rejects source drift, failed builds, stale hashes, unknown fields, and forged tree refs", () => {
+test("candidate build rejects source, topology, process, output and producer forgeries", () => {
   const sourceDrift = clone(createBuildReceipt());
-  sourceDrift.sourceAfter.sha = sha("drifted-source");
+  sourceDrift.sourceAfter.semanticRevisionHash = sha("drifted-source");
+  sourceDrift.sourceAfter.checkpointHash =
+    hashCandidateBuildSourceCheckpointV2(sourceDrift.sourceAfter);
   sourceDrift.receiptHash = hashCandidateBuildReceiptV2(sourceDrift);
   assert.equal(CandidateBuildReceiptV2Schema.safeParse(sourceDrift).success, false);
 
   const failedBuild = clone(createBuildReceipt()) as unknown as Record<string, unknown>;
-  failedBuild.exitCode = 1;
+  failedBuild.processOutcome = {
+    ...(failedBuild.processOutcome as Record<string, unknown>),
+    status: "nonzero",
+    exitCode: 1,
+  };
   failedBuild.receiptHash = hashCandidateBuildReceiptV2(failedBuild as never);
   assert.equal(CandidateBuildReceiptV2Schema.safeParse(failedBuild).success, false);
 
-  const staleCommand = clone(createBuildReceipt());
-  staleCommand.selectedBuildCommand.timeoutMs += 1;
-  staleCommand.receiptHash = hashCandidateBuildReceiptV2(staleCommand);
-  assert.equal(CandidateBuildReceiptV2Schema.safeParse(staleCommand).success, false);
+  const staleOperation = clone(createBuildReceipt()) as unknown as {
+    operation: { processPolicy: { timeoutMs: number }; operationHash: string };
+    receiptHash: string;
+  };
+  staleOperation.operation.processPolicy.timeoutMs += 1;
+  staleOperation.operation.operationHash =
+    hashCandidateBuildOperationV2(staleOperation.operation as never);
+  staleOperation.receiptHash = hashCandidateBuildReceiptV2(staleOperation as never);
+  assert.equal(CandidateBuildReceiptV2Schema.safeParse(staleOperation).success, false);
 
   const staleOutput = clone(createBuildReceipt());
   staleOutput.outputTree.totalBytes += 1;
+  staleOutput.outputTree.bindingHash =
+    hashCandidateBuildOutputTreeBindingV2(staleOutput.outputTree);
   staleOutput.receiptHash = hashCandidateBuildReceiptV2(staleOutput);
   assert.equal(CandidateBuildReceiptV2Schema.safeParse(staleOutput).success, false);
 
-  const forgedTreeRef = clone(createBuildReceipt());
-  const refWithExtra = {
-    ...forgedTreeRef.outputTree.treeArtifact,
-    mutablePath: "/tmp/worktree/dist",
-  };
-  forgedTreeRef.outputTree = {
-    ...forgedTreeRef.outputTree,
-    treeArtifact: refWithExtra,
-  } as typeof forgedTreeRef.outputTree;
-  forgedTreeRef.outputTree.bindingHash =
-    hashCandidateBuildOutputTreeBindingV2(forgedTreeRef.outputTree);
-  forgedTreeRef.receiptHash = hashCandidateBuildReceiptV2(forgedTreeRef);
-  assert.equal(CandidateBuildReceiptV2Schema.safeParse(forgedTreeRef).success, false);
+  const forgedProducer = clone(createBuildReceipt());
+  forgedProducer.outputTree.treeArtifact.producer.codeSha = "1234567";
+  forgedProducer.outputTree.bindingHash =
+    hashCandidateBuildOutputTreeBindingV2(forgedProducer.outputTree);
+  forgedProducer.receiptHash = hashCandidateBuildReceiptV2(forgedProducer);
+  assert.equal(CandidateBuildReceiptV2Schema.safeParse(forgedProducer).success, false);
 
   assert.equal(CandidateBuildReceiptV2Schema.safeParse({
     ...createBuildReceipt(),
-    timestamp: "2026-07-18T00:00:00.000Z",
-  }).success, false);
-  assert.equal(CandidateBuildReceiptV2Schema.safeParse({
-    ...createBuildReceipt(),
-    authorityState: "verified",
-  }).success, false);
-  assert.equal(CandidateBuildReceiptV2Schema.safeParse({
-    ...createBuildReceipt(),
-    productionUse: "allowed",
+    timestamp: "2026-07-21T00:00:00.000Z",
   }).success, false);
 });
 
-test("runtime bundle rejects self-consistent cross-join, application, and npm/tree forgeries", () => {
+test("runtime bundle joins the superseding source/build authority and rejects cross-joins", () => {
+  const sourceForgery = clone(createRuntimeBundle());
+  sourceForgery.sourceAuthority.semanticRevisionHash = sha("different-source");
+  sourceForgery.bundleHash = hashCandidateRuntimeBundleV2(sourceForgery);
+  assert.equal(CandidateRuntimeBundleV2Schema.safeParse(sourceForgery).success, false);
+
   const packetForgery = clone(createRuntimeBundle());
   packetForgery.packetEnvelopeHash = sha("different-packet");
   packetForgery.bundleHash = hashCandidateRuntimeBundleV2(packetForgery);
   assert.equal(CandidateRuntimeBundleV2Schema.safeParse(packetForgery).success, false);
 
-  const sourceForgery = clone(createRuntimeBundle());
-  sourceForgery.sourceRevision.treeHash = sha("different-source-tree");
-  sourceForgery.bundleHash = hashCandidateRuntimeBundleV2(sourceForgery);
-  assert.equal(CandidateRuntimeBundleV2Schema.safeParse(sourceForgery).success, false);
-
   const applicationForgery = clone(createRuntimeBundle());
-  applicationForgery.applicationTree.treeHash = sha("different-application-tree");
+  applicationForgery.applicationTree.treeHash = sha("different-application");
   rehashRuntimeBundle(applicationForgery);
   assert.equal(CandidateRuntimeBundleV2Schema.safeParse(applicationForgery).success, false);
 
   const npmForgery = clone(createRuntimeBundle());
-  npmForgery.npmMaterializationReceipt.dependencyTreePayloadHash =
-    sha("different-dependency-payload");
+  npmForgery.npmMaterializationReceipt.dependencyTreePayloadHash = sha("different-deps");
   rehashRuntimeBundle(npmForgery);
   assert.equal(CandidateRuntimeBundleV2Schema.safeParse(npmForgery).success, false);
 
-  const buildReceiptForgery = clone(createRuntimeBundle());
-  buildReceiptForgery.buildReceiptHash = sha("different-build-receipt");
-  buildReceiptForgery.bundleHash = hashCandidateRuntimeBundleV2(buildReceiptForgery);
-  assert.equal(CandidateRuntimeBundleV2Schema.safeParse(buildReceiptForgery).success, false);
-
   const staleRecipe = clone(createRuntimeBundle());
-  staleRecipe.npmMaterializationReceipt.installRecipe.configHash =
-    sha("different-npm-config");
+  staleRecipe.npmMaterializationReceipt.installRecipe.configHash = sha("different-config");
   staleRecipe.npmMaterializationReceipt.installRecipe.recipeHash =
     hashCandidateNpmProductionMaterializationRecipeV2(
       staleRecipe.npmMaterializationReceipt.installRecipe,
@@ -524,97 +611,14 @@ test("runtime bundle rejects self-consistent cross-join, application, and npm/tr
   staleRecipe.npmMaterializationReceipt.recipeHash =
     staleRecipe.npmMaterializationReceipt.installRecipe.recipeHash;
   staleRecipe.npmMaterializationReceipt.receiptHash =
-    hashCandidateNpmMaterializationReceiptV2(staleRecipe.npmMaterializationReceipt);
+    hashCandidateNpmMaterializationReceiptV2(
+      staleRecipe.npmMaterializationReceipt,
+    );
   staleRecipe.bundleHash = hashCandidateRuntimeBundleV2(staleRecipe);
   assert.equal(CandidateRuntimeBundleV2Schema.safeParse(staleRecipe).success, false);
-
-  const recipeJoinForgery = clone(createRuntimeBundle());
-  recipeJoinForgery.npmMaterializationReceipt.recipeHash = sha("different-recipe");
-  recipeJoinForgery.npmMaterializationReceipt.receiptHash =
-    hashCandidateNpmMaterializationReceiptV2(
-      recipeJoinForgery.npmMaterializationReceipt,
-    );
-  recipeJoinForgery.bundleHash = hashCandidateRuntimeBundleV2(recipeJoinForgery);
-  assert.equal(CandidateRuntimeBundleV2Schema.safeParse(recipeJoinForgery).success, false);
-
-  const argumentForgery = clone(createRuntimeBundle()) as unknown as {
-    npmMaterializationReceipt: {
-      installRecipe: {
-        arguments: string[];
-        recipeHash: string;
-      };
-      recipeHash: string;
-      receiptHash: string;
-    };
-    bundleHash: string;
-  };
-  argumentForgery.npmMaterializationReceipt.installRecipe.arguments[0] = "--include=dev";
-  argumentForgery.npmMaterializationReceipt.installRecipe.recipeHash =
-    hashCandidateNpmProductionMaterializationRecipeV2(
-      argumentForgery.npmMaterializationReceipt.installRecipe as never,
-    );
-  argumentForgery.npmMaterializationReceipt.recipeHash =
-    argumentForgery.npmMaterializationReceipt.installRecipe.recipeHash;
-  argumentForgery.npmMaterializationReceipt.receiptHash =
-    hashCandidateNpmMaterializationReceiptV2(
-      argumentForgery.npmMaterializationReceipt as never,
-    );
-  argumentForgery.bundleHash = hashCandidateRuntimeBundleV2(argumentForgery as never);
-  assert.equal(CandidateRuntimeBundleV2Schema.safeParse(argumentForgery).success, false);
 });
 
-test("runtime bundle rejects noncanonical roots, layouts, package refs, extra entries, and stale closure hashes", () => {
-  const wrongRoot = {
-    ...createRuntimeBundle(),
-    logicalRoot: "candidate-bundle-copy",
-  };
-  assert.equal(CandidateRuntimeBundleV2Schema.safeParse(wrongRoot).success, false);
-
-  const wrongMode = {
-    ...createRuntimeBundle(),
-    rootMode: "0755",
-  };
-  assert.equal(CandidateRuntimeBundleV2Schema.safeParse(wrongMode).success, false);
-
-  const wrongLayout = {
-    ...createRuntimeBundle(),
-    allowedRootEntries: ["application", "package.json", "node_modules"],
-  };
-  assert.equal(CandidateRuntimeBundleV2Schema.safeParse(wrongLayout).success, false);
-
-  const fourthEntry = {
-    ...createRuntimeBundle(),
-    allowedRootEntries: ["application", "node_modules", "package.json", "secret"],
-  };
-  assert.equal(CandidateRuntimeBundleV2Schema.safeParse(fourthEntry).success, false);
-  assert.equal(CandidateRuntimeBundleV2Schema.safeParse({
-    ...createRuntimeBundle(),
-    secretRootEntry: { logicalLocator: "candidate-bundle/secret" },
-  }).success, false);
-
-  const mutablePackage = clone(createRuntimeBundle()) as unknown as Record<string, unknown>;
-  mutablePackage.packageJson = {
-    ...(mutablePackage.packageJson as Record<string, unknown>),
-    mode: "0644",
-  };
-  assert.equal(CandidateRuntimeBundleV2Schema.safeParse(mutablePackage).success, false);
-
-  const staleClosure = clone(createRuntimeBundle());
-  staleClosure.packageJson.contentHash = sha("different-package-json");
-  staleClosure.bundleHash = hashCandidateRuntimeBundleV2(staleClosure);
-  assert.equal(CandidateRuntimeBundleV2Schema.safeParse(staleClosure).success, false);
-
-  assert.equal(CandidateRuntimeBundleV2Schema.safeParse({
-    ...createRuntimeBundle(),
-    authorityState: "verified",
-  }).success, false);
-  assert.equal(CandidateRuntimeBundleV2Schema.safeParse({
-    ...createRuntimeBundle(),
-    productionUse: "allowed",
-  }).success, false);
-});
-
-test("bounded parsers reject oversized, cyclic, accessor, and hostile proxy candidates without invoking user code", () => {
+test("bounded candidate parsers reject oversized, cyclic, accessor and proxy inputs", () => {
   const build = createBuildReceipt();
   const bundle = createRuntimeBundle();
   assert.equal(canonicalJsonBytes(build).byteLength
@@ -624,10 +628,6 @@ test("bounded parsers reject oversized, cyclic, accessor, and hostile proxy cand
   assert.throws(() => parseCandidateBuildReceiptV2({
     ...build,
     padding: "x".repeat(CANDIDATE_BUILD_RECEIPT_V2_MAX_CANONICAL_BYTES),
-  }));
-  assert.throws(() => parseCandidateRuntimeBundleV2({
-    ...bundle,
-    padding: "x".repeat(CANDIDATE_RUNTIME_BUNDLE_V2_MAX_CANONICAL_BYTES),
   }));
 
   const cyclic: Record<string, unknown> = { ...build };
@@ -646,64 +646,44 @@ test("bounded parsers reject oversized, cyclic, accessor, and hostile proxy cand
   assert.throws(() => parseCandidateRuntimeBundleV2(accessor));
   assert.equal(accessorInvoked, false);
 
-  let proxyGetInvoked = false;
+  let proxyInvoked = false;
   const hostile = new Proxy({}, {
     get() {
-      proxyGetInvoked = true;
-      throw new Error("proxy get trap must not run");
+      proxyInvoked = true;
+      throw new Error("proxy trap must not run");
     },
   });
   assert.throws(() => parseCandidateBuildReceiptV2(hostile));
-  assert.equal(proxyGetInvoked, false);
+  assert.equal(proxyInvoked, false);
 });
 
-test("candidate artifact hashes have fixed literal goldens and separated domains", () => {
+test("candidate build superseding-wire hash domains stay deterministic and separate", () => {
   const build = createBuildReceipt();
   const bundle = createRuntimeBundle();
-  const actual = {
-    argvHash: build.selectedBuildCommand.argvHash,
-    capabilityRefsHash: build.selectedBuildCommand.capabilityRefsHash,
-    environmentRefsHash: build.selectedBuildCommand.environmentRefsHash,
-    commandBindingHash: build.selectedBuildCommand.commandBindingHash,
-    buildOutputBindingHash: build.outputTree.bindingHash,
+  const hashes = {
+    contractHash: CANDIDATE_BUILD_RECEIPT_CONTRACT_HASH_V2,
+    operationHash: build.operation.operationHash,
+    sourceCheckpointHash: build.sourceBefore.checkpointHash,
+    processOutcomeHash: build.processOutcome.outcomeHash,
+    outputMembershipHash: build.outputTree.membershipHash,
+    outputBindingHash: build.outputTree.bindingHash,
     buildReceiptHash: build.receiptHash,
-    applicationBindingHash: bundle.applicationTree.bindingHash,
-    dependencyBindingHash: bundle.dependencyTree.bindingHash,
-    npmConfigHash: CANDIDATE_NPM_PRODUCTION_MATERIALIZATION_CONFIG_V2.configHash,
-    npmReceiptAbiPolicyHash:
-      CANDIDATE_NPM_MATERIALIZATION_RECEIPT_ABI_POLICY_V2.policyHash,
-    npmRecipeHash: bundle.npmMaterializationReceipt.installRecipe.recipeHash,
-    npmReceiptHash: bundle.npmMaterializationReceipt.receiptHash,
-    bundleClosureHash: bundle.bundleClosureHash,
     bundleHash: bundle.bundleHash,
-    buildCanonicalBytes: canonicalJsonBytes(build).byteLength,
-    bundleCanonicalBytes: canonicalJsonBytes(bundle).byteLength,
   };
-  assert.deepEqual(actual, {
-    argvHash: "eab518ab4749ea3db8ef4ca8cc77ecb68f2d27a58f561747b3f7e3e8af5ee6ed",
-    capabilityRefsHash: "356e6f73bcc7e23174c26c1111fc756c67d26accc5a3c985560eb39d86b64a34",
-    environmentRefsHash: "37ded600ea86bf8c9834b98a57191b57d7f2f5208bfa257f1609fea3aa47a30e",
-    commandBindingHash: "66848f9d9009857ebe7de4425b9865650d8f046a070f5c21812ce506a02b6fa1",
-    buildOutputBindingHash: "bc9c1596edd94ad6f655846aa3055c3b4a930609ede89cc309ec3070c81c91dc",
-    buildReceiptHash: "92f4ab828140dce4aeb2c9eaa57c3a63046719fcb12dcafad07be1a5d3ed776f",
-    applicationBindingHash: "f1fd8c41c096d4237fd8ad99639f8effdc07ca58e98bb4a406f60af88d1a16c7",
-    dependencyBindingHash: "537a977eb53395e6fe9e30338d75104ec96ec0ef59c67782fc27977765808e4b",
-    npmConfigHash: "548a8894a209c13f0edda9684c8cc91b12e1aa11b4d73c860df59004fffa3c9d",
-    npmReceiptAbiPolicyHash: "374bbc794e441c35de2316b8ae2f2fef269013021f75dd1dc5788aada766ffb9",
-    npmRecipeHash: "65a481f9d3f0ba72e2b0bd6d02f9042e5c9ee2c85f02cf86a5a51771a927654c",
-    npmReceiptHash: "ba6e370294d4a312578bab80cfc945688d07b214d59c60e2632f72baf95638ce",
-    bundleClosureHash: "497574e765d72a71bff1b3cc716afe955102a74da30bc0e44a31f3e7a4ef684e",
-    bundleHash: "323abc5e318b20ee19558ab99683964106315d62a97f9cd0d7c492d580cf0af7",
-    buildCanonicalBytes: 2_297,
-    bundleCanonicalBytes: 6_817,
+  assert.deepEqual(hashes, {
+    contractHash: "bd7e6c6ab0ef8e53f7d7f5d0c9461ab3f9fa5ac488bb48a707e1d5b800a952dc",
+    operationHash: "d313ee9852a169e8d677ee7c3289822c45723ed85d7cdba2ed3be39c0e124c05",
+    sourceCheckpointHash: "494c933edb52015d324aba924152aad6be096e4c8a27c1ede416f8d83995c703",
+    processOutcomeHash: "807438076500934b4c29071070981064428d7d238826cadcd6ae5009437ff71f",
+    outputMembershipHash: "57b1e3351dd9efdb1c2b057bcebb2e1f8d27a8ce94980010d6ec8ab88e296c86",
+    outputBindingHash: "8c28e7c8ba629e8a37b58480daea553f25efff18ca9191863049e7a2d242b7b0",
+    buildReceiptHash: "395d7af831d19ce6b238bb270e40b6eb0c289b3d29627bbe3aa23399ad7f7f29",
+    bundleHash: "4480dd09e4a5d478ff5d78f2b39ccd61a2fbe960d04ba4a39edc97d118802981",
   });
-  const hashes = Object.entries(actual)
-    .filter(([name]) => name.endsWith("Hash"))
-    .map(([, value]) => value);
-  assert.equal(new Set(hashes).size, hashes.length);
+  assert.equal(new Set(Object.values(hashes)).size, Object.keys(hashes).length);
 });
 
-test("candidate DTO modules expose data contracts, parsers, and hashes but no operational authority", () => {
+test("candidate DTO modules expose contracts but no operational authority", () => {
   const exportedNames = [
     ...Object.keys(buildModule),
     ...Object.keys(bundleModule),
@@ -712,6 +692,4 @@ test("candidate DTO modules expose data contracts, parsers, and hashes but no op
     /^(?:verify|issue|materialize|activate|run|launch|derive|create)/i.test(name)), false);
   assert.equal(exportedNames.some((name) =>
     /(?:Brand|Verified|Activated|Default|Retry|Classifier)/.test(name)), false);
-  assert.equal(exportedNames.every((name) =>
-    /^(?:CANDIDATE_|Candidate.*Schema$|hashCandidate|parseCandidate)/.test(name)), true);
 });

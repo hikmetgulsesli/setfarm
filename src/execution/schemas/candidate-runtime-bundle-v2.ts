@@ -11,7 +11,6 @@ import {
   CANONICAL_RUNTIME_TREE_V2_PROFILES,
   CANONICAL_RUNTIME_TREE_V2_SCHEMA,
 } from "./canonical-runtime-tree-v2.js";
-import { SourceRevisionV1Schema } from "./execution-attempt-v1.js";
 import {
   EXTERNAL_RUNTIME_RESOLUTION_V2_MAX_PACKAGES,
   ExactPackageLockSourceRefV2Schema,
@@ -33,6 +32,8 @@ export const CANDIDATE_RUNTIME_DEPENDENCY_TREE_BINDING_V2_SCHEMA =
   "setfarm.candidate-runtime-dependency-tree-binding.v2" as const;
 export const CANDIDATE_RUNTIME_PACKAGE_JSON_REF_V2_SCHEMA =
   "setfarm.candidate-runtime-package-json-ref.v2" as const;
+export const CANDIDATE_RUNTIME_SOURCE_BINDING_V2_SCHEMA =
+  "setfarm.candidate-runtime-source-binding.v2" as const;
 export const CANDIDATE_NPM_MATERIALIZATION_RECEIPT_V2_SCHEMA =
   "setfarm.candidate-npm-materialization-receipt.v2" as const;
 export const CANDIDATE_NPM_PRODUCTION_MATERIALIZATION_RECIPE_V2_SCHEMA =
@@ -450,7 +451,12 @@ const CandidateRuntimeBundleIdentityV2Schema = z.object({
   productionUse: z.literal("forbidden"),
   packetEnvelopeHash: Sha256Schema,
   buildTopologyHash: Sha256Schema,
-  sourceRevision: SourceRevisionV1Schema,
+  sourceAuthority: z.object({
+    schema: z.literal(CANDIDATE_RUNTIME_SOURCE_BINDING_V2_SCHEMA),
+    candidateSourceEnvelopeHash: Sha256Schema,
+    candidateSourceReceiptHash: Sha256Schema,
+    semanticRevisionHash: Sha256Schema,
+  }).strict(),
   buildReceiptHash: Sha256Schema,
   buildReceipt: CandidateBuildReceiptV2Schema,
   logicalRoot: z.literal("candidate-bundle"),
@@ -512,13 +518,6 @@ export function hashCandidateRuntimeBundleV2(
   });
 }
 
-function sameSourceRevisionV2(
-  left: z.infer<typeof SourceRevisionV1Schema>,
-  right: z.infer<typeof SourceRevisionV1Schema>,
-): boolean {
-  return left.sha === right.sha && left.treeHash === right.treeHash;
-}
-
 function applicationEqualsBuildOutputV2(
   application: CandidateRuntimeApplicationTreeBindingV2,
   buildReceipt: CandidateBuildReceiptV2,
@@ -540,11 +539,15 @@ export const CandidateRuntimeBundleV2Schema = CandidateRuntimeBundleIdentityV2Sc
 }).strict().superRefine((value, context) => {
   const build = value.buildReceipt;
   if (
-    value.packetEnvelopeHash !== build.packetEnvelopeHash
-    || value.buildTopologyHash !== build.buildTopologyHash
+    value.packetEnvelopeHash !== build.authority.packet.envelopeHash
+    || value.buildTopologyHash !== build.authority.buildTopology.manifestHash
     || value.buildReceiptHash !== build.receiptHash
-    || !sameSourceRevisionV2(value.sourceRevision, build.sourceBefore)
-    || !sameSourceRevisionV2(value.sourceRevision, build.sourceAfter)
+    || value.sourceAuthority.candidateSourceEnvelopeHash
+      !== build.sourceAfter.candidateSourceEnvelopeHash
+    || value.sourceAuthority.candidateSourceReceiptHash
+      !== build.sourceAfter.candidateSourceReceiptHash
+    || value.sourceAuthority.semanticRevisionHash
+      !== build.sourceAfter.semanticRevisionHash
   ) {
     context.addIssue({
       code: "custom",

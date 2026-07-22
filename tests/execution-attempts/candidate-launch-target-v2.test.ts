@@ -144,6 +144,16 @@ function applicationTreeBinding(kind: TargetKind): CandidateRuntimeApplicationTr
       artifactType: CANONICAL_RUNTIME_TREE_V2_SCHEMA,
       envelopeHash: sha(`${kind}-application-tree-envelope`),
       envelopeByteLength: 2_048,
+      producer: {
+        pass: "candidate-build-authority-v2",
+        codeSha: "abcdef0",
+        toolVersions: {
+          candidateBuild: "2.1.0",
+          candidateSource: "1.0.0",
+          buildTopology: "3.2.0",
+          canonicalRuntimeTree: "2.0.0",
+        },
+      },
     },
     treeHash: tree.treeHash,
     treePayloadHash: tree.payloadHash,
@@ -655,20 +665,20 @@ test("literal launch hashes are golden and every hash domain is separated", () =
     apiCanonicalBytes: canonicalJsonBytes(api).byteLength,
   };
   assert.deepEqual(actual, {
-    cliApplicationBindingHash: "cb4be9ca416828c758de3e62d0e37698b3fb4fa5bf23e31cba827df18dccae6a",
-    cliRuntimeBindingHash: "2508838fcb6e6a4e0700d26be4b50a8f648c35b1cd8078259742fb4c654cf5d9",
+    cliApplicationBindingHash: "d27489b691eabcfdffc785ad9c8510f6442d0bd5259b3c8039aefcd7f0bcfc7f",
+    cliRuntimeBindingHash: "6eb0d14e40fb48275067cfd632a150326915ccf498218e2a05fa168d3f5eeaac",
     cliExecutableBindingHash: "6a50196b4ccd0f9ff710e155c0cca9cb88f678cf6cddad2cd8c81da57a6cdfaf",
     cliModuleRefHash: "4f405d08e63be1885c720846b91007d1d0dd2415e1d907fb82b695cef9910abe",
     cliTargetHash: "18e0f5cde4af1ffe523307c32226adb2b8f867b447b68ea14ebf9f5d2d731e69",
-    cliLaunchTargetHash: "55004ac6bf2fed66e1c98991aad1a52cdd9569ce313d4679d4a0c52388651579",
-    apiApplicationBindingHash: "53ac894c1fc9d31ec1c133f28f0dc67e444bd49404d328a1452f71b286919483",
-    apiRuntimeBindingHash: "4abe0a002d5935cd29bca3b876dfd1af77c51c36a16413fadce531ebdfa1f35e",
+    cliLaunchTargetHash: "bb62f7fc4c05ea72aea8b951601f1a58dabe23ec9c2475ae9103f84ecf5e17f5",
+    apiApplicationBindingHash: "d0d742a7163b629e1ed162af75eb22e9c4dbccba8d60a21e9e5e046d6884be15",
+    apiRuntimeBindingHash: "8c79d8ede2313abd357fd60b6125e7488fb9c596c0a563d52548652fdfae6fad",
     apiExecutableBindingHash: "e7e3af38d3c783697e31b2e810b1ce45531522c34c4e765b388f0c6613ecb768",
     apiModuleRefHash: "a521a1831ef85313ec5b381569396eb6e3e116b6e1380d157f1758307ac61485",
     apiHandlerExportHash: "c4ad9f5c58125077802c566f0703bde7168fb266baa91e280e1bdce9018f053f",
-    apiLaunchTargetHash: "e8dece76d6793a8ccc6bfc921d898791a8d2d164bcd532b68661d0ca4ca3523b",
-    cliCanonicalBytes: 3_831,
-    apiCanonicalBytes: 3_820,
+    apiLaunchTargetHash: "923aba50581bc4d20b9f824e2c884a903118bad9b3bec089639994213b851b3a",
+    cliCanonicalBytes: 4_025,
+    apiCanonicalBytes: 4_014,
   });
   const hashes = Object.entries(actual)
     .filter(([name]) => name.endsWith("Hash"))
