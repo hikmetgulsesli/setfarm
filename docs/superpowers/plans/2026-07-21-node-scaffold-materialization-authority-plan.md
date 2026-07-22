@@ -254,6 +254,21 @@ F2B1/B2a/B2b/B2c evidence completed on 2026-07-22:
   canonical artifact, and typed failure artifacts bind command, ordered cause,
   failure kind, exit code, and hash. The production operation adapter derives
   architecture from the executing runtime and still has no process entrypoint;
+- commit `d609cad9` defined the separately packaged bootstrap manifest, fixed
+  root layout, fail-closed root launcher, self-contained CJS entry bundle, and
+  fresh every-only package verifier. Only the raw test-fixture compiler is
+  exported; there is deliberately no caller-byte production compiler;
+- commit `c77c93fd` added
+  `setfarm.node-toolchain-provisioner-bundle-authority-receipt.v2` and the
+  unforgeable `BuiltNodeToolchainProvisionerBundleV2` handle. Production bundle
+  authority accepts only an authenticated official private-tree handle, then
+  binds clean `main == origin/main`, exact `git archive HEAD`, the committed
+  entrypoint/package/lock/builder sources, code-owned npm registry tarball and
+  content-tree identities for esbuild 0.28.1, its Darwin platform package, and
+  zod 4.4.3. It copies those inputs to a fresh private stage and requires two
+  fresh process executions to emit byte-identical bundle and canonical
+  metadata. Test adapters are permanently marked `test_fixture` and cannot be
+  rehashed into production authority;
 - live read-only inspection corrected a false macOS assumption: the
   `/Library/Application Support` ancestor is root-owned mode `0755` but group
   `admin` (`gid=80`).
@@ -261,8 +276,9 @@ F2B1/B2a/B2b/B2c evidence completed on 2026-07-22:
   mode, while Setfarm-created directories remain exact `root:wheel`;
 - final command/rollback/CLI-focused evidence is 23/23; the combined distribution,
   inventory, private-tree, host, provisioning, and command chain is 56/56.
-  Final Product Compiler evidence is 980/980 across 121 suites with TypeScript,
-  English (1,054 files), path (582 files), diff and isolated scratch-residue
+  After bundle authority, final Product Compiler evidence is 982/982 across 121
+  suites, scripts are 24/24, with TypeScript, English (1,063 files), path (591
+  files), diff and isolated scratch-residue
   checks clean. No production toolchain root, live DB/PR/service, generated
   repository, or Setfarm run was mutated.
 
@@ -285,11 +301,14 @@ F2B dependency chain is:
    final root, Node bytes, and normalized npm tree before `production_host`
    authority can be issued. Merely creating the fixed directory or making a
    binary self-report the expected version is invalid;
-5. **Pending:** package that protocol behind a separately installed root-owned
-   startup/bootstrap launcher, execute the official tree through a real
-   production-root apply/verify/rollback rehearsal, and define the OS-update
-   transition. No installer action will run automatically from a Setfarm
-   product attempt.
+5. **Complete preparation authority, pending installation rehearsal:** the
+   separately packaged root launcher/manifest/verifier and authenticated
+   reproducible bundle handle now exist. The production bootstrap compiler must
+   next consume only that bundle handle plus the authenticated private-tree
+   handle, publish a prepared package without caller bytes, and execute the
+   official tree through isolated apply/verify/rollback before any production
+   root or OS-update transition. No installer action will run automatically
+   from a Setfarm product attempt.
 
 F2 completion does not authorize `npm ci`; it only creates the exact toolchain
 precondition consumed by F3/F4. F2A alone is deliberately insufficient.
