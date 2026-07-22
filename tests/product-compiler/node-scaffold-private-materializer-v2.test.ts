@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, renameSync } from "node:fs";
 import {
@@ -19,6 +20,8 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, afterEach, before, describe, it } from "node:test";
+
+import ts from "typescript";
 
 import { createArtifactIndexForTests as createArtifactIndex } from
   "../../src/product-compiler/artifact-index.js";
@@ -66,6 +69,12 @@ import {
   compileBuildTopologyV3ForTest,
   verifyBuildTopologyV3ForTest,
 } from "../../src/product-compiler/build-topology-v3.js";
+import {
+  NodeProductRuntimeSourceVerificationErrorV2,
+  generateNodeProductRuntimeSourceV2,
+  generateNodeProductRuntimeSourceV2ForTest,
+  verifyNodeProductRuntimeSourceV2ForTest,
+} from "../../src/product-compiler/node-product-runtime-generator-v2.js";
 import {
   NodeSemanticRuleGeneratorTransitionVerificationErrorV2,
   compileNodeSemanticRuleGeneratorTransitionV2,
@@ -155,8 +164,19 @@ import {
 import {
   resolveProductDeliverySelectionV2,
 } from "../../src/product-compiler/product-delivery-profile-catalog-v2.js";
+import {
+  compileSemanticRealizationPlanV2,
+} from "../../src/product-compiler/semantic-realization-plan-v2.js";
 import type { ProductSpecV2 } from
   "../../src/product-compiler/schemas/product-spec-v2.js";
+import { ProductSpecV2Schema } from
+  "../../src/product-compiler/schemas/product-spec-v2.js";
+import {
+  NODE_PRODUCT_RUNTIME_PROGRAM_CONTRACT_HASH_V2,
+  NodeProductRuntimeSourceReceiptV2Schema,
+  hashNodeProductRuntimeSourceLogicalReceiptV2,
+  hashNodeProductRuntimeSourceReceiptV2,
+} from "../../src/product-compiler/schemas/node-product-runtime-source-v2.js";
 import {
   createIsolatedTestDatabase,
   type TestDatabase,
@@ -182,6 +202,8 @@ const BUILD_TOPOLOGY_CONTRACT_HASH_GOLDEN_V2 =
   "5ac524ec5f5c45ac3091c39c5fe959da3da970c15757196879031db55c30ef28";
 const BUILD_TOPOLOGY_CONTRACT_HASH_GOLDEN_V3 =
   "85c5d6ab2546862383a3b1622a8f9360eed79af0bd5205e2cd1dea6bd911407f";
+const NODE_PRODUCT_RUNTIME_PROGRAM_CONTRACT_HASH_GOLDEN_V2 =
+  "bc034f20c1c56ed094a2bebe6ea83cace9c861a299fbba0d44a7482803034bd5";
 const NODE_ENTRYPOINT_GENERATOR_CONTRACT_HASH_GOLDEN_V2 =
   "52b95411113b302c8993e8d3debc712831955cb72a8b91a0226e40941a86933a";
 const NODE_RULE_GENERATOR_TRANSITION_CONTRACT_HASH_GOLDEN_V2 =
@@ -397,6 +419,88 @@ function deliverySelectionForV2(
   );
   if (result.status !== "shadow_selected") throw new Error("Expected delivery selection");
   return result.selection;
+}
+
+function executableRuntimeProductSpecV2(
+  productSpec: ProductSpecV2,
+): ProductSpecV2 {
+  const candidate = structuredClone(productSpec);
+  candidate.states.forEach((state) => {
+    state.invariants = [];
+  });
+  return ProductSpecV2Schema.parse(candidate);
+}
+
+function transpileGeneratedRuntimeV2(sourceText: string): string {
+  const transpiled = ts.transpileModule(sourceText, {
+    compilerOptions: {
+      module: ts.ModuleKind.ESNext,
+      target: ts.ScriptTarget.ES2022,
+      verbatimModuleSyntax: true,
+    },
+    fileName: "generated-runtime.ts",
+    reportDiagnostics: true,
+  });
+  const errors = (transpiled.diagnostics ?? []).filter((item) =>
+    item.category === ts.DiagnosticCategory.Error);
+  assert.deepEqual(errors.map((item) => ts.flattenDiagnosticMessageText(
+    item.messageText,
+    "\n",
+  )), []);
+  return transpiled.outputText;
+}
+
+async function typecheckGeneratedRuntimeV2(
+  sandboxRoot: string,
+  sourceText: string,
+  sourceBasename: "cli.ts" | "app.ts",
+): Promise<void> {
+  const root = path.join(sandboxRoot, `runtime-typecheck-${randomUUID()}`);
+  await mkdir(root, { recursive: true, mode: 0o700 });
+  const sourcePath = path.join(root, sourceBasename);
+  const expressTypesPath = path.join(root, "express.d.ts");
+  await Promise.all([
+    writeFile(path.join(root, "package.json"), "{\"type\":\"module\"}\n", {
+      mode: 0o600,
+    }),
+    writeFile(sourcePath, sourceText, { mode: 0o600 }),
+    writeFile(expressTypesPath, [
+      "declare module \"express\" {",
+      "  export interface Request { method: string; originalUrl: string; url: string; body: any; }",
+      "  export interface Response { status(code: number): Response; json(body: any): Response; }",
+      "  export type NextFunction = (error?: unknown) => void;",
+      "  export type RequestHandler = (request: Request, response: Response, next: NextFunction) => void;",
+      "}",
+      "",
+    ].join("\n"), { mode: 0o600 }),
+  ]);
+  const execution = spawnSync(process.execPath, [
+    path.join(process.cwd(), "node_modules", "typescript", "bin", "tsc"),
+    "--noEmit",
+    "--strict",
+    "--target",
+    "ES2022",
+    "--module",
+    "NodeNext",
+    "--moduleResolution",
+    "NodeNext",
+    "--verbatimModuleSyntax",
+    "--types",
+    "node",
+    "--typeRoots",
+    path.join(process.cwd(), "node_modules", "@types"),
+    sourcePath,
+    expressTypesPath,
+  ], {
+    encoding: "utf8",
+    env: {},
+    timeout: 10_000,
+  });
+  assert.equal(
+    execution.status,
+    0,
+    `${execution.stdout}\n${execution.stderr}`,
+  );
 }
 
 function assertRecursivelyFrozen(value: unknown): void {
@@ -1690,6 +1794,344 @@ describe("Node scaffold private staged materializer V2", () => {
       "a37c780c70f51974503ff2d27cf52f02c76379fbc4a3405b46b81d19f1d3ed6d",
       "7c94b8bda249c4138e0aa313ae4cd119dada708558809b38c59b67b6f4e1253b",
     ]);
+  });
+
+  it("generates exact CLI/API runtime bytes and binds every realization to source evidence", async () => {
+    const cases = [
+      {
+        profileId: CLI_PROFILE,
+        stackPackId: "node-cli" as const,
+        productSpec: executableRuntimeProductSpecV2(
+          genuineNodeCliProductSpecV2(),
+        ),
+        sourceLocator: "src/cli.ts",
+        runtimeKind: "cli" as const,
+      },
+      {
+        profileId: API_PROFILE,
+        stackPackId: "node-express-api" as const,
+        productSpec: executableRuntimeProductSpecV2(
+          genuineNodeExpressApiProductSpecV2(),
+        ),
+        sourceLocator: "src/app.ts",
+        runtimeKind: "api" as const,
+      },
+      {
+        profileId: API_PROFILE,
+        stackPackId: "node-express-api" as const,
+        productSpec: executableRuntimeProductSpecV2(
+          twoStoryNodeExpressApiProductSpecV2(),
+        ),
+        sourceLocator: "src/app.ts",
+        runtimeKind: "multi_api" as const,
+      },
+    ];
+
+    for (const [caseIndex, fixture] of cases.entries()) {
+      const created = await stage({ profileId: fixture.profileId });
+      const deliverySelection = deliverySelectionForV2(
+        fixture.productSpec,
+        fixture.stackPackId,
+      );
+      const authorityInput = {
+        productSpec: fixture.productSpec,
+        deliverySelection,
+      };
+      const realizationPlan = compileSemanticRealizationPlanV2(authorityInput);
+      assert.equal(realizationPlan.status, "shadow_compiled");
+      if (realizationPlan.status !== "shadow_compiled") {
+        throw new Error("Expected semantic realization plan");
+      }
+      const fileTree = await compileFileTreeManifestV3ForTest(
+        created.handle,
+        authorityInput,
+      );
+      assert.equal(fileTree.status, "shadow_compiled");
+      if (fileTree.status !== "shadow_compiled") {
+        throw new Error("Expected runtime-generator FileTreeV3");
+      }
+      await materializeNodeScaffoldDependenciesV2ForTest(created.handle);
+      const buildTopology = await compileBuildTopologyV3ForTest(created.handle, {
+        ...authorityInput,
+        fileTree: fileTree.value,
+      });
+      assert.equal(buildTopology.status, "shadow_compiled");
+      if (buildTopology.status !== "shadow_compiled") {
+        throw new Error("Expected runtime-generator BuildTopologyV3");
+      }
+      const generatorInput = {
+        ...authorityInput,
+        realizationPlan: realizationPlan.value,
+        fileTree: fileTree.value,
+        buildTopology: buildTopology.value,
+      };
+      const generated = await generateNodeProductRuntimeSourceV2ForTest(
+        created.handle,
+        generatorInput,
+      );
+      assert.equal(
+        generated.status,
+        "shadow_generated",
+        generated.status === "rejected"
+          ? JSON.stringify(generated.diagnostics)
+          : undefined,
+      );
+      if (generated.status !== "shadow_generated") {
+        throw new Error("Expected generated runtime source");
+      }
+
+      assert.equal(
+        NodeProductRuntimeSourceReceiptV2Schema.safeParse(generated.receipt)
+          .success,
+        true,
+      );
+      assert.equal(generated.receipt.source.normalizedLocator,
+        fixture.sourceLocator);
+      assert.equal(generated.receipt.source.contentHash,
+        generated.sourceContentHash);
+      assert.equal(generated.receipt.source.runtimeProgramHash,
+        generated.runtimeProgramHash);
+      assert.equal(
+        generated.receipt.authority.runtimeProgramContractHash,
+        NODE_PRODUCT_RUNTIME_PROGRAM_CONTRACT_HASH_V2,
+      );
+      assert.equal(
+        NODE_PRODUCT_RUNTIME_PROGRAM_CONTRACT_HASH_V2,
+        NODE_PRODUCT_RUNTIME_PROGRAM_CONTRACT_HASH_GOLDEN_V2,
+      );
+      assert.equal(
+        generated.receipt.coverage.generatorMemberCount,
+        realizationPlan.value.coverage.generatorMemberCount,
+      );
+      assert.equal(
+        generated.receipt.coverage.members.length,
+        realizationPlan.value.coverage.generatorMemberCount,
+      );
+      assert.equal(generated.receipt.coverage.opaqueBehaviorCount, 0);
+      assert.equal(generated.sourceText.includes("Math.random"), false);
+      assert.equal(generated.sourceText.includes("Date.now"), false);
+      assert.equal(generated.sourceText.includes("process.env"), false);
+      assert.equal(generated.sourceText.includes(".listen("), false);
+      assert.equal(generated.sourceText.includes("@setfarm-realization-v2"),
+        true);
+      const sourceBytes = Buffer.from(generated.sourceText, "utf8");
+      for (const member of generated.receipt.coverage.members) {
+        const marker = sourceBytes.subarray(
+          member.sourceSpan.startByte,
+          member.sourceSpan.endByteExclusive,
+        ).toString("utf8");
+        assert.match(marker, new RegExp(member.realizationRef, "u"));
+        assert.match(marker, new RegExp(member.memberKind, "u"));
+      }
+      assertRecursivelyFrozen(generated);
+
+      const verified = await verifyNodeProductRuntimeSourceV2ForTest(
+        created.handle,
+        {
+          ...generatorInput,
+          candidateReceipt: generated.receipt,
+          candidateSourceText: generated.sourceText,
+        },
+      );
+      assert.equal(verified.receipt.receiptHash, generated.receipt.receiptHash);
+      assert.equal(verified.sourceText, generated.sourceText);
+      assertRecursivelyFrozen(verified);
+
+      await typecheckGeneratedRuntimeV2(
+        sandbox,
+        generated.sourceText,
+        fixture.sourceLocator === "src/cli.ts" ? "cli.ts" : "app.ts",
+      );
+      const javascript = transpileGeneratedRuntimeV2(generated.sourceText);
+      if (fixture.runtimeKind === "cli") {
+        const modulePath = path.join(
+          sandbox,
+          `generated-cli-${randomUUID()}.mjs`,
+        );
+        await writeFile(modulePath, javascript, { mode: 0o600 });
+        const execution = spawnSync(process.execPath, [
+          modulePath,
+          "add",
+          "--title",
+          "Runtime proof",
+        ], {
+          encoding: "utf8",
+          env: {},
+          timeout: 5_000,
+        });
+        assert.equal(execution.status, 0, execution.stderr);
+        assert.equal(execution.stderr, "");
+        assert.deepEqual(JSON.parse(execution.stdout), {
+          task: { title: "Runtime proof" },
+        });
+      } else if (fixture.runtimeKind === "api") {
+        const encoded = Buffer.from(javascript, "utf8").toString("base64");
+        const runtime = await import(
+          `data:text/javascript;base64,${encoded}#${randomUUID()}`
+        ) as { setfarmHttpHandlerV2: Function };
+        assert.equal(typeof runtime.setfarmHttpHandlerV2, "function");
+
+        let statusCode = 0;
+        let responseBody: unknown;
+        let nextError: unknown;
+        const response = {
+          status(code: number) {
+            statusCode = code;
+            return this;
+          },
+          json(body: unknown) {
+            responseBody = body;
+            return this;
+          },
+        };
+        runtime.setfarmHttpHandlerV2({
+          method: "POST",
+          originalUrl: "/tasks/setfarm",
+          url: "/tasks/setfarm",
+          body: { title: "Runtime API proof" },
+        }, response, (error?: unknown) => {
+          nextError = error ?? "NEXT_WITHOUT_ERROR";
+        });
+        assert.equal(nextError, undefined);
+        assert.equal(statusCode, 201);
+        assert.deepEqual(responseBody, {
+          task: { title: "Runtime API proof" },
+        });
+
+        runtime.setfarmHttpHandlerV2({
+          method: "POST",
+          originalUrl: "/tasks/setfarm",
+          url: "/tasks/setfarm",
+          body: { title: "Valid", unexpected: true },
+        }, response, (error?: unknown) => {
+          nextError = error ?? "NEXT_WITHOUT_ERROR";
+        });
+        assert.equal(statusCode, 400);
+        assert.equal(
+          (responseBody as any).error.code,
+          "INPUT_VALIDATION_FAILED",
+        );
+      }
+
+      if (caseIndex === 0) {
+        const wrongScope = await generateNodeProductRuntimeSourceV2(
+          created.handle,
+          generatorInput,
+        );
+        assert.equal(wrongScope.status, "rejected");
+        assert.equal(
+          wrongScope.diagnostics[0]?.code,
+          "NODE_RUNTIME_SOURCE_V2_PRODUCTION_AUTHORITY_REQUIRED",
+        );
+
+        await assert.rejects(
+          verifyNodeProductRuntimeSourceV2ForTest(created.handle, {
+            ...generatorInput,
+            candidateReceipt: generated.receipt,
+            candidateSourceText: `${generated.sourceText}// drift\n`,
+          }),
+          (error: unknown) =>
+            error instanceof NodeProductRuntimeSourceVerificationErrorV2
+            && error.code
+              === "NODE_RUNTIME_SOURCE_V2_VERIFICATION_AUTHORITY_MISMATCH",
+        );
+
+        const selfRehashed = structuredClone(generated.receipt) as any;
+        selfRehashed.authority.buildTopology.logicalBuildHash = "f".repeat(64);
+        selfRehashed.logicalReceiptHash =
+          hashNodeProductRuntimeSourceLogicalReceiptV2(selfRehashed);
+        selfRehashed.receiptHash =
+          hashNodeProductRuntimeSourceReceiptV2(selfRehashed);
+        assert.equal(
+          NodeProductRuntimeSourceReceiptV2Schema.safeParse(selfRehashed)
+            .success,
+          true,
+        );
+        await assert.rejects(
+          verifyNodeProductRuntimeSourceV2ForTest(created.handle, {
+            ...generatorInput,
+            candidateReceipt: selfRehashed,
+            candidateSourceText: generated.sourceText,
+          }),
+          (error: unknown) =>
+            error instanceof NodeProductRuntimeSourceVerificationErrorV2
+            && error.code
+              === "NODE_RUNTIME_SOURCE_V2_VERIFICATION_AUTHORITY_MISMATCH",
+        );
+
+        const extraInput = await generateNodeProductRuntimeSourceV2ForTest(
+          created.handle,
+          { ...generatorInput, unexpected: true },
+        );
+        assert.equal(extraInput.status, "rejected");
+        assert.equal(extraInput.diagnostics[0]?.code,
+          "NODE_RUNTIME_SOURCE_V2_INPUT_INVALID");
+
+        const sibling = await stage({ profileId: CLI_PROFILE });
+        const siblingFileTree = await compileFileTreeManifestV3ForTest(
+          sibling.handle,
+          authorityInput,
+        );
+        assert.equal(siblingFileTree.status, "shadow_compiled");
+        if (siblingFileTree.status !== "shadow_compiled") {
+          throw new Error("Expected sibling runtime FileTreeV3");
+        }
+        await materializeNodeScaffoldDependenciesV2ForTest(sibling.handle);
+        const siblingTopology = await compileBuildTopologyV3ForTest(
+          sibling.handle,
+          { ...authorityInput, fileTree: siblingFileTree.value },
+        );
+        assert.equal(siblingTopology.status, "shadow_compiled");
+        if (siblingTopology.status !== "shadow_compiled") {
+          throw new Error("Expected sibling runtime BuildTopologyV3");
+        }
+        const siblingGenerated =
+          await generateNodeProductRuntimeSourceV2ForTest(sibling.handle, {
+            ...authorityInput,
+            realizationPlan: realizationPlan.value,
+            fileTree: siblingFileTree.value,
+            buildTopology: siblingTopology.value,
+          });
+        assert.equal(siblingGenerated.status, "shadow_generated");
+        if (siblingGenerated.status !== "shadow_generated") {
+          throw new Error("Expected sibling runtime source");
+        }
+        assert.notEqual(
+          siblingTopology.value.manifestHash,
+          buildTopology.value.manifestHash,
+        );
+        assert.equal(siblingGenerated.sourceText, generated.sourceText);
+        assert.equal(
+          siblingGenerated.receipt.logicalReceiptHash,
+          generated.receipt.logicalReceiptHash,
+        );
+        assert.notEqual(
+          siblingGenerated.receipt.receiptHash,
+          generated.receipt.receiptHash,
+        );
+      }
+    }
+
+    const opaqueSpec = genuineNodeCliProductSpecV2();
+    const opaqueCreated = await stage({ profileId: CLI_PROFILE });
+    const opaqueSelection = deliverySelectionForV2(opaqueSpec, "node-cli");
+    const rejectedOpaque = await generateNodeProductRuntimeSourceV2ForTest(
+      opaqueCreated.handle,
+      {
+        productSpec: opaqueSpec,
+        deliverySelection: opaqueSelection,
+        realizationPlan: {},
+        fileTree: {},
+        buildTopology: {},
+      },
+    );
+    assert.equal(rejectedOpaque.status, "rejected");
+    assert.equal(
+      rejectedOpaque.diagnostics[0]?.code,
+      "NODE_RUNTIME_SOURCE_V2_OPAQUE_BEHAVIOR_REJECTED",
+    );
+    assert.equal(rejectedOpaque.diagnostics[0]?.path,
+      "/productSpec/states/0/invariants");
   });
 
   it("transitions every legacy Node entrypoint slot to one generator-owned whole-file authority", async () => {
