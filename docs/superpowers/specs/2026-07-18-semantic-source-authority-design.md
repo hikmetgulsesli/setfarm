@@ -682,13 +682,21 @@ final F2A filesystem join. The host receipt now binds the provisioning receipt,
 physical root identity, exact Node bytes and the same normalized npm tree.
 Production host authority cannot exist without this join.
 
-F2 nevertheless remains production NO-GO. The publisher has only run against
-isolated process-owned test roots; no `/Library/Application Support/Setfarm`
-state was created or changed. A separately installed root-owned
-inspect/plan/apply/verify/rollback command, bounded rollback ownership, a real
-official-archive-to-production-root execution, and an OS-update transition are
-still absent. The process-owned private materialization remains evidence for
-that installer boundary, not permission for product-attempt code to provision.
+Commits `569767df`, `3cc8bb99`, and `dd2dc9de` now add the pathless operational
+authority core: canonical inspection, immutable apply/rollback plans, fresh
+precondition reproduction, apply/verify receipts, exact-generation rollback
+claim, private quarantine, restartable every-only deletion, durable
+content-addressed rollback tombstone, and canonical execution-start evidence.
+Receipt-link and destructive rollback crash tails converge only under their
+exact claim; old plans cannot remove a later physical generation.
+
+F2 nevertheless remains production NO-GO. The publisher and operational core
+have only run against isolated process-owned test roots; no `/Library/Application
+Support/Setfarm` state was created or changed. A separately installed root-owned
+bootstrap/CLI, a real official-archive-to-production-root apply/verify/rollback
+rehearsal, and an OS-update transition are still absent. The process-owned
+private materialization remains evidence for that installer boundary, not
+permission for product-attempt code to provision.
 
 The live host supports the design but is not production authority. Default PATH
 selects Node 26/npm 11. An alternate Homebrew Node 22.23.1/npm 10.9.8 exists,

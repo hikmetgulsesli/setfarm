@@ -81,9 +81,11 @@ rewrite the static catalog into an active receipt claim.
 
 ## F2 — Exact host Node/npm toolchain admission
 
-Status: F2A identity/consumer authority began in `e22f04be` and now requires
-the durable F2B2c provisioning join from `c090d816`. Production installation
-and its explicit operational command state machine remain blocking.
+Status: F2A identity/consumer authority began in `e22f04be`, requires the
+durable F2B2c provisioning join from `c090d816`, and now has the isolated
+inspect/plan/apply/verify/rollback authority core through `dd2dc9de`.
+Separately packaged root bootstrap/CLI, production installation, and a real
+official-tree production transition remain blocking.
 
 New versioned schemas:
 
@@ -152,8 +154,10 @@ can mutate the tree again.
 
 Status: F2B1 distribution verification, F2B2a archive inventory, F2B2b private
 materialization, and the F2B2c root publisher/durable receipt/F2A join are
-complete in shadow/test evidence. The explicit root-owned installer command,
-safe production apply/verify/rollback, and real production-root receipt remain
+complete in shadow/test evidence. The pathless operational command schemas and
+inspect/plan/apply/verify/rollback core are also complete against isolated
+process-owned roots. A separately installed root bootstrap/CLI, real official
+archive-to-production-root execution, and production-root receipt remain
 required before F2 is complete.
 
 The selected source is the official Node `22.23.1` Darwin distribution, not the
@@ -230,16 +234,30 @@ F2B1/B2a/B2b/B2c evidence completed on 2026-07-22:
   normalized npm tree/count/byte identity into `HostNodeToolchainReceiptV2`.
   A directory that merely exists or self-reports the right version cannot issue
   `production_host`;
+- commits `569767df` and `3cc8bb99` added strict, pathless provisioner
+  inspection/plan/operation artifacts plus fresh-precondition apply and verify.
+  `target_absent`, `ready_verified`, and exact interrupted-claim states are
+  derived from canonical filesystem evidence; a stale plan or substituted
+  private-tree source is rejected before publication;
+- commit `dd2dc9de` added generation-bound rollback claim and durable tombstone
+  artifacts. Rollback owns one exact plan, provisioning receipt, physical root
+  device/inode, normalized tree hash, and every claimed member. It publishes a
+  no-replace claim, atomically quarantines only that root, removes only exact
+  members, publishes the content-addressed tombstone, and removes the claim
+  last. Ten destructive crash boundaries, concurrent rollback, old-plan versus
+  later-generation, missing-member, foreign-quarantine, receipt-link recovery,
+  and self-rehashed evidence cases fail closed or converge exactly;
 - live read-only inspection corrected a false macOS assumption: the
   `/Library/Application Support` ancestor is root-owned mode `0755` but group
   `admin` (`gid=80`).
   The system ancestor therefore requires root ownership plus exact non-writable
   mode, while Setfarm-created directories remain exact `root:wheel`;
-- final focused private-tree/host/provisioning evidence is 27/27. Final Product
-  Compiler evidence is 965/965 across 120 suites with TypeScript, English
-  (1,050 files), path (578 files), diff and isolated scratch-residue checks
-  clean. No production toolchain root, live DB/PR/service, generated repository,
-  or Setfarm run was mutated.
+- final command/rollback-focused evidence is 22/22; the combined distribution,
+  inventory, private-tree, host, provisioning, and command chain is 56/56.
+  Final Product Compiler evidence is 979/979 across 121 suites with TypeScript,
+  English (1,052 files), path (580 files), diff and isolated scratch-residue
+  checks clean. No production toolchain root, live DB/PR/service, generated
+  repository, or Setfarm run was mutated.
 
 F2B dependency chain is:
 
@@ -249,17 +267,20 @@ F2B dependency chain is:
 2. **Complete:** `setfarm.node-toolchain-private-tree-receipt.v2`, binding the
    distribution receipt, safe every-member archive inventory, exact selected
    Node/npm closure, normalized modes and verified every-and-only private tree;
-3. **Complete authority core; operational command pending:**
+3. **Complete isolated authority and operational core:**
    `setfarm.node-toolchain-provisioning-receipt.v2`, real kernel serialization,
    claim-before-root, deterministic staged hard-link publication, receipt-last
    durability, bounded exact-claim recovery, owner/mode enforcement, durable
-   rehydration, and foreign-state refusal;
+   rehydration, foreign-state refusal, pathless inspect/plan/apply/verify, and
+   generation-bound rollback with a durable exact tombstone;
 4. **Complete:** the F2A join requires the exact provisioning receipt, physical
    final root, Node bytes, and normalized npm tree before `production_host`
    authority can be issued. Merely creating the fixed directory or making a
    binary self-report the expected version is invalid;
-5. **Pending:** idempotent inspect/plan/apply/verify/rollback operations. No installer action
-   will run automatically from a Setfarm product attempt.
+5. **Pending:** package the command behind a separately installed root-owned
+   bootstrap/CLI, execute the official tree through a real production-root
+   apply/verify/rollback rehearsal, and define the OS-update transition. No
+   installer action will run automatically from a Setfarm product attempt.
 
 F2 completion does not authorize `npm ci`; it only creates the exact toolchain
 precondition consumed by F3/F4. F2A alone is deliberately insufficient.
