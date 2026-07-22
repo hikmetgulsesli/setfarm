@@ -601,6 +601,62 @@ ownership and `.npmrc` absence. BuildTopologyV2 then binds build outputs and
 the F4 dependency receipt. Only after these joins may the corresponding static
 scaffold blockers be replaced by verified receipt refs.
 
+### F5A — Stable scaffold-base FileTreeManifestV2
+
+**Status (2026-07-22): complete as a shadow, production-forbidden authority.**
+The implementation and adversarial proof are sealed by commit `79adc8e8`.
+`setfarm.file-tree-manifest.v2` and its separately hashed code-owned contract
+fresh-reproduce ProductSpecV2, delivery selection, Node layout/path tokens,
+SemanticSourceIntentSetV1, SemanticSourcePathTokenSetV2 and scaffold resolution.
+The compiler additionally requires one authentic F4 base-ready handle and
+freshly revalidates the exact three-file private base before issuing a manifest.
+
+The manifest materializes every-and-only current repository path authority:
+
+- the three exact read-only scaffold config bytes;
+- the forbidden project `.npmrc` absence;
+- every unique semantic source path with exact intent, rule, subject, story,
+  owner and access bindings;
+- one generator-owned canonical entrypoint plan containing every external
+  semantic requirement; and
+- the profile's exact historical entrypoint rejection set.
+
+Exclusive semantic paths have one story owner and no grant. The only shared
+physical source class is a code-owned catalog aggregate: setup owns the file and
+every contributing story receives one exact write grant. A two-story API case
+proves sixteen semantic token intents become fifteen physical source paths,
+with both story owners retained on the shared runtime-data aggregate.
+
+FileTree is deliberately a logical artifact, not a private-attempt receipt.
+It projects F4's stable `semanticInputHash` and `baseStateHash`, config content
+hashes and path-specific absence hashes. Admission scope, environment receipt,
+inode/file physical identity, random private-root identity and base receipt hash
+are forbidden from manifest identity. Two independently materialized CLI bases
+with distinct environment/base receipts therefore produce byte-identical
+FileTree manifests. This prevents unchanged product/source authority from
+appearing as a new retry delta merely because a fresh private attempt exists.
+
+Build output, command execution, the dependency receipt, disposable raw
+`node_modules` build input and read-only dependency runtime capsule are not
+silently folded into FileTree. The contract delegates all five explicitly to
+BuildTopologyV2. Raw `node_modules` will require fresh verification before and
+after the private compiler command; the capsule excludes npm-generated `.bin`
+links and is reserved for a later candidate/runtime bundle receipt.
+
+The focused integration covers CLI, single-story API and two-story API;
+schema-valid self-rehash, ownership forgery, cross-scope use, accessor input,
+upstream rejection, base drift, recursive immutability and independent-attempt
+identity stability. Golden manifest hashes are respectively
+`687630f5caa489a64bd978891fe548e86ccc5e5e20a21cc912a3a1a9f5febbb2`,
+`3a69a3859bc9c5108b37dc84906dbe35eba962c9e5151bf419b187d9d9a06a10`
+and `79359b2225813271d06f3a8f34335ab37def435df793616fd73dba4acaa6b0dd`;
+contract hash is
+`c882764fc3790d7a7815c0ba802d0201d76e3ff874c878e0bf13f1b9d727756c`.
+Full Product Compiler is 1012/1012 across 124 suites. Production use remains
+forbidden by the exact six-code blocker set; no BuildTopologyV2, generated
+entrypoint source receipt, semantic declarations, packet or release activation
+is claimed by this slice.
+
 The old setup installer, ambient worktree `npm install`, legacy Node entrypoint
 rules and V1 BuildTopology remain compatibility observations. They are never
 promoted into this authority chain.
@@ -622,12 +678,13 @@ concurrency tests. A clean merged-`main` `npm run build` and full `npm test`
 remain release evidence; the feature-branch build guard is never bypassed.
 
 GO for F1, the complete isolated F2 authority through official-runtime packaged
-bootstrap rehearsal, the isolated F3 environment/config authority, and the
-complete isolated F4 scaffold/dependency authority. NO-GO for production host
-execution, setup cutover, PacketV4, live migration, deploy and new clean product
-runs until real-root verification, F5 and the later packet/evidence program are
-complete. F5 FileTreeV2/BuildTopologyV2/SourceMap sealing is the next
-dependency-order slice. The feature-branch `npm run build` guard correctly
+bootstrap rehearsal, the isolated F3 environment/config authority, the
+complete isolated F4 scaffold/dependency authority and F5A logical
+FileTreeManifestV2. NO-GO for production host execution, setup cutover,
+PacketV4, live migration, deploy and new clean product runs until BuildTopology,
+declarations, SourceMap and the later packet/evidence program are complete. F5B
+generated entrypoint authority and BuildTopologyV2 are the next dependency-order
+slices. The feature-branch `npm run build` guard correctly
 refused `b4bc3bd9`; the resulting source-v26 versus committed-dist-v25 mismatch
 also prevents `dist`-importing full step tests from being release evidence on
 this branch. Only a clean merged-main build and full test can close that release
