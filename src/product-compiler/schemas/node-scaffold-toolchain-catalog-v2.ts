@@ -765,7 +765,7 @@ const PlannedNpmrcFileV2Schema = z.object({
 
 const ExecutionEnvironmentIdentityV2Schema = z.object({
   schema: z.literal(NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_SCHEMA),
-  contractVersion: z.literal("2.1.0"),
+  contractVersion: z.literal("2.2.0"),
   environmentRef: z.literal(NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_REF_V2),
   mode: z.literal("planned_isolated_exact"),
   productionAuthority: z.literal("unverified_blocking"),
@@ -781,6 +781,7 @@ const ExecutionEnvironmentIdentityV2Schema = z.object({
     LC_ALL: z.literal("C.UTF-8"),
     NODE_DISABLE_COMPILE_CACHE: z.literal("1"),
     NO_COLOR: z.literal("1"),
+    NPM_CONFIG_ENGINE_STRICT: z.literal("true"),
     NPM_CONFIG_REGISTRY: z.literal("https://registry.npmjs.org"),
     NPM_CONFIG_LOGS_MAX: z.literal("0"),
     TZ: z.literal("UTC"),

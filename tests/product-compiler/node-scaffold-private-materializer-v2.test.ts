@@ -12,6 +12,7 @@ import {
   rename,
   rm,
   stat,
+  symlink,
   unlink,
   writeFile,
 } from "node:fs/promises";
@@ -42,6 +43,7 @@ import { IndexedArtifactPublisher } from
 import {
   createNodeScaffoldExecutionEnvironmentV2ForTest,
   destroyNodeScaffoldExecutionEnvironmentV2,
+  revalidateNodeScaffoldExecutionEnvironmentV2,
   type NodeScaffoldExecutionEnvironmentV2,
 } from "../../src/product-compiler/node-scaffold-execution-environment-v2.js";
 import {
@@ -50,20 +52,26 @@ import {
   destroyNodeScaffoldPrivateStageV2,
   getCodeOwnedPrivateStagedMaterializerAuthorityV2,
   inspectScaffoldBaseMaterializationReceiptV2,
+  inspectBuildDependencyMaterializationReceiptV2,
   isProductionNodeScaffoldPrivateStageV2,
   materializeNodeScaffoldPrivateStageV2,
   materializeNodeScaffoldPrivateStageV2ForTest,
+  materializeNodeScaffoldDependenciesV2,
+  materializeNodeScaffoldDependenciesV2ForTest,
+  revalidateNodeScaffoldDependenciesV2,
   revalidateNodeScaffoldPrivateStageV2,
   type NodeScaffoldPrivateMaterializerCrashBoundaryV2,
 } from "../../src/product-compiler/node-scaffold-private-materializer-v2.js";
 import {
   getCodeOwnedNodeScaffoldAssetPublicationV2,
+  getCodeOwnedNodeScaffoldToolchainEntryV2,
   verifyCodeOwnedNodeScaffoldAssetByteBundleV2,
   type NodeScaffoldAssetRoleV2,
   type NodeScaffoldProfileIdV2,
 } from "../../src/product-compiler/node-scaffold-toolchain-catalog-v2.js";
 import {
   PrivateStagedMaterializerAuthorityV2Schema,
+  BuildDependencyMaterializationReceiptV2Schema,
   ScaffoldBaseMaterializationReceiptV2Schema,
 } from "../../src/product-compiler/schemas/node-scaffold-private-materialization-v2.js";
 import {
@@ -97,12 +105,30 @@ type AssetSetV2 = Readonly<{
   typescriptCompilerConfig: VerifiedDeepByteBundleV2;
 }>;
 
+type InstallControlV2 = {
+  result?: HostNodeToolchainProbeResultV2;
+  afterInstall?: (projectRoot: string) => Promise<void> | void;
+};
+
+const installControls = new Map<NodeScaffoldProfileIdV2, InstallControlV2>();
+const installInvocations: HostNodeToolchainProbeInvocationV2[] = [];
+
 function exited(stdout: string, stderr = ""): HostNodeToolchainProbeResultV2 {
   return Object.freeze({
     status: "exited",
     exitCode: 0,
     signal: null,
     stdout,
+    stderr,
+  });
+}
+
+function nonzero(stderr: string): HostNodeToolchainProbeResultV2 {
+  return Object.freeze({
+    status: "exited",
+    exitCode: 1,
+    signal: null,
+    stdout: "",
     stderr,
   });
 }
@@ -116,6 +142,7 @@ Record<string, unknown> {
     cafile: null,
     cert: null,
     color: false,
+    "engine-strict": true,
     "foreground-scripts": false,
     fund: true,
     globalconfig: invocation.env.NPM_CONFIG_GLOBALCONFIG,
@@ -170,7 +197,65 @@ async function makeHostFixture(root: string): Promise<HostFixtureV2> {
   return { root, node, npmRoot, dynamicLibrary };
 }
 
-function hostAdapter(fixture: HostFixtureV2) {
+async function fakeNpmCiV2(
+  profileId: NodeScaffoldProfileIdV2,
+  projectRoot: string,
+): Promise<void> {
+  const entry = getCodeOwnedNodeScaffoldToolchainEntryV2(profileId)!;
+  const rootLock = JSON.parse(await readFile(path.join(projectRoot, "package-lock.json"), "utf8")) as {
+    name: string;
+    version: string;
+    packages: Record<string, Record<string, unknown>>;
+  };
+  const nodeModulesRoot = path.join(projectRoot, "node_modules");
+  await mkdir(nodeModulesRoot, { mode: 0o700 });
+  await chmod(nodeModulesRoot, 0o700);
+  const hiddenPackages: Record<string, Record<string, unknown>> = {};
+  for (const node of entry.dependencyGraph.nodes) {
+    const lockEntry = rootLock.packages[node.packagePath]!;
+    hiddenPackages[node.packagePath] = structuredClone(lockEntry);
+    const packageRoot = path.join(projectRoot, ...node.packagePath.split("/"));
+    await mkdir(packageRoot, { recursive: true, mode: 0o700 });
+    const packageJson = {
+      name: node.packageName,
+      version: node.version,
+      ...(lockEntry.bin === undefined ? {} : { bin: lockEntry.bin }),
+    };
+    await writeFile(path.join(packageRoot, "package.json"), `${JSON.stringify(packageJson)}\n`, {
+      mode: 0o600,
+    });
+    const rawBin = lockEntry.bin;
+    const commands: Array<readonly [string, string]> = typeof rawBin === "string"
+      ? [[node.packageName.split("/").at(-1)!, rawBin] as const]
+      : rawBin && typeof rawBin === "object"
+        ? Object.entries(rawBin).map(([command, target]) => [command, String(target)] as const)
+        : [];
+    const segments = node.packagePath.split("/");
+    const nodeModulesIndex = segments.lastIndexOf("node_modules");
+    const container = segments.slice(0, nodeModulesIndex + 1).join("/");
+    for (const [command, target] of commands) {
+      const targetPath = path.join(packageRoot, ...target.split("/"));
+      await mkdir(path.dirname(targetPath), { recursive: true, mode: 0o700 });
+      await writeFile(targetPath, "#!/usr/bin/env node\n", { mode: 0o700 });
+      await chmod(targetPath, 0o700);
+      const binDirectory = path.join(projectRoot, ...container.split("/"), ".bin");
+      await mkdir(binDirectory, { recursive: true, mode: 0o700 });
+      const linkPath = path.join(binDirectory, command);
+      const targetLocator = `${node.packagePath}/${target}`;
+      const linkLocator = `${container}/.bin/${command}`;
+      await symlink(path.posix.relative(path.posix.dirname(linkLocator), targetLocator), linkPath);
+    }
+  }
+  await writeFile(path.join(nodeModulesRoot, ".package-lock.json"), `${JSON.stringify({
+    name: rootLock.name,
+    version: rootLock.version,
+    lockfileVersion: 3,
+    requires: true,
+    packages: hiddenPackages,
+  })}\n`, { mode: 0o600 });
+}
+
+function hostAdapter(fixture: HostFixtureV2, profileId: NodeScaffoldProfileIdV2) {
   return async (invocation: HostNodeToolchainProbeInvocationV2):
   Promise<HostNodeToolchainProbeResultV2> => {
     if (invocation.probeRef === "HOST_NODE_RUNTIME_IDENTITY_PROBE_V2") {
@@ -184,6 +269,15 @@ function hostAdapter(fixture: HostFixtureV2) {
       })}\n`);
     }
     if (invocation.probeRef === "HOST_NPM_VERSION_PROBE_V2") return exited("10.9.8\n");
+    if (invocation.probeRef === "HOST_NPM_SCAFFOLD_INSTALL_V2") {
+      installInvocations.push(invocation);
+      const control = installControls.get(profileId);
+      if (control?.result) return control.result;
+      await fakeNpmCiV2(profileId, invocation.cwd);
+      await control?.afterInstall?.(invocation.cwd);
+      return exited(`\nadded ${getCodeOwnedNodeScaffoldToolchainEntryV2(profileId)!
+        .dependencyGraph.nodeCount} packages in 1s\n`);
+    }
     return exited(`${JSON.stringify(effectiveConfig(invocation), null, 2)}\n`);
   };
 }
@@ -267,12 +361,14 @@ describe("Node scaffold private staged materializer V2", () => {
           },
           nonSystemDynamicLibraryPaths: [hostFixture.dynamicLibrary],
         },
-        probeAdapter: hostAdapter(hostFixture),
+        probeAdapter: hostAdapter(hostFixture, profileId),
       }));
     }
   });
 
   afterEach(() => {
+    installControls.clear();
+    installInvocations.splice(0);
     for (const stage of activeStages.splice(0)) {
       try {
         destroyNodeScaffoldPrivateStageV2(stage);
@@ -355,7 +451,7 @@ describe("Node scaffold private staged materializer V2", () => {
       receipt.receiptHash,
     );
     const authority = getCodeOwnedPrivateStagedMaterializerAuthorityV2();
-    assert.equal(authority.activation, "scaffold_base_only_dependency_install_blocked");
+    assert.equal(authority.activation, "dependency_materialization_verified_file_tree_blocked");
     assert.equal(
       PrivateStagedMaterializerAuthorityV2Schema.parse(authority).authorityHash,
       receipt.materializerAuthority.authorityHash,
@@ -386,6 +482,195 @@ describe("Node scaffold private staged materializer V2", () => {
     destroyNodeScaffoldPrivateStageV2(created.handle);
     await assert.rejects(revalidateNodeScaffoldPrivateStageV2(created.handle), {
       code: "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DESTROYED",
+    });
+  });
+
+  it("materializes every-and-only locked dependency into a pathless read-only capsule", async () => {
+    for (const profileId of [CLI_PROFILE, API_PROFILE]) {
+      const created = await stage({ profileId });
+      const receipt = await materializeNodeScaffoldDependenciesV2ForTest(created.handle);
+      const entry = getCodeOwnedNodeScaffoldToolchainEntryV2(profileId)!;
+      assert.equal(receipt.status, "dependencies_materialized_verified");
+      assert.equal(receipt.admissionScope, "test_fixture");
+      assert.equal(receipt.lockGraph.graphHash, entry.dependencyGraph.graphHash);
+      assert.equal(receipt.lockGraph.expectedNodeCount, entry.dependencyGraph.nodeCount);
+      assert.equal(receipt.lockGraph.installedPackageCount, entry.dependencyGraph.nodeCount);
+      assert.equal(receipt.lockGraph.expectedEdgeCount, entry.dependencyGraph.edgeCount);
+      assert.equal(receipt.lockGraph.graphDisposition, "every_and_only_verified");
+      assert.equal(receipt.lifecycleAndEnginePolicy.engineStrict, true);
+      assert.match(receipt.installExecution.projectScopeHash, /^[a-f0-9]{64}$/u);
+      assert.equal(
+        receipt.lifecycleAndEnginePolicy.compatibilityDisposition,
+        "npm_engine_strict_exit_zero",
+      );
+      assert.equal(receipt.rawInstallTree.symbolicLinkCount, receipt.installedBins.count);
+      assert.equal(receipt.dependencyCapsule.profile, "dependencies");
+      assert.equal(receipt.dependencyCapsule.rootMode, "0555");
+      assert.equal(
+        receipt.dependencyCapsuleAuthority.metadataProbe,
+        "test_fixture_clear_probe",
+      );
+      assert.equal(receipt.dependencyCapsuleAuthority.metadataNormalization,
+        "test_fixture_none");
+      assert.equal(receipt.dependencyCapsuleAuthority.hostMetadataExclusion,
+        "test_fixture_none");
+      assert.equal(
+        receipt.dependencyCapsule.entries.some((candidate) =>
+          candidate.path === ".bin" || candidate.path.startsWith(".bin/")),
+        false,
+      );
+      assert.equal(
+        BuildDependencyMaterializationReceiptV2Schema.parse(receipt).receiptHash,
+        receipt.receiptHash,
+      );
+      assert.equal(
+        inspectBuildDependencyMaterializationReceiptV2(created.handle).receiptHash,
+        receipt.receiptHash,
+      );
+      assert.equal(
+        (await revalidateNodeScaffoldDependenciesV2(created.handle)).receiptHash,
+        receipt.receiptHash,
+      );
+      assert.doesNotMatch(
+        JSON.stringify(receipt),
+        /setfarm-f4-stage-v2|\/private\/|\/var\/folders|\/Users\//,
+      );
+      await assert.rejects(revalidateNodeScaffoldPrivateStageV2(created.handle), {
+        code: "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_INSTALL_ALREADY_CONSUMED",
+      });
+      await assert.rejects(materializeNodeScaffoldDependenciesV2ForTest(created.handle), {
+        code: "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_INSTALL_ALREADY_CONSUMED",
+      });
+      await assert.rejects(materializeNodeScaffoldDependenciesV2(created.handle), {
+        code: "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_PRODUCTION_AUTHORITY_REQUIRED",
+      });
+      const invocation = installInvocations.at(-1)!;
+      assert.deepEqual(invocation.argv.slice(1), [
+        "ci",
+        "--include=dev",
+        "--ignore-scripts",
+        "--no-audit",
+        "--no-fund",
+      ]);
+      assert.equal(invocation.shell, false);
+      assert.equal(invocation.timeoutMs, 120_000);
+      assert.equal(invocation.maxStdoutBytes, 65_536);
+      assert.equal(invocation.maxStderrBytes, 65_536);
+      assert.equal(invocation.env.NPM_CONFIG_ENGINE_STRICT, "true");
+      assert.equal(invocation.env.NODE_OPTIONS, undefined);
+    }
+  });
+
+  it("preclaims one install atomically and never reruns unchanged source", async () => {
+    const created = await stage();
+    const [first, second] = await Promise.allSettled([
+      materializeNodeScaffoldDependenciesV2ForTest(created.handle),
+      materializeNodeScaffoldDependenciesV2ForTest(created.handle),
+    ]);
+    const fulfilled = [first, second].filter((result) => result.status === "fulfilled");
+    const rejected = [first, second].filter((result) => result.status === "rejected");
+    assert.equal(fulfilled.length, 1);
+    assert.equal(rejected.length, 1);
+    assert.equal(
+      (rejected[0] as PromiseRejectedResult).reason.code,
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_INSTALL_ALREADY_CONSUMED",
+    );
+    assert.equal(installInvocations.length, 1);
+    assert.equal(inspectBuildDependencyMaterializationReceiptV2(created.handle).status,
+      "dependencies_materialized_verified");
+  });
+
+  it("consumes failed process attempts once and cleans only their authenticated stage", async () => {
+    const failures: HostNodeToolchainProbeResultV2[] = [
+      nonzero("npm ERR! engine mismatch\n"),
+      Object.freeze({ status: "timed_out", stdout: "", stderr: "" }),
+      Object.freeze({ status: "output_limit_exceeded", stdout: "x", stderr: "" }),
+      Object.freeze({ status: "spawn_failed", stdout: "", stderr: "spawn failed" }),
+      Object.freeze({
+        status: "exited",
+        exitCode: null,
+        signal: "SIGTERM",
+        stdout: "",
+        stderr: "",
+      }),
+    ];
+    for (const result of failures) {
+      const created = await stage();
+      const attemptRoot = await onlyAttemptRoot(created.stageParent);
+      installControls.set(CLI_PROFILE, { result });
+      await assert.rejects(materializeNodeScaffoldDependenciesV2ForTest(created.handle), {
+        code: "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_INSTALL_FAILED",
+      });
+      assert.equal(existsSync(attemptRoot), false);
+      await assert.rejects(revalidateNodeScaffoldExecutionEnvironmentV2(
+        created.environmentHandle,
+      ), {
+        code: "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_INSTALL_ALREADY_CONSUMED",
+      });
+      installControls.clear();
+    }
+  });
+
+  it("rejects unexpected bins, hidden-lock members and hard links after npm exits zero", async () => {
+    const mutations: Array<(projectRoot: string) => Promise<void>> = [
+      async (projectRoot) => {
+        const linkPath = path.join(projectRoot, "node_modules", ".bin", "tsc");
+        await unlink(linkPath);
+        await symlink("../undici-types/package.json", linkPath);
+      },
+      async (projectRoot) => {
+        const hiddenPath = path.join(projectRoot, "node_modules", ".package-lock.json");
+        const hidden = JSON.parse(await readFile(hiddenPath, "utf8")) as {
+          packages: Record<string, unknown>;
+        };
+        hidden.packages["node_modules/foreign"] = {
+          version: "1.0.0",
+          resolved: "https://registry.npmjs.org/foreign/-/foreign-1.0.0.tgz",
+          integrity: "sha512-foreign",
+        };
+        await writeFile(hiddenPath, `${JSON.stringify(hidden)}\n`);
+      },
+      async (projectRoot) => {
+        const packageJson = path.join(projectRoot, "node_modules", "typescript", "package.json");
+        await link(packageJson, `${packageJson}.alias`);
+      },
+    ];
+    for (const afterInstall of mutations) {
+      const created = await stage();
+      const attemptRoot = await onlyAttemptRoot(created.stageParent);
+      installControls.set(CLI_PROFILE, { afterInstall });
+      await assert.rejects(materializeNodeScaffoldDependenciesV2ForTest(created.handle), {
+        code: "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_GRAPH_INVALID",
+      });
+      assert.equal(existsSync(attemptRoot), false);
+      installControls.clear();
+    }
+  });
+
+  it("freshly detects raw-install and normalized-capsule drift", async () => {
+    const rawCreated = await stage();
+    await materializeNodeScaffoldDependenciesV2ForTest(rawCreated.handle);
+    const rawAttempt = await onlyAttemptRoot(rawCreated.stageParent);
+    await chmod(path.join(
+      rawAttempt,
+      "project",
+      "node_modules",
+      "typescript",
+      "package.json",
+    ), 0o666);
+    await assert.rejects(revalidateNodeScaffoldDependenciesV2(rawCreated.handle));
+
+    const capsuleCreated = await stage();
+    const capsuleReceipt = await materializeNodeScaffoldDependenciesV2ForTest(
+      capsuleCreated.handle,
+    );
+    const capsuleAttempt = await onlyAttemptRoot(capsuleCreated.stageParent);
+    const capsuleFile = capsuleReceipt.dependencyCapsule.entries.find((entry) =>
+      entry.type === "file");
+    assert.ok(capsuleFile);
+    await chmod(path.join(capsuleAttempt, "dependency-capsule", capsuleFile.path), 0o644);
+    await assert.rejects(revalidateNodeScaffoldDependenciesV2(capsuleCreated.handle), {
+      code: "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_STATE_DRIFT",
     });
   });
 

@@ -18,7 +18,7 @@ export const NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_RECEIPT_V2_SCHEMA =
   "setfarm.node-scaffold-execution-environment-receipt.v2" as const;
 export const NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_AUTHORITY_REF_V2 =
   "AUTH_NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2" as const;
-export const NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_VERSION_V2 = "2.0.0" as const;
+export const NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_VERSION_V2 = "2.1.0" as const;
 export const NODE_SCAFFOLD_PRIVATE_NPMRC_CONTENT_HASH_V2 =
   "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b" as const;
 
@@ -30,6 +30,7 @@ export const NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_VARIABLE_NAMES_V2 = Object.free
   "NODE_DISABLE_COMPILE_CACHE",
   "NO_COLOR",
   "NPM_CONFIG_CACHE",
+  "NPM_CONFIG_ENGINE_STRICT",
   "NPM_CONFIG_GLOBALCONFIG",
   "NPM_CONFIG_LOGS_MAX",
   "NPM_CONFIG_REGISTRY",
@@ -150,6 +151,7 @@ const EffectiveConfigV2Schema = z.object({
   privateKey: z.literal("absent"),
   strictSsl: z.literal(true),
   color: z.literal(false),
+  engineStrict: z.literal(true),
   lifecycle: z.object({
     baselineIgnoreScripts: z.literal(false),
     foregroundScripts: z.literal(false),
@@ -342,6 +344,7 @@ const ExecutionEnvironmentReceiptIdentityV2Schema = z.object({
       z.literal("NODE_DISABLE_COMPILE_CACHE"),
       z.literal("NO_COLOR"),
       z.literal("NPM_CONFIG_CACHE"),
+      z.literal("NPM_CONFIG_ENGINE_STRICT"),
       z.literal("NPM_CONFIG_GLOBALCONFIG"),
       z.literal("NPM_CONFIG_LOGS_MAX"),
       z.literal("NPM_CONFIG_REGISTRY"),

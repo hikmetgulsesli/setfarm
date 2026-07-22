@@ -27,7 +27,7 @@ export const BUILD_DEPENDENCY_MATERIALIZATION_RECEIPT_V2_SCHEMA =
   "setfarm.build-dependency-materialization-receipt.v2" as const;
 export const PRIVATE_STAGED_MATERIALIZER_AUTHORITY_REF_V2 =
   "AUTH_NODE_SCAFFOLD_PRIVATE_STAGED_MATERIALIZER_V2" as const;
-export const PRIVATE_STAGED_MATERIALIZER_VERSION_V2 = "2.0.0" as const;
+export const PRIVATE_STAGED_MATERIALIZER_VERSION_V2 = "2.1.0" as const;
 
 const AdmissionScopeV2Schema = z.enum(["production_host", "test_fixture"]);
 const ProfileIdV2Schema = z.enum([
@@ -74,7 +74,7 @@ const PrivateStagedMaterializerAuthorityIdentityV2Schema = z.object({
   schema: z.literal(PRIVATE_STAGED_MATERIALIZER_AUTHORITY_V2_SCHEMA),
   authorityVersion: z.literal(PRIVATE_STAGED_MATERIALIZER_VERSION_V2),
   authorityRef: z.literal(PRIVATE_STAGED_MATERIALIZER_AUTHORITY_REF_V2),
-  activation: z.literal("scaffold_base_only_dependency_install_blocked"),
+  activation: z.literal("dependency_materialization_verified_file_tree_blocked"),
   policy: z.object({
     rootFreshness: z.literal("exclusive_random_root_no_adoption_v2"),
     scaffoldWrite: z.literal("exclusive_descriptor_fsync_fresh_read_v2"),
@@ -358,6 +358,7 @@ const BuildDependencyMaterializationReceiptIdentityV2Schema = z.object({
     ]),
     directArgvHash: Sha256Schema,
     environmentHash: Sha256Schema,
+    projectScopeHash: Sha256Schema,
     shell: z.literal("forbidden"),
     timeoutMs: z.literal(120_000),
     maxStdoutBytes: z.literal(65_536),
@@ -383,11 +384,12 @@ const BuildDependencyMaterializationReceiptIdentityV2Schema = z.object({
   }).strict(),
   lifecycleAndEnginePolicy: z.object({
     lifecycleBarrier: z.literal("exact_npm_ci_ignore_scripts"),
-    observedLifecycleProcessCount: z.literal(0),
+    lifecycleExecutionAuthority: z.literal("npm_exact_ignore_scripts_argv_barrier_v2"),
     nativeLockMetadata: z.literal("absent"),
     engineStrict: z.literal(true),
     nodeVersion: z.literal("22.23.1"),
-    compatibilityDisposition: z.literal("every_installed_package_compatible"),
+    compatibilityDisposition: z.literal("npm_engine_strict_exit_zero"),
+    integrityAuthority: z.literal("npm_10_9_8_lock_integrity_enforcement"),
   }).strict(),
   installedBins: z.object({
     count: z.number().int().nonnegative().max(2_000),
@@ -402,6 +404,22 @@ const BuildDependencyMaterializationReceiptIdentityV2Schema = z.object({
     totalBytes: z.number().int().positive().max(2 * 1024 * 1024 * 1024),
     membershipHash: Sha256Schema,
     mutationPolicy: z.literal("private_disposable_install_output_v2"),
+  }).strict(),
+  dependencyCapsuleAuthority: z.object({
+    normalization: z.literal("exclusive_readonly_copy_without_generated_npm_links_v2"),
+    metadataNormalization: z.enum([
+      "code_owned_darwin_writable_copy_acl_xattr_clear_provenance_exclusion_readonly_seal_fsync_v2",
+      "test_fixture_none",
+    ]),
+    metadataProbe: z.enum([
+      "code_owned_darwin_acl_nonprovenance_xattr_probe_v2",
+      "test_fixture_clear_probe",
+    ]),
+    hostMetadataExclusion: z.enum([
+      "com.apple.provenance_only_not_in_canonical_tree_v2",
+      "test_fixture_none",
+    ]),
+    generatedNpmLinks: z.literal("verified_in_raw_tree_excluded_from_capsule"),
   }).strict(),
   dependencyCapsule: CanonicalRuntimeTreeV2Schema.superRefine((value, context) => {
     if (value.profile !== "dependencies") {
@@ -431,6 +449,7 @@ export function hashBuildDependencyIdentityV2(
     | "lifecycleAndEnginePolicy"
     | "installedBins"
     | "rawInstallTree"
+    | "dependencyCapsuleAuthority"
     | "dependencyCapsule"
   >,
 ): string {
@@ -482,6 +501,54 @@ export const BuildDependencyMaterializationReceiptV2Schema =
       });
     }
     if (
+      value.admissionScope === "production_host"
+      && value.dependencyCapsuleAuthority.metadataProbe
+        !== "code_owned_darwin_acl_nonprovenance_xattr_probe_v2"
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["dependencyCapsuleAuthority", "metadataProbe"],
+        message: "Production dependency capsules require the code-owned Darwin metadata probe",
+      });
+    }
+    if (
+      value.dependencyCapsuleAuthority.metadataProbe
+        === "code_owned_darwin_acl_nonprovenance_xattr_probe_v2"
+      && value.dependencyCapsuleAuthority.metadataNormalization
+        !== "code_owned_darwin_writable_copy_acl_xattr_clear_provenance_exclusion_readonly_seal_fsync_v2"
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["dependencyCapsuleAuthority", "metadataNormalization"],
+        message: "Darwin metadata probing requires the code-owned clear and fsync normalization",
+      });
+    }
+    if (
+      value.dependencyCapsuleAuthority.metadataProbe
+        === "code_owned_darwin_acl_nonprovenance_xattr_probe_v2"
+      && value.dependencyCapsuleAuthority.hostMetadataExclusion
+        !== "com.apple.provenance_only_not_in_canonical_tree_v2"
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["dependencyCapsuleAuthority", "hostMetadataExclusion"],
+        message: "Darwin metadata probing must disclose its only host metadata exclusion",
+      });
+    }
+    if (
+      value.dependencyCapsuleAuthority.metadataProbe === "test_fixture_clear_probe"
+      && (
+        value.dependencyCapsuleAuthority.metadataNormalization !== "test_fixture_none"
+        || value.dependencyCapsuleAuthority.hostMetadataExclusion !== "test_fixture_none"
+      )
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["dependencyCapsuleAuthority"],
+        message: "Test metadata probing cannot claim Darwin normalization or exclusions",
+      });
+    }
+    if (
       value.installedBins.count !== value.installedBins.entries.length
       || new Set(value.installedBins.entries.map((entry) => entry.linkLocator)).size
         !== value.installedBins.entries.length
@@ -505,6 +572,7 @@ export const BuildDependencyMaterializationReceiptV2Schema =
       lifecycleAndEnginePolicy: value.lifecycleAndEnginePolicy,
       installedBins: value.installedBins,
       rawInstallTree: value.rawInstallTree,
+      dependencyCapsuleAuthority: value.dependencyCapsuleAuthority,
       dependencyCapsule: value.dependencyCapsule,
     };
     if (value.dependencyIdentityHash !== hashBuildDependencyIdentityV2(dependencyIdentity)) {

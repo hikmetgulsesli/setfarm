@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import {
   chmodSync,
   closeSync,
@@ -11,6 +12,8 @@ import {
   mkdtempSync,
   openSync,
   readFileSync,
+  readSync,
+  readlinkSync,
   readdirSync,
   realpathSync,
   rmSync,
@@ -26,6 +29,17 @@ import {
 } from "./deep-byte-bundle-verifier-v2.js";
 import { hashCanonicalJson } from "./canonical-json.js";
 import {
+  captureCanonicalRuntimeTreeV2,
+  captureCanonicalRuntimeTreeV2ForTest,
+  verifyCanonicalRuntimeTreeV2,
+  type CanonicalRuntimeMetadataProbeV2,
+} from "../execution/canonical-runtime-tree-v2.js";
+import {
+  CANONICAL_RUNTIME_TREE_V2_PROFILES,
+  canonicalRuntimePathIssuesV2,
+  type CanonicalRuntimeTreeV2,
+} from "../execution/schemas/canonical-runtime-tree-v2.js";
+import {
   getCodeOwnedNodeScaffoldAssetPublicationV2,
   getCodeOwnedNodeScaffoldToolchainCatalogV2,
   getCodeOwnedNodeScaffoldToolchainEntryV2,
@@ -36,19 +50,26 @@ import {
   inspectNodeScaffoldExecutionEnvironmentReceiptV2,
   isProductionNodeScaffoldExecutionEnvironmentV2,
   revalidateNodeScaffoldExecutionEnvironmentV2,
+  executeNodeScaffoldEnvironmentNpmCiV2,
   type NodeScaffoldExecutionEnvironmentV2,
 } from "./node-scaffold-execution-environment-v2.js";
 import {
+  BUILD_DEPENDENCY_MATERIALIZATION_RECEIPT_V2_SCHEMA,
   PRIVATE_STAGED_MATERIALIZER_AUTHORITY_REF_V2,
   PRIVATE_STAGED_MATERIALIZER_AUTHORITY_V2_SCHEMA,
   PRIVATE_STAGED_MATERIALIZER_VERSION_V2,
   SCAFFOLD_BASE_MATERIALIZATION_RECEIPT_V2_SCHEMA,
+  BuildDependencyMaterializationReceiptV2Schema,
   PrivateStagedMaterializerAuthorityV2Schema,
   ScaffoldBaseMaterializationReceiptV2Schema,
+  hashBuildDependencyIdentityV2,
+  hashBuildDependencyMaterializationReceiptV2,
   hashPrivateStagedMaterializerAuthorityV2,
   hashScaffoldBaseMaterializationReceiptV2,
   hashScaffoldBaseSemanticInputV2,
   hashScaffoldBaseStateV2,
+  type BuildDependencyMaterializationReceiptHashPayloadV2,
+  type BuildDependencyMaterializationReceiptV2,
   type PrivateStagedMaterializerAuthorityV2,
   type ScaffoldBaseMaterializationReceiptHashPayloadV2,
   type ScaffoldBaseMaterializationReceiptV2,
@@ -56,6 +77,9 @@ import {
 import {
   NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_RECEIPT_V2_SCHEMA,
 } from "./schemas/node-scaffold-execution-environment-v2.js";
+import {
+  HOST_NODE_TOOLCHAIN_RECEIPT_V2_SCHEMA,
+} from "./schemas/host-node-toolchain-receipt-v2.js";
 import {
   NODE_SCAFFOLD_TOOLCHAIN_CATALOG_V2_SCHEMA,
   NODE_SCAFFOLD_TOOLCHAIN_ENTRY_V2_SCHEMA,
@@ -98,6 +122,10 @@ export type NodeScaffoldPrivateMaterializerErrorCodeV2 =
   | "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_RECEIPT_INVALID"
   | "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_HANDLE_UNAUTHENTICATED"
   | "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_STATE_DRIFT"
+  | "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_INSTALL_ALREADY_CONSUMED"
+  | "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_INSTALL_FAILED"
+  | "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_GRAPH_INVALID"
+  | "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_CAPSULE_INVALID"
   | "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DESTROYED";
 
 export class NodeScaffoldPrivateMaterializerErrorV2 extends Error {
@@ -156,7 +184,57 @@ type PrivateBaseCaptureV2 = Readonly<{
   privateIdentityHash: string;
 }>;
 
-type MutableLifecycleV2 = { status: "base_ready" | "destroyed" };
+type RawInstallEntryV2 = Readonly<{
+  locator: string;
+  type: "directory" | "file" | "symbolic_link";
+  mode: string;
+  rawHash?: string;
+  rawByteLength?: number;
+  linkTarget?: string;
+}>;
+
+type InstalledBinCaptureV2 = Readonly<{
+  commandName: string;
+  packagePath: string;
+  targetLocator: string;
+  linkLocator: string;
+  linkTargetHash: string;
+  targetContentHash: string;
+}>;
+
+type RawDependencyCaptureV2 = Readonly<{
+  fileCount: number;
+  directoryCount: number;
+  symbolicLinkCount: number;
+  totalBytes: number;
+  membershipHash: string;
+  hiddenLockRawHash: string;
+  hiddenLockGraphHash: string;
+  installedPackageMembershipHash: string;
+  installedBins: readonly InstalledBinCaptureV2[];
+  installedBinsMembershipHash: string;
+}>;
+
+type DependencyMaterializationCaptureV2 = Readonly<{
+  raw: RawDependencyCaptureV2;
+  capsule: CanonicalRuntimeTreeV2;
+  metadataProbe: CanonicalRuntimeMetadataProbeV2;
+  metadataAuthority:
+    | "code_owned_darwin_acl_nonprovenance_xattr_probe_v2"
+    | "test_fixture_clear_probe";
+}>;
+
+type MutableLifecycleV2 = {
+  status:
+    | "base_ready"
+    | "install_claimed"
+    | "installing"
+    | "install_consumed"
+    | "dependencies_ready"
+    | "destroyed";
+  dependencyReceipt?: BuildDependencyMaterializationReceiptV2;
+  dependencyCapture?: DependencyMaterializationCaptureV2;
+};
 
 type PrivateStageStateV2 = Readonly<{
   admissionScope: "production_host" | "test_fixture";
@@ -728,7 +806,7 @@ function codeOwnedMaterializerAuthorityV2(): PrivateStagedMaterializerAuthorityV
     schema: PRIVATE_STAGED_MATERIALIZER_AUTHORITY_V2_SCHEMA,
     authorityVersion: PRIVATE_STAGED_MATERIALIZER_VERSION_V2,
     authorityRef: PRIVATE_STAGED_MATERIALIZER_AUTHORITY_REF_V2,
-    activation: "scaffold_base_only_dependency_install_blocked" as const,
+    activation: "dependency_materialization_verified_file_tree_blocked" as const,
     policy: {
       rootFreshness: "exclusive_random_root_no_adoption_v2" as const,
       scaffoldWrite: "exclusive_descriptor_fsync_fresh_read_v2" as const,
@@ -878,6 +956,1267 @@ function buildBaseReceiptV2(input: Readonly<{
   return deepFreezeJson(parsed.data);
 }
 
+function modeTextV2(stat: Stats): string {
+  return modeBits(stat).toString(8).padStart(4, "0");
+}
+
+function parseBoundedJsonObjectV2(
+  bytes: Buffer,
+  label: string,
+): Readonly<Record<string, unknown>> {
+  if (bytes.byteLength < 2 || bytes.byteLength > 32 * 1024 * 1024) {
+    return fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_GRAPH_INVALID",
+      `${label} is outside its JSON byte bound`,
+    );
+  }
+  let parsed: unknown;
+  try {
+    const text = bytes.toString("utf8");
+    if (text.includes("\0") || text.startsWith("\ufeff")) throw new Error("non-canonical JSON text");
+    parsed = JSON.parse(text);
+  } catch (error) {
+    return fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_GRAPH_INVALID",
+      `${label} is not one JSON document`,
+      error,
+    );
+  }
+  if (!isPlainRecord(parsed)) {
+    return fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_GRAPH_INVALID",
+      `${label} must be one plain JSON object`,
+    );
+  }
+  return parsed;
+}
+
+function hashDependencyRegularFileV2(
+  absolutePath: string,
+  locator: string,
+): Readonly<{ rawHash: string; rawByteLength: number; mode: string }> {
+  const limits = CANONICAL_RUNTIME_TREE_V2_PROFILES.dependencies;
+  const owner = processOwnerV2();
+  let descriptor: number | undefined;
+  try {
+    descriptor = openSync(
+      absolutePath,
+      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+    );
+    const before = fstatSync(descriptor);
+    if (
+      !before.isFile()
+      || before.isSymbolicLink()
+      || before.nlink !== 1
+      || before.uid !== owner.uid
+      || before.gid !== owner.gid
+      || (modeBits(before) & 0o022) !== 0
+      || !Number.isSafeInteger(before.size)
+      || before.size < 0
+      || before.size > limits.maxFileBytes
+    ) {
+      return fail(
+        "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_GRAPH_INVALID",
+        `Installed file ${locator} has unsafe type, ownership, links, mode or size`,
+      );
+    }
+    const hash = createHash("sha256");
+    const buffer = Buffer.allocUnsafe(64 * 1024);
+    let rawByteLength = 0;
+    while (true) {
+      const count = readSync(descriptor, buffer, 0, buffer.byteLength, null);
+      if (count === 0) break;
+      rawByteLength += count;
+      hash.update(buffer.subarray(0, count));
+    }
+    const after = fstatSync(descriptor);
+    const pathAfter = lstatSync(absolutePath);
+    if (
+      rawByteLength !== after.size
+      || !sameFingerprint(fingerprint(before), fingerprint(after))
+      || !sameFingerprint(fingerprint(after), fingerprint(pathAfter))
+    ) {
+      return fail(
+        "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_GRAPH_INVALID",
+        `Installed file ${locator} changed while it was captured`,
+      );
+    }
+    return Object.freeze({
+      rawHash: hash.digest("hex"),
+      rawByteLength,
+      mode: modeTextV2(after),
+    });
+  } catch (error) {
+    if (error instanceof NodeScaffoldPrivateMaterializerErrorV2) throw error;
+    return fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_GRAPH_INVALID",
+      `Installed file ${locator} could not be captured without following links`,
+      error,
+    );
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
+  }
+}
+
+function readExactDependencyJsonBytesV2(input: Readonly<{
+  absolutePath: string;
+  label: string;
+  expectedRawHash?: string;
+}>): Buffer {
+  const owner = processOwnerV2();
+  let descriptor: number | undefined;
+  try {
+    descriptor = openSync(
+      input.absolutePath,
+      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+    );
+    const before = fstatSync(descriptor);
+    if (
+      !before.isFile()
+      || before.isSymbolicLink()
+      || before.nlink !== 1
+      || before.uid !== owner.uid
+      || before.gid !== owner.gid
+      || (modeBits(before) & 0o022) !== 0
+      || before.size < 2
+      || before.size > 32 * 1024 * 1024
+    ) {
+      return fail(
+        "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_GRAPH_INVALID",
+        `${input.label} is not one bounded regular file`,
+      );
+    }
+    const bytes = readFileSync(descriptor);
+    const after = fstatSync(descriptor);
+    const pathAfter = lstatSync(input.absolutePath);
+    if (
+      !sameFingerprint(fingerprint(before), fingerprint(after))
+      || !sameFingerprint(fingerprint(after), fingerprint(pathAfter))
+      || bytes.byteLength !== after.size
+      || (input.expectedRawHash !== undefined && sha256(bytes) !== input.expectedRawHash)
+    ) {
+      return fail(
+        "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_GRAPH_INVALID",
+        `${input.label} changed or differs from its admitted hash`,
+      );
+    }
+    return bytes;
+  } catch (error) {
+    if (error instanceof NodeScaffoldPrivateMaterializerErrorV2) throw error;
+    return fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_GRAPH_INVALID",
+      `${input.label} could not be read without following links`,
+      error,
+    );
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
+  }
+}
+
+function captureRawInstallEntriesV2(nodeModulesRoot: string): readonly RawInstallEntryV2[] {
+  const limits = CANONICAL_RUNTIME_TREE_V2_PROFILES.dependencies;
+  const owner = processOwnerV2();
+  const entries: RawInstallEntryV2[] = [];
+  const casefold = new Map<string, string>();
+  let fileCount = 0;
+  let directoryCount = 0;
+  let totalBytes = 0;
+  const visit = (absoluteDirectory: string, relativeDirectory: string): void => {
+    const before = lstatSync(absoluteDirectory);
+    const beforeNames = readdirSync(absoluteDirectory).sort();
+    if (
+      before.isSymbolicLink()
+      || !before.isDirectory()
+      || realpathSync(absoluteDirectory) !== absoluteDirectory
+      || before.uid !== owner.uid
+      || before.gid !== owner.gid
+      || (modeBits(before) & 0o022) !== 0
+    ) {
+      return fail(
+        "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_GRAPH_INVALID",
+        `Installed directory ${relativeDirectory || "node_modules"} is unsafe`,
+      );
+    }
+    for (const name of beforeNames) {
+      const locator = relativeDirectory ? `${relativeDirectory}/${name}` : name;
+      if (canonicalRuntimePathIssuesV2(locator, limits).length > 0) {
+        return fail(
+          "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_GRAPH_INVALID",
+          `Installed dependency locator ${locator} is not portable`,
+        );
+      }
+      const folded = locator.toLowerCase();
+      const prior = casefold.get(folded);
+      if (prior !== undefined && prior !== locator) {
+        return fail(
+          "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_GRAPH_INVALID",
+          `Installed dependency locators collide under case folding: ${prior} and ${locator}`,
+        );
+      }
+      casefold.set(folded, locator);
+      const absolutePath = path.join(absoluteDirectory, name);
+      const stat = lstatSync(absolutePath);
+      if (stat.isSymbolicLink()) {
+        if (stat.uid !== owner.uid || stat.gid !== owner.gid || stat.nlink !== 1) {
+          return fail(
+            "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_GRAPH_INVALID",
+            `Installed symbolic link ${locator} has unsafe ownership or link count`,
+          );
+        }
+        entries.push(Object.freeze({
+          locator,
+          type: "symbolic_link" as const,
+          mode: modeTextV2(stat),
+          linkTarget: readlinkSync(absolutePath),
+        }));
+        continue;
+      }
+      if (stat.isDirectory()) {
+        directoryCount += 1;
+        if (directoryCount > limits.maxDirectories) {
+          return fail(
+            "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_GRAPH_INVALID",
+            "Installed dependency directory count exceeded its fixed bound",
+          );
+        }
+        entries.push(Object.freeze({ locator, type: "directory" as const, mode: modeTextV2(stat) }));
+        visit(absolutePath, locator);
+        continue;
+      }
+      if (!stat.isFile()) {
+        return fail(
+          "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_GRAPH_INVALID",
+          `Installed dependency ${locator} is a forbidden special file`,
+        );
+      }
+      fileCount += 1;
+      if (fileCount > limits.maxFiles) {
+        return fail(
+          "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_GRAPH_INVALID",
+          "Installed dependency file count exceeded its fixed bound",
+        );
+      }
+      const captured = hashDependencyRegularFileV2(absolutePath, locator);
+      totalBytes += captured.rawByteLength;
+      if (totalBytes > limits.maxTotalBytes) {
+        return fail(
+          "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_GRAPH_INVALID",
+          "Installed dependency bytes exceeded their fixed bound",
+        );
+      }
+      entries.push(Object.freeze({
+        locator,
+        type: "file" as const,
+        mode: captured.mode,
+        rawHash: captured.rawHash,
+        rawByteLength: captured.rawByteLength,
+      }));
+    }
+    const after = lstatSync(absoluteDirectory);
+    const afterNames = readdirSync(absoluteDirectory).sort();
+    if (
+      !sameFingerprint(fingerprint(before), fingerprint(after))
+      || JSON.stringify(beforeNames) !== JSON.stringify(afterNames)
+    ) {
+      return fail(
+        "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_GRAPH_INVALID",
+        `Installed directory ${relativeDirectory || "node_modules"} changed during capture`,
+      );
+    }
+  };
+  visit(nodeModulesRoot, "");
+  return Object.freeze(entries.sort((left, right) =>
+    left.locator < right.locator ? -1 : left.locator > right.locator ? 1 : 0));
+}
+
+function exactStringKeysV2(record: Readonly<Record<string, unknown>>): readonly string[] {
+  return Object.freeze(Object.keys(record).sort());
+}
+
+function sameStringsV2(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+function defaultBinNameV2(packageName: string): string {
+  const slash = packageName.lastIndexOf("/");
+  return slash < 0 ? packageName : packageName.slice(slash + 1);
+}
+
+function deriveExpectedBinsV2(
+  lockPackages: Readonly<Record<string, unknown>>,
+  nodes: readonly Readonly<{
+    packagePath: string;
+    packageName: string;
+    version: string;
+    resolved: string;
+    integrity: string;
+  }>[],
+): readonly Readonly<InstalledBinCaptureV2 & { expectedLinkTarget: string }>[] {
+  const bins: Array<Readonly<InstalledBinCaptureV2 & { expectedLinkTarget: string }>> = [];
+  const linkLocators = new Set<string>();
+  for (const node of nodes) {
+    const lockEntry = lockPackages[node.packagePath];
+    if (!isPlainRecord(lockEntry)) {
+      return fail(
+        "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_GRAPH_INVALID",
+        `Lock package ${node.packagePath} is absent`,
+      );
+    }
+    const rawBin = lockEntry.bin;
+    let commands: Array<readonly [string, string]> = [];
+    if (typeof rawBin === "string") {
+      commands = [[defaultBinNameV2(node.packageName), rawBin] as const];
+    } else if (rawBin !== undefined) {
+      if (!isPlainRecord(rawBin)) {
+        return fail(
+          "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_GRAPH_INVALID",
+          `Lock package ${node.packagePath} has a malformed bin map`,
+        );
+      }
+      commands = Object.keys(rawBin).sort().map((command) => {
+        const target = rawBin[command];
+        if (!/^[A-Za-z0-9._+-]{1,214}$/u.test(command) || typeof target !== "string") {
+          return fail(
+            "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_GRAPH_INVALID",
+            `Lock package ${node.packagePath} has an unsafe bin entry`,
+          );
+        }
+        return [command, target] as const;
+      });
+    }
+    const segments = node.packagePath.split("/");
+    const nodeModulesIndex = segments.lastIndexOf("node_modules");
+    if (nodeModulesIndex < 0) {
+      return fail(
+        "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_GRAPH_INVALID",
+        `Lock package ${node.packagePath} is outside node_modules`,
+      );
+    }
+    const container = segments.slice(0, nodeModulesIndex + 1).join("/");
+    for (const [commandName, rawTarget] of commands) {
+      const normalizedTarget = path.posix.normalize(rawTarget);
+      if (
+        normalizedTarget !== rawTarget
+        || rawTarget.startsWith("/")
+        || rawTarget.includes("\\")
+        || rawTarget.split("/").some((segment) => segment === "" || segment === "." || segment === "..")
+      ) {
+        return fail(
+          "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_GRAPH_INVALID",
+          `Lock package ${node.packagePath} has a traversing bin target`,
+        );
+      }
+      const targetLocator = `${node.packagePath}/${rawTarget}`;
+      const linkLocator = `${container}/.bin/${commandName}`;
+      const expectedLinkTarget = path.posix.relative(path.posix.dirname(linkLocator), targetLocator);
+      if (
+        !/^[A-Za-z0-9._+-]{1,214}$/u.test(commandName)
+        || canonicalRuntimePathIssuesV2(
+          linkLocator,
+          CANONICAL_RUNTIME_TREE_V2_PROFILES.dependencies,
+        ).length > 0
+        || canonicalRuntimePathIssuesV2(
+          targetLocator,
+          CANONICAL_RUNTIME_TREE_V2_PROFILES.dependencies,
+        ).length > 0
+        || linkLocators.has(linkLocator)
+      ) {
+        return fail(
+          "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_GRAPH_INVALID",
+          `Lock bin ${linkLocator} is nonportable or collides`,
+        );
+      }
+      linkLocators.add(linkLocator);
+      bins.push(Object.freeze({
+        commandName,
+        packagePath: node.packagePath,
+        targetLocator,
+        linkLocator,
+        expectedLinkTarget,
+        linkTargetHash: "",
+        targetContentHash: "",
+      }));
+    }
+  }
+  return Object.freeze(bins.sort((left, right) =>
+    left.linkLocator < right.linkLocator ? -1 : left.linkLocator > right.linkLocator ? 1 : 0));
+}
+
+function validateEveryAndOnlyPackageRootsV2(
+  projectRoot: string,
+  rawEntries: readonly RawInstallEntryV2[],
+  packagePaths: readonly string[],
+): void {
+  const expectedContainers = new Map<string, string[]>();
+  for (const packagePath of packagePaths) {
+    const segments = packagePath.split("/");
+    const index = segments.lastIndexOf("node_modules");
+    const container = segments.slice(0, index + 1).join("/");
+    const localPackage = segments[index + 1]!.startsWith("@")
+      ? `${segments[index + 1]}/${segments[index + 2]}`
+      : segments[index + 1]!;
+    const members = expectedContainers.get(container) ?? [];
+    members.push(localPackage);
+    expectedContainers.set(container, members);
+  }
+  const actualContainers = new Set<string>(["node_modules"]);
+  for (const entry of rawEntries) {
+    if (entry.type === "directory" && entry.locator.endsWith("/node_modules")) {
+      actualContainers.add(`node_modules/${entry.locator}`);
+    }
+  }
+  if (!sameStringsV2([...actualContainers].sort(), [...expectedContainers.keys()].sort())) {
+    return fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_GRAPH_INVALID",
+      "Installed node_modules containers do not equal the lock graph containers",
+    );
+  }
+  for (const [container, packageMembers] of expectedContainers) {
+    const absoluteContainer = path.join(projectRoot, container);
+    const expectedTop = new Set(packageMembers.map((member) => member.split("/")[0]!));
+    const actualTop = readdirSync(absoluteContainer).filter((name) =>
+      name !== ".bin" && name !== ".package-lock.json").sort();
+    if (!sameStringsV2(actualTop, [...expectedTop].sort())) {
+      return fail(
+        "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_GRAPH_INVALID",
+        `Installed package roots in ${container} do not equal the lock graph`,
+      );
+    }
+    for (const scope of [...expectedTop].filter((name) => name.startsWith("@"))) {
+      const expectedScoped = packageMembers
+        .filter((member) => member.startsWith(`${scope}/`))
+        .map((member) => member.slice(scope.length + 1))
+        .sort();
+      const actualScoped = readdirSync(path.join(absoluteContainer, scope)).sort();
+      if (!sameStringsV2(actualScoped, expectedScoped)) {
+        return fail(
+          "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_GRAPH_INVALID",
+          `Installed scoped package roots in ${container}/${scope} do not equal the lock graph`,
+        );
+      }
+    }
+  }
+}
+
+function captureRawDependenciesV2(input: Readonly<{
+  projectRoot: string;
+  entry: NonNullable<ReturnType<typeof getCodeOwnedNodeScaffoldToolchainEntryV2>>;
+}>): RawDependencyCaptureV2 {
+  const nodeModulesRoot = path.join(input.projectRoot, "node_modules");
+  const rawEntries = captureRawInstallEntriesV2(nodeModulesRoot);
+  const graph = input.entry.dependencyGraph;
+  const rootLockBytes = readExactDependencyJsonBytesV2({
+    absolutePath: path.join(input.projectRoot, "package-lock.json"),
+    label: "Scaffold package-lock.json",
+    expectedRawHash: graph.lockRawHash,
+  });
+  const rootLock = parseBoundedJsonObjectV2(rootLockBytes, "Scaffold package-lock.json");
+  if (!isPlainRecord(rootLock.packages)) {
+    return fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_GRAPH_INVALID",
+      "Scaffold lock packages map is absent",
+    );
+  }
+  const lockPackages = rootLock.packages;
+  const expectedPackageKeys = ["", ...graph.nodes.map((node) => node.packagePath)].sort();
+  if (!sameStringsV2(exactStringKeysV2(lockPackages), expectedPackageKeys)) {
+    return fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_GRAPH_INVALID",
+      "Scaffold lock package membership no longer equals the code-owned graph",
+    );
+  }
+  validateEveryAndOnlyPackageRootsV2(
+    input.projectRoot,
+    rawEntries,
+    graph.nodes.map((node) => node.packagePath),
+  );
+
+  const hiddenLockEntry = rawEntries.find((entry) => entry.locator === ".package-lock.json");
+  if (!hiddenLockEntry || hiddenLockEntry.type !== "file") {
+    return fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_GRAPH_INVALID",
+      "npm hidden lock is absent from the raw install tree",
+    );
+  }
+  if (rawEntries.some((entry) =>
+    entry.locator !== ".package-lock.json" && entry.locator.endsWith("/.package-lock.json"))) {
+    return fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_GRAPH_INVALID",
+      "Unexpected nested npm hidden lock is present",
+    );
+  }
+  const hiddenLockBytes = readExactDependencyJsonBytesV2({
+    absolutePath: path.join(nodeModulesRoot, ".package-lock.json"),
+    label: "npm hidden package lock",
+    expectedRawHash: hiddenLockEntry.rawHash,
+  });
+  const hiddenLock = parseBoundedJsonObjectV2(hiddenLockBytes, "npm hidden package lock");
+  if (
+    !sameStringsV2(exactStringKeysV2(hiddenLock), [
+      "lockfileVersion",
+      "name",
+      "packages",
+      "requires",
+      "version",
+    ])
+    || hiddenLock.lockfileVersion !== 3
+    || hiddenLock.requires !== true
+    || hiddenLock.name !== rootLock.name
+    || hiddenLock.version !== rootLock.version
+    || !isPlainRecord(hiddenLock.packages)
+  ) {
+    return fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_GRAPH_INVALID",
+      "npm hidden lock root identity differs from the scaffold lock",
+    );
+  }
+  const hiddenPackages = hiddenLock.packages;
+  const expectedHiddenKeys = graph.nodes.map((node) => node.packagePath).sort();
+  if (!sameStringsV2(exactStringKeysV2(hiddenPackages), expectedHiddenKeys)) {
+    return fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_GRAPH_INVALID",
+      "npm hidden lock package membership does not equal the code-owned graph",
+    );
+  }
+  const installedPackages = graph.nodes.map((node) => {
+    const rootEntry = lockPackages[node.packagePath];
+    const hiddenEntry = hiddenPackages[node.packagePath];
+    if (
+      !isPlainRecord(rootEntry)
+      || !isPlainRecord(hiddenEntry)
+      || rootEntry.version !== node.version
+      || rootEntry.resolved !== node.resolved
+      || rootEntry.integrity !== node.integrity
+      || hiddenEntry.version !== node.version
+      || hiddenEntry.resolved !== node.resolved
+      || hiddenEntry.integrity !== node.integrity
+    ) {
+      return fail(
+        "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_GRAPH_INVALID",
+        `Installed lock identity differs for ${node.packagePath}`,
+      );
+    }
+    const packageJsonPath = path.join(input.projectRoot, node.packagePath, "package.json");
+    const packageJsonEntry = rawEntries.find((candidate) =>
+      candidate.locator === `${node.packagePath.slice("node_modules/".length)}/package.json`);
+    if (!packageJsonEntry || packageJsonEntry.type !== "file") {
+      return fail(
+        "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_GRAPH_INVALID",
+        `Installed package manifest is absent for ${node.packagePath}`,
+      );
+    }
+    const packageJsonBytes = readExactDependencyJsonBytesV2({
+      absolutePath: packageJsonPath,
+      label: `${node.packagePath}/package.json`,
+      expectedRawHash: packageJsonEntry.rawHash,
+    });
+    const packageJson = parseBoundedJsonObjectV2(packageJsonBytes, `${node.packagePath}/package.json`);
+    if (packageJson.name !== node.packageName || packageJson.version !== node.version) {
+      return fail(
+        "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_GRAPH_INVALID",
+        `Installed package identity differs for ${node.packagePath}`,
+      );
+    }
+    return Object.freeze({
+      packagePath: node.packagePath,
+      packageName: node.packageName,
+      version: node.version,
+      resolved: node.resolved,
+      integrity: node.integrity,
+      packageJsonRawHash: sha256(packageJsonBytes),
+    });
+  });
+  const expectedBins = deriveExpectedBinsV2(lockPackages, graph.nodes);
+  const expectedBinDirectories = [...new Set(expectedBins.map((candidate) =>
+    path.posix.dirname(candidate.linkLocator)))].sort();
+  const actualBinDirectories = rawEntries.filter((candidate) =>
+    candidate.type === "directory"
+    && (candidate.locator === ".bin" || candidate.locator.endsWith("/node_modules/.bin")))
+    .map((candidate) => `node_modules/${candidate.locator}`)
+    .sort();
+  if (!sameStringsV2(actualBinDirectories, expectedBinDirectories)) {
+    return fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_GRAPH_INVALID",
+      "Installed npm bin directories do not equal the lock-declared bin surfaces",
+    );
+  }
+  const actualLinks = rawEntries.filter((entry) => entry.type === "symbolic_link");
+  if (!sameStringsV2(
+    actualLinks.map((entry) => `node_modules/${entry.locator}`).sort(),
+    expectedBins.map((entry) => entry.linkLocator).sort(),
+  )) {
+    return fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_GRAPH_INVALID",
+      "Installed symbolic links do not equal the expected npm bin links",
+    );
+  }
+  const installedBins = expectedBins.map((expected) => {
+    const rawLinkLocator = expected.linkLocator.slice("node_modules/".length);
+    const rawTargetLocator = expected.targetLocator.slice("node_modules/".length);
+    const link = actualLinks.find((entry) => entry.locator === rawLinkLocator)!;
+    if (link.linkTarget !== expected.expectedLinkTarget) {
+      return fail(
+        "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_GRAPH_INVALID",
+        `Installed npm bin ${expected.linkLocator} targets an unexpected path`,
+      );
+    }
+    const target = rawEntries.find((entry) => entry.locator === rawTargetLocator);
+    if (
+      !target
+      || target.type !== "file"
+      || target.rawHash === undefined
+      || (Number.parseInt(target.mode, 8) & 0o111) === 0
+    ) {
+      return fail(
+        "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_GRAPH_INVALID",
+        `Installed npm bin target ${expected.targetLocator} is absent or non-executable`,
+      );
+    }
+    return Object.freeze({
+      commandName: expected.commandName,
+      packagePath: expected.packagePath,
+      targetLocator: expected.targetLocator,
+      linkLocator: expected.linkLocator,
+      linkTargetHash: sha256(link.linkTarget!),
+      targetContentHash: target.rawHash,
+    });
+  });
+  const files = rawEntries.filter((entry) => entry.type === "file");
+  const directories = rawEntries.filter((entry) => entry.type === "directory");
+  const symbolicLinks = rawEntries.filter((entry) => entry.type === "symbolic_link");
+  const totalBytes = files.reduce((sum, entry) => sum + entry.rawByteLength!, 0);
+  return Object.freeze({
+    fileCount: files.length,
+    directoryCount: directories.length,
+    symbolicLinkCount: symbolicLinks.length,
+    totalBytes,
+    membershipHash: hashCanonicalJson({
+      schema: "setfarm.raw-node-modules-membership.v2",
+      entries: rawEntries,
+    }),
+    hiddenLockRawHash: sha256(hiddenLockBytes),
+    hiddenLockGraphHash: hashCanonicalJson({
+      schema: "setfarm.npm-hidden-lock-graph.v2",
+      packages: graph.nodes.map((node) => ({
+        packagePath: node.packagePath,
+        version: node.version,
+        resolved: node.resolved,
+        integrity: node.integrity,
+      })),
+    }),
+    installedPackageMembershipHash: hashCanonicalJson({
+      schema: "setfarm.installed-package-membership.v2",
+      packages: installedPackages,
+    }),
+    installedBins: Object.freeze(installedBins),
+    installedBinsMembershipHash: hashCanonicalJson({
+      schema: "setfarm.installed-npm-bin-membership.v2",
+      bins: installedBins,
+    }),
+  });
+}
+
+function codeOwnedDarwinMetadataProbeV2(
+  input: Parameters<CanonicalRuntimeMetadataProbeV2>[0],
+): ReturnType<CanonicalRuntimeMetadataProbeV2> {
+  try {
+    const environment = Object.freeze({ LANG: "C", LC_ALL: "C", PATH: "/usr/bin:/bin" });
+    const xattrs = execFileSync("/usr/bin/xattr", [input.absolutePath], {
+      encoding: "utf8",
+      env: environment,
+      maxBuffer: 64 * 1024,
+      shell: false,
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 5_000,
+      windowsHide: true,
+    });
+    const acl = execFileSync("/bin/ls", ["-lde", input.absolutePath], {
+      encoding: "utf8",
+      env: environment,
+      maxBuffer: 64 * 1024,
+      shell: false,
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 5_000,
+      windowsHide: true,
+    });
+    const metadata: Array<"acl" | "xattr"> = [];
+    const xattrNames = xattrs.split("\n").map((name) => name.trim()).filter(Boolean);
+    if (xattrNames.some((name) => name !== "com.apple.provenance")) metadata.push("xattr");
+    if (acl.split("\n").slice(1).some((line) => /^\s*[0-9]+:\s/u.test(line))) {
+      metadata.push("acl");
+    }
+    return metadata.length === 0
+      ? Object.freeze({ status: "clear" as const })
+      : Object.freeze({ status: "present" as const, metadata: Object.freeze(metadata) });
+  } catch (error) {
+    return Object.freeze({
+      status: "unsupported" as const,
+      detail: `code-owned Darwin metadata probe failed for ${input.relativePath}: ${
+        error instanceof Error ? error.name : "unknown_error"
+      }`,
+    });
+  }
+}
+
+const clearTestMetadataProbeV2: CanonicalRuntimeMetadataProbeV2 = () =>
+  Object.freeze({ status: "clear" as const });
+
+function syncNormalizedTreeV2(absolutePath: string): void {
+  const stat = lstatSync(absolutePath);
+  if (stat.isSymbolicLink()) {
+    return fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_CAPSULE_INVALID",
+      "Metadata normalization encountered a forbidden symbolic link",
+    );
+  }
+  if (stat.isDirectory()) {
+    for (const name of readdirSync(absolutePath).sort()) {
+      syncNormalizedTreeV2(path.join(absolutePath, name));
+    }
+  } else if (!stat.isFile()) {
+    return fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_CAPSULE_INVALID",
+      "Metadata normalization encountered a forbidden special file",
+    );
+  }
+  let descriptor: number | undefined;
+  try {
+    descriptor = openSync(absolutePath, constants.O_RDONLY | constants.O_NOFOLLOW);
+    fsyncSync(descriptor);
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
+  }
+}
+
+function normalizeCodeOwnedDarwinMetadataV2(root: string): void {
+  const environment = Object.freeze({ LANG: "C", LC_ALL: "C", PATH: "/usr/bin:/bin" });
+  try {
+    execFileSync("/bin/chmod", ["-RN", root], {
+      encoding: "utf8",
+      env: environment,
+      maxBuffer: 64 * 1024,
+      shell: false,
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 30_000,
+      windowsHide: true,
+    });
+    execFileSync("/usr/bin/xattr", ["-cr", root], {
+      encoding: "utf8",
+      env: environment,
+      maxBuffer: 64 * 1024,
+      shell: false,
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 30_000,
+      windowsHide: true,
+    });
+  } catch (error) {
+    if (error instanceof NodeScaffoldPrivateMaterializerErrorV2) throw error;
+    return fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_CAPSULE_INVALID",
+      "Code-owned Darwin xattr and ACL normalization failed",
+    );
+  }
+}
+
+function normalizeDependencyCapsuleV2(input: Readonly<{
+  nodeModulesRoot: string;
+  capsuleRoot: string;
+  raw: RawDependencyCaptureV2;
+  metadataProbe: CanonicalRuntimeMetadataProbeV2;
+  metadataAuthority:
+    | "code_owned_darwin_acl_nonprovenance_xattr_probe_v2"
+    | "test_fixture_clear_probe";
+  admissionScope: "production_host" | "test_fixture";
+}>): CanonicalRuntimeTreeV2 {
+  const owner = processOwnerV2();
+  const rawEntries = captureRawInstallEntriesV2(input.nodeModulesRoot);
+  const reproducedRawHash = hashCanonicalJson({
+    schema: "setfarm.raw-node-modules-membership.v2",
+    entries: rawEntries,
+  });
+  if (reproducedRawHash !== input.raw.membershipHash) {
+    return fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_GRAPH_INVALID",
+      "Raw install tree changed before dependency capsule normalization",
+    );
+  }
+  const entries = new Map(rawEntries.map((entry) => [entry.locator, entry]));
+  const capsuleStat = lstatSync(input.capsuleRoot);
+  if (
+    capsuleStat.isSymbolicLink()
+    || !capsuleStat.isDirectory()
+    || realpathSync(input.capsuleRoot) !== input.capsuleRoot
+    || modeBits(capsuleStat) !== 0o700
+    || capsuleStat.uid !== owner.uid
+    || capsuleStat.gid !== owner.gid
+    || readdirSync(input.capsuleRoot).length !== 0
+  ) {
+    return fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_CAPSULE_INVALID",
+      "Dependency capsule root must be one fresh empty private directory",
+    );
+  }
+  const copyFile = (source: string, destination: string, locator: string): void => {
+    const expected = entries.get(locator);
+    if (!expected || expected.type !== "file") {
+      return fail(
+        "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_CAPSULE_INVALID",
+        `Dependency capsule source ${locator} lacks raw-tree authority`,
+      );
+    }
+    let sourceDescriptor: number | undefined;
+    let destinationDescriptor: number | undefined;
+    try {
+      sourceDescriptor = openSync(
+        source,
+        constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+      );
+      const before = fstatSync(sourceDescriptor);
+      destinationDescriptor = openSync(
+        destination,
+        constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW,
+        0o600,
+      );
+      const hash = createHash("sha256");
+      const buffer = Buffer.allocUnsafe(64 * 1024);
+      let total = 0;
+      while (true) {
+        const count = readSync(sourceDescriptor, buffer, 0, buffer.byteLength, null);
+        if (count === 0) break;
+        let offset = 0;
+        while (offset < count) {
+          const written = writeSync(
+            destinationDescriptor,
+            buffer,
+            offset,
+            count - offset,
+            null,
+          );
+          if (written < 1) {
+            return fail(
+              "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_CAPSULE_INVALID",
+              `Dependency capsule write ended early for ${locator}`,
+            );
+          }
+          offset += written;
+        }
+        total += count;
+        hash.update(buffer.subarray(0, count));
+      }
+      const after = fstatSync(sourceDescriptor);
+      const digest = hash.digest("hex");
+      if (
+        !sameFingerprint(fingerprint(before), fingerprint(after))
+        || total !== expected.rawByteLength
+        || digest !== expected.rawHash
+      ) {
+        return fail(
+          "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_CAPSULE_INVALID",
+          `Dependency capsule source ${locator} drifted during copy`,
+        );
+      }
+      fsyncSync(destinationDescriptor);
+      const destinationStat = fstatSync(destinationDescriptor);
+      if (
+        !destinationStat.isFile()
+        || destinationStat.nlink !== 1
+        || destinationStat.uid !== owner.uid
+        || destinationStat.gid !== owner.gid
+        || modeBits(destinationStat) !== 0o600
+        || destinationStat.size !== total
+      ) {
+        return fail(
+          "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_CAPSULE_INVALID",
+          `Dependency capsule destination metadata is invalid for ${locator}`,
+        );
+      }
+    } finally {
+      if (sourceDescriptor !== undefined) closeSync(sourceDescriptor);
+      if (destinationDescriptor !== undefined) closeSync(destinationDescriptor);
+    }
+  };
+  const copyDirectory = (
+    sourceDirectory: string,
+    targetDirectory: string,
+    relativeDirectory: string,
+  ): void => {
+    const names = readdirSync(sourceDirectory).sort();
+    for (const name of names) {
+      const locator = relativeDirectory ? `${relativeDirectory}/${name}` : name;
+      const inNodeModulesContainer = relativeDirectory === ""
+        || relativeDirectory.endsWith("/node_modules");
+      if (locator === ".package-lock.json" || (inNodeModulesContainer && name === ".bin")) {
+        continue;
+      }
+      const source = path.join(sourceDirectory, name);
+      const destination = path.join(targetDirectory, name);
+      const stat = lstatSync(source);
+      if (stat.isSymbolicLink()) {
+        return fail(
+          "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_CAPSULE_INVALID",
+          `Dependency capsule forbids symbolic link ${locator}`,
+        );
+      }
+      if (stat.isDirectory()) {
+        mkdirSync(destination, { mode: 0o700 });
+        chmodSync(destination, 0o700);
+        copyDirectory(source, destination, locator);
+        syncDirectoryV2(destination);
+      } else if (stat.isFile()) {
+        copyFile(source, destination, locator);
+      } else {
+        return fail(
+          "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_CAPSULE_INVALID",
+          `Dependency capsule forbids special file ${locator}`,
+        );
+      }
+    }
+  };
+  const sealDirectory = (
+    absoluteDirectory: string,
+    relativeDirectory: string,
+  ): void => {
+    for (const name of readdirSync(absoluteDirectory).sort()) {
+      const locator = relativeDirectory ? `${relativeDirectory}/${name}` : name;
+      const expected = entries.get(locator);
+      const absolutePath = path.join(absoluteDirectory, name);
+      const before = lstatSync(absolutePath);
+      if (before.isSymbolicLink() || expected === undefined) {
+        return fail(
+          "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_CAPSULE_INVALID",
+          `Dependency capsule seal encountered unauthorised member ${locator}`,
+        );
+      }
+      if (before.isDirectory()) {
+        if (expected.type !== "directory" || modeBits(before) !== 0o700) {
+          return fail(
+            "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_CAPSULE_INVALID",
+            `Dependency capsule directory ${locator} changed before its read-only seal`,
+          );
+        }
+        sealDirectory(absolutePath, locator);
+        chmodSync(absolutePath, 0o555);
+        syncDirectoryV2(absolutePath);
+        continue;
+      }
+      if (!before.isFile() || expected.type !== "file" || modeBits(before) !== 0o600) {
+        return fail(
+          "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_CAPSULE_INVALID",
+          `Dependency capsule file ${locator} changed before its read-only seal`,
+        );
+      }
+      let descriptor: number | undefined;
+      try {
+        descriptor = openSync(absolutePath, constants.O_RDONLY | constants.O_NOFOLLOW);
+        const opened = fstatSync(descriptor);
+        if (!sameFingerprint(fingerprint(before), fingerprint(opened))) {
+          return fail(
+            "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_CAPSULE_INVALID",
+            `Dependency capsule file ${locator} changed while its seal was acquired`,
+          );
+        }
+        const rawMode = Number.parseInt(expected.mode, 8);
+        if (!Number.isSafeInteger(rawMode)) {
+          return fail(
+            "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_CAPSULE_INVALID",
+            `Dependency capsule file ${locator} has an invalid admitted mode`,
+          );
+        }
+        const sealedMode = (rawMode & 0o111) === 0 ? 0o444 : 0o555;
+        fchmodSync(descriptor, sealedMode);
+        fsyncSync(descriptor);
+        const sealed = fstatSync(descriptor);
+        if (
+          opened.dev !== sealed.dev
+          || opened.ino !== sealed.ino
+          || opened.uid !== sealed.uid
+          || opened.gid !== sealed.gid
+          || opened.nlink !== sealed.nlink
+          || opened.size !== sealed.size
+          || opened.mtimeMs !== sealed.mtimeMs
+          || modeBits(sealed) !== sealedMode
+        ) {
+          return fail(
+            "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_CAPSULE_INVALID",
+            `Dependency capsule file ${locator} did not retain its authenticated read-only seal`,
+          );
+        }
+      } finally {
+        if (descriptor !== undefined) closeSync(descriptor);
+      }
+    }
+  };
+  try {
+    copyDirectory(input.nodeModulesRoot, input.capsuleRoot, "");
+    syncDirectoryV2(input.capsuleRoot);
+    if (input.metadataAuthority === "code_owned_darwin_acl_nonprovenance_xattr_probe_v2") {
+      normalizeCodeOwnedDarwinMetadataV2(input.capsuleRoot);
+    }
+    sealDirectory(input.capsuleRoot, "");
+    chmodSync(input.capsuleRoot, 0o555);
+    syncNormalizedTreeV2(input.capsuleRoot);
+    return input.admissionScope === "production_host"
+      ? captureCanonicalRuntimeTreeV2({
+          root: input.capsuleRoot,
+          profile: "dependencies",
+          metadataProbe: input.metadataProbe,
+        })
+      : captureCanonicalRuntimeTreeV2ForTest({
+          root: input.capsuleRoot,
+          profile: "dependencies",
+          metadataProbe: input.metadataProbe,
+        });
+  } catch (error) {
+    if (error instanceof NodeScaffoldPrivateMaterializerErrorV2) throw error;
+    return fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_CAPSULE_INVALID",
+      "Dependency capsule could not be normalized and captured",
+      error,
+    );
+  }
+}
+
+function captureScaffoldAssetsAfterInstallV2(state: PrivateStageStateV2): string {
+  const root = lstatSync(state.privateRoot);
+  const project = lstatSync(state.projectRoot);
+  const capsule = lstatSync(state.dependencyCapsuleRoot);
+  if (
+    root.isSymbolicLink()
+    || !root.isDirectory()
+    || realpathSync(state.privateRoot) !== state.privateRoot
+    || modeBits(root) !== 0o700
+    || root.dev !== state.baseCapture.rootFingerprint.device
+    || root.ino !== state.baseCapture.rootFingerprint.inode
+    || project.isSymbolicLink()
+    || !project.isDirectory()
+    || realpathSync(state.projectRoot) !== state.projectRoot
+    || modeBits(project) !== 0o700
+    || capsule.isSymbolicLink()
+    || !capsule.isDirectory()
+    || realpathSync(state.dependencyCapsuleRoot) !== state.dependencyCapsuleRoot
+    || modeBits(capsule) !== 0o555
+    || !sameStringsV2(readdirSync(state.privateRoot).sort(), [...ROOT_MEMBER_NAMES_V2])
+    || !sameStringsV2(readdirSync(state.projectRoot).sort(), [
+      "node_modules",
+      "package-lock.json",
+      "package.json",
+      "tsconfig.json",
+    ])
+  ) {
+    return fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_STATE_DRIFT",
+      "Private scaffold topology changed during dependency installation",
+    );
+  }
+  assertMissingPathV2(path.join(state.projectRoot, ".npmrc"), "Installed project .npmrc");
+  assertMissingPathV2(path.join(state.projectRoot, "src"), "Installed project source directory");
+  const assets = state.receipt.assets.map((asset) => Object.freeze({
+    role: asset.role,
+    normalizedLocator: asset.normalizedLocator,
+    bytes: Buffer.alloc(0),
+    rawHash: asset.rawHash,
+    rawByteLength: asset.rawByteLength,
+    verificationReceiptHash: asset.verificationReceiptHash,
+    consumerBindingHash: asset.consumerBindingHash,
+  })) as readonly CapturedAssetV2[];
+  const physical = assets.map((asset) => capturePhysicalAssetV2({
+    projectRoot: state.projectRoot,
+    asset,
+  }));
+  const membershipHash = hashCanonicalJson({
+    schema: "setfarm.scaffold-base-file-membership.v2",
+    files: assets.map((asset) => ({
+      role: asset.role,
+      normalizedLocator: asset.normalizedLocator,
+      mode: "0444",
+      rawHash: asset.rawHash,
+      rawByteLength: asset.rawByteLength,
+    })),
+  });
+  if (
+    membershipHash !== state.receipt.baseState.fileMembershipHash
+    || physical.some((file) => {
+      const expected = state.receipt.assets.find((asset) =>
+        asset.normalizedLocator === file.locator);
+      return expected?.physicalIdentityHash !== file.physicalIdentityHash;
+    })
+  ) {
+    return fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_STATE_DRIFT",
+      "Scaffold base bytes or physical identities changed during dependency installation",
+    );
+  }
+  return membershipHash;
+}
+
+function buildDependencyReceiptV2(input: Readonly<{
+  state: PrivateStageStateV2;
+  install: Awaited<ReturnType<typeof executeNodeScaffoldEnvironmentNpmCiV2>>;
+  raw: RawDependencyCaptureV2;
+  capsule: CanonicalRuntimeTreeV2;
+  metadataAuthority:
+    | "code_owned_darwin_acl_nonprovenance_xattr_probe_v2"
+    | "test_fixture_clear_probe";
+  endBaseFileMembershipHash: string;
+}>): BuildDependencyMaterializationReceiptV2 {
+  const catalog = getCodeOwnedNodeScaffoldToolchainCatalogV2();
+  const entry = getCodeOwnedNodeScaffoldToolchainEntryV2(input.state.profileId);
+  const environmentReceipt = inspectNodeScaffoldExecutionEnvironmentReceiptV2(
+    input.state.environment,
+  );
+  if (!entry) {
+    return fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_RECEIPT_INVALID",
+      "Dependency materialization profile lost its code-owned entry",
+    );
+  }
+  const identity: BuildDependencyMaterializationReceiptHashPayloadV2 = {
+    schema: BUILD_DEPENDENCY_MATERIALIZATION_RECEIPT_V2_SCHEMA,
+    receiptVersion: PRIVATE_STAGED_MATERIALIZER_VERSION_V2,
+    authorityRef: PRIVATE_STAGED_MATERIALIZER_AUTHORITY_REF_V2,
+    status: "dependencies_materialized_verified",
+    admissionScope: input.state.admissionScope,
+    productionUse: "forbidden_until_file_tree_and_build_topology_join",
+    materializerAuthority: codeOwnedMaterializerAuthorityV2(),
+    catalogBinding: input.state.receipt.catalogBinding,
+    environmentBinding: input.state.receipt.environmentBinding,
+    hostToolchain: {
+      receiptSchema: HOST_NODE_TOOLCHAIN_RECEIPT_V2_SCHEMA,
+      receiptHash: environmentReceipt.hostToolchain.receiptHash,
+      nodeIdentityHash: environmentReceipt.hostToolchain.nodeIdentityHash,
+      npmClosureHash: environmentReceipt.hostToolchain.npmClosureHash,
+      npmVersion: "10.9.8",
+    },
+    scaffoldBase: {
+      receiptSchema: SCAFFOLD_BASE_MATERIALIZATION_RECEIPT_V2_SCHEMA,
+      receiptHash: input.state.receipt.receiptHash,
+      semanticInputHash: input.state.receipt.semanticInputHash,
+      startBaseStateHash: input.state.receipt.baseStateHash,
+      endBaseFileMembershipHash: input.endBaseFileMembershipHash,
+      projectNpmrcState: "absent",
+    },
+    installExecution: {
+      commandRef: "CMD_NODE_SCAFFOLD_INSTALL_V2",
+      executableRef: "TOOL_NODE_NPM_CLI_V2",
+      directArgv: [...input.install.directArgv],
+      directArgvHash: input.install.directArgvHash,
+      environmentHash: input.install.environmentHash,
+      projectScopeHash: input.install.projectScopeHash,
+      shell: "forbidden",
+      timeoutMs: input.install.timeoutMs,
+      maxStdoutBytes: input.install.maxStdoutBytes,
+      maxStderrBytes: input.install.maxStderrBytes,
+      status: "exited_zero",
+      exitCode: input.install.exitCode,
+      signal: input.install.signal,
+      stdoutHash: input.install.stdoutHash,
+      stdoutBytes: input.install.stdoutBytes,
+      stderrHash: input.install.stderrHash,
+      stderrBytes: input.install.stderrBytes,
+    },
+    lockGraph: {
+      graphHash: entry.dependencyGraph.graphHash,
+      lockRawHash: entry.dependencyGraph.lockRawHash,
+      expectedNodeCount: entry.dependencyGraph.nodeCount,
+      installedPackageCount: entry.dependencyGraph.nodeCount,
+      expectedEdgeCount: entry.dependencyGraph.edgeCount,
+      installedPackageMembershipHash: input.raw.installedPackageMembershipHash,
+      hiddenLockRawHash: input.raw.hiddenLockRawHash,
+      hiddenLockGraphHash: input.raw.hiddenLockGraphHash,
+      graphDisposition: "every_and_only_verified",
+    },
+    lifecycleAndEnginePolicy: {
+      lifecycleBarrier: "exact_npm_ci_ignore_scripts",
+      lifecycleExecutionAuthority: "npm_exact_ignore_scripts_argv_barrier_v2",
+      nativeLockMetadata: "absent",
+      engineStrict: true,
+      nodeVersion: "22.23.1",
+      compatibilityDisposition: "npm_engine_strict_exit_zero",
+      integrityAuthority: "npm_10_9_8_lock_integrity_enforcement",
+    },
+    installedBins: {
+      count: input.raw.installedBins.length,
+      membershipHash: input.raw.installedBinsMembershipHash,
+      entries: input.raw.installedBins.map((entry) => ({ ...entry })),
+      disposition: "every_and_only_verified_npm_links",
+    },
+    rawInstallTree: {
+      fileCount: input.raw.fileCount,
+      directoryCount: input.raw.directoryCount,
+      symbolicLinkCount: input.raw.symbolicLinkCount,
+      totalBytes: input.raw.totalBytes,
+      membershipHash: input.raw.membershipHash,
+      mutationPolicy: "private_disposable_install_output_v2",
+    },
+    dependencyCapsuleAuthority: {
+      normalization: "exclusive_readonly_copy_without_generated_npm_links_v2",
+      metadataNormalization:
+        input.metadataAuthority === "code_owned_darwin_acl_nonprovenance_xattr_probe_v2"
+        ? "code_owned_darwin_writable_copy_acl_xattr_clear_provenance_exclusion_readonly_seal_fsync_v2"
+        : "test_fixture_none",
+      metadataProbe: input.metadataAuthority,
+      hostMetadataExclusion: input.metadataAuthority
+        === "code_owned_darwin_acl_nonprovenance_xattr_probe_v2"
+        ? "com.apple.provenance_only_not_in_canonical_tree_v2"
+        : "test_fixture_none",
+      generatedNpmLinks: "verified_in_raw_tree_excluded_from_capsule",
+    },
+    dependencyCapsule: input.capsule,
+    dependencyIdentityHash: "0".repeat(64),
+  };
+  identity.dependencyIdentityHash = hashBuildDependencyIdentityV2({
+    catalogBinding: identity.catalogBinding,
+    environmentBinding: identity.environmentBinding,
+    hostToolchain: identity.hostToolchain,
+    scaffoldBase: identity.scaffoldBase,
+    installExecution: identity.installExecution,
+    lockGraph: identity.lockGraph,
+    lifecycleAndEnginePolicy: identity.lifecycleAndEnginePolicy,
+    installedBins: identity.installedBins,
+    rawInstallTree: identity.rawInstallTree,
+    dependencyCapsuleAuthority: identity.dependencyCapsuleAuthority,
+    dependencyCapsule: identity.dependencyCapsule,
+  });
+  const parsed = BuildDependencyMaterializationReceiptV2Schema.safeParse({
+    ...identity,
+    receiptHash: hashBuildDependencyMaterializationReceiptV2(identity),
+  });
+  if (!parsed.success) {
+    return fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_RECEIPT_INVALID",
+      "Dependency materialization receipt failed its canonical schema",
+      parsed.error,
+    );
+  }
+  if (
+    catalog.catalogHash !== parsed.data.catalogBinding.catalogHash
+    || entry.entryHash !== parsed.data.catalogBinding.entryHash
+    || environmentReceipt.environment.environmentHash
+      !== parsed.data.installExecution.environmentHash
+    || environmentReceipt.effectiveNpmConfig.effectiveConfigHash
+      !== parsed.data.environmentBinding.effectiveConfigHash
+  ) {
+    return fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_RECEIPT_INVALID",
+      "Dependency materialization receipt lost a fresh catalog or environment join",
+    );
+  }
+  return deepFreezeJson(parsed.data);
+}
+
+function makeAttemptDirectoriesWritableV2(absoluteDirectory: string): void {
+  const stat = lstatSync(absoluteDirectory);
+  if (!stat.isDirectory() || stat.isSymbolicLink()) return;
+  chmodSync(absoluteDirectory, 0o700);
+  for (const name of readdirSync(absoluteDirectory)) {
+    const child = path.join(absoluteDirectory, name);
+    const childStat = lstatSync(child);
+    if (childStat.isDirectory() && !childStat.isSymbolicLink()) {
+      makeAttemptDirectoriesWritableV2(child);
+    }
+  }
+}
+
 function safeRemoveOwnedAttemptV2(
   privateRoot: string,
   expectedRoot: FingerprintV2,
@@ -894,6 +2233,7 @@ function safeRemoveOwnedAttemptV2(
       && current.gid === expectedRoot.ownerGid
       && modeBits(current) === 0o700
     ) {
+      makeAttemptDirectoriesWritableV2(privateRoot);
       rmSync(privateRoot, { recursive: true, force: false });
     }
   } catch (error) {
@@ -1142,6 +2482,12 @@ export async function revalidateNodeScaffoldPrivateStageV2(
   handle: MaterializedNodeScaffoldPrivateStageV2,
 ): Promise<ScaffoldBaseMaterializationReceiptV2> {
   const state = activeStageStateV2(handle);
+  if (state.lifecycle.status !== "base_ready") {
+    return fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_INSTALL_ALREADY_CONSUMED",
+      "Scaffold base revalidation is available only before its one-shot install",
+    );
+  }
   try {
     const environmentReceipt = await revalidateNodeScaffoldExecutionEnvironmentV2(
       state.environment,
@@ -1187,6 +2533,336 @@ export async function revalidateNodeScaffoldPrivateStageV2(
   }
 }
 
+export type NodeScaffoldPrivateInstallScopeInternalV2 = Readonly<{
+  admissionScope: "production_host" | "test_fixture";
+  profileId: NodeScaffoldProfileIdV2;
+  projectRoot: string;
+  scaffoldBaseReceiptHash: string;
+}>;
+
+/** @internal Authenticated bridge used only by the execution-environment boundary. */
+export function acquireNodeScaffoldPrivateInstallScopeInternalV2(
+  handle: MaterializedNodeScaffoldPrivateStageV2,
+  expectedEnvironmentReceiptHash: string,
+): NodeScaffoldPrivateInstallScopeInternalV2 {
+  const state = activeStageStateV2(handle);
+  if (state.lifecycle.status !== "install_claimed") {
+    return fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_INSTALL_ALREADY_CONSUMED",
+      "Private scaffold dependency installation lacks its single-use preclaim",
+    );
+  }
+  if (state.receipt.environmentBinding.receiptHash !== expectedEnvironmentReceiptHash) {
+    return fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_ENVIRONMENT_INVALID",
+      "Private scaffold and execution environment receipts do not join",
+    );
+  }
+  const assets = state.receipt.assets.map((asset) => Object.freeze({
+    role: asset.role,
+    normalizedLocator: asset.normalizedLocator,
+    bytes: Buffer.alloc(0),
+    rawHash: asset.rawHash,
+    rawByteLength: asset.rawByteLength,
+    verificationReceiptHash: asset.verificationReceiptHash,
+    consumerBindingHash: asset.consumerBindingHash,
+  })) as readonly CapturedAssetV2[];
+  const fresh = capturePrivateBaseV2({
+    privateRoot: state.privateRoot,
+    projectRoot: state.projectRoot,
+    dependencyCapsuleRoot: state.dependencyCapsuleRoot,
+    assets,
+  });
+  if (fresh.privateIdentityHash !== state.baseCapture.privateIdentityHash) {
+    return fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_STATE_DRIFT",
+      "Private scaffold base changed before dependency installation",
+    );
+  }
+  state.lifecycle.status = "installing";
+  return Object.freeze({
+    admissionScope: state.admissionScope,
+    profileId: state.profileId,
+    projectRoot: state.projectRoot,
+    scaffoldBaseReceiptHash: state.receipt.receiptHash,
+  });
+}
+
+/** @internal Consumes the one-shot stage lease on every process outcome. */
+export function settleNodeScaffoldPrivateInstallScopeInternalV2(
+  handle: MaterializedNodeScaffoldPrivateStageV2,
+  scaffoldBaseReceiptHash: string,
+): void {
+  const state = activeStageStateV2(handle);
+  if (
+    state.lifecycle.status !== "installing"
+    || state.receipt.receiptHash !== scaffoldBaseReceiptHash
+  ) {
+    return fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_STATE_DRIFT",
+      "Private scaffold install lease cannot be settled from this state",
+    );
+  }
+  state.lifecycle.status = "install_consumed";
+}
+
+async function materializeDependenciesV2(
+  handle: MaterializedNodeScaffoldPrivateStageV2,
+  admissionScope: "production_host" | "test_fixture",
+  metadataAuthority:
+    | "code_owned_darwin_acl_nonprovenance_xattr_probe_v2"
+    | "test_fixture_clear_probe",
+): Promise<BuildDependencyMaterializationReceiptV2> {
+  const state = activeStageStateV2(handle);
+  if (state.admissionScope !== admissionScope) {
+    return fail(
+      admissionScope === "production_host"
+        ? "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_PRODUCTION_AUTHORITY_REQUIRED"
+        : "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_INPUT_INVALID",
+      "Dependency materializer cannot promote, downgrade or cross execution scopes",
+    );
+  }
+  if (state.lifecycle.status !== "base_ready") {
+    return fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_INSTALL_ALREADY_CONSUMED",
+      "Dependency materialization is single-use for each private scaffold stage",
+    );
+  }
+  const entry = getCodeOwnedNodeScaffoldToolchainEntryV2(state.profileId);
+  if (!entry) {
+    return fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_RECEIPT_INVALID",
+      "Dependency materialization profile lost its code-owned entry",
+    );
+  }
+  state.lifecycle.status = "install_claimed";
+  try {
+    const install = await executeNodeScaffoldEnvironmentNpmCiV2(state.environment, handle);
+    if ((state.lifecycle as MutableLifecycleV2).status !== "install_consumed") {
+      return fail(
+        "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_STATE_DRIFT",
+        "Private scaffold install lease was not consumed after npm ci",
+      );
+    }
+    const raw = captureRawDependenciesV2({ projectRoot: state.projectRoot, entry });
+    const metadataProbe = metadataAuthority
+      === "code_owned_darwin_acl_nonprovenance_xattr_probe_v2"
+      ? codeOwnedDarwinMetadataProbeV2
+      : clearTestMetadataProbeV2;
+    const capsule = normalizeDependencyCapsuleV2({
+      nodeModulesRoot: path.join(state.projectRoot, "node_modules"),
+      capsuleRoot: state.dependencyCapsuleRoot,
+      raw,
+      metadataProbe,
+      metadataAuthority,
+      admissionScope,
+    });
+    const endBaseFileMembershipHash = captureScaffoldAssetsAfterInstallV2(state);
+    const receipt = buildDependencyReceiptV2({
+      state,
+      install,
+      raw,
+      capsule,
+      metadataAuthority,
+      endBaseFileMembershipHash,
+    });
+    state.lifecycle.dependencyReceipt = receipt;
+    state.lifecycle.dependencyCapture = Object.freeze({
+      raw,
+      capsule,
+      metadataProbe,
+      metadataAuthority,
+    });
+    state.lifecycle.status = "dependencies_ready";
+    return defensiveCopy(receipt);
+  } catch (error) {
+    let cleanupError: unknown;
+    try {
+      destroyNodeScaffoldPrivateStageV2(handle);
+    } catch (candidate) {
+      cleanupError = candidate;
+    }
+    if (cleanupError !== undefined) {
+      return fail(
+        "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_STATE_DRIFT",
+        "Failed dependency attempt could not clean only its authenticated private root",
+        { installError: error, cleanupError },
+      );
+    }
+    if (error instanceof NodeScaffoldPrivateMaterializerErrorV2) throw error;
+    return fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_INSTALL_FAILED",
+      "Authenticated dependency materialization failed and its private attempt was removed",
+      error,
+    );
+  }
+}
+
+export async function materializeNodeScaffoldDependenciesV2(
+  handle: MaterializedNodeScaffoldPrivateStageV2,
+): Promise<BuildDependencyMaterializationReceiptV2> {
+  let production: boolean;
+  try {
+    production = isProductionNodeScaffoldPrivateStageV2(handle);
+  } catch (error) {
+    return fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_HANDLE_UNAUTHENTICATED",
+      "Production dependency materialization requires one authentic private stage",
+      error,
+    );
+  }
+  if (!production) {
+    return fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_PRODUCTION_AUTHORITY_REQUIRED",
+      "Production dependency materialization requires a production_host private stage",
+    );
+  }
+  return materializeDependenciesV2(
+    handle,
+    "production_host",
+    "code_owned_darwin_acl_nonprovenance_xattr_probe_v2",
+  );
+}
+
+export async function materializeNodeScaffoldDependenciesV2ForTest(
+  handle: MaterializedNodeScaffoldPrivateStageV2,
+): Promise<BuildDependencyMaterializationReceiptV2> {
+  let production: boolean;
+  try {
+    production = isProductionNodeScaffoldPrivateStageV2(handle);
+  } catch (error) {
+    return fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_HANDLE_UNAUTHENTICATED",
+      "Test dependency materialization requires one authentic private stage",
+      error,
+    );
+  }
+  if (production) {
+    return fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_INPUT_INVALID",
+      "Test dependency materializer cannot consume production authority",
+    );
+  }
+  return materializeDependenciesV2(handle, "test_fixture", "test_fixture_clear_probe");
+}
+
+/**
+ * Uses official runtime bytes and real Darwin metadata probes while retaining
+ * test_fixture scope, so release rehearsal cannot promote a private test root.
+ */
+export async function materializeNodeScaffoldDependenciesV2ForOfficialRehearsal(
+  handle: MaterializedNodeScaffoldPrivateStageV2,
+): Promise<BuildDependencyMaterializationReceiptV2> {
+  let production: boolean;
+  try {
+    production = isProductionNodeScaffoldPrivateStageV2(handle);
+  } catch (error) {
+    return fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_HANDLE_UNAUTHENTICATED",
+      "Official dependency rehearsal requires one authentic private stage",
+      error,
+    );
+  }
+  if (production) {
+    return fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_INPUT_INVALID",
+      "Official test rehearsal cannot consume or downgrade production authority",
+    );
+  }
+  return materializeDependenciesV2(
+    handle,
+    "test_fixture",
+    "code_owned_darwin_acl_nonprovenance_xattr_probe_v2",
+  );
+}
+
+export function inspectBuildDependencyMaterializationReceiptV2(
+  handle: MaterializedNodeScaffoldPrivateStageV2,
+): BuildDependencyMaterializationReceiptV2 {
+  const state = activeStageStateV2(handle);
+  if (
+    state.lifecycle.status !== "dependencies_ready"
+    || !state.lifecycle.dependencyReceipt
+    || !state.lifecycle.dependencyCapture
+  ) {
+    return fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_INSTALL_ALREADY_CONSUMED",
+      "Verified dependency materialization is not available for this stage",
+    );
+  }
+  return defensiveCopy(state.lifecycle.dependencyReceipt);
+}
+
+export async function revalidateNodeScaffoldDependenciesV2(
+  handle: MaterializedNodeScaffoldPrivateStageV2,
+): Promise<BuildDependencyMaterializationReceiptV2> {
+  const state = activeStageStateV2(handle);
+  const receipt = state.lifecycle.dependencyReceipt;
+  const prior = state.lifecycle.dependencyCapture;
+  if (state.lifecycle.status !== "dependencies_ready" || !receipt || !prior) {
+    return fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_INSTALL_ALREADY_CONSUMED",
+      "Dependency revalidation requires one completed verified materialization",
+    );
+  }
+  try {
+    const entry = getCodeOwnedNodeScaffoldToolchainEntryV2(state.profileId);
+    if (!entry) {
+      return fail(
+        "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_STATE_DRIFT",
+        "Dependency profile no longer has code-owned authority",
+      );
+    }
+    const endMembership = captureScaffoldAssetsAfterInstallV2(state);
+    const raw = captureRawDependenciesV2({ projectRoot: state.projectRoot, entry });
+    if (
+      endMembership !== receipt.scaffoldBase.endBaseFileMembershipHash
+      || hashCanonicalJson(raw) !== hashCanonicalJson(prior.raw)
+    ) {
+      return fail(
+        "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_STATE_DRIFT",
+        "Raw dependencies or scaffold inputs changed after materialization",
+      );
+    }
+    const capsule = verifyCanonicalRuntimeTreeV2({
+      root: state.dependencyCapsuleRoot,
+      candidate: receipt.dependencyCapsule,
+      metadataProbe: prior.metadataProbe,
+    });
+    if (capsule.payloadHash !== prior.capsule.payloadHash) {
+      return fail(
+        "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_STATE_DRIFT",
+        "Dependency capsule no longer reproduces its issued identity",
+      );
+    }
+    const authority = codeOwnedMaterializerAuthorityV2();
+    const environment = inspectNodeScaffoldExecutionEnvironmentReceiptV2(state.environment);
+    if (
+      authority.authorityHash !== receipt.materializerAuthority.authorityHash
+      || environment.receiptHash !== receipt.environmentBinding.receiptHash
+      || prior.metadataAuthority !== receipt.dependencyCapsuleAuthority.metadataProbe
+      || getCodeOwnedNodeScaffoldToolchainCatalogV2().catalogHash
+        !== receipt.catalogBinding.catalogHash
+    ) {
+      return fail(
+        "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_STATE_DRIFT",
+        "Dependency receipt no longer joins current code-owned authorities",
+      );
+    }
+    return defensiveCopy(receipt);
+  } catch (error) {
+    if (
+      error instanceof NodeScaffoldPrivateMaterializerErrorV2
+      && error.code === "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_STATE_DRIFT"
+    ) throw error;
+    return fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_STATE_DRIFT",
+      "Dependency materialization could not be freshly reproduced",
+      error,
+    );
+  }
+}
+
 export function destroyNodeScaffoldPrivateStageV2(
   handle: MaterializedNodeScaffoldPrivateStageV2,
 ): void {
@@ -1209,6 +2885,7 @@ export function destroyNodeScaffoldPrivateStageV2(
         "Refusing to destroy a replaced private scaffold root",
       );
     }
+    makeAttemptDirectoriesWritableV2(state.privateRoot);
     rmSync(state.privateRoot, { recursive: true, force: false });
     assertMissingPathV2(state.privateRoot, "Destroyed private scaffold root");
     state.lifecycle.status = "destroyed";

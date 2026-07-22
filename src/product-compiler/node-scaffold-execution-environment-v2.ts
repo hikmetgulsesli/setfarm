@@ -23,12 +23,17 @@ import {
   HostNodeToolchainAuthorityErrorV2,
   inspectHostNodeToolchainReceiptV2,
   isProductionHostNodeToolchainAuthorityV2,
+  executeHostNodeToolchainNpmCiV2,
   probeHostNodeToolchainEffectiveNpmConfigV2,
   revalidateHostNodeToolchainAuthorityV2,
   type HostNodeToolchainAuthorityV2,
   type HostNodeToolchainEffectiveNpmConfigProbeEvidenceV2,
   type HostNodeToolchainEffectiveNpmConfigProbeInputV2,
+  type HostNodeToolchainNpmCiEvidenceV2,
 } from "./host-node-toolchain-authority-v2.js";
+import type {
+  MaterializedNodeScaffoldPrivateStageV2,
+} from "./node-scaffold-private-materializer-v2.js";
 import {
   getCodeOwnedNodeScaffoldToolchainCatalogV2,
   getCodeOwnedNodeScaffoldToolchainEntryV2,
@@ -84,6 +89,7 @@ export type NodeScaffoldExecutionEnvironmentErrorCodeV2 =
   | "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_RECEIPT_INVALID"
   | "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_HANDLE_UNAUTHENTICATED"
   | "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_STATE_DRIFT"
+  | "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_INSTALL_ALREADY_CONSUMED"
   | "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_DESTROYED";
 
 export class NodeScaffoldExecutionEnvironmentErrorV2 extends Error {
@@ -125,7 +131,9 @@ type PrivateMaterializationCaptureV2 = Readonly<{
   privateIdentityHash: string;
 }>;
 
-type MutableLifecycleV2 = { status: "active" | "destroyed" };
+type MutableLifecycleV2 = {
+  status: "active" | "installing" | "install_consumed" | "destroyed";
+};
 
 type PrivateEnvironmentStateV2 = Readonly<{
   admissionScope: "production_host" | "test_fixture";
@@ -510,6 +518,7 @@ function buildProbeInputV2(privateRoot: string): HostNodeToolchainEffectiveNpmCo
       NODE_DISABLE_COMPILE_CACHE: "1" as const,
       NO_COLOR: "1" as const,
       NPM_CONFIG_CACHE: path.join(privateRoot, "cache"),
+      NPM_CONFIG_ENGINE_STRICT: "true" as const,
       NPM_CONFIG_GLOBALCONFIG: path.join(privateRoot, "global.npmrc"),
       NPM_CONFIG_LOGS_MAX: "0" as const,
       NPM_CONFIG_REGISTRY: "https://registry.npmjs.org" as const,
@@ -597,6 +606,7 @@ function buildReceiptsV2(input: Readonly<{
     privateKey: "absent" as const,
     strictSsl: input.probeEvidence.effective.strictSsl,
     color: input.probeEvidence.effective.color,
+    engineStrict: input.probeEvidence.effective.engineStrict,
     lifecycle: {
       baselineIgnoreScripts: input.probeEvidence.effective.ignoreScripts,
       foregroundScripts: input.probeEvidence.effective.foregroundScripts,
@@ -1000,6 +1010,12 @@ function requireActiveStateV2(
 ): PrivateEnvironmentStateV2 {
   const state = authenticStateV2(handle);
   if (state.lifecycle.status !== "active") {
+    if (state.lifecycle.status !== "destroyed") {
+      return fail(
+        "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_INSTALL_ALREADY_CONSUMED",
+        "Execution environment npm install authority is single-use",
+      );
+    }
     return fail(
       "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_DESTROYED",
       "Execution environment authority has already been destroyed",
@@ -1068,6 +1084,76 @@ export async function revalidateNodeScaffoldExecutionEnvironmentV2(
       "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_STATE_DRIFT",
       "Execution environment authority could not be revalidated",
       error,
+    );
+  }
+}
+
+/**
+ * Joins one authenticated environment to one authenticated scaffold stage and
+ * consumes both install capabilities regardless of the process outcome.
+ */
+export async function executeNodeScaffoldEnvironmentNpmCiV2(
+  handle: NodeScaffoldExecutionEnvironmentV2,
+  stage: MaterializedNodeScaffoldPrivateStageV2,
+): Promise<HostNodeToolchainNpmCiEvidenceV2> {
+  const state = requireActiveStateV2(handle);
+  const environmentReceipt = await revalidateNodeScaffoldExecutionEnvironmentV2(handle);
+  const stageBridge = await import("./node-scaffold-private-materializer-v2.js");
+  let scope: ReturnType<
+    typeof stageBridge.acquireNodeScaffoldPrivateInstallScopeInternalV2
+  >;
+  try {
+    scope = stageBridge.acquireNodeScaffoldPrivateInstallScopeInternalV2(
+      stage,
+      environmentReceipt.receiptHash,
+    );
+  } catch (error) {
+    return fail(
+      "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_STATE_DRIFT",
+      "Execution environment could not acquire its authenticated scaffold install scope",
+      error,
+    );
+  }
+  if (
+    scope.admissionScope !== state.admissionScope
+    || scope.profileId !== state.profileId
+    || scope.scaffoldBaseReceiptHash !== stage.receiptHash
+  ) {
+    stageBridge.settleNodeScaffoldPrivateInstallScopeInternalV2(
+      stage,
+      scope.scaffoldBaseReceiptHash,
+    );
+    return fail(
+      "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_STATE_DRIFT",
+      "Execution environment and private scaffold scope or profile do not join",
+    );
+  }
+  state.lifecycle.status = "installing";
+  try {
+    const evidence = await executeHostNodeToolchainNpmCiV2(state.hostToolchain, {
+      privateRoot: state.privateRoot,
+      projectRoot: scope.projectRoot,
+      environment: state.probeInput.environment,
+    });
+    if (
+      evidence.hostToolchainReceiptHash !== environmentReceipt.hostToolchain.receiptHash
+      || evidence.environmentHash !== environmentReceipt.environment.environmentHash
+      || evidence.directArgvHash !== hashCanonicalJson({
+        schema: "setfarm.node-scaffold-install-direct-argv-hash.v2",
+        directArgv: evidence.directArgv,
+      })
+    ) {
+      return fail(
+        "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_STATE_DRIFT",
+        "npm ci execution evidence does not reproduce the admitted environment",
+      );
+    }
+    return evidence;
+  } finally {
+    state.lifecycle.status = "install_consumed";
+    stageBridge.settleNodeScaffoldPrivateInstallScopeInternalV2(
+      stage,
+      scope.scaffoldBaseReceiptHash,
     );
   }
 }

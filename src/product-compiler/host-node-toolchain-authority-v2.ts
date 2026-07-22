@@ -70,6 +70,8 @@ const NODE_PROBE_TIMEOUT_MS_V2 = 5_000 as const;
 const NODE_PROBE_MAX_STDOUT_BYTES_V2 = 4_096 as const;
 const NODE_PROBE_MAX_STDERR_BYTES_V2 = 4_096 as const;
 const EFFECTIVE_NPM_CONFIG_PROBE_MAX_STDOUT_BYTES_V2 = 32_768 as const;
+const NPM_SCAFFOLD_INSTALL_TIMEOUT_MS_V2 = 120_000 as const;
+const NPM_SCAFFOLD_INSTALL_MAX_OUTPUT_BYTES_V2 = 65_536 as const;
 const HOST_PACKAGE_MAX_FILE_BYTES_V2 = 64 * 1024 * 1024;
 const OTOOL_MAX_OUTPUT_BYTES_V2 = 512 * 1024;
 const OTOOL_TIMEOUT_MS_V2 = 5_000;
@@ -139,7 +141,13 @@ export type HostNodeToolchainAuthorityErrorCodeV2 =
   | "HOST_NODE_TOOLCHAIN_V2_PROVISIONING_AUTHORITY_INVALID"
   | "HOST_NODE_TOOLCHAIN_V2_HOST_DRIFT"
   | "HOST_NODE_TOOLCHAIN_V2_EXECUTION_ENVIRONMENT_INVALID"
-  | "HOST_NODE_TOOLCHAIN_V2_EFFECTIVE_NPM_CONFIG_INVALID";
+  | "HOST_NODE_TOOLCHAIN_V2_EFFECTIVE_NPM_CONFIG_INVALID"
+  | "HOST_NODE_TOOLCHAIN_V2_INSTALL_SCOPE_INVALID"
+  | "HOST_NODE_TOOLCHAIN_V2_INSTALL_TIMEOUT"
+  | "HOST_NODE_TOOLCHAIN_V2_INSTALL_OUTPUT_LIMIT"
+  | "HOST_NODE_TOOLCHAIN_V2_INSTALL_SPAWN_FAILED"
+  | "HOST_NODE_TOOLCHAIN_V2_INSTALL_SIGNALLED"
+  | "HOST_NODE_TOOLCHAIN_V2_INSTALL_NONZERO";
 
 export class HostNodeToolchainAuthorityErrorV2 extends Error {
   readonly code: HostNodeToolchainAuthorityErrorCodeV2;
@@ -160,7 +168,8 @@ export class HostNodeToolchainAuthorityErrorV2 extends Error {
 export type HostNodeToolchainProbeRefV2 =
   | "HOST_NODE_RUNTIME_IDENTITY_PROBE_V2"
   | "HOST_NPM_VERSION_PROBE_V2"
-  | "HOST_NPM_EFFECTIVE_CONFIG_PROBE_V2";
+  | "HOST_NPM_EFFECTIVE_CONFIG_PROBE_V2"
+  | "HOST_NPM_SCAFFOLD_INSTALL_V2";
 
 export type HostNodeToolchainProbeInvocationV2 = Readonly<{
   probeRef: HostNodeToolchainProbeRefV2;
@@ -169,11 +178,16 @@ export type HostNodeToolchainProbeInvocationV2 = Readonly<{
   cwd: string;
   env: Readonly<Record<string, string>>;
   shell: false;
-  timeoutMs: typeof NODE_PROBE_TIMEOUT_MS_V2;
+  timeoutMs:
+    | typeof NODE_PROBE_TIMEOUT_MS_V2
+    | typeof NPM_SCAFFOLD_INSTALL_TIMEOUT_MS_V2;
   maxStdoutBytes:
     | typeof NODE_PROBE_MAX_STDOUT_BYTES_V2
-    | typeof EFFECTIVE_NPM_CONFIG_PROBE_MAX_STDOUT_BYTES_V2;
-  maxStderrBytes: typeof NODE_PROBE_MAX_STDERR_BYTES_V2;
+    | typeof EFFECTIVE_NPM_CONFIG_PROBE_MAX_STDOUT_BYTES_V2
+    | typeof NPM_SCAFFOLD_INSTALL_MAX_OUTPUT_BYTES_V2;
+  maxStderrBytes:
+    | typeof NODE_PROBE_MAX_STDERR_BYTES_V2
+    | typeof NPM_SCAFFOLD_INSTALL_MAX_OUTPUT_BYTES_V2;
 }>;
 
 export type HostNodeToolchainProbeResultV2 =
@@ -198,6 +212,7 @@ export type HostNodeToolchainEffectiveNpmConfigProbeInputV2 = Readonly<{
     NODE_DISABLE_COMPILE_CACHE: "1";
     NO_COLOR: "1";
     NPM_CONFIG_CACHE: string;
+    NPM_CONFIG_ENGINE_STRICT: "true";
     NPM_CONFIG_GLOBALCONFIG: string;
     NPM_CONFIG_LOGS_MAX: "0";
     NPM_CONFIG_REGISTRY: "https://registry.npmjs.org";
@@ -232,6 +247,7 @@ export type HostNodeToolchainEffectiveNpmConfigProbeEvidenceV2 = Readonly<{
     privateKey: null;
     strictSsl: true;
     color: false;
+    engineStrict: true;
     ignoreScripts: false;
     foregroundScripts: false;
     scriptShell: null;
@@ -241,6 +257,37 @@ export type HostNodeToolchainEffectiveNpmConfigProbeEvidenceV2 = Readonly<{
     logsMax: 0;
   }>;
   discoveredCredentialConfigCount: 0;
+}>;
+
+export type HostNodeToolchainNpmCiInputV2 = Readonly<{
+  privateRoot: string;
+  projectRoot: string;
+  environment: HostNodeToolchainEffectiveNpmConfigProbeInputV2["environment"];
+}>;
+
+export type HostNodeToolchainNpmCiEvidenceV2 = Readonly<{
+  probeRef: "HOST_NPM_SCAFFOLD_INSTALL_V2";
+  hostToolchainReceiptHash: string;
+  environmentHash: string;
+  projectScopeHash: string;
+  directArgv: readonly [
+    "npm",
+    "ci",
+    "--include=dev",
+    "--ignore-scripts",
+    "--no-audit",
+    "--no-fund",
+  ];
+  directArgvHash: string;
+  timeoutMs: 120_000;
+  maxStdoutBytes: 65_536;
+  maxStderrBytes: 65_536;
+  exitCode: 0;
+  signal: null;
+  stdoutHash: string;
+  stdoutBytes: number;
+  stderrHash: string;
+  stderrBytes: number;
 }>;
 
 type HostNodeToolchainProbeAdapterV2 = (
@@ -2009,6 +2056,7 @@ const EFFECTIVE_NPM_CONFIG_ENVIRONMENT_KEYS_V2 = Object.freeze([
   "NODE_DISABLE_COMPILE_CACHE",
   "NO_COLOR",
   "NPM_CONFIG_CACHE",
+  "NPM_CONFIG_ENGINE_STRICT",
   "NPM_CONFIG_GLOBALCONFIG",
   "NPM_CONFIG_LOGS_MAX",
   "NPM_CONFIG_REGISTRY",
@@ -2079,6 +2127,7 @@ function captureEffectiveNpmConfigProbeScopeV2(
     || input.environment.LC_ALL !== "C.UTF-8"
     || input.environment.NODE_DISABLE_COMPILE_CACHE !== "1"
     || input.environment.NO_COLOR !== "1"
+    || input.environment.NPM_CONFIG_ENGINE_STRICT !== "true"
     || input.environment.NPM_CONFIG_LOGS_MAX !== "0"
     || input.environment.NPM_CONFIG_REGISTRY !== "https://registry.npmjs.org"
     || input.environment.TZ !== "UTC"
@@ -2320,6 +2369,7 @@ HostNodeToolchainEffectiveNpmConfigProbeEvidenceV2,
     || parsed.key !== null
     || parsed["strict-ssl"] !== true
     || parsed.color !== false
+    || parsed["engine-strict"] !== true
     || parsed["ignore-scripts"] !== false
     || parsed["foreground-scripts"] !== false
     || parsed["script-shell"] !== null
@@ -2356,6 +2406,7 @@ HostNodeToolchainEffectiveNpmConfigProbeEvidenceV2,
       privateKey: null,
       strictSsl: true as const,
       color: false as const,
+      engineStrict: true as const,
       ignoreScripts: false as const,
       foregroundScripts: false as const,
       scriptShell: null,
@@ -2439,6 +2490,211 @@ export async function probeHostNodeToolchainEffectiveNpmConfigV2(
     hostToolchainReceiptHash: hostBefore.receiptHash,
     environmentHash,
     ...parsed,
+  });
+}
+
+function captureNpmCiProjectScopeV2(projectRoot: string): string {
+  if (!path.isAbsolute(projectRoot) || path.basename(projectRoot) !== "project") {
+    return fail(
+      "HOST_NODE_TOOLCHAIN_V2_INSTALL_SCOPE_INVALID",
+      "npm ci requires one absolute private project root",
+    );
+  }
+  const owner = processOwnerV2();
+  try {
+    const root = lstatSync(projectRoot);
+    const parent = path.dirname(projectRoot);
+    const parentStat = lstatSync(parent);
+    const names = readdirSync(projectRoot).sort();
+    const parentNames = readdirSync(parent).sort();
+    if (
+      root.isSymbolicLink()
+      || !root.isDirectory()
+      || realpathSync(projectRoot) !== projectRoot
+      || modeBits(root) !== 0o700
+      || root.uid !== owner.uid
+      || root.gid !== owner.gid
+      || parentStat.isSymbolicLink()
+      || !parentStat.isDirectory()
+      || realpathSync(parent) !== parent
+      || modeBits(parentStat) !== 0o700
+      || parentStat.uid !== owner.uid
+      || parentStat.gid !== owner.gid
+      || canonicalJsonKeyList(parentNames) !== canonicalJsonKeyList(["dependency-capsule", "project"])
+      || canonicalJsonKeyList(names)
+        !== canonicalJsonKeyList(["package-lock.json", "package.json", "tsconfig.json"])
+    ) {
+      return fail(
+        "HOST_NODE_TOOLCHAIN_V2_INSTALL_SCOPE_INVALID",
+        "npm ci project scope is not one exact private scaffold base",
+      );
+    }
+    const files = names.map((name) => {
+      const absolutePath = path.join(projectRoot, name);
+      let descriptor: number | undefined;
+      try {
+        descriptor = openSync(
+          absolutePath,
+          constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+        );
+        const stat = fstatSync(descriptor);
+        const bytes = readFileSync(descriptor);
+        const after = fstatSync(descriptor);
+        const pathAfter = lstatSync(absolutePath);
+        if (
+          !stat.isFile()
+          || stat.isSymbolicLink()
+          || realpathSync(absolutePath) !== absolutePath
+          || stat.nlink !== 1
+          || modeBits(stat) !== 0o444
+          || stat.uid !== owner.uid
+          || stat.gid !== owner.gid
+          || !sameFingerprint(fingerprint(stat), fingerprint(after))
+          || !sameFingerprint(fingerprint(after), fingerprint(pathAfter))
+          || bytes.byteLength !== after.size
+        ) {
+          return fail(
+            "HOST_NODE_TOOLCHAIN_V2_INSTALL_SCOPE_INVALID",
+            `npm ci scaffold input ${name} is not one exact read-only file`,
+          );
+        }
+        return Object.freeze({ name, rawHash: sha256(bytes), rawByteLength: bytes.byteLength });
+      } finally {
+        if (descriptor !== undefined) closeSync(descriptor);
+      }
+    });
+    assertMissingPathV2(path.join(projectRoot, ".npmrc"), "Install project .npmrc");
+    assertMissingPathV2(path.join(projectRoot, "node_modules"), "Install project node_modules");
+    assertMissingPathV2(path.join(projectRoot, "src"), "Install project source directory");
+    return hashCanonicalJson({
+      schema: "setfarm.host-node-npm-ci-project-scope.v2",
+      root: fingerprint(root),
+      parent: fingerprint(parentStat),
+      files,
+    });
+  } catch (error) {
+    if (error instanceof HostNodeToolchainAuthorityErrorV2) throw error;
+    return fail(
+      "HOST_NODE_TOOLCHAIN_V2_INSTALL_SCOPE_INVALID",
+      "npm ci private project scope could not be captured",
+      error,
+    );
+  }
+}
+
+/**
+ * Executes the only admitted scaffold dependency install. Paths are consumed
+ * inside the authenticated host authority and are represented only by hashes
+ * in the returned evidence.
+ */
+export async function executeHostNodeToolchainNpmCiV2(
+  handle: HostNodeToolchainAuthorityV2,
+  input: HostNodeToolchainNpmCiInputV2,
+): Promise<HostNodeToolchainNpmCiEvidenceV2> {
+  const state = authenticState(handle);
+  if (
+    !isPlainRecord(input)
+    || !exactRecordKeys(input, ["environment", "privateRoot", "projectRoot"])
+    || typeof input.projectRoot !== "string"
+  ) {
+    return fail(
+      "HOST_NODE_TOOLCHAIN_V2_INSTALL_SCOPE_INVALID",
+      "npm ci input must contain one exact private environment and project scope",
+    );
+  }
+  const hostBefore = await revalidateHostNodeToolchainAuthorityV2(handle);
+  const environmentScope = captureEffectiveNpmConfigProbeScopeV2({
+    privateRoot: input.privateRoot,
+    environment: input.environment,
+  });
+  const projectScopeHash = captureNpmCiProjectScopeV2(input.projectRoot);
+  const environment = Object.freeze({
+    ...environmentScope.environment,
+    PATH: path.dirname(state.captured.root.nodePath),
+  });
+  const environmentHash = hashCanonicalJson({
+    schema: "setfarm.node-scaffold-private-execution-environment.v2",
+    variables: Object.entries(environment).sort(([left], [right]) =>
+      left < right ? -1 : left > right ? 1 : 0),
+  });
+  const directArgv = Object.freeze([
+    "npm",
+    "ci",
+    "--include=dev",
+    "--ignore-scripts",
+    "--no-audit",
+    "--no-fund",
+  ] as const);
+  const invocation: HostNodeToolchainProbeInvocationV2 = Object.freeze({
+    probeRef: "HOST_NPM_SCAFFOLD_INSTALL_V2",
+    executable: state.captured.root.nodePath,
+    argv: Object.freeze([state.captured.root.npmCliPath, ...directArgv.slice(1)]),
+    cwd: input.projectRoot,
+    env: environment,
+    shell: false,
+    timeoutMs: NPM_SCAFFOLD_INSTALL_TIMEOUT_MS_V2,
+    maxStdoutBytes: NPM_SCAFFOLD_INSTALL_MAX_OUTPUT_BYTES_V2,
+    maxStderrBytes: NPM_SCAFFOLD_INSTALL_MAX_OUTPUT_BYTES_V2,
+  });
+  let result: HostNodeToolchainProbeResultV2;
+  try {
+    result = await state.probeAdapter(invocation);
+  } catch (error) {
+    const hostAfterFailure = await revalidateHostNodeToolchainAuthorityV2(handle);
+    if (hostAfterFailure.receiptHash !== hostBefore.receiptHash) {
+      return fail(
+        "HOST_NODE_TOOLCHAIN_V2_HOST_DRIFT",
+        "Host Node/npm authority changed while npm ci failed to spawn",
+      );
+    }
+    return fail(
+      "HOST_NODE_TOOLCHAIN_V2_INSTALL_SPAWN_FAILED",
+      "Exact npm ci adapter failed",
+      error,
+    );
+  }
+  const hostAfter = await revalidateHostNodeToolchainAuthorityV2(handle);
+  if (hostAfter.receiptHash !== hostBefore.receiptHash) {
+    return fail("HOST_NODE_TOOLCHAIN_V2_HOST_DRIFT", "Host Node/npm authority changed during npm ci");
+  }
+  if (
+    Buffer.byteLength(result.stdout, "utf8") > NPM_SCAFFOLD_INSTALL_MAX_OUTPUT_BYTES_V2
+    || Buffer.byteLength(result.stderr, "utf8") > NPM_SCAFFOLD_INSTALL_MAX_OUTPUT_BYTES_V2
+    || result.status === "output_limit_exceeded"
+  ) {
+    return fail("HOST_NODE_TOOLCHAIN_V2_INSTALL_OUTPUT_LIMIT", "Exact npm ci exceeded its output bound");
+  }
+  if (result.status === "timed_out") {
+    return fail("HOST_NODE_TOOLCHAIN_V2_INSTALL_TIMEOUT", "Exact npm ci exceeded its timeout");
+  }
+  if (result.status === "spawn_failed") {
+    return fail("HOST_NODE_TOOLCHAIN_V2_INSTALL_SPAWN_FAILED", "Exact npm ci could not be spawned");
+  }
+  if (result.signal !== null) {
+    return fail("HOST_NODE_TOOLCHAIN_V2_INSTALL_SIGNALLED", "Exact npm ci terminated by signal");
+  }
+  if (result.exitCode !== 0) {
+    return fail("HOST_NODE_TOOLCHAIN_V2_INSTALL_NONZERO", "Exact npm ci exited nonzero");
+  }
+  return deepFreezeJson({
+    probeRef: "HOST_NPM_SCAFFOLD_INSTALL_V2" as const,
+    hostToolchainReceiptHash: hostBefore.receiptHash,
+    environmentHash,
+    projectScopeHash,
+    directArgv,
+    directArgvHash: hashCanonicalJson({
+      schema: "setfarm.node-scaffold-install-direct-argv-hash.v2",
+      directArgv,
+    }),
+    timeoutMs: NPM_SCAFFOLD_INSTALL_TIMEOUT_MS_V2,
+    maxStdoutBytes: NPM_SCAFFOLD_INSTALL_MAX_OUTPUT_BYTES_V2,
+    maxStderrBytes: NPM_SCAFFOLD_INSTALL_MAX_OUTPUT_BYTES_V2,
+    exitCode: 0 as const,
+    signal: null,
+    stdoutHash: sha256(result.stdout),
+    stdoutBytes: Buffer.byteLength(result.stdout, "utf8"),
+    stderrHash: sha256(result.stderr),
+    stderrBytes: Buffer.byteLength(result.stderr, "utf8"),
   });
 }
 

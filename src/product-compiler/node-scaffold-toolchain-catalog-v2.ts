@@ -166,7 +166,7 @@ function buildPlannedExecutionEnvironmentV2():
 NodeScaffoldExecutionEnvironmentV2 {
   const withoutHash: NodeScaffoldExecutionEnvironmentHashPayloadV2 = {
     schema: NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_SCHEMA,
-    contractVersion: "2.1.0",
+    contractVersion: "2.2.0",
     environmentRef: NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_REF_V2,
     mode: "planned_isolated_exact",
     productionAuthority: "unverified_blocking",
@@ -183,6 +183,7 @@ NodeScaffoldExecutionEnvironmentV2 {
       // receipts; mutable compile-cache and npm log files are forbidden.
       NODE_DISABLE_COMPILE_CACHE: "1",
       NO_COLOR: "1",
+      NPM_CONFIG_ENGINE_STRICT: "true",
       NPM_CONFIG_REGISTRY: "https://registry.npmjs.org",
       NPM_CONFIG_LOGS_MAX: "0",
       TZ: "UTC",
@@ -339,20 +340,20 @@ const EXPECTED_NODE_SCAFFOLD_TOOLCHAIN_IDENTITY_V2 = Object.freeze({
     Object.freeze({
       entryRef: NODE_SCAFFOLD_TOOLCHAIN_ENTRY_REFS_V2[0],
       entryHash:
-        "dcc662d7d80a7c4b0bac637cbe183af422e6be094233a8d8694ed7ce8e1b6236",
+        "394f08a458cfed9d8516d4d463d1b139c0cf2899d470b107b4247be2b534a050",
       graphHash:
         "9df929156d318356432f64478465b4d9db56e149322c0a409668cb1d94cd2e05",
     }),
     Object.freeze({
       entryRef: NODE_SCAFFOLD_TOOLCHAIN_ENTRY_REFS_V2[1],
       entryHash:
-        "a50c542dc95e8cf0efcbcef4d56999f0b64fe7656691ee87a7274474f46188b4",
+        "9982762efb8ac598af3acf08a4b1b22db188bae9d1fd20564b83fa36fe6c314a",
       graphHash:
         "0b252fa9eae81525771901bad0a279656164e4b03dceadde6b58186ee80c519f",
     }),
   ]),
   catalogHash:
-    "1a98cb77c5faa3eb0605b93a052ff7aa943c4bf784c6d152eb5a352505e25930",
+    "c3bea66eb67191aab2d3b489b53ce8bb63d4e40bceef71c50f771adce4e65c82",
 });
 
 function compareUtf16(left: string, right: string): number {

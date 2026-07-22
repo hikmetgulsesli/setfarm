@@ -115,6 +115,7 @@ function effectiveConfig(invocation: HostNodeToolchainProbeInvocationV2): Record
     cafile: null,
     cert: null,
     color: false,
+    "engine-strict": true,
     "foreground-scripts": false,
     fund: true,
     globalconfig: invocation.env.NPM_CONFIG_GLOBALCONFIG,
@@ -255,6 +256,7 @@ describe("NodeScaffoldExecutionEnvironmentV2", () => {
     assert.equal(configReceipt.effectiveConfig.registry, "https://registry.npmjs.org");
     assert.equal(configReceipt.effectiveConfig.proxy, "absent");
     assert.equal(configReceipt.effectiveConfig.ca, "absent");
+    assert.equal(configReceipt.effectiveConfig.engineStrict, true);
     assert.notEqual(
       receipt.privateMaterialization.userNpmrc.identityHash,
       receipt.privateMaterialization.globalNpmrc.identityHash,
@@ -370,6 +372,7 @@ describe("NodeScaffoldExecutionEnvironmentV2", () => {
       (config) => { config["//registry.npmjs.org/:_authToken"] = "secret"; },
       (config) => { config["//registry.npmjs.org/:_authToken"] = null; },
       (config) => { config["ignore-scripts"] = true; },
+      (config) => { config["engine-strict"] = false; },
       (config) => { config["script-shell"] = "/tmp/attacker-shell"; },
       (config) => { config["logs-max"] = 10; },
     ];
