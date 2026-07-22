@@ -166,7 +166,7 @@ function buildPlannedExecutionEnvironmentV2():
 NodeScaffoldExecutionEnvironmentV2 {
   const withoutHash: NodeScaffoldExecutionEnvironmentHashPayloadV2 = {
     schema: NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_SCHEMA,
-    contractVersion: "2.0.0",
+    contractVersion: "2.1.0",
     environmentRef: NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_REF_V2,
     mode: "planned_isolated_exact",
     productionAuthority: "unverified_blocking",
@@ -179,8 +179,12 @@ NodeScaffoldExecutionEnvironmentV2 {
       CI: "true",
       LANG: "C.UTF-8",
       LC_ALL: "C.UTF-8",
+      // Node/npm process diagnostics are captured by canonical command
+      // receipts; mutable compile-cache and npm log files are forbidden.
+      NODE_DISABLE_COMPILE_CACHE: "1",
       NO_COLOR: "1",
       NPM_CONFIG_REGISTRY: "https://registry.npmjs.org",
+      NPM_CONFIG_LOGS_MAX: "0",
       TZ: "UTC",
     },
     attemptScopedVariableBindings: {
@@ -335,20 +339,20 @@ const EXPECTED_NODE_SCAFFOLD_TOOLCHAIN_IDENTITY_V2 = Object.freeze({
     Object.freeze({
       entryRef: NODE_SCAFFOLD_TOOLCHAIN_ENTRY_REFS_V2[0],
       entryHash:
-        "f6c29d4b61eb8864f2216d53a3a3b558daaacb9e5fe477128c9275de0550f5dd",
+        "dcc662d7d80a7c4b0bac637cbe183af422e6be094233a8d8694ed7ce8e1b6236",
       graphHash:
         "9df929156d318356432f64478465b4d9db56e149322c0a409668cb1d94cd2e05",
     }),
     Object.freeze({
       entryRef: NODE_SCAFFOLD_TOOLCHAIN_ENTRY_REFS_V2[1],
       entryHash:
-        "ef0c3f4254df6a81f5063a177bb70e56394ad963096fbd15e20060e35a49404e",
+        "a50c542dc95e8cf0efcbcef4d56999f0b64fe7656691ee87a7274474f46188b4",
       graphHash:
         "0b252fa9eae81525771901bad0a279656164e4b03dceadde6b58186ee80c519f",
     }),
   ]),
   catalogHash:
-    "266b98153b9f8caefac304e8ac0304e3c5c12b5ba10269f81ed3c178513759c2",
+    "1a98cb77c5faa3eb0605b93a052ff7aa943c4bf784c6d152eb5a352505e25930",
 });
 
 function compareUtf16(left: string, right: string): number {
@@ -941,7 +945,8 @@ NodeScaffoldToolchainCatalogV2 {
     !== canonicalJsonStringify(EXPECTED_NODE_SCAFFOLD_TOOLCHAIN_IDENTITY_V2)
   ) {
     throw new NodeScaffoldToolchainCodeAuthorityErrorV2(
-      "NodeScaffoldToolchainCatalogV2 identity changed without an intentional version/hash transition",
+      "NodeScaffoldToolchainCatalogV2 identity changed without an intentional version/hash transition: "
+        + canonicalJsonStringify(identity),
     );
   }
   return deepFreezeJson(parsed.data);

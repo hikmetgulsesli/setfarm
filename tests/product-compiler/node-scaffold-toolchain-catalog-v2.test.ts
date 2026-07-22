@@ -45,11 +45,11 @@ import {
 } from "./fixtures/no-design-product-semantics-v2.js";
 
 const CATALOG_HASH_GOLDEN_V2 =
-  "266b98153b9f8caefac304e8ac0304e3c5c12b5ba10269f81ed3c178513759c2";
+  "1a98cb77c5faa3eb0605b93a052ff7aa943c4bf784c6d152eb5a352505e25930";
 const CLI_ENTRY_HASH_GOLDEN_V2 =
-  "f6c29d4b61eb8864f2216d53a3a3b558daaacb9e5fe477128c9275de0550f5dd";
+  "dcc662d7d80a7c4b0bac637cbe183af422e6be094233a8d8694ed7ce8e1b6236";
 const API_ENTRY_HASH_GOLDEN_V2 =
-  "ef0c3f4254df6a81f5063a177bb70e56394ad963096fbd15e20060e35a49404e";
+  "a50c542dc95e8cf0efcbcef4d56999f0b64fe7656691ee87a7274474f46188b4";
 const CLI_GRAPH_HASH_GOLDEN_V2 =
   "9df929156d318356432f64478465b4d9db56e149322c0a409668cb1d94cd2e05";
 const API_GRAPH_HASH_GOLDEN_V2 =
@@ -373,11 +373,14 @@ describe("NodeScaffoldToolchainCatalogV2 code-owned authority", () => {
         "--no-fund",
       ]);
       const environment = entry.executionEnvironment;
+      assert.equal(environment.contractVersion, "2.1.0");
       assert.equal(environment.mode, "planned_isolated_exact");
       assert.equal(environment.productionAuthority, "unverified_blocking");
       assert.equal(environment.inheritAmbientEnvironment, false);
       assert.equal(environment.constructionPolicy, "deny_all_then_exact_set");
       assert.deepEqual(environment.inheritedVariableAllowlist, []);
+      assert.equal(environment.fixedVariables.NODE_DISABLE_COMPILE_CACHE, "1");
+      assert.equal(environment.fixedVariables.NPM_CONFIG_LOGS_MAX, "0");
       assert.equal(
         environment.npmConfigIsolation.ambientVariablePolicy,
         "strip_all_before_exact_set",

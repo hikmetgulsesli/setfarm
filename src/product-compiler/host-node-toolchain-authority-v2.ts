@@ -69,6 +69,7 @@ import {
 const NODE_PROBE_TIMEOUT_MS_V2 = 5_000 as const;
 const NODE_PROBE_MAX_STDOUT_BYTES_V2 = 4_096 as const;
 const NODE_PROBE_MAX_STDERR_BYTES_V2 = 4_096 as const;
+const EFFECTIVE_NPM_CONFIG_PROBE_MAX_STDOUT_BYTES_V2 = 32_768 as const;
 const HOST_PACKAGE_MAX_FILE_BYTES_V2 = 64 * 1024 * 1024;
 const OTOOL_MAX_OUTPUT_BYTES_V2 = 512 * 1024;
 const OTOOL_TIMEOUT_MS_V2 = 5_000;
@@ -136,7 +137,9 @@ export type HostNodeToolchainAuthorityErrorCodeV2 =
   | "HOST_NODE_TOOLCHAIN_V2_HANDLE_UNAUTHENTICATED"
   | "HOST_NODE_TOOLCHAIN_V2_PRODUCTION_AUTHORITY_REQUIRED"
   | "HOST_NODE_TOOLCHAIN_V2_PROVISIONING_AUTHORITY_INVALID"
-  | "HOST_NODE_TOOLCHAIN_V2_HOST_DRIFT";
+  | "HOST_NODE_TOOLCHAIN_V2_HOST_DRIFT"
+  | "HOST_NODE_TOOLCHAIN_V2_EXECUTION_ENVIRONMENT_INVALID"
+  | "HOST_NODE_TOOLCHAIN_V2_EFFECTIVE_NPM_CONFIG_INVALID";
 
 export class HostNodeToolchainAuthorityErrorV2 extends Error {
   readonly code: HostNodeToolchainAuthorityErrorCodeV2;
@@ -156,7 +159,8 @@ export class HostNodeToolchainAuthorityErrorV2 extends Error {
 
 export type HostNodeToolchainProbeRefV2 =
   | "HOST_NODE_RUNTIME_IDENTITY_PROBE_V2"
-  | "HOST_NPM_VERSION_PROBE_V2";
+  | "HOST_NPM_VERSION_PROBE_V2"
+  | "HOST_NPM_EFFECTIVE_CONFIG_PROBE_V2";
 
 export type HostNodeToolchainProbeInvocationV2 = Readonly<{
   probeRef: HostNodeToolchainProbeRefV2;
@@ -166,7 +170,9 @@ export type HostNodeToolchainProbeInvocationV2 = Readonly<{
   env: Readonly<Record<string, string>>;
   shell: false;
   timeoutMs: typeof NODE_PROBE_TIMEOUT_MS_V2;
-  maxStdoutBytes: typeof NODE_PROBE_MAX_STDOUT_BYTES_V2;
+  maxStdoutBytes:
+    | typeof NODE_PROBE_MAX_STDOUT_BYTES_V2
+    | typeof EFFECTIVE_NPM_CONFIG_PROBE_MAX_STDOUT_BYTES_V2;
   maxStderrBytes: typeof NODE_PROBE_MAX_STDERR_BYTES_V2;
 }>;
 
@@ -181,6 +187,61 @@ export type HostNodeToolchainProbeResultV2 =
   | Readonly<{ status: "timed_out"; stdout: string; stderr: string }>
   | Readonly<{ status: "output_limit_exceeded"; stdout: string; stderr: string }>
   | Readonly<{ status: "spawn_failed"; stdout: string; stderr: string }>;
+
+export type HostNodeToolchainEffectiveNpmConfigProbeInputV2 = Readonly<{
+  privateRoot: string;
+  environment: Readonly<{
+    CI: "true";
+    HOME: string;
+    LANG: "C.UTF-8";
+    LC_ALL: "C.UTF-8";
+    NODE_DISABLE_COMPILE_CACHE: "1";
+    NO_COLOR: "1";
+    NPM_CONFIG_CACHE: string;
+    NPM_CONFIG_GLOBALCONFIG: string;
+    NPM_CONFIG_LOGS_MAX: "0";
+    NPM_CONFIG_REGISTRY: "https://registry.npmjs.org";
+    NPM_CONFIG_USERCONFIG: string;
+    TEMP: string;
+    TMP: string;
+    TMPDIR: string;
+    TZ: "UTC";
+  }>;
+}>;
+
+export type HostNodeToolchainEffectiveNpmConfigProbeEvidenceV2 = Readonly<{
+  probeRef: "HOST_NPM_EFFECTIVE_CONFIG_PROBE_V2";
+  hostToolchainReceiptHash: string;
+  environmentHash: string;
+  rawOutputHash: string;
+  keySetHash: string;
+  keyCount: number;
+  effective: Readonly<{
+    registry: "https://registry.npmjs.org";
+    cache: "PRIVATE_STAGE_NPM_CACHE_V2";
+    userconfig: "PRIVATE_STAGE_EMPTY_USER_NPMRC_V2";
+    globalconfig: "PRIVATE_STAGE_EMPTY_GLOBAL_NPMRC_V2";
+    prefix: "HOST_TOOLCHAIN_DEFAULT_PREFIX_V2";
+    location: "user";
+    proxy: null;
+    httpsProxy: null;
+    noProxy: readonly [""];
+    ca: null;
+    caFile: null;
+    certificate: null;
+    privateKey: null;
+    strictSsl: true;
+    color: false;
+    ignoreScripts: false;
+    foregroundScripts: false;
+    scriptShell: null;
+    shell: "sh";
+    audit: true;
+    fund: true;
+    logsMax: 0;
+  }>;
+  discoveredCredentialConfigCount: 0;
+}>;
 
 type HostNodeToolchainProbeAdapterV2 = (
   invocation: HostNodeToolchainProbeInvocationV2,
@@ -1931,6 +1992,454 @@ export async function revalidateHostNodeToolchainAuthorityV2(
       error,
     );
   }
+}
+
+type EffectiveNpmConfigProbeScopeCaptureV2 = Readonly<{
+  privateRoot: string;
+  configProbeCwd: string;
+  environment: HostNodeToolchainEffectiveNpmConfigProbeInputV2["environment"];
+  identityHash: string;
+}>;
+
+const EFFECTIVE_NPM_CONFIG_ENVIRONMENT_KEYS_V2 = Object.freeze([
+  "CI",
+  "HOME",
+  "LANG",
+  "LC_ALL",
+  "NODE_DISABLE_COMPILE_CACHE",
+  "NO_COLOR",
+  "NPM_CONFIG_CACHE",
+  "NPM_CONFIG_GLOBALCONFIG",
+  "NPM_CONFIG_LOGS_MAX",
+  "NPM_CONFIG_REGISTRY",
+  "NPM_CONFIG_USERCONFIG",
+  "TEMP",
+  "TMP",
+  "TMPDIR",
+  "TZ",
+] as const);
+
+function processOwnerV2(): Readonly<{ uid: number; gid: number }> {
+  if (typeof process.geteuid !== "function" || typeof process.getegid !== "function") {
+    return fail(
+      "HOST_NODE_TOOLCHAIN_V2_EXECUTION_ENVIRONMENT_INVALID",
+      "Effective npm config probing requires exact POSIX process ownership",
+    );
+  }
+  return Object.freeze({ uid: process.geteuid(), gid: process.getegid() });
+}
+
+function assertMissingPathV2(absolutePath: string, label: string): void {
+  try {
+    lstatSync(absolutePath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    return fail(
+      "HOST_NODE_TOOLCHAIN_V2_EXECUTION_ENVIRONMENT_INVALID",
+      `${label} absence could not be established exactly`,
+      error,
+    );
+  }
+  fail(
+    "HOST_NODE_TOOLCHAIN_V2_EXECUTION_ENVIRONMENT_INVALID",
+    `${label} must be absent`,
+  );
+}
+
+function captureEffectiveNpmConfigProbeScopeV2(
+  input: HostNodeToolchainEffectiveNpmConfigProbeInputV2,
+): EffectiveNpmConfigProbeScopeCaptureV2 {
+  if (
+    !isPlainRecord(input)
+    || !exactRecordKeys(input, ["environment", "privateRoot"])
+    || typeof input.privateRoot !== "string"
+    || !path.isAbsolute(input.privateRoot)
+    || !isPlainRecord(input.environment)
+    || !exactRecordKeys(input.environment, EFFECTIVE_NPM_CONFIG_ENVIRONMENT_KEYS_V2)
+  ) {
+    return fail(
+      "HOST_NODE_TOOLCHAIN_V2_EXECUTION_ENVIRONMENT_INVALID",
+      "Effective npm config probe input is not one exact private environment",
+    );
+  }
+  const root = input.privateRoot;
+  const owner = processOwnerV2();
+  const expected = Object.freeze({
+    HOME: path.join(root, "home"),
+    NPM_CONFIG_CACHE: path.join(root, "cache"),
+    NPM_CONFIG_GLOBALCONFIG: path.join(root, "global.npmrc"),
+    NPM_CONFIG_USERCONFIG: path.join(root, "user.npmrc"),
+    TEMP: path.join(root, "tmp"),
+    TMP: path.join(root, "tmp"),
+    TMPDIR: path.join(root, "tmp"),
+  });
+  if (
+    input.environment.CI !== "true"
+    || input.environment.LANG !== "C.UTF-8"
+    || input.environment.LC_ALL !== "C.UTF-8"
+    || input.environment.NODE_DISABLE_COMPILE_CACHE !== "1"
+    || input.environment.NO_COLOR !== "1"
+    || input.environment.NPM_CONFIG_LOGS_MAX !== "0"
+    || input.environment.NPM_CONFIG_REGISTRY !== "https://registry.npmjs.org"
+    || input.environment.TZ !== "UTC"
+    || input.environment.HOME !== expected.HOME
+    || input.environment.NPM_CONFIG_CACHE !== expected.NPM_CONFIG_CACHE
+    || input.environment.NPM_CONFIG_GLOBALCONFIG !== expected.NPM_CONFIG_GLOBALCONFIG
+    || input.environment.NPM_CONFIG_USERCONFIG !== expected.NPM_CONFIG_USERCONFIG
+    || input.environment.TEMP !== expected.TEMP
+    || input.environment.TMP !== expected.TMP
+    || input.environment.TMPDIR !== expected.TMPDIR
+  ) {
+    return fail(
+      "HOST_NODE_TOOLCHAIN_V2_EXECUTION_ENVIRONMENT_INVALID",
+      "Effective npm config environment differs from the code-owned exact bindings",
+    );
+  }
+
+  const expectedRootNames = [
+    "cache",
+    "config-probe",
+    "global.npmrc",
+    "home",
+    "tmp",
+    "user.npmrc",
+  ];
+  const rootStat = lstatSync(root);
+  if (
+    rootStat.isSymbolicLink()
+    || !rootStat.isDirectory()
+    || realpathSync(root) !== root
+    || modeBits(rootStat) !== 0o700
+    || rootStat.uid !== owner.uid
+    || rootStat.gid !== owner.gid
+    || canonicalJsonKeyList(readdirSync(root).sort()) !== canonicalJsonKeyList(expectedRootNames)
+  ) {
+    return fail(
+      "HOST_NODE_TOOLCHAIN_V2_EXECUTION_ENVIRONMENT_INVALID",
+      "Effective npm config private root is not one exact process-owned layout",
+    );
+  }
+
+  const directories = [
+    path.join(root, "cache"),
+    path.join(root, "config-probe"),
+    path.join(root, "home"),
+    path.join(root, "tmp"),
+  ].map((absolutePath) => {
+    const stat = lstatSync(absolutePath);
+    const names = readdirSync(absolutePath).sort();
+    if (
+      stat.isSymbolicLink()
+      || !stat.isDirectory()
+      || realpathSync(absolutePath) !== absolutePath
+      || modeBits(stat) !== 0o700
+      || stat.uid !== owner.uid
+      || stat.gid !== owner.gid
+      || names.length !== 0
+    ) {
+      fail(
+        "HOST_NODE_TOOLCHAIN_V2_EXECUTION_ENVIRONMENT_INVALID",
+        `Effective npm config private directory ${path.basename(absolutePath)} is not exact, empty `
+          + `and process-owned (members: ${names.join(",") || "none"})`,
+      );
+    }
+    return Object.freeze({ absolutePath, fingerprint: fingerprint(stat) });
+  });
+
+  const configFiles = [
+    path.join(root, "global.npmrc"),
+    path.join(root, "user.npmrc"),
+  ].map((absolutePath) => {
+    const stat = lstatSync(absolutePath);
+    const bytes = readFileSync(absolutePath);
+    const after = lstatSync(absolutePath);
+    if (
+      stat.isSymbolicLink()
+      || !stat.isFile()
+      || realpathSync(absolutePath) !== absolutePath
+      || modeBits(stat) !== 0o600
+      || stat.uid !== owner.uid
+      || stat.gid !== owner.gid
+      || stat.nlink !== 1
+      || !sameFingerprint(fingerprint(stat), fingerprint(after))
+      || bytes.length !== 1
+      || bytes[0] !== 0x0a
+    ) {
+      fail(
+        "HOST_NODE_TOOLCHAIN_V2_EXECUTION_ENVIRONMENT_INVALID",
+        "Effective npm config requires distinct exact blank-LF private npmrc files",
+      );
+    }
+    return Object.freeze({
+      absolutePath,
+      fingerprint: fingerprint(stat),
+      contentHash: sha256(bytes),
+    });
+  });
+  if (configFiles[0]!.fingerprint.inode === configFiles[1]!.fingerprint.inode
+    && configFiles[0]!.fingerprint.device === configFiles[1]!.fingerprint.device) {
+    fail(
+      "HOST_NODE_TOOLCHAIN_V2_EXECUTION_ENVIRONMENT_INVALID",
+      "Effective npm config user and global files must have distinct physical identities",
+    );
+  }
+  const configProbeCwd = path.join(root, "config-probe");
+  assertMissingPathV2(path.join(configProbeCwd, ".npmrc"), "Probe project .npmrc");
+  const identityHash = hashCanonicalJson({
+    schema: "setfarm.host-node-effective-npm-config-private-scope.v2",
+    root: fingerprint(rootStat),
+    directories,
+    configFiles,
+    environment: input.environment,
+  });
+  return Object.freeze({
+    privateRoot: root,
+    configProbeCwd,
+    environment: Object.freeze({ ...input.environment }),
+    identityHash,
+  });
+}
+
+function canonicalJsonKeyList(values: readonly string[]): string {
+  return JSON.stringify(values);
+}
+
+function assertEffectiveNpmConfigProbeSucceededV2(
+  result: HostNodeToolchainProbeResultV2,
+): asserts result is Extract<HostNodeToolchainProbeResultV2, { status: "exited" }> {
+  if (
+    Buffer.byteLength(result.stdout, "utf8") > EFFECTIVE_NPM_CONFIG_PROBE_MAX_STDOUT_BYTES_V2
+    || Buffer.byteLength(result.stderr, "utf8") > NODE_PROBE_MAX_STDERR_BYTES_V2
+    || result.status === "output_limit_exceeded"
+  ) {
+    fail(
+      "HOST_NODE_TOOLCHAIN_V2_PROBE_OUTPUT_LIMIT",
+      "HOST_NPM_EFFECTIVE_CONFIG_PROBE_V2 exceeded its output bound",
+    );
+  }
+  if (result.status === "timed_out") {
+    fail(
+      "HOST_NODE_TOOLCHAIN_V2_PROBE_TIMEOUT",
+      "HOST_NPM_EFFECTIVE_CONFIG_PROBE_V2 exceeded its exact timeout",
+    );
+  }
+  if (result.status === "spawn_failed") {
+    fail(
+      "HOST_NODE_TOOLCHAIN_V2_PROBE_SPAWN_FAILED",
+      "HOST_NPM_EFFECTIVE_CONFIG_PROBE_V2 could not be spawned exactly",
+    );
+  }
+  if (result.signal !== null) {
+    fail(
+      "HOST_NODE_TOOLCHAIN_V2_PROBE_SIGNALLED",
+      "HOST_NPM_EFFECTIVE_CONFIG_PROBE_V2 terminated by signal",
+    );
+  }
+  if (result.exitCode !== 0) {
+    fail(
+      "HOST_NODE_TOOLCHAIN_V2_PROBE_NONZERO",
+      "HOST_NPM_EFFECTIVE_CONFIG_PROBE_V2 exited nonzero",
+    );
+  }
+  if (result.stderr !== "") {
+    fail(
+      "HOST_NODE_TOOLCHAIN_V2_PROBE_MALFORMED",
+      "HOST_NPM_EFFECTIVE_CONFIG_PROBE_V2 wrote unexpected stderr",
+    );
+  }
+}
+
+function parseEffectiveNpmConfigProbeOutputV2(input: Readonly<{
+  stdout: string;
+  environment: HostNodeToolchainEffectiveNpmConfigProbeInputV2["environment"];
+}>): Omit<
+HostNodeToolchainEffectiveNpmConfigProbeEvidenceV2,
+"probeRef" | "hostToolchainReceiptHash" | "environmentHash"
+> {
+  let parsed: unknown;
+  try {
+    if (!input.stdout.endsWith("\n") || input.stdout.includes("\r") || input.stdout.startsWith("\ufeff")) {
+      throw new Error("not one canonical LF-terminated npm JSON document");
+    }
+    parsed = JSON.parse(input.stdout);
+  } catch (error) {
+    return fail(
+      "HOST_NODE_TOOLCHAIN_V2_EFFECTIVE_NPM_CONFIG_INVALID",
+      "Effective npm config probe did not return one bounded JSON object",
+      error,
+    );
+  }
+  if (!isPlainRecord(parsed)) {
+    return fail(
+      "HOST_NODE_TOOLCHAIN_V2_EFFECTIVE_NPM_CONFIG_INVALID",
+      "Effective npm config probe root is not one plain object",
+    );
+  }
+  const keys = Object.keys(parsed).sort();
+  if (keys.length === 0 || keys.length > 1_024) {
+    return fail(
+      "HOST_NODE_TOOLCHAIN_V2_EFFECTIVE_NPM_CONFIG_INVALID",
+      "Effective npm config key census is outside its exact bound",
+    );
+  }
+  const credentialKeys = keys.filter((key) => {
+    const lower = key.toLowerCase();
+    if (lower === "auth-type") return false;
+    return lower.startsWith("//")
+      || lower === "_auth"
+      || lower === "_authtoken"
+      || lower === "username"
+      || lower === "_password"
+      || lower.endsWith(":_auth")
+      || lower.endsWith(":_authtoken")
+      || lower.endsWith(":username")
+      || lower.endsWith(":_password");
+  });
+  if (credentialKeys.length > 0) {
+    return fail(
+      "HOST_NODE_TOOLCHAIN_V2_EFFECTIVE_NPM_CONFIG_INVALID",
+      "Effective npm config contains an unowned credential binding",
+    );
+  }
+  if (
+    parsed.registry !== "https://registry.npmjs.org"
+    || parsed.cache !== input.environment.NPM_CONFIG_CACHE
+    || parsed.userconfig !== input.environment.NPM_CONFIG_USERCONFIG
+    || parsed.globalconfig !== input.environment.NPM_CONFIG_GLOBALCONFIG
+    || typeof parsed.prefix !== "string"
+    || !path.isAbsolute(parsed.prefix)
+    || parsed.location !== "user"
+    || parsed.proxy !== null
+    || parsed["https-proxy"] !== null
+    || !Array.isArray(parsed.noproxy)
+    || parsed.noproxy.length !== 1
+    || parsed.noproxy[0] !== ""
+    || parsed.ca !== null
+    || parsed.cafile !== null
+    || parsed.cert !== null
+    || parsed.key !== null
+    || parsed["strict-ssl"] !== true
+    || parsed.color !== false
+    || parsed["ignore-scripts"] !== false
+    || parsed["foreground-scripts"] !== false
+    || parsed["script-shell"] !== null
+    || parsed.shell !== "sh"
+    || parsed.audit !== true
+    || parsed.fund !== true
+    || parsed["logs-max"] !== 0
+  ) {
+    return fail(
+      "HOST_NODE_TOOLCHAIN_V2_EFFECTIVE_NPM_CONFIG_INVALID",
+      "Effective npm config differs from the isolated registry, path, TLS or lifecycle contract",
+    );
+  }
+  return Object.freeze({
+    rawOutputHash: sha256(input.stdout),
+    keySetHash: hashCanonicalJson({
+      schema: "setfarm.host-node-effective-npm-config-key-set.v2",
+      keys,
+    }),
+    keyCount: keys.length,
+    effective: Object.freeze({
+      registry: "https://registry.npmjs.org" as const,
+      cache: "PRIVATE_STAGE_NPM_CACHE_V2" as const,
+      userconfig: "PRIVATE_STAGE_EMPTY_USER_NPMRC_V2" as const,
+      globalconfig: "PRIVATE_STAGE_EMPTY_GLOBAL_NPMRC_V2" as const,
+      prefix: "HOST_TOOLCHAIN_DEFAULT_PREFIX_V2" as const,
+      location: "user" as const,
+      proxy: null,
+      httpsProxy: null,
+      noProxy: Object.freeze([""] as const),
+      ca: null,
+      caFile: null,
+      certificate: null,
+      privateKey: null,
+      strictSsl: true as const,
+      color: false as const,
+      ignoreScripts: false as const,
+      foregroundScripts: false as const,
+      scriptShell: null,
+      shell: "sh" as const,
+      audit: true as const,
+      fund: true as const,
+      logsMax: 0 as const,
+    }),
+    discoveredCredentialConfigCount: 0 as const,
+  });
+}
+
+/**
+ * Runs only the code-owned npm effective-config probe. The caller supplies one
+ * exact private environment layout, while executable paths stay inside this
+ * authenticated host-toolchain boundary and are never returned.
+ */
+export async function probeHostNodeToolchainEffectiveNpmConfigV2(
+  handle: HostNodeToolchainAuthorityV2,
+  input: HostNodeToolchainEffectiveNpmConfigProbeInputV2,
+): Promise<HostNodeToolchainEffectiveNpmConfigProbeEvidenceV2> {
+  const state = authenticState(handle);
+  const hostBefore = await revalidateHostNodeToolchainAuthorityV2(handle);
+  const scopeBefore = captureEffectiveNpmConfigProbeScopeV2(input);
+  const environment = Object.freeze({
+    ...scopeBefore.environment,
+    PATH: path.dirname(state.captured.root.nodePath),
+  });
+  const environmentHash = hashCanonicalJson({
+    schema: "setfarm.node-scaffold-private-execution-environment.v2",
+    variables: Object.entries(environment).sort(([left], [right]) =>
+      left < right ? -1 : left > right ? 1 : 0),
+  });
+  const invocation: HostNodeToolchainProbeInvocationV2 = Object.freeze({
+    probeRef: "HOST_NPM_EFFECTIVE_CONFIG_PROBE_V2",
+    executable: state.captured.root.nodePath,
+    argv: Object.freeze([
+      state.captured.root.npmCliPath,
+      "config",
+      "list",
+      "--json",
+    ]),
+    cwd: scopeBefore.configProbeCwd,
+    env: environment,
+    shell: false,
+    timeoutMs: NODE_PROBE_TIMEOUT_MS_V2,
+    maxStdoutBytes: EFFECTIVE_NPM_CONFIG_PROBE_MAX_STDOUT_BYTES_V2,
+    maxStderrBytes: NODE_PROBE_MAX_STDERR_BYTES_V2,
+  });
+  let result: HostNodeToolchainProbeResultV2;
+  try {
+    result = await state.probeAdapter(invocation);
+  } catch (error) {
+    return fail(
+      "HOST_NODE_TOOLCHAIN_V2_PROBE_SPAWN_FAILED",
+      "Effective npm config probe adapter failed",
+      error,
+    );
+  }
+  assertEffectiveNpmConfigProbeSucceededV2(result);
+  const parsed = parseEffectiveNpmConfigProbeOutputV2({
+    stdout: result.stdout,
+    environment: scopeBefore.environment,
+  });
+  const scopeAfter = captureEffectiveNpmConfigProbeScopeV2(input);
+  if (scopeAfter.identityHash !== scopeBefore.identityHash) {
+    return fail(
+      "HOST_NODE_TOOLCHAIN_V2_EXECUTION_ENVIRONMENT_INVALID",
+      "Effective npm config private environment changed during probing",
+    );
+  }
+  const hostAfter = await revalidateHostNodeToolchainAuthorityV2(handle);
+  if (hostAfter.receiptHash !== hostBefore.receiptHash) {
+    return fail(
+      "HOST_NODE_TOOLCHAIN_V2_HOST_DRIFT",
+      "Host Node/npm authority changed during effective config probing",
+    );
+  }
+  return deepFreezeJson({
+    probeRef: "HOST_NPM_EFFECTIVE_CONFIG_PROBE_V2" as const,
+    hostToolchainReceiptHash: hostBefore.receiptHash,
+    environmentHash,
+    ...parsed,
+  });
 }
 
 /**
