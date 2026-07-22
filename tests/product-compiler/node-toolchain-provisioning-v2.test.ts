@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   chmod,
@@ -8,6 +8,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  realpath,
   readdir,
   rm,
   symlink,
@@ -29,7 +30,9 @@ import {
   inventoryVerifiedNodeToolchainDistributionArchiveV2,
 } from "../../src/product-compiler/node-toolchain-archive-inventory-v2.js";
 import {
+  copyMaterializedNodeToolchainPrivateTreeBundleV2,
   disposeMaterializedNodeToolchainPrivateTreeV2,
+  inspectNodeToolchainPrivateTreeReceiptV2,
   materializeInventoriedNodeToolchainPrivateTreeV2ForTest,
   type MaterializedNodeToolchainPrivateTreeV2,
 } from "../../src/product-compiler/node-toolchain-private-tree-v2.js";
@@ -46,6 +49,17 @@ import {
   NODE_TOOLCHAIN_PROVISIONING_STAGING_BASENAME_V2,
   getCodeOwnedNodeToolchainTargetV2,
 } from "../../src/product-compiler/node-toolchain-target-registry-v2.js";
+import {
+  NodeToolchainProvisionerBootstrapAuthorityErrorV2,
+  compileNodeToolchainProvisionerBootstrapV2ForTest,
+  renderNodeToolchainProvisionerBootstrapLauncherV2,
+} from "../../src/product-compiler/node-toolchain-provisioner-bootstrap-v2.js";
+import {
+  NodeToolchainProvisionerBootstrapPackageErrorV2,
+  inspectNodeToolchainProvisionerBootstrapPackageV2,
+  openNodeToolchainProvisionerBootstrapPackageV2ForTest,
+  revalidateNodeToolchainProvisionerBootstrapPackageV2,
+} from "../../src/product-compiler/node-toolchain-provisioner-bootstrap-package-v2.js";
 import {
   runNodeToolchainProvisionerCliV2,
   type NodeToolchainProvisionerCliOperationsV2,
@@ -76,6 +90,11 @@ import {
   NodeToolchainProvisionerCliFailureV2Schema,
   hashNodeToolchainProvisionerCliFailureV2,
 } from "../../src/product-compiler/schemas/node-toolchain-provisioner-cli-v2.js";
+import {
+  NodeToolchainProvisionerBootstrapFailureV2Schema,
+  NodeToolchainProvisionerBootstrapManifestV2Schema,
+  hashNodeToolchainProvisionerBootstrapManifestV2,
+} from "../../src/product-compiler/schemas/node-toolchain-provisioner-bootstrap-v2.js";
 import {
   NodeToolchainProvisionerOperationReceiptV2Schema,
   NodeToolchainProvisionerPlanV2Schema,
@@ -1252,6 +1271,151 @@ describe("NodeToolchainProvisionerCommandV2 inspection and planning", () => {
         JSON.parse(hostile.bytes.toString("utf8")),
       ).commandRef,
       "invalid_invocation",
+    );
+  });
+
+  it("compiles one exact bootstrap manifest and a fail-closed root launcher", async () => {
+    const packageRootAlias = await privateParent();
+    const packageRoot = await realpath(packageRootAlias);
+    const tree = await privateTree();
+    const privateBundle = await copyMaterializedNodeToolchainPrivateTreeBundleV2(tree);
+    const runtimeEntry = privateBundle.entries.find((entry) => entry.locator === "bin/node");
+    assert.ok(runtimeEntry?.bytes);
+    const input = {
+      codeSha: "1".repeat(40),
+      sourceTreeHash: "2".repeat(40),
+      packageVersion: "2.3.79",
+      entrypointSourceBytes: Buffer.from("export {};\n"),
+      packageLockSourceBytes: Buffer.from("{\"lockfileVersion\":3}\n"),
+      bundleBytes: Buffer.from("process.stdout.write('{}');\n"),
+      runtimeBytes: runtimeEntry.bytes,
+      sourcePrivateTree: inspectNodeToolchainPrivateTreeReceiptV2(tree),
+    };
+    const first = compileNodeToolchainProvisionerBootstrapV2ForTest(input, packageRoot);
+    const second = compileNodeToolchainProvisionerBootstrapV2ForTest(input, packageRoot);
+
+    assert.deepEqual(second.manifest, first.manifest);
+    assert.deepEqual(second.launcherBytes, first.launcherBytes);
+    assert.deepEqual(first.manifestBytes, canonicalJsonBytes(first.manifest));
+    assert.equal(first.manifestBytes.at(-1), "}".charCodeAt(0));
+    assert.equal(
+      NodeToolchainProvisionerBootstrapManifestV2Schema.parse(first.manifest).manifestHash,
+      first.manifest.manifestHash,
+    );
+    assert.equal(first.manifest.files.bootstrapRuntime.sha256, runtimeEntry.contentHash);
+    assert.equal(first.manifest.files.bootstrapRuntime.byteLength, runtimeEntry.byteLength);
+    assert.equal(first.manifest.distribution.sourcePrivateTree.receiptHash, privateBundle.receipt.receiptHash);
+    assert.match(first.launcherBytes.toString("utf8"), /^#!\/bin\/sh\n/);
+    assert.match(first.launcherBytes.toString("utf8"), /exec \/usr\/bin\/env -i/);
+    assert.doesNotMatch(first.launcherBytes.toString("utf8"), /command -v|\/opt\/homebrew|\/usr\/local|\bPATH=/);
+
+    const promotedFixture = structuredClone(first.manifest);
+    promotedFixture.admissionScope = "production_root";
+    promotedFixture.manifestHash = hashNodeToolchainProvisionerBootstrapManifestV2(promotedFixture);
+    assert.equal(
+      NodeToolchainProvisionerBootstrapManifestV2Schema.safeParse(promotedFixture).success,
+      false,
+    );
+    assert.throws(
+      () => compileNodeToolchainProvisionerBootstrapV2ForTest(
+        { ...input, runtimeBytes: Buffer.from("different-runtime\n") },
+        packageRoot,
+      ),
+      (error: unknown) => error instanceof NodeToolchainProvisionerBootstrapAuthorityErrorV2,
+    );
+
+    const rehashedDrift = structuredClone(first.manifest);
+    rehashedDrift.files.bootstrapRuntime.sha256 = "f".repeat(64);
+    rehashedDrift.manifestHash = hashNodeToolchainProvisionerBootstrapManifestV2(rehashedDrift);
+    assert.equal(
+      NodeToolchainProvisionerBootstrapManifestV2Schema.safeParse(rehashedDrift).success,
+      false,
+    );
+
+    const wrongOwnerLauncher = renderNodeToolchainProvisionerBootstrapLauncherV2({
+      rootLocator: packageRoot,
+      expectedOwnerUid: (process.getuid?.() ?? 0) + 1,
+      expectedOwnerGid: process.getgid?.() ?? 0,
+      bundleSha256: "a".repeat(64),
+      bundleByteLength: 1,
+      runtimeSha256: "b".repeat(64),
+      runtimeByteLength: 1,
+    });
+    const launcherPath = path.join(packageRoot, "wrong-owner-launcher");
+    await writeFile(launcherPath, wrongOwnerLauncher, { mode: 0o700 });
+    const rejected = spawnSync("/bin/sh", [launcherPath, "inspect"], {
+      encoding: "utf8",
+      env: { PATH: "/hostile", NODE_OPTIONS: "--definitely-invalid" },
+    });
+    assert.equal(rejected.status, 70, rejected.stderr);
+    const failure = NodeToolchainProvisionerBootstrapFailureV2Schema.parse(
+      JSON.parse(rejected.stdout),
+    );
+    assert.equal(failure.failureCode, "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_V2_ROOT_REQUIRED");
+    assert.equal(rejected.stdout.endsWith("\n"), false);
+    await unlink(launcherPath);
+
+    await mkdir(path.join(packageRoot, "bin"), { mode: 0o700 });
+    await mkdir(path.join(packageRoot, "lib"), { mode: 0o700 });
+    await mkdir(path.join(packageRoot, "runtime"), { mode: 0o700 });
+    await writeFile(
+      path.join(packageRoot, first.manifest.files.launcher.locator),
+      first.launcherBytes,
+      { mode: 0o555 },
+    );
+    await writeFile(
+      path.join(packageRoot, first.manifest.files.bundle.locator),
+      first.bundleBytes,
+      { mode: 0o444 },
+    );
+    await writeFile(
+      path.join(packageRoot, first.manifest.files.bootstrapRuntime.locator),
+      first.runtimeBytes,
+      { mode: 0o555 },
+    );
+    await writeFile(
+      path.join(packageRoot, first.manifest.layout.manifestLocator),
+      first.manifestBytes,
+      { mode: 0o444 },
+    );
+    await chmod(path.join(packageRoot, first.manifest.files.launcher.locator), 0o555);
+    await chmod(path.join(packageRoot, first.manifest.files.bundle.locator), 0o444);
+    await chmod(path.join(packageRoot, first.manifest.files.bootstrapRuntime.locator), 0o555);
+    await chmod(path.join(packageRoot, first.manifest.layout.manifestLocator), 0o444);
+    await chmod(path.join(packageRoot, "bin"), 0o555);
+    await chmod(path.join(packageRoot, "lib"), 0o555);
+    await chmod(path.join(packageRoot, "runtime"), 0o555);
+    await chmod(packageRoot, 0o555);
+
+    const handle = openNodeToolchainProvisionerBootstrapPackageV2ForTest({
+      root: packageRoot,
+      expectedOwner: {
+        uid: process.getuid?.() ?? 0,
+        gid: process.getgid?.() ?? 0,
+      },
+    });
+    assert.equal(
+      inspectNodeToolchainProvisionerBootstrapPackageV2(handle).manifestHash,
+      first.manifest.manifestHash,
+    );
+    assert.equal(
+      revalidateNodeToolchainProvisionerBootstrapPackageV2(handle).manifestHash,
+      first.manifest.manifestHash,
+    );
+    assert.throws(
+      () => inspectNodeToolchainProvisionerBootstrapPackageV2(first.manifest as never),
+      (error: unknown) => error instanceof NodeToolchainProvisionerBootstrapPackageErrorV2
+        && error.code === "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_V2_HANDLE_UNAUTHENTICATED",
+    );
+
+    const bundlePath = path.join(packageRoot, first.manifest.files.bundle.locator);
+    await chmod(bundlePath, 0o644);
+    await writeFile(bundlePath, Buffer.alloc(first.bundleBytes.byteLength, 0x61));
+    await chmod(bundlePath, 0o444);
+    assert.throws(
+      () => revalidateNodeToolchainProvisionerBootstrapPackageV2(handle),
+      (error: unknown) => error instanceof NodeToolchainProvisionerBootstrapPackageErrorV2
+        && error.code === "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_V2_FILE_MISMATCH",
     );
   });
 });
