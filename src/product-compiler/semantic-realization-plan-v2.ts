@@ -14,6 +14,8 @@ import type { SemanticSourceIntentV1, SemanticSourceIntentSetV1 } from
 import {
   NODE_PRODUCT_RUNTIME_GENERATOR_CONTRACT_HASH_V2,
   NODE_PRODUCT_RUNTIME_GENERATOR_CONTRACT_V2,
+  NODE_PRODUCT_TEST_GENERATOR_CONTRACT_HASH_V2,
+  NODE_PRODUCT_TEST_GENERATOR_CONTRACT_V2,
   NODE_SEMANTIC_REALIZATION_POLICY_HASH_V2,
   NODE_SEMANTIC_REALIZATION_POLICY_V2,
   SEMANTIC_REALIZATION_PLAN_CONTRACT_HASH_V2,
@@ -26,6 +28,7 @@ import {
   SemanticRealizationV2Schema,
   deriveSemanticRealizationRefV2,
   hashNodeProductRuntimeGeneratorProfileV2,
+  hashNodeProductTestGeneratorProfileV2,
   hashSemanticRealizationLegacyTargetV2,
   hashSemanticRealizationMembershipV2,
   hashSemanticRealizationPlanV2,
@@ -335,12 +338,18 @@ function buildPlanV2(
       candidate.profileId === intentSet.authority.deliverySelection.profileId
       && candidate.stackPackId === intentSet.authority.stackPackBinding.stackPackId,
   );
+  const testGeneratorProfile = NODE_PRODUCT_TEST_GENERATOR_CONTRACT_V2.profiles.find(
+    (candidate) =>
+      candidate.profileId === intentSet.authority.deliverySelection.profileId
+      && candidate.stackPackId === intentSet.authority.stackPackBinding.stackPackId,
+  );
   const ruleSet = getCodeOwnedStackSemanticSourceRuleSetV1(
     intentSet.authority.stackPackBinding.stackPackId,
   );
   if (
     !profile
     || !generatorProfile
+    || !testGeneratorProfile
     || !ruleSet
     || ruleSet.ruleSetVersion !== "1.0.0"
     || profile.semanticRuleSetRef !== ruleSet.ruleSetRef
@@ -382,6 +391,7 @@ function buildPlanV2(
     contractHash: SEMANTIC_REALIZATION_PLAN_CONTRACT_HASH_V2,
     policyHash: NODE_SEMANTIC_REALIZATION_POLICY_HASH_V2,
     generatorContractHash: NODE_PRODUCT_RUNTIME_GENERATOR_CONTRACT_HASH_V2,
+    testGeneratorContractHash: NODE_PRODUCT_TEST_GENERATOR_CONTRACT_HASH_V2,
     readiness: {
       status: "shadow_blocked",
       productionUse: "forbidden",
@@ -412,6 +422,14 @@ function buildPlanV2(
           hashNodeProductRuntimeGeneratorProfileV2(generatorProfile),
         entrypointKind: generatorProfile.entrypointKind,
         sourcePathSlotRef: generatorProfile.sourcePathSlotRef,
+      },
+      testGeneratorProfile: {
+        generatorRef: "NODE_PRODUCT_TEST_GENERATOR_V2",
+        generatorProfileHash:
+          hashNodeProductTestGeneratorProfileV2(testGeneratorProfile),
+        sourcePathRef: testGeneratorProfile.sourcePathRef,
+        compiledPathRef: testGeneratorProfile.compiledPathRef,
+        runnerAbi: testGeneratorProfile.execution.runnerAbi,
       },
     },
     coverage: {

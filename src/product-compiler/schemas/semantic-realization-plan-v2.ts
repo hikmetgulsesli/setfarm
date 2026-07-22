@@ -28,6 +28,10 @@ export const NODE_PRODUCT_RUNTIME_GENERATOR_CONTRACT_V2_SCHEMA =
   "setfarm.node-product-runtime-generator-contract.v2" as const;
 export const NODE_PRODUCT_RUNTIME_SOURCE_RECEIPT_V2_SCHEMA =
   "setfarm.node-product-runtime-source-receipt.v2" as const;
+export const NODE_PRODUCT_TEST_GENERATOR_CONTRACT_V2_SCHEMA =
+  "setfarm.node-product-test-generator-contract.v2" as const;
+export const NODE_PRODUCT_TEST_SOURCE_RECEIPT_V2_SCHEMA =
+  "setfarm.node-product-test-source-receipt.v2" as const;
 export const SEMANTIC_REALIZATION_PLAN_V2_MAX_ENTRIES = 20_000;
 export const SEMANTIC_REALIZATION_PLAN_V2_MAX_CANONICAL_BYTES = 4 * 1024 * 1024;
 export const SEMANTIC_REALIZATION_PLAN_V2_BOUNDED_WORK_LIMITS = Object.freeze({
@@ -48,6 +52,7 @@ export const SEMANTIC_REALIZATION_PLAN_V2_BLOCKER_CODES = Object.freeze([
   "SEMANTIC_REALIZATION_V2_RELEASE_MANIFEST_UNVERIFIED",
   "SEMANTIC_REALIZATION_V2_SOURCE_RECEIPT_UNVERIFIED",
   "SEMANTIC_REALIZATION_V2_TEST_GENERATOR_UNVERIFIED",
+  "SEMANTIC_REALIZATION_V2_TEST_SOURCE_RECEIPT_UNVERIFIED",
 ] as const);
 
 export const NODE_PRODUCT_RUNTIME_GENERATOR_CONTRACT_V2 = Object.freeze({
@@ -127,6 +132,88 @@ export function hashNodeProductRuntimeGeneratorProfileV2(
 ): string {
   return hashCanonicalJson({
     schema: "setfarm.node-product-runtime-generator-profile-hash.v2",
+    profile: value,
+  });
+}
+
+export const NODE_PRODUCT_TEST_GENERATOR_CONTRACT_V2 = Object.freeze({
+  schema: NODE_PRODUCT_TEST_GENERATOR_CONTRACT_V2_SCHEMA,
+  contractVersion: SEMANTIC_REALIZATION_PLAN_V2_VERSION,
+  generatorRef: "NODE_PRODUCT_TEST_GENERATOR_V2" as const,
+  inputAuthority: Object.freeze({
+    productSpecSchema: "setfarm.product-spec.v2" as const,
+    realizationPlanSchema: SEMANTIC_REALIZATION_PLAN_V2_SCHEMA,
+    invocationTransportSchema: "setfarm.invocation-input-transport.v2" as const,
+    evidenceRelationSource: "semantic_realization_plan_v2" as const,
+  }),
+  output: Object.freeze({
+    ownership: "code_owned_whole_file" as const,
+    modelWriteAuthority: "forbidden" as const,
+    sourceReceiptSchema: NODE_PRODUCT_TEST_SOURCE_RECEIPT_V2_SCHEMA,
+    mediaType: "text/typescript" as const,
+    encoding: "utf-8" as const,
+    newline: "lf" as const,
+    moduleSystem: "node_esm" as const,
+    minimumTestCount: 1,
+    zeroTestReceipt: "forbidden" as const,
+    coverage: "every_action_and_required_evidence_relation" as const,
+  }),
+  profiles: Object.freeze([
+    Object.freeze({
+      profileId: "PROFILE_NODE_CLI_STATELESS_EXACT_V2" as const,
+      stackPackId: "node-cli" as const,
+      sourcePathRef: "PATH_NODE_CLI_GENERATED_TEST_SOURCE_V2" as const,
+      sourceNormalizedLocator: "src/cli.setfarm.test.ts" as const,
+      compiledPathRef: "PATH_NODE_CLI_GENERATED_TEST_OUTPUT_V2" as const,
+      compiledNormalizedLocator: "dist/cli.setfarm.test.js" as const,
+      runtimeImportSpecifier: "./cli.js" as const,
+      execution: Object.freeze({
+        runnerAbi: "NODE_TEST_RUNNER_DIRECT_FILE_ABI_V2" as const,
+        executableRef: "TOOL_NODE_RUNTIME_V2" as const,
+        directArgvPrefix: Object.freeze(["node", "--test"] as const),
+        subprocessPolicy: "exact_same_runtime_cli_module_only" as const,
+        networkPolicy: "forbidden" as const,
+      }),
+    }),
+    Object.freeze({
+      profileId: "PROFILE_NODE_EXPRESS_API_STATELESS_EXACT_V2" as const,
+      stackPackId: "node-express-api" as const,
+      sourcePathRef: "PATH_NODE_API_GENERATED_TEST_SOURCE_V2" as const,
+      sourceNormalizedLocator: "src/app.setfarm.test.ts" as const,
+      compiledPathRef: "PATH_NODE_API_GENERATED_TEST_OUTPUT_V2" as const,
+      compiledNormalizedLocator: "dist/app.setfarm.test.js" as const,
+      runtimeImportSpecifier: "./app.js" as const,
+      execution: Object.freeze({
+        runnerAbi: "NODE_TEST_RUNNER_DIRECT_FILE_ABI_V2" as const,
+        executableRef: "TOOL_NODE_RUNTIME_V2" as const,
+        directArgvPrefix: Object.freeze(["node", "--test"] as const),
+        subprocessPolicy: "forbidden" as const,
+        networkPolicy: "forbidden" as const,
+      }),
+    }),
+  ] as const),
+  determinism: Object.freeze({
+    clock: "forbidden" as const,
+    randomness: "forbidden" as const,
+    network: "forbidden" as const,
+    ambientEnvironment: "forbidden" as const,
+    filesystemDiscovery: "forbidden" as const,
+    ordering: "canonical_utf16" as const,
+  }),
+} as const);
+
+export const NODE_PRODUCT_TEST_GENERATOR_CONTRACT_HASH_V2 = hashCanonicalJson(
+  NODE_PRODUCT_TEST_GENERATOR_CONTRACT_V2,
+);
+
+export type NodeProductTestGeneratorProfileV2 =
+  typeof NODE_PRODUCT_TEST_GENERATOR_CONTRACT_V2.profiles[number];
+
+export function hashNodeProductTestGeneratorProfileV2(
+  value: NodeProductTestGeneratorProfileV2,
+): string {
+  return hashCanonicalJson({
+    schema: "setfarm.node-product-test-generator-profile-hash.v2",
     profile: value,
   });
 }
@@ -326,6 +413,8 @@ export const SEMANTIC_REALIZATION_PLAN_CONTRACT_V2 = Object.freeze({
   policyHash: NODE_SEMANTIC_REALIZATION_POLICY_HASH_V2,
   generatorContractSchema: NODE_PRODUCT_RUNTIME_GENERATOR_CONTRACT_V2_SCHEMA,
   generatorContractHash: NODE_PRODUCT_RUNTIME_GENERATOR_CONTRACT_HASH_V2,
+  testGeneratorContractSchema: NODE_PRODUCT_TEST_GENERATOR_CONTRACT_V2_SCHEMA,
+  testGeneratorContractHash: NODE_PRODUCT_TEST_GENERATOR_CONTRACT_HASH_V2,
   outputAuthority: Object.freeze({
     semanticIntentTarget: "compatibility_evidence_only" as const,
     realizationPlan: "only_native_implementation_authority" as const,
@@ -522,6 +611,9 @@ const PlanIdentityV2Schema = z.object({
   contractHash: z.literal(SEMANTIC_REALIZATION_PLAN_CONTRACT_HASH_V2),
   policyHash: z.literal(NODE_SEMANTIC_REALIZATION_POLICY_HASH_V2),
   generatorContractHash: z.literal(NODE_PRODUCT_RUNTIME_GENERATOR_CONTRACT_HASH_V2),
+  testGeneratorContractHash: z.literal(
+    NODE_PRODUCT_TEST_GENERATOR_CONTRACT_HASH_V2,
+  ),
   readiness: z.object({
     status: z.literal("shadow_blocked"),
     productionUse: z.literal("forbidden"),
@@ -557,6 +649,19 @@ const PlanIdentityV2Schema = z.object({
         "PATH_SLOT_NODE_CLI_SOURCE_ENTRYPOINT_V2",
         "PATH_SLOT_NODE_API_SOURCE_ENTRYPOINT_V2",
       ]),
+    }).strict(),
+    testGeneratorProfile: z.object({
+      generatorRef: z.literal("NODE_PRODUCT_TEST_GENERATOR_V2"),
+      generatorProfileHash: Sha256Schema,
+      sourcePathRef: z.enum([
+        "PATH_NODE_CLI_GENERATED_TEST_SOURCE_V2",
+        "PATH_NODE_API_GENERATED_TEST_SOURCE_V2",
+      ]),
+      compiledPathRef: z.enum([
+        "PATH_NODE_CLI_GENERATED_TEST_OUTPUT_V2",
+        "PATH_NODE_API_GENERATED_TEST_OUTPUT_V2",
+      ]),
+      runnerAbi: z.literal("NODE_TEST_RUNNER_DIRECT_FILE_ABI_V2"),
     }).strict(),
   }).strict(),
   coverage: z.object({
@@ -621,6 +726,11 @@ function generatorProfileForV2(profileId: string) {
     profile.profileId === profileId);
 }
 
+function testGeneratorProfileForV2(profileId: string) {
+  return NODE_PRODUCT_TEST_GENERATOR_CONTRACT_V2.profiles.find((profile) =>
+    profile.profileId === profileId);
+}
+
 function addPlanClosureIssuesV2(
   value: SemanticRealizationPlanHashPayloadV2 & { planHash: string },
   context: z.RefinementCtx,
@@ -637,9 +747,13 @@ function addPlanClosureIssuesV2(
   }
   const policyProfile = policyProfileForV2(value.authority.profileId);
   const generatorProfile = generatorProfileForV2(value.authority.profileId);
+  const testGeneratorProfile = testGeneratorProfileForV2(
+    value.authority.profileId,
+  );
   if (
     !policyProfile
     || !generatorProfile
+    || !testGeneratorProfile
     || policyProfile.stackPackId !== value.authority.stackPackId
     || policyProfile.deliveryProfileHash
       !== value.authority.deliveryProfileHash
@@ -657,11 +771,21 @@ function addPlanClosureIssuesV2(
       !== value.authority.generatorProfile.sourcePathSlotRef
     || value.authority.generatorProfile.generatorProfileHash
       !== hashNodeProductRuntimeGeneratorProfileV2(generatorProfile)
+    || testGeneratorProfile.stackPackId !== value.authority.stackPackId
+    || testGeneratorProfile.sourcePathRef
+      !== value.authority.testGeneratorProfile.sourcePathRef
+    || testGeneratorProfile.compiledPathRef
+      !== value.authority.testGeneratorProfile.compiledPathRef
+    || testGeneratorProfile.execution.runnerAbi
+      !== value.authority.testGeneratorProfile.runnerAbi
+    || value.authority.testGeneratorProfile.generatorProfileHash
+      !== hashNodeProductTestGeneratorProfileV2(testGeneratorProfile)
   ) {
     context.addIssue({
       code: "custom",
       path: ["authority", "profileId"],
-      message: "Realization policy, rule set, stack and generator profile must join",
+      message:
+        "Realization policy, rule set, stack, runtime and test profiles must join",
     });
   }
   const refs = value.realizations.map((entry) => entry.realizationRef);

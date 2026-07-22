@@ -13,6 +13,8 @@ import {
 import {
   NODE_PRODUCT_RUNTIME_GENERATOR_CONTRACT_HASH_V2,
   NODE_PRODUCT_RUNTIME_GENERATOR_CONTRACT_V2,
+  NODE_PRODUCT_TEST_GENERATOR_CONTRACT_HASH_V2,
+  NODE_PRODUCT_TEST_GENERATOR_CONTRACT_V2,
   NODE_SEMANTIC_REALIZATION_POLICY_HASH_V2,
   NODE_SEMANTIC_REALIZATION_POLICY_V2,
   SEMANTIC_REALIZATION_PLAN_CONTRACT_HASH_V2,
@@ -33,16 +35,18 @@ import {
 
 const GENERATOR_CONTRACT_HASH_GOLDEN_V2 =
   "2f36ccaf6ccc5d88d89c770ea01daf139afc18b3736c4b282f9e01fea005b41f";
+const TEST_GENERATOR_CONTRACT_HASH_GOLDEN_V2 =
+  "478ecd63be81483a71d9becd769483e7c9b194c047223374eb35c0731e0c4f28";
 const POLICY_HASH_GOLDEN_V2 =
   "9dc1212f1c7fd1a6801dfbd9d3a2823b68292f76cdb9d8c7501fa8ac5beb120e";
 const PLAN_CONTRACT_HASH_GOLDEN_V2 =
-  "118e8cf9a2f0811b55782e693384d778948e462d589f0d4b1762d6538543b765";
+  "fcb011c9bcd79d4178415f0b7b419572d8a57eb38a94a8ece54d8a68f07d645e";
 const CLI_PLAN_HASH_GOLDEN_V2 =
-  "b037f9afa6adaab57ba0ea130b8c3f358e75e6c5533f10cc985e804774a9f704";
+  "4bf2b8117db2b84cecefb8b50ed5230c31fdac0350f97277a51816b69d30a191";
 const API_PLAN_HASH_GOLDEN_V2 =
-  "a90ef146452bc0ac85329ab288ad21d640dc812c0c2010674806a9bb064bd05f";
+  "a650d4b1923d098171181dd2de466df2cbce025782b556902cb5fc24e711a6c2";
 const TWO_STORY_API_PLAN_HASH_GOLDEN_V2 =
-  "1c0cc2e03de91a39afb0b4ba8931a47bb173e91e5e32efb9f5b070b669102ffe";
+  "7584d7e0c06858154ceaadba0707f0b01e0b56c320f362438f1ec8e9f0f6f16a";
 const CLI_MEMBERSHIP_HASH_GOLDEN_V2 =
   "da6de6fa7a1c2005be03459827dcb0dffccf917ac56acd6b4d11f9cbec370875";
 const API_MEMBERSHIP_HASH_GOLDEN_V2 =
@@ -126,6 +130,10 @@ describe("SemanticRealizationPlanV2 contract and compiler", () => {
       NODE_PRODUCT_RUNTIME_GENERATOR_CONTRACT_HASH_V2,
       GENERATOR_CONTRACT_HASH_GOLDEN_V2,
     );
+    assert.equal(
+      NODE_PRODUCT_TEST_GENERATOR_CONTRACT_HASH_V2,
+      TEST_GENERATOR_CONTRACT_HASH_GOLDEN_V2,
+    );
     assert.equal(NODE_SEMANTIC_REALIZATION_POLICY_HASH_V2, POLICY_HASH_GOLDEN_V2);
     assert.equal(
       SEMANTIC_REALIZATION_PLAN_CONTRACT_HASH_V2,
@@ -139,6 +147,7 @@ describe("SemanticRealizationPlanV2 contract and compiler", () => {
       "SEMANTIC_REALIZATION_V2_RELEASE_MANIFEST_UNVERIFIED",
       "SEMANTIC_REALIZATION_V2_SOURCE_RECEIPT_UNVERIFIED",
       "SEMANTIC_REALIZATION_V2_TEST_GENERATOR_UNVERIFIED",
+      "SEMANTIC_REALIZATION_V2_TEST_SOURCE_RECEIPT_UNVERIFIED",
     ]);
     assert.equal(
       NODE_PRODUCT_RUNTIME_GENERATOR_CONTRACT_V2.semanticExecution
@@ -285,6 +294,57 @@ describe("SemanticRealizationPlanV2 contract and compiler", () => {
       && entry.target.memberKind === "runtime_data_seed"), true);
   });
 
+  it("pins exact generated test source, output and direct runner authority", () => {
+    const cliProfile = NODE_PRODUCT_TEST_GENERATOR_CONTRACT_V2.profiles.find(
+      (profile) => profile.stackPackId === "node-cli",
+    );
+    const apiProfile = NODE_PRODUCT_TEST_GENERATOR_CONTRACT_V2.profiles.find(
+      (profile) => profile.stackPackId === "node-express-api",
+    );
+    assert.ok(cliProfile);
+    assert.deepEqual({
+      source: cliProfile.sourceNormalizedLocator,
+      output: cliProfile.compiledNormalizedLocator,
+      importSpecifier: cliProfile.runtimeImportSpecifier,
+      runner: cliProfile.execution.directArgvPrefix,
+      subprocess: cliProfile.execution.subprocessPolicy,
+      network: cliProfile.execution.networkPolicy,
+    }, {
+      source: "src/cli.setfarm.test.ts",
+      output: "dist/cli.setfarm.test.js",
+      importSpecifier: "./cli.js",
+      runner: ["node", "--test"],
+      subprocess: "exact_same_runtime_cli_module_only",
+      network: "forbidden",
+    });
+    assert.ok(apiProfile);
+    assert.deepEqual({
+      source: apiProfile.sourceNormalizedLocator,
+      output: apiProfile.compiledNormalizedLocator,
+      importSpecifier: apiProfile.runtimeImportSpecifier,
+      runner: apiProfile.execution.directArgvPrefix,
+      subprocess: apiProfile.execution.subprocessPolicy,
+      network: apiProfile.execution.networkPolicy,
+    }, {
+      source: "src/app.setfarm.test.ts",
+      output: "dist/app.setfarm.test.js",
+      importSpecifier: "./app.js",
+      runner: ["node", "--test"],
+      subprocess: "forbidden",
+      network: "forbidden",
+    });
+
+    const cli = compiled(genuineNodeCliProductSpecV2(), "node-cli").value;
+    assert.deepEqual(cli.authority.testGeneratorProfile, {
+      generatorRef: "NODE_PRODUCT_TEST_GENERATOR_V2",
+      generatorProfileHash:
+        "de094967886500722208094d508be9043cb387f0a0d157c79848898b1be17c3b",
+      sourcePathRef: "PATH_NODE_CLI_GENERATED_TEST_SOURCE_V2",
+      compiledPathRef: "PATH_NODE_CLI_GENERATED_TEST_OUTPUT_V2",
+      runnerAbi: "NODE_TEST_RUNNER_DIRECT_FILE_ABI_V2",
+    });
+  });
+
   it("resolves memory persistence to the generated state runtime", () => {
     const value = compiled(
       twoStoryNodeExpressApiProductSpecV2({ memoryOnOriginalStory: true }),
@@ -350,6 +410,15 @@ describe("SemanticRealizationPlanV2 contract and compiler", () => {
     assert.ok(action);
     action.target.memberKind = "output_codec";
     action.realizationHash = hashSemanticRealizationV2(action);
+    rehashPlan(candidate);
+    assert.equal(SemanticRealizationPlanV2Schema.safeParse(candidate).success, false);
+  });
+
+  it("rejects a self-rehashed cross-profile test path forgery", () => {
+    const authority = compiled(genuineNodeCliProductSpecV2(), "node-cli");
+    const candidate = structuredClone(authority.value) as any;
+    candidate.authority.testGeneratorProfile.sourcePathRef =
+      "PATH_NODE_API_GENERATED_TEST_SOURCE_V2";
     rehashPlan(candidate);
     assert.equal(SemanticRealizationPlanV2Schema.safeParse(candidate).success, false);
   });
