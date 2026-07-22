@@ -297,9 +297,9 @@ F2B1/B2a/B2b/B2c evidence completed on 2026-07-22:
   mode, while Setfarm-created directories remain exact `root:wheel`;
 - final command/rollback/CLI-focused evidence is 23/23; the combined distribution,
   inventory, private-tree, host, provisioning, and command chain is 56/56.
-  After authenticated compile and prepared publication, final Product Compiler evidence is
-  982/982 across 121
-  suites, scripts are 24/24, with TypeScript, English (1,066 files), path (594
+  After authenticated compile, prepared publication, and isolated bootstrap
+  installation, final Product Compiler evidence is 983/983 across 121
+  suites, scripts are 24/24, with TypeScript, English (1,071 files), path (599
   files), diff and isolated scratch-residue
   checks clean. No production toolchain root, live DB/PR/service, generated
   repository, or Setfarm run was mutated.
@@ -323,19 +323,28 @@ F2B dependency chain is:
    final root, Node bytes, and normalized npm tree before `production_host`
    authority can be issued. Merely creating the fixed directory or making a
    binary self-report the expected version is invalid;
-5. **Complete unprivileged preparation authority, pending privileged
-   installation rehearsal:** the separately packaged root launcher/manifest,
+5. **Complete isolated installation authority, pending privileged rollback and
+   packaged-CLI rehearsal:** the separately packaged root launcher/manifest,
    installed-root verifier, authenticated reproducible bundle handle,
    handle-only compiler, and private prepared-package publisher now exist. The
    prepared publisher deliberately does not impersonate an installed package:
    its process-owned storage root cannot satisfy the manifest's future
    root:wheel locator/owner contract. A dedicated prepared-payload verifier
-   therefore reopens exact storage bytes, while the existing installed-package
-   verifier remains reserved for the eventual final root. The next owner must
-   consume only the prepared handle and execute isolated install/open/CLI
-   inspect/apply/verify/rollback/cleanup rehearsal before any production root or
-   OS-update transition. No installer action will run automatically from a
-   Setfarm product attempt.
+   therefore reopens exact storage bytes. Commits `15f4c797` and `b4bc3bd9`
+   add canonical installation intent/claim/receipt, read-only
+   inspect/plan decisions, a real inherited-descriptor `/usr/bin/lockf` lease,
+   claim-before-root publication, prepared-handle-only defensive copy,
+   same-filesystem hard-link no-replace files, manifest-last sealing, receipt-last
+   durability, exact-claim recovery, and durable installed-handle rehydration.
+   Eight injected publication crash boundaries converge; foreign/unclaimed
+   state, aliases, source drift, stale decision expansion, forged handles and
+   test-to-production promotion fail closed. All mutation evidence is still
+   process-owned test-fixture storage. The next owner must add generation-bound
+   bootstrap uninstall/rollback, then execute the packaged CLI through the
+   official runtime in a complete isolated install/open/inspect/apply/verify/
+   rollback/cleanup rehearsal before any production root or OS-update
+   transition. No installer action will run automatically from a Setfarm
+   product attempt.
 
 F2 completion does not authorize `npm ci`; it only creates the exact toolchain
 precondition consumed by F3/F4. F2A alone is deliberately insufficient.
@@ -428,8 +437,12 @@ concurrency tests. A clean merged-`main` `npm run build` and full `npm test`
 remain release evidence; the feature-branch build guard is never bypassed.
 
 GO for F1 and the isolated F2B publisher/rehydration/host-join, authenticated
-bootstrap compile, and unprivileged prepared-package authority.
+bootstrap compile, prepared-package authority, and isolated bootstrap installer.
 NO-GO for production host execution, dependency installation, setup cutover,
-PacketV4, live migration, deploy and new clean product runs until the explicit
-installer state machine, real-root verification, F3-F5, and later packet/
-evidence program are complete.
+PacketV4, live migration, deploy and new clean product runs until bootstrap
+rollback plus official-runtime rehearsal, real-root verification, F3-F5, and
+the later packet/evidence program are complete. The feature-branch `npm run
+build` guard correctly refused `b4bc3bd9`; the resulting source-v26 versus
+committed-dist-v25 mismatch also prevents `dist`-importing full step tests from
+being release evidence on this branch. Only a clean merged-main build and full
+test can close that release gate; it must not be bypassed.
