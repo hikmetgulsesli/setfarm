@@ -660,17 +660,10 @@ const EXACT_PROCESS_ENVIRONMENT_KEYS_V2 = Object.freeze([
   "TZ",
 ]);
 
-export function assertProductionNodeToolchainProvisionerBootstrapProcessV2(
-  handle: VerifiedNodeToolchainProvisionerBootstrapPackageV2,
-): NodeToolchainProvisionerBootstrapManifestV2 {
-  const state = authenticState(handle);
-  if (state.admissionScope !== "production_root") {
-    return fail(
-      "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_V2_PROCESS_INVALID",
-      "Test bootstrap package authority cannot admit a production process",
-    );
-  }
-  const manifest = revalidateNodeToolchainProvisionerBootstrapPackageV2(handle);
+function assertExactBootstrapProcessV2(
+  state: VerifiedPackageStateV2,
+  manifest: NodeToolchainProvisionerBootstrapManifestV2,
+): void {
   const runtimePath = path.join(state.root, NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_RUNTIME_LOCATOR_V2);
   const bundlePath = path.join(state.root, NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_BUNDLE_LOCATOR_V2);
   const manifestPath = path.join(state.root, NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_MANIFEST_LOCATOR_V2);
@@ -681,8 +674,10 @@ export function assertProductionNodeToolchainProvisionerBootstrapProcessV2(
     || process.arch !== manifest.distribution.architecture
     || typeof process.getuid !== "function"
     || typeof process.getgid !== "function"
-    || process.getuid() !== 0
-    || process.getgid() !== 0
+    || process.getuid() !== state.expectedOwner.uid
+    || process.getgid() !== state.expectedOwner.gid
+    || (typeof process.geteuid === "function" && process.geteuid() !== state.expectedOwner.uid)
+    || (typeof process.getegid === "function" && process.getegid() !== state.expectedOwner.gid)
     || process.execPath !== runtimePath
     || realpathSync(process.execPath) !== runtimePath
     || process.argv[1] !== bundlePath
@@ -706,8 +701,150 @@ export function assertProductionNodeToolchainProvisionerBootstrapProcessV2(
   ) {
     return fail(
       "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_V2_PROCESS_INVALID",
-      "Provisioner process does not equal the verified root-owned runtime, bundle and sealed environment",
+      "Provisioner process does not equal the verified runtime, bundle, owner and sealed environment",
     );
   }
+}
+
+export function assertProductionNodeToolchainProvisionerBootstrapProcessV2(
+  handle: VerifiedNodeToolchainProvisionerBootstrapPackageV2,
+): NodeToolchainProvisionerBootstrapManifestV2 {
+  const state = authenticState(handle);
+  if (state.admissionScope !== "production_root") {
+    return fail(
+      "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_V2_PROCESS_INVALID",
+      "Test bootstrap package authority cannot admit a production process",
+    );
+  }
+  const manifest = revalidateNodeToolchainProvisionerBootstrapPackageV2(handle);
+  if (
+    state.root !== NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_ROOT_V2
+    || state.expectedOwner.uid !== 0
+    || state.expectedOwner.gid !== 0
+  ) {
+    return fail(
+      "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_V2_PROCESS_INVALID",
+      "Production provisioner process authority does not equal the fixed root-owned package",
+    );
+  }
+  assertExactBootstrapProcessV2(state, manifest);
   return manifest;
+}
+
+export type NodeToolchainProvisionerBootstrapTestProcessV2 = Readonly<{
+  admissionScope: "test_fixture";
+  architecture: "arm64" | "x64";
+  manifest: NodeToolchainProvisionerBootstrapManifestV2;
+  provisionerParent: string;
+  scratchParent: string;
+}>;
+
+function assertPrivateProcessDirectoryV2(
+  absolutePath: string,
+  expectedOwner: ExpectedOwnerV2,
+): void {
+  try {
+    const stat = lstatSync(absolutePath);
+    if (
+      stat.isSymbolicLink()
+      || !stat.isDirectory()
+      || stat.uid !== expectedOwner.uid
+      || stat.gid !== expectedOwner.gid
+      || modeBits(stat) !== 0o700
+      || realpathSync(absolutePath) !== absolutePath
+    ) {
+      return fail(
+        "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_V2_PROCESS_INVALID",
+        "Test provisioner process directory is not one direct process-owned 0700 directory",
+      );
+    }
+  } catch (error) {
+    if (error instanceof NodeToolchainProvisionerBootstrapPackageErrorV2) throw error;
+    return fail(
+      "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_V2_PROCESS_INVALID",
+      "Test provisioner process directory could not be reproduced",
+      error,
+    );
+  }
+}
+
+export function assertNodeToolchainProvisionerBootstrapTestProcessV2(
+  handle: VerifiedNodeToolchainProvisionerBootstrapPackageV2,
+): NodeToolchainProvisionerBootstrapTestProcessV2 {
+  const state = authenticState(handle);
+  if (state.admissionScope !== "test_fixture") {
+    return fail(
+      "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_V2_PROCESS_INVALID",
+      "Production bootstrap package authority cannot admit a test process",
+    );
+  }
+  const manifest = revalidateNodeToolchainProvisionerBootstrapPackageV2(handle);
+  const bootstrapParent = path.dirname(state.root);
+  const rehearsalRoot = path.dirname(bootstrapParent);
+  const provisionerParent = path.join(rehearsalRoot, "toolchains");
+  const scratchParent = path.join(rehearsalRoot, "scratch");
+  if (
+    path.basename(state.root) !== path.basename(NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_ROOT_V2)
+    || path.basename(bootstrapParent) !== "bootstrap"
+    || rehearsalRoot === path.parse(rehearsalRoot).root
+    || manifest.layout.expectedOwnerUid !== state.expectedOwner.uid
+    || manifest.layout.expectedOwnerGid !== state.expectedOwner.gid
+  ) {
+    return fail(
+      "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_V2_PROCESS_INVALID",
+      "Test bootstrap package is outside the fixed isolated rehearsal layout",
+    );
+  }
+  for (const directory of [rehearsalRoot, bootstrapParent, provisionerParent, scratchParent]) {
+    assertPrivateProcessDirectoryV2(directory, state.expectedOwner);
+  }
+  assertExactBootstrapProcessV2(state, manifest);
+  return deepFreezeJson({
+    admissionScope: "test_fixture",
+    architecture: manifest.distribution.architecture,
+    manifest,
+    provisionerParent,
+    scratchParent,
+  });
+}
+
+export type ExecutingNodeToolchainProvisionerBootstrapV2 =
+  | Readonly<{
+      admissionScope: "production_root";
+      manifest: NodeToolchainProvisionerBootstrapManifestV2;
+    }>
+  | NodeToolchainProvisionerBootstrapTestProcessV2;
+
+export function openExecutingNodeToolchainProvisionerBootstrapV2():
+ExecutingNodeToolchainProvisionerBootstrapV2 {
+  const manifestPath = process.env.SETFARM_NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_MANIFEST_V2;
+  const productionManifestPath = path.join(
+    NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_ROOT_V2,
+    NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_MANIFEST_LOCATOR_V2,
+  );
+  if (manifestPath === productionManifestPath) {
+    const handle = openProductionNodeToolchainProvisionerBootstrapPackageV2();
+    return deepFreezeJson({
+      admissionScope: "production_root",
+      manifest: assertProductionNodeToolchainProvisionerBootstrapProcessV2(handle),
+    });
+  }
+  if (
+    typeof manifestPath !== "string"
+    || !path.isAbsolute(manifestPath)
+    || path.normalize(manifestPath) !== manifestPath
+    || path.basename(manifestPath) !== NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_MANIFEST_LOCATOR_V2
+    || typeof process.getuid !== "function"
+    || typeof process.getgid !== "function"
+  ) {
+    return fail(
+      "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_V2_PROCESS_INVALID",
+      "Executing bootstrap manifest locator or process owner is invalid",
+    );
+  }
+  const handle = openNodeToolchainProvisionerBootstrapPackageV2ForTest({
+    root: path.dirname(manifestPath),
+    expectedOwner: { uid: process.getuid(), gid: process.getgid() },
+  });
+  return assertNodeToolchainProvisionerBootstrapTestProcessV2(handle);
 }

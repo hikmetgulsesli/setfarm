@@ -1,12 +1,12 @@
 import { canonicalJsonBytes } from "./canonical-json.js";
 import {
+  createNodeToolchainProvisionerCliOperationsV2ForTest,
   createProductionNodeToolchainProvisionerCliOperationsV2,
   runNodeToolchainProvisionerCliV2,
 } from "./node-toolchain-provisioner-cli-v2.js";
 import {
   NodeToolchainProvisionerBootstrapPackageErrorV2,
-  assertProductionNodeToolchainProvisionerBootstrapProcessV2,
-  openProductionNodeToolchainProvisionerBootstrapPackageV2,
+  openExecutingNodeToolchainProvisionerBootstrapV2,
 } from "./node-toolchain-provisioner-bootstrap-package-v2.js";
 import {
   NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_AUTHORITY_REF_V2,
@@ -54,11 +54,21 @@ function writeBootstrapFailure(error: unknown): number {
 
 async function main(): Promise<number> {
   try {
-    const bootstrap = openProductionNodeToolchainProvisionerBootstrapPackageV2();
-    assertProductionNodeToolchainProvisionerBootstrapProcessV2(bootstrap);
+    // CoreFoundation injects this key into Darwin Node processes even after
+    // /usr/bin/env -i. Remove only that OS-owned value before reproducing the
+    // launcher's every-and-only environment contract.
+    delete process.env.__CF_USER_TEXT_ENCODING;
+    const bootstrap = openExecutingNodeToolchainProvisionerBootstrapV2();
+    const operations = bootstrap.admissionScope === "production_root"
+      ? createProductionNodeToolchainProvisionerCliOperationsV2()
+      : createNodeToolchainProvisionerCliOperationsV2ForTest({
+          parent: bootstrap.provisionerParent,
+          scratchParent: bootstrap.scratchParent,
+          architecture: bootstrap.architecture,
+        });
     return await runNodeToolchainProvisionerCliV2(
       process.argv.slice(2),
-      createProductionNodeToolchainProvisionerCliOperationsV2(),
+      operations,
       {
         writeStdout: (bytes) => {
           process.stdout.write(bytes);

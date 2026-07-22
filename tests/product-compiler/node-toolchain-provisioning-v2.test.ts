@@ -106,9 +106,14 @@ import {
   planNodeToolchainProvisionerBootstrapInstallationV2,
 } from "../../src/product-compiler/node-toolchain-provisioner-bootstrap-installation-plan-v2.js";
 import {
+  createNodeToolchainProvisionerCliOperationsV2ForTest,
   runNodeToolchainProvisionerCliV2,
   type NodeToolchainProvisionerCliOperationsV2,
 } from "../../src/product-compiler/node-toolchain-provisioner-cli-v2.js";
+import {
+  NodeToolchainProvisionerRehearsalSourceErrorV2,
+  getCodeOwnedNodeToolchainProvisionerRehearsalSourceV2,
+} from "../../src/product-compiler/node-toolchain-provisioner-rehearsal-source-v2.js";
 import {
   applyNodeToolchainProvisionerPlanV2ForTest,
   inspectNodeToolchainProvisionerInspectionV2,
@@ -123,6 +128,10 @@ import {
   verifyNodeToolchainDistributionArchiveV2ForTest,
   type VerifiedNodeToolchainDistributionArchiveV2,
 } from "../../src/product-compiler/node-toolchain-distribution-authority-v2.js";
+import {
+  getCodeOwnedNodeToolchainDistributionArtifactV2,
+  getCodeOwnedNodeToolchainDistributionManifestV2,
+} from "../../src/product-compiler/node-toolchain-distribution-manifest-v2.js";
 import {
   NodeToolchainDistributionArtifactV2Schema,
   hashNodeToolchainDistributionArtifactV2,
@@ -1403,6 +1412,58 @@ describe("NodeToolchainProvisionerCommandV2 inspection and planning", () => {
         JSON.parse(hostile.bytes.toString("utf8")),
       ).commandRef,
       "invalid_invocation",
+    );
+  });
+
+  it("binds private CLI rehearsal to the exact official archive identity", async () => {
+    const officialManifest = getCodeOwnedNodeToolchainDistributionManifestV2();
+    const officialArtifact = getCodeOwnedNodeToolchainDistributionArtifactV2("arm64");
+    const source = getCodeOwnedNodeToolchainProvisionerRehearsalSourceV2("arm64");
+    assert.equal(source.officialManifestHash, officialManifest.manifestHash);
+    assert.equal(source.officialArtifactHash, officialArtifact.artifactHash);
+    assert.equal(source.rehearsalArtifact.sourceAuthority, "test_fixture");
+    assert.equal(source.rehearsalArtifact.architecture, officialArtifact.architecture);
+    assert.equal(source.rehearsalArtifact.origin, officialArtifact.origin);
+    assert.equal(source.rehearsalArtifact.fileName, officialArtifact.fileName);
+    assert.equal(source.rehearsalArtifact.archiveRoot, officialArtifact.archiveRoot);
+    assert.equal(source.rehearsalArtifact.byteLength, officialArtifact.byteLength);
+    assert.equal(source.rehearsalArtifact.sha256, officialArtifact.sha256);
+    assert.notEqual(source.rehearsalArtifact.artifactHash, officialArtifact.artifactHash);
+    assert.equal(Object.isFrozen(source), true);
+    assert.equal(Object.isFrozen(source.rehearsalArtifact), true);
+    assert.throws(
+      () => getCodeOwnedNodeToolchainProvisionerRehearsalSourceV2("ia32" as never),
+      (error: unknown) =>
+        error instanceof NodeToolchainProvisionerRehearsalSourceErrorV2
+        && error.code === "NODE_TOOLCHAIN_PROVISIONER_REHEARSAL_SOURCE_V2_INPUT_INVALID",
+    );
+
+    const parent = await privateParent();
+    const scratchParent = await privateParent();
+    const operations = createNodeToolchainProvisionerCliOperationsV2ForTest({
+      parent,
+      scratchParent,
+      architecture: "arm64",
+    });
+    const inspection = operations.inspectArtifact(await operations.inspect());
+    assert.equal(inspection.admissionScope, "test_fixture");
+    assert.equal(inspection.architecture, "arm64");
+    assert.equal(inspection.classification, "target_absent");
+    assert.throws(
+      () => createNodeToolchainProvisionerCliOperationsV2ForTest({
+        parent,
+        scratchParent,
+        architecture: "arm64",
+        targetOverride: "/Library/Application Support/Setfarm/toolchains",
+      }),
+      /unknown or missing fields/,
+    );
+
+    const wrongArchive = path.join(scratchParent, "wrong-official-node.tar.xz");
+    await writeFile(wrongArchive, "not-the-official-node-archive\n", { mode: 0o600 });
+    await assert.rejects(
+      operations.withPrivateTree(wrongArchive, () => undefined),
+      /source length differs from the code-owned artifact/,
     );
   });
 

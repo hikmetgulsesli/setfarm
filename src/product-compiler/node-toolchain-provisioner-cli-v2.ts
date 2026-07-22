@@ -23,12 +23,19 @@ import {
   type MaterializedNodeToolchainPrivateTreeV2,
 } from "./node-toolchain-private-tree-v2.js";
 import {
+  withNodeToolchainProvisionerRehearsalPrivateTreeV2,
+} from "./node-toolchain-provisioner-rehearsal-source-v2.js";
+import {
+  applyNodeToolchainProvisionerPlanV2ForTest,
   applyProductionNodeToolchainProvisionerPlanV2,
   inspectNodeToolchainProvisionerInspectionV2,
+  inspectNodeToolchainProvisionerV2ForTest,
   inspectProductionNodeToolchainProvisionerV2,
   planNodeToolchainProvisioningV2,
   planNodeToolchainRollbackV2,
+  rollbackNodeToolchainProvisionerPlanV2ForTest,
   rollbackProductionNodeToolchainProvisionerPlanV2,
+  verifyNodeToolchainProvisionerV2ForTest,
   verifyProductionNodeToolchainProvisionerV2,
   type InspectedNodeToolchainProvisionerStateV2,
 } from "./node-toolchain-provisioner-command-v2.js";
@@ -535,5 +542,118 @@ NodeToolchainProvisionerCliOperationsV2 {
     apply: applyProductionNodeToolchainProvisionerPlanV2,
     verify: verifyProductionNodeToolchainProvisionerV2,
     rollback: rollbackProductionNodeToolchainProvisionerPlanV2,
+  });
+}
+
+type NodeToolchainProvisionerCliTestBoundaryV2 = Readonly<{
+  parent: string;
+  scratchParent: string;
+  architecture: "arm64" | "x64";
+}>;
+
+function exactTestBoundary(input: unknown): NodeToolchainProvisionerCliTestBoundaryV2 {
+  try {
+    if (
+      typeof input !== "object"
+      || input === null
+      || isProxy(input)
+      || Object.getPrototypeOf(input) !== Object.prototype
+    ) {
+      return fail(
+        CLI_USAGE_ERROR_CODE_V2,
+        "invocation_rejected",
+        "Test CLI boundary must be one plain exact object",
+      );
+    }
+    const descriptors = Object.getOwnPropertyDescriptors(input);
+    const keys = Reflect.ownKeys(input).sort();
+    if (
+      keys.length !== 3
+      || keys[0] !== "architecture"
+      || keys[1] !== "parent"
+      || keys[2] !== "scratchParent"
+    ) {
+      return fail(
+        CLI_USAGE_ERROR_CODE_V2,
+        "invocation_rejected",
+        "Test CLI boundary has unknown or missing fields",
+      );
+    }
+    const architecture = descriptors.architecture && "value" in descriptors.architecture
+      ? descriptors.architecture.value
+      : undefined;
+    const parent = descriptors.parent && "value" in descriptors.parent
+      ? descriptors.parent.value
+      : undefined;
+    const scratchParent = descriptors.scratchParent && "value" in descriptors.scratchParent
+      ? descriptors.scratchParent.value
+      : undefined;
+    if (
+      (architecture !== "arm64" && architecture !== "x64")
+      || typeof parent !== "string"
+      || typeof scratchParent !== "string"
+    ) {
+      return fail(
+        CLI_USAGE_ERROR_CODE_V2,
+        "invocation_rejected",
+        "Test CLI boundary architecture or locator is invalid",
+      );
+    }
+    return Object.freeze({
+      architecture,
+      parent: normalizedAbsolutePath(parent, "Test provisioner parent"),
+      scratchParent: normalizedAbsolutePath(scratchParent, "Test provisioner scratch parent"),
+    });
+  } catch (error) {
+    if (error instanceof NodeToolchainProvisionerCliErrorV2) throw error;
+    return fail(
+      CLI_USAGE_ERROR_CODE_V2,
+      "invocation_rejected",
+      "Test CLI boundary could not be inspected safely",
+      error,
+    );
+  }
+}
+
+/**
+ * Permanently test-scoped operation binding for an installed bootstrap
+ * rehearsal. The archive bytes still have to equal the code-owned official
+ * Node distribution; only the filesystem authority is downgraded to a private
+ * process-owned fixture.
+ */
+export function createNodeToolchainProvisionerCliOperationsV2ForTest(
+  input: unknown,
+): NodeToolchainProvisionerCliOperationsV2 {
+  const boundary = exactTestBoundary(input);
+  const inspect = () => inspectNodeToolchainProvisionerV2ForTest({
+    parent: boundary.parent,
+    architecture: boundary.architecture,
+  });
+  return Object.freeze({
+    inspect,
+    inspectArtifact: inspectNodeToolchainProvisionerInspectionV2,
+    withPrivateTree: <T>(
+      archivePath: string,
+      use: (tree: MaterializedNodeToolchainPrivateTreeV2) => Promise<T> | T,
+    ) => withNodeToolchainProvisionerRehearsalPrivateTreeV2({
+      archivePath,
+      architecture: boundary.architecture,
+      scratchParent: boundary.scratchParent,
+    }, use),
+    planApply: planNodeToolchainProvisioningV2,
+    planRollback: planNodeToolchainRollbackV2,
+    apply: (plan, privateTree) => applyNodeToolchainProvisionerPlanV2ForTest({
+      parent: boundary.parent,
+      plan,
+      privateTree,
+    }),
+    verify: () => verifyNodeToolchainProvisionerV2ForTest({
+      parent: boundary.parent,
+      architecture: boundary.architecture,
+    }),
+    rollback: (plan) => rollbackNodeToolchainProvisionerPlanV2ForTest({
+      parent: boundary.parent,
+      plan,
+    }),
   });
 }
