@@ -15,13 +15,15 @@ import {
   INVOCATION_INPUT_TRANSPORT_ARTIFACT_TYPE_V2,
 } from "../../product-compiler/schemas/invocation-input-transport-v2.js";
 import {
+  CANDIDATE_RUNTIME_BUNDLE_CONTRACT_HASH_V2,
+  CANDIDATE_RUNTIME_BUNDLE_V2_VERSION,
   CANDIDATE_RUNTIME_BUNDLE_V2_SCHEMA,
   CandidateRuntimeApplicationTreeBindingV2Schema,
+  CandidateRuntimeSourceBindingV2Schema,
 } from "./candidate-runtime-bundle-v2.js";
 import {
   CANONICAL_RUNTIME_TREE_V2_PROFILES,
 } from "./canonical-runtime-tree-v2.js";
-import { SourceRevisionV1Schema } from "./execution-attempt-v1.js";
 import {
   PLATFORM_RELEASE_COMPONENT_VERSION_V2,
   PlatformReleasePortableLocatorV2Schema,
@@ -195,7 +197,12 @@ export type HttpHandlerExportV2 = z.infer<typeof HttpHandlerExportV2Schema>;
 
 const CandidateRuntimeBundleLaunchBindingIdentityV2Schema = z.object({
   runtimeBundleSchema: z.literal(CANDIDATE_RUNTIME_BUNDLE_V2_SCHEMA),
+  runtimeBundleVersion: z.literal(CANDIDATE_RUNTIME_BUNDLE_V2_VERSION),
+  runtimeBundleContractHash: z.literal(CANDIDATE_RUNTIME_BUNDLE_CONTRACT_HASH_V2),
   runtimeBundleHash: Sha256Schema,
+  packetEnvelopeHash: Sha256Schema,
+  buildTopologyHash: Sha256Schema,
+  sourceAuthority: CandidateRuntimeSourceBindingV2Schema,
   applicationTreeBinding: CandidateRuntimeApplicationTreeBindingV2Schema,
   applicationTreeBindingHash: Sha256Schema,
   applicationTreeHash: Sha256Schema,
@@ -378,7 +385,7 @@ const CandidateLaunchTargetCommonShape = {
   productionUse: z.literal("forbidden"),
   packetEnvelopeHash: Sha256Schema,
   buildTopologyHash: Sha256Schema,
-  sourceRevision: SourceRevisionV1Schema,
+  sourceAuthority: CandidateRuntimeSourceBindingV2Schema,
   runtimeBundle: CandidateRuntimeBundleLaunchBindingV2Schema,
 } as const;
 
@@ -421,6 +428,18 @@ function addCandidateLaunchTargetIssuesV2(
   value: CandidateLaunchTargetHashPayloadV2 & { launchTargetHash: string },
   context: z.RefinementCtx,
 ): void {
+  if (
+    value.packetEnvelopeHash !== value.runtimeBundle.packetEnvelopeHash
+    || value.buildTopologyHash !== value.runtimeBundle.buildTopologyHash
+    || JSON.stringify(value.sourceAuthority)
+      !== JSON.stringify(value.runtimeBundle.sourceAuthority)
+  ) {
+    context.addIssue({
+      code: "custom",
+      path: ["runtimeBundle"],
+      message: "Candidate launch target must join the runtime bundle's exact packet, topology and content-first source authority",
+    });
+  }
   if (!platformReleaseCandidateFitsCanonicalCapV2(
     value,
     CANDIDATE_LAUNCH_TARGET_V2_MAX_CANONICAL_BYTES,

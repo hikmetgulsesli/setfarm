@@ -1,7 +1,10 @@
 import { z } from "zod";
 
 import { canonicalJsonStringify, hashCanonicalJson } from "../../product-compiler/canonical-json.js";
-import { Sha256Schema } from "../../product-compiler/schemas/common-v1.js";
+import {
+  GitCodeShaSchema,
+  Sha256Schema,
+} from "../../product-compiler/schemas/common-v1.js";
 import {
   CandidateBuildReceiptV2Schema,
   CandidateCanonicalRuntimeTreeArtifactRefV2Schema,
@@ -14,11 +17,10 @@ import {
 import {
   EXTERNAL_RUNTIME_RESOLUTION_V2_MAX_PACKAGES,
   ExactPackageLockSourceRefV2Schema,
+  PRODUCTION_PACKAGE_RESOLUTION_GRAPH_V2_SCHEMA,
 } from "./external-runtime-resolution-v2.js";
 import {
   PLATFORM_RELEASE_COMPONENT_VERSION_V2,
-  PlatformReleaseStableReferenceV2Schema,
-  PlatformReleaseVersionIdentityV2Schema,
   boundedPlatformReleaseJsonSnapshotV2,
   deepFreezePlatformReleaseJsonV2,
   platformReleaseCandidateFitsCanonicalCapV2,
@@ -26,6 +28,7 @@ import {
 
 export const CANDIDATE_RUNTIME_BUNDLE_V2_SCHEMA =
   "setfarm.candidate-runtime-bundle.v2" as const;
+export const CANDIDATE_RUNTIME_BUNDLE_V2_VERSION = "2.1.0" as const;
 export const CANDIDATE_RUNTIME_APPLICATION_TREE_BINDING_V2_SCHEMA =
   "setfarm.candidate-runtime-application-tree-binding.v2" as const;
 export const CANDIDATE_RUNTIME_DEPENDENCY_TREE_BINDING_V2_SCHEMA =
@@ -42,9 +45,95 @@ export const CANDIDATE_NPM_PRODUCTION_MATERIALIZATION_CONFIG_V2_SCHEMA =
   "setfarm.candidate-npm-production-materialization-config.v2" as const;
 export const CANDIDATE_NPM_MATERIALIZATION_RECEIPT_ABI_POLICY_V2_SCHEMA =
   "setfarm.candidate-npm-materialization-receipt-abi-policy.v2" as const;
+export const CANDIDATE_RUNTIME_TREE_ARTIFACT_REF_V2_SCHEMA =
+  "setfarm.candidate-runtime-tree-artifact-ref.v2" as const;
+export const CANDIDATE_PRODUCTION_GRAPH_ARTIFACT_REF_V2_SCHEMA =
+  "setfarm.candidate-production-graph-artifact-ref.v2" as const;
+export const CANDIDATE_RUNTIME_PRODUCTION_GRAPH_BINDING_V2_SCHEMA =
+  "setfarm.candidate-runtime-production-graph-binding.v2" as const;
+export const CANDIDATE_RUNTIME_SOURCE_CHECKPOINT_V2_SCHEMA =
+  "setfarm.candidate-runtime-source-checkpoint.v2" as const;
+export const CANDIDATE_NPM_PROCESS_OUTCOME_V2_SCHEMA =
+  "setfarm.candidate-npm-process-outcome.v2" as const;
 
 export const CANDIDATE_RUNTIME_BUNDLE_V2_MAX_CANONICAL_BYTES = 384 * 1024;
 export const CANDIDATE_RUNTIME_PACKAGE_JSON_MAX_BYTES_V2 = 4 * 1024 * 1024;
+export const CANDIDATE_RUNTIME_ARTIFACT_ENVELOPE_MAX_BYTES_V2 = 16 * 1024 * 1024;
+
+export const CANDIDATE_RUNTIME_BUNDLE_V2_BLOCKER_CODES = Object.freeze([
+  "CANDIDATE_RUNTIME_BUNDLE_V2_ATOMIC_ARTIFACT_SET_ACTIVATION_UNVERIFIED",
+  "CANDIDATE_RUNTIME_BUNDLE_V2_EVIDENCE_PLAN_V2_UNVERIFIED",
+  "CANDIDATE_RUNTIME_BUNDLE_V2_LAUNCH_AUTHORITY_UNVERIFIED",
+  "CANDIDATE_RUNTIME_BUNDLE_V2_REGISTRY_V2_UNVERIFIED",
+] as const);
+
+export const CANDIDATE_NPM_PROCESS_POLICY_V2 = Object.freeze({
+  stdin: "closed" as const,
+  timeoutMs: 120_000 as const,
+  maxStdoutBytes: 65_536 as const,
+  maxStderrBytes: 65_536 as const,
+  shell: "forbidden" as const,
+  ambientEnvironment: "forbidden" as const,
+  outputLimitDisposition: "typed_runtime_bundle_rejection" as const,
+  timeoutDisposition: "typed_runtime_bundle_rejection" as const,
+  nonzeroOrSignalDisposition: "typed_runtime_bundle_rejection" as const,
+});
+
+export const CANDIDATE_NPM_DIRECT_ARGV_V2 = Object.freeze([
+  "npm",
+  "ci",
+  "--omit=dev",
+  "--ignore-scripts",
+  "--no-audit",
+  "--no-fund",
+] as const);
+
+export const CANDIDATE_NPM_DIRECT_ARGV_HASH_V2 = hashCanonicalJson({
+  schema: "setfarm.candidate-runtime-npm-direct-argv-hash.v2",
+  directArgv: CANDIDATE_NPM_DIRECT_ARGV_V2,
+});
+
+export const CandidateRuntimeBundleProducerV2Schema = z.object({
+  pass: z.literal("candidate-runtime-bundle-authority-v2"),
+  codeSha: GitCodeShaSchema,
+  toolVersions: z.object({
+    candidateRuntimeBundle: z.literal(CANDIDATE_RUNTIME_BUNDLE_V2_VERSION),
+    candidateBuild: z.literal("2.1.0"),
+    candidateSource: z.literal("1.0.0"),
+    canonicalRuntimeTree: z.literal("2.0.0"),
+    productionPackageResolutionGraph: z.literal("2.0.0"),
+  }).strict(),
+}).strict();
+
+export type CandidateRuntimeBundleProducerV2 = z.infer<
+  typeof CandidateRuntimeBundleProducerV2Schema
+>;
+
+export const CandidateRuntimeTreeArtifactRefV2Schema = z.object({
+  schema: z.literal(CANDIDATE_RUNTIME_TREE_ARTIFACT_REF_V2_SCHEMA),
+  artifactType: z.literal(CANONICAL_RUNTIME_TREE_V2_SCHEMA),
+  envelopeHash: Sha256Schema,
+  envelopeByteLength: z.number().int().positive()
+    .max(CANDIDATE_RUNTIME_ARTIFACT_ENVELOPE_MAX_BYTES_V2),
+  producer: CandidateRuntimeBundleProducerV2Schema,
+}).strict();
+
+export type CandidateRuntimeTreeArtifactRefV2 = z.infer<
+  typeof CandidateRuntimeTreeArtifactRefV2Schema
+>;
+
+export const CandidateProductionGraphArtifactRefV2Schema = z.object({
+  schema: z.literal(CANDIDATE_PRODUCTION_GRAPH_ARTIFACT_REF_V2_SCHEMA),
+  artifactType: z.literal(PRODUCTION_PACKAGE_RESOLUTION_GRAPH_V2_SCHEMA),
+  envelopeHash: Sha256Schema,
+  envelopeByteLength: z.number().int().positive()
+    .max(CANDIDATE_RUNTIME_ARTIFACT_ENVELOPE_MAX_BYTES_V2),
+  producer: CandidateRuntimeBundleProducerV2Schema,
+}).strict();
+
+export type CandidateProductionGraphArtifactRefV2 = z.infer<
+  typeof CandidateProductionGraphArtifactRefV2Schema
+>;
 
 const CandidateNpmProductionMaterializationConfigIdentityV2Schema = z.object({
   schema: z.literal(CANDIDATE_NPM_PRODUCTION_MATERIALIZATION_CONFIG_V2_SCHEMA),
@@ -112,7 +201,7 @@ export const CANDIDATE_NPM_PRODUCTION_MATERIALIZATION_CONFIG_V2 =
 
 const CandidateNpmMaterializationReceiptAbiPolicyIdentityV2Schema = z.object({
   schema: z.literal(CANDIDATE_NPM_MATERIALIZATION_RECEIPT_ABI_POLICY_V2_SCHEMA),
-  version: z.literal(PLATFORM_RELEASE_COMPONENT_VERSION_V2),
+  version: z.literal(CANDIDATE_RUNTIME_BUNDLE_V2_VERSION),
   receiptSchema: z.literal(CANDIDATE_NPM_MATERIALIZATION_RECEIPT_V2_SCHEMA),
   recipeSchema: z.literal(CANDIDATE_NPM_PRODUCTION_MATERIALIZATION_RECIPE_V2_SCHEMA),
   outputRoot: z.literal("candidate-bundle/node_modules"),
@@ -120,6 +209,9 @@ const CandidateNpmMaterializationReceiptAbiPolicyIdentityV2Schema = z.object({
   dependencySelection: z.literal("production_only"),
   lifecycleScripts: z.literal("forbidden"),
   successfulExitCode: z.literal(0),
+  processAuthority: z.literal("authenticated_host_environment_and_exact_argv"),
+  sourceFence: z.literal("package_manifest_and_lockfile_before_after"),
+  productionGraphAuthority: z.literal("complete_indexed_artifact"),
 }).strict();
 
 export function hashCandidateNpmMaterializationReceiptAbiPolicyV2(
@@ -149,7 +241,7 @@ export const CandidateNpmMaterializationReceiptAbiPolicyV2Schema =
 
 const CANDIDATE_NPM_MATERIALIZATION_RECEIPT_ABI_POLICY_IDENTITY_V2 = {
   schema: CANDIDATE_NPM_MATERIALIZATION_RECEIPT_ABI_POLICY_V2_SCHEMA,
-  version: PLATFORM_RELEASE_COMPONENT_VERSION_V2,
+  version: CANDIDATE_RUNTIME_BUNDLE_V2_VERSION,
   receiptSchema: CANDIDATE_NPM_MATERIALIZATION_RECEIPT_V2_SCHEMA,
   recipeSchema: CANDIDATE_NPM_PRODUCTION_MATERIALIZATION_RECIPE_V2_SCHEMA,
   outputRoot: "candidate-bundle/node_modules",
@@ -157,6 +249,9 @@ const CANDIDATE_NPM_MATERIALIZATION_RECEIPT_ABI_POLICY_IDENTITY_V2 = {
   dependencySelection: "production_only",
   lifecycleScripts: "forbidden",
   successfulExitCode: 0,
+  processAuthority: "authenticated_host_environment_and_exact_argv",
+  sourceFence: "package_manifest_and_lockfile_before_after",
+  productionGraphAuthority: "complete_indexed_artifact",
 } as const;
 
 export const CANDIDATE_NPM_MATERIALIZATION_RECEIPT_ABI_POLICY_V2 =
@@ -224,7 +319,7 @@ const CandidateRuntimeDependencyTreeBindingIdentityV2Schema = z.object({
   treeSchema: z.literal(CANONICAL_RUNTIME_TREE_V2_SCHEMA),
   profile: z.literal("dependencies"),
   logicalRoot: z.literal("candidate-bundle/node_modules"),
-  treeArtifact: CandidateCanonicalRuntimeTreeArtifactRefV2Schema,
+  treeArtifact: CandidateRuntimeTreeArtifactRefV2Schema,
   treeHash: Sha256Schema,
   treePayloadHash: Sha256Schema,
   fileCount: z.number().int().nonnegative()
@@ -283,11 +378,115 @@ export type CandidateRuntimePackageJsonRefV2 = z.infer<
   typeof CandidateRuntimePackageJsonRefV2Schema
 >;
 
+export const CandidateRuntimeSourceBindingV2Schema = z.object({
+  schema: z.literal(CANDIDATE_RUNTIME_SOURCE_BINDING_V2_SCHEMA),
+  candidateSourceEnvelopeHash: Sha256Schema,
+  candidateSourceReceiptHash: Sha256Schema,
+  semanticRevisionHash: Sha256Schema,
+}).strict();
+
+export type CandidateRuntimeSourceBindingV2 = z.infer<
+  typeof CandidateRuntimeSourceBindingV2Schema
+>;
+
+const CandidateRuntimeSourceCheckpointIdentityV2Schema = z.object({
+  schema: z.literal(CANDIDATE_RUNTIME_SOURCE_CHECKPOINT_V2_SCHEMA),
+  candidateSourceReceiptHash: Sha256Schema,
+  semanticRevisionHash: Sha256Schema,
+  packageJson: z.object({
+    locator: z.literal("package.json"),
+    mediaType: z.literal("application/json"),
+    contentHash: Sha256Schema,
+    byteLength: z.number().int().positive()
+      .max(CANDIDATE_RUNTIME_PACKAGE_JSON_MAX_BYTES_V2),
+  }).strict(),
+  lockfile: ExactPackageLockSourceRefV2Schema,
+}).strict();
+
+export type CandidateRuntimeSourceCheckpointHashPayloadV2 = z.infer<
+  typeof CandidateRuntimeSourceCheckpointIdentityV2Schema
+>;
+
+export function hashCandidateRuntimeSourceCheckpointV2(
+  value:
+    | CandidateRuntimeSourceCheckpointHashPayloadV2
+    | CandidateRuntimeSourceCheckpointV2,
+): string {
+  const checkpoint = { ...value } as Record<string, unknown>;
+  delete checkpoint.checkpointHash;
+  return hashCanonicalJson({
+    schema: "setfarm.candidate-runtime-source-checkpoint-hash.v2",
+    checkpoint,
+  });
+}
+
+export const CandidateRuntimeSourceCheckpointV2Schema =
+  CandidateRuntimeSourceCheckpointIdentityV2Schema.extend({
+    checkpointHash: Sha256Schema,
+  }).strict().superRefine((value, context) => {
+    if (value.checkpointHash !== hashCandidateRuntimeSourceCheckpointV2(value)) {
+      context.addIssue({
+        code: "custom",
+        path: ["checkpointHash"],
+        message: "Candidate runtime source checkpoint hash mismatch",
+      });
+    }
+  });
+
+export type CandidateRuntimeSourceCheckpointV2 = z.infer<
+  typeof CandidateRuntimeSourceCheckpointV2Schema
+>;
+
+const CandidateRuntimeProductionGraphBindingIdentityV2Schema = z.object({
+  schema: z.literal(CANDIDATE_RUNTIME_PRODUCTION_GRAPH_BINDING_V2_SCHEMA),
+  graphSchema: z.literal(PRODUCTION_PACKAGE_RESOLUTION_GRAPH_V2_SCHEMA),
+  graphArtifact: CandidateProductionGraphArtifactRefV2Schema,
+  resolutionGraphHash: Sha256Schema,
+  materializedDependencyTreeHash: Sha256Schema,
+  packageCount: z.number().int().nonnegative()
+    .max(EXTERNAL_RUNTIME_RESOLUTION_V2_MAX_PACKAGES),
+}).strict();
+
+export type CandidateRuntimeProductionGraphBindingHashPayloadV2 = z.infer<
+  typeof CandidateRuntimeProductionGraphBindingIdentityV2Schema
+>;
+
+export function hashCandidateRuntimeProductionGraphBindingV2(
+  value:
+    | CandidateRuntimeProductionGraphBindingHashPayloadV2
+    | CandidateRuntimeProductionGraphBindingV2,
+): string {
+  const binding = { ...value } as Record<string, unknown>;
+  delete binding.bindingHash;
+  return hashCanonicalJson({
+    schema: "setfarm.candidate-runtime-production-graph-binding-hash.v2",
+    binding,
+  });
+}
+
+export const CandidateRuntimeProductionGraphBindingV2Schema =
+  CandidateRuntimeProductionGraphBindingIdentityV2Schema.extend({
+    bindingHash: Sha256Schema,
+  }).strict().superRefine((value, context) => {
+    if (value.bindingHash !== hashCandidateRuntimeProductionGraphBindingV2(value)) {
+      context.addIssue({
+        code: "custom",
+        path: ["bindingHash"],
+        message: "Candidate production graph binding hash mismatch",
+      });
+    }
+  });
+
+export type CandidateRuntimeProductionGraphBindingV2 = z.infer<
+  typeof CandidateRuntimeProductionGraphBindingV2Schema
+>;
+
 const CandidateNpmIdentityV2Schema = z.object({
   packageName: z.literal("npm"),
-  version: PlatformReleaseVersionIdentityV2Schema,
-  executableRef: PlatformReleaseStableReferenceV2Schema,
-  executableHash: Sha256Schema,
+  version: z.literal("10.9.8"),
+  executableRef: z.literal("TOOL_NODE_NPM_CLI_V2"),
+  closureHash: Sha256Schema,
+  cliContentHash: Sha256Schema,
   packageTreeHash: Sha256Schema,
 }).strict();
 
@@ -372,21 +571,130 @@ export const CANDIDATE_NPM_PRODUCTION_MATERIALIZATION_RECIPE_V2 =
     }),
   );
 
+export const CANDIDATE_RUNTIME_BUNDLE_CONTRACT_V2 = Object.freeze({
+  schema: "setfarm.candidate-runtime-bundle-contract.v2" as const,
+  contractVersion: CANDIDATE_RUNTIME_BUNDLE_V2_VERSION,
+  buildAuthority: "fresh_verified_candidate_build_v2" as const,
+  sourceAuthority: "candidate_source_v1_content_first_fenced" as const,
+  applicationAuthority: "candidate_build_owned_canonical_dist_tree" as const,
+  dependencyAuthority:
+    "runtime_bundle_owned_production_graph_and_canonical_dependency_tree" as const,
+  installAuthority:
+    "authenticated_host_npm_exact_environment_and_bounded_process" as const,
+  rootAuthority: "every_and_only_private_read_only_candidate_bundle" as const,
+  pathDisclosure: "forbidden" as const,
+  gitPlaceholder: "forbidden" as const,
+  productionUse: "forbidden" as const,
+  configHash: CANDIDATE_NPM_PRODUCTION_MATERIALIZATION_CONFIG_V2.configHash,
+  recipeHash: CANDIDATE_NPM_PRODUCTION_MATERIALIZATION_RECIPE_V2.recipeHash,
+  processPolicy: CANDIDATE_NPM_PROCESS_POLICY_V2,
+  blockerCodes: CANDIDATE_RUNTIME_BUNDLE_V2_BLOCKER_CODES,
+});
+
+export const CANDIDATE_RUNTIME_BUNDLE_CONTRACT_HASH_V2 = hashCanonicalJson(
+  CANDIDATE_RUNTIME_BUNDLE_CONTRACT_V2,
+);
+
+const CandidateNpmProcessPolicyV2Schema = z.object({
+  stdin: z.literal(CANDIDATE_NPM_PROCESS_POLICY_V2.stdin),
+  timeoutMs: z.literal(CANDIDATE_NPM_PROCESS_POLICY_V2.timeoutMs),
+  maxStdoutBytes: z.literal(CANDIDATE_NPM_PROCESS_POLICY_V2.maxStdoutBytes),
+  maxStderrBytes: z.literal(CANDIDATE_NPM_PROCESS_POLICY_V2.maxStderrBytes),
+  shell: z.literal(CANDIDATE_NPM_PROCESS_POLICY_V2.shell),
+  ambientEnvironment: z.literal(CANDIDATE_NPM_PROCESS_POLICY_V2.ambientEnvironment),
+  outputLimitDisposition: z.literal(
+    CANDIDATE_NPM_PROCESS_POLICY_V2.outputLimitDisposition,
+  ),
+  timeoutDisposition: z.literal(CANDIDATE_NPM_PROCESS_POLICY_V2.timeoutDisposition),
+  nonzeroOrSignalDisposition: z.literal(
+    CANDIDATE_NPM_PROCESS_POLICY_V2.nonzeroOrSignalDisposition,
+  ),
+}).strict();
+
+const CandidateNpmProcessOutcomeIdentityV2Schema = z.object({
+  schema: z.literal(CANDIDATE_NPM_PROCESS_OUTCOME_V2_SCHEMA),
+  status: z.literal("exited_zero"),
+  exitCode: z.literal(0),
+  signal: z.null(),
+  stdoutHash: Sha256Schema,
+  stdoutBytes: z.number().int().nonnegative()
+    .max(CANDIDATE_NPM_PROCESS_POLICY_V2.maxStdoutBytes),
+  stderrHash: Sha256Schema,
+  stderrBytes: z.number().int().nonnegative()
+    .max(CANDIDATE_NPM_PROCESS_POLICY_V2.maxStderrBytes),
+  processPolicy: CandidateNpmProcessPolicyV2Schema,
+}).strict();
+
+export type CandidateNpmProcessOutcomeHashPayloadV2 = z.infer<
+  typeof CandidateNpmProcessOutcomeIdentityV2Schema
+>;
+
+export function hashCandidateNpmProcessOutcomeV2(
+  value:
+    | CandidateNpmProcessOutcomeHashPayloadV2
+    | CandidateNpmProcessOutcomeV2,
+): string {
+  const outcome = { ...value } as Record<string, unknown>;
+  delete outcome.outcomeHash;
+  return hashCanonicalJson({
+    schema: "setfarm.candidate-npm-process-outcome-hash.v2",
+    outcome,
+  });
+}
+
+export const CandidateNpmProcessOutcomeV2Schema =
+  CandidateNpmProcessOutcomeIdentityV2Schema.extend({
+    outcomeHash: Sha256Schema,
+  }).strict().superRefine((value, context) => {
+    if (value.outcomeHash !== hashCandidateNpmProcessOutcomeV2(value)) {
+      context.addIssue({
+        code: "custom",
+        path: ["outcomeHash"],
+        message: "Candidate npm process outcome hash mismatch",
+      });
+    }
+  });
+
+export type CandidateNpmProcessOutcomeV2 = z.infer<
+  typeof CandidateNpmProcessOutcomeV2Schema
+>;
+
 const CandidateNpmMaterializationReceiptIdentityV2Schema = z.object({
   schema: z.literal(CANDIDATE_NPM_MATERIALIZATION_RECEIPT_V2_SCHEMA),
+  receiptVersion: z.literal(CANDIDATE_RUNTIME_BUNDLE_V2_VERSION),
+  contractHash: z.literal(CANDIDATE_RUNTIME_BUNDLE_CONTRACT_HASH_V2),
+  stage: z.literal("private_candidate_production_dependencies_verified"),
+  producer: CandidateRuntimeBundleProducerV2Schema,
   outputRoot: z.literal("candidate-bundle/node_modules"),
-  lockfile: ExactPackageLockSourceRefV2Schema,
   installRecipe: CandidateNpmProductionMaterializationRecipeV2Schema,
   recipeHash: Sha256Schema,
   npmIdentity: CandidateNpmIdentityV2Schema,
-  productionPackageResolutionGraphHash: Sha256Schema,
+  hostToolchain: z.object({
+    receiptHash: Sha256Schema,
+    nodeIdentityHash: Sha256Schema,
+    npmClosureHash: Sha256Schema,
+  }).strict(),
+  environment: z.object({
+    receiptHash: Sha256Schema,
+    environmentContractHash: Sha256Schema,
+    effectiveConfigHash: Sha256Schema,
+    environmentHash: Sha256Schema,
+  }).strict(),
+  processBinding: z.object({
+    probeRef: z.literal("HOST_NPM_CANDIDATE_PRODUCTION_INSTALL_V2"),
+    projectScopeHash: Sha256Schema,
+    directArgvHash: Sha256Schema,
+  }).strict(),
+  sourceBefore: CandidateRuntimeSourceCheckpointV2Schema,
+  sourceAfter: CandidateRuntimeSourceCheckpointV2Schema,
+  productionGraph: CandidateRuntimeProductionGraphBindingV2Schema,
   dependencyTreeBindingHash: Sha256Schema,
   dependencyTreeHash: Sha256Schema,
   dependencyTreePayloadHash: Sha256Schema,
   packageCount: z.number().int().nonnegative()
     .max(EXTERNAL_RUNTIME_RESOLUTION_V2_MAX_PACKAGES),
   lifecycleScripts: z.literal("forbidden"),
-  exitCode: z.literal(0),
+  processOutcome: CandidateNpmProcessOutcomeV2Schema,
 }).strict();
 
 export type CandidateNpmMaterializationReceiptHashPayloadV2 = z.infer<
@@ -431,6 +739,58 @@ export const CandidateNpmMaterializationReceiptV2Schema =
         message: "Candidate npm receipt and install recipe must forbid lifecycle scripts",
       });
     }
+    if (
+      canonicalJsonStringify(value.sourceBefore)
+        !== canonicalJsonStringify(value.sourceAfter)
+      || value.sourceBefore.lockfile.hash !== value.sourceAfter.lockfile.hash
+      || value.sourceBefore.packageJson.contentHash
+        !== value.sourceAfter.packageJson.contentHash
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["sourceAfter"],
+        message: "Candidate package manifest and lockfile must remain stable across npm materialization",
+      });
+    }
+    if (
+      value.processBinding.directArgvHash !== CANDIDATE_NPM_DIRECT_ARGV_HASH_V2
+      || value.processOutcome.processPolicy.timeoutMs
+        !== CANDIDATE_NPM_PROCESS_POLICY_V2.timeoutMs
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["processBinding"],
+        message: "Candidate npm receipt must bind the exact code-owned argv and process policy",
+      });
+    }
+    if (
+      value.productionGraph.materializedDependencyTreeHash
+        !== value.dependencyTreeHash
+      || value.productionGraph.packageCount !== value.packageCount
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["productionGraph"],
+        message: "Candidate npm receipt must join its production graph to the exact dependency tree",
+      });
+    }
+    if (value.npmIdentity.closureHash !== value.hostToolchain.npmClosureHash) {
+      context.addIssue({
+        code: "custom",
+        path: ["npmIdentity", "closureHash"],
+        message: "Candidate npm identity must equal the authenticated host npm closure",
+      });
+    }
+    if (
+      canonicalJsonStringify(value.producer)
+        !== canonicalJsonStringify(value.productionGraph.graphArtifact.producer)
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["producer"],
+        message: "Candidate npm receipt and production graph must have one code-owned producer",
+      });
+    }
     if (value.receiptHash !== hashCandidateNpmMaterializationReceiptV2(value)) {
       context.addIssue({
         code: "custom",
@@ -446,17 +806,24 @@ export type CandidateNpmMaterializationReceiptV2 = z.infer<
 
 const CandidateRuntimeBundleIdentityV2Schema = z.object({
   schema: z.literal(CANDIDATE_RUNTIME_BUNDLE_V2_SCHEMA),
-  version: z.literal(PLATFORM_RELEASE_COMPONENT_VERSION_V2),
-  authorityState: z.literal("candidate_unverified"),
-  productionUse: z.literal("forbidden"),
-  packetEnvelopeHash: Sha256Schema,
-  buildTopologyHash: Sha256Schema,
-  sourceAuthority: z.object({
-    schema: z.literal(CANDIDATE_RUNTIME_SOURCE_BINDING_V2_SCHEMA),
-    candidateSourceEnvelopeHash: Sha256Schema,
-    candidateSourceReceiptHash: Sha256Schema,
-    semanticRevisionHash: Sha256Schema,
+  receiptVersion: z.literal(CANDIDATE_RUNTIME_BUNDLE_V2_VERSION),
+  contractHash: z.literal(CANDIDATE_RUNTIME_BUNDLE_CONTRACT_HASH_V2),
+  stage: z.literal("private_candidate_runtime_bundle_verified"),
+  readiness: z.object({
+    status: z.literal("verified_private_shadow"),
+    productionUse: z.literal("forbidden"),
+    blockerCodes: z.tuple([
+      z.literal(CANDIDATE_RUNTIME_BUNDLE_V2_BLOCKER_CODES[0]),
+      z.literal(CANDIDATE_RUNTIME_BUNDLE_V2_BLOCKER_CODES[1]),
+      z.literal(CANDIDATE_RUNTIME_BUNDLE_V2_BLOCKER_CODES[2]),
+      z.literal(CANDIDATE_RUNTIME_BUNDLE_V2_BLOCKER_CODES[3]),
+    ]),
   }).strict(),
+  producer: CandidateRuntimeBundleProducerV2Schema,
+  packetEnvelopeHash: Sha256Schema,
+  implementationClosureHash: Sha256Schema,
+  buildTopologyHash: Sha256Schema,
+  sourceAuthority: CandidateRuntimeSourceBindingV2Schema,
   buildReceiptHash: Sha256Schema,
   buildReceipt: CandidateBuildReceiptV2Schema,
   logicalRoot: z.literal("candidate-bundle"),
@@ -468,6 +835,7 @@ const CandidateRuntimeBundleIdentityV2Schema = z.object({
   ]),
   applicationTree: CandidateRuntimeApplicationTreeBindingV2Schema,
   dependencyTree: CandidateRuntimeDependencyTreeBindingV2Schema,
+  productionGraph: CandidateRuntimeProductionGraphBindingV2Schema,
   packageJson: CandidateRuntimePackageJsonRefV2Schema,
   npmMaterializationReceipt: CandidateNpmMaterializationReceiptV2Schema,
   bundleClosureHash: Sha256Schema,
@@ -484,6 +852,7 @@ export type CandidateRuntimeBundleClosureHashPayloadV2 = Readonly<Pick<
   | "allowedRootEntries"
   | "applicationTree"
   | "dependencyTree"
+  | "productionGraph"
   | "packageJson"
 >>;
 
@@ -499,6 +868,7 @@ export function hashCandidateRuntimeBundleClosureV2(
     allowedRootEntries: value.allowedRootEntries,
     applicationTree: value.applicationTree,
     dependencyTree: value.dependencyTree,
+    productionGraph: value.productionGraph,
     packageJson: value.packageJson,
   };
   return hashCanonicalJson({
@@ -540,6 +910,8 @@ export const CandidateRuntimeBundleV2Schema = CandidateRuntimeBundleIdentityV2Sc
   const build = value.buildReceipt;
   if (
     value.packetEnvelopeHash !== build.authority.packet.envelopeHash
+    || value.implementationClosureHash
+      !== build.authority.implementationClosure.closureHash
     || value.buildTopologyHash !== build.authority.buildTopology.manifestHash
     || value.buildReceiptHash !== build.receiptHash
     || value.sourceAuthority.candidateSourceEnvelopeHash
@@ -567,11 +939,52 @@ export const CandidateRuntimeBundleV2Schema = CandidateRuntimeBundleIdentityV2Sc
     npmReceipt.dependencyTreeBindingHash !== value.dependencyTree.bindingHash
     || npmReceipt.dependencyTreeHash !== value.dependencyTree.treeHash
     || npmReceipt.dependencyTreePayloadHash !== value.dependencyTree.treePayloadHash
+    || canonicalJsonStringify(npmReceipt.productionGraph)
+      !== canonicalJsonStringify(value.productionGraph)
   ) {
     context.addIssue({
       code: "custom",
       path: ["npmMaterializationReceipt"],
       message: "Candidate npm receipt must bind the exact materialized dependency tree",
+    });
+  }
+  if (
+    npmReceipt.sourceAfter.packageJson.contentHash !== value.packageJson.contentHash
+    || npmReceipt.sourceAfter.packageJson.byteLength !== value.packageJson.byteLength
+    || npmReceipt.sourceAfter.candidateSourceReceiptHash
+      !== value.sourceAuthority.candidateSourceReceiptHash
+    || npmReceipt.sourceAfter.semanticRevisionHash
+      !== value.sourceAuthority.semanticRevisionHash
+  ) {
+    context.addIssue({
+      code: "custom",
+      path: ["packageJson"],
+      message: "Candidate bundle package manifest must equal the fenced source manifest",
+    });
+  }
+  if (
+    canonicalJsonStringify(value.producer)
+      !== canonicalJsonStringify(npmReceipt.producer)
+    || canonicalJsonStringify(value.producer)
+      !== canonicalJsonStringify(value.dependencyTree.treeArtifact.producer)
+    || canonicalJsonStringify(value.producer)
+      !== canonicalJsonStringify(value.productionGraph.graphArtifact.producer)
+    || value.producer.codeSha !== build.producer.codeSha
+  ) {
+    context.addIssue({
+      code: "custom",
+      path: ["producer"],
+      message: "Candidate bundle, npm, dependency tree, graph and build must join code-owned producers",
+    });
+  }
+  if (
+    canonicalJsonStringify(value.readiness.blockerCodes)
+      !== canonicalJsonStringify(CANDIDATE_RUNTIME_BUNDLE_V2_BLOCKER_CODES)
+  ) {
+    context.addIssue({
+      code: "custom",
+      path: ["readiness", "blockerCodes"],
+      message: "Candidate runtime blocker set must be code-owned and complete",
     });
   }
   if (value.bundleClosureHash !== hashCandidateRuntimeBundleClosureV2(value)) {

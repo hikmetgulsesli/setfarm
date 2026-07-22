@@ -38,30 +38,46 @@ import * as bundleModule from "../../src/execution/schemas/candidate-runtime-bun
 import {
   CANDIDATE_NPM_MATERIALIZATION_RECEIPT_ABI_POLICY_V2,
   CANDIDATE_NPM_MATERIALIZATION_RECEIPT_V2_SCHEMA,
+  CANDIDATE_NPM_PROCESS_OUTCOME_V2_SCHEMA,
+  CANDIDATE_NPM_PROCESS_POLICY_V2,
   CANDIDATE_NPM_PRODUCTION_MATERIALIZATION_CONFIG_V2,
   CANDIDATE_NPM_PRODUCTION_MATERIALIZATION_RECIPE_V2,
+  CANDIDATE_PRODUCTION_GRAPH_ARTIFACT_REF_V2_SCHEMA,
   CANDIDATE_RUNTIME_APPLICATION_TREE_BINDING_V2_SCHEMA,
+  CANDIDATE_RUNTIME_BUNDLE_CONTRACT_HASH_V2,
+  CANDIDATE_RUNTIME_BUNDLE_V2_BLOCKER_CODES,
   CANDIDATE_RUNTIME_BUNDLE_V2_MAX_CANONICAL_BYTES,
   CANDIDATE_RUNTIME_BUNDLE_V2_SCHEMA,
+  CANDIDATE_RUNTIME_BUNDLE_V2_VERSION,
   CANDIDATE_RUNTIME_DEPENDENCY_TREE_BINDING_V2_SCHEMA,
   CANDIDATE_RUNTIME_PACKAGE_JSON_REF_V2_SCHEMA,
+  CANDIDATE_RUNTIME_PRODUCTION_GRAPH_BINDING_V2_SCHEMA,
   CANDIDATE_RUNTIME_SOURCE_BINDING_V2_SCHEMA,
+  CANDIDATE_RUNTIME_SOURCE_CHECKPOINT_V2_SCHEMA,
+  CANDIDATE_RUNTIME_TREE_ARTIFACT_REF_V2_SCHEMA,
   CandidateRuntimeBundleV2Schema,
   hashCandidateNpmMaterializationReceiptV2,
   hashCandidateNpmMaterializationReceiptAbiPolicyV2,
+  hashCandidateNpmProcessOutcomeV2,
   hashCandidateNpmProductionMaterializationConfigV2,
   hashCandidateNpmProductionMaterializationRecipeV2,
   hashCandidateRuntimeApplicationTreeBindingV2,
   hashCandidateRuntimeBundleClosureV2,
   hashCandidateRuntimeBundleV2,
   hashCandidateRuntimeDependencyTreeBindingV2,
+  hashCandidateRuntimeProductionGraphBindingV2,
+  hashCandidateRuntimeSourceCheckpointV2,
   parseCandidateRuntimeBundleV2,
   type CandidateNpmMaterializationReceiptHashPayloadV2,
+  type CandidateNpmProcessOutcomeHashPayloadV2,
   type CandidateRuntimeApplicationTreeBindingHashPayloadV2,
   type CandidateRuntimeBundleHashPayloadV2,
   type CandidateRuntimeBundleV2,
   type CandidateRuntimeDependencyTreeBindingHashPayloadV2,
   type CandidateRuntimePackageJsonRefV2,
+  type CandidateRuntimeProductionGraphBindingHashPayloadV2,
+  type CandidateRuntimeSourceCheckpointHashPayloadV2,
+  type CandidateRuntimeBundleProducerV2,
 } from "../../src/execution/schemas/candidate-runtime-bundle-v2.js";
 import {
   CANONICAL_RUNTIME_TREE_V2_SCHEMA,
@@ -99,6 +115,20 @@ function producer() {
       candidateSource: "1.0.0" as const,
       buildTopology: "3.2.0" as const,
       canonicalRuntimeTree: "2.0.0" as const,
+    },
+  };
+}
+
+function runtimeProducer(): CandidateRuntimeBundleProducerV2 {
+  return {
+    pass: "candidate-runtime-bundle-authority-v2",
+    codeSha: producer().codeSha,
+    toolVersions: {
+      candidateRuntimeBundle: CANDIDATE_RUNTIME_BUNDLE_V2_VERSION,
+      candidateBuild: CANDIDATE_BUILD_RECEIPT_V2_VERSION,
+      candidateSource: "1.0.0",
+      canonicalRuntimeTree: "2.0.0",
+      productionPackageResolutionGraph: "2.0.0",
     },
   };
 }
@@ -162,6 +192,16 @@ function treeArtifact(label: string): CandidateCanonicalRuntimeTreeArtifactRefV2
     envelopeByteLength: 1_024,
     producer: producer(),
   };
+}
+
+function runtimeTreeArtifact(label: string) {
+  return {
+    schema: CANDIDATE_RUNTIME_TREE_ARTIFACT_REF_V2_SCHEMA,
+    artifactType: CANONICAL_RUNTIME_TREE_V2_SCHEMA,
+    envelopeHash: sha(`${label}-envelope`),
+    envelopeByteLength: 1_024,
+    producer: runtimeProducer(),
+  } as const;
 }
 
 function compilerTarget() {
@@ -387,7 +427,7 @@ function createDependencyBinding() {
     treeSchema: tree.schema,
     profile: "dependencies",
     logicalRoot: "candidate-bundle/node_modules",
-    treeArtifact: treeArtifact("dependencies"),
+    treeArtifact: runtimeTreeArtifact("dependencies"),
     treeHash: tree.treeHash,
     treePayloadHash: tree.payloadHash,
     fileCount: tree.fileCount,
@@ -411,13 +451,21 @@ function createPackageJson(): CandidateRuntimePackageJsonRefV2 {
   };
 }
 
-function createNpmReceipt(
-  dependencyTree: ReturnType<typeof createDependencyBinding>,
-) {
-  const installRecipe = clone(CANDIDATE_NPM_PRODUCTION_MATERIALIZATION_RECIPE_V2);
-  const identity: CandidateNpmMaterializationReceiptHashPayloadV2 = {
-    schema: CANDIDATE_NPM_MATERIALIZATION_RECEIPT_V2_SCHEMA,
-    outputRoot: "candidate-bundle/node_modules",
+function createRuntimeSourceCheckpoint(
+  build: CandidateBuildReceiptV2,
+): CandidateRuntimeSourceCheckpointHashPayloadV2 & {
+  checkpointHash: string;
+} {
+  const identity: CandidateRuntimeSourceCheckpointHashPayloadV2 = {
+    schema: CANDIDATE_RUNTIME_SOURCE_CHECKPOINT_V2_SCHEMA,
+    candidateSourceReceiptHash: build.sourceAfter.candidateSourceReceiptHash,
+    semanticRevisionHash: build.sourceAfter.semanticRevisionHash,
+    packageJson: {
+      locator: "package.json",
+      mediaType: "application/json",
+      contentHash: sha("candidate-package-json"),
+      byteLength: 386,
+    },
     lockfile: {
       schema: EXACT_SOURCE_FILE_REF_V2_SCHEMA,
       locator: "package-lock.json",
@@ -425,22 +473,103 @@ function createNpmReceipt(
       hash: sha("candidate-lockfile"),
       byteLength: 4_096,
     },
+  };
+  return {
+    ...identity,
+    checkpointHash: hashCandidateRuntimeSourceCheckpointV2(identity),
+  };
+}
+
+function createProductionGraph(
+  dependencyTree: ReturnType<typeof createDependencyBinding>,
+) {
+  const identity: CandidateRuntimeProductionGraphBindingHashPayloadV2 = {
+    schema: CANDIDATE_RUNTIME_PRODUCTION_GRAPH_BINDING_V2_SCHEMA,
+    graphSchema: "setfarm.production-package-resolution-graph.v2",
+    graphArtifact: {
+      schema: CANDIDATE_PRODUCTION_GRAPH_ARTIFACT_REF_V2_SCHEMA,
+      artifactType: "setfarm.production-package-resolution-graph.v2",
+      envelopeHash: sha("candidate-production-graph-envelope"),
+      envelopeByteLength: 2_048,
+      producer: runtimeProducer(),
+    },
+    resolutionGraphHash: sha("candidate-production-graph"),
+    materializedDependencyTreeHash: dependencyTree.treeHash,
+    packageCount: 1,
+  };
+  return {
+    ...identity,
+    bindingHash: hashCandidateRuntimeProductionGraphBindingV2(identity),
+  };
+}
+
+function createNpmProcessOutcome() {
+  const identity: CandidateNpmProcessOutcomeHashPayloadV2 = {
+    schema: CANDIDATE_NPM_PROCESS_OUTCOME_V2_SCHEMA,
+    status: "exited_zero",
+    exitCode: 0,
+    signal: null,
+    stdoutHash: sha("candidate-npm-stdout"),
+    stdoutBytes: 12,
+    stderrHash: sha("candidate-npm-stderr"),
+    stderrBytes: 0,
+    processPolicy: clone(CANDIDATE_NPM_PROCESS_POLICY_V2),
+  };
+  return {
+    ...identity,
+    outcomeHash: hashCandidateNpmProcessOutcomeV2(identity),
+  };
+}
+
+function createNpmReceipt(
+  dependencyTree: ReturnType<typeof createDependencyBinding>,
+  productionGraph: ReturnType<typeof createProductionGraph>,
+  build: CandidateBuildReceiptV2,
+) {
+  const installRecipe = clone(CANDIDATE_NPM_PRODUCTION_MATERIALIZATION_RECIPE_V2);
+  const sourceCheckpoint = createRuntimeSourceCheckpoint(build);
+  const identity: CandidateNpmMaterializationReceiptHashPayloadV2 = {
+    schema: CANDIDATE_NPM_MATERIALIZATION_RECEIPT_V2_SCHEMA,
+    receiptVersion: CANDIDATE_RUNTIME_BUNDLE_V2_VERSION,
+    contractHash: CANDIDATE_RUNTIME_BUNDLE_CONTRACT_HASH_V2,
+    stage: "private_candidate_production_dependencies_verified",
+    producer: runtimeProducer(),
+    outputRoot: "candidate-bundle/node_modules",
     installRecipe,
     recipeHash: installRecipe.recipeHash,
     npmIdentity: {
       packageName: "npm",
       version: "10.9.8",
-      executableRef: "HOST_NPM_EXECUTABLE_V2",
-      executableHash: sha("candidate-npm-executable"),
+      executableRef: "TOOL_NODE_NPM_CLI_V2",
+      closureHash: sha("candidate-npm-closure"),
+      cliContentHash: sha("candidate-npm-executable"),
       packageTreeHash: sha("candidate-npm-package-tree"),
     },
-    productionPackageResolutionGraphHash: sha("candidate-production-graph"),
+    hostToolchain: {
+      receiptHash: sha("host-toolchain-receipt"),
+      nodeIdentityHash: sha("host-node-identity"),
+      npmClosureHash: sha("candidate-npm-closure"),
+    },
+    environment: {
+      receiptHash: sha("candidate-environment-receipt"),
+      environmentContractHash: sha("candidate-environment-contract"),
+      effectiveConfigHash: sha("candidate-effective-config"),
+      environmentHash: sha("candidate-environment"),
+    },
+    processBinding: {
+      probeRef: "HOST_NPM_CANDIDATE_PRODUCTION_INSTALL_V2",
+      projectScopeHash: sha("candidate-bundle-project-scope"),
+      directArgvHash: bundleModule.CANDIDATE_NPM_DIRECT_ARGV_HASH_V2,
+    },
+    sourceBefore: sourceCheckpoint,
+    sourceAfter: clone(sourceCheckpoint),
+    productionGraph,
     dependencyTreeBindingHash: dependencyTree.bindingHash,
     dependencyTreeHash: dependencyTree.treeHash,
     dependencyTreePayloadHash: dependencyTree.treePayloadHash,
     packageCount: 1,
     lifecycleScripts: "forbidden",
-    exitCode: 0,
+    processOutcome: createNpmProcessOutcome(),
   };
   return { ...identity, receiptHash: hashCandidateNpmMaterializationReceiptV2(identity) };
 }
@@ -448,12 +577,21 @@ function createNpmReceipt(
 function createRuntimeBundle(): CandidateRuntimeBundleV2 {
   const buildReceipt = createBuildReceipt();
   const dependencyTree = createDependencyBinding();
+  const productionGraph = createProductionGraph(dependencyTree);
   const identityWithoutClosure = {
     schema: CANDIDATE_RUNTIME_BUNDLE_V2_SCHEMA,
-    version: "2.0.0" as const,
-    authorityState: "candidate_unverified" as const,
-    productionUse: "forbidden" as const,
+    receiptVersion: CANDIDATE_RUNTIME_BUNDLE_V2_VERSION,
+    contractHash: CANDIDATE_RUNTIME_BUNDLE_CONTRACT_HASH_V2,
+    stage: "private_candidate_runtime_bundle_verified" as const,
+    readiness: {
+      status: "verified_private_shadow" as const,
+      productionUse: "forbidden" as const,
+      blockerCodes: clone(CANDIDATE_RUNTIME_BUNDLE_V2_BLOCKER_CODES),
+    },
+    producer: runtimeProducer(),
     packetEnvelopeHash: buildReceipt.authority.packet.envelopeHash,
+    implementationClosureHash:
+      buildReceipt.authority.implementationClosure.closureHash,
     buildTopologyHash: buildReceipt.authority.buildTopology.manifestHash,
     sourceAuthority: {
       schema: CANDIDATE_RUNTIME_SOURCE_BINDING_V2_SCHEMA,
@@ -470,8 +608,13 @@ function createRuntimeBundle(): CandidateRuntimeBundleV2 {
     allowedRootEntries: ["application", "node_modules", "package.json"] as const,
     applicationTree: createApplicationBinding(buildReceipt),
     dependencyTree,
+    productionGraph,
     packageJson: createPackageJson(),
-    npmMaterializationReceipt: createNpmReceipt(dependencyTree),
+    npmMaterializationReceipt: createNpmReceipt(
+      dependencyTree,
+      productionGraph,
+      buildReceipt,
+    ),
   };
   const bundleClosureHash = hashCandidateRuntimeBundleClosureV2(identityWithoutClosure);
   const identity: CandidateRuntimeBundleHashPayloadV2 = {
@@ -486,6 +629,21 @@ function rehashRuntimeBundle(candidate: CandidateRuntimeBundleV2): void {
     hashCandidateRuntimeApplicationTreeBindingV2(candidate.applicationTree);
   candidate.dependencyTree.bindingHash =
     hashCandidateRuntimeDependencyTreeBindingV2(candidate.dependencyTree);
+  candidate.productionGraph.bindingHash =
+    hashCandidateRuntimeProductionGraphBindingV2(candidate.productionGraph);
+  candidate.npmMaterializationReceipt.productionGraph = clone(candidate.productionGraph);
+  candidate.npmMaterializationReceipt.sourceBefore.checkpointHash =
+    hashCandidateRuntimeSourceCheckpointV2(
+      candidate.npmMaterializationReceipt.sourceBefore,
+    );
+  candidate.npmMaterializationReceipt.sourceAfter.checkpointHash =
+    hashCandidateRuntimeSourceCheckpointV2(
+      candidate.npmMaterializationReceipt.sourceAfter,
+    );
+  candidate.npmMaterializationReceipt.processOutcome.outcomeHash =
+    hashCandidateNpmProcessOutcomeV2(
+      candidate.npmMaterializationReceipt.processOutcome,
+    );
   candidate.npmMaterializationReceipt.receiptHash =
     hashCandidateNpmMaterializationReceiptV2(candidate.npmMaterializationReceipt);
   candidate.bundleClosureHash = hashCandidateRuntimeBundleClosureV2(candidate);
@@ -520,6 +678,18 @@ test("superseding candidate build wire is content-first, exact, deterministic an
   assert.equal("environmentRefs" in build.operation, false);
   assert.equal("worktree" in build, false);
   assert.equal("createdAt" in build, false);
+  assert.equal(bundle.receiptVersion, CANDIDATE_RUNTIME_BUNDLE_V2_VERSION);
+  assert.equal(bundle.stage, "private_candidate_runtime_bundle_verified");
+  assert.equal(bundle.readiness.status, "verified_private_shadow");
+  assert.equal(bundle.readiness.productionUse, "forbidden");
+  assert.deepEqual(bundle.readiness.blockerCodes,
+    CANDIDATE_RUNTIME_BUNDLE_V2_BLOCKER_CODES);
+  assert.equal(bundle.dependencyTree.treeArtifact.producer.pass,
+    "candidate-runtime-bundle-authority-v2");
+  assert.equal(bundle.applicationTree.treeArtifact.producer.pass,
+    "candidate-build-authority-v2");
+  assert.equal(bundle.productionGraph.graphArtifact.producer.pass,
+    "candidate-runtime-bundle-authority-v2");
 
   const parsedBuild = parseCandidateBuildReceiptV2(clone(build));
   const parsedBundle = parseCandidateRuntimeBundleV2(clone(bundle));
@@ -611,6 +781,34 @@ test("runtime bundle joins the superseding source/build authority and rejects cr
   rehashRuntimeBundle(npmForgery);
   assert.equal(CandidateRuntimeBundleV2Schema.safeParse(npmForgery).success, false);
 
+  const buildProducerForgery = clone(createRuntimeBundle()) as unknown as {
+    dependencyTree: { treeArtifact: unknown; bindingHash: string };
+    bundleHash: string;
+  };
+  buildProducerForgery.dependencyTree.treeArtifact = treeArtifact("forged-dependencies");
+  buildProducerForgery.dependencyTree.bindingHash =
+    hashCandidateRuntimeDependencyTreeBindingV2(
+      buildProducerForgery.dependencyTree as never,
+    );
+  buildProducerForgery.bundleHash = hashCandidateRuntimeBundleV2(
+    buildProducerForgery as never,
+  );
+  assert.equal(CandidateRuntimeBundleV2Schema.safeParse(buildProducerForgery).success,
+    false);
+
+  const processForgery = clone(createRuntimeBundle());
+  processForgery.npmMaterializationReceipt.processBinding.directArgvHash =
+    sha("caller-selected-npm-argv");
+  rehashRuntimeBundle(processForgery);
+  assert.equal(CandidateRuntimeBundleV2Schema.safeParse(processForgery).success, false);
+
+  const sourceFenceForgery = clone(createRuntimeBundle());
+  sourceFenceForgery.npmMaterializationReceipt.sourceAfter.lockfile.hash =
+    sha("changed-lockfile");
+  rehashRuntimeBundle(sourceFenceForgery);
+  assert.equal(CandidateRuntimeBundleV2Schema.safeParse(sourceFenceForgery).success,
+    false);
+
   const staleRecipe = clone(createRuntimeBundle());
   staleRecipe.npmMaterializationReceipt.installRecipe.configHash = sha("different-config");
   staleRecipe.npmMaterializationReceipt.installRecipe.recipeHash =
@@ -671,23 +869,44 @@ test("candidate build superseding-wire hash domains stay deterministic and separ
   const bundle = createRuntimeBundle();
   const hashes = {
     contractHash: CANDIDATE_BUILD_RECEIPT_CONTRACT_HASH_V2,
+    runtimeContractHash: CANDIDATE_RUNTIME_BUNDLE_CONTRACT_HASH_V2,
+    npmConfigHash: CANDIDATE_NPM_PRODUCTION_MATERIALIZATION_CONFIG_V2.configHash,
+    npmAbiPolicyHash:
+      CANDIDATE_NPM_MATERIALIZATION_RECEIPT_ABI_POLICY_V2.policyHash,
+    npmRecipeHash: CANDIDATE_NPM_PRODUCTION_MATERIALIZATION_RECIPE_V2.recipeHash,
     operationHash: build.operation.operationHash,
     sourceCheckpointHash: build.sourceBefore.checkpointHash,
     processOutcomeHash: build.processOutcome.outcomeHash,
     outputMembershipHash: build.outputTree.membershipHash,
     outputBindingHash: build.outputTree.bindingHash,
     buildReceiptHash: build.receiptHash,
+    runtimeSourceCheckpointHash:
+      bundle.npmMaterializationReceipt.sourceBefore.checkpointHash,
+    npmProcessOutcomeHash:
+      bundle.npmMaterializationReceipt.processOutcome.outcomeHash,
+    dependencyBindingHash: bundle.dependencyTree.bindingHash,
+    productionGraphBindingHash: bundle.productionGraph.bindingHash,
+    bundleClosureHash: bundle.bundleClosureHash,
     bundleHash: bundle.bundleHash,
   };
   assert.deepEqual(hashes, {
     contractHash: "692d50995d31be1902960fa77161544d61da9c0f813be12b2e2379c7c2ab273d",
+    runtimeContractHash: "f89ddb6362bba6284f5e203ee0c2b8a139fee721cd7540195a87c7f4bb3af896",
+    npmConfigHash: "548a8894a209c13f0edda9684c8cc91b12e1aa11b4d73c860df59004fffa3c9d",
+    npmAbiPolicyHash: "522212a9e0dcc63640991b498ec57bc78bdfaeb032943238bc13135fa0321073",
+    npmRecipeHash: "307ff51a4d9abaae5a714ec426cfb527497abfa589e5c8f3a81ae8ff2a6bf243",
     operationHash: "d313ee9852a169e8d677ee7c3289822c45723ed85d7cdba2ed3be39c0e124c05",
     sourceCheckpointHash: "494c933edb52015d324aba924152aad6be096e4c8a27c1ede416f8d83995c703",
     processOutcomeHash: "807438076500934b4c29071070981064428d7d238826cadcd6ae5009437ff71f",
     outputMembershipHash: "57b1e3351dd9efdb1c2b057bcebb2e1f8d27a8ce94980010d6ec8ab88e296c86",
     outputBindingHash: "8c28e7c8ba629e8a37b58480daea553f25efff18ca9191863049e7a2d242b7b0",
     buildReceiptHash: "881efc30b79bf0c8b6234fecae3484d8712718b48ea39a75923070fa483a29ea",
-    bundleHash: "cf319a21f7064fc7e1cc4fba34145dad965c94a2eaffaa53475e7a232fbb742f",
+    runtimeSourceCheckpointHash: "9dfc11ab296dc21246e04d559220ec44277a0eb764fafdad6e272f80dde46bea",
+    npmProcessOutcomeHash: "0578d55a2d9ca75d74ee041cfb5f79448690e7dfa794cfa95994bb8ce6563499",
+    dependencyBindingHash: "2bfc3cafa87d7d17905fcb4e373d013193bfc441362310e83ae14deb9623df69",
+    productionGraphBindingHash: "374ff896af895cde446f12b4680ff82220635c0b23545d5b23f933ec76456715",
+    bundleClosureHash: "dd4cac16ece4ee37c6a248c4ffa305691585ade8b92f3b8e4b9bc2487a81a6c4",
+    bundleHash: "e0f83abb5390ea4f21cb417a465764b4fec1c1a1a8208ef3986e03ea0362f0fe",
   });
   assert.equal(new Set(Object.values(hashes)).size, Object.keys(hashes).length);
 });

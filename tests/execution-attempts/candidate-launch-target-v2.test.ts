@@ -36,7 +36,10 @@ import {
 } from "../../src/execution/schemas/candidate-build-receipt-v2.js";
 import {
   CANDIDATE_RUNTIME_APPLICATION_TREE_BINDING_V2_SCHEMA,
+  CANDIDATE_RUNTIME_BUNDLE_CONTRACT_HASH_V2,
   CANDIDATE_RUNTIME_BUNDLE_V2_SCHEMA,
+  CANDIDATE_RUNTIME_BUNDLE_V2_VERSION,
+  CANDIDATE_RUNTIME_SOURCE_BINDING_V2_SCHEMA,
   hashCandidateRuntimeApplicationTreeBindingV2,
   type CandidateRuntimeApplicationTreeBindingHashPayloadV2,
   type CandidateRuntimeApplicationTreeBindingV2,
@@ -167,11 +170,25 @@ function applicationTreeBinding(kind: TargetKind): CandidateRuntimeApplicationTr
   };
 }
 
+function sourceAuthority() {
+  return {
+    schema: CANDIDATE_RUNTIME_SOURCE_BINDING_V2_SCHEMA,
+    candidateSourceEnvelopeHash: sha("candidate-source-envelope"),
+    candidateSourceReceiptHash: sha("candidate-source-receipt"),
+    semanticRevisionHash: sha("candidate-source-semantic-revision"),
+  } as const;
+}
+
 function runtimeBundleBinding(kind: TargetKind): CandidateRuntimeBundleLaunchBindingV2 {
   const applicationTreeBindingValue = applicationTreeBinding(kind);
   const identity: Omit<CandidateRuntimeBundleLaunchBindingV2, "bindingHash"> = {
     runtimeBundleSchema: CANDIDATE_RUNTIME_BUNDLE_V2_SCHEMA,
+    runtimeBundleVersion: CANDIDATE_RUNTIME_BUNDLE_V2_VERSION,
+    runtimeBundleContractHash: CANDIDATE_RUNTIME_BUNDLE_CONTRACT_HASH_V2,
     runtimeBundleHash: sha(`${kind}-runtime-bundle`),
+    packetEnvelopeHash: sha("candidate-packet-envelope"),
+    buildTopologyHash: sha("candidate-build-topology"),
+    sourceAuthority: sourceAuthority(),
     applicationTreeBinding: applicationTreeBindingValue,
     applicationTreeBindingHash: applicationTreeBindingValue.bindingHash,
     applicationTreeHash: applicationTreeBindingValue.treeHash,
@@ -272,10 +289,7 @@ function launchTarget(kind: TargetKind): CandidateLaunchTargetV2 {
     productionUse: "forbidden" as const,
     packetEnvelopeHash: sha("candidate-packet-envelope"),
     buildTopologyHash: sha("candidate-build-topology"),
-    sourceRevision: {
-      sha: sha("candidate-source-commit"),
-      treeHash: sha("candidate-source-tree"),
-    },
+    sourceAuthority: sourceAuthority(),
     runtimeBundle: runtimeBundleBinding(kind),
   };
   let identity: CandidateLaunchTargetHashPayloadV2;
@@ -345,6 +359,9 @@ function launchTarget(kind: TargetKind): CandidateLaunchTargetV2 {
 }
 
 function rehashCandidate(candidate: CandidateLaunchTargetV2): void {
+  candidate.runtimeBundle.packetEnvelopeHash = candidate.packetEnvelopeHash;
+  candidate.runtimeBundle.buildTopologyHash = candidate.buildTopologyHash;
+  candidate.runtimeBundle.sourceAuthority = clone(candidate.sourceAuthority);
   candidate.runtimeBundle.applicationTreeBinding.bindingHash =
     hashCandidateRuntimeApplicationTreeBindingV2(
       candidate.runtimeBundle.applicationTreeBinding,
@@ -376,6 +393,13 @@ test("CLI and HTTP launch candidates bind exact literal projections and parse as
   assert.equal(CandidateLaunchTargetV2Schema.safeParse(api).success, true);
   assert.equal(cli.authorityState, "candidate_unverified");
   assert.equal(cli.productionUse, "forbidden");
+  assert.equal("sourceRevision" in cli, false);
+  assert.equal(cli.sourceAuthority.semanticRevisionHash,
+    cli.runtimeBundle.sourceAuthority.semanticRevisionHash);
+  assert.equal(cli.runtimeBundle.runtimeBundleVersion,
+    CANDIDATE_RUNTIME_BUNDLE_V2_VERSION);
+  assert.equal(cli.runtimeBundle.runtimeBundleContractHash,
+    CANDIDATE_RUNTIME_BUNDLE_CONTRACT_HASH_V2);
   assert.equal(cli.profile.profileId, "PROFILE_NODE_CLI_STATELESS_EXACT_V2");
   assert.equal(cli.stackPack.stackPackId, "node-cli");
   assert.equal(cli.launcher.launcherRef, "LAUNCH_NODE_CLI_V2");
@@ -434,6 +458,16 @@ test("nested joins and every domain hash fail closed when only one side changes"
   staleRuntimeHash.launchTargetHash = hashCandidateLaunchTargetV2(staleRuntimeHash);
   assert.equal(CandidateLaunchTargetV2Schema.safeParse(staleRuntimeHash).success, false);
 
+  const staleSourceBinding = launchTarget("cli");
+  staleSourceBinding.runtimeBundle.sourceAuthority.semanticRevisionHash =
+    sha("other-runtime-source");
+  staleSourceBinding.runtimeBundle.bindingHash =
+    hashCandidateRuntimeBundleLaunchBindingV2(staleSourceBinding.runtimeBundle);
+  staleSourceBinding.launchTargetHash =
+    hashCandidateLaunchTargetV2(staleSourceBinding);
+  assert.equal(CandidateLaunchTargetV2Schema.safeParse(staleSourceBinding).success,
+    false);
+
   const staleTransportHash = launchTarget("cli");
   staleTransportHash.executableTransport.transportContractHash = sha("other-contract");
   staleTransportHash.launchTargetHash = hashCandidateLaunchTargetV2(staleTransportHash);
@@ -485,9 +519,11 @@ test("self-consistent external-authority changes remain explicitly unverified ca
   const candidate = launchTarget("cli");
   candidate.packetEnvelopeHash = sha("self-consistent-other-packet");
   candidate.buildTopologyHash = sha("self-consistent-other-topology");
-  candidate.sourceRevision = {
-    sha: sha("self-consistent-other-source"),
-    treeHash: sha("self-consistent-other-source-tree"),
+  candidate.sourceAuthority = {
+    schema: CANDIDATE_RUNTIME_SOURCE_BINDING_V2_SCHEMA,
+    candidateSourceEnvelopeHash: sha("self-consistent-other-source-envelope"),
+    candidateSourceReceiptHash: sha("self-consistent-other-source-receipt"),
+    semanticRevisionHash: sha("self-consistent-other-source-revision"),
   };
   candidate.runtimeBundle.runtimeBundleHash = sha("self-consistent-other-bundle");
   candidate.profile.catalogHash = sha("self-consistent-other-profile-catalog");
@@ -666,19 +702,19 @@ test("literal launch hashes are golden and every hash domain is separated", () =
   };
   assert.deepEqual(actual, {
     cliApplicationBindingHash: "d27489b691eabcfdffc785ad9c8510f6442d0bd5259b3c8039aefcd7f0bcfc7f",
-    cliRuntimeBindingHash: "6eb0d14e40fb48275067cfd632a150326915ccf498218e2a05fa168d3f5eeaac",
+    cliRuntimeBindingHash: "6941744ac414ddc2a3c177199ca08f9b79a4d965700fa7fee8b21d23134971eb",
     cliExecutableBindingHash: "6a50196b4ccd0f9ff710e155c0cca9cb88f678cf6cddad2cd8c81da57a6cdfaf",
     cliModuleRefHash: "4f405d08e63be1885c720846b91007d1d0dd2415e1d907fb82b695cef9910abe",
     cliTargetHash: "18e0f5cde4af1ffe523307c32226adb2b8f867b447b68ea14ebf9f5d2d731e69",
-    cliLaunchTargetHash: "bb62f7fc4c05ea72aea8b951601f1a58dabe23ec9c2475ae9103f84ecf5e17f5",
+    cliLaunchTargetHash: "c99087e6a547413696ca765909f912b1966f56da1abd399f1193e05fbbe7a474",
     apiApplicationBindingHash: "d0d742a7163b629e1ed162af75eb22e9c4dbccba8d60a21e9e5e046d6884be15",
-    apiRuntimeBindingHash: "8c79d8ede2313abd357fd60b6125e7488fb9c596c0a563d52548652fdfae6fad",
+    apiRuntimeBindingHash: "ea349c5d353cbe719f31e4f2a1940f3957d4c9c21ea436c569975b70322ff07c",
     apiExecutableBindingHash: "e7e3af38d3c783697e31b2e810b1ce45531522c34c4e765b388f0c6613ecb768",
     apiModuleRefHash: "a521a1831ef85313ec5b381569396eb6e3e116b6e1380d157f1758307ac61485",
     apiHandlerExportHash: "c4ad9f5c58125077802c566f0703bde7168fb266baa91e280e1bdce9018f053f",
-    apiLaunchTargetHash: "923aba50581bc4d20b9f824e2c884a903118bad9b3bec089639994213b851b3a",
-    cliCanonicalBytes: 4_025,
-    apiCanonicalBytes: 4_014,
+    apiLaunchTargetHash: "0470587e4e77dd3b70ab4516db09ee6d9b31150a01c689be581c0c5889bb42c5",
+    cliCanonicalBytes: 4_872,
+    apiCanonicalBytes: 4_861,
   });
   const hashes = Object.entries(actual)
     .filter(([name]) => name.endsWith("Hash"))
