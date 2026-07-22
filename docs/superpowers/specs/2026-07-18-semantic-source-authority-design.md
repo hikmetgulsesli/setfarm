@@ -578,13 +578,62 @@ build produce `dist/cli.js` or `dist/app.js`. The old shared-entrypoint parser
 requirement remains a compatibility blocker rather than being implemented only
 to preserve an unsafe central-file mutation model.
 
-The first scaffold catalog is still schema/compiler/verifier authority only.
-ByteBundle deep CAS reassembly, exact build-dependency materialization receipt,
+The first scaffold catalog remains shadow schema/compiler/verifier authority.
+Deep ByteBundle CAS reassembly now has the independently authenticated shadow
+authority described below. Exact build-dependency materialization receipt,
 host toolchain resolution, private no-replace staged filesystem materializer,
 FileTree/BuildTopology, entrypoint generator, candidate build/runtime ABI,
 activation, and setup-flow cutover remain independently blocking. In
-particular, adding exact byte refs does not make the current ambient
+particular, deep-verifying exact byte refs does not make the current ambient
 `npm install`/`npm run build` setup path a valid consumer.
+
+### Deep scaffold ByteBundle authority (implemented 2026-07-21)
+
+The first dependency-order part of step 8 is implemented in `43af7921` without
+changing the catalog's shadow readiness or removing any install/build blocker.
+The code-owned scaffold producer now fresh-reproduces all six exact file
+bundles and returns two profile-scoped DB-first batch plans. A single aggregate
+was deliberately rejected: six one-chunk files require twelve occurrences,
+while the artifact batch protocol permits at most nine. The atomic setup unit
+is one profile's three files, so each canonical batch has six occurrences and
+deduplicates only exact same-tier identities inside that profile.
+
+`DeepByteBundleVerificationReceiptV2` binds the fresh catalog/file subject,
+expected ByteBundle root, exact ordered chunk references, closure registry,
+closure evidence hash, and a deterministic receipt hash. It contains no
+filesystem path, mutable buffer, absolute attempt root, or timestamp. The
+receipt is canonical operational data, not byte authority by itself. A
+self-rehashed receipt remains incapable of materialization.
+
+The verifier accepts only a process-local `DeepByteBundleCasAuthorityV2`
+created from the PostgreSQL connection, semantic artifact root and exact
+capacity limits. That private authority constructs its own purpose-`reader`
+hybrid store and artifact index; callers cannot inject or replace either
+reader. Verification performs this sequence:
+
+1. read and exact-identity check the expected ByteBundle root;
+2. start and settle every declared chunk CAS read before closure
+   classification;
+3. start and settle every root/chunk `semantic_artifacts` lookup and require
+   exact type, length and producer equality;
+4. run the registered ByteBundle dependency closure;
+5. reassemble bytes in declared ordinal order and recheck total raw length and
+   SHA-256; and
+6. issue an authenticated `VerifiedDeepByteBundleV2` handle whose raw bytes
+   exist only in module-private memory.
+
+Copies returned from that handle cannot mutate the retained verified bytes.
+The Node scaffold adapter does not accept a caller-selected bundle binding: it
+fresh-reproduces the code-owned catalog from `profileId + file role`, then asks
+the generic verifier for that exact root. Consequently a valid API bundle
+cannot satisfy a CLI file and a filesystem-complete but unindexed closure
+cannot satisfy DB-first authority.
+
+This closes deep scaffold source-byte consumption only. Host Node/npm
+resolution, builtin/effective npm config, execution environment, private stage,
+dependency tree and materialization receipts are still absent; catalog
+`productionUse` remains forbidden. The receipt is process-local and is not yet
+persisted as the later durable materialization/operational receipt.
 
 ## SemanticSourceIntentSetV1
 
