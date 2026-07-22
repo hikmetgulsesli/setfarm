@@ -15,7 +15,7 @@ import path from "node:path";
 import { afterEach, describe, it } from "node:test";
 
 import {
-  NodeToolchainArchiveInventoryErrorV2,
+  copyInventoriedNodeToolchainMaterializationSourceV2,
   inspectNodeToolchainArchiveInventoryReceiptV2,
   inventoryVerifiedNodeToolchainDistributionArchiveV2,
   inventoryVerifiedNodeToolchainDistributionArchiveV2ForTest,
@@ -151,8 +151,10 @@ describe("NodeToolchainArchiveInventoryV2", () => {
     assert.equal(receipt.inventory.symlinkCount, 1);
     assert.equal(receipt.selected.nodeExecutableType, "file");
     assert.equal(receipt.selected.npmPackageRootType, "directory");
+    assert.equal(receipt.selected.nodeExecutableModeClass, "executable");
     assert.equal(receipt.selected.npmMemberCount, 4);
     assert.equal(receipt.selected.builtinNpmrcStatus, "absent");
+    assert.equal(receipt.selected.packageJsonModeClass, "non_executable");
     assert.equal(receipt.selected.discardedUnselectedSymlinkCount, 1);
     assert.equal(receipt.tarTool.ownerUid, 0);
     assert.equal(NodeToolchainArchiveInventoryReceiptV2Schema.parse(receipt).receiptHash, receipt.receiptHash);
@@ -174,6 +176,40 @@ describe("NodeToolchainArchiveInventoryV2", () => {
     );
   });
 
+  it("rejects invalid source modes for Node, npm CLI and package JSON", async () => {
+    const archive = await verifiedArchive();
+    const names = [
+      `${ARCHIVE_ROOT}/`, `${ARCHIVE_ROOT}/bin/`, `${ARCHIVE_ROOT}/bin/node`,
+      `${ARCHIVE_ROOT}/lib/`, `${ARCHIVE_ROOT}/lib/node_modules/`,
+      `${ARCHIVE_ROOT}/lib/node_modules/npm/`, `${ARCHIVE_ROOT}/lib/node_modules/npm/bin/`,
+      `${ARCHIVE_ROOT}/lib/node_modules/npm/bin/npm-cli.js`,
+      `${ARCHIVE_ROOT}/lib/node_modules/npm/package.json`, `${ARCHIVE_ROOT}/lib/node_modules/npm/.npmrc`,
+    ];
+    const admittedModes = [
+      "drwxr-xr-x", "drwxr-xr-x", "-rwxr-xr-x", "drwxr-xr-x", "drwxr-xr-x",
+      "drwxr-xr-x", "drwxr-xr-x", "-rwxr-xr-x", "-rw-r--r--", "-rw-r--r--",
+    ];
+    const invalidModes: Array<readonly [number, string]> = [
+      [2, "-rw-r--r--"],
+      [7, "-rw-r--r--"],
+      [8, "-rwxr-xr-x"],
+    ];
+    for (const [index, invalidMode] of invalidModes) {
+      const modes = [...admittedModes];
+      modes[index] = invalidMode;
+      await assert.rejects(inventoryVerifiedNodeToolchainDistributionArchiveV2ForTest(archive, {
+        tarAdapter: async () => ({
+          status: "exited",
+          exitCode: 0,
+          signal: null,
+          namesOutput: `${names.join("\n")}\n`,
+          verboseOutput: `${modes.join(" fixture\n")} fixture\n`,
+          stderr: "",
+        }),
+      }), { code: "NODE_TOOLCHAIN_ARCHIVE_V2_SELECTED_TYPE_REJECTED" });
+    }
+  });
+
   it("rejects traversal, case collision, duplicate and incomplete selected closure", async () => {
     const archive = await verifiedArchive();
     const base = [
@@ -188,12 +224,17 @@ describe("NodeToolchainArchiveInventoryV2", () => {
       `${ARCHIVE_ROOT}/lib/node_modules/npm/package.json`,
       `${ARCHIVE_ROOT}/lib/node_modules/npm/.npmrc`,
     ];
-    const types = ["d", "d", "-", "d", "d", "d", "d", "-", "-", "-"];
+    const types = [
+      "drwxr-xr-x", "drwxr-xr-x", "-rwxr-xr-x", "drwxr-xr-x", "drwxr-xr-x",
+      "drwxr-xr-x", "drwxr-xr-x", "-rwxr-xr-x", "-rw-r--r--", "-rw-r--r--",
+    ];
     const cases: Array<readonly [string[], string[], string]> = [
-      [[...base, `${ARCHIVE_ROOT}/../escape`], [...types, "-"], "NODE_TOOLCHAIN_ARCHIVE_V2_PATH_INVALID"],
-      [[...base, `${ARCHIVE_ROOT}/README`, `${ARCHIVE_ROOT}/readme`], [...types, "-", "-"],
+      [[...base, `${ARCHIVE_ROOT}/../escape`], [...types, "-rw-r--r--"],
+        "NODE_TOOLCHAIN_ARCHIVE_V2_PATH_INVALID"],
+      [[...base, `${ARCHIVE_ROOT}/README`, `${ARCHIVE_ROOT}/readme`],
+        [...types, "-rw-r--r--", "-rw-r--r--"],
         "NODE_TOOLCHAIN_ARCHIVE_V2_CASE_COLLISION"],
-      [[...base, base[2]!], [...types, "-"], "NODE_TOOLCHAIN_ARCHIVE_V2_DUPLICATE_MEMBER"],
+      [[...base, base[2]!], [...types, "-rwxr-xr-x"], "NODE_TOOLCHAIN_ARCHIVE_V2_DUPLICATE_MEMBER"],
       [base.filter((entry) => !entry.endsWith("/package.json")), types.filter((_entry, index) => index !== 8),
         "NODE_TOOLCHAIN_ARCHIVE_V2_SELECTED_CLOSURE_INCOMPLETE"],
     ];
@@ -247,7 +288,7 @@ describe("NodeToolchainArchiveInventoryV2", () => {
           exitCode: 0,
           signal: null,
           namesOutput: `${ARCHIVE_ROOT}/\n`,
-          verboseOutput: "d fixture\n",
+          verboseOutput: "drwxr-xr-x fixture\n",
           stderr: "",
         };
       },
@@ -260,6 +301,21 @@ describe("NodeToolchainArchiveInventoryV2", () => {
     assert.throws(() => inspectNodeToolchainArchiveInventoryReceiptV2(receipt as never), {
       code: "NODE_TOOLCHAIN_ARCHIVE_V2_HANDLE_UNAUTHENTICATED",
     });
+    await assert.rejects(copyInventoriedNodeToolchainMaterializationSourceV2(receipt as never), {
+      code: "NODE_TOOLCHAIN_ARCHIVE_V2_HANDLE_UNAUTHENTICATED",
+    });
+    const source = await copyInventoriedNodeToolchainMaterializationSourceV2(inventoried);
+    assert.equal(source.selectedMembers.find((member) => member.treeLocator === "bin/node")?.targetMode, "0555");
+    assert.equal(
+      source.selectedMembers.find((member) => member.treeLocator === "lib/node_modules/npm/package.json")
+        ?.targetMode,
+      "0444",
+    );
+    source.archiveBytes.fill(0);
+    assert.notEqual(
+      (await copyInventoriedNodeToolchainMaterializationSourceV2(inventoried)).archiveBytes[0],
+      0,
+    );
     assert.throws(() => inspectNodeToolchainArchiveInventoryReceiptV2(new Proxy(inventoried, {}) as never), {
       code: "NODE_TOOLCHAIN_ARCHIVE_V2_HANDLE_UNAUTHENTICATED",
     });

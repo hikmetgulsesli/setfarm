@@ -23,6 +23,7 @@ import { hashCanonicalJson } from "./canonical-json.js";
 import {
   copyVerifiedNodeToolchainDistributionArchiveBytesV2,
   inspectNodeToolchainDistributionVerificationReceiptV2,
+  revalidateVerifiedNodeToolchainDistributionArchiveV2,
   type VerifiedNodeToolchainDistributionArchiveV2,
 } from "./node-toolchain-distribution-authority-v2.js";
 import {
@@ -133,15 +134,31 @@ type TarToolCaptureV2 = Readonly<{
 }>;
 
 type ArchiveMemberTypeV2 = "file" | "directory" | "symlink" | "hard_link" | "special";
+type ArchiveMemberModeClassV2 = "executable" | "non_executable" | "not_applicable";
 
 type ArchiveMemberV2 = Readonly<{
   locator: string;
   type: ArchiveMemberTypeV2;
+  modeClass: ArchiveMemberModeClassV2;
+}>;
+
+export type NodeToolchainSelectedArchiveMemberV2 = Readonly<{
+  archiveLocator: string;
+  treeLocator: "." | string;
+  type: "file" | "directory";
+  targetMode: "0444" | "0555";
+}>;
+
+export type NodeToolchainMaterializationSourceV2 = Readonly<{
+  receipt: NodeToolchainArchiveInventoryReceiptV2;
+  archiveBytes: Buffer;
+  selectedMembers: readonly NodeToolchainSelectedArchiveMemberV2[];
 }>;
 
 type PrivateInventoryStateV2 = Readonly<{
   archive: VerifiedNodeToolchainDistributionArchiveV2;
   members: readonly ArchiveMemberV2[];
+  selectedMembers: readonly ArchiveMemberV2[];
   receipt: NodeToolchainArchiveInventoryReceiptV2;
 }>;
 
@@ -700,14 +717,43 @@ function listingLines(output: string): string[] {
   return lines;
 }
 
-function memberType(verboseLine: string): ArchiveMemberTypeV2 {
-  switch (verboseLine[0]) {
-    case "-": return "file";
-    case "d": return "directory";
-    case "l": return "symlink";
-    case "h": return "hard_link";
-    default: return "special";
+function memberTypeAndMode(verboseLine: string): Readonly<{
+  type: ArchiveMemberTypeV2;
+  modeClass: ArchiveMemberModeClassV2;
+}> {
+  if (verboseLine.length < 10) {
+    return fail(
+      "NODE_TOOLCHAIN_ARCHIVE_V2_LISTING_MALFORMED",
+      "Verbose archive inventory omitted one exact permission field",
+    );
   }
+  const typeCharacter = verboseLine[0];
+  const permissions = verboseLine.slice(1, 10);
+  if ((typeCharacter === "-" || typeCharacter === "d")
+    && !/^[r-][w-][x-][r-][w-][x-][r-][w-][x-]$/.test(permissions)) {
+    return fail(
+      "NODE_TOOLCHAIN_ARCHIVE_V2_LISTING_MALFORMED",
+      "Selected-capable archive member has non-canonical permission text",
+    );
+  }
+  if (typeCharacter === "-") {
+    return Object.freeze({
+      type: "file",
+      modeClass: permissions[2] === "x" || permissions[5] === "x" || permissions[8] === "x"
+        ? "executable"
+        : "non_executable",
+    });
+  }
+  if (typeCharacter === "d") {
+    return Object.freeze({ type: "directory", modeClass: "not_applicable" });
+  }
+  if (typeCharacter === "l") {
+    return Object.freeze({ type: "symlink", modeClass: "not_applicable" });
+  }
+  if (typeCharacter === "h") {
+    return Object.freeze({ type: "hard_link", modeClass: "not_applicable" });
+  }
+  return Object.freeze({ type: "special", modeClass: "not_applicable" });
 }
 
 function normalizeMemberLocator(
@@ -764,7 +810,7 @@ function parseInventory(input: Readonly<{
   const folded = new Map<string, string>();
   const members: ArchiveMemberV2[] = [];
   for (let index = 0; index < names.length; index += 1) {
-    const type = memberType(verbose[index]!);
+    const { type, modeClass } = memberTypeAndMode(verbose[index]!);
     const locator = normalizeMemberLocator(names[index]!, type, input.archiveRoot);
     if (exact.has(locator)) {
       return fail(
@@ -782,7 +828,7 @@ function parseInventory(input: Readonly<{
     }
     exact.add(locator);
     folded.set(caseFolded, locator);
-    members.push(Object.freeze({ locator, type }));
+    members.push(Object.freeze({ locator, type, modeClass }));
   }
   return Object.freeze(members);
 }
@@ -837,14 +883,24 @@ function selectClosure(input: Readonly<{
   const npmCli = `${input.archiveRoot}/${input.npmCliLocator}`;
   const packageJson = `${input.archiveRoot}/${input.npmPackageJsonLocator}`;
   const builtinNpmrc = `${input.archiveRoot}/${input.npmBuiltinConfigLocator}`;
-  requireMember(membersByLocator, nodeLocator, "file");
+  const nodeExecutable = requireMember(membersByLocator, nodeLocator, "file");
   requireMember(membersByLocator, npmRoot, "directory");
-  requireMember(membersByLocator, npmCli, "file");
-  requireMember(membersByLocator, packageJson, "file");
+  const npmCliMember = requireMember(membersByLocator, npmCli, "file");
+  const packageJsonMember = requireMember(membersByLocator, packageJson, "file");
   if (membersByLocator.has(builtinNpmrc)) {
     return fail(
       "NODE_TOOLCHAIN_ARCHIVE_V2_SELECTED_CLOSURE_UNEXPECTED",
       "Selected npm archive closure contains an unadmitted builtin npmrc",
+    );
+  }
+  if (
+    nodeExecutable.modeClass !== "executable"
+    || npmCliMember.modeClass !== "executable"
+    || packageJsonMember.modeClass !== "non_executable"
+  ) {
+    return fail(
+      "NODE_TOOLCHAIN_ARCHIVE_V2_SELECTED_TYPE_REJECTED",
+      "Selected Node executable and npm CLI must retain executable source mode",
     );
   }
 
@@ -871,10 +927,11 @@ function selectClosure(input: Readonly<{
     }
   }
   const npmCanonicalMembers = [
-    { locator: ".", type: "directory" as const },
+    { locator: ".", type: "directory" as const, modeClass: "not_applicable" as const },
     ...npmMembers.map((member) => ({
       locator: member.locator.slice(npmRoot.length + 1),
       type: member.type,
+      modeClass: member.modeClass,
     })),
   ].sort((left, right) => left.locator < right.locator ? -1 : left.locator > right.locator ? 1 : 0);
   return Object.freeze({
@@ -891,7 +948,10 @@ function buildReceipt(input: Readonly<{
   distribution: ReturnType<typeof inspectNodeToolchainDistributionVerificationReceiptV2>;
   tarTool: NodeToolchainArchiveInventoryReceiptV2["tarTool"];
   members: readonly ArchiveMemberV2[];
-}>): NodeToolchainArchiveInventoryReceiptV2 {
+}>): Readonly<{
+  receipt: NodeToolchainArchiveInventoryReceiptV2;
+  selectedMembers: readonly ArchiveMemberV2[];
+}> {
   const artifact = input.distribution.artifact;
   const selected = selectClosure({
     members: input.members,
@@ -903,7 +963,11 @@ function buildReceipt(input: Readonly<{
     npmBuiltinConfigLocator: artifact.selection.npmBuiltinConfigLocator,
   });
   const sortedMembers = [...input.members]
-    .map((member) => ({ locator: member.locator, type: member.type }))
+    .map((member) => ({
+      locator: member.locator,
+      type: member.type,
+      modeClass: member.modeClass,
+    }))
     .sort((left, right) => left.locator < right.locator ? -1 : left.locator > right.locator ? 1 : 0);
   const count = (type: ArchiveMemberTypeV2): number =>
     input.members.filter((member) => member.type === type).length;
@@ -934,10 +998,13 @@ function buildReceipt(input: Readonly<{
       policy: "exact_node_and_bundled_npm_v2",
       nodeExecutableType: "file",
       npmPackageRootType: "directory",
+      nodeExecutableModeClass: "executable",
       npmMemberCount: selected.npmMembers.length,
       npmClosureHash: selected.npmClosureHash,
       npmCliType: "file",
+      npmCliModeClass: "executable",
       packageJsonType: "file",
+      packageJsonModeClass: "non_executable",
       builtinNpmrcStatus: "absent",
       unselectedPolicy: "inventory_then_discard_without_extraction_v2",
       discardedUnselectedMemberCount: discarded.length,
@@ -955,7 +1022,12 @@ function buildReceipt(input: Readonly<{
       parsed.error,
     );
   }
-  return deepFreezeJson(parsed.data);
+  return Object.freeze({
+    receipt: deepFreezeJson(parsed.data),
+    selectedMembers: Object.freeze(input.members
+      .filter((member) => selected.retainedLocators.has(member.locator))
+      .sort((left, right) => left.locator < right.locator ? -1 : 1)),
+  });
 }
 
 async function inventory(input: Readonly<{
@@ -1000,11 +1072,12 @@ async function inventory(input: Readonly<{
       verboseOutput: result.verboseOutput,
       archiveRoot: distribution.artifact.archiveRoot,
     });
-    const receipt = buildReceipt({ distribution, tarTool: tarAfter.identity, members });
+    const built = buildReceipt({ distribution, tarTool: tarAfter.identity, members });
     const state: PrivateInventoryStateV2 = Object.freeze({
       archive: input.archive,
       members,
-      receipt,
+      selectedMembers: built.selectedMembers,
+      receipt: built.receipt,
     });
     return new InventoriedNodeToolchainDistributionV2(handleConstructorCapabilityV2, state);
   } finally {
@@ -1060,4 +1133,57 @@ export function inspectNodeToolchainArchiveInventoryReceiptV2(
   handle: InventoriedNodeToolchainDistributionV2,
 ): NodeToolchainArchiveInventoryReceiptV2 {
   return defensiveReceiptCopy(authenticState(handle).receipt);
+}
+
+export async function copyInventoriedNodeToolchainMaterializationSourceV2(
+  handle: InventoriedNodeToolchainDistributionV2,
+): Promise<NodeToolchainMaterializationSourceV2> {
+  const state = authenticState(handle);
+  await revalidateInventoriedNodeToolchainMaterializationAuthorityV2(handle);
+  const archiveBytes = await copyVerifiedNodeToolchainDistributionArchiveBytesV2(state.archive);
+  const archiveRoot = state.receipt.distribution.artifact.archiveRoot;
+  const selectedMembers = state.selectedMembers.map((member): NodeToolchainSelectedArchiveMemberV2 => {
+    if (member.type !== "file" && member.type !== "directory") {
+      return fail(
+        "NODE_TOOLCHAIN_ARCHIVE_V2_SELECTED_TYPE_REJECTED",
+        "Authenticated selected member cannot cross the materialization boundary",
+      );
+    }
+    return Object.freeze({
+      archiveLocator: member.locator,
+      treeLocator: member.locator === archiveRoot
+        ? "."
+        : member.locator.slice(archiveRoot.length + 1),
+      type: member.type,
+      targetMode: member.type === "directory" || member.modeClass === "executable"
+        ? "0555"
+        : "0444",
+    });
+  });
+  return Object.freeze({
+    receipt: defensiveReceiptCopy(state.receipt),
+    archiveBytes,
+    selectedMembers: Object.freeze(selectedMembers),
+  });
+}
+
+export async function revalidateInventoriedNodeToolchainMaterializationAuthorityV2(
+  handle: InventoriedNodeToolchainDistributionV2,
+): Promise<NodeToolchainArchiveInventoryReceiptV2> {
+  const state = authenticState(handle);
+  const tarTool = captureTarTool();
+  if (hashCanonicalJson(tarTool.identity) !== hashCanonicalJson(state.receipt.tarTool)) {
+    return fail(
+      "NODE_TOOLCHAIN_ARCHIVE_V2_TAR_TOOL_INVALID",
+      "Archive inventory tar authority changed before materialization handoff",
+    );
+  }
+  const distribution = await revalidateVerifiedNodeToolchainDistributionArchiveV2(state.archive);
+  if (distribution.receiptHash !== state.receipt.distribution.receiptHash) {
+    return fail(
+      "NODE_TOOLCHAIN_ARCHIVE_V2_PRIVATE_COPY_INVALID",
+      "Authenticated distribution receipt changed after archive inventory",
+    );
+  }
+  return defensiveReceiptCopy(state.receipt);
 }
