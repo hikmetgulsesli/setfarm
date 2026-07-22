@@ -2,8 +2,9 @@
 
 Date: 2026-07-21
 
-Status: F1 and F2A complete on the feature branch; F2B provisioning authority
-is next; production NO-GO.
+Status: F1, F2A, and the F2B2c publisher/durable-receipt/F2A join are complete
+on the feature branch. The root-owned installer command state machine and real
+production-root verification remain next; production NO-GO.
 
 ## Goal
 
@@ -80,9 +81,9 @@ rewrite the static catalog into an active receipt claim.
 
 ## F2 — Exact host Node/npm toolchain admission
 
-Status: F2A identity/consumer authority complete in `e22f04be`
-(`feat(toolchain): verify host Node authority`); F2B supply-chain provisioning
-and production installation remain blocking.
+Status: F2A identity/consumer authority began in `e22f04be` and now requires
+the durable F2B2c provisioning join from `c090d816`. Production installation
+and its explicit operational command state machine remain blocking.
 
 New versioned schemas:
 
@@ -149,9 +150,11 @@ can mutate the tree again.
 
 ### F2B — Code-owned distribution and root-owned provisioning receipt
 
-Status: F2B1 distribution verification, F2B2a archive inventory and F2B2b
-selected private materialization are complete; root-owned publication and the
-durable provisioning-receipt/F2A join remain required before F2 is complete.
+Status: F2B1 distribution verification, F2B2a archive inventory, F2B2b private
+materialization, and the F2B2c root publisher/durable receipt/F2A join are
+complete in shadow/test evidence. The explicit root-owned installer command,
+safe production apply/verify/rollback, and real production-root receipt remain
+required before F2 is complete.
 
 The selected source is the official Node `22.23.1` Darwin distribution, not the
 mutable Homebrew tree. Primary distribution evidence on 2026-07-21 established:
@@ -168,7 +171,7 @@ mutable Homebrew tree. Primary distribution evidence on 2026-07-21 established:
   produced `0600/0700`, proving the installer must normalize modes rather than
   treating extraction mode as authority.
 
-F2B1/B2a/B2b evidence completed on 2026-07-22:
+F2B1/B2a/B2b/B2c evidence completed on 2026-07-22:
 
 - commit `7809dd94` added a pathless authenticated distribution archive handle
   over the code-owned official URL, exact length and SHA-256. Candidate paths
@@ -208,9 +211,35 @@ F2B1/B2a/B2b evidence completed on 2026-07-22:
   and produced the same npm closure/tree hash while binding its distinct Node
   bytes and whole-tree hash. Both receipts were pathless and left zero private
   stage residue;
-- final Product Compiler evidence is 957/957 across 119 suites with TypeScript,
-  English (1,046 files), path (575 files), diff and private-temp-residue checks
-  clean.
+- commit `c090d816` added the architecture-owned target registry and strict
+  provisioning intent, claim, and receipt schemas. A root publisher acquires a
+  real parent-scoped `/usr/bin/lockf` lease through an exact `/bin/cat` pipe,
+  publishes a canonical no-replace claim before the root, hard-links every
+  authenticated file from a deterministic private stage without replacement,
+  fsyncs files/directories, removes stage aliases, seals every directory to
+  `0555`, fresh-verifies the whole tree, and publishes the canonical `0444`
+  receipt last;
+- seven injected crash boundaries converge only under the exact prior claim.
+  An unclaimed root, different ready source, foreign staging member, added final
+  member, forged handle/schema, owner/mode/content drift, and test-to-production
+  promotion all fail closed. Four concurrent identical publishers converge to
+  one physical root/receipt without deleting foreign state;
+- durable authority can be rehydrated from the receipt plus a fresh bounded
+  every-and-only tree scan. Production host admission now opens that code-owned
+  authority first and joins the exact root device/inode, Node content hash, and
+  normalized npm tree/count/byte identity into `HostNodeToolchainReceiptV2`.
+  A directory that merely exists or self-reports the right version cannot issue
+  `production_host`;
+- live read-only inspection corrected a false macOS assumption: the
+  `/Library/Application Support` ancestor is root-owned mode `0755` but group
+  `admin` (`gid=80`).
+  The system ancestor therefore requires root ownership plus exact non-writable
+  mode, while Setfarm-created directories remain exact `root:wheel`;
+- final focused private-tree/host/provisioning evidence is 27/27. Final Product
+  Compiler evidence is 965/965 across 120 suites with TypeScript, English
+  (1,050 files), path (578 files), diff and isolated scratch-residue checks
+  clean. No production toolchain root, live DB/PR/service, generated repository,
+  or Setfarm run was mutated.
 
 F2B dependency chain is:
 
@@ -220,15 +249,15 @@ F2B dependency chain is:
 2. **Complete:** `setfarm.node-toolchain-private-tree-receipt.v2`, binding the
    distribution receipt, safe every-member archive inventory, exact selected
    Node/npm closure, normalized modes and verified every-and-only private tree;
-3. **Pending:** `setfarm.node-toolchain-provisioning-receipt.v2` and a root-owned
-   separately installed provisioning command. It stages outside
-   the final root, rejects traversal/symlink/hard-link/special/case-collision
-   entries, copies only exact selected closure, normalizes files to `0444/0555`
-   and directories to `0555`, verifies again, then publishes with no replace and
-   binds root owner/group plus final directory identity;
-4. **Pending:** an F2A join requiring the exact provisioning receipt and final tree identity
-   before `production_host` authority can be issued. Merely creating the fixed
-   directory or making a binary self-report the expected version is invalid;
+3. **Complete authority core; operational command pending:**
+   `setfarm.node-toolchain-provisioning-receipt.v2`, real kernel serialization,
+   claim-before-root, deterministic staged hard-link publication, receipt-last
+   durability, bounded exact-claim recovery, owner/mode enforcement, durable
+   rehydration, and foreign-state refusal;
+4. **Complete:** the F2A join requires the exact provisioning receipt, physical
+   final root, Node bytes, and normalized npm tree before `production_host`
+   authority can be issued. Merely creating the fixed directory or making a
+   binary self-report the expected version is invalid;
 5. **Pending:** idempotent inspect/plan/apply/verify/rollback operations. No installer action
    will run automatically from a Setfarm product attempt.
 
@@ -322,6 +351,8 @@ F2-F4 additionally require focused real-filesystem, process, PostgreSQL and
 concurrency tests. A clean merged-`main` `npm run build` and full `npm test`
 remain release evidence; the feature-branch build guard is never bypassed.
 
-GO for F1 shadow authority. NO-GO for host execution, dependency installation,
-setup cutover, PacketV4, live migration, deploy and new clean product runs until
-F2-F5 and the later packet/evidence program are complete.
+GO for F1 and the isolated F2B2c publisher/rehydration/host-join authority.
+NO-GO for production host execution, dependency installation, setup cutover,
+PacketV4, live migration, deploy and new clean product runs until the explicit
+installer state machine, real-root verification, F3-F5, and later packet/
+evidence program are complete.

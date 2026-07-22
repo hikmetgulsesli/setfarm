@@ -666,26 +666,37 @@ device/inode/mode/owner/length/timestamps, bytes, complete npm topology and the
 recursive dylib closure; drift invalidates the handle rather than creating
 implementation retry prose.
 
-F2A alone does not prove supply-chain provenance. F2B1, F2B2a and F2B2b now bind
+F2A alone did not prove supply-chain provenance. F2B1, F2B2a and F2B2b bind
 the code-owned official Node archive SHA-256/length, a private authenticated
 archive handle, every-addressable-member inventory, exact selected Node/npm
 closure, explicit builtin `npmrc` absence and a second every-and-only normalized
 `0444/0555` private tree. Official arm64 and x64 archives both prove the
 2,469-member selected topology and identical npm tree hash; the arm64 archive
 contains 5,866 inventoried members and three discarded unselected symlinks. No
-production root is currently installed and F2 remains incomplete:
-fsync/no-replace root-owned publication, durable
-`NodeToolchainProvisioningReceiptV2` and its final F2A filesystem join still do
-not exist. The process-owned private materialization is evidence for the
-installer boundary, not production authority. F2A may issue `production_host`
-only after joining that exact receipt and final filesystem identity.
+production root is currently installed. Commit `c090d816` adds the missing
+F2B2c authority core: strict provisioning intent/claim/receipt schemas, real
+parent-scoped kernel serialization, claim-before-root, deterministic no-replace
+hard-link publication, file/directory fsync, read-only sealing, receipt-last
+publication, exact-claim crash recovery, durable receipt rehydration, and the
+final F2A filesystem join. The host receipt now binds the provisioning receipt,
+physical root identity, exact Node bytes and the same normalized npm tree.
+Production host authority cannot exist without this join.
+
+F2 nevertheless remains production NO-GO. The publisher has only run against
+isolated process-owned test roots; no `/Library/Application Support/Setfarm`
+state was created or changed. A separately installed root-owned
+inspect/plan/apply/verify/rollback command, bounded rollback ownership, a real
+official-archive-to-production-root execution, and an OS-update transition are
+still absent. The process-owned private materialization remains evidence for
+that installer boundary, not permission for product-attempt code to provision.
 
 The live host supports the design but is not production authority. Default PATH
 selects Node 26/npm 11. An alternate Homebrew Node 22.23.1/npm 10.9.8 exists,
 but its small launcher has a mutable Homebrew dylib graph and its npm tree has
 post-install writable Python bytecode. Local deletion would only hide the
-shared same-UID mutation channel. A direct production smoke therefore correctly
-returns `HOST_NODE_TOOLCHAIN_V2_NO_ADMITTED_CANDIDATE` instead of falling back.
+shared same-UID mutation channel. The production factory now refuses earlier:
+the code-owned durable provisioning receipt/root must be present and freshly
+verified; it never falls back to Homebrew.
 
 ## SemanticSourceIntentSetV1
 
