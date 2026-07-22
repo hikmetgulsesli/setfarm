@@ -648,7 +648,8 @@ PATH and Homebrew opt roots are not fallback candidates.
 `HostNodeToolchainReceiptV2` joins the fresh scaffold catalog/entry requirement,
 exact macOS build and architecture, Node version/ABI/N-API plus executable
 identity, recursive non-system Mach-O closure, npm package version and every-
-and-only tree, exact CLI/package JSON/builtin npmrc identities, bounded probe
+and-only tree, exact CLI/package JSON identities plus explicit builtin `npmrc`
+absence, bounded probe
 contract and ordered logical command-path projection. It contains no host path,
 probe scratch path or byte buffer. Production receipts require root-owned Node,
 npm and non-system library identities. Test receipts are permanently marked
@@ -665,15 +666,16 @@ device/inode/mode/owner/length/timestamps, bytes, complete npm topology and the
 recursive dylib closure; drift invalidates the handle rather than creating
 implementation retry prose.
 
-F2A does not yet prove supply-chain provenance. Exact hashes freshly observed
-from a root-owned directory identify those bytes but do not prove that the bytes
-came from the selected official distribution. Therefore no production root is
-currently installed and F2 remains incomplete. F2B must bind the code-owned
-official Node archive SHA-256/length, safe archive inventory, selected Node/npm
-closure, normalized modes and no-replace root-owned publication into
-`NodeToolchainDistributionManifestV2` plus
-`NodeToolchainProvisioningReceiptV2`. F2A may issue `production_host` only after
-joining that exact receipt and final filesystem identity.
+F2A alone does not prove supply-chain provenance. F2B1 and F2B2a now bind the
+code-owned official Node archive SHA-256/length, a private authenticated archive
+handle, every-addressable-member inventory, exact selected Node/npm closure and
+explicit builtin `npmrc` absence. The official arm64 archive proves this chain
+over 5,866 members and three discarded unselected symlinks. No production root
+is currently installed and F2 remains incomplete: normalized modes,
+fsync/no-replace root-owned publication, durable
+`NodeToolchainProvisioningReceiptV2` and its final F2A filesystem join still do
+not exist. F2A may issue `production_host` only after joining that exact receipt
+and final filesystem identity.
 
 The live host supports the design but is not production authority. Default PATH
 selects Node 26/npm 11. An alternate Homebrew Node 22.23.1/npm 10.9.8 exists,

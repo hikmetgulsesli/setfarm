@@ -109,10 +109,11 @@ F2A implemented producer and verifier invariants:
    environment construction. Require Node `>=22.13.0 <23` and npm exactly
    `10.9.8`.
 4. Bind npm as an every-and-only package closure, including its exact CLI
-   entrypoint, package JSON and builtin npmrc authority; hashing one launcher
-   file is insufficient. Symlink, hard link, special entry, writable file,
-   owner split, case collision, concurrent directory drift and fixed bounds are
-   typed refusals.
+   entrypoint, package JSON and explicit builtin `npmrc` absence; hashing one
+   launcher file is insufficient. The official archive's package-root `.npmrc`
+   remains an ordinary hashed closure member, not builtin config authority.
+   Symlink, hard link, special entry, writable file, owner split, case
+   collision, concurrent directory drift and fixed bounds are typed refusals.
 5. Record the ordered command PATH projection as logical executable refs and
    receipt hashes. Portable DTOs contain no absolute path.
 6. Revalidate the held private identities immediately before every later spawn;
@@ -148,7 +149,9 @@ can mutate the tree again.
 
 ### F2B — Code-owned distribution and root-owned provisioning receipt
 
-Status: next implementation slice; required before F2 is complete.
+Status: F2B1 distribution verification and F2B2a archive inventory are
+complete; selected extraction, root-owned publication and provisioning-receipt
+join remain required before F2 is complete.
 
 The selected source is the official Node `22.23.1` Darwin distribution, not the
 mutable Homebrew tree. Primary distribution evidence on 2026-07-21 established:
@@ -165,23 +168,53 @@ mutable Homebrew tree. Primary distribution evidence on 2026-07-21 established:
   produced `0600/0700`, proving the installer must normalize modes rather than
   treating extraction mode as authority.
 
-F2B will add:
+F2B1/B2a evidence completed on 2026-07-22:
 
-1. `setfarm.node-toolchain-distribution-manifest.v2`, a code-owned architecture
+- commit `7809dd94` added a pathless authenticated distribution archive handle
+  over the code-owned official URL, exact length and SHA-256. Candidate paths
+  are non-authoritative; bytes are copied into a private `0600` file, fsynced,
+  rehashed and exposed only as a defensive bounded byte copy;
+- commit `54e4bdb4` added
+  `setfarm.node-toolchain-archive-inventory-receipt.v2`. Exact root-owned
+  `/usr/bin/bsdtar` runs through direct argv, deny-all environment, separate
+  stdout/stderr limits and timeout. Every addressable member is checked for
+  root containment, portable segments, duplicates and ASCII case collisions
+  before selected-closure validation;
+- the official archive contains three links outside the selected closure.
+  Therefore the manifest now says
+  `inventory_then_discard_without_extraction_v2`: unselected entries are never
+  extracted, while every selected Node/npm member and ancestor must be a
+  regular file or directory. The previous global link-rejection wording was
+  false for the selected official source;
+- the official npm tree has package-root `.npmrc` but no builtin `npmrc`.
+  Inventory and F2A now bind that absence explicitly instead of inheriting the
+  Homebrew-generated `npmrc` topology;
+- a fresh official arm64 production smoke inventoried 5,866 members: 4,750
+  files, 1,113 directories, three discarded symlinks, zero hard links and zero
+  special entries. It selected 2,463 npm descendants, produced inventory hash
+  `6672fb908a0fa779dfa309327cb7b0553eb27a20960149cd4acefe10fce3a904`
+  and npm closure hash
+  `54302e6eea0fcf94490373fbd418f49d2003ce8f80be36e07ac56efb9c704924`;
+- final Product Compiler evidence is 949/949 with TypeScript, English (1,043
+  files), path (573 files), diff and private-temp-residue checks clean.
+
+F2B dependency chain is:
+
+1. **Complete:** `setfarm.node-toolchain-distribution-manifest.v2`, a code-owned architecture
    catalog binding exact URL, filename, byte length, SHA-256, expected Node/npm/
    ABI/N-API identities, selected archive roots and extraction policy;
-2. `setfarm.node-toolchain-provisioning-receipt.v2`, binding distribution
+2. **In progress:** `setfarm.node-toolchain-provisioning-receipt.v2`, binding distribution
    manifest, downloaded archive bytes, safe every-member archive inventory,
    selected Node/npm closure, normalized modes, fsync/no-replace publication,
    root owner/group and final directory identity;
-3. a root-owned separately installed provisioning command. It stages outside
+3. **Pending:** a root-owned separately installed provisioning command. It stages outside
    the final root, rejects traversal/symlink/hard-link/special/case-collision
    entries, copies only exact selected closure, normalizes files to `0444/0555`
    and directories to `0555`, verifies again, then publishes with no replace;
-4. an F2A join requiring the exact provisioning receipt and final tree identity
+4. **Pending:** an F2A join requiring the exact provisioning receipt and final tree identity
    before `production_host` authority can be issued. Merely creating the fixed
    directory or making a binary self-report the expected version is invalid;
-5. idempotent inspect/plan/apply/verify/rollback operations. No installer action
+5. **Pending:** idempotent inspect/plan/apply/verify/rollback operations. No installer action
    will run automatically from a Setfarm product attempt.
 
 F2 completion does not authorize `npm ci`; it only creates the exact toolchain
