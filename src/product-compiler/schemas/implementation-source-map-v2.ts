@@ -163,7 +163,7 @@ const ProfileIdV2Schema = z.enum([
 ]);
 const StackPackIdV2Schema = z.enum(["node-cli", "node-express-api"]);
 
-const SourceMapAuthorityIdentityV2Schema = z.object({
+export const ImplementationSourceMapAuthorityV2Schema = z.object({
   product: z.object({
     productRef: ProductIdSchema,
     productSpecHash: Sha256Schema,
@@ -235,7 +235,7 @@ const SourceMapAuthorityIdentityV2Schema = z.object({
 }).strict();
 
 export type ImplementationSourceMapAuthorityHashPayloadV2 = z.infer<
-  typeof SourceMapAuthorityIdentityV2Schema
+  typeof ImplementationSourceMapAuthorityV2Schema
 >;
 
 export function hashImplementationSourceMapAuthorityV2(
@@ -286,7 +286,7 @@ export function hashImplementationSourceMapEvidenceBindingV2(
   });
 }
 
-const LeafExecutionV2Schema = z.object({
+export const ImplementationSourceMapExecutionV2Schema = z.object({
   compilation: BuildTopologyCompilationV3Schema,
   commands: BuildTopologyCommandContractV3Schema,
   runtimeTarget: BuildTopologyRuntimeTargetV3Schema,
@@ -309,6 +309,10 @@ const LeafExecutionV2Schema = z.object({
     });
   }
 });
+
+export type ImplementationSourceMapExecutionV2 = z.infer<
+  typeof ImplementationSourceMapExecutionV2Schema
+>;
 
 const SharedProductScopeV2Schema = z.object({
   storyPlanBinding: ProductScopeV3Schema,
@@ -372,7 +376,7 @@ const StoryLeafIdentityV2Schema = z.object({
   realizationDefinitions: z.array(SemanticRealizationV2Schema)
     .min(1).max(20_000),
   sharedProductScope: SharedProductScopeV2Schema,
-  execution: LeafExecutionV2Schema,
+  execution: ImplementationSourceMapExecutionV2Schema,
   evidenceBindings: z.array(ImplementationSourceMapEvidenceBindingV2Schema)
     .min(1).max(20_000),
   designSource: z.object({
@@ -635,7 +639,7 @@ const RootManifestIdentityV2Schema = z.object({
     blockerCodes: z.array(SourceMapBlockerCodeV2Schema)
       .length(IMPLEMENTATION_SOURCE_MAP_V2_BLOCKER_CODES.length),
   }).strict(),
-  authority: SourceMapAuthorityIdentityV2Schema,
+  authority: ImplementationSourceMapAuthorityV2Schema,
   authorityHash: Sha256Schema,
   leafCount: z.number().int().positive().max(5_000),
   storyIdSetHash: Sha256Schema,

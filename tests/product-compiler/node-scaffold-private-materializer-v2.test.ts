@@ -99,6 +99,11 @@ import {
   verifyImplementationSourceMapStoryProofV2ForTest,
 } from "../../src/product-compiler/implementation-source-map-v2.js";
 import {
+  compileProductBuildPacketV4,
+  compileProductBuildPacketV4ForTest,
+  verifyProductBuildPacketV4ForTest,
+} from "../../src/product-compiler/product-build-packet-v4.js";
+import {
   NodeProductSourcePublicationVerificationErrorV1,
   compileNodeProductSourcePublicationV1,
   compileNodeProductSourcePublicationV1ForTest,
@@ -229,11 +234,17 @@ import {
   IMPLEMENTATION_SOURCE_MAP_CONTRACT_HASH_V2,
   ImplementationSourceMapEnvelopeV2Schema,
   ImplementationSourceMapStoryProofV2Schema,
+  hashImplementationSourceMapAuthorityV2,
   hashImplementationSourceMapManifestV2,
   hashImplementationSourceMapStoryLeafV2,
   hashImplementationSourceMapStoryProofV2,
   implementationSourceMapMerkleRootV2,
 } from "../../src/product-compiler/schemas/implementation-source-map-v2.js";
+import {
+  PRODUCT_BUILD_PACKET_CONTRACT_HASH_V4,
+  ProductBuildPacketEnvelopeV4Schema,
+  hashProductBuildPacketV4,
+} from "../../src/product-compiler/schemas/product-build-packet-v4.js";
 import {
   NodeProductSourcePublicationReceiptSetV1Schema,
   NodeProductSourcePublicationReceiptV1Schema,
@@ -2084,6 +2095,7 @@ describe("Node scaffold private staged materializer V2", () => {
     ];
     const storyPlanHashes: string[] = [];
     const sourceMapManifestHashes: string[] = [];
+    const packetEnvelopeHashes: string[] = [];
 
     for (const [caseIndex, fixture] of cases.entries()) {
       const created = await stage({ profileId: fixture.profileId });
@@ -2500,6 +2512,308 @@ describe("Node scaffold private staged materializer V2", () => {
       );
       sourceMapManifestHashes.push(sourceMap.root.value.manifestHash);
       assertRecursivelyFrozen(sourceMap);
+
+      const packetProducer = {
+        pass: "product-compiler-product-build-packet-v4" as const,
+        codeSha: sourceMapProducer.codeSha,
+        toolVersions: {
+          implementationSourceMap: "2.0.0" as const,
+          productBuildPacket: "4.0.0" as const,
+        },
+      };
+      const packetInput = {
+        ...storyPlanInput,
+        packetProducer,
+        sourceMapProducer,
+        storyPlan: storyPlan.value,
+        sourceMapRootEnvelope: sourceMap.root.envelope,
+      };
+      const packet = await compileProductBuildPacketV4ForTest(
+        created.handle,
+        packetInput,
+      );
+      assert.equal(
+        packet.status,
+        "shadow_sealed",
+        packet.status === "rejected"
+          ? JSON.stringify(packet.diagnostics)
+          : undefined,
+      );
+      if (packet.status !== "shadow_sealed") {
+        throw new Error("Expected ProductBuildPacketV4");
+      }
+      assert.equal(
+        ProductBuildPacketEnvelopeV4Schema.safeParse(packet.packet.envelope)
+          .success,
+        true,
+      );
+      assert.equal(
+        packet.packet.value.contractHash,
+        PRODUCT_BUILD_PACKET_CONTRACT_HASH_V4,
+      );
+      assert.equal(
+        packet.packet.value.sourceMapRoot.rootEnvelopeHash,
+        sourceMap.root.envelopeHash,
+      );
+      assert.equal(
+        packet.packet.value.sourceMapRoot.manifestHash,
+        sourceMap.root.value.manifestHash,
+      );
+      assert.equal(
+        packet.packet.value.sourceMapRoot.merkleRoot,
+        sourceMap.root.value.merkleRoot,
+      );
+      assert.equal(
+        packet.packet.value.sourceMapRoot.leafCount,
+        sourceMap.root.value.leafCount,
+      );
+      assert.equal(
+        packet.packet.value.sourceMapRoot.storyIdSetHash,
+        sourceMap.root.value.storyIdSetHash,
+      );
+      assert.equal(
+        packet.packet.value.sourceMapAuthorityHash,
+        sourceMap.root.value.authorityHash,
+      );
+      assert.equal(
+        packet.packet.value.execution.commandContractHash,
+        buildTopology.value.authority.commandContractHash,
+      );
+      assert.equal(
+        packet.packet.value.logicalSourceAuthority.runtimeLogicalReceiptHash,
+        generated.receipt.logicalReceiptHash,
+      );
+      assert.equal(
+        packet.packet.value.logicalSourceAuthority.testLogicalReceiptHash,
+        generatedTest.receipt.logicalReceiptHash,
+      );
+      assert.equal(
+        packet.packet.publicationPreflight.durabilityTier,
+        0,
+      );
+      assert.equal(
+        copyPreparedArtifactStoreBatchCanonicalItemsV1(
+          packet.packet.publicationPreflight.preparedPublication,
+        ).length,
+        1,
+      );
+      assert.equal(
+        packet.packet.canonicalBytes.includes(generated.receipt.receiptHash),
+        false,
+      );
+      assert.equal(
+        packet.packet.canonicalBytes.includes(generatedTest.receipt.receiptHash),
+        false,
+      );
+      assert.equal(
+        packet.packet.canonicalBytes.includes(
+          buildTopology.value.operationalEvidence.dependencyReceiptHash,
+        ),
+        false,
+      );
+      packetEnvelopeHashes.push(packet.packet.envelopeHash);
+      assertRecursivelyFrozen(packet);
+
+      if (caseIndex === 0 || caseIndex === 2) {
+        const verifiedPacket = await verifyProductBuildPacketV4ForTest(
+          created.handle,
+          {
+            ...packetInput,
+            expectedPacketEnvelopeHash: packet.packet.envelopeHash,
+            candidatePacketEnvelope: packet.packet.envelope,
+          },
+        );
+        assert.equal(
+          verifiedPacket.status,
+          "verified_shadow",
+          verifiedPacket.status === "rejected"
+            ? JSON.stringify(verifiedPacket.diagnostics)
+            : undefined,
+        );
+        if (verifiedPacket.status !== "verified_shadow") {
+          throw new Error("Expected verified ProductBuildPacketV4");
+        }
+        assert.equal(
+          verifiedPacket.sourceMapRootEnvelopeHash,
+          sourceMap.root.envelopeHash,
+        );
+        assertRecursivelyFrozen(verifiedPacket);
+      }
+
+      if (caseIndex === 0) {
+        const wrongPacketScope = await compileProductBuildPacketV4(
+          created.handle,
+          packetInput,
+        );
+        assert.equal(wrongPacketScope.status, "rejected");
+        assert.equal(
+          wrongPacketScope.diagnostics[0]?.code,
+          "PRODUCT_BUILD_PACKET_V4_SOURCE_MAP_REJECTED",
+        );
+        const extraPacketInput = await compileProductBuildPacketV4ForTest(
+          created.handle,
+          { ...packetInput, unexpected: true },
+        );
+        assert.equal(extraPacketInput.status, "rejected");
+        assert.equal(
+          extraPacketInput.diagnostics[0]?.code,
+          "PRODUCT_BUILD_PACKET_V4_INPUT_INVALID",
+        );
+        const producerDrift = await compileProductBuildPacketV4ForTest(
+          created.handle,
+          {
+            ...packetInput,
+            packetProducer: { ...packetProducer, codeSha: "f".repeat(16) },
+          },
+        );
+        assert.equal(producerDrift.status, "rejected");
+        assert.equal(
+          producerDrift.diagnostics[0]?.code,
+          "PRODUCT_BUILD_PACKET_V4_PRODUCER_REJECTED",
+        );
+        const rootSubstitution = structuredClone(sourceMap.root.envelope) as any;
+        rootSubstitution.producer.codeSha = "e".repeat(16);
+        assert.equal(
+          ImplementationSourceMapEnvelopeV2Schema.safeParse(rootSubstitution)
+            .success,
+          true,
+        );
+        const rejectedRootSubstitution =
+          await compileProductBuildPacketV4ForTest(created.handle, {
+            ...packetInput,
+            sourceMapRootEnvelope: rootSubstitution,
+          });
+        assert.equal(rejectedRootSubstitution.status, "rejected");
+        assert.equal(
+          rejectedRootSubstitution.diagnostics[0]?.code,
+          "PRODUCT_BUILD_PACKET_V4_SOURCE_MAP_ROOT_MISMATCH",
+        );
+
+        const validationDrift = structuredClone(packet.packet.envelope) as any;
+        validationDrift.payload.validationIds.reverse();
+        validationDrift.payload.packetHash =
+          hashProductBuildPacketV4(validationDrift.payload);
+        assert.equal(
+          ProductBuildPacketEnvelopeV4Schema.safeParse(validationDrift).success,
+          false,
+        );
+        const operationalInjection = structuredClone(
+          packet.packet.envelope,
+        ) as any;
+        operationalInjection.payload.logicalSourceAuthority
+          .dependencyReceiptHash =
+            buildTopology.value.operationalEvidence.dependencyReceiptHash;
+        operationalInjection.payload.packetHash =
+          hashProductBuildPacketV4(operationalInjection.payload);
+        assert.equal(
+          ProductBuildPacketEnvelopeV4Schema.safeParse(operationalInjection)
+            .success,
+          false,
+        );
+
+        const selfRehashed = structuredClone(packet.packet.envelope) as any;
+        selfRehashed.payload.sourceMapAuthority.product.productSpecHash =
+          "f".repeat(64);
+        selfRehashed.payload.sourceMapAuthorityHash =
+          hashImplementationSourceMapAuthorityV2(
+            selfRehashed.payload.sourceMapAuthority,
+          );
+        selfRehashed.payload.sourceMapRoot.authorityHash =
+          selfRehashed.payload.sourceMapAuthorityHash;
+        selfRehashed.payload.packetHash =
+          hashProductBuildPacketV4(selfRehashed.payload);
+        assert.equal(
+          ProductBuildPacketEnvelopeV4Schema.safeParse(selfRehashed).success,
+          true,
+        );
+        const selfRehashedEnvelopeHash = hashCanonicalJson(selfRehashed);
+        const rejectedSelfRehash = await verifyProductBuildPacketV4ForTest(
+          created.handle,
+          {
+            ...packetInput,
+            expectedPacketEnvelopeHash: selfRehashedEnvelopeHash,
+            candidatePacketEnvelope: selfRehashed,
+          },
+        );
+        assert.equal(rejectedSelfRehash.status, "rejected");
+        assert.equal(
+          rejectedSelfRehash.diagnostics[0]?.code,
+          "PRODUCT_BUILD_PACKET_V4_EXPECTED_HASH_MISMATCH",
+        );
+        const rejectedCandidateMismatch =
+          await verifyProductBuildPacketV4ForTest(created.handle, {
+            ...packetInput,
+            expectedPacketEnvelopeHash: packet.packet.envelopeHash,
+            candidatePacketEnvelope: selfRehashed,
+          });
+        assert.equal(rejectedCandidateMismatch.status, "rejected");
+        assert.equal(
+          rejectedCandidateMismatch.diagnostics[0]?.code,
+          "PRODUCT_BUILD_PACKET_V4_CANDIDATE_MISMATCH",
+        );
+
+        const executionDrift = structuredClone(packet.packet.envelope) as any;
+        executionDrift.payload.execution.commands.environmentContractHash =
+          "e".repeat(64);
+        executionDrift.payload.execution.commandContractHash =
+          hashBuildTopologyCommandContractV3(
+            executionDrift.payload.execution.commands,
+          );
+        executionDrift.payload.sourceMapAuthority.buildTopology
+          .commandContractHash =
+            executionDrift.payload.execution.commandContractHash;
+        executionDrift.payload.sourceMapAuthorityHash =
+          hashImplementationSourceMapAuthorityV2(
+            executionDrift.payload.sourceMapAuthority,
+          );
+        executionDrift.payload.sourceMapRoot.authorityHash =
+          executionDrift.payload.sourceMapAuthorityHash;
+        executionDrift.payload.packetHash =
+          hashProductBuildPacketV4(executionDrift.payload);
+        assert.equal(
+          ProductBuildPacketEnvelopeV4Schema.safeParse(executionDrift).success,
+          true,
+        );
+        const rejectedExecutionDrift =
+          await verifyProductBuildPacketV4ForTest(created.handle, {
+            ...packetInput,
+            expectedPacketEnvelopeHash: hashCanonicalJson(executionDrift),
+            candidatePacketEnvelope: executionDrift,
+          });
+        assert.equal(rejectedExecutionDrift.status, "rejected");
+        assert.equal(
+          rejectedExecutionDrift.diagnostics[0]?.code,
+          "PRODUCT_BUILD_PACKET_V4_EXPECTED_HASH_MISMATCH",
+        );
+
+        const wrongExpectedHash = await verifyProductBuildPacketV4ForTest(
+          created.handle,
+          {
+            ...packetInput,
+            expectedPacketEnvelopeHash: "d".repeat(64),
+            candidatePacketEnvelope: packet.packet.envelope,
+          },
+        );
+        assert.equal(wrongExpectedHash.status, "rejected");
+        assert.equal(
+          wrongExpectedHash.diagnostics[0]?.code,
+          "PRODUCT_BUILD_PACKET_V4_EXPECTED_HASH_MISMATCH",
+        );
+
+        let deepPacketProducer: unknown = { value: true };
+        for (let depth = 0; depth < 200; depth += 1) {
+          deepPacketProducer = { nested: deepPacketProducer };
+        }
+        const boundedPacketInput = await compileProductBuildPacketV4ForTest(
+          created.handle,
+          { ...packetInput, packetProducer: deepPacketProducer },
+        );
+        assert.equal(boundedPacketInput.status, "rejected");
+        assert.equal(
+          boundedPacketInput.diagnostics[0]?.code,
+          "PRODUCT_BUILD_PACKET_V4_INPUT_INVALID",
+        );
+      }
 
       if (caseIndex === 0 || caseIndex === 2) {
         const proofIndex = caseIndex === 2
@@ -3311,6 +3625,28 @@ describe("Node scaffold private staged materializer V2", () => {
           siblingSourceMap.root.envelopeHash,
           sourceMap.root.envelopeHash,
         );
+        const siblingPacket = await compileProductBuildPacketV4ForTest(
+          sibling.handle,
+          {
+            ...siblingStoryPlanInput,
+            packetProducer,
+            sourceMapProducer,
+            storyPlan: siblingStoryPlan.value,
+            sourceMapRootEnvelope: siblingSourceMap.root.envelope,
+          },
+        );
+        assert.equal(siblingPacket.status, "shadow_sealed");
+        if (siblingPacket.status !== "shadow_sealed") {
+          throw new Error("Expected sibling ProductBuildPacketV4");
+        }
+        assert.equal(
+          siblingPacket.packet.value.packetHash,
+          packet.packet.value.packetHash,
+        );
+        assert.equal(
+          siblingPacket.packet.envelopeHash,
+          packet.packet.envelopeHash,
+        );
 
         assert.ok(sourceMaterializationInput);
         await assert.rejects(
@@ -3410,6 +3746,8 @@ describe("Node scaffold private staged materializer V2", () => {
     ]);
     assert.equal(sourceMapManifestHashes.length, cases.length);
     assert.equal(new Set(sourceMapManifestHashes).size, cases.length);
+    assert.equal(packetEnvelopeHashes.length, cases.length);
+    assert.equal(new Set(packetEnvelopeHashes).size, cases.length);
 
     const unsupportedCandidate: any = structuredClone(
       genuineNodeExpressApiProductSpecV2(),
