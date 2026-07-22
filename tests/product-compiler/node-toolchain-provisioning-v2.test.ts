@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   chmod,
+  link,
   lstat,
   mkdir,
   mkdtemp,
@@ -10,6 +11,7 @@ import {
   readdir,
   rm,
   symlink,
+  unlink,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -45,6 +47,10 @@ import {
   getCodeOwnedNodeToolchainTargetV2,
 } from "../../src/product-compiler/node-toolchain-target-registry-v2.js";
 import {
+  runNodeToolchainProvisionerCliV2,
+  type NodeToolchainProvisionerCliOperationsV2,
+} from "../../src/product-compiler/node-toolchain-provisioner-cli-v2.js";
+import {
   applyNodeToolchainProvisionerPlanV2ForTest,
   inspectNodeToolchainProvisionerInspectionV2,
   inspectNodeToolchainProvisionerV2ForTest,
@@ -66,6 +72,10 @@ import {
   NodeToolchainProvisioningReceiptV2Schema,
   hashNodeToolchainProvisioningReceiptV2,
 } from "../../src/product-compiler/schemas/node-toolchain-provisioning-v2.js";
+import {
+  NodeToolchainProvisionerCliFailureV2Schema,
+  hashNodeToolchainProvisionerCliFailureV2,
+} from "../../src/product-compiler/schemas/node-toolchain-provisioner-cli-v2.js";
 import {
   NodeToolchainProvisionerOperationReceiptV2Schema,
   NodeToolchainProvisionerPlanV2Schema,
@@ -1039,5 +1049,209 @@ describe("NodeToolchainProvisionerCommandV2 inspection and planning", () => {
     assert.equal(left.durableRollback.receiptHash, right.durableRollback.receiptHash);
     assert.equal(left.afterInspection.classification, "target_absent");
     assert.equal(right.afterInspection.classification, "target_absent");
+  });
+
+  it("executes the pathless CLI protocol through canonical plan files and durable replay", async () => {
+    const parent = await privateParent();
+    const commandFiles = await privateParent();
+    const tree = await privateTree();
+    const archiveCandidate = path.join(commandFiles, "candidate-node-archive.tar.xz");
+    let operationCalls = 0;
+    const operations: NodeToolchainProvisionerCliOperationsV2 = Object.freeze({
+      inspect: () => {
+        operationCalls += 1;
+        return inspectNodeToolchainProvisionerV2ForTest({
+          parent,
+          architecture: "arm64",
+        });
+      },
+      inspectArtifact: (handle) => {
+        operationCalls += 1;
+        return inspectNodeToolchainProvisionerInspectionV2(handle);
+      },
+      withPrivateTree: async <T>(
+        observedArchivePath: string,
+        use: (source: MaterializedNodeToolchainPrivateTreeV2) => Promise<T> | T,
+      ): Promise<T> => {
+        operationCalls += 1;
+        assert.equal(observedArchivePath, archiveCandidate);
+        return use(tree);
+      },
+      planApply: (inspection, source) => {
+        operationCalls += 1;
+        return planNodeToolchainProvisioningV2(inspection, source);
+      },
+      planRollback: (inspection) => {
+        operationCalls += 1;
+        return planNodeToolchainRollbackV2(inspection);
+      },
+      apply: (plan, source) => {
+        operationCalls += 1;
+        return applyNodeToolchainProvisionerPlanV2ForTest({
+          parent,
+          plan,
+          privateTree: source,
+        });
+      },
+      verify: () => {
+        operationCalls += 1;
+        return verifyNodeToolchainProvisionerV2ForTest({
+          parent,
+          architecture: "arm64",
+        });
+      },
+      rollback: (plan) => {
+        operationCalls += 1;
+        return rollbackNodeToolchainProvisionerPlanV2ForTest({ parent, plan });
+      },
+    });
+    const stdout: Buffer[] = [];
+    const stderr: string[] = [];
+    const invoke = async (argv: unknown) => {
+      stdout.length = 0;
+      stderr.length = 0;
+      const exitCode = await runNodeToolchainProvisionerCliV2(argv, operations, {
+        writeStdout: (bytes) => stdout.push(Buffer.from(bytes)),
+        writeStderr: (text) => stderr.push(text),
+      });
+      assert.equal(stdout.length, 1);
+      return { exitCode, bytes: stdout[0]!, diagnostics: [...stderr] };
+    };
+
+    const inspected = await invoke(["inspect"]);
+    assert.equal(inspected.exitCode, 0);
+    assert.equal(JSON.parse(inspected.bytes.toString("utf8")).classification, "target_absent");
+    assert.equal(inspected.bytes.at(-1), "}".charCodeAt(0));
+
+    const applyPlanOutput = await invoke(["plan", "apply", "--archive", archiveCandidate]);
+    assert.equal(applyPlanOutput.exitCode, 0);
+    const applyPlan = NodeToolchainProvisionerPlanV2Schema.parse(
+      JSON.parse(applyPlanOutput.bytes.toString("utf8")),
+    );
+    assert.equal(applyPlan.operation, "apply");
+    assert.doesNotMatch(applyPlanOutput.bytes.toString("utf8"), /setfarm-node-provisioning-parent/);
+    const applyPlanPath = path.join(commandFiles, "apply-plan.json");
+    await writeFile(applyPlanPath, applyPlanOutput.bytes, { mode: 0o600 });
+
+    const callsBeforeInvalidOrder = operationCalls;
+    const invalidOrder = await invoke([
+      "apply",
+      "--archive",
+      archiveCandidate,
+      "--plan-file",
+      applyPlanPath,
+    ]);
+    assert.equal(invalidOrder.exitCode, 64);
+    assert.equal(operationCalls, callsBeforeInvalidOrder);
+
+    const symlinkPlanPath = path.join(commandFiles, "symlink-plan.json");
+    await symlink(applyPlanPath, symlinkPlanPath);
+    const symlinkRefused = await invoke([
+      "apply",
+      "--plan-file",
+      symlinkPlanPath,
+      "--archive",
+      archiveCandidate,
+    ]);
+    assert.equal(symlinkRefused.exitCode, 64);
+
+    const hardlinkSourcePath = path.join(commandFiles, "hardlink-plan-source.json");
+    const hardlinkAliasPath = path.join(commandFiles, "hardlink-plan-alias.json");
+    await writeFile(hardlinkSourcePath, applyPlanOutput.bytes, { mode: 0o600 });
+    await link(hardlinkSourcePath, hardlinkAliasPath);
+    const hardlinkRefused = await invoke([
+      "apply",
+      "--plan-file",
+      hardlinkAliasPath,
+      "--archive",
+      archiveCandidate,
+    ]);
+    assert.equal(hardlinkRefused.exitCode, 64);
+    await unlink(hardlinkAliasPath);
+    await unlink(hardlinkSourcePath);
+
+    const nestedDrift = JSON.parse(applyPlanOutput.bytes.toString("utf8"));
+    nestedDrift.inspection.inspectionHash = "f".repeat(64);
+    nestedDrift.planHash = hashNodeToolchainProvisionerPlanV2(nestedDrift);
+    const nestedDriftPath = path.join(commandFiles, "nested-drift-plan.json");
+    await writeFile(nestedDriftPath, canonicalJsonBytes(nestedDrift), { mode: 0o600 });
+    const nestedDriftRefused = await invoke([
+      "apply",
+      "--plan-file",
+      nestedDriftPath,
+      "--archive",
+      archiveCandidate,
+    ]);
+    assert.equal(nestedDriftRefused.exitCode, 64);
+
+    const noncanonicalPlanPath = path.join(commandFiles, "noncanonical-plan.json");
+    await writeFile(
+      noncanonicalPlanPath,
+      Buffer.concat([applyPlanOutput.bytes, Buffer.from("\n")]),
+      { mode: 0o600 },
+    );
+    const refused = await invoke([
+      "apply",
+      "--plan-file",
+      noncanonicalPlanPath,
+      "--archive",
+      archiveCandidate,
+    ]);
+    assert.equal(refused.exitCode, 64);
+    const failure = NodeToolchainProvisionerCliFailureV2Schema.parse(
+      JSON.parse(refused.bytes.toString("utf8")),
+    );
+    assert.equal(failure.commandRef, "apply");
+    assert.equal(failure.errorCode, "NODE_TOOLCHAIN_PROVISIONER_CLI_V2_PLAN_FILE_INVALID");
+    assert.equal(failure.failureKind, "invocation_rejected");
+    assert.equal(refused.diagnostics.length, 1);
+    const exitDrift = {
+      ...failure,
+      exitCode: 70 as const,
+    };
+    assert.throws(() => NodeToolchainProvisionerCliFailureV2Schema.parse({
+      ...exitDrift,
+      failureHash: hashNodeToolchainProvisionerCliFailureV2(exitDrift),
+    }));
+    const target = getCodeOwnedNodeToolchainTargetV2("arm64");
+    await assert.rejects(lstat(path.join(parent, target.rootBasename)), { code: "ENOENT" });
+
+    const applied = await invoke([
+      "apply",
+      "--plan-file",
+      applyPlanPath,
+      "--archive",
+      archiveCandidate,
+    ]);
+    assert.equal(applied.exitCode, 0);
+    assert.equal(JSON.parse(applied.bytes.toString("utf8")).result, "applied_exact_generation");
+    const verified = await invoke(["verify"]);
+    assert.equal(verified.exitCode, 0);
+    assert.equal(JSON.parse(verified.bytes.toString("utf8")).result, "verified_exact_generation");
+
+    const rollbackPlanOutput = await invoke(["plan", "rollback"]);
+    assert.equal(rollbackPlanOutput.exitCode, 0);
+    const rollbackPlan = NodeToolchainProvisionerPlanV2Schema.parse(
+      JSON.parse(rollbackPlanOutput.bytes.toString("utf8")),
+    );
+    assert.equal(rollbackPlan.operation, "rollback");
+    const rollbackPlanPath = path.join(commandFiles, "rollback-plan.json");
+    await writeFile(rollbackPlanPath, rollbackPlanOutput.bytes, { mode: 0o600 });
+    const rolledBack = await invoke(["rollback", "--plan-file", rollbackPlanPath]);
+    assert.equal(rolledBack.exitCode, 0);
+    assert.equal(JSON.parse(rolledBack.bytes.toString("utf8")).result, "rolled_back_exact_generation");
+    const replay = await invoke(["rollback", "--plan-file", rollbackPlanPath]);
+    assert.equal(replay.exitCode, 0);
+    assert.equal(JSON.parse(replay.bytes.toString("utf8")).result, "verified_existing_rollback");
+
+    const hostileArgv = new Proxy(["inspect"], {});
+    const hostile = await invoke(hostileArgv);
+    assert.equal(hostile.exitCode, 64);
+    assert.equal(
+      NodeToolchainProvisionerCliFailureV2Schema.parse(
+        JSON.parse(hostile.bytes.toString("utf8")),
+      ).commandRef,
+      "invalid_invocation",
+    );
   });
 });
