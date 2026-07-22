@@ -260,7 +260,6 @@ async function main(): Promise<void> {
         });
         const installationReceipt =
           inspectNodeToolchainProvisionerBootstrapInstallationReceiptV2(installed);
-        const manifest = installationReceipt.claim.intent.source.manifest;
         const launcher = path.join(bootstrapRoot, NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_LAUNCHER_LOCATOR_V2);
 
         const initialOutput = invokeLauncher(launcher, ["inspect"]);
@@ -342,7 +341,7 @@ async function main(): Promise<void> {
           },
           bootstrap: {
             bundleAuthorityReceiptHash: bundleReceipt.receiptHash,
-            manifestHash: manifest.manifestHash,
+            manifestHash: installationReceipt.finalRoot.manifestHash,
             installationReceiptHash: installationReceipt.receiptHash,
             rollbackReceiptHash: bootstrapRollback.rollbackReceipt.receiptHash,
           },
