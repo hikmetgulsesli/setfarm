@@ -8,10 +8,12 @@ the F5A-F5C compatibility experiments are complete on the feature branch. F5D
 SemanticRealizationPlanV2 is the corrected target-architecture boundary, F5E
 FileTreeManifestV3 projects its exact physical targets, and F5F
 BuildTopologyV3 binds those targets to dependency, compilation, command, and
-runtime authority. The V2
+runtime authority. F5K carries the PLAN behavior authority to runtime source;
+F5L executes that authority in the shared runtime program and generates an
+exact test program/source receipt from the same projection. The V2
 FileTree/BuildTopology/entrypoint-only transition must not be promoted.
-Production-root activation remains NO-GO; the runtime and test generators are
-next.
+Production-root activation remains NO-GO; authenticated source publication,
+the evidence registry, release manifest and clean multi-product eval remain.
 
 ## Goal
 
@@ -1324,6 +1326,87 @@ assertions/entity snapshot bindings at the specified checkpoints, and produce
 receipt/evaluation evidence. Only then may the runtime-generator blocker be
 removed and NodeProductTestGeneratorV2 consume the same contract.
 
+### F5L — executable runtime and generated-test behavior authority
+
+**Status (2026-07-21): complete as an isolated shadow authority in commit
+`06645e02`; production publication, evidence registration and release remain
+forbidden.** The closing “next slice” statement in F5K is retained as
+historical evidence and is superseded by this section. F5L does not add a
+review classifier or a project-specific gate. It makes runtime and test source
+two fresh-verified consumers of the same canonical behavior authority.
+
+`NodeProductRuntimeGeneratorV2` now exports one code-owned
+`NodeProductRuntimeProgramV2` projection. Runtime source generation and
+`NodeProductTestGeneratorV2` both consume that exact projection rather than
+maintaining separate behavior interpreters. The runtime program binds the
+freshly verified ProductSpec, ProductRuntimeBehaviorContract, invocation
+transport, invariant assertions and entity-field snapshot bindings. Generated
+tests therefore cannot reinterpret PLAN prose or infer a second expected
+behavior from mutable source.
+
+`NodeProductTestGeneratorV2` requires the complete ProductSpec, delivery,
+behavior proposal/contract, SemanticRealizationPlanV2, FileTreeManifestV3,
+BuildTopologyV3 and NodeProductRuntimeSourceReceiptV2 chain. It fresh-verifies
+the upstream artifacts and exact runtime source before producing any test
+bytes. It compiles one exact success test per action from the ProductSpec
+evidence scenario and invocation transport. `action_invocation` and
+`observable_outcome` are the only admitted evidence kinds in this slice;
+unsupported persistence evidence is a typed pre-source rejection, never a
+passing placeholder, skip or TODO.
+
+API action tests import a fresh runtime module instance for every scenario and
+execute prerequisites in that same instance before invoking the target action.
+CLI action tests spawn only the exact sibling runtime with an empty environment,
+bounded output and timeout. Non-empty CLI prerequisite sequences are rejected
+until a single-process sequence ABI exists. Expected full responses are
+independently projected from the canonical runtime program, so test source does
+not copy generated runtime output as its oracle.
+
+The new `NodeProductTestProgramV2` and
+`NodeProductTestSourceReceiptV2` contracts bind every action test, semantic
+evidence relation, runtime assertion, entity-field binding, exact source marker
+span and source hash. Logical and full receipt hashes have distinct domains;
+operational source coordinates cannot alter logical identity. Standalone schema
+closure is every-and-only: an omitted relation that is self-rehashed is still
+rejected. The verifier regenerates both source bytes and the complete receipt
+from the upstream authority chain. Production and test stage scopes cannot be
+crossed.
+
+Five isolated generated-source fixtures execute through `node --test`: one CLI
+action, a one-action API, a two-action API, an API prerequisite sequence on one
+fresh handler, and an entity-snapshot API. Negative proof covers wrong stage
+scope, source drift, a self-rehashed receipt, extra input, unsupported
+persistence evidence and standalone receipt omission. Generated runtime and
+test source both typecheck before execution.
+
+The runtime/test integration blockers are removed only because both exact
+consumers and their fresh verifiers now exist. The evidence-registry and
+release-manifest blockers remain. Production consumption is still forbidden;
+neither source has yet been published through an authenticated CAS/materializer
+receipt or registered as canonical operational evidence.
+
+Current test-generator contract hash is
+`9e95027d040924582b3fec49539f729defd52f797aa5af05e3602b04c521a8fe`;
+the containing SemanticRealizationPlanV2 contract hash is
+`d3459ee59896412533dda41752c2691c595b0ef7e12c7e5dad2eb8686eb7b63c`.
+Focused private materializer/runtime/test proof is 20/20. Full Product Compiler
+is 1057/1057 across 129 suites with `duration_ms 128208.668125`; full
+execution-attempts is 638/638 across 86 suites with
+`duration_ms 139955.278542`. TypeScript, English contract (1,114 files), path
+contract (633 files), version 2.3.79, migration digests, eight Mission Control
+contract artifacts and diff checks pass. The normal feature-branch build guard
+again refused `arch/product-semantics-v2-authority` and was not bypassed. No
+live run, live DB, PR, service, generated repository or real Setfarm
+application-support tree was mutated.
+
+The next dependency-order slice is authenticated publication/materialization
+of exact runtime and test source receipts into the canonical evidence registry,
+then a versioned release manifest which consumes those registry identities.
+Typed retry/supervisor ownership must consume that registry delta, and Mission
+Control must project the same operational evidence rather than agent prose.
+Only after those links exist may the remaining blockers be removed or a clean
+three-product eval start.
+
 ## Verification and release gate
 
 Every slice requires:
@@ -1340,16 +1423,15 @@ F2-F4 additionally require focused real-filesystem, process, PostgreSQL and
 concurrency tests. A clean merged-`main` `npm run build` and full `npm test`
 remain release evidence; the feature-branch build guard is never bypassed.
 
-GO for F1-F4 and F5D-F5K as isolated shadow authorities. F5A-F5C are GO only as
+GO for F1-F4 and F5D-F5L as isolated shadow authorities. F5A-F5C are GO only as
 compatibility evidence and are explicitly NO-GO as production topology. NO-GO
 for production host execution, setup cutover, PacketV4, live migration, deploy
-and new clean product runs until machine-readable runtime behavior, generated
-test source/receipt, authenticated runtime-source materialization,
-authenticated build/test/candidate evidence, evidence registry, release
-manifest, SourceMap, and the later packet/eval program are complete. The next
-dependency-order slice is executable ProductRuntimeBehaviorContract
-consumption in NodeProductRuntimeGeneratorV2, followed by the exact same
-authority in NodeProductTestGeneratorV2. The feature-branch
-`npm run build` guard was re-run after `d936b07b` and correctly refused branch
+and new clean product runs until authenticated runtime/test-source
+materialization, authenticated build/test/candidate evidence, evidence registry,
+release manifest, SourceMap, and the later packet/eval program are complete. The next
+dependency-order slice is authenticated source publication plus canonical
+evidence registration, followed by the versioned release manifest. The
+feature-branch
+`npm run build` guard was re-run after `06645e02` and correctly refused branch
 `arch/product-semantics-v2-authority`; it was not bypassed. Only a clean
 merged-main build and full test can close that release gate.
