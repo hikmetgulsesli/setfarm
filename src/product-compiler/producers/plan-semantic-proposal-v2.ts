@@ -98,12 +98,49 @@ function stableId(prefix: string, ...keys: string[]): string {
   return `${prefix}_${head}_${digest}`;
 }
 
-function actionId(key: string): string {
+export function derivePlanStateRefV2(key: string): string {
+  return stableId("STATE", key);
+}
+
+export function derivePlanActionRefV2(key: string): string {
   return stableId("ACT", key);
 }
 
+export function derivePlanEntityRefV2(key: string): string {
+  return stableId("ENTITY", key);
+}
+
+export function derivePlanEntityFieldRefV2(
+  entityKey: string,
+  fieldKey: string,
+): string {
+  return stableId("FIELD", entityKey, fieldKey);
+}
+
+export function derivePlanPersistenceRefV2(key: string): string {
+  return stableId("PERSIST", key);
+}
+
+export function derivePlanObservableRefV2(
+  actionKey: string,
+  observableKey: string,
+): string {
+  return stableId("OBS", actionKey, observableKey);
+}
+
+export function derivePlanObservableEvidenceRefV2(
+  actionKey: string,
+  observableKey: string,
+): string {
+  return stableId("EVID", actionKey, observableKey);
+}
+
+function actionId(key: string): string {
+  return derivePlanActionRefV2(key);
+}
+
 function stateId(key: string): string {
-  return stableId("STATE", key);
+  return derivePlanStateRefV2(key);
 }
 
 function surfaceId(key: string): string {
@@ -377,7 +414,7 @@ export function compilePlanSemanticProposalV2(input: Readonly<{
       persistenceRoundTripPredicatesByAction.get(baseAction.id) ?? []
     ).map((predicate) => predicate.id);
     const observableById = new Map(planAction.observables.map((observable) => [
-      stableId("OBS", planAction.key, observable.key),
+      derivePlanObservableRefV2(planAction.key, observable.key),
       observable,
     ] as const));
     return {
