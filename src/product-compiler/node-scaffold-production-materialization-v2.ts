@@ -53,23 +53,13 @@ import {
 import type {
   NodeScaffoldProductionClosureV2,
 } from "./schemas/node-scaffold-production-closure-v2.js";
-
-export const NODE_SCAFFOLD_PRODUCTION_MATERIALIZATION_CONTRACT_V2 =
-  Object.freeze({
-    schema: "setfarm.node-scaffold-production-materialization-contract.v2" as const,
-    contractVersion: "2.0.0" as const,
-    sourceAuthority: "fresh_code_owned_production_closure_v2" as const,
-    hiddenLockAuthority: "exact_canonical_lock_entry_equality_v2" as const,
-    packageRootAuthority: "every_and_only_production_package_roots_v2" as const,
-    generatedNpmMetadata: "verified_then_removed_v2" as const,
-    dependencyTreeAuthority: "readonly_canonical_runtime_tree_v2" as const,
-    packageRuntimeTreeHashDomain:
-      "setfarm.production-package-runtime-tree-hash.v2" as const,
-    callerPackageSelection: "forbidden" as const,
-  });
-
-export const NODE_SCAFFOLD_PRODUCTION_MATERIALIZATION_CONTRACT_HASH_V2 =
-  hashCanonicalJson(NODE_SCAFFOLD_PRODUCTION_MATERIALIZATION_CONTRACT_V2);
+import {
+  NODE_SCAFFOLD_PRODUCTION_MATERIALIZATION_CONTRACT_V2,
+} from "./schemas/node-scaffold-production-materialization-v2.js";
+export {
+  NODE_SCAFFOLD_PRODUCTION_MATERIALIZATION_CONTRACT_HASH_V2,
+  NODE_SCAFFOLD_PRODUCTION_MATERIALIZATION_CONTRACT_V2,
+} from "./schemas/node-scaffold-production-materialization-v2.js";
 
 export type NodeScaffoldProductionMaterializationErrorCodeV2 =
   | "NODE_SCAFFOLD_PRODUCTION_MATERIALIZATION_V2_INPUT_INVALID"
@@ -785,6 +775,19 @@ function metadataProbe(scope: AdmissionScopeV2): CanonicalRuntimeMetadataProbeV2
   return scope === "production_host" ? metadataProbeProduction : metadataProbeTest;
 }
 
+/** @internal Returns the code-owned metadata authority for one admitted scope. */
+export function getNodeScaffoldRuntimeMetadataProbeInternalV2(
+  scope: AdmissionScopeV2,
+): CanonicalRuntimeMetadataProbeV2 {
+  if (scope !== "production_host" && scope !== "test_fixture") {
+    return fail(
+      "NODE_SCAFFOLD_PRODUCTION_MATERIALIZATION_V2_INPUT_INVALID",
+      "Runtime metadata probe scope is not admitted",
+    );
+  }
+  return metadataProbe(scope);
+}
+
 function normalizeDarwinMetadata(root: string): void {
   const environment = Object.freeze({ LANG: "C", LC_ALL: "C", PATH: "/usr/bin:/bin" });
   try {
@@ -813,6 +816,24 @@ function normalizeDarwinMetadata(root: string): void {
       error,
     );
   }
+}
+
+/** @internal Normalizes one fresh runtime tree before its read-only seal. */
+export function normalizeNodeScaffoldRuntimeMetadataInternalV2(
+  scope: AdmissionScopeV2,
+  root: string,
+): void {
+  if (
+    (scope !== "production_host" && scope !== "test_fixture")
+    || typeof root !== "string"
+    || !path.isAbsolute(root)
+  ) {
+    return fail(
+      "NODE_SCAFFOLD_PRODUCTION_MATERIALIZATION_V2_INPUT_INVALID",
+      "Runtime metadata normalization input is not admitted",
+    );
+  }
+  if (scope === "production_host") normalizeDarwinMetadata(root);
 }
 
 function sealDependencyTree(root: string): void {

@@ -24,6 +24,7 @@ import {
   inspectHostNodeToolchainReceiptV2,
   isProductionHostNodeToolchainAuthorityV2,
   executeHostNodeToolchainNpmCiV2,
+  executeHostNodeToolchainCandidateProductionNpmCiV2,
   executeHostNodeToolchainBuildV2,
   probeHostNodeToolchainEffectiveNpmConfigV2,
   revalidateHostNodeToolchainAuthorityV2,
@@ -31,6 +32,7 @@ import {
   type HostNodeToolchainEffectiveNpmConfigProbeEvidenceV2,
   type HostNodeToolchainEffectiveNpmConfigProbeInputV2,
   type HostNodeToolchainNpmCiEvidenceV2,
+  type HostNodeToolchainCandidateProductionNpmCiEvidenceV2,
   type HostNodeToolchainBuildEvidenceV2,
 } from "./host-node-toolchain-authority-v2.js";
 import type {
@@ -63,6 +65,7 @@ import {
 import {
   HOST_NODE_TOOLCHAIN_AUTHORITY_REF_V2,
   HOST_NODE_TOOLCHAIN_RECEIPT_V2_SCHEMA,
+  type HostNodeToolchainReceiptV2,
 } from "./schemas/host-node-toolchain-receipt-v2.js";
 import {
   NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_REF_V2,
@@ -95,6 +98,7 @@ export type NodeScaffoldExecutionEnvironmentErrorCodeV2 =
   | "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_BUILD_ALREADY_CONSUMED"
   | "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_OPERATION_ROLE_INVALID"
   | "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_RUNTIME_HANDOFF_ALREADY_CONSUMED"
+  | "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_RUNTIME_INSTALL_ALREADY_CONSUMED"
   | "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_DESTROYED";
 
 export class NodeScaffoldExecutionEnvironmentErrorV2 extends Error {
@@ -1196,6 +1200,118 @@ export async function createNodeCandidateRuntimeExecutionEnvironmentInternalV2(
   } finally {
     state.lifecycle.status = "runtime_handoff_consumed";
   }
+}
+
+function requireCandidateRuntimeInstallStateInternalV2(
+  handle: NodeScaffoldExecutionEnvironmentV2,
+): PrivateEnvironmentStateV2 {
+  const state = authenticStateV2(handle);
+  if (state.operationRole !== "candidate_runtime_install") {
+    return fail(
+      "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_OPERATION_ROLE_INVALID",
+      "Scaffold-build environments cannot execute candidate runtime installation",
+    );
+  }
+  if (state.lifecycle.status === "active") return state;
+  if (state.lifecycle.status === "destroyed") {
+    return fail(
+      "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_DESTROYED",
+      "Candidate runtime environment has already been destroyed",
+    );
+  }
+  return fail(
+    "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_RUNTIME_INSTALL_ALREADY_CONSUMED",
+    "Candidate runtime dependency installation authority is single-use",
+  );
+}
+
+/** @internal Executes the only candidate-runtime operation and consumes it. */
+export async function executeNodeCandidateRuntimeEnvironmentNpmCiInternalV2(
+  handle: NodeScaffoldExecutionEnvironmentV2,
+  candidateBundleRoot: string,
+): Promise<HostNodeToolchainCandidateProductionNpmCiEvidenceV2> {
+  const state = requireCandidateRuntimeInstallStateInternalV2(handle);
+  if (typeof candidateBundleRoot !== "string") {
+    return fail(
+      "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_OPERATION_ROLE_INVALID",
+      "Candidate runtime installation requires one exact bundle-root locator",
+    );
+  }
+  const environmentReceipt = await revalidateNodeScaffoldExecutionEnvironmentV2(
+    handle,
+  );
+  state.lifecycle.status = "installing";
+  let succeeded = false;
+  try {
+    const evidence =
+      await executeHostNodeToolchainCandidateProductionNpmCiV2(
+        state.hostToolchain,
+        {
+          privateRoot: state.privateRoot,
+          candidateBundleRoot,
+          environment: state.probeInput.environment,
+        },
+      );
+    if (
+      evidence.hostToolchainReceiptHash
+        !== environmentReceipt.hostToolchain.receiptHash
+      || evidence.nodeIdentityHash
+        !== environmentReceipt.hostToolchain.nodeIdentityHash
+      || evidence.npmClosureHash
+        !== environmentReceipt.hostToolchain.npmClosureHash
+      || evidence.environmentHash
+        !== environmentReceipt.environment.environmentHash
+      || evidence.directArgvHash !== hashCanonicalJson({
+        schema: "setfarm.candidate-runtime-npm-direct-argv-hash.v2",
+        directArgv: evidence.directArgv,
+      })
+    ) {
+      return fail(
+        "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_STATE_DRIFT",
+        "Candidate runtime npm evidence does not reproduce the admitted environment",
+      );
+    }
+    succeeded = true;
+    return evidence;
+  } finally {
+    state.lifecycle.status = succeeded ? "install_consumed" : "install_failed";
+  }
+}
+
+/** @internal Freshly reproduces the pathless host/environment runtime context. */
+export async function revalidateNodeCandidateRuntimeExecutionContextInternalV2(
+  handle: NodeScaffoldExecutionEnvironmentV2,
+): Promise<Readonly<{
+  environment: NodeScaffoldExecutionEnvironmentReceiptV2;
+  hostToolchain: HostNodeToolchainReceiptV2;
+}>> {
+  const state = authenticStateV2(handle);
+  if (state.operationRole !== "candidate_runtime_install") {
+    return fail(
+      "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_OPERATION_ROLE_INVALID",
+      "Candidate runtime context requires its dedicated operation-role environment",
+    );
+  }
+  const environment = await revalidateNodeScaffoldExecutionEnvironmentV2(handle);
+  const hostToolchain = await revalidateHostNodeToolchainAuthorityV2(
+    state.hostToolchain,
+  );
+  if (
+    environment.hostToolchain.receiptHash !== hostToolchain.receiptHash
+    || environment.hostToolchain.nodeIdentityHash
+      !== hostToolchain.node.identityHash
+    || environment.hostToolchain.npmClosureHash
+      !== hostToolchain.npm.closureHash
+  ) {
+    return fail(
+      "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_STATE_DRIFT",
+      "Candidate runtime host and environment receipts no longer join",
+    );
+  }
+  return Object.freeze({
+    environment: defensiveCopy(environment),
+    hostToolchain: defensiveCopy(hostToolchain),
+  });
 }
 
 /**

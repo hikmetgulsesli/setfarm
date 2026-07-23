@@ -160,6 +160,15 @@ import {
   type NodeScaffoldExecutionEnvironmentV2,
 } from "../../src/product-compiler/node-scaffold-execution-environment-v2.js";
 import {
+  destroyNodeCandidateRuntimePrivateV2,
+  materializeNodeCandidateRuntimePrivateV2ForTest,
+  revalidateNodeCandidateRuntimePrivateV2,
+  type MaterializedNodeCandidateRuntimePrivateV2,
+} from "../../src/product-compiler/node-candidate-runtime-private-materializer-v2.js";
+import {
+  deriveCodeOwnedNodeScaffoldProductionClosureV2,
+} from "../../src/product-compiler/node-scaffold-production-closure-v2.js";
+import {
   MaterializedNodeScaffoldPrivateStageV2,
   NodeScaffoldPrivateMaterializerErrorV2,
   acquireNodeCandidateRuntimeBundleInputsInternalV2,
@@ -389,6 +398,7 @@ type BuildControlV2 = {
 
 const installControls = new Map<NodeScaffoldProfileIdV2, InstallControlV2>();
 const installInvocations: HostNodeToolchainProbeInvocationV2[] = [];
+const runtimeInstallInvocations: HostNodeToolchainProbeInvocationV2[] = [];
 const buildControls = new Map<NodeScaffoldProfileIdV2, BuildControlV2>();
 const buildInvocations: HostNodeToolchainProbeInvocationV2[] = [];
 
@@ -479,8 +489,12 @@ async function makeHostFixture(root: string): Promise<HostFixtureV2> {
 async function fakeNpmCiV2(
   profileId: NodeScaffoldProfileIdV2,
   projectRoot: string,
+  selection: "all" | "production" = "all",
 ): Promise<void> {
   const entry = getCodeOwnedNodeScaffoldToolchainEntryV2(profileId)!;
+  const nodes = selection === "production"
+    ? deriveCodeOwnedNodeScaffoldProductionClosureV2(profileId).nodes
+    : entry.dependencyGraph.nodes;
   const rootLock = JSON.parse(await readFile(path.join(projectRoot, "package-lock.json"), "utf8")) as {
     name: string;
     version: string;
@@ -490,7 +504,7 @@ async function fakeNpmCiV2(
   await mkdir(nodeModulesRoot, { mode: 0o700 });
   await chmod(nodeModulesRoot, 0o700);
   const hiddenPackages: Record<string, Record<string, unknown>> = {};
-  for (const node of entry.dependencyGraph.nodes) {
+  for (const node of nodes) {
     const lockEntry = rootLock.packages[node.packagePath]!;
     hiddenPackages[node.packagePath] = structuredClone(lockEntry);
     const packageRoot = path.join(projectRoot, ...node.packagePath.split("/"));
@@ -586,6 +600,12 @@ function hostAdapter(fixture: HostFixtureV2, profileId: NodeScaffoldProfileIdV2)
       await control?.afterInstall?.(invocation.cwd);
       return exited(`\nadded ${getCodeOwnedNodeScaffoldToolchainEntryV2(profileId)!
         .dependencyGraph.nodeCount} packages in 1s\n`);
+    }
+    if (invocation.probeRef === "HOST_NPM_CANDIDATE_PRODUCTION_INSTALL_V2") {
+      runtimeInstallInvocations.push(invocation);
+      const closure = deriveCodeOwnedNodeScaffoldProductionClosureV2(profileId);
+      await fakeNpmCiV2(profileId, invocation.cwd, "production");
+      return exited(`\nadded ${closure.nodeCount} packages in 1s\n`);
     }
     if (invocation.probeRef === "HOST_NODE_PRODUCT_BUILD_V2") {
       buildInvocations.push(invocation);
@@ -759,6 +779,7 @@ describe("Node scaffold private staged materializer V2", () => {
   const assetSets = new Map<NodeScaffoldProfileIdV2, AssetSetV2>();
   const activeStages: MaterializedNodeScaffoldPrivateStageV2[] = [];
   const activeEnvironments: NodeScaffoldExecutionEnvironmentV2[] = [];
+  const activeRuntimeBundles: MaterializedNodeCandidateRuntimePrivateV2[] = [];
 
   before(async () => {
     database = await createIsolatedTestDatabase();
@@ -842,8 +863,16 @@ describe("Node scaffold private staged materializer V2", () => {
   afterEach(() => {
     installControls.clear();
     installInvocations.splice(0);
+    runtimeInstallInvocations.splice(0);
     buildControls.clear();
     buildInvocations.splice(0);
+    for (const runtimeBundle of activeRuntimeBundles.splice(0)) {
+      try {
+        destroyNodeCandidateRuntimePrivateV2(runtimeBundle);
+      } catch {
+        // Destructive assertions may already have consumed the handle.
+      }
+    }
     for (const stage of activeStages.splice(0)) {
       try {
         destroyNodeScaffoldPrivateStageV2(stage);
@@ -4775,7 +4804,6 @@ describe("Node scaffold private staged materializer V2", () => {
               outputTreePayloadHash: runtimeContext.output.tree.payloadHash,
             },
           );
-        activeEnvironments.push(runtimeInputs.runtimeEnvironment);
         assert.equal(runtimeInputs.admissionScope, "test_fixture");
         assert.equal(runtimeInputs.profileId, CLI_PROFILE);
         assert.deepEqual(runtimeInputs.application.map((file) =>
@@ -4830,6 +4858,52 @@ describe("Node scaffold private staged materializer V2", () => {
               "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_RUNTIME_BUNDLE_ALREADY_CONSUMED",
           },
         );
+        const privateRuntime =
+          await materializeNodeCandidateRuntimePrivateV2ForTest({
+            runtimeInputs,
+          });
+        activeRuntimeBundles.push(privateRuntime);
+        assert.equal(runtimeInstallInvocations.length, 1);
+        assert.deepEqual(
+          runtimeInstallInvocations[0]?.argv.slice(1),
+          [
+            "ci",
+            "--omit=dev",
+            "--ignore-scripts",
+            "--no-audit",
+            "--no-fund",
+          ],
+        );
+        const privateRuntimeReceipt =
+          await revalidateNodeCandidateRuntimePrivateV2(privateRuntime);
+        assert.equal(privateRuntimeReceipt.admissionScope, "test_fixture");
+        assert.equal(privateRuntimeReceipt.pathDisclosure, "forbidden");
+        assert.equal(privateRuntimeReceipt.profileId, CLI_PROFILE);
+        assert.equal(privateRuntimeReceipt.applicationTree.fileCount, 2);
+        assert.equal(privateRuntimeReceipt.applicationTree.directoryCount, 0);
+        assert.equal(privateRuntimeReceipt.dependencyTree.fileCount, 0);
+        assert.equal(privateRuntimeReceipt.dependencyTree.directoryCount, 0);
+        assert.equal(privateRuntimeReceipt.productionClosure.nodeCount, 0);
+        assert.equal(privateRuntimeReceipt.productionGraph.packageCount, 0);
+        assert.deepEqual(
+          privateRuntimeReceipt.applicationTree.entries
+            .filter((entry) => entry.type === "file")
+            .map((entry) => entry.contentHash),
+          runtimeContext.output.files.map((file) => file.contentHash),
+        );
+        assert.equal(
+          privateRuntimeReceipt.installEvidence.status,
+          "exited_zero",
+        );
+        await assert.rejects(
+          revalidateNodeCandidateRuntimePrivateV2(
+            { ...privateRuntime } as MaterializedNodeCandidateRuntimePrivateV2,
+          ),
+          {
+            code:
+              "NODE_CANDIDATE_RUNTIME_PRIVATE_V2_AUTHORITY_UNAUTHENTICATED",
+          },
+        );
         settleNodeCandidateRuntimeBundleInputsInternalV2(
           runtimeContext.stage,
           runtimeInputs.scaffoldBaseReceiptHash,
@@ -4838,11 +4912,15 @@ describe("Node scaffold private staged materializer V2", () => {
           siblingCandidateBuild.authority,
           siblingCandidateBuild.receipt.receiptHash,
         );
-        for (const file of [
-          runtimeInputs.packageJson,
-          runtimeInputs.packageLock,
-          ...runtimeInputs.application,
-        ]) file.bytes.fill(0);
+        for (const file of [runtimeInputs.packageJson, runtimeInputs.packageLock,
+          ...runtimeInputs.application]) {
+          assert.equal(file.bytes.every((byte) => byte === 0), true);
+        }
+        destroyNodeCandidateRuntimePrivateV2(privateRuntime);
+        await assert.rejects(
+          revalidateNodeCandidateRuntimePrivateV2(privateRuntime),
+          { code: "NODE_CANDIDATE_RUNTIME_PRIVATE_V2_DESTROYED" },
+        );
         await assert.rejects(
           acquireCandidateBuildRuntimeBundleContextInternalV2(
             siblingCandidateBuild.authority,
