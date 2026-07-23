@@ -59,6 +59,7 @@ import {
   isProductionNodeScaffoldExecutionEnvironmentV2,
   revalidateNodeScaffoldExecutionEnvironmentV2,
   destroyNodeScaffoldExecutionEnvironmentV2,
+  createNodeCandidateRuntimeExecutionEnvironmentInternalV2,
   executeNodeScaffoldEnvironmentBuildV2,
   executeNodeScaffoldEnvironmentNpmCiV2,
   type NodeScaffoldExecutionEnvironmentV2,
@@ -177,6 +178,8 @@ export type NodeScaffoldPrivateMaterializerErrorCodeV2 =
   | "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_SOURCE_MATERIALIZATION_FAILED"
   | "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_BUILD_ALREADY_CONSUMED"
   | "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_BUILD_OUTPUT_INVALID"
+  | "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_RUNTIME_BUNDLE_ALREADY_CONSUMED"
+  | "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_RUNTIME_BUNDLE_INPUT_INVALID"
   | "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DESTROYED";
 
 export class NodeScaffoldPrivateMaterializerErrorV2 extends Error {
@@ -372,6 +375,8 @@ type MutableLifecycleV2 = {
     | "building"
     | "build_process_consumed"
     | "build_ready"
+    | "runtime_bundle_claimed"
+    | "runtime_bundle_consumed"
     | "destroyed";
   dependencyReceipt?: BuildDependencyMaterializationReceiptV2;
   dependencyCapture?: DependencyMaterializationCaptureV2;
@@ -2967,6 +2972,8 @@ export function inspectBuildDependencyMaterializationReceiptV2(
       "sources_ready",
       "build_process_consumed",
       "build_ready",
+      "runtime_bundle_claimed",
+      "runtime_bundle_consumed",
     ].includes(state.lifecycle.status)
     || !state.lifecycle.dependencyReceipt
     || !state.lifecycle.dependencyCapture
@@ -2992,6 +2999,8 @@ export async function revalidateNodeScaffoldDependenciesV2(
       "sources_ready",
       "build_process_consumed",
       "build_ready",
+      "runtime_bundle_claimed",
+      "runtime_bundle_consumed",
     ].includes(state.lifecycle.status)
     || !receipt
     || !prior
@@ -3011,9 +3020,20 @@ export async function revalidateNodeScaffoldDependenciesV2(
     }
     const endMembership = captureScaffoldAssetsAfterInstallV2(
       state,
-      ["sources_ready", "build_process_consumed", "build_ready"]
+      [
+        "sources_ready",
+        "build_process_consumed",
+        "build_ready",
+        "runtime_bundle_claimed",
+        "runtime_bundle_consumed",
+      ]
         .includes(state.lifecycle.status) ? "present" : "absent",
-      ["build_process_consumed", "build_ready"]
+      [
+        "build_process_consumed",
+        "build_ready",
+        "runtime_bundle_claimed",
+        "runtime_bundle_consumed",
+      ]
         .includes(state.lifecycle.status) ? "present" : "absent",
     );
     const raw = captureRawDependenciesV2({ projectRoot: state.projectRoot, entry });
@@ -3846,7 +3866,13 @@ export function inspectNodeProductSourceMaterializationReceiptV1(
 ): NodeProductSourceMaterializationReceiptV1 {
   const state = activeStageStateV2(handle);
   if (
-    !["sources_ready", "build_process_consumed", "build_ready"]
+    ![
+      "sources_ready",
+      "build_process_consumed",
+      "build_ready",
+      "runtime_bundle_claimed",
+      "runtime_bundle_consumed",
+    ]
       .includes(state.lifecycle.status)
     || !state.lifecycle.sourceReceipt
     || !state.lifecycle.sourceCapture
@@ -3869,10 +3895,21 @@ export async function revalidateNodeProductSourcesV1(
   const sourceAuthority = state.lifecycle.sourceAuthority;
   const dependency = state.lifecycle.dependencyReceipt;
   const dependencyCapture = state.lifecycle.dependencyCapture;
-  const outputState = ["build_process_consumed", "build_ready"]
+  const outputState = [
+    "build_process_consumed",
+    "build_ready",
+    "runtime_bundle_claimed",
+    "runtime_bundle_consumed",
+  ]
     .includes(state.lifecycle.status) ? "present" as const : "absent" as const;
   if (
-    !["sources_ready", "build_process_consumed", "build_ready"]
+    ![
+      "sources_ready",
+      "build_process_consumed",
+      "build_ready",
+      "runtime_bundle_claimed",
+      "runtime_bundle_consumed",
+    ]
       .includes(state.lifecycle.status)
     || !receipt
     || !priorCapture
@@ -4332,7 +4369,15 @@ export async function revalidateNodeCandidateBuildOutputV2(
 ): Promise<NodeCandidateBuildOutputV2> {
   const state = activeStageStateV2(handle);
   const capture = state.lifecycle.buildOutput;
-  if (state.lifecycle.status !== "build_ready" || !capture) {
+  if (
+    ![
+      "build_ready",
+      "runtime_bundle_claimed",
+      "runtime_bundle_consumed",
+    ]
+      .includes(state.lifecycle.status)
+    || !capture
+  ) {
     return fail(
       "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_BUILD_ALREADY_CONSUMED",
       "Candidate build output revalidation requires one completed build authority",
@@ -4365,6 +4410,226 @@ export async function revalidateNodeCandidateBuildOutputV2(
     );
   }
   return defensiveCopy(capture.value);
+}
+
+export type NodeCandidateRuntimeBundleExpectedAuthorityInternalV2 = Readonly<{
+  admissionScope: "production_host" | "test_fixture";
+  profileId: NodeScaffoldProfileIdV2;
+  sourceMaterializationReceiptHash: string;
+  dependencyReceiptHash: string;
+  dependencyIdentityHash: string;
+  outputMembershipHash: string;
+  outputTreeHash: string;
+  outputTreePayloadHash: string;
+}>;
+
+export type NodeCandidateRuntimeBundleInputFileInternalV2 = Readonly<{
+  logicalLocator: string;
+  contentHash: string;
+  byteLength: number;
+  bytes: Buffer;
+}>;
+
+export type NodeCandidateRuntimeBundleInputsInternalV2 = Readonly<{
+  admissionScope: "production_host" | "test_fixture";
+  profileId: NodeScaffoldProfileIdV2;
+  scaffoldBaseReceiptHash: string;
+  sourceMaterializationReceiptHash: string;
+  dependencyReceiptHash: string;
+  dependencyIdentityHash: string;
+  packageJson: NodeCandidateRuntimeBundleInputFileInternalV2;
+  packageLock: NodeCandidateRuntimeBundleInputFileInternalV2;
+  application: readonly [
+    NodeCandidateRuntimeBundleInputFileInternalV2,
+    NodeCandidateRuntimeBundleInputFileInternalV2,
+  ];
+  runtimeEnvironment: NodeScaffoldExecutionEnvironmentV2;
+}>;
+
+function copyNodeCandidateRuntimeInputFileInternalV2(input: Readonly<{
+  absolutePath: string;
+  logicalLocator: string;
+  expectedHash: string;
+  expectedByteLength: number;
+  maxBytes: number;
+}>): NodeCandidateRuntimeBundleInputFileInternalV2 {
+  let descriptor: number | undefined;
+  try {
+    descriptor = openSync(
+      input.absolutePath,
+      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+    );
+    const before = fstatSync(descriptor);
+    const bytes = readFileSync(descriptor);
+    const after = fstatSync(descriptor);
+    const pathAfter = lstatSync(input.absolutePath);
+    const owner = processOwnerV2();
+    if (
+      !before.isFile()
+      || before.isSymbolicLink()
+      || before.nlink !== 1
+      || modeBits(before) !== 0o444
+      || before.uid !== owner.uid
+      || before.gid !== owner.gid
+      || before.size < 1
+      || before.size > input.maxBytes
+      || !sameFingerprint(fingerprint(before), fingerprint(after))
+      || !sameFingerprint(fingerprint(after), fingerprint(pathAfter))
+      || bytes.byteLength !== input.expectedByteLength
+      || sha256(bytes) !== input.expectedHash
+    ) {
+      bytes.fill(0);
+      return fail(
+        "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_RUNTIME_BUNDLE_INPUT_INVALID",
+        `Runtime-bundle input ${input.logicalLocator} changed or differs from build authority`,
+      );
+    }
+    return Object.freeze({
+      logicalLocator: input.logicalLocator,
+      contentHash: input.expectedHash,
+      byteLength: input.expectedByteLength,
+      bytes,
+    });
+  } catch (error) {
+    if (error instanceof NodeScaffoldPrivateMaterializerErrorV2) throw error;
+    return fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_RUNTIME_BUNDLE_INPUT_INVALID",
+      `Runtime-bundle input ${input.logicalLocator} could not be copied exactly`,
+      error,
+    );
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
+  }
+}
+
+/** @internal Preclaims and copies every pathless runtime input from one sealed build. */
+export async function acquireNodeCandidateRuntimeBundleInputsInternalV2(
+  handle: MaterializedNodeScaffoldPrivateStageV2,
+  expected: NodeCandidateRuntimeBundleExpectedAuthorityInternalV2,
+): Promise<NodeCandidateRuntimeBundleInputsInternalV2> {
+  const state = activeStageStateV2(handle);
+  if (state.lifecycle.status !== "build_ready") {
+    return fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_RUNTIME_BUNDLE_ALREADY_CONSUMED",
+      "Candidate runtime-bundle input authority is single-use",
+    );
+  }
+  if (
+    !isPlainRecord(expected)
+    || Reflect.ownKeys(expected).length !== 8
+    || state.admissionScope !== expected.admissionScope
+    || state.profileId !== expected.profileId
+  ) {
+    return fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_RUNTIME_BUNDLE_INPUT_INVALID",
+      "Candidate runtime-bundle expected authority is malformed or cross-scoped",
+    );
+  }
+  state.lifecycle.status = "runtime_bundle_claimed";
+  const copied: Buffer[] = [];
+  try {
+    const [source, dependency, output] = await Promise.all([
+      revalidateNodeProductSourcesV1(handle),
+      revalidateNodeScaffoldDependenciesV2(handle),
+      revalidateNodeCandidateBuildOutputV2(handle),
+    ]);
+    if (
+      source.receiptHash !== expected.sourceMaterializationReceiptHash
+      || dependency.receiptHash !== expected.dependencyReceiptHash
+      || dependency.dependencyIdentityHash !== expected.dependencyIdentityHash
+      || output.sourceMaterializationReceiptHash !== source.receiptHash
+      || output.dependencyReceiptHash !== dependency.receiptHash
+      || output.dependencyIdentityHash !== dependency.dependencyIdentityHash
+      || output.membershipHash !== expected.outputMembershipHash
+      || output.tree.treeHash !== expected.outputTreeHash
+      || output.tree.payloadHash !== expected.outputTreePayloadHash
+    ) {
+      return fail(
+        "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_RUNTIME_BUNDLE_INPUT_INVALID",
+        "Candidate source, dependency and sealed build output do not join runtime-bundle authority",
+      );
+    }
+    const assetByLocator = new Map(state.receipt.assets.map((asset) => [
+      asset.normalizedLocator,
+      asset,
+    ]));
+    const packageJsonAsset = assetByLocator.get("package.json");
+    const packageLockAsset = assetByLocator.get("package-lock.json");
+    if (!packageJsonAsset || !packageLockAsset) {
+      return fail(
+        "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_RUNTIME_BUNDLE_INPUT_INVALID",
+        "Scaffold authority lacks the exact package manifest or dependency lock",
+      );
+    }
+    const packageJson = copyNodeCandidateRuntimeInputFileInternalV2({
+      absolutePath: path.join(state.projectRoot, "package.json"),
+      logicalLocator: "package.json",
+      expectedHash: packageJsonAsset.rawHash,
+      expectedByteLength: packageJsonAsset.rawByteLength,
+      maxBytes: 4 * 1024 * 1024,
+    });
+    copied.push(packageJson.bytes);
+    const packageLock = copyNodeCandidateRuntimeInputFileInternalV2({
+      absolutePath: path.join(state.projectRoot, "package-lock.json"),
+      logicalLocator: "package-lock.json",
+      expectedHash: packageLockAsset.rawHash,
+      expectedByteLength: packageLockAsset.rawByteLength,
+      maxBytes: 16 * 1024 * 1024,
+    });
+    copied.push(packageLock.bytes);
+    const application = output.files.map((file) => {
+      const name = path.basename(file.normalizedLocator);
+      const copiedFile = copyNodeCandidateRuntimeInputFileInternalV2({
+        absolutePath: path.join(state.projectRoot, "dist", name),
+        logicalLocator: `application/${name}`,
+        expectedHash: file.contentHash,
+        expectedByteLength: file.byteLength,
+        maxBytes: 32 * 1024 * 1024,
+      });
+      copied.push(copiedFile.bytes);
+      return copiedFile;
+    }) as unknown as readonly [
+      NodeCandidateRuntimeBundleInputFileInternalV2,
+      NodeCandidateRuntimeBundleInputFileInternalV2,
+    ];
+    const runtimeEnvironment =
+      await createNodeCandidateRuntimeExecutionEnvironmentInternalV2(
+        state.environment,
+      );
+    return Object.freeze({
+      admissionScope: state.admissionScope,
+      profileId: state.profileId,
+      scaffoldBaseReceiptHash: state.receipt.receiptHash,
+      sourceMaterializationReceiptHash: source.receiptHash,
+      dependencyReceiptHash: dependency.receiptHash,
+      dependencyIdentityHash: dependency.dependencyIdentityHash,
+      packageJson,
+      packageLock,
+      application: Object.freeze(application),
+      runtimeEnvironment,
+    });
+  } catch (error) {
+    for (const bytes of copied) bytes.fill(0);
+    throw error;
+  }
+}
+
+/** @internal Consumes the claimed physical runtime-input lease. */
+export function settleNodeCandidateRuntimeBundleInputsInternalV2(
+  handle: MaterializedNodeScaffoldPrivateStageV2,
+  expectedScaffoldBaseReceiptHash: string,
+): void {
+  const state = activeStageStateV2(handle);
+  if (
+    state.lifecycle.status !== "runtime_bundle_claimed"
+    || state.receipt.receiptHash !== expectedScaffoldBaseReceiptHash
+  ) {
+    return fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_RUNTIME_BUNDLE_ALREADY_CONSUMED",
+      "Candidate runtime-bundle input lease cannot be settled from this state",
+    );
+  }
+  state.lifecycle.status = "runtime_bundle_consumed";
 }
 
 export function destroyNodeScaffoldPrivateStageV2(

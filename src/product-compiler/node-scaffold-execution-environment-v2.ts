@@ -93,6 +93,8 @@ export type NodeScaffoldExecutionEnvironmentErrorCodeV2 =
   | "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_STATE_DRIFT"
   | "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_INSTALL_ALREADY_CONSUMED"
   | "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_BUILD_ALREADY_CONSUMED"
+  | "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_OPERATION_ROLE_INVALID"
+  | "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_RUNTIME_HANDOFF_ALREADY_CONSUMED"
   | "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_DESTROYED";
 
 export class NodeScaffoldExecutionEnvironmentErrorV2 extends Error {
@@ -142,12 +144,15 @@ type MutableLifecycleV2 = {
     | "install_failed"
     | "building"
     | "build_consumed"
+    | "runtime_handoff_claimed"
+    | "runtime_handoff_consumed"
     | "destroyed";
 };
 
 type PrivateEnvironmentStateV2 = Readonly<{
   admissionScope: "production_host" | "test_fixture";
   profileId: NodeScaffoldProfileIdV2;
+  operationRole: "scaffold_build" | "candidate_runtime_install";
   hostToolchain: HostNodeToolchainAuthorityV2;
   privateRoot: string;
   probeInput: HostNodeToolchainEffectiveNpmConfigProbeInputV2;
@@ -834,6 +839,7 @@ function parseExactInputV2(
 async function buildEnvironmentV2(input: Readonly<{
   admissionScope: "production_host" | "test_fixture";
   profileId: NodeScaffoldProfileIdV2;
+  operationRole: "scaffold_build" | "candidate_runtime_install";
   hostToolchain: HostNodeToolchainAuthorityV2;
   scratchParent?: string;
 }>): Promise<NodeScaffoldExecutionEnvironmentV2> {
@@ -892,6 +898,7 @@ async function buildEnvironmentV2(input: Readonly<{
     const state: PrivateEnvironmentStateV2 = Object.freeze({
       admissionScope: input.admissionScope,
       profileId: input.profileId,
+      operationRole: input.operationRole,
       hostToolchain: input.hostToolchain,
       privateRoot,
       probeInput,
@@ -946,6 +953,7 @@ export async function createNodeScaffoldExecutionEnvironmentV2(
   return buildEnvironmentV2({
     admissionScope: "production_host",
     profileId: parsed.profileId,
+    operationRole: "scaffold_build",
     hostToolchain,
   });
 }
@@ -986,6 +994,7 @@ export async function createNodeScaffoldExecutionEnvironmentV2ForTest(
   return buildEnvironmentV2({
     admissionScope: "test_fixture",
     profileId: parsed.profileId,
+    operationRole: "scaffold_build",
     hostToolchain,
     scratchParent: validateScratchParentV2(parsed.values.scratchParent),
   });
@@ -1019,6 +1028,12 @@ function requireActiveStateV2(
   handle: NodeScaffoldExecutionEnvironmentV2,
 ): PrivateEnvironmentStateV2 {
   const state = authenticStateV2(handle);
+  if (state.operationRole !== "scaffold_build") {
+    return fail(
+      "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_OPERATION_ROLE_INVALID",
+      "Candidate-runtime environments cannot execute scaffold dependency installation",
+    );
+  }
   if (state.lifecycle.status !== "active") {
     if (state.lifecycle.status !== "destroyed") {
       return fail(
@@ -1067,6 +1082,12 @@ function requireBuildStateV2(
   handle: NodeScaffoldExecutionEnvironmentV2,
 ): PrivateEnvironmentStateV2 {
   const state = authenticStateV2(handle);
+  if (state.operationRole !== "scaffold_build") {
+    return fail(
+      "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_OPERATION_ROLE_INVALID",
+      "Candidate-runtime environments cannot execute scaffold build operations",
+    );
+  }
   if (state.lifecycle.status === "install_consumed") return state;
   if (state.lifecycle.status === "destroyed") {
     return fail(
@@ -1141,6 +1162,39 @@ export async function revalidateNodeScaffoldExecutionEnvironmentV2(
       "Execution environment authority could not be revalidated",
       error,
     );
+  }
+}
+
+/**
+ * @internal Issues one fresh candidate-runtime environment from the same
+ * authenticated host only after the scaffold build consumed its environment.
+ */
+export async function createNodeCandidateRuntimeExecutionEnvironmentInternalV2(
+  handle: NodeScaffoldExecutionEnvironmentV2,
+): Promise<NodeScaffoldExecutionEnvironmentV2> {
+  const state = authenticStateV2(handle);
+  if (
+    state.operationRole !== "scaffold_build"
+    || state.lifecycle.status !== "build_consumed"
+  ) {
+    return fail(
+      "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_RUNTIME_HANDOFF_ALREADY_CONSUMED",
+      "Candidate-runtime environment handoff requires one consumed scaffold build and is single-use",
+    );
+  }
+  state.lifecycle.status = "runtime_handoff_claimed";
+  try {
+    return await buildEnvironmentV2({
+      admissionScope: state.admissionScope,
+      profileId: state.profileId,
+      operationRole: "candidate_runtime_install",
+      hostToolchain: state.hostToolchain,
+      ...(state.admissionScope === "test_fixture"
+        ? { scratchParent: path.dirname(state.privateRoot) }
+        : {}),
+    });
+  } finally {
+    state.lifecycle.status = "runtime_handoff_consumed";
   }
 }
 

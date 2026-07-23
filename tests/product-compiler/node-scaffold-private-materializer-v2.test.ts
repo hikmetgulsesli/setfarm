@@ -162,6 +162,7 @@ import {
 import {
   MaterializedNodeScaffoldPrivateStageV2,
   NodeScaffoldPrivateMaterializerErrorV2,
+  acquireNodeCandidateRuntimeBundleInputsInternalV2,
   destroyNodeScaffoldPrivateStageV2,
   finalizeNodeCandidateBuildOutputV2ForTest,
   getCodeOwnedPrivateStagedMaterializerAuthorityV2,
@@ -179,6 +180,7 @@ import {
   revalidateNodeCandidateBuildOutputV2,
   revalidateNodeScaffoldDependenciesV2,
   revalidateNodeScaffoldPrivateStageV2,
+  settleNodeCandidateRuntimeBundleInputsInternalV2,
   type NodeProductSourceMaterializerCrashBoundaryV1,
   type NodeScaffoldPrivateMaterializerCrashBoundaryV2,
 } from "../../src/product-compiler/node-scaffold-private-materializer-v2.js";
@@ -4755,10 +4757,92 @@ describe("Node scaffold private staged materializer V2", () => {
           (runtimeBundleClaims[1] as PromiseRejectedResult).reason.code,
           "CANDIDATE_BUILD_V2_RUNTIME_BUNDLE_ALREADY_CONSUMED",
         );
+        const runtimeContext = runtimeBundleClaims[0].value;
+        const runtimeInputs =
+          await acquireNodeCandidateRuntimeBundleInputsInternalV2(
+            runtimeContext.stage,
+            {
+              admissionScope: runtimeContext.expectedScope,
+              profileId: runtimeContext.output.profileId,
+              sourceMaterializationReceiptHash:
+                runtimeContext.output.sourceMaterializationReceiptHash,
+              dependencyReceiptHash:
+                runtimeContext.output.dependencyReceiptHash,
+              dependencyIdentityHash:
+                runtimeContext.output.dependencyIdentityHash,
+              outputMembershipHash: runtimeContext.output.membershipHash,
+              outputTreeHash: runtimeContext.output.tree.treeHash,
+              outputTreePayloadHash: runtimeContext.output.tree.payloadHash,
+            },
+          );
+        activeEnvironments.push(runtimeInputs.runtimeEnvironment);
+        assert.equal(runtimeInputs.admissionScope, "test_fixture");
+        assert.equal(runtimeInputs.profileId, CLI_PROFILE);
+        assert.deepEqual(runtimeInputs.application.map((file) =>
+          file.logicalLocator), [
+          "application/cli.js",
+          "application/cli.setfarm.test.js",
+        ]);
+        assert.equal(
+          runtimeInputs.application[0].contentHash,
+          runtimeContext.output.files[0].contentHash,
+        );
+        assert.equal(runtimeInputs.packageJson.contentHash,
+          getCodeOwnedNodeScaffoldToolchainEntryV2(CLI_PROFILE)!.scaffold.files
+            .find((file) => file.normalizedLocator === "package.json")!.rawHash);
+        const runtimeEnvironmentReceipt =
+          await revalidateNodeScaffoldExecutionEnvironmentV2(
+            runtimeInputs.runtimeEnvironment,
+          );
+        assert.equal(runtimeEnvironmentReceipt.admissionScope, "test_fixture");
+        assert.notEqual(
+          runtimeEnvironmentReceipt.receiptHash,
+          siblingCandidateBuild.receipt.executionAuthority.environment.receiptHash,
+        );
+        await assert.rejects(
+          executeNodeScaffoldEnvironmentBuildV2(
+            runtimeInputs.runtimeEnvironment,
+            runtimeContext.stage,
+          ),
+          {
+            code: "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_OPERATION_ROLE_INVALID",
+          },
+        );
+        await assert.rejects(
+          acquireNodeCandidateRuntimeBundleInputsInternalV2(
+            runtimeContext.stage,
+            {
+              admissionScope: runtimeContext.expectedScope,
+              profileId: runtimeContext.output.profileId,
+              sourceMaterializationReceiptHash:
+                runtimeContext.output.sourceMaterializationReceiptHash,
+              dependencyReceiptHash:
+                runtimeContext.output.dependencyReceiptHash,
+              dependencyIdentityHash:
+                runtimeContext.output.dependencyIdentityHash,
+              outputMembershipHash: runtimeContext.output.membershipHash,
+              outputTreeHash: runtimeContext.output.tree.treeHash,
+              outputTreePayloadHash: runtimeContext.output.tree.payloadHash,
+            },
+          ),
+          {
+            code:
+              "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_RUNTIME_BUNDLE_ALREADY_CONSUMED",
+          },
+        );
+        settleNodeCandidateRuntimeBundleInputsInternalV2(
+          runtimeContext.stage,
+          runtimeInputs.scaffoldBaseReceiptHash,
+        );
         settleCandidateBuildRuntimeBundleContextInternalV2(
           siblingCandidateBuild.authority,
           siblingCandidateBuild.receipt.receiptHash,
         );
+        for (const file of [
+          runtimeInputs.packageJson,
+          runtimeInputs.packageLock,
+          ...runtimeInputs.application,
+        ]) file.bytes.fill(0);
         await assert.rejects(
           acquireCandidateBuildRuntimeBundleContextInternalV2(
             siblingCandidateBuild.authority,
