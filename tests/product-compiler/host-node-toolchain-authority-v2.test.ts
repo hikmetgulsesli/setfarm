@@ -23,18 +23,23 @@ import {
   HostNodeToolchainAuthorityErrorV2,
   createHostNodeToolchainAuthorityV2,
   createHostNodeToolchainAuthorityV2ForTest,
+  executeHostNodeToolchainCandidateProductionNpmCiV2,
   inspectHostNodeToolchainReceiptV2,
   isProductionHostNodeToolchainAuthorityV2,
   requireProductionHostNodeToolchainPreSpawnV2,
   revalidateHostNodeToolchainAuthorityV2,
   type HostNodeToolchainProbeInvocationV2,
   type HostNodeToolchainProbeResultV2,
+  type HostNodeToolchainCandidateProductionNpmCiInputV2,
 } from "../../src/product-compiler/host-node-toolchain-authority-v2.js";
 import {
   HostNodeToolchainReceiptV2Schema,
   hashHostNodeExecutableIdentityV2,
   hashHostNodeToolchainReceiptV2,
 } from "../../src/product-compiler/schemas/host-node-toolchain-receipt-v2.js";
+import {
+  CANDIDATE_NPM_DIRECT_ARGV_HASH_V2,
+} from "../../src/execution/schemas/candidate-runtime-bundle-v2.js";
 
 const PROFILE_ID = "PROFILE_NODE_EXPRESS_API_STATELESS_EXACT_V2" as const;
 const roots: string[] = [];
@@ -51,6 +56,12 @@ type Fixture = Readonly<{
 type ProbeOverrides = Readonly<{
   node?: HostNodeToolchainProbeResultV2;
   npm?: HostNodeToolchainProbeResultV2;
+}>;
+
+type CandidateProductionInstallFixture = Readonly<{
+  privateRoot: string;
+  candidateBundleRoot: string;
+  environment: HostNodeToolchainCandidateProductionNpmCiInputV2["environment"];
 }>;
 
 function sha256(value: string | Buffer): string {
@@ -151,8 +162,119 @@ async function authority(
   });
 }
 
+async function makeCandidateProductionInstallFixture():
+Promise<CandidateProductionInstallFixture> {
+  const privateRoot = await realpath(
+    await mkdtemp(path.join(tmpdir(), "setfarm-runtime-env-v2-")),
+  );
+  roots.push(privateRoot);
+  for (const name of ["cache", "config-probe", "home", "tmp"]) {
+    await mkdir(path.join(privateRoot, name), { mode: 0o700 });
+    await chmod(path.join(privateRoot, name), 0o700);
+  }
+  await writeFile(path.join(privateRoot, "global.npmrc"), "\n", { mode: 0o600 });
+  await writeFile(path.join(privateRoot, "user.npmrc"), "\n", { mode: 0o600 });
+  await chmod(privateRoot, 0o700);
+
+  const attemptRoot = await realpath(
+    await mkdtemp(path.join(tmpdir(), "setfarm-runtime-attempt-v2-")),
+  );
+  roots.push(attemptRoot);
+  const candidateBundleRoot = path.join(attemptRoot, "candidate-bundle");
+  const applicationRoot = path.join(candidateBundleRoot, "application");
+  await mkdir(applicationRoot, { recursive: true, mode: 0o700 });
+  await writeFile(path.join(applicationRoot, "app.js"), "export function createApp() {}\n", {
+    mode: 0o444,
+  });
+  await writeFile(
+    path.join(applicationRoot, "app.setfarm.test.js"),
+    "export const testCount = 1;\n",
+    { mode: 0o444 },
+  );
+  await writeFile(path.join(candidateBundleRoot, "package.json"), `${JSON.stringify({
+    name: "@setfarm/generated-node-express-api-v2",
+    version: "0.0.0",
+    private: true,
+    dependencies: { express: "5.2.1" },
+    devDependencies: { typescript: "5.9.3" },
+  })}\n`, { mode: 0o444 });
+  await writeFile(path.join(candidateBundleRoot, "package-lock.json"), `${JSON.stringify({
+    name: "@setfarm/generated-node-express-api-v2",
+    version: "0.0.0",
+    lockfileVersion: 3,
+    requires: true,
+    packages: {},
+  })}\n`, { mode: 0o444 });
+  await Promise.all([
+    chmod(attemptRoot, 0o700),
+    chmod(candidateBundleRoot, 0o700),
+    chmod(applicationRoot, 0o555),
+    chmod(path.join(applicationRoot, "app.js"), 0o444),
+    chmod(path.join(applicationRoot, "app.setfarm.test.js"), 0o444),
+    chmod(path.join(candidateBundleRoot, "package.json"), 0o444),
+    chmod(path.join(candidateBundleRoot, "package-lock.json"), 0o444),
+  ]);
+  return {
+    privateRoot,
+    candidateBundleRoot,
+    environment: Object.freeze({
+      CI: "true",
+      HOME: path.join(privateRoot, "home"),
+      LANG: "C.UTF-8",
+      LC_ALL: "C.UTF-8",
+      NODE_DISABLE_COMPILE_CACHE: "1",
+      NO_COLOR: "1",
+      NPM_CONFIG_CACHE: path.join(privateRoot, "cache"),
+      NPM_CONFIG_ENGINE_STRICT: "true",
+      NPM_CONFIG_GLOBALCONFIG: path.join(privateRoot, "global.npmrc"),
+      NPM_CONFIG_LOGS_MAX: "0",
+      NPM_CONFIG_REGISTRY: "https://registry.npmjs.org",
+      NPM_CONFIG_USERCONFIG: path.join(privateRoot, "user.npmrc"),
+      TEMP: path.join(privateRoot, "tmp"),
+      TMP: path.join(privateRoot, "tmp"),
+      TMPDIR: path.join(privateRoot, "tmp"),
+      TZ: "UTC",
+    }),
+  };
+}
+
+async function runtimeInstallAuthority(
+  fixture: Fixture,
+  calls: HostNodeToolchainProbeInvocationV2[],
+  runtimeOperation: (
+    invocation: HostNodeToolchainProbeInvocationV2,
+  ) => Promise<HostNodeToolchainProbeResultV2>,
+) {
+  const baseAdapter = makeProbeAdapter(fixture, calls);
+  return createHostNodeToolchainAuthorityV2ForTest({
+    profileId: PROFILE_ID,
+    fixture: {
+      candidateRoot: fixture.root,
+      host: {
+        platform: "darwin",
+        architecture: "arm64",
+        macosProductVersion: "26.5.2",
+        macosBuildVersion: "25F84",
+        darwinKernelRelease: "25.5.0",
+      },
+      nonSystemDynamicLibraryPaths: [fixture.dynamicLibrary],
+    },
+    probeAdapter: async (invocation) => {
+      if (invocation.probeRef !== "HOST_NPM_CANDIDATE_PRODUCTION_INSTALL_V2") {
+        return baseAdapter(invocation);
+      }
+      calls.push(invocation);
+      return runtimeOperation(invocation);
+    },
+  });
+}
+
 afterEach(async () => {
-  await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+  await Promise.all(roots.splice(0).map(async (root) => {
+    await chmod(path.join(root, "candidate-bundle", "application"), 0o700)
+      .catch(() => undefined);
+    await rm(root, { recursive: true, force: true });
+  }));
 });
 
 describe("HostNodeToolchainAuthorityV2", () => {
@@ -437,6 +559,131 @@ describe("HostNodeToolchainAuthorityV2", () => {
     );
     assert.deepEqual(receipt.npm.builtinNpmrc, { locator: "npmrc", status: "absent" });
     assert.equal(receipt.receiptHash, hashHostNodeToolchainReceiptV2(receipt));
+  });
+
+  it("executes only the exact fenced candidate production npm operation", async () => {
+    const fixture = await makeFixture();
+    const install = await makeCandidateProductionInstallFixture();
+    const calls: HostNodeToolchainProbeInvocationV2[] = [];
+    const handle = await runtimeInstallAuthority(fixture, calls, async (invocation) => {
+      await mkdir(path.join(invocation.cwd, "node_modules"), { mode: 0o755 });
+      return exited("added 67 packages\n");
+    });
+    const evidence = await executeHostNodeToolchainCandidateProductionNpmCiV2(
+      handle,
+      install,
+    );
+
+    assert.equal(evidence.probeRef,
+      "HOST_NPM_CANDIDATE_PRODUCTION_INSTALL_V2");
+    assert.deepEqual(evidence.directArgv, [
+      "npm",
+      "ci",
+      "--omit=dev",
+      "--ignore-scripts",
+      "--no-audit",
+      "--no-fund",
+    ]);
+    assert.equal(evidence.stdin, "closed");
+    assert.equal(evidence.shell, "forbidden");
+    assert.equal(evidence.ambientEnvironment, "forbidden");
+    assert.equal(evidence.status, "exited_zero");
+    assert.equal(evidence.directArgvHash, CANDIDATE_NPM_DIRECT_ARGV_HASH_V2);
+    assert.match(evidence.projectScopeHash, /^[a-f0-9]{64}$/u);
+    assert.match(evidence.sourceFenceHash, /^[a-f0-9]{64}$/u);
+    assert.equal(Object.isFrozen(evidence), true);
+    assert.doesNotMatch(JSON.stringify(evidence),
+      /setfarm-runtime-env-v2|setfarm-runtime-attempt-v2|\/private\/|\/Users\//);
+
+    const runtimeCall = calls.find((call) =>
+      call.probeRef === "HOST_NPM_CANDIDATE_PRODUCTION_INSTALL_V2");
+    assert.ok(runtimeCall);
+    assert.equal(runtimeCall.executable, await realpath(fixture.node));
+    assert.deepEqual(runtimeCall.argv, [
+      await realpath(fixture.npmCli),
+      "ci",
+      "--omit=dev",
+      "--ignore-scripts",
+      "--no-audit",
+      "--no-fund",
+    ]);
+    assert.equal(runtimeCall.cwd, install.candidateBundleRoot);
+    assert.equal(runtimeCall.shell, false);
+    assert.equal(runtimeCall.timeoutMs, 120_000);
+    assert.equal(runtimeCall.maxStdoutBytes, 65_536);
+    assert.equal(runtimeCall.maxStderrBytes, 65_536);
+    assert.equal(runtimeCall.env.PATH, path.dirname(await realpath(fixture.node)));
+    assert.equal(runtimeCall.env.NODE_OPTIONS, undefined);
+    assert.equal(runtimeCall.env.npm_config_registry, undefined);
+  });
+
+  it("classifies every candidate production npm process failure", async () => {
+    const fixture = await makeFixture();
+    const install = await makeCandidateProductionInstallFixture();
+    const failures: Array<readonly [HostNodeToolchainProbeResultV2, string]> = [
+      [Object.freeze({ status: "timed_out", stdout: "", stderr: "" }),
+        "HOST_NODE_TOOLCHAIN_V2_RUNTIME_INSTALL_TIMEOUT"],
+      [Object.freeze({ status: "output_limit_exceeded", stdout: "x", stderr: "" }),
+        "HOST_NODE_TOOLCHAIN_V2_RUNTIME_INSTALL_OUTPUT_LIMIT"],
+      [Object.freeze({ status: "spawn_failed", stdout: "", stderr: "denied" }),
+        "HOST_NODE_TOOLCHAIN_V2_RUNTIME_INSTALL_SPAWN_FAILED"],
+      [Object.freeze({
+        status: "exited",
+        exitCode: null,
+        signal: "SIGKILL",
+        stdout: "",
+        stderr: "",
+      }), "HOST_NODE_TOOLCHAIN_V2_RUNTIME_INSTALL_SIGNALLED"],
+      [Object.freeze({
+        status: "exited",
+        exitCode: 17,
+        signal: null,
+        stdout: "",
+        stderr: "failed",
+      }), "HOST_NODE_TOOLCHAIN_V2_RUNTIME_INSTALL_NONZERO"],
+    ];
+    for (const [result, code] of failures) {
+      const handle = await runtimeInstallAuthority(fixture, [], async () => result);
+      await assert.rejects(
+        executeHostNodeToolchainCandidateProductionNpmCiV2(handle, install),
+        { code },
+      );
+    }
+    const throwing = await runtimeInstallAuthority(fixture, [], async () => {
+      throw new Error("adapter failed");
+    });
+    await assert.rejects(
+      executeHostNodeToolchainCandidateProductionNpmCiV2(throwing, install),
+      { code: "HOST_NODE_TOOLCHAIN_V2_RUNTIME_INSTALL_SPAWN_FAILED" },
+    );
+  });
+
+  it("rejects candidate source drift and caller-owned operation fields", async () => {
+    const fixture = await makeFixture();
+    const install = await makeCandidateProductionInstallFixture();
+    const packageJson = path.join(install.candidateBundleRoot, "package.json");
+    const handle = await runtimeInstallAuthority(fixture, [], async (invocation) => {
+      await chmod(packageJson, 0o644);
+      await writeFile(packageJson, "{\"name\":\"mutated\"}\n");
+      await chmod(packageJson, 0o444);
+      await mkdir(path.join(invocation.cwd, "node_modules"), { mode: 0o755 });
+      return exited("added 1 package\n");
+    });
+    await assert.rejects(
+      executeHostNodeToolchainCandidateProductionNpmCiV2(handle, install),
+      { code: "HOST_NODE_TOOLCHAIN_V2_RUNTIME_INSTALL_SOURCE_DRIFT" },
+    );
+
+    const clean = await makeCandidateProductionInstallFixture();
+    const cleanHandle = await runtimeInstallAuthority(fixture, [], async () =>
+      exited("unreachable\n"));
+    await assert.rejects(
+      executeHostNodeToolchainCandidateProductionNpmCiV2(cleanHandle, {
+        ...clean,
+        argv: ["npm", "install"],
+      } as never),
+      { code: "HOST_NODE_TOOLCHAIN_V2_RUNTIME_INSTALL_SCOPE_INVALID" },
+    );
   });
 
   it("runs the real direct probe adapter and recursive Mach-O resolver", {

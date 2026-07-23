@@ -150,6 +150,13 @@ export type HostNodeToolchainAuthorityErrorCodeV2 =
   | "HOST_NODE_TOOLCHAIN_V2_INSTALL_SPAWN_FAILED"
   | "HOST_NODE_TOOLCHAIN_V2_INSTALL_SIGNALLED"
   | "HOST_NODE_TOOLCHAIN_V2_INSTALL_NONZERO"
+  | "HOST_NODE_TOOLCHAIN_V2_RUNTIME_INSTALL_SCOPE_INVALID"
+  | "HOST_NODE_TOOLCHAIN_V2_RUNTIME_INSTALL_TIMEOUT"
+  | "HOST_NODE_TOOLCHAIN_V2_RUNTIME_INSTALL_OUTPUT_LIMIT"
+  | "HOST_NODE_TOOLCHAIN_V2_RUNTIME_INSTALL_SPAWN_FAILED"
+  | "HOST_NODE_TOOLCHAIN_V2_RUNTIME_INSTALL_SIGNALLED"
+  | "HOST_NODE_TOOLCHAIN_V2_RUNTIME_INSTALL_NONZERO"
+  | "HOST_NODE_TOOLCHAIN_V2_RUNTIME_INSTALL_SOURCE_DRIFT"
   | "HOST_NODE_TOOLCHAIN_V2_BUILD_SCOPE_INVALID"
   | "HOST_NODE_TOOLCHAIN_V2_BUILD_TIMEOUT"
   | "HOST_NODE_TOOLCHAIN_V2_BUILD_OUTPUT_LIMIT"
@@ -179,6 +186,7 @@ export type HostNodeToolchainProbeRefV2 =
   | "HOST_NPM_VERSION_PROBE_V2"
   | "HOST_NPM_EFFECTIVE_CONFIG_PROBE_V2"
   | "HOST_NPM_SCAFFOLD_INSTALL_V2"
+  | "HOST_NPM_CANDIDATE_PRODUCTION_INSTALL_V2"
   | "HOST_NODE_PRODUCT_BUILD_V2";
 
 export type HostNodeToolchainProbeInvocationV2 = Readonly<{
@@ -295,6 +303,44 @@ export type HostNodeToolchainNpmCiEvidenceV2 = Readonly<{
   timeoutMs: 120_000;
   maxStdoutBytes: 65_536;
   maxStderrBytes: 65_536;
+  exitCode: 0;
+  signal: null;
+  stdoutHash: string;
+  stdoutBytes: number;
+  stderrHash: string;
+  stderrBytes: number;
+}>;
+
+export type HostNodeToolchainCandidateProductionNpmCiInputV2 = Readonly<{
+  privateRoot: string;
+  candidateBundleRoot: string;
+  environment: HostNodeToolchainEffectiveNpmConfigProbeInputV2["environment"];
+}>;
+
+export type HostNodeToolchainCandidateProductionNpmCiEvidenceV2 = Readonly<{
+  probeRef: "HOST_NPM_CANDIDATE_PRODUCTION_INSTALL_V2";
+  hostToolchainReceiptHash: string;
+  nodeIdentityHash: string;
+  npmClosureHash: string;
+  environmentHash: string;
+  projectScopeHash: string;
+  sourceFenceHash: string;
+  directArgv: readonly [
+    "npm",
+    "ci",
+    "--omit=dev",
+    "--ignore-scripts",
+    "--no-audit",
+    "--no-fund",
+  ];
+  directArgvHash: string;
+  stdin: "closed";
+  timeoutMs: 120_000;
+  maxStdoutBytes: 65_536;
+  maxStderrBytes: 65_536;
+  shell: "forbidden";
+  ambientEnvironment: "forbidden";
+  status: "exited_zero";
   exitCode: 0;
   signal: null;
   stdoutHash: string;
@@ -2751,6 +2797,393 @@ export async function executeHostNodeToolchainNpmCiV2(
     timeoutMs: NPM_SCAFFOLD_INSTALL_TIMEOUT_MS_V2,
     maxStdoutBytes: NPM_SCAFFOLD_INSTALL_MAX_OUTPUT_BYTES_V2,
     maxStderrBytes: NPM_SCAFFOLD_INSTALL_MAX_OUTPUT_BYTES_V2,
+    exitCode: 0 as const,
+    signal: null,
+    stdoutHash: sha256(result.stdout),
+    stdoutBytes: Buffer.byteLength(result.stdout, "utf8"),
+    stderrHash: sha256(result.stderr),
+    stderrBytes: Buffer.byteLength(result.stderr, "utf8"),
+  });
+}
+
+type CandidateProductionNpmScopeCaptureV2 = Readonly<{
+  projectScopeHash: string;
+  sourceFenceHash: string;
+}>;
+
+function assertCandidateProductionMissingPathV2(
+  absolutePath: string,
+  label: string,
+): void {
+  try {
+    lstatSync(absolutePath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    return fail(
+      "HOST_NODE_TOOLCHAIN_V2_RUNTIME_INSTALL_SCOPE_INVALID",
+      `${label} absence could not be established exactly`,
+      error,
+    );
+  }
+  return fail(
+    "HOST_NODE_TOOLCHAIN_V2_RUNTIME_INSTALL_SCOPE_INVALID",
+    `${label} must be absent`,
+  );
+}
+
+function captureCandidateProductionNpmScopeV2(input: Readonly<{
+  candidateBundleRoot: string;
+  profileId: NodeScaffoldProfileIdV2;
+  phase: "before" | "after" | "failure";
+}>): CandidateProductionNpmScopeCaptureV2 {
+  const bundleRoot = input.candidateBundleRoot;
+  if (!path.isAbsolute(bundleRoot) || path.basename(bundleRoot) !== "candidate-bundle") {
+    return fail(
+      "HOST_NODE_TOOLCHAIN_V2_RUNTIME_INSTALL_SCOPE_INVALID",
+      "Candidate production install requires one absolute candidate-bundle root",
+    );
+  }
+  const owner = processOwnerV2();
+  try {
+    const parent = path.dirname(bundleRoot);
+    const parentStat = lstatSync(parent);
+    const rootStat = lstatSync(bundleRoot);
+    const parentNames = readdirSync(parent).sort();
+    const rootNames = readdirSync(bundleRoot).sort();
+    const baseNames = ["application", "package-lock.json", "package.json"];
+    const installedNames = [...baseNames, "node_modules"].sort();
+    const namesAdmitted = input.phase === "before"
+      ? canonicalJsonKeyList(rootNames) === canonicalJsonKeyList(baseNames.sort())
+      : input.phase === "after"
+      ? canonicalJsonKeyList(rootNames) === canonicalJsonKeyList(installedNames)
+      : canonicalJsonKeyList(rootNames) === canonicalJsonKeyList(baseNames.sort())
+        || canonicalJsonKeyList(rootNames) === canonicalJsonKeyList(installedNames);
+    if (
+      parentStat.isSymbolicLink()
+      || !parentStat.isDirectory()
+      || realpathSync(parent) !== parent
+      || modeBits(parentStat) !== 0o700
+      || parentStat.uid !== owner.uid
+      || parentStat.gid !== owner.gid
+      || canonicalJsonKeyList(parentNames) !== canonicalJsonKeyList(["candidate-bundle"])
+      || rootStat.isSymbolicLink()
+      || !rootStat.isDirectory()
+      || realpathSync(bundleRoot) !== bundleRoot
+      || modeBits(rootStat) !== 0o700
+      || rootStat.uid !== owner.uid
+      || rootStat.gid !== owner.gid
+      || !namesAdmitted
+    ) {
+      return fail(
+        "HOST_NODE_TOOLCHAIN_V2_RUNTIME_INSTALL_SCOPE_INVALID",
+        "Candidate production install root is not one exact private every-and-only topology",
+      );
+    }
+
+    const applicationRoot = path.join(bundleRoot, "application");
+    const applicationStat = lstatSync(applicationRoot);
+    const expectedApplicationNames = input.profileId
+      === "PROFILE_NODE_CLI_STATELESS_EXACT_V2"
+      ? ["cli.js", "cli.setfarm.test.js"]
+      : ["app.js", "app.setfarm.test.js"];
+    const applicationNames = readdirSync(applicationRoot).sort();
+    if (
+      applicationStat.isSymbolicLink()
+      || !applicationStat.isDirectory()
+      || realpathSync(applicationRoot) !== applicationRoot
+      || modeBits(applicationStat) !== 0o555
+      || applicationStat.uid !== owner.uid
+      || applicationStat.gid !== owner.gid
+      || canonicalJsonKeyList(applicationNames)
+        !== canonicalJsonKeyList(expectedApplicationNames.sort())
+    ) {
+      return fail(
+        "HOST_NODE_TOOLCHAIN_V2_RUNTIME_INSTALL_SCOPE_INVALID",
+        "Candidate application input is not the exact sealed profile output",
+      );
+    }
+    const application = applicationNames.map((name) => {
+      const file = readExactFile({
+        absolutePath: path.join(applicationRoot, name),
+        relativePath: `application/${name}`,
+        allowedModes: [0o444],
+        maxBytes: 32 * 1024 * 1024,
+        errorCode: "HOST_NODE_TOOLCHAIN_V2_RUNTIME_INSTALL_SCOPE_INVALID",
+      });
+      if (
+        file.fingerprint.ownerUid !== owner.uid
+        || file.fingerprint.ownerGid !== owner.gid
+        || file.fingerprint.byteLength < 1
+      ) {
+        return fail(
+          "HOST_NODE_TOOLCHAIN_V2_RUNTIME_INSTALL_SCOPE_INVALID",
+          `Candidate application input ${name} is not one exact process-owned file`,
+        );
+      }
+      return Object.freeze({
+        normalizedLocator: `application/${name}`,
+        contentHash: file.contentHash,
+        byteLength: file.fingerprint.byteLength,
+        fingerprint: file.fingerprint,
+      });
+    });
+
+    const packageJson = readExactFile({
+      absolutePath: path.join(bundleRoot, "package.json"),
+      relativePath: "package.json",
+      allowedModes: [0o444],
+      maxBytes: 4 * 1024 * 1024,
+      errorCode: "HOST_NODE_TOOLCHAIN_V2_RUNTIME_INSTALL_SCOPE_INVALID",
+    });
+    const packageLock = readExactFile({
+      absolutePath: path.join(bundleRoot, "package-lock.json"),
+      relativePath: "package-lock.json",
+      allowedModes: [0o444],
+      maxBytes: 16 * 1024 * 1024,
+      errorCode: "HOST_NODE_TOOLCHAIN_V2_RUNTIME_INSTALL_SCOPE_INVALID",
+    });
+    for (const file of [packageJson, packageLock]) {
+      if (
+        file.fingerprint.ownerUid !== owner.uid
+        || file.fingerprint.ownerGid !== owner.gid
+        || file.fingerprint.byteLength < 1
+      ) {
+        return fail(
+          "HOST_NODE_TOOLCHAIN_V2_RUNTIME_INSTALL_SCOPE_INVALID",
+          `${file.relativePath} is not one exact process-owned runtime input`,
+        );
+      }
+    }
+
+    let nodeModules: FingerprintV2 | null = null;
+    if (rootNames.includes("node_modules")) {
+      const nodeModulesRoot = path.join(bundleRoot, "node_modules");
+      const stat = lstatSync(nodeModulesRoot);
+      if (
+        stat.isSymbolicLink()
+        || !stat.isDirectory()
+        || realpathSync(nodeModulesRoot) !== nodeModulesRoot
+        || ![0o700, 0o755].includes(modeBits(stat))
+        || stat.uid !== owner.uid
+        || stat.gid !== owner.gid
+      ) {
+        return fail(
+          "HOST_NODE_TOOLCHAIN_V2_RUNTIME_INSTALL_SCOPE_INVALID",
+          "Candidate node_modules output is not one direct process-owned directory",
+        );
+      }
+      nodeModules = fingerprint(stat);
+    }
+    assertCandidateProductionMissingPathV2(
+      path.join(bundleRoot, ".npmrc"),
+      "Candidate bundle .npmrc",
+    );
+    const sourceFenceHash = hashCanonicalJson({
+      schema: "setfarm.host-node-candidate-production-source-fence.v2",
+      application,
+      packageJson: {
+        contentHash: packageJson.contentHash,
+        fingerprint: packageJson.fingerprint,
+      },
+      packageLock: {
+        contentHash: packageLock.contentHash,
+        fingerprint: packageLock.fingerprint,
+      },
+    });
+    return Object.freeze({
+      sourceFenceHash,
+      projectScopeHash: hashCanonicalJson({
+        schema: "setfarm.host-node-candidate-production-project-scope.v2",
+        phase: input.phase,
+        parent: fingerprint(parentStat),
+        root: fingerprint(rootStat),
+        rootNames,
+        sourceFenceHash,
+        nodeModules,
+      }),
+    });
+  } catch (error) {
+    if (error instanceof HostNodeToolchainAuthorityErrorV2) throw error;
+    return fail(
+      "HOST_NODE_TOOLCHAIN_V2_RUNTIME_INSTALL_SCOPE_INVALID",
+      "Candidate production install scope could not be captured",
+      error,
+    );
+  }
+}
+
+/**
+ * Executes the only admitted candidate production-dependency operation. The
+ * caller contributes no argv, cwd override, environment overlay, timeout or
+ * output limit, and package/application inputs are fenced across the process.
+ */
+export async function executeHostNodeToolchainCandidateProductionNpmCiV2(
+  handle: HostNodeToolchainAuthorityV2,
+  input: HostNodeToolchainCandidateProductionNpmCiInputV2,
+): Promise<HostNodeToolchainCandidateProductionNpmCiEvidenceV2> {
+  const state = authenticState(handle);
+  if (
+    !isPlainRecord(input)
+    || !exactRecordKeys(input, [
+      "candidateBundleRoot",
+      "environment",
+      "privateRoot",
+    ])
+    || typeof input.candidateBundleRoot !== "string"
+    || typeof input.privateRoot !== "string"
+  ) {
+    return fail(
+      "HOST_NODE_TOOLCHAIN_V2_RUNTIME_INSTALL_SCOPE_INVALID",
+      "Candidate production npm input must contain one exact environment and bundle scope",
+    );
+  }
+  const hostBefore = await revalidateHostNodeToolchainAuthorityV2(handle);
+  const environmentScope = captureEffectiveNpmConfigProbeScopeV2({
+    privateRoot: input.privateRoot,
+    environment: input.environment,
+  });
+  const scopeBefore = captureCandidateProductionNpmScopeV2({
+    candidateBundleRoot: input.candidateBundleRoot,
+    profileId: state.profileId,
+    phase: "before",
+  });
+  const environment = Object.freeze({
+    ...environmentScope.environment,
+    PATH: path.dirname(state.captured.root.nodePath),
+  });
+  const environmentHash = hashCanonicalJson({
+    schema: "setfarm.node-scaffold-private-execution-environment.v2",
+    variables: Object.entries(environment).sort(([left], [right]) =>
+      left < right ? -1 : left > right ? 1 : 0),
+  });
+  const directArgv = Object.freeze([
+    "npm",
+    "ci",
+    "--omit=dev",
+    "--ignore-scripts",
+    "--no-audit",
+    "--no-fund",
+  ] as const);
+  const invocation: HostNodeToolchainProbeInvocationV2 = Object.freeze({
+    probeRef: "HOST_NPM_CANDIDATE_PRODUCTION_INSTALL_V2",
+    executable: state.captured.root.nodePath,
+    argv: Object.freeze([state.captured.root.npmCliPath, ...directArgv.slice(1)]),
+    cwd: input.candidateBundleRoot,
+    env: environment,
+    shell: false,
+    timeoutMs: NPM_SCAFFOLD_INSTALL_TIMEOUT_MS_V2,
+    maxStdoutBytes: NPM_SCAFFOLD_INSTALL_MAX_OUTPUT_BYTES_V2,
+    maxStderrBytes: NPM_SCAFFOLD_INSTALL_MAX_OUTPUT_BYTES_V2,
+  });
+  let result: HostNodeToolchainProbeResultV2;
+  try {
+    result = await state.probeAdapter(invocation);
+  } catch (error) {
+    const hostAfterFailure = await revalidateHostNodeToolchainAuthorityV2(handle);
+    const scopeAfterFailure = captureCandidateProductionNpmScopeV2({
+      candidateBundleRoot: input.candidateBundleRoot,
+      profileId: state.profileId,
+      phase: "failure",
+    });
+    if (hostAfterFailure.receiptHash !== hostBefore.receiptHash) {
+      return fail(
+        "HOST_NODE_TOOLCHAIN_V2_HOST_DRIFT",
+        "Host Node/npm authority changed while candidate npm failed to spawn",
+      );
+    }
+    if (scopeAfterFailure.sourceFenceHash !== scopeBefore.sourceFenceHash) {
+      return fail(
+        "HOST_NODE_TOOLCHAIN_V2_RUNTIME_INSTALL_SOURCE_DRIFT",
+        "Candidate package, lockfile or application changed while npm failed to spawn",
+      );
+    }
+    return fail(
+      "HOST_NODE_TOOLCHAIN_V2_RUNTIME_INSTALL_SPAWN_FAILED",
+      "Exact candidate production npm adapter failed",
+      error,
+    );
+  }
+  const succeeded = result.status === "exited"
+    && result.exitCode === 0
+    && result.signal === null
+    && Buffer.byteLength(result.stdout, "utf8")
+      <= NPM_SCAFFOLD_INSTALL_MAX_OUTPUT_BYTES_V2
+    && Buffer.byteLength(result.stderr, "utf8")
+      <= NPM_SCAFFOLD_INSTALL_MAX_OUTPUT_BYTES_V2;
+  const [hostAfter, scopeAfter] = await Promise.all([
+    revalidateHostNodeToolchainAuthorityV2(handle),
+    Promise.resolve(captureCandidateProductionNpmScopeV2({
+      candidateBundleRoot: input.candidateBundleRoot,
+      profileId: state.profileId,
+      phase: succeeded ? "after" : "failure",
+    })),
+  ]);
+  if (hostAfter.receiptHash !== hostBefore.receiptHash) {
+    return fail(
+      "HOST_NODE_TOOLCHAIN_V2_HOST_DRIFT",
+      "Host Node/npm authority changed during candidate production npm",
+    );
+  }
+  if (scopeAfter.sourceFenceHash !== scopeBefore.sourceFenceHash) {
+    return fail(
+      "HOST_NODE_TOOLCHAIN_V2_RUNTIME_INSTALL_SOURCE_DRIFT",
+      "Candidate package, lockfile or application changed across production npm",
+    );
+  }
+  if (
+    Buffer.byteLength(result.stdout, "utf8") > NPM_SCAFFOLD_INSTALL_MAX_OUTPUT_BYTES_V2
+    || Buffer.byteLength(result.stderr, "utf8") > NPM_SCAFFOLD_INSTALL_MAX_OUTPUT_BYTES_V2
+    || result.status === "output_limit_exceeded"
+  ) {
+    return fail(
+      "HOST_NODE_TOOLCHAIN_V2_RUNTIME_INSTALL_OUTPUT_LIMIT",
+      "Exact candidate production npm exceeded its output bound",
+    );
+  }
+  if (result.status === "timed_out") {
+    return fail(
+      "HOST_NODE_TOOLCHAIN_V2_RUNTIME_INSTALL_TIMEOUT",
+      "Exact candidate production npm exceeded its timeout",
+    );
+  }
+  if (result.status === "spawn_failed") {
+    return fail(
+      "HOST_NODE_TOOLCHAIN_V2_RUNTIME_INSTALL_SPAWN_FAILED",
+      "Exact candidate production npm could not be spawned",
+    );
+  }
+  if (result.signal !== null) {
+    return fail(
+      "HOST_NODE_TOOLCHAIN_V2_RUNTIME_INSTALL_SIGNALLED",
+      "Exact candidate production npm terminated by signal",
+    );
+  }
+  if (result.exitCode !== 0) {
+    return fail(
+      "HOST_NODE_TOOLCHAIN_V2_RUNTIME_INSTALL_NONZERO",
+      "Exact candidate production npm exited nonzero",
+    );
+  }
+  return deepFreezeJson({
+    probeRef: "HOST_NPM_CANDIDATE_PRODUCTION_INSTALL_V2" as const,
+    hostToolchainReceiptHash: hostBefore.receiptHash,
+    nodeIdentityHash: hostBefore.node.identityHash,
+    npmClosureHash: hostBefore.npm.closureHash,
+    environmentHash,
+    projectScopeHash: scopeBefore.projectScopeHash,
+    sourceFenceHash: scopeBefore.sourceFenceHash,
+    directArgv,
+    directArgvHash: hashCanonicalJson({
+      schema: "setfarm.candidate-runtime-npm-direct-argv-hash.v2",
+      directArgv,
+    }),
+    stdin: "closed" as const,
+    timeoutMs: NPM_SCAFFOLD_INSTALL_TIMEOUT_MS_V2,
+    maxStdoutBytes: NPM_SCAFFOLD_INSTALL_MAX_OUTPUT_BYTES_V2,
+    maxStderrBytes: NPM_SCAFFOLD_INSTALL_MAX_OUTPUT_BYTES_V2,
+    shell: "forbidden" as const,
+    ambientEnvironment: "forbidden" as const,
+    status: "exited_zero" as const,
     exitCode: 0 as const,
     signal: null,
     stdoutHash: sha256(result.stdout),
