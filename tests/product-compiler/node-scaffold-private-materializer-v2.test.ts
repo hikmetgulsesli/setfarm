@@ -37,6 +37,16 @@ import {
   verifyCandidateBuildV2ForTest,
 } from "../../src/execution/candidate-build-v2.js";
 import {
+  CandidateRuntimeBundleErrorV2,
+  destroyCandidateRuntimeBundleV2,
+  materializeCandidateRuntimeBundleV2ForTest,
+  verifyCandidateRuntimeBundleV2ForTest,
+  type CandidateRuntimeBundleAuthorityV2,
+} from "../../src/execution/candidate-runtime-bundle-v2.js";
+import {
+  CandidateRuntimeBundleV2Schema,
+} from "../../src/execution/schemas/candidate-runtime-bundle-v2.js";
+import {
   compileCandidateSourceV1,
   compileCandidateSourceV1ForTest,
   revalidateVerifiedCandidateSourceAuthorityV1,
@@ -780,6 +790,7 @@ describe("Node scaffold private staged materializer V2", () => {
   const activeStages: MaterializedNodeScaffoldPrivateStageV2[] = [];
   const activeEnvironments: NodeScaffoldExecutionEnvironmentV2[] = [];
   const activeRuntimeBundles: MaterializedNodeCandidateRuntimePrivateV2[] = [];
+  const activeRuntimeAuthorities: CandidateRuntimeBundleAuthorityV2[] = [];
 
   before(async () => {
     database = await createIsolatedTestDatabase();
@@ -866,6 +877,13 @@ describe("Node scaffold private staged materializer V2", () => {
     runtimeInstallInvocations.splice(0);
     buildControls.clear();
     buildInvocations.splice(0);
+    for (const runtimeAuthority of activeRuntimeAuthorities.splice(0)) {
+      try {
+        destroyCandidateRuntimeBundleV2(runtimeAuthority);
+      } catch {
+        // Destructive assertions may already have consumed the authority.
+      }
+    }
     for (const runtimeBundle of activeRuntimeBundles.splice(0)) {
       try {
         destroyNodeCandidateRuntimePrivateV2(runtimeBundle);
@@ -4885,6 +4903,10 @@ describe("Node scaffold private staged materializer V2", () => {
         assert.equal(privateRuntimeReceipt.dependencyTree.directoryCount, 0);
         assert.equal(privateRuntimeReceipt.productionClosure.nodeCount, 0);
         assert.equal(privateRuntimeReceipt.productionGraph.packageCount, 0);
+        assert.equal(
+          privateRuntimeReceipt.applicationTree.treeHash,
+          runtimeContext.output.tree.treeHash,
+        );
         assert.deepEqual(
           privateRuntimeReceipt.applicationTree.entries
             .filter((entry) => entry.type === "file")
@@ -4929,6 +4951,74 @@ describe("Node scaffold private staged materializer V2", () => {
           (error: unknown) => error instanceof CandidateBuildErrorV2
             && error.code
               === "CANDIDATE_BUILD_V2_RUNTIME_BUNDLE_ALREADY_CONSUMED",
+        );
+        const issuedRuntimeClaims = await Promise.allSettled([
+          materializeCandidateRuntimeBundleV2ForTest({
+            buildAuthority: candidateBuild.authority,
+          }),
+          materializeCandidateRuntimeBundleV2ForTest({
+            buildAuthority: candidateBuild.authority,
+          }),
+        ]);
+        assert.equal(issuedRuntimeClaims[0]?.status, "fulfilled");
+        assert.equal(issuedRuntimeClaims[1]?.status, "rejected");
+        if (issuedRuntimeClaims[0]?.status !== "fulfilled") {
+          throw new Error("Expected one issued CandidateRuntimeBundleV2");
+        }
+        assert.equal(
+          (issuedRuntimeClaims[1] as PromiseRejectedResult).reason.code,
+          "CANDIDATE_RUNTIME_BUNDLE_V2_BUILD_ALREADY_CONSUMED",
+        );
+        const issuedRuntime = issuedRuntimeClaims[0].value;
+        activeRuntimeAuthorities.push(issuedRuntime.authority);
+        assert.equal(issuedRuntime.status, "shadow_verified_runtime_bundle");
+        assert.equal(
+          CandidateRuntimeBundleV2Schema.safeParse(issuedRuntime.bundle).success,
+          true,
+        );
+        assert.equal(
+          issuedRuntime.bundle.buildReceiptHash,
+          candidateBuild.receipt.receiptHash,
+        );
+        assert.equal(
+          issuedRuntime.bundle.applicationTree.treeHash,
+          candidateBuild.receipt.outputTree.treeHash,
+        );
+        assert.equal(issuedRuntime.bundle.dependencyTree.fileCount, 0);
+        assert.equal(
+          issuedRuntime.bundle.npmMaterializationReceipt.productionClosure
+            .nodeCount,
+          0,
+        );
+        assert.equal(runtimeInstallInvocations.length, 2);
+        const verifiedRuntime = await verifyCandidateRuntimeBundleV2ForTest({
+          runtimeAuthority: issuedRuntime.authority,
+          expectedBundleHash: issuedRuntime.bundle.bundleHash,
+        });
+        assert.equal(verifiedRuntime.status, "verified_shadow");
+        assert.equal(
+          verifiedRuntime.bundle.bundleHash,
+          issuedRuntime.bundle.bundleHash,
+        );
+        await assert.rejects(
+          verifyCandidateRuntimeBundleV2ForTest({
+            runtimeAuthority: {
+              ...issuedRuntime.authority,
+            } as CandidateRuntimeBundleAuthorityV2,
+            expectedBundleHash: issuedRuntime.bundle.bundleHash,
+          }),
+          (error: unknown) => error instanceof CandidateRuntimeBundleErrorV2
+            && error.code
+              === "CANDIDATE_RUNTIME_BUNDLE_V2_AUTHORITY_UNAUTHENTICATED",
+        );
+        await assert.rejects(
+          verifyCandidateRuntimeBundleV2ForTest({
+            runtimeAuthority: issuedRuntime.authority,
+            expectedBundleHash: "f".repeat(64),
+          }),
+          (error: unknown) => error instanceof CandidateRuntimeBundleErrorV2
+            && error.code
+              === "CANDIDATE_RUNTIME_BUNDLE_V2_EXPECTED_HASH_MISMATCH",
         );
         await assert.rejects(
           verifyCandidateBuildV2ForTest({
@@ -5022,6 +5112,15 @@ describe("Node scaffold private staged materializer V2", () => {
         await assert.rejects(revalidateNodeProductSourcesV1(created.handle), {
           code: "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_STATE_DRIFT",
         });
+        destroyCandidateRuntimeBundleV2(issuedRuntime.authority);
+        await assert.rejects(
+          verifyCandidateRuntimeBundleV2ForTest({
+            runtimeAuthority: issuedRuntime.authority,
+            expectedBundleHash: issuedRuntime.bundle.bundleHash,
+          }),
+          (error: unknown) => error instanceof CandidateRuntimeBundleErrorV2
+            && error.code === "CANDIDATE_RUNTIME_BUNDLE_V2_DESTROYED",
+        );
       }
     }
 
