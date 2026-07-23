@@ -25,10 +25,19 @@ import {
   deepFreezePlatformReleaseJsonV2,
   platformReleaseCandidateFitsCanonicalCapV2,
 } from "./platform-release-common-v2.js";
+import {
+  NODE_SCAFFOLD_PRODUCTION_CLOSURE_AUTHORITY_REF_V2,
+  NODE_SCAFFOLD_PRODUCTION_CLOSURE_CONTRACT_HASH_V2,
+  NODE_SCAFFOLD_PRODUCTION_CLOSURE_V2_SCHEMA,
+  NODE_SCAFFOLD_PRODUCTION_CLOSURE_VERSION_V2,
+} from "../../product-compiler/schemas/node-scaffold-production-closure-v2.js";
+import {
+  NODE_SCAFFOLD_PRODUCTION_MATERIALIZATION_CONTRACT_HASH_V2,
+} from "../../product-compiler/schemas/node-scaffold-production-materialization-v2.js";
 
 export const CANDIDATE_RUNTIME_BUNDLE_V2_SCHEMA =
   "setfarm.candidate-runtime-bundle.v2" as const;
-export const CANDIDATE_RUNTIME_BUNDLE_V2_VERSION = "2.1.0" as const;
+export const CANDIDATE_RUNTIME_BUNDLE_V2_VERSION = "2.2.0" as const;
 export const CANDIDATE_RUNTIME_APPLICATION_TREE_BINDING_V2_SCHEMA =
   "setfarm.candidate-runtime-application-tree-binding.v2" as const;
 export const CANDIDATE_RUNTIME_DEPENDENCY_TREE_BINDING_V2_SCHEMA =
@@ -51,6 +60,8 @@ export const CANDIDATE_PRODUCTION_GRAPH_ARTIFACT_REF_V2_SCHEMA =
   "setfarm.candidate-production-graph-artifact-ref.v2" as const;
 export const CANDIDATE_RUNTIME_PRODUCTION_GRAPH_BINDING_V2_SCHEMA =
   "setfarm.candidate-runtime-production-graph-binding.v2" as const;
+export const CANDIDATE_RUNTIME_PRODUCTION_CLOSURE_BINDING_V2_SCHEMA =
+  "setfarm.candidate-runtime-production-closure-binding.v2" as const;
 export const CANDIDATE_RUNTIME_SOURCE_CHECKPOINT_V2_SCHEMA =
   "setfarm.candidate-runtime-source-checkpoint.v2" as const;
 export const CANDIDATE_NPM_PROCESS_OUTCOME_V2_SCHEMA =
@@ -212,6 +223,13 @@ const CandidateNpmMaterializationReceiptAbiPolicyIdentityV2Schema = z.object({
   processAuthority: z.literal("authenticated_host_environment_and_exact_argv"),
   sourceFence: z.literal("package_manifest_and_lockfile_before_after"),
   productionGraphAuthority: z.literal("complete_indexed_artifact"),
+  productionClosureAuthority: z.literal("fresh_code_owned_lock_projection_v2"),
+  productionClosureContractHash: z.literal(
+    NODE_SCAFFOLD_PRODUCTION_CLOSURE_CONTRACT_HASH_V2,
+  ),
+  productionMaterializationContractHash: z.literal(
+    NODE_SCAFFOLD_PRODUCTION_MATERIALIZATION_CONTRACT_HASH_V2,
+  ),
 }).strict();
 
 export function hashCandidateNpmMaterializationReceiptAbiPolicyV2(
@@ -252,6 +270,11 @@ const CANDIDATE_NPM_MATERIALIZATION_RECEIPT_ABI_POLICY_IDENTITY_V2 = {
   processAuthority: "authenticated_host_environment_and_exact_argv",
   sourceFence: "package_manifest_and_lockfile_before_after",
   productionGraphAuthority: "complete_indexed_artifact",
+  productionClosureAuthority: "fresh_code_owned_lock_projection_v2",
+  productionClosureContractHash:
+    NODE_SCAFFOLD_PRODUCTION_CLOSURE_CONTRACT_HASH_V2,
+  productionMaterializationContractHash:
+    NODE_SCAFFOLD_PRODUCTION_MATERIALIZATION_CONTRACT_HASH_V2,
 } as const;
 
 export const CANDIDATE_NPM_MATERIALIZATION_RECEIPT_ABI_POLICY_V2 =
@@ -481,6 +504,86 @@ export type CandidateRuntimeProductionGraphBindingV2 = z.infer<
   typeof CandidateRuntimeProductionGraphBindingV2Schema
 >;
 
+const CandidateRuntimeProductionClosureBindingIdentityV2Schema = z.object({
+  schema: z.literal(CANDIDATE_RUNTIME_PRODUCTION_CLOSURE_BINDING_V2_SCHEMA),
+  closureSchema: z.literal(NODE_SCAFFOLD_PRODUCTION_CLOSURE_V2_SCHEMA),
+  closureVersion: z.literal(NODE_SCAFFOLD_PRODUCTION_CLOSURE_VERSION_V2),
+  authorityRef: z.literal(NODE_SCAFFOLD_PRODUCTION_CLOSURE_AUTHORITY_REF_V2),
+  closureContractHash: z.literal(
+    NODE_SCAFFOLD_PRODUCTION_CLOSURE_CONTRACT_HASH_V2,
+  ),
+  materializationContractHash: z.literal(
+    NODE_SCAFFOLD_PRODUCTION_MATERIALIZATION_CONTRACT_HASH_V2,
+  ),
+  profileId: z.enum([
+    "PROFILE_NODE_CLI_STATELESS_EXACT_V2",
+    "PROFILE_NODE_EXPRESS_API_STATELESS_EXACT_V2",
+  ]),
+  profileEntryHash: Sha256Schema,
+  catalogHash: Sha256Schema,
+  closureHash: Sha256Schema,
+  sourceGraphHash: Sha256Schema,
+  sourceLockRawHash: Sha256Schema,
+  sourceRootManifestRawHash: Sha256Schema,
+  sourceLockRootHash: Sha256Schema,
+  sourceGraphNodeCount: z.number().int().positive().max(1_000),
+  sourceGraphEdgeCount: z.number().int().positive().max(4_000),
+  sourceGraphNodeMembershipHash: Sha256Schema,
+  sourceGraphEdgeMembershipHash: Sha256Schema,
+  rootDependencyCount: z.number().int().nonnegative().max(100),
+  nodeCount: z.number().int().nonnegative()
+    .max(EXTERNAL_RUNTIME_RESOLUTION_V2_MAX_PACKAGES),
+  edgeCount: z.number().int().nonnegative().max(32_768),
+  rootMembershipHash: Sha256Schema,
+  nodeMembershipHash: Sha256Schema,
+  edgeMembershipHash: Sha256Schema,
+}).strict();
+
+export type CandidateRuntimeProductionClosureBindingHashPayloadV2 = z.infer<
+  typeof CandidateRuntimeProductionClosureBindingIdentityV2Schema
+>;
+
+export function hashCandidateRuntimeProductionClosureBindingV2(
+  value:
+    | CandidateRuntimeProductionClosureBindingHashPayloadV2
+    | CandidateRuntimeProductionClosureBindingV2,
+): string {
+  const binding = { ...value } as Record<string, unknown>;
+  delete binding.bindingHash;
+  return hashCanonicalJson({
+    schema: "setfarm.candidate-runtime-production-closure-binding-hash.v2",
+    binding,
+  });
+}
+
+export const CandidateRuntimeProductionClosureBindingV2Schema =
+  CandidateRuntimeProductionClosureBindingIdentityV2Schema.extend({
+    bindingHash: Sha256Schema,
+  }).strict().superRefine((value, context) => {
+    if (
+      value.nodeCount > value.sourceGraphNodeCount
+      || value.edgeCount > value.sourceGraphEdgeCount
+      || value.rootDependencyCount > value.nodeCount
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["nodeCount"],
+        message: "Candidate production closure counts must be a valid source-graph projection",
+      });
+    }
+    if (value.bindingHash !== hashCandidateRuntimeProductionClosureBindingV2(value)) {
+      context.addIssue({
+        code: "custom",
+        path: ["bindingHash"],
+        message: "Candidate production closure binding hash mismatch",
+      });
+    }
+  });
+
+export type CandidateRuntimeProductionClosureBindingV2 = z.infer<
+  typeof CandidateRuntimeProductionClosureBindingV2Schema
+>;
+
 const CandidateNpmIdentityV2Schema = z.object({
   packageName: z.literal("npm"),
   version: z.literal("10.9.8"),
@@ -579,8 +682,17 @@ export const CANDIDATE_RUNTIME_BUNDLE_CONTRACT_V2 = Object.freeze({
   applicationAuthority: "candidate_build_owned_canonical_dist_tree" as const,
   dependencyAuthority:
     "runtime_bundle_owned_production_graph_and_canonical_dependency_tree" as const,
+  productionClosureAuthority: "fresh_code_owned_lock_projection_v2" as const,
+  productionClosureContractHash:
+    NODE_SCAFFOLD_PRODUCTION_CLOSURE_CONTRACT_HASH_V2,
+  productionMaterializationContractHash:
+    NODE_SCAFFOLD_PRODUCTION_MATERIALIZATION_CONTRACT_HASH_V2,
+  artifactPublicationAuthority:
+    "single_indexed_tier_zero_dependency_tree_and_graph_batch_v2" as const,
   installAuthority:
     "authenticated_host_npm_exact_environment_and_bounded_process" as const,
+  processSourceFenceAuthority:
+    "authenticated_host_project_scope_and_source_fence_v2" as const,
   rootAuthority: "every_and_only_private_read_only_candidate_bundle" as const,
   pathDisclosure: "forbidden" as const,
   gitPlaceholder: "forbidden" as const,
@@ -683,10 +795,12 @@ const CandidateNpmMaterializationReceiptIdentityV2Schema = z.object({
   processBinding: z.object({
     probeRef: z.literal("HOST_NPM_CANDIDATE_PRODUCTION_INSTALL_V2"),
     projectScopeHash: Sha256Schema,
+    sourceFenceHash: Sha256Schema,
     directArgvHash: Sha256Schema,
   }).strict(),
   sourceBefore: CandidateRuntimeSourceCheckpointV2Schema,
   sourceAfter: CandidateRuntimeSourceCheckpointV2Schema,
+  productionClosure: CandidateRuntimeProductionClosureBindingV2Schema,
   productionGraph: CandidateRuntimeProductionGraphBindingV2Schema,
   dependencyTreeBindingHash: Sha256Schema,
   dependencyTreeHash: Sha256Schema,
@@ -767,11 +881,18 @@ export const CandidateNpmMaterializationReceiptV2Schema =
       value.productionGraph.materializedDependencyTreeHash
         !== value.dependencyTreeHash
       || value.productionGraph.packageCount !== value.packageCount
+      || value.productionClosure.nodeCount !== value.packageCount
+      || value.productionClosure.sourceLockRawHash
+        !== value.sourceAfter.lockfile.hash
+      || value.productionClosure.sourceRootManifestRawHash
+        !== value.sourceAfter.packageJson.contentHash
+      || value.productionGraph.graphArtifact.artifactType
+        !== PRODUCTION_PACKAGE_RESOLUTION_GRAPH_V2_SCHEMA
     ) {
       context.addIssue({
         code: "custom",
-        path: ["productionGraph"],
-        message: "Candidate npm receipt must join its production graph to the exact dependency tree",
+        path: ["productionClosure"],
+        message: "Candidate npm receipt must join fresh production closure, graph, lock and dependency tree",
       });
     }
     if (value.npmIdentity.closureHash !== value.hostToolchain.npmClosureHash) {
@@ -920,6 +1041,8 @@ export const CandidateRuntimeBundleV2Schema = CandidateRuntimeBundleIdentityV2Sc
       !== build.sourceAfter.candidateSourceReceiptHash
     || value.sourceAuthority.semanticRevisionHash
       !== build.sourceAfter.semanticRevisionHash
+    || value.npmMaterializationReceipt.productionClosure.profileId
+      !== build.outputTree.profileId
   ) {
     context.addIssue({
       code: "custom",

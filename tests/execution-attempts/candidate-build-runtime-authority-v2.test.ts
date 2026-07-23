@@ -51,6 +51,7 @@ import {
   CANDIDATE_RUNTIME_BUNDLE_V2_VERSION,
   CANDIDATE_RUNTIME_DEPENDENCY_TREE_BINDING_V2_SCHEMA,
   CANDIDATE_RUNTIME_PACKAGE_JSON_REF_V2_SCHEMA,
+  CANDIDATE_RUNTIME_PRODUCTION_CLOSURE_BINDING_V2_SCHEMA,
   CANDIDATE_RUNTIME_PRODUCTION_GRAPH_BINDING_V2_SCHEMA,
   CANDIDATE_RUNTIME_SOURCE_BINDING_V2_SCHEMA,
   CANDIDATE_RUNTIME_SOURCE_CHECKPOINT_V2_SCHEMA,
@@ -65,6 +66,7 @@ import {
   hashCandidateRuntimeBundleClosureV2,
   hashCandidateRuntimeBundleV2,
   hashCandidateRuntimeDependencyTreeBindingV2,
+  hashCandidateRuntimeProductionClosureBindingV2,
   hashCandidateRuntimeProductionGraphBindingV2,
   hashCandidateRuntimeSourceCheckpointV2,
   parseCandidateRuntimeBundleV2,
@@ -75,6 +77,7 @@ import {
   type CandidateRuntimeBundleV2,
   type CandidateRuntimeDependencyTreeBindingHashPayloadV2,
   type CandidateRuntimePackageJsonRefV2,
+  type CandidateRuntimeProductionClosureBindingHashPayloadV2,
   type CandidateRuntimeProductionGraphBindingHashPayloadV2,
   type CandidateRuntimeSourceCheckpointHashPayloadV2,
   type CandidateRuntimeBundleProducerV2,
@@ -87,6 +90,15 @@ import {
 import {
   EXACT_SOURCE_FILE_REF_V2_SCHEMA,
 } from "../../src/execution/schemas/external-runtime-resolution-v2.js";
+import {
+  NODE_SCAFFOLD_PRODUCTION_CLOSURE_AUTHORITY_REF_V2,
+  NODE_SCAFFOLD_PRODUCTION_CLOSURE_CONTRACT_HASH_V2,
+  NODE_SCAFFOLD_PRODUCTION_CLOSURE_V2_SCHEMA,
+  NODE_SCAFFOLD_PRODUCTION_CLOSURE_VERSION_V2,
+} from "../../src/product-compiler/schemas/node-scaffold-production-closure-v2.js";
+import {
+  NODE_SCAFFOLD_PRODUCTION_MATERIALIZATION_CONTRACT_HASH_V2,
+} from "../../src/product-compiler/schemas/node-scaffold-production-materialization-v2.js";
 
 function sha(label: string): string {
   return createHash("sha256").update(label).digest("hex");
@@ -503,6 +515,42 @@ function createProductionGraph(
   };
 }
 
+function createProductionClosureBinding(
+  build: CandidateBuildReceiptV2,
+) {
+  const identity: CandidateRuntimeProductionClosureBindingHashPayloadV2 = {
+    schema: CANDIDATE_RUNTIME_PRODUCTION_CLOSURE_BINDING_V2_SCHEMA,
+    closureSchema: NODE_SCAFFOLD_PRODUCTION_CLOSURE_V2_SCHEMA,
+    closureVersion: NODE_SCAFFOLD_PRODUCTION_CLOSURE_VERSION_V2,
+    authorityRef: NODE_SCAFFOLD_PRODUCTION_CLOSURE_AUTHORITY_REF_V2,
+    closureContractHash: NODE_SCAFFOLD_PRODUCTION_CLOSURE_CONTRACT_HASH_V2,
+    materializationContractHash:
+      NODE_SCAFFOLD_PRODUCTION_MATERIALIZATION_CONTRACT_HASH_V2,
+    profileId: build.outputTree.profileId,
+    profileEntryHash: sha("candidate-profile-entry"),
+    catalogHash: sha("candidate-profile-catalog"),
+    closureHash: sha("candidate-production-closure"),
+    sourceGraphHash: sha("candidate-source-lock-graph"),
+    sourceLockRawHash: sha("candidate-lockfile"),
+    sourceRootManifestRawHash: sha("candidate-package-json"),
+    sourceLockRootHash: sha("candidate-lock-root"),
+    sourceGraphNodeCount: 10,
+    sourceGraphEdgeCount: 12,
+    sourceGraphNodeMembershipHash: sha("candidate-source-nodes"),
+    sourceGraphEdgeMembershipHash: sha("candidate-source-edges"),
+    rootDependencyCount: 1,
+    nodeCount: 1,
+    edgeCount: 1,
+    rootMembershipHash: sha("candidate-production-roots"),
+    nodeMembershipHash: sha("candidate-production-nodes"),
+    edgeMembershipHash: sha("candidate-production-edges"),
+  };
+  return {
+    ...identity,
+    bindingHash: hashCandidateRuntimeProductionClosureBindingV2(identity),
+  };
+}
+
 function createNpmProcessOutcome() {
   const identity: CandidateNpmProcessOutcomeHashPayloadV2 = {
     schema: CANDIDATE_NPM_PROCESS_OUTCOME_V2_SCHEMA,
@@ -559,10 +607,12 @@ function createNpmReceipt(
     processBinding: {
       probeRef: "HOST_NPM_CANDIDATE_PRODUCTION_INSTALL_V2",
       projectScopeHash: sha("candidate-bundle-project-scope"),
+      sourceFenceHash: sha("candidate-bundle-source-fence"),
       directArgvHash: bundleModule.CANDIDATE_NPM_DIRECT_ARGV_HASH_V2,
     },
     sourceBefore: sourceCheckpoint,
     sourceAfter: clone(sourceCheckpoint),
+    productionClosure: createProductionClosureBinding(build),
     productionGraph,
     dependencyTreeBindingHash: dependencyTree.bindingHash,
     dependencyTreeHash: dependencyTree.treeHash,
@@ -631,6 +681,10 @@ function rehashRuntimeBundle(candidate: CandidateRuntimeBundleV2): void {
     hashCandidateRuntimeDependencyTreeBindingV2(candidate.dependencyTree);
   candidate.productionGraph.bindingHash =
     hashCandidateRuntimeProductionGraphBindingV2(candidate.productionGraph);
+  candidate.npmMaterializationReceipt.productionClosure.bindingHash =
+    hashCandidateRuntimeProductionClosureBindingV2(
+      candidate.npmMaterializationReceipt.productionClosure,
+    );
   candidate.npmMaterializationReceipt.productionGraph = clone(candidate.productionGraph);
   candidate.npmMaterializationReceipt.sourceBefore.checkpointHash =
     hashCandidateRuntimeSourceCheckpointV2(
@@ -809,6 +863,15 @@ test("runtime bundle joins the superseding source/build authority and rejects cr
   assert.equal(CandidateRuntimeBundleV2Schema.safeParse(sourceFenceForgery).success,
     false);
 
+  const closureManifestForgery = clone(createRuntimeBundle());
+  closureManifestForgery.npmMaterializationReceipt.productionClosure
+    .sourceRootManifestRawHash = sha("changed-package-json-authority");
+  rehashRuntimeBundle(closureManifestForgery);
+  assert.equal(
+    CandidateRuntimeBundleV2Schema.safeParse(closureManifestForgery).success,
+    false,
+  );
+
   const staleRecipe = clone(createRuntimeBundle());
   staleRecipe.npmMaterializationReceipt.installRecipe.configHash = sha("different-config");
   staleRecipe.npmMaterializationReceipt.installRecipe.recipeHash =
@@ -884,6 +947,8 @@ test("candidate build superseding-wire hash domains stay deterministic and separ
       bundle.npmMaterializationReceipt.sourceBefore.checkpointHash,
     npmProcessOutcomeHash:
       bundle.npmMaterializationReceipt.processOutcome.outcomeHash,
+    productionClosureBindingHash:
+      bundle.npmMaterializationReceipt.productionClosure.bindingHash,
     dependencyBindingHash: bundle.dependencyTree.bindingHash,
     productionGraphBindingHash: bundle.productionGraph.bindingHash,
     bundleClosureHash: bundle.bundleClosureHash,
@@ -891,10 +956,10 @@ test("candidate build superseding-wire hash domains stay deterministic and separ
   };
   assert.deepEqual(hashes, {
     contractHash: "692d50995d31be1902960fa77161544d61da9c0f813be12b2e2379c7c2ab273d",
-    runtimeContractHash: "f89ddb6362bba6284f5e203ee0c2b8a139fee721cd7540195a87c7f4bb3af896",
+    runtimeContractHash: "2bbd34a41a0fefcfca705d49e3c91a7a6f750890fa08f7fae8da2f442e41fe38",
     npmConfigHash: "548a8894a209c13f0edda9684c8cc91b12e1aa11b4d73c860df59004fffa3c9d",
-    npmAbiPolicyHash: "522212a9e0dcc63640991b498ec57bc78bdfaeb032943238bc13135fa0321073",
-    npmRecipeHash: "307ff51a4d9abaae5a714ec426cfb527497abfa589e5c8f3a81ae8ff2a6bf243",
+    npmAbiPolicyHash: "fc4702e591c1ad59d477b83fae7ad51c57ab79fd280425aac2519d1f405225c3",
+    npmRecipeHash: "f302c3860c903091a5317c816763fa40f23572edec1bcd8caea6599a1098b234",
     operationHash: "d313ee9852a169e8d677ee7c3289822c45723ed85d7cdba2ed3be39c0e124c05",
     sourceCheckpointHash: "494c933edb52015d324aba924152aad6be096e4c8a27c1ede416f8d83995c703",
     processOutcomeHash: "807438076500934b4c29071070981064428d7d238826cadcd6ae5009437ff71f",
@@ -903,10 +968,11 @@ test("candidate build superseding-wire hash domains stay deterministic and separ
     buildReceiptHash: "881efc30b79bf0c8b6234fecae3484d8712718b48ea39a75923070fa483a29ea",
     runtimeSourceCheckpointHash: "9dfc11ab296dc21246e04d559220ec44277a0eb764fafdad6e272f80dde46bea",
     npmProcessOutcomeHash: "0578d55a2d9ca75d74ee041cfb5f79448690e7dfa794cfa95994bb8ce6563499",
-    dependencyBindingHash: "2bfc3cafa87d7d17905fcb4e373d013193bfc441362310e83ae14deb9623df69",
-    productionGraphBindingHash: "374ff896af895cde446f12b4680ff82220635c0b23545d5b23f933ec76456715",
-    bundleClosureHash: "dd4cac16ece4ee37c6a248c4ffa305691585ade8b92f3b8e4b9bc2487a81a6c4",
-    bundleHash: "e0f83abb5390ea4f21cb417a465764b4fec1c1a1a8208ef3986e03ea0362f0fe",
+    productionClosureBindingHash: "339f809e09d95429604c610bd145d8cd94df598724711bb2d8a440142d115ef8",
+    dependencyBindingHash: "406ac4f6f435fd12f689b9724a32c055aa169b7f7fc144cecb7abb4d4e990eba",
+    productionGraphBindingHash: "22593b677aebba7ea90d6f863ed1da017a85bcc7b00a23fbc4590b0461c86ae6",
+    bundleClosureHash: "1bd1fc725b0570ff1e37feaa209875fc24ad44ade16e4f095cbe1fe36d0ead2c",
+    bundleHash: "25fcec23b75724e375e70761455e13d61fd8559fd353186290df5763b5ca16c1",
   });
   assert.equal(new Set(Object.values(hashes)).size, Object.keys(hashes).length);
 });
