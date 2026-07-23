@@ -31,7 +31,9 @@ import {
 } from "../../src/execution/schemas/candidate-build-receipt-v2.js";
 import {
   CandidateBuildErrorV2,
+  acquireCandidateBuildRuntimeBundleContextInternalV2,
   buildCandidateV2ForTest,
+  settleCandidateBuildRuntimeBundleContextInternalV2,
   verifyCandidateBuildV2ForTest,
 } from "../../src/execution/candidate-build-v2.js";
 import {
@@ -4725,6 +4727,46 @@ describe("Node scaffold private staged materializer V2", () => {
         assert.equal(
           verifiedCandidateBuild.outputTreeEnvelopeHash,
           candidateBuild.outputTreeEnvelopeHash,
+        );
+        const runtimeBundleClaims = await Promise.allSettled([
+          acquireCandidateBuildRuntimeBundleContextInternalV2(
+            siblingCandidateBuild.authority,
+            "test_fixture",
+          ),
+          acquireCandidateBuildRuntimeBundleContextInternalV2(
+            siblingCandidateBuild.authority,
+            "test_fixture",
+          ),
+        ]);
+        assert.equal(runtimeBundleClaims[0]?.status, "fulfilled");
+        assert.equal(runtimeBundleClaims[1]?.status, "rejected");
+        if (runtimeBundleClaims[0]?.status !== "fulfilled") {
+          throw new Error("Expected one claimed CandidateBuild runtime context");
+        }
+        assert.equal(
+          runtimeBundleClaims[0].value.receipt.receiptHash,
+          siblingCandidateBuild.receipt.receiptHash,
+        );
+        assert.equal(
+          runtimeBundleClaims[0].value.outputTreeEnvelopeHash,
+          siblingCandidateBuild.outputTreeEnvelopeHash,
+        );
+        assert.equal(
+          (runtimeBundleClaims[1] as PromiseRejectedResult).reason.code,
+          "CANDIDATE_BUILD_V2_RUNTIME_BUNDLE_ALREADY_CONSUMED",
+        );
+        settleCandidateBuildRuntimeBundleContextInternalV2(
+          siblingCandidateBuild.authority,
+          siblingCandidateBuild.receipt.receiptHash,
+        );
+        await assert.rejects(
+          acquireCandidateBuildRuntimeBundleContextInternalV2(
+            siblingCandidateBuild.authority,
+            "test_fixture",
+          ),
+          (error: unknown) => error instanceof CandidateBuildErrorV2
+            && error.code
+              === "CANDIDATE_BUILD_V2_RUNTIME_BUNDLE_ALREADY_CONSUMED",
         );
         await assert.rejects(
           verifyCandidateBuildV2ForTest({

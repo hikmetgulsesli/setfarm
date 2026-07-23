@@ -99,6 +99,7 @@ export type CandidateBuildErrorCodeV2 =
   | "CANDIDATE_BUILD_V2_RECEIPT_INVALID"
   | "CANDIDATE_BUILD_V2_AUTHORITY_UNAUTHENTICATED"
   | "CANDIDATE_BUILD_V2_EXPECTED_HASH_MISMATCH"
+  | "CANDIDATE_BUILD_V2_RUNTIME_BUNDLE_ALREADY_CONSUMED"
   | "CANDIDATE_BUILD_V2_CLEANUP_FAILED";
 
 export class CandidateBuildErrorV2 extends Error {
@@ -414,6 +415,10 @@ type VerifiedClosureV2 = Extract<Awaited<ReturnType<
   typeof verifyImplementationClosureV2ForTest
 >>, { status: "verified_shadow" }>;
 
+type CandidateBuildRuntimeBundleLeaseV2 = {
+  status: "ready" | "claimed" | "consumed";
+};
+
 type CandidateBuildAuthorityStateV2 = Readonly<{
   stage: MaterializedNodeScaffoldPrivateStageV2;
   sourceAuthority: VerifiedCandidateSourceAuthorityV1;
@@ -424,6 +429,7 @@ type CandidateBuildAuthorityStateV2 = Readonly<{
   treeEnvelope: SemanticArtifactEnvelopeV1;
   treeEnvelopeHash: string;
   expectedScope: "production_host" | "test_fixture";
+  runtimeBundleLease: CandidateBuildRuntimeBundleLeaseV2;
 }>;
 
 const candidateBuildAuthorityConstructorCapabilityV2 = Object.freeze({});
@@ -745,6 +751,9 @@ async function buildInternalV2(
       ...receiptIdentity,
       receiptHash: hashCandidateBuildReceiptV2(receiptIdentity),
     });
+    const runtimeBundleLease: CandidateBuildRuntimeBundleLeaseV2 = {
+      status: "ready",
+    };
     const state: CandidateBuildAuthorityStateV2 = Object.freeze({
       stage: context.stage,
       sourceAuthority: handles.sourceAuthority,
@@ -755,6 +764,7 @@ async function buildInternalV2(
       treeEnvelope,
       treeEnvelopeHash,
       expectedScope,
+      runtimeBundleLease,
     });
     const authority = new CandidateBuildAuthorityV2(
       candidateBuildAuthorityConstructorCapabilityV2,
@@ -968,4 +978,79 @@ export function verifyCandidateBuildV2(input: unknown) {
 
 export function verifyCandidateBuildV2ForTest(input: unknown) {
   return verifyBuildInternalV2(input, "test_fixture");
+}
+
+export type CandidateBuildRuntimeBundleContextInternalV2 = Readonly<{
+  expectedScope: "production_host" | "test_fixture";
+  stage: MaterializedNodeScaffoldPrivateStageV2;
+  receipt: CandidateBuildReceiptV2;
+  output: NodeCandidateBuildOutputV2;
+  artifactAuthority: IndexedArtifactPublisher;
+  outputTreeEnvelope: SemanticArtifactEnvelopeV1;
+  outputTreeEnvelopeHash: string;
+}>;
+
+/** @internal Preclaims the only runtime-bundle consumer before fresh verification. */
+export async function acquireCandidateBuildRuntimeBundleContextInternalV2(
+  authority: CandidateBuildAuthorityV2,
+  expectedScope: "production_host" | "test_fixture",
+): Promise<CandidateBuildRuntimeBundleContextInternalV2> {
+  const state = authenticBuildStateV2(authority);
+  if (
+    state.expectedScope !== expectedScope
+    || state.runtimeBundleLease.status !== "ready"
+  ) {
+    return fail(
+      "CANDIDATE_BUILD_V2_RUNTIME_BUNDLE_ALREADY_CONSUMED",
+      "Candidate build runtime-bundle authority is scope-bound and single-use",
+    );
+  }
+  state.runtimeBundleLease.status = "claimed";
+  try {
+    const verified = await verifyBuildInternalV2({
+      buildAuthority: authority,
+      expectedReceiptHash: state.receipt.receiptHash,
+    }, expectedScope);
+    if (
+      verified.status !== "verified_shadow"
+      || verified.receipt.receiptHash !== state.receipt.receiptHash
+      || verified.outputTreeEnvelopeHash !== state.treeEnvelopeHash
+      || state.runtimeBundleLease.status !== "claimed"
+    ) {
+      return fail(
+        "CANDIDATE_BUILD_V2_OUTPUT_REJECTED",
+        "Candidate build changed while its runtime-bundle lease was claimed",
+      );
+    }
+    return Object.freeze({
+      expectedScope: state.expectedScope,
+      stage: state.stage,
+      receipt: state.receipt,
+      output: state.output,
+      artifactAuthority: state.artifactAuthority,
+      outputTreeEnvelope: state.treeEnvelope,
+      outputTreeEnvelopeHash: state.treeEnvelopeHash,
+    });
+  } catch (error) {
+    state.runtimeBundleLease.status = "consumed";
+    throw error;
+  }
+}
+
+/** @internal Consumes the claimed runtime-bundle lease on every terminal outcome. */
+export function settleCandidateBuildRuntimeBundleContextInternalV2(
+  authority: CandidateBuildAuthorityV2,
+  expectedReceiptHash: string,
+): void {
+  const state = authenticBuildStateV2(authority);
+  if (
+    state.runtimeBundleLease.status !== "claimed"
+    || state.receipt.receiptHash !== expectedReceiptHash
+  ) {
+    return fail(
+      "CANDIDATE_BUILD_V2_RUNTIME_BUNDLE_ALREADY_CONSUMED",
+      "Candidate build runtime-bundle lease cannot be settled from this state",
+    );
+  }
+  state.runtimeBundleLease.status = "consumed";
 }
