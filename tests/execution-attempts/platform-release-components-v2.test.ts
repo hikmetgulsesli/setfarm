@@ -8,6 +8,10 @@ import {
   createCanonicalRuntimeTreeV2,
   type CanonicalRuntimeTreeV2,
 } from "../../src/execution/schemas/canonical-runtime-tree-v2.js";
+import {
+  EXCLUSIVE_SOCKET_LIFECYCLE_ABI_HASH_V2,
+  EXCLUSIVE_SOCKET_PORT_BANDS_POLICY_HASH_V2,
+} from "../../src/execution/schemas/exclusive-socket-lease-v2.js";
 import * as environmentModule from "../../src/execution/schemas/evidence-environment-capsule-v2.js";
 import {
   EVIDENCE_ENVIRONMENT_CAPSULE_V2_MAX_CANONICAL_BYTES,
@@ -309,7 +313,8 @@ function createEnvironmentCandidate(
     portLease: {
       mode: "exclusive_socket_lease" as const,
       host: "127.0.0.1" as const,
-      bandsHash: sha("port-bands"),
+      bandsHash: EXCLUSIVE_SOCKET_PORT_BANDS_POLICY_HASH_V2,
+      lifecycleAbiHash: EXCLUSIVE_SOCKET_LIFECYCLE_ABI_HASH_V2,
     },
     filesystem: {
       releaseRoot: "immutable_read_only" as const,
@@ -813,6 +818,14 @@ test("environment capsule candidate seals allowlists and exact metadata/network 
   assert.equal(parsed.childProcess.shell, "forbidden");
   assert.equal(parsed.network.outboundInternet, "forbidden");
   assert.equal(parsed.network.dns, "forbidden");
+  assert.equal(
+    parsed.portLease.bandsHash,
+    EXCLUSIVE_SOCKET_PORT_BANDS_POLICY_HASH_V2,
+  );
+  assert.equal(
+    parsed.portLease.lifecycleAbiHash,
+    EXCLUSIVE_SOCKET_LIFECYCLE_ABI_HASH_V2,
+  );
   assertRecursivelyFrozen(parsed);
 
   const ambient = clone(candidate) as any;
@@ -844,6 +857,22 @@ test("environment capsule candidate seals allowlists and exact metadata/network 
     hashEvidenceEnvironmentCapsuleV2(receiptAbiTamper);
   assert.throws(() => parseEvidenceEnvironmentCapsuleCandidateV2(
     receiptAbiTamper,
+  ));
+
+  const socketAbiTamper = clone(candidate) as any;
+  socketAbiTamper.portLease.lifecycleAbiHash = sha("caller-socket-abi");
+  socketAbiTamper.environmentCapsuleHash =
+    hashEvidenceEnvironmentCapsuleV2(socketAbiTamper);
+  assert.throws(() => parseEvidenceEnvironmentCapsuleCandidateV2(
+    socketAbiTamper,
+  ));
+
+  const socketBandsTamper = clone(candidate) as any;
+  socketBandsTamper.portLease.bandsHash = sha("caller-port-bands");
+  socketBandsTamper.environmentCapsuleHash =
+    hashEvidenceEnvironmentCapsuleV2(socketBandsTamper);
+  assert.throws(() => parseEvidenceEnvironmentCapsuleCandidateV2(
+    socketBandsTamper,
   ));
 
   const metadataTamper = clone(candidate) as any;
@@ -1227,12 +1256,12 @@ test("component canonical hashes and byte lengths match hardcoded golden vectors
     metadataProbeHash: "b34ce4aa52892c45b7ebb535df83a689e4a23cda55e88217d194b05cc1e10aa2",
     externalResolutionHash: "6b0b4902e5aadd7cde26ca2efc2b02439ff67342d8711f5aaadf80b82e47ccb5",
     networkIsolationHash: "8b41cbe4c27ed3299a0455ade9d25e0212aa5fa6848d44bd88f3e97ac8c8e310",
-    environmentCapsuleHash: "1ea34bb326c827958a5d900eea4011a3cc824616c66a9d6c33351b9844011da2",
+    environmentCapsuleHash: "ee7418914e45f1b8bf67715e160d23b91101cf63ee2231cb3f84ed0d36f1377a",
     browserClosureHash: "d934d4c4e1aa5a56ca3670e32694c08ed1c84191e39b836ae1a5a6f6f53627d8",
     browserExternalResolutionHash: "3e089dfe2ff5e4ac239c851f263c45230f0e2ed963c89bb07e4a7c4343a1d5eb",
     runtimeCanonicalBytes: 1976,
     externalCanonicalBytes: 7983,
-    environmentCanonicalBytes: 1887,
+    environmentCanonicalBytes: 1973,
     browserExternalCanonicalBytes: 9602,
   });
 });

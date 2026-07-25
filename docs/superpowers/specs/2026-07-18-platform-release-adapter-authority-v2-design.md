@@ -443,6 +443,7 @@ type EvidenceEnvironmentCapsuleV2 = {
     mode: "exclusive_socket_lease";
     host: "127.0.0.1";
     bandsHash: Sha256;
+    lifecycleAbiHash: Sha256;
   };
   filesystem: {
     releaseRoot: "immutable_read_only";
@@ -511,6 +512,13 @@ receipt schemas with explicit state transitions
 `bound -> sent -> acknowledged -> ready -> closed` or one typed terminal failure.
 Opaque lifecycle hashes without their canonical receipt payloads cannot satisfy
 the runner or EvidenceReceiptV2 joins.
+
+Both `bandsHash` and `lifecycleAbiHash` are code-owned literals. The lifecycle
+ABI binds the held-descriptor policy, zero inherited child `execArgv`, parent
+retention through a real child acknowledgement, one-use readiness observation,
+timeouts and cleanup rebind proof. A caller-chosen port range, inherited
+`NODE_OPTIONS`/loader flags or a successful `child.send` callback cannot become
+socket authority.
 
 ## Launchers and Runners
 

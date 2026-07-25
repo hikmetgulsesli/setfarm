@@ -14,6 +14,10 @@ import {
   NETWORK_ISOLATION_NEGATIVE_PROBE_RECEIPT_SCHEMA_HASH_V2,
   NETWORK_ISOLATION_NEGATIVE_PROBE_RECEIPT_V2_SCHEMA,
 } from "./network-isolation-negative-probe-v2.js";
+import {
+  EXCLUSIVE_SOCKET_LIFECYCLE_ABI_HASH_V2,
+  EXCLUSIVE_SOCKET_PORT_BANDS_POLICY_HASH_V2,
+} from "./exclusive-socket-lease-v2.js";
 
 export {
   NETWORK_ISOLATION_NEGATIVE_PROBE_RECEIPT_SCHEMA_HASH_V2,
@@ -205,7 +209,8 @@ const EvidenceEnvironmentCapsuleIdentityV2Schema = z.object({
   portLease: z.object({
     mode: z.literal("exclusive_socket_lease"),
     host: z.literal("127.0.0.1"),
-    bandsHash: Sha256Schema,
+    bandsHash: z.literal(EXCLUSIVE_SOCKET_PORT_BANDS_POLICY_HASH_V2),
+    lifecycleAbiHash: z.literal(EXCLUSIVE_SOCKET_LIFECYCLE_ABI_HASH_V2),
   }).strict(),
   filesystem: z.object({
     releaseRoot: z.literal("immutable_read_only"),
