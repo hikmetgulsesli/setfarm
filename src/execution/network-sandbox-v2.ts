@@ -381,6 +381,57 @@ async function captureExactPhysicalFileV2(
   });
 }
 
+/**
+ * @internal Code-owned bridge used by candidate launchers. It exposes only the
+ * fixed macOS sandbox executable and fixed profile after a fresh physical-file
+ * capture; callers cannot select either value.
+ */
+export async function acquireNetworkSandboxLaunchContextInternalV2(): Promise<
+  Readonly<{
+    sandboxExecutablePath: typeof NETWORK_SANDBOX_EXECUTABLE_V2;
+    sandboxExecutableContentHash: string;
+    sandboxExecutablePhysicalIdentityHash: string;
+    sandboxProfile: typeof NETWORK_SANDBOX_PROFILE_V2;
+    sandboxProfileHash: typeof NETWORK_SANDBOX_PROFILE_HASH_V2;
+  }>
+> {
+  if (process.platform !== "darwin") {
+    return fail(
+      "NETWORK_ISOLATION_V2_HOST_UNSUPPORTED",
+      "The first candidate launcher requires macOS sandbox-exec",
+    );
+  }
+  const captured = await captureExactPhysicalFileV2(
+    NETWORK_SANDBOX_EXECUTABLE_V2,
+  );
+  if (
+    captured.ownerUid !== 0
+    || captured.ownerGid !== 0
+    || captured.mode !== 0o755
+  ) {
+    return fail(
+      "NETWORK_ISOLATION_V2_HOST_UNSUPPORTED",
+      "The code-owned macOS sandbox executable must remain root-owned mode 0755",
+    );
+  }
+  return Object.freeze({
+    sandboxExecutablePath: NETWORK_SANDBOX_EXECUTABLE_V2,
+    sandboxExecutableContentHash: captured.contentHash,
+    sandboxExecutablePhysicalIdentityHash: hashCanonicalJson({
+      schema: "setfarm.network-sandbox-physical-file.v2",
+      device: captured.device,
+      inode: captured.inode,
+      ownerUid: captured.ownerUid,
+      ownerGid: captured.ownerGid,
+      mode: captured.mode,
+      byteLength: captured.byteLength,
+      contentHash: captured.contentHash,
+    }),
+    sandboxProfile: NETWORK_SANDBOX_PROFILE_V2,
+    sandboxProfileHash: NETWORK_SANDBOX_PROFILE_HASH_V2,
+  });
+}
+
 type NetworkIsolationProbeContextStateV2 = Readonly<{
   admissionScope: "test_fixture";
   wrapperModule: ExactPhysicalFileV2;

@@ -22,11 +22,20 @@ import {
   type ImplementationClosureVerificationResultV2,
 } from "../product-compiler/implementation-closure-v2.js";
 import {
+  compileInvocationInputTransportSetV2,
+} from "../product-compiler/invocation-input-transport-v2.js";
+import {
   inspectScaffoldBaseMaterializationReceiptV2,
   isProductionNodeScaffoldPrivateStageV2,
   revalidateNodeProductSourcesV1,
   type MaterializedNodeScaffoldPrivateStageV2,
 } from "../product-compiler/node-scaffold-private-materializer-v2.js";
+import {
+  ActionIdSchema,
+} from "../product-compiler/schemas/common-v1.js";
+import type {
+  InvocationInputTransportV2,
+} from "../product-compiler/schemas/invocation-input-transport-v2.js";
 import {
   CANDIDATE_SOURCE_ABSENCE_ENTRY_V1_SCHEMA,
   CANDIDATE_SOURCE_ARTIFACT_TYPE_V1,
@@ -959,5 +968,133 @@ export async function acquireVerifiedCandidateSourceBuildContextInternalV1(
     expectedScope: state.expectedScope,
     envelope: state.envelope,
     envelopeHash: revalidated.envelopeHash,
+  });
+}
+
+export type VerifiedCandidateSourceInvocationTransportInternalV1 = Readonly<{
+  candidateSourceReceiptHash: string;
+  semanticRevisionHash: string;
+  implementationClosureHash: string;
+  productBuildPacketHash: string;
+  productBuildPacketEnvelopeHash: string;
+  runtimeSourceReceiptHash: string;
+  runtimeSourceLogicalReceiptHash: string;
+  transportSetHash: string;
+  transportMembershipHash: string;
+  transportContract: Readonly<InvocationInputTransportV2>;
+}>;
+
+/**
+ * @internal
+ *
+ * Reproduces the every-action transport set from the ProductSpec and delivery
+ * selection retained by the authentic source capability. A launch consumer
+ * therefore selects only an action ref; it cannot contribute a self-consistent
+ * but unrelated transport contract.
+ */
+export async function acquireVerifiedCandidateSourceInvocationTransportInternalV1(
+  authority: VerifiedCandidateSourceAuthorityV1,
+  actionRefInput: unknown,
+): Promise<VerifiedCandidateSourceInvocationTransportInternalV1> {
+  const actionRef = ActionIdSchema.parse(actionRefInput);
+  const revalidated = await revalidateVerifiedCandidateSourceAuthorityV1(
+    authority,
+  );
+  const state = verifiedCandidateSourceAuthorityStateV1.get(authority);
+  if (!state) throw new Error("Candidate source authority is unauthenticated");
+  const verifyClosure = state.expectedScope === "production_host"
+    ? verifyImplementationClosureV2
+    : verifyImplementationClosureV2ForTest;
+  const closure = await verifyClosure(
+    state.handle,
+    state.compilerInput.closureVerificationInput,
+  );
+  if (closure.status !== "verified_shadow") {
+    throw new Error(
+      closure.diagnostics[0]?.message
+        ?? "Candidate source closure no longer verifies",
+    );
+  }
+  const closureInput = state.compilerInput.closureVerificationInput;
+  if (
+    closureInput === null
+    || typeof closureInput !== "object"
+    || Array.isArray(closureInput)
+    || isProxy(closureInput)
+    || !Object.hasOwn(closureInput, "productSpec")
+    || !Object.hasOwn(closureInput, "deliverySelection")
+  ) {
+    throw new Error(
+      "Candidate source closure does not retain exact transport authority inputs",
+    );
+  }
+  const retained = closureInput as Readonly<Record<string, unknown>>;
+  const compiled = compileInvocationInputTransportSetV2({
+    productSpec: retained.productSpec,
+    deliverySelection: retained.deliverySelection,
+  });
+  if (compiled.status !== "shadow_compiled") {
+    throw new Error(
+      compiled.diagnostics[0]?.message
+        ?? "Candidate source transport set no longer compiles",
+    );
+  }
+  const runtimeReceipt = closure.contextAttachments.runtimeSourceReceipt;
+  const runtimeSet = runtimeReceipt.authority.invocationTransportSet;
+  const packet = closure.contextAttachments.packetEnvelope;
+  const packetAuthority = packet.payload.sourceMapAuthority;
+  const contract = compiled.contractSet.contracts.find((candidate) =>
+    candidate.actionRef === actionRef);
+  if (
+    !contract
+    || compiled.contractSetHash !== runtimeSet.contractSetHash
+    || compiled.membershipHash !== runtimeSet.membershipHash
+    || compiled.contractSet.contractCount !== runtimeSet.contractCount
+    || compiled.contractSet.productSpecHash
+      !== packetAuthority.product.productSpecHash
+    || compiled.contractSet.productSpecHash
+      !== runtimeReceipt.authority.productSpecHash
+    || compiled.contractSet.deliverySelectionHash
+      !== packetAuthority.delivery.selectionHash
+    || compiled.contractSet.deliverySelectionHash
+      !== runtimeReceipt.authority.deliverySelectionHash
+    || contract.productSpecHash !== packetAuthority.product.productSpecHash
+    || contract.deliverySelectionHash
+      !== packetAuthority.delivery.selectionHash
+    || contract.profileBinding.profileId
+      !== packetAuthority.delivery.profileId
+    || contract.profileBinding.profileHash
+      !== packetAuthority.delivery.profileHash
+    || contract.profileBinding.profileId
+      !== runtimeReceipt.authority.profileId
+    || contract.stackPackBinding.stackPackId
+      !== packetAuthority.delivery.stackPackId
+    || contract.stackPackBinding.stackPackContentHash
+      !== packetAuthority.delivery.stackPackContentHash
+    || contract.stackPackBinding.stackPackId
+      !== runtimeReceipt.authority.stackPackId
+    || runtimeReceipt.logicalReceiptHash
+      !== packet.payload.logicalSourceAuthority.runtimeLogicalReceiptHash
+    || revalidated.receiptHash !== state.envelope.payload.receiptHash
+    || revalidated.implementationClosureHash
+      !== closure.closure.closureHash
+  ) {
+    throw new Error(
+      "Candidate source transport authority does not join its closure, packet and runtime source",
+    );
+  }
+  return Object.freeze({
+    candidateSourceReceiptHash: revalidated.receiptHash,
+    semanticRevisionHash: revalidated.semanticRevisionHash,
+    implementationClosureHash: revalidated.implementationClosureHash,
+    productBuildPacketHash: packet.payload.packetHash,
+    productBuildPacketEnvelopeHash: hashCanonicalJson(packet),
+    runtimeSourceReceiptHash: runtimeReceipt.receiptHash,
+    runtimeSourceLogicalReceiptHash: runtimeReceipt.logicalReceiptHash,
+    transportSetHash: compiled.contractSetHash,
+    transportMembershipHash: compiled.membershipHash,
+    transportContract: recursivelyFreezeCandidateSourceReceiptV1(
+      structuredClone(contract),
+    ),
   });
 }

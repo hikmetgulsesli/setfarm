@@ -21,6 +21,7 @@ import { isProxy } from "node:util/types";
 import { hashCanonicalJson } from "./canonical-json.js";
 import {
   HostNodeToolchainAuthorityErrorV2,
+  acquireHostNodeRuntimeLaunchContextInternalV2,
   inspectHostNodeToolchainReceiptV2,
   isProductionHostNodeToolchainAuthorityV2,
   executeHostNodeToolchainNpmCiV2,
@@ -34,6 +35,7 @@ import {
   type HostNodeToolchainNpmCiEvidenceV2,
   type HostNodeToolchainCandidateProductionNpmCiEvidenceV2,
   type HostNodeToolchainBuildEvidenceV2,
+  type HostNodeRuntimeLaunchContextInternalV2,
 } from "./host-node-toolchain-authority-v2.js";
 import type {
   MaterializedNodeScaffoldPrivateStageV2,
@@ -1311,6 +1313,57 @@ export async function revalidateNodeCandidateRuntimeExecutionContextInternalV2(
   return Object.freeze({
     environment: defensiveCopy(environment),
     hostToolchain: defensiveCopy(hostToolchain),
+  });
+}
+
+/**
+ * @internal Freshly joins the candidate-runtime environment to the exact
+ * authenticated Node executable without serializing either private locator.
+ */
+export async function acquireNodeCandidateRuntimeLaunchEnvironmentInternalV2(
+  handle: NodeScaffoldExecutionEnvironmentV2,
+): Promise<Readonly<{
+  admissionScope: "production_host" | "test_fixture";
+  profileId: NodeScaffoldProfileIdV2;
+  environmentReceiptHash: string;
+  environmentHash: string;
+  hostRuntime: HostNodeRuntimeLaunchContextInternalV2;
+}>> {
+  const state = authenticStateV2(handle);
+  if (
+    state.operationRole !== "candidate_runtime_install"
+    || state.lifecycle.status !== "install_consumed"
+  ) {
+    return fail(
+      "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_OPERATION_ROLE_INVALID",
+      "Candidate launch requires one completed candidate-runtime installation environment",
+    );
+  }
+  const context = await revalidateNodeCandidateRuntimeExecutionContextInternalV2(
+    handle,
+  );
+  const hostRuntime = await acquireHostNodeRuntimeLaunchContextInternalV2(
+    state.hostToolchain,
+  );
+  if (
+    hostRuntime.admissionScope !== state.admissionScope
+    || hostRuntime.profileId !== state.profileId
+    || hostRuntime.hostToolchainReceiptHash
+      !== context.hostToolchain.receiptHash
+    || hostRuntime.nodeIdentityHash
+      !== context.hostToolchain.node.identityHash
+  ) {
+    return fail(
+      "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_STATE_DRIFT",
+      "Candidate launch environment no longer joins its exact host runtime",
+    );
+  }
+  return Object.freeze({
+    admissionScope: state.admissionScope,
+    profileId: state.profileId,
+    environmentReceiptHash: context.environment.receiptHash,
+    environmentHash: context.environment.environment.environmentHash,
+    hostRuntime,
   });
 }
 

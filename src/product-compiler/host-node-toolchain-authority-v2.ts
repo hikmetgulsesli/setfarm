@@ -2149,6 +2149,49 @@ export async function revalidateHostNodeToolchainAuthorityV2(
   }
 }
 
+/**
+ * @internal
+ *
+ * Returns the exact executable locator only to a consumer that already holds
+ * the authentic host-toolchain capability. Serialized receipts remain
+ * pathless; the caller must spawn immediately and fresh-revalidate the same
+ * authority after the process boundary.
+ */
+export type HostNodeRuntimeLaunchContextInternalV2 = Readonly<{
+  admissionScope: "production_host" | "test_fixture";
+  profileId: NodeScaffoldProfileIdV2;
+  nodeExecutablePath: string;
+  nodeExecutableContentHash: string;
+  nodeIdentityHash: string;
+  hostToolchainReceiptHash: string;
+}>;
+
+export async function acquireHostNodeRuntimeLaunchContextInternalV2(
+  handle: HostNodeToolchainAuthorityV2,
+): Promise<HostNodeRuntimeLaunchContextInternalV2> {
+  const state = authenticState(handle);
+  const receipt = await revalidateHostNodeToolchainAuthorityV2(handle);
+  if (
+    receipt.receiptHash !== state.receipt.receiptHash
+    || receipt.node.identityHash !== state.receipt.node.identityHash
+    || receipt.node.executable.contentHash
+      !== state.captured.nodeFile.contentHash
+  ) {
+    return fail(
+      "HOST_NODE_TOOLCHAIN_V2_HOST_DRIFT",
+      "Host Node launch context does not reproduce the admitted executable",
+    );
+  }
+  return Object.freeze({
+    admissionScope: state.admissionScope,
+    profileId: state.profileId,
+    nodeExecutablePath: state.captured.root.nodePath,
+    nodeExecutableContentHash: state.captured.nodeFile.contentHash,
+    nodeIdentityHash: receipt.node.identityHash,
+    hostToolchainReceiptHash: receipt.receiptHash,
+  });
+}
+
 type EffectiveNpmConfigProbeScopeCaptureV2 = Readonly<{
   privateRoot: string;
   configProbeCwd: string;

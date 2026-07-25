@@ -723,11 +723,19 @@ identity; it does not symlink the worktree. `CandidateLaunchTargetV2` binds that
 bundle, selected profile/stack/launcher, exact module/argv target, export name,
 module hash, transport hash and launch ABI.
 
-The CLI target fixes an empty Node-option tuple, the exact bundled module as the
-first module argument, and transport-provided user arguments only after that
-module. The duplicated module-argument locator must equal the content-addressed
-module ref. Thus “argv owned by transport” cannot leave the actual Node module
-position or ambient Node options implicit.
+The CLI target distinguishes physical launcher arguments from candidate-visible
+arguments. The physical process uses exactly `node -e <code-owned bootstrap>
+<authenticated private config> ...transport`; the target binds the fixed `-e`
+tuple, bootstrap-source hash and launcher ABI hash. Before importing the
+candidate, the bootstrap removes the one admitted macOS-injected environment
+variable, verifies the exact environment/cwd/module bytes, clears
+`process.execArgv`, and rewrites `process.argv` to exactly
+`[nodeExecutable, bundledModule, ...transport]`. The candidate therefore sees an
+empty Node-option tuple and the exact bundled module as its first module
+argument, even though the physical launcher necessarily uses `-e`. The
+duplicated candidate-module locator must equal the content-addressed module ref.
+Thus “argv owned by transport” cannot leave bootstrap control arguments,
+candidate-visible module position or ambient Node options implicit.
 
 The candidate bundle does not expand the already-observed
 `CanonicalRuntimeTreeV2` profile enum and never launders the `dependencies`

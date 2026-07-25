@@ -32,6 +32,10 @@ import {
   deepFreezePlatformReleaseJsonV2,
   platformReleaseCandidateFitsCanonicalCapV2,
 } from "./platform-release-common-v2.js";
+import {
+  NODE_CLI_BOOTSTRAP_SOURCE_HASH_V2,
+  NODE_CLI_LAUNCHER_ABI_HASH_V2,
+} from "./node-cli-launcher-v2.js";
 
 export const CANDIDATE_LAUNCH_TARGET_V2_SCHEMA =
   "setfarm.candidate-launch-target.v2" as const;
@@ -104,9 +108,23 @@ const CandidateNodeEsmCliTargetIdentityV2Schema = z.object({
   entrypointAbi: z.literal("NODE_ESM_CLI_ENTRYPOINT_ABI_V2"),
   argvOwnership: z.literal("executable_invocation_transport_binding_v2"),
   argvLayout: z.object({
-    nodeOptionTokens: z.tuple([]),
-    moduleArgumentLocator: CandidateBundledApplicationModuleLocatorV2Schema,
-    transportArguments: z.literal("append_after_module"),
+    launcherNodeOptionTokens: z.tuple([z.literal("-e")]),
+    launcherBootstrapSourceHash: z.literal(
+      NODE_CLI_BOOTSTRAP_SOURCE_HASH_V2,
+    ),
+    launcherAbiHash: z.literal(NODE_CLI_LAUNCHER_ABI_HASH_V2),
+    bootstrapControlArgument: z.literal(
+      "authenticated_config_after_eval_source_hidden_before_candidate_import",
+    ),
+    candidateVisibleNodeOptionTokens: z.tuple([]),
+    candidateModuleArgumentLocator:
+      CandidateBundledApplicationModuleLocatorV2Schema,
+    candidateArgvRewrite: z.literal(
+      "node_executable_candidate_module_then_transport_arguments",
+    ),
+    transportArguments: z.literal(
+      "append_after_candidate_module_after_rewrite",
+    ),
   }).strict(),
 }).strict();
 
@@ -129,10 +147,13 @@ export const CandidateNodeEsmCliTargetV2Schema =
   CandidateNodeEsmCliTargetIdentityV2Schema.extend({
     targetHash: Sha256Schema,
   }).strict().superRefine((value, context) => {
-    if (value.argvLayout.moduleArgumentLocator !== value.module.logicalLocator) {
+    if (
+      value.argvLayout.candidateModuleArgumentLocator
+        !== value.module.logicalLocator
+    ) {
       context.addIssue({
         code: "custom",
-        path: ["argvLayout", "moduleArgumentLocator"],
+        path: ["argvLayout", "candidateModuleArgumentLocator"],
         message: "CLI argv layout must target the exact bundled module locator",
       });
     }
@@ -438,6 +459,20 @@ function addCandidateLaunchTargetIssuesV2(
       code: "custom",
       path: ["runtimeBundle"],
       message: "Candidate launch target must join the runtime bundle's exact packet, topology and content-first source authority",
+    });
+  }
+  if (
+    value.kind === "cli"
+    && (
+      value.launcher.launcherAbiHash !== NODE_CLI_LAUNCHER_ABI_HASH_V2
+      || value.target.argvLayout.launcherAbiHash
+        !== value.launcher.launcherAbiHash
+    )
+  ) {
+    context.addIssue({
+      code: "custom",
+      path: ["launcher", "launcherAbiHash"],
+      message: "CLI launch target must bind the exact code-owned bootstrap launcher ABI",
     });
   }
   if (!platformReleaseCandidateFitsCanonicalCapV2(

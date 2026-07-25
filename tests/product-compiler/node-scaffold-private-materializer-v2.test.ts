@@ -4,6 +4,8 @@ import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, renameSync } from "node:fs";
 import {
   chmod,
+  chown,
+  copyFile,
   link,
   mkdir,
   mkdtemp,
@@ -43,6 +45,17 @@ import {
   verifyCandidateRuntimeBundleV2ForTest,
   type CandidateRuntimeBundleAuthorityV2,
 } from "../../src/execution/candidate-runtime-bundle-v2.js";
+import {
+  NodeCliLauncherErrorV2,
+  copyNodeCliLaunchCaptureBytesV2ForTest,
+  destroyNodeCliLaunchObservationV2,
+  issueNodeCliLaunchAuthorityV2ForTest,
+  launchNodeCliV2,
+  type NodeCliLaunchAuthorityV2,
+} from "../../src/execution/launchers/node-cli-v2.js";
+import {
+  NodeCliLaunchReceiptV2Schema,
+} from "../../src/execution/schemas/node-cli-launcher-v2.js";
 import {
   CandidateRuntimeBundleV2Schema,
 } from "../../src/execution/schemas/candidate-runtime-bundle-v2.js";
@@ -343,6 +356,10 @@ import {
   type TestDatabase,
 } from "../execution-attempts/test-database.js";
 import {
+  decodeInvocationResponseV2,
+  encodeInvocationRequestV2,
+} from "../../src/product-compiler/invocation-input-transport-v2.js";
+import {
   entityFieldNodeExpressApiProductSpecV2,
   entityFieldNodeRuntimeBehaviorAuthorityV1,
   genuineNodeCliProductSpecV2,
@@ -466,10 +483,19 @@ async function makeHostFixture(root: string): Promise<HostFixtureV2> {
   const npmRoot = path.join(root, "lib", "node_modules", "npm");
   const npmCli = path.join(npmRoot, "bin", "npm-cli.js");
   const dynamicLibrary = path.join(root, "lib", "libnode.127.dylib");
+  const sourceNode = await realpath("/opt/homebrew/opt/node@22/bin/node");
+  const sourceDynamicLibrary = await realpath(
+    "/opt/homebrew/opt/node@22/lib/libnode.127.dylib",
+  );
   await mkdir(path.dirname(node), { recursive: true });
   await mkdir(path.dirname(npmCli), { recursive: true });
   await mkdir(path.join(npmRoot, "lib"), { recursive: true });
-  await writeFile(node, "fixture-node-binary\n", { mode: 0o555 });
+  await copyFile(sourceNode, node);
+  await copyFile(sourceDynamicLibrary, dynamicLibrary);
+  await Promise.all([
+    chown(node, process.getuid!(), process.getgid!()),
+    chown(dynamicLibrary, process.getuid!(), process.getgid!()),
+  ]);
   await writeFile(npmCli, "require('../lib/cli.js')(process)\n", { mode: 0o555 });
   await writeFile(path.join(npmRoot, "lib", "cli.js"), "module.exports = () => {}\n", {
     mode: 0o444,
@@ -479,7 +505,6 @@ async function makeHostFixture(root: string): Promise<HostFixtureV2> {
     version: "10.9.8",
     bin: { npm: "bin/npm-cli.js" },
   })}\n`, { mode: 0o444 });
-  await writeFile(dynamicLibrary, "fixture-dylib\n", { mode: 0o555 });
   await Promise.all([
     chmod(path.join(root, "bin"), 0o755),
     chmod(path.join(root, "lib"), 0o755),
@@ -1688,7 +1713,7 @@ describe("Node scaffold private staged materializer V2", () => {
         outputPath: "dist/cli.js",
         candidatePath: "candidate-bundle/application/cli.js",
         runtimeKind: "cli",
-        logicalBuildHash: "9f682c0f693999e01ccec6eb09ee07651b1056c198ddbb26c61ad52b4a5960b9",
+        logicalBuildHash: "187da06ff44445204592fc57b6f5bd73f0fa217b566c3df58902d8a203b14923",
       },
       {
         profileId: API_PROFILE,
@@ -1698,7 +1723,7 @@ describe("Node scaffold private staged materializer V2", () => {
         outputPath: "dist/app.js",
         candidatePath: "candidate-bundle/application/app.js",
         runtimeKind: "http_handler",
-        logicalBuildHash: "7c645d797803ce1b7a8a0f30c9c2e3f20c5ba3ed617312edf252f3def9135cfa",
+        logicalBuildHash: "9fe38cafd80ca89ac80b9417a3b90d3cbf21d84cd3e744c7cece01c73bd3ba1d",
       },
       {
         profileId: API_PROFILE,
@@ -1708,7 +1733,7 @@ describe("Node scaffold private staged materializer V2", () => {
         outputPath: "dist/app.js",
         candidatePath: "candidate-bundle/application/app.js",
         runtimeKind: "http_handler",
-        logicalBuildHash: "6f551d90c14837a8c1ac70e8fdd071413a71b80efea7134b4a12d51eef318c11",
+        logicalBuildHash: "41e7e028313663b7ada8d720d3e82a6e220c9add92142f04aae7718115ff750f",
       },
     ];
     for (const fixture of cases) {
@@ -2231,9 +2256,9 @@ describe("Node scaffold private staged materializer V2", () => {
     }
 
     assert.deepEqual(logicalBuildHashes, [
-      "e84797a297a091a9960d067e905a832d152cb997d83ac2a03ca0c8f08fc47a01",
-      "3783202378a7454b949397fb2946e9e8231984441a219273e5ed3dfa153f9900",
-      "4678f1ee2d9387d1795bf968a2edde0fd6bc0d61254822bef74629843f0452b4",
+      "999be2444be373ce1fb4ba4e7331e0260c7ffbba64718b9c6f67fc4a48084801",
+      "525e3371c8eadbea0c8d77663fc77944b3bd11928f3c4758413c9b5aa084e931",
+      "cff4e24f3f9def19e603d148a98fe59308131f42b97e7f16177187be4441bcd7",
     ]);
   });
 
@@ -5000,6 +5025,122 @@ describe("Node scaffold private staged materializer V2", () => {
           verifiedRuntime.bundle.bundleHash,
           issuedRuntime.bundle.bundleHash,
         );
+        if (caseIndex === 0) {
+          const action = fixture.productSpec.actions[0]!;
+          const issuedLaunch =
+            await issueNodeCliLaunchAuthorityV2ForTest({
+              runtimeAuthority: issuedRuntime.authority,
+              expectedBundleHash: issuedRuntime.bundle.bundleHash,
+              actionRef: action.id,
+            });
+          assert.equal(
+            issuedLaunch.status,
+            "issued_test_fixture_authority",
+          );
+          assert.notEqual(
+            issuedLaunch.transportContract.contractHash,
+            generated.receipt.authority.invocationTransportSet.contractSetHash,
+          );
+          const encoded = encodeInvocationRequestV2({
+            contract: issuedLaunch.transportContract,
+            inputValues: action.evidenceScenario.targetInputValues,
+          });
+          assert.equal(encoded.status, "encoded");
+          assert.equal(encoded.kind, "cli_command");
+          await assert.rejects(
+            launchNodeCliV2({
+              authority: {
+                ...issuedLaunch.authority,
+              } as NodeCliLaunchAuthorityV2,
+              encodedRequest: encoded,
+            }),
+            (error: unknown) => error instanceof NodeCliLauncherErrorV2
+              && error.code
+                === "NODE_CLI_LAUNCHER_V2_AUTHORITY_UNAUTHENTICATED",
+          );
+          const launchedClaims = await Promise.allSettled([
+            launchNodeCliV2({
+              authority: issuedLaunch.authority,
+              encodedRequest: encoded,
+            }),
+            launchNodeCliV2({
+              authority: issuedLaunch.authority,
+              encodedRequest: encoded,
+            }),
+          ]);
+          const fulfilledLaunch = launchedClaims.find((claim) =>
+            claim.status === "fulfilled");
+          const rejectedLaunch = launchedClaims.find((claim) =>
+            claim.status === "rejected");
+          assert.ok(fulfilledLaunch?.status === "fulfilled");
+          assert.ok(rejectedLaunch?.status === "rejected");
+          assert.equal(
+            (rejectedLaunch as PromiseRejectedResult).reason.code,
+            "NODE_CLI_LAUNCHER_V2_AUTHORITY_ALREADY_CONSUMED",
+          );
+          const launched = (fulfilledLaunch as PromiseFulfilledResult<
+            Awaited<ReturnType<typeof launchNodeCliV2>>
+          >).value;
+          assert.equal(
+            NodeCliLaunchReceiptV2Schema.safeParse(launched.receipt).success,
+            true,
+          );
+          assert.equal(
+            launched.receipt.candidate.runtimeBundleHash,
+            issuedRuntime.bundle.bundleHash,
+          );
+          assert.equal(
+            launched.receipt.transport.contractHash,
+            issuedLaunch.transportContract.contractHash,
+          );
+          assert.equal(
+            launched.receipt.transport.contractSetHash,
+            generated.receipt.authority.invocationTransportSet
+              .contractSetHash,
+          );
+          assert.equal(
+            launched.receipt.transport.contractMembershipHash,
+            generated.receipt.authority.invocationTransportSet
+              .membershipHash,
+          );
+          assert.equal(
+            launched.receipt.execution.sourceFenceBeforeHash,
+            launched.receipt.execution.sourceFenceAfterHash,
+          );
+          assert.deepEqual(
+            launched.receipt.process.termination,
+            { status: "exited", exitCode: 0, signal: null },
+          );
+          const capture = copyNodeCliLaunchCaptureBytesV2ForTest(
+            launched.observation,
+          );
+          const decoded = decodeInvocationResponseV2({
+            contract: issuedLaunch.transportContract,
+            response: {
+              kind: "cli_process_result",
+              exitCode: 0,
+              stdoutBytes: capture.stdout,
+              stderrBytes: capture.stderr,
+            },
+          });
+          assert.equal(decoded.status, "decoded_success");
+          assert.equal(decoded.kind, "cli_command");
+          if (decoded.status !== "decoded_success") {
+            throw new Error("Expected decoded CLI success");
+          }
+          assert.deepEqual(decoded.value, { title: "Ship Setfarm" });
+          capture.stdout.fill(0);
+          capture.stderr.fill(0);
+          destroyNodeCliLaunchObservationV2(launched.observation);
+          assert.throws(
+            () => copyNodeCliLaunchCaptureBytesV2ForTest(
+              launched.observation,
+            ),
+            {
+              code: "NODE_CLI_LAUNCHER_V2_OBSERVATION_DESTROYED",
+            },
+          );
+        }
         await assert.rejects(
           verifyCandidateRuntimeBundleV2ForTest({
             runtimeAuthority: {
@@ -5125,11 +5266,11 @@ describe("Node scaffold private staged materializer V2", () => {
     }
 
     assert.deepEqual(storyPlanHashes, [
-      "ec88d86bdac108f77daf50710371014748a8cb1d4fb1a45e6c6b3fd6f9805408",
-      "5652228735f1018469a6f1ced468391585aa5e8b5bab245d83eaab97f024fd22",
-      "681d4661a4c13dc8256760424bed48514bdc0889a5d33213574c35dd91818c9f",
-      "f155909ff73d237f5468a034578dc2a9f8c6d9a6ccc85b82a6fdbb5a11329368",
-      "3045cdd6b4d6b6125dbed33736f5f43c3726652a3e9a5fa3c6f24561ddf709ab",
+      "d294d452f89a235be3ee8989f18935ac1fbd9e43916e9a5cdbd8977442a623c1",
+      "6f6d26829cf35e14ef1bfc85abe7b05fbeb0bd3b07a191553246101a06a79aa2",
+      "5dc7f9770caa603e281985bdca7c07bba4534781ae5aec71feaf5669dd5783ee",
+      "74ad42f28bce0543d0e316c5a689d90407d40f1007e6e13197ffbae5840272e1",
+      "567c3eacbeb7d05e5d89821060d56a849c0b6ccfa70d29093c3996afc92c6a15",
     ]);
     assert.equal(sourceMapManifestHashes.length, cases.length);
     assert.equal(new Set(sourceMapManifestHashes).size, cases.length);
@@ -5476,7 +5617,7 @@ describe("Node scaffold private staged materializer V2", () => {
         entrypointKind: "cli",
         sourcePath: "src/cli.ts",
         routeCount: 1,
-        transitionHash: "cd8014a004d21f00ea38169f78a26a5c9790789540a0bf6d8f93e53fd99f148d",
+        transitionHash: "96fad444dd7433b33e045b3980b2fdf623e8e2a666460c1a1fec5cb75bca8edf",
       },
       {
         profileId: API_PROFILE,
@@ -5485,7 +5626,7 @@ describe("Node scaffold private staged materializer V2", () => {
         entrypointKind: "api",
         sourcePath: "src/app.ts",
         routeCount: 1,
-        transitionHash: "73bddefb895694fc7d5a0b50151573377c8aa24027f11c45bb86bef79ceafcf5",
+        transitionHash: "2a142a648d75fee4311c89df90d311c7c1d24d34edb3a22cb8d7363cc5a1799d",
       },
       {
         profileId: API_PROFILE,
@@ -5494,7 +5635,7 @@ describe("Node scaffold private staged materializer V2", () => {
         entrypointKind: "api",
         sourcePath: "src/app.ts",
         routeCount: 2,
-        transitionHash: "4a535961087f8a3e91603bafbeb48fb73b9c0fef5c5e440c93b9c86b3bc13f15",
+        transitionHash: "633a23ad981580efd5fee5520b0066ff8d06643a571ba417127fb5dd1396477e",
       },
     ];
     for (const fixture of cases) {

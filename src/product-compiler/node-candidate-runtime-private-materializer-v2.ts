@@ -34,6 +34,7 @@ import {
   hashCanonicalJson,
 } from "./canonical-json.js";
 import {
+  acquireNodeCandidateRuntimeLaunchEnvironmentInternalV2,
   destroyNodeScaffoldExecutionEnvironmentV2,
   executeNodeCandidateRuntimeEnvironmentNpmCiInternalV2,
   revalidateNodeCandidateRuntimeExecutionContextInternalV2,
@@ -456,9 +457,7 @@ function writeExclusiveFile(input: Readonly<{
   }
 }
 
-function captureSealedFile<
-  TLocator extends "package.json" | "package-lock.json",
->(input: Readonly<{
+function captureSealedFile<TLocator extends string>(input: Readonly<{
   absolutePath: string;
   logicalLocator: TLocator;
   maxBytes: number;
@@ -1214,6 +1213,99 @@ export async function revalidateNodeCandidateRuntimePrivateV2(
     );
   }
   return defensiveCopy(fresh);
+}
+
+/**
+ * @internal
+ *
+ * Physical locators never enter a serialized bundle or public authority
+ * handle. This bridge accepts only the otherwise-unexposed authentic private
+ * materializer handle and fresh-reproduces the complete bundle before giving
+ * the execution layer its immediate pre-spawn context.
+ */
+export type NodeCandidateRuntimePhysicalLaunchContextInternalV2 = Readonly<{
+  admissionScope: AdmissionScopeV2;
+  profileId: NodeScaffoldProfileIdV2;
+  bundleRoot: string;
+  applicationRoot: string;
+  materializationHash: string;
+  applicationTree: CanonicalRuntimeTreeV2;
+  applicationEntrypoint: Readonly<{
+    logicalLocator: "cli.js" | "app.js";
+    absolutePath: string;
+    contentHash: string;
+    byteLength: number;
+    mode: "0444";
+    physicalIdentityHash: string;
+  }>;
+  environment: Awaited<
+    ReturnType<
+      typeof acquireNodeCandidateRuntimeLaunchEnvironmentInternalV2
+    >
+  >;
+}>;
+
+export async function acquireNodeCandidateRuntimePhysicalLaunchContextInternalV2(
+  handle: MaterializedNodeCandidateRuntimePrivateV2,
+): Promise<NodeCandidateRuntimePhysicalLaunchContextInternalV2> {
+  const state = authenticState(handle);
+  const materialization = await revalidateNodeCandidateRuntimePrivateV2(handle);
+  const environment =
+    await acquireNodeCandidateRuntimeLaunchEnvironmentInternalV2(
+      state.environment,
+    );
+  const applicationRoot = path.join(state.bundleRoot, "application");
+  const logicalLocator = state.profileId
+    === "PROFILE_NODE_CLI_STATELESS_EXACT_V2"
+    ? "cli.js" as const
+    : "app.js" as const;
+  const entry = materialization.applicationTree.entries.find((candidate) =>
+    candidate.path === logicalLocator);
+  if (
+    !entry
+    || entry.type !== "file"
+    || entry.mode !== "0444"
+    || entry.executable
+  ) {
+    return fail(
+      "NODE_CANDIDATE_RUNTIME_PRIVATE_V2_AUTHORITY_MISMATCH",
+      "Candidate runtime launch entrypoint is absent or not one sealed data module",
+    );
+  }
+  const capturedEntrypoint = captureSealedFile({
+    absolutePath: path.join(applicationRoot, logicalLocator),
+    logicalLocator,
+    maxBytes: 64 * 1024 * 1024,
+  });
+  if (
+    environment.admissionScope !== state.admissionScope
+    || environment.profileId !== state.profileId
+    || materialization.environment.receiptHash
+      !== environment.environmentReceiptHash
+    || materialization.hostToolchain.receiptHash
+      !== environment.hostRuntime.hostToolchainReceiptHash
+    || capturedEntrypoint.contentHash !== entry.contentHash
+    || capturedEntrypoint.byteLength !== entry.byteLength
+  ) {
+    return fail(
+      "NODE_CANDIDATE_RUNTIME_PRIVATE_V2_AUTHORITY_MISMATCH",
+      "Candidate runtime launch context does not join its exact environment",
+    );
+  }
+  return Object.freeze({
+    admissionScope: state.admissionScope,
+    profileId: state.profileId,
+    bundleRoot: state.bundleRoot,
+    applicationRoot,
+    materializationHash: materialization.materializationHash,
+    applicationTree: defensiveCopy(materialization.applicationTree),
+    applicationEntrypoint: Object.freeze({
+      ...capturedEntrypoint,
+      absolutePath: path.join(applicationRoot, logicalLocator),
+      mode: "0444" as const,
+    }),
+    environment,
+  });
 }
 
 export function destroyNodeCandidateRuntimePrivateV2(

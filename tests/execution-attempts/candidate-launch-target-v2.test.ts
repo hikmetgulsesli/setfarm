@@ -35,6 +35,10 @@ import {
   CANDIDATE_CANONICAL_RUNTIME_TREE_ARTIFACT_REF_V2_SCHEMA,
 } from "../../src/execution/schemas/candidate-build-receipt-v2.js";
 import {
+  NODE_CLI_BOOTSTRAP_SOURCE_HASH_V2,
+  NODE_CLI_LAUNCHER_ABI_HASH_V2,
+} from "../../src/execution/schemas/node-cli-launcher-v2.js";
+import {
   CANDIDATE_RUNTIME_APPLICATION_TREE_BINDING_V2_SCHEMA,
   CANDIDATE_RUNTIME_BUNDLE_CONTRACT_HASH_V2,
   CANDIDATE_RUNTIME_BUNDLE_V2_SCHEMA,
@@ -254,9 +258,17 @@ function cliTarget() {
     entrypointAbi: "NODE_ESM_CLI_ENTRYPOINT_ABI_V2",
     argvOwnership: "executable_invocation_transport_binding_v2",
     argvLayout: {
-      nodeOptionTokens: [],
-      moduleArgumentLocator: bundledModule("cli").logicalLocator,
-      transportArguments: "append_after_module",
+      launcherNodeOptionTokens: ["-e"],
+      launcherBootstrapSourceHash: NODE_CLI_BOOTSTRAP_SOURCE_HASH_V2,
+      launcherAbiHash: NODE_CLI_LAUNCHER_ABI_HASH_V2,
+      bootstrapControlArgument:
+        "authenticated_config_after_eval_source_hidden_before_candidate_import",
+      candidateVisibleNodeOptionTokens: [],
+      candidateModuleArgumentLocator: bundledModule("cli").logicalLocator,
+      candidateArgvRewrite:
+        "node_executable_candidate_module_then_transport_arguments",
+      transportArguments:
+        "append_after_candidate_module_after_rewrite",
     },
   };
   return { ...identity, targetHash: hashCandidateNodeEsmCliTargetV2(identity) };
@@ -313,7 +325,7 @@ function launchTarget(kind: TargetKind): CandidateLaunchTargetV2 {
       launcher: {
         launcherDefinitionHash: sha("cli-launcher-definition"),
         launcherModuleHash: sha("cli-launcher-module"),
-        launcherAbiHash: sha("cli-launcher-abi"),
+        launcherAbiHash: NODE_CLI_LAUNCHER_ABI_HASH_V2,
         launcherRef: "LAUNCH_NODE_CLI_V2",
       },
       executableTransport: executableTransportBinding("cli") as Extract<
@@ -377,7 +389,7 @@ function rehashCandidate(candidate: CandidateLaunchTargetV2): void {
   candidate.target.module.moduleRefHash =
     hashCandidateBundledApplicationModuleRefV2(candidate.target.module);
   if (candidate.kind === "cli") {
-    candidate.target.argvLayout.moduleArgumentLocator =
+    candidate.target.argvLayout.candidateModuleArgumentLocator =
       candidate.target.module.logicalLocator;
     candidate.target.targetHash = hashCandidateNodeEsmCliTargetV2(candidate.target);
   } else {
@@ -408,10 +420,26 @@ test("CLI and HTTP launch candidates bind exact literal projections and parse as
   assert.equal(cli.target.entrypointAbi, "NODE_ESM_CLI_ENTRYPOINT_ABI_V2");
   assert.equal(cli.target.argvOwnership,
     "executable_invocation_transport_binding_v2");
-  assert.deepEqual(cli.target.argvLayout.nodeOptionTokens, []);
-  assert.equal(cli.target.argvLayout.moduleArgumentLocator,
+  assert.deepEqual(cli.target.argvLayout.launcherNodeOptionTokens, ["-e"]);
+  assert.equal(
+    cli.target.argvLayout.launcherBootstrapSourceHash,
+    NODE_CLI_BOOTSTRAP_SOURCE_HASH_V2,
+  );
+  assert.equal(
+    cli.target.argvLayout.launcherAbiHash,
+    NODE_CLI_LAUNCHER_ABI_HASH_V2,
+  );
+  assert.deepEqual(cli.target.argvLayout.candidateVisibleNodeOptionTokens, []);
+  assert.equal(cli.target.argvLayout.candidateModuleArgumentLocator,
     cli.target.module.logicalLocator);
-  assert.equal(cli.target.argvLayout.transportArguments, "append_after_module");
+  assert.equal(
+    cli.target.argvLayout.candidateArgvRewrite,
+    "node_executable_candidate_module_then_transport_arguments",
+  );
+  assert.equal(
+    cli.target.argvLayout.transportArguments,
+    "append_after_candidate_module_after_rewrite",
+  );
   assert.equal(api.profile.profileId,
     "PROFILE_NODE_EXPRESS_API_STATELESS_EXACT_V2");
   assert.equal(api.stackPack.stackPackId, "node-express-api");
@@ -532,7 +560,6 @@ test("self-consistent external-authority changes remain explicitly unverified ca
   candidate.stackPack.stackPackContentHash = sha("self-consistent-other-stack");
   candidate.launcher.launcherDefinitionHash = sha("self-consistent-other-launcher-def");
   candidate.launcher.launcherModuleHash = sha("self-consistent-other-launcher-module");
-  candidate.launcher.launcherAbiHash = sha("self-consistent-other-launcher-abi");
   candidate.executableTransport.bindingHash = sha("self-consistent-other-binding");
   candidate.executableTransport.transportContractHash = sha("self-consistent-other-contract");
   candidate.target.module.contentHash = sha("self-consistent-other-module");
@@ -622,7 +649,7 @@ test("API ownership and CLI argv policies cannot be weakened even with fresh has
   assert.equal(CandidateLaunchTargetV2Schema.safeParse(cli).success, false);
 
   const wrongModuleArgument = launchTarget("cli");
-  wrongModuleArgument.target.argvLayout.moduleArgumentLocator =
+  wrongModuleArgument.target.argvLayout.candidateModuleArgumentLocator =
     "candidate-bundle/application/other-entry.js";
   wrongModuleArgument.target.targetHash = hashCandidateNodeEsmCliTargetV2(
     wrongModuleArgument.target,
@@ -632,6 +659,48 @@ test("API ownership and CLI argv policies cannot be weakened even with fresh has
   );
   assert.equal(
     CandidateLaunchTargetV2Schema.safeParse(wrongModuleArgument).success,
+    false,
+  );
+
+  const cliPolicyMutations: Array<(argvLayout: Record<string, unknown>) => void> = [
+    (argvLayout) => {
+      argvLayout.launcherNodeOptionTokens = [];
+    },
+    (argvLayout) => {
+      argvLayout.launcherBootstrapSourceHash = sha("other-bootstrap");
+    },
+    (argvLayout) => {
+      argvLayout.launcherAbiHash = sha("other-cli-launcher-abi");
+    },
+    (argvLayout) => {
+      argvLayout.bootstrapControlArgument = "caller_visible_bootstrap_config";
+    },
+    (argvLayout) => {
+      argvLayout.candidateVisibleNodeOptionTokens = ["-e"];
+    },
+    (argvLayout) => {
+      argvLayout.candidateArgvRewrite = "leave_bootstrap_argv_visible";
+    },
+    (argvLayout) => {
+      argvLayout.transportArguments = "append_after_bootstrap_config";
+    },
+  ];
+  for (const mutate of cliPolicyMutations) {
+    const candidate = clone(launchTarget("cli")) as unknown as Record<string, unknown>;
+    const target = candidate.target as Record<string, unknown>;
+    mutate(target.argvLayout as Record<string, unknown>);
+    target.targetHash = hashCandidateNodeEsmCliTargetV2(target as never);
+    candidate.launchTargetHash = hashCandidateLaunchTargetV2(candidate as never);
+    assert.equal(CandidateLaunchTargetV2Schema.safeParse(candidate).success, false);
+  }
+
+  const wrongLauncherAbi = launchTarget("cli");
+  wrongLauncherAbi.launcher.launcherAbiHash = sha("other-cli-launcher-abi");
+  wrongLauncherAbi.launchTargetHash = hashCandidateLaunchTargetV2(
+    wrongLauncherAbi,
+  );
+  assert.equal(
+    CandidateLaunchTargetV2Schema.safeParse(wrongLauncherAbi).success,
     false,
   );
 });
@@ -705,15 +774,15 @@ test("literal launch hashes are golden and every hash domain is separated", () =
     cliRuntimeBindingHash: "abd770eccf66e2cdf4bd57605860ad3841841663f228e0514431ec8fa3251ec3",
     cliExecutableBindingHash: "6a50196b4ccd0f9ff710e155c0cca9cb88f678cf6cddad2cd8c81da57a6cdfaf",
     cliModuleRefHash: "4f405d08e63be1885c720846b91007d1d0dd2415e1d907fb82b695cef9910abe",
-    cliTargetHash: "18e0f5cde4af1ffe523307c32226adb2b8f867b447b68ea14ebf9f5d2d731e69",
-    cliLaunchTargetHash: "2a1f2da5975b5fa55f5ec3519cc27bc260245e1d3ad35ab777de50d59751a995",
+    cliTargetHash: "e014de4ea3028fac7dcfcd2c8d23499d3a28cdadf334fa55998f1242ef930576",
+    cliLaunchTargetHash: "c741f608fc916ab50ee600b33fbadeeb8f9f22dd174726fd5025d70386ce2772",
     apiApplicationBindingHash: "d0d742a7163b629e1ed162af75eb22e9c4dbccba8d60a21e9e5e046d6884be15",
     apiRuntimeBindingHash: "8f023a8af1385b92e93f15f7eb7588f8cf5ce1c6c6e3a9987fc12981c6c1d3b5",
     apiExecutableBindingHash: "e7e3af38d3c783697e31b2e810b1ce45531522c34c4e765b388f0c6613ecb768",
     apiModuleRefHash: "a521a1831ef85313ec5b381569396eb6e3e116b6e1380d157f1758307ac61485",
     apiHandlerExportHash: "c4ad9f5c58125077802c566f0703bde7168fb266baa91e280e1bdce9018f053f",
     apiLaunchTargetHash: "836be818d6523adb48dd286f38e709dcee6bbbd6490cb35e85596738891a221f",
-    cliCanonicalBytes: 4_872,
+    cliCanonicalBytes: 5_319,
     apiCanonicalBytes: 4_861,
   });
   const hashes = Object.entries(actual)

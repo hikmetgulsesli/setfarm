@@ -48,8 +48,10 @@ import type { BuildTopologyV3 } from
 import type { BuildDependencyMaterializationReceiptV2 } from
   "../product-compiler/schemas/node-scaffold-private-materialization-v2.js";
 import {
+  acquireVerifiedCandidateSourceInvocationTransportInternalV1,
   acquireVerifiedCandidateSourceBuildContextInternalV1,
   revalidateVerifiedCandidateSourceAuthorityV1,
+  type VerifiedCandidateSourceInvocationTransportInternalV1,
   type VerifiedCandidateSourceAuthorityV1,
   type VerifiedCandidateSourceBuildContextInternalV1,
 } from "./candidate-source-v1.js";
@@ -1053,4 +1055,66 @@ export function settleCandidateBuildRuntimeBundleContextInternalV2(
     );
   }
   state.runtimeBundleLease.status = "consumed";
+}
+
+export type CandidateBuildInvocationTransportContextInternalV2 = Readonly<{
+  admissionScope: "production_host" | "test_fixture";
+  buildReceiptHash: string;
+  buildOutputTreeHash: string;
+  source: VerifiedCandidateSourceInvocationTransportInternalV1;
+}>;
+
+/**
+ * @internal
+ *
+ * Resolves launch transport only through the source authority retained by this
+ * exact build. It does not consume the runtime-bundle lease and exposes no
+ * filesystem locator.
+ */
+export async function acquireCandidateBuildInvocationTransportContextInternalV2(
+  authority: CandidateBuildAuthorityV2,
+  expectedScope: "production_host" | "test_fixture",
+  actionRef: unknown,
+): Promise<CandidateBuildInvocationTransportContextInternalV2> {
+  const state = authenticBuildStateV2(authority);
+  if (state.expectedScope !== expectedScope) {
+    return fail(
+      "CANDIDATE_BUILD_V2_AUTHORITY_UNAUTHENTICATED",
+      "Candidate build transport authority scope does not match",
+    );
+  }
+  const verified = await verifyBuildInternalV2({
+    buildAuthority: authority,
+    expectedReceiptHash: state.receipt.receiptHash,
+  }, expectedScope);
+  const source =
+    await acquireVerifiedCandidateSourceInvocationTransportInternalV1(
+      state.sourceAuthority,
+      actionRef,
+    );
+  if (
+    verified.status !== "verified_shadow"
+    || verified.receipt.receiptHash !== state.receipt.receiptHash
+    || source.candidateSourceReceiptHash
+      !== state.receipt.authority.candidateSource.receiptHash
+    || source.semanticRevisionHash
+      !== state.receipt.authority.candidateSource.semanticRevisionHash
+    || source.implementationClosureHash
+      !== state.receipt.authority.implementationClosure.closureHash
+    || source.productBuildPacketHash
+      !== state.receipt.authority.packet.packetHash
+    || source.productBuildPacketEnvelopeHash
+      !== state.receipt.authority.packet.envelopeHash
+  ) {
+    return fail(
+      "CANDIDATE_BUILD_V2_OUTPUT_REJECTED",
+      "Candidate build transport authority no longer joins its exact source and packet",
+    );
+  }
+  return Object.freeze({
+    admissionScope: state.expectedScope,
+    buildReceiptHash: state.receipt.receiptHash,
+    buildOutputTreeHash: state.receipt.outputTree.treeHash,
+    source,
+  });
 }
