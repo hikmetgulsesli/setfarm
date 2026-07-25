@@ -10,6 +10,19 @@ import {
   deepFreezePlatformReleaseJsonV2,
   platformReleaseCandidateFitsCanonicalCapV2,
 } from "./platform-release-common-v2.js";
+import {
+  NETWORK_ISOLATION_NEGATIVE_PROBE_RECEIPT_SCHEMA_HASH_V2,
+  NETWORK_ISOLATION_NEGATIVE_PROBE_RECEIPT_V2_SCHEMA,
+} from "./network-isolation-negative-probe-v2.js";
+
+export {
+  NETWORK_ISOLATION_NEGATIVE_PROBE_RECEIPT_SCHEMA_HASH_V2,
+  NETWORK_ISOLATION_NEGATIVE_PROBE_RECEIPT_V2_SCHEMA,
+  NetworkIsolationNegativeProbeReceiptV2Schema,
+  hashNetworkIsolationNegativeProbeReceiptV2,
+  networkIsolationNegativeProbeReceiptSchemaHashV2,
+  parseNetworkIsolationNegativeProbeReceiptV2,
+} from "./network-isolation-negative-probe-v2.js";
 
 export const EVIDENCE_ENVIRONMENT_CAPSULE_V2_SCHEMA =
   "setfarm.evidence-environment-capsule.v2" as const;
@@ -18,7 +31,7 @@ export const METADATA_PROBE_AUTHORITY_V2_SCHEMA =
 export const NETWORK_ISOLATION_AUTHORITY_V2_SCHEMA =
   "setfarm.network-isolation-authority.v2" as const;
 export const NETWORK_NEGATIVE_PROBE_RECEIPT_V2_SCHEMA =
-  "setfarm.network-negative-probe-receipt.v2" as const;
+  NETWORK_ISOLATION_NEGATIVE_PROBE_RECEIPT_V2_SCHEMA;
 export const METADATA_PROBE_RECEIPT_V2_SCHEMA =
   "setfarm.metadata-probe-receipt.v2" as const;
 export const EVIDENCE_ENVIRONMENT_CAPSULE_V2_MAX_CANONICAL_BYTES = 64 * 1024;
@@ -110,7 +123,9 @@ const NetworkIsolationAuthorityIdentityV2Schema = z.object({
   canonicalProfileHash: Sha256Schema,
   hostRuntimeIdentityHash: Sha256Schema,
   negativeProbeReceiptSchema: z.literal(NETWORK_NEGATIVE_PROBE_RECEIPT_V2_SCHEMA),
-  negativeProbeReceiptSchemaHash: Sha256Schema,
+  negativeProbeReceiptSchemaHash: z.literal(
+    NETWORK_ISOLATION_NEGATIVE_PROBE_RECEIPT_SCHEMA_HASH_V2,
+  ),
 }).strict();
 
 export type NetworkIsolationAuthorityHashPayloadV2 = z.infer<

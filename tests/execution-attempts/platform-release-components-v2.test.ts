@@ -20,6 +20,7 @@ import {
   METADATA_PROBE_RECEIPT_V2_SCHEMA,
   NETWORK_ISOLATION_AUTHORITY_V2_SCHEMA,
   NETWORK_NEGATIVE_PROBE_RECEIPT_V2_SCHEMA,
+  NETWORK_ISOLATION_NEGATIVE_PROBE_RECEIPT_SCHEMA_HASH_V2,
   hashEvidenceEnvironmentCapsuleV2,
   hashMetadataProbeAuthorityV2,
   hashNetworkIsolationAuthorityV2,
@@ -250,7 +251,8 @@ function createNetworkIsolationCandidate(hostRuntimeIdentityHash: string) {
     canonicalProfileHash: sha("network-profile"),
     hostRuntimeIdentityHash,
     negativeProbeReceiptSchema: NETWORK_NEGATIVE_PROBE_RECEIPT_V2_SCHEMA,
-    negativeProbeReceiptSchemaHash: sha("negative-network-probe-receipt-schema"),
+    negativeProbeReceiptSchemaHash:
+      NETWORK_ISOLATION_NEGATIVE_PROBE_RECEIPT_SCHEMA_HASH_V2,
   };
   return {
     ...identity,
@@ -792,6 +794,10 @@ test("environment capsule candidate seals allowlists and exact metadata/network 
     parsed.network.authority,
   ));
   assert.equal(
+    parsed.network.authority.negativeProbeReceiptSchemaHash,
+    NETWORK_ISOLATION_NEGATIVE_PROBE_RECEIPT_SCHEMA_HASH_V2,
+  );
+  assert.equal(
     parsed.filesystem.metadataProbeAuthorityHash,
     external.metadataProbe.authorityHash,
   );
@@ -828,6 +834,17 @@ test("environment capsule candidate seals allowlists and exact metadata/network 
   networkTamper.network.authority.canonicalProfileHash = sha("tampered-profile");
   networkTamper.environmentCapsuleHash = hashEvidenceEnvironmentCapsuleV2(networkTamper);
   assert.throws(() => parseEvidenceEnvironmentCapsuleCandidateV2(networkTamper));
+
+  const receiptAbiTamper = clone(candidate) as any;
+  receiptAbiTamper.network.authority.negativeProbeReceiptSchemaHash =
+    sha("caller-network-receipt-abi");
+  receiptAbiTamper.network.authority.authorityHash =
+    hashNetworkIsolationAuthorityV2(receiptAbiTamper.network.authority);
+  receiptAbiTamper.environmentCapsuleHash =
+    hashEvidenceEnvironmentCapsuleV2(receiptAbiTamper);
+  assert.throws(() => parseEvidenceEnvironmentCapsuleCandidateV2(
+    receiptAbiTamper,
+  ));
 
   const metadataTamper = clone(candidate) as any;
   metadataTamper.filesystem.metadataProbeAuthorityHash = sha("tampered-module");
@@ -1209,8 +1226,8 @@ test("component canonical hashes and byte lengths match hardcoded golden vectors
     packageGraphHash: "060f6de7f196c4adb0bb75a940eefae2ce213385370d66e4791567f82300ffe8",
     metadataProbeHash: "b34ce4aa52892c45b7ebb535df83a689e4a23cda55e88217d194b05cc1e10aa2",
     externalResolutionHash: "6b0b4902e5aadd7cde26ca2efc2b02439ff67342d8711f5aaadf80b82e47ccb5",
-    networkIsolationHash: "df66fe0a14bc59e83787aad5fbb1951705e09f26ed91477e05f8a7f2530d7c60",
-    environmentCapsuleHash: "414c83f0af2c003de52bc562925e08f518ce4375f73304935d850d07cb3f56cd",
+    networkIsolationHash: "8b41cbe4c27ed3299a0455ade9d25e0212aa5fa6848d44bd88f3e97ac8c8e310",
+    environmentCapsuleHash: "1ea34bb326c827958a5d900eea4011a3cc824616c66a9d6c33351b9844011da2",
     browserClosureHash: "d934d4c4e1aa5a56ca3670e32694c08ed1c84191e39b836ae1a5a6f6f53627d8",
     browserExternalResolutionHash: "3e089dfe2ff5e4ac239c851f263c45230f0e2ed963c89bb07e4a7c4343a1d5eb",
     runtimeCanonicalBytes: 1976,

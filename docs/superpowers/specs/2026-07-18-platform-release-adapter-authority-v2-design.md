@@ -433,8 +433,9 @@ type EvidenceEnvironmentCapsuleV2 = {
       sandboxExecutableRef: "EXEC_MACOS_SANDBOX_EXEC_V2";
       canonicalProfileHash: Sha256;
       hostRuntimeIdentityHash: Sha256;
-      negativeProbeReceipt: NetworkIsolationNegativeProbeReceiptV2;
-      negativeProbeReceiptHash: Sha256;
+      negativeProbeReceiptSchema:
+        "setfarm.network-negative-probe-receipt.v2";
+      negativeProbeReceiptSchemaHash: Sha256;
       authorityHash: Sha256;
     };
   };
@@ -464,18 +465,28 @@ resolution. The environment capsule carries only its authority hash; the root
 manifest verifier requires exact equality. Duplicating the whole caller-shaped
 object in both components would create two independently hashable truths.
 
-The network fields are promises only when the authority resolves to a real,
-verified release wrapper plus exact host sandbox executable/profile/OS build and
-the full bounded `NetworkIsolationNegativeProbeReceiptV2`, not merely a chosen
-receipt-schema hash. That receipt binds release/wrapper/profile/host identities,
-one attempt nonce, exact loopback success, exact DNS/outbound/redirect negative
-probes, observed process lifecycle, bounded captures, start/end time and its own
-domain-separated hash. The fresh release verifier reruns the code-owned probe and
-requires canonical equality before issuing authority. The first macOS
+The deterministic manifest carries the code-owned negative-probe receipt ABI,
+not one observed receipt. An observed receipt contains an attempt nonce, process
+identity and timestamps; embedding it in the manifest would make the required
+double clean build non-reproducible. The network fields therefore become
+operational promises only when the fresh verified-release boundary resolves the
+manifest contract to a real release wrapper plus exact host sandbox
+executable/profile/OS build and a full bounded
+`NetworkIsolationNegativeProbeReceiptV2`. The verified-release private state and
+activation acknowledgement bind that receipt hash outside the immutable
+manifest.
+
+The receipt binds release-candidate/wrapper/profile/host identities, one attempt
+nonce, exact loopback success, exact DNS/outbound/redirect negative probes,
+observed process lifecycle, bounded captures, start/end time and its own
+domain-separated hash. The fresh release verifier reruns the code-owned probe
+and requires the exact deterministic identity projection plus the same typed
+probe outcomes before issuing authority; nonce, process and time observations
+remain new evidence rather than fake reproducible constants. The first macOS
 implementation must reuse or replace the existing Darwin runtime-isolation
 mechanism under this exact schema; prose does not authorize it. A schema-valid
-capsule without that reproduced receipt join is shadow-blocked; environment
-variables alone never prove loopback-only isolation.
+capsule or chosen receipt-schema hash without that fresh receipt join is
+shadow-blocked; environment variables alone never prove loopback-only isolation.
 
 Port allocation returns a private `ExclusiveSocketLeaseV2` whose bound
 `net.Server`, descriptor, address, port, attempt nonce and lease hash remain in a

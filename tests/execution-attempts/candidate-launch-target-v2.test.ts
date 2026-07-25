@@ -702,17 +702,17 @@ test("literal launch hashes are golden and every hash domain is separated", () =
   };
   assert.deepEqual(actual, {
     cliApplicationBindingHash: "d27489b691eabcfdffc785ad9c8510f6442d0bd5259b3c8039aefcd7f0bcfc7f",
-    cliRuntimeBindingHash: "6941744ac414ddc2a3c177199ca08f9b79a4d965700fa7fee8b21d23134971eb",
+    cliRuntimeBindingHash: "abd770eccf66e2cdf4bd57605860ad3841841663f228e0514431ec8fa3251ec3",
     cliExecutableBindingHash: "6a50196b4ccd0f9ff710e155c0cca9cb88f678cf6cddad2cd8c81da57a6cdfaf",
     cliModuleRefHash: "4f405d08e63be1885c720846b91007d1d0dd2415e1d907fb82b695cef9910abe",
     cliTargetHash: "18e0f5cde4af1ffe523307c32226adb2b8f867b447b68ea14ebf9f5d2d731e69",
-    cliLaunchTargetHash: "c99087e6a547413696ca765909f912b1966f56da1abd399f1193e05fbbe7a474",
+    cliLaunchTargetHash: "2a1f2da5975b5fa55f5ec3519cc27bc260245e1d3ad35ab777de50d59751a995",
     apiApplicationBindingHash: "d0d742a7163b629e1ed162af75eb22e9c4dbccba8d60a21e9e5e046d6884be15",
-    apiRuntimeBindingHash: "ea349c5d353cbe719f31e4f2a1940f3957d4c9c21ea436c569975b70322ff07c",
+    apiRuntimeBindingHash: "8f023a8af1385b92e93f15f7eb7588f8cf5ce1c6c6e3a9987fc12981c6c1d3b5",
     apiExecutableBindingHash: "e7e3af38d3c783697e31b2e810b1ce45531522c34c4e765b388f0c6613ecb768",
     apiModuleRefHash: "a521a1831ef85313ec5b381569396eb6e3e116b6e1380d157f1758307ac61485",
     apiHandlerExportHash: "c4ad9f5c58125077802c566f0703bde7168fb266baa91e280e1bdce9018f053f",
-    apiLaunchTargetHash: "0470587e4e77dd3b70ab4516db09ee6d9b31150a01c689be581c0c5889bb42c5",
+    apiLaunchTargetHash: "836be818d6523adb48dd286f38e709dcee6bbbd6490cb35e85596738891a221f",
     cliCanonicalBytes: 4_872,
     apiCanonicalBytes: 4_861,
   });
