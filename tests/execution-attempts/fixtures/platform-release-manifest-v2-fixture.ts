@@ -1,8 +1,14 @@
 import { createHash } from "node:crypto";
+import { readFileSync, statSync } from "node:fs";
+import path from "node:path";
 
 import {
   hashCanonicalJson,
 } from "../../../src/product-compiler/canonical-json.js";
+import {
+  captureCanonicalRuntimeTreeV2,
+  type CanonicalRuntimeMetadataProbeV2,
+} from "../../../src/execution/canonical-runtime-tree-v2.js";
 import {
   getProductDeliveryProfileCatalogV2,
 } from
@@ -155,6 +161,7 @@ import {
   "../../../src/execution/schemas/platform-runtime-payload-v2.js";
 import {
   CANONICAL_RUNTIME_TREE_V2_SCHEMA,
+  type CanonicalRuntimeTreeV2,
 } from
   "../../../src/execution/schemas/canonical-runtime-tree-v2.js";
 
@@ -1205,4 +1212,268 @@ PlatformReleaseManifestV2 {
     manifestPayloadHash:
       hashPlatformReleaseManifestV2(identity as never),
   } as PlatformReleaseManifestV2;
+}
+
+function bindingFromObservedTreeV2(
+  tree: CanonicalRuntimeTreeV2,
+  rootLocator: "payload/dist" | "payload/node_modules",
+) {
+  const identity = {
+    schema: CANONICAL_RUNTIME_TREE_BINDING_V2_SCHEMA,
+    treeSchema: CANONICAL_RUNTIME_TREE_V2_SCHEMA,
+    profile: tree.profile,
+    rootLocator,
+    treeHash: tree.treeHash,
+    treePayloadHash: tree.payloadHash,
+    fileCount: tree.fileCount,
+    directoryCount: tree.directoryCount,
+    totalBytes: tree.totalBytes,
+  };
+  return {
+    ...identity,
+    bindingHash: hashCanonicalRuntimeTreeBindingV2(identity),
+  };
+}
+
+function observedFileV2(absolutePath: string) {
+  const bytes = readFileSync(absolutePath);
+  const stat = statSync(absolutePath);
+  return {
+    contentHash: createHash("sha256").update(bytes).digest("hex"),
+    byteLength: bytes.byteLength,
+    mode: (stat.mode & 0o7777) === 0o555
+      ? "0555" as const
+      : "0444" as const,
+  };
+}
+
+function rebindBuildOutputV2(
+  receipt: any,
+  manifest: any,
+): void {
+  receipt.output.runtimePayload = structuredClone(
+    manifest.runtimePayload,
+  );
+  receipt.output.npmMaterializationReceipt = structuredClone(
+    manifest.externalResolution.materializationReceipt,
+  );
+  receipt.output.legacyStitchConverter = structuredClone(
+    manifest.legacyAssets.stitchConverter,
+  );
+  receipt.output.outputClosureHash = hashCanonicalJson({
+    schema: "setfarm.platform-release-build-output-closure.v2",
+    runtimePayloadHash:
+      receipt.output.runtimePayload.runtimePayloadHash,
+    platformTreeBindingHash:
+      receipt.output.runtimePayload.platformTree.bindingHash,
+    dependencyTreeBindingHash:
+      receipt.output.runtimePayload.dependencyTree.bindingHash,
+    packageJsonHash: receipt.output.runtimePayload.packageJson.hash,
+    npmMaterializationReceiptHash:
+      receipt.output.npmMaterializationReceipt.receiptHash,
+    legacyStitchConverter: receipt.output.legacyStitchConverter,
+  });
+  receipt.receiptHash =
+    hashPlatformReleaseBuildReceiptV2(receipt);
+}
+
+/**
+ * Test-only fixture derivation from real immutable stage bytes. This helper
+ * never issues a production handle; the terminal writer still performs its own
+ * independent full recapture and byte joins.
+ */
+export function bindPlatformReleaseManifestFixtureToStageV2(
+  stageRoot: string,
+  metadataProbe: CanonicalRuntimeMetadataProbeV2,
+): PlatformReleaseManifestV2 {
+  const manifest: any = createPlatformReleaseManifestFixtureV2();
+  const payloadRoot = path.join(stageRoot, "payload");
+  const platformTree = captureCanonicalRuntimeTreeV2({
+    root: path.join(payloadRoot, "dist"),
+    profile: "dist",
+    metadataProbe,
+  });
+  const dependencyTree = captureCanonicalRuntimeTreeV2({
+    root: path.join(payloadRoot, "node_modules"),
+    profile: "dependencies",
+    metadataProbe,
+  });
+  manifest.runtimePayload.platformTree =
+    bindingFromObservedTreeV2(platformTree, "payload/dist");
+  manifest.runtimePayload.dependencyTree =
+    bindingFromObservedTreeV2(
+      dependencyTree,
+      "payload/node_modules",
+    );
+  const packageJson = observedFileV2(
+    path.join(payloadRoot, "package.json"),
+  );
+  manifest.runtimePayload.packageJson.hash =
+    packageJson.contentHash;
+  manifest.runtimePayload.packageJson.byteLength =
+    packageJson.byteLength;
+  manifest.runtimePayload.packageJson.mode = packageJson.mode;
+  manifest.runtimePayload.runtimePayloadHash =
+    hashPlatformRuntimePayloadV2(manifest.runtimePayload);
+  const sourceInputSets = [
+    manifest.build.inputs,
+    manifest.build.firstBuildReceipt.inputs,
+    manifest.build.firstBuildReceipt.source.inputs,
+    manifest.build.secondBuildReceipt.inputs,
+    manifest.build.secondBuildReceipt.source.inputs,
+  ];
+  for (const inputs of sourceInputSets) {
+    const sourcePackageJson = inputs[1];
+    sourcePackageJson.contentHash = packageJson.contentHash;
+    sourcePackageJson.byteLength = packageJson.byteLength;
+    sourcePackageJson.sourceRefHash =
+      hashExactPlatformReleaseSourceRefV2(sourcePackageJson);
+  }
+  for (const source of [
+    manifest.build.firstBuildReceipt.source,
+    manifest.build.secondBuildReceipt.source,
+  ]) {
+    source.inputMembershipHash = hashCanonicalJson({
+      schema: "setfarm.platform-release-source-input-membership.v2",
+      entries: source.inputs.map((entry: any) => ({
+        role: entry.role,
+        locator: entry.locator,
+        sourceRefHash: entry.sourceRefHash,
+      })),
+    });
+    source.bindingHash =
+      hashPlatformReleaseSourceTreeBindingV2(source);
+  }
+
+  const external = manifest.externalResolution;
+  external.productionPackages.materializedDependencyTreeHash =
+    dependencyTree.treeHash;
+  external.productionPackages.resolutionGraphHash =
+    hashProductionPackageResolutionGraphV2(
+      external.productionPackages,
+    );
+  external.materializationReceipt.dependencyTreeHash =
+    dependencyTree.treeHash;
+  external.materializationReceipt.receiptHash =
+    hashNpmMaterializationReceiptV2(
+      external.materializationReceipt,
+    );
+  external.externalResolutionHash =
+    hashExternalRuntimeResolutionV2(external);
+
+  const networkWrapper = observedFileV2(path.join(
+    payloadRoot,
+    manifest.environmentCapsule.network.authority
+      .wrapperModuleLocator,
+  ));
+  manifest.environmentCapsule.network.authority.wrapperModuleHash =
+    networkWrapper.contentHash;
+  manifest.environmentCapsule.network.authority.authorityHash =
+    hashNetworkIsolationAuthorityV2(
+      manifest.environmentCapsule.network.authority,
+    );
+  manifest.environmentCapsule.environmentCapsuleHash =
+    hashEvidenceEnvironmentCapsuleV2(
+      manifest.environmentCapsule,
+    );
+
+  const stitch = observedFileV2(path.join(
+    stageRoot,
+    manifest.legacyAssets.stitchConverter.locator,
+  ));
+  manifest.legacyAssets.stitchConverter.hash =
+    stitch.contentHash;
+  manifest.legacyAssets.stitchConverter.byteLength =
+    stitch.byteLength;
+  manifest.legacyAssets.stitchConverter.mode = stitch.mode;
+
+  const launcher = manifest.launcherCatalog;
+  launcher.runtimePayloadHash =
+    manifest.runtimePayload.runtimePayloadHash;
+  launcher.platformTreeHash = platformTree.treeHash;
+  launcher.externalResolutionHash =
+    external.externalResolutionHash;
+  launcher.environmentCapsuleHash =
+    manifest.environmentCapsule.environmentCapsuleHash;
+  for (const entry of launcher.entries) {
+    const module = observedFileV2(
+      path.join(stageRoot, entry.module.payloadLocator),
+    );
+    entry.module.contentHash = module.contentHash;
+    entry.module.byteLength = module.byteLength;
+    entry.module.mode = module.mode;
+    entry.module.moduleRefHash =
+      hashPlatformReleaseModuleRefV2(entry.module);
+    entry.environmentCapsuleHash =
+      manifest.environmentCapsule.environmentCapsuleHash;
+    entry.entryHash =
+      hashPlatformLauncherCatalogEntryV2(entry);
+  }
+  launcher.catalogHash =
+    hashPlatformLauncherCatalogV2(launcher);
+
+  const runner = manifest.runnerCatalog;
+  runner.runtimePayloadHash =
+    manifest.runtimePayload.runtimePayloadHash;
+  runner.platformTreeHash = platformTree.treeHash;
+  runner.dependencyTreeHash = dependencyTree.treeHash;
+  runner.externalResolutionHash =
+    external.externalResolutionHash;
+  runner.productionResolutionGraphHash =
+    external.productionPackages.resolutionGraphHash;
+  runner.environmentCapsuleHash =
+    manifest.environmentCapsule.environmentCapsuleHash;
+  runner.launcherCatalogHash = launcher.catalogHash;
+  for (const entry of runner.entries) {
+    const module = observedFileV2(
+      path.join(stageRoot, entry.module.payloadLocator),
+    );
+    entry.module.contentHash = module.contentHash;
+    entry.module.byteLength = module.byteLength;
+    entry.module.mode = module.mode;
+    entry.module.moduleRefHash =
+      hashPlatformReleaseModuleRefV2(entry.module);
+    const executionAdmissionHash =
+      entry.admission.kind === "invocation"
+        ? entry.admission.executionLeaseContractHash
+        : entry.abiHash;
+    entry.toolchainHash = hashPlatformRunnerToolchainV2({
+      runnerEntrypointRef: entry.runnerEntrypointRef,
+      runnerModuleHash: entry.module.contentHash,
+      runnerAbiHash: entry.abiHash,
+      platformTreeHash: runner.platformTreeHash,
+      dependencyTreeHash: runner.dependencyTreeHash,
+      runtimePayloadHash: runner.runtimePayloadHash,
+      externalResolutionHash: runner.externalResolutionHash,
+      productionResolutionGraphHash:
+        runner.productionResolutionGraphHash,
+      environmentCapsuleHash: runner.environmentCapsuleHash,
+      launcherCatalogHash: runner.launcherCatalogHash,
+      transportCodecCatalogHash:
+        runner.transportCodecCatalogHash,
+      receiptSchemaHash: runner.receiptSchemaHash,
+      adapterDefinitionCatalogHash:
+        runner.adapterDefinitionCatalogHash,
+      executionAdmissionHash,
+    });
+    entry.entryHash =
+      hashPlatformRunnerCatalogEntryV2(entry);
+  }
+  runner.catalogHash = hashPlatformRunnerCatalogV2(runner);
+
+  rebindBuildOutputV2(
+    manifest.build.firstBuildReceipt,
+    manifest,
+  );
+  manifest.build.firstBuildReceiptHash =
+    manifest.build.firstBuildReceipt.receiptHash;
+  rebindBuildOutputV2(
+    manifest.build.secondBuildReceipt,
+    manifest,
+  );
+  manifest.build.secondBuildReceiptHash =
+    manifest.build.secondBuildReceipt.receiptHash;
+  manifest.manifestPayloadHash =
+    hashPlatformReleaseManifestV2(manifest);
+  return manifest as PlatformReleaseManifestV2;
 }
