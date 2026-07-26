@@ -2,12 +2,14 @@ import assert from "node:assert/strict";
 import {
   chmodSync,
   existsSync,
+  linkSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
   realpathSync,
+  renameSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -18,7 +20,12 @@ import { spawnSync } from "node:child_process";
 import { afterEach, describe, it } from "node:test";
 
 import {
+  canonicalJsonStringify,
+} from
+  "../../src/product-compiler/canonical-json.js";
+import {
   createHostNodeToolchainAuthorityV2ForTest,
+  hashHostNodePlatformReleaseOutputStageIdentityV2,
   type HostNodeToolchainProbeInvocationV2,
   type HostNodeToolchainProbeResultV2,
 } from
@@ -31,13 +38,20 @@ import {
   AdmittedPlatformReleaseSourceStageV2,
   PlatformReleaseBuildToolchainCapsuleErrorV2,
   PlatformReleaseBuildToolchainCapsuleV2,
+  PlatformReleaseCompiledOutputPairV2,
   PlatformReleaseSourceAdmissionErrorV2,
   admitPlatformReleaseSourceV2ForTest,
   disposePlatformReleaseSourceStageV2,
+  inspectPlatformReleaseCompiledOutputPairV2,
   inspectPlatformReleaseBuildToolchainReceiptV2,
+  materializePlatformReleaseCompiledOutputPairV2,
+  materializePlatformReleaseCompiledOutputPairV2ForTest,
+  materializePlatformReleaseCompiledOutputPairWithAllocationFaultForTestV2,
   materializePlatformReleaseBuildToolchainCapsuleV2,
   materializePlatformReleaseBuildToolchainCapsuleV2ForTest,
+  revalidatePlatformReleaseCompiledOutputPairV2,
   revalidatePlatformReleaseBuildToolchainCapsuleV2,
+  withPlatformReleaseCompiledOutputPairForTestV2,
   withPlatformReleaseBuildToolchainCapsuleForTestV2,
   withPlatformReleaseSourceStageForTestV2,
 } from
@@ -46,6 +60,11 @@ import {
   PlatformReleaseBuildToolchainReceiptV2Schema,
 } from
   "../../src/execution/schemas/platform-release-build-v2.js";
+import {
+  hashPlatformReleaseCompiledOutputPairInspectionV2,
+  PlatformReleaseCompiledOutputPairInspectionV2Schema,
+} from
+  "../../src/execution/schemas/platform-release-compiled-output-pair-v2.js";
 
 const GIT = "/usr/bin/git";
 const roots: string[] = [];
@@ -262,6 +281,74 @@ function createRepositoryFixtureV2(): RepositoryFixtureV2 {
     path.join(repository, "src", "index.ts"),
     "export const fixture = true;\n",
   );
+  mkdirSync(
+    path.join(repository, "src", "server"),
+    { recursive: true },
+  );
+  writeFileSync(
+    path.join(repository, "src", "server", "index.html"),
+    "<!doctype html><title>fixture</title>\n",
+  );
+  mkdirSync(
+    path.join(repository, "src", "installer", "prompts"),
+    { recursive: true },
+  );
+  mkdirSync(
+    path.join(repository, "src", "installer", "steps"),
+    { recursive: true },
+  );
+  writeFileSync(
+    path.join(
+      repository,
+      "src",
+      "installer",
+      "prompts",
+      "fixture.md",
+    ),
+    "# Fixture prompt\n",
+  );
+  writeFileSync(
+    path.join(
+      repository,
+      "src",
+      "installer",
+      "steps",
+      "fixture.md",
+    ),
+    "# Fixture step\n",
+  );
+  writeFileSync(
+    path.join(
+      repository,
+      "src",
+      "installer",
+      "compat-rules.json",
+    ),
+    "{\"version\":1}\n",
+  );
+  mkdirSync(path.join(repository, "scripts"));
+  writeFileSync(
+    path.join(
+      repository,
+      "scripts",
+      "build-platform-release-v2.mjs",
+    ),
+    readFileSync(path.join(
+      process.cwd(),
+      "scripts",
+      "build-platform-release-v2.mjs",
+    )),
+    { mode: 0o755 },
+  );
+  writeFileSync(
+    path.join(
+      repository,
+      "scripts",
+      "stitch-to-jsx.mjs",
+    ),
+    "export const convert = () => null;\n",
+    { mode: 0o755 },
+  );
   runGit(repository, ["add", "--all"]);
   runGit(repository, ["commit", "-m", "fixture"]);
   runGit(repository, ["push", "-u", "origin", "main"]);
@@ -366,7 +453,17 @@ function materializeFakeInstallV2(
   );
   writeFileSync(
     path.join(typescript, "bin", "tsc"),
-    "#!/usr/bin/env node\n",
+    [
+      "#!/usr/bin/env node",
+      "const fs = require('node:fs');",
+      "const path = require('node:path');",
+      "const index = process.argv.indexOf('--outDir');",
+      "if (index < 0 || !process.argv[index + 1]) process.exit(2);",
+      "const root = process.argv[index + 1];",
+      "fs.mkdirSync(path.join(root, 'cli'), { recursive: true });",
+      "fs.writeFileSync(path.join(root, 'cli', 'cli.js'), '#!/usr/bin/env node\\nexport {};\\n');",
+      "",
+    ].join("\n"),
     { mode: 0o755 },
   );
   writeFileSync(
@@ -444,6 +541,41 @@ function materializeFakeInstallV2(
   );
 }
 
+function executeBuildInvocationForTestV2(
+  invocation: HostNodeToolchainProbeInvocationV2,
+): HostNodeToolchainProbeResultV2 {
+  const result = spawnSync(
+    process.execPath,
+    invocation.argv,
+    {
+      cwd: invocation.cwd,
+      env: invocation.env,
+      encoding: "utf8",
+      shell: false,
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: invocation.timeoutMs,
+      maxBuffer: Math.max(
+        invocation.maxStdoutBytes,
+        invocation.maxStderrBytes,
+      ),
+    },
+  );
+  if (result.error) {
+    return Object.freeze({
+      status: "spawn_failed" as const,
+      stdout: result.stdout ?? "",
+      stderr: result.stderr ?? "",
+    });
+  }
+  return Object.freeze({
+    status: "exited" as const,
+    exitCode: result.status,
+    signal: result.signal,
+    stdout: result.stdout,
+    stderr: result.stderr,
+  });
+}
+
 async function createPlatformHostV2(
   fixture: HostFixtureV2,
   mode: InstallModeV2,
@@ -451,7 +583,20 @@ async function createPlatformHostV2(
     entered: () => void;
     wait: Promise<void>;
   }>,
+  buildHook?: (
+    invocation: HostNodeToolchainProbeInvocationV2,
+    occurrence: number,
+  ) =>
+    | HostNodeToolchainProbeResultV2
+    | undefined
+    | Promise<
+      HostNodeToolchainProbeResultV2 | undefined
+    >,
+  installHook?: (
+    invocation: HostNodeToolchainProbeInvocationV2,
+  ) => void | Promise<void>,
 ) {
+  let buildOccurrence = 0;
   const probeAdapter = async (
     invocation: HostNodeToolchainProbeInvocationV2,
   ): Promise<HostNodeToolchainProbeResultV2> => {
@@ -489,7 +634,22 @@ async function createPlatformHostV2(
         });
       }
       materializeFakeInstallV2(invocation.cwd, mode);
+      await installHook?.(invocation);
       return exited("installed exact build graph\n");
+    }
+    if (
+      invocation.probeRef
+        === "HOST_NODE_PLATFORM_RELEASE_BUILD_V2"
+    ) {
+      buildOccurrence += 1;
+      const overridden = await buildHook?.(
+        invocation,
+        buildOccurrence,
+      );
+      if (overridden) return overridden;
+      return executeBuildInvocationForTestV2(
+        invocation,
+      );
     }
     return exited();
   };
@@ -640,6 +800,1015 @@ describe("PlatformReleaseBuildToolchainCapsuleV2", () => {
     }
   });
 
+  it("owns two independent canonical compiled outputs and disposes every root", async () => {
+    const repository = createRepositoryFixtureV2();
+    const hostFixture = createHostFixtureV2();
+    const source = admittedSourceV2(repository);
+    let sourceRoot = "";
+    withPlatformReleaseSourceStageForTestV2(
+      source,
+      (root) => {
+        sourceRoot = root;
+      },
+    );
+    let disposed = false;
+    let firstOutputRoot = "";
+    let secondOutputRoot = "";
+    try {
+      const buildOccurrences: number[] = [];
+      const host = await createPlatformHostV2(
+        hostFixture,
+        "valid",
+        undefined,
+        (_invocation, occurrence) => {
+          buildOccurrences.push(occurrence);
+          return undefined;
+        },
+      );
+      const capsule =
+        await materializePlatformReleaseBuildToolchainCapsuleV2ForTest({
+          sourceStage: source,
+          hostToolchain: host,
+        });
+      let accessorCalled = false;
+      await assert.rejects(
+        materializePlatformReleaseCompiledOutputPairV2ForTest(
+          new Proxy({
+            sourceStage: source,
+            buildToolchain: capsule,
+          }, {
+            get() {
+              accessorCalled = true;
+              return undefined;
+            },
+          }),
+        ),
+        {
+          code:
+            "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_INPUT_INVALID",
+        },
+      );
+      await assert.rejects(
+        materializePlatformReleaseCompiledOutputPairV2ForTest({
+          sourceStage: source,
+          get buildToolchain() {
+            accessorCalled = true;
+            return capsule;
+          },
+        }),
+        {
+          code:
+            "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_INPUT_INVALID",
+        },
+      );
+      assert.equal(accessorCalled, false);
+      await assert.rejects(
+        materializePlatformReleaseCompiledOutputPairV2({
+          sourceStage: source,
+          buildToolchain: capsule,
+        }),
+        {
+          code:
+            "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_SCOPE_MISMATCH",
+        },
+      );
+      const pair =
+        await materializePlatformReleaseCompiledOutputPairV2ForTest({
+          sourceStage: source,
+          buildToolchain: capsule,
+        });
+      const inspection =
+        inspectPlatformReleaseCompiledOutputPairV2(pair);
+      assert.deepEqual(
+        PlatformReleaseCompiledOutputPairInspectionV2Schema
+          .parse(inspection),
+        inspection,
+      );
+      assert.equal(Object.isFrozen(inspection), true);
+      assert.equal(
+        Object.isFrozen(inspection.stableOutput),
+        true,
+      );
+      assert.equal(
+        Object.isFrozen(inspection.occurrences),
+        true,
+      );
+      assert.equal(
+        pair.stableOutputBindingHash,
+        inspection.stableOutput.bindingHash,
+      );
+      assert.notEqual(
+        inspection.occurrences[0].hostBuildEvidenceHash,
+        inspection.occurrences[1].hostBuildEvidenceHash,
+      );
+      assert.equal(
+        inspection.occurrences[0]
+          .predependencyOutputBindingHash,
+        inspection.stableOutput.bindingHash,
+      );
+      assert.equal(
+        inspection.occurrences[1]
+          .predependencyOutputBindingHash,
+        inspection.stableOutput.bindingHash,
+      );
+      assert.equal(
+        inspection.occurrences[0]
+          .stableHostProjectionHash,
+        inspection.occurrences[1]
+          .stableHostProjectionHash,
+      );
+      assert.doesNotMatch(
+        JSON.stringify(inspection),
+        /setfarm-platform-build-toolchain-|setfarm-platform-release-source-|setfarm-platform-release-output-|\/private\/|\/Users\//,
+      );
+      const tampered = structuredClone(inspection);
+      tampered.occurrences[0]
+        .predependencyOutputBindingHash = "0".repeat(64);
+      tampered.inspectionHash =
+        hashPlatformReleaseCompiledOutputPairInspectionV2(
+          tampered,
+        );
+      assert.throws(
+        () =>
+          PlatformReleaseCompiledOutputPairInspectionV2Schema
+            .parse(tampered),
+      );
+      assert.notEqual(
+        inspection.occurrences[0]
+          .outputStagePhysicalIdentityHash,
+        inspection.occurrences[1]
+          .outputStagePhysicalIdentityHash,
+      );
+      assert.deepEqual(buildOccurrences, [1, 2]);
+      assert.throws(
+        () => new PlatformReleaseCompiledOutputPairV2(
+          {},
+          {} as never,
+        ),
+        {
+          code:
+            "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_HANDLE_UNAUTHENTICATED",
+        },
+      );
+      await assert.rejects(
+        revalidatePlatformReleaseCompiledOutputPairV2(
+          Object.create(
+            PlatformReleaseCompiledOutputPairV2.prototype,
+          ) as PlatformReleaseCompiledOutputPairV2,
+        ),
+        {
+          code:
+            "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_HANDLE_UNAUTHENTICATED",
+        },
+      );
+      await withPlatformReleaseCompiledOutputPairForTestV2(
+        pair,
+        (roots) => {
+          firstOutputRoot = roots.firstOutputRoot;
+          secondOutputRoot = roots.secondOutputRoot;
+          assert.notEqual(
+            firstOutputRoot,
+            secondOutputRoot,
+          );
+          for (const root of [
+            firstOutputRoot,
+            secondOutputRoot,
+          ]) {
+            assert.deepEqual(
+              readdirSync(root),
+              ["payload"],
+            );
+            assert.deepEqual(
+              readdirSync(path.join(root, "payload")).sort(),
+              ["dist", "package.json"],
+            );
+          }
+          const firstStat = lstatSync(firstOutputRoot);
+          const secondStat = lstatSync(secondOutputRoot);
+          assert.equal(
+            inspection.occurrences[0]
+              .outputStagePhysicalIdentityHash,
+            hashHostNodePlatformReleaseOutputStageIdentityV2({
+              device: firstStat.dev,
+              inode: firstStat.ino,
+              mode: firstStat.mode,
+              ownerUid: firstStat.uid,
+              ownerGid: firstStat.gid,
+            }),
+          );
+          assert.equal(
+            inspection.occurrences[1]
+              .outputStagePhysicalIdentityHash,
+            hashHostNodePlatformReleaseOutputStageIdentityV2({
+              device: secondStat.dev,
+              inode: secondStat.ino,
+              mode: secondStat.mode,
+              ownerUid: secondStat.uid,
+              ownerGid: secondStat.gid,
+            }),
+          );
+        },
+      );
+      assert.deepEqual(
+        await revalidatePlatformReleaseCompiledOutputPairV2(
+          pair,
+        ),
+        inspection,
+      );
+      await assert.rejects(
+        materializePlatformReleaseCompiledOutputPairV2ForTest({
+          sourceStage: source,
+          buildToolchain: capsule,
+        }),
+        {
+          code:
+            "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_ALREADY_MATERIALIZED",
+        },
+      );
+      disposePlatformReleaseSourceStageV2(source);
+      disposed = true;
+      assert.equal(
+        existsSync(path.dirname(sourceRoot)),
+        false,
+      );
+      assert.equal(
+        existsSync(path.dirname(firstOutputRoot)),
+        false,
+      );
+      assert.equal(
+        existsSync(path.dirname(secondOutputRoot)),
+        false,
+      );
+      await assert.rejects(
+        revalidatePlatformReleaseCompiledOutputPairV2(pair),
+        {
+          code:
+            "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_SOURCE_DRIFT",
+        },
+      );
+    } finally {
+      if (!disposed) {
+        try {
+          disposePlatformReleaseSourceStageV2(source);
+        } catch (error) {
+          if (
+            !(error instanceof PlatformReleaseSourceAdmissionErrorV2)
+            || error.code
+              !== "PLATFORM_RELEASE_SOURCE_V2_HANDLE_DISPOSED"
+          ) throw error;
+        }
+      }
+    }
+  });
+
+  it("claims one double-build transaction before its first asynchronous build", async () => {
+    const repository = createRepositoryFixtureV2();
+    const hostFixture = createHostFixtureV2();
+    const source = admittedSourceV2(repository);
+    let releaseBuild!: () => void;
+    const buildWait = new Promise<void>((resolve) => {
+      releaseBuild = resolve;
+    });
+    let markBuildEntered!: () => void;
+    const buildEntered = new Promise<void>((resolve) => {
+      markBuildEntered = resolve;
+    });
+    const buildOccurrences: number[] = [];
+    try {
+      const host = await createPlatformHostV2(
+        hostFixture,
+        "valid",
+        undefined,
+        async (_invocation, occurrence) => {
+          buildOccurrences.push(occurrence);
+          if (occurrence === 1) {
+            markBuildEntered();
+            await buildWait;
+          }
+          return undefined;
+        },
+      );
+      const capsule =
+        await materializePlatformReleaseBuildToolchainCapsuleV2ForTest({
+          sourceStage: source,
+          hostToolchain: host,
+        });
+      const first =
+        materializePlatformReleaseCompiledOutputPairV2ForTest({
+          sourceStage: source,
+          buildToolchain: capsule,
+        });
+      await buildEntered;
+      await assert.rejects(
+        materializePlatformReleaseCompiledOutputPairV2ForTest({
+          sourceStage: source,
+          buildToolchain: capsule,
+        }),
+        {
+          code:
+            "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_ALREADY_MATERIALIZED",
+        },
+      );
+      assert.throws(
+        () => disposePlatformReleaseSourceStageV2(source),
+        {
+          code:
+            "PLATFORM_RELEASE_SOURCE_V2_MATERIALIZATION_BUSY",
+        },
+      );
+      releaseBuild();
+      const pair = await first;
+      assert.deepEqual(buildOccurrences, [1, 2]);
+      await revalidatePlatformReleaseCompiledOutputPairV2(
+        pair,
+      );
+    } finally {
+      releaseBuild?.();
+      try {
+        disposePlatformReleaseSourceStageV2(source);
+      } catch (error) {
+        if (
+          !(error instanceof PlatformReleaseSourceAdmissionErrorV2)
+          || error.code
+            !== "PLATFORM_RELEASE_SOURCE_V2_HANDLE_DISPOSED"
+        ) throw error;
+      }
+    }
+  });
+
+  for (
+    const checkpoint of [
+      "after_first_parent_created",
+      "after_first_output_created",
+    ] as const
+  ) {
+    it(`quarantines an unanchored allocation at ${checkpoint}`, async () => {
+      const repository = createRepositoryFixtureV2();
+      const hostFixture = createHostFixtureV2();
+      const source = admittedSourceV2(repository);
+      let sourceRoot = "";
+      let observedPath = "";
+      withPlatformReleaseSourceStageForTestV2(
+        source,
+        (root) => {
+          sourceRoot = root;
+        },
+      );
+      const host = await createPlatformHostV2(
+        hostFixture,
+        "valid",
+      );
+      const capsule =
+        await materializePlatformReleaseBuildToolchainCapsuleV2ForTest({
+          sourceStage: source,
+          hostToolchain: host,
+        });
+      let observedFailure: unknown;
+      await assert.rejects(
+        materializePlatformReleaseCompiledOutputPairWithAllocationFaultForTestV2(
+          {
+            sourceStage: source,
+            buildToolchain: capsule,
+          },
+          {
+            checkpoint,
+            observePath: (absolutePath) => {
+              observedPath = absolutePath;
+              writeFileSync(
+                path.join(
+                  absolutePath,
+                  "quarantine-sentinel",
+                ),
+                "must survive\n",
+              );
+            },
+          },
+        ),
+        (error: unknown) => {
+          observedFailure = error;
+          return error instanceof Error
+            && "code" in error
+            && error.code
+              === "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_CLEANUP_FAILED";
+        },
+      );
+      const quarantinedParent =
+        checkpoint === "after_first_parent_created"
+          ? observedPath
+          : path.dirname(observedPath);
+      roots.push(quarantinedParent);
+      assert.equal(existsSync(quarantinedParent), true);
+      assert.equal(
+        readFileSync(
+          path.join(
+            observedPath,
+            "quarantine-sentinel",
+          ),
+          "utf8",
+        ),
+        "must survive\n",
+      );
+      assert.equal(
+        existsSync(path.dirname(sourceRoot)),
+        false,
+      );
+      assert.ok(
+        observedFailure instanceof Error
+        && "cause" in observedFailure
+        && observedFailure.cause
+          instanceof AggregateError,
+      );
+      assert.equal(
+        observedFailure.cause.errors[0]?.code,
+        "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_BUILD_FAILED",
+      );
+      assert.equal(
+        observedFailure.cause.errors[1]?.code,
+        "PLATFORM_RELEASE_SOURCE_V2_CLEANUP_FAILED",
+      );
+    });
+  }
+
+  it("rejects equal-content source and toolchain handles from different physical contexts", async () => {
+    const repository = createRepositoryFixtureV2();
+    const hostFixture = createHostFixtureV2();
+    const firstSource = admittedSourceV2(repository);
+    const secondSource = admittedSourceV2(repository);
+    try {
+      const host = await createPlatformHostV2(
+        hostFixture,
+        "valid",
+      );
+      const firstCapsule =
+        await materializePlatformReleaseBuildToolchainCapsuleV2ForTest({
+          sourceStage: firstSource,
+          hostToolchain: host,
+        });
+      const secondCapsule =
+        await materializePlatformReleaseBuildToolchainCapsuleV2ForTest({
+          sourceStage: secondSource,
+          hostToolchain: host,
+        });
+      await assert.rejects(
+        materializePlatformReleaseCompiledOutputPairV2ForTest({
+          sourceStage: firstSource,
+          buildToolchain: secondCapsule,
+        }),
+        {
+          code:
+            "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_SCOPE_MISMATCH",
+        },
+      );
+      await assert.rejects(
+        materializePlatformReleaseCompiledOutputPairV2ForTest({
+          sourceStage: secondSource,
+          buildToolchain: firstCapsule,
+        }),
+        {
+          code:
+            "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_SCOPE_MISMATCH",
+        },
+      );
+      await revalidatePlatformReleaseBuildToolchainCapsuleV2(
+        firstCapsule,
+      );
+      await revalidatePlatformReleaseBuildToolchainCapsuleV2(
+        secondCapsule,
+      );
+    } finally {
+      disposePlatformReleaseSourceStageV2(firstSource);
+      disposePlatformReleaseSourceStageV2(secondSource);
+    }
+  });
+
+  it("destroys source and both output parents when the second build fails", async () => {
+    const repository = createRepositoryFixtureV2();
+    const hostFixture = createHostFixtureV2();
+    const source = admittedSourceV2(repository);
+    let sourceRoot = "";
+    withPlatformReleaseSourceStageForTestV2(
+      source,
+      (root) => {
+        sourceRoot = root;
+      },
+    );
+    const outputRoots: string[] = [];
+    const host = await createPlatformHostV2(
+      hostFixture,
+      "valid",
+      undefined,
+      (invocation, occurrence) => {
+        const outputIndex =
+          invocation.argv.indexOf("--output-root");
+        assert.ok(outputIndex >= 0);
+        outputRoots.push(
+          invocation.argv[outputIndex + 1]!,
+        );
+        return occurrence === 2
+          ? Object.freeze({
+            status: "exited" as const,
+            exitCode: 1,
+            signal: null,
+            stdout: "",
+            stderr: "second build failed\n",
+          })
+          : undefined;
+      },
+    );
+    const capsule =
+      await materializePlatformReleaseBuildToolchainCapsuleV2ForTest({
+        sourceStage: source,
+        hostToolchain: host,
+      });
+    await assert.rejects(
+      materializePlatformReleaseCompiledOutputPairV2ForTest({
+        sourceStage: source,
+        buildToolchain: capsule,
+      }),
+      {
+        code:
+          "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_BUILD_FAILED",
+      },
+    );
+    assert.equal(outputRoots.length, 2);
+    assert.equal(
+      existsSync(path.dirname(sourceRoot)),
+      false,
+    );
+    for (const root of outputRoots) {
+      assert.equal(
+        existsSync(path.dirname(root)),
+        false,
+      );
+    }
+    await assert.rejects(
+      materializePlatformReleaseCompiledOutputPairV2ForTest({
+        sourceStage: source,
+        buildToolchain: capsule,
+      }),
+      {
+        code:
+          "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_INPUT_INVALID",
+      },
+    );
+  });
+
+  it("rejects a canonical command result that does not join source authority", async () => {
+    const repository = createRepositoryFixtureV2();
+    const hostFixture = createHostFixtureV2();
+    const source = admittedSourceV2(repository);
+    let sourceRoot = "";
+    withPlatformReleaseSourceStageForTestV2(
+      source,
+      (root) => {
+        sourceRoot = root;
+      },
+    );
+    const buildOccurrences: number[] = [];
+    const host = await createPlatformHostV2(
+      hostFixture,
+      "valid",
+      undefined,
+      (invocation, occurrence) => {
+        buildOccurrences.push(occurrence);
+        const observed =
+          executeBuildInvocationForTestV2(invocation);
+        assert.equal(observed.status, "exited");
+        if (observed.status !== "exited") {
+          return observed;
+        }
+        assert.equal(observed.exitCode, 0);
+        const result = JSON.parse(observed.stdout) as
+          Record<string, unknown>;
+        result.sourceFileCount =
+          Number(result.sourceFileCount) + 1;
+        return Object.freeze({
+          ...observed,
+          stdout:
+            `${canonicalJsonStringify(result)}\n`,
+        });
+      },
+    );
+    const capsule =
+      await materializePlatformReleaseBuildToolchainCapsuleV2ForTest({
+        sourceStage: source,
+        hostToolchain: host,
+      });
+    await assert.rejects(
+      materializePlatformReleaseCompiledOutputPairV2ForTest({
+        sourceStage: source,
+        buildToolchain: capsule,
+      }),
+      {
+        code:
+          "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_OUTPUT_INVALID",
+      },
+    );
+    assert.deepEqual(buildOccurrences, [1]);
+    assert.equal(
+      existsSync(path.dirname(sourceRoot)),
+      false,
+    );
+  });
+
+  it("rejects equal command results when compiled dist bytes differ", async () => {
+    const repository = createRepositoryFixtureV2();
+    const hostFixture = createHostFixtureV2();
+    const source = admittedSourceV2(repository);
+    let sourceRoot = "";
+    withPlatformReleaseSourceStageForTestV2(
+      source,
+      (root) => {
+        sourceRoot = root;
+      },
+    );
+    const host = await createPlatformHostV2(
+      hostFixture,
+      "valid",
+      undefined,
+      (invocation, occurrence) => {
+        const observed =
+          executeBuildInvocationForTestV2(invocation);
+        if (
+          occurrence !== 2
+          || observed.status !== "exited"
+          || observed.exitCode !== 0
+        ) return observed;
+        const outputIndex =
+          invocation.argv.indexOf("--output-root");
+        const outputRoot =
+          invocation.argv[outputIndex + 1]!;
+        const distRoot = path.join(
+          outputRoot,
+          "payload",
+          "dist",
+        );
+        const buildInfo = path.join(
+          distRoot,
+          "BUILD_INFO.json",
+        );
+        const before = readFileSync(buildInfo, "utf8");
+        const after = before.replace(
+          "\"dirty\":false",
+          "\"dirty\":true ",
+        );
+        assert.equal(after.length, before.length);
+        assert.notEqual(after, before);
+        chmodSync(distRoot, 0o700);
+        chmodSync(buildInfo, 0o600);
+        writeFileSync(buildInfo, after);
+        chmodSync(buildInfo, 0o444);
+        chmodSync(distRoot, 0o555);
+        return observed;
+      },
+    );
+    const capsule =
+      await materializePlatformReleaseBuildToolchainCapsuleV2ForTest({
+        sourceStage: source,
+        hostToolchain: host,
+      });
+    await assert.rejects(
+      materializePlatformReleaseCompiledOutputPairV2ForTest({
+        sourceStage: source,
+        buildToolchain: capsule,
+      }),
+      {
+        code:
+          "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_EQUALITY_FAILED",
+      },
+    );
+    assert.equal(
+      existsSync(path.dirname(sourceRoot)),
+      false,
+    );
+  });
+
+  it("rejects first-output mutation hidden by matching second output", async () => {
+    const repository = createRepositoryFixtureV2();
+    const hostFixture = createHostFixtureV2();
+    const source = admittedSourceV2(repository);
+    let sourceRoot = "";
+    let firstOutputRoot = "";
+    withPlatformReleaseSourceStageForTestV2(
+      source,
+      (root) => {
+        sourceRoot = root;
+      },
+    );
+    const host = await createPlatformHostV2(
+      hostFixture,
+      "valid",
+      undefined,
+      (invocation, occurrence) => {
+        const observed =
+          executeBuildInvocationForTestV2(invocation);
+        if (
+          observed.status !== "exited"
+          || observed.exitCode !== 0
+        ) return observed;
+        const outputIndex =
+          invocation.argv.indexOf("--output-root");
+        const outputRoot =
+          invocation.argv[outputIndex + 1]!;
+        if (occurrence === 1) {
+          firstOutputRoot = outputRoot;
+          return observed;
+        }
+        const mutateBuildInfo = (root: string) => {
+          const distRoot = path.join(
+            root,
+            "payload",
+            "dist",
+          );
+          const buildInfo = path.join(
+            distRoot,
+            "BUILD_INFO.json",
+          );
+          const before = readFileSync(buildInfo, "utf8");
+          const after = before.replace(
+            "\"dirty\":false",
+            "\"dirty\":true ",
+          );
+          assert.equal(after.length, before.length);
+          assert.notEqual(after, before);
+          chmodSync(distRoot, 0o700);
+          chmodSync(buildInfo, 0o600);
+          writeFileSync(buildInfo, after);
+          chmodSync(buildInfo, 0o444);
+          chmodSync(distRoot, 0o555);
+        };
+        mutateBuildInfo(firstOutputRoot);
+        mutateBuildInfo(outputRoot);
+        return observed;
+      },
+    );
+    const capsule =
+      await materializePlatformReleaseBuildToolchainCapsuleV2ForTest({
+        sourceStage: source,
+        hostToolchain: host,
+      });
+    await assert.rejects(
+      materializePlatformReleaseCompiledOutputPairV2ForTest({
+        sourceStage: source,
+        buildToolchain: capsule,
+      }),
+      {
+        code:
+          "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_OUTPUT_INVALID",
+      },
+    );
+    assert.equal(
+      existsSync(path.dirname(sourceRoot)),
+      false,
+    );
+    assert.equal(
+      existsSync(path.dirname(firstOutputRoot)),
+      false,
+    );
+  });
+
+  it("terminally destroys a compiled pair after callback output drift", async () => {
+    const repository = createRepositoryFixtureV2();
+    const hostFixture = createHostFixtureV2();
+    const source = admittedSourceV2(repository);
+    let sourceRoot = "";
+    withPlatformReleaseSourceStageForTestV2(
+      source,
+      (root) => {
+        sourceRoot = root;
+      },
+    );
+    const externalRoot = realpathSync(mkdtempSync(path.join(
+      tmpdir(),
+      "setfarm-compiled-output-cleanup-sentinel-v2-",
+    )));
+    roots.push(externalRoot);
+    const externalFile = path.join(
+      externalRoot,
+      "external.txt",
+    );
+    writeFileSync(externalFile, "external\n", {
+      mode: 0o444,
+    });
+    chmodSync(externalFile, 0o444);
+    const externalDirectory = path.join(
+      externalRoot,
+      "external-directory",
+    );
+    mkdirSync(externalDirectory);
+    writeFileSync(
+      path.join(externalDirectory, "sentinel"),
+      "survives\n",
+    );
+    const host = await createPlatformHostV2(
+      hostFixture,
+      "valid",
+    );
+    const capsule =
+      await materializePlatformReleaseBuildToolchainCapsuleV2ForTest({
+        sourceStage: source,
+        hostToolchain: host,
+      });
+    const pair =
+      await materializePlatformReleaseCompiledOutputPairV2ForTest({
+        sourceStage: source,
+        buildToolchain: capsule,
+      });
+    let firstOutputRoot = "";
+    let secondOutputRoot = "";
+    await assert.rejects(
+      withPlatformReleaseCompiledOutputPairForTestV2(
+        pair,
+        (roots) => {
+          firstOutputRoot = roots.firstOutputRoot;
+          secondOutputRoot = roots.secondOutputRoot;
+          writeFileSync(
+            path.join(
+              firstOutputRoot,
+              "payload",
+              "rogue",
+            ),
+            "drift\n",
+          );
+          linkSync(
+            externalFile,
+            path.join(
+              firstOutputRoot,
+              "payload",
+              "external-hardlink",
+            ),
+          );
+          symlinkSync(
+            externalDirectory,
+            path.join(
+              firstOutputRoot,
+              "payload",
+              "external-symlink",
+            ),
+          );
+        },
+      ),
+      {
+        code:
+          "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_OUTPUT_INVALID",
+      },
+    );
+    assert.equal(
+      existsSync(path.dirname(sourceRoot)),
+      false,
+    );
+    assert.equal(
+      readFileSync(externalFile, "utf8"),
+      "external\n",
+    );
+    assert.equal(
+      lstatSync(externalFile).mode & 0o7777,
+      0o444,
+    );
+    assert.equal(lstatSync(externalFile).nlink, 1);
+    assert.equal(
+      readFileSync(
+        path.join(externalDirectory, "sentinel"),
+        "utf8",
+      ),
+      "survives\n",
+    );
+    assert.equal(
+      existsSync(path.dirname(firstOutputRoot)),
+      false,
+    );
+    assert.equal(
+      existsSync(path.dirname(secondOutputRoot)),
+      false,
+    );
+    await assert.rejects(
+      revalidatePlatformReleaseCompiledOutputPairV2(
+        pair,
+      ),
+      {
+        code:
+          "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_SOURCE_DRIFT",
+      },
+    );
+  });
+
+  it("refuses a replaced output parent while cleaning every other owned root", async () => {
+    const repository = createRepositoryFixtureV2();
+    const hostFixture = createHostFixtureV2();
+    const source = admittedSourceV2(repository);
+    let sourceRoot = "";
+    withPlatformReleaseSourceStageForTestV2(
+      source,
+      (root) => {
+        sourceRoot = root;
+      },
+    );
+    const siblingSentinel = realpathSync(mkdtempSync(
+      path.join(
+        tmpdir(),
+        "setfarm-compiled-output-sibling-v2-",
+      ),
+    ));
+    roots.push(siblingSentinel);
+    writeFileSync(
+      path.join(siblingSentinel, "sentinel"),
+      "outside\n",
+    );
+    const host = await createPlatformHostV2(
+      hostFixture,
+      "valid",
+    );
+    const capsule =
+      await materializePlatformReleaseBuildToolchainCapsuleV2ForTest({
+        sourceStage: source,
+        hostToolchain: host,
+      });
+    const pair =
+      await materializePlatformReleaseCompiledOutputPairV2ForTest({
+        sourceStage: source,
+        buildToolchain: capsule,
+      });
+    let replacedParent = "";
+    let displacedParent = "";
+    let secondParent = "";
+    let observedCleanupFailure: unknown;
+    await assert.rejects(
+      withPlatformReleaseCompiledOutputPairForTestV2(
+        pair,
+        (output) => {
+          replacedParent =
+            path.dirname(output.firstOutputRoot);
+          displacedParent =
+            `${replacedParent}-displaced`;
+          secondParent =
+            path.dirname(output.secondOutputRoot);
+          renameSync(
+            replacedParent,
+            displacedParent,
+          );
+          mkdirSync(replacedParent, { mode: 0o700 });
+          writeFileSync(
+            path.join(replacedParent, "replacement"),
+            "must survive\n",
+          );
+        },
+      ),
+      (error: unknown) => {
+        observedCleanupFailure = error;
+        return error instanceof Error
+          && "code" in error
+          && error.code
+            === "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_CLEANUP_FAILED";
+      },
+    );
+    assert.ok(
+      observedCleanupFailure instanceof Error
+      && "cause" in observedCleanupFailure
+      && observedCleanupFailure.cause
+        instanceof AggregateError,
+    );
+    const cleanupCauses =
+      observedCleanupFailure.cause.errors;
+    assert.equal(cleanupCauses.length, 2);
+    assert.equal(
+      cleanupCauses[0]?.code,
+      "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_OUTPUT_INVALID",
+    );
+    assert.equal(
+      cleanupCauses[1]?.code,
+      "PLATFORM_RELEASE_SOURCE_V2_CLEANUP_FAILED",
+    );
+    roots.push(replacedParent, displacedParent);
+    assert.equal(existsSync(replacedParent), true);
+    assert.equal(existsSync(displacedParent), true);
+    assert.equal(existsSync(secondParent), false);
+    assert.equal(
+      existsSync(path.dirname(sourceRoot)),
+      false,
+    );
+    assert.equal(
+      readFileSync(
+        path.join(replacedParent, "replacement"),
+        "utf8",
+      ),
+      "must survive\n",
+    );
+    assert.equal(
+      readFileSync(
+        path.join(siblingSentinel, "sentinel"),
+        "utf8",
+      ),
+      "outside\n",
+    );
+    await assert.rejects(
+      revalidatePlatformReleaseCompiledOutputPairV2(pair),
+      {
+        code:
+          "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_SOURCE_DRIFT",
+      },
+    );
+  });
+
   for (
     const mode of [
       "missing_required",
@@ -700,6 +1869,144 @@ describe("PlatformReleaseBuildToolchainCapsuleV2", () => {
       }
     });
   }
+
+  it("cleans hostile npm hardlinks without mutating the external inode", async () => {
+    const repository = createRepositoryFixtureV2();
+    const hostFixture = createHostFixtureV2();
+    const source = admittedSourceV2(repository);
+    let sourceRoot = "";
+    withPlatformReleaseSourceStageForTestV2(
+      source,
+      (root) => {
+        sourceRoot = root;
+      },
+    );
+    const externalRoot = realpathSync(mkdtempSync(path.join(
+      tmpdir(),
+      "setfarm-toolchain-cleanup-hardlink-v2-",
+    )));
+    roots.push(externalRoot);
+    const externalFile =
+      path.join(externalRoot, "external.txt");
+    writeFileSync(externalFile, "external\n");
+    chmodSync(externalFile, 0o444);
+    const host = await createPlatformHostV2(
+      hostFixture,
+      "valid",
+      undefined,
+      undefined,
+      (invocation) => {
+        linkSync(
+          externalFile,
+          path.join(
+            invocation.cwd,
+            "node_modules",
+            "typescript",
+            "external-hardlink",
+          ),
+        );
+      },
+    );
+    await assert.rejects(
+      materializePlatformReleaseBuildToolchainCapsuleV2ForTest({
+        sourceStage: source,
+        hostToolchain: host,
+      }),
+      {
+        code:
+          "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_TREE_INVALID",
+      },
+    );
+    assert.equal(
+      existsSync(path.dirname(sourceRoot)),
+      false,
+    );
+    assert.equal(
+      readFileSync(externalFile, "utf8"),
+      "external\n",
+    );
+    assert.equal(
+      lstatSync(externalFile).mode & 0o7777,
+      0o444,
+    );
+    assert.equal(lstatSync(externalFile).nlink, 1);
+  });
+
+  it("reports replaced scratch cleanup and terminally invalidates the source", async () => {
+    const repository = createRepositoryFixtureV2();
+    const hostFixture = createHostFixtureV2();
+    const source = admittedSourceV2(repository);
+    let sourceRoot = "";
+    let replacedEnvironmentRoot = "";
+    let displacedEnvironmentRoot = "";
+    withPlatformReleaseSourceStageForTestV2(
+      source,
+      (root) => {
+        sourceRoot = root;
+      },
+    );
+    const host = await createPlatformHostV2(
+      hostFixture,
+      "valid",
+      undefined,
+      undefined,
+      (invocation) => {
+        const home = invocation.env.HOME;
+        assert.equal(typeof home, "string");
+        replacedEnvironmentRoot =
+          path.dirname(home as string);
+        displacedEnvironmentRoot =
+          `${replacedEnvironmentRoot}-displaced`;
+        renameSync(
+          replacedEnvironmentRoot,
+          displacedEnvironmentRoot,
+        );
+        mkdirSync(
+          replacedEnvironmentRoot,
+          { mode: 0o700 },
+        );
+        writeFileSync(
+          path.join(
+            replacedEnvironmentRoot,
+            "replacement",
+          ),
+          "must survive\n",
+        );
+      },
+    );
+    await assert.rejects(
+      materializePlatformReleaseBuildToolchainCapsuleV2ForTest({
+        sourceStage: source,
+        hostToolchain: host,
+      }),
+      {
+        code:
+          "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_CLEANUP_FAILED",
+      },
+    );
+    roots.push(
+      replacedEnvironmentRoot,
+      displacedEnvironmentRoot,
+    );
+    assert.equal(
+      existsSync(path.dirname(sourceRoot)),
+      false,
+    );
+    assert.equal(
+      readFileSync(
+        path.join(
+          replacedEnvironmentRoot,
+          "replacement",
+        ),
+        "utf8",
+      ),
+      "must survive\n",
+    );
+    assert.equal(
+      existsSync(displacedEnvironmentRoot),
+      true,
+    );
+  });
 
   it("terminally disposes the source context after an acquired install fails", async () => {
     const repository = createRepositoryFixtureV2();

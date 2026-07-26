@@ -9,6 +9,7 @@ import {
   readFileSync,
   readdirSync,
   realpathSync,
+  renameSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -157,7 +158,7 @@ function createRepositoryFixture(): RepositoryFixture {
   });
 }
 
-function removeFixture(fixture: RepositoryFixture): void {
+function removeTree(root: string): void {
   const makeWritable = (absolute: string): void => {
     if (!existsSync(absolute)) return;
     const stat = lstatSync(absolute);
@@ -171,8 +172,12 @@ function removeFixture(fixture: RepositoryFixture): void {
       chmodSync(absolute, 0o600);
     }
   };
-  makeWritable(fixture.root);
-  rmSync(fixture.root, { recursive: true, force: true });
+  makeWritable(root);
+  rmSync(root, { recursive: true, force: true });
+}
+
+function removeFixture(fixture: RepositoryFixture): void {
+  removeTree(fixture.root);
 }
 
 function errorCode(action: () => unknown): string | undefined {
@@ -576,6 +581,67 @@ describe("Platform release source admission V2", () => {
       );
     } finally {
       removeFixture(linked);
+    }
+  });
+
+  it("preserves a replaced unissued source context and reports cleanup failure", () => {
+    const fixture = createRepositoryFixture();
+    let replacedContext = "";
+    let displacedContext = "";
+    let observed: unknown;
+    try {
+      try {
+        admitPlatformReleaseSourceV2ForTest({
+          repositoryRoot: fixture.repository,
+          afterFirstStageCaptureForTest: (stageRoot) => {
+            replacedContext = path.dirname(stageRoot);
+            displacedContext =
+              `${replacedContext}-displaced`;
+            renameSync(
+              replacedContext,
+              displacedContext,
+            );
+            mkdirSync(replacedContext, { mode: 0o700 });
+            writeFileSync(
+              path.join(replacedContext, "replacement"),
+              "must survive\n",
+            );
+          },
+        });
+        assert.fail("replacement must reject admission");
+      } catch (error) {
+        observed = error;
+      }
+      assert.ok(
+        observed instanceof
+          PlatformReleaseSourceAdmissionErrorV2,
+      );
+      assert.equal(
+        observed.code,
+        "PLATFORM_RELEASE_SOURCE_V2_CLEANUP_FAILED",
+      );
+      assert.ok(observed.cause instanceof AggregateError);
+      assert.equal(observed.cause.errors.length, 2);
+      assert.equal(
+        observed.cause.errors[0]?.code,
+        "PLATFORM_RELEASE_SOURCE_V2_SOURCE_DRIFT",
+      );
+      assert.equal(
+        observed.cause.errors[1]?.code,
+        "PLATFORM_RELEASE_SOURCE_V2_CLEANUP_FAILED",
+      );
+      assert.equal(
+        readFileSync(
+          path.join(replacedContext, "replacement"),
+          "utf8",
+        ),
+        "must survive\n",
+      );
+      assert.equal(existsSync(displacedContext), true);
+    } finally {
+      removeTree(replacedContext);
+      removeTree(displacedContext);
+      removeFixture(fixture);
     }
   });
 

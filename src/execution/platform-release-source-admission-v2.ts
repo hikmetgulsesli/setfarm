@@ -27,9 +27,27 @@ import { fileURLToPath } from "node:url";
 import { isProxy } from "node:util/types";
 
 import {
+  canonicalJsonBytes,
   canonicalJsonStringify,
   hashCanonicalJson,
 } from "../product-compiler/canonical-json.js";
+import {
+  hashHostNodePlatformReleaseOutputStageIdentityV2,
+} from
+  "../product-compiler/host-node-toolchain-authority-v2.js";
+import {
+  getNodeScaffoldRuntimeMetadataProbeInternalV2,
+  readExactNpmLockRegularFileInternalV2,
+} from
+  "../product-compiler/node-scaffold-production-materialization-v2.js";
+import {
+  captureCanonicalRuntimeTreeV2,
+  captureCanonicalRuntimeTreeV2ForTest,
+  verifyCanonicalRuntimeTreeV2,
+} from "./canonical-runtime-tree-v2.js";
+import {
+  type CanonicalRuntimeTreeV2,
+} from "./schemas/canonical-runtime-tree-v2.js";
 import {
   EXACT_PLATFORM_RELEASE_SOURCE_REF_V2_SCHEMA,
   PLATFORM_RELEASE_EMPTY_GIT_STATUS_CONTENT_HASH_V2,
@@ -55,15 +73,24 @@ import {
   hashPlatformReleaseBuildToolchainInstallRecipeV2,
   hashPlatformReleaseBuildToolchainPhysicalIdentityV2,
   hashPlatformReleaseBuildToolchainReceiptV2,
+  hashPlatformReleaseBuildCommandResultV2,
   hashPlatformReleaseSourceStagePhysicalIdentityV2,
   hashPlatformReleaseSourceTreeBindingV2,
   hashSourceAdmissionReceiptV2,
   type PlatformReleaseBuildToolchainPhysicalIdentityV2,
   type PlatformReleaseBuildToolchainReceiptV2,
+  type PlatformReleaseBuildCommandResultV2,
   type PlatformReleaseSourceStagePhysicalIdentityV2,
   type PlatformReleaseSourceTreeBindingV2,
   type SourceAdmissionReceiptV2,
 } from "./schemas/platform-release-build-v2.js";
+import {
+  createPlatformReleaseCompiledOutputPairInspectionV2,
+  createPlatformReleasePredependencyOutputBindingV2,
+  type PlatformReleaseCompiledOutputPairInspectionV2,
+  type PlatformReleasePredependencyOutputBindingV2,
+} from
+  "./schemas/platform-release-compiled-output-pair-v2.js";
 import {
   ExactHostOwnedFileRefV2Schema,
   boundedPlatformReleaseJsonSnapshotV2,
@@ -71,10 +98,12 @@ import {
   type ExactHostOwnedFileRefV2,
 } from "./schemas/platform-release-common-v2.js";
 import {
+  executePlatformReleaseHostNodeToolchainBuildInternalV2,
   executePlatformReleaseHostNodeToolchainNpmCiInternalV2,
   inspectPlatformReleaseHostNodeToolchainReceiptV2,
   isProductionPlatformReleaseHostNodeToolchainAuthorityV2,
   revalidatePlatformReleaseHostNodeToolchainAuthorityV2,
+  type PlatformReleaseHostNodeToolchainBuildEvidenceV2,
   type PlatformReleaseHostNodeToolchainAuthorityV2,
 } from
   "./platform-release-host-node-toolchain-authority-v2.js";
@@ -101,6 +130,10 @@ const BUILD_TOOLCHAIN_ENVIRONMENT_PREFIX_V2 =
   "setfarm-platform-build-toolchain-env-v2-";
 const BUILD_TOOLCHAIN_INSTALL_PREFIX_V2 =
   "setfarm-platform-build-toolchain-install-v2-";
+const COMPILED_OUTPUT_FIRST_PREFIX_V2 =
+  "setfarm-platform-compiled-output-first-v2-";
+const COMPILED_OUTPUT_SECOND_PREFIX_V2 =
+  "setfarm-platform-compiled-output-second-v2-";
 const SOURCE_ADMISSION_INPUT_MAX_BYTES_V2 = 256 * 1024;
 
 export type PlatformReleaseSourceAdmissionErrorCodeV2 =
@@ -116,6 +149,7 @@ export type PlatformReleaseSourceAdmissionErrorCodeV2 =
   | "PLATFORM_RELEASE_SOURCE_V2_HANDLE_UNAUTHENTICATED"
   | "PLATFORM_RELEASE_SOURCE_V2_HANDLE_DISPOSED"
   | "PLATFORM_RELEASE_SOURCE_V2_MATERIALIZATION_BUSY"
+  | "PLATFORM_RELEASE_SOURCE_V2_CLEANUP_FAILED"
   | "PLATFORM_RELEASE_SOURCE_V2_TEST_ONLY";
 
 export class PlatformReleaseSourceAdmissionErrorV2 extends Error {
@@ -281,6 +315,57 @@ type PlatformReleaseSourceContextLifecycleV2 =
   | "release_completed"
   | "disposed";
 
+type SourceOwnedPrivateDirectoryIdentityV2 = Readonly<{
+  device: number;
+  inode: number;
+  ownerUid: number;
+  ownerGid: number;
+  mode: 0o700;
+}>;
+
+type SourceOwnedPrivateDirectoryV2 = Readonly<{
+  absolutePath: string;
+  identity: SourceOwnedPrivateDirectoryIdentityV2;
+}>;
+
+type SourceOwnedOutputRootSlotV2 =
+  | Readonly<{ status: "empty" }>
+  | Readonly<{
+    status: "parent_created";
+    privateParentPath: string;
+  }>
+  | Readonly<{
+    status: "parent_anchored";
+    privateParent: SourceOwnedPrivateDirectoryV2;
+  }>
+  | Readonly<{
+    status: "output_created";
+    privateParent: SourceOwnedPrivateDirectoryV2;
+    outputPath: string;
+  }>
+  | Readonly<{
+    status: "output_anchored";
+    privateParent: SourceOwnedPrivateDirectoryV2;
+    outputRoot: SourceOwnedPrivateDirectoryV2;
+  }>;
+
+type SourceOwnedOutputRootRegistryV2 = {
+  cleanupState:
+    | "open"
+    | "cleaning"
+    | "cleaned"
+    | "cleanup_failed";
+  first: SourceOwnedOutputRootSlotV2;
+  second: SourceOwnedOutputRootSlotV2;
+};
+
+type SourceOwnedOutputAllocationFaultV2 = Readonly<{
+  checkpoint:
+    | "after_first_parent_created"
+    | "after_first_output_created";
+  observePath: (absolutePath: string) => void;
+}>;
+
 type SourceStageStateV2 = {
   readonly admissionScope: "production_candidate" | "test_fixture";
   readonly contextRoot: string;
@@ -288,8 +373,16 @@ type SourceStageStateV2 = {
   readonly core: SourceExportCoreV2;
   readonly receipt: SourceAdmissionReceiptV2 | null;
   readonly testEvidence: PlatformReleaseSourceAdmissionTestEvidenceV2 | null;
+  readonly contextAnchor: SourceOwnedPrivateDirectoryV2;
+  readonly ownedOutputRoots:
+    SourceOwnedOutputRootRegistryV2;
   lifecycle: PlatformReleaseSourceContextLifecycleV2;
 };
+
+type InitialSourceStageStateV2 = Omit<
+  SourceStageStateV2,
+  "ownedOutputRoots"
+>;
 
 export type AdmitPlatformReleaseSourceV2Input = Readonly<{
   repositoryRoot: string;
@@ -339,6 +432,7 @@ export type PlatformReleaseBuildToolchainCapsuleErrorCodeV2 =
   | "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_TREE_INVALID"
   | "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_CONTEXT_INVALID"
   | "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_ALREADY_MATERIALIZED"
+  | "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_CLEANUP_FAILED"
   | "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_HANDLE_UNAUTHENTICATED";
 
 export class PlatformReleaseBuildToolchainCapsuleErrorV2
@@ -412,12 +506,133 @@ export class PlatformReleaseBuildToolchainCapsuleV2 {
   }
 }
 
+export type PlatformReleaseCompiledOutputPairErrorCodeV2 =
+  | "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_INPUT_INVALID"
+  | "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_SCOPE_MISMATCH"
+  | "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_ALREADY_MATERIALIZED"
+  | "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_SOURCE_DRIFT"
+  | "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_TOOLCHAIN_DRIFT"
+  | "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_BUILD_FAILED"
+  | "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_OUTPUT_INVALID"
+  | "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_EQUALITY_FAILED"
+  | "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_CLEANUP_FAILED"
+  | "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_HANDLE_UNAUTHENTICATED"
+  | "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_TEST_ONLY";
+
+export class PlatformReleaseCompiledOutputPairErrorV2
+  extends Error {
+  readonly code:
+    PlatformReleaseCompiledOutputPairErrorCodeV2;
+  override readonly cause?: unknown;
+
+  constructor(
+    code: PlatformReleaseCompiledOutputPairErrorCodeV2,
+    message: string,
+    options?: ErrorOptions,
+  ) {
+    super(message.slice(0, 1_500), options);
+    this.name =
+      "PlatformReleaseCompiledOutputPairErrorV2";
+    this.code = code;
+    this.cause = options?.cause;
+  }
+}
+
+type CompiledPackageIdentityV2 = Readonly<{
+  sourceRefHash: string;
+  contentHash: string;
+  byteLength: number;
+  mode: "0444";
+}>;
+
+type CompiledOccurrenceStateV2 = Readonly<{
+  occurrence: "first" | "second";
+  slot: Extract<
+    SourceOwnedOutputRootSlotV2,
+    { status: "output_anchored" }
+  >;
+  hostEvidence:
+    PlatformReleaseHostNodeToolchainBuildEvidenceV2;
+  outputStagePhysicalIdentityHash: string;
+  stableHostProjectionHash: string;
+  commandResult: PlatformReleaseBuildCommandResultV2;
+  distTree: CanonicalRuntimeTreeV2;
+  packageIdentity: CompiledPackageIdentityV2;
+  binding: PlatformReleasePredependencyOutputBindingV2;
+}>;
+
+type CompiledOutputPairStateV2 = Readonly<{
+  admissionScope: "production_candidate" | "test_fixture";
+  sourceStage: AdmittedPlatformReleaseSourceStageV2;
+  buildToolchain:
+    PlatformReleaseBuildToolchainCapsuleV2;
+  first: CompiledOccurrenceStateV2;
+  second: CompiledOccurrenceStateV2;
+  inspection:
+    PlatformReleaseCompiledOutputPairInspectionV2;
+  ownership: {
+    lifecycle:
+      | "ready"
+      | "consuming"
+      | "consumed"
+      | "invalidated";
+  };
+}>;
+
+const compiledOutputPairConstructorCapabilityV2 =
+  Object.freeze({});
+const compiledOutputPairStatesV2 =
+  new WeakMap<object, CompiledOutputPairStateV2>();
+
+export class PlatformReleaseCompiledOutputPairV2 {
+  readonly authorityState =
+    "candidate_compiled_output_pair_unverified" as const;
+  readonly admissionScope:
+    "production_candidate" | "test_fixture";
+  readonly sourceBindingHash: string;
+  readonly stableOutputBindingHash: string;
+
+  constructor(
+    capability: object,
+    state: CompiledOutputPairStateV2,
+  ) {
+    if (
+      capability
+        !== compiledOutputPairConstructorCapabilityV2
+    ) {
+      throw new PlatformReleaseCompiledOutputPairErrorV2(
+        "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_HANDLE_UNAUTHENTICATED",
+        "Compiled output pair constructor capability is unavailable",
+      );
+    }
+    this.admissionScope = state.admissionScope;
+    this.sourceBindingHash =
+      state.inspection.sourceBindingHash;
+    this.stableOutputBindingHash =
+      state.inspection.stableOutput.bindingHash;
+    compiledOutputPairStatesV2.set(this, state);
+    Object.freeze(this);
+  }
+}
+
 function fail(
   code: PlatformReleaseSourceAdmissionErrorCodeV2,
   message: string,
   cause?: unknown,
 ): never {
   throw new PlatformReleaseSourceAdmissionErrorV2(
+    code,
+    message,
+    cause === undefined ? undefined : { cause },
+  );
+}
+
+function failCompiledOutputPair(
+  code: PlatformReleaseCompiledOutputPairErrorCodeV2,
+  message: string,
+  cause?: unknown,
+): never {
+  throw new PlatformReleaseCompiledOutputPairErrorV2(
     code,
     message,
     cause === undefined ? undefined : { cause },
@@ -1420,16 +1635,24 @@ function materializeSourceStage(
   objects: ReadonlyMap<string, CapturedGitObjectV2>,
 ): Readonly<{
   contextRoot: string;
+  contextAnchor: SourceOwnedPrivateDirectoryV2;
   stageRoot: string;
 }> {
   const parent = ensurePrivateStageParent();
   let contextRoot: string | undefined;
+  let contextAnchor:
+    | SourceOwnedPrivateDirectoryV2
+    | undefined;
   let stageRoot: string | undefined;
   try {
-    contextRoot = realpathSync(mkdtempSync(
+    contextRoot = mkdtempSync(
       path.join(parent, SOURCE_STAGE_PREFIX_V2),
-    ));
-    chmodSync(contextRoot, 0o700);
+    );
+    contextAnchor =
+      anchorSourceOwnedPrivateDirectoryV2(
+        realpathSync(contextRoot),
+        "Source context",
+      );
     const context = lstatSync(contextRoot);
     if (
       context.isSymbolicLink()
@@ -1511,14 +1734,24 @@ function materializeSourceStage(
     fsyncDirectory(stageRoot);
     fsyncDirectory(contextRoot);
     fsyncDirectory(parent);
-    return Object.freeze({ contextRoot, stageRoot });
+    return Object.freeze({
+      contextRoot,
+      contextAnchor,
+      stageRoot,
+    });
   } catch (error) {
-    if (contextRoot) cleanupStage(contextRoot);
-    if (error instanceof PlatformReleaseSourceAdmissionErrorV2) throw error;
-    return fail(
-      "PLATFORM_RELEASE_SOURCE_V2_STAGE_INVALID",
-      "Source stage materialization failed",
-      error,
+    const primary = error instanceof
+        PlatformReleaseSourceAdmissionErrorV2
+      ? error
+      : new PlatformReleaseSourceAdmissionErrorV2(
+        "PLATFORM_RELEASE_SOURCE_V2_STAGE_INVALID",
+        "Source stage materialization failed",
+        { cause: error },
+      );
+    return throwAfterUnissuedSourceCleanupV2(
+      contextRoot,
+      contextAnchor,
+      primary,
     );
   }
 }
@@ -1574,11 +1807,20 @@ function stableStageFile(
 
 function captureSourceFingerprint(
   stageRoot: string,
+  expectedOwner?: Readonly<{
+    uid: number;
+    gid: number;
+  }>,
 ): SourceFingerprintV2 {
   const entries: SourceFingerprintEntryV2[] = [];
   let fileCount = 0;
   let directoryCount = 0;
   let totalBytes = 0;
+  const initialRoot = lstatSync(stageRoot);
+  const owner = expectedOwner ?? Object.freeze({
+    uid: initialRoot.uid,
+    gid: initialRoot.gid,
+  });
 
   const visit = (absolute: string, relative: string): void => {
     const before = lstatSync(absolute);
@@ -1586,6 +1828,8 @@ function captureSourceFingerprint(
       before.isSymbolicLink()
       || !before.isDirectory()
       || (before.mode & 0o7777) !== 0o555
+      || before.uid !== owner.uid
+      || before.gid !== owner.gid
     ) {
       return fail(
         "PLATFORM_RELEASE_SOURCE_V2_STAGE_INVALID",
@@ -1634,6 +1878,8 @@ function captureSourceFingerprint(
         !stat.isFile()
         || stat.nlink !== 1
         || ![0o444, 0o555].includes(stat.mode & 0o7777)
+        || stat.uid !== owner.uid
+        || stat.gid !== owner.gid
         || stat.size < 0
         || stat.size > SOURCE_FILE_MAX_BYTES_V2
       ) {
@@ -1931,30 +2177,634 @@ function deriveSourceBinding(
   );
 }
 
-function cleanupStage(stageRoot: string): void {
-  try {
-    if (!lstatSync(stageRoot).isDirectory()) return;
-    const pending = [stageRoot];
-    while (pending.length > 0) {
-      const current = pending.pop()!;
-      try {
-        const stat = lstatSync(current);
-        if (stat.isDirectory() && !stat.isSymbolicLink()) {
-          chmodSync(current, 0o700);
-          for (const name of readdirSync(current)) {
-            pending.push(path.join(current, name));
-          }
-        } else if (!stat.isSymbolicLink()) {
-          chmodSync(current, 0o600);
-        }
-      } catch {
-        // Best-effort cleanup remains scoped to the private random stage.
-      }
-    }
-    rmSync(stageRoot, { recursive: true, force: true });
-  } catch {
-    // The typed operation failure remains authoritative.
+function removeSourceOwnedPrivateRootV2(
+  anchor: SourceOwnedPrivateDirectoryV2,
+  label: string,
+): void {
+  if (sourceOwnedPathIsAbsentV2(anchor.absolutePath)) {
+    return;
   }
+  try {
+    assertSourceOwnedPrivateDirectoryCurrentV2(
+      anchor,
+      label,
+      "PLATFORM_RELEASE_SOURCE_V2_CLEANUP_FAILED",
+    );
+    makeSourceOwnedDirectoriesWritableV2(
+      anchor.absolutePath,
+    );
+    rmSync(anchor.absolutePath, {
+      recursive: true,
+      force: false,
+    });
+    if (!sourceOwnedPathIsAbsentV2(anchor.absolutePath)) {
+      return fail(
+        "PLATFORM_RELEASE_SOURCE_V2_CLEANUP_FAILED",
+        `${label} remained after deletion`,
+      );
+    }
+  } catch (error) {
+    if (error instanceof PlatformReleaseSourceAdmissionErrorV2) {
+      throw error;
+    }
+    return fail(
+      "PLATFORM_RELEASE_SOURCE_V2_CLEANUP_FAILED",
+      `${label} could not be removed safely`,
+      error,
+    );
+  }
+}
+
+function throwAfterUnissuedSourceCleanupV2(
+  contextRoot: string | undefined,
+  contextAnchor:
+    | SourceOwnedPrivateDirectoryV2
+    | undefined,
+  primaryFailure: PlatformReleaseSourceAdmissionErrorV2,
+): never {
+  if (!contextRoot) throw primaryFailure;
+  let cleanupFailure: unknown;
+  try {
+    if (contextAnchor) {
+      removeSourceOwnedPrivateRootV2(
+        contextAnchor,
+        "Unissued source context",
+      );
+    } else if (!sourceOwnedPathIsAbsentV2(contextRoot)) {
+      cleanupFailure =
+        new PlatformReleaseSourceAdmissionErrorV2(
+          "PLATFORM_RELEASE_SOURCE_V2_CLEANUP_FAILED",
+          "Unanchored source context was preserved",
+        );
+    }
+  } catch (error) {
+    cleanupFailure = error;
+  }
+  if (cleanupFailure !== undefined) {
+    return fail(
+      "PLATFORM_RELEASE_SOURCE_V2_CLEANUP_FAILED",
+      "Unissued source transaction could not remove its authentic context safely",
+      new AggregateError([
+        primaryFailure,
+        cleanupFailure,
+      ]),
+    );
+  }
+  throw primaryFailure;
+}
+
+function sourceOwnedProcessOwnerV2(): Readonly<{
+  uid: number;
+  gid: number;
+}> {
+  if (
+    typeof process.getuid !== "function"
+    || typeof process.getgid !== "function"
+  ) {
+    return fail(
+      "PLATFORM_RELEASE_SOURCE_V2_STAGE_INVALID",
+      "Private release contexts require POSIX ownership evidence",
+    );
+  }
+  return Object.freeze({
+    uid: process.getuid(),
+    gid: process.getgid(),
+  });
+}
+
+function sourceOwnedDirectoryIdentityV2(
+  stat: Stats,
+): SourceOwnedPrivateDirectoryIdentityV2 {
+  return Object.freeze({
+    device: stat.dev,
+    inode: stat.ino,
+    ownerUid: stat.uid,
+    ownerGid: stat.gid,
+    mode: 0o700 as const,
+  });
+}
+
+function sameSourceOwnedDirectoryIdentityV2(
+  left: SourceOwnedPrivateDirectoryIdentityV2,
+  right: SourceOwnedPrivateDirectoryIdentityV2,
+): boolean {
+  return left.device === right.device
+    && left.inode === right.inode
+    && left.ownerUid === right.ownerUid
+    && left.ownerGid === right.ownerGid
+    && left.mode === right.mode;
+}
+
+function anchorSourceOwnedPrivateDirectoryV2(
+  absolutePath: string,
+  label: string,
+): SourceOwnedPrivateDirectoryV2 {
+  if (!normalizedAbsolute(absolutePath)) {
+    return fail(
+      "PLATFORM_RELEASE_SOURCE_V2_STAGE_INVALID",
+      `${label} must be one normalized absolute directory`,
+    );
+  }
+  const owner = sourceOwnedProcessOwnerV2();
+  try {
+    const stat = lstatSync(absolutePath);
+    if (
+      stat.isSymbolicLink()
+      || !stat.isDirectory()
+      || realpathSync(absolutePath) !== absolutePath
+      || (stat.mode & 0o7777) !== 0o700
+      || stat.uid !== owner.uid
+      || stat.gid !== owner.gid
+    ) {
+      return fail(
+        "PLATFORM_RELEASE_SOURCE_V2_STAGE_INVALID",
+        `${label} lost its exact private directory identity`,
+      );
+    }
+    return Object.freeze({
+      absolutePath,
+      identity: sourceOwnedDirectoryIdentityV2(stat),
+    });
+  } catch (error) {
+    if (error instanceof PlatformReleaseSourceAdmissionErrorV2) {
+      throw error;
+    }
+    return fail(
+      "PLATFORM_RELEASE_SOURCE_V2_STAGE_INVALID",
+      `${label} could not be anchored`,
+      error,
+    );
+  }
+}
+
+function assertSourceOwnedPrivateDirectoryCurrentV2(
+  anchor: SourceOwnedPrivateDirectoryV2,
+  label: string,
+  errorCode:
+    | "PLATFORM_RELEASE_SOURCE_V2_STAGE_INVALID"
+    | "PLATFORM_RELEASE_SOURCE_V2_CLEANUP_FAILED" =
+      "PLATFORM_RELEASE_SOURCE_V2_STAGE_INVALID",
+): void {
+  const owner = sourceOwnedProcessOwnerV2();
+  try {
+    const stat = lstatSync(anchor.absolutePath);
+    const current = sourceOwnedDirectoryIdentityV2(stat);
+    if (
+      stat.isSymbolicLink()
+      || !stat.isDirectory()
+      || realpathSync(anchor.absolutePath)
+        !== anchor.absolutePath
+      || (stat.mode & 0o7777) !== 0o700
+      || stat.uid !== owner.uid
+      || stat.gid !== owner.gid
+      || !sameSourceOwnedDirectoryIdentityV2(
+        current,
+        anchor.identity,
+      )
+    ) {
+      return fail(
+        errorCode,
+        `${label} was replaced or changed`,
+      );
+    }
+  } catch (error) {
+    if (error instanceof PlatformReleaseSourceAdmissionErrorV2) {
+      throw error;
+    }
+    return fail(
+      errorCode,
+      `${label} could not be re-anchored`,
+      error,
+    );
+  }
+}
+
+function createSourceOwnedOutputRootRegistryV2():
+  SourceOwnedOutputRootRegistryV2 {
+  return {
+    cleanupState: "open",
+    first: Object.freeze({ status: "empty" as const }),
+    second: Object.freeze({ status: "empty" as const }),
+  };
+}
+
+const SOURCE_CONTEXT_LIFECYCLE_TRANSITIONS_V2 = {
+    source_admitted: [
+      "toolchain_materializing",
+      "disposed",
+    ],
+    toolchain_materializing: [
+      "toolchain_materialized",
+      "disposed",
+    ],
+    toolchain_materialized: [
+      "double_build_running",
+      "disposed",
+    ],
+    double_build_running: [
+      "double_build_complete",
+      "disposed",
+    ],
+    double_build_complete: [
+      "dependency_materializing",
+      "disposed",
+    ],
+    dependency_materializing: [
+      "release_completed",
+      "disposed",
+    ],
+    release_completed: ["disposed"],
+    disposed: [],
+  } as const satisfies Readonly<
+    Record<
+      PlatformReleaseSourceContextLifecycleV2,
+      readonly PlatformReleaseSourceContextLifecycleV2[]
+    >
+  >;
+
+function transitionSourceContextLifecycleV2(
+  state: SourceStageStateV2,
+  expected: PlatformReleaseSourceContextLifecycleV2,
+  next: PlatformReleaseSourceContextLifecycleV2,
+): boolean {
+  const allowed =
+    SOURCE_CONTEXT_LIFECYCLE_TRANSITIONS_V2[
+      expected
+    ] as readonly PlatformReleaseSourceContextLifecycleV2[];
+  if (
+    !allowed.includes(next)
+  ) {
+    return fail(
+      "PLATFORM_RELEASE_SOURCE_V2_STAGE_INVALID",
+      `Invalid source-context lifecycle transition ${expected} -> ${next}`,
+    );
+  }
+  if (state.lifecycle !== expected) return false;
+  state.lifecycle = next;
+  return true;
+}
+
+function isMissingPathErrorV2(
+  error: unknown,
+): boolean {
+  return error instanceof Error
+    && "code" in error
+    && error.code === "ENOENT";
+}
+
+function sourceOwnedPathIsAbsentV2(
+  absolutePath: string,
+): boolean {
+  try {
+    lstatSync(absolutePath);
+    return false;
+  } catch (error) {
+    if (isMissingPathErrorV2(error)) return true;
+    throw error;
+  }
+}
+
+function makeSourceOwnedDirectoriesWritableV2(
+  absolutePath: string,
+): void {
+  const stat = lstatSync(absolutePath);
+  if (stat.isSymbolicLink() || !stat.isDirectory()) return;
+  chmodSync(absolutePath, 0o700);
+  for (const name of readdirSync(absolutePath)) {
+    const child = path.join(absolutePath, name);
+    const childStat = lstatSync(child);
+    if (
+      childStat.isDirectory()
+      && !childStat.isSymbolicLink()
+    ) {
+      makeSourceOwnedDirectoriesWritableV2(child);
+    }
+  }
+}
+
+function removeSourceOwnedOutputSlotV2(
+  slot: SourceOwnedOutputRootSlotV2,
+  label: string,
+): void {
+  if (slot.status === "empty") return;
+  if (slot.status === "parent_created") {
+    if (
+      sourceOwnedPathIsAbsentV2(slot.privateParentPath)
+    ) return;
+    return fail(
+      "PLATFORM_RELEASE_SOURCE_V2_CLEANUP_FAILED",
+      `${label} unanchored private parent was preserved`,
+    );
+  }
+  const parent = slot.privateParent;
+  if (sourceOwnedPathIsAbsentV2(parent.absolutePath)) {
+    return;
+  }
+  assertSourceOwnedPrivateDirectoryCurrentV2(
+    parent,
+    `${label} private parent`,
+    "PLATFORM_RELEASE_SOURCE_V2_CLEANUP_FAILED",
+  );
+  const names = readdirSync(parent.absolutePath).sort();
+  if (
+    slot.status === "output_created"
+    && canonicalJsonStringify(names)
+      === canonicalJsonStringify(["output"])
+  ) {
+    return fail(
+      "PLATFORM_RELEASE_SOURCE_V2_CLEANUP_FAILED",
+      `${label} unanchored output child was preserved`,
+    );
+  }
+  const expectedNames =
+    slot.status === "parent_anchored"
+      || slot.status === "output_created"
+      ? []
+      : ["output"];
+  if (
+    canonicalJsonStringify(names)
+      !== canonicalJsonStringify(expectedNames)
+  ) {
+    return fail(
+      "PLATFORM_RELEASE_SOURCE_V2_CLEANUP_FAILED",
+      `${label} private parent membership changed`,
+    );
+  }
+  if (slot.status === "output_anchored") {
+    assertSourceOwnedPrivateDirectoryCurrentV2(
+      slot.outputRoot,
+      `${label} output root`,
+      "PLATFORM_RELEASE_SOURCE_V2_CLEANUP_FAILED",
+    );
+  }
+  try {
+    makeSourceOwnedDirectoriesWritableV2(
+      parent.absolutePath,
+    );
+    rmSync(parent.absolutePath, {
+      recursive: true,
+      force: false,
+    });
+    if (!sourceOwnedPathIsAbsentV2(parent.absolutePath)) {
+      return fail(
+        "PLATFORM_RELEASE_SOURCE_V2_CLEANUP_FAILED",
+        `${label} private parent remained after deletion`,
+      );
+    }
+  } catch (error) {
+    if (error instanceof PlatformReleaseSourceAdmissionErrorV2) {
+      throw error;
+    }
+    return fail(
+      "PLATFORM_RELEASE_SOURCE_V2_CLEANUP_FAILED",
+      `${label} private parent could not be removed safely`,
+      error,
+    );
+  }
+}
+
+function removeSourceOwnedContextV2(
+  state: SourceStageStateV2,
+): void {
+  removeSourceOwnedPrivateRootV2(
+    state.contextAnchor,
+    "Source-owned context",
+  );
+}
+
+function disposeSourceOwnedPhysicalContextV2(
+  state: SourceStageStateV2,
+): void {
+  if (state.lifecycle !== "disposed") {
+    if (
+      !transitionSourceContextLifecycleV2(
+        state,
+        state.lifecycle,
+        "disposed",
+      )
+    ) {
+      return fail(
+        "PLATFORM_RELEASE_SOURCE_V2_CLEANUP_FAILED",
+        "Source context could not enter terminal disposal",
+      );
+    }
+  }
+  if (state.ownedOutputRoots.cleanupState !== "open") {
+    return fail(
+      "PLATFORM_RELEASE_SOURCE_V2_CLEANUP_FAILED",
+      "Source-owned roots already entered cleanup",
+    );
+  }
+  state.ownedOutputRoots.cleanupState = "cleaning";
+  const errors: unknown[] = [];
+  for (
+    const [slot, label] of [
+      [state.ownedOutputRoots.second, "Second compiled output"],
+      [state.ownedOutputRoots.first, "First compiled output"],
+    ] as const
+  ) {
+    try {
+      removeSourceOwnedOutputSlotV2(slot, label);
+    } catch (error) {
+      errors.push(error);
+    }
+  }
+  try {
+    removeSourceOwnedContextV2(state);
+  } catch (error) {
+    errors.push(error);
+  }
+  if (errors.length > 0) {
+    state.ownedOutputRoots.cleanupState =
+      "cleanup_failed";
+    return fail(
+      "PLATFORM_RELEASE_SOURCE_V2_CLEANUP_FAILED",
+      "One or more source-owned physical roots could not be removed safely",
+      new AggregateError(errors),
+    );
+  }
+  state.ownedOutputRoots.cleanupState = "cleaned";
+}
+
+function sourceOwnedRootsAreDisjointV2(
+  left: SourceOwnedPrivateDirectoryV2,
+  right: SourceOwnedPrivateDirectoryV2,
+): boolean {
+  const leftPrefix = `${left.absolutePath}${path.sep}`;
+  const rightPrefix = `${right.absolutePath}${path.sep}`;
+  return left.absolutePath !== right.absolutePath
+    && !left.absolutePath.startsWith(rightPrefix)
+    && !right.absolutePath.startsWith(leftPrefix)
+    && (
+      left.identity.device !== right.identity.device
+      || left.identity.inode !== right.identity.inode
+    );
+}
+
+function allocateSourceOwnedOutputRootV2(
+  state: SourceStageStateV2,
+  occurrence: "first" | "second",
+  fault?: SourceOwnedOutputAllocationFaultV2,
+): Extract<
+  SourceOwnedOutputRootSlotV2,
+  { status: "output_anchored" }
+> {
+  if (
+    state.lifecycle !== "double_build_running"
+    || state.ownedOutputRoots.cleanupState !== "open"
+    || state.ownedOutputRoots[occurrence].status
+      !== "empty"
+  ) {
+    return fail(
+      "PLATFORM_RELEASE_SOURCE_V2_MATERIALIZATION_BUSY",
+      `${occurrence} compiled output cannot be allocated in the current lifecycle`,
+    );
+  }
+  const parent = ensurePrivateStageParent();
+  const prefix = occurrence === "first"
+    ? COMPILED_OUTPUT_FIRST_PREFIX_V2
+    : COMPILED_OUTPUT_SECOND_PREFIX_V2;
+  const privateParentPath =
+    mkdtempSync(path.join(parent, prefix));
+  state.ownedOutputRoots[occurrence] =
+    Object.freeze({
+      status: "parent_created" as const,
+      privateParentPath,
+    });
+  if (
+    occurrence === "first"
+    && fault?.checkpoint
+      === "after_first_parent_created"
+  ) {
+    fault.observePath(privateParentPath);
+    return fail(
+      "PLATFORM_RELEASE_SOURCE_V2_STAGE_INVALID",
+      "Injected test fault after first output parent creation",
+    );
+  }
+  const privateParent =
+    anchorSourceOwnedPrivateDirectoryV2(
+      realpathSync(privateParentPath),
+      `${occurrence} compiled-output parent`,
+    );
+  state.ownedOutputRoots[occurrence] =
+    Object.freeze({
+      status: "parent_anchored" as const,
+      privateParent,
+    });
+  fsyncDirectory(parent);
+  const outputPath = path.join(
+    privateParent.absolutePath,
+    "output",
+  );
+  mkdirSync(outputPath, { mode: 0o700 });
+  state.ownedOutputRoots[occurrence] =
+    Object.freeze({
+      status: "output_created" as const,
+      privateParent,
+      outputPath,
+    });
+  if (
+    occurrence === "first"
+    && fault?.checkpoint
+      === "after_first_output_created"
+  ) {
+    fault.observePath(outputPath);
+    return fail(
+      "PLATFORM_RELEASE_SOURCE_V2_STAGE_INVALID",
+      "Injected test fault after first output child creation",
+    );
+  }
+  const outputRoot =
+    anchorSourceOwnedPrivateDirectoryV2(
+      realpathSync(outputPath),
+      `${occurrence} compiled-output root`,
+    );
+  const slot = Object.freeze({
+    status: "output_anchored" as const,
+    privateParent,
+    outputRoot,
+  });
+  state.ownedOutputRoots[occurrence] = slot;
+  fsyncDirectory(privateParent.absolutePath);
+  const anchors = [
+    state.contextAnchor,
+    ...(["first", "second"] as const)
+      .filter((name) => name !== occurrence)
+      .flatMap((name) => {
+        const slot = state.ownedOutputRoots[name];
+        return slot.status === "empty"
+          ? []
+          : slot.status === "parent_created"
+            ? []
+            : slot.status === "parent_anchored"
+              || slot.status === "output_created"
+            ? [slot.privateParent]
+            : [
+              slot.privateParent,
+              slot.outputRoot,
+            ];
+      }),
+  ];
+  if (
+    canonicalJsonStringify(
+      readdirSync(privateParent.absolutePath).sort(),
+    ) !== canonicalJsonStringify(["output"])
+    || !sourceOwnedRootsAreDisjointV2(
+      privateParent,
+      state.contextAnchor,
+    )
+    || anchors.some((anchor) =>
+      !sourceOwnedRootsAreDisjointV2(
+        privateParent,
+        anchor,
+      )
+      || !sourceOwnedRootsAreDisjointV2(
+        outputRoot,
+        anchor,
+      ))
+  ) {
+    return fail(
+      "PLATFORM_RELEASE_SOURCE_V2_STAGE_INVALID",
+      `${occurrence} compiled output is not one independent private occurrence`,
+    );
+  }
+  return slot;
+}
+
+function requireSourceOwnedOutputRootV2(
+  state: SourceStageStateV2,
+  occurrence: "first" | "second",
+): Extract<
+  SourceOwnedOutputRootSlotV2,
+  { status: "output_anchored" }
+> {
+  const slot = state.ownedOutputRoots[occurrence];
+  if (slot.status !== "output_anchored") {
+    return fail(
+      "PLATFORM_RELEASE_SOURCE_V2_STAGE_INVALID",
+      `${occurrence} compiled output is not fully anchored`,
+    );
+  }
+  assertSourceOwnedPrivateDirectoryCurrentV2(
+    slot.privateParent,
+    `${occurrence} compiled-output parent`,
+  );
+  assertSourceOwnedPrivateDirectoryCurrentV2(
+    slot.outputRoot,
+    `${occurrence} compiled-output root`,
+  );
+  if (
+    canonicalJsonStringify(
+      readdirSync(slot.privateParent.absolutePath).sort(),
+    ) !== canonicalJsonStringify(["output"])
+  ) {
+    return fail(
+      "PLATFORM_RELEASE_SOURCE_V2_STAGE_INVALID",
+      `${occurrence} compiled-output parent membership changed`,
+    );
+  }
+  return slot;
 }
 
 function zeroObjectBytes(
@@ -1974,12 +2824,16 @@ function runSourceExport(
   }>,
 ): Readonly<{
   contextRoot: string;
+  contextAnchor: SourceOwnedPrivateDirectoryV2;
   stageRoot: string;
   core: SourceExportCoreV2;
 }> {
   const repositoryRoot = anchorRealDirectory(repositoryRootInput);
   const git = anchorGitExecutableForTest(gitExecutableInput);
   let contextRoot: string | undefined;
+  let contextAnchor:
+    | SourceOwnedPrivateDirectoryV2
+    | undefined;
   let stageRoot: string | undefined;
   let objects: ReadonlyMap<string, CapturedGitObjectV2> | undefined;
   try {
@@ -2026,6 +2880,7 @@ function runSourceExport(
     }
     const materialized = materializeSourceStage(files, objects);
     contextRoot = materialized.contextRoot;
+    contextAnchor = materialized.contextAnchor;
     stageRoot = materialized.stageRoot;
     const expectedFingerprint =
       expectedSourceFingerprint(files, objects);
@@ -2103,14 +2958,25 @@ function runSourceExport(
       gitExecutableHash: git.hash,
       gitExecutableByteLength: git.byteLength,
     });
-    return Object.freeze({ contextRoot, stageRoot, core });
+    return Object.freeze({
+      contextRoot,
+      contextAnchor,
+      stageRoot,
+      core,
+    });
   } catch (error) {
-    if (contextRoot) cleanupStage(contextRoot);
-    if (error instanceof PlatformReleaseSourceAdmissionErrorV2) throw error;
-    return fail(
-      "PLATFORM_RELEASE_SOURCE_V2_SOURCE_DRIFT",
-      "Source export failed before a stable candidate was issued",
-      error,
+    const primary = error instanceof
+        PlatformReleaseSourceAdmissionErrorV2
+      ? error
+      : new PlatformReleaseSourceAdmissionErrorV2(
+        "PLATFORM_RELEASE_SOURCE_V2_SOURCE_DRIFT",
+        "Source export failed before a stable candidate was issued",
+        { cause: error },
+      );
+    return throwAfterUnissuedSourceCleanupV2(
+      contextRoot,
+      contextAnchor,
+      primary,
     );
   } finally {
     zeroObjectBytes(objects);
@@ -2216,7 +3082,27 @@ function authenticState(
   return state;
 }
 
-function issueHandle(state: SourceStageStateV2) {
+function issueHandle(
+  initial: InitialSourceStageStateV2,
+) {
+  if (
+    initial.contextAnchor.absolutePath
+      !== initial.contextRoot
+  ) {
+    return fail(
+      "PLATFORM_RELEASE_SOURCE_V2_STAGE_INVALID",
+      "Source context locator differs from its acquisition anchor",
+    );
+  }
+  assertSourceOwnedPrivateDirectoryCurrentV2(
+    initial.contextAnchor,
+    "Source-owned context",
+  );
+  const state: SourceStageStateV2 = {
+    ...initial,
+    ownedOutputRoots:
+      createSourceOwnedOutputRootRegistryV2(),
+  };
   return new AdmittedPlatformReleaseSourceStageV2(
     sourceStageConstructorCapabilityV2,
     state,
@@ -2322,6 +3208,7 @@ export function admitPlatformReleaseSourceV2(
     return issueHandle({
       admissionScope: "production_candidate",
       contextRoot: exported.contextRoot,
+      contextAnchor: exported.contextAnchor,
       stageRoot: exported.stageRoot,
       core: exported.core,
       receipt,
@@ -2329,12 +3216,18 @@ export function admitPlatformReleaseSourceV2(
       lifecycle: "source_admitted",
     });
   } catch (error) {
-    cleanupStage(exported.contextRoot);
-    if (error instanceof PlatformReleaseSourceAdmissionErrorV2) throw error;
-    return fail(
-      "PLATFORM_RELEASE_SOURCE_V2_HOST_AUTHORITY_INVALID",
-      "Production source receipt could not be issued",
-      error,
+    const primary = error instanceof
+        PlatformReleaseSourceAdmissionErrorV2
+      ? error
+      : new PlatformReleaseSourceAdmissionErrorV2(
+        "PLATFORM_RELEASE_SOURCE_V2_HOST_AUTHORITY_INVALID",
+        "Production source receipt could not be issued",
+        { cause: error },
+      );
+    return throwAfterUnissuedSourceCleanupV2(
+      exported.contextRoot,
+      exported.contextAnchor,
+      primary,
     );
   }
 }
@@ -2386,8 +3279,9 @@ export function admitPlatformReleaseSourceV2ForTest(
           ((stageRoot: string) => void) | undefined,
     },
   );
-  const testEvidence: PlatformReleaseSourceAdmissionTestEvidenceV2 =
-    deepFreezePlatformReleaseJsonV2({
+  try {
+    const testEvidence: PlatformReleaseSourceAdmissionTestEvidenceV2 =
+      deepFreezePlatformReleaseJsonV2({
       schema:
         "setfarm.platform-release-source-admission-test-evidence.v2",
       authorityState:
@@ -2416,16 +3310,32 @@ export function admitPlatformReleaseSourceV2ForTest(
         byteLength: exported.core.gitExecutableByteLength,
         authority: "test_fixture_process_tool",
       },
+      });
+    return issueHandle({
+      admissionScope: "test_fixture",
+      contextRoot: exported.contextRoot,
+      contextAnchor: exported.contextAnchor,
+      stageRoot: exported.stageRoot,
+      core: exported.core,
+      receipt: null,
+      testEvidence,
+      lifecycle: "source_admitted",
     });
-  return issueHandle({
-    admissionScope: "test_fixture",
-    contextRoot: exported.contextRoot,
-    stageRoot: exported.stageRoot,
-    core: exported.core,
-    receipt: null,
-    testEvidence,
-    lifecycle: "source_admitted",
-  });
+  } catch (error) {
+    const primary = error instanceof
+        PlatformReleaseSourceAdmissionErrorV2
+      ? error
+      : new PlatformReleaseSourceAdmissionErrorV2(
+        "PLATFORM_RELEASE_SOURCE_V2_STAGE_INVALID",
+        "Test source evidence could not be issued",
+        { cause: error },
+      );
+    return throwAfterUnissuedSourceCleanupV2(
+      exported.contextRoot,
+      exported.contextAnchor,
+      primary,
+    );
+  }
 }
 
 export function inspectPlatformReleaseSourceAdmissionCandidateV2(
@@ -2473,9 +3383,12 @@ function authenticBuildToolchainCapsuleState(
 
 function stableSourceStageState(
   state: SourceStageStateV2,
-): void {
+): SourceFingerprintV2 {
   const fingerprint =
-    captureSourceFingerprint(state.stageRoot);
+    captureSourceFingerprint(state.stageRoot, {
+      uid: state.core.stageAfter.ownerUid,
+      gid: state.core.stageAfter.ownerGid,
+    });
   const physical = sourceStageIdentity(
     state.stageRoot,
     state.core.source.bindingHash,
@@ -2497,6 +3410,7 @@ function stableSourceStageState(
       "Admitted source stage changed before build-toolchain use",
     );
   }
+  return fingerprint;
 }
 
 function processOwnerForBuildToolchain(): Readonly<{
@@ -2579,8 +3493,17 @@ function exactBuildContext(
 
 type PrivateBuildToolchainInstallScopeV2 = Readonly<{
   environmentRoot: string;
+  environmentAnchor: SourceOwnedPrivateDirectoryV2;
   installRoot: string;
+  installAnchor: SourceOwnedPrivateDirectoryV2;
   projectRoot: string;
+  cleanup: {
+    state:
+      | "open"
+      | "cleaning"
+      | "cleaned"
+      | "cleanup_failed";
+  };
   environment: Readonly<{
     CI: "true";
     HOME: string;
@@ -2666,18 +3589,122 @@ function copyAdmittedBuildInputs(
   fsyncDirectory(projectRoot);
 }
 
+function removePrivateBuildToolchainScratchRootV2(
+  anchor: SourceOwnedPrivateDirectoryV2,
+  label: string,
+): void {
+  if (sourceOwnedPathIsAbsentV2(anchor.absolutePath)) {
+    return;
+  }
+  try {
+    const owner = sourceOwnedProcessOwnerV2();
+    const stat = lstatSync(anchor.absolutePath);
+    if (
+      stat.isSymbolicLink()
+      || !stat.isDirectory()
+      || realpathSync(anchor.absolutePath)
+        !== anchor.absolutePath
+      || (stat.mode & 0o7777) !== 0o700
+      || stat.uid !== owner.uid
+      || stat.gid !== owner.gid
+      || !sameSourceOwnedDirectoryIdentityV2(
+        sourceOwnedDirectoryIdentityV2(stat),
+        anchor.identity,
+      )
+    ) {
+      return failBuildToolchainCapsule(
+        "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_CLEANUP_FAILED",
+        `${label} was replaced or changed before cleanup`,
+      );
+    }
+    makeSourceOwnedDirectoriesWritableV2(
+      anchor.absolutePath,
+    );
+    rmSync(anchor.absolutePath, {
+      recursive: true,
+      force: false,
+    });
+    if (!sourceOwnedPathIsAbsentV2(anchor.absolutePath)) {
+      return failBuildToolchainCapsule(
+        "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_CLEANUP_FAILED",
+        `${label} remained after cleanup`,
+      );
+    }
+  } catch (error) {
+    if (
+      error instanceof
+        PlatformReleaseBuildToolchainCapsuleErrorV2
+    ) throw error;
+    return failBuildToolchainCapsule(
+      "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_CLEANUP_FAILED",
+      `${label} could not be removed safely`,
+      error,
+    );
+  }
+}
+
+function cleanupPrivateBuildToolchainInstallScopeV2(
+  scope: PrivateBuildToolchainInstallScopeV2,
+): void {
+  if (scope.cleanup.state !== "open") {
+    return failBuildToolchainCapsule(
+      "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_CLEANUP_FAILED",
+      "Private build-toolchain scratch roots already entered cleanup",
+    );
+  }
+  scope.cleanup.state = "cleaning";
+  const errors: unknown[] = [];
+  for (
+    const [anchor, label] of [
+      [scope.installAnchor, "Build-toolchain install root"],
+      [
+        scope.environmentAnchor,
+        "Build-toolchain environment root",
+      ],
+    ] as const
+  ) {
+    try {
+      removePrivateBuildToolchainScratchRootV2(
+        anchor,
+        label,
+      );
+    } catch (error) {
+      errors.push(error);
+    }
+  }
+  if (errors.length > 0) {
+    scope.cleanup.state = "cleanup_failed";
+    return failBuildToolchainCapsule(
+      "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_CLEANUP_FAILED",
+      "One or more private build-toolchain scratch roots could not be removed safely",
+      new AggregateError(errors),
+    );
+  }
+  scope.cleanup.state = "cleaned";
+}
+
 function createPrivateBuildToolchainInstallScope(
   state: SourceStageStateV2,
 ): PrivateBuildToolchainInstallScopeV2 {
   const parent = ensurePrivateStageParent();
   let environmentRoot: string | undefined;
+  let environmentAnchor:
+    | SourceOwnedPrivateDirectoryV2
+    | undefined;
   let installRoot: string | undefined;
+  let installAnchor:
+    | SourceOwnedPrivateDirectoryV2
+    | undefined;
   try {
-    environmentRoot = realpathSync(mkdtempSync(path.join(
+    environmentRoot = mkdtempSync(path.join(
       parent,
       BUILD_TOOLCHAIN_ENVIRONMENT_PREFIX_V2,
-    )));
-    chmodSync(environmentRoot, 0o700);
+    ));
+    environmentAnchor =
+      anchorSourceOwnedPrivateDirectoryV2(
+        realpathSync(environmentRoot),
+        "Build-toolchain environment root",
+      );
     for (const name of [
       "cache",
       "config-probe",
@@ -2713,11 +3740,15 @@ function createPrivateBuildToolchainInstallScope(
     }
     fsyncDirectory(environmentRoot);
 
-    installRoot = realpathSync(mkdtempSync(path.join(
+    installRoot = mkdtempSync(path.join(
       parent,
       BUILD_TOOLCHAIN_INSTALL_PREFIX_V2,
-    )));
-    chmodSync(installRoot, 0o700);
+    ));
+    installAnchor =
+      anchorSourceOwnedPrivateDirectoryV2(
+        realpathSync(installRoot),
+        "Build-toolchain install root",
+      );
     mkdirSync(
       path.join(installRoot, "dependency-capsule"),
       { mode: 0o700 },
@@ -2732,8 +3763,13 @@ function createPrivateBuildToolchainInstallScope(
     fsyncDirectory(parent);
     return Object.freeze({
       environmentRoot,
+      environmentAnchor,
       installRoot,
+      installAnchor,
       projectRoot: realpathSync(projectRoot),
+      cleanup: {
+        state: "open" as const,
+      },
       environment: Object.freeze({
         CI: "true" as const,
         HOME: path.join(environmentRoot, "home"),
@@ -2758,17 +3794,59 @@ function createPrivateBuildToolchainInstallScope(
       }),
     });
   } catch (error) {
-    if (environmentRoot) cleanupStage(environmentRoot);
-    if (installRoot) cleanupStage(installRoot);
-    if (
-      error instanceof
+    const primary = error instanceof
         PlatformReleaseBuildToolchainCapsuleErrorV2
-    ) throw error;
-    return failBuildToolchainCapsule(
-      "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_CONTEXT_INVALID",
-      "Private build-toolchain install scope could not be created",
-      error,
-    );
+      ? error
+      : new PlatformReleaseBuildToolchainCapsuleErrorV2(
+        "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_CONTEXT_INVALID",
+        "Private build-toolchain install scope could not be created",
+        { cause: error },
+      );
+    const cleanupErrors: unknown[] = [];
+    for (
+      const [root, anchor, label] of [
+        [
+          installRoot,
+          installAnchor,
+          "Partial build-toolchain install root",
+        ],
+        [
+          environmentRoot,
+          environmentAnchor,
+          "Partial build-toolchain environment root",
+        ],
+      ] as const
+    ) {
+      if (!root) continue;
+      try {
+        if (anchor) {
+          removePrivateBuildToolchainScratchRootV2(
+            anchor,
+            label,
+          );
+        } else if (!sourceOwnedPathIsAbsentV2(root)) {
+          cleanupErrors.push(
+            new PlatformReleaseBuildToolchainCapsuleErrorV2(
+              "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_CLEANUP_FAILED",
+              `${label} was preserved without an authentic anchor`,
+            ),
+          );
+        }
+      } catch (cleanupError) {
+        cleanupErrors.push(cleanupError);
+      }
+    }
+    if (cleanupErrors.length > 0) {
+      return failBuildToolchainCapsule(
+        "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_CLEANUP_FAILED",
+        "Partial private build-toolchain scope could not be removed safely",
+        new AggregateError([
+          primary,
+          ...cleanupErrors,
+        ]),
+      );
+    }
+    throw primary;
   }
 }
 
@@ -3078,16 +4156,22 @@ async function materializeBuildToolchainCapsule(
       "Source and host admission scopes cannot be promoted, downgraded or mixed",
     );
   }
-  if (sourceState.lifecycle !== "source_admitted") {
+  if (
+    !transitionSourceContextLifecycleV2(
+      sourceState,
+      "source_admitted",
+      "toolchain_materializing",
+    )
+  ) {
     return failBuildToolchainCapsule(
       "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_ALREADY_MATERIALIZED",
       "An admitted source context can materialize one build toolchain only",
     );
   }
-  sourceState.lifecycle = "toolchain_materializing";
   let scope:
     | PrivateBuildToolchainInstallScopeV2
     | undefined;
+  let primaryFailure: unknown;
   try {
     let hostReceipt;
     try {
@@ -3231,31 +4315,68 @@ async function materializeBuildToolchainCapsule(
       materialized,
       receipt,
     });
-    sourceState.lifecycle = "toolchain_materialized";
+    if (
+      !transitionSourceContextLifecycleV2(
+        sourceState,
+        "toolchain_materializing",
+        "toolchain_materialized",
+      )
+    ) {
+      return failBuildToolchainCapsule(
+        "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_SOURCE_DRIFT",
+        "Source lifecycle changed before build-toolchain completion",
+      );
+    }
     return new PlatformReleaseBuildToolchainCapsuleV2(
       buildToolchainCapsuleConstructorCapabilityV2,
       capsuleState,
     );
   } catch (error) {
-    if (
-      error instanceof
+    primaryFailure = error instanceof
         PlatformReleaseBuildToolchainCapsuleErrorV2
-    ) throw error;
-    return failBuildToolchainCapsule(
-      "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_TREE_INVALID",
-      "Build-toolchain capsule failed at an internal boundary",
-      error,
-    );
+      ? error
+      : new PlatformReleaseBuildToolchainCapsuleErrorV2(
+        "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_TREE_INVALID",
+        "Build-toolchain capsule failed at an internal boundary",
+        { cause: error },
+      );
+    throw primaryFailure;
   } finally {
+    const cleanupErrors: unknown[] = [];
     if (scope) {
-      cleanupStage(scope.environmentRoot);
-      cleanupStage(scope.installRoot);
+      try {
+        cleanupPrivateBuildToolchainInstallScopeV2(
+          scope,
+        );
+      } catch (cleanupError) {
+        cleanupErrors.push(cleanupError);
+      }
     }
     if (
       sourceState.lifecycle === "toolchain_materializing"
+      || cleanupErrors.length > 0
     ) {
-      sourceState.lifecycle = "disposed";
-      cleanupStage(sourceState.contextRoot);
+      try {
+        disposeSourceOwnedPhysicalContextV2(
+          sourceState,
+        );
+      } catch (cleanupError) {
+        cleanupErrors.push(cleanupError);
+      }
+    }
+    if (cleanupErrors.length > 0) {
+      throw new PlatformReleaseBuildToolchainCapsuleErrorV2(
+        "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_CLEANUP_FAILED",
+        "Build-toolchain transaction could not destroy every private root safely",
+        {
+          cause: new AggregateError([
+            ...(primaryFailure === undefined
+              ? []
+              : [primaryFailure]),
+            ...cleanupErrors,
+          ]),
+        },
+      );
     }
   }
 }
@@ -3296,9 +4417,17 @@ export function inspectPlatformReleaseBuildToolchainReceiptV2(
   );
 }
 
-export async function revalidatePlatformReleaseBuildToolchainCapsuleV2(
+type RevalidatedBuildToolchainCapsuleStateV2 = Readonly<{
+  capsule: BuildToolchainCapsuleStateV2;
+  sourceState: SourceStageStateV2;
+  receipt: PlatformReleaseBuildToolchainReceiptV2;
+}>;
+
+async function revalidateBuildToolchainCapsuleForLifecycleV2(
   handle: PlatformReleaseBuildToolchainCapsuleV2,
-): Promise<PlatformReleaseBuildToolchainReceiptV2> {
+  admittedLifecycles:
+    readonly PlatformReleaseSourceContextLifecycleV2[],
+): Promise<RevalidatedBuildToolchainCapsuleStateV2> {
   const capsule =
     authenticBuildToolchainCapsuleState(handle);
   let sourceState: SourceStageStateV2;
@@ -3312,7 +4441,7 @@ export async function revalidatePlatformReleaseBuildToolchainCapsuleV2(
     );
   }
   if (
-    sourceState.lifecycle !== "toolchain_materialized"
+    !admittedLifecycles.includes(sourceState.lifecycle)
     || sourceState.contextRoot !== capsule.contextRoot
     || sourceState.core.source.bindingHash
       !== capsule.source.bindingHash
@@ -3377,7 +4506,8 @@ export async function revalidatePlatformReleaseBuildToolchainCapsuleV2(
   stableSourceStageState(sourceState);
   exactBuildContext(sourceState, "materialized");
   if (
-    canonicalJsonStringify(physical)
+    !admittedLifecycles.includes(sourceState.lifecycle)
+    || canonicalJsonStringify(physical)
       !== canonicalJsonStringify(
         capsule.receipt.physicalAfter,
       )
@@ -3387,9 +4517,1317 @@ export async function revalidatePlatformReleaseBuildToolchainCapsuleV2(
       "Capsule physical identity changed after materialization",
     );
   }
-  return deepFreezePlatformReleaseJsonV2(
-    structuredClone(capsule.receipt),
+  return Object.freeze({
+    capsule,
+    sourceState,
+    receipt: deepFreezePlatformReleaseJsonV2(
+      structuredClone(capsule.receipt),
+    ),
+  });
+}
+
+export async function revalidatePlatformReleaseBuildToolchainCapsuleV2(
+  handle: PlatformReleaseBuildToolchainCapsuleV2,
+): Promise<PlatformReleaseBuildToolchainReceiptV2> {
+  const live =
+    await revalidateBuildToolchainCapsuleForLifecycleV2(
+      handle,
+      [
+        "toolchain_materialized",
+        "double_build_running",
+        "double_build_complete",
+        "dependency_materializing",
+        "release_completed",
+      ],
+    );
+  return live.receipt;
+}
+
+function authenticCompiledOutputPairStateV2(
+  handle: PlatformReleaseCompiledOutputPairV2,
+): CompiledOutputPairStateV2 {
+  if (
+    typeof handle !== "object"
+    || handle === null
+    || isProxy(handle)
+    || Object.getPrototypeOf(handle)
+      !== PlatformReleaseCompiledOutputPairV2.prototype
+  ) {
+    return failCompiledOutputPair(
+      "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_HANDLE_UNAUTHENTICATED",
+      "Compiled output pair operation requires one authentic handle",
+    );
+  }
+  const state = compiledOutputPairStatesV2.get(handle);
+  if (!state) {
+    return failCompiledOutputPair(
+      "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_HANDLE_UNAUTHENTICATED",
+      "Compiled output pair operation requires one authentic handle",
+    );
+  }
+  return state;
+}
+
+function exactCompiledOutputPairInputV2(
+  input: unknown,
+): Readonly<{
+  sourceStage: AdmittedPlatformReleaseSourceStageV2;
+  buildToolchain:
+    PlatformReleaseBuildToolchainCapsuleV2;
+}> {
+  if (
+    typeof input !== "object"
+    || input === null
+    || Array.isArray(input)
+    || isProxy(input)
+    || Object.getPrototypeOf(input) !== Object.prototype
+  ) {
+    return failCompiledOutputPair(
+      "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_INPUT_INVALID",
+      "Compiled output input must be one exact plain data object",
+    );
+  }
+  const keys = Reflect.ownKeys(input);
+  if (
+    keys.length !== 2
+    || keys.some((key) =>
+      typeof key !== "string"
+      || !["buildToolchain", "sourceStage"].includes(key))
+  ) {
+    return failCompiledOutputPair(
+      "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_INPUT_INVALID",
+      "Compiled output input fields are not exact",
+    );
+  }
+  const sourceDescriptor =
+    Object.getOwnPropertyDescriptor(input, "sourceStage");
+  const toolchainDescriptor =
+    Object.getOwnPropertyDescriptor(input, "buildToolchain");
+  if (
+    !sourceDescriptor
+    || !("value" in sourceDescriptor)
+    || sourceDescriptor.enumerable !== true
+    || !toolchainDescriptor
+    || !("value" in toolchainDescriptor)
+    || toolchainDescriptor.enumerable !== true
+  ) {
+    return failCompiledOutputPair(
+      "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_INPUT_INVALID",
+      "Compiled output input contains an accessor or hidden capability",
+    );
+  }
+  return Object.freeze({
+    sourceStage:
+      sourceDescriptor.value as
+        AdmittedPlatformReleaseSourceStageV2,
+    buildToolchain:
+      toolchainDescriptor.value as
+        PlatformReleaseBuildToolchainCapsuleV2,
+  });
+}
+
+function compiledCommandModuleHashV2(
+  sourceState: SourceStageStateV2,
+): string {
+  const fingerprint = stableSourceStageState(sourceState);
+  const command = fingerprint.entries.find((entry) =>
+    entry.path === "scripts/build-platform-release-v2.mjs"
   );
+  if (!command || command.type !== "file") {
+    return failCompiledOutputPair(
+      "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_SOURCE_DRIFT",
+      "Admitted source lacks the exact platform release build command",
+    );
+  }
+  return command.contentHash;
+}
+
+function assertCompiledOutputTreeOwnershipV2(
+  root: string,
+  tree: CanonicalRuntimeTreeV2,
+  admissionScope: "production_candidate" | "test_fixture",
+): void {
+  const owner = sourceOwnedProcessOwnerV2();
+  const expectedUid = admissionScope === "production_candidate"
+    ? 0
+    : owner.uid;
+  if (
+    admissionScope === "production_candidate"
+    && owner.uid !== 0
+  ) {
+    return failCompiledOutputPair(
+      "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_SCOPE_MISMATCH",
+      "Production compiled outputs require the root-owned release producer",
+    );
+  }
+  for (const entry of [
+    {
+      path: ".",
+      type: "directory" as const,
+      mode: "0555" as const,
+    },
+    ...tree.entries,
+  ]) {
+    const absolutePath = entry.path === "."
+      ? root
+      : path.join(root, entry.path);
+    const stat = lstatSync(absolutePath);
+    const expectedMode =
+      Number.parseInt(entry.mode, 8);
+    if (
+      stat.isSymbolicLink()
+      || stat.uid !== expectedUid
+      || stat.gid !== owner.gid
+      || (stat.mode & 0o7777) !== expectedMode
+      || (
+        entry.type === "directory"
+          ? !stat.isDirectory()
+          : !stat.isFile() || stat.nlink !== 1
+      )
+    ) {
+      return failCompiledOutputPair(
+        "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_OUTPUT_INVALID",
+        `Compiled dist ownership or type changed at ${entry.path}`,
+      );
+    }
+  }
+}
+
+function captureCompiledDistTreeV2(
+  distRoot: string,
+  capsuleScope: "production_host" | "test_fixture",
+): CanonicalRuntimeTreeV2 {
+  const metadataProbe =
+    getNodeScaffoldRuntimeMetadataProbeInternalV2(
+      capsuleScope,
+    );
+  const tree = capsuleScope === "production_host"
+    ? captureCanonicalRuntimeTreeV2({
+      root: distRoot,
+      profile: "dist",
+      metadataProbe,
+    })
+    : captureCanonicalRuntimeTreeV2ForTest({
+      root: distRoot,
+      profile: "dist",
+      metadataProbe,
+    });
+  verifyCanonicalRuntimeTreeV2({
+    root: distRoot,
+    candidate: tree,
+    metadataProbe,
+  });
+  return tree;
+}
+
+function assertCompiledMetadataClearV2(
+  capsuleScope: "production_host" | "test_fixture",
+  absolutePath: string,
+  relativePath: string,
+  type: "directory" | "file",
+): void {
+  const probe =
+    getNodeScaffoldRuntimeMetadataProbeInternalV2(
+      capsuleScope,
+    );
+  let result;
+  try {
+    result = probe({
+      absolutePath,
+      relativePath,
+      type,
+    });
+  } catch (error) {
+    return failCompiledOutputPair(
+      "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_OUTPUT_INVALID",
+      `Compiled output metadata probe failed for ${relativePath}`,
+      error,
+    );
+  }
+  if (
+    result.status !== "clear"
+    || Reflect.ownKeys(result).length !== 1
+  ) {
+    return failCompiledOutputPair(
+      "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_OUTPUT_INVALID",
+      `Compiled output retained metadata at ${relativePath}`,
+    );
+  }
+}
+
+function exactCompiledPackageJsonV2(
+  packagePath: string,
+  sourceState: SourceStageStateV2,
+): Readonly<{
+  identity: CompiledPackageIdentityV2;
+  bytes: Buffer;
+}> {
+  const sourceRef = sourceState.core.source.inputs.find(
+    (entry) =>
+      entry.role === "package_manifest"
+      && entry.locator === "package.json",
+  );
+  if (!sourceRef) {
+    return failCompiledOutputPair(
+      "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_SOURCE_DRIFT",
+      "Admitted package source reference is missing",
+    );
+  }
+  let captured;
+  let admitted;
+  try {
+    captured =
+      readExactNpmLockRegularFileInternalV2({
+        absolutePath: packagePath,
+        label: "Compiled payload package.json",
+        maxBytes: 4 * 1024 * 1024,
+        allowedModes: [0o444],
+      });
+    admitted =
+      readExactNpmLockRegularFileInternalV2({
+        absolutePath: path.join(
+          sourceState.stageRoot,
+          sourceRef.locator,
+        ),
+        label: "Admitted source package.json",
+        maxBytes: 4 * 1024 * 1024,
+        allowedModes: [0o444],
+      });
+  } catch (error) {
+    captured?.bytes.fill(0);
+    admitted?.bytes.fill(0);
+    return failCompiledOutputPair(
+      "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_OUTPUT_INVALID",
+      "Compiled package.json failed exact descriptor capture",
+      error,
+    );
+  }
+  if (
+    captured.contentHash !== sourceRef.contentHash
+    || captured.bytes.byteLength !== sourceRef.byteLength
+    || admitted.contentHash !== sourceRef.contentHash
+    || admitted.bytes.byteLength !== sourceRef.byteLength
+    || !captured.bytes.equals(admitted.bytes)
+  ) {
+    captured.bytes.fill(0);
+    admitted.bytes.fill(0);
+    return failCompiledOutputPair(
+      "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_OUTPUT_INVALID",
+      "Compiled package.json differs from admitted source bytes",
+    );
+  }
+  admitted.bytes.fill(0);
+  return Object.freeze({
+    identity: Object.freeze({
+      sourceRefHash: sourceRef.sourceRefHash,
+      contentHash: captured.contentHash,
+      byteLength: captured.bytes.byteLength,
+      mode: "0444" as const,
+    }),
+    bytes: captured.bytes,
+  });
+}
+
+function assertCompiledCommandResultJoinsV2(
+  result: PlatformReleaseBuildCommandResultV2,
+  sourceState: SourceStageStateV2,
+  capsule: BuildToolchainCapsuleStateV2,
+  distTree: CanonicalRuntimeTreeV2,
+): void {
+  if (
+    result.sourceFingerprintHash
+      !== sourceState.core.source.exportedFileTreeHash
+    || result.sourceFileCount
+      !== sourceState.core.source.exportedFileCount
+    || result.sourceDirectoryCount
+      !== sourceState.core.source.exportedDirectoryCount
+    || result.sourceTotalBytes
+      !== sourceState.core.source.exportedTotalBytes
+    || result.sourceSha
+      !== sourceState.core.admittedSource.sha
+    || result.sourceDateEpoch
+      !== sourceState.core.admittedSource.commitEpochSeconds
+    || result.buildToolchainTreeHash
+      !== capsule.materialized.treeBinding.treeHash
+    || result.buildToolchainFileCount
+      !== capsule.materialized.treeBinding.fileCount
+    || result.buildToolchainDirectoryCount
+      !== capsule.materialized.treeBinding.directoryCount
+    || result.buildToolchainTotalBytes
+      !== capsule.materialized.treeBinding.totalBytes
+    || result.compilerEntryHash
+      !== capsule.materialized.compiler.entryModuleHash
+    || result.platformFileCount !== distTree.fileCount
+    || result.platformDirectoryCount
+      !== distTree.directoryCount
+    || result.platformTotalBytes !== distTree.totalBytes
+  ) {
+    return failCompiledOutputPair(
+      "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_OUTPUT_INVALID",
+      "Build command result does not join exact source, toolchain, compiler and dist authority",
+    );
+  }
+}
+
+type CapturedCompiledOccurrenceV2 = Readonly<{
+  state: CompiledOccurrenceStateV2;
+  packageBytes: Buffer;
+}>;
+
+function captureCompiledOccurrenceV2(input: Readonly<{
+  occurrence: "first" | "second";
+  sourceState: SourceStageStateV2;
+  capsule: BuildToolchainCapsuleStateV2;
+  slot: Extract<
+    SourceOwnedOutputRootSlotV2,
+    { status: "output_anchored" }
+  >;
+  commandModuleHash: string;
+  hostEvidence:
+    PlatformReleaseHostNodeToolchainBuildEvidenceV2;
+}>): CapturedCompiledOccurrenceV2 {
+  let capturedPackageBytes: Buffer | undefined;
+  try {
+    const currentSlot = requireSourceOwnedOutputRootV2(
+      input.sourceState,
+      input.occurrence,
+    );
+    if (
+      canonicalJsonStringify(currentSlot)
+        !== canonicalJsonStringify(input.slot)
+    ) {
+      return failCompiledOutputPair(
+        "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_OUTPUT_INVALID",
+        `${input.occurrence} compiled output anchor changed`,
+      );
+    }
+    const outputRoot = input.slot.outputRoot.absolutePath;
+    const outputRootStat = lstatSync(outputRoot);
+    const outputStagePhysicalIdentityHash =
+      hashHostNodePlatformReleaseOutputStageIdentityV2({
+        device: outputRootStat.dev,
+        inode: outputRootStat.ino,
+        mode: outputRootStat.mode,
+        ownerUid: outputRootStat.uid,
+        ownerGid: outputRootStat.gid,
+      });
+    const outputNames = readdirSync(outputRoot).sort();
+    const payloadRoot = path.join(outputRoot, "payload");
+    const payload = lstatSync(payloadRoot);
+    const owner = sourceOwnedProcessOwnerV2();
+    const expectedUid =
+      input.sourceState.admissionScope
+          === "production_candidate"
+        ? 0
+        : owner.uid;
+    if (
+      canonicalJsonStringify(outputNames)
+        !== canonicalJsonStringify(["payload"])
+      || payload.isSymbolicLink()
+      || !payload.isDirectory()
+      || realpathSync(payloadRoot) !== payloadRoot
+      || (payload.mode & 0o7777) !== 0o700
+      || payload.uid !== expectedUid
+      || payload.gid !== owner.gid
+      || canonicalJsonStringify(
+        readdirSync(payloadRoot).sort(),
+      ) !== canonicalJsonStringify([
+        "dist",
+        "package.json",
+      ])
+    ) {
+      return failCompiledOutputPair(
+        "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_OUTPUT_INVALID",
+        `${input.occurrence} output layout is not exact predependency payload`,
+      );
+    }
+    const distRoot = path.join(payloadRoot, "dist");
+    assertCompiledMetadataClearV2(
+      input.capsule.admissionScope,
+      payloadRoot,
+      "payload",
+      "directory",
+    );
+    assertCompiledMetadataClearV2(
+      input.capsule.admissionScope,
+      path.join(payloadRoot, "package.json"),
+      "payload/package.json",
+      "file",
+    );
+    const distTree = captureCompiledDistTreeV2(
+      distRoot,
+      input.capsule.admissionScope,
+    );
+    assertCompiledOutputTreeOwnershipV2(
+      distRoot,
+      distTree,
+      input.sourceState.admissionScope,
+    );
+    const packageCapture = exactCompiledPackageJsonV2(
+      path.join(payloadRoot, "package.json"),
+      input.sourceState,
+    );
+    capturedPackageBytes = packageCapture.bytes;
+    const result = input.hostEvidence.commandResult;
+    assertCompiledCommandResultJoinsV2(
+      result,
+      input.sourceState,
+      input.capsule,
+      distTree,
+    );
+    if (
+      input.hostEvidence
+        .platformHostToolchainReceiptHash
+        !== input.capsule.receipt.hostToolchain.receiptHash
+      || input.hostEvidence.nodeIdentityHash
+        !== input.capsule.receipt.hostToolchain.node.identityHash
+      || input.hostEvidence.commandModuleHash
+        !== input.commandModuleHash
+      || input.hostEvidence.outputStageIdentityHash
+        !== outputStagePhysicalIdentityHash
+    ) {
+      packageCapture.bytes.fill(0);
+      return failCompiledOutputPair(
+        "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_BUILD_FAILED",
+        "Host build occurrence does not join exact host, Node and command authority",
+      );
+    }
+    const binding =
+      createPlatformReleasePredependencyOutputBindingV2({
+        schema:
+          "setfarm.platform-release-predependency-output-binding.v2",
+        version: "2.0.0",
+        sourceBindingHash:
+          input.sourceState.core.source.bindingHash,
+        admittedSha:
+          input.sourceState.core.admittedSource.sha,
+        sourceDateEpoch:
+          input.sourceState.core.admittedSource
+            .commitEpochSeconds,
+        commandModuleHash: input.commandModuleHash,
+        buildToolchainTreeBindingHash:
+          input.capsule.materialized.treeBinding
+            .bindingHash,
+        compilerEntryHash:
+          input.capsule.materialized.compiler
+            .entryModuleHash,
+        commandResultHash:
+          hashPlatformReleaseBuildCommandResultV2(
+            result,
+          ),
+        distTreeHash: distTree.treeHash,
+        distTreePayloadHash: distTree.payloadHash,
+        distFileCount: distTree.fileCount,
+        distDirectoryCount: distTree.directoryCount,
+        distTotalBytes: distTree.totalBytes,
+        packageSourceRefHash:
+          packageCapture.identity.sourceRefHash,
+        packageContentHash:
+          packageCapture.identity.contentHash,
+        packageByteLength:
+          packageCapture.identity.byteLength,
+        outputLayout:
+          "payload_dist_and_package_json_only",
+        dependencyState: "absent",
+        manifestState: "absent",
+      });
+    return Object.freeze({
+      state: Object.freeze({
+        occurrence: input.occurrence,
+        slot: input.slot,
+        hostEvidence: input.hostEvidence,
+        outputStagePhysicalIdentityHash,
+        stableHostProjectionHash:
+          stableHostBuildEvidenceProjectionHashV2(
+            input.hostEvidence,
+          ),
+        commandResult: result,
+        distTree,
+        packageIdentity: packageCapture.identity,
+        binding,
+      }),
+      packageBytes: packageCapture.bytes,
+    });
+  } catch (error) {
+    capturedPackageBytes?.fill(0);
+    if (
+      error instanceof
+        PlatformReleaseCompiledOutputPairErrorV2
+    ) throw error;
+    return failCompiledOutputPair(
+      "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_OUTPUT_INVALID",
+      `${input.occurrence} compiled output could not be captured`,
+      error,
+    );
+  }
+}
+
+function stableHostBuildEvidenceProjectionV2(
+  evidence:
+    PlatformReleaseHostNodeToolchainBuildEvidenceV2,
+): Record<string, unknown> {
+  const projection = {
+    ...evidence,
+  } as Record<string, unknown>;
+  delete projection.evidenceHash;
+  delete projection.outputStageIdentityHash;
+  return projection;
+}
+
+function stableHostBuildEvidenceProjectionHashV2(
+  evidence:
+    PlatformReleaseHostNodeToolchainBuildEvidenceV2,
+): string {
+  return hashCanonicalJson({
+    schema:
+      "setfarm.platform-release-stable-host-build-evidence-projection.v2",
+    projection:
+      stableHostBuildEvidenceProjectionV2(evidence),
+  });
+}
+
+function assertCompiledOccurrenceEqualityV2(
+  first: CapturedCompiledOccurrenceV2,
+  second: CapturedCompiledOccurrenceV2,
+): void {
+  if (
+    !canonicalJsonBytes(first.state.commandResult)
+      .equals(canonicalJsonBytes(
+        second.state.commandResult,
+      ))
+    || !canonicalJsonBytes(first.state.distTree)
+      .equals(canonicalJsonBytes(second.state.distTree))
+    || !first.packageBytes.equals(second.packageBytes)
+    || !canonicalJsonBytes(first.state.binding)
+      .equals(canonicalJsonBytes(second.state.binding))
+    || !canonicalJsonBytes(
+      stableHostBuildEvidenceProjectionV2(
+        first.state.hostEvidence,
+      ),
+    ).equals(canonicalJsonBytes(
+      stableHostBuildEvidenceProjectionV2(
+        second.state.hostEvidence,
+      ),
+    ))
+    || first.state.stableHostProjectionHash
+      !== second.state.stableHostProjectionHash
+    || first.state.hostEvidence.evidenceHash
+      === second.state.hostEvidence.evidenceHash
+    || first.state.hostEvidence.outputStageIdentityHash
+      === second.state.hostEvidence.outputStageIdentityHash
+  ) {
+    return failCompiledOutputPair(
+      "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_EQUALITY_FAILED",
+      "Independent builds did not reproduce canonical command, tree, package and non-occurrence process fields",
+    );
+  }
+}
+
+function compiledPairInspectionV2(
+  sourceState: SourceStageStateV2,
+  capsule: BuildToolchainCapsuleStateV2,
+  first: CompiledOccurrenceStateV2,
+  second: CompiledOccurrenceStateV2,
+): PlatformReleaseCompiledOutputPairInspectionV2 {
+  return createPlatformReleaseCompiledOutputPairInspectionV2({
+    schema:
+      "setfarm.platform-release-compiled-output-pair-inspection.v2",
+    version: "2.0.0",
+    authorityState:
+      "candidate_compiled_output_pair_unverified",
+    productionUse:
+      "forbidden_until_dependency_materialization_and_fresh_release_verification",
+    admissionScope: sourceState.admissionScope,
+    lifecycle: "double_build_complete",
+    sourceBindingHash:
+      sourceState.core.source.bindingHash,
+    buildToolchainReceiptHash:
+      capsule.receipt.receiptHash,
+    stableOutput: first.binding,
+    occurrences: [
+      {
+        stageRef:
+          "PLATFORM_RELEASE_BUILD_STAGE_FIRST_V2",
+        hostBuildEvidenceHash:
+          first.hostEvidence.evidenceHash,
+        outputStagePhysicalIdentityHash:
+          first.outputStagePhysicalIdentityHash,
+        predependencyOutputBindingHash:
+          first.binding.bindingHash,
+        stableHostProjectionHash:
+          first.stableHostProjectionHash,
+      },
+      {
+        stageRef:
+          "PLATFORM_RELEASE_BUILD_STAGE_SECOND_V2",
+        hostBuildEvidenceHash:
+          second.hostEvidence.evidenceHash,
+        outputStagePhysicalIdentityHash:
+          second.outputStagePhysicalIdentityHash,
+        predependencyOutputBindingHash:
+          second.binding.bindingHash,
+        stableHostProjectionHash:
+          second.stableHostProjectionHash,
+      },
+    ],
+    equalityState:
+      "canonical_command_results_dist_trees_and_package_bytes_equal",
+  });
+}
+
+async function executeCompiledBuildOccurrenceV2(input: Readonly<{
+  occurrence: "first" | "second";
+  sourceState: SourceStageStateV2;
+  buildToolchain:
+    PlatformReleaseBuildToolchainCapsuleV2;
+  capsule: BuildToolchainCapsuleStateV2;
+  slot: Extract<
+    SourceOwnedOutputRootSlotV2,
+    { status: "output_anchored" }
+  >;
+  commandModuleHash: string;
+}>): Promise<
+  PlatformReleaseHostNodeToolchainBuildEvidenceV2
+> {
+  await revalidateBuildToolchainCapsuleForLifecycleV2(
+    input.buildToolchain,
+    ["double_build_running"],
+  );
+  if (
+    input.sourceState.lifecycle !== "double_build_running"
+    || readdirSync(input.slot.outputRoot.absolutePath)
+      .length !== 0
+  ) {
+    return failCompiledOutputPair(
+      "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_OUTPUT_INVALID",
+      `${input.occurrence} output was not empty before build`,
+    );
+  }
+  let evidence;
+  try {
+    evidence =
+      await executePlatformReleaseHostNodeToolchainBuildInternalV2(
+        input.capsule.hostToolchain,
+        {
+          sourceRoot: input.sourceState.stageRoot,
+          outputRoot:
+            input.slot.outputRoot.absolutePath,
+          buildToolchainRoot:
+            input.capsule.nodeModulesRoot,
+          buildToolchainHash:
+            input.capsule.materialized.treeBinding
+              .treeHash,
+          sourceSha:
+            input.sourceState.core.admittedSource.sha,
+          sourceDateEpoch:
+            input.sourceState.core.admittedSource
+              .commitEpochSeconds,
+          commandModuleHash:
+            input.commandModuleHash,
+        },
+      );
+  } catch (error) {
+    return failCompiledOutputPair(
+      "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_BUILD_FAILED",
+      `${input.occurrence} authenticated build occurrence failed`,
+      error,
+    );
+  }
+  await revalidateBuildToolchainCapsuleForLifecycleV2(
+    input.buildToolchain,
+    ["double_build_running"],
+  );
+  return evidence;
+}
+
+function destroyCompiledPairAfterFailureV2(
+  sourceState: SourceStageStateV2,
+  primaryFailure: unknown,
+): never {
+  try {
+    disposeSourceOwnedPhysicalContextV2(sourceState);
+  } catch (cleanupError) {
+    return failCompiledOutputPair(
+      "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_CLEANUP_FAILED",
+      "Failed compiled-output transaction could not destroy every owned root",
+      new AggregateError([
+        primaryFailure,
+        cleanupError,
+      ]),
+    );
+  }
+  throw primaryFailure;
+}
+
+function destroyReadyCompiledPairAfterFailureV2(
+  pairState: CompiledOutputPairStateV2,
+  sourceState: SourceStageStateV2,
+  primaryFailure: unknown,
+): never {
+  if (
+    pairState.ownership.lifecycle !== "ready"
+    || sourceState.lifecycle !== "double_build_complete"
+  ) {
+    throw primaryFailure;
+  }
+  pairState.ownership.lifecycle = "invalidated";
+  return destroyCompiledPairAfterFailureV2(
+    sourceState,
+    primaryFailure,
+  );
+}
+
+async function materializeCompiledOutputPairV2(
+  input: unknown,
+  expectedScope: "production_host" | "test_fixture",
+  allocationFault?: SourceOwnedOutputAllocationFaultV2,
+): Promise<PlatformReleaseCompiledOutputPairV2> {
+  const values = exactCompiledOutputPairInputV2(input);
+  let sourceState: SourceStageStateV2;
+  let capsule: BuildToolchainCapsuleStateV2;
+  try {
+    sourceState = authenticState(values.sourceStage);
+    capsule =
+      authenticBuildToolchainCapsuleState(
+        values.buildToolchain,
+      );
+  } catch (error) {
+    return failCompiledOutputPair(
+      "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_INPUT_INVALID",
+      "Compiled output input capabilities are not authentic",
+      error,
+    );
+  }
+  const expectedSourceScope =
+    expectedScope === "production_host"
+      ? "production_candidate"
+      : "test_fixture";
+  if (
+    capsule.sourceStage !== values.sourceStage
+    || capsule.admissionScope !== expectedScope
+    || sourceState.admissionScope !== expectedSourceScope
+  ) {
+    return failCompiledOutputPair(
+      "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_SCOPE_MISMATCH",
+      "Compiled output source, toolchain and admission scopes do not form one context",
+    );
+  }
+  if (
+    expectedScope === "production_host"
+    && sourceOwnedProcessOwnerV2().uid !== 0
+  ) {
+    return failCompiledOutputPair(
+      "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_SCOPE_MISMATCH",
+      "Production compiled outputs require a root-owned builder",
+    );
+  }
+  if (
+    !transitionSourceContextLifecycleV2(
+      sourceState,
+      "toolchain_materialized",
+      "double_build_running",
+    )
+  ) {
+    return failCompiledOutputPair(
+      "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_ALREADY_MATERIALIZED",
+      "One source context can own one double-build transaction",
+    );
+  }
+  let firstBeforeSecondPackageBytes:
+    Buffer | undefined;
+  let finalFirstPackageBytes: Buffer | undefined;
+  let finalSecondPackageBytes: Buffer | undefined;
+  try {
+    const live =
+      await revalidateBuildToolchainCapsuleForLifecycleV2(
+        values.buildToolchain,
+        ["double_build_running"],
+      );
+    if (
+      live.sourceState !== sourceState
+      || live.capsule !== capsule
+    ) {
+      return failCompiledOutputPair(
+        "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_TOOLCHAIN_DRIFT",
+        "Fresh source/toolchain authority changed before output allocation",
+      );
+    }
+    const commandModuleHash =
+      compiledCommandModuleHashV2(sourceState);
+    const firstSlot = allocateSourceOwnedOutputRootV2(
+      sourceState,
+      "first",
+      allocationFault,
+    );
+    const secondSlot = allocateSourceOwnedOutputRootV2(
+      sourceState,
+      "second",
+    );
+    const firstEvidence =
+      await executeCompiledBuildOccurrenceV2({
+        occurrence: "first",
+        sourceState,
+        buildToolchain: values.buildToolchain,
+        capsule,
+        slot: firstSlot,
+        commandModuleHash,
+      });
+    const firstBeforeSecond =
+      captureCompiledOccurrenceV2({
+      occurrence: "first",
+      sourceState,
+      capsule,
+      slot: firstSlot,
+      commandModuleHash,
+      hostEvidence: firstEvidence,
+    });
+    firstBeforeSecondPackageBytes =
+      firstBeforeSecond.packageBytes;
+    if (
+      readdirSync(secondSlot.outputRoot.absolutePath)
+        .length !== 0
+    ) {
+      return failCompiledOutputPair(
+        "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_OUTPUT_INVALID",
+        "Second output changed before its build occurrence",
+      );
+    }
+    const secondEvidence =
+      await executeCompiledBuildOccurrenceV2({
+        occurrence: "second",
+        sourceState,
+        buildToolchain: values.buildToolchain,
+        capsule,
+        slot: secondSlot,
+        commandModuleHash,
+      });
+    await revalidateBuildToolchainCapsuleForLifecycleV2(
+      values.buildToolchain,
+      ["double_build_running"],
+    );
+    const finalFirst = captureCompiledOccurrenceV2({
+      occurrence: "first",
+      sourceState,
+      capsule,
+      slot: firstSlot,
+      commandModuleHash,
+      hostEvidence: firstEvidence,
+    });
+    finalFirstPackageBytes = finalFirst.packageBytes;
+    const finalSecond = captureCompiledOccurrenceV2({
+      occurrence: "second",
+      sourceState,
+      capsule,
+      slot: secondSlot,
+      commandModuleHash,
+      hostEvidence: secondEvidence,
+    });
+    finalSecondPackageBytes = finalSecond.packageBytes;
+    if (
+      !sameCompiledOccurrenceV2(
+        firstBeforeSecond.state,
+        finalFirst.state,
+      )
+      || !firstBeforeSecond.packageBytes.equals(
+        finalFirst.packageBytes,
+      )
+    ) {
+      return failCompiledOutputPair(
+        "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_OUTPUT_INVALID",
+        "First compiled output changed while the independent second build ran",
+      );
+    }
+    assertCompiledOccurrenceEqualityV2(
+      finalFirst,
+      finalSecond,
+    );
+    const inspection = compiledPairInspectionV2(
+      sourceState,
+      capsule,
+      finalFirst.state,
+      finalSecond.state,
+    );
+    if (
+      !transitionSourceContextLifecycleV2(
+        sourceState,
+        "double_build_running",
+        "double_build_complete",
+      )
+    ) {
+      return failCompiledOutputPair(
+        "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_SOURCE_DRIFT",
+        "Source lifecycle changed before compiled-pair completion",
+      );
+    }
+    return new PlatformReleaseCompiledOutputPairV2(
+      compiledOutputPairConstructorCapabilityV2,
+      Object.freeze({
+        admissionScope: sourceState.admissionScope,
+        sourceStage: values.sourceStage,
+        buildToolchain: values.buildToolchain,
+        first: finalFirst.state,
+        second: finalSecond.state,
+        inspection,
+        ownership: {
+          lifecycle: "ready" as const,
+        },
+      }),
+    );
+  } catch (error) {
+    const primary = error instanceof
+        PlatformReleaseCompiledOutputPairErrorV2
+      ? error
+      : new PlatformReleaseCompiledOutputPairErrorV2(
+        "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_BUILD_FAILED",
+        "Compiled-output transaction failed at an internal boundary",
+        { cause: error },
+      );
+    if (
+      sourceState.lifecycle === "double_build_running"
+      || sourceState.lifecycle === "double_build_complete"
+    ) {
+      return destroyCompiledPairAfterFailureV2(
+        sourceState,
+        primary,
+      );
+    }
+    throw primary;
+  } finally {
+    firstBeforeSecondPackageBytes?.fill(0);
+    finalFirstPackageBytes?.fill(0);
+    finalSecondPackageBytes?.fill(0);
+  }
+}
+
+export async function materializePlatformReleaseCompiledOutputPairV2(
+  input: Readonly<{
+    sourceStage: AdmittedPlatformReleaseSourceStageV2;
+    buildToolchain:
+      PlatformReleaseBuildToolchainCapsuleV2;
+  }>,
+): Promise<PlatformReleaseCompiledOutputPairV2> {
+  return materializeCompiledOutputPairV2(
+    input,
+    "production_host",
+  );
+}
+
+export async function materializePlatformReleaseCompiledOutputPairV2ForTest(
+  input: Readonly<{
+    sourceStage: AdmittedPlatformReleaseSourceStageV2;
+    buildToolchain:
+      PlatformReleaseBuildToolchainCapsuleV2;
+  }>,
+): Promise<PlatformReleaseCompiledOutputPairV2> {
+  return materializeCompiledOutputPairV2(
+    input,
+    "test_fixture",
+  );
+}
+
+export async function materializePlatformReleaseCompiledOutputPairWithAllocationFaultForTestV2(
+  input: Readonly<{
+    sourceStage: AdmittedPlatformReleaseSourceStageV2;
+    buildToolchain:
+      PlatformReleaseBuildToolchainCapsuleV2;
+  }>,
+  fault: SourceOwnedOutputAllocationFaultV2,
+): Promise<PlatformReleaseCompiledOutputPairV2> {
+  if (
+    typeof fault !== "object"
+    || fault === null
+    || Array.isArray(fault)
+    || isProxy(fault)
+    || Object.getPrototypeOf(fault) !== Object.prototype
+  ) {
+    return failCompiledOutputPair(
+      "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_TEST_ONLY",
+      "Allocation fault requires one exact test-only descriptor",
+    );
+  }
+  const faultKeys = Reflect.ownKeys(fault);
+  if (
+    faultKeys.some((key) => typeof key !== "string")
+    || canonicalJsonStringify(
+      [...faultKeys].sort(),
+    ) !== canonicalJsonStringify([
+      "checkpoint",
+      "observePath",
+    ])
+  ) {
+    return failCompiledOutputPair(
+      "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_TEST_ONLY",
+      "Allocation fault requires one exact test-only descriptor",
+    );
+  }
+  const descriptors =
+    Object.getOwnPropertyDescriptors(fault);
+  const checkpoint = descriptors.checkpoint;
+  const observePath = descriptors.observePath;
+  if (
+    !checkpoint
+    || !("value" in checkpoint)
+    || !observePath
+    || !("value" in observePath)
+    || ![
+      "after_first_parent_created",
+      "after_first_output_created",
+    ].includes(checkpoint.value as string)
+    || typeof observePath.value !== "function"
+  ) {
+    return failCompiledOutputPair(
+      "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_TEST_ONLY",
+      "Allocation fault contains an invalid checkpoint or observer",
+    );
+  }
+  return materializeCompiledOutputPairV2(
+    input,
+    "test_fixture",
+    Object.freeze({
+      checkpoint:
+        checkpoint.value as
+          SourceOwnedOutputAllocationFaultV2["checkpoint"],
+      observePath:
+        observePath.value as
+          SourceOwnedOutputAllocationFaultV2["observePath"],
+    }),
+  );
+}
+
+export function inspectPlatformReleaseCompiledOutputPairV2(
+  handle: PlatformReleaseCompiledOutputPairV2,
+): PlatformReleaseCompiledOutputPairInspectionV2 {
+  const state = authenticCompiledOutputPairStateV2(handle);
+  if (state.ownership.lifecycle !== "ready") {
+    return failCompiledOutputPair(
+      "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_SOURCE_DRIFT",
+      "Compiled pair no longer owns its ready authority state",
+    );
+  }
+  let sourceState: SourceStageStateV2;
+  try {
+    sourceState = authenticState(state.sourceStage);
+  } catch (error) {
+    return failCompiledOutputPair(
+      "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_SOURCE_DRIFT",
+      "Compiled pair source authority is no longer live",
+      error,
+    );
+  }
+  if (sourceState.lifecycle !== "double_build_complete") {
+    return failCompiledOutputPair(
+      "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_SOURCE_DRIFT",
+      "Compiled pair no longer owns its exact completed lifecycle",
+    );
+  }
+  return deepFreezePlatformReleaseJsonV2(
+    structuredClone(state.inspection),
+  );
+}
+
+function sameCompiledOccurrenceV2(
+  left: CompiledOccurrenceStateV2,
+  right: CompiledOccurrenceStateV2,
+): boolean {
+  return canonicalJsonBytes(left)
+    .equals(canonicalJsonBytes(right));
+}
+
+export async function revalidatePlatformReleaseCompiledOutputPairV2(
+  handle: PlatformReleaseCompiledOutputPairV2,
+): Promise<PlatformReleaseCompiledOutputPairInspectionV2> {
+  const state = authenticCompiledOutputPairStateV2(handle);
+  const sourceState =
+    sourceStageStatesV2.get(state.sourceStage);
+  if (
+    !sourceState
+    || sourceState.lifecycle === "disposed"
+    || state.ownership.lifecycle !== "ready"
+  ) {
+    return failCompiledOutputPair(
+      "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_SOURCE_DRIFT",
+      "Compiled pair source authority is no longer live",
+    );
+  }
+  if (sourceState.lifecycle !== "double_build_complete") {
+    return failCompiledOutputPair(
+      "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_SOURCE_DRIFT",
+      "Compiled pair no longer owns its exact completed lifecycle",
+    );
+  }
+  let expectedCapsule: BuildToolchainCapsuleStateV2;
+  try {
+    expectedCapsule =
+      authenticBuildToolchainCapsuleState(
+        state.buildToolchain,
+      );
+  } catch (error) {
+    return failCompiledOutputPair(
+      "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_SOURCE_DRIFT",
+      "Compiled pair build-toolchain authority is no longer authentic",
+      error,
+    );
+  }
+  let firstBytes: Buffer | undefined;
+  let secondBytes: Buffer | undefined;
+  try {
+    const live =
+      await revalidateBuildToolchainCapsuleForLifecycleV2(
+        state.buildToolchain,
+        ["double_build_complete"],
+      );
+    if (
+      state.ownership.lifecycle !== "ready"
+      || sourceState.lifecycle !== "double_build_complete"
+      || live.sourceState !== sourceState
+      || live.capsule !== expectedCapsule
+    ) {
+      return failCompiledOutputPair(
+        "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_SOURCE_DRIFT",
+        "Compiled pair lost its exact source, toolchain or ready ownership while revalidation was in flight",
+      );
+    }
+    const commandModuleHash =
+      compiledCommandModuleHashV2(sourceState);
+    const first = captureCompiledOccurrenceV2({
+      occurrence: "first",
+      sourceState,
+      capsule: live.capsule,
+      slot: state.first.slot,
+      commandModuleHash,
+      hostEvidence: state.first.hostEvidence,
+    });
+    firstBytes = first.packageBytes;
+    const second = captureCompiledOccurrenceV2({
+      occurrence: "second",
+      sourceState,
+      capsule: live.capsule,
+      slot: state.second.slot,
+      commandModuleHash,
+      hostEvidence: state.second.hostEvidence,
+    });
+    secondBytes = second.packageBytes;
+    assertCompiledOccurrenceEqualityV2(first, second);
+    if (
+      !sameCompiledOccurrenceV2(
+        first.state,
+        state.first,
+      )
+      || !sameCompiledOccurrenceV2(
+        second.state,
+        state.second,
+      )
+    ) {
+      return failCompiledOutputPair(
+        "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_OUTPUT_INVALID",
+        "Fresh compiled outputs differ from issued pair authority",
+      );
+    }
+    const inspection = compiledPairInspectionV2(
+      sourceState,
+      live.capsule,
+      first.state,
+      second.state,
+    );
+    if (
+      canonicalJsonStringify(inspection)
+        !== canonicalJsonStringify(state.inspection)
+    ) {
+      return failCompiledOutputPair(
+        "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_OUTPUT_INVALID",
+        "Fresh compiled pair inspection differs from issued authority",
+      );
+    }
+    return inspection;
+  } catch (error) {
+    const primary = error instanceof
+        PlatformReleaseCompiledOutputPairErrorV2
+      ? error
+      : new PlatformReleaseCompiledOutputPairErrorV2(
+        "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_OUTPUT_INVALID",
+        "Compiled pair failed fresh operational revalidation",
+        { cause: error },
+      );
+    if (
+      state.ownership.lifecycle === "ready"
+      && sourceState.lifecycle
+        === "double_build_complete"
+    ) {
+      return destroyReadyCompiledPairAfterFailureV2(
+        state,
+        sourceState,
+        primary,
+      );
+    }
+    if (
+      sourceState.lifecycle !== "double_build_complete"
+      && (
+        !(primary instanceof
+          PlatformReleaseCompiledOutputPairErrorV2)
+        || primary.code
+          !== "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_SOURCE_DRIFT"
+      )
+    ) {
+      return failCompiledOutputPair(
+        "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_SOURCE_DRIFT",
+        "Compiled pair lost ownership while fresh revalidation was in flight",
+        primary,
+      );
+    }
+    throw primary;
+  } finally {
+    firstBytes?.fill(0);
+    secondBytes?.fill(0);
+  }
+}
+
+export async function withPlatformReleaseCompiledOutputPairForTestV2<T>(
+  handle: PlatformReleaseCompiledOutputPairV2,
+  callback: (roots: Readonly<{
+    firstOutputRoot: string;
+    secondOutputRoot: string;
+  }>) => T | Promise<T>,
+): Promise<T> {
+  const state = authenticCompiledOutputPairStateV2(handle);
+  if (
+    state.admissionScope !== "test_fixture"
+    || typeof callback !== "function"
+  ) {
+    return failCompiledOutputPair(
+      "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_TEST_ONLY",
+      "Compiled output roots are available only to an explicit test callback",
+    );
+  }
+  await revalidatePlatformReleaseCompiledOutputPairV2(
+    handle,
+  );
+  let result: T;
+  let callbackFailure: unknown;
+  try {
+    result = await callback(Object.freeze({
+      firstOutputRoot:
+        state.first.slot.outputRoot.absolutePath,
+      secondOutputRoot:
+        state.second.slot.outputRoot.absolutePath,
+    }));
+  } catch (error) {
+    callbackFailure = error;
+  }
+  try {
+    await revalidatePlatformReleaseCompiledOutputPairV2(
+      handle,
+    );
+  } catch (validationFailure) {
+    if (callbackFailure !== undefined) {
+      throw new AggregateError([
+        callbackFailure,
+        validationFailure,
+      ]);
+    }
+    throw validationFailure;
+  }
+  if (callbackFailure !== undefined) throw callbackFailure;
+  return result!;
 }
 
 export async function withPlatformReleaseBuildToolchainCapsuleForTestV2<T>(
@@ -3432,7 +5870,10 @@ export function withPlatformReleaseSourceStageForTestV2<T>(
     );
   }
   const beforeFingerprint =
-    captureSourceFingerprint(state.stageRoot);
+    captureSourceFingerprint(state.stageRoot, {
+      uid: state.core.stageAfter.ownerUid,
+      gid: state.core.stageAfter.ownerGid,
+    });
   const beforeIdentity = sourceStageIdentity(
     state.stageRoot,
     state.core.source.bindingHash,
@@ -3450,7 +5891,10 @@ export function withPlatformReleaseSourceStageForTestV2<T>(
   }
   const result = callback(state.stageRoot);
   const afterFingerprint =
-    captureSourceFingerprint(state.stageRoot);
+    captureSourceFingerprint(state.stageRoot, {
+      uid: state.core.stageAfter.ownerUid,
+      gid: state.core.stageAfter.ownerGid,
+    });
   const afterIdentity = sourceStageIdentity(
     state.stageRoot,
     state.core.source.bindingHash,
@@ -3482,6 +5926,5 @@ export function disposePlatformReleaseSourceStageV2(
       "Source stage cannot be disposed during an active materialization transaction",
     );
   }
-  state.lifecycle = "disposed";
-  cleanupStage(state.contextRoot);
+  disposeSourceOwnedPhysicalContextV2(state);
 }

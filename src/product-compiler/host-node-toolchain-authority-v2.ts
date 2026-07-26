@@ -388,6 +388,25 @@ export type HostNodeToolchainPlatformReleaseBuildInputV2 =
     commandModuleHash: string;
   }>;
 
+export type HostNodePlatformReleaseOutputStageIdentityV2 =
+  Readonly<{
+    device: number;
+    inode: number;
+    mode: number;
+    ownerUid: number;
+    ownerGid: number;
+  }>;
+
+export function hashHostNodePlatformReleaseOutputStageIdentityV2(
+  output: HostNodePlatformReleaseOutputStageIdentityV2,
+): string {
+  return hashCanonicalJson({
+    schema:
+      "setfarm.host-node-platform-release-output-stage-identity.v2",
+    output,
+  });
+}
+
 export type HostNodeToolchainPlatformReleaseBuildEvidenceV2 =
   Readonly<{
     probeRef: "HOST_NODE_PLATFORM_RELEASE_BUILD_V2";
@@ -3513,11 +3532,10 @@ function capturePlatformReleaseBuildScopeV2(
           fingerprint: command.fingerprint,
         },
       }),
-      outputStageIdentityHash: hashCanonicalJson({
-        schema:
-          "setfarm.host-node-platform-release-output-stage-identity.v2",
-        output: outputIdentity,
-      }),
+      outputStageIdentityHash:
+        hashHostNodePlatformReleaseOutputStageIdentityV2(
+          outputIdentity,
+        ),
     });
   } catch (error) {
     if (error instanceof HostNodeToolchainAuthorityErrorV2) throw error;

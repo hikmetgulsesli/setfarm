@@ -1174,6 +1174,17 @@ export type PlatformReleaseBuildCommandResultV2 = z.infer<
   typeof PlatformReleaseBuildCommandResultV2Schema
 >;
 
+export function hashPlatformReleaseBuildCommandResultV2(
+  value: PlatformReleaseBuildCommandResultV2,
+): string {
+  return hashCanonicalJson({
+    schema:
+      "setfarm.platform-release-build-command-result-hash.v2",
+    commandResult:
+      PlatformReleaseBuildCommandResultV2Schema.parse(value),
+  });
+}
+
 const PlatformReleaseBuildProcessOutcomeV2Schema = z.object({
   stdin: z.literal("closed"),
   inheritAmbientEnvironment: z.literal(false),
