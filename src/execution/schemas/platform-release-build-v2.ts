@@ -1,0 +1,670 @@
+import { z } from "zod";
+
+import { hashCanonicalJson } from "../../product-compiler/canonical-json.js";
+import {
+  GitObjectHashSchema,
+  Sha256Schema,
+} from "../../product-compiler/schemas/common-v1.js";
+import {
+  NpmMaterializationReceiptCandidateV2Schema,
+} from "./external-runtime-resolution-v2.js";
+import {
+  PLATFORM_RELEASE_COMPONENT_VERSION_V2,
+  ExactHostOwnedFileRefV2Schema,
+  PlatformReleaseStableReferenceV2Schema,
+  PlatformReleaseVersionIdentityV2Schema,
+  boundedPlatformReleaseJsonSnapshotV2,
+  deepFreezePlatformReleaseJsonV2,
+  platformReleaseCandidateFitsCanonicalCapV2,
+} from "./platform-release-common-v2.js";
+import {
+  PlatformRuntimePayloadCandidateV2Schema,
+} from "./platform-runtime-payload-v2.js";
+
+export const EXACT_PLATFORM_RELEASE_SOURCE_REF_V2_SCHEMA =
+  "setfarm.exact-platform-release-source-ref.v2" as const;
+export const PLATFORM_RELEASE_SOURCE_TREE_BINDING_V2_SCHEMA =
+  "setfarm.platform-release-source-tree-binding.v2" as const;
+export const SOURCE_ADMISSION_RECEIPT_V2_SCHEMA =
+  "setfarm.source-admission-receipt.v2" as const;
+export const PLATFORM_RELEASE_BUILD_RECEIPT_V2_SCHEMA =
+  "setfarm.platform-release-build-receipt.v2" as const;
+export const EXACT_LEGACY_STITCH_CONVERTER_REF_V2_SCHEMA =
+  "setfarm.exact-legacy-stitch-converter-ref.v2" as const;
+
+export const PLATFORM_RELEASE_BUILD_CONTRACT_VERSION_V2 = "2.0.0" as const;
+export const PLATFORM_RELEASE_SOURCE_ADMISSION_MAX_CANONICAL_BYTES_V2 =
+  128 * 1024;
+export const PLATFORM_RELEASE_BUILD_RECEIPT_MAX_CANONICAL_BYTES_V2 =
+  256 * 1024;
+export const PLATFORM_RELEASE_SOURCE_FILE_MAX_BYTES_V2 = 16 * 1024 * 1024;
+export const PLATFORM_RELEASE_BUILD_MODULE_MAX_BYTES_V2 = 64 * 1024 * 1024;
+
+export const PLATFORM_RELEASE_SOURCE_ADMISSION_CONTRACT_V2 = Object.freeze({
+  schema: "setfarm.platform-release-source-admission-contract.v2" as const,
+  version: PLATFORM_RELEASE_BUILD_CONTRACT_VERSION_V2,
+  authorityOwner: "root_owned_separately_installed_verifier" as const,
+  remoteRef: "refs/remotes/origin/main" as const,
+  policy: "exact_remote_main_sha" as const,
+  requiredBranch: "main" as const,
+  dirtyWorktree: "forbidden" as const,
+  sourceFence: "before_and_after_exact_commit_tree_and_index" as const,
+  candidateAuthority:
+    "forbidden_until_fresh_root_owned_source_verification" as const,
+});
+
+export const PLATFORM_RELEASE_SOURCE_ADMISSION_CONTRACT_HASH_V2 =
+  hashCanonicalJson(PLATFORM_RELEASE_SOURCE_ADMISSION_CONTRACT_V2);
+
+export const PLATFORM_RELEASE_BUILD_CONTRACT_V2 = Object.freeze({
+  schema: "setfarm.platform-release-build-contract.v2" as const,
+  version: PLATFORM_RELEASE_BUILD_CONTRACT_VERSION_V2,
+  sourceMethod: "verified_git_tree_export.v2" as const,
+  commandRef: "BUILD_PLATFORM_RELEASE_V2" as const,
+  commandModule: "scripts/build-platform-release-v2.mjs" as const,
+  outputPolicy: "parameterized_empty_stage_only" as const,
+  reproducibility: "double_clean_build_exact_tree_match" as const,
+  clockInput: "exact_git_commit_epoch_only" as const,
+  forbiddenPayloadInputs: [
+    "absolute_path",
+    "pid",
+    "random_uuid",
+    "wall_clock",
+  ] as const,
+  process: {
+    shell: "forbidden" as const,
+    ambientEnvironment: "forbidden" as const,
+    stdin: "closed" as const,
+    termination: "normal_exit_zero_only" as const,
+  },
+  productionUse: "forbidden_until_fresh_verified_release" as const,
+});
+
+export const PLATFORM_RELEASE_BUILD_CONTRACT_HASH_V2 =
+  hashCanonicalJson(PLATFORM_RELEASE_BUILD_CONTRACT_V2);
+
+export const PLATFORM_RELEASE_EMPTY_GIT_STATUS_CONTENT_HASH_V2 =
+  "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+
+const CanonicalDecimalEpochV2Schema = z.string()
+  .min(1)
+  .max(20)
+  .regex(/^(?:0|[1-9][0-9]*)$/, "Expected canonical Git epoch seconds");
+
+const SourceRoleV2Schema = z.enum([
+  "dependency_lock_manifest",
+  "package_manifest",
+  "typescript_compiler_config",
+]);
+
+const SourceLocatorV2Schema = z.enum([
+  "package-lock.json",
+  "package.json",
+  "tsconfig.json",
+]);
+
+const ExactPlatformReleaseSourceRefIdentityV2Schema = z.object({
+  schema: z.literal(EXACT_PLATFORM_RELEASE_SOURCE_REF_V2_SCHEMA),
+  role: SourceRoleV2Schema,
+  locator: SourceLocatorV2Schema,
+  mediaType: z.literal("application/json"),
+  gitBlobHash: GitObjectHashSchema,
+  contentHash: Sha256Schema,
+  byteLength: z.number().int().positive()
+    .max(PLATFORM_RELEASE_SOURCE_FILE_MAX_BYTES_V2),
+  gitMode: z.literal("100644"),
+  exportedMode: z.literal("0444"),
+}).strict().superRefine((value, context) => {
+  const expected = {
+    dependency_lock_manifest: "package-lock.json",
+    package_manifest: "package.json",
+    typescript_compiler_config: "tsconfig.json",
+  } as const;
+  if (value.locator !== expected[value.role]) {
+    context.addIssue({
+      code: "custom",
+      path: ["locator"],
+      message: "Source role must bind its one exact committed locator",
+    });
+  }
+});
+
+export type ExactPlatformReleaseSourceRefHashPayloadV2 = z.infer<
+  typeof ExactPlatformReleaseSourceRefIdentityV2Schema
+>;
+
+export function hashExactPlatformReleaseSourceRefV2(
+  value:
+    | ExactPlatformReleaseSourceRefHashPayloadV2
+    | ExactPlatformReleaseSourceRefV2,
+): string {
+  const sourceRef = { ...value } as Record<string, unknown>;
+  delete sourceRef.sourceRefHash;
+  return hashCanonicalJson({
+    schema: "setfarm.exact-platform-release-source-ref-hash.v2",
+    sourceRef,
+  });
+}
+
+export const ExactPlatformReleaseSourceRefV2Schema =
+  ExactPlatformReleaseSourceRefIdentityV2Schema.safeExtend({
+    sourceRefHash: Sha256Schema,
+  }).strict().superRefine((value, context) => {
+    if (
+      value.sourceRefHash !== hashExactPlatformReleaseSourceRefV2(value)
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["sourceRefHash"],
+        message: "Source ref hash must bind exact committed and exported bytes",
+      });
+    }
+  });
+
+export type ExactPlatformReleaseSourceRefV2 = z.infer<
+  typeof ExactPlatformReleaseSourceRefV2Schema
+>;
+
+export const PlatformReleaseSourceInputsV2Schema = z.tuple([
+  ExactPlatformReleaseSourceRefV2Schema,
+  ExactPlatformReleaseSourceRefV2Schema,
+  ExactPlatformReleaseSourceRefV2Schema,
+]).superRefine((value, context) => {
+  const expected = [
+    ["dependency_lock_manifest", "package-lock.json"],
+    ["package_manifest", "package.json"],
+    ["typescript_compiler_config", "tsconfig.json"],
+  ] as const;
+  value.forEach((entry, index) => {
+    if (
+      entry.role !== expected[index]![0]
+      || entry.locator !== expected[index]![1]
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: [index],
+        message:
+          "Release source inputs must contain the exact three files in canonical order",
+      });
+    }
+  });
+});
+
+const PlatformReleaseSourceTreeBindingIdentityV2Schema = z.object({
+  schema: z.literal(PLATFORM_RELEASE_SOURCE_TREE_BINDING_V2_SCHEMA),
+  sourceTreeHash: GitObjectHashSchema,
+  exportedFileTreeHash: Sha256Schema,
+  inputMembershipHash: Sha256Schema,
+  inputs: PlatformReleaseSourceInputsV2Schema,
+}).strict().superRefine((value, context) => {
+  const expectedMembershipHash = hashCanonicalJson({
+    schema: "setfarm.platform-release-source-input-membership.v2",
+    entries: value.inputs.map((entry) => ({
+      role: entry.role,
+      locator: entry.locator,
+      sourceRefHash: entry.sourceRefHash,
+    })),
+  });
+  if (value.inputMembershipHash !== expectedMembershipHash) {
+    context.addIssue({
+      code: "custom",
+      path: ["inputMembershipHash"],
+      message: "Source input membership hash must bind every exact input",
+    });
+  }
+});
+
+export type PlatformReleaseSourceTreeBindingHashPayloadV2 = z.infer<
+  typeof PlatformReleaseSourceTreeBindingIdentityV2Schema
+>;
+
+export function hashPlatformReleaseSourceTreeBindingV2(
+  value:
+    | PlatformReleaseSourceTreeBindingHashPayloadV2
+    | PlatformReleaseSourceTreeBindingV2,
+): string {
+  const binding = { ...value } as Record<string, unknown>;
+  delete binding.bindingHash;
+  return hashCanonicalJson({
+    schema: "setfarm.platform-release-source-tree-binding-hash.v2",
+    binding,
+  });
+}
+
+export const PlatformReleaseSourceTreeBindingV2Schema =
+  PlatformReleaseSourceTreeBindingIdentityV2Schema.safeExtend({
+    bindingHash: Sha256Schema,
+  }).strict().superRefine((value, context) => {
+    if (
+      value.bindingHash
+        !== hashPlatformReleaseSourceTreeBindingV2(value)
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["bindingHash"],
+        message: "Source tree binding hash must bind the exact export summary",
+      });
+    }
+  });
+
+export type PlatformReleaseSourceTreeBindingV2 = z.infer<
+  typeof PlatformReleaseSourceTreeBindingV2Schema
+>;
+
+const GitSourceFenceIdentityV2Schema = z.object({
+  headSha: GitObjectHashSchema,
+  treeHash: GitObjectHashSchema,
+  indexTreeHash: GitObjectHashSchema,
+  identityHash: Sha256Schema,
+}).strict().superRefine((value, context) => {
+  const expected = hashCanonicalJson({
+    schema: "setfarm.git-source-fence-identity.v2",
+    headSha: value.headSha,
+    treeHash: value.treeHash,
+    indexTreeHash: value.indexTreeHash,
+  });
+  if (value.identityHash !== expected) {
+    context.addIssue({
+      code: "custom",
+      path: ["identityHash"],
+      message: "Git source fence identity hash mismatch",
+    });
+  }
+});
+
+const RemoteMainObservationIdentityV2Schema = z.object({
+  remoteRef: z.literal("refs/remotes/origin/main"),
+  observedSha: GitObjectHashSchema,
+  observedTreeHash: GitObjectHashSchema,
+  observationHash: Sha256Schema,
+}).strict().superRefine((value, context) => {
+  const expected = hashCanonicalJson({
+    schema: "setfarm.remote-main-observation.v2",
+    remoteRef: value.remoteRef,
+    observedSha: value.observedSha,
+    observedTreeHash: value.observedTreeHash,
+  });
+  if (value.observationHash !== expected) {
+    context.addIssue({
+      code: "custom",
+      path: ["observationHash"],
+      message: "Remote-main observation hash mismatch",
+    });
+  }
+});
+
+const CleanWorktreeProofIdentityV2Schema = z.object({
+  dirty: z.literal(false),
+  untrackedEntryCount: z.literal(0),
+  statusPorcelainContentHash: z.literal(
+    PLATFORM_RELEASE_EMPTY_GIT_STATUS_CONTENT_HASH_V2,
+  ),
+  headSha: GitObjectHashSchema,
+  treeHash: GitObjectHashSchema,
+  indexTreeHash: GitObjectHashSchema,
+  proofHash: Sha256Schema,
+}).strict().superRefine((value, context) => {
+  const expected = hashCanonicalJson({
+    schema: "setfarm.clean-worktree-proof.v2",
+    dirty: value.dirty,
+    untrackedEntryCount: value.untrackedEntryCount,
+    statusPorcelainContentHash: value.statusPorcelainContentHash,
+    headSha: value.headSha,
+    treeHash: value.treeHash,
+    indexTreeHash: value.indexTreeHash,
+  });
+  if (value.proofHash !== expected) {
+    context.addIssue({
+      code: "custom",
+      path: ["proofHash"],
+      message: "Clean-worktree proof hash mismatch",
+    });
+  }
+});
+
+const SourceAdmissionReceiptIdentityV2Schema = z.object({
+  schema: z.literal(SOURCE_ADMISSION_RECEIPT_V2_SCHEMA),
+  version: z.literal(PLATFORM_RELEASE_COMPONENT_VERSION_V2),
+  authorityState: z.literal("candidate_observation_unverified"),
+  productionUse: z.literal(
+    "forbidden_until_fresh_root_owned_source_verification",
+  ),
+  remoteRef: z.literal("refs/remotes/origin/main"),
+  policy: z.literal("exact_remote_main_sha"),
+  branch: z.literal("main"),
+  admissionContractHash: z.literal(
+    PLATFORM_RELEASE_SOURCE_ADMISSION_CONTRACT_HASH_V2,
+  ),
+  remoteObservation: RemoteMainObservationIdentityV2Schema,
+  admittedSource: z.object({
+    sha: GitObjectHashSchema,
+    treeHash: GitObjectHashSchema,
+    commitEpochSeconds: CanonicalDecimalEpochV2Schema,
+  }).strict(),
+  cleanWorktreeProof: CleanWorktreeProofIdentityV2Schema,
+  sourceBefore: GitSourceFenceIdentityV2Schema,
+  sourceAfter: GitSourceFenceIdentityV2Schema,
+  implementation: z.object({
+    ownership: z.literal("root_owned_separately_installed"),
+    module: ExactHostOwnedFileRefV2Schema,
+    requiredExport: z.literal("admitPlatformReleaseSourceV2"),
+  }).strict(),
+}).strict().superRefine((value, context) => {
+  const admitted = value.admittedSource;
+  const before = value.sourceBefore;
+  const after = value.sourceAfter;
+  const clean = value.cleanWorktreeProof;
+  if (
+    value.remoteObservation.remoteRef !== value.remoteRef
+    || value.remoteObservation.observedSha !== admitted.sha
+    || value.remoteObservation.observedTreeHash !== admitted.treeHash
+    || before.headSha !== admitted.sha
+    || before.treeHash !== admitted.treeHash
+    || before.indexTreeHash !== admitted.treeHash
+    || after.headSha !== admitted.sha
+    || after.treeHash !== admitted.treeHash
+    || after.indexTreeHash !== admitted.treeHash
+    || clean.headSha !== admitted.sha
+    || clean.treeHash !== admitted.treeHash
+    || clean.indexTreeHash !== admitted.treeHash
+    || before.identityHash !== after.identityHash
+  ) {
+    context.addIssue({
+      code: "custom",
+      message:
+        "Source admission must close exact remote main, clean index and unchanged before/after source",
+    });
+  }
+});
+
+export type SourceAdmissionReceiptHashPayloadV2 = z.infer<
+  typeof SourceAdmissionReceiptIdentityV2Schema
+>;
+
+export function hashSourceAdmissionReceiptV2(
+  value:
+    | SourceAdmissionReceiptHashPayloadV2
+    | SourceAdmissionReceiptV2,
+): string {
+  const receipt = { ...value } as Record<string, unknown>;
+  delete receipt.receiptHash;
+  return hashCanonicalJson({
+    schema: "setfarm.source-admission-receipt-hash.v2",
+    receipt,
+  });
+}
+
+export const SourceAdmissionReceiptV2Schema =
+  SourceAdmissionReceiptIdentityV2Schema.safeExtend({
+    receiptHash: Sha256Schema,
+  }).strict().superRefine((value, context) => {
+    if (!platformReleaseCandidateFitsCanonicalCapV2(
+      value,
+      PLATFORM_RELEASE_SOURCE_ADMISSION_MAX_CANONICAL_BYTES_V2,
+    )) {
+      context.addIssue({
+        code: "custom",
+        message: "Source admission receipt exceeds its canonical byte cap",
+      });
+      return;
+    }
+    if (value.receiptHash !== hashSourceAdmissionReceiptV2(value)) {
+      context.addIssue({
+        code: "custom",
+        path: ["receiptHash"],
+        message: "Source admission receipt hash mismatch",
+      });
+    }
+  });
+
+export type SourceAdmissionReceiptV2 = z.infer<
+  typeof SourceAdmissionReceiptV2Schema
+>;
+
+export const PlatformReleaseCompilerIdentityV2Schema = z.object({
+  packageName: z.literal("typescript"),
+  version: PlatformReleaseVersionIdentityV2Schema,
+  lockEntryHash: Sha256Schema,
+  packageJsonHash: Sha256Schema,
+  packageTreeHash: Sha256Schema,
+  entryModuleLocator: z.literal("node_modules/typescript/bin/tsc"),
+  entryModuleHash: Sha256Schema,
+}).strict();
+
+export type PlatformReleaseCompilerIdentityV2 = z.infer<
+  typeof PlatformReleaseCompilerIdentityV2Schema
+>;
+
+export const PlatformReleasePackageManagerIdentityV2Schema = z.object({
+  packageName: z.literal("npm"),
+  version: PlatformReleaseVersionIdentityV2Schema,
+  executableRef: PlatformReleaseStableReferenceV2Schema,
+  executableHash: Sha256Schema,
+  packageTreeHash: Sha256Schema,
+  installRecipeHash: Sha256Schema,
+}).strict();
+
+export type PlatformReleasePackageManagerIdentityV2 = z.infer<
+  typeof PlatformReleasePackageManagerIdentityV2Schema
+>;
+
+export const ExactLegacyStitchConverterRefV2Schema = z.object({
+  schema: z.literal(EXACT_LEGACY_STITCH_CONVERTER_REF_V2_SCHEMA),
+  sourceLocator: z.literal("scripts/stitch-to-jsx.mjs"),
+  locator: z.literal("payload/dist/legacy-assets/stitch-to-jsx.mjs"),
+  mediaType: z.literal("text/javascript"),
+  hash: Sha256Schema,
+  byteLength: z.number().int().positive()
+    .max(PLATFORM_RELEASE_BUILD_MODULE_MAX_BYTES_V2),
+  mode: z.literal("0444"),
+}).strict();
+
+export type ExactLegacyStitchConverterRefV2 = z.infer<
+  typeof ExactLegacyStitchConverterRefV2Schema
+>;
+
+const PlatformReleaseBuildStageV2Schema = z.object({
+  stageRef: z.enum([
+    "PLATFORM_RELEASE_BUILD_STAGE_FIRST_V2",
+    "PLATFORM_RELEASE_BUILD_STAGE_SECOND_V2",
+  ]),
+  sourceStagePhysicalIdentityHash: Sha256Schema,
+  outputStagePhysicalIdentityHash: Sha256Schema,
+  sourceStageMode: z.literal("0555"),
+  outputStageInitialMode: z.literal("0700"),
+  outputWasEmpty: z.literal(true),
+  sourceAndOutputAreDistinct: z.literal(true),
+  temporaryLocatorDisclosure: z.literal("forbidden"),
+}).strict().superRefine((value, context) => {
+  if (
+    value.sourceStagePhysicalIdentityHash
+      === value.outputStagePhysicalIdentityHash
+  ) {
+    context.addIssue({
+      code: "custom",
+      message: "Build source and output stages must be physically distinct",
+    });
+  }
+});
+
+const PlatformReleaseBuildCommandV2Schema = z.object({
+  commandRef: z.literal("BUILD_PLATFORM_RELEASE_V2"),
+  contractHash: z.literal(PLATFORM_RELEASE_BUILD_CONTRACT_HASH_V2),
+  executableRef: z.literal("RUNTIME_NODE_PROCESS"),
+  moduleLocator: z.literal("scripts/build-platform-release-v2.mjs"),
+  moduleContentHash: Sha256Schema,
+  directArgvTemplate: z.tuple([
+    z.literal("node"),
+    z.literal("scripts/build-platform-release-v2.mjs"),
+    z.literal("--source-root"),
+    z.literal("<VERIFIED_SOURCE_STAGE>"),
+    z.literal("--output-root"),
+    z.literal("<EMPTY_OUTPUT_STAGE>"),
+  ]),
+  cwd: z.literal("verified_source_stage"),
+  sourceRootPassing: z.literal("parameterized_exact_stage"),
+  outputRootPassing: z.literal("parameterized_exact_empty_stage"),
+  shell: z.literal("forbidden"),
+}).strict();
+
+const PlatformReleaseBuildProcessOutcomeV2Schema = z.object({
+  stdin: z.literal("closed"),
+  inheritAmbientEnvironment: z.literal(false),
+  environment: z.object({
+    CI: z.literal("true"),
+    LANG: z.literal("C.UTF-8"),
+    LC_ALL: z.literal("C.UTF-8"),
+    NO_COLOR: z.literal("1"),
+    SOURCE_DATE_EPOCH: CanonicalDecimalEpochV2Schema,
+    TZ: z.literal("UTC"),
+  }).strict(),
+  termination: z.literal("normal_exit"),
+  exitCode: z.literal(0),
+  stdoutContentHash: Sha256Schema,
+  stdoutByteLength: z.number().int().nonnegative().max(1024 * 1024),
+  stderrContentHash: Sha256Schema,
+  stderrByteLength: z.number().int().nonnegative().max(1024 * 1024),
+}).strict();
+
+const PlatformReleaseBuildOutputIdentityV2Schema = z.object({
+  runtimePayload: PlatformRuntimePayloadCandidateV2Schema,
+  npmMaterializationReceipt:
+    NpmMaterializationReceiptCandidateV2Schema,
+  legacyStitchConverter: ExactLegacyStitchConverterRefV2Schema,
+  outputClosureHash: Sha256Schema,
+}).strict().superRefine((value, context) => {
+  if (
+    value.npmMaterializationReceipt.dependencyTreeHash
+      !== value.runtimePayload.dependencyTree.treeHash
+  ) {
+    context.addIssue({
+      code: "custom",
+      path: ["npmMaterializationReceipt", "dependencyTreeHash"],
+      message: "npm receipt must bind the exact produced dependency tree",
+    });
+  }
+  const expected = hashCanonicalJson({
+    schema: "setfarm.platform-release-build-output-closure.v2",
+    runtimePayloadHash: value.runtimePayload.runtimePayloadHash,
+    platformTreeBindingHash: value.runtimePayload.platformTree.bindingHash,
+    dependencyTreeBindingHash: value.runtimePayload.dependencyTree.bindingHash,
+    packageJsonHash: value.runtimePayload.packageJson.hash,
+    npmMaterializationReceiptHash:
+      value.npmMaterializationReceipt.receiptHash,
+    legacyStitchConverter: value.legacyStitchConverter,
+  });
+  if (value.outputClosureHash !== expected) {
+    context.addIssue({
+      code: "custom",
+      path: ["outputClosureHash"],
+      message: "Build output closure hash mismatch",
+    });
+  }
+});
+
+const PlatformReleaseBuildReceiptIdentityV2Schema = z.object({
+  schema: z.literal(PLATFORM_RELEASE_BUILD_RECEIPT_V2_SCHEMA),
+  version: z.literal(PLATFORM_RELEASE_COMPONENT_VERSION_V2),
+  authorityState: z.literal("candidate_build_observation_unverified"),
+  productionUse: z.literal(
+    "forbidden_until_double_build_and_fresh_release_verification",
+  ),
+  sourceAdmissionReceiptHash: Sha256Schema,
+  source: PlatformReleaseSourceTreeBindingV2Schema,
+  stage: PlatformReleaseBuildStageV2Schema,
+  inputs: PlatformReleaseSourceInputsV2Schema,
+  compiler: PlatformReleaseCompilerIdentityV2Schema,
+  packageManager: PlatformReleasePackageManagerIdentityV2Schema,
+  command: PlatformReleaseBuildCommandV2Schema,
+  sourceDateEpoch: CanonicalDecimalEpochV2Schema,
+  process: PlatformReleaseBuildProcessOutcomeV2Schema,
+  output: PlatformReleaseBuildOutputIdentityV2Schema,
+}).strict().superRefine((value, context) => {
+  if (
+    value.process.environment.SOURCE_DATE_EPOCH !== value.sourceDateEpoch
+    || hashCanonicalJson({
+      schema: "setfarm.platform-release-source-input-membership.v2",
+      entries: value.inputs.map((entry) => ({
+        role: entry.role,
+        locator: entry.locator,
+        sourceRefHash: entry.sourceRefHash,
+      })),
+    }) !== value.source.inputMembershipHash
+  ) {
+    context.addIssue({
+      code: "custom",
+      message:
+        "Build receipt must use one exact source input set and Git-derived clock",
+    });
+  }
+});
+
+export type PlatformReleaseBuildReceiptHashPayloadV2 = z.infer<
+  typeof PlatformReleaseBuildReceiptIdentityV2Schema
+>;
+
+export function hashPlatformReleaseBuildReceiptV2(
+  value:
+    | PlatformReleaseBuildReceiptHashPayloadV2
+    | PlatformReleaseBuildReceiptV2,
+): string {
+  const receipt = { ...value } as Record<string, unknown>;
+  delete receipt.receiptHash;
+  return hashCanonicalJson({
+    schema: "setfarm.platform-release-build-receipt-hash.v2",
+    receipt,
+  });
+}
+
+export const PlatformReleaseBuildReceiptV2Schema =
+  PlatformReleaseBuildReceiptIdentityV2Schema.safeExtend({
+    receiptHash: Sha256Schema,
+  }).strict().superRefine((value, context) => {
+    if (!platformReleaseCandidateFitsCanonicalCapV2(
+      value,
+      PLATFORM_RELEASE_BUILD_RECEIPT_MAX_CANONICAL_BYTES_V2,
+    )) {
+      context.addIssue({
+        code: "custom",
+        message: "Platform release build receipt exceeds its canonical byte cap",
+      });
+      return;
+    }
+    if (
+      value.receiptHash !== hashPlatformReleaseBuildReceiptV2(value)
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["receiptHash"],
+        message: "Platform release build receipt hash mismatch",
+      });
+    }
+  });
+
+export type PlatformReleaseBuildReceiptV2 = z.infer<
+  typeof PlatformReleaseBuildReceiptV2Schema
+>;
+
+export function parseSourceAdmissionReceiptCandidateV2(
+  input: unknown,
+): SourceAdmissionReceiptV2 {
+  const snapshot = boundedPlatformReleaseJsonSnapshotV2(
+    input,
+    PLATFORM_RELEASE_SOURCE_ADMISSION_MAX_CANONICAL_BYTES_V2,
+  );
+  return deepFreezePlatformReleaseJsonV2(
+    SourceAdmissionReceiptV2Schema.parse(snapshot),
+  );
+}
+
+export function parsePlatformReleaseBuildReceiptCandidateV2(
+  input: unknown,
+): PlatformReleaseBuildReceiptV2 {
+  const snapshot = boundedPlatformReleaseJsonSnapshotV2(
+    input,
+    PLATFORM_RELEASE_BUILD_RECEIPT_MAX_CANONICAL_BYTES_V2,
+  );
+  return deepFreezePlatformReleaseJsonV2(
+    PlatformReleaseBuildReceiptV2Schema.parse(snapshot),
+  );
+}
