@@ -113,6 +113,7 @@ import {
   PLATFORM_RELEASE_BUILD_CONTRACT_HASH_V2,
   PLATFORM_RELEASE_BUILD_RECEIPT_V2_SCHEMA,
   PLATFORM_RELEASE_BUILD_TOOLCHAIN_INSTALL_RECIPE_V2_SCHEMA,
+  PLATFORM_RELEASE_BUILD_TOOLCHAIN_NPM_CONFIG_HASH_V2,
   PLATFORM_RELEASE_BUILD_TOOLCHAIN_PHYSICAL_IDENTITY_V2_SCHEMA,
   PLATFORM_RELEASE_BUILD_TOOLCHAIN_RECEIPT_V2_SCHEMA,
   PLATFORM_RELEASE_BUILD_TOOLCHAIN_TREE_BINDING_V2_SCHEMA,
@@ -1552,7 +1553,8 @@ function buildToolchainInstallRecipe() {
       "exact_lock_declared_bins_verified_then_removed" as const,
     outputNormalization:
       "every_file_0444_or_0555_every_directory_0555" as const,
-    configHash: fixtureShaV2("build-toolchain-npm-config"),
+    configHash:
+      PLATFORM_RELEASE_BUILD_TOOLCHAIN_NPM_CONFIG_HASH_V2,
   };
   return {
     ...identity,

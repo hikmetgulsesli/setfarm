@@ -85,9 +85,12 @@ export class NodeScaffoldProductionMaterializationErrorV2 extends Error {
   }
 }
 
-type AdmissionScopeV2 = "production_host" | "test_fixture";
+export type NpmLockDependencyCapsuleAdmissionScopeV2 =
+  "production_host" | "test_fixture";
 
-type RawInstallEntryV2 = Readonly<{
+type AdmissionScopeV2 = NpmLockDependencyCapsuleAdmissionScopeV2;
+
+export type RawNpmInstallEntryInternalV2 = Readonly<{
   locator: string;
   type: "directory" | "file" | "symbolic_link";
   mode: number;
@@ -96,11 +99,15 @@ type RawInstallEntryV2 = Readonly<{
   linkTarget?: string;
 }>;
 
-type ExpectedBinV2 = Readonly<{
+type RawInstallEntryV2 = RawNpmInstallEntryInternalV2;
+
+export type ExpectedNpmBinInternalV2 = Readonly<{
   linkLocator: string;
   targetLocator: string;
   expectedLinkTarget: string;
 }>;
+
+type ExpectedBinV2 = ExpectedNpmBinInternalV2;
 
 export type NodeScaffoldProductionMaterializationV2 = Readonly<{
   profileId: NodeScaffoldProductionClosureV2["profileBinding"]["profileId"];
@@ -147,7 +154,9 @@ function sameStrings(left: readonly string[], right: readonly string[]): boolean
     && left.every((value, index) => value === right[index]);
 }
 
-function isPlainRecord(value: unknown): value is Record<string, unknown> {
+export function isPlainNpmLockRecordInternalV2(
+  value: unknown,
+): value is Record<string, unknown> {
   if (
     value === null
     || typeof value !== "object"
@@ -157,6 +166,8 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
   const prototype = Object.getPrototypeOf(value);
   return prototype === Object.prototype || prototype === null;
 }
+
+const isPlainRecord = isPlainNpmLockRecordInternalV2;
 
 function exactDataRecord(
   input: unknown,
@@ -193,7 +204,7 @@ function exactDataRecord(
   return Object.freeze(values);
 }
 
-function parseJsonObject(
+export function parseNpmLockJsonObjectInternalV2(
   bytes: Buffer,
   label: string,
   errorCode: NodeScaffoldProductionMaterializationErrorCodeV2 =
@@ -222,6 +233,8 @@ function parseJsonObject(
   }
 }
 
+const parseJsonObject = parseNpmLockJsonObjectInternalV2;
+
 function processOwner(): Readonly<{ uid: number; gid: number }> {
   if (typeof process.getuid !== "function" || typeof process.getgid !== "function") {
     return fail(
@@ -242,12 +255,16 @@ function syncPath(absolutePath: string): void {
   }
 }
 
-function readExactRegularFile(input: Readonly<{
+export function readExactNpmLockRegularFileInternalV2(input: Readonly<{
   absolutePath: string;
   label: string;
   maxBytes: number;
   allowedModes?: readonly number[];
-}>): Readonly<{ bytes: Buffer; contentHash: string; mode: number }> {
+}>): Readonly<{
+  bytes: Buffer;
+  contentHash: string;
+  mode: number;
+}> {
   const owner = processOwner();
   let descriptor: number | undefined;
   try {
@@ -311,6 +328,8 @@ function readExactRegularFile(input: Readonly<{
     if (descriptor !== undefined) closeSync(descriptor);
   }
 }
+
+const readExactRegularFile = readExactNpmLockRegularFileInternalV2;
 
 function hashRegularFile(
   absolutePath: string,
@@ -385,7 +404,9 @@ function hashRegularFile(
   }
 }
 
-function captureRawInstallTree(nodeModulesRoot: string): readonly RawInstallEntryV2[] {
+export function captureRawNpmInstallTreeInternalV2(
+  nodeModulesRoot: string,
+): readonly RawNpmInstallEntryInternalV2[] {
   const owner = processOwner();
   const limits = CANONICAL_RUNTIME_TREE_V2_PROFILES.dependencies;
   const entries: RawInstallEntryV2[] = [];
@@ -509,6 +530,8 @@ function captureRawInstallTree(nodeModulesRoot: string): readonly RawInstallEntr
     compareUtf16(left.locator, right.locator)));
 }
 
+const captureRawInstallTree = captureRawNpmInstallTreeInternalV2;
+
 function packageNameFromPath(packagePath: string): string {
   const segments = packagePath.split("/");
   const index = segments.lastIndexOf("node_modules");
@@ -521,9 +544,9 @@ function relativeNodeModulesLocator(packagePath: string): string {
   return packagePath.slice("node_modules/".length);
 }
 
-function validateEveryAndOnlyPackageRoots(
+export function validateEveryAndOnlyNpmPackageRootsInternalV2(
   nodeModulesRoot: string,
-  rawEntries: readonly RawInstallEntryV2[],
+  rawEntries: readonly RawNpmInstallEntryInternalV2[],
   packagePaths: readonly string[],
 ): void {
   const expectedContainers = new Map<string, string[]>();
@@ -586,29 +609,32 @@ function validateEveryAndOnlyPackageRoots(
   }
 }
 
-function expectedBins(
+const validateEveryAndOnlyPackageRoots =
+  validateEveryAndOnlyNpmPackageRootsInternalV2;
+
+export function deriveExpectedNpmBinsInternalV2(
   lockPackages: Readonly<Record<string, unknown>>,
-  closure: NodeScaffoldProductionClosureV2,
-): readonly ExpectedBinV2[] {
+  packagePaths: readonly string[],
+): readonly ExpectedNpmBinInternalV2[] {
   const result: ExpectedBinV2[] = [];
   const occupied = new Set<string>();
-  for (const node of closure.nodes) {
-    const lockEntry = lockPackages[node.packagePath];
+  for (const packagePath of packagePaths) {
+    const lockEntry = lockPackages[packagePath];
     if (!isPlainRecord(lockEntry)) {
       return fail(
         "NODE_SCAFFOLD_PRODUCTION_MATERIALIZATION_V2_LOCK_INVALID",
-        `Production lock entry ${node.packagePath} is absent`,
+        `Production lock entry ${packagePath} is absent`,
       );
     }
     const rawBin = lockEntry.bin;
     let commands: Array<readonly [string, string]> = [];
     if (typeof rawBin === "string") {
-      commands = [[packageNameFromPath(node.packagePath).split("/").at(-1)!, rawBin]];
+      commands = [[packageNameFromPath(packagePath).split("/").at(-1)!, rawBin]];
     } else if (rawBin !== undefined) {
       if (!isPlainRecord(rawBin)) {
         return fail(
           "NODE_SCAFFOLD_PRODUCTION_MATERIALIZATION_V2_LOCK_INVALID",
-          `Production lock entry ${node.packagePath} has a malformed bin map`,
+          `Production lock entry ${packagePath} has a malformed bin map`,
         );
       }
       commands = Object.keys(rawBin).sort(compareUtf16).map((command) => {
@@ -616,13 +642,13 @@ function expectedBins(
         if (!/^[A-Za-z0-9._+-]{1,214}$/u.test(command) || typeof target !== "string") {
           return fail(
             "NODE_SCAFFOLD_PRODUCTION_MATERIALIZATION_V2_LOCK_INVALID",
-            `Production lock entry ${node.packagePath} has an unsafe bin entry`,
+            `Production lock entry ${packagePath} has an unsafe bin entry`,
           );
         }
         return [command, target] as const;
       });
     }
-    const segments = node.packagePath.split("/");
+    const segments = packagePath.split("/");
     const index = segments.lastIndexOf("node_modules");
     const container = segments.slice(0, index + 1).join("/");
     for (const [command, target] of commands) {
@@ -636,11 +662,11 @@ function expectedBins(
       ) {
         return fail(
           "NODE_SCAFFOLD_PRODUCTION_MATERIALIZATION_V2_LOCK_INVALID",
-          `Production bin target ${node.packagePath}/${target} traverses`,
+          `Production bin target ${packagePath}/${target} traverses`,
         );
       }
       const fullLink = `${container}/.bin/${command}`;
-      const fullTarget = `${node.packagePath}/${target}`;
+      const fullTarget = `${packagePath}/${target}`;
       if (occupied.has(fullLink)) {
         return fail(
           "NODE_SCAFFOLD_PRODUCTION_MATERIALIZATION_V2_LOCK_INVALID",
@@ -664,9 +690,19 @@ function expectedBins(
     compareUtf16(left.linkLocator, right.linkLocator)));
 }
 
-function validateBins(
-  rawEntries: readonly RawInstallEntryV2[],
-  bins: readonly ExpectedBinV2[],
+function expectedBins(
+  lockPackages: Readonly<Record<string, unknown>>,
+  closure: NodeScaffoldProductionClosureV2,
+): readonly ExpectedBinV2[] {
+  return deriveExpectedNpmBinsInternalV2(
+    lockPackages,
+    closure.nodes.map((node) => node.packagePath),
+  );
+}
+
+export function validateNpmBinSurfaceInternalV2(
+  rawEntries: readonly RawNpmInstallEntryInternalV2[],
+  bins: readonly ExpectedNpmBinInternalV2[],
 ): readonly string[] {
   const expectedDirectories = [...new Set(bins.map((bin) =>
     path.posix.dirname(bin.linkLocator)))].sort(compareUtf16);
@@ -725,6 +761,8 @@ function validateBins(
   }
   return expectedDirectories;
 }
+
+const validateBins = validateNpmBinSurfaceInternalV2;
 
 function metadataProbeProduction(
   input: Parameters<CanonicalRuntimeMetadataProbeV2>[0],
@@ -836,7 +874,7 @@ export function normalizeNodeScaffoldRuntimeMetadataInternalV2(
   if (scope === "production_host") normalizeDarwinMetadata(root);
 }
 
-function sealDependencyTree(root: string): void {
+export function sealNpmDependencyTreeInternalV2(root: string): void {
   const owner = processOwner();
   const visit = (absolutePath: string): void => {
     const before = lstatSync(absolutePath);
@@ -872,7 +910,11 @@ function sealDependencyTree(root: string): void {
   visit(root);
 }
 
-function assertSealedOwnedTree(root: string): void {
+const sealDependencyTree = sealNpmDependencyTreeInternalV2;
+
+export function assertSealedOwnedNpmDependencyTreeInternalV2(
+  root: string,
+): void {
   const owner = processOwner();
   const visit = (absolutePath: string): void => {
     const stat = lstatSync(absolutePath);
@@ -898,6 +940,9 @@ function assertSealedOwnedTree(root: string): void {
   };
   visit(root);
 }
+
+const assertSealedOwnedTree =
+  assertSealedOwnedNpmDependencyTreeInternalV2;
 
 function packageRuntimeTreeHash(
   packageLocator: string,

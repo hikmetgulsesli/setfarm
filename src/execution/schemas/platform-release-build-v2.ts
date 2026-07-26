@@ -16,7 +16,6 @@ import {
 import {
   PLATFORM_RELEASE_COMPONENT_VERSION_V2,
   ExactHostOwnedFileRefV2Schema,
-  PlatformReleaseStableReferenceV2Schema,
   PlatformReleaseVersionIdentityV2Schema,
   boundedPlatformReleaseJsonSnapshotV2,
   deepFreezePlatformReleaseJsonV2,
@@ -171,6 +170,28 @@ export const PLATFORM_RELEASE_BUILD_CONTRACT_V2 = Object.freeze({
 
 export const PLATFORM_RELEASE_BUILD_CONTRACT_HASH_V2 =
   hashCanonicalJson(PLATFORM_RELEASE_BUILD_CONTRACT_V2);
+
+export const PLATFORM_RELEASE_BUILD_TOOLCHAIN_NPM_CONFIG_V2 =
+  Object.freeze({
+    schema:
+      "setfarm.platform-release-build-toolchain-npm-config.v2" as const,
+    registry: "https://registry.npmjs.org" as const,
+    engineStrict: true as const,
+    userConfig: "private_single_lf_blank_file" as const,
+    globalConfig: "private_single_lf_blank_file" as const,
+    cache: "private_attempt_scoped_directory" as const,
+    credentials: "forbidden" as const,
+    proxy: "forbidden" as const,
+    lifecycleScripts: "forbidden" as const,
+    audit: false as const,
+    fund: false as const,
+    ambientEnvironment: "discarded" as const,
+  });
+
+export const PLATFORM_RELEASE_BUILD_TOOLCHAIN_NPM_CONFIG_HASH_V2 =
+  hashCanonicalJson(
+    PLATFORM_RELEASE_BUILD_TOOLCHAIN_NPM_CONFIG_V2,
+  );
 
 export const PLATFORM_RELEASE_EMPTY_GIT_STATUS_CONTENT_HASH_V2 =
   "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
@@ -659,7 +680,7 @@ export type PlatformReleaseCompilerIdentityV2 = z.infer<
 export const PlatformReleasePackageManagerIdentityV2Schema = z.object({
   packageName: z.literal("npm"),
   version: PlatformReleaseVersionIdentityV2Schema,
-  executableRef: PlatformReleaseStableReferenceV2Schema,
+  executableRef: z.literal("EXEC_NPM_PACKAGE_MANAGER_V2"),
   executableHash: Sha256Schema,
   packageTreeHash: Sha256Schema,
   buildInstallRecipeHash: Sha256Schema,
@@ -818,7 +839,9 @@ const PlatformReleaseBuildToolchainInstallRecipeIdentityV2Schema =
     outputNormalization: z.literal(
       "every_file_0444_or_0555_every_directory_0555",
     ),
-    configHash: Sha256Schema,
+    configHash: z.literal(
+      PLATFORM_RELEASE_BUILD_TOOLCHAIN_NPM_CONFIG_HASH_V2,
+    ),
   }).strict();
 
 export type PlatformReleaseBuildToolchainInstallRecipeHashPayloadV2 =

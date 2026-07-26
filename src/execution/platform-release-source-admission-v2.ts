@@ -15,6 +15,7 @@ import {
   readSync,
   readdirSync,
   realpathSync,
+  renameSync,
   rmSync,
   statSync,
   writeSync,
@@ -43,12 +44,22 @@ import {
   PLATFORM_RELEASE_SOURCE_STAGE_PHYSICAL_IDENTITY_V2_SCHEMA,
   PLATFORM_RELEASE_SOURCE_TREE_BINDING_V2_SCHEMA,
   SOURCE_ADMISSION_RECEIPT_V2_SCHEMA,
+  PLATFORM_RELEASE_BUILD_TOOLCHAIN_INSTALL_RECIPE_V2_SCHEMA,
+  PLATFORM_RELEASE_BUILD_TOOLCHAIN_PHYSICAL_IDENTITY_V2_SCHEMA,
+  PLATFORM_RELEASE_BUILD_TOOLCHAIN_RECEIPT_V2_SCHEMA,
+  PlatformReleaseBuildToolchainPhysicalIdentityV2Schema,
+  PlatformReleaseBuildToolchainReceiptV2Schema,
   PlatformReleaseSourceTreeBindingV2Schema,
   SourceAdmissionReceiptV2Schema,
   hashExactPlatformReleaseSourceRefV2,
+  hashPlatformReleaseBuildToolchainInstallRecipeV2,
+  hashPlatformReleaseBuildToolchainPhysicalIdentityV2,
+  hashPlatformReleaseBuildToolchainReceiptV2,
   hashPlatformReleaseSourceStagePhysicalIdentityV2,
   hashPlatformReleaseSourceTreeBindingV2,
   hashSourceAdmissionReceiptV2,
+  type PlatformReleaseBuildToolchainPhysicalIdentityV2,
+  type PlatformReleaseBuildToolchainReceiptV2,
   type PlatformReleaseSourceStagePhysicalIdentityV2,
   type PlatformReleaseSourceTreeBindingV2,
   type SourceAdmissionReceiptV2,
@@ -59,6 +70,23 @@ import {
   deepFreezePlatformReleaseJsonV2,
   type ExactHostOwnedFileRefV2,
 } from "./schemas/platform-release-common-v2.js";
+import {
+  executePlatformReleaseHostNodeToolchainNpmCiInternalV2,
+  inspectPlatformReleaseHostNodeToolchainReceiptV2,
+  isProductionPlatformReleaseHostNodeToolchainAuthorityV2,
+  revalidatePlatformReleaseHostNodeToolchainAuthorityV2,
+  type PlatformReleaseHostNodeToolchainAuthorityV2,
+} from
+  "./platform-release-host-node-toolchain-authority-v2.js";
+import {
+  PLATFORM_RELEASE_BUILD_TOOLCHAIN_NPM_CONFIG_HASH_V2,
+  materializePlatformReleaseBuildToolchainTreeInternalV2,
+  revalidatePlatformReleaseBuildToolchainTreeInternalV2,
+  type PlatformReleaseBuildToolchainLockAuthorityV2,
+  type PlatformReleaseBuildToolchainLockPackageV2,
+  type PlatformReleaseBuildToolchainTreeMaterializationV2,
+} from
+  "./platform-release-build-toolchain-materialization-v2.js";
 
 const FULL_GIT_OBJECT_HASH_V2 = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
 const PORTABLE_SOURCE_PATH_V2 =
@@ -69,6 +97,10 @@ const GIT_DIAGNOSTIC_MAX_BYTES_V2 = 16 * 1024;
 const GIT_COMMAND_TIMEOUT_MS_V2 = 60_000;
 const SOURCE_STAGE_PREFIX_V2 =
   "setfarm-platform-release-source-v2-";
+const BUILD_TOOLCHAIN_ENVIRONMENT_PREFIX_V2 =
+  "setfarm-platform-build-toolchain-env-v2-";
+const BUILD_TOOLCHAIN_INSTALL_PREFIX_V2 =
+  "setfarm-platform-build-toolchain-install-v2-";
 const SOURCE_ADMISSION_INPUT_MAX_BYTES_V2 = 256 * 1024;
 
 export type PlatformReleaseSourceAdmissionErrorCodeV2 =
@@ -83,6 +115,7 @@ export type PlatformReleaseSourceAdmissionErrorCodeV2 =
   | "PLATFORM_RELEASE_SOURCE_V2_SOURCE_DRIFT"
   | "PLATFORM_RELEASE_SOURCE_V2_HANDLE_UNAUTHENTICATED"
   | "PLATFORM_RELEASE_SOURCE_V2_HANDLE_DISPOSED"
+  | "PLATFORM_RELEASE_SOURCE_V2_MATERIALIZATION_BUSY"
   | "PLATFORM_RELEASE_SOURCE_V2_TEST_ONLY";
 
 export class PlatformReleaseSourceAdmissionErrorV2 extends Error {
@@ -245,6 +278,7 @@ type SourceStageStateV2 = {
   readonly core: SourceExportCoreV2;
   readonly receipt: SourceAdmissionReceiptV2 | null;
   readonly testEvidence: PlatformReleaseSourceAdmissionTestEvidenceV2 | null;
+  toolchainLifecycle: "absent" | "materializing" | "materialized";
   disposed: boolean;
 };
 
@@ -287,12 +321,107 @@ export class AdmittedPlatformReleaseSourceStageV2 {
   }
 }
 
+export type PlatformReleaseBuildToolchainCapsuleErrorCodeV2 =
+  | "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_INPUT_INVALID"
+  | "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_SCOPE_MISMATCH"
+  | "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_SOURCE_DRIFT"
+  | "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_HOST_DRIFT"
+  | "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_INSTALL_FAILED"
+  | "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_TREE_INVALID"
+  | "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_CONTEXT_INVALID"
+  | "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_ALREADY_MATERIALIZED"
+  | "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_HANDLE_UNAUTHENTICATED";
+
+export class PlatformReleaseBuildToolchainCapsuleErrorV2
+  extends Error {
+  readonly code:
+    PlatformReleaseBuildToolchainCapsuleErrorCodeV2;
+  override readonly cause?: unknown;
+
+  constructor(
+    code:
+      PlatformReleaseBuildToolchainCapsuleErrorCodeV2,
+    message: string,
+    options?: ErrorOptions,
+  ) {
+    super(message.slice(0, 1_500), options);
+    this.name =
+      "PlatformReleaseBuildToolchainCapsuleErrorV2";
+    this.code = code;
+    this.cause = options?.cause;
+  }
+}
+
+type BuildToolchainCapsuleStateV2 = Readonly<{
+  admissionScope: "production_host" | "test_fixture";
+  sourceStage: AdmittedPlatformReleaseSourceStageV2;
+  hostToolchain:
+    PlatformReleaseHostNodeToolchainAuthorityV2;
+  contextRoot: string;
+  nodeModulesRoot: string;
+  source:
+    PlatformReleaseSourceTreeBindingV2;
+  materialized:
+    PlatformReleaseBuildToolchainTreeMaterializationV2;
+  receipt: PlatformReleaseBuildToolchainReceiptV2;
+}>;
+
+const buildToolchainCapsuleConstructorCapabilityV2 =
+  Object.freeze({});
+const buildToolchainCapsuleStatesV2 =
+  new WeakMap<object, BuildToolchainCapsuleStateV2>();
+
+export class PlatformReleaseBuildToolchainCapsuleV2 {
+  readonly authorityState =
+    "candidate_build_toolchain_materialization_unverified" as const;
+  readonly admissionScope:
+    "production_host" | "test_fixture";
+  readonly sourceBindingHash: string;
+  readonly treeHash: string;
+  readonly receiptHash: string;
+
+  constructor(
+    capability: object,
+    state: BuildToolchainCapsuleStateV2,
+  ) {
+    if (
+      capability
+        !== buildToolchainCapsuleConstructorCapabilityV2
+    ) {
+      throw new PlatformReleaseBuildToolchainCapsuleErrorV2(
+        "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_HANDLE_UNAUTHENTICATED",
+        "Build toolchain capsule constructor capability is unavailable",
+      );
+    }
+    this.admissionScope = state.admissionScope;
+    this.sourceBindingHash =
+      state.source.bindingHash;
+    this.treeHash = state.materialized.treeBinding.treeHash;
+    this.receiptHash = state.receipt.receiptHash;
+    buildToolchainCapsuleStatesV2.set(this, state);
+    Object.freeze(this);
+  }
+}
+
 function fail(
   code: PlatformReleaseSourceAdmissionErrorCodeV2,
   message: string,
   cause?: unknown,
 ): never {
   throw new PlatformReleaseSourceAdmissionErrorV2(
+    code,
+    message,
+    cause === undefined ? undefined : { cause },
+  );
+}
+
+function failBuildToolchainCapsule(
+  code:
+    PlatformReleaseBuildToolchainCapsuleErrorCodeV2,
+  message: string,
+  cause?: unknown,
+): never {
+  throw new PlatformReleaseBuildToolchainCapsuleErrorV2(
     code,
     message,
     cause === undefined ? undefined : { cause },
@@ -2188,6 +2317,7 @@ export function admitPlatformReleaseSourceV2(
       core: exported.core,
       receipt,
       testEvidence: null,
+      toolchainLifecycle: "absent",
       disposed: false,
     });
   } catch (error) {
@@ -2286,6 +2416,7 @@ export function admitPlatformReleaseSourceV2ForTest(
     core: exported.core,
     receipt: null,
     testEvidence,
+    toolchainLifecycle: "absent",
     disposed: false,
   });
 }
@@ -2306,6 +2437,977 @@ export function inspectPlatformReleaseSourceAdmissionCandidateV2(
       testEvidence: structuredClone(state.testEvidence!),
     };
   return deepFreezePlatformReleaseJsonV2(snapshot);
+}
+
+function authenticBuildToolchainCapsuleState(
+  handle: PlatformReleaseBuildToolchainCapsuleV2,
+): BuildToolchainCapsuleStateV2 {
+  if (
+    typeof handle !== "object"
+    || handle === null
+    || isProxy(handle)
+    || Object.getPrototypeOf(handle)
+      !== PlatformReleaseBuildToolchainCapsuleV2.prototype
+  ) {
+    return failBuildToolchainCapsule(
+      "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_HANDLE_UNAUTHENTICATED",
+      "Build toolchain capsule operation requires one authentic handle",
+    );
+  }
+  const state = buildToolchainCapsuleStatesV2.get(handle);
+  if (!state) {
+    return failBuildToolchainCapsule(
+      "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_HANDLE_UNAUTHENTICATED",
+      "Build toolchain capsule operation requires one authentic handle",
+    );
+  }
+  return state;
+}
+
+function stableSourceStageState(
+  state: SourceStageStateV2,
+): void {
+  const fingerprint =
+    captureSourceFingerprint(state.stageRoot);
+  const physical = sourceStageIdentity(
+    state.stageRoot,
+    state.core.source.bindingHash,
+  );
+  if (
+    fingerprint.fingerprintHash
+      !== state.core.source.exportedFileTreeHash
+    || fingerprint.fileCount
+      !== state.core.source.exportedFileCount
+    || fingerprint.directoryCount
+      !== state.core.source.exportedDirectoryCount
+    || fingerprint.totalBytes
+      !== state.core.source.exportedTotalBytes
+    || physical.identityHash
+      !== state.core.stageAfter.identityHash
+  ) {
+    return failBuildToolchainCapsule(
+      "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_SOURCE_DRIFT",
+      "Admitted source stage changed before build-toolchain use",
+    );
+  }
+}
+
+function processOwnerForBuildToolchain(): Readonly<{
+  uid: number;
+  gid: number;
+}> {
+  if (
+    typeof process.getuid !== "function"
+    || typeof process.getgid !== "function"
+  ) {
+    return failBuildToolchainCapsule(
+      "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_CONTEXT_INVALID",
+      "Build toolchain capsule requires POSIX ownership evidence",
+    );
+  }
+  return Object.freeze({
+    uid: process.getuid(),
+    gid: process.getgid(),
+  });
+}
+
+function exactBuildContext(
+  state: SourceStageStateV2,
+  phase: "source_only" | "materialized",
+): void {
+  const owner = processOwnerForBuildToolchain();
+  try {
+    const context = lstatSync(state.contextRoot);
+    const expected = phase === "source_only"
+      ? ["source"]
+      : ["node_modules", "source"];
+    const names = readdirSync(state.contextRoot).sort();
+    if (
+      context.isSymbolicLink()
+      || !context.isDirectory()
+      || realpathSync(state.contextRoot) !== state.contextRoot
+      || (context.mode & 0o7777) !== 0o700
+      || context.uid !== owner.uid
+      || context.gid !== owner.gid
+      || canonicalJsonStringify(names)
+        !== canonicalJsonStringify(expected)
+      || path.dirname(state.stageRoot) !== state.contextRoot
+      || path.basename(state.stageRoot) !== "source"
+    ) {
+      return failBuildToolchainCapsule(
+        "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_CONTEXT_INVALID",
+        "Private build context does not have its exact source/toolchain topology",
+      );
+    }
+    if (phase === "materialized") {
+      const nodeModulesRoot =
+        path.join(state.contextRoot, "node_modules");
+      const toolchain = lstatSync(nodeModulesRoot);
+      if (
+        toolchain.isSymbolicLink()
+        || !toolchain.isDirectory()
+        || realpathSync(nodeModulesRoot) !== nodeModulesRoot
+        || (toolchain.mode & 0o7777) !== 0o555
+        || toolchain.uid !== owner.uid
+        || toolchain.gid !== owner.gid
+      ) {
+        return failBuildToolchainCapsule(
+          "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_CONTEXT_INVALID",
+          "Authenticated node_modules sibling lost its exact physical root",
+        );
+      }
+    }
+  } catch (error) {
+    if (
+      error instanceof
+        PlatformReleaseBuildToolchainCapsuleErrorV2
+    ) throw error;
+    return failBuildToolchainCapsule(
+      "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_CONTEXT_INVALID",
+      "Private build context could not be authenticated",
+      error,
+    );
+  }
+}
+
+type PrivateBuildToolchainInstallScopeV2 = Readonly<{
+  environmentRoot: string;
+  installRoot: string;
+  projectRoot: string;
+  environment: Readonly<{
+    CI: "true";
+    HOME: string;
+    LANG: "C.UTF-8";
+    LC_ALL: "C.UTF-8";
+    NODE_DISABLE_COMPILE_CACHE: "1";
+    NO_COLOR: "1";
+    NPM_CONFIG_CACHE: string;
+    NPM_CONFIG_ENGINE_STRICT: "true";
+    NPM_CONFIG_GLOBALCONFIG: string;
+    NPM_CONFIG_LOGS_MAX: "0";
+    NPM_CONFIG_REGISTRY: "https://registry.npmjs.org";
+    NPM_CONFIG_USERCONFIG: string;
+    TEMP: string;
+    TMP: string;
+    TMPDIR: string;
+    TZ: "UTC";
+  }>;
+}>;
+
+function copyAdmittedBuildInputs(
+  state: SourceStageStateV2,
+  projectRoot: string,
+): void {
+  for (const sourceRef of state.core.source.inputs) {
+    const sourcePath =
+      path.join(state.stageRoot, sourceRef.locator);
+    const destinationPath =
+      path.join(projectRoot, sourceRef.locator);
+    let destinationDescriptor: number | undefined;
+    let bytes: Buffer | undefined;
+    try {
+      const sourceStat = lstatSync(sourcePath);
+      if (
+        sourceStat.isSymbolicLink()
+        || !sourceStat.isFile()
+        || sourceStat.nlink !== 1
+        || (sourceStat.mode & 0o7777) !== 0o444
+        || sourceStat.size !== sourceRef.byteLength
+      ) {
+        return failBuildToolchainCapsule(
+          "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_SOURCE_DRIFT",
+          `Admitted input ${sourceRef.locator} lost its exact source identity`,
+        );
+      }
+      bytes = stableStageFile(sourcePath, sourceStat);
+      if (
+        sha256(bytes) !== sourceRef.contentHash
+        || bytes.byteLength !== sourceRef.byteLength
+      ) {
+        return failBuildToolchainCapsule(
+          "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_SOURCE_DRIFT",
+          `Admitted input ${sourceRef.locator} bytes changed`,
+        );
+      }
+      destinationDescriptor = openSync(
+        destinationPath,
+        constants.O_WRONLY
+          | constants.O_CREAT
+          | constants.O_EXCL
+          | constants.O_NOFOLLOW,
+        0o600,
+      );
+      writeAll(destinationDescriptor, bytes);
+      fsyncSync(destinationDescriptor);
+      fchmodSync(destinationDescriptor, 0o444);
+      fsyncSync(destinationDescriptor);
+    } catch (error) {
+      if (
+        error instanceof
+          PlatformReleaseBuildToolchainCapsuleErrorV2
+      ) throw error;
+      return failBuildToolchainCapsule(
+        "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_CONTEXT_INVALID",
+        `Admitted input ${sourceRef.locator} could not be copied into the private install project`,
+        error,
+      );
+    } finally {
+      bytes?.fill(0);
+      closeQuietly(destinationDescriptor);
+    }
+  }
+  fsyncDirectory(projectRoot);
+}
+
+function createPrivateBuildToolchainInstallScope(
+  state: SourceStageStateV2,
+): PrivateBuildToolchainInstallScopeV2 {
+  const parent = ensurePrivateStageParent();
+  let environmentRoot: string | undefined;
+  let installRoot: string | undefined;
+  try {
+    environmentRoot = realpathSync(mkdtempSync(path.join(
+      parent,
+      BUILD_TOOLCHAIN_ENVIRONMENT_PREFIX_V2,
+    )));
+    chmodSync(environmentRoot, 0o700);
+    for (const name of [
+      "cache",
+      "config-probe",
+      "home",
+      "tmp",
+    ]) {
+      mkdirSync(path.join(environmentRoot, name), {
+        mode: 0o700,
+      });
+    }
+    for (const name of [
+      "global.npmrc",
+      "user.npmrc",
+    ]) {
+      const absolutePath = path.join(environmentRoot, name);
+      let descriptor: number | undefined;
+      try {
+        descriptor = openSync(
+          absolutePath,
+          constants.O_WRONLY
+            | constants.O_CREAT
+            | constants.O_EXCL
+            | constants.O_NOFOLLOW,
+          0o600,
+        );
+        writeAll(descriptor, Buffer.from("\n", "utf8"));
+        fsyncSync(descriptor);
+        fchmodSync(descriptor, 0o600);
+        fsyncSync(descriptor);
+      } finally {
+        closeQuietly(descriptor);
+      }
+    }
+    fsyncDirectory(environmentRoot);
+
+    installRoot = realpathSync(mkdtempSync(path.join(
+      parent,
+      BUILD_TOOLCHAIN_INSTALL_PREFIX_V2,
+    )));
+    chmodSync(installRoot, 0o700);
+    mkdirSync(
+      path.join(installRoot, "dependency-capsule"),
+      { mode: 0o700 },
+    );
+    const projectRoot = path.join(installRoot, "project");
+    mkdirSync(projectRoot, { mode: 0o700 });
+    copyAdmittedBuildInputs(state, projectRoot);
+    fsyncDirectory(
+      path.join(installRoot, "dependency-capsule"),
+    );
+    fsyncDirectory(installRoot);
+    fsyncDirectory(parent);
+    return Object.freeze({
+      environmentRoot,
+      installRoot,
+      projectRoot: realpathSync(projectRoot),
+      environment: Object.freeze({
+        CI: "true" as const,
+        HOME: path.join(environmentRoot, "home"),
+        LANG: "C.UTF-8" as const,
+        LC_ALL: "C.UTF-8" as const,
+        NODE_DISABLE_COMPILE_CACHE: "1" as const,
+        NO_COLOR: "1" as const,
+        NPM_CONFIG_CACHE:
+          path.join(environmentRoot, "cache"),
+        NPM_CONFIG_ENGINE_STRICT: "true" as const,
+        NPM_CONFIG_GLOBALCONFIG:
+          path.join(environmentRoot, "global.npmrc"),
+        NPM_CONFIG_LOGS_MAX: "0" as const,
+        NPM_CONFIG_REGISTRY:
+          "https://registry.npmjs.org" as const,
+        NPM_CONFIG_USERCONFIG:
+          path.join(environmentRoot, "user.npmrc"),
+        TEMP: path.join(environmentRoot, "tmp"),
+        TMP: path.join(environmentRoot, "tmp"),
+        TMPDIR: path.join(environmentRoot, "tmp"),
+        TZ: "UTC" as const,
+      }),
+    });
+  } catch (error) {
+    if (environmentRoot) cleanupStage(environmentRoot);
+    if (installRoot) cleanupStage(installRoot);
+    if (
+      error instanceof
+        PlatformReleaseBuildToolchainCapsuleErrorV2
+    ) throw error;
+    return failBuildToolchainCapsule(
+      "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_CONTEXT_INVALID",
+      "Private build-toolchain install scope could not be created",
+      error,
+    );
+  }
+}
+
+function buildToolchainPhysicalIdentity(
+  nodeModulesRoot: string,
+  toolchainBindingHash: string,
+): PlatformReleaseBuildToolchainPhysicalIdentityV2 {
+  const owner = processOwnerForBuildToolchain();
+  try {
+    const stat = lstatSync(nodeModulesRoot);
+    if (
+      stat.isSymbolicLink()
+      || !stat.isDirectory()
+      || realpathSync(nodeModulesRoot) !== nodeModulesRoot
+      || (stat.mode & 0o7777) !== 0o555
+      || stat.uid !== owner.uid
+      || stat.gid !== owner.gid
+    ) {
+      return failBuildToolchainCapsule(
+        "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_CONTEXT_INVALID",
+        "Build-toolchain physical root is not exact",
+      );
+    }
+    const identity = {
+      schema:
+        PLATFORM_RELEASE_BUILD_TOOLCHAIN_PHYSICAL_IDENTITY_V2_SCHEMA,
+      device: String(stat.dev),
+      inode: String(stat.ino),
+      ownerUid: stat.uid,
+      ownerGid: stat.gid,
+      mode: "0555" as const,
+      buildContextPolicy:
+        "private_0700_parent_source_child_and_authenticated_toolchain_sibling_v2" as const,
+      toolchainBindingHash,
+      identityHash: sha256("placeholder"),
+    };
+    return deepFreezePlatformReleaseJsonV2(
+      PlatformReleaseBuildToolchainPhysicalIdentityV2Schema
+        .parse({
+          ...identity,
+          identityHash:
+            hashPlatformReleaseBuildToolchainPhysicalIdentityV2(
+              identity,
+            ),
+        }),
+    );
+  } catch (error) {
+    if (
+      error instanceof
+        PlatformReleaseBuildToolchainCapsuleErrorV2
+    ) throw error;
+    return failBuildToolchainCapsule(
+      "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_CONTEXT_INVALID",
+      "Build-toolchain physical identity could not be captured",
+      error,
+    );
+  }
+}
+
+function sourceAdmissionBindingHash(
+  state: SourceStageStateV2,
+): string {
+  return state.receipt?.receiptHash
+    ?? hashCanonicalJson({
+      schema:
+        "setfarm.platform-release-test-source-admission-binding.v2",
+      testEvidence: state.testEvidence,
+    });
+}
+
+function issueBuildToolchainReceipt(input: Readonly<{
+  sourceState: SourceStageStateV2;
+  hostReceipt: ReturnType<
+    typeof inspectPlatformReleaseHostNodeToolchainReceiptV2
+  >;
+  installEvidence: Awaited<
+    ReturnType<
+      typeof executePlatformReleaseHostNodeToolchainNpmCiInternalV2
+    >
+  >;
+  materialized:
+    PlatformReleaseBuildToolchainTreeMaterializationV2;
+  physicalBefore:
+    PlatformReleaseBuildToolchainPhysicalIdentityV2;
+  physicalAfter:
+    PlatformReleaseBuildToolchainPhysicalIdentityV2;
+}>): PlatformReleaseBuildToolchainReceiptV2 {
+  const recipeIdentity = {
+    schema:
+      PLATFORM_RELEASE_BUILD_TOOLCHAIN_INSTALL_RECIPE_V2_SCHEMA,
+    commandRef:
+      "MATERIALIZE_PLATFORM_BUILD_TOOLCHAIN_V2" as const,
+    directArgv: [
+      "npm",
+      "ci",
+      "--include=dev",
+      "--ignore-scripts",
+      "--no-audit",
+      "--no-fund",
+    ] as const,
+    dependencySelection:
+      "production_and_dev_from_exact_lock" as const,
+    lifecycleScripts: "forbidden" as const,
+    ambientEnvironment: "forbidden" as const,
+    generatedNpmMetadata:
+      "verified_then_removed_before_capsule_capture" as const,
+    symbolicLinks:
+      "exact_lock_declared_bins_verified_then_removed" as const,
+    outputNormalization:
+      "every_file_0444_or_0555_every_directory_0555" as const,
+    configHash:
+      PLATFORM_RELEASE_BUILD_TOOLCHAIN_NPM_CONFIG_HASH_V2,
+  };
+  const installRecipe = {
+    ...recipeIdentity,
+    recipeHash:
+      hashPlatformReleaseBuildToolchainInstallRecipeV2(
+        recipeIdentity as never,
+      ),
+  };
+  const receiptIdentity = {
+    schema:
+      PLATFORM_RELEASE_BUILD_TOOLCHAIN_RECEIPT_V2_SCHEMA,
+    version: "2.0.0" as const,
+    authorityState:
+      "candidate_build_toolchain_materialization_unverified" as const,
+    productionUse:
+      "forbidden_until_fresh_context_and_double_build_verification" as const,
+    sourceAdmissionReceiptHash:
+      sourceAdmissionBindingHash(input.sourceState),
+    inputs: input.sourceState.core.source.inputs,
+    inputMembershipHash:
+      input.sourceState.core.source.inputMembershipHash,
+    placement: {
+      buildContextPolicy:
+        "private_0700_parent_source_child_and_authenticated_toolchain_sibling_v2" as const,
+      parentMode: "0700" as const,
+      rootLocator: "node_modules" as const,
+      rootMode: "0555" as const,
+      allowedFinalContextEntries: [
+        "node_modules",
+        "source",
+      ] as const,
+      temporaryLocatorDisclosure: "forbidden" as const,
+    },
+    hostToolchain: input.hostReceipt,
+    packageManager: {
+      packageName: "npm" as const,
+      version: input.hostReceipt.npm.version,
+      executableRef:
+        "EXEC_NPM_PACKAGE_MANAGER_V2" as const,
+      executableHash:
+        input.hostReceipt.npm.cli.contentHash,
+      packageTreeHash:
+        input.hostReceipt.npm.packageTree
+          .normalizedTreeHash,
+      buildInstallRecipeHash:
+        installRecipe.recipeHash,
+    },
+    compiler: input.materialized.compiler,
+    installRecipe,
+    process: {
+      hostToolchainReceiptHash:
+        input.installEvidence
+          .platformHostToolchainReceiptHash,
+      environmentHash:
+        input.installEvidence.environmentHash,
+      projectScopeHash:
+        input.installEvidence.projectScopeHash,
+      recipeHash: installRecipe.recipeHash,
+      directArgvHash:
+        input.installEvidence.directArgvHash,
+      stdin: "closed" as const,
+      inheritAmbientEnvironment: false as const,
+      shell: "forbidden" as const,
+      termination: "normal_exit" as const,
+      exitCode: 0 as const,
+      signal: null,
+      stdoutContentHash:
+        input.installEvidence.stdoutHash,
+      stdoutByteLength:
+        input.installEvidence.stdoutBytes,
+      stderrContentHash:
+        input.installEvidence.stderrHash,
+      stderrByteLength:
+        input.installEvidence.stderrBytes,
+    },
+    tree: input.materialized.treeBinding,
+    physicalBefore: input.physicalBefore,
+    physicalAfter: input.physicalAfter,
+  };
+  try {
+    return deepFreezePlatformReleaseJsonV2(
+      PlatformReleaseBuildToolchainReceiptV2Schema.parse({
+        ...receiptIdentity,
+        receiptHash:
+          hashPlatformReleaseBuildToolchainReceiptV2(
+            receiptIdentity as never,
+          ),
+      }),
+    );
+  } catch (error) {
+    return failBuildToolchainCapsule(
+      "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_TREE_INVALID",
+      "Materialized build toolchain failed its canonical receipt schema",
+      error,
+    );
+  }
+}
+
+function exactBuildToolchainCapsuleInput(
+  input: unknown,
+): Readonly<{
+  sourceStage: AdmittedPlatformReleaseSourceStageV2;
+  hostToolchain:
+    PlatformReleaseHostNodeToolchainAuthorityV2;
+}> {
+  if (
+    typeof input !== "object"
+    || input === null
+    || Array.isArray(input)
+    || isProxy(input)
+    || Object.getPrototypeOf(input) !== Object.prototype
+  ) {
+    return failBuildToolchainCapsule(
+      "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_INPUT_INVALID",
+      "Build toolchain input must be one exact plain data object",
+    );
+  }
+  const keys = Reflect.ownKeys(input);
+  if (
+    keys.length !== 2
+    || keys.some((key) =>
+      typeof key !== "string"
+      || !["hostToolchain", "sourceStage"].includes(key))
+  ) {
+    return failBuildToolchainCapsule(
+      "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_INPUT_INVALID",
+      "Build toolchain input fields are not exact",
+    );
+  }
+  const sourceDescriptor =
+    Object.getOwnPropertyDescriptor(input, "sourceStage");
+  const hostDescriptor =
+    Object.getOwnPropertyDescriptor(input, "hostToolchain");
+  if (
+    !sourceDescriptor
+    || !("value" in sourceDescriptor)
+    || sourceDescriptor.enumerable !== true
+    || !hostDescriptor
+    || !("value" in hostDescriptor)
+    || hostDescriptor.enumerable !== true
+  ) {
+    return failBuildToolchainCapsule(
+      "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_INPUT_INVALID",
+      "Build toolchain input contains an accessor or hidden capability",
+    );
+  }
+  return Object.freeze({
+    sourceStage:
+      sourceDescriptor.value as
+        AdmittedPlatformReleaseSourceStageV2,
+    hostToolchain:
+      hostDescriptor.value as
+        PlatformReleaseHostNodeToolchainAuthorityV2,
+  });
+}
+
+async function materializeBuildToolchainCapsule(
+  input: unknown,
+  expectedScope: "production_host" | "test_fixture",
+): Promise<PlatformReleaseBuildToolchainCapsuleV2> {
+  const values = exactBuildToolchainCapsuleInput(input);
+  let sourceState: SourceStageStateV2;
+  try {
+    sourceState = authenticState(values.sourceStage);
+  } catch (error) {
+    return failBuildToolchainCapsule(
+      "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_INPUT_INVALID",
+      "Build toolchain source handle is not authentic",
+      error,
+    );
+  }
+  if (sourceState.toolchainLifecycle !== "absent") {
+    return failBuildToolchainCapsule(
+      "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_ALREADY_MATERIALIZED",
+      "An admitted source context can materialize one build toolchain only",
+    );
+  }
+  let hostReceipt;
+  try {
+    const production =
+      isProductionPlatformReleaseHostNodeToolchainAuthorityV2(
+        values.hostToolchain,
+      );
+    const expectedSourceScope =
+      expectedScope === "production_host"
+        ? "production_candidate"
+        : "test_fixture";
+    if (
+      production !== (expectedScope === "production_host")
+      || sourceState.admissionScope !== expectedSourceScope
+    ) {
+      return failBuildToolchainCapsule(
+        "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_SCOPE_MISMATCH",
+        "Source and host admission scopes cannot be promoted, downgraded or mixed",
+      );
+    }
+    hostReceipt =
+      await revalidatePlatformReleaseHostNodeToolchainAuthorityV2(
+        values.hostToolchain,
+      );
+  } catch (error) {
+    if (
+      error instanceof
+        PlatformReleaseBuildToolchainCapsuleErrorV2
+    ) throw error;
+    return failBuildToolchainCapsule(
+      "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_HOST_DRIFT",
+      "Platform release host authority failed pre-install revalidation",
+      error,
+    );
+  }
+  stableSourceStageState(sourceState);
+  exactBuildContext(sourceState, "source_only");
+  sourceState.toolchainLifecycle = "materializing";
+  let scope:
+    | PrivateBuildToolchainInstallScopeV2
+    | undefined;
+  let adopted = false;
+  try {
+    scope =
+      createPrivateBuildToolchainInstallScope(sourceState);
+    stableSourceStageState(sourceState);
+    let installEvidence;
+    try {
+      installEvidence =
+        await executePlatformReleaseHostNodeToolchainNpmCiInternalV2(
+          values.hostToolchain,
+          {
+            privateRoot: scope.environmentRoot,
+            projectRoot: scope.projectRoot,
+            environment: scope.environment,
+          },
+        );
+    } catch (error) {
+      return failBuildToolchainCapsule(
+        "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_INSTALL_FAILED",
+        "Authenticated exact npm ci did not produce a build-toolchain candidate",
+        error,
+      );
+    }
+    if (sourceState.disposed) {
+      return failBuildToolchainCapsule(
+        "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_SOURCE_DRIFT",
+        "Source stage was disposed during build-toolchain installation",
+      );
+    }
+    stableSourceStageState(sourceState);
+    const hostAfter =
+      await revalidatePlatformReleaseHostNodeToolchainAuthorityV2(
+        values.hostToolchain,
+      );
+    if (
+      hostAfter.receiptHash !== hostReceipt.receiptHash
+      || installEvidence
+        .platformHostToolchainReceiptHash
+        !== hostReceipt.receiptHash
+    ) {
+      return failBuildToolchainCapsule(
+        "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_HOST_DRIFT",
+        "Host Node/npm authority changed across dependency installation",
+      );
+    }
+    let materialized:
+      PlatformReleaseBuildToolchainTreeMaterializationV2;
+    try {
+      materialized =
+        materializePlatformReleaseBuildToolchainTreeInternalV2({
+          admissionScope: expectedScope,
+          projectRoot: scope.projectRoot,
+          source: sourceState.core.source,
+          hostPlatform: hostAfter.host.platform,
+          hostArchitecture: hostAfter.host.architecture,
+        });
+    } catch (error) {
+      return failBuildToolchainCapsule(
+        "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_TREE_INVALID",
+        "npm output failed exact lock, package, bin or canonical-tree verification",
+        error,
+      );
+    }
+    const sourceNodeModulesRoot =
+      path.join(sourceState.contextRoot, "node_modules");
+    const installNodeModulesRoot =
+      path.join(scope.projectRoot, "node_modules");
+    chmodSync(installNodeModulesRoot, 0o700);
+    fsyncDirectory(installNodeModulesRoot);
+    renameSync(
+      installNodeModulesRoot,
+      sourceNodeModulesRoot,
+    );
+    adopted = true;
+    chmodSync(sourceNodeModulesRoot, 0o555);
+    fsyncDirectory(sourceNodeModulesRoot);
+    fsyncDirectory(sourceState.contextRoot);
+    fsyncDirectory(path.dirname(sourceState.contextRoot));
+    exactBuildContext(sourceState, "materialized");
+    stableSourceStageState(sourceState);
+    revalidatePlatformReleaseBuildToolchainTreeInternalV2({
+      admissionScope: expectedScope,
+      nodeModulesRoot: sourceNodeModulesRoot,
+      source: sourceState.core.source,
+      lockAuthority: materialized.lockAuthority,
+      installedPackages: materialized.installedPackages,
+      dependencyTree: materialized.dependencyTree,
+      treeBinding: materialized.treeBinding,
+      compiler: materialized.compiler,
+    });
+    const physicalBefore =
+      buildToolchainPhysicalIdentity(
+        sourceNodeModulesRoot,
+        materialized.treeBinding.bindingHash,
+      );
+    stableSourceStageState(sourceState);
+    const physicalAfter =
+      buildToolchainPhysicalIdentity(
+        sourceNodeModulesRoot,
+        materialized.treeBinding.bindingHash,
+      );
+    if (
+      canonicalJsonStringify(physicalBefore)
+        !== canonicalJsonStringify(physicalAfter)
+    ) {
+      return failBuildToolchainCapsule(
+        "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_CONTEXT_INVALID",
+        "Build-toolchain physical root changed across fresh verification",
+      );
+    }
+    const receipt = issueBuildToolchainReceipt({
+      sourceState,
+      hostReceipt: hostAfter,
+      installEvidence,
+      materialized,
+      physicalBefore,
+      physicalAfter,
+    });
+    const capsuleState = Object.freeze({
+      admissionScope: expectedScope,
+      sourceStage: values.sourceStage,
+      hostToolchain: values.hostToolchain,
+      contextRoot: sourceState.contextRoot,
+      nodeModulesRoot: sourceNodeModulesRoot,
+      source: sourceState.core.source,
+      materialized,
+      receipt,
+    });
+    sourceState.toolchainLifecycle = "materialized";
+    return new PlatformReleaseBuildToolchainCapsuleV2(
+      buildToolchainCapsuleConstructorCapabilityV2,
+      capsuleState,
+    );
+  } catch (error) {
+    if (
+      error instanceof
+        PlatformReleaseBuildToolchainCapsuleErrorV2
+    ) throw error;
+    return failBuildToolchainCapsule(
+      "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_TREE_INVALID",
+      "Build-toolchain capsule failed at an internal boundary",
+      error,
+    );
+  } finally {
+    if (scope) {
+      cleanupStage(scope.environmentRoot);
+      cleanupStage(scope.installRoot);
+    }
+    if (
+      sourceState.toolchainLifecycle === "materializing"
+    ) {
+      if (adopted) {
+        cleanupStage(path.join(
+          sourceState.contextRoot,
+          "node_modules",
+        ));
+      }
+      sourceState.toolchainLifecycle = "absent";
+    }
+  }
+}
+
+export async function materializePlatformReleaseBuildToolchainCapsuleV2(
+  input: Readonly<{
+    sourceStage: AdmittedPlatformReleaseSourceStageV2;
+    hostToolchain:
+      PlatformReleaseHostNodeToolchainAuthorityV2;
+  }>,
+): Promise<PlatformReleaseBuildToolchainCapsuleV2> {
+  return materializeBuildToolchainCapsule(
+    input,
+    "production_host",
+  );
+}
+
+export async function materializePlatformReleaseBuildToolchainCapsuleV2ForTest(
+  input: Readonly<{
+    sourceStage: AdmittedPlatformReleaseSourceStageV2;
+    hostToolchain:
+      PlatformReleaseHostNodeToolchainAuthorityV2;
+  }>,
+): Promise<PlatformReleaseBuildToolchainCapsuleV2> {
+  return materializeBuildToolchainCapsule(
+    input,
+    "test_fixture",
+  );
+}
+
+export function inspectPlatformReleaseBuildToolchainReceiptV2(
+  handle: PlatformReleaseBuildToolchainCapsuleV2,
+): PlatformReleaseBuildToolchainReceiptV2 {
+  return deepFreezePlatformReleaseJsonV2(
+    structuredClone(
+      authenticBuildToolchainCapsuleState(handle).receipt,
+    ),
+  );
+}
+
+export async function revalidatePlatformReleaseBuildToolchainCapsuleV2(
+  handle: PlatformReleaseBuildToolchainCapsuleV2,
+): Promise<PlatformReleaseBuildToolchainReceiptV2> {
+  const capsule =
+    authenticBuildToolchainCapsuleState(handle);
+  let sourceState: SourceStageStateV2;
+  try {
+    sourceState = authenticState(capsule.sourceStage);
+  } catch (error) {
+    return failBuildToolchainCapsule(
+      "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_SOURCE_DRIFT",
+      "Capsule source authority is no longer live",
+      error,
+    );
+  }
+  if (
+    sourceState.toolchainLifecycle !== "materialized"
+    || sourceState.contextRoot !== capsule.contextRoot
+    || sourceState.core.source.bindingHash
+      !== capsule.source.bindingHash
+  ) {
+    return failBuildToolchainCapsule(
+      "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_SOURCE_DRIFT",
+      "Capsule no longer joins its one admitted source context",
+    );
+  }
+  stableSourceStageState(sourceState);
+  exactBuildContext(sourceState, "materialized");
+  let host;
+  try {
+    host =
+      await revalidatePlatformReleaseHostNodeToolchainAuthorityV2(
+        capsule.hostToolchain,
+      );
+  } catch (error) {
+    return failBuildToolchainCapsule(
+      "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_HOST_DRIFT",
+      "Capsule host Node/npm authority failed fresh revalidation",
+      error,
+    );
+  }
+  if (
+    host.receiptHash
+      !== capsule.receipt.hostToolchain.receiptHash
+    || host.admissionScope !== capsule.admissionScope
+  ) {
+    return failBuildToolchainCapsule(
+      "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_HOST_DRIFT",
+      "Capsule host Node/npm receipt identity changed",
+    );
+  }
+  try {
+    revalidatePlatformReleaseBuildToolchainTreeInternalV2({
+      admissionScope: capsule.admissionScope,
+      nodeModulesRoot: capsule.nodeModulesRoot,
+      source: capsule.source,
+      lockAuthority:
+        capsule.materialized.lockAuthority,
+      installedPackages:
+        capsule.materialized.installedPackages,
+      dependencyTree:
+        capsule.materialized.dependencyTree,
+      treeBinding:
+        capsule.materialized.treeBinding,
+      compiler: capsule.materialized.compiler,
+    });
+  } catch (error) {
+    return failBuildToolchainCapsule(
+      "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_TREE_INVALID",
+      "Capsule dependency tree failed fresh every-and-only verification",
+      error,
+    );
+  }
+  const physical =
+    buildToolchainPhysicalIdentity(
+      capsule.nodeModulesRoot,
+      capsule.materialized.treeBinding.bindingHash,
+    );
+  stableSourceStageState(sourceState);
+  exactBuildContext(sourceState, "materialized");
+  if (
+    canonicalJsonStringify(physical)
+      !== canonicalJsonStringify(
+        capsule.receipt.physicalAfter,
+      )
+  ) {
+    return failBuildToolchainCapsule(
+      "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_CONTEXT_INVALID",
+      "Capsule physical identity changed after materialization",
+    );
+  }
+  return deepFreezePlatformReleaseJsonV2(
+    structuredClone(capsule.receipt),
+  );
+}
+
+export async function withPlatformReleaseBuildToolchainCapsuleForTestV2<T>(
+  handle: PlatformReleaseBuildToolchainCapsuleV2,
+  callback: (nodeModulesRoot: string) => T | Promise<T>,
+): Promise<T> {
+  const state =
+    authenticBuildToolchainCapsuleState(handle);
+  if (
+    state.admissionScope !== "test_fixture"
+    || typeof callback !== "function"
+  ) {
+    return failBuildToolchainCapsule(
+      "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_SCOPE_MISMATCH",
+      "Build-toolchain path access is restricted to an explicit test-fixture callback",
+    );
+  }
+  await revalidatePlatformReleaseBuildToolchainCapsuleV2(
+    handle,
+  );
+  const result = await callback(state.nodeModulesRoot);
+  await revalidatePlatformReleaseBuildToolchainCapsuleV2(
+    handle,
+  );
+  return result;
 }
 
 export function withPlatformReleaseSourceStageForTestV2<T>(
@@ -2363,6 +3465,12 @@ export function disposePlatformReleaseSourceStageV2(
   handle: AdmittedPlatformReleaseSourceStageV2,
 ): void {
   const state = authenticState(handle);
+  if (state.toolchainLifecycle === "materializing") {
+    return fail(
+      "PLATFORM_RELEASE_SOURCE_V2_MATERIALIZATION_BUSY",
+      "Source stage cannot be disposed during build-toolchain materialization",
+    );
+  }
   state.disposed = true;
   cleanupStage(state.contextRoot);
 }

@@ -292,6 +292,41 @@ physical Node/npm installation produce one release identity. Production and
 test constructors remain separate; a test receipt or candidate JSON cannot
 issue the production capability.
 
+The build-toolchain materializer is a source-context-owned, one-shot
+transaction. It copies only the three admitted input bytes into a separate
+private install project, asks the authenticated platform host capability to run
+the fixed npm ABI, and accepts no caller path, argv, environment overlay,
+package selection or compiler locator. The shared npm-lock primitive validates
+the root and hidden lock, exact installed lock entries and package manifests,
+every-and-only package roots, every required dependency/development edge, and
+only those optional edges actually installed for the authenticated host
+platform/architecture. Unsupported peer dependency semantics fail the
+versioned platform lock policy instead of being guessed. All lock-declared npm
+bin links and executable targets are verified, then `.bin` and the hidden lock
+are removed before metadata normalization and the read-only canonical capture.
+
+The source handle owns `absent -> materializing -> materialized`; a second or
+concurrent materialization and disposal during the in-flight transaction are
+rejected. After normalization, Darwin receives one bounded relocation lease on
+the capsule root only: the root temporarily becomes `0700`, is atomically
+renamed as the admitted context's `node_modules` sibling, immediately returns
+to `0555`, and the entire sealed tree, package closure, compiler, source,
+physical root and host authority are freshly revalidated. No production path
+getter exists. The returned capability exposes only source/tree/receipt hashes,
+retains all paths and lock authority in module-private state, and becomes
+invalid when its source context is disposed.
+
+The implementation compatibility probe for this boundary must remain distinct
+from release authority. On 2026-07-26, an isolated temporary project containing
+the exact current `package.json`, `package-lock.json`, and `tsconfig.json` ran
+the fixed ignore-scripts install recipe under host Node `26.4.0` and npm
+`11.17.0`; the materializer accepted the resulting exact Darwin/arm64 closure
+of 14 package roots and bound TypeScript `5.9.3` plus its `tsc` bytes. This
+proves that the versioned lock policy accepts the current repository lock shape.
+It does not attest a production release: only the authenticated platform host
+capability under the pinned Node/npm release requirement can issue that
+receipt.
+
 `BUILD_PLATFORM_RELEASE_V2` accepts the exact source root, output root,
 build-toolchain root/hash, admitted source SHA and Git epoch. It derives
 `node_modules/typescript/bin/tsc` from the capsule; no caller-supplied compiler
