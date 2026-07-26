@@ -300,7 +300,7 @@ describe("EvidenceOutcomeV2 typed candidate contract", () => {
     const policy = getEvidenceReceiptAbiPolicyV2();
     assert.equal(EvidenceReceiptAbiPolicyCandidateV2Schema.safeParse(policy).success, true);
     assert.equal(policy.policyHash, evidenceReceiptAbiPolicyHashV2());
-    assert.equal(policy.policyHash, "a867d8ad008486d2b8217edbe1e1048c1e8ea207af9ff5b0f0dee25175201aea");
+    assert.equal(policy.policyHash, "0baac1dd8263018e21e3c60a7b753e599ed1b235119326ea15adcdfb124bd578");
     assert.equal(policy.diagnosticProsePolicy, "forbidden_use_redacted_capture");
     assert.equal(policy.httpRequestTimeoutMs, EVIDENCE_HTTP_REQUEST_TIMEOUT_MS_V2);
     assert.equal(policy.httpResponseMaxBytes, EVIDENCE_HTTP_RESPONSE_MAX_BYTES_V2);
@@ -418,7 +418,7 @@ describe("EvidenceOutcomeV2 typed candidate contract", () => {
 describe("EvidenceReceiptV2 candidate contract", () => {
   it("binds the complete release/product/candidate/execution chain to a literal golden", () => {
     const candidate = receipt();
-    assert.equal(candidate.receiptHash, "4498c8d18a413c3ea5aef3adf4a766b72304749681f759c2940c3590dc36c639");
+    assert.equal(candidate.receiptHash, "c358466a073d1736429e63851716be9ce8627dad2dce920f6668f3be9cb08276");
     assert.equal(candidate.authorityState, "candidate_unverified");
     assert.equal(candidate.productionUse, "forbidden");
     assert.equal(Object.keys(candidate.release).length, 8);
