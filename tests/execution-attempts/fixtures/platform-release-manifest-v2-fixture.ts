@@ -3,6 +3,7 @@ import { readFileSync, statSync } from "node:fs";
 import path from "node:path";
 
 import {
+  canonicalJsonStringify,
   hashCanonicalJson,
 } from "../../../src/product-compiler/canonical-json.js";
 import {
@@ -108,6 +109,7 @@ import {
 import {
   EXACT_LEGACY_STITCH_CONVERTER_REF_V2_SCHEMA,
   EXACT_PLATFORM_RELEASE_SOURCE_REF_V2_SCHEMA,
+  PLATFORM_RELEASE_BUILD_COMMAND_RESULT_V2_SCHEMA,
   PLATFORM_RELEASE_BUILD_CONTRACT_HASH_V2,
   PLATFORM_RELEASE_BUILD_RECEIPT_V2_SCHEMA,
   PLATFORM_RELEASE_EMPTY_GIT_STATUS_CONTENT_HASH_V2,
@@ -992,6 +994,7 @@ function buildReceipt(
     | "PLATFORM_RELEASE_BUILD_STAGE_FIRST_V2"
     | "PLATFORM_RELEASE_BUILD_STAGE_SECOND_V2",
   admissionReceiptHash: string,
+  codeSha: string,
   source: ReturnType<typeof sourceTreeBinding>,
   compiler: ReturnType<typeof buildCompiler>,
   packageManager: ReturnType<typeof buildPackageManager>,
@@ -1009,6 +1012,24 @@ function buildReceipt(
       external.materializationReceipt.receiptHash,
     legacyStitchConverter: stitchConverter,
   });
+  const commandResult = {
+    schema: PLATFORM_RELEASE_BUILD_COMMAND_RESULT_V2_SCHEMA,
+    version: "2.0.0" as const,
+    sourceFingerprintHash: source.exportedFileTreeHash,
+    sourceFileCount: 187,
+    sourceDirectoryCount: 49,
+    sourceTotalBytes: 1_250_003,
+    sourceSha: codeSha,
+    sourceDateEpoch: "1785052800",
+    compilerEntryHash: compiler.entryModuleHash,
+    platformFileCount: payload.platformTree.fileCount,
+    platformDirectoryCount: payload.platformTree.directoryCount,
+    platformTotalBytes: payload.platformTree.totalBytes,
+    outputLayout: "payload_dist_and_package_json_only" as const,
+    productionUse:
+      "forbidden_until_dependency_materialization_and_manifest_verification" as const,
+  };
+  const commandStdout = `${canonicalJsonStringify(commandResult)}\n`;
   const identity = {
     schema: PLATFORM_RELEASE_BUILD_RECEIPT_V2_SCHEMA,
     version: "2.0.0" as const,
@@ -1045,11 +1066,23 @@ function buildReceipt(
         "<VERIFIED_SOURCE_STAGE>",
         "--output-root",
         "<EMPTY_OUTPUT_STAGE>",
+        "--typescript-entry",
+        "<AUTHENTICATED_TYPESCRIPT_ENTRY>",
+        "--source-sha",
+        "<ADMITTED_SOURCE_SHA>",
+        "--source-date-epoch",
+        "<ADMITTED_SOURCE_EPOCH>",
       ] as const,
       cwd: "verified_source_stage" as const,
       sourceRootPassing: "parameterized_exact_stage" as const,
       outputRootPassing:
         "parameterized_exact_empty_stage" as const,
+      compilerEntryPassing:
+        "parameterized_authenticated_external_entry" as const,
+      sourceIdentityPassing:
+        "parameterized_exact_admitted_sha" as const,
+      sourceClockPassing:
+        "parameterized_exact_admitted_git_epoch" as const,
       shell: "forbidden" as const,
     },
     sourceDateEpoch: "1785052800",
@@ -1066,10 +1099,14 @@ function buildReceipt(
       },
       termination: "normal_exit" as const,
       exitCode: 0 as const,
-      stdoutContentHash: fixtureShaV2("empty"),
-      stdoutByteLength: 0,
-      stderrContentHash: fixtureShaV2("empty"),
+      stdoutContentHash: createHash("sha256")
+        .update(commandStdout)
+        .digest("hex"),
+      stdoutByteLength: Buffer.byteLength(commandStdout, "utf8"),
+      stderrContentHash:
+        PLATFORM_RELEASE_EMPTY_GIT_STATUS_CONTENT_HASH_V2,
       stderrByteLength: 0,
+      commandResult,
     },
     output: {
       runtimePayload: payload,
@@ -1132,6 +1169,7 @@ PlatformReleaseManifestV2 {
   const firstBuildReceipt = buildReceipt(
     "PLATFORM_RELEASE_BUILD_STAGE_FIRST_V2",
     admission.receiptHash,
+    codeSha,
     source,
     compiler,
     packageManager,
@@ -1142,6 +1180,7 @@ PlatformReleaseManifestV2 {
   const secondBuildReceipt = buildReceipt(
     "PLATFORM_RELEASE_BUILD_STAGE_SECOND_V2",
     admission.receiptHash,
+    codeSha,
     source,
     compiler,
     packageManager,
@@ -1273,6 +1312,19 @@ function rebindBuildOutputV2(
       receipt.output.npmMaterializationReceipt.receiptHash,
     legacyStitchConverter: receipt.output.legacyStitchConverter,
   });
+  receipt.process.commandResult.platformFileCount =
+    manifest.runtimePayload.platformTree.fileCount;
+  receipt.process.commandResult.platformDirectoryCount =
+    manifest.runtimePayload.platformTree.directoryCount;
+  receipt.process.commandResult.platformTotalBytes =
+    manifest.runtimePayload.platformTree.totalBytes;
+  const commandStdout =
+    `${canonicalJsonStringify(receipt.process.commandResult)}\n`;
+  receipt.process.stdoutContentHash = createHash("sha256")
+    .update(commandStdout)
+    .digest("hex");
+  receipt.process.stdoutByteLength =
+    Buffer.byteLength(commandStdout, "utf8");
   receipt.receiptHash =
     hashPlatformReleaseBuildReceiptV2(receipt);
 }

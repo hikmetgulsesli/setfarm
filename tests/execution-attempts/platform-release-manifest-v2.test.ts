@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { describe, it } from "node:test";
 
 import {
   canonicalJsonBytes,
+  canonicalJsonStringify,
 } from "../../src/product-compiler/canonical-json.js";
 import {
   hashProductDeliveryProfileCatalogV2,
@@ -57,6 +59,17 @@ function rehashManifest(candidate: any): void {
     hashPlatformReleaseManifestV2(candidate);
 }
 
+function rebindCommandResult(receipt: any): void {
+  const stdout =
+    `${canonicalJsonStringify(receipt.process.commandResult)}\n`;
+  receipt.process.stdoutContentHash = createHash("sha256")
+    .update(stdout)
+    .digest("hex");
+  receipt.process.stdoutByteLength = Buffer.byteLength(stdout, "utf8");
+  receipt.receiptHash =
+    hashPlatformReleaseBuildReceiptV2(receipt);
+}
+
 describe("PlatformReleaseManifestV2 candidate authority boundary", () => {
   it("binds typed source and two independent build receipts with stable goldens", () => {
     const manifest = createPlatformReleaseManifestFixtureV2();
@@ -90,11 +103,11 @@ describe("PlatformReleaseManifestV2 candidate authority boundary", () => {
           "768a72032119579aad3c85236b3b3046cbae606b057febcc2704201f02e2bdab",
         sourceBytes: 2_279,
         firstBuildHash:
-          "68c01635a41f7cab5ae6aa7330c0ec3a34373a2bf363cfa6aac83f9f68528679",
-        firstBuildBytes: 8_927,
+          "2ddef6ed3f81b13f4187a310c4febe776e63a28b2fcef659f316864cb2a562a0",
+        firstBuildBytes: 9_912,
         secondBuildHash:
-          "c45e07efa56fdb0675f8cc803123bce8e9bad09034d8892089e1abc24a6674b7",
-        secondBuildBytes: 8_928,
+          "cda6a1e5b3a955bf6a1d2922a8998428a7e3272a4d0fdb455fe4f0f31fd3c04f",
+        secondBuildBytes: 9_913,
       },
     );
     assert.notEqual(
@@ -122,8 +135,8 @@ describe("PlatformReleaseManifestV2 candidate authority boundary", () => {
       },
       {
         hash:
-          "455fcccdf2aa6b1d19af7bf8f211bc757b053178fb6a73f819caccd7d0ce3368",
-        bytes: 70_474,
+          "8686b2ac265325f455fbcfeaa293fa9c2f99802b6d0ae91d734bd8909576d04c",
+        bytes: 72_444,
         cap: 3_145_728,
       },
     );
@@ -179,6 +192,16 @@ describe("PlatformReleaseManifestV2 candidate authority boundary", () => {
       PlatformReleaseBuildReceiptV2Schema.safeParse(aliasedStage).success,
       false,
     );
+
+    const driftedResult: any = structuredClone(
+      manifest.build.firstBuildReceipt,
+    );
+    driftedResult.process.commandResult.platformFileCount += 1;
+    rebindCommandResult(driftedResult);
+    assert.equal(
+      PlatformReleaseBuildReceiptV2Schema.safeParse(driftedResult).success,
+      false,
+    );
   });
 
   it("rejects self-rehashed cross-root, double-build and code-owned drift", () => {
@@ -224,10 +247,24 @@ describe("PlatformReleaseManifestV2 candidate authority boundary", () => {
       );
     rehashManifest(profileDrift);
 
+    const wrongBuildSource: any = structuredClone(manifest);
+    const wrongSha = fixtureShaV2("wrong-build-source").slice(0, 40);
+    for (const key of [
+      "firstBuildReceipt",
+      "secondBuildReceipt",
+    ] as const) {
+      const receipt = wrongBuildSource.build[key];
+      receipt.process.commandResult.sourceSha = wrongSha;
+      rebindCommandResult(receipt);
+      wrongBuildSource.build[`${key}Hash`] = receipt.receiptHash;
+    }
+    rehashManifest(wrongBuildSource);
+
     for (const candidate of [
       aliasedBuild,
       networkDrift,
       profileDrift,
+      wrongBuildSource,
     ]) {
       assert.equal(
         PlatformReleaseManifestV2Schema.safeParse(candidate).success,

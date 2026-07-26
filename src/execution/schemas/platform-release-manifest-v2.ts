@@ -158,6 +158,10 @@ const PlatformReleaseBuildIdentityV2Schema = z.object({
       !== canonicalJsonStringify(expectedRootFields)
     || first.command.commandRef !== value.commandRef
     || second.command.commandRef !== value.commandRef
+    || canonicalJsonStringify(first.command)
+      !== canonicalJsonStringify(second.command)
+    || canonicalJsonStringify(first.process.commandResult)
+      !== canonicalJsonStringify(second.process.commandResult)
     || canonicalJsonStringify(first.output)
       !== canonicalJsonStringify(second.output)
   ) {
@@ -245,7 +249,9 @@ const PlatformReleaseManifestIdentityV2Schema = z.object({
       && second.sourceAdmissionReceiptHash
         === value.release.sourceAdmission.receiptHash
       && first.source.sourceTreeHash === value.release.sourceTreeHash
-      && second.source.sourceTreeHash === value.release.sourceTreeHash,
+      && second.source.sourceTreeHash === value.release.sourceTreeHash
+      && first.process.commandResult.sourceSha === value.release.codeSha
+      && second.process.commandResult.sourceSha === value.release.codeSha,
     "admitted source and both build source stages",
   );
   requireJoin(

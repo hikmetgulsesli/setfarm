@@ -1,6 +1,11 @@
+import { createHash } from "node:crypto";
+
 import { z } from "zod";
 
-import { hashCanonicalJson } from "../../product-compiler/canonical-json.js";
+import {
+  canonicalJsonStringify,
+  hashCanonicalJson,
+} from "../../product-compiler/canonical-json.js";
 import {
   GitObjectHashSchema,
   Sha256Schema,
@@ -31,6 +36,8 @@ export const PLATFORM_RELEASE_BUILD_RECEIPT_V2_SCHEMA =
   "setfarm.platform-release-build-receipt.v2" as const;
 export const EXACT_LEGACY_STITCH_CONVERTER_REF_V2_SCHEMA =
   "setfarm.exact-legacy-stitch-converter-ref.v2" as const;
+export const PLATFORM_RELEASE_BUILD_COMMAND_RESULT_V2_SCHEMA =
+  "setfarm.build-platform-release-command-result.v2" as const;
 
 export const PLATFORM_RELEASE_BUILD_CONTRACT_VERSION_V2 = "2.0.0" as const;
 export const PLATFORM_RELEASE_SOURCE_ADMISSION_MAX_CANONICAL_BYTES_V2 =
@@ -65,6 +72,8 @@ export const PLATFORM_RELEASE_BUILD_CONTRACT_V2 = Object.freeze({
   outputPolicy: "parameterized_empty_stage_only" as const,
   reproducibility: "double_clean_build_exact_tree_match" as const,
   clockInput: "exact_git_commit_epoch_only" as const,
+  sourceIdentityInput: "exact_admitted_git_sha" as const,
+  compilerEntryInput: "authenticated_external_typescript_entry" as const,
   forbiddenPayloadInputs: [
     "absolute_path",
     "pid",
@@ -500,12 +509,52 @@ const PlatformReleaseBuildCommandV2Schema = z.object({
     z.literal("<VERIFIED_SOURCE_STAGE>"),
     z.literal("--output-root"),
     z.literal("<EMPTY_OUTPUT_STAGE>"),
+    z.literal("--typescript-entry"),
+    z.literal("<AUTHENTICATED_TYPESCRIPT_ENTRY>"),
+    z.literal("--source-sha"),
+    z.literal("<ADMITTED_SOURCE_SHA>"),
+    z.literal("--source-date-epoch"),
+    z.literal("<ADMITTED_SOURCE_EPOCH>"),
   ]),
   cwd: z.literal("verified_source_stage"),
   sourceRootPassing: z.literal("parameterized_exact_stage"),
   outputRootPassing: z.literal("parameterized_exact_empty_stage"),
+  compilerEntryPassing: z.literal(
+    "parameterized_authenticated_external_entry",
+  ),
+  sourceIdentityPassing: z.literal(
+    "parameterized_exact_admitted_sha",
+  ),
+  sourceClockPassing: z.literal(
+    "parameterized_exact_admitted_git_epoch",
+  ),
   shell: z.literal("forbidden"),
 }).strict();
+
+export const PlatformReleaseBuildCommandResultV2Schema = z.object({
+  schema: z.literal(PLATFORM_RELEASE_BUILD_COMMAND_RESULT_V2_SCHEMA),
+  version: z.literal(PLATFORM_RELEASE_COMPONENT_VERSION_V2),
+  sourceFingerprintHash: Sha256Schema,
+  sourceFileCount: z.number().int().positive().max(20_000),
+  sourceDirectoryCount: z.number().int().nonnegative().max(4_000),
+  sourceTotalBytes: z.number().int().positive()
+    .max(512 * 1024 * 1024),
+  sourceSha: GitObjectHashSchema,
+  sourceDateEpoch: CanonicalDecimalEpochV2Schema,
+  compilerEntryHash: Sha256Schema,
+  platformFileCount: z.number().int().positive().max(20_000),
+  platformDirectoryCount: z.number().int().nonnegative().max(4_000),
+  platformTotalBytes: z.number().int().positive()
+    .max(512 * 1024 * 1024),
+  outputLayout: z.literal("payload_dist_and_package_json_only"),
+  productionUse: z.literal(
+    "forbidden_until_dependency_materialization_and_manifest_verification",
+  ),
+}).strict();
+
+export type PlatformReleaseBuildCommandResultV2 = z.infer<
+  typeof PlatformReleaseBuildCommandResultV2Schema
+>;
 
 const PlatformReleaseBuildProcessOutcomeV2Schema = z.object({
   stdin: z.literal("closed"),
@@ -524,7 +573,26 @@ const PlatformReleaseBuildProcessOutcomeV2Schema = z.object({
   stdoutByteLength: z.number().int().nonnegative().max(1024 * 1024),
   stderrContentHash: Sha256Schema,
   stderrByteLength: z.number().int().nonnegative().max(1024 * 1024),
-}).strict();
+  commandResult: PlatformReleaseBuildCommandResultV2Schema,
+}).strict().superRefine((value, context) => {
+  const stdout = `${canonicalJsonStringify(value.commandResult)}\n`;
+  const expectedStdoutHash = createHash("sha256")
+    .update(stdout)
+    .digest("hex");
+  if (
+    value.stdoutContentHash !== expectedStdoutHash
+    || value.stdoutByteLength !== Buffer.byteLength(stdout, "utf8")
+    || value.stderrContentHash
+      !== PLATFORM_RELEASE_EMPTY_GIT_STATUS_CONTENT_HASH_V2
+    || value.stderrByteLength !== 0
+  ) {
+    context.addIssue({
+      code: "custom",
+      message:
+        "Successful build process evidence must bind one exact command result and empty stderr",
+    });
+  }
+});
 
 const PlatformReleaseBuildOutputIdentityV2Schema = z.object({
   runtimePayload: PlatformRuntimePayloadCandidateV2Schema,
@@ -580,8 +648,18 @@ const PlatformReleaseBuildReceiptIdentityV2Schema = z.object({
   process: PlatformReleaseBuildProcessOutcomeV2Schema,
   output: PlatformReleaseBuildOutputIdentityV2Schema,
 }).strict().superRefine((value, context) => {
+  const result = value.process.commandResult;
   if (
     value.process.environment.SOURCE_DATE_EPOCH !== value.sourceDateEpoch
+    || result.sourceDateEpoch !== value.sourceDateEpoch
+    || result.compilerEntryHash !== value.compiler.entryModuleHash
+    || result.sourceFingerprintHash !== value.source.exportedFileTreeHash
+    || result.platformFileCount
+      !== value.output.runtimePayload.platformTree.fileCount
+    || result.platformDirectoryCount
+      !== value.output.runtimePayload.platformTree.directoryCount
+    || result.platformTotalBytes
+      !== value.output.runtimePayload.platformTree.totalBytes
     || hashCanonicalJson({
       schema: "setfarm.platform-release-source-input-membership.v2",
       entries: value.inputs.map((entry) => ({
