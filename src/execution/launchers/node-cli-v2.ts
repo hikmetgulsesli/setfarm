@@ -28,6 +28,7 @@ import {
   CandidateRuntimeCliExecutionLeaseInternalV2,
   executeCandidateRuntimeCliLeaseInternalV2,
   issueCandidateRuntimeCliExecutionLeaseInternalV2,
+  type CandidateRuntimeInvocationSourceAuthorityInternalV2,
 } from "../candidate-runtime-bundle-v2.js";
 import {
   NODE_CLI_APPLICATION_MODULE_LOCATOR_V2,
@@ -430,6 +431,8 @@ export type IssuedNodeCliLaunchAuthorityV2 = Readonly<{
   productionUse: "forbidden_until_verified_release_join";
   authority: NodeCliLaunchAuthorityV2;
   transportContract: Readonly<CliInvocationInputTransportV2>;
+  sourceAuthority:
+    CandidateRuntimeInvocationSourceAuthorityInternalV2;
 }>;
 
 export async function issueNodeCliLaunchAuthorityV2ForTest(
@@ -479,6 +482,7 @@ export async function issueNodeCliLaunchAuthorityV2ForTest(
       productionUse: "forbidden_until_verified_release_join" as const,
       authority,
       transportContract: defensiveJsonCopy(issued.transportContract),
+      sourceAuthority: issued.sourceAuthority,
     });
   } catch (error) {
     if (error instanceof NodeCliLauncherErrorV2) throw error;

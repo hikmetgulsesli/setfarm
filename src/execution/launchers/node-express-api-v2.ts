@@ -28,6 +28,7 @@ import {
   CandidateRuntimeBundleErrorV2,
   executeCandidateRuntimeApiLeaseInternalV2,
   issueCandidateRuntimeApiExecutionLeaseInternalV2,
+  type CandidateRuntimeInvocationSourceAuthorityInternalV2,
 } from "../candidate-runtime-bundle-v2.js";
 import {
   NODE_EXPRESS_API_APPLICATION_EXPORT_V2,
@@ -506,6 +507,8 @@ export type IssuedNodeExpressApiLaunchAuthorityV2 = Readonly<{
   productionUse: "forbidden_until_verified_release_join";
   authority: NodeExpressApiLaunchAuthorityV2;
   transportContract: Readonly<HttpInvocationInputTransportV2>;
+  sourceAuthority:
+    CandidateRuntimeInvocationSourceAuthorityInternalV2;
 }>;
 
 export async function issueNodeExpressApiLaunchAuthorityV2ForTest(
@@ -555,6 +558,7 @@ export async function issueNodeExpressApiLaunchAuthorityV2ForTest(
       productionUse: "forbidden_until_verified_release_join" as const,
       authority,
       transportContract: defensiveJsonCopy(issued.transportContract),
+      sourceAuthority: issued.sourceAuthority,
     });
   } catch (error) {
     if (error instanceof NodeExpressApiLauncherErrorV2) throw error;

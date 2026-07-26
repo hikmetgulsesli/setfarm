@@ -44,6 +44,17 @@ import {
   evaluateInvocationEvidenceV2,
 } from "../../src/evidence/invocation-evidence-evaluator-v2.js";
 import {
+  CandidateInvocationEvidenceErrorV2,
+  copyCandidateInvocationEvidenceCaptureV2ForTest,
+  destroyCandidateInvocationEvidenceCaptureV2,
+  issueCandidateInvocationEvidenceExecutionAuthorityV2ForTest,
+  runCandidateInvocationEvidenceV2ForTest,
+  type CandidateInvocationEvidenceExecutionAuthorityV2,
+} from "../../src/evidence/candidate-invocation-evidence-v2.js";
+import {
+  CandidateInvocationEvidenceObservationV2Schema,
+} from "../../src/evidence/schemas/candidate-invocation-evidence-observation-v2.js";
+import {
   CANDIDATE_BUILD_RECEIPT_V2_SCHEMA,
   CandidateBuildReceiptV2Schema,
 } from "../../src/execution/schemas/candidate-build-receipt-v2.js";
@@ -5368,6 +5379,162 @@ describe("Node scaffold private staged materializer V2", () => {
             && error.code
               === "EVIDENCE_COMMAND_RUNNER_V2_AUTHORITY_ALREADY_CONSUMED",
         );
+        if (caseIndex < 2) {
+          assert.ok(invocationEvidence);
+          const candidateInvocationExecution = {
+            runId: `run-invocation-${caseIndex}`,
+            attemptId: caseIndex === 0
+              ? "ATT_0000000000000000"
+              : "ATT_0000000000000001",
+            storyId:
+              compiledSlices[0]!.slice.value.story.storyId,
+            sliceHash:
+              compiledSlices[0]!.slice.value.sliceHash,
+            predicateRef:
+              invocationEvidence.check.execution.predicateRef,
+          };
+          await assert.rejects(
+            issueCandidateInvocationEvidenceExecutionAuthorityV2ForTest({
+              candidateSourceAuthority:
+                verifiedSiblingCandidateSource.authority,
+              runtimeAuthority: issuedRuntime.authority,
+              expectedBundleHash:
+                issuedRuntime.bundle.bundleHash,
+              execution: candidateInvocationExecution,
+            }),
+            (error: unknown) =>
+              error instanceof CandidateInvocationEvidenceErrorV2
+              && error.code
+                === "CANDIDATE_INVOCATION_EVIDENCE_V2_SOURCE_RUNTIME_MISMATCH",
+          );
+          const issuedInvocation =
+            await issueCandidateInvocationEvidenceExecutionAuthorityV2ForTest({
+              candidateSourceAuthority:
+                verifiedCandidateSource.authority,
+              runtimeAuthority: issuedRuntime.authority,
+              expectedBundleHash:
+                issuedRuntime.bundle.bundleHash,
+              execution: candidateInvocationExecution,
+            });
+          assert.equal(
+            issuedInvocation.status,
+            "issued_pre_release_test_authority",
+          );
+          assert.equal(
+            issuedInvocation.productionUse,
+            "forbidden_until_verified_release_join",
+          );
+          await assert.rejects(
+            runCandidateInvocationEvidenceV2ForTest({
+              authority: {
+                ...issuedInvocation.authority,
+              } as CandidateInvocationEvidenceExecutionAuthorityV2,
+            }),
+            (error: unknown) =>
+              error instanceof CandidateInvocationEvidenceErrorV2
+              && error.code
+                === "CANDIDATE_INVOCATION_EVIDENCE_V2_AUTHORITY_UNAUTHENTICATED",
+          );
+          const invocationClaims = await Promise.allSettled([
+            runCandidateInvocationEvidenceV2ForTest({
+              authority: issuedInvocation.authority,
+            }),
+            runCandidateInvocationEvidenceV2ForTest({
+              authority: issuedInvocation.authority,
+            }),
+          ]);
+          const fulfilledInvocation = invocationClaims.find(
+            (claim) => claim.status === "fulfilled",
+          );
+          const rejectedInvocation = invocationClaims.find(
+            (claim) => claim.status === "rejected",
+          );
+          assert.ok(
+            fulfilledInvocation?.status === "fulfilled",
+            JSON.stringify(invocationClaims.map((claim) =>
+              claim.status === "fulfilled"
+                ? { status: claim.status }
+                : {
+                    status: claim.status,
+                    code: claim.reason?.code,
+                    message: claim.reason?.message,
+                    causeCode: claim.reason?.cause?.code,
+                    causeMessage: claim.reason?.cause?.message,
+                  })),
+          );
+          assert.ok(rejectedInvocation?.status === "rejected");
+          assert.equal(
+            (rejectedInvocation as PromiseRejectedResult).reason.code,
+            "CANDIDATE_INVOCATION_EVIDENCE_V2_AUTHORITY_ALREADY_CONSUMED",
+          );
+          const invocationResult =
+            (fulfilledInvocation as PromiseFulfilledResult<
+              Awaited<ReturnType<
+                typeof runCandidateInvocationEvidenceV2ForTest
+              >>
+            >).value;
+          assert.equal(
+            CandidateInvocationEvidenceObservationV2Schema.safeParse(
+              invocationResult.observation,
+            ).success,
+            true,
+          );
+          assert.equal(
+            invocationResult.observation.sourceAuthority
+              .candidateSourceReceiptHash,
+            candidateSource.receiptHash,
+          );
+          assert.equal(
+            invocationResult.observation.runtimeAuthority
+              .runtimeBundleHash,
+            issuedRuntime.bundle.bundleHash,
+          );
+          assert.equal(
+            invocationResult.observation.transportAuthority
+              .contractHash,
+            invocationEvidence.transportContract.contractHash,
+          );
+          assert.equal(
+            invocationResult.observation.checkAuthority.checkHash,
+            invocationEvidence.check.checkHash,
+          );
+          assert.equal(
+            invocationResult.observation.evaluation.status,
+            "passed",
+          );
+          assert.equal(
+            invocationResult.observation.productionUse,
+            "forbidden_until_verified_release_join",
+          );
+          const invocationCapture =
+            copyCandidateInvocationEvidenceCaptureV2ForTest(
+              invocationResult.capture,
+            );
+          assert.equal(
+            invocationCapture.kind,
+            caseIndex === 0
+              ? "cli_process_result"
+              : "http_response",
+          );
+          if (invocationCapture.kind === "cli_process_result") {
+            invocationCapture.stdout.fill(0);
+            invocationCapture.stderr.fill(0);
+          } else {
+            invocationCapture.body.fill(0);
+          }
+          destroyCandidateInvocationEvidenceCaptureV2(
+            invocationResult.capture,
+          );
+          assert.throws(
+            () => copyCandidateInvocationEvidenceCaptureV2ForTest(
+              invocationResult.capture,
+            ),
+            {
+              code:
+                "CANDIDATE_INVOCATION_EVIDENCE_V2_CAPTURE_DESTROYED",
+            },
+          );
+        }
         if (caseIndex === 0) {
           const action = fixture.productSpec.actions[0]!;
           const issuedLaunch =
@@ -5811,11 +5978,11 @@ describe("Node scaffold private staged materializer V2", () => {
     }
 
     assert.deepEqual(storyPlanHashes, [
-      "6f9c019b129faa64580c356a1a302d27a54f161575c014b28b5ae5980c55791c",
-      "c4edbb5cecacc96253abe5e0c811ab7e44dc2d6aad391dee27c612135e620039",
-      "0ee0bc2f8c3876bba28381579d00dafcda6efbe4093bf6863be386012d509c63",
-      "6d1fd6393e16a1bbf2eed66681e4ea86328b8af32ac8f587c57c712b8b6bbc24",
-      "efccf42ce23e97ca6de27a5e9f96b776df2433f5ebcb0a031867b04b5a2b109d",
+      "b56c8d6b87704886d309c61ffba3822d7504876889d020a3b6e9fd06b0fd8312",
+      "5b5346dec87ec6fc6f9f20b40dd97990e2e136b0a9ebc41341a50b526ae48e7e",
+      "e8cc79adc6669fae0af9b117f63026d9bec4565c285acbe2790bcd86d1f73b4c",
+      "e84588a46dc98e6f089c49f4931922d4936a061c4017988e941f2e314173a1ea",
+      "efa1a3804ba064d6d5684a5be7b0c0449d98cb83d1c30af79de1b9ed71324112",
     ]);
     assert.equal(sourceMapManifestHashes.length, cases.length);
     assert.equal(new Set(sourceMapManifestHashes).size, cases.length);

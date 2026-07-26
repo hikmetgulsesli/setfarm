@@ -760,6 +760,12 @@ export class CandidateRuntimeBundleAuthorityV2 {
   readonly bundleHash: string;
   readonly bundleClosureHash: string;
   readonly buildReceiptHash: string;
+  readonly packetHash: string;
+  readonly implementationClosureHash: string;
+  readonly buildTopologyHash: string;
+  readonly sourceMaterializationReceiptHash: string;
+  readonly candidateSourceReceiptHash: string;
+  readonly semanticRevisionHash: string;
   readonly applicationTreeHash: string;
   readonly dependencyTreeHash: string;
   readonly productionGraphHash: string;
@@ -778,6 +784,18 @@ export class CandidateRuntimeBundleAuthorityV2 {
     this.bundleHash = state.bundle.bundleHash;
     this.bundleClosureHash = state.bundle.bundleClosureHash;
     this.buildReceiptHash = state.bundle.buildReceiptHash;
+    this.packetHash =
+      state.bundle.buildReceipt.authority.packet.packetHash;
+    this.implementationClosureHash =
+      state.bundle.implementationClosureHash;
+    this.buildTopologyHash = state.bundle.buildTopologyHash;
+    this.sourceMaterializationReceiptHash =
+      state.bundle.buildReceipt.sourceAfter
+        .sourceMaterializationReceiptHash;
+    this.candidateSourceReceiptHash =
+      state.bundle.sourceAuthority.candidateSourceReceiptHash;
+    this.semanticRevisionHash =
+      state.bundle.sourceAuthority.semanticRevisionHash;
     this.applicationTreeHash = state.bundle.applicationTree.treeHash;
     this.dependencyTreeHash = state.bundle.dependencyTree.treeHash;
     this.productionGraphHash = state.bundle.productionGraph.resolutionGraphHash;
@@ -1733,6 +1751,21 @@ export class CandidateRuntimeCliExecutionLeaseInternalV2 {
   }
 }
 
+export type CandidateRuntimeInvocationSourceAuthorityInternalV2 =
+  Readonly<{
+    packetHash: string;
+    implementationClosureHash: string;
+    buildTopologyHash: string;
+    sourceMaterializationReceiptHash: string;
+    candidateSourceReceiptHash: string;
+    semanticRevisionHash: string;
+    buildReceiptHash: string;
+    runtimeBundleHash: string;
+    transportSetHash: string;
+    transportMembershipHash: string;
+    runtimeSourceLogicalReceiptHash: string;
+  }>;
+
 function authenticCandidateRuntimeCliLeaseInternalV2(
   lease: CandidateRuntimeCliExecutionLeaseInternalV2,
 ): CandidateRuntimeCliExecutionLeaseStateInternalV2 {
@@ -1763,6 +1796,8 @@ export type CandidateRuntimeCliExecutionLeaseResultInternalV2 = Readonly<{
   runtimeBundleHash: string;
   runtimeBundleClosureHash: string;
   buildReceiptHash: string;
+  sourceAuthority:
+    CandidateRuntimeInvocationSourceAuthorityInternalV2;
   applicationTreeHash: string;
   materializationHash: string;
   moduleLocator: "candidate-bundle/application/cli.js";
@@ -1864,6 +1899,27 @@ export async function issueCandidateRuntimeCliExecutionLeaseInternalV2(
     runtimeBundleHash: runtimeState.bundle.bundleHash,
     runtimeBundleClosureHash: runtimeState.bundle.bundleClosureHash,
     buildReceiptHash: runtimeState.bundle.buildReceiptHash,
+    sourceAuthority: Object.freeze({
+      packetHash:
+        runtimeState.bundle.buildReceipt.authority.packet.packetHash,
+      implementationClosureHash:
+        runtimeState.bundle.implementationClosureHash,
+      buildTopologyHash: runtimeState.bundle.buildTopologyHash,
+      sourceMaterializationReceiptHash:
+        runtimeState.bundle.buildReceipt.sourceAfter
+          .sourceMaterializationReceiptHash,
+      candidateSourceReceiptHash:
+        runtimeState.bundle.sourceAuthority.candidateSourceReceiptHash,
+      semanticRevisionHash:
+        runtimeState.bundle.sourceAuthority.semanticRevisionHash,
+      buildReceiptHash: runtimeState.bundle.buildReceiptHash,
+      runtimeBundleHash: runtimeState.bundle.bundleHash,
+      transportSetHash: transport.source.transportSetHash,
+      transportMembershipHash:
+        transport.source.transportMembershipHash,
+      runtimeSourceLogicalReceiptHash:
+        transport.source.runtimeSourceLogicalReceiptHash,
+    }),
     applicationTreeHash: runtimeState.bundle.applicationTree.treeHash,
     materializationHash: physical.materializationHash,
     moduleLocator: "candidate-bundle/application/cli.js" as const,
@@ -2152,6 +2208,8 @@ export type CandidateRuntimeApiExecutionLeaseResultInternalV2 = Readonly<{
   runtimeBundleHash: string;
   runtimeBundleClosureHash: string;
   buildReceiptHash: string;
+  sourceAuthority:
+    CandidateRuntimeInvocationSourceAuthorityInternalV2;
   applicationTreeHash: string;
   materializationHash: string;
   moduleLocator: "candidate-bundle/application/app.js";
@@ -2254,6 +2312,27 @@ export async function issueCandidateRuntimeApiExecutionLeaseInternalV2(
     runtimeBundleHash: runtimeState.bundle.bundleHash,
     runtimeBundleClosureHash: runtimeState.bundle.bundleClosureHash,
     buildReceiptHash: runtimeState.bundle.buildReceiptHash,
+    sourceAuthority: Object.freeze({
+      packetHash:
+        runtimeState.bundle.buildReceipt.authority.packet.packetHash,
+      implementationClosureHash:
+        runtimeState.bundle.implementationClosureHash,
+      buildTopologyHash: runtimeState.bundle.buildTopologyHash,
+      sourceMaterializationReceiptHash:
+        runtimeState.bundle.buildReceipt.sourceAfter
+          .sourceMaterializationReceiptHash,
+      candidateSourceReceiptHash:
+        runtimeState.bundle.sourceAuthority.candidateSourceReceiptHash,
+      semanticRevisionHash:
+        runtimeState.bundle.sourceAuthority.semanticRevisionHash,
+      buildReceiptHash: runtimeState.bundle.buildReceiptHash,
+      runtimeBundleHash: runtimeState.bundle.bundleHash,
+      transportSetHash: transport.source.transportSetHash,
+      transportMembershipHash:
+        transport.source.transportMembershipHash,
+      runtimeSourceLogicalReceiptHash:
+        transport.source.runtimeSourceLogicalReceiptHash,
+    }),
     applicationTreeHash: runtimeState.bundle.applicationTree.treeHash,
     materializationHash: physical.materializationHash,
     moduleLocator: "candidate-bundle/application/app.js" as const,
