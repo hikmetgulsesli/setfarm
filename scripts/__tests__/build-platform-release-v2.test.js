@@ -67,11 +67,15 @@ function createFixture(options = {}) {
     path.join(os.tmpdir(), "setfarm-build-command-v2-"),
   );
   const root = realpathSync(created);
-  const source = path.join(root, "source");
+  const context = path.join(root, "context");
+  const source = path.join(context, "source");
+  const toolchain = path.join(context, "node_modules");
   const outputA = path.join(root, "output-a");
   const outputB = path.join(root, "output-b");
   const outside = path.join(root, "outside");
+  mkdirSync(context, { mode: 0o700 });
   mkdirSync(source, { mode: 0o700 });
+  mkdirSync(toolchain, { mode: 0o700 });
   mkdirSync(outputA, { mode: 0o700 });
   mkdirSync(outputB, { mode: 0o700 });
   mkdirSync(outside, { mode: 0o700 });
@@ -107,11 +111,15 @@ function createFixture(options = {}) {
     "# Plan\n",
   );
   writeFixtureFile(source, "src/cli/cli.ts", "export {};\n");
-  chmodTree(source, 0o555, 0o444);
-
-  const compiler = path.join(root, "fake-typescript.mjs");
-  writeFileSync(
-    compiler,
+  const compiler = path.join(toolchain, "typescript", "bin", "tsc");
+  writeFixtureFile(
+    toolchain,
+    "typescript/package.json",
+    `${JSON.stringify({ name: "typescript", version: "5.9.3" })}\n`,
+  );
+  writeFixtureFile(
+    toolchain,
+    "typescript/bin/tsc",
     options.compilerSource ?? `
       import {
         chmodSync,
@@ -144,10 +152,31 @@ function createFixture(options = {}) {
         chmodSync(sourceFile, 0o444);
         chmodSync(path.dirname(sourceFile), 0o555);
       ` : ""}
+      ${options.mutateToolchain ? `
+        const toolchainFile = ${JSON.stringify(
+          path.join(toolchain, "typescript", "package.json"),
+        )};
+        chmodSync(path.dirname(toolchainFile), 0o755);
+        chmodSync(toolchainFile, 0o600);
+        writeFileSync(toolchainFile, "{\\"name\\":\\"changed\\"}\\n");
+        chmodSync(toolchainFile, 0o444);
+        chmodSync(path.dirname(toolchainFile), 0o555);
+      ` : ""}
     `,
-    { mode: 0o600 },
   );
-  return { root, source, outputA, outputB, outside, compiler };
+  chmodTree(source, 0o555, 0o444);
+  chmodTree(toolchain, 0o555, 0o444);
+  chmodSync(compiler, 0o555);
+  return {
+    root,
+    context,
+    source,
+    toolchain,
+    outputA,
+    outputB,
+    outside,
+    compiler,
+  };
 }
 
 function runCommand(fixture, output, overrides = {}) {
@@ -159,8 +188,10 @@ function runCommand(fixture, output, overrides = {}) {
       fixture.source,
       "--output-root",
       output,
-      "--typescript-entry",
-      overrides.compiler ?? fixture.compiler,
+      "--build-toolchain-root",
+      overrides.toolchain ?? fixture.toolchain,
+      "--build-toolchain-hash",
+      overrides.toolchainHash ?? toolchainTreeHash(fixture.toolchain),
       "--source-sha",
       overrides.sourceSha ?? sourceSha,
       "--source-date-epoch",
@@ -173,6 +204,53 @@ function runCommand(fixture, output, overrides = {}) {
       timeout: 30_000,
     },
   );
+}
+
+function canonicalJson(value) {
+  if (value === null) return "null";
+  if (typeof value === "string") return JSON.stringify(value);
+  if (typeof value === "number") return JSON.stringify(value);
+  if (typeof value === "boolean") return value ? "true" : "false";
+  if (Array.isArray(value)) {
+    return `[${value.map(canonicalJson).join(",")}]`;
+  }
+  return `{${Object.keys(value).sort().map(
+    (key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`,
+  ).join(",")}}`;
+}
+
+function toolchainTreeHash(root) {
+  const snapshot = treeSnapshot(root);
+  const entries = snapshot.map((entry) => {
+    if (entry.type === "directory") {
+      return {
+        path: entry.path,
+        type: "directory",
+        mode: "0555",
+      };
+    }
+    const executable = entry.mode === 0o555;
+    return {
+      path: entry.path,
+      type: "file",
+      mode: executable ? "0555" : "0444",
+      executable,
+      byteLength: Buffer.from(entry.bytes, "base64").byteLength,
+      contentHash: entry.hash,
+    };
+  });
+  const files = entries.filter((entry) => entry.type === "file");
+  const directories = entries.filter((entry) => entry.type === "directory");
+  const identity = {
+    schema: "setfarm.canonical-runtime-tree-content.v2",
+    profile: "dependencies",
+    rootMode: "0555",
+    entries,
+    fileCount: files.length,
+    directoryCount: directories.length,
+    totalBytes: files.reduce((sum, entry) => sum + entry.byteLength, 0),
+  };
+  return createHash("sha256").update(canonicalJson(identity)).digest("hex");
 }
 
 function treeSnapshot(root) {
@@ -218,6 +296,10 @@ test("BUILD_PLATFORM_RELEASE_V2 produces identical output in two empty roots", (
     assert.equal(
       firstResult.productionUse,
       "forbidden_until_dependency_materialization_and_manifest_verification",
+    );
+    assert.equal(
+      firstResult.buildToolchainTreeHash,
+      toolchainTreeHash(fixture.toolchain),
     );
     assert.deepEqual(
       treeSnapshot(fixture.outputA),
@@ -377,19 +459,50 @@ test("BUILD_PLATFORM_RELEASE_V2 rejects successful compiler prose", () => {
   }
 });
 
-test("BUILD_PLATFORM_RELEASE_V2 rejects a TypeScript entry through an aliased parent", () => {
+test("BUILD_PLATFORM_RELEASE_V2 rejects a toolchain through an aliased parent", () => {
   const fixture = createFixture();
   try {
-    const aliasRoot = path.join(fixture.root, "compiler-alias");
-    symlinkSync(fixture.root, aliasRoot, "dir");
+    const aliasRoot = path.join(fixture.root, "toolchain-alias");
+    symlinkSync(fixture.toolchain, aliasRoot, "dir");
     const result = runCommand(
       fixture,
       fixture.outputA,
-      { compiler: path.join(aliasRoot, "fake-typescript.mjs") },
+      { toolchain: aliasRoot },
     );
     assert.equal(result.status, 1);
-    assert.match(result.stderr, /TYPESCRIPT_ENTRY_INVALID/);
+    assert.match(result.stderr, /BUILD_TOOLCHAIN_ROOT_INVALID/);
     assert.deepEqual(readdirSync(fixture.outputA), []);
+  } finally {
+    cleanup(fixture.root);
+  }
+});
+
+test("BUILD_PLATFORM_RELEASE_V2 rejects detached or mismatched toolchain authority", () => {
+  const fixture = createFixture();
+  try {
+    const mismatched = runCommand(
+      fixture,
+      fixture.outputA,
+      { toolchainHash: "f".repeat(64) },
+    );
+    assert.equal(mismatched.status, 1);
+    assert.match(mismatched.stderr, /BUILD_TOOLCHAIN_HASH_MISMATCH/);
+
+    writeFileSync(path.join(fixture.context, "ambient"), "x");
+    const ambient = runCommand(fixture, fixture.outputB);
+    assert.equal(ambient.status, 1);
+    assert.match(ambient.stderr, /BUILD_CONTEXT_INVALID/);
+  } finally {
+    cleanup(fixture.root);
+  }
+});
+
+test("BUILD_PLATFORM_RELEASE_V2 detects toolchain mutation after compiler exit", () => {
+  const fixture = createFixture({ mutateToolchain: true });
+  try {
+    const result = runCommand(fixture, fixture.outputA);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /SOURCE_OR_OUTPUT_CHANGED|BUILD_TOOLCHAIN/);
   } finally {
     cleanup(fixture.root);
   }

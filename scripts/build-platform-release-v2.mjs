@@ -25,11 +25,16 @@ const MAX_SOURCE_FILES = 20_000;
 const MAX_SOURCE_DIRECTORIES = 4_000;
 const MAX_SOURCE_FILE_BYTES = 64 * 1024 * 1024;
 const MAX_SOURCE_TOTAL_BYTES = 512 * 1024 * 1024;
+const MAX_TOOLCHAIN_FILES = 100_000;
+const MAX_TOOLCHAIN_DIRECTORIES = 20_000;
+const MAX_TOOLCHAIN_FILE_BYTES = 512 * 1024 * 1024;
+const MAX_TOOLCHAIN_TOTAL_BYTES = 2 * 1024 * 1024 * 1024;
 const MAX_OUTPUT_FILES = 20_000;
 const MAX_OUTPUT_DIRECTORIES = 4_000;
 const MAX_OUTPUT_TOTAL_BYTES = 512 * 1024 * 1024;
 const MAX_PROCESS_OUTPUT_BYTES = 1024 * 1024;
 const FULL_GIT_HASH = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
+const FULL_SHA256 = /^[a-f0-9]{64}$/;
 const CANONICAL_EPOCH = /^(?:0|[1-9][0-9]*)$/;
 const PORTABLE_RELATIVE_PATH =
   /^(?:[A-Za-z0-9._@+-]+)(?:\/[A-Za-z0-9._@+-]+)*$/;
@@ -71,16 +76,17 @@ function canonicalJson(value) {
 }
 
 function parseArguments(argv) {
-  if (argv.length !== 10) {
+  if (argv.length !== 12) {
     fail(
       "ARGUMENTS_INVALID",
-      "Expected source root, output root, TypeScript entry, source SHA and source epoch",
+      "Expected source root, output root, build toolchain root/hash, source SHA and source epoch",
     );
   }
   const expectedNames = [
     "--source-root",
     "--output-root",
-    "--typescript-entry",
+    "--build-toolchain-root",
+    "--build-toolchain-hash",
     "--source-sha",
     "--source-date-epoch",
   ];
@@ -94,25 +100,47 @@ function parseArguments(argv) {
   }
   if (
     !FULL_GIT_HASH.test(values["--source-sha"])
+    || !FULL_SHA256.test(values["--build-toolchain-hash"])
     || !CANONICAL_EPOCH.test(values["--source-date-epoch"])
   ) {
-    fail("ARGUMENTS_INVALID", "Source SHA or epoch is invalid");
+    fail("ARGUMENTS_INVALID", "Toolchain hash, source SHA or epoch is invalid");
+  }
+  const sourceRoot = anchorDirectory(
+    values["--source-root"],
+    0o555,
+    "SOURCE_ROOT_INVALID",
+  );
+  const outputRoot = anchorDirectory(
+    values["--output-root"],
+    0o700,
+    "OUTPUT_ROOT_INVALID",
+  );
+  const buildToolchainRoot = anchorDirectory(
+    values["--build-toolchain-root"],
+    0o555,
+    "BUILD_TOOLCHAIN_ROOT_INVALID",
+  );
+  const typescriptEntry = anchorFile(
+    path.join(
+      buildToolchainRoot.path,
+      "typescript",
+      "bin",
+      "tsc",
+    ),
+    "TYPESCRIPT_ENTRY_INVALID",
+  );
+  if ((typescriptEntry.mode & 0o7777) !== 0o555) {
+    fail(
+      "TYPESCRIPT_ENTRY_INVALID",
+      "Authenticated TypeScript entry must be mode 0555",
+    );
   }
   return Object.freeze({
-    sourceRoot: anchorDirectory(
-      values["--source-root"],
-      0o555,
-      "SOURCE_ROOT_INVALID",
-    ),
-    outputRoot: anchorDirectory(
-      values["--output-root"],
-      0o700,
-      "OUTPUT_ROOT_INVALID",
-    ),
-    typescriptEntry: anchorFile(
-      values["--typescript-entry"],
-      "TYPESCRIPT_ENTRY_INVALID",
-    ),
+    sourceRoot,
+    outputRoot,
+    buildToolchainRoot,
+    buildToolchainHash: values["--build-toolchain-hash"],
+    typescriptEntry,
     sourceSha: values["--source-sha"],
     sourceDateEpoch: values["--source-date-epoch"],
   });
@@ -183,6 +211,7 @@ function anchorFile(value, code) {
       path: real,
       dev: stat.dev,
       ino: stat.ino,
+      mode: stat.mode,
       size: stat.size,
       hash: hashDescriptor(descriptor),
     });
@@ -326,7 +355,11 @@ function sourceFingerprint(root) {
     const names = readdirSync(absolute).sort();
     for (const name of names) {
       const childRelative = relative ? `${relative}/${name}` : name;
-      if (!portableRelative(childRelative)) {
+      if (
+        !portableRelative(childRelative)
+        || name.toLowerCase() === ".git"
+        || name.toLowerCase() === "node_modules"
+      ) {
         fail("SOURCE_TREE_INVALID", `${childRelative} is not portable`);
       }
       const child = path.join(absolute, name);
@@ -417,6 +450,209 @@ function sourceFingerprint(root) {
       }))
       .digest("hex"),
   });
+}
+
+function toolchainFingerprint(root) {
+  const entries = [];
+  const exactPaths = new Set();
+  const foldedPaths = new Set();
+  let fileCount = 0;
+  let directoryCount = 0;
+  let totalBytes = 0;
+
+  function registerPath(relative) {
+    const folded = relative.toLowerCase();
+    if (exactPaths.has(relative) || foldedPaths.has(folded)) {
+      fail(
+        "BUILD_TOOLCHAIN_TREE_INVALID",
+        `${relative} collides in the build toolchain tree`,
+      );
+    }
+    exactPaths.add(relative);
+    foldedPaths.add(folded);
+  }
+
+  function visit(absolute, relative) {
+    const before = lstatSync(absolute);
+    if (before.isSymbolicLink() || !before.isDirectory()) {
+      fail(
+        "BUILD_TOOLCHAIN_TREE_INVALID",
+        `${relative || "."} is not a real toolchain directory`,
+      );
+    }
+    if ((before.mode & 0o7777) !== 0o555) {
+      fail(
+        "BUILD_TOOLCHAIN_TREE_INVALID",
+        `${relative || "."} is not mode 0555`,
+      );
+    }
+    const names = readdirSync(absolute).sort();
+    for (const name of names) {
+      const childRelative = relative ? `${relative}/${name}` : name;
+      if (
+        !portableRelative(childRelative)
+        || name === ".bin"
+        || name === ".package-lock.json"
+      ) {
+        fail(
+          "BUILD_TOOLCHAIN_TREE_INVALID",
+          `${childRelative} is not an admitted toolchain locator`,
+        );
+      }
+      registerPath(childRelative);
+      const child = path.join(absolute, name);
+      const stat = lstatSync(child);
+      if (stat.isSymbolicLink()) {
+        fail(
+          "BUILD_TOOLCHAIN_TREE_INVALID",
+          `${childRelative} is a symbolic link`,
+        );
+      }
+      if (stat.isDirectory()) {
+        directoryCount += 1;
+        if (directoryCount > MAX_TOOLCHAIN_DIRECTORIES) {
+          fail(
+            "BUILD_TOOLCHAIN_TREE_INVALID",
+            "Build toolchain directory limit exceeded",
+          );
+        }
+        entries.push({
+          path: childRelative,
+          type: "directory",
+          mode: "0555",
+        });
+        visit(child, childRelative);
+        continue;
+      }
+      if (
+        !stat.isFile()
+        || stat.nlink !== 1
+        || ![0o444, 0o555].includes(stat.mode & 0o7777)
+        || stat.size < 0
+        || stat.size > MAX_TOOLCHAIN_FILE_BYTES
+      ) {
+        fail(
+          "BUILD_TOOLCHAIN_TREE_INVALID",
+          `${childRelative} is not a canonical toolchain file`,
+        );
+      }
+      fileCount += 1;
+      totalBytes += stat.size;
+      if (
+        fileCount > MAX_TOOLCHAIN_FILES
+        || totalBytes > MAX_TOOLCHAIN_TOTAL_BYTES
+      ) {
+        fail(
+          "BUILD_TOOLCHAIN_TREE_INVALID",
+          "Build toolchain file or byte limit exceeded",
+        );
+      }
+      const bytes = readStableFile(
+        child,
+        stat,
+        "BUILD_TOOLCHAIN_TREE_CHANGED",
+      );
+      const after = lstatSync(child);
+      if (
+        after.dev !== stat.dev
+        || after.ino !== stat.ino
+        || after.size !== stat.size
+        || after.mode !== stat.mode
+        || after.mtimeMs !== stat.mtimeMs
+        || after.ctimeMs !== stat.ctimeMs
+      ) {
+        fail(
+          "BUILD_TOOLCHAIN_TREE_CHANGED",
+          `${childRelative} changed during hashing`,
+        );
+      }
+      const executable = (stat.mode & 0o7777) === 0o555;
+      entries.push({
+        path: childRelative,
+        type: "file",
+        mode: executable ? "0555" : "0444",
+        executable,
+        byteLength: bytes.byteLength,
+        contentHash: createHash("sha256").update(bytes).digest("hex"),
+      });
+    }
+    const afterNames = readdirSync(absolute).sort();
+    const after = lstatSync(absolute);
+    if (
+      JSON.stringify(names) !== JSON.stringify(afterNames)
+      || before.dev !== after.dev
+      || before.ino !== after.ino
+      || before.mode !== after.mode
+      || before.mtimeMs !== after.mtimeMs
+      || before.ctimeMs !== after.ctimeMs
+    ) {
+      fail(
+        "BUILD_TOOLCHAIN_TREE_CHANGED",
+        `${relative || "."} changed during traversal`,
+      );
+    }
+  }
+
+  visit(root.path, "");
+  if (
+    !exactPaths.has("typescript")
+    || !exactPaths.has("typescript/bin")
+    || !exactPaths.has("typescript/bin/tsc")
+  ) {
+    fail(
+      "BUILD_TOOLCHAIN_TREE_INVALID",
+      "Build toolchain lacks the exact TypeScript compiler locator",
+    );
+  }
+  return Object.freeze({
+    fileCount,
+    directoryCount,
+    totalBytes,
+    treeHash: createHash("sha256")
+      .update(canonicalJson({
+        schema: "setfarm.canonical-runtime-tree-content.v2",
+        profile: "dependencies",
+        rootMode: "0555",
+        entries,
+        fileCount,
+        directoryCount,
+        totalBytes,
+      }))
+      .digest("hex"),
+  });
+}
+
+function assertBuildContext(input) {
+  const contextRoot = path.dirname(input.sourceRoot.path);
+  if (
+    path.basename(input.sourceRoot.path) !== "source"
+    || path.basename(input.buildToolchainRoot.path) !== "node_modules"
+    || path.dirname(input.buildToolchainRoot.path) !== contextRoot
+  ) {
+    fail(
+      "BUILD_CONTEXT_INVALID",
+      "Source and build toolchain must be exact siblings in one private context",
+    );
+  }
+  const context = anchorDirectory(
+    contextRoot,
+    0o700,
+    "BUILD_CONTEXT_INVALID",
+  );
+  if (
+    readdirSync(context.path).sort().join("\0") !== "node_modules\0source"
+    || input.sourceRoot.dev === input.buildToolchainRoot.dev
+      && input.sourceRoot.ino === input.buildToolchainRoot.ino
+    || input.outputRoot.path === context.path
+    || input.outputRoot.path.startsWith(`${context.path}${path.sep}`)
+    || context.path.startsWith(`${input.outputRoot.path}${path.sep}`)
+  ) {
+    fail(
+      "BUILD_CONTEXT_INVALID",
+      "Build context topology is not the exact isolated source/toolchain pair",
+    );
+  }
+  return context;
 }
 
 function createDirectory(absolute) {
@@ -636,6 +872,7 @@ function runTypeScript(input, distRoot) {
       .slice(0, 1_000)
       .replaceAll(input.sourceRoot.path, "<SOURCE_ROOT>")
       .replaceAll(input.outputRoot.path, "<OUTPUT_ROOT>")
+      .replaceAll(input.buildToolchainRoot.path, "<BUILD_TOOLCHAIN_ROOT>")
       .replaceAll(input.typescriptEntry.path, "<TYPESCRIPT_ENTRY>");
     fail(
       "TYPESCRIPT_BUILD_FAILED",
@@ -733,6 +970,7 @@ function fsyncDirectory(absolute) {
 
 function execute() {
   const input = parseArguments(process.argv.slice(2));
+  const buildContext = assertBuildContext(input);
   if (
     input.sourceRoot.path === input.outputRoot.path
     || (
@@ -741,11 +979,24 @@ function execute() {
     )
     || input.outputRoot.path.startsWith(`${input.sourceRoot.path}${path.sep}`)
     || input.sourceRoot.path.startsWith(`${input.outputRoot.path}${path.sep}`)
+    || input.outputRoot.path.startsWith(
+      `${input.buildToolchainRoot.path}${path.sep}`,
+    )
+    || input.buildToolchainRoot.path.startsWith(
+      `${input.outputRoot.path}${path.sep}`,
+    )
   ) {
     fail("ROOTS_OVERLAP", "Source and output roots must be disjoint");
   }
   assertEmptyOutput(input.outputRoot);
   const sourceBefore = sourceFingerprint(input.sourceRoot);
+  const toolchainBefore = toolchainFingerprint(input.buildToolchainRoot);
+  if (toolchainBefore.treeHash !== input.buildToolchainHash) {
+    fail(
+      "BUILD_TOOLCHAIN_HASH_MISMATCH",
+      "Build toolchain tree differs from the authenticated capsule hash",
+    );
+  }
   const payloadRoot = path.join(input.outputRoot.path, "payload");
   const distRoot = path.join(payloadRoot, "dist");
   mkdirSync(payloadRoot, { mode: 0o700 });
@@ -797,12 +1048,22 @@ function execute() {
   fsyncDirectory(payloadRoot);
   fsyncDirectory(input.outputRoot.path);
   assertDirectoryAnchor(input.sourceRoot, "SOURCE_ROOT_CHANGED");
+  assertDirectoryAnchor(
+    input.buildToolchainRoot,
+    "BUILD_TOOLCHAIN_ROOT_CHANGED",
+  );
+  assertDirectoryAnchor(buildContext, "BUILD_CONTEXT_CHANGED");
   assertDirectoryAnchor(input.outputRoot, "OUTPUT_ROOT_CHANGED");
   assertDirectoryAnchor(payloadAnchor, "OUTPUT_TREE_CHANGED");
   const sourceAfter = sourceFingerprint(input.sourceRoot);
+  const toolchainAfter = toolchainFingerprint(input.buildToolchainRoot);
   assertFileAnchor(input.typescriptEntry);
   if (
     canonicalJson(sourceBefore) !== canonicalJson(sourceAfter)
+    || canonicalJson(toolchainBefore) !== canonicalJson(toolchainAfter)
+    || toolchainAfter.treeHash !== input.buildToolchainHash
+    || readdirSync(buildContext.path).sort().join("\0")
+      !== "node_modules\0source"
     || readdirSync(input.outputRoot.path).join("\0") !== "payload"
     || readdirSync(payloadRoot).sort().join("\0") !== "dist\0package.json"
   ) {
@@ -820,6 +1081,10 @@ function execute() {
     sourceTotalBytes: sourceAfter.totalBytes,
     sourceSha: input.sourceSha,
     sourceDateEpoch: input.sourceDateEpoch,
+    buildToolchainTreeHash: toolchainAfter.treeHash,
+    buildToolchainFileCount: toolchainAfter.fileCount,
+    buildToolchainDirectoryCount: toolchainAfter.directoryCount,
+    buildToolchainTotalBytes: toolchainAfter.totalBytes,
     compilerEntryHash: input.typescriptEntry.hash,
     platformFileCount: output.fileCount,
     platformDirectoryCount: output.directoryCount,

@@ -175,7 +175,10 @@ type PlatformReleaseManifestV2 = {
       version: string;
       executable: ExactExternalExecutableRefV2;
       packageTreeHash: Sha256;
+      buildInstallRecipeHash: Sha256;
     };
+    buildToolchainReceipt: PlatformReleaseBuildToolchainReceiptV2;
+    buildToolchainReceiptHash: Sha256;
     sourceStage: {
       method: "verified_git_tree_export.v2";
       exportedTreeHash: GitObjectHash;
@@ -261,6 +264,24 @@ separate from a later authenticated build-toolchain sibling. TypeScript package
 resolution must use only that sibling; a source stage placed beneath the live
 checkout or any other ambient `node_modules` ancestor is invalid even if two
 build outputs happen to match.
+
+`PlatformReleaseBuildToolchainReceiptV2` is the complete build-time dependency
+authority, not a compiler-file hash. It embeds the exact host Node/npm receipt,
+the committed package/lock/config refs, the code-owned `npm ci --include=dev
+--ignore-scripts --no-audit --no-fund` recipe and sealed-environment process
+evidence, every-and-only lock/package/bin observation, the normalized
+symlink-free canonical dependency tree, and stable physical root identity.
+Generated npm hidden locks and exact lock-declared `.bin` links are verified and
+then removed before the capsule is made read-only. The final build context has
+exactly `source` and `node_modules`; the latter is the authenticated capsule.
+
+`BUILD_PLATFORM_RELEASE_V2` accepts the exact source root, output root,
+build-toolchain root/hash, admitted source SHA and Git epoch. It derives
+`node_modules/typescript/bin/tsc` from the capsule; no caller-supplied compiler
+path exists. The command requires source and `node_modules` to be the exact two
+siblings of one private `0700` context, captures both trees before and after
+execution, joins the capsule's canonical tree hash/counts/bytes, and rejects
+ambient or detached `node_modules` ancestry.
 
 Each `PlatformReleaseBuildReceiptV2` binds the exact exported source tree and
 its file/directory/byte counts, compiler/npm/executable identities,
@@ -1062,9 +1083,11 @@ into an existing `dist`:
    exact authenticated build toolchain as the context's only sibling, then
    create two independent empty output stages with mode `0700`;
 3. run a new side-effect-free `BUILD_PLATFORM_RELEASE_V2` command from the
-   verified source stage with an explicit output root; it may write only each
-   stage's `payload/dist`, and copies exact committed `package.json` without
-   invoking source-mutating V1 version injection;
+   verified source stage with explicit output and authenticated sibling
+   toolchain roots/hashes; derive TypeScript only from
+   `node_modules/typescript/bin/tsc`, re-capture source and toolchain before and
+   after, write only each stage's `payload/dist`, and copy exact committed
+   `package.json` without invoking source-mutating V1 version injection;
 4. materialize exact production dependencies independently into each
    `payload/node_modules` using the code-owned npm recipe (`ci --omit=dev
    --ignore-scripts --no-audit --no-fund` plus an exact config hash), remove

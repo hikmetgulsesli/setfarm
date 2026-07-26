@@ -28,6 +28,9 @@ import {
   withPlatformReleaseSourceStageForTestV2,
 } from
   "../../src/execution/platform-release-source-admission-v2.js";
+import {
+  captureCanonicalRuntimeTreeV2ForTest,
+} from "../../src/execution/canonical-runtime-tree-v2.js";
 
 const GIT = "/usr/bin/git";
 
@@ -390,22 +393,6 @@ describe("Platform release source admission V2", () => {
       );
       runGit(fixture.repository, ["push", "origin", "main"]);
 
-      const compiler = path.join(fixture.root, "fixture-compiler.mjs");
-      writeFileSync(
-        compiler,
-        [
-          "import { mkdirSync, writeFileSync } from \"node:fs\";",
-          "import path from \"node:path\";",
-          "const args = process.argv.slice(2);",
-          "const outIndex = args.indexOf(\"--outDir\");",
-          "if (outIndex < 0) process.exit(2);",
-          "const out = args[outIndex + 1];",
-          "mkdirSync(path.join(out, \"cli\"), { recursive: true });",
-          "writeFileSync(path.join(out, \"cli\", \"cli.js\"), \"#!/usr/bin/env node\\n\");",
-          "",
-        ].join("\n"),
-      );
-      chmodSync(compiler, 0o444);
       const output = path.join(fixture.root, "build-output");
       mkdirSync(output, { mode: 0o700 });
 
@@ -418,6 +405,53 @@ describe("Platform release source admission V2", () => {
       const buildResult = withPlatformReleaseSourceStageForTestV2(
         handle,
         (sourceRoot) => {
+          const toolchainRoot = path.join(
+            path.dirname(sourceRoot),
+            "node_modules",
+          );
+          const compiler = path.join(
+            toolchainRoot,
+            "typescript",
+            "bin",
+            "tsc",
+          );
+          mkdirSync(path.dirname(compiler), { recursive: true });
+          writeFileSync(
+            compiler,
+            [
+              "import { mkdirSync, writeFileSync } from \"node:fs\";",
+              "import path from \"node:path\";",
+              "const args = process.argv.slice(2);",
+              "const outIndex = args.indexOf(\"--outDir\");",
+              "if (outIndex < 0) process.exit(2);",
+              "const out = args[outIndex + 1];",
+              "mkdirSync(path.join(out, \"cli\"), { recursive: true });",
+              "writeFileSync(path.join(out, \"cli\", \"cli.js\"), \"#!/usr/bin/env node\\n\");",
+              "",
+            ].join("\n"),
+          );
+          writeFileSync(
+            path.join(toolchainRoot, "typescript", "package.json"),
+            "{\"name\":\"typescript\",\"version\":\"5.9.3\"}\n",
+          );
+          const normalize = (absolute: string): void => {
+            const stat = lstatSync(absolute);
+            if (stat.isDirectory()) {
+              for (const name of readdirSync(absolute)) {
+                normalize(path.join(absolute, name));
+              }
+              chmodSync(absolute, 0o555);
+            } else {
+              chmodSync(absolute, absolute === compiler ? 0o555 : 0o444);
+            }
+          };
+          normalize(toolchainRoot);
+          const toolchain =
+            captureCanonicalRuntimeTreeV2ForTest({
+              root: toolchainRoot,
+              profile: "dependencies",
+              metadataProbe: () => ({ status: "clear" }),
+            });
           const result = spawnSync(process.execPath, [
             realpathSync(path.resolve(
               "scripts/build-platform-release-v2.mjs",
@@ -426,8 +460,10 @@ describe("Platform release source admission V2", () => {
             sourceRoot,
             "--output-root",
             realpathSync(output),
-            "--typescript-entry",
-            realpathSync(compiler),
+            "--build-toolchain-root",
+            realpathSync(toolchainRoot),
+            "--build-toolchain-hash",
+            toolchain.treeHash,
             "--source-sha",
             evidence.admittedSource.sha,
             "--source-date-epoch",

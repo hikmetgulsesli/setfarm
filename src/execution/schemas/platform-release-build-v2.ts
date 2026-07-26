@@ -25,6 +25,13 @@ import {
 import {
   PlatformRuntimePayloadCandidateV2Schema,
 } from "./platform-runtime-payload-v2.js";
+import {
+  CANONICAL_RUNTIME_TREE_V2_PROFILES,
+  CANONICAL_RUNTIME_TREE_V2_SCHEMA,
+} from "./canonical-runtime-tree-v2.js";
+import {
+  HostNodeToolchainReceiptV2Schema,
+} from "../../product-compiler/schemas/host-node-toolchain-receipt-v2.js";
 
 export const EXACT_PLATFORM_RELEASE_SOURCE_REF_V2_SCHEMA =
   "setfarm.exact-platform-release-source-ref.v2" as const;
@@ -40,11 +47,21 @@ export const EXACT_LEGACY_STITCH_CONVERTER_REF_V2_SCHEMA =
   "setfarm.exact-legacy-stitch-converter-ref.v2" as const;
 export const PLATFORM_RELEASE_BUILD_COMMAND_RESULT_V2_SCHEMA =
   "setfarm.build-platform-release-command-result.v2" as const;
+export const PLATFORM_RELEASE_BUILD_TOOLCHAIN_TREE_BINDING_V2_SCHEMA =
+  "setfarm.platform-release-build-toolchain-tree-binding.v2" as const;
+export const PLATFORM_RELEASE_BUILD_TOOLCHAIN_PHYSICAL_IDENTITY_V2_SCHEMA =
+  "setfarm.platform-release-build-toolchain-physical-identity.v2" as const;
+export const PLATFORM_RELEASE_BUILD_TOOLCHAIN_INSTALL_RECIPE_V2_SCHEMA =
+  "setfarm.platform-release-build-toolchain-install-recipe.v2" as const;
+export const PLATFORM_RELEASE_BUILD_TOOLCHAIN_RECEIPT_V2_SCHEMA =
+  "setfarm.platform-release-build-toolchain-receipt.v2" as const;
 
 export const PLATFORM_RELEASE_BUILD_CONTRACT_VERSION_V2 = "2.0.0" as const;
 export const PLATFORM_RELEASE_SOURCE_ADMISSION_MAX_CANONICAL_BYTES_V2 =
   128 * 1024;
 export const PLATFORM_RELEASE_BUILD_RECEIPT_MAX_CANONICAL_BYTES_V2 =
+  256 * 1024;
+export const PLATFORM_RELEASE_BUILD_TOOLCHAIN_RECEIPT_MAX_CANONICAL_BYTES_V2 =
   256 * 1024;
 export const PLATFORM_RELEASE_SOURCE_FILE_MAX_BYTES_V2 = 16 * 1024 * 1024;
 export const PLATFORM_RELEASE_BUILD_MODULE_MAX_BYTES_V2 = 64 * 1024 * 1024;
@@ -130,7 +147,13 @@ export const PLATFORM_RELEASE_BUILD_CONTRACT_V2 = Object.freeze({
   reproducibility: "double_clean_build_exact_tree_match" as const,
   clockInput: "exact_git_commit_epoch_only" as const,
   sourceIdentityInput: "exact_admitted_git_sha" as const,
-  compilerEntryInput: "authenticated_external_typescript_entry" as const,
+  buildToolchainInput:
+    "authenticated_read_only_node_modules_sibling_capsule" as const,
+  buildToolchainTreeAuthority:
+    "canonical_runtime_dependencies_tree_v2" as const,
+  compilerEntryDerivation:
+    "exact_toolchain_locator_typescript_bin_tsc" as const,
+  ambientNodeModulesResolution: "forbidden" as const,
   forbiddenPayloadInputs: [
     "absolute_path",
     "pid",
@@ -639,11 +662,348 @@ export const PlatformReleasePackageManagerIdentityV2Schema = z.object({
   executableRef: PlatformReleaseStableReferenceV2Schema,
   executableHash: Sha256Schema,
   packageTreeHash: Sha256Schema,
-  installRecipeHash: Sha256Schema,
+  buildInstallRecipeHash: Sha256Schema,
 }).strict();
 
 export type PlatformReleasePackageManagerIdentityV2 = z.infer<
   typeof PlatformReleasePackageManagerIdentityV2Schema
+>;
+
+const PlatformReleaseBuildToolchainTreeBindingIdentityV2Schema = z.object({
+  schema: z.literal(
+    PLATFORM_RELEASE_BUILD_TOOLCHAIN_TREE_BINDING_V2_SCHEMA,
+  ),
+  treeSchema: z.literal(CANONICAL_RUNTIME_TREE_V2_SCHEMA),
+  profile: z.literal("dependencies"),
+  rootLocator: z.literal("node_modules"),
+  treeHash: Sha256Schema,
+  treePayloadHash: Sha256Schema,
+  fileCount: z.number().int().positive(),
+  directoryCount: z.number().int().positive(),
+  totalBytes: z.number().int().positive(),
+  inputMembershipHash: Sha256Schema,
+  packageCount: z.number().int().positive().max(100_000),
+  installedPackageMembershipHash: Sha256Schema,
+}).strict();
+
+export type PlatformReleaseBuildToolchainTreeBindingHashPayloadV2 = z.infer<
+  typeof PlatformReleaseBuildToolchainTreeBindingIdentityV2Schema
+>;
+
+export function hashPlatformReleaseBuildToolchainTreeBindingV2(
+  value:
+    | PlatformReleaseBuildToolchainTreeBindingHashPayloadV2
+    | PlatformReleaseBuildToolchainTreeBindingV2,
+): string {
+  const binding = { ...value } as Record<string, unknown>;
+  delete binding.bindingHash;
+  return hashCanonicalJson({
+    schema:
+      "setfarm.platform-release-build-toolchain-tree-binding-hash.v2",
+    binding,
+  });
+}
+
+export const PlatformReleaseBuildToolchainTreeBindingV2Schema =
+  PlatformReleaseBuildToolchainTreeBindingIdentityV2Schema.safeExtend({
+    bindingHash: Sha256Schema,
+  }).strict().superRefine((value, context) => {
+    const limits = CANONICAL_RUNTIME_TREE_V2_PROFILES.dependencies;
+    if (
+      value.fileCount > limits.maxFiles
+      || value.directoryCount > limits.maxDirectories
+      || value.totalBytes > limits.maxTotalBytes
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "Build toolchain tree exceeds dependency-profile limits",
+      });
+    }
+    if (
+      value.bindingHash
+        !== hashPlatformReleaseBuildToolchainTreeBindingV2(value)
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["bindingHash"],
+        message: "Build toolchain tree binding hash mismatch",
+      });
+    }
+  });
+
+export type PlatformReleaseBuildToolchainTreeBindingV2 = z.infer<
+  typeof PlatformReleaseBuildToolchainTreeBindingV2Schema
+>;
+
+const PlatformReleaseBuildToolchainPhysicalIdentityPayloadV2Schema =
+  z.object({
+    schema: z.literal(
+      PLATFORM_RELEASE_BUILD_TOOLCHAIN_PHYSICAL_IDENTITY_V2_SCHEMA,
+    ),
+    device: z.string().min(1).max(32)
+      .regex(/^(?:0|[1-9][0-9]*)$/),
+    inode: z.string().min(1).max(32)
+      .regex(/^(?:0|[1-9][0-9]*)$/),
+    ownerUid: z.number().int().nonnegative().max(4_294_967_294),
+    ownerGid: z.number().int().nonnegative().max(4_294_967_294),
+    mode: z.literal("0555"),
+    buildContextPolicy: z.literal(
+      "private_0700_parent_source_child_and_authenticated_toolchain_sibling_v2",
+    ),
+    toolchainBindingHash: Sha256Schema,
+    identityHash: Sha256Schema,
+  }).strict();
+
+export function hashPlatformReleaseBuildToolchainPhysicalIdentityV2(
+  value: z.infer<
+    typeof PlatformReleaseBuildToolchainPhysicalIdentityPayloadV2Schema
+  >,
+): string {
+  const identity = { ...value } as Record<string, unknown>;
+  delete identity.identityHash;
+  return hashCanonicalJson({
+    schema:
+      "setfarm.platform-release-build-toolchain-physical-identity-hash.v2",
+    identity,
+  });
+}
+
+export const PlatformReleaseBuildToolchainPhysicalIdentityV2Schema =
+  PlatformReleaseBuildToolchainPhysicalIdentityPayloadV2Schema.superRefine(
+    (value, context) => {
+      if (
+        value.identityHash
+          !== hashPlatformReleaseBuildToolchainPhysicalIdentityV2(value)
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: ["identityHash"],
+          message: "Build toolchain physical identity hash mismatch",
+        });
+      }
+    },
+  );
+
+export type PlatformReleaseBuildToolchainPhysicalIdentityV2 = z.infer<
+  typeof PlatformReleaseBuildToolchainPhysicalIdentityV2Schema
+>;
+
+const PlatformReleaseBuildToolchainInstallRecipeIdentityV2Schema =
+  z.object({
+    schema: z.literal(
+      PLATFORM_RELEASE_BUILD_TOOLCHAIN_INSTALL_RECIPE_V2_SCHEMA,
+    ),
+    commandRef: z.literal(
+      "MATERIALIZE_PLATFORM_BUILD_TOOLCHAIN_V2",
+    ),
+    directArgv: z.tuple([
+      z.literal("npm"),
+      z.literal("ci"),
+      z.literal("--include=dev"),
+      z.literal("--ignore-scripts"),
+      z.literal("--no-audit"),
+      z.literal("--no-fund"),
+    ]),
+    dependencySelection: z.literal(
+      "production_and_dev_from_exact_lock",
+    ),
+    lifecycleScripts: z.literal("forbidden"),
+    ambientEnvironment: z.literal("forbidden"),
+    generatedNpmMetadata: z.literal(
+      "verified_then_removed_before_capsule_capture",
+    ),
+    symbolicLinks: z.literal(
+      "exact_lock_declared_bins_verified_then_removed",
+    ),
+    outputNormalization: z.literal(
+      "every_file_0444_or_0555_every_directory_0555",
+    ),
+    configHash: Sha256Schema,
+  }).strict();
+
+export type PlatformReleaseBuildToolchainInstallRecipeHashPayloadV2 =
+  z.infer<
+    typeof PlatformReleaseBuildToolchainInstallRecipeIdentityV2Schema
+  >;
+
+export function hashPlatformReleaseBuildToolchainInstallRecipeV2(
+  value:
+    | PlatformReleaseBuildToolchainInstallRecipeHashPayloadV2
+    | PlatformReleaseBuildToolchainInstallRecipeV2,
+): string {
+  const recipe = { ...value } as Record<string, unknown>;
+  delete recipe.recipeHash;
+  return hashCanonicalJson({
+    schema:
+      "setfarm.platform-release-build-toolchain-install-recipe-hash.v2",
+    recipe,
+  });
+}
+
+export const PlatformReleaseBuildToolchainInstallRecipeV2Schema =
+  PlatformReleaseBuildToolchainInstallRecipeIdentityV2Schema.safeExtend({
+    recipeHash: Sha256Schema,
+  }).strict().superRefine((value, context) => {
+    if (
+      value.recipeHash
+        !== hashPlatformReleaseBuildToolchainInstallRecipeV2(value)
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["recipeHash"],
+        message: "Build toolchain install recipe hash mismatch",
+      });
+    }
+  });
+
+export type PlatformReleaseBuildToolchainInstallRecipeV2 = z.infer<
+  typeof PlatformReleaseBuildToolchainInstallRecipeV2Schema
+>;
+
+const PlatformReleaseBuildToolchainProcessEvidenceV2Schema = z.object({
+  hostToolchainReceiptHash: Sha256Schema,
+  environmentHash: Sha256Schema,
+  projectScopeHash: Sha256Schema,
+  recipeHash: Sha256Schema,
+  directArgvHash: Sha256Schema,
+  stdin: z.literal("closed"),
+  inheritAmbientEnvironment: z.literal(false),
+  shell: z.literal("forbidden"),
+  termination: z.literal("normal_exit"),
+  exitCode: z.literal(0),
+  signal: z.null(),
+  stdoutContentHash: Sha256Schema,
+  stdoutByteLength: z.number().int().nonnegative().max(64 * 1024),
+  stderrContentHash: Sha256Schema,
+  stderrByteLength: z.number().int().nonnegative().max(64 * 1024),
+}).strict();
+
+const PlatformReleaseBuildToolchainReceiptIdentityV2Schema = z.object({
+  schema: z.literal(
+    PLATFORM_RELEASE_BUILD_TOOLCHAIN_RECEIPT_V2_SCHEMA,
+  ),
+  version: z.literal(PLATFORM_RELEASE_COMPONENT_VERSION_V2),
+  authorityState: z.literal(
+    "candidate_build_toolchain_materialization_unverified",
+  ),
+  productionUse: z.literal(
+    "forbidden_until_fresh_context_and_double_build_verification",
+  ),
+  sourceAdmissionReceiptHash: Sha256Schema,
+  inputs: PlatformReleaseSourceInputsV2Schema,
+  inputMembershipHash: Sha256Schema,
+  placement: z.object({
+    buildContextPolicy: z.literal(
+      "private_0700_parent_source_child_and_authenticated_toolchain_sibling_v2",
+    ),
+    parentMode: z.literal("0700"),
+    rootLocator: z.literal("node_modules"),
+    rootMode: z.literal("0555"),
+    allowedFinalContextEntries: z.tuple([
+      z.literal("node_modules"),
+      z.literal("source"),
+    ]),
+    temporaryLocatorDisclosure: z.literal("forbidden"),
+  }).strict(),
+  hostToolchain: HostNodeToolchainReceiptV2Schema,
+  packageManager: PlatformReleasePackageManagerIdentityV2Schema,
+  compiler: PlatformReleaseCompilerIdentityV2Schema,
+  installRecipe: PlatformReleaseBuildToolchainInstallRecipeV2Schema,
+  process: PlatformReleaseBuildToolchainProcessEvidenceV2Schema,
+  tree: PlatformReleaseBuildToolchainTreeBindingV2Schema,
+  physicalBefore:
+    PlatformReleaseBuildToolchainPhysicalIdentityV2Schema,
+  physicalAfter:
+    PlatformReleaseBuildToolchainPhysicalIdentityV2Schema,
+}).strict().superRefine((value, context) => {
+  const expectedMembershipHash = hashCanonicalJson({
+    schema: "setfarm.platform-release-source-input-membership.v2",
+    entries: value.inputs.map((entry) => ({
+      role: entry.role,
+      locator: entry.locator,
+      sourceRefHash: entry.sourceRefHash,
+    })),
+  });
+  const directArgvHash = hashCanonicalJson({
+    schema:
+      "setfarm.platform-release-build-toolchain-direct-argv-hash.v2",
+    directArgv: value.installRecipe.directArgv,
+  });
+  if (
+    value.inputMembershipHash !== expectedMembershipHash
+    || value.tree.inputMembershipHash !== expectedMembershipHash
+    || value.process.hostToolchainReceiptHash
+      !== value.hostToolchain.receiptHash
+    || value.packageManager.version !== value.hostToolchain.npm.version
+    || value.packageManager.executableHash
+      !== value.hostToolchain.npm.cli.contentHash
+    || value.packageManager.packageTreeHash
+      !== value.hostToolchain.npm.packageTree.normalizedTreeHash
+    || value.packageManager.buildInstallRecipeHash
+      !== value.installRecipe.recipeHash
+    || value.process.recipeHash !== value.installRecipe.recipeHash
+    || value.process.directArgvHash !== directArgvHash
+    || value.physicalBefore.toolchainBindingHash
+      !== value.tree.bindingHash
+    || value.physicalAfter.toolchainBindingHash
+      !== value.tree.bindingHash
+    || canonicalJsonStringify(value.physicalBefore)
+      !== canonicalJsonStringify(value.physicalAfter)
+  ) {
+    context.addIssue({
+      code: "custom",
+      message:
+        "Build toolchain receipt must close exact inputs, recipe, tree and stable physical identity",
+    });
+  }
+});
+
+export type PlatformReleaseBuildToolchainReceiptHashPayloadV2 = z.infer<
+  typeof PlatformReleaseBuildToolchainReceiptIdentityV2Schema
+>;
+
+export function hashPlatformReleaseBuildToolchainReceiptV2(
+  value:
+    | PlatformReleaseBuildToolchainReceiptHashPayloadV2
+    | PlatformReleaseBuildToolchainReceiptV2,
+): string {
+  const receipt = { ...value } as Record<string, unknown>;
+  delete receipt.receiptHash;
+  return hashCanonicalJson({
+    schema:
+      "setfarm.platform-release-build-toolchain-receipt-hash.v2",
+    receipt,
+  });
+}
+
+export const PlatformReleaseBuildToolchainReceiptV2Schema =
+  PlatformReleaseBuildToolchainReceiptIdentityV2Schema.safeExtend({
+    receiptHash: Sha256Schema,
+  }).strict().superRefine((value, context) => {
+    if (!platformReleaseCandidateFitsCanonicalCapV2(
+      value,
+      PLATFORM_RELEASE_BUILD_TOOLCHAIN_RECEIPT_MAX_CANONICAL_BYTES_V2,
+    )) {
+      context.addIssue({
+        code: "custom",
+        message: "Build toolchain receipt exceeds its canonical byte cap",
+      });
+      return;
+    }
+    if (
+      value.receiptHash
+        !== hashPlatformReleaseBuildToolchainReceiptV2(value)
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["receiptHash"],
+        message: "Build toolchain receipt hash mismatch",
+      });
+    }
+  });
+
+export type PlatformReleaseBuildToolchainReceiptV2 = z.infer<
+  typeof PlatformReleaseBuildToolchainReceiptV2Schema
 >;
 
 export const ExactLegacyStitchConverterRefV2Schema = z.object({
@@ -667,11 +1027,18 @@ const PlatformReleaseBuildStageV2Schema = z.object({
     "PLATFORM_RELEASE_BUILD_STAGE_SECOND_V2",
   ]),
   sourceStagePhysicalIdentityHash: Sha256Schema,
+  buildToolchainPhysicalIdentityHash: Sha256Schema,
   outputStagePhysicalIdentityHash: Sha256Schema,
   sourceBuildContextPolicy: z.literal(
     "private_0700_parent_source_child_and_authenticated_toolchain_sibling_v2",
   ),
   sourceStageMode: z.literal("0555"),
+  buildToolchainRootLocator: z.literal("node_modules"),
+  buildToolchainRootMode: z.literal("0555"),
+  finalBuildContextEntries: z.tuple([
+    z.literal("node_modules"),
+    z.literal("source"),
+  ]),
   outputStageInitialMode: z.literal("0700"),
   outputWasEmpty: z.literal(true),
   sourceAndOutputAreDistinct: z.literal(true),
@@ -680,10 +1047,15 @@ const PlatformReleaseBuildStageV2Schema = z.object({
   if (
     value.sourceStagePhysicalIdentityHash
       === value.outputStagePhysicalIdentityHash
+    || value.buildToolchainPhysicalIdentityHash
+      === value.outputStagePhysicalIdentityHash
+    || value.sourceStagePhysicalIdentityHash
+      === value.buildToolchainPhysicalIdentityHash
   ) {
     context.addIssue({
       code: "custom",
-      message: "Build source and output stages must be physically distinct",
+      message:
+        "Build source, toolchain and output stages must be physically distinct",
     });
   }
 });
@@ -701,8 +1073,10 @@ const PlatformReleaseBuildCommandV2Schema = z.object({
     z.literal("<VERIFIED_SOURCE_STAGE>"),
     z.literal("--output-root"),
     z.literal("<EMPTY_OUTPUT_STAGE>"),
-    z.literal("--typescript-entry"),
-    z.literal("<AUTHENTICATED_TYPESCRIPT_ENTRY>"),
+    z.literal("--build-toolchain-root"),
+    z.literal("<AUTHENTICATED_BUILD_TOOLCHAIN_CAPSULE>"),
+    z.literal("--build-toolchain-hash"),
+    z.literal("<AUTHENTICATED_BUILD_TOOLCHAIN_TREE_HASH>"),
     z.literal("--source-sha"),
     z.literal("<ADMITTED_SOURCE_SHA>"),
     z.literal("--source-date-epoch"),
@@ -711,8 +1085,11 @@ const PlatformReleaseBuildCommandV2Schema = z.object({
   cwd: z.literal("verified_source_stage"),
   sourceRootPassing: z.literal("parameterized_exact_stage"),
   outputRootPassing: z.literal("parameterized_exact_empty_stage"),
-  compilerEntryPassing: z.literal(
-    "parameterized_authenticated_external_entry",
+  buildToolchainPassing: z.literal(
+    "parameterized_authenticated_sibling_capsule",
+  ),
+  compilerEntryDerivation: z.literal(
+    "build_toolchain_typescript_bin_tsc",
   ),
   sourceIdentityPassing: z.literal(
     "parameterized_exact_admitted_sha",
@@ -735,6 +1112,13 @@ export const PlatformReleaseBuildCommandResultV2Schema = z.object({
     .max(PLATFORM_RELEASE_SOURCE_MAX_TOTAL_BYTES_V2),
   sourceSha: GitObjectHashSchema,
   sourceDateEpoch: CanonicalDecimalEpochV2Schema,
+  buildToolchainTreeHash: Sha256Schema,
+  buildToolchainFileCount: z.number().int().positive()
+    .max(CANONICAL_RUNTIME_TREE_V2_PROFILES.dependencies.maxFiles),
+  buildToolchainDirectoryCount: z.number().int().positive()
+    .max(CANONICAL_RUNTIME_TREE_V2_PROFILES.dependencies.maxDirectories),
+  buildToolchainTotalBytes: z.number().int().positive()
+    .max(CANONICAL_RUNTIME_TREE_V2_PROFILES.dependencies.maxTotalBytes),
   compilerEntryHash: Sha256Schema,
   platformFileCount: z.number().int().positive().max(20_000),
   platformDirectoryCount: z.number().int().nonnegative().max(4_000),
@@ -832,7 +1216,9 @@ const PlatformReleaseBuildReceiptIdentityV2Schema = z.object({
     "forbidden_until_double_build_and_fresh_release_verification",
   ),
   sourceAdmissionReceiptHash: Sha256Schema,
+  buildToolchainReceiptHash: Sha256Schema,
   source: PlatformReleaseSourceTreeBindingV2Schema,
+  buildToolchain: PlatformReleaseBuildToolchainTreeBindingV2Schema,
   stage: PlatformReleaseBuildStageV2Schema,
   inputs: PlatformReleaseSourceInputsV2Schema,
   compiler: PlatformReleaseCompilerIdentityV2Schema,
@@ -852,6 +1238,14 @@ const PlatformReleaseBuildReceiptIdentityV2Schema = z.object({
     || result.sourceDirectoryCount
       !== value.source.exportedDirectoryCount
     || result.sourceTotalBytes !== value.source.exportedTotalBytes
+    || result.buildToolchainTreeHash
+      !== value.buildToolchain.treeHash
+    || result.buildToolchainFileCount
+      !== value.buildToolchain.fileCount
+    || result.buildToolchainDirectoryCount
+      !== value.buildToolchain.directoryCount
+    || result.buildToolchainTotalBytes
+      !== value.buildToolchain.totalBytes
     || result.platformFileCount
       !== value.output.runtimePayload.platformTree.fileCount
     || result.platformDirectoryCount
@@ -942,5 +1336,17 @@ export function parsePlatformReleaseBuildReceiptCandidateV2(
   );
   return deepFreezePlatformReleaseJsonV2(
     PlatformReleaseBuildReceiptV2Schema.parse(snapshot),
+  );
+}
+
+export function parsePlatformReleaseBuildToolchainReceiptCandidateV2(
+  input: unknown,
+): PlatformReleaseBuildToolchainReceiptV2 {
+  const snapshot = boundedPlatformReleaseJsonSnapshotV2(
+    input,
+    PLATFORM_RELEASE_BUILD_TOOLCHAIN_RECEIPT_MAX_CANONICAL_BYTES_V2,
+  );
+  return deepFreezePlatformReleaseJsonV2(
+    PlatformReleaseBuildToolchainReceiptV2Schema.parse(snapshot),
   );
 }

@@ -112,6 +112,10 @@ import {
   PLATFORM_RELEASE_BUILD_COMMAND_RESULT_V2_SCHEMA,
   PLATFORM_RELEASE_BUILD_CONTRACT_HASH_V2,
   PLATFORM_RELEASE_BUILD_RECEIPT_V2_SCHEMA,
+  PLATFORM_RELEASE_BUILD_TOOLCHAIN_INSTALL_RECIPE_V2_SCHEMA,
+  PLATFORM_RELEASE_BUILD_TOOLCHAIN_PHYSICAL_IDENTITY_V2_SCHEMA,
+  PLATFORM_RELEASE_BUILD_TOOLCHAIN_RECEIPT_V2_SCHEMA,
+  PLATFORM_RELEASE_BUILD_TOOLCHAIN_TREE_BINDING_V2_SCHEMA,
   PLATFORM_RELEASE_EMPTY_GIT_STATUS_CONTENT_HASH_V2,
   PLATFORM_RELEASE_SOURCE_ADMISSION_CONTRACT_HASH_V2,
   PLATFORM_RELEASE_SOURCE_GIT_COMMAND_CONTRACT_HASH_V2,
@@ -122,11 +126,33 @@ import {
   SOURCE_ADMISSION_RECEIPT_V2_SCHEMA,
   hashExactPlatformReleaseSourceRefV2,
   hashPlatformReleaseBuildReceiptV2,
+  hashPlatformReleaseBuildToolchainInstallRecipeV2,
+  hashPlatformReleaseBuildToolchainPhysicalIdentityV2,
+  hashPlatformReleaseBuildToolchainReceiptV2,
+  hashPlatformReleaseBuildToolchainTreeBindingV2,
   hashPlatformReleaseSourceStagePhysicalIdentityV2,
   hashPlatformReleaseSourceTreeBindingV2,
   hashSourceAdmissionReceiptV2,
 } from
   "../../../src/execution/schemas/platform-release-build-v2.js";
+import {
+  HOST_NODE_EXECUTABLE_IDENTITY_V2_SCHEMA,
+  HOST_NODE_TOOLCHAIN_AUTHORITY_REF_V2,
+  HOST_NODE_TOOLCHAIN_RECEIPT_V2_SCHEMA,
+  HOST_NODE_TOOLCHAIN_RECEIPT_VERSION_V2,
+  HOST_NPM_PACKAGE_CLOSURE_V2_SCHEMA,
+  hashHostNodeDynamicLibraryClosureV2,
+  hashHostNodeExecutableIdentityV2,
+  hashHostNodeToolchainReceiptV2,
+  hashHostNodeToolchainRequirementV2,
+  hashHostNpmPackageClosureV2,
+} from
+  "../../../src/product-compiler/schemas/host-node-toolchain-receipt-v2.js";
+import {
+  NODE_SCAFFOLD_TOOLCHAIN_CATALOG_V2_SCHEMA,
+  NODE_SCAFFOLD_TOOLCHAIN_ENTRY_V2_SCHEMA,
+} from
+  "../../../src/product-compiler/schemas/node-scaffold-toolchain-catalog-v2.js";
 import {
   EXACT_HOST_OWNED_FILE_REF_V2_SCHEMA,
   HOST_ADMISSION_PHYSICAL_IDENTITY_V2_SCHEMA,
@@ -183,6 +209,162 @@ export function fixtureShaV2(label: string): string {
 
 function gitHash(label: string): string {
   return fixtureShaV2(label).slice(0, 40);
+}
+
+function buildHostToolchainReceipt() {
+  const requirementIdentity = {
+    catalogSchema: NODE_SCAFFOLD_TOOLCHAIN_CATALOG_V2_SCHEMA,
+    catalogHash: fixtureShaV2("host-toolchain-catalog"),
+    entrySchema: NODE_SCAFFOLD_TOOLCHAIN_ENTRY_V2_SCHEMA,
+    entryRef: "NODE_SCAFFOLD_TOOLCHAIN_NODE_CLI_V2" as const,
+    entryHash: fixtureShaV2("host-toolchain-entry"),
+    profileId: "PROFILE_NODE_CLI_STATELESS_EXACT_V2" as const,
+    nodeExecutableRef: "TOOL_NODE_RUNTIME_V2" as const,
+    nodeCompatibilityRange: ">=22.13.0 <23" as const,
+    npmExecutableRef: "TOOL_NODE_NPM_CLI_V2" as const,
+    npmExactVersion: "10.9.8" as const,
+  };
+  const requirement = {
+    ...requirementIdentity,
+    requirementHash:
+      hashHostNodeToolchainRequirementV2(requirementIdentity),
+  };
+  const dynamicLibraryIdentity = {
+    resolutionPolicy: "darwin_recursive_loader_graph_v2" as const,
+    systemLibraryTrust: "exact_macos_build_identity" as const,
+    memberCount: 0,
+    members: [],
+  };
+  const dynamicLibraries = {
+    ...dynamicLibraryIdentity,
+    closureHash:
+      hashHostNodeDynamicLibraryClosureV2(dynamicLibraryIdentity),
+  };
+  const nodeIdentity = {
+    schema: HOST_NODE_EXECUTABLE_IDENTITY_V2_SCHEMA,
+    executableRef: "TOOL_NODE_RUNTIME_V2" as const,
+    version: "22.23.1",
+    modulesAbi: "127",
+    napiVersion: "10",
+    platform: "darwin" as const,
+    architecture: "arm64" as const,
+    executable: {
+      contentHash: fixtureShaV2("host-toolchain-node"),
+      byteLength: 51_001,
+      mode: "0555" as const,
+      ownerUid: 501,
+      ownerGid: 20,
+      linkCount: 1 as const,
+    },
+    nonSystemDynamicLibraries: dynamicLibraries,
+  };
+  const node = {
+    ...nodeIdentity,
+    identityHash:
+      hashHostNodeExecutableIdentityV2(nodeIdentity),
+  };
+  const npmIdentity = {
+    schema: HOST_NPM_PACKAGE_CLOSURE_V2_SCHEMA,
+    executableRef: "TOOL_NODE_NPM_CLI_V2" as const,
+    packageName: "npm" as const,
+    version: "10.9.8",
+    rootOwnerUid: 501,
+    rootOwnerGid: 20,
+    cliLocator: "bin/npm-cli.js" as const,
+    cli: {
+      contentHash: fixtureShaV2("host-toolchain-npm-cli"),
+      byteLength: 7_001,
+      mode: "0555" as const,
+      ownerUid: 501,
+      ownerGid: 20,
+      linkCount: 1 as const,
+    },
+    packageJsonLocator: "package.json" as const,
+    packageJson: {
+      contentHash: fixtureShaV2("host-toolchain-npm-package-json"),
+      byteLength: 3_001,
+      mode: "0444" as const,
+      ownerUid: 501,
+      ownerGid: 20,
+      linkCount: 1 as const,
+    },
+    builtinNpmrc: {
+      locator: "npmrc" as const,
+      status: "absent" as const,
+    },
+    packageTree: {
+      treeContract:
+        "host_npm_package_tree_every_and_only_v2" as const,
+      rootMode: "0755" as const,
+      fileCount: 311,
+      directoryCount: 71,
+      totalBytes: 9_100_001,
+      treeHash: fixtureShaV2("host-toolchain-npm-raw-tree"),
+      normalizedTreeHash:
+        fixtureShaV2("host-toolchain-npm-normalized-tree"),
+    },
+  };
+  const npm = {
+    ...npmIdentity,
+    closureHash: hashHostNpmPackageClosureV2(npmIdentity),
+  };
+  const receiptIdentity = {
+    schema: HOST_NODE_TOOLCHAIN_RECEIPT_V2_SCHEMA,
+    receiptVersion: HOST_NODE_TOOLCHAIN_RECEIPT_VERSION_V2,
+    authorityRef: HOST_NODE_TOOLCHAIN_AUTHORITY_REF_V2,
+    authorityVersion: "2.0.0" as const,
+    status: "verified" as const,
+    admissionScope: "test_fixture" as const,
+    filesystemProtection: "test_fixture_only" as const,
+    installationRoot: {
+      device: 1,
+      inode: 2,
+      ownerUid: 501,
+      ownerGid: 20,
+      mode: "0700" as const,
+    },
+    provisioning: {
+      policy: "test_fixture_unprovisioned_v2" as const,
+      status: "not_applicable" as const,
+    },
+    requirement,
+    host: {
+      platform: "darwin" as const,
+      architecture: "arm64" as const,
+      macosProductVersion: "15.5",
+      macosBuildVersion: "24F74",
+      darwinKernelRelease: "24.5.0",
+    },
+    node,
+    npm,
+    probe: {
+      executionPolicy:
+        "direct_exact_node_argv_deny_all_environment_v2" as const,
+      shell: "forbidden" as const,
+      timeoutMs: 5_000 as const,
+      maxStdoutBytes: 4_096 as const,
+      maxStderrBytes: 4_096 as const,
+      nodeProbeSourceHash:
+        fixtureShaV2("host-toolchain-node-probe-source"),
+      environmentContractHash:
+        fixtureShaV2("host-toolchain-environment-contract"),
+    },
+    commandPathProjection: {
+      policy:
+        "single_admitted_node_bin_then_exact_module_argv_v2" as const,
+      orderedExecutableRefs: [
+        "TOOL_NODE_RUNTIME_V2",
+        "TOOL_NODE_NPM_CLI_V2",
+      ] as const,
+      projectionHash:
+        fixtureShaV2("host-toolchain-command-projection"),
+    },
+  };
+  return {
+    ...receiptIdentity,
+    receiptHash:
+      hashHostNodeToolchainReceiptV2(receiptIdentity),
+  };
 }
 
 function hostFile(
@@ -442,16 +624,19 @@ function externalExecutable(
   };
 }
 
-function externalResolution(payload: ReturnType<typeof runtimePayload>) {
+function externalResolution(
+  payload: ReturnType<typeof runtimePayload>,
+  buildHost: ReturnType<typeof buildHostToolchainReceipt>,
+) {
   const host = hostRuntime();
   const probe = metadataProbe();
   const recipe = npmRecipe();
   const packageManager = {
     schema: NPM_PACKAGE_MANAGER_RESOLUTION_V2_SCHEMA,
     packageName: "npm" as const,
-    version: "11.4.2",
+    version: buildHost.npm.version,
     executableRef: "EXEC_NPM_PACKAGE_MANAGER_V2",
-    packageTreeHash: fixtureShaV2("npm-package-tree"),
+    packageTreeHash: buildHost.npm.packageTree.normalizedTreeHash,
     installRecipe: recipe,
   };
   const graphIdentity = {
@@ -502,9 +687,9 @@ function externalResolution(payload: ReturnType<typeof runtimePayload>) {
     nodeRuntime: {
       schema: NODE_RUNTIME_RESOLUTION_V2_SCHEMA,
       runtimeRef: "RUNTIME_NODE_PROCESS" as const,
-      version: "22.17.0",
-      modulesAbi: "127",
-      napiVersion: "10",
+      version: buildHost.node.version,
+      modulesAbi: buildHost.node.modulesAbi,
+      napiVersion: buildHost.node.napiVersion,
       platform: "darwin" as const,
       architecture: "arm64" as const,
       executableRef: "EXEC_NODE_RUNTIME_V2",
@@ -539,14 +724,14 @@ function externalResolution(payload: ReturnType<typeof runtimePayload>) {
         "EXEC_NODE_RUNTIME_V2",
         "node_runtime",
         "/opt/homebrew/bin/node",
-        fixtureShaV2("node"),
+        buildHost.node.executable.contentHash,
         47,
       ),
       externalExecutable(
         "EXEC_NPM_PACKAGE_MANAGER_V2",
         "npm_package_manager",
         "/opt/homebrew/bin/npm",
-        fixtureShaV2("npm"),
+        buildHost.npm.cli.contentHash,
         43,
       ),
       externalExecutable(
@@ -1142,6 +1327,7 @@ function buildReceipt(
   sourceStagePhysicalIdentityHash: string,
   compiler: ReturnType<typeof buildCompiler>,
   packageManager: ReturnType<typeof buildPackageManager>,
+  buildToolchain: ReturnType<typeof buildToolchainReceipt>,
   payload: ReturnType<typeof runtimePayload>,
   external: ReturnType<typeof externalResolution>,
   stitchConverter: ReturnType<typeof legacyStitchConverter>,
@@ -1165,6 +1351,11 @@ function buildReceipt(
     sourceTotalBytes: 1_250_003,
     sourceSha: codeSha,
     sourceDateEpoch: "1785052800",
+    buildToolchainTreeHash: buildToolchain.tree.treeHash,
+    buildToolchainFileCount: buildToolchain.tree.fileCount,
+    buildToolchainDirectoryCount:
+      buildToolchain.tree.directoryCount,
+    buildToolchainTotalBytes: buildToolchain.tree.totalBytes,
     compilerEntryHash: compiler.entryModuleHash,
     platformFileCount: payload.platformTree.fileCount,
     platformDirectoryCount: payload.platformTree.directoryCount,
@@ -1181,16 +1372,26 @@ function buildReceipt(
     productionUse:
       "forbidden_until_double_build_and_fresh_release_verification" as const,
     sourceAdmissionReceiptHash: admissionReceiptHash,
+    buildToolchainReceiptHash: buildToolchain.receiptHash,
     source,
+    buildToolchain: buildToolchain.tree,
     stage: {
       stageRef,
       sourceStagePhysicalIdentityHash:
         sourceStagePhysicalIdentityHash,
+      buildToolchainPhysicalIdentityHash:
+        buildToolchain.physicalAfter.identityHash,
       outputStagePhysicalIdentityHash:
         fixtureShaV2(`${stageRef}-output-stage`),
       sourceBuildContextPolicy:
         "private_0700_parent_source_child_and_authenticated_toolchain_sibling_v2" as const,
       sourceStageMode: "0555" as const,
+      buildToolchainRootLocator: "node_modules" as const,
+      buildToolchainRootMode: "0555" as const,
+      finalBuildContextEntries: [
+        "node_modules",
+        "source",
+      ] as const,
       outputStageInitialMode: "0700" as const,
       outputWasEmpty: true as const,
       sourceAndOutputAreDistinct: true as const,
@@ -1212,8 +1413,10 @@ function buildReceipt(
         "<VERIFIED_SOURCE_STAGE>",
         "--output-root",
         "<EMPTY_OUTPUT_STAGE>",
-        "--typescript-entry",
-        "<AUTHENTICATED_TYPESCRIPT_ENTRY>",
+        "--build-toolchain-root",
+        "<AUTHENTICATED_BUILD_TOOLCHAIN_CAPSULE>",
+        "--build-toolchain-hash",
+        "<AUTHENTICATED_BUILD_TOOLCHAIN_TREE_HASH>",
         "--source-sha",
         "<ADMITTED_SOURCE_SHA>",
         "--source-date-epoch",
@@ -1223,8 +1426,10 @@ function buildReceipt(
       sourceRootPassing: "parameterized_exact_stage" as const,
       outputRootPassing:
         "parameterized_exact_empty_stage" as const,
-      compilerEntryPassing:
-        "parameterized_authenticated_external_entry" as const,
+      buildToolchainPassing:
+        "parameterized_authenticated_sibling_capsule" as const,
+      compilerEntryDerivation:
+        "build_toolchain_typescript_bin_tsc" as const,
       sourceIdentityPassing:
         "parameterized_exact_admitted_sha" as const,
       sourceClockPassing:
@@ -1281,28 +1486,174 @@ function buildCompiler() {
   };
 }
 
+function buildToolchainInstallRecipe() {
+  const identity = {
+    schema:
+      PLATFORM_RELEASE_BUILD_TOOLCHAIN_INSTALL_RECIPE_V2_SCHEMA,
+    commandRef:
+      "MATERIALIZE_PLATFORM_BUILD_TOOLCHAIN_V2" as const,
+    directArgv: [
+      "npm",
+      "ci",
+      "--include=dev",
+      "--ignore-scripts",
+      "--no-audit",
+      "--no-fund",
+    ] as const,
+    dependencySelection:
+      "production_and_dev_from_exact_lock" as const,
+    lifecycleScripts: "forbidden" as const,
+    ambientEnvironment: "forbidden" as const,
+    generatedNpmMetadata:
+      "verified_then_removed_before_capsule_capture" as const,
+    symbolicLinks:
+      "exact_lock_declared_bins_verified_then_removed" as const,
+    outputNormalization:
+      "every_file_0444_or_0555_every_directory_0555" as const,
+    configHash: fixtureShaV2("build-toolchain-npm-config"),
+  };
+  return {
+    ...identity,
+    recipeHash:
+      hashPlatformReleaseBuildToolchainInstallRecipeV2(identity),
+  };
+}
+
 function buildPackageManager(
   external: ReturnType<typeof externalResolution>,
+  buildHost: ReturnType<typeof buildHostToolchainReceipt>,
+  recipe: ReturnType<typeof buildToolchainInstallRecipe>,
 ) {
-  const executable = external.executables.find(
-    (entry) =>
-      entry.executableRef === external.packageManager.executableRef,
-  )!;
   return {
     packageName: "npm" as const,
-    version: external.packageManager.version,
+    version: buildHost.npm.version,
     executableRef: external.packageManager.executableRef,
-    executableHash: executable.hash,
-    packageTreeHash: external.packageManager.packageTreeHash,
-    installRecipeHash:
-      external.packageManager.installRecipe.recipeHash,
+    executableHash: buildHost.npm.cli.contentHash,
+    packageTreeHash:
+      buildHost.npm.packageTree.normalizedTreeHash,
+    buildInstallRecipeHash: recipe.recipeHash,
+  };
+}
+
+function buildToolchainReceipt(
+  source: ReturnType<typeof sourceTreeBinding>,
+  sourceAdmissionReceiptHash: string,
+  buildHost: ReturnType<typeof buildHostToolchainReceipt>,
+  compiler: ReturnType<typeof buildCompiler>,
+  packageManager: ReturnType<typeof buildPackageManager>,
+  installRecipe: ReturnType<typeof buildToolchainInstallRecipe>,
+) {
+  const treeIdentity = {
+    schema:
+      PLATFORM_RELEASE_BUILD_TOOLCHAIN_TREE_BINDING_V2_SCHEMA,
+    treeSchema: CANONICAL_RUNTIME_TREE_V2_SCHEMA,
+    profile: "dependencies" as const,
+    rootLocator: "node_modules" as const,
+    treeHash: fixtureShaV2("build-toolchain-tree"),
+    treePayloadHash:
+      fixtureShaV2("build-toolchain-tree-payload"),
+    fileCount: 1_503,
+    directoryCount: 311,
+    totalBytes: 41_000_007,
+    inputMembershipHash: source.inputMembershipHash,
+    packageCount: 17,
+    installedPackageMembershipHash:
+      fixtureShaV2("build-toolchain-package-membership"),
+  };
+  const tree = {
+    ...treeIdentity,
+    bindingHash:
+      hashPlatformReleaseBuildToolchainTreeBindingV2(treeIdentity),
+  };
+  const physicalIdentity = {
+    schema:
+      PLATFORM_RELEASE_BUILD_TOOLCHAIN_PHYSICAL_IDENTITY_V2_SCHEMA,
+    device: "1",
+    inode: BigInt(
+      `0x${fixtureShaV2("build-toolchain-inode").slice(0, 12)}`,
+    ).toString(),
+    ownerUid: 501,
+    ownerGid: 20,
+    mode: "0555" as const,
+    buildContextPolicy:
+      "private_0700_parent_source_child_and_authenticated_toolchain_sibling_v2" as const,
+    toolchainBindingHash: tree.bindingHash,
+    identityHash: fixtureShaV2("placeholder"),
+  };
+  const physical = {
+    ...physicalIdentity,
+    identityHash:
+      hashPlatformReleaseBuildToolchainPhysicalIdentityV2(
+        physicalIdentity,
+      ),
+  };
+  const process = {
+    hostToolchainReceiptHash: buildHost.receiptHash,
+    environmentHash:
+      fixtureShaV2("build-toolchain-environment"),
+    projectScopeHash:
+      fixtureShaV2("build-toolchain-project-scope"),
+    recipeHash: installRecipe.recipeHash,
+    directArgvHash: hashCanonicalJson({
+      schema:
+        "setfarm.platform-release-build-toolchain-direct-argv-hash.v2",
+      directArgv: installRecipe.directArgv,
+    }),
+    stdin: "closed" as const,
+    inheritAmbientEnvironment: false as const,
+    shell: "forbidden" as const,
+    termination: "normal_exit" as const,
+    exitCode: 0 as const,
+    signal: null,
+    stdoutContentHash: fixtureShaV2("build-toolchain-stdout"),
+    stdoutByteLength: 41,
+    stderrContentHash:
+      PLATFORM_RELEASE_EMPTY_GIT_STATUS_CONTENT_HASH_V2,
+    stderrByteLength: 0,
+  };
+  const identity = {
+    schema: PLATFORM_RELEASE_BUILD_TOOLCHAIN_RECEIPT_V2_SCHEMA,
+    version: "2.0.0" as const,
+    authorityState:
+      "candidate_build_toolchain_materialization_unverified" as const,
+    productionUse:
+      "forbidden_until_fresh_context_and_double_build_verification" as const,
+    sourceAdmissionReceiptHash,
+    inputs: source.inputs,
+    inputMembershipHash: source.inputMembershipHash,
+    placement: {
+      buildContextPolicy:
+        "private_0700_parent_source_child_and_authenticated_toolchain_sibling_v2" as const,
+      parentMode: "0700" as const,
+      rootLocator: "node_modules" as const,
+      rootMode: "0555" as const,
+      allowedFinalContextEntries: [
+        "node_modules",
+        "source",
+      ] as const,
+      temporaryLocatorDisclosure: "forbidden" as const,
+    },
+    hostToolchain: buildHost,
+    packageManager,
+    compiler,
+    installRecipe,
+    process,
+    tree,
+    physicalBefore: physical,
+    physicalAfter: structuredClone(physical),
+  };
+  return {
+    ...identity,
+    receiptHash:
+      hashPlatformReleaseBuildToolchainReceiptV2(identity),
   };
 }
 
 export function createPlatformReleaseManifestFixtureV2():
 PlatformReleaseManifestV2 {
   const payload = runtimePayload();
-  const external = externalResolution(payload);
+  const buildHost = buildHostToolchainReceipt();
+  const external = externalResolution(payload, buildHost);
   const capsule = environment(external);
   const catalogs = moduleCatalogs(payload, external, capsule);
   const inputs = sourceInputs();
@@ -1314,7 +1665,20 @@ PlatformReleaseManifestV2 {
     source,
   );
   const compiler = buildCompiler();
-  const packageManager = buildPackageManager(external);
+  const installRecipe = buildToolchainInstallRecipe();
+  const packageManager = buildPackageManager(
+    external,
+    buildHost,
+    installRecipe,
+  );
+  const toolchain = buildToolchainReceipt(
+    source,
+    admission.receiptHash,
+    buildHost,
+    compiler,
+    packageManager,
+    installRecipe,
+  );
   const stitchConverter = legacyStitchConverter();
   const firstBuildReceipt = buildReceipt(
     "PLATFORM_RELEASE_BUILD_STAGE_FIRST_V2",
@@ -1324,6 +1688,7 @@ PlatformReleaseManifestV2 {
     admission.exportedSource.stageAfter.identityHash,
     compiler,
     packageManager,
+    toolchain,
     payload,
     external,
     stitchConverter,
@@ -1336,6 +1701,7 @@ PlatformReleaseManifestV2 {
     admission.exportedSource.stageAfter.identityHash,
     compiler,
     packageManager,
+    toolchain,
     payload,
     external,
     stitchConverter,
@@ -1369,6 +1735,8 @@ PlatformReleaseManifestV2 {
       inputs,
       compiler,
       packageManager,
+      buildToolchainReceipt: toolchain,
+      buildToolchainReceiptHash: toolchain.receiptHash,
       sourceStage: {
         method: "verified_git_tree_export.v2" as const,
         exportedTreeHash: source.sourceTreeHash,
@@ -1532,6 +1900,7 @@ export function bindPlatformReleaseManifestFixtureToStageV2(
     hashPlatformRuntimePayloadV2(manifest.runtimePayload);
   const sourceInputSets = [
     manifest.build.inputs,
+    manifest.build.buildToolchainReceipt.inputs,
     manifest.release.sourceAdmission.receipt
       .exportedSource.source.inputs,
     manifest.build.firstBuildReceipt.inputs,
@@ -1582,14 +1951,63 @@ export function bindPlatformReleaseManifestFixtureToStageV2(
     admission.exportedSource.source.bindingHash;
   manifest.build.sourceStage.stagePhysicalIdentityHash =
     admission.exportedSource.stageAfter.identityHash;
+  const buildToolchain =
+    manifest.build.buildToolchainReceipt;
+  buildToolchain.sourceAdmissionReceiptHash =
+    admission.receiptHash;
+  buildToolchain.inputMembershipHash = hashCanonicalJson({
+    schema: "setfarm.platform-release-source-input-membership.v2",
+    entries: buildToolchain.inputs.map((entry: any) => ({
+      role: entry.role,
+      locator: entry.locator,
+      sourceRefHash: entry.sourceRefHash,
+    })),
+  });
+  buildToolchain.tree.inputMembershipHash =
+    buildToolchain.inputMembershipHash;
+  buildToolchain.tree.bindingHash =
+    hashPlatformReleaseBuildToolchainTreeBindingV2(
+      buildToolchain.tree,
+    );
+  for (const physical of [
+    buildToolchain.physicalBefore,
+    buildToolchain.physicalAfter,
+  ]) {
+    physical.toolchainBindingHash =
+      buildToolchain.tree.bindingHash;
+    physical.identityHash =
+      hashPlatformReleaseBuildToolchainPhysicalIdentityV2(
+        physical,
+      );
+  }
+  buildToolchain.receiptHash =
+    hashPlatformReleaseBuildToolchainReceiptV2(
+      buildToolchain,
+    );
+  manifest.build.buildToolchainReceiptHash =
+    buildToolchain.receiptHash;
   for (const receipt of [
     manifest.build.firstBuildReceipt,
     manifest.build.secondBuildReceipt,
   ]) {
     receipt.sourceAdmissionReceiptHash =
       admission.receiptHash;
+    receipt.buildToolchainReceiptHash =
+      buildToolchain.receiptHash;
+    receipt.buildToolchain =
+      structuredClone(buildToolchain.tree);
     receipt.stage.sourceStagePhysicalIdentityHash =
       admission.exportedSource.stageAfter.identityHash;
+    receipt.stage.buildToolchainPhysicalIdentityHash =
+      buildToolchain.physicalAfter.identityHash;
+    receipt.process.commandResult.buildToolchainTreeHash =
+      buildToolchain.tree.treeHash;
+    receipt.process.commandResult.buildToolchainFileCount =
+      buildToolchain.tree.fileCount;
+    receipt.process.commandResult.buildToolchainDirectoryCount =
+      buildToolchain.tree.directoryCount;
+    receipt.process.commandResult.buildToolchainTotalBytes =
+      buildToolchain.tree.totalBytes;
   }
 
   const external = manifest.externalResolution;

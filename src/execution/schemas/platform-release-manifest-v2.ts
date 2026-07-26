@@ -37,6 +37,7 @@ import {
   PLATFORM_RELEASE_SOURCE_MAX_FILES_V2,
   PLATFORM_RELEASE_SOURCE_MAX_TOTAL_BYTES_V2,
   PlatformReleaseBuildReceiptV2Schema,
+  PlatformReleaseBuildToolchainReceiptV2Schema,
   PlatformReleaseCompilerIdentityV2Schema,
   PlatformReleasePackageManagerIdentityV2Schema,
   PlatformReleaseSourceInputsV2Schema,
@@ -118,6 +119,9 @@ const PlatformReleaseBuildIdentityV2Schema = z.object({
   inputs: PlatformReleaseSourceInputsV2Schema,
   compiler: PlatformReleaseCompilerIdentityV2Schema,
   packageManager: PlatformReleasePackageManagerIdentityV2Schema,
+  buildToolchainReceipt:
+    PlatformReleaseBuildToolchainReceiptV2Schema,
+  buildToolchainReceiptHash: Sha256Schema,
   sourceStage: z.object({
     method: z.literal("verified_git_tree_export.v2"),
     exportedTreeHash: GitObjectHashSchema,
@@ -150,6 +154,11 @@ const PlatformReleaseBuildIdentityV2Schema = z.object({
   const expectedRootFields = {
     compiler: canonicalJsonStringify(value.compiler),
     packageManager: canonicalJsonStringify(value.packageManager),
+    buildToolchainReceiptHash:
+      value.buildToolchainReceiptHash,
+    buildToolchain: canonicalJsonStringify(
+      value.buildToolchainReceipt.tree,
+    ),
     inputs: exactInputs,
     sourceDateEpoch: value.sourceDateEpoch,
     exportedTreeHash: value.sourceStage.exportedTreeHash,
@@ -160,11 +169,17 @@ const PlatformReleaseBuildIdentityV2Schema = z.object({
     sourceBindingHash: value.sourceStage.sourceBindingHash,
     stagePhysicalIdentityHash:
       value.sourceStage.stagePhysicalIdentityHash,
+    buildToolchainPhysicalIdentityHash:
+      value.buildToolchainReceipt.physicalAfter.identityHash,
     buildContextPolicy: value.sourceStage.buildContextPolicy,
   };
   const receiptFields = (receipt: typeof first) => ({
     compiler: canonicalJsonStringify(receipt.compiler),
     packageManager: canonicalJsonStringify(receipt.packageManager),
+    buildToolchainReceiptHash:
+      receipt.buildToolchainReceiptHash,
+    buildToolchain:
+      canonicalJsonStringify(receipt.buildToolchain),
     inputs: canonicalJsonStringify(receipt.inputs),
     sourceDateEpoch: receipt.sourceDateEpoch,
     exportedTreeHash: receipt.source.sourceTreeHash,
@@ -176,6 +191,8 @@ const PlatformReleaseBuildIdentityV2Schema = z.object({
     sourceBindingHash: receipt.source.bindingHash,
     stagePhysicalIdentityHash:
       receipt.stage.sourceStagePhysicalIdentityHash,
+    buildToolchainPhysicalIdentityHash:
+      receipt.stage.buildToolchainPhysicalIdentityHash,
     buildContextPolicy: receipt.stage.sourceBuildContextPolicy,
   });
   if (
@@ -188,6 +205,16 @@ const PlatformReleaseBuildIdentityV2Schema = z.object({
       === second.stage.outputStagePhysicalIdentityHash
     || first.stage.sourceStagePhysicalIdentityHash
       !== second.stage.sourceStagePhysicalIdentityHash
+    || first.stage.buildToolchainPhysicalIdentityHash
+      !== second.stage.buildToolchainPhysicalIdentityHash
+    || value.buildToolchainReceiptHash
+      !== value.buildToolchainReceipt.receiptHash
+    || value.buildToolchainReceipt.sourceAdmissionReceiptHash
+      !== first.sourceAdmissionReceiptHash
+    || first.buildToolchainReceiptHash
+      !== value.buildToolchainReceipt.receiptHash
+    || second.buildToolchainReceiptHash
+      !== value.buildToolchainReceipt.receiptHash
     || canonicalJsonStringify(receiptFields(first))
       !== canonicalJsonStringify(expectedRootFields)
     || canonicalJsonStringify(receiptFields(second))
@@ -271,6 +298,10 @@ const PlatformReleaseManifestIdentityV2Schema = z.object({
   const npmExecutable = external.executables.find(
     (entry) =>
       entry.executableRef === external.packageManager.executableRef,
+  );
+  const nodeExecutable = external.executables.find(
+    (entry) =>
+      entry.executableRef === external.nodeRuntime.executableRef,
   );
 
   const joinFailures: string[] = [];
@@ -432,11 +463,39 @@ const PlatformReleaseManifestIdentityV2Schema = z.object({
         === external.packageManager.executableRef
       && value.build.packageManager.packageTreeHash
         === external.packageManager.packageTreeHash
-      && value.build.packageManager.installRecipeHash
-        === external.packageManager.installRecipe.recipeHash
       && npmExecutable?.hash
         === value.build.packageManager.executableHash,
     "build and external npm identity",
+  );
+  const buildHost =
+    value.build.buildToolchainReceipt.hostToolchain;
+  requireJoin(
+    buildHost.host.platform === external.hostRuntime.platform
+      && buildHost.host.architecture
+        === external.hostRuntime.architecture
+      && buildHost.host.macosProductVersion
+        === external.hostRuntime.macosProductVersion
+      && buildHost.host.macosBuildVersion
+        === external.hostRuntime.macosBuildVersion
+      && buildHost.host.darwinKernelRelease
+        === external.hostRuntime.darwinKernelRelease
+      && buildHost.node.version === external.nodeRuntime.version
+      && buildHost.node.modulesAbi
+        === external.nodeRuntime.modulesAbi
+      && buildHost.node.napiVersion
+        === external.nodeRuntime.napiVersion
+      && buildHost.node.platform === external.nodeRuntime.platform
+      && buildHost.node.architecture
+        === external.nodeRuntime.architecture
+      && nodeExecutable?.hash
+        === buildHost.node.executable.contentHash
+      && buildHost.npm.version
+        === value.build.packageManager.version
+      && buildHost.npm.packageTree.normalizedTreeHash
+        === value.build.packageManager.packageTreeHash
+      && buildHost.npm.cli.contentHash
+        === value.build.packageManager.executableHash,
+    "build host Node/npm receipt and external runtime identity",
   );
   requireJoin(
     launcher.runtimePayloadHash === runtime.runtimePayloadHash

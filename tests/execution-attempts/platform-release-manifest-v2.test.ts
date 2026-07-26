@@ -21,11 +21,13 @@ import * as buildModule from
   "../../src/execution/schemas/platform-release-build-v2.js";
 import {
   PlatformReleaseBuildReceiptV2Schema,
+  PlatformReleaseBuildToolchainReceiptV2Schema,
   SourceAdmissionReceiptV2Schema,
   hashPlatformReleaseBuildReceiptV2,
   hashPlatformReleaseSourceStagePhysicalIdentityV2,
   hashSourceAdmissionReceiptV2,
   parsePlatformReleaseBuildReceiptCandidateV2,
+  parsePlatformReleaseBuildToolchainReceiptCandidateV2,
   parseSourceAdmissionReceiptCandidateV2,
 } from "../../src/execution/schemas/platform-release-build-v2.js";
 import * as manifestModule from
@@ -106,6 +108,7 @@ describe("PlatformReleaseManifestV2 candidate authority boundary", () => {
   it("binds typed source and two independent build receipts with stable goldens", () => {
     const manifest = createPlatformReleaseManifestFixtureV2();
     const sourceReceipt = manifest.release.sourceAdmission.receipt;
+    const toolchainReceipt = manifest.build.buildToolchainReceipt;
     const first = manifest.build.firstBuildReceipt;
     const second = manifest.build.secondBuildReceipt;
 
@@ -121,10 +124,18 @@ describe("PlatformReleaseManifestV2 candidate authority boundary", () => {
       PlatformReleaseBuildReceiptV2Schema.safeParse(second).success,
       true,
     );
+    assert.equal(
+      PlatformReleaseBuildToolchainReceiptV2Schema
+        .safeParse(toolchainReceipt).success,
+      true,
+    );
     assert.deepEqual(
       {
         sourceHash: sourceReceipt.receiptHash,
         sourceBytes: canonicalJsonBytes(sourceReceipt).byteLength,
+        toolchainHash: toolchainReceipt.receiptHash,
+        toolchainBytes:
+          canonicalJsonBytes(toolchainReceipt).byteLength,
         firstBuildHash: first.receiptHash,
         firstBuildBytes: canonicalJsonBytes(first).byteLength,
         secondBuildHash: second.receiptHash,
@@ -134,12 +145,15 @@ describe("PlatformReleaseManifestV2 candidate authority boundary", () => {
         sourceHash:
           "e270a58af84c476b5c292fb55bcd28126d2dd0b0df753305133876b266868571",
         sourceBytes: 10_594,
+        toolchainHash:
+          "4b66a2cc5aeeeef46c7ffa566a6bbb7d288a377c245b0e4031296fca647bc213",
+        toolchainBytes: 9_545,
         firstBuildHash:
-          "cf5bdd4f79fdf3ab83ec718b6d114227e18925eb704cfd1d2db7bdacb8cc89af",
-        firstBuildBytes: 10_094,
+          "eebe0df4d53e223e34394cba99be9a81abc8f9e3e69f26542f437ade6a6a9796",
+        firstBuildBytes: 11_466,
         secondBuildHash:
-          "c4a3ac8f661123e4c28330690f76b7fd4519ea291f3bfedec9f93adf0e1a2c2e",
-        secondBuildBytes: 10_095,
+          "ff2122db5564f63d403be7b33ee621e7c0da272068a1b84f475dae1fe97a1f8c",
+        secondBuildBytes: 11_467,
       },
     );
     assert.notEqual(
@@ -167,8 +181,8 @@ describe("PlatformReleaseManifestV2 candidate authority boundary", () => {
       },
       {
         hash:
-          "fbf959a19a45e55c2cbdd7ae9b1c242b0c26ba90e68c1baf21027e4290a29dcc",
-        bytes: 87_642,
+          "1025a08cda9a264baad56771b7d5d4fac314724f19fee1d369e86978fb8a5f4c",
+        bytes: 100_056,
         cap: 3_145_728,
       },
     );
@@ -197,8 +211,13 @@ describe("PlatformReleaseManifestV2 candidate authority boundary", () => {
     const parsedBuild = parsePlatformReleaseBuildReceiptCandidateV2(
       manifest.build.firstBuildReceipt,
     );
+    const parsedToolchain =
+      parsePlatformReleaseBuildToolchainReceiptCandidateV2(
+        manifest.build.buildToolchainReceipt,
+      );
     recursivelyAssertFrozen(parsedSource);
     recursivelyAssertFrozen(parsedBuild);
+    recursivelyAssertFrozen(parsedToolchain);
 
     const driftedSource: any = structuredClone(
       manifest.release.sourceAdmission.receipt,
@@ -308,6 +327,51 @@ describe("PlatformReleaseManifestV2 candidate authority boundary", () => {
       ).success,
       false,
     );
+
+    const driftedToolchainCount: any = structuredClone(
+      manifest.build.firstBuildReceipt,
+    );
+    driftedToolchainCount.process.commandResult
+      .buildToolchainFileCount += 1;
+    rebindCommandResult(driftedToolchainCount);
+    assert.equal(
+      PlatformReleaseBuildReceiptV2Schema.safeParse(
+        driftedToolchainCount,
+      ).success,
+      false,
+    );
+
+    const aliasedToolchainStage: any = structuredClone(
+      manifest.build.firstBuildReceipt,
+    );
+    aliasedToolchainStage.stage
+      .buildToolchainPhysicalIdentityHash =
+        aliasedToolchainStage.stage
+          .sourceStagePhysicalIdentityHash;
+    aliasedToolchainStage.receiptHash =
+      hashPlatformReleaseBuildReceiptV2(aliasedToolchainStage);
+    assert.equal(
+      PlatformReleaseBuildReceiptV2Schema.safeParse(
+        aliasedToolchainStage,
+      ).success,
+      false,
+    );
+
+    const mixedHostToolchain: any = structuredClone(
+      manifest.build.buildToolchainReceipt,
+    );
+    mixedHostToolchain.process.hostToolchainReceiptHash =
+      fixtureShaV2("mixed-host-toolchain");
+    mixedHostToolchain.receiptHash =
+      buildModule.hashPlatformReleaseBuildToolchainReceiptV2(
+        mixedHostToolchain,
+      );
+    assert.equal(
+      PlatformReleaseBuildToolchainReceiptV2Schema.safeParse(
+        mixedHostToolchain,
+      ).success,
+      false,
+    );
   });
 
   it("rejects self-rehashed cross-root, double-build and code-owned drift", () => {
@@ -388,6 +452,24 @@ describe("PlatformReleaseManifestV2 candidate authority boundary", () => {
         fixtureShaV2("detached-source-stage");
     rehashManifest(detachedSourceStage);
 
+    const detachedToolchain: any = structuredClone(manifest);
+    detachedToolchain.build.secondBuildReceipt.buildToolchain.treeHash =
+      fixtureShaV2("detached-build-toolchain-tree");
+    detachedToolchain.build.secondBuildReceipt.buildToolchain.bindingHash =
+      buildModule.hashPlatformReleaseBuildToolchainTreeBindingV2(
+        detachedToolchain.build.secondBuildReceipt.buildToolchain,
+      );
+    detachedToolchain.build.secondBuildReceipt.process.commandResult
+      .buildToolchainTreeHash =
+        detachedToolchain.build.secondBuildReceipt.buildToolchain
+          .treeHash;
+    rebindCommandResult(
+      detachedToolchain.build.secondBuildReceipt,
+    );
+    detachedToolchain.build.secondBuildReceiptHash =
+      detachedToolchain.build.secondBuildReceipt.receiptHash;
+    rehashManifest(detachedToolchain);
+
     for (const candidate of [
       aliasedBuild,
       networkDrift,
@@ -396,6 +478,7 @@ describe("PlatformReleaseManifestV2 candidate authority boundary", () => {
       sourceVerifierDrift,
       sourceGitVerifierDrift,
       detachedSourceStage,
+      detachedToolchain,
     ]) {
       assert.equal(
         PlatformReleaseManifestV2Schema.safeParse(candidate).success,
