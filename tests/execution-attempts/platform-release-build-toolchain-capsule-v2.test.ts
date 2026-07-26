@@ -52,6 +52,7 @@ const roots: string[] = [];
 
 type InstallModeV2 =
   | "valid"
+  | "install_failure"
   | "missing_required"
   | "unexpected_package"
   | "wrong_bin_target";
@@ -478,6 +479,15 @@ async function createPlatformHostV2(
     ) {
       installGate?.entered();
       if (installGate) await installGate.wait;
+      if (mode === "install_failure") {
+        return Object.freeze({
+          status: "exited",
+          exitCode: 1,
+          signal: null,
+          stdout: "",
+          stderr: "authenticated npm ci failed\n",
+        });
+      }
       materializeFakeInstallV2(invocation.cwd, mode);
       return exited("installed exact build graph\n");
     }
@@ -641,6 +651,13 @@ describe("PlatformReleaseBuildToolchainCapsuleV2", () => {
       const repository = createRepositoryFixtureV2();
       const hostFixture = createHostFixtureV2();
       const source = admittedSourceV2(repository);
+      let sourceRoot = "";
+      withPlatformReleaseSourceStageForTestV2(
+        source,
+        (root) => {
+          sourceRoot = root;
+        },
+      );
       try {
         const host = await createPlatformHostV2(
           hostFixture,
@@ -656,20 +673,84 @@ describe("PlatformReleaseBuildToolchainCapsuleV2", () => {
               "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_TREE_INVALID",
           },
         );
-        withPlatformReleaseSourceStageForTestV2(
-          source,
-          (sourceRoot) => {
-            assert.deepEqual(
-              readdirSync(path.dirname(sourceRoot)),
-              ["source"],
-            );
+        assert.equal(
+          existsSync(path.dirname(sourceRoot)),
+          false,
+        );
+        assert.throws(
+          () => withPlatformReleaseSourceStageForTestV2(
+            source,
+            () => undefined,
+          ),
+          {
+            code:
+              "PLATFORM_RELEASE_SOURCE_V2_HANDLE_DISPOSED",
           },
         );
       } finally {
-        disposePlatformReleaseSourceStageV2(source);
+        try {
+          disposePlatformReleaseSourceStageV2(source);
+        } catch (error) {
+          if (
+            !(error instanceof PlatformReleaseSourceAdmissionErrorV2)
+            || error.code
+              !== "PLATFORM_RELEASE_SOURCE_V2_HANDLE_DISPOSED"
+          ) throw error;
+        }
       }
     });
   }
+
+  it("terminally disposes the source context after an acquired install fails", async () => {
+    const repository = createRepositoryFixtureV2();
+    const hostFixture = createHostFixtureV2();
+    const source = admittedSourceV2(repository);
+    let sourceRoot = "";
+    withPlatformReleaseSourceStageForTestV2(
+      source,
+      (root) => {
+        sourceRoot = root;
+      },
+    );
+    const host = await createPlatformHostV2(
+      hostFixture,
+      "install_failure",
+    );
+    await assert.rejects(
+      materializePlatformReleaseBuildToolchainCapsuleV2ForTest({
+        sourceStage: source,
+        hostToolchain: host,
+      }),
+      {
+        code:
+          "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_INSTALL_FAILED",
+      },
+    );
+    assert.equal(
+      existsSync(path.dirname(sourceRoot)),
+      false,
+    );
+    assert.throws(
+      () => withPlatformReleaseSourceStageForTestV2(
+        source,
+        () => undefined,
+      ),
+      {
+        code:
+          "PLATFORM_RELEASE_SOURCE_V2_HANDLE_DISPOSED",
+      },
+    );
+    await assert.rejects(
+      materializePlatformReleaseBuildToolchainCapsuleV2ForTest({
+        sourceStage: source,
+        hostToolchain: host,
+      }),
+      {
+        code:
+          "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_INPUT_INVALID",
+      },
+    );
+  });
 
   it("owns concurrent and disposal lifecycle as one bounded transaction", async () => {
     const repository = createRepositoryFixtureV2();
@@ -697,7 +778,6 @@ describe("PlatformReleaseBuildToolchainCapsuleV2", () => {
           sourceStage: source,
           hostToolchain: host,
         });
-      await entered;
       await assert.rejects(
         materializePlatformReleaseBuildToolchainCapsuleV2ForTest({
           sourceStage: source,
@@ -708,6 +788,7 @@ describe("PlatformReleaseBuildToolchainCapsuleV2", () => {
             "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_ALREADY_MATERIALIZED",
         },
       );
+      await entered;
       assert.throws(
         () => disposePlatformReleaseSourceStageV2(source),
         {

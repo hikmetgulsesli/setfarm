@@ -271,6 +271,16 @@ export type PlatformReleaseSourceAdmissionCandidateSnapshotV2 =
     testEvidence: PlatformReleaseSourceAdmissionTestEvidenceV2;
   }>;
 
+type PlatformReleaseSourceContextLifecycleV2 =
+  | "source_admitted"
+  | "toolchain_materializing"
+  | "toolchain_materialized"
+  | "double_build_running"
+  | "double_build_complete"
+  | "dependency_materializing"
+  | "release_completed"
+  | "disposed";
+
 type SourceStageStateV2 = {
   readonly admissionScope: "production_candidate" | "test_fixture";
   readonly contextRoot: string;
@@ -278,8 +288,7 @@ type SourceStageStateV2 = {
   readonly core: SourceExportCoreV2;
   readonly receipt: SourceAdmissionReceiptV2 | null;
   readonly testEvidence: PlatformReleaseSourceAdmissionTestEvidenceV2 | null;
-  toolchainLifecycle: "absent" | "materializing" | "materialized";
-  disposed: boolean;
+  lifecycle: PlatformReleaseSourceContextLifecycleV2;
 };
 
 export type AdmitPlatformReleaseSourceV2Input = Readonly<{
@@ -2198,7 +2207,7 @@ function authenticState(
       "Source stage operation requires one authentic handle",
     );
   }
-  if (state.disposed) {
+  if (state.lifecycle === "disposed") {
     return fail(
       "PLATFORM_RELEASE_SOURCE_V2_HANDLE_DISPOSED",
       "Source stage handle has already been disposed",
@@ -2317,8 +2326,7 @@ export function admitPlatformReleaseSourceV2(
       core: exported.core,
       receipt,
       testEvidence: null,
-      toolchainLifecycle: "absent",
-      disposed: false,
+      lifecycle: "source_admitted",
     });
   } catch (error) {
     cleanupStage(exported.contextRoot);
@@ -2416,8 +2424,7 @@ export function admitPlatformReleaseSourceV2ForTest(
     core: exported.core,
     receipt: null,
     testEvidence,
-    toolchainLifecycle: "absent",
-    disposed: false,
+    lifecycle: "source_admitted",
   });
 }
 
@@ -3045,54 +3052,58 @@ async function materializeBuildToolchainCapsule(
       error,
     );
   }
-  if (sourceState.toolchainLifecycle !== "absent") {
+  let production: boolean;
+  try {
+    production =
+      isProductionPlatformReleaseHostNodeToolchainAuthorityV2(
+        values.hostToolchain,
+      );
+  } catch (error) {
+    return failBuildToolchainCapsule(
+      "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_HOST_DRIFT",
+      "Build toolchain host handle is not authentic",
+      error,
+    );
+  }
+  const expectedSourceScope =
+    expectedScope === "production_host"
+      ? "production_candidate"
+      : "test_fixture";
+  if (
+    production !== (expectedScope === "production_host")
+    || sourceState.admissionScope !== expectedSourceScope
+  ) {
+    return failBuildToolchainCapsule(
+      "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_SCOPE_MISMATCH",
+      "Source and host admission scopes cannot be promoted, downgraded or mixed",
+    );
+  }
+  if (sourceState.lifecycle !== "source_admitted") {
     return failBuildToolchainCapsule(
       "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_ALREADY_MATERIALIZED",
       "An admitted source context can materialize one build toolchain only",
     );
   }
-  let hostReceipt;
-  try {
-    const production =
-      isProductionPlatformReleaseHostNodeToolchainAuthorityV2(
-        values.hostToolchain,
-      );
-    const expectedSourceScope =
-      expectedScope === "production_host"
-        ? "production_candidate"
-        : "test_fixture";
-    if (
-      production !== (expectedScope === "production_host")
-      || sourceState.admissionScope !== expectedSourceScope
-    ) {
-      return failBuildToolchainCapsule(
-        "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_SCOPE_MISMATCH",
-        "Source and host admission scopes cannot be promoted, downgraded or mixed",
-      );
-    }
-    hostReceipt =
-      await revalidatePlatformReleaseHostNodeToolchainAuthorityV2(
-        values.hostToolchain,
-      );
-  } catch (error) {
-    if (
-      error instanceof
-        PlatformReleaseBuildToolchainCapsuleErrorV2
-    ) throw error;
-    return failBuildToolchainCapsule(
-      "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_HOST_DRIFT",
-      "Platform release host authority failed pre-install revalidation",
-      error,
-    );
-  }
-  stableSourceStageState(sourceState);
-  exactBuildContext(sourceState, "source_only");
-  sourceState.toolchainLifecycle = "materializing";
+  sourceState.lifecycle = "toolchain_materializing";
   let scope:
     | PrivateBuildToolchainInstallScopeV2
     | undefined;
-  let adopted = false;
   try {
+    let hostReceipt;
+    try {
+      hostReceipt =
+        await revalidatePlatformReleaseHostNodeToolchainAuthorityV2(
+          values.hostToolchain,
+        );
+    } catch (error) {
+      return failBuildToolchainCapsule(
+        "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_HOST_DRIFT",
+        "Platform release host authority failed pre-install revalidation",
+        error,
+      );
+    }
+    stableSourceStageState(sourceState);
+    exactBuildContext(sourceState, "source_only");
     scope =
       createPrivateBuildToolchainInstallScope(sourceState);
     stableSourceStageState(sourceState);
@@ -3114,10 +3125,12 @@ async function materializeBuildToolchainCapsule(
         error,
       );
     }
-    if (sourceState.disposed) {
+    if (
+      sourceState.lifecycle !== "toolchain_materializing"
+    ) {
       return failBuildToolchainCapsule(
         "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_SOURCE_DRIFT",
-        "Source stage was disposed during build-toolchain installation",
+        "Source context lifecycle changed during build-toolchain installation",
       );
     }
     stableSourceStageState(sourceState);
@@ -3164,7 +3177,6 @@ async function materializeBuildToolchainCapsule(
       installNodeModulesRoot,
       sourceNodeModulesRoot,
     );
-    adopted = true;
     chmodSync(sourceNodeModulesRoot, 0o555);
     fsyncDirectory(sourceNodeModulesRoot);
     fsyncDirectory(sourceState.contextRoot);
@@ -3219,7 +3231,7 @@ async function materializeBuildToolchainCapsule(
       materialized,
       receipt,
     });
-    sourceState.toolchainLifecycle = "materialized";
+    sourceState.lifecycle = "toolchain_materialized";
     return new PlatformReleaseBuildToolchainCapsuleV2(
       buildToolchainCapsuleConstructorCapabilityV2,
       capsuleState,
@@ -3240,15 +3252,10 @@ async function materializeBuildToolchainCapsule(
       cleanupStage(scope.installRoot);
     }
     if (
-      sourceState.toolchainLifecycle === "materializing"
+      sourceState.lifecycle === "toolchain_materializing"
     ) {
-      if (adopted) {
-        cleanupStage(path.join(
-          sourceState.contextRoot,
-          "node_modules",
-        ));
-      }
-      sourceState.toolchainLifecycle = "absent";
+      sourceState.lifecycle = "disposed";
+      cleanupStage(sourceState.contextRoot);
     }
   }
 }
@@ -3305,7 +3312,7 @@ export async function revalidatePlatformReleaseBuildToolchainCapsuleV2(
     );
   }
   if (
-    sourceState.toolchainLifecycle !== "materialized"
+    sourceState.lifecycle !== "toolchain_materialized"
     || sourceState.contextRoot !== capsule.contextRoot
     || sourceState.core.source.bindingHash
       !== capsule.source.bindingHash
@@ -3465,12 +3472,16 @@ export function disposePlatformReleaseSourceStageV2(
   handle: AdmittedPlatformReleaseSourceStageV2,
 ): void {
   const state = authenticState(handle);
-  if (state.toolchainLifecycle === "materializing") {
+  if (
+    state.lifecycle === "toolchain_materializing"
+    || state.lifecycle === "double_build_running"
+    || state.lifecycle === "dependency_materializing"
+  ) {
     return fail(
       "PLATFORM_RELEASE_SOURCE_V2_MATERIALIZATION_BUSY",
-      "Source stage cannot be disposed during build-toolchain materialization",
+      "Source stage cannot be disposed during an active materialization transaction",
     );
   }
-  state.disposed = true;
+  state.lifecycle = "disposed";
   cleanupStage(state.contextRoot);
 }
