@@ -136,7 +136,9 @@ describe("single-step claim_log lifecycle", () => {
   it("records single-step handoff before claim-side gates and closes no-spawn exits", () => {
     const source = claimSingleStepSource();
     const publication = claimRuntimePublicationSource();
-    const publicationCall = source.indexOf("publishSingleClaimAndRuntime(step, agentId, runtimeIntent)");
+    const publicationCall = source.search(
+      /publishSingleClaimAndRuntime\(\s*step,\s*agentId,\s*runtimeIntent,\s*planAuthoritySeal,\s*\)/,
+    );
     const transitionRecord = source.indexOf("recordStepTransition(step.id, step.run_id, \"pending\", \"running\"");
     const runningEvent = source.indexOf("event: \"step.running\"");
     const atomicHandoff = source.indexOf("recordSingleStepHandoff(\"claimSingleStep:atomic\")");
