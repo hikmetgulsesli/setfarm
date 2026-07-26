@@ -30,6 +30,8 @@ export const EXACT_PLATFORM_RELEASE_SOURCE_REF_V2_SCHEMA =
   "setfarm.exact-platform-release-source-ref.v2" as const;
 export const PLATFORM_RELEASE_SOURCE_TREE_BINDING_V2_SCHEMA =
   "setfarm.platform-release-source-tree-binding.v2" as const;
+export const PLATFORM_RELEASE_SOURCE_STAGE_PHYSICAL_IDENTITY_V2_SCHEMA =
+  "setfarm.platform-release-source-stage-physical-identity.v2" as const;
 export const SOURCE_ADMISSION_RECEIPT_V2_SCHEMA =
   "setfarm.source-admission-receipt.v2" as const;
 export const PLATFORM_RELEASE_BUILD_RECEIPT_V2_SCHEMA =
@@ -46,6 +48,37 @@ export const PLATFORM_RELEASE_BUILD_RECEIPT_MAX_CANONICAL_BYTES_V2 =
   256 * 1024;
 export const PLATFORM_RELEASE_SOURCE_FILE_MAX_BYTES_V2 = 16 * 1024 * 1024;
 export const PLATFORM_RELEASE_BUILD_MODULE_MAX_BYTES_V2 = 64 * 1024 * 1024;
+export const PLATFORM_RELEASE_SOURCE_MAX_FILES_V2 = 20_000;
+export const PLATFORM_RELEASE_SOURCE_MAX_DIRECTORIES_V2 = 4_000;
+export const PLATFORM_RELEASE_SOURCE_MAX_TOTAL_BYTES_V2 =
+  512 * 1024 * 1024;
+
+export const PLATFORM_RELEASE_SOURCE_GIT_COMMAND_CONTRACT_V2 = Object.freeze({
+  schema: "setfarm.platform-release-source-git-command-contract.v2" as const,
+  version: PLATFORM_RELEASE_BUILD_CONTRACT_VERSION_V2,
+  executableAuthority:
+    "root_owned_separately_installed_host_admitted_file" as const,
+  executableMode: "0555" as const,
+  invocation: "absolute_executable_direct_no_shell" as const,
+  repositoryAccess: "read_only_object_database_and_index_observation" as const,
+  checkoutBytes: "forbidden_as_export_input" as const,
+  requiredOperations: [
+    "symbolic_ref_exact_head_branch",
+    "rev_parse_exact_head_and_remote_main",
+    "status_porcelain_v2_z_all_untracked",
+    "ls_tree_recursive_nul",
+    "cat_file_batch_exact_commit_and_blobs",
+  ] as const,
+  objectVerification:
+    "independent_commit_blob_and_recursive_tree_hash_reproduction" as const,
+  sourceFence:
+    "remote_head_index_status_and_export_before_and_after" as const,
+  repositoryMutation: "forbidden" as const,
+  ambientEnvironment: "discard_all" as const,
+});
+
+export const PLATFORM_RELEASE_SOURCE_GIT_COMMAND_CONTRACT_HASH_V2 =
+  hashCanonicalJson(PLATFORM_RELEASE_SOURCE_GIT_COMMAND_CONTRACT_V2);
 
 export const PLATFORM_RELEASE_SOURCE_ADMISSION_CONTRACT_V2 = Object.freeze({
   schema: "setfarm.platform-release-source-admission-contract.v2" as const,
@@ -56,6 +89,11 @@ export const PLATFORM_RELEASE_SOURCE_ADMISSION_CONTRACT_V2 = Object.freeze({
   requiredBranch: "main" as const,
   dirtyWorktree: "forbidden" as const,
   sourceFence: "before_and_after_exact_commit_tree_and_index" as const,
+  remoteFence: "before_and_after_exact_remote_main_observation" as const,
+  exportFence:
+    "before_and_after_exact_read_only_stage_identity_and_fingerprint" as const,
+  gitCommandContractHash:
+    PLATFORM_RELEASE_SOURCE_GIT_COMMAND_CONTRACT_HASH_V2,
   candidateAuthority:
     "forbidden_until_fresh_root_owned_source_verification" as const,
 });
@@ -203,6 +241,12 @@ const PlatformReleaseSourceTreeBindingIdentityV2Schema = z.object({
   schema: z.literal(PLATFORM_RELEASE_SOURCE_TREE_BINDING_V2_SCHEMA),
   sourceTreeHash: GitObjectHashSchema,
   exportedFileTreeHash: Sha256Schema,
+  exportedFileCount: z.number().int().positive()
+    .max(PLATFORM_RELEASE_SOURCE_MAX_FILES_V2),
+  exportedDirectoryCount: z.number().int().nonnegative()
+    .max(PLATFORM_RELEASE_SOURCE_MAX_DIRECTORIES_V2),
+  exportedTotalBytes: z.number().int().positive()
+    .max(PLATFORM_RELEASE_SOURCE_MAX_TOTAL_BYTES_V2),
   inputMembershipHash: Sha256Schema,
   inputs: PlatformReleaseSourceInputsV2Schema,
 }).strict().superRefine((value, context) => {
@@ -258,6 +302,55 @@ export const PlatformReleaseSourceTreeBindingV2Schema =
 
 export type PlatformReleaseSourceTreeBindingV2 = z.infer<
   typeof PlatformReleaseSourceTreeBindingV2Schema
+>;
+
+const PlatformReleaseSourceStagePhysicalIdentityPayloadV2Schema = z.object({
+  schema: z.literal(
+    PLATFORM_RELEASE_SOURCE_STAGE_PHYSICAL_IDENTITY_V2_SCHEMA,
+  ),
+  device: z.string().min(1).max(32)
+    .regex(/^(?:0|[1-9][0-9]*)$/),
+  inode: z.string().min(1).max(32)
+    .regex(/^(?:0|[1-9][0-9]*)$/),
+  ownerUid: z.number().int().nonnegative().max(4_294_967_294),
+  ownerGid: z.number().int().nonnegative().max(4_294_967_294),
+  mode: z.literal("0555"),
+  sourceBindingHash: Sha256Schema,
+  identityHash: Sha256Schema,
+}).strict();
+
+export function hashPlatformReleaseSourceStagePhysicalIdentityV2(
+  value: z.infer<
+    typeof PlatformReleaseSourceStagePhysicalIdentityPayloadV2Schema
+  >,
+): string {
+  const identity = { ...value } as Record<string, unknown>;
+  delete identity.identityHash;
+  return hashCanonicalJson({
+    schema:
+      "setfarm.platform-release-source-stage-physical-identity-hash.v2",
+    identity,
+  });
+}
+
+export const PlatformReleaseSourceStagePhysicalIdentityV2Schema =
+  PlatformReleaseSourceStagePhysicalIdentityPayloadV2Schema.superRefine(
+    (value, context) => {
+      if (
+        value.identityHash
+          !== hashPlatformReleaseSourceStagePhysicalIdentityV2(value)
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: ["identityHash"],
+          message: "Source stage physical identity hash mismatch",
+        });
+      }
+    },
+  );
+
+export type PlatformReleaseSourceStagePhysicalIdentityV2 = z.infer<
+  typeof PlatformReleaseSourceStagePhysicalIdentityV2Schema
 >;
 
 const GitSourceFenceIdentityV2Schema = z.object({
@@ -344,15 +437,36 @@ const SourceAdmissionReceiptIdentityV2Schema = z.object({
   admissionContractHash: z.literal(
     PLATFORM_RELEASE_SOURCE_ADMISSION_CONTRACT_HASH_V2,
   ),
-  remoteObservation: RemoteMainObservationIdentityV2Schema,
+  remoteBefore: RemoteMainObservationIdentityV2Schema,
+  remoteAfter: RemoteMainObservationIdentityV2Schema,
   admittedSource: z.object({
     sha: GitObjectHashSchema,
     treeHash: GitObjectHashSchema,
     commitEpochSeconds: CanonicalDecimalEpochV2Schema,
   }).strict(),
-  cleanWorktreeProof: CleanWorktreeProofIdentityV2Schema,
+  cleanWorktreeBefore: CleanWorktreeProofIdentityV2Schema,
+  cleanWorktreeAfter: CleanWorktreeProofIdentityV2Schema,
   sourceBefore: GitSourceFenceIdentityV2Schema,
   sourceAfter: GitSourceFenceIdentityV2Schema,
+  exportedSource: z.object({
+    method: z.literal("verified_git_tree_export.v2"),
+    source: PlatformReleaseSourceTreeBindingV2Schema,
+    initialStageWasEmpty: z.literal(true),
+    stageBefore:
+      PlatformReleaseSourceStagePhysicalIdentityV2Schema,
+    stageAfter:
+      PlatformReleaseSourceStagePhysicalIdentityV2Schema,
+    temporaryLocatorDisclosure: z.literal("forbidden"),
+  }).strict(),
+  gitTool: z.object({
+    executable: ExactHostOwnedFileRefV2Schema,
+    requiredAbi: z.literal(
+      "GIT_OBJECT_DATABASE_SOURCE_EXPORT_V2",
+    ),
+    commandContractHash: z.literal(
+      PLATFORM_RELEASE_SOURCE_GIT_COMMAND_CONTRACT_HASH_V2,
+    ),
+  }).strict(),
   implementation: z.object({
     ownership: z.literal("root_owned_separately_installed"),
     module: ExactHostOwnedFileRefV2Schema,
@@ -362,21 +476,54 @@ const SourceAdmissionReceiptIdentityV2Schema = z.object({
   const admitted = value.admittedSource;
   const before = value.sourceBefore;
   const after = value.sourceAfter;
-  const clean = value.cleanWorktreeProof;
+  const cleanBefore = value.cleanWorktreeBefore;
+  const cleanAfter = value.cleanWorktreeAfter;
+  const exported = value.exportedSource;
+  const gitExecutable = value.gitTool.executable;
+  const implementation = value.implementation.module;
   if (
-    value.remoteObservation.remoteRef !== value.remoteRef
-    || value.remoteObservation.observedSha !== admitted.sha
-    || value.remoteObservation.observedTreeHash !== admitted.treeHash
+    value.remoteBefore.remoteRef !== value.remoteRef
+    || value.remoteBefore.observedSha !== admitted.sha
+    || value.remoteBefore.observedTreeHash !== admitted.treeHash
+    || value.remoteAfter.remoteRef !== value.remoteRef
+    || value.remoteAfter.observedSha !== admitted.sha
+    || value.remoteAfter.observedTreeHash !== admitted.treeHash
+    || value.remoteBefore.observationHash
+      !== value.remoteAfter.observationHash
     || before.headSha !== admitted.sha
     || before.treeHash !== admitted.treeHash
     || before.indexTreeHash !== admitted.treeHash
     || after.headSha !== admitted.sha
     || after.treeHash !== admitted.treeHash
     || after.indexTreeHash !== admitted.treeHash
-    || clean.headSha !== admitted.sha
-    || clean.treeHash !== admitted.treeHash
-    || clean.indexTreeHash !== admitted.treeHash
+    || cleanBefore.headSha !== admitted.sha
+    || cleanBefore.treeHash !== admitted.treeHash
+    || cleanBefore.indexTreeHash !== admitted.treeHash
+    || cleanAfter.headSha !== admitted.sha
+    || cleanAfter.treeHash !== admitted.treeHash
+    || cleanAfter.indexTreeHash !== admitted.treeHash
+    || cleanBefore.proofHash !== cleanAfter.proofHash
     || before.identityHash !== after.identityHash
+    || exported.source.sourceTreeHash !== admitted.treeHash
+    || exported.stageBefore.sourceBindingHash
+      !== exported.source.bindingHash
+    || exported.stageAfter.sourceBindingHash
+      !== exported.source.bindingHash
+    || exported.stageBefore.identityHash
+      !== exported.stageAfter.identityHash
+    || gitExecutable.mode !== "0555"
+    || gitExecutable.absoluteRealpathLocator
+      === implementation.absoluteRealpathLocator
+    || canonicalJsonStringify(
+      gitExecutable.hostAdmissionReceipt.host,
+    ) !== canonicalJsonStringify(
+      implementation.hostAdmissionReceipt.host,
+    )
+    || canonicalJsonStringify(
+      gitExecutable.hostAdmissionReceipt.verifier,
+    ) !== canonicalJsonStringify(
+      implementation.hostAdmissionReceipt.verifier,
+    )
   ) {
     context.addIssue({
       code: "custom",
@@ -535,10 +682,12 @@ export const PlatformReleaseBuildCommandResultV2Schema = z.object({
   schema: z.literal(PLATFORM_RELEASE_BUILD_COMMAND_RESULT_V2_SCHEMA),
   version: z.literal(PLATFORM_RELEASE_COMPONENT_VERSION_V2),
   sourceFingerprintHash: Sha256Schema,
-  sourceFileCount: z.number().int().positive().max(20_000),
-  sourceDirectoryCount: z.number().int().nonnegative().max(4_000),
+  sourceFileCount: z.number().int().positive()
+    .max(PLATFORM_RELEASE_SOURCE_MAX_FILES_V2),
+  sourceDirectoryCount: z.number().int().nonnegative()
+    .max(PLATFORM_RELEASE_SOURCE_MAX_DIRECTORIES_V2),
   sourceTotalBytes: z.number().int().positive()
-    .max(512 * 1024 * 1024),
+    .max(PLATFORM_RELEASE_SOURCE_MAX_TOTAL_BYTES_V2),
   sourceSha: GitObjectHashSchema,
   sourceDateEpoch: CanonicalDecimalEpochV2Schema,
   compilerEntryHash: Sha256Schema,
@@ -654,6 +803,10 @@ const PlatformReleaseBuildReceiptIdentityV2Schema = z.object({
     || result.sourceDateEpoch !== value.sourceDateEpoch
     || result.compilerEntryHash !== value.compiler.entryModuleHash
     || result.sourceFingerprintHash !== value.source.exportedFileTreeHash
+    || result.sourceFileCount !== value.source.exportedFileCount
+    || result.sourceDirectoryCount
+      !== value.source.exportedDirectoryCount
+    || result.sourceTotalBytes !== value.source.exportedTotalBytes
     || result.platformFileCount
       !== value.output.runtimePayload.platformTree.fileCount
     || result.platformDirectoryCount

@@ -114,10 +114,13 @@ import {
   PLATFORM_RELEASE_BUILD_RECEIPT_V2_SCHEMA,
   PLATFORM_RELEASE_EMPTY_GIT_STATUS_CONTENT_HASH_V2,
   PLATFORM_RELEASE_SOURCE_ADMISSION_CONTRACT_HASH_V2,
+  PLATFORM_RELEASE_SOURCE_GIT_COMMAND_CONTRACT_HASH_V2,
+  PLATFORM_RELEASE_SOURCE_STAGE_PHYSICAL_IDENTITY_V2_SCHEMA,
   PLATFORM_RELEASE_SOURCE_TREE_BINDING_V2_SCHEMA,
   SOURCE_ADMISSION_RECEIPT_V2_SCHEMA,
   hashExactPlatformReleaseSourceRefV2,
   hashPlatformReleaseBuildReceiptV2,
+  hashPlatformReleaseSourceStagePhysicalIdentityV2,
   hashPlatformReleaseSourceTreeBindingV2,
   hashSourceAdmissionReceiptV2,
 } from
@@ -960,6 +963,9 @@ function sourceTreeBinding(inputs: ReturnType<typeof sourceInputs>) {
     schema: PLATFORM_RELEASE_SOURCE_TREE_BINDING_V2_SCHEMA,
     sourceTreeHash,
     exportedFileTreeHash: fixtureShaV2("source-file-tree"),
+    exportedFileCount: 187,
+    exportedDirectoryCount: 49,
+    exportedTotalBytes: 1_250_003,
     inputMembershipHash,
     inputs,
   };
@@ -985,7 +991,11 @@ function gitFence(codeSha: string, treeHash: string) {
   };
 }
 
-function sourceAdmission(codeSha: string, treeHash: string) {
+function sourceAdmission(
+  codeSha: string,
+  treeHash: string,
+  source: ReturnType<typeof sourceTreeBinding>,
+) {
   const remoteObservation = {
     remoteRef: "refs/remotes/origin/main" as const,
     observedSha: codeSha,
@@ -1014,6 +1024,26 @@ function sourceAdmission(codeSha: string, treeHash: string) {
     }),
   };
   const fence = gitFence(codeSha, treeHash);
+  const stageIdentity = {
+    schema:
+      PLATFORM_RELEASE_SOURCE_STAGE_PHYSICAL_IDENTITY_V2_SCHEMA,
+    device: "1",
+    inode: BigInt(
+      `0x${fixtureShaV2("source-stage-inode").slice(0, 12)}`,
+    ).toString(),
+    ownerUid: 501,
+    ownerGid: 20,
+    mode: "0555" as const,
+    sourceBindingHash: source.bindingHash,
+  };
+  const stage = {
+    ...stageIdentity,
+    identityHash:
+      hashPlatformReleaseSourceStagePhysicalIdentityV2({
+        ...stageIdentity,
+        identityHash: fixtureShaV2("placeholder"),
+      }),
+  };
   const identity = {
     schema: SOURCE_ADMISSION_RECEIPT_V2_SCHEMA,
     version: "2.0.0" as const,
@@ -1025,15 +1055,37 @@ function sourceAdmission(codeSha: string, treeHash: string) {
     branch: "main" as const,
     admissionContractHash:
       PLATFORM_RELEASE_SOURCE_ADMISSION_CONTRACT_HASH_V2,
-    remoteObservation,
+    remoteBefore: structuredClone(remoteObservation),
+    remoteAfter: structuredClone(remoteObservation),
     admittedSource: {
       sha: codeSha,
       treeHash,
       commitEpochSeconds: "1785052800",
     },
-    cleanWorktreeProof,
+    cleanWorktreeBefore: structuredClone(cleanWorktreeProof),
+    cleanWorktreeAfter: structuredClone(cleanWorktreeProof),
     sourceBefore: structuredClone(fence),
     sourceAfter: structuredClone(fence),
+    exportedSource: {
+      method: "verified_git_tree_export.v2" as const,
+      source,
+      initialStageWasEmpty: true as const,
+      stageBefore: structuredClone(stage),
+      stageAfter: structuredClone(stage),
+      temporaryLocatorDisclosure: "forbidden" as const,
+    },
+    gitTool: {
+      executable: hostFile(
+        "source-git",
+        "/usr/local/libexec/setfarm/git-source-export-v2",
+        "0555",
+        118_928,
+      ),
+      requiredAbi:
+        "GIT_OBJECT_DATABASE_SOURCE_EXPORT_V2" as const,
+      commandContractHash:
+        PLATFORM_RELEASE_SOURCE_GIT_COMMAND_CONTRACT_HASH_V2,
+    },
     implementation: {
       ownership: "root_owned_separately_installed" as const,
       module: hostFile(
@@ -1071,6 +1123,7 @@ function buildReceipt(
   admissionReceiptHash: string,
   codeSha: string,
   source: ReturnType<typeof sourceTreeBinding>,
+  sourceStagePhysicalIdentityHash: string,
   compiler: ReturnType<typeof buildCompiler>,
   packageManager: ReturnType<typeof buildPackageManager>,
   payload: ReturnType<typeof runtimePayload>,
@@ -1116,7 +1169,7 @@ function buildReceipt(
     stage: {
       stageRef,
       sourceStagePhysicalIdentityHash:
-        fixtureShaV2("shared-source-stage"),
+        sourceStagePhysicalIdentityHash,
       outputStagePhysicalIdentityHash:
         fixtureShaV2(`${stageRef}-output-stage`),
       sourceStageMode: "0555" as const,
@@ -1237,7 +1290,11 @@ PlatformReleaseManifestV2 {
   const inputs = sourceInputs();
   const source = sourceTreeBinding(inputs);
   const codeSha = gitHash("source-commit");
-  const admission = sourceAdmission(codeSha, source.sourceTreeHash);
+  const admission = sourceAdmission(
+    codeSha,
+    source.sourceTreeHash,
+    source,
+  );
   const compiler = buildCompiler();
   const packageManager = buildPackageManager(external);
   const stitchConverter = legacyStitchConverter();
@@ -1246,6 +1303,7 @@ PlatformReleaseManifestV2 {
     admission.receiptHash,
     codeSha,
     source,
+    admission.exportedSource.stageAfter.identityHash,
     compiler,
     packageManager,
     payload,
@@ -1257,6 +1315,7 @@ PlatformReleaseManifestV2 {
     admission.receiptHash,
     codeSha,
     source,
+    admission.exportedSource.stageAfter.identityHash,
     compiler,
     packageManager,
     payload,
@@ -1294,6 +1353,13 @@ PlatformReleaseManifestV2 {
         method: "verified_git_tree_export.v2" as const,
         exportedTreeHash: source.sourceTreeHash,
         exportedFileTreeHash: source.exportedFileTreeHash,
+        exportedFileCount: source.exportedFileCount,
+        exportedDirectoryCount:
+          source.exportedDirectoryCount,
+        exportedTotalBytes: source.exportedTotalBytes,
+        sourceBindingHash: source.bindingHash,
+        stagePhysicalIdentityHash:
+          admission.exportedSource.stageAfter.identityHash,
         mode: "read_only" as const,
       },
       commandRef: "BUILD_PLATFORM_RELEASE_V2" as const,
@@ -1444,6 +1510,8 @@ export function bindPlatformReleaseManifestFixtureToStageV2(
     hashPlatformRuntimePayloadV2(manifest.runtimePayload);
   const sourceInputSets = [
     manifest.build.inputs,
+    manifest.release.sourceAdmission.receipt
+      .exportedSource.source.inputs,
     manifest.build.firstBuildReceipt.inputs,
     manifest.build.firstBuildReceipt.source.inputs,
     manifest.build.secondBuildReceipt.inputs,
@@ -1457,6 +1525,8 @@ export function bindPlatformReleaseManifestFixtureToStageV2(
       hashExactPlatformReleaseSourceRefV2(sourcePackageJson);
   }
   for (const source of [
+    manifest.release.sourceAdmission.receipt
+      .exportedSource.source,
     manifest.build.firstBuildReceipt.source,
     manifest.build.secondBuildReceipt.source,
   ]) {
@@ -1470,6 +1540,34 @@ export function bindPlatformReleaseManifestFixtureToStageV2(
     });
     source.bindingHash =
       hashPlatformReleaseSourceTreeBindingV2(source);
+  }
+  const admission =
+    manifest.release.sourceAdmission.receipt;
+  for (const stage of [
+    admission.exportedSource.stageBefore,
+    admission.exportedSource.stageAfter,
+  ]) {
+    stage.sourceBindingHash =
+      admission.exportedSource.source.bindingHash;
+    stage.identityHash =
+      hashPlatformReleaseSourceStagePhysicalIdentityV2(stage);
+  }
+  admission.receiptHash =
+    hashSourceAdmissionReceiptV2(admission);
+  manifest.release.sourceAdmission.receiptHash =
+    admission.receiptHash;
+  manifest.build.sourceStage.sourceBindingHash =
+    admission.exportedSource.source.bindingHash;
+  manifest.build.sourceStage.stagePhysicalIdentityHash =
+    admission.exportedSource.stageAfter.identityHash;
+  for (const receipt of [
+    manifest.build.firstBuildReceipt,
+    manifest.build.secondBuildReceipt,
+  ]) {
+    receipt.sourceAdmissionReceiptHash =
+      admission.receiptHash;
+    receipt.stage.sourceStagePhysicalIdentityHash =
+      admission.exportedSource.stageAfter.identityHash;
   }
 
   const external = manifest.externalResolution;

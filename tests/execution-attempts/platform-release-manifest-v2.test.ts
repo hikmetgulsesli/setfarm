@@ -5,6 +5,7 @@ import { describe, it } from "node:test";
 import {
   canonicalJsonBytes,
   canonicalJsonStringify,
+  hashCanonicalJson,
 } from "../../src/product-compiler/canonical-json.js";
 import {
   hashProductDeliveryProfileCatalogV2,
@@ -22,6 +23,7 @@ import {
   PlatformReleaseBuildReceiptV2Schema,
   SourceAdmissionReceiptV2Schema,
   hashPlatformReleaseBuildReceiptV2,
+  hashPlatformReleaseSourceStagePhysicalIdentityV2,
   hashSourceAdmissionReceiptV2,
   parsePlatformReleaseBuildReceiptCandidateV2,
   parseSourceAdmissionReceiptCandidateV2,
@@ -76,11 +78,15 @@ function rebindCommandResult(receipt: any): void {
 
 function rebindSourceAdmission(manifest: any): void {
   const admission = manifest.release.sourceAdmission.receipt;
-  const module = admission.implementation.module;
-  module.hostAdmissionReceipt.receiptHash =
-    hashHostAdmissionReceiptV2(module.hostAdmissionReceipt);
-  module.hostAdmissionEvidenceHash =
-    module.hostAdmissionReceipt.receiptHash;
+  for (const hostFile of [
+    admission.implementation.module,
+    admission.gitTool.executable,
+  ]) {
+    hostFile.hostAdmissionReceipt.receiptHash =
+      hashHostAdmissionReceiptV2(hostFile.hostAdmissionReceipt);
+    hostFile.hostAdmissionEvidenceHash =
+      hostFile.hostAdmissionReceipt.receiptHash;
+  }
   admission.receiptHash = hashSourceAdmissionReceiptV2(admission);
   manifest.release.sourceAdmission.receiptHash = admission.receiptHash;
   for (const key of [
@@ -126,14 +132,14 @@ describe("PlatformReleaseManifestV2 candidate authority boundary", () => {
       },
       {
         sourceHash:
-          "b052bed0fcad9764622bedfb58b574f2216b0ef59da76cab287cd1ea9cf2227c",
-        sourceBytes: 4_325,
+          "918b1668724289151e03eb582217bebc6d1a34033c4b8b641a2f7fb1bb865cfd",
+        sourceBytes: 10_114,
         firstBuildHash:
-          "617d1fb5f538ef1933968d55eb4d2d1625974be78aebcb5d4dfee066a11bf626",
-        firstBuildBytes: 9_912,
+          "0a61992873086e68cc7d0627e1443a3da0065132e604feae9f53e70f93990d3a",
+        firstBuildBytes: 9_993,
         secondBuildHash:
-          "fb412f55e238edd7b234752273bca8535c9b3ae7dad56699668fcd0602526402",
-        secondBuildBytes: 9_913,
+          "26e3a6f272a02dd8929fc4472d605006125d90dc8d2b37677537f9ffeb945363",
+        secondBuildBytes: 9_994,
       },
     );
     assert.notEqual(
@@ -161,8 +167,8 @@ describe("PlatformReleaseManifestV2 candidate authority boundary", () => {
       },
       {
         hash:
-          "4769e7b08b64fa80f4dd42a56a3f301cee4a583393302d5e476b83cabc452157",
-        bytes: 80_600,
+          "0e95128a6c7ac3e605b40c836e5e2b9c952c496566499569827977eef54086e8",
+        bytes: 86_814,
         cap: 3_145_728,
       },
     );
@@ -207,6 +213,40 @@ describe("PlatformReleaseManifestV2 candidate authority boundary", () => {
       false,
     );
 
+    const movedRemote: any = structuredClone(
+      manifest.release.sourceAdmission.receipt,
+    );
+    movedRemote.remoteAfter.observedSha =
+      fixtureShaV2("moved-remote-main").slice(0, 40);
+    movedRemote.remoteAfter.observationHash = hashCanonicalJson({
+      schema: "setfarm.remote-main-observation.v2",
+      remoteRef: movedRemote.remoteAfter.remoteRef,
+      observedSha: movedRemote.remoteAfter.observedSha,
+      observedTreeHash: movedRemote.remoteAfter.observedTreeHash,
+    });
+    movedRemote.receiptHash =
+      hashSourceAdmissionReceiptV2(movedRemote);
+    assert.equal(
+      SourceAdmissionReceiptV2Schema.safeParse(movedRemote).success,
+      false,
+    );
+
+    const swappedSourceStage: any = structuredClone(
+      manifest.release.sourceAdmission.receipt,
+    );
+    swappedSourceStage.exportedSource.stageAfter.inode = "999";
+    swappedSourceStage.exportedSource.stageAfter.identityHash =
+      hashPlatformReleaseSourceStagePhysicalIdentityV2(
+        swappedSourceStage.exportedSource.stageAfter,
+      );
+    swappedSourceStage.receiptHash =
+      hashSourceAdmissionReceiptV2(swappedSourceStage);
+    assert.equal(
+      SourceAdmissionReceiptV2Schema.safeParse(swappedSourceStage)
+        .success,
+      false,
+    );
+
     const aliasedStage: any = structuredClone(
       manifest.build.firstBuildReceipt,
     );
@@ -226,6 +266,18 @@ describe("PlatformReleaseManifestV2 candidate authority boundary", () => {
     rebindCommandResult(driftedResult);
     assert.equal(
       PlatformReleaseBuildReceiptV2Schema.safeParse(driftedResult).success,
+      false,
+    );
+
+    const driftedSourceCount: any = structuredClone(
+      manifest.build.firstBuildReceipt,
+    );
+    driftedSourceCount.process.commandResult.sourceFileCount += 1;
+    rebindCommandResult(driftedSourceCount);
+    assert.equal(
+      PlatformReleaseBuildReceiptV2Schema.safeParse(
+        driftedSourceCount,
+      ).success,
       false,
     );
   });
@@ -294,12 +346,28 @@ describe("PlatformReleaseManifestV2 candidate authority boundary", () => {
       );
     rebindSourceAdmission(sourceVerifierDrift);
 
+    const sourceGitVerifierDrift: any = structuredClone(manifest);
+    sourceGitVerifierDrift.release.sourceAdmission.receipt
+      .gitTool.executable.hostAdmissionReceipt
+      .verifier.abiHash = fixtureShaV2(
+        "different-source-git-host-verifier",
+      );
+    rebindSourceAdmission(sourceGitVerifierDrift);
+
+    const detachedSourceStage: any = structuredClone(manifest);
+    detachedSourceStage.build.sourceStage
+      .stagePhysicalIdentityHash =
+        fixtureShaV2("detached-source-stage");
+    rehashManifest(detachedSourceStage);
+
     for (const candidate of [
       aliasedBuild,
       networkDrift,
       profileDrift,
       wrongBuildSource,
       sourceVerifierDrift,
+      sourceGitVerifierDrift,
+      detachedSourceStage,
     ]) {
       assert.equal(
         PlatformReleaseManifestV2Schema.safeParse(candidate).success,

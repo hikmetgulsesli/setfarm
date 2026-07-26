@@ -179,6 +179,11 @@ type PlatformReleaseManifestV2 = {
       method: "verified_git_tree_export.v2";
       exportedTreeHash: GitObjectHash;
       exportedFileTreeHash: Sha256;
+      exportedFileCount: number;
+      exportedDirectoryCount: number;
+      exportedTotalBytes: number;
+      sourceBindingHash: Sha256;
+      stagePhysicalIdentityHash: Sha256;
       mode: "read_only";
     };
     commandRef: "BUILD_PLATFORM_RELEASE_V2";
@@ -233,12 +238,22 @@ the release identity and cannot pass an existing activation anchor.
 
 Source, build and host provenance are typed receipts, not opaque proof hashes.
 `SourceAdmissionReceiptV2` binds the exact remote ref observation, admitted
-commit/tree, clean-worktree proof, source-before/source-after identity and the
-root-owned admission implementation. Each `PlatformReleaseBuildReceiptV2`
-binds the exact exported source tree, compiler/npm/executable identities,
+commit/tree and commit epoch, clean-worktree proof, remote/source before and
+after fences, complete exported-source binding and the read-only stage's
+before/after physical identity. It also binds both the root-owned admission
+implementation and the separately installed exact Git executable. The Git
+command contract permits only direct, sealed-environment object-database/index
+observation; checkout bytes are never export input, repository mutation is
+forbidden, and commit/blob/recursive-tree hashes are independently reproduced
+from returned bytes. The implementation and Git executable must carry the same
+host OS and verifier receipt.
+
+Each `PlatformReleaseBuildReceiptV2` binds the exact exported source tree and
+its file/directory/byte counts, compiler/npm/executable identities,
 command/argv/config, isolated source/output roots, exit status and produced
-runtime-tree bindings; the two receipts must describe independent empty stages
-and equal outputs. Every `ExactHostOwnedFileRefV2` additionally carries a strict
+runtime-tree bindings. Both receipts must use the one admitted physical source
+stage, describe independent empty output stages and produce equal outputs.
+Every `ExactHostOwnedFileRefV2` additionally carries a strict
 `HostAdmissionReceiptV2` binding realpath, bytes, mode, owner/group, OS build and
 the independently installed verifier that observed them. A selected receipt
 schema or self-consistent hash without the corresponding canonical payload
@@ -257,7 +272,8 @@ The verifier identity intentionally terminates at a host-provisioning
 `ExactHostOwnedFileRefV2`. Host provisioning is the out-of-band trust root that
 installs and pins this one verifier. All bootstrap, metadata-probe and
 source-admission host files in one release must carry the same verifier
-identity and the same OS-build projection. Candidate parsers remain
+identity and the same OS-build projection; this includes the exact Git
+executable used for source observation/export. Candidate parsers remain
 non-authoritative; production bootstrap independently re-observes the target
 and receipt under the pinned verifier before issuing any release brand.
 
@@ -1021,11 +1037,15 @@ fresh-verified authority brand.
 The production builder never builds from the mutable checkout and never writes
 into an existing `dist`:
 
-1. fetch/read approved source authority, require the local SHA to equal exact
-   `refs/remotes/origin/main`, and snapshot SHA plus `HEAD^{tree}`;
-2. export that exact Git tree into a private read-only source stage, verify every
-   blob/mode and the complete tree hash, and create two independent empty output
-   stages with mode `0700`;
+1. read approved source authority without mutating the repository, require
+   clean `main` and `HEAD == refs/remotes/origin/main`, and fence the exact
+   commit/tree/index/status/remote observation before and after export;
+2. use the host-admitted exact Git executable only as a byte transport from the
+   object database, independently reproduce commit/blob/recursive-tree hashes,
+   export with exclusive writes into one initially empty private source stage,
+   normalize and fsync it read-only, verify its complete fingerprint/counts and
+   physical identity twice, then create two independent empty output stages
+   with mode `0700`;
 3. run a new side-effect-free `BUILD_PLATFORM_RELEASE_V2` command from the
    verified source stage with an explicit output root; it may write only each
    stage's `payload/dist`, and copies exact committed `package.json` without

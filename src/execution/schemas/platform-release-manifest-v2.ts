@@ -32,6 +32,9 @@ import {
 } from "./external-runtime-resolution-v2.js";
 import {
   ExactLegacyStitchConverterRefV2Schema,
+  PLATFORM_RELEASE_SOURCE_MAX_DIRECTORIES_V2,
+  PLATFORM_RELEASE_SOURCE_MAX_FILES_V2,
+  PLATFORM_RELEASE_SOURCE_MAX_TOTAL_BYTES_V2,
   PlatformReleaseBuildReceiptV2Schema,
   PlatformReleaseCompilerIdentityV2Schema,
   PlatformReleasePackageManagerIdentityV2Schema,
@@ -114,6 +117,14 @@ const PlatformReleaseBuildIdentityV2Schema = z.object({
     method: z.literal("verified_git_tree_export.v2"),
     exportedTreeHash: GitObjectHashSchema,
     exportedFileTreeHash: Sha256Schema,
+    exportedFileCount: z.number().int().positive()
+      .max(PLATFORM_RELEASE_SOURCE_MAX_FILES_V2),
+    exportedDirectoryCount: z.number().int().nonnegative()
+      .max(PLATFORM_RELEASE_SOURCE_MAX_DIRECTORIES_V2),
+    exportedTotalBytes: z.number().int().positive()
+      .max(PLATFORM_RELEASE_SOURCE_MAX_TOTAL_BYTES_V2),
+    sourceBindingHash: Sha256Schema,
+    stagePhysicalIdentityHash: Sha256Schema,
     mode: z.literal("read_only"),
   }).strict(),
   commandRef: z.literal("BUILD_PLATFORM_RELEASE_V2"),
@@ -135,6 +146,12 @@ const PlatformReleaseBuildIdentityV2Schema = z.object({
     sourceDateEpoch: value.sourceDateEpoch,
     exportedTreeHash: value.sourceStage.exportedTreeHash,
     exportedFileTreeHash: value.sourceStage.exportedFileTreeHash,
+    exportedFileCount: value.sourceStage.exportedFileCount,
+    exportedDirectoryCount: value.sourceStage.exportedDirectoryCount,
+    exportedTotalBytes: value.sourceStage.exportedTotalBytes,
+    sourceBindingHash: value.sourceStage.sourceBindingHash,
+    stagePhysicalIdentityHash:
+      value.sourceStage.stagePhysicalIdentityHash,
   };
   const receiptFields = (receipt: typeof first) => ({
     compiler: canonicalJsonStringify(receipt.compiler),
@@ -143,6 +160,13 @@ const PlatformReleaseBuildIdentityV2Schema = z.object({
     sourceDateEpoch: receipt.sourceDateEpoch,
     exportedTreeHash: receipt.source.sourceTreeHash,
     exportedFileTreeHash: receipt.source.exportedFileTreeHash,
+    exportedFileCount: receipt.source.exportedFileCount,
+    exportedDirectoryCount:
+      receipt.source.exportedDirectoryCount,
+    exportedTotalBytes: receipt.source.exportedTotalBytes,
+    sourceBindingHash: receipt.source.bindingHash,
+    stagePhysicalIdentityHash:
+      receipt.stage.sourceStagePhysicalIdentityHash,
   });
   if (
     value.firstBuildReceiptHash !== first.receiptHash
@@ -152,6 +176,8 @@ const PlatformReleaseBuildIdentityV2Schema = z.object({
     || first.receiptHash === second.receiptHash
     || first.stage.outputStagePhysicalIdentityHash
       === second.stage.outputStagePhysicalIdentityHash
+    || first.stage.sourceStagePhysicalIdentityHash
+      !== second.stage.sourceStagePhysicalIdentityHash
     || canonicalJsonStringify(receiptFields(first))
       !== canonicalJsonStringify(expectedRootFields)
     || canonicalJsonStringify(receiptFields(second))
@@ -254,6 +280,27 @@ const PlatformReleaseManifestIdentityV2Schema = z.object({
       && second.process.commandResult.sourceSha === value.release.codeSha,
     "admitted source and both build source stages",
   );
+  const admittedExport =
+    value.release.sourceAdmission.receipt.exportedSource;
+  requireJoin(
+    canonicalJsonStringify(admittedExport.source)
+      === canonicalJsonStringify(first.source)
+      && canonicalJsonStringify(admittedExport.source)
+        === canonicalJsonStringify(second.source)
+      && admittedExport.source.bindingHash
+        === value.build.sourceStage.sourceBindingHash
+      && admittedExport.source.exportedFileTreeHash
+        === value.build.sourceStage.exportedFileTreeHash
+      && admittedExport.source.exportedFileCount
+        === value.build.sourceStage.exportedFileCount
+      && admittedExport.source.exportedDirectoryCount
+        === value.build.sourceStage.exportedDirectoryCount
+      && admittedExport.source.exportedTotalBytes
+        === value.build.sourceStage.exportedTotalBytes
+      && admittedExport.stageAfter.identityHash
+        === value.build.sourceStage.stagePhysicalIdentityHash,
+    "source admission export and both build source stages",
+  );
   requireJoin(
     value.build.sourceDateEpoch
       === value.release.sourceAdmission.receipt.admittedSource
@@ -336,6 +383,23 @@ const PlatformReleaseManifestIdentityV2Schema = z.object({
           .hostAdmissionReceipt.verifier,
       ),
     "source admission implementation and host runtime identity",
+  );
+  requireJoin(
+    canonicalJsonStringify(
+      value.release.sourceAdmission.receipt.gitTool.executable
+        .hostAdmissionReceipt.host,
+    ) === canonicalJsonStringify(
+      value.release.sourceAdmission.receipt.implementation.module
+        .hostAdmissionReceipt.host,
+    )
+      && canonicalJsonStringify(
+        value.release.sourceAdmission.receipt.gitTool.executable
+          .hostAdmissionReceipt.verifier,
+      ) === canonicalJsonStringify(
+        external.hostRuntime.bootstrap.executable
+          .hostAdmissionReceipt.verifier,
+      ),
+    "source Git tool and release host verifier identity",
   );
   requireJoin(
     environment.network.authority.hostRuntimeIdentityHash
