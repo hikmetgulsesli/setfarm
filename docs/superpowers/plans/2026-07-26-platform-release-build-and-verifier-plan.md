@@ -184,6 +184,59 @@ The terminal writer must eventually accept this authentic composer handle, not
 public manifest/attestation JSON. The current JSON input remains candidate-only
 until that transition lands. The fixture path remains test-only.
 
+### B5D-0 — Host Composition Authority
+
+Read-only post-B5C audit proved that the dependency pair does not yet carry the
+production release-bootstrap, metadata-tool, network-sandbox, runtime UID/GID,
+or module-export authority required by the existing external/environment
+schemas. The complete fixture currently fabricates those values, and the
+current network probe is explicitly test-only.
+
+Before any manifest builder, attach one private
+`PlatformReleaseHostCompositionAuthorityV2` sub-capability to
+`PlatformReleaseHostNodeToolchainAuthorityV2`. The sub-capability is retained
+through the build capsule and dependency pair; it is not a new composer
+argument. It admits and freshly revalidates:
+
+- exact release bootstrap executable/module;
+- metadata bootstrap/export plus exact xattr and ACL tools;
+- sandbox executable, network wrapper/export, and canonical profile;
+- unprivileged runtime UID/GID distinct from the root owner;
+- exact host/verifier identity and non-system dynamic-library closure;
+- metadata, network, and module-export receipt ABIs.
+
+Production construction is bootstrap-owned and root-only. Tests use a distinct
+`test_fixture` constructor that cannot promote.
+
+### B5D-1 — Operational Evidence ABIs
+
+Add authenticated, fixed-argv, no-shell, bounded host operations for metadata,
+network negative probing, and module/export loading. Each operation revalidates
+its exact host files and output root before and after execution. Production
+failure is terminal; the same unchanged physical authority is not reset for
+another attempt.
+
+### B5D-2 — One-Shot Composition And Ownership Transfer
+
+The composer claims the pair before its first `await`, derives every artifact
+from private observed state and zero-input definitions, terminal-writes one
+selected output, transfers the complete selected private-parent/output-root
+slot to transaction ownership, destroys the second output and remaining
+source/toolchain/scratch context, and only then transitions
+`dependency_materializing -> release_completed` and transfers the slot to the
+completed handle. The predecessor remains only as a pathless completed
+tombstone; later disposal cannot re-enter cleanup or reach the transferred
+slot.
+
+No production path getter is added. The terminal writer's JSON/path/callback
+entry becomes explicit test-only issuance with a distinct non-promotable handle.
+Production terminalization is a low-level authenticated physical operation
+that returns no completed authority. Only the pair-adjacent composer may turn
+its sealed-root evidence into the production completed handle.
+
+The normative detail is
+`docs/superpowers/specs/2026-07-26-platform-release-composition-authority-v2-design.md`.
+
 ## B5E — Immutable Content Store and Prepared Brand
 
 The release content store is separate from semantic artifact CAS. It owns:
@@ -210,6 +263,11 @@ Tests use a separate test constructor and temporary root. Publication:
 
 No attestation occurrence bytes are written beneath the stable release root.
 Conflicting bytes at either identity are corruption, never overwrite targets.
+
+Migrations 22 through 26 already exist. Release-store persistence starts at
+migration 27 or later. Prepared-handle restart rehydration requires both the
+exact durable database record and a full fresh store reproduction while holding
+store authority; a row, path, or JSON object alone cannot recreate authority.
 
 ## B6 — Fresh Verifier
 
