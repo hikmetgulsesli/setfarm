@@ -1,6 +1,9 @@
 import { z } from "zod";
 
-import { hashCanonicalJson } from "../../product-compiler/canonical-json.js";
+import {
+  canonicalJsonStringify,
+  hashCanonicalJson,
+} from "../../product-compiler/canonical-json.js";
 import { Sha256Schema } from "../../product-compiler/schemas/common-v1.js";
 import {
   CANONICAL_RUNTIME_TREE_V2_PROFILES,
@@ -164,6 +167,34 @@ const HostRuntimeIdentityIdentityV2Schema = z.object({
       code: "custom",
       path: ["runtimeUid"],
       message: "Runtime UID must be separated from the root-owned bootstrap",
+    });
+  }
+  const expectedHostAdmission = canonicalJsonStringify({
+    platform: value.platform,
+    architecture: value.architecture,
+    macosProductVersion: value.macosProductVersion,
+    macosBuildVersion: value.macosBuildVersion,
+    darwinKernelRelease: value.darwinKernelRelease,
+  });
+  const bootstrapFiles = [
+    value.bootstrap.executable,
+    value.bootstrap.module,
+  ];
+  if (
+    bootstrapFiles.some((file) =>
+      canonicalJsonStringify(file.hostAdmissionReceipt.host)
+        !== expectedHostAdmission)
+    || canonicalJsonStringify(
+      value.bootstrap.executable.hostAdmissionReceipt.verifier,
+    ) !== canonicalJsonStringify(
+      value.bootstrap.module.hostAdmissionReceipt.verifier,
+    )
+  ) {
+    context.addIssue({
+      code: "custom",
+      path: ["bootstrap"],
+      message:
+        "Bootstrap files must share one verifier and the exact host runtime identity",
     });
   }
 });
@@ -653,6 +684,32 @@ const ExternalRuntimeResolutionIdentityV2Schema = z.object({
       code: "custom",
       path: ["nodeRuntime"],
       message: "Node platform and architecture must match the exact host TCB",
+    });
+  }
+
+  const hostAdmissionProjection = canonicalJsonStringify({
+    platform: value.hostRuntime.platform,
+    architecture: value.hostRuntime.architecture,
+    macosProductVersion: value.hostRuntime.macosProductVersion,
+    macosBuildVersion: value.hostRuntime.macosBuildVersion,
+    darwinKernelRelease: value.hostRuntime.darwinKernelRelease,
+  });
+  if (
+    canonicalJsonStringify(
+      value.metadataProbe.bootstrapModule.hostAdmissionReceipt.host,
+    ) !== hostAdmissionProjection
+    || canonicalJsonStringify(
+      value.metadataProbe.bootstrapModule.hostAdmissionReceipt.verifier,
+    ) !== canonicalJsonStringify(
+      value.hostRuntime.bootstrap.executable
+        .hostAdmissionReceipt.verifier,
+    )
+  ) {
+    context.addIssue({
+      code: "custom",
+      path: ["metadataProbe", "bootstrapModule"],
+      message:
+        "Metadata-probe host admission must match the exact host and verifier identity",
     });
   }
 

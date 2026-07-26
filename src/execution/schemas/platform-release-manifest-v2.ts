@@ -315,6 +315,29 @@ const PlatformReleaseManifestIdentityV2Schema = z.object({
     "runtime ownership and host runtime UID",
   );
   requireJoin(
+    canonicalJsonStringify(
+      value.release.sourceAdmission.receipt.implementation.module
+        .hostAdmissionReceipt.host,
+    ) === canonicalJsonStringify({
+      platform: external.hostRuntime.platform,
+      architecture: external.hostRuntime.architecture,
+      macosProductVersion:
+        external.hostRuntime.macosProductVersion,
+      macosBuildVersion:
+        external.hostRuntime.macosBuildVersion,
+      darwinKernelRelease:
+        external.hostRuntime.darwinKernelRelease,
+    })
+      && canonicalJsonStringify(
+        value.release.sourceAdmission.receipt.implementation.module
+          .hostAdmissionReceipt.verifier,
+      ) === canonicalJsonStringify(
+        external.hostRuntime.bootstrap.executable
+          .hostAdmissionReceipt.verifier,
+      ),
+    "source admission implementation and host runtime identity",
+  );
+  requireJoin(
     environment.network.authority.hostRuntimeIdentityHash
       === external.hostRuntime.hostRuntimeIdentityHash,
     "network authority and host runtime identity",

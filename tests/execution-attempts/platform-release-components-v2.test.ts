@@ -73,8 +73,18 @@ import {
   parsePlatformRuntimePayloadCandidateV2,
   PlatformRuntimePayloadCandidateV2Schema,
 } from "../../src/execution/schemas/platform-runtime-payload-v2.js";
+import * as commonModule from "../../src/execution/schemas/platform-release-common-v2.js";
 import {
   EXACT_HOST_OWNED_FILE_REF_V2_SCHEMA,
+  ExactHostOwnedFileRefV2Schema,
+  HOST_ADMISSION_PHYSICAL_IDENTITY_V2_SCHEMA,
+  HOST_ADMISSION_RECEIPT_V2_SCHEMA,
+  HOST_ADMISSION_RECEIPT_MAX_CANONICAL_BYTES_V2,
+  HOST_ADMISSION_VERIFIER_V2_SCHEMA,
+  HostAdmissionReceiptV2Schema,
+  hashHostAdmissionPhysicalIdentityV2,
+  hashHostAdmissionReceiptV2,
+  parseHostAdmissionReceiptCandidateV2,
 } from "../../src/execution/schemas/platform-release-common-v2.js";
 
 function sha(label: string): string {
@@ -334,16 +344,91 @@ function createHostOwnedFile(
   mode: "0444" | "0555",
   byteLength: number,
 ) {
-  return {
-    schema: EXACT_HOST_OWNED_FILE_REF_V2_SCHEMA,
+  const target = {
     absoluteRealpathLocator,
     hash: sha(label),
     byteLength,
     ownerUid: 0 as const,
     ownerGid: 0,
     mode,
-    hostAdmissionEvidenceHash: sha(`${label}-host-admission`),
   };
+  const physicalIdentity = {
+    schema: HOST_ADMISSION_PHYSICAL_IDENTITY_V2_SCHEMA,
+    device: "1",
+    inode: BigInt(`0x${sha(`${label}-inode`).slice(0, 12)}`)
+      .toString(),
+    linkCount: 1 as const,
+    hash: target.hash,
+    byteLength,
+    ownerUid: 0 as const,
+    ownerGid: 0,
+    mode,
+  };
+  const physical = {
+    ...physicalIdentity,
+    identityHash: hashHostAdmissionPhysicalIdentityV2({
+      ...physicalIdentity,
+      identityHash: sha("placeholder"),
+    }),
+  };
+  const receiptIdentity = {
+    schema: HOST_ADMISSION_RECEIPT_V2_SCHEMA,
+    version: "2.0.0" as const,
+    authorityState:
+      "candidate_host_admission_receipt_unverified" as const,
+    productionUse:
+      "forbidden_until_fresh_independent_host_bootstrap_verification" as const,
+    host: {
+      platform: "darwin" as const,
+      architecture: "arm64" as const,
+      macosProductVersion: "15.5",
+      macosBuildVersion: "24F74",
+      darwinKernelRelease: "24.5.0",
+    },
+    target,
+    physicalBefore: physical,
+    physicalAfter: structuredClone(physical),
+    metadata: {
+      acl: "absent" as const,
+      extendedAttributes: "absent" as const,
+      probeReceiptHash: sha(`${label}-metadata-probe`),
+    },
+    verifier: {
+      schema: HOST_ADMISSION_VERIFIER_V2_SCHEMA,
+      installationScope:
+        "root_owned_separately_installed" as const,
+      absoluteRealpathLocator:
+        "/usr/local/libexec/setfarm/host-admission-v2",
+      hash: sha("host-admission-verifier"),
+      byteLength: 12_001,
+      ownerUid: 0 as const,
+      ownerGid: 0,
+      mode: "0555" as const,
+      requiredAbi:
+        "HOST_FILE_STABLE_DESCRIPTOR_ADMISSION_V2" as const,
+      abiHash: sha("host-admission-verifier-abi"),
+      installationAnchorHash:
+        sha("host-admission-installation-anchor"),
+    },
+  };
+  const hostAdmissionReceipt = {
+    ...receiptIdentity,
+    receiptHash:
+      hashHostAdmissionReceiptV2(receiptIdentity as never),
+  };
+  return {
+    schema: EXACT_HOST_OWNED_FILE_REF_V2_SCHEMA,
+    ...target,
+    hostAdmissionEvidenceHash: hostAdmissionReceipt.receiptHash,
+    hostAdmissionReceipt,
+  };
+}
+
+function rehashHostAdmissionRef(candidate: any): void {
+  candidate.hostAdmissionReceipt.receiptHash =
+    hashHostAdmissionReceiptV2(candidate.hostAdmissionReceipt);
+  candidate.hostAdmissionEvidenceHash =
+    candidate.hostAdmissionReceipt.receiptHash;
 }
 
 function createHostRuntimeCandidate() {
@@ -783,6 +868,69 @@ test("runtime payload candidate binds exact layout, bounded trees, ownership sep
   assert.throws(() => parsePlatformRuntimePayloadCandidateV2(oversizedBinding));
 });
 
+test("host-owned file refs carry one complete stable admission receipt", () => {
+  const candidate = createHostOwnedFile(
+    "host-receipt-fixture",
+    "/usr/local/libexec/setfarm/host-receipt-fixture",
+    "0444",
+    4_003,
+  );
+  assert.equal(
+    ExactHostOwnedFileRefV2Schema.safeParse(candidate).success,
+    true,
+  );
+  const parsed = parseHostAdmissionReceiptCandidateV2(
+    candidate.hostAdmissionReceipt,
+  );
+  assert.equal(
+    parsed.receiptHash,
+    hashHostAdmissionReceiptV2(parsed),
+  );
+  assert.equal(
+    parsed.physicalBefore.identityHash,
+    parsed.physicalAfter.identityHash,
+  );
+  assert.equal(
+    canonicalJsonBytes(parsed).byteLength
+      < HOST_ADMISSION_RECEIPT_MAX_CANONICAL_BYTES_V2,
+    true,
+  );
+  assertRecursivelyFrozen(parsed);
+
+  const detachedTarget = clone(candidate) as any;
+  detachedTarget.hostAdmissionReceipt.target.hash =
+    sha("detached-target");
+  rehashHostAdmissionRef(detachedTarget);
+  assert.equal(
+    ExactHostOwnedFileRefV2Schema.safeParse(detachedTarget).success,
+    false,
+  );
+
+  const unstablePhysical = clone(candidate) as any;
+  unstablePhysical.hostAdmissionReceipt.physicalAfter.inode = "999";
+  unstablePhysical.hostAdmissionReceipt.physicalAfter.identityHash =
+    hashHostAdmissionPhysicalIdentityV2(
+      unstablePhysical.hostAdmissionReceipt.physicalAfter,
+    );
+  rehashHostAdmissionRef(unstablePhysical);
+  assert.equal(
+    HostAdmissionReceiptV2Schema.safeParse(
+      unstablePhysical.hostAdmissionReceipt,
+    ).success,
+    false,
+  );
+
+  let traps = 0;
+  const hostile = new Proxy({}, {
+    ownKeys() {
+      traps += 1;
+      throw new Error("host admission proxy trap must not execute");
+    },
+  });
+  assert.throws(() => parseHostAdmissionReceiptCandidateV2(hostile));
+  assert.equal(traps, 0);
+});
+
 test("environment capsule candidate seals allowlists and exact metadata/network bindings", () => {
   const external = createExternalRuntimeCandidate();
   const candidate = createEnvironmentCandidate(
@@ -934,6 +1082,31 @@ test("external runtime candidate binds host TCB, exact npm recipe, graph, tools,
   );
   rehashExternal(wrongBootstrap);
   assert.throws(() => parseExternalRuntimeResolutionCandidateV2(wrongBootstrap));
+
+  const bootstrapHostDrift = clone(candidate) as any;
+  bootstrapHostDrift.hostRuntime.bootstrap.module
+    .hostAdmissionReceipt.host.macosBuildVersion = "24F75";
+  rehashHostAdmissionRef(
+    bootstrapHostDrift.hostRuntime.bootstrap.module,
+  );
+  bootstrapHostDrift.hostRuntime.hostRuntimeIdentityHash =
+    hashHostRuntimeIdentityV2(bootstrapHostDrift.hostRuntime);
+  rehashExternal(bootstrapHostDrift);
+  assert.throws(() =>
+    parseExternalRuntimeResolutionCandidateV2(bootstrapHostDrift));
+
+  const metadataVerifierDrift = clone(candidate) as any;
+  metadataVerifierDrift.metadataProbe.bootstrapModule
+    .hostAdmissionReceipt.verifier.abiHash =
+      sha("different-host-admission-verifier");
+  rehashHostAdmissionRef(
+    metadataVerifierDrift.metadataProbe.bootstrapModule,
+  );
+  metadataVerifierDrift.metadataProbe.authorityHash =
+    hashMetadataProbeAuthorityV2(metadataVerifierDrift.metadataProbe);
+  rehashExternal(metadataVerifierDrift);
+  assert.throws(() =>
+    parseExternalRuntimeResolutionCandidateV2(metadataVerifierDrift));
 
   const payloadBootstrap = clone(candidate) as any;
   payloadBootstrap.hostRuntime.bootstrap.module.absoluteRealpathLocator =
@@ -1167,6 +1340,7 @@ test("top-level candidate schemas and parsers enforce the same canonical byte ca
 
 test("public release-component surface exposes candidates, parsers and hashes but no authority issuer", () => {
   const exportedNames = [
+    ...Object.keys(commonModule),
     ...Object.keys(environmentModule),
     ...Object.keys(externalModule),
     ...Object.keys(runtimeModule),
@@ -1231,6 +1405,9 @@ test("component canonical hashes and byte lengths match hardcoded golden vectors
     platformBindingHash: runtime.platformTree.bindingHash,
     dependencyBindingHash: runtime.dependencyTree.bindingHash,
     runtimePayloadHash: runtime.runtimePayloadHash,
+    hostAdmissionReceiptHash:
+      external.hostRuntime.bootstrap.executable
+        .hostAdmissionReceipt.receiptHash,
     hostRuntimeIdentityHash: external.hostRuntime.hostRuntimeIdentityHash,
     npmRecipeHash: external.packageManager.installRecipe.recipeHash,
     npmReceiptHash: external.materializationReceipt.receiptHash,
@@ -1242,6 +1419,11 @@ test("component canonical hashes and byte lengths match hardcoded golden vectors
     browserClosureHash: browserExternal.browserRuntime.browserClosureHash,
     browserExternalResolutionHash: browserExternal.externalResolutionHash,
     runtimeCanonicalBytes: canonicalJsonBytes(runtime).byteLength,
+    hostAdmissionReceiptCanonicalBytes:
+      canonicalJsonBytes(
+        external.hostRuntime.bootstrap.executable
+          .hostAdmissionReceipt,
+      ).byteLength,
     externalCanonicalBytes: canonicalJsonBytes(external).byteLength,
     environmentCanonicalBytes: canonicalJsonBytes(environment).byteLength,
     browserExternalCanonicalBytes: canonicalJsonBytes(browserExternal).byteLength,
@@ -1249,19 +1431,22 @@ test("component canonical hashes and byte lengths match hardcoded golden vectors
     platformBindingHash: "a6cab60583791c75e7986832573b64164143dad69a6554a28fc7787275e32683",
     dependencyBindingHash: "ebd92a5c0fb9681e3d83f4959ebfcbfb38706944010f415a4eae512f8607f12b",
     runtimePayloadHash: "74b61580a0bef4332dc8e324a0162a0ff3e5884798e2852fe0f77dd23df2f96e",
-    hostRuntimeIdentityHash: "ae1bfa5c37071fe2a28fd22296bdceca3c91acebdeb44c1c049cbb016a4129ab",
+    hostAdmissionReceiptHash:
+      "eac1e35ddd8ce08c6dc51f80dcb07ac4eb5ef7b2f43daf3482359212c89e08e6",
+    hostRuntimeIdentityHash: "88cff0f72a247a236540f441435360cd61cc96bcb59db5689014de8a399b7b93",
     npmRecipeHash: "0dada13537e1129a741cf50d35aeb54529e311aeb2e7e09310dff864e5a1d87b",
     npmReceiptHash: "8b6080a206bfddb53360d3bf6466a09783379b7b636cb8559cad7797cf64a3c0",
     packageGraphHash: "060f6de7f196c4adb0bb75a940eefae2ce213385370d66e4791567f82300ffe8",
-    metadataProbeHash: "b34ce4aa52892c45b7ebb535df83a689e4a23cda55e88217d194b05cc1e10aa2",
-    externalResolutionHash: "6b0b4902e5aadd7cde26ca2efc2b02439ff67342d8711f5aaadf80b82e47ccb5",
-    networkIsolationHash: "8b41cbe4c27ed3299a0455ade9d25e0212aa5fa6848d44bd88f3e97ac8c8e310",
-    environmentCapsuleHash: "ee7418914e45f1b8bf67715e160d23b91101cf63ee2231cb3f84ed0d36f1377a",
+    metadataProbeHash: "10912ba979838f0886e81c7d395f59717378606cb8748dc87276ea68f1fc21d4",
+    externalResolutionHash: "f21ce09061ff225ba8625e01704691cc5176dcf46d2c6e88409a83053002a941",
+    networkIsolationHash: "066148dd65bd0786418c63806d22396a04fff6fb6d30e66c5820b4b000f12fff",
+    environmentCapsuleHash: "cc36e6534744d7154e870c4c9e224ca75fe079001a49885c460018a67c73d78c",
     browserClosureHash: "d934d4c4e1aa5a56ca3670e32694c08ed1c84191e39b836ae1a5a6f6f53627d8",
-    browserExternalResolutionHash: "3e089dfe2ff5e4ac239c851f263c45230f0e2ed963c89bb07e4a7c4343a1d5eb",
+    browserExternalResolutionHash: "fe1cf9f476b864625f8de3019d1bad7c08ee4799fb0b4f6b4f85f3756a5b0ea4",
     runtimeCanonicalBytes: 1976,
-    externalCanonicalBytes: 7983,
+    hostAdmissionReceiptCanonicalBytes: 2011,
+    externalCanonicalBytes: 14100,
     environmentCanonicalBytes: 1973,
-    browserExternalCanonicalBytes: 9602,
+    browserExternalCanonicalBytes: 15719,
   });
 });

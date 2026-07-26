@@ -36,6 +36,10 @@ import {
 } from
   "../../src/execution/schemas/platform-release-manifest-v2.js";
 import {
+  hashHostAdmissionReceiptV2,
+} from
+  "../../src/execution/schemas/platform-release-common-v2.js";
+import {
   hashPlatformReleaseModuleRefV2,
   hashPlatformRunnerCatalogEntryV2,
   hashPlatformRunnerCatalogV2,
@@ -70,6 +74,28 @@ function rebindCommandResult(receipt: any): void {
     hashPlatformReleaseBuildReceiptV2(receipt);
 }
 
+function rebindSourceAdmission(manifest: any): void {
+  const admission = manifest.release.sourceAdmission.receipt;
+  const module = admission.implementation.module;
+  module.hostAdmissionReceipt.receiptHash =
+    hashHostAdmissionReceiptV2(module.hostAdmissionReceipt);
+  module.hostAdmissionEvidenceHash =
+    module.hostAdmissionReceipt.receiptHash;
+  admission.receiptHash = hashSourceAdmissionReceiptV2(admission);
+  manifest.release.sourceAdmission.receiptHash = admission.receiptHash;
+  for (const key of [
+    "firstBuildReceipt",
+    "secondBuildReceipt",
+  ] as const) {
+    const receipt = manifest.build[key];
+    receipt.sourceAdmissionReceiptHash = admission.receiptHash;
+    receipt.receiptHash =
+      hashPlatformReleaseBuildReceiptV2(receipt);
+    manifest.build[`${key}Hash`] = receipt.receiptHash;
+  }
+  rehashManifest(manifest);
+}
+
 describe("PlatformReleaseManifestV2 candidate authority boundary", () => {
   it("binds typed source and two independent build receipts with stable goldens", () => {
     const manifest = createPlatformReleaseManifestFixtureV2();
@@ -100,13 +126,13 @@ describe("PlatformReleaseManifestV2 candidate authority boundary", () => {
       },
       {
         sourceHash:
-          "768a72032119579aad3c85236b3b3046cbae606b057febcc2704201f02e2bdab",
-        sourceBytes: 2_279,
+          "b052bed0fcad9764622bedfb58b574f2216b0ef59da76cab287cd1ea9cf2227c",
+        sourceBytes: 4_325,
         firstBuildHash:
-          "2ddef6ed3f81b13f4187a310c4febe776e63a28b2fcef659f316864cb2a562a0",
+          "617d1fb5f538ef1933968d55eb4d2d1625974be78aebcb5d4dfee066a11bf626",
         firstBuildBytes: 9_912,
         secondBuildHash:
-          "cda6a1e5b3a955bf6a1d2922a8998428a7e3272a4d0fdb455fe4f0f31fd3c04f",
+          "fb412f55e238edd7b234752273bca8535c9b3ae7dad56699668fcd0602526402",
         secondBuildBytes: 9_913,
       },
     );
@@ -135,8 +161,8 @@ describe("PlatformReleaseManifestV2 candidate authority boundary", () => {
       },
       {
         hash:
-          "8686b2ac265325f455fbcfeaa293fa9c2f99802b6d0ae91d734bd8909576d04c",
-        bytes: 72_444,
+          "4769e7b08b64fa80f4dd42a56a3f301cee4a583393302d5e476b83cabc452157",
+        bytes: 80_600,
         cap: 3_145_728,
       },
     );
@@ -260,11 +286,20 @@ describe("PlatformReleaseManifestV2 candidate authority boundary", () => {
     }
     rehashManifest(wrongBuildSource);
 
+    const sourceVerifierDrift: any = structuredClone(manifest);
+    sourceVerifierDrift.release.sourceAdmission.receipt
+      .implementation.module.hostAdmissionReceipt
+      .verifier.abiHash = fixtureShaV2(
+        "different-source-host-verifier",
+      );
+    rebindSourceAdmission(sourceVerifierDrift);
+
     for (const candidate of [
       aliasedBuild,
       networkDrift,
       profileDrift,
       wrongBuildSource,
+      sourceVerifierDrift,
     ]) {
       assert.equal(
         PlatformReleaseManifestV2Schema.safeParse(candidate).success,

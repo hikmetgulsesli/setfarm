@@ -244,6 +244,23 @@ the independently installed verifier that observed them. A selected receipt
 schema or self-consistent hash without the corresponding canonical payload
 cannot satisfy a manifest join.
 
+`HostAdmissionReceiptV2` contains the complete target projection, stable
+descriptor physical identity before and after the read, single-link count,
+content hash/length, root UID/GID, exact read-only mode, explicit absent
+ACL/xattr result, exact Darwin/macOS identity and the separately installed
+verifier identity. `ExactHostOwnedFileRefV2.hostAdmissionEvidenceHash` must
+equal the embedded receipt hash and every duplicated target field must equal
+the receipt; an opaque evidence hash is not sufficient.
+
+The verifier identity intentionally terminates at a host-provisioning
+`installationAnchorHash`; it is not another recursively nested
+`ExactHostOwnedFileRefV2`. Host provisioning is the out-of-band trust root that
+installs and pins this one verifier. All bootstrap, metadata-probe and
+source-admission host files in one release must carry the same verifier
+identity and the same OS-build projection. Candidate parsers remain
+non-authoritative; production bootstrap independently re-observes the target
+and receipt under the pinned verifier before issuing any release brand.
+
 ## Runtime Payload Closure
 
 V2 does not create a second byte-tree format. It reuses the existing

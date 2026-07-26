@@ -124,6 +124,11 @@ import {
   "../../../src/execution/schemas/platform-release-build-v2.js";
 import {
   EXACT_HOST_OWNED_FILE_REF_V2_SCHEMA,
+  HOST_ADMISSION_PHYSICAL_IDENTITY_V2_SCHEMA,
+  HOST_ADMISSION_RECEIPT_V2_SCHEMA,
+  HOST_ADMISSION_VERIFIER_V2_SCHEMA,
+  hashHostAdmissionPhysicalIdentityV2,
+  hashHostAdmissionReceiptV2,
 } from
   "../../../src/execution/schemas/platform-release-common-v2.js";
 import {
@@ -181,15 +186,85 @@ function hostFile(
   mode: "0444" | "0555",
   byteLength: number,
 ) {
-  return {
-    schema: EXACT_HOST_OWNED_FILE_REF_V2_SCHEMA,
+  const target = {
     absoluteRealpathLocator,
     hash: fixtureShaV2(label),
     byteLength,
     ownerUid: 0 as const,
     ownerGid: 0,
     mode,
-    hostAdmissionEvidenceHash: fixtureShaV2(`${label}-admission`),
+  };
+  const physicalIdentity = {
+    schema: HOST_ADMISSION_PHYSICAL_IDENTITY_V2_SCHEMA,
+    device: "1",
+    inode: BigInt(
+      `0x${fixtureShaV2(`${label}-inode`).slice(0, 12)}`,
+    ).toString(),
+    linkCount: 1 as const,
+    hash: target.hash,
+    byteLength,
+    ownerUid: 0 as const,
+    ownerGid: 0,
+    mode,
+  };
+  const physical = {
+    ...physicalIdentity,
+    identityHash:
+      hashHostAdmissionPhysicalIdentityV2({
+        ...physicalIdentity,
+        identityHash: fixtureShaV2("placeholder"),
+      }),
+  };
+  const receiptIdentity = {
+    schema: HOST_ADMISSION_RECEIPT_V2_SCHEMA,
+    version: "2.0.0" as const,
+    authorityState:
+      "candidate_host_admission_receipt_unverified" as const,
+    productionUse:
+      "forbidden_until_fresh_independent_host_bootstrap_verification" as const,
+    host: {
+      platform: "darwin" as const,
+      architecture: "arm64" as const,
+      macosProductVersion: "15.5",
+      macosBuildVersion: "24F74",
+      darwinKernelRelease: "24.5.0",
+    },
+    target,
+    physicalBefore: physical,
+    physicalAfter: structuredClone(physical),
+    metadata: {
+      acl: "absent" as const,
+      extendedAttributes: "absent" as const,
+      probeReceiptHash: fixtureShaV2(`${label}-metadata-probe`),
+    },
+    verifier: {
+      schema: HOST_ADMISSION_VERIFIER_V2_SCHEMA,
+      installationScope:
+        "root_owned_separately_installed" as const,
+      absoluteRealpathLocator:
+        "/usr/local/libexec/setfarm/host-admission-v2",
+      hash: fixtureShaV2("host-admission-verifier"),
+      byteLength: 12_001,
+      ownerUid: 0 as const,
+      ownerGid: 0,
+      mode: "0555" as const,
+      requiredAbi:
+        "HOST_FILE_STABLE_DESCRIPTOR_ADMISSION_V2" as const,
+      abiHash: fixtureShaV2("host-admission-verifier-abi"),
+      installationAnchorHash:
+        fixtureShaV2("host-admission-installation-anchor"),
+    },
+  };
+  const hostAdmissionReceipt = {
+    ...receiptIdentity,
+    receiptHash:
+      hashHostAdmissionReceiptV2(receiptIdentity as never),
+  };
+  return {
+    schema: EXACT_HOST_OWNED_FILE_REF_V2_SCHEMA,
+    ...target,
+    hostAdmissionEvidenceHash: hostAdmissionReceipt.receiptHash,
+    hostAdmissionReceipt,
   };
 }
 
