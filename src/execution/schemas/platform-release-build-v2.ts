@@ -30,8 +30,8 @@ import {
   CANONICAL_RUNTIME_TREE_V2_SCHEMA,
 } from "./canonical-runtime-tree-v2.js";
 import {
-  HostNodeToolchainReceiptV2Schema,
-} from "../../product-compiler/schemas/host-node-toolchain-receipt-v2.js";
+  PlatformReleaseHostNodeToolchainReceiptV2Schema,
+} from "./platform-release-host-node-toolchain-v2.js";
 
 export const EXACT_PLATFORM_RELEASE_SOURCE_REF_V2_SCHEMA =
   "setfarm.exact-platform-release-source-ref.v2" as const;
@@ -905,7 +905,7 @@ const PlatformReleaseBuildToolchainReceiptIdentityV2Schema = z.object({
     ]),
     temporaryLocatorDisclosure: z.literal("forbidden"),
   }).strict(),
-  hostToolchain: HostNodeToolchainReceiptV2Schema,
+  hostToolchain: PlatformReleaseHostNodeToolchainReceiptV2Schema,
   packageManager: PlatformReleasePackageManagerIdentityV2Schema,
   compiler: PlatformReleaseCompilerIdentityV2Schema,
   installRecipe: PlatformReleaseBuildToolchainInstallRecipeV2Schema,

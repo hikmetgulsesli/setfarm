@@ -275,6 +275,23 @@ Generated npm hidden locks and exact lock-declared `.bin` links are verified and
 then removed before the capsule is made read-only. The final build context has
 exactly `source` and `node_modules`; the latter is the authenticated capsule.
 
+The embedded host receipt is
+`PlatformReleaseHostNodeToolchainReceiptV2`, not the generated-product
+`HostNodeToolchainReceiptV2`. The latter is intentionally bound to a CLI or API
+scaffold catalog entry; selecting either profile for the Setfarm platform build
+would make release identity depend on an unrelated product-delivery profile.
+The platform receipt instead carries one code-owned
+`platform_release_build_v2` requirement plus the complete installation-root,
+provisioning, host, Node executable, npm closure, probe, and command-path
+projection. A private `PlatformReleaseHostNodeToolchainAuthorityV2` may bootstrap
+that projection only from an authentic freshly revalidated host capability,
+retains that capability in module-private state, and revalidates it around every
+install. Its canonical receipt omits the bootstrap capability's scaffold
+requirement and receipt hash, so two authentic handles observing the same exact
+physical Node/npm installation produce one release identity. Production and
+test constructors remain separate; a test receipt or candidate JSON cannot
+issue the production capability.
+
 `BUILD_PLATFORM_RELEASE_V2` accepts the exact source root, output root,
 build-toolchain root/hash, admitted source SHA and Git epoch. It derives
 `node_modules/typescript/bin/tsc` from the capsule; no caller-supplied compiler

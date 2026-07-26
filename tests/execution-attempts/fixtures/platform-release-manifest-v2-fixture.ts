@@ -154,6 +154,14 @@ import {
 } from
   "../../../src/product-compiler/schemas/node-scaffold-toolchain-catalog-v2.js";
 import {
+  PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_AUTHORITY_REF_V2,
+  PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_AUTHORITY_VERSION_V2,
+  PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_RECEIPT_V2_SCHEMA,
+  getPlatformReleaseHostNodeToolchainRequirementV2,
+  hashPlatformReleaseHostNodeToolchainReceiptV2,
+} from
+  "../../../src/execution/schemas/platform-release-host-node-toolchain-v2.js";
+import {
   EXACT_HOST_OWNED_FILE_REF_V2_SCHEMA,
   HOST_ADMISSION_PHYSICAL_IDENTITY_V2_SCHEMA,
   HOST_ADMISSION_RECEIPT_V2_SCHEMA,
@@ -360,10 +368,44 @@ function buildHostToolchainReceipt() {
         fixtureShaV2("host-toolchain-command-projection"),
     },
   };
-  return {
+  const bootstrapReceipt = {
     ...receiptIdentity,
     receiptHash:
       hashHostNodeToolchainReceiptV2(receiptIdentity),
+  };
+  const platformIdentity = {
+    schema:
+      PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_RECEIPT_V2_SCHEMA,
+    receiptVersion: "2.0.0" as const,
+    authorityRef:
+      PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_AUTHORITY_REF_V2,
+    authorityVersion:
+      PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_AUTHORITY_VERSION_V2,
+    status: "verified" as const,
+    authorityState:
+      "verified_platform_release_host_projection" as const,
+    admissionScope: bootstrapReceipt.admissionScope,
+    filesystemProtection:
+      bootstrapReceipt.filesystemProtection,
+    installationRoot:
+      structuredClone(bootstrapReceipt.installationRoot),
+    provisioning:
+      structuredClone(bootstrapReceipt.provisioning),
+    requirement:
+      getPlatformReleaseHostNodeToolchainRequirementV2(),
+    host: structuredClone(bootstrapReceipt.host),
+    node: structuredClone(bootstrapReceipt.node),
+    npm: structuredClone(bootstrapReceipt.npm),
+    probe: structuredClone(bootstrapReceipt.probe),
+    commandPathProjection:
+      structuredClone(bootstrapReceipt.commandPathProjection),
+  };
+  return {
+    ...platformIdentity,
+    receiptHash:
+      hashPlatformReleaseHostNodeToolchainReceiptV2(
+        platformIdentity,
+      ),
   };
 }
 

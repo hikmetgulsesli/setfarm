@@ -186,6 +186,7 @@ export type HostNodeToolchainProbeRefV2 =
   | "HOST_NPM_VERSION_PROBE_V2"
   | "HOST_NPM_EFFECTIVE_CONFIG_PROBE_V2"
   | "HOST_NPM_SCAFFOLD_INSTALL_V2"
+  | "HOST_NPM_PLATFORM_RELEASE_BUILD_INSTALL_V2"
   | "HOST_NPM_CANDIDATE_PRODUCTION_INSTALL_V2"
   | "HOST_NODE_PRODUCT_BUILD_V2";
 
@@ -310,6 +311,32 @@ export type HostNodeToolchainNpmCiEvidenceV2 = Readonly<{
   stderrHash: string;
   stderrBytes: number;
 }>;
+
+export type HostNodeToolchainPlatformReleaseNpmCiEvidenceV2 =
+  Readonly<{
+    probeRef: "HOST_NPM_PLATFORM_RELEASE_BUILD_INSTALL_V2";
+    hostToolchainReceiptHash: string;
+    environmentHash: string;
+    projectScopeHash: string;
+    directArgv: readonly [
+      "npm",
+      "ci",
+      "--include=dev",
+      "--ignore-scripts",
+      "--no-audit",
+      "--no-fund",
+    ];
+    directArgvHash: string;
+    timeoutMs: 120_000;
+    maxStdoutBytes: 65_536;
+    maxStderrBytes: 65_536;
+    exitCode: 0;
+    signal: null;
+    stdoutHash: string;
+    stdoutBytes: number;
+    stderrHash: string;
+    stderrBytes: number;
+  }>;
 
 export type HostNodeToolchainCandidateProductionNpmCiInputV2 = Readonly<{
   privateRoot: string;
@@ -2733,15 +2760,16 @@ function captureNpmCiProjectScopeV2(projectRoot: string): string {
   }
 }
 
-/**
- * Executes the only admitted scaffold dependency install. Paths are consumed
- * inside the authenticated host authority and are represented only by hashes
- * in the returned evidence.
- */
-export async function executeHostNodeToolchainNpmCiV2(
+async function executeHostNodeToolchainNpmCiForPurposeV2(
   handle: HostNodeToolchainAuthorityV2,
   input: HostNodeToolchainNpmCiInputV2,
-): Promise<HostNodeToolchainNpmCiEvidenceV2> {
+  probeRef:
+    | "HOST_NPM_SCAFFOLD_INSTALL_V2"
+    | "HOST_NPM_PLATFORM_RELEASE_BUILD_INSTALL_V2",
+): Promise<
+  | HostNodeToolchainNpmCiEvidenceV2
+  | HostNodeToolchainPlatformReleaseNpmCiEvidenceV2
+> {
   const state = authenticState(handle);
   if (
     !isPlainRecord(input)
@@ -2777,7 +2805,7 @@ export async function executeHostNodeToolchainNpmCiV2(
     "--no-fund",
   ] as const);
   const invocation: HostNodeToolchainProbeInvocationV2 = Object.freeze({
-    probeRef: "HOST_NPM_SCAFFOLD_INSTALL_V2",
+    probeRef,
     executable: state.captured.root.nodePath,
     argv: Object.freeze([state.captured.root.npmCliPath, ...directArgv.slice(1)]),
     cwd: input.projectRoot,
@@ -2828,13 +2856,15 @@ export async function executeHostNodeToolchainNpmCiV2(
     return fail("HOST_NODE_TOOLCHAIN_V2_INSTALL_NONZERO", "Exact npm ci exited nonzero");
   }
   return deepFreezeJson({
-    probeRef: "HOST_NPM_SCAFFOLD_INSTALL_V2" as const,
+    probeRef,
     hostToolchainReceiptHash: hostBefore.receiptHash,
     environmentHash,
     projectScopeHash,
     directArgv,
     directArgvHash: hashCanonicalJson({
-      schema: "setfarm.node-scaffold-install-direct-argv-hash.v2",
+      schema: probeRef === "HOST_NPM_SCAFFOLD_INSTALL_V2"
+        ? "setfarm.node-scaffold-install-direct-argv-hash.v2"
+        : "setfarm.platform-release-build-toolchain-direct-argv-hash.v2",
       directArgv,
     }),
     timeoutMs: NPM_SCAFFOLD_INSTALL_TIMEOUT_MS_V2,
@@ -2847,6 +2877,57 @@ export async function executeHostNodeToolchainNpmCiV2(
     stderrHash: sha256(result.stderr),
     stderrBytes: Buffer.byteLength(result.stderr, "utf8"),
   });
+}
+
+/**
+ * Executes the only admitted generated-scaffold dependency install. Paths are
+ * consumed inside the authenticated host authority and are represented only by
+ * hashes in the returned evidence.
+ */
+export async function executeHostNodeToolchainNpmCiV2(
+  handle: HostNodeToolchainAuthorityV2,
+  input: HostNodeToolchainNpmCiInputV2,
+): Promise<HostNodeToolchainNpmCiEvidenceV2> {
+  const evidence =
+    await executeHostNodeToolchainNpmCiForPurposeV2(
+      handle,
+      input,
+      "HOST_NPM_SCAFFOLD_INSTALL_V2",
+    );
+  if (evidence.probeRef !== "HOST_NPM_SCAFFOLD_INSTALL_V2") {
+    return fail(
+      "HOST_NODE_TOOLCHAIN_V2_INSTALL_SCOPE_INVALID",
+      "Scaffold npm ci returned another purpose's evidence",
+    );
+  }
+  return evidence;
+}
+
+/**
+ * Executes the admitted Setfarm platform-release build dependency install.
+ * The physical host authority is shared, while its invocation and hash domains
+ * remain separate from generated-product scaffolding.
+ */
+export async function executeHostNodeToolchainPlatformReleaseNpmCiV2(
+  handle: HostNodeToolchainAuthorityV2,
+  input: HostNodeToolchainNpmCiInputV2,
+): Promise<HostNodeToolchainPlatformReleaseNpmCiEvidenceV2> {
+  const evidence =
+    await executeHostNodeToolchainNpmCiForPurposeV2(
+      handle,
+      input,
+      "HOST_NPM_PLATFORM_RELEASE_BUILD_INSTALL_V2",
+    );
+  if (
+    evidence.probeRef
+      !== "HOST_NPM_PLATFORM_RELEASE_BUILD_INSTALL_V2"
+  ) {
+    return fail(
+      "HOST_NODE_TOOLCHAIN_V2_INSTALL_SCOPE_INVALID",
+      "Platform release npm ci returned another purpose's evidence",
+    );
+  }
+  return evidence;
 }
 
 type CandidateProductionNpmScopeCaptureV2 = Readonly<{
