@@ -36,6 +36,15 @@ import {
   NODE_CLI_BOOTSTRAP_SOURCE_HASH_V2,
   NODE_CLI_LAUNCHER_ABI_HASH_V2,
 } from "./node-cli-launcher-v2.js";
+import {
+  NODE_EXPRESS_API_APPLICATION_EXPORT_V2,
+  NODE_EXPRESS_API_BOOTSTRAP_SOURCE_HASH_V2,
+  NODE_EXPRESS_API_HANDLER_ABI_HASH_V2,
+  NODE_EXPRESS_API_LAUNCHER_ABI_HASH_V2,
+} from "./node-express-api-launcher-v2.js";
+import {
+  EXCLUSIVE_SOCKET_LIFECYCLE_ABI_HASH_V2,
+} from "./exclusive-socket-lease-v2.js";
 
 export const CANDIDATE_LAUNCH_TARGET_V2_SCHEMA =
   "setfarm.candidate-launch-target.v2" as const;
@@ -170,17 +179,20 @@ export type CandidateNodeEsmCliTargetV2 = z.infer<
   typeof CandidateNodeEsmCliTargetV2Schema
 >;
 
-const JavascriptExportNameV2Schema = z.string()
-  .min(1)
-  .max(160)
-  .regex(/^[A-Za-z_$][A-Za-z0-9_$]*$/u);
-
 const HttpHandlerExportIdentityV2Schema = z.object({
   schema: z.literal(HTTP_HANDLER_EXPORT_V2_SCHEMA),
   kind: z.literal("http_handler"),
   module: CandidateBundledApplicationModuleRefV2Schema,
-  exportName: JavascriptExportNameV2Schema,
+  exportName: z.literal(NODE_EXPRESS_API_APPLICATION_EXPORT_V2),
   handlerAbi: z.literal("EXPRESS_REQUEST_HANDLER_ABI_V2"),
+  handlerAbiHash: z.literal(NODE_EXPRESS_API_HANDLER_ABI_HASH_V2),
+  launcherBootstrapSourceHash: z.literal(
+    NODE_EXPRESS_API_BOOTSTRAP_SOURCE_HASH_V2,
+  ),
+  launcherAbiHash: z.literal(NODE_EXPRESS_API_LAUNCHER_ABI_HASH_V2),
+  socketLifecycleAbiHash: z.literal(
+    EXCLUSIVE_SOCKET_LIFECYCLE_ABI_HASH_V2,
+  ),
   serverOwnership: z.literal("platform_owned"),
   listenerOwnership: z.literal("platform_owned"),
   socketOwnership: z.literal("platform_owned"),
@@ -473,6 +485,25 @@ function addCandidateLaunchTargetIssuesV2(
       code: "custom",
       path: ["launcher", "launcherAbiHash"],
       message: "CLI launch target must bind the exact code-owned bootstrap launcher ABI",
+    });
+  }
+  if (
+    value.kind === "http_handler"
+    && (
+      value.launcher.launcherAbiHash
+        !== NODE_EXPRESS_API_LAUNCHER_ABI_HASH_V2
+      || value.target.launcherAbiHash
+        !== value.launcher.launcherAbiHash
+      || value.target.handlerAbiHash
+        !== NODE_EXPRESS_API_HANDLER_ABI_HASH_V2
+      || value.target.socketLifecycleAbiHash
+        !== EXCLUSIVE_SOCKET_LIFECYCLE_ABI_HASH_V2
+    )
+  ) {
+    context.addIssue({
+      code: "custom",
+      path: ["launcher", "launcherAbiHash"],
+      message: "API launch target must bind the exact code-owned Express, bootstrap and socket lifecycle ABI",
     });
   }
   if (!platformReleaseCandidateFitsCanonicalCapV2(

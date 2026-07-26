@@ -776,6 +776,27 @@ socket. Existing `npm run start`, generic `app.listen(PORT)` and mutable preview
 commands are unsupported. ProfileV2 stays `shadow_blocked` until the upstream
 BuildTopology/Packet/SourceMap compiler produces this exact export contract.
 
+The candidate API module never owns a listener. The code-owned child bootstrap
+receives the already-listening descriptor over authenticated IPC, disables
+`net.Server.listen` before importing the candidate ESM module, imports only the
+exact `setfarmHttpHandlerV2` data export, and attaches that function to an exact
+Express version under a platform-owned JSON parser, fallback route and error
+boundary. One nonce-bound readiness request precedes exactly one authoritative
+transport request. Cleanup succeeds only after the child reports one readiness
+request and one application request, closes the handed server, exits zero and
+the parent exclusively rebinds the same endpoint. A candidate that calls
+`listen()`, changes export/handler ABI, emits process output, exceeds request or
+response bounds, follows a redirect, retains the socket, or changes source
+identity produces typed failure and no observation receipt.
+
+CLI and API candidate launch observations remain explicitly
+`forbidden_until_verified_release_join`. Their test issuers prove the sealed
+source/build/runtime and process mechanics without claiming production
+admission. The later runner may consume the same launch mechanics only through
+the exact current activated-release lease and verified installed launcher
+module/export; it cannot promote a TypeScript source observation or a
+self-consistent receipt.
+
 All three artifacts are bounded, canonical and content-addressed. The runtime
 bundle is fresh-verified immediately before launch. A runner accepts a branded
 candidate launch target plus a `CurrentActivatedPlatformReleaseLeaseV2`; source

@@ -52,9 +52,11 @@ import {
 } from "../product-compiler/schemas/node-scaffold-production-materialization-v2.js";
 import type {
   CliInvocationInputTransportV2,
+  HttpInvocationInputTransportV2,
 } from "../product-compiler/schemas/invocation-input-transport-v2.js";
 import type {
   CliEncodedInvocationRequestV2,
+  HttpEncodedInvocationRequestV2,
 } from "../product-compiler/invocation-input-transport-v2.js";
 import {
   CandidateBuildAuthorityV2,
@@ -70,6 +72,10 @@ import {
   executePrivateNodeCliProcessV2,
   type PrivateNodeCliProcessResultV2,
 } from "./private-node-cli-process-v2.js";
+import {
+  executePrivateNodeExpressApiProcessV2,
+  type PrivateNodeExpressApiProcessResultV2,
+} from "./private-node-express-api-process-v2.js";
 import {
   CANDIDATE_NPM_DIRECT_ARGV_HASH_V2,
   CANDIDATE_NPM_MATERIALIZATION_RECEIPT_V2_SCHEMA,
@@ -1572,6 +1578,398 @@ export async function executeCandidateRuntimeCliLeaseInternalV2(
     return fail(
       "CANDIDATE_RUNTIME_BUNDLE_V2_LAUNCH_PROCESS_REJECTED",
       "Candidate runtime CLI execution failed at one authenticated boundary",
+      error,
+    );
+  } finally {
+    leaseState.lifecycle.status = "consumed";
+  }
+}
+
+type CandidateRuntimeApiExecutionLeaseLifecycleInternalV2 = {
+  status: "ready" | "claimed" | "consumed";
+};
+
+type CandidateRuntimeApiExecutionLeaseStateInternalV2 = Readonly<{
+  runtimeAuthority: CandidateRuntimeBundleAuthorityV2;
+  admissionScope: "production_host" | "test_fixture";
+  expectedBundleHash: string;
+  buildReceiptHash: string;
+  transportContract: Readonly<HttpInvocationInputTransportV2>;
+  transportSetHash: string;
+  transportMembershipHash: string;
+  runtimeSourceLogicalReceiptHash: string;
+  lifecycle: CandidateRuntimeApiExecutionLeaseLifecycleInternalV2;
+}>;
+
+const candidateRuntimeApiLeaseConstructorCapabilityInternalV2 =
+  Object.freeze({});
+const candidateRuntimeApiLeaseStateInternalV2 = new WeakMap<
+  object,
+  CandidateRuntimeApiExecutionLeaseStateInternalV2
+>();
+
+/**
+ * @internal Pathless one-use bridge from an authentic runtime bundle to the
+ * code-owned Node Express API launcher.
+ */
+export class CandidateRuntimeApiExecutionLeaseInternalV2 {
+  readonly runtimeBundleHash: string;
+  readonly buildReceiptHash: string;
+  readonly actionRef: string;
+  readonly transportContractHash: string;
+  readonly admissionScope: "production_host" | "test_fixture";
+
+  constructor(
+    capability: object,
+    state: CandidateRuntimeApiExecutionLeaseStateInternalV2,
+  ) {
+    if (capability !== candidateRuntimeApiLeaseConstructorCapabilityInternalV2) {
+      throw new CandidateRuntimeBundleErrorV2(
+        "CANDIDATE_RUNTIME_BUNDLE_V2_AUTHORITY_UNAUTHENTICATED",
+        "Candidate runtime API lease constructor capability is unavailable",
+      );
+    }
+    this.runtimeBundleHash = state.expectedBundleHash;
+    this.buildReceiptHash = state.buildReceiptHash;
+    this.actionRef = state.transportContract.actionRef;
+    this.transportContractHash = state.transportContract.contractHash;
+    this.admissionScope = state.admissionScope;
+    candidateRuntimeApiLeaseStateInternalV2.set(this, state);
+    Object.freeze(this);
+  }
+}
+
+function authenticCandidateRuntimeApiLeaseInternalV2(
+  lease: CandidateRuntimeApiExecutionLeaseInternalV2,
+): CandidateRuntimeApiExecutionLeaseStateInternalV2 {
+  if (
+    typeof lease !== "object"
+    || lease === null
+    || isProxy(lease)
+    || Object.getPrototypeOf(lease)
+      !== CandidateRuntimeApiExecutionLeaseInternalV2.prototype
+  ) {
+    return fail(
+      "CANDIDATE_RUNTIME_BUNDLE_V2_AUTHORITY_UNAUTHENTICATED",
+      "Candidate runtime API execution requires one authentic lease",
+    );
+  }
+  const state = candidateRuntimeApiLeaseStateInternalV2.get(lease);
+  if (!state) {
+    return fail(
+      "CANDIDATE_RUNTIME_BUNDLE_V2_AUTHORITY_UNAUTHENTICATED",
+      "Candidate runtime API execution requires one authentic lease",
+    );
+  }
+  return state;
+}
+
+export type CandidateRuntimeApiExecutionLeaseResultInternalV2 = Readonly<{
+  lease: CandidateRuntimeApiExecutionLeaseInternalV2;
+  runtimeBundleHash: string;
+  runtimeBundleClosureHash: string;
+  buildReceiptHash: string;
+  applicationTreeHash: string;
+  materializationHash: string;
+  moduleLocator: "candidate-bundle/application/app.js";
+  moduleContentHash: string;
+  moduleByteLength: number;
+  moduleMode: "0444";
+  modulePhysicalIdentityHash: string;
+  applicationExport: "setfarmHttpHandlerV2";
+  transportContract: Readonly<HttpInvocationInputTransportV2>;
+  transportSetHash: string;
+  transportMembershipHash: string;
+  runtimeSourceLogicalReceiptHash: string;
+}>;
+
+export async function issueCandidateRuntimeApiExecutionLeaseInternalV2(
+  runtimeAuthority: CandidateRuntimeBundleAuthorityV2,
+  expectedBundleHash: string,
+  expectedScope: "production_host" | "test_fixture",
+  actionRef: unknown,
+): Promise<CandidateRuntimeApiExecutionLeaseResultInternalV2> {
+  const runtimeState = authenticRuntimeStateV2(runtimeAuthority);
+  if (
+    runtimeState.expectedScope !== expectedScope
+    || runtimeState.bundle.bundleHash !== expectedBundleHash
+  ) {
+    return fail(
+      "CANDIDATE_RUNTIME_BUNDLE_V2_AUTHORITY_UNAUTHENTICATED",
+      "Candidate runtime API lease scope or expected bundle differs",
+    );
+  }
+  const verified = await verifyInternalV2({
+    runtimeAuthority,
+    expectedBundleHash,
+  }, expectedScope);
+  const transport =
+    await acquireCandidateBuildInvocationTransportContextInternalV2(
+      runtimeState.buildAuthority,
+      expectedScope,
+      actionRef,
+    );
+  const contract = transport.source.transportContract;
+  if (
+    runtimeState.bundle.buildReceipt.outputTree.profileId
+      !== "PROFILE_NODE_EXPRESS_API_STATELESS_EXACT_V2"
+    || contract.kind !== "http_request"
+    || contract.profileBinding.profileId
+      !== "PROFILE_NODE_EXPRESS_API_STATELESS_EXACT_V2"
+    || contract.stackPackBinding.stackPackId !== "node-express-api"
+    || contract.runtimeBinding.invocationKind !== "http_service"
+    || contract.runtimeBinding.launcherRef !== "LAUNCH_NODE_EXPRESS_API_V2"
+    || transport.buildReceiptHash !== runtimeState.bundle.buildReceiptHash
+    || transport.buildOutputTreeHash
+      !== runtimeState.bundle.applicationTree.treeHash
+    || verified.bundle.bundleHash !== runtimeState.bundle.bundleHash
+  ) {
+    return fail(
+      "CANDIDATE_RUNTIME_BUNDLE_V2_LAUNCH_PROFILE_INVALID",
+      "Candidate runtime, build output and transport do not form one API launch profile",
+    );
+  }
+  const physical =
+    await acquireNodeCandidateRuntimePhysicalLaunchContextInternalV2(
+      runtimeState.privateRuntime,
+    );
+  if (
+    physical.profileId !== "PROFILE_NODE_EXPRESS_API_STATELESS_EXACT_V2"
+    || physical.applicationTree.treeHash
+      !== runtimeState.bundle.applicationTree.treeHash
+    || physical.materializationHash
+      !== runtimeState.privateRuntime.materializationHash
+    || physical.applicationEntrypoint.logicalLocator !== "app.js"
+  ) {
+    return fail(
+      "CANDIDATE_RUNTIME_BUNDLE_V2_STATE_DRIFT",
+      "Candidate runtime physical API entrypoint does not reproduce its bundle",
+    );
+  }
+  const lifecycle: CandidateRuntimeApiExecutionLeaseLifecycleInternalV2 = {
+    status: "ready",
+  };
+  const leaseState: CandidateRuntimeApiExecutionLeaseStateInternalV2 =
+    Object.freeze({
+      runtimeAuthority,
+      admissionScope: expectedScope,
+      expectedBundleHash,
+      buildReceiptHash: runtimeState.bundle.buildReceiptHash,
+      transportContract: defensiveCopy(contract),
+      transportSetHash: transport.source.transportSetHash,
+      transportMembershipHash: transport.source.transportMembershipHash,
+      runtimeSourceLogicalReceiptHash:
+        transport.source.runtimeSourceLogicalReceiptHash,
+      lifecycle,
+    });
+  const lease = new CandidateRuntimeApiExecutionLeaseInternalV2(
+    candidateRuntimeApiLeaseConstructorCapabilityInternalV2,
+    leaseState,
+  );
+  return Object.freeze({
+    lease,
+    runtimeBundleHash: runtimeState.bundle.bundleHash,
+    runtimeBundleClosureHash: runtimeState.bundle.bundleClosureHash,
+    buildReceiptHash: runtimeState.bundle.buildReceiptHash,
+    applicationTreeHash: runtimeState.bundle.applicationTree.treeHash,
+    materializationHash: physical.materializationHash,
+    moduleLocator: "candidate-bundle/application/app.js" as const,
+    moduleContentHash: physical.applicationEntrypoint.contentHash,
+    moduleByteLength: physical.applicationEntrypoint.byteLength,
+    moduleMode: "0444" as const,
+    modulePhysicalIdentityHash:
+      physical.applicationEntrypoint.physicalIdentityHash,
+    applicationExport: "setfarmHttpHandlerV2" as const,
+    transportContract: defensiveCopy(contract),
+    transportSetHash: transport.source.transportSetHash,
+    transportMembershipHash: transport.source.transportMembershipHash,
+    runtimeSourceLogicalReceiptHash:
+      transport.source.runtimeSourceLogicalReceiptHash,
+  });
+}
+
+function candidateRuntimeApiSourceFenceHashInternalV2(
+  runtimeBundleHash: string,
+  physical: Awaited<ReturnType<
+    typeof acquireNodeCandidateRuntimePhysicalLaunchContextInternalV2
+  >>,
+): string {
+  return hashCanonicalJson({
+    schema: "setfarm.candidate-runtime-api-source-fence.v2",
+    runtimeBundleHash,
+    materializationHash: physical.materializationHash,
+    applicationTreeHash: physical.applicationTree.treeHash,
+    module: {
+      logicalLocator: physical.applicationEntrypoint.logicalLocator,
+      contentHash: physical.applicationEntrypoint.contentHash,
+      byteLength: physical.applicationEntrypoint.byteLength,
+      mode: physical.applicationEntrypoint.mode,
+      physicalIdentityHash:
+        physical.applicationEntrypoint.physicalIdentityHash,
+      applicationExport: "setfarmHttpHandlerV2",
+    },
+    environmentReceiptHash: physical.environment.environmentReceiptHash,
+    environmentHash: physical.environment.environmentHash,
+    hostToolchainReceiptHash:
+      physical.environment.hostRuntime.hostToolchainReceiptHash,
+    nodeIdentityHash: physical.environment.hostRuntime.nodeIdentityHash,
+    nodeExecutableContentHash:
+      physical.environment.hostRuntime.nodeExecutableContentHash,
+  });
+}
+
+export type CandidateRuntimeApiExecutionResultInternalV2 = Readonly<{
+  runtimeBundleHash: string;
+  runtimeBundleClosureHash: string;
+  buildReceiptHash: string;
+  applicationTreeHash: string;
+  materializationHash: string;
+  moduleLocator: "candidate-bundle/application/app.js";
+  moduleContentHash: string;
+  moduleByteLength: number;
+  moduleMode: "0444";
+  modulePhysicalIdentityHash: string;
+  applicationExport: "setfarmHttpHandlerV2";
+  transportContract: Readonly<HttpInvocationInputTransportV2>;
+  transportSetHash: string;
+  transportMembershipHash: string;
+  runtimeSourceLogicalReceiptHash: string;
+  sourceFenceBeforeHash: string;
+  sourceFenceAfterHash: string;
+  hostToolchainReceiptHash: string;
+  nodeIdentityHash: string;
+  nodeExecutableContentHash: string;
+  process: PrivateNodeExpressApiProcessResultV2;
+}>;
+
+export async function executeCandidateRuntimeApiLeaseInternalV2(
+  lease: CandidateRuntimeApiExecutionLeaseInternalV2,
+  request: HttpEncodedInvocationRequestV2,
+): Promise<CandidateRuntimeApiExecutionResultInternalV2> {
+  const leaseState = authenticCandidateRuntimeApiLeaseInternalV2(lease);
+  if (leaseState.lifecycle.status !== "ready") {
+    return fail(
+      "CANDIDATE_RUNTIME_BUNDLE_V2_LAUNCH_AUTHORITY_ALREADY_CONSUMED",
+      "Candidate runtime API execution lease is one-use",
+    );
+  }
+  leaseState.lifecycle.status = "claimed";
+  const runtimeState = authenticRuntimeStateV2(leaseState.runtimeAuthority);
+  let processResult: PrivateNodeExpressApiProcessResultV2 | undefined;
+  try {
+    const verified = await verifyInternalV2({
+      runtimeAuthority: leaseState.runtimeAuthority,
+      expectedBundleHash: leaseState.expectedBundleHash,
+    }, leaseState.admissionScope);
+    const transport =
+      await acquireCandidateBuildInvocationTransportContextInternalV2(
+        runtimeState.buildAuthority,
+        leaseState.admissionScope,
+        leaseState.transportContract.actionRef,
+      );
+    if (
+      verified.bundle.bundleHash !== leaseState.expectedBundleHash
+      || transport.buildReceiptHash !== leaseState.buildReceiptHash
+      || canonicalJsonStringify(transport.source.transportContract)
+        !== canonicalJsonStringify(leaseState.transportContract)
+      || transport.source.transportSetHash !== leaseState.transportSetHash
+      || transport.source.transportMembershipHash
+        !== leaseState.transportMembershipHash
+      || transport.source.runtimeSourceLogicalReceiptHash
+        !== leaseState.runtimeSourceLogicalReceiptHash
+    ) {
+      return fail(
+        "CANDIDATE_RUNTIME_BUNDLE_V2_LAUNCH_TRANSPORT_REJECTED",
+        "Candidate runtime API transport changed before execution",
+      );
+    }
+    const before =
+      await acquireNodeCandidateRuntimePhysicalLaunchContextInternalV2(
+        runtimeState.privateRuntime,
+      );
+    if (
+      before.profileId !== "PROFILE_NODE_EXPRESS_API_STATELESS_EXACT_V2"
+      || before.applicationEntrypoint.logicalLocator !== "app.js"
+      || before.applicationTree.treeHash
+        !== runtimeState.bundle.applicationTree.treeHash
+      || before.materializationHash
+        !== runtimeState.privateRuntime.materializationHash
+    ) {
+      return fail(
+        "CANDIDATE_RUNTIME_BUNDLE_V2_STATE_DRIFT",
+        "Candidate runtime API source fence does not match its bundle",
+      );
+    }
+    const sourceFenceBeforeHash =
+      candidateRuntimeApiSourceFenceHashInternalV2(
+        leaseState.expectedBundleHash,
+        before,
+      );
+    processResult = await executePrivateNodeExpressApiProcessV2({
+      bundleRoot: before.bundleRoot,
+      modulePath: before.applicationEntrypoint.absolutePath,
+      moduleContentHash: before.applicationEntrypoint.contentHash,
+      nodeExecutablePath:
+        before.environment.hostRuntime.nodeExecutablePath,
+      request,
+    });
+    const after =
+      await acquireNodeCandidateRuntimePhysicalLaunchContextInternalV2(
+        runtimeState.privateRuntime,
+      );
+    const sourceFenceAfterHash =
+      candidateRuntimeApiSourceFenceHashInternalV2(
+        leaseState.expectedBundleHash,
+        after,
+      );
+    if (
+      sourceFenceAfterHash !== sourceFenceBeforeHash
+      || after.applicationEntrypoint.contentHash
+        !== before.applicationEntrypoint.contentHash
+      || after.applicationEntrypoint.physicalIdentityHash
+        !== before.applicationEntrypoint.physicalIdentityHash
+      || after.environment.hostRuntime.nodeExecutableContentHash
+        !== before.environment.hostRuntime.nodeExecutableContentHash
+    ) {
+      processResult.responseBody.fill(0);
+      return fail(
+        "CANDIDATE_RUNTIME_BUNDLE_V2_STATE_DRIFT",
+        "Candidate runtime API authority changed across service execution",
+      );
+    }
+    return Object.freeze({
+      runtimeBundleHash: runtimeState.bundle.bundleHash,
+      runtimeBundleClosureHash: runtimeState.bundle.bundleClosureHash,
+      buildReceiptHash: runtimeState.bundle.buildReceiptHash,
+      applicationTreeHash: runtimeState.bundle.applicationTree.treeHash,
+      materializationHash: before.materializationHash,
+      moduleLocator: "candidate-bundle/application/app.js" as const,
+      moduleContentHash: before.applicationEntrypoint.contentHash,
+      moduleByteLength: before.applicationEntrypoint.byteLength,
+      moduleMode: "0444" as const,
+      modulePhysicalIdentityHash:
+        before.applicationEntrypoint.physicalIdentityHash,
+      applicationExport: "setfarmHttpHandlerV2" as const,
+      transportContract: defensiveCopy(leaseState.transportContract),
+      transportSetHash: leaseState.transportSetHash,
+      transportMembershipHash: leaseState.transportMembershipHash,
+      runtimeSourceLogicalReceiptHash:
+        leaseState.runtimeSourceLogicalReceiptHash,
+      sourceFenceBeforeHash,
+      sourceFenceAfterHash,
+      hostToolchainReceiptHash:
+        before.environment.hostRuntime.hostToolchainReceiptHash,
+      nodeIdentityHash: before.environment.hostRuntime.nodeIdentityHash,
+      nodeExecutableContentHash:
+        before.environment.hostRuntime.nodeExecutableContentHash,
+      process: processResult,
+    });
+  } catch (error) {
+    processResult?.responseBody.fill(0);
+    if (error instanceof CandidateRuntimeBundleErrorV2) throw error;
+    return fail(
+      "CANDIDATE_RUNTIME_BUNDLE_V2_LAUNCH_PROCESS_REJECTED",
+      "Candidate runtime API execution failed at one authenticated boundary",
       error,
     );
   } finally {

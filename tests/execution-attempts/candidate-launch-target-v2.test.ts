@@ -39,6 +39,15 @@ import {
   NODE_CLI_LAUNCHER_ABI_HASH_V2,
 } from "../../src/execution/schemas/node-cli-launcher-v2.js";
 import {
+  NODE_EXPRESS_API_APPLICATION_EXPORT_V2,
+  NODE_EXPRESS_API_BOOTSTRAP_SOURCE_HASH_V2,
+  NODE_EXPRESS_API_HANDLER_ABI_HASH_V2,
+  NODE_EXPRESS_API_LAUNCHER_ABI_HASH_V2,
+} from "../../src/execution/schemas/node-express-api-launcher-v2.js";
+import {
+  EXCLUSIVE_SOCKET_LIFECYCLE_ABI_HASH_V2,
+} from "../../src/execution/schemas/exclusive-socket-lease-v2.js";
+import {
   CANDIDATE_RUNTIME_APPLICATION_TREE_BINDING_V2_SCHEMA,
   CANDIDATE_RUNTIME_BUNDLE_CONTRACT_HASH_V2,
   CANDIDATE_RUNTIME_BUNDLE_V2_SCHEMA,
@@ -279,8 +288,12 @@ function httpTarget() {
     schema: HTTP_HANDLER_EXPORT_V2_SCHEMA,
     kind: "http_handler",
     module: bundledModule("http_handler"),
-    exportName: "handleTaskRequest",
+    exportName: NODE_EXPRESS_API_APPLICATION_EXPORT_V2,
     handlerAbi: "EXPRESS_REQUEST_HANDLER_ABI_V2",
+    handlerAbiHash: NODE_EXPRESS_API_HANDLER_ABI_HASH_V2,
+    launcherBootstrapSourceHash: NODE_EXPRESS_API_BOOTSTRAP_SOURCE_HASH_V2,
+    launcherAbiHash: NODE_EXPRESS_API_LAUNCHER_ABI_HASH_V2,
+    socketLifecycleAbiHash: EXCLUSIVE_SOCKET_LIFECYCLE_ABI_HASH_V2,
     serverOwnership: "platform_owned",
     listenerOwnership: "platform_owned",
     socketOwnership: "platform_owned",
@@ -354,7 +367,7 @@ function launchTarget(kind: TargetKind): CandidateLaunchTargetV2 {
       launcher: {
         launcherDefinitionHash: sha("api-launcher-definition"),
         launcherModuleHash: sha("api-launcher-module"),
-        launcherAbiHash: sha("api-launcher-abi"),
+        launcherAbiHash: NODE_EXPRESS_API_LAUNCHER_ABI_HASH_V2,
         launcherRef: "LAUNCH_NODE_EXPRESS_API_V2",
       },
       executableTransport: executableTransportBinding("http_handler") as Extract<
@@ -444,9 +457,19 @@ test("CLI and HTTP launch candidates bind exact literal projections and parse as
     "PROFILE_NODE_EXPRESS_API_STATELESS_EXACT_V2");
   assert.equal(api.stackPack.stackPackId, "node-express-api");
   assert.equal(api.launcher.launcherRef, "LAUNCH_NODE_EXPRESS_API_V2");
+  assert.equal(api.launcher.launcherAbiHash,
+    NODE_EXPRESS_API_LAUNCHER_ABI_HASH_V2);
   assert.equal(api.executableTransport.transportKind, "http_request");
-  assert.equal(api.target.exportName, "handleTaskRequest");
+  assert.equal(api.target.exportName, NODE_EXPRESS_API_APPLICATION_EXPORT_V2);
   assert.equal(api.target.handlerAbi, "EXPRESS_REQUEST_HANDLER_ABI_V2");
+  assert.equal(api.target.handlerAbiHash,
+    NODE_EXPRESS_API_HANDLER_ABI_HASH_V2);
+  assert.equal(api.target.launcherBootstrapSourceHash,
+    NODE_EXPRESS_API_BOOTSTRAP_SOURCE_HASH_V2);
+  assert.equal(api.target.launcherAbiHash,
+    NODE_EXPRESS_API_LAUNCHER_ABI_HASH_V2);
+  assert.equal(api.target.socketLifecycleAbiHash,
+    EXCLUSIVE_SOCKET_LIFECYCLE_ABI_HASH_V2);
   assert.equal(api.target.serverOwnership, "platform_owned");
   assert.equal(api.target.listenerOwnership, "platform_owned");
   assert.equal(api.target.socketOwnership, "platform_owned");
@@ -631,6 +654,22 @@ test("API ownership and CLI argv policies cannot be weakened even with fresh has
     (candidate) => {
       (candidate.target as Record<string, unknown>).handlerAbi = "GENERIC_HTTP_ABI_V1";
     },
+    (candidate) => {
+      (candidate.target as Record<string, unknown>).handlerAbiHash =
+        sha("other-handler-abi");
+    },
+    (candidate) => {
+      (candidate.target as Record<string, unknown>).launcherBootstrapSourceHash =
+        sha("other-api-bootstrap");
+    },
+    (candidate) => {
+      (candidate.target as Record<string, unknown>).launcherAbiHash =
+        sha("other-api-launcher-abi");
+    },
+    (candidate) => {
+      (candidate.target as Record<string, unknown>).socketLifecycleAbiHash =
+        sha("other-socket-lifecycle");
+    },
   ];
   for (const mutate of apiMutations) {
     const candidate = clone(launchTarget("http_handler")) as unknown as Record<string, unknown>;
@@ -640,6 +679,16 @@ test("API ownership and CLI argv policies cannot be weakened even with fresh has
     candidate.launchTargetHash = hashCandidateLaunchTargetV2(candidate as never);
     assert.equal(CandidateLaunchTargetV2Schema.safeParse(candidate).success, false);
   }
+
+  const wrongApiLauncherAbi = launchTarget("http_handler");
+  wrongApiLauncherAbi.launcher.launcherAbiHash = sha("other-api-launcher-abi");
+  wrongApiLauncherAbi.launchTargetHash = hashCandidateLaunchTargetV2(
+    wrongApiLauncherAbi,
+  );
+  assert.equal(
+    CandidateLaunchTargetV2Schema.safeParse(wrongApiLauncherAbi).success,
+    false,
+  );
 
   const cli = clone(launchTarget("cli")) as unknown as Record<string, unknown>;
   const cliProjection = cli.target as Record<string, unknown>;
@@ -780,10 +829,10 @@ test("literal launch hashes are golden and every hash domain is separated", () =
     apiRuntimeBindingHash: "8f023a8af1385b92e93f15f7eb7588f8cf5ce1c6c6e3a9987fc12981c6c1d3b5",
     apiExecutableBindingHash: "e7e3af38d3c783697e31b2e810b1ce45531522c34c4e765b388f0c6613ecb768",
     apiModuleRefHash: "a521a1831ef85313ec5b381569396eb6e3e116b6e1380d157f1758307ac61485",
-    apiHandlerExportHash: "c4ad9f5c58125077802c566f0703bde7168fb266baa91e280e1bdce9018f053f",
-    apiLaunchTargetHash: "836be818d6523adb48dd286f38e709dcee6bbbd6490cb35e85596738891a221f",
+    apiHandlerExportHash: "c9b27f4790ea2a11d9632a18a9dd19cb584f3dc8e070d9dd96bcb5fb236e19e4",
+    apiLaunchTargetHash: "748c8052cdbea4d2743631cd06302a3e729292397f3d99aeb1648e8c784c963e",
     cliCanonicalBytes: 5_319,
-    apiCanonicalBytes: 4_861,
+    apiCanonicalBytes: 5_222,
   });
   const hashes = Object.entries(actual)
     .filter(([name]) => name.endsWith("Hash"))

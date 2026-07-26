@@ -1,6 +1,15 @@
-import { fork, type ChildProcess } from "node:child_process";
+import {
+  fork,
+  spawn,
+  type ChildProcess,
+} from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { rmSync, mkdtempSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+} from "node:fs";
 import { request as httpRequest } from "node:http";
 import {
   createServer,
@@ -11,6 +20,9 @@ import path from "node:path";
 import { isProxy } from "node:util/types";
 
 import { hashCanonicalJson } from "../product-compiler/canonical-json.js";
+import type {
+  HttpEncodedInvocationRequestV2,
+} from "../product-compiler/invocation-input-transport-v2.js";
 import { observeProcessIdentity } from "./process-identity.js";
 import {
   EXCLUSIVE_SOCKET_LEASE_V2_SCHEMA,
@@ -44,6 +56,10 @@ import {
   type SocketHandoffAcknowledgementV2,
   type SocketLaunchBindingV2,
 } from "./schemas/exclusive-socket-lease-v2.js";
+import {
+  NETWORK_ISOLATION_NORMALIZED_ENVIRONMENT_HASH_V2,
+  NETWORK_ISOLATION_NORMALIZED_ENVIRONMENT_NAMES_V2,
+} from "./schemas/network-isolation-negative-probe-v2.js";
 import {
   sameProcessIdentity,
   type ProcessIdentityV1,
@@ -282,6 +298,9 @@ export type ExclusiveSocketLeaseErrorCodeV2 =
   | "EXCLUSIVE_SOCKET_V2_PARENT_CLOSE_FAILED"
   | "EXCLUSIVE_SOCKET_V2_READINESS_FAILED"
   | "EXCLUSIVE_SOCKET_V2_READINESS_TIMEOUT"
+  | "EXCLUSIVE_SOCKET_V2_REQUEST_FAILED"
+  | "EXCLUSIVE_SOCKET_V2_REQUEST_TIMEOUT"
+  | "EXCLUSIVE_SOCKET_V2_RESPONSE_LIMIT"
   | "EXCLUSIVE_SOCKET_V2_CLEANUP_FAILED"
   | "EXCLUSIVE_SOCKET_V2_CLEANUP_TIMEOUT"
   | "EXCLUSIVE_SOCKET_V2_CHILD_OUTPUT"
@@ -374,6 +393,44 @@ type ChildOutputStateV2 = {
   stderrBytes: number;
 };
 
+type SocketChildProtocolV2 = Readonly<{
+  kind: "test_fixture" | "node_express_api_v2";
+  handoffCommandSchema: string;
+  handoffAcknowledgementSchema: string;
+  readinessObservationSchema: string;
+  cleanupCommandSchema: string;
+  cleanupAcknowledgementSchema: string;
+  failureSchema?: string;
+  expectedApplicationRequestCount: 0 | 1;
+}>;
+
+const SOCKET_TEST_CHILD_PROTOCOL_V2 = Object.freeze({
+  kind: "test_fixture" as const,
+  handoffCommandSchema: "setfarm.socket-test-handoff-command.v2",
+  handoffAcknowledgementSchema: "setfarm.socket-test-handoff-ack.v2",
+  readinessObservationSchema:
+    "setfarm.socket-test-readiness-observation.v2",
+  cleanupCommandSchema: "setfarm.socket-test-cleanup-command.v2",
+  cleanupAcknowledgementSchema: "setfarm.socket-test-cleanup-ack.v2",
+  expectedApplicationRequestCount: 0 as const,
+});
+
+const SOCKET_NODE_EXPRESS_API_CHILD_PROTOCOL_V2 = Object.freeze({
+  kind: "node_express_api_v2" as const,
+  handoffCommandSchema:
+    "setfarm.socket-node-express-api-handoff-command.v2",
+  handoffAcknowledgementSchema:
+    "setfarm.socket-node-express-api-handoff-ack.v2",
+  readinessObservationSchema:
+    "setfarm.socket-node-express-api-readiness-observation.v2",
+  cleanupCommandSchema:
+    "setfarm.socket-node-express-api-cleanup-command.v2",
+  cleanupAcknowledgementSchema:
+    "setfarm.socket-node-express-api-cleanup-ack.v2",
+  failureSchema: "setfarm.socket-node-express-api-failure.v2",
+  expectedApplicationRequestCount: 1 as const,
+});
+
 type ObservedProcessIdentityV2 = ProcessIdentityV1 & {
   source: "observed_os";
 };
@@ -409,6 +466,10 @@ type ExclusiveSocketLeaseStateV2 = {
   launchBinding?: SocketLaunchBindingV2;
   acknowledgement?: SocketHandoffAcknowledgementV2;
   readiness?: ServiceReadinessReceiptV2;
+  childProtocol?: SocketChildProtocolV2;
+  detachedProcessGroup?: boolean;
+  applicationRequestConsumed?: boolean;
+  environmentInstanceHash?: string;
 };
 
 const leaseConstructorCapabilityV2 = Object.freeze({});
@@ -541,6 +602,26 @@ async function waitForChildCloseV2(
   });
 }
 
+function killChildProcessV2(
+  child: ChildProcess,
+  detachedProcessGroup: boolean,
+): void {
+  if (child.pid === undefined) return;
+  if (detachedProcessGroup) {
+    try {
+      process.kill(-child.pid, "SIGKILL");
+      return;
+    } catch {
+      // The group may already be gone; the exact child fallback is still safe.
+    }
+  }
+  try {
+    child.kill("SIGKILL");
+  } catch {
+    // Forced cleanup verifies termination separately.
+  }
+}
+
 async function forceDisposeStateV2(
   state: ExclusiveSocketLeaseStateV2,
 ): Promise<void> {
@@ -552,7 +633,10 @@ async function forceDisposeStateV2(
   }
   if (state.child && state.child.exitCode === null) {
     try {
-      state.child.kill("SIGKILL");
+      killChildProcessV2(
+        state.child,
+        state.detachedProcessGroup === true,
+      );
       await waitForChildCloseV2(state.child, 1_000);
     } catch (error) {
       failures.push(error);
@@ -570,6 +654,7 @@ async function forceDisposeStateV2(
   state.handoffNonce = undefined;
   state.readinessNonce = undefined;
   state.cleanupNonce = undefined;
+  state.environmentInstanceHash = undefined;
   if (failures.length > 0) {
     throw new ExclusiveSocketLeaseErrorV2(
       "EXCLUSIVE_SOCKET_V2_CLEANUP_FAILED",
@@ -586,7 +671,7 @@ export type AcquiredExclusiveSocketLeaseV2 = Readonly<{
   productionDisposition: "forbidden_until_verified_platform_release";
 }>;
 
-export async function acquireExclusiveSocketLeaseV2ForTest(): Promise<
+export async function acquireExclusiveSocketLeaseInternalV2(): Promise<
   AcquiredExclusiveSocketLeaseV2
 > {
   const allocatorProcess = observedProcessIdentityV2(
@@ -680,6 +765,12 @@ export async function acquireExclusiveSocketLeaseV2ForTest(): Promise<
   }
 }
 
+export async function acquireExclusiveSocketLeaseV2ForTest(): Promise<
+  AcquiredExclusiveSocketLeaseV2
+> {
+  return await acquireExclusiveSocketLeaseInternalV2();
+}
+
 function exactChildEnvironmentV2(
   scratchRoot: string,
 ): NodeJS.ProcessEnv {
@@ -694,6 +785,26 @@ function exactChildEnvironmentV2(
     TMPDIR: scratchRoot,
     TZ: "UTC",
   });
+}
+
+function observeChildOutputV2(child: ChildProcess): ChildOutputStateV2 {
+  if (child.stdout === null || child.stderr === null) {
+    return fail(
+      "EXCLUSIVE_SOCKET_V2_CHILD_SPAWN_FAILED",
+      "Socket child did not expose its fixed output pipes",
+    );
+  }
+  const output: ChildOutputStateV2 = {
+    stdoutBytes: 0,
+    stderrBytes: 0,
+  };
+  child.stdout.on("data", (chunk: Buffer) => {
+    output.stdoutBytes += chunk.byteLength;
+  });
+  child.stderr.on("data", (chunk: Buffer) => {
+    output.stderrBytes += chunk.byteLength;
+  });
+  return output;
 }
 
 function spawnTestChildV2(
@@ -720,17 +831,155 @@ function spawnTestChildV2(
       error,
     );
   }
-  const output: ChildOutputStateV2 = {
-    stdoutBytes: 0,
-    stderrBytes: 0,
-  };
-  child.stdout!.on("data", (chunk: Buffer) => {
-    output.stdoutBytes += chunk.byteLength;
-  });
-  child.stderr!.on("data", (chunk: Buffer) => {
-    output.stderrBytes += chunk.byteLength;
-  });
+  const output = observeChildOutputV2(child);
   return Object.freeze({ child, output });
+}
+
+export type NodeExpressApiSocketLaunchContextInternalV2 = Readonly<{
+  bundleRoot: string;
+  modulePath: string;
+  moduleContentHash: string;
+  nodeExecutablePath: string;
+  sandboxExecutablePath: string;
+  sandboxExecutableContentHash: string;
+  sandboxExecutablePhysicalIdentityHash: string;
+  sandboxProfile: string;
+  sandboxProfileHash: string;
+  bootstrapSource: string;
+  bootstrapSourceHash: string;
+  launchBinding: SocketLaunchBindingV2;
+}>;
+
+type SpawnedNodeExpressApiChildInternalV2 = Readonly<{
+  child: ChildProcess;
+  output: ChildOutputStateV2;
+  environmentInstanceHash: string;
+}>;
+
+function exactNodeExpressApiEnvironmentInternalV2(
+  scratchRoot: string,
+  endpoint: ExclusiveSocketEndpointV2,
+): Readonly<NodeJS.ProcessEnv> {
+  const runHome = path.join(scratchRoot, "home");
+  const runTmp = path.join(scratchRoot, "tmp");
+  const runCache = path.join(scratchRoot, "cache");
+  for (const directory of [runHome, runTmp, runCache]) {
+    mkdirSync(directory, { mode: 0o700 });
+  }
+  const environment = Object.freeze({
+    CI: "true",
+    HOME: runHome,
+    HOST: endpoint.host,
+    LANG: "C.UTF-8",
+    LC_ALL: "C.UTF-8",
+    NO_COLOR: "1",
+    PORT: String(endpoint.port),
+    RUNTIME_URL: `http://${endpoint.host}:${endpoint.port}`,
+    RUN_CACHE_DIR: runCache,
+    RUN_HOME: runHome,
+    RUN_TMPDIR: runTmp,
+    TEMP: runTmp,
+    TMP: runTmp,
+    TMPDIR: runTmp,
+    TZ: "UTC",
+  });
+  if (
+    JSON.stringify(Object.keys(environment).sort())
+      !== JSON.stringify(
+        [...NETWORK_ISOLATION_NORMALIZED_ENVIRONMENT_NAMES_V2].sort(),
+      )
+  ) {
+    return fail(
+      "EXCLUSIVE_SOCKET_V2_CHILD_SPAWN_FAILED",
+      "Code-owned API environment no longer equals its normalized allowlist",
+    );
+  }
+  return environment;
+}
+
+function validateNodeExpressApiLaunchContextInternalV2(
+  input: NodeExpressApiSocketLaunchContextInternalV2,
+): SocketLaunchBindingV2 {
+  const launchBinding = SocketLaunchBindingV2Schema.parse(
+    structuredClone(input.launchBinding),
+  );
+  if (
+    !path.isAbsolute(input.bundleRoot)
+    || !path.isAbsolute(input.modulePath)
+    || !path.isAbsolute(input.nodeExecutablePath)
+    || !path.isAbsolute(input.sandboxExecutablePath)
+    || realpathSync(input.bundleRoot) !== input.bundleRoot
+    || realpathSync(input.modulePath) !== input.modulePath
+    || realpathSync(input.nodeExecutablePath) !== input.nodeExecutablePath
+    || realpathSync(input.sandboxExecutablePath)
+      !== input.sandboxExecutablePath
+    || input.modulePath !== path.join(input.bundleRoot, "application", "app.js")
+    || !/^[a-f0-9]{64}$/u.test(input.moduleContentHash)
+    || sha256(input.bootstrapSource) !== input.bootstrapSourceHash
+    || launchBinding.launcherRef !== "LAUNCH_NODE_EXPRESS_API_V2"
+    || launchBinding.launcherModuleHash !== input.bootstrapSourceHash
+    || launchBinding.applicationModuleLocator
+      !== "candidate-bundle/application/app.js"
+    || launchBinding.applicationModuleHash !== input.moduleContentHash
+    || launchBinding.applicationExport !== "setfarmHttpHandlerV2"
+  ) {
+    return fail(
+      "EXCLUSIVE_SOCKET_V2_CHILD_SPAWN_FAILED",
+      "Node Express API launch context does not form one exact sealed child",
+    );
+  }
+  return launchBinding;
+}
+
+function spawnNodeExpressApiChildInternalV2(
+  state: ExclusiveSocketLeaseStateV2,
+  input: NodeExpressApiSocketLaunchContextInternalV2,
+): SpawnedNodeExpressApiChildInternalV2 {
+  const environment = exactNodeExpressApiEnvironmentInternalV2(
+    state.scratchRoot!,
+    state.endpoint,
+  );
+  const environmentInstanceHash = hashCanonicalJson({
+    schema: "setfarm.node-express-api-environment-instance.v2",
+    environment,
+  });
+  const encodedBootstrapConfig = Buffer.from(JSON.stringify({
+    schema: "setfarm.node-express-api-bootstrap-config.v2",
+    bundleRoot: input.bundleRoot,
+    modulePath: input.modulePath,
+    moduleContentHash: input.moduleContentHash,
+    maxRequestBodyBytes: 8 * 1024 * 1024,
+    environment,
+  }), "utf8").toString("base64url");
+  let child: ChildProcess;
+  try {
+    child = spawn(input.sandboxExecutablePath, [
+      "-p",
+      input.sandboxProfile,
+      input.nodeExecutablePath,
+      "-e",
+      input.bootstrapSource,
+      encodedBootstrapConfig,
+    ], {
+      cwd: input.bundleRoot,
+      detached: true,
+      env: environment,
+      shell: false,
+      serialization: "json",
+      stdio: ["ignore", "pipe", "pipe", "ipc"],
+    });
+  } catch (error) {
+    return fail(
+      "EXCLUSIVE_SOCKET_V2_CHILD_SPAWN_FAILED",
+      "Authenticated Node Express API child could not be spawned",
+      error,
+    );
+  }
+  return Object.freeze({
+    child,
+    output: observeChildOutputV2(child),
+    environmentInstanceHash,
+  });
 }
 
 async function observeChildIdentityV2(
@@ -881,28 +1130,49 @@ export type TestSocketHandoffResultV2 = Readonly<{
   productionDisposition: "forbidden_until_verified_platform_release";
 }>;
 
-export async function handoffExclusiveSocketLeaseV2ToTestChild(
+type SocketHandoffOperationResultInternalV2 = Readonly<{
+  acknowledgement: SocketHandoffAcknowledgementV2;
+  environmentInstanceHash?: string;
+}>;
+
+async function handoffExclusiveSocketLeaseV2WithChildInternalV2(
   lease: ExclusiveSocketLeaseV2,
-): Promise<TestSocketHandoffResultV2> {
+  input: Readonly<{
+    protocol: SocketChildProtocolV2;
+    launchBinding: SocketLaunchBindingV2;
+    detachedProcessGroup: boolean;
+    spawnChild: (
+      state: ExclusiveSocketLeaseStateV2,
+    ) => Readonly<{
+      child: ChildProcess;
+      output: ChildOutputStateV2;
+      environmentInstanceHash?: string;
+    }>;
+  }>,
+): Promise<SocketHandoffOperationResultInternalV2> {
   const state = authenticLeaseV2(lease);
   requireStateV2(state, "bound");
   state.status = "sent";
   try {
-    state.scratchRoot = mkdtempSync(
+    state.scratchRoot = realpathSync(mkdtempSync(
       path.join(tmpdir(), "setfarm-socket-v2-"),
-    );
-    const spawned = spawnTestChildV2(state.scratchRoot);
+    ));
+    const spawned = input.spawnChild(state);
     state.child = spawned.child;
     state.childOutput = spawned.output;
+    state.childProtocol = input.protocol;
+    state.detachedProcessGroup = input.detachedProcessGroup;
+    state.applicationRequestConsumed = false;
+    state.environmentInstanceHash = spawned.environmentInstanceHash;
     state.childProcess = await observeChildIdentityV2(spawned.child);
     state.handoffNonce = randomNonceV2();
     state.readinessNonce = randomNonceV2();
-    state.launchBinding = SOCKET_HANDOFF_TEST_LAUNCH_BINDING_V2;
+    state.launchBinding = input.launchBinding;
     const handoffNonceHash = sha256(state.handoffNonce);
     const readinessNonceHash = sha256(state.readinessNonce);
     const sentAt = new Date().toISOString();
-    const message = {
-      schema: "setfarm.socket-test-handoff-command.v2",
+    const commonMessage = {
+      schema: input.protocol.handoffCommandSchema,
       leaseHash: state.receipt.leaseHash,
       descriptorCapabilityHash: state.descriptorCapabilityHash,
       handoffNonce: state.handoffNonce,
@@ -912,6 +1182,12 @@ export async function handoffExclusiveSocketLeaseV2ToTestChild(
       endpoint: state.endpoint,
       launchBindingHash: state.launchBinding.bindingHash,
     };
+    const message = input.protocol.kind === "node_express_api_v2"
+      ? {
+          ...commonMessage,
+          launchBinding: state.launchBinding,
+        }
+      : commonMessage;
     const messagePromise = waitForChildMessageV2(
       state,
       SOCKET_HANDOFF_TIMEOUT_MS_V2,
@@ -921,6 +1197,17 @@ export async function handoffExclusiveSocketLeaseV2ToTestChild(
       messagePromise,
       sendServerHandleV2(spawned.child, message, state.server),
     ]);
+    if (
+      input.protocol.failureSchema !== undefined
+      && exactRecordKeysV2(observed, ["code", "schema"])
+      && observed.schema === input.protocol.failureSchema
+      && typeof observed.code === "string"
+    ) {
+      return fail(
+        "EXCLUSIVE_SOCKET_V2_HANDOFF_FAILED",
+        `Socket child rejected authenticated handoff: ${observed.code}`,
+      );
+    }
     if (
       !exactRecordKeysV2(observed, [
         "candidateListen",
@@ -934,7 +1221,7 @@ export async function handoffExclusiveSocketLeaseV2ToTestChild(
         "receivedHandle",
         "schema",
       ])
-      || observed.schema !== "setfarm.socket-test-handoff-ack.v2"
+      || observed.schema !== input.protocol.handoffAcknowledgementSchema
       || observed.leaseHash !== state.receipt.leaseHash
       || observed.descriptorCapabilityHash !== state.descriptorCapabilityHash
       || observed.handoffNonceHash !== handoffNonceHash
@@ -1022,10 +1309,8 @@ export async function handoffExclusiveSocketLeaseV2ToTestChild(
     state.status = "acknowledged";
     assertNoChildOutputV2(state);
     return Object.freeze({
-      status: "acknowledged_test_fixture_socket",
       acknowledgement: state.acknowledgement,
-      productionDisposition:
-        "forbidden_until_verified_platform_release" as const,
+      environmentInstanceHash: state.environmentInstanceHash,
     });
   } catch (error) {
     state.status = "failed";
@@ -1045,6 +1330,71 @@ export async function handoffExclusiveSocketLeaseV2ToTestChild(
       error,
     );
   }
+}
+
+export async function handoffExclusiveSocketLeaseV2ToTestChild(
+  lease: ExclusiveSocketLeaseV2,
+): Promise<TestSocketHandoffResultV2> {
+  const result = await handoffExclusiveSocketLeaseV2WithChildInternalV2(
+    lease,
+    {
+      protocol: SOCKET_TEST_CHILD_PROTOCOL_V2,
+      launchBinding: SOCKET_HANDOFF_TEST_LAUNCH_BINDING_V2,
+      detachedProcessGroup: false,
+      spawnChild: (state) => spawnTestChildV2(state.scratchRoot!),
+    },
+  );
+  return Object.freeze({
+    status: "acknowledged_test_fixture_socket",
+    acknowledgement: result.acknowledgement,
+    productionDisposition:
+      "forbidden_until_verified_platform_release" as const,
+  });
+}
+
+export type NodeExpressApiSocketHandoffResultInternalV2 = Readonly<{
+  status: "acknowledged_node_express_api_socket";
+  leaseReceipt: ExclusiveSocketLeaseReceiptV2;
+  acknowledgement: SocketHandoffAcknowledgementV2;
+  environmentInstanceHash: string;
+  normalizedEnvironmentHash:
+    typeof NETWORK_ISOLATION_NORMALIZED_ENVIRONMENT_HASH_V2;
+  productionDisposition: "forbidden_until_verified_platform_release";
+}>;
+
+export async function handoffExclusiveSocketLeaseV2ToNodeExpressApiInternalV2(
+  lease: ExclusiveSocketLeaseV2,
+  context: NodeExpressApiSocketLaunchContextInternalV2,
+): Promise<NodeExpressApiSocketHandoffResultInternalV2> {
+  const launchBinding =
+    validateNodeExpressApiLaunchContextInternalV2(context);
+  const result = await handoffExclusiveSocketLeaseV2WithChildInternalV2(
+    lease,
+    {
+      protocol: SOCKET_NODE_EXPRESS_API_CHILD_PROTOCOL_V2,
+      launchBinding,
+      detachedProcessGroup: true,
+      spawnChild: (state) =>
+        spawnNodeExpressApiChildInternalV2(state, context),
+    },
+  );
+  if (result.environmentInstanceHash === undefined) {
+    return fail(
+      "EXCLUSIVE_SOCKET_V2_CHILD_SPAWN_FAILED",
+      "Node Express API handoff lost its exact environment identity",
+    );
+  }
+  const state = authenticLeaseV2(lease);
+  return Object.freeze({
+    status: "acknowledged_node_express_api_socket",
+    leaseReceipt: state.receipt,
+    acknowledgement: result.acknowledgement,
+    environmentInstanceHash: result.environmentInstanceHash,
+    normalizedEnvironmentHash:
+      NETWORK_ISOLATION_NORMALIZED_ENVIRONMENT_HASH_V2,
+    productionDisposition:
+      "forbidden_until_verified_platform_release" as const,
+  });
 }
 
 type ReadinessHttpObservationV2 = Readonly<{
@@ -1101,9 +1451,9 @@ export type TestSocketReadinessResultV2 = Readonly<{
   productionDisposition: "forbidden_until_verified_platform_release";
 }>;
 
-export async function observeExclusiveSocketServiceReadinessV2ForTest(
+async function observeExclusiveSocketServiceReadinessInternalV2(
   lease: ExclusiveSocketLeaseV2,
-): Promise<TestSocketReadinessResultV2> {
+): Promise<ServiceReadinessReceiptV2> {
   const state = authenticLeaseV2(lease);
   requireStateV2(state, "acknowledged");
   try {
@@ -1135,7 +1485,7 @@ export async function observeExclusiveSocketServiceReadinessV2ForTest(
         "schema",
       ])
       || observed.schema
-        !== "setfarm.socket-test-readiness-observation.v2"
+        !== state.childProtocol?.readinessObservationSchema
       || observed.leaseHash !== state.receipt.leaseHash
       || observed.readinessNonceHash !== readinessNonceHash
       || observed.requestCount !== 1
@@ -1196,12 +1546,7 @@ export async function observeExclusiveSocketServiceReadinessV2ForTest(
     });
     state.status = "ready";
     assertNoChildOutputV2(state);
-    return Object.freeze({
-      status: "ready_test_fixture_socket",
-      receipt: state.readiness,
-      productionDisposition:
-        "forbidden_until_verified_platform_release" as const,
-    });
+    return state.readiness;
   } catch (error) {
     state.status = "failed";
     try {
@@ -1219,6 +1564,275 @@ export async function observeExclusiveSocketServiceReadinessV2ForTest(
       "Socket readiness observation failed",
       error,
     );
+  }
+}
+
+export async function observeExclusiveSocketServiceReadinessV2ForTest(
+  lease: ExclusiveSocketLeaseV2,
+): Promise<TestSocketReadinessResultV2> {
+  const receipt = await observeExclusiveSocketServiceReadinessInternalV2(
+    lease,
+  );
+  return Object.freeze({
+    status: "ready_test_fixture_socket",
+    receipt,
+    productionDisposition:
+      "forbidden_until_verified_platform_release" as const,
+  });
+}
+
+export type NodeExpressApiSocketReadinessResultInternalV2 = Readonly<{
+  status: "ready_node_express_api_socket";
+  receipt: ServiceReadinessReceiptV2;
+  productionDisposition: "forbidden_until_verified_platform_release";
+}>;
+
+export async function observeExclusiveSocketNodeExpressApiReadinessInternalV2(
+  lease: ExclusiveSocketLeaseV2,
+): Promise<NodeExpressApiSocketReadinessResultInternalV2> {
+  const state = authenticLeaseV2(lease);
+  if (state.childProtocol?.kind !== "node_express_api_v2") {
+    return fail(
+      "EXCLUSIVE_SOCKET_V2_STATE_INVALID",
+      "Node Express API readiness requires its exact child protocol",
+    );
+  }
+  const receipt = await observeExclusiveSocketServiceReadinessInternalV2(
+    lease,
+  );
+  return Object.freeze({
+    status: "ready_node_express_api_socket",
+    receipt,
+    productionDisposition:
+      "forbidden_until_verified_platform_release" as const,
+  });
+}
+
+export type NodeExpressApiSocketRequestObservationInternalV2 = Readonly<{
+  startedAt: string;
+  finishedAt: string;
+  durationMs: number;
+  requestCount: 1;
+  redirectCount: 0;
+  statusCode: number;
+  contentType: string | undefined;
+  body: Buffer;
+  childProcessIdentityHash: string;
+}>;
+
+function exactNodeExpressApiRequestInternalV2(
+  input: HttpEncodedInvocationRequestV2,
+): Readonly<{
+  method: HttpEncodedInvocationRequestV2["method"];
+  pathAndQuery: string;
+  headers: Readonly<Record<string, string>>;
+  body: Buffer | null;
+}> {
+  if (
+    !exactRecordKeysV2(input, [
+      "bodyBytes",
+      "fixedHeaders",
+      "method",
+      "pathAndQuery",
+      "redirectPolicy",
+    ])
+    || !["GET", "POST", "PUT", "PATCH", "DELETE"].includes(input.method)
+    || typeof input.pathAndQuery !== "string"
+    || !input.pathAndQuery.startsWith("/")
+    || input.pathAndQuery.includes("\0")
+    || input.pathAndQuery.includes("\r")
+    || input.pathAndQuery.includes("\n")
+    || input.pathAndQuery.includes("#")
+    || input.pathAndQuery.includes("://")
+    || Buffer.from(input.pathAndQuery, "utf8").toString("utf8")
+      !== input.pathAndQuery
+    || Buffer.byteLength(input.pathAndQuery, "utf8") > 256 * 1024
+    || !Array.isArray(input.fixedHeaders)
+    || input.redirectPolicy !== "error"
+    || (input.bodyBytes !== null && typeof input.bodyBytes !== "string")
+  ) {
+    return fail(
+      "EXCLUSIVE_SOCKET_V2_REQUEST_FAILED",
+      "Node Express API request is not one exact bounded transport request",
+    );
+  }
+  const expectedHeaders = input.bodyBytes === null
+    ? [{ name: "accept", value: "application/json" }]
+    : [
+        { name: "accept", value: "application/json" },
+        { name: "content-type", value: "application/json" },
+      ];
+  if (
+    JSON.stringify(input.fixedHeaders) !== JSON.stringify(expectedHeaders)
+  ) {
+    return fail(
+      "EXCLUSIVE_SOCKET_V2_REQUEST_FAILED",
+      "Node Express API fixed headers differ from the transport ABI",
+    );
+  }
+  const body = input.bodyBytes === null
+    ? null
+    : Buffer.from(input.bodyBytes, "utf8");
+  if (
+    body !== null
+    && (
+      body.byteLength > 8 * 1024 * 1024
+      || body.toString("utf8") !== input.bodyBytes
+    )
+  ) {
+    body?.fill(0);
+    return fail(
+      "EXCLUSIVE_SOCKET_V2_REQUEST_FAILED",
+      "Node Express API request body exceeds its exact UTF-8 byte authority",
+    );
+  }
+  const headers: Record<string, string> = {
+    accept: "application/json",
+    connection: "close",
+  };
+  if (body !== null) {
+    headers["content-type"] = "application/json";
+    headers["content-length"] = String(body.byteLength);
+  } else {
+    headers["content-length"] = "0";
+  }
+  return Object.freeze({
+    method: input.method,
+    pathAndQuery: input.pathAndQuery,
+    headers: Object.freeze(headers),
+    body,
+  });
+}
+
+export async function requestExclusiveSocketNodeExpressApiInternalV2(
+  lease: ExclusiveSocketLeaseV2,
+  request: HttpEncodedInvocationRequestV2,
+): Promise<NodeExpressApiSocketRequestObservationInternalV2> {
+  const state = authenticLeaseV2(lease);
+  requireStateV2(state, "ready");
+  if (
+    state.childProtocol?.kind !== "node_express_api_v2"
+    || state.applicationRequestConsumed
+  ) {
+    return fail(
+      "EXCLUSIVE_SOCKET_V2_STATE_INVALID",
+      "Node Express API socket accepts one application request",
+    );
+  }
+  state.applicationRequestConsumed = true;
+  const transport = exactNodeExpressApiRequestInternalV2(request);
+  const childProcess = state.childProcess!;
+  const started = Date.now();
+  let body: Buffer | undefined;
+  try {
+    assertNoChildOutputV2(state);
+    const http = await new Promise<Readonly<{
+      body: Buffer;
+      statusCode: number;
+      contentType: string | undefined;
+    }>>((resolve, reject) => {
+      const operation = httpRequest({
+        host: state.endpoint.host,
+        port: state.endpoint.port,
+        method: transport.method,
+        path: transport.pathAndQuery,
+        headers: transport.headers,
+      }, (response) => {
+        const chunks: Buffer[] = [];
+        let byteLength = 0;
+        response.on("data", (chunk: Buffer) => {
+          byteLength += chunk.byteLength;
+          const remaining = 1_048_576
+            - Math.min(byteLength - chunk.byteLength, 1_048_576);
+          if (remaining > 0) {
+            chunks.push(Buffer.from(chunk.subarray(0, remaining)));
+          }
+          if (byteLength > 1_048_576) {
+            response.destroy(new ExclusiveSocketLeaseErrorV2(
+              "EXCLUSIVE_SOCKET_V2_RESPONSE_LIMIT",
+              "Node Express API response exceeded its code-owned byte limit",
+            ));
+          }
+        });
+        response.once("error", reject);
+        response.once("end", () => {
+          const captured = Buffer.concat(chunks);
+          const statusCode = response.statusCode ?? 0;
+          const contentTypeHeader = response.headers["content-type"];
+          const contentType = Array.isArray(contentTypeHeader)
+            ? undefined
+            : contentTypeHeader;
+          resolve(Object.freeze({
+            body: captured,
+            statusCode,
+            contentType,
+          }));
+        });
+      });
+      operation.setTimeout(30_000, () => {
+        operation.destroy(new ExclusiveSocketLeaseErrorV2(
+          "EXCLUSIVE_SOCKET_V2_REQUEST_TIMEOUT",
+          "Node Express API request exceeded its code-owned timeout",
+        ));
+      });
+      operation.once("error", reject);
+      if (transport.body === null) operation.end();
+      else operation.end(transport.body);
+    });
+    body = http.body;
+    const finished = Date.now();
+    const freshChildIdentity = observedProcessIdentityV2(
+      observeProcessIdentity(childProcess.pid),
+    );
+    if (
+      !freshChildIdentity
+      || !sameProcessIdentity(childProcess, freshChildIdentity)
+      || state.child?.exitCode !== null
+    ) {
+      body.fill(0);
+      return fail(
+        "EXCLUSIVE_SOCKET_V2_REQUEST_FAILED",
+        "Node Express API child identity drifted during its request",
+      );
+    }
+    assertNoChildOutputV2(state);
+    if (
+      !Number.isInteger(http.statusCode)
+      || http.statusCode < 100
+      || http.statusCode > 599
+      || (
+        http.contentType !== undefined
+        && typeof http.contentType !== "string"
+      )
+    ) {
+      body.fill(0);
+      return fail(
+        "EXCLUSIVE_SOCKET_V2_REQUEST_FAILED",
+        "Node Express API response did not expose one exact HTTP status",
+      );
+    }
+    return Object.freeze({
+      startedAt: new Date(started).toISOString(),
+      finishedAt: new Date(finished).toISOString(),
+      durationMs: finished - started,
+      requestCount: 1 as const,
+      redirectCount: 0 as const,
+      statusCode: http.statusCode,
+      contentType: http.contentType,
+      body,
+      childProcessIdentityHash:
+        hashSocketProcessIdentityV2(freshChildIdentity),
+    });
+  } catch (error) {
+    body?.fill(0);
+    if (error instanceof ExclusiveSocketLeaseErrorV2) throw error;
+    return fail(
+      "EXCLUSIVE_SOCKET_V2_REQUEST_FAILED",
+      "Node Express API request failed at its held-socket boundary",
+      error,
+    );
+  } finally {
+    transport.body?.fill(0);
   }
 }
 
@@ -1269,11 +1883,20 @@ export type TestSocketCleanupResultV2 = Readonly<{
   productionDisposition: "forbidden_until_verified_platform_release";
 }>;
 
-export async function closeExclusiveSocketLeaseV2ForTest(
+async function closeExclusiveSocketLeaseInternalV2(
   lease: ExclusiveSocketLeaseV2,
-): Promise<TestSocketCleanupResultV2> {
+): Promise<SocketCleanupReceiptV2> {
   const state = authenticLeaseV2(lease);
   requireStateV2(state, "ready");
+  if (
+    state.childProtocol?.expectedApplicationRequestCount === 1
+    && state.applicationRequestConsumed !== true
+  ) {
+    return fail(
+      "EXCLUSIVE_SOCKET_V2_STATE_INVALID",
+      "Node Express API cleanup requires its one application request",
+    );
+  }
   state.status = "closing";
   try {
     const child = state.child!;
@@ -1292,25 +1915,41 @@ export async function closeExclusiveSocketLeaseV2ForTest(
     const [observed, _send, termination] = await Promise.all([
       messagePromise,
       sendControlMessageV2(child, {
-        schema: "setfarm.socket-test-cleanup-command.v2",
+        schema: state.childProtocol!.cleanupCommandSchema,
         leaseHash: state.receipt.leaseHash,
         cleanupNonce: state.cleanupNonce,
         cleanupNonceHash,
       }),
       closePromise,
     ]);
+    const expectedKeys = state.childProtocol!
+      .expectedApplicationRequestCount === 1
+      ? [
+          "applicationRequestCount",
+          "cleanupNonceHash",
+          "leaseHash",
+          "readinessRequestCount",
+          "schema",
+          "serverCloseCallback",
+        ]
+      : [
+          "cleanupNonceHash",
+          "leaseHash",
+          "readinessRequestCount",
+          "schema",
+          "serverCloseCallback",
+        ];
     if (
-      !exactRecordKeysV2(observed, [
-        "cleanupNonceHash",
-        "leaseHash",
-        "readinessRequestCount",
-        "schema",
-        "serverCloseCallback",
-      ])
-      || observed.schema !== "setfarm.socket-test-cleanup-ack.v2"
+      !exactRecordKeysV2(observed, expectedKeys)
+      || observed.schema
+        !== state.childProtocol!.cleanupAcknowledgementSchema
       || observed.leaseHash !== state.receipt.leaseHash
       || observed.cleanupNonceHash !== cleanupNonceHash
       || observed.readinessRequestCount !== 1
+      || (
+        state.childProtocol!.expectedApplicationRequestCount === 1
+        && observed.applicationRequestCount !== 1
+      )
       || observed.serverCloseCallback !== "completed"
       || termination.exitCode !== 0
       || termination.signal !== null
@@ -1373,12 +2012,7 @@ export async function closeExclusiveSocketLeaseV2ForTest(
     state.readinessNonce = undefined;
     state.cleanupNonce = undefined;
     state.status = "closed";
-    return Object.freeze({
-      status: "closed_test_fixture_socket",
-      receipt,
-      productionDisposition:
-        "forbidden_until_verified_platform_release" as const,
-    });
+    return receipt;
   } catch (error) {
     state.status = "failed";
     try {
@@ -1399,11 +2033,54 @@ export async function closeExclusiveSocketLeaseV2ForTest(
   }
 }
 
-export async function destroyExclusiveSocketLeaseV2ForTest(
+export async function closeExclusiveSocketLeaseV2ForTest(
+  lease: ExclusiveSocketLeaseV2,
+): Promise<TestSocketCleanupResultV2> {
+  const receipt = await closeExclusiveSocketLeaseInternalV2(lease);
+  return Object.freeze({
+    status: "closed_test_fixture_socket",
+    receipt,
+    productionDisposition:
+      "forbidden_until_verified_platform_release" as const,
+  });
+}
+
+export type NodeExpressApiSocketCleanupResultInternalV2 = Readonly<{
+  status: "closed_node_express_api_socket";
+  receipt: SocketCleanupReceiptV2;
+  productionDisposition: "forbidden_until_verified_platform_release";
+}>;
+
+export async function closeExclusiveSocketNodeExpressApiInternalV2(
+  lease: ExclusiveSocketLeaseV2,
+): Promise<NodeExpressApiSocketCleanupResultInternalV2> {
+  const state = authenticLeaseV2(lease);
+  if (state.childProtocol?.kind !== "node_express_api_v2") {
+    return fail(
+      "EXCLUSIVE_SOCKET_V2_STATE_INVALID",
+      "Node Express API cleanup requires its exact child protocol",
+    );
+  }
+  const receipt = await closeExclusiveSocketLeaseInternalV2(lease);
+  return Object.freeze({
+    status: "closed_node_express_api_socket",
+    receipt,
+    productionDisposition:
+      "forbidden_until_verified_platform_release" as const,
+  });
+}
+
+export async function destroyExclusiveSocketLeaseInternalV2(
   lease: ExclusiveSocketLeaseV2,
 ): Promise<void> {
   const state = authenticLeaseV2(lease);
   if (state.status === "closed" || state.status === "destroyed") return;
   await forceDisposeStateV2(state);
   state.status = "destroyed";
+}
+
+export async function destroyExclusiveSocketLeaseV2ForTest(
+  lease: ExclusiveSocketLeaseV2,
+): Promise<void> {
+  await destroyExclusiveSocketLeaseInternalV2(lease);
 }

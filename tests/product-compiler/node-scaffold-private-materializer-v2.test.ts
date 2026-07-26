@@ -54,8 +54,19 @@ import {
   type NodeCliLaunchAuthorityV2,
 } from "../../src/execution/launchers/node-cli-v2.js";
 import {
+  NodeExpressApiLauncherErrorV2,
+  copyNodeExpressApiLaunchResponseBytesV2ForTest,
+  destroyNodeExpressApiLaunchObservationV2,
+  issueNodeExpressApiLaunchAuthorityV2ForTest,
+  launchNodeExpressApiV2,
+  type NodeExpressApiLaunchAuthorityV2,
+} from "../../src/execution/launchers/node-express-api-v2.js";
+import {
   NodeCliLaunchReceiptV2Schema,
 } from "../../src/execution/schemas/node-cli-launcher-v2.js";
+import {
+  NodeExpressApiLaunchReceiptV2Schema,
+} from "../../src/execution/schemas/node-express-api-launcher-v2.js";
 import {
   CandidateRuntimeBundleV2Schema,
 } from "../../src/execution/schemas/candidate-runtime-bundle-v2.js";
@@ -400,6 +411,83 @@ const ROLES = Object.freeze([
   "typescript_compiler_config",
 ] as const satisfies readonly NodeScaffoldAssetRoleV2[]);
 
+const SYNTHETIC_EXPRESS_RUNTIME_FIXTURE_V2 = String.raw`
+"use strict";
+function express() {
+  const stack = [];
+  const application = (request, response) => {
+    request.originalUrl = request.url;
+    response.status = function status(code) {
+      this.statusCode = code;
+      return this;
+    };
+    response.json = function json(value) {
+      const bytes = Buffer.from(JSON.stringify(value), "utf8");
+      this.setHeader("content-type", "application/json; charset=utf-8");
+      this.setHeader("content-length", String(bytes.byteLength));
+      this.end(bytes);
+      return this;
+    };
+    let index = 0;
+    const next = (error) => {
+      const layer = stack[index++];
+      if (!layer) {
+        if (error && !response.headersSent) {
+          response.status(500).json({ error: { code: "FIXTURE_UNHANDLED" } });
+        }
+        return;
+      }
+      const errorLayer = layer.length === 4;
+      if (error && errorLayer) return layer(error, request, response, next);
+      if (error || errorLayer) return next(error);
+      return layer(request, response, next);
+    };
+    next();
+  };
+  application.disable = () => application;
+  application.use = (layer) => {
+    stack.push(layer);
+    return application;
+  };
+  return application;
+}
+express.json = (options) => (request, response, next) => {
+  void response;
+  const contentType = String(request.headers["content-type"] || "");
+  if (!contentType.toLowerCase().startsWith(String(options.type))) {
+    next();
+    return;
+  }
+  const chunks = [];
+  let bytes = 0;
+  request.on("data", (chunk) => {
+    bytes += chunk.byteLength;
+    if (bytes > options.limit) {
+      request.destroy(new Error("FIXTURE_BODY_LIMIT"));
+      return;
+    }
+    chunks.push(Buffer.from(chunk));
+  });
+  request.on("end", () => {
+    try {
+      const value = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+      if (
+        options.strict
+        && (value === null || typeof value !== "object" || Array.isArray(value))
+      ) {
+        throw new Error("FIXTURE_STRICT_JSON");
+      }
+      request.body = value;
+      next();
+    } catch (error) {
+      next(error);
+    }
+  });
+  request.on("error", next);
+};
+module.exports = express;
+`;
+
 type HostFixtureV2 = Readonly<{
   root: string;
   node: string;
@@ -548,10 +636,26 @@ async function fakeNpmCiV2(
       name: node.packageName,
       version: node.version,
       ...(lockEntry.bin === undefined ? {} : { bin: lockEntry.bin }),
+      ...(profileId === API_PROFILE
+          && selection === "production"
+          && node.packageName === "express"
+        ? { main: "index.cjs" }
+        : {}),
     };
     await writeFile(path.join(packageRoot, "package.json"), `${JSON.stringify(packageJson)}\n`, {
       mode: 0o600,
     });
+    if (
+      profileId === API_PROFILE
+      && selection === "production"
+      && node.packageName === "express"
+    ) {
+      await writeFile(
+        path.join(packageRoot, "index.cjs"),
+        SYNTHETIC_EXPRESS_RUNTIME_FIXTURE_V2,
+        { mode: 0o600 },
+      );
+    }
     const rawBin = lockEntry.bin;
     const commands: Array<readonly [string, string]> = typeof rawBin === "string"
       ? [[node.packageName.split("/").at(-1)!, rawBin] as const]
@@ -597,8 +701,10 @@ async function fakeTypeScriptBuildV2(
     const emitted = ts.transpileModule(source, {
       compilerOptions: {
         target: ts.ScriptTarget.ES2022,
-        module: ts.ModuleKind.NodeNext,
-        moduleResolution: ts.ModuleResolutionKind.NodeNext,
+        // transpileModule cannot consult the scaffold's package.json, so
+        // NodeNext would classify this .ts input as CommonJS even though the
+        // canonical scaffold is explicitly "type": "module".
+        module: ts.ModuleKind.ESNext,
         verbatimModuleSyntax: true,
       },
       fileName: sourceName,
@@ -3902,46 +4008,46 @@ describe("Node scaffold private staged materializer V2", () => {
           sourcePublication.receiptSet.commitmentHash,
         );
 
-        if (caseIndex === 0) {
-          for (const publication of sourcePublication.publications) {
-            const indexed = await sourcePublisher.putBatch({
-              batchReservationId: randomUUID(),
-              plan: publication.publicationPlan,
-            });
-            assert.equal(indexed.lifecycle.state, "completed");
-            assert.equal(
-              indexed.items.length,
-              publication.preparedPublication.occurrenceCount,
-            );
-            const bindingIdentity = {
-              authoritySchema: publication.receipt.schema,
-              authorityHash: publication.receipt.receiptHash,
-              subjectRef:
-                `${publication.sourceRole}:${publication.receipt.authority.source.pathRef}`,
-              subjectHash:
-                publication.receipt.authority.source.sourceIdentityHash,
-            };
-            const verifiedBundle = await verifyDeepByteBundleFromCasV2({
-              authority: casAuthority,
-              binding: {
-                ...bindingIdentity,
-                bindingHash:
-                  hashDeepByteBundleConsumerBindingV2(bindingIdentity),
-              },
-              bundle: publication.receipt.authority.sourceBundle,
-            });
-            const sourceBytes = copyVerifiedDeepByteBundleBytesV2(verifiedBundle);
-            assert.equal(sourceBytes.byteLength, publication.sourceByteLength);
-            assert.equal(
-              createHash("sha256").update(sourceBytes).digest("hex"),
-              publication.sourceContentHash,
-            );
-          }
-          sourceMaterializationInput = Object.freeze({
-            compilerInput: sourcePublicationInput,
-            candidatePublications,
+        for (const publication of sourcePublication.publications) {
+          const indexed = await sourcePublisher.putBatch({
+            batchReservationId: randomUUID(),
+            plan: publication.publicationPlan,
           });
+          assert.equal(indexed.lifecycle.state, "completed");
+          assert.equal(
+            indexed.items.length,
+            publication.preparedPublication.occurrenceCount,
+          );
+          const bindingIdentity = {
+            authoritySchema: publication.receipt.schema,
+            authorityHash: publication.receipt.receiptHash,
+            subjectRef:
+              `${publication.sourceRole}:${publication.receipt.authority.source.pathRef}`,
+            subjectHash:
+              publication.receipt.authority.source.sourceIdentityHash,
+          };
+          const verifiedBundle = await verifyDeepByteBundleFromCasV2({
+            authority: casAuthority,
+            binding: {
+              ...bindingIdentity,
+              bindingHash:
+                hashDeepByteBundleConsumerBindingV2(bindingIdentity),
+            },
+            bundle: publication.receipt.authority.sourceBundle,
+          });
+          const sourceBytes = copyVerifiedDeepByteBundleBytesV2(verifiedBundle);
+          assert.equal(sourceBytes.byteLength, publication.sourceByteLength);
+          assert.equal(
+            createHash("sha256").update(sourceBytes).digest("hex"),
+            publication.sourceContentHash,
+          );
+        }
+        sourceMaterializationInput = Object.freeze({
+          compilerInput: sourcePublicationInput,
+          candidatePublications,
+        });
 
+        if (caseIndex === 0) {
           const wrongPublicationScope =
             await compileNodeProductSourcePublicationV1(
               created.handle,
@@ -4158,7 +4264,13 @@ describe("Node scaffold private staged materializer V2", () => {
         assert.deepEqual(responseBody, { task: { title: "" } });
       }
 
-      if (caseIndex === 0) {
+      if (caseIndex < 2) {
+        const runtimeInstallCountBefore = runtimeInstallInvocations.length;
+        const runtimeClosure =
+          deriveCodeOwnedNodeScaffoldProductionClosureV2(fixture.profileId);
+        const runtimeBasename = fixture.profileId === CLI_PROFILE
+          ? "cli"
+          : "app";
         const wrongScope = await generateNodeProductRuntimeSourceV2(
           created.handle,
           generatorInput,
@@ -4283,7 +4395,7 @@ describe("Node scaffold private staged materializer V2", () => {
         assert.equal(extraInput.diagnostics[0]?.code,
           "NODE_RUNTIME_SOURCE_V2_INPUT_INVALID");
 
-        const sibling = await stage({ profileId: CLI_PROFILE });
+        const sibling = await stage({ profileId: fixture.profileId });
         const siblingFileTree = await compileFileTreeManifestV3ForTest(
           sibling.handle,
           authorityInput,
@@ -4605,8 +4717,8 @@ describe("Node scaffold private staged materializer V2", () => {
           [
             "package-lock.json",
             "package.json",
-            "src/cli.setfarm.test.ts",
-            "src/cli.ts",
+            `src/${runtimeBasename}.setfarm.test.ts`,
+            `src/${runtimeBasename}.ts`,
             "tsconfig.json",
           ],
         );
@@ -4771,7 +4883,10 @@ describe("Node scaffold private staged materializer V2", () => {
         assert.deepEqual(
           candidateBuild.receipt.outputTree.files.map((file) =>
             file.normalizedLocator),
-          ["dist/cli.js", "dist/cli.setfarm.test.js"],
+          [
+            `dist/${runtimeBasename}.js`,
+            `dist/${runtimeBasename}.setfarm.test.js`,
+          ],
         );
         assert.equal(
           candidateBuild.authority.semanticRevisionHash,
@@ -4848,18 +4963,20 @@ describe("Node scaffold private staged materializer V2", () => {
             },
           );
         assert.equal(runtimeInputs.admissionScope, "test_fixture");
-        assert.equal(runtimeInputs.profileId, CLI_PROFILE);
+        assert.equal(runtimeInputs.profileId, fixture.profileId);
         assert.deepEqual(runtimeInputs.application.map((file) =>
           file.logicalLocator), [
-          "application/cli.js",
-          "application/cli.setfarm.test.js",
+          `application/${runtimeBasename}.js`,
+          `application/${runtimeBasename}.setfarm.test.js`,
         ]);
         assert.equal(
           runtimeInputs.application[0].contentHash,
           runtimeContext.output.files[0].contentHash,
         );
         assert.equal(runtimeInputs.packageJson.contentHash,
-          getCodeOwnedNodeScaffoldToolchainEntryV2(CLI_PROFILE)!.scaffold.files
+          getCodeOwnedNodeScaffoldToolchainEntryV2(
+            fixture.profileId,
+          )!.scaffold.files
             .find((file) => file.normalizedLocator === "package.json")!.rawHash);
         const runtimeEnvironmentReceipt =
           await revalidateNodeScaffoldExecutionEnvironmentV2(
@@ -4906,9 +5023,12 @@ describe("Node scaffold private staged materializer V2", () => {
             runtimeInputs,
           });
         activeRuntimeBundles.push(privateRuntime);
-        assert.equal(runtimeInstallInvocations.length, 1);
+        assert.equal(
+          runtimeInstallInvocations.length,
+          runtimeInstallCountBefore + 1,
+        );
         assert.deepEqual(
-          runtimeInstallInvocations[0]?.argv.slice(1),
+          runtimeInstallInvocations.at(-1)?.argv.slice(1),
           [
             "ci",
             "--omit=dev",
@@ -4921,13 +5041,25 @@ describe("Node scaffold private staged materializer V2", () => {
           await revalidateNodeCandidateRuntimePrivateV2(privateRuntime);
         assert.equal(privateRuntimeReceipt.admissionScope, "test_fixture");
         assert.equal(privateRuntimeReceipt.pathDisclosure, "forbidden");
-        assert.equal(privateRuntimeReceipt.profileId, CLI_PROFILE);
+        assert.equal(privateRuntimeReceipt.profileId, fixture.profileId);
         assert.equal(privateRuntimeReceipt.applicationTree.fileCount, 2);
         assert.equal(privateRuntimeReceipt.applicationTree.directoryCount, 0);
-        assert.equal(privateRuntimeReceipt.dependencyTree.fileCount, 0);
-        assert.equal(privateRuntimeReceipt.dependencyTree.directoryCount, 0);
-        assert.equal(privateRuntimeReceipt.productionClosure.nodeCount, 0);
-        assert.equal(privateRuntimeReceipt.productionGraph.packageCount, 0);
+        assert.equal(
+          privateRuntimeReceipt.dependencyTree.fileCount === 0,
+          runtimeClosure.nodeCount === 0,
+        );
+        assert.equal(
+          privateRuntimeReceipt.dependencyTree.directoryCount === 0,
+          runtimeClosure.nodeCount === 0,
+        );
+        assert.equal(
+          privateRuntimeReceipt.productionClosure.nodeCount,
+          runtimeClosure.nodeCount,
+        );
+        assert.equal(
+          privateRuntimeReceipt.productionGraph.packageCount,
+          runtimeClosure.nodeCount,
+        );
         assert.equal(
           privateRuntimeReceipt.applicationTree.treeHash,
           runtimeContext.output.tree.treeHash,
@@ -5009,13 +5141,19 @@ describe("Node scaffold private staged materializer V2", () => {
           issuedRuntime.bundle.applicationTree.treeHash,
           candidateBuild.receipt.outputTree.treeHash,
         );
-        assert.equal(issuedRuntime.bundle.dependencyTree.fileCount, 0);
+        assert.equal(
+          issuedRuntime.bundle.dependencyTree.fileCount === 0,
+          runtimeClosure.nodeCount === 0,
+        );
         assert.equal(
           issuedRuntime.bundle.npmMaterializationReceipt.productionClosure
             .nodeCount,
-          0,
+          runtimeClosure.nodeCount,
         );
-        assert.equal(runtimeInstallInvocations.length, 2);
+        assert.equal(
+          runtimeInstallInvocations.length,
+          runtimeInstallCountBefore + 2,
+        );
         const verifiedRuntime = await verifyCandidateRuntimeBundleV2ForTest({
           runtimeAuthority: issuedRuntime.authority,
           expectedBundleHash: issuedRuntime.bundle.bundleHash,
@@ -5072,7 +5210,23 @@ describe("Node scaffold private staged materializer V2", () => {
             claim.status === "fulfilled");
           const rejectedLaunch = launchedClaims.find((claim) =>
             claim.status === "rejected");
-          assert.ok(fulfilledLaunch?.status === "fulfilled");
+          assert.ok(
+            fulfilledLaunch?.status === "fulfilled",
+            JSON.stringify(launchedClaims.map((claim) =>
+              claim.status === "fulfilled"
+                ? { status: claim.status }
+                : {
+                    status: claim.status,
+                    code: claim.reason?.code,
+                    message: claim.reason?.message,
+                    causeCode: claim.reason?.cause?.code,
+                    causeMessage: claim.reason?.cause?.message,
+                    cause2Code: claim.reason?.cause?.cause?.code,
+                    cause2Message: claim.reason?.cause?.cause?.message,
+                    cause3Code: claim.reason?.cause?.cause?.cause?.code,
+                    cause3Message: claim.reason?.cause?.cause?.cause?.message,
+                  })),
+          );
           assert.ok(rejectedLaunch?.status === "rejected");
           assert.equal(
             (rejectedLaunch as PromiseRejectedResult).reason.code,
@@ -5140,6 +5294,144 @@ describe("Node scaffold private staged materializer V2", () => {
               code: "NODE_CLI_LAUNCHER_V2_OBSERVATION_DESTROYED",
             },
           );
+        } else {
+          const action = fixture.productSpec.actions[0]!;
+          const issuedLaunch =
+            await issueNodeExpressApiLaunchAuthorityV2ForTest({
+              runtimeAuthority: issuedRuntime.authority,
+              expectedBundleHash: issuedRuntime.bundle.bundleHash,
+              actionRef: action.id,
+            });
+          assert.equal(
+            issuedLaunch.status,
+            "issued_test_fixture_authority",
+          );
+          assert.notEqual(
+            issuedLaunch.transportContract.contractHash,
+            generated.receipt.authority.invocationTransportSet.contractSetHash,
+          );
+          const encoded = encodeInvocationRequestV2({
+            contract: issuedLaunch.transportContract,
+            inputValues: action.evidenceScenario.targetInputValues,
+          });
+          assert.equal(encoded.status, "encoded");
+          assert.equal(encoded.kind, "http_request");
+          await assert.rejects(
+            launchNodeExpressApiV2({
+              authority: {
+                ...issuedLaunch.authority,
+              } as NodeExpressApiLaunchAuthorityV2,
+              encodedRequest: encoded,
+            }),
+            (error: unknown) => error instanceof NodeExpressApiLauncherErrorV2
+              && error.code
+                === "NODE_EXPRESS_API_LAUNCHER_V2_AUTHORITY_UNAUTHENTICATED",
+          );
+          const launchedClaims = await Promise.allSettled([
+            launchNodeExpressApiV2({
+              authority: issuedLaunch.authority,
+              encodedRequest: encoded,
+            }),
+            launchNodeExpressApiV2({
+              authority: issuedLaunch.authority,
+              encodedRequest: encoded,
+            }),
+          ]);
+          const fulfilledLaunch = launchedClaims.find((claim) =>
+            claim.status === "fulfilled");
+          const rejectedLaunch = launchedClaims.find((claim) =>
+            claim.status === "rejected");
+          assert.ok(
+            fulfilledLaunch?.status === "fulfilled",
+            JSON.stringify(launchedClaims.map((claim) =>
+              claim.status === "fulfilled"
+                ? { status: claim.status }
+                : {
+                    status: claim.status,
+                    code: claim.reason?.code,
+                    message: claim.reason?.message,
+                    causeCode: claim.reason?.cause?.code,
+                    causeMessage: claim.reason?.cause?.message,
+                    cause2Code: claim.reason?.cause?.cause?.code,
+                    cause2Message: claim.reason?.cause?.cause?.message,
+                    cause3Code: claim.reason?.cause?.cause?.cause?.code,
+                    cause3Message: claim.reason?.cause?.cause?.cause?.message,
+                  })),
+          );
+          assert.ok(rejectedLaunch?.status === "rejected");
+          assert.equal(
+            (rejectedLaunch as PromiseRejectedResult).reason.code,
+            "NODE_EXPRESS_API_LAUNCHER_V2_AUTHORITY_ALREADY_CONSUMED",
+          );
+          const launched = (fulfilledLaunch as PromiseFulfilledResult<
+            Awaited<ReturnType<typeof launchNodeExpressApiV2>>
+          >).value;
+          assert.equal(
+            NodeExpressApiLaunchReceiptV2Schema.safeParse(launched.receipt)
+              .success,
+            true,
+          );
+          assert.equal(
+            launched.receipt.candidate.runtimeBundleHash,
+            issuedRuntime.bundle.bundleHash,
+          );
+          assert.equal(
+            launched.receipt.transport.contractHash,
+            issuedLaunch.transportContract.contractHash,
+          );
+          assert.equal(
+            launched.receipt.transport.contractSetHash,
+            generated.receipt.authority.invocationTransportSet
+              .contractSetHash,
+          );
+          assert.equal(
+            launched.receipt.transport.contractMembershipHash,
+            generated.receipt.authority.invocationTransportSet
+              .membershipHash,
+          );
+          assert.equal(
+            launched.receipt.execution.sourceFenceBeforeHash,
+            launched.receipt.execution.sourceFenceAfterHash,
+          );
+          assert.equal(launched.receipt.request.requestCount, 1);
+          assert.equal(
+            launched.receipt.request.childCommittedRequestCount,
+            1,
+          );
+          assert.equal(launched.receipt.request.redirectCount, 0);
+          assert.equal(launched.receipt.request.statusCode, 201);
+          assert.equal(
+            launched.receipt.socket.cleanup.readinessHash,
+            launched.receipt.socket.readiness.readinessHash,
+          );
+          const responseBody =
+            copyNodeExpressApiLaunchResponseBytesV2ForTest(
+              launched.observation,
+            );
+          const decoded = decodeInvocationResponseV2({
+            contract: issuedLaunch.transportContract,
+            response: {
+              kind: "http_response",
+              statusCode: launched.receipt.request.statusCode,
+              bodyBytes: responseBody,
+            },
+          });
+          assert.equal(decoded.status, "decoded_success");
+          assert.equal(decoded.kind, "http_request");
+          if (decoded.status !== "decoded_success") {
+            throw new Error("Expected decoded API success");
+          }
+          assert.deepEqual(decoded.value, { title: "Bind contracts" });
+          responseBody.fill(0);
+          destroyNodeExpressApiLaunchObservationV2(launched.observation);
+          assert.throws(
+            () => copyNodeExpressApiLaunchResponseBytesV2ForTest(
+              launched.observation,
+            ),
+            {
+              code: "NODE_EXPRESS_API_LAUNCHER_V2_OBSERVATION_DESTROYED",
+            },
+          );
         }
         await assert.rejects(
           verifyCandidateRuntimeBundleV2ForTest({
@@ -5203,13 +5495,16 @@ describe("Node scaffold private staged materializer V2", () => {
         const attemptRoot = await onlyAttemptRoot(created.stageParent);
         const sourceRoot = path.join(attemptRoot, "project", "src");
         assert.deepEqual(await readdir(sourceRoot), [
-          "cli.setfarm.test.ts",
-          "cli.ts",
+          `${runtimeBasename}.setfarm.test.ts`,
+          `${runtimeBasename}.ts`,
         ]);
-        const materializedRuntimePath = path.join(sourceRoot, "cli.ts");
+        const materializedRuntimePath = path.join(
+          sourceRoot,
+          `${runtimeBasename}.ts`,
+        );
         const materializedTestPath = path.join(
           sourceRoot,
-          "cli.setfarm.test.ts",
+          `${runtimeBasename}.setfarm.test.ts`,
         );
         assert.equal(
           (await readFile(materializedRuntimePath, "utf8")),
