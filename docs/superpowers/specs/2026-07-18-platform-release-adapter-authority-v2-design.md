@@ -17,9 +17,11 @@ clean main source tree
   -> exact external runtime resolution
   -> sealed environment capsule
   -> code-owned launcher, runner, profile, transport, receipt, and adapter catalogs
-  -> terminal PlatformReleaseManifestV2
+  -> stable terminal PlatformReleaseManifestV2
+  -> separate PlatformReleaseBuildAttestationV2 for the exact build occurrence
   -> immutable release directory
-  -> fresh verifier and in-memory authority brand
+  -> fresh verifier of both content and occurrence evidence
+  -> in-memory authority brand
   -> verified-release-derived EvidenceAdapterRegistryV2
   -> atomic CAS publication and append-only activation request/acknowledgement
 ```
@@ -128,6 +130,11 @@ limit before any write:
 - the complete manifest, including all nested catalogs and structural overhead:
   at most 3 MiB canonical JSON.
 
+The separate `PlatformReleaseBuildAttestationV2` is at most 1 MiB canonical
+JSON. Each nested receipt keeps its existing smaller cap. Manifest and
+attestation are preflighted as distinct CAS envelopes; one artifact's spare
+budget cannot be used to overflow the other.
+
 Component parsers and their exported candidate schemas enforce the same limits;
 a structurally valid but over-budget nested object is not a valid component.
 The root builder additionally enforces the combined limit and the actual CAS
@@ -149,8 +156,8 @@ type PlatformReleaseManifestV2 = {
       remoteRef: "refs/remotes/origin/main";
       admittedSha: GitObjectHash;
       policy: "exact_remote_main_sha";
-      receipt: SourceAdmissionReceiptV2;
-      receiptHash: Sha256;
+      admissionContractHash: Sha256;
+      source: PlatformReleaseSourceTreeBindingV2;
     };
     packageName: "setfarm";
     packageVersion: string;
@@ -177,8 +184,12 @@ type PlatformReleaseManifestV2 = {
       packageTreeHash: Sha256;
       buildInstallRecipeHash: Sha256;
     };
-    buildToolchainReceipt: PlatformReleaseBuildToolchainReceiptV2;
-    buildToolchainReceiptHash: Sha256;
+    buildContractHash: Sha256;
+    buildToolchain: {
+      requirement: PlatformReleaseHostNodeToolchainRequirementV2;
+      installRecipe: PlatformReleaseBuildToolchainInstallRecipeV2;
+      tree: PlatformReleaseBuildToolchainTreeBindingV2;
+    };
     sourceStage: {
       method: "verified_git_tree_export.v2";
       exportedTreeHash: GitObjectHash;
@@ -187,7 +198,6 @@ type PlatformReleaseManifestV2 = {
       exportedDirectoryCount: number;
       exportedTotalBytes: number;
       sourceBindingHash: Sha256;
-      stagePhysicalIdentityHash: Sha256;
       buildContextPolicy:
         "private_0700_parent_source_child_and_authenticated_toolchain_sibling_v2";
       mode: "read_only";
@@ -196,10 +206,7 @@ type PlatformReleaseManifestV2 = {
     outputPolicy: "parameterized_empty_stage_only";
     sourceDateEpoch: string;
     reproducibility: "double_clean_build_exact_tree_match";
-    firstBuildReceipt: PlatformReleaseBuildReceiptV2;
-    firstBuildReceiptHash: Sha256;
-    secondBuildReceipt: PlatformReleaseBuildReceiptV2;
-    secondBuildReceiptHash: Sha256;
+    reproducibleOutputClosureHash: Sha256;
   };
 
   runtimePayload: {
@@ -235,12 +242,47 @@ type PlatformReleaseManifestV2 = {
 
   manifestPayloadHash: Sha256;
 };
+
+type PlatformReleaseBuildAttestationV2 = {
+  schema: "setfarm.platform-release-build-attestation.v2";
+  version: "2.0.0";
+  authorityState: "candidate_build_attestation_unverified";
+  productionUse: "forbidden_until_fresh_release_verification";
+  releaseContentHash: Sha256;
+  sourceAdmissionReceipt: SourceAdmissionReceiptV2;
+  sourceAdmissionReceiptHash: Sha256;
+  buildToolchainReceipt: PlatformReleaseBuildToolchainReceiptV2;
+  buildToolchainReceiptHash: Sha256;
+  firstBuildReceipt: PlatformReleaseBuildReceiptV2;
+  firstBuildReceiptHash: Sha256;
+  secondBuildReceipt: PlatformReleaseBuildReceiptV2;
+  secondBuildReceiptHash: Sha256;
+  attestationHash: Sha256;
+};
 ```
 
 `manifestPayloadHash` is a domain-separated canonical hash of every field except
 itself. Nested catalogs have their own domain-separated payload hashes. Catalog
 hashes are included in the manifest, so a self-consistent nested rehash changes
 the release identity and cannot pass an existing activation anchor.
+
+`manifestPayloadHash` is also the stable `releaseId` and publication directory
+key. It contains only immutable release bytes, deterministic catalogs,
+source/build inputs and code-owned policy. It must not contain an attempt
+environment hash, project-scope fingerprint, temporary locator, device/inode,
+process capture or observed nonce/time. Two independent clean attempts that
+produce the same exact manifest and payload therefore have one `releaseId`.
+
+Occurrence-specific provenance remains mandatory but is not a content field.
+`PlatformReleaseBuildAttestationV2` carries the four complete typed receipts and
+binds them to `releaseContentHash`. Its own `attestationHash` deliberately
+changes when a physical source stage, toolchain stage, output stage, sealed
+process scope or capture changes. It is published as a separate append-only CAS
+artifact and activation/admission references both the stable release content
+hash and the exact verified attestation hash. The attestation is never written
+inside `releases/<releaseContentHash>/`; otherwise two correct independent
+attempts would produce different bytes at one supposedly content-addressed
+root.
 
 Source, build and host provenance are typed receipts, not opaque proof hashes.
 `SourceAdmissionReceiptV2` binds the exact remote ref observation, admitted
@@ -274,6 +316,12 @@ symlink-free canonical dependency tree, and stable physical root identity.
 Generated npm hidden locks and exact lock-declared `.bin` links are verified and
 then removed before the capsule is made read-only. The final build context has
 exactly `source` and `node_modules`; the latter is the authenticated capsule.
+These occurrence fields live in `PlatformReleaseBuildAttestationV2`. The stable
+manifest carries the exact source-tree/input binding, code-owned source/build
+contract hashes, host requirement, install recipe, compiler/package-manager
+content identities, toolchain tree binding and reproducible output-closure hash.
+The candidate-envelope validator requires every stable projection to equal its
+freshly parsed receipt projection; neither artifact can authorize itself alone.
 
 The embedded host receipt is
 `PlatformReleaseHostNodeToolchainReceiptV2`, not the generated-product
@@ -506,6 +554,15 @@ metadata-probe authority; payload dependency-tree hash equals the npm receipt an
 package-graph materialized tree hash; and every launcher/runner/tool/browser ref
 has exactly one compatible external resolution. Any mismatch is a manifest
 schema failure before publication.
+
+The candidate-envelope parser then performs the occurrence joins that the
+stable manifest intentionally cannot contain: source receipt to admitted
+repository/SHA/tree/source binding, build-toolchain receipt to requirement,
+recipe/compiler/package-manager/tree binding, both build receipts to exact
+source/toolchain physical generations, and both outputs to the one
+`reproducibleOutputClosureHash`. It also joins source/build host admission to
+the manifest's external runtime. Failure at either layer prevents a prepared
+brand.
 
 ## Sealed Environment Capsule
 
@@ -1109,8 +1166,9 @@ Public input no longer contains producer metadata, release hashes, adapters,
 support signatures, runner/dependency refs, toolchain hashes, catalog/profile/
 stack hashes, capability refs, transport/check/lifecycle values, launcher paths,
 or environment claims. Producer and release authority are projections of the
-verified manifest. Candidate verification derives a fresh registry from the
-brand and compares canonical bytes.
+verified stable manifest; build provenance is available only through its
+private, verified attestation state. Candidate verification derives a fresh
+registry from the brand and compares canonical bytes.
 
 Registry support adds ProductSpecV2 `action_invocation`,
 `CHECK_ACTION_INVOCATION`, and
@@ -1155,31 +1213,40 @@ into an existing `dist`:
    launcher/runner/codec/receipt catalogs whose preflighted module bytes now
    join the captured tree hashes; derive final toolchain hashes here and do not
    materialize runnable adapter support or Registry yet;
-8. write and fsync `PLATFORM_RELEASE_MANIFEST.v2.json` adjacent to `payload` as
-   the terminal content write, then make the release root read-only;
-9. prepare/acquire the existing publication batch lease for the exact manifest
-   identity, then atomically rename to `releases/<manifestPayloadHash>/`; a
-   concurrent identical winner is adopted only after full verification and a
-   conflicting target is never replaced;
-10. issue the prepared brand and run a fresh independent verifier to issue the
-   verified brand;
-11. derive the runnable adapter catalog and Registry only from that verified
-    brand, then publish exactly three envelopes--the manifest (with its nested
-    pre-verification catalogs), derived adapter catalog and Registry--as one
-    prepared CAS batch after exact envelope-byte preflight;
-12. append an activation-request event binding every published hash and ask the
+8. derive `PlatformReleaseBuildAttestationV2` from the exact source,
+   toolchain and two build receipts; derive the stable
+   `PlatformReleaseManifestV2` from only their deterministic projections plus
+   the exact payload/catalog closure, and require the candidate envelope to
+   close every projection before any terminal write;
+9. write and fsync only `PLATFORM_RELEASE_MANIFEST.v2.json` adjacent to
+   `payload` as the terminal content write, then make the release root
+   read-only; retain the attestation only in private prepared state and its
+   separate canonical CAS envelope;
+10. prepare/acquire publication leases for the stable manifest identity and
+    exact attestation identity, then atomically rename the content root to
+    `releases/<manifestPayloadHash>/`; a concurrent identical content winner is
+    adopted only after full content verification, while the new attestation is
+    appended rather than replacing the winner;
+11. issue the prepared brand only with both identities and run a fresh
+    independent verifier over release bytes, stable manifest and exact
+    attestation chain to issue the verified brand;
+12. derive the runnable adapter catalog and Registry only from that verified
+    brand, then publish the manifest, build attestation, derived adapter catalog
+    and Registry as one prepared CAS membership transaction after exact
+    envelope-byte preflight;
+13. append an activation-request event binding every published hash and ask the
     root-owned listener broker to start the new service on a private, unique Unix
     socket while the previous acknowledged release continues to own public
     traffic;
-13. after the new process independently verifies the chain/CAS/filesystem,
+14. after the new process independently verifies the chain/CAS/filesystem,
     reports exact process/release identity and passes bounded health directly on
     that private socket, acquire the activation predecessor lease and prepare a
     durable listener-cutover record;
-14. close the broker's public-dispatch gate under the same cutover lease, queue
+15. close the broker's public-dispatch gate under the same cutover lease, queue
     new public requests within a strict time/count bound, switch the pending
     backend pointer and run a root-authenticated cutover probe through the fixed
     listener while ordinary traffic remains gated;
-15. if that probe succeeds, append an activation-acknowledgement event containing
+16. if that probe succeeds, append an activation-acknowledgement event containing
     the exact cutover receipt, reopen the gate on the acknowledged backend, issue
     the activated handle and only then drain the old backend. On any pre-ack
     failure, restore the old pointer before reopening the gate.
@@ -1234,9 +1301,9 @@ append-only `platform_release_activation_events_v2`. Typed request and
 acknowledgement events form a predecessor hash chain; one predecessor can have
 only one successor, an acknowledgement references one exact request, and an
 unacknowledged request never changes current operational authority. Rows bind
-manifest, V2 catalog/registry, release SHA, runtime/external/environment hashes,
-bootstrap/process identity, startup-health receipt, listener-cutover receipt and
-CAS foreign keys.
+the stable manifest, exact verified build attestation, V2 catalog/registry,
+release SHA, runtime/external/environment hashes, bootstrap/process identity,
+startup-health receipt, listener-cutover receipt and CAS foreign keys.
 Update/delete/truncate are forbidden.
 
 Existing `v3_release_admissions` remain unchanged. Later admission V2 references
@@ -1263,8 +1330,9 @@ until the release builder/verifier and migration matrix are green on clean
    enforcer and exclusive socket-handle handoff; only this stage may derive an
    exact launch target from observed immutable build output;
 5. only after every nested schema, launch contract and real claimed export
-   exists, the root
-   manifest schema/hash vectors, empty-staging materializer and terminal writer;
+   exists, the stable root manifest, separate build-attestation and
+   candidate-envelope schemas/hash vectors, empty-staging materializer and
+   terminal writer;
 6. fresh installed/prepared verifier, private revocable authority brands and
    current-generation execution leases;
 7. new AdapterCatalogV2 and RegistryV2 derived only from verified release;
@@ -1297,7 +1365,12 @@ Required tests include:
 - dirty/non-main source, source-tree drift, lockfile/compiler drift, crash before
   manifest, and crash after fsync;
 - wall-clock/UUID/PID/temporary-path leakage into payload and unequal double
-  clean builds;
+  clean builds, including the invariant that equal clean content has one
+  `releaseId` while distinct physical attempts have distinct attestation
+  hashes;
+- rejection of a transplanted, missing, stale or self-rehashed attestation and
+  proof that no occurrence receipt bytes are written beneath the stable release
+  root;
 - missing/wrong runner export, ABI drift, toolchain tamper, package/executable/
   browser drift, ambient environment leak, shell/fallback/install attempt, and
   a sandbox that claims loopback-only while an outbound probe succeeds;
