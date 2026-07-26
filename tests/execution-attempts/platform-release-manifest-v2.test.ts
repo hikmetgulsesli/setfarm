@@ -132,14 +132,14 @@ describe("PlatformReleaseManifestV2 candidate authority boundary", () => {
       },
       {
         sourceHash:
-          "918b1668724289151e03eb582217bebc6d1a34033c4b8b641a2f7fb1bb865cfd",
-        sourceBytes: 10_114,
+          "e270a58af84c476b5c292fb55bcd28126d2dd0b0df753305133876b266868571",
+        sourceBytes: 10_594,
         firstBuildHash:
-          "0a61992873086e68cc7d0627e1443a3da0065132e604feae9f53e70f93990d3a",
-        firstBuildBytes: 9_993,
+          "cf5bdd4f79fdf3ab83ec718b6d114227e18925eb704cfd1d2db7bdacb8cc89af",
+        firstBuildBytes: 10_094,
         secondBuildHash:
-          "26e3a6f272a02dd8929fc4472d605006125d90dc8d2b37677537f9ffeb945363",
-        secondBuildBytes: 9_994,
+          "c4a3ac8f661123e4c28330690f76b7fd4519ea291f3bfedec9f93adf0e1a2c2e",
+        secondBuildBytes: 10_095,
       },
     );
     assert.notEqual(
@@ -167,8 +167,8 @@ describe("PlatformReleaseManifestV2 candidate authority boundary", () => {
       },
       {
         hash:
-          "0e95128a6c7ac3e605b40c836e5e2b9c952c496566499569827977eef54086e8",
-        bytes: 86_814,
+          "fbf959a19a45e55c2cbdd7ae9b1c242b0c26ba90e68c1baf21027e4290a29dcc",
+        bytes: 87_642,
         cap: 3_145_728,
       },
     );
@@ -220,6 +220,9 @@ describe("PlatformReleaseManifestV2 candidate authority boundary", () => {
       fixtureShaV2("moved-remote-main").slice(0, 40);
     movedRemote.remoteAfter.observationHash = hashCanonicalJson({
       schema: "setfarm.remote-main-observation.v2",
+      repositoryId: movedRemote.remoteAfter.repositoryId,
+      originTransport: movedRemote.remoteAfter.originTransport,
+      originUrlHash: movedRemote.remoteAfter.originUrlHash,
       remoteRef: movedRemote.remoteAfter.remoteRef,
       observedSha: movedRemote.remoteAfter.observedSha,
       observedTreeHash: movedRemote.remoteAfter.observedTreeHash,
@@ -228,6 +231,31 @@ describe("PlatformReleaseManifestV2 candidate authority boundary", () => {
       hashSourceAdmissionReceiptV2(movedRemote);
     assert.equal(
       SourceAdmissionReceiptV2Schema.safeParse(movedRemote).success,
+      false,
+    );
+
+    const foreignOrigin: any = structuredClone(
+      manifest.release.sourceAdmission.receipt,
+    );
+    for (const remote of [
+      foreignOrigin.remoteBefore,
+      foreignOrigin.remoteAfter,
+    ]) {
+      remote.originUrlHash = fixtureShaV2("foreign-origin-url");
+      remote.observationHash = hashCanonicalJson({
+        schema: "setfarm.remote-main-observation.v2",
+        repositoryId: remote.repositoryId,
+        originTransport: remote.originTransport,
+        originUrlHash: remote.originUrlHash,
+        remoteRef: remote.remoteRef,
+        observedSha: remote.observedSha,
+        observedTreeHash: remote.observedTreeHash,
+      });
+    }
+    foreignOrigin.receiptHash =
+      hashSourceAdmissionReceiptV2(foreignOrigin);
+    assert.equal(
+      SourceAdmissionReceiptV2Schema.safeParse(foreignOrigin).success,
       false,
     );
 

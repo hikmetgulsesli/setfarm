@@ -32,6 +32,7 @@ import {
 } from "./external-runtime-resolution-v2.js";
 import {
   ExactLegacyStitchConverterRefV2Schema,
+  PLATFORM_RELEASE_SOURCE_REPOSITORY_ID_V2,
   PLATFORM_RELEASE_SOURCE_MAX_DIRECTORIES_V2,
   PLATFORM_RELEASE_SOURCE_MAX_FILES_V2,
   PLATFORM_RELEASE_SOURCE_MAX_TOTAL_BYTES_V2,
@@ -79,6 +80,9 @@ const PlatformReleaseIdentityV2Schema = z.object({
   branch: z.literal("main"),
   dirty: z.literal(false),
   sourceAdmission: z.object({
+    repositoryId: z.literal(
+      PLATFORM_RELEASE_SOURCE_REPOSITORY_ID_V2,
+    ),
     remoteRef: z.literal("refs/remotes/origin/main"),
     admittedSha: GitObjectHashSchema,
     policy: z.literal("exact_remote_main_sha"),
@@ -92,6 +96,7 @@ const PlatformReleaseIdentityV2Schema = z.object({
   const receipt = admission.receipt;
   if (
     admission.receiptHash !== receipt.receiptHash
+    || admission.repositoryId !== receipt.repositoryId
     || admission.remoteRef !== receipt.remoteRef
     || admission.admittedSha !== receipt.admittedSource.sha
     || admission.policy !== receipt.policy
@@ -125,6 +130,9 @@ const PlatformReleaseBuildIdentityV2Schema = z.object({
       .max(PLATFORM_RELEASE_SOURCE_MAX_TOTAL_BYTES_V2),
     sourceBindingHash: Sha256Schema,
     stagePhysicalIdentityHash: Sha256Schema,
+    buildContextPolicy: z.literal(
+      "private_0700_parent_source_child_and_authenticated_toolchain_sibling_v2",
+    ),
     mode: z.literal("read_only"),
   }).strict(),
   commandRef: z.literal("BUILD_PLATFORM_RELEASE_V2"),
@@ -152,6 +160,7 @@ const PlatformReleaseBuildIdentityV2Schema = z.object({
     sourceBindingHash: value.sourceStage.sourceBindingHash,
     stagePhysicalIdentityHash:
       value.sourceStage.stagePhysicalIdentityHash,
+    buildContextPolicy: value.sourceStage.buildContextPolicy,
   };
   const receiptFields = (receipt: typeof first) => ({
     compiler: canonicalJsonStringify(receipt.compiler),
@@ -167,6 +176,7 @@ const PlatformReleaseBuildIdentityV2Schema = z.object({
     sourceBindingHash: receipt.source.bindingHash,
     stagePhysicalIdentityHash:
       receipt.stage.sourceStagePhysicalIdentityHash,
+    buildContextPolicy: receipt.stage.sourceBuildContextPolicy,
   });
   if (
     value.firstBuildReceiptHash !== first.receiptHash
@@ -298,7 +308,9 @@ const PlatformReleaseManifestIdentityV2Schema = z.object({
       && admittedExport.source.exportedTotalBytes
         === value.build.sourceStage.exportedTotalBytes
       && admittedExport.stageAfter.identityHash
-        === value.build.sourceStage.stagePhysicalIdentityHash,
+        === value.build.sourceStage.stagePhysicalIdentityHash
+      && admittedExport.buildContextPolicy
+        === value.build.sourceStage.buildContextPolicy,
     "source admission export and both build source stages",
   );
   requireJoin(

@@ -115,6 +115,8 @@ import {
   PLATFORM_RELEASE_EMPTY_GIT_STATUS_CONTENT_HASH_V2,
   PLATFORM_RELEASE_SOURCE_ADMISSION_CONTRACT_HASH_V2,
   PLATFORM_RELEASE_SOURCE_GIT_COMMAND_CONTRACT_HASH_V2,
+  PLATFORM_RELEASE_SOURCE_HTTPS_ORIGIN_HASH_V2,
+  PLATFORM_RELEASE_SOURCE_REPOSITORY_ID_V2,
   PLATFORM_RELEASE_SOURCE_STAGE_PHYSICAL_IDENTITY_V2_SCHEMA,
   PLATFORM_RELEASE_SOURCE_TREE_BINDING_V2_SCHEMA,
   SOURCE_ADMISSION_RECEIPT_V2_SCHEMA,
@@ -997,11 +999,21 @@ function sourceAdmission(
   source: ReturnType<typeof sourceTreeBinding>,
 ) {
   const remoteObservation = {
+    repositoryId:
+      PLATFORM_RELEASE_SOURCE_REPOSITORY_ID_V2,
+    originTransport: "github_https" as const,
+    originUrlHash:
+      PLATFORM_RELEASE_SOURCE_HTTPS_ORIGIN_HASH_V2,
     remoteRef: "refs/remotes/origin/main" as const,
     observedSha: codeSha,
     observedTreeHash: treeHash,
     observationHash: hashCanonicalJson({
       schema: "setfarm.remote-main-observation.v2",
+      repositoryId:
+        PLATFORM_RELEASE_SOURCE_REPOSITORY_ID_V2,
+      originTransport: "github_https",
+      originUrlHash:
+        PLATFORM_RELEASE_SOURCE_HTTPS_ORIGIN_HASH_V2,
       remoteRef: "refs/remotes/origin/main",
       observedSha: codeSha,
       observedTreeHash: treeHash,
@@ -1050,6 +1062,8 @@ function sourceAdmission(
     authorityState: "candidate_observation_unverified" as const,
     productionUse:
       "forbidden_until_fresh_root_owned_source_verification" as const,
+    repositoryId:
+      PLATFORM_RELEASE_SOURCE_REPOSITORY_ID_V2,
     remoteRef: "refs/remotes/origin/main" as const,
     policy: "exact_remote_main_sha" as const,
     branch: "main" as const,
@@ -1068,6 +1082,8 @@ function sourceAdmission(
     sourceAfter: structuredClone(fence),
     exportedSource: {
       method: "verified_git_tree_export.v2" as const,
+      buildContextPolicy:
+        "private_0700_parent_source_child_and_authenticated_toolchain_sibling_v2" as const,
       source,
       initialStageWasEmpty: true as const,
       stageBefore: structuredClone(stage),
@@ -1172,6 +1188,8 @@ function buildReceipt(
         sourceStagePhysicalIdentityHash,
       outputStagePhysicalIdentityHash:
         fixtureShaV2(`${stageRef}-output-stage`),
+      sourceBuildContextPolicy:
+        "private_0700_parent_source_child_and_authenticated_toolchain_sibling_v2" as const,
       sourceStageMode: "0555" as const,
       outputStageInitialMode: "0700" as const,
       outputWasEmpty: true as const,
@@ -1335,6 +1353,8 @@ PlatformReleaseManifestV2 {
       branch: "main" as const,
       dirty: false as const,
       sourceAdmission: {
+        repositoryId:
+          PLATFORM_RELEASE_SOURCE_REPOSITORY_ID_V2,
         remoteRef: "refs/remotes/origin/main" as const,
         admittedSha: codeSha,
         policy: "exact_remote_main_sha" as const,
@@ -1360,6 +1380,8 @@ PlatformReleaseManifestV2 {
         sourceBindingHash: source.bindingHash,
         stagePhysicalIdentityHash:
           admission.exportedSource.stageAfter.identityHash,
+        buildContextPolicy:
+          "private_0700_parent_source_child_and_authenticated_toolchain_sibling_v2" as const,
         mode: "read_only" as const,
       },
       commandRef: "BUILD_PLATFORM_RELEASE_V2" as const,

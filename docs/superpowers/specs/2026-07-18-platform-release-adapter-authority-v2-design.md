@@ -145,6 +145,7 @@ type PlatformReleaseManifestV2 = {
     branch: "main";
     dirty: false;
     sourceAdmission: {
+      repositoryId: "github.com/hikmetgulsesli/setfarm";
       remoteRef: "refs/remotes/origin/main";
       admittedSha: GitObjectHash;
       policy: "exact_remote_main_sha";
@@ -184,6 +185,8 @@ type PlatformReleaseManifestV2 = {
       exportedTotalBytes: number;
       sourceBindingHash: Sha256;
       stagePhysicalIdentityHash: Sha256;
+      buildContextPolicy:
+        "private_0700_parent_source_child_and_authenticated_toolchain_sibling_v2";
       mode: "read_only";
     };
     commandRef: "BUILD_PLATFORM_RELEASE_V2";
@@ -245,8 +248,19 @@ implementation and the separately installed exact Git executable. The Git
 command contract permits only direct, sealed-environment object-database/index
 observation; checkout bytes are never export input, repository mutation is
 forbidden, and commit/blob/recursive-tree hashes are independently reproduced
-from returned bytes. The implementation and Git executable must carry the same
-host OS and verifier receipt.
+from returned bytes. Both remote observations bind the code-owned
+`github.com/hikmetgulsesli/setfarm` repository identity and the hash of one
+accepted canonical HTTPS/SSH origin URL; an arbitrary repository with a
+self-consistent `main == origin/main` is not release source authority. The
+implementation and Git executable must carry the same host OS and verifier
+receipt.
+
+The admitted source stage is the read-only `source/` child of one private
+mode-`0700` build context. The context starts empty and keeps the source tree
+separate from a later authenticated build-toolchain sibling. TypeScript package
+resolution must use only that sibling; a source stage placed beneath the live
+checkout or any other ambient `node_modules` ancestor is invalid even if two
+build outputs happen to match.
 
 Each `PlatformReleaseBuildReceiptV2` binds the exact exported source tree and
 its file/directory/byte counts, compiler/npm/executable identities,
@@ -1042,10 +1056,11 @@ into an existing `dist`:
    commit/tree/index/status/remote observation before and after export;
 2. use the host-admitted exact Git executable only as a byte transport from the
    object database, independently reproduce commit/blob/recursive-tree hashes,
-   export with exclusive writes into one initially empty private source stage,
-   normalize and fsync it read-only, verify its complete fingerprint/counts and
-   physical identity twice, then create two independent empty output stages
-   with mode `0700`;
+   export with exclusive writes into an initially empty `source/` child under
+   one private build context, normalize and fsync it read-only, verify its
+   complete fingerprint/counts and physical identity twice, materialize the
+   exact authenticated build toolchain as the context's only sibling, then
+   create two independent empty output stages with mode `0700`;
 3. run a new side-effect-free `BUILD_PLATFORM_RELEASE_V2` command from the
    verified source stage with an explicit output root; it may write only each
    stage's `payload/dist`, and copies exact committed `package.json` without

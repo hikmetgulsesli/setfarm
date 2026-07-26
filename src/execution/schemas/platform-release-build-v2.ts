@@ -52,6 +52,20 @@ export const PLATFORM_RELEASE_SOURCE_MAX_FILES_V2 = 20_000;
 export const PLATFORM_RELEASE_SOURCE_MAX_DIRECTORIES_V2 = 4_000;
 export const PLATFORM_RELEASE_SOURCE_MAX_TOTAL_BYTES_V2 =
   512 * 1024 * 1024;
+export const PLATFORM_RELEASE_SOURCE_REPOSITORY_ID_V2 =
+  "github.com/hikmetgulsesli/setfarm" as const;
+export const PLATFORM_RELEASE_SOURCE_HTTPS_ORIGIN_V2 =
+  "https://github.com/hikmetgulsesli/setfarm.git" as const;
+export const PLATFORM_RELEASE_SOURCE_SSH_ORIGIN_V2 =
+  "git@github.com:hikmetgulsesli/setfarm.git" as const;
+export const PLATFORM_RELEASE_SOURCE_HTTPS_ORIGIN_HASH_V2 =
+  createHash("sha256")
+    .update(PLATFORM_RELEASE_SOURCE_HTTPS_ORIGIN_V2)
+    .digest("hex");
+export const PLATFORM_RELEASE_SOURCE_SSH_ORIGIN_HASH_V2 =
+  createHash("sha256")
+    .update(PLATFORM_RELEASE_SOURCE_SSH_ORIGIN_V2)
+    .digest("hex");
 
 export const PLATFORM_RELEASE_SOURCE_GIT_COMMAND_CONTRACT_V2 = Object.freeze({
   schema: "setfarm.platform-release-source-git-command-contract.v2" as const,
@@ -73,6 +87,8 @@ export const PLATFORM_RELEASE_SOURCE_GIT_COMMAND_CONTRACT_V2 = Object.freeze({
     "independent_commit_blob_and_recursive_tree_hash_reproduction" as const,
   sourceFence:
     "remote_head_index_status_and_export_before_and_after" as const,
+  repositoryId: PLATFORM_RELEASE_SOURCE_REPOSITORY_ID_V2,
+  acceptedOriginTransports: ["github_https", "github_ssh"] as const,
   repositoryMutation: "forbidden" as const,
   ambientEnvironment: "discard_all" as const,
 });
@@ -85,6 +101,7 @@ export const PLATFORM_RELEASE_SOURCE_ADMISSION_CONTRACT_V2 = Object.freeze({
   version: PLATFORM_RELEASE_BUILD_CONTRACT_VERSION_V2,
   authorityOwner: "root_owned_separately_installed_verifier" as const,
   remoteRef: "refs/remotes/origin/main" as const,
+  repositoryId: PLATFORM_RELEASE_SOURCE_REPOSITORY_ID_V2,
   policy: "exact_remote_main_sha" as const,
   requiredBranch: "main" as const,
   dirtyWorktree: "forbidden" as const,
@@ -92,6 +109,8 @@ export const PLATFORM_RELEASE_SOURCE_ADMISSION_CONTRACT_V2 = Object.freeze({
   remoteFence: "before_and_after_exact_remote_main_observation" as const,
   exportFence:
     "before_and_after_exact_read_only_stage_identity_and_fingerprint" as const,
+  buildContextPolicy:
+    "private_0700_parent_source_child_and_authenticated_toolchain_sibling_v2" as const,
   gitCommandContractHash:
     PLATFORM_RELEASE_SOURCE_GIT_COMMAND_CONTRACT_HASH_V2,
   candidateAuthority:
@@ -375,18 +394,33 @@ const GitSourceFenceIdentityV2Schema = z.object({
 });
 
 const RemoteMainObservationIdentityV2Schema = z.object({
+  repositoryId: z.literal(
+    PLATFORM_RELEASE_SOURCE_REPOSITORY_ID_V2,
+  ),
+  originTransport: z.enum(["github_https", "github_ssh"]),
+  originUrlHash: Sha256Schema,
   remoteRef: z.literal("refs/remotes/origin/main"),
   observedSha: GitObjectHashSchema,
   observedTreeHash: GitObjectHashSchema,
   observationHash: Sha256Schema,
 }).strict().superRefine((value, context) => {
+  const expectedOriginUrlHash =
+    value.originTransport === "github_https"
+      ? PLATFORM_RELEASE_SOURCE_HTTPS_ORIGIN_HASH_V2
+      : PLATFORM_RELEASE_SOURCE_SSH_ORIGIN_HASH_V2;
   const expected = hashCanonicalJson({
     schema: "setfarm.remote-main-observation.v2",
+    repositoryId: value.repositoryId,
+    originTransport: value.originTransport,
+    originUrlHash: value.originUrlHash,
     remoteRef: value.remoteRef,
     observedSha: value.observedSha,
     observedTreeHash: value.observedTreeHash,
   });
-  if (value.observationHash !== expected) {
+  if (
+    value.originUrlHash !== expectedOriginUrlHash
+    || value.observationHash !== expected
+  ) {
     context.addIssue({
       code: "custom",
       path: ["observationHash"],
@@ -431,6 +465,9 @@ const SourceAdmissionReceiptIdentityV2Schema = z.object({
   productionUse: z.literal(
     "forbidden_until_fresh_root_owned_source_verification",
   ),
+  repositoryId: z.literal(
+    PLATFORM_RELEASE_SOURCE_REPOSITORY_ID_V2,
+  ),
   remoteRef: z.literal("refs/remotes/origin/main"),
   policy: z.literal("exact_remote_main_sha"),
   branch: z.literal("main"),
@@ -450,6 +487,9 @@ const SourceAdmissionReceiptIdentityV2Schema = z.object({
   sourceAfter: GitSourceFenceIdentityV2Schema,
   exportedSource: z.object({
     method: z.literal("verified_git_tree_export.v2"),
+    buildContextPolicy: z.literal(
+      "private_0700_parent_source_child_and_authenticated_toolchain_sibling_v2",
+    ),
     source: PlatformReleaseSourceTreeBindingV2Schema,
     initialStageWasEmpty: z.literal(true),
     stageBefore:
@@ -482,7 +522,9 @@ const SourceAdmissionReceiptIdentityV2Schema = z.object({
   const gitExecutable = value.gitTool.executable;
   const implementation = value.implementation.module;
   if (
-    value.remoteBefore.remoteRef !== value.remoteRef
+    value.remoteBefore.repositoryId !== value.repositoryId
+    || value.remoteAfter.repositoryId !== value.repositoryId
+    || value.remoteBefore.remoteRef !== value.remoteRef
     || value.remoteBefore.observedSha !== admitted.sha
     || value.remoteBefore.observedTreeHash !== admitted.treeHash
     || value.remoteAfter.remoteRef !== value.remoteRef
@@ -626,6 +668,9 @@ const PlatformReleaseBuildStageV2Schema = z.object({
   ]),
   sourceStagePhysicalIdentityHash: Sha256Schema,
   outputStagePhysicalIdentityHash: Sha256Schema,
+  sourceBuildContextPolicy: z.literal(
+    "private_0700_parent_source_child_and_authenticated_toolchain_sibling_v2",
+  ),
   sourceStageMode: z.literal("0555"),
   outputStageInitialMode: z.literal("0700"),
   outputWasEmpty: z.literal(true),
