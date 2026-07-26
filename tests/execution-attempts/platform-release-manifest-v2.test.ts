@@ -62,6 +62,12 @@ import {
 } from
   "../../src/execution/schemas/platform-release-module-catalogs-v2.js";
 import {
+  PlatformReleaseRequiredModuleClosureV2Schema,
+  hashPlatformReleaseRequiredModuleClosureEntryV2,
+  hashPlatformReleaseRequiredModuleClosureV2,
+} from
+  "../../src/execution/schemas/platform-release-required-module-closure-v2.js";
+import {
   createPlatformReleaseCandidateEnvelopeFixtureV2,
   createDistinctPlatformReleaseBuildAttemptFixtureV2,
   createPlatformReleaseManifestFixtureV2,
@@ -78,6 +84,65 @@ function recursivelyAssertFrozen(value: unknown): void {
 function rehashManifest(candidate: any): void {
   candidate.manifestPayloadHash =
     hashPlatformReleaseManifestV2(candidate);
+}
+
+function rebindRequiredModuleClaim(
+  manifest: any,
+  module: any,
+): void {
+  const closureEntry =
+    manifest.requiredModuleClosure.entries.find(
+      (entry: any) =>
+        entry.module.moduleLocator === module.moduleLocator,
+    );
+  assert.ok(closureEntry);
+  closureEntry.module = structuredClone(module);
+  closureEntry.entryHash =
+    hashPlatformReleaseRequiredModuleClosureEntryV2(
+      closureEntry,
+    );
+  manifest.requiredModuleClosure.closureHash =
+    hashPlatformReleaseRequiredModuleClosureV2(
+      manifest.requiredModuleClosure,
+    );
+  manifest.runnerCatalog.requiredModuleClosureHash =
+    manifest.requiredModuleClosure.closureHash;
+  for (const entry of manifest.runnerCatalog.entries) {
+    entry.toolchainHash = hashPlatformRunnerToolchainV2({
+      runnerEntrypointRef: entry.runnerEntrypointRef,
+      runnerModuleHash: entry.module.contentHash,
+      runnerAbiHash: entry.abiHash,
+      platformTreeHash: manifest.runnerCatalog.platformTreeHash,
+      dependencyTreeHash:
+        manifest.runnerCatalog.dependencyTreeHash,
+      runtimePayloadHash:
+        manifest.runnerCatalog.runtimePayloadHash,
+      externalResolutionHash:
+        manifest.runnerCatalog.externalResolutionHash,
+      productionResolutionGraphHash:
+        manifest.runnerCatalog.productionResolutionGraphHash,
+      environmentCapsuleHash:
+        manifest.runnerCatalog.environmentCapsuleHash,
+      launcherCatalogHash:
+        manifest.runnerCatalog.launcherCatalogHash,
+      requiredModuleClosureHash:
+        manifest.runnerCatalog.requiredModuleClosureHash,
+      transportCodecCatalogHash:
+        manifest.runnerCatalog.transportCodecCatalogHash,
+      receiptSchemaHash:
+        manifest.runnerCatalog.receiptSchemaHash,
+      adapterDefinitionCatalogHash:
+        manifest.runnerCatalog.adapterDefinitionCatalogHash,
+      executionAdmissionHash:
+        entry.admission.kind === "invocation"
+          ? entry.admission.executionLeaseContractHash
+          : entry.abiHash,
+    });
+    entry.entryHash =
+      hashPlatformRunnerCatalogEntryV2(entry);
+  }
+  manifest.runnerCatalog.catalogHash =
+    hashPlatformRunnerCatalogV2(manifest.runnerCatalog);
 }
 
 function rehashAttestation(envelope: any): void {
@@ -195,7 +260,7 @@ describe("PlatformReleaseManifestV2 candidate authority boundary", () => {
           "5fb5c0266b58276585d1c34a02491f89c2161f83333c087efdae94b3fa1ad340",
         secondBuildBytes: 11_946,
         attestationHash:
-          "926db6db969e60199bb044bfbb8e9efd2be054dc4ae2dddedd11c795b81bf209",
+          "747a21bd44d6a9fc621bf17f509d35c8f51bf16e923844c87d1a77b6d1bd4b01",
         attestationBytes: 44_936,
         attestationCap: 1_048_576,
       },
@@ -291,8 +356,8 @@ describe("PlatformReleaseManifestV2 candidate authority boundary", () => {
       },
       {
         hash:
-          "12cd9dc2a67ec0367cfbcac19b3101298a75218e44738e5052101fb2e7cae0d5",
-        bytes: 61_307,
+          "f292ef826b00fd15378695dcb9f256f936772ed608d0a821024bffe09af84053",
+        bytes: 85_539,
         cap: 3_145_728,
       },
     );
@@ -537,6 +602,65 @@ describe("PlatformReleaseManifestV2 candidate authority boundary", () => {
       );
     rehashManifest(profileDrift);
 
+    const detachedRequiredModule: any =
+      structuredClone(manifest);
+    const detachedEntry =
+      detachedRequiredModule.requiredModuleClosure.entries
+        .find(
+          (entry: any) =>
+            entry.definition.role === "runner_cli",
+        );
+    assert.ok(detachedEntry);
+    detachedEntry.module.contentHash =
+      fixtureShaV2("detached-required-runner-module");
+    detachedEntry.module.moduleRefHash =
+      hashPlatformReleaseModuleRefV2(detachedEntry.module);
+    detachedEntry.entryHash =
+      hashPlatformReleaseRequiredModuleClosureEntryV2(
+        detachedEntry,
+      );
+    detachedRequiredModule.requiredModuleClosure.closureHash =
+      hashPlatformReleaseRequiredModuleClosureV2(
+        detachedRequiredModule.requiredModuleClosure,
+      );
+    rehashManifest(detachedRequiredModule);
+
+    const detachedNoncatalogClosure: any =
+      structuredClone(manifest);
+    const detachedNoncatalogEntry =
+      detachedNoncatalogClosure.requiredModuleClosure.entries
+        .find(
+          (entry: any) =>
+            entry.definition.role === "codec_runtime",
+        );
+    assert.ok(detachedNoncatalogEntry);
+    detachedNoncatalogEntry.module.contentHash =
+      fixtureShaV2("detached-codec-runtime-module");
+    detachedNoncatalogEntry.module.moduleRefHash =
+      hashPlatformReleaseModuleRefV2(
+        detachedNoncatalogEntry.module,
+      );
+    detachedNoncatalogEntry.entryHash =
+      hashPlatformReleaseRequiredModuleClosureEntryV2(
+        detachedNoncatalogEntry,
+      );
+    detachedNoncatalogClosure.requiredModuleClosure.closureHash =
+      hashPlatformReleaseRequiredModuleClosureV2(
+        detachedNoncatalogClosure.requiredModuleClosure,
+      );
+    assert.equal(
+      PlatformReleaseRequiredModuleClosureV2Schema.safeParse(
+        detachedNoncatalogClosure.requiredModuleClosure,
+      ).success,
+      true,
+    );
+    assert.equal(
+      detachedNoncatalogClosure.runnerCatalog
+        .requiredModuleClosureHash,
+      manifest.runnerCatalog.requiredModuleClosureHash,
+    );
+    rehashManifest(detachedNoncatalogClosure);
+
     const wrongBuildSource: any = structuredClone(baseEnvelope);
     const wrongSha = fixtureShaV2("wrong-build-source").slice(0, 40);
     for (const key of [
@@ -628,6 +752,8 @@ describe("PlatformReleaseManifestV2 candidate authority boundary", () => {
     for (const candidate of [
       networkDrift,
       profileDrift,
+      detachedRequiredModule,
+      detachedNoncatalogClosure,
     ]) {
       assert.equal(
         PlatformReleaseManifestV2Schema.safeParse(candidate).success,
@@ -679,6 +805,8 @@ describe("PlatformReleaseManifestV2 candidate authority boundary", () => {
         candidate.runnerCatalog.environmentCapsuleHash,
       launcherCatalogHash:
         candidate.runnerCatalog.launcherCatalogHash,
+      requiredModuleClosureHash:
+        candidate.runnerCatalog.requiredModuleClosureHash,
       transportCodecCatalogHash:
         candidate.runnerCatalog.transportCodecCatalogHash,
       receiptSchemaHash:
@@ -690,6 +818,7 @@ describe("PlatformReleaseManifestV2 candidate authority boundary", () => {
     entry.entryHash = hashPlatformRunnerCatalogEntryV2(entry);
     candidate.runnerCatalog.catalogHash =
       hashPlatformRunnerCatalogV2(candidate.runnerCatalog);
+    rebindRequiredModuleClaim(candidate, entry.module);
     rehashManifest(candidate);
 
     assert.equal(

@@ -65,6 +65,10 @@ import {
   PlatformRunnerCatalogV2Schema,
 } from "./platform-release-module-catalogs-v2.js";
 import {
+  PlatformReleaseRequiredModuleClosureV2Schema,
+  getPlatformReleaseRequiredModuleRequirementV2,
+} from "./platform-release-required-module-closure-v2.js";
+import {
   RELEASE_LAYOUT_V2,
   ReleaseLayoutV2Schema,
   PlatformRuntimePayloadCandidateV2Schema,
@@ -194,6 +198,8 @@ const PlatformReleaseManifestIdentityV2Schema = z.object({
   profileCatalog: ProductDeliveryProfileCatalogV2Schema,
   evidenceDefinitionCatalogs:
     PlatformEvidenceDefinitionCatalogsV2Schema,
+  requiredModuleClosure:
+    PlatformReleaseRequiredModuleClosureV2Schema,
   launcherCatalog: PlatformLauncherCatalogV2Schema,
   runnerCatalog: PlatformRunnerCatalogV2Schema,
   transportCodecCatalog: InvocationTransportCodecCatalogV2Schema,
@@ -231,6 +237,7 @@ const PlatformReleaseManifestIdentityV2Schema = z.object({
   const external = value.externalResolution;
   const environment = value.environmentCapsule;
   const definitions = value.evidenceDefinitionCatalogs;
+  const requiredModules = value.requiredModuleClosure;
   const launcher = value.launcherCatalog;
   const runner = value.runnerCatalog;
   const packageLock = value.build.inputs[0];
@@ -332,6 +339,16 @@ const PlatformReleaseManifestIdentityV2Schema = z.object({
     "environment and metadata probe authority",
   );
   requireJoin(
+    requiredModules.platformTreeHash === runtime.platformTree.treeHash
+      && requiredModules.runtimePayloadHash
+        === runtime.runtimePayloadHash
+      && canonicalJsonStringify(requiredModules.requirement)
+        === canonicalJsonStringify(
+          getPlatformReleaseRequiredModuleRequirementV2(),
+        ),
+    "required module closure and runtime payload",
+  );
+  requireJoin(
     value.build.packageManager.packageName
       === external.packageManager.packageName
       && value.build.packageManager.version
@@ -372,6 +389,8 @@ const PlatformReleaseManifestIdentityV2Schema = z.object({
       && runner.requirementCatalogHash
         === definitions.runnerRequirements.catalogHash
       && runner.launcherCatalogHash === launcher.catalogHash
+      && runner.requiredModuleClosureHash
+        === requiredModules.closureHash
       && runner.transportCodecCatalogHash
         === value.transportCodecCatalog.catalogHash
       && runner.receiptSchemaHash === value.receiptSchema.policyHash
@@ -403,6 +422,42 @@ const PlatformReleaseManifestIdentityV2Schema = z.object({
           && entry.executableRefs[0] === external.nodeRuntime.runtimeRef,
       ),
     "launcher and runner Node runtime refs",
+  );
+  const requiredModuleRefs = new Map(
+    requiredModules.entries.map(
+      (entry) => [
+        entry.module.moduleLocator,
+        canonicalJsonStringify(entry.module),
+      ],
+    ),
+  );
+  requireJoin(
+    [
+      ...launcher.entries.map((entry) => entry.module),
+      ...runner.entries.map((entry) => entry.module),
+    ].every(
+      (module) =>
+        requiredModuleRefs.get(module.moduleLocator)
+          === canonicalJsonStringify(module),
+    ),
+    "launcher and runner refs in required module closure",
+  );
+  const networkModule = requiredModules.entries.find(
+    (entry) => entry.definition.role === "network",
+  );
+  requireJoin(
+    networkModule !== undefined
+      && networkModule.module.moduleLocator
+        === environment.network.authority.wrapperModuleLocator
+      && networkModule.module.contentHash
+        === environment.network.authority.wrapperModuleHash
+      && networkModule.definition.requiredExports.some(
+        (entry) =>
+          entry.name
+            === environment.network.authority.wrapperExport
+          && entry.kind === "function",
+      ),
+    "network authority in required module closure",
   );
 
   if (joinFailures.length > 0) {

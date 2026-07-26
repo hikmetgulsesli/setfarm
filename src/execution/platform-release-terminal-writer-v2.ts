@@ -96,6 +96,8 @@ export type CompletedPlatformReleaseStageCandidateInspectionV2 = Readonly<{
   dependencyTreeHash: string;
   launcherCatalogHash: string;
   runnerCatalogHash: string;
+  requiredModuleClosureHash: string;
+  requiredModuleCount: 17;
 }>;
 
 const COMPLETED_STAGE_CONSTRUCTOR_CAPABILITY_V2 = Object.freeze({});
@@ -494,10 +496,9 @@ function assertMaterializedModulesV2(
   manifest: PlatformReleaseManifestV2,
   platformTree: CanonicalRuntimeTreeV2,
 ): void {
-  const refs = [
-    ...manifest.launcherCatalog.entries.map((entry) => entry.module),
-    ...manifest.runnerCatalog.entries.map((entry) => entry.module),
-  ];
+  const refs = manifest.requiredModuleClosure.entries.map(
+    (entry) => entry.module,
+  );
   const locators = refs.map((entry) => entry.payloadLocator);
   if (
     new Set(locators).size !== locators.length
@@ -532,21 +533,9 @@ function assertMaterializedModulesV2(
     ) {
       fail(
         "MODULE_BYTES_MISMATCH",
-        `Materialized module ${expected.moduleLocator} differs from its catalog ref`,
+        `Materialized module ${expected.moduleLocator} differs from its required closure ref`,
       );
     }
-  }
-  const wrapper = manifest.environmentCapsule.network.authority;
-  const wrapperTreeLocator = wrapper.wrapperModuleLocator.slice("dist/".length);
-  const wrapperEntry = treeFiles.get(wrapperTreeLocator);
-  if (
-    !wrapperEntry
-    || wrapperEntry.contentHash !== wrapper.wrapperModuleHash
-  ) {
-    fail(
-      "MODULE_BYTES_MISMATCH",
-      "Network wrapper module differs from the environment capsule",
-    );
   }
 }
 
@@ -706,6 +695,10 @@ function completedInspectionV2(
     dependencyTreeHash: manifest.runtimePayload.dependencyTree.treeHash,
     launcherCatalogHash: manifest.launcherCatalog.catalogHash,
     runnerCatalogHash: manifest.runnerCatalog.catalogHash,
+    requiredModuleClosureHash:
+      manifest.requiredModuleClosure.closureHash,
+    requiredModuleCount:
+      manifest.requiredModuleClosure.entries.length,
   });
 }
 

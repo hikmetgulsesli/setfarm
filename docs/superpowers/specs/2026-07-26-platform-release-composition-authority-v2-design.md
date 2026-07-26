@@ -107,7 +107,8 @@ The authority contains:
 - one separately installed root-owned release bootstrap executable and module;
 - the existing authenticated Node executable and npm authority;
 - exact metadata bootstrap module and export;
-- exact `xattr` and ACL-observation executables;
+- exact `xattr` observer/clear executable, ACL observer executable, and distinct
+  ACL clear executable;
 - exact sandbox executable, network wrapper module, wrapper export, and
   canonical sandbox policy;
 - one code-owned unprivileged runtime UID/GID identity distinct from every
@@ -116,6 +117,14 @@ The authority contains:
 - exact non-system dynamic library closure;
 - one verifier identity shared by every host-owned file receipt;
 - versioned metadata, network, and module-export receipt ABI identities.
+
+Composition host files use a composition-specific exact physical-file receipt.
+It supports read-only `0444`, executable `0555`, and system executable `0755`
+members. It must not widen `ExactHostOwnedFileRefV2`, whose existing
+`0444|0555` contract is already part of release V2 schemas. The composition
+receipt binds descriptor-captured device/inode, owner/group, mode, single-link
+count, byte length/hash, timestamps, parent identity, verifier binding, and
+every-and-only installed-package membership.
 
 Public inspection contains hashes, counts, stable refs, host identity, runtime
 UID/GID, policy hashes, and lifecycle state. It contains no filesystem path,
@@ -138,6 +147,16 @@ Tests use a separate `ForTest` constructor with temporary roots and
 `test_fixture` scope. A test-scoped authority can never enter the production
 composer.
 
+The repository currently has an independently installed Node-toolchain
+provisioner package, but no release-composition bootstrap package, durable
+runtime-account receipt, or installed host verifier. That Node provisioner
+must not be relabeled as the release bootstrap. Until a separately packaged
+fixed-root release bootstrap and runtime-account authority exist, the
+production composition opener is deliberately unavailable and returns a typed
+bootstrap-unavailable failure. It must not fall back to fixture UID/GID,
+`/usr/local/libexec` guesses, current source files, ambient `PATH`, or the
+calling process identity.
+
 ## Operational ABIs
 
 ### Metadata probe
@@ -158,6 +177,9 @@ versioned receipt containing:
 
 Tree normalization may continue to use internal metadata mechanics, but the
 manifest/environment claim is derived only from this admitted operation.
+ACL observation and mutation are distinct roles: the current implementation
+observes with `ls` and clears with `chmod`; one executable cannot be claimed as
+both merely because a fixture used that value.
 
 ### Network negative probe
 
@@ -180,13 +202,72 @@ The result binds:
 
 - canonical module locator;
 - observed module bytes;
-- exact required export names;
-- module load success;
+- exact required export name and runtime kind;
+- the code-owned verification policy and its semantic outcome;
+- module load success and zero-input projection hash where required;
 - bounded process evidence;
 - output occurrence identity.
 
 The two stable export projections must be canonical-byte equal. Process and
 physical occurrence evidence must remain distinct.
+
+Before this probe exists, add one zero-input
+`PlatformReleaseRequiredModuleClosureV2`. It names every runtime implementation
+module locator and required export actually consumed by launchers, runners,
+network isolation, invocation codecs, receipt handling, and adapters. A
+declarative catalog hash without an implementation locator/export is not module
+authority. The closure is reproduced from code-owned definitions and observed
+bytes; the composer cannot accept or infer entries.
+
+The canonical V2 closure is one exact ordered 17-entry tuple:
+
+1. CLI bootstrap-source module;
+2. HTTP bootstrap-source module;
+3. adapter-definition catalog module;
+4. evidence-definition catalog module;
+5. delivery-profile catalog module;
+6. invocation-codec catalog module;
+7. invocation-codec runtime module;
+8. invocation-evidence evaluator;
+9. CLI launcher;
+10. HTTP launcher;
+11. network sandbox with both `runNetworkIsolatedV2` and the actual
+    `acquireNetworkSandboxLaunchContextInternalV2` runtime export;
+12. evidence-receipt ABI module;
+13. durable evidence-result ABI module;
+14. CLI runner;
+15. command runner;
+16. HTTP runner;
+17. invocation-runner core used by the thin CLI/HTTP runners.
+
+Each entry binds required export `{name, kind}` records plus one code-owned
+verification policy. Bootstrap policies prove source/hash pairs; catalog and
+ABI policies execute zero-input exports and compare their canonical projection
+to the manifest; runtime policies require exact function kinds. Entries are
+tagged `runtime`, `bootstrap_source`, `code_owned_definition`, or
+`test_fixture_runtime_blocked`. The command runner is currently the final
+blocked category because its issuer/publication path is test-only. The
+adapter-definition catalog currently declares an empty operational catalog and
+production blockers; the closure proves those exact definition bytes but must
+not claim that a missing production RegistryV2 adapter implementation exists.
+Static transitive imports remain covered by the complete platform tree hash and
+ESM linking; they are not inflated into caller-selected closure entries.
+
+`PlatformReleaseRequiredModuleClosureV2` becomes an explicit stable manifest
+component. The module-export occurrence receipts bind its closure hash, exact
+module-ref hashes, required export sets, load outcomes, and first/second output
+identities outside stable release content.
+
+The exported candidate binder is deliberately not an admission authority. It
+strictly snapshots and hashes a complete candidate, but production composition
+must derive every module ref from a fresh canonical output-tree capability and
+must not accept the binder's refs from a caller. `PlatformRuntimePayloadV2`
+stores a full-tree binding, not the entry list. Therefore the manifest schema
+joins the closure to that binding and to all catalog/environment identities,
+while the terminal writer and B6 verifier independently recapture the tree and
+join every one of the 17 module refs to an actual file entry. Duplicating the
+tree entry list in the stable manifest solely to make the candidate parser look
+authoritative is rejected.
 
 ## Code-Owned Composition
 
@@ -212,6 +293,37 @@ Every builder:
 
 No builder may read an environment variable, resolve `PATH`, accept a default
 catalog, trust a fixture, or infer a missing field.
+
+The production attestation extends its existing exact source admission,
+toolchain, and two build receipts with:
+
+- the full authenticated host-composition admission receipt and its hash;
+- the required-module requirement and closure hashes;
+- an ordered first/second occurrence tuple, each containing the full host
+  dependency-install evidence, full npm materialization receipt, dependency
+  physical identity and output binding, metadata-probe receipt,
+  network-negative-probe receipt, module-export receipt, and each receipt hash;
+- the exact output occurrence and physical identities already joined by the
+  corresponding build receipt.
+
+Its strict refinement requires both occurrences to bind the same source,
+toolchain, host-composition authority, requirement, closure, runtime,
+dependency graph, environment, and catalog projection. Their process,
+filesystem, dependency-install, metadata, network, and module-load occurrence
+identities must be distinct. Equality is computed from one explicit stable
+projection; it is never inferred by dropping fields ad hoc.
+
+Terminal sealed-root evidence is not part of this pre-write attestation. B5E
+records the later seal/publication receipt and binds it to the already fixed
+manifest and attestation hashes. Putting terminal evidence into the object
+whose bytes must exist before terminalization would create a circular identity.
+
+Test source admission intentionally has no production
+`SourceAdmissionReceiptV2`. Therefore the test composition path produces a
+distinct `CompletedPlatformReleaseStageCandidateForTestV2` and test envelope.
+It exercises physical, concurrency, equality, and cleanup mechanics but cannot
+be parsed, cast, serialized, or passed to B5E as a production completed handle.
+Tests must never synthesize a production source receipt to close this gap.
 
 ## One-Shot Ownership Transaction
 
@@ -290,6 +402,7 @@ and cleanup ownership. Public inspection remains pathless.
 
 Composition uses typed producer-owned categories:
 
+- `HOST_COMPOSITION_BOOTSTRAP_UNAVAILABLE`;
 - `HOST_COMPOSITION_AUTHORITY_INVALID`;
 - `RUNTIME_IDENTITY_INVALID`;
 - `METADATA_PROBE_FAILED`;
@@ -305,7 +418,10 @@ Composition uses typed producer-owned categories:
 - `ALREADY_CONSUMED`.
 
 Low-level causes remain attached. No error-message regex or agent prose decides
-the category.
+the category. The no-input production opener reports
+`HOST_COMPOSITION_BOOTSTRAP_UNAVAILABLE` when the fixed-root release bootstrap,
+installed verifier, or durable runtime-account authority is absent; it never
+normalizes that state into generic invalid input and never selects a fallback.
 
 ## Compatibility
 
@@ -366,14 +482,20 @@ End to end:
 
 ## Implementation Order
 
-1. Add host-composition receipt schemas and opaque private sub-authority.
-2. Add authenticated metadata, network, and module-export operation ABIs.
-3. Add pure observed runtime/environment/catalog/build candidate builders.
-4. Add one-shot pair claim and internal composition state.
-5. Split production terminal issuance from the test JSON writer.
-6. Implement selected-root ownership transfer and terminal cleanup.
-7. Run the full adversarial matrix and update the audit.
-8. Begin B5E separate durable release store at migration 27+.
+1. Add the candidate-only zero-input required runtime-module closure, bind it
+   into runner toolchain identity and the manifest, and require terminal
+   physical recapture of all entries.
+2. Add host-composition receipt schemas and opaque private sub-authority.
+3. Add authenticated metadata, network, and module-export operation ABIs.
+4. Add pure observed runtime/environment/catalog/build candidate builders and
+   the exact two-occurrence attestation extension.
+5. Add one-shot pair claim and internal composition state.
+6. Split production terminal issuance from the test JSON writer.
+7. Implement selected-root ownership transfer and terminal cleanup.
+8. Package the fixed-root release bootstrap, verifier, and runtime-account
+   authority; only then enable the no-input production opener.
+9. Run the full adversarial matrix and update the audit.
+10. Begin B5E separate durable release store at migration 27+.
 
 Production activation, live Setfarm runs, Mission Control projection, RegistryV2,
 and generated-project recovery remain forbidden during these steps.

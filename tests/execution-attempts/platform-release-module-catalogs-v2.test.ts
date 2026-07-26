@@ -118,6 +118,7 @@ function fixtureCatalogs(): Readonly<{
   const transportCodecCatalogHash = sha("transport-codecs");
   const receiptSchemaHash = sha("receipt-schema");
   const adapterDefinitionCatalogHash = sha("adapter-definitions");
+  const requiredModuleClosureHash = sha("required-module-closure");
 
   const launcherEntries = [
     {
@@ -291,6 +292,7 @@ function fixtureCatalogs(): Readonly<{
       productionResolutionGraphHash,
       environmentCapsuleHash,
       launcherCatalogHash: launcher.catalogHash,
+      requiredModuleClosureHash,
       transportCodecCatalogHash,
       receiptSchemaHash,
       adapterDefinitionCatalogHash,
@@ -328,6 +330,7 @@ function fixtureCatalogs(): Readonly<{
     requirementCatalogHash:
       definitions.runnerRequirements.catalogHash,
     launcherCatalogHash: launcher.catalogHash,
+    requiredModuleClosureHash,
     transportCodecCatalogHash,
     receiptSchemaHash,
     adapterDefinitionCatalogHash,
@@ -371,9 +374,9 @@ describe("Platform release materialized module catalogs V2", () => {
         launcherHash:
           "9b275c8f58d5d5d8dae8009ad3f0a6779567416b416003d4a52a69ede4f82839",
         runnerHash:
-          "8338a0a15eeb82cf37d60435bfe73e6cc32c1117344f3855b6cdafdcd2977cb4",
+          "0d784ed41e62404ebad5e39d2f948c30f219931262e5baf100c8aeb25d00fe60",
         launcherBytes: 3_227,
-        runnerBytes: 5_705,
+        runnerBytes: 5_800,
       },
     );
     assert.equal(

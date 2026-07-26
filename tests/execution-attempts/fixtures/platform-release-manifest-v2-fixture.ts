@@ -192,6 +192,11 @@ import {
 } from
   "../../../src/execution/schemas/platform-release-module-catalogs-v2.js";
 import {
+  bindPlatformReleaseRequiredModuleClosureCandidateV2,
+  getPlatformReleaseRequiredModuleRequirementV2,
+} from
+  "../../../src/execution/schemas/platform-release-required-module-closure-v2.js";
+import {
   PLATFORM_RELEASE_BUILD_ATTESTATION_V2_SCHEMA,
   PLATFORM_RELEASE_CANDIDATE_ENVELOPE_V2_SCHEMA,
   hashPlatformReleaseBuildAttestationV2,
@@ -816,7 +821,9 @@ function environment(
     wrapperModuleLocator:
       EVIDENCE_ENVIRONMENT_NETWORK_WRAPPER_MODULE_V2,
     wrapperExport: EVIDENCE_ENVIRONMENT_NETWORK_WRAPPER_EXPORT_V2,
-    wrapperModuleHash: fixtureShaV2("network-wrapper"),
+    wrapperModuleHash: fixtureShaV2(
+      EVIDENCE_ENVIRONMENT_NETWORK_WRAPPER_MODULE_V2,
+    ),
     sandboxExecutableRef:
       EVIDENCE_ENVIRONMENT_SANDBOX_EXECUTABLE_REF_V2,
     canonicalProfileHash: fixtureShaV2("network-profile"),
@@ -1068,6 +1075,27 @@ function moduleCatalogs(
       },
     },
   ] as const;
+  const catalogModules = new Map(
+    [
+      ...launcherEntries.map((entry) => entry.module),
+      ...runnerStatic.map((entry) => entry.module),
+    ].map((module) => [module.moduleLocator, module]),
+  );
+  const requiredModules =
+    bindPlatformReleaseRequiredModuleClosureCandidateV2({
+      platformTreeHash: payload.platformTree.treeHash,
+      runtimePayloadHash: payload.runtimePayloadHash,
+      modules:
+        getPlatformReleaseRequiredModuleRequirementV2()
+          .entries.map((definition, index) =>
+            structuredClone(
+              catalogModules.get(definition.moduleLocator)
+                ?? moduleRef(
+                  definition.moduleLocator,
+                  30_000 + index,
+                ),
+            )),
+    });
   const runnerEntries = runnerStatic.map((entry, index) => {
     const executionAdmissionHash =
       entry.admission.kind === "invocation"
@@ -1085,6 +1113,7 @@ function moduleCatalogs(
         external.productionPackages.resolutionGraphHash,
       environmentCapsuleHash: capsule.environmentCapsuleHash,
       launcherCatalogHash: launcher.catalogHash,
+      requiredModuleClosureHash: requiredModules.closureHash,
       transportCodecCatalogHash: codecs.catalogHash,
       receiptSchemaHash: receipt.policyHash,
       adapterDefinitionCatalogHash: adapters.catalogHash,
@@ -1121,6 +1150,7 @@ function moduleCatalogs(
     requirementCatalogHash:
       definitions.runnerRequirements.catalogHash,
     launcherCatalogHash: launcher.catalogHash,
+    requiredModuleClosureHash: requiredModules.closureHash,
     transportCodecCatalogHash: codecs.catalogHash,
     receiptSchemaHash: receipt.policyHash,
     adapterDefinitionCatalogHash: adapters.catalogHash,
@@ -1130,6 +1160,7 @@ function moduleCatalogs(
   };
   return {
     launcher,
+    requiredModules,
     runner: {
       ...runnerIdentity,
       catalogHash:
@@ -1825,6 +1856,7 @@ PlatformReleaseCandidateEnvelopeV2 {
     profileCatalog: getProductDeliveryProfileCatalogV2(),
     evidenceDefinitionCatalogs:
       getPlatformEvidenceDefinitionCatalogsV2(),
+    requiredModuleClosure: catalogs.requiredModules,
     launcherCatalog: catalogs.launcher,
     runnerCatalog: catalogs.runner,
     transportCodecCatalog:
@@ -2280,6 +2312,34 @@ export function bindPlatformReleaseCandidateEnvelopeFixtureToStageV2(
     entry.module.mode = module.mode;
     entry.module.moduleRefHash =
       hashPlatformReleaseModuleRefV2(entry.module);
+  }
+
+  const reboundRequiredModules =
+    manifest.requiredModuleClosure.entries.map((entry: any) => {
+      const observed = observedFileV2(
+        path.join(stageRoot, entry.module.payloadLocator),
+      );
+      const identity = {
+        ...entry.module,
+        contentHash: observed.contentHash,
+        byteLength: observed.byteLength,
+        mode: observed.mode,
+      };
+      return {
+        ...identity,
+        moduleRefHash:
+          hashPlatformReleaseModuleRefV2(identity),
+      };
+    });
+  manifest.requiredModuleClosure =
+    bindPlatformReleaseRequiredModuleClosureCandidateV2({
+      platformTreeHash: platformTree.treeHash,
+      runtimePayloadHash: manifest.runtimePayload.runtimePayloadHash,
+      modules: reboundRequiredModules,
+    });
+  runner.requiredModuleClosureHash =
+    manifest.requiredModuleClosure.closureHash;
+  for (const entry of runner.entries) {
     const executionAdmissionHash =
       entry.admission.kind === "invocation"
         ? entry.admission.executionLeaseContractHash
@@ -2296,6 +2356,8 @@ export function bindPlatformReleaseCandidateEnvelopeFixtureToStageV2(
         runner.productionResolutionGraphHash,
       environmentCapsuleHash: runner.environmentCapsuleHash,
       launcherCatalogHash: runner.launcherCatalogHash,
+      requiredModuleClosureHash:
+        runner.requiredModuleClosureHash,
       transportCodecCatalogHash:
         runner.transportCodecCatalogHash,
       receiptSchemaHash: runner.receiptSchemaHash,

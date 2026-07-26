@@ -464,6 +464,7 @@ export type PlatformRunnerToolchainHashInputV2 = Readonly<{
   productionResolutionGraphHash: string;
   environmentCapsuleHash: string;
   launcherCatalogHash: string;
+  requiredModuleClosureHash: string;
   transportCodecCatalogHash: string;
   receiptSchemaHash: string;
   adapterDefinitionCatalogHash: string;
@@ -624,6 +625,7 @@ const PlatformRunnerCatalogIdentityV2Schema = z.object({
   profileCatalogHash: Sha256Schema,
   requirementCatalogHash: Sha256Schema,
   launcherCatalogHash: Sha256Schema,
+  requiredModuleClosureHash: Sha256Schema,
   transportCodecCatalogHash: Sha256Schema,
   receiptSchemaHash: Sha256Schema,
   adapterDefinitionCatalogHash: Sha256Schema,
@@ -674,6 +676,8 @@ const PlatformRunnerCatalogIdentityV2Schema = z.object({
         value.productionResolutionGraphHash,
       environmentCapsuleHash: value.environmentCapsuleHash,
       launcherCatalogHash: value.launcherCatalogHash,
+      requiredModuleClosureHash:
+        value.requiredModuleClosureHash,
       transportCodecCatalogHash: value.transportCodecCatalogHash,
       receiptSchemaHash: value.receiptSchemaHash,
       adapterDefinitionCatalogHash:

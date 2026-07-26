@@ -45,6 +45,11 @@ import {
 } from
   "../../src/execution/schemas/platform-release-module-catalogs-v2.js";
 import {
+  hashPlatformReleaseRequiredModuleClosureEntryV2,
+  hashPlatformReleaseRequiredModuleClosureV2,
+} from
+  "../../src/execution/schemas/platform-release-required-module-closure-v2.js";
+import {
   bindPlatformReleaseCandidateEnvelopeFixtureToStageV2,
   createDistinctPlatformReleaseBuildAttemptFixtureV2,
   createPlatformReleaseManifestFixtureV2,
@@ -140,27 +145,27 @@ function createStage(): Readonly<{
         version: "2.3.79",
       })}\n`,
     );
-    const moduleLocators = [
-      ...raw.launcherCatalog.entries.map(
-        (entry) => entry.module.payloadLocator,
-      ),
-      ...raw.runnerCatalog.entries.map(
-        (entry) => entry.module.payloadLocator,
-      ),
-    ];
-    for (const [index, locator] of moduleLocators.entries()) {
+    for (
+      const [index, entry]
+        of raw.requiredModuleClosure.entries.entries()
+    ) {
+      const bootstrapSource =
+        `fixture-bootstrap-source-${index}`;
       writeReleaseFile(
         root,
-        locator,
-        `export const fixtureModule${index} = ${index};\n`,
+        entry.module.payloadLocator,
+        `${entry.definition.requiredExports.map(
+          (exportContract, exportIndex) =>
+            exportContract.kind === "function"
+              ? `export function ${exportContract.name}() { return ${exportIndex}; }`
+              : `export const ${exportContract.name} = ${JSON.stringify(
+                exportContract.name.endsWith("_HASH_V2")
+                  ? fixtureShaV2(bootstrapSource)
+                  : bootstrapSource,
+              )};`,
+        ).join("\n")}\n`,
       );
     }
-    writeReleaseFile(
-      root,
-      `payload/${raw.environmentCapsule.network.authority
-        .wrapperModuleLocator}`,
-      "export async function runNetworkIsolatedV2() {}\n",
-    );
     writeReleaseFile(
       root,
       raw.legacyAssets.stitchConverter.locator,
@@ -211,6 +216,65 @@ function attestationForManifest(
   candidate.attestationHash =
     hashPlatformReleaseBuildAttestationV2(candidate);
   return candidate;
+}
+
+function rebindRequiredModuleClaim(
+  manifest: any,
+  module: any,
+): void {
+  const closureEntry =
+    manifest.requiredModuleClosure.entries.find(
+      (entry: any) =>
+        entry.module.moduleLocator === module.moduleLocator,
+    );
+  assert.ok(closureEntry);
+  closureEntry.module = structuredClone(module);
+  closureEntry.entryHash =
+    hashPlatformReleaseRequiredModuleClosureEntryV2(
+      closureEntry,
+    );
+  manifest.requiredModuleClosure.closureHash =
+    hashPlatformReleaseRequiredModuleClosureV2(
+      manifest.requiredModuleClosure,
+    );
+  manifest.runnerCatalog.requiredModuleClosureHash =
+    manifest.requiredModuleClosure.closureHash;
+  for (const entry of manifest.runnerCatalog.entries) {
+    entry.toolchainHash = hashPlatformRunnerToolchainV2({
+      runnerEntrypointRef: entry.runnerEntrypointRef,
+      runnerModuleHash: entry.module.contentHash,
+      runnerAbiHash: entry.abiHash,
+      platformTreeHash: manifest.runnerCatalog.platformTreeHash,
+      dependencyTreeHash:
+        manifest.runnerCatalog.dependencyTreeHash,
+      runtimePayloadHash:
+        manifest.runnerCatalog.runtimePayloadHash,
+      externalResolutionHash:
+        manifest.runnerCatalog.externalResolutionHash,
+      productionResolutionGraphHash:
+        manifest.runnerCatalog.productionResolutionGraphHash,
+      environmentCapsuleHash:
+        manifest.runnerCatalog.environmentCapsuleHash,
+      launcherCatalogHash:
+        manifest.runnerCatalog.launcherCatalogHash,
+      requiredModuleClosureHash:
+        manifest.runnerCatalog.requiredModuleClosureHash,
+      transportCodecCatalogHash:
+        manifest.runnerCatalog.transportCodecCatalogHash,
+      receiptSchemaHash:
+        manifest.runnerCatalog.receiptSchemaHash,
+      adapterDefinitionCatalogHash:
+        manifest.runnerCatalog.adapterDefinitionCatalogHash,
+      executionAdmissionHash:
+        entry.admission.kind === "invocation"
+          ? entry.admission.executionLeaseContractHash
+          : entry.abiHash,
+    });
+    entry.entryHash =
+      hashPlatformRunnerCatalogEntryV2(entry);
+  }
+  manifest.runnerCatalog.catalogHash =
+    hashPlatformRunnerCatalogV2(manifest.runnerCatalog);
 }
 
 function distinctAttemptAttestation(source: unknown): any {
@@ -264,12 +328,31 @@ describe("Platform release terminal manifest writer V2", () => {
         stage.buildAttestation.attestationHash,
       );
       assert.equal(
-        Object.prototype.hasOwnProperty.call(inspection, "root"),
-        false,
+        inspection.requiredModuleClosureHash,
+        stage.manifest.requiredModuleClosure.closureHash,
       );
       assert.equal(
-        Object.prototype.hasOwnProperty.call(inspection, "path"),
-        false,
+        inspection.requiredModuleCount,
+        stage.manifest.requiredModuleClosure.entries.length,
+      );
+      assert.deepEqual(
+        Object.keys(inspection).sort(),
+        [
+          "authorityState",
+          "buildAttestationHash",
+          "dependencyTreeHash",
+          "launcherCatalogHash",
+          "manifestCanonicalByteLength",
+          "manifestPayloadHash",
+          "platformTreeHash",
+          "productionUse",
+          "releaseId",
+          "requiredModuleClosureHash",
+          "requiredModuleCount",
+          "runnerCatalogHash",
+          "runtimePayloadHash",
+          "schema",
+        ],
       );
 
       const manifestPath = path.join(
@@ -426,6 +509,8 @@ describe("Platform release terminal manifest writer V2", () => {
           candidate.runnerCatalog.environmentCapsuleHash,
         launcherCatalogHash:
           candidate.runnerCatalog.launcherCatalogHash,
+        requiredModuleClosureHash:
+          candidate.runnerCatalog.requiredModuleClosureHash,
         transportCodecCatalogHash:
           candidate.runnerCatalog.transportCodecCatalogHash,
         receiptSchemaHash:
@@ -439,6 +524,54 @@ describe("Platform release terminal manifest writer V2", () => {
         hashPlatformRunnerCatalogEntryV2(entry);
       candidate.runnerCatalog.catalogHash =
         hashPlatformRunnerCatalogV2(candidate.runnerCatalog);
+      rebindRequiredModuleClaim(candidate, entry.module);
+      candidate.manifestPayloadHash =
+        hashPlatformReleaseManifestV2(candidate);
+      assert.equal(
+        PlatformReleaseManifestV2Schema.safeParse(candidate).success,
+        true,
+      );
+
+      expectTerminalError(
+        () => terminalWritePlatformReleaseManifestCandidateV2({
+          stageRoot: stage.root,
+          manifest: candidate,
+          buildAttestation: attestationForManifest(
+            candidate,
+            stage.buildAttestation,
+          ),
+          metadataProbe: clearMetadata,
+        }),
+        "MODULE_BYTES_MISMATCH",
+      );
+      assert.equal(
+        readdirSync(stage.root).includes(
+          PLATFORM_RELEASE_MANIFEST_V2_FILENAME,
+        ),
+        false,
+      );
+    } finally {
+      cleanupStage(stage.root);
+    }
+  });
+
+  it("rejects a coherent noncatalog module claim whose bytes are absent from the captured tree", () => {
+    const stage = createStage();
+    try {
+      const candidate: any = structuredClone(stage.manifest);
+      const closureEntry =
+        candidate.requiredModuleClosure.entries.find(
+          (entry: any) =>
+            entry.definition.role === "codec_runtime",
+        );
+      assert.ok(closureEntry);
+      const module = structuredClone(closureEntry.module);
+      module.contentHash = fixtureShaV2(
+        "claimed-but-absent-codec-runtime-bytes",
+      );
+      module.moduleRefHash =
+        hashPlatformReleaseModuleRefV2(module);
+      rebindRequiredModuleClaim(candidate, module);
       candidate.manifestPayloadHash =
         hashPlatformReleaseManifestV2(candidate);
       assert.equal(

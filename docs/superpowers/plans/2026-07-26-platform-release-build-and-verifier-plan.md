@@ -199,7 +199,8 @@ through the build capsule and dependency pair; it is not a new composer
 argument. It admits and freshly revalidates:
 
 - exact release bootstrap executable/module;
-- metadata bootstrap/export plus exact xattr and ACL tools;
+- metadata bootstrap/export plus distinct exact xattr observer/clear, ACL
+  observer, and ACL clear tools;
 - sandbox executable, network wrapper/export, and canonical profile;
 - unprivileged runtime UID/GID distinct from the root owner;
 - exact host/verifier identity and non-system dynamic-library closure;
@@ -208,6 +209,14 @@ argument. It admits and freshly revalidates:
 Production construction is bootstrap-owned and root-only. Tests use a distinct
 `test_fixture` constructor that cannot promote.
 
+The existing `ExactHostOwnedFileRefV2` is not widened: it permits only
+`0444|0555`, whereas exact system executables are commonly `0755`. B5D adds a
+composition-specific descriptor-captured file receipt with
+`0444|0555|0755`. The existing Node provisioner bootstrap is not the release
+bootstrap. Until the fixed-root release package, installed verifier, and
+durable runtime-account receipt exist, the production composition opener fails
+closed with no fixture/current-source/ambient fallback.
+
 ### B5D-1 — Operational Evidence ABIs
 
 Add authenticated, fixed-argv, no-shell, bounded host operations for metadata,
@@ -215,6 +224,24 @@ network negative probing, and module/export loading. Each operation revalidates
 its exact host files and output root before and after execution. Production
 failure is terminal; the same unchanged physical authority is not reset for
 another attempt.
+
+First add a zero-input `PlatformReleaseRequiredModuleClosureV2` covering every
+actual launcher, runner, network, codec, receipt, and adapter implementation
+module/export. Each export binds name, runtime kind, and a code-owned semantic
+verification policy; bootstrap source/hash pairs and zero-input catalog
+projections are not reduced to name-presence checks. Existing declarative
+catalog hashes without implementation locators are insufficient module
+authority. It is an exact 17-entry stable manifest component, while
+per-occurrence ESM load/export results remain in the attestation. The
+test-fixture-only command runner and definition-only entries retain explicit
+production blockers; an empty operational adapter catalog is never promoted
+into a fictional implementation.
+
+The candidate binder remains non-authoritative: it accepts observed refs only
+to construct a strict, hashed candidate. Production composition derives those
+refs from the freshly recaptured output capability. The manifest stores the
+complete-tree binding rather than duplicating every tree entry; the terminal
+writer and B6 verifier join all 17 refs to fresh captured tree entries.
 
 ### B5D-2 — One-Shot Composition And Ownership Transfer
 
@@ -233,6 +260,21 @@ entry becomes explicit test-only issuance with a distinct non-promotable handle.
 Production terminalization is a low-level authenticated physical operation
 that returns no completed authority. Only the pair-adjacent composer may turn
 its sealed-root evidence into the production completed handle.
+
+Because test source admission deliberately has no production
+`SourceAdmissionReceiptV2`, test composition returns a distinct structurally
+non-promotable completed-test handle/envelope. It must not synthesize a
+production receipt or enter B5E.
+
+The production attestation extends the existing source/toolchain/two-build
+evidence with the full host-composition admission receipt and two exact
+occurrence records. Each occurrence owns its dependency-install evidence,
+materialization receipt and physical/binding identity plus metadata, network,
+and module-export receipts. The schema compares only their code-defined stable
+projection for equality and requires their process/physical identities to be
+distinct. Terminal seal/publication evidence is recorded by B5E after
+terminalization; it is not placed in the pre-write attestation and therefore
+cannot create a self-referential hash.
 
 The normative detail is
 `docs/superpowers/specs/2026-07-26-platform-release-composition-authority-v2-design.md`.
@@ -296,6 +338,15 @@ authority, and network receipt.
 
 ## B7 — Registry V2
 
+Before RegistryV2 can be issued, replace the command runner's
+`issueCommandEvidenceRunnerAuthorityV2ForTest` and
+`publishCandidateEvidenceV2ForTest` path with a verified-release-owned
+production execution lease and the canonical durable evidence publication
+batch authority. This is a required production slice, not an optional adapter:
+generated test-command evidence is part of acceptance. It accepts no caller
+store, runtime path, catalog, or release identity. The existing test issuer
+remains structurally test-only.
+
 `compileEvidenceAdapterRegistryV2` accepts only
 `VerifiedPlatformReleaseV2`. It derives producer, release, catalog, adapter,
 runner, executable, profile, transport, and support fields from private verified
@@ -303,7 +354,9 @@ state. Public input contains none of them.
 
 Registry verification recompiles from the verified brand and compares canonical
 bytes. Registry V1 remains historical read-only. No V1 fallback or dual active
-registry is permitted.
+registry is permitted. Registry compilation fails closed while any required
+runner retains `test_fixture_runtime_blocked`; it cannot publish a partially
+usable RegistryV2 or silently omit command evidence.
 
 ## Implementation Commits
 
@@ -326,7 +379,8 @@ registry is permitted.
    - independently installed verifier capability, full recapture, verified
      brand.
 7. `feat(evidence): derive registry v2`
-   - verified-release-only catalog and RegistryV2.
+   - verified-release-owned production command lease and durable publisher;
+   - verified-release-only complete catalog and RegistryV2.
 
 Each commit is independently testable but production-forbidden until commit 7
 and the clean-main release matrix are complete.
