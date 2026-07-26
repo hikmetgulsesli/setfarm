@@ -44,7 +44,7 @@ import {
   INVOCATION_EVIDENCE_EVALUATOR_EXPORT_V2,
   INVOCATION_EVIDENCE_EVALUATOR_MODULE_LOCATOR_V2,
   INVOCATION_EVIDENCE_EVALUATOR_SOURCE_MODULE_LOCATOR_V2,
-} from "./cli-process-runner-v2.js";
+} from "../invocation-evidence-evaluator-v2.js";
 
 export const EVIDENCE_HTTP_SERVICE_RUNNER_ABI_POLICY_V2_SCHEMA =
   "setfarm.evidence-http-service-runner-abi-policy.v2" as const;

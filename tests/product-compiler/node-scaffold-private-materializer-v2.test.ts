@@ -55,6 +55,16 @@ import {
   CandidateInvocationEvidenceObservationV2Schema,
 } from "../../src/evidence/schemas/candidate-invocation-evidence-observation-v2.js";
 import {
+  InvocationEvidenceRunnerExecutionErrorV2,
+} from
+  "../../src/evidence/invocation-evidence-runner-execution-v2.js";
+import {
+  runEvidenceAdapterV2 as runCliInvocationEvidenceAdapterV2,
+} from "../../src/evidence/runners/cli-process-v2.js";
+import {
+  runEvidenceAdapterV2 as runHttpInvocationEvidenceAdapterV2,
+} from "../../src/evidence/runners/http-service-v2.js";
+import {
   CANDIDATE_BUILD_RECEIPT_V2_SCHEMA,
   CandidateBuildReceiptV2Schema,
 } from "../../src/execution/schemas/candidate-build-receipt-v2.js";
@@ -5424,6 +5434,21 @@ describe("Node scaffold private staged materializer V2", () => {
             issuedInvocation.productionUse,
             "forbidden_until_verified_release_join",
           );
+          for (const runOperationalAdapter of [
+            runCliInvocationEvidenceAdapterV2,
+            runHttpInvocationEvidenceAdapterV2,
+          ]) {
+            await assert.rejects(
+              runOperationalAdapter({
+                lease: issuedInvocation.authority,
+              }),
+              (error: unknown) =>
+                error
+                  instanceof InvocationEvidenceRunnerExecutionErrorV2
+                && error.code
+                  === "INVOCATION_EVIDENCE_RUNNER_EXECUTION_V2_LEASE_UNAUTHENTICATED",
+            );
+          }
           await assert.rejects(
             runCandidateInvocationEvidenceV2ForTest({
               authority: {

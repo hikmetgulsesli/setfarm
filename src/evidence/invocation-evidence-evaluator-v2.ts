@@ -28,6 +28,12 @@ import { Sha256Schema } from
 
 export const INVOCATION_EVIDENCE_EVALUATION_V2_SCHEMA =
   "setfarm.invocation-evidence-evaluation.v2" as const;
+export const INVOCATION_EVIDENCE_EVALUATOR_MODULE_LOCATOR_V2 =
+  "dist/evidence/invocation-evidence-evaluator-v2.js" as const;
+export const INVOCATION_EVIDENCE_EVALUATOR_SOURCE_MODULE_LOCATOR_V2 =
+  "src/evidence/invocation-evidence-evaluator-v2.ts" as const;
+export const INVOCATION_EVIDENCE_EVALUATOR_EXPORT_V2 =
+  "evaluateInvocationEvidenceV2" as const;
 
 export const INVOCATION_EVIDENCE_PLATFORM_DECODER_CODES_V2 = Object.freeze([
   "INVOCATION_TRANSPORT_V2_DECODER_INPUT_INVALID",

@@ -34,6 +34,11 @@ import {
   evidenceCaptureRedactionPolicyHashV2,
   evidenceReceiptAbiPolicyHashV2,
 } from "./evidence-receipt-v2.js";
+import {
+  INVOCATION_EVIDENCE_EVALUATOR_EXPORT_V2,
+  INVOCATION_EVIDENCE_EVALUATOR_MODULE_LOCATOR_V2,
+  INVOCATION_EVIDENCE_EVALUATOR_SOURCE_MODULE_LOCATOR_V2,
+} from "../invocation-evidence-evaluator-v2.js";
 
 export const EVIDENCE_CLI_PROCESS_RUNNER_ABI_POLICY_V2_SCHEMA =
   "setfarm.evidence-cli-process-runner-abi-policy.v2" as const;
@@ -47,13 +52,6 @@ export const EVIDENCE_CLI_PROCESS_RUNNER_SOURCE_MODULE_LOCATOR_V2 =
   "src/evidence/runners/cli-process-v2.ts" as const;
 export const EVIDENCE_CLI_PROCESS_RUNNER_EXPORT_V2 =
   "runEvidenceAdapterV2" as const;
-export const INVOCATION_EVIDENCE_EVALUATOR_MODULE_LOCATOR_V2 =
-  "dist/evidence/invocation-evidence-evaluator-v2.js" as const;
-export const INVOCATION_EVIDENCE_EVALUATOR_SOURCE_MODULE_LOCATOR_V2 =
-  "src/evidence/invocation-evidence-evaluator-v2.ts" as const;
-export const INVOCATION_EVIDENCE_EVALUATOR_EXPORT_V2 =
-  "evaluateInvocationEvidenceV2" as const;
-
 const EVIDENCE_CLI_PROCESS_RUNNER_ABI_IDENTITY_V2 = Object.freeze({
   schema: EVIDENCE_CLI_PROCESS_RUNNER_ABI_POLICY_V2_SCHEMA,
   version: PLATFORM_RELEASE_COMPONENT_VERSION_V2,
