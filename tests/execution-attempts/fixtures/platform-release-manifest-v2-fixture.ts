@@ -191,6 +191,14 @@ import {
 } from
   "../../../src/execution/schemas/platform-release-module-catalogs-v2.js";
 import {
+  PLATFORM_RELEASE_BUILD_ATTESTATION_V2_SCHEMA,
+  PLATFORM_RELEASE_CANDIDATE_ENVELOPE_V2_SCHEMA,
+  hashPlatformReleaseBuildAttestationV2,
+  type PlatformReleaseBuildAttestationV2,
+  type PlatformReleaseCandidateEnvelopeV2,
+} from
+  "../../../src/execution/schemas/platform-release-build-attestation-v2.js";
+import {
   PLATFORM_RELEASE_MANIFEST_V2_SCHEMA,
   hashPlatformReleaseManifestV2,
   type PlatformReleaseManifestV2,
@@ -1693,8 +1701,8 @@ function buildToolchainReceipt(
   };
 }
 
-export function createPlatformReleaseManifestFixtureV2():
-PlatformReleaseManifestV2 {
+export function createPlatformReleaseCandidateEnvelopeFixtureV2():
+PlatformReleaseCandidateEnvelopeV2 {
   const payload = runtimePayload();
   const buildHost = buildHostToolchainReceipt();
   const external = externalResolution(payload, buildHost);
@@ -1768,19 +1776,27 @@ PlatformReleaseManifestV2 {
         remoteRef: "refs/remotes/origin/main" as const,
         admittedSha: codeSha,
         policy: "exact_remote_main_sha" as const,
-        receipt: admission,
-        receiptHash: admission.receiptHash,
+        admissionContractHash:
+          PLATFORM_RELEASE_SOURCE_ADMISSION_CONTRACT_HASH_V2,
+        source: structuredClone(source),
       },
       packageName: "setfarm" as const,
       packageVersion: "2.3.79",
     },
     build: {
       contractVersion: "2.0.0" as const,
+      buildContractHash:
+        PLATFORM_RELEASE_BUILD_CONTRACT_HASH_V2,
       inputs,
       compiler,
       packageManager,
-      buildToolchainReceipt: toolchain,
-      buildToolchainReceiptHash: toolchain.receiptHash,
+      buildToolchain: {
+        requirement:
+          structuredClone(toolchain.hostToolchain.requirement),
+        installRecipe:
+          structuredClone(toolchain.installRecipe),
+        tree: structuredClone(toolchain.tree),
+      },
       sourceStage: {
         method: "verified_git_tree_export.v2" as const,
         exportedTreeHash: source.sourceTreeHash,
@@ -1790,8 +1806,6 @@ PlatformReleaseManifestV2 {
           source.exportedDirectoryCount,
         exportedTotalBytes: source.exportedTotalBytes,
         sourceBindingHash: source.bindingHash,
-        stagePhysicalIdentityHash:
-          admission.exportedSource.stageAfter.identityHash,
         buildContextPolicy:
           "private_0700_parent_source_child_and_authenticated_toolchain_sibling_v2" as const,
         mode: "read_only" as const,
@@ -1801,10 +1815,8 @@ PlatformReleaseManifestV2 {
       sourceDateEpoch: "1785052800",
       reproducibility:
         "double_clean_build_exact_tree_match" as const,
-      firstBuildReceipt,
-      firstBuildReceiptHash: firstBuildReceipt.receiptHash,
-      secondBuildReceipt,
-      secondBuildReceiptHash: secondBuildReceipt.receiptHash,
+      reproducibleOutputClosureHash:
+        firstBuildReceipt.output.outputClosureHash,
     },
     runtimePayload: payload,
     externalResolution: external,
@@ -1821,11 +1833,123 @@ PlatformReleaseManifestV2 {
       getEvidenceAdapterDefinitionCatalogV2(),
     legacyAssets: { stitchConverter },
   };
-  return {
+  const manifest = {
     ...identity,
     manifestPayloadHash:
       hashPlatformReleaseManifestV2(identity as never),
   } as PlatformReleaseManifestV2;
+  const attestationIdentity = {
+    schema: PLATFORM_RELEASE_BUILD_ATTESTATION_V2_SCHEMA,
+    version: "2.0.0" as const,
+    authorityState:
+      "candidate_build_attestation_unverified" as const,
+    productionUse:
+      "forbidden_until_fresh_release_verification" as const,
+    releaseContentHash: manifest.manifestPayloadHash,
+    sourceAdmissionReceipt: admission,
+    sourceAdmissionReceiptHash: admission.receiptHash,
+    buildToolchainReceipt: toolchain,
+    buildToolchainReceiptHash: toolchain.receiptHash,
+    firstBuildReceipt,
+    firstBuildReceiptHash: firstBuildReceipt.receiptHash,
+    secondBuildReceipt,
+    secondBuildReceiptHash: secondBuildReceipt.receiptHash,
+  };
+  const buildAttestation = {
+    ...attestationIdentity,
+    attestationHash:
+      hashPlatformReleaseBuildAttestationV2(
+        attestationIdentity,
+      ),
+  } as PlatformReleaseBuildAttestationV2;
+  return {
+    schema: PLATFORM_RELEASE_CANDIDATE_ENVELOPE_V2_SCHEMA,
+    manifest,
+    buildAttestation,
+  };
+}
+
+export function createPlatformReleaseManifestFixtureV2():
+PlatformReleaseManifestV2 {
+  return createPlatformReleaseCandidateEnvelopeFixtureV2()
+    .manifest;
+}
+
+export function createPlatformReleaseBuildAttestationFixtureV2():
+PlatformReleaseBuildAttestationV2 {
+  return createPlatformReleaseCandidateEnvelopeFixtureV2()
+    .buildAttestation;
+}
+
+export function createDistinctPlatformReleaseBuildAttemptFixtureV2(
+  source: PlatformReleaseBuildAttestationV2,
+  label: string,
+): PlatformReleaseBuildAttestationV2 {
+  const attestation: any = structuredClone(source);
+  const decimalIdentity = (suffix: string) =>
+    BigInt(
+      `0x${fixtureShaV2(`${label}:${suffix}`).slice(0, 12)}`,
+    ).toString();
+  const sourceReceipt = attestation.sourceAdmissionReceipt;
+  for (const stage of [
+    sourceReceipt.exportedSource.stageBefore,
+    sourceReceipt.exportedSource.stageAfter,
+  ]) {
+    stage.device = decimalIdentity("source-device");
+    stage.inode = decimalIdentity("source-inode");
+    stage.identityHash =
+      hashPlatformReleaseSourceStagePhysicalIdentityV2(stage);
+  }
+  sourceReceipt.receiptHash =
+    hashSourceAdmissionReceiptV2(sourceReceipt);
+  attestation.sourceAdmissionReceiptHash =
+    sourceReceipt.receiptHash;
+
+  const toolchain = attestation.buildToolchainReceipt;
+  toolchain.sourceAdmissionReceiptHash =
+    sourceReceipt.receiptHash;
+  toolchain.process.environmentHash =
+    fixtureShaV2(`${label}:environment`);
+  toolchain.process.projectScopeHash =
+    fixtureShaV2(`${label}:project-scope`);
+  for (const physical of [
+    toolchain.physicalBefore,
+    toolchain.physicalAfter,
+  ]) {
+    physical.device = decimalIdentity("toolchain-device");
+    physical.inode = decimalIdentity("toolchain-inode");
+    physical.identityHash =
+      hashPlatformReleaseBuildToolchainPhysicalIdentityV2(
+        physical,
+      );
+  }
+  toolchain.receiptHash =
+    hashPlatformReleaseBuildToolchainReceiptV2(toolchain);
+  attestation.buildToolchainReceiptHash =
+    toolchain.receiptHash;
+
+  for (const [index, key] of ([
+    "firstBuildReceipt",
+    "secondBuildReceipt",
+  ] as const).entries()) {
+    const receipt = attestation[key];
+    receipt.sourceAdmissionReceiptHash =
+      sourceReceipt.receiptHash;
+    receipt.buildToolchainReceiptHash =
+      toolchain.receiptHash;
+    receipt.stage.sourceStagePhysicalIdentityHash =
+      sourceReceipt.exportedSource.stageAfter.identityHash;
+    receipt.stage.buildToolchainPhysicalIdentityHash =
+      toolchain.physicalAfter.identityHash;
+    receipt.stage.outputStagePhysicalIdentityHash =
+      fixtureShaV2(`${label}:output:${index}`);
+    receipt.receiptHash =
+      hashPlatformReleaseBuildReceiptV2(receipt);
+    attestation[`${key}Hash`] = receipt.receiptHash;
+  }
+  attestation.attestationHash =
+    hashPlatformReleaseBuildAttestationV2(attestation);
+  return attestation as PlatformReleaseBuildAttestationV2;
 }
 
 function bindingFromObservedTreeV2(
@@ -1909,11 +2033,14 @@ function rebindBuildOutputV2(
  * never issues a production handle; the terminal writer still performs its own
  * independent full recapture and byte joins.
  */
-export function bindPlatformReleaseManifestFixtureToStageV2(
+export function bindPlatformReleaseCandidateEnvelopeFixtureToStageV2(
   stageRoot: string,
   metadataProbe: CanonicalRuntimeMetadataProbeV2,
-): PlatformReleaseManifestV2 {
-  const manifest: any = createPlatformReleaseManifestFixtureV2();
+): PlatformReleaseCandidateEnvelopeV2 {
+  const envelope: any =
+    createPlatformReleaseCandidateEnvelopeFixtureV2();
+  const manifest = envelope.manifest;
+  const attestation = envelope.buildAttestation;
   const payloadRoot = path.join(stageRoot, "payload");
   const platformTree = captureCanonicalRuntimeTreeV2({
     root: path.join(payloadRoot, "dist"),
@@ -1944,13 +2071,14 @@ export function bindPlatformReleaseManifestFixtureToStageV2(
     hashPlatformRuntimePayloadV2(manifest.runtimePayload);
   const sourceInputSets = [
     manifest.build.inputs,
-    manifest.build.buildToolchainReceipt.inputs,
-    manifest.release.sourceAdmission.receipt
+    manifest.release.sourceAdmission.source.inputs,
+    attestation.buildToolchainReceipt.inputs,
+    attestation.sourceAdmissionReceipt
       .exportedSource.source.inputs,
-    manifest.build.firstBuildReceipt.inputs,
-    manifest.build.firstBuildReceipt.source.inputs,
-    manifest.build.secondBuildReceipt.inputs,
-    manifest.build.secondBuildReceipt.source.inputs,
+    attestation.firstBuildReceipt.inputs,
+    attestation.firstBuildReceipt.source.inputs,
+    attestation.secondBuildReceipt.inputs,
+    attestation.secondBuildReceipt.source.inputs,
   ];
   for (const inputs of sourceInputSets) {
     const sourcePackageJson = inputs[1];
@@ -1960,10 +2088,11 @@ export function bindPlatformReleaseManifestFixtureToStageV2(
       hashExactPlatformReleaseSourceRefV2(sourcePackageJson);
   }
   for (const source of [
-    manifest.release.sourceAdmission.receipt
+    manifest.release.sourceAdmission.source,
+    attestation.sourceAdmissionReceipt
       .exportedSource.source,
-    manifest.build.firstBuildReceipt.source,
-    manifest.build.secondBuildReceipt.source,
+    attestation.firstBuildReceipt.source,
+    attestation.secondBuildReceipt.source,
   ]) {
     source.inputMembershipHash = hashCanonicalJson({
       schema: "setfarm.platform-release-source-input-membership.v2",
@@ -1977,7 +2106,7 @@ export function bindPlatformReleaseManifestFixtureToStageV2(
       hashPlatformReleaseSourceTreeBindingV2(source);
   }
   const admission =
-    manifest.release.sourceAdmission.receipt;
+    attestation.sourceAdmissionReceipt;
   for (const stage of [
     admission.exportedSource.stageBefore,
     admission.exportedSource.stageAfter,
@@ -1989,14 +2118,14 @@ export function bindPlatformReleaseManifestFixtureToStageV2(
   }
   admission.receiptHash =
     hashSourceAdmissionReceiptV2(admission);
-  manifest.release.sourceAdmission.receiptHash =
+  attestation.sourceAdmissionReceiptHash =
     admission.receiptHash;
+  manifest.release.sourceAdmission.source =
+    structuredClone(admission.exportedSource.source);
   manifest.build.sourceStage.sourceBindingHash =
     admission.exportedSource.source.bindingHash;
-  manifest.build.sourceStage.stagePhysicalIdentityHash =
-    admission.exportedSource.stageAfter.identityHash;
   const buildToolchain =
-    manifest.build.buildToolchainReceipt;
+    attestation.buildToolchainReceipt;
   buildToolchain.sourceAdmissionReceiptHash =
     admission.receiptHash;
   buildToolchain.inputMembershipHash = hashCanonicalJson({
@@ -2028,11 +2157,13 @@ export function bindPlatformReleaseManifestFixtureToStageV2(
     hashPlatformReleaseBuildToolchainReceiptV2(
       buildToolchain,
     );
-  manifest.build.buildToolchainReceiptHash =
+  attestation.buildToolchainReceiptHash =
     buildToolchain.receiptHash;
+  manifest.build.buildToolchain.tree =
+    structuredClone(buildToolchain.tree);
   for (const receipt of [
-    manifest.build.firstBuildReceipt,
-    manifest.build.secondBuildReceipt,
+    attestation.firstBuildReceipt,
+    attestation.secondBuildReceipt,
   ]) {
     receipt.sourceAdmissionReceiptHash =
       admission.receiptHash;
@@ -2171,18 +2302,34 @@ export function bindPlatformReleaseManifestFixtureToStageV2(
   runner.catalogHash = hashPlatformRunnerCatalogV2(runner);
 
   rebindBuildOutputV2(
-    manifest.build.firstBuildReceipt,
+    attestation.firstBuildReceipt,
     manifest,
   );
-  manifest.build.firstBuildReceiptHash =
-    manifest.build.firstBuildReceipt.receiptHash;
+  attestation.firstBuildReceiptHash =
+    attestation.firstBuildReceipt.receiptHash;
   rebindBuildOutputV2(
-    manifest.build.secondBuildReceipt,
+    attestation.secondBuildReceipt,
     manifest,
   );
-  manifest.build.secondBuildReceiptHash =
-    manifest.build.secondBuildReceipt.receiptHash;
+  attestation.secondBuildReceiptHash =
+    attestation.secondBuildReceipt.receiptHash;
+  manifest.build.reproducibleOutputClosureHash =
+    attestation.firstBuildReceipt.output.outputClosureHash;
   manifest.manifestPayloadHash =
     hashPlatformReleaseManifestV2(manifest);
-  return manifest as PlatformReleaseManifestV2;
+  attestation.releaseContentHash =
+    manifest.manifestPayloadHash;
+  attestation.attestationHash =
+    hashPlatformReleaseBuildAttestationV2(attestation);
+  return envelope as PlatformReleaseCandidateEnvelopeV2;
+}
+
+export function bindPlatformReleaseManifestFixtureToStageV2(
+  stageRoot: string,
+  metadataProbe: CanonicalRuntimeMetadataProbeV2,
+): PlatformReleaseManifestV2 {
+  return bindPlatformReleaseCandidateEnvelopeFixtureToStageV2(
+    stageRoot,
+    metadataProbe,
+  ).manifest;
 }

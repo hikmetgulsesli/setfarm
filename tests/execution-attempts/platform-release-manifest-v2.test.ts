@@ -32,6 +32,17 @@ import {
 } from "../../src/execution/schemas/platform-release-build-v2.js";
 import * as manifestModule from
   "../../src/execution/schemas/platform-release-manifest-v2.js";
+import * as attestationModule from
+  "../../src/execution/schemas/platform-release-build-attestation-v2.js";
+import {
+  PLATFORM_RELEASE_BUILD_ATTESTATION_V2_MAX_CANONICAL_BYTES,
+  PlatformReleaseBuildAttestationV2Schema,
+  PlatformReleaseCandidateEnvelopeV2Schema,
+  hashPlatformReleaseBuildAttestationV2,
+  parsePlatformReleaseBuildAttestationCandidateV2,
+  parsePlatformReleaseCandidateEnvelopeV2,
+} from
+  "../../src/execution/schemas/platform-release-build-attestation-v2.js";
 import {
   PLATFORM_RELEASE_MANIFEST_V2_MAX_CANONICAL_BYTES,
   PlatformReleaseManifestV2Schema,
@@ -51,6 +62,8 @@ import {
 } from
   "../../src/execution/schemas/platform-release-module-catalogs-v2.js";
 import {
+  createPlatformReleaseCandidateEnvelopeFixtureV2,
+  createDistinctPlatformReleaseBuildAttemptFixtureV2,
   createPlatformReleaseManifestFixtureV2,
   fixtureShaV2,
 } from
@@ -67,6 +80,15 @@ function rehashManifest(candidate: any): void {
     hashPlatformReleaseManifestV2(candidate);
 }
 
+function rehashAttestation(envelope: any): void {
+  envelope.buildAttestation.releaseContentHash =
+    envelope.manifest.manifestPayloadHash;
+  envelope.buildAttestation.attestationHash =
+    hashPlatformReleaseBuildAttestationV2(
+      envelope.buildAttestation,
+    );
+}
+
 function rebindCommandResult(receipt: any): void {
   const stdout =
     `${canonicalJsonStringify(receipt.process.commandResult)}\n`;
@@ -78,8 +100,9 @@ function rebindCommandResult(receipt: any): void {
     hashPlatformReleaseBuildReceiptV2(receipt);
 }
 
-function rebindSourceAdmission(manifest: any): void {
-  const admission = manifest.release.sourceAdmission.receipt;
+function rebindSourceAdmission(envelope: any): void {
+  const attestation = envelope.buildAttestation;
+  const admission = attestation.sourceAdmissionReceipt;
   for (const hostFile of [
     admission.implementation.module,
     admission.gitTool.executable,
@@ -90,27 +113,29 @@ function rebindSourceAdmission(manifest: any): void {
       hostFile.hostAdmissionReceipt.receiptHash;
   }
   admission.receiptHash = hashSourceAdmissionReceiptV2(admission);
-  manifest.release.sourceAdmission.receiptHash = admission.receiptHash;
+  attestation.sourceAdmissionReceiptHash = admission.receiptHash;
   for (const key of [
     "firstBuildReceipt",
     "secondBuildReceipt",
   ] as const) {
-    const receipt = manifest.build[key];
+    const receipt = attestation[key];
     receipt.sourceAdmissionReceiptHash = admission.receiptHash;
     receipt.receiptHash =
       hashPlatformReleaseBuildReceiptV2(receipt);
-    manifest.build[`${key}Hash`] = receipt.receiptHash;
+    attestation[`${key}Hash`] = receipt.receiptHash;
   }
-  rehashManifest(manifest);
+  rehashAttestation(envelope);
 }
 
 describe("PlatformReleaseManifestV2 candidate authority boundary", () => {
   it("binds typed source and two independent build receipts with stable goldens", () => {
-    const manifest = createPlatformReleaseManifestFixtureV2();
-    const sourceReceipt = manifest.release.sourceAdmission.receipt;
-    const toolchainReceipt = manifest.build.buildToolchainReceipt;
-    const first = manifest.build.firstBuildReceipt;
-    const second = manifest.build.secondBuildReceipt;
+    const envelope =
+      createPlatformReleaseCandidateEnvelopeFixtureV2();
+    const attestation = envelope.buildAttestation;
+    const sourceReceipt = attestation.sourceAdmissionReceipt;
+    const toolchainReceipt = attestation.buildToolchainReceipt;
+    const first = attestation.firstBuildReceipt;
+    const second = attestation.secondBuildReceipt;
 
     assert.equal(
       SourceAdmissionReceiptV2Schema.safeParse(sourceReceipt).success,
@@ -129,6 +154,16 @@ describe("PlatformReleaseManifestV2 candidate authority boundary", () => {
         .safeParse(toolchainReceipt).success,
       true,
     );
+    assert.equal(
+      PlatformReleaseBuildAttestationV2Schema
+        .safeParse(attestation).success,
+      true,
+    );
+    assert.equal(
+      PlatformReleaseCandidateEnvelopeV2Schema
+        .safeParse(envelope).success,
+      true,
+    );
     assert.deepEqual(
       {
         sourceHash: sourceReceipt.receiptHash,
@@ -140,6 +175,11 @@ describe("PlatformReleaseManifestV2 candidate authority boundary", () => {
         firstBuildBytes: canonicalJsonBytes(first).byteLength,
         secondBuildHash: second.receiptHash,
         secondBuildBytes: canonicalJsonBytes(second).byteLength,
+        attestationHash: attestation.attestationHash,
+        attestationBytes:
+          canonicalJsonBytes(attestation).byteLength,
+        attestationCap:
+          PLATFORM_RELEASE_BUILD_ATTESTATION_V2_MAX_CANONICAL_BYTES,
       },
       {
         sourceHash:
@@ -154,6 +194,10 @@ describe("PlatformReleaseManifestV2 candidate authority boundary", () => {
         secondBuildHash:
           "7a9013a7b064d6418cf44abb2a04effecd6176cfa3fb17f25c849da31bec4226",
         secondBuildBytes: 11_467,
+        attestationHash:
+          "d858e8c423f76578689d33990341b1587ebdddb283765423ec32c0ceab5ba86c",
+        attestationBytes: 43_907,
+        attestationCap: 1_048_576,
       },
     );
     assert.notEqual(
@@ -163,11 +207,77 @@ describe("PlatformReleaseManifestV2 candidate authority boundary", () => {
     assert.deepEqual(first.output, second.output);
   });
 
+  it("keeps one release ID across distinct physical and process attempts", () => {
+    const first =
+      createPlatformReleaseCandidateEnvelopeFixtureV2();
+    const second: any = {
+      schema: first.schema,
+      manifest: structuredClone(first.manifest),
+      buildAttestation:
+        createDistinctPlatformReleaseBuildAttemptFixtureV2(
+          first.buildAttestation,
+          "second-clean-attempt",
+        ),
+    };
+    const secondToolchain =
+      second.buildAttestation.buildToolchainReceipt;
+
+    assert.equal(
+      PlatformReleaseCandidateEnvelopeV2Schema
+        .safeParse(second).success,
+      true,
+    );
+    assert.deepEqual(second.manifest, first.manifest);
+    assert.equal(
+      second.manifest.manifestPayloadHash,
+      first.manifest.manifestPayloadHash,
+    );
+    assert.equal(
+      second.buildAttestation.releaseContentHash,
+      first.buildAttestation.releaseContentHash,
+    );
+    assert.notEqual(
+      second.buildAttestation.attestationHash,
+      first.buildAttestation.attestationHash,
+    );
+    const stableManifestBytes =
+      canonicalJsonStringify(second.manifest);
+    assert.equal(
+      stableManifestBytes.includes(
+        secondToolchain.process.environmentHash,
+      ),
+      false,
+    );
+    assert.equal(
+      stableManifestBytes.includes(
+        secondToolchain.process.projectScopeHash,
+      ),
+      false,
+    );
+    assert.notEqual(
+      second.buildAttestation.sourceAdmissionReceipt
+        .exportedSource.stageAfter.identityHash,
+      first.buildAttestation.sourceAdmissionReceipt
+        .exportedSource.stageAfter.identityHash,
+    );
+    assert.notEqual(
+      second.buildAttestation.buildToolchainReceipt
+        .physicalAfter.identityHash,
+      first.buildAttestation.buildToolchainReceipt
+        .physicalAfter.identityHash,
+    );
+  });
+
   it("closes every nested code-owned catalog and cross-component root join", () => {
-    const manifest = createPlatformReleaseManifestFixtureV2();
+    const envelope =
+      createPlatformReleaseCandidateEnvelopeFixtureV2();
+    const manifest = envelope.manifest;
     const parsed =
       parsePlatformReleaseManifestCandidateV2(manifest);
+    const parsedEnvelope =
+      parsePlatformReleaseCandidateEnvelopeV2(envelope);
     assert.deepEqual(parsed, manifest);
+    assert.deepEqual(parsedEnvelope, envelope);
     assert.notStrictEqual(parsed, manifest);
     assert.equal(
       parsed.productionUse,
@@ -181,8 +291,8 @@ describe("PlatformReleaseManifestV2 candidate authority boundary", () => {
       },
       {
         hash:
-          "1bf159fe34e2f1a333824fefffc420ae45d6731f9a2283b8baf7636090f1b9c0",
-        bytes: 100_055,
+          "0346947594cbc6bbfec5d171b05b0261592e97b13b63e9f75c0084a4e96a6102",
+        bytes: 60_463,
         cap: 3_145_728,
       },
     );
@@ -201,26 +311,34 @@ describe("PlatformReleaseManifestV2 candidate authority boundary", () => {
       parsed.externalResolution.hostRuntime.hostRuntimeIdentityHash,
     );
     recursivelyAssertFrozen(parsed);
+    recursivelyAssertFrozen(parsedEnvelope);
   });
 
   it("fresh-snapshots source/build inputs and rejects forged source or stage authority", () => {
-    const manifest = createPlatformReleaseManifestFixtureV2();
+    const attestation =
+      createPlatformReleaseCandidateEnvelopeFixtureV2()
+        .buildAttestation;
     const parsedSource = parseSourceAdmissionReceiptCandidateV2(
-      manifest.release.sourceAdmission.receipt,
+      attestation.sourceAdmissionReceipt,
     );
     const parsedBuild = parsePlatformReleaseBuildReceiptCandidateV2(
-      manifest.build.firstBuildReceipt,
+      attestation.firstBuildReceipt,
     );
     const parsedToolchain =
       parsePlatformReleaseBuildToolchainReceiptCandidateV2(
-        manifest.build.buildToolchainReceipt,
+        attestation.buildToolchainReceipt,
+      );
+    const parsedAttestation =
+      parsePlatformReleaseBuildAttestationCandidateV2(
+        attestation,
       );
     recursivelyAssertFrozen(parsedSource);
     recursivelyAssertFrozen(parsedBuild);
     recursivelyAssertFrozen(parsedToolchain);
+    recursivelyAssertFrozen(parsedAttestation);
 
     const driftedSource: any = structuredClone(
-      manifest.release.sourceAdmission.receipt,
+      attestation.sourceAdmissionReceipt,
     );
     driftedSource.sourceAfter.identityHash = fixtureShaV2(
       "self-rehashed-wrong-after",
@@ -233,7 +351,7 @@ describe("PlatformReleaseManifestV2 candidate authority boundary", () => {
     );
 
     const movedRemote: any = structuredClone(
-      manifest.release.sourceAdmission.receipt,
+      attestation.sourceAdmissionReceipt,
     );
     movedRemote.remoteAfter.observedSha =
       fixtureShaV2("moved-remote-main").slice(0, 40);
@@ -254,7 +372,7 @@ describe("PlatformReleaseManifestV2 candidate authority boundary", () => {
     );
 
     const foreignOrigin: any = structuredClone(
-      manifest.release.sourceAdmission.receipt,
+      attestation.sourceAdmissionReceipt,
     );
     for (const remote of [
       foreignOrigin.remoteBefore,
@@ -279,7 +397,7 @@ describe("PlatformReleaseManifestV2 candidate authority boundary", () => {
     );
 
     const swappedSourceStage: any = structuredClone(
-      manifest.release.sourceAdmission.receipt,
+      attestation.sourceAdmissionReceipt,
     );
     swappedSourceStage.exportedSource.stageAfter.inode = "999";
     swappedSourceStage.exportedSource.stageAfter.identityHash =
@@ -295,7 +413,7 @@ describe("PlatformReleaseManifestV2 candidate authority boundary", () => {
     );
 
     const aliasedStage: any = structuredClone(
-      manifest.build.firstBuildReceipt,
+      attestation.firstBuildReceipt,
     );
     aliasedStage.stage.outputStagePhysicalIdentityHash =
       aliasedStage.stage.sourceStagePhysicalIdentityHash;
@@ -307,7 +425,7 @@ describe("PlatformReleaseManifestV2 candidate authority boundary", () => {
     );
 
     const driftedResult: any = structuredClone(
-      manifest.build.firstBuildReceipt,
+      attestation.firstBuildReceipt,
     );
     driftedResult.process.commandResult.platformFileCount += 1;
     rebindCommandResult(driftedResult);
@@ -317,7 +435,7 @@ describe("PlatformReleaseManifestV2 candidate authority boundary", () => {
     );
 
     const driftedSourceCount: any = structuredClone(
-      manifest.build.firstBuildReceipt,
+      attestation.firstBuildReceipt,
     );
     driftedSourceCount.process.commandResult.sourceFileCount += 1;
     rebindCommandResult(driftedSourceCount);
@@ -329,7 +447,7 @@ describe("PlatformReleaseManifestV2 candidate authority boundary", () => {
     );
 
     const driftedToolchainCount: any = structuredClone(
-      manifest.build.firstBuildReceipt,
+      attestation.firstBuildReceipt,
     );
     driftedToolchainCount.process.commandResult
       .buildToolchainFileCount += 1;
@@ -342,7 +460,7 @@ describe("PlatformReleaseManifestV2 candidate authority boundary", () => {
     );
 
     const aliasedToolchainStage: any = structuredClone(
-      manifest.build.firstBuildReceipt,
+      attestation.firstBuildReceipt,
     );
     aliasedToolchainStage.stage
       .buildToolchainPhysicalIdentityHash =
@@ -358,7 +476,7 @@ describe("PlatformReleaseManifestV2 candidate authority boundary", () => {
     );
 
     const mixedHostToolchain: any = structuredClone(
-      manifest.build.buildToolchainReceipt,
+      attestation.buildToolchainReceipt,
     );
     mixedHostToolchain.process.hostToolchainReceiptHash =
       fixtureShaV2("mixed-host-toolchain");
@@ -375,20 +493,22 @@ describe("PlatformReleaseManifestV2 candidate authority boundary", () => {
   });
 
   it("rejects self-rehashed cross-root, double-build and code-owned drift", () => {
-    const manifest = createPlatformReleaseManifestFixtureV2();
+    const baseEnvelope =
+      createPlatformReleaseCandidateEnvelopeFixtureV2();
+    const manifest = baseEnvelope.manifest;
 
-    const aliasedBuild: any = structuredClone(manifest);
-    aliasedBuild.build.secondBuildReceipt.stage
+    const aliasedBuild: any = structuredClone(baseEnvelope);
+    aliasedBuild.buildAttestation.secondBuildReceipt.stage
       .outputStagePhysicalIdentityHash =
-        aliasedBuild.build.firstBuildReceipt.stage
+        aliasedBuild.buildAttestation.firstBuildReceipt.stage
           .outputStagePhysicalIdentityHash;
-    aliasedBuild.build.secondBuildReceipt.receiptHash =
+    aliasedBuild.buildAttestation.secondBuildReceipt.receiptHash =
       hashPlatformReleaseBuildReceiptV2(
-        aliasedBuild.build.secondBuildReceipt,
+        aliasedBuild.buildAttestation.secondBuildReceipt,
       );
-    aliasedBuild.build.secondBuildReceiptHash =
-      aliasedBuild.build.secondBuildReceipt.receiptHash;
-    rehashManifest(aliasedBuild);
+    aliasedBuild.buildAttestation.secondBuildReceiptHash =
+      aliasedBuild.buildAttestation.secondBuildReceipt.receiptHash;
+    rehashAttestation(aliasedBuild);
 
     const networkDrift: any = structuredClone(manifest);
     networkDrift.environmentCapsule.network.authority
@@ -417,71 +537,115 @@ describe("PlatformReleaseManifestV2 candidate authority boundary", () => {
       );
     rehashManifest(profileDrift);
 
-    const wrongBuildSource: any = structuredClone(manifest);
+    const wrongBuildSource: any = structuredClone(baseEnvelope);
     const wrongSha = fixtureShaV2("wrong-build-source").slice(0, 40);
     for (const key of [
       "firstBuildReceipt",
       "secondBuildReceipt",
     ] as const) {
-      const receipt = wrongBuildSource.build[key];
+      const receipt = wrongBuildSource.buildAttestation[key];
       receipt.process.commandResult.sourceSha = wrongSha;
       rebindCommandResult(receipt);
-      wrongBuildSource.build[`${key}Hash`] = receipt.receiptHash;
+      wrongBuildSource.buildAttestation[`${key}Hash`] =
+        receipt.receiptHash;
     }
-    rehashManifest(wrongBuildSource);
+    rehashAttestation(wrongBuildSource);
 
-    const sourceVerifierDrift: any = structuredClone(manifest);
-    sourceVerifierDrift.release.sourceAdmission.receipt
+    const sourceVerifierDrift: any =
+      structuredClone(baseEnvelope);
+    sourceVerifierDrift.buildAttestation.sourceAdmissionReceipt
       .implementation.module.hostAdmissionReceipt
       .verifier.abiHash = fixtureShaV2(
         "different-source-host-verifier",
       );
     rebindSourceAdmission(sourceVerifierDrift);
 
-    const sourceGitVerifierDrift: any = structuredClone(manifest);
-    sourceGitVerifierDrift.release.sourceAdmission.receipt
+    const sourceGitVerifierDrift: any =
+      structuredClone(baseEnvelope);
+    sourceGitVerifierDrift.buildAttestation.sourceAdmissionReceipt
       .gitTool.executable.hostAdmissionReceipt
       .verifier.abiHash = fixtureShaV2(
         "different-source-git-host-verifier",
       );
     rebindSourceAdmission(sourceGitVerifierDrift);
 
-    const detachedSourceStage: any = structuredClone(manifest);
-    detachedSourceStage.build.sourceStage
-      .stagePhysicalIdentityHash =
+    const detachedSourceStage: any =
+      structuredClone(baseEnvelope);
+    for (const key of [
+      "firstBuildReceipt",
+      "secondBuildReceipt",
+    ] as const) {
+      const receipt = detachedSourceStage.buildAttestation[key];
+      receipt.stage.sourceStagePhysicalIdentityHash =
         fixtureShaV2("detached-source-stage");
-    rehashManifest(detachedSourceStage);
+      receipt.receiptHash =
+        hashPlatformReleaseBuildReceiptV2(receipt);
+      detachedSourceStage.buildAttestation[`${key}Hash`] =
+        receipt.receiptHash;
+    }
+    rehashAttestation(detachedSourceStage);
 
-    const detachedToolchain: any = structuredClone(manifest);
-    detachedToolchain.build.secondBuildReceipt.buildToolchain.treeHash =
+    const detachedToolchain: any =
+      structuredClone(baseEnvelope);
+    detachedToolchain.buildAttestation.secondBuildReceipt
+      .buildToolchain.treeHash =
       fixtureShaV2("detached-build-toolchain-tree");
-    detachedToolchain.build.secondBuildReceipt.buildToolchain.bindingHash =
+    detachedToolchain.buildAttestation.secondBuildReceipt
+      .buildToolchain.bindingHash =
       buildModule.hashPlatformReleaseBuildToolchainTreeBindingV2(
-        detachedToolchain.build.secondBuildReceipt.buildToolchain,
+        detachedToolchain.buildAttestation.secondBuildReceipt
+          .buildToolchain,
       );
-    detachedToolchain.build.secondBuildReceipt.process.commandResult
+    detachedToolchain.buildAttestation.secondBuildReceipt
+      .process.commandResult
       .buildToolchainTreeHash =
-        detachedToolchain.build.secondBuildReceipt.buildToolchain
+        detachedToolchain.buildAttestation.secondBuildReceipt
+          .buildToolchain
           .treeHash;
     rebindCommandResult(
-      detachedToolchain.build.secondBuildReceipt,
+      detachedToolchain.buildAttestation.secondBuildReceipt,
     );
-    detachedToolchain.build.secondBuildReceiptHash =
-      detachedToolchain.build.secondBuildReceipt.receiptHash;
-    rehashManifest(detachedToolchain);
+    detachedToolchain.buildAttestation.secondBuildReceiptHash =
+      detachedToolchain.buildAttestation
+        .secondBuildReceipt.receiptHash;
+    rehashAttestation(detachedToolchain);
+
+    const transplantedAttestation: any =
+      structuredClone(baseEnvelope);
+    transplantedAttestation.buildAttestation.releaseContentHash =
+      fixtureShaV2("other-release-content");
+    transplantedAttestation.buildAttestation.attestationHash =
+      hashPlatformReleaseBuildAttestationV2(
+        transplantedAttestation.buildAttestation,
+      );
+    assert.equal(
+      PlatformReleaseBuildAttestationV2Schema.safeParse(
+        transplantedAttestation.buildAttestation,
+      ).success,
+      true,
+    );
 
     for (const candidate of [
-      aliasedBuild,
       networkDrift,
       profileDrift,
+    ]) {
+      assert.equal(
+        PlatformReleaseManifestV2Schema.safeParse(candidate).success,
+        false,
+      );
+    }
+    for (const candidate of [
+      aliasedBuild,
       wrongBuildSource,
       sourceVerifierDrift,
       sourceGitVerifierDrift,
       detachedSourceStage,
       detachedToolchain,
+      transplantedAttestation,
     ]) {
       assert.equal(
-        PlatformReleaseManifestV2Schema.safeParse(candidate).success,
+        PlatformReleaseCandidateEnvelopeV2Schema
+          .safeParse(candidate).success,
         false,
       );
     }
@@ -553,10 +717,17 @@ describe("PlatformReleaseManifestV2 candidate authority boundary", () => {
     assert.throws(
       () => parsePlatformReleaseManifestCandidateV2(hostile),
     );
+    assert.throws(
+      () => parsePlatformReleaseBuildAttestationCandidateV2(hostile),
+    );
+    assert.throws(
+      () => parsePlatformReleaseCandidateEnvelopeV2(hostile),
+    );
     assert.equal(traps, 0);
 
     for (const exports of [
       Object.keys(manifestModule),
+      Object.keys(attestationModule),
       Object.keys(buildModule),
     ]) {
       for (const forbidden of [

@@ -32,17 +32,23 @@ import {
 } from "./external-runtime-resolution-v2.js";
 import {
   ExactLegacyStitchConverterRefV2Schema,
+  PLATFORM_RELEASE_BUILD_CONTRACT_HASH_V2,
+  PLATFORM_RELEASE_SOURCE_ADMISSION_CONTRACT_HASH_V2,
   PLATFORM_RELEASE_SOURCE_REPOSITORY_ID_V2,
   PLATFORM_RELEASE_SOURCE_MAX_DIRECTORIES_V2,
   PLATFORM_RELEASE_SOURCE_MAX_FILES_V2,
   PLATFORM_RELEASE_SOURCE_MAX_TOTAL_BYTES_V2,
-  PlatformReleaseBuildReceiptV2Schema,
-  PlatformReleaseBuildToolchainReceiptV2Schema,
+  PlatformReleaseBuildToolchainInstallRecipeV2Schema,
+  PlatformReleaseBuildToolchainTreeBindingV2Schema,
   PlatformReleaseCompilerIdentityV2Schema,
   PlatformReleasePackageManagerIdentityV2Schema,
   PlatformReleaseSourceInputsV2Schema,
-  SourceAdmissionReceiptV2Schema,
+  PlatformReleaseSourceTreeBindingV2Schema,
 } from "./platform-release-build-v2.js";
+import {
+  PlatformReleaseHostNodeToolchainRequirementV2Schema,
+  getPlatformReleaseHostNodeToolchainRequirementV2,
+} from "./platform-release-host-node-toolchain-v2.js";
 import {
   PLATFORM_RELEASE_COMPONENT_VERSION_V2,
   PlatformReleaseVersionIdentityV2Schema,
@@ -87,41 +93,43 @@ const PlatformReleaseIdentityV2Schema = z.object({
     remoteRef: z.literal("refs/remotes/origin/main"),
     admittedSha: GitObjectHashSchema,
     policy: z.literal("exact_remote_main_sha"),
-    receipt: SourceAdmissionReceiptV2Schema,
-    receiptHash: Sha256Schema,
+    admissionContractHash: z.literal(
+      PLATFORM_RELEASE_SOURCE_ADMISSION_CONTRACT_HASH_V2,
+    ),
+    source: PlatformReleaseSourceTreeBindingV2Schema,
   }).strict(),
   packageName: z.literal("setfarm"),
   packageVersion: PlatformReleaseVersionIdentityV2Schema,
 }).strict().superRefine((value, context) => {
   const admission = value.sourceAdmission;
-  const receipt = admission.receipt;
   if (
-    admission.receiptHash !== receipt.receiptHash
-    || admission.repositoryId !== receipt.repositoryId
-    || admission.remoteRef !== receipt.remoteRef
-    || admission.admittedSha !== receipt.admittedSource.sha
-    || admission.policy !== receipt.policy
-    || value.codeSha !== receipt.admittedSource.sha
-    || value.sourceTreeHash !== receipt.admittedSource.treeHash
-    || value.branch !== receipt.branch
+    value.codeSha !== admission.admittedSha
+    || value.sourceTreeHash !== admission.source.sourceTreeHash
   ) {
     context.addIssue({
       code: "custom",
       path: ["sourceAdmission"],
       message:
-        "Release identity must be the exact admitted remote-main source receipt projection",
+        "Release identity must equal its stable admitted source projection",
     });
   }
 });
 
 const PlatformReleaseBuildIdentityV2Schema = z.object({
   contractVersion: z.literal(PLATFORM_RELEASE_COMPONENT_VERSION_V2),
+  buildContractHash: z.literal(
+    PLATFORM_RELEASE_BUILD_CONTRACT_HASH_V2,
+  ),
   inputs: PlatformReleaseSourceInputsV2Schema,
   compiler: PlatformReleaseCompilerIdentityV2Schema,
   packageManager: PlatformReleasePackageManagerIdentityV2Schema,
-  buildToolchainReceipt:
-    PlatformReleaseBuildToolchainReceiptV2Schema,
-  buildToolchainReceiptHash: Sha256Schema,
+  buildToolchain: z.object({
+    requirement:
+      PlatformReleaseHostNodeToolchainRequirementV2Schema,
+    installRecipe:
+      PlatformReleaseBuildToolchainInstallRecipeV2Schema,
+    tree: PlatformReleaseBuildToolchainTreeBindingV2Schema,
+  }).strict(),
   sourceStage: z.object({
     method: z.literal("verified_git_tree_export.v2"),
     exportedTreeHash: GitObjectHashSchema,
@@ -133,7 +141,6 @@ const PlatformReleaseBuildIdentityV2Schema = z.object({
     exportedTotalBytes: z.number().int().positive()
       .max(PLATFORM_RELEASE_SOURCE_MAX_TOTAL_BYTES_V2),
     sourceBindingHash: Sha256Schema,
-    stagePhysicalIdentityHash: Sha256Schema,
     buildContextPolicy: z.literal(
       "private_0700_parent_source_child_and_authenticated_toolchain_sibling_v2",
     ),
@@ -143,95 +150,30 @@ const PlatformReleaseBuildIdentityV2Schema = z.object({
   outputPolicy: z.literal("parameterized_empty_stage_only"),
   sourceDateEpoch: CanonicalDecimalEpochV2Schema,
   reproducibility: z.literal("double_clean_build_exact_tree_match"),
-  firstBuildReceipt: PlatformReleaseBuildReceiptV2Schema,
-  firstBuildReceiptHash: Sha256Schema,
-  secondBuildReceipt: PlatformReleaseBuildReceiptV2Schema,
-  secondBuildReceiptHash: Sha256Schema,
+  reproducibleOutputClosureHash: Sha256Schema,
 }).strict().superRefine((value, context) => {
-  const first = value.firstBuildReceipt;
-  const second = value.secondBuildReceipt;
-  const exactInputs = canonicalJsonStringify(value.inputs);
-  const expectedRootFields = {
-    compiler: canonicalJsonStringify(value.compiler),
-    packageManager: canonicalJsonStringify(value.packageManager),
-    buildToolchainReceiptHash:
-      value.buildToolchainReceiptHash,
-    buildToolchain: canonicalJsonStringify(
-      value.buildToolchainReceipt.tree,
-    ),
-    inputs: exactInputs,
-    sourceDateEpoch: value.sourceDateEpoch,
-    exportedTreeHash: value.sourceStage.exportedTreeHash,
-    exportedFileTreeHash: value.sourceStage.exportedFileTreeHash,
-    exportedFileCount: value.sourceStage.exportedFileCount,
-    exportedDirectoryCount: value.sourceStage.exportedDirectoryCount,
-    exportedTotalBytes: value.sourceStage.exportedTotalBytes,
-    sourceBindingHash: value.sourceStage.sourceBindingHash,
-    stagePhysicalIdentityHash:
-      value.sourceStage.stagePhysicalIdentityHash,
-    buildToolchainPhysicalIdentityHash:
-      value.buildToolchainReceipt.physicalAfter.identityHash,
-    buildContextPolicy: value.sourceStage.buildContextPolicy,
-  };
-  const receiptFields = (receipt: typeof first) => ({
-    compiler: canonicalJsonStringify(receipt.compiler),
-    packageManager: canonicalJsonStringify(receipt.packageManager),
-    buildToolchainReceiptHash:
-      receipt.buildToolchainReceiptHash,
-    buildToolchain:
-      canonicalJsonStringify(receipt.buildToolchain),
-    inputs: canonicalJsonStringify(receipt.inputs),
-    sourceDateEpoch: receipt.sourceDateEpoch,
-    exportedTreeHash: receipt.source.sourceTreeHash,
-    exportedFileTreeHash: receipt.source.exportedFileTreeHash,
-    exportedFileCount: receipt.source.exportedFileCount,
-    exportedDirectoryCount:
-      receipt.source.exportedDirectoryCount,
-    exportedTotalBytes: receipt.source.exportedTotalBytes,
-    sourceBindingHash: receipt.source.bindingHash,
-    stagePhysicalIdentityHash:
-      receipt.stage.sourceStagePhysicalIdentityHash,
-    buildToolchainPhysicalIdentityHash:
-      receipt.stage.buildToolchainPhysicalIdentityHash,
-    buildContextPolicy: receipt.stage.sourceBuildContextPolicy,
+  const expectedMembershipHash = hashCanonicalJson({
+    schema: "setfarm.platform-release-source-input-membership.v2",
+    entries: value.inputs.map((entry) => ({
+      role: entry.role,
+      locator: entry.locator,
+      sourceRefHash: entry.sourceRefHash,
+    })),
   });
   if (
-    value.firstBuildReceiptHash !== first.receiptHash
-    || value.secondBuildReceiptHash !== second.receiptHash
-    || first.stage.stageRef !== "PLATFORM_RELEASE_BUILD_STAGE_FIRST_V2"
-    || second.stage.stageRef !== "PLATFORM_RELEASE_BUILD_STAGE_SECOND_V2"
-    || first.receiptHash === second.receiptHash
-    || first.stage.outputStagePhysicalIdentityHash
-      === second.stage.outputStagePhysicalIdentityHash
-    || first.stage.sourceStagePhysicalIdentityHash
-      !== second.stage.sourceStagePhysicalIdentityHash
-    || first.stage.buildToolchainPhysicalIdentityHash
-      !== second.stage.buildToolchainPhysicalIdentityHash
-    || value.buildToolchainReceiptHash
-      !== value.buildToolchainReceipt.receiptHash
-    || value.buildToolchainReceipt.sourceAdmissionReceiptHash
-      !== first.sourceAdmissionReceiptHash
-    || first.buildToolchainReceiptHash
-      !== value.buildToolchainReceipt.receiptHash
-    || second.buildToolchainReceiptHash
-      !== value.buildToolchainReceipt.receiptHash
-    || canonicalJsonStringify(receiptFields(first))
-      !== canonicalJsonStringify(expectedRootFields)
-    || canonicalJsonStringify(receiptFields(second))
-      !== canonicalJsonStringify(expectedRootFields)
-    || first.command.commandRef !== value.commandRef
-    || second.command.commandRef !== value.commandRef
-    || canonicalJsonStringify(first.command)
-      !== canonicalJsonStringify(second.command)
-    || canonicalJsonStringify(first.process.commandResult)
-      !== canonicalJsonStringify(second.process.commandResult)
-    || canonicalJsonStringify(first.output)
-      !== canonicalJsonStringify(second.output)
+    canonicalJsonStringify(value.buildToolchain.requirement)
+      !== canonicalJsonStringify(
+        getPlatformReleaseHostNodeToolchainRequirementV2(),
+      )
+    || value.packageManager.buildInstallRecipeHash
+      !== value.buildToolchain.installRecipe.recipeHash
+    || value.buildToolchain.tree.inputMembershipHash
+      !== expectedMembershipHash
   ) {
     context.addIssue({
       code: "custom",
       message:
-        "Build must bind two independent empty stages with exact equal source, toolchain and output closure",
+        "Stable build identity must close code-owned requirement, recipe and exact input membership",
     });
   }
 });
@@ -285,8 +227,6 @@ const PlatformReleaseManifestIdentityV2Schema = z.object({
     }
   }
 
-  const first = value.build.firstBuildReceipt;
-  const second = value.build.secondBuildReceipt;
   const runtime = value.runtimePayload;
   const external = value.externalResolution;
   const environment = value.environmentCapsule;
@@ -299,10 +239,6 @@ const PlatformReleaseManifestIdentityV2Schema = z.object({
     (entry) =>
       entry.executableRef === external.packageManager.executableRef,
   );
-  const nodeExecutable = external.executables.find(
-    (entry) =>
-      entry.executableRef === external.nodeRuntime.executableRef,
-  );
 
   const joinFailures: string[] = [];
   const requireJoin = (condition: boolean, label: string) => {
@@ -311,71 +247,43 @@ const PlatformReleaseManifestIdentityV2Schema = z.object({
 
   requireJoin(
     value.release.sourceTreeHash === value.build.sourceStage.exportedTreeHash
-      && first.sourceAdmissionReceiptHash
-        === value.release.sourceAdmission.receiptHash
-      && second.sourceAdmissionReceiptHash
-        === value.release.sourceAdmission.receiptHash
-      && first.source.sourceTreeHash === value.release.sourceTreeHash
-      && second.source.sourceTreeHash === value.release.sourceTreeHash
-      && first.process.commandResult.sourceSha === value.release.codeSha
-      && second.process.commandResult.sourceSha === value.release.codeSha,
-    "admitted source and both build source stages",
-  );
-  const admittedExport =
-    value.release.sourceAdmission.receipt.exportedSource;
-  requireJoin(
-    canonicalJsonStringify(admittedExport.source)
-      === canonicalJsonStringify(first.source)
-      && canonicalJsonStringify(admittedExport.source)
-        === canonicalJsonStringify(second.source)
-      && admittedExport.source.bindingHash
+      && canonicalJsonStringify(
+        value.release.sourceAdmission.source.inputs,
+      ) === canonicalJsonStringify(value.build.inputs)
+      && value.release.sourceAdmission.source.sourceTreeHash
+        === value.release.sourceTreeHash
+      && value.release.sourceAdmission.source.bindingHash
         === value.build.sourceStage.sourceBindingHash
-      && admittedExport.source.exportedFileTreeHash
+      && value.release.sourceAdmission.source.exportedFileTreeHash
         === value.build.sourceStage.exportedFileTreeHash
-      && admittedExport.source.exportedFileCount
+      && value.release.sourceAdmission.source.exportedFileCount
         === value.build.sourceStage.exportedFileCount
-      && admittedExport.source.exportedDirectoryCount
+      && value.release.sourceAdmission.source.exportedDirectoryCount
         === value.build.sourceStage.exportedDirectoryCount
-      && admittedExport.source.exportedTotalBytes
+      && value.release.sourceAdmission.source.exportedTotalBytes
         === value.build.sourceStage.exportedTotalBytes
-      && admittedExport.stageAfter.identityHash
-        === value.build.sourceStage.stagePhysicalIdentityHash
-      && admittedExport.buildContextPolicy
-        === value.build.sourceStage.buildContextPolicy,
-    "source admission export and both build source stages",
+      && value.release.sourceAdmission.source.inputMembershipHash
+        === value.build.buildToolchain.tree.inputMembershipHash
+      && value.build.buildToolchain.installRecipe.recipeHash
+        === value.build.packageManager.buildInstallRecipeHash,
+    "stable source and build-toolchain projections",
   );
   requireJoin(
-    value.build.sourceDateEpoch
-      === value.release.sourceAdmission.receipt.admittedSource
-        .commitEpochSeconds,
-    "Git-derived source date epoch",
-  );
-  requireJoin(
-    canonicalJsonStringify(runtime)
-      === canonicalJsonStringify(first.output.runtimePayload)
-      && canonicalJsonStringify(runtime)
-        === canonicalJsonStringify(second.output.runtimePayload),
-    "double-build runtime payload",
-  );
-  requireJoin(
-    canonicalJsonStringify(external.materializationReceipt)
-      === canonicalJsonStringify(
-        first.output.npmMaterializationReceipt,
-      )
-      && canonicalJsonStringify(external.materializationReceipt)
-        === canonicalJsonStringify(
-          second.output.npmMaterializationReceipt,
-        ),
-    "double-build npm materialization receipt",
-  );
-  requireJoin(
-    canonicalJsonStringify(value.legacyAssets.stitchConverter)
-      === canonicalJsonStringify(first.output.legacyStitchConverter)
-      && canonicalJsonStringify(value.legacyAssets.stitchConverter)
-        === canonicalJsonStringify(
-          second.output.legacyStitchConverter,
-        ),
-    "double-build legacy Stitch converter",
+    value.build.reproducibleOutputClosureHash
+      === hashCanonicalJson({
+        schema: "setfarm.platform-release-build-output-closure.v2",
+        runtimePayloadHash: runtime.runtimePayloadHash,
+        platformTreeBindingHash:
+          runtime.platformTree.bindingHash,
+        dependencyTreeBindingHash:
+          runtime.dependencyTree.bindingHash,
+        packageJsonHash: runtime.packageJson.hash,
+        npmMaterializationReceiptHash:
+          external.materializationReceipt.receiptHash,
+        legacyStitchConverter:
+          value.legacyAssets.stitchConverter,
+      }),
+    "stable reproducible output closure",
   );
   requireJoin(
     runtime.packageJson.hash === packageJson.contentHash
@@ -405,46 +313,6 @@ const PlatformReleaseManifestIdentityV2Schema = z.object({
     "runtime ownership and host runtime UID",
   );
   requireJoin(
-    canonicalJsonStringify(
-      value.release.sourceAdmission.receipt.implementation.module
-        .hostAdmissionReceipt.host,
-    ) === canonicalJsonStringify({
-      platform: external.hostRuntime.platform,
-      architecture: external.hostRuntime.architecture,
-      macosProductVersion:
-        external.hostRuntime.macosProductVersion,
-      macosBuildVersion:
-        external.hostRuntime.macosBuildVersion,
-      darwinKernelRelease:
-        external.hostRuntime.darwinKernelRelease,
-    })
-      && canonicalJsonStringify(
-        value.release.sourceAdmission.receipt.implementation.module
-          .hostAdmissionReceipt.verifier,
-      ) === canonicalJsonStringify(
-        external.hostRuntime.bootstrap.executable
-          .hostAdmissionReceipt.verifier,
-      ),
-    "source admission implementation and host runtime identity",
-  );
-  requireJoin(
-    canonicalJsonStringify(
-      value.release.sourceAdmission.receipt.gitTool.executable
-        .hostAdmissionReceipt.host,
-    ) === canonicalJsonStringify(
-      value.release.sourceAdmission.receipt.implementation.module
-        .hostAdmissionReceipt.host,
-    )
-      && canonicalJsonStringify(
-        value.release.sourceAdmission.receipt.gitTool.executable
-          .hostAdmissionReceipt.verifier,
-      ) === canonicalJsonStringify(
-        external.hostRuntime.bootstrap.executable
-          .hostAdmissionReceipt.verifier,
-      ),
-    "source Git tool and release host verifier identity",
-  );
-  requireJoin(
     environment.network.authority.hostRuntimeIdentityHash
       === external.hostRuntime.hostRuntimeIdentityHash,
     "network authority and host runtime identity",
@@ -466,36 +334,6 @@ const PlatformReleaseManifestIdentityV2Schema = z.object({
       && npmExecutable?.hash
         === value.build.packageManager.executableHash,
     "build and external npm identity",
-  );
-  const buildHost =
-    value.build.buildToolchainReceipt.hostToolchain;
-  requireJoin(
-    buildHost.host.platform === external.hostRuntime.platform
-      && buildHost.host.architecture
-        === external.hostRuntime.architecture
-      && buildHost.host.macosProductVersion
-        === external.hostRuntime.macosProductVersion
-      && buildHost.host.macosBuildVersion
-        === external.hostRuntime.macosBuildVersion
-      && buildHost.host.darwinKernelRelease
-        === external.hostRuntime.darwinKernelRelease
-      && buildHost.node.version === external.nodeRuntime.version
-      && buildHost.node.modulesAbi
-        === external.nodeRuntime.modulesAbi
-      && buildHost.node.napiVersion
-        === external.nodeRuntime.napiVersion
-      && buildHost.node.platform === external.nodeRuntime.platform
-      && buildHost.node.architecture
-        === external.nodeRuntime.architecture
-      && nodeExecutable?.hash
-        === buildHost.node.executable.contentHash
-      && buildHost.npm.version
-        === value.build.packageManager.version
-      && buildHost.npm.packageTree.normalizedTreeHash
-        === value.build.packageManager.packageTreeHash
-      && buildHost.npm.cli.contentHash
-        === value.build.packageManager.executableHash,
-    "build host Node/npm receipt and external runtime identity",
   );
   requireJoin(
     launcher.runtimePayloadHash === runtime.runtimePayloadHash

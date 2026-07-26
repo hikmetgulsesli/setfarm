@@ -28,9 +28,13 @@ import {
 } from "./canonical-runtime-tree-v2.js";
 import {
   PLATFORM_RELEASE_MANIFEST_V2_MAX_CANONICAL_BYTES,
-  parsePlatformReleaseManifestCandidateV2,
   type PlatformReleaseManifestV2,
 } from "./schemas/platform-release-manifest-v2.js";
+import {
+  PLATFORM_RELEASE_CANDIDATE_ENVELOPE_V2_SCHEMA,
+  parsePlatformReleaseCandidateEnvelopeV2,
+  type PlatformReleaseBuildAttestationV2,
+} from "./schemas/platform-release-build-attestation-v2.js";
 import {
   hashCanonicalRuntimeTreeBindingV2,
   type CanonicalRuntimeTreeBindingCandidateV2,
@@ -85,6 +89,7 @@ export type CompletedPlatformReleaseStageCandidateInspectionV2 = Readonly<{
   productionUse: "forbidden_until_publication_lease_and_fresh_verification";
   releaseId: string;
   manifestPayloadHash: string;
+  buildAttestationHash: string;
   manifestCanonicalByteLength: number;
   runtimePayloadHash: string;
   platformTreeHash: string;
@@ -116,6 +121,7 @@ export class CompletedPlatformReleaseStageCandidateV2 {
 type CompletedStageStateV2 = Readonly<{
   root: RootIdentityV2;
   manifest: PlatformReleaseManifestV2;
+  buildAttestation: PlatformReleaseBuildAttestationV2;
   manifestCanonicalBytes: Buffer;
   inspection: CompletedPlatformReleaseStageCandidateInspectionV2;
 }>;
@@ -154,6 +160,7 @@ function assertPlainExactInput(
 ): asserts input is Readonly<{
   stageRoot: string;
   manifest: unknown;
+  buildAttestation: unknown;
   metadataProbe: CanonicalRuntimeMetadataProbeV2;
 }> {
   if (
@@ -168,7 +175,12 @@ function assertPlainExactInput(
   const descriptors = Object.getOwnPropertyDescriptors(input);
   const keys = Object.keys(descriptors).sort();
   if (
-    !sameStringArray(keys, ["manifest", "metadataProbe", "stageRoot"])
+    !sameStringArray(keys, [
+      "buildAttestation",
+      "manifest",
+      "metadataProbe",
+      "stageRoot",
+    ])
     || keys.some((key) =>
       !("value" in descriptors[key]!)
       || descriptors[key]!.get !== undefined
@@ -676,6 +688,7 @@ function terminalWriteManifestV2(
 
 function completedInspectionV2(
   manifest: PlatformReleaseManifestV2,
+  buildAttestation: PlatformReleaseBuildAttestationV2,
   canonicalBytes: Buffer,
 ): CompletedPlatformReleaseStageCandidateInspectionV2 {
   return Object.freeze({
@@ -686,6 +699,7 @@ function completedInspectionV2(
       "forbidden_until_publication_lease_and_fresh_verification",
     releaseId: manifest.manifestPayloadHash,
     manifestPayloadHash: manifest.manifestPayloadHash,
+    buildAttestationHash: buildAttestation.attestationHash,
     manifestCanonicalByteLength: canonicalBytes.byteLength - 1,
     runtimePayloadHash: manifest.runtimePayload.runtimePayloadHash,
     platformTreeHash: manifest.runtimePayload.platformTree.treeHash,
@@ -701,12 +715,19 @@ export function terminalWritePlatformReleaseManifestCandidateV2(
   assertPlainExactInput(input);
   const root = anchorPrivateStageRootV2(input.stageRoot);
   let manifest: PlatformReleaseManifestV2;
+  let buildAttestation: PlatformReleaseBuildAttestationV2;
   try {
-    manifest = parsePlatformReleaseManifestCandidateV2(input.manifest);
+    const envelope = parsePlatformReleaseCandidateEnvelopeV2({
+      schema: PLATFORM_RELEASE_CANDIDATE_ENVELOPE_V2_SCHEMA,
+      manifest: input.manifest,
+      buildAttestation: input.buildAttestation,
+    });
+    manifest = envelope.manifest;
+    buildAttestation = envelope.buildAttestation;
   } catch (error) {
     return fail(
       "INPUT_INVALID",
-      "Terminal writer manifest candidate is invalid",
+      "Terminal writer manifest and build attestation candidate are invalid",
       error,
     );
   }
@@ -735,11 +756,13 @@ export function terminalWritePlatformReleaseManifestCandidateV2(
   );
   const inspection = completedInspectionV2(
     manifest,
+    buildAttestation,
     manifestCanonicalBytes,
   );
   completedStageStatesV2.set(handle, Object.freeze({
     root,
     manifest,
+    buildAttestation,
     manifestCanonicalBytes,
     inspection,
   }));

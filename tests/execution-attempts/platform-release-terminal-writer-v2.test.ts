@@ -28,6 +28,11 @@ import {
 } from
   "../../src/execution/platform-release-terminal-writer-v2.js";
 import {
+  PlatformReleaseCandidateEnvelopeV2Schema,
+  hashPlatformReleaseBuildAttestationV2,
+} from
+  "../../src/execution/schemas/platform-release-build-attestation-v2.js";
+import {
   PlatformReleaseManifestV2Schema,
   hashPlatformReleaseManifestV2,
 } from
@@ -40,7 +45,8 @@ import {
 } from
   "../../src/execution/schemas/platform-release-module-catalogs-v2.js";
 import {
-  bindPlatformReleaseManifestFixtureToStageV2,
+  bindPlatformReleaseCandidateEnvelopeFixtureToStageV2,
+  createDistinctPlatformReleaseBuildAttemptFixtureV2,
   createPlatformReleaseManifestFixtureV2,
   fixtureShaV2,
 } from
@@ -105,8 +111,11 @@ function normalizeDirectoriesReadOnly(root: string): void {
 function createStage(): Readonly<{
   root: string;
   manifest: ReturnType<
-    typeof bindPlatformReleaseManifestFixtureToStageV2
-  >;
+    typeof bindPlatformReleaseCandidateEnvelopeFixtureToStageV2
+  >["manifest"];
+  buildAttestation: ReturnType<
+    typeof bindPlatformReleaseCandidateEnvelopeFixtureToStageV2
+  >["buildAttestation"];
 }> {
   const created = mkdtempSync(
     path.join(os.tmpdir(), "setfarm-release-terminal-v2-"),
@@ -159,15 +168,21 @@ function createStage(): Readonly<{
     );
     normalizeDirectoriesReadOnly(path.join(root, "payload"));
     chmodSync(root, 0o700);
-    const manifest = bindPlatformReleaseManifestFixtureToStageV2(
+    const envelope =
+      bindPlatformReleaseCandidateEnvelopeFixtureToStageV2(
       root,
       clearMetadata,
     );
     assert.equal(
-      PlatformReleaseManifestV2Schema.safeParse(manifest).success,
+      PlatformReleaseCandidateEnvelopeV2Schema
+        .safeParse(envelope).success,
       true,
     );
-    return Object.freeze({ root, manifest });
+    return Object.freeze({
+      root,
+      manifest: envelope.manifest,
+      buildAttestation: envelope.buildAttestation,
+    });
   } catch (error) {
     cleanupStage(root);
     throw error;
@@ -184,6 +199,25 @@ function rewriteReadOnlyFile(
   writeFileSync(absolutePath, content);
   chmodSync(absolutePath, 0o444);
   chmodSync(parent, 0o555);
+}
+
+function attestationForManifest(
+  manifest: Readonly<{ manifestPayloadHash: string }>,
+  source: unknown,
+): any {
+  const candidate: any = structuredClone(source);
+  candidate.releaseContentHash =
+    manifest.manifestPayloadHash;
+  candidate.attestationHash =
+    hashPlatformReleaseBuildAttestationV2(candidate);
+  return candidate;
+}
+
+function distinctAttemptAttestation(source: unknown): any {
+  return createDistinctPlatformReleaseBuildAttemptFixtureV2(
+    source as any,
+    "terminal-second-clean-attempt",
+  );
 }
 
 function expectTerminalError(
@@ -206,6 +240,7 @@ describe("Platform release terminal manifest writer V2", () => {
         terminalWritePlatformReleaseManifestCandidateV2({
           stageRoot: stage.root,
           manifest: stage.manifest,
+          buildAttestation: stage.buildAttestation,
           metadataProbe: clearMetadata,
         });
       const inspection =
@@ -219,6 +254,14 @@ describe("Platform release terminal manifest writer V2", () => {
       assert.equal(
         inspection.manifestPayloadHash,
         stage.manifest.manifestPayloadHash,
+      );
+      assert.equal(
+        inspection.releaseId,
+        stage.manifest.manifestPayloadHash,
+      );
+      assert.equal(
+        inspection.buildAttestationHash,
+        stage.buildAttestation.attestationHash,
       );
       assert.equal(
         Object.prototype.hasOwnProperty.call(inspection, "root"),
@@ -238,6 +281,12 @@ describe("Platform release terminal manifest writer V2", () => {
         "utf8",
       );
       assert.equal(readFileSync(manifestPath).equals(expected), true);
+      assert.equal(
+        readFileSync(manifestPath, "utf8").includes(
+          stage.buildAttestation.attestationHash,
+        ),
+        false,
+      );
       assert.equal(statSync(manifestPath).mode & 0o7777, 0o444);
       assert.equal(statSync(stage.root).mode & 0o7777, 0o555);
       assert.deepEqual(
@@ -250,6 +299,71 @@ describe("Platform release terminal manifest writer V2", () => {
       );
     } finally {
       cleanupStage(stage.root);
+    }
+  });
+
+  it("converges distinct build attempts on one byte-identical release root", () => {
+    const first = createStage();
+    const second = createStage();
+    try {
+      const secondAttestation =
+        distinctAttemptAttestation(second.buildAttestation);
+      assert.notEqual(
+        secondAttestation.attestationHash,
+        first.buildAttestation.attestationHash,
+      );
+      const firstHandle =
+        terminalWritePlatformReleaseManifestCandidateV2({
+          stageRoot: first.root,
+          manifest: first.manifest,
+          buildAttestation: first.buildAttestation,
+          metadataProbe: clearMetadata,
+        });
+      const secondHandle =
+        terminalWritePlatformReleaseManifestCandidateV2({
+          stageRoot: second.root,
+          manifest: second.manifest,
+          buildAttestation: secondAttestation,
+          metadataProbe: clearMetadata,
+        });
+      const firstInspection =
+        inspectCompletedPlatformReleaseStageCandidateV2(
+          firstHandle,
+        );
+      const secondInspection =
+        inspectCompletedPlatformReleaseStageCandidateV2(
+          secondHandle,
+        );
+      assert.equal(firstHandle.releaseId, secondHandle.releaseId);
+      assert.equal(
+        firstInspection.manifestPayloadHash,
+        secondInspection.manifestPayloadHash,
+      );
+      assert.notEqual(
+        firstInspection.buildAttestationHash,
+        secondInspection.buildAttestationHash,
+      );
+      assert.equal(
+        readFileSync(path.join(
+          first.root,
+          PLATFORM_RELEASE_MANIFEST_V2_FILENAME,
+        )).equals(readFileSync(path.join(
+          second.root,
+          PLATFORM_RELEASE_MANIFEST_V2_FILENAME,
+        ))),
+        true,
+      );
+      assert.deepEqual(
+        readdirSync(first.root).sort(),
+        [PLATFORM_RELEASE_MANIFEST_V2_FILENAME, "payload"],
+      );
+      assert.deepEqual(
+        readdirSync(second.root).sort(),
+        [PLATFORM_RELEASE_MANIFEST_V2_FILENAME, "payload"],
+      );
+    } finally {
+      cleanupStage(first.root);
+      cleanupStage(second.root);
     }
   });
 
@@ -268,6 +382,7 @@ describe("Platform release terminal manifest writer V2", () => {
         () => terminalWritePlatformReleaseManifestCandidateV2({
           stageRoot: stage.root,
           manifest: stage.manifest,
+          buildAttestation: stage.buildAttestation,
           metadataProbe: clearMetadata,
         }),
         "RUNTIME_TREE_MISMATCH",
@@ -335,6 +450,10 @@ describe("Platform release terminal manifest writer V2", () => {
         () => terminalWritePlatformReleaseManifestCandidateV2({
           stageRoot: stage.root,
           manifest: candidate,
+          buildAttestation: attestationForManifest(
+            candidate,
+            stage.buildAttestation,
+          ),
           metadataProbe: clearMetadata,
         }),
         "MODULE_BYTES_MISMATCH",
@@ -361,6 +480,8 @@ describe("Platform release terminal manifest writer V2", () => {
         () => terminalWritePlatformReleaseManifestCandidateV2({
           stageRoot: packageStage.root,
           manifest: packageStage.manifest,
+          buildAttestation:
+            packageStage.buildAttestation,
           metadataProbe: clearMetadata,
         }),
         "PACKAGE_JSON_MISMATCH",
@@ -380,6 +501,8 @@ describe("Platform release terminal manifest writer V2", () => {
         () => terminalWritePlatformReleaseManifestCandidateV2({
           stageRoot: occupiedStage.root,
           manifest: occupiedStage.manifest,
+          buildAttestation:
+            occupiedStage.buildAttestation,
           metadataProbe: clearMetadata,
         }),
         "MANIFEST_ALREADY_PRESENT",
@@ -406,6 +529,14 @@ describe("Platform release terminal manifest writer V2", () => {
     });
     expectTerminalError(
       () => terminalWritePlatformReleaseManifestCandidateV2(hostile),
+      "INPUT_INVALID",
+    );
+    expectTerminalError(
+      () => terminalWritePlatformReleaseManifestCandidateV2({
+        stageRoot: "/tmp/missing-attestation",
+        manifest: {},
+        metadataProbe: clearMetadata,
+      }),
       "INPUT_INVALID",
     );
     assert.equal(traps, 0);
@@ -455,6 +586,7 @@ describe("Platform release terminal manifest writer V2", () => {
         () => terminalWritePlatformReleaseManifestCandidateV2({
           stageRoot: stage.root,
           manifest: stage.manifest,
+          buildAttestation: stage.buildAttestation,
           metadataProbe,
         }),
         "RUNTIME_TREE_MISMATCH",
@@ -482,6 +614,7 @@ describe("Platform release terminal manifest writer V2", () => {
         () => terminalWritePlatformReleaseManifestCandidateV2({
           stageRoot: stage.root,
           manifest: candidate,
+          buildAttestation: stage.buildAttestation,
           metadataProbe: clearMetadata,
         }),
         "INPUT_INVALID",
