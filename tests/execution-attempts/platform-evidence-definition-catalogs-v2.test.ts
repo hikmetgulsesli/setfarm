@@ -35,7 +35,7 @@ import {
 } from "../../src/evidence/schemas/evidence-receipt-v2.js";
 
 const PLATFORM_CATALOG_HASH_GOLDEN_V2 =
-  "3b04fddc6bb1852482226bfc34d835544ffec2ebd4308f31e75cb2579e7ab224";
+  "cbc6062a8a8bf265e7970eebb4ebd1f3e0ec24ca10e77ae07376124091cac952";
 const LAUNCHER_CATALOG_HASH_GOLDEN_V2 =
   "8accc2a9c7c1cf11aedfb73c427f065536b05a6216c35c34e50f4fc4472389de";
 const RUNNER_CATALOG_HASH_GOLDEN_V2 =

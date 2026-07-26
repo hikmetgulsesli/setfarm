@@ -14,6 +14,7 @@ import {
   EvidenceOutcomeCandidateV2Schema,
   EvidenceReceiptAbiPolicyCandidateV2Schema,
   EvidenceReceiptCandidateV2Schema,
+  EvidenceReceiptOperationalV2Schema,
   createEvidenceOutcomeCandidateV2,
   evidenceCaptureRedactionPolicyHashV2,
   evidenceReceiptAbiPolicyHashV2,
@@ -47,6 +48,18 @@ function capture() {
       secretsRemoved: true as const,
       mutableLocatorStored: false as const,
     },
+  };
+}
+
+function driftedSourceFence() {
+  return {
+    schema: "setfarm.evidence-source-fence.v2" as const,
+    candidateSourceReceiptHash: sha("candidate-source-receipt"),
+    semanticRevisionHash: sha("changed-semantic-revision"),
+    sourceMaterializationReceiptHash: sha("changed-source-materialization"),
+    runtimeBundleHash: sha("runtime-bundle"),
+    physicalFenceHash: sha("changed-physical-source-fence"),
+    origin: { kind: "private_content_first" as const },
   };
 }
 
@@ -129,6 +142,48 @@ function readyHttpLifecycle(
   };
 }
 
+function operationFor(
+  checkKind: EvidenceOutcomeCandidateV2["checkKind"],
+): EvidenceReceiptHashPayloadV2["operation"] {
+  if (checkKind === "command") {
+    return {
+      kind: "command",
+      runnerEntrypointRef: "ENTRY_EVIDENCE_COMMAND_V2",
+      commandRef: "CMD_NODE_PRODUCT_TEST_V3",
+      commandContractHash: sha("command-contract"),
+      commandDefinitionHash: sha("command-definition"),
+      testOutputContentHash: sha("test-output"),
+      testOutputByteLength: 57,
+    };
+  }
+  if (checkKind === "http_service") {
+    return {
+      kind: "http_service",
+      runnerEntrypointRef: "ENTRY_EVIDENCE_HTTP_SERVICE_V2",
+      launcherRef: "LAUNCH_NODE_EXPRESS_API_V2",
+      launcherDefinitionHash: sha("api-launcher-definition"),
+      launcherModuleHash: sha("api-launcher-module"),
+      launcherAbiHash: sha("api-launcher-abi"),
+      transportContractHash: sha("api-transport-contract"),
+      executableTransportBindingHash: sha("api-executable-transport"),
+      launchTargetHash: sha("api-launch-target"),
+      launcherObservationReceiptHash: sha("api-launcher-observation"),
+    };
+  }
+  return {
+    kind: "cli_process",
+    runnerEntrypointRef: "ENTRY_EVIDENCE_CLI_PROCESS_V2",
+    launcherRef: "LAUNCH_NODE_CLI_V2",
+    launcherDefinitionHash: sha("launcher-definition"),
+    launcherModuleHash: sha("launcher-module"),
+    launcherAbiHash: sha("launcher-abi"),
+    transportContractHash: sha("transport-contract"),
+    executableTransportBindingHash: sha("executable-transport"),
+    launchTargetHash: sha("launch-target"),
+    launcherObservationReceiptHash: sha("launcher-observation"),
+  };
+}
+
 function receiptIdentity(
   overrides: Partial<EvidenceReceiptHashPayloadV2> = {},
 ): EvidenceReceiptHashPayloadV2 {
@@ -138,19 +193,14 @@ function receiptIdentity(
     authorityState: "candidate_unverified",
     productionUse: "forbidden",
     release: {
-      activationAcknowledgementHash: sha("activation-ack"),
-      platformReleaseManifestHash: sha("platform-manifest"),
-      runtimePayloadHash: sha("runtime-payload"),
-      externalResolutionHash: sha("external-resolution"),
-      environmentCapsuleHash: sha("environment"),
-      toolchainHash: sha("toolchain"),
-      launcherDefinitionHash: sha("launcher-definition"),
-      launcherModuleHash: sha("launcher-module"),
-      runnerDefinitionHash: sha("runner-definition"),
-      runnerModuleHash: sha("runner-module"),
+      kind: "shadow_candidate",
+      platformCatalogHash: sha("platform-catalog"),
+      runnerRequirementHash: sha("runner-requirement"),
+      runnerSourceModuleHash: sha("runner-source-module"),
+      runnerAbiHash: sha("runner-abi"),
       receiptSchemaHash: evidenceReceiptAbiPolicyHashV2(),
-      adapterDefinitionHash: sha("adapter-definition"),
-      adapterCatalogHash: sha("adapter-catalog"),
+      adapterRequirementHash: sha("adapter-requirement"),
+      adapterDefinitionCatalogHash: sha("adapter-definition-catalog"),
     },
     product: {
       packetHash: sha("packet-envelope"),
@@ -159,13 +209,22 @@ function receiptIdentity(
       profileId: "NODE_CLI_EXACT",
       profileHash: sha("profile"),
       stackPackHash: sha("stack-pack"),
-      transportContractHash: sha("transport-contract"),
-      executableTransportBindingHash: sha("executable-transport"),
     },
     candidate: {
       buildReceiptHash: sha("build-receipt"),
       runtimeBundleHash: sha("runtime-bundle"),
+    },
+    operation: {
+      kind: "cli_process",
+      runnerEntrypointRef: "ENTRY_EVIDENCE_CLI_PROCESS_V2",
+      launcherRef: "LAUNCH_NODE_CLI_V2",
+      launcherDefinitionHash: sha("launcher-definition"),
+      launcherModuleHash: sha("launcher-module"),
+      launcherAbiHash: sha("launcher-abi"),
+      transportContractHash: sha("transport-contract"),
+      executableTransportBindingHash: sha("executable-transport"),
       launchTargetHash: sha("launch-target"),
+      launcherObservationReceiptHash: sha("launcher-observation"),
     },
     execution: {
       runId: "run-receipt-fixture",
@@ -175,12 +234,22 @@ function receiptIdentity(
       predicateRef: "EVID_CHECK_OUTPUT",
     },
     sourceBefore: {
-      sha: "a".repeat(40),
-      treeHash: "b".repeat(40),
+      schema: "setfarm.evidence-source-fence.v2",
+      candidateSourceReceiptHash: sha("candidate-source-receipt"),
+      semanticRevisionHash: sha("semantic-revision"),
+      sourceMaterializationReceiptHash: sha("source-materialization"),
+      runtimeBundleHash: sha("runtime-bundle"),
+      physicalFenceHash: sha("physical-source-fence"),
+      origin: { kind: "private_content_first" },
     },
     sourceAfter: {
-      sha: "a".repeat(40),
-      treeHash: "b".repeat(40),
+      schema: "setfarm.evidence-source-fence.v2",
+      candidateSourceReceiptHash: sha("candidate-source-receipt"),
+      semanticRevisionHash: sha("semantic-revision"),
+      sourceMaterializationReceiptHash: sha("source-materialization"),
+      runtimeBundleHash: sha("runtime-bundle"),
+      physicalFenceHash: sha("physical-source-fence"),
+      origin: { kind: "private_content_first" },
     },
     startedAt: "2026-07-18T10:00:00.000Z",
     finishedAt: "2026-07-18T10:00:00.250Z",
@@ -202,6 +271,9 @@ function receiptIdentity(
   const merged = { ...base, ...overrides };
   if (overrides.outcome !== undefined && overrides.invocationResponseHash === undefined) {
     merged.invocationResponseHash = overrides.outcome.outcomeHash;
+  }
+  if (overrides.outcome !== undefined && overrides.operation === undefined) {
+    merged.operation = operationFor(overrides.outcome.checkKind);
   }
   return merged;
 }
@@ -228,14 +300,14 @@ describe("EvidenceOutcomeV2 typed candidate contract", () => {
     const policy = getEvidenceReceiptAbiPolicyV2();
     assert.equal(EvidenceReceiptAbiPolicyCandidateV2Schema.safeParse(policy).success, true);
     assert.equal(policy.policyHash, evidenceReceiptAbiPolicyHashV2());
-    assert.equal(policy.policyHash, "adfcaec93bfa69f82583684ebc9b702fd928744007a7a27f6db382b89aec07cf");
+    assert.equal(policy.policyHash, "a49ce9c25a8a963762b3a30f3e6c340e9697ebe3a8e7801fbd4a3a4cb5d2b95d");
     assert.equal(policy.diagnosticProsePolicy, "forbidden_use_redacted_capture");
     assert.equal(policy.httpRequestTimeoutMs, EVIDENCE_HTTP_REQUEST_TIMEOUT_MS_V2);
     assert.equal(policy.httpResponseMaxBytes, EVIDENCE_HTTP_RESPONSE_MAX_BYTES_V2);
     assert.equal(policy.schemaRevision, EVIDENCE_RECEIPT_SCHEMA_REVISION_V2);
     assert.deepEqual(policy.processSignalNames, EVIDENCE_PROCESS_SIGNAL_NAMES_V2);
-    assert.equal(policy.shapeSignatures.length, 29);
-    assert.equal(policy.crossFieldRelations.length, 21);
+    assert.equal(policy.shapeSignatures.length, 35);
+    assert.equal(policy.crossFieldRelations.length, 23);
     assert.equal(Object.isFrozen(policy), true);
     assert.equal(Object.isFrozen(policy.outcomeOwnership), true);
   });
@@ -335,11 +407,72 @@ describe("EvidenceOutcomeV2 typed candidate contract", () => {
 describe("EvidenceReceiptV2 candidate contract", () => {
   it("binds the complete release/product/candidate/execution chain to a literal golden", () => {
     const candidate = receipt();
-    assert.equal(candidate.receiptHash, "739d8c13a6a3b86d7a7fdf44b402eee0b1b363e72fbccb3b12066298b7bcfd13");
+    assert.equal(candidate.receiptHash, "c86d510b77c81769c0b85f8a024e1e85b3ab969c55bea23b78be8b54a81f0335");
     assert.equal(candidate.authorityState, "candidate_unverified");
     assert.equal(candidate.productionUse, "forbidden");
-    assert.equal(Object.keys(candidate.release).length, 13);
+    assert.equal(Object.keys(candidate.release).length, 8);
     assert.equal(Object.isFrozen(parseEvidenceReceiptCandidateV2(candidate)), true);
+  });
+
+  it("represents generated-test command evidence without fabricated launcher, transport, or launch-target joins", () => {
+    const commandOutcome = outcome({ checkKind: "command" });
+    const candidate = receipt({
+      outcome: commandOutcome,
+      lifecycle: {
+        kind: "command_process",
+        processIdentityHash: sha("command-process"),
+        termination: {
+          status: "normal_exit",
+          exitCode: 0,
+        },
+        lifecycleReceiptHash: sha("command-lifecycle"),
+      },
+    });
+    assert.equal(candidate.operation.kind, "command");
+    const serializedOperation = JSON.stringify(candidate.operation);
+    assert.equal(serializedOperation.includes("launcher"), false);
+    assert.equal(serializedOperation.includes("transport"), false);
+    assert.equal(serializedOperation.includes("launchTarget"), false);
+    assert.equal("transportContractHash" in candidate.product, false);
+    assert.equal("launchTargetHash" in candidate.candidate, false);
+  });
+
+  it("keeps shadow candidates and activated-release data structurally disjoint", () => {
+    const identity = receiptIdentity();
+    const operationalIdentity: EvidenceReceiptHashPayloadV2 = {
+      ...identity,
+      authorityState: "activated_release_bound",
+      productionUse: "permitted_current_activation_lease_only",
+      release: {
+        kind: "activated_release",
+        activationAcknowledgementHash: sha("activation-ack"),
+        platformReleaseManifestHash: sha("platform-manifest"),
+        runtimePayloadHash: sha("runtime-payload"),
+        externalResolutionHash: sha("external-resolution"),
+        environmentCapsuleHash: sha("environment"),
+        toolchainHash: sha("toolchain"),
+        runnerDefinitionHash: sha("runner-definition"),
+        runnerModuleHash: sha("runner-module"),
+        runnerAbiHash: sha("runner-abi"),
+        receiptSchemaHash: evidenceReceiptAbiPolicyHashV2(),
+        adapterDefinitionHash: sha("adapter-definition"),
+        adapterCatalogHash: sha("adapter-catalog"),
+      },
+    };
+    const operational = {
+      ...operationalIdentity,
+      receiptHash: hashEvidenceReceiptV2(operationalIdentity),
+    };
+    assert.equal(EvidenceReceiptOperationalV2Schema.safeParse(operational).success, true);
+    assert.equal(EvidenceReceiptCandidateV2Schema.safeParse(operational).success, false);
+
+    const mismatched = {
+      ...receipt(),
+      productionUse: "permitted_current_activation_lease_only",
+    };
+    mismatched.receiptHash = hashEvidenceReceiptV2(mismatched as never);
+    assert.equal(EvidenceReceiptCandidateV2Schema.safeParse(mismatched).success, false);
+    assert.equal(EvidenceReceiptOperationalV2Schema.safeParse(mismatched).success, false);
   });
 
   it("rejects duration, lifecycle, capture, source, and direct hash drift after rehash", () => {
@@ -372,7 +505,7 @@ describe("EvidenceReceiptV2 candidate contract", () => {
       }),
       rehash({
         ...base,
-        sourceAfter: { sha: "c".repeat(40), treeHash: "d".repeat(40) },
+        sourceAfter: driftedSourceFence(),
       }),
     ];
     for (const candidate of cases) {
@@ -424,7 +557,7 @@ describe("EvidenceReceiptV2 candidate contract", () => {
       captureEnvelopeHashes: [CAPTURE_ENVELOPE_HASH],
     });
     const candidate = receipt({
-      sourceAfter: { sha: "c".repeat(40), treeHash: "d".repeat(40) },
+      sourceAfter: driftedSourceFence(),
       outcome: sourceRejected,
     });
     assert.equal(candidate.outcome.status, "source_rejected");

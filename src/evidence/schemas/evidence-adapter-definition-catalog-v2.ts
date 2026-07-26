@@ -44,15 +44,29 @@ const EMPTY_OPERATIONAL_ADAPTER_CATALOG_HASH_DOMAIN_V2 =
 const ADAPTER_DEFINITION_CATALOG_HASH_DOMAIN_V2 =
   "setfarm.evidence-adapter-definition-catalog-hash.v2";
 
-const ProfileRequirementV2Schema = z.object({
+const ProfileRequirementCommonV2Shape = {
   catalogSchema: z.literal(PRODUCT_DELIVERY_PROFILE_CATALOG_V2_SCHEMA),
   profileSchema: z.literal(PRODUCT_DELIVERY_PROFILE_V2_SCHEMA),
   catalogVersion: z.literal(PRODUCT_DELIVERY_PROFILE_CATALOG_V2_VERSION),
   catalogHash: Sha256Schema,
   profileId: z.enum(PRODUCT_DELIVERY_PROFILE_IDS_V2),
   profileHash: Sha256Schema,
-  launcherRef: z.enum(["LAUNCH_NODE_CLI_V2", "LAUNCH_NODE_EXPRESS_API_V2"]),
-}).strict();
+} as const;
+
+const ProfileRequirementV2Schema = z.discriminatedUnion("executionKind", [
+  z.object({
+    ...ProfileRequirementCommonV2Shape,
+    executionKind: z.literal("profile_launcher"),
+    launcherRef: z.enum([
+      "LAUNCH_NODE_CLI_V2",
+      "LAUNCH_NODE_EXPRESS_API_V2",
+    ]),
+  }).strict(),
+  z.object({
+    ...ProfileRequirementCommonV2Shape,
+    executionKind: z.literal("generated_test_command"),
+  }).strict(),
+]);
 
 const ReceiptSchemaBindingV2Schema = z.object({
   policySchema: z.literal(EVIDENCE_RECEIPT_ABI_POLICY_V2_SCHEMA),
@@ -78,27 +92,45 @@ const EvidenceCheckRequirementV2Schema = z.discriminatedUnion("predicateKind", [
     checkRef: z.literal("CHECK_OBSERVABLE_OUTCOME"),
     selectorRequirement: z.literal("invocation_output"),
   }).strict(),
+  z.object({
+    predicateKind: z.literal("test"),
+    checkRef: z.literal("CHECK_TEST_PASS"),
+    selectorRequirement: z.literal("generated_test_command"),
+  }).strict(),
 ]);
 
-const InvocationTransportRequirementV2Schema = z.object({
-  transportSchema: z.literal(INVOCATION_INPUT_TRANSPORT_ARTIFACT_TYPE_V2),
-  transportKind: z.enum(["cli_command", "http_request"]),
-  codecCatalogHash: Sha256Schema,
-  receiptAbiPolicyHash: Sha256Schema,
-}).strict();
+const EvidenceExecutionRequirementV2Schema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("invocation_transport"),
+    transportSchema: z.literal(INVOCATION_INPUT_TRANSPORT_ARTIFACT_TYPE_V2),
+    transportKind: z.enum(["cli_command", "http_request"]),
+    codecCatalogHash: Sha256Schema,
+    receiptAbiPolicyHash: Sha256Schema,
+  }).strict(),
+  z.object({
+    kind: z.literal("generated_test_command"),
+    buildTopologySchema: z.literal("setfarm.build-topology.v3"),
+    buildTopologyVersion: z.literal("3.2.0"),
+    commandRef: z.literal("CMD_NODE_PRODUCT_TEST_V3"),
+    runnerAbi: z.literal("NODE_TEST_RUNNER_DIRECT_FILE_ABI_V2"),
+    receiptAbiPolicyHash: Sha256Schema,
+  }).strict(),
+]);
 
 const EvidenceAdapterRequirementDefinitionIdentityV2Schema = z.object({
   schema: z.literal(EVIDENCE_ADAPTER_REQUIREMENT_DEFINITION_V2_SCHEMA),
   definitionRef: z.enum([
     "ADAPTER_REQUIREMENT_NODE_CLI_ACTION_INVOCATION_V2",
     "ADAPTER_REQUIREMENT_NODE_CLI_INVOCATION_OUTPUT_V2",
+    "ADAPTER_REQUIREMENT_NODE_CLI_GENERATED_TEST_V2",
     "ADAPTER_REQUIREMENT_NODE_EXPRESS_API_ACTION_INVOCATION_V2",
     "ADAPTER_REQUIREMENT_NODE_EXPRESS_API_INVOCATION_OUTPUT_V2",
+    "ADAPTER_REQUIREMENT_NODE_EXPRESS_API_GENERATED_TEST_V2",
   ]),
   profileRequirement: ProfileRequirementV2Schema,
-  invocationKind: z.enum(["cli_process", "http_service"]),
+  invocationKind: z.enum(["cli_process", "command", "http_service"]),
   checkRequirement: EvidenceCheckRequirementV2Schema,
-  transportRequirement: InvocationTransportRequirementV2Schema,
+  executionRequirement: EvidenceExecutionRequirementV2Schema,
 }).strict();
 
 export type EvidenceAdapterRequirementDefinitionHashPayloadV2 = z.infer<
@@ -186,7 +218,7 @@ const EvidenceAdapterDefinitionCatalogIdentityV2Schema = z.object({
   ]),
   receiptSchemaBinding: ReceiptSchemaBindingV2Schema,
   invocationCodecCatalogBinding: InvocationCodecCatalogBindingV2Schema,
-  definitions: z.array(EvidenceAdapterRequirementDefinitionV2Schema).length(4),
+  definitions: z.array(EvidenceAdapterRequirementDefinitionV2Schema).length(6),
   operationalCatalog: EmptyOperationalEvidenceAdapterCatalogV2Schema,
 }).strict();
 
@@ -209,18 +241,29 @@ export function hashEvidenceAdapterDefinitionCatalogV2(
 
 function profileRequirementV2(
   profileId: (typeof PRODUCT_DELIVERY_PROFILE_IDS_V2)[number],
+  executionKind: "profile_launcher" | "generated_test_command",
 ): z.infer<typeof ProfileRequirementV2Schema> {
   const catalog = getProductDeliveryProfileCatalogV2();
   const profile = catalog.profiles.find((candidate) => candidate.id === profileId)!;
-  return {
+  const common = {
     catalogSchema: catalog.schema,
-    profileSchema: PRODUCT_DELIVERY_PROFILE_V2_SCHEMA,
+    profileSchema: PRODUCT_DELIVERY_PROFILE_V2_SCHEMA as
+      typeof PRODUCT_DELIVERY_PROFILE_V2_SCHEMA,
     catalogVersion: catalog.catalogVersion,
     catalogHash: catalog.catalogHash,
     profileId: profile.id,
     profileHash: profile.profileHash,
-    launcherRef: profile.runtime.launcherRef,
-  };
+  } as const;
+  return executionKind === "profile_launcher"
+    ? {
+        ...common,
+        executionKind,
+        launcherRef: profile.runtime.launcherRef,
+      }
+    : {
+        ...common,
+        executionKind,
+      };
 }
 
 function receiptSchemaBindingV2() {
@@ -245,8 +288,22 @@ function codecCatalogBindingV2() {
 function adapterDefinitionIdentitiesV2(): EvidenceAdapterRequirementDefinitionHashPayloadV2[] {
   const codecCatalogHash = invocationTransportCodecCatalogHashV2();
   const receiptAbiPolicyHash = evidenceReceiptAbiPolicyHashV2();
-  const cliProfile = profileRequirementV2(PRODUCT_DELIVERY_PROFILE_IDS_V2[0]);
-  const apiProfile = profileRequirementV2(PRODUCT_DELIVERY_PROFILE_IDS_V2[1]);
+  const cliProfile = profileRequirementV2(
+    PRODUCT_DELIVERY_PROFILE_IDS_V2[0],
+    "profile_launcher",
+  );
+  const cliCommandProfile = profileRequirementV2(
+    PRODUCT_DELIVERY_PROFILE_IDS_V2[0],
+    "generated_test_command",
+  );
+  const apiProfile = profileRequirementV2(
+    PRODUCT_DELIVERY_PROFILE_IDS_V2[1],
+    "profile_launcher",
+  );
+  const apiCommandProfile = profileRequirementV2(
+    PRODUCT_DELIVERY_PROFILE_IDS_V2[1],
+    "generated_test_command",
+  );
   return [
     {
       schema: EVIDENCE_ADAPTER_REQUIREMENT_DEFINITION_V2_SCHEMA,
@@ -258,7 +315,8 @@ function adapterDefinitionIdentitiesV2(): EvidenceAdapterRequirementDefinitionHa
         checkRef: "CHECK_ACTION_INVOCATION",
         selectorRequirement: "action_subject",
       },
-      transportRequirement: {
+      executionRequirement: {
+        kind: "invocation_transport",
         transportSchema: INVOCATION_INPUT_TRANSPORT_ARTIFACT_TYPE_V2,
         transportKind: "cli_command",
         codecCatalogHash,
@@ -275,10 +333,30 @@ function adapterDefinitionIdentitiesV2(): EvidenceAdapterRequirementDefinitionHa
         checkRef: "CHECK_OBSERVABLE_OUTCOME",
         selectorRequirement: "invocation_output",
       },
-      transportRequirement: {
+      executionRequirement: {
+        kind: "invocation_transport",
         transportSchema: INVOCATION_INPUT_TRANSPORT_ARTIFACT_TYPE_V2,
         transportKind: "cli_command",
         codecCatalogHash,
+        receiptAbiPolicyHash,
+      },
+    },
+    {
+      schema: EVIDENCE_ADAPTER_REQUIREMENT_DEFINITION_V2_SCHEMA,
+      definitionRef: "ADAPTER_REQUIREMENT_NODE_CLI_GENERATED_TEST_V2",
+      profileRequirement: cliCommandProfile,
+      invocationKind: "command",
+      checkRequirement: {
+        predicateKind: "test",
+        checkRef: "CHECK_TEST_PASS",
+        selectorRequirement: "generated_test_command",
+      },
+      executionRequirement: {
+        kind: "generated_test_command",
+        buildTopologySchema: "setfarm.build-topology.v3",
+        buildTopologyVersion: "3.2.0",
+        commandRef: "CMD_NODE_PRODUCT_TEST_V3",
+        runnerAbi: "NODE_TEST_RUNNER_DIRECT_FILE_ABI_V2",
         receiptAbiPolicyHash,
       },
     },
@@ -292,7 +370,8 @@ function adapterDefinitionIdentitiesV2(): EvidenceAdapterRequirementDefinitionHa
         checkRef: "CHECK_ACTION_INVOCATION",
         selectorRequirement: "action_subject",
       },
-      transportRequirement: {
+      executionRequirement: {
+        kind: "invocation_transport",
         transportSchema: INVOCATION_INPUT_TRANSPORT_ARTIFACT_TYPE_V2,
         transportKind: "http_request",
         codecCatalogHash,
@@ -309,10 +388,31 @@ function adapterDefinitionIdentitiesV2(): EvidenceAdapterRequirementDefinitionHa
         checkRef: "CHECK_OBSERVABLE_OUTCOME",
         selectorRequirement: "invocation_output",
       },
-      transportRequirement: {
+      executionRequirement: {
+        kind: "invocation_transport",
         transportSchema: INVOCATION_INPUT_TRANSPORT_ARTIFACT_TYPE_V2,
         transportKind: "http_request",
         codecCatalogHash,
+        receiptAbiPolicyHash,
+      },
+    },
+    {
+      schema: EVIDENCE_ADAPTER_REQUIREMENT_DEFINITION_V2_SCHEMA,
+      definitionRef:
+        "ADAPTER_REQUIREMENT_NODE_EXPRESS_API_GENERATED_TEST_V2",
+      profileRequirement: apiCommandProfile,
+      invocationKind: "command",
+      checkRequirement: {
+        predicateKind: "test",
+        checkRef: "CHECK_TEST_PASS",
+        selectorRequirement: "generated_test_command",
+      },
+      executionRequirement: {
+        kind: "generated_test_command",
+        buildTopologySchema: "setfarm.build-topology.v3",
+        buildTopologyVersion: "3.2.0",
+        commandRef: "CMD_NODE_PRODUCT_TEST_V3",
+        runnerAbi: "NODE_TEST_RUNNER_DIRECT_FILE_ABI_V2",
         receiptAbiPolicyHash,
       },
     },

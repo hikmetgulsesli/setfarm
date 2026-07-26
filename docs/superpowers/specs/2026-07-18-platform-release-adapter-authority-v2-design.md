@@ -845,9 +845,12 @@ build/test receipt artifacts to migrate.
 
 Every runner returns one strict receipt that binds:
 
-- activation acknowledgement, release manifest, runner, adapter, launcher,
-  profile, topology, transport, candidate build/runtime/launch, environment,
-  and toolchain hashes;
+- either an explicit shadow-candidate release projection or an activation
+  acknowledgement, release manifest, runner and adapter projection; the two
+  authority states and their production-use policies are structurally
+  disjoint;
+- profile, topology and candidate build/runtime hashes plus one discriminated
+  operation binding: generated-test command, CLI launch or HTTP launch;
 - run/attempt/story/slice/evidence predicate identity;
 - exact CandidateSource content-tree revision before execution and exact
   post-execution source fence, plus origin-specific revision evidence when the
@@ -857,6 +860,19 @@ Every runner returns one strict receipt that binds:
 - check kind, typed observed result, pass/fail, and failure owner;
 - process/service lifecycle and exclusive port lease identity when applicable;
 - receipt payload hash.
+
+The command operation never fabricates launcher, invocation-transport,
+executable-binding or launch-target hashes. It instead binds the exact
+`CMD_NODE_PRODUCT_TEST_V3` command contract/definition and the compiled test
+member. CLI and HTTP operations bind their exact launcher, transport,
+executable binding, launch target and launcher observation. Operation kind must
+equal outcome/lifecycle check kind.
+
+Source fences are content-first. They bind CandidateSource receipt, semantic
+revision, source materialization, runtime bundle and physical fence hashes.
+Git commit/tree identity appears only in an explicit Git-origin variant; private
+generated source uses the explicit no-Git variant and never receives placeholder
+SHA values.
 
 Every attempted check returns a bounded `EvidenceOutcomeV2`. Pass/fail receipts
 and infrastructure/source rejections are durable typed variants; none disappear
@@ -941,7 +957,9 @@ The first support set is intentionally small:
   `observable_outcome` for the exact Node CLI ProfileV2;
 - HTTP service: the same predicate classes for the exact stateless Node Express
   API ProfileV2;
-- command: build/test only after the command runner emits ReceiptV2.
+- command: generated-test evidence only after the command runner emits
+  ReceiptV2. Build success remains owned by CandidateBuildReceiptV2 and is not
+  duplicated by rerunning or translating it into a second receipt.
 
 API memory persistence is not claimed until an exact state/readback runner
 exists. Browser, visual, download, reload, database, file, remote API, and

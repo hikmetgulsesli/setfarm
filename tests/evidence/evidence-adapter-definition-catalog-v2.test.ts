@@ -27,14 +27,16 @@ import {
 } from "../../src/evidence/schemas/evidence-receipt-v2.js";
 
 const ADAPTER_CATALOG_HASH_GOLDEN_V2 =
-  "4ffb30d9b63c1ae060ac3bf6cf14f57051dc1eb8fb01437b135c384986b6329b";
+  "104778b061270a02cc67f05681d1777933b11f2c17fc2e467516b6b1bb957b46";
 const EMPTY_OPERATIONAL_ADAPTER_CATALOG_HASH_GOLDEN_V2 =
   "c264dca319f59f4d3d483caa8c9e0b323372ae988978ef6685a26d0e7dc197ce";
 const ADAPTER_DEFINITION_HASH_GOLDENS_V2 = [
-  "507b0061b8c232e100ba8638a292ba6c9155e9cc06c068154f2847d543ed216e",
-  "51c6b235afc6c64fee6ad39752fa566a587532cc390a6ae1d62206e74dbf44cf",
-  "3ef1ea001972402a7f739b2ccefa7d56038907c826366872a3f492edc5a420c6",
-  "f03dbe37529ab3ede5bd6959d0006e4c56c22fd77dae7241677fff04c47bb7c2",
+  "760407c339995c81603dcd348e8a890eb1d032a7a287a2729d9753214624ac5b",
+  "5c387d774b7a711c909ce33049a68fe27216ae16f93a49ec5ec3473b97756592",
+  "10c0da4faf5224db3724ec2a6c3f997aa62e4f626e91c6a54c537a977240e9b7",
+  "384135a5542aee11279feed13195ba5c850e4a4247da2d27bfbfcf0320057d75",
+  "23108cdf26222d2b4ba89a572c57636362ae4c870283121bc5c0165c30c173d0",
+  "c8c1563c14fd216e9a06327b6dd8f72104c63667a4a5a69b8f2d45cdb74bfc74",
 ] as const;
 
 function assertDeepFrozen(value: unknown): void {
@@ -57,7 +59,7 @@ function allKeys(value: unknown, output = new Set<string>()): Set<string> {
 }
 
 describe("EvidenceAdapterDefinitionCatalogV2 requirements-only authority", () => {
-  it("publishes exactly four deterministic CLI/API invocation requirements", () => {
+  it("publishes exact CLI/API invocation and generated-test requirements", () => {
     const first = getEvidenceAdapterDefinitionCatalogV2();
     const second = getEvidenceAdapterDefinitionCatalogV2();
     assert.notEqual(first, second);
@@ -71,8 +73,10 @@ describe("EvidenceAdapterDefinitionCatalogV2 requirements-only authority", () =>
       [
         "ADAPTER_REQUIREMENT_NODE_CLI_ACTION_INVOCATION_V2",
         "ADAPTER_REQUIREMENT_NODE_CLI_INVOCATION_OUTPUT_V2",
+        "ADAPTER_REQUIREMENT_NODE_CLI_GENERATED_TEST_V2",
         "ADAPTER_REQUIREMENT_NODE_EXPRESS_API_ACTION_INVOCATION_V2",
         "ADAPTER_REQUIREMENT_NODE_EXPRESS_API_INVOCATION_OUTPUT_V2",
+        "ADAPTER_REQUIREMENT_NODE_EXPRESS_API_GENERATED_TEST_V2",
       ],
     );
     assert.deepEqual(
@@ -81,13 +85,17 @@ describe("EvidenceAdapterDefinitionCatalogV2 requirements-only authority", () =>
         definition.checkRequirement.predicateKind,
         definition.checkRequirement.checkRef,
         definition.checkRequirement.selectorRequirement,
-        definition.transportRequirement.transportKind,
+        definition.executionRequirement.kind === "invocation_transport"
+          ? definition.executionRequirement.transportKind
+          : definition.executionRequirement.commandRef,
       ]),
       [
         ["cli_process", "action_invocation", "CHECK_ACTION_INVOCATION", "action_subject", "cli_command"],
         ["cli_process", "observable_outcome", "CHECK_OBSERVABLE_OUTCOME", "invocation_output", "cli_command"],
+        ["command", "test", "CHECK_TEST_PASS", "generated_test_command", "CMD_NODE_PRODUCT_TEST_V3"],
         ["http_service", "action_invocation", "CHECK_ACTION_INVOCATION", "action_subject", "http_request"],
         ["http_service", "observable_outcome", "CHECK_OBSERVABLE_OUTCOME", "invocation_output", "http_request"],
+        ["command", "test", "CHECK_TEST_PASS", "generated_test_command", "CMD_NODE_PRODUCT_TEST_V3"],
       ],
     );
     assert.deepEqual(first.operationalCatalog, {
@@ -137,17 +145,32 @@ describe("EvidenceAdapterDefinitionCatalogV2 requirements-only authority", () =>
       assert.equal(definition.profileRequirement.catalogVersion, profiles.catalogVersion);
       assert.equal(definition.profileRequirement.catalogHash, profiles.catalogHash);
       assert.equal(definition.profileRequirement.profileHash, profile.profileHash);
-      assert.equal(definition.profileRequirement.launcherRef, profile.runtime.launcherRef);
+      if (definition.profileRequirement.executionKind === "profile_launcher") {
+        assert.equal(definition.profileRequirement.launcherRef, profile.runtime.launcherRef);
+      } else {
+        assert.equal("launcherRef" in definition.profileRequirement, false);
+      }
+      if (definition.executionRequirement.kind === "invocation_transport") {
+        assert.equal(
+          definition.executionRequirement.transportSchema,
+          INVOCATION_INPUT_TRANSPORT_ARTIFACT_TYPE_V2,
+        );
+        assert.equal(
+          definition.executionRequirement.codecCatalogHash,
+          invocationTransportCodecCatalogHashV2(),
+        );
+      } else {
+        assert.equal(
+          definition.executionRequirement.commandRef,
+          "CMD_NODE_PRODUCT_TEST_V3",
+        );
+        assert.equal(
+          definition.executionRequirement.runnerAbi,
+          "NODE_TEST_RUNNER_DIRECT_FILE_ABI_V2",
+        );
+      }
       assert.equal(
-        definition.transportRequirement.transportSchema,
-        INVOCATION_INPUT_TRANSPORT_ARTIFACT_TYPE_V2,
-      );
-      assert.equal(
-        definition.transportRequirement.codecCatalogHash,
-        invocationTransportCodecCatalogHashV2(),
-      );
-      assert.equal(
-        definition.transportRequirement.receiptAbiPolicyHash,
+        definition.executionRequirement.receiptAbiPolicyHash,
         evidenceReceiptAbiPolicyHashV2(),
       );
     }
@@ -160,8 +183,9 @@ describe("EvidenceAdapterDefinitionCatalogV2 requirements-only authority", () =>
         value.definitions[0]!.profileRequirement.profileHash = "a".repeat(64);
       },
       (value) => {
-        value.definitions[0]!.profileRequirement.launcherRef =
-          "LAUNCH_NODE_EXPRESS_API_V2";
+        const profile = value.definitions[0]!.profileRequirement;
+        if (profile.executionKind !== "profile_launcher") assert.fail();
+        profile.launcherRef = "LAUNCH_NODE_EXPRESS_API_V2";
       },
       (value) => {
         Object.assign(value.definitions[0]!.checkRequirement, {
@@ -171,13 +195,17 @@ describe("EvidenceAdapterDefinitionCatalogV2 requirements-only authority", () =>
         });
       },
       (value) => {
-        value.definitions[0]!.transportRequirement.transportKind = "http_request";
+        const requirement = value.definitions[0]!.executionRequirement;
+        if (requirement.kind !== "invocation_transport") assert.fail();
+        requirement.transportKind = "http_request";
       },
       (value) => {
-        value.definitions[0]!.transportRequirement.codecCatalogHash = "b".repeat(64);
+        const requirement = value.definitions[0]!.executionRequirement;
+        if (requirement.kind !== "invocation_transport") assert.fail();
+        requirement.codecCatalogHash = "b".repeat(64);
       },
       (value) => {
-        value.definitions[0]!.transportRequirement.receiptAbiPolicyHash = "c".repeat(64);
+        value.definitions[0]!.executionRequirement.receiptAbiPolicyHash = "c".repeat(64);
       },
       (value) => {
         value.receiptSchemaBinding.policyHash = "d".repeat(64);
@@ -197,7 +225,7 @@ describe("EvidenceAdapterDefinitionCatalogV2 requirements-only authority", () =>
     }
   });
 
-  it("forbids operational fixture entries, unknown fields, and non-invocation support", () => {
+  it("forbids operational fixtures, unknown fields, and unsupported evidence classes", () => {
     const candidate = structuredClone(getEvidenceAdapterDefinitionCatalogV2()) as unknown as {
       operationalCatalog: { schema: string; entries: unknown[]; catalogHash: string };
       catalogHash: string;
@@ -218,7 +246,6 @@ describe("EvidenceAdapterDefinitionCatalogV2 requirements-only authority", () =>
     const serialized = JSON.stringify(getEvidenceAdapterDefinitionCatalogV2());
     for (const forbidden of [
       "CHECK_BUILD_PASS",
-      "CHECK_TEST_PASS",
       "browser_dom",
       "persistence_round_trip",
       "download",
@@ -229,6 +256,15 @@ describe("EvidenceAdapterDefinitionCatalogV2 requirements-only authority", () =>
       "state_probe",
     ]) {
       assert.equal(serialized.includes(forbidden), false, forbidden);
+    }
+    const commandDefinitions = getEvidenceAdapterDefinitionCatalogV2().definitions
+      .filter((definition) => definition.invocationKind === "command");
+    assert.equal(commandDefinitions.length, 2);
+    for (const definition of commandDefinitions) {
+      assert.equal(definition.profileRequirement.executionKind, "generated_test_command");
+      assert.equal("launcherRef" in definition.profileRequirement, false);
+      assert.equal(definition.executionRequirement.kind, "generated_test_command");
+      assert.equal("transportSchema" in definition.executionRequirement, false);
     }
   });
 

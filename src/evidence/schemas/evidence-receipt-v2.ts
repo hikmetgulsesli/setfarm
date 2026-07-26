@@ -3,12 +3,12 @@ import { z } from "zod";
 import { hashCanonicalJson } from "../../product-compiler/canonical-json.js";
 import {
   EvidenceIdSchema,
+  GitCodeShaSchema,
   Sha256Schema,
   StableReferenceSchema,
   StoryIdSchema,
   hasUniqueStrings,
 } from "../../product-compiler/schemas/common-v1.js";
-import { SourceRevisionV1Schema } from "../../execution/schemas/execution-attempt-v1.js";
 import {
   PLATFORM_RELEASE_COMPONENT_VERSION_V2,
   boundedPlatformReleaseJsonSnapshotV2,
@@ -35,7 +35,7 @@ export const EVIDENCE_RECEIPT_V2_MAX_CAPTURES = 32;
 export const EVIDENCE_RECEIPT_V2_MAX_DURATION_MS = 86_400_000;
 export const EVIDENCE_HTTP_REQUEST_TIMEOUT_MS_V2 = 30_000;
 export const EVIDENCE_HTTP_RESPONSE_MAX_BYTES_V2 = 4 * 1024 * 1024;
-export const EVIDENCE_RECEIPT_SCHEMA_REVISION_V2 = "2.0.0-r1" as const;
+export const EVIDENCE_RECEIPT_SCHEMA_REVISION_V2 = "2.0.0-r2" as const;
 export const EVIDENCE_PROCESS_SIGNAL_NAMES_V2 = Object.freeze([
   "SIGABRT",
   "SIGALRM",
@@ -158,12 +158,18 @@ const EvidenceReceiptAbiPolicyIdentityV2Schema = z.object({
   httpPolicy: z.literal("exact_loopback_redirect_error_pass_2xx"),
   processPassPolicy: z.literal("normal_exit_required"),
   shapeSignatures: z.tuple([
-    z.literal("receipt:schema,version,authorityState,productionUse,release,product,candidate,execution,sourceBefore,sourceAfter,startedAt,finishedAt,durationMs,invocationRequestHash,invocationResponseHash,lifecycle,outcome,captures,receiptHash"),
-    z.literal("release:activationAcknowledgementHash,platformReleaseManifestHash,runtimePayloadHash,externalResolutionHash,environmentCapsuleHash,toolchainHash,launcherDefinitionHash,launcherModuleHash,runnerDefinitionHash,runnerModuleHash,receiptSchemaHash,adapterDefinitionHash,adapterCatalogHash"),
-    z.literal("product:packetHash,buildTopologyHash,profileCatalogHash,profileId,profileHash,stackPackHash,transportContractHash,executableTransportBindingHash"),
-    z.literal("candidate:buildReceiptHash,runtimeBundleHash,launchTargetHash"),
+    z.literal("receipt:schema,version,authorityState,productionUse,release,product,candidate,operation,execution,sourceBefore,sourceAfter,startedAt,finishedAt,durationMs,invocationRequestHash,invocationResponseHash,lifecycle,outcome,captures,receiptHash"),
+    z.literal("release.shadow:kind,platformCatalogHash,runnerRequirementHash,runnerSourceModuleHash,runnerAbiHash,receiptSchemaHash,adapterRequirementHash,adapterDefinitionCatalogHash"),
+    z.literal("release.activated:kind,activationAcknowledgementHash,platformReleaseManifestHash,runtimePayloadHash,externalResolutionHash,environmentCapsuleHash,toolchainHash,runnerDefinitionHash,runnerModuleHash,runnerAbiHash,receiptSchemaHash,adapterDefinitionHash,adapterCatalogHash"),
+    z.literal("product:packetHash,buildTopologyHash,profileCatalogHash,profileId,profileHash,stackPackHash"),
+    z.literal("candidate:buildReceiptHash,runtimeBundleHash"),
+    z.literal("operation.command:kind,runnerEntrypointRef,commandRef,commandContractHash,commandDefinitionHash,testOutputContentHash,testOutputByteLength"),
+    z.literal("operation.cli:kind,runnerEntrypointRef,launcherRef,launcherDefinitionHash,launcherModuleHash,launcherAbiHash,transportContractHash,executableTransportBindingHash,launchTargetHash,launcherObservationReceiptHash"),
+    z.literal("operation.http:kind,runnerEntrypointRef,launcherRef,launcherDefinitionHash,launcherModuleHash,launcherAbiHash,transportContractHash,executableTransportBindingHash,launchTargetHash,launcherObservationReceiptHash"),
     z.literal("execution:runId,attemptId,storyId,sliceHash,predicateRef"),
-    z.literal("sourceRevision:sha,treeHash"),
+    z.literal("sourceFence:schema,candidateSourceReceiptHash,semanticRevisionHash,sourceMaterializationReceiptHash,runtimeBundleHash,physicalFenceHash,origin"),
+    z.literal("sourceOrigin.none:kind"),
+    z.literal("sourceOrigin.git:kind,commitSha,treeHash"),
     z.literal("capture:schema,artifactEnvelopeHash,contentHash,byteLength,mediaType,encoding,redaction"),
     z.literal("capture.redaction:policyRef,policyHash,secretsRemoved,mutableLocatorStored"),
     z.literal("outcome:schema,version,checkKind,status,verdict,failureOwner,code,observedValueHash?,captureEnvelopeHashes,outcomeHash"),
@@ -189,13 +195,15 @@ const EvidenceReceiptAbiPolicyIdentityV2Schema = z.object({
     z.literal("lifecycle.not_started:kind,intendedCheckKind,reasonOwner,lifecycleReceiptHash"),
   ]),
   crossFieldRelations: z.tuple([
+    z.literal("authority_state_maps_exact_release_kind_and_production_use"),
+    z.literal("operation_kind_equals_check_kind"),
     z.literal("receipt_schema_hash_equals_exact_abi_policy_hash"),
     z.literal("outcome_status_maps_exact_verdict_owner_and_code"),
     z.literal("completed_product_outcome_requires_observed_value_hash"),
     z.literal("outcome_hash_binds_exact_typed_outcome"),
     z.literal("duration_equals_exact_utc_interval"),
     z.literal("timestamps_round_trip_exact_utc_milliseconds"),
-    z.literal("source_drift_requires_source_rejected"),
+    z.literal("content_first_source_drift_requires_source_rejected"),
     z.literal("invocation_response_equals_outcome_hash"),
     z.literal("lifecycle_kind_equals_check_kind_or_typed_not_started"),
     z.literal("not_started_owner_equals_outcome_owner"),
@@ -286,12 +294,18 @@ const EVIDENCE_RECEIPT_ABI_POLICY_IDENTITY_V2 = {
   httpPolicy: "exact_loopback_redirect_error_pass_2xx",
   processPassPolicy: "normal_exit_required",
   shapeSignatures: [
-    "receipt:schema,version,authorityState,productionUse,release,product,candidate,execution,sourceBefore,sourceAfter,startedAt,finishedAt,durationMs,invocationRequestHash,invocationResponseHash,lifecycle,outcome,captures,receiptHash",
-    "release:activationAcknowledgementHash,platformReleaseManifestHash,runtimePayloadHash,externalResolutionHash,environmentCapsuleHash,toolchainHash,launcherDefinitionHash,launcherModuleHash,runnerDefinitionHash,runnerModuleHash,receiptSchemaHash,adapterDefinitionHash,adapterCatalogHash",
-    "product:packetHash,buildTopologyHash,profileCatalogHash,profileId,profileHash,stackPackHash,transportContractHash,executableTransportBindingHash",
-    "candidate:buildReceiptHash,runtimeBundleHash,launchTargetHash",
+    "receipt:schema,version,authorityState,productionUse,release,product,candidate,operation,execution,sourceBefore,sourceAfter,startedAt,finishedAt,durationMs,invocationRequestHash,invocationResponseHash,lifecycle,outcome,captures,receiptHash",
+    "release.shadow:kind,platformCatalogHash,runnerRequirementHash,runnerSourceModuleHash,runnerAbiHash,receiptSchemaHash,adapterRequirementHash,adapterDefinitionCatalogHash",
+    "release.activated:kind,activationAcknowledgementHash,platformReleaseManifestHash,runtimePayloadHash,externalResolutionHash,environmentCapsuleHash,toolchainHash,runnerDefinitionHash,runnerModuleHash,runnerAbiHash,receiptSchemaHash,adapterDefinitionHash,adapterCatalogHash",
+    "product:packetHash,buildTopologyHash,profileCatalogHash,profileId,profileHash,stackPackHash",
+    "candidate:buildReceiptHash,runtimeBundleHash",
+    "operation.command:kind,runnerEntrypointRef,commandRef,commandContractHash,commandDefinitionHash,testOutputContentHash,testOutputByteLength",
+    "operation.cli:kind,runnerEntrypointRef,launcherRef,launcherDefinitionHash,launcherModuleHash,launcherAbiHash,transportContractHash,executableTransportBindingHash,launchTargetHash,launcherObservationReceiptHash",
+    "operation.http:kind,runnerEntrypointRef,launcherRef,launcherDefinitionHash,launcherModuleHash,launcherAbiHash,transportContractHash,executableTransportBindingHash,launchTargetHash,launcherObservationReceiptHash",
     "execution:runId,attemptId,storyId,sliceHash,predicateRef",
-    "sourceRevision:sha,treeHash",
+    "sourceFence:schema,candidateSourceReceiptHash,semanticRevisionHash,sourceMaterializationReceiptHash,runtimeBundleHash,physicalFenceHash,origin",
+    "sourceOrigin.none:kind",
+    "sourceOrigin.git:kind,commitSha,treeHash",
     "capture:schema,artifactEnvelopeHash,contentHash,byteLength,mediaType,encoding,redaction",
     "capture.redaction:policyRef,policyHash,secretsRemoved,mutableLocatorStored",
     "outcome:schema,version,checkKind,status,verdict,failureOwner,code,observedValueHash?,captureEnvelopeHashes,outcomeHash",
@@ -317,13 +331,15 @@ const EVIDENCE_RECEIPT_ABI_POLICY_IDENTITY_V2 = {
     "lifecycle.not_started:kind,intendedCheckKind,reasonOwner,lifecycleReceiptHash",
   ],
   crossFieldRelations: [
+    "authority_state_maps_exact_release_kind_and_production_use",
+    "operation_kind_equals_check_kind",
     "receipt_schema_hash_equals_exact_abi_policy_hash",
     "outcome_status_maps_exact_verdict_owner_and_code",
     "completed_product_outcome_requires_observed_value_hash",
     "outcome_hash_binds_exact_typed_outcome",
     "duration_equals_exact_utc_interval",
     "timestamps_round_trip_exact_utc_milliseconds",
-    "source_drift_requires_source_rejected",
+    "content_first_source_drift_requires_source_rejected",
     "invocation_response_equals_outcome_hash",
     "lifecycle_kind_equals_check_kind_or_typed_not_started",
     "not_started_owner_equals_outcome_owner",
@@ -806,29 +822,126 @@ export const EvidenceLifecycleBindingV2Schema = z.discriminatedUnion("kind", [
   NotStartedLifecycleBindingV2Schema,
 ]);
 
+export const EVIDENCE_SOURCE_FENCE_V2_SCHEMA =
+  "setfarm.evidence-source-fence.v2" as const;
+
+const EvidenceSourceOriginV2Schema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("private_content_first"),
+  }).strict(),
+  z.object({
+    kind: z.literal("git"),
+    commitSha: GitCodeShaSchema,
+    treeHash: GitCodeShaSchema,
+  }).strict(),
+]);
+
+export const EvidenceSourceFenceV2Schema = z.object({
+  schema: z.literal(EVIDENCE_SOURCE_FENCE_V2_SCHEMA),
+  candidateSourceReceiptHash: Sha256Schema,
+  semanticRevisionHash: Sha256Schema,
+  sourceMaterializationReceiptHash: Sha256Schema,
+  runtimeBundleHash: Sha256Schema,
+  physicalFenceHash: Sha256Schema,
+  origin: EvidenceSourceOriginV2Schema,
+}).strict();
+
+export type EvidenceSourceFenceV2 = z.infer<
+  typeof EvidenceSourceFenceV2Schema
+>;
+
+const ShadowCandidateReleaseBindingV2Schema = z.object({
+  kind: z.literal("shadow_candidate"),
+  platformCatalogHash: Sha256Schema,
+  runnerRequirementHash: Sha256Schema,
+  runnerSourceModuleHash: Sha256Schema,
+  runnerAbiHash: Sha256Schema,
+  receiptSchemaHash: Sha256Schema.refine(
+    (value) => value === EVIDENCE_RECEIPT_ABI_POLICY_V2.policyHash,
+    "Receipt schema hash must equal the code-owned EvidenceReceiptV2 ABI policy",
+  ),
+  adapterRequirementHash: Sha256Schema,
+  adapterDefinitionCatalogHash: Sha256Schema,
+}).strict();
+
+const ActivatedReleaseBindingV2Schema = z.object({
+  kind: z.literal("activated_release"),
+  activationAcknowledgementHash: Sha256Schema,
+  platformReleaseManifestHash: Sha256Schema,
+  runtimePayloadHash: Sha256Schema,
+  externalResolutionHash: Sha256Schema,
+  environmentCapsuleHash: Sha256Schema,
+  toolchainHash: Sha256Schema,
+  runnerDefinitionHash: Sha256Schema,
+  runnerModuleHash: Sha256Schema,
+  runnerAbiHash: Sha256Schema,
+  receiptSchemaHash: Sha256Schema.refine(
+    (value) => value === EVIDENCE_RECEIPT_ABI_POLICY_V2.policyHash,
+    "Receipt schema hash must equal the code-owned EvidenceReceiptV2 ABI policy",
+  ),
+  adapterDefinitionHash: Sha256Schema,
+  adapterCatalogHash: Sha256Schema,
+}).strict();
+
+export const EvidenceReleaseBindingV2Schema = z.discriminatedUnion("kind", [
+  ShadowCandidateReleaseBindingV2Schema,
+  ActivatedReleaseBindingV2Schema,
+]);
+
+const CommandEvidenceOperationV2Schema = z.object({
+  kind: z.literal("command"),
+  runnerEntrypointRef: z.literal("ENTRY_EVIDENCE_COMMAND_V2"),
+  commandRef: z.literal("CMD_NODE_PRODUCT_TEST_V3"),
+  commandContractHash: Sha256Schema,
+  commandDefinitionHash: Sha256Schema,
+  testOutputContentHash: Sha256Schema,
+  testOutputByteLength: z.number().int().positive().max(32 * 1024 * 1024),
+}).strict();
+
+const CliEvidenceOperationV2Schema = z.object({
+  kind: z.literal("cli_process"),
+  runnerEntrypointRef: z.literal("ENTRY_EVIDENCE_CLI_PROCESS_V2"),
+  launcherRef: z.literal("LAUNCH_NODE_CLI_V2"),
+  launcherDefinitionHash: Sha256Schema,
+  launcherModuleHash: Sha256Schema,
+  launcherAbiHash: Sha256Schema,
+  transportContractHash: Sha256Schema,
+  executableTransportBindingHash: Sha256Schema,
+  launchTargetHash: Sha256Schema,
+  launcherObservationReceiptHash: Sha256Schema,
+}).strict();
+
+const HttpEvidenceOperationV2Schema = z.object({
+  kind: z.literal("http_service"),
+  runnerEntrypointRef: z.literal("ENTRY_EVIDENCE_HTTP_SERVICE_V2"),
+  launcherRef: z.literal("LAUNCH_NODE_EXPRESS_API_V2"),
+  launcherDefinitionHash: Sha256Schema,
+  launcherModuleHash: Sha256Schema,
+  launcherAbiHash: Sha256Schema,
+  transportContractHash: Sha256Schema,
+  executableTransportBindingHash: Sha256Schema,
+  launchTargetHash: Sha256Schema,
+  launcherObservationReceiptHash: Sha256Schema,
+}).strict();
+
+export const EvidenceOperationBindingV2Schema = z.discriminatedUnion("kind", [
+  CommandEvidenceOperationV2Schema,
+  CliEvidenceOperationV2Schema,
+  HttpEvidenceOperationV2Schema,
+]);
+
 const EvidenceReceiptIdentityV2Schema = z.object({
   schema: z.literal(EVIDENCE_RECEIPT_V2_SCHEMA),
   version: z.literal(PLATFORM_RELEASE_COMPONENT_VERSION_V2),
-  authorityState: z.literal("candidate_unverified"),
-  productionUse: z.literal("forbidden"),
-  release: z.object({
-    activationAcknowledgementHash: Sha256Schema,
-    platformReleaseManifestHash: Sha256Schema,
-    runtimePayloadHash: Sha256Schema,
-    externalResolutionHash: Sha256Schema,
-    environmentCapsuleHash: Sha256Schema,
-    toolchainHash: Sha256Schema,
-    launcherDefinitionHash: Sha256Schema,
-    launcherModuleHash: Sha256Schema,
-    runnerDefinitionHash: Sha256Schema,
-    runnerModuleHash: Sha256Schema,
-    receiptSchemaHash: Sha256Schema.refine(
-      (value) => value === EVIDENCE_RECEIPT_ABI_POLICY_V2.policyHash,
-      "Receipt schema hash must equal the code-owned EvidenceReceiptV2 ABI policy",
-    ),
-    adapterDefinitionHash: Sha256Schema,
-    adapterCatalogHash: Sha256Schema,
-  }).strict(),
+  authorityState: z.enum([
+    "candidate_unverified",
+    "activated_release_bound",
+  ]),
+  productionUse: z.enum([
+    "forbidden",
+    "permitted_current_activation_lease_only",
+  ]),
+  release: EvidenceReleaseBindingV2Schema,
   product: z.object({
     packetHash: Sha256Schema,
     buildTopologyHash: Sha256Schema,
@@ -836,14 +949,12 @@ const EvidenceReceiptIdentityV2Schema = z.object({
     profileId: StableReferenceSchema,
     profileHash: Sha256Schema,
     stackPackHash: Sha256Schema,
-    transportContractHash: Sha256Schema,
-    executableTransportBindingHash: Sha256Schema,
   }).strict(),
   candidate: z.object({
     buildReceiptHash: Sha256Schema,
     runtimeBundleHash: Sha256Schema,
-    launchTargetHash: Sha256Schema,
   }).strict(),
+  operation: EvidenceOperationBindingV2Schema,
   execution: z.object({
     runId: RunIdentityV2Schema,
     attemptId: AttemptIdentityV2Schema,
@@ -851,8 +962,8 @@ const EvidenceReceiptIdentityV2Schema = z.object({
     sliceHash: Sha256Schema,
     predicateRef: EvidenceIdSchema,
   }).strict(),
-  sourceBefore: SourceRevisionV1Schema,
-  sourceAfter: SourceRevisionV1Schema,
+  sourceBefore: EvidenceSourceFenceV2Schema,
+  sourceAfter: EvidenceSourceFenceV2Schema,
   startedAt: ExactUtcMillisecondTimestampV2Schema,
   finishedAt: ExactUtcMillisecondTimestampV2Schema,
   durationMs: z.number().int().nonnegative().max(EVIDENCE_RECEIPT_V2_MAX_DURATION_MS),
@@ -864,6 +975,30 @@ const EvidenceReceiptIdentityV2Schema = z.object({
     .min(1)
     .max(EVIDENCE_RECEIPT_V2_MAX_CAPTURES),
 }).strict().superRefine((value, context) => {
+  const shadowAuthority =
+    value.authorityState === "candidate_unverified"
+    && value.productionUse === "forbidden"
+    && value.release.kind === "shadow_candidate";
+  const activatedAuthority =
+    value.authorityState === "activated_release_bound"
+    && value.productionUse === "permitted_current_activation_lease_only"
+    && value.release.kind === "activated_release";
+  if (!shadowAuthority && !activatedAuthority) {
+    context.addIssue({
+      code: "custom",
+      path: ["authorityState"],
+      message: "Receipt authority state must map to one exact release binding and production-use policy",
+    });
+  }
+
+  if (value.operation.kind !== value.outcome.checkKind) {
+    context.addIssue({
+      code: "custom",
+      path: ["operation", "kind"],
+      message: "Evidence operation kind must equal the typed outcome check kind",
+    });
+  }
+
   const started = Date.parse(value.startedAt);
   const finished = Date.parse(value.finishedAt);
   if (finished < started || finished - started !== value.durationMs) {
@@ -874,8 +1009,8 @@ const EvidenceReceiptIdentityV2Schema = z.object({
     });
   }
 
-  const sourceChanged = value.sourceBefore.sha !== value.sourceAfter.sha
-    || value.sourceBefore.treeHash !== value.sourceAfter.treeHash;
+  const sourceChanged =
+    JSON.stringify(value.sourceBefore) !== JSON.stringify(value.sourceAfter);
   if (sourceChanged && value.outcome.status !== "source_rejected") {
     context.addIssue({
       code: "custom",
@@ -1008,9 +1143,10 @@ export function hashEvidenceReceiptV2(
   });
 }
 
-export const EvidenceReceiptCandidateV2Schema = EvidenceReceiptIdentityV2Schema.extend({
-  receiptHash: Sha256Schema,
-}).strict().superRefine((value, context) => {
+function addEvidenceReceiptHashIssuesV2(
+  value: EvidenceReceiptHashPayloadV2 & Readonly<{ receiptHash: string }>,
+  context: z.RefinementCtx,
+): void {
   if (!platformReleaseCandidateFitsCanonicalCapV2(
     value,
     EVIDENCE_RECEIPT_V2_MAX_CANONICAL_BYTES,
@@ -1028,10 +1164,50 @@ export const EvidenceReceiptCandidateV2Schema = EvidenceReceiptIdentityV2Schema.
       message: "Evidence receipt hash must bind the exact candidate receipt",
     });
   }
-});
+}
+
+export const EvidenceReceiptV2Schema = EvidenceReceiptIdentityV2Schema.extend({
+  receiptHash: Sha256Schema,
+}).strict().superRefine(addEvidenceReceiptHashIssuesV2);
+
+export const EvidenceReceiptCandidateV2Schema =
+  EvidenceReceiptV2Schema.superRefine((value, context) => {
+    if (
+      value.authorityState !== "candidate_unverified"
+      || value.productionUse !== "forbidden"
+      || value.release.kind !== "shadow_candidate"
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["authorityState"],
+        message: "Candidate receipt parser accepts only shadow candidate authority",
+      });
+    }
+  });
+
+export const EvidenceReceiptOperationalV2Schema =
+  EvidenceReceiptV2Schema.superRefine((value, context) => {
+    if (
+      value.authorityState !== "activated_release_bound"
+      || value.productionUse !== "permitted_current_activation_lease_only"
+      || value.release.kind !== "activated_release"
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["authorityState"],
+        message: "Operational receipt data requires one activated-release binding",
+      });
+    }
+  });
 
 export type EvidenceReceiptCandidateV2 = z.infer<
   typeof EvidenceReceiptCandidateV2Schema
+>;
+
+export type EvidenceReceiptV2 = z.infer<typeof EvidenceReceiptV2Schema>;
+
+export type EvidenceReceiptOperationalV2 = z.infer<
+  typeof EvidenceReceiptOperationalV2Schema
 >;
 
 export function parseEvidenceReceiptCandidateV2(
