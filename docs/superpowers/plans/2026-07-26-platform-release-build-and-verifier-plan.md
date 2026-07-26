@@ -217,6 +217,44 @@ bootstrap. Until the fixed-root release package, installed verifier, and
 durable runtime-account receipt exist, the production composition opener fails
 closed with no fixture/current-source/ambient fallback.
 
+#### B5D-0 delivery split and selected production provenance
+
+`B5D-0a` is the identity-only mechanical slice. It owns the strict pathless
+receipt, exact ten-role requirement, descriptor-bounded test-fixture capture,
+opaque capability, private host-Node retention, fresh host/composition fences,
+terminal capsule revalidation ownership, and exhaustive typed capsule-to-pair
+error translation. Its production opener remains zero-input and deliberately
+returns `HOST_COMPOSITION_BOOTSTRAP_UNAVAILABLE`.
+
+`B5D-0b` is the mandatory production-provenance slice. It is one private
+authority DAG, not a list of interchangeable designs:
+
+1. an independently installed native host-composition verifier package under
+   `/Library/Application Support/Setfarm/bootstrap/host-composition-verifier-v2`;
+2. an independently installed release-composition package under
+   `/Library/Application Support/Setfarm/bootstrap/platform-release-composition-v2`;
+3. a Darwin system-anchor authority for exact `/usr/bin/xattr`, `/bin/ls`,
+   `/bin/chmod`, and `/usr/bin/sandbox-exec` physical files and their two exact
+   parents;
+4. a durable `SETFARM_PLATFORM_RELEASE_RUNTIME_V2` OS-account authority;
+5. the zero-input aggregate composition opener, which independently reproduces
+   the base Node/npm host projection, opens all four leaf authorities, performs
+   two equal full captures, and issues the production capability.
+
+The verifier and release packages each carry an exact root-owned manifest,
+every-and-only directory membership, provisioning receipt, member hashes/modes,
+and physical root identity. Public receipts contain stable refs and hashes, not
+locators. The xattr observer and clearer are two logical roles bound to the same
+physical `/usr/bin/xattr` receipt. Package membership binds manifest entry and
+root/directory identities without referring back to the aggregate receipt, so
+the identity graph is acyclic.
+
+The existing single-root constructor remains structurally test-only. An
+`origin` string never proves package provenance. No B5D-1 production operation
+may execute until all B5D-0b leaf authorities exist and the zero-input aggregate
+opener succeeds. B5D-1 mechanics may be exercised with the non-promotable test
+authority, but those results cannot unlock production composition.
+
 ### B5D-1 — Operational Evidence ABIs
 
 Add authenticated, fixed-argv, no-shell, bounded host operations for metadata,
@@ -370,7 +408,11 @@ usable RegistryV2 or silently omit command evidence.
    - production npm host ABI;
    - lock/package/bin verification and double dependency trees.
 4. `feat(release): compose authentic release`
-   - observed runtime/external/environment/catalog builder;
+   - B5D-0a test-scoped composition mechanics and private host retention;
+   - B5D-0b installed verifier/release packages, system anchors, and durable
+     runtime-account authority;
+   - authenticated operational ABIs and observed
+     runtime/external/environment/catalog builder;
    - authentic terminal-writer input.
 5. `feat(release): publish immutable content`
    - release-store leases, rename/adoption, separate attestation CAS, prepared

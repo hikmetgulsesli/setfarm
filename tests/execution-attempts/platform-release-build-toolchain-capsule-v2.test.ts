@@ -105,6 +105,14 @@ import {
   validatePlatformReleaseSourceLockAuthorityInternalV2,
 } from
   "../../src/execution/platform-release-build-toolchain-materialization-v2.js";
+import {
+  materializePlatformReleaseHostCompositionFixtureV2,
+} from
+  "./helpers/platform-release-host-composition-fixture-v2.js";
+import type {
+  PlatformReleaseHostCompositionFixtureV2,
+} from
+  "../../src/execution/platform-release-host-composition-authority-v2.js";
 
 const GIT = "/usr/bin/git";
 const roots: string[] = [];
@@ -122,6 +130,9 @@ type HostFixtureV2 = Readonly<{
   npmRoot: string;
   npmCli: string;
   dynamicLibrary: string;
+  compositionFixture:
+    PlatformReleaseHostCompositionFixtureV2;
+  compositionFiles: Readonly<Record<string, string>>;
 }>;
 
 type RepositoryFixtureV2 = Readonly<{
@@ -466,6 +477,11 @@ function createHostFixtureV2(): HostFixtureV2 {
     "setfarm-platform-build-toolchain-host-v2-",
   )));
   roots.push(root);
+  const composition =
+    materializePlatformReleaseHostCompositionFixtureV2(
+      "setfarm-platform-build-composition-v2-",
+    );
+  roots.push(composition.root);
   const node = path.join(root, "bin", "node");
   const npmRoot =
     path.join(root, "lib", "node_modules", "npm");
@@ -529,6 +545,8 @@ function createHostFixtureV2(): HostFixtureV2 {
     npmRoot,
     npmCli,
     dynamicLibrary,
+    compositionFixture: composition.fixture,
+    compositionFiles: composition.files,
   });
 }
 
@@ -883,6 +901,7 @@ async function createPlatformHostV2(
     });
   return createPlatformReleaseHostNodeToolchainAuthorityV2ForTest({
     hostToolchain: bootstrap,
+    compositionFixture: fixture.compositionFixture,
   });
 }
 
@@ -1427,6 +1446,297 @@ describe("PlatformReleaseBuildToolchainCapsuleV2", () => {
     } finally {
       disposePlatformReleaseSourceStageV2(source);
     }
+  });
+
+  it("classifies composition drift during npm as host drift instead of install failure", async () => {
+    const repository = createRepositoryFixtureV2();
+    const hostFixture = createHostFixtureV2();
+    const source = admittedSourceV2(repository);
+    let sourceRoot = "";
+    withPlatformReleaseSourceStageForTestV2(
+      source,
+      (root) => {
+        sourceRoot = root;
+      },
+    );
+    const host = await createPlatformHostV2(
+      hostFixture,
+      "valid",
+      undefined,
+      undefined,
+      () => {
+        const target =
+          hostFixture.compositionFiles[
+            "lib/network-wrapper.mjs"
+          ]!;
+        chmodSync(target, 0o644);
+        writeFileSync(target, "drift-during-npm\n");
+        chmodSync(target, 0o444);
+      },
+    );
+
+    await assert.rejects(
+      materializePlatformReleaseBuildToolchainCapsuleV2ForTest({
+        sourceStage: source,
+        hostToolchain: host,
+      }),
+      {
+        code:
+          "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_HOST_DRIFT",
+      },
+    );
+    assert.equal(existsSync(path.dirname(sourceRoot)), false);
+  });
+
+  it("classifies composition drift during a build occurrence as toolchain drift", async () => {
+    const repository = createRepositoryFixtureV2();
+    const hostFixture = createHostFixtureV2();
+    const source = admittedSourceV2(repository);
+    let sourceRoot = "";
+    withPlatformReleaseSourceStageForTestV2(
+      source,
+      (root) => {
+        sourceRoot = root;
+      },
+    );
+    const host = await createPlatformHostV2(
+      hostFixture,
+      "valid",
+      undefined,
+      (_invocation, occurrence) => {
+        if (occurrence === 1) {
+          const target =
+            hostFixture.compositionFiles[
+              "lib/network-wrapper.mjs"
+            ]!;
+          chmodSync(target, 0o644);
+          writeFileSync(target, "drift-during-build\n");
+          chmodSync(target, 0o444);
+        }
+        return undefined;
+      },
+    );
+    const capsule =
+      await materializePlatformReleaseBuildToolchainCapsuleV2ForTest({
+        sourceStage: source,
+        hostToolchain: host,
+      });
+
+    await assert.rejects(
+      materializePlatformReleaseCompiledOutputPairV2ForTest({
+        sourceStage: source,
+        buildToolchain: capsule,
+      }),
+      {
+        code:
+          "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_TOOLCHAIN_DRIFT",
+      },
+    );
+    assert.equal(existsSync(path.dirname(sourceRoot)), false);
+  });
+
+  it("preserves source drift instead of relabeling it as a build failure", async () => {
+    const repository = createRepositoryFixtureV2();
+    const hostFixture = createHostFixtureV2();
+    const source = admittedSourceV2(repository);
+    let sourceRoot = "";
+    withPlatformReleaseSourceStageForTestV2(
+      source,
+      (root) => {
+        sourceRoot = root;
+      },
+    );
+    const host = await createPlatformHostV2(
+      hostFixture,
+      "valid",
+    );
+    const capsule =
+      await materializePlatformReleaseBuildToolchainCapsuleV2ForTest({
+        sourceStage: source,
+        hostToolchain: host,
+      });
+    const packagePath = path.join(
+      sourceRoot,
+      "package.json",
+    );
+    chmodSync(packagePath, 0o644);
+    writeFileSync(packagePath, "{\"drift\":true}\n");
+    chmodSync(packagePath, 0o444);
+
+    await assert.rejects(
+      materializePlatformReleaseCompiledOutputPairV2ForTest({
+        sourceStage: source,
+        buildToolchain: capsule,
+      }),
+      {
+        code:
+          "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_SOURCE_DRIFT",
+      },
+    );
+    assert.equal(existsSync(path.dirname(sourceRoot)), false);
+  });
+
+  it("maps sealed toolchain-tree drift to terminal compiled toolchain drift", async () => {
+    const repository = createRepositoryFixtureV2();
+    const hostFixture = createHostFixtureV2();
+    const source = admittedSourceV2(repository);
+    let sourceRoot = "";
+    let nodeModulesRoot = "";
+    withPlatformReleaseSourceStageForTestV2(
+      source,
+      (root) => {
+        sourceRoot = root;
+      },
+    );
+    const host = await createPlatformHostV2(
+      hostFixture,
+      "valid",
+    );
+    const capsule =
+      await materializePlatformReleaseBuildToolchainCapsuleV2ForTest({
+        sourceStage: source,
+        hostToolchain: host,
+      });
+    await withPlatformReleaseBuildToolchainCapsuleForTestV2(
+      capsule,
+      (root) => {
+        nodeModulesRoot = root;
+      },
+    );
+    const compilerPath = path.join(
+      nodeModulesRoot,
+      "typescript",
+      "bin",
+      "tsc",
+    );
+    chmodSync(compilerPath, 0o755);
+    writeFileSync(
+      compilerPath,
+      "#!/usr/bin/env node\n// sealed-tree-drift\n",
+    );
+    chmodSync(compilerPath, 0o555);
+
+    await assert.rejects(
+      materializePlatformReleaseCompiledOutputPairV2ForTest({
+        sourceStage: source,
+        buildToolchain: capsule,
+      }),
+      {
+        code:
+          "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_TOOLCHAIN_DRIFT",
+      },
+    );
+    assert.equal(existsSync(path.dirname(sourceRoot)), false);
+  });
+
+  it("claims capsule revalidation once and terminally cleans host drift", async () => {
+    const repository = createRepositoryFixtureV2();
+    const hostFixture = createHostFixtureV2();
+    const source = admittedSourceV2(repository);
+    let sourceRoot = "";
+    withPlatformReleaseSourceStageForTestV2(
+      source,
+      (root) => {
+        sourceRoot = root;
+      },
+    );
+    const host = await createPlatformHostV2(
+      hostFixture,
+      "valid",
+    );
+    const capsule =
+      await materializePlatformReleaseBuildToolchainCapsuleV2ForTest({
+        sourceStage: source,
+        hostToolchain: host,
+      });
+    const compositionTarget =
+      hostFixture.compositionFiles[
+        "lib/network-wrapper.mjs"
+      ]!;
+    chmodSync(compositionTarget, 0o644);
+    writeFileSync(
+      compositionTarget,
+      "concurrent-revalidation-drift\n",
+    );
+    chmodSync(compositionTarget, 0o444);
+
+    const first =
+      revalidatePlatformReleaseBuildToolchainCapsuleV2(
+        capsule,
+      );
+    const concurrent =
+      revalidatePlatformReleaseBuildToolchainCapsuleV2(
+        capsule,
+      );
+    await assert.rejects(
+      concurrent,
+      {
+        code:
+          "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_REVALIDATION_IN_FLIGHT",
+      },
+    );
+    await assert.rejects(
+      first,
+      {
+        code:
+          "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_HOST_DRIFT",
+      },
+    );
+    assert.equal(existsSync(path.dirname(sourceRoot)), false);
+    await assert.rejects(
+      revalidatePlatformReleaseBuildToolchainCapsuleV2(
+        capsule,
+      ),
+      {
+        code:
+          "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_SOURCE_DRIFT",
+      },
+    );
+    assert.throws(
+      () => disposePlatformReleaseSourceStageV2(source),
+      {
+        code:
+          "PLATFORM_RELEASE_SOURCE_V2_HANDLE_DISPOSED",
+      },
+    );
+  });
+
+  it("keeps source disposal outside an in-flight capsule revalidation claim", async () => {
+    const repository = createRepositoryFixtureV2();
+    const hostFixture = createHostFixtureV2();
+    const source = admittedSourceV2(repository);
+    const host = await createPlatformHostV2(
+      hostFixture,
+      "valid",
+    );
+    const capsule =
+      await materializePlatformReleaseBuildToolchainCapsuleV2ForTest({
+        sourceStage: source,
+        hostToolchain: host,
+      });
+
+    const revalidation =
+      revalidatePlatformReleaseBuildToolchainCapsuleV2(
+        capsule,
+      );
+    assert.throws(
+      () => disposePlatformReleaseSourceStageV2(source),
+      {
+        code:
+          "PLATFORM_RELEASE_SOURCE_V2_MATERIALIZATION_BUSY",
+      },
+    );
+    await revalidation;
+    disposePlatformReleaseSourceStageV2(source);
+    await assert.rejects(
+      revalidatePlatformReleaseBuildToolchainCapsuleV2(
+        capsule,
+      ),
+      {
+        code:
+          "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_SOURCE_DRIFT",
+      },
+    );
   });
 
   it("owns two independent canonical compiled outputs and disposes every root", async () => {
@@ -2786,7 +3096,13 @@ describe("PlatformReleaseBuildToolchainCapsuleV2", () => {
         && error.code
           === "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_TREE_INVALID",
     );
-    disposePlatformReleaseSourceStageV2(source);
+    assert.throws(
+      () => disposePlatformReleaseSourceStageV2(source),
+      {
+        code:
+          "PLATFORM_RELEASE_SOURCE_V2_HANDLE_DISPOSED",
+      },
+    );
     await assert.rejects(
       revalidatePlatformReleaseBuildToolchainCapsuleV2(
         capsule,
@@ -3348,6 +3664,169 @@ describe("PlatformReleaseDependencyMaterializedPairV2", () => {
         }
       }
     }
+  });
+
+  it("classifies private host-composition drift as terminal toolchain drift and cleans the dependency pair once", async () => {
+    const repository = createRepositoryFixtureV2();
+    const hostFixture = createHostFixtureV2();
+    const source = admittedSourceV2(repository);
+    let sourceRoot = "";
+    let firstOutputRoot = "";
+    let secondOutputRoot = "";
+    withPlatformReleaseSourceStageForTestV2(
+      source,
+      (root) => {
+        sourceRoot = root;
+      },
+    );
+    const host = await createPlatformHostV2(
+      hostFixture,
+      "valid",
+    );
+    const capsule =
+      await materializePlatformReleaseBuildToolchainCapsuleV2ForTest({
+        sourceStage: source,
+        hostToolchain: host,
+      });
+    const compiledPair =
+      await materializePlatformReleaseCompiledOutputPairV2ForTest({
+        sourceStage: source,
+        buildToolchain: capsule,
+      });
+    const dependencyPair =
+      await materializePlatformReleaseDependencyMaterializedPairForTestV2(
+        compiledPair,
+      );
+    await withPlatformReleaseDependencyMaterializedPairForTestV2(
+      dependencyPair,
+      (outputRoots) => {
+        firstOutputRoot = outputRoots.firstOutputRoot;
+        secondOutputRoot = outputRoots.secondOutputRoot;
+      },
+    );
+    const compositionTarget =
+      hostFixture.compositionFiles[
+        "lib/network-wrapper.mjs"
+      ]!;
+    chmodSync(compositionTarget, 0o644);
+    writeFileSync(compositionTarget, "private-drift\n");
+    chmodSync(compositionTarget, 0o444);
+
+    await assert.rejects(
+      revalidatePlatformReleaseDependencyMaterializedPairV2(
+        dependencyPair,
+      ),
+      {
+        code:
+          "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_TOOLCHAIN_DRIFT",
+      },
+    );
+    assert.equal(existsSync(path.dirname(sourceRoot)), false);
+    assert.equal(
+      existsSync(path.dirname(firstOutputRoot)),
+      false,
+    );
+    assert.equal(
+      existsSync(path.dirname(secondOutputRoot)),
+      false,
+    );
+    assert.throws(
+      () =>
+        disposePlatformReleaseDependencyMaterializedPairV2(
+          dependencyPair,
+        ),
+      {
+        code:
+          "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_SOURCE_DRIFT",
+      },
+    );
+  });
+
+  it("maps sealed capsule-tree drift to terminal dependency toolchain drift", async () => {
+    const repository = createRepositoryFixtureV2();
+    const hostFixture = createHostFixtureV2();
+    const source = admittedSourceV2(repository);
+    let sourceRoot = "";
+    let nodeModulesRoot = "";
+    let firstOutputRoot = "";
+    let secondOutputRoot = "";
+    withPlatformReleaseSourceStageForTestV2(
+      source,
+      (root) => {
+        sourceRoot = root;
+      },
+    );
+    const host = await createPlatformHostV2(
+      hostFixture,
+      "valid",
+    );
+    const capsule =
+      await materializePlatformReleaseBuildToolchainCapsuleV2ForTest({
+        sourceStage: source,
+        hostToolchain: host,
+      });
+    await withPlatformReleaseBuildToolchainCapsuleForTestV2(
+      capsule,
+      (root) => {
+        nodeModulesRoot = root;
+      },
+    );
+    const compiledPair =
+      await materializePlatformReleaseCompiledOutputPairV2ForTest({
+        sourceStage: source,
+        buildToolchain: capsule,
+      });
+    const dependencyPair =
+      await materializePlatformReleaseDependencyMaterializedPairForTestV2(
+        compiledPair,
+      );
+    await withPlatformReleaseDependencyMaterializedPairForTestV2(
+      dependencyPair,
+      (outputRoots) => {
+        firstOutputRoot = outputRoots.firstOutputRoot;
+        secondOutputRoot = outputRoots.secondOutputRoot;
+      },
+    );
+    const compilerPath = path.join(
+      nodeModulesRoot,
+      "typescript",
+      "bin",
+      "tsc",
+    );
+    chmodSync(compilerPath, 0o755);
+    writeFileSync(
+      compilerPath,
+      "#!/usr/bin/env node\n// dependency-tree-drift\n",
+    );
+    chmodSync(compilerPath, 0o555);
+
+    await assert.rejects(
+      revalidatePlatformReleaseDependencyMaterializedPairV2(
+        dependencyPair,
+      ),
+      {
+        code:
+          "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_TOOLCHAIN_DRIFT",
+      },
+    );
+    assert.equal(existsSync(path.dirname(sourceRoot)), false);
+    assert.equal(
+      existsSync(path.dirname(firstOutputRoot)),
+      false,
+    );
+    assert.equal(
+      existsSync(path.dirname(secondOutputRoot)),
+      false,
+    );
+    await assert.rejects(
+      revalidatePlatformReleaseDependencyMaterializedPairV2(
+        dependencyPair,
+      ),
+      {
+        code:
+          "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_SOURCE_DRIFT",
+      },
+    );
   });
 
   const terminalFaultCheckpoints = [

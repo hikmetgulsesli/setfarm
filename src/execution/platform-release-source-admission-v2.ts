@@ -339,6 +339,7 @@ type PlatformReleaseSourceContextLifecycleV2 =
   | "source_admitted"
   | "toolchain_materializing"
   | "toolchain_materialized"
+  | "toolchain_revalidating"
   | "double_build_running"
   | "double_build_complete"
   | "dependency_materializing"
@@ -478,6 +479,7 @@ export type PlatformReleaseBuildToolchainCapsuleErrorCodeV2 =
   | "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_TREE_INVALID"
   | "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_CONTEXT_INVALID"
   | "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_ALREADY_MATERIALIZED"
+  | "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_REVALIDATION_IN_FLIGHT"
   | "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_CLEANUP_FAILED"
   | "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_HANDLE_UNAUTHENTICATED";
 
@@ -590,6 +592,7 @@ export type PlatformReleaseDependencyMaterializedPairErrorCodeV2 =
   | "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_ALREADY_CLAIMED"
   | "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_SOURCE_DRIFT"
   | "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_TOOLCHAIN_DRIFT"
+  | "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_HOST_COMPOSITION_BOOTSTRAP_UNAVAILABLE"
   | "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_INSTALL_FAILED"
   | "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_INSTALL_SCOPE_INVALID"
   | "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_LOCK_INVALID"
@@ -805,6 +808,90 @@ function failDependencyMaterializedPair(
   );
 }
 
+const BUILD_TOOLCHAIN_CAPSULE_ERROR_CODE_TO_COMPILED_OUTPUT_PAIR_V2 =
+  Object.freeze({
+    PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_INPUT_INVALID:
+      "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_INPUT_INVALID",
+    PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_SCOPE_MISMATCH:
+      "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_SCOPE_MISMATCH",
+    PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_SOURCE_DRIFT:
+      "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_SOURCE_DRIFT",
+    PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_HOST_DRIFT:
+      "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_TOOLCHAIN_DRIFT",
+    PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_INSTALL_FAILED:
+      "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_TOOLCHAIN_DRIFT",
+    PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_TREE_INVALID:
+      "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_TOOLCHAIN_DRIFT",
+    PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_CONTEXT_INVALID:
+      "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_TOOLCHAIN_DRIFT",
+    PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_ALREADY_MATERIALIZED:
+      "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_ALREADY_MATERIALIZED",
+    PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_REVALIDATION_IN_FLIGHT:
+      "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_ALREADY_MATERIALIZED",
+    PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_CLEANUP_FAILED:
+      "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_CLEANUP_FAILED",
+    PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_HANDLE_UNAUTHENTICATED:
+      "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_TOOLCHAIN_DRIFT",
+  } satisfies Readonly<Record<
+    PlatformReleaseBuildToolchainCapsuleErrorCodeV2,
+    PlatformReleaseCompiledOutputPairErrorCodeV2
+  >>);
+
+const BUILD_TOOLCHAIN_CAPSULE_ERROR_CODE_TO_DEPENDENCY_PAIR_V2 =
+  Object.freeze({
+    PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_INPUT_INVALID:
+      "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_INPUT_INVALID",
+    PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_SCOPE_MISMATCH:
+      "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_SCOPE_MISMATCH",
+    PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_SOURCE_DRIFT:
+      "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_SOURCE_DRIFT",
+    PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_HOST_DRIFT:
+      "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_TOOLCHAIN_DRIFT",
+    PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_INSTALL_FAILED:
+      "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_INSTALL_FAILED",
+    PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_TREE_INVALID:
+      "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_TOOLCHAIN_DRIFT",
+    PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_CONTEXT_INVALID:
+      "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_TOOLCHAIN_DRIFT",
+    PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_ALREADY_MATERIALIZED:
+      "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_ALREADY_CLAIMED",
+    PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_REVALIDATION_IN_FLIGHT:
+      "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_ALREADY_CLAIMED",
+    PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_CLEANUP_FAILED:
+      "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_CLEANUP_FAILED",
+    PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_HANDLE_UNAUTHENTICATED:
+      "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_TOOLCHAIN_DRIFT",
+  } satisfies Readonly<Record<
+    PlatformReleaseBuildToolchainCapsuleErrorCodeV2,
+    PlatformReleaseDependencyMaterializedPairErrorCodeV2
+  >>);
+
+function compiledOutputPairErrorFromBuildToolchainCapsuleV2(
+  error: PlatformReleaseBuildToolchainCapsuleErrorV2,
+  message: string,
+): PlatformReleaseCompiledOutputPairErrorV2 {
+  return new PlatformReleaseCompiledOutputPairErrorV2(
+    BUILD_TOOLCHAIN_CAPSULE_ERROR_CODE_TO_COMPILED_OUTPUT_PAIR_V2[
+      error.code
+    ],
+    message,
+    { cause: error },
+  );
+}
+
+function dependencyPairErrorFromBuildToolchainCapsuleV2(
+  error: PlatformReleaseBuildToolchainCapsuleErrorV2,
+  message: string,
+): PlatformReleaseDependencyMaterializedPairErrorV2 {
+  return new PlatformReleaseDependencyMaterializedPairErrorV2(
+    BUILD_TOOLCHAIN_CAPSULE_ERROR_CODE_TO_DEPENDENCY_PAIR_V2[
+      error.code
+    ],
+    message,
+    { cause: error },
+  );
+}
+
 const HOST_TOOLCHAIN_ERROR_CODE_TO_DEPENDENCY_PAIR_V2 =
   Object.freeze({
     PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_INPUT_INVALID:
@@ -820,6 +907,12 @@ const HOST_TOOLCHAIN_ERROR_CODE_TO_DEPENDENCY_PAIR_V2 =
     PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_HANDLE_UNAUTHENTICATED:
       "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_TOOLCHAIN_DRIFT",
     PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_HOST_DRIFT:
+      "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_TOOLCHAIN_DRIFT",
+    HOST_COMPOSITION_BOOTSTRAP_UNAVAILABLE:
+      "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_HOST_COMPOSITION_BOOTSTRAP_UNAVAILABLE",
+    PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_COMPOSITION_AUTHORITY_INVALID:
+      "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_TOOLCHAIN_DRIFT",
+    PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_COMPOSITION_DRIFT:
       "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_TOOLCHAIN_DRIFT",
     PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_BUILD_FAILED:
       "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_TOOLCHAIN_DRIFT",
@@ -895,6 +988,27 @@ function failDependencyPairFromHostToolchainV2(
     message,
     error,
   );
+}
+
+function isPlatformReleaseHostAuthorityDriftV2(
+  error: unknown,
+): error is PlatformReleaseHostNodeToolchainAuthorityErrorV2 {
+  return error
+    instanceof PlatformReleaseHostNodeToolchainAuthorityErrorV2
+    && (
+      error.code
+        === "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_HOST_AUTHORITY_INVALID"
+      || error.code
+        === "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_RECEIPT_INVALID"
+      || error.code
+        === "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_HANDLE_UNAUTHENTICATED"
+      || error.code
+        === "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_HOST_DRIFT"
+      || error.code
+        === "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_COMPOSITION_AUTHORITY_INVALID"
+      || error.code
+        === "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_COMPOSITION_DRIFT"
+    );
 }
 
 function failDependencyPairFromMaterializationV2(
@@ -2702,7 +2816,12 @@ const SOURCE_CONTEXT_LIFECYCLE_TRANSITIONS_V2 = {
       "disposed",
     ],
     toolchain_materialized: [
+      "toolchain_revalidating",
       "double_build_running",
+      "disposed",
+    ],
+    toolchain_revalidating: [
+      "toolchain_materialized",
       "disposed",
     ],
     double_build_running: [
@@ -4901,6 +5020,13 @@ async function materializeBuildToolchainCapsule(
           values.hostToolchain,
         );
     } catch (error) {
+      if (isPlatformReleaseHostAuthorityDriftV2(error)) {
+        return failBuildToolchainCapsule(
+          "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_HOST_DRIFT",
+          "Authenticated host composition authority changed during npm installation",
+          error,
+        );
+      }
       return failBuildToolchainCapsule(
         "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_HOST_DRIFT",
         "Platform release host authority failed pre-install revalidation",
@@ -4924,6 +5050,13 @@ async function materializeBuildToolchainCapsule(
           },
         );
     } catch (error) {
+      if (isPlatformReleaseHostAuthorityDriftV2(error)) {
+        return failBuildToolchainCapsule(
+          "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_HOST_DRIFT",
+          "Authenticated host composition authority changed during npm installation",
+          error,
+        );
+      }
       return failBuildToolchainCapsule(
         "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_INSTALL_FAILED",
         "Authenticated exact npm ci did not produce a build-toolchain candidate",
@@ -4939,10 +5072,19 @@ async function materializeBuildToolchainCapsule(
       );
     }
     stableSourceStageState(sourceState);
-    const hostAfter =
-      await revalidatePlatformReleaseHostNodeToolchainAuthorityV2(
-        values.hostToolchain,
+    let hostAfter;
+    try {
+      hostAfter =
+        await revalidatePlatformReleaseHostNodeToolchainAuthorityV2(
+          values.hostToolchain,
+        );
+    } catch (error) {
+      return failBuildToolchainCapsule(
+        "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_HOST_DRIFT",
+        "Platform release host authority failed post-install revalidation",
+        error,
       );
+    }
     if (
       hostAfter.receiptHash !== hostReceipt.receiptHash
       || installEvidence
@@ -5172,8 +5314,24 @@ async function revalidateBuildToolchainCapsuleForLifecycleV2(
       "Capsule no longer joins its one admitted source context",
     );
   }
-  stableSourceStageState(sourceState);
-  exactBuildContext(sourceState, "materialized");
+  try {
+    stableSourceStageState(sourceState);
+  } catch (error) {
+    return failBuildToolchainCapsule(
+      "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_SOURCE_DRIFT",
+      "Capsule source tree failed fresh physical revalidation",
+      error,
+    );
+  }
+  try {
+    exactBuildContext(sourceState, "materialized");
+  } catch (error) {
+    return failBuildToolchainCapsule(
+      "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_CONTEXT_INVALID",
+      "Capsule source-owned context failed fresh topology revalidation",
+      error,
+    );
+  }
   let host;
   try {
     host =
@@ -5219,13 +5377,31 @@ async function revalidateBuildToolchainCapsuleForLifecycleV2(
       error,
     );
   }
-  const physical =
-    buildToolchainPhysicalIdentity(
-      capsule.nodeModulesRoot,
-      capsule.materialized.treeBinding.bindingHash,
+  let physical:
+    PlatformReleaseBuildToolchainPhysicalIdentityV2;
+  try {
+    physical =
+      buildToolchainPhysicalIdentity(
+        capsule.nodeModulesRoot,
+        capsule.materialized.treeBinding.bindingHash,
+      );
+    exactBuildContext(sourceState, "materialized");
+  } catch (error) {
+    return failBuildToolchainCapsule(
+      "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_CONTEXT_INVALID",
+      "Capsule physical context failed its post-verification fence",
+      error,
     );
-  stableSourceStageState(sourceState);
-  exactBuildContext(sourceState, "materialized");
+  }
+  try {
+    stableSourceStageState(sourceState);
+  } catch (error) {
+    return failBuildToolchainCapsule(
+      "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_SOURCE_DRIFT",
+      "Capsule source tree changed across fresh toolchain verification",
+      error,
+    );
+  }
   if (
     !admittedLifecycles.includes(sourceState.lifecycle)
     || canonicalJsonStringify(physical)
@@ -5250,18 +5426,84 @@ async function revalidateBuildToolchainCapsuleForLifecycleV2(
 export async function revalidatePlatformReleaseBuildToolchainCapsuleV2(
   handle: PlatformReleaseBuildToolchainCapsuleV2,
 ): Promise<PlatformReleaseBuildToolchainReceiptV2> {
-  const live =
-    await revalidateBuildToolchainCapsuleForLifecycleV2(
-      handle,
-      [
-        "toolchain_materialized",
-        "double_build_running",
-        "double_build_complete",
-        "dependency_materializing",
-        "release_completed",
-      ],
+  const capsule =
+    authenticBuildToolchainCapsuleState(handle);
+  let sourceState: SourceStageStateV2;
+  try {
+    sourceState = authenticState(capsule.sourceStage);
+  } catch (error) {
+    return failBuildToolchainCapsule(
+      "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_SOURCE_DRIFT",
+      "Capsule source authority is no longer live",
+      error,
     );
-  return live.receipt;
+  }
+  if (
+    !transitionSourceContextLifecycleV2(
+      sourceState,
+      "toolchain_materialized",
+      "toolchain_revalidating",
+    )
+  ) {
+    if (sourceState.lifecycle === "toolchain_revalidating") {
+      return failBuildToolchainCapsule(
+        "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_REVALIDATION_IN_FLIGHT",
+        "Capsule already owns one fresh revalidation transaction",
+      );
+    }
+    return failBuildToolchainCapsule(
+      "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_SOURCE_DRIFT",
+      "Capsule no longer owns the pre-build source lifecycle",
+    );
+  }
+  try {
+    const live =
+      await revalidateBuildToolchainCapsuleForLifecycleV2(
+        handle,
+        ["toolchain_revalidating"],
+      );
+    if (
+      live.capsule !== capsule
+      || live.sourceState !== sourceState
+      || !transitionSourceContextLifecycleV2(
+        sourceState,
+        "toolchain_revalidating",
+        "toolchain_materialized",
+      )
+    ) {
+      return failBuildToolchainCapsule(
+        "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_SOURCE_DRIFT",
+        "Capsule lost its exact source ownership during fresh revalidation",
+      );
+    }
+    return live.receipt;
+  } catch (error) {
+    const primary = error instanceof
+        PlatformReleaseBuildToolchainCapsuleErrorV2
+      ? error
+      : new PlatformReleaseBuildToolchainCapsuleErrorV2(
+        "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_CONTEXT_INVALID",
+        "Capsule failed at an internal revalidation boundary",
+        { cause: error },
+      );
+    if (sourceState.lifecycle === "toolchain_revalidating") {
+      try {
+        disposeSourceOwnedPhysicalContextV2(sourceState);
+      } catch (cleanupError) {
+        throw new PlatformReleaseBuildToolchainCapsuleErrorV2(
+          "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_CLEANUP_FAILED",
+          "Failed capsule revalidation could not destroy its source-owned context",
+          {
+            cause: new AggregateError([
+              primary,
+              cleanupError,
+            ]),
+          },
+        );
+      }
+    }
+    throw primary;
+  }
 }
 
 function authenticCompiledOutputPairStateV2(
@@ -5948,6 +6190,13 @@ async function executeCompiledBuildOccurrenceV2(input: Readonly<{
         },
       );
   } catch (error) {
+    if (isPlatformReleaseHostAuthorityDriftV2(error)) {
+      return failCompiledOutputPair(
+        "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_TOOLCHAIN_DRIFT",
+        `${input.occurrence} authenticated host composition authority changed during build`,
+        error,
+      );
+    }
     return failCompiledOutputPair(
       "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_BUILD_FAILED",
       `${input.occurrence} authenticated build occurrence failed`,
@@ -6198,6 +6447,12 @@ async function materializeCompiledOutputPairV2(
     const primary = error instanceof
         PlatformReleaseCompiledOutputPairErrorV2
       ? error
+      : error instanceof
+          PlatformReleaseBuildToolchainCapsuleErrorV2
+        ? compiledOutputPairErrorFromBuildToolchainCapsuleV2(
+          error,
+          "Compiled-output transaction lost its exact source or build-toolchain authority",
+        )
       : new PlatformReleaseCompiledOutputPairErrorV2(
         "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_BUILD_FAILED",
         "Compiled-output transaction failed at an internal boundary",
@@ -6464,6 +6719,12 @@ export async function revalidatePlatformReleaseCompiledOutputPairV2(
     const primary = error instanceof
         PlatformReleaseCompiledOutputPairErrorV2
       ? error
+      : error instanceof
+          PlatformReleaseBuildToolchainCapsuleErrorV2
+        ? compiledOutputPairErrorFromBuildToolchainCapsuleV2(
+          error,
+          "Compiled pair lost its exact source or build-toolchain authority",
+        )
       : new PlatformReleaseCompiledOutputPairErrorV2(
         "PLATFORM_RELEASE_COMPILED_OUTPUT_PAIR_V2_OUTPUT_INVALID",
         "Compiled pair failed fresh operational revalidation",
@@ -6683,6 +6944,15 @@ async function revalidateCompiledPairDuringDependencyMaterializationV2(
       error instanceof
       PlatformReleaseDependencyMaterializedPairErrorV2
     ) throw error;
+    if (
+      error instanceof
+        PlatformReleaseBuildToolchainCapsuleErrorV2
+    ) {
+      throw dependencyPairErrorFromBuildToolchainCapsuleV2(
+        error,
+        "Claimed compiled pair lost its exact source or build-toolchain authority",
+      );
+    }
     return failDependencyMaterializedPair(
       "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_OUTPUT_INVALID",
       "Claimed compiled pair failed phase-aware fresh revalidation",
@@ -7755,6 +8025,12 @@ async function materializeDependencyMaterializedPairV2(
     const primary = error instanceof
         PlatformReleaseDependencyMaterializedPairErrorV2
       ? error
+      : error instanceof
+          PlatformReleaseBuildToolchainCapsuleErrorV2
+        ? dependencyPairErrorFromBuildToolchainCapsuleV2(
+          error,
+          "Dependency pair lost its exact source or build-toolchain authority",
+        )
       : new PlatformReleaseDependencyMaterializedPairErrorV2(
         "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_OUTPUT_INVALID",
         "Dependency-materialized pair transaction failed at an internal boundary",
@@ -8110,6 +8386,12 @@ export async function revalidatePlatformReleaseDependencyMaterializedPairV2(
     const primary = error instanceof
         PlatformReleaseDependencyMaterializedPairErrorV2
       ? error
+      : error instanceof
+          PlatformReleaseBuildToolchainCapsuleErrorV2
+        ? dependencyPairErrorFromBuildToolchainCapsuleV2(
+          error,
+          "Dependency pair lost its exact source or build-toolchain authority during fresh revalidation",
+        )
       : new PlatformReleaseDependencyMaterializedPairErrorV2(
         "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_OUTPUT_INVALID",
         "Dependency pair failed fresh operational revalidation",
@@ -8361,6 +8643,7 @@ export function disposePlatformReleaseSourceStageV2(
   const state = authenticState(handle);
   if (
     state.lifecycle === "toolchain_materializing"
+    || state.lifecycle === "toolchain_revalidating"
     || state.lifecycle === "double_build_running"
     || state.lifecycle === "dependency_materializing"
   ) {

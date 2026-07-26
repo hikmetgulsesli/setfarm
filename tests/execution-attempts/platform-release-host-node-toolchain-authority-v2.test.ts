@@ -52,6 +52,14 @@ import {
   hashPlatformReleaseHostNodeToolchainBuildEvidenceV2,
 } from
   "../../src/execution/schemas/platform-release-host-node-build-evidence-v2.js";
+import {
+  materializePlatformReleaseHostCompositionFixtureV2,
+} from
+  "./helpers/platform-release-host-composition-fixture-v2.js";
+import type {
+  PlatformReleaseHostCompositionFixtureV2,
+} from
+  "../../src/execution/platform-release-host-composition-authority-v2.js";
 
 type FixtureV2 = Readonly<{
   root: string;
@@ -59,6 +67,9 @@ type FixtureV2 = Readonly<{
   npmRoot: string;
   npmCli: string;
   dynamicLibrary: string;
+  compositionFixture:
+    PlatformReleaseHostCompositionFixtureV2;
+  compositionFiles: Readonly<Record<string, string>>;
 }>;
 
 const cleanupRoots: string[] = [];
@@ -126,6 +137,9 @@ async function makeFixtureV2(): Promise<FixtureV2> {
     ),
   );
   cleanupRoots.push(root);
+  const composition =
+    materializePlatformReleaseHostCompositionFixtureV2();
+  cleanupRoots.push(composition.root);
   const node = path.join(root, "bin", "node");
   const npmRoot = path.join(root, "lib", "node_modules", "npm");
   const npmCli = path.join(npmRoot, "bin", "npm-cli.js");
@@ -170,7 +184,15 @@ async function makeFixtureV2(): Promise<FixtureV2> {
     chmod(path.join(npmRoot, "package.json"), 0o444),
     chmod(dynamicLibrary, 0o555),
   ]);
-  return { root, node, npmRoot, npmCli, dynamicLibrary };
+  return {
+    root,
+    node,
+    npmRoot,
+    npmCli,
+    dynamicLibrary,
+    compositionFixture: composition.fixture,
+    compositionFiles: composition.files,
+  };
 }
 
 function probeAdapterV2(
@@ -435,10 +457,12 @@ describe("PlatformReleaseHostNodeToolchainAuthorityV2", () => {
     const cli =
       await createPlatformReleaseHostNodeToolchainAuthorityV2ForTest({
         hostToolchain: cliBootstrap,
+        compositionFixture: fixture.compositionFixture,
       });
     const api =
       await createPlatformReleaseHostNodeToolchainAuthorityV2ForTest({
         hostToolchain: apiBootstrap,
+        compositionFixture: fixture.compositionFixture,
       });
     const cliReceipt =
       inspectPlatformReleaseHostNodeToolchainReceiptV2(cli);
@@ -478,6 +502,7 @@ describe("PlatformReleaseHostNodeToolchainAuthorityV2", () => {
     const handle =
       await createPlatformReleaseHostNodeToolchainAuthorityV2ForTest({
         hostToolchain: bootstrap,
+        compositionFixture: fixture.compositionFixture,
       });
     const candidate =
       parsePlatformReleaseHostNodeToolchainReceiptCandidateV2(
@@ -546,6 +571,7 @@ describe("PlatformReleaseHostNodeToolchainAuthorityV2", () => {
     const handle =
       await createPlatformReleaseHostNodeToolchainAuthorityV2ForTest({
         hostToolchain: bootstrap,
+        compositionFixture: fixture.compositionFixture,
       });
     const scope = await makeInstallScopeV2();
     const evidence =
@@ -592,6 +618,46 @@ describe("PlatformReleaseHostNodeToolchainAuthorityV2", () => {
     );
   });
 
+  it("retains composition privately and rejects its physical drift through the parent fence", async () => {
+    const fixture = await makeFixtureV2();
+    const bootstrap = await hostAuthorityV2(
+      fixture,
+      "PROFILE_NODE_CLI_STATELESS_EXACT_V2",
+    );
+    const handle =
+      await createPlatformReleaseHostNodeToolchainAuthorityV2ForTest({
+        hostToolchain: bootstrap,
+        compositionFixture: fixture.compositionFixture,
+      });
+    const before =
+      inspectPlatformReleaseHostNodeToolchainReceiptV2(handle);
+    const target =
+      fixture.compositionFiles[
+        "lib/network-wrapper.mjs"
+      ]!;
+    await chmod(target, 0o644);
+    await writeFile(target, "composition-drift\n");
+    await chmod(target, 0o444);
+
+    await assert.rejects(
+      revalidatePlatformReleaseHostNodeToolchainAuthorityV2(
+        handle,
+      ),
+      {
+        code:
+          "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_COMPOSITION_DRIFT",
+      },
+    );
+    assert.deepEqual(
+      inspectPlatformReleaseHostNodeToolchainReceiptV2(handle),
+      before,
+    );
+    assert.doesNotMatch(
+      JSON.stringify(before),
+      /composition|fixtureRoot|network-wrapper/iu,
+    );
+  });
+
   it("executes one exact platform build through the authenticated host Node ABI", async () => {
     const fixture = await makeFixtureV2();
     const calls: HostNodeToolchainProbeInvocationV2[] = [];
@@ -603,6 +669,7 @@ describe("PlatformReleaseHostNodeToolchainAuthorityV2", () => {
     const handle =
       await createPlatformReleaseHostNodeToolchainAuthorityV2ForTest({
         hostToolchain: bootstrap,
+        compositionFixture: fixture.compositionFixture,
       });
     const scope = await makeBuildScopeV2();
     const evidence =
@@ -758,6 +825,7 @@ describe("PlatformReleaseHostNodeToolchainAuthorityV2", () => {
     const staleHandle =
       await createPlatformReleaseHostNodeToolchainAuthorityV2ForTest({
         hostToolchain: staleBootstrap,
+        compositionFixture: fixture.compositionFixture,
       });
     const staleScope = await makeBuildScopeV2();
     let accessorCalled = false;
@@ -811,6 +879,7 @@ describe("PlatformReleaseHostNodeToolchainAuthorityV2", () => {
     const driftHandle =
       await createPlatformReleaseHostNodeToolchainAuthorityV2ForTest({
         hostToolchain: driftBootstrap,
+        compositionFixture: fixture.compositionFixture,
       });
     const driftScope = await makeBuildScopeV2();
     const commandPath = path.join(
@@ -864,6 +933,7 @@ describe("PlatformReleaseHostNodeToolchainAuthorityV2", () => {
     const racingHandle =
       await createPlatformReleaseHostNodeToolchainAuthorityV2ForTest({
         hostToolchain: racingBootstrap,
+        compositionFixture: fixture.compositionFixture,
       });
     await assert.rejects(
       executePlatformReleaseHostNodeToolchainBuildInternalV2(
@@ -903,6 +973,7 @@ describe("PlatformReleaseHostNodeToolchainAuthorityV2", () => {
     const proseHandle =
       await createPlatformReleaseHostNodeToolchainAuthorityV2ForTest({
         hostToolchain: proseBootstrap,
+        compositionFixture: fixture.compositionFixture,
       });
     await assert.rejects(
       executePlatformReleaseHostNodeToolchainBuildInternalV2(
@@ -995,6 +1066,7 @@ describe("PlatformReleaseHostNodeToolchainAuthorityV2", () => {
       const handle =
         await createPlatformReleaseHostNodeToolchainAuthorityV2ForTest({
           hostToolchain: bootstrap,
+          compositionFixture: fixture.compositionFixture,
         });
       await assert.rejects(
         executePlatformReleaseHostNodeToolchainBuildInternalV2(
@@ -1016,6 +1088,7 @@ describe("PlatformReleaseHostNodeToolchainAuthorityV2", () => {
     const epochHandle =
       await createPlatformReleaseHostNodeToolchainAuthorityV2ForTest({
         hostToolchain: epochBootstrap,
+        compositionFixture: fixture.compositionFixture,
       });
     const epochScope = await makeBuildScopeV2();
     await assert.rejects(
@@ -1073,6 +1146,7 @@ describe("PlatformReleaseHostNodeToolchainAuthorityV2", () => {
     const handle =
       await createPlatformReleaseHostNodeToolchainAuthorityV2ForTest({
         hostToolchain: bootstrap,
+        compositionFixture: fixture.compositionFixture,
       });
     for (const label of ["mutable payload", "linked payload"]) {
       await assert.rejects(
@@ -1100,6 +1174,7 @@ describe("PlatformReleaseHostNodeToolchainAuthorityV2", () => {
     const handle =
       await createPlatformReleaseHostNodeToolchainAuthorityV2ForTest({
         hostToolchain: bootstrap,
+        compositionFixture: fixture.compositionFixture,
       });
     const receipt = structuredClone(
       inspectPlatformReleaseHostNodeToolchainReceiptV2(handle),

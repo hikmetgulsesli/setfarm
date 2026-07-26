@@ -73,6 +73,71 @@ runtime UID, policy, catalog, receipt, or callback from its caller.
 This preserves the approved invariant that only the dependency-materialized
 pair can derive the complete release.
 
+### Selected production provenance DAG
+
+The production composition authority is an aggregate of four separately owned
+leaf authorities. The single-root `ForTest` fixture is not its installation
+model.
+
+```text
+zero-input lower host projection N
+  + installed verifier package V
+  + installed release-composition package R (verified by V)
+  + fixed Darwin system anchors S (verified by V)
+  + durable runtime-account authority A
+  -> production composition authority C
+```
+
+`V` is rooted at
+`/Library/Application Support/Setfarm/bootstrap/host-composition-verifier-v2`
+and contains an exact root-owned manifest plus a native verifier executable.
+The executable must not acquire ambient Node, shell, or `PATH`; otherwise its
+interpreter and non-system dynamic-library closure become additional admitted
+members.
+
+`R` is rooted at
+`/Library/Application Support/Setfarm/bootstrap/platform-release-composition-v2`
+and contains an exact root-owned manifest, release executable, release module,
+metadata module, and network wrapper module. Its manifest binds every-and-only
+member refs, content/mode/media identity, required export names, operation ABI
+hashes, provisioning receipt, root physical identity, and directory
+membership.
+
+`S` admits exact `/usr/bin/xattr`, `/bin/ls`, `/bin/chmod`, and
+`/usr/bin/sandbox-exec` files plus the exact `/usr/bin` and `/bin` parent
+identities. It does not claim every-and-only membership of those operating
+system directories. Xattr observe and clear are two logical bindings to the
+same physical xattr receipt; ACL observe and clear bind the distinct `ls` and
+`chmod` receipts.
+
+`A` resolves only the durable
+`SETFARM_PLATFORM_RELEASE_RUNTIME_V2` account and binds its provisioning
+receipt, host identity, UID, and GID. It accepts no caller UID/GID and requires
+both values to be nonzero and distinct from every root-owned composition file
+owner.
+
+Package member receipts bind their leaf package ref, manifest hash, manifest
+entry hash, root identity, directory membership, content hash, physical
+identity, and verifier identity. They do not bind the leaf or aggregate receipt
+hash back into the member identity. Thus the aggregate identity is acyclic:
+
+```text
+V = H(host, verifier manifest, verifier physical closure, verifier ABI)
+R = H(host, V, release manifest and physical closure)
+S = H(host, V, fixed system anchors and logical bindings)
+A = H(host, durable account provisioning)
+C = H(N, V, R, S, A, operation ABIs)
+```
+
+The no-input composition opener privately opens the lower root-owned Node/npm
+bootstrap and reproduces `N`; the outer platform host owner compares the
+resulting composition projection to its own `N` across a before/after fence.
+It does not accept `N`, a host handle, a path, or a receipt from a caller.
+The existing outer Node/npm receipt intentionally remains the Node/npm identity;
+`C` enters the B5D production attestation as separate canonical operational
+evidence. This avoids both an identity cycle and a retroactive B5C receipt
+mutation.
+
 ## Rejected Boundaries
 
 ### Public host-composition argument
@@ -485,15 +550,17 @@ End to end:
 1. Add the candidate-only zero-input required runtime-module closure, bind it
    into runner toolchain identity and the manifest, and require terminal
    physical recapture of all entries.
-2. Add host-composition receipt schemas and opaque private sub-authority.
-3. Add authenticated metadata, network, and module-export operation ABIs.
-4. Add pure observed runtime/environment/catalog/build candidate builders and
+2. Add the B5D-0a host-composition receipt schemas, opaque fixture-only
+   sub-authority, private host retention, and terminal revalidation ownership.
+3. Add B5D-0b installed verifier and release-package authorities, fixed Darwin
+   system anchors, durable runtime-account authority, and the zero-input
+   aggregate production opener.
+4. Add authenticated metadata, network, and module-export operation ABIs.
+5. Add pure observed runtime/environment/catalog/build candidate builders and
    the exact two-occurrence attestation extension.
-5. Add one-shot pair claim and internal composition state.
-6. Split production terminal issuance from the test JSON writer.
-7. Implement selected-root ownership transfer and terminal cleanup.
-8. Package the fixed-root release bootstrap, verifier, and runtime-account
-   authority; only then enable the no-input production opener.
+6. Add one-shot pair claim and internal composition state.
+7. Split production terminal issuance from the test JSON writer.
+8. Implement selected-root ownership transfer and terminal cleanup.
 9. Run the full adversarial matrix and update the audit.
 10. Begin B5E separate durable release store at migration 27+.
 

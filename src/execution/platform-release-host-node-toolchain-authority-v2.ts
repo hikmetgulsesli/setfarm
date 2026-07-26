@@ -19,6 +19,17 @@ import {
   hashCanonicalJson,
 } from "../product-compiler/canonical-json.js";
 import {
+  PlatformReleaseHostCompositionAuthorityErrorV2,
+  createPlatformReleaseHostCompositionAuthorityV2ForTest,
+  inspectPlatformReleaseHostCompositionReceiptV2,
+  isProductionPlatformReleaseHostCompositionAuthorityV2,
+  openPlatformReleaseHostCompositionAuthorityV2Internal,
+  revalidatePlatformReleaseHostCompositionAuthorityV2,
+  type PlatformReleaseHostCompositionAuthorityV2,
+  type PlatformReleaseHostCompositionFixtureV2,
+} from
+  "./platform-release-host-composition-authority-v2.js";
+import {
   PLATFORM_RELEASE_BUILD_DIRECT_ARGV_TEMPLATE_V2,
   PlatformReleaseBuildCommandResultV2Schema,
   type PlatformReleaseBuildCommandResultV2,
@@ -30,6 +41,14 @@ import {
     ParsedPlatformReleaseHostNodeToolchainBuildEvidenceV2,
 } from
   "./schemas/platform-release-host-node-build-evidence-v2.js";
+import {
+  PLATFORM_RELEASE_HOST_COMPOSITION_PLATFORM_PROJECTION_V2_SCHEMA,
+  PlatformReleaseHostCompositionPlatformProjectionV2Schema,
+  hashPlatformReleaseHostCompositionHostIdentityV2,
+  hashPlatformReleaseHostCompositionPlatformProjectionV2,
+  type PlatformReleaseHostCompositionPlatformProjectionV2,
+} from
+  "./schemas/platform-release-host-composition-v2.js";
 import {
   PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_AUTHORITY_REF_V2,
   PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_AUTHORITY_VERSION_V2,
@@ -52,6 +71,9 @@ export type PlatformReleaseHostNodeToolchainAuthorityErrorCodeV2 =
   | "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_RECEIPT_INVALID"
   | "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_HANDLE_UNAUTHENTICATED"
   | "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_HOST_DRIFT"
+  | "HOST_COMPOSITION_BOOTSTRAP_UNAVAILABLE"
+  | "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_COMPOSITION_AUTHORITY_INVALID"
+  | "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_COMPOSITION_DRIFT"
   | "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_BUILD_FAILED"
   | "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_INSTALL_FAILED"
   | "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_PRODUCTION_INSTALL_SCOPE_INVALID";
@@ -79,6 +101,9 @@ type PlatformReleaseHostNodeToolchainAuthorityStateV2 = Readonly<{
   admissionScope: "production_host" | "test_fixture";
   bootstrap: HostNodeToolchainAuthorityV2;
   bootstrapReceiptHash: string;
+  composition:
+    PlatformReleaseHostCompositionAuthorityV2;
+  compositionReceiptHash: string;
   receipt: PlatformReleaseHostNodeToolchainReceiptV2;
 }>;
 
@@ -354,6 +379,65 @@ function exactInputHandle(
   return descriptor.value as HostNodeToolchainAuthorityV2;
 }
 
+function exactTestInputV2(
+  input: unknown,
+): Readonly<{
+  hostToolchain: HostNodeToolchainAuthorityV2;
+  compositionFixture:
+    PlatformReleaseHostCompositionFixtureV2;
+}> {
+  if (
+    typeof input !== "object"
+    || input === null
+    || Array.isArray(input)
+    || isProxy(input)
+    || Object.getPrototypeOf(input) !== Object.prototype
+  ) {
+    return fail(
+      "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_INPUT_INVALID",
+      "Test platform release host input must be one exact plain capability record",
+    );
+  }
+  const keys = Reflect.ownKeys(input);
+  if (
+    keys.length !== 2
+    || !keys.includes("hostToolchain")
+    || !keys.includes("compositionFixture")
+  ) {
+    return fail(
+      "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_INPUT_INVALID",
+      "Test platform release host input must contain exact hostToolchain and compositionFixture fields",
+    );
+  }
+  const hostDescriptor =
+    Object.getOwnPropertyDescriptor(input, "hostToolchain");
+  const fixtureDescriptor =
+    Object.getOwnPropertyDescriptor(
+      input,
+      "compositionFixture",
+    );
+  if (
+    !hostDescriptor
+    || !("value" in hostDescriptor)
+    || hostDescriptor.enumerable !== true
+    || !fixtureDescriptor
+    || !("value" in fixtureDescriptor)
+    || fixtureDescriptor.enumerable !== true
+  ) {
+    return fail(
+      "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_INPUT_INVALID",
+      "Test platform release host input cannot contain accessors or hidden capabilities",
+    );
+  }
+  return Object.freeze({
+    hostToolchain:
+      hostDescriptor.value as HostNodeToolchainAuthorityV2,
+    compositionFixture:
+      fixtureDescriptor.value as
+        PlatformReleaseHostCompositionFixtureV2,
+  });
+}
+
 function buildReceipt(
   bootstrapReceipt: Awaited<
     ReturnType<typeof revalidateHostNodeToolchainAuthorityV2>
@@ -402,6 +486,34 @@ function buildReceipt(
   return deepFreezePlatformReleaseJsonV2(parsed.data);
 }
 
+function buildCompositionPlatformProjectionV2(
+  receipt: PlatformReleaseHostNodeToolchainReceiptV2,
+): PlatformReleaseHostCompositionPlatformProjectionV2 {
+  const host = structuredClone(receipt.host);
+  const identity = {
+    schema:
+      PLATFORM_RELEASE_HOST_COMPOSITION_PLATFORM_PROJECTION_V2_SCHEMA,
+    platformHostToolchainReceiptHash: receipt.receiptHash,
+    host,
+    hostIdentityHash:
+      hashPlatformReleaseHostCompositionHostIdentityV2(host),
+    nodeIdentityHash: receipt.node.identityHash,
+    npmClosureHash: receipt.npm.closureHash,
+    dynamicLibraryClosureHash:
+      receipt.node.nonSystemDynamicLibraries.closureHash,
+  };
+  return deepFreezePlatformReleaseJsonV2(
+    PlatformReleaseHostCompositionPlatformProjectionV2Schema
+      .parse({
+        ...identity,
+        projectionHash:
+          hashPlatformReleaseHostCompositionPlatformProjectionV2(
+            identity,
+          ),
+      }),
+  );
+}
+
 function authenticState(
   handle: PlatformReleaseHostNodeToolchainAuthorityV2,
 ): PlatformReleaseHostNodeToolchainAuthorityStateV2 {
@@ -430,6 +542,8 @@ function authenticState(
 async function issueAuthority(
   bootstrap: HostNodeToolchainAuthorityV2,
   expectedScope: "production_host" | "test_fixture",
+  compositionFixture?:
+    PlatformReleaseHostCompositionFixtureV2,
 ): Promise<PlatformReleaseHostNodeToolchainAuthorityV2> {
   let bootstrapReceipt;
   try {
@@ -451,10 +565,89 @@ async function issueAuthority(
     );
   }
   const receipt = buildReceipt(bootstrapReceipt);
+  const platformHost =
+    buildCompositionPlatformProjectionV2(receipt);
+  let composition:
+    PlatformReleaseHostCompositionAuthorityV2;
+  try {
+    composition = expectedScope === "production_host"
+      ? await openPlatformReleaseHostCompositionAuthorityV2Internal()
+      : await createPlatformReleaseHostCompositionAuthorityV2ForTest({
+        platformHost,
+        fixture: compositionFixture,
+      });
+  } catch (error) {
+    if (
+      error
+        instanceof PlatformReleaseHostCompositionAuthorityErrorV2
+      && error.code
+        === "HOST_COMPOSITION_BOOTSTRAP_UNAVAILABLE"
+    ) {
+      return fail(
+        "HOST_COMPOSITION_BOOTSTRAP_UNAVAILABLE",
+        "Production platform release host composition bootstrap is unavailable",
+        error,
+      );
+    }
+    return fail(
+      "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_COMPOSITION_AUTHORITY_INVALID",
+      "Platform release host composition authority could not be issued",
+      error,
+    );
+  }
+  const compositionReceipt =
+    inspectPlatformReleaseHostCompositionReceiptV2(composition);
+  if (
+    (
+      expectedScope === "production_host"
+      && !isProductionPlatformReleaseHostCompositionAuthorityV2(
+        composition,
+      )
+    )
+    || (
+      expectedScope === "test_fixture"
+      && isProductionPlatformReleaseHostCompositionAuthorityV2(
+        composition,
+      )
+    )
+    || canonicalJsonStringify(
+      compositionReceipt.platformHost,
+    ) !== canonicalJsonStringify(platformHost)
+  ) {
+    return fail(
+      "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_COMPOSITION_AUTHORITY_INVALID",
+      "Platform release host composition authority scope or host projection does not match its Node owner",
+    );
+  }
+  let bootstrapAfter;
+  try {
+    bootstrapAfter =
+      await revalidateHostNodeToolchainAuthorityV2(bootstrap);
+  } catch (error) {
+    return fail(
+      "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_HOST_AUTHORITY_INVALID",
+      "Platform release host bootstrap changed while composition authority was issued",
+      error,
+    );
+  }
+  if (
+    bootstrapAfter.receiptHash
+      !== bootstrapReceipt.receiptHash
+    || canonicalJsonStringify(buildReceipt(bootstrapAfter))
+      !== canonicalJsonStringify(receipt)
+  ) {
+    return fail(
+      "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_HOST_AUTHORITY_INVALID",
+      "Platform release host bootstrap changed while composition authority was issued",
+    );
+  }
   const state = Object.freeze({
     admissionScope: expectedScope,
     bootstrap,
     bootstrapReceiptHash: bootstrapReceipt.receiptHash,
+    composition,
+    compositionReceiptHash:
+      compositionReceipt.receiptHash,
     receipt,
   });
   return new PlatformReleaseHostNodeToolchainAuthorityV2(
@@ -488,9 +681,14 @@ export async function createPlatformReleaseHostNodeToolchainAuthorityV2(
 }
 
 export async function createPlatformReleaseHostNodeToolchainAuthorityV2ForTest(
-  input: Readonly<{ hostToolchain: HostNodeToolchainAuthorityV2 }>,
+  input: Readonly<{
+    hostToolchain: HostNodeToolchainAuthorityV2;
+    compositionFixture:
+      PlatformReleaseHostCompositionFixtureV2;
+  }>,
 ): Promise<PlatformReleaseHostNodeToolchainAuthorityV2> {
-  const bootstrap = exactInputHandle(input);
+  const exact = exactTestInputV2(input);
+  const bootstrap = exact.hostToolchain;
   let production: boolean;
   try {
     production =
@@ -508,7 +706,11 @@ export async function createPlatformReleaseHostNodeToolchainAuthorityV2ForTest(
       "Test platform release host constructor cannot downgrade production authority",
     );
   }
-  return issueAuthority(bootstrap, "test_fixture");
+  return issueAuthority(
+    bootstrap,
+    "test_fixture",
+    exact.compositionFixture,
+  );
 }
 
 export function inspectPlatformReleaseHostNodeToolchainReceiptV2(
@@ -562,8 +764,60 @@ export async function revalidatePlatformReleaseHostNodeToolchainAuthorityV2(
       "Platform release host Node/npm projection changed",
     );
   }
+  let compositionReceipt;
+  try {
+    compositionReceipt =
+      await revalidatePlatformReleaseHostCompositionAuthorityV2(
+        state.composition,
+      );
+  } catch (error) {
+    return fail(
+      "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_COMPOSITION_DRIFT",
+      "Platform release host composition authority failed fresh revalidation",
+      error,
+    );
+  }
+  let bootstrapAfter;
+  try {
+    bootstrapAfter =
+      await revalidateHostNodeToolchainAuthorityV2(
+        state.bootstrap,
+      );
+  } catch (error) {
+    return fail(
+      "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_HOST_DRIFT",
+      "Platform release host bootstrap failed its post-composition fence",
+      error,
+    );
+  }
+  const after = buildReceipt(bootstrapAfter);
+  if (
+    bootstrapAfter.receiptHash
+      !== currentBootstrap.receiptHash
+    || canonicalJsonStringify(after)
+      !== canonicalJsonStringify(current)
+  ) {
+    return fail(
+      "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_HOST_DRIFT",
+      "Platform release host Node/npm authority changed across its composition fence",
+    );
+  }
+  if (
+    compositionReceipt.receiptHash
+      !== state.compositionReceiptHash
+    || canonicalJsonStringify(
+      compositionReceipt.platformHost,
+    ) !== canonicalJsonStringify(
+      buildCompositionPlatformProjectionV2(current),
+    )
+  ) {
+    return fail(
+      "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_COMPOSITION_DRIFT",
+      "Platform release host composition authority changed across its fresh fence",
+    );
+  }
   return deepFreezePlatformReleaseJsonV2(
-    structuredClone(current),
+    structuredClone(after),
   );
 }
 
