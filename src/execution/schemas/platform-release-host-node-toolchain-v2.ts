@@ -41,6 +41,9 @@ const PlatformReleaseHostNodeToolchainRequirementIdentityV2Schema =
     installCommandRef: z.literal(
       "MATERIALIZE_PLATFORM_BUILD_TOOLCHAIN_V2",
     ),
+    productionInstallCommandRef: z.literal(
+      "MATERIALIZE_PRODUCTION_DEPENDENCIES_V2",
+    ),
     buildCommandRef: z.literal("BUILD_PLATFORM_RELEASE_V2"),
     commandPathPolicy: z.literal(
       "single_admitted_node_bin_then_exact_module_argv_v2",
@@ -73,6 +76,8 @@ const platformReleaseHostNodeToolchainRequirementIdentityV2 =
     npmExactVersion: "10.9.8" as const,
     installCommandRef:
       "MATERIALIZE_PLATFORM_BUILD_TOOLCHAIN_V2" as const,
+    productionInstallCommandRef:
+      "MATERIALIZE_PRODUCTION_DEPENDENCIES_V2" as const,
     buildCommandRef: "BUILD_PLATFORM_RELEASE_V2" as const,
     commandPathPolicy:
       "single_admitted_node_bin_then_exact_module_argv_v2" as const,

@@ -48,6 +48,13 @@ import {
   resolveNodeScaffoldDependencyPathV2,
 } from
   "../product-compiler/schemas/node-scaffold-toolchain-catalog-v2.js";
+import {
+  isCanonicalNpmExactVersionV2,
+  isCanonicalNpmLockPackagePathV2,
+  isCanonicalNpmPackageNameV2,
+  isSupportedNpmDependencySpecV2,
+} from
+  "../product-compiler/schemas/npm-lock-v3-grammar-v2.js";
 
 export {
   PLATFORM_RELEASE_BUILD_TOOLCHAIN_NPM_CONFIG_HASH_V2,
@@ -57,11 +64,6 @@ const LOCK_MAX_BYTES_V2 = 32 * 1024 * 1024;
 const PACKAGE_JSON_MAX_BYTES_V2 = 4 * 1024 * 1024;
 const MAX_LOCK_PACKAGES_V2 = 100_000;
 const MAX_DEPENDENCIES_PER_PACKAGE_V2 = 10_000;
-const PACKAGE_PATH_PATTERN_V2 =
-  /^(?:node_modules\/(?:@[a-z0-9][a-z0-9._~-]{0,99}\/)?[a-z0-9][a-z0-9._~-]{0,99})(?:\/node_modules\/(?:@[a-z0-9][a-z0-9._~-]{0,99}\/)?[a-z0-9][a-z0-9._~-]{0,99})*$/u;
-const PACKAGE_VERSION_PATTERN_V2 =
-  /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/u;
-
 export type PlatformReleaseBuildToolchainMaterializationErrorCodeV2 =
   | "PLATFORM_RELEASE_BUILD_TOOLCHAIN_V2_INPUT_INVALID"
   | "PLATFORM_RELEASE_BUILD_TOOLCHAIN_V2_LOCK_INVALID"
@@ -101,10 +103,11 @@ export type PlatformReleaseBuildToolchainLockPackageV2 =
     lockEntryHash: string;
   }>;
 
-export type PlatformReleaseBuildToolchainLockAuthorityV2 =
+export type PlatformReleaseSourceLockAuthorityV2 =
   Readonly<{
     schema:
-      "setfarm.platform-release-build-toolchain-lock-authority.v2";
+      "setfarm.platform-release-source-lock-authority.v2";
+    purpose: "build_toolchain" | "production_runtime";
     lockRawHash: string;
     lockRawByteLength: number;
     packageJsonRawHash: string;
@@ -118,10 +121,30 @@ export type PlatformReleaseBuildToolchainLockAuthorityV2 =
     authorityHash: string;
   }>;
 
+type PlatformReleaseSourceLockAuthorityIdentityV2 =
+  Omit<PlatformReleaseSourceLockAuthorityV2, "authorityHash">;
+
+const PLATFORM_RELEASE_SOURCE_LOCK_AUTHORITY_KEYS_V2 =
+  Object.freeze([
+    "authorityHash",
+    "inputMembershipHash",
+    "lockRawByteLength",
+    "lockRawHash",
+    "packageJsonRawByteLength",
+    "packageJsonRawHash",
+    "packagePaths",
+    "packages",
+    "purpose",
+    "root",
+    "rootPackageName",
+    "rootPackageVersion",
+    "schema",
+  ] as const);
+
 export type PlatformReleaseBuildToolchainTreeMaterializationV2 =
   Readonly<{
     lockAuthority:
-      PlatformReleaseBuildToolchainLockAuthorityV2;
+      PlatformReleaseSourceLockAuthorityV2;
     hiddenLockRawHash: string;
     rawInstallMembershipHash: string;
     installedPackages:
@@ -191,11 +214,8 @@ function exactStringMap(
   for (const key of keys) {
     const candidate = value[key];
     if (
-      !/^(?:@[a-z0-9][a-z0-9._~-]{0,99}\/)?[a-z0-9][a-z0-9._~-]{0,99}$/u
-        .test(key)
-      || typeof candidate !== "string"
-      || candidate.length < 1
-      || candidate.length > 160
+      !isCanonicalNpmPackageNameV2(key)
+      || !isSupportedNpmDependencySpecV2(candidate)
     ) {
       return fail(
         "PLATFORM_RELEASE_BUILD_TOOLCHAIN_V2_LOCK_INVALID",
@@ -220,6 +240,13 @@ function exactStringArray(
       typeof entry !== "string"
       || entry.length < 1
       || entry.length > 100)
+    || (
+      value.includes("any")
+      && (
+        value.length !== 1
+        || value[0] !== "any"
+      )
+    )
   ) {
     return fail(
       "PLATFORM_RELEASE_BUILD_TOOLCHAIN_V2_LOCK_INVALID",
@@ -234,7 +261,7 @@ function validateLockPackage(
   candidate: unknown,
 ): PlatformReleaseBuildToolchainLockPackageV2 {
   if (
-    !PACKAGE_PATH_PATTERN_V2.test(packagePath)
+    !isCanonicalNpmLockPackagePathV2(packagePath)
     || !isPlainNpmLockRecordInternalV2(candidate)
   ) {
     return fail(
@@ -247,7 +274,7 @@ function validateLockPackage(
   if (
     !packageName
     || typeof candidate.version !== "string"
-    || !PACKAGE_VERSION_PATTERN_V2.test(candidate.version)
+    || !isCanonicalNpmExactVersionV2(candidate.version)
     || typeof candidate.resolved !== "string"
     || !candidate.resolved.startsWith(
       "https://registry.npmjs.org/",
@@ -317,10 +344,71 @@ function selectedRootProjection(
   return projection;
 }
 
-function readLockAuthority(input: Readonly<{
-  projectRoot: string;
-  source: PlatformReleaseSourceTreeBindingV2;
-}>): PlatformReleaseBuildToolchainLockAuthorityV2 {
+function platformReleaseSourceLockAuthorityIdentityInternalV2(
+  value: PlatformReleaseSourceLockAuthorityV2,
+): PlatformReleaseSourceLockAuthorityIdentityV2 {
+  return {
+    schema: value.schema,
+    purpose: value.purpose,
+    lockRawHash: value.lockRawHash,
+    lockRawByteLength: value.lockRawByteLength,
+    packageJsonRawHash: value.packageJsonRawHash,
+    packageJsonRawByteLength:
+      value.packageJsonRawByteLength,
+    inputMembershipHash: value.inputMembershipHash,
+    rootPackageName: value.rootPackageName,
+    rootPackageVersion: value.rootPackageVersion,
+    root: value.root,
+    packages: value.packages,
+    packagePaths: value.packagePaths,
+  };
+}
+
+export function hashPlatformReleaseSourceLockAuthorityInternalV2(
+  value: PlatformReleaseSourceLockAuthorityV2,
+): string {
+  return hashCanonicalJson({
+    schema:
+      "setfarm.platform-release-source-lock-authority-hash.v2",
+    authority:
+      platformReleaseSourceLockAuthorityIdentityInternalV2(
+        value,
+      ),
+  });
+}
+
+export function validatePlatformReleaseSourceLockAuthorityInternalV2(
+  value: PlatformReleaseSourceLockAuthorityV2,
+  expectedPurpose:
+    PlatformReleaseSourceLockAuthorityV2["purpose"],
+): void {
+  if (
+    value.schema
+      !== "setfarm.platform-release-source-lock-authority.v2"
+    || value.purpose !== expectedPurpose
+    || !sameStrings(
+      Object.keys(value).sort(),
+      [...PLATFORM_RELEASE_SOURCE_LOCK_AUTHORITY_KEYS_V2],
+    )
+    || value.authorityHash
+      !== hashPlatformReleaseSourceLockAuthorityInternalV2(
+        value,
+      )
+  ) {
+    return fail(
+      "PLATFORM_RELEASE_BUILD_TOOLCHAIN_V2_AUTHORITY_MISMATCH",
+      "Source lock authority purpose, shape or canonical hash is invalid",
+    );
+  }
+}
+
+export function derivePlatformReleaseSourceLockAuthorityInternalV2(
+  input: Readonly<{
+    projectRoot: string;
+    source: PlatformReleaseSourceTreeBindingV2;
+    purpose: "build_toolchain" | "production_runtime";
+  }>,
+): PlatformReleaseSourceLockAuthorityV2 {
   const lockRef = input.source.inputs.find((entry) =>
     entry.locator === "package-lock.json");
   const packageRef = input.source.inputs.find((entry) =>
@@ -383,7 +471,7 @@ function readLockAuthority(input: Readonly<{
       || lock.name !== manifest.name
       || lock.version !== manifest.version
       || typeof lock.version !== "string"
-      || !PACKAGE_VERSION_PATTERN_V2.test(lock.version)
+      || !isCanonicalNpmExactVersionV2(lock.version)
       || !isPlainNpmLockRecordInternalV2(lock.packages)
       || manifest.peerDependencies !== undefined
       || manifest.peerDependenciesMeta !== undefined
@@ -423,31 +511,37 @@ function readLockAuthority(input: Readonly<{
       .filter((entry) => entry !== "")
       .sort(compareUtf16);
     if (
-      packagePaths.length < 1
+      (
+        input.purpose === "build_toolchain"
+        && packagePaths.length < 1
+      )
       || packagePaths.length > MAX_LOCK_PACKAGES_V2
     ) {
       return fail(
         "PLATFORM_RELEASE_BUILD_TOOLCHAIN_V2_LOCK_INVALID",
-        "npm lock package membership is empty or exceeds its fixed cap",
+        "npm lock package membership violates its purpose-specific fixed bounds",
       );
     }
     for (const packagePath of packagePaths) {
       validateLockPackage(packagePath, packages[packagePath]);
     }
-    const typescript = packages["node_modules/typescript"];
-    if (
-      !isPlainNpmLockRecordInternalV2(typescript)
-      || typeof typescript.version !== "string"
-      || !PACKAGE_VERSION_PATTERN_V2.test(typescript.version)
-    ) {
-      return fail(
-        "PLATFORM_RELEASE_BUILD_TOOLCHAIN_V2_COMPILER_INVALID",
-        "Exact TypeScript lock entry is absent",
-      );
+    if (input.purpose === "build_toolchain") {
+      const typescript = packages["node_modules/typescript"];
+      if (
+        !isPlainNpmLockRecordInternalV2(typescript)
+        || typeof typescript.version !== "string"
+        || !isCanonicalNpmExactVersionV2(typescript.version)
+      ) {
+        return fail(
+          "PLATFORM_RELEASE_BUILD_TOOLCHAIN_V2_COMPILER_INVALID",
+          "Exact TypeScript lock entry is absent",
+        );
+      }
     }
     const identity = {
       schema:
-        "setfarm.platform-release-build-toolchain-lock-authority.v2" as const,
+        "setfarm.platform-release-source-lock-authority.v2" as const,
+      purpose: input.purpose,
       lockRawHash: lockFile.contentHash,
       lockRawByteLength: lockFile.bytes.byteLength,
       packageJsonRawHash: packageFile.contentHash,
@@ -459,14 +553,20 @@ function readLockAuthority(input: Readonly<{
       packages: structuredClone(packages),
       packagePaths,
     };
-    return deepFreezePlatformReleaseJsonV2({
-      ...identity,
-      authorityHash: hashCanonicalJson({
-        schema:
-          "setfarm.platform-release-build-toolchain-lock-authority-hash.v2",
-        authority: identity,
-      }),
-    });
+    const authority =
+      deepFreezePlatformReleaseJsonV2({
+        ...identity,
+        authorityHash: hashCanonicalJson({
+          schema:
+            "setfarm.platform-release-source-lock-authority-hash.v2",
+          authority: identity,
+        }),
+      });
+    validatePlatformReleaseSourceLockAuthorityInternalV2(
+      authority,
+      input.purpose,
+    );
+    return authority;
   } catch (error) {
     if (
       error
@@ -488,12 +588,14 @@ function selectorAllows(
   current: string,
 ): boolean {
   if (!selectors) return true;
+  if (selectors.length === 1 && selectors[0] === "any") {
+    return true;
+  }
   const positive = selectors.filter((entry) =>
     !entry.startsWith("!"));
   if (selectors.includes(`!${current}`)) return false;
   return positive.length === 0
-    || positive.includes(current)
-    || positive.includes("any");
+    || positive.includes(current);
 }
 
 function packageIsEligible(
@@ -546,7 +648,7 @@ function resolveRequiredEdge(input: Readonly<{
 
 function installedClosure(input: Readonly<{
   lockAuthority:
-    PlatformReleaseBuildToolchainLockAuthorityV2;
+    PlatformReleaseSourceLockAuthorityV2;
   installedPaths: readonly string[];
   hostPlatform: string;
   hostArchitecture: string;
@@ -683,7 +785,7 @@ function validateHiddenLockAndInstalledPackages(input: Readonly<{
   projectRoot: string;
   nodeModulesRoot: string;
   lockAuthority:
-    PlatformReleaseBuildToolchainLockAuthorityV2;
+    PlatformReleaseSourceLockAuthorityV2;
   rawEntries: readonly RawNpmInstallEntryInternalV2[];
   hostPlatform: string;
   hostArchitecture: string;
@@ -764,7 +866,7 @@ function validateHiddenLockAndInstalledPackages(input: Readonly<{
       installedPaths.length < 1
       || installedPaths.length > MAX_LOCK_PACKAGES_V2
       || installedPaths.some((packagePath) =>
-        !PACKAGE_PATH_PATTERN_V2.test(packagePath))
+        !isCanonicalNpmLockPackagePathV2(packagePath))
     ) {
       return fail(
         "PLATFORM_RELEASE_BUILD_TOOLCHAIN_V2_LOCK_INVALID",
@@ -865,7 +967,7 @@ function installedPackageMembershipHash(
 function compilerIdentity(input: Readonly<{
   nodeModulesRoot: string;
   lockAuthority:
-    PlatformReleaseBuildToolchainLockAuthorityV2;
+    PlatformReleaseSourceLockAuthorityV2;
   installedPackages:
     readonly PlatformReleaseBuildToolchainLockPackageV2[];
   dependencyTree: CanonicalRuntimeTreeV2;
@@ -1069,7 +1171,11 @@ export function materializePlatformReleaseBuildToolchainTreeInternalV2(
   const nodeModulesRoot =
     path.join(input.projectRoot, "node_modules");
   try {
-    const lockAuthority = readLockAuthority(input);
+    const lockAuthority =
+      derivePlatformReleaseSourceLockAuthorityInternalV2({
+        ...input,
+        purpose: "build_toolchain",
+      });
     const rawEntries =
       captureRawNpmInstallTreeInternalV2(
         nodeModulesRoot,
@@ -1170,7 +1276,7 @@ export function revalidatePlatformReleaseBuildToolchainTreeInternalV2(
     nodeModulesRoot: string;
     source: PlatformReleaseSourceTreeBindingV2;
     lockAuthority:
-      PlatformReleaseBuildToolchainLockAuthorityV2;
+      PlatformReleaseSourceLockAuthorityV2;
     installedPackages:
       readonly PlatformReleaseBuildToolchainLockPackageV2[];
     dependencyTree: CanonicalRuntimeTreeV2;
@@ -1180,6 +1286,10 @@ export function revalidatePlatformReleaseBuildToolchainTreeInternalV2(
   }>,
 ): PlatformReleaseBuildToolchainTreeVerificationV2 {
   try {
+    validatePlatformReleaseSourceLockAuthorityInternalV2(
+      input.lockAuthority,
+      "build_toolchain",
+    );
     assertSealedMembership({
       nodeModulesRoot: input.nodeModulesRoot,
       installedPackages: input.installedPackages,

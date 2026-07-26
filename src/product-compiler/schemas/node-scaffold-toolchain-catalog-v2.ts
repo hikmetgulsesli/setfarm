@@ -17,6 +17,17 @@ import {
   hasUniqueStrings,
 } from "./common-v1.js";
 import {
+  NPM_LOCK_V3_DEPENDENCY_SPEC_MAX_CHARACTERS_V2,
+  NPM_LOCK_V3_EXACT_VERSION_MAX_CHARACTERS_V2,
+  isCanonicalNpmExactVersionV2,
+  isCanonicalNpmLockPackagePathV2,
+  isCanonicalNpmPackageNameV2,
+  isSupportedNpmDependencySpecV2,
+  npmPackageNameFromLockPathV2,
+  npmVersionSatisfiesDependencySpecV2,
+  resolveNpmDependencyPathV2,
+} from "./npm-lock-v3-grammar-v2.js";
+import {
   PATH_TOKEN_CONTRACT_HASH_V2,
   PATH_TOKEN_CONTRACT_VERSION_V2,
   PATH_TOKEN_SET_VERSION_V2,
@@ -306,35 +317,24 @@ const ScaffoldFileV2Schema = z.object({
   }
 });
 
-const CanonicalNumericVersionIdentifierPattern = "(?:0|[1-9]\\d*)";
-const ExactVersionPattern = new RegExp(
-  `^${CanonicalNumericVersionIdentifierPattern}`
-    + `\\.${CanonicalNumericVersionIdentifierPattern}`
-    + `\\.${CanonicalNumericVersionIdentifierPattern}$`,
-  "u",
-);
-const ExactVersionSchema = z.string().max(64).regex(
-  ExactVersionPattern,
-  "Expected a canonical exact three-part semantic version",
-);
-
-const NpmPackageSegmentPattern = "[a-z0-9](?:[a-z0-9._~-]{0,99})";
-const NpmPackageNamePattern =
-  `(?:@${NpmPackageSegmentPattern}/${NpmPackageSegmentPattern}`
-  + `|${NpmPackageSegmentPattern})`;
-const NpmLockPackagePathPattern = new RegExp(
-  `^node_modules/${NpmPackageNamePattern}`
-    + `(?:/node_modules/${NpmPackageNamePattern})*$`,
-  "u",
+const ExactVersionSchema = z.string()
+  .max(NPM_LOCK_V3_EXACT_VERSION_MAX_CHARACTERS_V2)
+  .refine(
+    isCanonicalNpmExactVersionV2,
+    "Expected a canonical exact three-part semantic version",
+  );
+const NpmPackageNameSchema = z.string().refine(
+  isCanonicalNpmPackageNameV2,
+  "Expected one exact npm lock-v3 package name",
 );
 const NpmLockPackagePathSchema = NormalizedRelativeLocatorSchema.refine(
-  (value) => NpmLockPackagePathPattern.test(value),
+  isCanonicalNpmLockPackagePathV2,
   "Expected an exact npm lock-v3 node_modules package path",
 );
 
 const RootDependencyV2Schema = z.object({
   kind: z.enum(["runtime", "development"]),
-  packageName: z.string().min(1).max(214),
+  packageName: NpmPackageNameSchema,
   exactVersion: ExactVersionSchema,
 }).strict();
 
@@ -369,7 +369,7 @@ const DependencyGraphRootV2Schema = z.object({
 
 const LockPackageNodeV2Schema = z.object({
   packagePath: NpmLockPackagePathSchema,
-  packageName: z.string().min(1).max(214),
+  packageName: NpmPackageNameSchema,
   version: ExactVersionSchema,
   resolved: z.string().url().max(2_000)
     .regex(/^https:\/\/registry\.npmjs\.org\//u),
@@ -385,8 +385,13 @@ const LockPackageNodeV2Schema = z.object({
 const DependencyEdgeV2Schema = z.object({
   ownerPackagePath: z.union([z.literal(""), NpmLockPackagePathSchema]),
   kind: z.enum(["dependencies", "devDependencies"]),
-  dependencyName: z.string().min(1).max(214),
-  declaredSpec: z.string().min(1).max(160),
+  dependencyName: NpmPackageNameSchema,
+  declaredSpec: z.string()
+    .max(NPM_LOCK_V3_DEPENDENCY_SPEC_MAX_CHARACTERS_V2)
+    .refine(
+      isSupportedNpmDependencySpecV2,
+      "Expected one supported canonical npm dependency spec",
+    ),
   resolvedPackagePath: NpmLockPackagePathSchema,
   resolvedVersion: ExactVersionSchema,
 }).strict();
@@ -394,101 +399,20 @@ const DependencyEdgeV2Schema = z.object({
 export const NodeScaffoldDependencyNodeV2Schema = LockPackageNodeV2Schema;
 export const NodeScaffoldDependencyEdgeV2Schema = DependencyEdgeV2Schema;
 
-type VersionTuple = readonly [bigint, bigint, bigint];
-
-function parseVersion(value: string): VersionTuple | null {
-  if (value.length > 64) return null;
-  if (!ExactVersionPattern.test(value)) return null;
-  const [major, minor, patch] = value.split(".");
-  return [BigInt(major!), BigInt(minor!), BigInt(patch!)];
-}
-
-function compareVersion(left: VersionTuple, right: VersionTuple): number {
-  for (let index = 0; index < 3; index += 1) {
-    if (left[index]! < right[index]!) return -1;
-    if (left[index]! > right[index]!) return 1;
-  }
-  return 0;
-}
-
-function parseCanonicalVersionIdentifier(value: string): bigint | null {
-  if (
-    value.length === 0
-    || value.length > 64
-    || !/^(?:0|[1-9]\d*)$/u.test(value)
-  ) return null;
-  return BigInt(value);
-}
-
 export function nodeScaffoldVersionSatisfiesSpecV2(
   versionText: string,
   spec: string,
 ): boolean {
-  const version = parseVersion(versionText);
-  if (!version) return false;
-  if (spec === "*") return true;
-  const exact = parseVersion(spec);
-  if (exact) return compareVersion(version, exact) === 0;
-  const major = parseCanonicalVersionIdentifier(spec);
-  if (major !== null) return version[0] === major;
-  const shortCaret = /^\^((?:0|[1-9]\d*))$/u.exec(spec);
-  if (shortCaret) {
-    const shortMajor = parseCanonicalVersionIdentifier(shortCaret[1]!);
-    return shortMajor !== null && version[0] === shortMajor;
-  }
-  const prefix = new RegExp(
-    `^([~^])(${CanonicalNumericVersionIdentifierPattern})`
-      + `\\.(${CanonicalNumericVersionIdentifierPattern})`
-      + `\\.(${CanonicalNumericVersionIdentifierPattern})$`,
-    "u",
-  ).exec(spec);
-  if (prefix) {
-    const baseIdentifiers = [prefix[2]!, prefix[3]!, prefix[4]!]
-      .map(parseCanonicalVersionIdentifier);
-    if (baseIdentifiers.some((identifier) => identifier === null)) return false;
-    const base: VersionTuple = [
-      baseIdentifiers[0]!,
-      baseIdentifiers[1]!,
-      baseIdentifiers[2]!,
-    ];
-    if (compareVersion(version, base) < 0) return false;
-    if (prefix[1] === "~") {
-      return version[0] === base[0] && version[1] === base[1];
-    }
-    if (base[0] > 0n) return version[0] === base[0];
-    if (base[1] > 0n) {
-      return version[0] === 0n && version[1] === base[1];
-    }
-    return version[0] === 0n && version[1] === 0n && version[2] === base[2];
-  }
-  const comparators = new RegExp(
-    `^>=\\s*(${CanonicalNumericVersionIdentifierPattern}`
-      + `\\.${CanonicalNumericVersionIdentifierPattern}`
-      + `\\.${CanonicalNumericVersionIdentifierPattern})\\s+<\\s*`
-      + `(${CanonicalNumericVersionIdentifierPattern}`
-      + `\\.${CanonicalNumericVersionIdentifierPattern}`
-      + `\\.${CanonicalNumericVersionIdentifierPattern})$`,
-    "u",
-  ).exec(spec);
-  if (comparators) {
-    const minimum = parseVersion(comparators[1]!);
-    const maximum = parseVersion(comparators[2]!);
-    if (!minimum || !maximum) return false;
-    return compareVersion(version, minimum) >= 0
-      && compareVersion(version, maximum) < 0;
-  }
-  return false;
+  return npmVersionSatisfiesDependencySpecV2(
+    versionText,
+    spec,
+  );
 }
 
 export function nodeScaffoldPackageNameFromLockPathV2(
   packagePath: string,
 ): string | null {
-  if (!NpmLockPackagePathPattern.test(packagePath)) return null;
-  const marker = "/node_modules/";
-  const lastMarker = packagePath.lastIndexOf(marker);
-  return lastMarker < 0
-    ? packagePath.slice("node_modules/".length)
-    : packagePath.slice(lastMarker + marker.length);
+  return npmPackageNameFromLockPathV2(packagePath);
 }
 
 export function resolveNodeScaffoldDependencyPathV2(
@@ -496,26 +420,11 @@ export function resolveNodeScaffoldDependencyPathV2(
   ownerPackagePath: string,
   dependencyName: string,
 ): string | null {
-  if (!new RegExp(`^${NpmPackageNamePattern}$`, "u").test(dependencyName)) {
-    return null;
-  }
-  let base = ownerPackagePath;
-  for (;;) {
-    const candidate = base.length > 0
-      ? `${base}/node_modules/${dependencyName}`
-      : `node_modules/${dependencyName}`;
-    if (packagePaths.has(candidate)) return candidate;
-    const nestedMarker = base.lastIndexOf("/node_modules/");
-    if (nestedMarker >= 0) {
-      base = base.slice(0, nestedMarker);
-      continue;
-    }
-    if (base.startsWith("node_modules/")) {
-      base = "";
-      continue;
-    }
-    return null;
-  }
+  return resolveNpmDependencyPathV2(
+    packagePaths,
+    ownerPackagePath,
+    dependencyName,
+  );
 }
 
 function edgeKey(edge: z.infer<typeof DependencyEdgeV2Schema>): string {

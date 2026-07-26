@@ -4,11 +4,15 @@ import { isProxy } from "node:util/types";
 import {
   executeHostNodeToolchainPlatformReleaseBuildV2,
   executeHostNodeToolchainPlatformReleaseNpmCiV2,
+  executeHostNodeToolchainPlatformReleaseProductionNpmCiV2,
   isProductionHostNodeToolchainAuthorityV2,
   revalidateHostNodeToolchainAuthorityV2,
+  HostNodeToolchainAuthorityErrorV2,
+  type HostNodeToolchainAuthorityErrorCodeV2,
   type HostNodeToolchainAuthorityV2,
   type HostNodeToolchainNpmCiInputV2,
   type HostNodeToolchainPlatformReleaseBuildInputV2,
+  type HostNodeToolchainPlatformReleaseProductionNpmCiInputV2,
 } from "../product-compiler/host-node-toolchain-authority-v2.js";
 import {
   canonicalJsonStringify,
@@ -49,7 +53,8 @@ export type PlatformReleaseHostNodeToolchainAuthorityErrorCodeV2 =
   | "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_HANDLE_UNAUTHENTICATED"
   | "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_HOST_DRIFT"
   | "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_BUILD_FAILED"
-  | "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_INSTALL_FAILED";
+  | "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_INSTALL_FAILED"
+  | "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_PRODUCTION_INSTALL_SCOPE_INVALID";
 
 export class PlatformReleaseHostNodeToolchainAuthorityErrorV2
   extends Error {
@@ -109,6 +114,50 @@ export type PlatformReleaseHostNodeToolchainNpmCiEvidenceV2 =
 export type PlatformReleaseHostNodeToolchainBuildEvidenceV2 =
   ParsedPlatformReleaseHostNodeToolchainBuildEvidenceV2;
 
+export type PlatformReleaseHostNodeToolchainProductionNpmCiEvidenceV2 =
+  Readonly<{
+    schema:
+      "setfarm.platform-release-host-node-toolchain-production-npm-ci-evidence.v2";
+    version: "2.0.0";
+    authorityState:
+      "authenticated_process_occurrence_unverified";
+    productionUse:
+      "forbidden_until_complete_dependency_pair_and_fresh_release_verification";
+    probeRef:
+      "HOST_NPM_PLATFORM_RELEASE_PRODUCTION_INSTALL_V2";
+    platformHostToolchainReceiptHash: string;
+    nodeIdentityHash: string;
+    npmClosureHash: string;
+    environmentHash: string;
+    environmentScopeHash: string;
+    projectScopeHash: string;
+    projectPhysicalIdentityHash: string;
+    sourceFenceHash: string;
+    directArgv: readonly [
+      "npm",
+      "ci",
+      "--omit=dev",
+      "--ignore-scripts",
+      "--no-audit",
+      "--no-fund",
+    ];
+    directArgvHash: string;
+    stdin: "closed";
+    inheritAmbientEnvironment: false;
+    timeoutMs: 120_000;
+    maxStdoutBytes: 65_536;
+    maxStderrBytes: 65_536;
+    shell: "forbidden";
+    termination: "normal_exit";
+    exitCode: 0;
+    signal: null;
+    stdoutContentHash: string;
+    stdoutByteLength: number;
+    stderrContentHash: string;
+    stderrByteLength: number;
+    evidenceHash: string;
+  }>;
+
 const authorityConstructorCapabilityV2 = Object.freeze({});
 const authorityStatesV2 =
   new WeakMap<object, PlatformReleaseHostNodeToolchainAuthorityStateV2>();
@@ -144,6 +193,130 @@ function fail(
     code,
     message,
     cause === undefined ? undefined : { cause },
+  );
+}
+
+const HOST_ERROR_CODE_TO_PRODUCTION_NPM_ERROR_V2 =
+  Object.freeze({
+    HOST_NODE_TOOLCHAIN_V2_INPUT_INVALID:
+      "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_INPUT_INVALID",
+    HOST_NODE_TOOLCHAIN_V2_NO_ADMITTED_CANDIDATE:
+      "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_HOST_AUTHORITY_INVALID",
+    HOST_NODE_TOOLCHAIN_V2_CANDIDATE_LAYOUT_INVALID:
+      "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_HOST_AUTHORITY_INVALID",
+    HOST_NODE_TOOLCHAIN_V2_NODE_IDENTITY_INVALID:
+      "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_HOST_AUTHORITY_INVALID",
+    HOST_NODE_TOOLCHAIN_V2_PACKAGE_CLOSURE_INVALID:
+      "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_HOST_AUTHORITY_INVALID",
+    HOST_NODE_TOOLCHAIN_V2_DYNAMIC_LIBRARY_CLOSURE_INVALID:
+      "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_HOST_AUTHORITY_INVALID",
+    HOST_NODE_TOOLCHAIN_V2_PROBE_TIMEOUT:
+      "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_HOST_AUTHORITY_INVALID",
+    HOST_NODE_TOOLCHAIN_V2_PROBE_OUTPUT_LIMIT:
+      "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_HOST_AUTHORITY_INVALID",
+    HOST_NODE_TOOLCHAIN_V2_PROBE_SPAWN_FAILED:
+      "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_HOST_AUTHORITY_INVALID",
+    HOST_NODE_TOOLCHAIN_V2_PROBE_SIGNALLED:
+      "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_HOST_AUTHORITY_INVALID",
+    HOST_NODE_TOOLCHAIN_V2_PROBE_NONZERO:
+      "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_HOST_AUTHORITY_INVALID",
+    HOST_NODE_TOOLCHAIN_V2_PROBE_MALFORMED:
+      "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_HOST_AUTHORITY_INVALID",
+    HOST_NODE_TOOLCHAIN_V2_NODE_VERSION_MISMATCH:
+      "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_HOST_AUTHORITY_INVALID",
+    HOST_NODE_TOOLCHAIN_V2_NPM_VERSION_MISMATCH:
+      "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_HOST_AUTHORITY_INVALID",
+    HOST_NODE_TOOLCHAIN_V2_EXECUTABLE_PAIRING_MISMATCH:
+      "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_HOST_AUTHORITY_INVALID",
+    HOST_NODE_TOOLCHAIN_V2_RECEIPT_INVALID:
+      "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_RECEIPT_INVALID",
+    HOST_NODE_TOOLCHAIN_V2_HANDLE_UNAUTHENTICATED:
+      "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_HANDLE_UNAUTHENTICATED",
+    HOST_NODE_TOOLCHAIN_V2_PRODUCTION_AUTHORITY_REQUIRED:
+      "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_PRODUCTION_AUTHORITY_REQUIRED",
+    HOST_NODE_TOOLCHAIN_V2_PROVISIONING_AUTHORITY_INVALID:
+      "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_HOST_AUTHORITY_INVALID",
+    HOST_NODE_TOOLCHAIN_V2_HOST_DRIFT:
+      "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_HOST_DRIFT",
+    HOST_NODE_TOOLCHAIN_V2_EXECUTION_ENVIRONMENT_INVALID:
+      "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_PRODUCTION_INSTALL_SCOPE_INVALID",
+    HOST_NODE_TOOLCHAIN_V2_EFFECTIVE_NPM_CONFIG_INVALID:
+      "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_PRODUCTION_INSTALL_SCOPE_INVALID",
+    HOST_NODE_TOOLCHAIN_V2_INSTALL_SCOPE_INVALID:
+      "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_PRODUCTION_INSTALL_SCOPE_INVALID",
+    HOST_NODE_TOOLCHAIN_V2_INSTALL_TIMEOUT:
+      "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_INSTALL_FAILED",
+    HOST_NODE_TOOLCHAIN_V2_INSTALL_OUTPUT_LIMIT:
+      "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_INSTALL_FAILED",
+    HOST_NODE_TOOLCHAIN_V2_INSTALL_SPAWN_FAILED:
+      "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_INSTALL_FAILED",
+    HOST_NODE_TOOLCHAIN_V2_INSTALL_SIGNALLED:
+      "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_INSTALL_FAILED",
+    HOST_NODE_TOOLCHAIN_V2_INSTALL_NONZERO:
+      "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_INSTALL_FAILED",
+    HOST_NODE_TOOLCHAIN_V2_RUNTIME_INSTALL_SCOPE_INVALID:
+      "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_PRODUCTION_INSTALL_SCOPE_INVALID",
+    HOST_NODE_TOOLCHAIN_V2_RUNTIME_INSTALL_TIMEOUT:
+      "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_INSTALL_FAILED",
+    HOST_NODE_TOOLCHAIN_V2_RUNTIME_INSTALL_OUTPUT_LIMIT:
+      "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_INSTALL_FAILED",
+    HOST_NODE_TOOLCHAIN_V2_RUNTIME_INSTALL_SPAWN_FAILED:
+      "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_INSTALL_FAILED",
+    HOST_NODE_TOOLCHAIN_V2_RUNTIME_INSTALL_SIGNALLED:
+      "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_INSTALL_FAILED",
+    HOST_NODE_TOOLCHAIN_V2_RUNTIME_INSTALL_NONZERO:
+      "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_INSTALL_FAILED",
+    HOST_NODE_TOOLCHAIN_V2_RUNTIME_INSTALL_SOURCE_DRIFT:
+      "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_PRODUCTION_INSTALL_SCOPE_INVALID",
+    HOST_NODE_TOOLCHAIN_V2_RELEASE_DEPENDENCY_INSTALL_SCOPE_INVALID:
+      "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_PRODUCTION_INSTALL_SCOPE_INVALID",
+    HOST_NODE_TOOLCHAIN_V2_RELEASE_DEPENDENCY_INSTALL_TIMEOUT:
+      "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_INSTALL_FAILED",
+    HOST_NODE_TOOLCHAIN_V2_RELEASE_DEPENDENCY_INSTALL_OUTPUT_LIMIT:
+      "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_INSTALL_FAILED",
+    HOST_NODE_TOOLCHAIN_V2_RELEASE_DEPENDENCY_INSTALL_SPAWN_FAILED:
+      "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_INSTALL_FAILED",
+    HOST_NODE_TOOLCHAIN_V2_RELEASE_DEPENDENCY_INSTALL_SIGNALLED:
+      "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_INSTALL_FAILED",
+    HOST_NODE_TOOLCHAIN_V2_RELEASE_DEPENDENCY_INSTALL_NONZERO:
+      "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_INSTALL_FAILED",
+    HOST_NODE_TOOLCHAIN_V2_RELEASE_DEPENDENCY_INSTALL_SOURCE_DRIFT:
+      "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_PRODUCTION_INSTALL_SCOPE_INVALID",
+    HOST_NODE_TOOLCHAIN_V2_BUILD_SCOPE_INVALID:
+      "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_PRODUCTION_INSTALL_SCOPE_INVALID",
+    HOST_NODE_TOOLCHAIN_V2_BUILD_TIMEOUT:
+      "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_INSTALL_FAILED",
+    HOST_NODE_TOOLCHAIN_V2_BUILD_OUTPUT_LIMIT:
+      "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_INSTALL_FAILED",
+    HOST_NODE_TOOLCHAIN_V2_BUILD_SPAWN_FAILED:
+      "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_INSTALL_FAILED",
+    HOST_NODE_TOOLCHAIN_V2_BUILD_SIGNALLED:
+      "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_INSTALL_FAILED",
+    HOST_NODE_TOOLCHAIN_V2_BUILD_NONZERO:
+      "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_INSTALL_FAILED",
+    HOST_NODE_TOOLCHAIN_V2_BUILD_COMPILER_DRIFT:
+      "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_HOST_DRIFT",
+  } satisfies Readonly<Record<
+    HostNodeToolchainAuthorityErrorCodeV2,
+    PlatformReleaseHostNodeToolchainAuthorityErrorCodeV2
+  >>);
+
+function translateProductionNpmErrorV2(
+  error: unknown,
+): never {
+  if (error instanceof HostNodeToolchainAuthorityErrorV2) {
+    return fail(
+      HOST_ERROR_CODE_TO_PRODUCTION_NPM_ERROR_V2[
+        error.code
+      ],
+      "Authenticated platform release production npm ci failed",
+      error,
+    );
+  }
+  return fail(
+    "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_INSTALL_FAILED",
+    "Authenticated platform release production npm ci failed",
+    error,
   );
 }
 
@@ -471,6 +644,118 @@ export async function executePlatformReleaseHostNodeToolchainNpmCiInternalV2(
     evidenceHash: hashCanonicalJson({
       schema:
         "setfarm.platform-release-host-node-toolchain-npm-ci-evidence-hash.v2",
+      evidence: identity,
+    }),
+  });
+}
+
+export async function executePlatformReleaseHostNodeToolchainProductionNpmCiInternalV2(
+  handle: PlatformReleaseHostNodeToolchainAuthorityV2,
+  input:
+    HostNodeToolchainPlatformReleaseProductionNpmCiInputV2,
+): Promise<
+  PlatformReleaseHostNodeToolchainProductionNpmCiEvidenceV2
+> {
+  const state = authenticState(handle);
+  const before =
+    await revalidatePlatformReleaseHostNodeToolchainAuthorityV2(
+      handle,
+    );
+  let observed;
+  try {
+    observed =
+      await executeHostNodeToolchainPlatformReleaseProductionNpmCiV2(
+        state.bootstrap,
+        input,
+      );
+  } catch (error) {
+    await revalidatePlatformReleaseHostNodeToolchainAuthorityV2(
+      handle,
+    );
+    return translateProductionNpmErrorV2(error);
+  }
+  const after =
+    await revalidatePlatformReleaseHostNodeToolchainAuthorityV2(
+      handle,
+    );
+  const expectedDirectArgvHash = hashCanonicalJson({
+    schema:
+      "setfarm.platform-release-production-npm-direct-argv-hash.v2",
+    directArgv: observed.directArgv,
+  });
+  if (
+    before.receiptHash !== after.receiptHash
+    || observed.hostToolchainReceiptHash
+      !== state.bootstrapReceiptHash
+    || observed.probeRef
+      !== "HOST_NPM_PLATFORM_RELEASE_PRODUCTION_INSTALL_V2"
+    || observed.nodeIdentityHash !== before.node.identityHash
+    || observed.npmClosureHash !== before.npm.closureHash
+    || observed.directArgvHash !== expectedDirectArgvHash
+    || observed.directArgv.join("\0") !== [
+      "npm",
+      "ci",
+      "--omit=dev",
+      "--ignore-scripts",
+      "--no-audit",
+      "--no-fund",
+    ].join("\0")
+    || observed.stdin !== "closed"
+    || observed.shell !== "forbidden"
+    || observed.ambientEnvironment !== "forbidden"
+    || observed.status !== "exited_zero"
+    || observed.exitCode !== 0
+    || observed.signal !== null
+  ) {
+    return fail(
+      "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_HOST_DRIFT",
+      "Platform release host or exact production npm recipe changed during execution",
+    );
+  }
+  const identity = {
+    schema:
+      "setfarm.platform-release-host-node-toolchain-production-npm-ci-evidence.v2" as const,
+    version: "2.0.0" as const,
+    authorityState:
+      "authenticated_process_occurrence_unverified" as const,
+    productionUse:
+      "forbidden_until_complete_dependency_pair_and_fresh_release_verification" as const,
+    probeRef:
+      "HOST_NPM_PLATFORM_RELEASE_PRODUCTION_INSTALL_V2" as const,
+    platformHostToolchainReceiptHash: after.receiptHash,
+    nodeIdentityHash: observed.nodeIdentityHash,
+    npmClosureHash: observed.npmClosureHash,
+    environmentHash: observed.environmentHash,
+    environmentScopeHash:
+      observed.environmentScopeHash,
+    projectScopeHash: observed.projectScopeHash,
+    projectPhysicalIdentityHash:
+      observed.projectPhysicalIdentityHash,
+    sourceFenceHash: observed.sourceFenceHash,
+    directArgv: [...observed.directArgv] as
+      PlatformReleaseHostNodeToolchainProductionNpmCiEvidenceV2[
+        "directArgv"
+      ],
+    directArgvHash: observed.directArgvHash,
+    stdin: "closed" as const,
+    inheritAmbientEnvironment: false as const,
+    timeoutMs: observed.timeoutMs,
+    maxStdoutBytes: observed.maxStdoutBytes,
+    maxStderrBytes: observed.maxStderrBytes,
+    shell: "forbidden" as const,
+    termination: "normal_exit" as const,
+    exitCode: 0 as const,
+    signal: null,
+    stdoutContentHash: observed.stdoutHash,
+    stdoutByteLength: observed.stdoutBytes,
+    stderrContentHash: observed.stderrHash,
+    stderrByteLength: observed.stderrBytes,
+  };
+  return deepFreezePlatformReleaseJsonV2({
+    ...identity,
+    evidenceHash: hashCanonicalJson({
+      schema:
+        "setfarm.platform-release-host-node-toolchain-production-npm-ci-evidence-hash.v2",
       evidence: identity,
     }),
   });

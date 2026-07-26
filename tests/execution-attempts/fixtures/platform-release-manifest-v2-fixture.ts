@@ -82,6 +82,7 @@ import {
   NON_SYSTEM_DYNAMIC_LIBRARY_V2_SCHEMA,
   NPM_MATERIALIZATION_RECEIPT_V2_SCHEMA,
   NPM_PACKAGE_MANAGER_RESOLUTION_V2_SCHEMA,
+  NPM_PRODUCTION_MATERIALIZATION_RECIPE_V2,
   NPM_PRODUCTION_MATERIALIZATION_RECIPE_V2_SCHEMA,
   PRODUCTION_PACKAGE_RESOLUTION_GRAPH_V2_SCHEMA,
   hashExternalRuntimeResolutionV2,
@@ -630,28 +631,9 @@ function hostRuntime() {
 }
 
 function npmRecipe() {
-  const identity = {
-    schema: NPM_PRODUCTION_MATERIALIZATION_RECIPE_V2_SCHEMA,
-    commandRef: "MATERIALIZE_PRODUCTION_DEPENDENCIES_V2" as const,
-    subcommand: "ci" as const,
-    arguments: [
-      "--omit=dev",
-      "--ignore-scripts",
-      "--no-audit",
-      "--no-fund",
-    ] as const,
-    dependencySelection: "production_only" as const,
-    lifecycleScripts: "forbidden" as const,
-    configHash: fixtureShaV2("npm-config"),
-    materializationReceiptSchema:
-      NPM_MATERIALIZATION_RECEIPT_V2_SCHEMA,
-    materializationReceiptSchemaHash:
-      fixtureShaV2("npm-receipt-schema"),
-  };
-  return {
-    ...identity,
-    recipeHash: hashNpmProductionMaterializationRecipeV2(identity),
-  };
+  return structuredClone(
+    NPM_PRODUCTION_MATERIALIZATION_RECIPE_V2,
+  );
 }
 
 function externalExecutable(
@@ -702,6 +684,14 @@ function externalResolution(
       byteLength: 14_321,
     },
     materializedDependencyTreeHash: payload.dependencyTree.treeHash,
+    productionClosureHash:
+      fixtureShaV2("production-closure"),
+    productionClosureContractHash:
+      fixtureShaV2("production-closure-contract"),
+    dependencyEdgeModel:
+      "required_and_observed_optional" as const,
+    rootDependencyLocators: [],
+    dependencyEdges: [],
     packages: [],
     packageCount: 0,
   };
@@ -722,6 +712,17 @@ function externalResolution(
     lockfile: structuredClone(productionPackages.lockfile),
     outputRoot: "payload/node_modules" as const,
     dependencyTreeHash: payload.dependencyTree.treeHash,
+    dependencyTreePayloadHash:
+      payload.dependencyTree.treePayloadHash,
+    dependencyTreeBindingHash:
+      payload.dependencyTree.bindingHash,
+    productionClosureHash:
+      productionPackages.productionClosureHash,
+    productionClosureContractHash:
+      productionPackages
+        .productionClosureContractHash,
+    productionResolutionGraphHash:
+      productionPackages.resolutionGraphHash,
     packageCount: 0,
     lifecycleScripts: "forbidden" as const,
     exitCode: 0 as const,
@@ -2194,6 +2195,12 @@ export function bindPlatformReleaseCandidateEnvelopeFixtureToStageV2(
     );
   external.materializationReceipt.dependencyTreeHash =
     dependencyTree.treeHash;
+  external.materializationReceipt.dependencyTreePayloadHash =
+    dependencyTree.payloadHash;
+  external.materializationReceipt.dependencyTreeBindingHash =
+    manifest.runtimePayload.dependencyTree.bindingHash;
+  external.materializationReceipt.productionResolutionGraphHash =
+    external.productionPackages.resolutionGraphHash;
   external.materializationReceipt.receiptHash =
     hashNpmMaterializationReceiptV2(
       external.materializationReceipt,

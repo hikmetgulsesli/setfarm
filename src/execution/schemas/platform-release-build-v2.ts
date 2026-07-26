@@ -1233,6 +1233,10 @@ const PlatformReleaseBuildOutputIdentityV2Schema = z.object({
   if (
     value.npmMaterializationReceipt.dependencyTreeHash
       !== value.runtimePayload.dependencyTree.treeHash
+    || value.npmMaterializationReceipt.dependencyTreePayloadHash
+      !== value.runtimePayload.dependencyTree.treePayloadHash
+    || value.npmMaterializationReceipt.dependencyTreeBindingHash
+      !== value.runtimePayload.dependencyTree.bindingHash
   ) {
     context.addIssue({
       code: "custom",

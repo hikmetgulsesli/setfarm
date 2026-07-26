@@ -1006,6 +1006,33 @@ function buildProductionGraph(input: Readonly<{
   dependencyTree: CanonicalRuntimeTreeV2;
 }>): ProductionPackageResolutionGraphV2 {
   const packageLocators = input.closure.nodes.map((node) => node.packagePath);
+  const dependencyEdges = input.closure.edges.map((edge) => ({
+    ownerPackageLocator: edge.ownerPackagePath,
+    kind: "dependencies" as const,
+    dependencyName: edge.dependencyName,
+    declaredSpec: edge.declaredSpec,
+    resolvedPackageLocator:
+      edge.resolvedPackagePath,
+    resolvedVersion: edge.resolvedVersion,
+  })).sort((left, right) =>
+    compareUtf16(
+      [
+        left.ownerPackageLocator,
+        left.kind,
+        left.dependencyName,
+        left.resolvedPackageLocator,
+        left.declaredSpec,
+        left.resolvedVersion,
+      ].join("\0"),
+      [
+        right.ownerPackageLocator,
+        right.kind,
+        right.dependencyName,
+        right.resolvedPackageLocator,
+        right.declaredSpec,
+        right.resolvedVersion,
+      ].join("\0"),
+    ));
   const packages: ProductionPackageResolutionEntryV2[] = input.closure.nodes.map((node) => {
     const relativePackage = relativeNodeModulesLocator(node.packagePath);
     const packageJson = readExactRegularFile({
@@ -1068,6 +1095,14 @@ function buildProductionGraph(input: Readonly<{
     lockfileVersion: 3,
     lockfile: lockfileRef(input.closure),
     materializedDependencyTreeHash: input.dependencyTree.treeHash,
+    productionClosureHash: input.closure.closureHash,
+    productionClosureContractHash:
+      input.closure.contractHash,
+    dependencyEdgeModel: "dependencies_only",
+    rootDependencyLocators: input.closure.rootDependencies
+      .map((dependency) => dependency.resolvedPackagePath)
+      .sort(compareUtf16),
+    dependencyEdges,
     packages,
     packageCount: packages.length,
   };

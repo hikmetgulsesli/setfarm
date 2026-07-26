@@ -13,6 +13,10 @@ import {
   StableReferenceSchema,
 } from "../../product-compiler/schemas/common-v1.js";
 import {
+  isCanonicalNpmPackageNameV2,
+} from
+  "../../product-compiler/schemas/npm-lock-v3-grammar-v2.js";
+import {
   CANONICAL_RUNTIME_TREE_V2_PROFILES,
   canonicalRuntimePathIssuesV2,
 } from "./canonical-runtime-tree-v2.js";
@@ -337,11 +341,9 @@ export type ExactHostOwnedFileRefV2 = z.infer<
 export const PlatformReleaseStableReferenceV2Schema = StableReferenceSchema;
 
 export const PlatformReleaseNpmPackageNameV2Schema = z.string()
-  .min(1)
-  .max(214)
-  .regex(
-    /^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/,
-    "Expected one canonical lowercase npm package name",
+  .refine(
+    isCanonicalNpmPackageNameV2,
+    "Expected one canonical lowercase npm lock-v3 package name",
   );
 
 export function boundedPlatformReleaseJsonSnapshotV2(

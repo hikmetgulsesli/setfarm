@@ -109,6 +109,10 @@ export const CanonicalRuntimeDependencyTreeBindingCandidateV2Schema = z.object({
   }
 });
 
+export type CanonicalRuntimeDependencyTreeBindingCandidateV2 = z.infer<
+  typeof CanonicalRuntimeDependencyTreeBindingCandidateV2Schema
+>;
+
 export const CanonicalRuntimeTreeBindingCandidateV2Schema = z.discriminatedUnion("profile", [
   CanonicalRuntimeDistTreeBindingCandidateV2Schema,
   CanonicalRuntimeDependencyTreeBindingCandidateV2Schema,

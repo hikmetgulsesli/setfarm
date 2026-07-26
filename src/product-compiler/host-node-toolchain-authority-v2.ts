@@ -157,6 +157,13 @@ export type HostNodeToolchainAuthorityErrorCodeV2 =
   | "HOST_NODE_TOOLCHAIN_V2_RUNTIME_INSTALL_SIGNALLED"
   | "HOST_NODE_TOOLCHAIN_V2_RUNTIME_INSTALL_NONZERO"
   | "HOST_NODE_TOOLCHAIN_V2_RUNTIME_INSTALL_SOURCE_DRIFT"
+  | "HOST_NODE_TOOLCHAIN_V2_RELEASE_DEPENDENCY_INSTALL_SCOPE_INVALID"
+  | "HOST_NODE_TOOLCHAIN_V2_RELEASE_DEPENDENCY_INSTALL_TIMEOUT"
+  | "HOST_NODE_TOOLCHAIN_V2_RELEASE_DEPENDENCY_INSTALL_OUTPUT_LIMIT"
+  | "HOST_NODE_TOOLCHAIN_V2_RELEASE_DEPENDENCY_INSTALL_SPAWN_FAILED"
+  | "HOST_NODE_TOOLCHAIN_V2_RELEASE_DEPENDENCY_INSTALL_SIGNALLED"
+  | "HOST_NODE_TOOLCHAIN_V2_RELEASE_DEPENDENCY_INSTALL_NONZERO"
+  | "HOST_NODE_TOOLCHAIN_V2_RELEASE_DEPENDENCY_INSTALL_SOURCE_DRIFT"
   | "HOST_NODE_TOOLCHAIN_V2_BUILD_SCOPE_INVALID"
   | "HOST_NODE_TOOLCHAIN_V2_BUILD_TIMEOUT"
   | "HOST_NODE_TOOLCHAIN_V2_BUILD_OUTPUT_LIMIT"
@@ -188,6 +195,7 @@ export type HostNodeToolchainProbeRefV2 =
   | "HOST_NPM_SCAFFOLD_INSTALL_V2"
   | "HOST_NPM_PLATFORM_RELEASE_BUILD_INSTALL_V2"
   | "HOST_NPM_CANDIDATE_PRODUCTION_INSTALL_V2"
+  | "HOST_NPM_PLATFORM_RELEASE_PRODUCTION_INSTALL_V2"
   | "HOST_NODE_PLATFORM_RELEASE_BUILD_V2"
   | "HOST_NODE_PRODUCT_BUILD_V2";
 
@@ -376,6 +384,50 @@ export type HostNodeToolchainCandidateProductionNpmCiEvidenceV2 = Readonly<{
   stderrHash: string;
   stderrBytes: number;
 }>;
+
+export type HostNodeToolchainPlatformReleaseProductionNpmCiInputV2 =
+  Readonly<{
+    privateRoot: string;
+    projectRoot: string;
+    environment:
+      HostNodeToolchainEffectiveNpmConfigProbeInputV2["environment"];
+  }>;
+
+export type HostNodeToolchainPlatformReleaseProductionNpmCiEvidenceV2 =
+  Readonly<{
+    probeRef:
+      "HOST_NPM_PLATFORM_RELEASE_PRODUCTION_INSTALL_V2";
+    hostToolchainReceiptHash: string;
+    nodeIdentityHash: string;
+    npmClosureHash: string;
+    environmentHash: string;
+    environmentScopeHash: string;
+    projectScopeHash: string;
+    projectPhysicalIdentityHash: string;
+    sourceFenceHash: string;
+    directArgv: readonly [
+      "npm",
+      "ci",
+      "--omit=dev",
+      "--ignore-scripts",
+      "--no-audit",
+      "--no-fund",
+    ];
+    directArgvHash: string;
+    stdin: "closed";
+    timeoutMs: 120_000;
+    maxStdoutBytes: 65_536;
+    maxStderrBytes: 65_536;
+    shell: "forbidden";
+    ambientEnvironment: "forbidden";
+    status: "exited_zero";
+    exitCode: 0;
+    signal: null;
+    stdoutHash: string;
+    stdoutBytes: number;
+    stderrHash: string;
+    stderrBytes: number;
+  }>;
 
 export type HostNodeToolchainPlatformReleaseBuildInputV2 =
   Readonly<{
@@ -3378,6 +3430,715 @@ export async function executeHostNodeToolchainCandidateProductionNpmCiV2(
     timeoutMs: NPM_SCAFFOLD_INSTALL_TIMEOUT_MS_V2,
     maxStdoutBytes: NPM_SCAFFOLD_INSTALL_MAX_OUTPUT_BYTES_V2,
     maxStderrBytes: NPM_SCAFFOLD_INSTALL_MAX_OUTPUT_BYTES_V2,
+    shell: "forbidden" as const,
+    ambientEnvironment: "forbidden" as const,
+    status: "exited_zero" as const,
+    exitCode: 0 as const,
+    signal: null,
+    stdoutHash: sha256(result.stdout),
+    stdoutBytes: Buffer.byteLength(result.stdout, "utf8"),
+    stderrHash: sha256(result.stderr),
+    stderrBytes: Buffer.byteLength(result.stderr, "utf8"),
+  });
+}
+
+type PlatformReleaseProductionNpmScopeCaptureV2 = Readonly<{
+  projectScopeHash: string;
+  projectPhysicalIdentityHash: string;
+  sourceFenceHash: string;
+}>;
+
+type PlatformReleaseProductionEnvironmentScopeCaptureV2 =
+  Readonly<{
+    environmentScopeHash: string;
+  }>;
+
+type PlatformReleaseStableDirectoryIdentityV2 = Readonly<{
+  device: string;
+  inode: string;
+  mode: number;
+  ownerUid: number;
+  ownerGid: number;
+}>;
+
+function platformReleaseStableDirectoryIdentityV2(
+  stat: Stats,
+): PlatformReleaseStableDirectoryIdentityV2 {
+  return Object.freeze({
+    device: String(stat.dev),
+    inode: String(stat.ino),
+    mode: modeBits(stat),
+    ownerUid: stat.uid,
+    ownerGid: stat.gid,
+  });
+}
+
+function capturePlatformReleaseProductionEnvironmentScopeV2(
+  input: HostNodeToolchainEffectiveNpmConfigProbeInputV2,
+): PlatformReleaseProductionEnvironmentScopeCaptureV2 {
+  if (
+    !isPlainRecord(input)
+    || !exactRecordKeys(input, ["environment", "privateRoot"])
+    || typeof input.privateRoot !== "string"
+    || !normalizedPlatformReleaseBuildPathV2(
+      input.privateRoot,
+    )
+    || !isPlainRecord(input.environment)
+    || !exactRecordKeys(
+      input.environment,
+      EFFECTIVE_NPM_CONFIG_ENVIRONMENT_KEYS_V2,
+    )
+  ) {
+    return fail(
+      "HOST_NODE_TOOLCHAIN_V2_RELEASE_DEPENDENCY_INSTALL_SCOPE_INVALID",
+      "Platform release production npm environment scope is not exact",
+    );
+  }
+  const root = input.privateRoot;
+  const owner = processOwnerV2();
+  const expected = Object.freeze({
+    HOME: path.join(root, "home"),
+    NPM_CONFIG_CACHE: path.join(root, "cache"),
+    NPM_CONFIG_GLOBALCONFIG: path.join(
+      root,
+      "global.npmrc",
+    ),
+    NPM_CONFIG_USERCONFIG: path.join(
+      root,
+      "user.npmrc",
+    ),
+    TEMP: path.join(root, "tmp"),
+    TMP: path.join(root, "tmp"),
+    TMPDIR: path.join(root, "tmp"),
+  });
+  if (
+    input.environment.CI !== "true"
+    || input.environment.LANG !== "C.UTF-8"
+    || input.environment.LC_ALL !== "C.UTF-8"
+    || input.environment.NODE_DISABLE_COMPILE_CACHE !== "1"
+    || input.environment.NO_COLOR !== "1"
+    || input.environment.NPM_CONFIG_ENGINE_STRICT !== "true"
+    || input.environment.NPM_CONFIG_LOGS_MAX !== "0"
+    || input.environment.NPM_CONFIG_REGISTRY
+      !== "https://registry.npmjs.org"
+    || input.environment.TZ !== "UTC"
+    || input.environment.HOME !== expected.HOME
+    || input.environment.NPM_CONFIG_CACHE
+      !== expected.NPM_CONFIG_CACHE
+    || input.environment.NPM_CONFIG_GLOBALCONFIG
+      !== expected.NPM_CONFIG_GLOBALCONFIG
+    || input.environment.NPM_CONFIG_USERCONFIG
+      !== expected.NPM_CONFIG_USERCONFIG
+    || input.environment.TEMP !== expected.TEMP
+    || input.environment.TMP !== expected.TMP
+    || input.environment.TMPDIR !== expected.TMPDIR
+  ) {
+    return fail(
+      "HOST_NODE_TOOLCHAIN_V2_RELEASE_DEPENDENCY_INSTALL_SCOPE_INVALID",
+      "Platform release production npm environment bindings are not code-owned",
+    );
+  }
+  try {
+    const rootStat = lstatSync(root);
+    const expectedRootNames = [
+      "cache",
+      "config-probe",
+      "global.npmrc",
+      "home",
+      "tmp",
+      "user.npmrc",
+    ].sort();
+    if (
+      rootStat.isSymbolicLink()
+      || !rootStat.isDirectory()
+      || realpathSync(root) !== root
+      || modeBits(rootStat) !== 0o700
+      || rootStat.uid !== owner.uid
+      || rootStat.gid !== owner.gid
+      || canonicalJsonKeyList(readdirSync(root).sort())
+        !== canonicalJsonKeyList(expectedRootNames)
+    ) {
+      return fail(
+        "HOST_NODE_TOOLCHAIN_V2_RELEASE_DEPENDENCY_INSTALL_SCOPE_INVALID",
+        "Platform release production npm environment root lost its exact topology",
+      );
+    }
+    const directories = [
+      "cache",
+      "config-probe",
+      "home",
+      "tmp",
+    ].map((normalizedLocator) => {
+      const absolutePath = path.join(
+        root,
+        normalizedLocator,
+      );
+      const stat = lstatSync(absolutePath);
+      if (
+        stat.isSymbolicLink()
+        || !stat.isDirectory()
+        || realpathSync(absolutePath) !== absolutePath
+        || modeBits(stat) !== 0o700
+        || stat.uid !== owner.uid
+        || stat.gid !== owner.gid
+      ) {
+        return fail(
+          "HOST_NODE_TOOLCHAIN_V2_RELEASE_DEPENDENCY_INSTALL_SCOPE_INVALID",
+          `Platform release production npm ${normalizedLocator} directory lost its exact identity`,
+        );
+      }
+      return Object.freeze({
+        normalizedLocator,
+        identity:
+          platformReleaseStableDirectoryIdentityV2(stat),
+      });
+    });
+    const configFiles = [
+      "global.npmrc",
+      "user.npmrc",
+    ].map((normalizedLocator) => {
+      const absolutePath = path.join(
+        root,
+        normalizedLocator,
+      );
+      const before = lstatSync(absolutePath);
+      const bytes = readFileSync(absolutePath);
+      const after = lstatSync(absolutePath);
+      if (
+        before.isSymbolicLink()
+        || !before.isFile()
+        || realpathSync(absolutePath) !== absolutePath
+        || modeBits(before) !== 0o600
+        || before.uid !== owner.uid
+        || before.gid !== owner.gid
+        || before.nlink !== 1
+        || !sameFingerprint(
+          fingerprint(before),
+          fingerprint(after),
+        )
+        || bytes.length !== 1
+        || bytes[0] !== 0x0a
+      ) {
+        return fail(
+          "HOST_NODE_TOOLCHAIN_V2_RELEASE_DEPENDENCY_INSTALL_SCOPE_INVALID",
+          `Platform release production npm ${normalizedLocator} lost its exact private identity`,
+        );
+      }
+      return Object.freeze({
+        normalizedLocator,
+        identity: Object.freeze({
+          ...platformReleaseStableDirectoryIdentityV2(
+            before,
+          ),
+          linkCount: before.nlink,
+        }),
+        contentHash: sha256(bytes),
+      });
+    });
+    if (
+      configFiles[0]!.identity.device
+        === configFiles[1]!.identity.device
+      && configFiles[0]!.identity.inode
+        === configFiles[1]!.identity.inode
+    ) {
+      return fail(
+        "HOST_NODE_TOOLCHAIN_V2_RELEASE_DEPENDENCY_INSTALL_SCOPE_INVALID",
+        "Platform release production npm config files share one physical identity",
+      );
+    }
+    assertPlatformReleaseProductionMissingPathV2(
+      path.join(root, "config-probe", ".npmrc"),
+      "Platform release production config-probe .npmrc",
+    );
+    return Object.freeze({
+      environmentScopeHash: hashCanonicalJson({
+        schema:
+          "setfarm.host-node-platform-release-production-environment-scope.v2",
+        root:
+          platformReleaseStableDirectoryIdentityV2(rootStat),
+        directories,
+        configFiles,
+        environment: Object.entries(input.environment)
+          .sort(([left], [right]) =>
+            left < right ? -1 : left > right ? 1 : 0),
+      }),
+    });
+  } catch (error) {
+    if (error instanceof HostNodeToolchainAuthorityErrorV2) {
+      throw error;
+    }
+    return fail(
+      "HOST_NODE_TOOLCHAIN_V2_RELEASE_DEPENDENCY_INSTALL_SCOPE_INVALID",
+      "Platform release production npm environment scope could not be captured",
+      error,
+    );
+  }
+}
+
+function assertPlatformReleaseProductionMissingPathV2(
+  absolutePath: string,
+  label: string,
+): void {
+  try {
+    lstatSync(absolutePath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    return fail(
+      "HOST_NODE_TOOLCHAIN_V2_RELEASE_DEPENDENCY_INSTALL_SCOPE_INVALID",
+      `${label} absence could not be established exactly`,
+      error,
+    );
+  }
+  return fail(
+    "HOST_NODE_TOOLCHAIN_V2_RELEASE_DEPENDENCY_INSTALL_SCOPE_INVALID",
+    `${label} must be absent`,
+  );
+}
+
+function capturePlatformReleaseProductionNpmScopeV2(input: Readonly<{
+  projectRoot: string;
+  phase: "before" | "after" | "failure";
+}>): PlatformReleaseProductionNpmScopeCaptureV2 {
+  const projectRoot = input.projectRoot;
+  if (
+    !normalizedPlatformReleaseBuildPathV2(projectRoot)
+    || path.basename(projectRoot) !== "project"
+  ) {
+    return fail(
+      "HOST_NODE_TOOLCHAIN_V2_RELEASE_DEPENDENCY_INSTALL_SCOPE_INVALID",
+      "Platform release production install requires one normalized private project root",
+    );
+  }
+  const owner = processOwnerV2();
+  try {
+    const parent = path.dirname(projectRoot);
+    const parentStat = lstatSync(parent);
+    const projectStat = lstatSync(projectRoot);
+    const parentNames = readdirSync(parent).sort();
+    const projectNames = readdirSync(projectRoot).sort();
+    const sourceNames = [
+      "package-lock.json",
+      "package.json",
+      "tsconfig.json",
+    ].sort();
+    const installedNames = [...sourceNames, "node_modules"].sort();
+    const hasSourceOnlyTopology =
+      canonicalJsonKeyList(projectNames)
+        === canonicalJsonKeyList(sourceNames);
+    const hasInstalledTopology =
+      canonicalJsonKeyList(projectNames)
+        === canonicalJsonKeyList(installedNames);
+    const namesAdmitted = input.phase === "before"
+      ? hasSourceOnlyTopology
+      : hasSourceOnlyTopology || hasInstalledTopology;
+    if (
+      parentStat.isSymbolicLink()
+      || !parentStat.isDirectory()
+      || realpathSync(parent) !== parent
+      || modeBits(parentStat) !== 0o700
+      || parentStat.uid !== owner.uid
+      || parentStat.gid !== owner.gid
+      || canonicalJsonKeyList(parentNames)
+        !== canonicalJsonKeyList(["project"])
+      || projectStat.isSymbolicLink()
+      || !projectStat.isDirectory()
+      || realpathSync(projectRoot) !== projectRoot
+      || modeBits(projectStat) !== 0o700
+      || projectStat.uid !== owner.uid
+      || projectStat.gid !== owner.gid
+      || !namesAdmitted
+    ) {
+      return fail(
+        "HOST_NODE_TOOLCHAIN_V2_RELEASE_DEPENDENCY_INSTALL_SCOPE_INVALID",
+        "Platform release production project is not one exact private every-and-only topology",
+      );
+    }
+
+    const sourceFiles = sourceNames.map((name) => {
+      const file = readExactFile({
+        absolutePath: path.join(projectRoot, name),
+        relativePath: name,
+        allowedModes: [0o444],
+        maxBytes: name === "package-lock.json"
+          ? 32 * 1024 * 1024
+          : 4 * 1024 * 1024,
+        errorCode:
+          "HOST_NODE_TOOLCHAIN_V2_RELEASE_DEPENDENCY_INSTALL_SCOPE_INVALID",
+      });
+      if (
+        file.fingerprint.ownerUid !== owner.uid
+        || file.fingerprint.ownerGid !== owner.gid
+        || file.fingerprint.byteLength < 1
+      ) {
+        return fail(
+          "HOST_NODE_TOOLCHAIN_V2_RELEASE_DEPENDENCY_INSTALL_SCOPE_INVALID",
+          `${name} is not one exact process-owned release input`,
+        );
+      }
+      return Object.freeze({
+        normalizedLocator: name,
+        contentHash: file.contentHash,
+        byteLength: file.fingerprint.byteLength,
+        fingerprint: file.fingerprint,
+      });
+    });
+
+    let nodeModules: FingerprintV2 | null = null;
+    if (projectNames.includes("node_modules")) {
+      const nodeModulesRoot = path.join(
+        projectRoot,
+        "node_modules",
+      );
+      const stat = lstatSync(nodeModulesRoot);
+      if (
+        stat.isSymbolicLink()
+        || !stat.isDirectory()
+        || realpathSync(nodeModulesRoot) !== nodeModulesRoot
+        || ![0o700, 0o755].includes(modeBits(stat))
+        || stat.uid !== owner.uid
+        || stat.gid !== owner.gid
+      ) {
+        return fail(
+          "HOST_NODE_TOOLCHAIN_V2_RELEASE_DEPENDENCY_INSTALL_SCOPE_INVALID",
+          "Platform release production node_modules is not one direct process-owned directory",
+        );
+      }
+      nodeModules = fingerprint(stat);
+    }
+    assertPlatformReleaseProductionMissingPathV2(
+      path.join(projectRoot, ".npmrc"),
+      "Platform release production .npmrc",
+    );
+    assertPlatformReleaseProductionMissingPathV2(
+      path.join(projectRoot, "src"),
+      "Platform release production source directory",
+    );
+    assertPlatformReleaseProductionMissingPathV2(
+      path.join(projectRoot, "dist"),
+      "Platform release production dist directory",
+    );
+    const sourceFenceHash = hashCanonicalJson({
+      schema:
+        "setfarm.host-node-platform-release-production-source-fence.v2",
+      files: sourceFiles,
+    });
+    const projectPhysicalIdentityHash =
+      hashCanonicalJson({
+        schema:
+          "setfarm.host-node-platform-release-production-project-physical-identity.v2",
+        parent:
+          platformReleaseStableDirectoryIdentityV2(
+            parentStat,
+          ),
+        project:
+          platformReleaseStableDirectoryIdentityV2(
+            projectStat,
+          ),
+      });
+    return Object.freeze({
+      sourceFenceHash,
+      projectPhysicalIdentityHash,
+      projectScopeHash: hashCanonicalJson({
+        schema:
+          "setfarm.host-node-platform-release-production-project-scope.v2",
+        phase: input.phase,
+        parent: fingerprint(parentStat),
+        project: fingerprint(projectStat),
+        projectNames,
+        sourceFenceHash,
+        nodeModules,
+      }),
+    });
+  } catch (error) {
+    if (error instanceof HostNodeToolchainAuthorityErrorV2) {
+      throw error;
+    }
+    return fail(
+      "HOST_NODE_TOOLCHAIN_V2_RELEASE_DEPENDENCY_INSTALL_SCOPE_INVALID",
+      "Platform release production install scope could not be captured",
+      error,
+    );
+  }
+}
+
+/**
+ * Executes one platform-release production dependency occurrence. The
+ * authenticated host owns argv, cwd policy, environment projection, bounds
+ * and pre/post source fences; installed bytes remain candidate data until the
+ * platform release dependency materializer verifies the complete lock graph.
+ */
+export async function executeHostNodeToolchainPlatformReleaseProductionNpmCiV2(
+  handle: HostNodeToolchainAuthorityV2,
+  input: HostNodeToolchainPlatformReleaseProductionNpmCiInputV2,
+): Promise<HostNodeToolchainPlatformReleaseProductionNpmCiEvidenceV2> {
+  const state = authenticState(handle);
+  if (
+    !isPlainRecord(input)
+    || !exactRecordKeys(input, [
+      "environment",
+      "privateRoot",
+      "projectRoot",
+    ])
+    || typeof input.privateRoot !== "string"
+    || typeof input.projectRoot !== "string"
+  ) {
+    return fail(
+      "HOST_NODE_TOOLCHAIN_V2_RELEASE_DEPENDENCY_INSTALL_SCOPE_INVALID",
+      "Platform release production npm input must contain one exact private environment and project scope",
+    );
+  }
+  const hostBefore =
+    await revalidateHostNodeToolchainAuthorityV2(handle);
+  const environmentScope = captureEffectiveNpmConfigProbeScopeV2({
+    privateRoot: input.privateRoot,
+    environment: input.environment,
+  });
+  const environmentScopeBefore =
+    capturePlatformReleaseProductionEnvironmentScopeV2({
+      privateRoot: input.privateRoot,
+      environment: input.environment,
+    });
+  const scopeBefore =
+    capturePlatformReleaseProductionNpmScopeV2({
+      projectRoot: input.projectRoot,
+      phase: "before",
+    });
+  const environment = Object.freeze({
+    ...environmentScope.environment,
+    PATH: path.dirname(state.captured.root.nodePath),
+  });
+  const environmentHash = hashCanonicalJson({
+    schema:
+      "setfarm.platform-release-production-private-execution-environment.v2",
+    variables: Object.entries(environment).sort(([left], [right]) =>
+      left < right ? -1 : left > right ? 1 : 0),
+  });
+  const directArgv = Object.freeze([
+    "npm",
+    "ci",
+    "--omit=dev",
+    "--ignore-scripts",
+    "--no-audit",
+    "--no-fund",
+  ] as const);
+  const invocation: HostNodeToolchainProbeInvocationV2 =
+    Object.freeze({
+      probeRef:
+        "HOST_NPM_PLATFORM_RELEASE_PRODUCTION_INSTALL_V2",
+      executable: state.captured.root.nodePath,
+      argv: Object.freeze([
+        state.captured.root.npmCliPath,
+        ...directArgv.slice(1),
+      ]),
+      cwd: input.projectRoot,
+      env: environment,
+      shell: false,
+      timeoutMs: NPM_SCAFFOLD_INSTALL_TIMEOUT_MS_V2,
+      maxStdoutBytes:
+        NPM_SCAFFOLD_INSTALL_MAX_OUTPUT_BYTES_V2,
+      maxStderrBytes:
+        NPM_SCAFFOLD_INSTALL_MAX_OUTPUT_BYTES_V2,
+    });
+  let result: HostNodeToolchainProbeResultV2;
+  try {
+    result = await state.probeAdapter(invocation);
+  } catch (error) {
+    const scopeImmediatelyAfterFailure =
+      capturePlatformReleaseProductionNpmScopeV2({
+        projectRoot: input.projectRoot,
+        phase: "failure",
+      });
+    const environmentScopeImmediatelyAfterFailure =
+      capturePlatformReleaseProductionEnvironmentScopeV2({
+        privateRoot: input.privateRoot,
+        environment: input.environment,
+      });
+    const hostAfterFailure =
+      await revalidateHostNodeToolchainAuthorityV2(handle);
+    const scopeAfterFailure =
+      capturePlatformReleaseProductionNpmScopeV2({
+        projectRoot: input.projectRoot,
+        phase: "failure",
+      });
+    const environmentScopeAfterFailure =
+      capturePlatformReleaseProductionEnvironmentScopeV2({
+        privateRoot: input.privateRoot,
+        environment: input.environment,
+      });
+    if (
+      [
+        scopeImmediatelyAfterFailure,
+        scopeAfterFailure,
+      ].some((scope) =>
+        scope.projectPhysicalIdentityHash
+          !== scopeBefore.projectPhysicalIdentityHash)
+      || [
+        environmentScopeImmediatelyAfterFailure,
+        environmentScopeAfterFailure,
+      ].some((scope) =>
+        scope.environmentScopeHash
+          !== environmentScopeBefore.environmentScopeHash)
+    ) {
+      return fail(
+        "HOST_NODE_TOOLCHAIN_V2_RELEASE_DEPENDENCY_INSTALL_SCOPE_INVALID",
+        "Platform release production project or environment authority changed while npm failed to spawn",
+      );
+    }
+    if (
+      [
+        scopeImmediatelyAfterFailure,
+        scopeAfterFailure,
+      ].some((scope) =>
+        scope.sourceFenceHash
+          !== scopeBefore.sourceFenceHash)
+    ) {
+      return fail(
+        "HOST_NODE_TOOLCHAIN_V2_RELEASE_DEPENDENCY_INSTALL_SOURCE_DRIFT",
+        "Platform release package, lock or TypeScript config changed while npm failed to spawn",
+      );
+    }
+    if (
+      hostAfterFailure.receiptHash
+        !== hostBefore.receiptHash
+    ) {
+      return fail(
+        "HOST_NODE_TOOLCHAIN_V2_HOST_DRIFT",
+        "Host Node/npm authority changed while platform release production npm failed to spawn",
+      );
+    }
+    return fail(
+      "HOST_NODE_TOOLCHAIN_V2_RELEASE_DEPENDENCY_INSTALL_SPAWN_FAILED",
+      "Exact platform release production npm adapter failed",
+      error,
+    );
+  }
+  const succeeded = result.status === "exited"
+    && result.exitCode === 0
+    && result.signal === null
+    && Buffer.byteLength(result.stdout, "utf8")
+      <= NPM_SCAFFOLD_INSTALL_MAX_OUTPUT_BYTES_V2
+    && Buffer.byteLength(result.stderr, "utf8")
+      <= NPM_SCAFFOLD_INSTALL_MAX_OUTPUT_BYTES_V2;
+  const scopeImmediatelyAfterExecution =
+    capturePlatformReleaseProductionNpmScopeV2({
+      projectRoot: input.projectRoot,
+      phase: succeeded ? "after" : "failure",
+    });
+  const environmentScopeImmediatelyAfterExecution =
+    capturePlatformReleaseProductionEnvironmentScopeV2({
+      privateRoot: input.privateRoot,
+      environment: input.environment,
+    });
+  const hostAfter =
+    await revalidateHostNodeToolchainAuthorityV2(handle);
+  const scopeAfter =
+    capturePlatformReleaseProductionNpmScopeV2({
+      projectRoot: input.projectRoot,
+      phase: succeeded ? "after" : "failure",
+    });
+  const environmentScopeAfter =
+    capturePlatformReleaseProductionEnvironmentScopeV2({
+      privateRoot: input.privateRoot,
+      environment: input.environment,
+    });
+  if (
+    [
+      scopeImmediatelyAfterExecution,
+      scopeAfter,
+    ].some((scope) =>
+      scope.projectPhysicalIdentityHash
+        !== scopeBefore.projectPhysicalIdentityHash)
+    || [
+      environmentScopeImmediatelyAfterExecution,
+      environmentScopeAfter,
+    ].some((scope) =>
+      scope.environmentScopeHash
+        !== environmentScopeBefore.environmentScopeHash)
+  ) {
+    return fail(
+      "HOST_NODE_TOOLCHAIN_V2_RELEASE_DEPENDENCY_INSTALL_SCOPE_INVALID",
+      "Platform release production project or environment authority changed across npm",
+    );
+  }
+  if (
+    [
+      scopeImmediatelyAfterExecution,
+      scopeAfter,
+    ].some((scope) =>
+      scope.sourceFenceHash !== scopeBefore.sourceFenceHash)
+  ) {
+    return fail(
+      "HOST_NODE_TOOLCHAIN_V2_RELEASE_DEPENDENCY_INSTALL_SOURCE_DRIFT",
+      "Platform release package, lock or TypeScript config changed across production npm",
+    );
+  }
+  if (hostAfter.receiptHash !== hostBefore.receiptHash) {
+    return fail(
+      "HOST_NODE_TOOLCHAIN_V2_HOST_DRIFT",
+      "Host Node/npm authority changed during platform release production npm",
+    );
+  }
+  if (
+    Buffer.byteLength(result.stdout, "utf8")
+      > NPM_SCAFFOLD_INSTALL_MAX_OUTPUT_BYTES_V2
+    || Buffer.byteLength(result.stderr, "utf8")
+      > NPM_SCAFFOLD_INSTALL_MAX_OUTPUT_BYTES_V2
+    || result.status === "output_limit_exceeded"
+  ) {
+    return fail(
+      "HOST_NODE_TOOLCHAIN_V2_RELEASE_DEPENDENCY_INSTALL_OUTPUT_LIMIT",
+      "Exact platform release production npm exceeded its output bound",
+    );
+  }
+  if (result.status === "timed_out") {
+    return fail(
+      "HOST_NODE_TOOLCHAIN_V2_RELEASE_DEPENDENCY_INSTALL_TIMEOUT",
+      "Exact platform release production npm exceeded its timeout",
+    );
+  }
+  if (result.status === "spawn_failed") {
+    return fail(
+      "HOST_NODE_TOOLCHAIN_V2_RELEASE_DEPENDENCY_INSTALL_SPAWN_FAILED",
+      "Exact platform release production npm could not be spawned",
+    );
+  }
+  if (result.signal !== null) {
+    return fail(
+      "HOST_NODE_TOOLCHAIN_V2_RELEASE_DEPENDENCY_INSTALL_SIGNALLED",
+      "Exact platform release production npm terminated by signal",
+    );
+  }
+  if (result.exitCode !== 0) {
+    return fail(
+      "HOST_NODE_TOOLCHAIN_V2_RELEASE_DEPENDENCY_INSTALL_NONZERO",
+      "Exact platform release production npm exited nonzero",
+    );
+  }
+  return deepFreezeJson({
+    probeRef:
+      "HOST_NPM_PLATFORM_RELEASE_PRODUCTION_INSTALL_V2" as const,
+    hostToolchainReceiptHash: hostBefore.receiptHash,
+    nodeIdentityHash: hostBefore.node.identityHash,
+    npmClosureHash: hostBefore.npm.closureHash,
+    environmentHash,
+    environmentScopeHash:
+      environmentScopeBefore.environmentScopeHash,
+    projectScopeHash: scopeBefore.projectScopeHash,
+    projectPhysicalIdentityHash:
+      scopeBefore.projectPhysicalIdentityHash,
+    sourceFenceHash: scopeBefore.sourceFenceHash,
+    directArgv,
+    directArgvHash: hashCanonicalJson({
+      schema:
+        "setfarm.platform-release-production-npm-direct-argv-hash.v2",
+      directArgv,
+    }),
+    stdin: "closed" as const,
+    timeoutMs: NPM_SCAFFOLD_INSTALL_TIMEOUT_MS_V2,
+    maxStdoutBytes:
+      NPM_SCAFFOLD_INSTALL_MAX_OUTPUT_BYTES_V2,
+    maxStderrBytes:
+      NPM_SCAFFOLD_INSTALL_MAX_OUTPUT_BYTES_V2,
     shell: "forbidden" as const,
     ambientEnvironment: "forbidden" as const,
     status: "exited_zero" as const,

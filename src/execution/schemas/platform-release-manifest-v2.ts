@@ -305,7 +305,16 @@ const PlatformReleaseManifestIdentityV2Schema = z.object({
     runtime.dependencyTree.treeHash
       === external.productionPackages.materializedDependencyTreeHash
       && runtime.dependencyTree.treeHash
-        === external.materializationReceipt.dependencyTreeHash,
+        === external.materializationReceipt.dependencyTreeHash
+      && runtime.dependencyTree.treePayloadHash
+        === external.materializationReceipt
+          .dependencyTreePayloadHash
+      && runtime.dependencyTree.bindingHash
+        === external.materializationReceipt
+          .dependencyTreeBindingHash
+      && external.productionPackages.resolutionGraphHash
+        === external.materializationReceipt
+          .productionResolutionGraphHash,
     "runtime dependency tree and npm evidence",
   );
   requireJoin(

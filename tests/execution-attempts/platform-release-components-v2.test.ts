@@ -38,21 +38,33 @@ import {
   EXACT_SOURCE_FILE_REF_V2_SCHEMA,
   EXTERNAL_EXECUTABLE_RESOLUTION_V2_SCHEMA,
   EXTERNAL_RUNTIME_RESOLUTION_V2_MAX_CANONICAL_BYTES,
+  EXTERNAL_RUNTIME_RESOLUTION_V2_MAX_DEPENDENCIES_PER_PACKAGE,
+  EXTERNAL_RUNTIME_RESOLUTION_V2_MAX_DEPENDENCY_EDGES,
+  EXTERNAL_RUNTIME_RESOLUTION_V2_MAX_PACKAGES,
   EXTERNAL_RUNTIME_RESOLUTION_V2_SCHEMA,
   ExternalRuntimeResolutionCandidateV2Schema,
   HOST_BOOTSTRAP_BINDING_V2_SCHEMA,
   HOST_RUNTIME_IDENTITY_V2_SCHEMA,
   NODE_RUNTIME_RESOLUTION_V2_SCHEMA,
   NON_SYSTEM_DYNAMIC_LIBRARY_V2_SCHEMA,
+  NPM_MATERIALIZATION_RECEIPT_ABI_POLICY_V2,
+  NPM_MATERIALIZATION_RECEIPT_ABI_POLICY_V2_SCHEMA,
   NPM_MATERIALIZATION_RECEIPT_V2_SCHEMA,
   NPM_PACKAGE_MANAGER_RESOLUTION_V2_SCHEMA,
+  NPM_PRODUCTION_MATERIALIZATION_CONFIG_V2,
+  NPM_PRODUCTION_MATERIALIZATION_CONFIG_V2_SCHEMA,
+  NPM_PRODUCTION_MATERIALIZATION_RECIPE_V2,
   NPM_PRODUCTION_MATERIALIZATION_RECIPE_V2_SCHEMA,
   PRODUCTION_PACKAGE_RESOLUTION_ENTRY_V2_SCHEMA,
   PRODUCTION_PACKAGE_RESOLUTION_GRAPH_V2_SCHEMA,
+  PRODUCTION_PACKAGE_RESOLUTION_GRAPH_V2_MAX_CANONICAL_BYTES,
+  ProductionPackageResolutionGraphV2Schema,
   hashBrowserRuntimeExactV2,
   hashExternalRuntimeResolutionV2,
   hashHostRuntimeIdentityV2,
+  hashNpmMaterializationReceiptAbiPolicyV2,
   hashNpmMaterializationReceiptV2,
+  hashNpmProductionMaterializationConfigV2,
   hashNpmProductionMaterializationRecipeV2,
   hashProductionPackageResolutionGraphV2,
   parseExternalRuntimeResolutionCandidateV2,
@@ -481,27 +493,73 @@ function createHostRuntimeCandidate() {
 }
 
 function createNpmRecipe() {
-  const identity = {
-    schema: NPM_PRODUCTION_MATERIALIZATION_RECIPE_V2_SCHEMA,
-    commandRef: "MATERIALIZE_PRODUCTION_DEPENDENCIES_V2" as const,
-    subcommand: "ci" as const,
-    arguments: [
-      "--omit=dev",
-      "--ignore-scripts",
-      "--no-audit",
-      "--no-fund",
-    ] as const,
-    dependencySelection: "production_only" as const,
-    lifecycleScripts: "forbidden" as const,
-    configHash: sha("npm-config"),
-    materializationReceiptSchema: NPM_MATERIALIZATION_RECEIPT_V2_SCHEMA,
-    materializationReceiptSchemaHash: sha("npm-materialization-receipt-schema"),
-  };
-  return {
-    ...identity,
-    recipeHash: hashNpmProductionMaterializationRecipeV2(identity),
-  };
+  return clone(NPM_PRODUCTION_MATERIALIZATION_RECIPE_V2);
 }
+
+test("npm production config, receipt ABI policy, and recipe form one frozen literal authority", () => {
+  assert.equal(
+    NPM_PRODUCTION_MATERIALIZATION_CONFIG_V2.schema,
+    NPM_PRODUCTION_MATERIALIZATION_CONFIG_V2_SCHEMA,
+  );
+  assert.equal(
+    NPM_MATERIALIZATION_RECEIPT_ABI_POLICY_V2.schema,
+    NPM_MATERIALIZATION_RECEIPT_ABI_POLICY_V2_SCHEMA,
+  );
+  assert.equal(
+    NPM_PRODUCTION_MATERIALIZATION_CONFIG_V2.configHash,
+    hashNpmProductionMaterializationConfigV2(
+      NPM_PRODUCTION_MATERIALIZATION_CONFIG_V2,
+    ),
+  );
+  assert.equal(
+    NPM_MATERIALIZATION_RECEIPT_ABI_POLICY_V2.policyHash,
+    hashNpmMaterializationReceiptAbiPolicyV2(
+      NPM_MATERIALIZATION_RECEIPT_ABI_POLICY_V2,
+    ),
+  );
+  assert.equal(
+    NPM_PRODUCTION_MATERIALIZATION_RECIPE_V2.configHash,
+    NPM_PRODUCTION_MATERIALIZATION_CONFIG_V2.configHash,
+  );
+  assert.equal(
+    NPM_PRODUCTION_MATERIALIZATION_RECIPE_V2
+      .materializationReceiptSchemaHash,
+    NPM_MATERIALIZATION_RECEIPT_ABI_POLICY_V2.policyHash,
+  );
+  assertRecursivelyFrozen(
+    NPM_PRODUCTION_MATERIALIZATION_CONFIG_V2,
+  );
+  assertRecursivelyFrozen(
+    NPM_MATERIALIZATION_RECEIPT_ABI_POLICY_V2,
+  );
+  assertRecursivelyFrozen(
+    NPM_PRODUCTION_MATERIALIZATION_RECIPE_V2,
+  );
+
+  const configDrift = clone(
+    NPM_PRODUCTION_MATERIALIZATION_CONFIG_V2,
+  ) as any;
+  configDrift.arguments[0] = "--include=dev";
+  configDrift.configHash =
+    hashNpmProductionMaterializationConfigV2(
+      configDrift,
+    );
+  assert.throws(() =>
+    externalModule.NpmProductionMaterializationConfigV2Schema
+      .parse(configDrift));
+
+  const policyDrift = clone(
+    NPM_MATERIALIZATION_RECEIPT_ABI_POLICY_V2,
+  ) as any;
+  policyDrift.processAuthority = "caller_claimed";
+  policyDrift.policyHash =
+    hashNpmMaterializationReceiptAbiPolicyV2(
+      policyDrift,
+    );
+  assert.throws(() =>
+    externalModule.NpmMaterializationReceiptAbiPolicyV2Schema
+      .parse(policyDrift));
+});
 
 function basePackages() {
   return [
@@ -529,6 +587,67 @@ function basePackages() {
 }
 
 function createPackageGraph(packages = basePackages()) {
+  const dependencyLocators = new Set(
+    packages.flatMap((entry) =>
+      entry.dependencyLocators),
+  );
+  const packagesByLocator = new Map(
+    packages.map((entry) => [
+      entry.packageLocator,
+      entry,
+    ]),
+  );
+  const rootDependencyLocators = packages
+    .map((entry) => entry.packageLocator)
+    .filter((locator) => !dependencyLocators.has(locator))
+    .sort();
+  const dependencyEdges = [
+    ...rootDependencyLocators.map((locator) => {
+      const dependency = packagesByLocator.get(locator)!;
+      return {
+        ownerPackageLocator: "",
+        kind: "required" as const,
+        dependencyName: dependency.packageName,
+        declaredSpec: dependency.version,
+        resolvedPackageLocator: locator,
+        resolvedVersion: dependency.version,
+      };
+    }),
+    ...packages.flatMap((owner) =>
+      owner.dependencyLocators.map((locator) => {
+        const dependency = packagesByLocator.get(locator)!;
+        return {
+          ownerPackageLocator: owner.packageLocator,
+          kind: "required" as const,
+          dependencyName: dependency.packageName,
+          declaredSpec: dependency.version,
+          resolvedPackageLocator: locator,
+          resolvedVersion: dependency.version,
+        };
+      })),
+  ].sort((left, right) => {
+    const leftKey = [
+      left.ownerPackageLocator,
+      left.kind,
+      left.dependencyName,
+      left.resolvedPackageLocator,
+      left.declaredSpec,
+      left.resolvedVersion,
+    ].join("\0");
+    const rightKey = [
+      right.ownerPackageLocator,
+      right.kind,
+      right.dependencyName,
+      right.resolvedPackageLocator,
+      right.declaredSpec,
+      right.resolvedVersion,
+    ].join("\0");
+    return leftKey < rightKey
+      ? -1
+      : leftKey > rightKey
+        ? 1
+        : 0;
+  });
   const identity = {
     schema: PRODUCTION_PACKAGE_RESOLUTION_GRAPH_V2_SCHEMA,
     version: "2.0.0" as const,
@@ -541,12 +660,146 @@ function createPackageGraph(packages = basePackages()) {
       byteLength: 14_321,
     },
     materializedDependencyTreeHash: createRuntimePayloadCandidate().dependencyTree.treeHash,
+    productionClosureHash: sha("production-closure"),
+    productionClosureContractHash:
+      sha("production-closure-contract"),
+    dependencyEdgeModel:
+      "required_and_observed_optional" as const,
+    rootDependencyLocators,
+    dependencyEdges,
     packages,
     packageCount: packages.length,
   };
   return {
     ...identity,
     resolutionGraphHash: hashProductionPackageResolutionGraphV2(identity),
+  };
+}
+
+function createCanonicalBudgetPackageGraph(
+  packageCount: number,
+) {
+  const version =
+    `1.${"1".repeat(30)}.${"1".repeat(31)}`;
+  const maximumVersion =
+    `2.${"1".repeat(30)}.${"1".repeat(31)}`;
+  const declaredSpec =
+    `>= ${version} < ${maximumVersion}`;
+  const packageNames = Array.from(
+    { length: packageCount },
+    (_unused, index) => {
+      const id = String(index).padStart(2, "0");
+      return `@s${id}${"a".repeat(97)}/p${id}${"b".repeat(97)}`;
+    },
+  );
+  const packageLocators = packageNames.map(
+    (packageName) => `node_modules/${packageName}`,
+  );
+  const packages = packageNames.map(
+    (packageName, index) => {
+      const packageLocator = packageLocators[index]!;
+      return {
+        schema:
+          PRODUCTION_PACKAGE_RESOLUTION_ENTRY_V2_SCHEMA,
+        packageLocator,
+        packageName,
+        version,
+        lockEntryHash:
+          sha(`budget-lock-${index}`),
+        packageJsonHash:
+          sha(`budget-package-json-${index}`),
+        runtimeTreeHash:
+          sha(`budget-runtime-tree-${index}`),
+        dependencyLocators: packageLocators
+          .filter((locator) => locator !== packageLocator)
+          .sort(),
+      };
+    },
+  );
+  const byLocator = new Map(
+    packages.map((entry) => [
+      entry.packageLocator,
+      entry,
+    ]),
+  );
+  const dependencyEdges = [
+    ...packages.map((dependency) => ({
+      ownerPackageLocator: "",
+      kind: "required" as const,
+      dependencyName: dependency.packageName,
+      declaredSpec,
+      resolvedPackageLocator:
+        dependency.packageLocator,
+      resolvedVersion: dependency.version,
+    })),
+    ...packages.flatMap((owner) =>
+      owner.dependencyLocators.map((locator) => {
+        const dependency = byLocator.get(locator)!;
+        return {
+          ownerPackageLocator:
+            owner.packageLocator,
+          kind: "required" as const,
+          dependencyName: dependency.packageName,
+          declaredSpec,
+          resolvedPackageLocator:
+            dependency.packageLocator,
+          resolvedVersion: dependency.version,
+        };
+      })),
+  ].sort((left, right) => {
+    const leftKey = [
+      left.ownerPackageLocator,
+      left.kind,
+      left.dependencyName,
+      left.resolvedPackageLocator,
+      left.declaredSpec,
+      left.resolvedVersion,
+    ].join("\0");
+    const rightKey = [
+      right.ownerPackageLocator,
+      right.kind,
+      right.dependencyName,
+      right.resolvedPackageLocator,
+      right.declaredSpec,
+      right.resolvedVersion,
+    ].join("\0");
+    return leftKey < rightKey
+      ? -1
+      : leftKey > rightKey
+        ? 1
+        : 0;
+  });
+  const identity = {
+    schema:
+      PRODUCTION_PACKAGE_RESOLUTION_GRAPH_V2_SCHEMA,
+    version: "2.0.0" as const,
+    lockfileVersion: 3 as const,
+    lockfile: {
+      schema: EXACT_SOURCE_FILE_REF_V2_SCHEMA,
+      locator: "package-lock.json" as const,
+      mediaType: "application/json" as const,
+      hash: sha("budget-package-lock"),
+      byteLength: 1,
+    },
+    materializedDependencyTreeHash:
+      sha("budget-dependency-tree"),
+    productionClosureHash:
+      sha("budget-production-closure"),
+    productionClosureContractHash:
+      sha("budget-production-contract"),
+    dependencyEdgeModel:
+      "required_and_observed_optional" as const,
+    rootDependencyLocators: [...packageLocators],
+    dependencyEdges,
+    packages,
+    packageCount,
+  };
+  return {
+    ...identity,
+    resolutionGraphHash:
+      hashProductionPackageResolutionGraphV2(
+        identity,
+      ),
   };
 }
 
@@ -576,6 +829,8 @@ function createNpmMaterializationReceipt(
   packageManager: ReturnType<typeof createNpmPackageManager>,
   productionPackages: ReturnType<typeof createPackageGraph>,
 ) {
+  const dependencyTree =
+    createRuntimePayloadCandidate().dependencyTree;
   const identity = {
     schema: NPM_MATERIALIZATION_RECEIPT_V2_SCHEMA,
     recipeHash: packageManager.installRecipe.recipeHash,
@@ -588,6 +843,17 @@ function createNpmMaterializationReceipt(
     lockfile: clone(productionPackages.lockfile),
     outputRoot: "payload/node_modules" as const,
     dependencyTreeHash: productionPackages.materializedDependencyTreeHash,
+    dependencyTreePayloadHash:
+      dependencyTree.treePayloadHash,
+    dependencyTreeBindingHash:
+      dependencyTree.bindingHash,
+    productionClosureHash:
+      productionPackages.productionClosureHash,
+    productionClosureContractHash:
+      productionPackages
+        .productionClosureContractHash,
+    productionResolutionGraphHash:
+      productionPackages.resolutionGraphHash,
     packageCount: productionPackages.packageCount,
     lifecycleScripts: "forbidden" as const,
     exitCode: 0 as const,
@@ -1163,7 +1429,7 @@ test("external runtime candidate binds host TCB, exact npm recipe, graph, tools,
   assert.throws(() => parseExternalRuntimeResolutionCandidateV2(wrongReceipt));
 });
 
-test("package graph rejects count, ordering, duplicate, self, and unresolved edges after rehash", () => {
+test("package graph rejects count, ordering, duplicate, self, unresolved edges, and incomplete root reachability after rehash", () => {
   const base = createExternalRuntimeCandidate();
   const variants: any[] = [];
 
@@ -1193,6 +1459,98 @@ test("package graph rejects count, ordering, duplicate, self, and unresolved edg
   ];
   variants.push(unresolved);
 
+  const unorderedRoots = clone(base) as any;
+  unorderedRoots.productionPackages.rootDependencyLocators = [
+    "node_modules/zod",
+    "node_modules/postgres",
+  ];
+  variants.push(unorderedRoots);
+
+  const duplicateRoot = clone(base) as any;
+  duplicateRoot.productionPackages.rootDependencyLocators = [
+    "node_modules/postgres",
+    "node_modules/postgres",
+  ];
+  variants.push(duplicateRoot);
+
+  const unreachablePackage = clone(base) as any;
+  unreachablePackage.productionPackages.rootDependencyLocators = [
+    "node_modules/zod",
+  ];
+  variants.push(unreachablePackage);
+
+  const missingRoots = clone(base) as any;
+  missingRoots.productionPackages.rootDependencyLocators = [];
+  variants.push(missingRoots);
+
+  const nestedRoot = clone(base) as any;
+  nestedRoot.productionPackages.packages[1].packageLocator =
+    "node_modules/postgres/node_modules/zod";
+  nestedRoot.productionPackages.packages[0].dependencyLocators = [
+    "node_modules/postgres/node_modules/zod",
+  ];
+  nestedRoot.productionPackages.rootDependencyLocators = [
+    "node_modules/postgres/node_modules/zod",
+  ];
+  variants.push(nestedRoot);
+
+  const malformedPackagePath = clone(base) as any;
+  malformedPackagePath.productionPackages.packages[0]
+    .packageLocator = "node_modules/extra/postgres";
+  malformedPackagePath.productionPackages
+    .rootDependencyLocators = [
+      "node_modules/extra/postgres",
+    ];
+  variants.push(malformedPackagePath);
+
+  const unsupportedSpec = clone(base) as any;
+  unsupportedSpec.productionPackages.dependencyEdges[0]
+    .declaredSpec = "latest";
+  variants.push(unsupportedSpec);
+
+  const incompatibleSpec = clone(base) as any;
+  incompatibleSpec.productionPackages.dependencyEdges[0]
+    .declaredSpec = "^99.0.0";
+  variants.push(incompatibleSpec);
+
+  const wrongEdgeModel = clone(base) as any;
+  wrongEdgeModel.productionPackages.dependencyEdgeModel =
+    "dependencies_only";
+  variants.push(wrongEdgeModel);
+
+  const wrongEdgeKind = clone(base) as any;
+  wrongEdgeKind.productionPackages.dependencyEdges[0]
+    .kind = "dependencies";
+  variants.push(wrongEdgeKind);
+
+  const duplicatedEdge = clone(base) as any;
+  duplicatedEdge.productionPackages.dependencyEdges.push(
+    clone(
+      duplicatedEdge.productionPackages
+        .dependencyEdges[0],
+    ),
+  );
+  variants.push(duplicatedEdge);
+
+  const reorderedEdges = clone(base) as any;
+  reorderedEdges.productionPackages.dependencyEdges
+    .reverse();
+  variants.push(reorderedEdges);
+
+  const wrongEdgeOwner = clone(base) as any;
+  wrongEdgeOwner.productionPackages.dependencyEdges[0]
+    .ownerPackageLocator = "node_modules/missing";
+  variants.push(wrongEdgeOwner);
+
+  const wrongEdgeName = clone(base) as any;
+  wrongEdgeName.productionPackages.dependencyEdges[0]
+    .dependencyName = "wrong-name";
+  variants.push(wrongEdgeName);
+
+  const missingEdge = clone(base) as any;
+  missingEdge.productionPackages.dependencyEdges.pop();
+  variants.push(missingEdge);
+
   for (const variant of variants) {
     variant.productionPackages.resolutionGraphHash =
       hashProductionPackageResolutionGraphV2(variant.productionPackages);
@@ -1203,6 +1561,107 @@ test("package graph rejects count, ordering, duplicate, self, and unresolved edg
     rehashExternal(variant);
     assert.throws(() => parseExternalRuntimeResolutionCandidateV2(variant));
   }
+});
+
+test("package graph enforces its one MiB canonical budget before the two MiB external envelope", () => {
+  const withinBudget =
+    createCanonicalBudgetPackageGraph(29);
+  const overBudget =
+    createCanonicalBudgetPackageGraph(30);
+  const withinBytes =
+    canonicalJsonBytes(withinBudget).byteLength;
+  const overBytes =
+    canonicalJsonBytes(overBudget).byteLength;
+
+  assert.equal(
+    withinBytes
+      <= PRODUCTION_PACKAGE_RESOLUTION_GRAPH_V2_MAX_CANONICAL_BYTES,
+    true,
+  );
+  assert.equal(
+    overBytes
+      > PRODUCTION_PACKAGE_RESOLUTION_GRAPH_V2_MAX_CANONICAL_BYTES,
+    true,
+  );
+  assert.equal(
+    PRODUCTION_PACKAGE_RESOLUTION_GRAPH_V2_MAX_CANONICAL_BYTES
+      < EXTERNAL_RUNTIME_RESOLUTION_V2_MAX_CANONICAL_BYTES,
+    true,
+  );
+  assert.equal(
+    withinBudget.packageCount
+      < EXTERNAL_RUNTIME_RESOLUTION_V2_MAX_PACKAGES,
+    true,
+  );
+  assert.equal(
+    withinBudget.dependencyEdges.length
+      < EXTERNAL_RUNTIME_RESOLUTION_V2_MAX_DEPENDENCY_EDGES,
+    true,
+  );
+  assert.equal(
+    withinBudget.packages.every(
+      (entry) =>
+        entry.dependencyLocators.length
+          < EXTERNAL_RUNTIME_RESOLUTION_V2_MAX_DEPENDENCIES_PER_PACKAGE,
+    ),
+    true,
+  );
+  assert.doesNotThrow(() =>
+    ProductionPackageResolutionGraphV2Schema.parse(
+      withinBudget,
+    ));
+
+  const rejected =
+    ProductionPackageResolutionGraphV2Schema.safeParse(
+      overBudget,
+    );
+  assert.equal(rejected.success, false);
+  if (!rejected.success) {
+    assert.equal(
+      rejected.error.issues.some(
+        (issue) =>
+          issue.message
+            === "Production package resolution graph exceeds its canonical byte cap",
+      ),
+      true,
+    );
+  }
+});
+
+test("package graph finalizes V2 by rejecting the pre-closure historical shape", () => {
+  const current = createPackageGraph();
+  assert.doesNotThrow(() =>
+    ProductionPackageResolutionGraphV2Schema.parse(
+      current,
+    ));
+
+  const historical = clone(current) as any;
+  delete historical.productionClosureHash;
+  delete historical.productionClosureContractHash;
+  delete historical.dependencyEdgeModel;
+  delete historical.rootDependencyLocators;
+  delete historical.dependencyEdges;
+  historical.resolutionGraphHash =
+    hashProductionPackageResolutionGraphV2(
+      historical,
+    );
+  assert.equal(
+    ProductionPackageResolutionGraphV2Schema
+      .safeParse(historical).success,
+    false,
+  );
+
+  const closureDrift = clone(current) as any;
+  closureDrift.productionClosureHash =
+    sha("different-production-closure");
+  closureDrift.resolutionGraphHash =
+    hashProductionPackageResolutionGraphV2(
+      closureDrift,
+    );
+  assert.notEqual(
+    closureDrift.resolutionGraphHash,
+    current.resolutionGraphHash,
+  );
 });
 
 test("browser policy is either forbidden with no browser executable or one exact closure", () => {
@@ -1434,19 +1893,19 @@ test("component canonical hashes and byte lengths match hardcoded golden vectors
     hostAdmissionReceiptHash:
       "eac1e35ddd8ce08c6dc51f80dcb07ac4eb5ef7b2f43daf3482359212c89e08e6",
     hostRuntimeIdentityHash: "88cff0f72a247a236540f441435360cd61cc96bcb59db5689014de8a399b7b93",
-    npmRecipeHash: "0dada13537e1129a741cf50d35aeb54529e311aeb2e7e09310dff864e5a1d87b",
-    npmReceiptHash: "8b6080a206bfddb53360d3bf6466a09783379b7b636cb8559cad7797cf64a3c0",
-    packageGraphHash: "060f6de7f196c4adb0bb75a940eefae2ce213385370d66e4791567f82300ffe8",
+    npmRecipeHash: "334da44acb37a412e8cdfef71f4d6c68f1e483f079405c9de7b181200d0f88a0",
+    npmReceiptHash: "0b88f9b161c091f5972479da8af70c3f8b5a5064080639b521d7ac5cd65f9ba5",
+    packageGraphHash: "602b621707c10796195482d658c7ec87571a56664871c3674919f9f4675798c1",
     metadataProbeHash: "10912ba979838f0886e81c7d395f59717378606cb8748dc87276ea68f1fc21d4",
-    externalResolutionHash: "f21ce09061ff225ba8625e01704691cc5176dcf46d2c6e88409a83053002a941",
+    externalResolutionHash: "f112599136404d5090c882037ef1371eadd5d998c4857c7210bf285b12208746",
     networkIsolationHash: "066148dd65bd0786418c63806d22396a04fff6fb6d30e66c5820b4b000f12fff",
     environmentCapsuleHash: "cc36e6534744d7154e870c4c9e224ca75fe079001a49885c460018a67c73d78c",
     browserClosureHash: "d934d4c4e1aa5a56ca3670e32694c08ed1c84191e39b836ae1a5a6f6f53627d8",
-    browserExternalResolutionHash: "fe1cf9f476b864625f8de3019d1bad7c08ee4799fb0b4f6b4f85f3756a5b0ea4",
+    browserExternalResolutionHash: "ee5121325a736fa5a7313e8b59ad581fa2f90e15b61c3c2e0f7b1d72d88112d6",
     runtimeCanonicalBytes: 1976,
     hostAdmissionReceiptCanonicalBytes: 2011,
-    externalCanonicalBytes: 14100,
+    externalCanonicalBytes: 15248,
     environmentCanonicalBytes: 1973,
-    browserExternalCanonicalBytes: 15719,
+    browserExternalCanonicalBytes: 17070,
   });
 });

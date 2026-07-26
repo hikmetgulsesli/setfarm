@@ -6,6 +6,15 @@ import {
 } from "../../product-compiler/canonical-json.js";
 import { Sha256Schema } from "../../product-compiler/schemas/common-v1.js";
 import {
+  NPM_LOCK_V3_DEPENDENCY_SPEC_MAX_CHARACTERS_V2,
+  isCanonicalNpmExactVersionV2,
+  isCanonicalNpmLockPackagePathV2,
+  isCanonicalNpmRootPackagePathV2,
+  isSupportedNpmDependencySpecV2,
+  npmVersionSatisfiesDependencySpecV2,
+} from
+  "../../product-compiler/schemas/npm-lock-v3-grammar-v2.js";
+import {
   CANONICAL_RUNTIME_TREE_V2_PROFILES,
   CANONICAL_RUNTIME_TREE_V2_SCHEMA,
 } from "./canonical-runtime-tree-v2.js";
@@ -40,6 +49,10 @@ export const NODE_RUNTIME_RESOLUTION_V2_SCHEMA =
   "setfarm.node-runtime-resolution.v2" as const;
 export const NPM_PACKAGE_MANAGER_RESOLUTION_V2_SCHEMA =
   "setfarm.npm-package-manager-resolution.v2" as const;
+export const NPM_PRODUCTION_MATERIALIZATION_CONFIG_V2_SCHEMA =
+  "setfarm.npm-production-materialization-config.v2" as const;
+export const NPM_MATERIALIZATION_RECEIPT_ABI_POLICY_V2_SCHEMA =
+  "setfarm.npm-materialization-receipt-abi-policy.v2" as const;
 export const NPM_PRODUCTION_MATERIALIZATION_RECIPE_V2_SCHEMA =
   "setfarm.npm-production-materialization-recipe.v2" as const;
 export const NPM_MATERIALIZATION_RECEIPT_V2_SCHEMA =
@@ -61,6 +74,8 @@ export const EXTERNAL_RUNTIME_RESOLUTION_V2_MAX_EXECUTABLE_BYTES = 1024 * 1024 *
 export const EXTERNAL_RUNTIME_RESOLUTION_V2_MAX_PACKAGES = 4_096;
 export const EXTERNAL_RUNTIME_RESOLUTION_V2_MAX_DEPENDENCIES_PER_PACKAGE = 256;
 export const EXTERNAL_RUNTIME_RESOLUTION_V2_MAX_DEPENDENCY_EDGES = 32_768;
+export const PRODUCTION_PACKAGE_RESOLUTION_GRAPH_V2_MAX_CANONICAL_BYTES =
+  1024 * 1024;
 export const EXTERNAL_RUNTIME_RESOLUTION_V2_MAX_LOCKFILE_BYTES = 16 * 1024 * 1024;
 export const EXTERNAL_RUNTIME_RESOLUTION_V2_MAX_DYNAMIC_LIBRARIES = 512;
 
@@ -242,6 +257,187 @@ export const NodeRuntimeResolutionV2Schema = z.object({
   executableRef: PlatformReleaseStableReferenceV2Schema,
 }).strict();
 
+const NpmProductionMaterializationConfigIdentityV2Schema = z.object({
+  schema: z.literal(NPM_PRODUCTION_MATERIALIZATION_CONFIG_V2_SCHEMA),
+  version: z.literal(PLATFORM_RELEASE_COMPONENT_VERSION_V2),
+  executable: z.literal("npm"),
+  commandRef: z.literal("MATERIALIZE_PRODUCTION_DEPENDENCIES_V2"),
+  subcommand: z.literal("ci"),
+  arguments: z.tuple([
+    z.literal("--omit=dev"),
+    z.literal("--ignore-scripts"),
+    z.literal("--no-audit"),
+    z.literal("--no-fund"),
+  ]),
+  dependencySelection: z.literal("production_only"),
+  outputRoot: z.literal("payload/node_modules"),
+  lifecycleScripts: z.literal("forbidden"),
+}).strict();
+
+export type NpmProductionMaterializationConfigHashPayloadV2 = z.infer<
+  typeof NpmProductionMaterializationConfigIdentityV2Schema
+>;
+
+export function hashNpmProductionMaterializationConfigV2(
+  value:
+    | NpmProductionMaterializationConfigHashPayloadV2
+    | NpmProductionMaterializationConfigV2
+    | Readonly<Record<string, unknown>>,
+): string {
+  const config = { ...value } as Record<string, unknown>;
+  delete config.configHash;
+  return hashCanonicalJson({
+    schema: "setfarm.npm-production-materialization-config-hash.v2",
+    config,
+  });
+}
+
+export const NpmProductionMaterializationConfigV2Schema =
+  NpmProductionMaterializationConfigIdentityV2Schema.extend({
+    configHash: Sha256Schema,
+  }).strict().superRefine((value, context) => {
+    if (
+      value.configHash
+        !== hashNpmProductionMaterializationConfigV2(value)
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["configHash"],
+        message:
+          "npm production materialization config hash must bind the exact code-owned config",
+      });
+    }
+  });
+
+export type NpmProductionMaterializationConfigV2 = z.infer<
+  typeof NpmProductionMaterializationConfigV2Schema
+>;
+
+const NPM_PRODUCTION_MATERIALIZATION_CONFIG_IDENTITY_V2 = {
+  schema: NPM_PRODUCTION_MATERIALIZATION_CONFIG_V2_SCHEMA,
+  version: PLATFORM_RELEASE_COMPONENT_VERSION_V2,
+  executable: "npm",
+  commandRef: "MATERIALIZE_PRODUCTION_DEPENDENCIES_V2",
+  subcommand: "ci",
+  arguments: [
+    "--omit=dev",
+    "--ignore-scripts",
+    "--no-audit",
+    "--no-fund",
+  ],
+  dependencySelection: "production_only",
+  outputRoot: "payload/node_modules",
+  lifecycleScripts: "forbidden",
+} as const;
+
+export const NPM_PRODUCTION_MATERIALIZATION_CONFIG_V2 =
+  deepFreezePlatformReleaseJsonV2(
+    NpmProductionMaterializationConfigV2Schema.parse({
+      ...NPM_PRODUCTION_MATERIALIZATION_CONFIG_IDENTITY_V2,
+      configHash: hashNpmProductionMaterializationConfigV2(
+        NPM_PRODUCTION_MATERIALIZATION_CONFIG_IDENTITY_V2,
+      ),
+    }),
+  );
+
+const NpmMaterializationReceiptAbiPolicyIdentityV2Schema = z.object({
+  schema: z.literal(
+    NPM_MATERIALIZATION_RECEIPT_ABI_POLICY_V2_SCHEMA,
+  ),
+  version: z.literal(PLATFORM_RELEASE_COMPONENT_VERSION_V2),
+  receiptSchema: z.literal(NPM_MATERIALIZATION_RECEIPT_V2_SCHEMA),
+  recipeSchema: z.literal(
+    NPM_PRODUCTION_MATERIALIZATION_RECIPE_V2_SCHEMA,
+  ),
+  outputRoot: z.literal("payload/node_modules"),
+  maxPackages: z.literal(
+    EXTERNAL_RUNTIME_RESOLUTION_V2_MAX_PACKAGES,
+  ),
+  dependencySelection: z.literal("production_only"),
+  lifecycleScripts: z.literal("forbidden"),
+  successfulExitCode: z.literal(0),
+  processAuthority: z.literal(
+    "authenticated_platform_host_exact_argv_occurrence_v2",
+  ),
+  sourceFence: z.literal(
+    "admitted_package_lock_manifest_and_tsconfig_before_after_v2",
+  ),
+  productionGraphAuthority: z.literal(
+    "strict_closure_bound_exact_named_specified_lock_edges_v2",
+  ),
+  dependencyTreeAuthority: z.literal(
+    "fresh_canonical_sealed_runtime_tree_v2",
+  ),
+}).strict();
+
+export type NpmMaterializationReceiptAbiPolicyHashPayloadV2 = z.infer<
+  typeof NpmMaterializationReceiptAbiPolicyIdentityV2Schema
+>;
+
+export function hashNpmMaterializationReceiptAbiPolicyV2(
+  value:
+    | NpmMaterializationReceiptAbiPolicyHashPayloadV2
+    | NpmMaterializationReceiptAbiPolicyV2,
+): string {
+  const policy = { ...value } as Record<string, unknown>;
+  delete policy.policyHash;
+  return hashCanonicalJson({
+    schema: "setfarm.npm-materialization-receipt-abi-policy-hash.v2",
+    policy,
+  });
+}
+
+export const NpmMaterializationReceiptAbiPolicyV2Schema =
+  NpmMaterializationReceiptAbiPolicyIdentityV2Schema.extend({
+    policyHash: Sha256Schema,
+  }).strict().superRefine((value, context) => {
+    if (
+      value.policyHash
+        !== hashNpmMaterializationReceiptAbiPolicyV2(value)
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["policyHash"],
+        message:
+          "npm materialization receipt ABI policy hash must bind the exact code-owned policy",
+      });
+    }
+  });
+
+export type NpmMaterializationReceiptAbiPolicyV2 = z.infer<
+  typeof NpmMaterializationReceiptAbiPolicyV2Schema
+>;
+
+const NPM_MATERIALIZATION_RECEIPT_ABI_POLICY_IDENTITY_V2 = {
+  schema: NPM_MATERIALIZATION_RECEIPT_ABI_POLICY_V2_SCHEMA,
+  version: PLATFORM_RELEASE_COMPONENT_VERSION_V2,
+  receiptSchema: NPM_MATERIALIZATION_RECEIPT_V2_SCHEMA,
+  recipeSchema: NPM_PRODUCTION_MATERIALIZATION_RECIPE_V2_SCHEMA,
+  outputRoot: "payload/node_modules",
+  maxPackages: EXTERNAL_RUNTIME_RESOLUTION_V2_MAX_PACKAGES,
+  dependencySelection: "production_only",
+  lifecycleScripts: "forbidden",
+  successfulExitCode: 0,
+  processAuthority:
+    "authenticated_platform_host_exact_argv_occurrence_v2",
+  sourceFence:
+    "admitted_package_lock_manifest_and_tsconfig_before_after_v2",
+  productionGraphAuthority:
+    "strict_closure_bound_exact_named_specified_lock_edges_v2",
+  dependencyTreeAuthority:
+    "fresh_canonical_sealed_runtime_tree_v2",
+} as const;
+
+export const NPM_MATERIALIZATION_RECEIPT_ABI_POLICY_V2 =
+  deepFreezePlatformReleaseJsonV2(
+    NpmMaterializationReceiptAbiPolicyV2Schema.parse({
+      ...NPM_MATERIALIZATION_RECEIPT_ABI_POLICY_IDENTITY_V2,
+      policyHash: hashNpmMaterializationReceiptAbiPolicyV2(
+        NPM_MATERIALIZATION_RECEIPT_ABI_POLICY_IDENTITY_V2,
+      ),
+    }),
+  );
+
 const NpmProductionMaterializationRecipeIdentityV2Schema = z.object({
   schema: z.literal(NPM_PRODUCTION_MATERIALIZATION_RECIPE_V2_SCHEMA),
   commandRef: z.literal("MATERIALIZE_PRODUCTION_DEPENDENCIES_V2"),
@@ -254,9 +450,13 @@ const NpmProductionMaterializationRecipeIdentityV2Schema = z.object({
   ]),
   dependencySelection: z.literal("production_only"),
   lifecycleScripts: z.literal("forbidden"),
-  configHash: Sha256Schema,
+  configHash: z.literal(
+    NPM_PRODUCTION_MATERIALIZATION_CONFIG_V2.configHash,
+  ),
   materializationReceiptSchema: z.literal(NPM_MATERIALIZATION_RECEIPT_V2_SCHEMA),
-  materializationReceiptSchemaHash: Sha256Schema,
+  materializationReceiptSchemaHash: z.literal(
+    NPM_MATERIALIZATION_RECEIPT_ABI_POLICY_V2.policyHash,
+  ),
 }).strict();
 
 export type NpmProductionMaterializationRecipeHashPayloadV2 = z.infer<
@@ -266,7 +466,8 @@ export type NpmProductionMaterializationRecipeHashPayloadV2 = z.infer<
 export function hashNpmProductionMaterializationRecipeV2(
   value:
     | NpmProductionMaterializationRecipeHashPayloadV2
-    | NpmProductionMaterializationRecipeV2,
+    | NpmProductionMaterializationRecipeV2
+    | Readonly<Record<string, unknown>>,
 ): string {
   const recipe = { ...value } as Record<string, unknown>;
   delete recipe.recipeHash;
@@ -293,6 +494,36 @@ export type NpmProductionMaterializationRecipeV2 = z.infer<
   typeof NpmProductionMaterializationRecipeV2Schema
 >;
 
+const NPM_PRODUCTION_MATERIALIZATION_RECIPE_IDENTITY_V2 = {
+  schema: NPM_PRODUCTION_MATERIALIZATION_RECIPE_V2_SCHEMA,
+  commandRef: "MATERIALIZE_PRODUCTION_DEPENDENCIES_V2",
+  subcommand: "ci",
+  arguments: [
+    "--omit=dev",
+    "--ignore-scripts",
+    "--no-audit",
+    "--no-fund",
+  ],
+  dependencySelection: "production_only",
+  lifecycleScripts: "forbidden",
+  configHash:
+    NPM_PRODUCTION_MATERIALIZATION_CONFIG_V2.configHash,
+  materializationReceiptSchema:
+    NPM_MATERIALIZATION_RECEIPT_V2_SCHEMA,
+  materializationReceiptSchemaHash:
+    NPM_MATERIALIZATION_RECEIPT_ABI_POLICY_V2.policyHash,
+} as const;
+
+export const NPM_PRODUCTION_MATERIALIZATION_RECIPE_V2 =
+  deepFreezePlatformReleaseJsonV2(
+    NpmProductionMaterializationRecipeV2Schema.parse({
+      ...NPM_PRODUCTION_MATERIALIZATION_RECIPE_IDENTITY_V2,
+      recipeHash: hashNpmProductionMaterializationRecipeV2(
+        NPM_PRODUCTION_MATERIALIZATION_RECIPE_IDENTITY_V2,
+      ),
+    }),
+  );
+
 export const NpmPackageManagerResolutionV2Schema = z.object({
   schema: z.literal(NPM_PACKAGE_MANAGER_RESOLUTION_V2_SCHEMA),
   packageName: z.literal("npm"),
@@ -304,7 +535,9 @@ export const NpmPackageManagerResolutionV2Schema = z.object({
 
 const NpmMaterializationReceiptIdentityV2Schema = z.object({
   schema: z.literal(NPM_MATERIALIZATION_RECEIPT_V2_SCHEMA),
-  recipeHash: Sha256Schema,
+  recipeHash: z.literal(
+    NPM_PRODUCTION_MATERIALIZATION_RECIPE_V2.recipeHash,
+  ),
   npmIdentity: z.object({
     packageName: z.literal("npm"),
     version: PlatformReleaseVersionIdentityV2Schema,
@@ -314,6 +547,11 @@ const NpmMaterializationReceiptIdentityV2Schema = z.object({
   lockfile: ExactPackageLockSourceRefV2Schema,
   outputRoot: z.literal("payload/node_modules"),
   dependencyTreeHash: Sha256Schema,
+  dependencyTreePayloadHash: Sha256Schema,
+  dependencyTreeBindingHash: Sha256Schema,
+  productionClosureHash: Sha256Schema,
+  productionClosureContractHash: Sha256Schema,
+  productionResolutionGraphHash: Sha256Schema,
   packageCount: z.number().int().nonnegative()
     .max(EXTERNAL_RUNTIME_RESOLUTION_V2_MAX_PACKAGES),
   lifecycleScripts: z.literal("forbidden"),
@@ -354,18 +592,68 @@ export type NpmMaterializationReceiptCandidateV2 = z.infer<
   typeof NpmMaterializationReceiptCandidateV2Schema
 >;
 
+export const PlatformReleaseNpmLockPackageLocatorV2Schema =
+  PlatformReleasePortableLocatorV2Schema.refine(
+    isCanonicalNpmLockPackagePathV2,
+    "Production package locator must be one exact npm lock package path",
+  );
+
+export const PlatformReleaseNpmRootPackageLocatorV2Schema =
+  PlatformReleaseNpmLockPackageLocatorV2Schema.refine(
+    isCanonicalNpmRootPackagePathV2,
+    "Production root dependency locator must be one direct npm root package path",
+  );
+
+const ProductionNpmExactVersionV2Schema = z.string()
+  .refine(
+    isCanonicalNpmExactVersionV2,
+    "Production package version must be one canonical exact three-part version",
+  );
+
+const ProductionNpmDependencySpecV2Schema = z.string()
+  .max(NPM_LOCK_V3_DEPENDENCY_SPEC_MAX_CHARACTERS_V2)
+  .refine(
+    isSupportedNpmDependencySpecV2,
+    "Production dependency spec must use the supported canonical lock grammar",
+  );
+
+export const ProductionPackageResolutionEdgeV2Schema =
+  z.object({
+    ownerPackageLocator: z.union([
+      z.literal(""),
+      PlatformReleaseNpmLockPackageLocatorV2Schema,
+    ]),
+    kind: z.enum([
+      "dependencies",
+      "required",
+      "optional",
+    ]),
+    dependencyName:
+      PlatformReleaseNpmPackageNameV2Schema,
+    declaredSpec:
+      ProductionNpmDependencySpecV2Schema,
+    resolvedPackageLocator:
+      PlatformReleaseNpmLockPackageLocatorV2Schema,
+    resolvedVersion:
+      ProductionNpmExactVersionV2Schema,
+  }).strict();
+
+export type ProductionPackageResolutionEdgeV2 = z.infer<
+  typeof ProductionPackageResolutionEdgeV2Schema
+>;
+
 const ProductionPackageResolutionEntryIdentityV2Schema = z.object({
   schema: z.literal(PRODUCTION_PACKAGE_RESOLUTION_ENTRY_V2_SCHEMA),
-  packageLocator: PlatformReleasePortableLocatorV2Schema.refine(
-    (value) => value.startsWith("node_modules/"),
-    "Production package locator must be rooted under node_modules",
-  ),
+  packageLocator:
+    PlatformReleaseNpmLockPackageLocatorV2Schema,
   packageName: PlatformReleaseNpmPackageNameV2Schema,
-  version: PlatformReleaseVersionIdentityV2Schema,
+  version: ProductionNpmExactVersionV2Schema,
   lockEntryHash: Sha256Schema,
   packageJsonHash: Sha256Schema,
   runtimeTreeHash: Sha256Schema,
-  dependencyLocators: z.array(PlatformReleasePortableLocatorV2Schema)
+  dependencyLocators: z.array(
+    PlatformReleaseNpmLockPackageLocatorV2Schema,
+  )
     .max(EXTERNAL_RUNTIME_RESOLUTION_V2_MAX_DEPENDENCIES_PER_PACKAGE),
 }).strict().superRefine((value, context) => {
   if (!value.packageLocator.endsWith(`node_modules/${value.packageName}`)) {
@@ -397,12 +685,38 @@ const ProductionPackageResolutionGraphIdentityV2Schema = z.object({
   lockfileVersion: z.literal(3),
   lockfile: ExactPackageLockSourceRefV2Schema,
   materializedDependencyTreeHash: Sha256Schema,
+  productionClosureHash: Sha256Schema,
+  productionClosureContractHash: Sha256Schema,
+  dependencyEdgeModel: z.enum([
+    "dependencies_only",
+    "required_and_observed_optional",
+  ]),
+  rootDependencyLocators: z.array(
+    PlatformReleaseNpmRootPackageLocatorV2Schema,
+  ).max(EXTERNAL_RUNTIME_RESOLUTION_V2_MAX_PACKAGES),
+  dependencyEdges:
+    z.array(ProductionPackageResolutionEdgeV2Schema)
+      .max(
+        EXTERNAL_RUNTIME_RESOLUTION_V2_MAX_DEPENDENCY_EDGES,
+      ),
   packages: z.array(ProductionPackageResolutionEntryV2Schema)
     .max(EXTERNAL_RUNTIME_RESOLUTION_V2_MAX_PACKAGES),
   packageCount: z.number().int().nonnegative()
     .max(EXTERNAL_RUNTIME_RESOLUTION_V2_MAX_PACKAGES),
 }).strict().superRefine((value, context) => {
   const locators = value.packages.map((entry) => entry.packageLocator);
+  if (
+    !hasCanonicalUniquePlatformReleaseStringsV2(
+      value.rootDependencyLocators,
+    )
+  ) {
+    context.addIssue({
+      code: "custom",
+      path: ["rootDependencyLocators"],
+      message:
+        "Production root dependency locators must be unique and canonically sorted",
+    });
+  }
   if (!hasCanonicalUniquePlatformReleaseStringsV2(locators)) {
     context.addIssue({
       code: "custom",
@@ -418,9 +732,104 @@ const ProductionPackageResolutionGraphIdentityV2Schema = z.object({
     });
   }
   const locatorSet = new Set(locators);
-  let dependencyEdges = 0;
+  const edgeKeys = value.dependencyEdges.map((edge) =>
+    [
+      edge.ownerPackageLocator,
+      edge.kind,
+      edge.dependencyName,
+      edge.resolvedPackageLocator,
+      edge.declaredSpec,
+      edge.resolvedVersion,
+    ].join("\0"));
+  if (!hasCanonicalUniquePlatformReleaseStringsV2(edgeKeys)) {
+    context.addIssue({
+      code: "custom",
+      path: ["dependencyEdges"],
+      message:
+        "Production dependency edges must be unique and canonically sorted",
+    });
+  }
+  if (
+    value.dependencyEdgeModel === "dependencies_only"
+      ? value.dependencyEdges.some((edge) =>
+          edge.kind !== "dependencies")
+      : value.dependencyEdges.some((edge) =>
+          edge.kind === "dependencies")
+  ) {
+    context.addIssue({
+      code: "custom",
+      path: ["dependencyEdges"],
+      message:
+        "Production dependency edge kinds must match the declared closure model",
+    });
+  }
+  const rootEdgeLocators = [
+    ...new Set(
+      value.dependencyEdges
+        .filter((edge) => edge.ownerPackageLocator === "")
+        .map((edge) => edge.resolvedPackageLocator),
+    ),
+  ].sort();
+  if (
+    canonicalJsonStringify(rootEdgeLocators)
+      !== canonicalJsonStringify(
+        value.rootDependencyLocators,
+      )
+  ) {
+    context.addIssue({
+      code: "custom",
+      path: ["rootDependencyLocators"],
+      message:
+        "Production roots must equal every and only exact root dependency edge",
+    });
+  }
+  value.rootDependencyLocators.forEach((locator, index) => {
+    if (!locatorSet.has(locator)) {
+      context.addIssue({
+        code: "custom",
+        path: ["rootDependencyLocators", index],
+        message:
+          "Every production root dependency must resolve to one exact package entry",
+      });
+    }
+  });
+  const byLocator = new Map(
+    value.packages.map((entry) => [
+      entry.packageLocator,
+      entry,
+    ]),
+  );
+  value.dependencyEdges.forEach((edge, edgeIndex) => {
+    const resolved = byLocator.get(
+      edge.resolvedPackageLocator,
+    );
+    const owner = edge.ownerPackageLocator === ""
+      ? undefined
+      : byLocator.get(edge.ownerPackageLocator);
+    if (
+      !resolved
+      || (
+        edge.ownerPackageLocator !== ""
+        && !owner
+      )
+      || edge.ownerPackageLocator
+        === edge.resolvedPackageLocator
+      || resolved?.packageName !== edge.dependencyName
+      || resolved?.version !== edge.resolvedVersion
+      || !npmVersionSatisfiesDependencySpecV2(
+        edge.resolvedVersion,
+        edge.declaredSpec,
+      )
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["dependencyEdges", edgeIndex],
+        message:
+          "Every exact dependency edge must join an existing owner, dependency name, version and distinct resolved package",
+      });
+    }
+  });
   value.packages.forEach((entry, packageIndex) => {
-    dependencyEdges += entry.dependencyLocators.length;
     entry.dependencyLocators.forEach((dependencyLocator, dependencyIndex) => {
       if (!locatorSet.has(dependencyLocator) || dependencyLocator === entry.packageLocator) {
         context.addIssue({
@@ -430,12 +839,58 @@ const ProductionPackageResolutionGraphIdentityV2Schema = z.object({
         });
       }
     });
+    const projected = [
+      ...new Set(
+        value.dependencyEdges
+          .filter((edge) =>
+            edge.ownerPackageLocator
+              === entry.packageLocator)
+          .map((edge) =>
+            edge.resolvedPackageLocator),
+      ),
+    ].sort();
+    if (
+      canonicalJsonStringify(projected)
+        !== canonicalJsonStringify(
+          entry.dependencyLocators,
+        )
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["packages", packageIndex, "dependencyLocators"],
+        message:
+          "Package adjacency must equal every and only exact dependency edge",
+      });
+    }
   });
-  if (dependencyEdges > EXTERNAL_RUNTIME_RESOLUTION_V2_MAX_DEPENDENCY_EDGES) {
+  if (
+    value.dependencyEdges.length
+      > EXTERNAL_RUNTIME_RESOLUTION_V2_MAX_DEPENDENCY_EDGES
+  ) {
     context.addIssue({
       code: "custom",
       path: ["packages"],
       message: "Production package dependency-edge limit exceeded",
+    });
+  }
+  const reached = new Set<string>();
+  const pending = [...value.rootDependencyLocators];
+  while (pending.length > 0) {
+    const locator = pending.pop()!;
+    if (reached.has(locator)) continue;
+    reached.add(locator);
+    const entry = byLocator.get(locator);
+    if (entry) pending.push(...entry.dependencyLocators);
+  }
+  if (
+    reached.size !== locatorSet.size
+    || locators.some((locator) => !reached.has(locator))
+  ) {
+    context.addIssue({
+      code: "custom",
+      path: ["packages"],
+      message:
+        "Every and only production package must be reachable from an exact root dependency",
     });
   }
 });
@@ -461,6 +916,18 @@ export const ProductionPackageResolutionGraphV2Schema =
   ProductionPackageResolutionGraphIdentityV2Schema.safeExtend({
     resolutionGraphHash: Sha256Schema,
   }).strict().superRefine((value, context) => {
+    if (
+      !platformReleaseCandidateFitsCanonicalCapV2(
+        value,
+        PRODUCTION_PACKAGE_RESOLUTION_GRAPH_V2_MAX_CANONICAL_BYTES,
+      )
+    ) {
+      context.addIssue({
+        code: "custom",
+        message:
+          "Production package resolution graph exceeds its canonical byte cap",
+      });
+    }
     if (value.resolutionGraphHash !== hashProductionPackageResolutionGraphV2(value)) {
       context.addIssue({
         code: "custom",
@@ -666,6 +1133,12 @@ const ExternalRuntimeResolutionIdentityV2Schema = z.object({
     || receipt.lockfile.hash !== graph.lockfile.hash
     || receipt.lockfile.byteLength !== graph.lockfile.byteLength
     || receipt.dependencyTreeHash !== graph.materializedDependencyTreeHash
+    || receipt.productionClosureHash
+      !== graph.productionClosureHash
+    || receipt.productionClosureContractHash
+      !== graph.productionClosureContractHash
+    || receipt.productionResolutionGraphHash
+      !== graph.resolutionGraphHash
     || receipt.packageCount !== graph.packageCount
     || receipt.lifecycleScripts !== manager.installRecipe.lifecycleScripts
   ) {

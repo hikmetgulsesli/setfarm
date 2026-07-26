@@ -92,6 +92,13 @@ import {
 } from
   "./schemas/platform-release-compiled-output-pair-v2.js";
 import {
+  createPlatformReleaseDependencyMaterializedPairInspectionV2,
+  createPlatformReleaseDependencyOutputBindingV2,
+  type PlatformReleaseDependencyMaterializedPairInspectionV2,
+  type PlatformReleaseDependencyOutputBindingV2,
+} from
+  "./schemas/platform-release-dependency-materialized-pair-v2.js";
+import {
   ExactHostOwnedFileRefV2Schema,
   boundedPlatformReleaseJsonSnapshotV2,
   deepFreezePlatformReleaseJsonV2,
@@ -100,22 +107,37 @@ import {
 import {
   executePlatformReleaseHostNodeToolchainBuildInternalV2,
   executePlatformReleaseHostNodeToolchainNpmCiInternalV2,
+  executePlatformReleaseHostNodeToolchainProductionNpmCiInternalV2,
   inspectPlatformReleaseHostNodeToolchainReceiptV2,
   isProductionPlatformReleaseHostNodeToolchainAuthorityV2,
   revalidatePlatformReleaseHostNodeToolchainAuthorityV2,
+  PlatformReleaseHostNodeToolchainAuthorityErrorV2,
+  type PlatformReleaseHostNodeToolchainAuthorityErrorCodeV2,
   type PlatformReleaseHostNodeToolchainBuildEvidenceV2,
   type PlatformReleaseHostNodeToolchainAuthorityV2,
+  type PlatformReleaseHostNodeToolchainProductionNpmCiEvidenceV2,
 } from
   "./platform-release-host-node-toolchain-authority-v2.js";
 import {
   PLATFORM_RELEASE_BUILD_TOOLCHAIN_NPM_CONFIG_HASH_V2,
+  derivePlatformReleaseSourceLockAuthorityInternalV2,
   materializePlatformReleaseBuildToolchainTreeInternalV2,
   revalidatePlatformReleaseBuildToolchainTreeInternalV2,
-  type PlatformReleaseBuildToolchainLockAuthorityV2,
+  PlatformReleaseBuildToolchainMaterializationErrorV2,
+  type PlatformReleaseBuildToolchainMaterializationErrorCodeV2,
   type PlatformReleaseBuildToolchainLockPackageV2,
+  type PlatformReleaseSourceLockAuthorityV2,
   type PlatformReleaseBuildToolchainTreeMaterializationV2,
 } from
   "./platform-release-build-toolchain-materialization-v2.js";
+import {
+  materializePlatformReleaseProductionDependenciesInternalV2,
+  revalidatePlatformReleaseProductionDependenciesInternalV2,
+  PlatformReleaseProductionDependencyMaterializationErrorV2,
+  type PlatformReleaseProductionDependencyMaterializationErrorCodeV2,
+  type PlatformReleaseProductionDependencyMaterializationV2,
+} from
+  "./platform-release-production-dependency-materialization-v2.js";
 
 const FULL_GIT_OBJECT_HASH_V2 = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
 const PORTABLE_SOURCE_PATH_V2 =
@@ -134,6 +156,14 @@ const COMPILED_OUTPUT_FIRST_PREFIX_V2 =
   "setfarm-platform-compiled-output-first-v2-";
 const COMPILED_OUTPUT_SECOND_PREFIX_V2 =
   "setfarm-platform-compiled-output-second-v2-";
+const PRODUCTION_DEPENDENCY_ENVIRONMENT_FIRST_PREFIX_V2 =
+  "setfarm-platform-production-dependency-environment-first-v2-";
+const PRODUCTION_DEPENDENCY_ENVIRONMENT_SECOND_PREFIX_V2 =
+  "setfarm-platform-production-dependency-environment-second-v2-";
+const PRODUCTION_DEPENDENCY_INSTALL_FIRST_PREFIX_V2 =
+  "setfarm-platform-production-dependency-install-first-v2-";
+const PRODUCTION_DEPENDENCY_INSTALL_SECOND_PREFIX_V2 =
+  "setfarm-platform-production-dependency-install-second-v2-";
 const SOURCE_ADMISSION_INPUT_MAX_BYTES_V2 = 256 * 1024;
 
 export type PlatformReleaseSourceAdmissionErrorCodeV2 =
@@ -366,6 +396,22 @@ type SourceOwnedOutputAllocationFaultV2 = Readonly<{
   observePath: (absolutePath: string) => void;
 }>;
 
+export type PlatformReleaseDependencyMaterializationFaultForTestV2 =
+  Readonly<{
+    checkpoint:
+      | "after_first_dependency_root_opened"
+      | "after_first_dependency_root_adopted"
+      | "after_first_dependency_root_resealed"
+      | "after_second_dependency_root_opened"
+      | "after_second_dependency_root_adopted"
+      | "after_second_dependency_root_resealed"
+      | "after_final_async_fence"
+      | "before_scratch_cleanup"
+      | "after_scratch_cleanup_before_registration"
+      | "after_registration_and_predecessor_consumption_before_return";
+    observePath: (absolutePath: string) => void;
+  }>;
+
 type SourceStageStateV2 = {
   readonly admissionScope: "production_candidate" | "test_fixture";
   readonly contextRoot: string;
@@ -538,6 +584,46 @@ export class PlatformReleaseCompiledOutputPairErrorV2
   }
 }
 
+export type PlatformReleaseDependencyMaterializedPairErrorCodeV2 =
+  | "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_INPUT_INVALID"
+  | "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_SCOPE_MISMATCH"
+  | "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_ALREADY_CLAIMED"
+  | "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_SOURCE_DRIFT"
+  | "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_TOOLCHAIN_DRIFT"
+  | "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_INSTALL_FAILED"
+  | "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_INSTALL_SCOPE_INVALID"
+  | "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_LOCK_INVALID"
+  | "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_CLOSURE_INVALID"
+  | "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_INSTALL_TREE_INVALID"
+  | "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_NORMALIZATION_FAILED"
+  | "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_GRAPH_INVALID"
+  | "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_AUTHORITY_MISMATCH"
+  | "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_OUTPUT_INVALID"
+  | "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_EQUALITY_FAILED"
+  | "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_CLEANUP_FAILED"
+  | "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_HANDLE_UNAUTHENTICATED"
+  | "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_TEST_ONLY";
+
+export class PlatformReleaseDependencyMaterializedPairErrorV2
+  extends Error {
+  readonly code:
+    PlatformReleaseDependencyMaterializedPairErrorCodeV2;
+  override readonly cause?: unknown;
+
+  constructor(
+    code:
+      PlatformReleaseDependencyMaterializedPairErrorCodeV2,
+    message: string,
+    options?: ErrorOptions,
+  ) {
+    super(message.slice(0, 1_500), options);
+    this.name =
+      "PlatformReleaseDependencyMaterializedPairErrorV2";
+    this.code = code;
+    this.cause = options?.cause;
+  }
+}
+
 type CompiledPackageIdentityV2 = Readonly<{
   sourceRefHash: string;
   contentHash: string;
@@ -615,6 +701,73 @@ export class PlatformReleaseCompiledOutputPairV2 {
   }
 }
 
+type DependencyMaterializedOccurrenceStateV2 = Readonly<{
+  occurrence: "first" | "second";
+  compiled: CompiledOccurrenceStateV2;
+  hostEvidence:
+    PlatformReleaseHostNodeToolchainProductionNpmCiEvidenceV2;
+  materialized:
+    PlatformReleaseProductionDependencyMaterializationV2;
+  dependencyTreePhysicalIdentityHash: string;
+  binding: PlatformReleaseDependencyOutputBindingV2;
+}>;
+
+type DependencyMaterializedPairStateV2 = Readonly<{
+  admissionScope: "production_candidate" | "test_fixture";
+  sourceStage: AdmittedPlatformReleaseSourceStageV2;
+  buildToolchain:
+    PlatformReleaseBuildToolchainCapsuleV2;
+  compiledOutputPair:
+    PlatformReleaseCompiledOutputPairV2;
+  first: DependencyMaterializedOccurrenceStateV2;
+  second: DependencyMaterializedOccurrenceStateV2;
+  inspection:
+    PlatformReleaseDependencyMaterializedPairInspectionV2;
+  ownership: {
+    lifecycle:
+      | "ready"
+      | "consuming"
+      | "consumed"
+      | "invalidated";
+  };
+}>;
+
+const dependencyMaterializedPairConstructorCapabilityV2 =
+  Object.freeze({});
+const dependencyMaterializedPairStatesV2 =
+  new WeakMap<object, DependencyMaterializedPairStateV2>();
+
+export class PlatformReleaseDependencyMaterializedPairV2 {
+  readonly authorityState =
+    "candidate_dependency_materialized_pair_unverified" as const;
+  readonly admissionScope:
+    "production_candidate" | "test_fixture";
+  readonly sourceBindingHash: string;
+  readonly stableOutputBindingHash: string;
+
+  constructor(
+    capability: object,
+    state: DependencyMaterializedPairStateV2,
+  ) {
+    if (
+      capability
+        !== dependencyMaterializedPairConstructorCapabilityV2
+    ) {
+      throw new PlatformReleaseDependencyMaterializedPairErrorV2(
+        "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_HANDLE_UNAUTHENTICATED",
+        "Dependency-materialized pair constructor capability is unavailable",
+      );
+    }
+    this.admissionScope = state.admissionScope;
+    this.sourceBindingHash =
+      state.inspection.sourceBindingHash;
+    this.stableOutputBindingHash =
+      state.inspection.stableOutput.bindingHash;
+    dependencyMaterializedPairStatesV2.set(this, state);
+    Object.freeze(this);
+  }
+}
+
 function fail(
   code: PlatformReleaseSourceAdmissionErrorCodeV2,
   message: string,
@@ -636,6 +789,157 @@ function failCompiledOutputPair(
     code,
     message,
     cause === undefined ? undefined : { cause },
+  );
+}
+
+function failDependencyMaterializedPair(
+  code:
+    PlatformReleaseDependencyMaterializedPairErrorCodeV2,
+  message: string,
+  cause?: unknown,
+): never {
+  throw new PlatformReleaseDependencyMaterializedPairErrorV2(
+    code,
+    message,
+    cause === undefined ? undefined : { cause },
+  );
+}
+
+const HOST_TOOLCHAIN_ERROR_CODE_TO_DEPENDENCY_PAIR_V2 =
+  Object.freeze({
+    PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_INPUT_INVALID:
+      "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_INSTALL_SCOPE_INVALID",
+    PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_HOST_AUTHORITY_INVALID:
+      "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_TOOLCHAIN_DRIFT",
+    PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_PRODUCTION_AUTHORITY_REQUIRED:
+      "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_SCOPE_MISMATCH",
+    PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_TEST_AUTHORITY_REQUIRED:
+      "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_SCOPE_MISMATCH",
+    PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_RECEIPT_INVALID:
+      "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_TOOLCHAIN_DRIFT",
+    PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_HANDLE_UNAUTHENTICATED:
+      "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_TOOLCHAIN_DRIFT",
+    PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_HOST_DRIFT:
+      "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_TOOLCHAIN_DRIFT",
+    PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_BUILD_FAILED:
+      "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_TOOLCHAIN_DRIFT",
+    PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_INSTALL_FAILED:
+      "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_INSTALL_FAILED",
+    PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_PRODUCTION_INSTALL_SCOPE_INVALID:
+      "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_INSTALL_SCOPE_INVALID",
+  } satisfies Readonly<Record<
+    PlatformReleaseHostNodeToolchainAuthorityErrorCodeV2,
+    PlatformReleaseDependencyMaterializedPairErrorCodeV2
+  >>);
+
+const PRODUCTION_DEPENDENCY_ERROR_CODE_TO_PAIR_V2 =
+  Object.freeze({
+    PLATFORM_RELEASE_PRODUCTION_DEPENDENCY_V2_INPUT_INVALID:
+      "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_INPUT_INVALID",
+    PLATFORM_RELEASE_PRODUCTION_DEPENDENCY_V2_LOCK_INVALID:
+      "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_LOCK_INVALID",
+    PLATFORM_RELEASE_PRODUCTION_DEPENDENCY_V2_CLOSURE_INVALID:
+      "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_CLOSURE_INVALID",
+    PLATFORM_RELEASE_PRODUCTION_DEPENDENCY_V2_INSTALL_TREE_INVALID:
+      "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_INSTALL_TREE_INVALID",
+    PLATFORM_RELEASE_PRODUCTION_DEPENDENCY_V2_NORMALIZATION_FAILED:
+      "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_NORMALIZATION_FAILED",
+    PLATFORM_RELEASE_PRODUCTION_DEPENDENCY_V2_GRAPH_INVALID:
+      "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_GRAPH_INVALID",
+    PLATFORM_RELEASE_PRODUCTION_DEPENDENCY_V2_AUTHORITY_MISMATCH:
+      "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_AUTHORITY_MISMATCH",
+  } satisfies Readonly<Record<
+    PlatformReleaseProductionDependencyMaterializationErrorCodeV2,
+    PlatformReleaseDependencyMaterializedPairErrorCodeV2
+  >>);
+
+const SOURCE_LOCK_ERROR_CODE_TO_DEPENDENCY_PAIR_V2 =
+  Object.freeze({
+    PLATFORM_RELEASE_BUILD_TOOLCHAIN_V2_INPUT_INVALID:
+      "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_INPUT_INVALID",
+    PLATFORM_RELEASE_BUILD_TOOLCHAIN_V2_LOCK_INVALID:
+      "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_LOCK_INVALID",
+    PLATFORM_RELEASE_BUILD_TOOLCHAIN_V2_INSTALL_TREE_INVALID:
+      "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_INSTALL_SCOPE_INVALID",
+    PLATFORM_RELEASE_BUILD_TOOLCHAIN_V2_CLOSURE_INVALID:
+      "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_CLOSURE_INVALID",
+    PLATFORM_RELEASE_BUILD_TOOLCHAIN_V2_COMPILER_INVALID:
+      "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_LOCK_INVALID",
+    PLATFORM_RELEASE_BUILD_TOOLCHAIN_V2_NORMALIZATION_FAILED:
+      "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_NORMALIZATION_FAILED",
+    PLATFORM_RELEASE_BUILD_TOOLCHAIN_V2_AUTHORITY_MISMATCH:
+      "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_AUTHORITY_MISMATCH",
+  } satisfies Readonly<Record<
+    PlatformReleaseBuildToolchainMaterializationErrorCodeV2,
+    PlatformReleaseDependencyMaterializedPairErrorCodeV2
+  >>);
+
+function failDependencyPairFromHostToolchainV2(
+  error: unknown,
+  message: string,
+): never {
+  if (
+    error instanceof
+    PlatformReleaseHostNodeToolchainAuthorityErrorV2
+  ) {
+    return failDependencyMaterializedPair(
+      HOST_TOOLCHAIN_ERROR_CODE_TO_DEPENDENCY_PAIR_V2[
+        error.code
+      ],
+      message,
+      error,
+    );
+  }
+  return failDependencyMaterializedPair(
+    "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_TOOLCHAIN_DRIFT",
+    message,
+    error,
+  );
+}
+
+function failDependencyPairFromMaterializationV2(
+  error: unknown,
+  message: string,
+): never {
+  if (
+    error instanceof
+    PlatformReleaseProductionDependencyMaterializationErrorV2
+  ) {
+    return failDependencyMaterializedPair(
+      PRODUCTION_DEPENDENCY_ERROR_CODE_TO_PAIR_V2[
+        error.code
+      ],
+      message,
+      error,
+    );
+  }
+  return failDependencyMaterializedPair(
+    "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_NORMALIZATION_FAILED",
+    message,
+    error,
+  );
+}
+
+function failDependencyPairFromSourceLockV2(
+  error: unknown,
+  message: string,
+): never {
+  if (
+    error instanceof
+    PlatformReleaseBuildToolchainMaterializationErrorV2
+  ) {
+    return failDependencyMaterializedPair(
+      SOURCE_LOCK_ERROR_CODE_TO_DEPENDENCY_PAIR_V2[
+        error.code
+      ],
+      message,
+      error,
+    );
+  }
+  return failDependencyMaterializedPair(
+    "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_NORMALIZATION_FAILED",
+    message,
+    error,
   );
 }
 
@@ -3756,6 +4060,11 @@ function createPrivateBuildToolchainInstallScope(
     const projectRoot = path.join(installRoot, "project");
     mkdirSync(projectRoot, { mode: 0o700 });
     copyAdmittedBuildInputs(state, projectRoot);
+    derivePlatformReleaseSourceLockAuthorityInternalV2({
+      projectRoot,
+      source: state.core.source,
+      purpose: "build_toolchain",
+    });
     fsyncDirectory(
       path.join(installRoot, "dependency-capsule"),
     );
@@ -3797,6 +4106,13 @@ function createPrivateBuildToolchainInstallScope(
     const primary = error instanceof
         PlatformReleaseBuildToolchainCapsuleErrorV2
       ? error
+      : error instanceof
+          PlatformReleaseBuildToolchainMaterializationErrorV2
+      ? new PlatformReleaseBuildToolchainCapsuleErrorV2(
+          "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_TREE_INVALID",
+          "Private build-toolchain source lock failed pre-npm validation",
+          { cause: error },
+        )
       : new PlatformReleaseBuildToolchainCapsuleErrorV2(
         "PLATFORM_RELEASE_BUILD_TOOLCHAIN_CAPSULE_V2_CONTEXT_INVALID",
         "Private build-toolchain install scope could not be created",
@@ -3847,6 +4163,411 @@ function createPrivateBuildToolchainInstallScope(
       );
     }
     throw primary;
+  }
+}
+
+type PrivateProductionDependencyInstallScopeV2 = Readonly<{
+  occurrence: "first" | "second";
+  environmentRoot: string;
+  environmentAnchor: SourceOwnedPrivateDirectoryV2;
+  installRoot: string;
+  installAnchor: SourceOwnedPrivateDirectoryV2;
+  projectRoot: string;
+  projectAnchor: SourceOwnedPrivateDirectoryV2;
+  preNpmLockAuthority:
+    PlatformReleaseSourceLockAuthorityV2;
+  cleanup: {
+    state:
+      | "open"
+      | "cleaning"
+      | "cleaned"
+      | "cleanup_failed";
+  };
+  environment:
+    PrivateBuildToolchainInstallScopeV2["environment"];
+}>;
+
+function removePrivateProductionDependencyScratchRootV2(
+  anchor: SourceOwnedPrivateDirectoryV2,
+  label: string,
+): void {
+  if (sourceOwnedPathIsAbsentV2(anchor.absolutePath)) {
+    return;
+  }
+  try {
+    const owner = sourceOwnedProcessOwnerV2();
+    const stat = lstatSync(anchor.absolutePath);
+    if (
+      stat.isSymbolicLink()
+      || !stat.isDirectory()
+      || realpathSync(anchor.absolutePath)
+        !== anchor.absolutePath
+      || (stat.mode & 0o7777) !== 0o700
+      || stat.uid !== owner.uid
+      || stat.gid !== owner.gid
+      || !sameSourceOwnedDirectoryIdentityV2(
+        sourceOwnedDirectoryIdentityV2(stat),
+        anchor.identity,
+      )
+    ) {
+      return failDependencyMaterializedPair(
+        "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_CLEANUP_FAILED",
+        `${label} was replaced or changed before cleanup`,
+      );
+    }
+    makeSourceOwnedDirectoriesWritableV2(
+      anchor.absolutePath,
+    );
+    rmSync(anchor.absolutePath, {
+      recursive: true,
+      force: false,
+    });
+    if (!sourceOwnedPathIsAbsentV2(anchor.absolutePath)) {
+      return failDependencyMaterializedPair(
+        "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_CLEANUP_FAILED",
+        `${label} remained after cleanup`,
+      );
+    }
+  } catch (error) {
+    if (
+      error instanceof
+      PlatformReleaseDependencyMaterializedPairErrorV2
+    ) throw error;
+    return failDependencyMaterializedPair(
+      "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_CLEANUP_FAILED",
+      `${label} could not be removed safely`,
+      error,
+    );
+  }
+}
+
+function cleanupPrivateProductionDependencyInstallScopeV2(
+  scope: PrivateProductionDependencyInstallScopeV2,
+): void {
+  if (scope.cleanup.state === "cleaned") return;
+  if (scope.cleanup.state !== "open") {
+    return failDependencyMaterializedPair(
+      "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_CLEANUP_FAILED",
+      `${scope.occurrence} dependency scratch roots already entered cleanup`,
+    );
+  }
+  scope.cleanup.state = "cleaning";
+  const errors: unknown[] = [];
+  for (
+    const [anchor, label] of [
+      [
+        scope.installAnchor,
+        `${scope.occurrence} production dependency install root`,
+      ],
+      [
+        scope.environmentAnchor,
+        `${scope.occurrence} production dependency environment root`,
+      ],
+    ] as const
+  ) {
+    try {
+      if (anchor === scope.installAnchor) {
+        assertSourceOwnedPrivateDirectoryCurrentV2(
+          scope.projectAnchor,
+          `${scope.occurrence} production dependency project root`,
+          "PLATFORM_RELEASE_SOURCE_V2_CLEANUP_FAILED",
+        );
+      }
+      removePrivateProductionDependencyScratchRootV2(
+        anchor,
+        label,
+      );
+    } catch (error) {
+      errors.push(error);
+    }
+  }
+  if (errors.length > 0) {
+    scope.cleanup.state = "cleanup_failed";
+    return failDependencyMaterializedPair(
+      "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_CLEANUP_FAILED",
+      `${scope.occurrence} dependency scratch roots could not be removed safely`,
+      new AggregateError(errors),
+    );
+  }
+  scope.cleanup.state = "cleaned";
+}
+
+function createPrivateProductionDependencyInstallScopeV2(
+  state: SourceStageStateV2,
+  occurrence: "first" | "second",
+): PrivateProductionDependencyInstallScopeV2 {
+  const parent = ensurePrivateStageParent();
+  const environmentPrefix = occurrence === "first"
+    ? PRODUCTION_DEPENDENCY_ENVIRONMENT_FIRST_PREFIX_V2
+    : PRODUCTION_DEPENDENCY_ENVIRONMENT_SECOND_PREFIX_V2;
+  const installPrefix = occurrence === "first"
+    ? PRODUCTION_DEPENDENCY_INSTALL_FIRST_PREFIX_V2
+    : PRODUCTION_DEPENDENCY_INSTALL_SECOND_PREFIX_V2;
+  let environmentRoot: string | undefined;
+  let environmentAnchor:
+    | SourceOwnedPrivateDirectoryV2
+    | undefined;
+  let installRoot: string | undefined;
+  let installAnchor:
+    | SourceOwnedPrivateDirectoryV2
+    | undefined;
+  let projectAnchor:
+    | SourceOwnedPrivateDirectoryV2
+    | undefined;
+  try {
+    environmentRoot = mkdtempSync(path.join(
+      parent,
+      environmentPrefix,
+    ));
+    environmentAnchor =
+      anchorSourceOwnedPrivateDirectoryV2(
+        realpathSync(environmentRoot),
+        `${occurrence} dependency environment root`,
+      );
+    for (const name of [
+      "cache",
+      "config-probe",
+      "home",
+      "tmp",
+    ]) {
+      mkdirSync(path.join(environmentRoot, name), {
+        mode: 0o700,
+      });
+    }
+    for (const name of [
+      "global.npmrc",
+      "user.npmrc",
+    ]) {
+      const absolutePath = path.join(environmentRoot, name);
+      let descriptor: number | undefined;
+      try {
+        descriptor = openSync(
+          absolutePath,
+          constants.O_WRONLY
+            | constants.O_CREAT
+            | constants.O_EXCL
+            | constants.O_NOFOLLOW,
+          0o600,
+        );
+        writeAll(descriptor, Buffer.from("\n", "utf8"));
+        fsyncSync(descriptor);
+        fchmodSync(descriptor, 0o600);
+        fsyncSync(descriptor);
+      } finally {
+        closeQuietly(descriptor);
+      }
+    }
+    fsyncDirectory(environmentRoot);
+
+    installRoot = mkdtempSync(path.join(
+      parent,
+      installPrefix,
+    ));
+    installAnchor =
+      anchorSourceOwnedPrivateDirectoryV2(
+        realpathSync(installRoot),
+        `${occurrence} dependency install root`,
+      );
+    const projectRoot = path.join(installRoot, "project");
+    mkdirSync(projectRoot, { mode: 0o700 });
+    projectAnchor =
+      anchorSourceOwnedPrivateDirectoryV2(
+        realpathSync(projectRoot),
+        `${occurrence} dependency project root`,
+      );
+    try {
+      copyAdmittedBuildInputs(state, projectRoot);
+    } catch (error) {
+      return failDependencyMaterializedPair(
+        "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_SOURCE_DRIFT",
+        `${occurrence} dependency project could not copy exact admitted inputs`,
+        error,
+      );
+    }
+    let preNpmLockAuthority:
+      PlatformReleaseSourceLockAuthorityV2;
+    try {
+      preNpmLockAuthority =
+        derivePlatformReleaseSourceLockAuthorityInternalV2({
+          projectRoot,
+          source: state.core.source,
+          purpose: "production_runtime",
+        });
+    } catch (error) {
+      return failDependencyPairFromSourceLockV2(
+        error,
+        `${occurrence} dependency source lock failed pre-npm validation`,
+      );
+    }
+    if (
+      canonicalJsonStringify(
+        readdirSync(installRoot).sort(),
+      ) !== canonicalJsonStringify(["project"])
+    ) {
+      return failDependencyMaterializedPair(
+        "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_INSTALL_SCOPE_INVALID",
+        `${occurrence} dependency install root topology is not exact`,
+      );
+    }
+    fsyncDirectory(installRoot);
+    fsyncDirectory(parent);
+    return Object.freeze({
+      occurrence,
+      environmentRoot,
+      environmentAnchor,
+      installRoot,
+      installAnchor,
+      projectRoot: projectAnchor.absolutePath,
+      projectAnchor,
+      preNpmLockAuthority,
+      cleanup: {
+        state: "open" as const,
+      },
+      environment: Object.freeze({
+        CI: "true" as const,
+        HOME: path.join(environmentRoot, "home"),
+        LANG: "C.UTF-8" as const,
+        LC_ALL: "C.UTF-8" as const,
+        NODE_DISABLE_COMPILE_CACHE: "1" as const,
+        NO_COLOR: "1" as const,
+        NPM_CONFIG_CACHE:
+          path.join(environmentRoot, "cache"),
+        NPM_CONFIG_ENGINE_STRICT: "true" as const,
+        NPM_CONFIG_GLOBALCONFIG:
+          path.join(environmentRoot, "global.npmrc"),
+        NPM_CONFIG_LOGS_MAX: "0" as const,
+        NPM_CONFIG_REGISTRY:
+          "https://registry.npmjs.org" as const,
+        NPM_CONFIG_USERCONFIG:
+          path.join(environmentRoot, "user.npmrc"),
+        TEMP: path.join(environmentRoot, "tmp"),
+        TMP: path.join(environmentRoot, "tmp"),
+        TMPDIR: path.join(environmentRoot, "tmp"),
+        TZ: "UTC" as const,
+      }),
+    });
+  } catch (error) {
+    const primary = error instanceof
+        PlatformReleaseDependencyMaterializedPairErrorV2
+      ? error
+      : new PlatformReleaseDependencyMaterializedPairErrorV2(
+        "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_INSTALL_SCOPE_INVALID",
+        `${occurrence} private dependency install scope could not be created`,
+        { cause: error },
+      );
+    const cleanupErrors: unknown[] = [];
+    for (
+      const [root, anchor, label] of [
+        [
+          installRoot,
+          installAnchor,
+          `${occurrence} partial dependency install root`,
+        ],
+        [
+          environmentRoot,
+          environmentAnchor,
+          `${occurrence} partial dependency environment root`,
+        ],
+      ] as const
+    ) {
+      if (!root) continue;
+      try {
+        if (anchor) {
+          if (
+            anchor === installAnchor
+            && projectAnchor
+          ) {
+            assertSourceOwnedPrivateDirectoryCurrentV2(
+              projectAnchor,
+              `${occurrence} partial dependency project root`,
+              "PLATFORM_RELEASE_SOURCE_V2_CLEANUP_FAILED",
+            );
+          }
+          removePrivateProductionDependencyScratchRootV2(
+            anchor,
+            label,
+          );
+        } else if (!sourceOwnedPathIsAbsentV2(root)) {
+          cleanupErrors.push(
+            new PlatformReleaseDependencyMaterializedPairErrorV2(
+              "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_CLEANUP_FAILED",
+              `${label} was preserved without an authentic anchor`,
+            ),
+          );
+        }
+      } catch (cleanupError) {
+        cleanupErrors.push(cleanupError);
+      }
+    }
+    if (cleanupErrors.length > 0) {
+      return failDependencyMaterializedPair(
+        "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_CLEANUP_FAILED",
+        `${occurrence} partial dependency scope could not be removed safely`,
+        new AggregateError([
+          primary,
+          ...cleanupErrors,
+        ]),
+      );
+    }
+    throw primary;
+  }
+}
+
+function assertPrivateProductionDependencyInstallScopeCurrentV2(
+  scope: PrivateProductionDependencyInstallScopeV2,
+  phase: string,
+): void {
+  try {
+    assertSourceOwnedPrivateDirectoryCurrentV2(
+      scope.environmentAnchor,
+      `${scope.occurrence} dependency environment root`,
+    );
+    assertSourceOwnedPrivateDirectoryCurrentV2(
+      scope.installAnchor,
+      `${scope.occurrence} dependency install root`,
+    );
+    assertSourceOwnedPrivateDirectoryCurrentV2(
+      scope.projectAnchor,
+      `${scope.occurrence} dependency project root`,
+    );
+    if (
+      scope.environmentAnchor.absolutePath
+        !== scope.environmentRoot
+      || scope.installAnchor.absolutePath
+        !== scope.installRoot
+      || scope.projectAnchor.absolutePath
+        !== scope.projectRoot
+      || path.dirname(scope.projectRoot)
+        !== scope.installRoot
+      || canonicalJsonStringify(
+        readdirSync(scope.installRoot).sort(),
+      ) !== canonicalJsonStringify(["project"])
+      || canonicalJsonStringify(
+        readdirSync(scope.environmentRoot).sort(),
+      ) !== canonicalJsonStringify([
+        "cache",
+        "config-probe",
+        "global.npmrc",
+        "home",
+        "tmp",
+        "user.npmrc",
+      ])
+    ) {
+      return failDependencyMaterializedPair(
+        "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_INSTALL_SCOPE_INVALID",
+        `${scope.occurrence} dependency scratch authority is not exact during ${phase}`,
+      );
+    }
+  } catch (error) {
+    if (
+      error instanceof
+      PlatformReleaseDependencyMaterializedPairErrorV2
+    ) throw error;
+    return failDependencyMaterializedPair(
+      "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_INSTALL_SCOPE_INVALID",
+      `${scope.occurrence} dependency scratch authority changed during ${phase}`,
+      error,
+    );
   }
 }
 
@@ -5778,6 +6499,1728 @@ export async function revalidatePlatformReleaseCompiledOutputPairV2(
   } finally {
     firstBytes?.fill(0);
     secondBytes?.fill(0);
+  }
+}
+
+function authenticDependencyMaterializedPairStateV2(
+  handle: PlatformReleaseDependencyMaterializedPairV2,
+): DependencyMaterializedPairStateV2 {
+  if (
+    typeof handle !== "object"
+    || handle === null
+    || isProxy(handle)
+    || Object.getPrototypeOf(handle)
+      !== PlatformReleaseDependencyMaterializedPairV2.prototype
+  ) {
+    return failDependencyMaterializedPair(
+      "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_HANDLE_UNAUTHENTICATED",
+      "Dependency-materialized pair operation requires one authentic handle",
+    );
+  }
+  const state =
+    dependencyMaterializedPairStatesV2.get(handle);
+  if (!state) {
+    return failDependencyMaterializedPair(
+      "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_HANDLE_UNAUTHENTICATED",
+      "Dependency-materialized pair operation requires one authentic handle",
+    );
+  }
+  return state;
+}
+
+function claimCompiledPairForDependencyMaterializationV2(
+  handle: PlatformReleaseCompiledOutputPairV2,
+  expectedScope: "production_host" | "test_fixture",
+): Readonly<{
+  pair: CompiledOutputPairStateV2;
+  sourceState: SourceStageStateV2;
+  capsule: BuildToolchainCapsuleStateV2;
+}> {
+  let pair: CompiledOutputPairStateV2;
+  let sourceState: SourceStageStateV2;
+  let capsule: BuildToolchainCapsuleStateV2;
+  try {
+    pair = authenticCompiledOutputPairStateV2(handle);
+    sourceState = authenticState(pair.sourceStage);
+    capsule =
+      authenticBuildToolchainCapsuleState(
+        pair.buildToolchain,
+      );
+  } catch (error) {
+    return failDependencyMaterializedPair(
+      "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_INPUT_INVALID",
+      "Dependency materialization requires one authentic compiled-pair authority",
+      error,
+    );
+  }
+  const expectedSourceScope =
+    expectedScope === "production_host"
+      ? "production_candidate"
+      : "test_fixture";
+  if (
+    pair.admissionScope !== expectedSourceScope
+    || sourceState.admissionScope !== expectedSourceScope
+    || capsule.admissionScope !== expectedScope
+    || capsule.sourceStage !== pair.sourceStage
+    || capsule.source.bindingHash
+      !== sourceState.core.source.bindingHash
+  ) {
+    return failDependencyMaterializedPair(
+      "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_SCOPE_MISMATCH",
+      "Compiled pair, source and build toolchain do not form one dependency-materialization scope",
+    );
+  }
+  if (
+    expectedScope === "production_host"
+    && sourceOwnedProcessOwnerV2().uid !== 0
+  ) {
+    return failDependencyMaterializedPair(
+      "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_SCOPE_MISMATCH",
+      "Production dependency materialization requires the root-owned release producer",
+    );
+  }
+  if (
+    pair.ownership.lifecycle !== "ready"
+    || sourceState.lifecycle !== "double_build_complete"
+    || sourceState.ownedOutputRoots.cleanupState !== "open"
+  ) {
+    return failDependencyMaterializedPair(
+      "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_ALREADY_CLAIMED",
+      "One compiled pair can enter dependency materialization exactly once",
+    );
+  }
+  if (
+    !transitionSourceContextLifecycleV2(
+      sourceState,
+      "double_build_complete",
+      "dependency_materializing",
+    )
+  ) {
+    return failDependencyMaterializedPair(
+      "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_ALREADY_CLAIMED",
+      "Compiled pair lost its source lifecycle before synchronous claim",
+    );
+  }
+  pair.ownership.lifecycle = "consuming";
+  return Object.freeze({
+    pair,
+    sourceState,
+    capsule,
+  });
+}
+
+async function revalidateCompiledPairDuringDependencyMaterializationV2(
+  pair: CompiledOutputPairStateV2,
+  sourceState: SourceStageStateV2,
+  expectedCapsule: BuildToolchainCapsuleStateV2,
+): Promise<void> {
+  if (
+    pair.ownership.lifecycle !== "consuming"
+    || sourceState.lifecycle !== "dependency_materializing"
+  ) {
+    return failDependencyMaterializedPair(
+      "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_SOURCE_DRIFT",
+      "Dependency transaction lost its claimed pair or source lifecycle",
+    );
+  }
+  let firstBytes: Buffer | undefined;
+  let secondBytes: Buffer | undefined;
+  try {
+    const live =
+      await revalidateBuildToolchainCapsuleForLifecycleV2(
+        pair.buildToolchain,
+        ["dependency_materializing"],
+      );
+    if (
+      pair.ownership.lifecycle !== "consuming"
+      || sourceState.lifecycle !== "dependency_materializing"
+      || live.sourceState !== sourceState
+      || live.capsule !== expectedCapsule
+    ) {
+      return failDependencyMaterializedPair(
+        "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_TOOLCHAIN_DRIFT",
+        "Dependency transaction lost exact source or toolchain authority during revalidation",
+      );
+    }
+    const commandModuleHash =
+      compiledCommandModuleHashV2(sourceState);
+    const first = captureCompiledOccurrenceV2({
+      occurrence: "first",
+      sourceState,
+      capsule: live.capsule,
+      slot: pair.first.slot,
+      commandModuleHash,
+      hostEvidence: pair.first.hostEvidence,
+    });
+    firstBytes = first.packageBytes;
+    const second = captureCompiledOccurrenceV2({
+      occurrence: "second",
+      sourceState,
+      capsule: live.capsule,
+      slot: pair.second.slot,
+      commandModuleHash,
+      hostEvidence: pair.second.hostEvidence,
+    });
+    secondBytes = second.packageBytes;
+    assertCompiledOccurrenceEqualityV2(first, second);
+    if (
+      !sameCompiledOccurrenceV2(
+        first.state,
+        pair.first,
+      )
+      || !sameCompiledOccurrenceV2(
+        second.state,
+        pair.second,
+      )
+    ) {
+      return failDependencyMaterializedPair(
+        "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_OUTPUT_INVALID",
+        "Predependency outputs changed after the compiled pair was claimed",
+      );
+    }
+  } catch (error) {
+    if (
+      error instanceof
+      PlatformReleaseDependencyMaterializedPairErrorV2
+    ) throw error;
+    return failDependencyMaterializedPair(
+      "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_OUTPUT_INVALID",
+      "Claimed compiled pair failed phase-aware fresh revalidation",
+      error,
+    );
+  } finally {
+    firstBytes?.fill(0);
+    secondBytes?.fill(0);
+  }
+}
+
+function assertProductionDependencyScopesDisjointV2(
+  sourceState: SourceStageStateV2,
+  first: PrivateProductionDependencyInstallScopeV2,
+  second: PrivateProductionDependencyInstallScopeV2,
+): void {
+  const outputAnchors = [
+    requireSourceOwnedOutputRootV2(
+      sourceState,
+      "first",
+    ).privateParent,
+    requireSourceOwnedOutputRootV2(
+      sourceState,
+      "second",
+    ).privateParent,
+  ];
+  const scratchAnchors = [
+    first.environmentAnchor,
+    first.installAnchor,
+    second.environmentAnchor,
+    second.installAnchor,
+  ];
+  const everyAnchor = [
+    sourceState.contextAnchor,
+    ...outputAnchors,
+    ...scratchAnchors,
+  ];
+  if (
+    scratchAnchors.some((scratch) =>
+      everyAnchor.some((other) =>
+        other !== scratch
+        && !sourceOwnedRootsAreDisjointV2(
+          scratch,
+          other,
+        )))
+  ) {
+    return failDependencyMaterializedPair(
+      "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_INSTALL_SCOPE_INVALID",
+      "Production dependency occurrences are not physically disjoint",
+    );
+  }
+}
+
+async function executeProductionDependencyOccurrenceV2(
+  input: Readonly<{
+    occurrence: "first" | "second";
+    scope: PrivateProductionDependencyInstallScopeV2;
+    pair: CompiledOutputPairStateV2;
+    sourceState: SourceStageStateV2;
+    capsule: BuildToolchainCapsuleStateV2;
+  }>,
+): Promise<Readonly<{
+  hostEvidence:
+    PlatformReleaseHostNodeToolchainProductionNpmCiEvidenceV2;
+  materialized:
+    PlatformReleaseProductionDependencyMaterializationV2;
+}>> {
+  assertPrivateProductionDependencyInstallScopeCurrentV2(
+    input.scope,
+    "pre-occurrence authority fence",
+  );
+  await revalidateCompiledPairDuringDependencyMaterializationV2(
+    input.pair,
+    input.sourceState,
+    input.capsule,
+  );
+  assertPrivateProductionDependencyInstallScopeCurrentV2(
+    input.scope,
+    "post-predecessor authority fence",
+  );
+  let hostEvidence:
+    PlatformReleaseHostNodeToolchainProductionNpmCiEvidenceV2;
+  try {
+    hostEvidence =
+      await executePlatformReleaseHostNodeToolchainProductionNpmCiInternalV2(
+        input.capsule.hostToolchain,
+        {
+          privateRoot: input.scope.environmentRoot,
+          projectRoot: input.scope.projectRoot,
+          environment: input.scope.environment,
+        },
+      );
+  } catch (error) {
+    try {
+      assertPrivateProductionDependencyInstallScopeCurrentV2(
+        input.scope,
+        "failed authenticated npm occurrence",
+      );
+    } catch (scopeError) {
+      return failDependencyMaterializedPair(
+        "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_INSTALL_SCOPE_INVALID",
+        `${input.occurrence} dependency scratch authority changed during authenticated npm`,
+        new AggregateError([error, scopeError]),
+      );
+    }
+    return failDependencyPairFromHostToolchainV2(
+      error,
+      `${input.occurrence} authenticated production npm occurrence failed`,
+    );
+  }
+  assertPrivateProductionDependencyInstallScopeCurrentV2(
+    input.scope,
+    "post-authenticated npm occurrence",
+  );
+  await revalidateCompiledPairDuringDependencyMaterializationV2(
+    input.pair,
+    input.sourceState,
+    input.capsule,
+  );
+  assertPrivateProductionDependencyInstallScopeCurrentV2(
+    input.scope,
+    "post-npm predecessor authority fence",
+  );
+  if (
+    hostEvidence.platformHostToolchainReceiptHash
+      !== input.capsule.receipt.hostToolchain.receiptHash
+    || hostEvidence.nodeIdentityHash
+      !== input.capsule.receipt.hostToolchain.node.identityHash
+    || hostEvidence.npmClosureHash
+      !== input.capsule.receipt.hostToolchain.npm.closureHash
+  ) {
+    return failDependencyMaterializedPair(
+      "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_TOOLCHAIN_DRIFT",
+      `${input.occurrence} npm occurrence does not join the exact host Node/npm receipt`,
+    );
+  }
+  let materialized:
+    PlatformReleaseProductionDependencyMaterializationV2;
+  try {
+    materialized =
+      materializePlatformReleaseProductionDependenciesInternalV2({
+        admissionScope: input.capsule.admissionScope,
+        projectRoot: input.scope.projectRoot,
+        source: input.sourceState.core.source,
+        hostPlatform:
+          input.capsule.receipt.hostToolchain.host.platform,
+        hostArchitecture:
+          input.capsule.receipt.hostToolchain.host.architecture,
+        hostToolchain:
+          input.capsule.receipt.hostToolchain,
+      });
+    if (
+      !canonicalJsonBytes(
+        materialized.lockAuthority,
+      ).equals(canonicalJsonBytes(
+        input.scope.preNpmLockAuthority,
+      ))
+    ) {
+      return failDependencyMaterializedPair(
+        "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_AUTHORITY_MISMATCH",
+        `${input.occurrence} production lock authority changed across authenticated npm`,
+      );
+    }
+    assertPrivateProductionDependencyInstallScopeCurrentV2(
+      input.scope,
+      "post-production-tree materialization",
+    );
+  } catch (error) {
+    if (
+      error instanceof
+      PlatformReleaseDependencyMaterializedPairErrorV2
+    ) throw error;
+    return failDependencyPairFromMaterializationV2(
+      error,
+      `${input.occurrence} npm tree failed every-and-only production verification`,
+    );
+  }
+  assertPrivateProductionDependencyInstallScopeCurrentV2(
+    input.scope,
+    "pre-final predecessor authority fence",
+  );
+  await revalidateCompiledPairDuringDependencyMaterializationV2(
+    input.pair,
+    input.sourceState,
+    input.capsule,
+  );
+  assertPrivateProductionDependencyInstallScopeCurrentV2(
+    input.scope,
+    "post-final predecessor authority fence",
+  );
+  return Object.freeze({
+    hostEvidence,
+    materialized,
+  });
+}
+
+function revalidateScratchProductionDependencyOccurrenceV2(
+  scope: PrivateProductionDependencyInstallScopeV2,
+  sourceState: SourceStageStateV2,
+  capsule: BuildToolchainCapsuleStateV2,
+  materialized:
+    PlatformReleaseProductionDependencyMaterializationV2,
+): void {
+  try {
+    assertPrivateProductionDependencyInstallScopeCurrentV2(
+      scope,
+      "sealed scratch revalidation",
+    );
+    revalidatePlatformReleaseProductionDependenciesInternalV2({
+      admissionScope: capsule.admissionScope,
+      nodeModulesRoot: path.join(
+        scope.projectRoot,
+        "node_modules",
+      ),
+      source: sourceState.core.source,
+      hostToolchain: capsule.receipt.hostToolchain,
+      lockAuthority: materialized.lockAuthority,
+      productionClosure: materialized.productionClosure,
+      dependencyTree: materialized.dependencyTree,
+      dependencyTreeBinding:
+        materialized.dependencyTreeBinding,
+      productionGraph: materialized.productionGraph,
+      materializationReceipt:
+        materialized.materializationReceipt,
+    });
+  } catch (error) {
+    if (
+      error instanceof
+      PlatformReleaseDependencyMaterializedPairErrorV2
+    ) throw error;
+    return failDependencyPairFromMaterializationV2(
+      error,
+      `${scope.occurrence} sealed scratch dependency tree changed`,
+    );
+  }
+}
+
+function assertIndependentProductionDependencyEqualityV2(
+  first: Readonly<{
+    hostEvidence:
+      PlatformReleaseHostNodeToolchainProductionNpmCiEvidenceV2;
+    materialized:
+      PlatformReleaseProductionDependencyMaterializationV2;
+  }>,
+  second: Readonly<{
+    hostEvidence:
+      PlatformReleaseHostNodeToolchainProductionNpmCiEvidenceV2;
+    materialized:
+      PlatformReleaseProductionDependencyMaterializationV2;
+  }>,
+): void {
+  const stableFirst = {
+    lockAuthority: first.materialized.lockAuthority,
+    productionClosure: first.materialized.productionClosure,
+    hiddenLockRawHash:
+      first.materialized.hiddenLockRawHash,
+    rawInstallMembershipHash:
+      first.materialized.rawInstallMembershipHash,
+    installedPackageMembershipHash:
+      first.materialized.installedPackageMembershipHash,
+    dependencyTree: first.materialized.dependencyTree,
+    dependencyTreeBinding:
+      first.materialized.dependencyTreeBinding,
+    productionGraph: first.materialized.productionGraph,
+    materializationReceipt:
+      first.materialized.materializationReceipt,
+  };
+  const stableSecond = {
+    lockAuthority: second.materialized.lockAuthority,
+    productionClosure: second.materialized.productionClosure,
+    hiddenLockRawHash:
+      second.materialized.hiddenLockRawHash,
+    rawInstallMembershipHash:
+      second.materialized.rawInstallMembershipHash,
+    installedPackageMembershipHash:
+      second.materialized.installedPackageMembershipHash,
+    dependencyTree: second.materialized.dependencyTree,
+    dependencyTreeBinding:
+      second.materialized.dependencyTreeBinding,
+    productionGraph: second.materialized.productionGraph,
+    materializationReceipt:
+      second.materialized.materializationReceipt,
+  };
+  if (
+    !canonicalJsonBytes(stableFirst)
+      .equals(canonicalJsonBytes(stableSecond))
+    || first.hostEvidence.evidenceHash
+      === second.hostEvidence.evidenceHash
+    || first.hostEvidence.projectScopeHash
+      === second.hostEvidence.projectScopeHash
+    || first.hostEvidence.projectPhysicalIdentityHash
+      === second.hostEvidence.projectPhysicalIdentityHash
+    || first.hostEvidence.environmentHash
+      === second.hostEvidence.environmentHash
+    || first.hostEvidence.environmentScopeHash
+      === second.hostEvidence.environmentScopeHash
+  ) {
+    return failDependencyMaterializedPair(
+      "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_EQUALITY_FAILED",
+      "Independent npm occurrences did not produce distinct process scopes and equal canonical production authorities",
+    );
+  }
+}
+
+function dependencyTreePhysicalIdentityHashV2(
+  nodeModulesRoot: string,
+  dependencyTreeBindingHash: string,
+): string {
+  try {
+    const stat = lstatSync(nodeModulesRoot);
+    const owner = sourceOwnedProcessOwnerV2();
+    if (
+      stat.isSymbolicLink()
+      || !stat.isDirectory()
+      || realpathSync(nodeModulesRoot) !== nodeModulesRoot
+      || (stat.mode & 0o7777) !== 0o555
+      || stat.uid !== owner.uid
+      || stat.gid !== owner.gid
+    ) {
+      return failDependencyMaterializedPair(
+        "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_OUTPUT_INVALID",
+        "Adopted dependency root lost its exact sealed physical identity",
+      );
+    }
+    return hashCanonicalJson({
+      schema:
+        "setfarm.platform-release-dependency-tree-physical-identity.v2",
+      device: String(stat.dev),
+      inode: String(stat.ino),
+      ownerUid: stat.uid,
+      ownerGid: stat.gid,
+      mode: "0555",
+      dependencyTreeBindingHash,
+    });
+  } catch (error) {
+    if (
+      error instanceof
+      PlatformReleaseDependencyMaterializedPairErrorV2
+    ) throw error;
+    return failDependencyMaterializedPair(
+      "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_OUTPUT_INVALID",
+      "Adopted dependency root could not be physically authenticated",
+      error,
+    );
+  }
+}
+
+function captureDependencyMaterializedOccurrenceV2(
+  input: Readonly<{
+    occurrence: "first" | "second";
+    pair: CompiledOutputPairStateV2;
+    sourceState: SourceStageStateV2;
+    capsule: BuildToolchainCapsuleStateV2;
+    hostEvidence:
+      PlatformReleaseHostNodeToolchainProductionNpmCiEvidenceV2;
+    materialized:
+      PlatformReleaseProductionDependencyMaterializationV2;
+  }>,
+): DependencyMaterializedOccurrenceStateV2 {
+  const compiled = input.occurrence === "first"
+    ? input.pair.first
+    : input.pair.second;
+  let packageBytes: Buffer | undefined;
+  try {
+    const currentSlot =
+      requireSourceOwnedOutputRootV2(
+        input.sourceState,
+        input.occurrence,
+      );
+    if (currentSlot !== compiled.slot) {
+      return failDependencyMaterializedPair(
+        "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_OUTPUT_INVALID",
+        `${input.occurrence} dependency output no longer owns its exact compiled parent and output anchors`,
+      );
+    }
+    const outputRoot =
+      compiled.slot.outputRoot.absolutePath;
+    const payloadRoot = path.join(outputRoot, "payload");
+    const nodeModulesRoot =
+      path.join(payloadRoot, "node_modules");
+    if (
+      canonicalJsonStringify(
+        readdirSync(outputRoot).sort(),
+      ) !== canonicalJsonStringify(["payload"])
+      || canonicalJsonStringify(
+        readdirSync(payloadRoot).sort(),
+      ) !== canonicalJsonStringify([
+        "dist",
+        "node_modules",
+        "package.json",
+      ])
+    ) {
+      return failDependencyMaterializedPair(
+        "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_OUTPUT_INVALID",
+        `${input.occurrence} dependency output layout is not exact`,
+      );
+    }
+    const distTree = captureCompiledDistTreeV2(
+      path.join(payloadRoot, "dist"),
+      input.capsule.admissionScope,
+    );
+    assertCompiledOutputTreeOwnershipV2(
+      path.join(payloadRoot, "dist"),
+      distTree,
+      input.sourceState.admissionScope,
+    );
+    const packageCapture = exactCompiledPackageJsonV2(
+      path.join(payloadRoot, "package.json"),
+      input.sourceState,
+    );
+    packageBytes = packageCapture.bytes;
+    if (
+      canonicalJsonStringify(distTree)
+        !== canonicalJsonStringify(compiled.distTree)
+      || canonicalJsonStringify(packageCapture.identity)
+        !== canonicalJsonStringify(
+          compiled.packageIdentity,
+        )
+    ) {
+      return failDependencyMaterializedPair(
+        "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_OUTPUT_INVALID",
+        `${input.occurrence} dist or package bytes changed during dependency adoption`,
+      );
+    }
+    try {
+      revalidatePlatformReleaseProductionDependenciesInternalV2({
+        admissionScope: input.capsule.admissionScope,
+        nodeModulesRoot,
+        source: input.sourceState.core.source,
+        hostToolchain:
+          input.capsule.receipt.hostToolchain,
+        lockAuthority:
+          input.materialized.lockAuthority,
+        productionClosure:
+          input.materialized.productionClosure,
+        dependencyTree:
+          input.materialized.dependencyTree,
+        dependencyTreeBinding:
+          input.materialized.dependencyTreeBinding,
+        productionGraph:
+          input.materialized.productionGraph,
+        materializationReceipt:
+          input.materialized.materializationReceipt,
+      });
+    } catch (error) {
+      return failDependencyPairFromMaterializationV2(
+        error,
+        `${input.occurrence} adopted dependency tree failed fresh reproduction`,
+      );
+    }
+    const physicalIdentityHash =
+      dependencyTreePhysicalIdentityHashV2(
+        nodeModulesRoot,
+        input.materialized.dependencyTreeBinding
+          .bindingHash,
+      );
+    const binding =
+      createPlatformReleaseDependencyOutputBindingV2({
+        schema:
+          "setfarm.platform-release-dependency-output-binding.v2",
+        version: "2.0.0",
+        sourceBindingHash:
+          input.sourceState.core.source.bindingHash,
+        predependencyOutputBindingHash:
+          compiled.binding.bindingHash,
+        distTreeHash: distTree.treeHash,
+        distTreePayloadHash: distTree.payloadHash,
+        distFileCount: distTree.fileCount,
+        distDirectoryCount: distTree.directoryCount,
+        distTotalBytes: distTree.totalBytes,
+        packageSourceRefHash:
+          packageCapture.identity.sourceRefHash,
+        packageContentHash:
+          packageCapture.identity.contentHash,
+        packageByteLength:
+          packageCapture.identity.byteLength,
+        dependencyTree:
+          input.materialized.dependencyTreeBinding,
+        productionClosureHash:
+          input.materialized.productionClosure
+            .closureHash,
+        productionClosureContractHash:
+          input.materialized.productionClosure
+            .contractHash,
+        productionResolutionGraphHash:
+          input.materialized.productionGraph
+            .resolutionGraphHash,
+        npmMaterializationReceiptHash:
+          input.materialized.materializationReceipt
+            .receiptHash,
+        outputLayout:
+          "payload_dist_node_modules_and_package_json_only",
+        dependencyState:
+          "sealed_every_and_only_root_reachable_production_closure",
+        manifestState: "absent",
+      });
+    return Object.freeze({
+      occurrence: input.occurrence,
+      compiled,
+      hostEvidence: input.hostEvidence,
+      materialized: input.materialized,
+      dependencyTreePhysicalIdentityHash:
+        physicalIdentityHash,
+      binding,
+    });
+  } catch (error) {
+    if (
+      error instanceof
+      PlatformReleaseDependencyMaterializedPairErrorV2
+    ) throw error;
+    return failDependencyMaterializedPair(
+      "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_OUTPUT_INVALID",
+      `${input.occurrence} dependency-materialized output could not be captured`,
+      error,
+    );
+  } finally {
+    packageBytes?.fill(0);
+  }
+}
+
+function assertDependencyMaterializedOccurrenceEqualityV2(
+  first: DependencyMaterializedOccurrenceStateV2,
+  second: DependencyMaterializedOccurrenceStateV2,
+): void {
+  if (
+    !canonicalJsonBytes(first.binding)
+      .equals(canonicalJsonBytes(second.binding))
+    || !canonicalJsonBytes(first.materialized)
+      .equals(canonicalJsonBytes(second.materialized))
+    || first.hostEvidence.evidenceHash
+      === second.hostEvidence.evidenceHash
+    || first.dependencyTreePhysicalIdentityHash
+      === second.dependencyTreePhysicalIdentityHash
+  ) {
+    return failDependencyMaterializedPair(
+      "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_EQUALITY_FAILED",
+      "Adopted dependency occurrences lack independent physical evidence or equal stable output authority",
+    );
+  }
+}
+
+function dependencyMaterializedPairInspectionV2(
+  sourceState: SourceStageStateV2,
+  capsule: BuildToolchainCapsuleStateV2,
+  pair: CompiledOutputPairStateV2,
+  first: DependencyMaterializedOccurrenceStateV2,
+  second: DependencyMaterializedOccurrenceStateV2,
+): PlatformReleaseDependencyMaterializedPairInspectionV2 {
+  return createPlatformReleaseDependencyMaterializedPairInspectionV2({
+    schema:
+      "setfarm.platform-release-dependency-materialized-pair-inspection.v2",
+    version: "2.0.0",
+    authorityState:
+      "candidate_dependency_materialized_pair_unverified",
+    productionUse:
+      "forbidden_until_complete_release_composition_and_fresh_release_verification",
+    admissionScope: sourceState.admissionScope,
+    lifecycle: "dependency_materializing",
+    sourceBindingHash:
+      sourceState.core.source.bindingHash,
+    buildToolchainReceiptHash:
+      capsule.receipt.receiptHash,
+    compiledOutputPairInspectionHash:
+      pair.inspection.inspectionHash,
+    compiledOutputPair: pair.inspection,
+    stableOutput: first.binding,
+    occurrences: [
+      {
+        stageRef:
+          "PLATFORM_RELEASE_DEPENDENCY_STAGE_FIRST_V2",
+        hostDependencyInstallEvidenceHash:
+          first.hostEvidence.evidenceHash,
+        dependencyTreePhysicalIdentityHash:
+          first.dependencyTreePhysicalIdentityHash,
+        dependencyOutputBindingHash:
+          first.binding.bindingHash,
+        npmMaterializationReceiptHash:
+          first.materialized.materializationReceipt
+            .receiptHash,
+        productionClosureHash:
+          first.materialized.productionClosure
+            .closureHash,
+        productionClosureContractHash:
+          first.materialized.productionClosure
+            .contractHash,
+        productionResolutionGraphHash:
+          first.materialized.productionGraph
+            .resolutionGraphHash,
+        projectScopeHash:
+          first.hostEvidence.projectScopeHash,
+        projectPhysicalIdentityHash:
+          first.hostEvidence.projectPhysicalIdentityHash,
+        environmentHash:
+          first.hostEvidence.environmentHash,
+        environmentScopeHash:
+          first.hostEvidence.environmentScopeHash,
+      },
+      {
+        stageRef:
+          "PLATFORM_RELEASE_DEPENDENCY_STAGE_SECOND_V2",
+        hostDependencyInstallEvidenceHash:
+          second.hostEvidence.evidenceHash,
+        dependencyTreePhysicalIdentityHash:
+          second.dependencyTreePhysicalIdentityHash,
+        dependencyOutputBindingHash:
+          second.binding.bindingHash,
+        npmMaterializationReceiptHash:
+          second.materialized.materializationReceipt
+            .receiptHash,
+        productionClosureHash:
+          second.materialized.productionClosure
+            .closureHash,
+        productionClosureContractHash:
+          second.materialized.productionClosure
+            .contractHash,
+        productionResolutionGraphHash:
+          second.materialized.productionGraph
+            .resolutionGraphHash,
+        projectScopeHash:
+          second.hostEvidence.projectScopeHash,
+        projectPhysicalIdentityHash:
+          second.hostEvidence.projectPhysicalIdentityHash,
+        environmentHash:
+          second.hostEvidence.environmentHash,
+        environmentScopeHash:
+          second.hostEvidence.environmentScopeHash,
+      },
+    ],
+    equalityState:
+      "independent_processes_and_physical_trees_with_equal_canonical_dependency_graph_receipt_and_complete_output",
+  });
+}
+
+function runDependencyMaterializationFaultForTestV2(
+  fault:
+    PlatformReleaseDependencyMaterializationFaultForTestV2
+    | undefined,
+  checkpoint:
+    PlatformReleaseDependencyMaterializationFaultForTestV2["checkpoint"],
+  absolutePath: string,
+  throwAfterObservation = true,
+): void {
+  if (fault?.checkpoint !== checkpoint) return;
+  fault.observePath(absolutePath);
+  if (throwAfterObservation) {
+    return failDependencyMaterializedPair(
+      "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_OUTPUT_INVALID",
+      `Injected test-only dependency materialization fault at ${checkpoint}`,
+    );
+  }
+}
+
+function adoptProductionDependencyTreeV2(
+  scope: PrivateProductionDependencyInstallScopeV2,
+  compiled: CompiledOccurrenceStateV2,
+  fault?:
+    PlatformReleaseDependencyMaterializationFaultForTestV2,
+): void {
+  assertPrivateProductionDependencyInstallScopeCurrentV2(
+    scope,
+    "dependency-tree adoption",
+  );
+  const source = path.join(
+    scope.projectRoot,
+    "node_modules",
+  );
+  const destination = path.join(
+    compiled.slot.outputRoot.absolutePath,
+    "payload",
+    "node_modules",
+  );
+  const destinationParent = path.dirname(destination);
+  try {
+    lstatSync(destination);
+    return failDependencyMaterializedPair(
+      "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_OUTPUT_INVALID",
+      `${scope.occurrence} output already contains a dependency root`,
+    );
+  } catch (error) {
+    if (
+      error instanceof
+      PlatformReleaseDependencyMaterializedPairErrorV2
+    ) throw error;
+    if (!isMissingPathErrorV2(error)) {
+      return failDependencyMaterializedPair(
+        "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_OUTPUT_INVALID",
+        `${scope.occurrence} dependency destination absence could not be established`,
+        error,
+      );
+    }
+  }
+  try {
+    assertSourceOwnedPrivateDirectoryCurrentV2(
+      scope.installAnchor,
+      `${scope.occurrence} dependency install root`,
+      "PLATFORM_RELEASE_SOURCE_V2_CLEANUP_FAILED",
+    );
+    assertSourceOwnedPrivateDirectoryCurrentV2(
+      compiled.slot.privateParent,
+      `${scope.occurrence} compiled-output private parent`,
+      "PLATFORM_RELEASE_SOURCE_V2_CLEANUP_FAILED",
+    );
+    assertSourceOwnedPrivateDirectoryCurrentV2(
+      compiled.slot.outputRoot,
+      `${scope.occurrence} compiled-output root`,
+      "PLATFORM_RELEASE_SOURCE_V2_CLEANUP_FAILED",
+    );
+    const owner = sourceOwnedProcessOwnerV2();
+    const sourceBefore = lstatSync(source);
+    const project = lstatSync(scope.projectRoot);
+    const destinationParentBefore =
+      lstatSync(destinationParent);
+    if (
+      sourceBefore.isSymbolicLink()
+      || !sourceBefore.isDirectory()
+      || realpathSync(source) !== source
+      || (sourceBefore.mode & 0o7777) !== 0o555
+      || sourceBefore.uid !== owner.uid
+      || sourceBefore.gid !== owner.gid
+      || project.isSymbolicLink()
+      || !project.isDirectory()
+      || realpathSync(scope.projectRoot)
+        !== scope.projectRoot
+      || (project.mode & 0o7777) !== 0o700
+      || project.uid !== owner.uid
+      || project.gid !== owner.gid
+      || destinationParentBefore.isSymbolicLink()
+      || !destinationParentBefore.isDirectory()
+      || realpathSync(destinationParent)
+        !== destinationParent
+      || (destinationParentBefore.mode & 0o7777) !== 0o700
+      || destinationParentBefore.uid !== owner.uid
+      || destinationParentBefore.gid !== owner.gid
+    ) {
+      return failDependencyMaterializedPair(
+        "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_OUTPUT_INVALID",
+        `${scope.occurrence} dependency adoption roots lost exact ownership, identity or mode`,
+      );
+    }
+    // Darwin rename(2) refuses a read-only directory even when both parents
+    // are writable. Open only the already-verified root for this synchronous
+    // rename window, then reseal the same inode at its destination.
+    chmodSync(source, 0o700);
+    runDependencyMaterializationFaultForTestV2(
+      fault,
+      scope.occurrence === "first"
+        ? "after_first_dependency_root_opened"
+        : "after_second_dependency_root_opened",
+      source,
+    );
+    const sourceOpened = lstatSync(source);
+    if (
+      sourceOpened.dev !== sourceBefore.dev
+      || sourceOpened.ino !== sourceBefore.ino
+      || (sourceOpened.mode & 0o7777) !== 0o700
+      || sourceOpened.uid !== sourceBefore.uid
+      || sourceOpened.gid !== sourceBefore.gid
+    ) {
+      return failDependencyMaterializedPair(
+        "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_OUTPUT_INVALID",
+        `${scope.occurrence} verified dependency root changed while opening its atomic adoption window`,
+      );
+    }
+    renameSync(source, destination);
+    runDependencyMaterializationFaultForTestV2(
+      fault,
+      scope.occurrence === "first"
+        ? "after_first_dependency_root_adopted"
+        : "after_second_dependency_root_adopted",
+      destination,
+    );
+    const adopted = lstatSync(destination);
+    if (
+      adopted.isSymbolicLink()
+      || !adopted.isDirectory()
+      || realpathSync(destination) !== destination
+      || adopted.dev !== sourceBefore.dev
+      || adopted.ino !== sourceBefore.ino
+      || (adopted.mode & 0o7777) !== 0o700
+      || adopted.uid !== sourceBefore.uid
+      || adopted.gid !== sourceBefore.gid
+    ) {
+      return failDependencyMaterializedPair(
+        "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_OUTPUT_INVALID",
+        `${scope.occurrence} adopted dependency root is not the verified source inode`,
+      );
+    }
+    chmodSync(destination, 0o555);
+    runDependencyMaterializationFaultForTestV2(
+      fault,
+      scope.occurrence === "first"
+        ? "after_first_dependency_root_resealed"
+        : "after_second_dependency_root_resealed",
+      destination,
+    );
+    const resealed = lstatSync(destination);
+    if (
+      resealed.dev !== sourceBefore.dev
+      || resealed.ino !== sourceBefore.ino
+      || (resealed.mode & 0o7777) !== 0o555
+      || resealed.uid !== sourceBefore.uid
+      || resealed.gid !== sourceBefore.gid
+    ) {
+      return failDependencyMaterializedPair(
+        "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_OUTPUT_INVALID",
+        `${scope.occurrence} adopted dependency root could not restore its exact seal`,
+      );
+    }
+    fsyncDirectory(destination);
+    fsyncDirectory(path.dirname(destination));
+    fsyncDirectory(scope.projectRoot);
+  } catch (error) {
+    return failDependencyMaterializedPair(
+      "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_OUTPUT_INVALID",
+      `${scope.occurrence} verified dependency tree could not be atomically adopted`,
+      error,
+    );
+  }
+}
+
+function cleanupProductionDependencyScopesV2(
+  scopes:
+    readonly PrivateProductionDependencyInstallScopeV2[],
+): readonly unknown[] {
+  const errors: unknown[] = [];
+  for (const scope of [...scopes].reverse()) {
+    if (
+      scope.cleanup.state === "cleaned"
+      || scope.cleanup.state === "cleanup_failed"
+    ) {
+      continue;
+    }
+    if (scope.cleanup.state === "cleaning") {
+      errors.push(
+        new PlatformReleaseDependencyMaterializedPairErrorV2(
+          "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_CLEANUP_FAILED",
+          `${scope.occurrence} dependency scratch cleanup was re-entered`,
+        ),
+      );
+      continue;
+    }
+    try {
+      cleanupPrivateProductionDependencyInstallScopeV2(
+        scope,
+      );
+    } catch (error) {
+      errors.push(error);
+    }
+  }
+  return Object.freeze(errors);
+}
+
+function destroyDependencyPairAfterFailureV2(
+  pair: CompiledOutputPairStateV2,
+  sourceState: SourceStageStateV2,
+  scopes:
+    readonly PrivateProductionDependencyInstallScopeV2[],
+  primaryFailure: unknown,
+): never {
+  pair.ownership.lifecycle = "invalidated";
+  const cleanupErrors = [
+    ...cleanupProductionDependencyScopesV2(scopes),
+  ];
+  try {
+    disposeSourceOwnedPhysicalContextV2(sourceState);
+  } catch (error) {
+    cleanupErrors.push(error);
+  }
+  if (cleanupErrors.length > 0) {
+    return failDependencyMaterializedPair(
+      "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_CLEANUP_FAILED",
+      "Failed dependency transaction could not destroy every scratch, output and source root",
+      new AggregateError([
+        primaryFailure,
+        ...cleanupErrors,
+      ]),
+    );
+  }
+  throw primaryFailure;
+}
+
+async function materializeDependencyMaterializedPairV2(
+  handle: PlatformReleaseCompiledOutputPairV2,
+  expectedScope: "production_host" | "test_fixture",
+  fault?:
+    PlatformReleaseDependencyMaterializationFaultForTestV2,
+): Promise<PlatformReleaseDependencyMaterializedPairV2> {
+  const claimed =
+    claimCompiledPairForDependencyMaterializationV2(
+      handle,
+      expectedScope,
+    );
+  const scopes:
+    PrivateProductionDependencyInstallScopeV2[] = [];
+  try {
+    await revalidateCompiledPairDuringDependencyMaterializationV2(
+      claimed.pair,
+      claimed.sourceState,
+      claimed.capsule,
+    );
+    const firstScope =
+      createPrivateProductionDependencyInstallScopeV2(
+        claimed.sourceState,
+        "first",
+      );
+    scopes.push(firstScope);
+    const secondScope =
+      createPrivateProductionDependencyInstallScopeV2(
+        claimed.sourceState,
+        "second",
+      );
+    scopes.push(secondScope);
+    assertProductionDependencyScopesDisjointV2(
+      claimed.sourceState,
+      firstScope,
+      secondScope,
+    );
+    const first =
+      await executeProductionDependencyOccurrenceV2({
+        occurrence: "first",
+        scope: firstScope,
+        pair: claimed.pair,
+        sourceState: claimed.sourceState,
+        capsule: claimed.capsule,
+      });
+    const second =
+      await executeProductionDependencyOccurrenceV2({
+        occurrence: "second",
+        scope: secondScope,
+        pair: claimed.pair,
+        sourceState: claimed.sourceState,
+        capsule: claimed.capsule,
+      });
+    revalidateScratchProductionDependencyOccurrenceV2(
+      firstScope,
+      claimed.sourceState,
+      claimed.capsule,
+      first.materialized,
+    );
+    revalidateScratchProductionDependencyOccurrenceV2(
+      secondScope,
+      claimed.sourceState,
+      claimed.capsule,
+      second.materialized,
+    );
+    assertIndependentProductionDependencyEqualityV2(
+      first,
+      second,
+    );
+    await revalidateCompiledPairDuringDependencyMaterializationV2(
+      claimed.pair,
+      claimed.sourceState,
+      claimed.capsule,
+    );
+    runDependencyMaterializationFaultForTestV2(
+      fault,
+      "after_final_async_fence",
+      firstScope.projectRoot,
+      false,
+    );
+    if (
+      claimed.pair.ownership.lifecycle !== "consuming"
+      || claimed.sourceState.lifecycle
+        !== "dependency_materializing"
+    ) {
+      return failDependencyMaterializedPair(
+        "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_SOURCE_DRIFT",
+        "Dependency transaction lost ownership before atomic adoption",
+      );
+    }
+    revalidateScratchProductionDependencyOccurrenceV2(
+      firstScope,
+      claimed.sourceState,
+      claimed.capsule,
+      first.materialized,
+    );
+    revalidateScratchProductionDependencyOccurrenceV2(
+      secondScope,
+      claimed.sourceState,
+      claimed.capsule,
+      second.materialized,
+    );
+
+    adoptProductionDependencyTreeV2(
+      firstScope,
+      claimed.pair.first,
+      fault,
+    );
+    adoptProductionDependencyTreeV2(
+      secondScope,
+      claimed.pair.second,
+      fault,
+    );
+    const capturedFirst =
+      captureDependencyMaterializedOccurrenceV2({
+        occurrence: "first",
+        pair: claimed.pair,
+        sourceState: claimed.sourceState,
+        capsule: claimed.capsule,
+        hostEvidence: first.hostEvidence,
+        materialized: first.materialized,
+      });
+    const capturedSecond =
+      captureDependencyMaterializedOccurrenceV2({
+        occurrence: "second",
+        pair: claimed.pair,
+        sourceState: claimed.sourceState,
+        capsule: claimed.capsule,
+        hostEvidence: second.hostEvidence,
+        materialized: second.materialized,
+      });
+    assertDependencyMaterializedOccurrenceEqualityV2(
+      capturedFirst,
+      capturedSecond,
+    );
+    const inspection =
+      dependencyMaterializedPairInspectionV2(
+        claimed.sourceState,
+        claimed.capsule,
+        claimed.pair,
+        capturedFirst,
+        capturedSecond,
+      );
+    runDependencyMaterializationFaultForTestV2(
+      fault,
+      "before_scratch_cleanup",
+      firstScope.environmentRoot,
+      false,
+    );
+    const cleanupErrors =
+      cleanupProductionDependencyScopesV2(scopes);
+    if (cleanupErrors.length > 0) {
+      return failDependencyMaterializedPair(
+        "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_CLEANUP_FAILED",
+        "Successful dependency outputs could not release their private scratch roots",
+        new AggregateError(cleanupErrors),
+      );
+    }
+    runDependencyMaterializationFaultForTestV2(
+      fault,
+      "after_scratch_cleanup_before_registration",
+      claimed.pair.first.slot.outputRoot.absolutePath,
+    );
+    const next =
+      new PlatformReleaseDependencyMaterializedPairV2(
+        dependencyMaterializedPairConstructorCapabilityV2,
+        Object.freeze({
+          admissionScope:
+            claimed.sourceState.admissionScope,
+          sourceStage: claimed.pair.sourceStage,
+          buildToolchain:
+            claimed.pair.buildToolchain,
+          compiledOutputPair: handle,
+          first: capturedFirst,
+          second: capturedSecond,
+          inspection,
+          ownership: {
+            lifecycle: "ready" as const,
+          },
+        }),
+      );
+    claimed.pair.ownership.lifecycle = "consumed";
+    runDependencyMaterializationFaultForTestV2(
+      fault,
+      "after_registration_and_predecessor_consumption_before_return",
+      claimed.pair.first.slot.outputRoot.absolutePath,
+    );
+    return next;
+  } catch (error) {
+    const primary = error instanceof
+        PlatformReleaseDependencyMaterializedPairErrorV2
+      ? error
+      : new PlatformReleaseDependencyMaterializedPairErrorV2(
+        "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_OUTPUT_INVALID",
+        "Dependency-materialized pair transaction failed at an internal boundary",
+        { cause: error },
+      );
+    if (
+      claimed.pair.ownership.lifecycle === "consuming"
+      || claimed.pair.ownership.lifecycle === "consumed"
+      || claimed.sourceState.lifecycle
+        === "dependency_materializing"
+    ) {
+      return destroyDependencyPairAfterFailureV2(
+        claimed.pair,
+        claimed.sourceState,
+        scopes,
+        primary,
+      );
+    }
+    throw primary;
+  }
+}
+
+export async function materializePlatformReleaseDependencyMaterializedPairV2(
+  handle: PlatformReleaseCompiledOutputPairV2,
+): Promise<PlatformReleaseDependencyMaterializedPairV2> {
+  return materializeDependencyMaterializedPairV2(
+    handle,
+    "production_host",
+  );
+}
+
+export async function materializePlatformReleaseDependencyMaterializedPairForTestV2(
+  handle: PlatformReleaseCompiledOutputPairV2,
+): Promise<PlatformReleaseDependencyMaterializedPairV2> {
+  return materializeDependencyMaterializedPairV2(
+    handle,
+    "test_fixture",
+  );
+}
+
+export async function materializePlatformReleaseDependencyMaterializedPairWithFaultForTestV2(
+  handle: PlatformReleaseCompiledOutputPairV2,
+  fault:
+    PlatformReleaseDependencyMaterializationFaultForTestV2,
+): Promise<PlatformReleaseDependencyMaterializedPairV2> {
+  if (
+    typeof fault !== "object"
+    || fault === null
+    || Array.isArray(fault)
+    || isProxy(fault)
+    || Object.getPrototypeOf(fault) !== Object.prototype
+  ) {
+    return failDependencyMaterializedPair(
+      "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_TEST_ONLY",
+      "Dependency materialization fault requires one exact test-only descriptor",
+    );
+  }
+  const keys = Reflect.ownKeys(fault);
+  const descriptors =
+    Object.getOwnPropertyDescriptors(fault);
+  const checkpoint = descriptors.checkpoint;
+  const observePath = descriptors.observePath;
+  const allowedCheckpoints:
+    readonly PlatformReleaseDependencyMaterializationFaultForTestV2["checkpoint"][] =
+      [
+        "after_first_dependency_root_opened",
+        "after_first_dependency_root_adopted",
+        "after_first_dependency_root_resealed",
+        "after_second_dependency_root_opened",
+        "after_second_dependency_root_adopted",
+        "after_second_dependency_root_resealed",
+        "after_final_async_fence",
+        "before_scratch_cleanup",
+        "after_scratch_cleanup_before_registration",
+        "after_registration_and_predecessor_consumption_before_return",
+      ];
+  if (
+    keys.some((key) => typeof key !== "string")
+    || canonicalJsonStringify([...keys].sort())
+      !== canonicalJsonStringify([
+        "checkpoint",
+        "observePath",
+      ])
+    || !checkpoint
+    || !("value" in checkpoint)
+    || !allowedCheckpoints.includes(
+      checkpoint.value as
+        PlatformReleaseDependencyMaterializationFaultForTestV2["checkpoint"],
+    )
+    || !observePath
+    || !("value" in observePath)
+    || typeof observePath.value !== "function"
+    || isProxy(observePath.value)
+  ) {
+    return failDependencyMaterializedPair(
+      "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_TEST_ONLY",
+      "Dependency materialization fault contains an invalid checkpoint or observer",
+    );
+  }
+  return materializeDependencyMaterializedPairV2(
+    handle,
+    "test_fixture",
+    Object.freeze({
+      checkpoint:
+        checkpoint.value as
+          PlatformReleaseDependencyMaterializationFaultForTestV2["checkpoint"],
+      observePath:
+        observePath.value as
+          PlatformReleaseDependencyMaterializationFaultForTestV2["observePath"],
+    }),
+  );
+}
+
+export function inspectPlatformReleaseDependencyMaterializedPairV2(
+  handle: PlatformReleaseDependencyMaterializedPairV2,
+): PlatformReleaseDependencyMaterializedPairInspectionV2 {
+  const state =
+    authenticDependencyMaterializedPairStateV2(handle);
+  const sourceState =
+    sourceStageStatesV2.get(state.sourceStage);
+  if (
+    state.ownership.lifecycle !== "ready"
+    || !sourceState
+    || sourceState.lifecycle !== "dependency_materializing"
+  ) {
+    return failDependencyMaterializedPair(
+      "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_SOURCE_DRIFT",
+      "Dependency-materialized pair no longer owns its exact ready lifecycle",
+    );
+  }
+  return deepFreezePlatformReleaseJsonV2(
+    structuredClone(state.inspection),
+  );
+}
+
+function sameDependencyMaterializedOccurrenceV2(
+  left: DependencyMaterializedOccurrenceStateV2,
+  right: DependencyMaterializedOccurrenceStateV2,
+): boolean {
+  return canonicalJsonBytes(left)
+    .equals(canonicalJsonBytes(right));
+}
+
+function assertDependencyMaterializedParentAuthorityV2(
+  state: DependencyMaterializedPairStateV2,
+  sourceState: SourceStageStateV2,
+): CompiledOutputPairStateV2 {
+  let pair: CompiledOutputPairStateV2;
+  try {
+    pair = authenticCompiledOutputPairStateV2(
+      state.compiledOutputPair,
+    );
+  } catch (error) {
+    return failDependencyMaterializedPair(
+      "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_SOURCE_DRIFT",
+      "Dependency pair lost its authentic predecessor authority",
+      error,
+    );
+  }
+  const firstSlot =
+    requireSourceOwnedOutputRootV2(
+      sourceState,
+      "first",
+    );
+  const secondSlot =
+    requireSourceOwnedOutputRootV2(
+      sourceState,
+      "second",
+    );
+  if (
+    pair.ownership.lifecycle !== "consumed"
+    || pair.sourceStage !== state.sourceStage
+    || pair.buildToolchain !== state.buildToolchain
+    || pair.first !== state.first.compiled
+    || pair.second !== state.second.compiled
+    || firstSlot !== pair.first.slot
+    || secondSlot !== pair.second.slot
+  ) {
+    return failDependencyMaterializedPair(
+      "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_SOURCE_DRIFT",
+      "Dependency pair predecessor, source, toolchain or output-anchor ownership changed",
+    );
+  }
+  return pair;
+}
+
+function captureIssuedDependencyMaterializedPairV2(
+  state: DependencyMaterializedPairStateV2,
+  sourceState: SourceStageStateV2,
+  capsule: BuildToolchainCapsuleStateV2,
+): Readonly<{
+  first: DependencyMaterializedOccurrenceStateV2;
+  second: DependencyMaterializedOccurrenceStateV2;
+  inspection:
+    PlatformReleaseDependencyMaterializedPairInspectionV2;
+}> {
+  const pair =
+    assertDependencyMaterializedParentAuthorityV2(
+      state,
+      sourceState,
+    );
+  const first =
+    captureDependencyMaterializedOccurrenceV2({
+      occurrence: "first",
+      pair,
+      sourceState,
+      capsule,
+      hostEvidence: state.first.hostEvidence,
+      materialized: state.first.materialized,
+    });
+  const second =
+    captureDependencyMaterializedOccurrenceV2({
+      occurrence: "second",
+      pair,
+      sourceState,
+      capsule,
+      hostEvidence: state.second.hostEvidence,
+      materialized: state.second.materialized,
+    });
+  assertDependencyMaterializedOccurrenceEqualityV2(
+    first,
+    second,
+  );
+  const inspection =
+    dependencyMaterializedPairInspectionV2(
+      sourceState,
+      capsule,
+      pair,
+      first,
+      second,
+    );
+  return Object.freeze({
+    first,
+    second,
+    inspection,
+  });
+}
+
+function destroyReadyDependencyPairAfterFailureV2(
+  state: DependencyMaterializedPairStateV2,
+  sourceState: SourceStageStateV2,
+  primaryFailure: unknown,
+): never {
+  if (
+    state.ownership.lifecycle !== "ready"
+    || sourceState.lifecycle !== "dependency_materializing"
+  ) {
+    throw primaryFailure;
+  }
+  state.ownership.lifecycle = "invalidated";
+  try {
+    disposeSourceOwnedPhysicalContextV2(sourceState);
+  } catch (cleanupError) {
+    return failDependencyMaterializedPair(
+      "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_CLEANUP_FAILED",
+      "Invalid dependency pair could not destroy its source-owned outputs",
+      new AggregateError([
+        primaryFailure,
+        cleanupError,
+      ]),
+    );
+  }
+  throw primaryFailure;
+}
+
+export async function revalidatePlatformReleaseDependencyMaterializedPairV2(
+  handle: PlatformReleaseDependencyMaterializedPairV2,
+): Promise<PlatformReleaseDependencyMaterializedPairInspectionV2> {
+  const state =
+    authenticDependencyMaterializedPairStateV2(handle);
+  const sourceState =
+    sourceStageStatesV2.get(state.sourceStage);
+  if (
+    !sourceState
+    || sourceState.lifecycle === "disposed"
+    || state.ownership.lifecycle !== "ready"
+  ) {
+    return failDependencyMaterializedPair(
+      "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_SOURCE_DRIFT",
+      "Dependency-materialized pair source authority is no longer live",
+    );
+  }
+  if (sourceState.lifecycle !== "dependency_materializing") {
+    return failDependencyMaterializedPair(
+      "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_SOURCE_DRIFT",
+      "Dependency-materialized pair no longer owns its exact lifecycle",
+    );
+  }
+  let expectedCapsule: BuildToolchainCapsuleStateV2;
+  try {
+    expectedCapsule =
+      authenticBuildToolchainCapsuleState(
+        state.buildToolchain,
+      );
+  } catch (error) {
+    return failDependencyMaterializedPair(
+      "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_TOOLCHAIN_DRIFT",
+      "Dependency pair build-toolchain authority is no longer authentic",
+      error,
+    );
+  }
+  try {
+    const expectedPair =
+      assertDependencyMaterializedParentAuthorityV2(
+        state,
+        sourceState,
+      );
+    const live =
+      await revalidateBuildToolchainCapsuleForLifecycleV2(
+        state.buildToolchain,
+        ["dependency_materializing"],
+      );
+    if (
+      state.ownership.lifecycle !== "ready"
+      || sourceState.lifecycle !== "dependency_materializing"
+      || live.sourceState !== sourceState
+      || live.capsule !== expectedCapsule
+      || assertDependencyMaterializedParentAuthorityV2(
+        state,
+        sourceState,
+      ) !== expectedPair
+    ) {
+      return failDependencyMaterializedPair(
+        "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_SOURCE_DRIFT",
+        "Dependency pair lost exact ownership while fresh revalidation was in flight",
+      );
+    }
+    const captured =
+      captureIssuedDependencyMaterializedPairV2(
+        state,
+        sourceState,
+        live.capsule,
+      );
+    if (
+      !sameDependencyMaterializedOccurrenceV2(
+        captured.first,
+        state.first,
+      )
+      || !sameDependencyMaterializedOccurrenceV2(
+        captured.second,
+        state.second,
+      )
+      || canonicalJsonStringify(captured.inspection)
+        !== canonicalJsonStringify(state.inspection)
+    ) {
+      return failDependencyMaterializedPair(
+        "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_OUTPUT_INVALID",
+        "Fresh dependency outputs differ from issued pair authority",
+      );
+    }
+    return captured.inspection;
+  } catch (error) {
+    const primary = error instanceof
+        PlatformReleaseDependencyMaterializedPairErrorV2
+      ? error
+      : new PlatformReleaseDependencyMaterializedPairErrorV2(
+        "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_OUTPUT_INVALID",
+        "Dependency pair failed fresh operational revalidation",
+        { cause: error },
+      );
+    if (
+      state.ownership.lifecycle === "ready"
+      && sourceState.lifecycle
+        === "dependency_materializing"
+    ) {
+      return destroyReadyDependencyPairAfterFailureV2(
+        state,
+        sourceState,
+        primary,
+      );
+    }
+    if (
+      (
+        state.ownership.lifecycle !== "ready"
+        || sourceState.lifecycle
+          !== "dependency_materializing"
+      )
+      && primary.code
+        !== "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_SOURCE_DRIFT"
+    ) {
+      return failDependencyMaterializedPair(
+        "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_SOURCE_DRIFT",
+        "Dependency pair lost ownership while fresh revalidation was in flight",
+        primary,
+      );
+    }
+    throw primary;
+  }
+}
+
+export async function withPlatformReleaseDependencyMaterializedPairForTestV2<T>(
+  handle: PlatformReleaseDependencyMaterializedPairV2,
+  callback: (roots: Readonly<{
+    firstOutputRoot: string;
+    secondOutputRoot: string;
+  }>) => T | Promise<T>,
+): Promise<T> {
+  const state =
+    authenticDependencyMaterializedPairStateV2(handle);
+  if (
+    state.admissionScope !== "test_fixture"
+    || typeof callback !== "function"
+  ) {
+    return failDependencyMaterializedPair(
+      "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_TEST_ONLY",
+      "Dependency output roots are available only to an explicit test callback",
+    );
+  }
+  await revalidatePlatformReleaseDependencyMaterializedPairV2(
+    handle,
+  );
+  let result: T;
+  let callbackFailure: unknown;
+  try {
+    result = await callback(Object.freeze({
+      firstOutputRoot:
+        state.first.compiled.slot.outputRoot.absolutePath,
+      secondOutputRoot:
+        state.second.compiled.slot.outputRoot.absolutePath,
+    }));
+  } catch (error) {
+    callbackFailure = error;
+  }
+  try {
+    await revalidatePlatformReleaseDependencyMaterializedPairV2(
+      handle,
+    );
+  } catch (validationFailure) {
+    if (callbackFailure !== undefined) {
+      throw new AggregateError([
+        callbackFailure,
+        validationFailure,
+      ]);
+    }
+    throw validationFailure;
+  }
+  if (callbackFailure !== undefined) throw callbackFailure;
+  return result!;
+}
+
+export function disposePlatformReleaseDependencyMaterializedPairV2(
+  handle: PlatformReleaseDependencyMaterializedPairV2,
+): void {
+  const state =
+    authenticDependencyMaterializedPairStateV2(handle);
+  const sourceState =
+    sourceStageStatesV2.get(state.sourceStage);
+  if (
+    !sourceState
+    || state.ownership.lifecycle !== "ready"
+    || sourceState.lifecycle !== "dependency_materializing"
+  ) {
+    return failDependencyMaterializedPair(
+      "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_SOURCE_DRIFT",
+      "Only one ready dependency pair can terminally release its source-owned context",
+    );
+  }
+  state.ownership.lifecycle = "invalidated";
+  try {
+    disposeSourceOwnedPhysicalContextV2(sourceState);
+  } catch (error) {
+    return failDependencyMaterializedPair(
+      "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_CLEANUP_FAILED",
+      "Dependency pair could not destroy every source-owned output and source root",
+      error,
+    );
   }
 }
 
