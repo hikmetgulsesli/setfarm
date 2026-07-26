@@ -84,7 +84,7 @@ zero-input lower host projection N
   + installed verifier package V
   + installed release-composition package R (verified by V)
   + fixed Darwin system anchors S (verified by V)
-  + durable runtime-account authority A
+  + durable runtime-account authority A (observed by V)
   -> production composition authority C
 ```
 
@@ -94,6 +94,35 @@ and contains an exact root-owned manifest plus a native verifier executable.
 The executable must not acquire ambient Node, shell, or `PATH`; otherwise its
 interpreter and non-system dynamic-library closure become additional admitted
 members.
+
+The verifier executable is not compiled on the production host. One
+code-owned per-architecture distribution catalog binds exact artifact hash and
+length, source-tree hash, build-recipe hash, ABI hash, and authenticated
+build-attestation policy. The external root of trust is the notarized
+Developer-ID-signed Setfarm installer distribution and macOS AMFI enforcement
+of V's exact designated requirement, Team ID, hardened-runtime policy, and
+library-validation policy. The signed installer carries an offline-release-key
+attestation over the source tree, build recipe, ABI, per-architecture bytes,
+minimum distribution epoch, and package manifest. The corresponding public key
+and designated requirement are code-owned policy inputs and are also embedded
+in V.
+
+The installed-package builder accepts only an opaque distribution handle
+recovered from that signed installer payload and its authenticated installer
+receipt. It accepts no raw bytes, compiler locator, command, environment,
+current-source module, or callback from a caller. V's complete V2 ABI is frozen
+before distribution authentication and includes `SELF_ATTEST_V2`,
+`VERIFY_PACKAGE_V2`, `VERIFY_SYSTEM_ANCHORS_V2`, and
+`LOOKUP_LOCAL_ACCOUNT_V2`. Its first execution is `SELF_ATTEST_V2`; AMFI admits
+the process, and the native result binds the running executable identity,
+embedded release key, complete ABI hash, build attestation, and the parent's
+descriptor capture. A distribution epoch below either the code-owned minimum
+or registry-owned durable installed floor fails closed. Package removal does
+not lower that floor; reinstalling an older epoch requires a distinct
+offline-signed rollback authorization bound to the current floor, exact target
+artifact, host policy, and expiry. If any signature, installer receipt, catalog
+entry, self attestation, or build evidence is absent, production composition
+remains typed unavailable.
 
 `R` is rooted at
 `/Library/Application Support/Setfarm/bootstrap/platform-release-composition-v2`
@@ -112,9 +141,37 @@ same physical xattr receipt; ACL observe and clear bind the distinct `ls` and
 
 `A` resolves only the durable
 `SETFARM_PLATFORM_RELEASE_RUNTIME_V2` account and binds its provisioning
-receipt, host identity, UID, and GID. It accepts no caller UID/GID and requires
-both values to be nonzero and distinct from every root-owned composition file
-owner.
+receipt, host identity, UID, GID, record identity, primary-group identity,
+provisioner-package identity, and V observation. V exposes a read-only,
+versioned `LOOKUP_LOCAL_ACCOUNT_V2` ABI using native account lookup. Account
+mutation belongs to a separate fixed-root, root-only native package at
+`/Library/Application Support/Setfarm/bootstrap/runtime-account-provisioner-v2`;
+V cannot create, update, repair, or delete an account. The provisioner package
+has an exact root-owned canonical manifest, every-and-only `.`/`bin` layout,
+one signed native executable, distribution/build attestation, installation
+receipt, physical root identity, and fixed
+`PLAN_LOCAL_ACCOUNT_V2`/`APPLY_LOCAL_ACCOUNT_V2`/`ROLLBACK_LOCAL_ACCOUNT_V2`
+ABI hashes. It uses direct native directory-service APIs, never shell,
+`PATH`, `dscl`, `id`, or caller command text. It is authenticated by the same
+external signed-installer policy as V and then independently admitted and
+physically verified by V before any mutation. A accepts no caller UID/GID,
+never adopts an existing record without its exact durable provisioning receipt
+or matching active preclaim, and requires both values to be nonzero and
+distinct from every root-owned composition file owner. Issuance requires two
+equal V observations around the durable receipt and host fences.
+
+Account provisioning is receipt-last and crash recoverable. Before mutation the
+root-only provisioner obtains two equal V absence observations, chooses the
+identity from the fixed record policy, and durably publishes a
+generation-specific preclaim containing the exact account name, group name,
+UID, GID, record UUIDs, host identity, provisioner-package identity, V identity,
+and intent hash. It then performs direct native directory-service mutation,
+observes the exact result twice through V, and publishes the durable receipt
+last. Recovery may finalize an exact record only when it matches the active
+preclaim byte-for-byte. Cleanup may delete only identities proven to belong to
+that same generation, records a tombstone, and otherwise fails terminally
+without touching the record. An unreceipted record with no authentic matching
+preclaim is foreign state, not an adoption candidate.
 
 Package member receipts bind their leaf package ref, manifest hash, manifest
 entry hash, root identity, directory membership, content hash, physical
@@ -122,12 +179,118 @@ identity, and verifier identity. They do not bind the leaf or aggregate receipt
 hash back into the member identity. Thus the aggregate identity is acyclic:
 
 ```text
-V = H(host, verifier manifest, verifier physical closure, verifier ABI)
+V = H(host, authenticated native distribution, verifier manifest,
+      verifier physical closure, verifier ABI)
 R = H(host, V, release manifest and physical closure)
 S = H(host, V, fixed system anchors and logical bindings)
-A = H(host, durable account provisioning)
+A = H(host, V, account provisioner package, durable account provisioning,
+      two equal native account observations)
 C = H(N, V, R, S, A, operation ABIs)
 ```
+
+### Shared bootstrap namespace and transaction authority
+
+The Node provisioner, V, R, and the account provisioner share
+`/Library/Application Support/Setfarm/bootstrap` as their physical parent.
+The existing Node installer owns a package-specific census: it rejects every
+sibling that is not one of its root, receipt, claim, lock, staging, or rollback
+receipt names. Therefore installing V or R before changing that contract would
+make the next Node inspect/install/rollback classify valid platform state as
+foreign corruption.
+
+B5D-0b first adds one code-owned bootstrap-package registry and shared parent
+serialization authority. The registry contains the exact package refs, fixed
+roots, active receipt/claim/staging basenames, rollback-receipt namespace, and
+shared lock identity. It is not caller configuration. A package operation:
+
+1. acquires the shared parent descriptor lease;
+2. reproduces the exact registry and parent identity;
+3. classifies every parent entry to exactly one registered package lifecycle
+   or the shared lock;
+4. rejects unknown, ambiguous, malformed, or transplanted state;
+5. mutates only its own registered lifecycle generation;
+6. re-captures the full parent namespace before releasing the lease.
+
+Node migration preserves its existing package and receipt identities, including
+the package-specific legacy lock that those receipts already bind. Cutover uses
+a registry activation receipt and a new shared parent lock:
+
+1. while no registered sibling exists, the migrator acquires the legacy Node
+   lock, reproduces the complete Node lifecycle and parent census, and creates
+   then acquires the shared lock while the legacy lease is still held;
+2. no steady-state registry-aware operation may start before activation, so
+   this one-time `legacy -> shared` acquisition cannot form a lock cycle;
+3. the migrator durably publishes the registry activation receipt last, binding the
+   registry version, shared-lock identity, legacy-lock identity, Node lifecycle
+   identity, and parent identity;
+4. registry-aware operations thereafter acquire shared lock first and then
+   their package lock;
+5. pre-registry Node binaries classify the shared lock or activation receipt as
+   foreign state and therefore fail before mutation;
+6. V, R, and account-provisioner installation require a fresh authentic
+   activation receipt and may not race the cutover.
+
+The legacy Node lock remains as an immutable package sentinel and continues to
+protect its existing receipt identity; it is not a competing parent
+serialization mechanism. A crash after shared-lock creation but before
+activation is a typed incomplete migration: old binaries remain fail-closed,
+and only the same migrator may resume under the legacy lock and exact shared
+lock identity. The activation receipt is irreversible while any registered
+sibling state or history exists. A rollback may disable the new leaves but may
+return only to a registry-aware compatibility version. Merely adding V/R names
+to a local allow-list is rejected because it would provide no cross-package
+serialization, ownership, cutover, or rollback boundary.
+
+The registry additionally owns the fixed root-owned files
+`bootstrap-package-registry-v2.activation-receipt.v2.json`,
+`bootstrap-package-registry-v2.epoch-floor.v2.json`, and
+`.setfarm-bootstrap-package-registry-v2.epoch-claim.v2.json` beneath the shared
+bootstrap parent. Activation publishes the exact genesis epoch state with
+generation zero, null prior-state hash, and one entry for every registered
+package using epoch zero and a null artifact hash. Every later strict epoch
+state contains the registry version, monotonically increasing generation,
+prior-state hash, transaction identity, and exact canonical map from package
+ref to highest admitted distribution epoch and artifact hash. The fixed state
+file is itself the sole receipt-last authority; there is no separate or
+generation-named epoch receipt namespace. It is updated only while holding the
+shared lease:
+
+1. reproduce the activation receipt, current epoch state, package lifecycle,
+   and exact absence of another epoch claim;
+2. durably publish a claim binding prior state, target state, package install
+   generation, and any offline rollback authorization;
+3. finish or recover the bound package installation without issuing its
+   production authority;
+4. atomically publish the exact target epoch state last with no unrelated
+   package-floor change;
+5. issue the package authority only after reproducing that state, then remove
+   only the exact claim.
+
+If a crash leaves a claim, recovery may finalize only the exact prior-or-target
+state and matching package generation. Any third state is terminal corruption.
+Removing or rolling back package bytes never lowers the highest-seen floor. An
+older artifact is executable only under an exact offline-signed rollback
+authorization; the durable floor remains unchanged and the V/installation
+receipt binds the authorization hash. The public registry receipt is a pathless
+projection of the fixed state hash; package receipts bind that epoch-state hash
+and expose no locator.
+
+Descriptor capture and sealed-root publication mechanics become shared internal
+primitives, while each package keeps its own strict manifest/layout/schema and
+typed lifecycle. The physical primitive owns `O_NOFOLLOW|O_NONBLOCK`,
+descriptor/path/parent fences, bounded exact read plus EOF, BigInt
+nanosecond fingerprints, every-and-only membership, buffer zeroing, and
+two-capture equality. The publication primitive owns claim-before-root,
+exclusive staging, fsync, atomic no-replace publication, receipt-last,
+generation-specific rollback, and exactly-one cleanup ownership. Neither
+primitive exposes a generic production opener, path-bearing receipt, or
+caller-supplied policy.
+
+The B5D-0a single-root aggregate receipt remains a non-promotable mechanics
+fixture. Production uses separate V, R, S, and A schemas. In particular, S
+binds two distinct parents: `/usr/bin` for xattr and sandbox-exec, and `/bin`
+for ls and chmod. The xattr observer and clearer are two logical bindings of
+one physical xattr receipt; they are not duplicate physical members.
 
 The no-input composition opener privately opens the lower root-owned Node/npm
 bootstrap and reproduces `N`; the outer platform host owner compares the
@@ -552,17 +715,33 @@ End to end:
    physical recapture of all entries.
 2. Add the B5D-0a host-composition receipt schemas, opaque fixture-only
    sub-authority, private host retention, and terminal revalidation ownership.
-3. Add B5D-0b installed verifier and release-package authorities, fixed Darwin
-   system anchors, durable runtime-account authority, and the zero-input
-   aggregate production opener.
-4. Add authenticated metadata, network, and module-export operation ABIs.
-5. Add pure observed runtime/environment/catalog/build candidate builders and
+3. Extract the complete B5D-0b fixed V/R/S/A package and operation ABI contract,
+   including native self-attestation, account lookup, distribution epoch and
+   rollback policy.
+4. Add the code-owned shared bootstrap-package registry, dual-lock activation
+   migration, compatibility receipt, and parent serialization authority.
+5. Add shared internal descriptor-bounded physical admission and sealed-root
+   publication/rollback primitives; migrate the Node installer behind a
+   characterization-preserving adapter before another production sibling is
+   installed.
+6. Add the authenticated per-architecture native verifier and account-
+   provisioner distributions, V package build/preparation/install/rollback,
+   registry-owned epoch-floor transaction, and zero-input installed V
+   authority.
+7. Add the installed V-verified root-only account-provisioner package with
+   preclaim/recovery, durable A authority, and two-parent Darwin S authority.
+8. Implement the authenticated metadata, network, and module-export operation
+   ABIs, then build/install R and issue its zero-input authority from the
+   already-frozen ABI contract.
+9. Add the zero-input aggregate production opener with
+   `N-before -> V/R/S/A -> second leaf capture -> N-after` fences.
+10. Add pure observed runtime/environment/catalog/build candidate builders and
    the exact two-occurrence attestation extension.
-6. Add one-shot pair claim and internal composition state.
-7. Split production terminal issuance from the test JSON writer.
-8. Implement selected-root ownership transfer and terminal cleanup.
-9. Run the full adversarial matrix and update the audit.
-10. Begin B5E separate durable release store at migration 27+.
+11. Add one-shot pair claim and internal composition state.
+12. Split production terminal issuance from the test JSON writer.
+13. Implement selected-root ownership transfer and terminal cleanup.
+14. Run the full adversarial matrix and update the audit.
+15. Begin B5E separate durable release store at migration 27+.
 
 Production activation, live Setfarm runs, Mission Control projection, RegistryV2,
 and generated-project recovery remain forbidden during these steps.

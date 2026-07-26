@@ -229,17 +229,44 @@ returns `HOST_COMPOSITION_BOOTSTRAP_UNAVAILABLE`.
 `B5D-0b` is the mandatory production-provenance slice. It is one private
 authority DAG, not a list of interchangeable designs:
 
-1. an independently installed native host-composition verifier package under
+1. a code-owned bootstrap-package registry and one shared parent serialization
+   authority for every package installed beneath
+   `/Library/Application Support/Setfarm/bootstrap`;
+2. an independently installed native host-composition verifier package under
    `/Library/Application Support/Setfarm/bootstrap/host-composition-verifier-v2`;
-2. an independently installed release-composition package under
+3. an independently installed release-composition package under
    `/Library/Application Support/Setfarm/bootstrap/platform-release-composition-v2`;
-3. a Darwin system-anchor authority for exact `/usr/bin/xattr`, `/bin/ls`,
+4. a Darwin system-anchor authority for exact `/usr/bin/xattr`, `/bin/ls`,
    `/bin/chmod`, and `/usr/bin/sandbox-exec` physical files and their two exact
    parents;
-4. a durable `SETFARM_PLATFORM_RELEASE_RUNTIME_V2` OS-account authority;
-5. the zero-input aggregate composition opener, which independently reproduces
+5. a separately packaged root-only runtime-account provisioner and durable
+   `SETFARM_PLATFORM_RELEASE_RUNTIME_V2` OS-account authority;
+6. the zero-input aggregate composition opener, which independently reproduces
    the base Node/npm host projection, opens all four leaf authorities, performs
    two equal full captures, and issues the production capability.
+
+The existing Node-toolchain installer currently treats every unrecognized
+sibling beneath the shared bootstrap parent as a conflict. Therefore V or R
+must not be installed by merely widening the Node installer allow-list. The
+registry owns the exact sibling namespace, package-specific lifecycle basename
+sets, and one shared parent lock. Unknown siblings still fail closed; a package
+installer may mutate only its own registered generation while holding the
+shared lease. Node installation and rollback must first be characterized and
+migrated to that registry without changing the existing Node package identity.
+
+The native verifier is not compiled on the production host. Its distribution is
+selected from a code-owned architecture catalog and admitted through exact
+artifact hash, byte length, source-tree hash, build-recipe hash, and authenticated
+build-attestation policy. The external bootstrap root is a notarized
+Developer-ID-signed Setfarm installer distribution plus macOS AMFI enforcement
+of V's designated requirement. V's first fixed operation is a native
+`SELF_ATTEST_V2` result that binds its running executable, embedded release key,
+complete ABI, build attestation, and admitted descriptor identity. Missing,
+downgraded, or unauthenticated distribution evidence is a typed
+bootstrap-unavailable result. Raw caller bytes, current-source builds, ambient
+compiler discovery, shell launch, `PATH`, and an authenticated-Node substitute
+are forbidden. The latter would make V depend on the same Node runtime it is
+meant to independently check.
 
 The verifier and release packages each carry an exact root-owned manifest,
 every-and-only directory membership, provisioning receipt, member hashes/modes,
@@ -248,6 +275,42 @@ locators. The xattr observer and clearer are two logical roles bound to the same
 physical `/usr/bin/xattr` receipt. Package membership binds manifest entry and
 root/directory identities without referring back to the aggregate receipt, so
 the identity graph is acyclic.
+
+V also owns a read-only, versioned `LOOKUP_LOCAL_ACCOUNT_V2` ABI implemented
+with native account lookup rather than parsed `dscl`/`id` prose. Account
+creation, update, and deletion remain the exclusive responsibility of the
+separate root-only provisioner package installed at
+`/Library/Application Support/Setfarm/bootstrap/runtime-account-provisioner-v2`.
+It is a notarized, signed native package admitted and physically verified by V,
+with exact `PLAN_LOCAL_ACCOUNT_V2`, `APPLY_LOCAL_ACCOUNT_V2`, and
+`ROLLBACK_LOCAL_ACCOUNT_V2` ABIs. A production account authority requires its
+durable provisioning receipt plus two equal V observations; it never adopts an
+unreceipted and unclaimed pre-existing record, repairs a mismatch, or accepts
+caller UID/GID. An exact active preclaim is the only receipt-recovery authority.
+
+Shared-lock cutover is explicit. The legacy Node package lock remains an
+immutable package sentinel because existing Node receipts bind it. A new
+registry activation receipt and shared parent lock are published while holding
+both locks. After activation, new operations acquire shared lock first and then
+their package lock. Pre-registry Node binaries see the activation receipt as
+foreign state and fail before mutation. V/R/account installation is forbidden
+until a fresh migration receipt proves the cutover. Rollback may return only to
+a registry-aware compatibility release; the activation receipt is not removed
+while any registered lifecycle or rollback history exists.
+
+The registry also owns durable monotonic per-package distribution-epoch floors.
+The fixed epoch-floor state is itself the sole receipt-last authority: updates
+are claim-first and atomically replace that state under the shared lock, without
+an unbounded receipt namespace. Removal never lowers a floor; an older exact
+artifact can run only with a distinct offline-signed rollback authorization
+bound to the current floor and target artifact.
+
+The B5D-0a ten-role aggregate receipt is a mechanics fixture, not the production
+leaf topology: it models one installed root and one tools parent. Production
+B5D-0b uses separate strict V, R, S, and A schemas because `/usr/bin/xattr` and
+`/usr/bin/sandbox-exec` are anchored under `/usr/bin`, while `/bin/ls` and
+`/bin/chmod` are anchored under a distinct `/bin` physical parent. The two xattr
+roles remain logical aliases of one physical file.
 
 The existing single-root constructor remains structurally test-only. An
 `origin` string never proves package provenance. No B5D-1 production operation
@@ -409,9 +472,11 @@ usable RegistryV2 or silently omit command evidence.
    - lock/package/bin verification and double dependency trees.
 4. `feat(release): compose authentic release`
    - B5D-0a test-scoped composition mechanics and private host retention;
-   - B5D-0b installed verifier/release packages, system anchors, and durable
-     runtime-account authority;
-   - authenticated operational ABIs and observed
+   - B5D-0b shared bootstrap namespace/serialization, authenticated native
+     verifier distribution, installed verifier/release packages, system
+     anchors, and durable runtime-account authority;
+   - authenticated operational ABIs frozen before the release package and
+     observed
      runtime/external/environment/catalog builder;
    - authentic terminal-writer input.
 5. `feat(release): publish immutable content`
