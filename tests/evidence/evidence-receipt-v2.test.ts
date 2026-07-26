@@ -300,13 +300,24 @@ describe("EvidenceOutcomeV2 typed candidate contract", () => {
     const policy = getEvidenceReceiptAbiPolicyV2();
     assert.equal(EvidenceReceiptAbiPolicyCandidateV2Schema.safeParse(policy).success, true);
     assert.equal(policy.policyHash, evidenceReceiptAbiPolicyHashV2());
-    assert.equal(policy.policyHash, "a49ce9c25a8a963762b3a30f3e6c340e9697ebe3a8e7801fbd4a3a4cb5d2b95d");
+    assert.equal(policy.policyHash, "a867d8ad008486d2b8217edbe1e1048c1e8ea207af9ff5b0f0dee25175201aea");
     assert.equal(policy.diagnosticProsePolicy, "forbidden_use_redacted_capture");
     assert.equal(policy.httpRequestTimeoutMs, EVIDENCE_HTTP_REQUEST_TIMEOUT_MS_V2);
     assert.equal(policy.httpResponseMaxBytes, EVIDENCE_HTTP_RESPONSE_MAX_BYTES_V2);
     assert.equal(policy.schemaRevision, EVIDENCE_RECEIPT_SCHEMA_REVISION_V2);
     assert.deepEqual(policy.processSignalNames, EVIDENCE_PROCESS_SIGNAL_NAMES_V2);
     assert.equal(policy.shapeSignatures.length, 35);
+    assert.equal(
+      policy.shapeSignatures.includes(
+        "sourceOrigin.private_content_first:kind",
+      ),
+      true,
+    );
+    assert.equal(
+      policy.shapeSignatures.some((signature) =>
+        signature.startsWith("sourceOrigin.none:")),
+      false,
+    );
     assert.equal(policy.crossFieldRelations.length, 23);
     assert.equal(Object.isFrozen(policy), true);
     assert.equal(Object.isFrozen(policy.outcomeOwnership), true);
@@ -407,7 +418,7 @@ describe("EvidenceOutcomeV2 typed candidate contract", () => {
 describe("EvidenceReceiptV2 candidate contract", () => {
   it("binds the complete release/product/candidate/execution chain to a literal golden", () => {
     const candidate = receipt();
-    assert.equal(candidate.receiptHash, "c86d510b77c81769c0b85f8a024e1e85b3ab969c55bea23b78be8b54a81f0335");
+    assert.equal(candidate.receiptHash, "4498c8d18a413c3ea5aef3adf4a766b72304749681f759c2940c3590dc36c639");
     assert.equal(candidate.authorityState, "candidate_unverified");
     assert.equal(candidate.productionUse, "forbidden");
     assert.equal(Object.keys(candidate.release).length, 8);

@@ -28,6 +28,18 @@ import ts from "typescript";
 import { EVIDENCE_RECEIPT_V2_SCHEMA } from
   "../../src/evidence/schemas/evidence-receipt-v2.js";
 import {
+  CommandEvidenceRunnerAuthorityV2,
+  CommandEvidenceRunnerErrorV2,
+  issueCommandEvidenceRunnerAuthorityV2ForTest,
+  runEvidenceAdapterV2 as runCommandEvidenceAdapterV2,
+} from "../../src/evidence/runners/command-v2.js";
+import {
+  EVIDENCE_COMMAND_RUNNER_ABI_HASH_V2,
+} from "../../src/evidence/schemas/command-runner-v2.js";
+import {
+  DurableEvidenceExecutionResultV2Schema,
+} from "../../src/evidence/schemas/evidence-runner-v2.js";
+import {
   CANDIDATE_BUILD_RECEIPT_V2_SCHEMA,
   CandidateBuildReceiptV2Schema,
 } from "../../src/execution/schemas/candidate-build-receipt-v2.js";
@@ -5163,6 +5175,117 @@ describe("Node scaffold private staged materializer V2", () => {
           verifiedRuntime.bundle.bundleHash,
           issuedRuntime.bundle.bundleHash,
         );
+        const commandEvidenceStore = new ContentAddressedArtifactStore(
+          path.join(
+            sandbox,
+            "command-evidence",
+            `${caseIndex}-${randomUUID()}`,
+          ),
+        );
+        const commandEvidenceAuthority =
+          await issueCommandEvidenceRunnerAuthorityV2ForTest({
+            runtimeAuthority: issuedRuntime.authority,
+            expectedBundleHash: issuedRuntime.bundle.bundleHash,
+            store: commandEvidenceStore,
+            execution: {
+              runId: `shadow-generated-test-${caseIndex}`,
+              attemptId:
+                `ATT_COMMAND_EVIDENCE_${String(caseIndex).padStart(4, "0")}`,
+              storyId:
+                compiledSlices[0]!.slice.value.story.storyId,
+              sliceHash:
+                compiledSlices[0]!.slice.value.sliceHash,
+              predicateRef:
+                fixture.productSpec.evidencePredicates[0]!.id,
+            },
+          });
+        assert.equal(
+          commandEvidenceAuthority.status,
+          "issued_shadow_test_fixture_authority",
+        );
+        await assert.rejects(
+          runCommandEvidenceAdapterV2({
+            authority: {
+              ...commandEvidenceAuthority.authority,
+            } as CommandEvidenceRunnerAuthorityV2,
+          }),
+          (error: unknown) => error instanceof CommandEvidenceRunnerErrorV2
+            && error.code
+              === "EVIDENCE_COMMAND_RUNNER_V2_AUTHORITY_UNAUTHENTICATED",
+        );
+        const commandEvidence =
+          await runCommandEvidenceAdapterV2({
+            authority: commandEvidenceAuthority.authority,
+          });
+        assert.equal(
+          DurableEvidenceExecutionResultV2Schema.safeParse(commandEvidence)
+            .success,
+          true,
+        );
+        assert.equal(commandEvidence.authorityState, "candidate_unverified");
+        assert.equal(commandEvidence.productionUse, "forbidden");
+        assert.equal(
+          commandEvidence.receipt.release.kind,
+          "shadow_candidate",
+        );
+        assert.equal(
+          commandEvidence.receipt.release.runnerAbiHash,
+          EVIDENCE_COMMAND_RUNNER_ABI_HASH_V2,
+        );
+        assert.equal(commandEvidence.receipt.operation.kind, "command");
+        assert.equal(
+          commandEvidence.receipt.product.profileId,
+          fixture.profileId,
+        );
+        assert.equal(
+          commandEvidence.receipt.candidate.runtimeBundleHash,
+          issuedRuntime.bundle.bundleHash,
+        );
+        assert.equal(
+          commandEvidence.receipt.candidate.buildReceiptHash,
+          candidateBuild.receipt.receiptHash,
+        );
+        assert.equal(
+          commandEvidence.receipt.sourceBefore.physicalFenceHash,
+          commandEvidence.receipt.sourceAfter.physicalFenceHash,
+        );
+        assert.equal(commandEvidence.receipt.outcome.status, "passed");
+        assert.equal(commandEvidence.receipt.outcome.verdict, "pass");
+        assert.equal(commandEvidence.receipt.captures.length, 3);
+        assert.equal(
+          commandEvidence.publication.captureEnvelopeHashes.length,
+          3,
+        );
+        for (const artifactHash of [
+          ...commandEvidence.publication.captureEnvelopeHashes,
+          commandEvidence.publication.receiptEnvelopeHash,
+        ]) {
+          const stored = await commandEvidenceStore.get(artifactHash);
+          assert.ok(stored.bytes.byteLength > 0);
+          stored.bytes.fill(0);
+        }
+        const serializedCommandEvidence = JSON.stringify(commandEvidence);
+        for (const forbidden of [
+          "/Users/",
+          "absolutePath",
+          "bundleRoot",
+          "artifactRoot",
+          "testPath",
+        ]) {
+          assert.equal(
+            serializedCommandEvidence.includes(forbidden),
+            false,
+            forbidden,
+          );
+        }
+        await assert.rejects(
+          runCommandEvidenceAdapterV2({
+            authority: commandEvidenceAuthority.authority,
+          }),
+          (error: unknown) => error instanceof CommandEvidenceRunnerErrorV2
+            && error.code
+              === "EVIDENCE_COMMAND_RUNNER_V2_AUTHORITY_ALREADY_CONSUMED",
+        );
         if (caseIndex === 0) {
           const action = fixture.productSpec.actions[0]!;
           const issuedLaunch =
@@ -5561,11 +5684,11 @@ describe("Node scaffold private staged materializer V2", () => {
     }
 
     assert.deepEqual(storyPlanHashes, [
-      "d294d452f89a235be3ee8989f18935ac1fbd9e43916e9a5cdbd8977442a623c1",
-      "6f6d26829cf35e14ef1bfc85abe7b05fbeb0bd3b07a191553246101a06a79aa2",
-      "5dc7f9770caa603e281985bdca7c07bba4534781ae5aec71feaf5669dd5783ee",
-      "74ad42f28bce0543d0e316c5a689d90407d40f1007e6e13197ffbae5840272e1",
-      "567c3eacbeb7d05e5d89821060d56a849c0b6ccfa70d29093c3996afc92c6a15",
+      "6f9c019b129faa64580c356a1a302d27a54f161575c014b28b5ae5980c55791c",
+      "c4edbb5cecacc96253abe5e0c811ab7e44dc2d6aad391dee27c612135e620039",
+      "0ee0bc2f8c3876bba28381579d00dafcda6efbe4093bf6863be386012d509c63",
+      "6d1fd6393e16a1bbf2eed66681e4ea86328b8af32ac8f587c57c712b8b6bbc24",
+      "efccf42ce23e97ca6de27a5e9f96b776df2433f5ebcb0a031867b04b5a2b109d",
     ]);
     assert.equal(sourceMapManifestHashes.length, cases.length);
     assert.equal(new Set(sourceMapManifestHashes).size, cases.length);

@@ -1238,6 +1238,14 @@ export type NodeCandidateRuntimePhysicalLaunchContextInternalV2 = Readonly<{
     mode: "0444";
     physicalIdentityHash: string;
   }>;
+  applicationTestFile: Readonly<{
+    logicalLocator: "cli.setfarm.test.js" | "app.setfarm.test.js";
+    absolutePath: string;
+    contentHash: string;
+    byteLength: number;
+    mode: "0444";
+    physicalIdentityHash: string;
+  }>;
   environment: Awaited<
     ReturnType<
       typeof acquireNodeCandidateRuntimeLaunchEnvironmentInternalV2
@@ -1259,23 +1267,38 @@ export async function acquireNodeCandidateRuntimePhysicalLaunchContextInternalV2
     === "PROFILE_NODE_CLI_STATELESS_EXACT_V2"
     ? "cli.js" as const
     : "app.js" as const;
+  const testLogicalLocator = state.profileId
+    === "PROFILE_NODE_CLI_STATELESS_EXACT_V2"
+    ? "cli.setfarm.test.js" as const
+    : "app.setfarm.test.js" as const;
   const entry = materialization.applicationTree.entries.find((candidate) =>
     candidate.path === logicalLocator);
+  const testEntry = materialization.applicationTree.entries.find((candidate) =>
+    candidate.path === testLogicalLocator);
   if (
     !entry
     || entry.type !== "file"
     || entry.mode !== "0444"
     || entry.executable
+    || !testEntry
+    || testEntry.type !== "file"
+    || testEntry.mode !== "0444"
+    || testEntry.executable
   ) {
     return fail(
       "NODE_CANDIDATE_RUNTIME_PRIVATE_V2_AUTHORITY_MISMATCH",
-      "Candidate runtime launch entrypoint is absent or not one sealed data module",
+      "Candidate runtime entrypoint or generated test is absent or not one sealed data module",
     );
   }
   const capturedEntrypoint = captureSealedFile({
     absolutePath: path.join(applicationRoot, logicalLocator),
     logicalLocator,
     maxBytes: 64 * 1024 * 1024,
+  });
+  const capturedTestFile = captureSealedFile({
+    absolutePath: path.join(applicationRoot, testLogicalLocator),
+    logicalLocator: testLogicalLocator,
+    maxBytes: 32 * 1024 * 1024,
   });
   if (
     environment.admissionScope !== state.admissionScope
@@ -1286,6 +1309,8 @@ export async function acquireNodeCandidateRuntimePhysicalLaunchContextInternalV2
       !== environment.hostRuntime.hostToolchainReceiptHash
     || capturedEntrypoint.contentHash !== entry.contentHash
     || capturedEntrypoint.byteLength !== entry.byteLength
+    || capturedTestFile.contentHash !== testEntry.contentHash
+    || capturedTestFile.byteLength !== testEntry.byteLength
   ) {
     return fail(
       "NODE_CANDIDATE_RUNTIME_PRIVATE_V2_AUTHORITY_MISMATCH",
@@ -1302,6 +1327,11 @@ export async function acquireNodeCandidateRuntimePhysicalLaunchContextInternalV2
     applicationEntrypoint: Object.freeze({
       ...capturedEntrypoint,
       absolutePath: path.join(applicationRoot, logicalLocator),
+      mode: "0444" as const,
+    }),
+    applicationTestFile: Object.freeze({
+      ...capturedTestFile,
+      absolutePath: path.join(applicationRoot, testLogicalLocator),
       mode: "0444" as const,
     }),
     environment,

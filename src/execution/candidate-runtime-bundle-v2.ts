@@ -63,6 +63,7 @@ import {
   CandidateBuildErrorV2,
   acquireCandidateBuildInvocationTransportContextInternalV2,
   acquireCandidateBuildRuntimeBundleContextInternalV2,
+  acquireCandidateBuildTestCommandContextInternalV2,
   settleCandidateBuildRuntimeBundleContextInternalV2,
   verifyCandidateBuildV2,
   verifyCandidateBuildV2ForTest,
@@ -76,6 +77,10 @@ import {
   executePrivateNodeExpressApiProcessV2,
   type PrivateNodeExpressApiProcessResultV2,
 } from "./private-node-express-api-process-v2.js";
+import {
+  executePrivateNodeTestCommandV2,
+  type PrivateNodeTestCommandResultV2,
+} from "./private-node-test-command-v2.js";
 import {
   CANDIDATE_NPM_DIRECT_ARGV_HASH_V2,
   CANDIDATE_NPM_MATERIALIZATION_RECEIPT_V2_SCHEMA,
@@ -1194,6 +1199,484 @@ export function verifyCandidateRuntimeBundleV2(input: unknown) {
 
 export function verifyCandidateRuntimeBundleV2ForTest(input: unknown) {
   return verifyInternalV2(input, "test_fixture");
+}
+
+type CandidateRuntimeCommandExecutionLeaseLifecycleInternalV2 = {
+  status: "ready" | "claimed" | "consumed";
+};
+
+type CandidateRuntimeCommandExecutionLeaseStateInternalV2 = Readonly<{
+  runtimeAuthority: CandidateRuntimeBundleAuthorityV2;
+  admissionScope: "production_host" | "test_fixture";
+  expectedBundleHash: string;
+  buildReceiptHash: string;
+  buildTopologyHash: string;
+  commandContractHash: string;
+  commandDefinitionHash: string;
+  buildTestLocator:
+    | "dist/cli.setfarm.test.js"
+    | "dist/app.setfarm.test.js";
+  testOutputContentHash: string;
+  testOutputByteLength: number;
+  lifecycle: CandidateRuntimeCommandExecutionLeaseLifecycleInternalV2;
+}>;
+
+const candidateRuntimeCommandLeaseConstructorCapabilityInternalV2 =
+  Object.freeze({});
+const candidateRuntimeCommandLeaseStateInternalV2 = new WeakMap<
+  object,
+  CandidateRuntimeCommandExecutionLeaseStateInternalV2
+>();
+
+/**
+ * @internal Pathless one-use bridge from an authentic runtime bundle and its
+ * retained BuildTopology to the code-owned generated-test process.
+ */
+export class CandidateRuntimeCommandExecutionLeaseInternalV2 {
+  readonly runtimeBundleHash: string;
+  readonly buildReceiptHash: string;
+  readonly buildTopologyHash: string;
+  readonly commandContractHash: string;
+  readonly commandDefinitionHash: string;
+  readonly testOutputContentHash: string;
+  readonly testOutputByteLength: number;
+  readonly admissionScope: "production_host" | "test_fixture";
+
+  constructor(
+    capability: object,
+    state: CandidateRuntimeCommandExecutionLeaseStateInternalV2,
+  ) {
+    if (
+      capability
+        !== candidateRuntimeCommandLeaseConstructorCapabilityInternalV2
+    ) {
+      throw new CandidateRuntimeBundleErrorV2(
+        "CANDIDATE_RUNTIME_BUNDLE_V2_AUTHORITY_UNAUTHENTICATED",
+        "Candidate runtime command lease constructor capability is unavailable",
+      );
+    }
+    this.runtimeBundleHash = state.expectedBundleHash;
+    this.buildReceiptHash = state.buildReceiptHash;
+    this.buildTopologyHash = state.buildTopologyHash;
+    this.commandContractHash = state.commandContractHash;
+    this.commandDefinitionHash = state.commandDefinitionHash;
+    this.testOutputContentHash = state.testOutputContentHash;
+    this.testOutputByteLength = state.testOutputByteLength;
+    this.admissionScope = state.admissionScope;
+    candidateRuntimeCommandLeaseStateInternalV2.set(this, state);
+    Object.freeze(this);
+  }
+}
+
+function authenticCandidateRuntimeCommandLeaseInternalV2(
+  lease: CandidateRuntimeCommandExecutionLeaseInternalV2,
+): CandidateRuntimeCommandExecutionLeaseStateInternalV2 {
+  if (
+    typeof lease !== "object"
+    || lease === null
+    || isProxy(lease)
+    || Object.getPrototypeOf(lease)
+      !== CandidateRuntimeCommandExecutionLeaseInternalV2.prototype
+  ) {
+    return fail(
+      "CANDIDATE_RUNTIME_BUNDLE_V2_AUTHORITY_UNAUTHENTICATED",
+      "Candidate runtime command execution requires one authentic lease",
+    );
+  }
+  const state = candidateRuntimeCommandLeaseStateInternalV2.get(lease);
+  if (!state) {
+    return fail(
+      "CANDIDATE_RUNTIME_BUNDLE_V2_AUTHORITY_UNAUTHENTICATED",
+      "Candidate runtime command execution requires one authentic lease",
+    );
+  }
+  return state;
+}
+
+function commandDefinitionHashInternalV2(
+  command: Awaited<ReturnType<
+    typeof acquireCandidateBuildTestCommandContextInternalV2
+  >>["buildTopology"]["commands"]["test"],
+): string {
+  return hashCanonicalJson({
+    schema: "setfarm.generated-test-command-definition-hash.v2",
+    command,
+  });
+}
+
+export type CandidateRuntimeCommandExecutionLeaseResultInternalV2 =
+  Readonly<{
+    lease: CandidateRuntimeCommandExecutionLeaseInternalV2;
+    runtimeBundleHash: string;
+    runtimeBundleClosureHash: string;
+    producerCodeSha: string;
+    buildReceiptHash: string;
+    buildTopologyHash: string;
+    applicationTreeHash: string;
+    materializationHash: string;
+    profileId:
+      | "PROFILE_NODE_CLI_STATELESS_EXACT_V2"
+      | "PROFILE_NODE_EXPRESS_API_STATELESS_EXACT_V2";
+    stackPackContentHash: string;
+    commandRef: "CMD_NODE_PRODUCT_TEST_V3";
+    commandContractHash: string;
+    commandDefinitionHash: string;
+    buildTestLocator:
+      | "dist/cli.setfarm.test.js"
+      | "dist/app.setfarm.test.js";
+    runtimeTestLocator:
+      | "candidate-bundle/application/cli.setfarm.test.js"
+      | "candidate-bundle/application/app.setfarm.test.js";
+    testOutputContentHash: string;
+    testOutputByteLength: number;
+    testOutputMode: "0444";
+    testOutputPhysicalIdentityHash: string;
+  }>;
+
+export async function issueCandidateRuntimeCommandExecutionLeaseInternalV2(
+  runtimeAuthority: CandidateRuntimeBundleAuthorityV2,
+  expectedBundleHash: string,
+  expectedScope: "production_host" | "test_fixture",
+): Promise<CandidateRuntimeCommandExecutionLeaseResultInternalV2> {
+  const runtimeState = authenticRuntimeStateV2(runtimeAuthority);
+  if (
+    runtimeState.expectedScope !== expectedScope
+    || runtimeState.bundle.bundleHash !== expectedBundleHash
+  ) {
+    return fail(
+      "CANDIDATE_RUNTIME_BUNDLE_V2_AUTHORITY_UNAUTHENTICATED",
+      "Candidate runtime command lease scope or expected bundle differs",
+    );
+  }
+  const verified = await verifyInternalV2({
+    runtimeAuthority,
+    expectedBundleHash,
+  }, expectedScope);
+  const build =
+    await acquireCandidateBuildTestCommandContextInternalV2(
+      runtimeState.buildAuthority,
+      expectedScope,
+    );
+  const physical =
+    await acquireNodeCandidateRuntimePhysicalLaunchContextInternalV2(
+      runtimeState.privateRuntime,
+    );
+  const command = build.buildTopology.commands.test;
+  const expectedBuildLocator =
+    build.receipt.outputTree.profileId
+      === "PROFILE_NODE_CLI_STATELESS_EXACT_V2"
+      ? "dist/cli.setfarm.test.js" as const
+      : "dist/app.setfarm.test.js" as const;
+  const expectedRuntimeLocator =
+    build.receipt.outputTree.profileId
+      === "PROFILE_NODE_CLI_STATELESS_EXACT_V2"
+      ? "candidate-bundle/application/cli.setfarm.test.js" as const
+      : "candidate-bundle/application/app.setfarm.test.js" as const;
+  const commandDefinitionHash = commandDefinitionHashInternalV2(command);
+  if (
+    verified.bundle.bundleHash !== runtimeState.bundle.bundleHash
+    || build.buildReceiptHash !== runtimeState.bundle.buildReceiptHash
+    || build.buildTopology.manifestHash
+      !== runtimeState.bundle.buildTopologyHash
+    || command.profileId !== runtimeState.bundle.buildReceipt.outputTree.profileId
+    || command.commandRef !== "CMD_NODE_PRODUCT_TEST_V3"
+    || command.runnerAbi !== "NODE_TEST_RUNNER_DIRECT_FILE_ABI_V2"
+    || command.directArgv[2] !== expectedBuildLocator
+    || build.testOutput.normalizedLocator !== expectedBuildLocator
+    || physical.applicationTestFile.logicalLocator
+      !== expectedRuntimeLocator.replace("candidate-bundle/application/", "")
+    || physical.applicationTestFile.contentHash
+      !== build.testOutput.contentHash
+    || physical.applicationTestFile.byteLength
+      !== build.testOutput.byteLength
+    || physical.applicationTree.treeHash
+      !== runtimeState.bundle.applicationTree.treeHash
+    || physical.materializationHash
+      !== runtimeState.privateRuntime.materializationHash
+  ) {
+    return fail(
+      "CANDIDATE_RUNTIME_BUNDLE_V2_LAUNCH_PROFILE_INVALID",
+      "Candidate runtime, build topology and compiled test do not form one command profile",
+    );
+  }
+  const lifecycle: CandidateRuntimeCommandExecutionLeaseLifecycleInternalV2 = {
+    status: "ready",
+  };
+  const leaseState: CandidateRuntimeCommandExecutionLeaseStateInternalV2 =
+    Object.freeze({
+      runtimeAuthority,
+      admissionScope: expectedScope,
+      expectedBundleHash,
+      buildReceiptHash: build.buildReceiptHash,
+      buildTopologyHash: build.buildTopology.manifestHash,
+      commandContractHash:
+        build.buildTopology.authority.commandContractHash,
+      commandDefinitionHash,
+      buildTestLocator: expectedBuildLocator,
+      testOutputContentHash: build.testOutput.contentHash,
+      testOutputByteLength: build.testOutput.byteLength,
+      lifecycle,
+    });
+  const lease = new CandidateRuntimeCommandExecutionLeaseInternalV2(
+    candidateRuntimeCommandLeaseConstructorCapabilityInternalV2,
+    leaseState,
+  );
+  return Object.freeze({
+    lease,
+    runtimeBundleHash: runtimeState.bundle.bundleHash,
+    runtimeBundleClosureHash: runtimeState.bundle.bundleClosureHash,
+    producerCodeSha: runtimeState.bundle.producer.codeSha,
+    buildReceiptHash: build.buildReceiptHash,
+    buildTopologyHash: build.buildTopology.manifestHash,
+    applicationTreeHash: runtimeState.bundle.applicationTree.treeHash,
+    materializationHash: physical.materializationHash,
+    profileId: build.receipt.outputTree.profileId,
+    stackPackContentHash:
+      build.buildTopology.authority.stackPackContentHash,
+    commandRef: "CMD_NODE_PRODUCT_TEST_V3" as const,
+    commandContractHash:
+      build.buildTopology.authority.commandContractHash,
+    commandDefinitionHash,
+    buildTestLocator: expectedBuildLocator,
+    runtimeTestLocator: expectedRuntimeLocator,
+    testOutputContentHash: build.testOutput.contentHash,
+    testOutputByteLength: build.testOutput.byteLength,
+    testOutputMode: "0444" as const,
+    testOutputPhysicalIdentityHash:
+      physical.applicationTestFile.physicalIdentityHash,
+  });
+}
+
+function candidateRuntimeCommandSourceFenceHashInternalV2(
+  runtimeBundleHash: string,
+  buildReceiptHash: string,
+  buildTopologyHash: string,
+  commandDefinitionHash: string,
+  physical: Awaited<ReturnType<
+    typeof acquireNodeCandidateRuntimePhysicalLaunchContextInternalV2
+  >>,
+): string {
+  return hashCanonicalJson({
+    schema: "setfarm.candidate-runtime-command-source-fence.v2",
+    runtimeBundleHash,
+    buildReceiptHash,
+    buildTopologyHash,
+    commandDefinitionHash,
+    materializationHash: physical.materializationHash,
+    applicationTreeHash: physical.applicationTree.treeHash,
+    testMember: {
+      logicalLocator: physical.applicationTestFile.logicalLocator,
+      contentHash: physical.applicationTestFile.contentHash,
+      byteLength: physical.applicationTestFile.byteLength,
+      mode: physical.applicationTestFile.mode,
+      physicalIdentityHash:
+        physical.applicationTestFile.physicalIdentityHash,
+    },
+    environmentReceiptHash: physical.environment.environmentReceiptHash,
+    environmentHash: physical.environment.environmentHash,
+    hostToolchainReceiptHash:
+      physical.environment.hostRuntime.hostToolchainReceiptHash,
+    nodeIdentityHash: physical.environment.hostRuntime.nodeIdentityHash,
+    nodeExecutableContentHash:
+      physical.environment.hostRuntime.nodeExecutableContentHash,
+  });
+}
+
+export type CandidateRuntimeCommandExecutionResultInternalV2 = Readonly<{
+  runtimeBundleHash: string;
+  runtimeBundleClosureHash: string;
+  producerCodeSha: string;
+  buildReceiptHash: string;
+  buildTopologyHash: string;
+  applicationTreeHash: string;
+  materializationHash: string;
+  profileId:
+    | "PROFILE_NODE_CLI_STATELESS_EXACT_V2"
+    | "PROFILE_NODE_EXPRESS_API_STATELESS_EXACT_V2";
+  commandRef: "CMD_NODE_PRODUCT_TEST_V3";
+  commandContractHash: string;
+  commandDefinitionHash: string;
+  buildTestLocator:
+    | "dist/cli.setfarm.test.js"
+    | "dist/app.setfarm.test.js";
+  runtimeTestLocator:
+    | "candidate-bundle/application/cli.setfarm.test.js"
+    | "candidate-bundle/application/app.setfarm.test.js";
+  testOutputContentHash: string;
+  testOutputByteLength: number;
+  testOutputMode: "0444";
+  testOutputPhysicalIdentityHash: string;
+  sourceFenceBeforeHash: string;
+  sourceFenceAfterHash: string;
+  sourceMaterializationReceiptHash: string;
+  candidateSourceReceiptHash: string;
+  semanticRevisionHash: string;
+  packetHash: string;
+  stackPackContentHash: string;
+  hostToolchainReceiptHash: string;
+  nodeIdentityHash: string;
+  nodeExecutableContentHash: string;
+  process: PrivateNodeTestCommandResultV2;
+}>;
+
+export async function executeCandidateRuntimeCommandLeaseInternalV2(
+  lease: CandidateRuntimeCommandExecutionLeaseInternalV2,
+): Promise<CandidateRuntimeCommandExecutionResultInternalV2> {
+  const leaseState = authenticCandidateRuntimeCommandLeaseInternalV2(lease);
+  if (leaseState.lifecycle.status !== "ready") {
+    return fail(
+      "CANDIDATE_RUNTIME_BUNDLE_V2_LAUNCH_AUTHORITY_ALREADY_CONSUMED",
+      "Candidate runtime command execution lease is one-use",
+    );
+  }
+  leaseState.lifecycle.status = "claimed";
+  const runtimeState = authenticRuntimeStateV2(leaseState.runtimeAuthority);
+  let processResult: PrivateNodeTestCommandResultV2 | undefined;
+  try {
+    const verified = await verifyInternalV2({
+      runtimeAuthority: leaseState.runtimeAuthority,
+      expectedBundleHash: leaseState.expectedBundleHash,
+    }, leaseState.admissionScope);
+    const build =
+      await acquireCandidateBuildTestCommandContextInternalV2(
+        runtimeState.buildAuthority,
+        leaseState.admissionScope,
+      );
+    const command = build.buildTopology.commands.test;
+    if (
+      verified.bundle.bundleHash !== leaseState.expectedBundleHash
+      || build.buildReceiptHash !== leaseState.buildReceiptHash
+      || build.buildTopology.manifestHash !== leaseState.buildTopologyHash
+      || build.buildTopology.authority.commandContractHash
+        !== leaseState.commandContractHash
+      || commandDefinitionHashInternalV2(command)
+        !== leaseState.commandDefinitionHash
+      || command.directArgv[2] !== leaseState.buildTestLocator
+      || build.testOutput.contentHash
+        !== leaseState.testOutputContentHash
+      || build.testOutput.byteLength
+        !== leaseState.testOutputByteLength
+    ) {
+      return fail(
+        "CANDIDATE_RUNTIME_BUNDLE_V2_STATE_DRIFT",
+        "Candidate runtime command authority changed before execution",
+      );
+    }
+    const before =
+      await acquireNodeCandidateRuntimePhysicalLaunchContextInternalV2(
+        runtimeState.privateRuntime,
+      );
+    if (
+      before.applicationTestFile.contentHash
+        !== leaseState.testOutputContentHash
+      || before.applicationTestFile.byteLength
+        !== leaseState.testOutputByteLength
+      || before.applicationTree.treeHash
+        !== runtimeState.bundle.applicationTree.treeHash
+      || before.materializationHash
+        !== runtimeState.privateRuntime.materializationHash
+    ) {
+      return fail(
+        "CANDIDATE_RUNTIME_BUNDLE_V2_STATE_DRIFT",
+        "Candidate runtime generated-test source fence does not match its bundle",
+      );
+    }
+    const sourceFenceBeforeHash =
+      candidateRuntimeCommandSourceFenceHashInternalV2(
+        leaseState.expectedBundleHash,
+        leaseState.buildReceiptHash,
+        leaseState.buildTopologyHash,
+        leaseState.commandDefinitionHash,
+        before,
+      );
+    processResult = await executePrivateNodeTestCommandV2({
+      bundleRoot: before.bundleRoot,
+      testPath: before.applicationTestFile.absolutePath,
+      testContentHash: before.applicationTestFile.contentHash,
+      nodeExecutablePath:
+        before.environment.hostRuntime.nodeExecutablePath,
+    });
+    const after =
+      await acquireNodeCandidateRuntimePhysicalLaunchContextInternalV2(
+        runtimeState.privateRuntime,
+      );
+    const sourceFenceAfterHash =
+      candidateRuntimeCommandSourceFenceHashInternalV2(
+        leaseState.expectedBundleHash,
+        leaseState.buildReceiptHash,
+        leaseState.buildTopologyHash,
+        leaseState.commandDefinitionHash,
+        after,
+      );
+    if (
+      sourceFenceAfterHash !== sourceFenceBeforeHash
+      || after.applicationTestFile.contentHash
+        !== before.applicationTestFile.contentHash
+      || after.applicationTestFile.physicalIdentityHash
+        !== before.applicationTestFile.physicalIdentityHash
+      || after.environment.hostRuntime.nodeExecutableContentHash
+        !== before.environment.hostRuntime.nodeExecutableContentHash
+    ) {
+      processResult.stdout.fill(0);
+      processResult.stderr.fill(0);
+      return fail(
+        "CANDIDATE_RUNTIME_BUNDLE_V2_STATE_DRIFT",
+        "Candidate runtime command authority changed across process execution",
+      );
+    }
+    return Object.freeze({
+      runtimeBundleHash: runtimeState.bundle.bundleHash,
+      runtimeBundleClosureHash: runtimeState.bundle.bundleClosureHash,
+      producerCodeSha: runtimeState.bundle.producer.codeSha,
+      buildReceiptHash: build.buildReceiptHash,
+      buildTopologyHash: build.buildTopology.manifestHash,
+      applicationTreeHash: runtimeState.bundle.applicationTree.treeHash,
+      materializationHash: before.materializationHash,
+      profileId: build.receipt.outputTree.profileId,
+      commandRef: "CMD_NODE_PRODUCT_TEST_V3" as const,
+      commandContractHash:
+        build.buildTopology.authority.commandContractHash,
+      commandDefinitionHash: leaseState.commandDefinitionHash,
+      buildTestLocator: leaseState.buildTestLocator,
+      runtimeTestLocator:
+        before.profileId === "PROFILE_NODE_CLI_STATELESS_EXACT_V2"
+          ? "candidate-bundle/application/cli.setfarm.test.js" as const
+          : "candidate-bundle/application/app.setfarm.test.js" as const,
+      testOutputContentHash: before.applicationTestFile.contentHash,
+      testOutputByteLength: before.applicationTestFile.byteLength,
+      testOutputMode: "0444" as const,
+      testOutputPhysicalIdentityHash:
+        before.applicationTestFile.physicalIdentityHash,
+      sourceFenceBeforeHash,
+      sourceFenceAfterHash,
+      sourceMaterializationReceiptHash:
+        build.receipt.sourceAfter.sourceMaterializationReceiptHash,
+      candidateSourceReceiptHash:
+        build.receipt.sourceAfter.candidateSourceReceiptHash,
+      semanticRevisionHash:
+        build.receipt.sourceAfter.semanticRevisionHash,
+      packetHash: build.receipt.authority.packet.packetHash,
+      stackPackContentHash:
+        build.buildTopology.authority.stackPackContentHash,
+      hostToolchainReceiptHash:
+        before.environment.hostRuntime.hostToolchainReceiptHash,
+      nodeIdentityHash: before.environment.hostRuntime.nodeIdentityHash,
+      nodeExecutableContentHash:
+        before.environment.hostRuntime.nodeExecutableContentHash,
+      process: processResult,
+    });
+  } catch (error) {
+    processResult?.stdout.fill(0);
+    processResult?.stderr.fill(0);
+    if (error instanceof CandidateRuntimeBundleErrorV2) throw error;
+    return fail(
+      "CANDIDATE_RUNTIME_BUNDLE_V2_LAUNCH_PROCESS_REJECTED",
+      "Candidate runtime command execution failed at one authenticated boundary",
+      error,
+    );
+  } finally {
+    leaseState.lifecycle.status = "consumed";
+  }
 }
 
 type CandidateRuntimeCliExecutionLeaseLifecycleInternalV2 = {

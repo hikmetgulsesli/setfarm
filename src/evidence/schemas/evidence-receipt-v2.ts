@@ -168,7 +168,7 @@ const EvidenceReceiptAbiPolicyIdentityV2Schema = z.object({
     z.literal("operation.http:kind,runnerEntrypointRef,launcherRef,launcherDefinitionHash,launcherModuleHash,launcherAbiHash,transportContractHash,executableTransportBindingHash,launchTargetHash,launcherObservationReceiptHash"),
     z.literal("execution:runId,attemptId,storyId,sliceHash,predicateRef"),
     z.literal("sourceFence:schema,candidateSourceReceiptHash,semanticRevisionHash,sourceMaterializationReceiptHash,runtimeBundleHash,physicalFenceHash,origin"),
-    z.literal("sourceOrigin.none:kind"),
+    z.literal("sourceOrigin.private_content_first:kind"),
     z.literal("sourceOrigin.git:kind,commitSha,treeHash"),
     z.literal("capture:schema,artifactEnvelopeHash,contentHash,byteLength,mediaType,encoding,redaction"),
     z.literal("capture.redaction:policyRef,policyHash,secretsRemoved,mutableLocatorStored"),
@@ -304,7 +304,7 @@ const EVIDENCE_RECEIPT_ABI_POLICY_IDENTITY_V2 = {
     "operation.http:kind,runnerEntrypointRef,launcherRef,launcherDefinitionHash,launcherModuleHash,launcherAbiHash,transportContractHash,executableTransportBindingHash,launchTargetHash,launcherObservationReceiptHash",
     "execution:runId,attemptId,storyId,sliceHash,predicateRef",
     "sourceFence:schema,candidateSourceReceiptHash,semanticRevisionHash,sourceMaterializationReceiptHash,runtimeBundleHash,physicalFenceHash,origin",
-    "sourceOrigin.none:kind",
+    "sourceOrigin.private_content_first:kind",
     "sourceOrigin.git:kind,commitSha,treeHash",
     "capture:schema,artifactEnvelopeHash,contentHash,byteLength,mediaType,encoding,redaction",
     "capture.redaction:policyRef,policyHash,secretsRemoved,mutableLocatorStored",
@@ -930,6 +930,18 @@ export const EvidenceOperationBindingV2Schema = z.discriminatedUnion("kind", [
   HttpEvidenceOperationV2Schema,
 ]);
 
+export const EvidenceExecutionIdentityV2Schema = z.object({
+  runId: RunIdentityV2Schema,
+  attemptId: AttemptIdentityV2Schema,
+  storyId: StoryIdSchema,
+  sliceHash: Sha256Schema,
+  predicateRef: EvidenceIdSchema,
+}).strict();
+
+export type EvidenceExecutionIdentityV2 = z.infer<
+  typeof EvidenceExecutionIdentityV2Schema
+>;
+
 const EvidenceReceiptIdentityV2Schema = z.object({
   schema: z.literal(EVIDENCE_RECEIPT_V2_SCHEMA),
   version: z.literal(PLATFORM_RELEASE_COMPONENT_VERSION_V2),
@@ -955,13 +967,7 @@ const EvidenceReceiptIdentityV2Schema = z.object({
     runtimeBundleHash: Sha256Schema,
   }).strict(),
   operation: EvidenceOperationBindingV2Schema,
-  execution: z.object({
-    runId: RunIdentityV2Schema,
-    attemptId: AttemptIdentityV2Schema,
-    storyId: StoryIdSchema,
-    sliceHash: Sha256Schema,
-    predicateRef: EvidenceIdSchema,
-  }).strict(),
+  execution: EvidenceExecutionIdentityV2Schema,
   sourceBefore: EvidenceSourceFenceV2Schema,
   sourceAfter: EvidenceSourceFenceV2Schema,
   startedAt: ExactUtcMillisecondTimestampV2Schema,

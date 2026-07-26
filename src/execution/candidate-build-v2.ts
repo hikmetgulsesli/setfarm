@@ -43,8 +43,11 @@ import {
   type MaterializedNodeScaffoldPrivateStageV2,
   type NodeCandidateBuildOutputV2,
 } from "../product-compiler/node-scaffold-private-materializer-v2.js";
-import type { BuildTopologyV3 } from
-  "../product-compiler/schemas/build-topology-v3.js";
+import {
+  BuildTopologyV3Schema,
+  recursivelyFreezeBuildTopologyV3,
+  type BuildTopologyV3,
+} from "../product-compiler/schemas/build-topology-v3.js";
 import type { BuildDependencyMaterializationReceiptV2 } from
   "../product-compiler/schemas/node-scaffold-private-materialization-v2.js";
 import {
@@ -424,6 +427,7 @@ type CandidateBuildRuntimeBundleLeaseV2 = {
 type CandidateBuildAuthorityStateV2 = Readonly<{
   stage: MaterializedNodeScaffoldPrivateStageV2;
   sourceAuthority: VerifiedCandidateSourceAuthorityV1;
+  buildTopology: Readonly<BuildTopologyV3>;
   receipt: CandidateBuildReceiptV2;
   output: NodeCandidateBuildOutputV2;
   artifactAuthority: IndexedArtifactPublisher;
@@ -759,6 +763,9 @@ async function buildInternalV2(
     const state: CandidateBuildAuthorityStateV2 = Object.freeze({
       stage: context.stage,
       sourceAuthority: handles.sourceAuthority,
+      buildTopology: recursivelyFreezeBuildTopologyV3(
+        BuildTopologyV3Schema.parse(buildTopology),
+      ),
       receipt,
       output,
       artifactAuthority: handles.artifactAuthority,
@@ -958,6 +965,16 @@ async function verifyBuildInternalV2(input: unknown, expectedScope: "production_
       !== canonicalJsonStringify(output.tree)
     || canonicalJsonStringify(outputBinding)
       !== canonicalJsonStringify(state.receipt.outputTree)
+    || state.buildTopology.manifestHash
+      !== state.receipt.authority.buildTopology.manifestHash
+    || state.buildTopology.logicalBuildHash
+      !== state.receipt.authority.buildTopology.logicalBuildHash
+    || state.buildTopology.authority.commandContractHash
+      !== state.receipt.authority.buildTopology.commandContractHash
+    || state.buildTopology.authority.compilationContractHash
+      !== state.receipt.authority.buildTopology.compilationContractHash
+    || state.buildTopology.authority.profileId
+      !== state.receipt.outputTree.profileId
     || parsedReceipt.receiptHash !== state.receipt.receiptHash
   ) {
     return fail(
@@ -1116,5 +1133,71 @@ export async function acquireCandidateBuildInvocationTransportContextInternalV2(
     buildReceiptHash: state.receipt.receiptHash,
     buildOutputTreeHash: state.receipt.outputTree.treeHash,
     source,
+  });
+}
+
+export type CandidateBuildTestCommandContextInternalV2 = Readonly<{
+  admissionScope: "production_host" | "test_fixture";
+  buildReceiptHash: string;
+  receipt: CandidateBuildReceiptV2;
+  buildTopology: Readonly<BuildTopologyV3>;
+  testOutput: CandidateBuildReceiptV2["outputTree"]["files"][number];
+}>;
+
+/**
+ * @internal
+ *
+ * Resolves the generated-test command only through the BuildTopology retained
+ * by this exact authenticated build. The context is pathless and does not
+ * consume either build or runtime authority.
+ */
+export async function acquireCandidateBuildTestCommandContextInternalV2(
+  authority: CandidateBuildAuthorityV2,
+  expectedScope: "production_host" | "test_fixture",
+): Promise<CandidateBuildTestCommandContextInternalV2> {
+  const state = authenticBuildStateV2(authority);
+  if (state.expectedScope !== expectedScope) {
+    return fail(
+      "CANDIDATE_BUILD_V2_AUTHORITY_UNAUTHENTICATED",
+      "Candidate build test-command authority scope does not match",
+    );
+  }
+  const verified = await verifyBuildInternalV2({
+    buildAuthority: authority,
+    expectedReceiptHash: state.receipt.receiptHash,
+  }, expectedScope);
+  const buildTopology = recursivelyFreezeBuildTopologyV3(
+    BuildTopologyV3Schema.parse(structuredClone(state.buildTopology)),
+  );
+  const expectedLocator =
+    buildTopology.authority.profileId
+      === "PROFILE_NODE_CLI_STATELESS_EXACT_V2"
+      ? "dist/cli.setfarm.test.js"
+      : "dist/app.setfarm.test.js";
+  const testOutput = state.receipt.outputTree.files.find(
+    (file) => file.normalizedLocator === expectedLocator,
+  );
+  if (
+    verified.status !== "verified_shadow"
+    || verified.receipt.receiptHash !== state.receipt.receiptHash
+    || buildTopology.commands.test.commandRef !== "CMD_NODE_PRODUCT_TEST_V3"
+    || buildTopology.commands.test.profileId
+      !== state.receipt.outputTree.profileId
+    || buildTopology.commands.test.directArgv[2] !== expectedLocator
+    || !testOutput
+    || testOutput.mode !== "0444"
+    || testOutput.executable
+  ) {
+    return fail(
+      "CANDIDATE_BUILD_V2_OUTPUT_REJECTED",
+      "Candidate build test command no longer joins its exact compiled test member",
+    );
+  }
+  return Object.freeze({
+    admissionScope: state.expectedScope,
+    buildReceiptHash: state.receipt.receiptHash,
+    receipt: state.receipt,
+    buildTopology,
+    testOutput,
   });
 }
