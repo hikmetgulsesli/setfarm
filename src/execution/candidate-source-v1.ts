@@ -23,6 +23,7 @@ import {
 } from "../product-compiler/implementation-closure-v2.js";
 import {
   compileInvocationInputTransportSetV2,
+  encodeInvocationRequestV2,
 } from "../product-compiler/invocation-input-transport-v2.js";
 import {
   inspectScaffoldBaseMaterializationReceiptV2,
@@ -32,10 +33,24 @@ import {
 } from "../product-compiler/node-scaffold-private-materializer-v2.js";
 import {
   ActionIdSchema,
+  EvidenceIdSchema,
+  Sha256Schema,
+  StoryIdSchema,
 } from "../product-compiler/schemas/common-v1.js";
+import {
+  INVOCATION_EVIDENCE_CHECK_CONTRACT_HASH_V2,
+  INVOCATION_EVIDENCE_CHECK_V2_SCHEMA,
+  INVOCATION_EVIDENCE_CHECK_V2_VERSION,
+  createInvocationEvidenceCheckV2,
+  type InvocationEvidenceCheckV2,
+  type InvocationEvidenceCheckHashPayloadV2,
+} from "../product-compiler/schemas/invocation-evidence-check-v2.js";
 import type {
   InvocationInputTransportV2,
 } from "../product-compiler/schemas/invocation-input-transport-v2.js";
+import {
+  ProductSpecV2Schema,
+} from "../product-compiler/schemas/product-spec-v2.js";
 import {
   CANDIDATE_SOURCE_ABSENCE_ENTRY_V1_SCHEMA,
   CANDIDATE_SOURCE_ARTIFACT_TYPE_V1,
@@ -92,6 +107,12 @@ const CompilerInputV1Schema = z.object({
 const VerifierInputV1Schema = CompilerInputV1Schema.extend({
   expectedCandidateSourceEnvelopeHash: z.string().regex(/^[a-f0-9]{64}$/u),
   candidateSourceEnvelope: z.unknown(),
+}).strict();
+
+const InvocationEvidenceIdentityInternalV1Schema = z.object({
+  storyId: StoryIdSchema,
+  sliceHash: Sha256Schema,
+  predicateRef: EvidenceIdSchema,
 }).strict();
 
 function errorMessage(error: unknown): string {
@@ -984,19 +1005,19 @@ export type VerifiedCandidateSourceInvocationTransportInternalV1 = Readonly<{
   transportContract: Readonly<InvocationInputTransportV2>;
 }>;
 
-/**
- * @internal
- *
- * Reproduces the every-action transport set from the ProductSpec and delivery
- * selection retained by the authentic source capability. A launch consumer
- * therefore selects only an action ref; it cannot contribute a self-consistent
- * but unrelated transport contract.
- */
-export async function acquireVerifiedCandidateSourceInvocationTransportInternalV1(
+type FreshVerifiedCandidateSourceSemanticContextInternalV1 = Readonly<{
+  revalidated: Awaited<
+    ReturnType<typeof revalidateVerifiedCandidateSourceAuthorityV1>
+  >;
+  state: VerifiedCandidateSourceAuthorityStateV1;
+  closure: VerifiedClosureV2;
+  retained: Readonly<Record<string, unknown>>;
+  productSpec: Readonly<z.infer<typeof ProductSpecV2Schema>>;
+}>;
+
+async function acquireFreshVerifiedCandidateSourceSemanticContextInternalV1(
   authority: VerifiedCandidateSourceAuthorityV1,
-  actionRefInput: unknown,
-): Promise<VerifiedCandidateSourceInvocationTransportInternalV1> {
-  const actionRef = ActionIdSchema.parse(actionRefInput);
+): Promise<FreshVerifiedCandidateSourceSemanticContextInternalV1> {
   const revalidated = await revalidateVerifiedCandidateSourceAuthorityV1(
     authority,
   );
@@ -1025,10 +1046,41 @@ export async function acquireVerifiedCandidateSourceInvocationTransportInternalV
     || !Object.hasOwn(closureInput, "deliverySelection")
   ) {
     throw new Error(
-      "Candidate source closure does not retain exact transport authority inputs",
+      "Candidate source closure does not retain exact semantic authority inputs",
     );
   }
   const retained = closureInput as Readonly<Record<string, unknown>>;
+  const productSpec = ProductSpecV2Schema.parse(retained.productSpec);
+  if (
+    hashCanonicalJson(productSpec)
+      !== closure.contextAttachments.packetEnvelope.payload.sourceMapAuthority
+        .product.productSpecHash
+    || revalidated.receiptHash !== state.envelope.payload.receiptHash
+    || revalidated.implementationClosureHash !== closure.closure.closureHash
+  ) {
+    throw new Error(
+      "Candidate source semantic authority does not join its closure and packet",
+    );
+  }
+  return Object.freeze({
+    revalidated,
+    state,
+    closure,
+    retained,
+    productSpec: recursivelyFreezeCandidateSourceReceiptV1(productSpec),
+  });
+}
+
+function deriveVerifiedInvocationTransportInternalV1(
+  context: FreshVerifiedCandidateSourceSemanticContextInternalV1,
+  actionRef: string,
+): VerifiedCandidateSourceInvocationTransportInternalV1 {
+  const {
+    revalidated,
+    state,
+    closure,
+    retained,
+  } = context;
   const compiled = compileInvocationInputTransportSetV2({
     productSpec: retained.productSpec,
     deliverySelection: retained.deliverySelection,
@@ -1096,5 +1148,246 @@ export async function acquireVerifiedCandidateSourceInvocationTransportInternalV
     transportContract: recursivelyFreezeCandidateSourceReceiptV1(
       structuredClone(contract),
     ),
+  });
+}
+
+/**
+ * @internal
+ *
+ * Reproduces the every-action transport set from the ProductSpec and delivery
+ * selection retained by the authentic source capability. A launch consumer
+ * therefore selects only an action ref; it cannot contribute a self-consistent
+ * but unrelated transport contract.
+ */
+export async function acquireVerifiedCandidateSourceInvocationTransportInternalV1(
+  authority: VerifiedCandidateSourceAuthorityV1,
+  actionRefInput: unknown,
+): Promise<VerifiedCandidateSourceInvocationTransportInternalV1> {
+  const actionRef = ActionIdSchema.parse(actionRefInput);
+  const context =
+    await acquireFreshVerifiedCandidateSourceSemanticContextInternalV1(
+      authority,
+    );
+  return deriveVerifiedInvocationTransportInternalV1(context, actionRef);
+}
+
+export type VerifiedCandidateSourceInvocationEvidenceInternalV1 = Readonly<{
+  check: Readonly<InvocationEvidenceCheckV2>;
+  transportContract: Readonly<InvocationInputTransportV2>;
+}>;
+
+/**
+ * @internal
+ *
+ * Derives a bounded post-implementation invocation check exclusively from the
+ * fresh CandidateSource closure. The caller chooses only an already-sealed
+ * story/slice/predicate identity. It cannot supply the action owner, input
+ * values, selector, assertion, expected value, SourceMap binding, transport,
+ * or any release/executable claim.
+ */
+export async function acquireVerifiedCandidateSourceInvocationEvidenceInternalV1(
+  authority: VerifiedCandidateSourceAuthorityV1,
+  executionInput: unknown,
+): Promise<VerifiedCandidateSourceInvocationEvidenceInternalV1> {
+  const execution = InvocationEvidenceIdentityInternalV1Schema.parse(
+    executionInput,
+  );
+  const context =
+    await acquireFreshVerifiedCandidateSourceSemanticContextInternalV1(
+      authority,
+    );
+  const sliceMatches = context.closure.contextAttachments.sliceEnvelopes
+    .filter((candidate) =>
+      candidate.payload.story.storyId === execution.storyId
+      && candidate.payload.sliceHash === execution.sliceHash);
+  const leafMatches = context.closure.contextAttachments.storyLeafEnvelopes
+    .filter((candidate) =>
+      candidate.payload.authority.storyId === execution.storyId);
+  if (sliceMatches.length !== 1 || leafMatches.length !== 1) {
+    throw new Error(
+      "Invocation evidence identity does not select one exact sealed story and slice",
+    );
+  }
+  const sliceEnvelope = sliceMatches[0]!;
+  const slice = sliceEnvelope.payload;
+  const leafEnvelope = leafMatches[0]!;
+  const leaf = leafEnvelope.payload;
+  const leafEnvelopeHash = hashCanonicalJson(leafEnvelope);
+  if (
+    slice.storyProof.leaf.reference.leafEnvelopeHash !== leafEnvelopeHash
+    || slice.storyProof.leaf.leafHash !== leaf.leafHash
+    || slice.story.storyHash !== leaf.story.storyHash
+    || slice.packet.packetHash
+      !== context.closure.contextAttachments.packetEnvelope.payload.packetHash
+  ) {
+    throw new Error(
+      "Invocation evidence slice does not join its exact SourceMap leaf and packet",
+    );
+  }
+  const bindings = leaf.evidenceBindings.filter((candidate) =>
+    candidate.evidenceRef === execution.predicateRef);
+  const predicates = context.productSpec.evidencePredicates.filter(
+    (candidate) => candidate.id === execution.predicateRef,
+  );
+  if (bindings.length !== 1 || predicates.length !== 1) {
+    throw new Error(
+      "Invocation evidence predicate does not select one exact SourceMap binding",
+    );
+  }
+  const binding = bindings[0]!;
+  const predicate = predicates[0]!;
+  if (
+    predicate.kind !== "action_invocation"
+    && predicate.kind !== "observable_outcome"
+  ) {
+    throw new Error(
+      "Invocation evidence predicate kind is unsupported by the exact runner",
+    );
+  }
+
+  const actionMatches = predicate.kind === "action_invocation"
+    ? context.productSpec.actions.filter((candidate) =>
+        candidate.id === predicate.subjectRef
+        && candidate.evidenceRefs.includes(predicate.id))
+    : context.productSpec.actions.filter((candidate) =>
+        candidate.evidenceRefs.includes(predicate.id)
+        && candidate.observableEffects.some((effect) =>
+          effect.id === predicate.subjectRef
+          && effect.evidenceRef === predicate.id));
+  if (actionMatches.length !== 1) {
+    throw new Error(
+      "Invocation evidence predicate does not have one exact action owner",
+    );
+  }
+  const action = actionMatches[0]!;
+  if (
+    action.invocationInterface.kind !== "cli_command"
+    && action.invocationInterface.kind !== "http_request"
+  ) {
+    throw new Error(
+      "Invocation evidence action does not use a CLI or HTTP interface",
+    );
+  }
+  const transport = deriveVerifiedInvocationTransportInternalV1(
+    context,
+    action.id,
+  );
+  const encoded = encodeInvocationRequestV2({
+    contract: transport.transportContract,
+    inputValues: action.evidenceScenario.targetInputValues,
+  });
+  if (encoded.kind !== action.invocationInterface.kind) {
+    throw new Error(
+      "Invocation evidence request kind differs from its ProductSpec action",
+    );
+  }
+
+  let check:
+    InvocationEvidenceCheckHashPayloadV2["check"];
+  if (predicate.kind === "action_invocation") {
+    check = {
+      predicateKind: "action_invocation",
+      checkRef: "CHECK_ACTION_INVOCATION",
+      subjectRef: action.id,
+      required: true,
+      assertion: { operator: "passes" },
+    };
+  } else {
+    const effects = action.observableEffects.filter((effect) =>
+      effect.id === predicate.subjectRef
+      && effect.evidenceRef === predicate.id);
+    if (effects.length !== 1) {
+      throw new Error(
+        "Invocation observable predicate does not select one exact effect",
+      );
+    }
+    const effect = effects[0]!;
+    if (
+      effect.selector.kind !== "invocation_output"
+      || effect.assertions.length !== 1
+      || effect.assertions[0]!.phase !== "after"
+      || effect.assertions[0]!.property !== "value"
+      || effect.assertions[0]!.operator !== "equals"
+      || effect.assertions[0]!.expected === undefined
+    ) {
+      throw new Error(
+        "Invocation observable evidence requires one exact after/value/equals assertion",
+      );
+    }
+    check = {
+      predicateKind: "observable_outcome",
+      checkRef: "CHECK_OBSERVABLE_OUTCOME",
+      subjectRef: effect.id,
+      required: true,
+      predicateAssertion: { operator: "passes" },
+      selector: recursivelyFreezeCandidateSourceReceiptV1(
+        structuredClone(effect.selector),
+      ),
+      assertion: recursivelyFreezeCandidateSourceReceiptV1(
+        structuredClone(effect.assertions[0]),
+      ) as Extract<
+        InvocationEvidenceCheckHashPayloadV2["check"],
+        { predicateKind: "observable_outcome" }
+      >["assertion"],
+    };
+  }
+  const packet =
+    context.closure.contextAttachments.packetEnvelope;
+  const checkIdentity: InvocationEvidenceCheckHashPayloadV2 = {
+    schema: INVOCATION_EVIDENCE_CHECK_V2_SCHEMA,
+    version: INVOCATION_EVIDENCE_CHECK_V2_VERSION,
+    contractHash: INVOCATION_EVIDENCE_CHECK_CONTRACT_HASH_V2,
+    authority: {
+      candidateSourceReceiptHash:
+        transport.candidateSourceReceiptHash,
+      semanticRevisionHash: transport.semanticRevisionHash,
+      implementationClosureHash:
+        transport.implementationClosureHash,
+      productSpecHash: transport.transportContract.productSpecHash,
+      productBuildPacketHash: transport.productBuildPacketHash,
+      productBuildPacketEnvelopeHash:
+        transport.productBuildPacketEnvelopeHash,
+      sourceMapLeafHash: leaf.leafHash,
+      sourceMapLeafEnvelopeHash: leafEnvelopeHash,
+      sourceMapEvidenceBinding:
+        recursivelyFreezeCandidateSourceReceiptV1(
+          structuredClone(binding),
+        ),
+      transportSetHash: transport.transportSetHash,
+      transportMembershipHash:
+        transport.transportMembershipHash,
+      transportContractHash:
+        transport.transportContract.contractHash,
+    },
+    execution,
+    operation: {
+      actionRef: action.id,
+      invocationKind: action.invocationInterface.kind,
+      targetInputValues:
+        recursivelyFreezeCandidateSourceReceiptV1(
+          structuredClone(action.evidenceScenario.targetInputValues),
+        ),
+      targetInputValuesHash: hashCanonicalJson({
+        schema: "setfarm.invocation-evidence-target-input-values.v2",
+        actionRef: action.id,
+        inputValues: action.evidenceScenario.targetInputValues,
+      }),
+      encodedRequestHash: encoded.requestHash,
+    },
+    check,
+  };
+  if (
+    packet.payload.sourceMapAuthority.product.productSpecHash
+      !== checkIdentity.authority.productSpecHash
+    || slice.implementation.evidenceBindingCount
+      !== leaf.evidenceBindings.length
+  ) {
+    throw new Error(
+      "Invocation evidence authority does not close over packet and story coverage",
+    );
+  }
+  return Object.freeze({
+    check: createInvocationEvidenceCheckV2(checkIdentity),
+    transportContract: transport.transportContract,
   });
 }

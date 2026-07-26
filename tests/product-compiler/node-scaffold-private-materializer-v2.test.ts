@@ -40,6 +40,10 @@ import {
   DurableEvidenceExecutionResultV2Schema,
 } from "../../src/evidence/schemas/evidence-runner-v2.js";
 import {
+  InvocationEvidenceEvaluationV2Schema,
+  evaluateInvocationEvidenceV2,
+} from "../../src/evidence/invocation-evidence-evaluator-v2.js";
+import {
   CANDIDATE_BUILD_RECEIPT_V2_SCHEMA,
   CandidateBuildReceiptV2Schema,
 } from "../../src/execution/schemas/candidate-build-receipt-v2.js";
@@ -83,6 +87,7 @@ import {
   CandidateRuntimeBundleV2Schema,
 } from "../../src/execution/schemas/candidate-runtime-bundle-v2.js";
 import {
+  acquireVerifiedCandidateSourceInvocationEvidenceInternalV1,
   compileCandidateSourceV1,
   compileCandidateSourceV1ForTest,
   revalidateVerifiedCandidateSourceAuthorityV1,
@@ -347,6 +352,13 @@ import {
   hashImplementationSlicePacketBindingV2,
   hashImplementationSliceV2,
 } from "../../src/product-compiler/schemas/implementation-slice-v2.js";
+import {
+  InvocationEvidenceCheckV2Schema,
+  type InvocationEvidenceCheckV2,
+} from "../../src/product-compiler/schemas/invocation-evidence-check-v2.js";
+import type {
+  InvocationInputTransportV2,
+} from "../../src/product-compiler/schemas/invocation-input-transport-v2.js";
 import {
   IMPLEMENTATION_CLOSURE_CONTRACT_HASH_V2,
   ImplementationClosureEnvelopeV2Schema,
@@ -4795,6 +4807,76 @@ describe("Node scaffold private staged materializer V2", () => {
           revalidatedCandidateSource.receiptHash,
           candidateSource.receiptHash,
         );
+        let invocationEvidence: Readonly<{
+          check: Readonly<InvocationEvidenceCheckV2>;
+          transportContract: Readonly<InvocationInputTransportV2>;
+        }> | null = null;
+        if (caseIndex < 2) {
+          const predicateKind = caseIndex === 0
+            ? "observable_outcome"
+            : "action_invocation";
+          const predicate = fixture.productSpec.evidencePredicates.find(
+            (candidate) => candidate.kind === predicateKind,
+          );
+          assert.ok(predicate);
+          invocationEvidence =
+            await acquireVerifiedCandidateSourceInvocationEvidenceInternalV1(
+              verifiedCandidateSource.authority,
+              {
+                storyId:
+                  compiledSlices[0]!.slice.value.story.storyId,
+                sliceHash:
+                  compiledSlices[0]!.slice.value.sliceHash,
+                predicateRef: predicate.id,
+              },
+            );
+          assert.equal(
+            InvocationEvidenceCheckV2Schema.safeParse(
+              invocationEvidence.check,
+            ).success,
+            true,
+          );
+          assert.equal(
+            invocationEvidence.check.execution.predicateRef,
+            predicate.id,
+          );
+          assert.equal(
+            invocationEvidence.check.authority
+              .candidateSourceReceiptHash,
+            candidateSource.receiptHash,
+          );
+          assert.equal(
+            invocationEvidence.check.authority
+              .implementationClosureHash,
+            compiledClosure.closure.value.closureHash,
+          );
+          assert.equal(
+            invocationEvidence.check.operation.targetInputValuesHash,
+            hashCanonicalJson({
+              schema:
+                "setfarm.invocation-evidence-target-input-values.v2",
+              actionRef:
+                invocationEvidence.check.operation.actionRef,
+              inputValues:
+                invocationEvidence.check.operation.targetInputValues,
+            }),
+          );
+          const serializedInvocationEvidence =
+            JSON.stringify(invocationEvidence);
+          for (const forbidden of [
+            "/Users/",
+            "absolutePath",
+            "callerExpectedValue",
+            "githubComment",
+            "regexClassifier",
+          ]) {
+            assert.equal(
+              serializedInvocationEvidence.includes(forbidden),
+              false,
+              forbidden,
+            );
+          }
+        }
 
         const siblingClosureVerificationInput = {
           ...siblingClosureInput,
@@ -5406,6 +5488,28 @@ describe("Node scaffold private staged materializer V2", () => {
             throw new Error("Expected decoded CLI success");
           }
           assert.deepEqual(decoded.value, { title: "Ship Setfarm" });
+          assert.ok(invocationEvidence);
+          const evaluated = evaluateInvocationEvidenceV2({
+            check: invocationEvidence.check,
+            transportContract:
+              invocationEvidence.transportContract,
+            response: {
+              kind: "cli_process_result",
+              exitCode: 0,
+              stdoutBytes: capture.stdout,
+              stderrBytes: capture.stderr,
+            },
+          });
+          assert.equal(
+            InvocationEvidenceEvaluationV2Schema.safeParse(evaluated)
+              .success,
+            true,
+          );
+          assert.equal(evaluated.status, "passed");
+          assert.equal(
+            evaluated.reasonCode,
+            "INVOCATION_EVIDENCE_OBSERVABLE_OUTCOME_PASSED",
+          );
           capture.stdout.fill(0);
           capture.stderr.fill(0);
           destroyNodeCliLaunchObservationV2(launched.observation);
@@ -5545,6 +5649,29 @@ describe("Node scaffold private staged materializer V2", () => {
             throw new Error("Expected decoded API success");
           }
           assert.deepEqual(decoded.value, { title: "Bind contracts" });
+          if (caseIndex === 1) {
+            assert.ok(invocationEvidence);
+            const evaluated = evaluateInvocationEvidenceV2({
+              check: invocationEvidence.check,
+              transportContract:
+                invocationEvidence.transportContract,
+              response: {
+                kind: "http_response",
+                statusCode: launched.receipt.request.statusCode,
+                bodyBytes: responseBody,
+              },
+            });
+            assert.equal(
+              InvocationEvidenceEvaluationV2Schema.safeParse(evaluated)
+                .success,
+              true,
+            );
+            assert.equal(evaluated.status, "passed");
+            assert.equal(
+              evaluated.reasonCode,
+              "INVOCATION_EVIDENCE_ACTION_INVOCATION_PASSED",
+            );
+          }
           responseBody.fill(0);
           destroyNodeExpressApiLaunchObservationV2(launched.observation);
           assert.throws(
