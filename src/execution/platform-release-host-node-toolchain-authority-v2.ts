@@ -1,16 +1,31 @@
+import { createHash } from "node:crypto";
 import { isProxy } from "node:util/types";
 
 import {
+  executeHostNodeToolchainPlatformReleaseBuildV2,
   executeHostNodeToolchainPlatformReleaseNpmCiV2,
   isProductionHostNodeToolchainAuthorityV2,
   revalidateHostNodeToolchainAuthorityV2,
   type HostNodeToolchainAuthorityV2,
   type HostNodeToolchainNpmCiInputV2,
+  type HostNodeToolchainPlatformReleaseBuildInputV2,
 } from "../product-compiler/host-node-toolchain-authority-v2.js";
 import {
   canonicalJsonStringify,
   hashCanonicalJson,
 } from "../product-compiler/canonical-json.js";
+import {
+  PLATFORM_RELEASE_BUILD_DIRECT_ARGV_TEMPLATE_V2,
+  PlatformReleaseBuildCommandResultV2Schema,
+  type PlatformReleaseBuildCommandResultV2,
+} from "./schemas/platform-release-build-v2.js";
+import {
+  hashPlatformReleaseHostNodeToolchainBuildEvidenceV2,
+  parsePlatformReleaseHostNodeToolchainBuildEvidenceCandidateV2,
+  type PlatformReleaseHostNodeToolchainBuildEvidenceV2 as
+    ParsedPlatformReleaseHostNodeToolchainBuildEvidenceV2,
+} from
+  "./schemas/platform-release-host-node-build-evidence-v2.js";
 import {
   PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_AUTHORITY_REF_V2,
   PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_AUTHORITY_VERSION_V2,
@@ -33,6 +48,7 @@ export type PlatformReleaseHostNodeToolchainAuthorityErrorCodeV2 =
   | "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_RECEIPT_INVALID"
   | "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_HANDLE_UNAUTHENTICATED"
   | "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_HOST_DRIFT"
+  | "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_BUILD_FAILED"
   | "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_INSTALL_FAILED";
 
 export class PlatformReleaseHostNodeToolchainAuthorityErrorV2
@@ -89,6 +105,9 @@ export type PlatformReleaseHostNodeToolchainNpmCiEvidenceV2 =
     stderrBytes: number;
     evidenceHash: string;
   }>;
+
+export type PlatformReleaseHostNodeToolchainBuildEvidenceV2 =
+  ParsedPlatformReleaseHostNodeToolchainBuildEvidenceV2;
 
 const authorityConstructorCapabilityV2 = Object.freeze({});
 const authorityStatesV2 =
@@ -454,5 +473,147 @@ export async function executePlatformReleaseHostNodeToolchainNpmCiInternalV2(
         "setfarm.platform-release-host-node-toolchain-npm-ci-evidence-hash.v2",
       evidence: identity,
     }),
+  });
+}
+
+export async function executePlatformReleaseHostNodeToolchainBuildInternalV2(
+  handle: PlatformReleaseHostNodeToolchainAuthorityV2,
+  input: HostNodeToolchainPlatformReleaseBuildInputV2,
+): Promise<PlatformReleaseHostNodeToolchainBuildEvidenceV2> {
+  const state = authenticState(handle);
+  const before =
+    await revalidatePlatformReleaseHostNodeToolchainAuthorityV2(handle);
+  let observed;
+  try {
+    observed =
+      await executeHostNodeToolchainPlatformReleaseBuildV2(
+        state.bootstrap,
+        input,
+      );
+  } catch (error) {
+    await revalidatePlatformReleaseHostNodeToolchainAuthorityV2(handle);
+    return fail(
+      "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_BUILD_FAILED",
+      "Authenticated platform release build command failed",
+      error,
+    );
+  }
+  const after =
+    await revalidatePlatformReleaseHostNodeToolchainAuthorityV2(handle);
+  let commandResult: PlatformReleaseBuildCommandResultV2;
+  try {
+    const snapshot = JSON.parse(observed.stdout);
+    commandResult =
+      PlatformReleaseBuildCommandResultV2Schema.parse(snapshot);
+  } catch (error) {
+    return fail(
+      "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_BUILD_FAILED",
+      "Platform release build stdout is not one exact command result",
+      error,
+    );
+  }
+  const canonicalStdout =
+    `${canonicalJsonStringify(commandResult)}\n`;
+  const expectedDirectArgvHash = hashCanonicalJson({
+    schema:
+      "setfarm.platform-release-build-direct-argv-hash.v2",
+    directArgv:
+      PLATFORM_RELEASE_BUILD_DIRECT_ARGV_TEMPLATE_V2,
+  });
+  const expectedEnvironmentHash = hashCanonicalJson({
+    schema:
+      "setfarm.platform-release-build-process-environment.v2",
+    variables: Object.entries({
+      CI: "true",
+      LANG: "C.UTF-8",
+      LC_ALL: "C.UTF-8",
+      NO_COLOR: "1",
+      SOURCE_DATE_EPOCH: commandResult.sourceDateEpoch,
+      TZ: "UTC",
+    }).sort(
+      ([left], [right]) => left < right ? -1 : left > right ? 1 : 0,
+    ),
+  });
+  if (
+    before.receiptHash !== after.receiptHash
+    || observed.hostToolchainReceiptHash
+      !== state.bootstrapReceiptHash
+    || observed.probeRef !== "HOST_NODE_PLATFORM_RELEASE_BUILD_V2"
+    || observed.nodeIdentityHash !== before.node.identityHash
+    || canonicalJsonStringify(observed.directArgv)
+      !== canonicalJsonStringify(
+        PLATFORM_RELEASE_BUILD_DIRECT_ARGV_TEMPLATE_V2,
+      )
+    || observed.directArgvHash !== expectedDirectArgvHash
+    || observed.environmentHash !== expectedEnvironmentHash
+    || observed.stdin !== "closed"
+    || observed.timeoutMs !== 120_000
+    || observed.maxStdoutBytes !== 1_048_576
+    || observed.maxStderrBytes !== 1_048_576
+    || observed.shell !== "forbidden"
+    || observed.ambientEnvironment !== "forbidden"
+    || observed.status !== "exited_zero"
+    || observed.exitCode !== 0
+    || observed.signal !== null
+    || observed.stdout !== canonicalStdout
+    || observed.stderr !== ""
+    || commandResult.sourceSha !== observed.sourceSha
+    || commandResult.sourceDateEpoch
+      !== observed.sourceDateEpoch
+    || commandResult.buildToolchainTreeHash
+      !== observed.buildToolchainHash
+  ) {
+    return fail(
+      "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_BUILD_FAILED",
+      "Platform release build evidence does not join the exact host, input and canonical command result",
+    );
+  }
+  const identity = {
+    schema:
+      "setfarm.platform-release-host-node-toolchain-build-evidence.v2" as const,
+    version: "2.0.0" as const,
+    authorityState:
+      "authenticated_process_occurrence_unverified" as const,
+    productionUse:
+      "forbidden_until_source_owned_double_build_and_fresh_release_verification" as const,
+    probeRef: "HOST_NODE_PLATFORM_RELEASE_BUILD_V2" as const,
+    platformHostToolchainReceiptHash: after.receiptHash,
+    nodeIdentityHash: observed.nodeIdentityHash,
+    buildContextRootIdentityHash:
+      observed.buildContextRootIdentityHash,
+    outputStageIdentityHash:
+      observed.outputStageIdentityHash,
+    commandModuleHash: observed.commandModuleHash,
+    environmentHash: observed.environmentHash,
+    directArgv: [...observed.directArgv] as
+      PlatformReleaseHostNodeToolchainBuildEvidenceV2["directArgv"],
+    directArgvHash: observed.directArgvHash,
+    stdin: "closed" as const,
+    inheritAmbientEnvironment: false as const,
+    timeoutMs: observed.timeoutMs,
+    maxStdoutBytes: observed.maxStdoutBytes,
+    maxStderrBytes: observed.maxStderrBytes,
+    shell: "forbidden" as const,
+    termination: "normal_exit" as const,
+    exitCode: 0 as const,
+    signal: null,
+    stdoutContentHash: createHash("sha256")
+      .update(observed.stdout)
+      .digest("hex"),
+    stdoutByteLength:
+      Buffer.byteLength(observed.stdout, "utf8"),
+    stderrContentHash: createHash("sha256")
+      .update(observed.stderr)
+      .digest("hex"),
+    stderrByteLength:
+      Buffer.byteLength(observed.stderr, "utf8"),
+    commandResult,
+  };
+  return parsePlatformReleaseHostNodeToolchainBuildEvidenceCandidateV2({
+    ...identity,
+    evidenceHash:
+      hashPlatformReleaseHostNodeToolchainBuildEvidenceV2(
+        identity,
+      ),
   });
 }

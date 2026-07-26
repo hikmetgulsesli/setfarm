@@ -92,13 +92,19 @@ This is an internal physical operation, not release authority. It:
 - uses the host authority's exact Node executable, never ambient
   `process.execPath`, `PATH`, a shell, or caller environment;
 - bounds stdout/stderr and timeout;
-- revalidates host, source, toolchain, command module, and output root after
-  execution;
+- revalidates the host, private build-context root topology, exact command
+  module, and output-root identity after execution;
 - returns bounded process evidence and the exact stdout bytes, with no
   filesystem locator in its public evidence projection.
 
 The platform wrapper binds that occurrence to the profile-independent platform
 host receipt. CLI/API scaffold profile identity must not enter this evidence.
+This low-level path operation deliberately does not issue source or toolchain
+content authority. Portable Node path APIs cannot close a hostile same-UID
+swap-and-restore attack. The B5B source owner must therefore keep both roots
+private, freshly revalidate the authentic source and toolchain handles before
+and after each call, and join every command-result tree/count/compiler field to
+those pinned receipts before it may issue any compiled-output handle.
 
 ## B5B — Source-Owned Double Build
 

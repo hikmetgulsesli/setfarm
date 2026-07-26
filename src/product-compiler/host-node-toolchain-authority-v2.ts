@@ -188,6 +188,7 @@ export type HostNodeToolchainProbeRefV2 =
   | "HOST_NPM_SCAFFOLD_INSTALL_V2"
   | "HOST_NPM_PLATFORM_RELEASE_BUILD_INSTALL_V2"
   | "HOST_NPM_CANDIDATE_PRODUCTION_INSTALL_V2"
+  | "HOST_NODE_PLATFORM_RELEASE_BUILD_V2"
   | "HOST_NODE_PRODUCT_BUILD_V2";
 
 export type HostNodeToolchainProbeInvocationV2 = Readonly<{
@@ -375,6 +376,59 @@ export type HostNodeToolchainCandidateProductionNpmCiEvidenceV2 = Readonly<{
   stderrHash: string;
   stderrBytes: number;
 }>;
+
+export type HostNodeToolchainPlatformReleaseBuildInputV2 =
+  Readonly<{
+    sourceRoot: string;
+    outputRoot: string;
+    buildToolchainRoot: string;
+    buildToolchainHash: string;
+    sourceSha: string;
+    sourceDateEpoch: string;
+    commandModuleHash: string;
+  }>;
+
+export type HostNodeToolchainPlatformReleaseBuildEvidenceV2 =
+  Readonly<{
+    probeRef: "HOST_NODE_PLATFORM_RELEASE_BUILD_V2";
+    hostToolchainReceiptHash: string;
+    nodeIdentityHash: string;
+    buildContextRootIdentityHash: string;
+    outputStageIdentityHash: string;
+    commandModuleHash: string;
+    buildToolchainHash: string;
+    sourceSha: string;
+    sourceDateEpoch: string;
+    environmentHash: string;
+    directArgv: readonly [
+      "node",
+      "scripts/build-platform-release-v2.mjs",
+      "--source-root",
+      "<VERIFIED_SOURCE_STAGE>",
+      "--output-root",
+      "<EMPTY_OUTPUT_STAGE>",
+      "--build-toolchain-root",
+      "<AUTHENTICATED_BUILD_TOOLCHAIN_CAPSULE>",
+      "--build-toolchain-hash",
+      "<AUTHENTICATED_BUILD_TOOLCHAIN_TREE_HASH>",
+      "--source-sha",
+      "<ADMITTED_SOURCE_SHA>",
+      "--source-date-epoch",
+      "<ADMITTED_SOURCE_EPOCH>",
+    ];
+    directArgvHash: string;
+    stdin: "closed";
+    timeoutMs: 120_000;
+    maxStdoutBytes: 1_048_576;
+    maxStderrBytes: 1_048_576;
+    shell: "forbidden";
+    ambientEnvironment: "forbidden";
+    status: "exited_zero";
+    exitCode: 0;
+    signal: null;
+    stdout: string;
+    stderr: string;
+  }>;
 
 export type HostNodeToolchainBuildCompilerTargetV2 = Readonly<{
   executableRef: "TOOL_NODE_TYPESCRIPT_TSC_V2";
@@ -3314,6 +3368,437 @@ export async function executeHostNodeToolchainCandidateProductionNpmCiV2(
     stdoutBytes: Buffer.byteLength(result.stdout, "utf8"),
     stderrHash: sha256(result.stderr),
     stderrBytes: Buffer.byteLength(result.stderr, "utf8"),
+  });
+}
+
+type PlatformReleaseBuildScopeCaptureV2 = Readonly<{
+  buildContextRootIdentityHash: string;
+  outputStageIdentityHash: string;
+}>;
+
+function normalizedPlatformReleaseBuildPathV2(
+  value: unknown,
+): value is string {
+  return typeof value === "string"
+    && Buffer.byteLength(value, "utf8") >= 1
+    && Buffer.byteLength(value, "utf8") <= 4_096
+    && path.isAbsolute(value)
+    && path.normalize(value) === value
+    && value !== path.parse(value).root;
+}
+
+function capturePlatformReleaseBuildScopeV2(
+  input: HostNodeToolchainPlatformReleaseBuildInputV2,
+  phase: "before" | "after" | "failure",
+): PlatformReleaseBuildScopeCaptureV2 {
+  const owner = processOwnerV2();
+  try {
+    const contextRoot = path.dirname(input.sourceRoot);
+    const outputParent = path.dirname(input.outputRoot);
+    const commandPath = path.join(
+      input.sourceRoot,
+      "scripts",
+      "build-platform-release-v2.mjs",
+    );
+    const context = lstatSync(contextRoot);
+    const source = lstatSync(input.sourceRoot);
+    const toolchain = lstatSync(input.buildToolchainRoot);
+    const outputParentStat = lstatSync(outputParent);
+    const output = lstatSync(input.outputRoot);
+    const contextNames = readdirSync(contextRoot).sort();
+    const outputNames = readdirSync(input.outputRoot).sort();
+    const expectedOutputNames =
+      phase === "before" ? [] : phase === "after" ? ["payload"] : null;
+    const roots = [
+      [contextRoot, context],
+      [input.sourceRoot, source],
+      [input.buildToolchainRoot, toolchain],
+      [outputParent, outputParentStat],
+      [input.outputRoot, output],
+    ] as const;
+    if (
+      path.basename(input.sourceRoot) !== "source"
+      || path.basename(input.buildToolchainRoot) !== "node_modules"
+      || path.dirname(input.buildToolchainRoot) !== contextRoot
+      || canonicalJsonKeyList(contextNames)
+        !== canonicalJsonKeyList(["node_modules", "source"])
+      || roots.some(([rootPath, stat]) =>
+        stat.isSymbolicLink()
+        || !stat.isDirectory()
+        || realpathSync(rootPath) !== rootPath
+        || stat.uid !== owner.uid
+        || stat.gid !== owner.gid)
+      || modeBits(context) !== 0o700
+      || modeBits(source) !== 0o555
+      || modeBits(toolchain) !== 0o555
+      || modeBits(outputParentStat) !== 0o700
+      || modeBits(output) !== 0o700
+      || (
+        source.dev === toolchain.dev
+        && source.ino === toolchain.ino
+      )
+      || (
+        output.dev === source.dev
+        && output.ino === source.ino
+      )
+      || (
+        output.dev === toolchain.dev
+        && output.ino === toolchain.ino
+      )
+      || input.outputRoot === contextRoot
+      || input.outputRoot.startsWith(`${contextRoot}${path.sep}`)
+      || contextRoot.startsWith(`${input.outputRoot}${path.sep}`)
+      || (
+        expectedOutputNames !== null
+        && canonicalJsonKeyList(outputNames)
+          !== canonicalJsonKeyList(expectedOutputNames)
+      )
+    ) {
+      return fail(
+        "HOST_NODE_TOOLCHAIN_V2_BUILD_SCOPE_INVALID",
+        "Platform release build scope is not one exact source, toolchain and independent output topology",
+      );
+    }
+    if (phase === "after") {
+      const payload = path.join(input.outputRoot, "payload");
+      const payloadStat = lstatSync(payload);
+      if (
+        payloadStat.isSymbolicLink()
+        || !payloadStat.isDirectory()
+        || realpathSync(payload) !== payload
+        || modeBits(payloadStat) !== 0o700
+        || payloadStat.uid !== owner.uid
+        || payloadStat.gid !== owner.gid
+        || (
+          payloadStat.dev === output.dev
+          && payloadStat.ino === output.ino
+        )
+      ) {
+        return fail(
+          "HOST_NODE_TOOLCHAIN_V2_BUILD_SCOPE_INVALID",
+          "Successful platform release build lacks one real payload root",
+        );
+      }
+    }
+    const command = readExactFile({
+      absolutePath: commandPath,
+      relativePath: "scripts/build-platform-release-v2.mjs",
+      allowedModes: [0o444, 0o555],
+      maxBytes: 4 * 1024 * 1024,
+      errorCode: "HOST_NODE_TOOLCHAIN_V2_BUILD_SCOPE_INVALID",
+    });
+    if (command.contentHash !== input.commandModuleHash) {
+      return fail(
+        "HOST_NODE_TOOLCHAIN_V2_BUILD_SCOPE_INVALID",
+        "Platform release build module bytes differ from the exact command identity",
+      );
+    }
+    const outputIdentity = {
+      device: output.dev,
+      inode: output.ino,
+      mode: output.mode,
+      ownerUid: output.uid,
+      ownerGid: output.gid,
+    };
+    return Object.freeze({
+      buildContextRootIdentityHash: hashCanonicalJson({
+        schema:
+          "setfarm.host-node-platform-release-build-context-identity.v2",
+        context: fingerprint(context),
+        source: fingerprint(source),
+        toolchain: fingerprint(toolchain),
+        contextNames,
+        command: {
+          contentHash: command.contentHash,
+          fingerprint: command.fingerprint,
+        },
+      }),
+      outputStageIdentityHash: hashCanonicalJson({
+        schema:
+          "setfarm.host-node-platform-release-output-stage-identity.v2",
+        output: outputIdentity,
+      }),
+    });
+  } catch (error) {
+    if (error instanceof HostNodeToolchainAuthorityErrorV2) throw error;
+    return fail(
+      "HOST_NODE_TOOLCHAIN_V2_BUILD_SCOPE_INVALID",
+      "Platform release build scope could not be captured",
+      error,
+    );
+  }
+}
+
+function parsePlatformReleaseBuildInputV2(
+  input: unknown,
+): HostNodeToolchainPlatformReleaseBuildInputV2 {
+  const keys = [
+    "buildToolchainHash",
+    "buildToolchainRoot",
+    "commandModuleHash",
+    "outputRoot",
+    "sourceDateEpoch",
+    "sourceRoot",
+    "sourceSha",
+  ];
+  if (!isPlainRecord(input) || !exactRecordKeys(input, keys)) {
+    return fail(
+      "HOST_NODE_TOOLCHAIN_V2_BUILD_SCOPE_INVALID",
+      "Platform release build input must contain exact bounded source, toolchain, output and identity fields",
+    );
+  }
+  const descriptors = Object.getOwnPropertyDescriptors(input);
+  if (keys.some((key) => {
+    const descriptor = descriptors[key];
+    return descriptor === undefined
+      || !("value" in descriptor)
+      || descriptor.enumerable !== true;
+  })) {
+    return fail(
+      "HOST_NODE_TOOLCHAIN_V2_BUILD_SCOPE_INVALID",
+      "Platform release build input fields must be enumerable data properties",
+    );
+  }
+  const value = Object.fromEntries(
+    keys.map((key) => [key, descriptors[key]?.value]),
+  ) as Record<string, unknown>;
+  if (
+    !normalizedPlatformReleaseBuildPathV2(value.sourceRoot)
+    || !normalizedPlatformReleaseBuildPathV2(value.outputRoot)
+    || !normalizedPlatformReleaseBuildPathV2(
+      value.buildToolchainRoot,
+    )
+    || typeof value.buildToolchainHash !== "string"
+    || !/^[a-f0-9]{64}$/u.test(value.buildToolchainHash)
+    || typeof value.commandModuleHash !== "string"
+    || !/^[a-f0-9]{64}$/u.test(value.commandModuleHash)
+    || typeof value.sourceSha !== "string"
+    || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u.test(value.sourceSha)
+    || typeof value.sourceDateEpoch !== "string"
+    || value.sourceDateEpoch.length > 20
+    || !/^(?:0|[1-9][0-9]*)$/u.test(value.sourceDateEpoch)
+  ) {
+    return fail(
+      "HOST_NODE_TOOLCHAIN_V2_BUILD_SCOPE_INVALID",
+      "Platform release build input must contain exact bounded source, toolchain, output and identity fields",
+    );
+  }
+  return Object.freeze({
+    sourceRoot: value.sourceRoot,
+    outputRoot: value.outputRoot,
+    buildToolchainRoot: value.buildToolchainRoot,
+    buildToolchainHash: value.buildToolchainHash,
+    sourceSha: value.sourceSha,
+    sourceDateEpoch: value.sourceDateEpoch,
+    commandModuleHash: value.commandModuleHash,
+  });
+}
+
+/**
+ * Executes the only admitted Setfarm platform release build command. The
+ * caller contributes physical capability roots and expected identities, while
+ * this authority owns Node, argv, environment, timeout, and process bounds.
+ */
+export async function executeHostNodeToolchainPlatformReleaseBuildV2(
+  handle: HostNodeToolchainAuthorityV2,
+  candidate: unknown,
+): Promise<HostNodeToolchainPlatformReleaseBuildEvidenceV2> {
+  const state = authenticState(handle);
+  const input = parsePlatformReleaseBuildInputV2(candidate);
+  const hostBefore =
+    await revalidateHostNodeToolchainAuthorityV2(handle);
+  const scopeBefore =
+    capturePlatformReleaseBuildScopeV2(input, "before");
+  const environment = Object.freeze({
+    CI: "true",
+    LANG: "C.UTF-8",
+    LC_ALL: "C.UTF-8",
+    NO_COLOR: "1",
+    SOURCE_DATE_EPOCH: input.sourceDateEpoch,
+    TZ: "UTC",
+  });
+  const environmentHash = hashCanonicalJson({
+    schema:
+      "setfarm.platform-release-build-process-environment.v2",
+    variables: Object.entries(environment).sort(
+      ([left], [right]) => left < right ? -1 : left > right ? 1 : 0,
+    ),
+  });
+  const directArgv = Object.freeze([
+    "node",
+    "scripts/build-platform-release-v2.mjs",
+    "--source-root",
+    "<VERIFIED_SOURCE_STAGE>",
+    "--output-root",
+    "<EMPTY_OUTPUT_STAGE>",
+    "--build-toolchain-root",
+    "<AUTHENTICATED_BUILD_TOOLCHAIN_CAPSULE>",
+    "--build-toolchain-hash",
+    "<AUTHENTICATED_BUILD_TOOLCHAIN_TREE_HASH>",
+    "--source-sha",
+    "<ADMITTED_SOURCE_SHA>",
+    "--source-date-epoch",
+    "<ADMITTED_SOURCE_EPOCH>",
+  ] as const);
+  const commandPath = path.join(
+    input.sourceRoot,
+    "scripts",
+    "build-platform-release-v2.mjs",
+  );
+  const invocation: HostNodeToolchainProbeInvocationV2 =
+    Object.freeze({
+      probeRef: "HOST_NODE_PLATFORM_RELEASE_BUILD_V2",
+      executable: state.captured.root.nodePath,
+      argv: Object.freeze([
+        commandPath,
+        "--source-root",
+        input.sourceRoot,
+        "--output-root",
+        input.outputRoot,
+        "--build-toolchain-root",
+        input.buildToolchainRoot,
+        "--build-toolchain-hash",
+        input.buildToolchainHash,
+        "--source-sha",
+        input.sourceSha,
+        "--source-date-epoch",
+        input.sourceDateEpoch,
+      ]),
+      cwd: input.sourceRoot,
+      env: environment,
+      shell: false,
+      timeoutMs: CANDIDATE_BUILD_TIMEOUT_MS_V2,
+      maxStdoutBytes: CANDIDATE_BUILD_MAX_OUTPUT_BYTES_V2,
+      maxStderrBytes: CANDIDATE_BUILD_MAX_OUTPUT_BYTES_V2,
+    });
+  let result: HostNodeToolchainProbeResultV2;
+  try {
+    result = await state.probeAdapter(invocation);
+  } catch (error) {
+    const hostAfterFailure =
+      await revalidateHostNodeToolchainAuthorityV2(handle);
+    const scopeAfterFailure =
+      capturePlatformReleaseBuildScopeV2(input, "failure");
+    if (hostAfterFailure.receiptHash !== hostBefore.receiptHash) {
+      return fail(
+        "HOST_NODE_TOOLCHAIN_V2_HOST_DRIFT",
+        "Host Node authority changed while the platform release build failed to spawn",
+      );
+    }
+    if (
+      scopeAfterFailure.buildContextRootIdentityHash
+        !== scopeBefore.buildContextRootIdentityHash
+      || scopeAfterFailure.outputStageIdentityHash
+        !== scopeBefore.outputStageIdentityHash
+    ) {
+      return fail(
+        "HOST_NODE_TOOLCHAIN_V2_BUILD_SCOPE_INVALID",
+        "Platform release build-context root topology, command or output identity changed while spawn failed",
+      );
+    }
+    return fail(
+      "HOST_NODE_TOOLCHAIN_V2_BUILD_SPAWN_FAILED",
+      "Exact platform release build adapter failed",
+      error,
+    );
+  }
+  const succeeded = result.status === "exited"
+    && result.exitCode === 0
+    && result.signal === null
+    && Buffer.byteLength(result.stdout, "utf8")
+      <= CANDIDATE_BUILD_MAX_OUTPUT_BYTES_V2
+    && Buffer.byteLength(result.stderr, "utf8")
+      <= CANDIDATE_BUILD_MAX_OUTPUT_BYTES_V2;
+  const [hostAfter, scopeAfter] = await Promise.all([
+    revalidateHostNodeToolchainAuthorityV2(handle),
+    Promise.resolve(capturePlatformReleaseBuildScopeV2(
+      input,
+      succeeded ? "after" : "failure",
+    )),
+  ]);
+  if (hostAfter.receiptHash !== hostBefore.receiptHash) {
+    return fail(
+      "HOST_NODE_TOOLCHAIN_V2_HOST_DRIFT",
+      "Host Node authority changed during the platform release build",
+    );
+  }
+  if (
+    scopeAfter.buildContextRootIdentityHash
+      !== scopeBefore.buildContextRootIdentityHash
+    || scopeAfter.outputStageIdentityHash
+      !== scopeBefore.outputStageIdentityHash
+  ) {
+    return fail(
+      "HOST_NODE_TOOLCHAIN_V2_BUILD_SCOPE_INVALID",
+      "Platform release build-context root topology, command or output identity changed during execution",
+    );
+  }
+  if (
+    result.status === "output_limit_exceeded"
+    || Buffer.byteLength(result.stdout, "utf8")
+      > CANDIDATE_BUILD_MAX_OUTPUT_BYTES_V2
+    || Buffer.byteLength(result.stderr, "utf8")
+      > CANDIDATE_BUILD_MAX_OUTPUT_BYTES_V2
+  ) {
+    return fail(
+      "HOST_NODE_TOOLCHAIN_V2_BUILD_OUTPUT_LIMIT",
+      "Exact platform release build exceeded its output bound",
+    );
+  }
+  if (result.status === "timed_out") {
+    return fail(
+      "HOST_NODE_TOOLCHAIN_V2_BUILD_TIMEOUT",
+      "Exact platform release build exceeded its timeout",
+    );
+  }
+  if (result.status === "spawn_failed") {
+    return fail(
+      "HOST_NODE_TOOLCHAIN_V2_BUILD_SPAWN_FAILED",
+      "Exact platform release build could not be spawned",
+    );
+  }
+  if (result.signal !== null) {
+    return fail(
+      "HOST_NODE_TOOLCHAIN_V2_BUILD_SIGNALLED",
+      "Exact platform release build terminated by signal",
+    );
+  }
+  if (result.exitCode !== 0) {
+    return fail(
+      "HOST_NODE_TOOLCHAIN_V2_BUILD_NONZERO",
+      "Exact platform release build exited nonzero",
+    );
+  }
+  return deepFreezeJson({
+    probeRef: "HOST_NODE_PLATFORM_RELEASE_BUILD_V2" as const,
+    hostToolchainReceiptHash: hostBefore.receiptHash,
+    nodeIdentityHash: hostBefore.node.identityHash,
+    buildContextRootIdentityHash:
+      scopeBefore.buildContextRootIdentityHash,
+    outputStageIdentityHash:
+      scopeBefore.outputStageIdentityHash,
+    commandModuleHash: input.commandModuleHash,
+    buildToolchainHash: input.buildToolchainHash,
+    sourceSha: input.sourceSha,
+    sourceDateEpoch: input.sourceDateEpoch,
+    environmentHash,
+    directArgv,
+    directArgvHash: hashCanonicalJson({
+      schema:
+        "setfarm.platform-release-build-direct-argv-hash.v2",
+      directArgv,
+    }),
+    stdin: "closed" as const,
+    timeoutMs: CANDIDATE_BUILD_TIMEOUT_MS_V2,
+    maxStdoutBytes: CANDIDATE_BUILD_MAX_OUTPUT_BYTES_V2,
+    maxStderrBytes: CANDIDATE_BUILD_MAX_OUTPUT_BYTES_V2,
+    shell: "forbidden" as const,
+    ambientEnvironment: "forbidden" as const,
+    status: "exited_zero" as const,
+    exitCode: 0 as const,
+    signal: null,
+    stdout: result.stdout,
+    stderr: result.stderr,
   });
 }
 

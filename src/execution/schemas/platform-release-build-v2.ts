@@ -46,6 +46,23 @@ export const EXACT_LEGACY_STITCH_CONVERTER_REF_V2_SCHEMA =
   "setfarm.exact-legacy-stitch-converter-ref.v2" as const;
 export const PLATFORM_RELEASE_BUILD_COMMAND_RESULT_V2_SCHEMA =
   "setfarm.build-platform-release-command-result.v2" as const;
+export const PLATFORM_RELEASE_BUILD_DIRECT_ARGV_TEMPLATE_V2 =
+  Object.freeze([
+    "node",
+    "scripts/build-platform-release-v2.mjs",
+    "--source-root",
+    "<VERIFIED_SOURCE_STAGE>",
+    "--output-root",
+    "<EMPTY_OUTPUT_STAGE>",
+    "--build-toolchain-root",
+    "<AUTHENTICATED_BUILD_TOOLCHAIN_CAPSULE>",
+    "--build-toolchain-hash",
+    "<AUTHENTICATED_BUILD_TOOLCHAIN_TREE_HASH>",
+    "--source-sha",
+    "<ADMITTED_SOURCE_SHA>",
+    "--source-date-epoch",
+    "<ADMITTED_SOURCE_EPOCH>",
+  ] as const);
 export const PLATFORM_RELEASE_BUILD_TOOLCHAIN_TREE_BINDING_V2_SCHEMA =
   "setfarm.platform-release-build-toolchain-tree-binding.v2" as const;
 export const PLATFORM_RELEASE_BUILD_TOOLCHAIN_PHYSICAL_IDENTITY_V2_SCHEMA =
