@@ -3,9 +3,13 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { execFileSync } from "node:child_process";
-import { setupRepoModule } from "../../dist/installer/steps/04-setup-repo/module.js";
-import type { ParsedOutput } from "../../dist/installer/steps/types.js";
+import { execFileSync, spawnSync } from "node:child_process";
+import { setupRepoModule } from "../../src/installer/steps/04-setup-repo/module.js";
+import type { ParsedOutput } from "../../src/installer/steps/types.js";
+import {
+  preClaim as preClaimSource,
+  SetupRepoEnglishTextRequiredError,
+} from "../../src/installer/steps/04-setup-repo/preclaim.js";
 
 describe("04-setup-repo step module", () => {
   it("module metadata is correct", () => {
@@ -74,6 +78,13 @@ describe("04-setup-repo step module", () => {
   it("preClaim supports auto-completion instead of setup-repo agent handoff", () => {
     const preclaim = fs.readFileSync("src/installer/steps/04-setup-repo/preclaim.ts", "utf-8");
     assert.ok(preclaim.includes("SETFARM_DISABLE_AUTO_SETUP_REPO"), "auto-complete should have an opt-out env guard");
+    const admission = preclaim.indexOf("loadCompilerEnglishAdmissionLedgerAuthorityV1(getSql()");
+    const storyAdmission = preclaim.indexOf("loadCompilerStoryEnglishAdmissionLedgerAuthorityV1(getSql()");
+    const optOut = preclaim.indexOf('if (process.env.SETFARM_DISABLE_AUTO_SETUP_REPO === "1") return;');
+    assert.ok(
+      admission > 0 && storyAdmission > admission && optOut > storyAdmission,
+      "auto-work opt-out must not bypass durable PLAN or STORIES English admission",
+    );
     assert.ok(preclaim.includes("AUTO-COMPLETED setup-repo"), "setup-repo should complete in preClaim when the repo is ready");
     assert.ok(
       preclaim.includes("completeStep(step.id, output, ctx.claimEnvelope)"),
@@ -85,7 +96,7 @@ describe("04-setup-repo step module", () => {
   });
 
   it("onComplete canonicalizes setup-repo branch to the run id", async () => {
-    const { onComplete } = await import("../../dist/installer/steps/04-setup-repo/guards.js");
+    const { onComplete } = await import("../../src/installer/steps/04-setup-repo/guards.js");
     const context: Record<string, string> = { branch: "feature-long-plan-branch", BRANCH: "feature-long-plan-branch" };
     await onComplete({
       runId: "run-123",
@@ -129,10 +140,15 @@ describe("04-setup-repo step module", () => {
     assert.ok(script.includes('"lucide-react"'), "frontend scaffolds should install lucide-react for SVG icons");
     assert.equal(script.includes("Material+Symbols+Outlined"), false, "scaffold must not load Material Symbols icon fonts");
     assert.ok(script.includes("<title>$HTML_TITLE</title>"), "HTML title should come from sanitized display title");
-    assert.ok(script.includes("UI_LANGUAGE=\"${7:-English}\""), "setup-repo should accept UI_LANGUAGE as a scaffold input");
-    assert.ok(script.includes("html_lang_for_ui_language()"), "setup-repo should derive html lang from UI_LANGUAGE");
-    assert.ok(script.includes('<html lang="$HTML_LANG">'), "frontend scaffolds should use derived html lang");
-    assert.equal(script.includes('<html lang="tr">'), false, "Vite scaffold must not hard-code a locale-specific html lang");
+    assert.ok(script.includes("UI_LANGUAGE=\"${7:-English}\""), "setup-repo should preserve its UI_LANGUAGE argument");
+    assert.ok(script.includes("canonicalize_ui_language()"), "setup-repo should validate compatible English aliases");
+    const languageValidation = script.indexOf('UI_LANGUAGE=$(canonicalize_ui_language "$UI_LANGUAGE")');
+    const firstRepoMutation = script.indexOf('mkdir -p "$REPO"');
+    assert.ok(languageValidation >= 0, "language validation must be present");
+    assert.ok(firstRepoMutation > languageValidation, "language validation must precede repo mutation");
+    assert.ok(script.includes('<html lang="en">'), "frontend scaffolds should use the canonical English language tag");
+    assert.equal(script.includes("turkish|tr|tr-tr"), false, "setup-repo must not retain a non-English language branch");
+    assert.equal(script.includes("$HTML_LANG"), false, "frontend scaffolds must not derive a mutable language tag");
     assert.ok(script.includes('"name": "$PACKAGE_NAME"'), "package name should come from project slug");
     assert.ok(script.includes('data-setfarm-root="baseline"'), "App baseline should be machine-detectable");
     assert.equal(script.includes('return <main data-setfarm-root="baseline"'), false, "generated-screen scaffolds must start from a neutral app root");
@@ -164,7 +180,7 @@ describe("04-setup-repo step module", () => {
         "",
         "static-html",
         "Static Canary",
-        "English",
+        "en-US",
       ], {
         cwd: process.cwd(),
         env: {
@@ -181,7 +197,9 @@ describe("04-setup-repo step module", () => {
       assert.equal(fs.existsSync(path.join(repo, "assets/css/styles.css")), true);
       assert.equal(fs.existsSync(path.join(repo, "assets/js/app.js")), true);
       assert.equal(fs.existsSync(path.join(repo, "package.json")), false);
-      assert.match(fs.readFileSync(path.join(repo, "index.html"), "utf-8"), /data-setfarm-root="baseline"/);
+      const html = fs.readFileSync(path.join(repo, "index.html"), "utf-8");
+      assert.match(html, /<html lang="en">/);
+      assert.match(html, /data-setfarm-root="baseline"/);
       const css = fs.readFileSync(path.join(repo, "assets/css/styles.css"), "utf-8");
       assert.match(css, /@import "\.\.\/\.\.\/stitch\/design-tokens\.css"/);
       assert.match(css, /font-family: var\(--font-family-base/);
@@ -191,11 +209,224 @@ describe("04-setup-repo step module", () => {
     }
   });
 
-  it("preClaim passes project display name into setup-repo scaffold", () => {
+  it("rejects non-English setup before mutating absent or existing targets", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-setup-language-"));
+    try {
+      const absentRepo = path.join(tmp, "absent");
+      const absentResult = spawnSync("bash", [
+        "scripts/setup-repo.sh",
+        absentRepo,
+        "main",
+        "",
+        "",
+        "static-html",
+        "Language Canary",
+        "Klingon",
+      ], { cwd: process.cwd(), encoding: "utf-8", timeout: 5_000 });
+
+      assert.equal(absentResult.status, 64);
+      assert.equal(absentResult.stdout, "");
+      assert.equal(absentResult.stderr, "SETUP_REPO_UI_LANGUAGE_MUST_BE_ENGLISH\n");
+      assert.equal(fs.existsSync(absentRepo), false);
+
+      const existingRepo = path.join(tmp, "existing");
+      fs.mkdirSync(existingRepo);
+      const marker = path.join(existingRepo, "marker.txt");
+      fs.writeFileSync(marker, "unchanged\n");
+      const entriesBefore = fs.readdirSync(existingRepo);
+      const markerBefore = fs.readFileSync(marker);
+      const existingResult = spawnSync("bash", [
+        "scripts/setup-repo.sh",
+        existingRepo,
+        "main",
+        "",
+        "",
+        "static-html",
+        "Language Canary",
+        "Spanish",
+      ], { cwd: process.cwd(), encoding: "utf-8", timeout: 5_000 });
+
+      assert.equal(existingResult.status, 64);
+      assert.equal(existingResult.stdout, "");
+      assert.equal(existingResult.stderr, "SETUP_REPO_UI_LANGUAGE_MUST_BE_ENGLISH\n");
+      assert.deepEqual(fs.readdirSync(existingRepo), entriesBefore);
+      assert.deepEqual(fs.readFileSync(marker), markerBefore);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects contaminated scaffold titles before shell target mutation", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-setup-title-"));
+    const markerBypass = `English title ${String.fromCodePoint(0x0416)}`;
+    try {
+      const absentRepo = path.join(tmp, "absent");
+      const absentResult = spawnSync("bash", [
+        "scripts/setup-repo.sh",
+        absentRepo,
+        "main",
+        "",
+        "",
+        "static-html",
+        markerBypass,
+        "English",
+      ], { cwd: process.cwd(), encoding: "utf-8", timeout: 5_000 });
+
+      assert.equal(absentResult.status, 64);
+      assert.equal(absentResult.stdout, "");
+      assert.equal(absentResult.stderr, "SETUP_REPO_ENGLISH_TEXT_REQUIRED: PROJECT_DISPLAY_NAME: English single-line admission failed\n");
+      assert.equal(absentResult.stderr.includes(markerBypass), false);
+      assert.equal(fs.existsSync(absentRepo), false);
+
+      const existingRepo = path.join(tmp, "existing");
+      fs.mkdirSync(existingRepo);
+      const marker = path.join(existingRepo, "marker.txt");
+      fs.writeFileSync(marker, "unchanged\n");
+      const entriesBefore = fs.readdirSync(existingRepo);
+      const markerBefore = fs.readFileSync(marker);
+      const existingResult = spawnSync("bash", [
+        "scripts/setup-repo.sh",
+        existingRepo,
+        "main",
+        "",
+        "",
+        "static-html",
+        "English title",
+        "English",
+      ], {
+        cwd: process.cwd(),
+        encoding: "utf-8",
+        timeout: 5_000,
+        env: { ...process.env, SETFARM_APP_TITLE: markerBypass },
+      });
+
+      assert.equal(existingResult.status, 64);
+      assert.equal(existingResult.stdout, "");
+      assert.equal(existingResult.stderr, "SETUP_REPO_ENGLISH_TEXT_REQUIRED: SETFARM_APP_TITLE: English single-line admission failed\n");
+      assert.deepEqual(fs.readdirSync(existingRepo), entriesBefore);
+      assert.deepEqual(fs.readFileSync(marker), markerBefore);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects ASCII localized and multiline titles before mutation while accepting English typography", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-setup-title-policy-"));
+    try {
+      const localizedTitle = String.fromCharCode(
+        71, 117, 97, 114, 100, 97, 114, 32, 99, 97, 109, 98, 105, 111, 115,
+      );
+      for (const [suffix, title] of [["localized", localizedTitle], ["multiline", "Line one\nLine two"]]) {
+        const target = path.join(tmp, suffix);
+        const result = spawnSync("bash", [
+          "scripts/setup-repo.sh",
+          target,
+          "main",
+          "",
+          "",
+          "static-html",
+          title,
+          "English",
+        ], { cwd: process.cwd(), encoding: "utf-8", timeout: 5_000 });
+        assert.equal(result.status, 64, suffix);
+        assert.equal(fs.existsSync(target), false, suffix);
+      }
+
+      const acceptedRepo = path.join(tmp, "accepted");
+      fs.mkdirSync(acceptedRepo);
+      execFileSync("git", ["init", "-b", "main"], { cwd: acceptedRepo, stdio: "pipe" });
+      execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: acceptedRepo, stdio: "pipe" });
+      execFileSync("git", ["config", "user.name", "Setfarm Test"], { cwd: acceptedRepo, stdio: "pipe" });
+      execFileSync("git", ["remote", "add", "origin", "https://example.com/setfarm/typography-test.git"], {
+        cwd: acceptedRepo,
+        stdio: "pipe",
+      });
+      const typographyTitle = `Planner${String.fromCodePoint(0x2019)}s Desk`;
+      const accepted = spawnSync("bash", [
+        "scripts/setup-repo.sh",
+        acceptedRepo,
+        "main",
+        "",
+        "",
+        "static-html",
+        typographyTitle,
+        "English",
+      ], { cwd: process.cwd(), encoding: "utf-8", timeout: 30_000 });
+      assert.equal(accepted.status, 0, accepted.stderr);
+      assert.match(fs.readFileSync(path.join(acceptedRepo, "index.html"), "utf-8"), /Planner/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("preClaim rejects contaminated persisted titles before context or target mutation", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-setup-preclaim-title-"));
+    const markerBypass = `English title ${String.fromCodePoint(0x03a9)}`;
+    try {
+      const absentRepo = path.join(tmp, "absent");
+      const absentContext = { repo: absentRepo, project_display_name: markerBypass };
+      await assert.rejects(
+        preClaimSource({
+          runId: "run-english-absent",
+          stepId: "setup-repo",
+          task: "Build a preference tool",
+          retryCount: 0,
+          context: absentContext,
+        }),
+        (error) => {
+          assert.ok(error instanceof SetupRepoEnglishTextRequiredError);
+          assert.equal(error.code, "SETUP_REPO_ENGLISH_TEXT_REQUIRED");
+          assert.equal(error.field, "project_display_name");
+          assert.equal(error.message.includes(markerBypass), false);
+          return true;
+        },
+      );
+      assert.deepEqual(absentContext, { repo: absentRepo, project_display_name: markerBypass });
+      assert.equal(fs.existsSync(absentRepo), false);
+
+      const existingRepo = path.join(tmp, "existing");
+      fs.mkdirSync(existingRepo);
+      const marker = path.join(existingRepo, "marker.txt");
+      fs.writeFileSync(marker, "unchanged\n");
+      const entriesBefore = fs.readdirSync(existingRepo);
+      const markerBefore = fs.readFileSync(marker);
+      const existingContext = {
+        repo: existingRepo,
+        project_display_name: "English title",
+        app_title: markerBypass,
+      };
+      await assert.rejects(
+        preClaimSource({
+          runId: "run-english-existing",
+          stepId: "setup-repo",
+          task: "Build a preference tool",
+          retryCount: 0,
+          context: existingContext,
+        }),
+        (error) => {
+          assert.ok(error instanceof SetupRepoEnglishTextRequiredError);
+          assert.equal(error.field, "app_title");
+          return true;
+        },
+      );
+      assert.deepEqual(existingContext, {
+        repo: existingRepo,
+        project_display_name: "English title",
+        app_title: markerBypass,
+      });
+      assert.deepEqual(fs.readdirSync(existingRepo), entriesBefore);
+      assert.deepEqual(fs.readFileSync(marker), markerBefore);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("preClaim passes project display name and literal English into setup-repo scaffold", () => {
     const preclaim = fs.readFileSync("src/installer/steps/04-setup-repo/preclaim.ts", "utf-8");
     assert.ok(preclaim.includes("project_display_name"), "preClaim should read display name from plan context");
     assert.ok(preclaim.includes("String(displayName)"), "setup-repo.sh should receive display name as an argv");
-    assert.ok(preclaim.includes("ui_language"), "preClaim should read UI language from plan context");
-    assert.ok(preclaim.includes("String(uiLanguage)"), "setup-repo.sh should receive UI language as an argv");
+    assert.equal(preclaim.includes('ctx.context["ui_language"]'), false, "preClaim must not inherit a mutable UI language");
+    assert.equal(preclaim.includes('ctx.context["UI_LANGUAGE"]'), false, "preClaim must not inherit a mutable UI language alias");
+    assert.ok(preclaim.includes('String(displayName), "English"]'), "setup-repo.sh should receive literal English");
   });
 });

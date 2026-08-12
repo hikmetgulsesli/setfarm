@@ -3,7 +3,7 @@ import path from "node:path";
 import fs from "node:fs";
 import crypto from "node:crypto";
 import { execFile } from "node:child_process";
-import type { ClaimContext } from "../types.js";
+import type { ClaimContext, PreClaimResult } from "../types.js";
 import { logger } from "../../../lib/logger.js";
 import { getSql, now, pgGet, pgRun } from "../../../db-pg.js";
 import { emitEvent } from "../../events.js";
@@ -31,7 +31,7 @@ import {
   type DesignGenerationTargetsV1,
 } from "../../../product-compiler/schemas/design-generation-targets-v1.js";
 import {
-  ProductSpecV1Schema,
+  ProductSpecV1EnglishWriteSchema,
   type ProductSpecV1,
 } from "../../../product-compiler/schemas/product-spec-v1.js";
 import type { StitchDirectResponseEvidenceV1 } from "../../../product-compiler/schemas/stitch-direct-response-evidence-v1.js";
@@ -48,6 +48,12 @@ import {
   type StitchTargetResponseBindingsV2,
 } from "../../../product-compiler/schemas/stitch-target-candidate-selection-v1.js";
 import { executeDesignPreclaimV2 } from "./runtime-v2.js";
+import {
+  inspectCompilerEnglishAdmissionLedgerAuthorityV1,
+  loadCompilerEnglishAdmissionLedgerAuthorityV1,
+  type CompilerEnglishAdmissionLedgerAuthorityV1,
+} from "../../../execution/compiler-english-admission-ledger-v1.js";
+import type { CompilerEnglishAdmissionReceiptV1 } from "../../../product-compiler/schemas/compiler-english-admission-receipt-v1.js";
 
 const PRECLAIM_CANCELLED = "DESIGN_PRECLAIM_CANCELLED";
 const progressDedupe = new Map<string, { detail: string; emittedAt: number }>();
@@ -799,7 +805,7 @@ export function extractCanonicalProductSpecFromPrd(prd: string): ProductSpecV1 {
   } catch {
     throw new Error("DESIGN_V3_PRODUCT_SPEC_PROJECTION_INVALID: product-spec-v1 block is not JSON");
   }
-  const parsed = ProductSpecV1Schema.safeParse(raw);
+  const parsed = ProductSpecV1EnglishWriteSchema.safeParse(raw);
   if (!parsed.success) {
     throw new Error(`DESIGN_V3_PRODUCT_SPEC_PROJECTION_INVALID: ${parsed.error.issues[0]?.message || "schema mismatch"}`);
   }
@@ -813,8 +819,16 @@ function writeCanonicalJson(filePath: string, value: unknown): void {
   fs.writeFileSync(filePath, `${canonicalJsonStringify(value)}\n`, "utf8");
 }
 
-function prepareV3DesignContract(prd: string, stitchDir: string): V3DesignContract {
+function prepareV3DesignContract(
+  prd: string,
+  stitchDir: string,
+  expectedProductSpecHash?: string,
+): V3DesignContract {
   const productSpec = extractCanonicalProductSpecFromPrd(prd);
+  if (expectedProductSpecHash !== undefined
+    && hashCanonicalJson(productSpec) !== expectedProductSpecHash) {
+    throw new Error("DESIGN_V3_ENGLISH_ADMISSION_PRODUCT_SPEC_MISMATCH");
+  }
   const produced = produceDesignGenerationTargetsV1(productSpec);
   if (produced.status !== "produced") {
     throw new Error(`DESIGN_V3_GENERATION_TARGETS_REJECTED: ${produced.rejectionCodes.join(",")}`);
@@ -2113,7 +2127,7 @@ function readScreenMapFromStitchArtifacts(stitchDir: string, deviceType: string,
 // Idempotent: if stitch/ already has current non-fallback HTML files plus
 // Stitch DESIGN.md, skips. If Stitch cannot produce the required assets, the
 // design step fails instead of generating local placeholder design files.
-export async function preClaim(ctx: ClaimContext): Promise<void> {
+export async function preClaim(ctx: ClaimContext): Promise<PreClaimResult> {
   const repo = ctx.context["repo"] || ctx.context["REPO"] || "";
   const prd = ctx.context["prd"] || ctx.context["PRD"] || "";
   const stitchDir = repo ? path.join(repo, "stitch") : "";
@@ -2124,6 +2138,41 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
       [ctx.runId],
     ))?.protocol
     ?? "legacy";
+  let englishAdmissionAuthority: CompilerEnglishAdmissionLedgerAuthorityV1 | undefined;
+  let englishAdmissionReceipt: CompilerEnglishAdmissionReceiptV1 | undefined;
+  if (protocol === "v3") {
+    try {
+      englishAdmissionAuthority = await loadCompilerEnglishAdmissionLedgerAuthorityV1(
+        getSql(),
+        { runId: ctx.runId },
+      );
+      englishAdmissionReceipt = inspectCompilerEnglishAdmissionLedgerAuthorityV1(
+        englishAdmissionAuthority,
+      );
+      const currentPrdHash = crypto.createHash("sha256").update(prd, "utf8").digest("hex");
+      if (englishAdmissionReceipt.runId !== ctx.runId
+        || englishAdmissionReceipt.prdHash !== currentPrdHash
+        || englishAdmissionReceipt.productSpecSchema !== ctx.context["product_spec_schema"]
+        || englishAdmissionReceipt.sourceTaskHash !== ctx.context["product_spec_source_task_hash"]) {
+        throw new Error("DESIGN_ENGLISH_ADMISSION_CONTEXT_BINDING_MISMATCH");
+      }
+    } catch (error) {
+      await failDesignPreclaim(
+        ctx,
+        `DESIGN_ENGLISH_ADMISSION_REQUIRED: ${redactDiagnosticText(error).slice(0, 850)}`,
+        { terminal: true },
+      );
+      return;
+    }
+  }
+  if (protocol === "v3" && ctx.context["product_semantics_version"] !== "v2") {
+    await failDesignPreclaim(
+      ctx,
+      "DESIGN_V2_PRODUCT_SEMANTICS_REQUIRED: New v3 DESIGN claims require Product Semantics v2 before bypass or provider dispatch.",
+      { terminal: true },
+    );
+    return;
+  }
   const designRequired = String(ctx.context["design_required"] || ctx.context["DESIGN_REQUIRED"] || "true").toLowerCase() !== "false";
   if (!designRequired) {
     const stepRow = await pgGet<{ id: string }>("SELECT id FROM steps WHERE run_id = $1 AND step_id = $2 LIMIT 1", [ctx.runId, ctx.stepId]);
@@ -2136,8 +2185,7 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
     ctx.context["screen_map"] = "[]";
     ctx.context["screens_generated"] = "0";
     ctx.context["design_system"] = "{}";
-    const { completeStep } = await import("../../step-ops.js");
-    await completeStep(stepRow.id, [
+    const completionOutput = [
       "STATUS: done",
       "DESIGN_REQUIRED: false",
       "DEVICE_TYPE: NONE",
@@ -2145,11 +2193,24 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
       "SCREEN_MAP: []",
       "SCREENS_GENERATED: 0",
       "AUTO_COMPLETED: design-bypass (DESIGN_REQUIRED=false)",
-    ].join("\n"), ctx.claimEnvelope);
+    ].join("\n");
+    if (protocol === "v3") {
+      logger.info("[module:design preclaim] PREPARED compiler-owned design bypass (DESIGN_REQUIRED=false)", { runId: ctx.runId });
+      return Object.freeze({
+        disposition: "compiler_completion" as const,
+        output: completionOutput,
+      });
+    }
+    const { completeStep } = await import("../../step-ops.js");
+    await completeStep(stepRow.id, completionOutput, ctx.claimEnvelope);
     logger.info("[module:design preclaim] AUTO-COMPLETED design bypass (DESIGN_REQUIRED=false)", { runId: ctx.runId });
     return;
   }
   if (protocol === "v3" && ctx.context["product_semantics_version"] === "v2") {
+    if (!englishAdmissionAuthority) {
+      await failDesignPreclaim(ctx, "DESIGN_V2_ENGLISH_ADMISSION_REQUIRED", { terminal: true });
+      return;
+    }
     const envelope = ctx.claimEnvelope;
     if (!envelope || envelope.protocol !== "v3") {
       await failDesignPreclaim(ctx, "DESIGN_V2_CLAIM_AUTHORITY_REQUIRED", { terminal: true });
@@ -2196,7 +2257,7 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
         ownerInstanceId: `${envelope.runtimeAgentId}:${envelope.claimId}:${process.pid}`,
         producerReleaseSha: releaseSha,
         deviceType,
-        uiLanguage: ctx.context["ui_language"] || ctx.context["UI_LANGUAGE"] || "English",
+        englishAdmissionAuthority,
       });
       if (result.status !== "accepted") {
         ctx.context["design_source_attempt_id"] = result.attemptId || "";
@@ -2214,12 +2275,14 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
         ctx,
         `Design preclaim v2: ${result.replayed ? "replayed" : "accepted"} ${result.screenMap.length} exact screen authority item(s)`,
       );
-      const { completeStep } = await import("../../step-ops.js");
-      await completeStep(stepRow.id, result.completionOutput, envelope);
       logger.info(
-        `[module:design preclaim] AUTO-COMPLETED v2 authority ${result.attemptId} (${result.screenMap.length} screens)`,
+        `[module:design preclaim] PREPARED compiler-owned v2 authority ${result.attemptId} (${result.screenMap.length} screens)`,
         { runId: ctx.runId, stepId: stepRow.id },
       );
+      return Object.freeze({
+        disposition: "compiler_completion" as const,
+        output: result.completionOutput,
+      });
     } catch (error) {
       if (isPreclaimCancelledError(error)) return;
       await failDesignPreclaim(
@@ -2233,7 +2296,11 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
   let v3Contract: V3DesignContract | undefined;
   if (protocol === "v3") {
     try {
-      v3Contract = prepareV3DesignContract(prd, stitchDir);
+      v3Contract = prepareV3DesignContract(
+        prd,
+        stitchDir,
+        englishAdmissionReceipt?.productSpecHash,
+      );
       ctx.context["generation_targets"] = canonicalJsonStringify(v3Contract.generationTargets);
     } catch (error) {
       await failDesignPreclaim(ctx, String((error as Error)?.message || error), { terminal: true });

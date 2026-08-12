@@ -10,6 +10,7 @@ import {
 import { runWithRuntimeCompletionOwner } from "../../src/execution/runtime-completion-owner-context.js";
 import { createRuntimeSessionRepository } from "../../src/execution/runtime-session-repository.js";
 import { recoverV3StageFailureV1 } from "../../src/execution/v3-stage-retry-authority.js";
+import { applyEnglishOutputPolicyToResolvedPrompt } from "../../src/installer/prompt-contracts.js";
 import { canonicalJsonStringify } from "../../src/product-compiler/canonical-json.js";
 import {
   canonicalProductDeliveryProfileCatalogV1,
@@ -126,7 +127,7 @@ test("invalid PLAN v3 proposal closes the exact claim and settles as a bounded r
       claimId,
       claimAgentId,
       runtimeAgentId,
-      input: planInstruction,
+      input: applyEnglishOutputPolicyToResolvedPrompt(planInstruction),
     };
     const requested = await requestRuntimeCompletion(database.sql, {
       envelope,
@@ -314,7 +315,10 @@ test("invalid PLAN v3 proposal closes the exact claim and settles as a bounded r
       retryClaim.v3StageRetrySource?.failure.diagnostics[0]?.message || "",
       /cannot be upgraded/i,
     );
-    assert.equal(retryClaim.resolvedInput, planInstruction);
+    assert.equal(
+      retryClaim.resolvedInput,
+      applyEnglishOutputPolicyToResolvedPrompt(planInstruction),
+    );
     const retrySeal = await database.sql<Array<{
       semantics_version: string;
       authority_version: string;

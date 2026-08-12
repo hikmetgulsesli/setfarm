@@ -16,6 +16,10 @@ import {
   OperationalRetryDirectiveV1Schema,
   resolveV3ExecutionProfile,
 } from "./operational-retry-directive.js";
+import {
+  V3_SUPERVISOR_RETRY_DIRECTIVE_ARTIFACT_TYPE_V1,
+  V3SupervisorRetryDirectiveV1Schema,
+} from "./v3-supervisor-retry-directive.js";
 
 /** Exact UTF-8 capacity of the pretty-serialized context file read by the model. */
 export const V3_IMPLEMENTATION_CONTEXT_MAX_BYTES = 256 * 1024;
@@ -39,7 +43,8 @@ function semanticArtifactHash(
     | "setfarm.implementation-slice.v1"
     | "setfarm.evidence-plan.v1"
     | "setfarm.github-review-thread-evidence.v1"
-    | "setfarm.operational-retry-directive.v1",
+    | "setfarm.operational-retry-directive.v1"
+    | "setfarm.v3-supervisor-retry-directive.v1",
   producer: z.infer<typeof SemanticArtifactProducerV1Schema>,
   payload: unknown,
 ): string {
@@ -123,6 +128,8 @@ export const V3ImplementationClaimHandoffV1Schema = z.object({
   executionProfile: ModelExecutionProfileV1Schema.default(resolveV3ExecutionProfile("primary")),
   operationalRetry: OperationalRetryDirectiveV1Schema.optional(),
   operationalRetryArtifactHash: Sha256Schema.optional(),
+  supervisorRetry: V3SupervisorRetryDirectiveV1Schema.optional(),
+  supervisorRetryArtifactHash: Sha256Schema.optional(),
   sourceBefore: z.object({
     sha: GitObjectHashSchema,
     treeHash: GitObjectHashSchema,
@@ -210,6 +217,50 @@ export const V3ImplementationClaimHandoffV1Schema = z.object({
       path: ["operationalRetry"],
       message: "FindingSet recovery and operational retry authorities are mutually exclusive",
     });
+  }
+  const supervisorRetry = value.supervisorRetry;
+  if (Boolean(supervisorRetry) !== Boolean(value.supervisorRetryArtifactHash)) {
+    context.addIssue({
+      code: "custom",
+      path: ["supervisorRetryArtifactHash"],
+      message: "Supervisor retry evidence and its immutable artifact hash must be handed off together",
+    });
+  }
+  if (
+    supervisorRetry
+    && value.supervisorRetryArtifactHash
+    && semanticArtifactHash(
+      V3_SUPERVISOR_RETRY_DIRECTIVE_ARTIFACT_TYPE_V1,
+      value.artifactProducer,
+      supervisorRetry,
+    ) !== value.supervisorRetryArtifactHash
+  ) {
+    context.addIssue({
+      code: "custom",
+      path: ["supervisorRetryArtifactHash"],
+      message: "Supervisor retry artifact hash must bind the exact semantic envelope",
+    });
+  }
+  if (supervisorRetry) {
+    if (recovery || operationalRetry) {
+      context.addIssue({
+        code: "custom",
+        path: ["supervisorRetry"],
+        message: "Supervisor retry is mutually exclusive with recovery and operational retry authority",
+      });
+    }
+    if (
+      supervisorRetry.runId !== value.runId
+      || supervisorRetry.storyDbId !== value.storyDbId
+      || supervisorRetry.storyId !== value.storyId
+      || supervisorRetry.supervisorClaimId === value.claimId
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["supervisorRetry"],
+        message: "Supervisor retry must bind a distinct exact prior supervision of this run and story",
+      });
+    }
   }
   const expectedExecutionAuthority = operationalRetry
     ? { role: "developer", attemptClass: "infrastructure_retry" }
@@ -517,6 +568,7 @@ export function createV3ImplementationContextV1(input: Readonly<{
       "If the exact contract cannot be satisfied inside writeAuthority.allowedPaths, fail with CONTRACT_SCOPE_CONFLICT instead of broadening scope.",
       "For recovery, change only the typed findings and expected delta embedded in the slice. An exact immutable reviewEvidenceArtifact is a bounded external repair instruction for its declared path; never infer a platform invariant from its prose or resolve its GitHub thread.",
       "For a typed operational retry, satisfy only handoff.operationalRetry.expectedDelta under its exact reset source and write paths. Its failure diagnostic is immutable operational evidence, not a new product requirement.",
+      "For a typed supervisor retry, resolve only handoff.supervisorRetry.feedback for its exact prior story generation while preserving the sealed product and write authority.",
       "Return one proposal matching outputContract.jsonSchema. Do not report command outcomes or evidence verdicts: Setfarm compiles the proposal before runtime drain and owns command execution, completion, commits, review routing, and retries.",
     ],
     outputContract: input.outputContract ?? V3_IMPLEMENTATION_OUTPUT_CONTRACT_V2,

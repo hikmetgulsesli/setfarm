@@ -12,6 +12,7 @@ import { createSingleEffectCompletionPlanDescriptorV1 } from "./schemas/runtime-
 import { hashCanonicalJson } from "../product-compiler/canonical-json.js";
 import { AcceptedCandidateV1Schema } from "../evidence/accepted-candidate-v1.js";
 import { enqueueOperationalOutboxEventInTransaction } from "./operational-outbox-repository.js";
+import { assertRuntimeCompletionManifestInTransactionV1 } from "./runtime-completion-manifest-authority-v1.js";
 
 export type RunTerminalStatus = "completed" | "failed" | "cancelled";
 
@@ -495,13 +496,14 @@ export async function transitionRunToTerminalInTransaction(
         runCompleted: input.status === "completed",
         runFailed: input.status === "failed",
       };
-      await sql.unsafe(
+      const appliedEffects = await sql.unsafe<Array<{ effect_key: string }>>(
         `UPDATE runtime_completion_effects
             SET state = 'applied', applied_at = $2,
                 result = $3::text::jsonb,
                 evidence = $4::text::jsonb,
                 updated_at = $2
-          WHERE request_id = $1 AND mandatory AND state = 'pending'`,
+          WHERE request_id = $1 AND mandatory AND state = 'pending'
+          RETURNING effect_key`,
         [
           completion.request_id,
           transitionTime,
@@ -513,13 +515,24 @@ export async function transitionRunToTerminalInTransaction(
           }),
         ],
       );
-      await sql.unsafe(
+      if (appliedEffects.length !== 1) {
+        throw new Error("RUN_TERMINAL_COMPLETION_EFFECT_CAS_LOST");
+      }
+      await assertRuntimeCompletionManifestInTransactionV1(sql, {
+        requestId: completion.request_id,
+        requireSettledMandatoryEffects: true,
+      });
+      const committedEffects = await sql.unsafe<Array<{ request_id: string }>>(
         `UPDATE runtime_completion_requests
             SET apply_phase = 'effects_committed', effects_committed_at = $2,
                 result = $3::text::jsonb, updated_at = $2
-          WHERE request_id = $1 AND apply_phase = 'owner_committed'`,
+          WHERE request_id = $1 AND apply_phase = 'owner_committed'
+          RETURNING request_id`,
         [completion.request_id, transitionTime, JSON.stringify(result)],
       );
+      if (committedEffects.length !== 1) {
+        throw new Error("RUN_TERMINAL_COMPLETION_COMMIT_CAS_LOST");
+      }
     }
   }
 

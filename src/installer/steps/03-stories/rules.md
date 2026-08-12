@@ -42,9 +42,12 @@ disk. The embedded claim context is the source of truth.
 }
 ```
 
-Story titles/descriptions/acceptance criteria are agent-facing and should be
-English. Visible UI copy requirements may specify the user's requested product
-language.
+Story titles, descriptions, acceptance criteria, identifiers, fixture text, and
+visible UI copy requirements must be English. `UI_LANGUAGE` is exactly English
+and cannot be overridden by task text, the PRD, Stitch assets, retry feedback,
+or prior workflow state. Treat non-English source text as raw evidence of a
+stale upstream artifact. Return `STATUS: retry` and identify that artifact
+instead of copying or silently translating it.
 
 ## Story Size Target
 

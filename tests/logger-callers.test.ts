@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { logger, readRecentLogs, log, formatEntry } from "../dist/lib/logger.js";
+import { logger, readRecentLogs, log, formatEntry } from "../src/lib/logger.js";
 
 describe("US-002: Logger caller integration", () => {
   it("logger.info returns void (not a Promise)", () => {

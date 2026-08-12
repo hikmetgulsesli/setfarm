@@ -83,6 +83,26 @@ describe("Product Build Packet v3 compiler", () => {
     );
   });
 
+  it("rejects ASCII localized ProductSpec V2 prose before publishing the child artifact", async () => {
+    const contracts = buildNoDesignProductBuildPacketV3Contracts();
+    contracts.productSpecV2.product.name = String.fromCharCode(
+      71, 117, 97, 114, 100, 97, 114, 32, 99, 97, 109, 98, 105, 111, 115,
+    );
+    const artifactStore = new MemoryArtifactWriter();
+    const result = await compileProductBuildPacketV3({
+      ...contracts,
+      compiler,
+      producer,
+      artifactStore,
+    });
+
+    assert.equal(result.status, "rejected");
+    assert.equal(result.report.diagnostics.some((item) =>
+      item.code === "CONTRACT_V3_PRODUCT_SPEC_SCHEMA_INVALID"), true);
+    assert.equal([...artifactStore.artifacts.values()].some((envelope) =>
+      envelope.artifactType === "setfarm.product-spec.v2"), false);
+  });
+
   it("seals the exact Stitch graph envelope and closure without v1 graph adaptation", async () => {
     const contracts = await buildStitchProductBuildPacketV3Contracts(producer);
     const expectedSourceMap = produceImplementationSourceMapV1(

@@ -53,7 +53,7 @@ import {
   type ProductBuildPacketV3,
 } from "./schemas/product-build-packet-v3.js";
 import {
-  ProductSpecV1Schema,
+  ProductSpecV1EnglishWriteSchema,
   type ProductActionV1,
   type ProductSpecV1,
 } from "./schemas/product-spec-v1.js";
@@ -61,7 +61,7 @@ import { StoryPlanV1Schema, type StoryPlanV1 } from "./schemas/story-plan-v1.js"
 import { DesignGenerationTargetsV2Schema } from "./schemas/design-generation-targets-v2.js";
 import { DesignInteractionGraphV2Schema } from "./schemas/design-interaction-graph-v2.js";
 import { DesignSourceClosureV2Schema } from "./schemas/design-source-closure-v2.js";
-import { ProductSpecV2Schema } from "./schemas/product-spec-v2.js";
+import { ProductSpecV2EnglishWriteSchema } from "./schemas/product-spec-v2.js";
 import { StitchDirectResponseEvidenceV2Schema } from "./schemas/stitch-direct-response-evidence-v2.js";
 import { StitchRenderedSemanticsV2Schema } from "./schemas/stitch-rendered-semantics-v2.js";
 import {
@@ -919,7 +919,7 @@ export async function compileProductBuildPacket(
     }));
   }
 
-  const productResult = ProductSpecV1Schema.safeParse(input.productSpec);
+  const productResult = ProductSpecV1EnglishWriteSchema.safeParse(input.productSpec);
   const graphResult = DesignInteractionGraphV1Schema.safeParse(input.designGraph);
   const topologyResult = BuildTopologyV1Schema.safeParse(input.buildTopology);
   const storiesResult = StoryPlanV1Schema.safeParse(input.storyPlan);
@@ -1206,7 +1206,7 @@ export async function compileProductBuildPacketV3(
     }));
   }
 
-  const productResult = ProductSpecV2Schema.safeParse(input.productSpecV2);
+  const productResult = ProductSpecV2EnglishWriteSchema.safeParse(input.productSpecV2);
   const graphResult = input.designGraphV2 === null
     ? { success: true as const, data: null }
     : DesignInteractionGraphV2Schema.safeParse(input.designGraphV2);

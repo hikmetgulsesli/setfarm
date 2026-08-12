@@ -1,6 +1,6 @@
 # Source Attachment Manifest
 
-Bu dosya Gemini/Sonnet daha fazla kanıt isterse hangi orijinal kaynak dosyalarının ekleneceğini listeler. Hepsini birden eklemek şart değildir.
+This document lists the original source files to attach if Gemini/Sonnet requests more evidence. They do not all need to be attached at once.
 
 ## Priority 1: Core Architecture
 
@@ -114,4 +114,3 @@ Attach tests when reviewer asks "what is already enforced?"
 - generated project `node_modules`
 - raw browser/session transcripts unless manually redacted
 - database dumps with secrets
-

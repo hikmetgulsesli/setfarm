@@ -1,5 +1,6 @@
 import { canonicalJsonStringify } from "../canonical-json.js";
 import {
+  ProductSpecV2EnglishWriteSchema,
   ProductSpecV2Schema,
   type ProductActionV2,
   type ProductSpecV2,
@@ -10,6 +11,25 @@ export type ProductSpecV2CompatibilityRenderOptions = Readonly<{
   techStack?: ProductSpecV2["delivery"]["techStack"];
   uiLanguage?: string;
 }>;
+
+function canonicalUiLanguage(override: string | undefined): "English" {
+  if (override !== undefined && override !== "English") {
+    throw new Error("PRODUCT_SPEC_V2_COMPATIBILITY_UI_LANGUAGE_MUST_BE_ENGLISH");
+  }
+  return "English";
+}
+
+function assertEnglishProductSpec(spec: ProductSpecV2): void {
+  if (spec.delivery.uiLanguage !== "English") {
+    throw new Error("PRODUCT_SPEC_V2_COMPATIBILITY_UI_LANGUAGE_MUST_BE_ENGLISH");
+  }
+  const result = ProductSpecV2EnglishWriteSchema.safeParse(spec);
+  if (!result.success) {
+    throw new Error(`PRODUCT_SPEC_V2_COMPATIBILITY_ENGLISH_TEXT_REQUIRED: ${
+      result.error.issues[0]?.message || "schema mismatch"
+    }`);
+  }
+}
 
 function productSlug(productId: string): string {
   return productId
@@ -175,9 +195,11 @@ export function renderProductSpecV2Compatibility(
   options: ProductSpecV2CompatibilityRenderOptions = {},
 ): string {
   const spec = ProductSpecV2Schema.parse(productSpec);
+  assertEnglishProductSpec(spec);
   const platform = options.platform ?? spec.delivery.platform;
   const techStack = options.techStack ?? spec.delivery.techStack;
   const dbRequired = spec.delivery.database;
+  const uiLanguage = canonicalUiLanguage(options.uiLanguage);
   const canonicalProjection = canonicalJsonStringify(spec);
   const uiVisionSummary = spec.delivery.uiVisionSummary;
   const persistenceKinds = unique(spec.persistencePolicies.map((policy) => policy.kind));
@@ -210,7 +232,7 @@ export function renderProductSpecV2Compatibility(
     `PROJECT_SLUG: ${productSlug(spec.product.id)}`,
     `PLATFORM: ${platform}`,
     `TECH_STACK: ${techStack}`,
-    `UI_LANGUAGE: ${options.uiLanguage ?? spec.delivery.uiLanguage}`,
+    `UI_LANGUAGE: ${uiLanguage}`,
     `DB_REQUIRED: ${dbRequired}`,
     `DESIGN_REQUIRED: ${String(spec.delivery.designRequired)}`,
     `UI_VISION_SUMMARY: ${uiVisionSummary}`,
@@ -226,8 +248,10 @@ export function renderProductSpecV2Compatibility(
       ? ["### Explicit Non-Goals", ...spec.product.nonGoals.map((item) => `- ${item.id}: ${item.statement}`)]
       : ["### Explicit Non-Goals", "- none"]),
     "### Source Requirement Ledger",
+    // Source-owned clause text remains byte-exact inside the typed ProductSpec
+    // evidence block and must never be copied into compiler-owned PRD prose.
     ...spec.requirements.map((requirement) =>
-      `- ${requirement.id}: ${requirement.normalizedClause} [${requirement.classification}; expects=${requirement.expectedSemanticKinds.join(",")}]`),
+      `- ${requirement.id}: clause_hash=${requirement.clauseHash}; classification=${requirement.classification}; semantic_kinds=${requirement.expectedSemanticKinds.join(",")}; source_refs=${requirement.sources.map((source) => source.sourceRef).join(",")}`),
     "",
     "## 2. Data And State Contract",
     ...spec.entities.flatMap((entity) => [renderEntity(entity), ""]),

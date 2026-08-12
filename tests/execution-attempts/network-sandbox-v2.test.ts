@@ -237,7 +237,7 @@ describe("NetworkSandboxV2", () => {
       profileHash:
         "f2c28eccae5791ed71ef703ff9455e68e77acad8ee3da996c4e269ebe031d0c9",
       probeProgramHash:
-        "3c4d97c9f741b63daa37378f5b38e4d8e12a516543763435830e01d388a2e546",
+        "c3f870ac7d456b42f8399c503498191fe2992a5497953e21bd1d26bed1b854a5",
       receiptAbiHash:
         "8c77228351b089f43d7146a1b3a048ef5dfd6b626f7d9f11b0f9099f225bb2f9",
       normalizedEnvironmentHash:

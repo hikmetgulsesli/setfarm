@@ -11,6 +11,7 @@ import {
 } from "node:fs";
 import path from "node:path";
 import { isProxy } from "node:util/types";
+import { z } from "zod";
 
 import { canonicalJsonBytes, hashCanonicalJson } from "./canonical-json.js";
 import {
@@ -28,6 +29,7 @@ import {
   rollbackProvisionedNodeToolchainV2ForTest,
   type NodeToolchainRollbackResultV2,
   type NodeToolchainRollbackTestHooksV2,
+  type NodeToolchainProvisioningPreconditionV2,
 } from "./node-toolchain-provisioning-v2.js";
 import {
   NODE_TOOLCHAIN_PROVISIONING_LOCK_BASENAME_V2,
@@ -38,6 +40,25 @@ import {
   type NodeToolchainTargetArchitectureV2,
   type NodeToolchainTargetV2,
 } from "./node-toolchain-target-registry-v2.js";
+import {
+  buildNodeToolchainProvisionerPlanTransportV3,
+  parseNodeToolchainProvisionerPlanTransportV3,
+  NodeToolchainProvisionerPlanTransportV3Schema,
+  type NodeToolchainProvisionerPlanTransportV3,
+  type NodeToolchainProvisionerPhysicalCensusV3,
+  type NodeToolchainProvisionerPhysicalScopeV3,
+} from "./schemas/node-toolchain-provisioner-physical-census-v3.js";
+import {
+  captureNodeToolchainProvisionerPhysicalCensusV3,
+  makeNodeToolchainProvisionerPhysicalScopeV3,
+  verifyNodeToolchainProvisionerPhysicalCensusV3,
+  type NodeToolchainProvisionerPhysicalPathsV3,
+} from "./node-toolchain-provisioner-physical-census-v3.js";
+
+// One shared strict authority: callers and the CLI parse the same transport
+// schema, whose plan member is the exact V2 plan schema.
+export { NodeToolchainProvisionerPlanTransportV3Schema } from
+  "./schemas/node-toolchain-provisioner-physical-census-v3.js";
 import {
   NODE_TOOLCHAIN_PROVISIONER_COMMAND_AUTHORITY_REF_V2,
   NODE_TOOLCHAIN_PROVISIONER_COMMAND_VERSION_V2,
@@ -98,6 +119,7 @@ type InspectionStateV2 = Readonly<{
   parent: string;
   expectedOwner: ExpectedOwnerV2;
   parentMode: 0o700 | 0o755;
+  physicalScope: NodeToolchainProvisionerPhysicalScopeV3;
   inspection: NodeToolchainProvisionerInspectionV2;
 }>;
 
@@ -348,6 +370,18 @@ function pathsFor(parent: string, target: NodeToolchainTargetV2): PathsV2 {
     rollbackClaim: path.join(parent, target.rollbackClaimBasename),
     lock: path.join(parent, NODE_TOOLCHAIN_PROVISIONING_LOCK_BASENAME_V2),
     staging: path.join(parent, NODE_TOOLCHAIN_PROVISIONING_STAGING_BASENAME_V2),
+  });
+}
+
+function physicalPathsFor(paths: PathsV2): NodeToolchainProvisionerPhysicalPathsV3 {
+  return Object.freeze({
+    parent: paths.parent,
+    root: paths.root,
+    receipt: paths.receipt,
+    claim: paths.claim,
+    rollback_claim: paths.rollbackClaim,
+    lock: paths.lock,
+    staging: paths.staging,
   });
 }
 
@@ -666,6 +700,12 @@ async function inspect(input: Readonly<{
   }
 
   const targetProjection = targetLocatorProjection(paths, target);
+  const physicalScope = makeNodeToolchainProvisionerPhysicalScopeV3({
+    admissionScope: input.admissionScope,
+    architecture: input.architecture,
+    targetRef: target.targetRef,
+    parentLocatorHash: targetProjection.parentLocatorHash,
+  });
   const claimTargetsInspection = claimRead.status !== "valid" || (
     claimRead.value.intent.admissionScope === input.admissionScope
     && claimRead.value.intent.architecture === input.architecture
@@ -831,6 +871,7 @@ async function inspect(input: Readonly<{
     parent: input.parent,
     expectedOwner: input.expectedOwner,
     parentMode: input.parentMode,
+    physicalScope,
     inspection: deepFreezeJson(parsed.data),
   });
   return new InspectedNodeToolchainProvisionerStateV2(handleConstructorCapabilityV2, state);
@@ -930,6 +971,204 @@ export function inspectNodeToolchainProvisionerInspectionV2(
   handle: InspectedNodeToolchainProvisionerStateV2,
 ): NodeToolchainProvisionerInspectionV2 {
   return defensiveCopy(authenticInspectionState(handle).inspection);
+}
+
+export function captureNodeToolchainProvisionerPhysicalCensusV3ForHandle(
+  handle: InspectedNodeToolchainProvisionerStateV2,
+): NodeToolchainProvisionerPhysicalCensusV3 {
+  const state = authenticInspectionState(handle);
+  const target = getCodeOwnedNodeToolchainTargetV2(state.architecture);
+  const paths = pathsFor(state.parent, target);
+  return captureNodeToolchainProvisionerPhysicalCensusV3({
+    scope: state.physicalScope,
+    paths: physicalPathsFor(paths),
+  });
+}
+
+function verifyNodeToolchainProvisionerPhysicalCensusV3ForHandle(
+  expected: NodeToolchainProvisionerPhysicalCensusV3,
+  handle: InspectedNodeToolchainProvisionerStateV2,
+  options?: Readonly<{ allowPreparationTransition?: boolean }>,
+): NodeToolchainProvisionerPhysicalCensusV3 {
+  const state = authenticInspectionState(handle);
+  const target = getCodeOwnedNodeToolchainTargetV2(state.architecture);
+  const paths = pathsFor(state.parent, target);
+  return verifyNodeToolchainProvisionerPhysicalCensusV3(
+    expected,
+    {
+      scope: state.physicalScope,
+      paths: physicalPathsFor(paths),
+    },
+    options,
+  );
+}
+
+function assertNodeToolchainProvisionerParentPreparationFenceV3(
+  handle: InspectedNodeToolchainProvisionerStateV2,
+): void {
+  const state = authenticInspectionState(handle);
+  const allowed = new Set<string>([
+    NODE_TOOLCHAIN_PROVISIONING_LOCK_BASENAME_V2,
+    NODE_TOOLCHAIN_PROVISIONING_STAGING_BASENAME_V2,
+  ]);
+  for (const architecture of ["arm64", "x64"] as const) {
+    const target = getCodeOwnedNodeToolchainTargetV2(architecture);
+    allowed.add(target.rootBasename);
+    allowed.add(target.receiptBasename);
+    allowed.add(target.claimBasename);
+    allowed.add(target.rollbackClaimBasename);
+  }
+  const entries = readdirSync(state.parent).sort();
+  const rollbackReceiptPattern = /^\.setfarm-node-toolchain-rollback-(?:arm64|x64)-[a-f0-9]{64}\.receipt-v2\.json$/u;
+  if (entries.some((entry) => !allowed.has(entry) && !rollbackReceiptPattern.test(entry))) {
+    return fail(
+      "NODE_TOOLCHAIN_PROVISIONER_V2_PRECONDITION_CHANGED",
+      "Provisioner parent contains an unadmitted entry during V3 preparation",
+    );
+  }
+}
+
+function targetLocatorFieldV3(
+  role: keyof NodeToolchainProvisionerPhysicalPathsV3,
+): "parentLocatorHash"
+  | "rootLocatorHash"
+  | "receiptLocatorHash"
+  | "claimLocatorHash"
+  | "rollbackClaimLocatorHash"
+  | "lockLocatorHash"
+  | "stagingLocatorHash" {
+  return role === "rollback_claim"
+    ? "rollbackClaimLocatorHash"
+    : `${role}LocatorHash` as
+      | "parentLocatorHash"
+      | "rootLocatorHash"
+      | "receiptLocatorHash"
+      | "claimLocatorHash"
+      | "lockLocatorHash"
+      | "stagingLocatorHash";
+}
+
+function validatePlanTransportV3(
+  transport: NodeToolchainProvisionerPlanTransportV3,
+): Readonly<{
+  plan: NodeToolchainProvisionerPlanV2;
+  physicalCensus: NodeToolchainProvisionerPhysicalCensusV3;
+}> {
+  const parsedPlan = NodeToolchainProvisionerPlanV2Schema.safeParse(transport.plan);
+  if (!parsedPlan.success) {
+    return fail(
+      "NODE_TOOLCHAIN_PROVISIONER_V2_PLAN_INVALID",
+      "V3 plan transport does not carry one strict V2 plan",
+      parsedPlan.error,
+    );
+  }
+  const plan = parsedPlan.data;
+  if (transport.operation !== plan.operation) {
+    return fail(
+      "NODE_TOOLCHAIN_PROVISIONER_V2_PLAN_INVALID",
+      "V3 plan transport operation does not equal its V2 plan",
+    );
+  }
+  const scope = transport.physicalCensus.scope;
+  if (
+    scope.admissionScope !== plan.admissionScope
+    || scope.architecture !== plan.architecture
+    || scope.targetRef !== plan.inspection.target.targetRef
+    || scope.parentLocatorHash !== plan.inspection.target.parentLocatorHash
+  ) {
+    return fail(
+      "NODE_TOOLCHAIN_PROVISIONER_V2_PLAN_INVALID",
+      "V3 physical census scope does not bind its V2 plan target",
+    );
+  }
+  for (const observation of transport.physicalCensus.observations) {
+    const expectedField = targetLocatorFieldV3(observation.role);
+    if (observation.locatorHash !== plan.inspection.target[expectedField]) {
+      return fail(
+        "NODE_TOOLCHAIN_PROVISIONER_V2_PLAN_INVALID",
+        `V3 physical ${observation.role} locator does not bind its V2 plan target`,
+      );
+    }
+  }
+  return Object.freeze({
+    plan: deepFreezeJson(plan),
+    physicalCensus: transport.physicalCensus,
+  });
+}
+
+function parsePlanInputV3(
+  input: unknown,
+  operation: "apply" | "rollback",
+): Readonly<{
+  plan: NodeToolchainProvisionerPlanV2;
+  physicalCensus?: NodeToolchainProvisionerPhysicalCensusV3;
+}> {
+  let hasV3Schema = false;
+  try {
+    hasV3Schema = typeof input === "object"
+      && input !== null
+      && "schema" in input
+      && (input as { schema?: unknown }).schema
+        === "setfarm.node-toolchain-provisioner-plan-transport.v3";
+  } catch (error) {
+    return fail(
+      "NODE_TOOLCHAIN_PROVISIONER_V2_PLAN_INVALID",
+      "Plan input could not be inspected safely",
+      error,
+    );
+  }
+  if (hasV3Schema) {
+    const parsed = NodeToolchainProvisionerPlanTransportV3Schema.safeParse(input);
+    if (!parsed.success) {
+      return fail(
+        "NODE_TOOLCHAIN_PROVISIONER_V2_PLAN_INVALID",
+        "V3 plan transport failed its exact envelope schema",
+        parsed.error,
+      );
+    }
+    const validated = validatePlanTransportV3(parsed.data);
+    if (validated.plan.operation !== operation) {
+      return fail(
+        "NODE_TOOLCHAIN_PROVISIONER_V2_PLAN_INVALID",
+        `V3 plan transport must carry one ${operation} plan`,
+      );
+    }
+    return validated;
+  }
+  const plan = operation === "apply"
+    ? parseApplyPlan(input)
+    : parseRollbackCommandPlan(input);
+  return Object.freeze({ plan });
+}
+
+export function buildNodeToolchainProvisionerPlanTransportV3ForHandle(
+  handle: InspectedNodeToolchainProvisionerStateV2,
+  plan: unknown,
+): NodeToolchainProvisionerPlanTransportV3 {
+  const parsedPlan = NodeToolchainProvisionerPlanV2Schema.safeParse(plan);
+  if (!parsedPlan.success) {
+    return fail(
+      "NODE_TOOLCHAIN_PROVISIONER_V2_PLAN_INVALID",
+      "V3 plan transport builder requires one strict V2 plan",
+      parsedPlan.error,
+    );
+  }
+  const physicalCensus = captureNodeToolchainProvisionerPhysicalCensusV3ForHandle(handle);
+  const built = buildNodeToolchainProvisionerPlanTransportV3({
+    operation: parsedPlan.data.operation,
+    plan: parsedPlan.data,
+    physicalCensus,
+  });
+  const parsed = NodeToolchainProvisionerPlanTransportV3Schema.safeParse(built);
+  if (!parsed.success) {
+    return fail(
+      "NODE_TOOLCHAIN_PROVISIONER_V2_SCHEMA_INVALID",
+      "V3 plan transport builder produced an invalid envelope",
+      parsed.error,
+    );
+  }
+  validatePlanTransportV3(parsed.data);
+  return parseNodeToolchainProvisionerPlanTransportV3(parsed.data);
 }
 
 function buildIntent(input: Readonly<{
@@ -1157,9 +1396,18 @@ async function applyPlan(input: Readonly<{
   admissionScope: AdmissionScopeV2;
   architecture: NodeToolchainTargetArchitectureV2;
   inspectFresh: () => Promise<InspectedNodeToolchainProvisionerStateV2>;
-  provision: () => ReturnType<typeof provisionNodeToolchainV2>;
+  provision: (
+    beforeMutation?: NodeToolchainProvisioningPreconditionV2,
+  ) => ReturnType<typeof provisionNodeToolchainV2>;
 }>): Promise<NodeToolchainProvisionerOperationReceiptV2> {
-  const plan = parseApplyPlan(input.plan);
+  const parsedInput = parsePlanInputV3(input.plan, "apply");
+  const plan = parsedInput.plan;
+  if (plan.operation !== "apply") {
+    return fail(
+      "NODE_TOOLCHAIN_PROVISIONER_V2_PLAN_INVALID",
+      "Apply requires one apply plan",
+    );
+  }
   if (plan.admissionScope !== input.admissionScope || plan.architecture !== input.architecture) {
     return fail(
       "NODE_TOOLCHAIN_PROVISIONER_V2_PLAN_INVALID",
@@ -1168,6 +1416,20 @@ async function applyPlan(input: Readonly<{
   }
   const freshHandle = await input.inspectFresh();
   const fresh = authenticInspectionState(freshHandle).inspection;
+  if (parsedInput.physicalCensus) {
+    try {
+      verifyNodeToolchainProvisionerPhysicalCensusV3ForHandle(
+        parsedInput.physicalCensus,
+        freshHandle,
+      );
+    } catch (error) {
+      return fail(
+        "NODE_TOOLCHAIN_PROVISIONER_V2_PRECONDITION_CHANGED",
+        "V3 physical census changed after the exact apply transport was issued",
+        error,
+      );
+    }
+  }
   if (fresh.inspectionHash !== plan.inspection.inspectionHash) {
     return fail(
       "NODE_TOOLCHAIN_PROVISIONER_V2_PRECONDITION_CHANGED",
@@ -1182,9 +1444,30 @@ async function applyPlan(input: Readonly<{
     );
   }
 
+  const beforeMutation = parsedInput.physicalCensus === undefined
+    ? undefined
+    : (async (): Promise<void> => {
+        const leaseHandle = await input.inspectFresh();
+        assertNodeToolchainProvisionerParentPreparationFenceV3(leaseHandle);
+        try {
+          verifyNodeToolchainProvisionerPhysicalCensusV3ForHandle(
+            parsedInput.physicalCensus!,
+            leaseHandle,
+            { allowPreparationTransition: true },
+          );
+        } catch (error) {
+          throw new NodeToolchainProvisionerCommandErrorV2(
+            "NODE_TOOLCHAIN_PROVISIONER_V2_PRECONDITION_CHANGED",
+            "V3 physical census changed while the V2 mutation lease was held",
+            { cause: error },
+          );
+        }
+      });
+
   let receipt: NodeToolchainProvisioningReceiptV2;
   try {
     if (plan.decision === "verify_existing") {
+      await beforeMutation?.();
       const ready = input.admissionScope === "production_root"
         ? await openProductionProvisionedNodeToolchainV2()
         : await openProvisionedNodeToolchainV2ForTest({
@@ -1193,10 +1476,20 @@ async function applyPlan(input: Readonly<{
           });
       receipt = await revalidateProvisionedNodeToolchainV2(ready);
     } else {
-      const provisioned = await input.provision();
+      const provisioned = await input.provision(beforeMutation);
       receipt = await revalidateProvisionedNodeToolchainV2(provisioned);
     }
   } catch (error) {
+    if (
+      error instanceof NodeToolchainProvisionerCommandErrorV2
+      && error.code === "NODE_TOOLCHAIN_PROVISIONER_V2_PRECONDITION_CHANGED"
+    ) {
+      return fail(
+        "NODE_TOOLCHAIN_PROVISIONER_V2_PRECONDITION_CHANGED",
+        "V3 physical census changed before apply mutation",
+        error,
+      );
+    }
     return fail(
       "NODE_TOOLCHAIN_PROVISIONER_V2_APPLY_FAILED",
       "Exact provisioner apply did not converge through the publisher authority",
@@ -1255,7 +1548,7 @@ export async function applyProductionNodeToolchainProvisionerPlanV2(
     admissionScope: "production_root",
     architecture: process.arch as NodeToolchainTargetArchitectureV2,
     inspectFresh: inspectProductionNodeToolchainProvisionerV2,
-    provision: () => provisionNodeToolchainV2(privateTree),
+    provision: (beforeMutation) => provisionNodeToolchainV2(privateTree, beforeMutation),
   });
 }
 
@@ -1264,7 +1557,8 @@ export async function applyNodeToolchainProvisionerPlanV2ForTest(input: Readonly
   plan: unknown;
   privateTree: MaterializedNodeToolchainPrivateTreeV2;
 }>): Promise<NodeToolchainProvisionerOperationReceiptV2> {
-  const parsedPlan = parseApplyPlan(input?.plan);
+  const parsedInput = parsePlanInputV3(input?.plan, "apply");
+  const parsedPlan = parsedInput.plan;
   if (parsedPlan.admissionScope !== "test_fixture") {
     return fail(
       "NODE_TOOLCHAIN_PROVISIONER_V2_PLAN_INVALID",
@@ -1272,7 +1566,7 @@ export async function applyNodeToolchainProvisionerPlanV2ForTest(input: Readonly
     );
   }
   return applyPlan({
-    plan: parsedPlan,
+    plan: input.plan,
     privateTree: input.privateTree,
     admissionScope: "test_fixture",
     architecture: parsedPlan.architecture,
@@ -1280,7 +1574,10 @@ export async function applyNodeToolchainProvisionerPlanV2ForTest(input: Readonly
       parent: input.parent,
       architecture: parsedPlan.architecture,
     }),
-    provision: () => provisionNodeToolchainV2ForTest(input.privateTree, { parent: input.parent }),
+    provision: (beforeMutation) => provisionNodeToolchainV2ForTest(input.privateTree, {
+      parent: input.parent,
+      ...(beforeMutation ? { beforeMutation } : {}),
+    }),
   });
 }
 
@@ -1387,9 +1684,18 @@ async function rollbackPlan(input: Readonly<{
   admissionScope: AdmissionScopeV2;
   architecture: NodeToolchainTargetArchitectureV2;
   inspectFresh: () => Promise<InspectedNodeToolchainProvisionerStateV2>;
-  rollback: () => Promise<NodeToolchainRollbackResultV2>;
+  rollback: (
+    beforeMutation?: NodeToolchainProvisioningPreconditionV2,
+  ) => Promise<NodeToolchainRollbackResultV2>;
 }>): Promise<NodeToolchainProvisionerOperationReceiptV2> {
-  const plan = parseRollbackCommandPlan(input.plan);
+  const parsedInput = parsePlanInputV3(input.plan, "rollback");
+  const plan = parsedInput.plan;
+  if (plan.operation !== "rollback") {
+    return fail(
+      "NODE_TOOLCHAIN_PROVISIONER_V2_PLAN_INVALID",
+      "Rollback requires one rollback plan",
+    );
+  }
   if (plan.admissionScope !== input.admissionScope || plan.architecture !== input.architecture) {
     return fail(
       "NODE_TOOLCHAIN_PROVISIONER_V2_PLAN_INVALID",
@@ -1398,6 +1704,20 @@ async function rollbackPlan(input: Readonly<{
   }
   const beforeHandle = await input.inspectFresh();
   const before = authenticInspectionState(beforeHandle).inspection;
+  if (parsedInput.physicalCensus) {
+    try {
+      verifyNodeToolchainProvisionerPhysicalCensusV3ForHandle(
+        parsedInput.physicalCensus,
+        beforeHandle,
+      );
+    } catch (error) {
+      return fail(
+        "NODE_TOOLCHAIN_PROVISIONER_V2_PRECONDITION_CHANGED",
+        "V3 physical census changed after the exact rollback transport was issued",
+        error,
+      );
+    }
+  }
   const retryMatches = before.classification === "rollback_interrupted"
     && before.canonical.rollbackClaim.status === "valid"
     && before.canonical.rollbackClaim.planHash === plan.planHash
@@ -1412,10 +1732,39 @@ async function rollbackPlan(input: Readonly<{
       "Rollback target no longer equals its plan or exact interrupted claim",
     );
   }
+  const beforeMutation = parsedInput.physicalCensus === undefined
+    ? undefined
+    : (async (): Promise<void> => {
+        const leaseHandle = await input.inspectFresh();
+        assertNodeToolchainProvisionerParentPreparationFenceV3(leaseHandle);
+        try {
+          verifyNodeToolchainProvisionerPhysicalCensusV3ForHandle(
+            parsedInput.physicalCensus!,
+            leaseHandle,
+            { allowPreparationTransition: true },
+          );
+        } catch (error) {
+          throw new NodeToolchainProvisionerCommandErrorV2(
+            "NODE_TOOLCHAIN_PROVISIONER_V2_PRECONDITION_CHANGED",
+            "V3 physical census changed while the V2 rollback lease was held",
+            { cause: error },
+          );
+        }
+      });
   let result: NodeToolchainRollbackResultV2;
   try {
-    result = await input.rollback();
+    result = await input.rollback(beforeMutation);
   } catch (error) {
+    if (
+      error instanceof NodeToolchainProvisionerCommandErrorV2
+      && error.code === "NODE_TOOLCHAIN_PROVISIONER_V2_PRECONDITION_CHANGED"
+    ) {
+      return fail(
+        "NODE_TOOLCHAIN_PROVISIONER_V2_PRECONDITION_CHANGED",
+        "V3 physical census changed before rollback mutation",
+        error,
+      );
+    }
     return fail(
       "NODE_TOOLCHAIN_PROVISIONER_V2_ROLLBACK_FAILED",
       "Rollback did not converge through its exact claim and tombstone authority",
@@ -1465,12 +1814,16 @@ export async function rollbackProductionNodeToolchainProvisionerPlanV2(
   plan: unknown,
 ): Promise<NodeToolchainProvisionerOperationReceiptV2> {
   assertProductionSystemBoundary();
+  const parsedPlan = parsePlanInputV3(plan, "rollback").plan;
   return rollbackPlan({
     plan,
     admissionScope: "production_root",
     architecture: process.arch as NodeToolchainTargetArchitectureV2,
     inspectFresh: inspectProductionNodeToolchainProvisionerV2,
-    rollback: () => rollbackProductionProvisionedNodeToolchainV2(plan),
+    rollback: (beforeMutation) => rollbackProductionProvisionedNodeToolchainV2(
+      parsedPlan,
+      beforeMutation,
+    ),
   });
 }
 
@@ -1479,7 +1832,8 @@ export async function rollbackNodeToolchainProvisionerPlanV2ForTest(input: Reado
   plan: unknown;
   hooks?: NodeToolchainRollbackTestHooksV2;
 }>): Promise<NodeToolchainProvisionerOperationReceiptV2> {
-  const plan = parseRollbackCommandPlan(input?.plan);
+  const parsedInput = parsePlanInputV3(input?.plan, "rollback");
+  const plan = parsedInput.plan;
   if (plan.admissionScope !== "test_fixture") {
     return fail(
       "NODE_TOOLCHAIN_PROVISIONER_V2_PLAN_INVALID",
@@ -1487,16 +1841,17 @@ export async function rollbackNodeToolchainProvisionerPlanV2ForTest(input: Reado
     );
   }
   return rollbackPlan({
-    plan,
+    plan: input.plan,
     admissionScope: "test_fixture",
     architecture: plan.architecture,
     inspectFresh: () => inspectNodeToolchainProvisionerV2ForTest({
       parent: input.parent,
       architecture: plan.architecture,
     }),
-    rollback: () => rollbackProvisionedNodeToolchainV2ForTest({
+    rollback: (beforeMutation) => rollbackProvisionedNodeToolchainV2ForTest({
       parent: input.parent,
       plan,
+      ...(beforeMutation ? { beforeMutation } : {}),
       ...(input.hooks ? { hooks: input.hooks } : {}),
     }),
   });

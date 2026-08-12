@@ -8,11 +8,11 @@ import {
   readImplementEvidenceConfig,
   summarizeImplementEvidenceValidation,
   validateImplementEvidenceArtifacts,
-} from "../dist/installer/implement-evidence.js";
+} from "../src/installer/implement-evidence.js";
 import {
   currentVisualEvidenceResult,
   writeImplementEvidenceArtifact,
-} from "../dist/installer/implement-evidence-writer.js";
+} from "../src/installer/implement-evidence-writer.js";
 
 const ENV_KEYS = [
   "SETFARM_IMPLEMENT_EVIDENCE_GATE",

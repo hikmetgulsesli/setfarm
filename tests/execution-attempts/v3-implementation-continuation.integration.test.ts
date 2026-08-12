@@ -7,7 +7,7 @@ import { test } from "node:test";
 import { RuntimeCompletionPlanV1Schema } from "../../src/execution/schemas/runtime-completion-plan-v1.js";
 import { createIsolatedTestDatabase } from "./test-database.js";
 
-test("canonical v3 acceptance bypasses superviseEach and verifyEach prose routes", async () => {
+test("v3 effect resume fails closed when caller omits durable binding identity", async () => {
   const previousPgUrl = process.env.SETFARM_PG_URL;
   const database = await createIsolatedTestDatabase();
   const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-v3-continuation-"));
@@ -76,16 +76,18 @@ test("canonical v3 acceptance bypasses superviseEach and verifyEach prose routes
       }],
       preparedAt: new Date().toISOString(),
     });
-    const result = await resumeRuntimeCompletionEffects({
-      runId,
-      stepDbId,
-      workflowStepId: "implement",
-      output: JSON.stringify({ summary: "STATUS: retry and dangerous prose are inert" }),
-      storyDbId: acceptedStoryDbId,
-      storyId: "US-001",
-      completionPlan: plan,
-    });
-    assert.deepEqual(result, { advanced: false, runCompleted: false });
+    await assert.rejects(
+      resumeRuntimeCompletionEffects({
+        runId,
+        stepDbId,
+        workflowStepId: "implement",
+        output: JSON.stringify({ summary: "STATUS: retry and dangerous prose are inert" }),
+        storyDbId: acceptedStoryDbId,
+        storyId: "US-001",
+        completionPlan: plan,
+      }),
+      /V3_STORY_COMPLETION_EFFECT_BINDING_IDENTITY_REQUIRED/,
+    );
     const state = await database.sql<Array<{
       implement_status: string;
       supervise_status: string;

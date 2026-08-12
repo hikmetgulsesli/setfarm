@@ -24,6 +24,7 @@ import {
   inspectScaffoldBaseMaterializationReceiptV2,
   isProductionNodeScaffoldPrivateStageV2,
   revalidateNodeScaffoldDependenciesV2,
+  revalidateNodeScaffoldStageHostToolchainLogicalIdentityInternalV3,
   type MaterializedNodeScaffoldPrivateStageV2,
 } from "./node-scaffold-private-materializer-v2.js";
 import {
@@ -77,6 +78,9 @@ import type {
 import type {
   BuildDependencyMaterializationReceiptV2,
 } from "./schemas/node-scaffold-private-materialization-v2.js";
+import type {
+  HostNodeToolchainLogicalProjectionV3,
+} from "./schemas/host-node-toolchain-receipt-v2.js";
 import type {
   NodeScaffoldToolchainCatalogV2,
   NodeScaffoldToolchainEntryV2,
@@ -315,6 +319,7 @@ function compilerTargetV3(
 function buildLogicalDependencyV3(
   receipt: Readonly<BuildDependencyMaterializationReceiptV2>,
   compilerTarget: TypeScriptCompilerTargetV3,
+  hostToolchain: HostNodeToolchainLogicalProjectionV3,
 ): BuildTopologyLogicalDependencyV3 {
   return {
     catalogHash: receipt.catalogBinding.catalogHash,
@@ -322,8 +327,8 @@ function buildLogicalDependencyV3(
     dependencyGraphHash: receipt.catalogBinding.dependencyGraphHash,
     environmentContractHash: receipt.environmentBinding.environmentContractHash,
     effectiveConfigHash: receipt.environmentBinding.effectiveConfigHash,
-    nodeIdentityHash: receipt.hostToolchain.nodeIdentityHash,
-    npmClosureHash: receipt.hostToolchain.npmClosureHash,
+    nodeRuntimeLogicalHash: hostToolchain.nodeRuntimeLogicalHash,
+    npmClosureLogicalHash: hostToolchain.npmClosureLogicalHash,
     npmVersion: receipt.hostToolchain.npmVersion,
     installDirectArgvHash: receipt.installExecution.directArgvHash,
     graph: {
@@ -400,6 +405,7 @@ function buildCommandsV3(
   dependency: Readonly<BuildDependencyMaterializationReceiptV2>,
   compilerTarget: TypeScriptCompilerTargetV3,
   testProfile: Readonly<NodeProductTestGeneratorProfileV2>,
+  hostToolchain: HostNodeToolchainLogicalProjectionV3,
 ): BuildTopologyCommandsV3 {
   const common = {
     commandRef: "CMD_NODE_PRODUCT_TEST_V3" as const,
@@ -433,7 +439,7 @@ function buildCommandsV3(
   return {
     environmentContractHash: dependency.environmentBinding.environmentContractHash,
     effectiveConfigHash: dependency.environmentBinding.effectiveConfigHash,
-    nodeIdentityHash: dependency.hostToolchain.nodeIdentityHash,
+    nodeRuntimeLogicalHash: hostToolchain.nodeRuntimeLogicalHash,
     ambientEnvironment: "forbidden",
     install: {
       commandRef: dependency.installExecution.commandRef,
@@ -566,9 +572,14 @@ function buildTopologyV3(input: Readonly<{
   fileTree: Readonly<FileTreeManifestV3>;
   dependency: Readonly<BuildDependencyMaterializationReceiptV2>;
   compilerTarget: TypeScriptCompilerTargetV3;
+  hostToolchain: HostNodeToolchainLogicalProjectionV3;
 }>): BuildTopologyV3 {
-  const { fresh, fileTree, dependency, compilerTarget } = input;
-  const logicalDependency = buildLogicalDependencyV3(dependency, compilerTarget);
+  const { fresh, fileTree, dependency, compilerTarget, hostToolchain } = input;
+  const logicalDependency = buildLogicalDependencyV3(
+    dependency,
+    compilerTarget,
+    hostToolchain,
+  );
   const logicalDependencyHash = hashBuildTopologyLogicalDependencyV3(
     logicalDependency,
   );
@@ -728,7 +739,12 @@ function buildTopologyV3(input: Readonly<{
     `${left.physicalSpace}\0${left.normalizedLocator}`,
     `${right.physicalSpace}\0${right.normalizedLocator}`,
   ));
-  const commands = buildCommandsV3(dependency, compilerTarget, testProfile);
+  const commands = buildCommandsV3(
+    dependency,
+    compilerTarget,
+    testProfile,
+    hostToolchain,
+  );
   const compilation: BuildTopologyCompilationV3 = {
     profileId: fileTree.authority.profileId,
     layoutHash: fresh.layout.layoutHash,
@@ -928,6 +944,10 @@ async function compileInternalV3(
           candidate: parsed.data.fileTree,
         });
     const dependency = await revalidateNodeScaffoldDependenciesV2(handle);
+    const hostToolchain =
+      await revalidateNodeScaffoldStageHostToolchainLogicalIdentityInternalV3(
+        handle,
+      );
     const inspectedDependency = inspectBuildDependencyMaterializationReceiptV2(handle);
     const base = inspectScaffoldBaseMaterializationReceiptV2(handle);
     const fresh = reproduceFreshAuthorityV3({
@@ -948,6 +968,7 @@ async function compileInternalV3(
       fileTree: verifiedFileTree.value,
       dependency,
       compilerTarget,
+      hostToolchain,
     }));
     let canonicalBytes: Buffer;
     try {

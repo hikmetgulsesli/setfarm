@@ -11,6 +11,7 @@ import {
   V3PreparationClaimAuthorityError,
   type V3PreparationClaimAuthorityV1,
 } from "../../src/execution/v3-preparation-claim-authority.js";
+import { seedCanonicalCompilerStoryAdmissionFixture } from "./helpers/compiler-story-english-admission-fixture.js";
 import { createIsolatedTestDatabase, type TestDatabase } from "./test-database.js";
 
 const PACKET_HASH = "a".repeat(64);
@@ -37,18 +38,11 @@ async function seedFixture(
   options: Readonly<{ dependency?: boolean }> = {},
 ) {
   const runId = `run-v3-preparation-authority-${suffix}`;
-  const stepDbId = `${runId}-step`;
-  const storyDbId = `${runId}-story`;
-  const admissionHash = await database.seedV3ReleaseGoAdmission(RELEASE_SHA);
-  await database.sql.unsafe(
-    `INSERT INTO runs (
-       id, workflow_id, task, status, protocol, protocol_version,
-       compiler_release_sha, packet_hash, activation_preflight_hash,
-       release_admission_hash
-     ) VALUES ($1, 'feature-dev', 'preparation authority test', 'running',
-               'v3', 1, $2, $3, $4, $5)`,
-    [runId, RELEASE_SHA, PACKET_HASH, "e".repeat(64), admissionHash],
-  );
+  const admission = await seedCanonicalCompilerStoryAdmissionFixture(database, {
+    runId,
+    releaseSha: RELEASE_SHA,
+    packetHash: PACKET_HASH,
+  });
   await database.sql.unsafe(
     `INSERT INTO semantic_artifacts (
        artifact_hash, artifact_type, byte_length, producer_metadata
@@ -64,21 +58,10 @@ async function seedFixture(
      VALUES ($1, $2, $3::text::jsonb)`,
     [runId, PACKET_HASH, JSON.stringify({ version: "3.0.0", codeSha: RELEASE_SHA })],
   );
-  await database.sql.unsafe(
-    `INSERT INTO steps (
-       id, run_id, step_id, agent_id, step_index, input_template,
-       expects, status, type
-     ) VALUES ($1,$2,'implement','feature-dev_developer',1,'','','pending','loop')`,
-    [stepDbId, runId],
-  );
-  const projectedDependencyIds = options.dependency ? ["US-001"] : [];
-  await database.sql.unsafe(
-    `INSERT INTO stories (
-       id, run_id, story_index, story_id, title, status,
-       claim_generation, depends_on
-     ) VALUES ($1,$2,2,'US-002','Target story','pending',0,$3)`,
-    [storyDbId, runId, projectedDependencyIds.length > 0 ? JSON.stringify(projectedDependencyIds) : null],
-  );
+  const target = options.dependency ? admission.stories[1] : admission.stories[0];
+  assert.ok(target);
+  const projectedDependencyIds = [...target.dependsOn];
+  assert.deepEqual(projectedDependencyIds, options.dependency ? ["US-001"] : []);
 
   let dependencyState: Array<{
     storyId: string;
@@ -89,11 +72,12 @@ async function seedFixture(
     sourceAfterTreeHash: string;
   }> = [];
   if (options.dependency) {
+    const dependencyStoryId = projectedDependencyIds[0]!;
     const dependencyClaimRows = await database.sql.unsafe<Array<{ id: string }>>(
       `INSERT INTO claim_log (run_id, step_id, story_id, agent_id, outcome)
-       VALUES ($1, 'implement', 'US-001', 'feature-dev_developer', 'completed')
+       VALUES ($1, 'implement', $2, 'feature-dev_developer', 'completed')
        RETURNING id::text AS id`,
-      [runId],
+      [runId, dependencyStoryId],
     );
     const dependencyClaimId = dependencyClaimRows[0]!.id;
     const attemptId = `ATT_dependency-${suffix.padEnd(16, "x")}`;
@@ -106,7 +90,7 @@ async function seedFixture(
          role, agent_id, lease_acquired_at, lease_expires_at, heartbeat_at,
          disposition, evidence_refs, claim_id
        ) VALUES (
-         $1,$2,'implement','US-001',1,$3,'supervisor_repair',$4,$5,
+         $1,$2,'implement',$12,1,$3,'supervisor_repair',$4,$5,
          $6,$7,$8,$9,'supervisor','feature-dev_supervisor',
          NOW(),NOW() + INTERVAL '5 minutes',NOW(),'produced_delta',$10,$11::bigint
        )`,
@@ -122,10 +106,11 @@ async function seedFixture(
         DEPENDENCY_TREE,
         JSON.stringify([`setfarm://claim-log/${dependencyClaimId}`]),
         dependencyClaimId,
+        dependencyStoryId,
       ],
     );
     dependencyState = [{
-      storyId: "US-001",
+      storyId: dependencyStoryId,
       state: "ready",
       attemptId,
       disposition: "produced_delta",
@@ -133,7 +118,15 @@ async function seedFixture(
       sourceAfterTreeHash: DEPENDENCY_TREE,
     }];
   }
-  return { runId, stepDbId, storyDbId, projectedDependencyIds, dependencyState };
+  return {
+    runId,
+    stepDbId: admission.implementStepDbId,
+    storyDbId: target.id,
+    storyId: target.storyId,
+    storyAdmissionProof: admission.storyAdmissionProof,
+    projectedDependencyIds,
+    dependencyState,
+  };
 }
 
 async function prepare(
@@ -144,7 +137,7 @@ async function prepare(
   const result = await createV3PreparationBlockRepository(database.sql).resolveReady({
     runId: fixture.runId,
     stepId: "implement",
-    storyId: "US-002",
+    storyId: fixture.storyId,
     packetHash: PACKET_HASH,
     sourceSha: BASE_SHA,
     sourceTreeHash,
@@ -165,12 +158,13 @@ function publicationInput(
     stepDbId: fixture.stepDbId,
     workflowStepId: "implement",
     storyDbId: fixture.storyDbId,
-    storyId: "US-002",
+    storyId: fixture.storyId,
     claimAgentId: "feature-dev_developer",
     callerGatewayAgent: "prism",
     parallelLimit: 1,
     runtimeIntent: runtimeIntent(sessionId),
     preparationAuthority: authority,
+    storyAdmissionProof: fixture.storyAdmissionProof,
   } as const;
 }
 
@@ -202,9 +196,11 @@ describe("v3 preparation claim authority", () => {
                state.state_version,
                state.claim_id::text AS state_claim_id,
                (SELECT COUNT(*)::integer FROM claim_log
-                 WHERE run_id = ${fixture.runId} AND story_id = 'US-002') AS claim_count,
+                 WHERE run_id = ${fixture.runId}
+                   AND story_id = ${fixture.storyId}) AS claim_count,
                (SELECT COUNT(*)::integer FROM runtime_sessions
-                 WHERE run_id = ${fixture.runId}) AS runtime_count
+                 WHERE run_id = ${fixture.runId}
+                   AND workflow_step_id = 'implement') AS runtime_count
           FROM stories story
           JOIN v3_preparation_story_state state
             ON state.run_id = story.run_id AND state.story_id = story.story_id
@@ -272,9 +268,11 @@ describe("v3 preparation claim authority", () => {
       );
       const counts = await database.sql<Array<{ claims: number; sessions: number }>>`
         SELECT (SELECT COUNT(*)::integer FROM claim_log
-                 WHERE run_id = ${fixture.runId} AND story_id = 'US-002') AS claims,
+                 WHERE run_id = ${fixture.runId}
+                   AND story_id = ${fixture.storyId}) AS claims,
                (SELECT COUNT(*)::integer FROM runtime_sessions
-                 WHERE run_id = ${fixture.runId}) AS sessions
+                 WHERE run_id = ${fixture.runId}
+                   AND workflow_step_id = 'implement') AS sessions
       `;
       assert.deepEqual({ ...counts[0] }, { claims: 0, sessions: 0 });
     } finally {
@@ -353,9 +351,11 @@ describe("v3 preparation claim authority", () => {
                state.state,
                state.claim_id::text AS state_claim_id,
                (SELECT COUNT(*)::integer FROM claim_log
-                 WHERE run_id = ${fixture.runId} AND story_id = 'US-002') AS target_claims,
+                 WHERE run_id = ${fixture.runId}
+                   AND story_id = ${fixture.storyId}) AS target_claims,
                (SELECT COUNT(*)::integer FROM runtime_sessions
-                 WHERE run_id = ${fixture.runId}) AS target_sessions
+                 WHERE run_id = ${fixture.runId}
+                   AND workflow_step_id = 'implement') AS target_sessions
           FROM stories story
           JOIN steps step ON step.id = ${fixture.stepDbId}
           JOIN v3_preparation_story_state state
@@ -422,9 +422,11 @@ describe("v3 preparation claim authority", () => {
       }>>`
         SELECT state.state, state.state_version, state.claim_id::text AS claim_id,
                (SELECT COUNT(*)::integer FROM claim_log
-                 WHERE run_id = ${fixture.runId} AND story_id = 'US-002') AS claims
+                 WHERE run_id = ${fixture.runId}
+                   AND story_id = ${fixture.storyId}) AS claims
           FROM v3_preparation_story_state state
-         WHERE state.run_id = ${fixture.runId} AND state.story_id = 'US-002'
+         WHERE state.run_id = ${fixture.runId}
+           AND state.story_id = ${fixture.storyId}
       `;
       assert.deepEqual({ ...rows[0] }, {
         state: "claimed",

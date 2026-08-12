@@ -118,8 +118,8 @@ export const ProductConvergenceSuiteV1Schema = z.object({
   }
   const holdouts = value.cases.filter((item) => item.oracle.cohort === "holdout");
   if (!holdouts.some((item) => item.oracle.variant === "paraphrase")
-    || !holdouts.some((item) => item.oracle.variant === "multilingual")) {
-    context.addIssue({ code: "custom", path: ["cases"], message: "Holdouts require paraphrase and multilingual variants" });
+    || !holdouts.some((item) => item.oracle.variant === "compositional")) {
+    context.addIssue({ code: "custom", path: ["cases"], message: "Holdouts require paraphrase and compositional variants" });
   }
   if (!hasUniqueStrings(value.cases.map((item) => hashCanonicalJson(item.task)))) {
     context.addIssue({ code: "custom", path: ["cases"], message: "Convergence tasks must be distinct" });

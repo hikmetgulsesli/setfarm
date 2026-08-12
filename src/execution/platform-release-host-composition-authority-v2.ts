@@ -4,9 +4,9 @@ import {
   constants,
   fstatSync,
   lstatSync,
+  opendirSync,
   openSync,
   readSync,
-  readdirSync,
   realpathSync,
   type BigIntStats,
 } from "node:fs";
@@ -50,6 +50,9 @@ import {
   PLATFORM_RELEASE_COMPONENT_VERSION_V2,
   deepFreezePlatformReleaseJsonV2,
 } from "./schemas/platform-release-common-v2.js";
+import {
+  PLATFORM_RELEASE_BOOTSTRAP_NETWORK_NEGATIVE_OPERATION_POLICY_HASH_V2,
+} from "./platform-release-bootstrap-network-negative-operation-v2.js";
 
 export type PlatformReleaseHostCompositionAuthorityErrorCodeV2 =
   | "HOST_COMPOSITION_INPUT_INVALID"
@@ -232,6 +235,48 @@ const EXPECTED_DIRECTORY_NAMES_V2 =
     ]),
   });
 
+type DirectoryLocatorV2 = "." | "bin" | "lib" | "tools";
+
+const DIRECTORY_MEMBER_CAPS_V2 = Object.freeze({
+  ".": 3,
+  bin: 2,
+  lib: 3,
+  tools: 5,
+} as const satisfies Readonly<Record<DirectoryLocatorV2, number>>);
+
+type DirectoryCaptureHookContextV2 = Readonly<{
+  absolutePath: string;
+  relativeLocator: DirectoryLocatorV2;
+}>;
+
+type DirectoryEntryHookContextV2 =
+  DirectoryCaptureHookContextV2 & Readonly<{
+    name: string;
+    retainedNameCount: number;
+  }>;
+
+type FileCaptureHookContextV2 = Readonly<{
+  absolutePath: string;
+  relativeLocator: string;
+  role: FileRoleDefinitionV2["role"];
+}>;
+
+export type PlatformReleaseHostCompositionAuthorityTestHooksV2 =
+  Readonly<{
+    afterDirectoryEntryRead?: (
+      context: DirectoryEntryHookContextV2,
+    ) => void;
+    afterDirectoryDescriptorClose?: (
+      context: DirectoryCaptureHookContextV2,
+    ) => void;
+    afterFileRead?: (
+      context: FileCaptureHookContextV2,
+    ) => void;
+    afterFileDescriptorClose?: (
+      context: FileCaptureHookContextV2,
+    ) => void;
+  }>;
+
 type PhysicalFingerprintV2 = Readonly<{
   device: string;
   inode: string;
@@ -245,7 +290,7 @@ type PhysicalFingerprintV2 = Readonly<{
 }>;
 
 type CapturedDirectoryV2 = Readonly<{
-  relativeLocator: "." | "bin" | "lib" | "tools";
+  relativeLocator: DirectoryLocatorV2;
   fingerprint: PhysicalFingerprintV2;
   names: readonly string[];
 }>;
@@ -368,16 +413,54 @@ function exactNames(
     && actual.every((name, index) => name === expected[index]);
 }
 
+function filesystemCaptureErrorV2(
+  error: unknown,
+  message: string,
+): PlatformReleaseHostCompositionAuthorityErrorV2 {
+  return error
+    instanceof PlatformReleaseHostCompositionAuthorityErrorV2
+    ? error
+    : new PlatformReleaseHostCompositionAuthorityErrorV2(
+      "HOST_COMPOSITION_FILESYSTEM_DRIFT",
+      message,
+      { cause: error },
+    );
+}
+
+function throwPrimaryFirstCaptureFailureV2(
+  primaryError:
+    PlatformReleaseHostCompositionAuthorityErrorV2
+    | undefined,
+  closeError:
+    PlatformReleaseHostCompositionAuthorityErrorV2
+    | undefined,
+  message: string,
+): void {
+  if (primaryError !== undefined && closeError !== undefined) {
+    const aggregate = new AggregateError(
+      [primaryError, closeError],
+      message,
+      { cause: primaryError },
+    );
+    throw new PlatformReleaseHostCompositionAuthorityErrorV2(
+      primaryError.code,
+      message,
+      { cause: aggregate },
+    );
+  }
+  if (primaryError !== undefined) throw primaryError;
+  if (closeError !== undefined) throw closeError;
+}
+
 function captureDirectoryV2(
   absolutePath: string,
-  relativeLocator: "." | "bin" | "lib" | "tools",
+  relativeLocator: DirectoryLocatorV2,
   expectedOwner?: Readonly<{ uid: number; gid: number }>,
+  hooks?: PlatformReleaseHostCompositionAuthorityTestHooksV2,
 ): CapturedDirectoryV2 {
-  let stat: BigIntStats;
-  let names: string[];
+  let before: BigIntStats;
   try {
-    stat = lstatSync(absolutePath, { bigint: true });
-    names = readdirSync(absolutePath).sort();
+    before = lstatSync(absolutePath, { bigint: true });
   } catch (error) {
     return fail(
       "HOST_COMPOSITION_FILESYSTEM_DRIFT",
@@ -385,13 +468,13 @@ function captureDirectoryV2(
       error,
     );
   }
-  if (stat.isSymbolicLink() || !stat.isDirectory()) {
+  if (before.isSymbolicLink() || !before.isDirectory()) {
     return fail(
       "HOST_COMPOSITION_FILESYSTEM_DRIFT",
       `Host composition ${relativeLocator} must be one direct directory`,
     );
   }
-  if (modeText(stat) !== "0700") {
+  if (modeText(before) !== "0700") {
     return fail(
       "HOST_COMPOSITION_FILESYSTEM_DRIFT",
       `Test host composition ${relativeLocator} directory mode must be 0700`,
@@ -400,8 +483,8 @@ function captureDirectoryV2(
   if (
     expectedOwner
     && (
-      Number(stat.uid) !== expectedOwner.uid
-      || Number(stat.gid) !== expectedOwner.gid
+      Number(before.uid) !== expectedOwner.uid
+      || Number(before.gid) !== expectedOwner.gid
     )
   ) {
     return fail(
@@ -411,6 +494,97 @@ function captureDirectoryV2(
   }
   const expectedNames =
     EXPECTED_DIRECTORY_NAMES_V2[relativeLocator];
+  const maximumNames =
+    DIRECTORY_MEMBER_CAPS_V2[relativeLocator];
+  if (expectedNames.length !== maximumNames) {
+    return fail(
+      "HOST_COMPOSITION_AUTHORITY_INVALID",
+      `Code-owned ${relativeLocator} directory member bound is inconsistent`,
+    );
+  }
+  let directory: ReturnType<typeof opendirSync> | undefined;
+  let primaryError:
+    PlatformReleaseHostCompositionAuthorityErrorV2
+    | undefined;
+  const names: string[] = [];
+  try {
+    directory = opendirSync(absolutePath, { bufferSize: 1 });
+    while (true) {
+      const entry = directory.readSync();
+      if (entry === null) break;
+      hooks?.afterDirectoryEntryRead?.({
+        absolutePath,
+        relativeLocator,
+        name: entry.name,
+        retainedNameCount: names.length,
+      });
+      if (names.length >= maximumNames) {
+        return fail(
+          "HOST_COMPOSITION_FILESYSTEM_DRIFT",
+          `Host composition ${relativeLocator} directory membership exceeds its admitted member bound`,
+        );
+      }
+      names.push(entry.name);
+    }
+  } catch (error) {
+    primaryError = filesystemCaptureErrorV2(
+      error,
+      `Host composition ${relativeLocator} directory membership could not be captured`,
+    );
+  }
+
+  let closeError:
+    PlatformReleaseHostCompositionAuthorityErrorV2
+    | undefined;
+  if (directory !== undefined) {
+    try {
+      directory.closeSync();
+      hooks?.afterDirectoryDescriptorClose?.({
+        absolutePath,
+        relativeLocator,
+      });
+    } catch (error) {
+      closeError = filesystemCaptureErrorV2(
+        error,
+        `Host composition ${relativeLocator} directory descriptor could not be closed`,
+      );
+    }
+  }
+  throwPrimaryFirstCaptureFailureV2(
+    primaryError,
+    closeError,
+    `Host composition ${relativeLocator} directory membership capture and descriptor close both failed`,
+  );
+
+  let after: BigIntStats;
+  try {
+    after = lstatSync(absolutePath, { bigint: true });
+  } catch (error) {
+    return fail(
+      "HOST_COMPOSITION_FILESYSTEM_DRIFT",
+      `Host composition ${relativeLocator} directory disappeared after bounded membership capture`,
+      error,
+    );
+  }
+  if (
+    after.isSymbolicLink()
+    || !after.isDirectory()
+    || modeText(after) !== "0700"
+    || (
+      expectedOwner
+      && (
+        Number(after.uid) !== expectedOwner.uid
+        || Number(after.gid) !== expectedOwner.gid
+      )
+    )
+    || !sameFingerprint(fingerprint(before), fingerprint(after))
+  ) {
+    return fail(
+      "HOST_COMPOSITION_FILESYSTEM_DRIFT",
+      `Host composition ${relativeLocator} directory changed during bounded membership capture`,
+    );
+  }
+  names.sort();
   if (!exactNames(names, expectedNames)) {
     return fail(
       "HOST_COMPOSITION_FILESYSTEM_DRIFT",
@@ -419,7 +593,7 @@ function captureDirectoryV2(
   }
   return Object.freeze({
     relativeLocator,
-    fingerprint: fingerprint(stat),
+    fingerprint: fingerprint(after),
     names: Object.freeze(names),
   });
 }
@@ -429,6 +603,7 @@ function captureFileV2(
   definition: FileRoleDefinitionV2,
   parent: CapturedDirectoryV2,
   expectedOwner: Readonly<{ uid: number; gid: number }>,
+  hooks?: PlatformReleaseHostCompositionAuthorityTestHooksV2,
 ): CapturedFileV2 {
   const absolutePath = path.join(
     root,
@@ -445,6 +620,10 @@ function captureFileV2(
     );
   }
   let descriptor: number | undefined;
+  let captured: CapturedFileV2 | undefined;
+  let primaryError:
+    PlatformReleaseHostCompositionAuthorityErrorV2
+    | undefined;
   try {
     const parentPath = path.dirname(absolutePath);
     const parentBefore = lstatSync(parentPath, {
@@ -528,6 +707,11 @@ function captureFileV2(
       hash.update(buffer.subarray(0, bytesRead));
     }
     buffer.fill(0);
+    hooks?.afterFileRead?.({
+      absolutePath,
+      relativeLocator: definition.relativeLocator,
+      role: definition.role,
+    });
     const descriptorAfter = fstatSync(descriptor, {
       bigint: true,
     });
@@ -557,7 +741,7 @@ function captureFileV2(
         `${definition.role} or its parent changed during descriptor admission`,
       );
     }
-    return Object.freeze({
+    captured = Object.freeze({
       definition,
       absolutePath,
       fingerprint: fingerprint(descriptorAfter),
@@ -565,24 +749,41 @@ function captureFileV2(
       parent,
     });
   } catch (error) {
-    if (
-      error
-        instanceof PlatformReleaseHostCompositionAuthorityErrorV2
-    ) {
-      throw error;
-    }
-    return fail(
-      "HOST_COMPOSITION_FILESYSTEM_DRIFT",
-      `${definition.role} could not be captured exactly`,
+    primaryError = filesystemCaptureErrorV2(
       error,
+      `${definition.role} could not be captured exactly`,
     );
-  } finally {
-    if (descriptor !== undefined) closeSync(descriptor);
   }
+
+  let closeError:
+    PlatformReleaseHostCompositionAuthorityErrorV2
+    | undefined;
+  if (descriptor !== undefined) {
+    try {
+      closeSync(descriptor);
+      hooks?.afterFileDescriptorClose?.({
+        absolutePath,
+        relativeLocator: definition.relativeLocator,
+        role: definition.role,
+      });
+    } catch (error) {
+      closeError = filesystemCaptureErrorV2(
+        error,
+        `${definition.role} file descriptor could not be closed`,
+      );
+    }
+  }
+  throwPrimaryFirstCaptureFailureV2(
+    primaryError,
+    closeError,
+    `${definition.role} capture and descriptor close both failed`,
+  );
+  return captured!;
 }
 
 function captureInstallationV2(
   fixtureRoot: string,
+  hooks?: PlatformReleaseHostCompositionAuthorityTestHooksV2,
 ): CapturedInstallationV2 {
   let resolved: string;
   try {
@@ -606,6 +807,8 @@ function captureInstallationV2(
   const rootBefore = captureDirectoryV2(
     fixtureRoot,
     ".",
+    undefined,
+    hooks,
   );
   const owner = Object.freeze({
     uid: rootBefore.fingerprint.ownerUid,
@@ -616,16 +819,19 @@ function captureInstallationV2(
       path.join(fixtureRoot, "bin"),
       "bin",
       owner,
+      hooks,
     ),
     captureDirectoryV2(
       path.join(fixtureRoot, "lib"),
       "lib",
       owner,
+      hooks,
     ),
     captureDirectoryV2(
       path.join(fixtureRoot, "tools"),
       "tools",
       owner,
+      hooks,
     ),
   ] as const);
   const byLocator = new Map(
@@ -653,6 +859,7 @@ function captureInstallationV2(
         definition,
         parent,
         owner,
+        hooks,
       );
     }),
   );
@@ -660,22 +867,26 @@ function captureInstallationV2(
     fixtureRoot,
     ".",
     owner,
+    hooks,
   );
   const directoriesAfter = Object.freeze([
     captureDirectoryV2(
       path.join(fixtureRoot, "bin"),
       "bin",
       owner,
+      hooks,
     ),
     captureDirectoryV2(
       path.join(fixtureRoot, "lib"),
       "lib",
       owner,
+      hooks,
     ),
     captureDirectoryV2(
       path.join(fixtureRoot, "tools"),
       "tools",
       owner,
+      hooks,
     ),
   ] as const);
   let finalRealpath: string;
@@ -1285,10 +1496,14 @@ export async function openPlatformReleaseHostCompositionAuthorityV2Internal(
 
 export async function createPlatformReleaseHostCompositionAuthorityV2ForTest(
   input: unknown,
+  hooks:
+    PlatformReleaseHostCompositionAuthorityTestHooksV2
+    | undefined = undefined,
 ): Promise<PlatformReleaseHostCompositionAuthorityV2> {
   const parsed = parseTestInputV2(input);
   const first = captureInstallationV2(
     parsed.fixture.fixtureRoot,
+    hooks,
   );
   const firstReceipt = buildReceiptV2({
     platformHost: parsed.platformHost,
@@ -1297,6 +1512,7 @@ export async function createPlatformReleaseHostCompositionAuthorityV2ForTest(
   });
   const second = captureInstallationV2(
     parsed.fixture.fixtureRoot,
+    hooks,
   );
   const secondReceipt = buildReceiptV2({
     platformHost: parsed.platformHost,
@@ -1336,6 +1552,391 @@ export function inspectPlatformReleaseHostCompositionReceiptV2(
   return deepFreezePlatformReleaseJsonV2(
     structuredClone(authenticStateV2(handle).receipt),
   );
+}
+
+export type PlatformReleaseHostCompositionModuleExportLaunchContextInternalV2 =
+  Readonly<{
+    admissionScope: "production_host" | "test_fixture";
+    hostIdentityHash: string;
+    hostCompositionReceiptHash: string;
+    releaseBootstrapExecutablePath: string;
+    releaseBootstrapExecutableContentHash: string;
+    releaseBootstrapExecutablePhysicalIdentityHash: string;
+    releaseBootstrapModulePath: string;
+    releaseBootstrapModuleContentHash: string;
+    releaseBootstrapModulePhysicalIdentityHash: string;
+  }>;
+
+export type PlatformReleaseHostCompositionTargetOperationAbiRefInternalV2 =
+  | "ABI_PLATFORM_RELEASE_HOST_OPERATION_V2"
+  | "ABI_PLATFORM_RELEASE_METADATA_PROBE_V2"
+  | "ABI_PLATFORM_RELEASE_MODULE_EXPORT_PROBE_V2"
+  | "ABI_PLATFORM_RELEASE_NETWORK_NEGATIVE_PROBE_V2";
+
+export type PlatformReleaseHostCompositionTargetOperationLaunchContextInternalV2 =
+  Readonly<{
+    admissionScope: "production_host" | "test_fixture";
+    hostIdentityHash: string;
+    hostCompositionReceiptHash: string;
+    operationAbiRef:
+      PlatformReleaseHostCompositionTargetOperationAbiRefInternalV2;
+    releaseBootstrapExecutablePath: string;
+    releaseBootstrapExecutableContentHash: string;
+    releaseBootstrapExecutablePhysicalIdentityHash: string;
+    implementationMemberRef:
+      | "BOOTSTRAP_RELEASE_COMPOSITION_MODULE_V2"
+      | "BOOTSTRAP_RELEASE_COMPOSITION_METADATA_MODULE_V2"
+      | "BOOTSTRAP_RELEASE_COMPOSITION_NETWORK_WRAPPER_MODULE_V2";
+    implementationPath: string;
+    implementationContentHash: string;
+    implementationPhysicalIdentityHash: string;
+  }>;
+
+export type PlatformReleaseHostCompositionMetadataOperationLaunchContextInternalV2 =
+  PlatformReleaseHostCompositionTargetOperationLaunchContextInternalV2 &
+  Readonly<{
+    admissionScope: "test_fixture";
+    operationAbiRef:
+      "ABI_PLATFORM_RELEASE_METADATA_PROBE_V2";
+    implementationMemberRef:
+      "BOOTSTRAP_RELEASE_COMPOSITION_METADATA_MODULE_V2";
+    xattrObserverExecutablePath: string;
+    xattrObserverExecutableContentHash: string;
+    xattrObserverExecutablePhysicalIdentityHash: string;
+    aclObserverExecutablePath: string;
+    aclObserverExecutableContentHash: string;
+    aclObserverExecutablePhysicalIdentityHash: string;
+  }>;
+
+export type PlatformReleaseHostCompositionNetworkNegativeOperationLaunchContextInternalV2 =
+  PlatformReleaseHostCompositionTargetOperationLaunchContextInternalV2 &
+  Readonly<{
+    admissionScope: "test_fixture";
+    operationAbiRef:
+      "ABI_PLATFORM_RELEASE_NETWORK_NEGATIVE_PROBE_V2";
+    implementationMemberRef:
+      "BOOTSTRAP_RELEASE_COMPOSITION_NETWORK_WRAPPER_MODULE_V2";
+    sandboxPolicyHash:
+      typeof PLATFORM_RELEASE_BOOTSTRAP_NETWORK_NEGATIVE_OPERATION_POLICY_HASH_V2;
+    sandboxExecutablePath: string;
+    sandboxExecutableContentHash: string;
+    sandboxExecutablePhysicalIdentityHash: string;
+  }>;
+
+const TARGET_OPERATION_IMPLEMENTATION_BINDINGS_V2 = Object.freeze({
+  ABI_PLATFORM_RELEASE_HOST_OPERATION_V2: Object.freeze({
+    role: "release_bootstrap_module" as const,
+    implementationMemberRef:
+      "BOOTSTRAP_RELEASE_COMPOSITION_MODULE_V2" as const,
+    admissionScopes: Object.freeze([
+      "production_host",
+      "test_fixture",
+    ] as const),
+  }),
+  ABI_PLATFORM_RELEASE_METADATA_PROBE_V2: Object.freeze({
+    role: "metadata_bootstrap_module" as const,
+    implementationMemberRef:
+      "BOOTSTRAP_RELEASE_COMPOSITION_METADATA_MODULE_V2" as const,
+    admissionScopes: Object.freeze([
+      "test_fixture",
+    ] as const),
+  }),
+  ABI_PLATFORM_RELEASE_MODULE_EXPORT_PROBE_V2: Object.freeze({
+    role: "release_bootstrap_module" as const,
+    implementationMemberRef:
+      "BOOTSTRAP_RELEASE_COMPOSITION_MODULE_V2" as const,
+    admissionScopes: Object.freeze([
+      "production_host",
+      "test_fixture",
+    ] as const),
+  }),
+  ABI_PLATFORM_RELEASE_NETWORK_NEGATIVE_PROBE_V2: Object.freeze({
+    role: "network_wrapper_module" as const,
+    implementationMemberRef:
+      "BOOTSTRAP_RELEASE_COMPOSITION_NETWORK_WRAPPER_MODULE_V2" as const,
+    admissionScopes: Object.freeze([
+      "test_fixture",
+    ] as const),
+  }),
+});
+
+/**
+ * @internal
+ *
+ * Resolves one of the four target-bound installed operations only after a
+ * complete fresh composition census. It returns no target path and grants no
+ * process or mutation authority.
+ */
+export async function acquirePlatformReleaseHostCompositionTargetOperationLaunchContextInternalV2(
+  handle: PlatformReleaseHostCompositionAuthorityV2,
+  operationAbiRef:
+    PlatformReleaseHostCompositionTargetOperationAbiRefInternalV2,
+): Promise<PlatformReleaseHostCompositionTargetOperationLaunchContextInternalV2> {
+  const state = authenticStateV2(handle);
+  if (
+    !Object.hasOwn(
+      TARGET_OPERATION_IMPLEMENTATION_BINDINGS_V2,
+      operationAbiRef,
+    )
+  ) {
+    return fail(
+      "HOST_COMPOSITION_INPUT_INVALID",
+      "Target operation ABI is not owned by the installed release composition",
+    );
+  }
+  const binding =
+    TARGET_OPERATION_IMPLEMENTATION_BINDINGS_V2[
+      operationAbiRef
+    ];
+  if (
+    binding.admissionScopes.every(
+      (scope) => scope !== state.admissionScope,
+    )
+  ) {
+    return fail(
+      "HOST_COMPOSITION_SCOPE_MISMATCH",
+      "Target operation ABI is forbidden for this composition admission scope",
+    );
+  }
+  const receipt =
+    await revalidatePlatformReleaseHostCompositionAuthorityV2(
+      handle,
+    );
+  const executable = state.privateAnchors.files.find(
+    (file) =>
+      file.definition.role
+        === "release_bootstrap_executable",
+  );
+  const implementation = state.privateAnchors.files.find(
+    (file) => file.definition.role === binding.role,
+  );
+  const executableReceipt = receipt.files.find(
+    (file) => file.role === "release_bootstrap_executable",
+  );
+  const implementationReceipt = receipt.files.find(
+    (file) => file.role === binding.role,
+  );
+  if (
+    !executable
+    || !implementation
+    || !executableReceipt
+    || !implementationReceipt
+    || executable.contentHash
+      !== executableReceipt.contentHash
+    || implementation.contentHash
+      !== implementationReceipt.contentHash
+    || receipt.receiptHash !== state.receipt.receiptHash
+  ) {
+    return fail(
+      "HOST_COMPOSITION_AUTHORITY_INVALID",
+      "Target operation cannot bind its exact admitted executable and implementation",
+    );
+  }
+  return Object.freeze({
+    admissionScope: state.admissionScope,
+    hostIdentityHash:
+      receipt.platformHost.hostIdentityHash,
+    hostCompositionReceiptHash: receipt.receiptHash,
+    operationAbiRef,
+    releaseBootstrapExecutablePath:
+      executable.absolutePath,
+    releaseBootstrapExecutableContentHash:
+      executable.contentHash,
+    releaseBootstrapExecutablePhysicalIdentityHash:
+      executableReceipt.physicalIdentityHash,
+    implementationMemberRef:
+      binding.implementationMemberRef,
+    implementationPath: implementation.absolutePath,
+    implementationContentHash: implementation.contentHash,
+    implementationPhysicalIdentityHash:
+      implementationReceipt.physicalIdentityHash,
+  });
+}
+
+/**
+ * @internal
+ *
+ * Extends the target-bound metadata module context with only its two
+ * read-only observer roles. Clear-role locators are deliberately not exposed:
+ * this bridge grants neither metadata mutation nor production authority.
+ */
+export async function acquirePlatformReleaseHostCompositionMetadataOperationLaunchContextInternalV2(
+  handle: PlatformReleaseHostCompositionAuthorityV2,
+): Promise<PlatformReleaseHostCompositionMetadataOperationLaunchContextInternalV2> {
+  const state = authenticStateV2(handle);
+  const targetContext =
+    await acquirePlatformReleaseHostCompositionTargetOperationLaunchContextInternalV2(
+      handle,
+      "ABI_PLATFORM_RELEASE_METADATA_PROBE_V2",
+    );
+  const receipt =
+    await revalidatePlatformReleaseHostCompositionAuthorityV2(
+      handle,
+    );
+  const observerRoles = [
+    "xattr_observer_executable",
+    "acl_observer_executable",
+  ] as const;
+  const observers = observerRoles.map((role) => {
+    const anchor = state.privateAnchors.files.find(
+      (file) => file.definition.role === role,
+    );
+    const fileReceipt = receipt.files.find(
+      (file) => file.role === role,
+    );
+    if (
+      !anchor
+      || !fileReceipt
+      || anchor.contentHash !== fileReceipt.contentHash
+    ) {
+      return fail(
+        "HOST_COMPOSITION_AUTHORITY_INVALID",
+        "Metadata operation cannot bind its exact read-only observer roles",
+      );
+    }
+    return Object.freeze({
+      absolutePath: anchor.absolutePath,
+      contentHash: anchor.contentHash,
+      physicalIdentityHash: fileReceipt.physicalIdentityHash,
+    });
+  });
+  if (
+    targetContext.operationAbiRef
+      !== "ABI_PLATFORM_RELEASE_METADATA_PROBE_V2"
+    || targetContext.admissionScope !== "test_fixture"
+    || targetContext.implementationMemberRef
+      !== "BOOTSTRAP_RELEASE_COMPOSITION_METADATA_MODULE_V2"
+    || targetContext.hostCompositionReceiptHash
+      !== receipt.receiptHash
+    || receipt.receiptHash !== state.receipt.receiptHash
+  ) {
+    return fail(
+      "HOST_COMPOSITION_AUTHORITY_INVALID",
+      "Metadata operation observer roles detached from its fresh target-operation census",
+    );
+  }
+  const [xattrObserver, aclObserver] = observers;
+  if (!xattrObserver || !aclObserver) {
+    return fail(
+      "HOST_COMPOSITION_AUTHORITY_INVALID",
+      "Metadata operation read-only observer role set is incomplete",
+    );
+  }
+  return Object.freeze({
+    ...targetContext,
+    admissionScope: "test_fixture" as const,
+    operationAbiRef:
+      "ABI_PLATFORM_RELEASE_METADATA_PROBE_V2" as const,
+    implementationMemberRef:
+      "BOOTSTRAP_RELEASE_COMPOSITION_METADATA_MODULE_V2" as const,
+    xattrObserverExecutablePath:
+      xattrObserver.absolutePath,
+    xattrObserverExecutableContentHash:
+      xattrObserver.contentHash,
+    xattrObserverExecutablePhysicalIdentityHash:
+      xattrObserver.physicalIdentityHash,
+    aclObserverExecutablePath:
+      aclObserver.absolutePath,
+    aclObserverExecutableContentHash:
+      aclObserver.contentHash,
+    aclObserverExecutablePhysicalIdentityHash:
+      aclObserver.physicalIdentityHash,
+  });
+}
+
+/**
+ * @internal
+ *
+ * Extends the target-bound network-wrapper context with the exact installed
+ * sandbox executable. This characterization bridge is deliberately test-only;
+ * production must obtain a verified-release owner in a later authority slice.
+ */
+export async function acquirePlatformReleaseHostCompositionNetworkNegativeOperationLaunchContextInternalV2(
+  handle: PlatformReleaseHostCompositionAuthorityV2,
+): Promise<PlatformReleaseHostCompositionNetworkNegativeOperationLaunchContextInternalV2> {
+  const state = authenticStateV2(handle);
+  const targetContext =
+    await acquirePlatformReleaseHostCompositionTargetOperationLaunchContextInternalV2(
+      handle,
+      "ABI_PLATFORM_RELEASE_NETWORK_NEGATIVE_PROBE_V2",
+    );
+  const receipt =
+    await revalidatePlatformReleaseHostCompositionAuthorityV2(
+      handle,
+    );
+  const sandboxAnchor = state.privateAnchors.files.find(
+    (file) => file.definition.role === "sandbox_executable",
+  );
+  const sandboxReceipt = receipt.files.find(
+    (file) => file.role === "sandbox_executable",
+  );
+  if (
+    targetContext.admissionScope !== "test_fixture"
+    || targetContext.operationAbiRef
+      !== "ABI_PLATFORM_RELEASE_NETWORK_NEGATIVE_PROBE_V2"
+    || targetContext.implementationMemberRef
+      !== "BOOTSTRAP_RELEASE_COMPOSITION_NETWORK_WRAPPER_MODULE_V2"
+    || targetContext.hostCompositionReceiptHash
+      !== receipt.receiptHash
+    || receipt.receiptHash !== state.receipt.receiptHash
+    || !sandboxAnchor
+    || !sandboxReceipt
+    || sandboxAnchor.contentHash !== sandboxReceipt.contentHash
+  ) {
+    return fail(
+      "HOST_COMPOSITION_AUTHORITY_INVALID",
+      "Network-negative operation detached from its wrapper, sandbox role or test scope",
+    );
+  }
+  return Object.freeze({
+    ...targetContext,
+    admissionScope: "test_fixture" as const,
+    operationAbiRef:
+      "ABI_PLATFORM_RELEASE_NETWORK_NEGATIVE_PROBE_V2" as const,
+    implementationMemberRef:
+      "BOOTSTRAP_RELEASE_COMPOSITION_NETWORK_WRAPPER_MODULE_V2" as const,
+    sandboxPolicyHash:
+      PLATFORM_RELEASE_BOOTSTRAP_NETWORK_NEGATIVE_OPERATION_POLICY_HASH_V2,
+    sandboxExecutablePath: sandboxAnchor.absolutePath,
+    sandboxExecutableContentHash: sandboxAnchor.contentHash,
+    sandboxExecutablePhysicalIdentityHash:
+      sandboxReceipt.physicalIdentityHash,
+  });
+}
+
+/**
+ * @internal
+ *
+ * Returns private installed locators only after a complete fresh composition
+ * census. The immediate process owner must use them with the authenticated
+ * host Node runtime and revalidate this authority after process settlement.
+ */
+export async function acquirePlatformReleaseHostCompositionModuleExportLaunchContextInternalV2(
+  handle: PlatformReleaseHostCompositionAuthorityV2,
+): Promise<PlatformReleaseHostCompositionModuleExportLaunchContextInternalV2> {
+  const context =
+    await acquirePlatformReleaseHostCompositionTargetOperationLaunchContextInternalV2(
+      handle,
+      "ABI_PLATFORM_RELEASE_MODULE_EXPORT_PROBE_V2",
+    );
+  return Object.freeze({
+    admissionScope: context.admissionScope,
+    hostIdentityHash: context.hostIdentityHash,
+    hostCompositionReceiptHash:
+      context.hostCompositionReceiptHash,
+    releaseBootstrapExecutablePath:
+      context.releaseBootstrapExecutablePath,
+    releaseBootstrapExecutableContentHash:
+      context.releaseBootstrapExecutableContentHash,
+    releaseBootstrapExecutablePhysicalIdentityHash:
+      context.releaseBootstrapExecutablePhysicalIdentityHash,
+    releaseBootstrapModulePath:
+      context.implementationPath,
+    releaseBootstrapModuleContentHash:
+      context.implementationContentHash,
+    releaseBootstrapModulePhysicalIdentityHash:
+      context.implementationPhysicalIdentityHash,
+  });
 }
 
 export function isProductionPlatformReleaseHostCompositionAuthorityV2(

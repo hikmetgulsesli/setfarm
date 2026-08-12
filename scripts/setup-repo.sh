@@ -2,6 +2,7 @@
 # setup-repo.sh — Full repo setup for ANY project type
 # Usage: setup-repo.sh <REPO_PATH> <BRANCH> <STITCH_PROJECT_ID> <SCREEN_MAP_JSON> <TECH_STACK> <PROJECT_DISPLAY_NAME> <UI_LANGUAGE>
 set -e
+export LC_ALL=C
 
 REPO="$1"
 BRANCH="$2"
@@ -15,6 +16,34 @@ PLATFORM_ROOT="${SETFARM_PLATFORM_ROOT:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 STITCH_SCRIPT="$PLATFORM_ROOT/scripts/stitch-api.mjs"
 
 EXISTING_CODE=false
+
+canonicalize_ui_language() {
+  local raw
+  raw=$(printf "%s" "${1:-English}" | tr '[:upper:]' '[:lower:]')
+  raw=$(printf "%s" "$raw" | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//')
+  case "$raw" in
+    english|en|en-us|en-gb)
+      printf "English"
+      ;;
+    *)
+      printf "SETUP_REPO_UI_LANGUAGE_MUST_BE_ENGLISH\n" >&2
+      return 64
+      ;;
+  esac
+}
+
+if ! UI_LANGUAGE=$(canonicalize_ui_language "$UI_LANGUAGE"); then
+  exit 64
+fi
+
+require_english_scaffold_text() {
+  local field="$1"
+  local value="$2"
+  if ! node "$PLATFORM_ROOT/scripts/english-text-value-check-v1.mjs" --single-line "$value" >/dev/null 2>&1; then
+    printf "SETUP_REPO_ENGLISH_TEXT_REQUIRED: %s: English single-line admission failed\n" "$field" >&2
+    return 64
+  fi
+}
 
 normalize_stack() {
   local raw
@@ -37,28 +66,34 @@ normalize_stack() {
   esac
 }
 
-html_lang_for_ui_language() {
-  local raw
-  raw=$(printf "%s" "${1:-English}" | tr '[:upper:]' '[:lower:]')
-  raw=$(printf "%s" "$raw" | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//')
-  case "$raw" in
-    turkish|tr|tr-tr)
-      printf "tr"
-      ;;
-    english|en|en-us|en-gb)
-      printf "en"
-      ;;
-    *)
-      printf "en"
-      ;;
-  esac
-}
-
 TECH_STACK_RAW="$TECH_STACK"
 TECH_STACK=$(normalize_stack "$TECH_STACK")
 if [ "$TECH_STACK_RAW" != "$TECH_STACK" ]; then
   echo "Normalized TECH_STACK: $TECH_STACK_RAW -> $TECH_STACK"
 fi
+
+# Resolve and validate every user-visible scaffold title before the target can
+# be created, initialized, or modified. Identifiers remain governed by their
+# existing normalization contracts.
+RAW_PROJECT_DISPLAY_NAME="$PROJECT_DISPLAY_NAME"
+if [ -n "$RAW_PROJECT_DISPLAY_NAME" ]; then
+  require_english_scaffold_text "PROJECT_DISPLAY_NAME" "$RAW_PROJECT_DISPLAY_NAME" || exit 64
+fi
+if [ -n "${SETFARM_APP_TITLE:-}" ]; then
+  require_english_scaffold_text "SETFARM_APP_TITLE" "$SETFARM_APP_TITLE" || exit 64
+fi
+PROJECT_NAME="${SETFARM_RUN_SLUG:-$(basename "$REPO")}"
+GITHUB_REPO="${SETFARM_GITHUB_REPO:-hikmetgulsesli/$PROJECT_NAME}"
+PACKAGE_NAME="${SETFARM_PACKAGE_NAME:-$(printf "%s" "$PROJECT_NAME" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9._-]+/-/g; s/^-+//; s/-+$//')}"
+[ -n "$PACKAGE_NAME" ] || PACKAGE_NAME="setfarm-app"
+if [ -n "${SETFARM_APP_TITLE:-}" ]; then
+  PROJECT_DISPLAY_NAME="$SETFARM_APP_TITLE"
+fi
+if [ -z "$PROJECT_DISPLAY_NAME" ]; then
+  PROJECT_DISPLAY_NAME=$(printf "%s" "$PROJECT_NAME" | sed -E 's/[-_]+/ /g; s/[[:space:]]+/ /g; s/^ //; s/ $//')
+fi
+require_english_scaffold_text "PROJECT_DISPLAY_NAME" "$PROJECT_DISPLAY_NAME" || exit 64
+HTML_TITLE=$(printf "%s" "$PROJECT_DISPLAY_NAME" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g')
 
 clean_branch_tracking() {
   local branch="$1"
@@ -95,19 +130,8 @@ else
   echo "Initialized new repo at $REPO"
 fi
 
-# 2. Runtime identity (provided by Setfarm/MC; basename is only a last-resort fallback)
-PROJECT_NAME="${SETFARM_RUN_SLUG:-$(basename "$REPO")}"
-GITHUB_REPO="${SETFARM_GITHUB_REPO:-hikmetgulsesli/$PROJECT_NAME}"
-PACKAGE_NAME="${SETFARM_PACKAGE_NAME:-$(printf "%s" "$PROJECT_NAME" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9._-]+/-/g; s/^-+//; s/-+$//')}"
-[ -n "$PACKAGE_NAME" ] || PACKAGE_NAME="setfarm-app"
-if [ -n "${SETFARM_APP_TITLE:-}" ]; then
-  PROJECT_DISPLAY_NAME="$SETFARM_APP_TITLE"
-fi
-if [ -z "$PROJECT_DISPLAY_NAME" ]; then
-  PROJECT_DISPLAY_NAME=$(printf "%s" "$PROJECT_NAME" | sed -E 's/[-_]+/ /g; s/[[:space:]]+/ /g; s/^ //; s/ $//')
-fi
-HTML_TITLE=$(printf "%s" "$PROJECT_DISPLAY_NAME" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g')
-HTML_LANG=$(html_lang_for_ui_language "$UI_LANGUAGE")
+# 2. Runtime identity was resolved before target mutation so its display text
+# could be admitted before any generated file or repository state was written.
 if ! git remote -v 2>/dev/null | grep -q origin; then
   # cuddly-sleeping-quail: gh repo create --push requires at least one commit.
   # If this is a fresh `git init` with no commits, create a README and commit
@@ -301,7 +325,7 @@ if [ ! -f package.json ]; then
       mkdir -p assets/css assets/js assets/data
       cat > index.html <<EOF
 <!doctype html>
-<html lang="$HTML_LANG">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -427,7 +451,7 @@ EOF
 EOF
       cat > index.html <<EOF
 <!doctype html>
-<html lang="$HTML_LANG">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -733,7 +757,7 @@ export default function RootLayout({
   children: ReactNode;
 }>) {
   return (
-    <html lang="$HTML_LANG">
+    <html lang="en">
       <body>{children}</body>
     </html>
   );

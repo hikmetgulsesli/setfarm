@@ -159,6 +159,19 @@ function mapAttempt(row: AttemptRow): ProductCompilationAttemptV1 {
   });
 }
 
+export async function readProductCompilationAttemptV1(
+  sql: Pick<Sql, "unsafe"> | Pick<TransactionSql, "unsafe">,
+  attemptIdInput: string,
+): Promise<ProductCompilationAttemptV1 | undefined> {
+  const parsed = z.string().regex(/^PCA_[a-f0-9]{64}$/).parse(attemptIdInput);
+  const row = await first(
+    sql,
+    "SELECT * FROM product_compilation_attempts WHERE attempt_id = $1",
+    [parsed],
+  );
+  return row ? mapAttempt(row) : undefined;
+}
+
 async function first(
   sql: Pick<Sql, "unsafe"> | Pick<TransactionSql, "unsafe">,
   query: string,
@@ -531,9 +544,7 @@ export class ProductCompilationAttemptRepository {
   }
 
   async get(attemptIdInput: string): Promise<ProductCompilationAttemptV1 | undefined> {
-    const parsed = z.string().regex(/^PCA_[a-f0-9]{64}$/).parse(attemptIdInput);
-    const row = await first(this.sql, "SELECT * FROM product_compilation_attempts WHERE attempt_id = $1", [parsed]);
-    return row ? mapAttempt(row) : undefined;
+    return readProductCompilationAttemptV1(this.sql, attemptIdInput);
   }
 
   private async withLiveFence<T extends z.infer<typeof FenceSchema>>(

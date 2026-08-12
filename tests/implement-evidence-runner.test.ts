@@ -6,8 +6,8 @@ import path from "node:path";
 import {
   normalizeInteractionRequests,
   runImplementEvidenceIfRequested,
-} from "../dist/installer/implement-evidence-runner.js";
-import { implementEvidenceArtifactPaths } from "../dist/installer/implement-evidence.js";
+} from "../src/installer/implement-evidence-runner.js";
+import { implementEvidenceArtifactPaths } from "../src/installer/implement-evidence.js";
 
 const ENV_KEYS = ["SETFARM_IMPLEMENT_EVIDENCE_GATE", "SETFARM_VISUAL_EVIDENCE_GATE"];
 const savedEnv = new Map<string, string | undefined>();

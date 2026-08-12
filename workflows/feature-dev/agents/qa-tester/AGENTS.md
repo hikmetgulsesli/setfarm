@@ -181,10 +181,10 @@ For EVERY form on each screen:
    })));
    ```
 
-2. **Fill with test data** (realistic Turkish names/emails):
+2. **Fill with realistic English test data:**
    ```
-   agent-browser fill input[name="name"] "Elif Yilmaz"
-   agent-browser fill input[name="email"] "elif@ornek.com"
+   agent-browser fill input[name="name"] "Morgan Reed"
+   agent-browser fill input[name="email"] "morgan@example-company.com"
    agent-browser fill input[type="password"] "Test1234!"
    ```
 
@@ -294,7 +294,7 @@ Test at FOUR breakpoints. At each breakpoint:
 - [ ] Skip-to-content link present (optional but recommended)
 
 **Understandable:**
-- [ ] `<html lang="tr">` set (or appropriate language)
+- [ ] `<html lang="en">` is set
 - [ ] Form inputs have visible `<label>` elements
 - [ ] Error messages identify the field and describe the error
 - [ ] Consistent navigation across pages
@@ -420,7 +420,7 @@ Compare implemented UI against stitch HTML reference:
 | Border radius | Compare border-radius values |
 | Shadows | Compare box-shadow values |
 | Icons | Verify SVG icons match (same library, same names) |
-| Content | Verify Turkish text labels match Stitch design |
+| Content | Verify all visible labels are English and match the approved English design contract |
 
 **Structural gap = step fail.** If a Stitch screen shows a sidebar + main content layout but the implementation is a single column, that is a structural design failure.
 

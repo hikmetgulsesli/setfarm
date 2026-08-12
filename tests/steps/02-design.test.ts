@@ -3,9 +3,9 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { designModule } from "../../dist/installer/steps/02-design/module.js";
-import { PROTECTED_CONTEXT_KEYS } from "../../dist/installer/constants.js";
-import { classifyDesignFailure, classifyV3DesignBoundary, inferPrdScreens, manifestUsesLocalFallback, parseProductSurfaces, stitchApiKeyAvailable, surfaceCoverageMode, synthesizeDesignMarkdownFromStitchAssets, verifyScreenMapToSurfaces } from "../../dist/installer/steps/02-design/preclaim.js";
+import { designModule } from "../../src/installer/steps/02-design/module.js";
+import { PROTECTED_CONTEXT_KEYS } from "../../src/installer/constants.js";
+import { classifyDesignFailure, classifyV3DesignBoundary, inferPrdScreens, manifestUsesLocalFallback, parseProductSurfaces, stitchApiKeyAvailable, surfaceCoverageMode, synthesizeDesignMarkdownFromStitchAssets, verifyScreenMapToSurfaces } from "../../src/installer/steps/02-design/preclaim.js";
 import { runModule } from "./harness.js";
 
 function designPreclaimSource(): string {
@@ -275,25 +275,51 @@ describe("02-design step module", () => {
       "utf8",
     );
     const authorityEntry = source.indexOf("executeDesignPreclaimV2({");
-    const legacyPreparation = source.indexOf("prepareV3DesignContract(prd, stitchDir)");
+    const englishAdmission = source.indexOf("loadCompilerEnglishAdmissionLedgerAuthorityV1(");
+    const semanticsGate = source.indexOf('ctx.context["product_semantics_version"] !== "v2"');
+    const designBypass = source.indexOf("if (!designRequired)");
+    const legacyPreparation = source.indexOf("v3Contract = prepareV3DesignContract(", authorityEntry);
     const destructiveReset = source.indexOf("resetFailedStitchProject");
 
     assert.ok(authorityEntry > 0);
+    assert.ok(
+      englishAdmission > 0 && semanticsGate > englishAdmission && designBypass > semanticsGate,
+      "durable English and Product Semantics v2 admission must precede design bypass",
+    );
     assert.ok(legacyPreparation > authorityEntry);
     assert.ok(destructiveReset > authorityEntry);
     assert.match(source, /product_semantics_version"] === "v2"/);
     assert.match(source, /design_source_attempt_id/);
     assert.match(runtime, /generate-all-screens-attempt/);
     assert.match(runtime, /ProductCompilationAttemptRepository/);
+    assert.match(runtime, /inspectCompilerEnglishAdmissionLedgerAuthorityV1/);
+    assert.match(runtime, /DESIGN_V2_ENGLISH_ADMISSION_BINDING_MISMATCH/);
+    assert.match(runtime, /englishAdmissionReceipt\.productSpecHash !== hashCanonicalJson\(contract\.productSpec\)/);
+    assert.doesNotMatch(runtime, /uiLanguage/);
+    assert.match(source, /englishAdmissionAuthority/);
+    assert.doesNotMatch(
+      source.slice(authorityEntry, legacyPreparation),
+      /uiLanguage:/,
+    );
     assert.match(runtime, /duplicateWaitMs: 15 \* 60_000/);
     assert.doesNotMatch(runtime, /generate-all-screens"|generate-screen-safe|STITCH_FORCE_NEW_PROJECT/);
     assert.match(guards, /product_semantics_version"] === "v2"\) return/);
+    assert.match(source, /Promise<PreClaimResult>/);
+    assert.match(source, /disposition: "compiler_completion" as const/);
+    const v3AuthorityStart = source.indexOf('if (protocol === "v3" && ctx.context["product_semantics_version"] === "v2")');
+    const legacyPreparationStart = source.indexOf("let v3Contract", v3AuthorityStart);
+    assert.ok(v3AuthorityStart > 0 && legacyPreparationStart > v3AuthorityStart);
+    assert.doesNotMatch(
+      source.slice(v3AuthorityStart, legacyPreparationStart),
+      /await completeStep\(/,
+      "native V3 DESIGN must enter the durable runtime-completion owner instead of closing its claim directly",
+    );
   });
 
   it("resolves non-visual delivery before creating any Stitch target authority", () => {
     const source = designPreclaimSource();
     const bypass = source.indexOf("if (!designRequired)");
-    const targetCompilation = source.indexOf("prepareV3DesignContract(prd, stitchDir)");
+    const targetCompilation = source.indexOf("v3Contract = prepareV3DesignContract(", bypass);
     assert.ok(bypass >= 0 && targetCompilation >= 0 && bypass < targetCompilation);
     assert.match(source, /delete ctx\.context\["generation_targets"\]/);
     assert.match(source, /delete ctx\.context\["stitch_candidate_selection"\]/);

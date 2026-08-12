@@ -3,10 +3,10 @@ import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
-import { finalTestModule } from "../../dist/installer/steps/10-final-test/module.js";
-import { normalize, validateOutput } from "../../dist/installer/steps/10-final-test/guards.js";
-import { classifyFinalSystemSmokeResult } from "../../dist/installer/steps/10-final-test/preclaim.js";
-import type { ParsedOutput } from "../../dist/installer/steps/types.js";
+import { finalTestModule } from "../../src/installer/steps/10-final-test/module.js";
+import { normalize, validateOutput } from "../../src/installer/steps/10-final-test/guards.js";
+import { classifyFinalSystemSmokeResult } from "../../src/installer/steps/10-final-test/preclaim.js";
+import type { ParsedOutput } from "../../src/installer/steps/types.js";
 
 const sourcePreclaim = readFileSync(resolve(import.meta.dirname, "../../src/installer/steps/10-final-test/preclaim.ts"), "utf-8");
 

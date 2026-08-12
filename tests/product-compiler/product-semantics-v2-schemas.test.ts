@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { describe, it } from "node:test";
 
 import { extractTaskRequirementLedgerV1 } from "../../src/product-compiler/requirements/task-requirements-v1.js";
@@ -6,6 +7,7 @@ import { PlanSemanticProposalV1Schema } from "../../src/product-compiler/schemas
 import { PlanSemanticProposalV2Schema } from "../../src/product-compiler/schemas/plan-semantic-proposal-v2.js";
 import { ProductSpecV1Schema } from "../../src/product-compiler/schemas/product-spec-v1.js";
 import {
+  ProductSpecV2EnglishWriteSchema,
   ProductSpecV2Schema,
   deriveActionInvocationEvidenceIdV2,
 } from "../../src/product-compiler/schemas/product-spec-v2.js";
@@ -380,6 +382,18 @@ describe("PlanSemanticProposalV2 schema authority", () => {
     assert.equal(PlanSemanticProposalV1Schema.safeParse(first).success, false);
   });
 
+  it("requires exact English UI language at the semantic proposal boundary", () => {
+    const localized = planProposal();
+    localized.product.uiLanguage = "Spanish";
+    const parsed = PlanSemanticProposalV2Schema.safeParse(localized);
+
+    assert.equal(parsed.success, false);
+    if (!parsed.success) {
+      assert.equal(parsed.error.issues.some((issue) =>
+        issue.path.join("/") === "product/uiLanguage"), true);
+    }
+  });
+
   it("rejects orphan, cross-route, and cyclic surface containment", () => {
     const orphan = planProposal();
     orphan.surfaces[1].composition.hostSurfaceKey = "missing_host";
@@ -470,6 +484,68 @@ describe("ProductSpecV2 schema authority", () => {
     assert.deepEqual(first.actions[0]!.controlPlacements.map((placement) => placement.surfaceRef), ["SURF_PLAY_PAGE"]);
     assert.deepEqual(first.actions[0]!.affectedSurfaceRefs, ["SURF_GAME_CANVAS", "SURF_STATUS_PANEL"]);
     assert.equal(ProductSpecV1Schema.safeParse(first).success, false);
+  });
+
+  it("requires exact English UI language at the ProductSpec boundary", () => {
+    const localized = productSpec();
+    localized.delivery.uiLanguage = "Spanish";
+    assert.equal(ProductSpecV2Schema.safeParse(localized).success, true);
+    const parsed = ProductSpecV2EnglishWriteSchema.safeParse(localized);
+
+    assert.equal(parsed.success, false);
+    if (!parsed.success) {
+      assert.equal(parsed.error.issues.some((issue) =>
+        issue.path.join("/") === "delivery/uiLanguage"), true);
+    }
+  });
+
+  it("rejects high-signal ASCII localized prose only at the current write boundary", () => {
+    const localized = productSpec();
+    localized.actions[0].name = String.fromCharCode(
+      71, 117, 97, 114, 100, 97, 114, 32, 99, 97, 109, 98, 105, 111, 115,
+    );
+    assert.equal(ProductSpecV2Schema.safeParse(localized).success, true);
+    assert.equal(ProductSpecV2EnglishWriteSchema.safeParse(localized).success, false);
+  });
+
+  it("keeps source evidence opaque and admits technical values by assertion role", () => {
+    const localizedCopy = String.fromCharCode(
+      71, 117, 97, 114, 100, 97, 114, 32, 99, 97, 109, 98, 105, 111, 115,
+    );
+    const localizedSource = productSpec();
+    const previousRequirementId = localizedSource.requirements[0].id;
+    const clauseHash = createHash("sha256").update(localizedCopy, "utf8").digest("hex");
+    const requirementId = `REQ_${clauseHash.slice(0, 16).toUpperCase()}`;
+    localizedSource.requirements[0].normalizedClause = localizedCopy;
+    localizedSource.requirements[0].clauseHash = clauseHash;
+    localizedSource.requirements[0].id = requirementId;
+    for (const binding of localizedSource.traceability.bindings) {
+      binding.requirementRefs = binding.requirementRefs.map((candidate: string) =>
+        candidate === previousRequirementId ? requirementId : candidate);
+    }
+    assert.equal(ProductSpecV2EnglishWriteSchema.safeParse(localizedSource).success, true);
+
+    const technicalRoute = productSpec();
+    technicalRoute.actions[0].observableEffects[1].assertions[0].expected = String.fromCharCode(
+      47, 103, 117, 97, 114, 100, 97, 114,
+    );
+    assert.equal(ProductSpecV2EnglishWriteSchema.safeParse(technicalRoute).success, true);
+
+    const visibleText = productSpec();
+    visibleText.actions[0].observableEffects[2].assertions[0].expected = localizedCopy;
+    const parsed = ProductSpecV2EnglishWriteSchema.safeParse(visibleText);
+    assert.equal(parsed.success, false);
+    if (!parsed.success) {
+      assert.equal(parsed.error.issues.some((issue) =>
+        issue.path.join("/") === "actions/0/observableEffects/2/assertions/0/expected"
+        && issue.message.includes("ENGLISH_TEXT_UNSUPPORTED_LEXEME")), true);
+    }
+
+    const structuredVisibleText = productSpec();
+    structuredVisibleText.actions[0].observableEffects[2].assertions[0].expected = {
+      text: localizedCopy,
+    };
+    assert.equal(ProductSpecV2EnglishWriteSchema.safeParse(structuredVisibleText).success, false);
   });
 
   it("rejects route-index drift, orphan hosts, cross-route hosts, and containment cycles", () => {

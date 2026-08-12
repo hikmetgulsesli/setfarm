@@ -8,7 +8,10 @@ import {
   auditCurrentArtifactPublicationAuthorityLedgerData,
   planContractSpineMigrations,
   rollbackArtifactPublicationBatchPlanLedgerToV25,
+  rollbackPlatformReleaseStoreRecordLedgerV3ToV26,
   rollbackPreparationAuthorityV2LedgerToV24 as rollbackPreparationAuthorityV2LedgerToV24Raw,
+  rollbackRuntimeCompletionManifestAuthorityToV27,
+  rollbackV3StoryClaimRuntimeBindingToV28,
   verifyContractSpineMigrations,
 } from "../../src/db/contract-spine-migrations.js";
 import {
@@ -30,10 +33,23 @@ const BASE_SHA = "e".repeat(40);
 const BASE_TREE = "f".repeat(40);
 const SLICE_HASH = "1".repeat(64);
 
+async function rollbackCurrentHeadToV26(sql: TestDatabase["sql"]): Promise<void> {
+  await rollbackV3StoryClaimRuntimeBindingToV28(sql, {
+    targetReleaseSha: "6".repeat(40),
+  });
+  await rollbackRuntimeCompletionManifestAuthorityToV27(sql, {
+    targetReleaseSha: "7".repeat(40),
+  });
+  await rollbackPlatformReleaseStoreRecordLedgerV3ToV26(sql, {
+    targetReleaseSha: "8".repeat(40),
+  });
+}
+
 async function rollbackPreparationAuthorityV2LedgerToV24(
   sql: TestDatabase["sql"],
   options: Parameters<typeof rollbackPreparationAuthorityV2LedgerToV24Raw>[1],
 ) {
+  await rollbackCurrentHeadToV26(sql);
   await rollbackArtifactPublicationBatchPlanLedgerToV25(sql, {
     targetReleaseSha: "9".repeat(40),
   });
@@ -57,17 +73,15 @@ function authority(runId: string, storyId = "US-001") {
 async function seedRun(database: TestDatabase, suffix: string) {
   const runId = `run-preparation-v2-${suffix}`;
   const storyId = "US-001";
-  const admissionHash = await database.seedV3ReleaseGoAdmission(RELEASE_SHA);
   await database.sql.unsafe(
     `INSERT INTO runs (
        id, workflow_id, task, status, protocol, protocol_version,
-       compiler_release_sha, packet_hash, activation_preflight_hash,
-       release_admission_hash
+       compiler_release_sha, packet_hash, activation_preflight_hash
      ) VALUES (
        $1, 'feature-dev', 'preparation authority v2 test', 'running',
-       'v3', 1, $2, $3, $4, $5
+       'shadow', 1, $2, $3, $4
      )`,
-    [runId, RELEASE_SHA, PACKET_HASH, "2".repeat(64), admissionHash],
+    [runId, RELEASE_SHA, PACKET_HASH, "2".repeat(64)],
   );
   await database.sql.unsafe(
     `INSERT INTO semantic_artifacts (
@@ -288,6 +302,7 @@ describe("preparation authority v2 migration 25", () => {
       ],
     );
     assert.equal((await verifyContractSpineMigrations(database.sql)).status, "verified");
+    await rollbackCurrentHeadToV26(database.sql);
     await assert.rejects(
       auditCurrentArtifactPublicationAuthorityLedgerData(database.sql),
       (error: unknown) => error instanceof ContractSpineMigrationError

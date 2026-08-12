@@ -57,12 +57,50 @@ function jsonLine(output: string, label: string): any {
 }
 
 describe("Product Semantics v2 story scheduling projection", { concurrency: 1 }, () => {
+  it("requires durable English admission before opt-out and filesystem projection", async () => {
+    const preclaimSource = fs.readFileSync(
+      "src/installer/steps/03-stories/preclaim.ts",
+      "utf8",
+    );
+    const runtimeSource = fs.readFileSync(
+      "src/installer/steps/03-stories/runtime-v2.ts",
+      "utf8",
+    );
+    const ledgerAdmission = preclaimSource.indexOf("loadCompilerEnglishAdmissionLedgerAuthorityV1(");
+    const semanticsGate = preclaimSource.indexOf('ctx.context["product_semantics_version"] !== "v2"');
+    const optOut = preclaimSource.indexOf('SETFARM_DISABLE_AUTO_STORIES === "1"');
+    const projection = preclaimSource.indexOf("output = buildV3AutoStoriesOutput(");
+    assert.ok(
+      ledgerAdmission > 0 && semanticsGate > ledgerAdmission && optOut > semanticsGate && projection > optOut,
+      "v3 story projection and opt-out must not bypass durable English or Product Semantics v2 admission",
+    );
+    assert.match(runtimeSource, /ProductSpecV2EnglishWriteSchema\.parse\(plan\.productSpec\)/);
+    assert.match(runtimeSource, /V2_STORY_ENGLISH_ADMISSION_PRODUCT_SPEC_MISMATCH/);
+
+    const value = await fixture();
+    try {
+      assert.throws(
+        () => buildV3AutoStoriesOutput({
+          repo: path.join(value.repo, "missing-before-authority"),
+          prd: value.planText,
+          expectedProductSpecHash: "f".repeat(64),
+          productSemanticsVersion: "v2",
+        }),
+        /V2_STORY_ENGLISH_ADMISSION_PRODUCT_SPEC_MISMATCH/,
+        "ProductSpec hash rejection must precede every stitch filesystem read",
+      );
+    } finally {
+      fs.rmSync(value.repo, { recursive: true, force: true });
+    }
+  });
+
   it("is deterministic and keeps slots/physical controls separate from affected surfaces", async () => {
     const value = await fixture();
     try {
       const params = {
         repo: value.repo,
         prd: value.planText,
+        expectedProductSpecHash: hashCanonicalJson(value.contracts.productSpecV2),
         productSemanticsVersion: "v2",
       };
       const first = buildV3AutoStoriesOutput(params);
@@ -123,16 +161,23 @@ describe("Product Semantics v2 story scheduling projection", { concurrency: 1 },
       const expected = buildV3AutoStoriesOutput({
         repo: value.repo,
         prd: value.planText,
+        expectedProductSpecHash: hashCanonicalJson(value.contracts.productSpecV2),
         productSemanticsVersion: "v2",
       });
+      const productSpecHash = hashCanonicalJson(value.contracts.productSpecV2);
       const guarded = buildExpectedV3StoriesOutput({
         repo: value.repo,
         prd: value.planText,
+        product_spec_hash: productSpecHash,
         product_semantics_version: "v2",
-      });
+      }, productSpecHash);
       assert.equal(guarded, expected);
       assert.throws(
-        () => buildExpectedV3StoriesOutput({ repo: value.repo, prd: value.planText }),
+        () => buildExpectedV3StoriesOutput({
+          repo: value.repo,
+          prd: value.planText,
+          product_spec_hash: productSpecHash,
+        }, productSpecHash),
         /V3_STORY_PRODUCT_SPEC_REJECTED/,
         "missing v2 context must stay on the immutable ProductSpecV1 path",
       );
@@ -156,6 +201,7 @@ describe("Product Semantics v2 story scheduling projection", { concurrency: 1 },
       const output = buildV3AutoStoriesOutput({
         repo,
         prd: planText,
+        expectedProductSpecHash: hashCanonicalJson(contracts.productSpecV2),
         productSemanticsVersion: "v2",
       });
       const stories = jsonLine(output, "STORIES_JSON");
@@ -183,6 +229,7 @@ describe("Product Semantics v2 story scheduling projection", { concurrency: 1 },
       const build = () => buildV3AutoStoriesOutput({
         repo: value.repo,
         prd: value.planText,
+        expectedProductSpecHash: hashCanonicalJson(value.contracts.productSpecV2),
         productSemanticsVersion: "v2",
       });
       const direct = structuredClone(value.contracts.designSourceArtifactsV2.directResponseEvidence);

@@ -9,27 +9,28 @@ import { OperationalFailureCauseError } from "../../src/execution/schemas/operat
 import { evaluateOperationalFailureCauseAuthorityV1 } from "../../src/execution/operational-failure-cause-authority-v1.js";
 import type { ClaimEnvelopeV1 } from "../../src/execution/schemas/claim-envelope-v1.js";
 import type { ClaimContext } from "../../src/installer/steps/types.js";
+import { seedCanonicalSetupBuildCompilerStoryAdmissionFixture } from "./helpers/compiler-story-admission-fixture.js";
 import { createIsolatedTestDatabase } from "./test-database.js";
 
 test("v3 setup-build does not invent a typed cause for a generic build exit", async () => {
   const previousPgUrl = process.env.SETFARM_PG_URL;
   const database = await createIsolatedTestDatabase();
   const repo = await mkdtemp(path.join(tmpdir(), "setfarm-v3-setup-untyped-build-"));
+  let runtimeDb: typeof import("../../src/db-pg.js") | undefined;
   try {
+    runtimeDb = await import("../../src/db-pg.js");
+    runtimeDb.pgConfigureIsolatedTestDatabase(database.url);
     const runId = "run-v3-setup-build-untyped-exit";
     const stepDbId = "step-v3-setup-build-untyped-exit";
     const claimAgentId = "feature-dev_builder";
     const releaseSha = "b".repeat(40);
-    const releaseAdmissionHash = await database.seedV3ReleaseGoAdmission(releaseSha);
-    await database.sql`
-      INSERT INTO runs (
-        id, workflow_id, task, status, context, protocol,
-        compiler_release_sha, activation_preflight_hash, release_admission_hash
-      ) VALUES (
-        ${runId}, 'feature-dev', 'Do not attribute an unproven build failure', 'running',
-        ${JSON.stringify({ repo, product_semantics_version: "v2" })}, 'v3', ${releaseSha}, ${"c".repeat(64)}, ${releaseAdmissionHash}
-      )
-    `;
+    const admission = await seedCanonicalSetupBuildCompilerStoryAdmissionFixture(database, {
+      runId,
+      repo,
+      setupBuildStepDbId: stepDbId,
+      setupBuildClaimAgentId: claimAgentId,
+      releaseSha,
+    });
     fs.mkdirSync(path.join(repo, "node_modules"), { recursive: true });
     fs.mkdirSync(path.join(repo, "stitch"), { recursive: true });
     fs.writeFileSync(path.join(repo, "package.json"), JSON.stringify({
@@ -47,16 +48,15 @@ test("v3 setup-build does not invent a typed cause for a generic build exit", as
       stepId: stepDbId,
       workflowStepId: "setup-build",
       runId,
-      claimId: 1,
+      claimId: admission.claimId,
       claimAgentId,
       runtimeAgentId: claimAgentId,
     };
     const context: Record<string, string> = {
-      repo,
+      ...admission.context,
       stack_pack_id: "vite-react-web-app",
       tech_stack: "vite-react",
-      product_semantics_version: "v2",
-      task: "Do not attribute an unproven build failure",
+      task: admission.task,
     };
     const claimContext: ClaimContext = {
       runId,
@@ -77,7 +77,7 @@ test("v3 setup-build does not invent a typed cause for a generic build exit", as
     await assert.rejects(
       preClaim(missingSemanticsContext),
       (error: unknown) => {
-        assert.equal(error instanceof OperationalFailureCauseError, true);
+        assert.equal(error instanceof OperationalFailureCauseError, true, String(error));
         if (!(error instanceof OperationalFailureCauseError)) return false;
         assert.match(error.message, /SETUP_PACKET_SEMANTICS_VERSION_MISMATCH/);
         assert.deepEqual(error.failureCause, {
@@ -115,6 +115,7 @@ test("v3 setup-build does not invent a typed cause for a generic build exit", as
     );
   } finally {
     await rm(repo, { recursive: true, force: true });
+    await runtimeDb?.pgClose().catch(() => {});
     await database.cleanup();
     if (previousPgUrl === undefined) delete process.env.SETFARM_PG_URL;
     else process.env.SETFARM_PG_URL = previousPgUrl;

@@ -1,6 +1,10 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { formatStoryForTemplate, parseAcceptanceCriteria } from "../src/installer/story-ops.js";
+import {
+  assertStoryArtifactEnglishV1,
+  formatStoryForTemplate,
+  parseAcceptanceCriteria,
+} from "../src/installer/story-ops.js";
 import type { Story } from "../src/installer/types.js";
 
 function story(overrides: Partial<Story>): Story {
@@ -69,5 +73,26 @@ describe("story prompt formatting", () => {
     assert.match(formatted, /Failure report:\nSTATUS: retry/);
     assert.match(formatted, /Fix every failure listed in the QA\/final failure report/);
     assert.doesNotMatch(formatted, /\bundefined\b/);
+  });
+
+  it("rejects localized story artifacts before database mutation", () => {
+    const localized = String.fromCharCode(
+      71, 117, 97, 114, 100, 97, 114, 32, 99, 97, 109, 98, 105, 111, 115,
+    );
+    assert.doesNotThrow(() => assertStoryArtifactEnglishV1([{
+      id: "US-001",
+      title: "Save Changes",
+      description: "Persist the approved settings.",
+      acceptanceCriteria: ["The saved settings remain visible."],
+    }]));
+    assert.throws(
+      () => assertStoryArtifactEnglishV1([{
+        id: "US-001",
+        title: localized,
+        description: "Persist the approved settings.",
+        acceptanceCriteria: ["The saved settings remain visible."],
+      }]),
+      /STORIES_ENGLISH_TEXT_REQUIRED: ENGLISH_TEXT_UNSUPPORTED_LEXEME at \/0\/title/,
+    );
   });
 });

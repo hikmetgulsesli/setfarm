@@ -75,6 +75,7 @@ function buildV3Prompt(ctx: PromptContext): string {
     "",
     "## Compiler-owned delivery",
     "Setfarm currently activates utility and operations on its exact web profile and game on its exact browser-game profile. Emit only product.class and database intent; do not emit platform, tech stack, stack pack, design policy, or capability IDs.",
+    "Set product.uiLanguage to exactly English. A source task may use or request another language, but every planner-owned product name, semantic statement, visible label, message, and UI copy must be expressed in English.",
     requestedStackPackId
       ? `The compiler will validate the explicit requested stack pack ${requestedStackPackId}; do not repeat or reinterpret it.`
       : "No explicit stack prefix was requested; the compiler selects delivery from product.class.",

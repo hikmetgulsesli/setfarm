@@ -17,6 +17,7 @@ import {
   realpathSync,
   rmSync,
   writeFileSync,
+  type BigIntStats,
   type Stats,
 } from "node:fs";
 import { release as osRelease } from "node:os";
@@ -65,6 +66,21 @@ import {
   NODE_SCAFFOLD_TOOLCHAIN_CATALOG_V2_SCHEMA,
   NODE_SCAFFOLD_TOOLCHAIN_ENTRY_V2_SCHEMA,
 } from "./schemas/node-scaffold-toolchain-catalog-v2.js";
+import {
+  buildHostNodeToolchainPhysicalIdentityV3,
+  buildHostNodeToolchainPhysicalScopeV3,
+  captureHostNodeToolchainPhysicalObservationV3,
+  type HostNodeToolchainPhysicalIdentityV3,
+  type HostNodeToolchainPhysicalObjectKindV3,
+  type HostNodeToolchainPhysicalObjectRoleV3,
+} from "./host-node-toolchain-physical-identity-v3.js";
+import {
+  matchesExactStableFilesystemObjectV2,
+  projectExactStableFilesystemIdentityToSafeNumbersV2,
+} from "./exact-stable-filesystem-identity-v2.js";
+import {
+  defaultNodeToolchainProvisionerHostIdentityHashV3,
+} from "./node-toolchain-provisioner-physical-census-v3.js";
 
 const NODE_PROBE_TIMEOUT_MS_V2 = 5_000 as const;
 const NODE_PROBE_MAX_STDOUT_BYTES_V2 = 4_096 as const;
@@ -121,6 +137,12 @@ const COMMAND_PATH_PROJECTION_HASH_V2 = hashCanonicalJson({
   orderedExecutableRefs: ["TOOL_NODE_RUNTIME_V2", "TOOL_NODE_NPM_CLI_V2"],
 });
 
+const HOST_NODE_TOOLCHAIN_AUTHORITY_TEST_HOST_IDENTITY_HASH_V3 =
+  hashCanonicalJson({
+    schema: "setfarm.host-node-toolchain-authority-test-host-identity.v3",
+    authorityDisposition: "test_fixture_only",
+  });
+
 export type HostNodeToolchainAuthorityErrorCodeV2 =
   | "HOST_NODE_TOOLCHAIN_V2_INPUT_INVALID"
   | "HOST_NODE_TOOLCHAIN_V2_NO_ADMITTED_CANDIDATE"
@@ -134,6 +156,7 @@ export type HostNodeToolchainAuthorityErrorCodeV2 =
   | "HOST_NODE_TOOLCHAIN_V2_PROBE_SIGNALLED"
   | "HOST_NODE_TOOLCHAIN_V2_PROBE_NONZERO"
   | "HOST_NODE_TOOLCHAIN_V2_PROBE_MALFORMED"
+  | "HOST_NODE_TOOLCHAIN_V2_PROBE_CLEANUP_FAILED"
   | "HOST_NODE_TOOLCHAIN_V2_NODE_VERSION_MISMATCH"
   | "HOST_NODE_TOOLCHAIN_V2_NPM_VERSION_MISMATCH"
   | "HOST_NODE_TOOLCHAIN_V2_EXECUTABLE_PAIRING_MISMATCH"
@@ -459,6 +482,32 @@ export function hashHostNodePlatformReleaseOutputStageIdentityV2(
   });
 }
 
+/**
+ * Exact physical identity used by source-admission fences.
+ *
+ * The public host v2 identity above intentionally retains its historical
+ * numeric device/inode fields. Source admission must not round those values,
+ * so it uses this helper with decimal strings instead.
+ */
+export type HostNodePlatformReleaseOutputStageExactIdentityV2 =
+  Readonly<{
+    device: string;
+    inode: string;
+    mode: number;
+    ownerUid: number;
+    ownerGid: number;
+  }>;
+
+export function hashHostNodePlatformReleaseOutputStageExactIdentityV2(
+  output: HostNodePlatformReleaseOutputStageExactIdentityV2,
+): string {
+  return hashCanonicalJson({
+    schema:
+      "setfarm.host-node-platform-release-output-stage-exact-identity.v2",
+    output,
+  });
+}
+
 export type HostNodeToolchainPlatformReleaseBuildEvidenceV2 =
   Readonly<{
     probeRef: "HOST_NODE_PLATFORM_RELEASE_BUILD_V2";
@@ -599,6 +648,7 @@ type CapturedNpmPackageV2 = Readonly<{
   totalBytes: number;
   treeHash: string;
   normalizedTreeHash: string;
+  logicalTreeHash: string;
   privateIdentityHash: string;
   packageName: "npm";
   version: string;
@@ -638,16 +688,25 @@ type PrivateAuthorityStateV2 = Readonly<{
   profileId: NodeScaffoldProfileIdV2;
   requirement: HostNodeToolchainRequirementV2;
   host: HostIdentityV2;
+  hostIdentityHash: string;
   candidate: Readonly<{
     logicalRoot: string;
     expectedRealRoot?: string;
     productionRootPolicy?: "root_owned_direct_exact_v2";
   }>;
   testDynamicLibraryPaths?: readonly string[];
+  testPhysicalInspectionHook?: (
+    checkpoint: "before_physical_capture" | "after_physical_capture",
+  ) => void;
   probeAdapter: HostNodeToolchainProbeAdapterV2;
   provisionedToolchain?: ProvisionedNodeToolchainV2;
   provisioningReceipt?: NodeToolchainProvisioningReceiptV2;
   captured: CapturedAuthorityStateV2;
+  /**
+   * Exact BigInt physical snapshot kept inside the authenticated boundary.
+   * This is intentionally never added to the public V2 receipt.
+   */
+  physicalIdentityV3: HostNodeToolchainPhysicalIdentityV3;
   receipt: HostNodeToolchainReceiptV2;
 }>;
 
@@ -691,6 +750,45 @@ function sha256(value: string | Uint8Array): string {
 
 function modeBits(stat: Stats): number {
   return stat.mode & 0o7777;
+}
+
+function exactModeBitsV2(stat: BigIntStats): number {
+  return Number(stat.mode & 0o7777n);
+}
+
+const MAX_SAFE_INTEGER_BIGINT_V2 = BigInt(Number.MAX_SAFE_INTEGER);
+
+function boundedExactOwnerIdV2(value: bigint): number {
+  if (value < 0n || value > MAX_SAFE_INTEGER_BIGINT_V2) {
+    throw new RangeError("Filesystem owner id exceeds the safe numeric bound");
+  }
+  return Number(value);
+}
+
+function exactBuildScopeStatProjectionV2(
+  stat: BigIntStats,
+): Readonly<{
+  device: string;
+  inode: string;
+  mode: number;
+  ownerUid: number;
+  ownerGid: number;
+  linkCount: string;
+  byteLength: string;
+  modifiedNanoseconds: string;
+  changedNanoseconds: string;
+}> {
+  return Object.freeze({
+    device: String(stat.dev),
+    inode: String(stat.ino),
+    mode: exactModeBitsV2(stat),
+    ownerUid: boundedExactOwnerIdV2(stat.uid),
+    ownerGid: boundedExactOwnerIdV2(stat.gid),
+    linkCount: String(stat.nlink),
+    byteLength: String(stat.size),
+    modifiedNanoseconds: String(stat.mtimeNs),
+    changedNanoseconds: String(stat.ctimeNs),
+  });
 }
 
 function modeText(stat: Stats): string {
@@ -1121,6 +1219,19 @@ function captureNpmPackage(root: string): CapturedNpmPackageV2 {
         })),
       ],
     });
+    const logicalTreeHash = hashCanonicalJson({
+      schema: "setfarm.node-toolchain-logical-npm-tree.v3",
+      entries: [
+        { locator: ".", type: "directory" as const },
+        ...treeEntries.map((entry) => ({
+          locator: entry.path,
+          type: entry.type,
+          ...(entry.type === "file"
+            ? { byteLength: entry.byteLength, contentHash: entry.contentHash }
+            : {}),
+        })),
+      ],
+    });
     const treeHash = hashCanonicalJson({
       schema: "setfarm.host-npm-package-tree-content.v2",
       rootMode,
@@ -1188,6 +1299,7 @@ function captureNpmPackage(root: string): CapturedNpmPackageV2 {
       totalBytes,
       treeHash,
       normalizedTreeHash,
+      logicalTreeHash,
       privateIdentityHash,
       packageName: "npm",
       version: parsedPackage.version,
@@ -1578,6 +1690,28 @@ function nodeVersionSatisfiesRange(version: string): boolean {
   return major === 22 && minor >= 13;
 }
 
+function assertExactProbeRootV2(
+  probeRoot: string,
+  expected: Readonly<{ device: number; inode: number }>,
+): void {
+  let stat: BigIntStats;
+  try {
+    stat = lstatSync(probeRoot, { bigint: true });
+  } catch (error) {
+    return fail(
+      "HOST_NODE_TOOLCHAIN_V2_PROBE_CLEANUP_FAILED",
+      "Host Node probe root identity could not be captured exactly before cleanup",
+      error,
+    );
+  }
+  if (!matchesExactStableFilesystemObjectV2({ stat, expected, objectKind: "directory" })) {
+    return fail(
+      "HOST_NODE_TOOLCHAIN_V2_PROBE_CLEANUP_FAILED",
+      "Host Node probe root changed or lost its directory identity before cleanup",
+    );
+  }
+}
+
 async function probeToolchain(input: Readonly<{
   root: ResolvedRootV2;
   npmPackage: CapturedNpmPackageV2;
@@ -1585,8 +1719,39 @@ async function probeToolchain(input: Readonly<{
   probeAdapter: HostNodeToolchainProbeAdapterV2;
 }>): Promise<NodeProbeIdentityV2> {
   const probeRoot = mkdtempSync("/private/tmp/setfarm-host-node-probe-v2-");
+  let probeRootIdentity: Readonly<{ device: number; inode: number }> | undefined;
   try {
-    chmodSync(probeRoot, 0o700);
+    try {
+      chmodSync(probeRoot, 0o700);
+      const exactRoot = lstatSync(probeRoot, { bigint: true });
+      if (
+        exactRoot.isSymbolicLink()
+        || !exactRoot.isDirectory()
+        || (exactRoot.mode & 0o7777n) !== 0o700n
+      ) {
+        return fail(
+          "HOST_NODE_TOOLCHAIN_V2_PROBE_CLEANUP_FAILED",
+          "Host Node probe root is not one exact private directory",
+        );
+      }
+      probeRootIdentity = projectExactStableFilesystemIdentityToSafeNumbersV2({
+        device: exactRoot.dev,
+        inode: exactRoot.ino,
+      });
+      if (probeRootIdentity === undefined) {
+        return fail(
+          "HOST_NODE_TOOLCHAIN_V2_PROBE_CLEANUP_FAILED",
+          "Host Node probe root identity cannot be represented injectively in its cleanup guard",
+        );
+      }
+    } catch (error) {
+      if (error instanceof HostNodeToolchainAuthorityErrorV2) throw error;
+      return fail(
+        "HOST_NODE_TOOLCHAIN_V2_PROBE_CLEANUP_FAILED",
+        "Host Node probe root could not be prepared for exact cleanup",
+        error,
+      );
+    }
     const home = path.join(probeRoot, "home");
     const cache = path.join(probeRoot, "cache");
     const temp = path.join(probeRoot, "tmp");
@@ -1670,7 +1835,22 @@ async function probeToolchain(input: Readonly<{
     }
     return nodeIdentity;
   } finally {
-    rmSync(probeRoot, { recursive: true, force: true });
+    // Never recursively remove an unbound path: if exact root capture failed,
+    // leaving the private root for bounded recovery is safer than deleting a
+    // replacement or foreign tree.
+    if (probeRootIdentity !== undefined) {
+      assertExactProbeRootV2(probeRoot, probeRootIdentity);
+      try {
+        rmSync(probeRoot, { recursive: true, force: true });
+      } catch (error) {
+        if (error instanceof HostNodeToolchainAuthorityErrorV2) throw error;
+        return fail(
+          "HOST_NODE_TOOLCHAIN_V2_PROBE_CLEANUP_FAILED",
+          "Host Node probe root could not be removed after exact identity validation",
+          error,
+        );
+      }
+    }
   }
 }
 
@@ -1761,6 +1941,91 @@ async function captureAuthorityState(input: Readonly<{
   });
   const privateIdentityHash = privateCaptureHash({ root, nodeFile, npmPackage, dynamicLibraries });
   return Object.freeze({ root, nodeFile, npmPackage, dynamicLibraries, privateIdentityHash });
+}
+
+/**
+ * Captures the exact physical bridge for one already-captured authority
+ * state. V2 receipts remain the compatibility surface; this V3 snapshot is
+ * private state used to detect exact device/inode and nanosecond metadata
+ * drift, and is still explicitly observation-only/non-authoritative.
+ */
+function capturePrivatePhysicalIdentityV3(input: Readonly<{
+  admissionScope: "production_host" | "test_fixture";
+  host: HostIdentityV2;
+  hostIdentityHash: string;
+  hostToolchainReceiptHash: string;
+  captured: CapturedAuthorityStateV2;
+}>): HostNodeToolchainPhysicalIdentityV3 {
+  const scope = buildHostNodeToolchainPhysicalScopeV3(input.host);
+  const capture = (
+    absolutePath: string,
+    role: HostNodeToolchainPhysicalObjectRoleV3,
+    objectKind: HostNodeToolchainPhysicalObjectKindV3,
+    member?: Readonly<{
+      memberRef: string;
+      installNameHash: string;
+    }>,
+  ) => captureHostNodeToolchainPhysicalObservationV3({
+    admissionScope: input.admissionScope,
+    role,
+    objectKind,
+    hostIdentityHash: input.hostIdentityHash,
+    absolutePath,
+    ...(member ?? {}),
+  });
+  const observations = [
+    capture(input.captured.root.realRoot, "toolchain_root", "directory"),
+    capture(input.captured.nodeFile.absolutePath, "node_executable", "ordinary_file"),
+    capture(input.captured.npmPackage.root, "npm_package_root", "directory"),
+    capture(input.captured.npmPackage.cli.absolutePath, "npm_cli", "ordinary_file"),
+    capture(
+      input.captured.npmPackage.packageJson.absolutePath,
+      "npm_package_json",
+      "ordinary_file",
+    ),
+    ...input.captured.dynamicLibraries.map((library, index) => capture(
+      library.file.absolutePath,
+      "non_system_dynamic_library",
+      "ordinary_file",
+      {
+        memberRef: `HOST_NODE_NON_SYSTEM_DYLIB_${String(index + 1).padStart(4, "0")}`,
+        installNameHash: library.installNameHash,
+      },
+    )),
+  ];
+  return buildHostNodeToolchainPhysicalIdentityV3({
+    admissionScope: input.admissionScope,
+    hostToolchainReceiptHash: input.hostToolchainReceiptHash,
+    revalidatedHostToolchainReceiptHash: input.hostToolchainReceiptHash,
+    scope,
+    observations,
+  });
+}
+
+/**
+ * Admission-only wrapper: V3 is an internal exact fence, so malformed scope,
+ * path, stat, or schema failures must not escape the V2 authority boundary as
+ * raw V3/Zod/RangeError instances.
+ */
+function capturePrivatePhysicalIdentityV3ForAdmission(
+  input: Readonly<{
+    admissionScope: "production_host" | "test_fixture";
+    host: HostIdentityV2;
+    hostIdentityHash: string;
+    hostToolchainReceiptHash: string;
+    captured: CapturedAuthorityStateV2;
+  }>,
+): HostNodeToolchainPhysicalIdentityV3 {
+  try {
+    return capturePrivatePhysicalIdentityV3(input);
+  } catch (error) {
+    if (error instanceof HostNodeToolchainAuthorityErrorV2) throw error;
+    return fail(
+      "HOST_NODE_TOOLCHAIN_V2_CANDIDATE_LAYOUT_INVALID",
+      "Exact V3 host physical identity could not be captured during authority admission",
+      error,
+    );
+  }
 }
 
 function assertProvisioningJoin(input: Readonly<{
@@ -1886,6 +2151,7 @@ function buildReceipt(input: Readonly<{
       totalBytes: input.captured.npmPackage.totalBytes,
       treeHash: input.captured.npmPackage.treeHash,
       normalizedTreeHash: input.captured.npmPackage.normalizedTreeHash,
+      logicalTreeHash: input.captured.npmPackage.logicalTreeHash,
     },
   };
   const npm = {
@@ -2016,11 +2282,19 @@ async function buildAuthority(input: Readonly<{
   admissionScope: "production_host" | "test_fixture";
   profileId: NodeScaffoldProfileIdV2;
   host: HostIdentityV2;
+  hostIdentityHash: string;
   candidate: PrivateAuthorityStateV2["candidate"];
   testDynamicLibraryPaths?: readonly string[];
+  testPhysicalInspectionHook?: PrivateAuthorityStateV2["testPhysicalInspectionHook"];
   probeAdapter: HostNodeToolchainProbeAdapterV2;
   provisionedToolchain?: ProvisionedNodeToolchainV2;
 }>): Promise<HostNodeToolchainAuthorityV2> {
+  if (!/^[a-f0-9]{64}$/u.test(input.hostIdentityHash)) {
+    return fail(
+      "HOST_NODE_TOOLCHAIN_V2_INPUT_INVALID",
+      "Host Node toolchain authority requires one canonical host identity hash",
+    );
+  }
   const requirement = requirementForProfile(input.profileId);
   if (input.admissionScope === "production_host" && !input.provisionedToolchain) {
     return fail(
@@ -2095,17 +2369,62 @@ async function buildAuthority(input: Readonly<{
     nodeProbe,
     ...(provisioningReceipt ? { provisioningReceipt } : {}),
   });
+  const physicalIdentityV3 = capturePrivatePhysicalIdentityV3ForAdmission({
+    admissionScope: input.admissionScope,
+    host: input.host,
+    hostIdentityHash: input.hostIdentityHash,
+    hostToolchainReceiptHash: receipt.receiptHash,
+    captured,
+  });
+  /**
+   * Final admission join: the receipt was built from the V2 capture above,
+   * while the private V3 snapshot used exact BigInt observations. Re-capture
+   * both sides once and retain only a pair that is byte/metadata-identical;
+   * this closes the cross-capture window without changing the public V2 ABI.
+   */
+  const finalCaptured = await captureAuthorityState({
+    candidate: {
+      ...input.candidate,
+      expectedRealRoot: captured.root.realRoot,
+    },
+    ...(input.testDynamicLibraryPaths
+      ? { testDynamicLibraryPaths: input.testDynamicLibraryPaths }
+      : {}),
+  });
+  if (finalCaptured.privateIdentityHash !== captured.privateIdentityHash) {
+    return fail(
+      "HOST_NODE_TOOLCHAIN_V2_HOST_DRIFT",
+      "Host Node/npm capture changed while the exact V3 admission snapshot was joined",
+    );
+  }
+  const finalPhysicalIdentityV3 = capturePrivatePhysicalIdentityV3ForAdmission({
+    admissionScope: input.admissionScope,
+    host: input.host,
+    hostIdentityHash: input.hostIdentityHash,
+    hostToolchainReceiptHash: receipt.receiptHash,
+    captured: finalCaptured,
+  });
+  if (finalPhysicalIdentityV3.identityHash !== physicalIdentityV3.identityHash) {
+    return fail(
+      "HOST_NODE_TOOLCHAIN_V2_HOST_DRIFT",
+      "Host exact V3 physical identity changed while the admission snapshot was joined",
+    );
+  }
   const state: PrivateAuthorityStateV2 = Object.freeze({
     admissionScope: input.admissionScope,
     profileId: input.profileId,
     requirement,
     host: Object.freeze({ ...input.host }),
+    hostIdentityHash: input.hostIdentityHash,
     candidate: Object.freeze({
       ...input.candidate,
       expectedRealRoot: captured.root.realRoot,
     }),
     ...(input.testDynamicLibraryPaths
       ? { testDynamicLibraryPaths: Object.freeze([...input.testDynamicLibraryPaths]) }
+      : {}),
+    ...(input.testPhysicalInspectionHook
+      ? { testPhysicalInspectionHook: input.testPhysicalInspectionHook }
       : {}),
     probeAdapter: input.probeAdapter,
     ...(input.provisionedToolchain
@@ -2114,7 +2433,8 @@ async function buildAuthority(input: Readonly<{
           provisioningReceipt,
         }
       : {}),
-    captured,
+    captured: finalCaptured,
+    physicalIdentityV3: finalPhysicalIdentityV3,
     receipt,
   });
   return new HostNodeToolchainAuthorityV2(authorityConstructorCapabilityV2, state);
@@ -2157,6 +2477,18 @@ function productionHostIdentity(): HostIdentityV2 {
   });
 }
 
+function productionHostIdentityHashV3(): string {
+  try {
+    return defaultNodeToolchainProvisionerHostIdentityHashV3();
+  } catch (error) {
+    return fail(
+      "HOST_NODE_TOOLCHAIN_V2_NO_ADMITTED_CANDIDATE",
+      "Stable production host identity cannot be obtained from the machine source",
+      error,
+    );
+  }
+}
+
 /**
  * Creates production authority from one profile and one code-owned Darwin
  * candidate registry. Absolute roots, process adapters and expected versions
@@ -2181,6 +2513,7 @@ Promise<HostNodeToolchainAuthorityV2> {
     admissionScope: "production_host",
     profileId,
     host,
+    hostIdentityHash: productionHostIdentityHashV3(),
     candidate: {
       logicalRoot: candidate.logicalRoot,
       productionRootPolicy: "root_owned_direct_exact_v2",
@@ -2195,7 +2528,11 @@ export type HostNodeToolchainAuthorityV2TestInput = Readonly<{
   fixture: Readonly<{
     candidateRoot: string;
     host: HostIdentityV2;
+    hostIdentityHash?: string;
     nonSystemDynamicLibraryPaths?: readonly string[];
+    physicalInspectionHook?: (
+      checkpoint: "before_physical_capture" | "after_physical_capture",
+    ) => void;
   }>;
   probeAdapter?: HostNodeToolchainProbeAdapterV2;
   provisionedToolchain?: ProvisionedNodeToolchainV2;
@@ -2212,9 +2549,14 @@ export async function createHostNodeToolchainAuthorityV2ForTest(
     admissionScope: "test_fixture",
     profileId: input.profileId,
     host: input.fixture.host,
+    hostIdentityHash: input.fixture.hostIdentityHash
+      ?? HOST_NODE_TOOLCHAIN_AUTHORITY_TEST_HOST_IDENTITY_HASH_V3,
     candidate: { logicalRoot: input.fixture.candidateRoot },
     ...(input.fixture.nonSystemDynamicLibraryPaths
       ? { testDynamicLibraryPaths: input.fixture.nonSystemDynamicLibraryPaths }
+      : {}),
+    ...(input.fixture.physicalInspectionHook
+      ? { testPhysicalInspectionHook: input.fixture.physicalInspectionHook }
       : {}),
     probeAdapter: input.probeAdapter ?? productionProbeAdapter,
     ...(input.provisionedToolchain
@@ -2227,6 +2569,51 @@ export function inspectHostNodeToolchainReceiptV2(
   handle: HostNodeToolchainAuthorityV2,
 ): HostNodeToolchainReceiptV2 {
   return defensiveReceiptCopy(authenticState(handle).receipt);
+}
+
+/**
+ * Explicit V3 physical observation bridge.  V2 receipts and hashes remain
+ * unchanged; callers opt into this fresh exact BigInt capture only after
+ * holding the authenticated host-toolchain capability.
+ */
+export async function inspectHostNodeToolchainPhysicalIdentityV3(
+  handle: HostNodeToolchainAuthorityV2,
+): Promise<HostNodeToolchainPhysicalIdentityV3> {
+  const state = authenticState(handle);
+  const before = await revalidateHostNodeToolchainAuthorityV2(handle);
+  state.testPhysicalInspectionHook?.("before_physical_capture");
+  let physical: HostNodeToolchainPhysicalIdentityV3;
+  try {
+    physical = capturePrivatePhysicalIdentityV3({
+      admissionScope: state.admissionScope,
+      host: state.host,
+      hostIdentityHash: state.hostIdentityHash,
+      hostToolchainReceiptHash: before.receiptHash,
+      captured: state.captured,
+    });
+  } finally {
+    state.testPhysicalInspectionHook?.("after_physical_capture");
+  }
+  const after = await revalidateHostNodeToolchainAuthorityV2(handle);
+  if (
+    after.receiptHash !== before.receiptHash
+    || after.receiptHash !== state.receipt.receiptHash
+    || physical.identityHash !== state.physicalIdentityV3.identityHash
+  ) {
+    throw new HostNodeToolchainAuthorityErrorV2(
+      "HOST_NODE_TOOLCHAIN_V2_HOST_DRIFT",
+      "Host Node authority changed while its V3 physical observation was captured",
+    );
+  }
+  return physical;
+}
+
+export async function inspectHostNodeToolchainStableHostIdentityHashV3(
+  handle: HostNodeToolchainAuthorityV2,
+): Promise<string> {
+  const state = authenticState(handle);
+  await revalidateHostNodeToolchainAuthorityV2(handle);
+  return state.hostIdentityHash;
 }
 
 export function isProductionHostNodeToolchainAuthorityV2(
@@ -2245,6 +2632,15 @@ export async function revalidateHostNodeToolchainAuthorityV2(
 ): Promise<HostNodeToolchainReceiptV2> {
   const state = authenticState(handle);
   try {
+    if (
+      state.admissionScope === "production_host"
+      && productionHostIdentityHashV3() !== state.hostIdentityHash
+    ) {
+      fail(
+        "HOST_NODE_TOOLCHAIN_V2_HOST_DRIFT",
+        "Stable production machine identity changed after host authority issuance",
+      );
+    }
     const provisioningReceipt = state.provisionedToolchain
       ? await requireProvisioningReceipt({
           admissionScope: state.admissionScope,
@@ -2275,6 +2671,19 @@ export async function revalidateHostNodeToolchainAuthorityV2(
         ? { testDynamicLibraryPaths: state.testDynamicLibraryPaths }
         : {}),
     });
+    const freshPhysicalIdentityV3 = capturePrivatePhysicalIdentityV3({
+      admissionScope: state.admissionScope,
+      host: state.host,
+      hostIdentityHash: state.hostIdentityHash,
+      hostToolchainReceiptHash: state.receipt.receiptHash,
+      captured: fresh,
+    });
+    if (freshPhysicalIdentityV3.identityHash !== state.physicalIdentityV3.identityHash) {
+      fail(
+        "HOST_NODE_TOOLCHAIN_V2_HOST_DRIFT",
+        "Host Node exact V3 physical identity changed after admission",
+      );
+    }
     if (fresh.privateIdentityHash !== state.captured.privateIdentityHash) {
       fail(
         "HOST_NODE_TOOLCHAIN_V2_HOST_DRIFT",
@@ -4180,11 +4589,11 @@ function capturePlatformReleaseBuildScopeV2(
       "scripts",
       "build-platform-release-v2.mjs",
     );
-    const context = lstatSync(contextRoot);
-    const source = lstatSync(input.sourceRoot);
-    const toolchain = lstatSync(input.buildToolchainRoot);
-    const outputParentStat = lstatSync(outputParent);
-    const output = lstatSync(input.outputRoot);
+    const context = lstatSync(contextRoot, { bigint: true });
+    const source = lstatSync(input.sourceRoot, { bigint: true });
+    const toolchain = lstatSync(input.buildToolchainRoot, { bigint: true });
+    const outputParentStat = lstatSync(outputParent, { bigint: true });
+    const output = lstatSync(input.outputRoot, { bigint: true });
     const contextNames = readdirSync(contextRoot).sort();
     const outputNames = readdirSync(input.outputRoot).sort();
     const expectedOutputNames =
@@ -4206,13 +4615,13 @@ function capturePlatformReleaseBuildScopeV2(
         stat.isSymbolicLink()
         || !stat.isDirectory()
         || realpathSync(rootPath) !== rootPath
-        || stat.uid !== owner.uid
-        || stat.gid !== owner.gid)
-      || modeBits(context) !== 0o700
-      || modeBits(source) !== 0o555
-      || modeBits(toolchain) !== 0o555
-      || modeBits(outputParentStat) !== 0o700
-      || modeBits(output) !== 0o700
+        || stat.uid !== BigInt(owner.uid)
+        || stat.gid !== BigInt(owner.gid))
+      || exactModeBitsV2(context) !== 0o700
+      || exactModeBitsV2(source) !== 0o555
+      || exactModeBitsV2(toolchain) !== 0o555
+      || exactModeBitsV2(outputParentStat) !== 0o700
+      || exactModeBitsV2(output) !== 0o700
       || (
         source.dev === toolchain.dev
         && source.ino === toolchain.ino
@@ -4241,14 +4650,14 @@ function capturePlatformReleaseBuildScopeV2(
     }
     if (phase === "after") {
       const payload = path.join(input.outputRoot, "payload");
-      const payloadStat = lstatSync(payload);
+      const payloadStat = lstatSync(payload, { bigint: true });
       if (
         payloadStat.isSymbolicLink()
         || !payloadStat.isDirectory()
         || realpathSync(payload) !== payload
-        || modeBits(payloadStat) !== 0o700
-        || payloadStat.uid !== owner.uid
-        || payloadStat.gid !== owner.gid
+        || exactModeBitsV2(payloadStat) !== 0o700
+        || payloadStat.uid !== BigInt(owner.uid)
+        || payloadStat.gid !== BigInt(owner.gid)
         || (
           payloadStat.dev === output.dev
           && payloadStat.ino === output.ino
@@ -4274,19 +4683,19 @@ function capturePlatformReleaseBuildScopeV2(
       );
     }
     const outputIdentity = {
-      device: output.dev,
-      inode: output.ino,
-      mode: output.mode,
-      ownerUid: output.uid,
-      ownerGid: output.gid,
+      device: String(output.dev),
+      inode: String(output.ino),
+      mode: exactModeBitsV2(output),
+      ownerUid: boundedExactOwnerIdV2(output.uid),
+      ownerGid: boundedExactOwnerIdV2(output.gid),
     };
     return Object.freeze({
       buildContextRootIdentityHash: hashCanonicalJson({
         schema:
           "setfarm.host-node-platform-release-build-context-identity.v2",
-        context: fingerprint(context),
-        source: fingerprint(source),
-        toolchain: fingerprint(toolchain),
+        context: exactBuildScopeStatProjectionV2(context),
+        source: exactBuildScopeStatProjectionV2(source),
+        toolchain: exactBuildScopeStatProjectionV2(toolchain),
         contextNames,
         command: {
           contentHash: command.contentHash,
@@ -4294,7 +4703,7 @@ function capturePlatformReleaseBuildScopeV2(
         },
       }),
       outputStageIdentityHash:
-        hashHostNodePlatformReleaseOutputStageIdentityV2(
+        hashHostNodePlatformReleaseOutputStageExactIdentityV2(
           outputIdentity,
         ),
     });

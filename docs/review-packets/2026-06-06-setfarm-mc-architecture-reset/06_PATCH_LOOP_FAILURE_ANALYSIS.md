@@ -2,84 +2,83 @@
 
 ## Symptom
 
-Son run'larda ana story'ler "done" veya "verified" olabiliyor, ancak daha sonra QA/smoke/supervisor yeni bir problem buluyor. Sistem QA-FIX story açıyor, agent düzeltmeye çalışıyor, supervisor tekrar başka checklist blocker yakalıyor. Kullanıcı açısından bu "bitmeyen yama döngüsü" gibi görünüyor.
+In recent runs, primary stories can become "done" or "verified," only for QA, smoke checks, or the supervisor to find another problem later. The system opens a QA-FIX story, the agent attempts a repair, and the supervisor then finds another checklist blocker. To the user, this looks like an "endless patch loop."
 
 ## Recent Failure Classes
 
 ### Design Import Gap
 
-Unknown Material icon veya Stitch CSS sorunları setup-build'de patlamalı. Daha önce fallback icon/CSS sızıntısı downstream'e taşındı.
+Unknown Material icons or Stitch CSS problems should fail during setup-build. In the past, fallback icon/CSS leakage propagated downstream.
 
-Doğru layer: `stitch-to-jsx` + setup-build hard gate.
+Correct layer: `stitch-to-jsx` + setup-build hard gate.
 
 ### Generated Screen Coverage Mismatch
 
-SCREEN_MAP iki ekran isterken generated screen tek dosya olabiliyor. Run completed görünse bile design/code mismatch kalabiliyor.
+SCREEN_MAP can require two screens while only one generated-screen file exists. A design/code mismatch can remain even when the run appears completed.
 
-Doğru layer: setup-build certificate + generated-screen-validator hard gate.
+Correct layer: setup-build certificate + generated-screen-validator hard gate.
 
 ### Runtime State Not Reflected In UI
 
-Game state ilerliyor olabilir ama ekranda hareket yoktur. Build/test/action handler pass bunu yakalamaz.
+Game state may advance without any visible movement on the screen. Passing the build, tests, and action-handler checks does not catch this.
 
-Doğru layer: runtime evidence/test bridge/smoke gate. Fakat bu implement sonrasında erken yakalanmalı, QA-FIX'e geç kalmamalı.
+Correct layer: runtime evidence/test bridge/smoke gate. However, this should be caught early after IMPLEMENT rather than late in QA-FIX.
 
 ### Agent Self-Review Weakness
 
-Agent "build/test geçiyor, runtime hazır" diyebilir ama orchestrator-owned screenshot/DOM/state yoksa bu iddia zayıftır.
+An agent may say "the build/tests pass and the runtime is ready," but that claim is weak without orchestrator-owned screenshots, DOM, and state.
 
-Doğru layer: implement evidence runner, not agent prose.
+Correct layer: implementation evidence runner, not agent prose.
 
 ### QA-FIX Loop
 
-QA veya verify smoke failure sonrası QA-FIX story açılır. QA-FIX mevcut screen'i düzeltirken supervisor eski checklist ile yeni layout/runtime fix'i çarpıştırabilir.
+A QA-FIX story is opened after a QA or VERIFY smoke failure. While QA-FIX repairs an existing screen, the supervisor can bring the new layout/runtime fix into conflict with an old checklist.
 
-Doğru layer: failure routing policy. Bazı smoke failures QA-FIX değil, previous story implement retry veya platform bug olmalı.
+Correct layer: failure-routing policy. Some smoke failures should become a retry of the previous implementation story or a platform bug, not a QA-FIX.
 
 ### Stale MC Observation
 
-PR state OPEN veya actionable comment blocked observation daha sonra resolved/verified olsa bile ham activity'de açık sorun gibi görünebilir.
+An OPEN PR-state or actionable-comment blocked observation can appear as an active problem in raw activity even after it is resolved or verified.
 
-Doğru layer: MC projection/read-model, not event deletion.
+Correct layer: MC projection/read model, not event deletion.
 
 ### PR/Verify Ambiguity
 
-Reviewer PR comments çözüldü der, PR state hala OPEN görünebilir, sonra auto-merge/verified observation gelir. Bu lifecycle açık FSM değilse kullanıcı ne olduğunu anlayamaz.
+The reviewer can say PR comments are resolved while the PR state still appears OPEN, followed later by an auto-merge/verified observation. Users cannot understand what happened unless this lifecycle is an explicit FSM.
 
-Doğru layer: PR comment/PR state FSM.
+Correct layer: PR-comment/PR-state FSM.
 
 ## Why More Patches Are Not Enough
 
-Her yeni bug için yeni guard eklemek kısa vadede doğru görünür. Ama toplamda:
+Adding a new guard for every new bug appears correct in the short term. In aggregate, however:
 
-- agent prompt şişer
-- spawner guard sayısı artar
-- MC activity gürültülü olur
-- failure routing anlaşılmaz hale gelir
-- QA-FIX yeni story olarak sistemi tekrar kirletir
-- stack-agnostic hedef zayıflar
+- the agent prompt becomes bloated
+- the number of spawner guards grows
+- MC activity becomes noisy
+- failure routing becomes difficult to understand
+- QA-FIX contaminates the system again as a new story
+- the stack-agnostic goal becomes weaker
 
-Bu yüzden dış modelden istenen ana analiz: Hangi kontroller platform invariant olarak kalmalı, hangileri kaldırılmalı veya stack evidence contract'a taşınmalı?
+The main analysis requested from the external model is therefore: Which checks should remain platform invariants, and which should be removed or moved into a stack evidence contract?
 
 ## Architectural Smell
 
-Şu dosyalar/katmanlar çok fazla sorumluluk taşıyor olabilir:
+The following files/layers may carry too much responsibility:
 
 - `src/installer/step-ops.ts`: lifecycle, PR, QA-FIX, verification, routing, side effects.
 - `src/spawner.ts`: process manager, runtime guard, supervisor signal, gateway health, claim recovery.
 - `src/server/index.html`: UI projection, activity rendering, evidence filmstrip.
-- supervisor layer: product PM + static analyzer + fixer + QA sinyalleri.
+- supervisor layer: product PM + static analyzer + fixer + QA signals.
 
 ## Core Reset Question
 
-Setfarm bir "agent orchestration platform" mu, yoksa "LLM destekli compiler/evidence pipeline" mı?
+Is Setfarm an "agent orchestration platform" or an "LLM-assisted compiler/evidence pipeline"?
 
-Eğer ikincisiyse:
+If it is the latter:
 
-- completion sadece machine evidence ile olur
-- agent output advisory kalır
-- failure routing table küçük ve mekanik olur
-- QA-FIX sınırlı ve nadir olur
-- MC projection event log'dan türetilir
-- self-heal plan-only veya approval-only başlar
-
+- completion is based only on machine evidence
+- agent output remains advisory
+- the failure-routing table is small and mechanical
+- QA-FIX is bounded and rare
+- the MC projection is derived from the event log
+- self-heal begins in plan-only or approval-only mode

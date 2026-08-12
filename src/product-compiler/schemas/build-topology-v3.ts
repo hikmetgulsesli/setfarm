@@ -174,6 +174,8 @@ export const BUILD_TOPOLOGY_CONTRACT_V3 = Object.freeze({
   identitySeparation: Object.freeze({
     retryAndSemanticIdentity: "logicalBuildHash" as const,
     executionEvidenceIdentity: "manifestHash" as const,
+    hostToolchainLogicalProjection:
+      "content_version_abi_without_filesystem_metadata_v3" as const,
     excludedFromLogicalBuildHash: Object.freeze([
       "admissionScope",
       "dependencyIdentityHash",
@@ -559,8 +561,8 @@ export const BuildTopologyLogicalDependencyV3Schema = z.object({
   dependencyGraphHash: Sha256Schema,
   environmentContractHash: Sha256Schema,
   effectiveConfigHash: Sha256Schema,
-  nodeIdentityHash: Sha256Schema,
-  npmClosureHash: Sha256Schema,
+  nodeRuntimeLogicalHash: Sha256Schema,
+  npmClosureLogicalHash: Sha256Schema,
   npmVersion: z.literal("10.9.8"),
   installDirectArgvHash: Sha256Schema,
   graph: z.object({
@@ -672,7 +674,7 @@ const TestCommandV3Schema = z.discriminatedUnion("profileId", [
 export const BuildTopologyCommandsV3Schema = z.object({
   environmentContractHash: Sha256Schema,
   effectiveConfigHash: Sha256Schema,
-  nodeIdentityHash: Sha256Schema,
+  nodeRuntimeLogicalHash: Sha256Schema,
   ambientEnvironment: z.literal("forbidden"),
   install: z.object({
     commandRef: z.literal("CMD_NODE_SCAFFOLD_INSTALL_V2"),
@@ -718,7 +720,7 @@ export type BuildTopologyCommandsV3 = z.infer<
 export const BuildTopologyCommandContractV3Schema = z.object({
   environmentContractHash: Sha256Schema,
   effectiveConfigHash: Sha256Schema,
-  nodeIdentityHash: Sha256Schema,
+  nodeRuntimeLogicalHash: Sha256Schema,
   ambientEnvironment: z.literal("forbidden"),
   install: BuildTopologyCommandsV3Schema.shape.install.pick({
     commandRef: true,
@@ -740,7 +742,7 @@ function rawBuildTopologyCommandContractProjectionV3(
   return {
     environmentContractHash: value.environmentContractHash,
     effectiveConfigHash: value.effectiveConfigHash,
-    nodeIdentityHash: value.nodeIdentityHash,
+    nodeRuntimeLogicalHash: value.nodeRuntimeLogicalHash,
     ambientEnvironment: value.ambientEnvironment,
     install: {
       commandRef: value.install.commandRef,
@@ -1160,7 +1162,8 @@ function addBuildTopologyClosureIssuesV3(
     || value.commands.install.dependencyReceiptHash !== dependencyReceiptHash
     || canonicalJsonStringify(value.commands.build.compilerTarget)
       !== canonicalJsonStringify(value.dependency.logical.typescriptCompiler)
-    || value.commands.nodeIdentityHash !== value.dependency.logical.nodeIdentityHash
+    || value.commands.nodeRuntimeLogicalHash
+      !== value.dependency.logical.nodeRuntimeLogicalHash
   ) {
     context.addIssue({
       code: "custom",

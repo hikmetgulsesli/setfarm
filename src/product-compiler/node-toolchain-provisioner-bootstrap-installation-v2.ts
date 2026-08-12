@@ -19,11 +19,13 @@ import {
   rmdirSync,
   unlinkSync,
   writeSync,
+  type BigIntStats,
   type Stats,
 } from "node:fs";
 import path from "node:path";
 import { isProxy } from "node:util/types";
 
+import { PLATFORM_RELEASE_BOOTSTRAP_CONTRACT_V2 } from "../execution/schemas/platform-release-bootstrap-contract-v2.js";
 import { canonicalJsonBytes } from "./canonical-json.js";
 import {
   DarwinParentDescriptorLeaseErrorV2,
@@ -97,6 +99,9 @@ import {
   NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_ROOT_V2,
   NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_RUNTIME_LOCATOR_V2,
 } from "./schemas/node-toolchain-provisioner-bootstrap-v2.js";
+import {
+  matchesExactStableFilesystemObjectV2,
+} from "./exact-stable-filesystem-identity-v2.js";
 
 const LOCK_FILE_BYTES_V2 = Buffer.from(
   NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_LOCK_CONTENT_V2,
@@ -177,6 +182,7 @@ type InstalledStateV2 = Readonly<{
 }>;
 
 export type NodeToolchainProvisionerBootstrapInstallationTestHooksV2 = Readonly<{
+  afterLegacyLeaseAcquired?: () => void;
   afterClaimStage?: () => void;
   afterClaimPublished?: () => void;
   afterPayloadStaged?: () => void;
@@ -308,6 +314,71 @@ function syncDirectory(absolutePath: string): void {
   }
 }
 
+/**
+ * Bootstrap installation receipts are still V2 JSON and therefore retain
+ * numeric device/inode fields.  Directory admission must prove those values
+ * came from an injective bigint projection; otherwise a rounded identity
+ * could be mistaken for the durable installed root during open/revalidate.
+ */
+function assertExactDirectoryStableIdentityV2(input: Readonly<{
+  absolutePath: string;
+  expected: FingerprintV2;
+  errorCode: NodeToolchainProvisionerBootstrapInstallationErrorCodeV2;
+}>): void {
+  let stat: BigIntStats;
+  try {
+    stat = lstatSync(input.absolutePath, { bigint: true });
+  } catch (error) {
+    return fail(
+      input.errorCode,
+      "Bootstrap installation directory exact physical identity could not be captured",
+      error,
+    );
+  }
+  if (
+    !matchesExactStableFilesystemObjectV2({
+      stat,
+      expected: input.expected,
+      objectKind: "directory",
+    })
+  ) {
+    return fail(
+      input.errorCode,
+      "Bootstrap installation directory device/inode identity exceeds or differs from the exact V2 numeric boundary",
+    );
+  }
+}
+
+function assertExactObjectStableIdentityV2(input: Readonly<{
+  absolutePath: string;
+  expected: FingerprintV2;
+  objectKind: "ordinary_file" | "directory";
+  errorCode: NodeToolchainProvisionerBootstrapInstallationErrorCodeV2;
+}>): void {
+  let stat: BigIntStats;
+  try {
+    stat = lstatSync(input.absolutePath, { bigint: true });
+  } catch (error) {
+    return fail(
+      input.errorCode,
+      "Bootstrap installation cleanup object identity could not be captured exactly",
+      error,
+    );
+  }
+  if (
+    !matchesExactStableFilesystemObjectV2({
+      stat,
+      expected: input.expected,
+      objectKind: input.objectKind,
+    })
+  ) {
+    return fail(
+      input.errorCode,
+      "Bootstrap installation cleanup object kind or stable identity changed",
+    );
+  }
+}
+
 function assertDirectory(input: Readonly<{
   absolutePath: string;
   expectedOwner: OwnerV2;
@@ -327,7 +398,13 @@ function assertDirectory(input: Readonly<{
     ) {
       return fail(input.errorCode, "Bootstrap installation directory boundary is invalid");
     }
-    return fingerprint(after);
+    const captured = fingerprint(after);
+    assertExactDirectoryStableIdentityV2({
+      absolutePath: input.absolutePath,
+      expected: captured,
+      errorCode: input.errorCode,
+    });
+    return captured;
   } catch (error) {
     if (error instanceof NodeToolchainProvisionerBootstrapInstallationErrorV2) throw error;
     return fail(input.errorCode, "Bootstrap installation directory could not be inspected", error);
@@ -478,6 +555,21 @@ function optionalFingerprint(absolutePath: string): FingerprintV2 | undefined {
   } catch (error) {
     if (isNodeError(error, "ENOENT")) return undefined;
     throw error;
+  }
+}
+
+function assertLegacyNodeRegistryCutoverAbsentV2(
+  paths: Readonly<{ parent: string }>,
+): void {
+  const activationReceiptPath = path.join(
+    paths.parent,
+    PLATFORM_RELEASE_BOOTSTRAP_CONTRACT_V2.registry.activationReceiptBasename,
+  );
+  if (optionalFingerprint(activationReceiptPath) !== undefined) {
+    return fail(
+      "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_LOCK_FAILED",
+      "Registry activation receipt is present; legacy-only Node mutation is forbidden and requires the shared-parent then package-lock adapter",
+    );
   }
 }
 
@@ -826,6 +918,12 @@ function publishCanonicalNoReplace(input: Readonly<{
     );
   }
   target.bytes.fill(0);
+  assertExactObjectStableIdentityV2({
+    absolutePath: input.stagePath,
+    expected: target.fingerprint,
+    objectKind: "ordinary_file",
+    errorCode: "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_CONFLICT",
+  });
   unlinkSync(input.stagePath);
   syncDirectory(path.dirname(input.stagePath));
   const final = stableFileBytes({
@@ -1140,9 +1238,31 @@ function removeCapturedTrees(captures: readonly CapturedEntryV2[]): void {
     .sort((left, right) => left.relativePath.length - right.relativePath.length);
   for (const directory of directories) chmodSync(directory.absolutePath, 0o700);
   for (const file of captures.filter((entry) => entry.type === "file")) {
+    assertExactObjectStableIdentityV2({
+      absolutePath: file.absolutePath,
+      expected: file.fingerprint,
+      objectKind: "ordinary_file",
+      errorCode: "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_RECOVERY_FAILED",
+    });
     unlinkSync(file.absolutePath);
   }
-  for (const directory of [...directories].reverse()) rmdirSync(directory.absolutePath);
+  for (const directory of [...directories].reverse()) {
+    if (directory.relativePath === ".") {
+      assertExactDirectoryStableIdentityV2({
+        absolutePath: directory.absolutePath,
+        expected: directory.fingerprint,
+        errorCode: "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_RECOVERY_FAILED",
+      });
+    } else {
+      assertExactObjectStableIdentityV2({
+        absolutePath: directory.absolutePath,
+        expected: directory.fingerprint,
+        objectKind: "directory",
+        errorCode: "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_RECOVERY_FAILED",
+      });
+    }
+    rmdirSync(directory.absolutePath);
+  }
 }
 
 function removeCapturedTree(captures: readonly CapturedEntryV2[]): void {
@@ -1333,13 +1453,54 @@ function publishPayloadRoot(input: Readonly<{
     claimPath: input.paths.claim,
     receiptPath: input.paths.receipt,
   });
+  const stageEntries = new Map(
+    stageCapture.map((entry) => [entry.relativePath, entry] as const),
+  );
   for (const spec of expectedFileSpecs(input.snapshot)) {
-    unlinkSync(path.join(payloadRoot, spec.locator));
+    const entry = stageEntries.get(spec.locator);
+    if (!entry || entry.type !== "file") {
+      return fail(
+        "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_PUBLICATION_FAILED",
+        "Bootstrap payload cleanup lost an exact staged file capture",
+      );
+    }
+    assertExactObjectStableIdentityV2({
+      absolutePath: entry.absolutePath,
+      expected: entry.fingerprint,
+      objectKind: "ordinary_file",
+      errorCode: "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_PUBLICATION_FAILED",
+    });
+    unlinkSync(entry.absolutePath);
   }
   for (const directory of ["bin", "lib", "runtime"] as const) {
-    rmdirSync(path.join(payloadRoot, directory));
+    const entry = stageEntries.get(directory);
+    if (!entry || entry.type !== "directory") {
+      return fail(
+        "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_PUBLICATION_FAILED",
+        "Bootstrap payload cleanup lost an exact staged directory capture",
+      );
+    }
+    assertExactObjectStableIdentityV2({
+      absolutePath: entry.absolutePath,
+      expected: entry.fingerprint,
+      objectKind: "directory",
+      errorCode: "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_PUBLICATION_FAILED",
+    });
+    rmdirSync(entry.absolutePath);
   }
-  rmdirSync(payloadRoot);
+  const payloadEntry = stageEntries.get(".");
+  if (!payloadEntry || payloadEntry.type !== "directory") {
+    return fail(
+      "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_PUBLICATION_FAILED",
+      "Bootstrap payload cleanup lost an exact staged root capture",
+    );
+  }
+  assertExactDirectoryStableIdentityV2({
+    absolutePath: payloadEntry.absolutePath,
+    expected: payloadEntry.fingerprint,
+    errorCode: "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_PUBLICATION_FAILED",
+  });
+  rmdirSync(payloadEntry.absolutePath);
   syncDirectory(input.paths.staging);
   for (const directory of ["bin", "lib", "runtime"] as const) {
     chmodSync(path.join(input.paths.root, directory), 0o555);
@@ -1420,6 +1581,7 @@ async function install(input: Readonly<{
   const boundary = input.expectedScope === "production_release"
     ? ensureProductionParent(paths)
     : testParent(paths);
+  assertLegacyNodeRegistryCutoverAbsentV2(paths);
   assertParentCensus(paths, boundary.expectedOwner, boundary.parentMode);
   ensureLock(paths, boundary.expectedOwner);
   let lease: DarwinParentDescriptorLeaseV2 | undefined;
@@ -1433,6 +1595,8 @@ async function install(input: Readonly<{
       allowedParentModes: [boundary.parentMode],
     });
     lease.assertCurrent();
+    input.hooks?.afterLegacyLeaseAcquired?.();
+    assertLegacyNodeRegistryCutoverAbsentV2(paths);
     const predecessorRollbackHistory = assertParentCensus(
       paths,
       boundary.expectedOwner,
@@ -2046,6 +2210,7 @@ export function revalidateInstalledNodeToolchainProvisionerBootstrapV2(
 }
 
 export type NodeToolchainProvisionerBootstrapRollbackTestHooksV2 = Readonly<{
+  afterLegacyLeaseAcquired?: () => void;
   afterRollbackClaimStage?: () => void;
   afterRollbackClaimPublished?: () => void;
   afterQuarantineCreated?: () => void;
@@ -2454,6 +2619,11 @@ function validatePartialRollbackTree(input: Readonly<{
       "Bootstrap rollback root differs from its claimed physical generation",
     );
   }
+  assertExactDirectoryStableIdentityV2({
+    absolutePath: input.root,
+    expected: root,
+    errorCode: "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_ROLLBACK_CONFLICT",
+  });
   const expected = new Map<string, NodeToolchainProvisionerBootstrapRollbackTreeEntryV2>(
     input.claim.treeEntries.map((entry) => [entry.locator, entry]),
   );
@@ -2575,6 +2745,7 @@ function removePartialRollbackTree(input: Readonly<{
       type: "directory";
     } => entry.type === "directory")
     .sort((left, right) => left.locator.split("/").length - right.locator.split("/").length);
+  const directoryIdentities = new Map<string, FingerprintV2>();
   for (const entry of directories) {
     const absolutePath = rollbackEntryPath(input.root, entry.locator);
     const current = optionalFingerprint(absolutePath);
@@ -2589,6 +2760,7 @@ function removePartialRollbackTree(input: Readonly<{
         "Bootstrap rollback directory changed before writable transition",
       );
     }
+    directoryIdentities.set(entry.locator, current);
     if (modeBits(current) !== 0o700) {
       chmodSync(absolutePath, 0o700);
       syncDirectory(absolutePath);
@@ -2613,6 +2785,12 @@ function removePartialRollbackTree(input: Readonly<{
           "Bootstrap rollback file changed before exact removal",
         );
       }
+      assertExactObjectStableIdentityV2({
+        absolutePath,
+        expected: captured.fingerprint,
+        objectKind: "ordinary_file",
+        errorCode: "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_ROLLBACK_CONFLICT",
+      });
       unlinkCapturedFile({ absolutePath, expected: captured.fingerprint });
     } finally {
       captured.bytes.fill(0);
@@ -2625,7 +2803,31 @@ function removePartialRollbackTree(input: Readonly<{
     .sort((left, right) => right.locator.split("/").length - left.locator.split("/").length);
   for (const entry of childDirectories) {
     const absolutePath = rollbackEntryPath(input.root, entry.locator);
-    if (!optionalFingerprint(absolutePath)) continue;
+    const current = optionalFingerprint(absolutePath);
+    const expected = directoryIdentities.get(entry.locator);
+    if (!current) continue;
+    if (!expected) {
+      return fail(
+        "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_ROLLBACK_CONFLICT",
+        "Bootstrap rollback directory lost its initial physical identity",
+      );
+    }
+    if (
+      current.ownerUid !== input.expectedOwner.uid
+      || current.ownerGid !== input.expectedOwner.gid
+      || modeBits(current) !== 0o700
+    ) {
+      return fail(
+        "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_ROLLBACK_CONFLICT",
+        "Bootstrap rollback directory changed before exact removal",
+      );
+    }
+    assertExactObjectStableIdentityV2({
+      absolutePath,
+      expected,
+      objectKind: "directory",
+      errorCode: "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_ROLLBACK_CONFLICT",
+    });
     rmdirSync(absolutePath);
     syncDirectory(path.dirname(absolutePath));
     removedCount += 1;
@@ -2633,6 +2835,13 @@ function removePartialRollbackTree(input: Readonly<{
   }
   const root = optionalFingerprint(input.root);
   if (root) {
+    const expectedRoot = directoryIdentities.get(".");
+    if (!expectedRoot) {
+      return fail(
+        "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_ROLLBACK_CONFLICT",
+        "Bootstrap rollback root lost its initial physical identity",
+      );
+    }
     if (
       root.device !== input.claim.generation.rootDevice
       || root.inode !== input.claim.generation.rootInode
@@ -2645,6 +2854,11 @@ function removePartialRollbackTree(input: Readonly<{
         "Bootstrap rollback root changed before exact removal",
       );
     }
+    assertExactDirectoryStableIdentityV2({
+      absolutePath: input.root,
+      expected: expectedRoot,
+      errorCode: "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_ROLLBACK_CONFLICT",
+    });
     rmdirSync(input.root);
     syncDirectory(path.dirname(input.root));
     removedCount += 1;
@@ -2734,6 +2948,7 @@ async function rollbackBootstrap(input: Readonly<{
   const plan = parseRollbackPlan(input.plan, input.expectedScope);
   const boundary = rollbackBoundary(plan);
   const { paths } = boundary;
+  assertLegacyNodeRegistryCutoverAbsentV2(paths);
   assertRollbackParentCensus(boundary);
   assertRollbackLock({ paths, expectedOwner: boundary.expectedOwner });
   let lease: DarwinParentDescriptorLeaseV2 | undefined;
@@ -2746,6 +2961,8 @@ async function rollbackBootstrap(input: Readonly<{
       allowedParentModes: [boundary.parentMode],
     });
     lease.assertCurrent();
+    input.hooks?.afterLegacyLeaseAcquired?.();
+    assertLegacyNodeRegistryCutoverAbsentV2(paths);
     const observedRollbackHistory = assertRollbackParentCensus(boundary);
     const rollbackClaimExistsAtStart = optionalFingerprint(paths.rollbackClaim) !== undefined;
     const rollbackOperationalStateExistsAtStart = rollbackClaimExistsAtStart
@@ -2974,10 +3191,16 @@ async function rollbackBootstrap(input: Readonly<{
           "Bootstrap rollback quarantine is not empty before atomic rename",
         );
       }
+      const liveRoot = fingerprint(lstatSync(paths.root));
       chmodSync(paths.root, 0o700);
       syncDirectory(paths.root);
       syncDirectory(paths.parent);
       input.hooks?.afterRootWritable?.();
+      assertExactDirectoryStableIdentityV2({
+        absolutePath: paths.root,
+        expected: liveRoot,
+        errorCode: "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_ROLLBACK_CONFLICT",
+      });
       renameSync(paths.root, paths.quarantineRoot);
       syncDirectory(paths.parent);
       syncDirectory(paths.rollbackStage);

@@ -14,6 +14,7 @@ import {
   ProductSpecV1Schema,
 } from "../schemas/product-spec-v1.js";
 import {
+  ProductSpecV2EnglishWriteSchema,
   ProductSpecV2Schema,
   deriveActionInvocationEvidenceIdV2,
   derivePersistenceRoundTripEvidenceIdV2,
@@ -522,7 +523,7 @@ export function compilePlanSemanticProposalV2(input: Readonly<{
     };
   });
 
-  const productSpecResult = ProductSpecV2Schema.safeParse({
+  const productSpecResult = ProductSpecV2EnglishWriteSchema.safeParse({
     schema: "setfarm.product-spec.v2",
     product: base.product,
     entities: base.entities,
@@ -579,7 +580,7 @@ export function compilePlanSemanticProposalV2(input: Readonly<{
       }],
     };
   }
-  const productSpec = ProductSpecV2Schema.parse(JSON.parse(
+  const productSpec = ProductSpecV2EnglishWriteSchema.parse(JSON.parse(
     canonicalProductSpecBytes.toString("utf8"),
   ));
   return deepFreezeJson({

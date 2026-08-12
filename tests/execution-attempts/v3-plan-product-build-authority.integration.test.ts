@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import { test } from "node:test";
 
 import type { ClaimEnvelopeV1 } from "../../src/execution/schemas/claim-envelope-v1.js";
@@ -6,10 +7,17 @@ import {
   createRuntimeCompletionRepository,
   requestRuntimeCompletion,
 } from "../../src/execution/runtime-completion.js";
+import { createRuntimeCompletionEffectRepository } from "../../src/execution/runtime-completion-effect-repository.js";
+import {
+  inspectCompilerEnglishAdmissionLedgerAuthorityV1,
+  loadCompilerEnglishAdmissionLedgerAuthorityV1,
+} from "../../src/execution/compiler-english-admission-ledger-v1.js";
 import { runWithRuntimeCompletionOwner } from "../../src/execution/runtime-completion-owner-context.js";
 import { createRuntimeSessionRepository } from "../../src/execution/runtime-session-repository.js";
 import { resolveV3PlanOutputAuthorityV2 } from "../../src/execution/v3-plan-output-authority-v2.js";
 import { canonicalJsonStringify, hashCanonicalJson } from "../../src/product-compiler/canonical-json.js";
+import { CompilerEnglishAdmissionReceiptV1Schema } from "../../src/product-compiler/schemas/compiler-english-admission-receipt-v1.js";
+import { executeDesignPreclaimV2 } from "../../src/installer/steps/02-design/runtime-v2.js";
 import { extractTaskRequirementLedgerV1 } from "../../src/product-compiler/requirements/task-requirements-v1.js";
 import {
   CONTAINED_GAME_TASK,
@@ -32,6 +40,44 @@ function block(kind: string, value: unknown): string {
 }
 
 test("atomic PLAN completion persists exact build and behavior authority", async () => {
+  const stepOpsSource = fs.readFileSync("src/installer/step-ops.ts", "utf8");
+  const candidateSnapshot = stepOpsSource.indexOf("const candidateContextSnapshot = await pgGet");
+  const atomicSnapshotReuse = stepOpsSource.indexOf("const prevContextJson = candidateContextSnapshot", candidateSnapshot);
+  const receiptCompilation = stepOpsSource.indexOf("compileCompilerEnglishAdmissionV1({", atomicSnapshotReuse);
+  assert.ok(candidateSnapshot > 0 && atomicSnapshotReuse > candidateSnapshot && receiptCompilation > atomicSnapshotReuse);
+  assert.match(
+    stepOpsSource.slice(candidateSnapshot, receiptCompilation),
+    /const prevContextJson = candidateContextSnapshot/,
+  );
+  assert.match(stepOpsSource.slice(atomicSnapshotReuse, receiptCompilation), /STEP_COMPLETION_RUN_CONTEXT_CAS_LOST/);
+  assert.match(stepOpsSource.slice(atomicSnapshotReuse, receiptCompilation), /STEP_COMPLETION_CONTEXT_RESTORE_CAS_LOST/);
+  const completionContextRegion = stepOpsSource.slice(atomicSnapshotReuse);
+  assert.doesNotMatch(
+    completionContextRegion,
+    /pgRun\("UPDATE runs SET context = \$1, updated_at = \$2 WHERE id = \$3"/,
+    "completion context publication must remain on the compare-and-swap helper",
+  );
+  const setupBuildContextRegion = completionContextRegion.slice(
+    completionContextRegion.indexOf("// SETUP-BUILD APP.TSX SCAFFOLD BASELINE GUARDRAIL."),
+    completionContextRegion.indexOf("let v3DeployReceipt"),
+  );
+  assert.ok(setupBuildContextRegion.length > 0);
+  assert.doesNotMatch(
+    setupBuildContextRegion,
+    /updateRunContext\(step\.run_id, context\)/,
+    "setup-build completion guardrails must keep the compare-and-swap snapshot current",
+  );
+  assert.match(
+    completionContextRegion,
+    /expectedRunContextJson: completionOwnedContextJson/,
+    "phased story completion must compare-and-swap the context in its settlement transaction",
+  );
+  assert.match(
+    completionContextRegion,
+    /WHERE id = \$3\s+AND context = \$4\s+RETURNING id/,
+    "legacy phased completion must compare-and-swap context inside its settlement transaction",
+  );
+
   const previousPgUrl = process.env.SETFARM_PG_URL;
   const database = await createIsolatedTestDatabase();
   let runtimeDb: typeof import("../../src/db-pg.js") | undefined;
@@ -39,6 +85,7 @@ test("atomic PLAN completion persists exact build and behavior authority", async
     runtimeDb = await import("../../src/db-pg.js");
     runtimeDb.pgConfigureIsolatedTestDatabase(database.url);
     const { buildPrompt } = await import("../../src/installer/steps/01-plan/module.js");
+    const { onComplete: completeStories } = await import("../../src/installer/steps/03-stories/guards.js");
     const { completeStep } = await import("../../src/installer/step-ops.js");
 
     const runId = "run-v3-plan-product-build-authority";
@@ -201,6 +248,8 @@ test("atomic PLAN completion persists exact build and behavior authority", async
       persistence_projection_hash: string;
       product_spec_hash: string;
       canonical_prd: string;
+      english_receipt_hash: string;
+      english_receipt: unknown;
     }>>`
       SELECT claim.outcome AS claim_outcome,
              plan.status AS plan_status,
@@ -221,12 +270,15 @@ test("atomic PLAN completion persists exact build and behavior authority", async
              run.context::jsonb ->> 'product_persistence_projection' AS persistence_projection,
              run.context::jsonb ->> 'product_persistence_projection_hash' AS persistence_projection_hash,
              run.context::jsonb ->> 'product_spec_hash' AS product_spec_hash,
-             run.context::jsonb ->> 'prd' AS canonical_prd
+             run.context::jsonb ->> 'prd' AS canonical_prd,
+             run.context::jsonb ->> 'plan_english_admission_receipt_hash' AS english_receipt_hash,
+             effect.payload::jsonb #> '{effect,compilerEnglishAdmissionReceipt}' AS english_receipt
         FROM runs run
         JOIN steps plan ON plan.id = ${stepDbId}
         JOIN steps design ON design.id = 'step-v3-plan-product-build-design'
         JOIN claim_log claim ON claim.id = ${claimId}
         JOIN runtime_completion_requests completion ON completion.claim_id = claim.id
+        JOIN runtime_completion_effects effect ON effect.request_id = completion.request_id
        WHERE run.id = ${runId}
     `;
     assert.equal(state.length, 1);
@@ -262,6 +314,14 @@ test("atomic PLAN completion persists exact build and behavior authority", async
       hashCanonicalJson(expected.persistenceProjectionEvidence),
     );
     assert.equal(row.product_spec_hash, hashCanonicalJson(expected.productSpec));
+    const englishReceipt = CompilerEnglishAdmissionReceiptV1Schema.parse(row.english_receipt);
+    assert.equal(englishReceipt.claimId, claimId);
+    assert.equal(englishReceipt.runId, runId);
+    assert.equal(englishReceipt.stepDbId, stepDbId);
+    assert.equal(englishReceipt.productSpecHash, hashCanonicalJson(expected.productSpec));
+    assert.equal(englishReceipt.sourceTaskHash, expected.productSpec.traceability.sourceTaskHash);
+    assert.equal(englishReceipt.productionAuthority, false);
+    assert.equal(row.english_receipt_hash, hashCanonicalJson(englishReceipt));
     assert.doesNotMatch(row.canonical_prd, /plan-product-build-proposal-v1/u);
     assert.match(row.canonical_prd, /```product-spec-v2/u);
     assert.doesNotMatch(row.canonical_prd, /product-runtime-behavior-contract-v1/u);
@@ -279,33 +339,133 @@ test("atomic PLAN completion persists exact build and behavior authority", async
       "setfarm.plan-product-build-authority.v1",
     );
 
-    const observations = await database.sql<Array<{
-      status: string;
-      evidence: string;
-    }>>`
-      SELECT status, evidence
+    await assert.rejects(
+      loadCompilerEnglishAdmissionLedgerAuthorityV1(database.sql, { runId }),
+      /COMPILER_ENGLISH_ADMISSION_LEDGER_OWNER_COUNT_INVALID:0/,
+    );
+    const effects = createRuntimeCompletionEffectRepository(database.sql);
+    const effect = await effects.claimNext({
+      requestId: requested.request.requestId,
+      ownerInstanceId,
+    });
+    assert.ok(effect?.leaseToken);
+    await effects.settle({
+      requestId: requested.request.requestId,
+      effectKey: effect.effectKey,
+      ownerInstanceId,
+      leaseToken: effect.leaseToken,
+      resolution: "applied",
+      result: { advanced: false, runCompleted: false },
+      evidence: { source: "atomic-plan-English-admission-fixture" },
+    });
+    await completions.markEffectsCommitted({
+      requestId: requested.request.requestId,
+      ownerInstanceId,
+      ownerAttemptCount: processing.ownerAttemptCount,
+      result: { advanced: false, runCompleted: false },
+    });
+    await completions.acceptAndRelease({
+      requestId: requested.request.requestId,
+      ownerInstanceId,
+      ownerAttemptCount: processing.ownerAttemptCount,
+      result: { advanced: false, runCompleted: false },
+    });
+    const ledgerAuthority = await loadCompilerEnglishAdmissionLedgerAuthorityV1(
+      database.sql,
+      { runId },
+    );
+    assert.equal(
+      hashCanonicalJson(inspectCompilerEnglishAdmissionLedgerAuthorityV1(ledgerAuthority)),
+      row.english_receipt_hash,
+    );
+    assert.throws(
+      () => inspectCompilerEnglishAdmissionLedgerAuthorityV1({ ...ledgerAuthority }),
+      /COMPILER_ENGLISH_ADMISSION_LEDGER_AUTHORITY_UNAUTHENTICATED/,
+    );
+    await database.sql`
+      UPDATE runs SET task = 'Drifted task bytes' WHERE id = ${runId}
+    `;
+    await assert.rejects(
+      loadCompilerEnglishAdmissionLedgerAuthorityV1(database.sql, { runId }),
+      /COMPILER_ENGLISH_ADMISSION_LEDGER_SOURCE_TASK_DRIFT/,
+    );
+    await database.sql`
+      UPDATE runs SET task = ${CONTAINED_GAME_TASK} WHERE id = ${runId}
+    `;
+    let externalProjectOperationStarted = false;
+    await assert.rejects(
+      executeDesignPreclaimV2({
+        sql: database.sql,
+        repo: "/unused-design-authority-fixture",
+        runId,
+        prd: `${row.canonical_prd}\n`,
+        originClaimId: claimId,
+        ownerClaimId: claimId,
+        ownerInstanceId: "design-English-admission-binding-test",
+        producerReleaseSha: releaseSha,
+        deviceType: "DESKTOP",
+        englishAdmissionAuthority: ledgerAuthority,
+      }, {
+        ensureProject: async () => {
+          externalProjectOperationStarted = true;
+          throw new Error("unexpected external project operation");
+        },
+      }),
+      /DESIGN_V2_ENGLISH_ADMISSION_BINDING_MISMATCH/,
+    );
+    assert.equal(externalProjectOperationStarted, false);
+
+    const contextRows = await database.sql<Array<{ context: string }>>`
+      SELECT context FROM runs WHERE id = ${runId}
+    `;
+    assert.equal(contextRows.length, 1);
+    const originalContextJson = contextRows[0]!.context;
+    const driftedContext = JSON.parse(originalContextJson) as Record<string, string>;
+    driftedContext["plan_english_admission_receipt_hash"] = "0".repeat(64);
+    await database.sql`
+      UPDATE runs SET context = ${JSON.stringify(driftedContext)} WHERE id = ${runId}
+    `;
+    await database.sql`
+      INSERT INTO stories (
+        id, run_id, story_index, story_id, title, description,
+        acceptance_criteria, status, retry_count, max_retries
+      ) VALUES (
+        'story-plan-ledger-retained', ${runId}, 0, 'US-RETAINED',
+        'Retained story', 'Preserve this story when completion authority drifts.',
+        ${JSON.stringify(["The retained story remains unchanged."])},
+        'pending', 0, 5
+      )
+    `;
+    await assert.rejects(
+      completeStories({
+        runId,
+        stepId: "stories",
+        parsed: { status: "done" },
+        context: driftedContext,
+        rawOutput: `STATUS: done\nSTORIES_JSON: ${JSON.stringify([{
+          id: "US-NEW",
+          title: "Unauthorized replacement",
+          description: "This candidate must not reach publication.",
+          acceptanceCriteria: ["Durable authority rejects the candidate."],
+        }])}`,
+      }),
+      /COMPILER_ENGLISH_ADMISSION_LEDGER_RECEIPT_DRIFT/,
+    );
+    const storyRowsAfterDrift = await database.sql<Array<{ story_id: string }>>`
+      SELECT story_id FROM stories WHERE run_id = ${runId} ORDER BY story_id
+    `;
+    assert.deepEqual(storyRowsAfterDrift.map((story) => story.story_id), ["US-RETAINED"]);
+    await database.sql`
+      UPDATE runs SET context = ${originalContextJson} WHERE id = ${runId}
+    `;
+
+    const observations = await database.sql<Array<{ count: number }>>`
+      SELECT COUNT(*)::integer AS count
         FROM run_observations
        WHERE run_id = ${runId}
          AND check_id = 'product_compiler.product_spec_v2_canonicalized'
     `;
-    assert.equal(observations.length, 1);
-    assert.equal(observations[0]!.status, "pass");
-    const evidence = JSON.parse(observations[0]!.evidence);
-    assert.equal(evidence.sourceTransport, "product_build_proposal_v1");
-    assert.equal(evidence.sourceProposalHash, expected.sourceProposalHash);
-    assert.equal(evidence.semanticProposalHash, expected.sourceSemanticProposalHash);
-    assert.equal(
-      evidence.planProductBuildAuthorityHash,
-      expected.planProductBuildAuthority.authorityHash,
-    );
-    assert.equal(
-      evidence.runtimeBehaviorProposalHash,
-      expected.runtimeBehaviorProposalHash,
-    );
-    assert.equal(
-      evidence.runtimeBehaviorContractHash,
-      expected.runtimeBehaviorContract.contractHash,
-    );
+    assert.equal(observations[0]?.count, 0, "v3 PLAN must not publish success before owner settlement");
   } finally {
     if (runtimeDb) await runtimeDb.pgClose();
     await database.cleanup();

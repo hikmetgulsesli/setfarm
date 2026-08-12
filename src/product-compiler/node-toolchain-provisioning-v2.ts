@@ -20,6 +20,7 @@ import {
   rmdirSync,
   unlinkSync,
   writeSync,
+  type BigIntStats,
   type Stats,
 } from "node:fs";
 import path from "node:path";
@@ -59,6 +60,10 @@ import {
   type NodeToolchainProvisioningReceiptHashPayloadV2,
   type NodeToolchainProvisioningReceiptV2,
 } from "./schemas/node-toolchain-provisioning-v2.js";
+import {
+  matchesExactStableFilesystemObjectV2,
+  projectExactStableFilesystemIdentityToSafeNumbersV2,
+} from "./exact-stable-filesystem-identity-v2.js";
 import {
   NODE_TOOLCHAIN_PROVISIONER_COMMAND_AUTHORITY_REF_V2,
   NODE_TOOLCHAIN_PROVISIONER_COMMAND_VERSION_V2,
@@ -175,6 +180,15 @@ type ProvisioningTestHooksV2 = Readonly<{
   afterReceiptPublish?: () => void | Promise<void>;
 }>;
 
+/**
+ * A caller-owned exact precondition evaluated after the kernel lease is held
+ * and before any publication mutation begins.  The callback is deliberately
+ * additive: the V2 publisher remains the mutation authority while V3 callers
+ * can bind an exact physical census to that same lease window.
+ */
+export type NodeToolchainProvisioningPreconditionV2 =
+  () => void | Promise<void>;
+
 type ProvisionedStateV2 = Readonly<{
   paths: PublicationPathsV2;
   expectedOwner: ExpectedOwnerV2;
@@ -260,6 +274,80 @@ function sameFingerprint(left: FingerprintV2, right: FingerprintV2): boolean {
 
 function samePhysicalIdentity(left: FingerprintV2, right: FingerprintV2): boolean {
   return left.device === right.device && left.inode === right.inode;
+}
+
+/**
+ * V2 receipts retain their historical numeric root identity fields.  Never
+ * let a default `Stats` conversion make those fields authoritative: capture
+ * the published root again with exact bigint device/inode values and reject
+ * any filesystem identity that cannot be represented injectively by the V2
+ * number ABI.  This keeps the V2 receipt stable while closing the rounded
+ * dev/ino replacement window before a durable authority is opened or
+ * revalidated.
+ */
+function assertExactRootStableIdentityV2(input: Readonly<{
+  absolutePath: string;
+  expected: FingerprintV2;
+  errorCode: NodeToolchainProvisioningErrorCodeV2;
+}>): void {
+  let stat: BigIntStats;
+  try {
+    stat = lstatSync(input.absolutePath, { bigint: true });
+  } catch (error) {
+    return fail(
+      input.errorCode,
+      "Provisioned root exact physical identity could not be captured",
+      error,
+    );
+  }
+  const projected = projectExactStableFilesystemIdentityToSafeNumbersV2({
+    device: stat.dev,
+    inode: stat.ino,
+  });
+  if (
+    stat.isSymbolicLink()
+    || !stat.isDirectory()
+    || projected === undefined
+    || !Number.isSafeInteger(input.expected.device)
+    || !Number.isSafeInteger(input.expected.inode)
+    || projected.device !== input.expected.device
+    || projected.inode !== input.expected.inode
+  ) {
+    return fail(
+      input.errorCode,
+      "Provisioned root device/inode identity exceeds or differs from the exact V2 numeric boundary",
+    );
+  }
+}
+
+function assertExactObjectStableIdentityV2(input: Readonly<{
+  absolutePath: string;
+  expected: FingerprintV2;
+  objectKind: "ordinary_file" | "directory";
+  errorCode: NodeToolchainProvisioningErrorCodeV2;
+}>): void {
+  let stat: BigIntStats;
+  try {
+    stat = lstatSync(input.absolutePath, { bigint: true });
+  } catch (error) {
+    return fail(
+      input.errorCode,
+      "Provisioning cleanup object identity could not be captured exactly",
+      error,
+    );
+  }
+  if (
+    !matchesExactStableFilesystemObjectV2({
+      stat,
+      expected: input.expected,
+      objectKind: input.objectKind,
+    })
+  ) {
+    return fail(
+      input.errorCode,
+      "Provisioning cleanup object kind or stable identity changed",
+    );
+  }
 }
 
 function modeBits(stat: Stats | FingerprintV2): number {
@@ -1828,6 +1916,12 @@ function removeCapturedTree(input: Readonly<{
     ) {
       return fail(input.errorCode, "Interrupted provisioning file changed before cleanup");
     }
+    assertExactObjectStableIdentityV2({
+      absolutePath,
+      expected,
+      objectKind: "ordinary_file",
+      errorCode: input.errorCode,
+    });
     unlinkSync(absolutePath);
   }
   const directories = [...input.captured.directories]
@@ -1843,6 +1937,12 @@ function removeCapturedTree(input: Readonly<{
     ) {
       return fail(input.errorCode, "Interrupted provisioning directory changed before cleanup");
     }
+    assertExactObjectStableIdentityV2({
+      absolutePath,
+      expected,
+      objectKind: "directory",
+      errorCode: input.errorCode,
+    });
     rmdirSync(absolutePath);
   }
   const currentRoot = fingerprint(lstatSync(input.root));
@@ -1853,6 +1953,11 @@ function removeCapturedTree(input: Readonly<{
   ) {
     return fail(input.errorCode, "Interrupted provisioning root changed before cleanup");
   }
+  assertExactRootStableIdentityV2({
+    absolutePath: input.root,
+    expected: input.captured.root,
+    errorCode: input.errorCode,
+  });
   rmdirSync(input.root);
 }
 
@@ -1949,6 +2054,11 @@ function captureFinalTree(input: Readonly<{
       "Published Node toolchain root is not the exact closed read-only tree",
     );
   }
+  assertExactRootStableIdentityV2({
+    absolutePath: input.root,
+    expected: captured.root,
+    errorCode: "NODE_TOOLCHAIN_PROVISIONING_V2_FINAL_TREE_INVALID",
+  });
   return captured.root;
 }
 
@@ -2296,6 +2406,7 @@ async function provision(input: Readonly<{
   parent: string;
   expectedOwner: ExpectedOwnerV2;
   hooks?: ProvisioningTestHooksV2;
+  beforeMutation?: NodeToolchainProvisioningPreconditionV2;
 }>): Promise<ProvisionedNodeToolchainV2> {
   const sourceReceipt = inspectNodeToolchainPrivateTreeReceiptV2(input.privateTree);
   if (
@@ -2324,6 +2435,8 @@ async function provision(input: Readonly<{
   await ensureLockAndStaging(paths, input.expectedOwner);
   const lease = await acquireKernelLease(paths, input.expectedOwner);
   try {
+    lease.assertCurrent();
+    await input.beforeMutation?.();
     lease.assertCurrent();
     assertStagingCensus({
       paths,
@@ -2493,6 +2606,7 @@ async function provision(input: Readonly<{
 
 export async function provisionNodeToolchainV2(
   privateTree: MaterializedNodeToolchainPrivateTreeV2,
+  beforeMutation?: NodeToolchainProvisioningPreconditionV2,
 ): Promise<ProvisionedNodeToolchainV2> {
   if (inspectNodeToolchainPrivateTreeReceiptV2(privateTree).admissionScope !== "production_distribution") {
     return fail(
@@ -2506,6 +2620,7 @@ export async function provisionNodeToolchainV2(
     privateTree,
     parent: NODE_TOOLCHAIN_ROOT_PARENT_V2,
     expectedOwner,
+    ...(beforeMutation ? { beforeMutation } : {}),
   });
 }
 
@@ -2514,6 +2629,7 @@ export async function provisionNodeToolchainV2ForTest(
   input: Readonly<{
     parent: string;
     hooks?: ProvisioningTestHooksV2;
+    beforeMutation?: NodeToolchainProvisioningPreconditionV2;
   }>,
 ): Promise<ProvisionedNodeToolchainV2> {
   if (!input || typeof input !== "object") {
@@ -2528,6 +2644,7 @@ export async function provisionNodeToolchainV2ForTest(
     privateTree,
     parent: parent.parent,
     expectedOwner: parent.expectedOwner,
+    ...(input.beforeMutation ? { beforeMutation: input.beforeMutation } : {}),
     ...(input.hooks ? { hooks: input.hooks } : {}),
   });
 }
@@ -3092,6 +3209,11 @@ function validatePartialRollbackTree(input: Readonly<{
       "Rollback quarantine root does not equal the claimed physical generation",
     );
   }
+  assertExactRootStableIdentityV2({
+    absolutePath: input.root,
+    expected: root,
+    errorCode: "NODE_TOOLCHAIN_PROVISIONING_V2_ROLLBACK_CONFLICT",
+  });
   const expected = new Map(input.claim.treeEntries.map((entry) => [entry.locator, entry]));
   const visit = (absoluteDirectory: string, locator: "." | string): void => {
     const before = fingerprint(lstatSync(absoluteDirectory));
@@ -3197,6 +3319,7 @@ async function removePartialRollbackTree(input: Readonly<{
   const directories = input.claim.treeEntries
     .filter((entry) => entry.type === "directory")
     .sort((left, right) => left.locator.split("/").length - right.locator.split("/").length);
+  const directoryIdentities = new Map<string, FingerprintV2>();
   for (const entry of directories) {
     const absolutePath = absoluteEntryPath(input.root, entry.locator);
     const stat = optionalFingerprint(absolutePath);
@@ -3211,6 +3334,7 @@ async function removePartialRollbackTree(input: Readonly<{
         "Rollback directory changed before writable transition",
       );
     }
+    directoryIdentities.set(entry.locator, stat);
     if (modeBits(stat) !== 0o700) chmodSync(absolutePath, 0o700);
   }
   let removedCount = 0;
@@ -3238,6 +3362,12 @@ async function removePartialRollbackTree(input: Readonly<{
         "Rollback file changed before exact removal",
       );
     }
+    assertExactObjectStableIdentityV2({
+      absolutePath,
+      expected: captured.fingerprint,
+      objectKind: "ordinary_file",
+      errorCode: "NODE_TOOLCHAIN_PROVISIONING_V2_ROLLBACK_CONFLICT",
+    });
     unlinkStableFile(
       absolutePath,
       captured.fingerprint,
@@ -3252,7 +3382,14 @@ async function removePartialRollbackTree(input: Readonly<{
   for (const entry of childDirectories) {
     const absolutePath = absoluteEntryPath(input.root, entry.locator);
     const stat = optionalFingerprint(absolutePath);
+    const expected = directoryIdentities.get(entry.locator);
     if (!stat) continue;
+    if (!expected) {
+      return fail(
+        "NODE_TOOLCHAIN_PROVISIONING_V2_ROLLBACK_CONFLICT",
+        "Rollback directory lost its initial physical identity",
+      );
+    }
     if (
       stat.ownerUid !== input.expectedOwner.uid
       || stat.ownerGid !== input.expectedOwner.gid
@@ -3263,12 +3400,25 @@ async function removePartialRollbackTree(input: Readonly<{
         "Rollback directory changed before exact removal",
       );
     }
+    assertExactObjectStableIdentityV2({
+      absolutePath,
+      expected,
+      objectKind: "directory",
+      errorCode: "NODE_TOOLCHAIN_PROVISIONING_V2_ROLLBACK_CONFLICT",
+    });
     rmdirSync(absolutePath);
     removedCount += 1;
     await input.hooks?.afterRemovedEntry?.({ locator: entry.locator, removedCount });
   }
   const root = optionalFingerprint(input.root);
   if (root) {
+    const expectedRoot = directoryIdentities.get(".");
+    if (!expectedRoot) {
+      return fail(
+        "NODE_TOOLCHAIN_PROVISIONING_V2_ROLLBACK_CONFLICT",
+        "Rollback root lost its initial physical identity",
+      );
+    }
     if (
       root.device !== input.claim.generation.rootDevice
       || root.inode !== input.claim.generation.rootInode
@@ -3281,6 +3431,11 @@ async function removePartialRollbackTree(input: Readonly<{
         "Rollback root changed before exact removal",
       );
     }
+    assertExactRootStableIdentityV2({
+      absolutePath: input.root,
+      expected: expectedRoot,
+      errorCode: "NODE_TOOLCHAIN_PROVISIONING_V2_ROLLBACK_CONFLICT",
+    });
     rmdirSync(input.root);
     removedCount += 1;
     await input.hooks?.afterRemovedEntry?.({ locator: ".", removedCount });
@@ -3294,6 +3449,7 @@ async function rollback(input: Readonly<{
   expectedOwner: ExpectedOwnerV2;
   plan: unknown;
   hooks?: NodeToolchainRollbackTestHooksV2;
+  beforeMutation?: NodeToolchainProvisioningPreconditionV2;
 }>): Promise<NodeToolchainRollbackResultV2> {
   const plan = parseRollbackPlan(input.plan, input);
   const target = getCodeOwnedNodeToolchainTargetV2(input.architecture);
@@ -3302,6 +3458,8 @@ async function rollback(input: Readonly<{
   await ensureLockAndStaging(paths, input.expectedOwner);
   const lease = await acquireKernelLease(paths, input.expectedOwner);
   try {
+    lease.assertCurrent();
+    await input.beforeMutation?.();
     lease.assertCurrent();
     const rollbackClaimExistsAtStart = optionalFingerprint(rollbackPathsV2.rollbackClaim) !== undefined;
     if (optionalFingerprint(rollbackPathsV2.rollbackReceipt)) {
@@ -3501,6 +3659,11 @@ async function rollback(input: Readonly<{
         syncDirectory(paths.parent);
         await input.hooks?.afterRootWritable?.();
       }
+      assertExactRootStableIdentityV2({
+        absolutePath: paths.root,
+        expected: liveRoot,
+        errorCode: "NODE_TOOLCHAIN_PROVISIONING_V2_ROLLBACK_CONFLICT",
+      });
       renameSync(paths.root, rollbackPathsV2.quarantineRoot);
       syncDirectory(paths.parent);
       syncDirectory(rollbackPathsV2.rollbackStage);
@@ -3636,6 +3799,7 @@ async function rollback(input: Readonly<{
 /** Production rollback is root-only and accepts no caller-selected target path or architecture. */
 export async function rollbackProductionProvisionedNodeToolchainV2(
   plan: unknown,
+  beforeMutation?: NodeToolchainProvisioningPreconditionV2,
 ): Promise<NodeToolchainRollbackResultV2> {
   if (typeof process.geteuid !== "function" || process.geteuid() !== 0) {
     return fail(
@@ -3656,6 +3820,7 @@ export async function rollbackProductionProvisionedNodeToolchainV2(
     parent: NODE_TOOLCHAIN_ROOT_PARENT_V2,
     expectedOwner,
     plan,
+    ...(beforeMutation ? { beforeMutation } : {}),
   });
 }
 
@@ -3664,6 +3829,7 @@ export async function rollbackProvisionedNodeToolchainV2ForTest(input: Readonly<
   parent: string;
   plan: unknown;
   hooks?: NodeToolchainRollbackTestHooksV2;
+  beforeMutation?: NodeToolchainProvisioningPreconditionV2;
 }>): Promise<NodeToolchainRollbackResultV2> {
   const parent = testParent(input.parent);
   const parsed = NodeToolchainProvisionerPlanV2Schema.safeParse(input.plan);
@@ -3680,6 +3846,7 @@ export async function rollbackProvisionedNodeToolchainV2ForTest(input: Readonly<
     parent: parent.parent,
     expectedOwner: parent.expectedOwner,
     plan: parsed.data,
+    ...(input.beforeMutation ? { beforeMutation: input.beforeMutation } : {}),
     ...(input.hooks ? { hooks: input.hooks } : {}),
   });
 }

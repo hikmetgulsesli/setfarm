@@ -8,6 +8,7 @@ import {
   readFileSync,
   readdirSync,
   realpathSync,
+  renameSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -18,14 +19,23 @@ import { describe, it } from "node:test";
 
 import {
   canonicalJsonStringify,
+  hashCanonicalJson,
 } from "../../src/product-compiler/canonical-json.js";
+import {
+  defaultNodeToolchainProvisionerHostIdentityHashV3,
+} from
+  "../../src/product-compiler/node-toolchain-provisioner-physical-census-v3.js";
 import {
   CompletedPlatformReleaseStageCandidateV2,
   PLATFORM_RELEASE_MANIFEST_V2_FILENAME,
   PlatformReleaseTerminalWriteV2Error,
   inspectCompletedPlatformReleaseStageCandidateV2,
-  terminalWritePlatformReleaseManifestCandidateV2,
+  inspectPlatformReleaseTerminalRetainedResidueReceiptForTestV2,
+  terminalWritePlatformReleaseManifestObservationFailureForTestV2,
+  terminalWritePlatformReleaseManifestForTestV2,
 } from
+  "../../src/execution/platform-release-terminal-writer-v2.js";
+import * as terminalWriterV2 from
   "../../src/execution/platform-release-terminal-writer-v2.js";
 import {
   PlatformReleaseCandidateEnvelopeV2Schema,
@@ -49,6 +59,12 @@ import {
   hashPlatformReleaseRequiredModuleClosureV2,
 } from
   "../../src/execution/schemas/platform-release-required-module-closure-v2.js";
+import {
+  PlatformReleaseTerminalTestObservationV2Schema,
+  hashPlatformReleaseTerminalTestObservationV2,
+  parsePlatformReleaseTerminalTestObservationV2,
+} from
+  "../../src/execution/schemas/platform-release-terminal-test-observation-v2.js";
 import {
   bindPlatformReleaseCandidateEnvelopeFixtureToStageV2,
   createDistinctPlatformReleaseBuildAttemptFixtureV2,
@@ -297,20 +313,152 @@ function expectTerminalError(
 }
 
 describe("Platform release terminal manifest writer V2", () => {
+  it("pins retained-residue and primary-first descriptor settlement source contracts", () => {
+    assert.equal(terminalWritePlatformReleaseManifestForTestV2.length, 1);
+    assert.equal(
+      terminalWritePlatformReleaseManifestObservationFailureForTestV2.length,
+      2,
+    );
+    assert.equal(
+      inspectPlatformReleaseTerminalRetainedResidueReceiptForTestV2.length,
+      1,
+    );
+    assert.deepEqual(
+      Object.keys(terminalWriterV2).sort(),
+      [
+        "CompletedPlatformReleaseStageCandidateV2",
+        "PLATFORM_RELEASE_MANIFEST_V2_FILENAME",
+        "PlatformReleaseTerminalWriteV2Error",
+        "inspectCompletedPlatformReleaseStageCandidateV2",
+        "inspectPlatformReleaseTerminalRetainedResidueReceiptForTestV2",
+        "terminalWritePlatformReleaseManifestForTestV2",
+        "terminalWritePlatformReleaseManifestObservationFailureForTestV2",
+      ],
+    );
+    const source = readFileSync(
+      "src/execution/platform-release-terminal-writer-v2.ts",
+      "utf8",
+    );
+    assert.doesNotMatch(
+      source,
+      /\bcleanupOwnedTerminalRootV2\b|\brmSync\b|\breaddirSync\b/u,
+    );
+    assert.match(source, /unlinkSync\(manifestPath\)/u);
+    assert.match(
+      source,
+      /new AggregateError\(\s*errors,[\s\S]*\{ cause: authoritativeError \}/u,
+    );
+    assert.match(source, /opendirSync\(absolutePath, \{ bufferSize: 1 \}\)/u);
+    assert.match(
+      source,
+      /not an atomic same-UID compare-and-swap/u,
+    );
+    assert.match(
+      source,
+      /defaultNodeToolchainProvisionerHostIdentityHashV3\(\)/u,
+    );
+    assert.match(source, /stat\.uid !== owner\.uid/u);
+    assert.match(source, /stat\.gid !== owner\.gid/u);
+    assert.match(
+      source,
+      /constants\.O_RDONLY \| constants\.O_NOFOLLOW \| constants\.O_NONBLOCK/u,
+    );
+    assert.match(
+      source,
+      /constants\.O_RDONLY \| constants\.O_DIRECTORY \| constants\.O_NOFOLLOW/u,
+    );
+    for (const [start, end] of [
+      ["function readStableFileV2(", "function bindingFromTreeV2("],
+      ["function fsyncDirectoryV2(", "function finalizeRootReadOnlyV2("],
+      ["function finalizeRootReadOnlyV2(", "function writeAllV2("],
+      ["function terminalWriteManifestV2(", "function completedInspectionV2("],
+    ] as const) {
+      const scoped = source.slice(source.indexOf(start), source.indexOf(end));
+      assert.notEqual(scoped.length, 0);
+      assert.doesNotMatch(scoped, /\bfinally\s*\{/u);
+    }
+    const finalization = source.slice(
+      source.indexOf("function finalizeRootReadOnlyV2("),
+      source.indexOf("function writeAllV2("),
+    );
+    const rootReadOnly = finalization.indexOf("fchmodSync(descriptor, 0o555)");
+    const closeRollback = finalization.indexOf("onRootReadOnly()", rootReadOnly);
+    const postFence = finalization.indexOf(
+      "const after = fstatSync(descriptor, { bigint: true })",
+      closeRollback,
+    );
+    assert.equal(rootReadOnly >= 0, true);
+    assert.equal(closeRollback > rootReadOnly, true);
+    assert.equal(postFence > closeRollback, true);
+  });
+
   it("recaptures exact bytes and writes the canonical manifest as the terminal durable file", () => {
     const stage = createStage();
     try {
       const handle =
-        terminalWritePlatformReleaseManifestCandidateV2({
+        terminalWritePlatformReleaseManifestForTestV2({
           stageRoot: stage.root,
           manifest: stage.manifest,
           buildAttestation: stage.buildAttestation,
           metadataProbe: clearMetadata,
         });
-      const inspection =
-        inspectCompletedPlatformReleaseStageCandidateV2(handle);
+      const inspection = handle;
       assert.equal(Object.isFrozen(handle), true);
       assert.equal(Object.isFrozen(inspection), true);
+      assert.equal(handle.productionAuthority, false);
+      assert.equal(handle.productionAdmission, "forbidden");
+      assert.equal(handle.credentialUse, "none");
+      assert.equal(handle.mutationAuthority, false);
+      assert.equal(handle.trustConclusion, "characterization_only");
+      assert.equal(handle.sealedRoot.stableIdentity.objectKind, "directory");
+      assert.equal(
+        handle.sealedRoot.stableIdentity.hostIdentityHash,
+        defaultNodeToolchainProvisionerHostIdentityHashV3(),
+      );
+      assert.match(handle.sealedRoot.stableIdentity.device, /^(?:0|[1-9][0-9]*)$/u);
+      assert.match(handle.sealedRoot.stableIdentity.inode, /^(?:0|[1-9][0-9]*)$/u);
+      assert.equal(handle.sealedRoot.mutableFingerprint.mode, "0555");
+      assert.equal(Object.isFrozen(handle.sealedRoot), true);
+      assert.equal(Object.isFrozen(handle.sealedRoot.stableIdentity), true);
+      assert.equal(Object.isFrozen(handle.sealedRoot.mutableFingerprint), true);
+      assert.match(handle.sealedRoot.observationHash, /^[a-f0-9]{64}$/u);
+      assert.match(handle.sealedRoot.membershipHash, /^[a-f0-9]{64}$/u);
+      assert.match(handle.observationHash, /^[a-f0-9]{64}$/u);
+      assert.match(
+        handle.sealedRoot.mutableFingerprint.modifiedTimeNanoseconds,
+        /^(?:0|[1-9][0-9]*)$/u,
+      );
+      assert.equal(
+        Number.isSafeInteger(handle.sealedRoot.mutableFingerprint.linkCount),
+        true,
+      );
+      assert.equal(
+        Number.isSafeInteger(handle.sealedRoot.mutableFingerprint.byteLength),
+        true,
+      );
+      assert.equal(handle instanceof CompletedPlatformReleaseStageCandidateV2, false);
+      const parsedObservation =
+        parsePlatformReleaseTerminalTestObservationV2(structuredClone(handle));
+      assert.deepEqual(parsedObservation, handle);
+      assert.equal(Object.isFrozen(parsedObservation), true);
+      assert.equal(
+        PlatformReleaseTerminalTestObservationV2Schema.safeParse(
+          structuredClone(handle),
+        ).success,
+        true,
+      );
+      assert.equal(JSON.stringify(handle).includes(stage.root), false);
+      assert.equal(
+        Object.hasOwn(terminalWriterV2, "terminalWritePlatformReleaseManifestCandidateV2"),
+        false,
+      );
+      assert.equal(
+        readFileSync(
+          "src/execution/platform-release-terminal-writer-v2.ts",
+          "utf8",
+        ).includes("new CompletedPlatformReleaseStageCandidateV2("),
+        false,
+      );
       assert.equal(
         inspection.productionUse,
         "forbidden_until_publication_lease_and_fresh_verification",
@@ -335,26 +483,6 @@ describe("Platform release terminal manifest writer V2", () => {
         inspection.requiredModuleCount,
         stage.manifest.requiredModuleClosure.entries.length,
       );
-      assert.deepEqual(
-        Object.keys(inspection).sort(),
-        [
-          "authorityState",
-          "buildAttestationHash",
-          "dependencyTreeHash",
-          "launcherCatalogHash",
-          "manifestCanonicalByteLength",
-          "manifestPayloadHash",
-          "platformTreeHash",
-          "productionUse",
-          "releaseId",
-          "requiredModuleClosureHash",
-          "requiredModuleCount",
-          "runnerCatalogHash",
-          "runtimePayloadHash",
-          "schema",
-        ],
-      );
-
       const manifestPath = path.join(
         stage.root,
         PLATFORM_RELEASE_MANIFEST_V2_FILENAME,
@@ -376,12 +504,628 @@ describe("Platform release terminal manifest writer V2", () => {
         readdirSync(stage.root).sort(),
         [PLATFORM_RELEASE_MANIFEST_V2_FILENAME, "payload"],
       );
+      const manifestStat = lstatSync(path.join(
+        stage.root,
+        PLATFORM_RELEASE_MANIFEST_V2_FILENAME,
+      ), { bigint: true });
+      const payloadStat = lstatSync(path.join(stage.root, "payload"), {
+        bigint: true,
+      });
+      assert.equal(
+        handle.sealedRoot.membershipHash,
+        hashCanonicalJson({
+          schema: "setfarm.platform-release-terminal-test-sealed-root-membership.v2",
+          entries: [
+            {
+              basename: PLATFORM_RELEASE_MANIFEST_V2_FILENAME,
+              objectKind: "ordinary_file",
+              device: manifestStat.dev.toString(10),
+              inode: manifestStat.ino.toString(10),
+            },
+            {
+              basename: "payload",
+              objectKind: "directory",
+              device: payloadStat.dev.toString(10),
+              inode: payloadStat.ino.toString(10),
+            },
+          ].sort((left, right) => left.basename.localeCompare(right.basename)),
+        }),
+      );
+      const sealedRootIdentity = {
+        stableIdentity: handle.sealedRoot.stableIdentity,
+        mutableFingerprint: handle.sealedRoot.mutableFingerprint,
+        membershipHash: handle.sealedRoot.membershipHash,
+      };
+      assert.equal(
+        handle.sealedRoot.observationHash,
+        hashCanonicalJson({
+          schema: "setfarm.platform-release-terminal-test-sealed-root-observation.v2",
+          observation: sealedRootIdentity,
+        }),
+      );
+      const { observationHash, ...observationIdentity } = handle;
+      assert.equal(
+        observationHash,
+        hashCanonicalJson({
+          schema: "setfarm.platform-release-terminal-test-observation-hash.v2",
+          observation: observationIdentity,
+        }),
+      );
+      const forgedObservation = structuredClone(handle) as Record<string, any>;
+      forgedObservation.productionAuthority = true;
+      delete forgedObservation.observationHash;
+      forgedObservation.observationHash =
+        hashPlatformReleaseTerminalTestObservationV2(forgedObservation);
+      assert.equal(
+        PlatformReleaseTerminalTestObservationV2Schema.safeParse(
+          forgedObservation,
+        ).success,
+        false,
+      );
       assert.equal(
         inspection.manifestCanonicalByteLength,
         expected.byteLength - 1,
       );
+      expectTerminalError(
+        () => inspectCompletedPlatformReleaseStageCandidateV2(handle as never),
+        "COMPLETED_STAGE_UNAUTHENTICATED",
+      );
     } finally {
       cleanupStage(stage.root);
+    }
+  });
+
+  it("retains a sealed terminal root and authenticates one pathless false-authority receipt on observation failure", () => {
+    const stage = createStage();
+    const primary = new Error("injected terminal observation failure");
+    try {
+      let captured: unknown;
+      try {
+        terminalWritePlatformReleaseManifestObservationFailureForTestV2(
+          {
+            stageRoot: stage.root,
+            manifest: stage.manifest,
+            buildAttestation: stage.buildAttestation,
+            metadataProbe: clearMetadata,
+          },
+          primary,
+        );
+      } catch (error) {
+        captured = error;
+      }
+      assert.equal(captured, primary);
+
+      const rootStat = lstatSync(stage.root, { bigint: true });
+      const manifestPath = path.join(
+        stage.root,
+        PLATFORM_RELEASE_MANIFEST_V2_FILENAME,
+      );
+      assert.equal(Number(rootStat.mode & 0o7777n), 0o555);
+      assert.equal(statSync(manifestPath).mode & 0o7777, 0o444);
+      assert.deepEqual(
+        readdirSync(stage.root).sort(),
+        [PLATFORM_RELEASE_MANIFEST_V2_FILENAME, "payload"],
+      );
+
+      const receipt =
+        inspectPlatformReleaseTerminalRetainedResidueReceiptForTestV2(primary);
+      assert.deepEqual(receipt, {
+        schema: "setfarm.platform-release-terminal-retained-residue-receipt.v2",
+        version: "2.0.0",
+        authorityState:
+          "test_fixture_terminalized_observation_failure_retained",
+        admissionScope: "test_fixture",
+        productionAuthority: false,
+        productionAdmission: "forbidden",
+        mutationAuthority: false,
+        deletionAuthority: false,
+        fsMutation: false,
+        rootDisposition: "retained_for_external_owner_inspection",
+        rootIdentity: {
+          hostIdentityHash:
+            defaultNodeToolchainProvisionerHostIdentityHashV3(),
+          objectKind: "directory",
+          device: rootStat.dev.toString(10),
+          inode: rootStat.ino.toString(10),
+        },
+      });
+      assert.equal(Object.isFrozen(receipt), true);
+      assert.equal(Object.isFrozen(receipt.rootIdentity), true);
+      assert.equal(JSON.stringify(receipt).includes(stage.root), false);
+      assert.equal(JSON.stringify(receipt).includes("absolutePath"), false);
+      assert.equal(
+        inspectPlatformReleaseTerminalRetainedResidueReceiptForTestV2(primary),
+        receipt,
+      );
+
+      for (const unauthenticated of [
+        structuredClone(primary),
+        new Error(primary.message),
+        Object.create(primary),
+      ]) {
+        expectTerminalError(
+          () =>
+            inspectPlatformReleaseTerminalRetainedResidueReceiptForTestV2(
+              unauthenticated,
+            ),
+          "RETAINED_RESIDUE_UNAUTHENTICATED",
+        );
+      }
+    } finally {
+      cleanupStage(stage.root);
+    }
+  });
+
+  it("rejects non-exact observation-failure injections before terminalization without invoking proxy traps", () => {
+    const stage = createStage();
+    let traps = 0;
+    const proxyFailure = new Proxy(new Error("proxy failure"), {
+      getPrototypeOf() {
+        traps += 1;
+        throw new Error("proxy failure prototype trap must not execute");
+      },
+    });
+    try {
+      for (const invalidFailure of [
+        proxyFailure,
+        Object.assign(Object.create(Error.prototype), { message: "forged" }),
+        new (class extends Error {})("derived"),
+      ]) {
+        expectTerminalError(
+          () =>
+            terminalWritePlatformReleaseManifestObservationFailureForTestV2(
+              {
+                stageRoot: stage.root,
+                manifest: stage.manifest,
+                buildAttestation: stage.buildAttestation,
+                metadataProbe: clearMetadata,
+              },
+              invalidFailure,
+            ),
+          "INPUT_INVALID",
+        );
+      }
+      assert.equal(traps, 0);
+      assert.equal(statSync(stage.root).mode & 0o7777, 0o700);
+      assert.equal(
+        existsSync(path.join(
+          stage.root,
+          PLATFORM_RELEASE_MANIFEST_V2_FILENAME,
+        )),
+        false,
+      );
+    } finally {
+      cleanupStage(stage.root);
+    }
+  });
+
+  it("rejects a stage root whose owner is not the effective process owner", () => {
+    const stage = createStage();
+    const originalGeteuid = process.geteuid;
+    try {
+      assert.equal(typeof originalGeteuid, "function");
+      Object.defineProperty(process, "geteuid", {
+        configurable: true,
+        enumerable: true,
+        writable: true,
+        value: () => originalGeteuid() + 1,
+      });
+      expectTerminalError(
+        () => terminalWritePlatformReleaseManifestForTestV2({
+          stageRoot: stage.root,
+          manifest: stage.manifest,
+          buildAttestation: stage.buildAttestation,
+          metadataProbe: clearMetadata,
+        }),
+        "ROOT_INVALID",
+      );
+      assert.equal(statSync(stage.root).mode & 0o7777, 0o700);
+      assert.equal(
+        existsSync(path.join(
+          stage.root,
+          PLATFORM_RELEASE_MANIFEST_V2_FILENAME,
+        )),
+        false,
+      );
+    } finally {
+      Object.defineProperty(process, "geteuid", {
+        configurable: true,
+        enumerable: true,
+        writable: true,
+        value: originalGeteuid,
+      });
+      cleanupStage(stage.root);
+    }
+  });
+
+  it("retains the manifest without pathname rollback after an ambiguous close result", () => {
+    const stage = createStage();
+    const closeFailure = new Error("injected ambiguous manifest close");
+    let closeSettlements = 0;
+    try {
+      assert.throws(
+        () => terminalWritePlatformReleaseManifestForTestV2(
+          {
+            stageRoot: stage.root,
+            manifest: stage.manifest,
+            buildAttestation: stage.buildAttestation,
+            metadataProbe: clearMetadata,
+          },
+          {
+            afterManifestDescriptorClose: () => {
+              closeSettlements += 1;
+              throw closeFailure;
+            },
+          },
+        ),
+        (error: unknown) => {
+          assert.ok(error instanceof PlatformReleaseTerminalWriteV2Error);
+          assert.equal(error.code, "MANIFEST_WRITE_FAILED");
+          assert.equal(error.cause, closeFailure);
+          return true;
+        },
+      );
+      assert.equal(closeSettlements, 1);
+      assert.equal(statSync(stage.root).mode & 0o7777, 0o700);
+      assert.equal(
+        statSync(path.join(
+          stage.root,
+          PLATFORM_RELEASE_MANIFEST_V2_FILENAME,
+        )).mode & 0o7777,
+        0o444,
+      );
+    } finally {
+      cleanupStage(stage.root);
+    }
+  });
+
+  it("preserves the primary manifest failure and orders rollback failure after it", () => {
+    const stage = createStage();
+    const primaryFailure = new Error("injected pre-finalization failure");
+    const cleanupFailure = new Error("injected manifest rollback failure");
+    try {
+      let observed: unknown;
+      try {
+        terminalWritePlatformReleaseManifestForTestV2(
+          {
+            stageRoot: stage.root,
+            manifest: stage.manifest,
+            buildAttestation: stage.buildAttestation,
+            metadataProbe: clearMetadata,
+          },
+          {
+            beforeRootReadOnlyFinalization: () => {
+              throw primaryFailure;
+            },
+            beforeManifestRollback: () => {
+              throw cleanupFailure;
+            },
+          },
+        );
+      } catch (error) {
+        observed = error;
+      }
+      assert.ok(observed instanceof PlatformReleaseTerminalWriteV2Error);
+      assert.equal(observed.code, "MANIFEST_WRITE_FAILED");
+      assert.ok(observed.cause instanceof AggregateError);
+      const aggregate = observed.cause;
+      const errors = aggregate.errors as unknown[];
+      assert.equal(errors.length, 2);
+      assert.ok(errors[0] instanceof PlatformReleaseTerminalWriteV2Error);
+      assert.equal(errors[0].code, "MANIFEST_WRITE_FAILED");
+      assert.equal(errors[0].cause, primaryFailure);
+      assert.ok(errors[1] instanceof PlatformReleaseTerminalWriteV2Error);
+      assert.equal(errors[1].code, "CLEANUP_FAILED");
+      assert.equal(errors[1].cause, cleanupFailure);
+      assert.equal(aggregate.cause, errors[0]);
+      assert.equal(
+        existsSync(path.join(
+          stage.root,
+          PLATFORM_RELEASE_MANIFEST_V2_FILENAME,
+        )),
+        true,
+      );
+    } finally {
+      cleanupStage(stage.root);
+    }
+  });
+
+  it("preserves typed directory primary and close failures with one ordered cause", () => {
+    const stage = createStage();
+    const closeOnlyStage = createStage();
+    const closeFailure = new Error("injected directory close failure");
+    try {
+      writeReleaseFile(stage.root, "unexpected-entry", "unexpected\n");
+      let observed: unknown;
+      try {
+        terminalWritePlatformReleaseManifestForTestV2(
+          {
+            stageRoot: stage.root,
+            manifest: stage.manifest,
+            buildAttestation: stage.buildAttestation,
+            metadataProbe: clearMetadata,
+          },
+          {
+            afterDirectoryDescriptorClose: ({ label }) => {
+              if (label === "Release root") throw closeFailure;
+            },
+          },
+        );
+      } catch (error) {
+        observed = error;
+      }
+      assert.ok(observed instanceof PlatformReleaseTerminalWriteV2Error);
+      assert.equal(observed.code, "LAYOUT_INVALID");
+      assert.ok(observed.cause instanceof AggregateError);
+      const aggregate = observed.cause;
+      const errors = aggregate.errors as unknown[];
+      assert.equal(errors.length, 2);
+      assert.ok(errors[0] instanceof PlatformReleaseTerminalWriteV2Error);
+      assert.equal(errors[0].code, "LAYOUT_INVALID");
+      assert.ok(errors[1] instanceof PlatformReleaseTerminalWriteV2Error);
+      assert.equal(errors[1].code, "LAYOUT_INVALID");
+      assert.equal(errors[1].cause, closeFailure);
+      assert.equal(aggregate.cause, errors[0]);
+
+      const closeOnlyFailure = new Error("injected close-only failure");
+      assert.throws(
+        () => terminalWritePlatformReleaseManifestForTestV2(
+          {
+            stageRoot: closeOnlyStage.root,
+            manifest: closeOnlyStage.manifest,
+            buildAttestation: closeOnlyStage.buildAttestation,
+            metadataProbe: clearMetadata,
+          },
+          {
+            afterDirectoryDescriptorClose: ({ label }) => {
+              if (label === "Release root") throw closeOnlyFailure;
+            },
+          },
+        ),
+        (error: unknown) => {
+          assert.ok(error instanceof PlatformReleaseTerminalWriteV2Error);
+          assert.equal(error.code, "LAYOUT_INVALID");
+          assert.equal(error.cause, closeOnlyFailure);
+          return true;
+        },
+      );
+    } finally {
+      cleanupStage(stage.root);
+      cleanupStage(closeOnlyStage.root);
+    }
+  });
+
+  it("descriptor-fences sealed members and authenticates the natural typed failure", () => {
+    const stage = createStage();
+    const closeFailure = new Error("injected sealed member close failure");
+    let swapped = false;
+    try {
+      let observed: unknown;
+      try {
+        terminalWritePlatformReleaseManifestForTestV2(
+          {
+            stageRoot: stage.root,
+            manifest: stage.manifest,
+            buildAttestation: stage.buildAttestation,
+            metadataProbe: clearMetadata,
+          },
+          {
+            afterSealedMembershipDescriptorAdmission: ({
+              absolutePath,
+              basename,
+            }) => {
+              if (swapped || basename !== PLATFORM_RELEASE_MANIFEST_V2_FILENAME) {
+                return;
+              }
+              swapped = true;
+              const bytes = readFileSync(absolutePath);
+              chmodSync(stage.root, 0o700);
+              renameSync(absolutePath, `${absolutePath}.retained`);
+              writeFileSync(absolutePath, bytes, { flag: "wx", mode: 0o400 });
+              chmodSync(absolutePath, 0o444);
+              chmodSync(stage.root, 0o555);
+            },
+            afterSealedMembershipDescriptorClose: ({ basename }) => {
+              if (basename === PLATFORM_RELEASE_MANIFEST_V2_FILENAME) {
+                throw closeFailure;
+              }
+            },
+          },
+        );
+      } catch (error) {
+        observed = error;
+      }
+      assert.equal(swapped, true);
+      assert.ok(observed instanceof PlatformReleaseTerminalWriteV2Error);
+      assert.equal(observed.code, "ROOT_CHANGED");
+      assert.ok(observed.cause instanceof AggregateError);
+      const aggregate = observed.cause;
+      const errors = aggregate.errors as unknown[];
+      assert.equal(errors.length, 2);
+      assert.ok(errors[0] instanceof PlatformReleaseTerminalWriteV2Error);
+      assert.equal(errors[0].code, "ROOT_CHANGED");
+      assert.ok(errors[1] instanceof PlatformReleaseTerminalWriteV2Error);
+      assert.equal(errors[1].code, "ROOT_CHANGED");
+      assert.equal(errors[1].cause, closeFailure);
+      assert.equal(aggregate.cause, errors[0]);
+      const receipt =
+        inspectPlatformReleaseTerminalRetainedResidueReceiptForTestV2(observed);
+      assert.equal(
+        receipt.rootIdentity.hostIdentityHash,
+        defaultNodeToolchainProvisionerHostIdentityHashV3(),
+      );
+      expectTerminalError(
+        () => inspectPlatformReleaseTerminalRetainedResidueReceiptForTestV2(
+          new PlatformReleaseTerminalWriteV2Error(
+            observed.code,
+            observed.message,
+          ),
+        ),
+        "RETAINED_RESIDUE_UNAUTHENTICATED",
+      );
+    } finally {
+      cleanupStage(stage.root);
+    }
+  });
+
+  it("totally binds a reused hostile natural error to distinct retained residues", () => {
+    const first = createStage();
+    const second = createStage();
+    const primary = new PlatformReleaseTerminalWriteV2Error(
+      "ROOT_CHANGED",
+      "reused natural observation failure",
+    );
+    const hooks = {
+      afterSealedMembershipDescriptorClose: ({ basename }: {
+        basename: string;
+      }) => {
+        if (basename === PLATFORM_RELEASE_MANIFEST_V2_FILENAME) throw primary;
+      },
+    };
+    try {
+      let firstThrown: unknown;
+      try {
+        terminalWritePlatformReleaseManifestForTestV2(
+          {
+            stageRoot: first.root,
+            manifest: first.manifest,
+            buildAttestation: first.buildAttestation,
+            metadataProbe: clearMetadata,
+          },
+          hooks,
+        );
+      } catch (error) {
+        firstThrown = error;
+      }
+      assert.equal(firstThrown, primary);
+      const firstReceipt =
+        inspectPlatformReleaseTerminalRetainedResidueReceiptForTestV2(primary);
+      const firstRootStat = lstatSync(first.root, { bigint: true });
+      assert.equal(
+        firstReceipt.rootIdentity.device,
+        firstRootStat.dev.toString(10),
+      );
+      assert.equal(
+        firstReceipt.rootIdentity.inode,
+        firstRootStat.ino.toString(10),
+      );
+
+      let hostilePropertyReads = 0;
+      for (const property of ["code", "message"] as const) {
+        Object.defineProperty(primary, property, {
+          configurable: true,
+          enumerable: false,
+          get() {
+            hostilePropertyReads += 1;
+            throw new Error(`reused error ${property} must not be read`);
+          },
+        });
+      }
+
+      let secondThrown: unknown;
+      try {
+        terminalWritePlatformReleaseManifestForTestV2(
+          {
+            stageRoot: second.root,
+            manifest: second.manifest,
+            buildAttestation: second.buildAttestation,
+            metadataProbe: clearMetadata,
+          },
+          hooks,
+        );
+      } catch (error) {
+        secondThrown = error;
+      }
+      assert.equal(hostilePropertyReads, 0);
+      assert.ok(secondThrown instanceof PlatformReleaseTerminalWriteV2Error);
+      assert.notEqual(secondThrown, primary);
+      assert.equal(secondThrown.code, "ROOT_CHANGED");
+      assert.equal(
+        secondThrown.message,
+        "ROOT_CHANGED: Repeated natural terminal observation failure retained",
+      );
+      assert.equal(secondThrown.cause, primary);
+      const secondReceipt =
+        inspectPlatformReleaseTerminalRetainedResidueReceiptForTestV2(
+          secondThrown,
+        );
+      const secondRootStat = lstatSync(second.root, { bigint: true });
+      assert.equal(
+        secondReceipt.rootIdentity.device,
+        secondRootStat.dev.toString(10),
+      );
+      assert.equal(
+        secondReceipt.rootIdentity.inode,
+        secondRootStat.ino.toString(10),
+      );
+      assert.notDeepEqual(firstReceipt.rootIdentity, secondReceipt.rootIdentity);
+      assert.equal(
+        inspectPlatformReleaseTerminalRetainedResidueReceiptForTestV2(primary),
+        firstReceipt,
+      );
+      for (const [root, receipt] of [
+        [first.root, firstReceipt],
+        [second.root, secondReceipt],
+      ] as const) {
+        assert.equal(statSync(root).mode & 0o7777, 0o555);
+        assert.equal(receipt.productionAuthority, false);
+        assert.equal(receipt.deletionAuthority, false);
+        assert.equal(receipt.fsMutation, false);
+        assert.equal(JSON.stringify(receipt).includes(root), false);
+        assert.equal(JSON.stringify(receipt).includes("absolutePath"), false);
+      }
+    } finally {
+      cleanupStage(first.root);
+      cleanupStage(second.root);
+    }
+  });
+
+  it("rejects reuse of one observation Error before mutating another fixture", () => {
+    const first = createStage();
+    const second = createStage();
+    const primary = new Error("single-use observation failure");
+    try {
+      assert.throws(
+        () => terminalWritePlatformReleaseManifestObservationFailureForTestV2(
+          {
+            stageRoot: first.root,
+            manifest: first.manifest,
+            buildAttestation: first.buildAttestation,
+            metadataProbe: clearMetadata,
+          },
+          primary,
+        ),
+        (error: unknown) => error === primary,
+      );
+      const firstReceipt =
+        inspectPlatformReleaseTerminalRetainedResidueReceiptForTestV2(primary);
+      expectTerminalError(
+        () => terminalWritePlatformReleaseManifestObservationFailureForTestV2(
+          {
+            stageRoot: second.root,
+            manifest: second.manifest,
+            buildAttestation: second.buildAttestation,
+            metadataProbe: clearMetadata,
+          },
+          primary,
+        ),
+        "INPUT_INVALID",
+      );
+      assert.equal(
+        inspectPlatformReleaseTerminalRetainedResidueReceiptForTestV2(primary),
+        firstReceipt,
+      );
+      assert.equal(statSync(second.root).mode & 0o7777, 0o700);
+      assert.equal(
+        existsSync(path.join(
+          second.root,
+          PLATFORM_RELEASE_MANIFEST_V2_FILENAME,
+        )),
+        false,
+      );
+    } finally {
+      cleanupStage(first.root);
+      cleanupStage(second.root);
     }
   });
 
@@ -396,27 +1140,21 @@ describe("Platform release terminal manifest writer V2", () => {
         first.buildAttestation.attestationHash,
       );
       const firstHandle =
-        terminalWritePlatformReleaseManifestCandidateV2({
+        terminalWritePlatformReleaseManifestForTestV2({
           stageRoot: first.root,
           manifest: first.manifest,
           buildAttestation: first.buildAttestation,
           metadataProbe: clearMetadata,
         });
       const secondHandle =
-        terminalWritePlatformReleaseManifestCandidateV2({
+        terminalWritePlatformReleaseManifestForTestV2({
           stageRoot: second.root,
           manifest: second.manifest,
           buildAttestation: secondAttestation,
           metadataProbe: clearMetadata,
         });
-      const firstInspection =
-        inspectCompletedPlatformReleaseStageCandidateV2(
-          firstHandle,
-        );
-      const secondInspection =
-        inspectCompletedPlatformReleaseStageCandidateV2(
-          secondHandle,
-        );
+      const firstInspection = firstHandle;
+      const secondInspection = secondHandle;
       assert.equal(firstHandle.releaseId, secondHandle.releaseId);
       assert.equal(
         firstInspection.manifestPayloadHash,
@@ -462,7 +1200,7 @@ describe("Platform release terminal manifest writer V2", () => {
       );
       chmodSync(dist, 0o555);
       expectTerminalError(
-        () => terminalWritePlatformReleaseManifestCandidateV2({
+        () => terminalWritePlatformReleaseManifestForTestV2({
           stageRoot: stage.root,
           manifest: stage.manifest,
           buildAttestation: stage.buildAttestation,
@@ -477,6 +1215,53 @@ describe("Platform release terminal manifest writer V2", () => {
         false,
       );
       assert.equal(statSync(stage.root).mode & 0o7777, 0o700);
+    } finally {
+      cleanupStage(stage.root);
+    }
+  });
+
+  it("bounds stage membership before materializing a polluted namespace", () => {
+    const implementationSource = readFileSync(
+      "src/execution/platform-release-terminal-writer-v2.ts",
+      "utf8",
+    );
+    assert.match(
+      implementationSource,
+      /opendirSync\(absolutePath, \{ bufferSize: 1 \}\)/u,
+    );
+    assert.match(
+      implementationSource,
+      /names\.length >= maximumEntries/u,
+    );
+
+    const stage = createStage();
+    try {
+      chmodSync(stage.root, 0o700);
+      for (let index = 0; index < 64; index += 1) {
+        writeFileSync(
+          path.join(stage.root, `unexpected-${index.toString().padStart(2, "0")}`),
+          "unexpected\n",
+          { flag: "wx", mode: 0o600 },
+        );
+      }
+      chmodSync(stage.root, 0o700);
+
+      expectTerminalError(
+        () => terminalWritePlatformReleaseManifestForTestV2({
+          stageRoot: stage.root,
+          manifest: stage.manifest,
+          buildAttestation: stage.buildAttestation,
+          metadataProbe: clearMetadata,
+        }),
+        "LAYOUT_INVALID",
+      );
+      assert.equal(
+        existsSync(path.join(
+          stage.root,
+          PLATFORM_RELEASE_MANIFEST_V2_FILENAME,
+        )),
+        false,
+      );
     } finally {
       cleanupStage(stage.root);
     }
@@ -533,7 +1318,7 @@ describe("Platform release terminal manifest writer V2", () => {
       );
 
       expectTerminalError(
-        () => terminalWritePlatformReleaseManifestCandidateV2({
+        () => terminalWritePlatformReleaseManifestForTestV2({
           stageRoot: stage.root,
           manifest: candidate,
           buildAttestation: attestationForManifest(
@@ -580,7 +1365,7 @@ describe("Platform release terminal manifest writer V2", () => {
       );
 
       expectTerminalError(
-        () => terminalWritePlatformReleaseManifestCandidateV2({
+        () => terminalWritePlatformReleaseManifestForTestV2({
           stageRoot: stage.root,
           manifest: candidate,
           buildAttestation: attestationForManifest(
@@ -610,7 +1395,7 @@ describe("Platform release terminal manifest writer V2", () => {
         "{\"name\":\"changed\"}\n",
       );
       expectTerminalError(
-        () => terminalWritePlatformReleaseManifestCandidateV2({
+        () => terminalWritePlatformReleaseManifestForTestV2({
           stageRoot: packageStage.root,
           manifest: packageStage.manifest,
           buildAttestation:
@@ -630,8 +1415,13 @@ describe("Platform release terminal manifest writer V2", () => {
         PLATFORM_RELEASE_MANIFEST_V2_FILENAME,
         "{}\n",
       );
+      writeReleaseFile(
+        occupiedStage.root,
+        "unexpected-after-manifest",
+        "unexpected\n",
+      );
       expectTerminalError(
-        () => terminalWritePlatformReleaseManifestCandidateV2({
+        () => terminalWritePlatformReleaseManifestForTestV2({
           stageRoot: occupiedStage.root,
           manifest: occupiedStage.manifest,
           buildAttestation:
@@ -661,16 +1451,28 @@ describe("Platform release terminal manifest writer V2", () => {
       },
     });
     expectTerminalError(
-      () => terminalWritePlatformReleaseManifestCandidateV2(hostile),
+      () => terminalWritePlatformReleaseManifestForTestV2(hostile),
       "INPUT_INVALID",
     );
     expectTerminalError(
-      () => terminalWritePlatformReleaseManifestCandidateV2({
-        stageRoot: "/tmp/missing-attestation",
+      () => terminalWritePlatformReleaseManifestForTestV2({
+        stageRoot: path.join(
+          os.tmpdir(),
+          "setfarm-release-terminal-v2-missing-attestation",
+        ),
         manifest: {},
         metadataProbe: clearMetadata,
       }),
       "INPUT_INVALID",
+    );
+    expectTerminalError(
+      () => terminalWritePlatformReleaseManifestForTestV2({
+        stageRoot: path.join(os.tmpdir(), "foreign-terminal-fixture"),
+        manifest: {},
+        buildAttestation: {},
+        metadataProbe: clearMetadata,
+      }),
+      "ROOT_INVALID",
     );
     assert.equal(traps, 0);
     expectTerminalError(
@@ -716,7 +1518,7 @@ describe("Platform release terminal manifest writer V2", () => {
         return { status: "clear" as const };
       };
       expectTerminalError(
-        () => terminalWritePlatformReleaseManifestCandidateV2({
+        () => terminalWritePlatformReleaseManifestForTestV2({
           stageRoot: stage.root,
           manifest: stage.manifest,
           buildAttestation: stage.buildAttestation,
@@ -744,7 +1546,7 @@ describe("Platform release terminal manifest writer V2", () => {
       const candidate: any = structuredClone(stage.manifest);
       candidate.manifestPayloadHash = fixtureShaV2("wrong-root");
       expectTerminalError(
-        () => terminalWritePlatformReleaseManifestCandidateV2({
+        () => terminalWritePlatformReleaseManifestForTestV2({
           stageRoot: stage.root,
           manifest: candidate,
           buildAttestation: stage.buildAttestation,

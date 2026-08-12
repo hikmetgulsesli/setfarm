@@ -448,7 +448,18 @@ const CLAIM_CONTENTION_CODES = new Set([
   "V3_RECOVERY_LEASE_CAS_LOST",
 ]);
 
-export function createV3RecoveryWorkRouter(sql: Sql) {
+export function createV3RecoveryWorkRouter(
+  sql: Sql,
+  options: Readonly<{
+    admitCandidate?: (candidate: Readonly<{
+      runId: string;
+      storyId: string;
+      storyDbId: string;
+      stepDbId: string;
+      dispatchId: string;
+    }>) => Promise<void>;
+  }> = {},
+) {
   const authority = createV3RecoveryClaimAuthority(sql);
   return Object.freeze({
     async acquireNext(raw: unknown): Promise<V3RecoveryRoutedWork | undefined> {
@@ -458,6 +469,14 @@ export function createV3RecoveryWorkRouter(sql: Sql) {
         const candidate = await discoverCandidate(sql, input, excludedDispatchIds);
         if (!candidate) return undefined;
         excludedDispatchIds.push(candidate.dispatch_id);
+
+        await options.admitCandidate?.(Object.freeze({
+          runId: candidate.run_id,
+          storyId: candidate.story_id,
+          storyDbId: candidate.story_db_id,
+          stepDbId: candidate.step_db_id,
+          dispatchId: candidate.dispatch_id,
+        }));
 
         let handoff: V3RecoveryClaimHandoffV1;
         try {

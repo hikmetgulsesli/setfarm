@@ -9,6 +9,9 @@ import {
   planContractSpineMigrations,
   rollbackArtifactPublicationBatchLedgerToV22,
   rollbackArtifactPublicationBatchPlanLedgerToV25,
+  rollbackPlatformReleaseStoreRecordLedgerV3ToV26,
+  rollbackRuntimeCompletionManifestAuthorityToV27,
+  rollbackV3StoryClaimRuntimeBindingToV28,
   rollbackArtifactStoreAuthorityLedgerToV23,
   rollbackPreparationAuthorityV2LedgerToV24,
   verifyContractSpineMigrations,
@@ -30,7 +33,22 @@ const migrationProducer = Object.freeze({
   toolVersions: Object.freeze({ node: "22" }),
 });
 
+async function rollbackEmptyReleaseStoreRecordLedger(
+  database: TestDatabase,
+): Promise<void> {
+  await rollbackV3StoryClaimRuntimeBindingToV28(database.sql, {
+    targetReleaseSha: "a".repeat(40),
+  });
+  await rollbackRuntimeCompletionManifestAuthorityToV27(database.sql, {
+    targetReleaseSha: "b".repeat(40),
+  });
+  await rollbackPlatformReleaseStoreRecordLedgerV3ToV26(database.sql, {
+    targetReleaseSha: "c".repeat(40),
+  });
+}
+
 async function rollbackEmptyAuthorityLedger(database: TestDatabase): Promise<void> {
+  await rollbackEmptyReleaseStoreRecordLedger(database);
   await rollbackArtifactPublicationBatchPlanLedgerToV25(database.sql, {
     targetReleaseSha: "d".repeat(40),
   });
@@ -772,6 +790,7 @@ describe("artifact publication batch migration 23", () => {
 
   it("rejects an unjournaled extra object before adopting migration 23", async () => {
     await applyContractSpineMigrations(database.sql);
+    await rollbackEmptyReleaseStoreRecordLedger(database);
     await rollbackArtifactPublicationBatchPlanLedgerToV25(database.sql, {
       targetReleaseSha: "7".repeat(40),
     });
@@ -1075,6 +1094,7 @@ describe("artifact publication batch migration 23", () => {
       ENABLE TRIGGER trg_artifact_publication_batches_complete
     `);
     assert.equal((await verifyContractSpineMigrations(database.sql)).status, "verified");
+    await rollbackEmptyReleaseStoreRecordLedger(database);
     await assert.rejects(
       auditCurrentArtifactPublicationAuthorityLedgerData(database.sql),
       (error: unknown) => error instanceof ContractSpineMigrationError
@@ -1124,6 +1144,7 @@ describe("artifact publication batch migration 23", () => {
       ENABLE TRIGGER trg_artifact_publication_batch_child_membership
     `);
     assert.equal((await verifyContractSpineMigrations(database.sql)).status, "verified");
+    await rollbackEmptyReleaseStoreRecordLedger(database);
     await assert.rejects(
       auditCurrentArtifactPublicationAuthorityLedgerData(database.sql),
       (error: unknown) => error instanceof ContractSpineMigrationError
@@ -1208,6 +1229,7 @@ describe("artifact publication batch migration 23", () => {
       "ALTER TABLE artifact_publication_reservations ENABLE TRIGGER trg_artifact_publication_batch_child_membership",
     ]) await database.sql.unsafe(statement);
     assert.equal((await verifyContractSpineMigrations(database.sql)).status, "verified");
+    await rollbackEmptyReleaseStoreRecordLedger(database);
     await assert.rejects(
       auditCurrentArtifactPublicationAuthorityLedgerData(database.sql),
       (error: unknown) => error instanceof ContractSpineMigrationError

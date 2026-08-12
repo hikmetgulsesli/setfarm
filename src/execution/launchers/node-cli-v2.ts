@@ -3,6 +3,7 @@ import {
   lstatSync,
   readFileSync,
   realpathSync,
+  type BigIntStats,
 } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { isProxy } from "node:util/types";
@@ -294,9 +295,47 @@ function exactEncodedCliRequestV2(
 }
 
 type ExactLauncherModuleV2 = Readonly<{
-  contentHash: string;
+  stableIdentity: Readonly<{
+    objectKind: "ordinary_file";
+    device: string;
+    inode: string;
+  }>;
+  mutableFingerprint: Readonly<{
+    ownerUid: string;
+    ownerGid: string;
+    mode: string;
+    linkCount: string;
+    byteLength: string;
+    modifiedTimeNanoseconds: string;
+    changedTimeNanoseconds: string;
+    contentHash: string;
+  }>;
   physicalIdentityHash: string;
 }>;
+
+function exactLauncherModeV2(stat: BigIntStats): string {
+  return Number(stat.mode & 0o7777n).toString(8).padStart(4, "0");
+}
+
+function exactLauncherStatMatchesV2(
+  left: BigIntStats,
+  right: BigIntStats,
+): boolean {
+  return left.isFile()
+    && right.isFile()
+    && !left.isSymbolicLink()
+    && !right.isSymbolicLink()
+    && left.dev === right.dev
+    && left.ino === right.ino
+    && left.mode === right.mode
+    && left.uid === right.uid
+    && left.gid === right.gid
+    && left.nlink === right.nlink
+    && left.size === right.size
+    && left.rdev === right.rdev
+    && left.mtimeNs === right.mtimeNs
+    && left.ctimeNs === right.ctimeNs;
+}
 
 function captureExactLauncherModuleV2(): ExactLauncherModuleV2 {
   const absolutePath = realpathSync(fileURLToPath(import.meta.url));
@@ -306,37 +345,13 @@ function captureExactLauncherModuleV2(): ExactLauncherModuleV2 {
       "Test launcher is not executing its declared TypeScript source module",
     );
   }
-  const before = lstatSync(absolutePath);
+  const before = lstatSync(absolutePath, { bigint: true });
   const bytes = readFileSync(absolutePath);
-  const after = lstatSync(absolutePath);
-  const identityBefore = [
-    before.dev,
-    before.ino,
-    before.uid,
-    before.gid,
-    before.mode & 0o7777,
-    before.size,
-    before.mtimeMs,
-    before.ctimeMs,
-    before.nlink,
-  ];
-  const identityAfter = [
-    after.dev,
-    after.ino,
-    after.uid,
-    after.gid,
-    after.mode & 0o7777,
-    after.size,
-    after.mtimeMs,
-    after.ctimeMs,
-    after.nlink,
-  ];
+  const after = lstatSync(absolutePath, { bigint: true });
   if (
-    !before.isFile()
-    || before.nlink !== 1
-    || canonicalJsonStringify(identityBefore)
-      !== canonicalJsonStringify(identityAfter)
-    || bytes.byteLength !== after.size
+    !exactLauncherStatMatchesV2(before, after)
+    || after.nlink !== 1n
+    || BigInt(bytes.byteLength) !== after.size
   ) {
     bytes.fill(0);
     return fail(
@@ -346,20 +361,28 @@ function captureExactLauncherModuleV2(): ExactLauncherModuleV2 {
   }
   const contentHash = sha256(bytes);
   bytes.fill(0);
-  return Object.freeze({
+  const stableIdentity = Object.freeze({
+    objectKind: "ordinary_file" as const,
+    device: after.dev.toString(10),
+    inode: after.ino.toString(10),
+  });
+  const mutableFingerprint = Object.freeze({
+    ownerUid: after.uid.toString(10),
+    ownerGid: after.gid.toString(10),
+    mode: exactLauncherModeV2(after),
+    linkCount: after.nlink.toString(10),
+    byteLength: after.size.toString(10),
+    modifiedTimeNanoseconds: after.mtimeNs.toString(10),
+    changedTimeNanoseconds: after.ctimeNs.toString(10),
     contentHash,
+  });
+  return Object.freeze({
+    stableIdentity,
+    mutableFingerprint,
     physicalIdentityHash: hashCanonicalJson({
-      schema: "setfarm.node-cli-launcher-source-physical-file.v2",
-      device: after.dev,
-      inode: after.ino,
-      ownerUid: after.uid,
-      ownerGid: after.gid,
-      mode: after.mode & 0o7777,
-      byteLength: after.size,
-      modifiedMs: after.mtimeMs,
-      changedMs: after.ctimeMs,
-      linkCount: after.nlink,
-      contentHash,
+      schema: "setfarm.node-cli-launcher-source-physical-file.v3",
+      stableIdentity,
+      mutableFingerprint,
     }),
   });
 }
@@ -669,7 +692,7 @@ export async function launchNodeCliV2(
         observedImplementation: {
           scope: "test_fixture_typescript_source",
           moduleLocator: NODE_CLI_LAUNCHER_SOURCE_MODULE_LOCATOR_V2,
-          moduleContentHash: launcherBefore.contentHash,
+          moduleContentHash: launcherBefore.mutableFingerprint.contentHash,
           modulePhysicalIdentityHash: launcherBefore.physicalIdentityHash,
         },
       },

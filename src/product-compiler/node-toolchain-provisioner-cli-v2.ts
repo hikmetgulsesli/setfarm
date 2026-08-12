@@ -5,6 +5,7 @@ import {
   lstatSync,
   openSync,
   readSync,
+  type BigIntStats,
 } from "node:fs";
 import path from "node:path";
 import { isProxy } from "node:util/types";
@@ -28,12 +29,14 @@ import {
 import {
   applyNodeToolchainProvisionerPlanV2ForTest,
   applyProductionNodeToolchainProvisionerPlanV2,
+  buildNodeToolchainProvisionerPlanTransportV3ForHandle,
   inspectNodeToolchainProvisionerInspectionV2,
   inspectNodeToolchainProvisionerV2ForTest,
   inspectProductionNodeToolchainProvisionerV2,
   planNodeToolchainProvisioningV2,
   planNodeToolchainRollbackV2,
   rollbackNodeToolchainProvisionerPlanV2ForTest,
+  NodeToolchainProvisionerPlanTransportV3Schema,
   rollbackProductionNodeToolchainProvisionerPlanV2,
   verifyNodeToolchainProvisionerV2ForTest,
   verifyProductionNodeToolchainProvisionerV2,
@@ -58,6 +61,19 @@ import {
   type NodeToolchainProvisionerOperationReceiptV2,
   type NodeToolchainProvisionerPlanV2,
 } from "./schemas/node-toolchain-provisioner-command-v2.js";
+import {
+  NODE_TOOLCHAIN_PROVISIONER_CLI_AUTHORITY_REF_V3,
+  NODE_TOOLCHAIN_PROVISIONER_CLI_FAILURE_V3_SCHEMA,
+  NODE_TOOLCHAIN_PROVISIONER_CLI_VERSION_V3,
+  NodeToolchainProvisionerCliFailureV3Schema,
+  hashNodeToolchainProvisionerCliFailureV3,
+  type NodeToolchainProvisionerCliCommandRefV3,
+  type NodeToolchainProvisionerCliFailureHashPayloadV3,
+  type NodeToolchainProvisionerCliFailureV3,
+} from "./schemas/node-toolchain-provisioner-cli-v3.js";
+import type {
+  NodeToolchainProvisionerPlanTransportV3,
+} from "./schemas/node-toolchain-provisioner-physical-census-v3.js";
 
 const PLAN_FILE_MAX_BYTES_V2 = 16 * 1024 * 1024;
 const CLI_USAGE_ERROR_CODE_V2 = "NODE_TOOLCHAIN_PROVISIONER_CLI_V2_USAGE_INVALID";
@@ -70,9 +86,17 @@ type ParsedCommandV2 =
   | Readonly<{ commandRef: "inspect" }>
   | Readonly<{ commandRef: "plan_apply"; archivePath: string }>
   | Readonly<{ commandRef: "plan_rollback" }>
+  | Readonly<{ commandRef: "plan_apply_v3"; archivePath: string }>
+  | Readonly<{ commandRef: "plan_rollback_v3" }>
   | Readonly<{ commandRef: "apply"; planPath: string; archivePath: string }>
+  | Readonly<{ commandRef: "apply_v3"; planPath: string; archivePath: string }>
   | Readonly<{ commandRef: "verify" }>
-  | Readonly<{ commandRef: "rollback"; planPath: string }>;
+  | Readonly<{ commandRef: "rollback"; planPath: string }>
+  | Readonly<{ commandRef: "rollback_v3"; planPath: string }>;
+
+type RuntimeCommandRefV2 =
+  | NodeToolchainProvisionerCliCommandRefV2
+  | NodeToolchainProvisionerCliCommandRefV3;
 
 export type NodeToolchainProvisionerCliOperationsV2 = Readonly<{
   inspect: () => Promise<InspectedNodeToolchainProvisionerStateV2>;
@@ -214,6 +238,20 @@ function parseCommand(input: unknown): ParsedCommandV2 {
   }
   if (
     input.length === 4
+    && input[0] === "plan-v3"
+    && input[1] === "apply"
+    && input[2] === "--archive"
+  ) {
+    return Object.freeze({
+      commandRef: "plan_apply_v3",
+      archivePath: normalizedAbsolutePath(input[3]!, "Archive candidate"),
+    });
+  }
+  if (input.length === 2 && input[0] === "plan-v3" && input[1] === "rollback") {
+    return Object.freeze({ commandRef: "plan_rollback_v3" });
+  }
+  if (
+    input.length === 4
     && input[0] === "plan"
     && input[1] === "apply"
     && input[2] === "--archive"
@@ -245,6 +283,28 @@ function parseCommand(input: unknown): ParsedCommandV2 {
       planPath: normalizedAbsolutePath(input[2]!, "Plan file"),
     });
   }
+  if (
+    input.length === 5
+    && input[0] === "apply-v3"
+    && input[1] === "--plan-file"
+    && input[3] === "--archive"
+  ) {
+    return Object.freeze({
+      commandRef: "apply_v3",
+      planPath: normalizedAbsolutePath(input[2]!, "Plan transport file"),
+      archivePath: normalizedAbsolutePath(input[4]!, "Archive candidate"),
+    });
+  }
+  if (
+    input.length === 3
+    && input[0] === "rollback-v3"
+    && input[1] === "--plan-file"
+  ) {
+    return Object.freeze({
+      commandRef: "rollback_v3",
+      planPath: normalizedAbsolutePath(input[2]!, "Plan transport file"),
+    });
+  }
   return fail(
     CLI_USAGE_ERROR_CODE_V2,
     "invocation_rejected",
@@ -252,31 +312,38 @@ function parseCommand(input: unknown): ParsedCommandV2 {
   );
 }
 
-function inferredCommandRef(input: unknown): NodeToolchainProvisionerCliCommandRefV2 {
+function inferredCommandRef(input: unknown): RuntimeCommandRefV2 {
   if (!validArgv(input)) return "invalid_invocation";
   try {
     if (input[0] === "inspect") return "inspect";
     if (input[0] === "verify") return "verify";
     if (input[0] === "apply") return "apply";
     if (input[0] === "rollback") return "rollback";
+    if (input[0] === "apply-v3") return "apply_v3";
+    if (input[0] === "rollback-v3") return "rollback_v3";
     if (input[0] === "plan" && input[1] === "apply") return "plan_apply";
     if (input[0] === "plan" && input[1] === "rollback") return "plan_rollback";
+    if (input[0] === "plan-v3" && input[1] === "apply") return "plan_apply_v3";
+    if (input[0] === "plan-v3" && input[1] === "rollback") return "plan_rollback_v3";
   } catch {
     return "invalid_invocation";
   }
   return "invalid_invocation";
 }
 
-function sameFileIdentity(left: ReturnType<typeof fstatSync>, right: ReturnType<typeof fstatSync>): boolean {
+function sameFileIdentity(left: BigIntStats, right: BigIntStats): boolean {
   return left.dev === right.dev
     && left.ino === right.ino
+    && left.isFile() === right.isFile()
+    && left.isDirectory() === right.isDirectory()
+    && left.isSymbolicLink() === right.isSymbolicLink()
     && left.mode === right.mode
     && left.uid === right.uid
     && left.gid === right.gid
     && left.nlink === right.nlink
     && left.size === right.size
-    && left.mtimeMs === right.mtimeMs
-    && left.ctimeMs === right.ctimeMs;
+    && left.mtimeNs === right.mtimeNs
+    && left.ctimeNs === right.ctimeNs;
 }
 
 export function readNodeToolchainProvisionerPlanFileV2(planPath: string): NodeToolchainProvisionerPlanV2 {
@@ -288,12 +355,14 @@ export function readNodeToolchainProvisionerPlanFileV2(planPath: string): NodeTo
       absolutePath,
       constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
     );
-    const before = fstatSync(descriptor);
+    const before = fstatSync(descriptor, { bigint: true });
     if (
       !before.isFile()
-      || before.nlink !== 1
-      || before.size < 1
-      || before.size > PLAN_FILE_MAX_BYTES_V2
+      || before.isSymbolicLink()
+      || before.nlink !== 1n
+      || before.size < 1n
+      || before.size > BigInt(PLAN_FILE_MAX_BYTES_V2)
+      || before.size > BigInt(Number.MAX_SAFE_INTEGER)
     ) {
       return fail(
         CLI_PLAN_FILE_ERROR_CODE_V2,
@@ -301,7 +370,7 @@ export function readNodeToolchainProvisionerPlanFileV2(planPath: string): NodeTo
         "Plan input must be one bounded unaliased regular file",
       );
     }
-    bytes = Buffer.allocUnsafeSlow(before.size);
+    bytes = Buffer.allocUnsafeSlow(Number(before.size));
     let offset = 0;
     while (offset < bytes.byteLength) {
       const count = readSync(descriptor, bytes, offset, bytes.byteLength - offset, null);
@@ -322,9 +391,16 @@ export function readNodeToolchainProvisionerPlanFileV2(planPath: string): NodeTo
         "Plan input exceeded its inspected byte length",
       );
     }
-    const after = fstatSync(descriptor);
-    const pathAfter = lstatSync(absolutePath);
-    if (!sameFileIdentity(before, after) || !sameFileIdentity(after, pathAfter)) {
+    const after = fstatSync(descriptor, { bigint: true });
+    const pathAfter = lstatSync(absolutePath, { bigint: true });
+    if (
+      !after.isFile()
+      || after.isSymbolicLink()
+      || !pathAfter.isFile()
+      || pathAfter.isSymbolicLink()
+      || !sameFileIdentity(before, after)
+      || !sameFileIdentity(after, pathAfter)
+    ) {
       return fail(
         CLI_PLAN_FILE_ERROR_CODE_V2,
         "invocation_rejected",
@@ -372,6 +448,127 @@ export function readNodeToolchainProvisionerPlanFileV2(planPath: string): NodeTo
   }
 }
 
+export function readNodeToolchainProvisionerPlanTransportV3(
+  planPath: string,
+): NodeToolchainProvisionerPlanTransportV3 {
+  const absolutePath = normalizedAbsolutePath(planPath, "Plan transport file");
+  let descriptor: number | undefined;
+  let bytes: Buffer | undefined;
+  try {
+    descriptor = openSync(
+      absolutePath,
+      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+    );
+    const before = fstatSync(descriptor, { bigint: true });
+    if (
+      !before.isFile()
+      || before.isSymbolicLink()
+      || before.nlink !== 1n
+      || before.size < 1n
+      || before.size > BigInt(PLAN_FILE_MAX_BYTES_V2)
+      || before.size > BigInt(Number.MAX_SAFE_INTEGER)
+    ) {
+      return fail(
+        CLI_PLAN_FILE_ERROR_CODE_V2,
+        "invocation_rejected",
+        "Plan transport input must be one bounded unaliased regular file",
+      );
+    }
+    bytes = Buffer.allocUnsafeSlow(Number(before.size));
+    let offset = 0;
+    while (offset < bytes.byteLength) {
+      const count = readSync(descriptor, bytes, offset, bytes.byteLength - offset, null);
+      if (count < 1) {
+        return fail(
+          CLI_PLAN_FILE_ERROR_CODE_V2,
+          "invocation_rejected",
+          "Plan transport input ended before its inspected byte length",
+        );
+      }
+      offset += count;
+    }
+    const eof = Buffer.allocUnsafe(1);
+    if (readSync(descriptor, eof, 0, 1, null) !== 0) {
+      return fail(
+        CLI_PLAN_FILE_ERROR_CODE_V2,
+        "invocation_rejected",
+        "Plan transport input exceeded its inspected byte length",
+      );
+    }
+    const after = fstatSync(descriptor, { bigint: true });
+    const pathAfter = lstatSync(absolutePath, { bigint: true });
+    if (
+      !after.isFile()
+      || after.isSymbolicLink()
+      || !pathAfter.isFile()
+      || pathAfter.isSymbolicLink()
+      || !sameFileIdentity(before, after)
+      || !sameFileIdentity(after, pathAfter)
+    ) {
+      return fail(
+        CLI_PLAN_FILE_ERROR_CODE_V2,
+        "invocation_rejected",
+        "Plan transport input changed during its bounded read",
+      );
+    }
+    let raw: unknown;
+    try {
+      raw = JSON.parse(bytes.toString("utf8"));
+    } catch (error) {
+      return fail(
+        CLI_PLAN_FILE_ERROR_CODE_V2,
+        "invocation_rejected",
+        "Plan transport input is not JSON",
+        error,
+      );
+    }
+    const parsedEnvelope = NodeToolchainProvisionerPlanTransportV3Schema.safeParse(raw);
+    if (!parsedEnvelope.success) {
+      return fail(
+        CLI_PLAN_FILE_ERROR_CODE_V2,
+        "invocation_rejected",
+        "Plan transport input is not one exact V3 envelope",
+        parsedEnvelope.error,
+      );
+    }
+    const parsedPlan = NodeToolchainProvisionerPlanV2Schema.safeParse(parsedEnvelope.data.plan);
+    if (!parsedPlan.success) {
+      return fail(
+        CLI_PLAN_FILE_ERROR_CODE_V2,
+        "invocation_rejected",
+        "Plan transport envelope does not carry one strict V2 plan",
+        parsedPlan.error,
+      );
+    }
+    const canonical = { ...parsedEnvelope.data, plan: parsedPlan.data };
+    if (!bytes.equals(canonicalJsonBytes(canonical))) {
+      return fail(
+        CLI_PLAN_FILE_ERROR_CODE_V2,
+        "invocation_rejected",
+        "Plan transport input is not one exact canonical V3 envelope",
+      );
+    }
+    return deepFreezeJson(canonical);
+  } catch (error) {
+    if (error instanceof NodeToolchainProvisionerCliErrorV2) throw error;
+    return fail(
+      CLI_PLAN_FILE_ERROR_CODE_V2,
+      "invocation_rejected",
+      "Plan transport input could not be read safely",
+      error,
+    );
+  } finally {
+    bytes?.fill(0);
+    if (descriptor !== undefined) {
+      try {
+        closeSync(descriptor);
+      } catch {
+        // The primary read result owns the command outcome.
+      }
+    }
+  }
+}
+
 function errorCode(error: unknown): string | undefined {
   try {
     if (
@@ -404,31 +601,75 @@ function causeCodes(error: unknown): readonly string[] {
   return Object.freeze(output);
 }
 
-function buildFailure(
+function failureKind(error: unknown): NodeToolchainProvisionerCliFailureKindV2 {
+  const codes = causeCodes(error);
+  return error instanceof NodeToolchainProvisionerCliErrorV2
+    ? error.failureKind
+    : codes[0] === CLI_INTERNAL_ERROR_CODE_V2
+      ? "internal_failure"
+      : "command_rejected";
+}
+
+function buildFailureV2(
   commandRef: NodeToolchainProvisionerCliCommandRefV2,
   error: unknown,
 ): NodeToolchainProvisionerCliFailureV2 {
   const codes = causeCodes(error);
-  const failureKind: NodeToolchainProvisionerCliFailureKindV2 =
-    error instanceof NodeToolchainProvisionerCliErrorV2
-      ? error.failureKind
-      : codes[0] === CLI_INTERNAL_ERROR_CODE_V2
-        ? "internal_failure"
-        : "command_rejected";
+  const failureKindValue = failureKind(error);
   const identity: NodeToolchainProvisionerCliFailureHashPayloadV2 = {
     schema: NODE_TOOLCHAIN_PROVISIONER_CLI_FAILURE_V2_SCHEMA,
     failureVersion: NODE_TOOLCHAIN_PROVISIONER_CLI_VERSION_V2,
     authorityRef: NODE_TOOLCHAIN_PROVISIONER_CLI_AUTHORITY_REF_V2,
     commandRef,
-    failureKind,
+    failureKind: failureKindValue,
     errorCode: codes[0]!,
     causeCodes: [...codes],
-    exitCode: failureKind === "invocation_rejected" ? 64 : failureKind === "command_rejected" ? 1 : 70,
+    exitCode: failureKindValue === "invocation_rejected" ? 64 : failureKindValue === "command_rejected" ? 1 : 70,
   };
   return NodeToolchainProvisionerCliFailureV2Schema.parse({
     ...identity,
     failureHash: hashNodeToolchainProvisionerCliFailureV2(identity),
   });
+}
+
+function buildFailureV3(
+  commandRef: NodeToolchainProvisionerCliCommandRefV3,
+  error: unknown,
+): NodeToolchainProvisionerCliFailureV3 {
+  const codes = causeCodes(error);
+  const failureKindValue = failureKind(error);
+  const identity: NodeToolchainProvisionerCliFailureHashPayloadV3 = {
+    schema: NODE_TOOLCHAIN_PROVISIONER_CLI_FAILURE_V3_SCHEMA,
+    failureVersion: NODE_TOOLCHAIN_PROVISIONER_CLI_VERSION_V3,
+    authorityRef: NODE_TOOLCHAIN_PROVISIONER_CLI_AUTHORITY_REF_V3,
+    commandRef,
+    failureKind: failureKindValue,
+    errorCode: codes[0]!,
+    causeCodes: [...codes],
+    exitCode: failureKindValue === "invocation_rejected" ? 64 : failureKindValue === "command_rejected" ? 1 : 70,
+  };
+  return NodeToolchainProvisionerCliFailureV3Schema.parse({
+    ...identity,
+    failureHash: hashNodeToolchainProvisionerCliFailureV3(identity),
+  });
+}
+
+function isV3CommandRef(
+  commandRef: RuntimeCommandRefV2,
+): commandRef is NodeToolchainProvisionerCliCommandRefV3 {
+  return commandRef === "plan_apply_v3"
+    || commandRef === "plan_rollback_v3"
+    || commandRef === "apply_v3"
+    || commandRef === "rollback_v3";
+}
+
+function buildFailure(
+  commandRef: RuntimeCommandRefV2,
+  error: unknown,
+): NodeToolchainProvisionerCliFailureV2 | NodeToolchainProvisionerCliFailureV3 {
+  return isV3CommandRef(commandRef)
+    ? buildFailureV3(commandRef, error)
+    : buildFailureV2(commandRef, error);
 }
 
 function diagnostic(error: unknown): string {
@@ -448,7 +689,9 @@ function outputArtifact(
 ): Buffer {
   const schema = command.commandRef === "inspect"
     ? NodeToolchainProvisionerInspectionV2Schema
-    : command.commandRef === "plan_apply" || command.commandRef === "plan_rollback"
+    : command.commandRef === "plan_apply_v3" || command.commandRef === "plan_rollback_v3"
+      ? NodeToolchainProvisionerPlanTransportV3Schema
+      : command.commandRef === "plan_apply" || command.commandRef === "plan_rollback"
       ? NodeToolchainProvisionerPlanV2Schema
       : NodeToolchainProvisionerOperationReceiptV2Schema;
   const parsed = schema.safeParse(value);
@@ -480,11 +723,32 @@ export async function runNodeToolchainProvisionerCliV2(
         operations.planApply(await operations.inspect(), tree));
     } else if (command.commandRef === "plan_rollback") {
       result = operations.planRollback(await operations.inspect());
+    } else if (command.commandRef === "plan_apply_v3") {
+      const handle = await operations.inspect();
+      result = await operations.withPrivateTree(command.archivePath, async (tree) => {
+        const plan = operations.planApply(handle, tree);
+        return buildNodeToolchainProvisionerPlanTransportV3ForHandle(handle, plan);
+      });
+    } else if (command.commandRef === "plan_rollback_v3") {
+      const handle = await operations.inspect();
+      const plan = operations.planRollback(handle);
+      result = buildNodeToolchainProvisionerPlanTransportV3ForHandle(handle, plan);
     } else if (command.commandRef === "apply") {
       const plan = readNodeToolchainProvisionerPlanFileV2(command.planPath);
       result = await operations.withPrivateTree(command.archivePath, (tree) => operations.apply(plan, tree));
+    } else if (command.commandRef === "apply_v3") {
+      const transport = readNodeToolchainProvisionerPlanTransportV3(command.planPath);
+      result = await operations.withPrivateTree(
+        command.archivePath,
+        (tree) => operations.apply(transport as unknown as NodeToolchainProvisionerPlanV2, tree),
+      );
     } else if (command.commandRef === "verify") {
       result = await operations.verify();
+    } else if (command.commandRef === "rollback_v3") {
+      const transport = readNodeToolchainProvisionerPlanTransportV3(command.planPath);
+      result = await operations.rollback(
+        transport as unknown as NodeToolchainProvisionerPlanV2,
+      );
     } else {
       result = await operations.rollback(readNodeToolchainProvisionerPlanFileV2(command.planPath));
     }

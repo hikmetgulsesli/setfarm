@@ -4,10 +4,12 @@ import { parseStackPrefix } from "../../stack-contract/prefix.js";
 import { getStackPack } from "../../stack-contract/packs.js";
 import type { StackPackId } from "../../stack-contract/types.js";
 import {
+  ProductSpecV1EnglishWriteSchema,
   ProductSpecV1Schema,
   ProductSpecV3ProposalSchema,
 } from "../../../product-compiler/schemas/product-spec-v1.js";
 import {
+  ProductSpecV2EnglishWriteSchema,
   ProductSpecV2Schema,
   type ProductSpecV2,
 } from "../../../product-compiler/schemas/product-spec-v2.js";
@@ -20,6 +22,12 @@ import { renderLegacyPrd } from "../../../product-compiler/renderers/legacy-prd.
 import { renderProductSpecV2Compatibility } from "../../../product-compiler/renderers/product-spec-v2-compatibility.js";
 import { recordObservation } from "../../observations.js";
 import { verifyProductDeliverySelectionV1 } from "../../../product-compiler/product-delivery-profile-catalog.js";
+import {
+  ENGLISH_TEXT_ARRAY_INDEX_V1,
+  englishTextViolationMessageV1,
+  inspectEnglishTextTreeV1,
+  type EnglishTextPathPatternV1,
+} from "../../../product-compiler/english-text-contract-v1.js";
 
 const VALID_TECH_STACKS = new Set([
   "vite-react",
@@ -38,7 +46,7 @@ const VALID_TECH_STACKS = new Set([
 
 const VALID_PLATFORMS = new Set(["web", "mobile", "desktop", "api", "cli", "game"]);
 const VALID_DB_REQUIRED = new Set(["none", "postgres", "sqlite", "external"]);
-const VALID_UI_LANGUAGES = new Set(["english", "turkish"]);
+const CANONICAL_UI_LANGUAGE = "English";
 const VALID_BOOLEAN = new Set(["true", "false"]);
 const PLAN_CONTRACT_SCHEMA_VERSION = "setfarm.plan.v2.2";
 const MIN_PRD_LENGTH = 2000;
@@ -68,11 +76,11 @@ function parsedProductSpec(prd: string): ReturnType<typeof ProductSpecV1Schema.s
   }
 }
 
-function parsedProductSpecV2(prd: string): ReturnType<typeof ProductSpecV2Schema.safeParse> | undefined {
+function parsedProductSpecV2(prd: string): ReturnType<typeof ProductSpecV2EnglishWriteSchema.safeParse> | undefined {
   const blocks = productSpecV2Blocks(prd);
   if (blocks.length !== 1) return undefined;
   try {
-    return ProductSpecV2Schema.safeParse(JSON.parse(blocks[0]![1]!));
+    return ProductSpecV2EnglishWriteSchema.safeParse(JSON.parse(blocks[0]![1]!));
   } catch {
     return undefined;
   }
@@ -140,8 +148,37 @@ const REQUIRED_PRD_SECTIONS = [
   "Out Of Scope",
 ];
 
+const PLAN_OUTPUT_ENGLISH_PROSE_PATHS = Object.freeze([
+  ["projectName"],
+  ["uiVisionSummary"],
+  ["prd"],
+  ["reasons", ENGLISH_TEXT_ARRAY_INDEX_V1, "message"],
+] satisfies readonly EnglishTextPathPatternV1[]);
+
+const PLAN_REJECTION_ENGLISH_PROSE_PATHS = Object.freeze([
+  ["reasons", ENGLISH_TEXT_ARRAY_INDEX_V1, "message"],
+] satisfies readonly EnglishTextPathPatternV1[]);
+
 function boolValue(value: string): boolean {
   return String(value || "").trim().toLowerCase() === "true";
+}
+
+function englishTextErrors(
+  value: unknown,
+  label: string,
+  lexicalPathPatterns: readonly EnglishTextPathPatternV1[] = PLAN_OUTPUT_ENGLISH_PROSE_PATHS,
+): string[] {
+  return inspectEnglishTextTreeV1(value, {
+    lexicalPathPatterns,
+  }).map((issue) =>
+    `PLAN_ENGLISH_TEXT_REQUIRED: ${label}: ${englishTextViolationMessageV1(issue)}`);
+}
+
+function plannerOwnedPrdProseV1(prd: string): string {
+  return prd
+    .replace(PRODUCT_SPEC_BLOCK_RE, "")
+    .replace(PRODUCT_SPEC_V2_BLOCK_RE, "")
+    .replace(PRODUCT_SPEC_REJECTION_BLOCK_RE, "");
 }
 
 function hasSection(prd: string, section: string): boolean {
@@ -206,7 +243,7 @@ export function normalize(parsed: ParsedOutput): void {
   const rejectionBlocks = productSpecRejectionBlocks(prd);
   if (proposalV2Blocks.length === 1 && proposalBlocks.length === 0 && rejectionBlocks.length === 0) {
     try {
-      const candidate = ProductSpecV2Schema.parse(JSON.parse(proposalV2Blocks[0]![1]!));
+      const candidate = ProductSpecV2EnglishWriteSchema.parse(JSON.parse(proposalV2Blocks[0]![1]!));
       parsed.prd = prd.replace(
         proposalV2Blocks[0]![0],
         `\`\`\`product-spec-v2\n${canonicalJsonStringify(candidate)}\n\`\`\``,
@@ -240,6 +277,11 @@ export function normalize(parsed: ParsedOutput): void {
 export function validateOutput(parsed: ParsedOutput): ValidationResult {
   const errors: string[] = [];
   const prd = String(parsed.prd || "");
+  errors.push(...englishTextErrors({
+    projectName: String(parsed.project_name || ""),
+    uiVisionSummary: String(parsed.ui_vision_summary || ""),
+    prd: plannerOwnedPrdProseV1(prd),
+  }, "planner output"));
   const typedProductSpecBlocks = productSpecBlocks(prd);
   const typedProductSpecV2Blocks = productSpecV2Blocks(prd);
   const typedRejectionBlocks = productSpecRejectionBlocks(prd);
@@ -254,7 +296,12 @@ export function validateOutput(parsed: ParsedOutput): ValidationResult {
   }
   if (typedRejectionBlocks.length === 1) {
     try {
-      ProductSpecRejectionV1Schema.parse(JSON.parse(typedRejectionBlocks[0]![1]!));
+      const rejection = ProductSpecRejectionV1Schema.parse(JSON.parse(typedRejectionBlocks[0]![1]!));
+      errors.push(...englishTextErrors(
+        rejection,
+        "typed rejection",
+        PLAN_REJECTION_ENGLISH_PROSE_PATHS,
+      ));
       errors.push("Typed ProductSpec rejection requires upstream specification clarification; Setfarm will not guess product semantics");
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -265,11 +312,16 @@ export function validateOutput(parsed: ParsedOutput): ValidationResult {
   if (typedProductSpecV2Blocks.length === 1) {
     try {
       const candidate = JSON.parse(typedProductSpecV2Blocks[0]![1]!);
-      const result = ProductSpecV2Schema.safeParse(candidate);
+      const result = ProductSpecV2EnglishWriteSchema.safeParse(candidate);
       if (!result.success) {
         errors.push(`Typed PLAN ProductSpec v2 proposal is invalid: ${result.error.issues[0]?.message || "schema mismatch"}`);
-      } else if (canonicalJsonStringify(result.data) !== typedProductSpecV2Blocks[0]![1]!.trim()) {
-        errors.push("Typed PLAN ProductSpec v2 proposal was not canonicalized by Setfarm");
+      } else {
+        if (result.data.delivery.uiLanguage !== CANONICAL_UI_LANGUAGE) {
+          errors.push("Typed PLAN ProductSpec v2 UI language must be exactly English");
+        }
+        if (canonicalJsonStringify(result.data) !== typedProductSpecV2Blocks[0]![1]!.trim()) {
+          errors.push("Typed PLAN ProductSpec v2 proposal was not canonicalized by Setfarm");
+        }
       }
       if ((parsed.status || "").toLowerCase() !== "done") {
         errors.push(`STATUS must be 'done' for a ProductSpec v2 proposal (got: '${parsed.status || ""}')`);
@@ -351,9 +403,9 @@ export function validateOutput(parsed: ParsedOutput): ValidationResult {
     errors.push("UI_VISION_SUMMARY must be present and >=80 chars when DESIGN_REQUIRED=true");
   }
 
-  const uiLanguage = (parsed.ui_language || "").toLowerCase();
-  if (!VALID_UI_LANGUAGES.has(uiLanguage)) {
-    errors.push(`UI_LANGUAGE must be one of ${[...VALID_UI_LANGUAGES].join(", ")} (got: '${parsed.ui_language || ""}')`);
+  const uiLanguage = String(parsed.ui_language || "").trim();
+  if (uiLanguage !== CANONICAL_UI_LANGUAGE) {
+    errors.push(`UI_LANGUAGE must be exactly ${CANONICAL_UI_LANGUAGE} (got: '${parsed.ui_language || ""}')`);
   }
 
   if (prd.length < MIN_PRD_LENGTH) {
@@ -370,7 +422,7 @@ export function validateOutput(parsed: ParsedOutput): ValidationResult {
     } else {
       try {
         const candidate = JSON.parse(typedProductSpecBlocks[0]![1]!);
-        const result = ProductSpecV1Schema.safeParse(candidate);
+        const result = ProductSpecV1EnglishWriteSchema.safeParse(candidate);
         if (!result.success) {
           errors.push(`Typed PLAN ProductSpec is invalid: ${result.error.issues[0]?.message || "schema mismatch"}`);
         } else if (canonicalJsonStringify(result.data) !== typedProductSpecBlocks[0]![1]!.trim()) {
@@ -464,7 +516,7 @@ export async function onComplete(ctx: CompleteContext): Promise<void> {
     context["product_semantics_version"] = "v2";
     context["product_spec_hash"] = hashCanonicalJson(spec);
     context["product_spec_source_task_hash"] = spec.traceability.sourceTaskHash;
-    await recordObservation({
+    if (context["plan_protocol"] !== "v3") await recordObservation({
       runId,
       stepId: ctx.stepId,
       phase: "planning",
@@ -530,7 +582,7 @@ export async function onComplete(ctx: CompleteContext): Promise<void> {
     parsed.prd = rendered.slice(bodyIndex + bodyMarker.length);
     context["product_spec_hash"] = hashCanonicalJson(spec);
     context["product_spec_source_task_hash"] = canonical.sourceTaskHash;
-    await recordObservation({
+    if (context["plan_protocol"] !== "v3") await recordObservation({
       runId,
       stepId: ctx.stepId,
       phase: "planning",
@@ -589,7 +641,7 @@ export async function onComplete(ctx: CompleteContext): Promise<void> {
   context["prd"] = parsed.prd || "";
   context["db_required"] = (parsed.db_required || "").toLowerCase();
   context["design_required"] = (parsed.design_required || "").toLowerCase();
-  context["ui_language"] = parsed.ui_language || "English";
+  context["ui_language"] = CANONICAL_UI_LANGUAGE;
   context["contract_schema_version"] = parsed.contract_schema_version || PLAN_CONTRACT_SCHEMA_VERSION;
   context["ui_vision_summary"] = parsed.ui_vision_summary || "";
 }

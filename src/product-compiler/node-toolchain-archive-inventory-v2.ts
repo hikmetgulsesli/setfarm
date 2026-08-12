@@ -14,6 +14,7 @@ import {
   rmdirSync,
   unlinkSync,
   writeSync,
+  type BigIntStats,
   type Stats,
 } from "node:fs";
 import path from "node:path";
@@ -26,6 +27,9 @@ import {
   revalidateVerifiedNodeToolchainDistributionArchiveV2,
   type VerifiedNodeToolchainDistributionArchiveV2,
 } from "./node-toolchain-distribution-authority-v2.js";
+import {
+  matchesExactStableFilesystemObjectV2,
+} from "./exact-stable-filesystem-identity-v2.js";
 import {
   NODE_TOOLCHAIN_ARCHIVE_INVENTORY_AUTHORITY_REF_V2,
   NODE_TOOLCHAIN_ARCHIVE_INVENTORY_MAX_LISTING_BYTES_V2,
@@ -252,7 +256,43 @@ function sha256(bytes: Uint8Array | string): string {
   return createHash("sha256").update(bytes).digest("hex");
 }
 
-function cleanupPrivateArchive(privateRoot: string, privateArchivePath: string): void {
+function assertExactObjectStableIdentityV2(input: Readonly<{
+  absolutePath: string;
+  expected: FileFingerprintV2;
+  objectKind: "ordinary_file" | "directory";
+}>): void {
+  let stat: BigIntStats;
+  try {
+    stat = lstatSync(input.absolutePath, { bigint: true });
+  } catch (error) {
+    return fail(
+      "NODE_TOOLCHAIN_ARCHIVE_V2_CLEANUP_FAILED",
+      "Private archive cleanup object identity could not be captured exactly",
+      error,
+    );
+  }
+  if (
+    !matchesExactStableFilesystemObjectV2({
+      stat,
+      expected: input.expected,
+      objectKind: input.objectKind,
+    })
+  ) {
+    return fail(
+      "NODE_TOOLCHAIN_ARCHIVE_V2_CLEANUP_FAILED",
+      "Private archive cleanup object kind or stable identity changed",
+    );
+  }
+}
+
+function cleanupPrivateArchive(
+  privateRoot: string,
+  privateArchivePath: string,
+  expected?: Readonly<{
+    root: FileFingerprintV2;
+    archive: FileFingerprintV2;
+  }>,
+): void {
   try {
     const names = readdirSync(privateRoot);
     if (names.length > 1 || (names.length === 1 && names[0] !== path.basename(privateArchivePath))) {
@@ -261,7 +301,23 @@ function cleanupPrivateArchive(privateRoot: string, privateArchivePath: string):
         "Private archive inventory root contains an unowned entry",
       );
     }
-    if (names.length === 1) unlinkSync(privateArchivePath);
+    if (names.length === 1) {
+      if (expected) {
+        assertExactObjectStableIdentityV2({
+          absolutePath: privateArchivePath,
+          expected: expected.archive,
+          objectKind: "ordinary_file",
+        });
+      }
+      unlinkSync(privateArchivePath);
+    }
+    if (expected) {
+      assertExactObjectStableIdentityV2({
+        absolutePath: privateRoot,
+        expected: expected.root,
+        objectKind: "directory",
+      });
+    }
     rmdirSync(privateRoot);
   } catch (error) {
     if (error instanceof NodeToolchainArchiveInventoryErrorV2) throw error;
@@ -279,6 +335,7 @@ function createPrivateArchive(
 ): Readonly<{
   privateRoot: string;
   privateArchivePath: string;
+  privateRootFingerprint: FileFingerprintV2;
   privateArchiveFingerprint: FileFingerprintV2;
 }> {
   if (bytes.byteLength !== expected.byteLength || sha256(bytes) !== expected.sha256) {
@@ -333,10 +390,12 @@ function createPrivateArchive(
         "Private archive copy lost its exact filesystem identity",
       );
     }
+    const rootStat = lstatSync(privateRoot);
     completed = true;
     return Object.freeze({
       privateRoot,
       privateArchivePath,
+      privateRootFingerprint: fingerprint(rootStat),
       privateArchiveFingerprint: fingerprint(archiveStat),
     });
   } catch (error) {
@@ -1039,6 +1098,7 @@ async function inventory(input: Readonly<{
   let staged: Readonly<{
     privateRoot: string;
     privateArchivePath: string;
+    privateRootFingerprint: FileFingerprintV2;
     privateArchiveFingerprint: FileFingerprintV2;
   }> | undefined;
   try {
@@ -1082,7 +1142,16 @@ async function inventory(input: Readonly<{
     return new InventoriedNodeToolchainDistributionV2(handleConstructorCapabilityV2, state);
   } finally {
     bytes.fill(0);
-    if (staged) cleanupPrivateArchive(staged.privateRoot, staged.privateArchivePath);
+    if (staged) {
+      cleanupPrivateArchive(
+        staged.privateRoot,
+        staged.privateArchivePath,
+        {
+          root: staged.privateRootFingerprint,
+          archive: staged.privateArchiveFingerprint,
+        },
+      );
+    }
   }
 }
 

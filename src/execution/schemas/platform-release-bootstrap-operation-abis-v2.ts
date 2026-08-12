@@ -64,6 +64,16 @@ const OperationAbiRefV2Schema = z.enum([
   "ABI_PLATFORM_RELEASE_VERIFY_SYSTEM_ANCHORS_V2",
 ]);
 
+type OperationAbiRefV2 = z.infer<typeof OperationAbiRefV2Schema>;
+
+const TARGET_ROOT_BOUND_OPERATION_ABI_REFS_V2:
+  ReadonlySet<OperationAbiRefV2> = new Set([
+    "ABI_PLATFORM_RELEASE_HOST_OPERATION_V2",
+    "ABI_PLATFORM_RELEASE_METADATA_PROBE_V2",
+    "ABI_PLATFORM_RELEASE_MODULE_EXPORT_PROBE_V2",
+    "ABI_PLATFORM_RELEASE_NETWORK_NEGATIVE_PROBE_V2",
+  ]);
+
 const WireSchemaRefV2Schema = z.string()
   .min(1)
   .max(160)
@@ -120,9 +130,10 @@ const PlatformReleaseBootstrapOperationAbiIdentityV2Schema = z.object({
   environmentPolicy: z.literal(
     "exact_empty_environment_v2",
   ),
-  workingDirectoryPolicy: z.literal(
+  workingDirectoryPolicy: z.enum([
     "installed_owner_package_root_v2",
-  ),
+    "authenticated_target_root_v2",
+  ]),
   processEvidencePolicy: z.literal(
     "outer_host_owner_binds_exit_termination_stdout_stderr_and_occurrence_v2",
   ),
@@ -153,6 +164,12 @@ export const PlatformReleaseBootstrapOperationAbiV2Schema =
   PlatformReleaseBootstrapOperationAbiIdentityV2Schema.extend({
     operationHash: Sha256Schema,
   }).strict().superRefine((value, context) => {
+    const workingDirectoryBindingIsValid =
+      TARGET_ROOT_BOUND_OPERATION_ABI_REFS_V2.has(value.abiRef)
+        ? value.workingDirectoryPolicy
+            === "authenticated_target_root_v2"
+        : value.workingDirectoryPolicy
+            === "installed_owner_package_root_v2";
     const implementationBindingIsValid =
       value.implementationKind === "signed_native_executable"
         ? value.processLaunchPolicy
@@ -176,6 +193,7 @@ export const PlatformReleaseBootstrapOperationAbiV2Schema =
           && value.moduleExport !== null;
     if (
       value.directArgvTemplate[0] !== value.command
+      || !workingDirectoryBindingIsValid
       || !implementationBindingIsValid
       || value.operationHash
         !== hashPlatformReleaseBootstrapOperationAbiV2(value)
@@ -258,7 +276,7 @@ const operationIdentitiesV2 = [
     environmentPolicy:
       "exact_empty_environment_v2",
     workingDirectoryPolicy:
-      "installed_owner_package_root_v2",
+      "authenticated_target_root_v2",
     timeoutMs: 120_000,
     maxStdoutBytes: 1024 * 1024,
     maxStderrBytes: 256 * 1024,
@@ -327,7 +345,7 @@ const operationIdentitiesV2 = [
     environmentPolicy:
       "exact_empty_environment_v2",
     workingDirectoryPolicy:
-      "installed_owner_package_root_v2",
+      "authenticated_target_root_v2",
     timeoutMs: 30_000,
     maxStdoutBytes: 1024 * 1024,
     maxStderrBytes: 256 * 1024,
@@ -362,7 +380,7 @@ const operationIdentitiesV2 = [
     environmentPolicy:
       "exact_empty_environment_v2",
     workingDirectoryPolicy:
-      "installed_owner_package_root_v2",
+      "authenticated_target_root_v2",
     timeoutMs: 30_000,
     maxStdoutBytes: 1024 * 1024,
     maxStderrBytes: 256 * 1024,
@@ -397,7 +415,7 @@ const operationIdentitiesV2 = [
     environmentPolicy:
       "exact_empty_environment_v2",
     workingDirectoryPolicy:
-      "installed_owner_package_root_v2",
+      "authenticated_target_root_v2",
     timeoutMs: 30_000,
     maxStdoutBytes: 1024 * 1024,
     maxStderrBytes: 256 * 1024,

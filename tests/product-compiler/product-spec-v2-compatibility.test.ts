@@ -70,7 +70,30 @@ describe("ProductSpec v2 compatibility renderer", () => {
     assert.ok(first.includes(
       `\`\`\`product-spec-v2\n${canonicalJsonStringify(spec)}\n\`\`\``,
     ));
+    const prose = first.slice(0, first.indexOf("```product-spec-v2"));
+    assert.equal(prose.includes(spec.requirements[0]!.normalizedClause), false);
+    assert.match(prose, new RegExp(`clause_hash=${spec.requirements[0]!.clauseHash}`));
     assert.doesNotMatch(first, /```product-spec-v1/);
+  });
+
+  it("keeps UI language canonical and rejects non-English compatibility overrides", () => {
+    const spec = containedGameSpec();
+
+    assert.match(
+      renderProductSpecV2Compatibility(spec, { uiLanguage: "English" }),
+      /^UI_LANGUAGE: English$/m,
+    );
+    assert.throws(
+      () => renderProductSpecV2Compatibility(spec, { uiLanguage: "Spanish" }),
+      /PRODUCT_SPEC_V2_COMPATIBILITY_UI_LANGUAGE_MUST_BE_ENGLISH/,
+    );
+
+    const markerBypass = structuredClone(spec);
+    markerBypass.product.name = `English marker ${String.fromCodePoint(0x03a9)}`;
+    assert.throws(
+      () => renderProductSpecV2Compatibility(markerBypass),
+      /PRODUCT_SPEC_V2_COMPATIBILITY_ENGLISH_TEXT_REQUIRED/,
+    );
   });
 
   it("renders one Start control on Play Page and zero controls on contained effect surfaces", () => {

@@ -2,7 +2,7 @@ import { canonicalJsonStringify } from "./canonical-json.js";
 import { produceDesignGenerationTargetsV2 } from "./producers/design-targets-v2.js";
 import type { DesignGenerationTargetsV2 } from "./schemas/design-generation-targets-v2.js";
 import {
-  ProductSpecV2Schema,
+  ProductSpecV2EnglishWriteSchema,
   type ProductSpecV2,
 } from "./schemas/product-spec-v2.js";
 
@@ -28,7 +28,7 @@ export function extractCanonicalProductSpecV2FromPrd(prd: string): ProductSpecV2
   } catch {
     throw new Error("DESIGN_V2_PRODUCT_SPEC_PROJECTION_INVALID: product-spec-v2 block is not JSON");
   }
-  const parsed = ProductSpecV2Schema.safeParse(decoded);
+  const parsed = ProductSpecV2EnglishWriteSchema.safeParse(decoded);
   if (!parsed.success) {
     throw new Error(
       `DESIGN_V2_PRODUCT_SPEC_PROJECTION_INVALID: ${parsed.error.issues[0]?.message || "schema mismatch"}`,
@@ -67,7 +67,6 @@ export function buildV3BatchStitchPromptV2(input: Readonly<{
   contract: V3DesignContractV2;
   targetRefs: readonly string[];
   deviceType: string;
-  uiLanguage: string;
   stageId: string;
 }>): string {
   const { productSpec, generationTargets } = input.contract;
@@ -134,7 +133,7 @@ export function buildV3BatchStitchPromptV2(input: Readonly<{
     `stage_id: ${input.stageId}`,
     `Generate exactly ${targets.length} screens and no others in this response.`,
     `Target device type: ${input.deviceType}.`,
-    `All visible user-facing text must be in ${input.uiLanguage}.`,
+    "All visible user-facing text must be in English.",
     "",
     "## EXACT_SCREEN_TARGETS",
     targetSpecs,

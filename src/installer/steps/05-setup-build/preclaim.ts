@@ -28,6 +28,12 @@ import {
   OperationalFailureCauseV1Schema,
   type OperationalFailureCauseV1,
 } from "../../../execution/schemas/operational-failure-cause-v1.js";
+import {
+  englishTextViolationMessageV1,
+  inspectEnglishTextV1,
+} from "../../../product-compiler/english-text-contract-v1.js";
+import { loadCompilerEnglishAdmissionLedgerAuthorityV1 } from "../../../execution/compiler-english-admission-ledger-v1.js";
+import { loadCompilerStoryEnglishAdmissionLedgerAuthorityV1 } from "../../../execution/compiler-story-english-admission-ledger-v1.js";
 
 const DESIGN_IMPORT_REPORT_REL = ".setfarm/setup/DESIGN_IMPORT_VALIDATE.json";
 const STITCH_CONVERSION_RESULT_REL = ".setfarm/setup/STITCH_TO_JSX_RESULT.json";
@@ -59,6 +65,41 @@ class SetupBuildPreclaimError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "SetupBuildPreclaimError";
+  }
+}
+
+export class SetupBuildEnglishTextRequiredError extends Error {
+  readonly code = "SETUP_BUILD_ENGLISH_TEXT_REQUIRED";
+  readonly field: string;
+
+  constructor(field: string, detail: string) {
+    super(`SETUP_BUILD_ENGLISH_TEXT_REQUIRED: ${field}: ${detail}`);
+    this.name = "SetupBuildEnglishTextRequiredError";
+    this.field = field;
+  }
+}
+
+function requireEnglishSetupBuildContext(context: Readonly<Record<string, string>>): void {
+  const fields = [
+    "project_display_name",
+    "PROJECT_DISPLAY_NAME",
+    "project_name",
+    "PROJECT_NAME",
+    "app_title",
+  ] as const;
+  for (const field of fields) {
+    const value = context[field];
+    if (value === undefined) continue;
+    if (/[\t\r\n]/.test(value)) {
+      throw new SetupBuildEnglishTextRequiredError(field, "ENGLISH_TEXT_SINGLE_LINE_REQUIRED");
+    }
+    const issue = inspectEnglishTextV1(value);
+    if (issue) {
+      throw new SetupBuildEnglishTextRequiredError(
+        field,
+        englishTextViolationMessageV1(issue),
+      );
+    }
   }
 }
 
@@ -519,9 +560,8 @@ function rerunSetupRepoScaffold(ctx: ClaimContext, repo: string): boolean {
   const screenMap = ctx.context["screen_map"] || ctx.context["SCREEN_MAP"] || "";
   const techStack = resolveSetupTechStack(ctx.context);
   const displayName = ctx.context["project_display_name"] || ctx.context["PROJECT_DISPLAY_NAME"] || ctx.context["project_name"] || "";
-  const uiLanguage = ctx.context["ui_language"] || ctx.context["UI_LANGUAGE"] || "English";
   try {
-    execFileSync("bash", [script, repo, String(branch), String(stitchProjectId), String(screenMap), String(techStack), String(displayName), String(uiLanguage)], {
+    execFileSync("bash", [script, repo, String(branch), String(stitchProjectId), String(screenMap), String(techStack), String(displayName), "English"], {
       encoding: "utf-8",
       timeout: 180000,
       stdio: "pipe",
@@ -764,9 +804,12 @@ async function compileSetupBuildProductPacket(
 // 4. Tailwind install/config (when Stitch uses utility classes)
 // 5. stitch-to-jsx -> src/screens/<PredictedScreenName>.tsx + commit
 export async function preClaim(ctx: ClaimContext): Promise<void> {
-  if (process.env.SETFARM_DISABLE_AUTO_SETUP_BUILD === "1") return;
-
+  requireEnglishSetupBuildContext(ctx.context);
   const protocol = await resolveSetupBuildProtocol(ctx);
+  if (protocol === "v3") {
+    await loadCompilerEnglishAdmissionLedgerAuthorityV1(getSql(), { runId: ctx.runId });
+    await loadCompilerStoryEnglishAdmissionLedgerAuthorityV1(getSql(), { runId: ctx.runId });
+  }
   let executedConverterSource: SetupConverterSourceV1 | undefined;
 
   if (protocol === "v3" && ctx.context["product_semantics_version"] !== "v2") {
@@ -784,6 +827,7 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
       },
     );
   }
+  if (process.env.SETFARM_DISABLE_AUTO_SETUP_BUILD === "1") return;
 
   const repo = ctx.context["repo"] || ctx.context["REPO"] || "";
   if (!repo) {

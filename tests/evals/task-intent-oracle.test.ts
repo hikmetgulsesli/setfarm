@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import {
+  TaskIntentOracleV1Schema,
   evaluateTaskIntentOracleTaskBindingV1,
   evaluateTaskIntentOracleV1,
   type TaskIntentOracleV1,
@@ -57,6 +58,18 @@ function mutateAssertion(
 }
 
 describe("TaskIntentOracleV1", () => {
+  it("accepts English compositional metadata and rejects legacy multilingual metadata", () => {
+    const compositional = clone(fixture().oracle);
+    compositional.cohort = "holdout";
+    compositional.variant = "compositional";
+    assert.equal(TaskIntentOracleV1Schema.safeParse(compositional).success, true);
+
+    const multilingual = { ...compositional, variant: "multilingual" };
+    assert.equal(TaskIntentOracleV1Schema.safeParse(multilingual).success, false);
+    const nonEnglish = { ...compositional, locale: "tr" };
+    assert.equal(TaskIntentOracleV1Schema.safeParse(nonEnglish).success, false);
+  });
+
   it("accepts a source-bound contract only after canonical AcceptedCandidate evidence passes", () => {
     const input = fixture();
     assert.deepEqual(evaluateTaskIntentOracleTaskBindingV1(TASK, input.oracle).mismatchCodes, []);

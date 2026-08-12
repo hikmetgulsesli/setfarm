@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { formatQualityRetryReport, runQualityChecks } from "../dist/installer/quality-gates.js";
+import { formatQualityRetryReport, runQualityChecks } from "../src/installer/quality-gates.js";
 
 describe("quality gates", () => {
   it("omits warning match details from retry reports", () => {

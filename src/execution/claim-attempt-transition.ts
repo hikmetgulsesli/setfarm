@@ -666,6 +666,7 @@ export async function completeStoryClaimAndBoundAttempt(
     stepStatus: "running" | "pending" | "waiting";
     stepOutput: string;
     runContextJson?: string;
+    expectedRunContextJson?: string;
     completionPlan?: RuntimeCompletionPlanDescriptorV1;
     diagnostic?: string;
     now?: Date;
@@ -931,13 +932,25 @@ export async function completeStoryClaimAndBoundAttempt(
     if (closed.length !== 1) throw new Error("STORY_COMPLETION_CLAIM_CAS_LOST");
 
     if (input.runContextJson !== undefined) {
+      if (input.runContextJson.length > 16_000_000
+        || input.expectedRunContextJson === undefined
+        || input.expectedRunContextJson.length > 16_000_000) {
+        throw new Error("STORY_COMPLETION_RUN_CONTEXT_INVALID");
+      }
       let parsedContext: unknown;
+      let parsedExpectedContext: unknown;
       try {
         parsedContext = JSON.parse(input.runContextJson);
+        parsedExpectedContext = JSON.parse(input.expectedRunContextJson);
       } catch {
         throw new Error("STORY_COMPLETION_RUN_CONTEXT_INVALID");
       }
       if (!parsedContext || typeof parsedContext !== "object" || Array.isArray(parsedContext)) {
+        throw new Error("STORY_COMPLETION_RUN_CONTEXT_INVALID");
+      }
+      if (!parsedExpectedContext
+        || typeof parsedExpectedContext !== "object"
+        || Array.isArray(parsedExpectedContext)) {
         throw new Error("STORY_COMPLETION_RUN_CONTEXT_INVALID");
       }
       const runUpdated = await transaction.unsafe<Array<{ id: string }>>(
@@ -945,8 +958,9 @@ export async function completeStoryClaimAndBoundAttempt(
             SET context = $2, updated_at = $3
           WHERE id = $1
             AND status IN ('running', 'resuming')
+            AND context = $4
           RETURNING id`,
-        [envelope.runId, input.runContextJson, now],
+        [envelope.runId, input.runContextJson, now, input.expectedRunContextJson],
       );
       if (runUpdated.length !== 1) throw new Error("STORY_COMPLETION_RUN_CONTEXT_CAS_LOST");
     }
@@ -1017,10 +1031,15 @@ export type CompleteSingleStepClaimAndStateInput = Readonly<{
   stepStatus: "done" | "waiting" | "pending";
   stepOutput: string;
   clearCurrentStory?: boolean;
+  runContextJson?: string;
+  expectedRunContextJson?: string;
+  requireRuntimeCompletionOwner?: boolean;
   completionPlan?: RuntimeCompletionPlanDescriptorV1;
   diagnostic?: string;
   now?: Date;
 }>;
+
+const SINGLE_STEP_COMPLETION_MAX_RUN_CONTEXT_CODE_UNITS = 16_000_000;
 
 /**
  * Close one exact non-story claim and publish its step state inside a caller's
@@ -1038,6 +1057,29 @@ export async function completeSingleStepClaimAndStateInTransaction(
   const callerTime = input.now ? new Date(input.now) : new Date();
   if (!Number.isFinite(callerTime.getTime())) throw new Error("SINGLE_STEP_COMPLETION_TIME_INVALID");
 
+  const expectedRunContextJson = input.runContextJson !== undefined
+    ? input.expectedRunContextJson
+    : undefined;
+  if (input.runContextJson !== undefined) {
+    if (input.runContextJson.length > SINGLE_STEP_COMPLETION_MAX_RUN_CONTEXT_CODE_UNITS
+      || expectedRunContextJson === undefined
+      || expectedRunContextJson.length > SINGLE_STEP_COMPLETION_MAX_RUN_CONTEXT_CODE_UNITS) {
+      throw new Error("SINGLE_STEP_COMPLETION_RUN_CONTEXT_LIMIT_EXCEEDED");
+    }
+    let parsedContext: unknown;
+    try {
+      parsedContext = JSON.parse(input.runContextJson);
+    } catch {
+      throw new Error("SINGLE_STEP_COMPLETION_RUN_CONTEXT_INVALID");
+    }
+    if (!parsedContext || typeof parsedContext !== "object" || Array.isArray(parsedContext)) {
+      throw new Error("SINGLE_STEP_COMPLETION_RUN_CONTEXT_INVALID");
+    }
+    if (Object.values(parsedContext).some((value) => typeof value !== "string")) {
+      throw new Error("SINGLE_STEP_COMPLETION_RUN_CONTEXT_INVALID");
+    }
+  }
+
   await closeExactSingleStepClaimInTransaction(transaction, {
     envelope,
     outcome: "completed",
@@ -1049,6 +1091,19 @@ export async function completeSingleStepClaimAndStateInTransaction(
     transaction,
     "SINGLE_STEP_COMPLETION_DATABASE_TIME_UNAVAILABLE",
   );
+
+  if (input.runContextJson !== undefined) {
+    const runUpdated = await transaction.unsafe<Array<{ id: string }>>(
+      `UPDATE runs
+          SET context = $2, updated_at = $3
+        WHERE id = $1
+          AND status IN ('running', 'resuming')
+          AND context = $4
+        RETURNING id`,
+      [envelope.runId, input.runContextJson, now, expectedRunContextJson!],
+    );
+    if (runUpdated.length !== 1) throw new Error("SINGLE_STEP_COMPLETION_RUN_CONTEXT_CAS_LOST");
+  }
 
   const updated = await transaction.unsafe<Array<{ id: string }>>(
     `UPDATE steps
@@ -1062,7 +1117,7 @@ export async function completeSingleStepClaimAndStateInTransaction(
     [envelope.stepId, input.stepStatus, input.stepOutput, input.clearCurrentStory ?? false, now],
   );
   if (updated.length !== 1) throw new Error("SINGLE_STEP_COMPLETION_STEP_CAS_LOST");
-  await markRuntimeCompletionOwnerCommittedInTransaction(transaction, {
+  const runtimeCompletionOwnerCommitted = await markRuntimeCompletionOwnerCommittedInTransaction(transaction, {
     claimId: envelope.claimId,
     claimOutcome: "completed",
     plan: input.completionPlan ?? createSingleEffectCompletionPlanDescriptorV1({
@@ -1071,21 +1126,16 @@ export async function completeSingleStepClaimAndStateInTransaction(
     }),
     now,
   });
+  if (input.requireRuntimeCompletionOwner === true && !runtimeCompletionOwnerCommitted) {
+    throw new Error("SINGLE_STEP_COMPLETION_RUNTIME_OWNER_REQUIRED");
+  }
   return { status: "completed" as const, claimId: envelope.claimId, stepStatus: input.stepStatus };
 }
 
 /** Close one exact non-story claim and publish its step state atomically. */
 export async function completeSingleStepClaimAndState(
   sql: postgres.Sql,
-  input: Readonly<{
-    envelope: ClaimEnvelopeV1;
-    stepStatus: "done" | "waiting" | "pending";
-    stepOutput: string;
-    clearCurrentStory?: boolean;
-    completionPlan?: RuntimeCompletionPlanDescriptorV1;
-    diagnostic?: string;
-    now?: Date;
-  }>,
+  input: CompleteSingleStepClaimAndStateInput,
 ): Promise<CompletedSingleStepClaimTransitionResult> {
   return sql.begin(async (transaction) => completeSingleStepClaimAndStateInTransaction(
     transaction,

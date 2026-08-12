@@ -785,7 +785,7 @@ function harness(loaded: LoadedSuiteFixture, options: HarnessOptions = {}) {
 }
 
 describe("product convergence suite contract", () => {
-  it("loads independent baseline, holdout, multilingual, and negative oracle cases", async () => {
+  it("loads independent baseline, holdout, compositional, and negative oracle cases", async () => {
     const loaded = await suite();
     assert.equal(loaded.suite.cases.length, 8);
     assert.deepEqual(Object.fromEntries(["utility", "operations", "game", "negative"].map((productClass) => [
@@ -793,7 +793,11 @@ describe("product convergence suite contract", () => {
       loaded.suite.cases.filter((item) => item.productClass === productClass).length,
     ])), { utility: 2, operations: 2, game: 2, negative: 2 });
     assert.ok(loaded.suite.cases.some((item) => item.oracle.variant === "paraphrase"));
-    assert.ok(loaded.suite.cases.some((item) => item.oracle.variant === "multilingual"));
+    assert.deepEqual(
+      loaded.suite.cases.filter((item) => item.oracle.variant === "compositional").map((item) => item.caseId).sort(),
+      ["game-restart-compositional", "utility-preference-compositional"],
+    );
+    assert.deepEqual([...new Set(loaded.suite.cases.map((item) => item.oracle.locale))], ["en"]);
     assert.deepEqual(
       loaded.suite.cases.filter((item) => item.productClass === "negative").map((item) => item.oracle.variant).sort(),
       ["ambiguous", "unsupported"],
@@ -801,8 +805,24 @@ describe("product convergence suite contract", () => {
     for (const item of loaded.suite.cases) {
       assert.deepEqual(evaluateTaskIntentOracleTaskBindingV1(item.task, item.oracle).mismatchCodes, [], item.caseId);
       assert.match(taskIntentOracleHashV1(item.task, item.oracle), /^[a-f0-9]{64}$/);
+      for (const clause of item.oracle.clauses) {
+        assert.equal(item.task.slice(clause.source.startOffset, clause.source.endOffset), clause.source.normalizedClause);
+      }
     }
+    const preference = loaded.suite.cases.find((item) => item.caseId === "utility-preference-compositional")!;
+    assert.equal(preference.oracle.oracleId, preference.caseId);
+    assert.equal(preference.oracle.clauses[0]!.source.endOffset, preference.task.length);
+    assert.deepEqual(preference.oracle.expectations.map((item) => item.intentId).sort(), [
+      "preference-state", "preference-storage", "preferences-route", "preferences-surface", "ready-preference-action",
+    ]);
+    const game = loaded.suite.cases.find((item) => item.caseId === "game-restart-compositional")!;
+    assert.equal(game.oracle.oracleId, game.caseId);
+    assert.equal(game.oracle.clauses[0]!.source.endOffset, game.task.length);
+    assert.deepEqual(game.oracle.expectations.map((item) => item.intentId).sort(), [
+      "arena-canvas", "arena-game-state", "arena-route", "arena-score-storage", "restart-round-action",
+    ]);
     const serialized = JSON.stringify(loaded.suite);
+    assert.equal(serialized.includes("multilingual"), false);
     assert.equal(serialized.includes("requiredPredicateRefs"), false);
     assert.equal(serialized.includes("EVID_REFRESH_STATUS_CONTROL"), false);
   });

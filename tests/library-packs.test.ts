@@ -3,10 +3,10 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { resolveStackContract } from "../dist/installer/stack-contract/reconcile.js";
-import { applyLibraryPackContext } from "../dist/installer/library-packs/context.js";
-import { readLibraryPackSelection } from "../dist/installer/library-packs/ledger.js";
-import { selectLibraryPacks } from "../dist/installer/library-packs/select.js";
+import { resolveStackContract } from "../src/installer/stack-contract/reconcile.js";
+import { applyLibraryPackContext } from "../src/installer/library-packs/context.js";
+import { readLibraryPackSelection } from "../src/installer/library-packs/ledger.js";
+import { selectLibraryPacks } from "../src/installer/library-packs/select.js";
 
 function tmpDir(name: string): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), `setfarm-${name}-`));

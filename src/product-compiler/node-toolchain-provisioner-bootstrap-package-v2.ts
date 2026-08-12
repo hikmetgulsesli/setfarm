@@ -8,7 +8,7 @@ import {
   readSync,
   readdirSync,
   realpathSync,
-  type Stats,
+  type BigIntStats,
 } from "node:fs";
 import path from "node:path";
 import { isProxy } from "node:util/types";
@@ -56,15 +56,16 @@ export class NodeToolchainProvisionerBootstrapPackageErrorV2 extends Error {
 type ExpectedOwnerV2 = Readonly<{ uid: number; gid: number }>;
 
 type FingerprintV2 = Readonly<{
-  device: number;
-  inode: number;
-  mode: number;
-  ownerUid: number;
-  ownerGid: number;
-  linkCount: number;
-  byteLength: number;
-  modifiedMs: number;
-  changedMs: number;
+  device: bigint;
+  inode: bigint;
+  objectKind: "ordinary_file" | "directory";
+  mode: bigint;
+  ownerUid: bigint;
+  ownerGid: bigint;
+  linkCount: bigint;
+  byteLength: bigint;
+  modifiedNs: bigint;
+  changedNs: bigint;
 }>;
 
 type DirectoryCaptureV2 = Readonly<{
@@ -119,34 +120,47 @@ function fail(
   );
 }
 
-function modeBits(stat: Stats): number {
-  return stat.mode & 0o7777;
+function modeBits(stat: BigIntStats): bigint {
+  return stat.mode & 0o7777n;
 }
 
-function fingerprint(stat: Stats): FingerprintV2 {
+function fingerprint(stat: BigIntStats): FingerprintV2 {
+  const objectKind = stat.isFile()
+    ? "ordinary_file" as const
+    : stat.isDirectory()
+      ? "directory" as const
+      : undefined;
+  if (objectKind === undefined || stat.isSymbolicLink()) {
+    throw new NodeToolchainProvisionerBootstrapPackageErrorV2(
+      "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_V2_FILE_INVALID",
+      "Bootstrap physical identity requires one ordinary file or directory",
+    );
+  }
   return Object.freeze({
     device: stat.dev,
     inode: stat.ino,
+    objectKind,
     mode: stat.mode,
     ownerUid: stat.uid,
     ownerGid: stat.gid,
     linkCount: stat.nlink,
     byteLength: stat.size,
-    modifiedMs: stat.mtimeMs,
-    changedMs: stat.ctimeMs,
+    modifiedNs: stat.mtimeNs,
+    changedNs: stat.ctimeNs,
   });
 }
 
 function sameFingerprint(left: FingerprintV2, right: FingerprintV2): boolean {
   return left.device === right.device
     && left.inode === right.inode
+    && left.objectKind === right.objectKind
     && left.mode === right.mode
     && left.ownerUid === right.ownerUid
     && left.ownerGid === right.ownerGid
     && left.linkCount === right.linkCount
     && left.byteLength === right.byteLength
-    && left.modifiedMs === right.modifiedMs
-    && left.changedMs === right.changedMs;
+    && left.modifiedNs === right.modifiedNs
+    && left.changedNs === right.changedNs;
 }
 
 function deepFreezeJson<T>(value: T): T {
@@ -235,13 +249,15 @@ function captureDirectory(
 ): DirectoryCaptureV2 {
   const absolutePath = locator === "." ? root : path.join(root, locator);
   try {
-    const before = lstatSync(absolutePath);
+    const before = lstatSync(absolutePath, { bigint: true });
+    const expectedUid = BigInt(expectedOwner.uid);
+    const expectedGid = BigInt(expectedOwner.gid);
     if (
       before.isSymbolicLink()
       || !before.isDirectory()
-      || before.uid !== expectedOwner.uid
-      || before.gid !== expectedOwner.gid
-      || modeBits(before) !== 0o555
+      || before.uid !== expectedUid
+      || before.gid !== expectedGid
+      || modeBits(before) !== 0o555n
       || realpathSync(absolutePath) !== absolutePath
     ) {
       return fail(
@@ -259,7 +275,7 @@ function captureDirectory(
         `Bootstrap directory ${locator} is not every-and-only`,
       );
     }
-    const after = lstatSync(absolutePath);
+    const after = lstatSync(absolutePath, { bigint: true });
     if (!sameFingerprint(fingerprint(before), fingerprint(after))) {
       return fail(
         "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_V2_LAYOUT_INVALID",
@@ -301,23 +317,32 @@ function readExactFile(input: Readonly<{
       absolutePath,
       constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
     );
-    const before = fstatSync(descriptor);
+    const before = fstatSync(descriptor, { bigint: true });
+    const expectedUid = BigInt(input.expectedOwner.uid);
+    const expectedGid = BigInt(input.expectedOwner.gid);
     if (
       !before.isFile()
-      || before.uid !== input.expectedOwner.uid
-      || before.gid !== input.expectedOwner.gid
-      || before.nlink !== 1
-      || modeBits(before) !== input.expectedMode
-      || before.size < 1
-      || before.size > input.maxLength
-      || (input.expectedLength !== undefined && before.size !== input.expectedLength)
+      || before.uid !== expectedUid
+      || before.gid !== expectedGid
+      || before.nlink !== 1n
+      || modeBits(before) !== BigInt(input.expectedMode)
+      || before.size < 1n
+      || before.size > BigInt(input.maxLength)
+      || (input.expectedLength !== undefined && before.size !== BigInt(input.expectedLength))
     ) {
       return fail(
         "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_V2_FILE_INVALID",
         `Bootstrap file ${input.locator} does not match its exact metadata`,
       );
     }
-    bytes = Buffer.allocUnsafeSlow(before.size);
+    const byteLength = Number(before.size);
+    if (!Number.isSafeInteger(byteLength)) {
+      return fail(
+        "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_V2_FILE_INVALID",
+        `Bootstrap file ${input.locator} length is not safely representable`,
+      );
+    }
+    bytes = Buffer.allocUnsafeSlow(byteLength);
     let offset = 0;
     while (offset < bytes.byteLength) {
       const count = readSync(descriptor, bytes, offset, bytes.byteLength - offset, null);
@@ -336,8 +361,8 @@ function readExactFile(input: Readonly<{
         `Bootstrap file ${input.locator} exceeded its inspected length`,
       );
     }
-    const after = fstatSync(descriptor);
-    const pathAfter = lstatSync(absolutePath);
+    const after = fstatSync(descriptor, { bigint: true });
+    const pathAfter = lstatSync(absolutePath, { bigint: true });
     if (
       !sameFingerprint(fingerprint(before), fingerprint(after))
       || !sameFingerprint(fingerprint(after), fingerprint(pathAfter))
@@ -744,13 +769,15 @@ function assertPrivateProcessDirectoryV2(
   expectedOwner: ExpectedOwnerV2,
 ): void {
   try {
-    const stat = lstatSync(absolutePath);
+    const stat = lstatSync(absolutePath, { bigint: true });
+    const expectedUid = BigInt(expectedOwner.uid);
+    const expectedGid = BigInt(expectedOwner.gid);
     if (
       stat.isSymbolicLink()
       || !stat.isDirectory()
-      || stat.uid !== expectedOwner.uid
-      || stat.gid !== expectedOwner.gid
-      || modeBits(stat) !== 0o700
+      || stat.uid !== expectedUid
+      || stat.gid !== expectedGid
+      || modeBits(stat) !== 0o700n
       || realpathSync(absolutePath) !== absolutePath
     ) {
       return fail(

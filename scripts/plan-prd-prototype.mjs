@@ -1,16 +1,20 @@
 #!/usr/bin/env node
 
+import { inspectEnglishScriptTextV1 } from "./english-text-value-check-v1.mjs";
+
 const args = parseArgs(process.argv.slice(2));
 
 const defaultTask =
   "Build a compact browser CRM called Customer Desk. It should manage accounts, contacts, leads, opportunities, activities, saved filters, reporting insights, settings, empty and error states, and every visible button/action should update real app state.";
 
 const task = args.task || defaultTask;
+requireEnglishPrototypeText(task, "task");
 const projectName = args["project-name"] || deriveProjectName(task);
+requireEnglishPrototypeText(projectName, "project-name");
 const projectSlug = slugify(projectName);
 const platform = args.platform || inferPlatform(task);
 const techStack = args.stack || inferStack(task, platform);
-const uiLanguage = args["ui-language"] || inferUiLanguage(task);
+const uiLanguage = resolveUiLanguage(args["ui-language"], task);
 const dbRequired = args.db || inferDb(task);
 const designRequired = args["design-required"] || String(isDesignRequired(platform));
 
@@ -26,23 +30,31 @@ const prd = buildPrd({
   surfaces,
 });
 
-process.stdout.write(
-  [
-    "STATUS: done",
-    "",
-    `PROJECT_NAME: ${projectName}`,
-    `PROJECT_SLUG: ${projectSlug}`,
-    `PLATFORM: ${platform}`,
-    `TECH_STACK: ${techStack}`,
-    `UI_LANGUAGE: ${uiLanguage}`,
-    `DB_REQUIRED: ${dbRequired}`,
-    `DESIGN_REQUIRED: ${designRequired}`,
-    "",
-    "PRD:",
-    prd,
-    "",
-  ].join("\n"),
-);
+const output = [
+  "STATUS: done",
+  "",
+  `PROJECT_NAME: ${projectName}`,
+  `PROJECT_SLUG: ${projectSlug}`,
+  `PLATFORM: ${platform}`,
+  `TECH_STACK: ${techStack}`,
+  `UI_LANGUAGE: ${uiLanguage}`,
+  `DB_REQUIRED: ${dbRequired}`,
+  `DESIGN_REQUIRED: ${designRequired}`,
+  "",
+  "PRD:",
+  prd,
+  "",
+].join("\n");
+requireEnglishPrototypeText(output, "output");
+process.stdout.write(output);
+
+function requireEnglishPrototypeText(value, field) {
+  const issue = inspectEnglishScriptTextV1(value);
+  if (issue) {
+    process.stderr.write(`PLAN_PRD_PROTOTYPE_ENGLISH_TEXT_REQUIRED: ${field}: ${issue}\n`);
+    process.exit(64);
+  }
+}
 
 function parseArgs(tokens) {
   const parsed = {};
@@ -102,8 +114,19 @@ function inferStack(text, platform) {
   return "vite-react";
 }
 
-function inferUiLanguage(text) {
-  if (/[\u00e7\u011f\u0131\u00f6\u015f\u00fc\u00c7\u011e\u0130\u00d6\u015e\u00dc]/.test(text) || /\bTurkish\b|\bTurkce\b/i.test(text)) return "Turkish";
+function resolveUiLanguage(explicit, taskText) {
+  if (explicit === undefined) return inferUiLanguage(taskText);
+  const normalized = String(explicit)
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  if (["english", "en", "en-us", "en-gb"].includes(normalized)) return "English";
+  process.stderr.write("PLAN_PRD_PROTOTYPE_UI_LANGUAGE_MUST_BE_ENGLISH\n");
+  process.exit(64);
+}
+
+function inferUiLanguage(_text) {
   return "English";
 }
 
@@ -235,6 +258,7 @@ function buildPrd(input) {
     "",
     "## 1. Context And Goals",
     `- Overview: ${projectName} is a ${platform} product generated from the user request: "${task}" It must open directly into useful product work, preserve the selected product identity, and avoid marketing or placeholder-first behavior.`,
+    `- UI Language: ${uiLanguage}`,
     "- Target Audience: operators who repeatedly manage the product workflow, managers who need status clarity, and test agents that need deterministic state and actions.",
     "- Business Goals: make the core workflow visible, reduce missed follow-up work, and expose enough state to verify real behavior.",
     "- User Goals: inspect current work, search/filter records, create or update records, recover from empty/error states, and keep preferences consistent.",

@@ -174,7 +174,6 @@ async function createNativeV2Fixture(input: Readonly<{
     provider: "stitch",
     model: "GEMINI_3_1_PRO",
     deviceType: "DESKTOP",
-    uiLanguage: "English",
     duplicateWaitMs: 500,
     duplicatePollMs: 10,
   }, {

@@ -245,6 +245,21 @@ export type NodeToolchainProvisionerBundleBuilderAdapterV2 = (
   invocation: NodeToolchainProvisionerBundleBuildInvocationV2,
 ) => Promise<NodeToolchainProvisionerBundleBuildResultV2>;
 
+export type NodeToolchainProvisionerBundleAuthorityTestOptionsV2 = Readonly<{
+  privateDependencyRoot: string;
+}>;
+
+type DependencyRootAuthorityV2 = Readonly<{
+  kind: "repository";
+  root: string;
+}> | Readonly<{
+  kind: "authenticated_private_test";
+  root: string;
+  architecture: ArchitectureV2;
+  rootStat: Stats;
+  scopeStat: Stats;
+}>;
+
 type AuthorityStateV2 = Readonly<{
   receipt: NodeToolchainProvisionerBundleAuthorityReceiptV2;
   bundleBytes: Buffer;
@@ -659,8 +674,11 @@ function packageTreeHash(entries: readonly PackageEntryV2[]): string {
   }));
 }
 
-function capturePackageTree(contract: ExactPackageContractV2): CapturedPackageV2 {
-  const packageRoot = path.join(repositoryRootV2, "node_modules", contract.packageName);
+function capturePackageTree(
+  dependencyRoot: string,
+  contract: ExactPackageContractV2,
+): CapturedPackageV2 {
+  const packageRoot = path.join(dependencyRoot, contract.packageName);
   const pending = ["."];
   const entries: PackageEntryV2[] = [];
   let fileCount = 0;
@@ -775,6 +793,141 @@ function capturePackageTree(contract: ExactPackageContractV2): CapturedPackageV2
     );
   }
   return Object.freeze({ contract, entries: Object.freeze(entries) });
+}
+
+function exactDirectoryNames(locator: string): readonly string[] {
+  try {
+    return Object.freeze(readdirSync(locator).sort());
+  } catch (error) {
+    return fail(
+      "NODE_TOOLCHAIN_PROVISIONER_BUNDLE_V2_DEPENDENCY_INVALID",
+      "Private test dependency root could not be inventoried exactly",
+      error,
+    );
+  }
+}
+
+function admitPrivateTestDependencyRoot(
+  options: NodeToolchainProvisionerBundleAuthorityTestOptionsV2 | undefined,
+  architecture: ArchitectureV2,
+): DependencyRootAuthorityV2 {
+  if (options === undefined) {
+    return Object.freeze({
+      kind: "repository" as const,
+      root: path.join(repositoryRootV2, "node_modules"),
+    });
+  }
+  if (
+    typeof options !== "object"
+    || options === null
+    || Array.isArray(options)
+    || isProxy(options)
+    || Object.getPrototypeOf(options) !== Object.prototype
+    || !Object.isFrozen(options)
+  ) {
+    return fail(
+      "NODE_TOOLCHAIN_PROVISIONER_BUNDLE_V2_INPUT_INVALID",
+      "Private test dependency options must be one frozen exact object",
+    );
+  }
+  const descriptors = Object.getOwnPropertyDescriptors(options);
+  if (
+    Reflect.ownKeys(descriptors).length !== 1
+    || !("privateDependencyRoot" in descriptors)
+    || descriptors.privateDependencyRoot?.get !== undefined
+    || descriptors.privateDependencyRoot?.set !== undefined
+    || descriptors.privateDependencyRoot?.enumerable !== true
+    || descriptors.privateDependencyRoot?.value !== options.privateDependencyRoot
+    || typeof descriptors.privateDependencyRoot?.value !== "string"
+  ) {
+    return fail(
+      "NODE_TOOLCHAIN_PROVISIONER_BUNDLE_V2_INPUT_INVALID",
+      "Private test dependency options contain unknown or active fields",
+    );
+  }
+  const requestedRoot = descriptors.privateDependencyRoot.value as string;
+  if (
+    requestedRoot.length < 1
+    || requestedRoot.length > 1_024
+    || !path.isAbsolute(requestedRoot)
+    || path.normalize(requestedRoot) !== requestedRoot
+    || requestedRoot.includes("\0")
+    || requestedRoot.includes("\n")
+    || requestedRoot.includes("\r")
+  ) {
+    return fail(
+      "NODE_TOOLCHAIN_PROVISIONER_BUNDLE_V2_INPUT_INVALID",
+      "Private test dependency root is not one canonical absolute path",
+    );
+  }
+  let root: string;
+  let rootStat: Stats;
+  let scopeStat: Stats;
+  try {
+    root = realpathSync(requestedRoot);
+    rootStat = lstatSync(root);
+    scopeStat = lstatSync(path.join(root, "@esbuild"));
+  } catch (error) {
+    return fail(
+      "NODE_TOOLCHAIN_PROVISIONER_BUNDLE_V2_DEPENDENCY_INVALID",
+      "Private test dependency root could not be authenticated",
+      error,
+    );
+  }
+  const expectedPlatform = architecture === "arm64" ? "darwin-arm64" : "darwin-x64";
+  if (
+    root !== requestedRoot
+    || !rootStat.isDirectory()
+    || rootStat.isSymbolicLink()
+    || (rootStat.mode & 0o7777) !== 0o700
+    || rootStat.uid !== process.getuid?.()
+    || !scopeStat.isDirectory()
+    || scopeStat.isSymbolicLink()
+    || scopeStat.uid !== rootStat.uid
+    || exactDirectoryNames(root).join("\0") !== "@esbuild\0esbuild\0zod"
+    || exactDirectoryNames(path.join(root, "@esbuild")).join("\0") !== expectedPlatform
+  ) {
+    return fail(
+      "NODE_TOOLCHAIN_PROVISIONER_BUNDLE_V2_DEPENDENCY_INVALID",
+      "Private test dependency root is not one exact process-owned closure",
+    );
+  }
+  return Object.freeze({
+    kind: "authenticated_private_test" as const,
+    root,
+    architecture,
+    rootStat,
+    scopeStat,
+  });
+}
+
+function revalidatePrivateTestDependencyRoot(authority: DependencyRootAuthorityV2): void {
+  if (authority.kind !== "authenticated_private_test") return;
+  const scope = path.join(authority.root, "@esbuild");
+  const expectedPlatform = authority.architecture === "arm64" ? "darwin-arm64" : "darwin-x64";
+  let rootStat: Stats;
+  let scopeStat: Stats;
+  try {
+    rootStat = lstatSync(authority.root);
+    scopeStat = lstatSync(scope);
+  } catch (error) {
+    return fail(
+      "NODE_TOOLCHAIN_PROVISIONER_BUNDLE_V2_DEPENDENCY_INVALID",
+      "Private test dependency root disappeared during capture",
+      error,
+    );
+  }
+  if (
+    !sameStat(rootStat, authority.rootStat)
+    || !sameStat(scopeStat, authority.scopeStat)
+    || exactDirectoryNames(authority.root).join("\0") !== "@esbuild\0esbuild\0zod"
+    || exactDirectoryNames(scope).join("\0") !== expectedPlatform
+  ) {
+    return fail(
+      "NODE_TOOLCHAIN_PROVISIONER_BUNDLE_V2_DEPENDENCY_INVALID",
+      "Private test dependency root changed during exact capture",
+    );
+  }
 }
 
 function writeExclusive(locator: string, bytes: Uint8Array, mode: number): void {
@@ -1187,6 +1340,7 @@ async function buildAuthority(
   privateTreeHandle: MaterializedNodeToolchainPrivateTreeV2,
   admissionScope: "production_release" | "test_fixture",
   adapter: NodeToolchainProvisionerBundleBuilderAdapterV2,
+  dependencyRootAuthority: DependencyRootAuthorityV2,
 ): Promise<BuiltNodeToolchainProvisionerBundleV2> {
   if (typeof adapter !== "function") {
     return fail(
@@ -1218,12 +1372,13 @@ async function buildAuthority(
   let privateBundle: NodeToolchainPrivateTreeBundleV2 | undefined;
   let stageRoot: string | undefined;
   try {
-    const esbuild = capturePackageTree(contracts.esbuild);
+    const esbuild = capturePackageTree(dependencyRootAuthority.root, contracts.esbuild);
     capturedPackages.push(esbuild);
-    const platform = capturePackageTree(contracts.platform);
+    const platform = capturePackageTree(dependencyRootAuthority.root, contracts.platform);
     capturedPackages.push(platform);
-    const zod = capturePackageTree(ZOD_CONTRACT_V2);
+    const zod = capturePackageTree(dependencyRootAuthority.root, ZOD_CONTRACT_V2);
     capturedPackages.push(zod);
+    revalidatePrivateTestDependencyRoot(dependencyRootAuthority);
     const genericBinary = esbuild.entries.find((entry) => entry.locator === "bin/esbuild");
     const platformBinary = platform.entries.find((entry) => entry.locator === "bin/esbuild");
     if (
@@ -1433,14 +1588,36 @@ async function buildAuthority(
 export async function buildNodeToolchainProvisionerBundleAuthorityV2(
   privateTreeHandle: MaterializedNodeToolchainPrivateTreeV2,
 ): Promise<BuiltNodeToolchainProvisionerBundleV2> {
-  return buildAuthority(privateTreeHandle, "production_release", productionBuilderAdapter);
+  return buildAuthority(
+    privateTreeHandle,
+    "production_release",
+    productionBuilderAdapter,
+    Object.freeze({
+      kind: "repository",
+      root: path.join(repositoryRootV2, "node_modules"),
+    }),
+  );
 }
 
 export async function buildNodeToolchainProvisionerBundleAuthorityV2ForTest(
   privateTreeHandle: MaterializedNodeToolchainPrivateTreeV2,
   builderAdapter: NodeToolchainProvisionerBundleBuilderAdapterV2,
+  options?: NodeToolchainProvisionerBundleAuthorityTestOptionsV2,
 ): Promise<BuiltNodeToolchainProvisionerBundleV2> {
-  return buildAuthority(privateTreeHandle, "test_fixture", builderAdapter);
+  const receipt = inspectNodeToolchainPrivateTreeReceiptV2(privateTreeHandle);
+  const architecture = receipt.inventory.distribution.artifact.architecture;
+  if (architecture !== "arm64" && architecture !== "x64") {
+    return fail(
+      "NODE_TOOLCHAIN_PROVISIONER_BUNDLE_V2_INPUT_INVALID",
+      "Provisioner bundle test dependency root supports only Darwin arm64 and x64",
+    );
+  }
+  return buildAuthority(
+    privateTreeHandle,
+    "test_fixture",
+    builderAdapter,
+    admitPrivateTestDependencyRoot(options, architecture),
+  );
 }
 
 export function inspectNodeToolchainProvisionerBundleAuthorityReceiptV2(

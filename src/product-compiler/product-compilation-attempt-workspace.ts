@@ -690,31 +690,68 @@ async function projectionMatchesReceipt(
       throw workspaceError("PRODUCT_COMPILATION_CANONICAL_PROJECTION_UNSAFE", target);
     }
 
+    let bytes: Buffer | undefined;
     try {
-      const before = await handle.stat();
-      if (!before.isFile() || before.size !== artifact.byteLength) return false;
-      const bytes = await handle.readFile();
-      const after = await handle.stat();
-      const pathStat = await statOrUndefined(target);
+      if (!Number.isSafeInteger(artifact.byteLength)) return false;
+      const before = await handle.stat({ bigint: true });
+      if (
+        !before.isFile()
+        || before.isSymbolicLink()
+        || before.nlink !== 1n
+        || before.size < 0n
+        || before.size !== BigInt(artifact.byteLength)
+      ) return false;
+      bytes = Buffer.allocUnsafeSlow(Number(before.size));
+      let offset = 0;
+      while (offset < bytes.byteLength) {
+        const result = await handle.read(bytes, offset, bytes.byteLength - offset, null);
+        if (result.bytesRead < 1) return false;
+        offset += result.bytesRead;
+      }
+      const eof = Buffer.allocUnsafe(1);
+      if ((await handle.read(eof, 0, 1, null)).bytesRead !== 0) return false;
+      const after = await handle.stat({ bigint: true });
+      const pathStat = await lstat(target, { bigint: true }).catch((error) => {
+        if (isNodeError(error, "ENOENT") || isNodeError(error, "ENOTDIR") || isNodeError(error, "ELOOP")) {
+          return undefined;
+        }
+        throw error;
+      });
       const resolvedTarget = await projectionRealpathOrUndefined(target);
       if (
         !pathStat?.isFile()
         || pathStat.isSymbolicLink()
+        || pathStat.nlink !== 1n
         || !resolvedTarget
         || !isWithin(root.real, resolvedTarget)
+        || !after.isFile()
+        || after.isSymbolicLink()
+        || after.nlink !== 1n
         || before.dev !== after.dev
         || before.ino !== after.ino
+        || before.mode !== after.mode
+        || before.uid !== after.uid
+        || before.gid !== after.gid
+        || before.nlink !== after.nlink
         || before.size !== after.size
-        || before.mtimeMs !== after.mtimeMs
-        || before.ctimeMs !== after.ctimeMs
+        || before.mtimeNs !== after.mtimeNs
+        || before.ctimeNs !== after.ctimeNs
         || after.dev !== pathStat.dev
         || after.ino !== pathStat.ino
+        || after.mode !== pathStat.mode
+        || after.uid !== pathStat.uid
+        || after.gid !== pathStat.gid
+        || after.nlink !== pathStat.nlink
+        || after.size !== pathStat.size
+        || after.mtimeNs !== pathStat.mtimeNs
+        || after.ctimeNs !== pathStat.ctimeNs
         || bytes.length !== artifact.byteLength
         || sha256(bytes) !== artifact.contentHash
       ) {
         return false;
       }
     } finally {
+      bytes?.fill(0);
       await handle.close();
     }
   }

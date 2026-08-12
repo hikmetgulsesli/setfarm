@@ -2,6 +2,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import type { ClaimContext } from "../types.js";
+import { getSql } from "../../../db-pg.js";
+import { loadCompilerStoryEnglishAdmissionLedgerAuthorityV1 } from "../../../execution/compiler-story-english-admission-ledger-v1.js";
 import {
   expandTilde,
   getApiRoutes,
@@ -59,6 +61,9 @@ function supervisorGitSummary(repo: string, branch: string): string {
 }
 
 export async function injectContext(ctx: ClaimContext): Promise<void> {
+  if (ctx.claimEnvelope?.protocol === "v3") {
+    await loadCompilerStoryEnglishAdmissionLedgerAuthorityV1(getSql(), { runId: ctx.runId });
+  }
   const mainRepo = expandTilde(ctx.context["repo"] || "");
   const storyWorkdir = expandTilde(ctx.context["story_workdir"] || "");
   const repo = storyWorkdir || mainRepo;

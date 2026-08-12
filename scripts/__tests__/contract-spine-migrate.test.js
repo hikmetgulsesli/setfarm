@@ -50,4 +50,37 @@ describe("contract spine migration CLI", () => {
     assert.notEqual(result.status, 0);
     assert.match(result.stderr, /rollback-26-to-25 requires --target-release <git-sha>/);
   });
+
+  it("requires an exact release target for migration 27 rollback before opening PostgreSQL", () => {
+    const result = spawnSync(
+      process.execPath,
+      ["--import", "tsx", "scripts/contract-spine-migrate.ts", "rollback-27-to-26"],
+      { cwd: root, encoding: "utf8" },
+    );
+
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /rollback-27-to-26 requires --target-release <git-sha>/);
+  });
+
+  it("requires an exact release target for migration 28 rollback before opening PostgreSQL", () => {
+    const result = spawnSync(
+      process.execPath,
+      ["--import", "tsx", "scripts/contract-spine-migrate.ts", "rollback-28-to-27"],
+      { cwd: root, encoding: "utf8" },
+    );
+
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /rollback-28-to-27 requires --target-release <git-sha>/);
+  });
+
+  it("requires an exact release target for migration 29 rollback before opening PostgreSQL", () => {
+    const result = spawnSync(
+      process.execPath,
+      ["--import", "tsx", "scripts/contract-spine-migrate.ts", "rollback-29-to-28"],
+      { cwd: root, encoding: "utf8" },
+    );
+
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /rollback-29-to-28 requires --target-release <git-sha>/);
+  });
 });

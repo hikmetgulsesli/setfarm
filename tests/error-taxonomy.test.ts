@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { classifyError, sanitizeDesignMismatchFeedback } from "../dist/installer/error-taxonomy.js";
+import { classifyError, sanitizeDesignMismatchFeedback } from "../src/installer/error-taxonomy.js";
 
 describe("error taxonomy", () => {
   it("preserves explicit implement guard categories before generic missing-input matching", () => {

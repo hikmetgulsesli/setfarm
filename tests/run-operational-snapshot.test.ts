@@ -14,6 +14,10 @@ import {
 import { createAttemptRepository } from "../src/execution/attempt-repository.js";
 import { createOperationalOutboxPublisher } from "../src/execution/operational-outbox-publisher.js";
 import { createOperationalOutboxRepository } from "../src/execution/operational-outbox-repository.js";
+import {
+  createRuntimeCompletionPlanV1,
+  type RuntimeCompletionPlanDescriptorV1,
+} from "../src/execution/schemas/runtime-completion-plan-v1.js";
 import { createV3DeployReceiptRepository } from "../src/execution/v3-deploy-receipt-repository.js";
 import { createV3ProjectTransferAckRepository } from "../src/execution/v3-project-transfer-ack-repository.js";
 import { ClaimEnvelopeV1Schema } from "../src/execution/schemas/claim-envelope-v1.js";
@@ -365,6 +369,35 @@ describe("canonical run operational snapshot", () => {
         canonicalOutputHash,
         ignoredFieldPaths: ["/providerAnnotation"],
       };
+      const preparedAt = new Date("2026-07-13T08:00:02.000Z");
+      const completionDescriptor: RuntimeCompletionPlanDescriptorV1 = {
+        kind: "legacy_recovery",
+        continuation: { type: "legacy_receipt_only" },
+        effects: [{
+          effectKey: "continuation",
+          ordinal: 0,
+          effectType: "advance_pipeline",
+          mandatory: true,
+          payload: { raw: "SECRET_EFFECT_PAYLOAD" },
+        }],
+      };
+      const completionPlan = createRuntimeCompletionPlanV1({
+        requestId,
+        claimId: Number(claimId),
+        runId,
+        stepDbId: "STEP_DB_1",
+        workflowStepId: "implement",
+        outputHash: canonicalOutputHash,
+        descriptor: completionDescriptor,
+        preparedAt,
+      });
+      const completionEffectPayload = {
+        schema: "setfarm.runtime-completion-effect-input.v1" as const,
+        planHash: completionPlan.planHash,
+        plan: completionPlan.plan,
+        effect: completionPlan.plan.effects[0]!.payload,
+      };
+      const completionEffectInputHash = hashCanonicalJson(completionEffectPayload);
 
       await database.sql.unsafe(
         `INSERT INTO runtime_sessions (
@@ -380,53 +413,64 @@ describe("canonical run operational snapshot", () => {
          )`,
         [sessionId, runId, claimId, attemptId],
       );
-      await database.sql.unsafe(
-        `INSERT INTO runtime_completion_requests (
-           request_id, runtime_session_id, claim_id, run_id, step_db_id,
-           workflow_step_id, story_db_id, story_id, attempt_id, claim_envelope,
-           output, output_hash, source_proposal, submission_evidence, apply_phase,
-           claim_outcome, claim_committed_at, effects_committed_at, state,
-           requested_by, requested_at, drained_at, processing_at, accepted_at,
-           result, completion_plan,
-           completion_plan_hash, prepared_at
-         ) VALUES (
-           $1, $2, $3, $4, 'STEP_DB_1', 'implement', 'STORY_DB_1', 'US-001', $5,
-           $6::jsonb, $7, $8, $9, $10::jsonb, 'effects_committed', 'completed',
-           NOW(), NOW(), 'accepted', 'runtime-agent', NOW(), NOW(), NOW(), NOW(),
-           $11::jsonb, $12::jsonb, $13, NOW()
-         )`,
-        [
-          requestId,
-          sessionId,
-          claimId,
-          runId,
-          attemptId,
-          { protocol: "v3", fenceToken: "SECRET_ENVELOPE_FENCE" },
-          canonicalOutput,
-          canonicalOutputHash,
-          sourceProposal,
-          submissionEvidence,
-          { raw: "SECRET_RESULT" },
-          { schema: "setfarm.runtime-completion-plan.v1" },
-          PLAN_HASH,
-        ],
-      );
-      await database.sql.unsafe(
-        `INSERT INTO runtime_completion_effects (
-           request_id, effect_key, ordinal, effect_type, input_hash, payload,
-           mandatory, state, result, evidence, applied_at
-         ) VALUES (
-           $1, 'continuation', 0, 'advance_pipeline', $2, $3::jsonb,
-           TRUE, 'applied', $4::jsonb, $5::jsonb, NOW()
-         )`,
-        [
-          requestId,
-          INPUT_HASH,
-          { raw: "SECRET_EFFECT_PAYLOAD" },
-          { raw: "SECRET_EFFECT_RESULT" },
-          { raw: "SECRET_EFFECT_EVIDENCE" },
-        ],
-      );
+      await database.sql.begin(async (transaction) => {
+        await transaction.unsafe(
+          `INSERT INTO runtime_completion_requests (
+             request_id, runtime_session_id, claim_id, run_id, step_db_id,
+             workflow_step_id, story_db_id, story_id, attempt_id, claim_envelope,
+             output, output_hash, source_proposal, submission_evidence, apply_phase,
+             claim_outcome, claim_committed_at, state, requested_by, requested_at,
+             drained_at, processing_at, result, completion_plan,
+             completion_plan_hash, prepared_at
+           ) VALUES (
+             $1, $2, $3, $4, 'STEP_DB_1', 'implement', 'STORY_DB_1', 'US-001', $5,
+             $6::jsonb, $7, $8, $9, $10::jsonb, 'owner_committed', 'completed',
+             $11, 'processing', 'runtime-agent', $11, $11, $11,
+             $12::jsonb, $13::text::jsonb, $14, $11
+           )`,
+          [
+            requestId,
+            sessionId,
+            claimId,
+            runId,
+            attemptId,
+            { protocol: "v3", fenceToken: "SECRET_ENVELOPE_FENCE" },
+            canonicalOutput,
+            canonicalOutputHash,
+            sourceProposal,
+            submissionEvidence,
+            preparedAt,
+            { raw: "SECRET_RESULT" },
+            JSON.stringify(completionPlan.plan),
+            completionPlan.planHash,
+          ],
+        );
+        await transaction.unsafe(
+          `INSERT INTO runtime_completion_effects (
+             request_id, effect_key, ordinal, effect_type, input_hash, payload,
+             mandatory, state, result, evidence, applied_at, created_at, updated_at
+           ) VALUES (
+             $1, 'continuation', 0, 'advance_pipeline', $2, $3::text::jsonb,
+             TRUE, 'applied', $4::jsonb, $5::jsonb, $6, $6, $6
+           )`,
+          [
+            requestId,
+            completionEffectInputHash,
+            JSON.stringify(completionEffectPayload),
+            { raw: "SECRET_EFFECT_RESULT" },
+            { raw: "SECRET_EFFECT_EVIDENCE" },
+            preparedAt,
+          ],
+        );
+      });
+      await database.sql`
+        UPDATE runtime_completion_requests
+           SET apply_phase = 'effects_committed',
+               effects_committed_at = ${preparedAt},
+               state = 'accepted',
+               accepted_at = ${preparedAt}
+         WHERE request_id = ${requestId}
+      `;
       const outboxRepository = createOperationalOutboxRepository(database.sql);
       await outboxRepository.enqueue({
         requestId,

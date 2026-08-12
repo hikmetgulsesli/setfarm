@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync } from "node:fs";
+import { closeSync, existsSync, openSync, writeFileSync } from "node:fs";
 import {
   chmod,
+  copyFile,
   link,
   lstat,
   mkdir,
@@ -18,8 +19,11 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { createInterface } from "node:readline";
 import { afterEach, describe, it } from "node:test";
+import { fileURLToPath } from "node:url";
 
+import { PLATFORM_RELEASE_BOOTSTRAP_CONTRACT_V2 } from "../../src/execution/schemas/platform-release-bootstrap-contract-v2.js";
 import { canonicalJsonBytes } from "../../src/product-compiler/canonical-json.js";
 import {
   createHostNodeToolchainAuthorityV2ForTest,
@@ -68,6 +72,7 @@ import {
   buildNodeToolchainProvisionerBundleAuthorityV2ForTest,
   copyBuiltNodeToolchainProvisionerBundleV2,
   inspectNodeToolchainProvisionerBundleAuthorityReceiptV2,
+  type NodeToolchainProvisionerBundleAuthorityTestOptionsV2,
   type NodeToolchainProvisionerBundleBuilderAdapterV2,
 } from "../../src/product-compiler/node-toolchain-provisioner-bundle-authority-v2.js";
 import {
@@ -116,8 +121,10 @@ import {
 } from "../../src/product-compiler/node-toolchain-provisioner-rehearsal-source-v2.js";
 import {
   applyNodeToolchainProvisionerPlanV2ForTest,
+  buildNodeToolchainProvisionerPlanTransportV3ForHandle,
   inspectNodeToolchainProvisionerInspectionV2,
   inspectNodeToolchainProvisionerV2ForTest,
+  NodeToolchainProvisionerPlanTransportV3Schema,
   planNodeToolchainProvisioningV2,
   planNodeToolchainRollbackV2,
   rollbackNodeToolchainProvisionerPlanV2ForTest,
@@ -145,6 +152,9 @@ import {
   hashNodeToolchainProvisionerCliFailureV2,
 } from "../../src/product-compiler/schemas/node-toolchain-provisioner-cli-v2.js";
 import {
+  NodeToolchainProvisionerCliFailureV3Schema,
+} from "../../src/product-compiler/schemas/node-toolchain-provisioner-cli-v3.js";
+import {
   NodeToolchainProvisionerBootstrapFailureV2Schema,
   NodeToolchainProvisionerBootstrapManifestV2Schema,
   hashNodeToolchainProvisionerBootstrapBuildV2,
@@ -161,6 +171,7 @@ import {
   hashNodeToolchainProvisionerBootstrapInstallationPlanV2,
 } from "../../src/product-compiler/schemas/node-toolchain-provisioner-bootstrap-installation-plan-v2.js";
 import {
+  NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_LOCK_CONTENT_V2,
   NodeToolchainProvisionerBootstrapInstallationClaimV2Schema,
   NodeToolchainProvisionerBootstrapInstallationIntentV2Schema,
   NodeToolchainProvisionerBootstrapInstallationReceiptV2Schema,
@@ -170,6 +181,9 @@ import {
   hashNodeToolchainProvisionerBootstrapInstallationReceiptV2,
 } from "../../src/product-compiler/schemas/node-toolchain-provisioner-bootstrap-installation-state-v2.js";
 import {
+  NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_ROLLBACK_CLAIM_BASENAME_V2,
+  NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_ROLLBACK_QUARANTINE_BASENAME_V2,
+  NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_ROLLBACK_STAGE_BASENAME_V2,
   NodeToolchainProvisionerBootstrapRollbackClaimV2Schema,
   NodeToolchainProvisionerBootstrapRollbackPlanV2Schema,
   NodeToolchainProvisionerBootstrapRollbackReceiptV2Schema,
@@ -193,8 +207,8 @@ import {
   hashNodeToolchainProvisionerOperationReceiptV2,
   hashNodeToolchainProvisionerPlanV2,
 } from "../../src/product-compiler/schemas/node-toolchain-provisioner-command-v2.js";
-
 const ARCHIVE_ROOT = "node-v22.23.1-darwin-arm64";
+const REPOSITORY_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const roots: string[] = [];
 const archives: VerifiedNodeToolchainDistributionArchiveV2[] = [];
 const trees: MaterializedNodeToolchainPrivateTreeV2[] = [];
@@ -296,6 +310,75 @@ async function privateParent(): Promise<string> {
   roots.push(root);
   await chmod(root, 0o700);
   return root;
+}
+
+async function copyPrivateDependencyTree(source: string, target: string): Promise<void> {
+  const sourceStat = await lstat(source);
+  assert.equal(sourceStat.isSymbolicLink(), false, source);
+  assert.equal(sourceStat.uid, process.getuid?.(), source);
+  if (sourceStat.isDirectory()) {
+    await mkdir(target, { mode: 0o700 });
+    for (const name of (await readdir(source)).sort()) {
+      await copyPrivateDependencyTree(path.join(source, name), path.join(target, name));
+    }
+    await chmod(target, sourceStat.mode & 0o7777);
+    const targetStat = await lstat(target);
+    assert.equal(targetStat.isDirectory(), true, target);
+    assert.equal(targetStat.uid, sourceStat.uid, target);
+    assert.equal(targetStat.mode & 0o7777, sourceStat.mode & 0o7777, target);
+    return;
+  }
+  assert.equal(sourceStat.isFile(), true, source);
+  await copyFile(source, target);
+  await chmod(target, sourceStat.mode & 0o7777);
+  const targetStat = await lstat(target);
+  assert.equal(targetStat.isFile(), true, target);
+  assert.equal(targetStat.uid, sourceStat.uid, target);
+  assert.equal(targetStat.mode & 0o7777, sourceStat.mode & 0o7777, target);
+  assert.equal(targetStat.size, sourceStat.size, target);
+  assert.equal(targetStat.nlink, 1, target);
+}
+
+async function privateProvisionerBundleDependencies(
+  architecture: "arm64" | "x64" = "arm64",
+): Promise<NodeToolchainProvisionerBundleAuthorityTestOptionsV2> {
+  const parent = await privateParent();
+  const dependencyRoot = path.join(parent, "node_modules");
+  const scopeRoot = path.join(dependencyRoot, "@esbuild");
+  const platformName = architecture === "arm64" ? "darwin-arm64" : "darwin-x64";
+  await mkdir(dependencyRoot, { mode: 0o700 });
+  await mkdir(scopeRoot, { mode: 0o700 });
+  await copyPrivateDependencyTree(
+    path.join(REPOSITORY_ROOT, "node_modules", "esbuild"),
+    path.join(dependencyRoot, "esbuild"),
+  );
+  await copyPrivateDependencyTree(
+    path.join(REPOSITORY_ROOT, "node_modules", "@esbuild", platformName),
+    path.join(scopeRoot, platformName),
+  );
+  await copyPrivateDependencyTree(
+    path.join(REPOSITORY_ROOT, "node_modules", "zod"),
+    path.join(dependencyRoot, "zod"),
+  );
+  assert.deepEqual((await readdir(dependencyRoot)).sort(), ["@esbuild", "esbuild", "zod"]);
+  assert.deepEqual(await readdir(scopeRoot), [platformName]);
+  return Object.freeze({
+    privateDependencyRoot: await realpath(dependencyRoot),
+  });
+}
+
+async function buildProvisionerBundleWithPrivateDependencies(
+  privateTreeHandle: MaterializedNodeToolchainPrivateTreeV2,
+  builderAdapter: NodeToolchainProvisionerBundleBuilderAdapterV2,
+): Promise<BuiltNodeToolchainProvisionerBundleV2> {
+  const architecture = inspectNodeToolchainPrivateTreeReceiptV2(privateTreeHandle)
+    .inventory.distribution.artifact.architecture;
+  assert.ok(architecture === "arm64" || architecture === "x64");
+  return buildNodeToolchainProvisionerBundleAuthorityV2ForTest(
+    privateTreeHandle,
+    builderAdapter,
+    await privateProvisionerBundleDependencies(architecture),
+  );
 }
 
 function provisionerBundleBuilderAdapter(
@@ -1404,6 +1487,82 @@ describe("NodeToolchainProvisionerCommandV2 inspection and planning", () => {
     assert.equal(replay.exitCode, 0);
     assert.equal(JSON.parse(replay.bytes.toString("utf8")).result, "verified_existing_rollback");
 
+    const v3ApplyPlanOutput = await invoke(["plan-v3", "apply", "--archive", archiveCandidate]);
+    assert.equal(v3ApplyPlanOutput.exitCode, 0);
+    const v3ApplyTransport = NodeToolchainProvisionerPlanTransportV3Schema.parse(
+      JSON.parse(v3ApplyPlanOutput.bytes.toString("utf8")),
+    );
+    assert.equal(v3ApplyTransport.operation, "apply");
+    assert.equal(v3ApplyTransport.physicalCensus.scope.hostIdentityHash.length, 64);
+    const v3ApplyPlanPath = path.join(commandFiles, "apply-plan-v3.json");
+    await writeFile(v3ApplyPlanPath, v3ApplyPlanOutput.bytes, { mode: 0o600 });
+    const v3Applied = await invoke([
+      "apply-v3",
+      "--plan-file",
+      v3ApplyPlanPath,
+      "--archive",
+      archiveCandidate,
+    ]);
+    assert.equal(v3Applied.exitCode, 0);
+    assert.equal(JSON.parse(v3Applied.bytes.toString("utf8")).result, "applied_exact_generation");
+
+    const v3RollbackPlanOutput = await invoke(["plan-v3", "rollback"]);
+    assert.equal(v3RollbackPlanOutput.exitCode, 0);
+    const v3RollbackTransport = NodeToolchainProvisionerPlanTransportV3Schema.parse(
+      JSON.parse(v3RollbackPlanOutput.bytes.toString("utf8")),
+    );
+    assert.equal(v3RollbackTransport.operation, "rollback");
+    const v3RollbackPlanPath = path.join(commandFiles, "rollback-plan-v3.json");
+    await writeFile(v3RollbackPlanPath, v3RollbackPlanOutput.bytes, { mode: 0o600 });
+    const v3RolledBack = await invoke(["rollback-v3", "--plan-file", v3RollbackPlanPath]);
+    assert.equal(v3RolledBack.exitCode, 0);
+    assert.equal(JSON.parse(v3RolledBack.bytes.toString("utf8")).result, "rolled_back_exact_generation");
+
+    const v3Failure = await invoke([
+      "rollback-v3",
+      "--plan-file",
+      path.join(commandFiles, "missing-v3-plan.json"),
+    ]);
+    assert.equal(v3Failure.exitCode, 64);
+    const parsedV3Failure = NodeToolchainProvisionerCliFailureV3Schema.parse(
+      JSON.parse(v3Failure.bytes.toString("utf8")),
+    );
+    assert.equal(parsedV3Failure.commandRef, "rollback_v3");
+    assert.equal(parsedV3Failure.failureKind, "invocation_rejected");
+
+    const cleanParent = await privateParent();
+    const cleanInspection = await inspectNodeToolchainProvisionerV2ForTest({
+      parent: cleanParent,
+      architecture: "arm64",
+    });
+    const cleanPlan = planNodeToolchainProvisioningV2(cleanInspection, tree);
+    const cleanTransport = buildNodeToolchainProvisionerPlanTransportV3ForHandle(
+      cleanInspection,
+      cleanPlan,
+    );
+    assert.equal(Object.isFrozen(cleanTransport), true);
+    assert.equal(Object.isFrozen(cleanTransport.plan), true);
+    const cleanApplied = await applyNodeToolchainProvisionerPlanV2ForTest({
+      parent: cleanParent,
+      plan: cleanTransport,
+      privateTree: tree,
+    });
+    assert.equal(cleanApplied.result, "applied_exact_generation");
+    const cleanReady = await inspectNodeToolchainProvisionerV2ForTest({
+      parent: cleanParent,
+      architecture: "arm64",
+    });
+    const cleanRollbackPlan = planNodeToolchainRollbackV2(cleanReady);
+    const cleanRollbackTransport = buildNodeToolchainProvisionerPlanTransportV3ForHandle(
+      cleanReady,
+      cleanRollbackPlan,
+    );
+    const cleanRolledBack = await rollbackNodeToolchainProvisionerPlanV2ForTest({
+      parent: cleanParent,
+      plan: cleanRollbackTransport,
+    });
+    assert.equal(cleanRolledBack.result, "rolled_back_exact_generation");
+
     const hostileArgv = new Proxy(["inspect"], {});
     const hostile = await invoke(hostileArgv);
     assert.equal(hostile.exitCode, 64);
@@ -1469,9 +1628,11 @@ describe("NodeToolchainProvisionerCommandV2 inspection and planning", () => {
 
   it("issues bundle, compile and prepared authority only from one exact source join", async () => {
     const tree = await privateTree();
+    const privateDependencies = await privateProvisionerBundleDependencies();
     const handle = await buildNodeToolchainProvisionerBundleAuthorityV2ForTest(
       tree,
       executingProvisionerBundleBuilderAdapter(),
+      privateDependencies,
     );
     const receipt = inspectNodeToolchainProvisionerBundleAuthorityReceiptV2(handle);
     const snapshot = copyBuiltNodeToolchainProvisionerBundleV2(handle);
@@ -1616,6 +1777,37 @@ describe("NodeToolchainProvisionerCommandV2 inspection and planning", () => {
       bootstrapParent,
       NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_LOCK_BASENAME_V2,
     );
+    const activationReceiptPath = path.join(
+      bootstrapParent,
+      PLATFORM_RELEASE_BOOTSTRAP_CONTRACT_V2.registry.activationReceiptBasename,
+    );
+    await assert.rejects(
+      installNodeToolchainProvisionerBootstrapV2ForTest({
+        preparedHandle: prepared,
+        plan: cleanPlan,
+        testHooks: {
+          afterLegacyLeaseAcquired: () => {
+            writeFileSync(
+              activationReceiptPath,
+              "simulated-receipt-last-cutover\n",
+              { mode: 0o600, flag: "wx" },
+            );
+          },
+        },
+      }),
+      (error: unknown) =>
+        error instanceof NodeToolchainProvisionerBootstrapInstallationErrorV2
+        && error.code
+          === "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_LOCK_FAILED",
+    );
+    assert.equal(existsSync(bootstrapRoot), false);
+    assert.equal(
+      await readFile(activationReceiptPath, "utf8"),
+      "simulated-receipt-last-cutover\n",
+    );
+    await unlink(activationReceiptPath);
+    await unlink(lockPath);
+
     await writeFile(lockPath, "foreign-lock\n", { mode: 0o600 });
     const lockConflict = planNodeToolchainProvisionerBootstrapInstallationV2(prepared);
     assert.equal(lockConflict.decision, "no_mutation_blocked");
@@ -1977,9 +2169,42 @@ describe("NodeToolchainProvisionerCommandV2 inspection and planning", () => {
         provisionerBundleBuilderAdapter((executionRef) => Buffer.from(
           executionRef === "first" ? "first\n" : "second\n",
         )),
+        privateDependencies,
       ),
       (error: unknown) => error instanceof NodeToolchainProvisionerBundleAuthorityErrorV2
         && error.code === "NODE_TOOLCHAIN_PROVISIONER_BUNDLE_V2_NONDETERMINISTIC",
+    );
+    await assert.rejects(
+      buildNodeToolchainProvisionerBundleAuthorityV2ForTest(
+        tree,
+        provisionerBundleBuilderAdapter(),
+        { privateDependencyRoot: privateDependencies.privateDependencyRoot },
+      ),
+      (error: unknown) => error instanceof NodeToolchainProvisionerBundleAuthorityErrorV2
+        && error.code === "NODE_TOOLCHAIN_PROVISIONER_BUNDLE_V2_INPUT_INVALID",
+    );
+    await assert.rejects(
+      buildNodeToolchainProvisionerBundleAuthorityV2ForTest(
+        tree,
+        provisionerBundleBuilderAdapter(),
+        Object.freeze({
+          privateDependencyRoot: path.join(REPOSITORY_ROOT, "node_modules"),
+        }),
+      ),
+      (error: unknown) => error instanceof NodeToolchainProvisionerBundleAuthorityErrorV2
+        && error.code === "NODE_TOOLCHAIN_PROVISIONER_BUNDLE_V2_DEPENDENCY_INVALID",
+    );
+    await assert.rejects(
+      buildNodeToolchainProvisionerBundleAuthorityV2ForTest(
+        tree,
+        provisionerBundleBuilderAdapter(),
+        Object.freeze({
+          privateDependencyRoot: privateDependencies.privateDependencyRoot,
+          unknown: true,
+        }) as unknown as NodeToolchainProvisionerBundleAuthorityTestOptionsV2,
+      ),
+      (error: unknown) => error instanceof NodeToolchainProvisionerBundleAuthorityErrorV2
+        && error.code === "NODE_TOOLCHAIN_PROVISIONER_BUNDLE_V2_INPUT_INVALID",
     );
     disposeCompiledNodeToolchainProvisionerBootstrapV2(compiledHandle);
     assert.throws(
@@ -1991,7 +2216,7 @@ describe("NodeToolchainProvisionerCommandV2 inspection and planning", () => {
 
   it("recovers every bootstrap installation publication crash under one exact claim", async () => {
     const tree = await privateTree();
-    const bundleHandle = await buildNodeToolchainProvisionerBundleAuthorityV2ForTest(
+    const bundleHandle = await buildProvisionerBundleWithPrivateDependencies(
       tree,
       executingProvisionerBundleBuilderAdapter(),
     );
@@ -2106,7 +2331,7 @@ describe("NodeToolchainProvisionerCommandV2 inspection and planning", () => {
 
   it("rolls back only one bootstrap generation across every destructive crash boundary", async () => {
     const tree = await privateTree();
-    const bundleHandle = await buildNodeToolchainProvisionerBundleAuthorityV2ForTest(
+    const bundleHandle = await buildProvisionerBundleWithPrivateDependencies(
       tree,
       executingProvisionerBundleBuilderAdapter(),
     );
@@ -2225,7 +2450,7 @@ describe("NodeToolchainProvisionerCommandV2 inspection and planning", () => {
 
   it("serializes bootstrap rollback and preserves changed or foreign claimed state", async () => {
     const tree = await privateTree();
-    const bundleHandle = await buildNodeToolchainProvisionerBundleAuthorityV2ForTest(
+    const bundleHandle = await buildProvisionerBundleWithPrivateDependencies(
       tree,
       executingProvisionerBundleBuilderAdapter(),
     );
@@ -2251,6 +2476,35 @@ describe("NodeToolchainProvisionerCommandV2 inspection and planning", () => {
     };
 
     const concurrent = await installedFixture();
+    const activationReceiptPath = path.join(
+      concurrent.bootstrapParent,
+      PLATFORM_RELEASE_BOOTSTRAP_CONTRACT_V2.registry.activationReceiptBasename,
+    );
+    await assert.rejects(
+      rollbackNodeToolchainProvisionerBootstrapV2ForTest({
+        plan: concurrent.plan,
+        testHooks: {
+          afterLegacyLeaseAcquired: () => {
+            writeFileSync(
+              activationReceiptPath,
+              "simulated-receipt-last-cutover\n",
+              { mode: 0o600, flag: "wx" },
+            );
+          },
+        },
+      }),
+      (error: unknown) =>
+        error instanceof NodeToolchainProvisionerBootstrapInstallationErrorV2
+        && error.code
+          === "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_LOCK_FAILED",
+    );
+    assert.equal(
+      existsSync(
+        path.join(concurrent.bootstrapParent, "node-toolchain-provisioner-v2"),
+      ),
+      true,
+    );
+    await unlink(activationReceiptPath);
     const concurrentResults = await Promise.all([
       rollbackNodeToolchainProvisionerBootstrapV2ForTest({ plan: concurrent.plan }),
       rollbackNodeToolchainProvisionerBootstrapV2ForTest({ plan: concurrent.plan }),
@@ -2426,7 +2680,7 @@ describe("NodeToolchainProvisionerCommandV2 inspection and planning", () => {
 
   it("retains exact rollback history across reinstall generations and rejects transplanted tombstones", async () => {
     const tree = await privateTree();
-    const bundleHandle = await buildNodeToolchainProvisionerBundleAuthorityV2ForTest(
+    const bundleHandle = await buildProvisionerBundleWithPrivateDependencies(
       tree,
       executingProvisionerBundleBuilderAdapter(),
     );
@@ -2620,6 +2874,279 @@ describe("NodeToolchainProvisionerCommandV2 inspection and planning", () => {
     disposeNodeToolchainProvisionerBootstrapPreparedPackageV2(prepared);
     disposeCompiledNodeToolchainProvisionerBootstrapV2(compiledHandle);
   });
+
+  it("rejects a cutover receipt present before install and rollback entry without registry mutation", async () => {
+    const tree = await privateTree();
+    const bundleHandle = await buildProvisionerBundleWithPrivateDependencies(
+      tree,
+      executingProvisionerBundleBuilderAdapter(),
+    );
+    const preparedFixture = async () => {
+      const bootstrapParent = await realpath(await privateParent());
+      const bootstrapRoot = path.join(bootstrapParent, "node-toolchain-provisioner-v2");
+      const compiledHandle = await compileNodeToolchainProvisionerBootstrapV2ForTestFromAuthority(
+        bundleHandle,
+        tree,
+        bootstrapRoot,
+      );
+      const preparedParent = await realpath(await privateParent());
+      const prepared = prepareNodeToolchainProvisionerBootstrapPackageV2ForTest(
+        compiledHandle,
+        { scratchParent: preparedParent },
+      );
+      return { bootstrapParent, compiledHandle, prepared };
+    };
+
+    const installFixture = await preparedFixture();
+    const installPlan = planNodeToolchainProvisionerBootstrapInstallationV2(
+      installFixture.prepared,
+    );
+    const installPaths = getNodeToolchainProvisionerBootstrapInstallationPathsV2(
+      inspectNodeToolchainProvisionerBootstrapPreparedPackageReceiptV2(
+        installFixture.prepared,
+      ),
+    );
+    const installActivationReceipt = path.join(
+      installFixture.bootstrapParent,
+      PLATFORM_RELEASE_BOOTSTRAP_CONTRACT_V2.registry.activationReceiptBasename,
+    );
+    await writeFile(installActivationReceipt, "pre-entry-install-cutover\n", {
+      mode: 0o600,
+      flag: "wx",
+    });
+    const installParentBefore = (await readdir(installFixture.bootstrapParent)).sort();
+    await assert.rejects(
+      installNodeToolchainProvisionerBootstrapV2ForTest({
+        preparedHandle: installFixture.prepared,
+        plan: installPlan,
+      }),
+      (error: unknown) =>
+        error instanceof NodeToolchainProvisionerBootstrapInstallationErrorV2
+        && error.code === "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_LOCK_FAILED",
+    );
+    assert.deepEqual(
+      (await readdir(installFixture.bootstrapParent)).sort(),
+      installParentBefore,
+    );
+    assert.equal(await readFile(installActivationReceipt, "utf8"), "pre-entry-install-cutover\n");
+    for (const absentPath of [
+      installPaths.root,
+      installPaths.claim,
+      installPaths.staging,
+      path.join(
+        installFixture.bootstrapParent,
+        NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_ROLLBACK_CLAIM_BASENAME_V2,
+      ),
+      path.join(
+        installPaths.staging,
+        NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_ROLLBACK_STAGE_BASENAME_V2,
+        NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_ROLLBACK_QUARANTINE_BASENAME_V2,
+      ),
+    ]) {
+      assert.equal(existsSync(absentPath), false, absentPath);
+    }
+    await unlink(installActivationReceipt);
+    disposeNodeToolchainProvisionerBootstrapPreparedPackageV2(installFixture.prepared);
+    disposeCompiledNodeToolchainProvisionerBootstrapV2(installFixture.compiledHandle);
+
+    const rollbackFixture = await preparedFixture();
+    const installed = await installNodeToolchainProvisionerBootstrapV2ForTest({
+      preparedHandle: rollbackFixture.prepared,
+      plan: planNodeToolchainProvisionerBootstrapInstallationV2(rollbackFixture.prepared),
+    });
+    const rollbackPlan = planNodeToolchainProvisionerBootstrapRollbackV2(installed);
+    const rollbackPaths = getNodeToolchainProvisionerBootstrapRollbackPathsV2(
+      rollbackPlan.installed,
+    );
+    const rollbackActivationReceipt = path.join(
+      rollbackFixture.bootstrapParent,
+      PLATFORM_RELEASE_BOOTSTRAP_CONTRACT_V2.registry.activationReceiptBasename,
+    );
+    const installedReceiptHash = revalidateInstalledNodeToolchainProvisionerBootstrapV2(
+      installed,
+    ).receiptHash;
+    const rootBefore = await lstat(rollbackPaths.root);
+    const claimBefore = await readFile(rollbackPaths.installationClaim);
+    const receiptBefore = await readFile(rollbackPaths.installationReceipt);
+    await writeFile(rollbackActivationReceipt, "pre-entry-rollback-cutover\n", {
+      mode: 0o600,
+      flag: "wx",
+    });
+    const rollbackParentBefore = (await readdir(rollbackFixture.bootstrapParent)).sort();
+    await assert.rejects(
+      rollbackNodeToolchainProvisionerBootstrapV2ForTest({ plan: rollbackPlan }),
+      (error: unknown) =>
+        error instanceof NodeToolchainProvisionerBootstrapInstallationErrorV2
+        && error.code === "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_LOCK_FAILED",
+    );
+    const rootAfter = await lstat(rollbackPaths.root);
+    assert.deepEqual(
+      { device: rootAfter.dev, inode: rootAfter.ino },
+      { device: rootBefore.dev, inode: rootBefore.ino },
+    );
+    assert.deepEqual(await readFile(rollbackPaths.installationClaim), claimBefore);
+    assert.deepEqual(await readFile(rollbackPaths.installationReceipt), receiptBefore);
+    assert.deepEqual(
+      (await readdir(rollbackFixture.bootstrapParent)).sort(),
+      rollbackParentBefore,
+    );
+    assert.equal(
+      await readFile(rollbackActivationReceipt, "utf8"),
+      "pre-entry-rollback-cutover\n",
+    );
+    for (const absentPath of [
+      rollbackPaths.staging,
+      rollbackPaths.rollbackClaim,
+      rollbackPaths.rollbackStage,
+      rollbackPaths.quarantineRoot,
+    ]) {
+      assert.equal(existsSync(absentPath), false, absentPath);
+    }
+    await unlink(rollbackActivationReceipt);
+    assert.equal(
+      revalidateInstalledNodeToolchainProvisionerBootstrapV2(installed).receiptHash,
+      installedReceiptHash,
+    );
+    disposeNodeToolchainProvisionerBootstrapPreparedPackageV2(rollbackFixture.prepared);
+    disposeCompiledNodeToolchainProvisionerBootstrapV2(rollbackFixture.compiledHandle);
+  });
+
+  it(
+    "rejects receipt-last cutover after real Darwin legacy-lock contention without registry mutation",
+    { skip: process.platform !== "darwin", timeout: 30_000 },
+    async () => {
+      const tree = await privateTree();
+      const bundleHandle = await buildProvisionerBundleWithPrivateDependencies(
+        tree,
+        executingProvisionerBundleBuilderAdapter(),
+      );
+      const bootstrapParent = await realpath(await privateParent());
+      const bootstrapRoot = path.join(bootstrapParent, "node-toolchain-provisioner-v2");
+      const compiledHandle = await compileNodeToolchainProvisionerBootstrapV2ForTestFromAuthority(
+        bundleHandle,
+        tree,
+        bootstrapRoot,
+      );
+      const preparedParent = await realpath(await privateParent());
+      const prepared = prepareNodeToolchainProvisionerBootstrapPackageV2ForTest(
+        compiledHandle,
+        { scratchParent: preparedParent },
+      );
+      const plan = planNodeToolchainProvisionerBootstrapInstallationV2(prepared);
+      const paths = getNodeToolchainProvisionerBootstrapInstallationPathsV2(
+        inspectNodeToolchainProvisionerBootstrapPreparedPackageReceiptV2(prepared),
+      );
+      const activationReceipt = path.join(
+        bootstrapParent,
+        PLATFORM_RELEASE_BOOTSTRAP_CONTRACT_V2.registry.activationReceiptBasename,
+      );
+      await writeFile(
+        paths.lock,
+        NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_LOCK_CONTENT_V2,
+        { mode: 0o600, flag: "wx" },
+      );
+      const actorScript = [
+        "import os, sys",
+        "receipt = sys.argv[1]",
+        "print('legacy-held', flush=True)",
+        "assert sys.stdin.readline().strip() == 'publish'",
+        "flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, 'O_NOFOLLOW', 0)",
+        "fd = os.open(receipt, flags, 0o600)",
+        "try:",
+        "    os.write(fd, b'real-contention-receipt-last\\n')",
+        "    os.fsync(fd)",
+        "finally:",
+        "    os.close(fd)",
+        "print('receipt-published', flush=True)",
+        "assert sys.stdin.readline().strip() == 'release'",
+      ].join("\n");
+      const lockDescriptor = openSync(paths.lock, "r+");
+      const activator = spawn(
+        "/usr/bin/lockf",
+        [
+          "-s",
+          "-t",
+          "10",
+          "/dev/fd/3",
+          "/usr/bin/python3",
+          "-c",
+          actorScript,
+          activationReceipt,
+        ],
+        {
+          env: { LANG: "C", LC_ALL: "C", TZ: "UTC" },
+          shell: false,
+          stdio: ["pipe", "pipe", "pipe", lockDescriptor],
+        },
+      );
+      closeSync(lockDescriptor);
+      let actorStderr = "";
+      activator.stderr!.on("data", (chunk: Buffer) => {
+        actorStderr += chunk.toString("utf8");
+      });
+      const actorExit = new Promise<Readonly<{ code: number | null; signal: NodeJS.Signals | null }>>(
+        (resolve, reject) => {
+          activator.once("error", reject);
+          activator.once("close", (code, signal) => resolve({ code, signal }));
+        },
+      );
+      const lines = createInterface({ input: activator.stdout! });
+      const lineIterator = lines[Symbol.asyncIterator]();
+      try {
+        assert.deepEqual(await lineIterator.next(), { value: "legacy-held", done: false });
+        const installResult = installNodeToolchainProvisionerBootstrapV2ForTest({
+          preparedHandle: prepared,
+          plan,
+        });
+        activator.stdin!.write("publish\n");
+        assert.deepEqual(await lineIterator.next(), { value: "receipt-published", done: false });
+        assert.equal(
+          await readFile(activationReceipt, "utf8"),
+          "real-contention-receipt-last\n",
+        );
+        activator.stdin!.end("release\n");
+        assert.deepEqual(await actorExit, { code: 0, signal: null }, actorStderr);
+        await assert.rejects(
+          installResult,
+          (error: unknown) =>
+            error instanceof NodeToolchainProvisionerBootstrapInstallationErrorV2
+            && error.code === "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_LOCK_FAILED",
+        );
+        assert.deepEqual((await readdir(bootstrapParent)).sort(), [
+          path.basename(activationReceipt),
+          path.basename(paths.lock),
+        ].sort());
+        assert.equal(
+          await readFile(activationReceipt, "utf8"),
+          "real-contention-receipt-last\n",
+        );
+        for (const absentPath of [
+          paths.root,
+          paths.claim,
+          paths.staging,
+          path.join(
+            bootstrapParent,
+            NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_ROLLBACK_CLAIM_BASENAME_V2,
+          ),
+          path.join(
+            paths.staging,
+            NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_ROLLBACK_STAGE_BASENAME_V2,
+            NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_ROLLBACK_QUARANTINE_BASENAME_V2,
+          ),
+        ]) {
+          assert.equal(existsSync(absentPath), false, absentPath);
+        }
+      } finally {
+        lines.close();
+        if (activator.exitCode === null && activator.signalCode === null) {
+          activator.kill("SIGKILL");
+          await actorExit.catch(() => undefined);
+        }
+        disposeNodeToolchainProvisionerBootstrapPreparedPackageV2(prepared);
+        disposeCompiledNodeToolchainProvisionerBootstrapV2(compiledHandle);
+      }
+    },
+  );
 
   it("compiles one exact bootstrap manifest and a fail-closed root launcher", async () => {
     const packageRootAlias = await privateParent();

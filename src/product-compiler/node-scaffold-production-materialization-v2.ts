@@ -4,16 +4,18 @@ import {
   chmodSync,
   closeSync,
   constants,
+  fchmodSync,
   fstatSync,
   fsyncSync,
   lstatSync,
+  opendirSync,
   openSync,
-  readFileSync,
   readSync,
   readlinkSync,
-  readdirSync,
   realpathSync,
-  rmSync,
+  rmdirSync,
+  unlinkSync,
+  type BigIntStats,
   type Stats,
 } from "node:fs";
 import path from "node:path";
@@ -99,7 +101,27 @@ export type RawNpmInstallEntryInternalV2 = Readonly<{
   linkTarget?: string;
 }>;
 
+export type RawNpmInstallExactObjectKindInternalV2 =
+  "ordinary_file" | "directory" | "symbolic_link" | "special";
+
+export type RawNpmInstallExactObjectIdentityInternalV2 = Readonly<{
+  device: bigint;
+  inode: bigint;
+  ownerUid: bigint;
+  ownerGid: bigint;
+  objectKind: RawNpmInstallExactObjectKindInternalV2;
+}>;
+
+export type RawNpmInstallExactCensusInternalV2 = Readonly<{
+  rootPath: string;
+  root: RawNpmInstallExactObjectIdentityInternalV2;
+  entries: ReadonlyMap<string, RawNpmInstallExactObjectIdentityInternalV2>;
+}>;
+
 type RawInstallEntryV2 = RawNpmInstallEntryInternalV2;
+
+const rawNpmInstallExactCensusByEntriesV2 =
+  new WeakMap<object, RawNpmInstallExactCensusInternalV2>();
 
 export type ExpectedNpmBinInternalV2 = Readonly<{
   linkLocator: string;
@@ -135,6 +157,63 @@ function fail(
     message,
     cause === undefined ? undefined : { cause },
   );
+}
+
+function runWithIndependentFinalizersV2<T>(input: Readonly<{
+  operation: () => T;
+  finalizers: readonly (() => void)[];
+  onFinalizerFailure: (errors: readonly unknown[]) => never;
+}>): T {
+  const primaryErrors: unknown[] = [];
+  let result: T | undefined;
+  try {
+    result = input.operation();
+  } catch (error) {
+    primaryErrors.push(error);
+  }
+  const finalizerErrors: unknown[] = [];
+  for (const finalizer of input.finalizers) {
+    try {
+      finalizer();
+    } catch (error) {
+      finalizerErrors.push(error);
+    }
+  }
+  if (finalizerErrors.length > 0) {
+    return input.onFinalizerFailure([...primaryErrors, ...finalizerErrors]);
+  }
+  if (primaryErrors.length > 0) throw primaryErrors[0];
+  return result as T;
+}
+
+function readBoundedDirectoryNamesV2(input: Readonly<{
+  absolutePath: string;
+  label: string;
+  maxNames: number;
+  onFailure: (message: string, cause?: unknown) => never;
+  beforeReadForTest?: () => void;
+}>): readonly string[] {
+  const names: string[] = [];
+  const directory = opendirSync(input.absolutePath);
+  return runWithIndependentFinalizersV2({
+    operation: () => {
+      input.beforeReadForTest?.();
+      let entry = directory.readSync();
+      while (entry !== null) {
+        names.push(entry.name);
+        if (names.length > input.maxNames) {
+          return input.onFailure(`${input.label} exceeded its fixed membership bound`);
+        }
+        entry = directory.readSync();
+      }
+      return names.sort(compareUtf16);
+    },
+    finalizers: [() => directory.closeSync()],
+    onFinalizerFailure: (errors) => input.onFailure(
+      `${input.label} read or descriptor close failed`,
+      new AggregateError(errors, `${input.label} read and descriptor finalization failures`),
+    ),
+  });
 }
 
 function compareUtf16(left: string, right: string): number {
@@ -245,14 +324,31 @@ function processOwner(): Readonly<{ uid: number; gid: number }> {
   return Object.freeze({ uid: process.getuid(), gid: process.getgid() });
 }
 
-function syncPath(absolutePath: string): void {
+function syncPath(
+  absolutePath: string,
+  testHooks?: Readonly<{
+    beforeSync?: (absolutePath: string) => void;
+    afterDescriptorClose?: (absolutePath: string) => void;
+  }>,
+): void {
   let descriptor: number | undefined;
-  try {
-    descriptor = openSync(absolutePath, constants.O_RDONLY | constants.O_NOFOLLOW);
-    fsyncSync(descriptor);
-  } finally {
-    if (descriptor !== undefined) closeSync(descriptor);
-  }
+  return runWithIndependentFinalizersV2({
+    operation: () => {
+      descriptor = openSync(absolutePath, constants.O_RDONLY | constants.O_NOFOLLOW);
+      testHooks?.beforeSync?.(absolutePath);
+      fsyncSync(descriptor);
+    },
+    finalizers: [() => {
+      if (descriptor === undefined) return;
+      closeSync(descriptor);
+      testHooks?.afterDescriptorClose?.(absolutePath);
+    }],
+    onFinalizerFailure: (errors) => fail(
+      "NODE_SCAFFOLD_PRODUCTION_MATERIALIZATION_V2_NORMALIZATION_FAILED",
+      `Dependency path ${absolutePath} sync or descriptor close failed`,
+      new AggregateError(errors, "Dependency path sync and descriptor finalization failures"),
+    ),
+  });
 }
 
 export function readExactNpmLockRegularFileInternalV2(input: Readonly<{
@@ -260,6 +356,8 @@ export function readExactNpmLockRegularFileInternalV2(input: Readonly<{
   label: string;
   maxBytes: number;
   allowedModes?: readonly number[];
+  beforeReadForTest?: () => void;
+  afterDescriptorCloseForTest?: () => void;
 }>): Readonly<{
   bytes: Buffer;
   contentHash: string;
@@ -268,54 +366,87 @@ export function readExactNpmLockRegularFileInternalV2(input: Readonly<{
   const owner = processOwner();
   let descriptor: number | undefined;
   try {
-    descriptor = openSync(
-      input.absolutePath,
-      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
-    );
-    const before = fstatSync(descriptor);
-    if (
-      !before.isFile()
-      || before.isSymbolicLink()
-      || before.nlink !== 1
-      || before.uid !== owner.uid
-      || before.gid !== owner.gid
-      || (modeBits(before) & 0o022) !== 0
-      || (input.allowedModes !== undefined
-        && !input.allowedModes.includes(modeBits(before)))
-      || before.size < 1
-      || before.size > input.maxBytes
-    ) {
-      return fail(
+    return runWithIndependentFinalizersV2({
+      operation: () => {
+        descriptor = openSync(
+          input.absolutePath,
+          constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+        );
+        const before = fstatSync(descriptor);
+        if (
+          !before.isFile()
+          || before.isSymbolicLink()
+          || before.nlink !== 1
+          || before.uid !== owner.uid
+          || before.gid !== owner.gid
+          || (modeBits(before) & 0o022) !== 0
+          || (input.allowedModes !== undefined
+            && !input.allowedModes.includes(modeBits(before)))
+          || before.size < 1
+          || before.size > input.maxBytes
+        ) {
+          return fail(
+            "NODE_SCAFFOLD_PRODUCTION_MATERIALIZATION_V2_INSTALL_TREE_INVALID",
+            `${input.label} has unsafe type, ownership, links, mode or size`,
+          );
+        }
+        input.beforeReadForTest?.();
+        const bytes = Buffer.alloc(before.size);
+        let byteLength = 0;
+        while (byteLength < bytes.byteLength) {
+          const count = readSync(
+            descriptor,
+            bytes,
+            byteLength,
+            bytes.byteLength - byteLength,
+            null,
+          );
+          if (count === 0) break;
+          byteLength += count;
+        }
+        const growthProbe = Buffer.allocUnsafe(1);
+        const growthCount = readSync(descriptor, growthProbe, 0, 1, null);
+        const after = fstatSync(descriptor);
+        const pathAfter = lstatSync(input.absolutePath);
+        if (
+          before.dev !== after.dev
+          || before.ino !== after.ino
+          || before.mode !== after.mode
+          || before.size !== after.size
+          || before.mtimeMs !== after.mtimeMs
+          || before.ctimeMs !== after.ctimeMs
+          || after.dev !== pathAfter.dev
+          || after.ino !== pathAfter.ino
+          || after.mode !== pathAfter.mode
+          || after.size !== pathAfter.size
+          || byteLength !== after.size
+          || growthCount !== 0
+        ) {
+          bytes.fill(0);
+          return fail(
+            "NODE_SCAFFOLD_PRODUCTION_MATERIALIZATION_V2_INSTALL_TREE_INVALID",
+            `${input.label} changed while it was captured`,
+          );
+        }
+        return Object.freeze({
+          bytes,
+          contentHash: sha256(bytes),
+          mode: modeBits(after),
+        });
+      },
+      finalizers: [() => {
+        if (descriptor === undefined) return;
+        closeSync(descriptor);
+        input.afterDescriptorCloseForTest?.();
+      }],
+      onFinalizerFailure: (errors) => fail(
         "NODE_SCAFFOLD_PRODUCTION_MATERIALIZATION_V2_INSTALL_TREE_INVALID",
-        `${input.label} has unsafe type, ownership, links, mode or size`,
-      );
-    }
-    const bytes = readFileSync(descriptor);
-    const after = fstatSync(descriptor);
-    const pathAfter = lstatSync(input.absolutePath);
-    if (
-      before.dev !== after.dev
-      || before.ino !== after.ino
-      || before.mode !== after.mode
-      || before.size !== after.size
-      || before.mtimeMs !== after.mtimeMs
-      || before.ctimeMs !== after.ctimeMs
-      || after.dev !== pathAfter.dev
-      || after.ino !== pathAfter.ino
-      || after.mode !== pathAfter.mode
-      || after.size !== pathAfter.size
-      || bytes.byteLength !== after.size
-    ) {
-      bytes.fill(0);
-      return fail(
-        "NODE_SCAFFOLD_PRODUCTION_MATERIALIZATION_V2_INSTALL_TREE_INVALID",
-        `${input.label} changed while it was captured`,
-      );
-    }
-    return Object.freeze({
-      bytes,
-      contentHash: sha256(bytes),
-      mode: modeBits(after),
+        `${input.label} read or descriptor close failed`,
+        new AggregateError(
+          errors,
+          `${input.label} read and descriptor finalization failures`,
+        ),
+      ),
     });
   } catch (error) {
     if (error instanceof NodeScaffoldProductionMaterializationErrorV2) throw error;
@@ -324,73 +455,585 @@ export function readExactNpmLockRegularFileInternalV2(input: Readonly<{
       `${input.label} could not be read without following links`,
       error,
     );
-  } finally {
-    if (descriptor !== undefined) closeSync(descriptor);
   }
 }
 
 const readExactRegularFile = readExactNpmLockRegularFileInternalV2;
 
+function rawNpmInstallExactIdentityV2(
+  stat: BigIntStats,
+): RawNpmInstallExactObjectIdentityInternalV2 {
+  return Object.freeze({
+    device: stat.dev,
+    inode: stat.ino,
+    ownerUid: stat.uid,
+    ownerGid: stat.gid,
+    objectKind: stat.isSymbolicLink()
+      ? "symbolic_link" as const
+      : stat.isDirectory()
+        ? "directory" as const
+        : stat.isFile()
+          ? "ordinary_file" as const
+          : "special" as const,
+  });
+}
+
+function sameRawNpmInstallExactIdentityV2(
+  left: RawNpmInstallExactObjectIdentityInternalV2,
+  right: RawNpmInstallExactObjectIdentityInternalV2,
+): boolean {
+  return left.device === right.device
+    && left.inode === right.inode
+    && left.ownerUid === right.ownerUid
+    && left.ownerGid === right.ownerGid
+    && left.objectKind === right.objectKind;
+}
+
+export function getRawNpmInstallExactObjectIdentityInternalV2(
+  entries: readonly RawNpmInstallEntryInternalV2[],
+  locator: string,
+): RawNpmInstallExactObjectIdentityInternalV2 | undefined {
+  const census = rawNpmInstallExactCensusByEntriesV2.get(entries as object);
+  if (!census) return undefined;
+  return locator === ""
+    ? census.root
+    : census.entries.get(locator);
+}
+
+export function assertRawNpmInstallObjectCurrentInternalV2(input: Readonly<{
+  entries: readonly RawNpmInstallEntryInternalV2[];
+  nodeModulesRoot: string;
+  locator: string;
+  expected: RawNpmInstallExactObjectIdentityInternalV2 | undefined;
+  onFailure: (message: string, cause?: unknown) => never;
+}>): void {
+  const census = rawNpmInstallExactCensusByEntriesV2.get(
+    input.entries as object,
+  );
+  if (!census || census.rootPath !== input.nodeModulesRoot) {
+    return input.onFailure(
+      `Exact npm install census is not bound to ${input.nodeModulesRoot}`,
+    );
+  }
+  const expectedFromCensus = input.locator === ""
+    ? census.root
+    : census.entries.get(input.locator);
+  if (
+    !input.expected
+    || !expectedFromCensus
+    || !sameRawNpmInstallExactIdentityV2(
+      input.expected,
+      expectedFromCensus,
+    )
+  ) {
+    return input.onFailure(
+      `Exact npm install census is unavailable for ${input.locator || "node_modules"}`,
+    );
+  }
+  const absolutePath = input.locator === ""
+    ? input.nodeModulesRoot
+    : path.join(input.nodeModulesRoot, ...input.locator.split("/"));
+  let rootCurrent: RawNpmInstallExactObjectIdentityInternalV2;
+  try {
+    rootCurrent = rawNpmInstallExactIdentityV2(
+      lstatSync(input.nodeModulesRoot, { bigint: true }),
+    );
+  } catch (error) {
+    return input.onFailure(
+      "Exact npm install root could not be revalidated before target deletion",
+      error,
+    );
+  }
+  if (!sameRawNpmInstallExactIdentityV2(rootCurrent, census.root)) {
+    return input.onFailure(
+      "Exact npm install root was replaced or changed before target deletion",
+    );
+  }
+  let targetMatches = false;
+  try {
+    const current = rawNpmInstallExactIdentityV2(
+      lstatSync(absolutePath, { bigint: true }),
+    );
+    targetMatches = sameRawNpmInstallExactIdentityV2(
+      current,
+      input.expected,
+    );
+  } catch (error) {
+    return input.onFailure(
+      `Exact npm install target ${input.locator || "node_modules"} could not be revalidated`,
+      error,
+    );
+  }
+  if (!targetMatches) {
+    return input.onFailure(
+      `Exact npm install target ${input.locator || "node_modules"} was replaced or changed`,
+    );
+  }
+}
+
+export function removeRawNpmInstallExactOwnedObjectsInternalV2(input: Readonly<{
+  entries: readonly RawNpmInstallEntryInternalV2[];
+  nodeModulesRoot: string;
+  locators: readonly string[];
+  onFailure: (message: string, cause?: unknown) => never;
+  afterDirectoryWritableForTest?: (locator: string) => void;
+  afterDirectoryDescriptorCloseForTest?: (
+    locator: string,
+    phase: "make_writable" | "restore_mode",
+  ) => void;
+  beforeDirectoryMembershipReadForTest?: (locator: string) => void;
+}>): void {
+  if (input.locators.length === 0) return;
+  const census = rawNpmInstallExactCensusByEntriesV2.get(
+    input.entries as object,
+  );
+  if (!census || census.rootPath !== input.nodeModulesRoot) {
+    return input.onFailure(
+      `Exact npm install census is not bound to ${input.nodeModulesRoot}`,
+    );
+  }
+  if (
+    new Set(input.locators).size !== input.locators.length
+    || input.locators.some((locator) =>
+      locator.length === 0
+      || !census.entries.has(locator)
+      || input.locators.some((other) =>
+        other !== locator && locator.startsWith(`${other}/`)))
+  ) {
+    return input.onFailure(
+      "Exact npm install cleanup locators are absent, duplicated, or overlapping",
+    );
+  }
+
+  const absolutePath = (locator: string): string => locator === ""
+    ? input.nodeModulesRoot
+    : path.join(input.nodeModulesRoot, ...locator.split("/"));
+  const currentIdentity = (
+    locator: string,
+    label: string,
+  ): RawNpmInstallExactObjectIdentityInternalV2 => {
+    try {
+      return rawNpmInstallExactIdentityV2(
+        lstatSync(absolutePath(locator), { bigint: true }),
+      );
+    } catch (error) {
+      return input.onFailure(
+        `Exact npm install ${label} ${locator || "node_modules"} could not be revalidated`,
+        error,
+      );
+    }
+  };
+  const assertIdentity = (
+    locator: string,
+    expected: RawNpmInstallExactObjectIdentityInternalV2,
+    label: string,
+  ): void => {
+    if (!sameRawNpmInstallExactIdentityV2(
+      currentIdentity(locator, label),
+      expected,
+    )) {
+      return input.onFailure(
+        `Exact npm install ${label} ${locator || "node_modules"} was replaced or changed`,
+      );
+    }
+  };
+  const remaining = new Map(census.entries);
+  const immediateChildNames = (directoryLocator: string): string[] => {
+    const names: string[] = [];
+    for (const locator of remaining.keys()) {
+      if (locator === "" || locator === directoryLocator) continue;
+      const parent = path.posix.dirname(locator);
+      const canonicalParent = parent === "." ? "" : parent;
+      if (canonicalParent === directoryLocator) {
+        names.push(path.posix.basename(locator));
+      }
+    }
+    return names.sort(compareUtf16);
+  };
+  const assertDirectoryMembership = (
+    locator: string,
+    expected: RawNpmInstallExactObjectIdentityInternalV2,
+  ): void => {
+    assertIdentity(locator, expected, "directory");
+    if (expected.objectKind !== "directory") {
+      return input.onFailure(
+        `Exact npm install cleanup parent ${locator || "node_modules"} is not a directory`,
+      );
+    }
+    const expectedNames = immediateChildNames(locator);
+    const actual = readBoundedDirectoryNamesV2({
+      absolutePath: absolutePath(locator),
+      label: `Exact npm install directory ${locator || "node_modules"}`,
+      maxNames: expectedNames.length,
+      onFailure: input.onFailure,
+      beforeReadForTest: () => input.beforeDirectoryMembershipReadForTest?.(locator),
+    });
+    if (!sameStrings(actual, expectedNames)) {
+      return input.onFailure(
+        `Exact npm install directory ${locator || "node_modules"} membership changed before cleanup`,
+      );
+    }
+  };
+  const assertRoot = (): void => assertDirectoryMembership("", census.root);
+  const modeJournal = new Map<string, Readonly<{
+    locator: string;
+    expected: RawNpmInstallExactObjectIdentityInternalV2;
+    originalMode: number;
+  }>>();
+  const makeDirectoryOwnerWritable = (
+    locator: string,
+    expected: RawNpmInstallExactObjectIdentityInternalV2,
+  ): void => {
+    assertDirectoryMembership(locator, expected);
+    let descriptor: number | undefined;
+    const operationErrors: unknown[] = [];
+    try {
+      descriptor = openSync(
+        absolutePath(locator),
+        constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW,
+      );
+      const stat = fstatSync(descriptor, { bigint: true });
+      if (
+        !stat.isDirectory()
+        || !sameRawNpmInstallExactIdentityV2(
+          rawNpmInstallExactIdentityV2(stat),
+          expected,
+        )
+      ) {
+        throw new TypeError(
+          `Exact npm install directory ${locator || "node_modules"} changed before descriptor-bound chmod`,
+        );
+      }
+      if ((stat.mode & 0o700n) !== 0o700n) {
+        modeJournal.set(locator, Object.freeze({
+          locator,
+          expected,
+          originalMode: Number(stat.mode & 0o7777n),
+        }));
+        fchmodSync(descriptor, Number(stat.mode & 0o7777n) | 0o700);
+        input.afterDirectoryWritableForTest?.(locator);
+      }
+    } catch (error) {
+      operationErrors.push(error);
+    }
+    const closeErrors: unknown[] = [];
+    if (descriptor !== undefined) {
+      try {
+        closeSync(descriptor);
+        input.afterDirectoryDescriptorCloseForTest?.(locator, "make_writable");
+      } catch (error) {
+        closeErrors.push(error);
+      }
+    }
+    if (operationErrors.length > 0 && closeErrors.length > 0) {
+      return input.onFailure(
+        `Exact npm install directory ${locator || "node_modules"} could not be made owner-writable through its exact descriptor`,
+        new AggregateError(
+          [...operationErrors, ...closeErrors],
+          "Exact npm install directory mutation and descriptor close both failed",
+        ),
+      );
+    }
+    if (operationErrors.length > 0) {
+      return input.onFailure(
+        `Exact npm install directory ${locator || "node_modules"} could not be made owner-writable through its exact descriptor`,
+        operationErrors[0],
+      );
+    }
+    if (closeErrors.length > 0) {
+      return input.onFailure(
+        `Exact npm install directory ${locator || "node_modules"} descriptor could not be closed after owner-writable mutation`,
+        closeErrors[0],
+      );
+    }
+    assertDirectoryMembership(locator, expected);
+  };
+
+  const restoreDirectoryMode = (entry: Readonly<{
+    locator: string;
+    expected: RawNpmInstallExactObjectIdentityInternalV2;
+    originalMode: number;
+  }>): void => {
+    let descriptor: number | undefined;
+    const operationErrors: unknown[] = [];
+    try {
+      try {
+        lstatSync(absolutePath(entry.locator), { bigint: true });
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+        throw error;
+      }
+      descriptor = openSync(
+        absolutePath(entry.locator),
+        constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW,
+      );
+      const before = fstatSync(descriptor, { bigint: true });
+      if (
+        !before.isDirectory()
+        || !sameRawNpmInstallExactIdentityV2(
+          rawNpmInstallExactIdentityV2(before),
+          entry.expected,
+        )
+      ) {
+        throw new TypeError(
+          `Exact npm install surviving directory ${entry.locator || "node_modules"} changed before mode restoration`,
+        );
+      }
+      if (Number(before.mode & 0o7777n) !== entry.originalMode) {
+        fchmodSync(descriptor, entry.originalMode);
+      }
+      const after = fstatSync(descriptor, { bigint: true });
+      const pathAfter = lstatSync(absolutePath(entry.locator), { bigint: true });
+      if (
+        !sameRawNpmInstallExactIdentityV2(
+          rawNpmInstallExactIdentityV2(after),
+          entry.expected,
+        )
+        || !sameRawNpmInstallExactIdentityV2(
+          rawNpmInstallExactIdentityV2(pathAfter),
+          entry.expected,
+        )
+        || Number(after.mode & 0o7777n) !== entry.originalMode
+        || Number(pathAfter.mode & 0o7777n) !== entry.originalMode
+      ) {
+        throw new TypeError(
+          `Exact npm install surviving directory ${entry.locator || "node_modules"} did not retain its original mode`,
+        );
+      }
+    } catch (error) {
+      operationErrors.push(error);
+    }
+    const closeErrors: unknown[] = [];
+    if (descriptor !== undefined) {
+      try {
+        closeSync(descriptor);
+        input.afterDirectoryDescriptorCloseForTest?.(
+          entry.locator,
+          "restore_mode",
+        );
+      } catch (error) {
+        closeErrors.push(error);
+      }
+    }
+    if (operationErrors.length > 0 && closeErrors.length > 0) {
+      throw new AggregateError(
+        [...operationErrors, ...closeErrors],
+        "Exact npm install directory mode restoration and descriptor close both failed",
+      );
+    }
+    if (operationErrors.length > 0) throw operationErrors[0];
+    if (closeErrors.length > 0) throw closeErrors[0];
+  };
+
+  // Validate the complete bounded capture once before deleting anything. During
+  // deletion, revalidate each parent/leaf and use only unlink(2)/rmdir(2).
+  // A raced foreign subtree therefore remains non-empty and cannot be followed
+  // by a recursive path-based remover.
+  const primaryErrors: unknown[] = [];
+  try {
+    assertRoot();
+    for (const [locator, expected] of remaining) {
+      if (locator === "") continue;
+      if (expected.objectKind === "directory") {
+        assertDirectoryMembership(locator, expected);
+      } else {
+        assertIdentity(locator, expected, "entry");
+      }
+    }
+
+    const selected = [...remaining.entries()].filter(([locator]) =>
+      locator !== "" && input.locators.some((target) =>
+        locator === target || locator.startsWith(`${target}/`)));
+    const depth = (locator: string): number => locator.split("/").length;
+    const writableDirectories = new Set<string>();
+    for (const [locator, expected] of selected) {
+      if (expected.objectKind === "directory") writableDirectories.add(locator);
+      const rawParent = path.posix.dirname(locator);
+      writableDirectories.add(rawParent === "." ? "" : rawParent);
+    }
+    for (const locator of [...writableDirectories].sort((left, right) =>
+      depth(left) - depth(right) || compareUtf16(left, right))) {
+      const expected = locator === "" ? census.root : remaining.get(locator);
+      if (!expected) {
+        return input.onFailure(
+          `Exact npm install writable cleanup directory census is absent for ${locator || "node_modules"}`,
+        );
+      }
+      makeDirectoryOwnerWritable(locator, expected);
+    }
+    const leaves = selected
+      .filter(([, expected]) => expected.objectKind !== "directory")
+      .sort(([left], [right]) => depth(right) - depth(left)
+        || compareUtf16(left, right));
+    for (const [locator, expected] of leaves) {
+      assertRoot();
+      const rawParent = path.posix.dirname(locator);
+      const parent = rawParent === "." ? "" : rawParent;
+      const parentIdentity = remaining.get(parent);
+      if (!parentIdentity) {
+        return input.onFailure(
+          `Exact npm install cleanup parent census is absent for ${locator}`,
+        );
+      }
+      assertDirectoryMembership(parent, parentIdentity);
+      assertIdentity(locator, expected, "cleanup leaf");
+      try {
+        unlinkSync(absolutePath(locator));
+      } catch (error) {
+        return input.onFailure(
+          `Exact npm install cleanup leaf ${locator} could not be unlinked`,
+          error,
+        );
+      }
+      remaining.delete(locator);
+      assertIdentity(parent, parentIdentity, "cleanup parent");
+    }
+
+    const directories = selected
+      .filter(([, expected]) => expected.objectKind === "directory")
+      .sort(([left], [right]) => depth(right) - depth(left)
+        || compareUtf16(left, right));
+    for (const [locator, expected] of directories) {
+      assertRoot();
+      const rawParent = path.posix.dirname(locator);
+      const parent = rawParent === "." ? "" : rawParent;
+      const parentIdentity = remaining.get(parent);
+      if (!parentIdentity) {
+        return input.onFailure(
+          `Exact npm install cleanup parent census is absent for ${locator}`,
+        );
+      }
+      assertDirectoryMembership(parent, parentIdentity);
+      assertDirectoryMembership(locator, expected);
+      try {
+        rmdirSync(absolutePath(locator));
+      } catch (error) {
+        return input.onFailure(
+          `Exact npm install cleanup directory ${locator} could not be removed empty`,
+          error,
+        );
+      }
+      remaining.delete(locator);
+      assertIdentity(parent, parentIdentity, "cleanup parent");
+    }
+    assertRoot();
+  } catch (error) {
+    primaryErrors.push(error);
+  }
+
+  const restoreErrors: unknown[] = [];
+  for (const entry of [...modeJournal.values()].reverse()) {
+    try {
+      restoreDirectoryMode(entry);
+    } catch (error) {
+      restoreErrors.push(error);
+    }
+  }
+  if (restoreErrors.length > 0) {
+    const errors = primaryErrors.length === 0
+      ? restoreErrors
+      : [...primaryErrors, ...restoreErrors];
+    return input.onFailure(
+      "Exact npm install cleanup could not restore every surviving directory mode",
+      new AggregateError(
+        errors,
+        "Exact npm install cleanup retained a surviving directory with uncertain mode",
+      ),
+    );
+  }
+  if (primaryErrors.length > 0) throw primaryErrors[0];
+}
+
 function hashRegularFile(
   absolutePath: string,
   locator: string,
+  testHooks?: Readonly<{
+    beforeFileRead?: (locator: string) => void;
+    afterFileDescriptorClose?: (locator: string) => void;
+    beforeDirectoryRead?: (locator: string) => void;
+    maxDirectoryEntriesForTest?: number;
+  }>,
 ): Readonly<{ contentHash: string; byteLength: number; mode: number }> {
   const owner = processOwner();
   const limits = CANONICAL_RUNTIME_TREE_V2_PROFILES.dependencies;
   let descriptor: number | undefined;
   try {
-    descriptor = openSync(
-      absolutePath,
-      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
-    );
-    const before = fstatSync(descriptor);
-    if (
-      !before.isFile()
-      || before.nlink !== 1
-      || before.uid !== owner.uid
-      || before.gid !== owner.gid
-      || (modeBits(before) & 0o022) !== 0
-      || before.size < 0
-      || before.size > limits.maxFileBytes
-    ) {
-      return fail(
+    return runWithIndependentFinalizersV2({
+      operation: () => {
+        descriptor = openSync(
+          absolutePath,
+          constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+        );
+        const before = fstatSync(descriptor);
+        if (
+          !before.isFile()
+          || before.nlink !== 1
+          || before.uid !== owner.uid
+          || before.gid !== owner.gid
+          || (modeBits(before) & 0o022) !== 0
+          || before.size < 0
+          || before.size > limits.maxFileBytes
+        ) {
+          return fail(
+            "NODE_SCAFFOLD_PRODUCTION_MATERIALIZATION_V2_INSTALL_TREE_INVALID",
+            `Installed file ${locator} is unsafe`,
+          );
+        }
+        const hash = createHash("sha256");
+        const buffer = Buffer.allocUnsafe(64 * 1024);
+        let byteLength = 0;
+        testHooks?.beforeFileRead?.(locator);
+        while (true) {
+          const count = readSync(descriptor, buffer, 0, buffer.byteLength, null);
+          if (count === 0) break;
+          if (byteLength + count > before.size || byteLength + count > limits.maxFileBytes) {
+            return fail(
+              "NODE_SCAFFOLD_PRODUCTION_MATERIALIZATION_V2_INSTALL_TREE_INVALID",
+              `Installed file ${locator} exceeded its admitted byte length while hashing`,
+            );
+          }
+          byteLength += count;
+          hash.update(buffer.subarray(0, count));
+        }
+        const after = fstatSync(descriptor);
+        const pathAfter = lstatSync(absolutePath);
+        if (
+          before.dev !== after.dev
+          || before.ino !== after.ino
+          || before.mode !== after.mode
+          || before.size !== after.size
+          || before.mtimeMs !== after.mtimeMs
+          || before.ctimeMs !== after.ctimeMs
+          || after.dev !== pathAfter.dev
+          || after.ino !== pathAfter.ino
+          || after.mode !== pathAfter.mode
+          || after.size !== pathAfter.size
+          || byteLength !== after.size
+        ) {
+          return fail(
+            "NODE_SCAFFOLD_PRODUCTION_MATERIALIZATION_V2_INSTALL_TREE_INVALID",
+            `Installed file ${locator} changed while it was hashed`,
+          );
+        }
+        return Object.freeze({
+          contentHash: hash.digest("hex"),
+          byteLength,
+          mode: modeBits(after),
+        });
+      },
+      finalizers: [() => {
+        if (descriptor === undefined) return;
+        closeSync(descriptor);
+        testHooks?.afterFileDescriptorClose?.(locator);
+      }],
+      onFinalizerFailure: (errors) => fail(
         "NODE_SCAFFOLD_PRODUCTION_MATERIALIZATION_V2_INSTALL_TREE_INVALID",
-        `Installed file ${locator} is unsafe`,
-      );
-    }
-    const hash = createHash("sha256");
-    const buffer = Buffer.allocUnsafe(64 * 1024);
-    let byteLength = 0;
-    while (true) {
-      const count = readSync(descriptor, buffer, 0, buffer.byteLength, null);
-      if (count === 0) break;
-      byteLength += count;
-      hash.update(buffer.subarray(0, count));
-    }
-    const after = fstatSync(descriptor);
-    const pathAfter = lstatSync(absolutePath);
-    if (
-      before.dev !== after.dev
-      || before.ino !== after.ino
-      || before.mode !== after.mode
-      || before.size !== after.size
-      || before.mtimeMs !== after.mtimeMs
-      || before.ctimeMs !== after.ctimeMs
-      || after.dev !== pathAfter.dev
-      || after.ino !== pathAfter.ino
-      || after.mode !== pathAfter.mode
-      || after.size !== pathAfter.size
-      || byteLength !== after.size
-    ) {
-      return fail(
-        "NODE_SCAFFOLD_PRODUCTION_MATERIALIZATION_V2_INSTALL_TREE_INVALID",
-        `Installed file ${locator} changed while it was hashed`,
-      );
-    }
-    return Object.freeze({
-      contentHash: hash.digest("hex"),
-      byteLength,
-      mode: modeBits(after),
+        `Installed file ${locator} hash or descriptor close failed`,
+        new AggregateError(
+          errors,
+          `Installed file ${locator} hash and descriptor finalization failures`,
+        ),
+      ),
     });
   } catch (error) {
     if (error instanceof NodeScaffoldProductionMaterializationErrorV2) throw error;
@@ -399,24 +1042,51 @@ function hashRegularFile(
       `Installed file ${locator} could not be hashed`,
       error,
     );
-  } finally {
-    if (descriptor !== undefined) closeSync(descriptor);
   }
 }
 
 export function captureRawNpmInstallTreeInternalV2(
   nodeModulesRoot: string,
+  testHooks?: Readonly<{
+    beforeFileRead?: (locator: string) => void;
+    afterFileDescriptorClose?: (locator: string) => void;
+    beforeDirectoryRead?: (locator: string) => void;
+    maxDirectoryEntriesForTest?: number;
+  }>,
 ): readonly RawNpmInstallEntryInternalV2[] {
   const owner = processOwner();
   const limits = CANONICAL_RUNTIME_TREE_V2_PROFILES.dependencies;
   const entries: RawInstallEntryV2[] = [];
+  const exactEntries = new Map<
+    string,
+    RawNpmInstallExactObjectIdentityInternalV2
+  >();
+  let exactRoot:
+    RawNpmInstallExactObjectIdentityInternalV2 | undefined;
   const casefold = new Map<string, string>();
   let files = 0;
   let directories = 0;
   let totalBytes = 0;
+  const maxMembers = limits.maxFiles + limits.maxDirectories;
   const visit = (absoluteDirectory: string, relativeDirectory: string): void => {
     const before = lstatSync(absoluteDirectory);
-    const beforeNames = readdirSync(absoluteDirectory).sort(compareUtf16);
+    const exactBefore = lstatSync(absoluteDirectory, { bigint: true });
+    const beforeNames = readBoundedDirectoryNamesV2({
+      absolutePath: absoluteDirectory,
+      label: `Installed directory ${relativeDirectory || "node_modules"}`,
+      maxNames: Math.min(
+        maxMembers - entries.length,
+        testHooks?.maxDirectoryEntriesForTest ?? Number.MAX_SAFE_INTEGER,
+      ),
+      onFailure: (message, cause) => fail(
+        "NODE_SCAFFOLD_PRODUCTION_MATERIALIZATION_V2_INSTALL_TREE_INVALID",
+        message,
+        cause,
+      ),
+      beforeReadForTest: () => testHooks?.beforeDirectoryRead?.(
+        relativeDirectory || "node_modules",
+      ),
+    });
     if (
       before.isSymbolicLink()
       || !before.isDirectory()
@@ -430,6 +1100,9 @@ export function captureRawNpmInstallTreeInternalV2(
         `Installed directory ${relativeDirectory || "node_modules"} is unsafe`,
       );
     }
+    const exactDirectoryIdentity = rawNpmInstallExactIdentityV2(exactBefore);
+    if (relativeDirectory === "") exactRoot = exactDirectoryIdentity;
+    exactEntries.set(relativeDirectory, exactDirectoryIdentity);
     for (const name of beforeNames) {
       const locator = relativeDirectory ? `${relativeDirectory}/${name}` : name;
       if (canonicalRuntimePathIssuesV2(locator, limits).length > 0) {
@@ -449,6 +1122,9 @@ export function captureRawNpmInstallTreeInternalV2(
       casefold.set(folded, locator);
       const absolutePath = path.join(absoluteDirectory, name);
       const stat = lstatSync(absolutePath);
+      const exactStat = lstatSync(absolutePath, { bigint: true });
+      const exactIdentity = rawNpmInstallExactIdentityV2(exactStat);
+      exactEntries.set(locator, exactIdentity);
       if (stat.isSymbolicLink()) {
         if (stat.uid !== owner.uid || stat.gid !== owner.gid || stat.nlink !== 1) {
           return fail(
@@ -493,7 +1169,7 @@ export function captureRawNpmInstallTreeInternalV2(
           "Installed dependency file count exceeded its fixed bound",
         );
       }
-      const captured = hashRegularFile(absolutePath, locator);
+      const captured = hashRegularFile(absolutePath, locator, testHooks);
       totalBytes += captured.byteLength;
       if (totalBytes > limits.maxTotalBytes) {
         return fail(
@@ -510,13 +1186,27 @@ export function captureRawNpmInstallTreeInternalV2(
       }));
     }
     const after = lstatSync(absoluteDirectory);
-    const afterNames = readdirSync(absoluteDirectory).sort(compareUtf16);
+    const exactAfter = lstatSync(absoluteDirectory, { bigint: true });
+    const afterNames = readBoundedDirectoryNamesV2({
+      absolutePath: absoluteDirectory,
+      label: `Installed directory ${relativeDirectory || "node_modules"}`,
+      maxNames: beforeNames.length,
+      onFailure: (message, cause) => fail(
+        "NODE_SCAFFOLD_PRODUCTION_MATERIALIZATION_V2_INSTALL_TREE_INVALID",
+        message,
+        cause,
+      ),
+    });
     if (
       before.dev !== after.dev
       || before.ino !== after.ino
       || before.mode !== after.mode
       || before.mtimeMs !== after.mtimeMs
       || before.ctimeMs !== after.ctimeMs
+      || !sameRawNpmInstallExactIdentityV2(
+        exactDirectoryIdentity,
+        rawNpmInstallExactIdentityV2(exactAfter),
+      )
       || !sameStrings(beforeNames, afterNames)
     ) {
       return fail(
@@ -526,8 +1216,20 @@ export function captureRawNpmInstallTreeInternalV2(
     }
   };
   visit(nodeModulesRoot, "");
-  return Object.freeze(entries.sort((left, right) =>
+  const result = Object.freeze(entries.sort((left, right) =>
     compareUtf16(left.locator, right.locator)));
+  if (!exactRoot) {
+    return fail(
+      "NODE_SCAFFOLD_PRODUCTION_MATERIALIZATION_V2_INSTALL_TREE_INVALID",
+      "Installed dependency root exact census was not captured",
+    );
+  }
+  rawNpmInstallExactCensusByEntriesV2.set(result, Object.freeze({
+    rootPath: nodeModulesRoot,
+    root: exactRoot,
+    entries: exactEntries,
+  }));
+  return result;
 }
 
 const captureRawInstallTree = captureRawNpmInstallTreeInternalV2;
@@ -583,7 +1285,16 @@ export function validateEveryAndOnlyNpmPackageRootsInternalV2(
       : nodeModulesRoot;
     const expectedTop = [...new Set(packageMembers.map((member) =>
       member.split("/")[0]!))].sort(compareUtf16);
-    const actualTop = readdirSync(absoluteContainer)
+    const actualTop = readBoundedDirectoryNamesV2({
+      absolutePath: absoluteContainer,
+      label: `Installed package roots in ${container}`,
+      maxNames: expectedTop.length + 2,
+      onFailure: (message, cause) => fail(
+        "NODE_SCAFFOLD_PRODUCTION_MATERIALIZATION_V2_INSTALL_TREE_INVALID",
+        message,
+        cause,
+      ),
+    })
       .filter((name) => name !== ".bin" && name !== ".package-lock.json")
       .sort(compareUtf16);
     if (!sameStrings(actualTop, expectedTop)) {
@@ -597,8 +1308,16 @@ export function validateEveryAndOnlyNpmPackageRootsInternalV2(
         .filter((member) => member.startsWith(`${scope}/`))
         .map((member) => member.slice(scope.length + 1))
         .sort(compareUtf16);
-      const actualScoped = readdirSync(path.join(absoluteContainer, scope))
-        .sort(compareUtf16);
+      const actualScoped = readBoundedDirectoryNamesV2({
+        absolutePath: path.join(absoluteContainer, scope),
+        label: `Installed scoped package roots in ${container}/${scope}`,
+        maxNames: expectedScoped.length,
+        onFailure: (message, cause) => fail(
+          "NODE_SCAFFOLD_PRODUCTION_MATERIALIZATION_V2_INSTALL_TREE_INVALID",
+          message,
+          cause,
+        ),
+      });
       if (!sameStrings(actualScoped, expectedScoped)) {
         return fail(
           "NODE_SCAFFOLD_PRODUCTION_MATERIALIZATION_V2_INSTALL_TREE_INVALID",
@@ -874,8 +1593,16 @@ export function normalizeNodeScaffoldRuntimeMetadataInternalV2(
   if (scope === "production_host") normalizeDarwinMetadata(root);
 }
 
-export function sealNpmDependencyTreeInternalV2(root: string): void {
+export function sealNpmDependencyTreeInternalV2(
+  root: string,
+  testHooks?: Readonly<{
+    beforePathSync?: (absolutePath: string) => void;
+    afterPathDescriptorClose?: (absolutePath: string) => void;
+  }>,
+): void {
   const owner = processOwner();
+  let remainingMembers = CANONICAL_RUNTIME_TREE_V2_PROFILES.dependencies.maxFiles
+    + CANONICAL_RUNTIME_TREE_V2_PROFILES.dependencies.maxDirectories;
   const visit = (absolutePath: string): void => {
     const before = lstatSync(absolutePath);
     if (before.isSymbolicLink()) {
@@ -891,11 +1618,25 @@ export function sealNpmDependencyTreeInternalV2(root: string): void {
       );
     }
     if (before.isDirectory()) {
-      for (const name of readdirSync(absolutePath).sort(compareUtf16)) {
+      const names = readBoundedDirectoryNamesV2({
+        absolutePath,
+        label: `Dependency seal directory ${absolutePath}`,
+        maxNames: remainingMembers,
+        onFailure: (message, cause) => fail(
+          "NODE_SCAFFOLD_PRODUCTION_MATERIALIZATION_V2_NORMALIZATION_FAILED",
+          message,
+          cause,
+        ),
+      });
+      remainingMembers -= names.length;
+      for (const name of names) {
         visit(path.join(absolutePath, name));
       }
       chmodSync(absolutePath, 0o555);
-      syncPath(absolutePath);
+      syncPath(absolutePath, {
+        beforeSync: testHooks?.beforePathSync,
+        afterDescriptorClose: testHooks?.afterPathDescriptorClose,
+      });
       return;
     }
     if (!before.isFile() || before.nlink !== 1) {
@@ -905,7 +1646,10 @@ export function sealNpmDependencyTreeInternalV2(root: string): void {
       );
     }
     chmodSync(absolutePath, (modeBits(before) & 0o111) === 0 ? 0o444 : 0o555);
-    syncPath(absolutePath);
+    syncPath(absolutePath, {
+      beforeSync: testHooks?.beforePathSync,
+      afterDescriptorClose: testHooks?.afterPathDescriptorClose,
+    });
   };
   visit(root);
 }
@@ -916,6 +1660,8 @@ export function assertSealedOwnedNpmDependencyTreeInternalV2(
   root: string,
 ): void {
   const owner = processOwner();
+  let remainingMembers = CANONICAL_RUNTIME_TREE_V2_PROFILES.dependencies.maxFiles
+    + CANONICAL_RUNTIME_TREE_V2_PROFILES.dependencies.maxDirectories;
   const visit = (absolutePath: string): void => {
     const stat = lstatSync(absolutePath);
     if (
@@ -933,7 +1679,18 @@ export function assertSealedOwnedNpmDependencyTreeInternalV2(
       );
     }
     if (stat.isDirectory()) {
-      for (const name of readdirSync(absolutePath).sort(compareUtf16)) {
+      const names = readBoundedDirectoryNamesV2({
+        absolutePath,
+        label: `Sealed dependency directory ${absolutePath}`,
+        maxNames: remainingMembers,
+        onFailure: (message, cause) => fail(
+          "NODE_SCAFFOLD_PRODUCTION_MATERIALIZATION_V2_AUTHORITY_MISMATCH",
+          message,
+          cause,
+        ),
+      });
+      remainingMembers -= names.length;
+      for (const name of names) {
         visit(path.join(absolutePath, name));
       }
     }
@@ -1399,15 +2156,19 @@ export function materializeNodeScaffoldProductionDependenciesInternalV2(
       );
     }
     assertRootLockAuthority(nodeModulesRoot, closure);
-    rmSync(path.join(nodeModulesRoot, ".package-lock.json"), {
-      force: false,
+    removeRawNpmInstallExactOwnedObjectsInternalV2({
+      entries: rawEntries,
+      nodeModulesRoot,
+      locators: [
+        ".package-lock.json",
+        ...validated.binDirectories,
+      ],
+      onFailure: (message, cause) => fail(
+        "NODE_SCAFFOLD_PRODUCTION_MATERIALIZATION_V2_INSTALL_TREE_INVALID",
+        message,
+        cause,
+      ),
     });
-    for (const binDirectory of validated.binDirectories) {
-      rmSync(path.join(nodeModulesRoot, ...binDirectory.split("/")), {
-        recursive: true,
-        force: false,
-      });
-    }
     syncPath(nodeModulesRoot);
     if (admissionScope === "production_host") {
       normalizeDarwinMetadata(nodeModulesRoot);

@@ -4,18 +4,18 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
-import { verifyModule } from "../../dist/installer/steps/07-verify/module.js";
-import { normalize, validateOutput } from "../../dist/installer/steps/07-verify/guards.js";
+import { verifyModule } from "../../src/installer/steps/07-verify/module.js";
+import { normalize, validateOutput } from "../../src/installer/steps/07-verify/guards.js";
 import {
   commentLooksMechanicallySatisfied,
   formatPrCommentsForAgent,
   getMechanicallySatisfiedInlineReviewThreadIds,
   getResolvableHistoricalInlineReviewThreadIds,
-} from "../../dist/installer/steps/07-verify/pr-comments.js";
-import type { PrState } from "../../dist/installer/steps/07-verify/pr-comments.js";
-import { resolveVerifyRetryIssues } from "../../dist/installer/step-ops.js";
-import { isStaleFailureStoryOutput, verifiedStoryOutput } from "../../dist/installer/repo.js";
-import type { ParsedOutput } from "../../dist/installer/steps/types.js";
+} from "../../src/installer/steps/07-verify/pr-comments.js";
+import type { PrState } from "../../src/installer/steps/07-verify/pr-comments.js";
+import { resolveVerifyRetryIssues } from "../../src/installer/step-ops.js";
+import { isStaleFailureStoryOutput, verifiedStoryOutput } from "../../src/installer/repo.js";
+import type { ParsedOutput } from "../../src/installer/steps/types.js";
 
 const verifyPromptSource = readFileSync(
   resolve(import.meta.dirname, "../../src/installer/steps/07-verify/prompt.md"),

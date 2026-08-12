@@ -1,12 +1,41 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { after, before, describe, it } from "node:test";
 
 import { createAttemptRepository } from "../../src/execution/attempt-repository.js";
+import { completeSingleStepClaimAndState } from "../../src/execution/claim-attempt-transition.js";
 import { ensureCompilerClaimFence } from "../../src/execution/compiler-claim-fence.js";
 import { publishLoopClaimRuntime } from "../../src/execution/claim-runtime-publication.js";
+import { loadCompilerEnglishAdmissionLedgerAuthorityV1 } from "../../src/execution/compiler-english-admission-ledger-v1.js";
+import {
+  createCompilerStoryEnglishAdmissionClaimProofV1,
+  loadCompilerStoryEnglishAdmissionLedgerAuthorityV1,
+  type CompilerStoryEnglishAdmissionClaimProofV1,
+} from "../../src/execution/compiler-story-english-admission-ledger-v1.js";
+import { publishCompilerStoryEnglishAdmissionAndCompleteV1 } from "../../src/execution/compiler-story-english-admission-publication-v1.js";
 import { withdrawPreDispatchClaimInTransaction } from "../../src/execution/pre-dispatch-withdrawal-authority.js";
+import { createRuntimeCompletionEffectRepository } from "../../src/execution/runtime-completion-effect-repository.js";
+import { runWithRuntimeCompletionOwner } from "../../src/execution/runtime-completion-owner-context.js";
+import {
+  createRuntimeCompletionRepository,
+  requestRuntimeCompletion,
+} from "../../src/execution/runtime-completion.js";
 import { createRuntimeSessionRepository } from "../../src/execution/runtime-session-repository.js";
+import { createSingleEffectCompletionPlanDescriptorV1 } from "../../src/execution/schemas/runtime-completion-plan-v1.js";
+import type { ClaimEnvelopeV1 } from "../../src/execution/schemas/claim-envelope-v1.js";
 import { createFindingSetV1 } from "../../src/findings/finding-set.js";
+import { designAuthoritySubjectHashV1 } from "../../src/installer/steps/03-stories/guards.js";
+import { buildV3AutoStoriesOutput } from "../../src/installer/steps/03-stories/preclaim.js";
+import {
+  compileCompilerEnglishAdmissionV1,
+  compilerEnglishAdmissionReceiptV1,
+} from "../../src/product-compiler/compiler-english-admission-v1.js";
+import {
+  compileCompilerStoryEnglishAdmissionV1,
+  compilerStoryEnglishAdmissionStateV1,
+} from "../../src/product-compiler/compiler-story-english-admission-v1.js";
+import { hashCanonicalJson } from "../../src/product-compiler/canonical-json.js";
+import { renderProductSpecV2Compatibility } from "../../src/product-compiler/renderers/product-spec-v2-compatibility.js";
 import type { RecoveryCaseDraftV1 } from "../../src/recovery/recovery-case.js";
 import { createRecoveryDeliveryRepository } from "../../src/recovery/recovery-delivery-repository.js";
 import { createFindingRecoveryRepository } from "../../src/recovery/finding-recovery-repository.js";
@@ -17,6 +46,10 @@ import {
 import { createV3RecoveryLifecycleReconciler } from "../../src/recovery/v3-recovery-lifecycle-reconciler.js";
 import { createV3RecoveryOwnerLeaseRepository } from "../../src/recovery/v3-recovery-owner-lease.js";
 import { createIsolatedTestDatabase, type TestDatabase } from "../execution-attempts/test-database.js";
+import {
+  NODE_CLI_TASK,
+  genuineNodeCliProductSpecV2,
+} from "../product-compiler/fixtures/no-design-product-semantics-v2.js";
 
 const PACKET_HASH = "a".repeat(64);
 const SLICE_HASH = "b".repeat(64);
@@ -24,6 +57,15 @@ const OBSERVATION_HASH = "c".repeat(64);
 const CONTENT_HASH = "d".repeat(64);
 const SOURCE_SHA = "1".repeat(40);
 const SOURCE_TREE = "2".repeat(40);
+const STORY_ADMISSION_DRAIN_EVIDENCE = {
+  schema: "setfarm.runtime-drain-evidence.v1" as const,
+  observedAt: "2026-08-12T00:00:00.000Z",
+  localProcessAbsent: true,
+  openClawTaskAbsent: true,
+  workspaceProcessAbsent: true,
+  stableObservations: 2,
+  evidenceRefs: ["setfarm://test/v3-recovery-lifecycle-story-admission-drain"],
+};
 
 function finding(runId: string, storyId: string) {
   return createFindingSetV1({
@@ -71,6 +113,365 @@ function recoveryDraft(findingSet: ReturnType<typeof finding>): RecoveryCaseDraf
   };
 }
 
+async function prepareCompilerAdmissionCompletion(
+  database: TestDatabase,
+  input: Readonly<{
+    runId: string;
+    stepDbId: string;
+    workflowStepId: "plan" | "design" | "stories";
+    output: string;
+  }>,
+) {
+  const token = createHash("sha256")
+    .update(`${input.runId}:${input.workflowStepId}`, "utf8")
+    .digest("hex")
+    .slice(0, 24);
+  const claimAgentId = `feature-dev_${input.workflowStepId}`;
+  const runtimeAgentId = `${input.workflowStepId}-fixture-runtime`;
+  const ownerInstanceId = `${input.workflowStepId}-fixture-owner`;
+  const claims = await database.sql<Array<{ id: number }>>`
+    INSERT INTO claim_log (run_id, step_id, story_id, agent_id)
+    VALUES (${input.runId}, ${input.workflowStepId}, NULL, ${claimAgentId})
+    RETURNING id::integer AS id
+  `;
+  const claimId = claims[0]!.id;
+  const sessions = createRuntimeSessionRepository(database.sql);
+  const session = await sessions.reserve({
+    sessionId: `RTS_${token}`,
+    runId: input.runId,
+    stepDbId: input.stepDbId,
+    workflowStepId: input.workflowStepId,
+    claimId,
+    claimAgentId,
+    runtimeAgentId,
+    runtimeKind: "openclaw_session",
+    ownerInstanceId,
+  });
+  await sessions.markStarting({ sessionId: session.sessionId, ownerInstanceId });
+  await sessions.markRunning({
+    sessionId: session.sessionId,
+    ownerInstanceId,
+    sessionKey: `${input.workflowStepId}-fixture-session`,
+  });
+  const envelope: ClaimEnvelopeV1 = {
+    schema: "setfarm.claim-envelope.v1",
+    protocol: "v3",
+    issuedAt: "2026-08-12T00:00:00.000Z",
+    stepId: input.stepDbId,
+    workflowStepId: input.workflowStepId,
+    runId: input.runId,
+    claimId,
+    claimAgentId,
+    runtimeAgentId,
+    input: `Durable ${input.workflowStepId} fixture completion`,
+  };
+  const requested = await requestRuntimeCompletion(database.sql, {
+    envelope,
+    output: input.output,
+    requestId: `RCR_${token}`,
+  });
+  assert.equal(requested.status, "requested");
+  if (requested.status !== "requested") {
+    throw new Error("compiler admission completion request missing");
+  }
+  const completions = createRuntimeCompletionRepository(database.sql);
+  await completions.claim({ requestId: requested.request.requestId, ownerInstanceId });
+  await sessions.markDrained({
+    sessionId: session.sessionId,
+    ownerInstanceId,
+    evidence: STORY_ADMISSION_DRAIN_EVIDENCE,
+  });
+  const processing = await completions.markProcessing({
+    requestId: requested.request.requestId,
+    ownerInstanceId,
+  });
+  if (!processing.ownerInstanceId || !processing.leaseExpiresAt) {
+    throw new Error("compiler admission completion owner capability missing");
+  }
+  return {
+    claimId,
+    envelope,
+    completions,
+    processing,
+    requestId: requested.request.requestId,
+    ownerInstanceId,
+  };
+}
+
+async function settleCompilerAdmissionCompletion(
+  database: TestDatabase,
+  managed: Awaited<ReturnType<typeof prepareCompilerAdmissionCompletion>>,
+): Promise<void> {
+  const effects = createRuntimeCompletionEffectRepository(database.sql);
+  const effect = await effects.claimNext({
+    requestId: managed.requestId,
+    ownerInstanceId: managed.ownerInstanceId,
+  });
+  assert.ok(effect?.leaseToken);
+  await effects.settle({
+    requestId: managed.requestId,
+    effectKey: effect.effectKey,
+    ownerInstanceId: managed.ownerInstanceId,
+    leaseToken: effect.leaseToken,
+    resolution: "applied",
+    result: { advanced: false, runCompleted: false },
+    evidence: { source: "v3-recovery-lifecycle-story-admission-fixture" },
+  });
+  await managed.completions.markEffectsCommitted({
+    requestId: managed.requestId,
+    ownerInstanceId: managed.ownerInstanceId,
+    ownerAttemptCount: managed.processing.ownerAttemptCount,
+    result: { advanced: false, runCompleted: false },
+  });
+  await managed.completions.acceptAndRelease({
+    requestId: managed.requestId,
+    ownerInstanceId: managed.ownerInstanceId,
+    ownerAttemptCount: managed.processing.ownerAttemptCount,
+    result: { advanced: false, runCompleted: false },
+  });
+}
+
+async function seedCanonicalStoryAdmission(
+  database: TestDatabase,
+  input: Readonly<{ runId: string; implementStepDbId: string }>,
+): Promise<Readonly<{
+  storyDbId: string;
+  storyId: string;
+  storyAdmissionProof: CompilerStoryEnglishAdmissionClaimProofV1;
+}>> {
+  const productSpec = genuineNodeCliProductSpecV2();
+  const releaseSha = "3".repeat(40);
+  const releaseAdmissionHash = await database.seedV3ReleaseGoAdmission(releaseSha);
+  const productSpecHash = hashCanonicalJson(productSpec);
+  const renderedPlan = renderProductSpecV2Compatibility(productSpec);
+  const prdMarker = "\nPRD:\n";
+  const prdIndex = renderedPlan.indexOf(prdMarker);
+  assert.ok(prdIndex > 0);
+  const prd = renderedPlan.slice(prdIndex + prdMarker.length);
+  const baseContext: Record<string, string> = {
+    task: NODE_CLI_TASK,
+    repo: `/tmp/${input.runId}`,
+    prd,
+    product_semantics_version: "v2",
+    product_spec_schema: productSpec.schema,
+    product_spec_hash: productSpecHash,
+    product_spec_source_task_hash: productSpec.traceability.sourceTaskHash,
+    ui_language: "English",
+    project_name: productSpec.product.name,
+    project_display_name: productSpec.product.name,
+    project_slug: "task-cli",
+    app_title: productSpec.product.name,
+    ui_vision_summary: productSpec.delivery.uiVisionSummary,
+    design_required: "false",
+  };
+  const planStepDbId = `${input.runId}-plan-step`;
+  const designStepDbId = `${input.runId}-design-step`;
+  const storiesStepDbId = `${input.runId}-stories-step`;
+  const releaseAdmissionPreflightHash = "e".repeat(64);
+  await database.sql`
+    INSERT INTO runs (
+      id, workflow_id, task, status, context, protocol, protocol_version,
+      compiler_release_sha, packet_hash, activation_preflight_hash, release_admission_hash
+    ) VALUES (
+      ${input.runId}, 'feature-dev', ${NODE_CLI_TASK}, 'running', ${JSON.stringify(baseContext)},
+      'v3', 1, ${releaseSha}, ${PACKET_HASH}, ${releaseAdmissionPreflightHash},
+      ${releaseAdmissionHash}
+    )
+  `;
+  await database.sql`
+    INSERT INTO steps (
+      id, run_id, step_id, agent_id, step_index, input_template, expects,
+      status, type, retry_count, max_retries
+    ) VALUES (
+      ${planStepDbId}, ${input.runId}, 'plan', 'feature-dev_planner', 1, '', '',
+      'running', 'single', 0, 3
+    ), (
+      ${designStepDbId}, ${input.runId}, 'design', 'feature-dev_designer', 2, '', '',
+      'waiting', 'single', 0, 3
+    ), (
+      ${storiesStepDbId}, ${input.runId}, 'stories', 'feature-dev_story-planner', 3, '', '',
+      'waiting', 'single', 0, 3
+    ), (
+      ${input.implementStepDbId}, ${input.runId}, 'implement', 'implement-agent', 5, '', '',
+      'pending', 'loop', 0, 3
+    )
+  `;
+
+  const managedPlan = await prepareCompilerAdmissionCompletion(database, {
+    runId: input.runId,
+    stepDbId: planStepDbId,
+    workflowStepId: "plan",
+    output: "STATUS: done",
+  });
+  const planAuthority = compileCompilerEnglishAdmissionV1({
+    claimId: managedPlan.claimId,
+    runId: input.runId,
+    stepDbId: planStepDbId,
+    workflowStepId: "plan",
+    productSpec,
+    finalContext: baseContext,
+  });
+  const planReceipt = compilerEnglishAdmissionReceiptV1(planAuthority);
+  const planContext = {
+    ...baseContext,
+    plan_english_authority_version: planReceipt.authorityVersion,
+    plan_english_admission_receipt_hash: planAuthority.receiptHash,
+  };
+  await runWithRuntimeCompletionOwner({
+    requestId: managedPlan.processing.requestId,
+    ownerInstanceId: managedPlan.processing.ownerInstanceId!,
+    leaseExpiresAt: managedPlan.processing.leaseExpiresAt!,
+    ownerAttemptCount: managedPlan.processing.ownerAttemptCount,
+  }, () => completeSingleStepClaimAndState(database.sql, {
+    envelope: managedPlan.envelope,
+    stepStatus: "done",
+    stepOutput: "STATUS: done",
+    runContextJson: JSON.stringify(planContext),
+    expectedRunContextJson: JSON.stringify(baseContext),
+    requireRuntimeCompletionOwner: true,
+    completionPlan: createSingleEffectCompletionPlanDescriptorV1({
+      kind: "single_completion",
+      continuation: { type: "single_pipeline_advance" },
+      effectPayload: { stepId: "plan", compilerEnglishAdmissionReceipt: planReceipt },
+    }),
+  }));
+  await settleCompilerAdmissionCompletion(database, managedPlan);
+  const durablePlanAuthority = await loadCompilerEnglishAdmissionLedgerAuthorityV1(
+    database.sql,
+    { runId: input.runId },
+  );
+
+  const designOutput = [
+    "STATUS: done",
+    "DESIGN_REQUIRED: false",
+    "DEVICE_TYPE: NONE",
+    "DESIGN_SYSTEM: {}",
+    "SCREEN_MAP: []",
+    "SCREENS_GENERATED: 0",
+    "AUTO_COMPLETED: design-bypass (DESIGN_REQUIRED=false)",
+  ].join("\n");
+  const designContext = {
+    ...planContext,
+    screen_map: "[]",
+    screens_generated: "0",
+    design_system: "{}",
+  };
+  await database.sql`UPDATE steps SET status = 'running' WHERE id = ${designStepDbId}`;
+  const managedDesign = await prepareCompilerAdmissionCompletion(database, {
+    runId: input.runId,
+    stepDbId: designStepDbId,
+    workflowStepId: "design",
+    output: designOutput,
+  });
+  await runWithRuntimeCompletionOwner({
+    requestId: managedDesign.processing.requestId,
+    ownerInstanceId: managedDesign.processing.ownerInstanceId!,
+    leaseExpiresAt: managedDesign.processing.leaseExpiresAt!,
+    ownerAttemptCount: managedDesign.processing.ownerAttemptCount,
+  }, () => completeSingleStepClaimAndState(database.sql, {
+    envelope: managedDesign.envelope,
+    stepStatus: "done",
+    stepOutput: designOutput,
+    runContextJson: JSON.stringify(designContext),
+    expectedRunContextJson: JSON.stringify(planContext),
+    requireRuntimeCompletionOwner: true,
+    completionPlan: createSingleEffectCompletionPlanDescriptorV1({
+      kind: "single_completion",
+      continuation: { type: "single_pipeline_advance" },
+      effectPayload: { stepId: "design" },
+    }),
+  }));
+  await settleCompilerAdmissionCompletion(database, managedDesign);
+
+  const storyOutput = buildV3AutoStoriesOutput({
+    repo: baseContext.repo,
+    prd,
+    expectedProductSpecHash: productSpecHash,
+    productSemanticsVersion: "v2",
+  });
+  const screenMapLine = storyOutput.split("\n").find((line) => line.startsWith("SCREEN_MAP: "));
+  assert.ok(screenMapLine);
+  const storyAdmissionContext = {
+    ...designContext,
+    screen_map: screenMapLine.slice("SCREEN_MAP: ".length),
+  };
+  await database.sql`
+    UPDATE runs SET context = ${JSON.stringify(storyAdmissionContext)} WHERE id = ${input.runId}
+  `;
+  await database.sql`UPDATE steps SET status = 'running' WHERE id = ${storiesStepDbId}`;
+  const managedStories = await prepareCompilerAdmissionCompletion(database, {
+    runId: input.runId,
+    stepDbId: storiesStepDbId,
+    workflowStepId: "stories",
+    output: storyOutput,
+  });
+  const designAuthoritySubjectHash = await designAuthoritySubjectHashV1(
+    database.sql,
+    input.runId,
+    storyAdmissionContext,
+    productSpecHash,
+    false,
+  );
+  const storyAuthority = compileCompilerStoryEnglishAdmissionV1({
+    claimId: managedStories.claimId,
+    runId: input.runId,
+    stepDbId: storiesStepDbId,
+    workflowStepId: "stories",
+    planAuthority: durablePlanAuthority,
+    designAuthoritySubjectHash,
+    rawOutput: storyOutput,
+    expectedOutput: storyOutput,
+    finalContext: storyAdmissionContext,
+  });
+  const storyReceipt = compilerStoryEnglishAdmissionStateV1(storyAuthority).receipt;
+  const finalContext = {
+    ...storyAdmissionContext,
+    stories_english_authority_version: storyReceipt.authorityVersion,
+    stories_english_admission_receipt_hash: storyAuthority.receiptHash,
+  };
+  await runWithRuntimeCompletionOwner({
+    requestId: managedStories.processing.requestId,
+    ownerInstanceId: managedStories.processing.ownerInstanceId!,
+    leaseExpiresAt: managedStories.processing.leaseExpiresAt!,
+    ownerAttemptCount: managedStories.processing.ownerAttemptCount,
+  }, () => publishCompilerStoryEnglishAdmissionAndCompleteV1(database.sql, {
+    authority: storyAuthority,
+    completion: {
+      envelope: managedStories.envelope,
+      stepStatus: "done",
+      stepOutput: storyOutput,
+      runContextJson: JSON.stringify(finalContext),
+      expectedRunContextJson: JSON.stringify(storyAdmissionContext),
+      requireRuntimeCompletionOwner: true,
+      completionPlan: createSingleEffectCompletionPlanDescriptorV1({
+        kind: "single_completion",
+        continuation: { type: "single_pipeline_advance" },
+        effectPayload: {
+          stepId: "stories",
+          compilerStoryEnglishAdmissionReceipt: storyReceipt,
+        },
+      }),
+    },
+  }));
+  await settleCompilerAdmissionCompletion(database, managedStories);
+  const durableStoryAuthority = await loadCompilerStoryEnglishAdmissionLedgerAuthorityV1(
+    database.sql,
+    { runId: input.runId },
+  );
+  const storyRows = await database.sql<Array<{ id: string; story_id: string }>>`
+    SELECT id, story_id
+      FROM stories
+     WHERE run_id = ${input.runId}
+     ORDER BY story_index, story_id
+  `;
+  assert.ok(storyRows[0]);
+  return Object.freeze({
+    storyDbId: storyRows[0]!.id,
+    storyId: storyRows[0]!.story_id,
+    storyAdmissionProof: createCompilerStoryEnglishAdmissionClaimProofV1(durableStoryAuthority),
+  });
+}
+
 describe("v3 recovery lifecycle reconciler", () => {
   let database: TestDatabase;
   let sequence = 0;
@@ -84,32 +485,18 @@ describe("v3 recovery lifecycle reconciler", () => {
   async function setup() {
     sequence += 1;
     const runId = `run-v3-lifecycle-${sequence}`;
-    const storyId = `US-LIFE-${sequence}`;
     const stepDbId = `step-v3-lifecycle-${sequence}`;
-    const storyDbId = `story-v3-lifecycle-${sequence}`;
     const base = new Date(Date.now() + sequence * 1_000);
-    const releaseSha = "3".repeat(40);
-    const releaseAdmissionHash = await database.seedV3ReleaseGoAdmission(releaseSha);
+    const canonical = await seedCanonicalStoryAdmission(database, {
+      runId,
+      implementStepDbId: stepDbId,
+    });
+    const { storyDbId, storyId, storyAdmissionProof } = canonical;
     await database.sql.unsafe(
-      `INSERT INTO runs (
-         id, workflow_id, task, status, protocol, protocol_version,
-         compiler_release_sha, packet_hash, activation_preflight_hash,
-         release_admission_hash
-       ) VALUES ($1, 'feature-dev', 'lifecycle reconciliation', 'running', 'v3', 1, $2, $3, $4, $5)`,
-      [runId, releaseSha, PACKET_HASH, "e".repeat(64), releaseAdmissionHash],
-    );
-    await database.sql.unsafe(
-      `INSERT INTO steps (
-         id, run_id, step_id, agent_id, step_index, input_template, expects,
-         status, type, current_story_id
-       ) VALUES ($1, $2, 'implement', 'implement-agent', 5, '', '', 'pending', 'loop', NULL)`,
-      [stepDbId, runId],
-    );
-    await database.sql.unsafe(
-      `INSERT INTO stories (
-         id, run_id, story_index, story_id, title, description,
-         acceptance_criteria, status
-       ) VALUES ($1, $2, 1, $3, 'Lifecycle story', '', '[]', 'failed')`,
+      `UPDATE stories
+          SET status = 'failed', output = NULL, claimed_by = NULL,
+              claimed_at = NULL, started_at = NULL
+        WHERE id = $1 AND run_id = $2 AND story_id = $3`,
       [storyDbId, runId, storyId],
     );
 
@@ -139,6 +526,7 @@ describe("v3 recovery lifecycle reconciler", () => {
       dispatch: authorized.dispatch,
       delivery: authorized.delivery,
       deliveries,
+      storyAdmissionProof,
     };
   }
 
@@ -168,6 +556,7 @@ describe("v3 recovery lifecycle reconciler", () => {
       claimAgentId: "recovery-agent",
       parallelLimit: 1,
       recoveryHandoff: handoff,
+      storyAdmissionProof: fixture.storyAdmissionProof,
       runtimeIntent: {
         schema: "setfarm.runtime-claim-intent.v1",
         sessionId: input.sessionId,

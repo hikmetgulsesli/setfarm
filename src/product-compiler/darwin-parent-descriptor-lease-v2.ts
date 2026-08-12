@@ -7,7 +7,7 @@ import {
   lstatSync,
   openSync,
   readSync,
-  type Stats,
+  type BigIntStats,
 } from "node:fs";
 import path from "node:path";
 
@@ -44,15 +44,15 @@ export class DarwinParentDescriptorLeaseErrorV2 extends Error {
 type OwnerV2 = Readonly<{ uid: number; gid: number }>;
 
 type FingerprintV2 = Readonly<{
-  device: number;
-  inode: number;
-  mode: number;
-  ownerUid: number;
-  ownerGid: number;
-  linkCount: number;
-  byteLength: number;
-  modifiedMs: number;
-  changedMs: number;
+  device: bigint;
+  inode: bigint;
+  mode: bigint;
+  ownerUid: bigint;
+  ownerGid: bigint;
+  linkCount: bigint;
+  byteLength: bigint;
+  modifiedNanoseconds: bigint;
+  changedNanoseconds: bigint;
 }>;
 
 type SystemToolRefV2 = "MACOS_LOCKF_V2" | "MACOS_CAT_LOCK_HELPER_V2";
@@ -81,6 +81,10 @@ export type DarwinParentDescriptorLeaseSystemToolEvidenceV2<
 }>;
 
 export type DarwinParentDescriptorLeaseV2 = Readonly<{
+  parentPhysicalIdentity: Readonly<{
+    device: bigint;
+    inode: bigint;
+  }>;
   evidence: Readonly<{
     contractRef: "DARWIN_PARENT_DESCRIPTOR_LEASE_V2";
     executionPolicy: "exact_lockf_fd_then_exact_cat_pipe_v2";
@@ -112,7 +116,7 @@ function closeQuietly(descriptor: number | undefined): void {
   }
 }
 
-function fingerprint(stat: Stats): FingerprintV2 {
+function fingerprint(stat: BigIntStats): FingerprintV2 {
   return Object.freeze({
     device: stat.dev,
     inode: stat.ino,
@@ -121,8 +125,8 @@ function fingerprint(stat: Stats): FingerprintV2 {
     ownerGid: stat.gid,
     linkCount: stat.nlink,
     byteLength: stat.size,
-    modifiedMs: stat.mtimeMs,
-    changedMs: stat.ctimeMs,
+    modifiedNanoseconds: stat.mtimeNs,
+    changedNanoseconds: stat.ctimeNs,
   });
 }
 
@@ -134,16 +138,16 @@ function sameFingerprint(left: FingerprintV2, right: FingerprintV2): boolean {
     && left.ownerGid === right.ownerGid
     && left.linkCount === right.linkCount
     && left.byteLength === right.byteLength
-    && left.modifiedMs === right.modifiedMs
-    && left.changedMs === right.changedMs;
+    && left.modifiedNanoseconds === right.modifiedNanoseconds
+    && left.changedNanoseconds === right.changedNanoseconds;
 }
 
 function samePhysicalIdentity(left: FingerprintV2, right: FingerprintV2): boolean {
   return left.device === right.device && left.inode === right.inode;
 }
 
-function modeBits(stat: Stats | FingerprintV2): number {
-  return stat.mode & 0o7777;
+function modeBits(stat: BigIntStats | FingerprintV2): number {
+  return Number(stat.mode & 0o7777n);
 }
 
 function normalizedAbsolute(value: unknown, field: string): string {
@@ -205,17 +209,17 @@ function stableFileHash(input: Readonly<{
 }>): Readonly<{ fingerprint: FingerprintV2; contentHash: string }> {
   let descriptor: number | undefined;
   try {
-    const pathBefore = lstatSync(input.absolutePath);
+    const pathBefore = lstatSync(input.absolutePath, { bigint: true });
     if (
       pathBefore.isSymbolicLink()
       || !pathBefore.isFile()
-      || !Number.isSafeInteger(pathBefore.size)
-      || pathBefore.size < 1
-      || pathBefore.size > input.maxBytes
+      || pathBefore.size < 1n
+      || pathBefore.size > BigInt(input.maxBytes)
       || (input.expectedOwner
-        && (pathBefore.uid !== input.expectedOwner.uid || pathBefore.gid !== input.expectedOwner.gid))
+        && (pathBefore.uid !== BigInt(input.expectedOwner.uid)
+          || pathBefore.gid !== BigInt(input.expectedOwner.gid)))
       || !input.allowedModes.includes(modeBits(pathBefore))
-      || !input.allowedLinks.includes(pathBefore.nlink)
+      || !input.allowedLinks.includes(Number(pathBefore.nlink))
     ) {
       return fail(input.errorCode, "Lease file is not one exact bounded ordinary file");
     }
@@ -223,7 +227,7 @@ function stableFileHash(input: Readonly<{
       input.absolutePath,
       constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
     );
-    const before = fstatSync(descriptor);
+    const before = fstatSync(descriptor, { bigint: true });
     if (!sameFingerprint(fingerprint(pathBefore), fingerprint(before))) {
       return fail(input.errorCode, "Lease file changed before its bounded read");
     }
@@ -237,10 +241,10 @@ function stableFileHash(input: Readonly<{
       if (total > input.maxBytes) return fail(input.errorCode, "Lease file exceeded its bound");
       hash.update(buffer.subarray(0, count));
     }
-    const after = fstatSync(descriptor);
-    const pathAfter = lstatSync(input.absolutePath);
+    const after = fstatSync(descriptor, { bigint: true });
+    const pathAfter = lstatSync(input.absolutePath, { bigint: true });
     if (
-      total !== before.size
+      BigInt(total) !== before.size
       || !sameFingerprint(fingerprint(before), fingerprint(after))
       || !sameFingerprint(fingerprint(after), fingerprint(pathAfter))
     ) {
@@ -262,13 +266,13 @@ function assertDirectory(input: Readonly<{
   errorCode: DarwinParentDescriptorLeaseErrorCodeV2;
 }>): FingerprintV2 {
   try {
-    const before = lstatSync(input.absolutePath);
-    const after = lstatSync(input.absolutePath);
+    const before = lstatSync(input.absolutePath, { bigint: true });
+    const after = lstatSync(input.absolutePath, { bigint: true });
     if (
       before.isSymbolicLink()
       || !before.isDirectory()
-      || before.uid !== input.expectedOwner.uid
-      || before.gid !== input.expectedOwner.gid
+      || before.uid !== BigInt(input.expectedOwner.uid)
+      || before.gid !== BigInt(input.expectedOwner.gid)
       || !input.allowedModes.includes(modeBits(before))
       || !sameFingerprint(fingerprint(before), fingerprint(after))
     ) {
@@ -286,7 +290,7 @@ function captureSystemTool<RefV2 extends SystemToolRefV2>(
   toolRef: RefV2,
 ): CapturedSystemToolV2<RefV2> {
   try {
-    const ownerGid = lstatSync(absolutePath).gid;
+    const ownerGid = Number(lstatSync(absolutePath, { bigint: true }).gid);
     const captured = stableFileHash({
       absolutePath,
       maxBytes: MAX_TOOL_BYTES_V2,
@@ -298,7 +302,7 @@ function captureSystemTool<RefV2 extends SystemToolRefV2>(
     return Object.freeze({
       toolRef,
       contentHash: captured.contentHash,
-      byteLength: captured.fingerprint.byteLength,
+      byteLength: Number(captured.fingerprint.byteLength),
       mode: "0755",
       ownerUid: 0,
       ownerGid,
@@ -431,7 +435,7 @@ export async function acquireDarwinParentDescriptorLeaseV2(input: Readonly<{
   });
   if (
     expectedLock.contentHash !== expectedLockHash
-    || expectedLock.fingerprint.byteLength !== expectedLockBytes.byteLength
+    || expectedLock.fingerprint.byteLength !== BigInt(expectedLockBytes.byteLength)
   ) {
     expectedLockBytes.fill(0);
     return fail(
@@ -444,7 +448,10 @@ export async function acquireDarwinParentDescriptorLeaseV2(input: Readonly<{
   let child: ReturnType<typeof spawn> | undefined;
   try {
     descriptor = openSync(lockPath, constants.O_RDWR | constants.O_NOFOLLOW | constants.O_NONBLOCK);
-    if (!sameFingerprint(fingerprint(fstatSync(descriptor)), expectedLock.fingerprint)) {
+    if (!sameFingerprint(
+      fingerprint(fstatSync(descriptor, { bigint: true })),
+      expectedLock.fingerprint,
+    )) {
       return fail(
         "DARWIN_PARENT_DESCRIPTOR_LEASE_V2_LOST",
         "Lease lock changed while its inherited descriptor was opened",
@@ -533,7 +540,7 @@ export async function acquireDarwinParentDescriptorLeaseV2(input: Readonly<{
       }
       const currentLock = stableFileHash({
         absolutePath: lockPath,
-        maxBytes: expectedLock.fingerprint.byteLength,
+        maxBytes: Number(expectedLock.fingerprint.byteLength),
         expectedOwner,
         allowedModes: [0o600],
         allowedLinks: [1],
@@ -584,6 +591,10 @@ export async function acquireDarwinParentDescriptorLeaseV2(input: Readonly<{
     };
     assertCurrent();
     return Object.freeze({
+      parentPhysicalIdentity: Object.freeze({
+        device: expectedParent.device,
+        inode: expectedParent.inode,
+      }),
       evidence: Object.freeze({
         contractRef: "DARWIN_PARENT_DESCRIPTOR_LEASE_V2" as const,
         executionPolicy: "exact_lockf_fd_then_exact_cat_pipe_v2" as const,

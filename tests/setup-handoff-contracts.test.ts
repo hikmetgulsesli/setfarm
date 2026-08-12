@@ -1,7 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { getStackPack } from "../dist/installer/stack-contract/packs.js";
-import { annotateResolvedTargetsForSetup, expandCompanionTargets, type ResolvedTarget } from "../dist/installer/setup-handoff.js";
+import { getStackPack } from "../src/installer/stack-contract/packs.js";
+import { annotateResolvedTargetsForSetup, expandCompanionTargets, type ResolvedTarget } from "../src/installer/setup-handoff.js";
 
 function target(partial: Partial<ResolvedTarget>): ResolvedTarget {
   return {

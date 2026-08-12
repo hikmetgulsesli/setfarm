@@ -8,6 +8,20 @@ import {
   Sha256Schema,
 } from "../../product-compiler/schemas/common-v1.js";
 import {
+  PLATFORM_RELEASE_BOOTSTRAP_METADATA_OPERATION_POLICY_HASH_V2,
+} from "../platform-release-bootstrap-metadata-operation-v2.js";
+import {
+  PLATFORM_RELEASE_BOOTSTRAP_NETWORK_NEGATIVE_OPERATION_POLICY_HASH_V2,
+  PLATFORM_RELEASE_BOOTSTRAP_NETWORK_NEGATIVE_PROBE_CLOSURE_HASH_V2,
+} from "../platform-release-bootstrap-network-negative-operation-v2.js";
+import {
+  NETWORK_ISOLATION_NEGATIVE_PROBE_PROGRAM_HASH_V2,
+  NETWORK_SANDBOX_PROFILE_HASH_V2,
+} from "../network-sandbox-v2.js";
+import {
+  NETWORK_ISOLATION_NORMALIZED_ENVIRONMENT_HASH_V2,
+} from "./network-isolation-negative-probe-v2.js";
+import {
   PLATFORM_RELEASE_COMPONENT_VERSION_V2,
   boundedPlatformReleaseJsonSnapshotV2,
   deepFreezePlatformReleaseJsonV2,
@@ -196,13 +210,21 @@ const PLATFORM_RELEASE_HOST_COMPOSITION_OPERATION_BINDINGS_V2 =
       moduleExport: "runPlatformReleaseHostOperationV2",
       moduleExportProbe:
         "runPlatformReleaseModuleExportProbeV2",
+      moduleExportObservationProtocol:
+        "nonce_fd3_nested_observer_child_parent_emits_public_wire_v2",
     }),
     metadataOperationAbiHash: hashCanonicalJson({
       schema:
         "setfarm.platform-release-host-composition-metadata-operation-abi.v2",
       operation:
-        "observe_then_clear_xattr_and_acl_with_distinct_exact_roles_v2",
+        "read_only_xattr_and_acl_observation_with_distinct_exact_roles_v2",
       moduleExport: "runPlatformReleaseMetadataProbeV2",
+      metadataPolicyHash:
+        PLATFORM_RELEASE_BOOTSTRAP_METADATA_OPERATION_POLICY_HASH_V2,
+      observationProtocol:
+        "fd3_authenticated_host_object_kind_device_inode_target_v2",
+      roleExposure:
+        "read_only_observers_returned_clear_role_locators_withheld_v2",
     }),
     networkOperationAbiHash: hashCanonicalJson({
       schema:
@@ -211,20 +233,28 @@ const PLATFORM_RELEASE_HOST_COMPOSITION_OPERATION_BINDINGS_V2 =
         "sandboxed_negative_network_probe_authenticated_wrapper_v2",
       moduleExport:
         "runPlatformReleaseNetworkNegativeProbeV2",
+      sandboxPolicyHash:
+        PLATFORM_RELEASE_BOOTSTRAP_NETWORK_NEGATIVE_OPERATION_POLICY_HASH_V2,
+      sandboxProfileHash: NETWORK_SANDBOX_PROFILE_HASH_V2,
+      probeProgramHash:
+        NETWORK_ISOLATION_NEGATIVE_PROBE_PROGRAM_HASH_V2,
+      normalizedEnvironmentHash:
+        NETWORK_ISOLATION_NORMALIZED_ENVIRONMENT_HASH_V2,
+      probeClosureHash:
+        PLATFORM_RELEASE_BOOTSTRAP_NETWORK_NEGATIVE_PROBE_CLOSURE_HASH_V2,
+      observationProtocol:
+        "fd3_authenticated_target_outer_process_group_nested_sandbox_child_v2",
     }),
     moduleExportOperationAbiHash: hashCanonicalJson({
       schema:
         "setfarm.platform-release-host-composition-module-export-operation-abi.v2",
       operation:
         "load_exact_required_module_closure_and_verify_exports_v2",
+      observationProtocol:
+        "nonce_fd3_nested_observer_child_parent_emits_public_wire_v2",
     }),
-    sandboxPolicyHash: hashCanonicalJson({
-      schema:
-        "setfarm.platform-release-host-composition-sandbox-policy.v2",
-      network: "deny_all",
-      filesystem: "private_output_read_only_except_owned_scratch",
-      shell: "forbidden",
-    }),
+    sandboxPolicyHash:
+      PLATFORM_RELEASE_BOOTSTRAP_NETWORK_NEGATIVE_OPERATION_POLICY_HASH_V2,
     verifierAbiHash: hashCanonicalJson({
       schema:
         "setfarm.platform-release-host-composition-verifier-abi.v2",
@@ -358,12 +388,12 @@ const PlatformReleaseHostIdentityV2Schema = z.object({
   darwinKernelRelease: HostVersionV2Schema,
 }).strict();
 
-export function hashPlatformReleaseHostCompositionHostIdentityV2(
+export function hashPlatformReleaseHostCompositionHostSemanticProfileV2(
   value: z.infer<typeof PlatformReleaseHostIdentityV2Schema>,
 ): string {
   return hashCanonicalJson({
     schema:
-      "setfarm.platform-release-host-composition-host-identity-hash.v2",
+      "setfarm.platform-release-host-composition-host-semantic-profile-hash.v2",
     host: value,
   });
 }
@@ -375,22 +405,24 @@ const PlatformReleaseHostCompositionPlatformProjectionIdentityV2Schema =
     ),
     platformHostToolchainReceiptHash: Sha256Schema,
     host: PlatformReleaseHostIdentityV2Schema,
+    hostIdentitySource: z.literal("authenticated_machine_identity_v3"),
     hostIdentityHash: Sha256Schema,
+    hostSemanticProfileHash: Sha256Schema,
     nodeIdentityHash: Sha256Schema,
     npmClosureHash: Sha256Schema,
     dynamicLibraryClosureHash: Sha256Schema,
   }).strict().superRefine((value, context) => {
     if (
-      value.hostIdentityHash
-        !== hashPlatformReleaseHostCompositionHostIdentityV2(
+      value.hostSemanticProfileHash
+        !== hashPlatformReleaseHostCompositionHostSemanticProfileV2(
           value.host,
         )
     ) {
       context.addIssue({
         code: "custom",
-        path: ["hostIdentityHash"],
+        path: ["hostSemanticProfileHash"],
         message:
-          "Host composition platform projection must bind the exact host identity",
+          "Host composition platform projection must bind the exact OS semantic profile independently from machine identity",
       });
     }
   });

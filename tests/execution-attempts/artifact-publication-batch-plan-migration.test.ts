@@ -10,6 +10,9 @@ import {
   auditCurrentArtifactPublicationAuthorityLedgerData,
   planContractSpineMigrations,
   rollbackArtifactPublicationBatchPlanLedgerToV25,
+  rollbackPlatformReleaseStoreRecordLedgerV3ToV26,
+  rollbackRuntimeCompletionManifestAuthorityToV27,
+  rollbackV3StoryClaimRuntimeBindingToV28,
   verifyContractSpineMigrations,
 } from "../../src/db/contract-spine-migrations.js";
 import {
@@ -31,6 +34,18 @@ const producer = Object.freeze({
   codeSha: "c".repeat(40),
   toolVersions: Object.freeze({ node: "22" }),
 });
+
+async function rollbackEmptyCurrentHeadsToV26(database: TestDatabase): Promise<void> {
+  await rollbackV3StoryClaimRuntimeBindingToV28(database.sql, {
+    targetReleaseSha: "a".repeat(40),
+  });
+  await rollbackRuntimeCompletionManifestAuthorityToV27(database.sql, {
+    targetReleaseSha: "b".repeat(40),
+  });
+  await rollbackPlatformReleaseStoreRecordLedgerV3ToV26(database.sql, {
+    targetReleaseSha: "c".repeat(40),
+  });
+}
 
 function identity(token: string, byteLength = 10): ArtifactPublicationBatchIdentityItem {
   return Object.freeze({
@@ -188,6 +203,7 @@ describe("artifact publication batch recovery plan migration 26", () => {
       true,
     );
     assert.equal((await verifyContractSpineMigrations(database.sql)).status, "verified");
+    await rollbackEmptyCurrentHeadsToV26(database);
     assert.equal(
       (await auditCurrentArtifactPublicationAuthorityLedgerData(database.sql)).status,
       "verified",
@@ -239,6 +255,7 @@ describe("artifact publication batch recovery plan migration 26", () => {
       database.sql`TRUNCATE TABLE public.artifact_publication_batch_plans CASCADE`,
       /ARTIFACT_PUBLICATION_BATCH_PLAN_IMMUTABLE/,
     );
+    await rollbackEmptyCurrentHeadsToV26(database);
     await assert.rejects(
       rollbackArtifactPublicationBatchPlanLedgerToV25(database.sql, {
         targetReleaseSha: TARGET_RELEASE_SHA,
@@ -250,6 +267,7 @@ describe("artifact publication batch recovery plan migration 26", () => {
 
   it("rejects migration adoption when legacy migration-23 batch evidence exists", async () => {
     await applyContractSpineMigrations(database.sql, { releaseSha: RELEASE_SHA });
+    await rollbackEmptyCurrentHeadsToV26(database);
     await rollbackArtifactPublicationBatchPlanLedgerToV25(database.sql, {
       targetReleaseSha: TARGET_RELEASE_SHA,
     });
@@ -264,6 +282,7 @@ describe("artifact publication batch recovery plan migration 26", () => {
 
   it("adopts only an exact empty unjournaled migration-26 shape", async () => {
     await applyContractSpineMigrations(database.sql, { releaseSha: RELEASE_SHA });
+    await rollbackEmptyCurrentHeadsToV26(database);
     await rollbackArtifactPublicationBatchPlanLedgerToV25(database.sql, {
       targetReleaseSha: TARGET_RELEASE_SHA,
     });

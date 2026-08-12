@@ -3,6 +3,12 @@ import type postgres from "postgres";
 import { readDatabaseWallClock } from "../db/database-wall-clock.js";
 import { hashCanonicalJson } from "../product-compiler/canonical-json.js";
 import {
+  lockAndAuthenticateCompilerStoryEnglishAdmissionClaimSubjectV1,
+  type CompilerStoryEnglishAdmissionClaimAuthorityV1,
+  type CompilerStoryEnglishAdmissionClaimProofV1,
+  type CompilerStoryEnglishAdmissionClaimSubjectCandidateV1,
+} from "./compiler-story-english-admission-ledger-v1.js";
+import {
   V3RecoveryClaimAuthorityError,
   V3RecoveryClaimHandoffV1Schema,
   v3RecoveryStoryLockIdentity,
@@ -19,14 +25,225 @@ import {
   v3PreparationStoryLockIdentity,
   type V3PreparationClaimAuthorityV1,
 } from "./v3-preparation-claim-authority.js";
+import {
+  insertV3StoryClaimRuntimeBindingV1,
+  type V3StoryClaimRuntimeSubjectV1,
+} from "./v3-story-claim-runtime-binding-v1.js";
+import { parseV3SupervisorRetryDirectiveStoryOutputV1 } from "./v3-supervisor-retry-directive.js";
 
 type Sql = postgres.Sql;
 type TransactionSql = postgres.TransactionSql;
+
+const AUTHENTICATED_V3_SUPERVISOR_RETRY_PREPARATION_SOURCE: unique symbol = Symbol(
+  "setfarm.authenticated-v3-supervisor-retry-preparation-source.v1",
+);
+
+export type AuthenticatedV3SupervisorRetryPreparationSourceV1 = Readonly<{
+  storyDbId: string;
+  storyId: string;
+  storyBranch: string;
+  storyClaimGeneration: number;
+  directiveHash: string;
+  preparationStateVersion: number;
+  preparationStateFingerprint: string;
+  priorImplementationClaimId: number;
+  sourceRevision: Readonly<{ sha: string; treeHash: string }>;
+  [AUTHENTICATED_V3_SUPERVISOR_RETRY_PREPARATION_SOURCE]: true;
+}>;
+
+/**
+ * Authenticate the only source override accepted by normal V3 implementation
+ * preparation. The branch name comes from the locked canonical story row, and
+ * the retry directive must be backed by the exact settled SUPERVISE owner.
+ */
+export async function loadAuthenticatedV3SupervisorRetryPreparationSourceV1(
+  sql: Sql,
+  input: Readonly<{ runId: string; stepDbId: string; workflowStepId: string }>,
+): Promise<AuthenticatedV3SupervisorRetryPreparationSourceV1 | undefined> {
+  return sql.begin(async (transaction) => {
+    const runs = await transaction.unsafe<Array<{ protocol: string; status: string }>>(
+      "SELECT protocol, status FROM runs WHERE id = $1 FOR UPDATE",
+      [input.runId],
+    );
+    if (runs.length !== 1 || runs[0]!.protocol !== "v3" || !["running", "resuming"].includes(runs[0]!.status)) {
+      return undefined;
+    }
+    const steps = await transaction.unsafe<Array<{ id: string }>>(
+      `SELECT id
+         FROM steps
+        WHERE run_id = $1 AND step_id = $2 AND type = 'loop'
+          AND status IN ('pending', 'running')
+        ORDER BY id
+        LIMIT 2
+        FOR UPDATE`,
+      [input.runId, input.workflowStepId],
+    );
+    if (steps.length !== 1 || steps[0]!.id !== input.stepDbId) {
+      throw new Error("V3_SUPERVISOR_RETRY_PREPARATION_STEP_IDENTITY_INVALID");
+    }
+    const stories = await transaction.unsafe<Array<{
+      id: string;
+      story_id: string;
+      story_branch: string | null;
+      claim_generation: number;
+      output: string | null;
+      retry_count: number;
+      max_retries: number;
+    }>>(
+      `SELECT id, story_id, story_branch, claim_generation, output, retry_count, max_retries
+         FROM stories
+        WHERE run_id = $1 AND status = 'pending'
+        ORDER BY story_index, story_id, id
+        LIMIT 1
+        FOR UPDATE`,
+      [input.runId],
+    );
+    const story = stories[0];
+    if (!story) return undefined;
+    const directive = parseV3SupervisorRetryDirectiveStoryOutputV1(story.output);
+    if (!directive) return undefined;
+    if (
+      directive.runId !== input.runId
+      || directive.storyDbId !== story.id
+      || directive.storyId !== story.story_id
+      || directive.storyClaimGeneration !== story.claim_generation
+      || directive.retryOrdinal !== story.retry_count
+      || directive.maxRetries !== story.max_retries
+    ) {
+      throw new Error("V3_SUPERVISOR_RETRY_PREPARATION_DIRECTIVE_IDENTITY_MISMATCH");
+    }
+    const storyBranch = story.story_branch?.trim() ?? "";
+    if (!storyBranch || storyBranch.length > 500 || storyBranch.includes("\0")) {
+      throw new Error("V3_SUPERVISOR_RETRY_PREPARATION_BRANCH_INVALID");
+    }
+    const exactSupervisor = await transaction.unsafe<Array<{ claim_id: string }>>(
+      `SELECT binding.claim_id::text AS claim_id
+         FROM v3_story_claim_runtime_bindings_v1 binding
+         JOIN claim_log claim
+           ON claim.id = binding.claim_id AND claim.run_id = binding.run_id
+         JOIN runtime_sessions runtime
+           ON runtime.session_id = binding.runtime_session_id
+          AND runtime.claim_id = binding.claim_id AND runtime.run_id = binding.run_id
+         JOIN runtime_completion_requests completion
+           ON completion.claim_id = binding.claim_id
+          AND completion.runtime_session_id = binding.runtime_session_id
+          AND completion.run_id = binding.run_id
+        WHERE binding.claim_id = $1
+          AND binding.runtime_session_id = $2
+          AND binding.run_id = $3
+          AND binding.workflow_step_id = 'supervise'
+          AND binding.subject_kind = 'story_member'
+          AND binding.story_db_id = $4
+          AND binding.story_id = $5
+          AND binding.story_claim_generation = $6
+          AND claim.outcome IN ('failed', 'completed')
+          AND runtime.state = 'released'
+          AND completion.state = 'accepted'
+          AND completion.apply_phase = 'effects_committed'
+          AND completion.output_hash = $7
+        LIMIT 2
+        FOR UPDATE OF binding, claim, runtime, completion`,
+      [
+        directive.supervisorClaimId,
+        directive.runtimeSessionId,
+        input.runId,
+        story.id,
+        story.story_id,
+        story.claim_generation,
+        directive.outputHash,
+      ],
+    );
+    if (exactSupervisor.length !== 1) {
+      throw new Error("V3_SUPERVISOR_RETRY_PREPARATION_SETTLEMENT_INVALID");
+    }
+    const preparationOwners = await transaction.unsafe<Array<{
+      state_version: number;
+      state_fingerprint: string;
+      claim_id: string;
+    }>>(
+      `SELECT preparation.state_version, preparation.state_fingerprint,
+              preparation.claim_id::text AS claim_id
+         FROM v3_preparation_story_state preparation
+         JOIN claim_log claim
+           ON claim.id = preparation.claim_id
+          AND claim.run_id = preparation.run_id
+          AND claim.step_id = preparation.step_id
+         JOIN v3_story_claim_runtime_bindings_v1 binding
+           ON binding.claim_id = preparation.claim_id
+          AND binding.run_id = preparation.run_id
+          AND binding.workflow_step_id = preparation.step_id
+         JOIN runtime_sessions runtime
+           ON runtime.claim_id = binding.claim_id
+          AND runtime.session_id = binding.runtime_session_id
+          AND runtime.run_id = binding.run_id
+         JOIN runtime_completion_requests completion
+           ON completion.claim_id = binding.claim_id
+          AND completion.runtime_session_id = binding.runtime_session_id
+          AND completion.run_id = binding.run_id
+        WHERE preparation.run_id = $1
+          AND preparation.step_id = $2
+          AND preparation.story_id = $3
+          AND preparation.state = 'claimed'
+          AND preparation.packet_hash = (SELECT packet_hash FROM runs WHERE id = $1)
+          AND claim.story_id = $3
+          AND claim.outcome = 'completed'
+          AND binding.step_db_id = $4
+          AND binding.subject_kind = 'story_member'
+          AND binding.story_db_id = $5
+          AND binding.story_id = $3
+          AND binding.story_claim_generation = $6
+          AND runtime.state = 'released'
+          AND completion.state = 'accepted'
+          AND completion.apply_phase = 'effects_committed'
+          AND completion.claim_outcome = 'completed'
+        LIMIT 2
+        FOR UPDATE OF preparation, claim, binding, runtime, completion`,
+      [
+        input.runId,
+        input.workflowStepId,
+        story.story_id,
+        input.stepDbId,
+        story.id,
+        story.claim_generation,
+      ],
+    );
+    if (preparationOwners.length !== 1) {
+      throw new Error("V3_SUPERVISOR_RETRY_PREPARATION_PRIOR_OWNER_INVALID");
+    }
+    const priorImplementationClaimId = Number(preparationOwners[0]!.claim_id);
+    if (!Number.isSafeInteger(priorImplementationClaimId) || priorImplementationClaimId < 1) {
+      throw new Error("V3_SUPERVISOR_RETRY_PREPARATION_PRIOR_CLAIM_INVALID");
+    }
+    return {
+      storyDbId: story.id,
+      storyId: story.story_id,
+      storyBranch,
+      storyClaimGeneration: story.claim_generation,
+      directiveHash: directive.directiveHash,
+      preparationStateVersion: preparationOwners[0]!.state_version,
+      preparationStateFingerprint: preparationOwners[0]!.state_fingerprint,
+      priorImplementationClaimId,
+      sourceRevision: directive.sourceRevision,
+      [AUTHENTICATED_V3_SUPERVISOR_RETRY_PREPARATION_SOURCE]: true,
+    };
+  });
+}
+
+export function inspectAuthenticatedV3SupervisorRetryPreparationSourceV1(
+  input: AuthenticatedV3SupervisorRetryPreparationSourceV1,
+): Omit<AuthenticatedV3SupervisorRetryPreparationSourceV1, typeof AUTHENTICATED_V3_SUPERVISOR_RETRY_PREPARATION_SOURCE> {
+  if (!input || input[AUTHENTICATED_V3_SUPERVISOR_RETRY_PREPARATION_SOURCE] !== true) {
+    throw new Error("V3_SUPERVISOR_RETRY_PREPARATION_SOURCE_UNAUTHENTICATED");
+  }
+  return input;
+}
 
 export type ClaimRuntimePublication = Readonly<{
   claimId: number;
   protocol: "legacy" | "shadow" | "v3";
   runtime?: Readonly<{ sessionId: string; ownerInstanceId: string }>;
+  /** Transaction-authenticated V3 IMPLEMENT/SUPERVISE subject. */
+  storySubject?: V3StoryClaimRuntimeSubjectV1;
 }>;
 
 type PlanAuthoritySeal = Readonly<{
@@ -94,6 +311,34 @@ function parsedJson(value: unknown): unknown {
 
 function canonicalStrings(values: readonly string[]): string[] {
   return [...new Set(values)].sort();
+}
+
+function parseStorySubjectCandidate(
+  value: unknown,
+): CompilerStoryEnglishAdmissionClaimSubjectCandidateV1 | undefined {
+  if (value === undefined) return undefined;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("V3_STORY_CLAIM_SUBJECT_INVALID");
+  }
+  const record = value as Record<string, unknown>;
+  if (record["kind"] === "final_product" && Object.keys(record).join(",") === "kind") {
+    return Object.freeze({ kind: "final_product" as const });
+  }
+  if (record["kind"] === "story_member"
+    && Object.keys(record).sort().join(",") === "kind,storyDbId,storyId"
+    && typeof record["storyDbId"] === "string"
+    && record["storyDbId"].length > 0
+    && record["storyDbId"].length <= 500
+    && typeof record["storyId"] === "string"
+    && record["storyId"].length > 0
+    && record["storyId"].length <= 500) {
+    return Object.freeze({
+      kind: "story_member" as const,
+      storyDbId: record["storyDbId"],
+      storyId: record["storyId"],
+    });
+  }
+  throw new Error("V3_STORY_CLAIM_SUBJECT_INVALID");
 }
 
 function parseStoryDependencyProjection(value: string | null): string[] {
@@ -509,6 +754,8 @@ export async function publishSingleClaimRuntime(
     claimAgentId: string;
     runtimeIntent?: RuntimeClaimIntentV1;
     planAuthoritySeal?: PlanAuthoritySeal;
+    storyAdmissionProof?: CompilerStoryEnglishAdmissionClaimProofV1;
+    storySubject?: CompilerStoryEnglishAdmissionClaimSubjectCandidateV1;
     now?: Date;
   }>,
 ): Promise<ClaimRuntimePublication | undefined> {
@@ -517,6 +764,7 @@ export async function publishSingleClaimRuntime(
   const runtimeIntent = rawInput.runtimeIntent
     ? parseRuntimeClaimIntentV1(rawInput.runtimeIntent)
     : undefined;
+  const storySubjectCandidate = parseStorySubjectCandidate(rawInput.storySubject);
   return sql.begin(async (transaction) => {
     const runs = await transaction.unsafe<Array<{
       status: string;
@@ -528,6 +776,19 @@ export async function publishSingleClaimRuntime(
     );
     const run = runs[0];
     if (!run || !["running", "resuming"].includes(run.status)) return undefined;
+    let storyClaimAuthority: CompilerStoryEnglishAdmissionClaimAuthorityV1 | undefined;
+    if (run.protocol === "v3" && rawInput.workflowStepId === "supervise") {
+      if (!rawInput.storyAdmissionProof || !storySubjectCandidate) {
+        throw new Error("COMPILER_STORY_ENGLISH_ADMISSION_CLAIM_PROOF_REQUIRED");
+      }
+      storyClaimAuthority = await lockAndAuthenticateCompilerStoryEnglishAdmissionClaimSubjectV1(transaction, {
+        runId: rawInput.runId,
+        proof: rawInput.storyAdmissionProof,
+        subject: storySubjectCandidate,
+      });
+    } else if (storySubjectCandidate) {
+      throw new Error("V3_STORY_CLAIM_SUBJECT_SCOPE_INVALID");
+    }
     const requests = await transaction.unsafe<Array<{ request_id: string }>>(
       "SELECT request_id FROM run_termination_requests WHERE run_id = $1 AND state <> 'terminalized' LIMIT 1",
       [rawInput.runId],
@@ -599,6 +860,7 @@ export async function publishSingleClaimRuntime(
       [rawInput.runId, rawInput.workflowStepId, rawInput.claimAgentId, now],
     ));
     let runtime: ClaimRuntimePublication["runtime"];
+    let authenticatedStorySubject: V3StoryClaimRuntimeSubjectV1 | undefined;
     if (runtimeIntent) {
       await reserveRuntimeSessionInTransaction(transaction, {
         sessionId: runtimeIntent.sessionId,
@@ -618,6 +880,17 @@ export async function publishSingleClaimRuntime(
       });
       runtime = { sessionId: runtimeIntent.sessionId, ownerInstanceId: runtimeIntent.ownerInstanceId };
     }
+    if (storyClaimAuthority) {
+      if (!runtimeIntent) throw new Error("COMPILER_RUNTIME_CLAIM_INTENT_REQUIRED");
+      authenticatedStorySubject = await insertV3StoryClaimRuntimeBindingV1(transaction, {
+        claimId,
+        runtimeSessionId: runtimeIntent.sessionId,
+        runId: rawInput.runId,
+        stepDbId: rawInput.stepDbId,
+        workflowStepId: "supervise",
+        authority: storyClaimAuthority,
+      });
+    }
     if (sealedPlanContext !== undefined) {
       const sealed = await transaction.unsafe<Array<{ id: string }>>(
         "UPDATE runs SET context = $1, updated_at = $2 WHERE id = $3 RETURNING id",
@@ -625,7 +898,12 @@ export async function publishSingleClaimRuntime(
       );
       if (sealed.length !== 1) throw new Error("PLAN_AUTHORITY_SEAL_RUN_CAS_LOST");
     }
-    return { claimId, protocol: run.protocol, runtime };
+    return {
+      claimId,
+      protocol: run.protocol,
+      runtime,
+      ...(authenticatedStorySubject ? { storySubject: authenticatedStorySubject } : {}),
+    };
   }) as Promise<ClaimRuntimePublication | undefined>;
 }
 
@@ -663,10 +941,17 @@ export async function publishLoopClaimRuntime(
     runtimeIntent?: RuntimeClaimIntentV1;
     recoveryHandoff?: V3RecoveryClaimHandoffV1;
     preparationAuthority?: V3PreparationClaimAuthorityV1;
+    supervisorRetryPreparationSource?: AuthenticatedV3SupervisorRetryPreparationSourceV1;
+    storyAdmissionProof?: CompilerStoryEnglishAdmissionClaimProofV1;
     now?: Date;
   }>,
 ): Promise<LoopClaimRuntimePublication | undefined> {
   validTime(rawInput.now);
+  if (!Number.isSafeInteger(rawInput.parallelLimit)
+    || rawInput.parallelLimit < 1
+    || rawInput.parallelLimit > 100) {
+    throw new Error("LOOP_CLAIM_PARALLEL_LIMIT_INVALID");
+  }
   const runtimeIntent = rawInput.runtimeIntent
     ? parseRuntimeClaimIntentV1(rawInput.runtimeIntent)
     : undefined;
@@ -676,6 +961,18 @@ export async function publishLoopClaimRuntime(
   const preparationAuthority = rawInput.preparationAuthority
     ? V3PreparationClaimAuthorityV1Schema.parse(rawInput.preparationAuthority)
     : undefined;
+  const supervisorRetryPreparationSource = rawInput.supervisorRetryPreparationSource;
+  if (supervisorRetryPreparationSource
+    && supervisorRetryPreparationSource[AUTHENTICATED_V3_SUPERVISOR_RETRY_PREPARATION_SOURCE] !== true) {
+    throw new Error("V3_SUPERVISOR_RETRY_PREPARATION_SOURCE_UNAUTHENTICATED");
+  }
+  if (supervisorRetryPreparationSource && !preparationAuthority) {
+    throw new Error("V3_SUPERVISOR_RETRY_PREPARATION_AUTHORITY_REQUIRED");
+  }
+  if (supervisorRetryPreparationSource && preparationAuthority
+    && preparationAuthority.stateVersion !== supervisorRetryPreparationSource.preparationStateVersion + 1) {
+    throw new Error("V3_SUPERVISOR_RETRY_PREPARATION_STATE_VERSION_INVALID");
+  }
   if (recoveryHandoff && preparationAuthority) {
     preparationPublicationFail(
       "V3_PREPARATION_PUBLICATION_AUTHORITY_CONFLICT",
@@ -760,6 +1057,21 @@ export async function publishLoopClaimRuntime(
         "preparation authority publication is only valid for a v3 run",
       );
     }
+    let storyClaimAuthority: CompilerStoryEnglishAdmissionClaimAuthorityV1 | undefined;
+    if (run.protocol === "v3" && rawInput.workflowStepId === "implement") {
+      if (!rawInput.storyAdmissionProof) {
+        throw new Error("COMPILER_STORY_ENGLISH_ADMISSION_CLAIM_PROOF_REQUIRED");
+      }
+      storyClaimAuthority = await lockAndAuthenticateCompilerStoryEnglishAdmissionClaimSubjectV1(transaction, {
+        runId: rawInput.runId,
+        proof: rawInput.storyAdmissionProof,
+        subject: {
+          kind: "story_member",
+          storyDbId: rawInput.storyDbId,
+          storyId: rawInput.storyId,
+        },
+      });
+    }
     const requests = await transaction.unsafe<Array<{ request_id: string }>>(
       "SELECT request_id FROM run_termination_requests WHERE run_id = $1 AND state <> 'terminalized' LIMIT 1",
       [rawInput.runId],
@@ -831,8 +1143,16 @@ export async function publishLoopClaimRuntime(
       [rawInput.stepDbId, rawInput.runId, rawInput.workflowStepId],
     );
     if (!steps[0] || !["pending", "running"].includes(steps[0].status)) return undefined;
-    const stories = await transaction.unsafe<Array<{ status: string; story_id: string }>>(
-      "SELECT status, story_id FROM stories WHERE id = $1 AND run_id = $2 FOR UPDATE",
+    const stories = await transaction.unsafe<Array<{
+      status: string;
+      story_id: string;
+      claim_generation: number;
+      output: string | null;
+      story_branch: string | null;
+      retry_count: number;
+      max_retries: number;
+    }>>(
+      "SELECT status, story_id, story_branch, claim_generation, output, retry_count, max_retries FROM stories WHERE id = $1 AND run_id = $2 FOR UPDATE",
       [rawInput.storyDbId, rawInput.runId],
     );
     const story = stories[0];
@@ -845,6 +1165,123 @@ export async function publishLoopClaimRuntime(
         );
       }
       return undefined;
+    }
+    if (run.protocol === "v3") {
+      const unsettledSupervision = await transaction.unsafe<Array<{ claim_id: string }>>(
+        `SELECT binding.claim_id::text AS claim_id
+           FROM v3_story_claim_runtime_bindings_v1 binding
+           JOIN runtime_sessions runtime
+             ON runtime.session_id = binding.runtime_session_id
+            AND runtime.claim_id = binding.claim_id
+            AND runtime.run_id = binding.run_id
+          WHERE binding.run_id = $1
+            AND binding.workflow_step_id = 'supervise'
+            AND binding.subject_kind = 'story_member'
+            AND binding.story_db_id = $2
+            AND binding.story_id = $3
+            AND binding.story_claim_generation = $4
+            AND (
+              runtime.state <> 'released'
+              OR NOT EXISTS (
+                SELECT 1
+                  FROM runtime_completion_requests completion
+                 WHERE completion.claim_id = binding.claim_id
+                   AND completion.runtime_session_id = binding.runtime_session_id
+                   AND completion.run_id = binding.run_id
+                   AND completion.state = 'accepted'
+                   AND completion.apply_phase = 'effects_committed'
+              )
+            )
+          ORDER BY binding.claim_id
+          LIMIT 1
+          FOR UPDATE OF binding, runtime`,
+        [rawInput.runId, rawInput.storyDbId, rawInput.storyId, story.claim_generation],
+      );
+      if (unsettledSupervision.length !== 0) return undefined;
+      if (!recoveryHandoff) {
+        const awaitingCanonicalGate = await transaction.unsafe<Array<{ id: string }>>(
+          `SELECT id
+             FROM stories
+            WHERE run_id = $1 AND id <> $2 AND status = 'done'
+            ORDER BY story_index, id
+            LIMIT 1
+            FOR UPDATE`,
+          [rawInput.runId, rawInput.storyDbId],
+        );
+        if (awaitingCanonicalGate.length !== 0) return undefined;
+      }
+      const supervisorRetryDirective = parseV3SupervisorRetryDirectiveStoryOutputV1(story.output);
+      if (supervisorRetryDirective && (!supervisorRetryPreparationSource || !preparationAuthority)) {
+        throw new Error("V3_SUPERVISOR_RETRY_PREPARATION_AUTHORITY_REQUIRED");
+      }
+      if (supervisorRetryPreparationSource && (
+        !supervisorRetryDirective
+        || supervisorRetryPreparationSource.storyDbId !== rawInput.storyDbId
+        || supervisorRetryPreparationSource.storyId !== rawInput.storyId
+        || supervisorRetryPreparationSource.storyBranch !== story.story_branch
+        || supervisorRetryPreparationSource.storyClaimGeneration !== story.claim_generation
+        || supervisorRetryPreparationSource.directiveHash !== supervisorRetryDirective.directiveHash
+        || supervisorRetryPreparationSource.sourceRevision.sha !== supervisorRetryDirective.sourceRevision.sha
+        || supervisorRetryPreparationSource.sourceRevision.treeHash !== supervisorRetryDirective.sourceRevision.treeHash
+      )) {
+        throw new Error("V3_SUPERVISOR_RETRY_PREPARATION_SOURCE_STALE");
+      }
+      if (supervisorRetryDirective && preparationAuthority && (
+        preparationAuthority.baseRevision.sha !== supervisorRetryDirective.sourceRevision.sha
+        || preparationAuthority.baseRevision.treeHash !== supervisorRetryDirective.sourceRevision.treeHash
+        || preparationAuthority.baseRevision.sha !== supervisorRetryPreparationSource!.sourceRevision.sha
+        || preparationAuthority.baseRevision.treeHash !== supervisorRetryPreparationSource!.sourceRevision.treeHash
+      )) {
+        throw new Error("V3_SUPERVISOR_RETRY_PREPARATION_REVISION_MISMATCH");
+      }
+      if (supervisorRetryDirective) {
+        if (supervisorRetryDirective.runId !== rawInput.runId
+          || supervisorRetryDirective.storyDbId !== rawInput.storyDbId
+          || supervisorRetryDirective.storyId !== rawInput.storyId
+          || supervisorRetryDirective.storyClaimGeneration !== story.claim_generation
+          || supervisorRetryDirective.retryOrdinal !== story.retry_count
+          || supervisorRetryDirective.maxRetries !== story.max_retries) {
+          return undefined;
+        }
+        const exactSupervisor = await transaction.unsafe<Array<{ claim_id: string }>>(
+          `SELECT binding.claim_id::text AS claim_id
+             FROM v3_story_claim_runtime_bindings_v1 binding
+             JOIN claim_log claim
+               ON claim.id = binding.claim_id AND claim.run_id = binding.run_id
+             JOIN runtime_sessions runtime
+               ON runtime.session_id = binding.runtime_session_id
+              AND runtime.claim_id = binding.claim_id AND runtime.run_id = binding.run_id
+             JOIN runtime_completion_requests completion
+               ON completion.claim_id = binding.claim_id
+              AND completion.runtime_session_id = binding.runtime_session_id
+              AND completion.run_id = binding.run_id
+            WHERE binding.claim_id = $1
+              AND binding.runtime_session_id = $2
+              AND binding.run_id = $3
+              AND binding.workflow_step_id = 'supervise'
+              AND binding.subject_kind = 'story_member'
+              AND binding.story_db_id = $4
+              AND binding.story_id = $5
+              AND binding.story_claim_generation = $6
+              AND claim.outcome IN ('failed', 'completed')
+              AND runtime.state = 'released'
+              AND completion.state = 'accepted'
+              AND completion.apply_phase = 'effects_committed'
+              AND completion.output_hash = $7
+            LIMIT 2
+            FOR UPDATE OF binding, claim, runtime, completion`,
+          [
+            supervisorRetryDirective.supervisorClaimId,
+            supervisorRetryDirective.runtimeSessionId,
+            rawInput.runId,
+            rawInput.storyDbId,
+            rawInput.storyId,
+            supervisorRetryDirective.storyClaimGeneration,
+            supervisorRetryDirective.outputHash,
+          ],
+        );
+        if (exactSupervisor.length !== 1) return undefined;
+      }
     }
     const active = await transaction.unsafe<Array<{ count: number }>>(
       "SELECT COUNT(*)::integer AS count FROM stories WHERE run_id = $1 AND status = 'running'",
@@ -918,6 +1355,7 @@ export async function publishLoopClaimRuntime(
       }
     }
     let runtime: ClaimRuntimePublication["runtime"];
+    let authenticatedStorySubject: V3StoryClaimRuntimeSubjectV1 | undefined;
     if (runtimeIntent) {
       await reserveRuntimeSessionInTransaction(transaction, {
         sessionId: runtimeIntent.sessionId,
@@ -939,11 +1377,23 @@ export async function publishLoopClaimRuntime(
       });
       runtime = { sessionId: runtimeIntent.sessionId, ownerInstanceId: runtimeIntent.ownerInstanceId };
     }
+    if (storyClaimAuthority) {
+      if (!runtimeIntent) throw new Error("COMPILER_RUNTIME_CLAIM_INTENT_REQUIRED");
+      authenticatedStorySubject = await insertV3StoryClaimRuntimeBindingV1(transaction, {
+        claimId,
+        runtimeSessionId: runtimeIntent.sessionId,
+        runId: rawInput.runId,
+        stepDbId: rawInput.stepDbId,
+        workflowStepId: "implement",
+        authority: storyClaimAuthority,
+      });
+    }
     return {
       claimId,
       claimGeneration: Number(updatedStories[0]!.claim_generation),
       protocol: run.protocol,
       runtime,
+      ...(authenticatedStorySubject ? { storySubject: authenticatedStorySubject } : {}),
       ...(run.protocol === "v3"
         ? {
             claimAuthority: recoveryHandoff

@@ -3,13 +3,13 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { resolveStackContract } from "../dist/installer/stack-contract/reconcile.js";
-import { readStackContract, stackContractPath, writeStackContract } from "../dist/installer/stack-contract/ledger.js";
-import { getStackPack, listStackPacks } from "../dist/installer/stack-contract/packs.js";
-import { applyStackContractContext } from "../dist/installer/stack-contract/context.js";
-import { parseStackPrefix, stripStackPrefix } from "../dist/installer/stack-contract/prefix.js";
-import { validateAllStackPacks } from "../dist/installer/stack-contract/validators.js";
-import { resolveProductDeliverySelectionV1 } from "../dist/product-compiler/product-delivery-profile-catalog.js";
+import { resolveStackContract } from "../src/installer/stack-contract/reconcile.js";
+import { readStackContract, stackContractPath, writeStackContract } from "../src/installer/stack-contract/ledger.js";
+import { getStackPack, listStackPacks } from "../src/installer/stack-contract/packs.js";
+import { applyStackContractContext } from "../src/installer/stack-contract/context.js";
+import { parseStackPrefix, stripStackPrefix } from "../src/installer/stack-contract/prefix.js";
+import { validateAllStackPacks } from "../src/installer/stack-contract/validators.js";
+import { resolveProductDeliverySelectionV1 } from "../src/product-compiler/product-delivery-profile-catalog.js";
 
 function tmpDir(name: string): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), `setfarm-${name}-`));

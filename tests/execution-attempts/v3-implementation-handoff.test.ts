@@ -9,6 +9,11 @@ import { compileEvidencePlanV1 } from "../../src/evidence/evidence-plan-v1.js";
 import { ClaimEnvelopeV1Schema } from "../../src/execution/schemas/claim-envelope-v1.js";
 import { createOperationalRetryDirectiveV1 } from "../../src/execution/operational-retry-directive.js";
 import {
+  createV3SupervisorRetryDirectiveV1,
+  parseV3SupervisorRetryDirectiveStoryOutputV1,
+  serializeV3SupervisorRetryDirectiveV1,
+} from "../../src/execution/v3-supervisor-retry-directive.js";
+import {
   assertV3ImplementationContextCapacity,
   createV3ImplementationClaimHandoffV1,
   createV3ImplementationContextV1,
@@ -320,6 +325,89 @@ describe("Product Compiler v3 implementation handoff", () => {
           payload: wrongStepRetry,
         }),
       }).success, false);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("carries exact hash-bound supervisor retry evidence without expanding write authority", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-v3-supervisor-retry-handoff-"));
+    try {
+      const workdir = path.join(root, "worktree");
+      fs.mkdirSync(path.join(workdir, "src"), { recursive: true });
+      fs.writeFileSync(path.join(workdir, "src", "App.tsx"), "export const App = () => null;\n");
+      const { handoff } = fixture(workdir);
+      const supervisorRetry = createV3SupervisorRetryDirectiveV1({
+        runId: handoff.runId,
+        storyDbId: handoff.storyDbId,
+        storyId: handoff.storyId,
+        storyClaimGeneration: 1,
+        supervisorClaimId: 801,
+        runtimeSessionId: "RTS_v3-supervisor-retry-handoff-001",
+        outputHash: "8".repeat(64),
+        sourceRevision: { sha: "1".repeat(40), treeHash: "2".repeat(40) },
+        decision: "retry",
+        feedback: "Restore the disabled control and preserve the exact runtime state transition.",
+        retryOrdinal: 1,
+        maxRetries: 3,
+      });
+      const supervisorRetryArtifactHash = hashCanonicalJson({
+        schema: "setfarm.semantic-artifact-envelope.v1",
+        artifactType: "setfarm.v3-supervisor-retry-directive.v1",
+        producer: handoff.artifactProducer,
+        payload: supervisorRetry,
+      });
+      const retryHandoff = createV3ImplementationClaimHandoffV1({
+        ...handoff,
+        claimId: 902,
+        attemptId: "ATT_00000000-0000-0000-0000-000000000902",
+        attemptGeneration: 2,
+        supervisorRetry,
+        supervisorRetryArtifactHash,
+      });
+      const context = createV3ImplementationContextV1({ handoff: retryHandoff });
+      assert.equal(context.writeAuthority.mode, "initial");
+      assert.deepEqual(context.writeAuthority.allowedPaths, ["src/App.tsx"]);
+      assert.equal(context.handoff.executionAuthority.attemptClass, "product_implementation");
+      assert.equal(context.handoff.executionProfile.selection, "primary");
+      assert.equal(context.handoff.supervisorRetry?.outputHash, "8".repeat(64));
+      assert.match(context.rules.join("\n"), /typed supervisor retry.*exact prior story generation/i);
+      assert.deepEqual(
+        parseV3SupervisorRetryDirectiveStoryOutputV1(
+          serializeV3SupervisorRetryDirectiveV1(supervisorRetry),
+        ),
+        supervisorRetry,
+      );
+
+      assert.equal(V3ImplementationClaimHandoffV1Schema.safeParse({
+        ...retryHandoff,
+        supervisorRetryArtifactHash: "0".repeat(64),
+      }).success, false);
+      assert.equal(V3ImplementationClaimHandoffV1Schema.safeParse({
+        ...retryHandoff,
+        supervisorRetry: {
+          ...supervisorRetry,
+          outputHash: "0".repeat(64),
+        },
+      }).success, false);
+      assert.equal(V3ImplementationClaimHandoffV1Schema.safeParse({
+        ...retryHandoff,
+        supervisorRetry: undefined,
+      }).success, false);
+      assert.throws(() => createV3SupervisorRetryDirectiveV1({
+        runId: handoff.runId,
+        storyDbId: handoff.storyDbId,
+        storyId: handoff.storyId,
+        storyClaimGeneration: 1,
+        supervisorClaimId: 801,
+        runtimeSessionId: "RTS_v3-supervisor-retry-handoff-001",
+        outputHash: "8".repeat(64),
+        sourceRevision: { sha: "1".repeat(40), treeHash: "2".repeat(40) },
+        decision: "retry",
+        feedback: " Dismiss the evidence.",
+        retryOrdinal: 1,
+        maxRetries: 3,
+      }));
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

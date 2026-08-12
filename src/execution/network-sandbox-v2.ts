@@ -8,6 +8,7 @@ import {
   mkdtempSync,
   realpathSync,
   rmSync,
+  type BigIntStats,
 } from "node:fs";
 import { arch, release, tmpdir } from "node:os";
 import path from "node:path";
@@ -57,7 +58,7 @@ export const NETWORK_SANDBOX_PROFILE_HASH_V2 = createHash("sha256")
   .update(NETWORK_SANDBOX_PROFILE_V2)
   .digest("hex");
 
-const NETWORK_PROBE_CHILD_SOURCE_V2 = String.raw`
+export const NETWORK_ISOLATION_NEGATIVE_PROBE_CHILD_SOURCE_V2 = String.raw`
 const crypto = require("node:crypto");
 const dns = require("node:dns");
 const http = require("node:http");
@@ -68,6 +69,17 @@ const fail = (code) => {
   process.exit(2);
 };
 const sha256 = (value) => crypto.createHash("sha256").update(value).digest("hex");
+const canonical = (value) => {
+  if (value === null) return "null";
+  if (typeof value === "boolean") return value ? "true" : "false";
+  if (typeof value === "string" || typeof value === "number") return JSON.stringify(value);
+  if (Array.isArray(value)) return "[" + value.map(canonical).join(",") + "]";
+  if (typeof value === "object") {
+    return "{" + Object.keys(value).sort().map((key) =>
+      JSON.stringify(key) + ":" + canonical(value[key])).join(",") + "}";
+  }
+  throw new Error("NETWORK_PROBE_OUTPUT_UNSUPPORTED");
+};
 let config;
 try {
   config = JSON.parse(Buffer.from(process.argv[1], "base64url").toString("utf8"));
@@ -146,13 +158,28 @@ const request = (pathname) => new Promise((resolve, reject) => {
   operation.end();
 });
 
-const dnsDenied = () => new Promise((resolve, reject) => {
+const dnsObserved = () => new Promise((resolve, reject) => {
   dns.lookup("example.com", (error) => {
+    if (config.dnsDisposition === "supplementary_not_counted_as_enforcement_denial_v2") {
+      return resolve(error
+        ? {
+            status: "supplementary_observed",
+            outcome: "lookup_error",
+            errorCode: ["EACCES", "EAI_AGAIN", "ENOTFOUND", "EPERM"].includes(error.code)
+              ? error.code
+              : "OTHER",
+          }
+        : {
+            status: "supplementary_observed",
+            outcome: "resolved",
+            errorCode: null,
+          });
+    }
     if (!error) return reject(new Error("NETWORK_PROBE_DNS_ALLOWED"));
     if (!["EACCES", "EAI_AGAIN", "ENOTFOUND", "EPERM"].includes(error.code)) {
       return reject(new Error("NETWORK_PROBE_DNS_UNTYPED:" + error.code));
     }
-    resolve(error.code);
+    resolve({ status: "denied", errorCode: error.code });
   });
 });
 
@@ -179,9 +206,9 @@ const outboundDenied = () => new Promise((resolve, reject) => {
 Promise.all([
   request("/echo?nonce=" + encodeURIComponent(config.nonce)),
   request("/redirect"),
-  dnsDenied(),
+  dnsObserved(),
   outboundDenied(),
-]).then(([loopback, redirect, dnsErrorCode, outboundErrorCode]) => {
+]).then(([loopback, redirect, dnsObservation, outboundErrorCode]) => {
   if (loopback.statusCode !== 200 || loopback.body !== config.nonce) {
     throw new Error("NETWORK_PROBE_LOOPBACK_MISMATCH");
   }
@@ -192,7 +219,7 @@ Promise.all([
   ) {
     throw new Error("NETWORK_PROBE_REDIRECT_MISMATCH");
   }
-  process.stdout.write(JSON.stringify({
+  process.stdout.write(canonical({
     normalizedEnvironmentHash: config.normalizedEnvironmentHash,
     probes: {
       loopback: {
@@ -202,9 +229,8 @@ Promise.all([
         responseNonceHash: sha256(loopback.body),
       },
       dns: {
-        status: "denied",
+        ...dnsObservation,
         hostname: "example.com",
-        errorCode: dnsErrorCode,
       },
       outbound: {
         status: "denied",
@@ -225,7 +251,7 @@ Promise.all([
 
 export const NETWORK_ISOLATION_NEGATIVE_PROBE_PROGRAM_HASH_V2 = createHash(
   "sha256",
-).update(NETWORK_PROBE_CHILD_SOURCE_V2).digest("hex");
+).update(NETWORK_ISOLATION_NEGATIVE_PROBE_CHILD_SOURCE_V2).digest("hex");
 
 const EMPTY_SHA256_V2 =
   "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" as const;
@@ -309,15 +335,15 @@ function exactRegularFile(absolutePath: string): string {
     );
   }
   const literal = path.resolve(absolutePath);
-  const literalStat = lstatSync(literal);
+  const literalStat = lstatSync(literal, { bigint: true });
   const real = realpathSync(literal);
-  const stat = lstatSync(real);
+  const stat = lstatSync(real, { bigint: true });
   if (
     literalStat.isSymbolicLink()
     || real !== literal
     || !stat.isFile()
     || stat.isSymbolicLink()
-    || stat.nlink !== 1
+    || stat.nlink !== 1n
   ) {
     return fail(
       "NETWORK_ISOLATION_V2_HOST_UNSUPPORTED",
@@ -327,43 +353,56 @@ function exactRegularFile(absolutePath: string): string {
   return real;
 }
 
-type ExactPhysicalFileV2 = Readonly<{
-  absolutePath: string;
-  device: number;
-  inode: number;
-  ownerUid: number;
-  ownerGid: number;
-  mode: number;
-  byteLength: number;
+type ExactPhysicalStableIdentityV2 = Readonly<{
+  objectKind: "ordinary_file";
+  device: string;
+  inode: string;
+}>;
+
+type ExactPhysicalMutableFingerprintV2 = Readonly<{
+  ownerUid: string;
+  ownerGid: string;
+  mode: string;
+  linkCount: string;
+  byteLength: string;
+  modifiedTimeNanoseconds: string;
+  changedTimeNanoseconds: string;
   contentHash: string;
 }>;
+
+type ExactPhysicalFileV2 = Readonly<{
+  absolutePath: string;
+  stableIdentity: ExactPhysicalStableIdentityV2;
+  mutableFingerprint: ExactPhysicalMutableFingerprintV2;
+}>;
+
+function exactPhysicalModeV2(stat: BigIntStats): string {
+  return Number(stat.mode & 0o7777n).toString(8).padStart(4, "0");
+}
+
+function exactPhysicalStatMatchesV2(left: BigIntStats, right: BigIntStats): boolean {
+  return left.isFile()
+    && right.isFile()
+    && left.dev === right.dev
+    && left.ino === right.ino
+    && left.mode === right.mode
+    && left.uid === right.uid
+    && left.gid === right.gid
+    && left.nlink === right.nlink
+    && left.size === right.size
+    && left.rdev === right.rdev
+    && left.mtimeNs === right.mtimeNs
+    && left.ctimeNs === right.ctimeNs;
+}
 
 async function captureExactPhysicalFileV2(
   absolutePath: string,
 ): Promise<ExactPhysicalFileV2> {
   const canonical = exactRegularFile(absolutePath);
-  const before = lstatSync(canonical);
+  const before = lstatSync(canonical, { bigint: true });
   const contentHash = await hashFile(canonical);
-  const after = lstatSync(canonical);
-  const beforeIdentity = [
-    before.dev,
-    before.ino,
-    before.uid,
-    before.gid,
-    before.mode & 0o7777,
-    before.size,
-    before.nlink,
-  ];
-  const afterIdentity = [
-    after.dev,
-    after.ino,
-    after.uid,
-    after.gid,
-    after.mode & 0o7777,
-    after.size,
-    after.nlink,
-  ];
-  if (canonicalJsonStringify(beforeIdentity) !== canonicalJsonStringify(afterIdentity)) {
+  const after = lstatSync(canonical, { bigint: true });
+  if (!exactPhysicalStatMatchesV2(before, after)) {
     return fail(
       "NETWORK_ISOLATION_V2_HOST_DRIFT",
       "Network isolation executable or module changed while hashing",
@@ -371,13 +410,21 @@ async function captureExactPhysicalFileV2(
   }
   return Object.freeze({
     absolutePath: canonical,
-    device: after.dev,
-    inode: after.ino,
-    ownerUid: after.uid,
-    ownerGid: after.gid,
-    mode: after.mode & 0o7777,
-    byteLength: after.size,
-    contentHash,
+    stableIdentity: Object.freeze({
+      objectKind: "ordinary_file" as const,
+      device: after.dev.toString(10),
+      inode: after.ino.toString(10),
+    }),
+    mutableFingerprint: Object.freeze({
+      ownerUid: after.uid.toString(10),
+      ownerGid: after.gid.toString(10),
+      mode: exactPhysicalModeV2(after),
+      linkCount: after.nlink.toString(10),
+      byteLength: after.size.toString(10),
+      modifiedTimeNanoseconds: after.mtimeNs.toString(10),
+      changedTimeNanoseconds: after.ctimeNs.toString(10),
+      contentHash,
+    }),
   });
 }
 
@@ -405,9 +452,9 @@ export async function acquireNetworkSandboxLaunchContextInternalV2(): Promise<
     NETWORK_SANDBOX_EXECUTABLE_V2,
   );
   if (
-    captured.ownerUid !== 0
-    || captured.ownerGid !== 0
-    || captured.mode !== 0o755
+    captured.mutableFingerprint.ownerUid !== "0"
+    || captured.mutableFingerprint.ownerGid !== "0"
+    || captured.mutableFingerprint.mode !== "0755"
   ) {
     return fail(
       "NETWORK_ISOLATION_V2_HOST_UNSUPPORTED",
@@ -416,16 +463,11 @@ export async function acquireNetworkSandboxLaunchContextInternalV2(): Promise<
   }
   return Object.freeze({
     sandboxExecutablePath: NETWORK_SANDBOX_EXECUTABLE_V2,
-    sandboxExecutableContentHash: captured.contentHash,
+    sandboxExecutableContentHash: captured.mutableFingerprint.contentHash,
     sandboxExecutablePhysicalIdentityHash: hashCanonicalJson({
-      schema: "setfarm.network-sandbox-physical-file.v2",
-      device: captured.device,
-      inode: captured.inode,
-      ownerUid: captured.ownerUid,
-      ownerGid: captured.ownerGid,
-      mode: captured.mode,
-      byteLength: captured.byteLength,
-      contentHash: captured.contentHash,
+      schema: "setfarm.network-sandbox-physical-file.v3",
+      stableIdentity: captured.stableIdentity,
+      mutableFingerprint: captured.mutableFingerprint,
     }),
     sandboxProfile: NETWORK_SANDBOX_PROFILE_V2,
     sandboxProfileHash: NETWORK_SANDBOX_PROFILE_HASH_V2,
@@ -463,9 +505,9 @@ export class NetworkIsolationProbeContextV2 {
       );
     }
     this.admissionScope = state.admissionScope;
-    this.wrapperModuleHash = state.wrapperModule.contentHash;
-    this.sandboxExecutableHash = state.sandboxExecutable.contentHash;
-    this.nodeExecutableHash = state.nodeExecutable.contentHash;
+    this.wrapperModuleHash = state.wrapperModule.mutableFingerprint.contentHash;
+    this.sandboxExecutableHash = state.sandboxExecutable.mutableFingerprint.contentHash;
+    this.nodeExecutableHash = state.nodeExecutable.mutableFingerprint.contentHash;
     this.platformTreeHash = state.platformTreeHash;
     this.runtimePayloadHash = state.runtimePayloadHash;
     this.hostRuntimeIdentityHash = state.hostRuntimeIdentityHash;
@@ -518,13 +560,13 @@ export async function createNetworkIsolationProbeContextV2ForTest(): Promise<
     architecture: arch(),
     kernelRelease: release(),
     nodeVersion: process.version,
-    nodeExecutableHash: nodeExecutable.contentHash,
-    sandboxExecutableHash: sandboxExecutable.contentHash,
+    nodeExecutableHash: nodeExecutable.mutableFingerprint.contentHash,
+    sandboxExecutableHash: sandboxExecutable.mutableFingerprint.contentHash,
   });
   const platformTreeHash = hashCanonicalJson({
     schema: "setfarm.network-isolation-test-platform-tree.v2",
     wrapperModuleLocator: EVIDENCE_ENVIRONMENT_NETWORK_WRAPPER_MODULE_V2,
-    wrapperModuleHash: wrapperModule.contentHash,
+    wrapperModuleHash: wrapperModule.mutableFingerprint.contentHash,
     probeProgramHash: NETWORK_ISOLATION_NEGATIVE_PROBE_PROGRAM_HASH_V2,
   });
   const runtimePayloadHash = hashCanonicalJson({
@@ -573,7 +615,7 @@ function spawnProbeV2(input: Readonly<{
       NETWORK_SANDBOX_PROFILE_V2,
       input.state.nodeExecutable.absolutePath,
       "-e",
-      NETWORK_PROBE_CHILD_SOURCE_V2,
+      NETWORK_ISOLATION_NEGATIVE_PROBE_CHILD_SOURCE_V2,
       input.encodedConfig,
     ], {
       cwd: input.cwd,
@@ -699,8 +741,15 @@ export type NetworkIsolationProbeExecutionResultV2 = Readonly<{
   productionDisposition: "forbidden_until_verified_platform_release";
 }>;
 
-export async function runNetworkIsolatedV2(
+type NetworkIsolationProbeRunOptionsV2 = Readonly<{
+  scratchRoot?: string;
+  retainScratchRoot?: boolean;
+  reuseScratchDirectories?: boolean;
+}>;
+
+async function runNetworkIsolatedInternalV2(
   context: NetworkIsolationProbeContextV2,
+  options: NetworkIsolationProbeRunOptionsV2 = {},
 ): Promise<NetworkIsolationProbeExecutionResultV2> {
   const state = authenticContextV2(context);
   if (state.lifecycle.status === "destroyed") {
@@ -717,6 +766,7 @@ export async function runNetworkIsolatedV2(
   }
   state.lifecycle.status = "running";
   let scratchRoot: string | undefined;
+  let scratchRootIdentity: Readonly<{ dev: bigint; ino: bigint }> | undefined;
   let server: ReturnType<typeof createServer> | undefined;
   let primaryFailure: unknown;
   try {
@@ -735,12 +785,46 @@ export async function runNetworkIsolatedV2(
         "Network isolation implementation or executable identity drifted",
       );
     }
-    scratchRoot = mkdtempSync(path.join(tmpdir(), "setfarm-network-v2-"));
+    if (options.scratchRoot !== undefined) {
+      if (!path.isAbsolute(options.scratchRoot)) {
+        return fail(
+          "NETWORK_ISOLATION_V2_HOST_DRIFT",
+          "Network isolation scratch root must be one absolute private directory",
+        );
+      }
+      const scratchStat = lstatSync(options.scratchRoot, { bigint: true });
+      if (
+        scratchStat.isSymbolicLink()
+        || !scratchStat.isDirectory()
+        || (scratchStat.mode & 0o7777n) !== 0o700n
+      ) {
+        return fail(
+          "NETWORK_ISOLATION_V2_HOST_DRIFT",
+          "Network isolation scratch root must remain one non-symlink mode-0700 directory",
+        );
+      }
+      scratchRoot = options.scratchRoot;
+    } else {
+      scratchRoot = mkdtempSync(path.join(tmpdir(), "setfarm-network-v2-"));
+    }
+    {
+      const scratchIdentity = lstatSync(
+        scratchRoot,
+        { bigint: true },
+      ) as { dev: bigint; ino: bigint };
+      scratchRootIdentity = {
+        dev: scratchIdentity.dev,
+        ino: scratchIdentity.ino,
+      };
+    }
     const runHome = path.join(scratchRoot, "home");
     const runTmp = path.join(scratchRoot, "tmp");
     const runCache = path.join(scratchRoot, "cache");
     for (const directory of [runHome, runTmp, runCache]) {
-      mkdirSync(directory, { mode: 0o700 });
+      mkdirSync(directory, {
+        mode: 0o700,
+        recursive: options.reuseScratchDirectories === true,
+      });
     }
     const nonce = randomBytes(32).toString("hex");
     const redirectLocation = `/echo?nonce=${encodeURIComponent(nonce)}`;
@@ -848,11 +932,11 @@ export async function runNetworkIsolatedV2(
         enforcementRef: EVIDENCE_ENVIRONMENT_NETWORK_ENFORCEMENT_REF_V2,
         wrapperModuleLocator: EVIDENCE_ENVIRONMENT_NETWORK_WRAPPER_MODULE_V2,
         wrapperExport: EVIDENCE_ENVIRONMENT_NETWORK_WRAPPER_EXPORT_V2,
-        wrapperModuleHash: state.wrapperModule.contentHash,
+        wrapperModuleHash: state.wrapperModule.mutableFingerprint.contentHash,
         sandboxExecutableRef: EVIDENCE_ENVIRONMENT_SANDBOX_EXECUTABLE_REF_V2,
-        sandboxExecutableHash: state.sandboxExecutable.contentHash,
+        sandboxExecutableHash: state.sandboxExecutable.mutableFingerprint.contentHash,
         nodeExecutableRef: "EXEC_NODE_RUNTIME_V2",
-        nodeExecutableHash: state.nodeExecutable.contentHash,
+        nodeExecutableHash: state.nodeExecutable.mutableFingerprint.contentHash,
         canonicalProfileHash: NETWORK_SANDBOX_PROFILE_HASH_V2,
         hostRuntimeIdentityHash: state.hostRuntimeIdentityHash,
         probeProgramRef: NETWORK_ISOLATION_NEGATIVE_PROBE_PROGRAM_REF_V2,
@@ -900,7 +984,7 @@ export async function runNetworkIsolatedV2(
       enforcementRef: EVIDENCE_ENVIRONMENT_NETWORK_ENFORCEMENT_REF_V2,
       wrapperModuleLocator: EVIDENCE_ENVIRONMENT_NETWORK_WRAPPER_MODULE_V2,
       wrapperExport: EVIDENCE_ENVIRONMENT_NETWORK_WRAPPER_EXPORT_V2,
-      wrapperModuleHash: state.wrapperModule.contentHash,
+      wrapperModuleHash: state.wrapperModule.mutableFingerprint.contentHash,
       sandboxExecutableRef: EVIDENCE_ENVIRONMENT_SANDBOX_EXECUTABLE_REF_V2,
       canonicalProfileHash: NETWORK_SANDBOX_PROFILE_HASH_V2,
       hostRuntimeIdentityHash: state.hostRuntimeIdentityHash,
@@ -951,8 +1035,25 @@ export async function runNetworkIsolatedV2(
         cleanupErrors.push(error);
       }
     }
-    if (scratchRoot) {
+    if (scratchRoot && !options.retainScratchRoot) {
       try {
+        if (scratchRootIdentity === undefined) {
+          throw new Error("Network isolation scratch root identity was not captured");
+        }
+        const currentRoot = lstatSync(
+          scratchRoot,
+          { bigint: true },
+        ) as ReturnType<typeof lstatSync> & { dev: bigint; ino: bigint };
+        if (
+          currentRoot.isSymbolicLink()
+          || !currentRoot.isDirectory()
+          || currentRoot.dev !== scratchRootIdentity.dev
+          || currentRoot.ino !== scratchRootIdentity.ino
+        ) {
+          throw new Error(
+            "Network isolation scratch root changed; refusing destructive cleanup",
+          );
+        }
         rmSync(scratchRoot, { recursive: true, force: false });
       } catch (error) {
         cleanupErrors.push(error);
@@ -967,6 +1068,28 @@ export async function runNetworkIsolatedV2(
       );
     }
   }
+}
+
+export async function runNetworkIsolatedV2(
+  context: NetworkIsolationProbeContextV2,
+): Promise<NetworkIsolationProbeExecutionResultV2> {
+  return runNetworkIsolatedInternalV2(context);
+}
+
+/**
+ * @internal Test-only bridge. It keeps the production launcher zero-input
+ * while allowing a characterization fixture to own and fence its private
+ * scratch root around the unchanged network probe.
+ */
+export async function runNetworkIsolatedWithScratchRootForTestV2(
+  context: NetworkIsolationProbeContextV2,
+  scratchRoot: string,
+): Promise<NetworkIsolationProbeExecutionResultV2> {
+  return runNetworkIsolatedInternalV2(context, {
+    scratchRoot,
+    retainScratchRoot: true,
+    reuseScratchDirectories: true,
+  });
 }
 
 export function destroyNetworkIsolationProbeContextV2(

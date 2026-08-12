@@ -17,7 +17,7 @@ repository paths, Git branches, and deployment names are resolved later by MC.
 - `TECH_STACK`: `vite-react`, `nextjs`, `vanilla-ts`, `node-express`, or `react-native`
 - `DB_REQUIRED`: `none`, `postgres`, or `sqlite`
 - `DESIGN_REQUIRED`: `true` for UI-bound products, `false` for API/CLI
-- `UI_LANGUAGE`: product UI language
+- `UI_LANGUAGE`: always `English`; localized conversation or task input does not change project output language
 - `PRD`: Product Contract with Context, Data/State, Behavioral Actions,
   Product Surfaces, Platform Contract, Testability, and Out Of Scope sections
 

@@ -8,6 +8,9 @@ import {
   readContractSpineMigrationAttestation,
   rollbackArtifactPublicationBatchLedgerToV22,
   rollbackArtifactPublicationBatchPlanLedgerToV25,
+  rollbackPlatformReleaseStoreRecordLedgerV3ToV26,
+  rollbackRuntimeCompletionManifestAuthorityToV27,
+  rollbackV3StoryClaimRuntimeBindingToV28,
   rollbackArtifactStoreAuthorityLedgerToV23,
   rollbackOperationalFailureCauseSealToV20,
   rollbackPreparationAuthorityV2LedgerToV24,
@@ -18,6 +21,15 @@ import {
 import { createIsolatedTestDatabase, type TestDatabase } from "./test-database.js";
 
 async function rollbackCurrentToV21(database: TestDatabase): Promise<void> {
+  await rollbackV3StoryClaimRuntimeBindingToV28(database.sql, {
+    targetReleaseSha: "8".repeat(40),
+  });
+  await rollbackRuntimeCompletionManifestAuthorityToV27(database.sql, {
+    targetReleaseSha: "9".repeat(40),
+  });
+  await rollbackPlatformReleaseStoreRecordLedgerV3ToV26(database.sql, {
+    targetReleaseSha: "a".repeat(40),
+  });
   await rollbackArtifactPublicationBatchPlanLedgerToV25(database.sql, {
     targetReleaseSha: "b".repeat(40),
   });
@@ -229,6 +241,9 @@ describe("operational failure cause migration", () => {
         "024_artifact_store_authority_ledger",
         "025_v3_preparation_authority_v2_ledger",
         "026_artifact_publication_batch_plan_ledger",
+        "027_platform_release_store_record_ledger_v3",
+        "028_runtime_completion_manifest_authority",
+        "029_v3_story_claim_runtime_binding_v1",
       ]);
       assert.equal((await verifyContractSpineMigrations(database.sql)).status, "verified");
 

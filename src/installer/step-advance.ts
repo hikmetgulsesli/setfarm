@@ -233,6 +233,11 @@ export async function checkLoopContinuation(runId: string, loopStepId: string): 
     logger.error(`[checkLoopContinuation] ${failReason}`, { runId });
 
     await pgBegin(async (sql) => {
+      const lockedRun = await sql.unsafe<Array<{ id: string }>>(
+        "SELECT id FROM runs WHERE id = $1 FOR UPDATE",
+        [runId],
+      );
+      if (lockedRun.length !== 1) throw new Error("LOOP_FAILURE_RUN_LOCK_MISSING");
       await sql.unsafe(
         "UPDATE steps SET status = 'failed', output = $1, updated_at = $2 WHERE id = $3",
         [failReason, now(), loopStepId],
@@ -340,6 +345,11 @@ SUMMARY: ${verifiedCount}/${totalCount} stories verified, ${skippedCount} skippe
 
   // Atomic: mark loop done + verify done must happen together
   await pgBegin(async (sql) => {
+    const lockedRun = await sql.unsafe<Array<{ context: string | null }>>(
+      "SELECT context FROM runs WHERE id = $1 FOR UPDATE",
+      [runId],
+    );
+    if (lockedRun.length !== 1) throw new Error("LOOP_COMPLETION_RUN_LOCK_MISSING");
     await sql.unsafe(
       "UPDATE steps SET status = 'done', output = $1, updated_at = $2 WHERE id = $3",
       [loopSummaryOutput, now(), loopStepId]
@@ -356,8 +366,7 @@ VERIFICATION_SUMMARY: ${verifiedCount}/${totalCount} stories verified`;
     }
 
     if (loopConfig?.verifyEach || loopConfig?.mergeStrategy === "pr-each") {
-      const runRows = await sql.unsafe("SELECT context FROM runs WHERE id = $1", [runId]);
-      const runRow = runRows[0] as unknown as { context: string | null } | undefined;
+      const runRow = lockedRun[0];
       let context: Record<string, any> = {};
       try { context = JSON.parse(runRow?.context || "{}"); } catch {}
       const nextContext = clearPrEachDownstreamContext(context);

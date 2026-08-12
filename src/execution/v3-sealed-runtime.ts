@@ -19,7 +19,7 @@ import {
   statSync,
   unlinkSync,
   writeFileSync,
-  type Stats,
+  type BigIntStats,
 } from "node:fs";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -74,9 +74,9 @@ function pathComponents(absolutePath: string): readonly string[] {
   return [parsed.root, ...suffix.split(path.sep).filter(Boolean)];
 }
 
-function lstatOrUndefined(filePath: string): Stats | undefined {
+function lstatOrUndefined(filePath: string): BigIntStats | undefined {
   try {
-    return lstatSync(filePath);
+    return lstatSync(filePath, { bigint: true });
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
     throw error;
@@ -114,7 +114,7 @@ export function ensureCanonicalV3StateRoot(requestedRoot: string): string {
       continue;
     }
     mkdirSync(current, { recursive: false, mode: 0o700 });
-    const created = lstatSync(current);
+    const created = lstatSync(current, { bigint: true });
     if (!created.isDirectory() || created.isSymbolicLink()) {
       fail("V3_DEPLOY_STATE_PATH_ANCESTOR_INVALID", current);
     }
@@ -152,7 +152,7 @@ function ensureCanonicalStateDirectory(stateRoot: string, directoryPath: string)
     }
     assertCanonicalStatePath(stateRoot, current, { allowMissingLeaf: true });
     mkdirSync(current, { recursive: false, mode: 0o700 });
-    const created = lstatSync(current);
+    const created = lstatSync(current, { bigint: true });
     if (!created.isDirectory() || created.isSymbolicLink()) {
       fail("V3_DEPLOY_STATE_PATH_ANCESTOR_INVALID", current);
     }
@@ -169,7 +169,7 @@ function fsyncDirectory(directoryPath: string): void {
 
 function fsyncTree(root: string): void {
   const visit = (absolutePath: string): void => {
-    const stats = lstatSync(absolutePath);
+    const stats = lstatSync(absolutePath, { bigint: true });
     if (stats.isSymbolicLink()) fail("V3_DEPLOY_SEALED_RUNTIME_SYMLINK", absolutePath);
     if (stats.isDirectory()) {
       for (const entry of readdirSync(absolutePath).sort(compareCodeUnits)) {
@@ -239,20 +239,24 @@ function copyAcceptedSource(input: Readonly<{
     const destination = path.resolve(input.destination, locator);
     assertInside(input.worktree, source, locator);
     assertInside(input.destination, destination, locator);
-    const stats = lstatSync(source);
+    const stats = lstatSync(source, { bigint: true });
     if (stats.isSymbolicLink()) fail("V3_DEPLOY_SEALED_SOURCE_SYMLINK_UNSUPPORTED", locator);
     if (!stats.isFile()) fail("V3_DEPLOY_SEALED_SOURCE_SPECIAL_FILE", locator);
-    if (stats.size > MAX_SEALED_SOURCE_FILE_BYTES) {
+    if (stats.size > BigInt(MAX_SEALED_SOURCE_FILE_BYTES)) {
       fail("V3_DEPLOY_SEALED_SOURCE_FILE_SIZE_LIMIT", locator);
     }
-    totalBytes += stats.size;
+    const byteLength = Number(stats.size);
+    if (!Number.isSafeInteger(byteLength)) {
+      fail("V3_DEPLOY_SEALED_SOURCE_FILE_SIZE_LIMIT", locator);
+    }
+    totalBytes += byteLength;
     if (!Number.isSafeInteger(totalBytes) || totalBytes > MAX_SEALED_SOURCE_TOTAL_BYTES) {
       fail("V3_DEPLOY_SEALED_SOURCE_TOTAL_SIZE_LIMIT", String(totalBytes));
     }
     mkdirSync(path.dirname(destination), { recursive: true, mode: 0o700 });
-    input.capacity.admitWrite(stats.size);
+    input.capacity.admitWrite(byteLength);
     copyFileSync(source, destination);
-    chmodSync(destination, (stats.mode & 0o111) !== 0 ? 0o500 : 0o400);
+    chmodSync(destination, (stats.mode & 0o111n) !== 0n ? 0o500 : 0o400);
   }
   return sourceArtifactOverlapPaths;
 }
@@ -269,8 +273,12 @@ function copyBuildArtifact(input: Readonly<{
     const destination = path.resolve(input.destination, file.path);
     assertInside(input.worktree, source, file.path);
     assertInside(input.destination, destination, file.path);
-    const stats = lstatSync(source);
-    if (!stats.isFile() || stats.isSymbolicLink() || stats.size !== file.byteLength) {
+    const stats = lstatSync(source, { bigint: true });
+    if (!stats.isFile() || stats.isSymbolicLink() || stats.size !== BigInt(file.byteLength)) {
+      fail("V3_DEPLOY_BUILD_OUTPUT_DRIFT", file.path);
+    }
+    const byteLength = Number(stats.size);
+    if (!Number.isSafeInteger(byteLength)) {
       fail("V3_DEPLOY_BUILD_OUTPUT_DRIFT", file.path);
     }
     if (existsSync(destination)) {
@@ -280,7 +288,7 @@ function copyBuildArtifact(input: Readonly<{
       continue;
     }
     mkdirSync(path.dirname(destination), { recursive: true, mode: 0o700 });
-    input.capacity.admitWrite(stats.size);
+    input.capacity.admitWrite(byteLength);
     copyFileSync(source, destination);
     chmodSync(destination, file.executable ? 0o500 : 0o400);
   }
@@ -305,32 +313,43 @@ function dependencyLocators(previewCwd: string, packageManager: string): readonl
 }
 
 type StableStat = Readonly<{
-  dev: number;
-  ino: number;
-  mode: number;
-  size: number;
-  mtimeMs: number;
-  ctimeMs: number;
+  dev: bigint;
+  ino: bigint;
+  objectKind: "ordinary_file" | "directory";
+  mode: bigint;
+  size: bigint;
+  mtimeNs: bigint;
+  ctimeNs: bigint;
 }>;
 
-function stableStat(stats: Stats): StableStat {
-  return {
+function stableStat(stats: BigIntStats): StableStat {
+  const objectKind = stats.isFile()
+    ? "ordinary_file" as const
+    : stats.isDirectory()
+      ? "directory" as const
+      : undefined;
+  if (objectKind === undefined || stats.isSymbolicLink()) {
+    fail("V3_DEPLOY_SEALED_RUNTIME_SPECIAL_FILE", "physical identity");
+  }
+  return Object.freeze({
     dev: stats.dev,
     ino: stats.ino,
+    objectKind,
     mode: stats.mode,
     size: stats.size,
-    mtimeMs: stats.mtimeMs,
-    ctimeMs: stats.ctimeMs,
-  };
+    mtimeNs: stats.mtimeNs,
+    ctimeNs: stats.ctimeNs,
+  });
 }
 
 function sameStableStat(left: StableStat, right: StableStat): boolean {
   return left.dev === right.dev
     && left.ino === right.ino
+    && left.objectKind === right.objectKind
     && left.mode === right.mode
     && left.size === right.size
-    && left.mtimeMs === right.mtimeMs
-    && left.ctimeMs === right.ctimeMs;
+    && left.mtimeNs === right.mtimeNs
+    && left.ctimeNs === right.ctimeNs;
 }
 
 type DependencyCopyBudget = {
@@ -355,7 +374,7 @@ function copyRuntimeDependencyEntry(input: Readonly<{
   ) {
     fail("V3_DEPLOY_RUNTIME_DEPENDENCY_ESCAPE", input.locator);
   }
-  const beforeStats = statSync(input.source);
+  const beforeStats = statSync(input.source, { bigint: true });
   const before = stableStat(beforeStats);
   if (beforeStats.isDirectory()) {
     if (input.activeDirectoryTargets.has(canonicalSource)) {
@@ -380,7 +399,7 @@ function copyRuntimeDependencyEntry(input: Readonly<{
       });
     }
     input.activeDirectoryTargets.delete(canonicalSource);
-    const afterStats = statSync(input.source);
+    const afterStats = statSync(input.source, { bigint: true });
     const afterEntries = readdirSync(input.source).sort(compareCodeUnits);
     if (
       realpathSync(input.source) !== canonicalSource
@@ -393,11 +412,15 @@ function copyRuntimeDependencyEntry(input: Readonly<{
     return;
   }
   if (!beforeStats.isFile()) fail("V3_DEPLOY_RUNTIME_DEPENDENCY_SPECIAL_FILE", input.locator);
-  if (beforeStats.size > V3_SEALED_RUNTIME_MAX_FILE_BYTES) {
+  if (beforeStats.size > BigInt(V3_SEALED_RUNTIME_MAX_FILE_BYTES)) {
+    fail("V3_DEPLOY_RUNTIME_DEPENDENCY_FILE_SIZE_LIMIT", input.locator);
+  }
+  const byteLength = Number(beforeStats.size);
+  if (!Number.isSafeInteger(byteLength)) {
     fail("V3_DEPLOY_RUNTIME_DEPENDENCY_FILE_SIZE_LIMIT", input.locator);
   }
   input.budget.files += 1;
-  input.budget.totalBytes += beforeStats.size;
+  input.budget.totalBytes += byteLength;
   if (input.budget.files > V3_SEALED_RUNTIME_MAX_FILES) {
     fail("V3_DEPLOY_RUNTIME_DEPENDENCY_FILE_LIMIT", String(input.budget.files));
   }
@@ -407,10 +430,10 @@ function copyRuntimeDependencyEntry(input: Readonly<{
   ) {
     fail("V3_DEPLOY_RUNTIME_DEPENDENCY_TOTAL_SIZE_LIMIT", String(input.budget.totalBytes));
   }
-  input.capacity.admitWrite(beforeStats.size);
+  input.capacity.admitWrite(byteLength);
   copyFileSync(canonicalSource, input.destination);
-  chmodSync(input.destination, (beforeStats.mode & 0o111) !== 0 ? 0o500 : 0o400);
-  const afterStats = statSync(input.source);
+  chmodSync(input.destination, (beforeStats.mode & 0o111n) !== 0n ? 0o500 : 0o400);
+  const afterStats = statSync(input.source, { bigint: true });
   if (
     realpathSync(input.source) !== canonicalSource
     || !afterStats.isFile()
@@ -436,7 +459,9 @@ function copyRuntimeDependencies(input: Readonly<{
     assertInside(input.destination, destination, locator);
     if (!existsSync(source)) continue;
     if (existsSync(destination)) fail("V3_DEPLOY_RUNTIME_DEPENDENCY_DESTINATION_CONFLICT", locator);
-    if (!statSync(source).isDirectory()) fail("V3_DEPLOY_RUNTIME_DEPENDENCY_INVALID", locator);
+    if (!statSync(source, { bigint: true }).isDirectory()) {
+      fail("V3_DEPLOY_RUNTIME_DEPENDENCY_INVALID", locator);
+    }
     mkdirSync(path.dirname(destination), { recursive: true, mode: 0o700 });
     const filesBefore = budget.files;
     copyRuntimeDependencyEntry({
@@ -483,7 +508,7 @@ async function captureSealedRuntimeManifest(input: Readonly<{
   requireReadOnlyModes?: boolean;
 }>): Promise<V3SealedRuntimeManifestV1> {
   const resolvedRoot = path.resolve(input.root);
-  const rootStats = lstatSync(resolvedRoot);
+  const rootStats = lstatSync(resolvedRoot, { bigint: true });
   if (!rootStats.isDirectory() || rootStats.isSymbolicLink()) {
     fail("V3_DEPLOY_SEALED_RUNTIME_INVALID", resolvedRoot);
   }
@@ -494,10 +519,10 @@ async function captureSealedRuntimeManifest(input: Readonly<{
   let totalBytes = 0;
 
   const visit = async (absolutePath: string, locator: string): Promise<void> => {
-    const stats = lstatSync(absolutePath);
+    const stats = lstatSync(absolutePath, { bigint: true });
     if (stats.isSymbolicLink()) fail("V3_DEPLOY_SEALED_RUNTIME_SYMLINK", locator);
     if (stats.isDirectory()) {
-      if (input.requireReadOnlyModes && (stats.mode & 0o777) !== 0o500) {
+      if (input.requireReadOnlyModes && (stats.mode & 0o777n) !== 0o500n) {
         fail("V3_DEPLOY_SEALED_RUNTIME_DRIFT", `mode:${locator}`);
       }
       if (directories.length >= V3_SEALED_RUNTIME_MAX_DIRECTORIES) {
@@ -518,34 +543,38 @@ async function captureSealedRuntimeManifest(input: Readonly<{
     if (files.length >= V3_SEALED_RUNTIME_MAX_FILES) {
       fail("V3_DEPLOY_SEALED_RUNTIME_FILE_LIMIT", String(files.length + 1));
     }
-    if (stats.size > V3_SEALED_RUNTIME_MAX_FILE_BYTES) {
+    if (stats.size > BigInt(V3_SEALED_RUNTIME_MAX_FILE_BYTES)) {
       fail("V3_DEPLOY_SEALED_RUNTIME_FILE_SIZE_LIMIT", locator);
     }
-    const expectedMode = (stats.mode & 0o111) !== 0 ? 0o500 : 0o400;
-    if ((stats.mode & 0o777) !== expectedMode) {
+    const expectedMode = (stats.mode & 0o111n) !== 0n ? 0o500n : 0o400n;
+    if ((stats.mode & 0o777n) !== expectedMode) {
       fail("V3_DEPLOY_SEALED_RUNTIME_DRIFT", `mode:${locator}`);
     }
-    totalBytes += stats.size;
+    const byteLength = Number(stats.size);
+    if (!Number.isSafeInteger(byteLength)) {
+      fail("V3_DEPLOY_SEALED_RUNTIME_FILE_SIZE_LIMIT", locator);
+    }
+    totalBytes += byteLength;
     if (!Number.isSafeInteger(totalBytes) || totalBytes > V3_SEALED_RUNTIME_MAX_TOTAL_BYTES) {
       fail("V3_DEPLOY_SEALED_RUNTIME_TOTAL_SIZE_LIMIT", String(totalBytes));
     }
     const before = stableStat(stats);
     const contentHash = await hashFile(absolutePath);
-    const afterStats = lstatSync(absolutePath);
+    const afterStats = lstatSync(absolutePath, { bigint: true });
     if (!afterStats.isFile() || !sameStableStat(before, stableStat(afterStats))) {
       fail("V3_DEPLOY_SEALED_RUNTIME_DRIFT", locator);
     }
     files.push({
       path: locator,
-      byteLength: stats.size,
+      byteLength,
       contentHash,
-      executable: (stats.mode & 0o111) !== 0,
+      executable: (stats.mode & 0o111n) !== 0n,
     });
   };
 
   await visit(root, ".");
   for (const directory of directories) {
-    const afterStats = lstatSync(directory.absolutePath);
+    const afterStats = lstatSync(directory.absolutePath, { bigint: true });
     const afterEntries = readdirSync(directory.absolutePath)
       .filter((entry) => directory.locator !== "." || entry !== SEALED_RUNTIME_MANIFEST_FILE)
       .sort(compareCodeUnits);
@@ -573,11 +602,11 @@ async function captureSealedRuntimeManifest(input: Readonly<{
 
 function readSealedRuntimeManifest(root: string): V3SealedRuntimeManifestV1 {
   const manifestPath = path.join(root, SEALED_RUNTIME_MANIFEST_FILE);
-  const stats = lstatSync(manifestPath);
+  const stats = lstatSync(manifestPath, { bigint: true });
   if (!stats.isFile() || stats.isSymbolicLink()) {
     fail("V3_DEPLOY_SEALED_RUNTIME_MANIFEST_INVALID", manifestPath);
   }
-  if ((stats.mode & 0o777) !== 0o400) {
+  if ((stats.mode & 0o777n) !== 0o400n) {
     fail("V3_DEPLOY_SEALED_RUNTIME_DRIFT", `mode:${SEALED_RUNTIME_MANIFEST_FILE}`);
   }
   return V3SealedRuntimeManifestV1Schema.parse(JSON.parse(readFileSync(manifestPath, "utf8")));
@@ -643,14 +672,14 @@ export async function verifyV3SealedRuntime(input: Readonly<{
 
 function makeTreeReadOnly(root: string): void {
   const visit = (absolute: string): void => {
-    const stats = lstatSync(absolute);
+    const stats = lstatSync(absolute, { bigint: true });
     if (stats.isSymbolicLink()) fail("V3_DEPLOY_SEALED_RUNTIME_SYMLINK", absolute);
     if (stats.isDirectory()) {
       for (const entry of readdirSync(absolute).sort(compareCodeUnits)) visit(path.join(absolute, entry));
       chmodSync(absolute, 0o500);
       return;
     }
-    if (stats.isFile()) chmodSync(absolute, (stats.mode & 0o111) !== 0 ? 0o500 : 0o400);
+    if (stats.isFile()) chmodSync(absolute, (stats.mode & 0o111n) !== 0n ? 0o500 : 0o400);
   };
   visit(root);
 }
@@ -658,7 +687,7 @@ function makeTreeReadOnly(root: string): void {
 function makeTreeWritable(root: string): void {
   if (!existsSync(root)) return;
   const visit = (absolute: string): void => {
-    const stats = lstatSync(absolute);
+    const stats = lstatSync(absolute, { bigint: true });
     if (stats.isSymbolicLink()) return;
     if (stats.isDirectory()) {
       chmodSync(absolute, 0o700);
@@ -691,16 +720,16 @@ function readSealAuthority(filePath: string): Readonly<{
   authority: V3SealAuthorityV1;
   bytes: string;
 }> {
-  let stats: Stats;
+  let stats: BigIntStats;
   try {
-    stats = lstatSync(filePath);
+    stats = lstatSync(filePath, { bigint: true });
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
       fail("V3_DEPLOY_SEAL_AUTHORITY_MISSING", filePath);
     }
     throw error;
   }
-  if (!stats.isFile() || stats.isSymbolicLink() || (stats.mode & 0o777) !== 0o400) {
+  if (!stats.isFile() || stats.isSymbolicLink() || (stats.mode & 0o777n) !== 0o400n) {
     fail("V3_DEPLOY_SEAL_AUTHORITY_INVALID", filePath);
   }
   const bytes = readFileSync(filePath, "utf8");

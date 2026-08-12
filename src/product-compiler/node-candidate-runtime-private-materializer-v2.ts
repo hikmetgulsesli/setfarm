@@ -15,6 +15,7 @@ import {
   realpathSync,
   rmSync,
   writeSync,
+  type BigIntStats,
   type Stats,
 } from "node:fs";
 import os from "node:os";
@@ -112,6 +113,19 @@ type RootIdentityV2 = Readonly<{
   ownerUid: number;
   ownerGid: number;
 }>;
+
+type ExactFilesystemObjectKindV2 = "ordinary_file" | "directory";
+
+export type NodeCandidateRuntimeExactFilesystemIdentityInternalV2 = Readonly<{
+  device: bigint;
+  inode: bigint;
+  ownerUid: bigint;
+  ownerGid: bigint;
+  objectKind: ExactFilesystemObjectKindV2;
+}>;
+
+const sealedFileExactIdentityV2 =
+  new WeakMap<object, NodeCandidateRuntimeExactFilesystemIdentityInternalV2>();
 
 export type NodeCandidateRuntimePhysicalSourceCheckpointInternalV2 = Readonly<{
   packageJson: Readonly<{
@@ -216,6 +230,30 @@ function modeBits(stat: Stats): number {
   return stat.mode & 0o7777;
 }
 
+function exactModeBitsV2(stat: BigIntStats): string {
+  return Number(stat.mode & 0o7777n).toString(8).padStart(4, "0");
+}
+
+function exactSealedFileStatMatchesV2(
+  left: BigIntStats,
+  right: BigIntStats,
+): boolean {
+  return left.isFile()
+    && right.isFile()
+    && !left.isSymbolicLink()
+    && !right.isSymbolicLink()
+    && left.dev === right.dev
+    && left.ino === right.ino
+    && left.mode === right.mode
+    && left.uid === right.uid
+    && left.gid === right.gid
+    && left.nlink === right.nlink
+    && left.size === right.size
+    && left.rdev === right.rdev
+    && left.mtimeNs === right.mtimeNs
+    && left.ctimeNs === right.ctimeNs;
+}
+
 function processOwner(): Readonly<{ uid: number; gid: number }> {
   if (typeof process.getuid !== "function" || typeof process.getgid !== "function") {
     return fail(
@@ -240,6 +278,113 @@ function sameRootIdentity(left: RootIdentityV2, right: RootIdentityV2): boolean 
     && left.inode === right.inode
     && left.ownerUid === right.ownerUid
     && left.ownerGid === right.ownerGid;
+}
+
+function exactFilesystemIdentityFromStatV2(
+  stat: BigIntStats,
+  objectKind: ExactFilesystemObjectKindV2,
+): NodeCandidateRuntimeExactFilesystemIdentityInternalV2 | undefined {
+  if (
+    stat.isSymbolicLink()
+    || (objectKind === "ordinary_file" ? !stat.isFile() : !stat.isDirectory())
+  ) {
+    return undefined;
+  }
+  return Object.freeze({
+    device: stat.dev,
+    inode: stat.ino,
+    ownerUid: stat.uid,
+    ownerGid: stat.gid,
+    objectKind,
+  });
+}
+
+function sameExactFilesystemIdentityV2(
+  left: NodeCandidateRuntimeExactFilesystemIdentityInternalV2,
+  right: NodeCandidateRuntimeExactFilesystemIdentityInternalV2,
+): boolean {
+  return left.device === right.device
+    && left.inode === right.inode
+    && left.ownerUid === right.ownerUid
+    && left.ownerGid === right.ownerGid
+    && left.objectKind === right.objectKind;
+}
+
+function captureExactFilesystemIdentityV2(input: Readonly<{
+  absolutePath: string;
+  objectKind: ExactFilesystemObjectKindV2;
+  errorCode: NodeCandidateRuntimePrivateMaterializerErrorCodeV2;
+}>): NodeCandidateRuntimeExactFilesystemIdentityInternalV2 {
+  let stat: BigIntStats;
+  try {
+    stat = lstatSync(input.absolutePath, { bigint: true });
+  } catch (error) {
+    return fail(
+      input.errorCode,
+      "Candidate runtime filesystem identity could not be captured exactly",
+      error,
+    );
+  }
+  const identity = exactFilesystemIdentityFromStatV2(stat, input.objectKind);
+  if (!identity) {
+    return fail(
+      input.errorCode,
+      "Candidate runtime filesystem object kind or stable identity is invalid",
+    );
+  }
+  return identity;
+}
+
+function assertExactFilesystemIdentityCurrentV2(input: Readonly<{
+  absolutePath: string;
+  expected: NodeCandidateRuntimeExactFilesystemIdentityInternalV2;
+  errorCode: NodeCandidateRuntimePrivateMaterializerErrorCodeV2;
+}>): void {
+  let stat: BigIntStats;
+  try {
+    stat = lstatSync(input.absolutePath, { bigint: true });
+  } catch (error) {
+    return fail(
+      input.errorCode,
+      "Candidate runtime filesystem cleanup identity could not be captured exactly",
+      error,
+    );
+  }
+  const observed = exactFilesystemIdentityFromStatV2(
+    stat,
+    input.expected.objectKind,
+  );
+  if (!observed || !sameExactFilesystemIdentityV2(observed, input.expected)) {
+    return fail(
+      input.errorCode,
+      "Candidate runtime filesystem cleanup object kind or stable identity changed",
+    );
+  }
+}
+
+/** @internal */
+export function captureNodeCandidateRuntimeExactFilesystemIdentityInternalV2(
+  absolutePath: string,
+  objectKind: ExactFilesystemObjectKindV2,
+): NodeCandidateRuntimeExactFilesystemIdentityInternalV2 {
+  return captureExactFilesystemIdentityV2({
+    absolutePath,
+    objectKind,
+    errorCode: "NODE_CANDIDATE_RUNTIME_PRIVATE_V2_BUNDLE_INVALID",
+  });
+}
+
+/** @internal */
+export function assertNodeCandidateRuntimeExactFilesystemIdentityCurrentInternalV2(
+  input: Readonly<{
+    absolutePath: string;
+    expected: NodeCandidateRuntimeExactFilesystemIdentityInternalV2;
+  }>,
+): void {
+  assertExactFilesystemIdentityCurrentV2({
+    ...input,
+    errorCode: "NODE_CANDIDATE_RUNTIME_PRIVATE_V2_BUNDLE_INVALID",
+  });
 }
 
 function deepFreezeJson<T>(value: T): T {
@@ -474,29 +619,31 @@ function captureSealedFile<TLocator extends string>(input: Readonly<{
       input.absolutePath,
       constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
     );
-    const before = fstatSync(descriptor);
+    const beforeExact = fstatSync(descriptor, { bigint: true }) as BigIntStats;
     const bytes = readFileSync(descriptor);
-    const after = fstatSync(descriptor);
-    const pathAfter = lstatSync(input.absolutePath);
+    const afterExact = fstatSync(descriptor, { bigint: true }) as BigIntStats;
+    const pathAfterExact = lstatSync(input.absolutePath, {
+      bigint: true,
+    }) as BigIntStats;
+    const ownerUid = BigInt(owner.uid);
+    const ownerGid = BigInt(owner.gid);
     if (
-      !before.isFile()
-      || before.nlink !== 1
-      || before.uid !== owner.uid
-      || before.gid !== owner.gid
-      || modeBits(before) !== 0o444
-      || before.size < 1
-      || before.size > input.maxBytes
-      || before.dev !== after.dev
-      || before.ino !== after.ino
-      || before.mode !== after.mode
-      || before.size !== after.size
-      || before.mtimeMs !== after.mtimeMs
-      || before.ctimeMs !== after.ctimeMs
-      || after.dev !== pathAfter.dev
-      || after.ino !== pathAfter.ino
-      || after.mode !== pathAfter.mode
-      || after.size !== pathAfter.size
-      || bytes.byteLength !== after.size
+      !beforeExact.isFile()
+      || !afterExact.isFile()
+      || !pathAfterExact.isFile()
+      || beforeExact.isSymbolicLink()
+      || afterExact.isSymbolicLink()
+      || pathAfterExact.isSymbolicLink()
+      || beforeExact.nlink !== 1n
+      || afterExact.nlink !== 1n
+      || beforeExact.uid !== ownerUid
+      || beforeExact.gid !== ownerGid
+      || (beforeExact.mode & 0o7777n) !== 0o444n
+      || beforeExact.size < 1n
+      || beforeExact.size > BigInt(input.maxBytes)
+      || !exactSealedFileStatMatchesV2(beforeExact, afterExact)
+      || !exactSealedFileStatMatchesV2(afterExact, pathAfterExact)
+      || BigInt(bytes.byteLength) !== afterExact.size
     ) {
       bytes.fill(0);
       return fail(
@@ -504,25 +651,45 @@ function captureSealedFile<TLocator extends string>(input: Readonly<{
         `Candidate source ${input.logicalLocator} changed or is not sealed`,
       );
     }
+    const contentHash = sha256(bytes);
+    const stableIdentity = Object.freeze({
+      objectKind: "ordinary_file" as const,
+      device: afterExact.dev.toString(10),
+      inode: afterExact.ino.toString(10),
+    });
+    const mutableFingerprint = Object.freeze({
+      ownerUid: afterExact.uid.toString(10),
+      ownerGid: afterExact.gid.toString(10),
+      mode: exactModeBitsV2(afterExact),
+      linkCount: afterExact.nlink.toString(10),
+      byteLength: afterExact.size.toString(10),
+      modifiedTimeNanoseconds: afterExact.mtimeNs.toString(10),
+      changedTimeNanoseconds: afterExact.ctimeNs.toString(10),
+      contentHash,
+    });
     const value = Object.freeze({
       logicalLocator: input.logicalLocator,
-      contentHash: sha256(bytes),
+      contentHash,
       byteLength: bytes.byteLength,
       physicalIdentityHash: hashCanonicalJson({
-        schema: "setfarm.node-candidate-runtime-physical-file.v2",
+        schema: "setfarm.node-candidate-runtime-physical-file.v3",
         logicalLocator: input.logicalLocator,
-        device: after.dev,
-        inode: after.ino,
-        mode: modeBits(after),
-        ownerUid: after.uid,
-        ownerGid: after.gid,
-        linkCount: after.nlink,
-        byteLength: after.size,
-        modifiedMs: after.mtimeMs,
-        changedMs: after.ctimeMs,
-        contentHash: sha256(bytes),
+        stableIdentity,
+        mutableFingerprint,
       }),
     });
+    const exactIdentity = exactFilesystemIdentityFromStatV2(
+      afterExact,
+      "ordinary_file",
+    );
+    if (!exactIdentity) {
+      bytes.fill(0);
+      return fail(
+        "NODE_CANDIDATE_RUNTIME_PRIVATE_V2_SOURCE_INVALID",
+        `Candidate source ${input.logicalLocator} is not an exact ordinary file`,
+      );
+    }
+    sealedFileExactIdentityV2.set(value, exactIdentity);
     bytes.fill(0);
     return value;
   } catch (error) {
@@ -565,6 +732,7 @@ function createLayout(scope: AdmissionScopeV2): Readonly<{
   bundleRoot: string;
   applicationRoot: string;
   attemptIdentity: RootIdentityV2;
+  bundleExactIdentity: NodeCandidateRuntimeExactFilesystemIdentityInternalV2;
 }> {
   const owner = processOwner();
   let attemptRoot: string | undefined;
@@ -598,11 +766,17 @@ function createLayout(scope: AdmissionScopeV2): Readonly<{
     syncPath(applicationRoot);
     syncPath(bundleRoot);
     syncPath(attemptRoot);
+    const bundleExactIdentity = captureExactFilesystemIdentityV2({
+      absolutePath: bundleRoot,
+      objectKind: "directory",
+      errorCode: "NODE_CANDIDATE_RUNTIME_PRIVATE_V2_LAYOUT_INVALID",
+    });
     const value = Object.freeze({
       attemptRoot,
       bundleRoot,
       applicationRoot,
       attemptIdentity: rootIdentity(attemptStat),
+      bundleExactIdentity,
     });
     attemptRoot = undefined;
     return value;
@@ -906,6 +1080,12 @@ async function materializeInternal(
         layout.bundleRoot,
       );
     const sourceAfter = sourceCheckpoint(layout.bundleRoot);
+    const sourceBeforePackageLockIdentity = sealedFileExactIdentityV2.get(
+      sourceBefore.packageLock,
+    );
+    const sourceAfterPackageLockIdentity = sealedFileExactIdentityV2.get(
+      sourceAfter.packageLock,
+    );
     if (
       canonicalJsonStringify(sourceBefore)
         !== canonicalJsonStringify(sourceAfter)
@@ -913,6 +1093,12 @@ async function materializeInternal(
         !== runtimeInputs.packageJson.contentHash
       || sourceBefore.packageLock.contentHash
         !== runtimeInputs.packageLock.contentHash
+      || !sourceBeforePackageLockIdentity
+      || !sourceAfterPackageLockIdentity
+      || !sameExactFilesystemIdentityV2(
+        sourceBeforePackageLockIdentity,
+        sourceAfterPackageLockIdentity,
+      )
     ) {
       return fail(
         "NODE_CANDIDATE_RUNTIME_PRIVATE_V2_SOURCE_INVALID",
@@ -937,6 +1123,16 @@ async function materializeInternal(
         "Candidate application tree changed across dependency materialization",
       );
     }
+    assertExactFilesystemIdentityCurrentV2({
+      absolutePath: layout.bundleRoot,
+      expected: layout.bundleExactIdentity,
+      errorCode: "NODE_CANDIDATE_RUNTIME_PRIVATE_V2_BUNDLE_INVALID",
+    });
+    assertExactFilesystemIdentityCurrentV2({
+      absolutePath: path.join(layout.bundleRoot, "package-lock.json"),
+      expected: sourceAfterPackageLockIdentity,
+      errorCode: "NODE_CANDIDATE_RUNTIME_PRIVATE_V2_BUNDLE_INVALID",
+    });
     rmSync(path.join(layout.bundleRoot, "package-lock.json"), { force: false });
     syncPath(layout.bundleRoot);
     chmodSync(layout.bundleRoot, 0o555);

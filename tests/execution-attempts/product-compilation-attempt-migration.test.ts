@@ -7,12 +7,27 @@ import {
   planContractSpineMigrations,
   rollbackArtifactPublicationBatchLedgerToV22,
   rollbackArtifactPublicationBatchPlanLedgerToV25,
+  rollbackPlatformReleaseStoreRecordLedgerV3ToV26,
   rollbackArtifactStoreAuthorityLedgerToV23,
   rollbackPreparationAuthorityV2LedgerToV24,
   rollbackProductCompilationAttemptLedgerToV21,
+  rollbackRuntimeCompletionManifestAuthorityToV27,
+  rollbackV3StoryClaimRuntimeBindingToV28,
   verifyContractSpineMigrations,
 } from "../../src/db/contract-spine-migrations.js";
 import { createIsolatedTestDatabase, type TestDatabase } from "./test-database.js";
+
+async function rollbackCurrentHeadToV26(sql: TestDatabase["sql"]): Promise<void> {
+  await rollbackV3StoryClaimRuntimeBindingToV28(sql, {
+    targetReleaseSha: "3".repeat(40),
+  });
+  await rollbackRuntimeCompletionManifestAuthorityToV27(sql, {
+    targetReleaseSha: "2".repeat(40),
+  });
+  await rollbackPlatformReleaseStoreRecordLedgerV3ToV26(sql, {
+    targetReleaseSha: "1".repeat(40),
+  });
+}
 
 describe("product compilation attempt migration 22", () => {
   let database: TestDatabase;
@@ -36,6 +51,7 @@ describe("product compilation attempt migration 22", () => {
     const verified = await verifyContractSpineMigrations(database.sql);
     assert.equal(verified.status, "verified");
 
+    await rollbackCurrentHeadToV26(database.sql);
     await rollbackArtifactPublicationBatchPlanLedgerToV25(database.sql, {
       targetReleaseSha: "0".repeat(40),
     });
@@ -76,6 +92,7 @@ describe("product compilation attempt migration 22", () => {
 
   it("refuses rollback after immutable attempt evidence exists", async () => {
     await applyContractSpineMigrations(database.sql, { releaseSha: "c".repeat(40) });
+    await rollbackCurrentHeadToV26(database.sql);
     await rollbackArtifactPublicationBatchPlanLedgerToV25(database.sql, {
       targetReleaseSha: "0".repeat(40),
     });

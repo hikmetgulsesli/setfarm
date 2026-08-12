@@ -11,13 +11,14 @@ import {
   mkdirSync,
   mkdtempSync,
   openSync,
-  readFileSync,
+  opendirSync,
   readSync,
   readlinkSync,
-  readdirSync,
   realpathSync,
-  rmSync,
+  rmdirSync,
+  unlinkSync,
   writeSync,
+  type BigIntStats,
   type Stats,
 } from "node:fs";
 import path from "node:path";
@@ -33,6 +34,9 @@ import {
   type VerifiedDeepByteBundleV2,
 } from "./deep-byte-bundle-verifier-v2.js";
 import { hashCanonicalJson } from "./canonical-json.js";
+import {
+  matchesExactStableFilesystemObjectV2,
+} from "./exact-stable-filesystem-identity-v2.js";
 import {
   captureCanonicalRuntimeTreeV2,
   captureCanonicalRuntimeTreeV2ForTest,
@@ -57,6 +61,7 @@ import type {
 import {
   inspectNodeScaffoldExecutionEnvironmentReceiptV2,
   isProductionNodeScaffoldExecutionEnvironmentV2,
+  revalidateNodeScaffoldHostToolchainLogicalIdentityInternalV3,
   revalidateNodeScaffoldExecutionEnvironmentV2,
   destroyNodeScaffoldExecutionEnvironmentV2,
   createNodeCandidateRuntimeExecutionEnvironmentInternalV2,
@@ -93,6 +98,7 @@ import {
 } from "./schemas/node-scaffold-execution-environment-v2.js";
 import {
   HOST_NODE_TOOLCHAIN_RECEIPT_V2_SCHEMA,
+  type HostNodeToolchainLogicalProjectionV3,
 } from "./schemas/host-node-toolchain-receipt-v2.js";
 import {
   DEEP_BYTE_BUNDLE_VERIFICATION_RECEIPT_V2_SCHEMA,
@@ -357,6 +363,24 @@ type CandidateBuildOutputCaptureV2 = Readonly<{
   metadataProbe: CanonicalRuntimeMetadataProbeV2;
 }>;
 
+type PrivateCleanupObjectKindV2 =
+  | "directory"
+  | "ordinary_file"
+  | "symbolic_link";
+
+type PrivateCleanupMemberV2 = Readonly<{
+  locator: string;
+  objectKind: PrivateCleanupObjectKindV2;
+  device: string;
+  inode: string;
+  ownerUid: string;
+  ownerGid: string;
+}>;
+
+type PrivateCleanupCensusV2 = Readonly<{
+  members: readonly PrivateCleanupMemberV2[];
+}>;
+
 type SourceCasRevalidationAuthorityV1 = Readonly<{
   casAuthority: DeepByteBundleCasAuthorityV2;
   sources: readonly PublishedSourceArtifactAuthorityV1[];
@@ -384,6 +408,7 @@ type MutableLifecycleV2 = {
   sourceCapture?: SourceMaterializationCaptureV1;
   sourceAuthority?: SourceCasRevalidationAuthorityV1;
   buildOutput?: CandidateBuildOutputCaptureV2;
+  cleanupCensus: PrivateCleanupCensusV2;
 };
 
 type PrivateStageStateV2 = Readonly<{
@@ -396,6 +421,7 @@ type PrivateStageStateV2 = Readonly<{
   baseCapture: PrivateBaseCaptureV2;
   receipt: ScaffoldBaseMaterializationReceiptV2;
   lifecycle: MutableLifecycleV2;
+  cleanupTestHooks?: NodeScaffoldPrivateMaterializerTestHooksV2;
 }>;
 
 const materializedStageConstructorCapabilityV2 = Object.freeze({});
@@ -418,6 +444,12 @@ export class MaterializedNodeScaffoldPrivateStageV2 {
 }
 
 export type NodeScaffoldPrivateMaterializerCrashBoundaryV2 =
+  | "after_private_root_create"
+  | "after_dependency_capsule_create"
+  | "after_project_directory_create"
+  | "after_package_lock_create"
+  | "after_package_json_create"
+  | "after_tsconfig_create"
   | "after_private_root_fsync"
   | "after_layout_fsync"
   | "after_package_lock_fsync"
@@ -428,11 +460,25 @@ export type NodeScaffoldPrivateMaterializerCrashBoundaryV2 =
 
 export type NodeScaffoldPrivateMaterializerTestHooksV2 = Readonly<{
   afterBoundary?: (boundary: NodeScaffoldPrivateMaterializerCrashBoundaryV2) => void;
+  afterCleanupDirectoryWritable?: (locator: string) => void;
+  afterCleanupDirectoryDescriptorClose?: (locator: string) => void;
+  beforeCleanupCensusDirectoryRead?: (locator: string) => void;
+  afterCleanupCensusDirectoryClose?: (locator: string) => void;
+  afterDependencyCapsuleDestinationCreate?: (locator: string) => void;
+  afterDependencyCapsuleSourceDescriptorClose?: (locator: string) => void;
+  afterDependencyCapsuleDestinationDescriptorClose?: (locator: string) => void;
+  beforeDependencyCapsuleSourceDirectoryRead?: (locator: string) => void;
+  afterCleanupDirectoryModeRestore?: (locator: string) => void;
+  beforeRawDependencyFileRead?: (locator: string, absolutePath: string) => void;
+  maxRawDependencyDirectoryEntriesForTest?: number;
 }>;
 
 export type NodeProductSourceMaterializerCrashBoundaryV1 =
   | "after_source_preclaim"
   | "after_source_authority_verification"
+  | "after_source_directory_create"
+  | "after_runtime_source_create"
+  | "after_test_source_create"
   | "after_source_directory_fsync"
   | "after_runtime_source_fsync"
   | "after_test_source_fsync"
@@ -453,6 +499,103 @@ function fail(
     message,
     cause === undefined ? undefined : { cause },
   );
+}
+
+function runWithIndependentFinalizersV2<T>(input: Readonly<{
+  operation: () => T;
+  finalizers: readonly (() => void)[];
+  onFinalizerFailure: (errors: readonly unknown[]) => never;
+}>): T {
+  const primaryErrors: unknown[] = [];
+  let result: T | undefined;
+  try {
+    result = input.operation();
+  } catch (error) {
+    primaryErrors.push(error);
+  }
+  const finalizerErrors: unknown[] = [];
+  for (const finalizer of input.finalizers) {
+    try {
+      finalizer();
+    } catch (error) {
+      finalizerErrors.push(error);
+    }
+  }
+  if (finalizerErrors.length > 0) {
+    return input.onFinalizerFailure([...primaryErrors, ...finalizerErrors]);
+  }
+  if (primaryErrors.length > 0) throw primaryErrors[0];
+  return result as T;
+}
+
+function readBoundedDirectoryNamesV2(input: Readonly<{
+  absolutePath: string;
+  label: string;
+  maxNames: number;
+  errorCode: NodeScaffoldPrivateMaterializerErrorCodeV2;
+  beforeRead?: () => void;
+  afterClose?: () => void;
+  membershipBoundLabel?: "fixed" | "admitted";
+}>): readonly string[] {
+  const names: string[] = [];
+  const directory = opendirSync(input.absolutePath);
+  return runWithIndependentFinalizersV2({
+    operation: () => {
+      input.beforeRead?.();
+      let entry = directory.readSync();
+      while (entry !== null) {
+        names.push(entry.name);
+        if (names.length > input.maxNames) {
+          return fail(
+            input.errorCode,
+            `${input.label} exceeded its ${input.membershipBoundLabel ?? "fixed"} membership bound`,
+          );
+        }
+        entry = directory.readSync();
+      }
+      return names.sort();
+    },
+    finalizers: [() => {
+      directory.closeSync();
+      input.afterClose?.();
+    }],
+    onFinalizerFailure: (errors) => fail(
+      input.errorCode,
+      `${input.label} read or descriptor close failed`,
+      new AggregateError(errors, `${input.label} read and descriptor finalization failures`),
+    ),
+  });
+}
+
+function readExactDescriptorBytesV2(input: Readonly<{
+  descriptor: number;
+  admittedByteLength: number;
+  label: string;
+  errorCode: NodeScaffoldPrivateMaterializerErrorCodeV2;
+}>): Buffer {
+  if (!Number.isSafeInteger(input.admittedByteLength) || input.admittedByteLength < 0) {
+    return fail(input.errorCode, `${input.label} has an invalid admitted byte length`);
+  }
+  const bytes = Buffer.alloc(input.admittedByteLength);
+  let byteLength = 0;
+  while (byteLength < bytes.byteLength) {
+    const count = readSync(
+      input.descriptor,
+      bytes,
+      byteLength,
+      bytes.byteLength - byteLength,
+      null,
+    );
+    if (count === 0) break;
+    byteLength += count;
+  }
+  const growthProbe = Buffer.allocUnsafe(1);
+  const growthCount = readSync(input.descriptor, growthProbe, 0, 1, null);
+  if (byteLength !== input.admittedByteLength || growthCount !== 0) {
+    bytes.fill(0);
+    return fail(input.errorCode, `${input.label} changed outside its admitted byte length`);
+  }
+  return bytes;
 }
 
 function sha256(value: string | Uint8Array): string {
@@ -581,12 +724,20 @@ function assertMissingPathV2(absolutePath: string, label: string): void {
 
 function syncDirectoryV2(absolutePath: string): void {
   let descriptor: number | undefined;
-  try {
-    descriptor = openSync(absolutePath, constants.O_RDONLY | constants.O_NOFOLLOW);
-    fsyncSync(descriptor);
-  } finally {
-    if (descriptor !== undefined) closeSync(descriptor);
-  }
+  return runWithIndependentFinalizersV2({
+    operation: () => {
+      descriptor = openSync(absolutePath, constants.O_RDONLY | constants.O_NOFOLLOW);
+      fsyncSync(descriptor);
+    },
+    finalizers: [() => {
+      if (descriptor !== undefined) closeSync(descriptor);
+    }],
+    onFinalizerFailure: (errors) => fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_MATERIALIZATION_FAILED",
+      `Private directory ${absolutePath} sync or descriptor close failed`,
+      new AggregateError(errors, "Private directory sync and descriptor finalization failures"),
+    ),
+  });
 }
 
 function validateScratchParentV2(value: unknown): string {
@@ -632,6 +783,7 @@ function createPrivateLayoutV2(input: Readonly<{
   projectRoot: string;
   dependencyCapsuleRoot: string;
   initialRootFingerprint: FingerprintV2;
+  initialCleanupCensus: PrivateCleanupCensusV2;
 }> {
   const prefix = input.admissionScope === "production_host"
     ? PRODUCTION_PRIVATE_ROOT_PREFIX_V2
@@ -639,8 +791,17 @@ function createPrivateLayoutV2(input: Readonly<{
   const owner = processOwnerV2();
   let privateRoot: string | undefined;
   let initialRootFingerprint: FingerprintV2 | undefined;
+  let cleanupCensus: PrivateCleanupCensusV2 | undefined;
   try {
     privateRoot = mkdtempSync(prefix);
+    cleanupCensus = extendPrivateCleanupCensusWithCreatedMemberV2({
+      privateRoot,
+      current: cleanupCensus,
+      absolutePath: privateRoot,
+      locator: ".",
+    });
+    input.hooks?.afterBoundary?.("after_private_root_create");
+    cleanupCensus = capturePrivateCleanupCensusV2(privateRoot);
     chmodSync(privateRoot, 0o700);
     initialRootFingerprint = fingerprint(lstatSync(privateRoot));
     if (
@@ -655,36 +816,71 @@ function createPrivateLayoutV2(input: Readonly<{
       );
     }
     syncDirectoryV2(privateRoot);
+    cleanupCensus = capturePrivateCleanupCensusV2(privateRoot);
     input.hooks?.afterBoundary?.("after_private_root_fsync");
     const projectRoot = path.join(privateRoot, "project");
     const dependencyCapsuleRoot = path.join(privateRoot, "dependency-capsule");
     mkdirSync(dependencyCapsuleRoot, { mode: 0o700 });
+    cleanupCensus = extendPrivateCleanupCensusWithCreatedMemberV2({
+      privateRoot,
+      current: cleanupCensus,
+      absolutePath: dependencyCapsuleRoot,
+      locator: "dependency-capsule",
+    });
+    input.hooks?.afterBoundary?.("after_dependency_capsule_create");
+    cleanupCensus = capturePrivateCleanupCensusV2(privateRoot);
     mkdirSync(projectRoot, { mode: 0o700 });
+    cleanupCensus = extendPrivateCleanupCensusWithCreatedMemberV2({
+      privateRoot,
+      current: cleanupCensus,
+      absolutePath: projectRoot,
+      locator: "project",
+    });
+    input.hooks?.afterBoundary?.("after_project_directory_create");
+    cleanupCensus = capturePrivateCleanupCensusV2(privateRoot);
     chmodSync(dependencyCapsuleRoot, 0o700);
     chmodSync(projectRoot, 0o700);
     syncDirectoryV2(dependencyCapsuleRoot);
     syncDirectoryV2(projectRoot);
     syncDirectoryV2(privateRoot);
+    cleanupCensus = capturePrivateCleanupCensusV2(privateRoot);
     input.hooks?.afterBoundary?.("after_layout_fsync");
     const result = Object.freeze({
       privateRoot,
       projectRoot,
       dependencyCapsuleRoot,
       initialRootFingerprint,
+      initialCleanupCensus: cleanupCensus,
     });
     privateRoot = undefined;
     return result;
   } catch (error) {
+    let cleanupError: unknown;
+    if (privateRoot && cleanupCensus) {
+      try {
+        safeRemoveOwnedAttemptV2(privateRoot, cleanupCensus);
+      } catch (candidate) {
+        cleanupError = candidate;
+      }
+    }
+    if (cleanupError !== undefined) {
+      return fail(
+        error instanceof NodeScaffoldPrivateMaterializerErrorV2
+          ? error.code
+          : "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_MATERIALIZATION_FAILED",
+        `Fresh private scaffold layout failed and cleanup retained its authenticated root ${privateRoot}`,
+        new AggregateError(
+          [error, cleanupError],
+          "Private layout failure and exact cleanup failure",
+        ),
+      );
+    }
     if (error instanceof NodeScaffoldPrivateMaterializerErrorV2) throw error;
     return fail(
       "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_MATERIALIZATION_FAILED",
       "Fresh private scaffold layout could not be created",
       error,
     );
-  } finally {
-    if (privateRoot && initialRootFingerprint) {
-      safeRemoveOwnedAttemptV2(privateRoot, initialRootFingerprint);
-    }
   }
 }
 
@@ -750,15 +946,19 @@ function captureAuthenticatedAssetsV2(input: Readonly<{
 function writeExclusiveAssetV2(input: Readonly<{
   projectRoot: string;
   asset: CapturedAssetV2;
+  onCreated: (absolutePath: string) => void;
 }>): CapturedPhysicalAssetV2 {
   const absolutePath = path.join(input.projectRoot, input.asset.normalizedLocator);
   let descriptor: number | undefined;
   try {
-    descriptor = openSync(
+    return runWithIndependentFinalizersV2({
+      operation: () => {
+        descriptor = openSync(
       absolutePath,
       constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW,
       0o600,
     );
+    input.onCreated(absolutePath);
     fchmodSync(descriptor, 0o444);
     let offset = 0;
     while (offset < input.asset.bytes.byteLength) {
@@ -793,7 +993,7 @@ function writeExclusiveAssetV2(input: Readonly<{
       );
     }
     const fileFingerprint = fingerprint(stat);
-    return Object.freeze({
+        return Object.freeze({
       locator: input.asset.normalizedLocator,
       fingerprint: fileFingerprint,
       contentHash: input.asset.rawHash,
@@ -803,6 +1003,16 @@ function writeExclusiveAssetV2(input: Readonly<{
         fingerprint: fileFingerprint,
         contentHash: input.asset.rawHash,
       }),
+        });
+      },
+      finalizers: [() => {
+        if (descriptor !== undefined) closeSync(descriptor);
+      }],
+      onFinalizerFailure: (errors) => fail(
+        "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_MATERIALIZATION_FAILED",
+        `Scaffold ${input.asset.normalizedLocator} write or descriptor close failed`,
+        new AggregateError(errors, "Scaffold write and descriptor finalization failures"),
+      ),
     });
   } catch (error) {
     if (error instanceof NodeScaffoldPrivateMaterializerErrorV2) throw error;
@@ -811,8 +1021,6 @@ function writeExclusiveAssetV2(input: Readonly<{
       `Scaffold ${input.asset.normalizedLocator} could not be written exclusively`,
       error,
     );
-  } finally {
-    if (descriptor !== undefined) closeSync(descriptor);
   }
 }
 
@@ -823,7 +1031,12 @@ function captureDirectoryV2(input: Readonly<{
 }>): FingerprintV2 {
   const owner = processOwnerV2();
   const before = lstatSync(input.absolutePath);
-  const names = readdirSync(input.absolutePath).sort();
+  const names = readBoundedDirectoryNamesV2({
+    absolutePath: input.absolutePath,
+    label: input.label,
+    maxNames: input.expectedNames.length,
+    errorCode: "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_STATE_DRIFT",
+  });
   const after = lstatSync(input.absolutePath);
   if (
     before.isSymbolicLink()
@@ -851,42 +1064,64 @@ function capturePhysicalAssetV2(input: Readonly<{
   const absolutePath = path.join(input.projectRoot, input.asset.normalizedLocator);
   let descriptor: number | undefined;
   try {
-    descriptor = openSync(
-      absolutePath,
-      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
-    );
-    const before = fstatSync(descriptor);
-    const bytes = readFileSync(descriptor);
-    const after = fstatSync(descriptor);
-    const pathAfter = lstatSync(absolutePath);
-    const fileFingerprint = fingerprint(after);
-    if (
-      !before.isFile()
-      || before.isSymbolicLink()
-      || before.nlink !== 1
-      || modeBits(before) !== 0o444
-      || before.uid !== processOwnerV2().uid
-      || before.gid !== processOwnerV2().gid
-      || !sameFingerprint(fingerprint(before), fileFingerprint)
-      || !sameFingerprint(fileFingerprint, fingerprint(pathAfter))
-      || bytes.byteLength !== input.asset.rawByteLength
-      || sha256(bytes) !== input.asset.rawHash
-    ) {
-      return fail(
+    return runWithIndependentFinalizersV2({
+      operation: () => {
+        descriptor = openSync(
+          absolutePath,
+          constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+        );
+        const before = fstatSync(descriptor);
+        if (before.size !== input.asset.rawByteLength) {
+          return fail(
+            "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_STATE_DRIFT",
+            `Scaffold ${input.asset.normalizedLocator} differs from its admitted byte length`,
+          );
+        }
+        const bytes = readExactDescriptorBytesV2({
+          descriptor,
+          admittedByteLength: input.asset.rawByteLength,
+          label: `Scaffold ${input.asset.normalizedLocator}`,
+          errorCode: "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_STATE_DRIFT",
+        });
+        const after = fstatSync(descriptor);
+        const pathAfter = lstatSync(absolutePath);
+        const fileFingerprint = fingerprint(after);
+        if (
+          !before.isFile()
+          || before.isSymbolicLink()
+          || before.nlink !== 1
+          || modeBits(before) !== 0o444
+          || before.uid !== processOwnerV2().uid
+          || before.gid !== processOwnerV2().gid
+          || !sameFingerprint(fingerprint(before), fileFingerprint)
+          || !sameFingerprint(fileFingerprint, fingerprint(pathAfter))
+          || sha256(bytes) !== input.asset.rawHash
+        ) {
+          return fail(
+            "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_STATE_DRIFT",
+            `Scaffold ${input.asset.normalizedLocator} changed after materialization`,
+          );
+        }
+        return Object.freeze({
+          locator: input.asset.normalizedLocator,
+          fingerprint: fileFingerprint,
+          contentHash: input.asset.rawHash,
+          physicalIdentityHash: hashCanonicalJson({
+            schema: "setfarm.scaffold-base-physical-file-identity.v2",
+            locator: input.asset.normalizedLocator,
+            fingerprint: fileFingerprint,
+            contentHash: input.asset.rawHash,
+          }),
+        });
+      },
+      finalizers: [() => {
+        if (descriptor !== undefined) closeSync(descriptor);
+      }],
+      onFinalizerFailure: (errors) => fail(
         "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_STATE_DRIFT",
-        `Scaffold ${input.asset.normalizedLocator} changed after materialization`,
-      );
-    }
-    return Object.freeze({
-      locator: input.asset.normalizedLocator,
-      fingerprint: fileFingerprint,
-      contentHash: input.asset.rawHash,
-      physicalIdentityHash: hashCanonicalJson({
-        schema: "setfarm.scaffold-base-physical-file-identity.v2",
-        locator: input.asset.normalizedLocator,
-        fingerprint: fileFingerprint,
-        contentHash: input.asset.rawHash,
-      }),
+        `Scaffold ${input.asset.normalizedLocator} read or descriptor close failed`,
+        new AggregateError(errors, "Scaffold read and descriptor finalization failures"),
+      ),
     });
   } catch (error) {
     if (error instanceof NodeScaffoldPrivateMaterializerErrorV2) throw error;
@@ -895,8 +1130,6 @@ function capturePhysicalAssetV2(input: Readonly<{
       `Scaffold ${input.asset.normalizedLocator} could not be fresh-read`,
       error,
     );
-  } finally {
-    if (descriptor !== undefined) closeSync(descriptor);
   }
 }
 
@@ -962,6 +1195,425 @@ function capturePrivateBaseV2(input: Readonly<{
     totalBytes,
     privateIdentityHash,
   });
+}
+
+const PRIVATE_CLEANUP_MAX_MEMBERS_V2 = 65_536 as const;
+const PRIVATE_CLEANUP_MAX_DEPTH_V2 = 64 as const;
+const PRIVATE_CLEANUP_MAX_LOCATOR_BYTES_V2 = 4_096 as const;
+
+function privateCleanupObjectKindV2(
+  stat: BigIntStats,
+): PrivateCleanupObjectKindV2 | undefined {
+  if (stat.isSymbolicLink()) return "symbolic_link";
+  if (stat.isDirectory()) return "directory";
+  if (stat.isFile()) return "ordinary_file";
+  return undefined;
+}
+
+function capturePrivateCleanupMemberV2(input: Readonly<{
+  absolutePath: string;
+  locator: string;
+  ownerUid: string;
+  ownerGid: string;
+}>): PrivateCleanupMemberV2 {
+  const stat = lstatSync(input.absolutePath, { bigint: true });
+  const objectKind = privateCleanupObjectKindV2(stat);
+  if (
+    objectKind === undefined
+    || String(stat.uid) !== input.ownerUid
+    || String(stat.gid) !== input.ownerGid
+  ) {
+    return fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_STATE_DRIFT",
+      `Private cleanup member ${input.locator} has a forbidden kind or ownership`,
+    );
+  }
+  return Object.freeze({
+    locator: input.locator,
+    objectKind,
+    device: String(stat.dev),
+    inode: String(stat.ino),
+    ownerUid: String(stat.uid),
+    ownerGid: String(stat.gid),
+  });
+}
+
+function boundedPrivateCleanupNamesV2(
+  absoluteDirectory: string,
+  memberCount: number,
+  locator: string,
+  hooks?: NodeScaffoldPrivateMaterializerTestHooksV2,
+): readonly string[] {
+  return readBoundedDirectoryNamesV2({
+    absolutePath: absoluteDirectory,
+    label: `Private cleanup directory ${locator}`,
+    maxNames: PRIVATE_CLEANUP_MAX_MEMBERS_V2 - memberCount,
+    errorCode: "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_STATE_DRIFT",
+    beforeRead: () => hooks?.beforeCleanupCensusDirectoryRead?.(locator),
+    afterClose: () => hooks?.afterCleanupCensusDirectoryClose?.(locator),
+  });
+}
+
+function capturePrivateCleanupCensusV2(
+  privateRoot: string,
+  hooks?: NodeScaffoldPrivateMaterializerTestHooksV2,
+): PrivateCleanupCensusV2 {
+  const rootStat = lstatSync(privateRoot, { bigint: true });
+  if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) {
+    return fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_STATE_DRIFT",
+      "Private cleanup root is not one direct directory",
+    );
+  }
+  const ownerUid = String(rootStat.uid);
+  const ownerGid = String(rootStat.gid);
+  const members: PrivateCleanupMemberV2[] = [];
+  const visit = (absolutePath: string, locator: string, depth: number): void => {
+    if (
+      depth > PRIVATE_CLEANUP_MAX_DEPTH_V2
+      || Buffer.byteLength(locator, "utf8") > PRIVATE_CLEANUP_MAX_LOCATOR_BYTES_V2
+      || members.length >= PRIVATE_CLEANUP_MAX_MEMBERS_V2
+    ) {
+      return fail(
+        "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_STATE_DRIFT",
+        "Private cleanup census exceeded its fixed path or membership bound",
+      );
+    }
+    const member = capturePrivateCleanupMemberV2({
+      absolutePath,
+      locator,
+      ownerUid,
+      ownerGid,
+    });
+    members.push(member);
+    if (member.objectKind !== "directory") return;
+    for (const name of boundedPrivateCleanupNamesV2(
+      absolutePath,
+      members.length,
+      locator,
+      hooks,
+    )) {
+      visit(
+        path.join(absolutePath, name),
+        locator === "." ? name : `${locator}/${name}`,
+        depth + 1,
+      );
+    }
+  };
+  visit(privateRoot, ".", 0);
+  return Object.freeze({
+    members: Object.freeze(members.sort((left, right) =>
+      left.locator < right.locator ? -1 : left.locator > right.locator ? 1 : 0)),
+  });
+}
+
+function extendPrivateCleanupCensusWithCreatedMemberV2(input: Readonly<{
+  privateRoot: string;
+  current: PrivateCleanupCensusV2 | undefined;
+  absolutePath: string;
+  locator: string;
+}>): PrivateCleanupCensusV2 {
+  if (input.current?.members.some((member) => member.locator === input.locator)) {
+    return fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_STATE_DRIFT",
+      `Private cleanup journal already contains ${input.locator}`,
+    );
+  }
+  if (
+    input.locator !== "."
+    && !input.current?.members.some((member) => member.locator === ".")
+  ) {
+    return fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_STATE_DRIFT",
+      `Private cleanup journal lacks its root before adding ${input.locator}`,
+    );
+  }
+  if ((input.current?.members.length ?? 0) >= PRIVATE_CLEANUP_MAX_MEMBERS_V2) {
+    return fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_STATE_DRIFT",
+      "Private cleanup journal exceeded its fixed membership bound",
+    );
+  }
+  const root = input.current?.members.find((member) => member.locator === ".");
+  const rootStat = root === undefined
+    ? lstatSync(input.privateRoot, { bigint: true })
+    : undefined;
+  const member = capturePrivateCleanupMemberV2({
+    absolutePath: input.absolutePath,
+    locator: input.locator,
+    ownerUid: root?.ownerUid ?? String(rootStat!.uid),
+    ownerGid: root?.ownerGid ?? String(rootStat!.gid),
+  });
+  return Object.freeze({
+    members: Object.freeze([
+      ...(input.current?.members ?? []),
+      member,
+    ].sort((left, right) =>
+      left.locator < right.locator ? -1 : left.locator > right.locator ? 1 : 0)),
+  });
+}
+
+function samePrivateCleanupCensusV2(
+  left: PrivateCleanupCensusV2,
+  right: PrivateCleanupCensusV2,
+): boolean {
+  return left.members.length === right.members.length
+    && left.members.every((member, index) => {
+      const expected = right.members[index];
+      return expected !== undefined
+        && member.locator === expected.locator
+        && member.objectKind === expected.objectKind
+        && member.device === expected.device
+        && member.inode === expected.inode
+        && member.ownerUid === expected.ownerUid
+        && member.ownerGid === expected.ownerGid;
+    });
+}
+
+function assertPrivateCleanupMemberV2(
+  privateRoot: string,
+  expected: PrivateCleanupMemberV2,
+): string {
+  const absolutePath = expected.locator === "."
+    ? privateRoot
+    : path.join(privateRoot, ...expected.locator.split("/"));
+  const current = capturePrivateCleanupMemberV2({
+    absolutePath,
+    locator: expected.locator,
+    ownerUid: expected.ownerUid,
+    ownerGid: expected.ownerGid,
+  });
+  if (!samePrivateCleanupCensusV2(
+    { members: [current] },
+    { members: [expected] },
+  )) {
+    return fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_STATE_DRIFT",
+      `Private cleanup member ${expected.locator} changed before removal`,
+    );
+  }
+  return absolutePath;
+}
+
+function makePrivateCleanupDirectoryWritableV2(
+  privateRoot: string,
+  expected: PrivateCleanupMemberV2,
+  hooks?: NodeScaffoldPrivateMaterializerTestHooksV2,
+  onModeChange?: (entry: Readonly<{
+    expected: PrivateCleanupMemberV2;
+    originalMode: number;
+  }>) => void,
+): void {
+  const absolutePath = assertPrivateCleanupMemberV2(privateRoot, expected);
+  let descriptor: number | undefined;
+  const operationErrors: unknown[] = [];
+  try {
+    descriptor = openSync(
+      absolutePath,
+      constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW,
+    );
+    const stat = fstatSync(descriptor, { bigint: true });
+    if (
+      !stat.isDirectory()
+      || String(stat.dev) !== expected.device
+      || String(stat.ino) !== expected.inode
+      || String(stat.uid) !== expected.ownerUid
+      || String(stat.gid) !== expected.ownerGid
+    ) {
+      return fail(
+        "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_STATE_DRIFT",
+        `Private cleanup directory ${expected.locator} changed before descriptor-bound chmod`,
+      );
+    }
+    const originalMode = Number(stat.mode & 0o7777n);
+    if (originalMode !== 0o700) {
+      onModeChange?.(Object.freeze({ expected, originalMode }));
+      fchmodSync(descriptor, 0o700);
+    }
+    hooks?.afterCleanupDirectoryWritable?.(expected.locator);
+  } catch (error) {
+    operationErrors.push(error);
+  }
+  const closeErrors: unknown[] = [];
+  if (descriptor !== undefined) {
+    try {
+      closeSync(descriptor);
+      hooks?.afterCleanupDirectoryDescriptorClose?.(expected.locator);
+    } catch (error) {
+      closeErrors.push(error);
+    }
+  }
+  if (operationErrors.length === 1 && closeErrors.length === 0) {
+    const [operationError] = operationErrors;
+    if (operationError instanceof NodeScaffoldPrivateMaterializerErrorV2) {
+      throw operationError;
+    }
+    return fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_STATE_DRIFT",
+      `Private cleanup directory ${expected.locator} could not be made writable through its exact descriptor`,
+      operationError,
+    );
+  }
+  const errors = [...operationErrors, ...closeErrors];
+  if (errors.length > 0) {
+    return fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_STATE_DRIFT",
+      `Private cleanup directory ${expected.locator} mutation or descriptor close failed`,
+      errors.length === 1
+        ? errors[0]
+        : new AggregateError(
+          errors,
+          "Private cleanup directory mutation and descriptor close both failed",
+        ),
+    );
+  }
+  assertPrivateCleanupMemberV2(privateRoot, expected);
+}
+
+function restorePrivateCleanupDirectoryModeV2(
+  privateRoot: string,
+  entry: Readonly<{
+    expected: PrivateCleanupMemberV2;
+    originalMode: number;
+  }>,
+  hooks?: NodeScaffoldPrivateMaterializerTestHooksV2,
+): void {
+  const absolutePath = entry.expected.locator === "."
+    ? privateRoot
+    : path.join(privateRoot, ...entry.expected.locator.split("/"));
+  try {
+    lstatSync(absolutePath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw error;
+  }
+  let descriptor: number | undefined;
+  return runWithIndependentFinalizersV2({
+    operation: () => {
+      descriptor = openSync(
+        absolutePath,
+        constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW,
+      );
+      const before = fstatSync(descriptor, { bigint: true });
+      if (
+        !before.isDirectory()
+        || String(before.dev) !== entry.expected.device
+        || String(before.ino) !== entry.expected.inode
+        || String(before.uid) !== entry.expected.ownerUid
+        || String(before.gid) !== entry.expected.ownerGid
+      ) {
+        return fail(
+          "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_STATE_DRIFT",
+          `Private cleanup directory ${entry.expected.locator} changed before mode restoration`,
+        );
+      }
+      fchmodSync(descriptor, entry.originalMode);
+      hooks?.afterCleanupDirectoryModeRestore?.(entry.expected.locator);
+      const after = fstatSync(descriptor, { bigint: true });
+      const pathAfter = lstatSync(absolutePath, { bigint: true });
+      if (
+        String(after.dev) !== entry.expected.device
+        || String(after.ino) !== entry.expected.inode
+        || String(pathAfter.dev) !== entry.expected.device
+        || String(pathAfter.ino) !== entry.expected.inode
+        || Number(after.mode & 0o7777n) !== entry.originalMode
+        || Number(pathAfter.mode & 0o7777n) !== entry.originalMode
+      ) {
+        return fail(
+          "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_STATE_DRIFT",
+          `Private cleanup directory ${entry.expected.locator} did not retain its original mode`,
+        );
+      }
+    },
+    finalizers: [() => {
+      if (descriptor !== undefined) closeSync(descriptor);
+    }],
+    onFinalizerFailure: (errors) => fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_STATE_DRIFT",
+      `Private cleanup directory ${entry.expected.locator} mode restore or descriptor close failed`,
+      new AggregateError(
+        errors,
+        "Private cleanup directory mode restoration and descriptor finalization failures",
+      ),
+    ),
+  });
+}
+
+function destroyPrivateCleanupCensusV2(
+  privateRoot: string,
+  expected: PrivateCleanupCensusV2,
+  hooks?: NodeScaffoldPrivateMaterializerTestHooksV2,
+): void {
+  const modeJournal = new Map<string, Readonly<{
+    expected: PrivateCleanupMemberV2;
+    originalMode: number;
+  }>>();
+  const primaryErrors: unknown[] = [];
+  try {
+    const current = capturePrivateCleanupCensusV2(privateRoot, hooks);
+    if (!samePrivateCleanupCensusV2(current, expected)) {
+      return fail(
+        "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_STATE_DRIFT",
+        "Private cleanup census no longer equals every-and-only captured membership",
+      );
+    }
+    const directories = expected.members.filter((member) =>
+      member.objectKind === "directory");
+    for (const directory of directories) {
+      makePrivateCleanupDirectoryWritableV2(
+        privateRoot,
+        directory,
+        hooks,
+        (entry) => modeJournal.set(entry.expected.locator, entry),
+      );
+    }
+    for (const leaf of expected.members.filter((member) =>
+      member.objectKind !== "directory")) {
+      const absolutePath = assertPrivateCleanupMemberV2(privateRoot, leaf);
+      unlinkSync(absolutePath);
+      assertMissingPathV2(absolutePath, `Destroyed private cleanup member ${leaf.locator}`);
+    }
+    const deepestFirst = directories.slice().sort((left, right) => {
+      const leftDepth = left.locator === "." ? 0 : left.locator.split("/").length;
+      const rightDepth = right.locator === "." ? 0 : right.locator.split("/").length;
+      return rightDepth - leftDepth;
+    });
+    for (const directory of deepestFirst) {
+      const absolutePath = assertPrivateCleanupMemberV2(privateRoot, directory);
+      readBoundedDirectoryNamesV2({
+        absolutePath,
+        label: `Private cleanup directory ${directory.locator}`,
+        maxNames: 0,
+        errorCode: "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_STATE_DRIFT",
+      });
+      rmdirSync(absolutePath);
+      assertMissingPathV2(
+        absolutePath,
+        `Destroyed private cleanup directory ${directory.locator}`,
+      );
+    }
+  } catch (error) {
+    primaryErrors.push(error);
+  }
+  const restoreErrors: unknown[] = [];
+  for (const entry of [...modeJournal.values()].reverse()) {
+    try {
+      restorePrivateCleanupDirectoryModeV2(privateRoot, entry, hooks);
+    } catch (error) {
+      restoreErrors.push(error);
+    }
+  }
+  if (restoreErrors.length > 0) {
+    return fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_STATE_DRIFT",
+      "Private cleanup could not restore every surviving directory mode",
+      new AggregateError(
+        [...primaryErrors, ...restoreErrors],
+        "Private cleanup operation and directory mode restoration failures",
+      ),
+    );
+  }
+  if (primaryErrors.length > 0) throw primaryErrors[0];
 }
 
 function codeOwnedMaterializerAuthorityV2(): PrivateStagedMaterializerAuthorityV2 {
@@ -1157,57 +1809,77 @@ function parseBoundedJsonObjectV2(
 function hashDependencyRegularFileV2(
   absolutePath: string,
   locator: string,
+  testHooks?: NodeScaffoldPrivateMaterializerTestHooksV2,
 ): Readonly<{ rawHash: string; rawByteLength: number; mode: string }> {
   const limits = CANONICAL_RUNTIME_TREE_V2_PROFILES.dependencies;
   const owner = processOwnerV2();
   let descriptor: number | undefined;
   try {
-    descriptor = openSync(
-      absolutePath,
-      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
-    );
-    const before = fstatSync(descriptor);
-    if (
-      !before.isFile()
-      || before.isSymbolicLink()
-      || before.nlink !== 1
-      || before.uid !== owner.uid
-      || before.gid !== owner.gid
-      || (modeBits(before) & 0o022) !== 0
-      || !Number.isSafeInteger(before.size)
-      || before.size < 0
-      || before.size > limits.maxFileBytes
-    ) {
-      return fail(
+    return runWithIndependentFinalizersV2({
+      operation: () => {
+        descriptor = openSync(
+          absolutePath,
+          constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+        );
+        const before = fstatSync(descriptor);
+        if (
+          !before.isFile()
+          || before.isSymbolicLink()
+          || before.nlink !== 1
+          || before.uid !== owner.uid
+          || before.gid !== owner.gid
+          || (modeBits(before) & 0o022) !== 0
+          || !Number.isSafeInteger(before.size)
+          || before.size < 0
+          || before.size > limits.maxFileBytes
+        ) {
+          return fail(
+            "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_GRAPH_INVALID",
+            `Installed file ${locator} has unsafe type, ownership, links, mode or size`,
+          );
+        }
+        const hash = createHash("sha256");
+        const buffer = Buffer.allocUnsafe(64 * 1024);
+        let rawByteLength = 0;
+        testHooks?.beforeRawDependencyFileRead?.(locator, absolutePath);
+        while (true) {
+          const count = readSync(descriptor, buffer, 0, buffer.byteLength, null);
+          if (count === 0) break;
+          if (rawByteLength + count > before.size) {
+            return fail(
+              "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_GRAPH_INVALID",
+              `Installed file ${locator} exceeded its admitted byte length`,
+            );
+          }
+          rawByteLength += count;
+          hash.update(buffer.subarray(0, count));
+        }
+        const after = fstatSync(descriptor);
+        const pathAfter = lstatSync(absolutePath);
+        if (
+          rawByteLength !== after.size
+          || !sameFingerprint(fingerprint(before), fingerprint(after))
+          || !sameFingerprint(fingerprint(after), fingerprint(pathAfter))
+        ) {
+          return fail(
+            "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_GRAPH_INVALID",
+            `Installed file ${locator} changed while it was captured`,
+          );
+        }
+        return Object.freeze({
+          rawHash: hash.digest("hex"),
+          rawByteLength,
+          mode: modeTextV2(after),
+        });
+      },
+      finalizers: [() => {
+        if (descriptor !== undefined) closeSync(descriptor);
+      }],
+      onFinalizerFailure: (errors) => fail(
         "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_GRAPH_INVALID",
-        `Installed file ${locator} has unsafe type, ownership, links, mode or size`,
-      );
-    }
-    const hash = createHash("sha256");
-    const buffer = Buffer.allocUnsafe(64 * 1024);
-    let rawByteLength = 0;
-    while (true) {
-      const count = readSync(descriptor, buffer, 0, buffer.byteLength, null);
-      if (count === 0) break;
-      rawByteLength += count;
-      hash.update(buffer.subarray(0, count));
-    }
-    const after = fstatSync(descriptor);
-    const pathAfter = lstatSync(absolutePath);
-    if (
-      rawByteLength !== after.size
-      || !sameFingerprint(fingerprint(before), fingerprint(after))
-      || !sameFingerprint(fingerprint(after), fingerprint(pathAfter))
-    ) {
-      return fail(
-        "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_GRAPH_INVALID",
-        `Installed file ${locator} changed while it was captured`,
-      );
-    }
-    return Object.freeze({
-      rawHash: hash.digest("hex"),
-      rawByteLength,
-      mode: modeTextV2(after),
+        `Installed file ${locator} capture or descriptor close failed`,
+        new AggregateError(errors, "Installed file capture and descriptor finalization failures"),
+      ),
     });
   } catch (error) {
     if (error instanceof NodeScaffoldPrivateMaterializerErrorV2) throw error;
@@ -1216,8 +1888,6 @@ function hashDependencyRegularFileV2(
       `Installed file ${locator} could not be captured without following links`,
       error,
     );
-  } finally {
-    if (descriptor !== undefined) closeSync(descriptor);
   }
 }
 
@@ -1229,41 +1899,57 @@ function readExactDependencyJsonBytesV2(input: Readonly<{
   const owner = processOwnerV2();
   let descriptor: number | undefined;
   try {
-    descriptor = openSync(
-      input.absolutePath,
-      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
-    );
-    const before = fstatSync(descriptor);
-    if (
-      !before.isFile()
-      || before.isSymbolicLink()
-      || before.nlink !== 1
-      || before.uid !== owner.uid
-      || before.gid !== owner.gid
-      || (modeBits(before) & 0o022) !== 0
-      || before.size < 2
-      || before.size > 32 * 1024 * 1024
-    ) {
-      return fail(
+    return runWithIndependentFinalizersV2({
+      operation: () => {
+        descriptor = openSync(
+          input.absolutePath,
+          constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+        );
+        const before = fstatSync(descriptor);
+        if (
+          !before.isFile()
+          || before.isSymbolicLink()
+          || before.nlink !== 1
+          || before.uid !== owner.uid
+          || before.gid !== owner.gid
+          || (modeBits(before) & 0o022) !== 0
+          || before.size < 2
+          || before.size > 32 * 1024 * 1024
+        ) {
+          return fail(
+            "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_GRAPH_INVALID",
+            `${input.label} is not one bounded regular file`,
+          );
+        }
+        const bytes = readExactDescriptorBytesV2({
+          descriptor,
+          admittedByteLength: before.size,
+          label: input.label,
+          errorCode: "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_GRAPH_INVALID",
+        });
+        const after = fstatSync(descriptor);
+        const pathAfter = lstatSync(input.absolutePath);
+        if (
+          !sameFingerprint(fingerprint(before), fingerprint(after))
+          || !sameFingerprint(fingerprint(after), fingerprint(pathAfter))
+          || (input.expectedRawHash !== undefined && sha256(bytes) !== input.expectedRawHash)
+        ) {
+          return fail(
+            "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_GRAPH_INVALID",
+            `${input.label} changed or differs from its admitted hash`,
+          );
+        }
+        return bytes;
+      },
+      finalizers: [() => {
+        if (descriptor !== undefined) closeSync(descriptor);
+      }],
+      onFinalizerFailure: (errors) => fail(
         "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_GRAPH_INVALID",
-        `${input.label} is not one bounded regular file`,
-      );
-    }
-    const bytes = readFileSync(descriptor);
-    const after = fstatSync(descriptor);
-    const pathAfter = lstatSync(input.absolutePath);
-    if (
-      !sameFingerprint(fingerprint(before), fingerprint(after))
-      || !sameFingerprint(fingerprint(after), fingerprint(pathAfter))
-      || bytes.byteLength !== after.size
-      || (input.expectedRawHash !== undefined && sha256(bytes) !== input.expectedRawHash)
-    ) {
-      return fail(
-        "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_GRAPH_INVALID",
-        `${input.label} changed or differs from its admitted hash`,
-      );
-    }
-    return bytes;
+        `${input.label} read or descriptor close failed`,
+        new AggregateError(errors, `${input.label} read and descriptor finalization failures`),
+      ),
+    });
   } catch (error) {
     if (error instanceof NodeScaffoldPrivateMaterializerErrorV2) throw error;
     return fail(
@@ -1271,12 +1957,13 @@ function readExactDependencyJsonBytesV2(input: Readonly<{
       `${input.label} could not be read without following links`,
       error,
     );
-  } finally {
-    if (descriptor !== undefined) closeSync(descriptor);
   }
 }
 
-function captureRawInstallEntriesV2(nodeModulesRoot: string): readonly RawInstallEntryV2[] {
+function captureRawInstallEntriesV2(
+  nodeModulesRoot: string,
+  testHooks?: NodeScaffoldPrivateMaterializerTestHooksV2,
+): readonly RawInstallEntryV2[] {
   const limits = CANONICAL_RUNTIME_TREE_V2_PROFILES.dependencies;
   const owner = processOwnerV2();
   const entries: RawInstallEntryV2[] = [];
@@ -1284,9 +1971,18 @@ function captureRawInstallEntriesV2(nodeModulesRoot: string): readonly RawInstal
   let fileCount = 0;
   let directoryCount = 0;
   let totalBytes = 0;
+  const maxMembers = limits.maxFiles + limits.maxDirectories;
   const visit = (absoluteDirectory: string, relativeDirectory: string): void => {
     const before = lstatSync(absoluteDirectory);
-    const beforeNames = readdirSync(absoluteDirectory).sort();
+    const beforeNames = readBoundedDirectoryNamesV2({
+      absolutePath: absoluteDirectory,
+      label: `Installed directory ${relativeDirectory || "node_modules"}`,
+      maxNames: Math.min(
+        maxMembers - entries.length,
+        testHooks?.maxRawDependencyDirectoryEntriesForTest ?? Number.MAX_SAFE_INTEGER,
+      ),
+      errorCode: "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_GRAPH_INVALID",
+    });
     if (
       before.isSymbolicLink()
       || !before.isDirectory()
@@ -1359,7 +2055,7 @@ function captureRawInstallEntriesV2(nodeModulesRoot: string): readonly RawInstal
           "Installed dependency file count exceeded its fixed bound",
         );
       }
-      const captured = hashDependencyRegularFileV2(absolutePath, locator);
+      const captured = hashDependencyRegularFileV2(absolutePath, locator, testHooks);
       totalBytes += captured.rawByteLength;
       if (totalBytes > limits.maxTotalBytes) {
         return fail(
@@ -1376,7 +2072,12 @@ function captureRawInstallEntriesV2(nodeModulesRoot: string): readonly RawInstal
       }));
     }
     const after = lstatSync(absoluteDirectory);
-    const afterNames = readdirSync(absoluteDirectory).sort();
+    const afterNames = readBoundedDirectoryNamesV2({
+      absolutePath: absoluteDirectory,
+      label: `Installed directory ${relativeDirectory || "node_modules"}`,
+      maxNames: beforeNames.length,
+      errorCode: "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_GRAPH_INVALID",
+    });
     if (
       !sameFingerprint(fingerprint(before), fingerprint(after))
       || JSON.stringify(beforeNames) !== JSON.stringify(afterNames)
@@ -1537,7 +2238,12 @@ function validateEveryAndOnlyPackageRootsV2(
   for (const [container, packageMembers] of expectedContainers) {
     const absoluteContainer = path.join(projectRoot, container);
     const expectedTop = new Set(packageMembers.map((member) => member.split("/")[0]!));
-    const actualTop = readdirSync(absoluteContainer).filter((name) =>
+    const actualTop = readBoundedDirectoryNamesV2({
+      absolutePath: absoluteContainer,
+      label: `Installed package roots in ${container}`,
+      maxNames: expectedTop.size + 2,
+      errorCode: "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_GRAPH_INVALID",
+    }).filter((name) =>
       name !== ".bin" && name !== ".package-lock.json").sort();
     if (!sameStringsV2(actualTop, [...expectedTop].sort())) {
       return fail(
@@ -1550,7 +2256,12 @@ function validateEveryAndOnlyPackageRootsV2(
         .filter((member) => member.startsWith(`${scope}/`))
         .map((member) => member.slice(scope.length + 1))
         .sort();
-      const actualScoped = readdirSync(path.join(absoluteContainer, scope)).sort();
+      const actualScoped = readBoundedDirectoryNamesV2({
+        absolutePath: path.join(absoluteContainer, scope),
+        label: `Installed scoped package roots in ${container}/${scope}`,
+        maxNames: expectedScoped.length,
+        errorCode: "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_GRAPH_INVALID",
+      });
       if (!sameStringsV2(actualScoped, expectedScoped)) {
         return fail(
           "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_GRAPH_INVALID",
@@ -1564,9 +2275,10 @@ function validateEveryAndOnlyPackageRootsV2(
 function captureRawDependenciesV2(input: Readonly<{
   projectRoot: string;
   entry: NonNullable<ReturnType<typeof getCodeOwnedNodeScaffoldToolchainEntryV2>>;
+  testHooks?: NodeScaffoldPrivateMaterializerTestHooksV2;
 }>): RawDependencyCaptureV2 {
   const nodeModulesRoot = path.join(input.projectRoot, "node_modules");
-  const rawEntries = captureRawInstallEntriesV2(nodeModulesRoot);
+  const rawEntries = captureRawInstallEntriesV2(nodeModulesRoot, input.testHooks);
   const graph = input.entry.dependencyGraph;
   const rootLockBytes = readExactDependencyJsonBytesV2({
     absolutePath: path.join(input.projectRoot, "package-lock.json"),
@@ -1828,6 +2540,10 @@ function syncNormalizedTreeV2(
   absolutePath: string,
   errorCode: NodeScaffoldPrivateMaterializerErrorCodeV2 =
     "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_CAPSULE_INVALID",
+  census: { remaining: number } = {
+    remaining: CANONICAL_RUNTIME_TREE_V2_PROFILES.dependencies.maxFiles
+      + CANONICAL_RUNTIME_TREE_V2_PROFILES.dependencies.maxDirectories,
+  },
 ): void {
   const stat = lstatSync(absolutePath);
   if (stat.isSymbolicLink()) {
@@ -1837,8 +2553,15 @@ function syncNormalizedTreeV2(
     );
   }
   if (stat.isDirectory()) {
-    for (const name of readdirSync(absolutePath).sort()) {
-      syncNormalizedTreeV2(path.join(absolutePath, name), errorCode);
+    const names = readBoundedDirectoryNamesV2({
+      absolutePath,
+      label: `Metadata normalization directory ${absolutePath}`,
+      maxNames: census.remaining,
+      errorCode,
+    });
+    census.remaining -= names.length;
+    for (const name of names) {
+      syncNormalizedTreeV2(path.join(absolutePath, name), errorCode, census);
     }
   } else if (!stat.isFile()) {
     return fail(
@@ -1847,12 +2570,23 @@ function syncNormalizedTreeV2(
     );
   }
   let descriptor: number | undefined;
-  try {
-    descriptor = openSync(absolutePath, constants.O_RDONLY | constants.O_NOFOLLOW);
-    fsyncSync(descriptor);
-  } finally {
-    if (descriptor !== undefined) closeSync(descriptor);
-  }
+  return runWithIndependentFinalizersV2({
+    operation: () => {
+      descriptor = openSync(absolutePath, constants.O_RDONLY | constants.O_NOFOLLOW);
+      fsyncSync(descriptor);
+    },
+    finalizers: [() => {
+      if (descriptor !== undefined) closeSync(descriptor);
+    }],
+    onFinalizerFailure: (errors) => fail(
+      errorCode,
+      `Metadata normalization path ${absolutePath} sync or descriptor close failed`,
+      new AggregateError(
+        errors,
+        "Metadata normalization sync and descriptor finalization failures",
+      ),
+    ),
+  });
 }
 
 function normalizeCodeOwnedDarwinMetadataV2(
@@ -1898,6 +2632,8 @@ function normalizeDependencyCapsuleV2(input: Readonly<{
     | "code_owned_darwin_acl_nonprovenance_xattr_probe_v2"
     | "test_fixture_clear_probe";
   admissionScope: "production_host" | "test_fixture";
+  onCreated: (absolutePath: string, locator: string) => void;
+  testHooks?: NodeScaffoldPrivateMaterializerTestHooksV2;
 }>): CanonicalRuntimeTreeV2 {
   const owner = processOwnerV2();
   const rawEntries = captureRawInstallEntriesV2(input.nodeModulesRoot);
@@ -1912,6 +2648,37 @@ function normalizeDependencyCapsuleV2(input: Readonly<{
     );
   }
   const entries = new Map(rawEntries.map((entry) => [entry.locator, entry]));
+  const boundedDirectoryNames = (
+    absoluteDirectory: string,
+    locator: string,
+    maxNames: number,
+    beforeRead?: () => void,
+  ): readonly string[] => readBoundedDirectoryNamesV2({
+    absolutePath: absoluteDirectory,
+    label: `Dependency capsule directory ${locator}`,
+    maxNames,
+    errorCode: "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_CAPSULE_INVALID",
+    beforeRead,
+    membershipBoundLabel: "admitted",
+  });
+  const immediateChildNames = (relativeDirectory: string): readonly string[] =>
+    [...entries.keys()]
+      .filter((locator) => {
+        const separator = locator.lastIndexOf("/");
+        const parent = separator < 0 ? "" : locator.slice(0, separator);
+        return parent === relativeDirectory;
+      })
+      .map((locator) => {
+        const separator = locator.lastIndexOf("/");
+        return separator < 0 ? locator : locator.slice(separator + 1);
+      })
+      .sort();
+  const skippedCapsuleMember = (relativeDirectory: string, name: string): boolean => {
+    const locator = relativeDirectory ? `${relativeDirectory}/${name}` : name;
+    const inNodeModulesContainer = relativeDirectory === ""
+      || relativeDirectory.endsWith("/node_modules");
+    return locator === ".package-lock.json" || (inNodeModulesContainer && name === ".bin");
+  };
   const capsuleStat = lstatSync(input.capsuleRoot);
   if (
     capsuleStat.isSymbolicLink()
@@ -1920,7 +2687,7 @@ function normalizeDependencyCapsuleV2(input: Readonly<{
     || modeBits(capsuleStat) !== 0o700
     || capsuleStat.uid !== owner.uid
     || capsuleStat.gid !== owner.gid
-    || readdirSync(input.capsuleRoot).length !== 0
+    || boundedDirectoryNames(input.capsuleRoot, ".", 0).length !== 0
   ) {
     return fail(
       "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_CAPSULE_INVALID",
@@ -1929,96 +2696,140 @@ function normalizeDependencyCapsuleV2(input: Readonly<{
   }
   const copyFile = (source: string, destination: string, locator: string): void => {
     const expected = entries.get(locator);
-    if (!expected || expected.type !== "file") {
+    if (
+      !expected
+      || expected.type !== "file"
+      || expected.rawByteLength === undefined
+      || expected.rawHash === undefined
+    ) {
       return fail(
         "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_CAPSULE_INVALID",
         `Dependency capsule source ${locator} lacks raw-tree authority`,
       );
     }
+    const expectedByteLength = expected.rawByteLength;
+    const expectedRawHash = expected.rawHash;
     let sourceDescriptor: number | undefined;
     let destinationDescriptor: number | undefined;
-    try {
-      sourceDescriptor = openSync(
-        source,
-        constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
-      );
-      const before = fstatSync(sourceDescriptor);
-      destinationDescriptor = openSync(
-        destination,
-        constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW,
-        0o600,
-      );
-      const hash = createHash("sha256");
-      const buffer = Buffer.allocUnsafe(64 * 1024);
-      let total = 0;
-      while (true) {
-        const count = readSync(sourceDescriptor, buffer, 0, buffer.byteLength, null);
-        if (count === 0) break;
-        let offset = 0;
-        while (offset < count) {
-          const written = writeSync(
-            destinationDescriptor,
-            buffer,
-            offset,
-            count - offset,
-            null,
-          );
-          if (written < 1) {
+    runWithIndependentFinalizersV2({
+      operation: () => {
+        sourceDescriptor = openSync(
+          source,
+          constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+        );
+        const before = fstatSync(sourceDescriptor);
+        destinationDescriptor = openSync(
+          destination,
+          constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW,
+          0o600,
+        );
+        input.onCreated(destination, locator);
+        input.testHooks?.afterDependencyCapsuleDestinationCreate?.(locator);
+        const hash = createHash("sha256");
+        const buffer = Buffer.allocUnsafe(64 * 1024);
+        let total = 0;
+        while (true) {
+          const count = readSync(sourceDescriptor, buffer, 0, buffer.byteLength, null);
+          if (count === 0) break;
+          if (total + count > expectedByteLength) {
             return fail(
               "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_CAPSULE_INVALID",
-              `Dependency capsule write ended early for ${locator}`,
+              `Dependency capsule source ${locator} exceeded its admitted byte length`,
             );
           }
-          offset += written;
+          let offset = 0;
+          while (offset < count) {
+            const written = writeSync(
+              destinationDescriptor,
+              buffer,
+              offset,
+              count - offset,
+              null,
+            );
+            if (written < 1) {
+              return fail(
+                "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_CAPSULE_INVALID",
+                `Dependency capsule write ended early for ${locator}`,
+              );
+            }
+            offset += written;
+          }
+          total += count;
+          hash.update(buffer.subarray(0, count));
         }
-        total += count;
-        hash.update(buffer.subarray(0, count));
-      }
-      const after = fstatSync(sourceDescriptor);
-      const digest = hash.digest("hex");
-      if (
-        !sameFingerprint(fingerprint(before), fingerprint(after))
-        || total !== expected.rawByteLength
-        || digest !== expected.rawHash
-      ) {
-        return fail(
-          "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_CAPSULE_INVALID",
-          `Dependency capsule source ${locator} drifted during copy`,
-        );
-      }
-      fsyncSync(destinationDescriptor);
-      const destinationStat = fstatSync(destinationDescriptor);
-      if (
-        !destinationStat.isFile()
-        || destinationStat.nlink !== 1
-        || destinationStat.uid !== owner.uid
-        || destinationStat.gid !== owner.gid
-        || modeBits(destinationStat) !== 0o600
-        || destinationStat.size !== total
-      ) {
-        return fail(
-          "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_CAPSULE_INVALID",
-          `Dependency capsule destination metadata is invalid for ${locator}`,
-        );
-      }
-    } finally {
-      if (sourceDescriptor !== undefined) closeSync(sourceDescriptor);
-      if (destinationDescriptor !== undefined) closeSync(destinationDescriptor);
-    }
+        const after = fstatSync(sourceDescriptor);
+        const digest = hash.digest("hex");
+        if (
+          !sameFingerprint(fingerprint(before), fingerprint(after))
+          || total !== expectedByteLength
+          || digest !== expectedRawHash
+        ) {
+          return fail(
+            "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_CAPSULE_INVALID",
+            `Dependency capsule source ${locator} drifted during copy`,
+          );
+        }
+        fsyncSync(destinationDescriptor);
+        const destinationStat = fstatSync(destinationDescriptor);
+        if (
+          !destinationStat.isFile()
+          || destinationStat.nlink !== 1
+          || destinationStat.uid !== owner.uid
+          || destinationStat.gid !== owner.gid
+          || modeBits(destinationStat) !== 0o600
+          || destinationStat.size !== total
+        ) {
+          return fail(
+            "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_CAPSULE_INVALID",
+            `Dependency capsule destination metadata is invalid for ${locator}`,
+          );
+        }
+      },
+      finalizers: [
+        () => {
+          if (sourceDescriptor === undefined) return;
+          closeSync(sourceDescriptor);
+          input.testHooks?.afterDependencyCapsuleSourceDescriptorClose?.(locator);
+        },
+        () => {
+          if (destinationDescriptor === undefined) return;
+          closeSync(destinationDescriptor);
+          input.testHooks?.afterDependencyCapsuleDestinationDescriptorClose?.(locator);
+        },
+      ],
+      onFinalizerFailure: (errors) => fail(
+        "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_CAPSULE_INVALID",
+        `Dependency capsule copy or descriptor close failed for ${locator}`,
+        new AggregateError(
+          errors,
+          `Dependency capsule ${locator} copy and descriptor finalization failures`,
+        ),
+      ),
+    });
   };
   const copyDirectory = (
     sourceDirectory: string,
     targetDirectory: string,
     relativeDirectory: string,
   ): void => {
-    const names = readdirSync(sourceDirectory).sort();
+    const expectedNames = immediateChildNames(relativeDirectory);
+    const names = boundedDirectoryNames(
+      sourceDirectory,
+      relativeDirectory || "node_modules",
+      expectedNames.length,
+      () => input.testHooks?.beforeDependencyCapsuleSourceDirectoryRead?.(
+        relativeDirectory || "node_modules",
+      ),
+    );
+    if (!sameStringsV2(names, expectedNames)) {
+      return fail(
+        "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_CAPSULE_INVALID",
+        `Dependency capsule source directory ${relativeDirectory || "node_modules"} changed membership`,
+      );
+    }
     for (const name of names) {
       const locator = relativeDirectory ? `${relativeDirectory}/${name}` : name;
-      const inNodeModulesContainer = relativeDirectory === ""
-        || relativeDirectory.endsWith("/node_modules");
-      if (locator === ".package-lock.json" || (inNodeModulesContainer && name === ".bin")) {
-        continue;
-      }
+      if (skippedCapsuleMember(relativeDirectory, name)) continue;
       const source = path.join(sourceDirectory, name);
       const destination = path.join(targetDirectory, name);
       const stat = lstatSync(source);
@@ -2030,6 +2841,7 @@ function normalizeDependencyCapsuleV2(input: Readonly<{
       }
       if (stat.isDirectory()) {
         mkdirSync(destination, { mode: 0o700 });
+        input.onCreated(destination, locator);
         chmodSync(destination, 0o700);
         copyDirectory(source, destination, locator);
         syncDirectoryV2(destination);
@@ -2047,7 +2859,20 @@ function normalizeDependencyCapsuleV2(input: Readonly<{
     absoluteDirectory: string,
     relativeDirectory: string,
   ): void => {
-    for (const name of readdirSync(absoluteDirectory).sort()) {
+    const expectedNames = immediateChildNames(relativeDirectory)
+      .filter((name) => !skippedCapsuleMember(relativeDirectory, name));
+    const names = boundedDirectoryNames(
+      absoluteDirectory,
+      relativeDirectory || ".",
+      expectedNames.length,
+    );
+    if (!sameStringsV2(names, expectedNames)) {
+      return fail(
+        "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_CAPSULE_INVALID",
+        `Dependency capsule seal encountered unauthorised or missing membership in ${relativeDirectory || "."}`,
+      );
+    }
+    for (const name of names) {
       const locator = relativeDirectory ? `${relativeDirectory}/${name}` : name;
       const expected = entries.get(locator);
       const absolutePath = path.join(absoluteDirectory, name);
@@ -2077,44 +2902,52 @@ function normalizeDependencyCapsuleV2(input: Readonly<{
         );
       }
       let descriptor: number | undefined;
-      try {
-        descriptor = openSync(absolutePath, constants.O_RDONLY | constants.O_NOFOLLOW);
-        const opened = fstatSync(descriptor);
-        if (!sameFingerprint(fingerprint(before), fingerprint(opened))) {
-          return fail(
-            "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_CAPSULE_INVALID",
-            `Dependency capsule file ${locator} changed while its seal was acquired`,
-          );
-        }
-        const rawMode = Number.parseInt(expected.mode, 8);
-        if (!Number.isSafeInteger(rawMode)) {
-          return fail(
-            "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_CAPSULE_INVALID",
-            `Dependency capsule file ${locator} has an invalid admitted mode`,
-          );
-        }
-        const sealedMode = (rawMode & 0o111) === 0 ? 0o444 : 0o555;
-        fchmodSync(descriptor, sealedMode);
-        fsyncSync(descriptor);
-        const sealed = fstatSync(descriptor);
-        if (
-          opened.dev !== sealed.dev
-          || opened.ino !== sealed.ino
-          || opened.uid !== sealed.uid
-          || opened.gid !== sealed.gid
-          || opened.nlink !== sealed.nlink
-          || opened.size !== sealed.size
-          || opened.mtimeMs !== sealed.mtimeMs
-          || modeBits(sealed) !== sealedMode
-        ) {
-          return fail(
-            "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_CAPSULE_INVALID",
-            `Dependency capsule file ${locator} did not retain its authenticated read-only seal`,
-          );
-        }
-      } finally {
-        if (descriptor !== undefined) closeSync(descriptor);
-      }
+      runWithIndependentFinalizersV2({
+        operation: () => {
+          descriptor = openSync(absolutePath, constants.O_RDONLY | constants.O_NOFOLLOW);
+          const opened = fstatSync(descriptor);
+          if (!sameFingerprint(fingerprint(before), fingerprint(opened))) {
+            return fail(
+              "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_CAPSULE_INVALID",
+              `Dependency capsule file ${locator} changed while its seal was acquired`,
+            );
+          }
+          const rawMode = Number.parseInt(expected.mode, 8);
+          if (!Number.isSafeInteger(rawMode)) {
+            return fail(
+              "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_CAPSULE_INVALID",
+              `Dependency capsule file ${locator} has an invalid admitted mode`,
+            );
+          }
+          const sealedMode = (rawMode & 0o111) === 0 ? 0o444 : 0o555;
+          fchmodSync(descriptor, sealedMode);
+          fsyncSync(descriptor);
+          const sealed = fstatSync(descriptor);
+          if (
+            opened.dev !== sealed.dev
+            || opened.ino !== sealed.ino
+            || opened.uid !== sealed.uid
+            || opened.gid !== sealed.gid
+            || opened.nlink !== sealed.nlink
+            || opened.size !== sealed.size
+            || opened.mtimeMs !== sealed.mtimeMs
+            || modeBits(sealed) !== sealedMode
+          ) {
+            return fail(
+              "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_CAPSULE_INVALID",
+              `Dependency capsule file ${locator} did not retain its authenticated read-only seal`,
+            );
+          }
+        },
+        finalizers: [() => {
+          if (descriptor !== undefined) closeSync(descriptor);
+        }],
+        onFinalizerFailure: (errors) => fail(
+          "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_CAPSULE_INVALID",
+          `Dependency capsule file ${locator} seal or descriptor close failed`,
+          new AggregateError(errors, "Dependency capsule seal and descriptor finalization failures"),
+        ),
+      });
     }
   };
   try {
@@ -2155,6 +2988,14 @@ function captureScaffoldAssetsAfterInstallV2(
   const root = lstatSync(state.privateRoot);
   const project = lstatSync(state.projectRoot);
   const capsule = lstatSync(state.dependencyCapsuleRoot);
+  const expectedProjectNames = [
+    "node_modules",
+    "package-lock.json",
+    "package.json",
+    ...(outputState === "present" ? ["dist"] : []),
+    ...(sourceState === "present" ? ["src"] : []),
+    "tsconfig.json",
+  ].sort();
   if (
     root.isSymbolicLink()
     || !root.isDirectory()
@@ -2170,17 +3011,20 @@ function captureScaffoldAssetsAfterInstallV2(
     || !capsule.isDirectory()
     || realpathSync(state.dependencyCapsuleRoot) !== state.dependencyCapsuleRoot
     || modeBits(capsule) !== 0o555
-    || !sameStringsV2(readdirSync(state.privateRoot).sort(), [...ROOT_MEMBER_NAMES_V2])
+    || !sameStringsV2(readBoundedDirectoryNamesV2({
+      absolutePath: state.privateRoot,
+      label: "Private scaffold root",
+      maxNames: ROOT_MEMBER_NAMES_V2.length,
+      errorCode: "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_STATE_DRIFT",
+    }), [...ROOT_MEMBER_NAMES_V2])
     || !sameStringsV2(
-      readdirSync(state.projectRoot).sort(),
-      [
-        "node_modules",
-        "package-lock.json",
-        "package.json",
-        ...(outputState === "present" ? ["dist"] : []),
-        ...(sourceState === "present" ? ["src"] : []),
-        "tsconfig.json",
-      ].sort(),
+      readBoundedDirectoryNamesV2({
+        absolutePath: state.projectRoot,
+        label: "Private scaffold project root",
+        maxNames: expectedProjectNames.length,
+        errorCode: "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_STATE_DRIFT",
+      }),
+      expectedProjectNames,
     )
   ) {
     return fail(
@@ -2389,40 +3233,15 @@ function buildDependencyReceiptV2(input: Readonly<{
   return deepFreezeJson(parsed.data);
 }
 
-function makeAttemptDirectoriesWritableV2(absoluteDirectory: string): void {
-  const stat = lstatSync(absoluteDirectory);
-  if (!stat.isDirectory() || stat.isSymbolicLink()) return;
-  chmodSync(absoluteDirectory, 0o700);
-  for (const name of readdirSync(absoluteDirectory)) {
-    const child = path.join(absoluteDirectory, name);
-    const childStat = lstatSync(child);
-    if (childStat.isDirectory() && !childStat.isSymbolicLink()) {
-      makeAttemptDirectoriesWritableV2(child);
-    }
-  }
-}
-
 function safeRemoveOwnedAttemptV2(
   privateRoot: string,
-  expectedRoot: FingerprintV2,
+  expectedCensus: PrivateCleanupCensusV2,
 ): void {
   try {
-    const current = lstatSync(privateRoot);
-    if (
-      current.isDirectory()
-      && !current.isSymbolicLink()
-      && realpathSync(privateRoot) === privateRoot
-      && current.dev === expectedRoot.device
-      && current.ino === expectedRoot.inode
-      && current.uid === expectedRoot.ownerUid
-      && current.gid === expectedRoot.ownerGid
-      && modeBits(current) === 0o700
-    ) {
-      makeAttemptDirectoriesWritableV2(privateRoot);
-      rmSync(privateRoot, { recursive: true, force: false });
-    }
+    destroyPrivateCleanupCensusV2(privateRoot, expectedCensus);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw error;
   }
 }
 
@@ -2434,6 +3253,7 @@ async function materializeBaseV2(input: Readonly<{
   hooks?: NodeScaffoldPrivateMaterializerTestHooksV2;
 }>): Promise<MaterializedNodeScaffoldPrivateStageV2> {
   let layout: ReturnType<typeof createPrivateLayoutV2> | undefined;
+  let cleanupCensus: PrivateCleanupCensusV2 | undefined;
   let assets: readonly CapturedAssetV2[] = [];
   try {
     const environmentReceipt = await revalidateNodeScaffoldExecutionEnvironmentV2(
@@ -2452,8 +3272,29 @@ async function materializeBaseV2(input: Readonly<{
       ...(input.scratchParent ? { scratchParent: input.scratchParent } : {}),
       ...(input.hooks ? { hooks: input.hooks } : {}),
     });
+    cleanupCensus = layout.initialCleanupCensus;
     for (const asset of assets) {
-      writeExclusiveAssetV2({ projectRoot: layout.projectRoot, asset });
+      writeExclusiveAssetV2({
+        projectRoot: layout.projectRoot,
+        asset,
+        onCreated: (absolutePath) => {
+          cleanupCensus = extendPrivateCleanupCensusWithCreatedMemberV2({
+            privateRoot: layout!.privateRoot,
+            current: cleanupCensus,
+            absolutePath,
+            locator: `project/${asset.normalizedLocator}`,
+          });
+          input.hooks?.afterBoundary?.(
+            asset.normalizedLocator === "package-lock.json"
+              ? "after_package_lock_create"
+              : asset.normalizedLocator === "package.json"
+                ? "after_package_json_create"
+                : "after_tsconfig_create",
+          );
+          cleanupCensus = capturePrivateCleanupCensusV2(layout!.privateRoot);
+        },
+      });
+      cleanupCensus = capturePrivateCleanupCensusV2(layout.privateRoot);
       input.hooks?.afterBoundary?.(
         asset.normalizedLocator === "package-lock.json"
           ? "after_package_lock_fsync"
@@ -2464,6 +3305,7 @@ async function materializeBaseV2(input: Readonly<{
     }
     syncDirectoryV2(layout.projectRoot);
     syncDirectoryV2(layout.privateRoot);
+    cleanupCensus = capturePrivateCleanupCensusV2(layout.privateRoot);
     input.hooks?.afterBoundary?.("after_project_fsync");
     const baseCapture = capturePrivateBaseV2({
       privateRoot: layout.privateRoot,
@@ -2479,7 +3321,10 @@ async function materializeBaseV2(input: Readonly<{
       assets,
       capture: baseCapture,
     });
-    const lifecycle: MutableLifecycleV2 = { status: "base_ready" };
+    const lifecycle: MutableLifecycleV2 = {
+      status: "base_ready",
+      cleanupCensus: capturePrivateCleanupCensusV2(layout.privateRoot),
+    };
     const state: PrivateStageStateV2 = Object.freeze({
       admissionScope: input.admissionScope,
       profileId,
@@ -2490,6 +3335,7 @@ async function materializeBaseV2(input: Readonly<{
       baseCapture,
       receipt,
       lifecycle,
+      ...(input.hooks ? { cleanupTestHooks: input.hooks } : {}),
     });
     const handle = new MaterializedNodeScaffoldPrivateStageV2(
       materializedStageConstructorCapabilityV2,
@@ -2498,6 +3344,26 @@ async function materializeBaseV2(input: Readonly<{
     layout = undefined;
     return handle;
   } catch (error) {
+    let cleanupError: unknown;
+    if (layout && cleanupCensus) {
+      try {
+        safeRemoveOwnedAttemptV2(layout.privateRoot, cleanupCensus);
+      } catch (candidate) {
+        cleanupError = candidate;
+      }
+    }
+    if (cleanupError !== undefined) {
+      return fail(
+        error instanceof NodeScaffoldPrivateMaterializerErrorV2
+          ? error.code
+          : "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_MATERIALIZATION_FAILED",
+        `Private scaffold base materialization failed and cleanup retained its authenticated root ${layout?.privateRoot}`,
+        new AggregateError(
+          [error, cleanupError],
+          "Private base failure and exact cleanup failure",
+        ),
+      );
+    }
     if (error instanceof NodeScaffoldPrivateMaterializerErrorV2) throw error;
     return fail(
       "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_MATERIALIZATION_FAILED",
@@ -2506,7 +3372,6 @@ async function materializeBaseV2(input: Readonly<{
     );
   } finally {
     for (const asset of assets) asset.bytes.fill(0);
-    if (layout) safeRemoveOwnedAttemptV2(layout.privateRoot, layout.initialRootFingerprint);
   }
 }
 
@@ -2594,8 +3459,68 @@ export async function materializeNodeScaffoldPrivateStageV2ForTest(
     testHooks !== undefined
     && (
       !isPlainRecord(testHooks)
-      || Reflect.ownKeys(testHooks).some((key) => key !== "afterBoundary")
+      || Reflect.ownKeys(testHooks).some((key) =>
+        key !== "afterBoundary"
+        && key !== "afterCleanupDirectoryWritable"
+        && key !== "afterCleanupDirectoryDescriptorClose"
+        && key !== "beforeCleanupCensusDirectoryRead"
+        && key !== "afterCleanupCensusDirectoryClose"
+        && key !== "afterDependencyCapsuleDestinationCreate"
+        && key !== "afterDependencyCapsuleSourceDescriptorClose"
+        && key !== "afterDependencyCapsuleDestinationDescriptorClose"
+        && key !== "beforeDependencyCapsuleSourceDirectoryRead"
+        && key !== "afterCleanupDirectoryModeRestore"
+        && key !== "beforeRawDependencyFileRead"
+        && key !== "maxRawDependencyDirectoryEntriesForTest")
       || (testHooks.afterBoundary !== undefined && typeof testHooks.afterBoundary !== "function")
+      || (
+        testHooks.afterCleanupDirectoryWritable !== undefined
+        && typeof testHooks.afterCleanupDirectoryWritable !== "function"
+      )
+      || (
+        testHooks.afterCleanupDirectoryDescriptorClose !== undefined
+        && typeof testHooks.afterCleanupDirectoryDescriptorClose !== "function"
+      )
+      || (
+        testHooks.beforeCleanupCensusDirectoryRead !== undefined
+        && typeof testHooks.beforeCleanupCensusDirectoryRead !== "function"
+      )
+      || (
+        testHooks.afterCleanupCensusDirectoryClose !== undefined
+        && typeof testHooks.afterCleanupCensusDirectoryClose !== "function"
+      )
+      || (
+        testHooks.afterDependencyCapsuleDestinationCreate !== undefined
+        && typeof testHooks.afterDependencyCapsuleDestinationCreate !== "function"
+      )
+      || (
+        testHooks.afterDependencyCapsuleSourceDescriptorClose !== undefined
+        && typeof testHooks.afterDependencyCapsuleSourceDescriptorClose !== "function"
+      )
+      || (
+        testHooks.afterDependencyCapsuleDestinationDescriptorClose !== undefined
+        && typeof testHooks.afterDependencyCapsuleDestinationDescriptorClose !== "function"
+      )
+      || (
+        testHooks.beforeDependencyCapsuleSourceDirectoryRead !== undefined
+        && typeof testHooks.beforeDependencyCapsuleSourceDirectoryRead !== "function"
+      )
+      || (
+        testHooks.afterCleanupDirectoryModeRestore !== undefined
+        && typeof testHooks.afterCleanupDirectoryModeRestore !== "function"
+      )
+      || (
+        testHooks.beforeRawDependencyFileRead !== undefined
+        && typeof testHooks.beforeRawDependencyFileRead !== "function"
+      )
+      || (
+        testHooks.maxRawDependencyDirectoryEntriesForTest !== undefined
+        && (
+          typeof testHooks.maxRawDependencyDirectoryEntriesForTest !== "number"
+          || !Number.isSafeInteger(testHooks.maxRawDependencyDirectoryEntriesForTest)
+          || testHooks.maxRawDependencyDirectoryEntriesForTest < 0
+        )
+      )
     )
   ) {
     return fail(
@@ -2788,7 +3713,22 @@ export function settleNodeScaffoldPrivateInstallScopeInternalV2(
       "Private scaffold install lease cannot be settled from this state",
     );
   }
+  const captureErrors: unknown[] = [];
+  try {
+    state.lifecycle.cleanupCensus = capturePrivateCleanupCensusV2(state.privateRoot);
+  } catch (error) {
+    captureErrors.push(error);
+  }
   state.lifecycle.status = "install_consumed";
+  if (captureErrors.length > 0) {
+    const [error] = captureErrors;
+    if (error instanceof NodeScaffoldPrivateMaterializerErrorV2) throw error;
+    return fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_STATE_DRIFT",
+      "Private scaffold install lease was consumed without a fresh exact cleanup census",
+      error,
+    );
+  }
 }
 
 async function materializeDependenciesV2(
@@ -2829,7 +3769,11 @@ async function materializeDependenciesV2(
         "Private scaffold install lease was not consumed after npm ci",
       );
     }
-    const raw = captureRawDependenciesV2({ projectRoot: state.projectRoot, entry });
+    const raw = captureRawDependenciesV2({
+      projectRoot: state.projectRoot,
+      entry,
+      testHooks: state.cleanupTestHooks,
+    });
     const metadataProbe = metadataAuthority
       === "code_owned_darwin_acl_nonprovenance_xattr_probe_v2"
       ? codeOwnedDarwinMetadataProbeV2
@@ -2841,6 +3785,16 @@ async function materializeDependenciesV2(
       metadataProbe,
       metadataAuthority,
       admissionScope,
+      testHooks: state.cleanupTestHooks,
+      onCreated: (absolutePath, locator) => {
+        state.lifecycle.cleanupCensus = extendPrivateCleanupCensusWithCreatedMemberV2({
+          privateRoot: state.privateRoot,
+          current: state.lifecycle.cleanupCensus,
+          absolutePath,
+          locator: `dependency-capsule/${locator}`,
+        });
+        state.lifecycle.cleanupCensus = capturePrivateCleanupCensusV2(state.privateRoot);
+      },
     });
     const endBaseFileMembershipHash = captureScaffoldAssetsAfterInstallV2(state);
     const receipt = buildDependencyReceiptV2({
@@ -2858,6 +3812,7 @@ async function materializeDependenciesV2(
       metadataProbe,
       metadataAuthority,
     });
+    state.lifecycle.cleanupCensus = capturePrivateCleanupCensusV2(state.privateRoot);
     state.lifecycle.status = "dependencies_ready";
     return defensiveCopy(receipt);
   } catch (error) {
@@ -2871,7 +3826,10 @@ async function materializeDependenciesV2(
       return fail(
         "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_STATE_DRIFT",
         "Failed dependency attempt could not clean only its authenticated private root",
-        { installError: error, cleanupError },
+        new AggregateError(
+          [error, cleanupError],
+          `Dependency failure retained authenticated private root ${state.privateRoot}`,
+        ),
       );
     }
     if (error instanceof NodeScaffoldPrivateMaterializerErrorV2) throw error;
@@ -2984,6 +3942,34 @@ export function inspectBuildDependencyMaterializationReceiptV2(
     );
   }
   return defensiveCopy(state.lifecycle.dependencyReceipt);
+}
+
+/** @internal Revalidates the stage-owned environment before logical hashing. */
+export function revalidateNodeScaffoldStageHostToolchainLogicalIdentityInternalV3(
+  handle: MaterializedNodeScaffoldPrivateStageV2,
+): Promise<HostNodeToolchainLogicalProjectionV3> {
+  const state = activeStageStateV2(handle);
+  if (
+    ![
+      "dependencies_ready",
+      "source_claimed",
+      "sources_ready",
+      "build_process_consumed",
+      "build_ready",
+      "runtime_bundle_claimed",
+      "runtime_bundle_consumed",
+    ].includes(state.lifecycle.status)
+    || !state.lifecycle.dependencyReceipt
+    || !state.lifecycle.dependencyCapture
+  ) {
+    return fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_INSTALL_ALREADY_CONSUMED",
+      "Logical host toolchain identity requires a verified dependency stage",
+    );
+  }
+  return revalidateNodeScaffoldHostToolchainLogicalIdentityInternalV3(
+    state.environment,
+  );
 }
 
 export async function revalidateNodeScaffoldDependenciesV2(
@@ -3230,6 +4216,7 @@ function expectedSourceLocatorV1(
 function writeExclusivePublishedSourceV1(input: Readonly<{
   state: PrivateStageStateV2;
   source: CapturedPublishedSourceV1;
+  onCreated: (absolutePath: string, locator: string) => void;
 }>): PhysicalSourceCaptureV1 {
   const expectedLocator = expectedSourceLocatorV1(
     input.state.profileId,
@@ -3249,11 +4236,14 @@ function writeExclusivePublishedSourceV1(input: Readonly<{
   const absolutePath = path.join(input.state.projectRoot, locator);
   let descriptor: number | undefined;
   try {
-    descriptor = openSync(
+    return runWithIndependentFinalizersV2({
+      operation: () => {
+        descriptor = openSync(
       absolutePath,
       constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW,
       0o600,
     );
+    input.onCreated(absolutePath, locator);
     let offset = 0;
     while (offset < input.source.bytes.byteLength) {
       const written = writeSync(
@@ -3289,7 +4279,7 @@ function writeExclusivePublishedSourceV1(input: Readonly<{
         `Exclusive ${input.source.sourceRole} source metadata is invalid`,
       );
     }
-    return Object.freeze({
+        return Object.freeze({
       sourceRole: input.source.sourceRole,
       normalizedLocator: locator,
       fingerprint: fileFingerprint,
@@ -3301,6 +4291,16 @@ function writeExclusivePublishedSourceV1(input: Readonly<{
         fingerprint: fileFingerprint,
         contentHash: input.source.sourceReceipt.source.contentHash,
       }),
+        });
+      },
+      finalizers: [() => {
+        if (descriptor !== undefined) closeSync(descriptor);
+      }],
+      onFinalizerFailure: (errors) => fail(
+        "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_SOURCE_MATERIALIZATION_FAILED",
+        `${input.source.sourceRole} source write or descriptor close failed`,
+        new AggregateError(errors, "Source write and descriptor finalization failures"),
+      ),
     });
   } catch (error) {
     if (error instanceof NodeScaffoldPrivateMaterializerErrorV2) throw error;
@@ -3309,8 +4309,6 @@ function writeExclusivePublishedSourceV1(input: Readonly<{
       `${input.source.sourceRole} source could not be written exclusively`,
       error,
     );
-  } finally {
-    if (descriptor !== undefined) closeSync(descriptor);
   }
 }
 
@@ -3334,44 +4332,66 @@ function capturePhysicalSourceV1(input: Readonly<{
   const absolutePath = path.join(input.state.projectRoot, input.normalizedLocator);
   let descriptor: number | undefined;
   try {
-    descriptor = openSync(
-      absolutePath,
-      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
-    );
-    const before = fstatSync(descriptor);
-    const bytes = readFileSync(descriptor);
-    const after = fstatSync(descriptor);
-    const pathAfter = lstatSync(absolutePath);
-    const fileFingerprint = fingerprint(after);
-    if (
-      !before.isFile()
-      || before.isSymbolicLink()
-      || before.nlink !== 1
-      || modeBits(before) !== 0o444
-      || before.uid !== processOwnerV2().uid
-      || before.gid !== processOwnerV2().gid
-      || !sameFingerprint(fingerprint(before), fileFingerprint)
-      || !sameFingerprint(fileFingerprint, fingerprint(pathAfter))
-      || bytes.byteLength !== input.byteLength
-      || sha256(bytes) !== input.contentHash
-    ) {
-      return fail(
+    return runWithIndependentFinalizersV2({
+      operation: () => {
+        descriptor = openSync(
+          absolutePath,
+          constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+        );
+        const before = fstatSync(descriptor);
+        if (before.size !== input.byteLength) {
+          return fail(
+            "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_STATE_DRIFT",
+            `${input.sourceRole} source differs from its admitted byte length`,
+          );
+        }
+        const bytes = readExactDescriptorBytesV2({
+          descriptor,
+          admittedByteLength: input.byteLength,
+          label: `${input.sourceRole} source`,
+          errorCode: "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_STATE_DRIFT",
+        });
+        const after = fstatSync(descriptor);
+        const pathAfter = lstatSync(absolutePath);
+        const fileFingerprint = fingerprint(after);
+        if (
+          !before.isFile()
+          || before.isSymbolicLink()
+          || before.nlink !== 1
+          || modeBits(before) !== 0o444
+          || before.uid !== processOwnerV2().uid
+          || before.gid !== processOwnerV2().gid
+          || !sameFingerprint(fingerprint(before), fileFingerprint)
+          || !sameFingerprint(fileFingerprint, fingerprint(pathAfter))
+          || sha256(bytes) !== input.contentHash
+        ) {
+          return fail(
+            "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_STATE_DRIFT",
+            `${input.sourceRole} source changed after materialization`,
+          );
+        }
+        return Object.freeze({
+          sourceRole: input.sourceRole,
+          normalizedLocator: input.normalizedLocator,
+          fingerprint: fileFingerprint,
+          contentHash: input.contentHash,
+          physicalIdentityHash: hashCanonicalJson({
+            schema: "setfarm.node-product-source-physical-file-identity.v1",
+            sourceRole: input.sourceRole,
+            normalizedLocator: input.normalizedLocator,
+            fingerprint: fileFingerprint,
+            contentHash: input.contentHash,
+          }),
+        });
+      },
+      finalizers: [() => {
+        if (descriptor !== undefined) closeSync(descriptor);
+      }],
+      onFinalizerFailure: (errors) => fail(
         "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_STATE_DRIFT",
-        `${input.sourceRole} source changed after materialization`,
-      );
-    }
-    return Object.freeze({
-      sourceRole: input.sourceRole,
-      normalizedLocator: input.normalizedLocator,
-      fingerprint: fileFingerprint,
-      contentHash: input.contentHash,
-      physicalIdentityHash: hashCanonicalJson({
-        schema: "setfarm.node-product-source-physical-file-identity.v1",
-        sourceRole: input.sourceRole,
-        normalizedLocator: input.normalizedLocator,
-        fingerprint: fileFingerprint,
-        contentHash: input.contentHash,
-      }),
+        `${input.sourceRole} source read or descriptor close failed`,
+        new AggregateError(errors, "Source read and descriptor finalization failures"),
+      ),
     });
   } catch (error) {
     if (error instanceof NodeScaffoldPrivateMaterializerErrorV2) throw error;
@@ -3380,8 +4400,6 @@ function capturePhysicalSourceV1(input: Readonly<{
       `${input.sourceRole} source could not be fresh-read`,
       error,
     );
-  } finally {
-    if (descriptor !== undefined) closeSync(descriptor);
   }
 }
 
@@ -3666,13 +4684,46 @@ async function materializeNodeProductSourcesInternalV1(input: Readonly<{
     filesystemStarted = true;
     assertMissingPathV2(sourceRoot, "Generated source directory");
     mkdirSync(sourceRoot, { mode: 0o700 });
+    state.lifecycle.cleanupCensus = extendPrivateCleanupCensusWithCreatedMemberV2({
+      privateRoot: state.privateRoot,
+      current: state.lifecycle.cleanupCensus,
+      absolutePath: sourceRoot,
+      locator: "project/src",
+    });
+    input.hooks?.afterBoundary?.("after_source_directory_create");
+    state.lifecycle.cleanupCensus = capturePrivateCleanupCensusV2(state.privateRoot);
     chmodSync(sourceRoot, 0o700);
     syncDirectoryV2(sourceRoot);
     syncDirectoryV2(state.projectRoot);
+    state.lifecycle.cleanupCensus = capturePrivateCleanupCensusV2(
+      state.privateRoot,
+    );
     input.hooks?.afterBoundary?.("after_source_directory_fsync");
 
     const written = captured.map((source) => {
-      const physical = writeExclusivePublishedSourceV1({ state, source });
+      const physical = writeExclusivePublishedSourceV1({
+        state,
+        source,
+        onCreated: (absolutePath, locator) => {
+          state.lifecycle.cleanupCensus = extendPrivateCleanupCensusWithCreatedMemberV2({
+            privateRoot: state.privateRoot,
+            current: state.lifecycle.cleanupCensus,
+            absolutePath,
+            locator: `project/${locator}`,
+          });
+          input.hooks?.afterBoundary?.(
+            source.sourceRole === "runtime"
+              ? "after_runtime_source_create"
+              : "after_test_source_create",
+          );
+          state.lifecycle.cleanupCensus = capturePrivateCleanupCensusV2(
+            state.privateRoot,
+          );
+        },
+      });
+      state.lifecycle.cleanupCensus = capturePrivateCleanupCensusV2(
+        state.privateRoot,
+      );
       input.hooks?.afterBoundary?.(
         source.sourceRole === "runtime"
           ? "after_runtime_source_fsync"
@@ -3784,6 +4835,7 @@ async function materializeNodeProductSourcesInternalV1(input: Readonly<{
             publication.sourceReceiptArtifactByteLength,
         }))),
     });
+    state.lifecycle.cleanupCensus = capturePrivateCleanupCensusV2(state.privateRoot);
     state.lifecycle.status = "sources_ready";
     return defensiveCopy(receipt);
   } catch (error) {
@@ -3797,7 +4849,10 @@ async function materializeNodeProductSourcesInternalV1(input: Readonly<{
       return fail(
         "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_STATE_DRIFT",
         "Failed source attempt could not clean only its authenticated private root",
-        { sourceError: error, cleanupError },
+        new AggregateError(
+          [error, cleanupError],
+          `Source failure retained authenticated private root ${state.privateRoot}`,
+        ),
       );
     }
     if (error instanceof NodeScaffoldPrivateMaterializerErrorV2) throw error;
@@ -4087,7 +5142,22 @@ export function settleNodeScaffoldPrivateBuildScopeInternalV2(
       "Private candidate-build lease cannot be settled from this state",
     );
   }
+  const captureErrors: unknown[] = [];
+  try {
+    state.lifecycle.cleanupCensus = capturePrivateCleanupCensusV2(state.privateRoot);
+  } catch (error) {
+    captureErrors.push(error);
+  }
   state.lifecycle.status = "build_process_consumed";
+  if (captureErrors.length > 0) {
+    const [error] = captureErrors;
+    if (error instanceof NodeScaffoldPrivateMaterializerErrorV2) throw error;
+    return fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_STATE_DRIFT",
+      "Private candidate-build lease was consumed without a fresh exact cleanup census",
+      error,
+    );
+  }
 }
 
 /** @internal Runs the only build operation through the stage-owned environment. */
@@ -4140,8 +5210,13 @@ function captureCandidateBuildOutputFilesV2(input: Readonly<{
   const owner = processOwnerV2();
   try {
     const rootStat = lstatSync(root);
-    const names = readdirSync(root).sort();
     const expectedNames = candidateBuildOutputNamesV2(input.state.profileId);
+    const names = readBoundedDirectoryNamesV2({
+      absolutePath: root,
+      label: "Candidate build output root",
+      maxNames: expectedNames.length,
+      errorCode: "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_BUILD_OUTPUT_INVALID",
+    });
     const rootMode = modeBits(rootStat);
     if (
       rootStat.isSymbolicLink()
@@ -4162,60 +5237,72 @@ function captureCandidateBuildOutputFilesV2(input: Readonly<{
     const files = names.map((name) => {
       const absolutePath = path.join(root, name);
       let descriptor: number | undefined;
-      try {
-        descriptor = openSync(
-          absolutePath,
-          constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
-        );
-        const before = fstatSync(descriptor);
-        if (before.size <= 0 || before.size > 32 * 1024 * 1024) {
-          return fail(
-            "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_BUILD_OUTPUT_INVALID",
-            `Candidate build output ${name} has an invalid byte length`,
+      return runWithIndependentFinalizersV2({
+        operation: () => {
+          descriptor = openSync(
+            absolutePath,
+            constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
           );
-        }
-        const bytes = readFileSync(descriptor);
-        const after = fstatSync(descriptor);
-        const pathAfter = lstatSync(absolutePath);
-        const mode = modeBits(after);
-        const fileFingerprint = fingerprint(after);
-        if (
-          !before.isFile()
-          || before.isSymbolicLink()
-          || before.nlink !== 1
-          || before.uid !== owner.uid
-          || before.gid !== owner.gid
-          || (input.sealed
-            ? mode !== 0o444
-            : ![0o600, 0o640, 0o644].includes(mode))
-          || !sameFingerprint(fingerprint(before), fileFingerprint)
-          || !sameFingerprint(fileFingerprint, fingerprint(pathAfter))
-          || bytes.byteLength !== after.size
-        ) {
-          return fail(
-            "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_BUILD_OUTPUT_INVALID",
-            `Candidate build output ${name} is not one stable process-owned regular file`,
-          );
-        }
-        const normalizedLocator = `dist/${name}` as
-          NodeCandidateBuildOutputFileV2["normalizedLocator"];
-        const contentHash = sha256(bytes);
-        return Object.freeze({
-          normalizedLocator,
-          mode: "0444" as const,
-          executable: false as const,
-          contentHash,
-          byteLength: bytes.byteLength,
-          physicalIdentityHash: hashCanonicalJson({
-            schema: "setfarm.node-candidate-build-output-physical-file.v2",
+          const before = fstatSync(descriptor);
+          if (before.size <= 0 || before.size > 32 * 1024 * 1024) {
+            return fail(
+              "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_BUILD_OUTPUT_INVALID",
+              `Candidate build output ${name} has an invalid byte length`,
+            );
+          }
+          const bytes = readExactDescriptorBytesV2({
+            descriptor,
+            admittedByteLength: before.size,
+            label: `Candidate build output ${name}`,
+            errorCode: "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_BUILD_OUTPUT_INVALID",
+          });
+          const after = fstatSync(descriptor);
+          const pathAfter = lstatSync(absolutePath);
+          const mode = modeBits(after);
+          const fileFingerprint = fingerprint(after);
+          if (
+            !before.isFile()
+            || before.isSymbolicLink()
+            || before.nlink !== 1
+            || before.uid !== owner.uid
+            || before.gid !== owner.gid
+            || (input.sealed
+              ? mode !== 0o444
+              : ![0o600, 0o640, 0o644].includes(mode))
+            || !sameFingerprint(fingerprint(before), fileFingerprint)
+            || !sameFingerprint(fileFingerprint, fingerprint(pathAfter))
+          ) {
+            return fail(
+              "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_BUILD_OUTPUT_INVALID",
+              `Candidate build output ${name} is not one stable process-owned regular file`,
+            );
+          }
+          const normalizedLocator = `dist/${name}` as
+            NodeCandidateBuildOutputFileV2["normalizedLocator"];
+          const contentHash = sha256(bytes);
+          return Object.freeze({
             normalizedLocator,
-            fingerprint: fileFingerprint,
+            mode: "0444" as const,
+            executable: false as const,
             contentHash,
-          }),
-        });
-      } finally {
-        if (descriptor !== undefined) closeSync(descriptor);
-      }
+            byteLength: bytes.byteLength,
+            physicalIdentityHash: hashCanonicalJson({
+              schema: "setfarm.node-candidate-build-output-physical-file.v2",
+              normalizedLocator,
+              fingerprint: fileFingerprint,
+              contentHash,
+            }),
+          });
+        },
+        finalizers: [() => {
+          if (descriptor !== undefined) closeSync(descriptor);
+        }],
+        onFinalizerFailure: (errors) => fail(
+          "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_BUILD_OUTPUT_INVALID",
+          `Candidate build output ${name} read or descriptor close failed`,
+          new AggregateError(errors, "Build output read and descriptor finalization failures"),
+        ),
+      });
     });
     return Object.freeze(files) as readonly [
       NodeCandidateBuildOutputFileV2,
@@ -4336,6 +5423,7 @@ async function finalizeNodeCandidateBuildOutputInternalV2(
     tree,
   });
   state.lifecycle.buildOutput = Object.freeze({ value, metadataProbe });
+  state.lifecycle.cleanupCensus = capturePrivateCleanupCensusV2(state.privateRoot);
   state.lifecycle.status = "build_ready";
   return defensiveCopy(value);
 }
@@ -4455,40 +5543,64 @@ function copyNodeCandidateRuntimeInputFileInternalV2(input: Readonly<{
 }>): NodeCandidateRuntimeBundleInputFileInternalV2 {
   let descriptor: number | undefined;
   try {
-    descriptor = openSync(
-      input.absolutePath,
-      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
-    );
-    const before = fstatSync(descriptor);
-    const bytes = readFileSync(descriptor);
-    const after = fstatSync(descriptor);
-    const pathAfter = lstatSync(input.absolutePath);
-    const owner = processOwnerV2();
-    if (
-      !before.isFile()
-      || before.isSymbolicLink()
-      || before.nlink !== 1
-      || modeBits(before) !== 0o444
-      || before.uid !== owner.uid
-      || before.gid !== owner.gid
-      || before.size < 1
-      || before.size > input.maxBytes
-      || !sameFingerprint(fingerprint(before), fingerprint(after))
-      || !sameFingerprint(fingerprint(after), fingerprint(pathAfter))
-      || bytes.byteLength !== input.expectedByteLength
-      || sha256(bytes) !== input.expectedHash
-    ) {
-      bytes.fill(0);
-      return fail(
+    return runWithIndependentFinalizersV2({
+      operation: () => {
+        descriptor = openSync(
+          input.absolutePath,
+          constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+        );
+        const before = fstatSync(descriptor);
+        if (
+          input.expectedByteLength < 1
+          || input.expectedByteLength > input.maxBytes
+          || before.size !== input.expectedByteLength
+        ) {
+          return fail(
+            "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_RUNTIME_BUNDLE_INPUT_INVALID",
+            `Runtime-bundle input ${input.logicalLocator} differs from its admitted byte length`,
+          );
+        }
+        const bytes = readExactDescriptorBytesV2({
+          descriptor,
+          admittedByteLength: input.expectedByteLength,
+          label: `Runtime-bundle input ${input.logicalLocator}`,
+          errorCode: "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_RUNTIME_BUNDLE_INPUT_INVALID",
+        });
+        const after = fstatSync(descriptor);
+        const pathAfter = lstatSync(input.absolutePath);
+        const owner = processOwnerV2();
+        if (
+          !before.isFile()
+          || before.isSymbolicLink()
+          || before.nlink !== 1
+          || modeBits(before) !== 0o444
+          || before.uid !== owner.uid
+          || before.gid !== owner.gid
+          || !sameFingerprint(fingerprint(before), fingerprint(after))
+          || !sameFingerprint(fingerprint(after), fingerprint(pathAfter))
+          || sha256(bytes) !== input.expectedHash
+        ) {
+          bytes.fill(0);
+          return fail(
+            "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_RUNTIME_BUNDLE_INPUT_INVALID",
+            `Runtime-bundle input ${input.logicalLocator} changed or differs from build authority`,
+          );
+        }
+        return Object.freeze({
+          logicalLocator: input.logicalLocator,
+          contentHash: input.expectedHash,
+          byteLength: input.expectedByteLength,
+          bytes,
+        });
+      },
+      finalizers: [() => {
+        if (descriptor !== undefined) closeSync(descriptor);
+      }],
+      onFinalizerFailure: (errors) => fail(
         "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_RUNTIME_BUNDLE_INPUT_INVALID",
-        `Runtime-bundle input ${input.logicalLocator} changed or differs from build authority`,
-      );
-    }
-    return Object.freeze({
-      logicalLocator: input.logicalLocator,
-      contentHash: input.expectedHash,
-      byteLength: input.expectedByteLength,
-      bytes,
+        `Runtime-bundle input ${input.logicalLocator} read or descriptor close failed`,
+        new AggregateError(errors, "Runtime input read and descriptor finalization failures"),
+      ),
     });
   } catch (error) {
     if (error instanceof NodeScaffoldPrivateMaterializerErrorV2) throw error;
@@ -4497,8 +5609,6 @@ function copyNodeCandidateRuntimeInputFileInternalV2(input: Readonly<{
       `Runtime-bundle input ${input.logicalLocator} could not be copied exactly`,
       error,
     );
-  } finally {
-    if (descriptor !== undefined) closeSync(descriptor);
   }
 }
 
@@ -4632,6 +5742,32 @@ export function settleNodeCandidateRuntimeBundleInputsInternalV2(
   state.lifecycle.status = "runtime_bundle_consumed";
 }
 
+function assertExactPrivateRootStableIdentityV2(
+  privateRoot: string,
+  expected: FingerprintV2,
+): void {
+  let stat: BigIntStats;
+  try {
+    stat = lstatSync(privateRoot, { bigint: true });
+  } catch (error) {
+    return fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_STATE_DRIFT",
+      "Private scaffold root identity could not be captured exactly before destruction",
+      error,
+    );
+  }
+  if (!matchesExactStableFilesystemObjectV2({
+    stat,
+    expected,
+    objectKind: "directory",
+  })) {
+    return fail(
+      "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_STATE_DRIFT",
+      "Refusing to destroy a private scaffold root with changed exact identity",
+    );
+  }
+}
+
 export function destroyNodeScaffoldPrivateStageV2(
   handle: MaterializedNodeScaffoldPrivateStageV2,
 ): void {
@@ -4654,8 +5790,15 @@ export function destroyNodeScaffoldPrivateStageV2(
         "Refusing to destroy a replaced private scaffold root",
       );
     }
-    makeAttemptDirectoriesWritableV2(state.privateRoot);
-    rmSync(state.privateRoot, { recursive: true, force: false });
+    assertExactPrivateRootStableIdentityV2(
+      state.privateRoot,
+      state.baseCapture.rootFingerprint,
+    );
+    destroyPrivateCleanupCensusV2(
+      state.privateRoot,
+      state.lifecycle.cleanupCensus,
+      state.cleanupTestHooks,
+    );
     assertMissingPathV2(state.privateRoot, "Destroyed private scaffold root");
     state.lifecycle.status = "destroyed";
   } catch (error) {

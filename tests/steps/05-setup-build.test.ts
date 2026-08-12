@@ -1,9 +1,15 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import { setupBuildModule } from "../../dist/installer/steps/05-setup-build/module.js";
-import { onComplete } from "../../dist/installer/steps/05-setup-build/guards.js";
-import type { ParsedOutput, CompleteContext } from "../../dist/installer/steps/types.js";
+import os from "node:os";
+import path from "node:path";
+import { setupBuildModule } from "../../src/installer/steps/05-setup-build/module.js";
+import { onComplete } from "../../src/installer/steps/05-setup-build/guards.js";
+import type { ParsedOutput, CompleteContext } from "../../src/installer/steps/types.js";
+import {
+  preClaim as preClaimSource,
+  SetupBuildEnglishTextRequiredError,
+} from "../../src/installer/steps/05-setup-build/preclaim.js";
 
 describe("05-setup-build step module", () => {
   it("module metadata is correct", () => {
@@ -18,11 +24,71 @@ describe("05-setup-build step module", () => {
   it("preClaim supports auto-completion instead of setup-build agent handoff", () => {
     const preclaim = fs.readFileSync("src/installer/steps/05-setup-build/preclaim.ts", "utf-8");
     assert.ok(preclaim.includes("SETFARM_DISABLE_AUTO_SETUP_BUILD"), "auto-complete should have an opt-out env guard");
+    const admission = preclaim.indexOf("loadCompilerEnglishAdmissionLedgerAuthorityV1(getSql()");
+    const storyAdmission = preclaim.indexOf("loadCompilerStoryEnglishAdmissionLedgerAuthorityV1(getSql()");
+    const semanticGate = preclaim.indexOf('ctx.context["product_semantics_version"] !== "v2"');
+    const optOut = preclaim.indexOf('if (process.env.SETFARM_DISABLE_AUTO_SETUP_BUILD === "1") return;');
+    assert.ok(
+      admission > 0 && storyAdmission > admission && semanticGate > storyAdmission && optOut > semanticGate,
+      "auto-work opt-out must not bypass durable PLAN/STORIES English or Product Semantics v2 admission",
+    );
     assert.ok(preclaim.includes("AUTO-COMPLETED setup-build"), "setup-build should complete in preClaim when baseline checks pass");
     assert.ok(
       preclaim.includes("completeStep(step.id, output, ctx.claimEnvelope)"),
       "preClaim should complete through the immutable claim capability",
     );
+  });
+
+  it("rejects contaminated ready baselines before repository or context mutation", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-setup-build-language-"));
+    const localizedName = String.fromCharCode(
+      71, 111, 114, 101, 118, 108, 101, 114, 105, 32, 107, 97, 121, 100, 101, 116,
+    );
+    try {
+      for (const [kind, baseline] of [
+        ["static", "index.html"],
+        ["package", "package.json"],
+      ] as const) {
+        const repo = path.join(tmp, kind);
+        fs.mkdirSync(repo);
+        fs.writeFileSync(path.join(repo, baseline), baseline === "index.html" ? "<main>Ready</main>\n" : "{}\n");
+        const marker = path.join(repo, "marker.txt");
+        fs.writeFileSync(marker, "unchanged\n");
+        const entriesBefore = fs.readdirSync(repo);
+        const markerBefore = fs.readFileSync(marker);
+        const context = {
+          repo,
+          stack_pack_id: kind === "static" ? "static-html-site" : "vite-react-web-app",
+          project_display_name: localizedName,
+        };
+
+        await assert.rejects(
+          preClaimSource({
+            runId: `run-setup-build-${kind}`,
+            stepId: "setup-build",
+            task: "Build a compact status view.",
+            retryCount: 0,
+            context,
+          }),
+          (error) => {
+            assert.ok(error instanceof SetupBuildEnglishTextRequiredError);
+            assert.equal(error.code, "SETUP_BUILD_ENGLISH_TEXT_REQUIRED");
+            assert.equal(error.field, "project_display_name");
+            assert.equal(error.message.includes(localizedName), false);
+            return true;
+          },
+        );
+        assert.deepEqual(fs.readdirSync(repo), entriesBefore);
+        assert.deepEqual(fs.readFileSync(marker), markerBefore);
+        assert.deepEqual(context, {
+          repo,
+          stack_pack_id: kind === "static" ? "static-html-site" : "vite-react-web-app",
+          project_display_name: localizedName,
+        });
+      }
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   });
 
   it("preClaim recovers missing package.json by rerunning setup-repo scaffold", () => {
@@ -38,7 +104,9 @@ describe("05-setup-build step module", () => {
     assert.ok(preclaim.includes('resolvePlatformScript("generated-screen-validator.mjs")'), "setup-build should validate generated screens before handoff");
     assert.equal(preclaim.includes(".openclaw/setfarm-repo/scripts/setup-repo.sh"), false, "setup-build must not hard-code the legacy setup script path");
     assert.ok(preclaim.includes("String(displayName)"), "recovery path should preserve project display title");
-    assert.ok(preclaim.includes("String(uiLanguage)"), "recovery path should preserve UI language for scaffold html lang");
+    assert.equal(preclaim.includes('ctx.context["ui_language"]'), false, "recovery must not inherit a mutable UI language");
+    assert.equal(preclaim.includes('ctx.context["UI_LANGUAGE"]'), false, "recovery must not inherit a mutable UI language alias");
+    assert.ok(preclaim.includes('String(displayName), "English"]'), "recovery should pass literal English to the scaffold");
   });
 
   it("preClaim treats static HTML as an index.html baseline instead of package.json baseline", () => {

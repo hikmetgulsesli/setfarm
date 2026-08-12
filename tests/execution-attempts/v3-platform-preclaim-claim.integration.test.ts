@@ -5,18 +5,32 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 
+import { seedCanonicalSetupBuildCompilerStoryAdmissionFixture } from "./helpers/compiler-story-admission-fixture.js";
 import { createIsolatedTestDatabase } from "./test-database.js";
 
 test("claimStep publishes one normal v3 platform-preclaim terminal transition", async () => {
   const previousPgUrl = process.env.SETFARM_PG_URL;
   const database = await createIsolatedTestDatabase();
   const repo = await mkdtemp(path.join(tmpdir(), "setfarm-v3-preclaim-normal-"));
+  let runtimeDb: typeof import("../../src/db-pg.js") | undefined;
   try {
+    runtimeDb = await import("../../src/db-pg.js");
+    runtimeDb.pgConfigureIsolatedTestDatabase(database.url);
     const runId = "run-v3-platform-preclaim-normal";
     const stepDbId = "step-v3-platform-preclaim-normal";
     const claimAgentId = "feature-dev_builder";
     const releaseSha = "9".repeat(40);
-    const releaseAdmissionHash = await database.seedV3ReleaseGoAdmission(releaseSha);
+    const admission = await seedCanonicalSetupBuildCompilerStoryAdmissionFixture(database, {
+      runId,
+      repo,
+      setupBuildStepDbId: stepDbId,
+      setupBuildClaimAgentId: claimAgentId,
+      releaseSha,
+      additionalContext: {
+        stack_pack_id: "vite-react-web-app",
+        tech_stack: "vite-react",
+      },
+    });
     fs.mkdirSync(path.join(repo, "node_modules"), { recursive: true });
     fs.mkdirSync(path.join(repo, "stitch"), { recursive: true });
     fs.writeFileSync(path.join(repo, "package.json"), JSON.stringify({
@@ -26,36 +40,6 @@ test("claimStep publishes one normal v3 platform-preclaim terminal transition", 
       scripts: { build: "node -e \"process.exit(0)\"" },
     }));
     fs.writeFileSync(path.join(repo, "stitch", "DESIGN_MANIFEST.json"), "{ malformed-json\n");
-    await database.sql`
-      INSERT INTO runs (
-        id, workflow_id, task, status, context, protocol,
-        compiler_release_sha, activation_preflight_hash, release_admission_hash
-      ) VALUES (
-        ${runId}, 'feature-dev', 'Prove one preclaim terminal owner', 'running',
-        ${JSON.stringify({
-          repo,
-          stack_pack_id: "vite-react-web-app",
-          tech_stack: "vite-react",
-          product_semantics_version: "v2",
-          task: "Prove one preclaim terminal owner",
-        })}, 'v3', ${releaseSha}, ${"8".repeat(64)}, ${releaseAdmissionHash}
-      )
-    `;
-    await database.sql`
-      INSERT INTO steps (
-        id, run_id, step_id, agent_id, step_index, input_template, expects,
-        status, type, retry_count, max_retries
-      ) VALUES (
-        ${stepDbId}, ${runId}, 'setup-build', ${claimAgentId}, 5, '', '',
-        'running', 'single', 0, 3
-      )
-    `;
-    const claims = await database.sql<Array<{ id: number }>>`
-      INSERT INTO claim_log (run_id, step_id, story_id, agent_id)
-      VALUES (${runId}, 'setup-build', NULL, ${claimAgentId})
-      RETURNING id::integer AS id
-    `;
-
     const { claimStep } = await import("../../src/installer/step-ops.js");
     assert.deepEqual(
       await claimStep(claimAgentId, "v3-platform-preclaim-normal"),
@@ -82,7 +66,7 @@ test("claimStep publishes one normal v3 platform-preclaim terminal transition", 
              termination.evidence
         FROM runs run_row
         JOIN steps step ON step.id = ${stepDbId}
-        JOIN claim_log claim ON claim.id = ${claims[0]!.id}
+        JOIN claim_log claim ON claim.id = ${admission.claimId}
         JOIN run_termination_requests termination ON termination.run_id = run_row.id
        WHERE run_row.id = ${runId}
     `;
@@ -99,7 +83,7 @@ test("claimStep publishes one normal v3 platform-preclaim terminal transition", 
       run_status: "failing",
       step_status: "failed",
       claim_outcome: "failed",
-      claim_count: 1,
+      claim_count: 4,
       termination_count: 1,
       termination_state: "requested",
       requested_by: "setfarm.step-fail.single",
@@ -117,6 +101,7 @@ test("claimStep publishes one normal v3 platform-preclaim terminal transition", 
     );
   } finally {
     await rm(repo, { recursive: true, force: true });
+    await runtimeDb?.pgClose().catch(() => {});
     await database.cleanup();
     if (previousPgUrl === undefined) delete process.env.SETFARM_PG_URL;
     else process.env.SETFARM_PG_URL = previousPgUrl;

@@ -30,6 +30,7 @@ import {
   createV3PreparationEligibilityEvaluator,
 } from "./v3-preparation-eligibility.js";
 import { resolveV3GitRevision } from "./v3-git-revision.js";
+import type { AuthenticatedV3SupervisorRetryPreparationSourceV1 } from "./claim-runtime-publication.js";
 
 const SHA256 = /^[a-f0-9]{64}$/;
 const MAX_PENDING_STORIES = 5_000;
@@ -462,6 +463,7 @@ export function createV3NormalImplementationPreclaim<
       repo: string;
       requestedBaseRef: string;
       expectedSha?: string;
+      supervisorRetryPreparationSource?: AuthenticatedV3SupervisorRetryPreparationSourceV1;
     }>): Promise<V3NormalImplementationPreclaimResult<TStory>> {
       if (!input.runId || !input.stepId || !input.repo || !input.requestedBaseRef) {
         return blocked({
@@ -502,6 +504,16 @@ export function createV3NormalImplementationPreclaim<
         });
       }
       if (!story) return { status: "none" };
+      if (input.supervisorRetryPreparationSource
+        && (input.supervisorRetryPreparationSource.storyDbId !== story.id
+          || input.supervisorRetryPreparationSource.storyId !== story.story_id)) {
+        return blocked({
+          code: "V3_NORMAL_PRECLAIM_STORY_SELECTION_FAILED",
+          message: "authenticated supervisor retry source does not own the selected pending story",
+          story,
+          packetHash: packet.packetHash,
+        });
+      }
 
       let projectedDependencyIds: readonly string[];
       try {
@@ -544,6 +556,14 @@ export function createV3NormalImplementationPreclaim<
           requestedRef: input.requestedBaseRef,
           ...(input.expectedSha ? { expectedSha: input.expectedSha } : {}),
         });
+        if (input.supervisorRetryPreparationSource
+          && (baseRevision.sha !== input.supervisorRetryPreparationSource.sourceRevision.sha
+            || baseRevision.treeHash !== input.supervisorRetryPreparationSource.sourceRevision.treeHash)) {
+          throw new V3NormalImplementationPreclaimError(
+            "V3_NORMAL_PRECLAIM_SOURCE_UNAVAILABLE",
+            "authenticated supervisor retry source revision drifted before preparation",
+          );
+        }
       } catch (error) {
         return blocked({
           code: "V3_NORMAL_PRECLAIM_SOURCE_UNAVAILABLE",
@@ -702,6 +722,9 @@ export function createV3NormalImplementationPreclaim<
           sourceTreeHash: baseRevision.treeHash,
           dependencyState: eligibility.dependencyState,
           projectedDependencyIds,
+          ...(input.supervisorRetryPreparationSource
+            ? { supervisorRetryRearm: input.supervisorRetryPreparationSource }
+            : {}),
         });
         const parsedAuthority = V3PreparationClaimAuthorityV1Schema.safeParse(resolution.authority);
         if (!parsedAuthority.success || !exactAuthorityMatch({

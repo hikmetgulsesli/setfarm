@@ -17,7 +17,7 @@ import {
   rmdirSync,
   unlinkSync,
   writeSync,
-  type Stats,
+  type BigIntStats,
 } from "node:fs";
 import path from "node:path";
 import { isProxy } from "node:util/types";
@@ -45,6 +45,9 @@ import {
   type NodeToolchainPrivateTreeReceiptHashPayloadV2,
   type NodeToolchainPrivateTreeReceiptV2,
 } from "./schemas/node-toolchain-private-tree-v2.js";
+import {
+  matchesExactStableFilesystemObjectIdentityV2,
+} from "./exact-stable-filesystem-identity-v2.js";
 
 const BSDTAR_PATH_V2 = "/usr/bin/bsdtar" as const;
 const PRIVATE_ROOT_PREFIX_V2 = "/private/tmp/setfarm-node-toolchain-tree-v2-";
@@ -122,15 +125,16 @@ type TestHooksV2 = Readonly<{
 }>;
 
 type FileFingerprintV2 = Readonly<{
-  device: number;
-  inode: number;
-  mode: number;
-  ownerUid: number;
-  ownerGid: number;
-  linkCount: number;
-  byteLength: number;
-  modifiedMs: number;
-  changedMs: number;
+  device: bigint;
+  inode: bigint;
+  objectKind: "ordinary_file" | "directory";
+  mode: bigint;
+  ownerUid: bigint;
+  ownerGid: bigint;
+  linkCount: bigint;
+  byteLength: bigint;
+  modifiedNs: bigint;
+  changedNs: bigint;
 }>;
 
 type RawFileV2 = Readonly<{
@@ -205,39 +209,73 @@ function fail(
   );
 }
 
-function fingerprint(stat: Stats): FileFingerprintV2 {
+function fingerprint(stat: BigIntStats): FileFingerprintV2 {
   return Object.freeze({
     device: stat.dev,
     inode: stat.ino,
+    objectKind: stat.isDirectory() ? "directory" : "ordinary_file",
     mode: stat.mode,
     ownerUid: stat.uid,
     ownerGid: stat.gid,
     linkCount: stat.nlink,
     byteLength: stat.size,
-    modifiedMs: stat.mtimeMs,
-    changedMs: stat.ctimeMs,
+    modifiedNs: stat.mtimeNs,
+    changedNs: stat.ctimeNs,
   });
 }
 
 function sameFingerprint(left: FileFingerprintV2, right: FileFingerprintV2): boolean {
   return left.device === right.device
     && left.inode === right.inode
+    && left.objectKind === right.objectKind
     && left.mode === right.mode
     && left.ownerUid === right.ownerUid
     && left.ownerGid === right.ownerGid
     && left.linkCount === right.linkCount
     && left.byteLength === right.byteLength
-    && left.modifiedMs === right.modifiedMs
-    && left.changedMs === right.changedMs;
+    && left.modifiedNs === right.modifiedNs
+    && left.changedNs === right.changedNs;
 }
 
-function modeBits(stat: Stats | FileFingerprintV2): number {
-  return stat.mode & 0o7777;
+function assertExactObjectStableIdentityV2(input: Readonly<{
+  absolutePath: string;
+  expected: FileFingerprintV2;
+  objectKind: "ordinary_file" | "directory";
+}>): void {
+  let stat: BigIntStats;
+  try {
+    stat = lstatSync(input.absolutePath, { bigint: true });
+  } catch (error) {
+    return fail(
+      "NODE_TOOLCHAIN_PRIVATE_TREE_V2_CLEANUP_FAILED",
+      "Private tree cleanup object identity could not be captured exactly",
+      error,
+    );
+  }
+  if (
+    !matchesExactStableFilesystemObjectIdentityV2({
+      stat,
+      expected: {
+        device: input.expected.device,
+        inode: input.expected.inode,
+      },
+      objectKind: input.objectKind,
+    })
+  ) {
+    return fail(
+      "NODE_TOOLCHAIN_PRIVATE_TREE_V2_CLEANUP_FAILED",
+      "Private tree cleanup object kind or stable identity changed",
+    );
+  }
 }
 
-function modeText(bits: number): "0444" | "0555" {
-  if (bits === 0o444) return "0444";
-  if (bits === 0o555) return "0555";
+function modeBits(stat: BigIntStats | FileFingerprintV2): bigint {
+  return stat.mode & 0o7777n;
+}
+
+function modeText(bits: bigint): "0444" | "0555" {
+  if (bits === 0o444n) return "0444";
+  if (bits === 0o555n) return "0555";
   return fail(
     "NODE_TOOLCHAIN_PRIVATE_TREE_V2_NORMALIZED_TREE_INVALID",
     "Normalized tree entry has a non-canonical mode",
@@ -298,12 +336,12 @@ function writeExclusiveFile(input: Readonly<{
     }
     fchmodSync(descriptor, input.mode);
     fsyncSync(descriptor);
-    const stat = fstatSync(descriptor);
+    const stat = fstatSync(descriptor, { bigint: true });
     if (
       !stat.isFile()
-      || stat.nlink !== 1
-      || modeBits(stat) !== input.mode
-      || stat.size !== input.bytes.byteLength
+      || stat.nlink !== 1n
+      || modeBits(stat) !== BigInt(input.mode)
+      || stat.size !== BigInt(input.bytes.byteLength)
     ) {
       return fail(input.errorCode, "Exclusive file write lost its exact filesystem identity");
     }
@@ -328,16 +366,16 @@ function syncDirectory(absolutePath: string): void {
 function removeStageBestEffort(stageRoot: string | undefined, stagePrefix: string): void {
   if (!stageRoot || !stageRoot.startsWith(stagePrefix)) return;
   try {
-    const root = lstatSync(stageRoot);
+    const root = lstatSync(stageRoot, { bigint: true });
     if (root.isSymbolicLink() || !root.isDirectory()) return;
     const ownerUid = root.uid;
     const makeWritable = (absoluteDirectory: string): void => {
-      const stat = lstatSync(absoluteDirectory);
+      const stat = lstatSync(absoluteDirectory, { bigint: true });
       if (stat.isSymbolicLink() || !stat.isDirectory() || stat.uid !== ownerUid) return;
       chmodSync(absoluteDirectory, 0o700);
       for (const name of readdirSync(absoluteDirectory)) {
         const child = path.join(absoluteDirectory, name);
-        const childStat = lstatSync(child);
+        const childStat = lstatSync(child, { bigint: true });
         if (childStat.isDirectory() && !childStat.isSymbolicLink()) makeWritable(child);
       }
     };
@@ -601,13 +639,13 @@ function readStableFile(input: Readonly<{
 }> {
   let descriptor: number | undefined;
   try {
-    const pathBefore = lstatSync(input.absolutePath);
+    const pathBefore = lstatSync(input.absolutePath, { bigint: true });
     if (
       pathBefore.isSymbolicLink()
       || !pathBefore.isFile()
-      || pathBefore.nlink !== 1
-      || pathBefore.size < 0
-      || pathBefore.size > input.maxBytes
+      || pathBefore.nlink !== 1n
+      || pathBefore.size < 0n
+      || pathBefore.size > BigInt(input.maxBytes)
     ) {
       return fail(input.errorCode, "Materialized file is not one bounded single-link regular file");
     }
@@ -615,7 +653,7 @@ function readStableFile(input: Readonly<{
       input.absolutePath,
       constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
     );
-    const before = fstatSync(descriptor);
+    const before = fstatSync(descriptor, { bigint: true });
     if (
       !sameFingerprint(fingerprint(pathBefore), fingerprint(before))
       || (input.expectedFingerprint
@@ -623,7 +661,11 @@ function readStableFile(input: Readonly<{
     ) {
       return fail(input.errorCode, "Materialized file changed before its exact read");
     }
-    const bytes = Buffer.allocUnsafeSlow(before.size);
+    if (before.size > BigInt(Number.MAX_SAFE_INTEGER)) {
+      return fail(input.errorCode, "Materialized file length cannot be represented safely");
+    }
+    const byteLength = Number(before.size);
+    const bytes = Buffer.allocUnsafeSlow(byteLength);
     let offset = 0;
     while (offset < bytes.byteLength) {
       const bytesRead = readSync(descriptor, bytes, offset, bytes.byteLength - offset, null);
@@ -634,8 +676,8 @@ function readStableFile(input: Readonly<{
     if (readSync(descriptor, eof, 0, 1, null) !== 0) {
       return fail(input.errorCode, "Materialized file exceeded its exact length");
     }
-    const after = fstatSync(descriptor);
-    const pathAfter = lstatSync(input.absolutePath);
+    const after = fstatSync(descriptor, { bigint: true });
+    const pathAfter = lstatSync(input.absolutePath, { bigint: true });
     if (
       !sameFingerprint(fingerprint(before), fingerprint(after))
       || !sameFingerprint(fingerprint(after), fingerprint(pathAfter))
@@ -666,7 +708,7 @@ function captureRawTree(input: Readonly<{
   let directoryCount = 0;
 
   const visit = (absoluteDirectory: string, parentLocator: string | null): void => {
-    const before = lstatSync(absoluteDirectory);
+    const before = lstatSync(absoluteDirectory, { bigint: true });
     if (before.isSymbolicLink() || !before.isDirectory()) {
       fail("NODE_TOOLCHAIN_PRIVATE_TREE_V2_RAW_TREE_INVALID", "Raw extraction contains a non-directory parent");
     }
@@ -685,7 +727,7 @@ function captureRawTree(input: Readonly<{
         fail("NODE_TOOLCHAIN_PRIVATE_TREE_V2_RAW_TREE_INVALID", "Raw extraction contains an unselected member");
       }
       const absolutePath = path.join(absoluteDirectory, name);
-      const stat = lstatSync(absolutePath);
+      const stat = lstatSync(absolutePath, { bigint: true });
       if (stat.isSymbolicLink()) {
         fail("NODE_TOOLCHAIN_PRIVATE_TREE_V2_RAW_TREE_INVALID", "Raw extraction contains a symbolic link");
       }
@@ -701,7 +743,7 @@ function captureRawTree(input: Readonly<{
         visit(absolutePath, locator);
         continue;
       }
-      if (!stat.isFile() || stat.nlink !== 1 || expectedMember.type !== "file") {
+      if (!stat.isFile() || stat.nlink !== 1n || expectedMember.type !== "file") {
         fail("NODE_TOOLCHAIN_PRIVATE_TREE_V2_RAW_TREE_INVALID", "Raw extraction contains a hard link or special entry");
       }
       if (files.length >= NODE_TOOLCHAIN_PRIVATE_TREE_MAX_FILES_V2) {
@@ -726,7 +768,7 @@ function captureRawTree(input: Readonly<{
         bytes: captured.bytes,
       }));
     }
-    const after = lstatSync(absoluteDirectory);
+    const after = lstatSync(absoluteDirectory, { bigint: true });
     const namesAfter = readdirSync(absoluteDirectory).sort();
     if (
       !sameFingerprint(fingerprint(before), fingerprint(after))
@@ -774,7 +816,7 @@ function materializeNormalizedTree(input: Readonly<{
       mode: file.targetMode === "0555" ? 0o555 : 0o444,
       errorCode: "NODE_TOOLCHAIN_PRIVATE_TREE_V2_NORMALIZED_TREE_INVALID",
     });
-    if (sha256(file.bytes) !== file.contentHash || written.byteLength !== file.bytes.byteLength) {
+    if (sha256(file.bytes) !== file.contentHash || written.byteLength !== BigInt(file.bytes.byteLength)) {
       fail("NODE_TOOLCHAIN_PRIVATE_TREE_V2_NORMALIZED_TREE_INVALID", "Normalized file differs from raw capture");
     }
   }
@@ -802,13 +844,13 @@ function captureNormalizedTree(input: Readonly<{
 
   const visit = (absoluteDirectory: string, locator: "." | string): void => {
     const expectedDirectory = expected.get(locator);
-    const before = lstatSync(absoluteDirectory);
+    const before = lstatSync(absoluteDirectory, { bigint: true });
     if (
       !expectedDirectory
       || expectedDirectory.type !== "directory"
       || before.isSymbolicLink()
       || !before.isDirectory()
-      || modeBits(before) !== 0o555
+      || modeBits(before) !== 0o555n
     ) {
       fail("NODE_TOOLCHAIN_PRIVATE_TREE_V2_NORMALIZED_TREE_INVALID", "Normalized directory identity is invalid");
     }
@@ -829,7 +871,7 @@ function captureNormalizedTree(input: Readonly<{
         fail("NODE_TOOLCHAIN_PRIVATE_TREE_V2_NORMALIZED_TREE_INVALID", "Normalized tree contains an extra member");
       }
       const absolutePath = path.join(absoluteDirectory, name);
-      const stat = lstatSync(absolutePath);
+      const stat = lstatSync(absolutePath, { bigint: true });
       if (stat.isDirectory()) {
         if (expectedMember.type !== "directory") {
           fail("NODE_TOOLCHAIN_PRIVATE_TREE_V2_NORMALIZED_TREE_INVALID", "Normalized member type changed");
@@ -841,7 +883,7 @@ function captureNormalizedTree(input: Readonly<{
         expectedMember.type !== "file"
         || stat.isSymbolicLink()
         || !stat.isFile()
-        || stat.nlink !== 1
+        || stat.nlink !== 1n
         || modeText(modeBits(stat)) !== expectedMember.targetMode
       ) {
         fail("NODE_TOOLCHAIN_PRIVATE_TREE_V2_NORMALIZED_TREE_INVALID", "Normalized file identity is invalid");
@@ -874,7 +916,7 @@ function captureNormalizedTree(input: Readonly<{
       }));
       fileBuffers.set(childLocator, captured.bytes);
     }
-    const after = lstatSync(absoluteDirectory);
+    const after = lstatSync(absoluteDirectory, { bigint: true });
     const namesAfter = readdirSync(absoluteDirectory).sort();
     if (
       !sameFingerprint(fingerprint(before), fingerprint(after))
@@ -1117,9 +1159,9 @@ async function materialize(input: Readonly<{
         selectedMembers: source.selectedMembers,
         entries: captured.entries,
       });
-      const stageRootFingerprint = fingerprint(lstatSync(stage.stageRoot));
+      const stageRootFingerprint = fingerprint(lstatSync(stage.stageRoot, { bigint: true }));
       if (
-        modeBits(stageRootFingerprint) !== 0o700
+        modeBits(stageRootFingerprint) !== 0o700n
         || readdirSync(stage.stageRoot).length !== 1
         || readdirSync(stage.stageRoot)[0] !== path.basename(stage.treeRoot)
       ) {
@@ -1170,17 +1212,17 @@ function testStagePrefix(scratchParent: string | undefined): string {
       "Test private-tree scratch parent must be one normalized absolute path",
     );
   }
-  const stat = lstatSync(scratchParent);
+  const stat = lstatSync(scratchParent, { bigint: true });
   const expectedUid = typeof process.geteuid === "function" ? process.geteuid() : undefined;
   const expectedGid = typeof process.getegid === "function" ? process.getegid() : undefined;
   if (
     stat.isSymbolicLink()
     || !stat.isDirectory()
-    || modeBits(stat) !== 0o700
+    || modeBits(stat) !== 0o700n
     || expectedUid === undefined
     || expectedGid === undefined
-    || stat.uid !== expectedUid
-    || stat.gid !== expectedGid
+    || stat.uid !== BigInt(expectedUid)
+    || stat.gid !== BigInt(expectedGid)
   ) {
     return fail(
       "NODE_TOOLCHAIN_PRIVATE_TREE_V2_INPUT_INVALID",
@@ -1251,10 +1293,10 @@ function revalidatePrivateTree(state: PrivateTreeStateV2): Readonly<{
   entries: readonly NormalizedEntryV2[];
   fileBuffers: ReadonlyMap<string, Buffer>;
 }> {
-  const stage = fingerprint(lstatSync(state.stageRoot));
+  const stage = fingerprint(lstatSync(state.stageRoot, { bigint: true }));
   if (
     !sameFingerprint(stage, state.stageRootFingerprint)
-    || modeBits(stage) !== 0o700
+    || modeBits(stage) !== 0o700n
     || readdirSync(state.stageRoot).length !== 1
     || readdirSync(state.stageRoot)[0] !== path.basename(state.treeRoot)
   ) {
@@ -1349,12 +1391,47 @@ function cleanupAuthenticatedTree(state: PrivateTreeStateV2): void {
     const files = state.entries
       .filter((entry) => entry.type === "file")
       .sort((left, right) => right.locator.length - left.locator.length);
-    for (const file of files) unlinkSync(path.join(state.treeRoot, file.locator));
+    for (const file of files) {
+      const absolutePath = path.join(state.treeRoot, file.locator);
+      assertExactObjectStableIdentityV2({
+        absolutePath,
+        expected: file.fingerprint,
+        objectKind: "ordinary_file",
+      });
+      unlinkSync(absolutePath);
+    }
     const directories = state.entries
       .filter((entry) => entry.type === "directory" && entry.locator !== ".")
       .sort((left, right) => right.locator.split("/").length - left.locator.split("/").length);
-    for (const directory of directories) rmdirSync(path.join(state.treeRoot, directory.locator));
+    for (const directory of directories) {
+      const absolutePath = path.join(state.treeRoot, directory.locator);
+      assertExactObjectStableIdentityV2({
+        absolutePath,
+        expected: directory.fingerprint,
+        objectKind: "directory",
+      });
+      rmdirSync(absolutePath);
+    }
+    const treeRootEntry = state.entries.find(
+      (entry) => entry.locator === "." && entry.type === "directory",
+    );
+    if (!treeRootEntry) {
+      return fail(
+        "NODE_TOOLCHAIN_PRIVATE_TREE_V2_CLEANUP_FAILED",
+        "Private tree cleanup has no exact captured tree root identity",
+      );
+    }
+    assertExactObjectStableIdentityV2({
+      absolutePath: state.treeRoot,
+      expected: treeRootEntry.fingerprint,
+      objectKind: "directory",
+    });
     rmdirSync(state.treeRoot);
+    assertExactObjectStableIdentityV2({
+      absolutePath: state.stageRoot,
+      expected: state.stageRootFingerprint,
+      objectKind: "directory",
+    });
     rmdirSync(state.stageRoot);
   } catch (error) {
     return fail(

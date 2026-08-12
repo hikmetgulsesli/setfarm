@@ -15,7 +15,7 @@ import {
 } from "../../src/product-compiler/schemas/build-topology-v3.js";
 
 const BUILD_TOPOLOGY_CONTRACT_HASH_GOLDEN_V3_2 =
-  "409d808e65a5a2a9d974b7af5190c20309573f92f81829ab68eb2e000114c894";
+  "f0ff27887299b07851128df3293280ef2f0d6bdd4c4463da14764e49c9fa3ac4";
 
 describe("BuildTopologyV3.2 operation authority", () => {
   it("uses the only implemented candidate build and evidence receipt schemas", () => {

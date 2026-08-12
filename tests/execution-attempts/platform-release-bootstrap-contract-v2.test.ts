@@ -7,27 +7,26 @@ import {
   NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_LOCK_BASENAME_V2,
   NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_RECEIPT_BASENAME_V2,
   NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_STAGING_PREFIX_V2,
-} from
-  "../../src/product-compiler/schemas/node-toolchain-provisioner-bootstrap-installation-state-v2.js";
+} from "../../src/product-compiler/schemas/node-toolchain-provisioner-bootstrap-installation-state-v2.js";
 import {
   NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_ROLLBACK_CLAIM_BASENAME_V2,
   NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_ROLLBACK_RECEIPT_BASENAME_REGEX_V2,
-} from
-  "../../src/product-compiler/schemas/node-toolchain-provisioner-bootstrap-rollback-v2.js";
-import {
-  NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_ROOT_V2,
-} from
-  "../../src/product-compiler/schemas/node-toolchain-provisioner-bootstrap-v2.js";
+} from "../../src/product-compiler/schemas/node-toolchain-provisioner-bootstrap-rollback-v2.js";
+import { NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_ROOT_V2 } from "../../src/product-compiler/schemas/node-toolchain-provisioner-bootstrap-v2.js";
 import {
   PLATFORM_RELEASE_BOOTSTRAP_CONTRACT_V2,
+  PLATFORM_RELEASE_BOOTSTRAP_FILESYSTEM_SCOPE_DOCUMENT_BASENAME_V2,
   PLATFORM_RELEASE_BOOTSTRAP_PACKAGE_COUNT_V2,
   PLATFORM_RELEASE_BOOTSTRAP_PARENT_V2,
   PLATFORM_RELEASE_BOOTSTRAP_REGISTRY_DOCUMENT_PROTOCOL_CATALOG_V2,
   PLATFORM_RELEASE_BOOTSTRAP_REGISTRY_DOCUMENT_PROTOCOL_COUNT_V2,
+  PLATFORM_RELEASE_BOOTSTRAP_REGISTRY_ACTIVATION_CLAIM_BASENAME_V2,
+  PLATFORM_RELEASE_BOOTSTRAP_REGISTRY_ACTIVATION_MIGRATOR_PROTOCOL_HASH_V2,
   PLATFORM_RELEASE_BOOTSTRAP_REGISTRY_ACTIVATION_RECEIPT_BASENAME_V2,
   PLATFORM_RELEASE_BOOTSTRAP_REGISTRY_EPOCH_CLAIM_BASENAME_V2,
   PLATFORM_RELEASE_BOOTSTRAP_REGISTRY_EPOCH_FLOOR_BASENAME_V2,
   PLATFORM_RELEASE_BOOTSTRAP_REGISTRY_SHARED_LOCK_BASENAME_V2,
+  PLATFORM_RELEASE_BOOTSTRAP_REGISTRY_TRANSACTION_STAGING_BASENAME_V2,
   PLATFORM_RELEASE_COMPOSITION_PACKAGE_ROOT_V2,
   PLATFORM_RELEASE_HOST_VERIFIER_ROOT_V2,
   PLATFORM_RELEASE_RUNTIME_ACCOUNT_PROVISIONER_ROOT_V2,
@@ -41,8 +40,7 @@ import {
   hashPlatformReleaseBootstrapRegistryDocumentProtocolV2,
   parsePlatformReleaseBootstrapContractCandidateV2,
   parsePlatformReleaseBootstrapRegistryDocumentProtocolCatalogCandidateV2,
-} from
-  "../../src/execution/schemas/platform-release-bootstrap-contract-v2.js";
+} from "../../src/execution/schemas/platform-release-bootstrap-contract-v2.js";
 import {
   PLATFORM_RELEASE_BOOTSTRAP_OPERATION_ABI_COUNT_V2,
   PLATFORM_RELEASE_BOOTSTRAP_OPERATION_ABI_SET_V2,
@@ -52,8 +50,7 @@ import {
   hashPlatformReleaseBootstrapOperationAbiSetV2,
   hashPlatformReleaseBootstrapOperationAbiV2,
   parsePlatformReleaseBootstrapOperationAbiSetCandidateV2,
-} from
-  "../../src/execution/schemas/platform-release-bootstrap-operation-abis-v2.js";
+} from "../../src/execution/schemas/platform-release-bootstrap-operation-abis-v2.js";
 import {
   PLATFORM_RELEASE_BOOTSTRAP_OPERATION_FAILURE_V2_SCHEMA,
   PLATFORM_RELEASE_BOOTSTRAP_WIRE_CONTRACT_SET_V2,
@@ -66,12 +63,8 @@ import {
   hashPlatformReleaseBootstrapWireSchemaContractV2,
   parsePlatformReleaseBootstrapWireContractSetCandidateV2,
   parsePlatformReleaseBootstrapWireMessageV2,
-} from
-  "../../src/execution/schemas/platform-release-bootstrap-wire-contracts-v2.js";
-import {
-  PLATFORM_RELEASE_HOST_COMPOSITION_REQUIREMENT_V2,
-} from
-  "../../src/execution/schemas/platform-release-host-composition-v2.js";
+} from "../../src/execution/schemas/platform-release-bootstrap-wire-contracts-v2.js";
+import { PLATFORM_RELEASE_HOST_COMPOSITION_REQUIREMENT_V2 } from "../../src/execution/schemas/platform-release-host-composition-v2.js";
 
 function mutableClone<T>(value: T): T {
   return structuredClone(value);
@@ -115,21 +108,13 @@ describe("platform release bootstrap contract v2", () => {
         PLATFORM_RELEASE_BOOTSTRAP_WIRE_CONTRACT_SET_V2,
       ),
     );
-    for (
-      const wireContract
-      of PLATFORM_RELEASE_BOOTSTRAP_WIRE_CONTRACT_SET_V2.schemas
-    ) {
+    for (const wireContract of PLATFORM_RELEASE_BOOTSTRAP_WIRE_CONTRACT_SET_V2.schemas) {
       assert.equal(
         wireContract.wireSchemaHash,
-        hashPlatformReleaseBootstrapWireSchemaContractV2(
-          wireContract,
-        ),
+        hashPlatformReleaseBootstrapWireSchemaContractV2(wireContract),
       );
     }
-    for (
-      const operation
-      of PLATFORM_RELEASE_BOOTSTRAP_OPERATION_ABI_SET_V2.operations
-    ) {
+    for (const operation of PLATFORM_RELEASE_BOOTSTRAP_OPERATION_ABI_SET_V2.operations) {
       assert.equal(
         operation.operationHash,
         hashPlatformReleaseBootstrapOperationAbiV2(operation),
@@ -163,9 +148,7 @@ describe("platform release bootstrap contract v2", () => {
       ),
     );
     assert.ok(
-      Object.isFrozen(
-        PLATFORM_RELEASE_BOOTSTRAP_WIRE_CONTRACT_SET_V2.schemas,
-      ),
+      Object.isFrozen(PLATFORM_RELEASE_BOOTSTRAP_WIRE_CONTRACT_SET_V2.schemas),
     );
 
     const first = getPlatformReleaseBootstrapContractV2();
@@ -181,10 +164,8 @@ describe("platform release bootstrap contract v2", () => {
     assert.deepEqual(firstAbis, secondAbis);
     assert.ok(Object.isFrozen(firstAbis.operations));
 
-    const firstWireContracts =
-      getPlatformReleaseBootstrapWireContractSetV2();
-    const secondWireContracts =
-      getPlatformReleaseBootstrapWireContractSetV2();
+    const firstWireContracts = getPlatformReleaseBootstrapWireContractSetV2();
+    const secondWireContracts = getPlatformReleaseBootstrapWireContractSetV2();
     assert.notEqual(firstWireContracts, secondWireContracts);
     assert.deepEqual(firstWireContracts, secondWireContracts);
     assert.ok(Object.isFrozen(firstWireContracts.schemas));
@@ -200,12 +181,15 @@ describe("platform release bootstrap contract v2", () => {
       PLATFORM_RELEASE_BOOTSTRAP_PACKAGE_REFS_V2.platformReleaseComposition,
       PLATFORM_RELEASE_BOOTSTRAP_PACKAGE_REFS_V2.runtimeAccountProvisioner,
     ]);
-    assert.deepEqual(packages.map((entry) => entry.root), [
-      PLATFORM_RELEASE_HOST_VERIFIER_ROOT_V2,
-      NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_ROOT_V2,
-      PLATFORM_RELEASE_COMPOSITION_PACKAGE_ROOT_V2,
-      PLATFORM_RELEASE_RUNTIME_ACCOUNT_PROVISIONER_ROOT_V2,
-    ]);
+    assert.deepEqual(
+      packages.map((entry) => entry.root),
+      [
+        PLATFORM_RELEASE_HOST_VERIFIER_ROOT_V2,
+        NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_ROOT_V2,
+        PLATFORM_RELEASE_COMPOSITION_PACKAGE_ROOT_V2,
+        PLATFORM_RELEASE_RUNTIME_ACCOUNT_PROVISIONER_ROOT_V2,
+      ],
+    );
     for (const packageContract of packages) {
       assert.equal(
         path.posix.dirname(packageContract.root),
@@ -216,29 +200,33 @@ describe("platform release bootstrap contract v2", () => {
         packageContract.rootBasename,
       );
       const directoryRefs = new Set(
-        packageContract.directories.map((entry) =>
-          entry.directoryRef),
+        packageContract.directories.map((entry) => entry.directoryRef),
       );
       const memberRefs = new Set(
         packageContract.members.map((entry) => entry.memberRef),
       );
       assert.equal(
         packageContract.members.every((entry) =>
-          directoryRefs.has(entry.parentDirectoryRef)),
+          directoryRefs.has(entry.parentDirectoryRef),
+        ),
         true,
       );
       assert.equal(
         packageContract.directories.every((directory) =>
-          directory.orderedEntryRefs.every((entryRef) =>
-            directoryRefs.has(entryRef) || memberRefs.has(entryRef))),
+          directory.orderedEntryRefs.every(
+            (entryRef) =>
+              directoryRefs.has(entryRef) || memberRefs.has(entryRef),
+          ),
+        ),
         true,
       );
     }
 
-    const node = packages.find((entry) =>
-      entry.packageRef
-        === PLATFORM_RELEASE_BOOTSTRAP_PACKAGE_REFS_V2
-          .nodeToolchainProvisioner)!;
+    const node = packages.find(
+      (entry) =>
+        entry.packageRef ===
+        PLATFORM_RELEASE_BOOTSTRAP_PACKAGE_REFS_V2.nodeToolchainProvisioner,
+    )!;
     assert.equal(
       node.lifecycle.activeReceiptBasename,
       NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_RECEIPT_BASENAME_V2,
@@ -273,20 +261,29 @@ describe("platform release bootstrap contract v2", () => {
     );
     assert.deepEqual(
       [
+        contract.registry.filesystemScopeBasename,
         contract.registry.sharedLockBasename,
+        contract.registry.activationClaimBasename,
+        contract.registry.transactionStagingBasename,
         contract.registry.activationReceiptBasename,
         contract.registry.epochFloorBasename,
         contract.registry.epochClaimBasename,
       ],
       [
+        PLATFORM_RELEASE_BOOTSTRAP_FILESYSTEM_SCOPE_DOCUMENT_BASENAME_V2,
         PLATFORM_RELEASE_BOOTSTRAP_REGISTRY_SHARED_LOCK_BASENAME_V2,
+        PLATFORM_RELEASE_BOOTSTRAP_REGISTRY_ACTIVATION_CLAIM_BASENAME_V2,
+        PLATFORM_RELEASE_BOOTSTRAP_REGISTRY_TRANSACTION_STAGING_BASENAME_V2,
         PLATFORM_RELEASE_BOOTSTRAP_REGISTRY_ACTIVATION_RECEIPT_BASENAME_V2,
         PLATFORM_RELEASE_BOOTSTRAP_REGISTRY_EPOCH_FLOOR_BASENAME_V2,
         PLATFORM_RELEASE_BOOTSTRAP_REGISTRY_EPOCH_CLAIM_BASENAME_V2,
       ],
     );
     const exactNames = [
+      contract.registry.filesystemScopeBasename,
       contract.registry.sharedLockBasename,
+      contract.registry.activationClaimBasename,
+      contract.registry.transactionStagingBasename,
       contract.registry.activationReceiptBasename,
       contract.registry.epochFloorBasename,
       contract.registry.epochClaimBasename,
@@ -300,14 +297,20 @@ describe("platform release bootstrap contract v2", () => {
       ]),
     ];
     assert.equal(new Set(exactNames).size, exactNames.length);
+    assert.equal(
+      contract.registry.activationMigratorProtocolHash,
+      PLATFORM_RELEASE_BOOTSTRAP_REGISTRY_ACTIVATION_MIGRATOR_PROTOCOL_HASH_V2,
+    );
 
     const rollbackSamples = contract.packages.map((entry) => ({
       packageRef: entry.packageRef,
       regex: new RegExp(entry.lifecycle.rollbackReceiptBasenameRegex),
-      sample: entry.lifecycle.rollbackReceiptBasenameRegex
-        .match(/node-toolchain-provisioner/) !== null
-        ? `.setfarm-node-toolchain-provisioner-installation-v2.rollback.${"a".repeat(64)}.receipt.json`
-        : `.setfarm-${entry.rootBasename}.rollback.${"a".repeat(64)}.receipt.json`,
+      sample:
+        entry.lifecycle.rollbackReceiptBasenameRegex.match(
+          /node-toolchain-provisioner/,
+        ) !== null
+          ? `.setfarm-node-toolchain-provisioner-installation-v2.rollback.${"a".repeat(64)}.receipt.json`
+          : `.setfarm-${entry.rootBasename}.rollback.${"a".repeat(64)}.receipt.json`,
     }));
     for (const candidate of rollbackSamples) {
       assert.equal(candidate.regex.test(candidate.sample), true);
@@ -324,15 +327,14 @@ describe("platform release bootstrap contract v2", () => {
     const catalog =
       PLATFORM_RELEASE_BOOTSTRAP_REGISTRY_DOCUMENT_PROTOCOL_CATALOG_V2;
     assert.equal(
-      PlatformReleaseBootstrapRegistryDocumentProtocolCatalogV2Schema
-        .safeParse(catalog).success,
+      PlatformReleaseBootstrapRegistryDocumentProtocolCatalogV2Schema.safeParse(
+        catalog,
+      ).success,
       true,
     );
     assert.equal(
       catalog.catalogHash,
-      hashPlatformReleaseBootstrapRegistryDocumentProtocolCatalogV2(
-        catalog,
-      ),
+      hashPlatformReleaseBootstrapRegistryDocumentProtocolCatalogV2(catalog),
     );
     assert.equal(
       catalog.documents.length,
@@ -350,9 +352,7 @@ describe("platform release bootstrap contract v2", () => {
     for (const document of catalog.documents) {
       assert.equal(
         document.documentSchemaHash,
-        hashPlatformReleaseBootstrapRegistryDocumentProtocolV2(
-          document,
-        ),
+        hashPlatformReleaseBootstrapRegistryDocumentProtocolV2(document),
       );
       assert.equal(document.productionUse, "forbidden");
       assert.ok(document.maxCanonicalBytes <= 256 * 1024);
@@ -361,57 +361,139 @@ describe("platform release bootstrap contract v2", () => {
       assert.ok(document.fields.at(-1)!.name.endsWith("Hash"));
     }
 
-    const first = getPlatformReleaseBootstrapRegistryDocumentProtocolCatalogV2();
-    const second = getPlatformReleaseBootstrapRegistryDocumentProtocolCatalogV2();
+    const first =
+      getPlatformReleaseBootstrapRegistryDocumentProtocolCatalogV2();
+    const second =
+      getPlatformReleaseBootstrapRegistryDocumentProtocolCatalogV2();
     assert.notEqual(first, second);
     assert.deepEqual(first, second);
     assert.ok(Object.isFrozen(first.documents));
-    const epochFloor =
-      getPlatformReleaseBootstrapRegistryDocumentProtocolV2(
-        "setfarm.platform-release-bootstrap-registry-epoch-floor-state.v2",
-      );
+    const epochFloor = getPlatformReleaseBootstrapRegistryDocumentProtocolV2(
+      "setfarm.platform-release-bootstrap-registry-epoch-floor-state.v2",
+    );
     assert.equal(
-      epochFloor.fields.find((entry) =>
-        entry.name === "transactionIdentityHash")?.kind,
+      epochFloor.fields.find(
+        (entry) => entry.name === "transactionIdentityHash",
+      )?.kind,
       "nullable_sha256",
     );
     assert.equal(
-      epochFloor.fields.find((entry) =>
-        entry.name === "packageEpochArtifactMap")?.kind,
+      epochFloor.fields.find(
+        (entry) => entry.name === "packageEpochArtifactMap",
+      )?.kind,
       "exact_package_epoch_artifact_map",
+    );
+    const activationClaim =
+      getPlatformReleaseBootstrapRegistryDocumentProtocolV2(
+        "setfarm.platform-release-bootstrap-registry-activation-claim.v2",
+      );
+    assert.equal(activationClaim.documentKind, "activation_claim");
+    assert.deepEqual(
+      activationClaim.fields
+        .filter((entry) =>
+          [
+            "nodeLifecycleSnapshotHash",
+            "preActivationNamespaceCaptureHash",
+            "transactionStagingIdentityHash",
+            "transactionStagingCensusHash",
+          ].includes(entry.name),
+        )
+        .map((entry) => entry.name),
+      [
+        "nodeLifecycleSnapshotHash",
+        "preActivationNamespaceCaptureHash",
+        "transactionStagingIdentityHash",
+        "transactionStagingCensusHash",
+      ],
+    );
+    assert.deepEqual(
+      activationClaim.fields.slice(-3).map((entry) => entry.name),
+      [
+        "genesisEpochStateHash",
+        "expectedActivationReceiptHash",
+        "activationClaimHash",
+      ],
+    );
+    const epochClaim = getPlatformReleaseBootstrapRegistryDocumentProtocolV2(
+      "setfarm.platform-release-bootstrap-registry-epoch-claim.v2",
+    );
+    assert.deepEqual(
+      epochClaim.fields
+        .filter((entry) =>
+          [
+            "priorEpochStateHash",
+            "targetEpochStateHash",
+            "priorEpochState",
+            "targetEpochState",
+          ].includes(entry.name),
+        )
+        .map((entry) => [entry.name, entry.kind]),
+      [
+        ["priorEpochStateHash", "sha256"],
+        ["targetEpochStateHash", "sha256"],
+        ["priorEpochState", "exact_epoch_floor_state"],
+        ["targetEpochState", "exact_epoch_floor_state"],
+      ],
+    );
+    assert.deepEqual(
+      epochClaim.fields
+        .filter((entry) =>
+          [
+            "transactionStagingIdentityHash",
+            "transactionStagingCensusHash",
+            "stagedTargetEpochStatePhysicalIdentityHash",
+          ].includes(entry.name),
+        )
+        .map((entry) => [entry.name, entry.kind]),
+      [
+        ["transactionStagingIdentityHash", "sha256"],
+        ["transactionStagingCensusHash", "sha256"],
+        ["stagedTargetEpochStatePhysicalIdentityHash", "sha256"],
+      ],
     );
     assert.throws(() =>
       getPlatformReleaseBootstrapRegistryDocumentProtocolV2(
         "setfarm.platform-release-bootstrap-registry-unknown.v2",
-      ));
+      ),
+    );
   });
 
   it("freezes the complete native and release operation ABI set before package installation", () => {
     const abiSet = PLATFORM_RELEASE_BOOTSTRAP_OPERATION_ABI_SET_V2;
     const refs = abiSet.operations.map((entry) => entry.abiRef);
+    const targetRootBoundRefs = new Set([
+      "ABI_PLATFORM_RELEASE_HOST_OPERATION_V2",
+      "ABI_PLATFORM_RELEASE_METADATA_PROBE_V2",
+      "ABI_PLATFORM_RELEASE_MODULE_EXPORT_PROBE_V2",
+      "ABI_PLATFORM_RELEASE_NETWORK_NEGATIVE_PROBE_V2",
+    ]);
     assert.deepEqual(refs, [...refs].sort());
     assert.equal(new Set(refs).size, refs.length);
     assert.equal(
-      abiSet.operations.every((entry) =>
-        entry.directArgvTemplate[0] === entry.command
-        && entry.inputTransport
-          === "preopened_read_only_fd3_exactly_once_v2"
-        && entry.stdin === "closed"
-        && entry.shell === "forbidden"
-        && entry.inheritAmbientEnvironment === false
-        && entry.environmentPolicy === "exact_empty_environment_v2"
-        && entry.workingDirectoryPolicy
-          === "installed_owner_package_root_v2"
-        && entry.processEvidencePolicy
-          ===
-            "outer_host_owner_binds_exit_termination_stdout_stderr_and_occurrence_v2"),
+      abiSet.operations.every(
+        (entry) =>
+          entry.directArgvTemplate[0] === entry.command &&
+          entry.inputTransport === "preopened_read_only_fd3_exactly_once_v2" &&
+          entry.stdin === "closed" &&
+          entry.shell === "forbidden" &&
+          entry.inheritAmbientEnvironment === false &&
+          entry.environmentPolicy === "exact_empty_environment_v2" &&
+          entry.workingDirectoryPolicy ===
+            (targetRootBoundRefs.has(entry.abiRef)
+              ? "authenticated_target_root_v2"
+              : "installed_owner_package_root_v2") &&
+          entry.processEvidencePolicy ===
+            "outer_host_owner_binds_exit_termination_stdout_stderr_and_occurrence_v2",
+      ),
       true,
     );
     assert.deepEqual(
       abiSet.operations
-        .filter((entry) =>
-          entry.ownerPackageRef
-            === PLATFORM_RELEASE_BOOTSTRAP_PACKAGE_REFS_V2.hostVerifier)
+        .filter(
+          (entry) =>
+            entry.ownerPackageRef ===
+            PLATFORM_RELEASE_BOOTSTRAP_PACKAGE_REFS_V2.hostVerifier,
+        )
         .map((entry) => entry.abiRef),
       [
         "ABI_PLATFORM_RELEASE_LOOKUP_LOCAL_ACCOUNT_V2",
@@ -422,10 +504,11 @@ describe("platform release bootstrap contract v2", () => {
     );
     assert.deepEqual(
       abiSet.operations
-        .filter((entry) =>
-          entry.ownerPackageRef
-            === PLATFORM_RELEASE_BOOTSTRAP_PACKAGE_REFS_V2
-              .runtimeAccountProvisioner)
+        .filter(
+          (entry) =>
+            entry.ownerPackageRef ===
+            PLATFORM_RELEASE_BOOTSTRAP_PACKAGE_REFS_V2.runtimeAccountProvisioner,
+        )
         .map((entry) => entry.abiRef),
       [
         "ABI_PLATFORM_RELEASE_APPLY_LOCAL_ACCOUNT_V2",
@@ -441,27 +524,71 @@ describe("platform release bootstrap contract v2", () => {
     assert.deepEqual(
       compatibilityHashes,
       new Set([
-        PLATFORM_RELEASE_HOST_COMPOSITION_REQUIREMENT_V2
-          .operationBindings.releaseBootstrapAbiHash,
-        PLATFORM_RELEASE_HOST_COMPOSITION_REQUIREMENT_V2
-          .operationBindings.metadataOperationAbiHash,
-        PLATFORM_RELEASE_HOST_COMPOSITION_REQUIREMENT_V2
-          .operationBindings.moduleExportOperationAbiHash,
-        PLATFORM_RELEASE_HOST_COMPOSITION_REQUIREMENT_V2
-          .operationBindings.networkOperationAbiHash,
-        PLATFORM_RELEASE_HOST_COMPOSITION_REQUIREMENT_V2
-          .operationBindings.verifierAbiHash,
+        PLATFORM_RELEASE_HOST_COMPOSITION_REQUIREMENT_V2.operationBindings
+          .releaseBootstrapAbiHash,
+        PLATFORM_RELEASE_HOST_COMPOSITION_REQUIREMENT_V2.operationBindings
+          .metadataOperationAbiHash,
+        PLATFORM_RELEASE_HOST_COMPOSITION_REQUIREMENT_V2.operationBindings
+          .moduleExportOperationAbiHash,
+        PLATFORM_RELEASE_HOST_COMPOSITION_REQUIREMENT_V2.operationBindings
+          .networkOperationAbiHash,
+        PLATFORM_RELEASE_HOST_COMPOSITION_REQUIREMENT_V2.operationBindings
+          .verifierAbiHash,
       ]),
+    );
+
+    const wrongTargetCwd = mutableClone(abiSet) as any;
+    const moduleExportOperation =
+      wrongTargetCwd.operations.find(
+        (entry: { abiRef: string }) =>
+          entry.abiRef
+            === "ABI_PLATFORM_RELEASE_MODULE_EXPORT_PROBE_V2",
+      );
+    assert.ok(moduleExportOperation);
+    moduleExportOperation.workingDirectoryPolicy =
+      "installed_owner_package_root_v2";
+    moduleExportOperation.operationHash =
+      hashPlatformReleaseBootstrapOperationAbiV2(
+        moduleExportOperation,
+      );
+    wrongTargetCwd.abiSetHash =
+      hashPlatformReleaseBootstrapOperationAbiSetV2(
+        wrongTargetCwd,
+      );
+    assert.equal(
+      PlatformReleaseBootstrapOperationAbiSetV2Schema
+        .safeParse(wrongTargetCwd).success,
+      false,
+    );
+
+    const wrongInstalledCwd = mutableClone(abiSet) as any;
+    const hostOperation = wrongInstalledCwd.operations.find(
+      (entry: { abiRef: string }) =>
+        entry.abiRef
+          === "ABI_PLATFORM_RELEASE_VERIFY_PACKAGE_V2",
+    );
+    assert.ok(hostOperation);
+    hostOperation.workingDirectoryPolicy =
+      "authenticated_target_root_v2";
+    hostOperation.operationHash =
+      hashPlatformReleaseBootstrapOperationAbiV2(
+        hostOperation,
+      );
+    wrongInstalledCwd.abiSetHash =
+      hashPlatformReleaseBootstrapOperationAbiSetV2(
+        wrongInstalledCwd,
+      );
+    assert.equal(
+      PlatformReleaseBootstrapOperationAbiSetV2Schema
+        .safeParse(wrongInstalledCwd).success,
+      false,
     );
   });
 
   it("binds every ABI input and output to exactly one wire contract", () => {
     const abiSet = PLATFORM_RELEASE_BOOTSTRAP_OPERATION_ABI_SET_V2;
     const wireSet = PLATFORM_RELEASE_BOOTSTRAP_WIRE_CONTRACT_SET_V2;
-    assert.equal(
-      abiSet.wireContractSetHash,
-      wireSet.contractSetHash,
-    );
+    assert.equal(abiSet.wireContractSetHash, wireSet.contractSetHash);
 
     const wireBySchemaRef = new Map(
       wireSet.schemas.map((entry) => [entry.schemaRef, entry]),
@@ -470,27 +597,28 @@ describe("platform release bootstrap contract v2", () => {
     for (const operation of abiSet.operations) {
       const inputContract = wireBySchemaRef.get(operation.inputSchema);
       const outputContract = wireBySchemaRef.get(operation.outputSchema);
-      const ownerPackage =
-        PLATFORM_RELEASE_BOOTSTRAP_CONTRACT_V2.packages
-          .find((entry) =>
-            entry.packageRef === operation.ownerPackageRef)!;
-      const executableMember = ownerPackage.members.find((entry) =>
-        entry.memberRef === operation.processExecutableMemberRef)!;
-      const implementationMember = ownerPackage.members.find((entry) =>
-        entry.memberRef === operation.implementationMemberRef)!;
+      const ownerPackage = PLATFORM_RELEASE_BOOTSTRAP_CONTRACT_V2.packages.find(
+        (entry) => entry.packageRef === operation.ownerPackageRef,
+      )!;
+      const executableMember = ownerPackage.members.find(
+        (entry) => entry.memberRef === operation.processExecutableMemberRef,
+      )!;
+      const implementationMember = ownerPackage.members.find(
+        (entry) => entry.memberRef === operation.implementationMemberRef,
+      )!;
       assert.ok(executableMember);
       assert.ok(implementationMember);
       assert.equal(
-        executableMember.role === "signed_native_executable"
-          || executableMember.role === "release_executable",
+        executableMember.role === "signed_native_executable" ||
+          executableMember.role === "release_executable",
         true,
       );
       assert.equal(
         operation.moduleExport === null
-          ? implementationMember.memberRef
-            === executableMember.memberRef
-          : implementationMember.requiredExports
-            .includes(operation.moduleExport),
+          ? implementationMember.memberRef === executableMember.memberRef
+          : implementationMember.requiredExports.includes(
+              operation.moduleExport,
+            ),
         true,
       );
       if (operation.implementationKind === "signed_native_executable") {
@@ -506,12 +634,13 @@ describe("platform release bootstrap contract v2", () => {
           "exact_node_runtime_then_release_executable_then_fixed_application_argv_v2",
         );
         const interpreterPackage =
-          PLATFORM_RELEASE_BOOTSTRAP_CONTRACT_V2.packages
-            .find((entry) =>
-              entry.packageRef === operation.interpreterPackageRef)!;
+          PLATFORM_RELEASE_BOOTSTRAP_CONTRACT_V2.packages.find(
+            (entry) => entry.packageRef === operation.interpreterPackageRef,
+          )!;
         assert.equal(
-          interpreterPackage.members.find((entry) =>
-            entry.memberRef === operation.interpreterMemberRef)?.role,
+          interpreterPackage.members.find(
+            (entry) => entry.memberRef === operation.interpreterMemberRef,
+          )?.role,
           "node_runtime",
         );
       }
@@ -550,7 +679,8 @@ describe("platform release bootstrap contract v2", () => {
     assert.throws(() =>
       getPlatformReleaseBootstrapWireSchemaContractV2(
         "setfarm.platform-release-unknown-input.v2",
-      ));
+      ),
+    );
   });
 
   it("parses only strict self-hashed wire messages and enforces field relations", () => {
@@ -572,14 +702,15 @@ describe("platform release bootstrap contract v2", () => {
     };
     const absent = {
       ...absentIdentity,
-      messageHash:
-        hashPlatformReleaseBootstrapWireMessageV2(
-          schemaRef,
-          absentIdentity,
-        ),
+      messageHash: hashPlatformReleaseBootstrapWireMessageV2(
+        schemaRef,
+        absentIdentity,
+      ),
     };
-    const parsed =
-      parsePlatformReleaseBootstrapWireMessageV2(schemaRef, absent);
+    const parsed = parsePlatformReleaseBootstrapWireMessageV2(
+      schemaRef,
+      absent,
+    );
     assert.deepEqual(parsed, absent);
     assert.ok(Object.isFrozen(parsed));
 
@@ -587,32 +718,32 @@ describe("platform release bootstrap contract v2", () => {
       ...absent,
       uid: "601",
     };
-    inconsistent.messageHash =
-      hashPlatformReleaseBootstrapWireMessageV2(
-        schemaRef,
-        inconsistent,
-      );
+    inconsistent.messageHash = hashPlatformReleaseBootstrapWireMessageV2(
+      schemaRef,
+      inconsistent,
+    );
     assert.throws(() =>
-      parsePlatformReleaseBootstrapWireMessageV2(
-        schemaRef,
-        inconsistent,
-      ));
+      parsePlatformReleaseBootstrapWireMessageV2(schemaRef, inconsistent),
+    );
 
     assert.throws(() =>
       parsePlatformReleaseBootstrapWireMessageV2(schemaRef, {
         ...absent,
         messageHash: "c".repeat(64),
-      }));
+      }),
+    );
     assert.throws(() =>
       parsePlatformReleaseBootstrapWireMessageV2(schemaRef, {
         ...absent,
         unexpected: true,
-      }));
+      }),
+    );
     assert.throws(() =>
       parsePlatformReleaseBootstrapWireMessageV2(
         "setfarm.platform-release-unknown-input.v2",
         absent,
-      ));
+      ),
+    );
 
     const outOfRangeIdentity = {
       ...absentIdentity,
@@ -626,17 +757,16 @@ describe("platform release bootstrap contract v2", () => {
     assert.throws(() =>
       parsePlatformReleaseBootstrapWireMessageV2(schemaRef, {
         ...outOfRangeIdentity,
-        messageHash:
-          hashPlatformReleaseBootstrapWireMessageV2(
-            schemaRef,
-            outOfRangeIdentity,
-          ),
-      }));
+        messageHash: hashPlatformReleaseBootstrapWireMessageV2(
+          schemaRef,
+          outOfRangeIdentity,
+        ),
+      }),
+    );
 
-    const applyContract =
-      getPlatformReleaseBootstrapWireSchemaContractV2(
-        "setfarm.platform-release-apply-local-account-input.v2",
-      );
+    const applyContract = getPlatformReleaseBootstrapWireSchemaContractV2(
+      "setfarm.platform-release-apply-local-account-input.v2",
+    );
     const applyFields = applyContract.fields.map((entry) => entry.name);
     assert.equal(applyFields.includes("uid"), false);
     assert.equal(applyFields.includes("gid"), false);
@@ -660,11 +790,10 @@ describe("platform release bootstrap contract v2", () => {
       planSchemaRef,
       {
         ...planIdentity,
-        messageHash:
-          hashPlatformReleaseBootstrapWireMessageV2(
-            planSchemaRef,
-            planIdentity,
-          ),
+        messageHash: hashPlatformReleaseBootstrapWireMessageV2(
+          planSchemaRef,
+          planIdentity,
+        ),
       },
     );
     assert.ok(Object.isFrozen(parsedPlan));
@@ -688,18 +817,16 @@ describe("platform release bootstrap contract v2", () => {
       intentHash: "9".repeat(64),
       hostIdentityHash: "a".repeat(64),
     };
-    const parsedPlanReceipt =
-      parsePlatformReleaseBootstrapWireMessageV2(
-        planReceiptSchemaRef,
-        {
-          ...planReceiptIdentity,
-          messageHash:
-            hashPlatformReleaseBootstrapWireMessageV2(
-              planReceiptSchemaRef,
-              planReceiptIdentity,
-            ),
-        },
-      );
+    const parsedPlanReceipt = parsePlatformReleaseBootstrapWireMessageV2(
+      planReceiptSchemaRef,
+      {
+        ...planReceiptIdentity,
+        messageHash: hashPlatformReleaseBootstrapWireMessageV2(
+          planReceiptSchemaRef,
+          planReceiptIdentity,
+        ),
+      },
+    );
     assert.ok(Object.isFrozen(parsedPlanReceipt));
 
     const repeatedObservationIdentity = {
@@ -708,67 +835,56 @@ describe("platform release bootstrap contract v2", () => {
         planReceiptIdentity.absenceObservationBeforeReceiptHash,
     };
     assert.throws(() =>
-      parsePlatformReleaseBootstrapWireMessageV2(
-        planReceiptSchemaRef,
-        {
+      parsePlatformReleaseBootstrapWireMessageV2(planReceiptSchemaRef, {
         ...repeatedObservationIdentity,
-        messageHash:
-          hashPlatformReleaseBootstrapWireMessageV2(
-            planReceiptSchemaRef,
-            repeatedObservationIdentity,
-          ),
-        },
-      ));
+        messageHash: hashPlatformReleaseBootstrapWireMessageV2(
+          planReceiptSchemaRef,
+          repeatedObservationIdentity,
+        ),
+      }),
+    );
 
     const unequalStateIdentity = {
       ...planReceiptIdentity,
       absenceObservationAfterStateHash: "b".repeat(64),
     };
     assert.throws(() =>
-      parsePlatformReleaseBootstrapWireMessageV2(
-        planReceiptSchemaRef,
-        {
-          ...unequalStateIdentity,
-          messageHash:
-            hashPlatformReleaseBootstrapWireMessageV2(
-              planReceiptSchemaRef,
-              unequalStateIdentity,
-            ),
-        },
-      ));
+      parsePlatformReleaseBootstrapWireMessageV2(planReceiptSchemaRef, {
+        ...unequalStateIdentity,
+        messageHash: hashPlatformReleaseBootstrapWireMessageV2(
+          planReceiptSchemaRef,
+          unequalStateIdentity,
+        ),
+      }),
+    );
   });
 
   it("models two physical system parents and one aliased xattr file", () => {
-    const system =
-      PLATFORM_RELEASE_BOOTSTRAP_CONTRACT_V2.systemAnchors;
+    const system = PLATFORM_RELEASE_BOOTSTRAP_CONTRACT_V2.systemAnchors;
     assert.deepEqual(
       system.parents.map((entry) => entry.absoluteLocator),
       ["/bin", "/usr/bin"],
     );
     assert.deepEqual(
       system.files.map((entry) => entry.absoluteLocator),
-      [
-        "/bin/chmod",
-        "/bin/ls",
-        "/usr/bin/sandbox-exec",
-        "/usr/bin/xattr",
-      ],
+      ["/bin/chmod", "/bin/ls", "/usr/bin/sandbox-exec", "/usr/bin/xattr"],
     );
     for (const file of system.files) {
-      const parent = system.parents.find((entry) =>
-        entry.parentRef === file.parentRef)!;
+      const parent = system.parents.find(
+        (entry) => entry.parentRef === file.parentRef,
+      )!;
       assert.equal(
         path.posix.dirname(file.absoluteLocator),
         parent.absoluteLocator,
       );
     }
     const xattrBindings = system.logicalBindings.filter((entry) =>
-      entry.roleRef.includes("XATTR_"));
+      entry.roleRef.includes("XATTR_"),
+    );
     assert.equal(xattrBindings.length, 2);
     assert.equal(xattrBindings[0]!.fileRef, xattrBindings[1]!.fileRef);
     assert.equal(
-      new Set(system.logicalBindings.map((entry) =>
-        entry.fileRef)).size,
+      new Set(system.logicalBindings.map((entry) => entry.fileRef)).size,
       4,
     );
   });
@@ -784,12 +900,10 @@ describe("platform release bootstrap contract v2", () => {
       userShell: "/usr/bin/false",
       passwordPolicy: "disabled_non_empty_marker_v2",
       hidden: true,
-      uidGidPolicy:
-        "lowest_equal_free_uid_gid_in_code_owned_range_v2",
+      uidGidPolicy: "lowest_equal_free_uid_gid_in_code_owned_range_v2",
       minimumUidGid: 600,
       maximumUidGid: 699,
-      lookupAbiRef:
-        "ABI_PLATFORM_RELEASE_LOOKUP_LOCAL_ACCOUNT_V2",
+      lookupAbiRef: "ABI_PLATFORM_RELEASE_LOOKUP_LOCAL_ACCOUNT_V2",
       mutationAbiRefs: [
         "ABI_PLATFORM_RELEASE_APPLY_LOCAL_ACCOUNT_V2",
         "ABI_PLATFORM_RELEASE_PLAN_LOCAL_ACCOUNT_V2",
@@ -797,17 +911,13 @@ describe("platform release bootstrap contract v2", () => {
       ],
       lifecyclePolicy:
         "double_absence_preclaim_native_mutation_double_observation_receipt_last_v2",
-      adoptionPolicy:
-        "receipt_or_matching_active_preclaim_only_v2",
+      adoptionPolicy: "receipt_or_matching_active_preclaim_only_v2",
     });
     assert.equal(
       contract.productionTrust.authorityState,
       "production_trust_configuration_unavailable",
     );
-    assert.equal(
-      contract.productionTrust.productionAdmission,
-      "forbidden",
-    );
+    assert.equal(contract.productionTrust.productionAdmission, "forbidden");
     assert.deepEqual(contract.productionTrust.blockerCodes, [
       "DEVELOPER_ID_TEAM_UNCONFIGURED",
       "DESIGNATED_REQUIREMENT_UNCONFIGURED",
@@ -816,14 +926,12 @@ describe("platform release bootstrap contract v2", () => {
       "SIGNED_NATIVE_DISTRIBUTION_CATALOG_EMPTY",
     ]);
     const serialized = JSON.stringify(contract.productionTrust);
-    assert.equal(serialized.includes("developerTeamId\":"), false);
-    assert.equal(serialized.includes("offlineReleasePublicKey\":"), false);
+    assert.equal(serialized.includes('developerTeamId":'), false);
+    assert.equal(serialized.includes('offlineReleasePublicKey":'), false);
   });
 
   it("rejects rehashed topology edits, unknown fields and attempted production promotion", () => {
-    const moved = mutableClone(
-      PLATFORM_RELEASE_BOOTSTRAP_CONTRACT_V2,
-    );
+    const moved = mutableClone(PLATFORM_RELEASE_BOOTSTRAP_CONTRACT_V2);
     moved.packages[0]!.root =
       "/Library/Application Support/Setfarm/bootstrap/forged-verifier";
     moved.contractHash = hashPlatformReleaseBootstrapContractV2(moved);
@@ -832,14 +940,13 @@ describe("platform release bootstrap contract v2", () => {
       false,
     );
 
-    const promoted = mutableClone(
-      PLATFORM_RELEASE_BOOTSTRAP_CONTRACT_V2,
-    );
-    (promoted.productionTrust as {
-      productionAdmission: string;
-    }).productionAdmission = "allowed";
-    promoted.contractHash =
-      hashPlatformReleaseBootstrapContractV2(promoted);
+    const promoted = mutableClone(PLATFORM_RELEASE_BOOTSTRAP_CONTRACT_V2);
+    (
+      promoted.productionTrust as {
+        productionAdmission: string;
+      }
+    ).productionAdmission = "allowed";
+    promoted.contractHash = hashPlatformReleaseBootstrapContractV2(promoted);
     assert.equal(
       PlatformReleaseBootstrapContractV2Schema.safeParse(promoted).success,
       false,
@@ -850,8 +957,7 @@ describe("platform release bootstrap contract v2", () => {
       pathOverride: "/tmp/forged",
     };
     assert.equal(
-      PlatformReleaseBootstrapContractV2Schema.safeParse(unknown)
-        .success,
+      PlatformReleaseBootstrapContractV2Schema.safeParse(unknown).success,
       false,
     );
 
@@ -860,15 +966,12 @@ describe("platform release bootstrap contract v2", () => {
     );
     changedAbi.operations[0]!.timeoutMs = 1;
     changedAbi.operations[0]!.operationHash =
-      hashPlatformReleaseBootstrapOperationAbiV2(
-        changedAbi.operations[0]!,
-      );
+      hashPlatformReleaseBootstrapOperationAbiV2(changedAbi.operations[0]!);
     changedAbi.abiSetHash =
       hashPlatformReleaseBootstrapOperationAbiSetV2(changedAbi);
     assert.equal(
-      PlatformReleaseBootstrapOperationAbiSetV2Schema.safeParse(
-        changedAbi,
-      ).success,
+      PlatformReleaseBootstrapOperationAbiSetV2Schema.safeParse(changedAbi)
+        .success,
       false,
     );
 
@@ -877,15 +980,12 @@ describe("platform release bootstrap contract v2", () => {
     );
     changedWire.schemas[0]!.maxCanonicalBytes = 1;
     changedWire.schemas[0]!.wireSchemaHash =
-      hashPlatformReleaseBootstrapWireSchemaContractV2(
-        changedWire.schemas[0]!,
-      );
+      hashPlatformReleaseBootstrapWireSchemaContractV2(changedWire.schemas[0]!);
     changedWire.contractSetHash =
       hashPlatformReleaseBootstrapWireContractSetV2(changedWire);
     assert.equal(
-      PlatformReleaseBootstrapWireContractSetV2Schema.safeParse(
-        changedWire,
-      ).success,
+      PlatformReleaseBootstrapWireContractSetV2Schema.safeParse(changedWire)
+        .success,
       false,
     );
 
@@ -902,30 +1002,37 @@ describe("platform release bootstrap contract v2", () => {
         changedRegistryProtocols,
       );
     assert.equal(
-      PlatformReleaseBootstrapRegistryDocumentProtocolCatalogV2Schema
-        .safeParse(changedRegistryProtocols).success,
+      PlatformReleaseBootstrapRegistryDocumentProtocolCatalogV2Schema.safeParse(
+        changedRegistryProtocols,
+      ).success,
       false,
     );
   });
 
   it("takes bounded plain-data snapshots without executing proxy or accessor traps", () => {
     let proxyTrapExecuted = false;
-    const proxy = new Proxy({}, {
-      ownKeys() {
-        proxyTrapExecuted = true;
-        throw new Error("proxy trap must not execute");
+    const proxy = new Proxy(
+      {},
+      {
+        ownKeys() {
+          proxyTrapExecuted = true;
+          throw new Error("proxy trap must not execute");
+        },
       },
-    });
+    );
     assert.throws(() =>
-      parsePlatformReleaseBootstrapContractCandidateV2(proxy));
+      parsePlatformReleaseBootstrapContractCandidateV2(proxy),
+    );
     assert.equal(proxyTrapExecuted, false);
     assert.throws(() =>
-      parsePlatformReleaseBootstrapWireContractSetCandidateV2(proxy));
+      parsePlatformReleaseBootstrapWireContractSetCandidateV2(proxy),
+    );
     assert.equal(proxyTrapExecuted, false);
     assert.throws(() =>
       parsePlatformReleaseBootstrapRegistryDocumentProtocolCatalogCandidateV2(
         proxy,
-      ));
+      ),
+    );
     assert.equal(proxyTrapExecuted, false);
 
     let getterExecuted = false;
@@ -938,25 +1045,27 @@ describe("platform release bootstrap contract v2", () => {
       },
     });
     assert.throws(() =>
-      parsePlatformReleaseBootstrapContractCandidateV2(accessor));
+      parsePlatformReleaseBootstrapContractCandidateV2(accessor),
+    );
     assert.equal(getterExecuted, false);
     assert.throws(() =>
       parsePlatformReleaseBootstrapWireMessageV2(
         "setfarm.platform-release-self-attest-input.v2",
         accessor,
-      ));
+      ),
+    );
     assert.equal(getterExecuted, false);
 
     const cyclic: Record<string, unknown> = {};
     cyclic.self = cyclic;
     assert.throws(() =>
-      parsePlatformReleaseBootstrapContractCandidateV2(cyclic));
+      parsePlatformReleaseBootstrapContractCandidateV2(cyclic),
+    );
     assert.throws(() =>
       parsePlatformReleaseBootstrapOperationAbiSetCandidateV2({
-        ...mutableClone(
-          PLATFORM_RELEASE_BOOTSTRAP_OPERATION_ABI_SET_V2,
-        ),
+        ...mutableClone(PLATFORM_RELEASE_BOOTSTRAP_OPERATION_ABI_SET_V2),
         oversized: "x".repeat(300 * 1024),
-      }));
+      }),
+    );
   });
 });

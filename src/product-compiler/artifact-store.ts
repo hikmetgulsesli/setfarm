@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { constants, type Stats } from "node:fs";
+import { constants, type BigIntStats } from "node:fs";
 import {
   lstat,
   link,
@@ -192,23 +192,25 @@ type ArtifactStoreReadTestHooks = Readonly<{
   }>) => void | Promise<void>;
 }>;
 
+type PhysicalObjectKind = "ordinary_file" | "directory";
 type ArtifactRootIdentity = Readonly<{
-  dev: number;
-  ino: number;
+  dev: bigint;
+  ino: bigint;
+  objectKind: PhysicalObjectKind;
 }>;
 
 type BatchDirectoryIdentity = Readonly<ArtifactRootIdentity & {
-  mode: number;
-  uid: number;
+  mode: bigint;
+  uid: bigint;
 }>;
 
 type BatchFileIdentity = Readonly<ArtifactRootIdentity & {
-  size: number;
-  mtimeMs: number;
-  ctimeMs: number;
-  mode: number;
-  uid: number;
-  nlink: number;
+  size: bigint;
+  mtimeNs: bigint;
+  ctimeNs: bigint;
+  mode: bigint;
+  uid: bigint;
+  nlink: bigint;
 }>;
 
 type StagedBatchItem = Readonly<{
@@ -280,25 +282,45 @@ function isNodeError(error: unknown, code: string): error is NodeJS.ErrnoExcepti
   return error instanceof Error && "code" in error && error.code === code;
 }
 
-function fileIdentity(value: Pick<Stats, "dev" | "ino">): ArtifactRootIdentity {
-  return { dev: value.dev, ino: value.ino };
+function physicalObjectKind(
+  value: Pick<BigIntStats, "isFile" | "isDirectory">,
+): PhysicalObjectKind | undefined {
+  if (value.isFile()) return "ordinary_file";
+  if (value.isDirectory()) return "directory";
+  return undefined;
+}
+
+function fileIdentity(value: BigIntStats): ArtifactRootIdentity {
+  const objectKind = physicalObjectKind(value);
+  if (objectKind === undefined || value.isSymbolicLink()) {
+    throw new ArtifactStoreError(
+      "ARTIFACT_UNSAFE_FILE_TYPE",
+      "Artifact physical identity requires one ordinary file or directory",
+    );
+  }
+  return Object.freeze({ dev: value.dev, ino: value.ino, objectKind });
 }
 
 function sameFileIdentity(
-  left: Pick<Stats, "dev" | "ino">,
-  right: Pick<Stats, "dev" | "ino">,
+  left: ArtifactRootIdentity,
+  right: ArtifactRootIdentity,
 ): boolean {
-  return left.dev === right.dev && left.ino === right.ino;
+  return left.dev === right.dev
+    && left.ino === right.ino
+    && left.objectKind === right.objectKind;
 }
 
 async function unlinkIfSameFile(
   target: string,
-  expected: Pick<Stats, "dev" | "ino"> | undefined,
+  expected: ArtifactRootIdentity | undefined,
 ): Promise<void> {
   if (!expected) return;
   try {
-    const current = await lstat(target);
-    if (sameFileIdentity(current, expected)) await unlink(target);
+    const current = await lstat(target, { bigint: true });
+    if (!sameFileIdentity(fileIdentity(current), expected)) return;
+    const beforeUnlink = await lstat(target, { bigint: true });
+    if (!sameFileIdentity(fileIdentity(beforeUnlink), expected)) return;
+    await unlink(target);
   } catch (error) {
     if (!isNodeError(error, "ENOENT")) throw error;
   }
@@ -341,27 +363,25 @@ async function syncDirectory(directory: string): Promise<void> {
   }
 }
 
-function currentUid(): number | undefined {
-  return typeof process.getuid === "function" ? process.getuid() : undefined;
+function currentUid(): bigint | undefined {
+  return typeof process.getuid === "function" ? BigInt(process.getuid()) : undefined;
 }
 
-function batchDirectoryIdentity(stats: Stats): BatchDirectoryIdentity {
+function batchDirectoryIdentity(stats: BigIntStats): BatchDirectoryIdentity {
   return Object.freeze({
-    dev: stats.dev,
-    ino: stats.ino,
-    mode: stats.mode & 0o7777,
+    ...fileIdentity(stats),
+    mode: stats.mode & 0o7777n,
     uid: stats.uid,
   });
 }
 
-function batchFileIdentity(stats: Stats): BatchFileIdentity {
+function batchFileIdentity(stats: BigIntStats): BatchFileIdentity {
   return Object.freeze({
-    dev: stats.dev,
-    ino: stats.ino,
+    ...fileIdentity(stats),
     size: stats.size,
-    mtimeMs: stats.mtimeMs,
-    ctimeMs: stats.ctimeMs,
-    mode: stats.mode & 0o7777,
+    mtimeNs: stats.mtimeNs,
+    ctimeNs: stats.ctimeNs,
+    mode: stats.mode & 0o7777n,
     uid: stats.uid,
     nlink: stats.nlink,
   });
@@ -382,22 +402,22 @@ function sameBatchFileIdentity(
 ): boolean {
   return sameFileIdentity(left, right)
     && left.size === right.size
-    && left.mtimeMs === right.mtimeMs
-    && left.ctimeMs === right.ctimeMs
+    && left.mtimeNs === right.mtimeNs
+    && left.ctimeNs === right.ctimeNs
     && left.mode === right.mode
     && left.uid === right.uid
     && left.nlink === right.nlink;
 }
 
 function assertPrivateBatchDirectory(
-  stats: Stats,
+  stats: BigIntStats,
   label: string,
   artifactHash: string,
 ): void {
   if (
     !stats.isDirectory()
     || stats.isSymbolicLink()
-    || (stats.mode & 0o7777) !== 0o700
+    || (stats.mode & 0o7777n) !== 0o700n
     || (currentUid() !== undefined && stats.uid !== currentUid())
   ) {
     throw new ArtifactStoreError(
@@ -409,16 +429,16 @@ function assertPrivateBatchDirectory(
 }
 
 function assertPrivateBatchFile(
-  stats: Stats,
+  stats: BigIntStats,
   label: string,
   artifactHash: string,
-  allowedLinks: readonly number[],
+  allowedLinks: readonly (number | bigint)[],
 ): void {
   if (
     !stats.isFile()
     || stats.isSymbolicLink()
-    || !allowedLinks.includes(stats.nlink)
-    || (stats.mode & 0o7777) !== 0o600
+    || !allowedLinks.some((link) => BigInt(link) === stats.nlink)
+    || (stats.mode & 0o7777n) !== 0o600n
     || (currentUid() !== undefined && stats.uid !== currentUid())
   ) {
     throw new ArtifactStoreError(
@@ -444,7 +464,7 @@ async function openBatchDirectory(
         | constants.O_NOFOLLOW
         | constants.O_NONBLOCK,
     );
-    const observed = await handle.stat();
+    const observed = await handle.stat({ bigint: true });
     assertPrivateBatchDirectory(observed, label, artifactHash);
     if (!sameBatchDirectoryIdentity(batchDirectoryIdentity(observed), expected)) {
       throw new ArtifactStoreError(
@@ -466,9 +486,9 @@ async function assertBatchDirectoryCurrent(
   label: string,
   artifactHash: string,
 ): Promise<void> {
-  let observed: Stats;
+  let observed: BigIntStats;
   try {
-    observed = await lstat(target);
+    observed = await lstat(target, { bigint: true });
   } catch (error) {
     throw new ArtifactStoreError(
       "ARTIFACT_ROOT_CHANGED_DURING_OPERATION",
@@ -515,11 +535,10 @@ async function readExactStagedBytes(
 ): Promise<BatchFileIdentity> {
   let handle;
   try {
-    const pathBefore = await lstat(target);
+    const pathBefore = await lstat(target, { bigint: true });
     assertPrivateBatchFile(pathBefore, "Artifact batch temp", artifactHash, [1]);
     if (
-      !Number.isSafeInteger(pathBefore.size)
-      || pathBefore.size !== expectedBytes.length
+      pathBefore.size !== BigInt(expectedBytes.length)
     ) {
       throw new ArtifactStoreError(
         "ARTIFACT_FILE_CHANGED_DURING_READ",
@@ -539,7 +558,7 @@ async function readExactStagedBytes(
       target,
       constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
     );
-    const before = await handle.stat();
+    const before = await handle.stat({ bigint: true });
     assertPrivateBatchFile(before, "Held artifact batch temp", artifactHash, [1]);
     if (!sameBatchFileIdentity(batchFileIdentity(before), identityBefore)) {
       throw new ArtifactStoreError(
@@ -548,7 +567,8 @@ async function readExactStagedBytes(
         { artifactHash },
       );
     }
-    const bytes = Buffer.allocUnsafe(before.size);
+    const size = Number(before.size);
+    const bytes = Buffer.allocUnsafe(size);
     let offset = 0;
     while (offset < bytes.length) {
       const read = await handle.read(bytes, offset, bytes.length - offset, offset);
@@ -556,11 +576,11 @@ async function readExactStagedBytes(
       offset += read.bytesRead;
     }
     const probe = Buffer.allocUnsafe(1);
-    const beyond = await handle.read(probe, 0, 1, before.size);
-    const after = await handle.stat();
-    const pathAfter = await lstat(target);
+    const beyond = await handle.read(probe, 0, 1, size);
+    const after = await handle.stat({ bigint: true });
+    const pathAfter = await lstat(target, { bigint: true });
     if (
-      offset !== before.size
+      offset !== size
       || beyond.bytesRead !== 0
       || !sameBatchFileIdentity(batchFileIdentity(after), identityBefore)
       || !sameBatchFileIdentity(batchFileIdentity(pathAfter), identityBefore)
@@ -640,7 +660,7 @@ export class ContentAddressedArtifactStore {
 
   private readonly lockTimeoutMs: number;
 
-  private bindRootIdentity(root: Stats, artifactHash: string): ArtifactRootIdentity {
+  private bindRootIdentity(root: BigIntStats, artifactHash: string): ArtifactRootIdentity {
     if (!root.isDirectory()) {
       throw new ArtifactStoreError(
         "ARTIFACT_UNSAFE_FILE_TYPE",
@@ -665,8 +685,8 @@ export class ContentAddressedArtifactStore {
     artifactHash: string,
   ): Promise<void> {
     try {
-      const current = await stat(this.root);
-      if (!current.isDirectory() || !sameFileIdentity(current, expected)) {
+      const current = await stat(this.root, { bigint: true });
+      if (!current.isDirectory() || !sameFileIdentity(fileIdentity(current), expected)) {
         throw new ArtifactStoreError(
           "ARTIFACT_ROOT_CHANGED_DURING_OPERATION",
           `Artifact root changed while operating on ${artifactHash}`,
@@ -698,8 +718,8 @@ export class ContentAddressedArtifactStore {
     await this.assertCurrentRoot(expected, artifactHash);
     try {
       const authorityPath = this.rootAuthorityPath ?? await realpath(this.root);
-      const authority = await stat(authorityPath);
-      if (!authority.isDirectory() || !sameFileIdentity(authority, expected)) {
+      const authority = await stat(authorityPath, { bigint: true });
+      if (!authority.isDirectory() || !sameFileIdentity(fileIdentity(authority), expected)) {
         throw new ArtifactStoreError(
           "ARTIFACT_ROOT_CHANGED_DURING_OPERATION",
           `Artifact root physical authority changed while operating on ${artifactHash}`,
@@ -744,7 +764,7 @@ export class ContentAddressedArtifactStore {
         );
         try {
           await providerLease.assertCurrent();
-          const rootBefore = await rootHandle.stat();
+          const rootBefore = await rootHandle.stat({ bigint: true });
           const rootIdentity = this.bindRootIdentity(rootBefore, artifactHash);
           const authorityPath = await this.authorityPathForRoot(rootIdentity, artifactHash);
           const lease = Object.freeze({
@@ -774,9 +794,9 @@ export class ContentAddressedArtifactStore {
       constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NONBLOCK,
     );
     let handle;
-    let lockIdentity: Stats | undefined;
+    let lockIdentity: ArtifactRootIdentity | undefined;
     try {
-      const rootBefore = await rootHandle.stat();
+      const rootBefore = await rootHandle.stat({ bigint: true });
       const rootIdentity = this.bindRootIdentity(rootBefore, artifactHash);
       const authorityPath = await this.authorityPathForRoot(rootIdentity, artifactHash);
       while (!handle) {
@@ -785,10 +805,10 @@ export class ContentAddressedArtifactStore {
           handle = await open(lockPath, "wx", 0o600);
           await handle.writeFile(token, "utf8");
           await handle.sync();
-          lockIdentity = await handle.stat();
+          lockIdentity = fileIdentity(await handle.stat({ bigint: true }));
           await this.assertCurrentRoot(rootIdentity, artifactHash);
-          const currentLock = await lstat(lockPath);
-          if (!currentLock.isFile() || !sameFileIdentity(currentLock, lockIdentity)) {
+          const currentLock = await lstat(lockPath, { bigint: true });
+          if (!currentLock.isFile() || !sameFileIdentity(fileIdentity(currentLock), lockIdentity)) {
             throw new ArtifactStoreError(
               "ARTIFACT_ROOT_CHANGED_DURING_OPERATION",
               `Artifact capacity lock path changed for ${artifactHash}`,
@@ -886,7 +906,7 @@ export class ContentAddressedArtifactStore {
         this.root,
         constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NONBLOCK,
       );
-      const rootBefore = await rootHandle.stat();
+      const rootBefore = await rootHandle.stat({ bigint: true });
       this.bindRootIdentity(rootBefore, artifactHash);
       try {
         handle = await open(
@@ -897,7 +917,7 @@ export class ContentAddressedArtifactStore {
         if (isNodeError(error, "ENOENT")) throw error;
         let entry;
         try {
-          entry = await lstat(target);
+          entry = await lstat(target, { bigint: true });
         } catch {
           // Classification must never replace the original operational error.
           // In particular, missing targets and inaccessible regular files keep
@@ -914,7 +934,7 @@ export class ContentAddressedArtifactStore {
         throw error;
       }
 
-      const before = await handle.stat();
+      const before = await handle.stat({ bigint: true });
       if (!before.isFile()) {
         throw new ArtifactStoreError(
           "ARTIFACT_UNSAFE_FILE_TYPE",
@@ -923,9 +943,8 @@ export class ContentAddressedArtifactStore {
         );
       }
       if (
-        !Number.isSafeInteger(before.size)
-        || before.size < 0
-        || before.size > this.limits.maxPayloadBytes
+        before.size < 0n
+        || before.size > BigInt(this.limits.maxPayloadBytes)
       ) {
         throw new ArtifactStoreError(
           "ARTIFACT_BOUNDED_READ_EXCEEDED",
@@ -934,13 +953,14 @@ export class ContentAddressedArtifactStore {
         );
       }
 
-      const bytes = Buffer.allocUnsafe(before.size);
+      const size = Number(before.size);
+      const bytes = Buffer.allocUnsafe(size);
       let byteLength = 0;
-      while (byteLength < before.size) {
+      while (byteLength < size) {
         const read = await handle.read(
           bytes,
           byteLength,
-          before.size - byteLength,
+          size - byteLength,
           byteLength,
         );
         if (read.bytesRead === 0) break;
@@ -954,15 +974,15 @@ export class ContentAddressedArtifactStore {
       });
 
       const probe = Buffer.allocUnsafe(1);
-      const probeRead = await handle.read(probe, 0, 1, before.size);
-      const after = await handle.stat();
-      const rootAfter = await rootHandle.stat();
+      const probeRead = await handle.read(probe, 0, 1, size);
+      const after = await handle.stat({ bigint: true });
+      const rootAfter = await rootHandle.stat({ bigint: true });
       let currentRoot;
       let currentTarget;
       try {
         [currentRoot, currentTarget] = await Promise.all([
-          stat(this.root),
-          lstat(target),
+          stat(this.root, { bigint: true }),
+          lstat(target, { bigint: true }),
         ]);
       } catch (error) {
         if (
@@ -979,8 +999,8 @@ export class ContentAddressedArtifactStore {
         throw error;
       }
       if (
-        after.size > this.limits.maxPayloadBytes
-        || (probeRead.bytesRead > 0 && before.size === this.limits.maxPayloadBytes)
+        after.size > BigInt(this.limits.maxPayloadBytes)
+        || (probeRead.bytesRead > 0 && before.size === BigInt(this.limits.maxPayloadBytes))
       ) {
         throw new ArtifactStoreError(
           "ARTIFACT_BOUNDED_READ_EXCEEDED",
@@ -990,13 +1010,13 @@ export class ContentAddressedArtifactStore {
       }
       if (
         !after.isFile()
-        || byteLength !== before.size
+        || byteLength !== size
         || probeRead.bytesRead !== 0
         || before.dev !== after.dev
         || before.ino !== after.ino
         || before.size !== after.size
-        || before.mtimeMs !== after.mtimeMs
-        || before.ctimeMs !== after.ctimeMs
+        || before.mtimeNs !== after.mtimeNs
+        || before.ctimeNs !== after.ctimeNs
         || !rootAfter.isDirectory()
         || !currentRoot.isDirectory()
         || rootBefore.dev !== rootAfter.dev
@@ -1080,7 +1100,7 @@ export class ContentAddressedArtifactStore {
     } catch (error) {
       if (!allowExisting || !isNodeError(error, "EEXIST")) throw error;
     }
-    const observed = await lstat(target);
+    const observed = await lstat(target, { bigint: true });
     assertPrivateBatchDirectory(observed, label, planIdentityHash);
     const identity = batchDirectoryIdentity(observed);
     const handle = await openBatchDirectory(
@@ -1194,8 +1214,8 @@ export class ContentAddressedArtifactStore {
         );
         for (const candidate of cleanupCandidates) {
           await lease.assertCurrent();
-          const current = await lstat(candidate.tempPath);
-          if (!sameFileIdentity(current, candidate.identity)) {
+          const current = await lstat(candidate.tempPath, { bigint: true });
+          if (!sameFileIdentity(fileIdentity(current), candidate.identity)) {
             throw new ArtifactStoreError(
               "ARTIFACT_FILE_CHANGED_DURING_READ",
               `Owned batch temp ${candidate.artifactHash} changed before cleanup`,
@@ -1208,15 +1228,15 @@ export class ContentAddressedArtifactStore {
             candidate.artifactHash,
             [1, 2],
           );
-          if (current.nlink === 2) {
-            const final = await lstat(candidate.authorityPath);
+          if (current.nlink === 2n) {
+            const final = await lstat(candidate.authorityPath, { bigint: true });
             assertPrivateBatchFile(
               final,
               "Owned artifact batch final alias",
               candidate.artifactHash,
               [2],
             );
-            if (!sameFileIdentity(current, final)) {
+            if (!sameFileIdentity(fileIdentity(current), fileIdentity(final))) {
               throw new ArtifactStoreError(
                 "ARTIFACT_FILE_CHANGED_DURING_READ",
                 `Owned batch temp ${candidate.artifactHash} has a foreign second link`,
@@ -1224,16 +1244,30 @@ export class ContentAddressedArtifactStore {
               );
             }
           }
+          const beforeUnlink = await lstat(candidate.tempPath, { bigint: true });
+          assertPrivateBatchFile(
+            beforeUnlink,
+            "Owned artifact batch temp",
+            candidate.artifactHash,
+            [1, 2],
+          );
+          if (!sameFileIdentity(fileIdentity(beforeUnlink), candidate.identity)) {
+            throw new ArtifactStoreError(
+              "ARTIFACT_FILE_CHANGED_DURING_READ",
+              `Owned batch temp ${candidate.artifactHash} changed immediately before cleanup`,
+              { artifactHash: candidate.artifactHash },
+            );
+          }
           await unlink(candidate.tempPath);
-          if (current.nlink === 2) {
-            const final = await lstat(candidate.authorityPath);
+          if (beforeUnlink.nlink === 2n) {
+            const final = await lstat(candidate.authorityPath, { bigint: true });
             assertPrivateBatchFile(
               final,
               "Finalized artifact batch alias",
               candidate.artifactHash,
               [1],
             );
-            if (!sameFileIdentity(final, candidate.identity)) {
+            if (!sameFileIdentity(fileIdentity(final), candidate.identity)) {
               throw new ArtifactStoreError(
                 "ARTIFACT_FILE_CHANGED_DURING_READ",
                 `Final artifact ${candidate.artifactHash} changed during temp cleanup`,
@@ -1257,6 +1291,19 @@ export class ContentAddressedArtifactStore {
         await attemptHandle.close();
         attemptHandle = undefined;
         await lease.assertCurrent();
+        const beforeRmdir = await lstat(attemptPath, { bigint: true });
+        assertPrivateBatchDirectory(
+          beforeRmdir,
+          "Artifact batch attempt",
+          prepared.planIdentityHash,
+        );
+        if (!sameFileIdentity(fileIdentity(beforeRmdir), attemptIdentity)) {
+          throw new ArtifactStoreError(
+            "ARTIFACT_ROOT_CHANGED_DURING_OPERATION",
+            "Artifact batch attempt changed immediately before cleanup",
+            { artifactHash: prepared.planIdentityHash },
+          );
+        }
         await rmdir(attemptPath);
         await syncDirectory(stagingPath!);
         await syncDirectory(lease.authorityPath);
@@ -1322,7 +1369,7 @@ export class ContentAddressedArtifactStore {
                 0o600,
               );
               await handle.chmod(0o600);
-              const created = await handle.stat();
+              const created = await handle.stat({ bigint: true });
               assertPrivateBatchFile(
                 created,
                 "New artifact batch temp",
@@ -1396,8 +1443,8 @@ export class ContentAddressedArtifactStore {
                 await link(entry.tempPath, entry.authorityPath);
                 created = true;
                 const [tempStats, finalStats] = await Promise.all([
-                  lstat(entry.tempPath),
-                  lstat(entry.authorityPath),
+                  lstat(entry.tempPath, { bigint: true }),
+                  lstat(entry.authorityPath, { bigint: true }),
                 ]);
                 assertPrivateBatchFile(
                   tempStats,
@@ -1411,7 +1458,7 @@ export class ContentAddressedArtifactStore {
                   entry.item.identity.hash,
                   [2],
                 );
-                if (!sameFileIdentity(tempStats, finalStats)) {
+                if (!sameFileIdentity(fileIdentity(tempStats), fileIdentity(finalStats))) {
                   throw new ArtifactStoreError(
                     "ARTIFACT_FILE_CHANGED_DURING_READ",
                     `Artifact ${entry.item.identity.hash} did not retain its staged inode`,
@@ -1506,12 +1553,19 @@ export class ContentAddressedArtifactStore {
         if (
           !this.capacityLeaseProvider
           && stagingPath
+          && stagingIdentity
           && (cleanupCompleted || !attemptPath)
         ) {
           try {
             await lease.assertCurrent();
             await assertBatchDirectoryEmpty(
               stagingPath,
+              "Artifact batch staging root",
+              prepared.planIdentityHash,
+            );
+            await assertBatchDirectoryCurrent(
+              stagingPath,
+              stagingIdentity,
               "Artifact batch staging root",
               prepared.planIdentityHash,
             );
@@ -1772,8 +1826,8 @@ export class ContentAddressedArtifactStore {
           storedByOrdinal[ordinal] = read.stored;
           identityByOrdinal[ordinal] = read.identity;
           if (
-            read.identity.nlink !== 1
-            || (read.identity.mode & 0o7777) !== 0o600
+            read.identity.nlink !== 1n
+            || (read.identity.mode & 0o7777n) !== 0o600n
             || (currentUid() !== undefined && read.identity.uid !== currentUid())
           ) {
             issues.push(Object.freeze({
@@ -1827,7 +1881,7 @@ export class ContentAddressedArtifactStore {
         if (!expected) continue;
         const artifactHash = hashes[ordinal]!;
         try {
-          const current = await lstat(this.pathFor(artifactHash));
+          const current = await lstat(this.pathFor(artifactHash), { bigint: true });
           if (!sameBatchFileIdentity(batchFileIdentity(current), expected)) {
             throw new ArtifactStoreError(
               "ARTIFACT_ROOT_CHANGED_DURING_OPERATION",
@@ -1878,7 +1932,7 @@ export class ContentAddressedArtifactStore {
     this.assertInventoryCapability();
     if (!this.capacityLeaseProvider) {
       try {
-        await lstat(this.root);
+        await lstat(this.root, { bigint: true });
       } catch (error) {
         if (isNodeError(error, "ENOENT")) {
           return work(Object.freeze({

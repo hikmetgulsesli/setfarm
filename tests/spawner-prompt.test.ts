@@ -8,14 +8,14 @@ import {
   buildClaimSummary,
   buildResolvedClaimBootstrapScript,
   buildPreclaimedPrompt,
-} from "../dist/spawner-prompt.js";
-import { legacyOutputFileTransportV1 } from "../dist/execution/agent-tool-policy.js";
-import { createV3StageClaimHandoffV1 } from "../dist/execution/v3-stage-execution-context.js";
+} from "../src/spawner-prompt.js";
+import { legacyOutputFileTransportV1 } from "../src/execution/agent-tool-policy.js";
+import { createV3StageClaimHandoffV1 } from "../src/execution/v3-stage-execution-context.js";
 import {
   createV3StageFailureV1,
   createV3StageRetrySourceV1,
   serializeV3StageFailureDiagnostic,
-} from "../dist/execution/v3-stage-retry-authority.js";
+} from "../src/execution/v3-stage-retry-authority.js";
 
 describe("spawner prompt bootstrap", () => {
   it("emits a copy-safe first exec command instead of an inline jq shell blob", () => {

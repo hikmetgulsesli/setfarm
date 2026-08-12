@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { isVerifyRetryInfraFailure, isVerifyRetryMergeBlocker, isVerifyRetryQualityFailure } from "../dist/installer/verify-retry-routing.js";
+import { isVerifyRetryInfraFailure, isVerifyRetryMergeBlocker, isVerifyRetryQualityFailure } from "../src/installer/verify-retry-routing.js";
 
 describe("verify retry routing", () => {
   it("routes actionable verify retry reports back to implement", () => {

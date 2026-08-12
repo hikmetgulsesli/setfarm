@@ -251,17 +251,17 @@ describe("PlatformReleaseManifestV2 candidate authority boundary", () => {
           "e270a58af84c476b5c292fb55bcd28126d2dd0b0df753305133876b266868571",
         sourceBytes: 10_594,
         toolchainHash:
-          "a6eeba3328ce8762e3234a15660ef51473be8fb38f3faa00c7913e623d8592f6",
-        toolchainBytes: 9_615,
+          "997e5925ebfd4c014487cdda1a31215f504f5c13fef0abf71ff9edbc2dc2311d",
+        toolchainBytes: 9_700,
         firstBuildHash:
-          "2b40a10ca8d0bb2483d4defff60418c2524fbca1c653d524d02c4c52998b05ab",
+          "d1bf11be3da2aaff123712db17ac1012bba5404bb54efdeadbac63b333653ed7",
         firstBuildBytes: 11_945,
         secondBuildHash:
-          "5fb5c0266b58276585d1c34a02491f89c2161f83333c087efdae94b3fa1ad340",
+          "45fe9fa714d0e5d945f1b3f55255b247e51109d329e9c025b073b1831393eaf5",
         secondBuildBytes: 11_946,
         attestationHash:
-          "747a21bd44d6a9fc621bf17f509d35c8f51bf16e923844c87d1a77b6d1bd4b01",
-        attestationBytes: 44_936,
+          "f14e249005f5f76376a58972e708c3e00d0297b4554c423c893fab953736da6b",
+        attestationBytes: 45_021,
         attestationCap: 1_048_576,
       },
     );

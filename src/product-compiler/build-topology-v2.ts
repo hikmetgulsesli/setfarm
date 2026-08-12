@@ -18,6 +18,7 @@ import {
   inspectScaffoldBaseMaterializationReceiptV2,
   isProductionNodeScaffoldPrivateStageV2,
   revalidateNodeScaffoldDependenciesV2,
+  revalidateNodeScaffoldStageHostToolchainLogicalIdentityInternalV3,
   type MaterializedNodeScaffoldPrivateStageV2,
 } from "./node-scaffold-private-materializer-v2.js";
 import {
@@ -63,6 +64,8 @@ import type { NodeExecutionLayoutV2 } from
   "./schemas/node-execution-layout-catalog-v2.js";
 import type { BuildDependencyMaterializationReceiptV2 } from
   "./schemas/node-scaffold-private-materialization-v2.js";
+import type { HostNodeToolchainLogicalProjectionV3 } from
+  "./schemas/host-node-toolchain-receipt-v2.js";
 import type { NodeScaffoldToolchainEntryV2 } from
   "./schemas/node-scaffold-toolchain-catalog-v2.js";
 import {
@@ -235,6 +238,7 @@ function tokenBySlotV2(
 
 function buildLogicalDependencyV2(
   receipt: Readonly<BuildDependencyMaterializationReceiptV2>,
+  hostToolchain: HostNodeToolchainLogicalProjectionV3,
 ): BuildTopologyLogicalDependencyV2 {
   return {
     catalogHash: receipt.catalogBinding.catalogHash,
@@ -242,8 +246,8 @@ function buildLogicalDependencyV2(
     dependencyGraphHash: receipt.catalogBinding.dependencyGraphHash,
     environmentContractHash: receipt.environmentBinding.environmentContractHash,
     effectiveConfigHash: receipt.environmentBinding.effectiveConfigHash,
-    nodeIdentityHash: receipt.hostToolchain.nodeIdentityHash,
-    npmClosureHash: receipt.hostToolchain.npmClosureHash,
+    nodeRuntimeLogicalHash: hostToolchain.nodeRuntimeLogicalHash,
+    npmClosureLogicalHash: hostToolchain.npmClosureLogicalHash,
     npmVersion: receipt.hostToolchain.npmVersion,
     installDirectArgvHash: receipt.installExecution.directArgvHash,
     graph: {
@@ -421,9 +425,13 @@ function buildTopologyV2(input: Readonly<{
   fresh: FreshAuthorityV2;
   fileTree: Readonly<FileTreeManifestV2>;
   dependency: Readonly<BuildDependencyMaterializationReceiptV2>;
+  hostToolchain: HostNodeToolchainLogicalProjectionV3;
 }>): BuildTopologyV2 {
-  const { fresh, fileTree, dependency } = input;
-  const logicalDependency = buildLogicalDependencyV2(dependency);
+  const { fresh, fileTree, dependency, hostToolchain } = input;
+  const logicalDependency = buildLogicalDependencyV2(
+    dependency,
+    hostToolchain,
+  );
   const logicalDependencyHash = hashBuildTopologyLogicalDependencyV2(
     logicalDependency,
   );
@@ -689,6 +697,10 @@ async function compileInternalV2(
           candidate: parsed.data.fileTree,
         });
     const dependency = await revalidateNodeScaffoldDependenciesV2(handle);
+    const hostToolchain =
+      await revalidateNodeScaffoldStageHostToolchainLogicalIdentityInternalV3(
+        handle,
+      );
     const inspectedDependency = inspectBuildDependencyMaterializationReceiptV2(handle);
     const base = inspectScaffoldBaseMaterializationReceiptV2(handle);
     const fresh = reproduceFreshAuthorityV2({
@@ -708,6 +720,7 @@ async function compileInternalV2(
       fresh,
       fileTree: verifiedFileTree.value,
       dependency,
+      hostToolchain,
     }));
     let canonicalBytes: Buffer;
     try {

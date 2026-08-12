@@ -14,6 +14,10 @@ import {
   type RuntimeCompletionPlanV1,
 } from "./schemas/runtime-completion-plan-v1.js";
 import {
+  loadAndRevalidateV3StoryClaimRuntimeBindingV1,
+  type V3StoryClaimRuntimeSubjectV1,
+} from "./v3-story-claim-runtime-binding-v1.js";
+import {
   RuntimeCompletionSubmissionEvidenceV1Schema,
   type RuntimeCompletionSubmissionEvidenceV1,
 } from "./schemas/runtime-completion-submission-evidence-v1.js";
@@ -23,11 +27,15 @@ import { currentRuntimeCompletionOwnerCapability } from "./runtime-completion-ow
 import { compileV3ImplementationTransportProposalV1 } from "./v3-implementation-output.js";
 import { compileV3ImplementationCompletionProposal } from "./v3-implementation-completion.js";
 import { v3RecoveryStoryLockIdentity } from "../recovery/v3-recovery-claim-authority.js";
+import { assertRuntimeCompletionManifestInTransactionV1 } from "./runtime-completion-manifest-authority-v1.js";
 
 type Sql = postgres.Sql;
 type TransactionSql = postgres.TransactionSql;
 
 const RuntimeCompletionRequestIdSchema = z.string().regex(/^RCR_[A-Za-z0-9-]{16,160}$/);
+const RuntimeCompletionRecoveryOwnerInstanceIdV1Schema = z.string().regex(
+  /^setfarm-runtime-completion-recovery:v1:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+);
 const RuntimeCompletionStateSchema = z.enum([
   "requested",
   "draining",
@@ -43,12 +51,15 @@ const RuntimeCompletionApplyPhaseSchema = z.enum([
   "effects_committed",
 ]);
 
+const MAX_RUNTIME_COMPLETION_PLAN_BYTES_V1 = 4_000_000;
+const MAX_RUNTIME_COMPLETION_EFFECT_PAYLOAD_BYTES_V1 = 4_000_000;
+
 export {
   RuntimeCompletionSubmissionEvidenceV1Schema,
   type RuntimeCompletionSubmissionEvidenceV1,
 } from "./schemas/runtime-completion-submission-evidence-v1.js";
 
-type RuntimeCompletionRow = Readonly<{
+export type RuntimeCompletionRow = Readonly<{
   request_id: string;
   runtime_session_id: string;
   claim_id: string;
@@ -156,7 +167,9 @@ function objectValue(value: unknown, code: string): Record<string, unknown> {
   return parsed as Record<string, unknown>;
 }
 
-function mapRequest(row: RuntimeCompletionRow): RuntimeCompletionRequest {
+export function mapRuntimeCompletionRequestRowV1(
+  row: RuntimeCompletionRow,
+): RuntimeCompletionRequest {
   const envelope = parseClaimEnvelope(
     typeof row.claim_envelope === "string" ? JSON.parse(row.claim_envelope) : row.claim_envelope,
   );
@@ -228,8 +241,31 @@ function mapRequest(row: RuntimeCompletionRow): RuntimeCompletionRequest {
   });
 }
 
+const mapRequest = mapRuntimeCompletionRequestRowV1;
+
+export async function findRuntimeCompletionRequestByIdV1(
+  sql: postgres.Sql | postgres.TransactionSql,
+  requestId: string,
+): Promise<RuntimeCompletionRequest | undefined> {
+  const rows = await sql.unsafe<RuntimeCompletionRow[]>(
+    "SELECT * FROM runtime_completion_requests WHERE request_id = $1 LIMIT 1",
+    [RuntimeCompletionRequestIdSchema.parse(requestId)],
+  );
+  return rows[0] ? mapRuntimeCompletionRequestRowV1(rows[0]) : undefined;
+}
+
 export function newRuntimeCompletionRequestId(): string {
   return `RCR_${randomUUID()}`;
+}
+
+export function isRuntimeCompletionRecoveryOwnerInstanceIdV1(value: string): boolean {
+  return RuntimeCompletionRecoveryOwnerInstanceIdV1Schema.safeParse(value).success;
+}
+
+function newRuntimeCompletionRecoveryOwnerInstanceIdV1(): string {
+  return RuntimeCompletionRecoveryOwnerInstanceIdV1Schema.parse(
+    `setfarm-runtime-completion-recovery:v1:${randomUUID()}`,
+  );
 }
 
 export type RequestRuntimeCompletionResult =
@@ -338,6 +374,49 @@ export async function markRuntimeCompletionOwnerCommittedInTransaction(
     descriptor,
     preparedAt: wallClock,
   });
+  const preparedPlanBytes = Buffer.byteLength(
+    canonicalJsonStringify(prepared.plan),
+    "utf8",
+  );
+  if (preparedPlanBytes < 2 || preparedPlanBytes > MAX_RUNTIME_COMPLETION_PLAN_BYTES_V1) {
+    throw new Error("RUNTIME_COMPLETION_OWNER_COMMIT_PLAN_SIZE_INVALID");
+  }
+  if (prepared.plan.effects.some((effect, index) => effect.ordinal !== index)) {
+    throw new Error("RUNTIME_COMPLETION_OWNER_COMMIT_EFFECT_ORDER_INVALID");
+  }
+  const preparedEffects = prepared.plan.effects.map((effect) => {
+    const effectPayload = {
+      schema: "setfarm.runtime-completion-effect-input.v1" as const,
+      planHash: prepared.planHash,
+      plan: prepared.plan,
+      effect: effect.payload,
+    };
+    return Object.freeze({
+      effect,
+      effectPayload,
+      inputHash: hashCanonicalJson(effectPayload),
+      byteLength: Buffer.byteLength(canonicalJsonStringify(effectPayload), "utf8"),
+    });
+  });
+  const aggregateEffectBytes = preparedEffects.reduce(
+    (total, effect) => total + effect.byteLength,
+    0,
+  );
+  if (aggregateEffectBytes < 2
+    || aggregateEffectBytes > MAX_RUNTIME_COMPLETION_EFFECT_PAYLOAD_BYTES_V1) {
+    throw new Error("RUNTIME_COMPLETION_OWNER_COMMIT_EFFECT_PAYLOAD_SIZE_INVALID");
+  }
+  const preexistingEffects = await sql.unsafe<Array<{ effect_key: string }>>(
+    `SELECT effect_key
+       FROM runtime_completion_effects
+      WHERE request_id = $1
+      ORDER BY ordinal, effect_key
+      LIMIT 1`,
+    [current.request_id],
+  );
+  if (preexistingEffects.length !== 0) {
+    throw new Error("RUNTIME_COMPLETION_OWNER_COMMIT_EFFECT_PRESEED_DETECTED");
+  }
   const updated = await sql.unsafe<Array<{ request_id: string }>>(
     `UPDATE runtime_completion_requests
         SET apply_phase = 'owner_committed', claim_outcome = $2,
@@ -367,30 +446,63 @@ export async function markRuntimeCompletionOwnerCommittedInTransaction(
     ],
   );
   if (updated.length !== 1) throw new Error("RUNTIME_COMPLETION_OWNER_COMMIT_CAS_LOST");
-  for (const effect of prepared.plan.effects) {
-    const effectPayload = {
-      schema: "setfarm.runtime-completion-effect-input.v1",
-      planHash: prepared.planHash,
-      plan: prepared.plan,
-      effect: effect.payload,
-    };
-    await sql.unsafe(
+  for (const preparedEffect of preparedEffects) {
+    const { effect, effectPayload, inputHash } = preparedEffect;
+    const insertedEffects = await sql.unsafe<Array<{ effect_key: string }>>(
       `INSERT INTO runtime_completion_effects (
          request_id, effect_key, ordinal, effect_type, input_hash,
          payload, mandatory, state, created_at, updated_at
        ) VALUES ($1, $2, $3, $4, $5, $6::text::jsonb, $7, 'pending', $8, $8)
-       ON CONFLICT (request_id, effect_key) DO NOTHING`,
+       RETURNING effect_key`,
       [
         current.request_id,
         effect.effectKey,
         effect.ordinal,
         effect.effectType,
-        hashCanonicalJson(effectPayload),
+        inputHash,
         JSON.stringify(effectPayload),
         effect.mandatory,
         wallClock,
       ],
     );
+    if (insertedEffects.length !== 1 || insertedEffects[0]!.effect_key !== effect.effectKey) {
+      throw new Error("RUNTIME_COMPLETION_OWNER_COMMIT_EFFECT_INSERT_FAILED");
+    }
+  }
+  const storedEffects = await sql.unsafe<Array<{
+    effect_key: string;
+    ordinal: number;
+    effect_type: string;
+    input_hash: string;
+    payload: unknown;
+    mandatory: boolean;
+  }>>(
+    `SELECT effect_key, ordinal, effect_type, input_hash, payload, mandatory
+       FROM runtime_completion_effects
+      WHERE request_id = $1
+      ORDER BY ordinal, effect_key
+      LIMIT $2`,
+    [current.request_id, prepared.plan.effects.length + 1],
+  );
+  if (storedEffects.length !== prepared.plan.effects.length) {
+    throw new Error("RUNTIME_COMPLETION_OWNER_COMMIT_EFFECT_CENSUS_INVALID");
+  }
+  for (const [index, stored] of storedEffects.entries()) {
+    const expected = prepared.plan.effects[index]!;
+    const expectedPayload = {
+      schema: "setfarm.runtime-completion-effect-input.v1",
+      planHash: prepared.planHash,
+      plan: prepared.plan,
+      effect: expected.payload,
+    };
+    if (stored.effect_key !== expected.effectKey
+      || stored.ordinal !== expected.ordinal
+      || stored.effect_type !== expected.effectType
+      || stored.mandatory !== expected.mandatory
+      || stored.input_hash !== hashCanonicalJson(expectedPayload)
+      || hashCanonicalJson(stored.payload) !== hashCanonicalJson(expectedPayload)) {
+      throw new Error("RUNTIME_COMPLETION_OWNER_COMMIT_EFFECT_BINDING_INVALID");
+    }
   }
   const outboxEventKey = `runtime-completion/${current.request_id}/owner-committed`;
   await sql.unsafe(
@@ -672,6 +784,27 @@ export async function requestRuntimeCompletion(
     if (claimOwner.claim_outcome !== null) throw new Error("RUNTIME_COMPLETION_OWNER_NOT_ACTIVE");
     const owner = { ...runtimeOwner, ...claimOwner };
 
+    let boundStorySubject: V3StoryClaimRuntimeSubjectV1 | undefined;
+    if (envelope.protocol === "v3"
+      && (envelope.workflowStepId === "implement" || envelope.workflowStepId === "supervise")) {
+      boundStorySubject = await loadAndRevalidateV3StoryClaimRuntimeBindingV1(transaction, {
+        claimId: envelope.claimId,
+        runtimeSessionId: runtimeOwner.runtime_session_id,
+        runId: envelope.runId,
+        stepDbId: envelope.stepId,
+        workflowStepId: envelope.workflowStepId,
+      });
+      if (envelope.workflowStepId === "implement") {
+        if (boundStorySubject.kind !== "story_member"
+          || envelope.storyDbId !== boundStorySubject.storyDbId
+          || envelope.storyId !== boundStorySubject.storyId) {
+          throw new Error("RUNTIME_COMPLETION_STORY_BINDING_ENVELOPE_MISMATCH");
+        }
+      } else if (envelope.storyDbId || envelope.storyId || envelope.attempt) {
+        throw new Error("RUNTIME_COMPLETION_SUPERVISE_ENVELOPE_STORY_FORBIDDEN");
+      }
+    }
+
     const existing = await transaction.unsafe<RuntimeCompletionRow[]>(
       "SELECT * FROM runtime_completion_requests WHERE claim_id = $1 LIMIT 1 FOR UPDATE",
       [envelope.claimId],
@@ -697,9 +830,12 @@ export async function requestRuntimeCompletion(
         WHERE id = $1 AND run_id = $2 AND step_id = $3 FOR UPDATE`,
       [envelope.stepId, envelope.runId, envelope.workflowStepId],
     );
+    const expectedStepStoryDbId = boundStorySubject?.kind === "story_member"
+      ? boundStorySubject.storyDbId
+      : envelope.storyDbId ?? null;
     if (
       steps[0]?.status !== "running"
-      || steps[0].current_story_id !== (envelope.storyDbId ?? null)
+      || steps[0].current_story_id !== expectedStepStoryDbId
     ) throw new Error("RUNTIME_COMPLETION_OWNER_NOT_ACTIVE");
     // The step is the final lock in the publication chain. Read a volatile DB
     // wall clock only now: waiting on any earlier owner/step lock must be able
@@ -749,8 +885,12 @@ export async function requestRuntimeCompletion(
         envelope.runId,
         envelope.stepId,
         envelope.workflowStepId,
-        envelope.storyDbId ?? null,
-        envelope.storyId ?? null,
+        boundStorySubject?.kind === "story_member"
+          ? boundStorySubject.storyDbId
+          : envelope.storyDbId ?? null,
+        boundStorySubject?.kind === "story_member"
+          ? boundStorySubject.storyId
+          : envelope.storyId ?? null,
         envelope.attempt?.attemptId ?? null,
         JSON.stringify(envelope),
         output,
@@ -965,13 +1105,8 @@ async function lockRuntimeCompletionChainInTransaction(
 }
 
 export function createRuntimeCompletionRepository(sql: Sql) {
-  const findById = async (requestId: string): Promise<RuntimeCompletionRequest | undefined> => {
-    const rows = await sql.unsafe<RuntimeCompletionRow[]>(
-      "SELECT * FROM runtime_completion_requests WHERE request_id = $1 LIMIT 1",
-      [RuntimeCompletionRequestIdSchema.parse(requestId)],
-    );
-    return rows[0] ? mapRequest(rows[0]) : undefined;
-  };
+  const findById = (requestId: string): Promise<RuntimeCompletionRequest | undefined> =>
+    findRuntimeCompletionRequestByIdV1(sql, requestId);
 
   return Object.freeze({
     findById,
@@ -1145,13 +1280,29 @@ export function createRuntimeCompletionRepository(sql: Sql) {
           && claimOutcome !== null
           && ["owner_committed", "effects_committed"].includes(request.apply_phase)
         ) {
+          // The pre-owner attempt count is intentionally bounded by the frozen
+          // v8 schema. Once the owner receipt is durable, fence every recovery
+          // generation with a fresh internal owner identity instead of
+          // incrementing that exhausted pre-commit budget.
+          const recoveryOwnerInstanceId = newRuntimeCompletionRecoveryOwnerInstanceIdV1();
           const adopted = await transaction.unsafe<RuntimeCompletionRow[]>(
             `UPDATE runtime_completion_requests
                 SET owner_instance_id = $2, lease_expires_at = $3,
-                    owner_attempt_count = owner_attempt_count + 1, updated_at = $1
+                    updated_at = $1
               WHERE request_id = $4 AND state = 'processing'
+                AND apply_phase = $5
+                AND owner_attempt_count = $6
+                AND owner_instance_id = $7
               RETURNING *`,
-            [wallClock, input.ownerInstanceId, new Date(wallClock.getTime() + leaseMs), request.request_id],
+            [
+              wallClock,
+              recoveryOwnerInstanceId,
+              new Date(wallClock.getTime() + leaseMs),
+              request.request_id,
+              request.apply_phase,
+              request.owner_attempt_count,
+              request.owner_instance_id,
+            ],
           );
           if (adopted.length !== 1) throw new Error("RUNTIME_COMPLETION_RECOVERY_CAS_LOST");
           return {
@@ -1311,21 +1462,10 @@ export function createRuntimeCompletionRepository(sql: Sql) {
           !exactOwner
           || current.apply_phase !== "owner_committed"
         ) throw new Error("RUNTIME_COMPLETION_EFFECTS_COMMIT_OWNER_MISMATCH");
-        const effectCounts = await transaction.unsafe<Array<{ total: number; unsettled: number }>>(
-          `SELECT COUNT(*) FILTER (WHERE mandatory)::integer AS total,
-                  COUNT(*) FILTER (
-                    WHERE mandatory AND state NOT IN ('applied', 'reconciled')
-                  )::integer AS unsettled
-             FROM runtime_completion_effects
-            WHERE request_id = $1`,
-          [current.request_id],
-        );
-        if ((effectCounts[0]?.total ?? 0) === 0) {
-          throw new Error("RUNTIME_COMPLETION_MANDATORY_EFFECT_MANIFEST_MISSING");
-        }
-        if ((effectCounts[0]?.unsettled ?? 0) > 0) {
-          throw new Error(`RUNTIME_COMPLETION_MANDATORY_EFFECTS_PENDING:${effectCounts[0]!.unsettled}`);
-        }
+        await assertRuntimeCompletionManifestInTransactionV1(transaction, {
+          requestId: current.request_id,
+          requireSettledMandatoryEffects: true,
+        });
         const rows = await transaction.unsafe<RuntimeCompletionRow[]>(
           `UPDATE runtime_completion_requests
               SET apply_phase = 'effects_committed', effects_committed_at = $3,

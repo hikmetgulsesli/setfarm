@@ -318,6 +318,39 @@ describe("Platform release source admission V2", () => {
     }
   });
 
+  it("keeps exact decimal stage identity across a changed working directory", () => {
+    const fixture = createRepositoryFixture();
+    let handle: AdmittedPlatformReleaseSourceStageV2 | undefined;
+    const previousWorkingDirectory = process.cwd();
+    try {
+      process.chdir(fixture.root);
+      handle = admitPlatformReleaseSourceV2ForTest({
+        repositoryRoot: fixture.repository,
+      });
+      const inspected =
+        inspectPlatformReleaseSourceAdmissionCandidateV2(handle);
+      const identity = inspected.testEvidence?.exportedSource.stageAfter;
+      assert.ok(identity);
+      assert.match(identity.device, /^\d+$/);
+      assert.match(identity.inode, /^\d+$/);
+      withPlatformReleaseSourceStageForTestV2(
+        handle,
+        (stageRoot) => {
+          const observed = lstatSync(stageRoot, { bigint: true });
+          assert.equal(identity.device, String(observed.dev));
+          assert.equal(identity.inode, String(observed.ino));
+          assert.equal(BigInt(identity.ownerUid), observed.uid);
+          assert.equal(BigInt(identity.ownerGid), observed.gid);
+          return undefined;
+        },
+      );
+    } finally {
+      process.chdir(previousWorkingDirectory);
+      if (handle) disposePlatformReleaseSourceStageV2(handle);
+      removeFixture(fixture);
+    }
+  });
+
   it("reproduces identical content evidence in independent physical stages", () => {
     const fixture = createRepositoryFixture();
     const handles: AdmittedPlatformReleaseSourceStageV2[] = [];

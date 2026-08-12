@@ -9,6 +9,9 @@ export const CONTRACT_SPINE_SEMANTIC_MIGRATION_DIGESTS = Object.freeze({
   24: "62fd9d92eaceffee527aa734b1ae91b17594e4898750b0468bbe9d6acd9b75b4",
   25: "bd2aaf747f7937bddd8ccad9d6dfce9dad2eb467f3910aa01e8346cc82ce301f",
   26: "ad37c7710fae8f8eb9f1ff518368e67e20599ac7c316781261eef328738a67d9",
+  27: "6c88521537665a21e0167373b12f35215aac3cd74eb06978b162a04ab7f4fb89",
+  28: "cb6b68777f143c1b55ad38e66d42254745241b82e95a8e06e4898bb047ddfdcd",
+  29: "b0a2cb9163bc87a6e9e45f8ba230c55821c85d14458697b72b2a6e17d7dcb305",
 } as const);
 
 export type ContractSpineSemanticMigrationVersion =

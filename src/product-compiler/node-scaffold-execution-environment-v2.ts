@@ -3,22 +3,29 @@ import {
   chmodSync,
   closeSync,
   constants,
+  fchmodSync,
+  fstatSync,
   fsyncSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
   openSync,
-  readFileSync,
-  readdirSync,
+  opendirSync,
+  readSync,
   realpathSync,
-  rmSync,
+  rmdirSync,
+  unlinkSync,
   writeSync,
+  type BigIntStats,
   type Stats,
 } from "node:fs";
 import path from "node:path";
 import { isProxy } from "node:util/types";
 
 import { hashCanonicalJson } from "./canonical-json.js";
+import {
+  matchesExactStableFilesystemObjectV2,
+} from "./exact-stable-filesystem-identity-v2.js";
 import {
   HostNodeToolchainAuthorityErrorV2,
   acquireHostNodeRuntimeLaunchContextInternalV2,
@@ -67,6 +74,8 @@ import {
 import {
   HOST_NODE_TOOLCHAIN_AUTHORITY_REF_V2,
   HOST_NODE_TOOLCHAIN_RECEIPT_V2_SCHEMA,
+  projectHostNodeToolchainLogicalIdentityV3,
+  type HostNodeToolchainLogicalProjectionV3,
   type HostNodeToolchainReceiptV2,
 } from "./schemas/host-node-toolchain-receipt-v2.js";
 import {
@@ -131,6 +140,24 @@ type FingerprintV2 = Readonly<{
   changedMs: number;
 }>;
 
+type PrivateCleanupObjectKindV2 =
+  | "directory"
+  | "ordinary_file"
+  | "symbolic_link";
+
+type PrivateCleanupMemberV2 = Readonly<{
+  locator: string;
+  objectKind: PrivateCleanupObjectKindV2;
+  device: string;
+  inode: string;
+  ownerUid: string;
+  ownerGid: string;
+}>;
+
+type PrivateCleanupCensusV2 = Readonly<{
+  members: readonly PrivateCleanupMemberV2[];
+}>;
+
 type PrivateMaterializationCaptureV2 = Readonly<{
   privateRoot: string;
   rootFingerprint: FingerprintV2;
@@ -139,6 +166,7 @@ type PrivateMaterializationCaptureV2 = Readonly<{
   ownerGid: number;
   userNpmrc: PrivateNpmrcIdentityV2;
   globalNpmrc: PrivateNpmrcIdentityV2;
+  cleanupCensus: PrivateCleanupCensusV2;
   privateIdentityHash: string;
 }>;
 
@@ -153,6 +181,7 @@ type MutableLifecycleV2 = {
     | "runtime_handoff_claimed"
     | "runtime_handoff_consumed"
     | "destroyed";
+  cleanupCensus: PrivateCleanupCensusV2;
 };
 
 type PrivateEnvironmentStateV2 = Readonly<{
@@ -167,6 +196,7 @@ type PrivateEnvironmentStateV2 = Readonly<{
   effectiveNpmConfigReceipt: EffectiveNpmConfigReceiptV2;
   receipt: NodeScaffoldExecutionEnvironmentReceiptV2;
   lifecycle: MutableLifecycleV2;
+  cleanupTestHooks?: NodeScaffoldExecutionEnvironmentTestHooksV2;
 }>;
 
 const environmentConstructorCapabilityV2 = Object.freeze({});
@@ -198,6 +228,74 @@ function fail(
     message,
     cause === undefined ? undefined : { cause },
   );
+}
+
+function runWithIndependentFinalizersV2<T>(input: Readonly<{
+  operation: () => T;
+  finalizers: readonly (() => void)[];
+  onFinalizerFailure: (errors: readonly unknown[]) => never;
+}>): T {
+  const primaryErrors: unknown[] = [];
+  let result: T | undefined;
+  try {
+    result = input.operation();
+  } catch (error) {
+    primaryErrors.push(error);
+  }
+  const finalizerErrors: unknown[] = [];
+  for (const finalizer of input.finalizers) {
+    try {
+      finalizer();
+    } catch (error) {
+      finalizerErrors.push(error);
+    }
+  }
+  if (finalizerErrors.length > 0) {
+    return input.onFinalizerFailure([...primaryErrors, ...finalizerErrors]);
+  }
+  if (primaryErrors.length > 0) throw primaryErrors[0];
+  return result as T;
+}
+
+function readBoundedDirectoryNamesV2(input: Readonly<{
+  absolutePath: string;
+  locator: string;
+  maxNames: number;
+  errorCode: NodeScaffoldExecutionEnvironmentErrorCodeV2;
+  beforeRead?: () => void;
+  afterClose?: () => void;
+}>): readonly string[] {
+  const names: string[] = [];
+  const directory = opendirSync(input.absolutePath);
+  return runWithIndependentFinalizersV2({
+    operation: () => {
+      input.beforeRead?.();
+      let entry = directory.readSync();
+      while (entry !== null) {
+        names.push(entry.name);
+        if (names.length > input.maxNames) {
+          return fail(
+            input.errorCode,
+            `Directory ${input.locator} exceeded its fixed membership bound`,
+          );
+        }
+        entry = directory.readSync();
+      }
+      return names.sort();
+    },
+    finalizers: [() => {
+      directory.closeSync();
+      input.afterClose?.();
+    }],
+    onFinalizerFailure: (errors) => fail(
+      input.errorCode,
+      `Directory ${input.locator} read or descriptor close failed`,
+      new AggregateError(
+        errors,
+        `Directory ${input.locator} read and descriptor finalization failures`,
+      ),
+    ),
+  });
 }
 
 function sha256(value: string | Uint8Array): string {
@@ -236,6 +334,449 @@ function sameFingerprint(left: FingerprintV2, right: FingerprintV2): boolean {
     && left.byteLength === right.byteLength
     && left.modifiedMs === right.modifiedMs
     && left.changedMs === right.changedMs;
+}
+
+function assertExactPrivateRootStableIdentityV2(
+  privateRoot: string,
+  expected: FingerprintV2,
+): void {
+  let stat: BigIntStats;
+  try {
+    stat = lstatSync(privateRoot, { bigint: true });
+  } catch (error) {
+    return fail(
+      "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_STATE_DRIFT",
+      "Private execution environment root identity could not be captured exactly before destruction",
+      error,
+    );
+  }
+  if (
+    !matchesExactStableFilesystemObjectV2({
+      stat,
+      expected,
+      objectKind: "directory",
+    })
+    || stat.uid !== BigInt(expected.ownerUid)
+    || stat.gid !== BigInt(expected.ownerGid)
+  ) {
+    return fail(
+      "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_STATE_DRIFT",
+      "Refusing to destroy a private execution environment root with changed exact identity",
+    );
+  }
+}
+
+const PRIVATE_CLEANUP_MAX_MEMBERS_V2 = 65_536 as const;
+const PRIVATE_CLEANUP_MAX_DEPTH_V2 = 64 as const;
+
+function privateCleanupObjectKindV2(
+  stat: BigIntStats,
+): PrivateCleanupObjectKindV2 | undefined {
+  if (stat.isSymbolicLink()) return "symbolic_link";
+  if (stat.isDirectory()) return "directory";
+  if (stat.isFile()) return "ordinary_file";
+  return undefined;
+}
+
+function capturePrivateCleanupMemberV2(
+  absolutePath: string,
+  locator: string,
+  ownerUid: string,
+  ownerGid: string,
+): PrivateCleanupMemberV2 {
+  const stat = lstatSync(absolutePath, { bigint: true });
+  const objectKind = privateCleanupObjectKindV2(stat);
+  if (
+    objectKind === undefined
+    || String(stat.uid) !== ownerUid
+    || String(stat.gid) !== ownerGid
+  ) {
+    return fail(
+      "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_STATE_DRIFT",
+      `Private cleanup member ${locator} has a forbidden kind or ownership`,
+    );
+  }
+  return Object.freeze({
+    locator,
+    objectKind,
+    device: String(stat.dev),
+    inode: String(stat.ino),
+    ownerUid: String(stat.uid),
+    ownerGid: String(stat.gid),
+  });
+}
+
+function boundedPrivateCleanupNamesV2(
+  absoluteDirectory: string,
+  locator: string,
+  hooks?: NodeScaffoldExecutionEnvironmentTestHooksV2,
+): readonly string[] {
+  return readBoundedDirectoryNamesV2({
+    absolutePath: absoluteDirectory,
+    locator,
+    maxNames: PRIVATE_CLEANUP_MAX_MEMBERS_V2,
+    errorCode: "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_STATE_DRIFT",
+    beforeRead: () => hooks?.beforeCleanupCensusDirectoryRead?.(locator),
+    afterClose: () => hooks?.afterCleanupCensusDirectoryClose?.(locator),
+  });
+}
+
+function capturePrivateCleanupCensusV2(
+  privateRoot: string,
+  hooks?: NodeScaffoldExecutionEnvironmentTestHooksV2,
+): PrivateCleanupCensusV2 {
+  const rootStat = lstatSync(privateRoot, { bigint: true });
+  if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) {
+    return fail(
+      "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_STATE_DRIFT",
+      "Private cleanup root is not one direct directory",
+    );
+  }
+  const ownerUid = String(rootStat.uid);
+  const ownerGid = String(rootStat.gid);
+  const members: PrivateCleanupMemberV2[] = [];
+  const visit = (absolutePath: string, locator: string, depth: number): void => {
+    if (
+      depth > PRIVATE_CLEANUP_MAX_DEPTH_V2
+      || Buffer.byteLength(locator, "utf8") > 4_096
+      || members.length >= PRIVATE_CLEANUP_MAX_MEMBERS_V2
+    ) {
+      return fail(
+        "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_STATE_DRIFT",
+        "Private cleanup census exceeded its fixed path or membership bound",
+      );
+    }
+    const member = capturePrivateCleanupMemberV2(
+      absolutePath,
+      locator,
+      ownerUid,
+      ownerGid,
+    );
+    members.push(member);
+    if (member.objectKind !== "directory") return;
+    for (const name of boundedPrivateCleanupNamesV2(absolutePath, locator, hooks)) {
+      visit(
+        path.join(absolutePath, name),
+        locator === "." ? name : `${locator}/${name}`,
+        depth + 1,
+      );
+    }
+  };
+  visit(privateRoot, ".", 0);
+  return Object.freeze({
+    members: Object.freeze(members.sort((left, right) =>
+      left.locator < right.locator ? -1 : left.locator > right.locator ? 1 : 0)),
+  });
+}
+
+function extendPrivateCleanupCensusWithCreatedMemberV2(input: Readonly<{
+  privateRoot: string;
+  current: PrivateCleanupCensusV2 | undefined;
+  absolutePath: string;
+  locator: string;
+}>): PrivateCleanupCensusV2 {
+  if (input.current?.members.some((member) => member.locator === input.locator)) {
+    return fail(
+      "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_STATE_DRIFT",
+      `Private cleanup journal already contains ${input.locator}`,
+    );
+  }
+  if (
+    input.locator !== "."
+    && !input.current?.members.some((member) => member.locator === ".")
+  ) {
+    return fail(
+      "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_STATE_DRIFT",
+      `Private cleanup journal lacks its root before adding ${input.locator}`,
+    );
+  }
+  if ((input.current?.members.length ?? 0) >= PRIVATE_CLEANUP_MAX_MEMBERS_V2) {
+    return fail(
+      "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_STATE_DRIFT",
+      "Private cleanup journal exceeded its fixed membership bound",
+    );
+  }
+  const root = input.current?.members.find((member) => member.locator === ".");
+  const rootStat = root === undefined
+    ? lstatSync(input.privateRoot, { bigint: true })
+    : undefined;
+  const member = capturePrivateCleanupMemberV2(
+    input.absolutePath,
+    input.locator,
+    root?.ownerUid ?? String(rootStat!.uid),
+    root?.ownerGid ?? String(rootStat!.gid),
+  );
+  return Object.freeze({
+    members: Object.freeze([
+      ...(input.current?.members ?? []),
+      member,
+    ].sort((left, right) =>
+      left.locator < right.locator ? -1 : left.locator > right.locator ? 1 : 0)),
+  });
+}
+
+function samePrivateCleanupCensusV2(
+  left: PrivateCleanupCensusV2,
+  right: PrivateCleanupCensusV2,
+): boolean {
+  return left.members.length === right.members.length
+    && left.members.every((member, index) => {
+      const expected = right.members[index];
+      return expected !== undefined
+        && member.locator === expected.locator
+        && member.objectKind === expected.objectKind
+        && member.device === expected.device
+        && member.inode === expected.inode
+        && member.ownerUid === expected.ownerUid
+        && member.ownerGid === expected.ownerGid;
+    });
+}
+
+function assertPrivateCleanupMemberV2(
+  privateRoot: string,
+  expected: PrivateCleanupMemberV2,
+): string {
+  const absolutePath = expected.locator === "."
+    ? privateRoot
+    : path.join(privateRoot, ...expected.locator.split("/"));
+  const current = capturePrivateCleanupMemberV2(
+    absolutePath,
+    expected.locator,
+    expected.ownerUid,
+    expected.ownerGid,
+  );
+  if (!samePrivateCleanupCensusV2(
+    { members: [current] },
+    { members: [expected] },
+  )) {
+    return fail(
+      "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_STATE_DRIFT",
+      `Private cleanup member ${expected.locator} changed before removal`,
+    );
+  }
+  return absolutePath;
+}
+
+function makePrivateCleanupDirectoryWritableV2(
+  privateRoot: string,
+  expected: PrivateCleanupMemberV2,
+  hooks?: NodeScaffoldExecutionEnvironmentTestHooksV2,
+  onModeChange?: (entry: Readonly<{
+    expected: PrivateCleanupMemberV2;
+    originalMode: number;
+  }>) => void,
+): void {
+  const absolutePath = assertPrivateCleanupMemberV2(privateRoot, expected);
+  let descriptor: number | undefined;
+  const operationErrors: unknown[] = [];
+  try {
+    descriptor = openSync(
+      absolutePath,
+      constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW,
+    );
+    const stat = fstatSync(descriptor, { bigint: true });
+    if (
+      !stat.isDirectory()
+      || String(stat.dev) !== expected.device
+      || String(stat.ino) !== expected.inode
+      || String(stat.uid) !== expected.ownerUid
+      || String(stat.gid) !== expected.ownerGid
+    ) {
+      return fail(
+        "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_STATE_DRIFT",
+        `Private cleanup directory ${expected.locator} changed before descriptor-bound chmod`,
+      );
+    }
+    const originalMode = Number(stat.mode & 0o7777n);
+    if (originalMode !== 0o700) {
+      onModeChange?.(Object.freeze({ expected, originalMode }));
+      fchmodSync(descriptor, 0o700);
+    }
+    hooks?.afterCleanupDirectoryWritable?.(expected.locator);
+  } catch (error) {
+    operationErrors.push(error);
+  }
+  const closeErrors: unknown[] = [];
+  if (descriptor !== undefined) {
+    try {
+      closeSync(descriptor);
+      hooks?.afterCleanupDirectoryDescriptorClose?.(expected.locator);
+    } catch (error) {
+      closeErrors.push(error);
+    }
+  }
+  if (operationErrors.length === 1 && closeErrors.length === 0) {
+    const [operationError] = operationErrors;
+    if (operationError instanceof NodeScaffoldExecutionEnvironmentErrorV2) {
+      throw operationError;
+    }
+    return fail(
+      "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_STATE_DRIFT",
+      `Private cleanup directory ${expected.locator} could not be made writable through its exact descriptor`,
+      operationError,
+    );
+  }
+  const errors = [...operationErrors, ...closeErrors];
+  if (errors.length > 0) {
+    return fail(
+      "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_STATE_DRIFT",
+      `Private cleanup directory ${expected.locator} mutation or descriptor close failed`,
+      errors.length === 1
+        ? errors[0]
+        : new AggregateError(
+          errors,
+          "Private cleanup directory mutation and descriptor close both failed",
+        ),
+    );
+  }
+  assertPrivateCleanupMemberV2(privateRoot, expected);
+}
+
+function restorePrivateCleanupDirectoryModeV2(
+  privateRoot: string,
+  entry: Readonly<{
+    expected: PrivateCleanupMemberV2;
+    originalMode: number;
+  }>,
+): void {
+  const absolutePath = entry.expected.locator === "."
+    ? privateRoot
+    : path.join(privateRoot, ...entry.expected.locator.split("/"));
+  try {
+    lstatSync(absolutePath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw error;
+  }
+  let descriptor: number | undefined;
+  return runWithIndependentFinalizersV2({
+    operation: () => {
+      descriptor = openSync(
+        absolutePath,
+        constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW,
+      );
+      const before = fstatSync(descriptor, { bigint: true });
+      if (
+        !before.isDirectory()
+        || String(before.dev) !== entry.expected.device
+        || String(before.ino) !== entry.expected.inode
+        || String(before.uid) !== entry.expected.ownerUid
+        || String(before.gid) !== entry.expected.ownerGid
+      ) {
+        return fail(
+          "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_STATE_DRIFT",
+          `Private cleanup directory ${entry.expected.locator} changed before mode restoration`,
+        );
+      }
+      fchmodSync(descriptor, entry.originalMode);
+      const after = fstatSync(descriptor, { bigint: true });
+      const pathAfter = lstatSync(absolutePath, { bigint: true });
+      if (
+        String(after.dev) !== entry.expected.device
+        || String(after.ino) !== entry.expected.inode
+        || String(pathAfter.dev) !== entry.expected.device
+        || String(pathAfter.ino) !== entry.expected.inode
+        || Number(after.mode & 0o7777n) !== entry.originalMode
+        || Number(pathAfter.mode & 0o7777n) !== entry.originalMode
+      ) {
+        return fail(
+          "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_STATE_DRIFT",
+          `Private cleanup directory ${entry.expected.locator} did not retain its original mode`,
+        );
+      }
+    },
+    finalizers: [() => {
+      if (descriptor !== undefined) closeSync(descriptor);
+    }],
+    onFinalizerFailure: (errors) => fail(
+      "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_STATE_DRIFT",
+      `Private cleanup directory ${entry.expected.locator} mode restore or descriptor close failed`,
+      new AggregateError(
+        errors,
+        "Private cleanup directory mode restoration and descriptor finalization failures",
+      ),
+    ),
+  });
+}
+
+function destroyPrivateCleanupCensusV2(
+  privateRoot: string,
+  expected: PrivateCleanupCensusV2,
+  hooks?: NodeScaffoldExecutionEnvironmentTestHooksV2,
+): void {
+  const modeJournal = new Map<string, Readonly<{
+    expected: PrivateCleanupMemberV2;
+    originalMode: number;
+  }>>();
+  const primaryErrors: unknown[] = [];
+  try {
+    const current = capturePrivateCleanupCensusV2(privateRoot, hooks);
+    if (!samePrivateCleanupCensusV2(current, expected)) {
+      return fail(
+        "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_STATE_DRIFT",
+        "Private cleanup census no longer equals every-and-only captured membership",
+      );
+    }
+    const directories = expected.members.filter((member) =>
+      member.objectKind === "directory");
+    for (const directory of directories) {
+      makePrivateCleanupDirectoryWritableV2(
+        privateRoot,
+        directory,
+        hooks,
+        (entry) => modeJournal.set(entry.expected.locator, entry),
+      );
+    }
+    for (const leaf of expected.members.filter((member) =>
+      member.objectKind !== "directory")) {
+      const absolutePath = assertPrivateCleanupMemberV2(privateRoot, leaf);
+      unlinkSync(absolutePath);
+      assertMissingPathV2(absolutePath, `Destroyed private cleanup member ${leaf.locator}`);
+    }
+    const deepestFirst = directories.slice().sort((left, right) =>
+      (right.locator === "." ? 0 : right.locator.split("/").length)
+        - (left.locator === "." ? 0 : left.locator.split("/").length));
+    for (const directory of deepestFirst) {
+      const absolutePath = assertPrivateCleanupMemberV2(privateRoot, directory);
+      if (readBoundedDirectoryNamesV2({
+        absolutePath,
+        locator: directory.locator,
+        maxNames: 0,
+        errorCode: "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_STATE_DRIFT",
+      }).length !== 0) {
+        return fail(
+          "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_STATE_DRIFT",
+          `Private cleanup directory ${directory.locator} is not empty`,
+        );
+      }
+      rmdirSync(absolutePath);
+      assertMissingPathV2(
+        absolutePath,
+        `Destroyed private cleanup directory ${directory.locator}`,
+      );
+    }
+  } catch (error) {
+    primaryErrors.push(error);
+  }
+  const restoreErrors: unknown[] = [];
+  for (const entry of [...modeJournal.values()].reverse()) {
+    try {
+      restorePrivateCleanupDirectoryModeV2(privateRoot, entry);
+    } catch (error) {
+      restoreErrors.push(error);
+    }
+  }
+  if (restoreErrors.length > 0) {
+    return fail(
+      "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_STATE_DRIFT",
+      "Private cleanup could not restore every surviving directory mode",
+      new AggregateError(
+        [...primaryErrors, ...restoreErrors],
+        "Private cleanup operation and directory mode restoration failures",
+      ),
+    );
+  }
+  if (primaryErrors.length > 0) throw primaryErrors[0];
 }
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
@@ -284,31 +825,53 @@ function defensiveCopy<T>(value: T): T {
 }
 
 function syncDirectoryV2(absolutePath: string): void {
-  const descriptor = openSync(absolutePath, constants.O_RDONLY);
-  try {
-    fsyncSync(descriptor);
-  } finally {
-    closeSync(descriptor);
-  }
+  let descriptor: number | undefined;
+  return runWithIndependentFinalizersV2({
+    operation: () => {
+      descriptor = openSync(absolutePath, constants.O_RDONLY);
+      fsyncSync(descriptor);
+    },
+    finalizers: [() => {
+      if (descriptor !== undefined) closeSync(descriptor);
+    }],
+    onFinalizerFailure: (errors) => fail(
+      "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_MATERIALIZATION_FAILED",
+      `Private directory ${absolutePath} sync or descriptor close failed`,
+      new AggregateError(errors, "Private directory sync and descriptor finalization failures"),
+    ),
+  });
 }
 
-function writeBlankNpmrcV2(absolutePath: string): void {
-  const descriptor = openSync(
-    absolutePath,
-    constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW,
-    0o600,
-  );
-  try {
-    if (writeSync(descriptor, Buffer.from("\n", "utf8")) !== 1) {
-      fail(
-        "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_MATERIALIZATION_FAILED",
-        "Private npmrc write was incomplete",
+function writeBlankNpmrcV2(
+  absolutePath: string,
+  onCreated: () => void,
+): void {
+  let descriptor: number | undefined;
+  return runWithIndependentFinalizersV2({
+    operation: () => {
+      descriptor = openSync(
+        absolutePath,
+        constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW,
+        0o600,
       );
-    }
-    fsyncSync(descriptor);
-  } finally {
-    closeSync(descriptor);
-  }
+      onCreated();
+      if (writeSync(descriptor, Buffer.from("\n", "utf8")) !== 1) {
+        fail(
+          "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_MATERIALIZATION_FAILED",
+          "Private npmrc write was incomplete",
+        );
+      }
+      fsyncSync(descriptor);
+    },
+    finalizers: [() => {
+      if (descriptor !== undefined) closeSync(descriptor);
+    }],
+    onFinalizerFailure: (errors) => fail(
+      "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_MATERIALIZATION_FAILED",
+      `Private npmrc ${absolutePath} write or descriptor close failed`,
+      new AggregateError(errors, "Private npmrc write and descriptor finalization failures"),
+    ),
+  });
 }
 
 function assertMissingPathV2(absolutePath: string, label: string): void {
@@ -336,10 +899,50 @@ function privateNpmrcIdentityV2(
     ? "user.npmrc" as const
     : "global.npmrc" as const;
   const absolutePath = path.join(privateRoot, normalizedPrivateLocator);
-  const before = lstatSync(absolutePath);
-  const bytes = readFileSync(absolutePath);
-  const after = lstatSync(absolutePath);
   const owner = processOwnerV2();
+  let descriptor: number | undefined;
+  const captured = runWithIndependentFinalizersV2({
+    operation: () => {
+      descriptor = openSync(
+        absolutePath,
+        constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+      );
+      const before = fstatSync(descriptor);
+      if (before.size !== 1) {
+        return fail(
+          "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_PRIVATE_ROOT_INVALID",
+          `${normalizedPrivateLocator} is outside its exact byte bound`,
+        );
+      }
+      const bytes = Buffer.alloc(1);
+      const byteLength = readSync(descriptor, bytes, 0, 1, null);
+      const growthProbe = Buffer.allocUnsafe(1);
+      const growthCount = readSync(descriptor, growthProbe, 0, 1, null);
+      const after = fstatSync(descriptor);
+      const pathAfter = lstatSync(absolutePath);
+      if (
+        byteLength !== 1
+        || growthCount !== 0
+        || !sameFingerprint(fingerprint(before), fingerprint(after))
+        || !sameFingerprint(fingerprint(after), fingerprint(pathAfter))
+      ) {
+        return fail(
+          "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_PRIVATE_ROOT_INVALID",
+          `${normalizedPrivateLocator} changed while it was captured`,
+        );
+      }
+      return Object.freeze({ before, after, bytes });
+    },
+    finalizers: [() => {
+      if (descriptor !== undefined) closeSync(descriptor);
+    }],
+    onFinalizerFailure: (errors) => fail(
+      "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_PRIVATE_ROOT_INVALID",
+      `${normalizedPrivateLocator} read or descriptor close failed`,
+      new AggregateError(errors, "Private npmrc read and descriptor finalization failures"),
+    ),
+  });
+  const { before, after, bytes } = captured;
   if (
     before.isSymbolicLink()
     || !before.isFile()
@@ -348,7 +951,6 @@ function privateNpmrcIdentityV2(
     || before.uid !== owner.uid
     || before.gid !== owner.gid
     || before.nlink !== 1
-    || !sameFingerprint(fingerprint(before), fingerprint(after))
     || bytes.length !== 1
     || bytes[0] !== 0x0a
     || sha256(bytes) !== NODE_SCAFFOLD_PRIVATE_NPMRC_CONTENT_HASH_V2
@@ -386,7 +988,12 @@ function capturePrivateMaterializationV2(privateRoot: string): PrivateMaterializ
       || modeBits(rootStat) !== 0o700
       || rootStat.uid !== owner.uid
       || rootStat.gid !== owner.gid
-      || JSON.stringify(readdirSync(privateRoot).sort())
+      || JSON.stringify(readBoundedDirectoryNamesV2({
+        absolutePath: privateRoot,
+        locator: ".",
+        maxNames: PRIVATE_LAYOUT_NAMES_V2.length,
+        errorCode: "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_PRIVATE_ROOT_INVALID",
+      }))
         !== JSON.stringify([...PRIVATE_LAYOUT_NAMES_V2])
     ) {
       return fail(
@@ -404,7 +1011,12 @@ function capturePrivateMaterializationV2(privateRoot: string): PrivateMaterializ
         || modeBits(stat) !== 0o700
         || stat.uid !== owner.uid
         || stat.gid !== owner.gid
-        || readdirSync(absolutePath).length !== 0
+        || readBoundedDirectoryNamesV2({
+          absolutePath,
+          locator: name,
+          maxNames: 0,
+          errorCode: "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_PRIVATE_ROOT_INVALID",
+        }).length !== 0
       ) {
         fail(
           "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_PRIVATE_ROOT_INVALID",
@@ -453,6 +1065,7 @@ function capturePrivateMaterializationV2(privateRoot: string): PrivateMaterializ
       ownerGid: owner.gid,
       userNpmrc,
       globalNpmrc,
+      cleanupCensus: capturePrivateCleanupCensusV2(privateRoot),
       privateIdentityHash,
     });
   } catch (error) {
@@ -501,24 +1114,86 @@ function validateScratchParentV2(scratchParent: string): string {
 function createPrivateRootV2(input: Readonly<{
   admissionScope: "production_host" | "test_fixture";
   scratchParent?: string;
+  hooks?: NodeScaffoldExecutionEnvironmentTestHooksV2;
 }>): string {
   let privateRoot: string | undefined;
+  let cleanupCensus: PrivateCleanupCensusV2 | undefined;
   try {
     const prefix = input.admissionScope === "production_host"
       ? PRODUCTION_PRIVATE_ROOT_PREFIX_V2
       : path.join(validateScratchParentV2(input.scratchParent!), "environment-");
-    privateRoot = realpathSync(mkdtempSync(prefix));
-    chmodSync(privateRoot, 0o700);
-    for (const name of ["cache", "config-probe", "home", "tmp"]) {
-      mkdirSync(path.join(privateRoot, name), { mode: 0o700 });
-      chmodSync(path.join(privateRoot, name), 0o700);
+    privateRoot = mkdtempSync(prefix);
+    cleanupCensus = extendPrivateCleanupCensusWithCreatedMemberV2({
+      privateRoot,
+      current: cleanupCensus,
+      absolutePath: privateRoot,
+      locator: ".",
+    });
+    input.hooks?.afterCheckpoint?.("after_private_root_create");
+    cleanupCensus = capturePrivateCleanupCensusV2(privateRoot);
+    if (realpathSync(privateRoot) !== privateRoot) {
+      return fail(
+        "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_PRIVATE_ROOT_INVALID",
+        "Fresh private execution environment root is not canonical",
+      );
     }
-    writeBlankNpmrcV2(path.join(privateRoot, "global.npmrc"));
-    writeBlankNpmrcV2(path.join(privateRoot, "user.npmrc"));
+    chmodSync(privateRoot, 0o700);
+    cleanupCensus = capturePrivateCleanupCensusV2(privateRoot);
+    for (const name of ["cache", "config-probe", "home", "tmp"]) {
+      const directoryPath = path.join(privateRoot, name);
+      mkdirSync(directoryPath, { mode: 0o700 });
+      cleanupCensus = extendPrivateCleanupCensusWithCreatedMemberV2({
+        privateRoot,
+        current: cleanupCensus,
+        absolutePath: directoryPath,
+        locator: name,
+      });
+      input.hooks?.afterCheckpoint?.("after_private_directory_create");
+      cleanupCensus = capturePrivateCleanupCensusV2(privateRoot);
+      chmodSync(directoryPath, 0o700);
+      cleanupCensus = capturePrivateCleanupCensusV2(privateRoot);
+    }
+    const afterNpmrcCreated = (locator: "global.npmrc" | "user.npmrc") => (): void => {
+      cleanupCensus = extendPrivateCleanupCensusWithCreatedMemberV2({
+        privateRoot: privateRoot!,
+        current: cleanupCensus,
+        absolutePath: path.join(privateRoot!, locator),
+        locator,
+      });
+      input.hooks?.afterCheckpoint?.("after_private_npmrc_create");
+      cleanupCensus = capturePrivateCleanupCensusV2(privateRoot!);
+    };
+    writeBlankNpmrcV2(
+      path.join(privateRoot, "global.npmrc"),
+      afterNpmrcCreated("global.npmrc"),
+    );
+    writeBlankNpmrcV2(
+      path.join(privateRoot, "user.npmrc"),
+      afterNpmrcCreated("user.npmrc"),
+    );
     syncDirectoryV2(privateRoot);
     return privateRoot;
   } catch (error) {
-    if (privateRoot) rmSync(privateRoot, { recursive: true, force: true });
+    let cleanupError: unknown;
+    if (privateRoot && cleanupCensus) {
+      try {
+        destroyPrivateCleanupCensusV2(privateRoot, cleanupCensus);
+      } catch (candidate) {
+        cleanupError = candidate;
+      }
+    }
+    if (cleanupError !== undefined) {
+      return fail(
+        error instanceof NodeScaffoldExecutionEnvironmentErrorV2
+          ? error.code
+          : "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_MATERIALIZATION_FAILED",
+        `Fresh private execution environment failed and cleanup retained its authenticated root ${privateRoot}`,
+        new AggregateError(
+          [error, cleanupError],
+          "Private environment creation failure and exact cleanup failure",
+        ),
+      );
+    }
     if (error instanceof NodeScaffoldExecutionEnvironmentErrorV2) throw error;
     return fail(
       "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_MATERIALIZATION_FAILED",
@@ -848,8 +1523,10 @@ async function buildEnvironmentV2(input: Readonly<{
   operationRole: "scaffold_build" | "candidate_runtime_install";
   hostToolchain: HostNodeToolchainAuthorityV2;
   scratchParent?: string;
+  hooks?: NodeScaffoldExecutionEnvironmentTestHooksV2;
 }>): Promise<NodeScaffoldExecutionEnvironmentV2> {
   let privateRoot: string | undefined;
+  let cleanupCensus: PrivateCleanupCensusV2 | undefined;
   try {
     const hostReceipt = await revalidateHostNodeToolchainAuthorityV2(input.hostToolchain);
     if (
@@ -864,8 +1541,10 @@ async function buildEnvironmentV2(input: Readonly<{
     privateRoot = createPrivateRootV2({
       admissionScope: input.admissionScope,
       ...(input.scratchParent ? { scratchParent: input.scratchParent } : {}),
+      ...(input.hooks ? { hooks: input.hooks } : {}),
     });
     const materialization = capturePrivateMaterializationV2(privateRoot);
+    cleanupCensus = materialization.cleanupCensus;
     const probeInput = buildProbeInputV2(privateRoot);
     let probeEvidence: HostNodeToolchainEffectiveNpmConfigProbeEvidenceV2;
     try {
@@ -887,6 +1566,7 @@ async function buildEnvironmentV2(input: Readonly<{
       );
     }
     const freshMaterialization = capturePrivateMaterializationV2(privateRoot);
+    cleanupCensus = freshMaterialization.cleanupCensus;
     if (freshMaterialization.privateIdentityHash !== materialization.privateIdentityHash) {
       return fail(
         "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_STATE_DRIFT",
@@ -900,7 +1580,10 @@ async function buildEnvironmentV2(input: Readonly<{
       materialization,
       probeEvidence,
     });
-    const lifecycle: MutableLifecycleV2 = { status: "active" };
+    const lifecycle: MutableLifecycleV2 = {
+      status: "active",
+      cleanupCensus: materialization.cleanupCensus,
+    };
     const state: PrivateEnvironmentStateV2 = Object.freeze({
       admissionScope: input.admissionScope,
       profileId: input.profileId,
@@ -913,10 +1596,29 @@ async function buildEnvironmentV2(input: Readonly<{
       effectiveNpmConfigReceipt: receipts.effectiveNpmConfigReceipt,
       receipt: receipts.receipt,
       lifecycle,
+      ...(input.hooks ? { cleanupTestHooks: input.hooks } : {}),
     });
     privateRoot = undefined;
     return new NodeScaffoldExecutionEnvironmentV2(environmentConstructorCapabilityV2, state);
   } catch (error) {
+    let cleanupError: unknown;
+    if (privateRoot && cleanupCensus) {
+      try {
+        destroyPrivateCleanupCensusV2(privateRoot, cleanupCensus);
+      } catch (candidate) {
+        cleanupError = candidate;
+      }
+    }
+    if (cleanupError !== undefined) {
+      return fail(
+        "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_STATE_DRIFT",
+        `Execution environment admission failed and cleanup retained its authenticated root ${privateRoot}`,
+        new AggregateError(
+          [error, cleanupError],
+          "Execution environment admission failure and exact cleanup failure",
+        ),
+      );
+    }
     if (error instanceof NodeScaffoldExecutionEnvironmentErrorV2) throw error;
     if (error instanceof HostNodeToolchainAuthorityErrorV2) {
       return fail(
@@ -930,8 +1632,6 @@ async function buildEnvironmentV2(input: Readonly<{
       "Execution environment admission failed",
       error,
     );
-  } finally {
-    if (privateRoot) rmSync(privateRoot, { recursive: true, force: true });
   }
 }
 
@@ -964,16 +1664,36 @@ export async function createNodeScaffoldExecutionEnvironmentV2(
   });
 }
 
+export type NodeScaffoldExecutionEnvironmentTestCheckpointV2 =
+  | "after_private_root_create"
+  | "after_private_directory_create"
+  | "after_private_npmrc_create";
+
+export type NodeScaffoldExecutionEnvironmentTestHooksV2 = Readonly<{
+  afterCheckpoint?: (
+    checkpoint: NodeScaffoldExecutionEnvironmentTestCheckpointV2,
+  ) => void;
+  afterCleanupDirectoryWritable?: (locator: string) => void;
+  afterCleanupDirectoryDescriptorClose?: (locator: string) => void;
+  beforeCleanupCensusDirectoryRead?: (locator: string) => void;
+  afterCleanupCensusDirectoryClose?: (locator: string) => void;
+}>;
+
 export type NodeScaffoldExecutionEnvironmentV2TestInput = Readonly<{
   profileId: NodeScaffoldProfileIdV2;
   hostToolchain: HostNodeToolchainAuthorityV2;
   scratchParent: string;
+  testHooks?: NodeScaffoldExecutionEnvironmentTestHooksV2;
 }>;
 
 export async function createNodeScaffoldExecutionEnvironmentV2ForTest(
   input: NodeScaffoldExecutionEnvironmentV2TestInput,
 ): Promise<NodeScaffoldExecutionEnvironmentV2> {
-  const parsed = parseExactInputV2(input, ["hostToolchain", "profileId", "scratchParent"]);
+  const expectedKeys = isPlainRecord(input)
+    && Object.prototype.hasOwnProperty.call(input, "testHooks")
+    ? ["hostToolchain", "profileId", "scratchParent", "testHooks"]
+    : ["hostToolchain", "profileId", "scratchParent"];
+  const parsed = parseExactInputV2(input, expectedKeys);
   if (typeof parsed.values.scratchParent !== "string") {
     return fail(
       "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_INPUT_INVALID",
@@ -997,12 +1717,53 @@ export async function createNodeScaffoldExecutionEnvironmentV2ForTest(
       "Test constructor cannot consume or downgrade a production host authority",
     );
   }
+  const testHooks = parsed.values.testHooks;
+  if (
+    testHooks !== undefined
+    && (
+      !isPlainRecord(testHooks)
+      || Reflect.ownKeys(testHooks).some((key) =>
+        key !== "afterCheckpoint"
+        && key !== "afterCleanupDirectoryWritable"
+        && key !== "afterCleanupDirectoryDescriptorClose"
+        && key !== "beforeCleanupCensusDirectoryRead"
+        && key !== "afterCleanupCensusDirectoryClose")
+      || (
+        testHooks.afterCheckpoint !== undefined
+        && typeof testHooks.afterCheckpoint !== "function"
+      )
+      || (
+        testHooks.afterCleanupDirectoryWritable !== undefined
+        && typeof testHooks.afterCleanupDirectoryWritable !== "function"
+      )
+      || (
+        testHooks.afterCleanupDirectoryDescriptorClose !== undefined
+        && typeof testHooks.afterCleanupDirectoryDescriptorClose !== "function"
+      )
+      || (
+        testHooks.beforeCleanupCensusDirectoryRead !== undefined
+        && typeof testHooks.beforeCleanupCensusDirectoryRead !== "function"
+      )
+      || (
+        testHooks.afterCleanupCensusDirectoryClose !== undefined
+        && typeof testHooks.afterCleanupCensusDirectoryClose !== "function"
+      )
+    )
+  ) {
+    return fail(
+      "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_INPUT_INVALID",
+      "Test execution environment hooks are invalid",
+    );
+  }
   return buildEnvironmentV2({
     admissionScope: "test_fixture",
     profileId: parsed.profileId,
     operationRole: "scaffold_build",
     hostToolchain,
     scratchParent: validateScratchParentV2(parsed.values.scratchParent),
+    ...(testHooks
+      ? { hooks: testHooks as NodeScaffoldExecutionEnvironmentTestHooksV2 }
+      : {}),
   });
 }
 
@@ -1111,6 +1872,41 @@ export function inspectNodeScaffoldExecutionEnvironmentReceiptV2(
   handle: NodeScaffoldExecutionEnvironmentV2,
 ): NodeScaffoldExecutionEnvironmentReceiptV2 {
   return defensiveCopy(authenticStateV2(handle).receipt);
+}
+
+/** @internal Returns only freshly revalidated retry-stable toolchain semantics. */
+export async function revalidateNodeScaffoldHostToolchainLogicalIdentityInternalV3(
+  handle: NodeScaffoldExecutionEnvironmentV2,
+): Promise<HostNodeToolchainLogicalProjectionV3> {
+  const state = authenticStateV2(handle);
+  if (
+    state.lifecycle.status === "destroyed"
+    || state.lifecycle.status === "install_failed"
+  ) {
+    return fail(
+      "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_STATE_DRIFT",
+      "Logical toolchain projection requires a live execution environment",
+    );
+  }
+  const hostToolchain = await revalidateHostNodeToolchainAuthorityV2(
+    state.hostToolchain,
+  );
+  const statusAfter = authenticStateV2(handle).lifecycle.status;
+  if (
+    statusAfter === "destroyed"
+    || statusAfter === "install_failed"
+    || hostToolchain.receiptHash !== state.receipt.hostToolchain.receiptHash
+    || hostToolchain.node.identityHash
+      !== state.receipt.hostToolchain.nodeIdentityHash
+    || hostToolchain.npm.closureHash
+      !== state.receipt.hostToolchain.npmClosureHash
+  ) {
+    return fail(
+      "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_STATE_DRIFT",
+      "Logical toolchain projection lost its authenticated environment join",
+    );
+  }
+  return projectHostNodeToolchainLogicalIdentityV3(hostToolchain);
 }
 
 export function inspectEffectiveNpmConfigReceiptV2(
@@ -1227,6 +2023,34 @@ function requireCandidateRuntimeInstallStateInternalV2(
   );
 }
 
+function finishExecutionOperationV2<T>(input: Readonly<{
+  completed: boolean;
+  evidence: T | undefined;
+  primaryErrors: readonly unknown[];
+  finalizerErrors: readonly unknown[];
+  message: string;
+  aggregateMessage: string;
+}>): T {
+  if (input.finalizerErrors.length > 0) {
+    return fail(
+      "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_STATE_DRIFT",
+      input.message,
+      new AggregateError(
+        [...input.primaryErrors, ...input.finalizerErrors],
+        input.aggregateMessage,
+      ),
+    );
+  }
+  if (input.primaryErrors.length > 0) throw input.primaryErrors[0];
+  if (!input.completed || input.evidence === undefined) {
+    return fail(
+      "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_STATE_DRIFT",
+      "Execution operation completed without exact evidence",
+    );
+  }
+  return input.evidence;
+}
+
 /** @internal Executes the only candidate-runtime operation and consumes it. */
 export async function executeNodeCandidateRuntimeEnvironmentNpmCiInternalV2(
   handle: NodeScaffoldExecutionEnvironmentV2,
@@ -1243,9 +2067,11 @@ export async function executeNodeCandidateRuntimeEnvironmentNpmCiInternalV2(
     handle,
   );
   state.lifecycle.status = "installing";
-  let succeeded = false;
+  let evidence: HostNodeToolchainCandidateProductionNpmCiEvidenceV2 | undefined;
+  let completed = false;
+  const primaryErrors: unknown[] = [];
   try {
-    const evidence =
+    const candidateEvidence =
       await executeHostNodeToolchainCandidateProductionNpmCiV2(
         state.hostToolchain,
         {
@@ -1255,17 +2081,17 @@ export async function executeNodeCandidateRuntimeEnvironmentNpmCiInternalV2(
         },
       );
     if (
-      evidence.hostToolchainReceiptHash
+      candidateEvidence.hostToolchainReceiptHash
         !== environmentReceipt.hostToolchain.receiptHash
-      || evidence.nodeIdentityHash
+      || candidateEvidence.nodeIdentityHash
         !== environmentReceipt.hostToolchain.nodeIdentityHash
-      || evidence.npmClosureHash
+      || candidateEvidence.npmClosureHash
         !== environmentReceipt.hostToolchain.npmClosureHash
-      || evidence.environmentHash
+      || candidateEvidence.environmentHash
         !== environmentReceipt.environment.environmentHash
-      || evidence.directArgvHash !== hashCanonicalJson({
+      || candidateEvidence.directArgvHash !== hashCanonicalJson({
         schema: "setfarm.candidate-runtime-npm-direct-argv-hash.v2",
-        directArgv: evidence.directArgv,
+        directArgv: candidateEvidence.directArgv,
       })
     ) {
       return fail(
@@ -1273,11 +2099,26 @@ export async function executeNodeCandidateRuntimeEnvironmentNpmCiInternalV2(
         "Candidate runtime npm evidence does not reproduce the admitted environment",
       );
     }
-    succeeded = true;
-    return evidence;
-  } finally {
-    state.lifecycle.status = succeeded ? "install_consumed" : "install_failed";
+    evidence = candidateEvidence;
+    completed = true;
+  } catch (error) {
+    primaryErrors.push(error);
   }
+  const finalizerErrors: unknown[] = [];
+  try {
+    state.lifecycle.cleanupCensus = capturePrivateCleanupCensusV2(state.privateRoot);
+  } catch (error) {
+    finalizerErrors.push(error);
+  }
+  state.lifecycle.status = completed ? "install_consumed" : "install_failed";
+  return finishExecutionOperationV2({
+    completed,
+    evidence,
+    primaryErrors,
+    finalizerErrors,
+    message: "Candidate runtime npm operation finalization could not capture its exact private cleanup census",
+    aggregateMessage: "Candidate runtime npm operation and bounded finalization failures",
+  });
 }
 
 /** @internal Freshly reproduces the pathless host/environment runtime context. */
@@ -1408,19 +2249,21 @@ export async function executeNodeScaffoldEnvironmentNpmCiV2(
     );
   }
   state.lifecycle.status = "installing";
-  let installSucceeded = false;
+  let evidence: HostNodeToolchainNpmCiEvidenceV2 | undefined;
+  let completed = false;
+  const primaryErrors: unknown[] = [];
   try {
-    const evidence = await executeHostNodeToolchainNpmCiV2(state.hostToolchain, {
+    const candidateEvidence = await executeHostNodeToolchainNpmCiV2(state.hostToolchain, {
       privateRoot: state.privateRoot,
       projectRoot: scope.projectRoot,
       environment: state.probeInput.environment,
     });
     if (
-      evidence.hostToolchainReceiptHash !== environmentReceipt.hostToolchain.receiptHash
-      || evidence.environmentHash !== environmentReceipt.environment.environmentHash
-      || evidence.directArgvHash !== hashCanonicalJson({
+      candidateEvidence.hostToolchainReceiptHash !== environmentReceipt.hostToolchain.receiptHash
+      || candidateEvidence.environmentHash !== environmentReceipt.environment.environmentHash
+      || candidateEvidence.directArgvHash !== hashCanonicalJson({
         schema: "setfarm.node-scaffold-install-direct-argv-hash.v2",
-        directArgv: evidence.directArgv,
+        directArgv: candidateEvidence.directArgv,
       })
     ) {
       return fail(
@@ -1428,17 +2271,34 @@ export async function executeNodeScaffoldEnvironmentNpmCiV2(
         "npm ci execution evidence does not reproduce the admitted environment",
       );
     }
-    installSucceeded = true;
-    return evidence;
-  } finally {
-    state.lifecycle.status = installSucceeded
-      ? "install_consumed"
-      : "install_failed";
+    evidence = candidateEvidence;
+    completed = true;
+  } catch (error) {
+    primaryErrors.push(error);
+  }
+  const finalizerErrors: unknown[] = [];
+  try {
+    state.lifecycle.cleanupCensus = capturePrivateCleanupCensusV2(state.privateRoot);
+  } catch (error) {
+    finalizerErrors.push(error);
+  }
+  state.lifecycle.status = completed ? "install_consumed" : "install_failed";
+  try {
     stageBridge.settleNodeScaffoldPrivateInstallScopeInternalV2(
       stage,
       scope.scaffoldBaseReceiptHash,
     );
+  } catch (error) {
+    finalizerErrors.push(error);
   }
+  return finishExecutionOperationV2({
+    completed,
+    evidence,
+    primaryErrors,
+    finalizerErrors,
+    message: "npm ci operation finalization could not consume every authenticated private scope",
+    aggregateMessage: "npm ci operation and bounded private-scope finalization failures",
+  });
 }
 
 /**
@@ -1482,23 +2342,26 @@ export async function executeNodeScaffoldEnvironmentBuildV2(
     );
   }
   state.lifecycle.status = "building";
+  let evidence: HostNodeToolchainBuildEvidenceV2 | undefined;
+  let completed = false;
+  const primaryErrors: unknown[] = [];
   try {
-    const evidence = await executeHostNodeToolchainBuildV2(state.hostToolchain, {
+    const candidateEvidence = await executeHostNodeToolchainBuildV2(state.hostToolchain, {
       privateRoot: state.privateRoot,
       projectRoot: scope.projectRoot,
       environment: state.probeInput.environment,
       compilerTarget: scope.compilerTarget,
     });
     if (
-      evidence.hostToolchainReceiptHash
+      candidateEvidence.hostToolchainReceiptHash
         !== environmentReceipt.hostToolchain.receiptHash
-      || evidence.nodeIdentityHash
+      || candidateEvidence.nodeIdentityHash
         !== environmentReceipt.hostToolchain.nodeIdentityHash
-      || evidence.environmentHash
+      || candidateEvidence.environmentHash
         !== environmentReceipt.environment.environmentHash
-      || evidence.directArgvHash !== hashCanonicalJson({
+      || candidateEvidence.directArgvHash !== hashCanonicalJson({
         schema: "setfarm.candidate-build-direct-argv-hash.v2",
-        directArgv: evidence.directArgv,
+        directArgv: candidateEvidence.directArgv,
       })
     ) {
       return fail(
@@ -1506,14 +2369,34 @@ export async function executeNodeScaffoldEnvironmentBuildV2(
         "Candidate build execution evidence does not reproduce the sealed environment",
       );
     }
-    return evidence;
-  } finally {
-    state.lifecycle.status = "build_consumed";
+    evidence = candidateEvidence;
+    completed = true;
+  } catch (error) {
+    primaryErrors.push(error);
+  }
+  const finalizerErrors: unknown[] = [];
+  try {
+    state.lifecycle.cleanupCensus = capturePrivateCleanupCensusV2(state.privateRoot);
+  } catch (error) {
+    finalizerErrors.push(error);
+  }
+  state.lifecycle.status = "build_consumed";
+  try {
     stageBridge.settleNodeScaffoldPrivateBuildScopeInternalV2(
       stage,
       scope.scaffoldBaseReceiptHash,
     );
+  } catch (error) {
+    finalizerErrors.push(error);
   }
+  return finishExecutionOperationV2({
+    completed,
+    evidence,
+    primaryErrors,
+    finalizerErrors,
+    message: "Candidate build finalization could not consume every authenticated private scope",
+    aggregateMessage: "Candidate build operation and bounded private-scope finalization failures",
+  });
 }
 
 export function destroyNodeScaffoldExecutionEnvironmentV2(
@@ -1522,19 +2405,15 @@ export function destroyNodeScaffoldExecutionEnvironmentV2(
   const state = authenticStateV2(handle);
   if (state.lifecycle.status === "destroyed") return;
   try {
-    const stat = lstatSync(state.privateRoot);
-    if (
-      realpathSync(state.privateRoot) !== state.privateRoot
-      || !stat.isDirectory()
-      || stat.isSymbolicLink()
-      || !sameFingerprint(fingerprint(stat), state.materialization.rootFingerprint)
-    ) {
-      return fail(
-        "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_STATE_DRIFT",
-        "Refusing to destroy a replaced private execution environment root",
-      );
-    }
-    rmSync(state.privateRoot, { recursive: true, force: false });
+    assertExactPrivateRootStableIdentityV2(
+      state.privateRoot,
+      state.materialization.rootFingerprint,
+    );
+    destroyPrivateCleanupCensusV2(
+      state.privateRoot,
+      state.lifecycle.cleanupCensus,
+      state.cleanupTestHooks,
+    );
     assertMissingPathV2(state.privateRoot, "Destroyed private execution environment root");
     state.lifecycle.status = "destroyed";
   } catch (error) {

@@ -59,6 +59,9 @@ import {
   NodeToolchainProvisionerBootstrapRollbackReceiptV2Schema,
   getNodeToolchainProvisionerBootstrapRollbackPathsV2,
 } from "./schemas/node-toolchain-provisioner-bootstrap-rollback-v2.js";
+import {
+  projectExactStableFilesystemIdentityToSafeNumbersV2,
+} from "./exact-stable-filesystem-identity-v2.js";
 
 const ROLLBACK_RECEIPT_BASENAME_PATTERN_V2 = new RegExp(
   NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_ROLLBACK_RECEIPT_BASENAME_REGEX_V2,
@@ -192,6 +195,23 @@ function captureEntry(
         "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_INSPECTION_FAILED",
         `Bootstrap installation ${role} changed during inspection`,
       );
+    }
+    if (role === "root" && after.isDirectory()) {
+      const exact = lstatSync(absoluteLocator, { bigint: true });
+      const projected = projectExactStableFilesystemIdentityToSafeNumbersV2({
+        device: exact.dev,
+        inode: exact.ino,
+      });
+      if (
+        projected === undefined
+        || projected.device !== after.dev
+        || projected.inode !== after.ino
+      ) {
+        return fail(
+          "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_INSTALLATION_V2_INSPECTION_FAILED",
+          "Bootstrap installation root device/inode cannot be represented injectively in the V2 inspection ABI",
+        );
+      }
     }
     return Object.freeze({
       state: "present" as const,

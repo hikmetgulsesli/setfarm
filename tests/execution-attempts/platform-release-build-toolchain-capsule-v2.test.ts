@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import {
   chmodSync,
+  chownSync,
+  copyFileSync,
   existsSync,
   linkSync,
   lstatSync,
@@ -13,6 +15,7 @@ import {
   renameSync,
   rmSync,
   symlinkSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -26,8 +29,22 @@ import {
 } from
   "../../src/product-compiler/canonical-json.js";
 import {
+  PlatformReleaseBootstrapInstalledMetadataOperationErrorV2,
+  buildPlatformReleaseBootstrapInstalledMetadataOperationFixtureForTestV2,
+  mutatePlatformReleaseBootstrapInstalledMetadataOperationFixtureForTestV2,
+  observePlatformReleaseBootstrapInstalledMetadataOperationForTestV2,
+} from
+  "../../src/product-compiler/platform-release-bootstrap-installed-metadata-operation-test-support-v2.js";
+import {
+  PLATFORM_RELEASE_BOOTSTRAP_INSTALLED_NETWORK_NEGATIVE_EMPTY_SHA256_V2,
+  PlatformReleaseBootstrapInstalledNetworkNegativeOperationErrorV2,
+  observePlatformReleaseBootstrapInstalledNetworkNegativeEvidenceAtPrivateTargetInternalV2,
+  observePlatformReleaseBootstrapInstalledNetworkNegativeOperationAtPrivateTargetInternalV2,
+} from
+  "../../src/product-compiler/platform-release-bootstrap-installed-network-negative-operation-test-support-v2.js";
+import {
   createHostNodeToolchainAuthorityV2ForTest,
-  hashHostNodePlatformReleaseOutputStageIdentityV2,
+  hashHostNodePlatformReleaseOutputStageExactIdentityV2,
   HostNodeToolchainAuthorityErrorV2,
   type HostNodeToolchainProbeInvocationV2,
   type HostNodeToolchainProbeResultV2,
@@ -44,15 +61,27 @@ import {
   PlatformReleaseBuildToolchainCapsuleErrorV2,
   PlatformReleaseBuildToolchainCapsuleV2,
   PlatformReleaseCompiledOutputPairV2,
+  PlatformReleaseCompositionModuleClosureForTestErrorV2,
+  PlatformReleaseCompositionModuleExportsForTestErrorV2,
+  PlatformReleaseCompositionMetadataPairForTestErrorV2,
+  PlatformReleaseCompositionNetworkNegativePairForTestErrorV2,
+  type PlatformReleaseCompositionOwnershipTransferFaultForTestV2,
   type PlatformReleaseDependencyMaterializationFaultForTestV2,
   PlatformReleaseDependencyMaterializedPairErrorV2,
   PlatformReleaseDependencyMaterializedPairV2,
+  PlatformReleaseCompositionOwnershipTransferForTestV2,
   PlatformReleaseSourceAdmissionErrorV2,
   admitPlatformReleaseSourceV2ForTest,
+  derivePlatformReleaseCompositionModuleClosureForTestV2,
+  observePlatformReleaseCompositionModuleExportsForTestV2,
+  observePlatformReleaseCompositionMetadataPairForTestV2,
+  observePlatformReleaseCompositionNetworkNegativePairForTestV2,
+  disposePlatformReleaseCompositionOwnershipTransferForTestV2,
   disposePlatformReleaseDependencyMaterializedPairV2,
   disposePlatformReleaseSourceStageV2,
   inspectPlatformReleaseCompiledOutputPairV2,
   inspectPlatformReleaseDependencyMaterializedPairV2,
+  inspectPlatformReleaseCompositionOwnershipTransferForTestV2,
   inspectPlatformReleaseBuildToolchainReceiptV2,
   inspectPlatformReleaseSourceAdmissionCandidateV2,
   materializePlatformReleaseCompiledOutputPairV2,
@@ -65,6 +94,8 @@ import {
   materializePlatformReleaseBuildToolchainCapsuleV2ForTest,
   revalidatePlatformReleaseCompiledOutputPairV2,
   revalidatePlatformReleaseDependencyMaterializedPairV2,
+  rehearsePlatformReleaseCompositionOwnershipTransferForTestV2,
+  rehearsePlatformReleaseCompositionOwnershipTransferWithFaultForTestV2,
   revalidatePlatformReleaseBuildToolchainCapsuleV2,
   withPlatformReleaseCompiledOutputPairForTestV2,
   withPlatformReleaseDependencyMaterializedPairForTestV2,
@@ -72,6 +103,10 @@ import {
   withPlatformReleaseSourceStageForTestV2,
 } from
   "../../src/execution/platform-release-source-admission-v2.js";
+import {
+  inspectCompletedPlatformReleaseStageCandidateV2,
+} from
+  "../../src/execution/platform-release-terminal-writer-v2.js";
 import {
   EXACT_PLATFORM_RELEASE_SOURCE_REF_V2_SCHEMA,
   PLATFORM_RELEASE_SOURCE_TREE_BINDING_V2_SCHEMA,
@@ -92,6 +127,46 @@ import {
   PlatformReleaseDependencyMaterializedPairInspectionV2Schema,
 } from
   "../../src/execution/schemas/platform-release-dependency-materialized-pair-v2.js";
+import {
+  hashPlatformReleaseCompositionModuleClosureForTestV2,
+  hashPlatformReleaseCompositionModuleExportStableSetForTestV2,
+  hashPlatformReleaseCompositionModuleExportsForTestV2,
+  hashPlatformReleaseCompositionOwnershipTransferForTestV2,
+  PlatformReleaseCompositionModuleClosureForTestV2Schema,
+  PlatformReleaseCompositionModuleExportsForTestV2Schema,
+  PlatformReleaseCompositionOwnershipTransferForTestV2Schema,
+} from
+  "../../src/execution/schemas/platform-release-composition-test-v2.js";
+import {
+  PlatformReleaseCompositionMetadataPairTestV2Schema,
+  PlatformReleaseCompositionMetadataTestV2Schema,
+  hashPlatformReleaseCompositionMetadataPairForTestV2,
+  hashPlatformReleaseCompositionMetadataPairOccurrenceForTestV2,
+  hashPlatformReleaseCompositionMetadataPairStableProjectionForTestV2,
+  hashPlatformReleaseCompositionMetadataFixedArgvForTestV2,
+  hashPlatformReleaseCompositionMetadataLaunchProjectionForTestV2,
+  hashPlatformReleaseCompositionMetadataProcessObservationForTestV2,
+  hashPlatformReleaseCompositionMetadataForTestV2,
+} from
+  "../../src/execution/schemas/platform-release-composition-metadata-test-v2.js";
+import {
+  PlatformReleaseCompositionNetworkNegativePairOccurrenceForTestV2Schema,
+  PlatformReleaseCompositionNetworkNegativePairTestV2Schema,
+  PlatformReleaseCompositionNetworkNegativeTestV2Schema,
+  hashPlatformReleaseCompositionNetworkNegativeFixedArgvForTestV2,
+  hashPlatformReleaseCompositionNetworkNegativeLaunchProjectionForTestV2,
+  hashPlatformReleaseCompositionNetworkNegativePairForTestV2,
+  hashPlatformReleaseCompositionNetworkNegativePairOccurrenceForTestV2,
+  hashPlatformReleaseCompositionNetworkNegativePairStableProjectionForTestV2,
+  hashPlatformReleaseCompositionNetworkNegativeProcessObservationForTestV2,
+  hashPlatformReleaseCompositionNetworkNegativeForTestV2,
+  hashPlatformReleaseCompositionNetworkNegativeTargetObservationForTestV2,
+} from
+  "../../src/execution/schemas/platform-release-composition-network-negative-test-v2.js";
+import {
+  getPlatformReleaseRequiredModuleRequirementV2,
+} from
+  "../../src/execution/schemas/platform-release-required-module-closure-v2.js";
 import {
   materializePlatformReleaseProductionDependenciesInternalV2,
   PlatformReleaseProductionDependencyMaterializationErrorV2,
@@ -115,6 +190,8 @@ import type {
   "../../src/execution/platform-release-host-composition-authority-v2.js";
 
 const GIT = "/usr/bin/git";
+const REQUIRED_MODULE_BUILD_FIXTURE_V2 =
+  ".setfarm-required-modules-fixture-v2.json";
 const roots: string[] = [];
 
 type InstallModeV2 =
@@ -471,7 +548,53 @@ function createRepositoryFixtureV2(
   });
 }
 
-function createHostFixtureV2(): HostFixtureV2 {
+function enableRequiredModuleBuildFixtureV2(
+  fixture: RepositoryFixtureV2,
+  fixtureLabel = "stable",
+  wrongExport?: Readonly<{
+    moduleLocator: string;
+    name: string;
+    actualKind: "function" | "string";
+  }>,
+  modulePreamble?: string,
+): RepositoryFixtureV2 {
+  writeFileSync(
+    path.join(
+      fixture.repository,
+      REQUIRED_MODULE_BUILD_FIXTURE_V2,
+    ),
+    `${JSON.stringify({
+      fixtureLabel,
+      ...(wrongExport === undefined
+        ? {}
+        : { wrongExport }),
+      ...(modulePreamble === undefined
+        ? {}
+        : { modulePreamble }),
+      definitions:
+        getPlatformReleaseRequiredModuleRequirementV2()
+          .entries.map((definition) => ({
+            moduleLocator: definition.moduleLocator,
+            requiredExports: definition.requiredExports,
+          })),
+    })}\n`,
+  );
+  runGit(fixture.repository, ["add", "--all"]);
+  runGit(fixture.repository, [
+    "commit",
+    "-m",
+    `required module fixture ${fixtureLabel}`,
+  ]);
+  runGit(fixture.repository, ["push", "origin", "main"]);
+  return fixture;
+}
+
+function createHostFixtureV2(
+  options: Readonly<{
+    operationalMetadataObserverWrappers?: boolean;
+    operationalNetworkSandboxWrapper?: boolean;
+  }> = {},
+): HostFixtureV2 {
   const root = realpathSync(mkdtempSync(path.join(
     tmpdir(),
     "setfarm-platform-build-toolchain-host-v2-",
@@ -480,22 +603,53 @@ function createHostFixtureV2(): HostFixtureV2 {
   const composition =
     materializePlatformReleaseHostCompositionFixtureV2(
       "setfarm-platform-build-composition-v2-",
+      options,
     );
   roots.push(composition.root);
   const node = path.join(root, "bin", "node");
   const npmRoot =
     path.join(root, "lib", "node_modules", "npm");
   const npmCli = path.join(npmRoot, "bin", "npm-cli.js");
+  const sourceNodeRoot = path.resolve(
+    path.dirname(realpathSync(process.execPath)),
+    "..",
+  );
+  const sourceDynamicLibraryNames = readdirSync(
+    path.join(sourceNodeRoot, "lib"),
+  ).filter((name) => /^libnode(?:\.\d+)?\.dylib$/.test(name));
+  if (sourceDynamicLibraryNames.length !== 1) {
+    throw new Error(
+      "Expected exactly one host libnode dylib beside the test Node executable",
+    );
+  }
   const dynamicLibrary =
-    path.join(root, "lib", "libnode.127.dylib");
+    path.join(root, "lib", sourceDynamicLibraryNames[0]!);
   mkdirSync(path.dirname(node), { recursive: true });
   mkdirSync(path.dirname(npmCli), { recursive: true });
   mkdirSync(path.join(npmRoot, "lib"), {
     recursive: true,
   });
-  writeFileSync(node, "fixture-node-binary\n", {
-    mode: 0o555,
-  });
+  copyFileSync(process.execPath, node);
+  copyFileSync(
+    path.join(
+      sourceNodeRoot,
+      "lib",
+      sourceDynamicLibraryNames[0]!,
+    ),
+    dynamicLibrary,
+  );
+  if (
+    typeof process.getuid === "function"
+    && typeof process.getgid === "function"
+  ) {
+    chownSync(node, process.getuid(), process.getgid());
+    chownSync(
+      dynamicLibrary,
+      process.getuid(),
+      process.getgid(),
+    );
+  }
+  chmodSync(node, 0o555);
   writeFileSync(
     npmCli,
     "require('../lib/cli.js')(process)\n",
@@ -515,9 +669,6 @@ function createHostFixtureV2(): HostFixtureV2 {
     })}\n`,
     { mode: 0o444 },
   );
-  writeFileSync(dynamicLibrary, "fixture-dylib\n", {
-    mode: 0o555,
-  });
   for (const directory of [
     path.join(root, "bin"),
     path.join(root, "lib"),
@@ -582,6 +733,17 @@ function materializeFakeInstallV2(
       "const root = process.argv[index + 1];",
       "fs.mkdirSync(path.join(root, 'cli'), { recursive: true });",
       "fs.writeFileSync(path.join(root, 'cli', 'cli.js'), '#!/usr/bin/env node\\nexport {};\\n');",
+      `const fixturePath = path.join(process.cwd(), ${JSON.stringify(REQUIRED_MODULE_BUILD_FIXTURE_V2)});`,
+      "if (fs.existsSync(fixturePath)) {",
+      "  const fixture = JSON.parse(fs.readFileSync(fixturePath, 'utf8'));",
+      "  for (const definition of fixture.definitions) {",
+      "    if (!definition.moduleLocator.startsWith('dist/')) process.exit(3);",
+      "    const target = path.join(root, definition.moduleLocator.slice('dist/'.length));",
+      "    fs.mkdirSync(path.dirname(target), { recursive: true });",
+      "    const lines = definition.requiredExports.map((entry) => { const kind = fixture.wrongExport && fixture.wrongExport.moduleLocator === definition.moduleLocator && fixture.wrongExport.name === entry.name ? fixture.wrongExport.actualKind : entry.kind; return kind === 'function' ? 'export function ' + entry.name + '() { return undefined; }' : 'export const ' + entry.name + ' = ' + JSON.stringify('fixture:' + fixture.fixtureLabel + ':' + entry.name) + ';'; });",
+      "    fs.writeFileSync(target, (fixture.modulePreamble || '') + lines.join('\\n') + '\\n');",
+      "  }",
+      "}",
       "",
     ].join("\n"),
     { mode: 0o755 },
@@ -1266,6 +1428,927 @@ afterEach(() => {
   }
 });
 
+describe("installed platform-release metadata operation", () => {
+  it("observes a real Darwin target with strict non-promotable read-only evidence", async () => {
+    const hostFixture = createHostFixtureV2({
+      operationalMetadataObserverWrappers: true,
+    });
+    const host = await createPlatformHostV2(
+      hostFixture,
+      "valid",
+    );
+    const fixture =
+      buildPlatformReleaseBootstrapInstalledMetadataOperationFixtureForTestV2();
+    let disposed = false;
+    try {
+      const evidence =
+        await observePlatformReleaseBootstrapInstalledMetadataOperationForTestV2(
+          host,
+          fixture,
+        );
+
+      assert.deepEqual(
+        PlatformReleaseCompositionMetadataTestV2Schema.parse(evidence),
+        evidence,
+      );
+      assert.equal(Object.isFrozen(evidence), true);
+      assert.equal(Object.isFrozen(evidence.targetBefore), true);
+      assert.equal(evidence.admissionScope, "test_fixture");
+      assert.equal(evidence.productionAuthority, false);
+      assert.equal(evidence.productionAdmission, "forbidden");
+      assert.equal(evidence.credentialUse, "none");
+      assert.equal(evidence.mutationAuthority, false);
+      assert.equal(evidence.trustConclusion, "characterization_only");
+      assert.equal(
+        evidence.receipt.observationOutcome,
+        "metadata_policy_satisfied",
+      );
+      assert.equal(evidence.receipt.observedEntryCount, 1);
+      assert.deepEqual(evidence.targetAfter, evidence.targetBefore);
+      assert.equal(
+        evidence.targetRootPhysicalIdentityHash,
+        evidence.receipt.targetRootPhysicalIdentityHash,
+      );
+      assert.equal(
+        hashPlatformReleaseCompositionMetadataForTestV2(evidence),
+        evidence.evidenceHash,
+      );
+      assert.doesNotMatch(
+        JSON.stringify(evidence),
+        /(?:clear|\/tmp\/|\/private\/|\/Users\/)/u,
+      );
+
+      const promoted = structuredClone(evidence) as any;
+      promoted.productionAuthority = true;
+      promoted.evidenceHash =
+        hashPlatformReleaseCompositionMetadataForTestV2(promoted);
+      assert.equal(
+        PlatformReleaseCompositionMetadataTestV2Schema
+          .safeParse(promoted).success,
+        false,
+      );
+
+      fixture.dispose();
+      disposed = true;
+      await assert.rejects(
+        observePlatformReleaseBootstrapInstalledMetadataOperationForTestV2(
+          host,
+          fixture,
+        ),
+        {
+          code:
+            "INSTALLED_METADATA_OPERATION_FIXTURE_HANDLE_UNAUTHENTICATED",
+        },
+      );
+    } finally {
+      if (!disposed) fixture.dispose();
+    }
+  });
+
+  it("keeps stable host-object identity across fresh metadata occurrences", async () => {
+    const hostFixture = createHostFixtureV2({
+      operationalMetadataObserverWrappers: true,
+    });
+    const host = await createPlatformHostV2(
+      hostFixture,
+      "valid",
+    );
+    const fixture =
+      buildPlatformReleaseBootstrapInstalledMetadataOperationFixtureForTestV2();
+    try {
+      const first =
+        await observePlatformReleaseBootstrapInstalledMetadataOperationForTestV2(
+          host,
+          fixture,
+        );
+      const repeated =
+        await observePlatformReleaseBootstrapInstalledMetadataOperationForTestV2(
+          host,
+          fixture,
+        );
+
+      assert.deepEqual(
+        repeated.targetBefore.stableIdentity,
+        first.targetBefore.stableIdentity,
+      );
+      assert.deepEqual(
+        repeated.targetBefore.mutableFingerprint,
+        first.targetBefore.mutableFingerprint,
+      );
+      assert.equal(
+        repeated.targetRootPhysicalIdentityHash,
+        first.targetRootPhysicalIdentityHash,
+      );
+      assert.notEqual(repeated.occurrenceId, first.occurrenceId);
+      assert.notEqual(
+        repeated.receipt.messageHash,
+        first.receipt.messageHash,
+      );
+      assert.notEqual(repeated.process.pid, first.process.pid);
+      assert.notEqual(repeated.evidenceHash, first.evidenceHash);
+    } finally {
+      fixture.dispose();
+    }
+  });
+
+  it("rejects direct-entry and same-byte identity drift before metadata execution", async () => {
+    const hostFixture = createHostFixtureV2({
+      operationalMetadataObserverWrappers: true,
+    });
+    const host = await createPlatformHostV2(
+      hostFixture,
+      "valid",
+    );
+    for (const mutation of [
+      "add_target_entry",
+      "replace_entry_same_bytes",
+    ] as const) {
+      const fixture =
+        buildPlatformReleaseBootstrapInstalledMetadataOperationFixtureForTestV2();
+      let disposed = false;
+      try {
+        mutatePlatformReleaseBootstrapInstalledMetadataOperationFixtureForTestV2(
+          fixture,
+          mutation,
+        );
+        await assert.rejects(
+          observePlatformReleaseBootstrapInstalledMetadataOperationForTestV2(
+            host,
+            fixture,
+          ),
+          (error: unknown) => {
+            assert.ok(
+              error instanceof
+                PlatformReleaseBootstrapInstalledMetadataOperationErrorV2,
+            );
+            assert.equal(
+              error.code,
+              "INSTALLED_METADATA_OPERATION_FIXTURE_HANDLE_UNAUTHENTICATED",
+            );
+            return true;
+          },
+        );
+        fixture.dispose();
+        disposed = true;
+        assert.throws(
+          () => fixture.dispose(),
+          {
+            code:
+              "INSTALLED_METADATA_OPERATION_FIXTURE_HANDLE_UNAUTHENTICATED",
+          },
+        );
+      } finally {
+        if (!disposed) fixture.dispose();
+      }
+    }
+  });
+
+  it("authenticates the child rejection for unauthorized target metadata", async () => {
+    const hostFixture = createHostFixtureV2({
+      operationalMetadataObserverWrappers: true,
+    });
+    const host = await createPlatformHostV2(
+      hostFixture,
+      "valid",
+    );
+    const fixture =
+      buildPlatformReleaseBootstrapInstalledMetadataOperationFixtureForTestV2();
+    try {
+      mutatePlatformReleaseBootstrapInstalledMetadataOperationFixtureForTestV2(
+        fixture,
+        "add_target_xattr",
+      );
+      await assert.rejects(
+        observePlatformReleaseBootstrapInstalledMetadataOperationForTestV2(
+          host,
+          fixture,
+        ),
+        (error: unknown) => {
+          assert.ok(
+            error instanceof
+              PlatformReleaseBootstrapInstalledMetadataOperationErrorV2,
+          );
+          assert.equal(
+            error.code,
+            "INSTALLED_METADATA_OPERATION_OPERATION_REJECTED",
+          );
+          return true;
+        },
+      );
+    } finally {
+      fixture.dispose();
+    }
+  });
+
+  it("preserves an authenticated child authority-drift classification", async () => {
+    const hostFixture = createHostFixtureV2({
+      operationalMetadataObserverWrappers: true,
+    });
+    const releaseBootstrap =
+      hostFixture.compositionFiles["bin/release-bootstrap"]!;
+    chmodSync(releaseBootstrap, 0o755);
+    writeFileSync(releaseBootstrap, [
+      "const { createHash } = require('node:crypto');",
+      "const { readFileSync } = require('node:fs');",
+      "const canonical = (value) => {",
+      "  if (value === null || typeof value !== 'object') return JSON.stringify(value);",
+      "  if (Array.isArray(value)) return '[' + value.map(canonical).join(',') + ']';",
+      "  return '{' + Object.keys(value).sort().map((key) => JSON.stringify(key) + ':' + canonical(value[key])).join(',') + '}';",
+      "};",
+      "const hash = (value) => createHash('sha256').update(canonical(value), 'utf8').digest('hex');",
+      "const input = JSON.parse(readFileSync(3, 'utf8'));",
+      "const identity = {",
+      "  schema: 'setfarm.platform-release-bootstrap-operation-failure.v2',",
+      "  version: '2.0.0',",
+      "  occurrenceId: input.occurrenceId,",
+      "  operationAbiRef: 'ABI_PLATFORM_RELEASE_METADATA_PROBE_V2',",
+      "  errorCode: 'AUTHORITY_DRIFT',",
+      "  phaseRef: 'METADATA_PROBE_FILESYSTEM_FENCE_V2',",
+      "  retryDisposition: 'retry_after_authority_delta',",
+      "  authorityStateHash: input.hostCompositionReceiptHash,",
+      "  diagnosticHash: hash({ schema: 'setfarm.platform-release-metadata-probe-diagnostic-hash.v2', diagnosticRef: 'METADATA_PROBE_FILESYSTEM_DRIFT' }),",
+      "};",
+      "const messageHash = hash({ schema: 'setfarm.platform-release-bootstrap-wire-message-hash.v2', schemaRef: identity.schema, message: identity });",
+      "process.stdout.write(canonical({ ...identity, messageHash }) + '\\n');",
+      "process.exitCode = 1;",
+      "",
+    ].join("\n"));
+    chmodSync(releaseBootstrap, 0o555);
+    const host = await createPlatformHostV2(
+      hostFixture,
+      "valid",
+    );
+    const fixture =
+      buildPlatformReleaseBootstrapInstalledMetadataOperationFixtureForTestV2();
+    try {
+      await assert.rejects(
+        observePlatformReleaseBootstrapInstalledMetadataOperationForTestV2(
+          host,
+          fixture,
+        ),
+        {
+          code:
+            "INSTALLED_METADATA_OPERATION_FILESYSTEM_DRIFT",
+        },
+      );
+    } finally {
+      fixture.dispose();
+    }
+  });
+});
+
+describe("installed platform-release network-negative operation", () => {
+  it("rejects a caller-held terminal symlink at the target fence", {
+    skip: process.platform !== "darwin",
+  }, async () => {
+    const hostFixture = createHostFixtureV2({
+      operationalNetworkSandboxWrapper: true,
+    });
+    const host = await createPlatformHostV2(hostFixture, "valid");
+    const targetRoot = mkdtempSync(path.join(
+      tmpdir(),
+      "setfarm-network-negative-symlink-target-v2-",
+    ));
+    const aliasParent = mkdtempSync(path.join(
+      tmpdir(),
+      "setfarm-network-negative-symlink-alias-v2-",
+    ));
+    roots.push(targetRoot, aliasParent);
+    const alias = path.join(aliasParent, "target");
+    symlinkSync(targetRoot, alias);
+
+    await assert.rejects(
+      observePlatformReleaseBootstrapInstalledNetworkNegativeOperationAtPrivateTargetInternalV2(
+        host,
+        alias,
+      ),
+      (error: unknown) => {
+        assert.ok(
+          error instanceof
+            PlatformReleaseBootstrapInstalledNetworkNegativeOperationErrorV2,
+        );
+        assert.equal(
+          error.code,
+          "INSTALLED_NETWORK_NEGATIVE_OPERATION_FILESYSTEM_DRIFT",
+        );
+        return true;
+      },
+    );
+  });
+
+  it("executes the installed test-only sandbox ABI against an authentic output root", {
+    skip: process.platform !== "darwin",
+  }, async () => {
+    const repository = createRepositoryFixtureV2();
+    const hostFixture = createHostFixtureV2({
+      operationalNetworkSandboxWrapper: true,
+    });
+    const source = admittedSourceV2(repository);
+    let dependencyPair:
+      PlatformReleaseDependencyMaterializedPairV2
+      | undefined;
+    try {
+      const host = await createPlatformHostV2(hostFixture, "valid");
+      const capsule =
+        await materializePlatformReleaseBuildToolchainCapsuleV2ForTest({
+          sourceStage: source,
+          hostToolchain: host,
+        });
+      const compiledPair =
+        await materializePlatformReleaseCompiledOutputPairV2ForTest({
+          sourceStage: source,
+          buildToolchain: capsule,
+        });
+      dependencyPair =
+        await materializePlatformReleaseDependencyMaterializedPairForTestV2(
+          compiledPair,
+        );
+
+      const occurrence =
+        await withPlatformReleaseDependencyMaterializedPairForTestV2(
+          dependencyPair,
+          ({ firstOutputRoot }) =>
+            observePlatformReleaseBootstrapInstalledNetworkNegativeEvidenceAtPrivateTargetInternalV2(
+              host,
+              firstOutputRoot,
+            ),
+        );
+
+      assert.deepEqual(
+        PlatformReleaseCompositionNetworkNegativeTestV2Schema.parse(
+          occurrence,
+        ),
+        occurrence,
+      );
+      assert.equal(Object.isFrozen(occurrence), true);
+      assert.equal(occurrence.admissionScope, "test_fixture");
+      assert.equal(occurrence.productionAuthority, false);
+      assert.equal(occurrence.productionAdmission, "forbidden");
+      assert.equal(occurrence.credentialUse, "none");
+      assert.equal(occurrence.mutationAuthority, false);
+      assert.equal(occurrence.trustConclusion, "characterization_only");
+      assert.equal(
+        hashPlatformReleaseCompositionNetworkNegativeForTestV2(
+          occurrence,
+        ),
+        occurrence.evidenceHash,
+      );
+      assert.equal(occurrence.receipt.probeOutcome, "all_denied");
+      assert.equal(
+        occurrence.receipt.controlOutcome,
+        "loopback_and_redirect_observed",
+      );
+      assert.equal(occurrence.receipt.attemptedProbeCount, 1);
+      assert.equal(occurrence.receipt.deniedProbeCount, 1);
+      assert.equal(
+        occurrence.receipt.occurrenceId,
+        occurrence.occurrenceId,
+      );
+      assert.equal(
+        occurrence.receipt.hostIdentityHash,
+        occurrence.hostIdentityHash,
+      );
+      assert.equal(
+        occurrence.receipt.targetRootPhysicalIdentityHash,
+        occurrence.targetRootPhysicalIdentityHash,
+      );
+      assert.equal(
+        occurrence.receipt.hostCompositionReceiptHash,
+        occurrence.hostCompositionReceiptHash,
+      );
+      assert.equal(
+        occurrence.receipt.sandboxPolicyHash,
+        occurrence.sandboxPolicyHash,
+      );
+      assert.deepEqual(occurrence.targetAfter, occurrence.targetBefore);
+      assert.equal(occurrence.process.status, "exited");
+      assert.equal(occurrence.process.exitCode, 0);
+      assert.equal(occurrence.process.signal, null);
+      assert.equal(
+        occurrence.process.environmentPolicy,
+        "exact_empty_environment_v2",
+      );
+      assert.equal(occurrence.process.shell, false);
+      assert.equal(occurrence.process.stderrByteLength, 0);
+      assert.equal(
+        occurrence.process.stderrHash,
+        PLATFORM_RELEASE_BOOTSTRAP_INSTALLED_NETWORK_NEGATIVE_EMPTY_SHA256_V2,
+      );
+      assert.doesNotMatch(
+        JSON.stringify(occurrence),
+        /(?:clear|\/tmp\/|\/private\/|\/Users\/)/u,
+      );
+      const promoted = structuredClone(occurrence) as any;
+      promoted.productionAuthority = true;
+      promoted.evidenceHash =
+        hashPlatformReleaseCompositionNetworkNegativeForTestV2(
+          promoted,
+        );
+      assert.equal(
+        PlatformReleaseCompositionNetworkNegativeTestV2Schema
+          .safeParse(promoted).success,
+        false,
+      );
+      assert.equal(
+        existsSync(path.join(
+          "/private/tmp",
+          `setfarm-installed-network-negative-operation-v2-${occurrence.occurrenceId}`,
+        )),
+        false,
+      );
+      await revalidatePlatformReleaseDependencyMaterializedPairV2(
+        dependencyPair,
+      );
+    } finally {
+      if (dependencyPair !== undefined) {
+        disposePlatformReleaseDependencyMaterializedPairV2(dependencyPair);
+      } else {
+        disposePlatformReleaseSourceStageV2(source);
+      }
+    }
+  });
+
+  it("observes two strict network-negative occurrences under one exclusive pair lease", {
+    skip: process.platform !== "darwin",
+  }, async () => {
+    const repository = createRepositoryFixtureV2();
+    const hostFixture = createHostFixtureV2({
+      operationalNetworkSandboxWrapper: true,
+    });
+    const source = admittedSourceV2(repository);
+    let dependencyPair:
+      PlatformReleaseDependencyMaterializedPairV2
+      | undefined;
+    try {
+      const host = await createPlatformHostV2(hostFixture, "valid");
+      const capsule =
+        await materializePlatformReleaseBuildToolchainCapsuleV2ForTest({
+          sourceStage: source,
+          hostToolchain: host,
+        });
+      const compiledPair =
+        await materializePlatformReleaseCompiledOutputPairV2ForTest({
+          sourceStage: source,
+          buildToolchain: capsule,
+        });
+      dependencyPair =
+        await materializePlatformReleaseDependencyMaterializedPairForTestV2(
+          compiledPair,
+        );
+
+      await assert.rejects(
+        observePlatformReleaseCompositionNetworkNegativePairForTestV2({
+          dependencyPair,
+          targetRoot: "/tmp/caller-selected-target",
+        } as never),
+        {
+          code:
+            "PLATFORM_RELEASE_COMPOSITION_NETWORK_NEGATIVE_PAIR_TEST_V2_INPUT_INVALID",
+        },
+      );
+      await assert.rejects(
+        observePlatformReleaseCompositionNetworkNegativePairForTestV2(
+          "/tmp/caller-selected-target" as never,
+        ),
+        {
+          code:
+            "PLATFORM_RELEASE_COMPOSITION_NETWORK_NEGATIVE_PAIR_TEST_V2_INPUT_INVALID",
+        },
+      );
+      await assert.rejects(
+        observePlatformReleaseCompositionNetworkNegativePairForTestV2(
+          new Proxy(dependencyPair, {}) as never,
+        ),
+        (error: unknown) => {
+          assert.ok(
+            error instanceof
+              PlatformReleaseCompositionNetworkNegativePairForTestErrorV2,
+          );
+          assert.equal(
+            error.code,
+            "PLATFORM_RELEASE_COMPOSITION_NETWORK_NEGATIVE_PAIR_TEST_V2_INPUT_INVALID",
+          );
+          return true;
+        },
+      );
+
+      let releaseRootCallback!: () => void;
+      let markRootCallbackEntered!: () => void;
+      const rootCallbackEntered = new Promise<void>((resolve) => {
+        markRootCallbackEntered = resolve;
+      });
+      const releaseRootCallbackPromise =
+        new Promise<void>((resolve) => {
+          releaseRootCallback = resolve;
+        });
+      const heldRootCallback =
+        withPlatformReleaseDependencyMaterializedPairForTestV2(
+          dependencyPair,
+          async () => {
+            markRootCallbackEntered();
+            await releaseRootCallbackPromise;
+          },
+        );
+      await rootCallbackEntered;
+      await assert.rejects(
+        observePlatformReleaseCompositionNetworkNegativePairForTestV2(
+          dependencyPair,
+        ),
+        {
+          code:
+            "PLATFORM_RELEASE_COMPOSITION_NETWORK_NEGATIVE_PAIR_TEST_V2_ALREADY_CLAIMED",
+        },
+      );
+      releaseRootCallback();
+      await heldRootCallback;
+
+      const first =
+        await observePlatformReleaseCompositionNetworkNegativePairForTestV2(
+          dependencyPair,
+        );
+      const second =
+        await observePlatformReleaseCompositionNetworkNegativePairForTestV2(
+          dependencyPair,
+        );
+      for (const evidence of [first, second]) {
+        assert.deepEqual(
+          PlatformReleaseCompositionNetworkNegativePairTestV2Schema
+            .parse(evidence),
+          evidence,
+        );
+        assert.equal(Object.isFrozen(evidence), true);
+        assert.equal(Object.isFrozen(evidence.occurrences), true);
+        assert.equal(
+          Object.isFrozen(evidence.occurrences[0].receipt),
+          true,
+        );
+        assert.equal(evidence.productionAuthority, false);
+        assert.equal(evidence.productionAdmission, "forbidden");
+        assert.equal(evidence.mutationAuthority, false);
+        assert.equal(evidence.callerJsonState, "absent");
+        assert.equal(evidence.callerLocatorState, "absent");
+        assert.equal(
+          evidence.occurrences[0].stageRef,
+          "PLATFORM_RELEASE_DEPENDENCY_STAGE_FIRST_V2",
+        );
+        assert.equal(
+          evidence.occurrences[1].stageRef,
+          "PLATFORM_RELEASE_DEPENDENCY_STAGE_SECOND_V2",
+        );
+        assert.equal(
+          evidence.stableProjectionHash,
+          evidence.occurrences[0].stableProjectionHash,
+        );
+        assert.equal(
+          evidence.occurrences[0].stableProjectionHash,
+          evidence.occurrences[1].stableProjectionHash,
+        );
+        assert.equal(
+          evidence.occurrences[0].launchProjectionHash,
+          evidence.occurrences[1].launchProjectionHash,
+        );
+        assert.equal(
+          evidence.occurrences[0].receipt.stableNetworkProjectionHash,
+          evidence.occurrences[1].receipt.stableNetworkProjectionHash,
+        );
+        assert.notEqual(
+          evidence.occurrences[0].outputStagePhysicalIdentityHash,
+          evidence.occurrences[1].outputStagePhysicalIdentityHash,
+        );
+        assert.notEqual(
+          evidence.occurrences[0].targetRootPhysicalIdentityHash,
+          evidence.occurrences[1].targetRootPhysicalIdentityHash,
+        );
+        assert.notEqual(
+          evidence.occurrences[0].targetBefore.observationHash,
+          evidence.occurrences[1].targetBefore.observationHash,
+        );
+        assert.notEqual(
+          evidence.occurrences[0].occurrenceId,
+          evidence.occurrences[1].occurrenceId,
+        );
+        assert.notEqual(
+          evidence.occurrences[0].process.processObservationHash,
+          evidence.occurrences[1].process.processObservationHash,
+        );
+        assert.notEqual(
+          evidence.occurrences[0].receipt.messageHash,
+          evidence.occurrences[1].receipt.messageHash,
+        );
+        assert.notEqual(
+          evidence.occurrences[0].receipt.networkObservationHash,
+          evidence.occurrences[1].receipt.networkObservationHash,
+        );
+        assert.notEqual(
+          evidence.occurrences[0].occurrenceHash,
+          evidence.occurrences[1].occurrenceHash,
+        );
+        assert.equal(
+          hashPlatformReleaseCompositionNetworkNegativePairForTestV2(
+            evidence,
+          ),
+          evidence.collectionHash,
+        );
+        assert.doesNotMatch(
+          JSON.stringify(evidence),
+          /\/tmp\/|\/private\/|\/var\/folders\/|\/Users\/|setfarm-platform-compiled-output/,
+        );
+      }
+      assert.equal(
+        first.stableProjectionHash,
+        second.stableProjectionHash,
+      );
+      assert.equal(
+        first.occurrences[0].targetRootPhysicalIdentityHash,
+        second.occurrences[0].targetRootPhysicalIdentityHash,
+      );
+      assert.equal(
+        first.occurrences[1].targetRootPhysicalIdentityHash,
+        second.occurrences[1].targetRootPhysicalIdentityHash,
+      );
+      for (const index of [0, 1] as const) {
+        assert.notEqual(
+          first.occurrences[index].occurrenceId,
+          second.occurrences[index].occurrenceId,
+        );
+        assert.notEqual(
+          first.occurrences[index].process.processObservationHash,
+          second.occurrences[index].process.processObservationHash,
+        );
+        assert.notEqual(
+          first.occurrences[index].receipt.messageHash,
+          second.occurrences[index].receipt.messageHash,
+        );
+        assert.notEqual(
+          first.occurrences[index].receipt.networkObservationHash,
+          second.occurrences[index].receipt.networkObservationHash,
+        );
+        assert.notEqual(
+          first.occurrences[index].occurrenceHash,
+          second.occurrences[index].occurrenceHash,
+        );
+      }
+      assert.notEqual(first.collectionHash, second.collectionHash);
+
+      const swapped = structuredClone(first) as any;
+      swapped.occurrences.reverse();
+      swapped.occurrences[0].stageRef =
+        "PLATFORM_RELEASE_DEPENDENCY_STAGE_FIRST_V2";
+      swapped.occurrences[1].stageRef =
+        "PLATFORM_RELEASE_DEPENDENCY_STAGE_SECOND_V2";
+      for (const occurrence of swapped.occurrences) {
+        occurrence.occurrenceHash =
+          hashPlatformReleaseCompositionNetworkNegativePairOccurrenceForTestV2(
+            occurrence,
+          );
+      }
+      swapped.collectionHash =
+        hashPlatformReleaseCompositionNetworkNegativePairForTestV2(
+          swapped,
+        );
+      assert.equal(
+        PlatformReleaseCompositionNetworkNegativePairTestV2Schema
+          .safeParse(swapped).success,
+        false,
+      );
+
+      const aliased = structuredClone(first) as any;
+      aliased.occurrences[1] = structuredClone(
+        aliased.occurrences[0],
+      );
+      aliased.occurrences[1].stageRef =
+        "PLATFORM_RELEASE_DEPENDENCY_STAGE_SECOND_V2";
+      aliased.occurrences[1].occurrenceHash =
+        hashPlatformReleaseCompositionNetworkNegativePairOccurrenceForTestV2(
+          aliased.occurrences[1],
+        );
+      aliased.collectionHash =
+        hashPlatformReleaseCompositionNetworkNegativePairForTestV2(
+          aliased,
+        );
+      assert.equal(
+        PlatformReleaseCompositionNetworkNegativePairTestV2Schema
+          .safeParse(aliased).success,
+        false,
+      );
+
+      const widenedTargetLayout = structuredClone(first) as any;
+      const widenedOccurrence = widenedTargetLayout.occurrences[0];
+      widenedOccurrence.targetBefore.mutableFingerprint
+        .directEntryNamesHash = "a".repeat(64);
+      widenedOccurrence.targetBefore.observationHash =
+        hashPlatformReleaseCompositionNetworkNegativeTargetObservationForTestV2({
+          stableIdentity: widenedOccurrence.targetBefore.stableIdentity,
+          mutableFingerprint:
+            widenedOccurrence.targetBefore.mutableFingerprint,
+        });
+      widenedOccurrence.targetAfter = structuredClone(
+        widenedOccurrence.targetBefore,
+      );
+      widenedOccurrence.occurrenceHash =
+        hashPlatformReleaseCompositionNetworkNegativePairOccurrenceForTestV2(
+          widenedOccurrence,
+        );
+      widenedTargetLayout.collectionHash =
+        hashPlatformReleaseCompositionNetworkNegativePairForTestV2(
+          widenedTargetLayout,
+        );
+      assert.equal(
+        PlatformReleaseCompositionNetworkNegativePairTestV2Schema
+          .safeParse(widenedTargetLayout).success,
+        false,
+      );
+
+      const detachedLaunch = structuredClone(first) as any;
+      const detachedLaunchOccurrence =
+        detachedLaunch.occurrences[1];
+      detachedLaunchOccurrence.process.sandboxExecutableContentHash =
+        "d".repeat(64);
+      detachedLaunchOccurrence.process.fixedArgvHash =
+        hashPlatformReleaseCompositionNetworkNegativeFixedArgvForTestV2(
+          detachedLaunchOccurrence.process,
+        );
+      const {
+        processObservationHash: _processObservationHash,
+        ...detachedProcessIdentity
+      } = detachedLaunchOccurrence.process;
+      detachedLaunchOccurrence.process.processObservationHash =
+        hashPlatformReleaseCompositionNetworkNegativeProcessObservationForTestV2(
+          detachedProcessIdentity,
+        );
+      detachedLaunchOccurrence.launchProjectionHash =
+        hashPlatformReleaseCompositionNetworkNegativeLaunchProjectionForTestV2(
+          detachedLaunchOccurrence.process,
+        );
+      detachedLaunchOccurrence.stableProjectionHash =
+        hashPlatformReleaseCompositionNetworkNegativePairStableProjectionForTestV2({
+          operationAbiRef: detachedLaunch.operationAbiRef,
+          operationAbiHash: detachedLaunch.operationAbiHash,
+          sandboxPolicyHash:
+            detachedLaunchOccurrence.sandboxPolicyHash,
+          hostIdentityHash:
+            detachedLaunchOccurrence.hostIdentityHash,
+          platformHostToolchainReceiptHash:
+            detachedLaunchOccurrence.platformHostToolchainReceiptHash,
+          hostCompositionReceiptHash:
+            detachedLaunchOccurrence.hostCompositionReceiptHash,
+          stableOutputBindingHash:
+            detachedLaunchOccurrence.stableOutputBindingHash,
+          sandboxProfileHash:
+            detachedLaunchOccurrence.receipt.sandboxProfileHash,
+          probeProgramHash:
+            detachedLaunchOccurrence.receipt.probeProgramHash,
+          normalizedEnvironmentHash:
+            detachedLaunchOccurrence.receipt.normalizedEnvironmentHash,
+          probeClosureHash:
+            detachedLaunchOccurrence.receipt.probeClosureHash,
+          probeOutcome:
+            detachedLaunchOccurrence.receipt.probeOutcome,
+          attemptedProbeCount:
+            detachedLaunchOccurrence.receipt.attemptedProbeCount,
+          deniedProbeCount:
+            detachedLaunchOccurrence.receipt.deniedProbeCount,
+          deniedProbeSetHash:
+            detachedLaunchOccurrence.receipt.deniedProbeSetHash,
+          controlOutcome:
+            detachedLaunchOccurrence.receipt.controlOutcome,
+          controlSetHash:
+            detachedLaunchOccurrence.receipt.controlSetHash,
+          networkStableProjectionHash:
+            detachedLaunchOccurrence.receipt
+              .stableNetworkProjectionHash,
+          launchProjectionHash:
+            detachedLaunchOccurrence.launchProjectionHash,
+        });
+      detachedLaunchOccurrence.occurrenceHash =
+        hashPlatformReleaseCompositionNetworkNegativePairOccurrenceForTestV2(
+          detachedLaunchOccurrence,
+        );
+      detachedLaunch.collectionHash =
+        hashPlatformReleaseCompositionNetworkNegativePairForTestV2(
+          detachedLaunch,
+        );
+      assert.equal(
+        PlatformReleaseCompositionNetworkNegativePairOccurrenceForTestV2Schema
+          .safeParse(detachedLaunchOccurrence).success,
+        true,
+      );
+      assert.equal(
+        PlatformReleaseCompositionNetworkNegativePairTestV2Schema
+          .safeParse(detachedLaunch).success,
+        false,
+      );
+
+      const detachedPair = structuredClone(first) as any;
+      detachedPair.dependencyPairInspectionHash = "f".repeat(64);
+      detachedPair.collectionHash =
+        hashPlatformReleaseCompositionNetworkNegativePairForTestV2(
+          detachedPair,
+        );
+      assert.equal(
+        PlatformReleaseCompositionNetworkNegativePairTestV2Schema
+          .safeParse(detachedPair).success,
+        false,
+      );
+      await revalidatePlatformReleaseDependencyMaterializedPairV2(
+        dependencyPair,
+      );
+    } finally {
+      if (dependencyPair !== undefined) {
+        disposePlatformReleaseDependencyMaterializedPairV2(dependencyPair);
+      } else {
+        disposePlatformReleaseSourceStageV2(source);
+      }
+    }
+  });
+
+  it("invalidates and cleans both outputs after same-byte sandbox tool inode drift", {
+    skip: process.platform !== "darwin",
+  }, async () => {
+    const repository = createRepositoryFixtureV2();
+    const hostFixture = createHostFixtureV2({
+      operationalNetworkSandboxWrapper: true,
+    });
+    const source = admittedSourceV2(repository);
+    let dependencyPair:
+      PlatformReleaseDependencyMaterializedPairV2
+      | undefined;
+    let firstOutputRoot = "";
+    let secondOutputRoot = "";
+    try {
+      const host = await createPlatformHostV2(hostFixture, "valid");
+      const capsule =
+        await materializePlatformReleaseBuildToolchainCapsuleV2ForTest({
+          sourceStage: source,
+          hostToolchain: host,
+        });
+      const compiledPair =
+        await materializePlatformReleaseCompiledOutputPairV2ForTest({
+          sourceStage: source,
+          buildToolchain: capsule,
+        });
+      dependencyPair =
+        await materializePlatformReleaseDependencyMaterializedPairForTestV2(
+          compiledPair,
+        );
+      await withPlatformReleaseDependencyMaterializedPairForTestV2(
+        dependencyPair,
+        (outputRoots) => {
+          firstOutputRoot = outputRoots.firstOutputRoot;
+          secondOutputRoot = outputRoots.secondOutputRoot;
+        },
+      );
+      const sandboxTool =
+        hostFixture.compositionFiles["tools/sandbox-exec"]!;
+      const bytes = readFileSync(sandboxTool);
+      try {
+        unlinkSync(sandboxTool);
+        writeFileSync(sandboxTool, bytes, { mode: 0o755 });
+        chmodSync(sandboxTool, 0o755);
+      } finally {
+        bytes.fill(0);
+      }
+      await assert.rejects(
+        observePlatformReleaseCompositionNetworkNegativePairForTestV2(
+          dependencyPair,
+        ),
+        {
+          code:
+            "PLATFORM_RELEASE_COMPOSITION_NETWORK_NEGATIVE_PAIR_TEST_V2_PAIR_DRIFT",
+        },
+      );
+      assert.equal(existsSync(path.dirname(firstOutputRoot)), false);
+      assert.equal(existsSync(path.dirname(secondOutputRoot)), false);
+      assert.throws(
+        () => disposePlatformReleaseDependencyMaterializedPairV2(
+          dependencyPair!,
+        ),
+        {
+          code:
+            "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_SOURCE_DRIFT",
+        },
+      );
+      dependencyPair = undefined;
+    } finally {
+      if (dependencyPair !== undefined) {
+        try {
+          disposePlatformReleaseDependencyMaterializedPairV2(
+            dependencyPair,
+          );
+        } catch {
+          // The drift assertion owns any terminal cleanup failure.
+        }
+      } else {
+        try {
+          disposePlatformReleaseSourceStageV2(source);
+        } catch {
+          // Terminal drift may already have destroyed the source.
+        }
+      }
+    }
+  });
+});
+
 describe("PlatformReleaseBuildToolchainCapsuleV2", () => {
   it("binds source lock authority to its exact phase and canonical hash", () => {
     const repository = createRepositoryFixtureV2();
@@ -1922,28 +3005,31 @@ describe("PlatformReleaseBuildToolchainCapsuleV2", () => {
               ["dist", "package.json"],
             );
           }
-          const firstStat = lstatSync(firstOutputRoot);
-          const secondStat = lstatSync(secondOutputRoot);
+          const firstStat = lstatSync(firstOutputRoot, { bigint: true });
+          const secondStat = lstatSync(secondOutputRoot, { bigint: true });
+          const maxSafe = BigInt(Number.MAX_SAFE_INTEGER);
+          assert.ok(firstStat.uid <= maxSafe && firstStat.gid <= maxSafe);
+          assert.ok(secondStat.uid <= maxSafe && secondStat.gid <= maxSafe);
           assert.equal(
             inspection.occurrences[0]
               .outputStagePhysicalIdentityHash,
-            hashHostNodePlatformReleaseOutputStageIdentityV2({
-              device: firstStat.dev,
-              inode: firstStat.ino,
-              mode: firstStat.mode,
-              ownerUid: firstStat.uid,
-              ownerGid: firstStat.gid,
+            hashHostNodePlatformReleaseOutputStageExactIdentityV2({
+              device: String(firstStat.dev),
+              inode: String(firstStat.ino),
+              mode: Number(firstStat.mode & 0o7777n),
+              ownerUid: Number(firstStat.uid),
+              ownerGid: Number(firstStat.gid),
             }),
           );
           assert.equal(
             inspection.occurrences[1]
               .outputStagePhysicalIdentityHash,
-            hashHostNodePlatformReleaseOutputStageIdentityV2({
-              device: secondStat.dev,
-              inode: secondStat.ino,
-              mode: secondStat.mode,
-              ownerUid: secondStat.uid,
-              ownerGid: secondStat.gid,
+            hashHostNodePlatformReleaseOutputStageExactIdentityV2({
+              device: String(secondStat.dev),
+              inode: String(secondStat.ino),
+              mode: Number(secondStat.mode & 0o7777n),
+              ownerUid: Number(secondStat.uid),
+              ownerGid: Number(secondStat.gid),
             }),
           );
         },
@@ -5413,6 +6499,1999 @@ describe("PlatformReleaseDependencyMaterializedPairV2", () => {
       },
     );
   });
+
+  it("rejects an authentic dependency pair whose dist tree lacks the code-owned required module closure", async () => {
+    const repository = createRepositoryFixtureV2();
+    const hostFixture = createHostFixtureV2();
+    const source = admittedSourceV2(repository);
+    let dependencyPair:
+      PlatformReleaseDependencyMaterializedPairV2
+      | undefined;
+    try {
+      const host = await createPlatformHostV2(
+        hostFixture,
+        "valid",
+      );
+      const capsule =
+        await materializePlatformReleaseBuildToolchainCapsuleV2ForTest({
+          sourceStage: source,
+          hostToolchain: host,
+        });
+      const compiledPair =
+        await materializePlatformReleaseCompiledOutputPairV2ForTest({
+          sourceStage: source,
+          buildToolchain: capsule,
+        });
+      dependencyPair =
+        await materializePlatformReleaseDependencyMaterializedPairForTestV2(
+          compiledPair,
+        );
+      await assert.rejects(
+        derivePlatformReleaseCompositionModuleClosureForTestV2(
+          dependencyPair,
+        ),
+        (error: unknown) => {
+          assert.ok(
+            error instanceof
+              PlatformReleaseCompositionModuleClosureForTestErrorV2,
+          );
+          assert.equal(
+            error.code,
+            "PLATFORM_RELEASE_COMPOSITION_MODULE_CLOSURE_TEST_V2_MODULE_MISSING",
+          );
+          assert.match(
+            error.message,
+            /dist\/execution\/schemas\/node-cli-launcher-v2\.js/,
+          );
+          return true;
+        },
+      );
+      await revalidatePlatformReleaseDependencyMaterializedPairV2(
+        dependencyPair,
+      );
+    } finally {
+      if (dependencyPair) {
+        disposePlatformReleaseDependencyMaterializedPairV2(
+          dependencyPair,
+        );
+      } else {
+        disposePlatformReleaseSourceStageV2(source);
+      }
+    }
+  });
+
+  it("derives pathless runtime payload and all 17 module refs from authentic pairs without caller JSON", async () => {
+    const repositories = [
+      enableRequiredModuleBuildFixtureV2(
+        createRepositoryFixtureV2(),
+        "first-pair",
+      ),
+      enableRequiredModuleBuildFixtureV2(
+        createRepositoryFixtureV2(),
+        "second-pair",
+      ),
+    ] as const;
+    const sources = repositories.map(admittedSourceV2);
+    const hostFixture = createHostFixtureV2();
+    const dependencyPairs:
+      PlatformReleaseDependencyMaterializedPairV2[] = [];
+    try {
+      const host = await createPlatformHostV2(
+        hostFixture,
+        "valid",
+      );
+      for (const source of sources) {
+        const capsule =
+          await materializePlatformReleaseBuildToolchainCapsuleV2ForTest({
+            sourceStage: source,
+            hostToolchain: host,
+          });
+        const compiledPair =
+          await materializePlatformReleaseCompiledOutputPairV2ForTest({
+            sourceStage: source,
+            buildToolchain: capsule,
+          });
+        dependencyPairs.push(
+          await materializePlatformReleaseDependencyMaterializedPairForTestV2(
+            compiledPair,
+          ),
+        );
+      }
+      const [firstPair, secondPair] = dependencyPairs as [
+        PlatformReleaseDependencyMaterializedPairV2,
+        PlatformReleaseDependencyMaterializedPairV2,
+      ];
+      await assert.rejects(
+        derivePlatformReleaseCompositionModuleClosureForTestV2({
+          dependencyPair: firstPair,
+          moduleRoot: "/tmp/caller-selected-modules",
+        } as never),
+        {
+          code:
+            "PLATFORM_RELEASE_COMPOSITION_MODULE_CLOSURE_TEST_V2_INPUT_INVALID",
+        },
+      );
+      await assert.rejects(
+        derivePlatformReleaseCompositionModuleClosureForTestV2(
+          new Proxy(firstPair, {}) as never,
+        ),
+        {
+          code:
+            "PLATFORM_RELEASE_COMPOSITION_MODULE_CLOSURE_TEST_V2_INPUT_INVALID",
+        },
+      );
+      await assert.rejects(
+        derivePlatformReleaseCompositionModuleClosureForTestV2({
+          firstPair,
+          secondPair,
+        } as never),
+        {
+          code:
+            "PLATFORM_RELEASE_COMPOSITION_MODULE_CLOSURE_TEST_V2_INPUT_INVALID",
+        },
+      );
+
+      const [first, repeated, second] = await Promise.all([
+        derivePlatformReleaseCompositionModuleClosureForTestV2(
+          firstPair,
+        ),
+        derivePlatformReleaseCompositionModuleClosureForTestV2(
+          firstPair,
+        ),
+        derivePlatformReleaseCompositionModuleClosureForTestV2(
+          secondPair,
+        ),
+      ]);
+      assert.deepEqual(first, repeated);
+      assert.deepEqual(
+        PlatformReleaseCompositionModuleClosureForTestV2Schema
+          .parse(first),
+        first,
+      );
+      assert.equal(Object.isFrozen(first), true);
+      assert.equal(Object.isFrozen(first.runtimePayload), true);
+      assert.equal(
+        Object.isFrozen(first.requiredModuleClosure.entries),
+        true,
+      );
+      assert.equal(first.productionAuthority, false);
+      assert.equal(first.productionAdmission, "forbidden");
+      assert.equal(first.callerJsonState, "absent");
+      assert.equal(first.mutationAuthority, false);
+      assert.equal(
+        first.requiredModuleClosure.entries.length,
+        17,
+      );
+      assert.equal(
+        first.requiredModuleClosure.runtimePayloadHash,
+        first.runtimePayload.runtimePayloadHash,
+      );
+      assert.equal(
+        first.requiredModuleClosure.platformTreeHash,
+        first.runtimePayload.platformTree.treeHash,
+      );
+      assert.equal(first.runtimePayload.ownership.ownerUid, 0);
+      assert.equal(first.runtimePayload.ownership.ownerGid, 0);
+      assert.ok(first.runtimePayload.ownership.runtimeUid > 0);
+      assert.equal(
+        first.occurrences[0].moduleSetHash,
+        first.occurrences[1].moduleSetHash,
+      );
+      assert.notEqual(
+        first.occurrences[0].outputStagePhysicalIdentityHash,
+        first.occurrences[1].outputStagePhysicalIdentityHash,
+      );
+      assert.equal(
+        hashPlatformReleaseCompositionModuleClosureForTestV2(
+          first,
+        ),
+        first.derivationHash,
+      );
+      assert.notEqual(
+        first.requiredModuleClosure.closureHash,
+        second.requiredModuleClosure.closureHash,
+      );
+      assert.notEqual(
+        first.runtimePayload.platformTree.treeHash,
+        second.runtimePayload.platformTree.treeHash,
+      );
+      assert.doesNotMatch(
+        JSON.stringify(first),
+        /\/tmp\/|\/private\/|\/Users\//,
+      );
+      const promoted = structuredClone(first) as any;
+      promoted.productionAuthority = true;
+      promoted.derivationHash =
+        hashPlatformReleaseCompositionModuleClosureForTestV2(
+          promoted,
+        );
+      assert.equal(
+        PlatformReleaseCompositionModuleClosureForTestV2Schema
+          .safeParse(promoted).success,
+        false,
+      );
+      const detachedStableOutput = structuredClone(first) as any;
+      detachedStableOutput.stableOutput
+        .dependencyOutputBindingHash = hashCanonicalJson({
+          schema: "test.detached-dependency-output.v2",
+        });
+      detachedStableOutput.derivationHash =
+        hashPlatformReleaseCompositionModuleClosureForTestV2(
+          detachedStableOutput,
+        );
+      assert.equal(
+        PlatformReleaseCompositionModuleClosureForTestV2Schema
+          .safeParse(detachedStableOutput).success,
+        false,
+      );
+      const detachedModuleSet = structuredClone(first) as any;
+      const forgedModuleSetHash = hashCanonicalJson({
+        schema: "test.detached-module-set.v2",
+      });
+      detachedModuleSet.occurrences[0].moduleSetHash =
+        forgedModuleSetHash;
+      detachedModuleSet.occurrences[1].moduleSetHash =
+        forgedModuleSetHash;
+      detachedModuleSet.derivationHash =
+        hashPlatformReleaseCompositionModuleClosureForTestV2(
+          detachedModuleSet,
+        );
+      assert.equal(
+        PlatformReleaseCompositionModuleClosureForTestV2Schema
+          .safeParse(detachedModuleSet).success,
+        false,
+      );
+      assert.throws(
+        () => inspectCompletedPlatformReleaseStageCandidateV2(
+          first as never,
+        ),
+        { code: "COMPLETED_STAGE_UNAUTHENTICATED" },
+      );
+      await Promise.all(
+        dependencyPairs.map((pair) =>
+          revalidatePlatformReleaseDependencyMaterializedPairV2(
+            pair,
+          )),
+      );
+    } finally {
+      for (const pair of dependencyPairs) {
+        try {
+          disposePlatformReleaseDependencyMaterializedPairV2(pair);
+        } catch {
+          // The assertion path reports any authority failure.
+        }
+      }
+      for (const source of sources.slice(dependencyPairs.length)) {
+        try {
+          disposePlatformReleaseSourceStageV2(source);
+        } catch {
+          // A failed transaction may already have destroyed this source.
+        }
+      }
+    }
+  });
+
+  it("observes all required export kinds across two physical occurrences under one exclusive pair lease", async () => {
+    const repositories = [
+      enableRequiredModuleBuildFixtureV2(
+        createRepositoryFixtureV2(),
+        "export-probe-first",
+      ),
+      enableRequiredModuleBuildFixtureV2(
+        createRepositoryFixtureV2(),
+        "export-probe-second",
+      ),
+    ] as const;
+    const sources = repositories.map(admittedSourceV2);
+    const hostFixture = createHostFixtureV2();
+    const dependencyPairs:
+      PlatformReleaseDependencyMaterializedPairV2[] = [];
+    try {
+      const host = await createPlatformHostV2(
+        hostFixture,
+        "valid",
+      );
+      for (const source of sources) {
+        const capsule =
+          await materializePlatformReleaseBuildToolchainCapsuleV2ForTest({
+            sourceStage: source,
+            hostToolchain: host,
+          });
+        const compiledPair =
+          await materializePlatformReleaseCompiledOutputPairV2ForTest({
+            sourceStage: source,
+            buildToolchain: capsule,
+          });
+        dependencyPairs.push(
+          await materializePlatformReleaseDependencyMaterializedPairForTestV2(
+            compiledPair,
+          ),
+        );
+      }
+      const [firstPair, secondPair] = dependencyPairs as [
+        PlatformReleaseDependencyMaterializedPairV2,
+        PlatformReleaseDependencyMaterializedPairV2,
+      ];
+      await assert.rejects(
+        observePlatformReleaseCompositionModuleExportsForTestV2({
+          dependencyPair: firstPair,
+          moduleRoot: "/tmp/caller-selected-modules",
+        } as never),
+        {
+          code:
+            "PLATFORM_RELEASE_COMPOSITION_MODULE_EXPORTS_TEST_V2_INPUT_INVALID",
+        },
+      );
+      await assert.rejects(
+        observePlatformReleaseCompositionModuleExportsForTestV2(
+          new Proxy(firstPair, {}) as never,
+        ),
+        {
+          code:
+            "PLATFORM_RELEASE_COMPOSITION_MODULE_EXPORTS_TEST_V2_INPUT_INVALID",
+        },
+      );
+      await assert.rejects(
+        observePlatformReleaseCompositionModuleExportsForTestV2({
+          firstPair,
+          secondPair,
+        } as never),
+        {
+          code:
+            "PLATFORM_RELEASE_COMPOSITION_MODULE_EXPORTS_TEST_V2_INPUT_INVALID",
+        },
+      );
+
+      const first =
+        observePlatformReleaseCompositionModuleExportsForTestV2(
+          firstPair,
+        );
+      const concurrent =
+        observePlatformReleaseCompositionModuleExportsForTestV2(
+          firstPair,
+        );
+      await assert.rejects(concurrent, {
+        code:
+          "PLATFORM_RELEASE_COMPOSITION_MODULE_EXPORTS_TEST_V2_ALREADY_CLAIMED",
+      });
+      assert.throws(
+        () =>
+          disposePlatformReleaseDependencyMaterializedPairV2(
+            firstPair,
+          ),
+        {
+          code:
+            "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_SOURCE_DRIFT",
+        },
+      );
+      const inspection = await first;
+      assert.deepEqual(
+        PlatformReleaseCompositionModuleExportsForTestV2Schema
+          .parse(inspection),
+        inspection,
+      );
+      assert.equal(Object.isFrozen(inspection), true);
+      assert.equal(Object.isFrozen(inspection.probes), true);
+      assert.equal(inspection.productionAuthority, false);
+      assert.equal(inspection.productionAdmission, "forbidden");
+      assert.equal(inspection.mutationAuthority, false);
+      assert.equal(inspection.callerJsonState, "absent");
+      assert.equal(
+        inspection.operationExecutionState,
+        "authenticated_test_host_composition_fixed_abi_fd3_isolated_observer_child",
+      );
+      assert.equal(
+        inspection.productionUse,
+        "forbidden_until_authenticated_installed_probe_and_verified_release",
+      );
+      assert.equal(inspection.probes.length, 17);
+      assert.equal(
+        new Set(
+          inspection.probes.map(
+            (probe) => probe.challengeHash,
+          ),
+        ).size,
+        17,
+      );
+      for (const [index, probe] of inspection.probes.entries()) {
+        const closureEntry =
+          inspection.moduleClosureDerivation
+            .requiredModuleClosure.entries[index]!;
+        assert.deepEqual(probe.moduleRef, closureEntry.module);
+        assert.deepEqual(
+          probe.requiredExports,
+          closureEntry.definition.requiredExports,
+        );
+        assert.deepEqual(
+          probe.occurrences[0].observedExports,
+          probe.requiredExports,
+        );
+        assert.deepEqual(
+          probe.occurrences[1].observedExports,
+          probe.requiredExports,
+        );
+        assert.notEqual(
+          probe.occurrences[0].process.pid,
+          probe.occurrences[1].process.pid,
+        );
+        assert.notEqual(
+          `${probe.occurrences[0].moduleObservation.stableIdentity.device}:${probe.occurrences[0].moduleObservation.stableIdentity.inode}`,
+          `${probe.occurrences[1].moduleObservation.stableIdentity.device}:${probe.occurrences[1].moduleObservation.stableIdentity.inode}`,
+        );
+        assert.equal(
+          probe.occurrences[0].semanticProjectionHash,
+          probe.occurrences[1].semanticProjectionHash,
+        );
+      }
+      assert.equal(
+        hashPlatformReleaseCompositionModuleExportStableSetForTestV2(
+          inspection.probes,
+        ),
+        inspection.stableProjectionSetHash,
+      );
+      assert.equal(
+        hashPlatformReleaseCompositionModuleExportsForTestV2(
+          inspection,
+        ),
+        inspection.collectionHash,
+      );
+      assert.doesNotMatch(
+        JSON.stringify(inspection),
+        /\/tmp\/|\/private\/|\/Users\//,
+      );
+      const promoted = structuredClone(inspection) as any;
+      promoted.productionAuthority = true;
+      promoted.collectionHash =
+        hashPlatformReleaseCompositionModuleExportsForTestV2(
+          promoted,
+        );
+      assert.equal(
+        PlatformReleaseCompositionModuleExportsForTestV2Schema
+          .safeParse(promoted).success,
+        false,
+      );
+      const detachedExecutionBridge =
+        structuredClone(inspection) as any;
+      detachedExecutionBridge.operationExecutionState =
+        "direct_local_process";
+      detachedExecutionBridge.collectionHash =
+        hashPlatformReleaseCompositionModuleExportsForTestV2(
+          detachedExecutionBridge,
+        );
+      assert.equal(
+        PlatformReleaseCompositionModuleExportsForTestV2Schema
+          .safeParse(detachedExecutionBridge).success,
+        false,
+      );
+      const reordered = structuredClone(inspection) as any;
+      reordered.probes.reverse();
+      reordered.stableProjectionSetHash =
+        hashPlatformReleaseCompositionModuleExportStableSetForTestV2(
+          reordered.probes,
+        );
+      reordered.collectionHash =
+        hashPlatformReleaseCompositionModuleExportsForTestV2(
+          reordered,
+        );
+      assert.equal(
+        PlatformReleaseCompositionModuleExportsForTestV2Schema
+          .safeParse(reordered).success,
+        false,
+      );
+      assert.throws(
+        () => inspectCompletedPlatformReleaseStageCandidateV2(
+          inspection as never,
+        ),
+        { code: "COMPLETED_STAGE_UNAUTHENTICATED" },
+      );
+      await Promise.all([
+        revalidatePlatformReleaseDependencyMaterializedPairV2(
+          firstPair,
+        ),
+        revalidatePlatformReleaseDependencyMaterializedPairV2(
+          secondPair,
+        ),
+      ]);
+    } finally {
+      for (const pair of dependencyPairs) {
+        try {
+          disposePlatformReleaseDependencyMaterializedPairV2(pair);
+        } catch {
+          // The assertion path reports any authority failure.
+        }
+      }
+      for (const source of sources.slice(dependencyPairs.length)) {
+        try {
+          disposePlatformReleaseSourceStageV2(source);
+        } catch {
+          // A failed transaction may already have destroyed this source.
+        }
+      }
+    }
+  });
+
+  it("observes stable metadata semantics across two private physical output roots", {
+    skip: process.platform !== "darwin",
+  }, async () => {
+    const repository = createRepositoryFixtureV2();
+    const hostFixture = createHostFixtureV2({
+      operationalMetadataObserverWrappers: true,
+    });
+    const source = admittedSourceV2(repository);
+    let dependencyPair:
+      PlatformReleaseDependencyMaterializedPairV2
+      | undefined;
+    try {
+      const host = await createPlatformHostV2(
+        hostFixture,
+        "valid",
+      );
+      const capsule =
+        await materializePlatformReleaseBuildToolchainCapsuleV2ForTest({
+          sourceStage: source,
+          hostToolchain: host,
+        });
+      const compiledPair =
+        await materializePlatformReleaseCompiledOutputPairV2ForTest({
+          sourceStage: source,
+          buildToolchain: capsule,
+        });
+      dependencyPair =
+        await materializePlatformReleaseDependencyMaterializedPairForTestV2(
+          compiledPair,
+        );
+      await assert.rejects(
+        observePlatformReleaseCompositionMetadataPairForTestV2({
+          dependencyPair,
+          targetRoot: "/tmp/caller-selected-target",
+        } as never),
+        {
+          code:
+            "PLATFORM_RELEASE_COMPOSITION_METADATA_PAIR_TEST_V2_INPUT_INVALID",
+        },
+      );
+      await assert.rejects(
+        observePlatformReleaseCompositionMetadataPairForTestV2(
+          new Proxy(dependencyPair, {}) as never,
+        ),
+        {
+          code:
+            "PLATFORM_RELEASE_COMPOSITION_METADATA_PAIR_TEST_V2_INPUT_INVALID",
+        },
+      );
+
+      let releaseRootCallback!: () => void;
+      let markRootCallbackEntered!: () => void;
+      const rootCallbackEntered = new Promise<void>((resolve) => {
+        markRootCallbackEntered = resolve;
+      });
+      const releaseRootCallbackPromise =
+        new Promise<void>((resolve) => {
+          releaseRootCallback = resolve;
+        });
+      const heldRootCallback =
+        withPlatformReleaseDependencyMaterializedPairForTestV2(
+          dependencyPair,
+          async () => {
+            markRootCallbackEntered();
+            await releaseRootCallbackPromise;
+          },
+        );
+      await rootCallbackEntered;
+      await assert.rejects(
+        observePlatformReleaseCompositionMetadataPairForTestV2(
+          dependencyPair,
+        ),
+        {
+          code:
+            "PLATFORM_RELEASE_COMPOSITION_METADATA_PAIR_TEST_V2_ALREADY_CLAIMED",
+        },
+      );
+      await assert.rejects(
+        observePlatformReleaseCompositionModuleExportsForTestV2(
+          dependencyPair,
+        ),
+        {
+          code:
+            "PLATFORM_RELEASE_COMPOSITION_MODULE_EXPORTS_TEST_V2_ALREADY_CLAIMED",
+        },
+      );
+      assert.throws(
+        () => disposePlatformReleaseDependencyMaterializedPairV2(
+          dependencyPair!,
+        ),
+        {
+          code:
+            "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_SOURCE_DRIFT",
+        },
+      );
+      releaseRootCallback();
+      await heldRootCallback;
+
+      const firstPending =
+        observePlatformReleaseCompositionMetadataPairForTestV2(
+          dependencyPair,
+        );
+      await assert.rejects(
+        observePlatformReleaseCompositionMetadataPairForTestV2(
+          dependencyPair,
+        ),
+        {
+          code:
+            "PLATFORM_RELEASE_COMPOSITION_METADATA_PAIR_TEST_V2_ALREADY_CLAIMED",
+        },
+      );
+      await assert.rejects(
+        withPlatformReleaseDependencyMaterializedPairForTestV2(
+          dependencyPair,
+          () => undefined,
+        ),
+        {
+          code:
+            "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_SOURCE_DRIFT",
+        },
+      );
+      const first = await firstPending;
+      const second =
+        await observePlatformReleaseCompositionMetadataPairForTestV2(
+          dependencyPair,
+        );
+      for (const evidence of [first, second]) {
+        assert.deepEqual(
+          PlatformReleaseCompositionMetadataPairTestV2Schema
+            .parse(evidence),
+          evidence,
+        );
+        assert.equal(Object.isFrozen(evidence), true);
+        assert.equal(Object.isFrozen(evidence.occurrences), true);
+        assert.equal(
+          Object.isFrozen(evidence.occurrences[0].receipt),
+          true,
+        );
+        assert.equal(evidence.productionAuthority, false);
+        assert.equal(evidence.productionAdmission, "forbidden");
+        assert.equal(evidence.mutationAuthority, false);
+        assert.equal(evidence.callerJsonState, "absent");
+        assert.equal(
+          evidence.occurrences[0].stableProjectionHash,
+          evidence.occurrences[1].stableProjectionHash,
+        );
+        assert.notEqual(
+          evidence.occurrences[0].targetRootPhysicalIdentityHash,
+          evidence.occurrences[1].targetRootPhysicalIdentityHash,
+        );
+        assert.notEqual(
+          evidence.occurrences[0].receipt.metadataCatalogHash,
+          evidence.occurrences[1].receipt.metadataCatalogHash,
+        );
+        assert.notEqual(
+          evidence.occurrences[0].receipt.metadataObservationHash,
+          evidence.occurrences[1].receipt.metadataObservationHash,
+        );
+        assert.notEqual(
+          evidence.occurrences[0].process.processObservationHash,
+          evidence.occurrences[1].process.processObservationHash,
+        );
+        assert.equal(
+          hashPlatformReleaseCompositionMetadataPairForTestV2(
+            evidence,
+          ),
+          evidence.collectionHash,
+        );
+        assert.doesNotMatch(
+          JSON.stringify(evidence),
+          /\/tmp\/|\/private\/|\/var\/folders\/|\/Users\/|setfarm-platform-compiled-output/,
+        );
+      }
+      assert.equal(
+        first.stableProjectionHash,
+        second.stableProjectionHash,
+      );
+      assert.notEqual(
+        first.occurrences[0].occurrenceId,
+        second.occurrences[0].occurrenceId,
+      );
+      assert.notEqual(
+        first.collectionHash,
+        second.collectionHash,
+      );
+      assert.throws(
+        () => inspectCompletedPlatformReleaseStageCandidateV2(
+          first as never,
+        ),
+        { code: "COMPLETED_STAGE_UNAUTHENTICATED" },
+      );
+      const promoted = structuredClone(first) as any;
+      promoted.productionAuthority = true;
+      promoted.collectionHash =
+        hashPlatformReleaseCompositionMetadataPairForTestV2(
+          promoted,
+        );
+      assert.equal(
+        PlatformReleaseCompositionMetadataPairTestV2Schema
+          .safeParse(promoted).success,
+        false,
+      );
+      const detachedPair = structuredClone(first) as any;
+      detachedPair.dependencyPairInspectionHash = "f".repeat(64);
+      detachedPair.collectionHash =
+        hashPlatformReleaseCompositionMetadataPairForTestV2(
+          detachedPair,
+        );
+      assert.equal(
+        PlatformReleaseCompositionMetadataPairTestV2Schema
+          .safeParse(detachedPair).success,
+        false,
+      );
+      const swapped = structuredClone(first) as any;
+      swapped.occurrences.reverse();
+      swapped.occurrences[0].stageRef =
+        "PLATFORM_RELEASE_DEPENDENCY_STAGE_FIRST_V2";
+      swapped.occurrences[1].stageRef =
+        "PLATFORM_RELEASE_DEPENDENCY_STAGE_SECOND_V2";
+      for (const occurrence of swapped.occurrences) {
+        occurrence.occurrenceHash =
+          hashPlatformReleaseCompositionMetadataPairOccurrenceForTestV2(
+            occurrence,
+          );
+      }
+      swapped.collectionHash =
+        hashPlatformReleaseCompositionMetadataPairForTestV2(
+          swapped,
+        );
+      assert.equal(
+        PlatformReleaseCompositionMetadataPairTestV2Schema
+          .safeParse(swapped).success,
+        false,
+      );
+      const aliased = structuredClone(first) as any;
+      aliased.occurrences[1] = structuredClone(
+        aliased.occurrences[0],
+      );
+      aliased.occurrences[1].stageRef =
+        "PLATFORM_RELEASE_DEPENDENCY_STAGE_SECOND_V2";
+      aliased.occurrences[1].occurrenceHash =
+        hashPlatformReleaseCompositionMetadataPairOccurrenceForTestV2(
+          aliased.occurrences[1],
+        );
+      aliased.collectionHash =
+        hashPlatformReleaseCompositionMetadataPairForTestV2(
+          aliased,
+        );
+      assert.equal(
+        PlatformReleaseCompositionMetadataPairTestV2Schema
+          .safeParse(aliased).success,
+        false,
+      );
+      const unequalProjection = structuredClone(first) as any;
+      unequalProjection.occurrences[1].stableProjectionHash =
+        "e".repeat(64);
+      unequalProjection.occurrences[1].occurrenceHash =
+        hashPlatformReleaseCompositionMetadataPairOccurrenceForTestV2(
+          unequalProjection.occurrences[1],
+        );
+      unequalProjection.collectionHash =
+        hashPlatformReleaseCompositionMetadataPairForTestV2(
+          unequalProjection,
+        );
+      assert.equal(
+        PlatformReleaseCompositionMetadataPairTestV2Schema
+          .safeParse(unequalProjection).success,
+        false,
+      );
+      const detachedLaunch = structuredClone(first) as any;
+      const detachedOccurrence = detachedLaunch.occurrences[1];
+      detachedOccurrence.process.metadataModuleContentHash =
+        "d".repeat(64);
+      detachedOccurrence.process.fixedArgvHash =
+        hashPlatformReleaseCompositionMetadataFixedArgvForTestV2(
+          detachedOccurrence.process,
+        );
+      const {
+        processObservationHash: _processObservationHash,
+        ...detachedProcessIdentity
+      } = detachedOccurrence.process;
+      detachedOccurrence.process.processObservationHash =
+        hashPlatformReleaseCompositionMetadataProcessObservationForTestV2(
+          detachedProcessIdentity,
+        );
+      detachedOccurrence.launchProjectionHash =
+        hashPlatformReleaseCompositionMetadataLaunchProjectionForTestV2(
+          detachedOccurrence.process,
+        );
+      detachedOccurrence.stableProjectionHash =
+        hashPlatformReleaseCompositionMetadataPairStableProjectionForTestV2({
+          operationAbiRef: detachedLaunch.operationAbiRef,
+          operationAbiHash: detachedLaunch.operationAbiHash,
+          metadataPolicyHash:
+            detachedOccurrence.metadataPolicyHash,
+          hostIdentityHash: detachedOccurrence.hostIdentityHash,
+          platformHostToolchainReceiptHash:
+            detachedOccurrence.platformHostToolchainReceiptHash,
+          hostCompositionReceiptHash:
+            detachedOccurrence.hostCompositionReceiptHash,
+          stableOutputBindingHash:
+            detachedOccurrence.stableOutputBindingHash,
+          targetEntryNamesHash:
+            detachedOccurrence.receipt.targetEntryNamesHash,
+          observedEntryCount:
+            detachedOccurrence.receipt.observedEntryCount,
+          observationOutcome:
+            detachedOccurrence.receipt.observationOutcome,
+          metadataStableProjectionHash:
+            detachedOccurrence.receipt.stableMetadataProjectionHash,
+          launchProjectionHash:
+            detachedOccurrence.launchProjectionHash,
+        });
+      detachedOccurrence.occurrenceHash =
+        hashPlatformReleaseCompositionMetadataPairOccurrenceForTestV2(
+          detachedOccurrence,
+        );
+      detachedLaunch.collectionHash =
+        hashPlatformReleaseCompositionMetadataPairForTestV2(
+          detachedLaunch,
+        );
+      assert.equal(
+        PlatformReleaseCompositionMetadataPairTestV2Schema
+          .safeParse(detachedLaunch).success,
+        false,
+      );
+      await revalidatePlatformReleaseDependencyMaterializedPairV2(
+        dependencyPair,
+      );
+    } finally {
+      if (dependencyPair) {
+        disposePlatformReleaseDependencyMaterializedPairV2(
+          dependencyPair,
+        );
+      } else {
+        disposePlatformReleaseSourceStageV2(source);
+      }
+    }
+  });
+
+  it("returns authenticated metadata rejection and releases the pair lease", {
+    skip: process.platform !== "darwin",
+  }, async () => {
+    const repository = createRepositoryFixtureV2();
+    const hostFixture = createHostFixtureV2({
+      operationalMetadataObserverWrappers: true,
+    });
+    const source = admittedSourceV2(repository);
+    let dependencyPair:
+      PlatformReleaseDependencyMaterializedPairV2
+      | undefined;
+    try {
+      const host = await createPlatformHostV2(
+        hostFixture,
+        "valid",
+      );
+      const capsule =
+        await materializePlatformReleaseBuildToolchainCapsuleV2ForTest({
+          sourceStage: source,
+          hostToolchain: host,
+        });
+      const compiledPair =
+        await materializePlatformReleaseCompiledOutputPairV2ForTest({
+          sourceStage: source,
+          buildToolchain: capsule,
+        });
+      dependencyPair =
+        await materializePlatformReleaseDependencyMaterializedPairForTestV2(
+          compiledPair,
+        );
+      await withPlatformReleaseDependencyMaterializedPairForTestV2(
+        dependencyPair,
+        ({ firstOutputRoot }) => {
+          const result = spawnSync(
+            "/usr/bin/xattr",
+            [
+              "-w",
+              "com.setfarm.metadata_pair_test_v2",
+              "fixture",
+              firstOutputRoot,
+            ],
+            { env: {}, shell: false, stdio: "ignore" },
+          );
+          assert.equal(result.error, undefined);
+          assert.equal(result.status, 0);
+        },
+      );
+      await assert.rejects(
+        observePlatformReleaseCompositionMetadataPairForTestV2(
+          dependencyPair,
+        ),
+        (error: unknown) => {
+          assert.ok(
+            error instanceof
+              PlatformReleaseCompositionMetadataPairForTestErrorV2,
+          );
+          assert.equal(
+            error.code,
+            "PLATFORM_RELEASE_COMPOSITION_METADATA_PAIR_TEST_V2_OPERATION_REJECTED",
+          );
+          assert.doesNotMatch(
+            errorMessagesV2(error).join("\n"),
+            /\/tmp\/|\/private\/|\/var\/folders\/|\/Users\//,
+          );
+          return true;
+        },
+      );
+      await withPlatformReleaseDependencyMaterializedPairForTestV2(
+        dependencyPair,
+        ({ firstOutputRoot }) => {
+          const result = spawnSync(
+            "/usr/bin/xattr",
+            [
+              "-d",
+              "com.setfarm.metadata_pair_test_v2",
+              firstOutputRoot,
+            ],
+            { env: {}, shell: false, stdio: "ignore" },
+          );
+          assert.equal(result.error, undefined);
+          assert.equal(result.status, 0);
+        },
+      );
+      await revalidatePlatformReleaseDependencyMaterializedPairV2(
+        dependencyPair,
+      );
+      const recovered =
+        await observePlatformReleaseCompositionMetadataPairForTestV2(
+          dependencyPair,
+        );
+      assert.equal(recovered.occurrences.length, 2);
+
+      const aclRule = "everyone deny delete";
+      await withPlatformReleaseDependencyMaterializedPairForTestV2(
+        dependencyPair,
+        ({ secondOutputRoot }) => {
+          const result = spawnSync(
+            "/bin/chmod",
+            ["+a", aclRule, secondOutputRoot],
+            { env: {}, shell: false, stdio: "ignore" },
+          );
+          assert.equal(result.error, undefined);
+          assert.equal(result.status, 0);
+        },
+      );
+      await assert.rejects(
+        observePlatformReleaseCompositionMetadataPairForTestV2(
+          dependencyPair,
+        ),
+        {
+          code:
+            "PLATFORM_RELEASE_COMPOSITION_METADATA_PAIR_TEST_V2_OPERATION_REJECTED",
+        },
+      );
+      await withPlatformReleaseDependencyMaterializedPairForTestV2(
+        dependencyPair,
+        ({ secondOutputRoot }) => {
+          const result = spawnSync(
+            "/bin/chmod",
+            ["-a", aclRule, secondOutputRoot],
+            { env: {}, shell: false, stdio: "ignore" },
+          );
+          assert.equal(result.error, undefined);
+          assert.equal(result.status, 0);
+        },
+      );
+      await revalidatePlatformReleaseDependencyMaterializedPairV2(
+        dependencyPair,
+      );
+    } finally {
+      if (dependencyPair) {
+        disposePlatformReleaseDependencyMaterializedPairV2(
+          dependencyPair,
+        );
+      } else {
+        disposePlatformReleaseSourceStageV2(source);
+      }
+    }
+  });
+
+  it("terminally cleans the exact metadata pair after host launch drift", {
+    skip: process.platform !== "darwin",
+  }, async () => {
+    const repository = createRepositoryFixtureV2();
+    const hostFixture = createHostFixtureV2({
+      operationalMetadataObserverWrappers: true,
+    });
+    const source = admittedSourceV2(repository);
+    let dependencyPair:
+      PlatformReleaseDependencyMaterializedPairV2
+      | undefined;
+    let firstOutputRoot = "";
+    let secondOutputRoot = "";
+    try {
+      const host = await createPlatformHostV2(
+        hostFixture,
+        "valid",
+      );
+      const capsule =
+        await materializePlatformReleaseBuildToolchainCapsuleV2ForTest({
+          sourceStage: source,
+          hostToolchain: host,
+        });
+      const compiledPair =
+        await materializePlatformReleaseCompiledOutputPairV2ForTest({
+          sourceStage: source,
+          buildToolchain: capsule,
+        });
+      dependencyPair =
+        await materializePlatformReleaseDependencyMaterializedPairForTestV2(
+          compiledPair,
+        );
+      await withPlatformReleaseDependencyMaterializedPairForTestV2(
+        dependencyPair,
+        (roots) => {
+          firstOutputRoot = roots.firstOutputRoot;
+          secondOutputRoot = roots.secondOutputRoot;
+        },
+      );
+      const metadataModule =
+        hostFixture.compositionFiles[
+          "lib/metadata-bootstrap.mjs"
+        ]!;
+      chmodSync(metadataModule, 0o644);
+      writeFileSync(metadataModule, "private-host-drift\n");
+      chmodSync(metadataModule, 0o444);
+      await assert.rejects(
+        observePlatformReleaseCompositionMetadataPairForTestV2(
+          dependencyPair,
+        ),
+        {
+          code:
+            "PLATFORM_RELEASE_COMPOSITION_METADATA_PAIR_TEST_V2_PAIR_DRIFT",
+        },
+      );
+      assert.equal(
+        existsSync(path.dirname(firstOutputRoot)),
+        false,
+      );
+      assert.equal(
+        existsSync(path.dirname(secondOutputRoot)),
+        false,
+      );
+      assert.throws(
+        () => disposePlatformReleaseDependencyMaterializedPairV2(
+          dependencyPair!,
+        ),
+        {
+          code:
+            "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_SOURCE_DRIFT",
+        },
+      );
+      dependencyPair = undefined;
+    } finally {
+      if (dependencyPair) {
+        try {
+          disposePlatformReleaseDependencyMaterializedPairV2(
+            dependencyPair,
+          );
+        } catch {
+          // Drift assertions own any terminal cleanup failure.
+        }
+      } else {
+        try {
+          disposePlatformReleaseSourceStageV2(source);
+        } catch {
+          // A terminal metadata drift already destroyed the source.
+        }
+      }
+    }
+  });
+
+  it("terminally rejects a same-byte metadata observer inode replacement", {
+    skip: process.platform !== "darwin",
+  }, async () => {
+    const repository = createRepositoryFixtureV2();
+    const hostFixture = createHostFixtureV2({
+      operationalMetadataObserverWrappers: true,
+    });
+    const source = admittedSourceV2(repository);
+    let dependencyPair:
+      PlatformReleaseDependencyMaterializedPairV2
+      | undefined;
+    let firstOutputRoot = "";
+    let secondOutputRoot = "";
+    try {
+      const host = await createPlatformHostV2(
+        hostFixture,
+        "valid",
+      );
+      const capsule =
+        await materializePlatformReleaseBuildToolchainCapsuleV2ForTest({
+          sourceStage: source,
+          hostToolchain: host,
+        });
+      const compiledPair =
+        await materializePlatformReleaseCompiledOutputPairV2ForTest({
+          sourceStage: source,
+          buildToolchain: capsule,
+        });
+      dependencyPair =
+        await materializePlatformReleaseDependencyMaterializedPairForTestV2(
+          compiledPair,
+        );
+      await withPlatformReleaseDependencyMaterializedPairForTestV2(
+        dependencyPair,
+        (outputRoots) => {
+          firstOutputRoot = outputRoots.firstOutputRoot;
+          secondOutputRoot = outputRoots.secondOutputRoot;
+        },
+      );
+      const observer =
+        hostFixture.compositionFiles["tools/xattr-observe"]!;
+      const bytes = readFileSync(observer);
+      try {
+        unlinkSync(observer);
+        writeFileSync(observer, bytes, { mode: 0o755 });
+        chmodSync(observer, 0o755);
+      } finally {
+        bytes.fill(0);
+      }
+      await assert.rejects(
+        observePlatformReleaseCompositionMetadataPairForTestV2(
+          dependencyPair,
+        ),
+        {
+          code:
+            "PLATFORM_RELEASE_COMPOSITION_METADATA_PAIR_TEST_V2_PAIR_DRIFT",
+        },
+      );
+      assert.equal(
+        existsSync(path.dirname(firstOutputRoot)),
+        false,
+      );
+      assert.equal(
+        existsSync(path.dirname(secondOutputRoot)),
+        false,
+      );
+      assert.throws(
+        () => disposePlatformReleaseDependencyMaterializedPairV2(
+          dependencyPair!,
+        ),
+        {
+          code:
+            "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_SOURCE_DRIFT",
+        },
+      );
+      dependencyPair = undefined;
+    } finally {
+      if (dependencyPair) {
+        try {
+          disposePlatformReleaseDependencyMaterializedPairV2(
+            dependencyPair,
+          );
+        } catch {
+          // Drift assertions own any terminal cleanup failure.
+        }
+      } else {
+        try {
+          disposePlatformReleaseSourceStageV2(source);
+        } catch {
+          // Terminal drift may already have destroyed the source.
+        }
+      }
+    }
+  });
+
+  it("terminally cleans a target changed while the installed observer child is in flight", {
+    skip: process.platform !== "darwin",
+  }, async () => {
+    const synchronizationRoot = realpathSync(mkdtempSync(path.join(
+      tmpdir(),
+      "setfarm-metadata-pair-target-drift-v2-",
+    )));
+    roots.push(synchronizationRoot);
+    const enteredPath = path.join(synchronizationRoot, "entered");
+    const releasePath = path.join(synchronizationRoot, "release");
+    const repository = createRepositoryFixtureV2();
+    const hostFixture = createHostFixtureV2({
+      operationalMetadataObserverWrappers: true,
+    });
+    const observer =
+      hostFixture.compositionFiles["tools/xattr-observe"]!;
+    chmodSync(observer, 0o755);
+    writeFileSync(observer, [
+      "#!/bin/sh",
+      "set -efu",
+      `: > '${enteredPath}'`,
+      `while [ ! -e '${releasePath}' ]; do /bin/sleep 0.01; done`,
+      "exec /usr/bin/xattr \"$@\"",
+      "",
+    ].join("\n"));
+    chmodSync(observer, 0o755);
+    const source = admittedSourceV2(repository);
+    let dependencyPair:
+      PlatformReleaseDependencyMaterializedPairV2
+      | undefined;
+    let firstOutputRoot = "";
+    let secondOutputRoot = "";
+    try {
+      const host = await createPlatformHostV2(
+        hostFixture,
+        "valid",
+      );
+      const capsule =
+        await materializePlatformReleaseBuildToolchainCapsuleV2ForTest({
+          sourceStage: source,
+          hostToolchain: host,
+        });
+      const compiledPair =
+        await materializePlatformReleaseCompiledOutputPairV2ForTest({
+          sourceStage: source,
+          buildToolchain: capsule,
+        });
+      dependencyPair =
+        await materializePlatformReleaseDependencyMaterializedPairForTestV2(
+          compiledPair,
+        );
+      await withPlatformReleaseDependencyMaterializedPairForTestV2(
+        dependencyPair,
+        (outputRoots) => {
+          firstOutputRoot = outputRoots.firstOutputRoot;
+          secondOutputRoot = outputRoots.secondOutputRoot;
+        },
+      );
+      const pending =
+        observePlatformReleaseCompositionMetadataPairForTestV2(
+          dependencyPair,
+        );
+      const deadline = Date.now() + 5_000;
+      while (!existsSync(enteredPath)) {
+        if (Date.now() >= deadline) {
+          throw new Error(
+            "Installed metadata observer did not enter its test fence",
+          );
+        }
+        await new Promise<void>((resolve) => {
+          setTimeout(resolve, 10);
+        });
+      }
+      writeFileSync(
+        path.join(firstOutputRoot, "rogue.txt"),
+        "in-flight target drift\n",
+        { mode: 0o444 },
+      );
+      writeFileSync(releasePath, "release\n", { mode: 0o600 });
+      await assert.rejects(pending, {
+        code:
+          "PLATFORM_RELEASE_COMPOSITION_METADATA_PAIR_TEST_V2_PAIR_DRIFT",
+      });
+      assert.equal(
+        existsSync(path.dirname(firstOutputRoot)),
+        false,
+      );
+      assert.equal(
+        existsSync(path.dirname(secondOutputRoot)),
+        false,
+      );
+      assert.throws(
+        () => disposePlatformReleaseDependencyMaterializedPairV2(
+          dependencyPair!,
+        ),
+        {
+          code:
+            "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_SOURCE_DRIFT",
+        },
+      );
+      dependencyPair = undefined;
+    } finally {
+      if (!existsSync(releasePath)) {
+        writeFileSync(releasePath, "release\n", { mode: 0o600 });
+      }
+      if (dependencyPair) {
+        try {
+          disposePlatformReleaseDependencyMaterializedPairV2(
+            dependencyPair,
+          );
+        } catch {
+          // Drift assertions own any terminal cleanup failure.
+        }
+      } else {
+        try {
+          disposePlatformReleaseSourceStageV2(source);
+        } catch {
+          // Terminal drift may already have destroyed the source.
+        }
+      }
+    }
+  });
+
+  it("keeps trusted wire emission and termination independent from hostile module global mutation", async () => {
+    const repository = enableRequiredModuleBuildFixtureV2(
+      createRepositoryFixtureV2(),
+      "hostile-module-globals",
+      undefined,
+      [
+        "import fs from 'node:fs';",
+        "import { createHash as hostileCreateHash } from 'node:crypto';",
+        "import { syncBuiltinESMExports } from 'node:module';",
+        "process.stdout.write = () => { throw new Error('HOSTILE_STDOUT_USED'); };",
+        "process.exit = () => { throw new Error('HOSTILE_EXIT_USED'); };",
+        "process.exitCode = 93;",
+        "Object.keys = () => { throw new Error('HOSTILE_OBJECT_KEYS_USED'); };",
+        "JSON.stringify = () => { throw new Error('HOSTILE_JSON_USED'); };",
+        "Buffer.alloc = () => { throw new Error('HOSTILE_BUFFER_USED'); };",
+        "fs.writeSync = () => { throw new Error('HOSTILE_FS_WRITE_USED'); };",
+        "Object.getPrototypeOf(hostileCreateHash('sha256')).update = () => { throw new Error('HOSTILE_HASH_USED'); };",
+        "syncBuiltinESMExports();",
+        "",
+      ].join("\n"),
+    );
+    const hostFixture = createHostFixtureV2();
+    const source = admittedSourceV2(repository);
+    let dependencyPair:
+      PlatformReleaseDependencyMaterializedPairV2
+      | undefined;
+    try {
+      const host = await createPlatformHostV2(
+        hostFixture,
+        "valid",
+      );
+      const capsule =
+        await materializePlatformReleaseBuildToolchainCapsuleV2ForTest({
+          sourceStage: source,
+          hostToolchain: host,
+        });
+      const compiledPair =
+        await materializePlatformReleaseCompiledOutputPairV2ForTest({
+          sourceStage: source,
+          buildToolchain: capsule,
+        });
+      dependencyPair =
+        await materializePlatformReleaseDependencyMaterializedPairForTestV2(
+          compiledPair,
+        );
+      const inspection =
+        await observePlatformReleaseCompositionModuleExportsForTestV2(
+          dependencyPair,
+        );
+      assert.equal(inspection.probes.length, 17);
+      assert.equal(inspection.productionAuthority, false);
+      await revalidatePlatformReleaseDependencyMaterializedPairV2(
+        dependencyPair,
+      );
+    } finally {
+      if (dependencyPair) {
+        disposePlatformReleaseDependencyMaterializedPairV2(
+          dependencyPair,
+        );
+      } else {
+        disposePlatformReleaseSourceStageV2(source);
+      }
+    }
+  });
+
+  it("keeps process binding and reallyExit mutation inside the nonce-isolated observer child", async () => {
+    const repository = enableRequiredModuleBuildFixtureV2(
+      createRepositoryFixtureV2(),
+      "hostile-node-internals",
+      undefined,
+      [
+        "const hostileFsBinding = process.binding('fs');",
+        "const originalWriteBuffer = hostileFsBinding.writeBuffer;",
+        "hostileFsBinding.writeBuffer = function (...args) {",
+        "  const result = Reflect.apply(originalWriteBuffer, this, args);",
+        "  Reflect.apply(originalWriteBuffer, this, args);",
+        "  return result;",
+        "};",
+        "process.reallyExit = () => undefined;",
+        "",
+      ].join("\n"),
+    );
+    const hostFixture = createHostFixtureV2();
+    const source = admittedSourceV2(repository);
+    let dependencyPair:
+      PlatformReleaseDependencyMaterializedPairV2
+      | undefined;
+    try {
+      const host = await createPlatformHostV2(
+        hostFixture,
+        "valid",
+      );
+      const capsule =
+        await materializePlatformReleaseBuildToolchainCapsuleV2ForTest({
+          sourceStage: source,
+          hostToolchain: host,
+        });
+      const compiledPair =
+        await materializePlatformReleaseCompiledOutputPairV2ForTest({
+          sourceStage: source,
+          buildToolchain: capsule,
+        });
+      dependencyPair =
+        await materializePlatformReleaseDependencyMaterializedPairForTestV2(
+          compiledPair,
+        );
+      await assert.rejects(
+        observePlatformReleaseCompositionModuleExportsForTestV2(
+          dependencyPair,
+        ),
+        (error: unknown) => {
+          assert.ok(
+            error instanceof
+              PlatformReleaseCompositionModuleExportsForTestErrorV2,
+          );
+          assert.equal(
+            error.code,
+            "PLATFORM_RELEASE_COMPOSITION_MODULE_EXPORTS_TEST_V2_OPERATION_REJECTED",
+          );
+          assert.match(
+            error.message,
+            /authenticated failure receipt/,
+          );
+          assert.doesNotMatch(
+            error.message,
+            /writeBuffer|reallyExit|hostile-node-internals/,
+          );
+          return true;
+        },
+      );
+      await revalidatePlatformReleaseDependencyMaterializedPairV2(
+        dependencyPair,
+      );
+    } finally {
+      if (dependencyPair) {
+        disposePlatformReleaseDependencyMaterializedPairV2(
+          dependencyPair,
+        );
+      } else {
+        disposePlatformReleaseSourceStageV2(source);
+      }
+    }
+  });
+
+  it("rejects a stable wrong export kind and releases the authentic pair lease after its post-fence", async () => {
+    const firstDefinition =
+      getPlatformReleaseRequiredModuleRequirementV2()
+        .entries[0]!;
+    const firstExport = firstDefinition.requiredExports[0]!;
+    const repository = enableRequiredModuleBuildFixtureV2(
+      createRepositoryFixtureV2(),
+      "wrong-export-kind",
+      {
+        moduleLocator: firstDefinition.moduleLocator,
+        name: firstExport.name,
+        actualKind:
+          firstExport.kind === "function"
+            ? "string"
+            : "function",
+      },
+    );
+    const hostFixture = createHostFixtureV2();
+    const source = admittedSourceV2(repository);
+    let dependencyPair:
+      PlatformReleaseDependencyMaterializedPairV2
+      | undefined;
+    try {
+      const host = await createPlatformHostV2(
+        hostFixture,
+        "valid",
+      );
+      const capsule =
+        await materializePlatformReleaseBuildToolchainCapsuleV2ForTest({
+          sourceStage: source,
+          hostToolchain: host,
+        });
+      const compiledPair =
+        await materializePlatformReleaseCompiledOutputPairV2ForTest({
+          sourceStage: source,
+          buildToolchain: capsule,
+        });
+      dependencyPair =
+        await materializePlatformReleaseDependencyMaterializedPairForTestV2(
+          compiledPair,
+        );
+      await assert.rejects(
+        observePlatformReleaseCompositionModuleExportsForTestV2(
+          dependencyPair,
+        ),
+        (error: unknown) => {
+          assert.ok(
+            error instanceof
+              PlatformReleaseCompositionModuleExportsForTestErrorV2,
+          );
+          assert.equal(
+            error.code,
+            "PLATFORM_RELEASE_COMPOSITION_MODULE_EXPORTS_TEST_V2_OPERATION_REJECTED",
+          );
+          assert.match(
+            error.message,
+            /authenticated failure receipt/,
+          );
+          return true;
+        },
+      );
+      await revalidatePlatformReleaseDependencyMaterializedPairV2(
+        dependencyPair,
+      );
+    } finally {
+      if (dependencyPair) {
+        disposePlatformReleaseDependencyMaterializedPairV2(
+          dependencyPair,
+        );
+      } else {
+        disposePlatformReleaseSourceStageV2(source);
+      }
+    }
+  });
+
+  it("rejects authenticated release-bootstrap command and output deviations without promoting the pair", async () => {
+    const cases = [
+      {
+        label: "wrong-installed-command",
+        executableSource: [
+          "const directArgv = process.argv.slice(2);",
+          "if (directArgv[0] !== 'wrong-module-export-command-v2') {",
+          "  process.stderr.write('RELEASE_BOOTSTRAP_ARGV_INVALID\\n');",
+          "  process.exitCode = 1;",
+          "}",
+          "",
+        ].join("\n"),
+        expectedCode:
+          "PLATFORM_RELEASE_COMPOSITION_MODULE_EXPORTS_TEST_V2_PROCESS_FAILED",
+      },
+      {
+        label: "invalid-installed-output",
+        executableSource: [
+          "const { readFileSync } = require('node:fs');",
+          "readFileSync(3);",
+          "process.stdout.write('{}\\n');",
+          "",
+        ].join("\n"),
+        expectedCode:
+          "PLATFORM_RELEASE_COMPOSITION_MODULE_EXPORTS_TEST_V2_OUTPUT_INVALID",
+      },
+    ] as const;
+
+    for (const scenario of cases) {
+      const repository = enableRequiredModuleBuildFixtureV2(
+        createRepositoryFixtureV2(),
+        scenario.label,
+      );
+      const hostFixture = createHostFixtureV2();
+      const releaseBootstrap =
+        hostFixture.compositionFiles["bin/release-bootstrap"]!;
+      chmodSync(releaseBootstrap, 0o755);
+      writeFileSync(
+        releaseBootstrap,
+        scenario.executableSource,
+      );
+      chmodSync(releaseBootstrap, 0o555);
+      const source = admittedSourceV2(repository);
+      let dependencyPair:
+        PlatformReleaseDependencyMaterializedPairV2
+        | undefined;
+      try {
+        const host = await createPlatformHostV2(
+          hostFixture,
+          "valid",
+        );
+        const capsule =
+          await materializePlatformReleaseBuildToolchainCapsuleV2ForTest({
+            sourceStage: source,
+            hostToolchain: host,
+          });
+        const compiledPair =
+          await materializePlatformReleaseCompiledOutputPairV2ForTest({
+            sourceStage: source,
+            buildToolchain: capsule,
+          });
+        dependencyPair =
+          await materializePlatformReleaseDependencyMaterializedPairForTestV2(
+            compiledPair,
+          );
+        await assert.rejects(
+          observePlatformReleaseCompositionModuleExportsForTestV2(
+            dependencyPair,
+          ),
+          {
+            code: scenario.expectedCode,
+          },
+        );
+        await revalidatePlatformReleaseDependencyMaterializedPairV2(
+          dependencyPair,
+        );
+      } finally {
+        if (dependencyPair) {
+          disposePlatformReleaseDependencyMaterializedPairV2(
+            dependencyPair,
+          );
+        } else {
+          disposePlatformReleaseSourceStageV2(source);
+        }
+      }
+    }
+  });
+
+  it("claims one authentic pair before await and transfers exactly one pathless test slot", async () => {
+    const repository = createRepositoryFixtureV2();
+    const hostFixture = createHostFixtureV2();
+    const source = admittedSourceV2(repository);
+    let dependencyPair:
+      PlatformReleaseDependencyMaterializedPairV2
+      | undefined;
+    let transfer:
+      PlatformReleaseCompositionOwnershipTransferForTestV2
+      | undefined;
+    let transferDisposed = false;
+    let sourceRetired = false;
+    let sourceRoot = "";
+    let firstOutputRoot = "";
+    let secondOutputRoot = "";
+    withPlatformReleaseSourceStageForTestV2(
+      source,
+      (root) => {
+        sourceRoot = root;
+      },
+    );
+    try {
+      const host = await createPlatformHostV2(
+        hostFixture,
+        "valid",
+      );
+      const capsule =
+        await materializePlatformReleaseBuildToolchainCapsuleV2ForTest({
+          sourceStage: source,
+          hostToolchain: host,
+        });
+      const compiledPair =
+        await materializePlatformReleaseCompiledOutputPairV2ForTest({
+          sourceStage: source,
+          buildToolchain: capsule,
+        });
+      dependencyPair =
+        await materializePlatformReleaseDependencyMaterializedPairForTestV2(
+          compiledPair,
+        );
+      await withPlatformReleaseDependencyMaterializedPairForTestV2(
+        dependencyPair,
+        (roots) => {
+          firstOutputRoot = roots.firstOutputRoot;
+          secondOutputRoot = roots.secondOutputRoot;
+        },
+      );
+      await assert.rejects(
+        rehearsePlatformReleaseCompositionOwnershipTransferWithFaultForTestV2(
+          dependencyPair,
+          {
+            checkpoint: "after_selected_slot_transfer",
+            observePath() {},
+            extra: true,
+          } as never,
+        ),
+        {
+          code:
+            "PLATFORM_RELEASE_COMPOSITION_TRANSFER_TEST_V2_INPUT_INVALID",
+        },
+      );
+      await assert.rejects(
+        rehearsePlatformReleaseCompositionOwnershipTransferWithFaultForTestV2(
+          dependencyPair,
+          new Proxy({
+            checkpoint: "after_selected_slot_transfer" as const,
+            observePath() {},
+          }, {}) as never,
+        ),
+        {
+          code:
+            "PLATFORM_RELEASE_COMPOSITION_TRANSFER_TEST_V2_INPUT_INVALID",
+        },
+      );
+      assert.throws(
+        () =>
+          new PlatformReleaseCompositionOwnershipTransferForTestV2(
+            {},
+            {} as never,
+          ),
+        {
+          code:
+            "PLATFORM_RELEASE_COMPOSITION_TRANSFER_TEST_V2_HANDLE_UNAUTHENTICATED",
+        },
+      );
+
+      const first =
+        rehearsePlatformReleaseCompositionOwnershipTransferForTestV2(
+          dependencyPair,
+        );
+      const second =
+        rehearsePlatformReleaseCompositionOwnershipTransferForTestV2(
+          dependencyPair,
+        );
+      await assert.rejects(second, {
+        code:
+          "PLATFORM_RELEASE_COMPOSITION_TRANSFER_TEST_V2_ALREADY_CLAIMED",
+      });
+      transfer = await first;
+
+      const inspection =
+        inspectPlatformReleaseCompositionOwnershipTransferForTestV2(
+          transfer,
+        );
+      assert.deepEqual(
+        PlatformReleaseCompositionOwnershipTransferForTestV2Schema
+          .parse(inspection),
+        inspection,
+      );
+      assert.equal(Object.isFrozen(inspection), true);
+      assert.equal(Object.isFrozen(inspection.selectedSlot), true);
+      assert.equal(inspection.productionAuthority, false);
+      assert.equal(inspection.productionAdmission, "forbidden");
+      assert.equal(
+        inspection.terminalizationState,
+        "not_performed_manifest_attestation_still_required",
+      );
+      assert.deepEqual(inspection.pairLifecycle, [
+        "pair_ready",
+        "pair_consuming",
+        "selected_root_owned",
+        "predecessors_consumed",
+        "release_completed",
+      ]);
+      assert.equal(
+        hashPlatformReleaseCompositionOwnershipTransferForTestV2(
+          inspection,
+        ),
+        inspection.transactionHash,
+      );
+      const selectedStat = lstatSync(
+        firstOutputRoot,
+        { bigint: true },
+      );
+      assert.equal(
+        inspection.selectedSlot.outputRoot.stableIdentity.device,
+        selectedStat.dev.toString(10),
+      );
+      assert.equal(
+        inspection.selectedSlot.outputRoot.stableIdentity.inode,
+        selectedStat.ino.toString(10),
+      );
+      assert.equal(
+        inspection.selectedSlot.outputRoot.mutableFingerprint.mode,
+        "0700",
+      );
+      assert.equal(
+        existsSync(path.dirname(sourceRoot)),
+        false,
+      );
+      assert.equal(
+        existsSync(path.dirname(secondOutputRoot)),
+        false,
+      );
+      assert.equal(
+        existsSync(path.dirname(firstOutputRoot)),
+        true,
+      );
+      assert.doesNotMatch(
+        JSON.stringify(inspection),
+        /\/tmp\/|\/private\/|\/Users\//,
+      );
+      const promoted = structuredClone(inspection) as any;
+      promoted.productionAuthority = true;
+      promoted.transactionHash =
+        hashPlatformReleaseCompositionOwnershipTransferForTestV2(
+          promoted,
+        );
+      assert.equal(
+        PlatformReleaseCompositionOwnershipTransferForTestV2Schema
+          .safeParse(promoted).success,
+        false,
+      );
+      assert.throws(
+        () => inspectCompletedPlatformReleaseStageCandidateV2(
+          transfer as never,
+        ),
+        { code: "COMPLETED_STAGE_UNAUTHENTICATED" },
+      );
+      await assert.rejects(
+        revalidatePlatformReleaseDependencyMaterializedPairV2(
+          dependencyPair,
+        ),
+        {
+          code:
+            "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_SOURCE_DRIFT",
+        },
+      );
+      assert.throws(
+        () => disposePlatformReleaseDependencyMaterializedPairV2(
+          dependencyPair!,
+        ),
+        {
+          code:
+            "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_SOURCE_DRIFT",
+        },
+      );
+
+      disposePlatformReleaseSourceStageV2(source);
+      sourceRetired = true;
+      assert.equal(
+        existsSync(path.dirname(firstOutputRoot)),
+        true,
+      );
+      disposePlatformReleaseCompositionOwnershipTransferForTestV2(
+        transfer,
+      );
+      transferDisposed = true;
+      assert.equal(
+        existsSync(path.dirname(firstOutputRoot)),
+        false,
+      );
+      assert.throws(
+        () =>
+          inspectPlatformReleaseCompositionOwnershipTransferForTestV2(
+            transfer!,
+          ),
+        {
+          code:
+            "PLATFORM_RELEASE_COMPOSITION_TRANSFER_TEST_V2_HANDLE_DISPOSED",
+        },
+      );
+      assert.throws(
+        () =>
+          disposePlatformReleaseCompositionOwnershipTransferForTestV2(
+            transfer!,
+          ),
+        {
+          code:
+            "PLATFORM_RELEASE_COMPOSITION_TRANSFER_TEST_V2_HANDLE_DISPOSED",
+        },
+      );
+    } finally {
+      if (transfer && !transferDisposed) {
+        try {
+          disposePlatformReleaseCompositionOwnershipTransferForTestV2(
+            transfer,
+          );
+        } catch {
+          // The assertion path above reports the authoritative failure.
+        }
+      } else if (dependencyPair && !transfer) {
+        try {
+          disposePlatformReleaseDependencyMaterializedPairV2(
+            dependencyPair,
+          );
+        } catch {
+          // Failed transactions may already have destroyed the source context.
+        }
+      }
+      if (!sourceRetired) {
+        try {
+          disposePlatformReleaseSourceStageV2(source);
+        } catch (error) {
+          if (
+            !(error instanceof PlatformReleaseSourceAdmissionErrorV2)
+            || error.code
+              !== "PLATFORM_RELEASE_SOURCE_V2_HANDLE_DISPOSED"
+          ) throw error;
+        }
+      }
+    }
+  });
+
+  for (
+    const checkpoint of [
+      "after_claim_before_revalidation",
+      "after_selected_slot_transfer",
+      "after_second_output_cleanup",
+      "after_source_context_cleanup_before_completion",
+      "after_completion_before_return",
+    ] as const satisfies readonly
+      PlatformReleaseCompositionOwnershipTransferFaultForTestV2[
+        "checkpoint"
+      ][]
+  ) {
+    it(`leaves no unowned root at the ${checkpoint} ownership-transfer fault`, async () => {
+      const repository = createRepositoryFixtureV2();
+      const hostFixture = createHostFixtureV2();
+      const source = admittedSourceV2(repository);
+      let dependencyPair:
+        PlatformReleaseDependencyMaterializedPairV2
+        | undefined;
+      let sourceRoot = "";
+      let firstOutputRoot = "";
+      let secondOutputRoot = "";
+      let observedPath = "";
+      withPlatformReleaseSourceStageForTestV2(
+        source,
+        (root) => {
+          sourceRoot = root;
+        },
+      );
+      try {
+        const host = await createPlatformHostV2(
+          hostFixture,
+          "valid",
+        );
+        const capsule =
+          await materializePlatformReleaseBuildToolchainCapsuleV2ForTest({
+            sourceStage: source,
+            hostToolchain: host,
+          });
+        const compiledPair =
+          await materializePlatformReleaseCompiledOutputPairV2ForTest({
+            sourceStage: source,
+            buildToolchain: capsule,
+          });
+        dependencyPair =
+          await materializePlatformReleaseDependencyMaterializedPairForTestV2(
+            compiledPair,
+          );
+        await withPlatformReleaseDependencyMaterializedPairForTestV2(
+          dependencyPair,
+          (roots) => {
+            firstOutputRoot = roots.firstOutputRoot;
+            secondOutputRoot = roots.secondOutputRoot;
+          },
+        );
+        await assert.rejects(
+          rehearsePlatformReleaseCompositionOwnershipTransferWithFaultForTestV2(
+            dependencyPair,
+            {
+              checkpoint,
+              observePath(absolutePath) {
+                observedPath = absolutePath;
+              },
+            },
+          ),
+          {
+            code:
+              "PLATFORM_RELEASE_COMPOSITION_TRANSFER_TEST_V2_OUTPUT_INVALID",
+          },
+        );
+        assert.notEqual(observedPath, "");
+        assert.equal(
+          existsSync(path.dirname(sourceRoot)),
+          false,
+        );
+        assert.equal(
+          existsSync(path.dirname(firstOutputRoot)),
+          false,
+        );
+        assert.equal(
+          existsSync(path.dirname(secondOutputRoot)),
+          false,
+        );
+        await assert.rejects(
+          revalidatePlatformReleaseDependencyMaterializedPairV2(
+            dependencyPair,
+          ),
+          {
+            code:
+              "PLATFORM_RELEASE_DEPENDENCY_PAIR_V2_SOURCE_DRIFT",
+          },
+        );
+        assert.throws(
+          () => disposePlatformReleaseSourceStageV2(source),
+          {
+            code:
+              "PLATFORM_RELEASE_SOURCE_V2_HANDLE_DISPOSED",
+          },
+        );
+      } finally {
+        if (dependencyPair) {
+          try {
+            disposePlatformReleaseDependencyMaterializedPairV2(
+              dependencyPair,
+            );
+          } catch {
+            // Injected failure owns terminal cleanup.
+          }
+        }
+        try {
+          disposePlatformReleaseSourceStageV2(source);
+        } catch (error) {
+          if (
+            !(error instanceof PlatformReleaseSourceAdmissionErrorV2)
+            || error.code
+              !== "PLATFORM_RELEASE_SOURCE_V2_HANDLE_DISPOSED"
+          ) throw error;
+        }
+      }
+    });
+  }
 
   it("rejects unsupported source dependency grammar before any npm occurrence", async () => {
     const artifacts = structuredClone(

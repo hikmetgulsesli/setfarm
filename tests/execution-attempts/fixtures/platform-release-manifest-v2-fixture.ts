@@ -325,6 +325,8 @@ function buildHostToolchainReceipt() {
       treeHash: fixtureShaV2("host-toolchain-npm-raw-tree"),
       normalizedTreeHash:
         fixtureShaV2("host-toolchain-npm-normalized-tree"),
+      logicalTreeHash:
+        fixtureShaV2("host-toolchain-npm-logical-tree-v3"),
     },
   };
   const npm = {

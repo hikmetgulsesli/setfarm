@@ -7,6 +7,7 @@ import {
   lstatSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   readdirSync,
   realpathSync,
   renameSync,
@@ -116,6 +117,244 @@ afterEach(() => {
 });
 
 describe("CanonicalRuntimeTreeV2 capture and reproduction authority", () => {
+  it("uses exact bigint physical stat fences instead of lossy numeric inode/device values", () => {
+    const source = readFileSync(
+      new URL("../../src/execution/canonical-runtime-tree-v2.ts", import.meta.url),
+      "utf8",
+    );
+    assert.doesNotMatch(source, /type Stats/);
+    assert.match(source, /lstatSync\([^)]*,\s*\{\s*bigint:\s*true\s*\}\)/u);
+    assert.match(source, /fstatSync\([^)]*,\s*\{\s*bigint:\s*true\s*\}\)/u);
+    assert.match(source, /mtimeNs/);
+    assert.match(source, /ctimeNs/);
+
+    if (process.platform !== "darwin") return;
+
+    // The Data volume root is a stable, read-only observation target on this
+    // Darwin host and has an inode outside Number's safe integer range. The
+    // production capture path must be able to compare such values exactly.
+    const dataRoot = "/System/Volumes/Data";
+    const observed = lstatSync(dataRoot, { bigint: true });
+    if (!Number.isSafeInteger(Number(observed.ino))) {
+      assert.notEqual(
+        observed.ino.toString(10),
+        BigInt(Number(observed.ino)).toString(10),
+      );
+    }
+  });
+
+  it("bounds directory snapshots before allocation and preserves primary-first close failures", () => {
+    const source = readFileSync(
+      new URL("../../src/execution/canonical-runtime-tree-v2.ts", import.meta.url),
+      "utf8",
+    );
+    assert.doesNotMatch(source, /\breaddirSync\b/u);
+    const snapshotSource = source.slice(
+      source.indexOf("function directorySnapshot("),
+      source.indexOf("function sameStringArray("),
+    );
+    const orderedSnapshotContracts = [
+      "lstatSync(absolutePath, { bigint: true })",
+      "stat.isSymbolicLink()",
+      "stat.isDirectory()",
+      "opendirSync(absolutePath, { bufferSize: 1 })",
+      "directory.readSync()",
+      "names.length >= maximumEntries",
+      "names.push(entry.name)",
+      "directory.closeSync()",
+    ];
+    let snapshotCursor = -1;
+    for (const contract of orderedSnapshotContracts) {
+      const next = snapshotSource.indexOf(contract, snapshotCursor + 1);
+      assert.ok(next > snapshotCursor, `missing ordered directory snapshot contract: ${contract}`);
+      snapshotCursor = next;
+    }
+    assert.match(
+      source,
+      /state\.limits\.maxFiles\s*\+\s*state\.limits\.maxDirectories\s*-\s*state\.initialMembershipNamesRetained,[\s\S]*"DIRECTORY_LIMIT_EXCEEDED",[\s\S]*before\.names\.length,[\s\S]*"DIRECTORY_CHANGED"/u,
+    );
+    assert.match(
+      source,
+      /new AggregateError\([\s\S]*\[primary, secondary\],[\s\S]*\{ cause: primary \}/u,
+    );
+    assert.match(
+      source,
+      /not a security boundary[\s\S]*same UID/u,
+    );
+
+    const pollutedRoot = fixture({
+      files: Object.fromEntries(
+        Array.from({ length: 64 }, (_, index) => [
+          `entry-${index.toString().padStart(2, "0")}`,
+          "x",
+        ]),
+      ),
+    });
+    const injectedDirectoryClose = new Error("injected directory close failure");
+    let boundedFailure: unknown;
+    try {
+      captureCanonicalRuntimeTreeV2ForTest({
+        root: pollutedRoot,
+        profile: "dist",
+        metadataProbe: clearMetadata,
+        limits: { maxFiles: 1, maxDirectories: 1 },
+        hooks: {
+          afterDirectoryDescriptorClose: () => {
+            throw injectedDirectoryClose;
+          },
+        },
+      });
+      assert.fail("polluted directory snapshot must fail");
+    } catch (error) {
+      boundedFailure = error;
+    }
+    assert.ok(boundedFailure instanceof CanonicalRuntimeTreeV2Error);
+    assert.equal(boundedFailure.code, "DIRECTORY_LIMIT_EXCEEDED");
+    assert.ok(boundedFailure.cause instanceof AggregateError);
+    const boundedAggregate = boundedFailure.cause;
+    const boundedErrors = boundedAggregate.errors as unknown[];
+    assert.equal(boundedErrors.length, 2);
+    assert.ok(boundedErrors[0] instanceof CanonicalRuntimeTreeV2Error);
+    assert.equal(boundedErrors[0].code, "DIRECTORY_LIMIT_EXCEEDED");
+    assert.ok(boundedErrors[1] instanceof CanonicalRuntimeTreeV2Error);
+    assert.equal(boundedErrors[1].code, "DIRECTORY_CHANGED");
+    assert.equal(boundedErrors[1].cause, injectedDirectoryClose);
+    assert.equal(boundedAggregate.cause, boundedErrors[0]);
+
+    const emptyRoot = fixture();
+    const closeOnly = new Error("injected directory close-only failure");
+    assert.throws(
+      () => captureCanonicalRuntimeTreeV2ForTest({
+        root: emptyRoot,
+        profile: "dist",
+        metadataProbe: clearMetadata,
+        hooks: {
+          afterDirectoryDescriptorClose: () => {
+            throw closeOnly;
+          },
+        },
+      }),
+      (error: unknown) => {
+        assert.ok(error instanceof CanonicalRuntimeTreeV2Error);
+        assert.equal(error.code, "DIRECTORY_CHANGED");
+        assert.equal(error.cause, closeOnly);
+        return true;
+      },
+    );
+  });
+
+  it("shares one initial-membership budget across nested and pending sibling snapshots", () => {
+    const root = fixture({
+      directories: ["a/nested", "pending"],
+      files: {
+        "a/nested/overflow.txt": "overflow",
+        "a/value.txt": "value",
+      },
+    });
+    let initialReads = 0;
+    let peakRetainedNames = 0;
+    const initialDirectoriesRead = new Set<string>();
+    let observed: unknown;
+    try {
+      captureCanonicalRuntimeTreeV2ForTest({
+        root,
+        profile: "dist",
+        metadataProbe: clearMetadata,
+        limits: { maxFiles: 2, maxDirectories: 2 },
+        hooks: {
+          afterDirectoryEntryRead: ({ phase, relativePath }) => {
+            if (phase !== "initial") return;
+            initialReads += 1;
+            initialDirectoriesRead.add(relativePath);
+          },
+          afterDirectoryEntryRetained: ({
+            phase,
+            totalInitialMembershipNamesRetained,
+          }) => {
+            if (phase !== "initial") return;
+            peakRetainedNames = Math.max(
+              peakRetainedNames,
+              totalInitialMembershipNamesRetained,
+            );
+          },
+        },
+      });
+      assert.fail("recursive membership must share one global bound");
+    } catch (error) {
+      observed = error;
+    }
+    assert.ok(observed instanceof CanonicalRuntimeTreeV2Error);
+    assert.equal(observed.code, "DIRECTORY_LIMIT_EXCEEDED");
+    assert.equal(initialReads, 5);
+    assert.equal(peakRetainedNames, 4);
+    assert.equal(initialDirectoriesRead.has("pending"), false);
+  });
+
+  it("preserves file-capture primary errors when descriptor close also fails", () => {
+    const changedRoot = fixture({ files: { "value.txt": "before" } });
+    const injectedFileClose = new Error("injected file close failure");
+    let combinedFailure: unknown;
+    try {
+      captureCanonicalRuntimeTreeV2ForTest({
+        root: changedRoot,
+        profile: "dist",
+        metadataProbe: clearMetadata,
+        hooks: {
+          afterFileRead: ({ absolutePath }) => {
+            chmodSync(absolutePath, 0o644);
+            writeFileSync(absolutePath, "after!");
+            chmodSync(absolutePath, 0o444);
+          },
+          afterFileDescriptorClose: () => {
+            throw injectedFileClose;
+          },
+        },
+      });
+      assert.fail("file mutation and close failure must fail");
+    } catch (error) {
+      combinedFailure = error;
+    }
+    assert.ok(combinedFailure instanceof CanonicalRuntimeTreeV2Error);
+    assert.equal(combinedFailure.code, "FILE_CHANGED");
+    assert.equal(
+      combinedFailure instanceof CanonicalRuntimeTreeV2Error
+        ? "PLATFORM_RELEASE_PRODUCTION_DEPENDENCY_V2_INSTALL_TREE_INVALID"
+        : "PLATFORM_RELEASE_PRODUCTION_DEPENDENCY_V2_NORMALIZATION_FAILED",
+      "PLATFORM_RELEASE_PRODUCTION_DEPENDENCY_V2_INSTALL_TREE_INVALID",
+    );
+    assert.ok(combinedFailure.cause instanceof AggregateError);
+    const combinedAggregate = combinedFailure.cause;
+    const combinedErrors = combinedAggregate.errors as unknown[];
+    assert.equal(combinedErrors.length, 2);
+    assert.ok(combinedErrors[0] instanceof CanonicalRuntimeTreeV2Error);
+    assert.equal(combinedErrors[0].code, "FILE_CHANGED");
+    assert.ok(combinedErrors[1] instanceof CanonicalRuntimeTreeV2Error);
+    assert.equal(combinedErrors[1].code, "IO_FAILURE");
+    assert.equal(combinedErrors[1].cause, injectedFileClose);
+    assert.equal(combinedAggregate.cause, combinedErrors[0]);
+
+    const closeOnlyRoot = fixture({ files: { "value.txt": "stable" } });
+    const closeOnly = new Error("injected file close-only failure");
+    assert.throws(
+      () => captureCanonicalRuntimeTreeV2ForTest({
+        root: closeOnlyRoot,
+        profile: "dist",
+        metadataProbe: clearMetadata,
+        hooks: {
+          afterFileDescriptorClose: () => {
+            throw closeOnly;
+          },
+        },
+      }),
+      (error: unknown) => {
+        assert.ok(error instanceof CanonicalRuntimeTreeV2Error);
+        assert.equal(error.code, "IO_FAILURE");
+        assert.equal(error.cause, closeOnly);
+        return true;
+      },
+    );
+  });
+
   it("produces the same frozen canonical artifact twice and binds empty directories", () => {
     const root = fixture({
       directories: ["empty", "nested/also-empty"],

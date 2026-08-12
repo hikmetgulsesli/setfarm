@@ -1,13 +1,35 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
-import { loadWorkflowSpec } from "../dist/installer/workflow-spec.js";
+import { loadWorkflowSpec } from "../src/installer/workflow-spec.js";
 
 const WORKFLOW_DIR = path.resolve(import.meta.dirname, "..", "workflows", "feature-dev");
 
 describe("feature-dev design contract prompt", () => {
+  it("makes English immutable across workflow and agent policy sources", async () => {
+    const spec = await loadWorkflowSpec(WORKFLOW_DIR);
+    const languageSteps = ["plan", "design", "stories", "implement"]
+      .map(stepId => spec.steps.find(step => step.id === stepId));
+    const policySources = [
+      path.resolve(WORKFLOW_DIR, "../_fragments/design-first.md"),
+      path.resolve(WORKFLOW_DIR, "agents/developer/AGENTS.md"),
+      path.resolve(WORKFLOW_DIR, "agents/qa-tester/AGENTS.md"),
+    ].map(file => readFileSync(file, "utf-8")).join("\n");
+
+    for (const step of languageSteps) {
+      assert.ok(step, "language-authoring step should exist");
+      assert.match(step.input, /UI_LANGUAGE is (?:immutable and )?exactly\s+English/);
+    }
+    assert.match(policySources, /All source code, comments, identifiers, tests, fixtures/);
+    assert.match(policySources, /<html lang="en">` is set/);
+    assert.doesNotMatch(
+      `${languageSteps.map(step => step?.input || "").join("\n")}\n${policySources}`,
+      /Infer UI_LANGUAGE|choose Turkish|requested product language|keep UI labels Turkish|realistic Turkish|Verify Turkish|<html lang="tr">/,
+    );
+  });
+
   it("does not instruct implement agents to use Material Symbols icon fonts", async () => {
     const spec = await loadWorkflowSpec(WORKFLOW_DIR);
     const implement = spec.steps.find(step => step.id === "implement");

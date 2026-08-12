@@ -24,6 +24,36 @@ import {
   RequirementClauseSourceV1Schema,
   TaskRequirementClauseV1Schema,
 } from "../requirements/task-requirements-v1.js";
+import {
+  ENGLISH_TEXT_ARRAY_INDEX_V1,
+  ENGLISH_TEXT_TREE_MAX_CODE_UNITS_V1,
+  ENGLISH_TEXT_TREE_MAX_ISSUES_V1,
+  ENGLISH_TEXT_TREE_MAX_VALUES_V1,
+  englishTextViolationMessageV1,
+  inspectEnglishTextTreeV1,
+  inspectEnglishTextV1,
+  type EnglishTextPathPatternV1,
+} from "../english-text-contract-v1.js";
+
+const INDEX = ENGLISH_TEXT_ARRAY_INDEX_V1;
+
+export const PRODUCT_SPEC_V1_ENGLISH_PROSE_PATHS = Object.freeze([
+  ["product", "name"],
+  ["product", "goals", INDEX, "statement"],
+  ["product", "nonGoals", INDEX, "statement"],
+  ["entities", INDEX, "name"],
+  ["states", INDEX, "name"],
+  ["states", INDEX, "invariants", INDEX],
+  ["surfaces", INDEX, "name"],
+  ["actions", INDEX, "name"],
+  ["actions", INDEX, "observableEffects", INDEX, "selector", "name"],
+  ["assumptions", INDEX, "statement"],
+  ["delivery", "uiVisionSummary"],
+] satisfies readonly EnglishTextPathPatternV1[]);
+
+export const PRODUCT_SPEC_V1_OPAQUE_SOURCE_EVIDENCE_PATHS = Object.freeze([
+  ["requirements", INDEX, "normalizedClause"],
+] satisfies readonly EnglishTextPathPatternV1[]);
 
 const ValueTypeSchema = z.enum([
   "string",
@@ -380,6 +410,15 @@ export const ObservableAssertionV1Schema = z.object({
   if (["contains", "matches"].includes(value.operator) && typeof value.expected !== "string") {
     context.addIssue({ code: "custom", path: ["expected"], message: `${value.operator} observable assertions require a string expected value` });
   }
+  if (value.property === "visible_text"
+    && value.operator !== "changed"
+    && typeof value.expected !== "string") {
+    context.addIssue({
+      code: "custom",
+      path: ["expected"],
+      message: "Visible-text assertions require a string expected value",
+    });
+  }
   if (["visibility", "enabled"].includes(value.property)) {
     if (!(["equals", "changed"].includes(value.operator))) {
       context.addIssue({ code: "custom", path: ["operator"], message: `${value.property} supports only equals or changed` });
@@ -507,7 +546,7 @@ export const RequirementBindingV1Schema = z.object({
   }),
 }).strict();
 
-export const ProductDeliveryV1Schema = z.object({
+const ProductDeliveryV1ReaderSchema = z.object({
   platform: z.enum(["web", "mobile", "desktop", "api", "cli", "game"]),
   techStack: z.enum([
     "vite-react",
@@ -552,7 +591,14 @@ export const ProductDeliveryV1Schema = z.object({
   }
 });
 
-export type ProductDeliveryV1 = z.infer<typeof ProductDeliveryV1Schema>;
+export const ProductDeliveryV1Schema = ProductDeliveryV1ReaderSchema;
+
+export const ProductDeliveryV1EnglishWriteSchema = ProductDeliveryV1ReaderSchema.safeExtend({
+  uiLanguage: z.literal("English"),
+});
+
+export type ProductDeliveryV1 = z.infer<typeof ProductDeliveryV1ReaderSchema>;
+export type ProductDeliveryV1EnglishWrite = z.infer<typeof ProductDeliveryV1EnglishWriteSchema>;
 
 export type PersistenceDeliveryCompatibilityIssueV1 = Readonly<{
   code:
@@ -794,7 +840,7 @@ export const ProductSpecV1Schema = z
     actions: z.array(ProductActionV1Schema).min(1).max(2_000),
     evidencePredicates: z.array(EvidencePredicateV1Schema).min(1).max(2_000),
     assumptions: z.array(ProductAssumptionV1Schema).max(500),
-    delivery: ProductDeliveryV1Schema.optional(),
+    delivery: ProductDeliveryV1ReaderSchema.optional(),
     requirements: z.array(ProductRequirementV1Schema).min(1).max(1_000).optional(),
     traceability: z.object({
       schema: z.literal("setfarm.product-requirement-traceability.v1"),
@@ -1298,7 +1344,71 @@ export const ProductSpecV1Schema = z
 
 export type ProductSpecV1 = z.infer<typeof ProductSpecV1Schema>;
 
-export const ProductSpecV3ProposalSchema = ProductSpecV1Schema.superRefine((value, context) => {
+export const ProductSpecV1EnglishWriteSchema = ProductSpecV1Schema.superRefine((value, context) => {
+  if (value.delivery && value.delivery.uiLanguage !== "English") {
+    context.addIssue({
+      code: "custom",
+      path: ["delivery", "uiLanguage"],
+      message: "PRODUCT_SPEC_UI_LANGUAGE_MUST_BE_ENGLISH",
+    });
+  }
+  const englishTreeIssues = inspectEnglishTextTreeV1(value, {
+    lexicalPathPatterns: PRODUCT_SPEC_V1_ENGLISH_PROSE_PATHS,
+    opaquePathPatterns: PRODUCT_SPEC_V1_OPAQUE_SOURCE_EVIDENCE_PATHS,
+  });
+  englishTreeIssues.forEach((issue) => context.addIssue({
+    code: "custom",
+    path: [...issue.path],
+    message: `PRODUCT_SPEC_ENGLISH_TEXT_REQUIRED: ${englishTextViolationMessageV1(issue)}`,
+  }));
+  if (englishTreeIssues.some((issue) => issue.code === "ENGLISH_TEXT_TREE_LIMIT_EXCEEDED")
+    || englishTreeIssues.length >= ENGLISH_TEXT_TREE_MAX_ISSUES_V1) return;
+  let visibleTextValues = 0;
+  let visibleTextCodeUnits = 0;
+  let englishIssueCount = englishTreeIssues.length;
+  visibleTextScan: for (let actionIndex = 0; actionIndex < value.actions.length; actionIndex += 1) {
+    const action = value.actions[actionIndex]!;
+    const effects = action.observableEffects ?? [];
+    for (let effectIndex = 0; effectIndex < effects.length; effectIndex += 1) {
+      const effect = effects[effectIndex]!;
+      for (let assertionIndex = 0; assertionIndex < effect.assertions.length; assertionIndex += 1) {
+        const assertion = effect.assertions[assertionIndex]!;
+        if (assertion.property !== "visible_text" || typeof assertion.expected !== "string") continue;
+        visibleTextValues += 1;
+        visibleTextCodeUnits += assertion.expected.length;
+        const path = [
+          "actions",
+          actionIndex,
+          "observableEffects",
+          effectIndex,
+          "assertions",
+          assertionIndex,
+          "expected",
+        ];
+        if (visibleTextValues > ENGLISH_TEXT_TREE_MAX_VALUES_V1
+          || visibleTextCodeUnits > ENGLISH_TEXT_TREE_MAX_CODE_UNITS_V1) {
+          context.addIssue({
+            code: "custom",
+            path,
+            message: "PRODUCT_SPEC_ENGLISH_TEXT_REQUIRED: ENGLISH_TEXT_TREE_LIMIT_EXCEEDED",
+          });
+          break visibleTextScan;
+        }
+        const issue = inspectEnglishTextV1(assertion.expected);
+        if (!issue) continue;
+        context.addIssue({
+          code: "custom",
+          path,
+          message: `PRODUCT_SPEC_ENGLISH_TEXT_REQUIRED: ${englishTextViolationMessageV1(issue)}`,
+        });
+        englishIssueCount += 1;
+        if (englishIssueCount >= ENGLISH_TEXT_TREE_MAX_ISSUES_V1) break visibleTextScan;
+      }
+    }
+  }
+});
+
+export const ProductSpecV3ProposalSchema = ProductSpecV1EnglishWriteSchema.superRefine((value, context) => {
   if (!value.delivery) context.addIssue({ code: "custom", path: ["delivery"], message: "V3 ProductSpec requires delivery" });
   if (!value.requirements) context.addIssue({ code: "custom", path: ["requirements"], message: "V3 ProductSpec requires source requirements" });
   if (!value.traceability) context.addIssue({ code: "custom", path: ["traceability"], message: "V3 ProductSpec requires requirement traceability" });

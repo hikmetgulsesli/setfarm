@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, renameSync } from "node:fs";
 import {
   chmod,
   chown,
   copyFile,
   link,
+  lstat,
   mkdir,
   mkdtemp,
   readFile,
@@ -24,6 +25,7 @@ import {
   createHostNodeToolchainAuthorityV2,
   createHostNodeToolchainAuthorityV2ForTest,
   executeHostNodeToolchainCandidateProductionNpmCiV2,
+  inspectHostNodeToolchainPhysicalIdentityV3,
   inspectHostNodeToolchainReceiptV2,
   isProductionHostNodeToolchainAuthorityV2,
   requireProductionHostNodeToolchainPreSpawnV2,
@@ -34,8 +36,11 @@ import {
 } from "../../src/product-compiler/host-node-toolchain-authority-v2.js";
 import {
   HostNodeToolchainReceiptV2Schema,
+  hashHostNodeDynamicLibraryClosureV2,
   hashHostNodeExecutableIdentityV2,
+  hashHostNpmPackageClosureV2,
   hashHostNodeToolchainReceiptV2,
+  projectHostNodeToolchainLogicalIdentityV3,
 } from "../../src/product-compiler/schemas/host-node-toolchain-receipt-v2.js";
 import {
   CANDIDATE_NPM_DIRECT_ARGV_HASH_V2,
@@ -315,6 +320,161 @@ describe("HostNodeToolchainAuthorityV2", () => {
     assert.equal(calls.every((call) => call.env.PATH === path.dirname(realNode)), true);
   });
 
+  it("keeps mutable host ownership out of retry-stable toolchain semantics", async () => {
+    const fixture = await makeFixture();
+    const handle = await authority(fixture);
+    const receipt = inspectHostNodeToolchainReceiptV2(handle);
+    const changed = structuredClone(receipt) as any;
+    changed.node.executable.ownerUid += 1;
+    changed.node.executable.ownerGid += 1;
+    changed.node.executable.mode = changed.node.executable.mode === "0555"
+      ? "0444"
+      : "0555";
+    for (const member of changed.node.nonSystemDynamicLibraries.members) {
+      member.file.ownerUid += 1;
+      member.file.ownerGid += 1;
+    }
+    const {
+      closureHash: _dynamicLibraryClosureHash,
+      ...dynamicLibraryClosure
+    } = changed.node.nonSystemDynamicLibraries;
+    changed.node.nonSystemDynamicLibraries.closureHash =
+      hashHostNodeDynamicLibraryClosureV2(dynamicLibraryClosure);
+    const { identityHash: _nodeIdentityHash, ...nodeIdentity } = changed.node;
+    changed.node.identityHash = hashHostNodeExecutableIdentityV2(nodeIdentity);
+    changed.npm.rootOwnerUid += 1;
+    changed.npm.rootOwnerGid += 1;
+    changed.npm.packageTree.rootMode = changed.npm.packageTree.rootMode === "0755"
+      ? "0555"
+      : "0755";
+    changed.npm.packageTree.treeHash = "a".repeat(64);
+    changed.npm.packageTree.normalizedTreeHash = "b".repeat(64);
+    changed.npm.cli.ownerUid += 1;
+    changed.npm.cli.ownerGid += 1;
+    changed.npm.cli.mode = changed.npm.cli.mode === "0555" ? "0444" : "0555";
+    changed.npm.packageJson.ownerUid += 1;
+    changed.npm.packageJson.ownerGid += 1;
+    changed.npm.packageJson.mode = changed.npm.packageJson.mode === "0555"
+      ? "0444"
+      : "0555";
+    const { closureHash: _npmClosureHash, ...npmIdentity } = changed.npm;
+    changed.npm.closureHash = hashHostNpmPackageClosureV2(npmIdentity);
+    changed.installationRoot.ownerUid += 1;
+    changed.installationRoot.ownerGid += 1;
+    changed.receiptHash = hashHostNodeToolchainReceiptV2(changed);
+
+    assert.equal(HostNodeToolchainReceiptV2Schema.safeParse(changed).success, true);
+    assert.notEqual(changed.node.identityHash, receipt.node.identityHash);
+    assert.notEqual(changed.npm.closureHash, receipt.npm.closureHash);
+    assert.deepEqual(
+      projectHostNodeToolchainLogicalIdentityV3(changed),
+      projectHostNodeToolchainLogicalIdentityV3(receipt),
+    );
+  });
+
+  it("exposes exact V3 physical identity only through an authenticated V2 handle", async () => {
+    const fixture = await makeFixture();
+    const handle = await authority(fixture);
+    const physical = await inspectHostNodeToolchainPhysicalIdentityV3(handle);
+    const receipt = inspectHostNodeToolchainReceiptV2(handle);
+
+    assert.equal(physical.admissionScope, "test_fixture");
+    assert.equal(physical.authorityDisposition, "observation_only_non_authoritative");
+    assert.equal(physical.hostToolchainReceiptHash, receipt.receiptHash);
+    assert.equal(physical.revalidatedHostToolchainReceiptHash, receipt.receiptHash);
+    assert.equal(physical.scope.architecture, "arm64");
+    assert.deepEqual(
+      physical.observations.map((observation) => observation.role),
+      [
+        "toolchain_root",
+        "node_executable",
+        "npm_package_root",
+        "npm_cli",
+        "npm_package_json",
+        "non_system_dynamic_library",
+      ],
+    );
+    const expectedHostIdentityHash =
+      physical.observations[0]?.objectIdentity.hostIdentityHash;
+    assert.equal(typeof expectedHostIdentityHash, "string");
+    assert.equal(physical.observations.every((observation) =>
+      observation.objectIdentity.hostIdentityHash === expectedHostIdentityHash
+      && observation.fingerprint.objectIdentityHash
+        === observation.objectIdentity.objectIdentityHash
+      && typeof observation.objectIdentity.device === "string"
+      && typeof observation.objectIdentity.inode === "string"
+      && typeof observation.fingerprint.modifiedTimeNanoseconds === "string"
+      && typeof observation.fingerprint.changedTimeNanoseconds === "string"), true);
+    const dynamic = physical.observations.find((observation) =>
+      observation.role === "non_system_dynamic_library");
+    assert.equal(dynamic?.memberRef, "HOST_NODE_NON_SYSTEM_DYLIB_0001");
+    assert.equal(dynamic?.installNameHash, receipt.node.nonSystemDynamicLibraries.members[0]?.installNameHash);
+    assert.equal(Object.isFrozen(physical), true);
+
+    await assert.rejects(inspectHostNodeToolchainPhysicalIdentityV3(
+      inspectHostNodeToolchainReceiptV2(handle) as never,
+    ), { code: "HOST_NODE_TOOLCHAIN_V2_HANDLE_UNAUTHENTICATED" });
+  });
+
+  it("fails closed before V3 capture when the authenticated V2 host receipt is stale", async () => {
+    const fixture = await makeFixture();
+    const handle = await authority(fixture);
+    await chmod(fixture.node, 0o700);
+    await writeFile(fixture.node, "drifted-node\n");
+
+    await assert.rejects(inspectHostNodeToolchainPhysicalIdentityV3(handle), {
+      code: "HOST_NODE_TOOLCHAIN_V2_HOST_DRIFT",
+    });
+  });
+
+  it("rejects a transient same-byte physical substitute restored before the final V2 fence", async () => {
+    const fixture = await makeFixture();
+    const swapRoot = await mkdtemp(path.join(tmpdir(), "setfarm-host-node-v3-aba-"));
+    roots.push(swapRoot);
+    const displaced = path.join(swapRoot, "node.original");
+    const substitute = path.join(swapRoot, "node.substitute");
+    await copyFile(fixture.node, substitute);
+    await chmod(substitute, 0o555);
+    const original = await lstat(fixture.node);
+    let swapped = false;
+    const handle = await createHostNodeToolchainAuthorityV2ForTest({
+      profileId: PROFILE_ID,
+      fixture: {
+        candidateRoot: fixture.root,
+        host: {
+          platform: "darwin",
+          architecture: "arm64",
+          macosProductVersion: "26.5.2",
+          macosBuildVersion: "25F84",
+          darwinKernelRelease: "25.5.0",
+        },
+        nonSystemDynamicLibraryPaths: [fixture.dynamicLibrary],
+        physicalInspectionHook(checkpoint) {
+          if (checkpoint === "before_physical_capture") {
+            renameSync(fixture.node, displaced);
+            renameSync(substitute, fixture.node);
+            swapped = true;
+            return;
+          }
+          if (swapped) {
+            renameSync(fixture.node, substitute);
+            renameSync(displaced, fixture.node);
+            swapped = false;
+          }
+        },
+      },
+      probeAdapter: makeProbeAdapter(fixture, []),
+    });
+
+    await assert.rejects(inspectHostNodeToolchainPhysicalIdentityV3(handle), {
+      code: "HOST_NODE_TOOLCHAIN_V2_HOST_DRIFT",
+    });
+    const restored = await lstat(fixture.node);
+    assert.equal(swapped, false);
+    assert.equal(restored.dev, original.dev);
+    assert.equal(restored.ino, original.ino);
+  });
+
   it("returns defensive receipt copies and rejects DTOs, proxies and forged handles", async () => {
     const fixture = await makeFixture();
     const handle = await authority(fixture);
@@ -460,6 +620,76 @@ describe("HostNodeToolchainAuthorityV2", () => {
       code: "HOST_NODE_TOOLCHAIN_V2_HOST_DRIFT",
     });
     assert.equal(inspectHostNodeToolchainReceiptV2(handle).receiptHash, original.receiptHash);
+  });
+
+  it("keeps an exact V3 snapshot private and checks it during revalidation", async () => {
+    const source = await readFile(
+      path.resolve("src/product-compiler/host-node-toolchain-authority-v2.ts"),
+      "utf8",
+    );
+    assert.match(source, /physicalIdentityV3:\s*HostNodeToolchainPhysicalIdentityV3/);
+    assert.match(source, /const physicalIdentityV3 = capturePrivatePhysicalIdentityV3ForAdmission\(/);
+    assert.match(source, /const freshPhysicalIdentityV3 = capturePrivatePhysicalIdentityV3\(/);
+    assert.match(source, /const finalCaptured = await captureAuthorityState\(/);
+    assert.match(
+      source,
+      /finalPhysicalIdentityV3\.identityHash\s*!==\s*physicalIdentityV3\.identityHash/,
+    );
+    assert.match(
+      source,
+      /freshPhysicalIdentityV3\.identityHash\s*!==\s*state\.physicalIdentityV3\.identityHash/,
+    );
+
+    const fixture = await makeFixture();
+    const handle = await authority(fixture);
+    const physical = await inspectHostNodeToolchainPhysicalIdentityV3(handle);
+    assert.equal(physical.authorityDisposition, "observation_only_non_authoritative");
+
+    await chmod(fixture.dynamicLibrary, 0o755);
+    await writeFile(fixture.dynamicLibrary, "changed-exact-physical-observation\n");
+    await chmod(fixture.dynamicLibrary, 0o555);
+    await assert.rejects(revalidateHostNodeToolchainAuthorityV2(handle), {
+      code: "HOST_NODE_TOOLCHAIN_V2_HOST_DRIFT",
+    });
+  });
+
+  it("normalizes an initial exact V3 admission failure at the V2 authority boundary", async () => {
+    const fixture = await makeFixture();
+    const baseAdapter = makeProbeAdapter(fixture, []);
+    let replaced = false;
+    await assert.rejects(
+      createHostNodeToolchainAuthorityV2ForTest({
+        profileId: PROFILE_ID,
+        fixture: {
+          candidateRoot: fixture.root,
+          host: {
+            platform: "darwin",
+            architecture: "arm64",
+            macosProductVersion: "26.5.2",
+            macosBuildVersion: "25F84",
+            darwinKernelRelease: "25.5.0",
+          },
+          nonSystemDynamicLibraryPaths: [fixture.dynamicLibrary],
+        },
+        probeAdapter: async (invocation) => {
+          const result = await baseAdapter(invocation);
+          if (invocation.probeRef === "HOST_NPM_VERSION_PROBE_V2" && !replaced) {
+            const target = `${fixture.dynamicLibrary}.target`;
+            await chmod(fixture.dynamicLibrary, 0o755);
+            await rename(fixture.dynamicLibrary, target);
+            await symlink(target, fixture.dynamicLibrary);
+            replaced = true;
+          }
+          return result;
+        },
+      }),
+      (error: unknown) => {
+        assert.ok(error instanceof HostNodeToolchainAuthorityErrorV2);
+        assert.equal(error.code, "HOST_NODE_TOOLCHAIN_V2_CANDIDATE_LAYOUT_INVALID");
+        return true;
+      },
+    );
+    assert.equal(replaced, true);
   });
 
   it("invalidates the handle when a non-system dynamic library changes", async () => {

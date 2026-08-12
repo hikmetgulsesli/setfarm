@@ -13,7 +13,9 @@ import {
 } from "./platform-release-bootstrap-operation-abis-v2.js";
 import {
   PLATFORM_RELEASE_BOOTSTRAP_CONTRACT_V2,
+  PLATFORM_RELEASE_BOOTSTRAP_REGISTRY_ACTIVATION_CLAIM_V2_SCHEMA,
   PLATFORM_RELEASE_BOOTSTRAP_REGISTRY_ACTIVATION_RECEIPT_V2_SCHEMA,
+  PLATFORM_RELEASE_BOOTSTRAP_REGISTRY_ACTIVATION_MIGRATOR_PROTOCOL_HASH_V2,
   PLATFORM_RELEASE_BOOTSTRAP_REGISTRY_DOCUMENT_PROTOCOL_CATALOG_V2,
   PLATFORM_RELEASE_BOOTSTRAP_REGISTRY_EPOCH_CLAIM_V2_SCHEMA,
   PLATFORM_RELEASE_BOOTSTRAP_REGISTRY_EPOCH_FLOOR_STATE_V2_SCHEMA,
@@ -51,6 +53,10 @@ function registryDocumentMaxCanonicalBytesV2(
 export const PLATFORM_RELEASE_BOOTSTRAP_REGISTRY_ACTIVATION_RECEIPT_MAX_CANONICAL_BYTES_V2 =
   registryDocumentMaxCanonicalBytesV2(
     PLATFORM_RELEASE_BOOTSTRAP_REGISTRY_ACTIVATION_RECEIPT_V2_SCHEMA,
+  );
+export const PLATFORM_RELEASE_BOOTSTRAP_REGISTRY_ACTIVATION_CLAIM_MAX_CANONICAL_BYTES_V2 =
+  registryDocumentMaxCanonicalBytesV2(
+    PLATFORM_RELEASE_BOOTSTRAP_REGISTRY_ACTIVATION_CLAIM_V2_SCHEMA,
   );
 export const PLATFORM_RELEASE_BOOTSTRAP_REGISTRY_EPOCH_FLOOR_STATE_MAX_CANONICAL_BYTES_V2 =
   registryDocumentMaxCanonicalBytesV2(
@@ -274,6 +280,124 @@ export type PlatformReleaseBootstrapRegistryActivationReceiptV2 =
     typeof PlatformReleaseBootstrapRegistryActivationReceiptV2Schema
   >;
 
+const ActivationClaimIdentityV2Schema = z.object({
+  schema: z.literal(
+    PLATFORM_RELEASE_BOOTSTRAP_REGISTRY_ACTIVATION_CLAIM_V2_SCHEMA,
+  ),
+  version: z.literal(PLATFORM_RELEASE_COMPONENT_VERSION_V2),
+  registryRef: z.literal(REGISTRY_REF_V2),
+  registryContractHash: z.literal(REGISTRY_CONTRACT_HASH_V2),
+  transactionIdentityHash: Sha256Schema,
+  migratorProtocolHash: z.literal(
+    PLATFORM_RELEASE_BOOTSTRAP_REGISTRY_ACTIVATION_MIGRATOR_PROTOCOL_HASH_V2,
+  ),
+  legacyNodeLockIdentityHash: Sha256Schema,
+  sharedLockIdentityHash: Sha256Schema,
+  nodeLifecycleIdentityHash: Sha256Schema,
+  nodeLifecycleSnapshotHash: Sha256Schema,
+  parentIdentityHash: Sha256Schema,
+  preActivationNamespaceCaptureHash: Sha256Schema,
+  transactionStagingIdentityHash: Sha256Schema,
+  transactionStagingCensusHash: Sha256Schema,
+  genesisEpochStateHash: Sha256Schema,
+  expectedActivationReceiptHash: Sha256Schema,
+}).strict();
+
+export type PlatformReleaseBootstrapRegistryActivationClaimHashPayloadV2 =
+  z.infer<typeof ActivationClaimIdentityV2Schema>;
+
+export function buildPlatformReleaseBootstrapRegistryActivationClaimHashPreimageV2(
+  value:
+    | PlatformReleaseBootstrapRegistryActivationClaimHashPayloadV2
+    | PlatformReleaseBootstrapRegistryActivationClaimV2
+    | Readonly<Record<string, unknown>>,
+): RegistryDocumentHashPreimageV2 {
+  return buildRegistryDocumentHashPreimageV2(
+    "setfarm.platform-release-bootstrap-registry-activation-claim-hash.v2",
+    "activationClaimHash",
+    value,
+  );
+}
+
+export function hashPlatformReleaseBootstrapRegistryActivationClaimV2(
+  value:
+    | PlatformReleaseBootstrapRegistryActivationClaimHashPayloadV2
+    | PlatformReleaseBootstrapRegistryActivationClaimV2
+    | Readonly<Record<string, unknown>>,
+): string {
+  return hashCanonicalJson(
+    buildPlatformReleaseBootstrapRegistryActivationClaimHashPreimageV2(
+      value,
+    ),
+  );
+}
+
+function expectedActivationReceiptHashForClaimV2(
+  value: PlatformReleaseBootstrapRegistryActivationClaimHashPayloadV2,
+): string {
+  return hashPlatformReleaseBootstrapRegistryActivationReceiptV2({
+    schema:
+      PLATFORM_RELEASE_BOOTSTRAP_REGISTRY_ACTIVATION_RECEIPT_V2_SCHEMA,
+    version: PLATFORM_RELEASE_COMPONENT_VERSION_V2,
+    registryRef: REGISTRY_REF_V2,
+    registryContractHash: REGISTRY_CONTRACT_HASH_V2,
+    sharedLockIdentityHash: value.sharedLockIdentityHash,
+    legacyNodeLockIdentityHash: value.legacyNodeLockIdentityHash,
+    nodeLifecycleIdentityHash: value.nodeLifecycleIdentityHash,
+    parentIdentityHash: value.parentIdentityHash,
+    genesisEpochStateHash: value.genesisEpochStateHash,
+  });
+}
+
+export const PlatformReleaseBootstrapRegistryActivationClaimV2Schema =
+  ActivationClaimIdentityV2Schema.extend({
+    activationClaimHash: Sha256Schema,
+  }).strict().superRefine((value, context) => {
+    const transactionAndCutoverHashes = [
+      value.transactionIdentityHash,
+      value.migratorProtocolHash,
+      value.legacyNodeLockIdentityHash,
+      value.sharedLockIdentityHash,
+      value.nodeLifecycleIdentityHash,
+      value.nodeLifecycleSnapshotHash,
+      value.parentIdentityHash,
+      value.preActivationNamespaceCaptureHash,
+      value.transactionStagingIdentityHash,
+      value.transactionStagingCensusHash,
+      value.genesisEpochStateHash,
+      value.expectedActivationReceiptHash,
+    ];
+    if (
+      !platformReleaseCandidateFitsCanonicalCapV2(
+        value,
+        PLATFORM_RELEASE_BOOTSTRAP_REGISTRY_ACTIVATION_CLAIM_MAX_CANONICAL_BYTES_V2,
+      )
+      || new Set(transactionAndCutoverHashes).size
+        !== transactionAndCutoverHashes.length
+      || value.genesisEpochStateHash
+        !== exactGenesisEpochFloorStateHashV2()
+      || value.expectedActivationReceiptHash
+        !== expectedActivationReceiptHashForClaimV2(value)
+      || value.activationClaimHash
+        !==
+          hashPlatformReleaseBootstrapRegistryActivationClaimV2(
+            value,
+          )
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["activationClaimHash"],
+        message:
+          "Registry activation claim must be bounded and bind one exact crash-safe cutover transaction and expected receipt",
+      });
+    }
+  });
+
+export type PlatformReleaseBootstrapRegistryActivationClaimV2 =
+  z.infer<
+    typeof PlatformReleaseBootstrapRegistryActivationClaimV2Schema
+  >;
+
 const EpochFloorStateIdentityV2Schema = z.object({
   schema: z.literal(
     PLATFORM_RELEASE_BOOTSTRAP_REGISTRY_EPOCH_FLOOR_STATE_V2_SCHEMA,
@@ -373,6 +497,24 @@ export type PlatformReleaseBootstrapRegistryEpochFloorStateV2 =
     typeof PlatformReleaseBootstrapRegistryEpochFloorStateV2Schema
   >;
 
+export type PlatformReleaseBootstrapRegistryEpochStagingTargetMemberV2 =
+  Readonly<{
+    memberKind: "staged_target_epoch_state";
+    logicalIdentityHash: string;
+    physicalIdentityHash: string;
+  }>;
+
+export function hashPlatformReleaseBootstrapRegistryEpochStagingInitialCensusV2(
+  orderedMembers:
+    readonly PlatformReleaseBootstrapRegistryEpochStagingTargetMemberV2[],
+): string {
+  return hashCanonicalJson({
+    schema:
+      "setfarm.platform-release-bootstrap-registry-epoch-staging-initial-census.v2",
+    orderedMembers,
+  });
+}
+
 const EpochClaimIdentityV2Schema = z.object({
   schema: z.literal(
     PLATFORM_RELEASE_BOOTSTRAP_REGISTRY_EPOCH_CLAIM_V2_SCHEMA,
@@ -383,23 +525,120 @@ const EpochClaimIdentityV2Schema = z.object({
   transactionIdentityHash: Sha256Schema,
   priorEpochStateHash: Sha256Schema,
   targetEpochStateHash: Sha256Schema,
+  priorEpochState:
+    PlatformReleaseBootstrapRegistryEpochFloorStateV2Schema,
+  targetEpochState:
+    PlatformReleaseBootstrapRegistryEpochFloorStateV2Schema,
+  transactionStagingIdentityHash: Sha256Schema,
+  transactionStagingCensusHash: Sha256Schema,
+  stagedTargetEpochStatePhysicalIdentityHash: Sha256Schema,
   packageRef: PlatformReleaseBootstrapPackageRefV2Schema,
   packageInstallationGeneration: NonnegativeSafeIntegerV2Schema,
   offlineRollbackAuthorizationHash: Sha256Schema.nullable(),
 }).strict().superRefine((value, context) => {
-  if (
-    new Set([
-      value.transactionIdentityHash,
-      value.priorEpochStateHash,
-      value.targetEpochStateHash,
-    ]).size !== 3
-  ) {
+  const identityHashes = [
+    value.transactionIdentityHash,
+    value.priorEpochStateHash,
+    value.targetEpochStateHash,
+    value.transactionStagingIdentityHash,
+    value.transactionStagingCensusHash,
+    value.stagedTargetEpochStatePhysicalIdentityHash,
+  ];
+  if (new Set(identityHashes).size !== identityHashes.length) {
     context.addIssue({
       code: "custom",
       path: ["transactionIdentityHash"],
       message:
-        "Epoch claim transaction, prior-state, and target-state identities must be distinct",
+        "Epoch claim transaction, state, staging, census, and physical target identities must be pairwise distinct",
     });
+  }
+  if (
+    value.priorEpochStateHash
+      !== value.priorEpochState.epochStateHash
+    || value.targetEpochStateHash
+      !== value.targetEpochState.epochStateHash
+  ) {
+    context.addIssue({
+      code: "custom",
+      path: ["priorEpochStateHash"],
+      message:
+        "Epoch claim state hashes must exactly bind their full prior and target state documents",
+    });
+  }
+  if (
+    value.transactionStagingCensusHash
+      !==
+        hashPlatformReleaseBootstrapRegistryEpochStagingInitialCensusV2(
+          [{
+            memberKind: "staged_target_epoch_state",
+            logicalIdentityHash: value.targetEpochStateHash,
+            physicalIdentityHash:
+              value.stagedTargetEpochStatePhysicalIdentityHash,
+          }],
+        )
+  ) {
+    context.addIssue({
+      code: "custom",
+      path: ["transactionStagingCensusHash"],
+      message:
+        "Epoch claim staging census must derive from its exact logical and physical target member",
+    });
+  }
+  if (
+    value.priorEpochState.generation
+      >= Number.MAX_SAFE_INTEGER
+    || value.targetEpochState.generation
+      !== value.priorEpochState.generation + 1
+    || value.targetEpochState.priorEpochStateHash
+      !== value.priorEpochState.epochStateHash
+    || value.targetEpochState.transactionIdentityHash
+      !== value.transactionIdentityHash
+  ) {
+    context.addIssue({
+      code: "custom",
+      path: ["targetEpochState"],
+      message:
+        "Epoch claim target must be the safe next generation with exact prior and transaction ancestry",
+    });
+  }
+  for (const packageRef of Object.values(
+    PLATFORM_RELEASE_BOOTSTRAP_PACKAGE_REFS_V2,
+  )) {
+    const priorEntry =
+      value.priorEpochState.packageEpochArtifactMap[packageRef];
+    const targetEntry =
+      value.targetEpochState.packageEpochArtifactMap[packageRef];
+    if (packageRef === value.packageRef) {
+      if (
+        targetEntry.distributionEpoch
+          <= priorEntry.distributionEpoch
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: [
+            "targetEpochState",
+            "packageEpochArtifactMap",
+            packageRef,
+          ],
+          message:
+            "Epoch claim target package distribution epoch must strictly increase",
+        });
+      }
+    } else if (
+      canonicalJsonStringify(targetEntry)
+        !== canonicalJsonStringify(priorEntry)
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: [
+          "targetEpochState",
+          "packageEpochArtifactMap",
+          packageRef,
+        ],
+        message:
+          "Epoch claim may change only its declared package entry",
+      });
+    }
   }
 });
 
@@ -603,6 +842,20 @@ export function parsePlatformReleaseBootstrapRegistryActivationReceiptCandidateV
   );
 }
 
+export function parsePlatformReleaseBootstrapRegistryActivationClaimCandidateV2(
+  input: unknown,
+): PlatformReleaseBootstrapRegistryActivationClaimV2 {
+  const snapshot = boundedPlatformReleaseJsonSnapshotV2(
+    input,
+    PLATFORM_RELEASE_BOOTSTRAP_REGISTRY_ACTIVATION_CLAIM_MAX_CANONICAL_BYTES_V2,
+  );
+  return deepFreezePlatformReleaseJsonV2(
+    PlatformReleaseBootstrapRegistryActivationClaimV2Schema.parse(
+      snapshot,
+    ),
+  );
+}
+
 export function parsePlatformReleaseBootstrapRegistryEpochFloorStateCandidateV2(
   input: unknown,
 ): PlatformReleaseBootstrapRegistryEpochFloorStateV2 {
@@ -672,6 +925,65 @@ export function buildPlatformReleaseBootstrapRegistryActivationReceiptV2(
   });
 }
 
+const ActivationClaimBuilderInputV2Schema =
+  ActivationReceiptBuilderInputV2Schema.extend({
+    transactionIdentityHash: Sha256Schema,
+    nodeLifecycleSnapshotHash: Sha256Schema,
+    preActivationNamespaceCaptureHash: Sha256Schema,
+    transactionStagingIdentityHash: Sha256Schema,
+    transactionStagingCensusHash: Sha256Schema,
+  }).strict();
+
+export type PlatformReleaseBootstrapRegistryActivationClaimBuilderInputV2 =
+  z.infer<typeof ActivationClaimBuilderInputV2Schema>;
+
+export function buildPlatformReleaseBootstrapRegistryActivationClaimV2(
+  input: PlatformReleaseBootstrapRegistryActivationClaimBuilderInputV2,
+): PlatformReleaseBootstrapRegistryActivationClaimV2 {
+  const parsedInput = ActivationClaimBuilderInputV2Schema.parse(input);
+  const receipt =
+    buildPlatformReleaseBootstrapRegistryActivationReceiptV2({
+      sharedLockIdentityHash: parsedInput.sharedLockIdentityHash,
+      legacyNodeLockIdentityHash:
+        parsedInput.legacyNodeLockIdentityHash,
+      nodeLifecycleIdentityHash:
+        parsedInput.nodeLifecycleIdentityHash,
+      parentIdentityHash: parsedInput.parentIdentityHash,
+    });
+  const identity = {
+    schema:
+      PLATFORM_RELEASE_BOOTSTRAP_REGISTRY_ACTIVATION_CLAIM_V2_SCHEMA,
+    version: PLATFORM_RELEASE_COMPONENT_VERSION_V2,
+    registryRef: REGISTRY_REF_V2,
+    registryContractHash: REGISTRY_CONTRACT_HASH_V2,
+    transactionIdentityHash: parsedInput.transactionIdentityHash,
+    migratorProtocolHash:
+      PLATFORM_RELEASE_BOOTSTRAP_REGISTRY_ACTIVATION_MIGRATOR_PROTOCOL_HASH_V2,
+    legacyNodeLockIdentityHash:
+      parsedInput.legacyNodeLockIdentityHash,
+    sharedLockIdentityHash: parsedInput.sharedLockIdentityHash,
+    nodeLifecycleIdentityHash:
+      parsedInput.nodeLifecycleIdentityHash,
+    nodeLifecycleSnapshotHash:
+      parsedInput.nodeLifecycleSnapshotHash,
+    parentIdentityHash: parsedInput.parentIdentityHash,
+    preActivationNamespaceCaptureHash:
+      parsedInput.preActivationNamespaceCaptureHash,
+    transactionStagingIdentityHash:
+      parsedInput.transactionStagingIdentityHash,
+    transactionStagingCensusHash:
+      parsedInput.transactionStagingCensusHash,
+    genesisEpochStateHash: receipt.genesisEpochStateHash,
+    expectedActivationReceiptHash:
+      receipt.activationReceiptHash,
+  } as const;
+  return parsePlatformReleaseBootstrapRegistryActivationClaimCandidateV2({
+    ...identity,
+    activationClaimHash:
+      hashPlatformReleaseBootstrapRegistryActivationClaimV2(identity),
+  });
+}
+
 const EpochFloorStateBuilderInputV2Schema = z.object({
   generation: NonnegativeSafeIntegerV2Schema,
   priorEpochStateHash: Sha256Schema.nullable(),
@@ -714,8 +1026,13 @@ PlatformReleaseBootstrapRegistryEpochFloorStateV2 {
 
 const EpochClaimBuilderInputV2Schema = z.object({
   transactionIdentityHash: Sha256Schema,
-  priorEpochStateHash: Sha256Schema,
-  targetEpochStateHash: Sha256Schema,
+  priorEpochState:
+    PlatformReleaseBootstrapRegistryEpochFloorStateV2Schema,
+  targetEpochState:
+    PlatformReleaseBootstrapRegistryEpochFloorStateV2Schema,
+  transactionStagingIdentityHash: Sha256Schema,
+  transactionStagingCensusHash: Sha256Schema,
+  stagedTargetEpochStatePhysicalIdentityHash: Sha256Schema,
   packageRef: PlatformReleaseBootstrapPackageRefV2Schema,
   packageInstallationGeneration: NonnegativeSafeIntegerV2Schema,
   offlineRollbackAuthorizationHash: Sha256Schema.nullable(),
@@ -733,6 +1050,10 @@ export function buildPlatformReleaseBootstrapRegistryEpochClaimV2(
     version: PLATFORM_RELEASE_COMPONENT_VERSION_V2,
     registryRef: REGISTRY_REF_V2,
     registryContractHash: REGISTRY_CONTRACT_HASH_V2,
+    priorEpochStateHash:
+      parsedInput.priorEpochState.epochStateHash,
+    targetEpochStateHash:
+      parsedInput.targetEpochState.epochStateHash,
     ...parsedInput,
   } as const;
   return parsePlatformReleaseBootstrapRegistryEpochClaimCandidateV2({

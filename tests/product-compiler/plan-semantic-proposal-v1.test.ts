@@ -18,7 +18,7 @@ function proposal() {
       key: "status_refresh",
       name: "Status Refresh",
       class: "utility",
-      uiLanguage: "en",
+      uiLanguage: "English",
       database: "none",
       uiVisionSummary: "A compact status utility with one clear refresh control, a persistent result region, and an explicit calm visual hierarchy for the single status route.",
       goals: [{
@@ -180,6 +180,89 @@ describe("PlanSemanticProposalV1 compiler authority", () => {
     persistenceInput.persistencePolicies[0].durability = "reload";
     const persistenceParsed = PlanSemanticProposalV1Schema.safeParse(persistenceInput);
     assert.equal(persistenceParsed.success, false);
+
+    const localizedInput: any = structuredClone(proposal());
+    localizedInput.product.uiLanguage = "Spanish";
+    const localizedParsed = PlanSemanticProposalV1Schema.safeParse(localizedInput);
+    assert.equal(localizedParsed.success, false);
+    if (!localizedParsed.success) {
+      assert.equal(localizedParsed.error.issues.some((issue) =>
+        issue.path.join("/") === "product/uiLanguage"), true);
+    }
+  });
+
+  it("rejects English-marker bypasses across planner-owned semantic text", () => {
+    const markerBypass = `English marker ${String.fromCodePoint(0x0416)}`;
+    const cases: Array<Readonly<{
+      path: string;
+      mutate: (input: any) => void;
+    }>> = [
+      { path: "product/name", mutate: (input) => { input.product.name = markerBypass; } },
+      { path: "product/uiVisionSummary", mutate: (input) => { input.product.uiVisionSummary += markerBypass; } },
+      { path: "product/goals/0/statement", mutate: (input) => { input.product.goals[0].statement = markerBypass; } },
+      { path: "states/0/name", mutate: (input) => { input.states[0].name = markerBypass; } },
+      { path: "states/0/invariants/0", mutate: (input) => { input.states[0].invariants[0] = markerBypass; } },
+      { path: "surfaces/0/name", mutate: (input) => { input.surfaces[0].name = markerBypass; } },
+      { path: "actions/0/name", mutate: (input) => { input.actions[0].name = markerBypass; } },
+      { path: "actions/0/observables/0/assertions/0/expected", mutate: (input) => {
+        input.actions[0].observables[0].assertions[0].expected = markerBypass;
+      } },
+    ];
+
+    for (const entry of cases) {
+      const input = structuredClone(proposal());
+      entry.mutate(input);
+      const parsed = PlanSemanticProposalV1Schema.safeParse(input);
+      assert.equal(parsed.success, false, entry.path);
+      if (!parsed.success) {
+        assert.equal(parsed.error.issues.some((issue) =>
+          issue.path.join("/") === entry.path
+          && issue.message.includes("PLAN_SEMANTIC_ENGLISH_TEXT_REQUIRED")), true, entry.path);
+      }
+    }
+  });
+
+  it("rejects high-signal ASCII localized copy at planner-owned text boundaries", () => {
+    const localizedCopy = String.fromCharCode(
+      71, 117, 97, 114, 100, 97, 114, 32, 99, 97, 109, 98, 105, 111, 115,
+    );
+    const input = structuredClone(proposal());
+    input.actions[0].name = localizedCopy;
+
+    const parsed = PlanSemanticProposalV1Schema.safeParse(input);
+    assert.equal(parsed.success, false);
+    if (!parsed.success) {
+      assert.equal(parsed.error.issues.some((issue) =>
+        issue.path.join("/") === "actions/0/name"
+        && issue.message.includes("ENGLISH_TEXT_UNSUPPORTED_LEXEME")), true);
+    }
+
+    const structuredVisibleText = structuredClone(proposal());
+    structuredVisibleText.actions[0].observables[0].assertions[0].expected = {
+      text: localizedCopy,
+    };
+    assert.equal(PlanSemanticProposalV1Schema.safeParse(structuredVisibleText).success, false);
+  });
+
+  it("selects lexical admission from the exact observable property role", () => {
+    const localizedCopy = String.fromCharCode(
+      71, 117, 97, 114, 100, 97, 114, 32, 99, 97, 109, 98, 105, 111, 115,
+    );
+    const technical = structuredClone(proposal());
+    technical.actions[0].observables[2].assertions[0].expected = String.fromCharCode(
+      47, 103, 117, 97, 114, 100, 97, 114,
+    );
+    assert.equal(PlanSemanticProposalV1Schema.safeParse(technical).success, true);
+
+    const visibleText = structuredClone(proposal());
+    visibleText.actions[0].observables[0].assertions[0].expected = localizedCopy;
+    const parsed = PlanSemanticProposalV1Schema.safeParse(visibleText);
+    assert.equal(parsed.success, false);
+    if (!parsed.success) {
+      assert.equal(parsed.error.issues.some((issue) =>
+        issue.path.join("/") === "actions/0/observables/0/assertions/0/expected"
+        && issue.message.includes("ENGLISH_TEXT_UNSUPPORTED_LEXEME")), true);
+    }
   });
 
   it("selects activated delivery for utility, operations, and game from semantic class only", () => {

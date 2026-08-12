@@ -5,7 +5,9 @@ import {
   executeHostNodeToolchainPlatformReleaseBuildV2,
   executeHostNodeToolchainPlatformReleaseNpmCiV2,
   executeHostNodeToolchainPlatformReleaseProductionNpmCiV2,
+  acquireHostNodeRuntimeLaunchContextInternalV2,
   isProductionHostNodeToolchainAuthorityV2,
+  inspectHostNodeToolchainStableHostIdentityHashV3,
   revalidateHostNodeToolchainAuthorityV2,
   HostNodeToolchainAuthorityErrorV2,
   type HostNodeToolchainAuthorityErrorCodeV2,
@@ -20,6 +22,9 @@ import {
 } from "../product-compiler/canonical-json.js";
 import {
   PlatformReleaseHostCompositionAuthorityErrorV2,
+  acquirePlatformReleaseHostCompositionMetadataOperationLaunchContextInternalV2,
+  acquirePlatformReleaseHostCompositionNetworkNegativeOperationLaunchContextInternalV2,
+  acquirePlatformReleaseHostCompositionTargetOperationLaunchContextInternalV2,
   createPlatformReleaseHostCompositionAuthorityV2ForTest,
   inspectPlatformReleaseHostCompositionReceiptV2,
   isProductionPlatformReleaseHostCompositionAuthorityV2,
@@ -27,8 +32,16 @@ import {
   revalidatePlatformReleaseHostCompositionAuthorityV2,
   type PlatformReleaseHostCompositionAuthorityV2,
   type PlatformReleaseHostCompositionFixtureV2,
+  type PlatformReleaseHostCompositionTargetOperationAbiRefInternalV2,
 } from
   "./platform-release-host-composition-authority-v2.js";
+import {
+  PLATFORM_RELEASE_BOOTSTRAP_NETWORK_NEGATIVE_OPERATION_POLICY_HASH_V2,
+} from "./platform-release-bootstrap-network-negative-operation-v2.js";
+import {
+  PLATFORM_RELEASE_BOOTSTRAP_OPERATION_ABI_SET_V2,
+} from
+  "./schemas/platform-release-bootstrap-operation-abis-v2.js";
 import {
   PLATFORM_RELEASE_BUILD_DIRECT_ARGV_TEMPLATE_V2,
   PlatformReleaseBuildCommandResultV2Schema,
@@ -44,8 +57,9 @@ import {
 import {
   PLATFORM_RELEASE_HOST_COMPOSITION_PLATFORM_PROJECTION_V2_SCHEMA,
   PlatformReleaseHostCompositionPlatformProjectionV2Schema,
-  hashPlatformReleaseHostCompositionHostIdentityV2,
+  hashPlatformReleaseHostCompositionHostSemanticProfileV2,
   hashPlatformReleaseHostCompositionPlatformProjectionV2,
+  type PlatformReleaseHostCompositionReceiptV2,
   type PlatformReleaseHostCompositionPlatformProjectionV2,
 } from
   "./schemas/platform-release-host-composition-v2.js";
@@ -101,6 +115,7 @@ type PlatformReleaseHostNodeToolchainAuthorityStateV2 = Readonly<{
   admissionScope: "production_host" | "test_fixture";
   bootstrap: HostNodeToolchainAuthorityV2;
   bootstrapReceiptHash: string;
+  hostIdentityHash: string;
   composition:
     PlatformReleaseHostCompositionAuthorityV2;
   compositionReceiptHash: string;
@@ -246,6 +261,8 @@ const HOST_ERROR_CODE_TO_PRODUCTION_NPM_ERROR_V2 =
     HOST_NODE_TOOLCHAIN_V2_PROBE_NONZERO:
       "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_HOST_AUTHORITY_INVALID",
     HOST_NODE_TOOLCHAIN_V2_PROBE_MALFORMED:
+      "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_HOST_AUTHORITY_INVALID",
+    HOST_NODE_TOOLCHAIN_V2_PROBE_CLEANUP_FAILED:
       "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_HOST_AUTHORITY_INVALID",
     HOST_NODE_TOOLCHAIN_V2_NODE_VERSION_MISMATCH:
       "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_HOST_AUTHORITY_INVALID",
@@ -488,6 +505,7 @@ function buildReceipt(
 
 function buildCompositionPlatformProjectionV2(
   receipt: PlatformReleaseHostNodeToolchainReceiptV2,
+  hostIdentityHash: string,
 ): PlatformReleaseHostCompositionPlatformProjectionV2 {
   const host = structuredClone(receipt.host);
   const identity = {
@@ -495,8 +513,10 @@ function buildCompositionPlatformProjectionV2(
       PLATFORM_RELEASE_HOST_COMPOSITION_PLATFORM_PROJECTION_V2_SCHEMA,
     platformHostToolchainReceiptHash: receipt.receiptHash,
     host,
-    hostIdentityHash:
-      hashPlatformReleaseHostCompositionHostIdentityV2(host),
+    hostIdentitySource: "authenticated_machine_identity_v3" as const,
+    hostIdentityHash,
+    hostSemanticProfileHash:
+      hashPlatformReleaseHostCompositionHostSemanticProfileV2(host),
     nodeIdentityHash: receipt.node.identityHash,
     npmClosureHash: receipt.npm.closureHash,
     dynamicLibraryClosureHash:
@@ -565,8 +585,21 @@ async function issueAuthority(
     );
   }
   const receipt = buildReceipt(bootstrapReceipt);
+  let hostIdentityHash: string;
+  try {
+    hostIdentityHash =
+      await inspectHostNodeToolchainStableHostIdentityHashV3(
+        bootstrap,
+      );
+  } catch (error) {
+    return fail(
+      "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_HOST_AUTHORITY_INVALID",
+      "Platform release host bootstrap has no stable authenticated machine identity",
+      error,
+    );
+  }
   const platformHost =
-    buildCompositionPlatformProjectionV2(receipt);
+    buildCompositionPlatformProjectionV2(receipt, hostIdentityHash);
   let composition:
     PlatformReleaseHostCompositionAuthorityV2;
   try {
@@ -620,9 +653,14 @@ async function issueAuthority(
     );
   }
   let bootstrapAfter;
+  let hostIdentityHashAfter: string;
   try {
     bootstrapAfter =
       await revalidateHostNodeToolchainAuthorityV2(bootstrap);
+    hostIdentityHashAfter =
+      await inspectHostNodeToolchainStableHostIdentityHashV3(
+        bootstrap,
+      );
   } catch (error) {
     return fail(
       "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_HOST_AUTHORITY_INVALID",
@@ -633,6 +671,7 @@ async function issueAuthority(
   if (
     bootstrapAfter.receiptHash
       !== bootstrapReceipt.receiptHash
+    || hostIdentityHashAfter !== hostIdentityHash
     || canonicalJsonStringify(buildReceipt(bootstrapAfter))
       !== canonicalJsonStringify(receipt)
   ) {
@@ -645,6 +684,7 @@ async function issueAuthority(
     admissionScope: expectedScope,
     bootstrap,
     bootstrapReceiptHash: bootstrapReceipt.receiptHash,
+    hostIdentityHash,
     composition,
     compositionReceiptHash:
       compositionReceipt.receiptHash,
@@ -721,6 +761,532 @@ export function inspectPlatformReleaseHostNodeToolchainReceiptV2(
   );
 }
 
+export function inspectPlatformReleaseHostNodeToolchainCompositionReceiptInternalV2(
+  handle: PlatformReleaseHostNodeToolchainAuthorityV2,
+): PlatformReleaseHostCompositionReceiptV2 {
+  const state = authenticState(handle);
+  const receipt =
+    inspectPlatformReleaseHostCompositionReceiptV2(
+      state.composition,
+    );
+  if (receipt.receiptHash !== state.compositionReceiptHash) {
+    return fail(
+      "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_COMPOSITION_DRIFT",
+      "Platform release host composition receipt changed outside its private Node owner",
+    );
+  }
+  return deepFreezePlatformReleaseJsonV2(
+    structuredClone(receipt),
+  );
+}
+
+export type PlatformReleaseHostNodeToolchainTargetOperationLaunchContextInternalV2 =
+  Readonly<{
+    admissionScope: "production_host" | "test_fixture";
+    platformHostToolchainReceiptHash: string;
+    hostCompositionReceiptHash: string;
+    hostIdentityHash: string;
+    nodeIdentityHash: string;
+    nodeExecutablePath: string;
+    nodeExecutableContentHash: string;
+    releaseBootstrapExecutablePath: string;
+    releaseBootstrapExecutableContentHash: string;
+    releaseBootstrapExecutablePhysicalIdentityHash: string;
+    implementationMemberRef:
+      | "BOOTSTRAP_RELEASE_COMPOSITION_MODULE_V2"
+      | "BOOTSTRAP_RELEASE_COMPOSITION_METADATA_MODULE_V2"
+      | "BOOTSTRAP_RELEASE_COMPOSITION_NETWORK_WRAPPER_MODULE_V2";
+    implementationPath: string;
+    implementationContentHash: string;
+    implementationPhysicalIdentityHash: string;
+    operationAbiRef:
+      PlatformReleaseHostCompositionTargetOperationAbiRefInternalV2;
+    operationAbiHash: string;
+    moduleExport: string;
+    directArgv: readonly string[];
+    workingDirectoryPolicy:
+      "authenticated_target_root_v2";
+    environmentPolicy: "exact_empty_environment_v2";
+    timeoutMs: number;
+    maxStdoutBytes: number;
+    maxStderrBytes: number;
+  }>;
+
+export type PlatformReleaseHostNodeToolchainMetadataOperationLaunchContextInternalV2 =
+  PlatformReleaseHostNodeToolchainTargetOperationLaunchContextInternalV2 &
+  Readonly<{
+    admissionScope: "test_fixture";
+    operationAbiRef:
+      "ABI_PLATFORM_RELEASE_METADATA_PROBE_V2";
+    implementationMemberRef:
+      "BOOTSTRAP_RELEASE_COMPOSITION_METADATA_MODULE_V2";
+    moduleExport: "runPlatformReleaseMetadataProbeV2";
+    directArgv: readonly [
+      "run-metadata-probe-v2",
+      "PLATFORM_RELEASE_METADATA_PROBE_V2",
+    ];
+    xattrObserverExecutablePath: string;
+    xattrObserverExecutableContentHash: string;
+    xattrObserverExecutablePhysicalIdentityHash: string;
+    aclObserverExecutablePath: string;
+    aclObserverExecutableContentHash: string;
+    aclObserverExecutablePhysicalIdentityHash: string;
+  }>;
+
+export type PlatformReleaseHostNodeToolchainNetworkNegativeOperationLaunchContextInternalV2 =
+  PlatformReleaseHostNodeToolchainTargetOperationLaunchContextInternalV2 &
+  Readonly<{
+    admissionScope: "test_fixture";
+    operationAbiRef:
+      "ABI_PLATFORM_RELEASE_NETWORK_NEGATIVE_PROBE_V2";
+    implementationMemberRef:
+      "BOOTSTRAP_RELEASE_COMPOSITION_NETWORK_WRAPPER_MODULE_V2";
+    moduleExport:
+      "runPlatformReleaseNetworkNegativeProbeV2";
+    directArgv: readonly [
+      "run-network-negative-probe-v2",
+      "PLATFORM_RELEASE_NETWORK_NEGATIVE_PROBE_V2",
+    ];
+    sandboxPolicyHash:
+      typeof PLATFORM_RELEASE_BOOTSTRAP_NETWORK_NEGATIVE_OPERATION_POLICY_HASH_V2;
+    sandboxExecutablePath: string;
+    sandboxExecutableContentHash: string;
+    sandboxExecutablePhysicalIdentityHash: string;
+  }>;
+
+/**
+ * @internal
+ *
+ * Joins the exact admitted Node runtime, installed composition member and
+ * code-owned ABI for one pathless target-bound operation. The caller remains
+ * responsible for supplying and revalidating the authenticated target root.
+ */
+export async function acquirePlatformReleaseHostNodeToolchainTargetOperationLaunchContextInternalV2(
+  handle: PlatformReleaseHostNodeToolchainAuthorityV2,
+  operationAbiRef:
+    PlatformReleaseHostCompositionTargetOperationAbiRefInternalV2,
+): Promise<PlatformReleaseHostNodeToolchainTargetOperationLaunchContextInternalV2> {
+  const state = authenticState(handle);
+  if (
+    (
+      operationAbiRef === "ABI_PLATFORM_RELEASE_METADATA_PROBE_V2"
+      || operationAbiRef
+        === "ABI_PLATFORM_RELEASE_NETWORK_NEGATIVE_PROBE_V2"
+    )
+    && state.admissionScope !== "test_fixture"
+  ) {
+    return fail(
+      "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_COMPOSITION_DRIFT",
+      "Installed characterization ABI is forbidden for production host authority",
+    );
+  }
+  const before =
+    await revalidatePlatformReleaseHostNodeToolchainAuthorityV2(
+      handle,
+    );
+  let node: Awaited<
+    ReturnType<
+      typeof acquireHostNodeRuntimeLaunchContextInternalV2
+    >
+  >;
+  try {
+    node =
+      await acquireHostNodeRuntimeLaunchContextInternalV2(
+        state.bootstrap,
+      );
+  } catch (error) {
+    return fail(
+      "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_HOST_DRIFT",
+      "Target operation Node runtime failed fresh launch-context acquisition",
+      error,
+    );
+  }
+  let composition: Awaited<
+    ReturnType<
+      typeof acquirePlatformReleaseHostCompositionTargetOperationLaunchContextInternalV2
+    >
+  >;
+  let compositionReceipt:
+    PlatformReleaseHostCompositionReceiptV2;
+  try {
+    composition =
+      await acquirePlatformReleaseHostCompositionTargetOperationLaunchContextInternalV2(
+        state.composition,
+        operationAbiRef,
+      );
+    compositionReceipt =
+      inspectPlatformReleaseHostCompositionReceiptV2(
+        state.composition,
+      );
+  } catch (error) {
+    return fail(
+      "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_COMPOSITION_DRIFT",
+      "Target operation installed composition failed fresh launch-context acquisition",
+      error,
+    );
+  }
+  const after =
+    await revalidatePlatformReleaseHostNodeToolchainAuthorityV2(
+      handle,
+    );
+  const operation =
+    PLATFORM_RELEASE_BOOTSTRAP_OPERATION_ABI_SET_V2.operations
+      .find(
+        (candidate) =>
+          candidate.abiRef === operationAbiRef,
+      );
+  if (
+    !operation
+    || before.receiptHash !== after.receiptHash
+    || before.receiptHash !== state.receipt.receiptHash
+    || node.admissionScope !== state.admissionScope
+    || composition.admissionScope !== state.admissionScope
+    || node.hostToolchainReceiptHash
+      !== state.bootstrapReceiptHash
+    || node.nodeIdentityHash !== before.node.identityHash
+    || node.nodeExecutableContentHash
+      !== before.node.executable.contentHash
+    || composition.operationAbiRef !== operationAbiRef
+    || composition.hostCompositionReceiptHash
+      !== state.compositionReceiptHash
+    || composition.hostIdentityHash
+      !== compositionReceipt.platformHost.hostIdentityHash
+    || operation.implementationKind
+      !== "installed_release_module"
+    || operation.processExecutableMemberRef
+      !== "BOOTSTRAP_RELEASE_COMPOSITION_EXECUTABLE_V2"
+    || operation.implementationMemberRef
+      !== composition.implementationMemberRef
+    || operation.moduleExport === null
+    || operation.workingDirectoryPolicy
+      !== "authenticated_target_root_v2"
+    || operation.environmentPolicy
+      !== "exact_empty_environment_v2"
+    || operation.directArgvTemplate[0] !== operation.command
+  ) {
+    return fail(
+      "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_COMPOSITION_DRIFT",
+      "Target operation could not join the exact Node, installed composition and ABI authority",
+    );
+  }
+  return Object.freeze({
+    admissionScope: state.admissionScope,
+    platformHostToolchainReceiptHash:
+      after.receiptHash,
+    hostCompositionReceiptHash:
+      composition.hostCompositionReceiptHash,
+    hostIdentityHash: composition.hostIdentityHash,
+    nodeIdentityHash: node.nodeIdentityHash,
+    nodeExecutablePath: node.nodeExecutablePath,
+    nodeExecutableContentHash:
+      node.nodeExecutableContentHash,
+    releaseBootstrapExecutablePath:
+      composition.releaseBootstrapExecutablePath,
+    releaseBootstrapExecutableContentHash:
+      composition.releaseBootstrapExecutableContentHash,
+    releaseBootstrapExecutablePhysicalIdentityHash:
+      composition.releaseBootstrapExecutablePhysicalIdentityHash,
+    implementationMemberRef:
+      composition.implementationMemberRef,
+    implementationPath: composition.implementationPath,
+    implementationContentHash:
+      composition.implementationContentHash,
+    implementationPhysicalIdentityHash:
+      composition.implementationPhysicalIdentityHash,
+    operationAbiRef,
+    operationAbiHash: operation.operationHash,
+    moduleExport: operation.moduleExport,
+    directArgv: Object.freeze([
+      ...operation.directArgvTemplate,
+    ]),
+    workingDirectoryPolicy:
+      "authenticated_target_root_v2" as const,
+    environmentPolicy:
+      "exact_empty_environment_v2" as const,
+    timeoutMs: operation.timeoutMs,
+    maxStdoutBytes: operation.maxStdoutBytes,
+    maxStderrBytes: operation.maxStderrBytes,
+  });
+}
+
+/** @internal */
+export async function acquirePlatformReleaseHostNodeToolchainMetadataOperationLaunchContextInternalV2(
+  handle: PlatformReleaseHostNodeToolchainAuthorityV2,
+): Promise<PlatformReleaseHostNodeToolchainMetadataOperationLaunchContextInternalV2> {
+  const state = authenticState(handle);
+  const targetContext =
+    await acquirePlatformReleaseHostNodeToolchainTargetOperationLaunchContextInternalV2(
+      handle,
+      "ABI_PLATFORM_RELEASE_METADATA_PROBE_V2",
+    );
+  let metadataContext: Awaited<
+    ReturnType<
+      typeof acquirePlatformReleaseHostCompositionMetadataOperationLaunchContextInternalV2
+    >
+  >;
+  try {
+    metadataContext =
+      await acquirePlatformReleaseHostCompositionMetadataOperationLaunchContextInternalV2(
+        state.composition,
+      );
+  } catch (error) {
+    return fail(
+      "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_COMPOSITION_DRIFT",
+      "Metadata observer roles failed fresh composition acquisition",
+      error,
+    );
+  }
+  const after =
+    await revalidatePlatformReleaseHostNodeToolchainAuthorityV2(
+      handle,
+    );
+  if (
+    after.receiptHash
+      !== targetContext.platformHostToolchainReceiptHash
+    || after.receiptHash !== state.receipt.receiptHash
+    || metadataContext.hostCompositionReceiptHash
+      !== targetContext.hostCompositionReceiptHash
+    || targetContext.admissionScope !== "test_fixture"
+    || metadataContext.admissionScope !== "test_fixture"
+    || metadataContext.hostIdentityHash
+      !== targetContext.hostIdentityHash
+    || metadataContext.releaseBootstrapExecutablePath
+      !== targetContext.releaseBootstrapExecutablePath
+    || metadataContext.releaseBootstrapExecutableContentHash
+      !== targetContext.releaseBootstrapExecutableContentHash
+    || metadataContext.releaseBootstrapExecutablePhysicalIdentityHash
+      !== targetContext.releaseBootstrapExecutablePhysicalIdentityHash
+    || metadataContext.implementationPath
+      !== targetContext.implementationPath
+    || metadataContext.implementationContentHash
+      !== targetContext.implementationContentHash
+    || metadataContext.implementationPhysicalIdentityHash
+      !== targetContext.implementationPhysicalIdentityHash
+    || targetContext.moduleExport
+      !== "runPlatformReleaseMetadataProbeV2"
+    || canonicalJsonStringify(targetContext.directArgv)
+      !== canonicalJsonStringify([
+        "run-metadata-probe-v2",
+        "PLATFORM_RELEASE_METADATA_PROBE_V2",
+      ])
+  ) {
+    return fail(
+      "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_COMPOSITION_DRIFT",
+      "Metadata operation could not join its exact Node, module, ABI and observer roles",
+    );
+  }
+  return Object.freeze({
+    ...targetContext,
+    admissionScope: "test_fixture" as const,
+    operationAbiRef:
+      "ABI_PLATFORM_RELEASE_METADATA_PROBE_V2" as const,
+    implementationMemberRef:
+      "BOOTSTRAP_RELEASE_COMPOSITION_METADATA_MODULE_V2" as const,
+    moduleExport:
+      "runPlatformReleaseMetadataProbeV2" as const,
+    directArgv: Object.freeze([
+      "run-metadata-probe-v2",
+      "PLATFORM_RELEASE_METADATA_PROBE_V2",
+    ] as const),
+    xattrObserverExecutablePath:
+      metadataContext.xattrObserverExecutablePath,
+    xattrObserverExecutableContentHash:
+      metadataContext.xattrObserverExecutableContentHash,
+    xattrObserverExecutablePhysicalIdentityHash:
+      metadataContext.xattrObserverExecutablePhysicalIdentityHash,
+    aclObserverExecutablePath:
+      metadataContext.aclObserverExecutablePath,
+    aclObserverExecutableContentHash:
+      metadataContext.aclObserverExecutableContentHash,
+    aclObserverExecutablePhysicalIdentityHash:
+      metadataContext.aclObserverExecutablePhysicalIdentityHash,
+  });
+}
+
+/** @internal */
+export async function acquirePlatformReleaseHostNodeToolchainNetworkNegativeOperationLaunchContextInternalV2(
+  handle: PlatformReleaseHostNodeToolchainAuthorityV2,
+): Promise<PlatformReleaseHostNodeToolchainNetworkNegativeOperationLaunchContextInternalV2> {
+  const state = authenticState(handle);
+  const targetContext =
+    await acquirePlatformReleaseHostNodeToolchainTargetOperationLaunchContextInternalV2(
+      handle,
+      "ABI_PLATFORM_RELEASE_NETWORK_NEGATIVE_PROBE_V2",
+    );
+  let networkContext: Awaited<
+    ReturnType<
+      typeof acquirePlatformReleaseHostCompositionNetworkNegativeOperationLaunchContextInternalV2
+    >
+  >;
+  try {
+    networkContext =
+      await acquirePlatformReleaseHostCompositionNetworkNegativeOperationLaunchContextInternalV2(
+        state.composition,
+      );
+  } catch (error) {
+    return fail(
+      "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_COMPOSITION_DRIFT",
+      "Network-negative sandbox role failed fresh composition acquisition",
+      error,
+    );
+  }
+  const after =
+    await revalidatePlatformReleaseHostNodeToolchainAuthorityV2(
+      handle,
+    );
+  if (
+    after.receiptHash
+      !== targetContext.platformHostToolchainReceiptHash
+    || after.receiptHash !== state.receipt.receiptHash
+    || targetContext.admissionScope !== "test_fixture"
+    || networkContext.admissionScope !== "test_fixture"
+    || networkContext.hostCompositionReceiptHash
+      !== targetContext.hostCompositionReceiptHash
+    || networkContext.hostIdentityHash
+      !== targetContext.hostIdentityHash
+    || networkContext.releaseBootstrapExecutablePath
+      !== targetContext.releaseBootstrapExecutablePath
+    || networkContext.releaseBootstrapExecutableContentHash
+      !== targetContext.releaseBootstrapExecutableContentHash
+    || networkContext.releaseBootstrapExecutablePhysicalIdentityHash
+      !== targetContext.releaseBootstrapExecutablePhysicalIdentityHash
+    || networkContext.implementationPath
+      !== targetContext.implementationPath
+    || networkContext.implementationContentHash
+      !== targetContext.implementationContentHash
+    || networkContext.implementationPhysicalIdentityHash
+      !== targetContext.implementationPhysicalIdentityHash
+    || networkContext.sandboxPolicyHash
+      !== PLATFORM_RELEASE_BOOTSTRAP_NETWORK_NEGATIVE_OPERATION_POLICY_HASH_V2
+    || targetContext.moduleExport
+      !== "runPlatformReleaseNetworkNegativeProbeV2"
+    || canonicalJsonStringify(targetContext.directArgv)
+      !== canonicalJsonStringify([
+        "run-network-negative-probe-v2",
+        "PLATFORM_RELEASE_NETWORK_NEGATIVE_PROBE_V2",
+      ])
+  ) {
+    return fail(
+      "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_COMPOSITION_DRIFT",
+      "Network-negative operation could not join its exact Node, wrapper, ABI and sandbox role",
+    );
+  }
+  return Object.freeze({
+    ...targetContext,
+    admissionScope: "test_fixture" as const,
+    operationAbiRef:
+      "ABI_PLATFORM_RELEASE_NETWORK_NEGATIVE_PROBE_V2" as const,
+    implementationMemberRef:
+      "BOOTSTRAP_RELEASE_COMPOSITION_NETWORK_WRAPPER_MODULE_V2" as const,
+    moduleExport:
+      "runPlatformReleaseNetworkNegativeProbeV2" as const,
+    directArgv: Object.freeze([
+      "run-network-negative-probe-v2",
+      "PLATFORM_RELEASE_NETWORK_NEGATIVE_PROBE_V2",
+    ] as const),
+    sandboxPolicyHash:
+      PLATFORM_RELEASE_BOOTSTRAP_NETWORK_NEGATIVE_OPERATION_POLICY_HASH_V2,
+    sandboxExecutablePath:
+      networkContext.sandboxExecutablePath,
+    sandboxExecutableContentHash:
+      networkContext.sandboxExecutableContentHash,
+    sandboxExecutablePhysicalIdentityHash:
+      networkContext.sandboxExecutablePhysicalIdentityHash,
+  });
+}
+
+export type PlatformReleaseHostNodeToolchainModuleExportLaunchContextInternalV2 =
+  Readonly<{
+    admissionScope: "production_host" | "test_fixture";
+    platformHostToolchainReceiptHash: string;
+    hostCompositionReceiptHash: string;
+    hostIdentityHash: string;
+    nodeIdentityHash: string;
+    nodeExecutablePath: string;
+    nodeExecutableContentHash: string;
+    releaseBootstrapExecutablePath: string;
+    releaseBootstrapExecutableContentHash: string;
+    releaseBootstrapExecutablePhysicalIdentityHash: string;
+    releaseBootstrapModuleContentHash: string;
+    releaseBootstrapModulePhysicalIdentityHash: string;
+    operationAbiRef:
+      "ABI_PLATFORM_RELEASE_MODULE_EXPORT_PROBE_V2";
+    operationAbiHash: string;
+    directArgv: readonly [
+      "run-module-export-probe-v2",
+      "PLATFORM_RELEASE_MODULE_EXPORT_PROBE_V2",
+    ];
+    workingDirectoryPolicy:
+      "authenticated_target_root_v2";
+    environmentPolicy: "exact_empty_environment_v2";
+    timeoutMs: number;
+    maxStdoutBytes: number;
+    maxStderrBytes: number;
+  }>;
+
+/** @internal */
+export async function acquirePlatformReleaseHostNodeToolchainModuleExportLaunchContextInternalV2(
+  handle: PlatformReleaseHostNodeToolchainAuthorityV2,
+): Promise<PlatformReleaseHostNodeToolchainModuleExportLaunchContextInternalV2> {
+  const context =
+    await acquirePlatformReleaseHostNodeToolchainTargetOperationLaunchContextInternalV2(
+      handle,
+      "ABI_PLATFORM_RELEASE_MODULE_EXPORT_PROBE_V2",
+    );
+  if (
+    context.implementationMemberRef
+      !== "BOOTSTRAP_RELEASE_COMPOSITION_MODULE_V2"
+    || context.moduleExport
+      !== "runPlatformReleaseModuleExportProbeV2"
+    || canonicalJsonStringify(context.directArgv)
+      !== canonicalJsonStringify([
+        "run-module-export-probe-v2",
+        "PLATFORM_RELEASE_MODULE_EXPORT_PROBE_V2",
+      ])
+  ) {
+    return fail(
+      "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_COMPOSITION_DRIFT",
+      "Module-export operation could not join the exact Node, installed composition and ABI authority",
+    );
+  }
+  return Object.freeze({
+    admissionScope: context.admissionScope,
+    platformHostToolchainReceiptHash:
+      context.platformHostToolchainReceiptHash,
+    hostCompositionReceiptHash:
+      context.hostCompositionReceiptHash,
+    hostIdentityHash: context.hostIdentityHash,
+    nodeIdentityHash: context.nodeIdentityHash,
+    nodeExecutablePath: context.nodeExecutablePath,
+    nodeExecutableContentHash:
+      context.nodeExecutableContentHash,
+    releaseBootstrapExecutablePath:
+      context.releaseBootstrapExecutablePath,
+    releaseBootstrapExecutableContentHash:
+      context.releaseBootstrapExecutableContentHash,
+    releaseBootstrapExecutablePhysicalIdentityHash:
+      context.releaseBootstrapExecutablePhysicalIdentityHash,
+    releaseBootstrapModuleContentHash:
+      context.implementationContentHash,
+    releaseBootstrapModulePhysicalIdentityHash:
+      context.implementationPhysicalIdentityHash,
+    operationAbiRef:
+      "ABI_PLATFORM_RELEASE_MODULE_EXPORT_PROBE_V2" as const,
+    operationAbiHash: context.operationAbiHash,
+    directArgv: Object.freeze([
+      "run-module-export-probe-v2",
+      "PLATFORM_RELEASE_MODULE_EXPORT_PROBE_V2",
+    ] as const),
+    workingDirectoryPolicy:
+      context.workingDirectoryPolicy,
+    environmentPolicy:
+      context.environmentPolicy,
+    timeoutMs: context.timeoutMs,
+    maxStdoutBytes: context.maxStdoutBytes,
+    maxStderrBytes: context.maxStderrBytes,
+  });
+}
+
 export function isProductionPlatformReleaseHostNodeToolchainAuthorityV2(
   handle: PlatformReleaseHostNodeToolchainAuthorityV2,
 ): boolean {
@@ -755,7 +1321,22 @@ export async function revalidatePlatformReleaseHostNodeToolchainAuthorityV2(
     );
   }
   const current = buildReceipt(currentBootstrap);
+  let currentHostIdentityHash: string;
+  try {
+    currentHostIdentityHash =
+      await inspectHostNodeToolchainStableHostIdentityHashV3(
+        state.bootstrap,
+      );
+  } catch (error) {
+    return fail(
+      "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_HOST_DRIFT",
+      "Platform release host stable machine identity failed fresh revalidation",
+      error,
+    );
+  }
   if (
+    currentHostIdentityHash !== state.hostIdentityHash
+    ||
     canonicalJsonStringify(current)
       !== canonicalJsonStringify(state.receipt)
   ) {
@@ -778,9 +1359,14 @@ export async function revalidatePlatformReleaseHostNodeToolchainAuthorityV2(
     );
   }
   let bootstrapAfter;
+  let hostIdentityHashAfter: string;
   try {
     bootstrapAfter =
       await revalidateHostNodeToolchainAuthorityV2(
+        state.bootstrap,
+      );
+    hostIdentityHashAfter =
+      await inspectHostNodeToolchainStableHostIdentityHashV3(
         state.bootstrap,
       );
   } catch (error) {
@@ -794,6 +1380,7 @@ export async function revalidatePlatformReleaseHostNodeToolchainAuthorityV2(
   if (
     bootstrapAfter.receiptHash
       !== currentBootstrap.receiptHash
+    || hostIdentityHashAfter !== currentHostIdentityHash
     || canonicalJsonStringify(after)
       !== canonicalJsonStringify(current)
   ) {
@@ -808,7 +1395,10 @@ export async function revalidatePlatformReleaseHostNodeToolchainAuthorityV2(
     || canonicalJsonStringify(
       compositionReceipt.platformHost,
     ) !== canonicalJsonStringify(
-      buildCompositionPlatformProjectionV2(current),
+      buildCompositionPlatformProjectionV2(
+        current,
+        currentHostIdentityHash,
+      ),
     )
   ) {
     return fail(

@@ -64,9 +64,9 @@ describe("v3 ProductSpec v2 DESIGN contract", () => {
       contract,
       targetRefs: contract.generationTargets.targets.map((target) => target.targetId),
       deviceType: "DESKTOP",
-      uiLanguage: "English",
       stageId: "STAGE_01",
     });
+    assert.match(prompt, /All visible user-facing text must be in English\./);
     assert.match(prompt, /exact_same_element_attributes: data-action="ACT_START_GAME" data-control-slot="CSLOT_START_GAME_PRIMARY_START"/);
     assert.match(prompt, /surface_ref: SURF_GAME_CANVAS[\s\S]*composition: contained[\s\S]*host_surface_ref: SURF_PLAY_PAGE/);
     assert.match(prompt, /affecting_action_refs_context_only: ACT_START_GAME/);
@@ -83,5 +83,23 @@ describe("v3 ProductSpec v2 DESIGN contract", () => {
       /owning_surface_ref: SURF_(?:GAME_CANVAS|STATUS_PANEL)/,
     );
     assert.equal(canonicalJsonStringify(contract.generationTargets).includes("surfaceRefs"), false);
+  });
+
+  it("rejects a canonical ProductSpec whose publication text is not English", () => {
+    const parsed = extractCanonicalProductSpecV2FromPrd(planPrd());
+    const contaminated = {
+      ...parsed,
+      product: {
+        ...parsed.product,
+        name: `Game${String.fromCharCode(0x00e9)}`,
+      },
+    };
+    const fence = String.fromCharCode(96).repeat(3);
+    assert.throws(
+      () => extractCanonicalProductSpecV2FromPrd(
+        `${fence}product-spec-v2\n${canonicalJsonStringify(contaminated)}\n${fence}`,
+      ),
+      /DESIGN_V2_PRODUCT_SPEC_PROJECTION_INVALID/,
+    );
   });
 });

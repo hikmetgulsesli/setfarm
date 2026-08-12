@@ -12,6 +12,9 @@ import {
   readContractSpineMigrationAttestation,
   rollbackArtifactStoreAuthorityLedgerToV23 as rollbackArtifactStoreAuthorityLedgerToV23Raw,
   rollbackArtifactPublicationBatchPlanLedgerToV25,
+  rollbackPlatformReleaseStoreRecordLedgerV3ToV26,
+  rollbackRuntimeCompletionManifestAuthorityToV27,
+  rollbackV3StoryClaimRuntimeBindingToV28,
   rollbackPreparationAuthorityV2LedgerToV24,
   verifyContractSpineMigrations,
 } from "../../src/db/contract-spine-migrations.js";
@@ -22,7 +25,41 @@ const targetRelease = "b".repeat(40);
 const authorityId = "11111111-1111-4111-8111-111111111111";
 const rootLocatorHash = "c".repeat(64);
 
+async function rollbackRecordLedgerIfPresent(sql: postgres.Sql): Promise<void> {
+  const bindingRows = await sql.unsafe<Array<{ present: boolean }>>(
+    `SELECT EXISTS (
+       SELECT 1 FROM public.setfarm_schema_migrations WHERE version = 29
+     ) AS present`,
+  );
+  if (bindingRows[0]?.present) {
+    await rollbackV3StoryClaimRuntimeBindingToV28(sql, {
+      targetReleaseSha: "5".repeat(40),
+    });
+  }
+  const manifestRows = await sql.unsafe<Array<{ present: boolean }>>(
+    `SELECT EXISTS (
+       SELECT 1 FROM public.setfarm_schema_migrations WHERE version = 28
+     ) AS present`,
+  );
+  if (manifestRows[0]?.present) {
+    await rollbackRuntimeCompletionManifestAuthorityToV27(sql, {
+      targetReleaseSha: "6".repeat(40),
+    });
+  }
+  const recordLedgerRows = await sql.unsafe<Array<{ present: boolean }>>(
+    `SELECT EXISTS (
+       SELECT 1 FROM public.setfarm_schema_migrations WHERE version = 27
+     ) AS present`,
+  );
+  if (recordLedgerRows[0]?.present) {
+    await rollbackPlatformReleaseStoreRecordLedgerV3ToV26(sql, {
+      targetReleaseSha: "7".repeat(40),
+    });
+  }
+}
+
 async function rollbackPreparationAuthorityIfPresent(sql: postgres.Sql): Promise<void> {
+  await rollbackRecordLedgerIfPresent(sql);
   const batchPlanRows = await sql.unsafe<Array<{ present: boolean }>>(
     `SELECT EXISTS (
        SELECT 1 FROM public.setfarm_schema_migrations WHERE version = 26
@@ -45,6 +82,7 @@ async function rollbackPreparationAuthorityIfPresent(sql: postgres.Sql): Promise
 }
 
 async function auditArtifactStoreAuthorityLedgerData(sql: postgres.Sql) {
+  await rollbackRecordLedgerIfPresent(sql);
   const current = await auditCurrentArtifactPublicationAuthorityLedgerData(sql);
   return Object.freeze({
     schema: "setfarm.artifact-store-authority-ledger-audit.v1" as const,
@@ -71,6 +109,37 @@ async function insertBindingAuthority(database: TestDatabase): Promise<void> {
      )`,
     [authorityId, rootLocatorHash],
   );
+}
+
+async function waitForAuthorityAuditShareLockBarrier(
+  database: TestDatabase,
+  auditApplicationName: string,
+  writerPid: number,
+): Promise<void> {
+  const hangGuardDeadline = Date.now() + 10_000;
+  while (true) {
+    const rows = await database.sql.unsafe<Array<{ blocked: boolean }>>(
+      `SELECT EXISTS (
+         SELECT 1
+           FROM pg_locks AS waiting
+           JOIN pg_stat_activity AS activity
+             ON activity.pid = waiting.pid
+          WHERE activity.datname = current_database()
+            AND activity.application_name = $1
+            AND waiting.locktype = 'relation'
+            AND waiting.relation = 'public.artifact_store_authorities'::regclass
+            AND waiting.mode = 'ShareLock'
+            AND NOT waiting.granted
+            AND $2::integer = ANY(pg_blocking_pids(waiting.pid))
+       ) AS blocked`,
+      [auditApplicationName, writerPid],
+    );
+    if (rows[0]?.blocked) return;
+    if (Date.now() >= hangGuardDeadline) {
+      throw new Error("TEST_BARRIER_AUTHORITY_AUDIT_SHARE_LOCK_NOT_OBSERVED");
+    }
+    await new Promise<void>((resolve) => setTimeout(resolve, 10));
+  }
 }
 
 describe("artifact store authority migration 24", () => {
@@ -313,23 +382,32 @@ describe("artifact store authority migration 24", () => {
 
   it("linearizes the ledger audit after an in-flight authority writer commits", async () => {
     await applyContractSpineMigrations(database.sql);
+    await rollbackRecordLedgerIfPresent(database.sql);
     const writerSql = postgres(database.url, {
       max: 1,
       connect_timeout: 5,
       idle_timeout: 1,
       onnotice: () => {},
     });
+    const auditApplicationName = "setfarm.test.authority-audit-share-lock-barrier.v1";
     const auditSql = postgres(database.url, {
       max: 1,
       connect_timeout: 5,
-      idle_timeout: 1,
+      connection: {
+        application_name: auditApplicationName,
+      },
       onnotice: () => {},
     });
     let signalWriterReady!: () => void;
     let releaseWriter!: () => void;
     const writerReady = new Promise<void>((resolve) => { signalWriterReady = resolve; });
     const writerRelease = new Promise<void>((resolve) => { releaseWriter = resolve; });
+    let writerPid = -1;
     const writer = writerSql.begin(async (transaction) => {
+      const writerPidRows = await transaction.unsafe<Array<{ pid: number }>>(
+        "SELECT pg_backend_pid()::integer AS pid",
+      );
+      writerPid = writerPidRows[0]!.pid;
       await transaction.unsafe(
         `INSERT INTO public.artifact_store_authorities (
            authority_key, authority_schema, authority_id, root_locator_hash, state
@@ -342,34 +420,25 @@ describe("artifact store authority migration 24", () => {
       signalWriterReady();
       await writerRelease;
     });
-    let audit: ReturnType<typeof auditArtifactStoreAuthorityLedgerData> | undefined;
+    let audit: ReturnType<
+      typeof auditCurrentArtifactPublicationAuthorityLedgerData
+    > | undefined;
     try {
       await writerReady;
-      const auditPidRows = await auditSql.unsafe<Array<{ pid: number }>>(
-        "SELECT pg_backend_pid()::integer AS pid",
-      );
-      const auditPid = auditPidRows[0]!.pid;
-      audit = auditArtifactStoreAuthorityLedgerData(auditSql);
-      let lockWaitObserved = false;
-      for (let attempt = 0; attempt < 100; attempt += 1) {
-        const waits = await database.sql.unsafe<Array<{ waiting: boolean }>>(
-          `SELECT EXISTS (
-             SELECT 1
-               FROM pg_locks
-              WHERE pid = $1
-                AND relation = 'public.artifact_store_authorities'::regclass
-                AND mode = 'ShareLock'
-                AND NOT granted
-           ) AS waiting`,
-          [auditPid],
-        );
-        if (waits[0]?.waiting) {
-          lockWaitObserved = true;
-          break;
-        }
-        await new Promise((resolve) => setTimeout(resolve, 10));
-      }
-      assert.equal(lockWaitObserved, true);
+      audit = auditCurrentArtifactPublicationAuthorityLedgerData(auditSql);
+      await Promise.race([
+        waitForAuthorityAuditShareLockBarrier(
+          database,
+          auditApplicationName,
+          writerPid,
+        ),
+        audit.then(
+          () => {
+            throw new Error("TEST_BARRIER_AUTHORITY_AUDIT_SETTLED_BEFORE_SHARE_LOCK");
+          },
+          (error: unknown) => { throw error; },
+        ),
+      ]);
       releaseWriter();
       await writer;
       const audited = await audit;
@@ -1007,7 +1076,7 @@ describe("artifact store authority migration 24", () => {
              AS evil_checksum`,
       );
       assert.deepEqual(evidence[0], {
-        public_rows: 26,
+        public_rows: 29,
         evil_checksum: "0".repeat(64),
       });
     } finally {

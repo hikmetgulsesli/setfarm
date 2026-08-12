@@ -2,7 +2,6 @@ import {
   lstatSync,
   mkdirSync,
   realpathSync,
-  rmSync,
   readdirSync,
 } from "node:fs";
 import path from "node:path";
@@ -19,6 +18,7 @@ import {
   normalizeNodeScaffoldRuntimeMetadataInternalV2,
   parseNpmLockJsonObjectInternalV2,
   readExactNpmLockRegularFileInternalV2,
+  removeRawNpmInstallExactOwnedObjectsInternalV2,
   sealNpmDependencyTreeInternalV2,
   assertSealedOwnedNpmDependencyTreeInternalV2,
   validateEveryAndOnlyNpmPackageRootsInternalV2,
@@ -1479,21 +1479,21 @@ export function materializePlatformReleaseProductionDependenciesInternalV2(
         "Production install tree changed across exact lock validation",
       );
     }
-    if (validated.hiddenLockRawHash !== null) {
-      rmSync(
-        path.join(nodeModulesRoot, ".package-lock.json"),
-        { force: false },
-      );
-    }
-    for (const directory of validated.binDirectories) {
-      rmSync(
-        path.join(
-          nodeModulesRoot,
-          ...directory.split("/"),
-        ),
-        { recursive: true, force: false },
-      );
-    }
+    removeRawNpmInstallExactOwnedObjectsInternalV2({
+      entries: rawEntries,
+      nodeModulesRoot,
+      locators: [
+        ...(validated.hiddenLockRawHash === null
+          ? []
+          : [".package-lock.json"]),
+        ...validated.binDirectories,
+      ],
+      onFailure: (message, cause) => fail(
+        "PLATFORM_RELEASE_PRODUCTION_DEPENDENCY_V2_INSTALL_TREE_INVALID",
+        message,
+        cause,
+      ),
+    });
     normalizeNodeScaffoldRuntimeMetadataInternalV2(
       input.admissionScope,
       nodeModulesRoot,

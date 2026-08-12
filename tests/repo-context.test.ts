@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { mergeRunContextForUpdate } from "../dist/installer/repo.js";
+import { mergeRunContextForUpdate } from "../src/installer/repo.js";
 
 describe("run context merge", () => {
   it("does not let blank optional defaults erase existing command context", () => {

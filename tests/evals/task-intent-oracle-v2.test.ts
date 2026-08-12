@@ -255,6 +255,16 @@ describe("versioned convergence suite and result readers", () => {
           },
         })),
       });
+      const compositional = suiteV2.cases.find((item) => item.oracle.variant === "compositional")!;
+      assert.equal(compositional.oracle.locale, "en");
+      assert.equal(TaskIntentOracleV2Schema.safeParse({
+        ...compositional.oracle,
+        variant: "multilingual",
+      }).success, false);
+      assert.equal(TaskIntentOracleV2Schema.safeParse({
+        ...compositional.oracle,
+        locale: "tr",
+      }).success, false);
       const v2File = path.join(root, "suite-v2.json");
       await writeFile(v2File, `${JSON.stringify(suiteV2)}\n`, "utf8");
 

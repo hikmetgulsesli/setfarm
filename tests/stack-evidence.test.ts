@@ -6,9 +6,9 @@ import {
   isBrowserRuntimeStack,
   stackRuntimeKind,
   stackExecutionPlanForStep,
-} from "../dist/installer/stack-evidence.js";
-import { getStackPack } from "../dist/installer/stack-contract/packs.js";
-import type { StackContract } from "../dist/installer/stack-contract/types.js";
+} from "../src/installer/stack-evidence.js";
+import { getStackPack } from "../src/installer/stack-contract/packs.js";
+import type { StackContract } from "../src/installer/stack-contract/types.js";
 
 function contract(packId: string): StackContract {
   const pack = getStackPack(packId as any);

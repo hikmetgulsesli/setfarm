@@ -7,7 +7,7 @@ import {
   mkdirSync,
   mkdtempSync,
   openSync,
-  readFileSync,
+  readSync,
   closeSync,
   realpathSync,
   rmSync,
@@ -108,33 +108,75 @@ function exactTestFile(input: Readonly<{
     );
   }
   let descriptor: number | undefined;
+  let bytes: Buffer | undefined;
   try {
     descriptor = openSync(
       testPath,
       constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
     );
-    const before = fstatSync(descriptor);
-    const bytes = readFileSync(descriptor);
-    const after = fstatSync(descriptor);
-    const pathAfter = lstatSync(testPath);
-    const contentHash = sha256(bytes);
-    bytes.fill(0);
+    const before = fstatSync(descriptor, { bigint: true });
     if (
       !before.isFile()
-      || before.nlink !== 1
-      || (before.mode & 0o7777) !== 0o444
-      || before.size < 1
-      || before.size > EVIDENCE_COMMAND_MAX_TEST_FILE_BYTES_V2
+      || before.isSymbolicLink()
+      || before.nlink !== 1n
+      || (before.mode & 0o7777n) !== 0o444n
+      || before.size < 1n
+      || before.size > BigInt(EVIDENCE_COMMAND_MAX_TEST_FILE_BYTES_V2)
+      || before.size > BigInt(Number.MAX_SAFE_INTEGER)
+    ) {
+      return fail(
+        "NODE_TEST_COMMAND_V2_INPUT_INVALID",
+        "Node test command member is not one bounded ordinary file",
+      );
+    }
+    const byteLength = Number(before.size);
+    bytes = Buffer.allocUnsafeSlow(byteLength);
+    let offset = 0;
+    while (offset < bytes.byteLength) {
+      const count = readSync(descriptor, bytes, offset, bytes.byteLength - offset, null);
+      if (count < 1) {
+        return fail(
+          "NODE_TEST_COMMAND_V2_INPUT_INVALID",
+          "Node test command member ended before its inspected byte length",
+        );
+      }
+      offset += count;
+    }
+    const eof = Buffer.allocUnsafe(1);
+    if (readSync(descriptor, eof, 0, 1, null) !== 0) {
+      return fail(
+        "NODE_TEST_COMMAND_V2_INPUT_INVALID",
+        "Node test command member exceeded its inspected byte length",
+      );
+    }
+    const after = fstatSync(descriptor, { bigint: true });
+    const pathAfter = lstatSync(testPath, { bigint: true });
+    const contentHash = sha256(bytes);
+    if (
+      !before.isFile()
+      || before.isSymbolicLink()
+      || !after.isFile()
+      || after.isSymbolicLink()
+      || !pathAfter.isFile()
+      || pathAfter.isSymbolicLink()
+      || before.nlink !== 1n
+      || after.nlink !== 1n
+      || pathAfter.nlink !== 1n
+      || (before.mode & 0o7777n) !== 0o444n
+      || (after.mode & 0o7777n) !== 0o444n
+      || (pathAfter.mode & 0o7777n) !== 0o444n
       || before.dev !== after.dev
       || before.ino !== after.ino
       || before.mode !== after.mode
       || before.size !== after.size
-      || before.mtimeMs !== after.mtimeMs
-      || before.ctimeMs !== after.ctimeMs
+      || before.mtimeNs !== after.mtimeNs
+      || before.ctimeNs !== after.ctimeNs
       || after.dev !== pathAfter.dev
       || after.ino !== pathAfter.ino
       || after.mode !== pathAfter.mode
       || after.size !== pathAfter.size
+      || after.mtimeNs !== pathAfter.mtimeNs
+      || after.ctimeNs !== pathAfter.ctimeNs
       || contentHash !== input.testContentHash
     ) {
       return fail(
@@ -145,7 +187,7 @@ function exactTestFile(input: Readonly<{
     return Object.freeze({
       runtimeLogicalLocator,
       contentHash,
-      byteLength: before.size,
+      byteLength,
     });
   } catch (error) {
     if (error instanceof PrivateNodeTestCommandErrorV2) throw error;
@@ -155,6 +197,7 @@ function exactTestFile(input: Readonly<{
       error,
     );
   } finally {
+    bytes?.fill(0);
     if (descriptor !== undefined) closeSync(descriptor);
   }
 }

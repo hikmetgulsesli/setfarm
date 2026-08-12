@@ -38,7 +38,7 @@ describe("External skill installation", () => {
 
   it("resolves skill from ~/.openclaw/workspace/skills/", async () => {
     // Import after setting HOME
-    const mod = await import("../dist/installer/agent-provision.js");
+    const mod = await import("../src/installer/agent-provision.js");
     // We can't directly test resolveExternalSkillSource since it's not exported,
     // but we can test provisionAgents with a minimal workflow
     const workflowDir = path.join(tmpDir, "workflow");
@@ -74,7 +74,7 @@ describe("External skill installation", () => {
   });
 
   it("resolves skill from ~/.openclaw/skills/ (fallback)", async () => {
-    const mod = await import("../dist/installer/agent-provision.js");
+    const mod = await import("../src/installer/agent-provision.js");
     const workflowDir = path.join(tmpDir, "workflow");
     await fs.mkdir(workflowDir, { recursive: true });
 
@@ -107,7 +107,7 @@ describe("External skill installation", () => {
   });
 
   it("skips missing external skills with warning (does not throw)", async () => {
-    const mod = await import("../dist/installer/agent-provision.js");
+    const mod = await import("../src/installer/agent-provision.js");
     const workflowDir = path.join(tmpDir, "workflow");
     await fs.mkdir(workflowDir, { recursive: true });
 
@@ -137,7 +137,7 @@ describe("External skill installation", () => {
   });
 
   it("resolves shared bundled bootstrap files and links references", async () => {
-    const mod = await import("../dist/installer/agent-provision.js");
+    const mod = await import("../src/installer/agent-provision.js");
     const workflowDir = path.join(tmpDir, "installed", "workflows", "feature-dev");
     const bundledRoot = path.join(tmpDir, "package");
     const bundledSourceDir = path.join(bundledRoot, "workflows", "feature-dev");
@@ -187,7 +187,7 @@ describe("External skill installation", () => {
   });
 
   it("does not interfere with setfarm-workflows skill (bundled)", async () => {
-    const mod = await import("../dist/installer/agent-provision.js");
+    const mod = await import("../src/installer/agent-provision.js");
     const workflowDir = path.join(tmpDir, "workflow");
     // Create bundled setfarm-workflows skill in workflow dir
     const bundledSkillDir = path.join(workflowDir, "skills", "setfarm-workflows");
@@ -229,7 +229,7 @@ describe("External skill installation", () => {
   });
 
   it("installs skills for multiple agents independently", async () => {
-    const mod = await import("../dist/installer/agent-provision.js");
+    const mod = await import("../src/installer/agent-provision.js");
     const workflowDir = path.join(tmpDir, "workflow");
     await fs.mkdir(workflowDir, { recursive: true });
 

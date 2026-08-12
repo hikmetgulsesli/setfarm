@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, renameSync } from "node:fs";
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  renameSync,
+  writeFileSync,
+} from "node:fs";
 import {
   chmod,
   chown,
@@ -225,8 +232,10 @@ import {
 import { IndexedArtifactPublisher } from
   "../../src/product-compiler/indexed-artifact-publisher.js";
 import {
+  NodeScaffoldExecutionEnvironmentErrorV2,
   createNodeScaffoldExecutionEnvironmentV2ForTest,
   destroyNodeScaffoldExecutionEnvironmentV2,
+  executeNodeScaffoldEnvironmentNpmCiV2,
   executeNodeScaffoldEnvironmentBuildV2,
   revalidateNodeScaffoldExecutionEnvironmentV2,
   type NodeScaffoldExecutionEnvironmentV2,
@@ -261,9 +270,12 @@ import {
   revalidateNodeCandidateBuildOutputV2,
   revalidateNodeScaffoldDependenciesV2,
   revalidateNodeScaffoldPrivateStageV2,
+  settleNodeScaffoldPrivateBuildScopeInternalV2,
+  settleNodeScaffoldPrivateInstallScopeInternalV2,
   settleNodeCandidateRuntimeBundleInputsInternalV2,
   type NodeProductSourceMaterializerCrashBoundaryV1,
   type NodeScaffoldPrivateMaterializerCrashBoundaryV2,
+  type NodeScaffoldPrivateMaterializerTestHooksV2,
 } from "../../src/product-compiler/node-scaffold-private-materializer-v2.js";
 import {
   getCodeOwnedNodeScaffoldAssetPublicationV2,
@@ -436,9 +448,9 @@ const FILE_TREE_CONTRACT_HASH_GOLDEN_V2 =
 const FILE_TREE_CONTRACT_HASH_GOLDEN_V3 =
   "013c2b2e04985fb54896d34f84e9044a3e30dff1f1297050e8d0c741462f487a";
 const BUILD_TOPOLOGY_CONTRACT_HASH_GOLDEN_V2 =
-  "5ac524ec5f5c45ac3091c39c5fe959da3da970c15757196879031db55c30ef28";
+  "6eaf2ef07d185986e22b11c87c36ef05b837c529f33bd8f67e4e7e1aa9931b8e";
 const BUILD_TOPOLOGY_CONTRACT_HASH_GOLDEN_V3 =
-  "409d808e65a5a2a9d974b7af5190c20309573f92f81829ab68eb2e000114c894";
+  "f0ff27887299b07851128df3293280ef2f0d6bdd4c4463da14764e49c9fa3ac4";
 const NODE_PRODUCT_RUNTIME_PROGRAM_CONTRACT_HASH_GOLDEN_V2 =
   "5443c8c68e178ec3cce5a94857918dae195848e4f33e8ec751e0154b6fc97a46";
 const NODE_ENTRYPOINT_GENERATOR_CONTRACT_HASH_GOLDEN_V2 =
@@ -580,6 +592,18 @@ function nonzero(stderr: string): HostNodeToolchainProbeResultV2 {
     stdout: "",
     stderr,
   });
+}
+
+function createSpecialFifoV2(absolutePath: string): void {
+  const result = spawnSync("mkfifo", [absolutePath], {
+    encoding: "utf8",
+    shell: false,
+  });
+  assert.equal(
+    result.status,
+    0,
+    `mkfifo failed: ${result.stderr || result.error?.message || "unknown error"}`,
+  );
 }
 
 function effectiveConfig(invocation: HostNodeToolchainProbeInvocationV2):
@@ -781,7 +805,10 @@ function hostAdapter(fixture: HostFixtureV2, profileId: NodeScaffoldProfileIdV2)
     if (invocation.probeRef === "HOST_NPM_SCAFFOLD_INSTALL_V2") {
       installInvocations.push(invocation);
       const control = installControls.get(profileId);
-      if (control?.result) return control.result;
+      if (control?.result) {
+        await control.afterInstall?.(invocation.cwd);
+        return control.result;
+      }
       await fakeNpmCiV2(profileId, invocation.cwd);
       await control?.afterInstall?.(invocation.cwd);
       return exited(`\nadded ${getCodeOwnedNodeScaffoldToolchainEntryV2(profileId)!
@@ -796,7 +823,10 @@ function hostAdapter(fixture: HostFixtureV2, profileId: NodeScaffoldProfileIdV2)
     if (invocation.probeRef === "HOST_NODE_PRODUCT_BUILD_V2") {
       buildInvocations.push(invocation);
       const control = buildControls.get(profileId);
-      if (control?.result) return control.result;
+      if (control?.result) {
+        await control.afterBuild?.(invocation.cwd);
+        return control.result;
+      }
       await fakeTypeScriptBuildV2(profileId, invocation.cwd);
       await control?.afterBuild?.(invocation.cwd);
       return exited("");
@@ -1110,6 +1140,7 @@ describe("Node scaffold private staged materializer V2", () => {
     environment?: NodeScaffoldExecutionEnvironmentV2;
     stageParent?: string;
     assets?: AssetSetV2;
+    testHooks?: NodeScaffoldPrivateMaterializerTestHooksV2;
   }> = {}) {
     const profileId = input.profileId ?? CLI_PROFILE;
     const environmentHandle = input.environment ?? await environment(profileId);
@@ -1118,6 +1149,7 @@ describe("Node scaffold private staged materializer V2", () => {
       environment: environmentHandle,
       scratchParent: stageParent,
       ...(input.assets ?? assetSets.get(profileId)!),
+      ...(input.testHooks ? { testHooks: input.testHooks } : {}),
     });
     activeStages.push(handle);
     return { handle, environmentHandle, stageParent };
@@ -1333,6 +1365,160 @@ describe("Node scaffold private staged materializer V2", () => {
       assert.equal(invocation.env.NPM_CONFIG_ENGINE_STRICT, "true");
       assert.equal(invocation.env.NODE_OPTIONS, undefined);
     }
+  });
+
+  it("bounds capsule growth and preserves primary, source-close and destination-close order", async () => {
+    let attemptRoot = "";
+    let targetLocator = "";
+    const created = await stage({
+      testHooks: {
+        afterDependencyCapsuleDestinationCreate(locator) {
+          if (targetLocator !== "") return;
+          targetLocator = locator;
+          appendFileSync(
+            path.join(attemptRoot, "project", "node_modules", ...locator.split("/")),
+            "INJECTED_CAPSULE_GROWTH",
+          );
+        },
+        afterDependencyCapsuleSourceDescriptorClose(locator) {
+          if (locator === targetLocator) {
+            throw new Error("INJECTED_CAPSULE_SOURCE_CLOSE_FAILURE");
+          }
+        },
+        afterDependencyCapsuleDestinationDescriptorClose(locator) {
+          if (locator === targetLocator) {
+            throw new Error("INJECTED_CAPSULE_DESTINATION_CLOSE_FAILURE");
+          }
+        },
+      },
+    });
+    attemptRoot = await onlyAttemptRoot(created.stageParent);
+
+    await assert.rejects(materializeNodeScaffoldDependenciesV2ForTest(created.handle),
+      (error: unknown) =>
+        error instanceof NodeScaffoldPrivateMaterializerErrorV2
+        && error.code === "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_CAPSULE_INVALID"
+        && error.cause instanceof AggregateError
+        && error.cause.errors.length === 3
+        && error.cause.errors[0] instanceof NodeScaffoldPrivateMaterializerErrorV2
+        && /exceeded its admitted byte length/u.test(error.cause.errors[0].message)
+        && error.cause.errors[1] instanceof Error
+        && error.cause.errors[1].message === "INJECTED_CAPSULE_SOURCE_CLOSE_FAILURE"
+        && error.cause.errors[2] instanceof Error
+        && error.cause.errors[2].message === "INJECTED_CAPSULE_DESTINATION_CLOSE_FAILURE");
+    assert.notEqual(targetLocator, "");
+    assert.equal(existsSync(attemptRoot), false);
+  });
+
+  it("stops raw dependency hashing at the admitted size and bounds its directory census", async () => {
+    let growthInjected = false;
+    const growing = await stage({
+      testHooks: {
+        beforeRawDependencyFileRead(_locator, absolutePath) {
+          if (growthInjected) return;
+          growthInjected = true;
+          appendFileSync(absolutePath, "INJECTED_RAW_GROWTH");
+        },
+      },
+    });
+    const growingRoot = await onlyAttemptRoot(growing.stageParent);
+    await assert.rejects(materializeNodeScaffoldDependenciesV2ForTest(growing.handle),
+      (error: unknown) =>
+        error instanceof NodeScaffoldPrivateMaterializerErrorV2
+        && error.code === "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_GRAPH_INVALID"
+        && /exceeded its admitted byte length/u.test(error.message));
+    assert.equal(growthInjected, true);
+    assert.equal(existsSync(growingRoot), false);
+
+    const bounded = await stage({
+      testHooks: { maxRawDependencyDirectoryEntriesForTest: 1 },
+    });
+    const boundedRoot = await onlyAttemptRoot(bounded.stageParent);
+    await assert.rejects(materializeNodeScaffoldDependenciesV2ForTest(bounded.handle),
+      (error: unknown) =>
+        error instanceof NodeScaffoldPrivateMaterializerErrorV2
+        && error.code === "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_GRAPH_INVALID"
+        && /exceeded its fixed membership bound/u.test(error.message));
+    assert.equal(existsSync(boundedRoot), false);
+  });
+
+  it("bounds a post-snapshot capsule source namespace at expected membership plus one", async () => {
+    let attemptRoot = "";
+    let foreignPath = "";
+    let injected = false;
+    const created = await stage({
+      testHooks: {
+        beforeDependencyCapsuleSourceDirectoryRead(locator) {
+          if (locator !== "node_modules" || injected) return;
+          injected = true;
+          foreignPath = path.join(attemptRoot, "project", "node_modules", "foreign-race");
+          writeFileSync(foreignPath, "foreign\n", { mode: 0o600 });
+        },
+      },
+    });
+    attemptRoot = await onlyAttemptRoot(created.stageParent);
+
+    await assert.rejects(materializeNodeScaffoldDependenciesV2ForTest(created.handle),
+      (error: unknown) =>
+        error instanceof NodeScaffoldPrivateMaterializerErrorV2
+        && error.code === "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_STATE_DRIFT"
+        && error.cause instanceof AggregateError
+        && error.cause.errors[0] instanceof NodeScaffoldPrivateMaterializerErrorV2
+        && error.cause.errors[0].code
+          === "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_DEPENDENCY_CAPSULE_INVALID"
+        && /exceeded its admitted membership bound/u.test(error.cause.errors[0].message));
+    assert.equal(injected, true);
+    assert.equal(existsSync(foreignPath), true);
+    assert.equal(existsSync(attemptRoot), true);
+
+    await unlink(foreignPath);
+    destroyNodeScaffoldPrivateStageV2(created.handle);
+    assert.equal(existsSync(attemptRoot), false);
+  });
+
+  it("restores a surviving sealed capsule mode and preserves primary-first restore errors", async () => {
+    let cleanupFailurePending = true;
+    let restoreFailurePending = true;
+    const created = await stage({
+      testHooks: {
+        afterCleanupDirectoryDescriptorClose(locator) {
+          if (locator === "dependency-capsule" && cleanupFailurePending) {
+            cleanupFailurePending = false;
+            throw new Error("INJECTED_CAPSULE_CLEANUP_CLOSE_PRIMARY");
+          }
+        },
+        afterCleanupDirectoryModeRestore(locator) {
+          if (locator === "dependency-capsule" && restoreFailurePending) {
+            restoreFailurePending = false;
+            throw new Error("INJECTED_CAPSULE_MODE_RESTORE_FAILURE");
+          }
+        },
+      },
+    });
+    await materializeNodeScaffoldDependenciesV2ForTest(created.handle);
+    const attemptRoot = await onlyAttemptRoot(created.stageParent);
+    const capsuleRoot = path.join(attemptRoot, "dependency-capsule");
+    assert.equal((await stat(capsuleRoot)).mode & 0o7777, 0o555);
+
+    await assert.rejects(async () => destroyNodeScaffoldPrivateStageV2(created.handle),
+      (error: unknown) => {
+        if (
+          !(error instanceof NodeScaffoldPrivateMaterializerErrorV2)
+          || !(error.cause instanceof AggregateError)
+          || error.cause.errors.length !== 2
+        ) return false;
+        const [primary, restore] = error.cause.errors;
+        return primary instanceof NodeScaffoldPrivateMaterializerErrorV2
+          && primary.cause instanceof Error
+          && primary.cause.message === "INJECTED_CAPSULE_CLEANUP_CLOSE_PRIMARY"
+          && restore instanceof Error
+          && restore.message === "INJECTED_CAPSULE_MODE_RESTORE_FAILURE";
+      });
+    assert.equal(existsSync(capsuleRoot), true);
+    assert.equal((await stat(capsuleRoot)).mode & 0o7777, 0o555);
+
+    destroyNodeScaffoldPrivateStageV2(created.handle);
+    assert.equal(existsSync(attemptRoot), false);
   });
 
   it("derives and freshly verifies exact CLI/API scaffold-base FileTreeV2 authority", async () => {
@@ -1864,7 +2050,7 @@ describe("Node scaffold private staged materializer V2", () => {
         outputPath: "dist/cli.js",
         candidatePath: "candidate-bundle/application/cli.js",
         runtimeKind: "cli",
-        logicalBuildHash: "187da06ff44445204592fc57b6f5bd73f0fa217b566c3df58902d8a203b14923",
+        logicalBuildHash: "72d6c191c58b05473ea2a6fee3d1e84043dbf192c2731d19ec18b99460c0d1e5",
       },
       {
         profileId: API_PROFILE,
@@ -1874,7 +2060,7 @@ describe("Node scaffold private staged materializer V2", () => {
         outputPath: "dist/app.js",
         candidatePath: "candidate-bundle/application/app.js",
         runtimeKind: "http_handler",
-        logicalBuildHash: "9fe38cafd80ca89ac80b9417a3b90d3cbf21d84cd3e744c7cece01c73bd3ba1d",
+        logicalBuildHash: "5dc058de38f3c1fcdb782cf58a508f19d528aa95e024d405e2ae23004d855d74",
       },
       {
         profileId: API_PROFILE,
@@ -1884,7 +2070,7 @@ describe("Node scaffold private staged materializer V2", () => {
         outputPath: "dist/app.js",
         candidatePath: "candidate-bundle/application/app.js",
         runtimeKind: "http_handler",
-        logicalBuildHash: "41e7e028313663b7ada8d720d3e82a6e220c9add92142f04aae7718115ff750f",
+        logicalBuildHash: "fcf135f5b8cb74febc0e5d6cfcbb5343e937d4f2ce20070648e3b4dae2f9aed4",
       },
     ];
     for (const fixture of cases) {
@@ -2407,9 +2593,9 @@ describe("Node scaffold private staged materializer V2", () => {
     }
 
     assert.deepEqual(logicalBuildHashes, [
-      "c510a4cffc094c18d0892384a08a4bcf96409b9bbc36dee2a9a77f3a9f3ec034",
-      "702110a886cd55e1760ec0e5755768145f27d49f9bde4da7d8e1f984161cd6e9",
-      "1f3daea32471d2e0cc243598cb60b9d7b226ea0525b42a9ac36f5d47611aaec2",
+      "97aeaf18ef40a787cf66855d0dedd1c3599a94b2c5cd07dbece36e448e1d1fd4",
+      "c89736e0e62606e46f479dc504eb695765f66a3cceb15b837eff25178292888a",
+      "6851ec6a6b69ebe6ffe5aec373bf235d83912a60a421e5d1f3f2d340cc231d84",
     ]);
   });
 
@@ -6003,11 +6189,11 @@ describe("Node scaffold private staged materializer V2", () => {
     }
 
     assert.deepEqual(storyPlanHashes, [
-      "b56c8d6b87704886d309c61ffba3822d7504876889d020a3b6e9fd06b0fd8312",
-      "5b5346dec87ec6fc6f9f20b40dd97990e2e136b0a9ebc41341a50b526ae48e7e",
-      "e8cc79adc6669fae0af9b117f63026d9bec4565c285acbe2790bcd86d1f73b4c",
-      "e84588a46dc98e6f089c49f4931922d4936a061c4017988e941f2e314173a1ea",
-      "efa1a3804ba064d6d5684a5be7b0c0449d98cb83d1c30af79de1b9ed71324112",
+      "18f276368d5dead56a703f0293cdb01e186c6a17ae7d5a0654ac13b37a477e8d",
+      "efe245be22be4fa9be69e3d81e72798c45433ae500e26376a00e5a7bcffabf73",
+      "5b9d074308c1a91fe12716f61f9e86436ed9177ac181884b05999fd2e74bbd72",
+      "3e1d61cbcbbdd8d477acbd25452520f18159842124c68bc615a5eecf13d00785",
+      "0f1aa52955591c6e7dca37d57444267aa4f7a7b195554926f3b81300b9faa4bd",
     ]);
     assert.equal(sourceMapManifestHashes.length, cases.length);
     assert.equal(new Set(sourceMapManifestHashes).size, cases.length);
@@ -6209,6 +6395,60 @@ describe("Node scaffold private staged materializer V2", () => {
     );
   });
 
+  it("consumes build scopes and preserves primary plus special-residue finalizer failures", async () => {
+    const created = await stage();
+    const publication = await preparePublishedNodeSourcesV1(created.handle);
+    await materializeNodeProductSourcesV1ForTest(created.handle, {
+      casAuthority,
+      ...publication,
+    });
+    const attemptRoot = await onlyAttemptRoot(created.stageParent);
+    const fifo = path.join(attemptRoot, "project", "build-finalizer-residue.fifo");
+    buildControls.set(CLI_PROFILE, {
+      result: nonzero("typed build primary failure"),
+      afterBuild() {
+        createSpecialFifoV2(fifo);
+      },
+    });
+
+    await assert.rejects(
+      executeNodeScaffoldEnvironmentBuildV2(
+        created.environmentHandle,
+        created.handle,
+      ),
+      (error: unknown) =>
+        error instanceof Error
+        && (error as { code?: unknown }).code
+          === "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_STATE_DRIFT"
+        && error.cause instanceof AggregateError
+        && error.cause.errors.length === 2
+        && (error.cause.errors[0] as { code?: unknown }).code
+          === "HOST_NODE_TOOLCHAIN_V2_BUILD_NONZERO"
+        && error.cause.errors[1] instanceof NodeScaffoldPrivateMaterializerErrorV2
+        && error.cause.errors[1].code
+          === "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_STATE_DRIFT",
+    );
+    await assert.rejects(
+      executeNodeScaffoldEnvironmentBuildV2(
+        created.environmentHandle,
+        created.handle,
+      ),
+      { code: "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_BUILD_ALREADY_CONSUMED" },
+    );
+
+    await unlink(fifo);
+    assert.throws(
+      () => settleNodeScaffoldPrivateBuildScopeInternalV2(
+        created.handle,
+        created.handle.receiptHash,
+      ),
+      { code: "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_STATE_DRIFT" },
+    );
+    destroyNodeScaffoldPrivateStageV2(created.handle);
+    destroyNodeScaffoldExecutionEnvironmentV2(created.environmentHandle);
+    assert.equal(existsSync(attemptRoot), false);
+  });
+
   it("classifies every candidate-build process disposition and consumes each physical attempt", async () => {
     const cases: readonly Readonly<{
       label: string;
@@ -6317,32 +6557,37 @@ describe("Node scaffold private staged materializer V2", () => {
     assert.deepEqual(await readdir(stageParent), ["sentinel"]);
   });
 
-  it("removes a partial source tree after a post-runtime-write crash", async () => {
-    const stageParent = await privateParent("source-partial-crash");
-    const sentinel = path.join(stageParent, "sentinel");
-    await writeFile(sentinel, "foreign\n", { mode: 0o600 });
-    const created = await stage({ stageParent });
-    const publication = await preparePublishedNodeSourcesV1(created.handle);
-    const crashBoundary: NodeProductSourceMaterializerCrashBoundaryV1 =
-      "after_runtime_source_fsync";
-    await assert.rejects(
-      materializeNodeProductSourcesV1ForTest(created.handle, {
-        casAuthority,
-        ...publication,
-        testHooks: {
-          afterBoundary(boundary) {
-            if (boundary === crashBoundary) {
-              throw new Error(`CRASH:${crashBoundary}`);
-            }
+  it("removes a partial source tree after every create-before-write crash", async () => {
+    const crashBoundaries: readonly NodeProductSourceMaterializerCrashBoundaryV1[] = [
+      "after_source_directory_create",
+      "after_runtime_source_create",
+      "after_test_source_create",
+    ];
+    for (const crashBoundary of crashBoundaries) {
+      const stageParent = await privateParent(`source-partial-${crashBoundary}`);
+      const sentinel = path.join(stageParent, "sentinel");
+      await writeFile(sentinel, "foreign\n", { mode: 0o600 });
+      const created = await stage({ stageParent });
+      const publication = await preparePublishedNodeSourcesV1(created.handle);
+      await assert.rejects(
+        materializeNodeProductSourcesV1ForTest(created.handle, {
+          casAuthority,
+          ...publication,
+          testHooks: {
+            afterBoundary(boundary) {
+              if (boundary === crashBoundary) {
+                throw new Error(`CRASH:${crashBoundary}`);
+              }
+            },
           },
+        }),
+        {
+          code:
+            "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_SOURCE_MATERIALIZATION_FAILED",
         },
-      }),
-      {
-        code:
-          "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_SOURCE_MATERIALIZATION_FAILED",
-      },
-    );
-    assert.deepEqual(await readdir(stageParent), ["sentinel"]);
+      );
+      assert.deepEqual(await readdir(stageParent), ["sentinel"]);
+    }
   });
 
   it("transitions every legacy Node entrypoint slot to one generator-owned whole-file authority", async () => {
@@ -6354,7 +6599,7 @@ describe("Node scaffold private staged materializer V2", () => {
         entrypointKind: "cli",
         sourcePath: "src/cli.ts",
         routeCount: 1,
-        transitionHash: "96fad444dd7433b33e045b3980b2fdf623e8e2a666460c1a1fec5cb75bca8edf",
+        transitionHash: "244b2e2c1a40e3e96be785106aab7e0d66e561244bd3992dc453f5e08b6f7f9c",
       },
       {
         profileId: API_PROFILE,
@@ -6363,7 +6608,7 @@ describe("Node scaffold private staged materializer V2", () => {
         entrypointKind: "api",
         sourcePath: "src/app.ts",
         routeCount: 1,
-        transitionHash: "2a142a648d75fee4311c89df90d311c7c1d24d34edb3a22cb8d7363cc5a1799d",
+        transitionHash: "41799dc052e4768686fa4fd8f4cac58426d3d1f1e717e1b01b346a233737e419",
       },
       {
         profileId: API_PROFILE,
@@ -6372,7 +6617,7 @@ describe("Node scaffold private staged materializer V2", () => {
         entrypointKind: "api",
         sourcePath: "src/app.ts",
         routeCount: 2,
-        transitionHash: "633a23ad981580efd5fee5520b0066ff8d06643a571ba417127fb5dd1396477e",
+        transitionHash: "fd28c77f1c39aec798de2563d04e788aab8d113d71fde3229f857d79abd0e013",
       },
     ];
     for (const fixture of cases) {
@@ -6672,6 +6917,61 @@ describe("Node scaffold private staged materializer V2", () => {
     }
   });
 
+  it("consumes npm scopes and preserves primary plus special-residue finalizer failures", async () => {
+    const created = await stage();
+    const attemptRoot = await onlyAttemptRoot(created.stageParent);
+    const fifo = path.join(attemptRoot, "project", "npm-finalizer-residue.fifo");
+    installControls.set(CLI_PROFILE, {
+      result: nonzero("typed npm primary failure"),
+      afterInstall() {
+        createSpecialFifoV2(fifo);
+      },
+    });
+
+    await assert.rejects(
+      materializeNodeScaffoldDependenciesV2ForTest(created.handle),
+      (error: unknown) => {
+        if (
+          !(error instanceof NodeScaffoldPrivateMaterializerErrorV2)
+          || error.code !== "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_STATE_DRIFT"
+          || !(error.cause instanceof AggregateError)
+          || error.cause.errors.length !== 2
+        ) return false;
+        const [executionError, cleanupError] = error.cause.errors;
+        return executionError instanceof NodeScaffoldExecutionEnvironmentErrorV2
+          && executionError.code === "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_STATE_DRIFT"
+          && executionError.cause instanceof AggregateError
+          && executionError.cause.errors.length === 2
+          && (executionError.cause.errors[0] as { code?: unknown }).code
+            === "HOST_NODE_TOOLCHAIN_V2_INSTALL_NONZERO"
+          && executionError.cause.errors[1] instanceof NodeScaffoldPrivateMaterializerErrorV2
+          && executionError.cause.errors[1].code
+            === "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_STATE_DRIFT"
+          && cleanupError instanceof NodeScaffoldPrivateMaterializerErrorV2
+          && cleanupError.code === "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_STATE_DRIFT";
+      },
+    );
+    await assert.rejects(
+      executeNodeScaffoldEnvironmentNpmCiV2(
+        created.environmentHandle,
+        created.handle,
+      ),
+      { code: "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_INSTALL_ALREADY_CONSUMED" },
+    );
+
+    await unlink(fifo);
+    assert.throws(
+      () => settleNodeScaffoldPrivateInstallScopeInternalV2(
+        created.handle,
+        created.handle.receiptHash,
+      ),
+      { code: "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_STATE_DRIFT" },
+    );
+    destroyNodeScaffoldPrivateStageV2(created.handle);
+    destroyNodeScaffoldExecutionEnvironmentV2(created.environmentHandle);
+    assert.equal(existsSync(attemptRoot), false);
+  });
+
   it("rejects unexpected bins, hidden-lock members and hard links after npm exits zero", async () => {
     const mutations: Array<(projectRoot: string) => Promise<void>> = [
       async (projectRoot) => {
@@ -6880,12 +7180,28 @@ describe("Node scaffold private staged materializer V2", () => {
       await assert.rejects(revalidateNodeScaffoldPrivateStageV2(created.handle), {
         code: "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_STATE_DRIFT",
       });
-      destroyNodeScaffoldPrivateStageV2(created.handle);
+      try {
+        destroyNodeScaffoldPrivateStageV2(created.handle);
+      } catch (error) {
+        assert.equal(
+          error instanceof NodeScaffoldPrivateMaterializerErrorV2
+            ? error.code
+            : undefined,
+          "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_STATE_DRIFT",
+        );
+        await rm(attemptRoot, { recursive: true, force: true });
+      }
     }
   });
 
   it("cleans only its authenticated attempt after every injected fsync boundary failure", async () => {
     const boundaries: readonly NodeScaffoldPrivateMaterializerCrashBoundaryV2[] = [
+      "after_private_root_create",
+      "after_dependency_capsule_create",
+      "after_project_directory_create",
+      "after_package_lock_create",
+      "after_package_json_create",
+      "after_tsconfig_create",
       "after_private_root_fsync",
       "after_layout_fsync",
       "after_package_lock_fsync",
@@ -6936,9 +7252,12 @@ describe("Node scaffold private staged materializer V2", () => {
           throw new Error("CRASH_AFTER_REPLACEMENT");
         },
       },
-    }), {
-      code: "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_MATERIALIZATION_FAILED",
-    });
+    }), (error: unknown) =>
+      error instanceof NodeScaffoldPrivateMaterializerErrorV2
+      && error.code === "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_MATERIALIZATION_FAILED"
+      && error.cause instanceof AggregateError
+      && error.cause.errors.length === 2
+      && error.message.includes("cleanup retained its authenticated root"));
     assert.equal(existsSync(attemptRoot), true);
     assert.equal(existsSync(displaced), true);
     await rm(attemptRoot, { recursive: true, force: true });
@@ -6958,6 +7277,105 @@ describe("Node scaffold private staged materializer V2", () => {
     assert.equal(existsSync(displaced), true);
     await rm(attemptRoot, { recursive: true, force: true });
     await rm(displaced, { recursive: true, force: true });
+  });
+
+  it("preserves cleanup mutation and close failures and retries the retained stage root", async () => {
+    let mutationFailurePending = true;
+    let closeFailurePending = true;
+    const created = await stage({
+      testHooks: {
+        afterCleanupDirectoryWritable(locator) {
+          if (locator === "." && mutationFailurePending) {
+            mutationFailurePending = false;
+            throw new Error("INJECTED_STAGE_CLEANUP_MUTATION_FAILURE");
+          }
+        },
+        afterCleanupDirectoryDescriptorClose(locator) {
+          if (locator === "." && closeFailurePending) {
+            closeFailurePending = false;
+            throw new Error("INJECTED_STAGE_CLEANUP_CLOSE_FAILURE");
+          }
+        },
+      },
+    });
+    const attemptRoot = await onlyAttemptRoot(created.stageParent);
+
+    await assert.rejects(async () => destroyNodeScaffoldPrivateStageV2(created.handle),
+      (error: unknown) =>
+        error instanceof NodeScaffoldPrivateMaterializerErrorV2
+        && error.code === "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_STATE_DRIFT"
+        && error.cause instanceof AggregateError
+        && error.cause.errors.length === 2
+        && error.cause.errors[0] instanceof Error
+        && error.cause.errors[0].message === "INJECTED_STAGE_CLEANUP_MUTATION_FAILURE"
+        && error.cause.errors[1] instanceof Error
+        && error.cause.errors[1].message === "INJECTED_STAGE_CLEANUP_CLOSE_FAILURE");
+    assert.equal(existsSync(attemptRoot), true);
+
+    destroyNodeScaffoldPrivateStageV2(created.handle);
+    assert.equal(existsSync(attemptRoot), false);
+  });
+
+  it("preserves cleanup census read and close failures in primary-first order", async () => {
+    let failuresPending = true;
+    const created = await stage({
+      testHooks: {
+        beforeCleanupCensusDirectoryRead(locator) {
+          if (locator === "." && failuresPending) {
+            throw new Error("INJECTED_STAGE_CENSUS_READ_FAILURE");
+          }
+        },
+        afterCleanupCensusDirectoryClose(locator) {
+          if (locator === "." && failuresPending) {
+            throw new Error("INJECTED_STAGE_CENSUS_CLOSE_FAILURE");
+          }
+        },
+      },
+    });
+    const attemptRoot = await onlyAttemptRoot(created.stageParent);
+
+    await assert.rejects(async () => destroyNodeScaffoldPrivateStageV2(created.handle),
+      (error: unknown) =>
+        error instanceof NodeScaffoldPrivateMaterializerErrorV2
+        && error.code === "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_STATE_DRIFT"
+        && error.cause instanceof AggregateError
+        && error.cause.errors.length === 2
+        && error.cause.errors[0] instanceof Error
+        && error.cause.errors[0].message === "INJECTED_STAGE_CENSUS_READ_FAILURE"
+        && error.cause.errors[1] instanceof Error
+        && error.cause.errors[1].message === "INJECTED_STAGE_CENSUS_CLOSE_FAILURE");
+    assert.equal(existsSync(attemptRoot), true);
+
+    failuresPending = false;
+    destroyNodeScaffoldPrivateStageV2(created.handle);
+    assert.equal(existsSync(attemptRoot), false);
+  });
+
+  it("preserves a foreign nested replacement until test recovery restores the captured census", async () => {
+    const created = await stage();
+    const attemptRoot = await onlyAttemptRoot(created.stageParent);
+    const projectRoot = path.join(attemptRoot, "project");
+    const displaced = `${attemptRoot}-project-displaced`;
+    const foreign = `${attemptRoot}-project-foreign`;
+    const foreignLeaf = path.join(projectRoot, "foreign", "sentinel");
+
+    await rename(projectRoot, displaced);
+    await mkdir(path.dirname(foreignLeaf), { recursive: true, mode: 0o700 });
+    await writeFile(foreignLeaf, "foreign\n", { mode: 0o600 });
+
+    await assert.rejects(async () => destroyNodeScaffoldPrivateStageV2(
+      created.handle,
+    ), { code: "NODE_SCAFFOLD_PRIVATE_MATERIALIZER_V2_STATE_DRIFT" });
+    assert.equal(existsSync(attemptRoot), true);
+    assert.equal(existsSync(displaced), true);
+    assert.equal(existsSync(foreignLeaf), true);
+
+    await rename(projectRoot, foreign);
+    await rename(displaced, projectRoot);
+    destroyNodeScaffoldPrivateStageV2(created.handle);
+    assert.equal(existsSync(attemptRoot), false);
+    assert.equal(existsSync(path.join(foreign, "foreign", "sentinel")), true);
+    await rm(foreign, { recursive: true, force: true });
   });
 
   it("fails closed when an authenticated source handle is replaced by receipt-shaped data", async () => {

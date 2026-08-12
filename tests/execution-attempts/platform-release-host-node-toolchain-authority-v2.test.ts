@@ -21,6 +21,10 @@ import {
 } from
   "../../src/product-compiler/canonical-json.js";
 import {
+  PLATFORM_RELEASE_BOOTSTRAP_NETWORK_NEGATIVE_OPERATION_POLICY_HASH_V2,
+} from
+  "../../src/execution/platform-release-bootstrap-network-negative-operation-v2.js";
+import {
   createHostNodeToolchainAuthorityV2ForTest,
   type HostNodeToolchainAuthorityV2,
   type HostNodeToolchainProbeInvocationV2,
@@ -30,6 +34,10 @@ import {
 import {
   PlatformReleaseHostNodeToolchainAuthorityErrorV2,
   PlatformReleaseHostNodeToolchainAuthorityV2,
+  acquirePlatformReleaseHostNodeToolchainMetadataOperationLaunchContextInternalV2,
+  acquirePlatformReleaseHostNodeToolchainModuleExportLaunchContextInternalV2,
+  acquirePlatformReleaseHostNodeToolchainNetworkNegativeOperationLaunchContextInternalV2,
+  acquirePlatformReleaseHostNodeToolchainTargetOperationLaunchContextInternalV2,
   createPlatformReleaseHostNodeToolchainAuthorityV2,
   createPlatformReleaseHostNodeToolchainAuthorityV2ForTest,
   executePlatformReleaseHostNodeToolchainBuildInternalV2,
@@ -47,6 +55,10 @@ import {
   parsePlatformReleaseHostNodeToolchainReceiptCandidateV2,
 } from
   "../../src/execution/schemas/platform-release-host-node-toolchain-v2.js";
+import {
+  PLATFORM_RELEASE_BOOTSTRAP_OPERATION_ABI_SET_V2,
+} from
+  "../../src/execution/schemas/platform-release-bootstrap-operation-abis-v2.js";
 import {
   PlatformReleaseHostNodeToolchainBuildEvidenceV2Schema,
   hashPlatformReleaseHostNodeToolchainBuildEvidenceV2,
@@ -656,6 +668,292 @@ describe("PlatformReleaseHostNodeToolchainAuthorityV2", () => {
       JSON.stringify(before),
       /composition|fixtureRoot|network-wrapper/iu,
     );
+  });
+
+  it("acquires the four fixed target-operation launch contexts and translates installed composition drift", async () => {
+    const fixture = await makeFixtureV2();
+    const bootstrap = await hostAuthorityV2(
+      fixture,
+      "PROFILE_NODE_CLI_STATELESS_EXACT_V2",
+    );
+    const handle =
+      await createPlatformReleaseHostNodeToolchainAuthorityV2ForTest({
+        hostToolchain: bootstrap,
+        compositionFixture: fixture.compositionFixture,
+      });
+    const expectedOperations = [
+      [
+        "ABI_PLATFORM_RELEASE_HOST_OPERATION_V2",
+        "BOOTSTRAP_RELEASE_COMPOSITION_MODULE_V2",
+        "lib/release-bootstrap.mjs",
+        ["run-host-operation-v2", "PLATFORM_RELEASE_HOST_OPERATION_V2"],
+      ],
+      [
+        "ABI_PLATFORM_RELEASE_METADATA_PROBE_V2",
+        "BOOTSTRAP_RELEASE_COMPOSITION_METADATA_MODULE_V2",
+        "lib/metadata-bootstrap.mjs",
+        ["run-metadata-probe-v2", "PLATFORM_RELEASE_METADATA_PROBE_V2"],
+      ],
+      [
+        "ABI_PLATFORM_RELEASE_MODULE_EXPORT_PROBE_V2",
+        "BOOTSTRAP_RELEASE_COMPOSITION_MODULE_V2",
+        "lib/release-bootstrap.mjs",
+        [
+          "run-module-export-probe-v2",
+          "PLATFORM_RELEASE_MODULE_EXPORT_PROBE_V2",
+        ],
+      ],
+      [
+        "ABI_PLATFORM_RELEASE_NETWORK_NEGATIVE_PROBE_V2",
+        "BOOTSTRAP_RELEASE_COMPOSITION_NETWORK_WRAPPER_MODULE_V2",
+        "lib/network-wrapper.mjs",
+        [
+          "run-network-negative-probe-v2",
+          "PLATFORM_RELEASE_NETWORK_NEGATIVE_PROBE_V2",
+        ],
+      ],
+    ] as const;
+    for (const [operationAbiRef, memberRef, locator, directArgv] of
+      expectedOperations) {
+      const targetContext =
+        await acquirePlatformReleaseHostNodeToolchainTargetOperationLaunchContextInternalV2(
+          handle,
+          operationAbiRef,
+        );
+      assert.equal(targetContext.operationAbiRef, operationAbiRef);
+      assert.equal(targetContext.implementationMemberRef, memberRef);
+      assert.equal(
+        targetContext.implementationPath,
+        fixture.compositionFiles[locator],
+      );
+      assert.deepEqual(targetContext.directArgv, directArgv);
+      assert.equal(
+        targetContext.workingDirectoryPolicy,
+        "authenticated_target_root_v2",
+      );
+      assert.equal(Object.isFrozen(targetContext), true);
+      assert.equal(Object.isFrozen(targetContext.directArgv), true);
+    }
+    const metadataContext =
+      await acquirePlatformReleaseHostNodeToolchainMetadataOperationLaunchContextInternalV2(
+        handle,
+      );
+    assert.equal(metadataContext.admissionScope, "test_fixture");
+    assert.equal(metadataContext.nodeExecutablePath, fixture.node);
+    assert.equal(
+      metadataContext.implementationPath,
+      fixture.compositionFiles["lib/metadata-bootstrap.mjs"],
+    );
+    assert.equal(
+      metadataContext.xattrObserverExecutablePath,
+      fixture.compositionFiles["tools/xattr-observe"],
+    );
+    assert.equal(
+      metadataContext.aclObserverExecutablePath,
+      fixture.compositionFiles["tools/acl-observe"],
+    );
+    assert.deepEqual(metadataContext.directArgv, [
+      "run-metadata-probe-v2",
+      "PLATFORM_RELEASE_METADATA_PROBE_V2",
+    ]);
+    assert.equal(
+      "xattrClearExecutablePath" in metadataContext,
+      false,
+    );
+    assert.equal(
+      "aclClearExecutablePath" in metadataContext,
+      false,
+    );
+    const context =
+      await acquirePlatformReleaseHostNodeToolchainModuleExportLaunchContextInternalV2(
+        handle,
+      );
+    assert.equal(context.admissionScope, "test_fixture");
+    assert.equal(context.nodeExecutablePath, fixture.node);
+    assert.equal(
+      context.releaseBootstrapExecutablePath,
+      fixture.compositionFiles["bin/release-bootstrap"],
+    );
+    assert.deepEqual(context.directArgv, [
+      "run-module-export-probe-v2",
+      "PLATFORM_RELEASE_MODULE_EXPORT_PROBE_V2",
+    ]);
+    assert.equal(
+      context.workingDirectoryPolicy,
+      "authenticated_target_root_v2",
+    );
+    assert.equal(
+      context.environmentPolicy,
+      "exact_empty_environment_v2",
+    );
+    assert.equal(
+      context.releaseBootstrapExecutableContentHash,
+      createHash("sha256")
+        .update(await readFile(
+          fixture.compositionFiles["bin/release-bootstrap"]!,
+        ))
+        .digest("hex"),
+    );
+
+    const target =
+      fixture.compositionFiles["bin/release-bootstrap"]!;
+    await chmod(target, 0o755);
+    await writeFile(target, "composition-command-drift\n");
+    await chmod(target, 0o555);
+    await assert.rejects(
+      acquirePlatformReleaseHostNodeToolchainModuleExportLaunchContextInternalV2(
+        handle,
+      ),
+      {
+        code:
+          "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_COMPOSITION_DRIFT",
+      },
+    );
+  });
+
+  it("joins the network-negative ABI to the exact test Node, wrapper, sandbox and policy", async () => {
+    const fixture = await makeFixtureV2();
+    const bootstrap = await hostAuthorityV2(
+      fixture,
+      "PROFILE_NODE_CLI_STATELESS_EXACT_V2",
+    );
+    const handle =
+      await createPlatformReleaseHostNodeToolchainAuthorityV2ForTest({
+        hostToolchain: bootstrap,
+        compositionFixture: fixture.compositionFixture,
+      });
+    const genericContext =
+      await acquirePlatformReleaseHostNodeToolchainTargetOperationLaunchContextInternalV2(
+        handle,
+        "ABI_PLATFORM_RELEASE_NETWORK_NEGATIVE_PROBE_V2",
+      );
+    const context =
+      await acquirePlatformReleaseHostNodeToolchainNetworkNegativeOperationLaunchContextInternalV2(
+        handle,
+      );
+    const operation =
+      PLATFORM_RELEASE_BOOTSTRAP_OPERATION_ABI_SET_V2.operations.find(
+        (candidate) => candidate.abiRef
+          === "ABI_PLATFORM_RELEASE_NETWORK_NEGATIVE_PROBE_V2",
+      )!;
+
+    assert.equal(context.admissionScope, "test_fixture");
+    assert.equal(
+      context.operationAbiRef,
+      "ABI_PLATFORM_RELEASE_NETWORK_NEGATIVE_PROBE_V2",
+    );
+    assert.equal(context.operationAbiHash, operation.operationHash);
+    assert.equal(
+      context.implementationMemberRef,
+      "BOOTSTRAP_RELEASE_COMPOSITION_NETWORK_WRAPPER_MODULE_V2",
+    );
+    assert.equal(
+      context.moduleExport,
+      "runPlatformReleaseNetworkNegativeProbeV2",
+    );
+    assert.equal(context.nodeExecutablePath, fixture.node);
+    assert.equal(
+      context.nodeExecutableContentHash,
+      createHash("sha256")
+        .update(await readFile(fixture.node))
+        .digest("hex"),
+    );
+    assert.equal(
+      context.releaseBootstrapExecutablePath,
+      fixture.compositionFiles["bin/release-bootstrap"],
+    );
+    assert.equal(
+      context.releaseBootstrapExecutableContentHash,
+      createHash("sha256")
+        .update(await readFile(
+          fixture.compositionFiles["bin/release-bootstrap"]!,
+        ))
+        .digest("hex"),
+    );
+    assert.equal(
+      context.implementationPath,
+      fixture.compositionFiles["lib/network-wrapper.mjs"],
+    );
+    assert.equal(
+      context.implementationContentHash,
+      createHash("sha256")
+        .update(await readFile(
+          fixture.compositionFiles["lib/network-wrapper.mjs"]!,
+        ))
+        .digest("hex"),
+    );
+    assert.equal(
+      context.sandboxPolicyHash,
+      PLATFORM_RELEASE_BOOTSTRAP_NETWORK_NEGATIVE_OPERATION_POLICY_HASH_V2,
+    );
+    assert.equal(
+      context.sandboxExecutablePath,
+      fixture.compositionFiles["tools/sandbox-exec"],
+    );
+    assert.equal(
+      context.sandboxExecutableContentHash,
+      createHash("sha256")
+        .update(await readFile(
+          fixture.compositionFiles["tools/sandbox-exec"]!,
+        ))
+        .digest("hex"),
+    );
+    assert.match(
+      context.sandboxExecutablePhysicalIdentityHash,
+      /^[a-f0-9]{64}$/u,
+    );
+    assert.deepEqual(context.directArgv, [
+      "run-network-negative-probe-v2",
+      "PLATFORM_RELEASE_NETWORK_NEGATIVE_PROBE_V2",
+    ]);
+    assert.equal(
+      context.environmentPolicy,
+      "exact_empty_environment_v2",
+    );
+    assert.equal(
+      context.workingDirectoryPolicy,
+      "authenticated_target_root_v2",
+    );
+    assert.equal(context.timeoutMs, operation.timeoutMs);
+    assert.equal(context.maxStdoutBytes, operation.maxStdoutBytes);
+    assert.equal(context.maxStderrBytes, operation.maxStderrBytes);
+    const {
+      sandboxPolicyHash: _sandboxPolicyHash,
+      sandboxExecutablePath: _sandboxExecutablePath,
+      sandboxExecutableContentHash: _sandboxExecutableContentHash,
+      sandboxExecutablePhysicalIdentityHash:
+        _sandboxExecutablePhysicalIdentityHash,
+      ...baseContext
+    } = context;
+    assert.deepEqual(baseContext, genericContext);
+    assert.equal(Object.isFrozen(context), true);
+    assert.equal(Object.isFrozen(context.directArgv), true);
+
+    for (const unauthenticated of [
+      structuredClone(handle),
+      Object.create(handle),
+      { ...structuredClone(handle), admissionScope: "production_host" },
+    ]) {
+      await assert.rejects(
+        acquirePlatformReleaseHostNodeToolchainTargetOperationLaunchContextInternalV2(
+          unauthenticated as never,
+          "ABI_PLATFORM_RELEASE_NETWORK_NEGATIVE_PROBE_V2",
+        ),
+        {
+          code:
+            "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_HANDLE_UNAUTHENTICATED",
+        },
+      );
+      await assert.rejects(
+        acquirePlatformReleaseHostNodeToolchainNetworkNegativeOperationLaunchContextInternalV2(
+          unauthenticated as never,
+        ),
+        {
+          code:
+            "PLATFORM_RELEASE_HOST_NODE_TOOLCHAIN_V2_HANDLE_UNAUTHENTICATED",
+        },
+      );
+    }
   });
 
   it("executes one exact platform build through the authenticated host Node ABI", async () => {

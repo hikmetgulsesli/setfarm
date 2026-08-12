@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -19,6 +20,10 @@ import {
   type V3DesignContractV2,
 } from "../../../product-compiler/v3-design-contract-v2.js";
 import { resolvePlatformScript } from "../../paths.js";
+import {
+  inspectCompilerEnglishAdmissionLedgerAuthorityV1,
+  type CompilerEnglishAdmissionLedgerAuthorityV1,
+} from "../../../execution/compiler-english-admission-ledger-v1.js";
 
 const ProjectIdentitySchema = z.object({
   schema: z.literal("setfarm.stitch-project-identity.v1"),
@@ -224,7 +229,7 @@ export async function executeDesignPreclaimV2(input: Readonly<{
   ownerInstanceId: string;
   producerReleaseSha: string;
   deviceType: "DESKTOP" | "TABLET" | "MOBILE";
-  uiLanguage: string;
+  englishAdmissionAuthority: CompilerEnglishAdmissionLedgerAuthorityV1;
   provider?: string;
   model?: string;
 }>, dependencies: Readonly<{
@@ -232,6 +237,14 @@ export async function executeDesignPreclaimV2(input: Readonly<{
   generateStage?: typeof generateStitchStageOnceV2;
 }> = {}): Promise<DesignPreclaimV2Result> {
   const contract = prepareV3DesignContractV2(input.prd);
+  const englishAdmissionReceipt = inspectCompilerEnglishAdmissionLedgerAuthorityV1(
+    input.englishAdmissionAuthority,
+  );
+  if (englishAdmissionReceipt.runId !== input.runId
+    || englishAdmissionReceipt.prdHash !== createHash("sha256").update(input.prd, "utf8").digest("hex")
+    || englishAdmissionReceipt.productSpecHash !== hashCanonicalJson(contract.productSpec)) {
+    throw new Error("DESIGN_V2_ENGLISH_ADMISSION_BINDING_MISMATCH");
+  }
   const ensureProject = dependencies.ensureProject ?? ensureStitchProjectIdentityV2;
   const projectId = await ensureProject({ repo: input.repo, projectName: contract.productSpec.product.name });
   const model = input.model ?? "GEMINI_3_1_PRO";
@@ -248,7 +261,6 @@ export async function executeDesignPreclaimV2(input: Readonly<{
     provider: input.provider ?? "stitch",
     model,
     deviceType: input.deviceType,
-    uiLanguage: input.uiLanguage,
     duplicateWaitMs: 15 * 60_000,
     duplicatePollMs: 100,
   }, {

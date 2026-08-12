@@ -216,6 +216,7 @@ const HostNpmPackageTreeV2Schema = z.object({
   totalBytes: z.number().int().positive().max(HOST_NPM_PACKAGE_MAX_TOTAL_BYTES_V2),
   treeHash: Sha256Schema,
   normalizedTreeHash: Sha256Schema,
+  logicalTreeHash: Sha256Schema,
 }).strict();
 
 const HostNodeToolchainProvisioningJoinV2Schema = z.discriminatedUnion("policy", [
@@ -446,3 +447,92 @@ export const HostNodeToolchainReceiptV2Schema =
 export type HostNodeToolchainReceiptV2 = z.infer<
   typeof HostNodeToolchainReceiptV2Schema
 >;
+
+export const HOST_NODE_TOOLCHAIN_LOGICAL_PROJECTION_V3_SCHEMA =
+  "setfarm.host-node-toolchain-logical-projection.v3" as const;
+export const HOST_NODE_TOOLCHAIN_LOGICAL_PROJECTION_V3_VERSION =
+  "3.0.0" as const;
+
+export type HostNodeToolchainLogicalProjectionV3 = Readonly<{
+  schema: typeof HOST_NODE_TOOLCHAIN_LOGICAL_PROJECTION_V3_SCHEMA;
+  version: typeof HOST_NODE_TOOLCHAIN_LOGICAL_PROJECTION_V3_VERSION;
+  nodeRuntimeLogicalHash: string;
+  npmClosureLogicalHash: string;
+}>;
+
+/**
+ * Projects only retry-stable Node/npm semantics. Filesystem ownership, mode,
+ * link count, device/inode and timestamps remain operational drift evidence
+ * in the authenticated host receipt and private V3 physical census; they are
+ * deliberately excluded from logical build identity.
+ */
+export function projectHostNodeToolchainLogicalIdentityV3(
+  receipt: HostNodeToolchainReceiptV2,
+): HostNodeToolchainLogicalProjectionV3 {
+  const value = HostNodeToolchainReceiptV2Schema.parse(receipt);
+  const node = {
+    executableRef: value.node.executableRef,
+    compatibilityRange: value.requirement.nodeCompatibilityRange,
+    version: value.node.version,
+    modulesAbi: value.node.modulesAbi,
+    napiVersion: value.node.napiVersion,
+    host: {
+      platform: value.host.platform,
+      architecture: value.host.architecture,
+      macosProductVersion: value.host.macosProductVersion,
+      macosBuildVersion: value.host.macosBuildVersion,
+      darwinKernelRelease: value.host.darwinKernelRelease,
+    },
+    executable: {
+      contentHash: value.node.executable.contentHash,
+      byteLength: value.node.executable.byteLength,
+    },
+    nonSystemDynamicLibraries: {
+      resolutionPolicy: value.node.nonSystemDynamicLibraries.resolutionPolicy,
+      systemLibraryTrust: value.node.nonSystemDynamicLibraries.systemLibraryTrust,
+      memberCount: value.node.nonSystemDynamicLibraries.memberCount,
+      members: value.node.nonSystemDynamicLibraries.members.map((member) => ({
+        memberRef: member.memberRef,
+        installNameHash: member.installNameHash,
+        contentHash: member.file.contentHash,
+        byteLength: member.file.byteLength,
+      })),
+    },
+  };
+  const npm = {
+    executableRef: value.npm.executableRef,
+    packageName: value.npm.packageName,
+    exactVersion: value.requirement.npmExactVersion,
+    version: value.npm.version,
+    cliLocator: value.npm.cliLocator,
+    cli: {
+      contentHash: value.npm.cli.contentHash,
+      byteLength: value.npm.cli.byteLength,
+    },
+    packageJsonLocator: value.npm.packageJsonLocator,
+    packageJson: {
+      contentHash: value.npm.packageJson.contentHash,
+      byteLength: value.npm.packageJson.byteLength,
+    },
+    builtinNpmrc: value.npm.builtinNpmrc,
+    packageTree: {
+      treeContract: value.npm.packageTree.treeContract,
+      fileCount: value.npm.packageTree.fileCount,
+      directoryCount: value.npm.packageTree.directoryCount,
+      totalBytes: value.npm.packageTree.totalBytes,
+      logicalTreeHash: value.npm.packageTree.logicalTreeHash,
+    },
+  };
+  return Object.freeze({
+    schema: HOST_NODE_TOOLCHAIN_LOGICAL_PROJECTION_V3_SCHEMA,
+    version: HOST_NODE_TOOLCHAIN_LOGICAL_PROJECTION_V3_VERSION,
+    nodeRuntimeLogicalHash: hashCanonicalJson({
+      schema: "setfarm.host-node-runtime-logical-hash.v3",
+      node,
+    }),
+    npmClosureLogicalHash: hashCanonicalJson({
+      schema: "setfarm.host-npm-closure-logical-hash.v3",
+      npm,
+    }),
+  });
+}

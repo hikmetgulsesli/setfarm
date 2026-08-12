@@ -18,6 +18,7 @@ import {
   type DesignInteractionGraphV2,
 } from "../../../product-compiler/schemas/design-interaction-graph-v2.js";
 import {
+  ProductSpecV2EnglishWriteSchema,
   type ProductActionV2,
   type ProductSpecV2,
 } from "../../../product-compiler/schemas/product-spec-v2.js";
@@ -597,15 +598,20 @@ function projectCompatibilityStories(input: Readonly<{
 export function buildProductSemanticsV2StoriesOutput(input: Readonly<{
   repo: string;
   planText: string;
+  expectedProductSpecHash: string;
   maxStories?: number | null;
 }>): string {
   const plan = resolveCanonicalProductSpecV2FromPlan({ text: input.planText });
   if (plan.status !== "resolved") {
     throw new Error(`V2_STORY_PRODUCT_SPEC_REJECTED:${plan.rejectionCodes.join(",")}`);
   }
-  if (!plan.productSpec.delivery.designRequired) {
+  const productSpec = ProductSpecV2EnglishWriteSchema.parse(plan.productSpec);
+  if (hashCanonicalJson(productSpec) !== input.expectedProductSpecHash) {
+    throw new Error("V2_STORY_ENGLISH_ADMISSION_PRODUCT_SPEC_MISMATCH");
+  }
+  if (!productSpec.delivery.designRequired) {
     const definitions = produceStoryDefinitionsV2({
-      productSpec: plan.productSpec,
+      productSpec,
       designGraph: null,
     });
     if (definitions.status !== "produced") {
@@ -621,7 +627,7 @@ export function buildProductSemanticsV2StoriesOutput(input: Readonly<{
     const projection: ProductSemanticsV2CompatibilityProjection = {
       ...projected,
       productSpecSourceHash: plan.sourceHash,
-      productSpecHash: hashCanonicalJson(plan.productSpec),
+      productSpecHash: hashCanonicalJson(productSpec),
       designGraphHash: null,
     };
     return [
@@ -641,7 +647,7 @@ export function buildProductSemanticsV2StoriesOutput(input: Readonly<{
     label: "GENERATION_TARGETS",
     parse: (value) => DesignGenerationTargetsV2Schema.parse(value),
   });
-  const producedTargets = produceDesignGenerationTargetsV2(plan.productSpec);
+  const producedTargets = produceDesignGenerationTargetsV2(productSpec);
   if (producedTargets.status !== "produced") {
     throw new Error(`V2_STORY_GENERATION_TARGETS_REJECTED:${producedTargets.rejectionCodes.join(",")}`);
   }
@@ -678,7 +684,7 @@ export function buildProductSemanticsV2StoriesOutput(input: Readonly<{
   const renderedSemanticsHash = hashCanonicalJson(renderedSemantics);
   const candidateSelectionHash = hashCanonicalJson(candidateSelection);
   if (
-    generationTargets.productSpecHash !== hashCanonicalJson(plan.productSpec)
+    generationTargets.productSpecHash !== hashCanonicalJson(productSpec)
     || renderedSemantics.generationTargetsHash !== generationTargetsHash
     || renderedSemantics.directResponseEvidenceHash !== directResponseEvidenceHash
     || candidateSelection.generationTargetsHash !== generationTargetsHash
@@ -692,7 +698,7 @@ export function buildProductSemanticsV2StoriesOutput(input: Readonly<{
     throw new Error("V2_STORY_DESIGN_AUTHORITY_HASH_MISMATCH");
   }
   const reproducedGraph = produceDesignInteractionGraphV2({
-    productSpec: plan.productSpec,
+    productSpec,
     generationTargets,
     renderedSemantics,
     candidateSelection,
@@ -702,7 +708,7 @@ export function buildProductSemanticsV2StoriesOutput(input: Readonly<{
     throw new Error("V2_STORY_DESIGN_GRAPH_REPRODUCTION_MISMATCH");
   }
   const definitions = produceStoryDefinitionsV2({
-    productSpec: plan.productSpec,
+    productSpec,
     designGraph: reproducedGraph,
   });
   if (definitions.status !== "produced") {
@@ -720,7 +726,7 @@ export function buildProductSemanticsV2StoriesOutput(input: Readonly<{
   const projection: ProductSemanticsV2CompatibilityProjection = {
     ...projected,
     productSpecSourceHash: plan.sourceHash,
-    productSpecHash: hashCanonicalJson(plan.productSpec),
+    productSpecHash: hashCanonicalJson(productSpec),
     designGraphHash: hashCanonicalJson(reproducedGraph),
   };
   return [

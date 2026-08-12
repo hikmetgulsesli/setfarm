@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { appendFileSync } from "node:fs";
 import {
   chmod,
   lstat,
@@ -7,6 +8,7 @@ import {
   readFile,
   readdir,
   realpath,
+  rename,
   rm,
   symlink,
   writeFile,
@@ -25,8 +27,14 @@ import {
 import {
   NODE_SCAFFOLD_PRODUCTION_MATERIALIZATION_CONTRACT_HASH_V2,
   NodeScaffoldProductionMaterializationErrorV2,
+  assertRawNpmInstallObjectCurrentInternalV2,
+  captureRawNpmInstallTreeInternalV2,
+  getRawNpmInstallExactObjectIdentityInternalV2,
   materializeNodeScaffoldProductionDependenciesInternalV2,
+  readExactNpmLockRegularFileInternalV2,
+  removeRawNpmInstallExactOwnedObjectsInternalV2,
   revalidateNodeScaffoldProductionDependenciesInternalV2,
+  sealNpmDependencyTreeInternalV2,
 } from "../../src/product-compiler/node-scaffold-production-materialization-v2.js";
 
 const CLI_PROFILE = "PROFILE_NODE_CLI_STATELESS_EXACT_V2";
@@ -174,6 +182,440 @@ function expectCode(
 }
 
 describe("Node scaffold production materialization V2", () => {
+  it("bounds exact reads before allocation and preserves the growth and close causes", async () => {
+    const root = await realpath(await mkdtemp(path.join(
+      os.tmpdir(),
+      "setfarm-production-exact-read-growth-v2-",
+    )));
+    const lockPath = path.join(root, "package-lock.json");
+    try {
+      await chmod(root, 0o700);
+      await writeFile(lockPath, "bounded\n", { mode: 0o600 });
+      assert.throws(
+        () => readExactNpmLockRegularFileInternalV2({
+          absolutePath: lockPath,
+          label: "Injected exact lock",
+          maxBytes: 1_024,
+          beforeReadForTest: () => appendFileSync(lockPath, "growth\n"),
+          afterDescriptorCloseForTest: () => {
+            throw new Error("INJECTED_EXACT_READ_CLOSE_FAILURE");
+          },
+        }),
+        (error: unknown) =>
+          error instanceof NodeScaffoldProductionMaterializationErrorV2
+          && error.code === "NODE_SCAFFOLD_PRODUCTION_MATERIALIZATION_V2_INSTALL_TREE_INVALID"
+          && error.cause instanceof AggregateError
+          && error.cause.errors.length === 2
+          && error.cause.errors[0] instanceof NodeScaffoldProductionMaterializationErrorV2
+          && /changed while it was captured/u.test(error.cause.errors[0].message)
+          && error.cause.errors[1] instanceof Error
+          && error.cause.errors[1].message === "INJECTED_EXACT_READ_CLOSE_FAILURE",
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("stops a growing install file at its admitted size and still reports close failure", async () => {
+    const root = await realpath(await mkdtemp(path.join(
+      os.tmpdir(),
+      "setfarm-production-hash-growth-v2-",
+    )));
+    const installedFile = path.join(root, "package.json");
+    try {
+      await chmod(root, 0o700);
+      await writeFile(installedFile, "{}\n", { mode: 0o600 });
+      assert.throws(
+        () => captureRawNpmInstallTreeInternalV2(root, {
+          beforeFileRead: (locator) => {
+            if (locator === "package.json") appendFileSync(installedFile, "growth\n");
+          },
+          afterFileDescriptorClose: (locator) => {
+            if (locator === "package.json") {
+              throw new Error("INJECTED_HASH_CLOSE_FAILURE");
+            }
+          },
+        }),
+        (error: unknown) =>
+          error instanceof NodeScaffoldProductionMaterializationErrorV2
+          && error.code === "NODE_SCAFFOLD_PRODUCTION_MATERIALIZATION_V2_INSTALL_TREE_INVALID"
+          && error.cause instanceof AggregateError
+          && error.cause.errors.length === 2
+          && error.cause.errors[0] instanceof NodeScaffoldProductionMaterializationErrorV2
+          && /exceeded its admitted byte length/u.test(error.cause.errors[0].message)
+          && error.cause.errors[1] instanceof Error
+          && error.cause.errors[1].message === "INJECTED_HASH_CLOSE_FAILURE",
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("bounds raw directory enumeration before materializing the full namespace", async () => {
+    const root = await realpath(await mkdtemp(path.join(
+      os.tmpdir(),
+      "setfarm-production-directory-bound-v2-",
+    )));
+    try {
+      await chmod(root, 0o700);
+      await Promise.all([
+        writeFile(path.join(root, "a"), "a", { mode: 0o600 }),
+        writeFile(path.join(root, "b"), "b", { mode: 0o600 }),
+      ]);
+      assert.throws(
+        () => captureRawNpmInstallTreeInternalV2(root, {
+          maxDirectoryEntriesForTest: 1,
+        }),
+        (error: unknown) =>
+          error instanceof NodeScaffoldProductionMaterializationErrorV2
+          && /exceeded its fixed membership bound/u.test(error.message),
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves path-sync primary and descriptor-close failures in order", async () => {
+    const root = await realpath(await mkdtemp(path.join(
+      os.tmpdir(),
+      "setfarm-production-sync-finalizer-v2-",
+    )));
+    const member = path.join(root, "member.js");
+    try {
+      await chmod(root, 0o700);
+      await writeFile(member, "export {};\n", { mode: 0o600 });
+      assert.throws(
+        () => sealNpmDependencyTreeInternalV2(root, {
+          beforePathSync: (absolutePath) => {
+            if (absolutePath === member) throw new Error("INJECTED_SYNC_PRIMARY");
+          },
+          afterPathDescriptorClose: (absolutePath) => {
+            if (absolutePath === member) throw new Error("INJECTED_SYNC_CLOSE");
+          },
+        }),
+        (error: unknown) =>
+          error instanceof NodeScaffoldProductionMaterializationErrorV2
+          && error.cause instanceof AggregateError
+          && error.cause.errors.length === 2
+          && error.cause.errors[0] instanceof Error
+          && error.cause.errors[0].message === "INJECTED_SYNC_PRIMARY"
+          && error.cause.errors[1] instanceof Error
+          && error.cause.errors[1].message === "INJECTED_SYNC_CLOSE",
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("treats source-only empty cleanup selection as a census-free no-op", () => {
+    assert.doesNotThrow(() => removeRawNpmInstallExactOwnedObjectsInternalV2({
+      entries: Object.freeze([]),
+      nodeModulesRoot: path.join(os.tmpdir(), "source-only-node-modules-not-created"),
+      locators: [],
+      onFailure: (message, cause) => {
+        throw new Error(message, { cause });
+      },
+    }));
+  });
+
+  it("fences exact hidden-lock and bin targets after the raw snapshot", async () => {
+    const root = await realpath(await mkdtemp(path.join(
+      os.tmpdir(),
+      "setfarm-production-census-v2-",
+    )));
+    const hiddenLock = path.join(root, ".package-lock.json");
+    const binRoot = path.join(root, ".bin");
+    const hiddenLockBackup = `${hiddenLock}.old`;
+    const binRootBackup = `${binRoot}.old`;
+    const rootBackup = `${root}.old`;
+    try {
+      await chmod(root, 0o700);
+      await writeFile(hiddenLock, "original\n", { mode: 0o600 });
+      await mkdir(binRoot, { mode: 0o700 });
+      const entries = captureRawNpmInstallTreeInternalV2(root);
+      const assertReplacement = (locator: string): void => {
+        assertRawNpmInstallObjectCurrentInternalV2({
+          entries,
+          nodeModulesRoot: root,
+          locator,
+          expected: getRawNpmInstallExactObjectIdentityInternalV2(
+            entries,
+            locator,
+          ),
+          onFailure: (message) => {
+            throw new Error(message);
+          },
+        });
+      };
+      await rename(hiddenLock, hiddenLockBackup);
+      await writeFile(hiddenLock, "replacement\n", { mode: 0o600 });
+      assert.throws(
+        () => assertReplacement(".package-lock.json"),
+        /was replaced or changed/,
+      );
+      await rename(binRoot, binRootBackup);
+      await mkdir(binRoot, { mode: 0o700 });
+      assert.throws(
+        () => assertReplacement(".bin"),
+        /was replaced or changed/,
+      );
+      await rename(root, rootBackup);
+      await mkdir(root, { mode: 0o700 });
+      assert.throws(
+        () => assertReplacement(".bin"),
+        /root was replaced or changed/,
+      );
+      await rm(root, { recursive: true, force: true });
+      await rename(rootBackup, root);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+      await rm(rootBackup, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves a foreign bin descendant instead of recursively deleting it", async () => {
+    const root = await realpath(await mkdtemp(path.join(
+      os.tmpdir(),
+      "setfarm-production-cleanup-census-v2-",
+    )));
+    const binRoot = path.join(root, ".bin");
+    const owned = path.join(binRoot, "owned");
+    const displaced = `${root}.owned`;
+    const canary = path.join(owned, "foreign", "canary.txt");
+    try {
+      await chmod(root, 0o700);
+      await mkdir(owned, { recursive: true, mode: 0o700 });
+      await writeFile(path.join(owned, "payload.txt"), "owned\n", {
+        mode: 0o600,
+      });
+      const entries = captureRawNpmInstallTreeInternalV2(root);
+      await rename(owned, displaced);
+      await mkdir(path.dirname(canary), { recursive: true, mode: 0o700 });
+      await writeFile(canary, "foreign\n", { mode: 0o600 });
+
+      assert.throws(
+        () => removeRawNpmInstallExactOwnedObjectsInternalV2({
+          entries,
+          nodeModulesRoot: root,
+          locators: [".bin"],
+          onFailure: (message, cause) => {
+            throw new Error(message, { cause });
+          },
+        }),
+        /was replaced or changed/,
+      );
+      assert.equal(await readFile(canary, "utf8"), "foreign\n");
+      assert.equal((await lstat(binRoot)).isDirectory(), true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+      await rm(displaced, { recursive: true, force: true });
+    }
+  });
+
+  it("removes an admitted 0555 bin tree through exact descriptor-bound chmod", async () => {
+    const root = await realpath(await mkdtemp(path.join(
+      os.tmpdir(),
+      "setfarm-production-readonly-bin-v2-",
+    )));
+    const nodeModulesParent = path.join(root, "package", "node_modules");
+    const packageRoot = path.join(root, "package");
+    const binRoot = path.join(nodeModulesParent, ".bin");
+    const sentinel = path.join(nodeModulesParent, "keep.txt");
+    try {
+      await chmod(root, 0o700);
+      await mkdir(binRoot, { recursive: true, mode: 0o700 });
+      await writeFile(path.join(binRoot, "tool"), "#!/bin/sh\n", { mode: 0o500 });
+      await writeFile(sentinel, "keep\n", { mode: 0o600 });
+      await chmod(binRoot, 0o555);
+      await chmod(nodeModulesParent, 0o555);
+      await chmod(packageRoot, 0o555);
+      await chmod(root, 0o555);
+      const entries = captureRawNpmInstallTreeInternalV2(root);
+
+      removeRawNpmInstallExactOwnedObjectsInternalV2({
+        entries,
+        nodeModulesRoot: root,
+        locators: ["package/node_modules/.bin"],
+        onFailure: (message, cause) => {
+          throw new Error(message, { cause });
+        },
+      });
+
+      await assert.rejects(lstat(binRoot), { code: "ENOENT" });
+      assert.equal(await readFile(sentinel, "utf8"), "keep\n");
+      assert.equal((await lstat(nodeModulesParent)).mode & 0o7777, 0o555);
+      assert.equal((await lstat(packageRoot)).mode & 0o7777, 0o555);
+      assert.equal((await lstat(root)).mode & 0o7777, 0o555);
+    } finally {
+      await makeWritable(root);
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("restores every surviving directory mode when exact cleanup fails after chmod", async () => {
+    const root = await realpath(await mkdtemp(path.join(
+      os.tmpdir(),
+      "setfarm-production-readonly-bin-failure-v2-",
+    )));
+    const packageRoot = path.join(root, "package");
+    const nodeModulesParent = path.join(packageRoot, "node_modules");
+    const binRoot = path.join(nodeModulesParent, ".bin");
+    const tool = path.join(binRoot, "tool");
+    try {
+      await chmod(root, 0o700);
+      await mkdir(binRoot, { recursive: true, mode: 0o700 });
+      await writeFile(tool, "#!/bin/sh\n", { mode: 0o500 });
+      await chmod(binRoot, 0o555);
+      await chmod(nodeModulesParent, 0o555);
+      await chmod(packageRoot, 0o555);
+      await chmod(root, 0o555);
+      const entries = captureRawNpmInstallTreeInternalV2(root);
+
+      assert.throws(
+        () => removeRawNpmInstallExactOwnedObjectsInternalV2({
+          entries,
+          nodeModulesRoot: root,
+          locators: ["package/node_modules/.bin"],
+          afterDirectoryWritableForTest: (locator) => {
+            if (locator === "package/node_modules/.bin") {
+              throw new Error("INJECTED_AFTER_DIRECTORY_CHMOD");
+            }
+          },
+          onFailure: (message, cause) => {
+            throw new Error(message, { cause });
+          },
+        }),
+        /could not be made owner-writable through its exact descriptor/,
+      );
+      assert.equal(await readFile(tool, "utf8"), "#!/bin/sh\n");
+      assert.equal((await lstat(binRoot)).mode & 0o7777, 0o555);
+      assert.equal((await lstat(nodeModulesParent)).mode & 0o7777, 0o555);
+      assert.equal((await lstat(packageRoot)).mode & 0o7777, 0o555);
+      assert.equal((await lstat(root)).mode & 0o7777, 0o555);
+    } finally {
+      await makeWritable(root);
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves chmod and descriptor-close failures while restoring every surviving mode", async () => {
+    const root = await realpath(await mkdtemp(path.join(
+      os.tmpdir(),
+      "setfarm-production-readonly-bin-double-failure-v2-",
+    )));
+    const packageRoot = path.join(root, "package");
+    const nodeModulesParent = path.join(packageRoot, "node_modules");
+    const binRoot = path.join(nodeModulesParent, ".bin");
+    const tool = path.join(binRoot, "tool");
+    try {
+      await chmod(root, 0o700);
+      await mkdir(binRoot, { recursive: true, mode: 0o700 });
+      await writeFile(tool, "#!/bin/sh\n", { mode: 0o500 });
+      for (const directory of [binRoot, nodeModulesParent, packageRoot, root]) {
+        await chmod(directory, 0o555);
+      }
+      const entries = captureRawNpmInstallTreeInternalV2(root);
+
+      assert.throws(
+        () => removeRawNpmInstallExactOwnedObjectsInternalV2({
+          entries,
+          nodeModulesRoot: root,
+          locators: ["package/node_modules/.bin"],
+          afterDirectoryWritableForTest: (locator) => {
+            if (locator === "package/node_modules/.bin") {
+              throw new Error("INJECTED_DIRECTORY_MUTATION_FAILURE");
+            }
+          },
+          afterDirectoryDescriptorCloseForTest: (locator, phase) => {
+            if (locator === "package/node_modules/.bin" && phase === "make_writable") {
+              throw new Error("INJECTED_DESCRIPTOR_CLOSE_FAILURE");
+            }
+          },
+          onFailure: (message, cause) => {
+            throw new Error(message, { cause });
+          },
+        }),
+        (error: unknown) =>
+          error instanceof Error
+          && error.cause instanceof AggregateError
+          && error.cause.errors.length === 2
+          && error.cause.errors[0] instanceof Error
+          && error.cause.errors[0].message === "INJECTED_DIRECTORY_MUTATION_FAILURE"
+          && error.cause.errors[1] instanceof Error
+          && error.cause.errors[1].message === "INJECTED_DESCRIPTOR_CLOSE_FAILURE",
+      );
+      assert.equal(await readFile(tool, "utf8"), "#!/bin/sh\n");
+      assert.equal((await lstat(binRoot)).mode & 0o7777, 0o555);
+      assert.equal((await lstat(nodeModulesParent)).mode & 0o7777, 0o555);
+      assert.equal((await lstat(packageRoot)).mode & 0o7777, 0o555);
+      assert.equal((await lstat(root)).mode & 0o7777, 0o555);
+    } finally {
+      await makeWritable(root);
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("aggregates a restoration-close failure without losing the primary cleanup cause", async () => {
+    const root = await realpath(await mkdtemp(path.join(
+      os.tmpdir(),
+      "setfarm-production-mode-restore-close-failure-v2-",
+    )));
+    const packageRoot = path.join(root, "package");
+    const nodeModulesParent = path.join(packageRoot, "node_modules");
+    const binRoot = path.join(nodeModulesParent, ".bin");
+    const tool = path.join(binRoot, "tool");
+    try {
+      await chmod(root, 0o700);
+      await mkdir(binRoot, { recursive: true, mode: 0o700 });
+      await writeFile(tool, "#!/bin/sh\n", { mode: 0o500 });
+      for (const directory of [binRoot, nodeModulesParent, packageRoot, root]) {
+        await chmod(directory, 0o555);
+      }
+      const entries = captureRawNpmInstallTreeInternalV2(root);
+
+      assert.throws(
+        () => removeRawNpmInstallExactOwnedObjectsInternalV2({
+          entries,
+          nodeModulesRoot: root,
+          locators: ["package/node_modules/.bin"],
+          afterDirectoryWritableForTest: (locator) => {
+            if (locator === "package/node_modules/.bin") {
+              throw new Error("INJECTED_PRIMARY_CLEANUP_FAILURE");
+            }
+          },
+          afterDirectoryDescriptorCloseForTest: (locator, phase) => {
+            if (locator === "package/node_modules/.bin" && phase === "restore_mode") {
+              throw new Error("INJECTED_MODE_RESTORE_CLOSE_FAILURE");
+            }
+          },
+          onFailure: (message, cause) => {
+            throw new Error(message, { cause });
+          },
+        }),
+        (error: unknown) => {
+          if (!(error instanceof Error) || !(error.cause instanceof AggregateError)) {
+            return false;
+          }
+          const [primary, restoreClose] = error.cause.errors;
+          return error.cause.errors.length === 2
+            && primary instanceof Error
+            && primary.cause instanceof Error
+            && primary.cause.message === "INJECTED_PRIMARY_CLEANUP_FAILURE"
+            && restoreClose instanceof Error
+            && restoreClose.message === "INJECTED_MODE_RESTORE_CLOSE_FAILURE";
+        },
+      );
+      assert.equal(await readFile(tool, "utf8"), "#!/bin/sh\n");
+      assert.equal((await lstat(binRoot)).mode & 0o7777, 0o555);
+      assert.equal((await lstat(nodeModulesParent)).mode & 0o7777, 0o555);
+      assert.equal((await lstat(packageRoot)).mode & 0o7777, 0o555);
+      assert.equal((await lstat(root)).mode & 0o7777, 0o555);
+    } finally {
+      await makeWritable(root);
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("seals and freshly reproduces the exact empty CLI production closure", async () => {
     const fixture = await createInstalledFixture(CLI_PROFILE);
     try {

@@ -3,10 +3,10 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { writeLibraryPackSelection } from "../dist/installer/library-packs/ledger.js";
-import { selectLibraryPacks } from "../dist/installer/library-packs/select.js";
-import { resolveStackContract } from "../dist/installer/stack-contract/reconcile.js";
-import { writeStackContract } from "../dist/installer/stack-contract/ledger.js";
+import { writeLibraryPackSelection } from "../src/installer/library-packs/ledger.js";
+import { selectLibraryPacks } from "../src/installer/library-packs/select.js";
+import { resolveStackContract } from "../src/installer/stack-contract/reconcile.js";
+import { writeStackContract } from "../src/installer/stack-contract/ledger.js";
 import {
   appendSupervisorRepairHistory,
   collectOpenSupervisorFindings,
@@ -14,9 +14,9 @@ import {
   readSupervisorLedgerSummary,
   supervisorLedgerPaths,
   writeSupervisorFinalEvidence,
-} from "../dist/installer/supervisor/ledger.js";
-import { createEmptySupervisorState, writeSupervisorState, writeSupervisorVisualResult } from "../dist/installer/supervisor/state.js";
-import type { SupervisorEvidence, SupervisorIntervention, SupervisorVisualResult } from "../dist/installer/supervisor/types.js";
+} from "../src/installer/supervisor/ledger.js";
+import { createEmptySupervisorState, writeSupervisorState, writeSupervisorVisualResult } from "../src/installer/supervisor/state.js";
+import type { SupervisorEvidence, SupervisorIntervention, SupervisorVisualResult } from "../src/installer/supervisor/types.js";
 
 function tmpDir(name: string): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), `setfarm-${name}-`));

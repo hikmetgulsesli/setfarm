@@ -1,4 +1,3 @@
-import { rmSync } from "node:fs";
 import path from "node:path";
 
 import {
@@ -35,6 +34,7 @@ import {
   normalizeNodeScaffoldRuntimeMetadataInternalV2,
   parseNpmLockJsonObjectInternalV2,
   readExactNpmLockRegularFileInternalV2,
+  removeRawNpmInstallExactOwnedObjectsInternalV2,
   sealNpmDependencyTreeInternalV2,
   validateEveryAndOnlyNpmPackageRootsInternalV2,
   validateNpmBinSurfaceInternalV2,
@@ -1202,19 +1202,19 @@ export function materializePlatformReleaseBuildToolchainTreeInternalV2(
         "Installed dependency tree changed across exact lock validation",
       );
     }
-    rmSync(
-      path.join(nodeModulesRoot, ".package-lock.json"),
-      { force: false },
-    );
-    for (const directory of validated.binDirectories) {
-      rmSync(
-        path.join(
-          nodeModulesRoot,
-          ...directory.split("/"),
-        ),
-        { recursive: true, force: false },
-      );
-    }
+    removeRawNpmInstallExactOwnedObjectsInternalV2({
+      entries: rawEntries,
+      nodeModulesRoot,
+      locators: [
+        ".package-lock.json",
+        ...validated.binDirectories,
+      ],
+      onFailure: (message, cause) => fail(
+        "PLATFORM_RELEASE_BUILD_TOOLCHAIN_V2_INSTALL_TREE_INVALID",
+        message,
+        cause,
+      ),
+    });
     normalizeNodeScaffoldRuntimeMetadataInternalV2(
       input.admissionScope,
       nodeModulesRoot,

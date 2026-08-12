@@ -13,6 +13,7 @@ import {
   rmdirSync,
   unlinkSync,
   writeSync,
+  type BigIntStats,
   type Stats,
 } from "node:fs";
 import path from "node:path";
@@ -22,6 +23,9 @@ import {
   getCodeOwnedNodeToolchainDistributionArtifactV2,
   getCodeOwnedNodeToolchainDistributionManifestV2,
 } from "./node-toolchain-distribution-manifest-v2.js";
+import {
+  matchesExactStableFilesystemObjectV2,
+} from "./exact-stable-filesystem-identity-v2.js";
 import {
   NODE_TOOLCHAIN_DISTRIBUTION_MANIFEST_V2_SCHEMA,
   NODE_TOOLCHAIN_DISTRIBUTION_VERIFICATION_RECEIPT_V2_SCHEMA,
@@ -163,6 +167,35 @@ function sameFingerprint(left: FileFingerprintV2, right: FileFingerprintV2): boo
     && left.changedMs === right.changedMs;
 }
 
+function assertExactObjectStableIdentityV2(input: Readonly<{
+  absolutePath: string;
+  expected: FileFingerprintV2;
+  objectKind: "ordinary_file" | "directory";
+}>): void {
+  let stat: BigIntStats;
+  try {
+    stat = lstatSync(input.absolutePath, { bigint: true });
+  } catch (error) {
+    return fail(
+      "NODE_TOOLCHAIN_DISTRIBUTION_V2_CLEANUP_FAILED",
+      "Private distribution cleanup object identity could not be captured exactly",
+      error,
+    );
+  }
+  if (
+    !matchesExactStableFilesystemObjectV2({
+      stat,
+      expected: input.expected,
+      objectKind: input.objectKind,
+    })
+  ) {
+    return fail(
+      "NODE_TOOLCHAIN_DISTRIBUTION_V2_CLEANUP_FAILED",
+      "Private distribution cleanup object kind or stable identity changed",
+    );
+  }
+}
+
 function deepFreezeJson<T>(value: T): T {
   if (value === null || typeof value !== "object") return value;
   const pending: object[] = [value as object];
@@ -222,7 +255,14 @@ function closeQuietly(descriptor: number | undefined): void {
   }
 }
 
-function cleanupPrivateRoot(privateRoot: string, privateArchivePath: string): void {
+function cleanupPrivateRoot(
+  privateRoot: string,
+  privateArchivePath: string,
+  expected?: Readonly<{
+    root: FileFingerprintV2;
+    archive: FileFingerprintV2;
+  }>,
+): void {
   try {
     const names = readdirSync(privateRoot);
     if (names.length > 1 || (names.length === 1 && names[0] !== path.basename(privateArchivePath))) {
@@ -231,7 +271,23 @@ function cleanupPrivateRoot(privateRoot: string, privateArchivePath: string): vo
         "Private distribution root contains an unowned entry",
       );
     }
-    if (names.length === 1) unlinkSync(privateArchivePath);
+    if (names.length === 1) {
+      if (expected) {
+        assertExactObjectStableIdentityV2({
+          absolutePath: privateArchivePath,
+          expected: expected.archive,
+          objectKind: "ordinary_file",
+        });
+      }
+      unlinkSync(privateArchivePath);
+    }
+    if (expected) {
+      assertExactObjectStableIdentityV2({
+        absolutePath: privateRoot,
+        expected: expected.root,
+        objectKind: "directory",
+      });
+    }
     rmdirSync(privateRoot);
   } catch (error) {
     if (error instanceof NodeToolchainDistributionAuthorityErrorV2) throw error;
@@ -513,7 +569,14 @@ async function verify(input: Readonly<{
     const state: PrivateArchiveStateV2 = Object.freeze({ ...copied, receipt });
     return new VerifiedNodeToolchainDistributionArchiveV2(handleConstructorCapabilityV2, state);
   } catch (error) {
-    cleanupPrivateRoot(copied.privateRoot, copied.privateArchivePath);
+    cleanupPrivateRoot(
+      copied.privateRoot,
+      copied.privateArchivePath,
+      {
+        root: copied.privateRootFingerprint,
+        archive: copied.privateArchiveFingerprint,
+      },
+    );
     throw error;
   }
 }
@@ -723,7 +786,14 @@ export async function disposeVerifiedNodeToolchainDistributionArchiveV2(
     );
   }
   await revalidateVerifiedNodeToolchainDistributionArchiveV2(handle);
-  cleanupPrivateRoot(state.privateRoot, state.privateArchivePath);
+  cleanupPrivateRoot(
+    state.privateRoot,
+    state.privateArchivePath,
+    {
+      root: state.privateRootFingerprint,
+      archive: state.privateArchiveFingerprint,
+    },
+  );
   privateArchiveStateV2.delete(handle);
   disposedHandlesV2.add(handle);
 }

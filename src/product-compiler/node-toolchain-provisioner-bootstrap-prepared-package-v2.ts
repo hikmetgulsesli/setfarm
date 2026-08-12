@@ -17,6 +17,7 @@ import {
   rmdirSync,
   unlinkSync,
   writeSync,
+  type BigIntStats,
   type Stats,
 } from "node:fs";
 import path from "node:path";
@@ -53,6 +54,9 @@ import {
   type NodeToolchainProvisionerBootstrapPreparedPackageReceiptHashPayloadV2,
   type NodeToolchainProvisionerBootstrapPreparedPackageReceiptV2,
 } from "./schemas/node-toolchain-provisioner-bootstrap-prepared-package-v2.js";
+import {
+  matchesExactStableFilesystemObjectV2,
+} from "./exact-stable-filesystem-identity-v2.js";
 
 const PRODUCTION_STAGE_PREFIX_V2 =
   "/private/tmp/setfarm-node-toolchain-bootstrap-prepared-v2-" as const;
@@ -99,6 +103,7 @@ type FingerprintV2 = Readonly<{
 }>;
 
 type DirectoryCaptureV2 = Readonly<{
+  absolutePath: string;
   locator: string;
   fingerprint: FingerprintV2;
   entries: readonly string[];
@@ -208,6 +213,35 @@ function sameFingerprint(left: FingerprintV2, right: FingerprintV2): boolean {
     && left.byteLength === right.byteLength
     && left.modifiedMs === right.modifiedMs
     && left.changedMs === right.changedMs;
+}
+
+function assertExactObjectStableIdentityV2(input: Readonly<{
+  absolutePath: string;
+  expected: FingerprintV2;
+  objectKind: "ordinary_file" | "directory";
+}>): void {
+  let stat: BigIntStats;
+  try {
+    stat = lstatSync(input.absolutePath, { bigint: true });
+  } catch (error) {
+    return fail(
+      "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_PREPARED_V2_CLEANUP_FAILED",
+      "Prepared bootstrap cleanup object identity could not be captured exactly",
+      error,
+    );
+  }
+  if (
+    !matchesExactStableFilesystemObjectV2({
+      stat,
+      expected: input.expected,
+      objectKind: input.objectKind,
+    })
+  ) {
+    return fail(
+      "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_PREPARED_V2_CLEANUP_FAILED",
+      "Prepared bootstrap cleanup object kind or stable identity changed",
+    );
+  }
 }
 
 function deepFreezeJson<T>(value: T): T {
@@ -420,6 +454,7 @@ function captureDirectory(input: Readonly<{
       );
     }
     return Object.freeze({
+      absolutePath: absolute,
       locator: input.locator,
       fingerprint: fingerprint(after),
       entries: Object.freeze(entries),
@@ -1295,12 +1330,68 @@ function cleanupExactPackage(state: PreparedPackageStateV2): void {
       NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_BUNDLE_LOCATOR_V2,
       NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_RUNTIME_LOCATOR_V2,
     ]) {
-      unlinkSync(path.join(state.payloadRoot, locator));
+      const capture = state.files.find((file) => file.locator === locator);
+      if (!capture) {
+        return fail(
+          "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_PREPARED_V2_CLEANUP_FAILED",
+          `Prepared bootstrap cleanup has no exact capture for ${locator}`,
+        );
+      }
+      const absolutePath = path.join(state.payloadRoot, locator);
+      assertExactObjectStableIdentityV2({
+        absolutePath,
+        expected: capture.fingerprint,
+        objectKind: "ordinary_file",
+      });
+      unlinkSync(absolutePath);
     }
     for (const directory of ["bin", "lib", "runtime"] as const) {
-      rmdirSync(path.join(state.payloadRoot, directory));
+      const absolutePath = path.join(state.payloadRoot, directory);
+      const capture = state.directories.find(
+        (entry) => entry.absolutePath === absolutePath,
+      );
+      if (!capture) {
+        return fail(
+          "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_PREPARED_V2_CLEANUP_FAILED",
+          `Prepared bootstrap cleanup has no exact capture for ${directory}`,
+        );
+      }
+      assertExactObjectStableIdentityV2({
+        absolutePath,
+        expected: capture.fingerprint,
+        objectKind: "directory",
+      });
+      rmdirSync(absolutePath);
     }
+    const payloadCapture = state.directories.find(
+      (entry) => entry.absolutePath === state.payloadRoot,
+    );
+    if (!payloadCapture) {
+      return fail(
+        "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_PREPARED_V2_CLEANUP_FAILED",
+        "Prepared bootstrap cleanup has no exact payload-root capture",
+      );
+    }
+    assertExactObjectStableIdentityV2({
+      absolutePath: state.payloadRoot,
+      expected: payloadCapture.fingerprint,
+      objectKind: "directory",
+    });
     rmdirSync(state.payloadRoot);
+    const stageCapture = state.directories.find(
+      (entry) => entry.absolutePath === state.stageRoot,
+    );
+    if (!stageCapture) {
+      return fail(
+        "NODE_TOOLCHAIN_PROVISIONER_BOOTSTRAP_PREPARED_V2_CLEANUP_FAILED",
+        "Prepared bootstrap cleanup has no exact stage-root capture",
+      );
+    }
+    assertExactObjectStableIdentityV2({
+      absolutePath: state.stageRoot,
+      expected: stageCapture.fingerprint,
+      objectKind: "directory",
+    });
     rmdirSync(state.stageRoot);
   } catch (error) {
     return fail(

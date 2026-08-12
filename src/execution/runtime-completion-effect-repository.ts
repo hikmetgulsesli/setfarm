@@ -4,13 +4,14 @@ import type postgres from "postgres";
 import { z } from "zod";
 
 import { readDatabaseWallClock } from "../db/database-wall-clock.js";
+import { assertRuntimeCompletionManifestInTransactionV1 } from "./runtime-completion-manifest-authority-v1.js";
 
 type Sql = postgres.Sql;
 type TransactionSql = postgres.TransactionSql;
 
 const EffectStateSchema = z.enum(["pending", "leased", "applied", "reconciled", "quarantined"]);
 
-type EffectRow = Readonly<{
+export type RuntimeCompletionEffectRow = Readonly<{
   request_id: string;
   effect_key: string;
   ordinal: number;
@@ -30,6 +31,8 @@ type EffectRow = Readonly<{
   created_at: Date | string;
   updated_at: Date | string;
 }>;
+
+type EffectRow = RuntimeCompletionEffectRow;
 
 export type RuntimeCompletionEffect = Readonly<{
   requestId: string;
@@ -66,7 +69,9 @@ function objectValue(value: unknown, code: string): Record<string, unknown> {
   return parsed as Record<string, unknown>;
 }
 
-function mapEffect(row: EffectRow): RuntimeCompletionEffect {
+export function mapRuntimeCompletionEffectRowV1(
+  row: RuntimeCompletionEffectRow,
+): RuntimeCompletionEffect {
   return Object.freeze({
     requestId: row.request_id,
     effectKey: row.effect_key,
@@ -89,6 +94,19 @@ function mapEffect(row: EffectRow): RuntimeCompletionEffect {
   });
 }
 
+const mapEffect = mapRuntimeCompletionEffectRowV1;
+
+export async function listRuntimeCompletionEffectsForRequestV1(
+  sql: postgres.Sql | postgres.TransactionSql,
+  requestId: string,
+): Promise<RuntimeCompletionEffect[]> {
+  const rows = await sql.unsafe<EffectRow[]>(
+    "SELECT * FROM runtime_completion_effects WHERE request_id = $1 ORDER BY ordinal, effect_key",
+    [requestId],
+  );
+  return rows.map(mapRuntimeCompletionEffectRowV1);
+}
+
 function validTime(value?: Date): Date {
   const parsed = value ? new Date(value) : new Date();
   if (!Number.isFinite(parsed.getTime())) throw new Error("RUNTIME_COMPLETION_EFFECT_TIME_INVALID");
@@ -96,8 +114,13 @@ function validTime(value?: Date): Date {
 }
 
 type LockedEffectAuthority = Readonly<{
-  request?: Readonly<{ state: string; apply_phase: string }>;
-  effect?: EffectRow;
+  request?: Readonly<{
+    state: string;
+    apply_phase: string;
+    owner_instance_id: string | null;
+    lease_expires_at: Date | string | null;
+  }>;
+  effect?: RuntimeCompletionEffectRow;
   wallClock?: Date;
 }>;
 
@@ -118,11 +141,19 @@ async function lockEffectAuthorityInTransaction(
   );
   if (!identities[0]) return {};
   await sql.unsafe("SELECT id FROM runs WHERE id = $1 FOR UPDATE", [identities[0].run_id]);
-  const requests = await sql.unsafe<Array<{ state: string; apply_phase: string }>>(
-    "SELECT state, apply_phase FROM runtime_completion_requests WHERE request_id = $1 FOR UPDATE",
+  const requests = await sql.unsafe<Array<{
+    state: string;
+    apply_phase: string;
+    owner_instance_id: string | null;
+    lease_expires_at: Date | string | null;
+  }>>(
+    `SELECT state, apply_phase, owner_instance_id, lease_expires_at
+       FROM runtime_completion_requests
+      WHERE request_id = $1
+      FOR UPDATE`,
     [input.requestId],
   );
-  const effects = await sql.unsafe<EffectRow[]>(
+  const effects = await sql.unsafe<RuntimeCompletionEffectRow[]>(
     `SELECT * FROM runtime_completion_effects
       WHERE request_id = $1 AND effect_key = $2
       FOR UPDATE`,
@@ -143,10 +174,14 @@ function hasLiveEffectLease(
   authority: LockedEffectAuthority,
   ownerInstanceId: string,
   leaseToken: string,
-): authority is LockedEffectAuthority & Readonly<{ effect: EffectRow; wallClock: Date }> {
+): authority is LockedEffectAuthority & Readonly<{ effect: RuntimeCompletionEffectRow; wallClock: Date }> {
   return Boolean(
     authority.request?.state === "processing"
     && authority.request.apply_phase === "owner_committed"
+    && authority.request.owner_instance_id === ownerInstanceId
+    && authority.request.lease_expires_at
+    && authority.wallClock
+    && new Date(authority.request.lease_expires_at).getTime() > authority.wallClock.getTime()
     && authority.effect?.state === "leased"
     && authority.effect.owner_instance_id === ownerInstanceId
     && authority.effect.lease_token === leaseToken
@@ -183,11 +218,7 @@ export async function assertRuntimeCompletionEffectLeaseInTransaction(
 export function createRuntimeCompletionEffectRepository(sql: Sql) {
   return Object.freeze({
     async listForRequest(requestId: string): Promise<RuntimeCompletionEffect[]> {
-      const rows = await sql.unsafe<EffectRow[]>(
-        "SELECT * FROM runtime_completion_effects WHERE request_id = $1 ORDER BY ordinal, effect_key",
-        [requestId],
-      );
-      return rows.map(mapEffect);
+      return listRuntimeCompletionEffectsForRequestV1(sql, requestId);
     },
 
     async claimNext(input: Readonly<{
@@ -205,16 +236,35 @@ export function createRuntimeCompletionEffectRepository(sql: Sql) {
         );
         if (!requestRows[0]) throw new Error("RUNTIME_COMPLETION_EFFECT_REQUEST_NOT_FOUND");
         await transaction.unsafe("SELECT id FROM runs WHERE id = $1 FOR UPDATE", [requestRows[0].run_id]);
-        const locked = await transaction.unsafe<Array<{ state: string; apply_phase: string }>>(
-          "SELECT state, apply_phase FROM runtime_completion_requests WHERE request_id = $1 FOR UPDATE",
+        const locked = await transaction.unsafe<Array<{
+          state: string;
+          apply_phase: string;
+          owner_instance_id: string | null;
+          lease_expires_at: Date | string | null;
+        }>>(
+          `SELECT state, apply_phase, owner_instance_id, lease_expires_at
+             FROM runtime_completion_requests
+            WHERE request_id = $1
+            FOR UPDATE`,
           [input.requestId],
         );
-        if (locked[0]?.state !== "processing" || locked[0]?.apply_phase !== "owner_committed") return undefined;
+        const request = locked[0];
+        if (
+          request?.state !== "processing"
+          || request.apply_phase !== "owner_committed"
+          || request.owner_instance_id !== input.ownerInstanceId
+        ) return undefined;
+        await assertRuntimeCompletionManifestInTransactionV1(transaction, {
+          requestId: input.requestId,
+        });
         const candidates = await transaction.unsafe<EffectRow[]>(
           `SELECT effect.* FROM runtime_completion_effects effect
             WHERE effect.request_id = $1
               AND (effect.state = 'pending'
-                OR (effect.state = 'leased' AND effect.lease_expires_at <= clock_timestamp()))
+                OR (effect.state = 'leased' AND (
+                  effect.owner_instance_id IS DISTINCT FROM $2
+                  OR effect.lease_expires_at <= clock_timestamp()
+                )))
               AND NOT EXISTS (
                 SELECT 1 FROM runtime_completion_effects prior
                  WHERE prior.request_id = effect.request_id
@@ -224,7 +274,7 @@ export function createRuntimeCompletionEffectRepository(sql: Sql) {
               )
             ORDER BY effect.ordinal, effect.effect_key
             LIMIT 1 FOR UPDATE SKIP LOCKED`,
-          [input.requestId],
+          [input.requestId, input.ownerInstanceId],
         );
         const candidate = candidates[0];
         if (!candidate) return undefined;
@@ -233,7 +283,12 @@ export function createRuntimeCompletionEffectRepository(sql: Sql) {
           "RUNTIME_COMPLETION_EFFECT_DATABASE_TIME_UNAVAILABLE",
         );
         if (
+          !request.lease_expires_at
+          || new Date(request.lease_expires_at).getTime() <= now.getTime()
+        ) return undefined;
+        if (
           candidate.state === "leased"
+          && candidate.owner_instance_id === input.ownerInstanceId
           && (
             !candidate.lease_expires_at
             || new Date(candidate.lease_expires_at).getTime() > now.getTime()
@@ -246,7 +301,10 @@ export function createRuntimeCompletionEffectRepository(sql: Sql) {
                   lease_expires_at = $5, attempt_count = attempt_count + 1,
                   updated_at = $2
             WHERE request_id = $1 AND effect_key = $6
-              AND (state = 'pending' OR (state = 'leased' AND lease_expires_at <= $2))
+              AND (state = 'pending' OR (state = 'leased' AND (
+                owner_instance_id IS DISTINCT FROM $3
+                OR lease_expires_at <= $2
+              )))
             RETURNING *`,
           [
             input.requestId,
@@ -325,7 +383,7 @@ export function createRuntimeCompletionEffectRepository(sql: Sql) {
           `UPDATE runtime_completion_effects
               SET state = 'pending', owner_instance_id = NULL, lease_token = NULL,
                   lease_expires_at = NULL,
-                  result = jsonb_build_object('lastDiagnostic', $5),
+                  result = jsonb_build_object('lastDiagnostic', $5::text),
                   updated_at = $6
             WHERE request_id = $1 AND effect_key = $2 AND state = 'leased'
               AND owner_instance_id = $3 AND lease_token = $4
@@ -363,7 +421,7 @@ export function createRuntimeCompletionEffectRepository(sql: Sql) {
           `UPDATE runtime_completion_effects
               SET state = 'quarantined', owner_instance_id = NULL, lease_token = NULL,
                   lease_expires_at = NULL,
-                  result = jsonb_build_object('diagnostic', $5),
+                  result = jsonb_build_object('diagnostic', $5::text),
                   evidence = $6::text::jsonb,
                   updated_at = $7
             WHERE request_id = $1 AND effect_key = $2 AND state = 'leased'

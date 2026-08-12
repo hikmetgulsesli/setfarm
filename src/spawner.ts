@@ -88,6 +88,7 @@ import {
 } from "./execution/run-termination.js";
 import {
   createRuntimeCompletionRepository,
+  isRuntimeCompletionRecoveryOwnerInstanceIdV1,
   requestRuntimeCompletion,
   type RuntimeCompletionRequest,
 } from "./execution/runtime-completion.js";
@@ -7326,6 +7327,35 @@ async function spawnAgentNow(agentId: string, wfId: string, role: string): Promi
     await releasePreSpawnClaim(claim, agentId, reason);
     return;
   }
+  if (claim.compilerCompletionOutput !== undefined) {
+    claimingSpawns.delete(key);
+    try {
+      const publication = await publishRuntimeCompletionProposal(
+        claim.stepId!,
+        claim.compilerCompletionOutput,
+        claimEnvelope,
+      );
+      if (!publication.managed) {
+        throw new Error("COMPILER_PRECLAIM_RUNTIME_COMPLETION_OWNER_REQUIRED");
+      }
+      console.log(`[spawner] Published compiler-owned completion for ${claim.workflowStepId}; no agent process spawned`);
+    } catch (error) {
+      const diagnostic = `COMPILER_PRECLAIM_COMPLETION_PUBLICATION_FAILED: ${String(error).slice(0, 500)}`;
+      console.warn(`[spawner] ${diagnostic}`);
+      const completionExists = await publishRuntimeCompletionIfPresent(claim.claimId);
+      if (!completionExists && claim.runId && claim.stepId && claim.workflowStepId) {
+        await retryPreSpawnSingleStepClaim(
+          claim.runId,
+          claim.stepId,
+          claim.workflowStepId,
+          claim.claimAgentId || fullAgentId,
+          claim.claimId!,
+          diagnostic,
+        );
+      }
+    }
+    return;
+  }
   if (claim.storyId && spawnCwd === AGENT_SAFE_CWD) {
     claimingSpawns.delete(key);
     const reason = "CLAIM_WORKDIR_MISSING: story claim " + claim.storyId + " for " + fullAgentId + " did not resolve a project/story worktree from claim input. Refusing to spawn in agent scratch.";
@@ -8251,7 +8281,7 @@ async function quarantineRuntimeCompletion(
   if (currentRequest.state !== "quarantined") {
     if (
       (currentRequest.state !== "draining" && currentRequest.state !== "processing")
-      || currentRequest.ownerInstanceId !== SPAWNER_INSTANCE_ID
+      || currentRequest.ownerInstanceId !== request.ownerInstanceId
       || !currentRequest.leaseExpiresAt
       || new Date(currentRequest.leaseExpiresAt).getTime() <= Date.now()
     ) {
@@ -8263,12 +8293,12 @@ async function quarantineRuntimeCompletion(
     try {
       await completions.quarantine({
         requestId: request.requestId,
-        ownerInstanceId: SPAWNER_INSTANCE_ID,
+        ownerInstanceId: request.ownerInstanceId!,
         expectedState: currentRequest.state,
         expectedLeaseExpiresAt: currentRequest.leaseExpiresAt,
         expectedUpdatedAt: currentRequest.updatedAt,
         diagnostic,
-        result: { ownerInstanceId: SPAWNER_INSTANCE_ID },
+        result: { ownerInstanceId: request.ownerInstanceId },
       });
     } catch (quarantineError) {
       if (
@@ -8309,7 +8339,7 @@ async function finalizeRecoveredRuntimeCompletion(request: RuntimeCompletionRequ
   const completions = createRuntimeCompletionRepository(getSql());
   await completions.acceptAndRelease({
     requestId: request.requestId,
-    ownerInstanceId: SPAWNER_INSTANCE_ID,
+    ownerInstanceId: request.ownerInstanceId!,
     ownerAttemptCount: request.ownerAttemptCount,
     result: { ...request.result, recoveredAfterCoordinatorCrash: true },
   });
@@ -8347,7 +8377,7 @@ async function withRuntimeCompletionHeartbeat<T>(
         try {
           const retained = await completions.heartbeatProcessing({
             requestId: request.requestId,
-            ownerInstanceId: SPAWNER_INSTANCE_ID,
+            ownerInstanceId: request.ownerInstanceId!,
             ownerAttemptCount: request.ownerAttemptCount,
             leaseMs: 2 * 60_000,
           });
@@ -8380,7 +8410,11 @@ async function withRuntimeCompletionOwnerCapability<T>(
     "./execution/runtime-completion-owner-context.js",
   );
   if (
-    request.ownerInstanceId !== SPAWNER_INSTANCE_ID
+    !request.ownerInstanceId
+    || (
+      request.ownerInstanceId !== SPAWNER_INSTANCE_ID
+      && !isRuntimeCompletionRecoveryOwnerInstanceIdV1(request.ownerInstanceId)
+    )
     || !request.leaseExpiresAt
     || request.ownerAttemptCount < 1
   ) {
@@ -8471,7 +8505,7 @@ async function applyAndAcceptRuntimeCompletionEffects(
   const result = await withRuntimeCompletionOwnerCapability(request, () => (
     withRuntimeCompletionHeartbeat(request, () => runRuntimeCompletionEffectLedger({
       requestId: request.requestId,
-      ownerInstanceId: SPAWNER_INSTANCE_ID,
+      ownerInstanceId: request.ownerInstanceId!,
       repository: effects,
       handler: {
         reconcile: async ({ input: effectInput, effect }) => {
@@ -8480,6 +8514,9 @@ async function applyAndAcceptRuntimeCompletionEffects(
           // effect through the generic continuation-state interpreter.
           if (effect.effectType === V3_RECOVERY_COORDINATE_EFFECT_TYPE) return undefined;
           const reconciled = await reconcileRuntimeCompletionEffects({
+            protocol: request.claimEnvelope.protocol,
+            claimId: request.claimId,
+            runtimeSessionId: request.runtimeSessionId,
             runId: request.runId,
             stepDbId: request.stepDbId,
             workflowStepId: request.workflowStepId,
@@ -8504,6 +8541,9 @@ async function applyAndAcceptRuntimeCompletionEffects(
               assertLease,
               coordinate: () => createPostgresV3RecoveryEffectHandler(getSql()).coordinate(effectInput.effect),
               resumeCanonicalContinuation: () => resumeRuntimeCompletionEffects({
+                protocol: request.claimEnvelope.protocol,
+                claimId: request.claimId,
+                runtimeSessionId: request.runtimeSessionId,
                 runId: request.runId,
                 stepDbId: request.stepDbId,
                 workflowStepId: request.workflowStepId,
@@ -8516,6 +8556,9 @@ async function applyAndAcceptRuntimeCompletionEffects(
           }
           await assertLease();
           const applied = await resumeRuntimeCompletionEffects({
+            protocol: request.claimEnvelope.protocol,
+            claimId: request.claimId,
+            runtimeSessionId: request.runtimeSessionId,
             runId: request.runId,
             stepDbId: request.stepDbId,
             workflowStepId: request.workflowStepId,
@@ -8542,13 +8585,13 @@ async function applyAndAcceptRuntimeCompletionEffects(
   ));
   await completions.markEffectsCommitted({
     requestId: request.requestId,
-    ownerInstanceId: SPAWNER_INSTANCE_ID,
+    ownerInstanceId: request.ownerInstanceId!,
     ownerAttemptCount: request.ownerAttemptCount,
     result,
   });
   await completions.acceptAndRelease({
     requestId: request.requestId,
-    ownerInstanceId: SPAWNER_INSTANCE_ID,
+    ownerInstanceId: request.ownerInstanceId!,
     ownerAttemptCount: request.ownerAttemptCount,
     result,
   });

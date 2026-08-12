@@ -258,7 +258,8 @@ describe("plan semantic proposal v2 compiler", () => {
     });
     assert.equal(rejected.status, "rejected");
     if (rejected.status === "rejected") {
-      assert.equal(rejected.diagnostics[0]?.code, "PRODUCT_SPEC_V2_PAYLOAD_TOO_LARGE");
+      assert.equal(rejected.diagnostics[0]?.code, "PLAN_SEMANTIC_PROPOSAL_SCHEMA_INVALID");
+      assert.match(rejected.diagnostics[0]?.message ?? "", /ENGLISH_TEXT_VALUE_LIMIT_EXCEEDED/);
     }
   });
 });

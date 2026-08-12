@@ -1,6 +1,6 @@
 import { canonicalJsonStringify } from "../canonical-json.js";
 import {
-  ProductSpecV1Schema,
+  ProductSpecV1EnglishWriteSchema,
   type ProductDeliveryV1,
   type ProductActionV1,
   type ProductSpecV1,
@@ -11,6 +11,13 @@ export type LegacyPrdRenderOptions = Readonly<{
   techStack?: ProductDeliveryV1["techStack"];
   uiLanguage?: string;
 }>;
+
+function canonicalUiLanguage(override: string | undefined): "English" {
+  if (override !== undefined && override !== "English") {
+    throw new Error("LEGACY_PRD_UI_LANGUAGE_MUST_BE_ENGLISH");
+  }
+  return "English";
+}
 
 function productSlug(productId: string): string {
   return productId
@@ -117,12 +124,13 @@ export function renderLegacyPrd(
   productSpec: unknown,
   options: LegacyPrdRenderOptions = {},
 ): string {
-  const spec = ProductSpecV1Schema.parse(productSpec);
+  const spec = ProductSpecV1EnglishWriteSchema.parse(productSpec);
   const platform = options.platform ?? spec.delivery?.platform ?? (spec.product.class === "game" ? "game" : "web");
   const techStack = options.techStack ?? spec.delivery?.techStack ?? (spec.product.class === "game" ? "browser-game" : "vite-react");
   const dbRequired = spec.delivery?.database ?? (spec.persistencePolicies.some((policy) => policy.kind === "database")
     ? "postgres"
     : "none");
+  const uiLanguage = canonicalUiLanguage(options.uiLanguage);
   const canonicalProjection = canonicalJsonStringify(spec);
   const uiVisionSummary = spec.delivery?.uiVisionSummary ?? [
     `${spec.product.name} is a focused ${spec.product.class} product, not a marketing or placeholder surface.`,
@@ -141,7 +149,7 @@ export function renderLegacyPrd(
     `PROJECT_SLUG: ${productSlug(spec.product.id)}`,
     `PLATFORM: ${platform}`,
     `TECH_STACK: ${techStack}`,
-    `UI_LANGUAGE: ${options.uiLanguage ?? spec.delivery?.uiLanguage ?? "English"}`,
+    `UI_LANGUAGE: ${uiLanguage}`,
     `DB_REQUIRED: ${dbRequired}`,
     `DESIGN_REQUIRED: ${String(spec.delivery?.designRequired ?? true)}`,
     `UI_VISION_SUMMARY: ${uiVisionSummary}`,
@@ -159,8 +167,10 @@ export function renderLegacyPrd(
     ...(spec.requirements
       ? [
           "### Source Requirement Ledger",
+          // Source-owned clause text remains byte-exact inside the typed
+          // ProductSpec evidence block and never enters compiler-owned prose.
           ...spec.requirements.map((requirement) =>
-            `- ${requirement.id}: ${requirement.normalizedClause} [${requirement.classification}; expects=${requirement.expectedSemanticKinds.join(",")}]`),
+            `- ${requirement.id}: clause_hash=${requirement.clauseHash}; classification=${requirement.classification}; semantic_kinds=${requirement.expectedSemanticKinds.join(",")}; source_refs=${requirement.sources.map((source) => source.sourceRef).join(",")}`),
         ]
       : []),
     "",

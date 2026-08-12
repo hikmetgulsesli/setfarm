@@ -4,7 +4,7 @@
 // and returned as an "error" status — tests can opt in to verifying
 // the call shape without actually writing.
 
-import type { StepModule, ClaimContext, ParsedOutput, CompleteContext } from "../../dist/installer/steps/types.js";
+import type { StepModule, ClaimContext, ParsedOutput, CompleteContext } from "../../src/installer/steps/types.js";
 
 export interface HarnessResult {
   prompt: string;

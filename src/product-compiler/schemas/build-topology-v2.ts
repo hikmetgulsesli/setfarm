@@ -85,6 +85,8 @@ export const BUILD_TOPOLOGY_CONTRACT_V2 = Object.freeze({
   identitySeparation: Object.freeze({
     retryAndSemanticIdentity: "logicalBuildHash" as const,
     executionEvidenceIdentity: "manifestHash" as const,
+    hostToolchainLogicalProjection:
+      "content_version_abi_without_filesystem_metadata_v3" as const,
     excludedFromLogicalBuildHash: Object.freeze([
       "admissionScope",
       "dependencyIdentityHash",
@@ -429,8 +431,8 @@ export const BuildTopologyLogicalDependencyV2Schema = z.object({
   dependencyGraphHash: Sha256Schema,
   environmentContractHash: Sha256Schema,
   effectiveConfigHash: Sha256Schema,
-  nodeIdentityHash: Sha256Schema,
-  npmClosureHash: Sha256Schema,
+  nodeRuntimeLogicalHash: Sha256Schema,
+  npmClosureLogicalHash: Sha256Schema,
   npmVersion: z.literal("10.9.8"),
   installDirectArgvHash: Sha256Schema,
   graph: z.object({

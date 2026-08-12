@@ -1,5 +1,11 @@
 import assert from "node:assert/strict";
 import {
+  chmodSync,
+  mkdirSync,
+  renameSync,
+  writeFileSync,
+} from "node:fs";
+import {
   chmod,
   link,
   readFile,
@@ -14,6 +20,9 @@ import { afterEach, describe, it } from "node:test";
 import {
   PlatformReleaseHostCompositionAuthorityErrorV2,
   PlatformReleaseHostCompositionAuthorityV2,
+  acquirePlatformReleaseHostCompositionMetadataOperationLaunchContextInternalV2,
+  acquirePlatformReleaseHostCompositionNetworkNegativeOperationLaunchContextInternalV2,
+  acquirePlatformReleaseHostCompositionTargetOperationLaunchContextInternalV2,
   createPlatformReleaseHostCompositionAuthorityV2ForTest,
   inspectPlatformReleaseHostCompositionReceiptV2,
   isProductionPlatformReleaseHostCompositionAuthorityV2,
@@ -28,9 +37,14 @@ import {
 } from
   "../../src/product-compiler/canonical-json.js";
 import {
+  PLATFORM_RELEASE_BOOTSTRAP_NETWORK_NEGATIVE_OPERATION_POLICY_HASH_V2,
+} from
+  "../../src/execution/platform-release-bootstrap-network-negative-operation-v2.js";
+import {
   PLATFORM_RELEASE_HOST_COMPOSITION_PLATFORM_PROJECTION_V2_SCHEMA,
+  PlatformReleaseHostCompositionPlatformProjectionV2Schema,
   PlatformReleaseHostCompositionReceiptV2Schema,
-  hashPlatformReleaseHostCompositionHostIdentityV2,
+  hashPlatformReleaseHostCompositionHostSemanticProfileV2,
   hashPlatformReleaseHostCompositionPlatformProjectionV2,
   getPlatformReleaseHostCompositionRequirementV2,
   parsePlatformReleaseHostCompositionReceiptCandidateV2,
@@ -47,6 +61,73 @@ import {
 
 const cleanupRoots: string[] = [];
 
+async function capturedRejectionV2(
+  promise: Promise<unknown>,
+): Promise<unknown> {
+  let captured: unknown;
+  try {
+    await promise;
+  } catch (error) {
+    captured = error;
+  }
+  assert.notEqual(captured, undefined);
+  return captured;
+}
+
+function assertPrimaryFirstFilesystemFailureV2(
+  error: unknown,
+  primaryMessage: RegExp,
+  closeFailure: Error,
+): void {
+  assert.ok(
+    error
+      instanceof PlatformReleaseHostCompositionAuthorityErrorV2,
+  );
+  assert.equal(
+    error.code,
+    "HOST_COMPOSITION_FILESYSTEM_DRIFT",
+  );
+  assert.ok(error.cause instanceof AggregateError);
+  const failures = Array.from(error.cause.errors);
+  assert.equal(failures.length, 2);
+  const primary = failures[0];
+  const close = failures[1];
+  assert.ok(
+    primary
+      instanceof PlatformReleaseHostCompositionAuthorityErrorV2,
+  );
+  assert.equal(
+    primary.code,
+    "HOST_COMPOSITION_FILESYSTEM_DRIFT",
+  );
+  assert.match(primary.message, primaryMessage);
+  assert.ok(
+    close
+      instanceof PlatformReleaseHostCompositionAuthorityErrorV2,
+  );
+  assert.equal(
+    close.code,
+    "HOST_COMPOSITION_FILESYSTEM_DRIFT",
+  );
+  assert.equal(close.cause, closeFailure);
+  assert.equal(error.cause.cause, primary);
+}
+
+function assertCloseOnlyFilesystemFailureV2(
+  error: unknown,
+  closeFailure: Error,
+): void {
+  assert.ok(
+    error
+      instanceof PlatformReleaseHostCompositionAuthorityErrorV2,
+  );
+  assert.equal(
+    error.code,
+    "HOST_COMPOSITION_FILESYSTEM_DRIFT",
+  );
+  assert.equal(error.cause, closeFailure);
+}
+
 function platformHostV2():
 PlatformReleaseHostCompositionPlatformProjectionV2 {
   const host = Object.freeze({
@@ -61,8 +142,10 @@ PlatformReleaseHostCompositionPlatformProjectionV2 {
       PLATFORM_RELEASE_HOST_COMPOSITION_PLATFORM_PROJECTION_V2_SCHEMA,
     platformHostToolchainReceiptHash: "a".repeat(64),
     host,
-    hostIdentityHash:
-      hashPlatformReleaseHostCompositionHostIdentityV2(host),
+    hostIdentitySource: "authenticated_machine_identity_v3" as const,
+    hostIdentityHash: "f".repeat(64),
+    hostSemanticProfileHash:
+      hashPlatformReleaseHostCompositionHostSemanticProfileV2(host),
     nodeIdentityHash: "b".repeat(64),
     npmClosureHash: "c".repeat(64),
     dynamicLibraryClosureHash: "d".repeat(64),
@@ -164,12 +247,67 @@ afterEach(async () => {
 });
 
 describe("PlatformReleaseHostCompositionAuthorityV2", () => {
+  it("separates stable machine identity from the mutable OS semantic profile", () => {
+    const first = platformHostV2();
+    const differentMachineIdentity = {
+      ...first,
+      hostIdentityHash: "1".repeat(64),
+      projectionHash: "",
+    };
+    differentMachineIdentity.projectionHash =
+      hashPlatformReleaseHostCompositionPlatformProjectionV2((({
+        projectionHash: _projectionHash,
+        ...identity
+      }) => identity)(differentMachineIdentity));
+    const differentMachine =
+      PlatformReleaseHostCompositionPlatformProjectionV2Schema.parse(
+        differentMachineIdentity,
+      );
+    const changedHost = {
+      ...first.host,
+      macosBuildVersion: "25F85",
+    };
+    const changedSemanticIdentity = {
+      ...first,
+      host: changedHost,
+      hostSemanticProfileHash:
+        hashPlatformReleaseHostCompositionHostSemanticProfileV2(
+          changedHost,
+        ),
+      projectionHash: "",
+    };
+    changedSemanticIdentity.projectionHash =
+      hashPlatformReleaseHostCompositionPlatformProjectionV2((({
+        projectionHash: _projectionHash,
+        ...identity
+      }) => identity)(changedSemanticIdentity));
+    const changedSemantic =
+      PlatformReleaseHostCompositionPlatformProjectionV2Schema.parse(
+        changedSemanticIdentity,
+      );
+
+    assert.equal(
+      differentMachine.hostSemanticProfileHash,
+      first.hostSemanticProfileHash,
+    );
+    assert.notEqual(
+      differentMachine.hostIdentityHash,
+      first.hostIdentityHash,
+    );
+    assert.notEqual(differentMachine.projectionHash, first.projectionHash);
+    assert.equal(changedSemantic.hostIdentityHash, first.hostIdentityHash);
+    assert.notEqual(
+      changedSemantic.hostSemanticProfileHash,
+      first.hostSemanticProfileHash,
+    );
+  });
+
   it("keeps the zero-input composition requirement deterministic", () => {
     const requirement =
       getPlatformReleaseHostCompositionRequirementV2();
     assert.equal(
       requirement.requirementHash,
-      "a6999121a09bc3b89b3248008e2eb4431063a6735f7e6a1e2ccb4a0ecb9cb459",
+      "9bc58f9a2b83d3b79647f48969fbd63d1b52cea677434dae192903e342f7598f",
     );
     assert.equal(
       Buffer.byteLength(canonicalJsonStringify(requirement)),
@@ -200,6 +338,10 @@ describe("PlatformReleaseHostCompositionAuthorityV2", () => {
       [
         "PlatformReleaseHostCompositionAuthorityErrorV2",
         "PlatformReleaseHostCompositionAuthorityV2",
+        "acquirePlatformReleaseHostCompositionMetadataOperationLaunchContextInternalV2",
+        "acquirePlatformReleaseHostCompositionModuleExportLaunchContextInternalV2",
+        "acquirePlatformReleaseHostCompositionNetworkNegativeOperationLaunchContextInternalV2",
+        "acquirePlatformReleaseHostCompositionTargetOperationLaunchContextInternalV2",
         "createPlatformReleaseHostCompositionAuthorityV2ForTest",
         "inspectPlatformReleaseHostCompositionReceiptV2",
         "isProductionPlatformReleaseHostCompositionAuthorityV2",
@@ -233,7 +375,7 @@ describe("PlatformReleaseHostCompositionAuthorityV2", () => {
         "hashPlatformReleaseHostCompositionFilePhysicalIdentityV2",
         "hashPlatformReleaseHostCompositionFileReceiptV2",
         "hashPlatformReleaseHostCompositionFileSetMembershipV2",
-        "hashPlatformReleaseHostCompositionHostIdentityV2",
+        "hashPlatformReleaseHostCompositionHostSemanticProfileV2",
         "hashPlatformReleaseHostCompositionInstallationReceiptV2",
         "hashPlatformReleaseHostCompositionParentIdentityV2",
         "hashPlatformReleaseHostCompositionPhysicalClosureV2",
@@ -245,6 +387,80 @@ describe("PlatformReleaseHostCompositionAuthorityV2", () => {
         "hashPlatformReleaseHostCompositionVerifierIdentityV2",
         "parsePlatformReleaseHostCompositionReceiptCandidateV2",
       ],
+    );
+  });
+
+  it("pins bounded descriptor census and primary-first close source contracts", async () => {
+    assert.equal(
+      createPlatformReleaseHostCompositionAuthorityV2ForTest.length,
+      1,
+    );
+    const source = await readFile(
+      new URL(
+        "../../src/execution/platform-release-host-composition-authority-v2.ts",
+        import.meta.url,
+      ),
+      "utf8",
+    );
+    assert.doesNotMatch(source, /\breaddirSync\b/u);
+    assert.match(
+      source,
+      /const DIRECTORY_MEMBER_CAPS_V2 = Object\.freeze\(\{\s*"\.": 3,\s*bin: 2,\s*lib: 3,\s*tools: 5,/u,
+    );
+    const directorySource = source.slice(
+      source.indexOf("function captureDirectoryV2("),
+      source.indexOf("function captureFileV2("),
+    );
+    const orderedDirectoryContracts = [
+      "before = lstatSync(absolutePath, { bigint: true })",
+      "before.isSymbolicLink()",
+      "!before.isDirectory()",
+      'modeText(before) !== "0700"',
+      "Number(before.uid) !== expectedOwner.uid",
+      "opendirSync(absolutePath, { bufferSize: 1 })",
+      "directory.readSync()",
+      "hooks?.afterDirectoryEntryRead?.(",
+      "names.length >= maximumNames",
+      "names.push(entry.name)",
+      "directory.closeSync()",
+      "hooks?.afterDirectoryDescriptorClose?.(",
+      "after = lstatSync(absolutePath, { bigint: true })",
+      "sameFingerprint(fingerprint(before), fingerprint(after))",
+      "names.sort()",
+      "exactNames(names, expectedNames)",
+    ];
+    let directoryCursor = -1;
+    for (const contract of orderedDirectoryContracts) {
+      const next = directorySource.indexOf(
+        contract,
+        directoryCursor + 1,
+      );
+      assert.ok(
+        next > directoryCursor,
+        `missing ordered bounded directory contract: ${contract}`,
+      );
+      directoryCursor = next;
+    }
+    const fileSource = source.slice(
+      source.indexOf("function captureFileV2("),
+      source.indexOf("function captureInstallationV2("),
+    );
+    assert.doesNotMatch(
+      fileSource,
+      /finally\s*\{[\s\S]*closeSync\(descriptor\)/u,
+    );
+    assert.match(fileSource, /closeSync\(descriptor\)/u);
+    assert.match(
+      fileSource,
+      /hooks\?\.afterFileRead\?\.\(/u,
+    );
+    assert.match(
+      fileSource,
+      /hooks\?\.afterFileDescriptorClose\?\.\(/u,
+    );
+    assert.match(
+      source,
+      /new AggregateError\(\s*\[primaryError, closeError\],[\s\S]*\{ cause: primaryError \}/u,
     );
   });
 
@@ -349,6 +565,212 @@ describe("PlatformReleaseHostCompositionAuthorityV2", () => {
       );
     assert.deepEqual(fresh, receipt);
     assert.notEqual(fresh, receipt);
+
+    const expectedImplementations = [
+      [
+        "ABI_PLATFORM_RELEASE_HOST_OPERATION_V2",
+        "BOOTSTRAP_RELEASE_COMPOSITION_MODULE_V2",
+        "lib/release-bootstrap.mjs",
+      ],
+      [
+        "ABI_PLATFORM_RELEASE_METADATA_PROBE_V2",
+        "BOOTSTRAP_RELEASE_COMPOSITION_METADATA_MODULE_V2",
+        "lib/metadata-bootstrap.mjs",
+      ],
+      [
+        "ABI_PLATFORM_RELEASE_MODULE_EXPORT_PROBE_V2",
+        "BOOTSTRAP_RELEASE_COMPOSITION_MODULE_V2",
+        "lib/release-bootstrap.mjs",
+      ],
+      [
+        "ABI_PLATFORM_RELEASE_NETWORK_NEGATIVE_PROBE_V2",
+        "BOOTSTRAP_RELEASE_COMPOSITION_NETWORK_WRAPPER_MODULE_V2",
+        "lib/network-wrapper.mjs",
+      ],
+    ] as const;
+    for (const [operationAbiRef, memberRef, locator] of
+      expectedImplementations) {
+      const context =
+        await acquirePlatformReleaseHostCompositionTargetOperationLaunchContextInternalV2(
+          handle,
+          operationAbiRef,
+        );
+      assert.equal(context.admissionScope, "test_fixture");
+      assert.equal(context.operationAbiRef, operationAbiRef);
+      assert.equal(context.implementationMemberRef, memberRef);
+      assert.equal(
+        context.releaseBootstrapExecutablePath,
+        materialized.files["bin/release-bootstrap"],
+      );
+      assert.equal(
+        context.implementationPath,
+        materialized.files[locator],
+      );
+      assert.equal(
+        context.hostCompositionReceiptHash,
+        receipt.receiptHash,
+      );
+    }
+    for (const invalidOperationAbiRef of [
+      "ABI_PLATFORM_RELEASE_VERIFY_PACKAGE_V2",
+      "__proto__",
+    ]) {
+      await assert.rejects(
+        acquirePlatformReleaseHostCompositionTargetOperationLaunchContextInternalV2(
+          handle,
+          invalidOperationAbiRef as never,
+        ),
+        { code: "HOST_COMPOSITION_INPUT_INVALID" },
+      );
+    }
+    const metadataContext =
+      await acquirePlatformReleaseHostCompositionMetadataOperationLaunchContextInternalV2(
+        handle,
+      );
+    assert.equal(metadataContext.admissionScope, "test_fixture");
+    assert.equal(
+      metadataContext.implementationPath,
+      materialized.files["lib/metadata-bootstrap.mjs"],
+    );
+    assert.equal(
+      metadataContext.xattrObserverExecutablePath,
+      materialized.files["tools/xattr-observe"],
+    );
+    assert.equal(
+      metadataContext.aclObserverExecutablePath,
+      materialized.files["tools/acl-observe"],
+    );
+    assert.equal(
+      "xattrClearExecutablePath" in metadataContext,
+      false,
+    );
+    assert.equal(
+      "aclClearExecutablePath" in metadataContext,
+      false,
+    );
+    assert.equal(Object.isFrozen(metadataContext), true);
+  });
+
+  it("binds the test-only network-negative context to the exact wrapper, sandbox and policy", async () => {
+    const materialized =
+      materializePlatformReleaseHostCompositionFixtureV2();
+    cleanupRoots.push(materialized.root);
+    const handle =
+      await createPlatformReleaseHostCompositionAuthorityV2ForTest({
+        platformHost: platformHostV2(),
+        fixture: materialized.fixture,
+      });
+    const receipt =
+      inspectPlatformReleaseHostCompositionReceiptV2(handle);
+    const genericContext =
+      await acquirePlatformReleaseHostCompositionTargetOperationLaunchContextInternalV2(
+        handle,
+        "ABI_PLATFORM_RELEASE_NETWORK_NEGATIVE_PROBE_V2",
+      );
+    const context =
+      await acquirePlatformReleaseHostCompositionNetworkNegativeOperationLaunchContextInternalV2(
+        handle,
+      );
+    const sandboxReceipt = receipt.files.find(
+      (file) => file.role === "sandbox_executable",
+    )!;
+    const wrapperReceipt = receipt.files.find(
+      (file) => file.role === "network_wrapper_module",
+    )!;
+    const executableReceipt = receipt.files.find(
+      (file) => file.role === "release_bootstrap_executable",
+    )!;
+
+    assert.equal(context.admissionScope, "test_fixture");
+    assert.equal(
+      context.operationAbiRef,
+      "ABI_PLATFORM_RELEASE_NETWORK_NEGATIVE_PROBE_V2",
+    );
+    assert.equal(
+      context.implementationMemberRef,
+      "BOOTSTRAP_RELEASE_COMPOSITION_NETWORK_WRAPPER_MODULE_V2",
+    );
+    assert.equal(
+      context.hostIdentityHash,
+      receipt.platformHost.hostIdentityHash,
+    );
+    assert.equal(
+      context.hostCompositionReceiptHash,
+      receipt.receiptHash,
+    );
+    assert.equal(
+      context.releaseBootstrapExecutablePath,
+      materialized.files["bin/release-bootstrap"],
+    );
+    assert.equal(
+      context.releaseBootstrapExecutableContentHash,
+      executableReceipt.contentHash,
+    );
+    assert.equal(
+      context.releaseBootstrapExecutablePhysicalIdentityHash,
+      executableReceipt.physicalIdentityHash,
+    );
+    assert.equal(
+      context.implementationPath,
+      materialized.files["lib/network-wrapper.mjs"],
+    );
+    assert.equal(
+      context.implementationContentHash,
+      wrapperReceipt.contentHash,
+    );
+    assert.equal(
+      context.implementationPhysicalIdentityHash,
+      wrapperReceipt.physicalIdentityHash,
+    );
+    assert.equal(
+      context.sandboxPolicyHash,
+      PLATFORM_RELEASE_BOOTSTRAP_NETWORK_NEGATIVE_OPERATION_POLICY_HASH_V2,
+    );
+    assert.equal(
+      context.sandboxExecutablePath,
+      materialized.files["tools/sandbox-exec"],
+    );
+    assert.equal(
+      context.sandboxExecutableContentHash,
+      sandboxReceipt.contentHash,
+    );
+    assert.equal(
+      context.sandboxExecutablePhysicalIdentityHash,
+      sandboxReceipt.physicalIdentityHash,
+    );
+    const {
+      sandboxPolicyHash: _sandboxPolicyHash,
+      sandboxExecutablePath: _sandboxExecutablePath,
+      sandboxExecutableContentHash: _sandboxExecutableContentHash,
+      sandboxExecutablePhysicalIdentityHash:
+        _sandboxExecutablePhysicalIdentityHash,
+      ...baseContext
+    } = context;
+    assert.deepEqual(baseContext, genericContext);
+    assert.equal(Object.isFrozen(context), true);
+
+    for (const unauthenticated of [
+      structuredClone(handle),
+      Object.create(handle),
+      {
+        ...structuredClone(receipt),
+        admissionScope: "production_host",
+      },
+    ]) {
+      await assert.rejects(
+        acquirePlatformReleaseHostCompositionTargetOperationLaunchContextInternalV2(
+          unauthenticated as never,
+          "ABI_PLATFORM_RELEASE_NETWORK_NEGATIVE_PROBE_V2",
+        ),
+        { code: "HOST_COMPOSITION_HANDLE_UNAUTHENTICATED" },
+      );
+      await assert.rejects(
+        acquirePlatformReleaseHostCompositionNetworkNegativeOperationLaunchContextInternalV2(
+          unauthenticated as never,
+        ),
+        { code: "HOST_COMPOSITION_HANDLE_UNAUTHENTICATED" },
+      );
+    }
   });
 
   it("keeps constructor, parsed receipts, proxies and accessors outside the capability boundary", async () => {
@@ -613,7 +1035,7 @@ describe("PlatformReleaseHostCompositionAuthorityV2", () => {
 
     const accountHostDrift = structuredClone(receipt);
     accountHostDrift.runtimeAccount.hostIdentityHash =
-      "f".repeat(64);
+      "d".repeat(64);
     rehashAggregateReceiptV2(accountHostDrift);
     assert.throws(
       () =>
@@ -694,6 +1116,236 @@ describe("PlatformReleaseHostCompositionAuthorityV2", () => {
               .PLATFORM_RELEASE_HOST_COMPOSITION_RECEIPT_MAX_CANONICAL_BYTES_V2,
           ),
         }),
+    );
+  });
+
+  it("bounds hostile directory census reads to each expected member count plus one", async () => {
+    const cases = [
+      { relativeLocator: "." as const, maximumNames: 3 },
+      { relativeLocator: "bin" as const, maximumNames: 2 },
+      { relativeLocator: "lib" as const, maximumNames: 3 },
+      { relativeLocator: "tools" as const, maximumNames: 5 },
+    ];
+    for (const testCase of cases) {
+      const materialized =
+        materializePlatformReleaseHostCompositionFixtureV2();
+      cleanupRoots.push(materialized.root);
+      const directoryPath = testCase.relativeLocator === "."
+        ? materialized.root
+        : `${materialized.root}/${testCase.relativeLocator}`;
+      for (let index = 0; index < 64; index += 1) {
+        writeFileSync(
+          `${directoryPath}/hostile-${index
+            .toString()
+            .padStart(2, "0")}`,
+          "hostile\n",
+          { mode: 0o444 },
+        );
+      }
+      let reads = 0;
+      const error = await capturedRejectionV2(
+        createPlatformReleaseHostCompositionAuthorityV2ForTest(
+          {
+            platformHost: platformHostV2(),
+            fixture: materialized.fixture,
+          },
+          {
+            afterDirectoryEntryRead: (context) => {
+              if (
+                context.relativeLocator
+                  === testCase.relativeLocator
+              ) {
+                reads += 1;
+              }
+            },
+          },
+        ),
+      );
+      assert.ok(
+        error
+          instanceof PlatformReleaseHostCompositionAuthorityErrorV2,
+      );
+      assert.equal(
+        error.code,
+        "HOST_COMPOSITION_FILESYSTEM_DRIFT",
+      );
+      assert.match(error.message, /admitted member bound/u);
+      assert.equal(reads, testCase.maximumNames + 1);
+    }
+  });
+
+  it("post-fences a directory replacement made after descriptor close", async () => {
+    const materialized =
+      materializePlatformReleaseHostCompositionFixtureV2();
+    cleanupRoots.push(materialized.root);
+    let replaced = false;
+    const error = await capturedRejectionV2(
+      createPlatformReleaseHostCompositionAuthorityV2ForTest(
+        {
+          platformHost: platformHostV2(),
+          fixture: materialized.fixture,
+        },
+        {
+          afterDirectoryDescriptorClose: (context) => {
+            if (
+              !replaced
+              && context.relativeLocator === "lib"
+            ) {
+              replaced = true;
+              renameSync(
+                `${materialized.root}/lib`,
+                `${materialized.root}/lib-displaced`,
+              );
+              mkdirSync(`${materialized.root}/lib`, {
+                mode: 0o700,
+              });
+              chmodSync(`${materialized.root}/lib`, 0o700);
+            }
+          },
+        },
+      ),
+    );
+    assert.equal(replaced, true);
+    assert.ok(
+      error
+        instanceof PlatformReleaseHostCompositionAuthorityErrorV2,
+    );
+    assert.equal(
+      error.code,
+      "HOST_COMPOSITION_FILESYSTEM_DRIFT",
+    );
+    assert.match(
+      error.message,
+      /changed during bounded membership capture/u,
+    );
+  });
+
+  it("preserves directory primary-first close aggregation and typed close-only failure", async () => {
+    const primaryAndClose =
+      materializePlatformReleaseHostCompositionFixtureV2();
+    cleanupRoots.push(primaryAndClose.root);
+    for (let index = 0; index < 64; index += 1) {
+      writeFileSync(
+        `${primaryAndClose.root}/hostile-${index
+          .toString()
+          .padStart(2, "0")}`,
+        "hostile\n",
+        { mode: 0o444 },
+      );
+    }
+    const aggregateCloseFailure =
+      new Error("injected directory close failure");
+    const aggregateError = await capturedRejectionV2(
+      createPlatformReleaseHostCompositionAuthorityV2ForTest(
+        {
+          platformHost: platformHostV2(),
+          fixture: primaryAndClose.fixture,
+        },
+        {
+          afterDirectoryDescriptorClose: (context) => {
+            if (context.relativeLocator === ".") {
+              throw aggregateCloseFailure;
+            }
+          },
+        },
+      ),
+    );
+    assertPrimaryFirstFilesystemFailureV2(
+      aggregateError,
+      /admitted member bound/u,
+      aggregateCloseFailure,
+    );
+
+    const closeOnly =
+      materializePlatformReleaseHostCompositionFixtureV2();
+    cleanupRoots.push(closeOnly.root);
+    const closeOnlyFailure =
+      new Error("injected directory close-only failure");
+    const closeOnlyError = await capturedRejectionV2(
+      createPlatformReleaseHostCompositionAuthorityV2ForTest(
+        {
+          platformHost: platformHostV2(),
+          fixture: closeOnly.fixture,
+        },
+        {
+          afterDirectoryDescriptorClose: (context) => {
+            if (context.relativeLocator === ".") {
+              throw closeOnlyFailure;
+            }
+          },
+        },
+      ),
+    );
+    assertCloseOnlyFilesystemFailureV2(
+      closeOnlyError,
+      closeOnlyFailure,
+    );
+  });
+
+  it("preserves file primary-first close aggregation and typed close-only failure", async () => {
+    const primaryAndClose =
+      materializePlatformReleaseHostCompositionFixtureV2();
+    cleanupRoots.push(primaryAndClose.root);
+    const aggregateCloseFailure =
+      new Error("injected file close failure");
+    const aggregateError = await capturedRejectionV2(
+      createPlatformReleaseHostCompositionAuthorityV2ForTest(
+        {
+          platformHost: platformHostV2(),
+          fixture: primaryAndClose.fixture,
+        },
+        {
+          afterFileRead: (context) => {
+            if (
+              context.relativeLocator
+                === "bin/release-bootstrap"
+            ) {
+              chmodSync(context.absolutePath, 0o444);
+            }
+          },
+          afterFileDescriptorClose: (context) => {
+            if (
+              context.relativeLocator
+                === "bin/release-bootstrap"
+            ) {
+              throw aggregateCloseFailure;
+            }
+          },
+        },
+      ),
+    );
+    assertPrimaryFirstFilesystemFailureV2(
+      aggregateError,
+      /or its parent changed during descriptor admission/u,
+      aggregateCloseFailure,
+    );
+
+    const closeOnly =
+      materializePlatformReleaseHostCompositionFixtureV2();
+    cleanupRoots.push(closeOnly.root);
+    const closeOnlyFailure =
+      new Error("injected file close-only failure");
+    const closeOnlyError = await capturedRejectionV2(
+      createPlatformReleaseHostCompositionAuthorityV2ForTest(
+        {
+          platformHost: platformHostV2(),
+          fixture: closeOnly.fixture,
+        },
+        {
+          afterFileDescriptorClose: (context) => {
+            if (
+              context.relativeLocator
+                === "bin/release-bootstrap"
+            ) {
+              throw closeOnlyFailure;
+            }
+          },
+        },
+      ),
+    );
+    assertCloseOnlyFilesystemFailureV2(
+      closeOnlyError,
+      closeOnlyFailure,
     );
   });
 

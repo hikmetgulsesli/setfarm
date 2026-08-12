@@ -5,10 +5,10 @@ import {
   fstatSync,
   lstatSync,
   openSync,
+  opendirSync,
   readSync,
-  readdirSync,
   realpathSync,
-  type Stats,
+  type BigIntStats,
 } from "node:fs";
 import path from "node:path";
 
@@ -95,8 +95,21 @@ type CaptureHookContext = Readonly<{
   relativePath: "." | string;
 }>;
 
+type DirectorySnapshotHookContext = CaptureHookContext & Readonly<{
+  phase: "initial" | "rescan";
+}>;
+
+type DirectorySnapshotEntryHookContext = DirectorySnapshotHookContext & Readonly<{
+  name: string;
+  totalInitialMembershipNamesRetained: number;
+}>;
+
 export type CanonicalRuntimeTreeV2TestHooks = Readonly<{
   afterFileRead?: (context: CaptureHookContext) => void;
+  afterFileDescriptorClose?: (context: CaptureHookContext) => void;
+  afterDirectoryDescriptorClose?: (context: DirectorySnapshotHookContext) => void;
+  afterDirectoryEntryRead?: (context: DirectorySnapshotEntryHookContext) => void;
+  afterDirectoryEntryRetained?: (context: DirectorySnapshotEntryHookContext) => void;
   beforeDirectoryRescan?: (context: CaptureHookContext) => void;
 }>;
 
@@ -109,25 +122,26 @@ type CaptureState = {
   readonly entries: CanonicalRuntimeTreeEntryV2[];
   readonly casefoldPaths: Map<string, string>;
   readonly visitedDirectories: Set<string>;
+  initialMembershipNamesRetained: number;
   fileCount: number;
   directoryCount: number;
   totalBytes: number;
 };
 
 type DirectorySnapshot = Readonly<{
-  dev: number;
-  ino: number;
-  mode: number;
-  mtimeMs: number;
-  ctimeMs: number;
+  dev: bigint;
+  ino: bigint;
+  mode: bigint;
+  mtimeNs: bigint;
+  ctimeNs: bigint;
   names: readonly string[];
 }>;
 
-function modeBits(stat: Stats): number {
-  return stat.mode & 0o7777;
+function modeBits(stat: BigIntStats): number {
+  return Number(stat.mode & 0o7777n);
 }
 
-function octalMode(stat: Stats): string {
+function octalMode(stat: BigIntStats): string {
   return modeBits(stat).toString(8).padStart(4, "0");
 }
 
@@ -143,8 +157,25 @@ function throwCaptureError(
   throw new CanonicalRuntimeTreeV2Error(code, message, cause === undefined ? undefined : { cause });
 }
 
+function primaryFirstAggregate(
+  primary: CanonicalRuntimeTreeV2Error,
+  secondary: CanonicalRuntimeTreeV2Error,
+  message: string,
+): never {
+  const aggregate = new AggregateError(
+    [primary, secondary],
+    message,
+    { cause: primary },
+  );
+  throw new CanonicalRuntimeTreeV2Error(
+    primary.code,
+    message,
+    { cause: aggregate },
+  );
+}
+
 function assertExactMode(
-  stat: Stats,
+  stat: BigIntStats,
   expected: readonly number[],
   relativePath: "." | string,
 ): void {
@@ -222,12 +253,17 @@ function validateRelativePath(state: CaptureState, relativePath: string): void {
   state.casefoldPaths.set(folded, relativePath);
 }
 
-function directorySnapshot(absolutePath: string, relativePath: "." | string): DirectorySnapshot {
-  let stat: Stats;
-  let names: string[];
+function directorySnapshot(
+  state: CaptureState,
+  absolutePath: string,
+  relativePath: "." | string,
+  maximumEntries: number,
+  overflowCode: "DIRECTORY_LIMIT_EXCEEDED" | "DIRECTORY_CHANGED",
+  phase: "initial" | "rescan",
+): DirectorySnapshot {
+  let stat: BigIntStats;
   try {
-    stat = lstatSync(absolutePath);
-    names = readdirSync(absolutePath).sort();
+    stat = lstatSync(absolutePath, { bigint: true });
   } catch (error) {
     throwCaptureError("DIRECTORY_CHANGED", `${relativePath} could not be snapshotted`, error);
   }
@@ -237,12 +273,86 @@ function directorySnapshot(absolutePath: string, relativePath: "." | string): Di
   if (!stat.isDirectory()) {
     throwCaptureError("SPECIAL_FILE_REJECTED", `${relativePath} is not a directory`);
   }
+
+  let directory: ReturnType<typeof opendirSync> | undefined;
+  let primaryError: CanonicalRuntimeTreeV2Error | undefined;
+  const names: string[] = [];
+  try {
+    directory = opendirSync(absolutePath, { bufferSize: 1 });
+    while (true) {
+      const entry = directory.readSync();
+      if (entry === null) break;
+      state.hooks?.afterDirectoryEntryRead?.({
+        absolutePath,
+        relativePath,
+        phase,
+        name: entry.name,
+        totalInitialMembershipNamesRetained:
+          state.initialMembershipNamesRetained,
+      });
+      if (names.length >= maximumEntries) {
+        throwCaptureError(
+          overflowCode,
+          `${relativePath} directory membership exceeds its admitted snapshot bound`,
+        );
+      }
+      names.push(entry.name);
+      if (phase === "initial") {
+        state.initialMembershipNamesRetained += 1;
+      }
+      state.hooks?.afterDirectoryEntryRetained?.({
+        absolutePath,
+        relativePath,
+        phase,
+        name: entry.name,
+        totalInitialMembershipNamesRetained:
+          state.initialMembershipNamesRetained,
+      });
+    }
+  } catch (error) {
+    primaryError = error instanceof CanonicalRuntimeTreeV2Error
+      ? error
+      : new CanonicalRuntimeTreeV2Error(
+        "DIRECTORY_CHANGED",
+        `${relativePath} directory membership could not be read`,
+        { cause: error },
+      );
+  }
+
+  let closeError: CanonicalRuntimeTreeV2Error | undefined;
+  if (directory !== undefined) {
+    try {
+      directory.closeSync();
+      state.hooks?.afterDirectoryDescriptorClose?.({
+        absolutePath,
+        relativePath,
+        phase,
+      });
+    } catch (error) {
+      closeError = new CanonicalRuntimeTreeV2Error(
+        "DIRECTORY_CHANGED",
+        `${relativePath} directory snapshot could not be closed`,
+        { cause: error },
+      );
+    }
+  }
+  if (primaryError !== undefined && closeError !== undefined) {
+    primaryFirstAggregate(
+      primaryError,
+      closeError,
+      `${relativePath} directory snapshot read and close both failed`,
+    );
+  }
+  if (primaryError !== undefined) throw primaryError;
+  if (closeError !== undefined) throw closeError;
+
+  names.sort();
   return {
     dev: stat.dev,
     ino: stat.ino,
     mode: stat.mode,
-    mtimeMs: stat.mtimeMs,
-    ctimeMs: stat.ctimeMs,
+    mtimeNs: stat.mtimeNs,
+    ctimeNs: stat.ctimeNs,
     names,
   };
 }
@@ -260,8 +370,8 @@ function assertDirectoryStable(
     before.dev !== after.dev
     || before.ino !== after.ino
     || before.mode !== after.mode
-    || before.mtimeMs !== after.mtimeMs
-    || before.ctimeMs !== after.ctimeMs
+    || before.mtimeNs !== after.mtimeNs
+    || before.ctimeNs !== after.ctimeNs
     || !sameStringArray(before.names, after.names)
   ) {
     throwCaptureError("DIRECTORY_CHANGED", `${relativePath} changed while its tree was captured`);
@@ -269,23 +379,23 @@ function assertDirectoryStable(
 }
 
 function assertFileStat(
-  stat: Stats,
+  stat: BigIntStats,
   relativePath: string,
   limits: CanonicalRuntimeTreeLimitsV2,
 ): void {
   if (!stat.isFile()) {
     throwCaptureError("SPECIAL_FILE_REJECTED", `${relativePath} is not a regular file`);
   }
-  if (stat.nlink !== 1) {
+  if (stat.nlink !== 1n) {
     throwCaptureError("HARDLINK_REJECTED", `${relativePath} has link count ${stat.nlink}; expected 1`);
   }
   assertExactMode(stat, [0o444, 0o555], relativePath);
-  if (!Number.isSafeInteger(stat.size) || stat.size < 0 || stat.size > limits.maxFileBytes) {
+  if (stat.size < 0n || stat.size > BigInt(limits.maxFileBytes)) {
     throwCaptureError("FILE_TOO_LARGE", `${relativePath} exceeds ${limits.maxFileBytes} bytes`);
   }
 }
 
-function sameFileStat(left: Stats, right: Stats): boolean {
+function sameFileStat(left: BigIntStats, right: BigIntStats): boolean {
   return left.isFile()
     && right.isFile()
     && left.dev === right.dev
@@ -293,8 +403,8 @@ function sameFileStat(left: Stats, right: Stats): boolean {
     && left.nlink === right.nlink
     && left.mode === right.mode
     && left.size === right.size
-    && left.mtimeMs === right.mtimeMs
-    && left.ctimeMs === right.ctimeMs;
+    && left.mtimeNs === right.mtimeNs
+    && left.ctimeNs === right.ctimeNs;
 }
 
 function readAndHashFile(state: CaptureState, absolutePath: string, relativePath: string): Readonly<{
@@ -304,6 +414,13 @@ function readAndHashFile(state: CaptureState, absolutePath: string, relativePath
   executable: boolean;
 }> {
   let descriptor: number | undefined;
+  let captured: Readonly<{
+    byteLength: number;
+    contentHash: string;
+    mode: "0444" | "0555";
+    executable: boolean;
+  }> | undefined;
+  let primaryError: CanonicalRuntimeTreeV2Error | undefined;
   try {
     try {
       descriptor = openSync(
@@ -317,9 +434,9 @@ function readAndHashFile(state: CaptureState, absolutePath: string, relativePath
       throwCaptureError("FILE_CHANGED", `${relativePath} could not be opened without following links`, error);
     }
 
-    const before = fstatSync(descriptor);
+    const before = fstatSync(descriptor, { bigint: true });
     assertFileStat(before, relativePath, state.limits);
-    if (state.totalBytes + before.size > state.limits.maxTotalBytes) {
+    if (state.totalBytes + Number(before.size) > state.limits.maxTotalBytes) {
       throwCaptureError(
         "TOTAL_BYTES_EXCEEDED",
         `runtime tree exceeds ${state.limits.maxTotalBytes} total bytes at ${relativePath}`,
@@ -347,17 +464,17 @@ function readAndHashFile(state: CaptureState, absolutePath: string, relativePath
     }
 
     state.hooks?.afterFileRead?.({ absolutePath, relativePath });
-    const after = fstatSync(descriptor);
-    let pathAfter: Stats;
+    const after = fstatSync(descriptor, { bigint: true });
+    let pathAfter: BigIntStats;
     try {
-      pathAfter = lstatSync(absolutePath);
+      pathAfter = lstatSync(absolutePath, { bigint: true });
     } catch (error) {
       throwCaptureError("FILE_CHANGED", `${relativePath} disappeared during capture`, error);
     }
     if (
       !sameFileStat(before, after)
       || !sameFileStat(after, pathAfter)
-      || byteLength !== after.size
+      || BigInt(byteLength) !== after.size
     ) {
       throwCaptureError("FILE_CHANGED", `${relativePath} changed while it was hashed`);
     }
@@ -365,18 +482,48 @@ function readAndHashFile(state: CaptureState, absolutePath: string, relativePath
     assertMetadataClear(state, absolutePath, relativePath, "file");
 
     const executable = modeBits(after) === 0o555;
-    return {
+    captured = {
       byteLength,
       contentHash: hash.digest("hex"),
       mode: executable ? "0555" : "0444",
       executable,
     };
   } catch (error) {
-    if (error instanceof CanonicalRuntimeTreeV2Error) throw error;
-    return throwCaptureError("IO_FAILURE", `failed to capture ${relativePath}`, error);
-  } finally {
-    if (descriptor !== undefined) closeSync(descriptor);
+    primaryError = error instanceof CanonicalRuntimeTreeV2Error
+      ? error
+      : new CanonicalRuntimeTreeV2Error(
+        "IO_FAILURE",
+        `failed to capture ${relativePath}`,
+        { cause: error },
+      );
   }
+
+  let closeError: CanonicalRuntimeTreeV2Error | undefined;
+  if (descriptor !== undefined) {
+    try {
+      closeSync(descriptor);
+      state.hooks?.afterFileDescriptorClose?.({
+        absolutePath,
+        relativePath,
+      });
+    } catch (error) {
+      closeError = new CanonicalRuntimeTreeV2Error(
+        "IO_FAILURE",
+        `file descriptor for ${relativePath} could not be closed`,
+        { cause: error },
+      );
+    }
+  }
+  if (primaryError !== undefined && closeError !== undefined) {
+    primaryFirstAggregate(
+      primaryError,
+      closeError,
+      `${relativePath} capture and descriptor close both failed`,
+    );
+  }
+  if (primaryError !== undefined) throw primaryError;
+  if (closeError !== undefined) throw closeError;
+  return captured!;
 }
 
 function visitDirectory(
@@ -385,15 +532,24 @@ function visitDirectory(
   relativePath: "." | string,
   type: "root" | "directory",
 ): void {
-  const before = directorySnapshot(absolutePath, relativePath);
+  const before = directorySnapshot(
+    state,
+    absolutePath,
+    relativePath,
+    state.limits.maxFiles
+      + state.limits.maxDirectories
+      - state.initialMembershipNamesRetained,
+    "DIRECTORY_LIMIT_EXCEEDED",
+    "initial",
+  );
   const directoryIdentity = `${before.dev}:${before.ino}`;
   if (state.visitedDirectories.has(directoryIdentity)) {
     throwCaptureError("HARDLINK_REJECTED", `${relativePath} aliases an already visited directory`);
   }
   state.visitedDirectories.add(directoryIdentity);
-  let beforeStat: Stats;
+  let beforeStat: BigIntStats;
   try {
-    beforeStat = lstatSync(absolutePath);
+    beforeStat = lstatSync(absolutePath, { bigint: true });
   } catch (error) {
     throwCaptureError("DIRECTORY_CHANGED", `${relativePath} disappeared after snapshot`, error);
   }
@@ -401,8 +557,8 @@ function visitDirectory(
     before.dev !== beforeStat.dev
     || before.ino !== beforeStat.ino
     || before.mode !== beforeStat.mode
-    || before.mtimeMs !== beforeStat.mtimeMs
-    || before.ctimeMs !== beforeStat.ctimeMs
+    || before.mtimeNs !== beforeStat.mtimeNs
+    || before.ctimeNs !== beforeStat.ctimeNs
   ) {
     throwCaptureError("DIRECTORY_CHANGED", `${relativePath} changed after its initial snapshot`);
   }
@@ -413,9 +569,9 @@ function visitDirectory(
     const childRelative = relativePath === "." ? name : `${relativePath}/${name}`;
     validateRelativePath(state, childRelative);
     const childAbsolute = path.join(absolutePath, name);
-    let childStat: Stats;
+    let childStat: BigIntStats;
     try {
-      childStat = lstatSync(childAbsolute);
+      childStat = lstatSync(childAbsolute, { bigint: true });
     } catch (error) {
       throwCaptureError("DIRECTORY_CHANGED", `${childRelative} disappeared during traversal`, error);
     }
@@ -452,7 +608,14 @@ function visitDirectory(
   }
 
   state.hooks?.beforeDirectoryRescan?.({ absolutePath, relativePath });
-  const after = directorySnapshot(absolutePath, relativePath);
+  const after = directorySnapshot(
+    state,
+    absolutePath,
+    relativePath,
+    before.names.length,
+    "DIRECTORY_CHANGED",
+    "rescan",
+  );
   assertDirectoryStable(before, after, relativePath);
   assertMetadataClear(state, absolutePath, relativePath, type);
 }
@@ -496,9 +659,9 @@ function capture(
     throwCaptureError("CONTRACT_INVALID", "runtime tree metadataProbe must be a function");
   }
   const root = path.resolve(input.root);
-  let rootStat: Stats;
+  let rootStat: BigIntStats;
   try {
-    rootStat = lstatSync(root);
+    rootStat = lstatSync(root, { bigint: true });
   } catch (error) {
     throwCaptureError("ROOT_INVALID", `${root} cannot be inspected`, error);
   }
@@ -527,6 +690,7 @@ function capture(
     entries: [],
     casefoldPaths: new Map(),
     visitedDirectories: new Set(),
+    initialMembershipNamesRetained: 0,
     fileCount: 0,
     directoryCount: 0,
     totalBytes: 0,

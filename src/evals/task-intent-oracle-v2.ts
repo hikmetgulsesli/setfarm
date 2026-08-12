@@ -25,7 +25,7 @@ import {
 
 const SlugSchema = z.string().min(1).max(160).regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/);
 const ReasonCodeSchema = z.string().min(3).max(160).regex(/^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$/);
-const LocaleSchema = z.string().min(2).max(35).regex(/^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$/);
+const LocaleSchema = z.literal("en");
 
 const RejectionCodeListSchema = z.array(RejectionCodeSchema).min(1).max(4).refine(hasUniqueStrings, {
   message: "Oracle rejection reason codes must be unique",
@@ -51,7 +51,7 @@ const TaskIntentOracleV2BaseSchema = z.object({
   oracleVersion: z.literal(2),
   locale: LocaleSchema,
   cohort: z.enum(["baseline", "holdout", "negative"]),
-  variant: z.enum(["direct", "paraphrase", "multilingual", "ambiguous", "unsupported"]),
+  variant: z.enum(["direct", "paraphrase", "compositional", "ambiguous", "unsupported"]),
   expectedDecision: z.discriminatedUnion("kind", [AcceptedDecisionV1Schema, RejectionDecisionV2Schema]),
   clauses: z.array(OracleClauseV1Schema).min(1).max(1_000),
   expectations: z.array(TaskIntentExpectationV1Schema).max(2_000),

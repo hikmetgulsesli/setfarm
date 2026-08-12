@@ -18,12 +18,22 @@ import {
   ObservableAssertionV1Schema,
   ProductActionV1Schema,
   ProductDeliveryV1Schema,
+  PRODUCT_SPEC_V1_OPAQUE_SOURCE_EVIDENCE_PATHS,
   ProductRequirementV1Schema,
+  PRODUCT_SPEC_V1_ENGLISH_PROSE_PATHS,
   ProductSpecV1Schema,
   validatePersistenceDeliveryCompatibilityV1,
   type ProductSpecV1,
 } from "./product-spec-v1.js";
 import { TaskRequirementClauseV1Schema } from "../requirements/task-requirements-v1.js";
+import {
+  ENGLISH_TEXT_TREE_MAX_CODE_UNITS_V1,
+  ENGLISH_TEXT_TREE_MAX_ISSUES_V1,
+  ENGLISH_TEXT_TREE_MAX_VALUES_V1,
+  englishTextViolationMessageV1,
+  inspectEnglishTextTreeV1,
+  inspectEnglishTextV1,
+} from "../english-text-contract-v1.js";
 import {
   ProductActionInvocationInterfaceIntentV1Schema,
   ProductInvocationResultValueContractV1Schema,
@@ -1614,6 +1624,73 @@ export const ProductSpecV2Schema = z.object({
 });
 
 export type ProductSpecV2 = z.infer<typeof ProductSpecV2Schema>;
+
+export const ProductSpecV2EnglishWriteSchema = ProductSpecV2Schema.superRefine(
+  (value, context) => {
+    if (value.delivery.uiLanguage !== "English") {
+      context.addIssue({
+        code: "custom",
+        path: ["delivery", "uiLanguage"],
+        message: "PRODUCT_SPEC_V2_UI_LANGUAGE_MUST_BE_ENGLISH",
+      });
+    }
+    const englishTreeIssues = inspectEnglishTextTreeV1(value, {
+      lexicalPathPatterns: PRODUCT_SPEC_V1_ENGLISH_PROSE_PATHS,
+      opaquePathPatterns: PRODUCT_SPEC_V1_OPAQUE_SOURCE_EVIDENCE_PATHS,
+    });
+    englishTreeIssues.forEach((issue) => context.addIssue({
+      code: "custom",
+      path: [...issue.path],
+      message: `PRODUCT_SPEC_V2_ENGLISH_TEXT_REQUIRED: ${englishTextViolationMessageV1(issue)}`,
+    }));
+    if (englishTreeIssues.some((issue) => issue.code === "ENGLISH_TEXT_TREE_LIMIT_EXCEEDED")
+      || englishTreeIssues.length >= ENGLISH_TEXT_TREE_MAX_ISSUES_V1) return;
+    let visibleTextValues = 0;
+    let visibleTextCodeUnits = 0;
+    let englishIssueCount = englishTreeIssues.length;
+    visibleTextScan: for (let actionIndex = 0; actionIndex < value.actions.length; actionIndex += 1) {
+      const action = value.actions[actionIndex]!;
+      for (let effectIndex = 0; effectIndex < action.observableEffects.length; effectIndex += 1) {
+        const effect = action.observableEffects[effectIndex]!;
+        for (let assertionIndex = 0; assertionIndex < effect.assertions.length; assertionIndex += 1) {
+          const assertion = effect.assertions[assertionIndex]!;
+          if (assertion.property !== "visible_text" || typeof assertion.expected !== "string") continue;
+          visibleTextValues += 1;
+          visibleTextCodeUnits += assertion.expected.length;
+          const path = [
+            "actions",
+            actionIndex,
+            "observableEffects",
+            effectIndex,
+            "assertions",
+            assertionIndex,
+            "expected",
+          ];
+          if (visibleTextValues > ENGLISH_TEXT_TREE_MAX_VALUES_V1
+            || visibleTextCodeUnits > ENGLISH_TEXT_TREE_MAX_CODE_UNITS_V1) {
+            context.addIssue({
+              code: "custom",
+              path,
+              message: "PRODUCT_SPEC_V2_ENGLISH_TEXT_REQUIRED: ENGLISH_TEXT_TREE_LIMIT_EXCEEDED",
+            });
+            break visibleTextScan;
+          }
+          const issue = inspectEnglishTextV1(assertion.expected);
+          if (!issue) continue;
+          context.addIssue({
+            code: "custom",
+            path,
+            message: `PRODUCT_SPEC_V2_ENGLISH_TEXT_REQUIRED: ${englishTextViolationMessageV1(issue)}`,
+          });
+          englishIssueCount += 1;
+          if (englishIssueCount >= ENGLISH_TEXT_TREE_MAX_ISSUES_V1) break visibleTextScan;
+        }
+      }
+    }
+  },
+);
+
+export type ProductSpecV2EnglishWrite = z.infer<typeof ProductSpecV2EnglishWriteSchema>;
 
 /**
  * Explicit product-semantics authority accepted by shared topology/runtime

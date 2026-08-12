@@ -58,7 +58,12 @@ import {
   type DesignInteractionGraphV2,
 } from "./schemas/design-interaction-graph-v2.js";
 import { DesignGenerationTargetsV2Schema } from "./schemas/design-generation-targets-v2.js";
-import { ProductSpecV2Schema } from "./schemas/product-spec-v2.js";
+import { ProductSpecV2EnglishWriteSchema } from "./schemas/product-spec-v2.js";
+import {
+  ENGLISH_TEXT_MAX_CODE_UNITS_V1,
+  englishTextViolationMessageV1,
+  inspectEnglishTextV1,
+} from "./english-text-contract-v1.js";
 import {
   buildV3BatchStitchPromptV2,
   type V3DesignContractV2,
@@ -78,6 +83,15 @@ const AttemptTransportSchema = z.object({
   directScreenEvidence: z.array(z.unknown()).max(1_000),
   downloaded: z.array(z.unknown()).max(1_000),
 }).strict();
+
+const MAX_SELECTED_HTML_BYTES_V2 = ENGLISH_TEXT_MAX_CODE_UNITS_V1 * 4;
+const DESIGN_SOURCE_SELECTED_HTML_ADMISSION_POLICY_V2 = Object.freeze({
+  schema: "setfarm.design-source-selected-html-admission-policy.v2" as const,
+  maximumBytes: MAX_SELECTED_HTML_BYTES_V2,
+  encoding: "utf8_fatal" as const,
+  language: "English" as const,
+  contract: "setfarm.english-text-contract.v1" as const,
+});
 
 export type DesignSourceStageArtifactV2 = Readonly<{
   screenId: string;
@@ -120,7 +134,6 @@ export type DesignSourceAuthorityRuntimeInputV2 = Readonly<{
   provider: string;
   model: string;
   deviceType: "DESKTOP" | "TABLET" | "MOBILE";
-  uiLanguage: string;
   leaseMs?: number;
   heartbeatIntervalMs?: number;
   duplicateWaitMs?: number;
@@ -263,6 +276,39 @@ function typedMaterializationFailure(input: Readonly<{
         ? reasonCodes
         : ["DESIGN_SOURCE_SEMANTIC_CLOSURE_REJECTED"],
       evidence: { cause, ...evidence },
+    },
+  });
+}
+
+function requireSelectedHtmlEnglishV2(input: Readonly<{
+  attempt: ProductCompilationAttemptV1;
+  screenId: string;
+  bytes: Uint8Array;
+}>): void {
+  let diagnostic: string | undefined;
+  if (input.bytes.byteLength > MAX_SELECTED_HTML_BYTES_V2) {
+    diagnostic = "DESIGN_SOURCE_SELECTED_HTML_BYTE_LIMIT_EXCEEDED";
+  } else {
+    let decoded: string;
+    try {
+      decoded = new TextDecoder("utf-8", { fatal: true }).decode(input.bytes);
+    } catch {
+      diagnostic = "DESIGN_SOURCE_SELECTED_HTML_UTF8_INVALID";
+      decoded = "";
+    }
+    if (!diagnostic) {
+      const violation = inspectEnglishTextV1(decoded);
+      if (violation) diagnostic = englishTextViolationMessageV1(violation);
+    }
+  }
+  if (!diagnostic) return;
+  throw typedMaterializationFailure({
+    attempt: input.attempt,
+    reasonCodes: ["DESIGN_SOURCE_SELECTED_HTML_ENGLISH_REQUIRED"],
+    evidence: {
+      phase: "selected_html_english_admission",
+      screenId: input.screenId,
+      diagnostic,
     },
   });
 }
@@ -484,6 +530,17 @@ async function materializeAcceptedAuthority(input: Readonly<{
       },
     });
   }
+  for (const binding of bound.responseBindings.bindings) {
+    const artifact = artifactsById.get(binding.responseScreenId);
+    if (!artifact?.htmlBytes || !artifact.htmlRef || !artifact.screenshotRef) {
+      throw new Error(`DESIGN_SOURCE_SELECTED_ARTIFACT_MISSING:${binding.responseScreenId}`);
+    }
+    requireSelectedHtmlEnglishV2({
+      attempt: input.attempt,
+      screenId: binding.responseScreenId,
+      bytes: artifact.htmlBytes,
+    });
+  }
   const bindingsRef = await writeCanonicalPayload({
     area: "selection",
     locator: "response-bindings.json",
@@ -588,7 +645,7 @@ export async function readProjectedDesignSourceAuthorityV2(
   contractInput: V3DesignContractV2,
 ): Promise<DesignSourceAuthorityArtifactsV2> {
   const contract = {
-    productSpec: ProductSpecV2Schema.parse(contractInput.productSpec),
+    productSpec: ProductSpecV2EnglishWriteSchema.parse(contractInput.productSpec),
     generationTargets: DesignGenerationTargetsV2Schema.parse(contractInput.generationTargets),
   };
   const directResponseEvidence = StitchDirectResponseEvidenceV2Schema.parse(
@@ -623,7 +680,7 @@ export async function readProjectedDesignSourceAuthorityV2(
 }
 
 function authorityFor(input: DesignSourceAuthorityRuntimeInputV2): DesignSourceGenerationAuthorityV1 {
-  const productSpec = ProductSpecV2Schema.parse(input.contract.productSpec);
+  const productSpec = ProductSpecV2EnglishWriteSchema.parse(input.contract.productSpec);
   const generationTargets = DesignGenerationTargetsV2Schema.parse(input.contract.generationTargets);
   const targetRefs = generationTargets.targets.map((target) => target.targetId).sort(compareUtf16);
   return DesignSourceGenerationAuthorityV1Schema.parse({
@@ -637,6 +694,7 @@ function authorityFor(input: DesignSourceAuthorityRuntimeInputV2): DesignSourceG
       builder: "buildV3BatchStitchPromptV2",
       generationTargetsSchema: generationTargets.schema,
       projectId: input.projectId,
+      selectedHtmlAdmissionPolicy: DESIGN_SOURCE_SELECTED_HTML_ADMISSION_POLICY_V2,
     }),
     renderPolicyHash: hashCanonicalJson(STITCH_RENDERED_SEMANTICS_POLICY_V2),
     selectionPolicyHash: hashCanonicalJson(STITCH_TARGET_CANDIDATE_SELECTION_POLICY_V2),
@@ -667,7 +725,7 @@ export async function runDesignSourceAuthorityV2(
   dependencies: DesignSourceAuthorityRuntimeDependenciesV2,
 ): Promise<DesignSourceAuthorityRuntimeResultV2> {
   const contract: V3DesignContractV2 = {
-    productSpec: ProductSpecV2Schema.parse(input.contract.productSpec),
+    productSpec: ProductSpecV2EnglishWriteSchema.parse(input.contract.productSpec),
     generationTargets: DesignGenerationTargetsV2Schema.parse(input.contract.generationTargets),
   };
   const authority = authorityFor({ ...input, contract });
@@ -684,7 +742,6 @@ export async function runDesignSourceAuthorityV2(
         contract,
         targetRefs,
         deviceType: input.deviceType,
-        uiLanguage: input.uiLanguage,
         stageId,
       }),
     });

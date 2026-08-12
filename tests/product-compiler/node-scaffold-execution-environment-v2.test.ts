@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
-import { existsSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, renameSync } from "node:fs";
 import {
   chmod,
   link,
+  lstat,
   mkdir,
   mkdtemp,
   realpath,
@@ -21,6 +22,7 @@ import {
   type HostNodeToolchainProbeResultV2,
 } from "../../src/product-compiler/host-node-toolchain-authority-v2.js";
 import {
+  NodeScaffoldExecutionEnvironmentErrorV2,
   NodeScaffoldExecutionEnvironmentV2,
   createNodeScaffoldExecutionEnvironmentV2,
   createNodeScaffoldExecutionEnvironmentV2ForTest,
@@ -29,6 +31,7 @@ import {
   inspectNodeScaffoldExecutionEnvironmentReceiptV2,
   isProductionNodeScaffoldExecutionEnvironmentV2,
   revalidateNodeScaffoldExecutionEnvironmentV2,
+  type NodeScaffoldExecutionEnvironmentTestCheckpointV2,
 } from "../../src/product-compiler/node-scaffold-execution-environment-v2.js";
 import {
   EffectiveNpmConfigReceiptV2Schema,
@@ -346,6 +349,39 @@ describe("NodeScaffoldExecutionEnvironmentV2", () => {
     });
   });
 
+  it("cleans its exact partial root after every create-before-write checkpoint failure", async () => {
+    const checkpoints: readonly NodeScaffoldExecutionEnvironmentTestCheckpointV2[] = [
+      "after_private_root_create",
+      "after_private_directory_create",
+      "after_private_npmrc_create",
+    ];
+    const fixture = await makeFixture();
+    const calls: HostNodeToolchainProbeInvocationV2[] = [];
+    const hostToolchain = await makeAuthority({ fixture, calls });
+    const scratchParent = await makeScratchParent();
+    const sentinel = path.join(scratchParent, "sentinel");
+    await writeFile(sentinel, "foreign\n", { mode: 0o600 });
+
+    for (const checkpoint of checkpoints) {
+      await assert.rejects(createNodeScaffoldExecutionEnvironmentV2ForTest({
+        profileId: PROFILE_ID,
+        hostToolchain,
+        scratchParent,
+        testHooks: {
+          afterCheckpoint(observed) {
+            if (observed === checkpoint) throw new Error(`FAULT:${checkpoint}`);
+          },
+        },
+      }), {
+        code: "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_MATERIALIZATION_FAILED",
+      });
+      assert.deepEqual(
+        await (await import("node:fs/promises")).readdir(scratchParent),
+        ["sentinel"],
+      );
+    }
+  });
+
   it("joins both code-owned Node product profiles without project-specific environment rules", async () => {
     for (const profileId of [
       "PROFILE_NODE_CLI_STATELESS_EXACT_V2",
@@ -418,7 +454,7 @@ describe("NodeScaffoldExecutionEnvironmentV2", () => {
         });
       },
     ];
-    for (const attack of attacks) {
+    for (const [index, attack] of attacks.entries()) {
       const fixture = await makeFixture();
       const calls: HostNodeToolchainProbeInvocationV2[] = [];
       const hostToolchain = await makeAuthority({
@@ -433,8 +469,21 @@ describe("NodeScaffoldExecutionEnvironmentV2", () => {
         profileId: PROFILE_ID,
         hostToolchain,
         scratchParent,
-      }), { code: "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_EFFECTIVE_CONFIG_INVALID" });
-      assert.deepEqual(await (await import("node:fs/promises")).readdir(scratchParent), []);
+      }), (error: unknown) => {
+        if (!(error instanceof NodeScaffoldExecutionEnvironmentErrorV2)) return false;
+        if (index < 2) {
+          return error.code === "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_STATE_DRIFT"
+            && error.cause instanceof AggregateError
+            && error.cause.errors.length === 2
+            && error.message.includes("cleanup retained its authenticated root");
+        }
+        return error.code
+          === "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_EFFECTIVE_CONFIG_INVALID";
+      });
+      const retained = await (await import("node:fs/promises")).readdir(
+        scratchParent,
+      );
+      assert.equal(retained.length, index < 2 ? 1 : 0);
     }
   });
 
@@ -494,6 +543,197 @@ describe("NodeScaffoldExecutionEnvironmentV2", () => {
     destroyNodeScaffoldExecutionEnvironmentV2(second);
     await rm(firstRoot, { recursive: true, force: true });
     await rm(displaced, { recursive: true, force: true });
+  });
+
+  it("types a cleanup descriptor-close failure and permits an exact retained-root retry", async () => {
+    const fixture = await makeFixture();
+    const calls: HostNodeToolchainProbeInvocationV2[] = [];
+    const hostToolchain = await makeAuthority({ fixture, calls });
+    const scratchParent = await makeScratchParent();
+    let closeFailurePending = true;
+    const handle = await createNodeScaffoldExecutionEnvironmentV2ForTest({
+      profileId: PROFILE_ID,
+      hostToolchain,
+      scratchParent,
+      testHooks: {
+        afterCleanupDirectoryDescriptorClose(locator) {
+          if (locator === "." && closeFailurePending) {
+            closeFailurePending = false;
+            throw new Error("INJECTED_EXECUTION_CLEANUP_CLOSE_FAILURE");
+          }
+        },
+      },
+    });
+    const privateRoot = path.dirname(effectiveInvocation(calls).cwd);
+
+    await assert.rejects(async () => destroyNodeScaffoldExecutionEnvironmentV2(handle),
+      (error: unknown) =>
+        error instanceof NodeScaffoldExecutionEnvironmentErrorV2
+        && error.code === "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_STATE_DRIFT"
+        && error.cause instanceof Error
+        && error.cause.message === "INJECTED_EXECUTION_CLEANUP_CLOSE_FAILURE");
+    assert.equal(existsSync(privateRoot), true);
+
+    destroyNodeScaffoldExecutionEnvironmentV2(handle);
+    assert.equal(existsSync(privateRoot), false);
+  });
+
+  it("restores a retained nested directory to its original read-only mode", async () => {
+    const fixture = await makeFixture();
+    const calls: HostNodeToolchainProbeInvocationV2[] = [];
+    const hostToolchain = await makeAuthority({ fixture, calls });
+    const scratchParent = await makeScratchParent();
+    let closeFailurePending = true;
+    const handle = await createNodeScaffoldExecutionEnvironmentV2ForTest({
+      profileId: PROFILE_ID,
+      hostToolchain,
+      scratchParent,
+      testHooks: {
+        afterCleanupDirectoryDescriptorClose(locator) {
+          if (locator === "config-probe" && closeFailurePending) {
+            closeFailurePending = false;
+            throw new Error("INJECTED_EXECUTION_NESTED_CLEANUP_CLOSE_FAILURE");
+          }
+        },
+      },
+    });
+    const privateRoot = path.dirname(effectiveInvocation(calls).cwd);
+    const nestedDirectory = path.join(privateRoot, "config-probe");
+    await chmod(nestedDirectory, 0o555);
+
+    await assert.rejects(async () => destroyNodeScaffoldExecutionEnvironmentV2(handle),
+      (error: unknown) =>
+        error instanceof NodeScaffoldExecutionEnvironmentErrorV2
+        && error.code === "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_STATE_DRIFT"
+        && error.cause instanceof Error
+        && error.cause.message === "INJECTED_EXECUTION_NESTED_CLEANUP_CLOSE_FAILURE");
+    assert.equal(existsSync(nestedDirectory), true);
+    assert.equal((await lstat(nestedDirectory)).mode & 0o7777, 0o555);
+
+    destroyNodeScaffoldExecutionEnvironmentV2(handle);
+    assert.equal(existsSync(privateRoot), false);
+  });
+
+  it("orders cleanup then restore errors and does not mutate a foreign replacement", async () => {
+    const fixture = await makeFixture();
+    const calls: HostNodeToolchainProbeInvocationV2[] = [];
+    const hostToolchain = await makeAuthority({ fixture, calls });
+    const scratchParent = await makeScratchParent();
+    let privateRoot = "";
+    let displaced = "";
+    let failuresPending = true;
+    const handle = await createNodeScaffoldExecutionEnvironmentV2ForTest({
+      profileId: PROFILE_ID,
+      hostToolchain,
+      scratchParent,
+      testHooks: {
+        afterCleanupDirectoryDescriptorClose(locator) {
+          if (locator !== "config-probe" || !failuresPending) return;
+          failuresPending = false;
+          const nestedDirectory = path.join(privateRoot, "config-probe");
+          displaced = `${nestedDirectory}-displaced`;
+          renameSync(nestedDirectory, displaced);
+          mkdirSync(nestedDirectory, { mode: 0o555 });
+          chmodSync(nestedDirectory, 0o555);
+          throw new Error("INJECTED_EXECUTION_CLEANUP_PRIMARY_FAILURE");
+        },
+      },
+    });
+    privateRoot = path.dirname(effectiveInvocation(calls).cwd);
+    const nestedDirectory = path.join(privateRoot, "config-probe");
+    await chmod(nestedDirectory, 0o555);
+
+    await assert.rejects(async () => destroyNodeScaffoldExecutionEnvironmentV2(handle),
+      (error: unknown) => {
+        if (
+          !(error instanceof NodeScaffoldExecutionEnvironmentErrorV2)
+          || !(error.cause instanceof AggregateError)
+          || error.cause.errors.length !== 2
+        ) return false;
+        const [primary, restore] = error.cause.errors;
+        return primary instanceof NodeScaffoldExecutionEnvironmentErrorV2
+          && primary.cause instanceof Error
+          && primary.cause.message === "INJECTED_EXECUTION_CLEANUP_PRIMARY_FAILURE"
+          && restore instanceof NodeScaffoldExecutionEnvironmentErrorV2
+          && restore.message.includes("changed before mode restoration");
+      });
+    assert.equal((await lstat(nestedDirectory)).mode & 0o7777, 0o555);
+    assert.equal((await lstat(displaced)).mode & 0o7777, 0o700);
+
+    await rm(nestedDirectory, { recursive: true, force: true });
+    renameSync(displaced, nestedDirectory);
+    destroyNodeScaffoldExecutionEnvironmentV2(handle);
+    assert.equal(existsSync(privateRoot), false);
+  });
+
+  it("preserves cleanup census read and directory-close failures in primary-first order", async () => {
+    const fixture = await makeFixture();
+    const calls: HostNodeToolchainProbeInvocationV2[] = [];
+    const hostToolchain = await makeAuthority({ fixture, calls });
+    const scratchParent = await makeScratchParent();
+    let failuresPending = true;
+    const handle = await createNodeScaffoldExecutionEnvironmentV2ForTest({
+      profileId: PROFILE_ID,
+      hostToolchain,
+      scratchParent,
+      testHooks: {
+        beforeCleanupCensusDirectoryRead(locator) {
+          if (locator === "." && failuresPending) {
+            throw new Error("INJECTED_EXECUTION_CENSUS_READ_FAILURE");
+          }
+        },
+        afterCleanupCensusDirectoryClose(locator) {
+          if (locator === "." && failuresPending) {
+            throw new Error("INJECTED_EXECUTION_CENSUS_CLOSE_FAILURE");
+          }
+        },
+      },
+    });
+    const privateRoot = path.dirname(effectiveInvocation(calls).cwd);
+
+    await assert.rejects(async () => destroyNodeScaffoldExecutionEnvironmentV2(handle),
+      (error: unknown) =>
+        error instanceof NodeScaffoldExecutionEnvironmentErrorV2
+        && error.code === "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_STATE_DRIFT"
+        && error.cause instanceof AggregateError
+        && error.cause.errors.length === 2
+        && error.cause.errors[0] instanceof Error
+        && error.cause.errors[0].message === "INJECTED_EXECUTION_CENSUS_READ_FAILURE"
+        && error.cause.errors[1] instanceof Error
+        && error.cause.errors[1].message === "INJECTED_EXECUTION_CENSUS_CLOSE_FAILURE");
+    assert.equal(existsSync(privateRoot), true);
+
+    failuresPending = false;
+    destroyNodeScaffoldExecutionEnvironmentV2(handle);
+    assert.equal(existsSync(privateRoot), false);
+  });
+
+  it("preserves a foreign nested replacement until test recovery restores the captured census", async () => {
+    const created = await createFixtureEnvironment();
+    const invocation = effectiveInvocation(created.calls);
+    const privateRoot = path.dirname(invocation.cwd);
+    const nestedParent = path.join(privateRoot, "config-probe");
+    const displaced = `${privateRoot}-config-probe-displaced`;
+    const foreign = `${privateRoot}-config-probe-foreign`;
+    const foreignLeaf = path.join(nestedParent, "foreign", "sentinel");
+
+    await rename(nestedParent, displaced);
+    await mkdir(path.dirname(foreignLeaf), { recursive: true, mode: 0o700 });
+    await writeFile(foreignLeaf, "foreign\n", { mode: 0o600 });
+
+    await assert.rejects(async () => destroyNodeScaffoldExecutionEnvironmentV2(
+      created.handle,
+    ), { code: "NODE_SCAFFOLD_EXECUTION_ENVIRONMENT_V2_STATE_DRIFT" });
+    assert.equal(existsSync(privateRoot), true);
+    assert.equal(existsSync(displaced), true);
+    assert.equal(existsSync(foreignLeaf), true);
+
+    await rename(nestedParent, foreign);
+    await rename(displaced, nestedParent);
+    destroyNodeScaffoldExecutionEnvironmentV2(created.handle);
+    assert.equal(existsSync(privateRoot), false);
+    assert.equal(existsSync(path.join(foreign, "foreign", "sentinel")), true);
+    await rm(foreign, { recursive: true, force: true });
   });
 
   it("normalizes process failures into typed effective-config rejection and cleans only its root", async () => {
