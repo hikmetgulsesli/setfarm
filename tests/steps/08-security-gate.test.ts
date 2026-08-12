@@ -1,8 +1,8 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { securityGateModule } from "../../dist/installer/steps/08-security-gate/module.js";
-import { normalize, validateOutput } from "../../dist/installer/steps/08-security-gate/guards.js";
-import type { ParsedOutput } from "../../dist/installer/steps/types.js";
+import { securityGateModule } from "../../src/installer/steps/08-security-gate/module.js";
+import { normalize, validateOutput } from "../../src/installer/steps/08-security-gate/guards.js";
+import type { ParsedOutput } from "../../src/installer/steps/types.js";
 
 describe("08-security-gate step module", () => {
   it("module metadata is correct", () => {

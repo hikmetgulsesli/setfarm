@@ -6,6 +6,32 @@ import {
   hasUniqueStrings,
 } from "./common-v1.js";
 import { RequirementSemanticKindV1Schema } from "./product-spec-v1.js";
+import {
+  ENGLISH_TEXT_ARRAY_INDEX_V1,
+  ENGLISH_TEXT_TREE_MAX_CODE_UNITS_V1,
+  ENGLISH_TEXT_TREE_MAX_ISSUES_V1,
+  ENGLISH_TEXT_TREE_MAX_VALUES_V1,
+  englishTextViolationMessageV1,
+  inspectEnglishTextTreeV1,
+  inspectEnglishTextV1,
+  type EnglishTextPathPatternV1,
+} from "../english-text-contract-v1.js";
+
+const INDEX = ENGLISH_TEXT_ARRAY_INDEX_V1;
+
+const PLAN_SEMANTIC_ENGLISH_PROSE_PATHS = Object.freeze([
+  ["product", "name"],
+  ["product", "uiVisionSummary"],
+  ["product", "goals", INDEX, "statement"],
+  ["product", "nonGoals", INDEX, "statement"],
+  ["entities", INDEX, "name"],
+  ["states", INDEX, "name"],
+  ["states", INDEX, "invariants", INDEX],
+  ["surfaces", INDEX, "name"],
+  ["actions", INDEX, "name"],
+  ["actions", INDEX, "observables", INDEX, "selector", "name"],
+  ["assumptions", INDEX, "statement"],
+] satisfies readonly EnglishTextPathPatternV1[]);
 
 export const PlanSemanticKeyV1Schema = z.string()
   .min(1)
@@ -175,7 +201,17 @@ const ObservableAssertionSchema = z.object({
   property: z.enum(["visible_text", "value", "visibility", "enabled", "route"]),
   operator: z.enum(["equals", "contains", "matches", "changed"]),
   expected: z.json().optional(),
-}).strict();
+}).strict().superRefine((value, context) => {
+  if (value.property === "visible_text"
+    && value.operator !== "changed"
+    && typeof value.expected !== "string") {
+    context.addIssue({
+      code: "custom",
+      path: ["expected"],
+      message: "Visible-text assertions require a string expected value",
+    });
+  }
+});
 
 const ObservableSchema = z.object({
   key: PlanSemanticKeyV1Schema,
@@ -282,7 +318,7 @@ export const PlanSemanticProposalV1Schema = z.object({
     key: PlanSemanticKeyV1Schema,
     name: z.string().min(1).max(200),
     class: z.enum(["utility", "operations", "game", "content", "commerce", "developer_tool", "service", "other"]),
-    uiLanguage: z.string().min(1).max(100),
+    uiLanguage: z.literal("English"),
     database: z.enum(["none", "postgres", "sqlite", "external"]),
     uiVisionSummary: z.string().min(80).max(4_000),
     goals: z.array(GoalSchema).min(1).max(200),
@@ -308,6 +344,58 @@ export const PlanSemanticProposalV1Schema = z.object({
   uniqueKeys(context, "assumptions", value.assumptions);
   if (!hasUniqueStrings(value.requirements.map((requirement) => requirement.id))) {
     context.addIssue({ code: "custom", path: ["requirements"], message: "Requirement IDs must be unique" });
+  }
+  const englishTreeIssues = inspectEnglishTextTreeV1(value, {
+    lexicalPathPatterns: PLAN_SEMANTIC_ENGLISH_PROSE_PATHS,
+  });
+  englishTreeIssues.forEach((issue) => context.addIssue({
+    code: "custom",
+    path: [...issue.path],
+    message: `PLAN_SEMANTIC_ENGLISH_TEXT_REQUIRED: ${englishTextViolationMessageV1(issue)}`,
+  }));
+  if (englishTreeIssues.some((issue) => issue.code === "ENGLISH_TEXT_TREE_LIMIT_EXCEEDED")
+    || englishTreeIssues.length >= ENGLISH_TEXT_TREE_MAX_ISSUES_V1) return;
+  let visibleTextValues = 0;
+  let visibleTextCodeUnits = 0;
+  let englishIssueCount = englishTreeIssues.length;
+  visibleTextScan: for (let actionIndex = 0; actionIndex < value.actions.length; actionIndex += 1) {
+    const action = value.actions[actionIndex]!;
+    for (let observableIndex = 0; observableIndex < action.observables.length; observableIndex += 1) {
+      const observable = action.observables[observableIndex]!;
+      for (let assertionIndex = 0; assertionIndex < observable.assertions.length; assertionIndex += 1) {
+        const assertion = observable.assertions[assertionIndex]!;
+        if (assertion.property !== "visible_text" || typeof assertion.expected !== "string") continue;
+        visibleTextValues += 1;
+        visibleTextCodeUnits += assertion.expected.length;
+        const path = [
+          "actions",
+          actionIndex,
+          "observables",
+          observableIndex,
+          "assertions",
+          assertionIndex,
+          "expected",
+        ];
+        if (visibleTextValues > ENGLISH_TEXT_TREE_MAX_VALUES_V1
+          || visibleTextCodeUnits > ENGLISH_TEXT_TREE_MAX_CODE_UNITS_V1) {
+          context.addIssue({
+            code: "custom",
+            path,
+            message: "PLAN_SEMANTIC_ENGLISH_TEXT_REQUIRED: ENGLISH_TEXT_TREE_LIMIT_EXCEEDED",
+          });
+          break visibleTextScan;
+        }
+        const issue = inspectEnglishTextV1(assertion.expected);
+        if (!issue) continue;
+        context.addIssue({
+          code: "custom",
+          path,
+          message: `PLAN_SEMANTIC_ENGLISH_TEXT_REQUIRED: ${englishTextViolationMessageV1(issue)}`,
+        });
+        englishIssueCount += 1;
+        if (englishIssueCount >= ENGLISH_TEXT_TREE_MAX_ISSUES_V1) break visibleTextScan;
+      }
+    }
   }
 });
 

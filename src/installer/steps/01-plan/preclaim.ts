@@ -9,6 +9,10 @@ import { getStackModule } from "../../stack-modules/registry.js";
 import { produceProductSpecV1 } from "../../../product-compiler/producers/product-spec.js";
 import { hashCanonicalJson } from "../../../product-compiler/canonical-json.js";
 import { recordObservation } from "../../observations.js";
+import {
+  englishTextViolationMessageV1,
+  inspectEnglishTextV1,
+} from "../../../product-compiler/english-text-contract-v1.js";
 
 const DEFAULT_STACK = "vite-react";
 const PLAN_CONTRACT_SCHEMA_VERSION = "setfarm.plan.v2.2";
@@ -19,6 +23,27 @@ type AutoPlanOptions = {
   runId?: string;
   context?: Record<string, string>;
 };
+
+export class PlanEnglishTranslationRequiredError extends Error {
+  readonly code = "PLAN_ENGLISH_TRANSLATION_REQUIRED";
+  readonly field: string;
+
+  constructor(field: string, detail: string) {
+    super(`PLAN_ENGLISH_TRANSLATION_REQUIRED: ${field}: ${detail}`);
+    this.name = "PlanEnglishTranslationRequiredError";
+    this.field = field;
+  }
+}
+
+function requireEnglishAutoPlanText(value: string, field: string): void {
+  const issue = inspectEnglishTextV1(value);
+  if (issue) {
+    throw new PlanEnglishTranslationRequiredError(
+      field,
+      englishTextViolationMessageV1(issue),
+    );
+  }
+}
 
 export function slugify(input: string): string {
   return slugifyIdentity(input);
@@ -174,9 +199,7 @@ function formatEntityName(raw: string): string {
   return singular.replace(/(^|-)([a-z])/g, (_m, sep, ch) => `${sep}${ch.toUpperCase()}`).replace(/-/g, "");
 }
 
-export function inferUiLanguage(task: string): string {
-  const normalized = transliterateIdentity(task).toLowerCase();
-  if (/\b(turkish|turkce|tr)\b/.test(normalized)) return "Turkish";
+export function inferUiLanguage(_task: string): string {
   return "English";
 }
 
@@ -669,6 +692,7 @@ function mockDataContract(kind: ProjectKind, entity: string, dbRequired: string)
 }
 
 export function buildAutoPlanOutput(task: string, options: AutoPlanOptions = {}): string {
+  requireEnglishAutoPlanText(task, "task");
   task = stripStackPrefix(task);
   const rawProjectName = extractProjectName(task);
   const projectName = extractProjectDisplayName(task, rawProjectName);
@@ -689,7 +713,7 @@ export function buildAutoPlanOutput(task: string, options: AutoPlanOptions = {})
     ? surfaces.join("\n\n")
     : "DESIGN_REQUIRED=false. Product Surfaces are intentionally skipped for this API/CLI contract.";
 
-  return [
+  const output = [
     `CONTRACT_SCHEMA_VERSION: ${PLAN_CONTRACT_SCHEMA_VERSION}`,
     "STATUS: done",
     `PROJECT_NAME: ${projectName}`,
@@ -785,6 +809,8 @@ export function buildAutoPlanOutput(task: string, options: AutoPlanOptions = {})
       ? "- No local fallback design; DESIGN must use Stitch when DESIGN_REQUIRED=true and must block on Stitch failure."
       : "- No visual design step for DESIGN_REQUIRED=false platform contracts; downstream work must follow the behavioral/platform contract.",
   ].join("\n");
+  requireEnglishAutoPlanText(output, "output");
+  return output;
 }
 
 export async function preClaim(ctx: ClaimContext): Promise<void> {

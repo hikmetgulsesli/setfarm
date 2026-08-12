@@ -1,10 +1,10 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { deployModule } from "../../dist/installer/steps/11-deploy/module.js";
-import { normalize, validateOutput } from "../../dist/installer/steps/11-deploy/guards.js";
-import { evaluateDeployCapability } from "../../dist/installer/steps/11-deploy/preclaim.js";
-import { humanizeProjectDisplayName, normalizeMissionControlHostname, normalizeMissionControlSummary } from "../../dist/installer/step-ops.js";
-import type { ParsedOutput } from "../../dist/installer/steps/types.js";
+import { deployModule } from "../../src/installer/steps/11-deploy/module.js";
+import { normalize, validateOutput } from "../../src/installer/steps/11-deploy/guards.js";
+import { evaluateDeployCapability } from "../../src/installer/steps/11-deploy/preclaim.js";
+import { humanizeProjectDisplayName, normalizeMissionControlHostname, normalizeMissionControlSummary } from "../../src/installer/step-ops.js";
+import type { ParsedOutput } from "../../src/installer/steps/types.js";
 
 describe("11-deploy step module", () => {
   it("module metadata", () => {

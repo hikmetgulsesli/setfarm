@@ -11,7 +11,15 @@ import {
   type RunTerminationRequest,
 } from "./run-termination.js";
 import { hashCanonicalJson } from "../product-compiler/canonical-json.js";
-import { buildRunOperationalSnapshotInTransaction } from "../server/run-operational-snapshot.js";
+import { createRuntimeArtifactReader } from "../product-compiler/runtime-artifact-reader.js";
+import {
+  resolveProductArtifactCapacity,
+  resolveProductArtifactDir,
+} from "../runtime-config.js";
+import {
+  buildRunOperationalSnapshotInTransaction,
+  type RunOperationalSnapshotBuildOptions,
+} from "../server/run-operational-snapshot.js";
 import { hasStopBlockingInvariant } from "./run-operational-invariant-policy.js";
 
 type Sql = postgres.Sql;
@@ -314,12 +322,17 @@ async function executeInTransaction(
     runId: string;
     expectedSnapshotHash: string;
     now?: Date;
+    snapshotOptions: RunOperationalSnapshotBuildOptions;
   }>,
 ): Promise<RunOperationalActionResult> {
   const source = await readLegacyResumePlanSource(sql, input.runId, { lock: true });
   if (!source) throw new RunOperationalActionError("RUN_OPERATIONAL_ACTION_RUN_NOT_FOUND");
 
-  const snapshot = await buildRunOperationalSnapshotInTransaction(sql, input.runId);
+  const snapshot = await buildRunOperationalSnapshotInTransaction(
+    sql,
+    input.runId,
+    input.snapshotOptions,
+  );
   if (!snapshot) throw new RunOperationalActionError("RUN_OPERATIONAL_ACTION_RUN_NOT_FOUND");
   if (snapshot.snapshotHash !== input.expectedSnapshotHash) {
     throw new RunOperationalActionError("RUN_OPERATIONAL_ACTION_STALE_SNAPSHOT");
@@ -451,6 +464,16 @@ export async function executeRunOperationalAction(
     ...rawInput,
     runId: exactRunId(rawInput.runId),
     expectedSnapshotHash: exactHash(rawInput.expectedSnapshotHash),
+    snapshotOptions: (() => {
+      const artifactRoot = resolveProductArtifactDir();
+      const artifactLimits = resolveProductArtifactCapacity();
+      const artifactReadPort = createRuntimeArtifactReader({
+        sql,
+        artifactRoot,
+        artifactLimits,
+      }).store;
+      return { artifactRoot, artifactLimits, artifactReadPort };
+    })(),
   };
   try {
     return await sql.begin(

@@ -136,7 +136,9 @@ describe("single-step claim_log lifecycle", () => {
   it("records single-step handoff before claim-side gates and closes no-spawn exits", () => {
     const source = claimSingleStepSource();
     const publication = claimRuntimePublicationSource();
-    const publicationCall = source.indexOf("publishSingleClaimAndRuntime(step, agentId, runtimeIntent)");
+    const publicationCall = source.search(
+      /publishSingleClaimAndRuntime\(\s*step,\s*agentId,\s*runtimeIntent,\s*planAuthoritySeal,\s*storyAdmissionProof,\s*superviseSubjectCandidate,\s*\)/,
+    );
     const transitionRecord = source.indexOf("recordStepTransition(step.id, step.run_id, \"pending\", \"running\"");
     const runningEvent = source.indexOf("event: \"step.running\"");
     const atomicHandoff = source.indexOf("recordSingleStepHandoff(\"claimSingleStep:atomic\")");
@@ -181,8 +183,14 @@ describe("single-step claim_log lifecycle", () => {
     assert.match(source, /singleStepClaimEnvelope = \{/);
     assert.match(source, /claimId: singleStepClaimId,[\s\S]*claimAgentId: agentId,[\s\S]*runtimeAgentId: runtimeIntent\?\.runtimeAgentId \|\| agentId/);
     assert.match(source, /claimEnvelope: singleStepClaimEnvelope/);
-    assert.match(source, /v3PlatformPreclaim[\s\S]*singleStepMode: "terminal_platform_preclaim"/);
-    assert.match(source, /failStep\([\s\S]*ownedPreClaimError,[\s\S]*singleStepClaimEnvelope/);
+    assert.match(
+      source,
+      /async function terminalizeV3PlatformPreclaim\([\s\S]*failStep\([\s\S]*singleStepClaimEnvelope,[\s\S]*singleStepMode: "terminal_platform_preclaim"/,
+    );
+    assert.match(
+      source,
+      /if \(v3PlatformPreclaim\) \{[\s\S]*terminalizeV3PlatformPreclaim\([\s\S]*ownedPreClaimError/,
+    );
 
     const preclaims = [
       "01-plan", "02-design", "03-stories", "04-setup-repo", "05-setup-build",
@@ -190,8 +198,17 @@ describe("single-step claim_log lifecycle", () => {
     ];
     for (const step of preclaims) {
       const preclaim = fs.readFileSync(path.join(root, "src", "installer", "steps", step, "preclaim.ts"), "utf-8");
+      const exactClaimAliases = [...preclaim.matchAll(
+        /const\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*ctx\.claimEnvelope\s*;/g,
+      )].map((match) => match[1]!);
       for (const call of preclaim.matchAll(/(?:completeStep|failStep)\([\s\S]*?\);/g)) {
-        assert.match(call[0], /ctx\.claimEnvelope/, `${step} preclaim must complete or fail through exact claim authority`);
+        const carriesExactAuthority = /ctx\.claimEnvelope/.test(call[0])
+          || exactClaimAliases.some((alias) => new RegExp(`\\b${alias}\\b`).test(call[0]));
+        assert.equal(
+          carriesExactAuthority,
+          true,
+          `${step} preclaim must complete or fail through exact claim authority`,
+        );
       }
     }
   });
@@ -260,7 +277,7 @@ describe("single-step claim_log lifecycle", () => {
     const completeDispatch = source.slice(completeDispatchStart, completeDispatchStart + 700);
     assert.match(completeDispatch, /if \(superviseEachConfigForStep\)/);
     assert.match(completeDispatch, /handleSuperviseEachCompletion/);
-    assert.match(completeDispatch, /treating it as final supervisor/);
+    assert.match(completeDispatch, /v3SuperviseBoundSubject/);
   });
 
   it("does not auto-complete downstream quality gates from supervise_each final-product context", () => {
@@ -272,8 +289,50 @@ describe("single-step claim_log lifecycle", () => {
     assert.doesNotMatch(guard, /qa-test|final-test|security-gate|deploy/);
   });
 
+  it("routes deterministic final-product supervision through durable runtime completion", () => {
+    const source = claimSingleStepSource();
+    const finalScope = source.indexOf('context["supervisor_scope"] === "final-product"');
+    const finalRouteEnd = source.indexOf("Final supervisor remains agent-owned", finalScope);
+    const finalRoute = source.slice(finalScope, finalRouteEnd);
+    assert.match(finalRoute, /compilerCompletionOutput = \[/);
+    assert.match(finalRoute, /V3_FINAL_PRODUCT_COMPILER_COMPLETION_RUNTIME_REQUIRED/);
+    assert.match(finalRoute, /runtimeSessionId: singleStepRuntime\.sessionId/);
+    assert.match(finalRoute, /compilerCompletionOutput/);
+    assert.doesNotMatch(finalRoute, /UPDATE steps SET status = 'done'/);
+    assert.doesNotMatch(finalRoute, /closeSingleStepHandoff\("completed"/);
+    assert.doesNotMatch(finalRoute, /advancePipeline\(step\.run_id\)/);
+  });
+
+  it("does not accept final-product retry or block as successful supervision", () => {
+    const source = stepOpsSource();
+    const handlerStart = source.indexOf("async function handleSuperviseEachCompletion(");
+    const finalRetry = source.slice(handlerStart, handlerStart + 4_000);
+    assert.match(finalRetry, /boundFinalProduct/);
+    assert.match(finalRetry, /authenticatedV3Success/);
+    assert.match(finalRetry, /finalProductStatus === "done"/);
+    assert.match(finalRetry, /\["pass", "fixed"\]\.includes\(finalProductDecision\)/);
+    assert.match(finalRetry, /V3_SUPERVISE_NON_SUCCESS_CLAIM_AUTHORITY_REQUIRED/);
+    assert.match(finalRetry, /await failStep\(/);
+    assert.match(finalRetry, /return \{ advanced: false, runCompleted: false \}/);
+  });
+
+  it("reconciles a committed supervisor block without replaying its retry mutation", () => {
+    const source = stepOpsSource();
+    const reconcileStart = source.indexOf("export async function reconcileRuntimeCompletionEffects(");
+    const resumeStart = source.indexOf("export async function resumeRuntimeCompletionEffects(", reconcileStart);
+    const reconcile = source.slice(reconcileStart, resumeStart);
+    assert.match(reconcile, /parsed\["supervisor_decision"\] \|\| parsed\["decision"\] \|\| parsed\["status"\]/);
+    assert.match(reconcile, /\["retry", "block", "blocked", "failed", "fail"\]\.includes\(decision\)/);
+    assert.match(reconcile, /story\.status !== "done"/);
+  });
+
   it("clears stale story supervisor context before final-product supervisor claims", () => {
     const injectSource = injectSuperviseEachContextSource();
+    const finalProduct = injectSource.indexOf('authenticatedSubject?.kind === "final_product"');
+    const loopLookup = injectSource.indexOf("findLoopStep(step.run_id)");
+    assert.ok(finalProduct >= 0 && finalProduct < loopLookup);
+    assert.match(injectSource.slice(finalProduct, loopLookup), /delete context\["story_workdir"\]/);
+    assert.match(injectSource.slice(finalProduct, loopLookup), /await updateRunContext/);
     assert.match(injectSource, /status IN \('pending','running','done'\)/);
     assert.match(injectSource, /loopStatus\?\.status === "done"/);
     assert.match(injectSource, /context\["supervisor_scope"\] = "final-product"/);
@@ -391,8 +450,9 @@ describe("single-step claim_log lifecycle", () => {
     const moduleSource = source.slice(moduleStart, moduleEnd);
 
     const onComplete = moduleSource.indexOf("_stepModule.onComplete");
-    const persist = moduleSource.indexOf("UPDATE runs SET context = $1");
+    const persist = moduleSource.indexOf("await persistCompletionContext()");
     assert.ok(persist > onComplete, "module onComplete context mutations must be persisted");
+    assert.match(source, /const persistCompletionContext = async[\s\S]*UPDATE runs[\s\S]*AND context = \$4/);
   });
 
   it("closes downstream quality gate claims when routing back to implement", () => {
@@ -1345,7 +1405,7 @@ describe("single-step claim_log lifecycle", () => {
   it("accepts static HTML source when final-test verifies merged main", () => {
     const source = stepOpsSource();
     const guardStart = source.indexOf("// After final-test completes successfully, verify the feature branch is merged into main.");
-    const guardEnd = source.indexOf("await pgRun(\"UPDATE runs SET context", guardStart);
+    const guardEnd = source.indexOf("await persistCompletionContext();", guardStart);
     assert.notEqual(guardStart, -1, "final-test merge guard not found");
     assert.notEqual(guardEnd, -1, "final-test merge guard end not found");
     const guard = source.slice(guardStart, guardEnd);

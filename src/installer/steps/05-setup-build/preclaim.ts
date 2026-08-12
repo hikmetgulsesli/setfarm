@@ -1,5 +1,8 @@
 import path from "node:path";
 import fs from "node:fs";
+import os from "node:os";
+import { createHash } from "node:crypto";
+import { TextDecoder } from "node:util";
 import { execFileSync } from "node:child_process";
 import type { ClaimContext } from "../types.js";
 import { getSql, pgGet } from "../../../db-pg.js";
@@ -11,7 +14,9 @@ import {
 import {
   orchestrateSetupBuildProductPacket,
   SetupBuildPacketError,
+  type SetupConverterSourceV1,
 } from "../../../product-compiler/setup-build-packet-orchestrator.js";
+import { readRegularFileAtMostSync } from "../../../lib/bounded-file-read.js";
 import { isValidStitchHtmlFile } from "../../../product-compiler/stitch-render-artifact.js";
 import { resolvePlatformScript } from "../../paths.js";
 import { materializeSetupBuildContracts } from "../../setup-handoff.js";
@@ -23,6 +28,12 @@ import {
   OperationalFailureCauseV1Schema,
   type OperationalFailureCauseV1,
 } from "../../../execution/schemas/operational-failure-cause-v1.js";
+import {
+  englishTextViolationMessageV1,
+  inspectEnglishTextV1,
+} from "../../../product-compiler/english-text-contract-v1.js";
+import { loadCompilerEnglishAdmissionLedgerAuthorityV1 } from "../../../execution/compiler-english-admission-ledger-v1.js";
+import { loadCompilerStoryEnglishAdmissionLedgerAuthorityV1 } from "../../../execution/compiler-story-english-admission-ledger-v1.js";
 
 const DESIGN_IMPORT_REPORT_REL = ".setfarm/setup/DESIGN_IMPORT_VALIDATE.json";
 const STITCH_CONVERSION_RESULT_REL = ".setfarm/setup/STITCH_TO_JSX_RESULT.json";
@@ -55,6 +66,164 @@ class SetupBuildPreclaimError extends Error {
     super(message);
     this.name = "SetupBuildPreclaimError";
   }
+}
+
+export class SetupBuildEnglishTextRequiredError extends Error {
+  readonly code = "SETUP_BUILD_ENGLISH_TEXT_REQUIRED";
+  readonly field: string;
+
+  constructor(field: string, detail: string) {
+    super(`SETUP_BUILD_ENGLISH_TEXT_REQUIRED: ${field}: ${detail}`);
+    this.name = "SetupBuildEnglishTextRequiredError";
+    this.field = field;
+  }
+}
+
+function requireEnglishSetupBuildContext(context: Readonly<Record<string, string>>): void {
+  const fields = [
+    "project_display_name",
+    "PROJECT_DISPLAY_NAME",
+    "project_name",
+    "PROJECT_NAME",
+    "app_title",
+  ] as const;
+  for (const field of fields) {
+    const value = context[field];
+    if (value === undefined) continue;
+    if (/[\t\r\n]/.test(value)) {
+      throw new SetupBuildEnglishTextRequiredError(field, "ENGLISH_TEXT_SINGLE_LINE_REQUIRED");
+    }
+    const issue = inspectEnglishTextV1(value);
+    if (issue) {
+      throw new SetupBuildEnglishTextRequiredError(
+        field,
+        englishTextViolationMessageV1(issue),
+      );
+    }
+  }
+}
+
+class StitchConverterSourceAttestationError extends Error {
+  readonly code = "STITCH_CONVERTER_SOURCE_CHANGED_DURING_EXECUTION";
+
+  constructor(message: string) {
+    super(message);
+    this.name = "StitchConverterSourceAttestationError";
+  }
+}
+
+const MAX_STITCH_CONVERTER_SOURCE_BYTES = 16 * 1024 * 1024;
+
+type ConverterSourceSnapshot = Readonly<{
+  source: SetupConverterSourceV1;
+  bytes: Buffer;
+  identity: Readonly<{
+    dev: number;
+    ino: number;
+    size: number;
+    mtimeMs: number;
+    ctimeMs: number;
+  }>;
+}>;
+
+function snapshotConverterSource(filePath: string): ConverterSourceSnapshot {
+  try {
+    const exact = readRegularFileAtMostSync(filePath, MAX_STITCH_CONVERTER_SOURCE_BYTES);
+    const text = new TextDecoder("utf-8", { fatal: true }).decode(exact.bytes);
+    return Object.freeze({
+      source: Object.freeze({
+        source: Object.freeze({
+          schema: "setfarm.source-artifact-ref.v1",
+          hash: createHash("sha256").update(exact.bytes).digest("hex"),
+          mediaType: "text/javascript",
+          locator: "scripts/stitch-to-jsx.mjs",
+          byteLength: exact.byteLength,
+        }),
+        text,
+      }),
+      bytes: exact.bytes,
+      identity: Object.freeze({
+        dev: exact.stat.dev,
+        ino: exact.stat.ino,
+        size: exact.stat.size,
+        mtimeMs: exact.stat.mtimeMs,
+        ctimeMs: exact.stat.ctimeMs,
+      }),
+    });
+  } catch (error) {
+    throw new StitchConverterSourceAttestationError(
+      `Converter source is not one stable bounded UTF-8 regular file: ${String((error as Error)?.message || error)}`,
+    );
+  }
+}
+
+function sameConverterSnapshot(
+  left: ConverterSourceSnapshot,
+  right: ConverterSourceSnapshot,
+): boolean {
+  return left.source.source.hash === right.source.source.hash
+    && left.source.source.byteLength === right.source.source.byteLength
+    && left.bytes.equals(right.bytes)
+    && left.identity.dev === right.identity.dev
+    && left.identity.ino === right.identity.ino
+    && left.identity.size === right.identity.size
+    && left.identity.mtimeMs === right.identity.mtimeMs
+    && left.identity.ctimeMs === right.identity.ctimeMs;
+}
+
+/**
+ * Executes a private immutable copy of the exact bounded converter bytes, then
+ * proves both the release source and the executed copy stayed unchanged. The
+ * returned source is therefore the converter that generated the TSX, not a
+ * later read of a mutable platform path.
+ */
+export function executeAttestedStitchConverter(
+  scriptPath: string,
+  repo: string,
+): SetupConverterSourceV1 {
+  const sourceBefore = snapshotConverterSource(scriptPath);
+  const privateDir = fs.mkdtempSync(path.join(os.tmpdir(), "setfarm-stitch-converter-"));
+  const executionPath = path.join(privateDir, "stitch-to-jsx.mjs");
+  let executionError: unknown;
+  let attestationError: unknown;
+  try {
+    fs.chmodSync(privateDir, 0o700);
+    fs.writeFileSync(executionPath, sourceBefore.bytes, { flag: "wx", mode: 0o500 });
+    const executionBefore = snapshotConverterSource(executionPath);
+    if (
+      executionBefore.source.source.hash !== sourceBefore.source.source.hash
+      || executionBefore.source.source.byteLength !== sourceBefore.source.source.byteLength
+      || !executionBefore.bytes.equals(sourceBefore.bytes)
+    ) {
+      throw new StitchConverterSourceAttestationError(
+        "Private converter execution copy does not match the release source bytes",
+      );
+    }
+    try {
+      execFileSync("node", [executionPath, repo], { timeout: 30000, stdio: "pipe" });
+    } catch (error) {
+      executionError = error;
+    }
+    const executionAfter = snapshotConverterSource(executionPath);
+    const sourceAfter = snapshotConverterSource(scriptPath);
+    if (!sameConverterSnapshot(executionBefore, executionAfter)) {
+      throw new StitchConverterSourceAttestationError(
+        "Private converter bytes changed while the converter was executing",
+      );
+    }
+    if (!sameConverterSnapshot(sourceBefore, sourceAfter)) {
+      throw new StitchConverterSourceAttestationError(
+        "Release converter source changed while the converter was executing",
+      );
+    }
+  } catch (error) {
+    attestationError = error;
+  } finally {
+    fs.rmSync(privateDir, { recursive: true, force: true });
+  }
+  if (attestationError) throw attestationError;
+  if (executionError) throw executionError;
+  return sourceBefore.source;
 }
 
 function readJsonObject(filePath: string): Record<string, unknown> | undefined {
@@ -391,9 +560,8 @@ function rerunSetupRepoScaffold(ctx: ClaimContext, repo: string): boolean {
   const screenMap = ctx.context["screen_map"] || ctx.context["SCREEN_MAP"] || "";
   const techStack = resolveSetupTechStack(ctx.context);
   const displayName = ctx.context["project_display_name"] || ctx.context["PROJECT_DISPLAY_NAME"] || ctx.context["project_name"] || "";
-  const uiLanguage = ctx.context["ui_language"] || ctx.context["UI_LANGUAGE"] || "English";
   try {
-    execFileSync("bash", [script, repo, String(branch), String(stitchProjectId), String(screenMap), String(techStack), String(displayName), String(uiLanguage)], {
+    execFileSync("bash", [script, repo, String(branch), String(stitchProjectId), String(screenMap), String(techStack), String(displayName), "English"], {
       encoding: "utf-8",
       timeout: 180000,
       stdio: "pipe",
@@ -472,10 +640,22 @@ function packetFailureDetail(error: unknown): string {
   return `SETUP_PACKET_UNEXPECTED: ${String((error as Error)?.message || error)}`.slice(0, 4_000);
 }
 
+function setupBuildPacketOperationalFailureCode(
+  error: SetupBuildPacketError,
+): SetupBuildPacketError["code"] {
+  // Product Semantics is part of the setup packet protocol boundary. Keep the
+  // specific producer diagnostic, but terminate through the immutable v1
+  // authority tuple instead of inventing an unregistered cause identity.
+  return error.code === "SETUP_PACKET_SEMANTICS_VERSION_MISMATCH"
+    ? "SETUP_PACKET_PROTOCOL_MISMATCH"
+    : error.code;
+}
+
 async function compileSetupBuildProductPacket(
   ctx: ClaimContext,
   repo: string,
   protocol: "legacy" | "shadow" | "v3",
+  converterSource?: SetupConverterSourceV1,
 ): Promise<void> {
   if (protocol === "legacy") return;
   try {
@@ -487,6 +667,21 @@ async function compileSetupBuildProductPacket(
       expectedMode: protocol,
       repo,
       planText: ctx.context["prd"] || ctx.context["PRD"] || "",
+      productSemanticsVersion: ctx.context["product_semantics_version"],
+      ...(converterSource ? { converterSource } : {}),
+      ...(ctx.context["design_source_attempt_id"]
+        ? {
+            designSourceExpectation: {
+              attemptId: ctx.context["design_source_attempt_id"],
+              authorityHash: ctx.context["design_source_authority_hash"] || "",
+              requestHash: ctx.context["design_source_request_hash"] || "",
+              outputSealHash: ctx.context["design_source_output_seal_hash"] || "",
+              productSpecHash: ctx.context["design_source_product_spec_hash"] || "",
+              generationTargetsHash: ctx.context["design_source_generation_targets_hash"] || "",
+              compilerReleaseSha: ctx.context["design_source_compiler_release_sha"] || "",
+            },
+          }
+        : {}),
       ...(ctx.context["product_delivery_selection_hash"]
         ? { expectedDeliverySelectionHash: ctx.context["product_delivery_selection_hash"] }
         : {}),
@@ -533,6 +728,24 @@ async function compileSetupBuildProductPacket(
     }
     ctx.context["product_build_packet_hash"] = packetHash;
     ctx.context["product_compilation_report_hash"] = compiled.reportHash;
+    const canonicalRefs = await getSql().unsafe<Array<{
+      ref_key: string;
+      artifact_hash: string;
+    }>>(
+      `SELECT ref_key, artifact_hash
+         FROM run_artifact_refs
+       WHERE run_id = $1
+          AND ref_key !~ '^(REJECTED|SHADOW)_'
+        ORDER BY ref_key ASC`,
+      [ctx.runId],
+    );
+    const activationEvidence = {
+      ...evidence,
+      canonicalArtifactRefs: canonicalRefs.map((item) => ({
+        refKey: item.ref_key,
+        artifactHash: item.artifact_hash,
+      })),
+    };
     await recordObservation({
       runId: ctx.runId,
       stepId: ctx.stepId,
@@ -540,8 +753,8 @@ async function compileSetupBuildProductPacket(
       checkId: "product_compiler.setup_build_packet_activated",
       label: "Product Build Packet activation",
       status: "pass",
-      summary: "Six canonical Product Build Packet refs were atomically activated",
-      evidence,
+      summary: `${canonicalRefs.length} canonical Product Build Packet refs were atomically activated: ${canonicalRefs.map((item) => item.ref_key).join(", ")}`,
+      evidence: activationEvidence,
       completedAt: new Date().toISOString(),
     });
   } catch (error) {
@@ -578,7 +791,7 @@ async function compileSetupBuildProductPacket(
         workflowStepId: "setup-build",
         boundary: "product_compiler.setup_build_packet",
         failureClass: "contract_invalid",
-        failureCode: error.code,
+        failureCode: setupBuildPacketOperationalFailureCode(error),
       } : undefined,
     );
   }
@@ -591,9 +804,30 @@ async function compileSetupBuildProductPacket(
 // 4. Tailwind install/config (when Stitch uses utility classes)
 // 5. stitch-to-jsx -> src/screens/<PredictedScreenName>.tsx + commit
 export async function preClaim(ctx: ClaimContext): Promise<void> {
-  if (process.env.SETFARM_DISABLE_AUTO_SETUP_BUILD === "1") return;
-
+  requireEnglishSetupBuildContext(ctx.context);
   const protocol = await resolveSetupBuildProtocol(ctx);
+  if (protocol === "v3") {
+    await loadCompilerEnglishAdmissionLedgerAuthorityV1(getSql(), { runId: ctx.runId });
+    await loadCompilerStoryEnglishAdmissionLedgerAuthorityV1(getSql(), { runId: ctx.runId });
+  }
+  let executedConverterSource: SetupConverterSourceV1 | undefined;
+
+  if (protocol === "v3" && ctx.context["product_semantics_version"] !== "v2") {
+    throwPreclaimFailure(
+      ctx,
+      "SETUP_PACKET_SEMANTICS_VERSION_MISMATCH: V3 setup-build requires explicit Product Semantics v2 authority before any repository mutation.",
+      "product_packet_compilation_failure",
+      "Drain or restart the historical v3/v1 run under its pinned release; do not infer Product Semantics v2 from legacy artifacts.",
+      {
+        schema: "setfarm.operational-failure-cause.v1",
+        workflowStepId: "setup-build",
+        boundary: "product_compiler.setup_build_packet",
+        failureClass: "contract_invalid",
+        failureCode: "SETUP_PACKET_PROTOCOL_MISMATCH",
+      },
+    );
+  }
+  if (process.env.SETFARM_DISABLE_AUTO_SETUP_BUILD === "1") return;
 
   const repo = ctx.context["repo"] || ctx.context["REPO"] || "";
   if (!repo) {
@@ -801,7 +1035,11 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
       const scriptPath = resolvePlatformScript("stitch-to-jsx.mjs");
       if (fs.existsSync(scriptPath)) {
         fs.rmSync(path.join(repo, STITCH_CONVERSION_RESULT_REL), { force: true });
-        execFileSync("node", [scriptPath, repo], { timeout: 30000, stdio: "pipe" });
+        executedConverterSource = executeAttestedStitchConverter(scriptPath, repo);
+        ctx.context["stitch_converter_source_hash"] = executedConverterSource.source.hash;
+        ctx.context["stitch_converter_source_byte_length"] = String(
+          executedConverterSource.source.byteLength,
+        );
         const converterSuccessFailure = stitchConverterSuccessContractFailure(repo);
         if (converterSuccessFailure) {
           throwPreclaimFailure(
@@ -869,6 +1107,21 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
       }
     } catch (e) {
       if (e instanceof OperationalFailureCauseError || e instanceof SetupBuildPreclaimError) throw e;
+      if (e instanceof StitchConverterSourceAttestationError) {
+        throwPreclaimFailure(
+          ctx,
+          `${e.code}: ${e.message}`,
+          "design_import_failure",
+          "Restore the pinned Setfarm release converter bytes, then rerun setup-build; do not seal generated sources from an unattested converter.",
+          OperationalFailureCauseV1Schema.parse({
+            schema: "setfarm.operational-failure-cause.v1",
+            workflowStepId: "setup-build",
+            boundary: "stitch.converter.source_attestation",
+            failureClass: "platform_invariant_failed",
+            failureCode: e.code,
+          }),
+        );
+      }
       const details = formatProcessFailure(e);
       logger.warn(`[module:setup-build preclaim] stitch-to-jsx failed: ${details.slice(0, 300)}`, { runId: ctx.runId });
       throwPreclaimFailure(
@@ -898,7 +1151,7 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
   }
 
   if (!ctx.context["baseline_fail"] && !ctx.context["compat_fail"]) {
-    await compileSetupBuildProductPacket(ctx, repo, protocol);
+    await compileSetupBuildProductPacket(ctx, repo, protocol, executedConverterSource);
   }
 
   if (!ctx.context["baseline_fail"] && !ctx.context["compat_fail"]) {

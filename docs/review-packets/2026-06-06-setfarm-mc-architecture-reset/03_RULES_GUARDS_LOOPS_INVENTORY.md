@@ -1,39 +1,39 @@
 # Rules, Guards, Gates, And Loops Inventory
 
-Bu envanter dış modelin "hangi kurallar var, nerede fazla karmaşa var, hangileri korunmalı/silinmeli" sorusunu cevaplayabilmesi için hazırlanmıştır.
+This inventory is intended to help an external model answer: "Which rules exist, where is there excessive complexity, and which rules should be preserved or removed?"
 
 ## Phase Boundary Rules
 
-- PLAN sadece Product Contract üretmeli; repo path, branch, package name, physical screen list, runtime identity üretmemeli.
-- DESIGN Product Surfaces'i Stitch artifact'larına bağlamalı; out-of-scope screen veya unmapped surface hard failure olmalı.
-- STORIES PRD + SCREEN_MAP üzerinden story/scope üretmeli; hallucinated file path veya missing scope file fail olmalı.
-- SETUP-BUILD design import, dependency install, baseline build ve generated screen setup certificate üretmeli.
-- IMPLEMENT sadece story scope ve granted shared files içinde çalışmalı.
-- VERIFY PR/comment/merge/post-merge state'i mekanik doğrulamalı.
-- QA/FINAL-TEST agent prose değil, JSON/evidence/smoke sonucu ile tamamlanmalı.
+- PLAN should produce only the Product Contract; it should not produce a repository path, branch, package name, physical screen list, or runtime identity.
+- DESIGN should bind Product Surfaces to Stitch artifacts; an out-of-scope screen or unmapped surface should be a hard failure.
+- STORIES should produce stories and scopes from the PRD + SCREEN_MAP; a hallucinated file path or missing scope file should fail.
+- SETUP-BUILD should import the design, install dependencies, run the baseline build, and produce a generated-screen setup certificate.
+- IMPLEMENT should work only within the story scope and granted shared files.
+- VERIFY should mechanically verify PR, comment, merge, and post-merge state.
+- QA/FINAL-TEST should complete based on JSON, evidence, and smoke results, not agent prose.
 
 ## Design And Stitch Guards
 
-- Unknown Material Symbols fallback yapmamalı; `stitch-to-jsx` fail etmeli.
-- Material Symbols/icon font CSS generated runtime'a sızmamalı.
-- `transition: all` gibi blanket CSS kuralları sanitize edilmeli veya fail edilmeli.
-- `SCREEN_MAP`, `UI_CONTRACT`, `DESIGN_DOM`, `SCREEN_INDEX` birbirini tutmalı.
-- SCREEN_MAP'teki her generated screen için dosya ve component olmalı.
-- Generated screen'ler required props, action IDs, shell chrome ve regression gate'lerden geçmeli.
-- Stitch raw HTML implement agent için primary context olmamalı; agent UI_CONTRACT/SCREEN_INDEX/claim summary üzerinden çalışmalı.
+- Unknown Material Symbols should not fall back; `stitch-to-jsx` should fail.
+- Material Symbols/icon-font CSS should not leak into the generated runtime.
+- Blanket CSS rules such as `transition: all` should be sanitized or rejected.
+- `SCREEN_MAP`, `UI_CONTRACT`, `DESIGN_DOM`, and `SCREEN_INDEX` should be consistent with one another.
+- Every generated screen in SCREEN_MAP should have a file and component.
+- Generated screens should pass required-prop, action-ID, shell-chrome, and regression gates.
+- Raw Stitch HTML should not be the implementation agent's primary context; the agent should work from UI_CONTRACT, SCREEN_INDEX, and the claim summary.
 
 ## Scope And Ownership Guards
 
-- Her story için `.story-scope-files` veya resolved scope listesi olmalı.
-- Story dışı dosya değişikliği fail veya hard block olmalı.
-- Shared files sadece explicit grant ile düzenlenmeli.
-- Implement agent staging/commit/push yapmamalı; Setfarm scoped commit/PR açmalı.
-- Retry patch daha önce reddedilmiş deletion/change'i tekrar uygularsa runtime guard kill etmeli.
-- Agent raw claim JSON parse loop'a girmemeli; `CLAIM_SUMMARY_FILE` kullanmalı.
+- Every story should have `.story-scope-files` or a resolved scope list.
+- Changes to files outside the story should fail or be hard-blocked.
+- Shared files should be edited only through an explicit grant.
+- The implementation agent should not stage, commit, or push; Setfarm should create the scoped commit and PR.
+- If a retry patch reapplies a previously rejected deletion or change, the runtime guard should terminate it.
+- The agent should not enter a loop parsing raw claim JSON; it should use `CLAIM_SUMMARY_FILE`.
 
 ## Runtime/Spawner Guards
 
-`src/spawner.ts` içinde çok sayıda runtime discipline guard bulunur:
+`src/spawner.ts` contains many runtime-discipline guards:
 
 - gateway readiness wait/restart/backoff
 - runtime usage limit cooldown
@@ -45,7 +45,7 @@ Bu envanter dış modelin "hangi kurallar var, nerede fazla karmaşa var, hangil
 - hard stuck watchdog
 - repeated tool/self-loop detection
 - repeated write/edit no-op detection
-- broad process cleanup ban (`pkill`, `killall` gibi)
+- broad process cleanup ban (such as `pkill` and `killall`)
 - git discipline violation detection
 - pre-delta context sprawl detection
 - irrelevant reference context read detection
@@ -53,65 +53,64 @@ Bu envanter dış modelin "hangi kurallar var, nerede fazla karmaşa var, hangil
 - raw Stitch context read detection
 - runtime guard repeat limit
 
-Risk: Bu guard'lar gerçek sorunları yakalıyor, fakat fazla runtime discipline kuralı agent davranışını "kod yazma" yerine "guard kaçınma" oyununa çevirebilir.
+Risk: These guards catch real problems, but too many runtime-discipline rules can turn agent behavior from "writing code" into a game of "avoiding guards."
 
 ## Build/Test/Smoke Gates
 
-- `npm run build` baseline ve story sonrası gate olarak kullanılır.
-- Step-specific tests ve project tests çalıştırılır.
-- `scripts/smoke-test.mjs` runtime semantic issues yakalar: routes, buttons, generated screens, browser game static issues, weak interactions.
-- Smoke failure QA-FIX story yaratabilir.
-- QA-FIX loop guard gerekli; yoksa kalite aşaması yeni story üretip sonsuz döngü yaratır.
+- `npm run build` is used as a baseline and post-story gate.
+- Step-specific and project tests are run.
+- `scripts/smoke-test.mjs` catches runtime semantic issues: routes, buttons, generated screens, static browser-game issues, and weak interactions.
+- A smoke failure can create a QA-FIX story.
+- A QA-FIX loop guard is required; without it, the quality phase can create new stories indefinitely.
 
-Risk: Smoke gate semantic bug yakalıyor ama geç yakalarsa story verified olduktan sonra QA-FIX açılıyor. Bu kullanıcıda "bitti sandık, tekrar bozuldu" algısı yaratıyor.
+Risk: The smoke gate catches semantic bugs, but if it catches one too late, a QA-FIX is opened after the story has been verified. This creates the impression that "it was finished, then it broke again."
 
 ## PR/Review/Merge Guards
 
-- Implement story sonunda Setfarm scoped commit oluşturur.
-- Story PR açılır veya reuse edilir.
-- Verify PR review comments okur.
-- Actionable comment varsa implement'e geri route eder.
-- PR state `MERGED` değilse verified olmamalı.
-- Post-merge build/smoke gate çalışabilir.
-- Review comment lifecycle şu anda event/observation olarak görünür ama açık FSM olarak yeterince birinci sınıf değildir.
+- At the end of an implementation story, Setfarm creates a scoped commit.
+- A story PR is opened or reused.
+- VERIFY reads PR review comments.
+- If there is an actionable comment, VERIFY routes the story back to IMPLEMENT.
+- The story should not be verified unless the PR state is `MERGED`.
+- A post-merge build/smoke gate can run.
+- The review-comment lifecycle currently appears as events and observations, but it is not sufficiently first-class as an explicit FSM.
 
-Risk: Stale "PR state OPEN" observation daha sonra story verified olsa bile MC activity'de açık blocker gibi görünebilir. Event sourcing doğru, projection/read-model eksiktir.
+Risk: A stale "PR state OPEN" observation can appear as an active blocker in MC activity even after the story is verified. Event sourcing is correct, but the projection/read model is incomplete.
 
 ## Supervisor Guards
 
-- Product supervisor story ve final coherence denetler.
-- Deterministic checklist static button, missing handler, missing generated screen, scope drift gibi sorunları yakalar.
-- Supervisor memory ilerleyen story'lere geçmiş blocker context'i taşır.
-- Visual QA katmanı ile design/code mismatch yakalanmaya çalışılır.
+- The product supervisor checks story and final coherence.
+- The deterministic checklist catches issues such as static buttons, missing handlers, missing generated screens, and scope drift.
+- Supervisor memory carries prior blocker context into later stories.
+- The visual QA layer attempts to catch design/code mismatches.
 
-Risk: Supervisor hem PM hem QA hem static analyzer hem fixer gibi davranırsa yetki sınırı bulanıklaşır. Özellikle QA-FIX story'de supervisor checklist eski design beklentisiyle yeni runtime fix'i çarpıştırabilir.
+Risk: If the supervisor acts as PM, QA, static analyzer, and fixer, its authority boundary becomes unclear. In a QA-FIX story in particular, the supervisor checklist can conflict with a new runtime fix because it still reflects an old design expectation.
 
 ## Evidence Rules
 
-- Agent runtime correctness'i prose ile self-certify etmemeli.
-- Agent `IMPLEMENT_INTENT.json` ve `IMPLEMENT_VERIFICATION_REQUEST.json` isteyebilir.
-- Setfarm runtime'ı başlatmalı, interaction çalıştırmalı, screenshot/DOM/state capture almalı, `IMPLEMENT_EVIDENCE.json` yazmalı.
-- Evidence gate `off|advisory|blocking` olabilir.
-- Visual evidence ayrıca `off|advisory|blocking` olabilir.
+- An agent should not self-certify runtime correctness in prose.
+- An agent can request `IMPLEMENT_INTENT.json` and `IMPLEMENT_VERIFICATION_REQUEST.json`.
+- Setfarm should start the runtime, execute the interaction, capture screenshots, DOM, and state, and write `IMPLEMENT_EVIDENCE.json`.
+- The evidence gate can be `off|advisory|blocking`.
+- Visual evidence can also be `off|advisory|blocking`.
 
-Risk: Advisory modda missing request pass sayılırsa evidence sistemi görünür ama bağlayıcı değildir. Blocking moda erken geçilirse mevcut agent'lar çok fazla takılır.
+Risk: If a missing request passes in advisory mode, the evidence system is visible but not binding. If blocking mode is enabled too early, existing agents may become blocked too frequently.
 
 ## Platform Self-Heal Rules
 
-- Default güvenli mod `plan_only` olmalı.
-- Platform patch için classification, ownership map, write interceptor, rollback, patch registry, strictness delta gerekir.
-- LLM kendi patch başarısını self-certify etmemeli.
-- Immutable platform tests self-heal tarafından değiştirilememeli.
-- `mc_visibility_bug` gibi geniş kategoriler daraltılmalı.
+- The safe default mode should be `plan_only`.
+- A platform patch requires classification, an ownership map, a write interceptor, rollback, a patch registry, and a strictness delta.
+- An LLM should not self-certify the success of its own patch.
+- Self-heal should not be allowed to modify immutable platform tests.
+- Broad categories such as `mc_visibility_bug` should be narrowed.
 
-Risk: Self-heal smoke test'i gevşetirse veya guard'ı kaldırırsa başarı oranı artar ama platform bozulur.
+Risk: If self-heal relaxes the smoke test or removes a guard, the success rate rises while the platform becomes less correct.
 
 ## Mission Control Rules
 
-- MC run/step/story status, observations, evidence filmstrip, PR status, runtime URL göstermeli.
-- Cancelled/failed/stale cards kullanıcıyı yanıltmamalı.
-- Activity ham event stream değil, projection/read-model olmalı.
-- Evidence screenshot, DOM, runtime URL, port lifecycle görünür olmalı.
+- MC should display run, step, and story status; observations; the evidence filmstrip; PR status; and the runtime URL.
+- Cancelled, failed, or stale cards should not mislead users.
+- Activity should be a projection/read model, not a raw event stream.
+- Evidence screenshots, DOM, runtime URL, and port lifecycle should be visible.
 
-Risk: MC stale blocker veya old event'i açık sorun gibi gösterirse kullanıcı sisteme güvenmez.
-
+Risk: If MC presents a stale blocker or old event as an active issue, users will not trust the system.

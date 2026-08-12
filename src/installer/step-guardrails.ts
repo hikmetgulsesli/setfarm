@@ -398,6 +398,12 @@ export async function processSetupDesignContracts(
   runId: string,
   context: Record<string, string>,
 ): Promise<string | null> {
+  const runProtocol = await pgGet<{ protocol: string }>(
+    "SELECT protocol FROM runs WHERE id = $1",
+    [runId],
+  );
+  const compilerOwnedStorySurface = runProtocol?.protocol === "v3"
+    && context["stories_english_authority_version"] === "compiler_story_english_surface_v1";
   const repoPath = context["repo"] || context["REPO"] || "";
   logger.info(`[setup-design-contracts] ENTERING guardrail: repo=${repoPath} stitch_project_id=${context["stitch_project_id"]} screens_generated=${context["screens_generated"]}`, { runId });
   if (!repoPath) {
@@ -447,8 +453,11 @@ export async function processSetupDesignContracts(
       const contractPath = path.join(stitchDir, "UI_CONTRACT.json");
       fs.writeFileSync(contractPath, JSON.stringify(contracts, null, 2));
 
-      // 5. Enrich stories with design criteria
-      await enrichStoriesWithDesignContract(runId, contracts);
+      // V3 compiler-owned story semantics are immutable. Legacy pipelines may
+      // still append design-derived criteria as a compatibility projection.
+      if (!compilerOwnedStorySurface) {
+        await enrichStoriesWithDesignContract(runId, contracts);
+      }
 
       logger.info(`[setup-design-contracts] UI contract: ${contracts.reduce((s: number, c: any) => s + c.totalInteractive, 0)} elements`, { runId });
 
@@ -461,6 +470,9 @@ export async function processSetupDesignContracts(
           // Format normalization: PRD Generator sends {"Screen Name": "screenId"}
           // Pipeline expects [{"screenId":"xxx", "name":"yyy", "stories":["US-xxx"]}]
           if (!Array.isArray(screenMap) && typeof screenMap === "object") {
+            if (compilerOwnedStorySurface) {
+              return "GUARDRAIL: compiler-owned V3 screen_map is not the admitted canonical array";
+            }
             // Old format: convert to new format using DESIGN_MANIFEST.json
             const manifestPath = path.join(repoPath, "stitch", "DESIGN_MANIFEST.json");
             let manifestScreens: any[] = [];
@@ -517,6 +529,9 @@ export async function processSetupDesignContracts(
           );
           const ownership = normalizeScreenMapStoryOwners(screenMap, allStoriesForOwnership, computePredictedScreenFiles(repoPath));
           if (ownership.changed) {
+            if (compilerOwnedStorySurface) {
+              return `GUARDRAIL: compiler-owned V3 screen_map requires a different runtime ownership projection (${ownership.changes.slice(0, 8).join("; ")})`;
+            }
             screenMap = ownership.screenMap;
             context["screen_map"] = JSON.stringify(screenMap);
             await pgRun("UPDATE runs SET context = $1, updated_at = $2 WHERE id = $3", [JSON.stringify(context), now(), runId]);
@@ -529,7 +544,8 @@ export async function processSetupDesignContracts(
               const row = await pgGet<any>("SELECT id, acceptance_criteria FROM stories WHERE run_id = $1 AND story_id = $2", [runId, storyId]);
               if (!row) continue;
               const criterion = `Must implement screen ${screen.screenId} (${screen.name}) - read stitch/${screen.screenId}.html`;
-              if (!row.acceptance_criteria.includes(screen.screenId)) {
+              if (!compilerOwnedStorySurface
+                && !row.acceptance_criteria.includes(screen.screenId)) {
                 // v1.5.53: Parse as JSON array before appending (was raw string concat → broke JSON)
                 let acArr: string[] = [];
                 try { acArr = JSON.parse(row.acceptance_criteria); } catch { acArr = [row.acceptance_criteria]; }

@@ -2,7 +2,10 @@ import { z } from "zod";
 
 import { hashCanonicalJson } from "../product-compiler/canonical-json.js";
 import { GitObjectHashSchema, Sha256Schema } from "../product-compiler/schemas/common-v1.js";
-import { ConvergenceEvalResultV1Schema, type ConvergenceEvalResultV1 } from "./result-schema.js";
+import {
+  ConvergenceEvalResultVersionedSchema,
+  type ConvergenceEvalResultVersioned,
+} from "./result-schema-v2.js";
 
 const GateCodeSchema = z.enum([
   "CONVERGENCE_EXECUTION_REQUIRED",
@@ -41,8 +44,8 @@ export const ConvergenceReleaseGateV1Schema = ReleaseGatePayloadV1Schema.extend(
 
 export type ConvergenceReleaseGateV1 = z.infer<typeof ConvergenceReleaseGateV1Schema>;
 
-export function evaluateConvergenceReleaseGate(value: ConvergenceEvalResultV1): ConvergenceReleaseGateV1 {
-  const result = ConvergenceEvalResultV1Schema.parse(value);
+export function evaluateConvergenceReleaseGate(value: ConvergenceEvalResultVersioned): ConvergenceReleaseGateV1 {
+  const result = ConvergenceEvalResultVersionedSchema.parse(value);
   const counts = {
     utility: result.runs.filter((item) => item.productClass === "utility").length,
     operations: result.runs.filter((item) => item.productClass === "operations").length,

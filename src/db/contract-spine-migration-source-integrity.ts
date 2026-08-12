@@ -61,6 +61,191 @@ export const CONTRACT_SPINE_SEMANTIC_MIGRATION_SOURCE_MANIFEST = Object.freeze({
       "src/product-compiler/canonical-json.ts",
     ]),
   }),
+  23: Object.freeze({
+    regions: Object.freeze([
+      Object.freeze({
+        file: MIGRATION_SOURCE_FILE,
+        region: "sql-definition-normalization-v1",
+      }),
+      Object.freeze({ file: MIGRATION_SOURCE_FILE, region: "migration-v23-batch-ledger" }),
+      Object.freeze({
+        file: MIGRATION_SOURCE_FILE,
+        region: "migration-v23-shared-ownership",
+      }),
+      Object.freeze({ file: MIGRATION_SOURCE_FILE, region: "migration-v23-rollback" }),
+      Object.freeze({ file: MIGRATION_SOURCE_FILE, region: "migration-v23-registration" }),
+      Object.freeze({
+        file: "src/product-compiler/artifact-publication-batch-identity.ts",
+        region: "artifact-publication-batch-v1",
+      }),
+    ]),
+    dependencyFiles: Object.freeze([
+      "src/product-compiler/canonical-json.ts",
+    ]),
+  }),
+  24: Object.freeze({
+    regions: Object.freeze([
+      Object.freeze({
+        file: MIGRATION_SOURCE_FILE,
+        region: "sql-definition-normalization-v1",
+      }),
+      Object.freeze({
+        file: MIGRATION_SOURCE_FILE,
+        region: "migration-v24-artifact-store-authority",
+      }),
+      Object.freeze({
+        file: MIGRATION_SOURCE_FILE,
+        region: "migration-journal-operational-authority-v1",
+      }),
+      Object.freeze({ file: MIGRATION_SOURCE_FILE, region: "migration-v24-registration" }),
+      Object.freeze({ file: MIGRATION_SOURCE_FILE, region: "migration-v24-rollback" }),
+    ]),
+    dependencyFiles: Object.freeze([
+      "src/product-compiler/canonical-json.ts",
+    ]),
+  }),
+  25: Object.freeze({
+    regions: Object.freeze([
+      Object.freeze({
+        file: "src/db/preparation-authority-v2-migration.ts",
+        region: "migration-v25-preparation-authority-ledger",
+      }),
+      Object.freeze({ file: MIGRATION_SOURCE_FILE, region: "migration-v25-registration" }),
+      Object.freeze({
+        file: MIGRATION_SOURCE_FILE,
+        region: "migration-v25-current-artifact-store-audit",
+      }),
+      Object.freeze({ file: MIGRATION_SOURCE_FILE, region: "migration-v25-rollback" }),
+    ]),
+    dependencyFiles: Object.freeze([
+      "src/execution/v3-preparation-claim-authority-v2.ts",
+      "src/product-compiler/canonical-json.ts",
+    ]),
+  }),
+  26: Object.freeze({
+    regions: Object.freeze([
+      Object.freeze({
+        file: "src/db/artifact-publication-batch-plan-migration.ts",
+        region: "migration-v26-artifact-publication-batch-plan",
+      }),
+      Object.freeze({ file: MIGRATION_SOURCE_FILE, region: "migration-v26-registration" }),
+      Object.freeze({ file: MIGRATION_SOURCE_FILE, region: "migration-v26-error-binding" }),
+      Object.freeze({
+        file: MIGRATION_SOURCE_FILE,
+        region: "migration-v26-current-object-ownership",
+      }),
+      Object.freeze({
+        file: MIGRATION_SOURCE_FILE,
+        region: "migration-v26-current-authority-audit",
+      }),
+      Object.freeze({ file: MIGRATION_SOURCE_FILE, region: "migration-v26-rollback" }),
+      Object.freeze({
+        file: "src/product-compiler/artifact-publication-batch-identity.ts",
+        region: "artifact-publication-batch-v1",
+      }),
+    ]),
+    dependencyFiles: Object.freeze([
+      "src/product-compiler/artifact-publication-batch-plan-binding.ts",
+      "src/product-compiler/bounded-canonical-json.ts",
+      "src/product-compiler/canonical-json.ts",
+    ]),
+  }),
+  27: Object.freeze({
+    regions: Object.freeze([
+      Object.freeze({
+        file: "src/db/platform-release-store-record-ledger-v3-migration.ts",
+        region: "migration-v27-platform-release-store-record-ledger",
+      }),
+      Object.freeze({ file: MIGRATION_SOURCE_FILE, region: "migration-error-contract" }),
+      Object.freeze({ file: MIGRATION_SOURCE_FILE, region: "migration-v27-error-binding" }),
+      Object.freeze({
+        file: MIGRATION_SOURCE_FILE,
+        region: "migration-v27-registration-adapters",
+      }),
+      Object.freeze({ file: MIGRATION_SOURCE_FILE, region: "migration-v27-registration" }),
+      Object.freeze({
+        file: MIGRATION_SOURCE_FILE,
+        region: "migration-v27-fenced-adoption-dispatch",
+      }),
+      Object.freeze({
+        file: MIGRATION_SOURCE_FILE,
+        region: "migration-v27-current-object-ownership",
+      }),
+      Object.freeze({
+        file: MIGRATION_SOURCE_FILE,
+        region: "migration-v27-current-authority-audit",
+      }),
+      Object.freeze({ file: MIGRATION_SOURCE_FILE, region: "migration-v27-rollback" }),
+    ]),
+    dependencyFiles: Object.freeze([
+      "src/execution/schemas/platform-release-common-v2.ts",
+      "src/execution/schemas/platform-release-content-store-census-v3.ts",
+      "src/execution/schemas/platform-release-content-store-durable-record-test-v3.ts",
+      "src/execution/schemas/platform-release-content-store-test-v3.ts",
+      "src/product-compiler/bounded-canonical-json.ts",
+      "src/product-compiler/canonical-json.ts",
+      "src/product-compiler/schemas/common-v1.ts",
+    ]),
+  }),
+  28: Object.freeze({
+    regions: Object.freeze([
+      Object.freeze({
+        file: "src/db/runtime-completion-manifest-authority-migration.ts",
+        region: "migration-v28-runtime-completion-manifest-authority",
+      }),
+      Object.freeze({ file: MIGRATION_SOURCE_FILE, region: "migration-v28-error-binding" }),
+      Object.freeze({
+        file: MIGRATION_SOURCE_FILE,
+        region: "migration-v28-registration-adapters",
+      }),
+      Object.freeze({ file: MIGRATION_SOURCE_FILE, region: "migration-v28-registration" }),
+      Object.freeze({
+        file: MIGRATION_SOURCE_FILE,
+        region: "migration-v28-current-object-ownership",
+      }),
+      Object.freeze({
+        file: MIGRATION_SOURCE_FILE,
+        region: "migration-v28-current-authority-audit",
+      }),
+      Object.freeze({ file: MIGRATION_SOURCE_FILE, region: "migration-v28-head-dispatch" }),
+      Object.freeze({ file: MIGRATION_SOURCE_FILE, region: "migration-v28-rollback" }),
+    ]),
+    dependencyFiles: Object.freeze([
+      "src/execution/runtime-completion-manifest-authority-v1.ts",
+      "src/execution/schemas/runtime-completion-plan-v1.ts",
+      "src/product-compiler/canonical-json.ts",
+    ]),
+  }),
+  29: Object.freeze({
+    regions: Object.freeze([
+      Object.freeze({
+        file: "src/db/v3-story-claim-runtime-binding-v1-migration.ts",
+        region: "migration-v29-v3-story-claim-runtime-binding",
+      }),
+      Object.freeze({ file: MIGRATION_SOURCE_FILE, region: "migration-v29-error-binding" }),
+      Object.freeze({
+        file: MIGRATION_SOURCE_FILE,
+        region: "migration-v29-registration-adapters",
+      }),
+      Object.freeze({ file: MIGRATION_SOURCE_FILE, region: "migration-v29-registration" }),
+      Object.freeze({
+        file: MIGRATION_SOURCE_FILE,
+        region: "migration-v29-current-object-ownership",
+      }),
+      Object.freeze({
+        file: MIGRATION_SOURCE_FILE,
+        region: "migration-v29-current-authority-audit",
+      }),
+      Object.freeze({
+        file: MIGRATION_SOURCE_FILE,
+        region: "migration-v28-current-authority-audit",
+      }),
+      Object.freeze({ file: MIGRATION_SOURCE_FILE, region: "migration-v29-rollback" }),
+    ]),
+    dependencyFiles: Object.freeze([
+      "src/product-compiler/canonical-json.ts",
+    ]),
+  }),
 } satisfies Readonly<Record<ContractSpineSemanticMigrationVersion, SemanticMigrationSourceManifest>>);
 
 function sha256(value: string): string {
@@ -125,7 +310,7 @@ export function computeContractSpineSemanticMigrationDigests(
   readSource: ContractSpineMigrationSourceReader,
 ): ContractSpineSemanticMigrationDigestMap {
   const computed = {} as Record<ContractSpineSemanticMigrationVersion, string>;
-  for (const version of [8, 11, 12] as const) {
+  for (const version of [8, 11, 12, 23, 24, 25, 26, 27, 28, 29] as const) {
     const manifest = CONTRACT_SPINE_SEMANTIC_MIGRATION_SOURCE_MANIFEST[version];
     const regions = manifest.regions.map((item) => ({
       file: item.file,
@@ -153,7 +338,7 @@ export function assertContractSpineSemanticMigrationSourceIntegrity(
   readSource: ContractSpineMigrationSourceReader,
 ): ContractSpineSemanticMigrationDigestMap {
   const actual = computeContractSpineSemanticMigrationDigests(readSource);
-  for (const version of [8, 11, 12] as const) {
+  for (const version of [8, 11, 12, 23, 24, 25, 26, 27, 28, 29] as const) {
     const expected = CONTRACT_SPINE_SEMANTIC_MIGRATION_DIGESTS[version];
     if (actual[version] !== expected) {
       throw new Error(
@@ -184,6 +369,13 @@ export function renderContractSpineSemanticMigrationDigests(
     `  8: \"${digests[8]}\",`,
     `  11: \"${digests[11]}\",`,
     `  12: \"${digests[12]}\",`,
+    `  23: \"${digests[23]}\",`,
+    `  24: \"${digests[24]}\",`,
+    `  25: \"${digests[25]}\",`,
+    `  26: \"${digests[26]}\",`,
+    `  27: \"${digests[27]}\",`,
+    `  28: \"${digests[28]}\",`,
+    `  29: \"${digests[29]}\",`,
     "} as const);",
     "",
     "export type ContractSpineSemanticMigrationVersion =",

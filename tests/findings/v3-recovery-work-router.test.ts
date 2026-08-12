@@ -226,6 +226,43 @@ describe("v3 recovery work router", () => {
     }), undefined);
   });
 
+  it("runs candidate admission before acquiring a recovery delivery lease", async () => {
+    const candidate = await setup({
+      workflowId: "workflow-router-admission",
+      dispatchClass: "product_implementation",
+    });
+    let observedRunId = "";
+    const router = createV3RecoveryWorkRouter(database.sql, {
+      admitCandidate: async (identity) => {
+        observedRunId = identity.runId;
+        throw new Error("TEST_STORY_ADMISSION_REFUSED");
+      },
+    });
+    await assert.rejects(
+      router.acquireNext({
+        workflowId: candidate.workflowId,
+        dispatchClass: candidate.dispatchClass,
+        ownerInstanceId: "router-admission-worker",
+      }),
+      /TEST_STORY_ADMISSION_REFUSED/,
+    );
+    assert.equal(observedRunId, candidate.runId);
+    const deliveries = await database.sql<Array<{
+      state: string;
+      owner_instance_id: string | null;
+      attempt_count: number;
+    }>>`
+      SELECT state, owner_instance_id, attempt_count
+        FROM recovery_dispatch_deliveries
+       WHERE dispatch_id = ${candidate.dispatch.dispatchId}
+    `;
+    assert.deepEqual(Array.from(deliveries), [{
+      state: "authorized",
+      owner_instance_id: null,
+      attempt_count: 0,
+    }]);
+  });
+
   it("never exposes evidence-only or caller-mismatched model work", async () => {
     const workflowId = "workflow-router-evidence-only";
     const fixture = await setup({ workflowId, dispatchClass: "evidence_only" });

@@ -15,7 +15,10 @@ import { getMedicStatus, getRecentMedicChecks } from "../medic/medic.js";
 import { readSupervisorArtifactSummary } from "./supervisor-summary.js";
 import { getRunOperationalModel } from "./run-operational-model.js";
 import { buildRunOperationalSnapshot } from "./run-operational-snapshot.js";
-import { readProductBuildAuthorityV1 } from "./product-build-authority.js";
+import {
+  ProductBuildAuthorityV2Error,
+  readVersionedProductBuildAuthority,
+} from "./product-build-authority.js";
 import {
   RuntimeArtifactReaderError,
   createRuntimeArtifactReader,
@@ -588,14 +591,32 @@ export function startDashboard(port = 3333, options: Readonly<{
     const productBuildAuthorityMatch = p.match(/^\/api\/runs\/([^/]+)\/product-build-authority$/);
     if (productBuildAuthorityMatch && req.method === "GET") {
       const runId = productBuildAuthorityMatch[1];
+      const legacyV1 = url.searchParams.get("schema") === "v1";
+      const sql = getSql();
+      const artifactRoot = resolveProductArtifactDir();
+      const artifactLimits = resolveProductArtifactCapacity();
       try {
-        const authority = await readProductBuildAuthorityV1(createRuntimeArtifactReader({
-          sql: getSql(),
-          artifactRoot: resolveProductArtifactDir(),
-          artifactLimits: resolveProductArtifactCapacity(),
-        }), runId);
+        const reader = createRuntimeArtifactReader({ sql, artifactRoot, artifactLimits });
+        const authority = await readVersionedProductBuildAuthority({
+          schema: legacyV1 ? "v1" : "v2",
+          reader,
+          runId,
+          refusalOptions: {
+            sql,
+            artifactRoot,
+            artifactLimits,
+            artifactReadPort: reader.store,
+          },
+        });
         return json(res, authority);
       } catch (error) {
+        if (error instanceof ProductBuildAuthorityV2Error) {
+          return json(res, {
+            schema: "setfarm.product-build-authority-error.v2",
+            runId,
+            code: error.code,
+          }, 503);
+        }
         if (error instanceof RuntimeArtifactReaderError) {
           const status = error.code === "RUNTIME_PACKET_RUN_NOT_FOUND"
             ? 404
@@ -608,7 +629,9 @@ export function startDashboard(port = 3333, options: Readonly<{
               ? 409
               : 503;
           return json(res, {
-            schema: "setfarm.product-build-authority-error.v1",
+            schema: legacyV1
+              ? "setfarm.product-build-authority-error.v1"
+              : "setfarm.product-build-authority-error.v2",
             runId,
             code: error.code,
           }, status);

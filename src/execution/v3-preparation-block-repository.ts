@@ -20,6 +20,10 @@ import {
   type V3PreparationClaimAuthorityV1,
   type V3PreparationDependencyAttemptAuthorityV1,
 } from "./v3-preparation-claim-authority.js";
+import {
+  inspectAuthenticatedV3SupervisorRetryPreparationSourceV1,
+  type AuthenticatedV3SupervisorRetryPreparationSourceV1,
+} from "./claim-runtime-publication.js";
 
 type TransactionSql = postgres.TransactionSql;
 
@@ -511,6 +515,7 @@ export function createV3PreparationBlockRepository(sql: postgres.Sql) {
        * v16 block-resolution API for callers that only close historical blocks.
        */
       projectedDependencyIds?: readonly string[];
+      supervisorRetryRearm?: AuthenticatedV3SupervisorRetryPreparationSourceV1;
       now?: Date;
     }>): Promise<Readonly<{
       status: "none" | "resolved";
@@ -589,10 +594,18 @@ export function createV3PreparationBlockRepository(sql: postgres.Sql) {
               "claimed preparation cannot be rearmed while its claim is active",
             );
           }
-          if (claims[0]?.outcome !== "infra_retry") {
+          const supervisorRetryRearm = input.supervisorRetryRearm
+            ? inspectAuthenticatedV3SupervisorRetryPreparationSourceV1(input.supervisorRetryRearm)
+            : undefined;
+          const exactSupervisorRetryRearm = claims[0]?.outcome === "completed"
+            && supervisorRetryRearm?.storyId === input.storyId
+            && supervisorRetryRearm.preparationStateVersion === current.state_version
+            && supervisorRetryRearm.preparationStateFingerprint === current.state_fingerprint
+            && supervisorRetryRearm.priorImplementationClaimId === Number(current.claim_id);
+          if (claims[0]?.outcome !== "infra_retry" && !exactSupervisorRetryRearm) {
             preparationFail(
               "V3_PREPARATION_PRIOR_CLAIM_NOT_RETRYABLE",
-              "only a terminal infra_retry claim can mint a new ready generation",
+              "only terminal infra_retry or the exact authenticated supervisor retry owner can mint a new ready generation",
             );
           }
         }

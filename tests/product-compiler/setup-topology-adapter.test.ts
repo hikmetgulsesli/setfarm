@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import { adaptExactSetupTopologyV1 } from "../../src/product-compiler/adapters/setup-topology.js";
+import { hashCanonicalJson } from "../../src/product-compiler/canonical-json.js";
 import { topologyPathAbsenceHash } from "../../src/product-compiler/schemas/build-topology-v1.js";
+import { buildContainedGameProductSpecV2 } from "./fixtures/product-semantics-v2.js";
 
 const HASH_A = "a".repeat(64);
 const HASH_B = "b".repeat(64);
@@ -170,6 +172,19 @@ describe("exact setup-to-BuildTopology adapter", () => {
     assert.equal(result.candidate?.commands.some((command) => command.argv.includes("this legacy prose is deliberately ignored")), false);
     assert.equal(result.candidate?.pathBindings.find((binding) => binding.id === "PATH_SAVE_TASK")?.presence, "absent");
     assert.equal(result.provenance.length, 3);
+  });
+
+  it("accepts native ProductSpecV2 without changing the topology artifact version", () => {
+    const snapshot = baseSnapshot();
+    const productSpec = buildContainedGameProductSpecV2();
+    snapshot.productSpec = productSpec;
+    snapshot.entrypoints[0].routeRefs = productSpec.routes.map((route) => route.id);
+
+    const result = adaptExactSetupTopologyV1(snapshot);
+    assert.deepEqual(result.diagnostics, []);
+    assert.equal(result.candidate?.schema, "setfarm.build-topology.v1");
+    assert.equal(result.candidate?.runtimeDataContract?.schema, "setfarm.runtime-data-contract.v1");
+    assert.equal(result.candidate?.runtimeDataContract?.sourceProductSpecHash, hashCanonicalJson(productSpec));
   });
 
   it("maps only an exact granted shared edit across explicit owners", () => {

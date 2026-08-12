@@ -72,6 +72,12 @@ export async function onComplete(ctx: CompleteContext): Promise<void> {
     return;
   }
 
+  // Product semantics v2 is already browser-observed, candidate-selected,
+  // graph-closed, attempt-sealed, and projected by Setfarm before completion.
+  // Legacy completion recovery must not redownload or reinterpret that
+  // compiler-owned authority from manifest prose or title heuristics.
+  if (context["product_semantics_version"] === "v2") return;
+
   // Delegate to legacy guardrail for design contracts + design-tokens extraction
   // + screenshot persistence + SCREEN_MAP auto-recovery from Stitch API.
   // Treated as warning, not fatal — module validateOutput already passed.

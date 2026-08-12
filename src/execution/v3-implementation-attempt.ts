@@ -8,6 +8,7 @@ import { IndexedArtifactPublisher } from "../product-compiler/indexed-artifact-p
 import { canonicalJsonStringify, hashCanonicalJson } from "../product-compiler/canonical-json.js";
 import { SemanticArtifactEnvelopeV1Schema } from "../product-compiler/artifact-store.js";
 import { createRuntimeArtifactReader, type SealedRuntimePacket } from "../product-compiler/runtime-artifact-reader.js";
+import { createHybridArtifactStoreCapacityLeaseProviderV1 } from "../product-compiler/artifact-store-authority.js";
 import { compileImplementationSlice } from "../product-compiler/slice-compiler.js";
 import { ImplementationSliceV1Schema, type ImplementationSliceV1 } from "../product-compiler/schemas/implementation-slice-v1.js";
 import type { SemanticArtifactProducerV1 } from "../product-compiler/schemas/common-v1.js";
@@ -16,8 +17,13 @@ import type { SourceRevisionV1 } from "./schemas/execution-attempt-v1.js";
 import type { ExecutionAttemptV1 } from "./schemas/execution-attempt-v1.js";
 import { createAttemptRepository, type AttemptReservationResult } from "./attempt-repository.js";
 import { captureShadowSourceRevision } from "./shadow-attempt-recorder.js";
+import { captureV3GitCommitRevision } from "./v3-git-revision.js";
 import { getSql } from "../db-pg.js";
-import { resolveProductArtifactCapacity, resolveProductArtifactDir } from "../runtime-config.js";
+import {
+  resolveArtifactStorePublicationAuthorityMode,
+  resolveProductArtifactCapacity,
+  resolveProductArtifactDir,
+} from "../runtime-config.js";
 import { compileEvidencePlanV1, type EvidencePlanV1 } from "../evidence/evidence-plan-v1.js";
 import { createRecoveryDeliveryRepository } from "../recovery/recovery-delivery-repository.js";
 import { createFindingRecoveryRepository } from "../recovery/finding-recovery-repository.js";
@@ -52,6 +58,11 @@ import {
   type ModelExecutionProfileV1,
   type OperationalRetryDirectiveV1,
 } from "./operational-retry-directive.js";
+import {
+  V3_SUPERVISOR_RETRY_DIRECTIVE_ARTIFACT_TYPE_V1,
+  V3SupervisorRetryDirectiveV1Schema,
+  type V3SupervisorRetryDirectiveV1,
+} from "./v3-supervisor-retry-directive.js";
 
 export type V3ReviewEvidenceArtifact = Readonly<{
   artifactHash: string;
@@ -69,6 +80,7 @@ export type V3ImplementationAttemptInput = Readonly<{
   worktree: string;
   findingSetHash?: string;
   operationalRetry?: OperationalRetryDirectiveV1;
+  supervisorRetry?: V3SupervisorRetryDirectiveV1;
   recoveryDelivery?: Readonly<{
     dispatchId: string;
     revisionId: string;
@@ -96,6 +108,11 @@ export type V3ImplementationAttemptResult = Readonly<{
   executionProfile: ModelExecutionProfileV1;
   operationalRetry?: Readonly<{
     directive: OperationalRetryDirectiveV1;
+    artifactHash: string;
+    refKey: string;
+  }>;
+  supervisorRetry?: Readonly<{
+    directive: V3SupervisorRetryDirectiveV1;
     artifactHash: string;
     refKey: string;
   }>;
@@ -129,6 +146,9 @@ export function createV3ImplementationAttemptHandoffV1(input: Readonly<{
   if (compiled.attempt.stepId !== "implement") {
     throw new Error("V3_IMPLEMENTATION_HANDOFF_WORKFLOW_STEP_MISMATCH");
   }
+  if (compiled.attempt.claimId !== input.claimId) {
+    throw new Error("V3_IMPLEMENTATION_HANDOFF_CLAIM_ID_MISMATCH");
+  }
   return createV3ImplementationClaimHandoffV1({
     schema: "setfarm.v3-implementation-claim-handoff.v1",
     protocol: "v3",
@@ -155,6 +175,12 @@ export function createV3ImplementationAttemptHandoffV1(input: Readonly<{
       ? {
           operationalRetry: compiled.operationalRetry.directive,
           operationalRetryArtifactHash: compiled.operationalRetry.artifactHash,
+        }
+      : {}),
+    ...(compiled.supervisorRetry
+      ? {
+          supervisorRetry: compiled.supervisorRetry.directive,
+          supervisorRetryArtifactHash: compiled.supervisorRetry.artifactHash,
         }
       : {}),
     sourceBefore: compiled.sourceBefore,
@@ -201,6 +227,7 @@ type V3CompilerDependencies = Readonly<{
     payload: unknown;
   }>>;
   captureSource(worktree: string): Promise<SourceRevisionV1>;
+  captureSupervisorRetrySource?(worktree: string): Promise<SourceRevisionV1>;
   readDependencies(input: {
     runId: string;
     stepId: string;
@@ -292,6 +319,22 @@ function operationalRetryEnvelope(
   return SemanticArtifactEnvelopeV1Schema.parse({
     schema: "setfarm.semantic-artifact-envelope.v1",
     artifactType: "setfarm.operational-retry-directive.v1",
+    producer: packet.producer,
+    payload: directive,
+  });
+}
+
+function supervisorRetryRefKey(directiveHash: string): string {
+  return `SUPERVISOR_RETRY_${directiveHash.slice(0, 16).toUpperCase()}`;
+}
+
+function supervisorRetryEnvelope(
+  packet: SealedRuntimePacket,
+  directive: V3SupervisorRetryDirectiveV1,
+) {
+  return SemanticArtifactEnvelopeV1Schema.parse({
+    schema: "setfarm.semantic-artifact-envelope.v1",
+    artifactType: V3_SUPERVISOR_RETRY_DIRECTIVE_ARTIFACT_TYPE_V1,
     producer: packet.producer,
     payload: directive,
   });
@@ -473,6 +516,97 @@ async function loadOperationalRetryArtifact(input: Readonly<{
     directive,
     artifactHash,
     refKey: operationalRetryRefKey(directive.directiveHash),
+  };
+}
+
+function validateSupervisorRetryCarrier(input: Readonly<{
+  directive: V3SupervisorRetryDirectiveV1;
+  runId: string;
+  stepId: string;
+  storyId: string;
+  claimId: number;
+  role: string;
+}>): V3SupervisorRetryDirectiveV1 {
+  const directive = V3SupervisorRetryDirectiveV1Schema.parse(input.directive);
+  if (
+    input.stepId !== "implement"
+    || input.role !== "developer"
+    || directive.runId !== input.runId
+    || directive.storyId !== input.storyId
+    || directive.supervisorClaimId === input.claimId
+  ) {
+    throw new V3ImplementationAttemptError(
+      "V3_SUPERVISOR_RETRY_IDENTITY_MISMATCH",
+      "Supervisor retry evidence must bind a distinct prior supervision of this exact implementation run and story",
+    );
+  }
+  return directive;
+}
+
+async function loadSupervisorRetryArtifact(input: Readonly<{
+  dependencies: V3CompilerDependencies;
+  packet: SealedRuntimePacket;
+  attempt: ExecutionAttemptV1;
+}>): Promise<Readonly<{
+  directive: V3SupervisorRetryDirectiveV1;
+  artifactHash: string;
+  refKey: string;
+}> | undefined> {
+  const artifactHashes = input.attempt.evidenceRefs
+    .map((reference) => reference.match(/^setfarm:\/\/supervisor-retry-artifact\/([a-f0-9]{64})$/)?.[1])
+    .filter((hash): hash is string => Boolean(hash));
+  const directiveHashes = input.attempt.evidenceRefs
+    .map((reference) => reference.match(/^setfarm:\/\/supervisor-retry\/([a-f0-9]{64})$/)?.[1])
+    .filter((hash): hash is string => Boolean(hash));
+  if (artifactHashes.length === 0 && directiveHashes.length === 0) return undefined;
+  if (
+    artifactHashes.length !== 1
+    || directiveHashes.length !== 1
+    || !input.attempt.claimId
+    || input.attempt.attemptClass !== "product_implementation"
+  ) {
+    throw new V3ImplementationAttemptError(
+      "V3_SUPERVISOR_RETRY_IDENTITY_MISMATCH",
+      `Implementation attempt ${input.attempt.attemptId} must reference one exact supervisor retry artifact`,
+    );
+  }
+  const artifactHash = artifactHashes[0]!;
+  const stored = await input.dependencies.readArtifact(artifactHash);
+  if (stored.artifactType !== V3_SUPERVISOR_RETRY_DIRECTIVE_ARTIFACT_TYPE_V1) {
+    throw new V3ImplementationAttemptError(
+      "V3_SUPERVISOR_RETRY_IDENTITY_MISMATCH",
+      `Supervisor retry artifact ${artifactHash} has the wrong artifact type`,
+    );
+  }
+  const directive = validateSupervisorRetryCarrier({
+    directive: V3SupervisorRetryDirectiveV1Schema.parse(stored.payload),
+    runId: input.attempt.runId,
+    stepId: input.attempt.stepId,
+    storyId: input.attempt.storyId,
+    claimId: input.attempt.claimId,
+    role: input.attempt.role,
+  });
+  const envelope = SemanticArtifactEnvelopeV1Schema.parse({
+    schema: "setfarm.semantic-artifact-envelope.v1",
+    artifactType: stored.artifactType,
+    producer: stored.producer,
+    payload: directive,
+  });
+  if (
+    canonicalJsonStringify(stored.producer) !== canonicalJsonStringify(input.packet.producer)
+    || hashCanonicalJson(envelope) !== artifactHash
+    || directiveHashes[0] !== directive.directiveHash
+    || !input.attempt.evidenceRefs.includes(`setfarm://artifact/${artifactHash}`)
+  ) {
+    throw new V3ImplementationAttemptError(
+      "V3_SUPERVISOR_RETRY_IDENTITY_MISMATCH",
+      `Supervisor retry artifact ${artifactHash} differs from its durable producer, content, or evidence reference`,
+    );
+  }
+  return {
+    directive,
+    artifactHash,
+    refKey: supervisorRetryRefKey(directive.directiveHash),
   };
 }
 
@@ -671,6 +805,9 @@ export function createV3ImplementationAttemptCompiler(dependencies: V3CompilerDe
       const operationalRetry = input.operationalRetry
         ? OperationalRetryDirectiveV1Schema.parse(input.operationalRetry)
         : undefined;
+      const supervisorRetry = input.supervisorRetry
+        ? V3SupervisorRetryDirectiveV1Schema.parse(input.supervisorRetry)
+        : undefined;
       const executionProfile = operationalRetry?.executionProfile ?? resolveV3ExecutionProfile("primary");
       if (recoveryEvidenceOnly && downstreamEvidence) {
         throw new V3ImplementationAttemptError(
@@ -690,6 +827,21 @@ export function createV3ImplementationAttemptCompiler(dependencies: V3CompilerDe
         throw new V3ImplementationAttemptError(
           "V3_OPERATIONAL_RETRY_AUTHORITY_CONFLICT",
           "Operational retry cannot be combined with FindingSet recovery or evidence-only authority",
+        );
+      }
+      if (
+        supervisorRetry
+        && (
+          operationalRetry !== undefined
+          || input.recoveryDelivery !== undefined
+          || input.evidenceOnlyLease !== undefined
+          || input.downstreamEvidenceAuthority !== undefined
+          || input.findingSetHash !== undefined
+        )
+      ) {
+        throw new V3ImplementationAttemptError(
+          "V3_SUPERVISOR_RETRY_AUTHORITY_CONFLICT",
+          "Supervisor retry evidence cannot be combined with recovery, operational retry, or evidence-only authority",
         );
       }
       if (!recoveryEvidenceOnly && !downstreamEvidence && (!Number.isSafeInteger(input.claimId) || (input.claimId ?? 0) <= 0)) {
@@ -743,6 +895,16 @@ export function createV3ImplementationAttemptCompiler(dependencies: V3CompilerDe
           `Story ${input.storyId} is absent from run ${input.runId}'s sealed packet`,
         );
       }
+      const validatedSupervisorRetry = supervisorRetry
+        ? validateSupervisorRetryCarrier({
+            directive: supervisorRetry,
+            runId: input.runId,
+            stepId: input.stepId,
+            storyId: input.storyId,
+            claimId: input.claimId!,
+            role: input.role,
+          })
+        : undefined;
       const runtimeEvidenceContract = packet.buildTopology.runtimeEvidenceContract;
       if (!runtimeEvidenceContract || !packet.buildTopology.runtimeEvidenceContractHash) {
         throw new V3ImplementationAttemptError(
@@ -840,6 +1002,21 @@ export function createV3ImplementationAttemptCompiler(dependencies: V3CompilerDe
         : undefined;
 
       const sourceBefore = await dependencies.captureSource(input.worktree);
+      if (validatedSupervisorRetry) {
+        if (!dependencies.captureSupervisorRetrySource) {
+          throw new V3ImplementationAttemptError(
+            "V3_SUPERVISOR_RETRY_IDENTITY_MISMATCH",
+            "Supervisor retry compilation requires an exact committed Git revision reader",
+          );
+        }
+        const exactSupervisorRetrySource = await dependencies.captureSupervisorRetrySource(input.worktree);
+        if (!sameRevision(exactSupervisorRetrySource, validatedSupervisorRetry.sourceRevision)) {
+          throw new V3ImplementationAttemptError(
+            "V3_SUPERVISOR_RETRY_IDENTITY_MISMATCH",
+            "Supervisor retry worktree HEAD differs from the exact reviewed source revision",
+          );
+        }
+      }
       if (recovery && !sameRevision(sourceBefore, recovery.dispatch.sourceRevision)) {
         throw new V3ImplementationAttemptError(
           "V3_RECOVERY_SOURCE_REVISION_MISMATCH",
@@ -981,6 +1158,12 @@ export function createV3ImplementationAttemptCompiler(dependencies: V3CompilerDe
       const expectedOperationalRetryArtifactHash = retryEnvelope
         ? hashCanonicalJson(retryEnvelope)
         : undefined;
+      const supervisorRetryArtifactEnvelope = validatedSupervisorRetry
+        ? supervisorRetryEnvelope(packet, validatedSupervisorRetry)
+        : undefined;
+      const expectedSupervisorRetryArtifactHash = supervisorRetryArtifactEnvelope
+        ? hashCanonicalJson(supervisorRetryArtifactEnvelope)
+        : undefined;
       if (!recoveryEvidenceOnly && !downstreamEvidence) {
         // Refuse before CAS publication and attempt reservation. The unknown
         // durable IDs use their schema maxima, so any later real handoff is no
@@ -1001,7 +1184,7 @@ export function createV3ImplementationAttemptCompiler(dependencies: V3CompilerDe
             stepId: "S".repeat(500),
             workflowStepId: "implement",
             storyId: input.storyId,
-            storyDbId: "D".repeat(500),
+            storyDbId: validatedSupervisorRetry?.storyDbId ?? "D".repeat(500),
             claimId: input.claimId!,
             attemptId: `ATT_${"A".repeat(160)}`,
             attemptGeneration: Number.MAX_SAFE_INTEGER,
@@ -1020,6 +1203,12 @@ export function createV3ImplementationAttemptCompiler(dependencies: V3CompilerDe
               ? {
                   operationalRetry,
                   operationalRetryArtifactHash: expectedOperationalRetryArtifactHash,
+                }
+              : {}),
+            ...(validatedSupervisorRetry && expectedSupervisorRetryArtifactHash
+              ? {
+                  supervisorRetry: validatedSupervisorRetry,
+                  supervisorRetryArtifactHash: expectedSupervisorRetryArtifactHash,
                 }
               : {}),
             sourceBefore,
@@ -1070,10 +1259,25 @@ export function createV3ImplementationAttemptCompiler(dependencies: V3CompilerDe
           `CAS published ${operationalRetryPublication.hash}, operational retry produced ${expectedOperationalRetryArtifactHash}`,
         );
       }
+      const supervisorRetryPublication = supervisorRetryArtifactEnvelope
+        ? await dependencies.publish(supervisorRetryArtifactEnvelope)
+        : undefined;
+      if (
+        supervisorRetryPublication
+        && supervisorRetryPublication.hash !== expectedSupervisorRetryArtifactHash
+      ) {
+        throw new V3ImplementationAttemptError(
+          "V3_SUPERVISOR_RETRY_PUBLICATION_HASH_MISMATCH",
+          `CAS published ${supervisorRetryPublication.hash}, supervisor retry produced ${expectedSupervisorRetryArtifactHash}`,
+        );
+      }
       const refKey = sliceRefKey(input.storyId, publication.hash);
       const planRefKey = evidencePlanRefKey(input.storyId, planPublication.hash);
       const retryRefKey = operationalRetry
         ? operationalRetryRefKey(operationalRetry.directiveHash)
+        : undefined;
+      const supervisorRetryRunRefKey = validatedSupervisorRetry
+        ? supervisorRetryRefKey(validatedSupervisorRetry.directiveHash)
         : undefined;
       await dependencies.addRunRef({
         runId: input.runId,
@@ -1092,6 +1296,13 @@ export function createV3ImplementationAttemptCompiler(dependencies: V3CompilerDe
           artifactHash: operationalRetryPublication.hash,
         });
       }
+      if (supervisorRetryPublication && supervisorRetryRunRefKey) {
+        await dependencies.addRunRef({
+          runId: input.runId,
+          refKey: supervisorRetryRunRefKey,
+          artifactHash: supervisorRetryPublication.hash,
+        });
+      }
 
       const durableEvidenceRefs = [
         `setfarm://artifact/${packet.packetHash}`,
@@ -1103,6 +1314,13 @@ export function createV3ImplementationAttemptCompiler(dependencies: V3CompilerDe
               `setfarm://artifact/${operationalRetryPublication.hash}`,
               `setfarm://operational-retry/${operationalRetry.directiveHash}`,
               `setfarm://operational-retry-artifact/${operationalRetryPublication.hash}`,
+            ]
+          : []),
+        ...(supervisorRetryPublication && validatedSupervisorRetry
+          ? [
+              `setfarm://artifact/${supervisorRetryPublication.hash}`,
+              `setfarm://supervisor-retry/${validatedSupervisorRetry.directiveHash}`,
+              `setfarm://supervisor-retry-artifact/${supervisorRetryPublication.hash}`,
             ]
           : []),
         ...(recovery
@@ -1241,6 +1459,15 @@ export function createV3ImplementationAttemptCompiler(dependencies: V3CompilerDe
               },
             }
           : {}),
+        ...(validatedSupervisorRetry && supervisorRetryPublication && supervisorRetryRunRefKey
+          ? {
+              supervisorRetry: {
+                directive: validatedSupervisorRetry,
+                artifactHash: supervisorRetryPublication.hash,
+                refKey: supervisorRetryRunRefKey,
+              },
+            }
+          : {}),
         ...(recovery ? { recovery } : {}),
       };
     },
@@ -1300,6 +1527,17 @@ export function createV3ImplementationAttemptCompiler(dependencies: V3CompilerDe
       const operationalRetry = attempt.attemptClass === "infrastructure_retry"
         ? await loadOperationalRetryArtifact({ dependencies, packet, attempt, slice })
         : undefined;
+      const supervisorRetry = await loadSupervisorRetryArtifact({
+        dependencies,
+        packet,
+        attempt,
+      });
+      if (operationalRetry && supervisorRetry) {
+        throw new V3ImplementationAttemptError(
+          "V3_SUPERVISOR_RETRY_AUTHORITY_CONFLICT",
+          `Attempt ${attempt.attemptId} cannot carry both operational and supervisor retry evidence`,
+        );
+      }
       const executionProfile = operationalRetry?.directive.executionProfile
         ?? resolveV3ExecutionProfile("primary");
       let evidencePlan: EvidencePlanV1;
@@ -1385,6 +1623,7 @@ export function createV3ImplementationAttemptCompiler(dependencies: V3CompilerDe
         sourceBefore: attempt.sourceBefore,
         executionProfile,
         ...(operationalRetry ? { operationalRetry } : {}),
+        ...(supervisorRetry ? { supervisorRetry } : {}),
         ...(recovery ? { recovery } : {}),
       };
     },
@@ -1395,15 +1634,28 @@ let defaultCompiler: ReturnType<typeof createV3ImplementationAttemptCompiler> | 
 
 function createDefaultCompiler() {
   const sql = getSql();
+  const artifactRoot = resolveProductArtifactDir();
+  const artifactLimits = resolveProductArtifactCapacity();
+  const publicationAuthority = resolveArtifactStorePublicationAuthorityMode();
+  const capacityLeaseProvider = publicationAuthority === "hybrid-required"
+    ? createHybridArtifactStoreCapacityLeaseProviderV1({
+        sql,
+        artifactRoot,
+        purpose: "writer",
+      })
+    : undefined;
   const reader = createRuntimeArtifactReader({
     sql,
-    artifactRoot: resolveProductArtifactDir(),
-    artifactLimits: resolveProductArtifactCapacity(),
+    artifactRoot,
+    artifactLimits,
+    publicationAuthorityMode: publicationAuthority,
+    ...(capacityLeaseProvider ? { capacityLeaseProvider } : {}),
   });
   const publisher = new IndexedArtifactPublisher({
     index: reader.index,
     store: reader.store,
     ownerInstanceId: `v3-slice-compiler:${process.pid}`,
+    publicationAuthority,
   });
   const attempts = createAttemptRepository(sql);
   const evidenceOnlyPublication = createV3EvidenceOnlyPublication(sql);
@@ -1441,6 +1693,14 @@ function createDefaultCompiler() {
       return stored.envelope;
     },
     captureSource: (worktree) => captureShadowSourceRevision(worktree),
+    captureSupervisorRetrySource: async (worktree) => {
+      const commitSha = execFileSync("git", ["rev-parse", "HEAD"], {
+        cwd: worktree,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+      }).trim();
+      return captureV3GitCommitRevision({ repo: worktree, commitSha });
+    },
     readDependencies: async (input) => {
       const result: Record<string, DependencySignature> = {};
       for (const storyId of input.storyIds) {

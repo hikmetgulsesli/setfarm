@@ -109,6 +109,7 @@ export async function handleV3PreDispatchFailure(input: Readonly<{
   phase: "source" | "reservation";
   error: unknown;
   operationalRetryRefused?: boolean;
+  preserveStoryOutput?: boolean;
   repo?: string;
   storyBranch?: string;
 }>): Promise<V3PreDispatchDispositionV1> {
@@ -166,11 +167,11 @@ export async function handleV3PreDispatchFailure(input: Readonly<{
     if (disposition.runTerminal) {
       const stories = await sql.unsafe<Array<{ id: string }>>(
         `UPDATE stories
-            SET status = 'failed', output = $2, claimed_at = NULL,
+            SET status = 'failed', output = CASE WHEN $6::boolean THEN output ELSE $2 END, claimed_at = NULL,
                 claimed_by = NULL, updated_at = $3
           WHERE id = $1 AND run_id = $4 AND story_id = $5 AND status = 'running'
           RETURNING id`,
-        [input.story.id, disposition.diagnostic, transitionTime, input.step.run_id, input.story.story_id],
+        [input.story.id, disposition.diagnostic, transitionTime, input.step.run_id, input.story.story_id, input.preserveStoryOutput === true],
       );
       if (stories.length !== 1) throw new Error("V3_PRE_DISPATCH_STORY_TERMINAL_CAS_LOST");
       const steps = await sql.unsafe<Array<{ id: string }>>(
@@ -197,11 +198,11 @@ export async function handleV3PreDispatchFailure(input: Readonly<{
     } else {
       const stories = await sql.unsafe<Array<{ id: string }>>(
         `UPDATE stories
-            SET status = 'pending', output = $2, claimed_at = NULL,
+            SET status = 'pending', output = CASE WHEN $6::boolean THEN output ELSE $2 END, claimed_at = NULL,
                 claimed_by = NULL, updated_at = $3
           WHERE id = $1 AND run_id = $4 AND story_id = $5 AND status = 'running'
           RETURNING id`,
-        [input.story.id, disposition.diagnostic, transitionTime, input.step.run_id, input.story.story_id],
+        [input.story.id, disposition.diagnostic, transitionTime, input.step.run_id, input.story.story_id, input.preserveStoryOutput === true],
       );
       if (stories.length !== 1) throw new Error("V3_PRE_DISPATCH_STORY_RETRY_CAS_LOST");
       await sql.unsafe(

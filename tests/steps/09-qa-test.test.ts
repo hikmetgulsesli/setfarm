@@ -3,10 +3,10 @@ import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
-import { qaTestModule } from "../../dist/installer/steps/09-qa-test/module.js";
-import { normalize, validateOutput } from "../../dist/installer/steps/09-qa-test/guards.js";
-import { classifyQaSystemSmokeResult } from "../../dist/installer/steps/09-qa-test/preclaim.js";
-import type { ParsedOutput } from "../../dist/installer/steps/types.js";
+import { qaTestModule } from "../../src/installer/steps/09-qa-test/module.js";
+import { normalize, validateOutput } from "../../src/installer/steps/09-qa-test/guards.js";
+import { classifyQaSystemSmokeResult } from "../../src/installer/steps/09-qa-test/preclaim.js";
+import type { ParsedOutput } from "../../src/installer/steps/types.js";
 
 const sourcePrompt = readFileSync(resolve(import.meta.dirname, "../../src/installer/steps/09-qa-test/prompt.md"), "utf-8");
 const sourcePreclaim = readFileSync(resolve(import.meta.dirname, "../../src/installer/steps/09-qa-test/preclaim.ts"), "utf-8");

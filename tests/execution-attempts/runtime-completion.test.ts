@@ -16,6 +16,7 @@ import {
 } from "../../src/execution/claim-recovery-authority.js";
 import {
   createRuntimeCompletionRepository,
+  isRuntimeCompletionRecoveryOwnerInstanceIdV1,
   markRuntimeCompletionOwnerCommittedInTransaction,
   requestRuntimeCompletion,
   RuntimeCompletionSubmissionEvidenceV1Schema,
@@ -394,6 +395,24 @@ async function settleCompletionEffects(
 }
 
 describe("manager-owned runtime completion", () => {
+  it("admits only the exact durable recovery owner identity format", () => {
+    assert.equal(
+      isRuntimeCompletionRecoveryOwnerInstanceIdV1(
+        "setfarm-runtime-completion-recovery:v1:123e4567-e89b-12d3-a456-426614174000",
+      ),
+      true,
+    );
+    for (const invalid of [
+      "SPAWNER_INSTANCE_ID",
+      "setfarm-runtime-completion-recovery:v1:",
+      "setfarm-runtime-completion-recovery:v1:123e4567-e89b-12d3-a456-426614174000-suffix",
+      "setfarm-runtime-completion-recovery:v1:123E4567-E89B-12D3-A456-426614174000",
+      "prefix-setfarm-runtime-completion-recovery:v1:123e4567-e89b-12d3-a456-426614174000",
+    ]) {
+      assert.equal(isRuntimeCompletionRecoveryOwnerInstanceIdV1(invalid), false, invalid);
+    }
+  });
+
   it("keeps claim and product state active until exact runtime drain is accepted", async () => {
     const database = await createIsolatedTestDatabase();
     try {
@@ -1556,8 +1575,12 @@ describe("manager-owned runtime completion", () => {
         now: new Date(startedAt.getTime() + 120_000),
       });
       assert.equal(recovered.status, "resume_effects");
-      assert.equal(recovered.request?.ownerInstanceId, "crashed-manager");
-      assert.equal(recovered.request?.ownerAttemptCount, staleOwner.ownerAttemptCount + 1);
+      assert.equal(
+        isRuntimeCompletionRecoveryOwnerInstanceIdV1(recovered.request?.ownerInstanceId ?? ""),
+        true,
+      );
+      assert.notEqual(recovered.request?.ownerInstanceId, "crashed-manager");
+      assert.equal(recovered.request?.ownerAttemptCount, staleOwner.ownerAttemptCount);
       assert.equal(recovered.request?.applyPhase, "owner_committed");
       assert.equal(recovered.request?.claimOutcome, "completed");
       await assert.rejects(
@@ -1578,6 +1601,302 @@ describe("manager-owned runtime completion", () => {
         }),
         /RUNTIME_COMPLETION_PROCESSING_OWNER_MISMATCH/,
       );
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("rotates durable recovery owners beyond the pre-commit budget and fences stale effect leases", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const runId = "run-durable-recovery-generations";
+      const seeded = await seedManagedSingleStepClaim(database, runId);
+      const startedAt = new Date("2026-07-13T12:00:00.000Z");
+      const output = "STATUS: done\nSUMMARY: durable recovery generations remain live";
+      const requestId = "RCR_durable-recovery-budget01";
+      const requested = await requestRuntimeCompletion(database.sql, {
+        envelope: seeded.envelope,
+        output,
+        requestId,
+        now: startedAt,
+      });
+      if (requested.status !== "requested") throw new Error("completion request missing");
+      const completions = createRuntimeCompletionRepository(database.sql);
+      await completions.claim({ requestId, ownerInstanceId: "pre-owner-1", now: startedAt });
+      await seeded.sessions.markDrained({
+        sessionId: seeded.session.sessionId,
+        ownerInstanceId: "spawner-a",
+        evidence: DRAIN_EVIDENCE,
+        now: startedAt,
+      });
+      await completions.markProcessing({
+        requestId,
+        ownerInstanceId: "pre-owner-1",
+        leaseMs: 60_000,
+        now: startedAt,
+      });
+      for (const [index, ownerInstanceId] of ["pre-owner-2", "pre-owner-3"].entries()) {
+        await expireRuntimeCompletionLease(database, requestId);
+        const recovered = await completions.recoverExpiredProcessing({
+          ownerInstanceId,
+          leaseMs: 60_000,
+          now: new Date(startedAt.getTime() + ((index + 1) * 120_000)),
+        });
+        assert.equal(recovered.status, "resume_owner");
+        assert.equal(recovered.request?.ownerInstanceId, ownerInstanceId);
+        assert.equal(recovered.request?.ownerAttemptCount, index + 2);
+      }
+      await asRuntimeCompletionOwner(completions, requestId, () => completeSingleStepClaimAndState(
+        database.sql,
+        {
+          envelope: seeded.envelope,
+          stepStatus: "done",
+          stepOutput: output,
+          now: new Date(startedAt.getTime() + 300_000),
+        },
+      ));
+
+      await expireRuntimeCompletionLease(database, requestId);
+      const firstDurable = await completions.recoverExpiredProcessing({
+        ownerInstanceId: "caller-selected-owner-is-not-authority",
+        leaseMs: 60_000,
+      });
+      assert.equal(firstDurable.status, "resume_effects");
+      assert.ok(firstDurable.request?.ownerInstanceId);
+      assert.equal(
+        isRuntimeCompletionRecoveryOwnerInstanceIdV1(firstDurable.request.ownerInstanceId),
+        true,
+      );
+      assert.notEqual(
+        firstDurable.request.ownerInstanceId,
+        "caller-selected-owner-is-not-authority",
+      );
+      assert.equal(firstDurable.request.ownerAttemptCount, 3);
+
+      const effects = createRuntimeCompletionEffectRepository(database.sql);
+      const firstEffect = await effects.claimNext({
+        requestId,
+        ownerInstanceId: firstDurable.request.ownerInstanceId,
+        leaseMs: 30 * 60_000,
+      });
+      assert.ok(firstEffect?.leaseToken);
+
+      await expireRuntimeCompletionLease(database, requestId);
+      const secondDurable = await completions.recoverExpiredProcessing({
+        ownerInstanceId: "same-caller-still-does-not-select-token",
+        leaseMs: 60_000,
+      });
+      assert.equal(secondDurable.status, "resume_effects");
+      assert.ok(secondDurable.request?.ownerInstanceId);
+      assert.notEqual(secondDurable.request.ownerInstanceId, firstDurable.request.ownerInstanceId);
+      assert.equal(secondDurable.request.ownerAttemptCount, 3);
+      assert.equal(await completions.heartbeatProcessing({
+        requestId,
+        ownerInstanceId: firstDurable.request.ownerInstanceId,
+        ownerAttemptCount: 3,
+      }), false);
+      assert.equal(await effects.heartbeat({
+        requestId,
+        effectKey: firstEffect.effectKey,
+        ownerInstanceId: firstDurable.request.ownerInstanceId,
+        leaseToken: firstEffect.leaseToken,
+      }), false);
+      await assert.rejects(
+        effects.assertLease({
+          requestId,
+          effectKey: firstEffect.effectKey,
+          ownerInstanceId: firstDurable.request.ownerInstanceId,
+          leaseToken: firstEffect.leaseToken,
+        }),
+        /RUNTIME_COMPLETION_EFFECT_LEASE_LOST/,
+      );
+      await assert.rejects(
+        effects.releaseForRetry({
+          requestId,
+          effectKey: firstEffect.effectKey,
+          ownerInstanceId: firstDurable.request.ownerInstanceId,
+          leaseToken: firstEffect.leaseToken,
+          diagnostic: "stale effect owner must not release",
+        }),
+        /RUNTIME_COMPLETION_EFFECT_RETRY_FENCE_LOST/,
+      );
+      await assert.rejects(
+        effects.quarantine({
+          requestId,
+          effectKey: firstEffect.effectKey,
+          ownerInstanceId: firstDurable.request.ownerInstanceId,
+          leaseToken: firstEffect.leaseToken,
+          diagnostic: "stale effect owner must not quarantine",
+        }),
+        /RUNTIME_COMPLETION_EFFECT_QUARANTINE_FENCE_LOST/,
+      );
+      await assert.rejects(
+        effects.settle({
+          requestId,
+          effectKey: firstEffect.effectKey,
+          ownerInstanceId: firstDurable.request.ownerInstanceId,
+          leaseToken: firstEffect.leaseToken,
+          resolution: "applied",
+          result: {},
+          evidence: {},
+        }),
+        /RUNTIME_COMPLETION_EFFECT_SETTLE_FENCE_LOST/,
+      );
+      await assert.rejects(
+        completions.markEffectsCommitted({
+          requestId,
+          ownerInstanceId: firstDurable.request.ownerInstanceId,
+          ownerAttemptCount: 3,
+          result: { advanced: true, runCompleted: false },
+        }),
+        /RUNTIME_COMPLETION_EFFECTS_COMMIT_OWNER_MISMATCH/,
+      );
+      await assert.rejects(
+        completions.acceptAndRelease({
+          requestId,
+          ownerInstanceId: firstDurable.request.ownerInstanceId,
+          ownerAttemptCount: 3,
+          result: { advanced: true, runCompleted: false },
+        }),
+        /RUNTIME_COMPLETION_PROCESSING_OWNER_MISMATCH/,
+      );
+
+      let latest = secondDurable.request;
+      for (let generation = 0; generation < 2; generation += 1) {
+        await expireRuntimeCompletionLease(database, requestId);
+        const recovered = await completions.recoverExpiredProcessing({
+          ownerInstanceId: `ignored-durable-caller-${generation}`,
+          leaseMs: 60_000,
+        });
+        assert.equal(recovered.status, "resume_effects");
+        assert.ok(recovered.request?.ownerInstanceId);
+        assert.equal(isRuntimeCompletionRecoveryOwnerInstanceIdV1(recovered.request.ownerInstanceId), true);
+        assert.notEqual(recovered.request.ownerInstanceId, latest.ownerInstanceId);
+        assert.equal(recovered.request.ownerAttemptCount, 3);
+        latest = recovered.request;
+      }
+
+      const latestEffect = await effects.claimNext({
+        requestId,
+        ownerInstanceId: latest.ownerInstanceId!,
+      });
+      assert.ok(latestEffect?.leaseToken);
+      assert.notEqual(latestEffect.leaseToken, firstEffect.leaseToken);
+      await effects.settle({
+        requestId,
+        effectKey: latestEffect.effectKey,
+        ownerInstanceId: latest.ownerInstanceId!,
+        leaseToken: latestEffect.leaseToken,
+        resolution: "reconciled",
+        result: { advanced: true, runCompleted: false },
+        evidence: { source: "latest durable recovery generation" },
+      });
+      const result = { advanced: true, runCompleted: false };
+      const effectsCommitted = await completions.markEffectsCommitted({
+        requestId,
+        ownerInstanceId: latest.ownerInstanceId!,
+        ownerAttemptCount: latest.ownerAttemptCount,
+        result,
+      });
+      let finalizer = effectsCommitted;
+      for (let generation = 0; generation < 2; generation += 1) {
+        await expireRuntimeCompletionLease(database, requestId);
+        const recovered = await completions.recoverExpiredProcessing({
+          ownerInstanceId: `ignored-finalizer-caller-${generation}`,
+          leaseMs: 60_000,
+        });
+        assert.equal(recovered.status, "finalize");
+        assert.ok(recovered.request?.ownerInstanceId);
+        assert.equal(isRuntimeCompletionRecoveryOwnerInstanceIdV1(recovered.request.ownerInstanceId), true);
+        assert.notEqual(recovered.request.ownerInstanceId, finalizer.ownerInstanceId);
+        assert.equal(recovered.request.ownerAttemptCount, 3);
+        finalizer = recovered.request;
+      }
+      const accepted = await completions.acceptAndRelease({
+        requestId,
+        ownerInstanceId: finalizer.ownerInstanceId!,
+        ownerAttemptCount: finalizer.ownerAttemptCount,
+        result,
+      });
+      assert.equal(accepted.state, "accepted");
+      assert.equal(accepted.ownerAttemptCount, 3);
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("adopts consecutive expired durable receipts without head-of-line blocking at count three", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const completions = createRuntimeCompletionRepository(database.sql);
+      const seedDurableReceipt = async (
+        runId: string,
+        requestId: string,
+        requestedAt: Date,
+      ): Promise<void> => {
+        const seeded = await seedManagedSingleStepClaim(database, runId);
+        const output = `STATUS: done\nSUMMARY: durable receipt ${requestId}`;
+        const requested = await requestRuntimeCompletion(database.sql, {
+          envelope: seeded.envelope,
+          output,
+          requestId,
+          now: requestedAt,
+        });
+        if (requested.status !== "requested") throw new Error("completion request missing");
+        await completions.claim({ requestId, ownerInstanceId: `owner-${requestId}`, now: requestedAt });
+        await seeded.sessions.markDrained({
+          sessionId: seeded.session.sessionId,
+          ownerInstanceId: "spawner-a",
+          evidence: DRAIN_EVIDENCE,
+          now: requestedAt,
+        });
+        await completions.markProcessing({
+          requestId,
+          ownerInstanceId: `owner-${requestId}`,
+          leaseMs: 60_000,
+          now: requestedAt,
+        });
+        await asRuntimeCompletionOwner(completions, requestId, () => completeSingleStepClaimAndState(
+          database.sql,
+          {
+            envelope: seeded.envelope,
+            stepStatus: "done",
+            stepOutput: output,
+            now: new Date(requestedAt.getTime() + 1_000),
+          },
+        ));
+        const rows = await database.sql.unsafe<Array<{ request_id: string }>>(
+          `UPDATE runtime_completion_requests
+              SET owner_attempt_count = 3,
+                  lease_expires_at = clock_timestamp() - INTERVAL '1 second'
+            WHERE request_id = $1
+              AND state = 'processing'
+              AND apply_phase = 'owner_committed'
+            RETURNING request_id`,
+          [requestId],
+        );
+        assert.equal(rows.length, 1);
+      };
+
+      const firstRequestId = "RCR_durable-hol-first0001";
+      const secondRequestId = "RCR_durable-hol-second001";
+      const startedAt = new Date("2026-07-13T12:00:00.000Z");
+      await seedDurableReceipt("run-durable-hol-first", firstRequestId, startedAt);
+      await seedDurableReceipt(
+        "run-durable-hol-second",
+        secondRequestId,
+        new Date(startedAt.getTime() + 1_000),
+      );
+
+      const first = await completions.recoverExpiredProcessing({ ownerInstanceId: "recovery-loop" });
+      assert.equal(first.status, "resume_effects");
+      assert.equal(first.request?.requestId, firstRequestId);
+      assert.equal(first.request?.ownerAttemptCount, 3);
+      const second = await completions.recoverExpiredProcessing({ ownerInstanceId: "recovery-loop" });
+      assert.equal(second.status, "resume_effects");
+      assert.equal(second.request?.requestId, secondRequestId);
+      assert.equal(second.request?.ownerAttemptCount, 3);
+      assert.notEqual(second.request?.ownerInstanceId, first.request?.ownerInstanceId);
     } finally {
       await database.cleanup();
     }
@@ -1617,13 +1936,13 @@ describe("manager-owned runtime completion", () => {
           const effects = createRuntimeCompletionEffectRepository(database.sql);
           const effect = await effects.claimNext({
             requestId,
-            ownerInstanceId: "effect-manager",
+            ownerInstanceId: "manager-a",
           });
           assert.ok(effect?.leaseToken);
           await effects.settle({
             requestId,
             effectKey: effect.effectKey,
-            ownerInstanceId: "effect-manager",
+            ownerInstanceId: "manager-a",
             leaseToken: effect.leaseToken,
             resolution: "reconciled",
             result: { advanced: true, runCompleted: false },
@@ -1730,6 +2049,85 @@ describe("manager-owned runtime completion", () => {
     }
   });
 
+  it("rejects a pre-seeded effect before atomically committing the completion owner", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const runId = "run-effect-preseed-fence";
+      const seeded = await seedManagedSingleStepClaim(database, runId);
+      const output = "STATUS: done\nSUMMARY: pre-seeded effect fence";
+      const requested = await requestRuntimeCompletion(database.sql, {
+        envelope: seeded.envelope,
+        output,
+        requestId: "RCR_effect-preseed-fence01",
+      });
+      if (requested.status !== "requested") throw new Error("completion request missing");
+      const completions = createRuntimeCompletionRepository(database.sql);
+      await completions.claim({
+        requestId: requested.request.requestId,
+        ownerInstanceId: "manager-a",
+      });
+      await seeded.sessions.markDrained({
+        sessionId: seeded.session.sessionId,
+        ownerInstanceId: "spawner-a",
+        evidence: DRAIN_EVIDENCE,
+      });
+      await completions.markProcessing({
+        requestId: requested.request.requestId,
+        ownerInstanceId: "manager-a",
+      });
+      await assert.rejects(
+        database.sql`
+          INSERT INTO runtime_completion_effects (
+            request_id, effect_key, ordinal, effect_type, input_hash,
+            payload, mandatory, state
+          ) VALUES (
+            ${requested.request.requestId}, 'preseeded-effect', 0,
+            'single.pipeline.advance', ${"a".repeat(64)},
+            ${database.sql.json({ forged: true })}, TRUE, 'pending'
+          )
+        `,
+        /RUNTIME_COMPLETION_EFFECT_PARENT_BINDING_INVALID/,
+      );
+
+      await asRuntimeCompletionOwner(
+        completions,
+        requested.request.requestId,
+        () => completeSingleStepClaimAndState(database.sql, {
+          envelope: seeded.envelope,
+          stepStatus: "done",
+          stepOutput: output,
+        }),
+      );
+
+      const state = await database.sql<Array<{
+        claim_outcome: string | null;
+        step_status: string;
+        apply_phase: string;
+        effect_count: number;
+      }>>`
+        SELECT cl.outcome AS claim_outcome,
+               s.status AS step_status,
+               rcr.apply_phase,
+               COUNT(rce.effect_key)::integer AS effect_count
+          FROM claim_log cl
+          JOIN steps s ON s.id = ${seeded.stepDbId}
+          JOIN runtime_completion_requests rcr ON rcr.claim_id = cl.id
+          LEFT JOIN runtime_completion_effects rce
+            ON rce.request_id = rcr.request_id
+         WHERE cl.id = ${seeded.claimId}
+         GROUP BY cl.outcome, s.status, rcr.apply_phase
+      `;
+      assert.deepEqual({ ...state[0] }, {
+        claim_outcome: "completed",
+        step_status: "done",
+        apply_phase: "owner_committed",
+        effect_count: 1,
+      });
+    } finally {
+      await database.cleanup();
+    }
+  });
+
   it("fences mandatory continuation effects and refuses aggregate acceptance before receipts", async () => {
     const database = await createIsolatedTestDatabase();
     try {
@@ -1776,7 +2174,7 @@ describe("manager-owned runtime completion", () => {
       const effects = createRuntimeCompletionEffectRepository(database.sql);
       const first = await effects.claimNext({
         requestId: requested.request.requestId,
-        ownerInstanceId: "effect-owner-a",
+        ownerInstanceId: "manager-a",
         leaseMs: 30_000,
         now: new Date("2999-01-01T00:00:00.000Z"),
       });
@@ -1790,7 +2188,7 @@ describe("manager-owned runtime completion", () => {
       assert.equal(await effects.heartbeat({
         requestId: requested.request.requestId,
         effectKey: first!.effectKey,
-        ownerInstanceId: "effect-owner-a",
+        ownerInstanceId: "manager-a",
         leaseToken: first!.leaseToken!,
         leaseMs: 30_000,
         now: new Date("1900-01-01T00:00:00.000Z"),
@@ -1804,14 +2202,14 @@ describe("manager-owned runtime completion", () => {
       assert.equal(await effects.heartbeat({
         requestId: requested.request.requestId,
         effectKey: first!.effectKey,
-        ownerInstanceId: "effect-owner-a",
+        ownerInstanceId: "manager-a",
         leaseToken: first!.leaseToken!,
         leaseMs: 30_000,
         now: new Date("1900-01-01T00:00:00.000Z"),
       }), false);
       const adopted = await effects.claimNext({
         requestId: requested.request.requestId,
-        ownerInstanceId: "effect-owner-b",
+        ownerInstanceId: "manager-a",
         leaseMs: 30_000,
         now: new Date("1900-01-01T00:00:00.000Z"),
       });
@@ -1821,7 +2219,7 @@ describe("manager-owned runtime completion", () => {
         effects.settle({
           requestId: requested.request.requestId,
           effectKey: first!.effectKey,
-          ownerInstanceId: "effect-owner-a",
+          ownerInstanceId: "manager-a",
           leaseToken: first!.leaseToken!,
           resolution: "applied",
           result: {},
@@ -1833,7 +2231,7 @@ describe("manager-owned runtime completion", () => {
       await effects.settle({
         requestId: requested.request.requestId,
         effectKey: adopted!.effectKey,
-        ownerInstanceId: "effect-owner-b",
+        ownerInstanceId: "manager-a",
         leaseToken: adopted!.leaseToken!,
         resolution: "reconciled",
         result: { advanced: true, runCompleted: false },

@@ -117,7 +117,7 @@ describe("canonical operational event migration", () => {
         verifyContractSpineMigrations(database.sql),
         (error: unknown) => error instanceof ContractSpineMigrationError
           && error.code === "MIGRATION_ADOPTION_MISMATCH"
-          && /immutability trigger/.test(error.message),
+          && /Migration 12 /.test(error.message),
       );
     } finally {
       await database.cleanup();

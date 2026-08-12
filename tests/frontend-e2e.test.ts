@@ -4,7 +4,7 @@ import { execSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { computeHasFrontendChanges, resolveTemplate } from "../dist/installer/step-ops.js";
+import { computeHasFrontendChanges, resolveTemplate } from "../src/installer/step-ops.js";
 
 /**
  * Regression test for frontend change detection in the verify flow.

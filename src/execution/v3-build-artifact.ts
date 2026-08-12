@@ -1,5 +1,11 @@
 import { createHash } from "node:crypto";
-import { createReadStream, lstatSync, realpathSync, readdirSync, type Stats } from "node:fs";
+import {
+  createReadStream,
+  lstatSync,
+  realpathSync,
+  readdirSync,
+  type BigIntStats,
+} from "node:fs";
 import path from "node:path";
 
 import { canonicalJsonStringify } from "../product-compiler/canonical-json.js";
@@ -24,32 +30,47 @@ function fail(code: string, detail: string): never {
 }
 
 type StableStat = Readonly<{
-  dev: number;
-  ino: number;
-  mode: number;
-  size: number;
-  mtimeMs: number;
-  ctimeMs: number;
+  dev: bigint;
+  ino: bigint;
+  objectKind: "ordinary_file" | "directory";
+  mode: bigint;
+  size: bigint;
+  mtimeNs: bigint;
+  ctimeNs: bigint;
 }>;
 
-function stableStat(stats: Stats): StableStat {
-  return {
+function stableStat(stats: BigIntStats): StableStat {
+  const objectKind = stats.isFile()
+    ? "ordinary_file" as const
+    : stats.isDirectory()
+      ? "directory" as const
+      : undefined;
+  if (objectKind === undefined || stats.isSymbolicLink()) {
+    fail("V3_DEPLOY_BUILD_OUTPUT_SPECIAL_FILE", "physical identity");
+  }
+  return Object.freeze({
     dev: stats.dev,
     ino: stats.ino,
+    objectKind,
     mode: stats.mode,
     size: stats.size,
-    mtimeMs: stats.mtimeMs,
-    ctimeMs: stats.ctimeMs,
-  };
+    mtimeNs: stats.mtimeNs,
+    ctimeNs: stats.ctimeNs,
+  });
+}
+
+function samePhysicalIdentity(left: StableStat, right: StableStat): boolean {
+  return left.dev === right.dev
+    && left.ino === right.ino
+    && left.objectKind === right.objectKind;
 }
 
 function sameStableStat(left: StableStat, right: StableStat): boolean {
-  return left.dev === right.dev
-    && left.ino === right.ino
+  return samePhysicalIdentity(left, right)
     && left.mode === right.mode
     && left.size === right.size
-    && left.mtimeMs === right.mtimeMs
-    && left.ctimeMs === right.ctimeMs;
+    && left.mtimeNs === right.mtimeNs
+    && left.ctimeNs === right.ctimeNs;
 }
 
 function assertWithinRoot(root: string, target: string, locator: string): void {
@@ -64,9 +85,9 @@ function assertNoSymlinkPath(root: string, locator: string): string {
   let current = root;
   for (const segment of locator.split("/")) {
     current = path.join(current, segment);
-    let stats: Stats;
+    let stats: BigIntStats;
     try {
-      stats = lstatSync(current);
+      stats = lstatSync(current, { bigint: true });
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") {
         fail("V3_DEPLOY_BUILD_OUTPUT_MISSING", locator);
@@ -147,8 +168,11 @@ export async function captureV3BuildArtifact(input: Readonly<{
   });
 
   const root = realpathSync(path.resolve(input.worktree));
-  const rootBefore = stableStat(lstatSync(root));
-  if (!lstatSync(root).isDirectory()) fail("V3_DEPLOY_WORKTREE_INVALID", root);
+  const rootBeforeStats = lstatSync(root, { bigint: true });
+  if (!rootBeforeStats.isDirectory() || rootBeforeStats.isSymbolicLink()) {
+    fail("V3_DEPLOY_WORKTREE_INVALID", root);
+  }
+  const rootBefore = stableStat(rootBeforeStats);
 
   const files: V3BuildArtifactFileV1[] = [];
   const directories: DirectorySnapshot[] = [];
@@ -159,33 +183,37 @@ export async function captureV3BuildArtifact(input: Readonly<{
     if (files.length >= maxFiles) {
       fail("V3_DEPLOY_BUILD_OUTPUT_FILE_LIMIT", String(maxFiles));
     }
-    const beforeStats = lstatSync(absolutePath);
+    const beforeStats = lstatSync(absolutePath, { bigint: true });
     if (beforeStats.isSymbolicLink()) fail("V3_DEPLOY_BUILD_OUTPUT_SYMLINK", locator);
     if (!beforeStats.isFile()) fail("V3_DEPLOY_BUILD_OUTPUT_SPECIAL_FILE", locator);
-    if (beforeStats.size > maxFileBytes) {
+    if (beforeStats.size > BigInt(maxFileBytes)) {
       fail("V3_DEPLOY_BUILD_OUTPUT_FILE_SIZE_LIMIT", locator);
     }
-    totalBytes += beforeStats.size;
+    const byteLength = Number(beforeStats.size);
+    if (!Number.isSafeInteger(byteLength)) {
+      fail("V3_DEPLOY_BUILD_OUTPUT_FILE_SIZE_LIMIT", locator);
+    }
+    totalBytes += byteLength;
     if (!Number.isSafeInteger(totalBytes) || totalBytes > maxTotalBytes) {
       fail("V3_DEPLOY_BUILD_OUTPUT_TOTAL_SIZE_LIMIT", String(maxTotalBytes));
     }
     const before = stableStat(beforeStats);
     const contentHash = await hashFile(absolutePath);
     await input.afterFileHashed?.(locator);
-    const afterStats = lstatSync(absolutePath);
+    const afterStats = lstatSync(absolutePath, { bigint: true });
     if (!afterStats.isFile() || !sameStableStat(before, stableStat(afterStats))) {
       fail("V3_DEPLOY_BUILD_OUTPUT_DRIFT", locator);
     }
     files.push({
       path: NormalizedRelativeLocatorSchema.parse(locator),
-      byteLength: beforeStats.size,
+      byteLength,
       contentHash,
-      executable: (beforeStats.mode & 0o111) !== 0,
+      executable: (beforeStats.mode & 0o111n) !== 0n,
     });
   };
 
   const visit = async (absolutePath: string, locator: string): Promise<void> => {
-    const stats = lstatSync(absolutePath);
+    const stats = lstatSync(absolutePath, { bigint: true });
     if (stats.isSymbolicLink()) fail("V3_DEPLOY_BUILD_OUTPUT_SYMLINK", locator);
     if (stats.isFile()) {
       await captureFile(absolutePath, locator);
@@ -212,7 +240,7 @@ export async function captureV3BuildArtifact(input: Readonly<{
   }
 
   for (const directory of directories) {
-    const afterStats = lstatSync(directory.absolutePath);
+    const afterStats = lstatSync(directory.absolutePath, { bigint: true });
     const afterEntries = readdirSync(directory.absolutePath).sort(compareCodeUnits);
     if (
       !afterStats.isDirectory()
@@ -225,8 +253,8 @@ export async function captureV3BuildArtifact(input: Readonly<{
   if (realpathSync(path.resolve(input.worktree)) !== root) {
     fail("V3_DEPLOY_WORKTREE_DRIFT", input.worktree);
   }
-  const rootAfter = stableStat(lstatSync(root));
-  if (rootBefore.dev !== rootAfter.dev || rootBefore.ino !== rootAfter.ino) {
+  const rootAfter = stableStat(lstatSync(root, { bigint: true }));
+  if (!samePhysicalIdentity(rootBefore, rootAfter)) {
     fail("V3_DEPLOY_WORKTREE_DRIFT", input.worktree);
   }
 

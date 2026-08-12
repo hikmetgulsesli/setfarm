@@ -1,7 +1,13 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { planModule } from "../../dist/installer/steps/01-plan/module.js";
-import { buildAutoPlanOutput, slugify } from "../../dist/installer/steps/01-plan/preclaim.js";
+import fs from "node:fs";
+import { planModule } from "../../src/installer/steps/01-plan/module.js";
+import {
+  buildAutoPlanOutput,
+  inferUiLanguage,
+  PlanEnglishTranslationRequiredError,
+  slugify,
+} from "../../src/installer/steps/01-plan/preclaim.js";
 import { runModule, validPlanOutput } from "./harness.js";
 
 function parsePlanOutput(output: string) {
@@ -81,6 +87,92 @@ describe("01-plan step module", () => {
 
     assert.equal(parsed.platform, "web");
     assert.equal(parsed.tech_stack, "static-html");
+  });
+
+  it("keeps public language inference and auto-plan output exactly English", () => {
+    const task = "Build a compact preference tool and use Spanish for the product interface.";
+    const parsed = parsePlanOutput(buildAutoPlanOutput(task));
+
+    assert.equal(inferUiLanguage.length, 1);
+    assert.equal(inferUiLanguage(task), "English");
+    assert.equal(parsed.ui_language, "English");
+    assert.match(parsed.prd, /^- UI Language: English\./m);
+  });
+
+  it("fails before auto-plan output can copy text that requires English translation", () => {
+    const task = `Build a compact preference tool ${String.fromCodePoint(0x0416)}`;
+
+    assert.throws(
+      () => buildAutoPlanOutput(task),
+      (error: unknown) => {
+        assert.ok(error instanceof PlanEnglishTranslationRequiredError);
+        assert.equal(error.code, "PLAN_ENGLISH_TRANSLATION_REQUIRED");
+        assert.equal(error.field, "task");
+        assert.equal(error.message.includes(task), false);
+        return true;
+      },
+    );
+  });
+
+  it("rejects marker-bypass text in every legacy planner-owned text envelope", () => {
+    const markerBypass = `English marker ${String.fromCodePoint(0x03a9)}`;
+    const base = validPlanOutput();
+    const cases = [
+      validPlanOutput({ project_name: markerBypass }),
+      validPlanOutput({ ui_vision_summary: `${base.ui_vision_summary} ${markerBypass}` }),
+      validPlanOutput({ prd: `${base.prd}\n${markerBypass}` }),
+    ];
+
+    for (const candidate of cases) {
+      const validation = planModule.validateOutput(candidate);
+      assert.equal(validation.ok, false);
+      assert.equal(validation.errors.some((error) =>
+        error.includes("PLAN_ENGLISH_TEXT_REQUIRED")), true);
+    }
+  });
+
+  it("checks the built auto-plan contract only when the current source was built", async (context) => {
+    const builtUrl = new URL("../../dist/installer/steps/01-plan/preclaim.js", import.meta.url);
+    if (!fs.existsSync(builtUrl)) {
+      context.skip("dist artifact is absent");
+      return;
+    }
+    const builtSource = fs.readFileSync(builtUrl, "utf-8");
+    assert.equal(
+      builtSource.includes("PLAN_ENGLISH_TRANSLATION_REQUIRED"),
+      true,
+      "an existing dist artifact must contain the current English contract",
+    );
+    const built = await import(builtUrl.href);
+    const task = `Build a compact preference tool ${String.fromCodePoint(0x0416)}`;
+    assert.throws(
+      () => built.buildAutoPlanOutput(task),
+      (error: any) => error?.code === "PLAN_ENGLISH_TRANSLATION_REQUIRED",
+    );
+  });
+
+  it("rejects every non-canonical legacy UI language", async () => {
+    for (const uiLanguage of ["english", "Spanish"]) {
+      const result = await runModule(
+        planModule,
+        "Build a compact preference tool.",
+        validPlanOutput({ ui_language: uiLanguage }),
+      );
+      assert.equal(result.validation.ok, false, uiLanguage);
+      assert.equal(result.validation.errors.some((error) =>
+        error.includes("UI_LANGUAGE must be exactly English")), true, uiLanguage);
+    }
+  });
+
+  it("requires English planner-owned semantics in the v3 prompt", () => {
+    const prompt = planModule.buildPrompt({
+      runId: "test-run-v3-english",
+      task: "Build a compact preference tool and use Spanish for the product interface.",
+      context: { plan_protocol: "v3" },
+    });
+
+    assert.match(prompt, /Set product\.uiLanguage to exactly English\./);
+    assert.match(prompt, /every planner-owned product name, semantic statement, visible label, message, and UI copy must be expressed in English\./);
   });
 
   it("rejects runtime-owned fields and screen tables", async () => {

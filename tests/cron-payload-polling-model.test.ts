@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { buildPollingPrompt } from "../dist/installer/agent-cron.js";
+import { buildPollingPrompt } from "../src/installer/agent-cron.js";
 
 describe("cron payload includes polling model (regression #121)", () => {
   it("buildPollingPrompt returns a non-empty string", () => {

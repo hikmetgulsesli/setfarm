@@ -3,7 +3,7 @@ import type postgres from "postgres";
 import { readDatabaseWallClock } from "../db/database-wall-clock.js";
 import { evaluateConvergenceReleaseGate } from "../evals/release-gate.js";
 import { ContentAddressedEvalResultStore } from "../evals/report.js";
-import type { ConvergenceEvalResultV1 } from "../evals/result-schema.js";
+import type { ConvergenceEvalResultVersioned } from "../evals/result-schema-v2.js";
 import { hashCanonicalJson } from "../product-compiler/canonical-json.js";
 import { GitObjectHashSchema, Sha256Schema } from "../product-compiler/schemas/common-v1.js";
 import {
@@ -147,7 +147,7 @@ async function verifyReleaseGoArtifacts(
       || admission.gate.ref !== convergenceArtifactRef(admission.gate.hash)
     ) throw new Error("non-canonical artifact ref");
     const [result, gate] = await Promise.all([
-      store.getResult(admission.result.hash),
+      store.getVersionedResult(admission.result.hash),
       store.getReleaseGate(admission.gate.hash),
     ]);
     const expectedGate = evaluateConvergenceReleaseGate(result);
@@ -173,7 +173,7 @@ async function verifyReleaseGoArtifacts(
 
 async function verifyConsumedCanaryEvidence(
   sql: postgres.Sql | postgres.TransactionSql,
-  result: ConvergenceEvalResultV1,
+  result: ConvergenceEvalResultVersioned,
 ): Promise<void> {
   const runIds = result.runs.map((run) => run.runId);
   if (new Set(runIds).size !== result.plannedRuns || runIds.length !== result.plannedRuns) {
@@ -597,7 +597,7 @@ export function createV3ReleaseAdmissionRepository(
       let gate;
       try {
         [result, gate] = await Promise.all([
-          store.getResult(resultHash),
+          store.getVersionedResult(resultHash),
           store.getReleaseGate(gateHash),
         ]);
       } catch {

@@ -14,9 +14,14 @@ import {
 import { createAttemptRepository } from "../src/execution/attempt-repository.js";
 import { createOperationalOutboxPublisher } from "../src/execution/operational-outbox-publisher.js";
 import { createOperationalOutboxRepository } from "../src/execution/operational-outbox-repository.js";
+import {
+  createRuntimeCompletionPlanV1,
+  type RuntimeCompletionPlanDescriptorV1,
+} from "../src/execution/schemas/runtime-completion-plan-v1.js";
 import { createV3DeployReceiptRepository } from "../src/execution/v3-deploy-receipt-repository.js";
 import { createV3ProjectTransferAckRepository } from "../src/execution/v3-project-transfer-ack-repository.js";
 import { ClaimEnvelopeV1Schema } from "../src/execution/schemas/claim-envelope-v1.js";
+import { operationalFailureCauseHashV1 } from "../src/execution/schemas/operational-failure-cause-v1.js";
 import {
   createV3BuildArtifactV1,
   createV3DeployReceiptV1,
@@ -43,6 +48,7 @@ import {
   RunOperationalSnapshotV1Schema,
 } from "../src/server/schemas/run-operational-snapshot-v1.js";
 import { RunOperationalSnapshotV2Schema } from "../src/server/schemas/run-operational-snapshot-v2.js";
+import { RunOperationalSnapshotV3Schema } from "../src/server/schemas/run-operational-snapshot-v3.js";
 import { createIsolatedTestDatabase } from "./execution-attempts/test-database.js";
 
 const SHA = "a".repeat(40);
@@ -363,6 +369,35 @@ describe("canonical run operational snapshot", () => {
         canonicalOutputHash,
         ignoredFieldPaths: ["/providerAnnotation"],
       };
+      const preparedAt = new Date("2026-07-13T08:00:02.000Z");
+      const completionDescriptor: RuntimeCompletionPlanDescriptorV1 = {
+        kind: "legacy_recovery",
+        continuation: { type: "legacy_receipt_only" },
+        effects: [{
+          effectKey: "continuation",
+          ordinal: 0,
+          effectType: "advance_pipeline",
+          mandatory: true,
+          payload: { raw: "SECRET_EFFECT_PAYLOAD" },
+        }],
+      };
+      const completionPlan = createRuntimeCompletionPlanV1({
+        requestId,
+        claimId: Number(claimId),
+        runId,
+        stepDbId: "STEP_DB_1",
+        workflowStepId: "implement",
+        outputHash: canonicalOutputHash,
+        descriptor: completionDescriptor,
+        preparedAt,
+      });
+      const completionEffectPayload = {
+        schema: "setfarm.runtime-completion-effect-input.v1" as const,
+        planHash: completionPlan.planHash,
+        plan: completionPlan.plan,
+        effect: completionPlan.plan.effects[0]!.payload,
+      };
+      const completionEffectInputHash = hashCanonicalJson(completionEffectPayload);
 
       await database.sql.unsafe(
         `INSERT INTO runtime_sessions (
@@ -378,53 +413,64 @@ describe("canonical run operational snapshot", () => {
          )`,
         [sessionId, runId, claimId, attemptId],
       );
-      await database.sql.unsafe(
-        `INSERT INTO runtime_completion_requests (
-           request_id, runtime_session_id, claim_id, run_id, step_db_id,
-           workflow_step_id, story_db_id, story_id, attempt_id, claim_envelope,
-           output, output_hash, source_proposal, submission_evidence, apply_phase,
-           claim_outcome, claim_committed_at, effects_committed_at, state,
-           requested_by, requested_at, drained_at, processing_at, accepted_at,
-           result, completion_plan,
-           completion_plan_hash, prepared_at
-         ) VALUES (
-           $1, $2, $3, $4, 'STEP_DB_1', 'implement', 'STORY_DB_1', 'US-001', $5,
-           $6::jsonb, $7, $8, $9, $10::jsonb, 'effects_committed', 'completed',
-           NOW(), NOW(), 'accepted', 'runtime-agent', NOW(), NOW(), NOW(), NOW(),
-           $11::jsonb, $12::jsonb, $13, NOW()
-         )`,
-        [
-          requestId,
-          sessionId,
-          claimId,
-          runId,
-          attemptId,
-          { protocol: "v3", fenceToken: "SECRET_ENVELOPE_FENCE" },
-          canonicalOutput,
-          canonicalOutputHash,
-          sourceProposal,
-          submissionEvidence,
-          { raw: "SECRET_RESULT" },
-          { schema: "setfarm.runtime-completion-plan.v1" },
-          PLAN_HASH,
-        ],
-      );
-      await database.sql.unsafe(
-        `INSERT INTO runtime_completion_effects (
-           request_id, effect_key, ordinal, effect_type, input_hash, payload,
-           mandatory, state, result, evidence, applied_at
-         ) VALUES (
-           $1, 'continuation', 0, 'advance_pipeline', $2, $3::jsonb,
-           TRUE, 'applied', $4::jsonb, $5::jsonb, NOW()
-         )`,
-        [
-          requestId,
-          INPUT_HASH,
-          { raw: "SECRET_EFFECT_PAYLOAD" },
-          { raw: "SECRET_EFFECT_RESULT" },
-          { raw: "SECRET_EFFECT_EVIDENCE" },
-        ],
-      );
+      await database.sql.begin(async (transaction) => {
+        await transaction.unsafe(
+          `INSERT INTO runtime_completion_requests (
+             request_id, runtime_session_id, claim_id, run_id, step_db_id,
+             workflow_step_id, story_db_id, story_id, attempt_id, claim_envelope,
+             output, output_hash, source_proposal, submission_evidence, apply_phase,
+             claim_outcome, claim_committed_at, state, requested_by, requested_at,
+             drained_at, processing_at, result, completion_plan,
+             completion_plan_hash, prepared_at
+           ) VALUES (
+             $1, $2, $3, $4, 'STEP_DB_1', 'implement', 'STORY_DB_1', 'US-001', $5,
+             $6::jsonb, $7, $8, $9, $10::jsonb, 'owner_committed', 'completed',
+             $11, 'processing', 'runtime-agent', $11, $11, $11,
+             $12::jsonb, $13::text::jsonb, $14, $11
+           )`,
+          [
+            requestId,
+            sessionId,
+            claimId,
+            runId,
+            attemptId,
+            { protocol: "v3", fenceToken: "SECRET_ENVELOPE_FENCE" },
+            canonicalOutput,
+            canonicalOutputHash,
+            sourceProposal,
+            submissionEvidence,
+            preparedAt,
+            { raw: "SECRET_RESULT" },
+            JSON.stringify(completionPlan.plan),
+            completionPlan.planHash,
+          ],
+        );
+        await transaction.unsafe(
+          `INSERT INTO runtime_completion_effects (
+             request_id, effect_key, ordinal, effect_type, input_hash, payload,
+             mandatory, state, result, evidence, applied_at, created_at, updated_at
+           ) VALUES (
+             $1, 'continuation', 0, 'advance_pipeline', $2, $3::text::jsonb,
+             TRUE, 'applied', $4::jsonb, $5::jsonb, $6, $6, $6
+           )`,
+          [
+            requestId,
+            completionEffectInputHash,
+            JSON.stringify(completionEffectPayload),
+            { raw: "SECRET_EFFECT_RESULT" },
+            { raw: "SECRET_EFFECT_EVIDENCE" },
+            preparedAt,
+          ],
+        );
+      });
+      await database.sql`
+        UPDATE runtime_completion_requests
+           SET apply_phase = 'effects_committed',
+               effects_committed_at = ${preparedAt},
+               state = 'accepted',
+               accepted_at = ${preparedAt}
+         WHERE request_id = ${requestId}
+      `;
       const outboxRepository = createOperationalOutboxRepository(database.sql);
       await outboxRepository.enqueue({
         requestId,
@@ -465,6 +511,13 @@ describe("canonical run operational snapshot", () => {
           modelRedispatchBudget: 0,
           runtimeSessionCount: 1,
           ownerInstanceId: "setfarm-spawner",
+          operationalFailureCause: {
+            schema: "setfarm.operational-failure-cause.v1",
+            workflowStepId: "deploy",
+            boundary: "product_compiler.deploy_authority",
+            failureClass: "contract_invalid",
+            failureCode: "V3_DEPLOY_SOURCE_REVISION_MISMATCH",
+          },
         }],
       );
       await database.sql.unsafe("UPDATE claim_log SET outcome = 'completed' WHERE id = $1", [claimId]);
@@ -472,7 +525,7 @@ describe("canonical run operational snapshot", () => {
 
       const snapshot = await buildRunOperationalSnapshot(database.sql, runId);
       assert.ok(snapshot);
-      assert.equal(snapshot.schema, "setfarm.run-operational-snapshot.v2");
+      assert.equal(snapshot.schema, "setfarm.run-operational-snapshot.v3");
       assert.equal(snapshot.source.projection, "complete");
       assert.deepEqual(snapshot.source.capabilities, {
         attempts: true,
@@ -486,7 +539,16 @@ describe("canonical run operational snapshot", () => {
         acceptedCandidate: true,
         deploymentReceipt: true,
         projectTransferAck: true,
+        operationalFailureAuthority: true,
       });
+      assert.ok("operationalFailure" in snapshot && snapshot.operationalFailure);
+      assert.equal(snapshot.operationalFailure.terminationRequestRef, `setfarm://run-termination/${terminationId}`);
+      assert.equal(snapshot.operationalFailure.failureIdentity.requestedBy, "setfarm.product-compiler.deploy-refusal");
+      assert.equal(snapshot.operationalFailure.failureIdentity.exactFailure, null);
+      assert.equal(
+        snapshot.operationalFailure.failureIdentity.operationalCauseHash,
+        operationalFailureCauseHashV1(snapshot.terminationRequests[0]?.evidence.operationalFailureCause),
+      );
       assert.deepEqual(snapshot.findingSets, []);
       assert.deepEqual(snapshot.evidenceBundles, []);
       assert.deepEqual(snapshot.recoveryCases, []);
@@ -519,14 +581,21 @@ describe("canonical run operational snapshot", () => {
         modelRedispatchBudget: 0,
         runtimeSessionCount: 1,
         ownerInstanceId: "setfarm-spawner",
+        operationalFailureCause: {
+          schema: "setfarm.operational-failure-cause.v1",
+          workflowStepId: "deploy",
+          boundary: "product_compiler.deploy_authority",
+          failureClass: "contract_invalid",
+          failureCode: "V3_DEPLOY_SOURCE_REVISION_MISMATCH",
+        },
       });
       assert.equal(snapshot.outbox[0]?.requestRef, `setfarm://runtime-completion/${requestId}`);
       assert.equal(snapshot.summary.lifecycleState, "terminal");
       assert.equal(snapshot.summary.health, "ok");
       assert.equal(snapshot.invariants.length, 0);
-      assert.doesNotThrow(() => RunOperationalSnapshotV2Schema.parse(snapshot));
+      assert.doesNotThrow(() => RunOperationalSnapshotV3Schema.parse(snapshot));
       assert.throws(
-        () => RunOperationalSnapshotV2Schema.parse({
+        () => RunOperationalSnapshotV3Schema.parse({
           ...snapshot,
           source: {
             ...snapshot.source,
@@ -538,7 +607,7 @@ describe("canonical run operational snapshot", () => {
       const projectedCompletion = snapshot.completionRequests[0];
       assert.ok(projectedCompletion?.implementationSubmissionEvidence);
       assert.throws(
-        () => RunOperationalSnapshotV2Schema.parse({
+        () => RunOperationalSnapshotV3Schema.parse({
           ...snapshot,
           completionRequests: [{
             ...projectedCompletion,
@@ -1007,7 +1076,7 @@ describe("canonical run operational snapshot", () => {
       assert.equal(snapshot.deploymentReceipt?.receipt.runtime.deployUrl, `http://127.0.0.1:${port}/`);
       assert.equal(snapshot.summary.unpublishedOutbox, 1);
       assert.equal(snapshot.summary.lifecycleState, "effects_applying");
-      assert.doesNotThrow(() => RunOperationalSnapshotV2Schema.parse(snapshot));
+      assert.doesNotThrow(() => RunOperationalSnapshotV3Schema.parse(snapshot));
 
       const outbox = createOperationalOutboxPublisher({
         repository: createOperationalOutboxRepository(database.sql),
@@ -1126,7 +1195,7 @@ describe("canonical run operational snapshot", () => {
       assert.ok(acknowledgedSnapshot);
       assert.equal(acknowledgedSnapshot.projectTransferAck?.acknowledgement.ackHash, acknowledgement.ackHash);
       assert.equal(acknowledgedSnapshot.summary.unpublishedOutbox, 1);
-      assert.doesNotThrow(() => RunOperationalSnapshotV2Schema.parse(acknowledgedSnapshot));
+      assert.doesNotThrow(() => RunOperationalSnapshotV3Schema.parse(acknowledgedSnapshot));
       assert.equal((await outbox.drain({ maxEvents: 10 })).published, 1);
       const settledSnapshot = await buildRunOperationalSnapshot(database.sql, runId);
       assert.ok(settledSnapshot);
@@ -1438,6 +1507,25 @@ describe("canonical run operational snapshot", () => {
     }
   });
 
+  it("keeps the v2 projection readable until migration 22 is release-attested", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      await attestSnapshotMigrationShape(database);
+      await database.sql.unsafe("DELETE FROM setfarm_schema_migrations WHERE version = 22");
+      const runId = "RUN_snapshot-pre-v22-failure-authority";
+      await database.insertRun(runId);
+
+      const snapshot = await buildRunOperationalSnapshot(database.sql, runId);
+      assert.ok(snapshot);
+      assert.equal(snapshot.schema, "setfarm.run-operational-snapshot.v2");
+      assert.equal(snapshot.source.projection, "complete");
+      assert.equal("operationalFailureAuthority" in snapshot.source.capabilities, false);
+      assert.doesNotThrow(() => RunOperationalSnapshotV2Schema.parse(snapshot));
+    } finally {
+      await database.cleanup();
+    }
+  });
+
   it("does not advertise submission evidence from an unattested v19 shape", async () => {
     const database = await createIsolatedTestDatabase();
     try {
@@ -1468,6 +1556,10 @@ describe("canonical run operational snapshot", () => {
     );
     assert.throws(
       () => RunOperationalSnapshotV2Schema.parse({ schema: "setfarm.run-operational-snapshot.v2", unexpected: true }),
+      /generatedAt|Required|Invalid input/,
+    );
+    assert.throws(
+      () => RunOperationalSnapshotV3Schema.parse({ schema: "setfarm.run-operational-snapshot.v3", unexpected: true }),
       /generatedAt|Required|Invalid input/,
     );
   });

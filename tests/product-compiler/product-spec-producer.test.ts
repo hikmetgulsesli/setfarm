@@ -5,8 +5,13 @@ import { adaptLegacyPlan } from "../../src/product-compiler/adapters/legacy-plan
 import { canonicalJsonStringify } from "../../src/product-compiler/canonical-json.js";
 import { produceProductSpecV1 } from "../../src/product-compiler/producers/product-spec.js";
 import { renderLegacyPrd } from "../../src/product-compiler/renderers/legacy-prd.js";
-import { ProductSpecV1Schema, type ProductSpecV1 } from "../../src/product-compiler/schemas/product-spec-v1.js";
+import {
+  ProductSpecV1EnglishWriteSchema,
+  ProductSpecV1Schema,
+  type ProductSpecV1,
+} from "../../src/product-compiler/schemas/product-spec-v1.js";
 import { validateOutput as validateLegacyPlanOutput } from "../../src/installer/steps/01-plan/guards.js";
+import { buildMinimalValidV3ProductSpec } from "./fixtures/minimal-valid-contract.js";
 
 const UTILITY_TASK = [
   "Build a compact single-page status utility called Pulse Tile.",
@@ -103,15 +108,30 @@ describe("typed-first ProductSpec producer", () => {
     assertCompleteActions(first.productSpec);
   });
 
-  it("normalizes Unicode product names into stable ASCII artifact identities", () => {
+  it("rejects source text that requires an approved English translation", () => {
     const localizedName = "\u00c7\u0131\u011f \u00d6z\u00fc";
-    const spec = produced([
-      `Build a compact single-page status utility called ${localizedName}.`,
-      "It has a refresh button and a ready/paused toggle.",
-      "Keep status in localStorage.",
-    ].join(" "));
-    assert.equal(spec.product.name, localizedName);
-    assert.equal(spec.product.id, "PROD_CIG_OZU");
+    const result = produceProductSpecV1({
+      task: [
+        `Build a compact single-page status utility called ${localizedName}.`,
+        "It has a refresh button and a ready/paused toggle.",
+        "Keep status in localStorage.",
+      ].join(" "),
+    });
+
+    assert.equal(result.status, "rejected");
+    assert.equal(result.diagnostics.some((item) =>
+      item.code === "PRODUCT_SPEC_ENGLISH_TRANSLATION_REQUIRED"
+      && item.reference === "task"), true);
+    assert.equal("productSpec" in result, false);
+
+    const named = produceProductSpecV1({
+      task: UTILITY_TASK,
+      productName: `English marker ${String.fromCodePoint(0x03a9)}`,
+    });
+    assert.equal(named.status, "rejected");
+    assert.equal(named.diagnostics.some((item) =>
+      item.code === "PRODUCT_SPEC_ENGLISH_TRANSLATION_REQUIRED"
+      && item.reference === "productName"), true);
   });
 
   it("compiles explicit CRUD operations without inventing unrequested feature actions", () => {
@@ -194,6 +214,28 @@ describe("typed-first ProductSpec producer", () => {
 });
 
 describe("legacy PRD compatibility renderer", () => {
+  it("keeps historical ProductSpec V1 reads compatible while new writes fail closed", () => {
+    const legacy = structuredClone(buildMinimalValidV3ProductSpec());
+    const legacyLanguage = `English ${String.fromCodePoint(0x0416)}`;
+    legacy.delivery.uiLanguage = legacyLanguage;
+
+    assert.equal(ProductSpecV1Schema.safeParse(legacy).success, true);
+    assert.equal(ProductSpecV1EnglishWriteSchema.safeParse(legacy).success, false);
+    assert.throws(
+      () => renderLegacyPrd(legacy),
+      /PRODUCT_SPEC_UI_LANGUAGE_MUST_BE_ENGLISH|PRODUCT_SPEC_ENGLISH_TEXT_REQUIRED/,
+    );
+
+    const markerBypass = structuredClone(buildMinimalValidV3ProductSpec());
+    markerBypass.product.name = `English marker ${String.fromCodePoint(0x03a9)}`;
+    assert.equal(ProductSpecV1Schema.safeParse(markerBypass).success, true);
+    assert.equal(ProductSpecV1EnglishWriteSchema.safeParse(markerBypass).success, false);
+    assert.throws(
+      () => renderLegacyPrd(markerBypass),
+      /PRODUCT_SPEC_ENGLISH_TEXT_REQUIRED/,
+    );
+  });
+
   it("renders deterministically from the typed value and round-trips through the exact adapter", () => {
     const spec = produced(OPERATIONS_TASK);
     const first = renderLegacyPrd(spec);
@@ -218,6 +260,16 @@ describe("legacy PRD compatibility renderer", () => {
     assert.deepEqual(adapted.diagnostics, []);
     const validation = validateLegacyPlanOutput(parseLegacyPlanOutput(first));
     assert.equal(validation.ok, true, validation.errors.join("; "));
+  });
+
+  it("keeps UI language canonical and rejects non-English compatibility overrides", () => {
+    const spec = produced(OPERATIONS_TASK);
+
+    assert.match(renderLegacyPrd(spec, { uiLanguage: "English" }), /^UI_LANGUAGE: English$/m);
+    assert.throws(
+      () => renderLegacyPrd(spec, { uiLanguage: "Spanish" }),
+      /LEGACY_PRD_UI_LANGUAGE_MUST_BE_ENGLISH/,
+    );
   });
 
   it("reflects typed changes in both prose and the structured projection", () => {

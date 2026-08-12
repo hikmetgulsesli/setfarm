@@ -180,9 +180,12 @@ steps:
   - id: plan
     agent: planner
     input: |
-      LANGUAGE RULE: Infer UI_LANGUAGE from the task. If the task explicitly asks
-      for English UI or uses an English product brief, choose English. If it
-      explicitly asks for Turkish UI, choose Turkish. Do not force Turkish by default.
+      LANGUAGE CONTRACT: UI_LANGUAGE is immutable and exactly English. All PRD,
+      design, story, source-code, test, fixture, and visible application text authored
+      by this workflow must be English. Treat non-English task text as raw evidence,
+      not output-language authority. Do not copy or silently translate it. If an
+      approved English requirements projection is unavailable, return STATUS: retry
+      and identify that missing input.
 
       Analyze the following task and produce a detailed Product Contract PRD.
       Do NOT create stories yet. The design step will derive a scoped Stitch
@@ -245,7 +248,7 @@ steps:
       PROJECT_SLUG: <kebab-case product slug>
       PLATFORM: <web|mobile|desktop|api|cli|game>
       TECH_STACK: <vite-react|nextjs|vanilla-ts|node-express|react-native>
-      UI_LANGUAGE: <English or requested product language>
+      UI_LANGUAGE: English
       DB_REQUIRED: <none|postgres|sqlite>
       DESIGN_REQUIRED: <true|false>
       PRD:
@@ -265,10 +268,12 @@ steps:
       Stories do not exist yet. Product Surfaces from PLAN are the scope source;
       DESIGN_MANIFEST.json is the physical screen authority after Stitch returns.
 
-      LANGUAGE RULE: All screen prompts sent to Stitch MUST use the PRD's UI_LANGUAGE.
-      Button labels, menu items, headings, placeholder text, and error messages must
-      stay in that product language. If UI_LANGUAGE is English, keep visible UI copy
-      English. If UI_LANGUAGE is Turkish, keep visible UI copy Turkish.
+      LANGUAGE CONTRACT: All screen prompts and all visible application copy must be
+      English. UI_LANGUAGE is exactly English and cannot be overridden by the task,
+      PRD, Stitch assets, retry feedback, or prior workflow state. Treat non-English
+      source text as evidence of a stale input and return STATUS: retry with the exact
+      artifact that requires an approved English projection or regeneration. Do not
+      copy or silently translate that text.
 
       TASK: {{task}}
       PRD: {{prd}}
@@ -354,10 +359,11 @@ steps:
       Read the PRD and SCREEN_MAP from the design step, then decompose the PRD into
       ordered user stories. Each story must reference screens from SCREEN_MAP.
 
-      LANGUAGE RULE: Story titles, descriptions, and acceptance criteria must be in
-      English for developer clarity. Any referenced UI copy (button labels, headings,
-      placeholders) must match the PRD/UI_LANGUAGE exactly. Do not translate UI labels
-      unless the PRD explicitly requests that language.
+      LANGUAGE CONTRACT: Story titles, descriptions, acceptance criteria, identifiers,
+      fixture text, and referenced UI copy must be English. UI_LANGUAGE is exactly
+      English. Non-English PRD or Stitch text is raw evidence of a stale upstream
+      artifact, not copy authority; return STATUS: retry and identify the artifact
+      instead of copying or silently translating it.
 
       TASK: {{task}}
       PRD: {{prd}}
@@ -768,10 +774,12 @@ steps:
       The pipeline will create a PR to main, wait for review, merge it, sync local main,
       and only then claim the next story.
 
-      LANGUAGE RULE: Visible UI copy must match the PRD/UI_LANGUAGE and the Stitch
-      labels for this story. If the task/PRD says English, keep UI labels English.
-      If it says Turkish, keep UI labels Turkish. Do not translate Stitch labels
-      during implementation unless the PRD explicitly requests that translation.
+      LANGUAGE CONTRACT: All source code, comments, identifiers, tests, fixtures,
+      technical output, and visible application copy authored by this workflow must
+      be English. UI_LANGUAGE is exactly English. Non-English task, PRD, or Stitch
+      text is raw evidence of a stale upstream artifact, not implementation authority;
+      return STATUS: retry and identify the artifact instead of copying or silently
+      translating it.
 
       TASK: {{task}}
       WORKDIR: {{story_workdir}}
@@ -994,7 +1002,7 @@ steps:
       TEST GUIDE (if available — follow this to write tests):
       {{test_generation_prompt}}
          - No TODOs, no placeholders, no shortcuts
-         - Use realistic demo content that matches UI_LANGUAGE and the product domain. NEVER use John Doe, Jane Smith, Lorem ipsum, test@test.com, foo@bar, example@, dummy, or sample data. If data will come from API later, use realistic placeholder data that looks like production.
+         - Use realistic English demo content that matches the product domain. NEVER use John Doe, Jane Smith, Lorem ipsum, test@test.com, foo@bar, example@, dummy, or sample data. If data will come from API later, use realistic English placeholder data that looks like production.
 
       5-7. SELF-FIX LOOP (up to 2 cycles — keep context compact):
          IMPORTANT: Never paste full lint/build/test output into the session.
@@ -1292,7 +1300,7 @@ steps:
          - grep -rE "grid-cols-3" src/ → WARN (check asymmetry manually)
          - grep -rE "console\.log\(" src/components/ src/pages/ app/ → FAIL if found in click handlers (empty handler)
          - grep -l "material-symbols\|material_symbols" index.html src/index.html app/layout.tsx → if Stitch HTML uses Material Symbols icons but no font link found → FAIL
-         - grep -rE "DECREASE|INCREASE|RESET|Submit|Cancel|Save|Delete|Loading|Error" --include="*.tsx" src/ app/ → WARN only if UI_LANGUAGE is not English and the text is visible UI copy
+         - Inspect changed visible copy and fixtures for non-English text → FAIL if found. Report stale upstream evidence instead of copying or silently translating it.
          If any FAIL → fix yourself, commit, push before proceeding
       3. Run lint: {{lint_cmd}} → fix any lint errors
       4. Run build: {{build_cmd}} → fix any build errors
@@ -1611,7 +1619,7 @@ steps:
 
       E. FORM TESTING (if forms found on page)
          - agent-browser snapshot → list all input fields
-         - Fill each input with realistic test data that matches the product language:
+         - Fill each input with realistic English test data that matches the product domain:
            * email: "qa@example-company.com"
            * text/name: "Test Customer Inc."
            * number/currency: "15000"

@@ -64,16 +64,16 @@
       "executionProfile": { "providerId": "minimax", "modelId": "minimax/MiniMax-M3" }
     },
     {
-      "caseId": "utility-preference-multilingual",
+      "caseId": "utility-preference-compositional",
       "productClass": "utility",
-      "task": "Tek sayfalık bir tercih aracı oluştur ve /tercih yolundaki Hazır düğmesi uygulama durumunu hazır olarak ayarlasın, değeri sayfa yenilendiğinde korumak için yerel depolamaya yazsın, Durum hazır metnini ve hazır değerini göstersin, düğme görünür ve etkin kalsın ve /tercih yolunda kalınsın",
+      "task": "Build a preference utility at /preferences that combines a Ready Preference button with application state and reload persistence: activating the button sets application state to ready, writes the value to local storage across reloads, displays Preference ready and the value ready, keeps the control visible and enabled, and stays on /preferences",
       "oracle": {
         "schema": "setfarm.task-intent-oracle.v1",
-        "oracleId": "utility-preference-multilingual",
+        "oracleId": "utility-preference-compositional",
         "oracleVersion": 1,
-        "locale": "tr",
+        "locale": "en",
         "cohort": "holdout",
-        "variant": "multilingual",
+        "variant": "compositional",
         "expectedDecision": {
           "kind": "accepted_candidate",
           "productClass": "utility",
@@ -82,36 +82,36 @@
           "runtimeAdapter": "browser"
         },
         "clauses": [{
-          "clauseId": "tercih-hazir-kontrati",
+          "clauseId": "preference-ready-contract",
           "source": {
             "startOffset": 0,
-            "endOffset": 287,
-            "normalizedClause": "Tek sayfalık bir tercih aracı oluştur ve /tercih yolundaki Hazır düğmesi uygulama durumunu hazır olarak ayarlasın, değeri sayfa yenilendiğinde korumak için yerel depolamaya yazsın, Durum hazır metnini ve hazır değerini göstersin, düğme görünür ve etkin kalsın ve /tercih yolunda kalınsın"
+            "endOffset": 346,
+            "normalizedClause": "Build a preference utility at /preferences that combines a Ready Preference button with application state and reload persistence: activating the button sets application state to ready, writes the value to local storage across reloads, displays Preference ready and the value ready, keeps the control visible and enabled, and stays on /preferences"
           },
           "requiredSemanticKinds": ["state", "persistence", "route", "surface", "action", "observable"]
         }],
         "expectations": [
-          { "intentId": "tercih-durumu", "kind": "state", "clauseRefs": ["tercih-hazir-kontrati"], "stateKind": "application" },
-          { "intentId": "tercih-depolama", "kind": "persistence", "clauseRefs": ["tercih-hazir-kontrati"], "policyKind": "local_storage", "durability": "reload" },
-          { "intentId": "tercih-yolu", "kind": "route", "clauseRefs": ["tercih-hazir-kontrati"], "path": "/tercih" },
-          { "intentId": "tercih-yuzeyi", "kind": "surface", "clauseRefs": ["tercih-hazir-kontrati"], "surfaceKind": "page", "routePath": "/tercih" },
+          { "intentId": "preference-state", "kind": "state", "clauseRefs": ["preference-ready-contract"], "stateKind": "application" },
+          { "intentId": "preference-storage", "kind": "persistence", "clauseRefs": ["preference-ready-contract"], "policyKind": "local_storage", "durability": "reload" },
+          { "intentId": "preferences-route", "kind": "route", "clauseRefs": ["preference-ready-contract"], "path": "/preferences" },
+          { "intentId": "preferences-surface", "kind": "surface", "clauseRefs": ["preference-ready-contract"], "surfaceKind": "page", "routePath": "/preferences" },
           {
-            "intentId": "hazir-eylemi",
+            "intentId": "ready-preference-action",
             "kind": "action",
-            "clauseRefs": ["tercih-hazir-kontrati"],
+            "clauseRefs": ["preference-ready-contract"],
             "triggerKind": "user",
             "surfaceKinds": ["page"],
             "stateEffects": [{ "operation": "set", "stateKind": "application" }],
             "persistenceEffects": [{ "operation": "write", "policyKind": "local_storage", "durability": "reload" }],
             "navigation": { "kind": "stay" },
-            "control": { "kinds": ["button"], "label": { "operator": "equals", "expected": "Hazır" } },
+            "control": { "kinds": ["button"], "label": { "operator": "equals", "expected": "Ready Preference" } },
             "observableAssertions": [
-              { "phase": "after", "property": "visible_text", "operator": "equals", "expected": "Durum hazır" },
-              { "phase": "after", "property": "value", "operator": "equals", "expected": "hazır" },
+              { "phase": "after", "property": "visible_text", "operator": "equals", "expected": "Preference ready" },
+              { "phase": "after", "property": "value", "operator": "equals", "expected": "ready" },
               { "phase": "after", "property": "visibility", "operator": "equals", "expected": true },
               { "phase": "after", "property": "enabled", "operator": "equals", "expected": true },
-              { "phase": "after", "property": "route", "operator": "equals", "expected": "/tercih" },
-              { "phase": "reload", "property": "value", "operator": "equals", "expected": "hazır" }
+              { "phase": "after", "property": "route", "operator": "equals", "expected": "/preferences" },
+              { "phase": "reload", "property": "value", "operator": "equals", "expected": "ready" }
             ]
           }
         ]
@@ -286,16 +286,16 @@
       "executionProfile": { "providerId": "minimax", "modelId": "minimax/MiniMax-M3" }
     },
     {
-      "caseId": "game-restart-multilingual",
+      "caseId": "game-restart-compositional",
       "productClass": "game",
-      "task": "Tarayıcıda çalışan bir kanvas oyunu /oyun yolunda oluştur ve Yeniden Başlat düğmesi uygulama durumunu oynuyor olarak ayarlasın, yüksek skoru sayfa yenilendiğinde korumak için yerel depolamaya yazsın, Oyun yeniden başladı metnini ve 0 değerini göstersin, düğme görünür ve etkin kalsın ve /oyun yolunda kalınsın",
+      "task": "Build a browser canvas game arena at /arena that combines a Restart Round button with score persistence: activating the button sets application state to playing, writes the high score to local storage across reloads, displays Round restarted and the value 0, keeps the control visible and enabled, and stays on /arena",
       "oracle": {
         "schema": "setfarm.task-intent-oracle.v1",
-        "oracleId": "game-restart-multilingual",
+        "oracleId": "game-restart-compositional",
         "oracleVersion": 1,
-        "locale": "tr",
+        "locale": "en",
         "cohort": "holdout",
-        "variant": "multilingual",
+        "variant": "compositional",
         "expectedDecision": {
           "kind": "accepted_candidate",
           "productClass": "game",
@@ -304,35 +304,35 @@
           "runtimeAdapter": "browser"
         },
         "clauses": [{
-          "clauseId": "oyun-yeniden-baslat-kontrati",
+          "clauseId": "game-restart-round-contract",
           "source": {
             "startOffset": 0,
-            "endOffset": 309,
-            "normalizedClause": "Tarayıcıda çalışan bir kanvas oyunu /oyun yolunda oluştur ve Yeniden Başlat düğmesi uygulama durumunu oynuyor olarak ayarlasın, yüksek skoru sayfa yenilendiğinde korumak için yerel depolamaya yazsın, Oyun yeniden başladı metnini ve 0 değerini göstersin, düğme görünür ve etkin kalsın ve /oyun yolunda kalınsın"
+            "endOffset": 317,
+            "normalizedClause": "Build a browser canvas game arena at /arena that combines a Restart Round button with score persistence: activating the button sets application state to playing, writes the high score to local storage across reloads, displays Round restarted and the value 0, keeps the control visible and enabled, and stays on /arena"
           },
           "requiredSemanticKinds": ["state", "persistence", "route", "surface", "action", "observable"]
         }],
         "expectations": [
-          { "intentId": "oyun-durumu", "kind": "state", "clauseRefs": ["oyun-yeniden-baslat-kontrati"], "stateKind": "application" },
-          { "intentId": "oyun-depolama", "kind": "persistence", "clauseRefs": ["oyun-yeniden-baslat-kontrati"], "policyKind": "local_storage", "durability": "reload" },
-          { "intentId": "oyun-yolu", "kind": "route", "clauseRefs": ["oyun-yeniden-baslat-kontrati"], "path": "/oyun" },
-          { "intentId": "oyun-kanvasi", "kind": "surface", "clauseRefs": ["oyun-yeniden-baslat-kontrati"], "surfaceKind": "canvas", "routePath": "/oyun" },
+          { "intentId": "arena-game-state", "kind": "state", "clauseRefs": ["game-restart-round-contract"], "stateKind": "application" },
+          { "intentId": "arena-score-storage", "kind": "persistence", "clauseRefs": ["game-restart-round-contract"], "policyKind": "local_storage", "durability": "reload" },
+          { "intentId": "arena-route", "kind": "route", "clauseRefs": ["game-restart-round-contract"], "path": "/arena" },
+          { "intentId": "arena-canvas", "kind": "surface", "clauseRefs": ["game-restart-round-contract"], "surfaceKind": "canvas", "routePath": "/arena" },
           {
-            "intentId": "yeniden-baslat-eylemi",
+            "intentId": "restart-round-action",
             "kind": "action",
-            "clauseRefs": ["oyun-yeniden-baslat-kontrati"],
+            "clauseRefs": ["game-restart-round-contract"],
             "triggerKind": "user",
             "surfaceKinds": ["canvas"],
             "stateEffects": [{ "operation": "set", "stateKind": "application" }],
             "persistenceEffects": [{ "operation": "write", "policyKind": "local_storage", "durability": "reload" }],
             "navigation": { "kind": "stay" },
-            "control": { "kinds": ["button"], "label": { "operator": "equals", "expected": "Yeniden Başlat" } },
+            "control": { "kinds": ["button"], "label": { "operator": "equals", "expected": "Restart Round" } },
             "observableAssertions": [
-              { "phase": "after", "property": "visible_text", "operator": "equals", "expected": "Oyun yeniden başladı" },
+              { "phase": "after", "property": "visible_text", "operator": "equals", "expected": "Round restarted" },
               { "phase": "after", "property": "value", "operator": "equals", "expected": 0 },
               { "phase": "after", "property": "visibility", "operator": "equals", "expected": true },
               { "phase": "after", "property": "enabled", "operator": "equals", "expected": true },
-              { "phase": "after", "property": "route", "operator": "equals", "expected": "/oyun" },
+              { "phase": "after", "property": "route", "operator": "equals", "expected": "/arena" },
               { "phase": "reload", "property": "value", "operator": "equals", "expected": 0 }
             ]
           }

@@ -1,10 +1,15 @@
 import { z } from "zod";
 
 import {
+  ProductSpecV1EnglishWriteSchema,
   ProductSpecV1Schema,
   type ProductActionV1,
   type ProductSpecV1,
 } from "../schemas/product-spec-v1.js";
+import {
+  englishTextViolationMessageV1,
+  inspectEnglishTextV1,
+} from "../english-text-contract-v1.js";
 
 const SupportedProductClassSchema = z.enum(["utility", "operations", "game"]);
 const RequestedProductClassSchema = z.enum([
@@ -859,6 +864,25 @@ export function produceProductSpecV1(input: unknown): ProductSpecProducerResult 
     )));
   }
 
+  const taskEnglishIssue = inspectEnglishTextV1(parsedInput.data.task);
+  if (taskEnglishIssue) {
+    return reject([diagnostic(
+      "PRODUCT_SPEC_ENGLISH_TRANSLATION_REQUIRED",
+      `Task requires an approved English translation before ProductSpec production: ${englishTextViolationMessageV1(taskEnglishIssue)}`,
+      "task",
+    )]);
+  }
+  if (parsedInput.data.productName !== undefined) {
+    const productNameEnglishIssue = inspectEnglishTextV1(parsedInput.data.productName);
+    if (productNameEnglishIssue) {
+      return reject([diagnostic(
+        "PRODUCT_SPEC_ENGLISH_TRANSLATION_REQUIRED",
+        `Product name requires an approved English translation before ProductSpec production: ${englishTextViolationMessageV1(productNameEnglishIssue)}`,
+        "productName",
+      )]);
+    }
+  }
+
   const task = normalizeTask(parsedInput.data.task);
   if (!task) {
     return reject([diagnostic("PRODUCT_SPEC_TASK_EMPTY", "Task has no semantic content after normalization")]);
@@ -898,7 +922,7 @@ export function produceProductSpecV1(input: unknown): ProductSpecProducerResult 
     ...profile,
     assumptions: [],
   };
-  const parsedCandidate = ProductSpecV1Schema.safeParse(candidate);
+  const parsedCandidate = ProductSpecV1EnglishWriteSchema.safeParse(candidate);
   if (!parsedCandidate.success) {
     return reject(parsedCandidate.error.issues.slice(0, 100).map((issue) => diagnostic(
       "PRODUCT_SPEC_PRODUCER_OUTPUT_INVALID",

@@ -6,11 +6,46 @@ import {
   applyContractSpineMigrations,
   planContractSpineMigrations,
   readContractSpineMigrationAttestation,
+  rollbackArtifactPublicationBatchLedgerToV22,
+  rollbackArtifactPublicationBatchPlanLedgerToV25,
+  rollbackPlatformReleaseStoreRecordLedgerV3ToV26,
+  rollbackRuntimeCompletionManifestAuthorityToV27,
+  rollbackV3StoryClaimRuntimeBindingToV28,
+  rollbackArtifactStoreAuthorityLedgerToV23,
   rollbackOperationalFailureCauseSealToV20,
+  rollbackPreparationAuthorityV2LedgerToV24,
+  rollbackProductCompilationAttemptLedgerToV21,
   rollbackRecoveryTerminalLeaseIdentityToV19,
   verifyContractSpineMigrations,
 } from "../../src/db/contract-spine-migrations.js";
-import { createIsolatedTestDatabase } from "./test-database.js";
+import { createIsolatedTestDatabase, type TestDatabase } from "./test-database.js";
+
+async function rollbackCurrentToV21(database: TestDatabase): Promise<void> {
+  await rollbackV3StoryClaimRuntimeBindingToV28(database.sql, {
+    targetReleaseSha: "8".repeat(40),
+  });
+  await rollbackRuntimeCompletionManifestAuthorityToV27(database.sql, {
+    targetReleaseSha: "9".repeat(40),
+  });
+  await rollbackPlatformReleaseStoreRecordLedgerV3ToV26(database.sql, {
+    targetReleaseSha: "a".repeat(40),
+  });
+  await rollbackArtifactPublicationBatchPlanLedgerToV25(database.sql, {
+    targetReleaseSha: "b".repeat(40),
+  });
+  await rollbackPreparationAuthorityV2LedgerToV24(database.sql, {
+    targetReleaseSha: "c".repeat(40),
+  });
+  await rollbackArtifactStoreAuthorityLedgerToV23(database.sql, {
+    targetReleaseSha: "d".repeat(40),
+  });
+  await rollbackArtifactPublicationBatchLedgerToV22(database.sql, {
+    targetReleaseSha: "e".repeat(40),
+  });
+  await rollbackProductCompilationAttemptLedgerToV21(database.sql, {
+    targetReleaseSha: "f".repeat(40),
+  });
+}
 
 const VALID_CAUSE = Object.freeze({
   schema: "setfarm.operational-failure-cause.v1",
@@ -151,6 +186,7 @@ describe("operational failure cause migration", () => {
       );
 
       const targetReleaseSha = "a".repeat(40);
+      await rollbackCurrentToV21(database);
       const rollback = await rollbackOperationalFailureCauseSealToV20(database.sql, {
         targetReleaseSha,
       });
@@ -198,7 +234,17 @@ describe("operational failure cause migration", () => {
       const reapplied = await applyContractSpineMigrations(database.sql, {
         releaseSha: "b".repeat(40),
       });
-      assert.deepEqual(reapplied.applied, ["021_operational_failure_cause_seal"]);
+      assert.deepEqual(reapplied.applied, [
+        "021_operational_failure_cause_seal",
+        "022_product_compilation_attempt_ledger",
+        "023_artifact_publication_batch_ledger",
+        "024_artifact_store_authority_ledger",
+        "025_v3_preparation_authority_v2_ledger",
+        "026_artifact_publication_batch_plan_ledger",
+        "027_platform_release_store_record_ledger_v3",
+        "028_runtime_completion_manifest_authority",
+        "029_v3_story_claim_runtime_binding_v1",
+      ]);
       assert.equal((await verifyContractSpineMigrations(database.sql)).status, "verified");
 
       const constraintRows = await database.sql<Array<{ expression: string }>>`

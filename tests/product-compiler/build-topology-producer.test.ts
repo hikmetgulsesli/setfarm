@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
+import { hashCanonicalJson } from "../../src/product-compiler/canonical-json.js";
 import { produceBuildTopologyV1 } from "../../src/product-compiler/producers/build-topology.js";
 import {
   buildMinimalValidContracts,
   buildMinimalValidV3ProductSpec,
 } from "./fixtures/minimal-valid-contract.js";
+import { buildContainedGameProductSpecV2 } from "./fixtures/product-semantics-v2.js";
 
 function clone<T>(value: T): T {
   return structuredClone(value);
@@ -146,6 +148,25 @@ describe("typed build-topology producer", () => {
     assert.equal(first.buildTopology.runtimeDataContractHash, second.buildTopology.runtimeDataContractHash);
     assert.equal(first.buildTopology.runtimeDataContract?.authorities[0]?.kind, "browser-origin");
     assert.deepEqual(first.buildTopology.runtimeDataContract?.writableVolumes, []);
+  });
+
+  it("embeds an exact runtime-data v1 projection from native ProductSpecV2", () => {
+    const input = producerInput();
+    const productSpec = buildContainedGameProductSpecV2();
+    Object.assign(input, { productSpec });
+
+    const result = produceBuildTopologyV1(input);
+    assert.equal(result.status, "produced", JSON.stringify(result));
+    if (result.status !== "produced") return;
+    assert.equal(result.buildTopology.schema, "setfarm.build-topology.v1");
+    assert.equal(result.buildTopology.runtimeDataContract?.schema, "setfarm.runtime-data-contract.v1");
+    assert.equal(result.buildTopology.runtimeDataContract?.sourceProductSpecHash, hashCanonicalJson(productSpec));
+    assert.deepEqual(result.buildTopology.runtimeDataContract?.authorities, [{
+      id: "AUTH_DATA_STATELESS_NONE",
+      kind: "stateless",
+      durability: "none",
+      persistenceRefs: [],
+    }]);
   });
 
   it("keeps legacy topology absence explicit and rejects provisioning without v3 ProductSpec authority", () => {

@@ -10,6 +10,7 @@ import {
 import { runWithRuntimeCompletionOwner } from "../../src/execution/runtime-completion-owner-context.js";
 import { createRuntimeSessionRepository } from "../../src/execution/runtime-session-repository.js";
 import { recoverV3StageFailureV1 } from "../../src/execution/v3-stage-retry-authority.js";
+import { applyEnglishOutputPolicyToResolvedPrompt } from "../../src/installer/prompt-contracts.js";
 import { canonicalJsonStringify } from "../../src/product-compiler/canonical-json.js";
 import {
   canonicalProductDeliveryProfileCatalogV1,
@@ -62,6 +63,7 @@ test("invalid PLAN v3 proposal closes the exact claim and settles as a bounded r
       context: {
         task: TASK,
         plan_protocol: "v3",
+        product_semantics_version: "v2",
         v3_requirement_ledger: canonicalJsonStringify(extractTaskRequirementLedgerV1(TASK)),
         v3_delivery_profile_catalog: canonicalProductDeliveryProfileCatalogV1(),
         v3_delivery_profile_catalog_hash: productDeliveryProfileCatalogHashV1(),
@@ -75,7 +77,7 @@ test("invalid PLAN v3 proposal closes the exact claim and settles as a bounded r
         compiler_release_sha, activation_preflight_hash, release_admission_hash
       ) VALUES (
         ${runId}, 'feature-dev', ${TASK}, 'running',
-        ${JSON.stringify({ task: TASK, plan_protocol: "v3" })}, 'v3',
+        ${JSON.stringify({ task: TASK, plan_protocol: "v3", product_semantics_version: "v2" })}, 'v3',
         ${releaseSha}, ${"e".repeat(64)}, ${releaseAdmissionHash}
       )
     `;
@@ -125,7 +127,7 @@ test("invalid PLAN v3 proposal closes the exact claim and settles as a bounded r
       claimId,
       claimAgentId,
       runtimeAgentId,
-      input: planInstruction,
+      input: applyEnglishOutputPolicyToResolvedPrompt(planInstruction),
     };
     const requested = await requestRuntimeCompletion(database.sql, {
       envelope,
@@ -207,7 +209,7 @@ test("invalid PLAN v3 proposal closes the exact claim and settles as a bounded r
       runtime_state: "drained",
       termination_count: 0,
     });
-    assert.match(ownerState[0]!.claim_diagnostic, /^V3_PLAN_OUTPUT_REJECTED: V3_PLAN_PRODUCT_SPEC_PROPOSAL_INVALID:/);
+    assert.match(ownerState[0]!.claim_diagnostic, /^V3_PLAN_OUTPUT_REJECTED: V3_PLAN_V2_LEGACY_SEMANTICS_FORBIDDEN:/);
     const stageFailure = recoverV3StageFailureV1({
       workflowStepId: "plan",
       diagnostic: ownerState[0]!.plan_output,
@@ -215,7 +217,8 @@ test("invalid PLAN v3 proposal closes the exact claim and settles as a bounded r
     assert.equal(stageFailure.schema, "setfarm.v3-stage-failure.v1");
     assert.equal(stageFailure.kind, "output_contract_invalid");
     assert.ok(stageFailure.diagnostics.length > 0);
-    assert.match(stageFailure.diagnostics[0]!.message, /expected/i);
+    assert.equal(stageFailure.diagnostics[0]!.code, "V3_PLAN_V2_LEGACY_SEMANTICS_FORBIDDEN");
+    assert.match(stageFailure.diagnostics[0]!.message, /cannot be upgraded/i);
     assert.equal(ownerState[0]!.plan_output, ownerState[0]!.claim_diagnostic);
 
     const prematureRetry = await (await import("../../src/installer/step-ops.js")).claimStep(
@@ -310,9 +313,25 @@ test("invalid PLAN v3 proposal closes the exact claim and settles as a bounded r
     );
     assert.match(
       retryClaim.v3StageRetrySource?.failure.diagnostics[0]?.message || "",
-      /expected/i,
+      /cannot be upgraded/i,
     );
-    assert.equal(retryClaim.resolvedInput, planInstruction);
+    assert.equal(
+      retryClaim.resolvedInput,
+      applyEnglishOutputPolicyToResolvedPrompt(planInstruction),
+    );
+    const retrySeal = await database.sql<Array<{
+      semantics_version: string;
+      authority_version: string;
+    }>>`
+      SELECT context::jsonb ->> 'product_semantics_version' AS semantics_version,
+             context::jsonb ->> 'plan_output_authority_version' AS authority_version
+        FROM runs
+       WHERE id = ${runId}
+    `;
+    assert.deepEqual({ ...retrySeal[0] }, {
+      semantics_version: "v2",
+      authority_version: "product_build_v1",
+    });
     if (!retryClaim.claimId || !retryClaim.runtimeSessionId) {
       throw new Error("retry claim authority missing");
     }

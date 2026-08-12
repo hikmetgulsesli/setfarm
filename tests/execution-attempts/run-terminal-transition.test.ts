@@ -5,7 +5,15 @@ import {
   applyContractSpineMigrations,
   planContractSpineMigrations,
   readContractSpineMigrationAttestation,
+  rollbackArtifactPublicationBatchLedgerToV22,
+  rollbackArtifactPublicationBatchPlanLedgerToV25,
+  rollbackPlatformReleaseStoreRecordLedgerV3ToV26,
+  rollbackRuntimeCompletionManifestAuthorityToV27,
+  rollbackV3StoryClaimRuntimeBindingToV28,
+  rollbackArtifactStoreAuthorityLedgerToV23,
   rollbackOperationalFailureCauseSealToV20,
+  rollbackPreparationAuthorityV2LedgerToV24,
+  rollbackProductCompilationAttemptLedgerToV21,
   rollbackRecoveryTerminalLeaseIdentityToV19,
 } from "../../src/db/contract-spine-migrations.js";
 import { createAttemptRepository } from "../../src/execution/attempt-repository.js";
@@ -16,6 +24,35 @@ import { createFindingRecoveryRepository } from "../../src/recovery/finding-reco
 import { createRecoveryDeliveryRepository } from "../../src/recovery/recovery-delivery-repository.js";
 import { exactProductReservation, HASH_A } from "./fixtures.js";
 import { createIsolatedTestDatabase } from "./test-database.js";
+
+async function rollbackCurrentToV21(
+  database: Awaited<ReturnType<typeof createIsolatedTestDatabase>>,
+): Promise<void> {
+  await rollbackV3StoryClaimRuntimeBindingToV28(database.sql, {
+    targetReleaseSha: "e".repeat(40),
+  });
+  await rollbackRuntimeCompletionManifestAuthorityToV27(database.sql, {
+    targetReleaseSha: "f".repeat(40),
+  });
+  await rollbackPlatformReleaseStoreRecordLedgerV3ToV26(database.sql, {
+    targetReleaseSha: "0".repeat(40),
+  });
+  await rollbackArtifactPublicationBatchPlanLedgerToV25(database.sql, {
+    targetReleaseSha: "1".repeat(40),
+  });
+  await rollbackPreparationAuthorityV2LedgerToV24(database.sql, {
+    targetReleaseSha: "2".repeat(40),
+  });
+  await rollbackArtifactStoreAuthorityLedgerToV23(database.sql, {
+    targetReleaseSha: "3".repeat(40),
+  });
+  await rollbackArtifactPublicationBatchLedgerToV22(database.sql, {
+    targetReleaseSha: "4".repeat(40),
+  });
+  await rollbackProductCompilationAttemptLedgerToV21(database.sql, {
+    targetReleaseSha: "5".repeat(40),
+  });
+}
 
 async function seedActiveStory(database: Awaited<ReturnType<typeof createIsolatedTestDatabase>>, runId: string) {
   const stepDbId = `${runId}-step`;
@@ -615,6 +652,7 @@ describe("canonical run terminal owner", () => {
       const runId = "run-terminal-v19-binary-rollback";
       const fixture = await seedActiveRecovery(database, { runId, runStatus: "failed" });
       const targetReleaseSha = "7".repeat(40);
+      await rollbackCurrentToV21(database);
       await rollbackOperationalFailureCauseSealToV20(database.sql, {
         targetReleaseSha: "6".repeat(40),
       });
@@ -655,12 +693,20 @@ describe("canonical run terminal owner", () => {
       assert.deepEqual(reapplied.applied, [
         "020_recovery_terminal_lease_identity",
         "021_operational_failure_cause_seal",
+        "022_product_compilation_attempt_ledger",
+        "023_artifact_publication_batch_ledger",
+        "024_artifact_store_authority_ledger",
+        "025_v3_preparation_authority_v2_ledger",
+        "026_artifact_publication_batch_plan_ledger",
+        "027_platform_release_store_record_ledger_v3",
+        "028_runtime_completion_manifest_authority",
+        "029_v3_story_claim_runtime_binding_v1",
       ]);
       assert.equal(
         (await createRecoveryDeliveryRepository(database.sql).findDelivery(fixture.dispatchId))?.schema,
         "setfarm.recovery-dispatch-delivery.v1",
       );
-
+      await rollbackCurrentToV21(database);
       await rollbackOperationalFailureCauseSealToV20(database.sql, {
         targetReleaseSha: "9".repeat(40),
       });

@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
 
-import { canonicalJsonStringify } from "../../src/product-compiler/canonical-json.js";
+import { canonicalJsonStringify, hashCanonicalJson } from "../../src/product-compiler/canonical-json.js";
 import {
   compileV3CompatibilityStoryProjection,
   stitchComponentNameV3,
@@ -164,13 +164,14 @@ describe("Product Compiler v3 legacy story compatibility projection", () => {
       techStack: "vite-react",
       uiLanguage: "English",
     });
-    const output = buildV3AutoStoriesOutput({ repo, prd });
+    const expectedProductSpecHash = hashCanonicalJson(contracts.productSpec);
+    const output = buildV3AutoStoriesOutput({ repo, prd, expectedProductSpecHash });
     assert.match(output, /^STATUS: done\nV3_STORY_PROJECTION_SCHEMA:/);
     assert.match(output, /"owned_actions":\[\{"id":"ACT_SAVE_TASK"/);
 
     fs.writeFileSync(targetsPath, JSON.stringify(contracts.generationTargets, null, 2), "utf8");
     assert.throws(
-      () => buildV3AutoStoriesOutput({ repo, prd }),
+      () => buildV3AutoStoriesOutput({ repo, prd, expectedProductSpecHash }),
       /V3_STORY_GENERATION_TARGETS_NON_CANONICAL/,
     );
   });

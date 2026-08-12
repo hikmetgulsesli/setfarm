@@ -232,7 +232,7 @@ describe("peekStep logic (direct DB validation)", () => {
 
 describe("polling prompt includes step peek", () => {
   it("includes step peek command before step claim", async () => {
-    const { buildPollingPrompt } = await import("../dist/installer/agent-cron.js");
+    const { buildPollingPrompt } = await import("../src/installer/agent-cron.js");
     const prompt = buildPollingPrompt("bug-fix", "fixer");
     assert.ok(prompt.includes("step peek"), "should include step peek command");
     
@@ -243,7 +243,7 @@ describe("polling prompt includes step peek", () => {
   });
 
   it("instructs to stop on NO_WORK from peek without running claim", async () => {
-    const { buildPollingPrompt } = await import("../dist/installer/agent-cron.js");
+    const { buildPollingPrompt } = await import("../src/installer/agent-cron.js");
     const prompt = buildPollingPrompt("bug-fix", "fixer");
     assert.ok(prompt.includes("NO_WORK"), "should mention NO_WORK");
     assert.ok(prompt.includes("HEARTBEAT_OK"), "should still include HEARTBEAT_OK");
@@ -254,13 +254,13 @@ describe("polling prompt includes step peek", () => {
   });
 
   it("includes step peek with correct agent id", async () => {
-    const { buildPollingPrompt } = await import("../dist/installer/agent-cron.js");
+    const { buildPollingPrompt } = await import("../src/installer/agent-cron.js");
     const prompt = buildPollingPrompt("bug-fix", "triager");
     assert.ok(prompt.includes('step peek "bug-fix_triager"'), "should include correct agent id in peek");
   });
 
   it("still includes sessions_spawn for when work exists", async () => {
-    const { buildPollingPrompt } = await import("../dist/installer/agent-cron.js");
+    const { buildPollingPrompt } = await import("../src/installer/agent-cron.js");
     const prompt = buildPollingPrompt("bug-fix", "fixer");
     assert.ok(prompt.includes("sessions_spawn"), "should still include sessions_spawn");
   });

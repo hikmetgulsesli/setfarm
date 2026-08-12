@@ -58,6 +58,9 @@ export const V3ImplementationAttemptErrorCodeSchema = z.enum([
   "V3_SLICE_SOURCE_PATH_ESCAPE",
   "V3_SLICE_SOURCE_TYPE_UNSUPPORTED",
   "V3_SLICE_STORY_NOT_IN_PACKET",
+  "V3_SUPERVISOR_RETRY_AUTHORITY_CONFLICT",
+  "V3_SUPERVISOR_RETRY_IDENTITY_MISMATCH",
+  "V3_SUPERVISOR_RETRY_PUBLICATION_HASH_MISMATCH",
 ]);
 
 export type V3ImplementationAttemptErrorCode = z.infer<typeof V3ImplementationAttemptErrorCodeSchema>;

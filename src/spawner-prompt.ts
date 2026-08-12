@@ -14,6 +14,7 @@ import {
 } from "./execution/v3-implementation-handoff.js";
 import {
   createV3StageClaimHandoffV1,
+  V3StageClaimHandoffV1Schema,
 } from "./execution/v3-stage-execution-context.js";
 import type { V3StageRetrySourceV1 } from "./execution/v3-stage-retry-authority.js";
 import {
@@ -2614,10 +2615,23 @@ ${stepIdCommand}; ${cliCommand} step complete "$STEP_ID" --claim-file ${shellQuo
 Never call step fail for any native v3 implementation outcome. Typed refusals use step complete so Setfarm can validate their source/slice/finding identity; runtime and process failures are owned by the spawner. After step complete, reply HEARTBEAT_OK and stop.`;
   }
   if (params.protocol === "v3") {
-    return `Setfarm Product Compiler v3 stage claim ready for ${params.wfId}/${params.role}. First action MUST be the exact bootstrap exec below; send no prose first.
+    let stageHandoff: ReturnType<typeof V3StageClaimHandoffV1Schema.parse>;
+    try {
+      const claimSummary = JSON.parse(fs.readFileSync(params.claimSummaryFile, "utf8")) as Record<string, unknown>;
+      stageHandoff = V3StageClaimHandoffV1Schema.parse(claimSummary.canonicalStageClaimHandoff);
+    } catch {
+      throw new Error("V3_STAGE_TOOL_POLICY_HANDOFF_INVALID");
+    }
+    if (
+      stageHandoff.context.workflow !== params.wfId
+      || stageHandoff.context.role !== params.role
+    ) {
+      throw new Error("V3_STAGE_TOOL_POLICY_PROMPT_AUTHORITY_MISMATCH");
+    }
+    const outputTransport = stageHandoff.context.toolPolicy.artifactSubmission.transport;
+    const sharedStagePrompt = `Setfarm Product Compiler v3 stage claim ready for ${params.wfId}/${params.role}. First action MUST be the exact bootstrap exec below; send no prose first.
 
 CLAIM_FILE=${params.claimFile}
-OUTPUT_FILE=${params.outputFile}
 BOOTSTRAP_FILE=${params.bootstrapFile}
 
 First exec command (copy exactly, with no wrapper, pipe, redirection, or chaining):
@@ -2625,8 +2639,32 @@ bash ${shellQuote(params.bootstrapFile)}
 
 The bootstrap must print STAGE_EXECUTION_CONTEXT_FILE and STAGE_INSTRUCTION_FILE. Read STAGE_EXECUTION_CONTEXT_FILE once. If its exact manifest contains retry, read retry.previousOutput.path next and treat retry.failure plus retry.expectedDelta as the sole recovery authority. Then read the exact instruction.path it binds. The context manifest, optional retry artifact, and instruction artifact are the sole task, role, output, recovery, and completion authority for this claim. Do not infer product requirements or retry work from WORKDIR, old projects, session memory, raw claim.input, claim-summary prose, or filesystem searches.
 
-Execute the stage instruction exactly. On retry, repair the exact previous output so every bound diagnostic is resolved and the output hash changes; never recreate blindly from the base instruction. Do not substitute the generic implement loop, do not create implementation-evidence files, and do not edit product source unless the stage instruction explicitly owns source changes. Write the response required by the stage instruction to ${params.outputFile}. For a valid stage response, including a typed rejection owned by that instruction, complete with the exact claim capability:
-${stepIdCommand}; ${cliCommand} step complete "$STEP_ID" --claim-file ${shellQuote(params.claimFile)} --file ${shellQuote(params.outputFile)}
+Execute the stage instruction exactly. On retry, repair the exact previous output so every bound diagnostic is resolved and the output hash changes; never recreate blindly from the base instruction. Do not substitute the generic implement loop, do not create implementation-evidence files, and do not edit product source unless the stage instruction explicitly owns source changes.`;
+
+    if (outputTransport.kind === "legacy-output-file") {
+      if (path.resolve(outputTransport.outputFile) !== path.resolve(params.outputFile)) {
+        throw new Error("V3_STAGE_LEGACY_OUTPUT_FILE_PROMPT_MISMATCH");
+      }
+      return `${sharedStagePrompt}
+
+The canonical tool policy explicitly selects legacy-output-file compatibility transport. Write the response required by the stage instruction to ${outputTransport.outputFile}. For a valid stage response, including a typed rejection owned by that instruction, complete with the exact claim capability:
+${stepIdCommand}; ${cliCommand} step complete "$STEP_ID" --claim-file ${shellQuote(params.claimFile)} --file ${shellQuote(outputTransport.outputFile)}
+
+Use step fail only when the execution infrastructure makes the stage instruction unavailable or unexecutable:
+${stepIdCommand}; ${cliCommand} step fail "$STEP_ID" --claim-file ${shellQuote(params.claimFile)} "specific infrastructure reason"
+
+After complete/fail, reply HEARTBEAT_OK and stop.`;
+    }
+
+    const stepIdReadCommand = `node -e 'const fs=require("fs"); process.stdout.write(JSON.parse(fs.readFileSync(process.argv[1],"utf8")).stepId||"")' ${shellQuote(params.claimFile)}`;
+    return `${sharedStagePrompt}
+
+The canonical tool policy selects claim-bound-step-complete-stdin. Final artifact submission is separately authorized and is not a generic filesystem mutation: do not create or edit any temporary output file, and do not invoke a filesystem mutation tool for final submission. Keep the final artifact in the heredoc body and submit it directly on stdin. The exact --claim-file envelope binds runId, stepId, storyId when present, claimId, and attempt identity when present; do not alter or reconstruct those identities.
+
+For a valid stage response, including a typed rejection owned by the instruction, use this one exact step-complete-stdin command. Replace only the heredoc body with the complete final artifact required by STAGE_INSTRUCTION_FILE:
+${cliCommand} step complete "$(${stepIdReadCommand})" --claim-file ${shellQuote(params.claimFile)} <<'SETFARM_STAGE_ARTIFACT'
+<complete final artifact required by STAGE_INSTRUCTION_FILE>
+SETFARM_STAGE_ARTIFACT
 
 Use step fail only when the execution infrastructure makes the stage instruction unavailable or unexecutable:
 ${stepIdCommand}; ${cliCommand} step fail "$STEP_ID" --claim-file ${shellQuote(params.claimFile)} "specific infrastructure reason"

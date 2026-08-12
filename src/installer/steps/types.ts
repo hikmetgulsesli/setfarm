@@ -40,6 +40,11 @@ export interface CompleteContext {
   rawOutput?: string;
 }
 
+export type PreClaimResult = void | Readonly<{
+  disposition: "compiler_completion";
+  output: string;
+}>;
+
 export interface StepModule {
   id: string;
   type: "single" | "loop";
@@ -47,7 +52,7 @@ export interface StepModule {
 
   // Optional: heavy work BEFORE the agent claims (e.g. design step calls
   // Stitch API to generate screens, so the agent only sees the result).
-  preClaim?(ctx: ClaimContext): Promise<void>;
+  preClaim?(ctx: ClaimContext): Promise<PreClaimResult>;
   injectContext(ctx: ClaimContext): Promise<void>;
   buildPrompt(ctx: PromptContext): string;
   // Optional: mutate parsed in-place (e.g. auto-fix REPO path) before validation

@@ -15,23 +15,60 @@ import {
   V3ImplementationClaimHandoffV1Schema,
 } from "../../src/execution/v3-implementation-handoff.js";
 import { createV3ReleaseAdmissionV1 } from "../../src/execution/v3-release-admission.js";
+import { completeSingleStepClaimAndState } from "../../src/execution/claim-attempt-transition.js";
+import { publishLoopClaimRuntime } from "../../src/execution/claim-runtime-publication.js";
+import { loadCompilerEnglishAdmissionLedgerAuthorityV1 } from "../../src/execution/compiler-english-admission-ledger-v1.js";
+import {
+  createCompilerStoryEnglishAdmissionClaimProofV1,
+  loadCompilerStoryEnglishAdmissionLedgerAuthorityV1,
+} from "../../src/execution/compiler-story-english-admission-ledger-v1.js";
+import { publishCompilerStoryEnglishAdmissionAndCompleteV1 } from "../../src/execution/compiler-story-english-admission-publication-v1.js";
+import { createRuntimeCompletionEffectRepository } from "../../src/execution/runtime-completion-effect-repository.js";
+import { runWithRuntimeCompletionOwner as runWithExactCompletionOwner } from "../../src/execution/runtime-completion-owner-context.js";
+import { createRuntimeCompletionRepository, requestRuntimeCompletion } from "../../src/execution/runtime-completion.js";
+import {
+  createRuntimeSessionRepository,
+  releaseReservedRuntimeSessionInTransaction,
+} from "../../src/execution/runtime-session-repository.js";
+import { createSingleEffectCompletionPlanDescriptorV1 } from "../../src/execution/schemas/runtime-completion-plan-v1.js";
+import { createV3PreparationBlockRepository } from "../../src/execution/v3-preparation-block-repository.js";
+import { buildV3AutoStoriesOutput } from "../../src/installer/steps/03-stories/preclaim.js";
+import { designAuthoritySubjectHashV1 } from "../../src/installer/steps/03-stories/guards.js";
+import { compileCompilerEnglishAdmissionV1, compilerEnglishAdmissionReceiptV1 } from "../../src/product-compiler/compiler-english-admission-v1.js";
+import { compileCompilerStoryEnglishAdmissionV1, compilerStoryEnglishAdmissionStateV1 } from "../../src/product-compiler/compiler-story-english-admission-v1.js";
+import { hashCanonicalJson } from "../../src/product-compiler/canonical-json.js";
+import { renderProductSpecV2Compatibility } from "../../src/product-compiler/renderers/product-spec-v2-compatibility.js";
 import { ClaimEnvelopeV1Schema } from "../../src/execution/schemas/claim-envelope-v1.js";
 import { RuntimeCompletionPlanV1Schema } from "../../src/execution/schemas/runtime-completion-plan-v1.js";
 import { runWithRuntimeCompletionOwner } from "../../src/execution/runtime-completion-owner-context.js";
 import { buildClaimSummary, buildPreclaimedPrompt } from "../../src/spawner-prompt.js";
+import {
+  NODE_EXPRESS_API_TASK,
+  twoStoryNodeExpressApiProductSpecV2,
+} from "../product-compiler/fixtures/no-design-product-semantics-v2.js";
 
 const RELEASE_SHA = "c".repeat(40);
 const EVIDENCE_HASH = "d".repeat(64);
 const WORKFLOW_ID = "feature-dev-v3-recovery-claim";
 const RUN_ID = "run-v3-recovery-claim-integration";
 const STEP_DB_ID = "step-v3-recovery-claim-integration";
-const STORY_DB_ID = "story-v3-recovery-claim-integration";
 const STORY_ID = "US-001";
 const AGENT_ID = `${WORKFLOW_ID}_supervisor`;
 const PRIOR_AGENT_ID = `${WORKFLOW_ID}_developer`;
 const OWNER_INSTANCE_ID = "claim-step-v3-recovery-owner";
 const COMPLETION_OWNER_INSTANCE_ID = "claim-step-v3-recovery-completion-owner";
 const SESSION_ID = "RTS_claim-step-v3-recovery-0001";
+const PRIOR_SESSION_ID = "RTS_claim-step-v3-prior-runtime-0001";
+const PRIOR_OWNER_INSTANCE_ID = "claim-step-v3-prior-runtime-owner";
+const STORY_ADMISSION_DRAIN_EVIDENCE = {
+  schema: "setfarm.runtime-drain-evidence.v1" as const,
+  observedAt: "2026-07-13T09:59:00.000Z",
+  localProcessAbsent: true,
+  openClawTaskAbsent: true,
+  workspaceProcessAbsent: true,
+  stableObservations: 2,
+  evidenceRefs: ["setfarm://test/claim-step-v3-recovery-story-admission"],
+};
 
 const ARTIFACT_LIMITS = Object.freeze({
   maxPayloadBytes: 4 * 1024 * 1024,
@@ -53,6 +90,107 @@ function restoreEnvironment(previous: Readonly<Record<string, string | undefined
     if (value === undefined) delete process.env[key];
     else process.env[key] = value;
   }
+}
+
+async function prepareCompilerAdmissionCompletion(
+  database: TestDatabase,
+  input: Readonly<{ runId: string; stepDbId: string; workflowStepId: "plan" | "design" | "stories"; output: string }>,
+) {
+  const token = createHash("sha256")
+    .update(`${input.runId}:${input.workflowStepId}`, "utf8")
+    .digest("hex")
+    .slice(0, 24);
+  const claimAgentId = `${WORKFLOW_ID}_${input.workflowStepId}`;
+  const runtimeAgentId = `${input.workflowStepId}-compiler-fixture-runtime`;
+  const ownerInstanceId = `${input.workflowStepId}-compiler-fixture-owner`;
+  const claims = await database.sql.unsafe<Array<{ id: number }>>(
+    `INSERT INTO claim_log (run_id, step_id, story_id, agent_id)
+     VALUES ($1, $2, NULL, $3) RETURNING id::integer AS id`,
+    [input.runId, input.workflowStepId, claimAgentId],
+  );
+  const claimId = claims[0]!.id;
+  const sessions = createRuntimeSessionRepository(database.sql);
+  const session = await sessions.reserve({
+    sessionId: `RTS_${token}`,
+    runId: input.runId,
+    stepDbId: input.stepDbId,
+    workflowStepId: input.workflowStepId,
+    claimId,
+    claimAgentId,
+    runtimeAgentId,
+    runtimeKind: "openclaw_session",
+    ownerInstanceId,
+  });
+  await sessions.markStarting({ sessionId: session.sessionId, ownerInstanceId });
+  await sessions.markRunning({
+    sessionId: session.sessionId,
+    ownerInstanceId,
+    sessionKey: `${input.workflowStepId}-compiler-fixture-session`,
+  });
+  const envelope = ClaimEnvelopeV1Schema.parse({
+    schema: "setfarm.claim-envelope.v1",
+    protocol: "v3",
+    issuedAt: "2026-07-13T09:58:00.000Z",
+    stepId: input.stepDbId,
+    workflowStepId: input.workflowStepId,
+    runId: input.runId,
+    claimId,
+    claimAgentId,
+    runtimeAgentId,
+    input: `Durable ${input.workflowStepId} compiler admission`,
+  });
+  const requested = await requestRuntimeCompletion(database.sql, {
+    envelope,
+    output: input.output,
+    requestId: `RCR_${token}`,
+  });
+  assert.equal(requested.status, "requested");
+  if (requested.status !== "requested") throw new Error("compiler admission completion request missing");
+  const completions = createRuntimeCompletionRepository(database.sql);
+  await completions.claim({ requestId: requested.request.requestId, ownerInstanceId });
+  await sessions.markDrained({
+    sessionId: session.sessionId,
+    ownerInstanceId,
+    evidence: STORY_ADMISSION_DRAIN_EVIDENCE,
+  });
+  const processing = await completions.markProcessing({
+    requestId: requested.request.requestId,
+    ownerInstanceId,
+  });
+  if (!processing.ownerInstanceId || !processing.leaseExpiresAt) {
+    throw new Error("compiler admission completion owner missing");
+  }
+  return { claimId, envelope, completions, processing, requestId: requested.request.requestId, ownerInstanceId };
+}
+
+async function settleCompilerAdmissionCompletion(
+  database: TestDatabase,
+  managed: Awaited<ReturnType<typeof prepareCompilerAdmissionCompletion>>,
+): Promise<void> {
+  const effects = createRuntimeCompletionEffectRepository(database.sql);
+  const effect = await effects.claimNext({ requestId: managed.requestId, ownerInstanceId: managed.ownerInstanceId });
+  assert.ok(effect?.leaseToken);
+  await effects.settle({
+    requestId: managed.requestId,
+    effectKey: effect.effectKey,
+    ownerInstanceId: managed.ownerInstanceId,
+    leaseToken: effect.leaseToken,
+    resolution: "applied",
+    result: { advanced: false, runCompleted: false },
+    evidence: { source: "claim-step-v3-recovery-compiler-admission" },
+  });
+  await managed.completions.markEffectsCommitted({
+    requestId: managed.requestId,
+    ownerInstanceId: managed.ownerInstanceId,
+    ownerAttemptCount: managed.processing.ownerAttemptCount,
+    result: { advanced: false, runCompleted: false },
+  });
+  await managed.completions.acceptAndRelease({
+    requestId: managed.requestId,
+    ownerInstanceId: managed.ownerInstanceId,
+    ownerAttemptCount: managed.processing.ownerAttemptCount,
+    result: { advanced: false, runCompleted: false },
+  });
 }
 
 test("claimStep publishes and completes one exact bounded supervisor repair without legacy fallback", async () => {
@@ -151,9 +289,11 @@ test("claimStep publishes and completes one exact bounded supervisor repair with
     git(repo, ["push", "-qu", "origin", "main"]);
 
     database = await createIsolatedTestDatabase();
+    const canonicalDb = await import("../../src/db-pg.js");
+    canonicalDb.pgConfigureIsolatedTestDatabase(database.url);
 
     const [
-      runtimePacketModule,
+      packetCompilerModule,
       artifactIndexModule,
       artifactStoreModule,
       artifactPublisherModule,
@@ -174,7 +314,7 @@ test("claimStep publishes and completes one exact bounded supervisor repair with
       recoveryEffectModule,
       spawnerModule,
     ] = await Promise.all([
-      import("../../src/product-compiler/runtime-packet-compiler.js"),
+      import("../../src/product-compiler/packet-compiler.js"),
       import("../../src/product-compiler/artifact-index.js"),
       import("../../src/product-compiler/artifact-store.js"),
       import("../../src/product-compiler/indexed-artifact-publisher.js"),
@@ -206,15 +346,33 @@ test("claimStep publishes and completes one exact bounded supervisor repair with
     contracts.buildTopology.repo.treeHash = sourceTreeObject;
     contracts.buildTopology.pathBindings[0]!.knownContentHash = appContentHash;
 
+    const admissionProductSpec = twoStoryNodeExpressApiProductSpecV2();
+    const productSpecHash = hashCanonicalJson(admissionProductSpec);
+    const renderedPlan = renderProductSpecV2Compatibility(admissionProductSpec);
+    const prdMarker = "\nPRD:\n";
+    const prdIndex = renderedPlan.indexOf(prdMarker);
+    assert.ok(prdIndex > 0);
+    const prd = renderedPlan.slice(prdIndex + prdMarker.length);
+
     const runContext = {
       run_id: RUN_ID,
       workflow_id: WORKFLOW_ID,
-      task: "Exercise one exact Product Compiler v3 recovery claim.",
+      task: NODE_EXPRESS_API_TASK,
       repo,
       branch: "main",
       base_branch: "main",
-      project_name: "V3 Recovery Claim Fixture",
-      project_slug: "v3-recovery-claim-fixture",
+      project_name: admissionProductSpec.product.name,
+      project_display_name: admissionProductSpec.product.name,
+      project_slug: "task-api",
+      prd,
+      product_semantics_version: "v2",
+      product_spec_schema: admissionProductSpec.schema,
+      product_spec_hash: productSpecHash,
+      product_spec_source_task_hash: admissionProductSpec.traceability.sourceTaskHash,
+      ui_language: "English",
+      app_title: admissionProductSpec.product.name,
+      ui_vision_summary: admissionProductSpec.delivery.uiVisionSummary,
+      design_required: "false",
     };
     const releaseSuiteHash = "1".repeat(64);
     const releaseResultHash = "2".repeat(64);
@@ -271,26 +429,16 @@ test("claimStep publishes and completes one exact bounded supervisor repair with
       `INSERT INTO steps (
          id, run_id, step_id, agent_id, step_index, input_template, expects,
          status, type, loop_config, retry_count, output
-       ) VALUES (
+       ) VALUES
+       ('step-v3-recovery-plan', $2, 'plan', 'feature-dev_planner', 1, '', '', 'running', 'single', NULL, 0, NULL),
+       ('step-v3-recovery-design', $2, 'design', 'feature-dev_designer', 2, '', '', 'waiting', 'single', NULL, 0, NULL),
+       ('step-v3-recovery-stories', $2, 'stories', 'feature-dev_story-planner', 3, '', '', 'waiting', 'single', NULL, 0, NULL),
+       (
          $1, $2, 'implement', $3, 6, 'legacy template must not be authority',
          'STATUS: done', 'pending', 'loop', '{"over":"stories","parallel":1}',
          2, 'prior loop output'
        )`,
       [STEP_DB_ID, RUN_ID, AGENT_ID],
-    );
-    await database.sql.unsafe(
-      `INSERT INTO stories (
-         id, run_id, story_index, story_id, title, description,
-         acceptance_criteria, status, output, retry_count, max_retries,
-         abandoned_count, claim_generation, depends_on, scope_files,
-         shared_files, implementation_contract, story_screens
-       ) VALUES (
-         $1, $2, 1, $3, 'Implement exact save behavior',
-         'The sealed packet, not this prose, owns behavior.', '["save and reload"]',
-         'running', NULL, 2, 3, 0, 5, '[]', '["src/App.tsx"]', '[]',
-         '{"schema":"setfarm.test-implementation-contract.v1"}', '[]'
-       )`,
-      [STORY_DB_ID, RUN_ID, STORY_ID],
     );
 
     const artifactIndex = artifactIndexModule.createArtifactIndex(database.sql);
@@ -309,34 +457,238 @@ test("claimStep publishes and completes one exact bounded supervisor repair with
       codeSha: RELEASE_SHA,
       toolVersions: { zod: "4.4.3" },
     } as const;
-    const packetCompilation = await runtimePacketModule.createRuntimePacketCompiler({
-      sql: database.sql,
-      artifactRoot,
-      artifactLimits: ARTIFACT_LIMITS,
-      ownerInstanceId: "claim-step-recovery-packet-compiler",
-    }).compile({
-      runId: RUN_ID,
-      expectedMode: "v3",
+    const compiler = { version: "3.0.0", codeSha: RELEASE_SHA } as const;
+    const packetCompilation = await packetCompilerModule.compileProductBuildPacket({
       productSpec: contracts.productSpec,
       designGraph: contracts.designGraph,
       buildTopology: contracts.buildTopology,
       storyPlan: contracts.storyPlan,
       designSource: contracts.designSource,
-      compiler: { version: "3.0.0", codeSha: RELEASE_SHA },
+      compiler,
       producer,
+      protocol: "v3",
+      artifactStore: new artifactPublisherModule.IndexedArtifactPublisher({
+        index: artifactIndex,
+        store: artifactStore,
+        ownerInstanceId: "claim-step-recovery-packet-compiler",
+      }),
     });
-    assert.equal(packetCompilation.activation, "activated", JSON.stringify(packetCompilation));
-    assert.equal(packetCompilation.compilation.status, "sealed", JSON.stringify(packetCompilation));
-    const packetHash = packetCompilation.compilation.packetHash;
+    assert.equal(packetCompilation.status, "sealed", JSON.stringify(packetCompilation));
+    const packetHash = packetCompilation.packetHash;
     assert.ok(packetHash);
+    await artifactIndex.activateProductPacket({
+      runId: RUN_ID,
+      packetHash,
+      compiler,
+      artifactRefs: {
+        PRODUCT_SPEC: packetCompilation.artifactHashes.productSpec!,
+        DESIGN_GRAPH: packetCompilation.artifactHashes.designGraph!,
+        BUILD_TOPOLOGY: packetCompilation.artifactHashes.buildTopology!,
+        STORY_PLAN: packetCompilation.artifactHashes.storyPlan!,
+        DESIGN_SOURCE_CLOSURE: packetCompilation.artifactHashes.designSourceClosure!,
+        PRODUCT_BUILD_PACKET: packetHash,
+        COMPILATION_REPORT: packetCompilation.reportHash,
+      },
+    });
 
-    const priorClaims = await database.sql.unsafe<Array<{ id: string }>>(
-      `INSERT INTO claim_log (run_id, step_id, story_id, agent_id)
-       VALUES ($1, 'implement', $2, $3)
-       RETURNING id::text AS id`,
-      [RUN_ID, STORY_ID, PRIOR_AGENT_ID],
+    const planManaged = await prepareCompilerAdmissionCompletion(database, {
+      runId: RUN_ID,
+      stepDbId: "step-v3-recovery-plan",
+      workflowStepId: "plan",
+      output: "STATUS: done",
+    });
+    const planAuthority = compileCompilerEnglishAdmissionV1({
+      claimId: planManaged.claimId,
+      runId: RUN_ID,
+      stepDbId: "step-v3-recovery-plan",
+      workflowStepId: "plan",
+      productSpec: admissionProductSpec,
+      finalContext: runContext,
+    });
+    const planReceipt = compilerEnglishAdmissionReceiptV1(planAuthority);
+    const planContext = {
+      ...runContext,
+      plan_english_authority_version: planReceipt.authorityVersion,
+      plan_english_admission_receipt_hash: planAuthority.receiptHash,
+    };
+    await runWithExactCompletionOwner({
+      requestId: planManaged.processing.requestId,
+      ownerInstanceId: planManaged.processing.ownerInstanceId!,
+      leaseExpiresAt: planManaged.processing.leaseExpiresAt!,
+      ownerAttemptCount: planManaged.processing.ownerAttemptCount,
+    }, () => completeSingleStepClaimAndState(database.sql, {
+      envelope: planManaged.envelope,
+      stepStatus: "done",
+      stepOutput: "STATUS: done",
+      runContextJson: JSON.stringify(planContext),
+      expectedRunContextJson: JSON.stringify(runContext),
+      requireRuntimeCompletionOwner: true,
+      completionPlan: createSingleEffectCompletionPlanDescriptorV1({
+        kind: "single_completion",
+        continuation: { type: "single_pipeline_advance" },
+        effectPayload: { stepId: "plan", compilerEnglishAdmissionReceipt: planReceipt },
+      }),
+    }));
+    await settleCompilerAdmissionCompletion(database, planManaged);
+    const durablePlanAuthority = await loadCompilerEnglishAdmissionLedgerAuthorityV1(
+      database.sql,
+      { runId: RUN_ID },
     );
-    const priorClaimId = Number(priorClaims[0]!.id);
+
+    const designOutput = [
+      "STATUS: done",
+      "DESIGN_REQUIRED: false",
+      "DEVICE_TYPE: NONE",
+      "DESIGN_SYSTEM: {}",
+      "SCREEN_MAP: []",
+      "SCREENS_GENERATED: 0",
+      "AUTO_COMPLETED: design-bypass (DESIGN_REQUIRED=false)",
+    ].join("\n");
+    const designContext = { ...planContext, screen_map: "[]", screens_generated: "0", design_system: "{}" };
+    await database.sql`UPDATE steps SET status = 'running' WHERE id = 'step-v3-recovery-design'`;
+    const designManaged = await prepareCompilerAdmissionCompletion(database, {
+      runId: RUN_ID,
+      stepDbId: "step-v3-recovery-design",
+      workflowStepId: "design",
+      output: designOutput,
+    });
+    await runWithExactCompletionOwner({
+      requestId: designManaged.processing.requestId,
+      ownerInstanceId: designManaged.processing.ownerInstanceId!,
+      leaseExpiresAt: designManaged.processing.leaseExpiresAt!,
+      ownerAttemptCount: designManaged.processing.ownerAttemptCount,
+    }, () => completeSingleStepClaimAndState(database.sql, {
+      envelope: designManaged.envelope,
+      stepStatus: "done",
+      stepOutput: designOutput,
+      runContextJson: JSON.stringify(designContext),
+      expectedRunContextJson: JSON.stringify(planContext),
+      requireRuntimeCompletionOwner: true,
+      completionPlan: createSingleEffectCompletionPlanDescriptorV1({
+        kind: "single_completion",
+        continuation: { type: "single_pipeline_advance" },
+        effectPayload: { stepId: "design" },
+      }),
+    }));
+    await settleCompilerAdmissionCompletion(database, designManaged);
+
+    const storiesOutput = buildV3AutoStoriesOutput({
+      repo,
+      prd,
+      expectedProductSpecHash: productSpecHash,
+      productSemanticsVersion: "v2",
+    });
+    const screenMapLine = storiesOutput.split("\n").find((line) => line.startsWith("SCREEN_MAP: "));
+    assert.ok(screenMapLine);
+    const storiesContext = { ...designContext, screen_map: screenMapLine.slice("SCREEN_MAP: ".length) };
+    await database.sql`UPDATE runs SET context = ${JSON.stringify(storiesContext)} WHERE id = ${RUN_ID}`;
+    await database.sql`UPDATE steps SET status = 'running' WHERE id = 'step-v3-recovery-stories'`;
+    const storiesManaged = await prepareCompilerAdmissionCompletion(database, {
+      runId: RUN_ID,
+      stepDbId: "step-v3-recovery-stories",
+      workflowStepId: "stories",
+      output: storiesOutput,
+    });
+    const designAuthorityHash = await designAuthoritySubjectHashV1(
+      database.sql,
+      RUN_ID,
+      storiesContext,
+      productSpecHash,
+      false,
+    );
+    const storiesAuthority = compileCompilerStoryEnglishAdmissionV1({
+      claimId: storiesManaged.claimId,
+      runId: RUN_ID,
+      stepDbId: "step-v3-recovery-stories",
+      workflowStepId: "stories",
+      planAuthority: durablePlanAuthority,
+      designAuthoritySubjectHash: designAuthorityHash,
+      rawOutput: storiesOutput,
+      expectedOutput: storiesOutput,
+      finalContext: storiesContext,
+    });
+    const storiesReceipt = compilerStoryEnglishAdmissionStateV1(storiesAuthority).receipt;
+    const admittedContext = {
+      ...storiesContext,
+      stories_english_authority_version: storiesReceipt.authorityVersion,
+      stories_english_admission_receipt_hash: storiesAuthority.receiptHash,
+    };
+    await runWithExactCompletionOwner({
+      requestId: storiesManaged.processing.requestId,
+      ownerInstanceId: storiesManaged.processing.ownerInstanceId!,
+      leaseExpiresAt: storiesManaged.processing.leaseExpiresAt!,
+      ownerAttemptCount: storiesManaged.processing.ownerAttemptCount,
+    }, () => publishCompilerStoryEnglishAdmissionAndCompleteV1(database.sql, {
+      authority: storiesAuthority,
+      completion: {
+        envelope: storiesManaged.envelope,
+        stepStatus: "done",
+        stepOutput: storiesOutput,
+        runContextJson: JSON.stringify(admittedContext),
+        expectedRunContextJson: JSON.stringify(storiesContext),
+        requireRuntimeCompletionOwner: true,
+        completionPlan: createSingleEffectCompletionPlanDescriptorV1({
+          kind: "single_completion",
+          continuation: { type: "single_pipeline_advance" },
+          effectPayload: { stepId: "stories", compilerStoryEnglishAdmissionReceipt: storiesReceipt },
+        }),
+      },
+    }));
+    await settleCompilerAdmissionCompletion(database, storiesManaged);
+    const durableStoryAuthority = await loadCompilerStoryEnglishAdmissionLedgerAuthorityV1(
+      database.sql,
+      { runId: RUN_ID },
+    );
+    const storyAdmissionProof = createCompilerStoryEnglishAdmissionClaimProofV1(
+      durableStoryAuthority,
+    );
+    const canonicalStories = await database.sql.unsafe<Array<{ id: string }>>(
+      "SELECT id FROM stories WHERE run_id = $1 AND story_id = $2",
+      [RUN_ID, STORY_ID],
+    );
+    assert.equal(canonicalStories.length, 1);
+    const canonicalStoryDbId = canonicalStories[0]!.id;
+    await database.sql.unsafe(
+      `UPDATE stories
+          SET status = 'pending', output = NULL, retry_count = 2, max_retries = 3,
+              abandoned_count = 0, claim_generation = 4, claimed_by = NULL,
+              claimed_at = NULL, updated_at = NOW()
+        WHERE id = $1`,
+      [canonicalStoryDbId],
+    );
+
+    const preparation = await createV3PreparationBlockRepository(database.sql).resolveReady({
+      runId: RUN_ID,
+      stepId: "implement",
+      storyId: STORY_ID,
+      packetHash,
+      sourceSha: sourceRevision.sha,
+      sourceTreeHash: sourceRevision.treeHash,
+      dependencyState: [],
+      projectedDependencyIds: [],
+    });
+    assert.ok(preparation.authority);
+    const priorPublication = await publishLoopClaimRuntime(database.sql, {
+      runId: RUN_ID,
+      stepDbId: STEP_DB_ID,
+      workflowStepId: "implement",
+      storyDbId: canonicalStoryDbId,
+      storyId: STORY_ID,
+      claimAgentId: PRIOR_AGENT_ID,
+      parallelLimit: 1,
+      runtimeIntent: {
+        schema: "setfarm.runtime-claim-intent.v1",
+        sessionId: PRIOR_SESSION_ID,
+        runtimeAgentId: "openclaw-v3-prior-runtime",
+        runtimeKind: "openclaw_session",
+        ownerInstanceId: PRIOR_OWNER_INSTANCE_ID,
+      },
+      preparationAuthority: preparation.authority,
+      storyAdmissionProof,
+    });
+    assert.ok(priorPublication?.runtime);
+    assert.equal(priorPublication.claimGeneration, 5);
+    const priorClaimId = priorPublication.claimId;
     const prior = await implementationAttemptModule.reserveV3ImplementationAttempt({
       runId: RUN_ID,
       stepId: "implement",
@@ -361,17 +713,25 @@ test("claimStep publishes and completes one exact bounded supervisor repair with
     });
     assert.equal(priorTerminal.status, "completed");
     assert.equal(priorTerminal.status === "completed" && priorTerminal.attempt.disposition, "failed");
-    await database.sql.unsafe(
-      `UPDATE claim_log SET outcome = 'failed', abandoned_at = NOW(), diagnostic = 'typed evidence failure'
-        WHERE id = $1`,
-      [priorClaimId],
-    );
+    await database.sql.begin(async (transaction) => {
+      await transaction.unsafe(
+        `UPDATE claim_log SET outcome = 'failed', abandoned_at = NOW(), diagnostic = 'typed evidence failure'
+          WHERE id = $1`,
+        [priorClaimId],
+      );
+      await releaseReservedRuntimeSessionInTransaction(transaction, {
+        sessionId: PRIOR_SESSION_ID,
+        claimId: priorClaimId,
+        ownerInstanceId: PRIOR_OWNER_INSTANCE_ID,
+        diagnostic: "test prior implementation runtime never spawned",
+      });
+    });
     await database.sql.unsafe(
       `UPDATE stories
           SET status = 'failed', output = 'typed evidence failure',
               claimed_by = $2, claimed_at = NOW(), updated_at = NOW()
         WHERE id = $1`,
-      [STORY_DB_ID, PRIOR_AGENT_ID],
+      [canonicalStoryDbId, PRIOR_AGENT_ID],
     );
 
     const findingSet = findingSetModule.createFindingSetV1({
@@ -438,7 +798,7 @@ test("claimStep publishes and completes one exact bounded supervisor repair with
       claim_generation: number;
     }>>(
       "SELECT status, retry_count, output, claim_generation FROM stories WHERE id = $1",
-      [STORY_DB_ID],
+      [canonicalStoryDbId],
     );
     assert.deepEqual(beforeClaim[0], {
       status: "failed",
@@ -498,7 +858,7 @@ test("claimStep publishes and completes one exact bounded supervisor repair with
     assert.equal(claim.protocol, "v3");
     assert.equal(claim.runId, RUN_ID);
     assert.equal(claim.storyId, STORY_ID);
-    assert.equal(claim.storyDbId, STORY_DB_ID);
+    assert.equal(claim.storyDbId, canonicalStoryDbId);
     assert.equal(claim.recoveryDispatchId, authorization.dispatch.dispatchId);
     assert.equal(claim.recoveryRevisionId, revision.revisionId);
     assert.equal(claim.runtimeSessionId, SESSION_ID);
@@ -681,7 +1041,7 @@ test("claimStep publishes and completes one exact bounded supervisor repair with
          JOIN claim_log claim ON claim.id = $3
          JOIN runtime_sessions runtime ON runtime.session_id = $4
         WHERE story.id = $1`,
-      [STORY_DB_ID, STEP_DB_ID, claim.claimId, SESSION_ID],
+      [canonicalStoryDbId, STEP_DB_ID, claim.claimId, SESSION_ID],
     );
     assert.deepEqual(operationalRows[0], {
       story_status: "running",
@@ -715,7 +1075,7 @@ test("claimStep publishes and completes one exact bounded supervisor repair with
       workflowStepId: "implement",
       runId: RUN_ID,
       storyId: STORY_ID,
-      storyDbId: STORY_DB_ID,
+      storyDbId: canonicalStoryDbId,
       claimId: claim.claimId,
       claimAgentId: AGENT_ID,
       runtimeAgentId: "openclaw-v3-recovery-runtime",
@@ -894,7 +1254,7 @@ test("claimStep publishes and completes one exact bounded supervisor repair with
     const completionPlan = RuntimeCompletionPlanV1Schema.parse(ownerCommitted?.completionPlan);
     assert.equal(completionPlan.kind, "story_completion");
     assert.equal(completionPlan.continuation.type, "story_direct_merge");
-    assert.deepEqual(completionPlan.subject?.storyDbId, STORY_DB_ID);
+    assert.deepEqual(completionPlan.subject?.storyDbId, canonicalStoryDbId);
     assert.equal(completionPlan.effects.length, 1);
     assert.equal(completionPlan.effects[0]!.effectType, "v3.recovery.coordinate");
     assert.equal(completionPlan.effects[0]!.payload.attemptId, structuredHandoff.attemptId);
@@ -922,23 +1282,6 @@ test("claimStep publishes and completes one exact bounded supervisor repair with
         ["EVID_SAVE_CONFIRMATION", "pass"],
         ["EVID_SAVE_RELOAD", "pass"],
       ],
-    );
-
-    // Keep the loop open for a hypothetical next packet story so this test
-    // exercises the exact recovery continuation without invoking unrelated
-    // final-candidate/deploy gates.
-    await database.sql.unsafe(
-      `INSERT INTO stories (
-         id, run_id, story_index, story_id, title, description,
-         acceptance_criteria, status, retry_count, max_retries,
-         abandoned_count, claim_generation, depends_on, scope_files,
-         shared_files, implementation_contract, story_screens
-       ) VALUES (
-         'story-v3-recovery-next-integration', $1, 2, 'US-002',
-         'Next unrelated packet story', 'Continuation sentinel only.', '[]',
-         'pending', 0, 3, 0, 0, '[]', '[]', '[]', '{}', '[]'
-       )`,
-      [RUN_ID],
     );
 
     const effectRepository = runtimeEffectRepositoryModule.createRuntimeCompletionEffectRepository(database.sql);
@@ -975,11 +1318,14 @@ test("claimStep publishes and completes one exact bounded supervisor repair with
             resumeCanonicalContinuation: async () => {
               continuationCalls += 1;
               return stepOpsModule.resumeRuntimeCompletionEffects({
+                protocol: "v3",
+                claimId: claim.claimId,
+                runtimeSessionId: SESSION_ID,
                 runId: RUN_ID,
                 stepDbId: STEP_DB_ID,
                 workflowStepId: "implement",
                 output: rawReadyOutput,
-                storyDbId: STORY_DB_ID,
+                storyDbId: canonicalStoryDbId,
                 storyId: STORY_ID,
                 completionPlan: effectInput.plan,
               });
@@ -1105,7 +1451,7 @@ test("claimStep publishes and completes one exact bounded supervisor repair with
         RUN_ID,
         STORY_ID,
         structuredHandoff.attemptId,
-        STORY_DB_ID,
+        canonicalStoryDbId,
         STEP_DB_ID,
         authorization.dispatch.dispatchId,
         opened.recoveryCase.recoveryCaseId,

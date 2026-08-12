@@ -5,10 +5,16 @@
  */
 
 import crypto from "node:crypto";
+import type postgres from "postgres";
 import { pgQuery, pgGet, pgRun, pgExec, pgBegin, now } from "../db-pg.js";
 import type { Story } from "./types.js";
 import { logger } from "../lib/logger.js";
 import { MAX_STORIES, DEFAULT_STORY_MAX_RETRIES } from "./constants.js";
+import {
+  ENGLISH_TEXT_DESCENDANT_V1,
+  englishTextViolationMessageV1,
+  inspectEnglishTextTreeV1,
+} from "../product-compiler/english-text-contract-v1.js";
 
 // ── Story CRUD ──────────────────────────────────────────────────────
 
@@ -307,10 +313,44 @@ export function normalizeScopeFilesForStory(scopeFiles: unknown, storyCount: num
   return normalized;
 }
 
+/** Reject generated story artifacts before any database transaction can begin. */
+export function assertStoryArtifactEnglishV1(stories: unknown): void {
+  const issue = inspectEnglishTextTreeV1(stories, {
+    lexicalPathPatterns: [[ENGLISH_TEXT_DESCENDANT_V1]],
+  })[0];
+  if (issue) {
+    throw new Error(
+      `STORIES_ENGLISH_TEXT_REQUIRED: ${englishTextViolationMessageV1(issue)}`,
+    );
+  }
+}
+
 /**
  * Parse STORIES_JSON from step output and insert stories into the DB.
  */
-export async function parseAndInsertStories(output: string, runId: string): Promise<void> {
+export type ParseAndInsertStoriesOptions = Readonly<{
+  replaceExisting?: boolean;
+}>;
+
+export type StoryPublicationRowV1 = Readonly<{
+  storyIndex: number;
+  storyId: string;
+  title: string;
+  description: string;
+  acceptanceCriteria: string;
+  dependsOn: string | null;
+  scopeFiles: string | null;
+  sharedFiles: string | null;
+  scopeTargets: string | null;
+  requestedDependencies: string | null;
+  sharedEditRequests: string | null;
+  resolvedScopeFiles: string | null;
+  scopeDescription: string | null;
+  fileSkeletons: string | null;
+  implementationContract: string | null;
+}>;
+
+export function compileStoryPublicationRowsV1(output: string): readonly StoryPublicationRowV1[] {
   const lines = output.split("\n");
   const startIdx = lines.findIndex(l => l.startsWith("STORIES_JSON:"));
   // B64 support: agent sometimes encodes STORIES_JSON as base64
@@ -319,9 +359,9 @@ export async function parseAndInsertStories(output: string, runId: string): Prom
     const b64Data = lines[b64Idx].slice("STORIES_JSON_B64:".length).trim();
     try {
       const decoded = Buffer.from(b64Data, "base64").toString("utf-8");
-      return parseAndInsertStories("STORIES_JSON: " + decoded, runId);
+      return compileStoryPublicationRowsV1("STORIES_JSON: " + decoded);
     } catch (e) {
-      logger.warn("[stories] B64 decode failed: " + String(e), { runId });
+      throw new Error(`Failed to decode STORIES_JSON_B64: ${String(e instanceof Error ? e.message : e)}`);
     }
   }
 
@@ -348,13 +388,13 @@ export async function parseAndInsertStories(output: string, runId: string): Prom
         if (obj.STORIES_JSON && Array.isArray(obj.STORIES_JSON)) {
           jsonText = JSON.stringify(obj.STORIES_JSON);
         } else {
-          return; // No STORIES_JSON field in object
+          return Object.freeze([]); // No STORIES_JSON field in object
         }
       } catch {
-        return; // Not valid JSON
+        return Object.freeze([]); // Not valid JSON
       }
     } else {
-      return; // Not JSON at all — skip
+      return Object.freeze([]); // Not JSON at all — skip
     }
   }
   let stories: any[];
@@ -366,6 +406,9 @@ export async function parseAndInsertStories(output: string, runId: string): Prom
 
   if (!Array.isArray(stories)) {
     throw new Error("STORIES_JSON must be an array");
+  }
+  if (stories.length === 0) {
+    throw new Error("STORIES_JSON must contain at least one story");
   }
   if (stories.length > MAX_STORIES) {
     throw new Error(`STORIES_JSON has ${stories.length} stories, max is ${MAX_STORIES}`);
@@ -402,7 +445,10 @@ export async function parseAndInsertStories(output: string, runId: string): Prom
   for (let i = 0; i < stories.length; i++) {
     const s = stories[i];
     const ac = s.acceptanceCriteria ?? s.acceptance_criteria;
-    if (!s.id || !s.title || !s.description || !Array.isArray(ac) || ac.length === 0) {
+    if (typeof s.id !== "string" || s.id.length === 0
+      || typeof s.title !== "string" || s.title.length === 0
+      || typeof s.description !== "string" || s.description.length === 0
+      || !Array.isArray(ac) || ac.length === 0) {
       throw new Error(`STORIES_JSON story at index ${i} missing required fields (id, title, description, acceptanceCriteria)`);
     }
     if (seenIds.has(s.id)) {
@@ -411,32 +457,76 @@ export async function parseAndInsertStories(output: string, runId: string): Prom
     seenIds.add(s.id);
   }
 
+  assertStoryArtifactEnglishV1(stories);
+
+  return Object.freeze(stories.map((s, storyIndex): StoryPublicationRowV1 => {
+    const acceptanceCriteria = s.acceptanceCriteria ?? s.acceptance_criteria;
+    const normalizedScopeFiles = normalizeScopeFilesForStory(s.scope_files, stories.length);
+    const scopeFiles = normalizedScopeFiles ? JSON.stringify(normalizedScopeFiles) : null;
+    return Object.freeze({
+      storyIndex,
+      storyId: s.id,
+      title: s.title,
+      description: s.description,
+      acceptanceCriteria: JSON.stringify(acceptanceCriteria),
+      dependsOn: Array.isArray(s.depends_on) ? JSON.stringify(s.depends_on) : null,
+      scopeFiles,
+      sharedFiles: Array.isArray(s.shared_files) ? JSON.stringify(s.shared_files) : null,
+      scopeTargets: normalizeJsonArray(s.scope_targets),
+      requestedDependencies: normalizeJsonArray(s.requested_dependencies),
+      sharedEditRequests: normalizeJsonArray(s.shared_edit_requests),
+      resolvedScopeFiles: scopeFiles,
+      scopeDescription: typeof s.scope_description === "string" ? s.scope_description : null,
+      fileSkeletons: s.file_skeletons && typeof s.file_skeletons === "object"
+        ? JSON.stringify(s.file_skeletons)
+        : null,
+      implementationContract: normalizeImplementationContract(s.implementation_contract),
+    });
+  }));
+}
+
+export async function insertStoryPublicationRowsInTransactionV1(
+  transaction: postgres.TransactionSql,
+  runId: string,
+  rows: readonly StoryPublicationRowV1[],
+): Promise<void> {
+  const ts = now();
+  for (const row of rows) {
+    await transaction.unsafe(
+      `INSERT INTO stories (id, run_id, story_index, story_id, title, description, acceptance_criteria, status, retry_count, max_retries, depends_on, scope_files, shared_files, scope_targets, requested_dependencies, shared_edit_requests, resolved_scope_files, scope_description, file_skeletons, implementation_contract, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', 0, 5, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $18)`,
+      [
+        crypto.randomUUID(), runId, row.storyIndex, row.storyId, row.title,
+        row.description, row.acceptanceCriteria, row.dependsOn, row.scopeFiles,
+        row.sharedFiles, row.scopeTargets, row.requestedDependencies,
+        row.sharedEditRequests, row.resolvedScopeFiles, row.scopeDescription,
+        row.fileSkeletons, row.implementationContract, ts,
+      ],
+    );
+  }
+}
+
+export async function parseAndInsertStories(
+  output: string,
+  runId: string,
+  options: ParseAndInsertStoriesOptions = {},
+): Promise<void> {
+  const rows = compileStoryPublicationRowsV1(output);
+  if (rows.length === 0) return;
+
   await pgBegin(async (sql) => {
+    if (options.replaceExisting) {
+      const runRows = await sql`SELECT id FROM runs WHERE id = ${runId} FOR UPDATE`;
+      if (runRows.length !== 1) {
+        throw new Error("STORIES_CANONICAL_PUBLICATION_RUN_INVALID");
+      }
+      await sql`DELETE FROM stories WHERE run_id = ${runId}`;
+    }
     const existingCount = await sql`SELECT COUNT(*) as cnt FROM stories WHERE run_id = ${runId}`;
     if (Number(existingCount[0].cnt) > 0) {
       logger.info("Stories already exist for run " + runId + ", skipping duplicate insertion");
       return;
     }
-    const ts = now();
-    for (let i = 0; i < stories.length; i++) {
-      const s = stories[i];
-      const ac = s.acceptanceCriteria ?? s.acceptance_criteria;
-      const dependsOn = Array.isArray(s.depends_on) ? JSON.stringify(s.depends_on) : null;
-      // Modern contract: STORIES emits logical scope_targets and optional
-      // shared_edit_requests. SETUP-BUILD resolves those to physical paths and
-      // writes resolved_scope_files. Legacy scope_files are still stored only
-      // for old runs and explicit human-authored stories.
-      const normalizedScopeFiles = normalizeScopeFilesForStory(s.scope_files, stories.length);
-      const scopeFiles: string | null = normalizedScopeFiles ? JSON.stringify(normalizedScopeFiles) : null;
-      const sharedFiles = Array.isArray(s.shared_files) ? JSON.stringify(s.shared_files) : null;
-      const scopeTargets = normalizeJsonArray(s.scope_targets);
-      const requestedDependencies = normalizeJsonArray(s.requested_dependencies);
-      const sharedEditRequests = normalizeJsonArray(s.shared_edit_requests);
-      const scopeDesc = typeof s.scope_description === "string" ? s.scope_description : null;
-      const fileSkeletons = s.file_skeletons && typeof s.file_skeletons === "object" ? JSON.stringify(s.file_skeletons) : null;
-      const implementationContract = normalizeImplementationContract(s.implementation_contract);
-      await sql`INSERT INTO stories (id, run_id, story_index, story_id, title, description, acceptance_criteria, status, retry_count, max_retries, depends_on, scope_files, shared_files, scope_targets, requested_dependencies, shared_edit_requests, resolved_scope_files, scope_description, file_skeletons, implementation_contract, created_at, updated_at)
-        VALUES (${crypto.randomUUID()}, ${runId}, ${i}, ${s.id}, ${s.title}, ${s.description}, ${JSON.stringify(ac)}, 'pending', 0, 5, ${dependsOn}, ${scopeFiles}, ${sharedFiles}, ${scopeTargets}, ${requestedDependencies}, ${sharedEditRequests}, ${scopeFiles}, ${scopeDesc}, ${fileSkeletons}, ${implementationContract}, ${ts}, ${ts})`;
-    }
+    await insertStoryPublicationRowsInTransactionV1(sql, runId, rows);
   });
 }

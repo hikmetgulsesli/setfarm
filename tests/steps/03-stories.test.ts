@@ -3,31 +3,31 @@ import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { storiesModule } from "../../dist/installer/steps/03-stories/module.js";
+import { storiesModule } from "../../src/installer/steps/03-stories/module.js";
 import {
   collectUiBehaviorRequirements,
   computeUiBehaviorContract,
   computePredictedScreenFiles,
   extractExplicitMaxStories,
-} from "../../dist/installer/steps/03-stories/context.js";
+} from "../../src/installer/steps/03-stories/context.js";
 import {
   buildAcceptanceCriteria,
   buildAutoStoriesOutput,
   buildSingleStoryScopeFiles,
-} from "../../dist/installer/steps/03-stories/preclaim.js";
-import { buildOwnedActionsForScreens } from "../../dist/installer/steps/03-stories/action-control-mapper.js";
+} from "../../src/installer/steps/03-stories/preclaim.js";
+import { buildOwnedActionsForScreens } from "../../src/installer/steps/03-stories/action-control-mapper.js";
 import {
   detectStorySemanticDrift,
   detectImplementationContractGaps,
   detectUiBehaviorContractGaps,
   extractStoryDomainTerms,
   planUiBehaviorCriteriaInjections,
-} from "../../dist/installer/steps/03-stories/guards.js";
+} from "../../src/installer/steps/03-stories/guards.js";
 import {
   detectPrdActionCoverageGaps,
   planPrdActionOwnershipDedupes,
-} from "../../dist/installer/steps/03-stories/story-coverage-gates.js";
-import { normalizeScopeFilesForStory } from "../../dist/installer/story-ops.js";
+} from "../../src/installer/steps/03-stories/story-coverage-gates.js";
+import { normalizeScopeFilesForStory } from "../../src/installer/story-ops.js";
 import { runModule } from "./harness.js";
 
 function hasScopeTarget(story: any, role: string, screenId?: string): boolean {
@@ -41,6 +41,14 @@ function hasSharedEditRequest(story: any, role: string): boolean {
 }
 
 describe("03-stories step module", () => {
+  it("keeps the story authoring language immutable", () => {
+    const rules = readFileSync(path.join(process.cwd(), "src/installer/steps/03-stories/rules.md"), "utf-8");
+
+    assert.match(rules, /UI_LANGUAGE` is exactly English/);
+    assert.match(rules, /raw evidence of a\s+stale upstream artifact/);
+    assert.doesNotMatch(rules, /requested product\s+language|may specify the user's requested/);
+  });
+
   it("happy path: STATUS=done passes validation + prompt under budget", async () => {
     const result = await runModule(storiesModule, "Test", { status: "done" });
     assert.ok(result.validation.ok);
@@ -60,6 +68,28 @@ describe("03-stories step module", () => {
     assert.equal(storiesModule.maxPromptSize, 32768);
   });
 
+  it("keeps v3 STORIES on the compiler-owned no-agent path", () => {
+    const preclaim = readFileSync(
+      path.join(process.cwd(), "src/installer/steps/03-stories/preclaim.ts"),
+      "utf8",
+    );
+    const stepOps = readFileSync(path.join(process.cwd(), "src/installer/step-ops.ts"), "utf8");
+    assert.match(preclaim, /protocol !== "v3" && process\.env\.SETFARM_DISABLE_AUTO_STORIES/);
+    assert.match(preclaim, /disposition: "compiler_completion" as const/);
+    assert.doesNotMatch(preclaim, /await failStep\(/);
+    assert.match(stepOps, /V3_STORIES_COMPILER_MODULE_REQUIRED/);
+    assert.match(stepOps, /V3_STORIES_COMPILER_PRECLAIM_REQUIRED/);
+    assert.match(stepOps, /V3_STORIES_COMPILER_COMPLETION_REQUIRED/);
+    assert.match(
+      stepOps,
+      /step\.step_id === "stories"\s*&& typeof _stepModule\.preClaim !== "function"/,
+    );
+    assert.match(stepOps, /releaseReservedRuntimeSessionInTransaction/);
+    const compilerReturn = stepOps.indexOf("compilerCompletionOutput,");
+    const promptResolution = stepOps.indexOf("let resolvedInput = resolveTemplate(", compilerReturn);
+    assert.ok(compilerReturn > 0 && promptResolution > compilerReturn);
+  });
+
   it("prompt includes logical scope target and predicted_screen_files mentions", async () => {
     const result = await runModule(storiesModule, "Test", { status: "done" });
     assert.ok(result.prompt.includes("scope_targets"), "prompt should mention scope_targets");
@@ -75,8 +105,8 @@ describe("03-stories step module", () => {
   });
 
   it("stores implementation contracts as story DB fields", () => {
-    const dbSource = readFileSync(path.join(process.cwd(), "dist/db-pg.js"), "utf-8");
-    const storyOpsSource = readFileSync(path.join(process.cwd(), "dist/installer/story-ops.js"), "utf-8");
+    const dbSource = readFileSync(path.join(process.cwd(), "src/db-pg.ts"), "utf-8");
+    const storyOpsSource = readFileSync(path.join(process.cwd(), "src/installer/story-ops.ts"), "utf-8");
 
     assert.match(dbSource, /implementation_contract TEXT/);
     assert.match(storyOpsSource, /normalizeImplementationContract/);

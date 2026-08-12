@@ -11,11 +11,17 @@ import {
 import { canonicalJsonBytes, hashCanonicalJson } from "../../src/product-compiler/canonical-json.js";
 import { bootstrapArtifactIndex } from "../../src/product-compiler/indexed-artifact-publisher.js";
 import { ContentAddressedArtifactStore } from "../../src/product-compiler/artifact-store.js";
-import { createRuntimePacketCompiler } from "../../src/product-compiler/runtime-packet-compiler.js";
+import {
+  RuntimePacketCompilerError,
+  createRuntimePacketCompiler,
+} from "../../src/product-compiler/runtime-packet-compiler.js";
 import {
   buildMinimalValidContracts,
-  buildMinimalValidV3PacketV2Contracts,
 } from "./fixtures/minimal-valid-contract.js";
+import {
+  buildNoDesignProductBuildPacketV3Contracts,
+  buildStitchProductBuildPacketV3Contracts,
+} from "./fixtures/product-build-packet-v3.js";
 import { createIsolatedTestDatabase, type TestDatabase } from "../execution-attempts/test-database.js";
 
 const RELEASE_SHA = "c".repeat(40);
@@ -36,9 +42,7 @@ describe("runtime Product Build Packet compiler", () => {
   after(async () => database.cleanup());
 
   beforeEach(async () => {
-    await database.sql.unsafe(
-      "TRUNCATE product_packets, run_artifact_refs, artifact_publication_reservations, semantic_artifacts, execution_attempts, claim_log, runs CASCADE",
-    );
+    await database.reset();
     await database.sql.unsafe(
       `UPDATE artifact_capacity
           SET quota_bytes = 8388608, max_payload_bytes = 4194304,
@@ -76,7 +80,7 @@ describe("runtime Product Build Packet compiler", () => {
       [runId, mode, RELEASE_SHA, "d".repeat(64), releaseAdmissionHash],
     );
     const contracts = mode === "v3"
-      ? buildMinimalValidV3PacketV2Contracts()
+      ? buildNoDesignProductBuildPacketV3Contracts()
       : buildMinimalValidContracts();
     const compiler = createRuntimePacketCompiler({
       sql: database.sql,
@@ -101,7 +105,7 @@ describe("runtime Product Build Packet compiler", () => {
     } as const;
   }
 
-  it("atomically activates one deterministic v3 packet and seven canonical refs", async () => {
+  it("atomically activates one deterministic v3 packet and its exact seven-ref no-design set", async () => {
     const test = await fixture("v3");
     const [first, second] = await Promise.all([
       test.compiler.compile(test.input),
@@ -115,16 +119,61 @@ describe("runtime Product Build Packet compiler", () => {
       packet_hash: string | null;
       packets: number;
       refs: number;
+      source_map_type: string | null;
     }>>`
       SELECT r.packet_hash,
              (SELECT COUNT(*)::integer FROM product_packets WHERE run_id = r.id) AS packets,
-             (SELECT COUNT(*)::integer FROM run_artifact_refs WHERE run_id = r.id) AS refs
+             (SELECT COUNT(*)::integer FROM run_artifact_refs WHERE run_id = r.id) AS refs,
+             (SELECT MAX(a.artifact_type)
+                FROM run_artifact_refs ra
+                JOIN semantic_artifacts a ON a.artifact_hash = ra.artifact_hash
+               WHERE ra.run_id = r.id AND ra.ref_key = 'IMPLEMENTATION_SOURCE_MAP') AS source_map_type
         FROM runs r WHERE r.id = ${test.runId}
     `;
     assert.deepEqual(rows.map((row) => ({ ...row })), [{
       packet_hash: first.compilation.packetHash,
       packets: 1,
       refs: 7,
+      source_map_type: "setfarm.implementation-source-map.v1",
+    }]);
+  });
+
+  it("activates the exact eight-ref native Stitch packet without historical adapters", async () => {
+    const test = await fixture("v3");
+    Object.assign(
+      test.input,
+      await buildStitchProductBuildPacketV3Contracts(test.input.producer),
+    );
+    const result = await test.compiler.compile(test.input);
+    assert.equal(result.activation, "activated");
+    assert.equal(result.compilation.packet?.schema, "setfarm.product-build-packet.v3");
+    const rows = await database.sql<Array<{
+      refs: number;
+      graph_type: string | null;
+      source_map_type: string | null;
+      nested_design_sources: number;
+    }>>`
+      SELECT COUNT(ra.ref_key)::integer AS refs,
+             MAX(a.artifact_type) FILTER (WHERE ra.ref_key = 'DESIGN_GRAPH') AS graph_type,
+             MAX(a.artifact_type) FILTER (WHERE ra.ref_key = 'IMPLEMENTATION_SOURCE_MAP') AS source_map_type,
+             (SELECT COUNT(*)::integer
+                FROM semantic_artifacts nested
+               WHERE nested.artifact_type IN (
+                 'setfarm.design-generation-targets.v2',
+                 'setfarm.stitch-direct-response-evidence.v2',
+                 'setfarm.stitch-rendered-semantics.v2',
+                 'setfarm.stitch-target-candidate-selection.v2',
+                 'setfarm.stitch-target-response-bindings.v3'
+               )) AS nested_design_sources
+        FROM run_artifact_refs ra
+        JOIN semantic_artifacts a ON a.artifact_hash = ra.artifact_hash
+       WHERE ra.run_id = ${test.runId}
+    `;
+    assert.deepEqual(rows.map((row) => ({ ...row })), [{
+      refs: 8,
+      graph_type: "setfarm.design-interaction-graph.v2",
+      source_map_type: "setfarm.implementation-source-map.v1",
+      nested_design_sources: 5,
     }]);
   });
 
@@ -156,13 +205,7 @@ describe("runtime Product Build Packet compiler", () => {
 
   it("stores a rejected v3 report but never creates a half-sealed packet", async () => {
     const test = await fixture("v3");
-    const binding = test.input.designGraph.bindings.shift()!;
-    test.input.designGraph.unresolvedBindings.push({
-      controlRef: binding.controlRef,
-      code: "LINK_SEMANTIC_ACTION_MISSING",
-      provenance: [],
-      suggestions: [],
-    });
+    (test.input.storyPlanV2 as any).schema = "setfarm.story-plan.v1";
     const result = await test.compiler.compile(test.input);
     assert.equal(result.activation, "rejected");
     assert.equal(result.compilation.status, "rejected");
@@ -177,6 +220,7 @@ describe("runtime Product Build Packet compiler", () => {
              (SELECT COUNT(*)::integer FROM run_artifact_refs
                WHERE run_id = r.id AND ref_key IN (
                  'PRODUCT_SPEC', 'DESIGN_GRAPH', 'BUILD_TOPOLOGY', 'STORY_PLAN',
+                 'DESIGN_SOURCE_CLOSURE', 'IMPLEMENTATION_SOURCE_MAP',
                  'PRODUCT_BUILD_PACKET', 'COMPILATION_REPORT'
                )) AS canonical_refs,
              (SELECT COUNT(*)::integer FROM run_artifact_refs
@@ -189,55 +233,62 @@ describe("runtime Product Build Packet compiler", () => {
     assert.equal((rows[0]?.rejected_refs ?? 0) > 0, true);
   });
 
-  it("rejects historical ProductSpec bytes on the explicit v3 compiler path", async () => {
+  it("rejects a v3 compile without its required ImplementationSourceMapV1 producer inputs", async () => {
     const test = await fixture("v3");
-    const historical = buildMinimalValidContracts();
-    Object.assign(test.input, {
-      productSpec: historical.productSpec,
-      designGraph: historical.designGraph,
-      buildTopology: historical.buildTopology,
-      storyPlan: historical.storyPlan,
-    });
+    delete (test.input as any).implementationSourceInputsV1;
     const result = await test.compiler.compile(test.input);
     assert.equal(result.activation, "rejected");
+    assert.equal(result.compilation.packet, undefined);
     assert.equal(
-      result.compilation.report.diagnostics.some((item) =>
-        item.code === "CONTRACT_V3_PRODUCT_DELIVERY_MISSING"),
+      result.compilation.report.status === "rejected"
+        && result.compilation.report.rejectionCodes.includes(
+          "IMPLEMENTATION_SOURCE_MAP_V1_INPUT_INVALID",
+        ),
       true,
     );
   });
 
-  it("applies the indexed payload limit to nested design-source closure children", async () => {
+  it("rejects historical ProductSpec bytes on the explicit v3 compiler path", async () => {
     const test = await fixture("v3");
-    const designSource = structuredClone(test.input.designSource!);
-    if (designSource.kind !== "stitch") throw new Error("Expected Stitch fixture");
-    const renderedSemantics = designSource.renderedSemantics as any;
-    renderedSemantics.resources = Array.from({ length: 200 }, (_, index) => {
-      const urlHash = index.toString(16).padStart(64, "0");
-      const contentHash = (index + 10_000).toString(16).padStart(64, "0");
-      return {
-        urlHash,
-        resourceType: index % 2 === 0 ? "stylesheet" : "script",
-        contentHash,
-        byteLength: 1,
-        locator: `stitch/render-resources/${contentHash}.bin`,
-      };
-    });
-    const candidateSelection = designSource.candidateSelection as any;
-    candidateSelection.renderedSemanticsHash = hashCanonicalJson(renderedSemantics);
-    const responseBindings = designSource.responseBindings as any;
-    responseBindings.renderedSemanticsHash = candidateSelection.renderedSemanticsHash;
-    responseBindings.candidateSelectionHash = hashCanonicalJson(candidateSelection);
-    const designGraph = structuredClone(test.input.designGraph) as any;
-    designGraph.rawArtifactHashes = [...new Set([
-      ...designGraph.rawArtifactHashes,
-      hashCanonicalJson(designSource.generationTargets),
-      hashCanonicalJson(designSource.directResponseEvidence),
-      hashCanonicalJson(renderedSemantics),
-      hashCanonicalJson(candidateSelection),
-      hashCanonicalJson(responseBindings),
-    ])].sort();
-    Object.assign(test.input, { designGraph, designSource });
+    const historical = buildMinimalValidContracts();
+    (test.input as any).productSpecV2 = historical.productSpec;
+    const result = await test.compiler.compile(test.input);
+    assert.equal(result.activation, "rejected");
+    assert.equal(
+      result.compilation.report.diagnostics.some((item) =>
+        item.code === "CONTRACT_V3_PRODUCT_SPEC_SCHEMA_INVALID"),
+      true,
+    );
+  });
+
+  it("pins v3 compilation to the run, compiler, and producer release SHA before publication", async () => {
+    const test = await fixture("v3");
+    await assert.rejects(
+      test.compiler.compile({
+        ...test.input,
+        producer: { ...test.input.producer, codeSha: "f".repeat(40) },
+      }),
+      (error: unknown) => error instanceof RuntimePacketCompilerError
+        && error.code === "RUNTIME_PACKET_RUN_RELEASE_MISMATCH",
+    );
+    const rows = await database.sql<Array<{ refs: number; packets: number; packet_hash: string | null }>>`
+      SELECT
+        (SELECT COUNT(*)::integer FROM run_artifact_refs WHERE run_id = r.id) AS refs,
+        (SELECT COUNT(*)::integer FROM product_packets WHERE run_id = r.id) AS packets,
+        r.packet_hash
+      FROM runs r WHERE r.id = ${test.runId}
+    `;
+    assert.deepEqual(rows.map((row) => ({ ...row })), [
+      { refs: 0, packets: 0, packet_hash: null },
+    ]);
+  });
+
+  it("applies the indexed payload limit to native v3 child envelopes", async () => {
+    const test = await fixture("v3");
+    const storyPlan = structuredClone(test.input.storyPlanV2) as any;
+    storyPlan.stories[0].description = "v3 authority ".repeat(700);
+    storyPlan.partitionHash = hashCanonicalJson(storyPlan.stories);
+    (test.input as any).storyPlanV2 = storyPlan;
 
     const envelopeBytes = (artifactType: string, payload: unknown) => canonicalJsonBytes({
       schema: "setfarm.semantic-artifact-envelope.v1",
@@ -246,19 +297,15 @@ describe("runtime Product Build Packet compiler", () => {
       payload,
     }).byteLength;
     const earlierEnvelopeBytes = [
-      ["setfarm.product-spec.v1", test.input.productSpec],
-      ["setfarm.design-interaction-graph.v1", designGraph],
-      ["setfarm.build-topology.v1", test.input.buildTopology],
-      ["setfarm.story-plan.v1", test.input.storyPlan],
-      ["setfarm.design-generation-targets.v1", designSource.generationTargets],
-      ["setfarm.stitch-direct-response-evidence.v2", designSource.directResponseEvidence],
+      ["setfarm.product-spec.v2", test.input.productSpecV2],
+      ["setfarm.build-topology.v1", test.input.buildTopologyV1],
     ].map(([artifactType, payload]) => envelopeBytes(artifactType as string, payload));
-    const renderedEnvelopeBytes = envelopeBytes(
-      "setfarm.stitch-rendered-semantics.v1",
-      renderedSemantics,
+    const storyEnvelopeBytes = envelopeBytes(
+      "setfarm.story-plan.v2",
+      storyPlan,
     );
     const maxEarlierEnvelopeBytes = Math.max(...earlierEnvelopeBytes);
-    assert.equal(renderedEnvelopeBytes > maxEarlierEnvelopeBytes, true);
+    assert.equal(storyEnvelopeBytes > maxEarlierEnvelopeBytes, true);
     await database.sql.unsafe(
       `UPDATE artifact_capacity SET max_payload_bytes = $1, updated_at = NOW()
         WHERE capacity_key = 'semantic-artifacts'`,

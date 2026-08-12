@@ -4,17 +4,17 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-import { implementModule } from "../../dist/installer/steps/06-implement/module.js";
-import { checkBuildGate, checkGeneratedRuntimeSemanticGate, checkGeneratedScreenRequiredPropsGate, checkGeneratedScreenShellChromeGate, checkImplementEvidenceGate, checkPlatformHelperContaminationGate, checkScopeEnforcement, checkScopeFilesGate, checkTestGate, classifyGeneratedScreenRegressionIssues, computeScopeFileLimits, detectPackageBuildCommand, findDesignDomImplementationFindings, findDesignDomImplementationIssues, findGeneratedRuntimeSemanticIssues, findGeneratedRuntimeSupervisorQualityIssues, findGeneratedScreenIntegrationIssues, findGeneratedScreenRegressionIssues, findGeneratedScreenRequiredPropIssues, findGeneratedScreenShellChromeIssues, findPlatformHelperContaminationIssues, getOutOfScopeStoryFiles, normalize, parseGitStatusPorcelainPath, selectMatchingStoryWorktree, sourceExposesWindowApp, validateOutput } from "../../dist/installer/steps/06-implement/guards.js";
-import { buildScopeFilesRetryFailureForWorkdir, cleanupOutOfScopeWorktreeFiles, mergeRetryFailureTexts, retryPatchCategoryHint, shouldRestoreRetryWorktreePatchForCategory } from "../../dist/installer/steps/06-implement/context.js";
-import { cleanupBlockedStoryCommitScope, commitStoryWorktreeScopeIfNeeded, decideStorySystemSmokeGate } from "../../dist/installer/step-ops.js";
-import { createStoryWorktree, ensureStoryBranchWorktree, hardenGeneratedScreenSourcesForScope } from "../../dist/installer/worktree-ops.js";
-import { assembleImplementContext, fileTreeManifestPath, setupCertificatePath, sharedGrantsPath } from "../../dist/installer/setup-handoff.js";
-import { IMPLICIT_STORY_SCOPE_FILES, isImplicitStoryScopeFile } from "../../dist/installer/story-scope.js";
-import { checkStoryDesignCompliance } from "../../dist/installer/step-guardrails.js";
-import { STACK_RULES } from "../../dist/installer/stack-modules/stack-rules.js";
-import { pgRun } from "../../dist/db-pg.js";
-import type { ParsedOutput } from "../../dist/installer/steps/types.js";
+import { implementModule } from "../../src/installer/steps/06-implement/module.js";
+import { checkBuildGate, checkGeneratedRuntimeSemanticGate, checkGeneratedScreenRequiredPropsGate, checkGeneratedScreenShellChromeGate, checkImplementEvidenceGate, checkPlatformHelperContaminationGate, checkScopeEnforcement, checkScopeFilesGate, checkTestGate, classifyGeneratedScreenRegressionIssues, computeScopeFileLimits, detectPackageBuildCommand, findDesignDomImplementationFindings, findDesignDomImplementationIssues, findGeneratedRuntimeSemanticIssues, findGeneratedRuntimeSupervisorQualityIssues, findGeneratedScreenIntegrationIssues, findGeneratedScreenRegressionIssues, findGeneratedScreenRequiredPropIssues, findGeneratedScreenShellChromeIssues, findPlatformHelperContaminationIssues, getOutOfScopeStoryFiles, normalize, parseGitStatusPorcelainPath, selectMatchingStoryWorktree, sourceExposesWindowApp, validateOutput } from "../../src/installer/steps/06-implement/guards.js";
+import { buildScopeFilesRetryFailureForWorkdir, cleanupOutOfScopeWorktreeFiles, mergeRetryFailureTexts, retryPatchCategoryHint, shouldRestoreRetryWorktreePatchForCategory } from "../../src/installer/steps/06-implement/context.js";
+import { cleanupBlockedStoryCommitScope, commitStoryWorktreeScopeIfNeeded, decideStorySystemSmokeGate } from "../../src/installer/step-ops.js";
+import { createStoryWorktree, ensureStoryBranchWorktree, hardenGeneratedScreenSourcesForScope } from "../../src/installer/worktree-ops.js";
+import { assembleImplementContext, fileTreeManifestPath, setupCertificatePath, sharedGrantsPath } from "../../src/installer/setup-handoff.js";
+import { IMPLICIT_STORY_SCOPE_FILES, isImplicitStoryScopeFile } from "../../src/installer/story-scope.js";
+import { checkStoryDesignCompliance } from "../../src/installer/step-guardrails.js";
+import { STACK_RULES } from "../../src/installer/stack-modules/stack-rules.js";
+import { pgRun } from "../../src/db-pg.js";
+import type { ParsedOutput } from "../../src/installer/steps/types.js";
 
 function git(cwd: string, args: string[]): string {
   return execFileSync("git", args, {
@@ -45,8 +45,24 @@ describe("06-implement step module", () => {
     assert.deepEqual(implementModule.requiredOutputFields, ["STATUS"]);
   });
 
+  it("requires durable STORIES admission before V3 implementation consumption", () => {
+    const source = fs.readFileSync(path.join(process.cwd(), "src/installer/step-ops.ts"), "utf8");
+    const selection = source.indexOf("if (!step) return { found: false };");
+    const admission = source.indexOf(
+      "await loadCompilerStoryEnglishAdmissionLedgerAuthorityV1(",
+      selection,
+    );
+    const contextRead = source.indexOf("await getRunContext(step.run_id)", selection);
+    const loopStart = source.indexOf('if (step.type === "loop")', selection);
+    assert.ok(selection > 0 && admission > selection);
+    assert.ok(contextRead > admission);
+    assert.ok(loopStart > admission);
+    assert.match(source.slice(selection, admission), /step\.step_id === "implement"/);
+    assert.match(source, /admitCandidate:\s*async \(candidate\)/);
+  });
+
   it("rules treat shared files as read-only context", () => {
-    const rules = fs.readFileSync(path.join(process.cwd(), "dist/installer/steps/06-implement/rules.md"), "utf-8");
+    const rules = fs.readFileSync(path.join(process.cwd(), "src/installer/steps/06-implement/rules.md"), "utf-8");
     assert.ok(rules.includes("SHARED_FILES are read/import context only"));
     assert.ok(rules.includes("Do NOT invent props for components imported from SHARED_FILES"));
     assert.ok(rules.includes("typed `actions` prop"));
@@ -58,8 +74,8 @@ describe("06-implement step module", () => {
   });
 
   it("keeps app diagnostics out of generated full-screen Stitch surfaces", () => {
-    const prompt = fs.readFileSync(path.join(process.cwd(), "dist/installer/steps/06-implement/prompt.md"), "utf-8");
-    const rules = fs.readFileSync(path.join(process.cwd(), "dist/installer/steps/06-implement/rules.md"), "utf-8");
+    const prompt = fs.readFileSync(path.join(process.cwd(), "src/installer/steps/06-implement/prompt.md"), "utf-8");
+    const rules = fs.readFileSync(path.join(process.cwd(), "src/installer/steps/06-implement/rules.md"), "utf-8");
 
     assert.match(prompt, /Do not add visible diagnostic, session, status, QA, debug, or telemetry strips/);
     assert.match(prompt, /Do not wrap generated full-screen Stitch screens in another semantic landmark\/root/);
@@ -91,8 +107,8 @@ describe("06-implement step module", () => {
   });
 
   it("documents orchestrator-owned implementation evidence rollout modes", () => {
-    const prompt = fs.readFileSync(path.join(process.cwd(), "dist/installer/steps/06-implement/prompt.md"), "utf-8");
-    const rules = fs.readFileSync(path.join(process.cwd(), "dist/installer/steps/06-implement/rules.md"), "utf-8");
+    const prompt = fs.readFileSync(path.join(process.cwd(), "src/installer/steps/06-implement/prompt.md"), "utf-8");
+    const rules = fs.readFileSync(path.join(process.cwd(), "src/installer/steps/06-implement/rules.md"), "utf-8");
 
     assert.match(prompt, /required when Setfarm runs with `SETFARM_IMPLEMENT_EVIDENCE_GATE=blocking`/);
     assert.match(prompt, /strongly expected when it runs with `advisory`/);
@@ -200,7 +216,7 @@ describe("06-implement step module", () => {
   });
 
   it("exposes retry worktree patch memory instead of compact-only feedback", () => {
-    const sourcePath = "dist/installer/steps/06-implement/context.js";
+    const sourcePath = "src/installer/steps/06-implement/context.ts";
     const source = fs.readFileSync(path.join(process.cwd(), sourcePath), "utf-8");
     const blockStart = source.indexOf("RETRY_WORKTREE_PATCH:");
     assert.notEqual(blockStart, -1, `${sourcePath} retry patch feedback block missing`);
@@ -212,7 +228,7 @@ describe("06-implement step module", () => {
     assert.match(source, /```diff/, sourcePath);
     assert.match(source, /900_000|900000/, sourcePath);
 
-    const stepOps = fs.readFileSync(path.join(process.cwd(), "dist/installer/step-ops.js"), "utf-8");
+    const stepOps = fs.readFileSync(path.join(process.cwd(), "src/installer/step-ops.ts"), "utf-8");
     assert.match(stepOps, /injectStoryContextFromModule\(nextStory, step, context,/);
     assert.doesNotMatch(stepOps, /RETRY_WORKTREE_PATCH_MEMORY:/);
   });
@@ -1037,9 +1053,9 @@ describe("06-implement step module", () => {
   });
 
   it("keeps git ownership in the platform instead of the implement agent", () => {
-    const prompt = fs.readFileSync(path.join(process.cwd(), "dist/installer/steps/06-implement/prompt.md"), "utf-8");
-    const contextSource = fs.readFileSync(path.join(process.cwd(), "dist/installer/steps/06-implement/context.js"), "utf-8");
-    const rules = fs.readFileSync(path.join(process.cwd(), "dist/installer/steps/06-implement/rules.md"), "utf-8");
+    const prompt = fs.readFileSync(path.join(process.cwd(), "src/installer/steps/06-implement/prompt.md"), "utf-8");
+    const contextSource = fs.readFileSync(path.join(process.cwd(), "src/installer/steps/06-implement/context.ts"), "utf-8");
+    const rules = fs.readFileSync(path.join(process.cwd(), "src/installer/steps/06-implement/rules.md"), "utf-8");
     const workflow = fs.readFileSync(path.join(process.cwd(), "workflows/feature-dev/workflow.yml"), "utf-8");
     const implementInput = workflow.split("\n  - id: implement\n")[1]?.split("\n  - id: verify\n")[0] || "";
     assert.match(prompt, /Do NOT run `git add`, `git commit`, `git push`, `gh pr create`, or any branch command/);
@@ -1256,9 +1272,9 @@ describe("06-implement step module", () => {
     assert.equal(isImplicitStoryScopeFile("src/types/domain.ts"), false);
     assert.ok(IMPLICIT_STORY_SCOPE_FILES.includes("src/test/utils.tsx"));
 
-    const guards = fs.readFileSync(path.join(process.cwd(), "dist/installer/steps/06-implement/guards.js"), "utf-8");
-    const stepOps = fs.readFileSync(path.join(process.cwd(), "dist/installer/step-ops.js"), "utf-8");
-    const context = fs.readFileSync(path.join(process.cwd(), "dist/installer/steps/06-implement/context.js"), "utf-8");
+    const guards = fs.readFileSync(path.join(process.cwd(), "src/installer/steps/06-implement/guards.ts"), "utf-8");
+    const stepOps = fs.readFileSync(path.join(process.cwd(), "src/installer/step-ops.ts"), "utf-8");
+    const context = fs.readFileSync(path.join(process.cwd(), "src/installer/steps/06-implement/context.ts"), "utf-8");
     assert.match(guards, /isImplicitStoryScopeFile/);
     assert.match(stepOps, /isImplicitStoryScopeFile/);
     assert.match(stepOps, /IMPLICIT_STORY_SCOPE_FILES/);
@@ -1673,8 +1689,8 @@ describe("06-implement step module", () => {
   });
 
   it("treats Stitch design as binding while separating generated and non-generated stacks", () => {
-    const prompt = fs.readFileSync(path.join(process.cwd(), "dist/installer/steps/06-implement/prompt.md"), "utf-8");
-    const contextSource = fs.readFileSync(path.join(process.cwd(), "dist/installer/steps/06-implement/context.js"), "utf-8");
+    const prompt = fs.readFileSync(path.join(process.cwd(), "src/installer/steps/06-implement/prompt.md"), "utf-8");
+    const contextSource = fs.readFileSync(path.join(process.cwd(), "src/installer/steps/06-implement/context.ts"), "utf-8");
 
     assert.match(prompt, /Treat Stitch, DESIGN_DOM, UI_CONTRACT, and generated screen contracts as binding product design inputs/);
     assert.match(prompt, /If no generated component exists for this stack, recreate the assigned screen from Stitch HTML, DESIGN_DOM, UI_CONTRACT/);
@@ -1689,26 +1705,26 @@ describe("06-implement step module", () => {
     assert.doesNotMatch(contextSource, /read stitch\/DESIGN_DOM\.json for full DOM/);
     assert.doesNotMatch(contextSource, /read stitch\/DESIGN_DOM\.json for the full behavior contract/);
 
-    const stepOps = fs.readFileSync(path.join(process.cwd(), "dist/installer/step-ops.js"), "utf-8");
+    const stepOps = fs.readFileSync(path.join(process.cwd(), "src/installer/step-ops.ts"), "utf-8");
     assert.doesNotMatch(stepOps, /read stitch\/DESIGN_DOM\.json for full DOM/);
   });
 
   it("scope gate treats shared_files as read-only context, not completion-allowed files", () => {
-    const source = fs.readFileSync(path.join(process.cwd(), "dist/installer/steps/06-implement/guards.js"), "utf-8");
+    const source = fs.readFileSync(path.join(process.cwd(), "src/installer/steps/06-implement/guards.ts"), "utf-8");
     assert.match(source, /SELECT scope_files, shared_files FROM stories WHERE id/);
     assert.match(source, /const declaredSharedFiles = parseScopeFiles\(scopeRow\?\.shared_files\)/);
     assert.doesNotMatch(source, /declaredSharedFiles\.forEach\(f => allowed\.add\(f\)\)/);
     assert.match(source, /void declaredSharedFiles/);
 
-    const stepOps = fs.readFileSync(path.join(process.cwd(), "dist/installer/step-ops.js"), "utf-8");
+    const stepOps = fs.readFileSync(path.join(process.cwd(), "src/installer/step-ops.ts"), "utf-8");
     assert.match(stepOps, /cleanupOutOfScopeWorktreeFiles/);
     assert.match(stepOps, /vite\.config\.\*, tailwind\.config\.\*, tsconfig\.\*, index\.html/);
     assert.doesNotMatch(stepOps, /src\/types\/\* shared API files are also allowed/);
 
-    const guards = fs.readFileSync(path.join(process.cwd(), "dist/installer/steps/06-implement/guards.js"), "utf-8");
+    const guards = fs.readFileSync(path.join(process.cwd(), "src/installer/steps/06-implement/guards.ts"), "utf-8");
     assert.doesNotMatch(guards, /src\\\/types\\\/\.\*/);
 
-    const worktreeOps = fs.readFileSync(path.join(process.cwd(), "dist/installer/worktree-ops.js"), "utf-8");
+    const worktreeOps = fs.readFileSync(path.join(process.cwd(), "src/installer/worktree-ops.ts"), "utf-8");
     assert.doesNotMatch(worktreeOps, /src\/types\/\*/);
   });
 
@@ -1746,10 +1762,10 @@ describe("06-implement step module", () => {
   });
 
   it("blocks SCOPE_BLEED completion instead of silently accepting it", () => {
-    const stepOps = fs.readFileSync(path.join(process.cwd(), "dist/installer/step-ops.js"), "utf-8");
+    const stepOps = fs.readFileSync(path.join(process.cwd(), "src/installer/step-ops.ts"), "utf-8");
     assert.match(stepOps, /scope-bleed-cleanup/);
     assert.match(stepOps, /failing story for retry/);
-    assert.match(stepOps, /await failStep\(stepId, scopeResult\.reason, completionAuthority\?\.envelope\)/);
+    assert.match(stepOps, /await failStep\(stepId, scopeResult\.reason!, completionAuthority\?\.envelope\)/);
     assert.doesNotMatch(stepOps, /scope-bleed-silent/);
     assert.doesNotMatch(stepOps, /story kept DONE/);
     assert.doesNotMatch(stepOps, /kept DONE despite scope bleed/);
@@ -3116,19 +3132,19 @@ describe("06-implement step module", () => {
   });
 
   it("wires runtime bridge and touched-test gates into implement completion", () => {
-    const stepOps = fs.readFileSync(path.join(process.cwd(), "dist/installer/step-ops.js"), "utf-8");
+    const stepOps = fs.readFileSync(path.join(process.cwd(), "src/installer/step-ops.ts"), "utf-8");
     assert.match(stepOps, /const bridgeResult = await checkRuntimeBridgeGate/);
-    assert.match(stepOps, /await failStep\(stepId, bridgeResult\.reason, completionAuthority\?\.envelope\)/);
+    assert.match(stepOps, /await failStep\(stepId, bridgeResult\.reason!, completionAuthority\?\.envelope\)/);
     assert.match(stepOps, /const testResult = checkTestGate/);
-    assert.match(stepOps, /await failStep\(stepId, testResult\.reason, completionAuthority\?\.envelope\)/);
+    assert.match(stepOps, /await failStep\(stepId, testResult\.reason!, completionAuthority\?\.envelope\)/);
     assert.match(stepOps, /const generatedScreenResult = await checkGeneratedScreenIntegrationGate/);
-    assert.match(stepOps, /await failStep\(stepId, generatedScreenResult\.reason, completionAuthority\?\.envelope\)/);
+    assert.match(stepOps, /await failStep\(stepId, generatedScreenResult\.reason!, completionAuthority\?\.envelope\)/);
     assert.match(stepOps, /const generatedScreenRegressionResult = await checkGeneratedScreenRegressionGate/);
-    assert.match(stepOps, /await failStep\(stepId, generatedScreenRegressionResult\.reason, completionAuthority\?\.envelope\)/);
+    assert.match(stepOps, /await failStep\(stepId, generatedScreenRegressionResult\.reason!, completionAuthority\?\.envelope\)/);
     assert.match(stepOps, /const generatedScreenShellChromeResult = checkGeneratedScreenShellChromeGate/);
-    assert.match(stepOps, /await failStep\(stepId, generatedScreenShellChromeResult\.reason, completionAuthority\?\.envelope\)/);
+    assert.match(stepOps, /await failStep\(stepId, generatedScreenShellChromeResult\.reason!, completionAuthority\?\.envelope\)/);
     assert.match(stepOps, /const generatedScreenPropsResult = checkGeneratedScreenRequiredPropsGate/);
-    assert.match(stepOps, /await failStep\(stepId, generatedScreenPropsResult\.reason, completionAuthority\?\.envelope\)/);
+    assert.match(stepOps, /await failStep\(stepId, generatedScreenPropsResult\.reason!, completionAuthority\?\.envelope\)/);
     assert.match(stepOps, /detectVerifyGeneratedScreenRegressionFailure/);
     assert.match(stepOps, /verify-generated-screen-regression-preflight/);
   });

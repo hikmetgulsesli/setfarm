@@ -6,12 +6,18 @@ import { execFileSync } from "node:child_process";
 import type postgres from "postgres";
 import { z } from "zod";
 
+import {
+  readRegularFileAtMostSync,
+} from "../lib/bounded-file-read.js";
 import { createRunProtocolRepository } from "../execution/run-protocol.js";
 import {
   produceRuntimeEvidenceContractV1,
   RUNTIME_EVIDENCE_CONTRACT_PRODUCER_VERSION,
 } from "../evidence/runtime-evidence-contract-producer-v1.js";
 import { hashRuntimeEvidenceContractV1 } from "../evidence/runtime-evidence-contract-v1.js";
+import {
+  SemanticArtifactEnvelopeV1Schema,
+} from "./artifact-store.js";
 import {
   adaptExactSetupTopologyV1,
   FileTreeManifestV1Schema,
@@ -24,9 +30,25 @@ import {
 import type { ArtifactCapacityLimits } from "./artifact-capacity.js";
 import { canonicalJsonStringify, hashCanonicalJson } from "./canonical-json.js";
 import type { StitchDesignSourceInputV1 } from "./design-source-closure-compiler.js";
+import { compileDesignSourceClosureV2 } from "./design-source-closure-compiler-v2.js";
+import { readProjectedDesignSourceAuthorityV2 } from "./design-source-runtime-v2.js";
+import { ProductCompilationAttemptRepository } from "./product-compilation-attempt-repository.js";
+import {
+  projectAcceptedProductCompilationAttemptV1,
+  ProductCompilationProjectionReceiptV1Schema,
+  readProductCompilationArtifactManifestV1,
+} from "./product-compilation-attempt-workspace.js";
 import { compileRuntimeStoryPlanV1 } from "./runtime-story-plan-compiler.js";
+import { compileRuntimeStoryPlanV2 } from "./runtime-story-plan-compiler-v2.js";
 import { createRuntimePacketCompiler } from "./runtime-packet-compiler.js";
 import { resolveCanonicalProductSpecFromPlan } from "./runtime-plan-source.js";
+import { resolveCanonicalProductSpecV2FromPlan } from "./runtime-plan-source-v2.js";
+import { validateStitchScreenSourceV2 } from "./stitch-screen-source-validator-v2.js";
+import { produceDesignGenerationTargetsV2 } from "./producers/design-targets-v2.js";
+import {
+  produceImplementationSourceMapV1,
+  type ImplementationSourceMapProducerInputV1,
+} from "./producers/implementation-source-map-v1.js";
 import { selectStitchTargetCandidatesV1 } from "./producers/stitch-target-candidate-selection.js";
 import {
   DesignGenerationTargetsV1Schema,
@@ -43,6 +65,7 @@ import {
 } from "./schemas/stitch-target-candidate-selection-v1.js";
 import {
   NormalizedRelativeLocatorSchema,
+  type SemanticArtifactProducerV1,
   type SourceArtifactRefV1,
 } from "./schemas/common-v1.js";
 import {
@@ -54,8 +77,31 @@ import {
   type TopologyPathBindingV1,
 } from "./schemas/build-topology-v1.js";
 import type { DesignInteractionGraphV1 } from "./schemas/design-interaction-graph-v1.js";
+import {
+  DesignInteractionGraphV2Schema,
+  type DesignInteractionGraphV2,
+} from "./schemas/design-interaction-graph-v2.js";
+import type { DesignSourceClosureV2 } from "./schemas/design-source-closure-v2.js";
+import {
+  DesignGenerationTargetsV2Schema,
+  type DesignGenerationTargetsV2,
+} from "./schemas/design-generation-targets-v2.js";
+import type { ImplementationSourceMapV1 } from "./schemas/implementation-source-map-v1.js";
 import type { ProductSpecV1 } from "./schemas/product-spec-v1.js";
+import type { ProductSpecV1OrV2, ProductSpecV2 } from "./schemas/product-spec-v2.js";
 import type { StoryPlanV1 } from "./schemas/story-plan-v1.js";
+import type { StoryPlanV2 } from "./schemas/story-plan-v2.js";
+import { StitchRenderedSemanticsV2Schema } from "./schemas/stitch-rendered-semantics-v2.js";
+import {
+  StitchScreenIndexV2Schema,
+  type StitchScreenIndexV2,
+  type StitchScreenIndexEntryV2,
+} from "./schemas/stitch-screen-index-v2.js";
+import {
+  StitchTargetCandidateSelectionV2Schema,
+  StitchTargetResponseBindingsV3Schema,
+  type StitchTargetResponseBindingsV3,
+} from "./schemas/stitch-target-candidate-selection-v2.js";
 import {
   PRODUCT_DELIVERY_PROFILE_CATALOG_VERSION,
   resolveProductDeliverySelectionV1,
@@ -68,11 +114,13 @@ import {
 } from "./stack-topology-catalog.js";
 import { PRODUCT_EVIDENCE_CAPABILITY_POLICY_VERSION } from "./product-evidence-capability-policy.js";
 
-export const PRODUCT_COMPILER_RUNTIME_VERSION = "3.5.0";
+export const PRODUCT_COMPILER_RUNTIME_VERSION = "4.0.0";
 
 export type SetupBuildPacketErrorCode =
   | "SETUP_PACKET_ACTIVATION_REJECTED"
   | "SETUP_PACKET_DESIGN_GRAPH_REJECTED"
+  | "SETUP_PACKET_DESIGN_SOURCE_ATTEMPT_REJECTED"
+  | "SETUP_PACKET_DESIGN_SOURCE_CLOSURE_REJECTED"
   | "SETUP_PACKET_DIRECT_RESPONSE_EVIDENCE_REJECTED"
   | "SETUP_PACKET_DELIVERY_PROFILE_REJECTED"
   | "SETUP_PACKET_ENTRYPOINT_AMBIGUOUS"
@@ -81,6 +129,7 @@ export type SetupBuildPacketErrorCode =
   | "SETUP_PACKET_GENERATED_SOURCE_AMBIGUOUS"
   | "SETUP_PACKET_GENERATED_SOURCE_MISSING"
   | "SETUP_PACKET_GENERATED_SOURCE_TOPOLOGY_MISSING"
+  | "SETUP_PACKET_IMPLEMENTATION_SOURCE_MAP_REJECTED"
   | "SETUP_PACKET_JSON_INVALID"
   | "SETUP_PACKET_PLAN_REJECTED"
   | "SETUP_PACKET_PROTOCOL_MISMATCH"
@@ -88,6 +137,7 @@ export type SetupBuildPacketErrorCode =
   | "SETUP_PACKET_REPO_IDENTITY_INVALID"
   | "SETUP_PACKET_RUNTIME_EVIDENCE_REJECTED"
   | "SETUP_PACKET_RUN_ID_MISMATCH"
+  | "SETUP_PACKET_SEMANTICS_VERSION_MISMATCH"
   | "SETUP_PACKET_SOURCE_NON_CANONICAL"
   | "SETUP_PACKET_STORY_PLAN_REJECTED"
   | "SETUP_PACKET_TOPOLOGY_OWNER_AMBIGUOUS"
@@ -147,6 +197,71 @@ export type SetupBuildPacketContracts = Readonly<{
   }>;
 }>;
 
+export type SetupBuildPacketContractsV2 = Readonly<{
+  productSpecV2: ProductSpecV2;
+  deliverySelection: ProductDeliverySelectionV1;
+  designGraphV2: DesignInteractionGraphV2 | null;
+  buildTopologyV1: BuildTopologyV1;
+  storyPlanV2: StoryPlanV2;
+  designSourceClosureV2: DesignSourceClosureV2;
+  implementationSourceInputsV1: ImplementationSourceMapProducerInputV1;
+  implementationSourceMapV1: ImplementationSourceMapV1;
+  designSourceArtifactsV2?: Readonly<{
+    generationTargets: unknown;
+    directResponseEvidence: unknown;
+    renderedSemantics: unknown;
+    candidateSelection: unknown;
+    responseBindings: unknown;
+  }>;
+  sourceHashes: Readonly<{
+    plan: string;
+    deliverySelection: string;
+    generationTargets?: string;
+    directResponseEvidence?: string;
+    renderedSemantics?: string;
+    candidateSelection?: string;
+    responseBindings?: string;
+    designGraph?: string;
+    acceptedAttempt?: string;
+    artifactManifest?: string;
+    projectionReceipt?: string;
+    screenIndex?: string;
+    converterSource?: string;
+    generatedSources: string[];
+    setupCertificate: string;
+    fileTreeManifest: string;
+    sharedGrants: string;
+  }>;
+}>;
+
+export type SetupConverterSourceV1 = Readonly<{
+  source: SourceArtifactRefV1;
+  text: string;
+}>;
+
+type StitchImplementationSourceInputsV1 = Readonly<{
+  generationTargets: DesignGenerationTargetsV2;
+  responseBindings: StitchTargetResponseBindingsV3;
+  screenIndex: StitchScreenIndexV2;
+  screenIndexSource: SetupConverterSourceV1;
+  generatedSources: ReadonlyArray<Readonly<{
+    targetRef: string;
+    responseScreenId: string;
+    source: SourceArtifactRefV1;
+    text: string;
+  }>>;
+}>;
+
+export type DesignSourceAttemptExpectationV2 = Readonly<{
+  attemptId: string;
+  authorityHash: string;
+  requestHash: string;
+  outputSealHash: string;
+  productSpecHash: string;
+  generationTargetsHash: string;
+  compilerReleaseSha: string;
+}>;
+
 function compareUtf16(left: string, right: string): number {
   if (left < right) return -1;
   if (left > right) return 1;
@@ -158,7 +273,7 @@ function uniqueSorted(values: readonly string[]): string[] {
 }
 
 function resolveV3DeliverySelection(input: Readonly<{
-  productSpec: ProductSpecV1;
+  productSpec: ProductSpecV1OrV2;
   expectedSelectionHash?: string;
   requestedStackPackId?: string;
 }>): Readonly<{ selection: ProductDeliverySelectionV1; selectionHash: string }> {
@@ -246,15 +361,49 @@ function readExactSource(repo: string, locatorInput: string): ExactSource {
       { locator },
     );
   }
-  const stat = fs.lstatSync(candidate);
-  if (stat.isSymbolicLink() || !fs.statSync(resolved).isFile()) {
+  const resolvedBefore = fs.statSync(resolved);
+  if (!resolvedBefore.isFile()) {
     throw new SetupBuildPacketError(
       "SETUP_PACKET_FILE_INVALID",
       `Packet source must be a regular in-repository file: ${locator}`,
       { locator },
     );
   }
-  const bytes = fs.readFileSync(resolved);
+  let exact: ReturnType<typeof readRegularFileAtMostSync>;
+  try {
+    exact = readRegularFileAtMostSync(candidate, 16 * 1024 * 1024);
+  } catch (error) {
+    throw new SetupBuildPacketError(
+      "SETUP_PACKET_FILE_INVALID",
+      `Packet source must be one stable bounded non-symlink file: ${locator}`,
+      { locator, cause: error instanceof Error ? error.message : String(error) },
+    );
+  }
+  let resolvedAfter: string;
+  try {
+    resolvedAfter = fs.realpathSync(candidate);
+  } catch (error) {
+    throw new SetupBuildPacketError(
+      "SETUP_PACKET_FILE_INVALID",
+      `Packet source changed after its descriptor read: ${locator}`,
+      { locator, cause: error instanceof Error ? error.message : String(error) },
+    );
+  }
+  const resolvedAfterStat = fs.statSync(resolvedAfter);
+  if (
+    resolvedAfter !== resolved
+    || exact.stat.dev !== resolvedBefore.dev
+    || exact.stat.ino !== resolvedBefore.ino
+    || exact.stat.dev !== resolvedAfterStat.dev
+    || exact.stat.ino !== resolvedAfterStat.ino
+  ) {
+    throw new SetupBuildPacketError(
+      "SETUP_PACKET_FILE_INVALID",
+      `Packet source path identity changed while it was being read: ${locator}`,
+      { locator },
+    );
+  }
+  const bytes = exact.bytes;
   return {
     source: {
       schema: "setfarm.source-artifact-ref.v1",
@@ -300,7 +449,7 @@ function readJsonSource<T>(input: Readonly<{
       },
     );
   }
-  if (input.canonical && canonicalJsonStringify(parsed.data) !== exact.text.trim()) {
+  if (input.canonical && canonicalJsonStringify(parsed.data) !== exact.text) {
     throw new SetupBuildPacketError(
       "SETUP_PACKET_SOURCE_NON_CANONICAL",
       `Packet source is not Setfarm Canonical JSON v1: ${input.locator}`,
@@ -402,7 +551,7 @@ function roleForPath(input: Readonly<{
 }>): TopologyPathBindingV1["role"] {
   if (input.entrypointPaths.has(input.locator)) return "entrypoint";
   if (input.targetRoles.some((role) => role === "fixture_data" || role === "test_bridge")) return "test";
-  if (input.generatedDesignFiles.has(input.locator)) return "asset";
+  if (input.generatedDesignFiles.has(input.locator)) return "generated";
   if (/(?:^|\/)(?:package(?:-lock)?\.json|requirements\.txt|pyproject\.toml)$/.test(input.locator)) return "dependency";
   if (/\.(?:json|ya?ml|toml|gradle|config\.[cm]?[jt]s)$/.test(input.locator)) return "config";
   if (/\.(?:ts|tsx|js|jsx|mjs|cjs|py|kt|java|swift|html|css)$/.test(input.locator)) return "source";
@@ -487,7 +636,7 @@ function selectEntrypoints(input: Readonly<{
 
 function buildExactSetupSnapshot(input: Readonly<{
   repo: string;
-  productSpec: ProductSpecV1;
+  productSpec: ProductSpecV1OrV2;
   certificate: Readonly<{ source: SourceArtifactRefV1; value: SetupCertificate }>;
   manifest: Readonly<{ source: SourceArtifactRefV1; value: FileTreeManifest }>;
   sharedGrants: Readonly<{ source: SourceArtifactRefV1; value: SharedGrantsArtifact }>;
@@ -967,7 +1116,7 @@ export function assembleSetupBuildPacketContracts(input: Readonly<{
     generationTargets: generationTargets.value,
     ...(candidateSelection ? { candidateSelection: candidateSelection.value } : {}),
     ...(renderedSemantics ? { renderedSemantics: renderedSemantics.value } : {}),
-    authoritySourceHashes: [
+    authoritySourceHashes: uniqueSorted([
       generationTargets.source.hash,
       responseBindings.source.hash,
       ...(candidateSelection ? [candidateSelection.source.hash] : []),
@@ -979,7 +1128,7 @@ export function assembleSetupBuildPacketContracts(input: Readonly<{
         renderedSemantics.source.hash,
         hashCanonicalJson(renderedSemantics.value),
       ] : []),
-    ].sort(compareUtf16),
+    ]),
     responseBindings: responseBindings.value,
     screenIndex: { source: screenIndex.source, text: screenIndex.text },
     generatedSources,
@@ -1191,6 +1340,754 @@ export function assembleSetupBuildPacketContracts(input: Readonly<{
   };
 }
 
+function semanticArtifactEvidenceV2(input: Readonly<{
+  artifactType: string;
+  producer: SemanticArtifactProducerV1;
+  payload: unknown;
+}>) {
+  const envelope = SemanticArtifactEnvelopeV1Schema.parse({
+    schema: "setfarm.semantic-artifact-envelope.v1",
+    artifactType: input.artifactType,
+    producer: input.producer,
+    payload: input.payload,
+  });
+  return Object.freeze({
+    reference: Object.freeze({
+      artifactType: input.artifactType,
+      envelopeHash: hashCanonicalJson(envelope),
+      payloadHash: hashCanonicalJson(input.payload),
+    }),
+    envelope,
+  });
+}
+
+function readSetupSourcesV2(input: Readonly<{
+  runId: string;
+  repo: string;
+  deliverySelection: Readonly<{
+    selection: ProductDeliverySelectionV1;
+    selectionHash: string;
+  }>;
+}>) {
+  const certificate = readJsonSource({
+    repo: input.repo,
+    locator: ".setfarm/setup/SETUP_CERTIFICATE.json",
+    schema: SetupCertificateV1Schema,
+    canonical: false,
+  });
+  const manifest = readJsonSource({
+    repo: input.repo,
+    locator: ".setfarm/setup/FILE_TREE_MANIFEST.json",
+    schema: FileTreeManifestV1Schema,
+    canonical: false,
+  });
+  const sharedGrants = readJsonSource({
+    repo: input.repo,
+    locator: ".setfarm/setup/SHARED_GRANTS.json",
+    schema: SharedGrantsArtifactV1Schema,
+    canonical: false,
+  });
+  const selection = input.deliverySelection.selection;
+  if (
+    certificate.value.stackPackId !== selection.stackPackId
+    || certificate.value.platform !== selection.delivery.platform
+    || certificate.value.techStack !== selection.delivery.techStack
+    || certificate.value.designAuthority.conversionPolicy !== selection.design.conversionPolicy
+  ) {
+    throw new SetupBuildPacketError(
+      "SETUP_PACKET_DELIVERY_PROFILE_REJECTED",
+      "Setup certificate topology does not equal the ProductSpecV2 delivery selection",
+      {
+        expected: {
+          stackPackId: selection.stackPackId,
+          platform: selection.delivery.platform,
+          techStack: selection.delivery.techStack,
+          conversionPolicy: selection.design.conversionPolicy,
+        },
+        observed: {
+          stackPackId: certificate.value.stackPackId,
+          platform: certificate.value.platform,
+          techStack: certificate.value.techStack,
+          conversionPolicy: certificate.value.designAuthority.conversionPolicy,
+        },
+      },
+    );
+  }
+  const sourceRunIds = [
+    certificate.value.runId,
+    manifest.value.runId,
+    sharedGrants.value.runId,
+  ];
+  if (sourceRunIds.some((runId) => runId !== input.runId)) {
+    throw new SetupBuildPacketError(
+      "SETUP_PACKET_RUN_ID_MISMATCH",
+      "Setup sources do not belong to the ProductSpecV2 packet compilation run",
+      { expectedRunId: input.runId, sourceRunIds },
+    );
+  }
+  return { certificate, manifest, sharedGrants };
+}
+
+function bindRuntimeTopologyV2(input: Readonly<{
+  repo: string;
+  productSpec: ProductSpecV2;
+  deliverySelection: Readonly<{
+    selection: ProductDeliverySelectionV1;
+    selectionHash: string;
+  }>;
+  certificate: Readonly<{ source: SourceArtifactRefV1; value: SetupCertificate }>;
+  manifest: Readonly<{ source: SourceArtifactRefV1; value: FileTreeManifest }>;
+  sharedGrants: Readonly<{ source: SourceArtifactRefV1; value: SharedGrantsArtifact }>;
+}>): BuildTopologyV1 {
+  const topology = adaptExactSetupTopologyV1(buildExactSetupSnapshot({
+    repo: input.repo,
+    productSpec: input.productSpec,
+    certificate: input.certificate,
+    manifest: input.manifest,
+    sharedGrants: input.sharedGrants,
+  }));
+  if (!topology.candidate) {
+    throw new SetupBuildPacketError(
+      "SETUP_PACKET_TOPOLOGY_REJECTED",
+      "Exact ProductSpecV2 setup BuildTopology was rejected",
+      { diagnostics: topology.diagnostics },
+    );
+  }
+  const selection = input.deliverySelection.selection;
+  const deliveryBound = BuildTopologyV1Schema.parse({
+    ...topology.candidate,
+    deliveryProfile: {
+      schema: "setfarm.product-delivery-selection-ref.v1",
+      profileId: selection.profileId,
+      catalogVersion: selection.catalogVersion,
+      catalogHash: selection.catalogHash,
+      selectionHash: input.deliverySelection.selectionHash,
+      productClass: selection.productClass,
+      stackPackId: selection.stackPackId,
+      designProjection: selection.design.projection,
+      topologyDescriptorHash: selection.topology.descriptorHash,
+    },
+  });
+  const runtimeEvidence = produceRuntimeEvidenceContractV1({
+    productSpec: input.productSpec,
+    buildTopology: deliveryBound,
+  });
+  if (runtimeEvidence.status !== "produced") {
+    throw new SetupBuildPacketError(
+      "SETUP_PACKET_RUNTIME_EVIDENCE_REJECTED",
+      runtimeEvidence.status === "unsupported"
+        ? `ProductSpecV2 stack has no runtime evidence contract: ${runtimeEvidence.stackPackId}`
+        : `ProductSpecV2 runtime evidence was rejected: ${runtimeEvidence.rejectionCode}`,
+      runtimeEvidence.status === "unsupported"
+        ? { stackPackId: runtimeEvidence.stackPackId }
+        : { rejectionCode: runtimeEvidence.rejectionCode },
+    );
+  }
+  return BuildTopologyV1Schema.parse({
+    ...deliveryBound,
+    runtimeEvidenceContract: runtimeEvidence.contract,
+    runtimeEvidenceContractHash: hashRuntimeEvidenceContractV1(runtimeEvidence.contract),
+  });
+}
+
+/**
+ * Native Product Semantics v2 setup compiler. It never reads a ProductSpecV1,
+ * DesignGraphV1, StoryPlanV1, or legacy Stitch projection.
+ */
+export async function assembleSetupBuildPacketContractsV2(input: Readonly<{
+  sql: postgres.Sql;
+  runId: string;
+  repo: string;
+  planText: string;
+  producer: SemanticArtifactProducerV1;
+  converterSource?: SetupConverterSourceV1;
+  designSourceExpectation?: DesignSourceAttemptExpectationV2;
+  expectedDeliverySelectionHash?: string;
+  requestedStackPackId?: string;
+}>): Promise<SetupBuildPacketContractsV2> {
+  const plan = resolveCanonicalProductSpecV2FromPlan({ text: input.planText });
+  if (plan.status !== "resolved") {
+    throw new SetupBuildPacketError(
+      "SETUP_PACKET_PLAN_REJECTED",
+      `Canonical PLAN ProductSpecV2 was rejected: ${plan.rejectionCodes.join(",")}`,
+      { rejectionCodes: plan.rejectionCodes, diagnostics: plan.diagnostics },
+    );
+  }
+  const deliverySelection = resolveV3DeliverySelection({
+    productSpec: plan.productSpec,
+    ...(input.expectedDeliverySelectionHash
+      ? { expectedSelectionHash: input.expectedDeliverySelectionHash }
+      : {}),
+    ...(input.requestedStackPackId
+      ? { requestedStackPackId: input.requestedStackPackId }
+      : {}),
+  });
+  const setup = readSetupSourcesV2({
+    runId: input.runId,
+    repo: input.repo,
+    deliverySelection,
+  });
+
+  let designGraphV2: DesignInteractionGraphV2 | null = null;
+  let designSourceArtifactsV2: SetupBuildPacketContractsV2["designSourceArtifactsV2"];
+  let designSourceClosureV2: DesignSourceClosureV2;
+  let designSourceHashes: Partial<SetupBuildPacketContractsV2["sourceHashes"]> = {};
+  let stitchImplementationSources: StitchImplementationSourceInputsV1 | undefined;
+
+  if (!plan.productSpec.delivery.designRequired) {
+    const compiled = compileDesignSourceClosureV2({ kind: "none" });
+    if (compiled.status !== "compiled") {
+      throw new SetupBuildPacketError(
+        "SETUP_PACKET_DESIGN_SOURCE_CLOSURE_REJECTED",
+        "No-design ProductSpecV2 closure was rejected",
+        { issues: compiled.issues },
+      );
+    }
+    designSourceClosureV2 = compiled.closure;
+  } else {
+    if (!input.designSourceExpectation) {
+      throw new SetupBuildPacketError(
+        "SETUP_PACKET_DESIGN_SOURCE_ATTEMPT_REJECTED",
+        "Design-required ProductSpecV2 setup requires one complete accepted-attempt expectation",
+      );
+    }
+    const expectation = input.designSourceExpectation;
+    const attempt = await new ProductCompilationAttemptRepository(input.sql)
+      .get(expectation.attemptId);
+    if (
+      !attempt
+      || attempt.runId !== input.runId
+      || attempt.authorityHash !== expectation.authorityHash
+      || attempt.requestHash !== expectation.requestHash
+      || attempt.outputSealHash !== expectation.outputSealHash
+      || attempt.state !== "sealed"
+      || attempt.disposition !== "accepted"
+      || expectation.compilerReleaseSha !== input.producer.codeSha
+    ) {
+      throw new SetupBuildPacketError(
+        "SETUP_PACKET_DESIGN_SOURCE_ATTEMPT_REJECTED",
+        "Design-source attempt does not equal the complete DESIGN-sealed expectation",
+        { attemptId: expectation.attemptId, runId: input.runId },
+      );
+    }
+    const targets = produceDesignGenerationTargetsV2(plan.productSpec);
+    if (targets.status !== "produced") {
+      throw new SetupBuildPacketError(
+        "SETUP_PACKET_DESIGN_SOURCE_CLOSURE_REJECTED",
+        `ProductSpecV2 generation targets were rejected: ${targets.rejectionCodes.join(",")}`,
+        { diagnostics: targets.diagnostics },
+      );
+    }
+    if (
+      expectation.productSpecHash !== hashCanonicalJson(plan.productSpec)
+      || expectation.generationTargetsHash !== hashCanonicalJson(targets.generationTargets)
+    ) {
+      throw new SetupBuildPacketError(
+        "SETUP_PACKET_DESIGN_SOURCE_ATTEMPT_REJECTED",
+        "DESIGN-sealed ProductSpec/generation-target identities differ from SETUP authority",
+        {
+          expectedProductSpecHash: expectation.productSpecHash,
+          actualProductSpecHash: hashCanonicalJson(plan.productSpec),
+          expectedGenerationTargetsHash: expectation.generationTargetsHash,
+          actualGenerationTargetsHash: hashCanonicalJson(targets.generationTargets),
+        },
+      );
+    }
+    const exactGenerationTargetsText = canonicalJsonStringify(targets.generationTargets);
+    const projectionReceipt = await projectAcceptedProductCompilationAttemptV1({
+      repo: input.repo,
+      attempt,
+      expectedProjectionArtifacts: [{
+        path: "GENERATION_TARGETS.json",
+        contentHash: sha256(exactGenerationTargetsText),
+        byteLength: Buffer.byteLength(exactGenerationTargetsText, "utf8"),
+      }],
+    });
+    const projectedTargets = readJsonSource({
+      repo: input.repo,
+      locator: "stitch/GENERATION_TARGETS.json",
+      schema: DesignGenerationTargetsV2Schema,
+      canonical: true,
+    });
+    if (canonicalJsonStringify(projectedTargets.value)
+      !== canonicalJsonStringify(targets.generationTargets)) {
+      throw new SetupBuildPacketError(
+        "SETUP_PACKET_DESIGN_SOURCE_CLOSURE_REJECTED",
+        "Projected generation targets differ from the deterministic ProductSpecV2 producer",
+      );
+    }
+    const projected = await readProjectedDesignSourceAuthorityV2(input.repo, {
+      productSpec: plan.productSpec,
+      generationTargets: targets.generationTargets,
+    });
+    designGraphV2 = projected.designGraph;
+
+    const direct = readJsonSource({
+      repo: input.repo,
+      locator: "stitch/STITCH_DIRECT_RESPONSE_EVIDENCE.json",
+      schema: StitchDirectResponseEvidenceV2Schema,
+      canonical: true,
+    });
+    const rendered = readJsonSource({
+      repo: input.repo,
+      locator: "stitch/STITCH_RENDERED_SEMANTICS_V2.json",
+      schema: StitchRenderedSemanticsV2Schema,
+      canonical: true,
+    });
+    const selection = readJsonSource({
+      repo: input.repo,
+      locator: "stitch/STITCH_TARGET_CANDIDATE_SELECTION.json",
+      schema: StitchTargetCandidateSelectionV2Schema,
+      canonical: true,
+    });
+    const bindings = readJsonSource({
+      repo: input.repo,
+      locator: "stitch/STITCH_RESPONSE_BINDINGS.json",
+      schema: StitchTargetResponseBindingsV3Schema,
+      canonical: true,
+    });
+    const graph = readJsonSource({
+      repo: input.repo,
+      locator: "stitch/DESIGN_INTERACTION_GRAPH_V2.json",
+      schema: DesignInteractionGraphV2Schema,
+      canonical: true,
+    });
+    if (hashCanonicalJson(graph.value) !== hashCanonicalJson(projected.designGraph)) {
+      throw new SetupBuildPacketError(
+        "SETUP_PACKET_DESIGN_GRAPH_REJECTED",
+        "Projected DesignInteractionGraphV2 differs from its deterministic producer",
+      );
+    }
+
+    const screenIndex = readJsonSource({
+      repo: input.repo,
+      locator: "src/screens/SCREEN_INDEX.json",
+      schema: StitchScreenIndexV2Schema,
+      canonical: false,
+    });
+    const indexByScreen = new Map<string, StitchScreenIndexEntryV2>();
+    for (const entry of screenIndex.value) {
+      if (indexByScreen.has(entry.screenId)) {
+        throw new SetupBuildPacketError(
+          "SETUP_PACKET_GENERATED_SOURCE_AMBIGUOUS",
+          `SCREEN_INDEX repeats v2 response screen ${entry.screenId}`,
+        );
+      }
+      indexByScreen.set(entry.screenId, entry);
+    }
+    const targetById = new Map(targets.generationTargets.targets.map((target) =>
+      [target.targetId, target] as const));
+    const graphActionById = new Map(projected.designGraph.actions.map((action) =>
+      [action.actionRef, action] as const));
+    const graphControlBySlot = new Map(projected.designGraph.controls.map((control) =>
+      [control.identity.controlSlotRef, control] as const));
+    const graphObservableById = new Map(projected.designGraph.observables.map((observable) =>
+      [observable.observableRef, observable] as const));
+    const renderedByScreen = new Map(projected.renderedSemantics.candidates.map((candidate) =>
+      [candidate.screenId, candidate] as const));
+    const generatedLocators = new Set<string>();
+    const generatedSources = bindings.value.bindings.map((binding) => {
+      const indexed = indexByScreen.get(binding.responseScreenId);
+      const target = targetById.get(binding.targetRef);
+      const renderedCandidate = renderedByScreen.get(binding.responseScreenId);
+      if (
+        !indexed
+        || !target
+        || renderedCandidate?.status !== "rendered"
+        || !renderedCandidate.semanticDom
+        || indexed.projection.targetRef !== binding.targetRef
+        || indexed.title !== binding.responseTitle
+      ) {
+        throw new SetupBuildPacketError(
+          "SETUP_PACKET_GENERATED_SOURCE_MISSING",
+          `V2 target ${binding.targetRef} lacks one exact SCREEN_INDEX/rendered/generated source`,
+        );
+      }
+      if (generatedLocators.has(indexed.file)) {
+        throw new SetupBuildPacketError(
+          "SETUP_PACKET_GENERATED_SOURCE_AMBIGUOUS",
+          `More than one v2 target resolves to generated source ${indexed.file}`,
+        );
+      }
+      generatedLocators.add(indexed.file);
+      const source = readExactSource(input.repo, indexed.file);
+      const sourceValidation = validateStitchScreenSourceV2({
+        screen: indexed,
+        sourceText: source.text,
+      });
+      if (sourceValidation.status === "invalid") {
+        throw new SetupBuildPacketError(
+          "SETUP_PACKET_GENERATED_SOURCE_TOPOLOGY_MISSING",
+          `V2 generated source fails its exact SCREEN_INDEX source contract: ${indexed.file}`,
+          {
+            targetRef: binding.targetRef,
+            generatedSourceLocator: indexed.file,
+            rejectionCodes: sourceValidation.rejectionCodes,
+            diagnostics: sourceValidation.diagnostics,
+          },
+        );
+      }
+      const expectedControls = projected.designGraph.controls.filter((control) =>
+        control.source.targetRef === binding.targetRef);
+      const indexedControls = indexed.controls.filter((control) =>
+        control.semanticSource === "data-action");
+      if (expectedControls.length !== indexedControls.length) {
+        throw new SetupBuildPacketError(
+          "SETUP_PACKET_GENERATED_SOURCE_TOPOLOGY_MISSING",
+          `V2 generated source does not index every and only physical control for ${binding.targetRef}`,
+          { expected: expectedControls.length, observed: indexedControls.length },
+        );
+      }
+      const expectedInputBindings = uniqueSorted(expectedControls.flatMap((control) =>
+        control.actionInputBindings.map((item) =>
+          `${item.actionInputRef}\0${item.elementRef}`)));
+      const observedInputBindings = indexed.controls.flatMap((control) =>
+        (control.inputBindings ?? []).map((item) =>
+          `${item.actionRef}.${item.inputField}\0${control.sourceElementRef}`));
+      if (
+        observedInputBindings.length !== new Set(observedInputBindings).size
+        || canonicalJsonStringify(uniqueSorted(observedInputBindings))
+          !== canonicalJsonStringify(expectedInputBindings)
+      ) {
+        throw new SetupBuildPacketError(
+          "SETUP_PACKET_GENERATED_SOURCE_TOPOLOGY_MISSING",
+          `V2 generated source does not preserve every action-input element binding for ${binding.targetRef}`,
+          { expected: expectedInputBindings, observed: uniqueSorted(observedInputBindings) },
+        );
+      }
+      for (const control of indexed.controls) {
+        if (
+          control.generatedSourceLocator !== indexed.file
+          || control.sourceLocator !== renderedCandidate.semanticDom.locator
+        ) {
+          throw new SetupBuildPacketError(
+            "SETUP_PACKET_GENERATED_SOURCE_TOPOLOGY_MISSING",
+            `V2 generated input/control ${control.generatedLocalId} lost its exact source locator`,
+            { generatedLocalId: control.generatedLocalId },
+          );
+        }
+      }
+      for (const rejected of indexed.rejectedControls) {
+        if (
+          rejected.generatedSourceLocator !== indexed.file
+          || rejected.sourceLocator !== renderedCandidate.semanticDom.locator
+        ) {
+          throw new SetupBuildPacketError(
+            "SETUP_PACKET_GENERATED_SOURCE_TOPOLOGY_MISSING",
+            `V2 rejected control ${rejected.rejectionId} lost its exact source locator`,
+            { rejectionId: rejected.rejectionId },
+          );
+        }
+      }
+      for (const control of indexedControls) {
+        const graphControl = graphControlBySlot.get(control.controlSlotRef);
+        const graphAction = graphActionById.get(control.actionRef);
+        if (
+          !graphControl
+          || !graphAction
+          || graphControl.source.targetRef !== binding.targetRef
+          || graphControl.source.responseScreenId !== binding.responseScreenId
+          || control.physicalControlRef !== graphControl.id
+          || control.actionRef !== graphControl.identity.actionRef
+          || control.surfaceRef !== graphControl.identity.surfaceRef
+          || control.sourceElementRef !== graphControl.elementRef
+          || control.tagName !== graphControl.tagName
+          || control.nativeControlKind !== graphControl.nativeControlKind
+          || control.role !== graphControl.role
+          || control.ariaLabel !== graphControl.ariaLabel
+          || control.href !== graphControl.href
+          || control.interactiveRole !== graphControl.interactiveRole
+          || canonicalJsonStringify(control.affectedSurfaceRefs)
+            !== canonicalJsonStringify(graphAction.affectedSurfaceRefs)
+        ) {
+          throw new SetupBuildPacketError(
+            "SETUP_PACKET_GENERATED_SOURCE_TOPOLOGY_MISSING",
+            `V2 generated control ${control.controlSlotRef} lost its exact graph/source identity`,
+            { controlSlotRef: control.controlSlotRef, physicalControlRef: control.physicalControlRef },
+          );
+        }
+      }
+      const expectedObservables = projected.designGraph.observables.filter((observable) =>
+        observable.source.targetRef === binding.targetRef);
+      if (expectedObservables.length !== indexed.observables.length) {
+        throw new SetupBuildPacketError(
+          "SETUP_PACKET_GENERATED_SOURCE_TOPOLOGY_MISSING",
+          `V2 generated source does not index every and only observable for ${binding.targetRef}`,
+          { expected: expectedObservables.length, observed: indexed.observables.length },
+        );
+      }
+      for (const observable of indexed.observables) {
+        const graphObservable = graphObservableById.get(observable.observableRef);
+        const exactElement = graphObservable?.elementBindings.length === 1
+          ? graphObservable.elementBindings[0]
+          : undefined;
+        const expectedControlSlot = graphObservable?.selector.kind === "control"
+          ? graphObservable.selector.controlSlotRef
+          : undefined;
+        const expectedSurface = graphObservable?.selector.kind === "control"
+          ? undefined
+          : graphObservable?.selector.surfaceRef;
+        const expectedRole = graphObservable?.selector.kind === "accessibility"
+          ? graphObservable.selector.role
+          : undefined;
+        const expectedName = graphObservable?.selector.kind === "accessibility"
+          ? graphObservable.selector.name
+          : undefined;
+        if (
+          !graphObservable
+          || graphObservable.source.targetRef !== binding.targetRef
+          || graphObservable.source.responseScreenId !== binding.responseScreenId
+          || observable.actionRef !== graphObservable.actionRef
+          || observable.selectorKind !== graphObservable.selector.kind
+          || observable.controlSlotRef !== expectedControlSlot
+          || observable.surfaceRef !== expectedSurface
+          || observable.role !== expectedRole
+          || observable.name !== expectedName
+          || observable.evidenceRef !== graphObservable.evidenceRef
+          || observable.sourceElementRef !== exactElement?.elementRef
+          || observable.generatedSourceLocator !== indexed.file
+          || observable.sourceLocator !== renderedCandidate.semanticDom.locator
+        ) {
+          throw new SetupBuildPacketError(
+            "SETUP_PACKET_GENERATED_SOURCE_TOPOLOGY_MISSING",
+            `V2 generated observable ${observable.observableRef} lost its exact graph/source identity`,
+            { observableRef: observable.observableRef },
+          );
+        }
+      }
+      const exactTargets = setup.manifest.value.resolvedTargets.filter((candidate) =>
+        candidate.role === "surface_component"
+        && candidate.path === source.source.locator
+        && candidate.surfaceId === target.surfaceRef
+        && candidate.screenId === binding.responseScreenId);
+      if (exactTargets.length !== 1) {
+        throw new SetupBuildPacketError(
+          "SETUP_PACKET_GENERATED_SOURCE_TOPOLOGY_MISSING",
+          `V2 generated source lacks one exact target/surface/screen topology binding: ${indexed.file}`,
+          {
+            targetRef: binding.targetRef,
+            surfaceRef: target.surfaceRef,
+            responseScreenId: binding.responseScreenId,
+            observedTargets: exactTargets.length,
+          },
+        );
+      }
+      return {
+        targetRef: binding.targetRef,
+        responseScreenId: binding.responseScreenId,
+        source: source.source,
+        text: source.text,
+      };
+    });
+    if (indexByScreen.size !== generatedSources.length) {
+      throw new SetupBuildPacketError(
+        "SETUP_PACKET_GENERATED_SOURCE_AMBIGUOUS",
+        "SCREEN_INDEX contains a generated screen outside the exact ProductSpecV2 binding set",
+      );
+    }
+    stitchImplementationSources = {
+      generationTargets: targets.generationTargets,
+      responseBindings: bindings.value,
+      screenIndex: screenIndex.value,
+      screenIndexSource: { source: screenIndex.source, text: screenIndex.text },
+      generatedSources,
+    };
+
+    const artifactManifest = await readProductCompilationArtifactManifestV1({
+      repo: input.repo,
+      attempt,
+    });
+    const receiptSource = readJsonSource({
+      repo: input.repo,
+      locator: "stitch/PRODUCT_COMPILATION_PROJECTION_RECEIPT.json",
+      schema: ProductCompilationProjectionReceiptV1Schema,
+      canonical: true,
+    });
+    if (receiptSource.value.receiptHash !== projectionReceipt.receiptHash) {
+      throw new SetupBuildPacketError(
+        "SETUP_PACKET_DESIGN_SOURCE_ATTEMPT_REJECTED",
+        "Projected receipt changed after accepted-attempt integrity verification",
+      );
+    }
+
+    const generationTargetsArtifact = semanticArtifactEvidenceV2({
+      artifactType: "setfarm.design-generation-targets.v2",
+      producer: input.producer,
+      payload: targets.generationTargets,
+    });
+    const directArtifact = semanticArtifactEvidenceV2({
+      artifactType: "setfarm.stitch-direct-response-evidence.v2",
+      producer: input.producer,
+      payload: direct.value,
+    });
+    const renderedArtifact = semanticArtifactEvidenceV2({
+      artifactType: "setfarm.stitch-rendered-semantics.v2",
+      producer: input.producer,
+      payload: rendered.value,
+    });
+    const selectionArtifact = semanticArtifactEvidenceV2({
+      artifactType: "setfarm.stitch-target-candidate-selection.v2",
+      producer: input.producer,
+      payload: selection.value,
+    });
+    const bindingsArtifact = semanticArtifactEvidenceV2({
+      artifactType: "setfarm.stitch-target-response-bindings.v3",
+      producer: input.producer,
+      payload: bindings.value,
+    });
+    const graphArtifact = semanticArtifactEvidenceV2({
+      artifactType: "setfarm.design-interaction-graph.v2",
+      producer: input.producer,
+      payload: projected.designGraph,
+    });
+    const closure = compileDesignSourceClosureV2({
+      kind: "stitch",
+      productSpecV2Hash: hashCanonicalJson(plan.productSpec),
+      generationTargets: generationTargetsArtifact,
+      directResponseEvidence: directArtifact,
+      renderedSemantics: renderedArtifact,
+      candidateSelection: selectionArtifact,
+      responseBindings: bindingsArtifact,
+      designGraph: graphArtifact,
+      acceptedAttempt: attempt,
+      artifactManifest,
+      projectionReceipt: receiptSource.value,
+    });
+    if (closure.status !== "compiled") {
+      throw new SetupBuildPacketError(
+        "SETUP_PACKET_DESIGN_SOURCE_CLOSURE_REJECTED",
+        "Accepted ProductSpecV2 design artifacts do not form one exact closure",
+        { issues: closure.issues },
+      );
+    }
+    designSourceClosureV2 = closure.closure;
+    designSourceArtifactsV2 = {
+      generationTargets: targets.generationTargets,
+      directResponseEvidence: direct.value,
+      renderedSemantics: rendered.value,
+      candidateSelection: selection.value,
+      responseBindings: bindings.value,
+    };
+    designSourceHashes = {
+      generationTargets: projectedTargets.source.hash,
+      directResponseEvidence: direct.source.hash,
+      renderedSemantics: rendered.source.hash,
+      candidateSelection: selection.source.hash,
+      responseBindings: bindings.source.hash,
+      designGraph: graph.source.hash,
+      acceptedAttempt: hashCanonicalJson(attempt),
+      artifactManifest: hashCanonicalJson(artifactManifest),
+      projectionReceipt: receiptSource.source.hash,
+      screenIndex: screenIndex.source.hash,
+      generatedSources: generatedSources.map((item) => item.source.hash).sort(compareUtf16),
+    };
+  }
+
+  const buildTopologyV1 = bindRuntimeTopologyV2({
+    repo: input.repo,
+    productSpec: plan.productSpec,
+    deliverySelection,
+    ...setup,
+  });
+  const stories = compileRuntimeStoryPlanV2({
+    productSpec: plan.productSpec,
+    designGraph: designGraphV2,
+    buildTopology: buildTopologyV1,
+  });
+  if (stories.status !== "compiled") {
+    throw new SetupBuildPacketError(
+      "SETUP_PACKET_STORY_PLAN_REJECTED",
+      `Native StoryPlanV2 was rejected: ${stories.rejectionCodes.join(",")}`,
+      { rejectionCodes: stories.rejectionCodes, diagnostics: stories.diagnostics },
+    );
+  }
+  let implementationSourceMapInput: ImplementationSourceMapProducerInputV1;
+  if (designGraphV2 === null) {
+    if (input.converterSource !== undefined) {
+      throw new SetupBuildPacketError(
+        "SETUP_PACKET_IMPLEMENTATION_SOURCE_MAP_REJECTED",
+        "No-design ProductSpecV2 setup cannot bind a Stitch converter source",
+      );
+    }
+    implementationSourceMapInput = {
+      designSourceKind: "none",
+      productSpec: plan.productSpec,
+      designGraph: null,
+      buildTopology: buildTopologyV1,
+      storyPlan: stories.storyPlan,
+      designSourceClosure: designSourceClosureV2,
+      generationTargets: null,
+      responseBindings: null,
+      screenIndex: [],
+      screenIndexSource: null,
+      converterSource: null,
+      generatedSources: [],
+    };
+  } else {
+    if (!stitchImplementationSources || !input.converterSource) {
+      throw new SetupBuildPacketError(
+        "SETUP_PACKET_IMPLEMENTATION_SOURCE_MAP_REJECTED",
+        "Stitch ProductSpecV2 setup requires exact generated sources and executed converter bytes",
+      );
+    }
+    const generatedSources = stitchImplementationSources.generatedSources.map((generated) => {
+      const paths = buildTopologyV1.pathBindings.filter((binding) =>
+        binding.path === generated.source.locator);
+      if (paths.length !== 1) {
+        throw new SetupBuildPacketError(
+          "SETUP_PACKET_IMPLEMENTATION_SOURCE_MAP_REJECTED",
+          `Generated source must resolve to one exact BuildTopology path: ${generated.source.locator}`,
+          { locator: generated.source.locator, observedPaths: paths.length },
+        );
+      }
+      return { ...generated, pathRef: paths[0]!.id };
+    });
+    implementationSourceMapInput = {
+      designSourceKind: "stitch",
+      productSpec: plan.productSpec,
+      designGraph: designGraphV2,
+      buildTopology: buildTopologyV1,
+      storyPlan: stories.storyPlan,
+      designSourceClosure: designSourceClosureV2,
+      generationTargets: stitchImplementationSources.generationTargets,
+      responseBindings: stitchImplementationSources.responseBindings,
+      screenIndex: stitchImplementationSources.screenIndex,
+      screenIndexSource: stitchImplementationSources.screenIndexSource,
+      converterSource: input.converterSource,
+      generatedSources,
+    };
+  }
+  const sourceMap = produceImplementationSourceMapV1(implementationSourceMapInput);
+  if (sourceMap.status !== "produced") {
+    throw new SetupBuildPacketError(
+      "SETUP_PACKET_IMPLEMENTATION_SOURCE_MAP_REJECTED",
+      `ImplementationSourceMapV1 was rejected: ${sourceMap.rejectionCodes.join(",")}`,
+      { rejectionCodes: sourceMap.rejectionCodes, diagnostics: sourceMap.diagnostics },
+    );
+  }
+  return {
+    productSpecV2: plan.productSpec,
+    deliverySelection: deliverySelection.selection,
+    designGraphV2,
+    buildTopologyV1,
+    storyPlanV2: stories.storyPlan,
+    designSourceClosureV2,
+    implementationSourceInputsV1: implementationSourceMapInput,
+    implementationSourceMapV1: sourceMap.sourceMap,
+    ...(designSourceArtifactsV2 ? { designSourceArtifactsV2 } : {}),
+    sourceHashes: {
+      plan: plan.sourceHash,
+      deliverySelection: deliverySelection.selectionHash,
+      ...designSourceHashes,
+      ...(input.converterSource ? { converterSource: input.converterSource.source.hash } : {}),
+      generatedSources: designSourceHashes.generatedSources ?? [],
+      setupCertificate: setup.certificate.source.hash,
+      fileTreeManifest: setup.manifest.source.hash,
+      sharedGrants: setup.sharedGrants.source.hash,
+    },
+  };
+}
+
 export async function orchestrateSetupBuildProductPacket(input: Readonly<{
   sql: postgres.Sql;
   artifactRoot: string;
@@ -1199,6 +2096,9 @@ export async function orchestrateSetupBuildProductPacket(input: Readonly<{
   expectedMode: "shadow" | "v3";
   repo: string;
   planText: string;
+  productSemanticsVersion?: string;
+  converterSource?: SetupConverterSourceV1;
+  designSourceExpectation?: DesignSourceAttemptExpectationV2;
   expectedDeliverySelectionHash?: string;
   requestedStackPackId?: string;
   ownerInstanceId?: string;
@@ -1211,11 +2111,70 @@ export async function orchestrateSetupBuildProductPacket(input: Readonly<{
       { storedMode: protocol.mode, expectedMode: input.expectedMode },
     );
   }
-  const contracts = assembleSetupBuildPacketContracts({
+  if (input.expectedMode === "v3" && input.productSemanticsVersion !== "v2") {
+    throw new SetupBuildPacketError(
+      "SETUP_PACKET_SEMANTICS_VERSION_MISMATCH",
+      `Run ${input.runId} cannot activate ProductBuildPacketV3 without explicit Product Semantics v2 authority`,
+      { observedVersion: input.productSemanticsVersion ?? null, expectedVersion: "v2" },
+    );
+  }
+  const producer: SemanticArtifactProducerV1 = {
+    pass: "setup-build-product-packet-v3",
+    codeSha: protocol.compilerReleaseSha,
+    toolVersions: {
+      node: process.versions.node,
+      productCompiler: PRODUCT_COMPILER_RUNTIME_VERSION,
+      stackTopologyCatalog: STACK_TOPOLOGY_CATALOG_VERSION,
+      productDeliveryProfileCatalog: PRODUCT_DELIVERY_PROFILE_CATALOG_VERSION,
+      productEvidenceCapabilityPolicy: PRODUCT_EVIDENCE_CAPABILITY_POLICY_VERSION,
+      runtimeEvidenceContractProducer: RUNTIME_EVIDENCE_CONTRACT_PRODUCER_VERSION,
+    },
+  };
+  const compiler = createRuntimePacketCompiler({
+    sql: input.sql,
+    artifactRoot: input.artifactRoot,
+    artifactLimits: input.artifactLimits,
+    ownerInstanceId: input.ownerInstanceId,
+  });
+  const compilerIdentity = {
+    version: PRODUCT_COMPILER_RUNTIME_VERSION,
+    codeSha: protocol.compilerReleaseSha,
+  };
+  if (input.expectedMode === "shadow") {
+    const contracts = assembleSetupBuildPacketContracts({
+      runId: input.runId,
+      repo: input.repo,
+      planText: input.planText,
+      ...(input.expectedDeliverySelectionHash
+        ? { expectedDeliverySelectionHash: input.expectedDeliverySelectionHash }
+        : {}),
+      ...(input.requestedStackPackId
+        ? { requestedStackPackId: input.requestedStackPackId }
+        : {}),
+    });
+    const compilation = await compiler.compile({
+      runId: input.runId,
+      expectedMode: "shadow",
+      productSpec: contracts.productSpec,
+      designGraph: contracts.designGraph,
+      buildTopology: contracts.buildTopology,
+      storyPlan: contracts.storyPlan,
+      compiler: compilerIdentity,
+      producer,
+    });
+    return Object.freeze({ contracts, compilation });
+  }
+
+  const contracts = await assembleSetupBuildPacketContractsV2({
+    sql: input.sql,
     runId: input.runId,
     repo: input.repo,
     planText: input.planText,
-    requireV3Proposal: input.expectedMode === "v3",
+    producer,
+    ...(input.converterSource ? { converterSource: input.converterSource } : {}),
+    ...(input.designSourceExpectation
+      ? { designSourceExpectation: input.designSourceExpectation }
+      : {}),
     ...(input.expectedDeliverySelectionHash
       ? { expectedDeliverySelectionHash: input.expectedDeliverySelectionHash }
       : {}),
@@ -1223,38 +2182,20 @@ export async function orchestrateSetupBuildProductPacket(input: Readonly<{
       ? { requestedStackPackId: input.requestedStackPackId }
       : {}),
   });
-  const compiler = createRuntimePacketCompiler({
-    sql: input.sql,
-    artifactRoot: input.artifactRoot,
-    artifactLimits: input.artifactLimits,
-    ownerInstanceId: input.ownerInstanceId,
-  });
   const compilation = await compiler.compile({
     runId: input.runId,
-    expectedMode: input.expectedMode,
-    productSpec: contracts.productSpec,
-    designGraph: contracts.designGraph,
-    buildTopology: contracts.buildTopology,
-    storyPlan: contracts.storyPlan,
-    ...(input.expectedMode === "v3" && contracts.designSource
-      ? { designSource: contracts.designSource }
+    expectedMode: "v3",
+    productSpecV2: contracts.productSpecV2,
+    designGraphV2: contracts.designGraphV2,
+    buildTopologyV1: contracts.buildTopologyV1,
+    storyPlanV2: contracts.storyPlanV2,
+    designSourceClosureV2: contracts.designSourceClosureV2,
+    implementationSourceInputsV1: contracts.implementationSourceInputsV1,
+    ...(contracts.designSourceArtifactsV2
+      ? { designSourceArtifactsV2: contracts.designSourceArtifactsV2 }
       : {}),
-    compiler: {
-      version: PRODUCT_COMPILER_RUNTIME_VERSION,
-      codeSha: protocol.compilerReleaseSha,
-    },
-    producer: {
-      pass: "setup-build-product-packet-v3",
-      codeSha: protocol.compilerReleaseSha,
-      toolVersions: {
-        node: process.versions.node,
-        productCompiler: PRODUCT_COMPILER_RUNTIME_VERSION,
-        stackTopologyCatalog: STACK_TOPOLOGY_CATALOG_VERSION,
-        productDeliveryProfileCatalog: PRODUCT_DELIVERY_PROFILE_CATALOG_VERSION,
-        productEvidenceCapabilityPolicy: PRODUCT_EVIDENCE_CAPABILITY_POLICY_VERSION,
-        runtimeEvidenceContractProducer: RUNTIME_EVIDENCE_CONTRACT_PRODUCER_VERSION,
-      },
-    },
+    compiler: compilerIdentity,
+    producer,
   });
   return Object.freeze({ contracts, compilation });
 }

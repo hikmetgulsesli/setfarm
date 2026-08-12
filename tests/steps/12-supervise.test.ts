@@ -17,6 +17,23 @@ describe("12-supervise step module", () => {
     assert.deepEqual(superviseModule.requiredOutputFields, ["STATUS", "SUPERVISOR_DECISION", "AC_COVERAGE"]);
   });
 
+  it("requires durable STORIES admission before supervisor evidence reads", () => {
+    const source = fs.readFileSync("src/installer/step-ops.ts", "utf8");
+    const selection = source.indexOf("if (!step) return { found: false };");
+    const admission = source.indexOf(
+      "await loadCompilerStoryEnglishAdmissionLedgerAuthorityV1(",
+      selection,
+    );
+    const runStatusRead = source.indexOf("await getRunStatus(step.run_id)", selection);
+    const singleStepDispatch = source.indexOf("return await claimSingleStep(", selection);
+    const contextRead = source.indexOf("await getRunContext(step.run_id)", selection);
+    assert.ok(admission > 0);
+    assert.ok(runStatusRead > admission);
+    assert.ok(contextRead > admission);
+    assert.ok(singleStepDispatch > admission);
+    assert.match(source.slice(selection, admission), /step\.step_id === "supervise"/);
+  });
+
   it("normalizes done supervisor audit outputs that omit the decision label", () => {
     const parsed = {
       status: "done",

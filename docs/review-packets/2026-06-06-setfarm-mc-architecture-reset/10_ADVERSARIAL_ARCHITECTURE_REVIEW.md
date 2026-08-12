@@ -304,7 +304,7 @@ Same shape: start dev server, wait for canvas/render, run interaction plan (inpu
 - **Android/iOS**: native build + simulator/emulator launch + UI hierarchy capture + screenshot + logcat. Same interface, different driver. The interface does not change; the driver does.
 
 ### 6.6 Advisory vs blocking?
-**Blocking** for any story whose evidence contract says runtime. Advisory for any story that does not need runtime. The toggle exists for transition; default is blocking. The packet's own fear — "blocking moda erken geçilirse mevcut agent'lar çok fazla takılır" — is real, but the answer is **fix the evidence pipeline so it is reliable**, not weaken the gate. A flaky blocking gate is a different problem (flakiness) and is solved by deterministic readiness + retries, not by making it advisory.
+**Blocking** for any story whose evidence contract says runtime. Advisory for any story that does not need runtime. The toggle exists for transition; default is blocking. The packet's own fear — "if blocking mode is enabled too early, existing agents may become blocked too frequently" — is real, but the answer is **fix the evidence pipeline so it is reliable**, not weaken the gate. A flaky blocking gate is a different problem (flakiness) and is solved by deterministic readiness + retries, not by making it advisory.
 
 ### 6.7 VLM / vision?
 **Advisory, never primary, always on top of structured evidence.** A VLM judge looking at a screenshot is not a correctness proof; it is a critic. The contract is: structured evidence (DOM, state, HTTP) is primary; VLM is a critic that flags visual regressions and design/code mismatch. The VLM never decides pass/fail on its own. This keeps evidence cheap, fast, and stack-agnostic; VLM is a per-stack optional add-on.

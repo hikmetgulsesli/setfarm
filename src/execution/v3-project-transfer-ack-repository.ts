@@ -2,7 +2,15 @@ import type postgres from "postgres";
 
 import { readDatabaseWallClock } from "../db/database-wall-clock.js";
 import { hashCanonicalJson } from "../product-compiler/canonical-json.js";
-import { buildRunOperationalSnapshotInTransaction } from "../server/run-operational-snapshot.js";
+import { createRuntimeArtifactReader } from "../product-compiler/runtime-artifact-reader.js";
+import {
+  resolveProductArtifactCapacity,
+  resolveProductArtifactDir,
+} from "../runtime-config.js";
+import {
+  buildRunOperationalSnapshotInTransaction,
+  type RunOperationalSnapshotBuildOptions,
+} from "../server/run-operational-snapshot.js";
 import { operationalOutboxIdForEventKey } from "./operational-outbox-repository.js";
 import {
   V3DeployReceiptV1Schema,
@@ -181,9 +189,24 @@ function assertAuthority(
 
 export function createV3ProjectTransferAckRepository(
   sql: postgres.Sql,
-  dependencies: Readonly<{ now?: () => Date }> = {},
+  dependencies: Readonly<{
+    now?: () => Date;
+    snapshotOptions?: RunOperationalSnapshotBuildOptions;
+  }> = {},
 ) {
   const compatibilityNow = dependencies.now;
+  const artifactRoot = dependencies.snapshotOptions?.artifactRoot
+    ?? resolveProductArtifactDir();
+  const artifactLimits = dependencies.snapshotOptions?.artifactLimits
+    ?? resolveProductArtifactCapacity();
+  const artifactReadPort = dependencies.snapshotOptions?.artifactReadPort
+    ?? createRuntimeArtifactReader({ sql, artifactRoot, artifactLimits }).store;
+  const snapshotOptions: RunOperationalSnapshotBuildOptions = {
+    ...dependencies.snapshotOptions,
+    artifactRoot,
+    artifactLimits,
+    artifactReadPort,
+  };
   return Object.freeze({
     async findByRunId(runId: string): Promise<V3ProjectTransferAckV1 | undefined> {
       const row = await readAckByRun(sql, runId);
@@ -268,6 +291,7 @@ export function createV3ProjectTransferAckRepository(
         const snapshot = await buildRunOperationalSnapshotInTransaction(
           transaction,
           acknowledgement.runId,
+          snapshotOptions,
         );
         if (
           !snapshot

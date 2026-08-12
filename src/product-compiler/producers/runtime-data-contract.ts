@@ -11,10 +11,10 @@ import {
   hasUniqueStrings,
 } from "../schemas/common-v1.js";
 import {
-  ProductSpecV1Schema,
   validatePersistenceDeliveryCompatibilityV1,
   type PersistencePolicyV1,
 } from "../schemas/product-spec-v1.js";
+import { ProductSpecV1OrV2Schema } from "../schemas/product-spec-v2.js";
 import {
   RuntimeDataContractV1Schema,
   RuntimeDataProvisioningV1Schema,
@@ -35,7 +35,7 @@ const RuntimeCommandReferenceV1Schema = z
 
 const RuntimeDataContractProducerInputSchema = z
   .object({
-    productSpec: ProductSpecV1Schema,
+    productSpec: ProductSpecV1OrV2Schema,
     commands: z.array(RuntimeCommandReferenceV1Schema).min(1).max(1_000),
     provisioning: RuntimeDataProvisioningV1Schema.optional(),
   })
@@ -206,7 +206,7 @@ export function produceRuntimeDataContractV1(input: unknown): RuntimeDataContrac
   if (!productSpec.delivery) {
     return reject([diagnostic({
       code: "RUNTIME_DATA_PRODUCT_DELIVERY_MISSING",
-      message: "Runtime-data authority can be produced only from a v3 ProductSpec with exact delivery",
+      message: "Runtime-data authority can be produced only from a ProductSpec with exact delivery",
       reference: "delivery",
     })]);
   }
@@ -597,7 +597,7 @@ export function validateRuntimeDataContractClosureV1(input: Readonly<{
   contract: unknown;
   contractHash: unknown;
 }>): CompilationDiagnosticV1[] {
-  const productSpec = ProductSpecV1Schema.safeParse(input.productSpec);
+  const productSpec = ProductSpecV1OrV2Schema.safeParse(input.productSpec);
   const commands = z.array(RuntimeCommandReferenceV1Schema).min(1).max(1_000).safeParse(input.commands);
   const contract = RuntimeDataContractV1Schema.safeParse(input.contract);
   const contractHash = z.string().regex(/^[a-f0-9]{64}$/).safeParse(input.contractHash);

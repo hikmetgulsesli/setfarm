@@ -5,9 +5,11 @@ import path from "node:path";
 import { test } from "node:test";
 
 import { createAttemptRepository } from "../../src/execution/attempt-repository.js";
+import { publishLoopClaimRuntime } from "../../src/execution/claim-runtime-publication.js";
 import { createRuntimeSessionRepository } from "../../src/execution/runtime-session-repository.js";
 import { createV3PreparationClaimAuthorityV1 } from "../../src/execution/v3-preparation-claim-authority.js";
 import { exactProductReservation } from "./fixtures.js";
+import { seedCanonicalCompilerStoryAdmissionFixture } from "./helpers/compiler-story-english-admission-fixture.js";
 import { createIsolatedTestDatabase } from "./test-database.js";
 
 test("typed transient pre-dispatch failure atomically closes ownership and requeues exact work", async () => {
@@ -21,63 +23,87 @@ test("typed transient pre-dispatch failure atomically closes ownership and reque
     runtimeDb = await import("../../src/db-pg.js");
     runtimeDb.pgConfigureIsolatedTestDatabase(database.url);
     const { handleV3PreDispatchFailure } = await import("../../src/installer/v3-pre-dispatch-failure.js");
-    const runId = "run-v3-pre-dispatch-integration";
-    const stepDbId = "step-v3-pre-dispatch-integration";
-    const storyDbId = "story-v3-pre-dispatch-integration";
-    const storyId = "US-001";
     const releaseSha = "a".repeat(40);
     const packetHash = "b".repeat(64);
-    const admissionHash = await database.seedV3ReleaseGoAdmission(releaseSha);
-    await database.sql`
-      INSERT INTO runs (
-        id, workflow_id, task, status, context, protocol, protocol_version,
-        compiler_release_sha, activation_preflight_hash, packet_hash,
-        release_admission_hash
-      ) VALUES (
-        ${runId}, 'feature-dev', 'pre-dispatch integration', 'running', '{}', 'v3', 1,
-        ${releaseSha}, ${"c".repeat(64)}, ${packetHash}, ${admissionHash}
-      )
-    `;
-    await database.sql`
-      INSERT INTO steps (
-        id, run_id, step_id, agent_id, step_index, input_template, expects,
-        status, type, loop_config, current_story_id
-      ) VALUES (
-        ${stepDbId}, ${runId}, 'implement', 'feature-dev_developer', 1, '', '',
-        'running', 'loop', '{"over":"stories","parallel":1}', ${storyDbId}
-      )
-    `;
-    await database.sql`
-      INSERT INTO stories (
-        id, run_id, story_index, story_id, title, status, claimed_by,
-        claimed_at, claim_generation
-      ) VALUES (
-        ${storyDbId}, ${runId}, 1, ${storyId}, 'Exact transient story', 'running',
-        'feature-dev_developer', NOW(), 1
-      )
-    `;
-    const claims = await database.sql<Array<{ id: number }>>`
-      INSERT INTO claim_log (run_id, step_id, story_id, agent_id, claimed_at)
-      VALUES (${runId}, 'implement', ${storyId}, 'feature-dev_developer', NOW())
-      RETURNING id::integer AS id
-    `;
-    const authority = createV3PreparationClaimAuthorityV1({
-      stateVersion: 1,
-      runId,
-      stepId: "implement",
-      storyId,
-      packetHash,
-      baseRevision: { sha: "d".repeat(40), treeHash: "e".repeat(40) },
-      projectedDependencyIds: [],
-      dependencyAttempts: [],
-    });
+    const seedManagedOwner = async (suffix: string) => {
+      const managedRunId = `run-v3-pre-dispatch-${suffix}`;
+      const admission = await seedCanonicalCompilerStoryAdmissionFixture(database, {
+        runId: managedRunId,
+        releaseSha,
+        packetHash,
+      });
+      const story = admission.stories[0]!;
+      const publication = await publishLoopClaimRuntime(database.sql, {
+        runId: managedRunId,
+        stepDbId: admission.implementStepDbId,
+        workflowStepId: "implement",
+        storyDbId: story.id,
+        storyId: story.storyId,
+        claimAgentId: "feature-dev_developer",
+        parallelLimit: 1,
+        runtimeIntent: {
+          schema: "setfarm.runtime-claim-intent.v1",
+          sessionId: `RTS_predispatch-${suffix}-owner`,
+          runtimeAgentId: "prism",
+          runtimeKind: "openclaw_session",
+          ownerInstanceId: "spawner-predispatch",
+        },
+        storyAdmissionProof: admission.storyAdmissionProof,
+      });
+      assert.ok(publication?.runtime);
+      const managedClaimId = publication.claimId;
+      const attempts = createAttemptRepository(database.sql, {
+        attemptId: () => `ATT_predispatch-${suffix}-owner`,
+        fenceToken: () => "f".repeat(64),
+      });
+      const attempt = await attempts.reserve(exactProductReservation({
+        claimId: managedClaimId,
+        runId: managedRunId,
+        stepId: "implement",
+        storyId: story.storyId,
+        agentId: "feature-dev_developer",
+        packetHash,
+        sourceBefore: { sha: "d".repeat(40), treeHash: "e".repeat(40) },
+        evidenceRefs: [`setfarm://claim-log/${managedClaimId}`],
+      }));
+      const sessions = createRuntimeSessionRepository(database.sql);
+      const runtime = await sessions.bindAttempt({
+        sessionId: publication.runtime.sessionId,
+        attemptId: attempt.attempt.attemptId,
+        ownerInstanceId: publication.runtime.ownerInstanceId,
+      });
+      return {
+        runId: managedRunId,
+        stepDbId: admission.implementStepDbId,
+        storyDbId: story.id,
+        storyId: story.storyId,
+        claimId: managedClaimId,
+        attemptId: attempt.attempt.attemptId,
+        runtime,
+        authority: createV3PreparationClaimAuthorityV1({
+          stateVersion: 1,
+          runId: managedRunId,
+          stepId: "implement",
+          storyId: story.storyId,
+          packetHash,
+          baseRevision: { sha: "d".repeat(40), treeHash: "e".repeat(40) },
+          projectedDependencyIds: [],
+          dependencyAttempts: [],
+        }),
+      };
+    };
 
+    const transient = await seedManagedOwner("integration");
     const disposition = await handleV3PreDispatchFailure({
-      step: { id: stepDbId, run_id: runId, step_id: "implement" },
-      story: { id: storyDbId, story_id: storyId, title: "Exact transient story" },
+      step: { id: transient.stepDbId, run_id: transient.runId, step_id: "implement" },
+      story: { id: transient.storyDbId, story_id: transient.storyId, title: "Exact transient story" },
       agentId: "feature-dev_developer",
-      claimId: claims[0]!.id,
-      authority,
+      claimId: transient.claimId,
+      runtime: {
+        sessionId: transient.runtime.sessionId,
+        ownerInstanceId: transient.runtime.ownerInstanceId,
+      },
+      authority: transient.authority,
       phase: "source",
       error: Object.assign(new Error("temporary worktree timeout"), { code: "ETIMEDOUT" }),
     });
@@ -102,14 +128,14 @@ test("typed transient pre-dispatch failure atomically closes ownership and reque
              story.claimed_by,
              claim.outcome AS claim_outcome,
              claim.diagnostic,
-             (SELECT COUNT(*)::integer FROM run_termination_requests WHERE run_id = ${runId}) AS termination_requests,
+             (SELECT COUNT(*)::integer FROM run_termination_requests WHERE run_id = ${transient.runId}) AS termination_requests,
              (SELECT COUNT(*)::integer FROM run_observations
-               WHERE run_id = ${runId} AND phase = 'v3-pre-dispatch') AS owner_observations
+               WHERE run_id = ${transient.runId} AND phase = 'v3-pre-dispatch') AS owner_observations
         FROM runs run
-        JOIN steps step ON step.id = ${stepDbId}
-        JOIN stories story ON story.id = ${storyDbId}
-        JOIN claim_log claim ON claim.id = ${claims[0]!.id}
-       WHERE run.id = ${runId}
+        JOIN steps step ON step.id = ${transient.stepDbId}
+        JOIN stories story ON story.id = ${transient.storyDbId}
+        JOIN claim_log claim ON claim.id = ${transient.claimId}
+       WHERE run.id = ${transient.runId}
     `;
     assert.deepEqual({ ...state[0] }, {
       run_status: "running",
@@ -122,94 +148,6 @@ test("typed transient pre-dispatch failure atomically closes ownership and reque
       termination_requests: 0,
       owner_observations: 1,
     });
-
-    const seedManagedOwner = async (suffix: string) => {
-      const managedRunId = `run-v3-pre-dispatch-${suffix}`;
-      const managedStepDbId = `step-v3-pre-dispatch-${suffix}`;
-      const managedStoryDbId = `story-v3-pre-dispatch-${suffix}`;
-      await database.sql`
-        INSERT INTO runs (
-          id, workflow_id, task, status, context, protocol, protocol_version,
-          compiler_release_sha, activation_preflight_hash, packet_hash,
-          release_admission_hash
-        ) VALUES (
-          ${managedRunId}, 'feature-dev', 'managed pre-dispatch failure', 'running', '{}', 'v3', 1,
-          ${releaseSha}, ${"c".repeat(64)}, ${packetHash}, ${admissionHash}
-        )
-      `;
-      await database.sql`
-        INSERT INTO steps (
-          id, run_id, step_id, agent_id, step_index, input_template, expects,
-          status, type, loop_config, current_story_id
-        ) VALUES (
-          ${managedStepDbId}, ${managedRunId}, 'implement', 'feature-dev_developer',
-          1, '', '', 'running', 'loop', '{"over":"stories","parallel":1}', ${managedStoryDbId}
-        )
-      `;
-      await database.sql`
-        INSERT INTO stories (
-          id, run_id, story_index, story_id, title, status, claimed_by,
-          claimed_at, claim_generation
-        ) VALUES (
-          ${managedStoryDbId}, ${managedRunId}, 1, 'US-001', 'Managed pre-dispatch story',
-          'running', 'feature-dev_developer', NOW(), 1
-        )
-      `;
-      const managedClaims = await database.sql<Array<{ id: number }>>`
-        INSERT INTO claim_log (run_id, step_id, story_id, agent_id, claimed_at)
-        VALUES (${managedRunId}, 'implement', 'US-001', 'feature-dev_developer', NOW())
-        RETURNING id::integer AS id
-      `;
-      const managedClaimId = managedClaims[0]!.id;
-      const attempts = createAttemptRepository(database.sql, {
-        attemptId: () => `ATT_predispatch-${suffix}-owner`,
-        fenceToken: () => "f".repeat(64),
-      });
-      const attempt = await attempts.reserve(exactProductReservation({
-        claimId: managedClaimId,
-        runId: managedRunId,
-        stepId: "implement",
-        storyId: "US-001",
-        agentId: "feature-dev_developer",
-        packetHash,
-        sourceBefore: { sha: "d".repeat(40), treeHash: "e".repeat(40) },
-        evidenceRefs: [`setfarm://claim-log/${managedClaimId}`],
-      }));
-      const sessions = createRuntimeSessionRepository(database.sql);
-      const runtime = await sessions.reserve({
-        sessionId: `RTS_predispatch-${suffix}-owner`,
-        runId: managedRunId,
-        stepDbId: managedStepDbId,
-        workflowStepId: "implement",
-        storyDbId: managedStoryDbId,
-        storyId: "US-001",
-        claimId: managedClaimId,
-        attemptId: attempt.attempt.attemptId,
-        claimAgentId: "feature-dev_developer",
-        runtimeAgentId: "prism",
-        runtimeKind: "openclaw_session",
-        ownerInstanceId: "spawner-predispatch",
-      });
-      return {
-        runId: managedRunId,
-        stepDbId: managedStepDbId,
-        storyDbId: managedStoryDbId,
-        storyId: "US-001",
-        claimId: managedClaimId,
-        attemptId: attempt.attempt.attemptId,
-        runtime,
-        authority: createV3PreparationClaimAuthorityV1({
-          stateVersion: 1,
-          runId: managedRunId,
-          stepId: "implement",
-          storyId: "US-001",
-          packetHash,
-          baseRevision: { sha: "d".repeat(40), treeHash: "e".repeat(40) },
-          projectedDependencyIds: [],
-          dependencyAttempts: [],
-        }),
-      };
-    };
 
     const contractFailures = [
       {
@@ -319,7 +257,7 @@ test("typed transient pre-dispatch failure atomically closes ownership and reque
       CREATE FUNCTION test_fail_v3_predispatch_story_terminal_update()
       RETURNS trigger LANGUAGE plpgsql AS $$
       BEGIN
-        IF NEW.id LIKE 'story-v3-pre-dispatch-%-rollback' AND NEW.status = 'failed' THEN
+        IF NEW.run_id LIKE 'run-v3-pre-dispatch-%-rollback' AND NEW.status = 'failed' THEN
           RAISE EXCEPTION 'TEST_INJECTED_PRE_DISPATCH_STORY_UPDATE_FAILURE';
         END IF;
         RETURN NEW;

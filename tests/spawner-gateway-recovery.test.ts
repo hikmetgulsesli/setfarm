@@ -3,7 +3,7 @@ import path from "node:path";
 import os from "node:os";
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { expandSupportedGuardGlob, isMaskedDeterministicCheckCommand, isSetfarmHelperScriptReadCommand, isSetfarmSummaryHelpCommand, isUnsupportedSetfarmSummaryCommand } from "../dist/spawner.js";
+import { expandSupportedGuardGlob, isMaskedDeterministicCheckCommand, isSetfarmHelperScriptReadCommand, isSetfarmSummaryHelpCommand, isUnsupportedSetfarmSummaryCommand } from "../src/spawner.js";
 
 const root = path.resolve(import.meta.dirname, "..");
 

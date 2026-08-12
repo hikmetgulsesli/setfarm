@@ -178,11 +178,7 @@ describe("v3 deploy receipt ledger", () => {
   before(async () => { database = await createIsolatedTestDatabase(); });
   after(async () => database.cleanup());
   beforeEach(async () => {
-    await database.sql.unsafe(
-      `TRUNCATE v3_deploy_receipts, accepted_candidate_story_evidence,
-                accepted_candidates, product_packets, semantic_artifacts,
-                operational_outbox, claim_log, steps, runs CASCADE`,
-    );
+    await database.reset();
   });
 
   async function seed(runId: string) {

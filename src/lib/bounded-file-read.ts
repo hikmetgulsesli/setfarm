@@ -30,15 +30,21 @@ export type BoundedUtf8FileRead = Readonly<{
   stat: Stats;
 }>;
 
+export type BoundedFileRead = Readonly<{
+  bytes: Buffer;
+  byteLength: number;
+  stat: Stats;
+}>;
+
 /**
  * Reads an agent-owned regular file without following a replaceable symlink or
  * allocating beyond the declared protocol boundary. The before/after metadata
  * comparison rejects an inode that was modified while it was being consumed.
  */
-export function readUtf8RegularFileAtMostSync(
+export function readRegularFileAtMostSync(
   filePath: string,
   maxBytes: number,
-): BoundedUtf8FileRead {
+): BoundedFileRead {
   if (!Number.isSafeInteger(maxBytes) || maxBytes < 1) {
     throw new RangeError("maxBytes must be a positive safe integer");
   }
@@ -60,7 +66,7 @@ export function readUtf8RegularFileAtMostSync(
       );
     }
 
-    const buffer = Buffer.allocUnsafe(maxBytes + 1);
+    const buffer = Buffer.allocUnsafe(Math.min(maxBytes + 1, before.size + 1));
     let byteLength = 0;
     while (byteLength < buffer.length) {
       const bytesRead = readSync(
@@ -96,24 +102,33 @@ export function readUtf8RegularFileAtMostSync(
       );
     }
 
-    let text: string;
-    try {
-      text = new TextDecoder("utf-8", { fatal: true }).decode(
-        buffer.subarray(0, byteLength),
-      );
-    } catch {
-      throw new BoundedFileReadError(
-        "FILE_INVALID_UTF8",
-        `${filePath} is not valid UTF-8`,
-      );
-    }
-
     return {
-      text,
+      bytes: Buffer.from(buffer.subarray(0, byteLength)),
       byteLength,
       stat: after,
     };
   } finally {
     if (descriptor !== undefined) closeSync(descriptor);
   }
+}
+
+export function readUtf8RegularFileAtMostSync(
+  filePath: string,
+  maxBytes: number,
+): BoundedUtf8FileRead {
+  const exact = readRegularFileAtMostSync(filePath, maxBytes);
+  let text: string;
+  try {
+    text = new TextDecoder("utf-8", { fatal: true }).decode(exact.bytes);
+  } catch {
+    throw new BoundedFileReadError(
+      "FILE_INVALID_UTF8",
+      `${filePath} is not valid UTF-8`,
+    );
+  }
+  return {
+    text,
+    byteLength: exact.byteLength,
+    stat: exact.stat,
+  };
 }

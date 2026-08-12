@@ -2,31 +2,31 @@
 
 ## Current Idea
 
-Kullanıcı uzun vadede Codex/supervisor'ın Setfarm veya Mission Control kodlarını otomatik inceleyip sistemsel fix ekleyebilmesini istiyor. Hedef proje özel yama değil; run'lar sırasında bulunan platform sorunlarının Setfarm/MC altyapısına kalıcı ve genel fix olarak eklenmesi.
+In the long term, the user wants Codex/the supervisor to inspect Setfarm or Mission Control code automatically and add systemic fixes. The goal is not a project-specific patch, but a durable, general fix in the Setfarm/MC platform for problems discovered during runs.
 
 ## Why This Is Attractive
 
-- Her proje için aynı bug'ı tekrar düzeltmek gerekmez.
-- Platform kendi failure taxonomy'sini öğrenebilir.
-- MC'de patch plan, diff, test, rollback görünür olabilir.
-- Supervisor "şirketin platform ekibi" gibi davranabilir.
+- The same bug does not need to be fixed again for every project.
+- The platform can learn its own failure taxonomy.
+- MC can display the patch plan, diff, tests, and rollback.
+- The supervisor can act like "the company's platform team."
 
 ## Why This Is Dangerous
 
-Self-heal agent platform kodunu değiştirirse reward hacking riski doğar:
+If the self-heal agent changes platform code, it creates a reward-hacking risk:
 
-- smoke test'i gevşetebilir
-- guard'ı kaldırabilir
-- failure classifier'ı yanlış yorumlayabilir
-- MC görünürlüğünü düzeltiyorum derken blocker'ları saklayabilir
-- aynı run içinde hot patch + resume module cache/state problemleri yaratabilir
+- it can relax the smoke test
+- it can remove a guard
+- it can misinterpret the failure classifier
+- it can hide blockers while claiming to improve MC visibility
+- hot patch + resume within the same run can create module-cache/state problems
 
 ## Current Components
 
 - `config.ts`: env controls.
 - `classifier.ts`: failure classification.
 - `known-patterns.ts/json`: deterministic known failure signatures.
-- `ownership-map.ts`: hangi failure class hangi dosyaları patch'leyebilir.
+- `ownership-map.ts`: which failure class can patch which files.
 - `patch-contract.ts`: patch plan schema/validation.
 - `runner.ts`: self-heal execution.
 - `rollback.ts`: patch rollback.
@@ -75,4 +75,3 @@ If no:
 ## Recommended Initial Answer To Challenge
 
 Do not enable autonomous `patch_and_resume` yet. Use self-heal as a plan-only platform diagnostician until failure classification accuracy and immutable tests are strong.
-

@@ -1,10 +1,31 @@
+import crypto from "node:crypto";
+
+import type postgres from "postgres";
+
 import type { ParsedOutput, ValidationResult, CompleteContext } from "../types.js";
-import { pgGet, pgQuery, pgRun, now } from "../../../db-pg.js";
+import { getSql, pgGet, pgQuery, pgRun, now } from "../../../db-pg.js";
+import {
+  compilerEnglishAdmissionLedgerDesignRequiredV1,
+  inspectCompilerEnglishAdmissionLedgerAuthorityV1,
+  loadCompilerEnglishAdmissionLedgerAuthorityV1,
+  type CompilerEnglishAdmissionLedgerAuthorityV1,
+} from "../../../execution/compiler-english-admission-ledger-v1.js";
+import { loadRuntimeCompletionAuthorityProjectionV1 } from "../../../execution/runtime-completion-authority-projection-v1.js";
+import { validateRuntimeCompletionEffectInput } from "../../../execution/runtime-completion-effect-runner.js";
+import { createSingleEffectCompletionPlanDescriptorV1 } from "../../../execution/schemas/runtime-completion-plan-v1.js";
 import { logger } from "../../../lib/logger.js";
-import { parseAndInsertStories } from "../../story-ops.js";
+import {
+  compileStoryPublicationRowsV1,
+  parseAndInsertStories,
+} from "../../story-ops.js";
+import { hashCanonicalJson } from "../../../product-compiler/canonical-json.js";
+import { readProductCompilationAttemptV1 } from "../../../product-compiler/product-compilation-attempt-repository.js";
+import { readProjectedDesignSourceAuthorityV2 } from "../../../product-compiler/design-source-runtime-v2.js";
+import { prepareV3DesignContractV2 } from "../../../product-compiler/v3-design-contract-v2.js";
 import {
   collectUiBehaviorRequirements,
   computePredictedScreenFiles,
+  extractExplicitMaxStories,
   normalizeUiBehaviorText,
   type UiBehaviorRequirement,
 } from "./context.js";
@@ -25,10 +46,356 @@ export function validateOutput(parsed: ParsedOutput): ValidationResult {
   return { ok: errors.length === 0, errors };
 }
 
-function getExplicitMaxStories(context: Record<string, string>): number | null {
-  const m = String(context["story_count_hint"] || "").match(/MAX_STORIES=(\d+)/);
-  const n = m ? Number(m[1]) : 0;
-  return Number.isInteger(n) && n > 0 && n < 50 ? n : null;
+function getExplicitMaxStories(context: Readonly<Record<string, string>>): number | null {
+  return extractExplicitMaxStories([
+    context["task"] || context["TASK"] || "",
+    context["prd"] || context["PRD"] || "",
+  ].join("\n"));
+}
+
+export function buildExpectedV3StoriesOutput(
+  context: Record<string, string>,
+  expectedProductSpecHash: string,
+): string {
+  return buildV3AutoStoriesOutput({
+    repo: context["repo"] || context["REPO"] || "",
+    prd: context["prd"] || context["PRD"] || "",
+    expectedProductSpecHash,
+    productSemanticsVersion: context["product_semantics_version"],
+    ...(getExplicitMaxStories(context)
+      ? { maxStories: getExplicitMaxStories(context)! }
+      : {}),
+  });
+}
+
+export type PreparedV3StoriesCompletionV1 = Readonly<{
+  planAuthority: CompilerEnglishAdmissionLedgerAuthorityV1;
+  designAuthoritySubjectHash: string;
+  expectedOutput: string;
+  storyCount: number;
+}>;
+
+const DESIGN_NOT_REQUIRED_OUTPUT_V1 = [
+  "STATUS: done",
+  "DESIGN_REQUIRED: false",
+  "DEVICE_TYPE: NONE",
+  "DESIGN_SYSTEM: {}",
+  "SCREEN_MAP: []",
+  "SCREENS_GENERATED: 0",
+  "AUTO_COMPLETED: design-bypass (DESIGN_REQUIRED=false)",
+].join("\n");
+
+const MAX_DESIGN_COMPLETION_BYTES_V1 = 4_000_000;
+const MAX_DESIGN_COMPLETION_EFFECTS_V1 = 128;
+
+async function loadDurableDesignCompletionV1(
+  sql: postgres.Sql | postgres.TransactionSql,
+  runId: string,
+  ownerClaimId?: number,
+): Promise<Readonly<{ claimId: number; stepOutput: string }>> {
+  const candidates = await sql.unsafe<Array<{
+    claim_id: number;
+    request_id: string;
+    step_db_id: string;
+    step_status: string;
+    step_output: string | null;
+    step_output_bytes: string;
+    completion_output_bytes: string;
+    completion_plan_bytes: string;
+  }>>(
+    `SELECT claim.id::integer AS claim_id,
+            completion.request_id,
+            design.id AS step_db_id,
+            design.status AS step_status,
+            CASE
+              WHEN octet_length(design.output) <= $3 THEN design.output
+              ELSE NULL
+            END AS step_output,
+            octet_length(design.output)::text AS step_output_bytes,
+            octet_length(completion.output)::text AS completion_output_bytes,
+            octet_length(completion.completion_plan::text)::text AS completion_plan_bytes
+       FROM claim_log claim
+       JOIN steps design
+         ON design.run_id = claim.run_id
+        AND design.step_id = claim.step_id
+       JOIN runtime_completion_requests completion
+         ON completion.claim_id = claim.id
+      WHERE claim.run_id = $1
+        AND claim.step_id = 'design'
+        AND claim.story_id IS NULL
+        AND claim.outcome = 'completed'
+        AND completion.state = 'accepted'
+        AND completion.apply_phase = 'effects_committed'
+        AND ($2::bigint IS NULL OR claim.id = $2)
+      ORDER BY claim.id DESC
+      LIMIT 2`,
+    [runId, ownerClaimId ?? null, MAX_DESIGN_COMPLETION_BYTES_V1],
+  );
+  if (candidates.length !== 1) {
+    throw new Error(`STORIES_DESIGN_COMPLETION_OWNER_COUNT_INVALID:${candidates.length}`);
+  }
+  const candidate = candidates[0]!;
+  if (candidate.step_output === null
+    || Number(candidate.step_output_bytes) > MAX_DESIGN_COMPLETION_BYTES_V1
+    || Number(candidate.completion_output_bytes) > MAX_DESIGN_COMPLETION_BYTES_V1
+    || Number(candidate.completion_plan_bytes) > MAX_DESIGN_COMPLETION_BYTES_V1) {
+    throw new Error("STORIES_DESIGN_COMPLETION_LIMIT_EXCEEDED");
+  }
+  const completionAuthority = await loadRuntimeCompletionAuthorityProjectionV1(
+    sql,
+    { requestId: candidate.request_id },
+  );
+  const completion = completionAuthority.request;
+  const plan = completion?.completionPlan;
+  const expectedDescriptor = createSingleEffectCompletionPlanDescriptorV1({
+    kind: "single_completion",
+    continuation: { type: "single_pipeline_advance" },
+    effectPayload: { stepId: "design" },
+  });
+  if (!completion
+    || candidate.step_status !== "done"
+    || candidate.step_output === null
+    || completion.claimId !== candidate.claim_id
+    || completion.runId !== runId
+    || completion.stepDbId !== candidate.step_db_id
+    || completion.workflowStepId !== "design"
+    || completion.storyId
+    || completion.storyDbId
+    || completion.attemptId
+    || completion.claimOutcome !== "completed"
+    || completion.state !== "accepted"
+    || completion.applyPhase !== "effects_committed"
+    || completion.output !== candidate.step_output
+    || crypto.createHash("sha256").update(completion.output, "utf8").digest("hex")
+      !== completion.outputHash
+    || !plan
+    || !completion.completionPlanHash
+    || hashCanonicalJson(plan) !== completion.completionPlanHash
+    || plan.requestId !== completion.requestId
+    || plan.claimId !== completion.claimId
+    || plan.runId !== completion.runId
+    || plan.stepDbId !== completion.stepDbId
+    || plan.workflowStepId !== "design"
+    || plan.outputHash !== completion.outputHash
+    || !completion.preparedAt
+    || plan.preparedAt !== completion.preparedAt
+    || hashCanonicalJson({
+      kind: plan.kind,
+      continuation: plan.continuation,
+      ...(plan.subject ? { subject: plan.subject } : {}),
+      effects: plan.effects,
+    }) !== hashCanonicalJson(expectedDescriptor)) {
+    throw new Error("STORIES_DESIGN_COMPLETION_BINDING_INVALID");
+  }
+  const effects = completionAuthority.effects;
+  if (effects.length !== 1 || effects.length > MAX_DESIGN_COMPLETION_EFFECTS_V1) {
+    throw new Error("STORIES_DESIGN_COMPLETION_EFFECT_LIMIT_EXCEEDED");
+  }
+  if (effects.length !== plan.effects.length
+    || effects.length !== 1) {
+    throw new Error("STORIES_DESIGN_COMPLETION_EFFECT_COUNT_INVALID");
+  }
+  for (const effect of effects) {
+    const validated = validateRuntimeCompletionEffectInput(effect);
+    if (validated.planHash !== completion.completionPlanHash
+      || !effect.mandatory
+      || !["applied", "reconciled"].includes(effect.state)) {
+      throw new Error("STORIES_DESIGN_COMPLETION_EFFECT_BINDING_INVALID");
+    }
+  }
+  return Object.freeze({
+    claimId: candidate.claim_id,
+    stepOutput: candidate.step_output,
+  });
+}
+
+export async function designAuthoritySubjectHashV1(
+  sql: postgres.Sql | postgres.TransactionSql,
+  runId: string,
+  context: Readonly<Record<string, string>>,
+  productSpecHash: string,
+  designRequired: boolean,
+  contract?: ReturnType<typeof prepareV3DesignContractV2>,
+): Promise<string> {
+  if (context["design_required"] !== String(designRequired)) {
+    throw new Error("STORIES_DESIGN_REQUIREMENT_BINDING_INVALID");
+  }
+  const durableDesignCompletion = await loadDurableDesignCompletionV1(sql, runId);
+  if (!designRequired) {
+    if ([
+      "design_source_attempt_id",
+      "design_source_authority_hash",
+      "design_source_request_hash",
+      "design_source_output_seal_hash",
+      "design_source_product_spec_hash",
+      "design_source_generation_targets_hash",
+    ].some((key) => Boolean(context[key]))) {
+      throw new Error("STORIES_DESIGN_AUTHORITY_UNEXPECTED");
+    }
+    if (durableDesignCompletion.stepOutput !== DESIGN_NOT_REQUIRED_OUTPUT_V1
+      || context["screen_map"] !== "[]") {
+      throw new Error("STORIES_DESIGN_NOT_REQUIRED_COMPLETION_INVALID");
+    }
+    return hashCanonicalJson({
+      schema: "setfarm.stories-design-authority-subject.v1",
+      disposition: "design_not_required",
+      productSpecHash,
+    });
+  }
+
+  if (!contract) throw new Error("STORIES_DESIGN_CONTRACT_REQUIRED");
+  const repo = context["repo"] || context["REPO"] || "";
+  const attemptId = context["design_source_attempt_id"] || "";
+  const attempt = await readProductCompilationAttemptV1(sql, attemptId);
+  const expectedOutputSealHash = attempt?.outputRefs
+    ? hashCanonicalJson({
+        schema: "setfarm.product-compilation-output-seal.v1",
+        attemptRef: attempt.attemptId,
+        disposition: "accepted",
+        outputRefs: attempt.outputRefs,
+      })
+    : "";
+  if (!attempt
+    || attempt.runId !== runId
+    || attempt.state !== "sealed"
+    || attempt.disposition !== "accepted"
+    || !attempt.outputRefs
+    || attempt.authorityHash !== context["design_source_authority_hash"]
+    || attempt.requestHash !== context["design_source_request_hash"]
+    || attempt.outputSealHash !== context["design_source_output_seal_hash"]
+    || attempt.outputSealHash !== expectedOutputSealHash
+    || context["design_source_product_spec_hash"] !== productSpecHash) {
+    throw new Error("STORIES_DESIGN_ATTEMPT_AUTHORITY_INVALID");
+  }
+  if (durableDesignCompletion.claimId !== attempt.ownerClaimId) {
+    throw new Error("STORIES_DESIGN_COMPLETION_BINDING_INVALID");
+  }
+  const claimBindings = await sql.unsafe<Array<{
+    claim_id: number;
+    claim_outcome: string | null;
+    step_status: string;
+    step_output: string | null;
+  }>>(
+    `SELECT claim.id::integer AS claim_id,
+            claim.outcome AS claim_outcome,
+            design.status AS step_status,
+            design.output AS step_output
+       FROM claim_log claim
+       JOIN steps design
+         ON design.run_id = claim.run_id
+        AND design.step_id = claim.step_id
+      WHERE claim.run_id = $1
+        AND claim.step_id = 'design'
+        AND claim.story_id IS NULL
+        AND claim.id = $2
+      LIMIT 2`,
+    [runId, attempt.ownerClaimId],
+  );
+  const ownerClaim = claimBindings[0];
+  const ownerAttemptMarkers = (ownerClaim?.step_output ?? "")
+    .split("\n")
+    .filter((line) => line.startsWith("DESIGN_SOURCE_ATTEMPT_ID: "));
+  if (claimBindings.length !== 1
+    || !ownerClaim
+    || ownerClaim.claim_id !== attempt.ownerClaimId
+    || ownerClaim.claim_outcome !== "completed"
+    || ownerClaim.step_status !== "done"
+    || ownerAttemptMarkers.length !== 1
+    || ownerAttemptMarkers[0] !== `DESIGN_SOURCE_ATTEMPT_ID: ${attempt.attemptId}`) {
+    throw new Error("STORIES_DESIGN_COMPLETION_BINDING_INVALID");
+  }
+  const originClaims = await sql.unsafe<Array<{ claim_id: number }>>(
+    `SELECT id::integer AS claim_id
+       FROM claim_log
+      WHERE run_id = $1
+        AND step_id = 'design'
+        AND story_id IS NULL
+        AND id = $2
+        AND id <= $3
+      LIMIT 2`,
+    [runId, attempt.originClaimId, attempt.ownerClaimId],
+  );
+  if (originClaims.length !== 1 || originClaims[0]!.claim_id !== attempt.originClaimId) {
+    throw new Error("STORIES_DESIGN_ORIGIN_CLAIM_BINDING_INVALID");
+  }
+  if (hashCanonicalJson(contract.productSpec) !== productSpecHash
+    || hashCanonicalJson(contract.generationTargets)
+      !== context["design_source_generation_targets_hash"]) {
+    throw new Error("STORIES_DESIGN_CONTRACT_BINDING_INVALID");
+  }
+  const artifacts = await readProjectedDesignSourceAuthorityV2(repo, contract);
+  const outputRefs = {
+    directResponseEvidenceHash: hashCanonicalJson(artifacts.directResponseEvidence),
+    renderedSemanticsHash: hashCanonicalJson(artifacts.renderedSemantics),
+    candidateSelectionHash: hashCanonicalJson(artifacts.candidateSelection),
+    responseBindingsHash: hashCanonicalJson(artifacts.responseBindings),
+  };
+  if (hashCanonicalJson(outputRefs) !== hashCanonicalJson(attempt.outputRefs)) {
+    throw new Error("STORIES_DESIGN_OUTPUT_REFS_MISMATCH");
+  }
+  return hashCanonicalJson({
+    schema: "setfarm.stories-design-authority-subject.v1",
+    disposition: "accepted_design_source_attempt",
+    attemptId: attempt.attemptId,
+    authorityHash: attempt.authorityHash,
+    requestHash: attempt.requestHash,
+    outputSealHash: attempt.outputSealHash,
+    productSpecHash,
+    outputRefs,
+  });
+}
+
+export async function prepareV3StoriesCompletionV1(
+  ctx: CompleteContext,
+): Promise<PreparedV3StoriesCompletionV1> {
+  const { runId, context, rawOutput } = ctx;
+  const planAuthority = await loadCompilerEnglishAdmissionLedgerAuthorityV1(
+    getSql(),
+    { runId },
+  );
+  const receipt = inspectCompilerEnglishAdmissionLedgerAuthorityV1(planAuthority);
+  const prd = context["prd"] || context["PRD"] || "";
+  if (receipt.runId !== runId
+    || receipt.prdHash !== crypto.createHash("sha256").update(prd, "utf8").digest("hex")
+    || receipt.productSpecSchema !== context["product_spec_schema"]
+    || receipt.sourceTaskHash !== context["product_spec_source_task_hash"]
+    || receipt.productSpecHash !== context["product_spec_hash"]) {
+    throw new Error("STORIES_ENGLISH_ADMISSION_CONTEXT_BINDING_MISMATCH");
+  }
+  const designRequired = compilerEnglishAdmissionLedgerDesignRequiredV1(planAuthority);
+  const contract = designRequired
+    ? prepareV3DesignContractV2(prd)
+    : undefined;
+  if (contract && hashCanonicalJson(contract.productSpec) !== receipt.productSpecHash) {
+    throw new Error("STORIES_DESIGN_CONTRACT_BINDING_INVALID");
+  }
+  const designAuthoritySubjectHash = await designAuthoritySubjectHashV1(
+    getSql(),
+    runId,
+    context,
+    receipt.productSpecHash,
+    designRequired,
+    contract,
+  );
+  let expectedOutput: string;
+  try {
+    expectedOutput = buildExpectedV3StoriesOutput(context, receipt.productSpecHash);
+  } catch (error) {
+    throw new Error(`V3_STORY_PROJECTION_SOURCE_INVALID:${String((error as Error)?.message || error)}`);
+  }
+  if (!rawOutput || rawOutput !== expectedOutput) {
+    throw new Error("V3_STORY_PROJECTION_MISMATCH: stories must equal the canonical ProductSpec/Stitch compatibility projection");
+  }
+  const rows = compileStoryPublicationRowsV1(rawOutput);
+  if (rows.length < 1) {
+    throw new Error("GUARDRAIL: Stories step completed with STATUS: done but produced 0 stories — STORIES_JSON missing or empty");
+  }
+  return Object.freeze({
+    planAuthority,
+    designAuthoritySubjectHash,
+    expectedOutput,
+    storyCount: rows.length,
+  });
 }
 
 const SEMANTIC_STOP_WORDS = new Set([
@@ -443,6 +810,16 @@ async function autoInjectUiBehaviorCriteria(
 export async function onComplete(ctx: CompleteContext): Promise<void> {
   const { runId, parsed, context, rawOutput } = ctx;
 
+  const protocol = (await pgGet<{ protocol: "legacy" | "shadow" | "v3" }>(
+    "SELECT protocol FROM runs WHERE id = $1",
+    [runId],
+  ))?.protocol ?? "legacy";
+  if (protocol === "v3") {
+    await prepareV3StoriesCompletionV1(ctx);
+    logger.info("[module:stories] accepted exact v3 compatibility projection; legacy prose/classifier gates bypassed", { runId });
+    return;
+  }
+
   // 0. Parse + insert STORIES_JSON from raw output (line-based parsed[] can't
   //    capture multi-line JSON). No-op if rawOutput missing or no STORIES_JSON.
   if (rawOutput) {
@@ -462,29 +839,6 @@ export async function onComplete(ctx: CompleteContext): Promise<void> {
     const msg = "GUARDRAIL: Stories step completed with STATUS: done but produced 0 stories — STORIES_JSON missing or empty";
     logger.warn(`[module:stories] ${msg}`, { runId });
     throw new Error(msg);
-  }
-
-  const protocol = (await pgGet<{ protocol: "legacy" | "shadow" | "v3" }>(
-    "SELECT protocol FROM runs WHERE id = $1",
-    [runId],
-  ))?.protocol ?? "legacy";
-  if (protocol === "v3") {
-    let expected: string;
-    try {
-      expected = buildV3AutoStoriesOutput({
-        repo: context["repo"] || context["REPO"] || "",
-        prd: context["prd"] || context["PRD"] || "",
-      });
-    } catch (error) {
-      await pgRun("DELETE FROM stories WHERE run_id = $1", [runId]);
-      throw new Error(`V3_STORY_PROJECTION_SOURCE_INVALID:${String((error as Error)?.message || error)}`);
-    }
-    if (!rawOutput || rawOutput.trim() !== expected.trim()) {
-      await pgRun("DELETE FROM stories WHERE run_id = $1", [runId]);
-      throw new Error("V3_STORY_PROJECTION_MISMATCH: stories must equal the canonical ProductSpec/Stitch compatibility projection");
-    }
-    logger.info("[module:stories] accepted exact v3 compatibility projection; legacy prose/classifier gates bypassed", { runId });
-    return;
   }
 
   const explicitMaxStories = getExplicitMaxStories(context);

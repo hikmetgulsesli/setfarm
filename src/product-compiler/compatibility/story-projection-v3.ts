@@ -9,7 +9,7 @@ import {
 } from "../schemas/stitch-target-candidate-selection-v1.js";
 import { StitchRenderedSemanticsV1Schema } from "../schemas/stitch-rendered-semantics-v1.js";
 import {
-  ProductSpecV1Schema,
+  ProductSpecV1EnglishWriteSchema,
   type ProductActionV1,
   type ProductSpecV1,
 } from "../schemas/product-spec-v1.js";
@@ -192,7 +192,7 @@ export function compileV3CompatibilityStoryProjection(input: Readonly<{
   responseBindings: unknown;
   maxStories?: number | null;
 }>): V3CompatibilityStoryProjection {
-  const productSpec = ProductSpecV1Schema.parse(input.productSpec);
+  const productSpec = ProductSpecV1EnglishWriteSchema.parse(input.productSpec);
   const generationTargets = DesignGenerationTargetsV1Schema.parse(input.generationTargets);
   const renderedSemantics = StitchRenderedSemanticsV1Schema.parse(input.renderedSemantics);
   const candidateSelection = StitchTargetCandidateSelectionV1Schema.parse(input.candidateSelection);

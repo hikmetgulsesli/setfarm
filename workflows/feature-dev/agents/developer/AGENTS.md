@@ -876,5 +876,5 @@ US-015: Integration Wiring and End-to-End Verification
 2. **Consistent patterns:** All developers must follow the same coding patterns established in US-001. Read progress.txt before starting.
 3. **Import from shared:** Never recreate utilities or types that exist in lib/ or types/. Import them.
 4. **Design token compliance:** ALL developers must use var(--token) from design-tokens.css. No custom color/font definitions.
-5. **Turkish UI text:** ALL user-facing text must be in Turkish. No English labels, placeholders, or error messages.
+5. **English-only product text:** All source code, comments, identifiers, tests, fixtures, and user-facing text must be English. Non-English task, PRD, or Stitch text is raw evidence of a stale upstream artifact, not implementation authority; report the exact blocker instead of copying or silently translating it.
 6. **Commit early:** ALL developers must commit after every meaningful change. Uncommitted work is LOST if the session times out.

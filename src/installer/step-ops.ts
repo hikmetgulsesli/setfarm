@@ -17,6 +17,7 @@ import {
   RUN_STATUS,
   STORY_STATUS,
   PROTECTED_CONTEXT_KEYS,
+  isStepOutputContextKeyProtected,
   OPTIONAL_TEMPLATE_VARS,
   PR_REVIEW_DELAY_MS,
 } from "./constants.js";
@@ -40,7 +41,29 @@ import {
   reserveV3ImplementationAttempt,
   type V3ImplementationAttemptResult,
 } from "../execution/v3-implementation-attempt.js";
-import { canonicalJsonStringify } from "../product-compiler/canonical-json.js";
+import { canonicalJsonStringify, hashCanonicalJson } from "../product-compiler/canonical-json.js";
+import {
+  compileCompilerEnglishAdmissionV1,
+  compilerEnglishAdmissionReceiptV1,
+} from "../product-compiler/compiler-english-admission-v1.js";
+import {
+  compileCompilerStoryEnglishAdmissionV1,
+  compilerStoryEnglishAdmissionStateV1,
+  type CompilerStoryEnglishAdmissionAuthorityV1,
+} from "../product-compiler/compiler-story-english-admission-v1.js";
+import type {
+  CompilerEnglishAdmissionReceiptV1,
+} from "../product-compiler/schemas/compiler-english-admission-receipt-v1.js";
+import type {
+  CompilerStoryEnglishAdmissionReceiptV1,
+} from "../product-compiler/schemas/compiler-story-english-admission-receipt-v1.js";
+import { publishCompilerStoryEnglishAdmissionAndCompleteV1 } from "../execution/compiler-story-english-admission-publication-v1.js";
+import {
+  createCompilerStoryEnglishAdmissionClaimProofV1,
+  loadCompilerStoryEnglishAdmissionLedgerAuthorityV1,
+  type CompilerStoryEnglishAdmissionClaimProofV1,
+} from "../execution/compiler-story-english-admission-ledger-v1.js";
+import type { PreparedV3StoriesCompletionV1 } from "./steps/03-stories/guards.js";
 import { isValidStitchHtmlFile } from "../product-compiler/stitch-render-artifact.js";
 import { ensureCompilerClaimFence } from "../execution/compiler-claim-fence.js";
 import type { ClaimAttemptFenceV1 } from "../execution/schemas/claim-envelope-v1.js";
@@ -66,14 +89,21 @@ import {
 import {
   bindRuntimeSessionAttemptInTransaction,
   parseRuntimeClaimIntentV1,
+  releaseReservedRuntimeSessionInTransaction,
   reserveRuntimeSessionInTransaction,
   type RuntimeClaimIntentV1,
 } from "../execution/runtime-session-repository.js";
 import {
+  loadAuthenticatedV3SupervisorRetryPreparationSourceV1,
   publishLoopClaimRuntime,
+  type AuthenticatedV3SupervisorRetryPreparationSourceV1,
   publishSingleClaimRuntime,
   type LoopClaimAuthorityPublication,
 } from "../execution/claim-runtime-publication.js";
+import {
+  loadAndRevalidateV3StoryClaimRuntimeBindingV1,
+  type V3StoryClaimRuntimeSubjectV1,
+} from "../execution/v3-story-claim-runtime-binding-v1.js";
 import type { V3PreparationClaimAuthorityV1 } from "../execution/v3-preparation-claim-authority.js";
 import { createV3PreparationBlockRepository } from "../execution/v3-preparation-block-repository.js";
 import {
@@ -83,7 +113,7 @@ import {
   createPostgresV3PendingStoryReader,
   createV3NormalImplementationPreclaim,
 } from "../execution/v3-normal-implementation-preclaim.js";
-import { resolveV3GitRevision } from "../execution/v3-git-revision.js";
+import { captureV3GitCommitRevision, resolveV3GitRevision } from "../execution/v3-git-revision.js";
 import { createRuntimeArtifactReader } from "../product-compiler/runtime-artifact-reader.js";
 import type { EvidenceBundleV2 } from "../evidence/evidence-bundle-v2.js";
 import type { FindingSetV1 } from "../findings/finding-set.js";
@@ -111,6 +141,11 @@ import {
 } from "../execution/v3-implementation-handoff.js";
 import { parseOperationalRetryDirectiveStoryOutput } from "../execution/operational-retry-directive.js";
 import {
+  createV3SupervisorRetryDirectiveV1,
+  parseV3SupervisorRetryDirectiveStoryOutputV1,
+  serializeV3SupervisorRetryDirectiveV1,
+} from "../execution/v3-supervisor-retry-directive.js";
+import {
   parseV3ImplementationAgentOutputV1,
   type V3ImplementationAgentOutputV1,
 } from "../execution/v3-implementation-output.js";
@@ -121,6 +156,13 @@ import {
   V3PlanOutputRejectedError,
   type V3PlanOutputAuthorityV1,
 } from "../execution/v3-plan-output-authority.js";
+import {
+  projectCanonicalV3PlanParsedOutputV2,
+  resolveV3PlanOutputAuthorityV2,
+  shouldRunLegacyProductSupervisorV2,
+  V3PlanOutputV2RejectedError,
+  type V3PlanOutputAuthorityV2,
+} from "../execution/v3-plan-output-authority-v2.js";
 import {
   createV3StageFailureV1,
   createV3StageRetryDedupeKeyV1,
@@ -188,7 +230,10 @@ import {
   resolveProductArtifactDir,
 } from "../runtime-config.js";
 import { sanitizeDesignMismatchFeedback } from "./error-taxonomy.js";
-import { sanitizeAgentPromptContracts } from "./prompt-contracts.js";
+import {
+  applyEnglishOutputPolicyToResolvedPrompt,
+  migratePersistedAgentPromptTemplate,
+} from "./prompt-contracts.js";
 import { routeDownstreamQualityFailure } from "./failure-router.js";
 import { IMPLICIT_STORY_SCOPE_FILES, isImplicitStoryScopeFile } from "./story-scope.js";
 import { resolvePlatformScript } from "./paths.js";
@@ -1359,7 +1404,10 @@ async function resolveLoopClaimInput(
   context: Record<string, string>,
 ): Promise<string> {
   const renderContext = withStepModulePromptAliases(prunedContextLoop, step.run_id);
-  let resolvedInput = sanitizeAgentPromptContracts(prependScopeReminderIfMissing(resolveTemplate(step.input_template, renderContext), context));
+  let resolvedInput = applyEnglishOutputPolicyToResolvedPrompt(prependScopeReminderIfMissing(
+    resolveTemplate(migratePersistedAgentPromptTemplate(step.input_template), renderContext),
+    context,
+  ));
 
   // Step module takeover for loop claims. Single-step claims already use
   // buildPrompt(); loop claims need the same module source of truth after
@@ -1379,8 +1427,11 @@ async function resolveLoopClaimInput(
           logger.warn("[step-module] " + _stepModuleP.id + " loop prompt " + _modulePromptBytes + " bytes > budget " + _stepModuleP.maxPromptSize + " - using anyway, investigate", { runId: step.run_id });
         }
         resolvedInput = renderContext["implementation_context_protocol"] === "v3"
-          ? _modulePrompt
-          : sanitizeAgentPromptContracts(prependScopeReminderIfMissing(resolveTemplate(_modulePrompt, renderContext), context));
+          ? applyEnglishOutputPolicyToResolvedPrompt(_modulePrompt)
+          : applyEnglishOutputPolicyToResolvedPrompt(prependScopeReminderIfMissing(
+              resolveTemplate(_modulePrompt, renderContext),
+              context,
+            ));
         logger.info("[step-module] " + _stepModuleP.id + " loop buildPrompt override (" + _modulePromptBytes + "b)", { runId: step.run_id });
       }
     }
@@ -3265,6 +3316,130 @@ function firstOutputWord(value: string | undefined): string {
   return String(value || "").trim().split(/\s+/)[0].toLowerCase();
 }
 
+function assertExactGitBranchWorktree(workdir: string, expectedBranch: string): void {
+  if (!workdir || !fs.existsSync(workdir) || !expectedBranch) {
+    throw new Error("V3_SUPERVISE_BOUND_WORKTREE_REQUIRED");
+  }
+  const observedBranch = execFileSync("git", ["branch", "--show-current"], {
+    cwd: workdir,
+    encoding: "utf8",
+    timeout: 5_000,
+    stdio: ["ignore", "pipe", "pipe"],
+  }).trim();
+  if (observedBranch !== expectedBranch) {
+    throw new Error("V3_SUPERVISE_BOUND_WORKTREE_BRANCH_MISMATCH");
+  }
+}
+
+async function authenticatedV3SupervisorStoryWorktree(input: Readonly<{
+  runId: string;
+  superviseStepDbId: string;
+  runtimeSessionId: string;
+  boundSubject: RuntimeCompletionSubjectV1;
+}>): Promise<Readonly<{
+  workdir: string;
+  storyBranch: string;
+  storyTitle: string;
+  scopeFiles: string | null;
+  runId: string;
+  superviseStepDbId: string;
+  runtimeSessionId: string;
+  storyDbId: string;
+  storyId: string;
+}>> {
+  const rows = await pgBegin(async (transaction) => {
+    const runs = await transaction.unsafe<Array<{ id: string }>>(
+      "SELECT id FROM runs WHERE id = $1 FOR UPDATE",
+      [input.runId],
+    );
+    if (runs.length !== 1) throw new Error("V3_SUPERVISE_BOUND_WORKTREE_RUN_INVALID");
+    return transaction.unsafe<Array<{
+    worktree: string | null;
+    story_branch: string | null;
+    title: string;
+    scope_files: string | null;
+    }>>(
+    `SELECT runtime.worktree, story.story_branch, story.title, story.scope_files
+       FROM v3_story_claim_runtime_bindings_v1 binding
+       JOIN runtime_sessions runtime
+         ON runtime.session_id = binding.runtime_session_id
+        AND runtime.claim_id = binding.claim_id
+        AND runtime.run_id = binding.run_id
+       JOIN stories story
+         ON story.id = binding.story_db_id
+        AND story.run_id = binding.run_id
+        AND story.story_id = binding.story_id
+        AND story.claim_generation = binding.story_claim_generation
+      WHERE binding.runtime_session_id = $1
+        AND binding.run_id = $2
+        AND binding.step_db_id = $3
+        AND binding.workflow_step_id = 'supervise'
+        AND binding.subject_kind = 'story_member'
+        AND binding.story_db_id = $4
+        AND binding.story_id = $5
+      LIMIT 2
+      FOR UPDATE OF binding, runtime, story`,
+    [
+      input.runtimeSessionId,
+      input.runId,
+      input.superviseStepDbId,
+      input.boundSubject.storyDbId,
+      input.boundSubject.storyId,
+    ],
+    );
+  });
+  if (rows.length !== 1) throw new Error("V3_SUPERVISE_BOUND_WORKTREE_IDENTITY_INVALID");
+  const workdir = rows[0]!.worktree?.trim() ?? "";
+  const storyBranch = rows[0]!.story_branch?.trim() ?? "";
+  assertExactGitBranchWorktree(workdir, storyBranch);
+  return {
+    workdir,
+    storyBranch,
+    storyTitle: rows[0]!.title,
+    scopeFiles: rows[0]!.scope_files,
+    runId: input.runId,
+    superviseStepDbId: input.superviseStepDbId,
+    runtimeSessionId: input.runtimeSessionId,
+    storyDbId: input.boundSubject.storyDbId,
+    storyId: input.boundSubject.storyId,
+  };
+}
+
+async function revalidateAuthenticatedV3SupervisorStoryWorktree(
+  input: Awaited<ReturnType<typeof authenticatedV3SupervisorStoryWorktree>>,
+): Promise<void> {
+  const current = await authenticatedV3SupervisorStoryWorktree({
+    runId: input.runId,
+    superviseStepDbId: input.superviseStepDbId,
+    runtimeSessionId: input.runtimeSessionId,
+    boundSubject: { storyDbId: input.storyDbId, storyId: input.storyId },
+  });
+  if (current.workdir !== input.workdir || current.storyBranch !== input.storyBranch) {
+    throw new Error("V3_SUPERVISE_BOUND_WORKTREE_DRIFT");
+  }
+}
+
+function captureExactCleanBoundStoryRevision(
+  workdir: string,
+  storyBranch: string,
+): Readonly<{ sha: string; treeHash: string }> {
+  assertExactGitBranchWorktree(workdir, storyBranch);
+  const porcelain = execFileSync("git", ["status", "--porcelain"], {
+    cwd: workdir,
+    encoding: "utf8",
+    timeout: 5_000,
+    stdio: ["ignore", "pipe", "pipe"],
+  }).trim();
+  if (porcelain) throw new Error("V3_SUPERVISE_RETRY_SOURCE_WORKTREE_DIRTY");
+  const commitSha = execFileSync("git", ["rev-parse", "--verify", "HEAD"], {
+    cwd: workdir,
+    encoding: "utf8",
+    timeout: 5_000,
+    stdio: ["ignore", "pipe", "pipe"],
+  }).trim();
+  return captureV3GitCommitRevision({ repo: workdir, commitSha });
+}
+
 function parseStoryIdSet(value: string | undefined): Set<string> {
   return new Set(String(value || "").split(",").map((v) => v.trim()).filter(Boolean));
 }
@@ -3983,6 +4158,7 @@ interface ClaimResult {
   recoveryLeaseToken?: string;
   v3ImplementationHandoff?: V3ImplementationClaimHandoffV1;
   v3StageRetrySource?: V3StageRetrySourceV1;
+  compilerCompletionOutput?: string;
   resolvedInput?: string;
 }
 
@@ -4627,7 +4803,7 @@ async function injectVerifyContext(
   if (nextUnverified.output) {
     const storyOutput = parseOutputKeyValues(nextUnverified.output);
     for (const [key, value] of Object.entries(storyOutput)) {
-      if (PROTECTED_CONTEXT_KEYS.has(key) && context[key]) continue;
+      if (isStepOutputContextKeyProtected(key, context)) continue;
       context[key] = value;
     }
   }
@@ -4690,7 +4866,23 @@ async function injectSuperviseEachContext(
   step: StepRow,
   context: Record<string, string>,
   agentId: string,
+  authenticatedSubject?: V3StoryClaimRuntimeSubjectV1,
 ): Promise<boolean> {
+  if (authenticatedSubject?.kind === "final_product") {
+    context["supervisor_scope"] = "final-product";
+    delete context["current_story_id"];
+    delete context["current_story_title"];
+    delete context["current_story"];
+    delete context["story_workdir"];
+    delete context["story_scope_files"];
+    delete context["story_shared_files"];
+    delete context["scope_reminder"];
+    delete context["pr_url"];
+    delete context["story_branch"];
+    delete context["story_diff_base"];
+    await updateRunContext(step.run_id, context);
+    return true;
+  }
   const loopStepForSupervise = await findLoopStep(step.run_id);
   if (!loopStepForSupervise?.loop_config) return true;
 
@@ -4698,20 +4890,35 @@ async function injectSuperviseEachContext(
   if (!lcCheck.superviseEach || (lcCheck.superviseStep || "supervise") !== step.step_id) return true;
 
   let story: any | undefined;
-  if (step.current_story_id) {
+  if (authenticatedSubject?.kind === "story_member") {
+    story = await pgGet<any>(
+      `SELECT * FROM stories
+        WHERE run_id = $1 AND id = $2 AND story_id = $3 AND story_index = $4
+          AND claim_generation = $5 AND status = 'done'
+        LIMIT 1`,
+      [
+        step.run_id,
+        authenticatedSubject.storyDbId,
+        authenticatedSubject.storyId,
+        authenticatedSubject.storyIndex,
+        authenticatedSubject.storyClaimGeneration,
+      ],
+    );
+    if (!story) throw new Error("V3_SUPERVISE_AUTHENTICATED_STORY_MISSING");
+  } else if (step.current_story_id) {
     story = await pgGet<any>(
       "SELECT * FROM stories WHERE run_id = $1 AND id = $2 AND status = 'done' LIMIT 1",
       [step.run_id, step.current_story_id],
     );
   }
   const currentStoryId = context["current_story_id"] || "";
-  if (!story && currentStoryId) {
+  if (!authenticatedSubject && !story && currentStoryId) {
     story = await pgGet<any>(
       "SELECT * FROM stories WHERE run_id = $1 AND story_id = $2 AND status = 'done' LIMIT 1",
       [step.run_id, currentStoryId],
     );
   }
-  if (!story) {
+  if (!authenticatedSubject && !story) {
     story = await findUnsupervisedDoneStory(step.run_id, context);
   }
   if (!story) {
@@ -4803,10 +5010,20 @@ async function publishSingleClaimAndRuntime(
   step: StepRow,
   claimAgentId: string,
   rawRuntimeIntent?: RuntimeClaimIntentV1,
+  planAuthoritySeal?: Readonly<{
+    productSemanticsVersion: "v2";
+    outputAuthorityVersion: "product_build_v1";
+  }>,
+  storyAdmissionProof?: CompilerStoryEnglishAdmissionClaimProofV1,
+  storySubject?: Readonly<
+    | { kind: "story_member"; storyDbId: string; storyId: string }
+    | { kind: "final_product" }
+  >,
 ): Promise<Readonly<{
   claimId: number;
   protocol: "legacy" | "shadow" | "v3";
   runtime?: RuntimeClaimOwnership;
+  storySubject?: V3StoryClaimRuntimeSubjectV1;
 }> | undefined> {
   return publishSingleClaimRuntime(getSql(), {
     runId: step.run_id,
@@ -4814,6 +5031,9 @@ async function publishSingleClaimAndRuntime(
     workflowStepId: step.step_id,
     claimAgentId,
     runtimeIntent: rawRuntimeIntent,
+    planAuthoritySeal,
+    storyAdmissionProof,
+    storySubject,
   });
 }
 
@@ -4826,6 +5046,8 @@ async function publishLoopClaimAndRuntime(
   rawRuntimeIntent?: RuntimeClaimIntentV1,
   recoveryHandoff?: V3RecoveryClaimHandoffV1,
   preparationAuthority?: V3PreparationClaimAuthorityV1,
+  storyAdmissionProof?: CompilerStoryEnglishAdmissionClaimProofV1,
+  supervisorRetryPreparationSource?: AuthenticatedV3SupervisorRetryPreparationSourceV1,
 ): Promise<Readonly<{
   claimId: number;
   claimGeneration: number;
@@ -4833,6 +5055,7 @@ async function publishLoopClaimAndRuntime(
   runtime?: RuntimeClaimOwnership;
   baseRevision?: V3PreparationClaimAuthorityV1["baseRevision"];
   claimAuthority?: LoopClaimAuthorityPublication;
+  storySubject?: V3StoryClaimRuntimeSubjectV1;
 }> | undefined> {
   return publishLoopClaimRuntime(getSql(), {
     runId: step.run_id,
@@ -4846,6 +5069,8 @@ async function publishLoopClaimAndRuntime(
     runtimeIntent: rawRuntimeIntent,
     recoveryHandoff,
     preparationAuthority,
+    storyAdmissionProof,
+    supervisorRetryPreparationSource,
   });
 }
 
@@ -4902,6 +5127,7 @@ async function claimV3RecoveryWork(
   callerGatewayAgent: string | undefined,
   runtimeIntent: RuntimeClaimIntentV1,
   executionRole: "developer" | "supervisor",
+  storyAdmissionProof: CompilerStoryEnglishAdmissionClaimProofV1,
 ): Promise<ClaimResult> {
   const step: StepRow = work.step;
   const story: any = { ...work.story };
@@ -4996,6 +5222,8 @@ async function claimV3RecoveryWork(
     1,
     runtimeIntent,
     handoff,
+    undefined,
+    storyAdmissionProof,
   );
   if (!publication) {
     removeStoryWorktree(repo, storyBranch, agentId);
@@ -5006,6 +5234,9 @@ async function claimV3RecoveryWork(
     || publication.claimAuthority?.mode !== "recovery"
     || publication.claimAuthority.handoff.dispatchId !== handoff.dispatchId
     || publication.claimAuthority.handoff.revisionId !== handoff.revisionId
+    || publication.storySubject?.kind !== "story_member"
+    || publication.storySubject.storyDbId !== story.id
+    || publication.storySubject.storyId !== story.story_id
   ) {
     throw new Error("V3_RECOVERY_PUBLICATION_AUTHORITY_MISMATCH");
   }
@@ -5139,6 +5370,7 @@ async function claimSingleStep(
   context: Record<string, string>,
   db: any,
   runtimeIntent?: RuntimeClaimIntentV1,
+  storyAdmissionProof?: CompilerStoryEnglishAdmissionClaimProofV1,
 ): Promise<ClaimResult> {
   const runProtocol = await pgGet<{ protocol: "legacy" | "shadow" | "v3" }>(
     "SELECT protocol FROM runs WHERE id = $1",
@@ -5267,6 +5499,8 @@ async function claimSingleStep(
   let singleStepClaimId: number | null = null;
   let singleStepClaimEnvelope: ClaimEnvelopeV1 | undefined;
   let singleStepRuntime: RuntimeClaimOwnership | undefined;
+  let authenticatedStorySubject: V3StoryClaimRuntimeSubjectV1 | undefined;
+  let compilerCompletionOutput: string | undefined;
 
   async function recordSingleStepHandoff(reason: string): Promise<void> {
     if (shouldRecordSingleStepTransition) {
@@ -5288,6 +5522,35 @@ async function claimSingleStep(
       diagnostic,
       runtime: singleStepRuntime,
     }));
+  }
+
+  async function terminalizeV3PlatformPreclaim(
+    diagnostic: string,
+    operationalFailureCause?: OperationalFailureCauseError,
+  ): Promise<void> {
+    if (!singleStepClaimEnvelope || singleStepClaimEnvelope.protocol !== "v3") {
+      throw new Error("V3_PLATFORM_PRECLAIM_CLAIM_AUTHORITY_REQUIRED");
+    }
+    await failStep(
+      step.id,
+      diagnostic,
+      singleStepClaimEnvelope,
+      {
+        singleStepMode: "terminal_platform_preclaim",
+        ...(operationalFailureCause
+          ? { operationalFailureCause: operationalFailureCause.failureCause }
+          : {}),
+      },
+    );
+    if (singleStepRuntime) {
+      const runtime = singleStepRuntime;
+      await pgBegin((transaction) => releaseReservedRuntimeSessionInTransaction(transaction, {
+        sessionId: runtime.sessionId,
+        claimId: singleStepClaimEnvelope!.claimId,
+        ownerInstanceId: runtime.ownerInstanceId,
+        diagnostic,
+      }));
+    }
   }
 
   // Single-step idempotency: some models run `step claim` twice and overwrite
@@ -5332,12 +5595,71 @@ async function claimSingleStep(
         ownerInstanceId: existingOpenClaim.owner_instance_id!,
       };
     }
+    if (runProtocol?.protocol === "v3" && step.step_id === "supervise") {
+      if (!singleStepRuntime) throw new Error("V3_SUPERVISE_RUNTIME_BINDING_REQUIRED");
+      authenticatedStorySubject = await getSql().begin((transaction) =>
+        loadAndRevalidateV3StoryClaimRuntimeBindingV1(transaction, {
+          claimId: singleStepClaimId!,
+          runtimeSessionId: singleStepRuntime!.sessionId,
+          runId: step.run_id,
+          stepDbId: step.id,
+          workflowStepId: "supervise",
+        })) as V3StoryClaimRuntimeSubjectV1;
+    }
     logger.info(`[claim-idempotent] Re-issued running step ${step.step_id} to ${agentId}`, { runId: step.run_id, stepId: step.step_id });
   } else {
-    const publication = await publishSingleClaimAndRuntime(step, agentId, runtimeIntent);
+    const productSemanticsVersion = context["product_semantics_version"] === "v1"
+      || context["product_semantics_version"] === "v2"
+      ? context["product_semantics_version"]
+      : process.env.SETFARM_PRODUCT_SEMANTICS_VERSION === "v1"
+        ? "v1"
+        : "v2";
+    const planAuthoritySeal = runProtocol?.protocol === "v3"
+      && step.step_id === "plan"
+      && productSemanticsVersion === "v2"
+      ? {
+          productSemanticsVersion: "v2" as const,
+          outputAuthorityVersion: "product_build_v1" as const,
+        }
+      : undefined;
+    let superviseSubjectCandidate: Readonly<
+      | { kind: "story_member"; storyDbId: string; storyId: string }
+      | { kind: "final_product" }
+    > | undefined;
+    if (runProtocol?.protocol === "v3" && step.step_id === "supervise") {
+      if (step.current_story_id) {
+        const selected = await pgGet<{ id: string; story_id: string }>(
+          "SELECT id, story_id FROM stories WHERE run_id = $1 AND id = $2 AND status = 'done' LIMIT 1",
+          [step.run_id, step.current_story_id],
+        );
+        if (!selected) {
+          throw new Error("V3_SUPERVISE_STORY_SUBJECT_SELECTION_INVALID");
+        }
+        superviseSubjectCandidate = {
+          kind: "story_member",
+          storyDbId: selected.id,
+          storyId: selected.story_id,
+        };
+      } else {
+        superviseSubjectCandidate = { kind: "final_product" };
+      }
+    }
+    const publication = await publishSingleClaimAndRuntime(
+      step,
+      agentId,
+      runtimeIntent,
+      planAuthoritySeal,
+      storyAdmissionProof,
+      superviseSubjectCandidate,
+    );
     if (!publication) return { found: false };
     singleStepClaimId = publication.claimId;
     singleStepRuntime = publication.runtime;
+    authenticatedStorySubject = publication.storySubject;
+    if (planAuthoritySeal) {
+      context["product_semantics_version"] = "v2";
+      context["plan_output_authority_version"] = "product_build_v1";
+    }
     logger.info(`Step claimed by ${agentId}`, { runId: step.run_id, stepId: step.step_id });
     shouldRecordSingleStepTransition = true;
   }
@@ -5410,7 +5732,7 @@ async function claimSingleStep(
 
   // BUG FIX: If this is a verify step for a verify_each loop, inject the correct
   // story info from the oldest unverified 'done' story (not from stale context).
-  if (!await injectSuperviseEachContext(step, context, agentId)) {
+  if (!await injectSuperviseEachContext(step, context, agentId, authenticatedStorySubject)) {
     await pgRun(
       "UPDATE steps SET status = 'pending', updated_at = $1 WHERE id = $2 AND status = 'running'",
       [now(), step.id],
@@ -5421,42 +5743,27 @@ async function claimSingleStep(
   if (step.step_id === "supervise" && context["supervisor_scope"] === "final-product") {
     const finalSupervise = await shouldAutoCompleteFinalSuperviseEachStep(step.run_id, context);
     if (finalSupervise.ok) {
-      const output = [
+      compilerCompletionOutput = [
         "STATUS: done",
         "SUPERVISOR_DECISION: pass",
         `AC_COVERAGE: ${finalSupervise.reason}`,
         "CHECKS: deterministic supervise-each final gate; no LLM supervisor spawned",
       ].join("\n");
-      const done = await pgRun(
-        "UPDATE steps SET status = 'done', output = $1, current_story_id = NULL, updated_at = $2 WHERE id = $3 AND status = 'running'",
-        [output, now(), step.id],
-      );
-      if (done.changes > 0) {
-        await closeSingleStepHandoff("completed", "supervise_each deterministic final gate completed");
-        await recordStepTransition(step.id, step.run_id, "running", "done", agentId, "superviseEach:final-auto-complete");
-        await refreshRunContractSafe(step.run_id, `step.${step.step_id}.done`, context);
-        emitEvent({
-          ts: now(),
-          event: "step.done",
-          runId: step.run_id,
-          workflowId: await getWorkflowId(step.run_id),
-          stepId: step.step_id,
-          agentId,
-          detail: "supervise_each deterministic final gate completed",
-        });
-        await recordObservation({
-          runId: step.run_id,
-          stepId: step.step_id,
-          phase: step.step_id,
-          checkId: "supervise_each.final_auto_complete",
-          status: "pass",
-          label: "Supervise-each final gate completed deterministically",
-          detail: finalSupervise.reason,
-        });
-        await cleanupProjectEphemera(step.run_id, `step-complete:${step.step_id}:final-auto`, context);
-        await advancePipeline(step.run_id);
+      if (singleStepClaimId === null || !singleStepRuntime) {
+        throw new Error("V3_FINAL_PRODUCT_COMPILER_COMPLETION_RUNTIME_REQUIRED");
       }
-      return { found: false };
+      return {
+        found: true,
+        stepId: step.id,
+        workflowStepId: step.step_id,
+        runId: step.run_id,
+        protocol: "v3",
+        claimId: singleStepClaimId,
+        claimAgentId: agentId,
+        runtimeSessionId: singleStepRuntime.sessionId,
+        runtimeOwnerInstanceId: singleStepRuntime.ownerInstanceId,
+        compilerCompletionOutput,
+      };
     }
     logger.info(`[supervise-each] Final supervisor remains agent-owned: ${finalSupervise.reason}`, { runId: step.run_id });
   }
@@ -5738,6 +6045,11 @@ async function claimSingleStep(
   try {
     const _modRegistry = await import("./steps/registry.js");
     const _stepModule = _modRegistry.get(step.step_id);
+    if (!_stepModule
+      && singleStepClaimEnvelope?.protocol === "v3"
+      && step.step_id === "stories") {
+      throw new Error("V3_STORIES_COMPILER_MODULE_REQUIRED");
+    }
     if (_stepModule) {
       const _modCtx = {
         runId: step.run_id,
@@ -5747,10 +6059,24 @@ async function claimSingleStep(
         context: prunedContextSingle,
         claimEnvelope: singleStepClaimEnvelope,
       };
+      if (singleStepClaimEnvelope?.protocol === "v3"
+        && step.step_id === "stories"
+        && typeof _stepModule.preClaim !== "function") {
+        throw new Error("V3_STORIES_COMPILER_PRECLAIM_REQUIRED");
+      }
       if (_stepModule.preClaim) {
         try {
           const preClaimContextBefore = { ...prunedContextSingle };
-          await _stepModule.preClaim(_modCtx);
+          const preClaimResult = await _stepModule.preClaim(_modCtx);
+          if (preClaimResult?.disposition === "compiler_completion") {
+            if (singleStepClaimEnvelope?.protocol !== "v3"
+              || step.type !== "single"
+              || Buffer.byteLength(preClaimResult.output, "utf8") > 4_000_000
+              || !/^STATUS:\s*done$/m.test(preClaimResult.output)) {
+              throw new Error("COMPILER_PRECLAIM_COMPLETION_INVALID");
+            }
+            compilerCompletionOutput = preClaimResult.output;
+          }
           const mergedPreClaimKeys: string[] = [];
           for (const [key, value] of Object.entries(prunedContextSingle)) {
             if (preClaimContextBefore[key] !== value) {
@@ -5773,6 +6099,26 @@ async function claimSingleStep(
             const outcome = postPreClaimStep.status === "cancelled" ? "cancelled" : postPreClaimStep.status === "failed" ? "failed" : "infra_retry";
             await closeSingleStepHandoff(outcome, `preClaim changed step status to ${postPreClaimStep.status}; no agent spawned`);
             return { found: false };
+          }
+          if (compilerCompletionOutput !== undefined) {
+            if (singleStepClaimId === null) throw new Error("COMPILER_PRECLAIM_CLAIM_MISSING");
+            return {
+              found: true,
+              stepId: step.id,
+              workflowStepId: step.step_id,
+              runId: step.run_id,
+              protocol: "v3",
+              claimId: singleStepClaimId,
+              claimAgentId: agentId,
+              ...(singleStepRuntime ? {
+                runtimeSessionId: singleStepRuntime.sessionId,
+                runtimeOwnerInstanceId: singleStepRuntime.ownerInstanceId,
+              } : {}),
+              compilerCompletionOutput,
+            };
+          }
+          if (singleStepClaimEnvelope?.protocol === "v3" && step.step_id === "stories") {
+            throw new Error("V3_STORIES_COMPILER_COMPLETION_REQUIRED");
           }
         } catch (_pce) {
           const preClaimError = `PRECLAIM_BLOCKED [${_stepModule.id}]: ${String(_pce).slice(0, 1200)}`;
@@ -5822,17 +6168,14 @@ async function claimSingleStep(
               { runId: step.run_id },
             );
             try {
-              await failStep(
-                step.id,
-                ownedPreClaimError,
-                singleStepClaimEnvelope,
-                v3PlatformPreclaim ? {
-                  singleStepMode: "terminal_platform_preclaim",
-                  ...(_pce instanceof OperationalFailureCauseError
-                    ? { operationalFailureCause: _pce.failureCause }
-                    : {}),
-                } : undefined,
-              );
+              if (v3PlatformPreclaim) {
+                await terminalizeV3PlatformPreclaim(
+                  ownedPreClaimError,
+                  _pce instanceof OperationalFailureCauseError ? _pce : undefined,
+                );
+              } else {
+                await failStep(step.id, ownedPreClaimError, singleStepClaimEnvelope);
+              }
             } catch (transitionError) {
               if (v3PlatformPreclaim) {
                 throw new V3PlatformPreclaimLifecycleError(transitionError);
@@ -5858,9 +6201,24 @@ async function claimSingleStep(
       });
       throw _ie;
     }
+    if (singleStepClaimEnvelope?.protocol === "v3" && step.step_id === "stories") {
+      const diagnostic = `PLATFORM_PRECLAIM_TERMINAL [stories]: ${String(_ie).slice(0, 1_000)}`;
+      try {
+        await terminalizeV3PlatformPreclaim(
+          diagnostic,
+          _ie instanceof OperationalFailureCauseError ? _ie : undefined,
+        );
+      } catch (transitionError) {
+        throw new V3PlatformPreclaimLifecycleError(transitionError);
+      }
+      return { found: false };
+    }
     logger.warn(`[step-module] injectContext failed: ${String(_ie).slice(0, 200)}`, { runId: step.run_id });
   }
-  let resolvedInput = resolveTemplate(step.input_template, prunedContextSingle);
+  let resolvedInput = resolveTemplate(
+    migratePersistedAgentPromptTemplate(step.input_template),
+    prunedContextSingle,
+  );
 
   // Step module takeover: if a module is registered for this step, its
   // buildPrompt() replaces the workflow.yml input_template output. This is
@@ -5881,14 +6239,16 @@ async function claimSingleStep(
         if (_modulePromptBytes > _stepModuleP.maxPromptSize) {
           logger.warn(`[step-module] ${_stepModuleP.id} prompt ${_modulePromptBytes} bytes > budget ${_stepModuleP.maxPromptSize} — using anyway, investigate`, { runId: step.run_id });
         }
-        resolvedInput = _modulePrompt;
+        resolvedInput = prunedContextSingle["implementation_context_protocol"] === "v3"
+          ? _modulePrompt
+          : resolveTemplate(_modulePrompt, prunedContextSingle);
         logger.info(`[step-module] ${_stepModuleP.id} buildPrompt override (${_modulePromptBytes}b)`, { runId: step.run_id });
       }
     }
   } catch (_pe) {
     logger.warn(`[step-module] buildPrompt failed (falling back to template): ${String(_pe).slice(0, 200)}`, { runId: step.run_id });
   }
-  resolvedInput = sanitizeAgentPromptContracts(resolvedInput);
+  resolvedInput = applyEnglishOutputPolicyToResolvedPrompt(resolvedInput);
 
   // MISSING_INPUT_GUARD (v1.5.53): First miss -> retry step, second -> fail run.
   // WAL race condition can cause false positives — one retry absorbs that.
@@ -6112,18 +6472,41 @@ export async function claimStep(
     if (agentId !== `${workIntent.workflowId}_${executionRole}`) {
       throw new Error("V3_RECOVERY_CLAIM_ROLE_MISMATCH");
     }
-    const recoveryWork = await createV3RecoveryWorkRouter(getSql()).acquireNext({
+    let admittedStory: Readonly<{
+      runId: string;
+      storyId: string;
+      proof: CompilerStoryEnglishAdmissionClaimProofV1;
+    }> | undefined;
+    const recoveryWork = await createV3RecoveryWorkRouter(getSql(), {
+      admitCandidate: async (candidate) => {
+        const authority = await loadCompilerStoryEnglishAdmissionLedgerAuthorityV1(
+          getSql(),
+          { runId: candidate.runId },
+        );
+        admittedStory = Object.freeze({
+          runId: candidate.runId,
+          storyId: candidate.storyId,
+          proof: createCompilerStoryEnglishAdmissionClaimProofV1(authority),
+        });
+      },
+    }).acquireNext({
       workflowId: workIntent.workflowId,
       dispatchClass: workIntent.recoveryDispatchClass,
       ownerInstanceId: runtimeIntent.ownerInstanceId,
     });
     if (recoveryWork) {
+      if (!admittedStory
+        || admittedStory.runId !== recoveryWork.step.run_id
+        || admittedStory.storyId !== recoveryWork.story.story_id) {
+        throw new Error("COMPILER_STORY_ENGLISH_ADMISSION_RECOVERY_CANDIDATE_PROOF_MISSING");
+      }
       return claimV3RecoveryWork(
         recoveryWork,
         agentId,
         callerGatewayAgent,
         runtimeIntent,
         executionRole,
+        admittedStory.proof,
       );
     }
   }
@@ -6288,6 +6671,17 @@ export async function claimStep(
          LIMIT 1`, [agentId, callerGatewayAgent ?? null, PR_REVIEW_DELAY_MS]);
 
   if (!step) return { found: false };
+
+  let storyAdmissionProof: CompilerStoryEnglishAdmissionClaimProofV1 | undefined;
+  if (step.protocol === "v3"
+    && ((step.step_id === "implement" && step.type === "loop")
+      || (step.step_id === "supervise" && step.type === "single"))) {
+    const authority = await loadCompilerStoryEnglishAdmissionLedgerAuthorityV1(
+      getSql(),
+      { runId: step.run_id },
+    );
+    storyAdmissionProof = createCompilerStoryEnglishAdmissionClaimProofV1(authority);
+  }
 
   // Cheap pre-guard. The publication transaction locks and revalidates the run.
   if (![RUN_STATUS.RUNNING, "resuming"].includes((await getRunStatus(step.run_id)) as any)) {
@@ -6618,6 +7012,9 @@ export async function claimStep(
       let nextStory: any | undefined;
       let v3PreparationAuthority: V3PreparationClaimAuthorityV1 | undefined;
       let v3PreparedBaseRevision: V3PreparationClaimAuthorityV1["baseRevision"] | undefined;
+      let v3SupervisorRetryPreparationSource: Awaited<ReturnType<
+        typeof loadAuthenticatedV3SupervisorRetryPreparationSourceV1
+      >>;
 
       if (runProtocol?.protocol === "v3") {
         if (step.step_id !== "implement") {
@@ -6633,31 +7030,62 @@ export async function claimStep(
           artifactRoot: resolveProductArtifactDir(),
           artifactLimits: resolveProductArtifactCapacity(),
         });
+        v3SupervisorRetryPreparationSource = await loadAuthenticatedV3SupervisorRetryPreparationSourceV1(
+          sql,
+          {
+            runId: step.run_id,
+            stepDbId: step.id,
+            workflowStepId: step.step_id,
+          },
+        );
         const blockRepository = createV3PreparationBlockRepository(sql);
         const preclaim = createV3NormalImplementationPreclaim({
           readPacket: (runId) => artifactReader.readSealedPacket(runId),
           readPendingStories: createPostgresV3PendingStoryReader(sql),
           readTerminalDependencyAttempts: createPostgresTerminalDependencyAttemptReader(sql),
           blockRepository,
-          ...(isPrEach
+          ...((isPrEach || v3SupervisorRetryPreparationSource)
             ? {
                 syncBeforePin: ({ repo }: { repo: string }) => {
-                  if (!syncBaseBranch(repo, "main")) {
+                  if (v3SupervisorRetryPreparationSource) {
+                    execFileSync(
+                      "git",
+                      ["check-ref-format", "--branch", v3SupervisorRetryPreparationSource.storyBranch],
+                      { cwd: repo, timeout: 5_000, stdio: ["ignore", "ignore", "pipe"] },
+                    );
+                    execFileSync(
+                      "git",
+                      [
+                        "fetch",
+                        "origin",
+                        `refs/heads/${v3SupervisorRetryPreparationSource.storyBranch}:refs/remotes/origin/${v3SupervisorRetryPreparationSource.storyBranch}`,
+                      ],
+                      { cwd: repo, timeout: 20_000, stdio: ["ignore", "ignore", "pipe"] },
+                    );
+                  } else if (!syncBaseBranch(repo, "main")) {
                     throw new Error("V3_NORMAL_PRECLAIM_PR_EACH_SYNC_FAILED");
                   }
                 },
               }
             : {}),
         });
-        const requestedBaseRef = isPrEach
-          ? "main"
-          : (context["implement_base_commit"] || context["branch"] || "master");
+        const requestedBaseRef = v3SupervisorRetryPreparationSource
+          ? `refs/remotes/origin/${v3SupervisorRetryPreparationSource.storyBranch}`
+          : isPrEach
+            ? "main"
+            : (context["implement_base_commit"] || context["branch"] || "master");
         const prepared = await preclaim.prepare({
           runId: step.run_id,
           stepId: step.step_id,
           repo: context["repo"] || "",
           requestedBaseRef,
-          ...(!isPrEach && context["implement_base_commit"]
+          ...(v3SupervisorRetryPreparationSource
+            ? { supervisorRetryPreparationSource: v3SupervisorRetryPreparationSource }
+            : {}),
+          ...(v3SupervisorRetryPreparationSource
+            ? { expectedSha: v3SupervisorRetryPreparationSource.sourceRevision.sha }
+            : {}),
+          ...(!isPrEach && !v3SupervisorRetryPreparationSource && context["implement_base_commit"]
             ? { expectedSha: context["implement_base_commit"] }
             : {}),
         });
@@ -6683,6 +7111,12 @@ export async function claimStep(
           return { found: false };
         }
         if (prepared.status === "ready") {
+          if (v3SupervisorRetryPreparationSource && (
+            prepared.story.id !== v3SupervisorRetryPreparationSource.storyDbId
+            || prepared.story.story_id !== v3SupervisorRetryPreparationSource.storyId
+          )) {
+            throw new Error("V3_SUPERVISOR_RETRY_PREPARATION_STORY_DRIFT");
+          }
           const exactStory = await pgGet<any>(
             `SELECT * FROM stories
               WHERE id = $1 AND run_id = $2 AND story_id = $3 AND status = 'pending'
@@ -6694,7 +7128,8 @@ export async function claimStep(
           pendingStories = [exactStory];
           v3PreparationAuthority = prepared.authority;
           v3PreparedBaseRevision = prepared.baseRevision;
-          if (!isPrEach && context["implement_base_commit"] !== prepared.baseRevision.sha) {
+          if (!isPrEach && !v3SupervisorRetryPreparationSource
+            && context["implement_base_commit"] !== prepared.baseRevision.sha) {
             context["implement_base_commit"] = prepared.baseRevision.sha;
             await updateRunContext(step.run_id, context);
           }
@@ -6963,6 +7398,15 @@ export async function claimStep(
         const reason = "V3_PREPARATION_AUTHORITY_UNAVAILABLE: a v3 story reached publication without the exact ready authority";
         const transitionTime = now();
         await pgBegin(async (sql) => {
+          const lockedRuns = await sql.unsafe<Array<{ id: string }>>(
+            `SELECT id FROM runs
+              WHERE id = $1 AND protocol = 'v3' AND status IN ('running', 'resuming')
+              FOR UPDATE`,
+            [step.run_id],
+          );
+          if (lockedRuns.length !== 1) {
+            throw new Error("V3_PRE_DISPATCH_RUN_LOCK_INVALID");
+          }
           await sql.unsafe(
             `UPDATE stories
                 SET status = 'failed', output = $2, claimed_at = NULL,
@@ -7013,7 +7457,9 @@ export async function claimStep(
         return { found: false };
       }
 
-      const requestedBaseRef = isPrEach ? "main" : (context["implement_base_commit"] || context["branch"] || "master");
+      const requestedBaseRef = v3SupervisorRetryPreparationSource
+        ? `refs/remotes/origin/${v3SupervisorRetryPreparationSource.storyBranch}`
+        : isPrEach ? "main" : (context["implement_base_commit"] || context["branch"] || "master");
       const publication = await publishLoopClaimAndRuntime(
         step,
         nextStory,
@@ -7023,6 +7469,8 @@ export async function claimStep(
         runtimeIntent,
         undefined,
         v3PreparationAuthority,
+        storyAdmissionProof,
+        v3SupervisorRetryPreparationSource,
       );
       if (!publication) {
         logger.info(`[claim] Story publication lost a concurrency or termination race`, { runId: step.run_id, stepId: step.step_id });
@@ -7037,6 +7485,9 @@ export async function claimStep(
           || publication.claimAuthority.authority.authorityHash !== v3PreparationAuthority!.authorityHash
           || publication.baseRevision?.sha !== v3PreparedBaseRevision!.sha
           || publication.baseRevision.treeHash !== v3PreparedBaseRevision!.treeHash
+          || publication.storySubject?.kind !== "story_member"
+          || publication.storySubject.storyDbId !== nextStory.id
+          || publication.storySubject.storyId !== nextStory.story_id
         )
       ) {
         const authorityReason = "V3_PREPARATION_PUBLICATION_RESULT_MISMATCH";
@@ -7049,6 +7500,7 @@ export async function claimStep(
           authority: v3PreparationAuthority!,
           phase: "reservation",
           error: Object.assign(new Error(authorityReason), { code: authorityReason }),
+          preserveStoryOutput: Boolean(v3SupervisorRetryPreparationSource),
         });
         logger.error(authorityReason, { runId: step.run_id, stepId: step.step_id });
         return { found: false };
@@ -7105,6 +7557,7 @@ export async function claimStep(
           error: Object.assign(new Error(wtReason), {
             code: "V3_PREPARATION_WORKTREE_UNAVAILABLE",
           }),
+          preserveStoryOutput: Boolean(v3SupervisorRetryPreparationSource),
           repo: context["repo"],
           storyBranch,
         });
@@ -7314,6 +7767,18 @@ export async function claimStep(
         let pendingOperationalRetry: ReturnType<typeof parseOperationalRetryDirectiveStoryOutput>;
         try {
           pendingOperationalRetry = parseOperationalRetryDirectiveStoryOutput(nextStory.output);
+          const pendingSupervisorRetry = parseV3SupervisorRetryDirectiveStoryOutputV1(nextStory.output);
+          if (pendingSupervisorRetry && (
+            pendingSupervisorRetry.storyDbId !== nextStory.id
+            || pendingSupervisorRetry.storyId !== nextStory.story_id
+            || pendingSupervisorRetry.storyClaimGeneration + 1 !== publication.claimGeneration
+            || pendingSupervisorRetry.retryOrdinal !== nextStory.retry_count
+            || pendingSupervisorRetry.maxRetries !== nextStory.max_retries
+            || pendingSupervisorRetry.sourceRevision.sha !== publication.baseRevision?.sha
+            || pendingSupervisorRetry.sourceRevision.treeHash !== publication.baseRevision?.treeHash
+          )) {
+            throw new Error("V3_SUPERVISOR_RETRY_PUBLICATION_IDENTITY_MISMATCH");
+          }
           const compiled = await reserveV3ImplementationAttempt({
             runId: step.run_id,
             stepId: step.step_id,
@@ -7324,6 +7789,7 @@ export async function claimStep(
             branch: String(context["story_branch"] || storyBranch),
             worktree: storyWorkdir,
             ...(pendingOperationalRetry ? { operationalRetry: pendingOperationalRetry } : {}),
+            ...(pendingSupervisorRetry ? { supervisorRetry: pendingSupervisorRetry } : {}),
           });
           applyV3ImplementationSliceContext(context, compiled);
           nativeV3Attempt = {
@@ -7341,7 +7807,8 @@ export async function claimStep(
           });
         } catch (error) {
           const operationalRetryRefused = Boolean(pendingOperationalRetry)
-            || String(nextStory.output || "").includes("setfarm.operational-retry-directive.v1");
+            || String(nextStory.output || "").includes("setfarm.operational-retry-directive.v1")
+            || String(nextStory.output || "").includes("setfarm.v3-supervisor-retry-directive.v1");
           await handleV3PreDispatchFailure({
             step,
             story: nextStory,
@@ -7352,6 +7819,7 @@ export async function claimStep(
             phase: "reservation",
             error,
             operationalRetryRefused,
+            preserveStoryOutput: Boolean(v3SupervisorRetryPreparationSource),
             repo: context["repo"],
             storyBranch,
           });
@@ -7544,7 +8012,14 @@ export async function claimStep(
   }
 
   // Single (non-loop) step claim path
-  return await claimSingleStep(step, agentId, context, null, runtimeIntent);
+  return await claimSingleStep(
+    step,
+    agentId,
+    context,
+    null,
+    runtimeIntent,
+    storyAdmissionProof,
+  );
 }
 
 // ── Complete ────────────────────────────────────────────────────────
@@ -7590,6 +8065,29 @@ export async function completeStep(
   const completionAuthority = claimEnvelope
     ? await assertClaimAuthority(getSql(), claimEnvelope, step.id)
     : undefined;
+  let v3SuperviseBoundSubject: V3StoryClaimRuntimeSubjectV1 | undefined;
+  let v3SuperviseRuntimeSessionId: string | undefined;
+  if (completionAuthority?.protocol === "v3" && step.step_id === "supervise") {
+    const superviseStep = step;
+    v3SuperviseBoundSubject = await getSql().begin(async (transaction) => {
+      const requests = await transaction.unsafe<Array<{ runtime_session_id: string }>>(
+        `SELECT runtime_session_id
+           FROM runtime_completion_requests
+          WHERE claim_id = $1 AND run_id = $2 AND step_db_id = $3
+          LIMIT 2`,
+        [completionAuthority.envelope.claimId, superviseStep.run_id, superviseStep.id],
+      );
+      if (requests.length !== 1) throw new Error("V3_SUPERVISE_COMPLETION_REQUEST_IDENTITY_INVALID");
+      v3SuperviseRuntimeSessionId = requests[0]!.runtime_session_id;
+      return loadAndRevalidateV3StoryClaimRuntimeBindingV1(transaction, {
+        claimId: completionAuthority.envelope.claimId,
+        runtimeSessionId: requests[0]!.runtime_session_id,
+        runId: superviseStep.run_id,
+        stepDbId: superviseStep.id,
+        workflowStepId: "supervise",
+      });
+    }) as V3StoryClaimRuntimeSubjectV1;
+  }
   const runProtocol = await pgGet<{ protocol: string }>("SELECT protocol FROM runs WHERE id = $1", [step.run_id]);
   if (runProtocol?.protocol !== "legacy" && !completionAuthority) {
     throw new Error("CLAIM_ENVELOPE_REQUIRED");
@@ -7614,10 +8112,21 @@ export async function completeStep(
   const isNativeV3PlanCompletion = completionAuthority?.protocol === "v3"
     && step.step_id === "plan"
     && step.type === "single";
+  const atomicNativeV3PlanCompletion = isNativeV3PlanCompletion
+    && options.deferContinuationToEffectLedger === true;
+  const isNativeV3StoriesCompletion = completionAuthority?.protocol === "v3"
+    && step.step_id === "stories"
+    && step.type === "single";
+  const atomicNativeV3StoriesCompletion = isNativeV3StoriesCompletion
+    && options.deferContinuationToEffectLedger === true;
+  if (isNativeV3StoriesCompletion && !atomicNativeV3StoriesCompletion) {
+    throw new Error("V3_STORIES_RUNTIME_COMPLETION_OWNER_REQUIRED");
+  }
   let nativeV3AgentOutput: V3ImplementationAgentOutputV1 | undefined;
   let nativeV3AgentContext: V3ImplementationContextV1 | undefined;
   let nativeV3AttemptContext: V3ImplementationAttemptResult | undefined;
-  let nativeV3PlanAuthority: V3PlanOutputAuthorityV1 | undefined;
+  let nativeV3PlanAuthority: V3PlanOutputAuthorityV1 | V3PlanOutputAuthorityV2 | undefined;
+  let preparedV3StoriesCompletion: PreparedV3StoriesCompletionV1 | undefined;
 
   if (
     completionAuthority?.protocol === "v3"
@@ -7703,7 +8212,13 @@ export async function completeStep(
   }
 
   // Merge KEY: value lines into run context (legacy/shadow only).
-  const context: Record<string, string> = await getRunContext(step.run_id);
+  const candidateContextSnapshot = await pgGet<{ context: string }>(
+    "SELECT context FROM runs WHERE id = $1",
+    [step.run_id],
+  );
+  const context: Record<string, string> = candidateContextSnapshot?.context
+    ? JSON.parse(candidateContextSnapshot.context)
+    : {};
 
   // Parse KEY: value lines and merge into context
   // #197: Protect seed context keys from being overwritten by step output
@@ -7717,18 +8232,37 @@ export async function completeStep(
     : parseOutputKeyValues(output);
   if (isNativeV3PlanCompletion) {
     try {
-      nativeV3PlanAuthority = resolveV3PlanOutputAuthorityV1({
+      const planInput = {
         task: context["task"] || "",
         parsed,
+        ...(context["plan_output_authority_version"] !== "product_build_v1"
+          ? { allowSemanticOnlyCompatibility: true }
+          : {}),
         ...(context["requested_stack_prefix"] && context["stack_pack_id"]
           ? { requestedStackPackId: context["stack_pack_id"] }
           : {}),
-      });
+      };
+      const semanticsV2 = context["product_semantics_version"] === "v2";
+      nativeV3PlanAuthority = semanticsV2
+        ? resolveV3PlanOutputAuthorityV2(planInput)
+        : resolveV3PlanOutputAuthorityV1(planInput);
       if (nativeV3PlanAuthority.status === "proposal") {
-        parsed.prd = projectCanonicalV3PlanParsedOutputV1({
-          parsed,
-          authority: nativeV3PlanAuthority,
-        }).prd;
+        const canonicalPrd = semanticsV2
+          ? projectCanonicalV3PlanParsedOutputV2({
+              parsed,
+              authority: nativeV3PlanAuthority as Extract<V3PlanOutputAuthorityV2, { status: "proposal" }>,
+            }).prd
+          : projectCanonicalV3PlanParsedOutputV1({
+              parsed,
+              authority: nativeV3PlanAuthority as Extract<V3PlanOutputAuthorityV1, { status: "proposal" }>,
+            }).prd;
+        // The typed proposal is the only model-owned PLAN payload. Legacy
+        // KEY:value siblings are neither specification nor operational
+        // authority, so do not let them enter run context even transiently.
+        for (const key of Object.keys(parsed)) {
+          if (key !== "status" && key !== "prd") delete parsed[key];
+        }
+        parsed.prd = canonicalPrd;
       }
     } catch (error) {
       // A malformed or semantically invalid typed PLAN proposal is an agent
@@ -7740,7 +8274,7 @@ export async function completeStep(
       const failure = createV3StageFailureV1({
         workflowStepId: "plan",
         kind: "output_contract_invalid",
-        diagnostics: error instanceof V3PlanOutputRejectedError
+        diagnostics: error instanceof V3PlanOutputRejectedError || error instanceof V3PlanOutputV2RejectedError
           ? error.diagnostics
           : [{
               code: "V3_PLAN_OUTPUT_REJECTED",
@@ -7749,7 +8283,7 @@ export async function completeStep(
             }],
       });
       const diagnostic = serializeV3StageFailureDiagnostic(
-        error instanceof V3PlanOutputRejectedError
+        error instanceof V3PlanOutputRejectedError || error instanceof V3PlanOutputV2RejectedError
           ? `V3_PLAN_OUTPUT_REJECTED: ${error.message}`
           : "V3_PLAN_OUTPUT_REJECTED",
         failure,
@@ -7768,6 +8302,27 @@ export async function completeStep(
     const delivery = nativeV3PlanAuthority.deliverySelection;
     context["plan_source_transport"] = nativeV3PlanAuthority.sourceTransport;
     context["plan_source_proposal_hash"] = nativeV3PlanAuthority.sourceProposalHash;
+    if (nativeV3PlanAuthority.sourceTransport === "product_build_proposal_v1") {
+      context["plan_semantic_proposal_hash"] = nativeV3PlanAuthority.sourceSemanticProposalHash;
+      context["plan_product_build_authority"] =
+        nativeV3PlanAuthority.planProductBuildAuthorityCanonicalBytes;
+      context["plan_product_build_authority_hash"] =
+        nativeV3PlanAuthority.planProductBuildAuthority.authorityHash;
+      context["product_runtime_behavior_proposal"] =
+        nativeV3PlanAuthority.runtimeBehaviorProposalCanonicalBytes;
+      context["product_runtime_behavior_proposal_hash"] =
+        nativeV3PlanAuthority.runtimeBehaviorProposalHash;
+      context["product_runtime_behavior_contract"] =
+        nativeV3PlanAuthority.runtimeBehaviorCanonicalBytes;
+      context["product_runtime_behavior_contract_hash"] =
+        nativeV3PlanAuthority.runtimeBehaviorContract.contractHash;
+    }
+    context["product_semantics_version"] = nativeV3PlanAuthority.productSpec.schema === "setfarm.product-spec.v2"
+      ? "v2"
+      : "v1";
+    context["product_spec_schema"] = nativeV3PlanAuthority.productSpec.schema;
+    context["product_persistence_projection"] = canonicalJsonStringify(nativeV3PlanAuthority.persistenceProjectionEvidence);
+    context["product_persistence_projection_hash"] = hashCanonicalJson(nativeV3PlanAuthority.persistenceProjectionEvidence);
     context["product_delivery_selection"] = nativeV3PlanAuthority.deliverySelectionCanonicalBytes;
     context["product_delivery_selection_hash"] = nativeV3PlanAuthority.deliverySelectionHash;
     context["product_delivery_profile_id"] = delivery.profileId;
@@ -7785,7 +8340,7 @@ export async function completeStep(
   }
   if (!isNativeV3ImplementCompletion) {
     for (const [key, value] of Object.entries(parsed)) {
-      if (PROTECTED_CONTEXT_KEYS.has(key) && context[key]) {
+      if (isStepOutputContextKeyProtected(key, context)) {
         logger.warn(`[context] Blocked overwrite of protected key "${key}" (current: "${context[key]}", attempted: "${value}")`, { runId: step.run_id });
         continue;
       }
@@ -7807,7 +8362,7 @@ export async function completeStep(
     { rx: /\bgit\s+push\s+--force\b/, label: "git push --force" },
     { rx: /\bgit\s+reset\s+--hard\s+origin\/(main|master)\b/, label: "git reset --hard origin/main" },
   ];
-  if (!isNativeV3ImplementCompletion) {
+  if (!isNativeV3ImplementCompletion && !isNativeV3PlanCompletion) {
     for (const { rx, label } of DANGEROUS_CMDS) {
       const m = output.match(rx);
       if (m) {
@@ -7904,13 +8459,18 @@ export async function completeStep(
     && (step.step_id === "qa-test" || step.step_id === "final-test");
   const isV3DeterministicDeployCompletion = completionAuthority?.envelope.protocol === "v3"
     && step.step_id === "deploy";
-  if (!isNativeV3ImplementCompletion) {
+  if (!isNativeV3ImplementCompletion && !atomicNativeV3StoriesCompletion) {
     await recordStepOutputObservation(step, parsed, output, context);
     await recordStackEvidencePlanObservation(step, context);
   }
   const superviseEachConfigForStep = await getSuperviseEachConfigForStep(step);
   const supervisorDecisionVal = firstOutputWord(parsed["supervisor_decision"]);
-  if (superviseEachConfigForStep && (statusVal === "retry" || supervisorDecisionVal === "block")) {
+  const v3SuperviseSuccess = statusVal === "done"
+    && ["pass", "fixed"].includes(supervisorDecisionVal);
+  if (v3SuperviseBoundSubject
+    && !v3SuperviseSuccess
+    && superviseEachConfigForStep
+    && v3SuperviseBoundSubject.kind === "story_member") {
     return await handleSuperviseEachCompletion(
       step,
       superviseEachConfigForStep.loopStepId,
@@ -7918,7 +8478,33 @@ export async function completeStep(
       output,
       context,
       completionAuthority?.envelope,
+      false,
+      v3SuperviseBoundSubject?.kind === "story_member"
+        ? {
+            storyDbId: v3SuperviseBoundSubject.storyDbId,
+            storyId: v3SuperviseBoundSubject.storyId,
+          }
+        : undefined,
+      options.deferContinuationToEffectLedger ?? false,
+      false,
+      true,
+      v3SuperviseRuntimeSessionId,
     );
+  }
+  if (v3SuperviseBoundSubject?.kind === "final_product" && !v3SuperviseSuccess) {
+    context["previous_failure"] = `Authenticated supervisor rejected non-success output ${supervisorDecisionVal || statusVal || "unknown"}: ${output.slice(0, 6_000)}`;
+    context["failure_category"] = "LLM_SUPERVISOR_BLOCKED";
+    context["failure_suggestion"] = "Return an exact STATUS done with SUPERVISOR_DECISION pass or fixed after resolving every blocker.";
+    context["supervisor_scope"] = v3SuperviseBoundSubject.kind === "final_product"
+      ? "final-product"
+      : "story";
+    await updateRunContext(step.run_id, context);
+    await failStep(
+      step.id,
+      `Authenticated supervisor rejected non-success output ${supervisorDecisionVal || statusVal || "unknown"}: ${output.slice(0, 6_000)}`,
+      completionAuthority?.envelope,
+    );
+    return { advanced: false, runCompleted: false };
   }
   if (step.step_id === "qa-test" && !isV3DownstreamCompletion) {
     const _modRegistry = await import("./steps/registry.js");
@@ -7998,9 +8584,43 @@ export async function completeStep(
   // Guardrails (test, quality, db-provision) may call failStep + return early,
   // which previously skipped the context save — losing parsed output keys.
   // v1.5.47: Snapshot context before save so guardrail failures can rollback bad values.
-  const prevContextJson = await pgGet<{ context: string }>("SELECT context FROM runs WHERE id = $1", [step.run_id]);
-  if (!isNativeV3ImplementCompletion) {
-    await pgRun("UPDATE runs SET context = $1, updated_at = $2 WHERE id = $3", [JSON.stringify(context), now(), step.run_id]);
+  const prevContextJson = candidateContextSnapshot;
+  let completionOwnedContextJson = prevContextJson?.context;
+  const persistCompletionContext = async (): Promise<void> => {
+    if (atomicNativeV3PlanCompletion || atomicNativeV3StoriesCompletion) return;
+    if (completionOwnedContextJson === undefined) {
+      throw new Error("STEP_COMPLETION_PRIOR_RUN_CONTEXT_REQUIRED");
+    }
+    const nextContextJson = JSON.stringify(context);
+    const updated = await pgQuery<{ id: string }>(
+      `UPDATE runs
+          SET context = $1, updated_at = $2
+        WHERE id = $3
+          AND context = $4
+        RETURNING id`,
+      [nextContextJson, now(), step.run_id, completionOwnedContextJson],
+    );
+    if (updated.length !== 1) throw new Error("STEP_COMPLETION_RUN_CONTEXT_CAS_LOST");
+    completionOwnedContextJson = nextContextJson;
+  };
+  const restoreCompletionContext = async (restoredContextJson = prevContextJson?.context): Promise<void> => {
+    if (atomicNativeV3PlanCompletion || atomicNativeV3StoriesCompletion || restoredContextJson === undefined) return;
+    if (completionOwnedContextJson === undefined) {
+      throw new Error("STEP_COMPLETION_PRIOR_RUN_CONTEXT_REQUIRED");
+    }
+    const restored = await pgQuery<{ id: string }>(
+      `UPDATE runs
+          SET context = $1, updated_at = $2
+        WHERE id = $3
+          AND context = $4
+        RETURNING id`,
+      [restoredContextJson, now(), step.run_id, completionOwnedContextJson],
+    );
+    if (restored.length !== 1) throw new Error("STEP_COMPLETION_CONTEXT_RESTORE_CAS_LOST");
+    completionOwnedContextJson = restoredContextJson;
+  };
+  if (!isNativeV3ImplementCompletion && !atomicNativeV3PlanCompletion && !atomicNativeV3StoriesCompletion) {
+    await persistCompletionContext();
   }
 
   // Step module delegation (v2026-04-14).
@@ -8016,7 +8636,7 @@ export async function completeStep(
       if (!_result.ok) {
         const _modErr = `GUARDRAIL [module:${_stepModule.id}]: ${_result.errors.join("; ")}`;
         logger.warn(`[step-module] ${_modErr}`, { runId: step.run_id });
-        if (prevContextJson) { await pgRun("UPDATE runs SET context = $1 WHERE id = $2", [prevContextJson.context, step.run_id]); }
+        await restoreCompletionContext();
         await failStep(stepId, _modErr, completionAuthority?.envelope);
         return { advanced: false, runCompleted: false };
       }
@@ -8031,15 +8651,21 @@ export async function completeStep(
             completeCurrentStoryId = completeStory?.story_id || "";
           }
           if (!completeCurrentStoryId) completeCurrentStoryId = context["current_story_id"] || "";
-          await _stepModule.onComplete({ runId: step.run_id, stepId: step.step_id, parsed, context, currentStoryId: completeCurrentStoryId, rawOutput: output });
-          await pgRun("UPDATE runs SET context = $1, updated_at = $2 WHERE id = $3", [JSON.stringify(context), now(), step.run_id]);
+          const completeContext = { runId: step.run_id, stepId: step.step_id, parsed, context, currentStoryId: completeCurrentStoryId, rawOutput: output };
+          if (atomicNativeV3StoriesCompletion && _stepModule.id === "stories") {
+            const { prepareV3StoriesCompletionV1 } = await import("./steps/03-stories/guards.js");
+            preparedV3StoriesCompletion = await prepareV3StoriesCompletionV1(completeContext);
+          } else {
+            await _stepModule.onComplete(completeContext);
+          }
+          if (!atomicNativeV3PlanCompletion && !atomicNativeV3StoriesCompletion) await persistCompletionContext();
           logger.info(`[step-module] ${_stepModule.id} onComplete ok`, { runId: step.run_id });
         } catch (_oe) {
           // Module onComplete threw — treat as fatal guardrail rejection (e.g. stories
           // 0-stories, missing scope_files, hallucinated screen path).
           const _msg = `GUARDRAIL [module:${_stepModule.id}]: ${String(_oe instanceof Error ? _oe.message : _oe).slice(0, 400)}`;
           logger.warn(`[step-module] ${_msg}`, { runId: step.run_id });
-          if (prevContextJson) {
+          if (!atomicNativeV3PlanCompletion && prevContextJson) {
             let restoredContext = prevContextJson.context;
             if (_stepModule.id === "supervise") {
               try {
@@ -8052,7 +8678,7 @@ export async function completeStep(
                 restoredContext = prevContextJson.context;
               }
             }
-            await pgRun("UPDATE runs SET context = $1 WHERE id = $2", [restoredContext, step.run_id]);
+            await restoreCompletionContext(restoredContext);
           }
           await failStep(stepId, _msg, completionAuthority?.envelope);
           return { advanced: false, runCompleted: false };
@@ -8064,11 +8690,23 @@ export async function completeStep(
         step.step_id === "design" ? "design" :
         step.step_id === "deploy" ? "deploy" :
         "";
-      const runLegacyProductSupervisor = shouldRunLegacyProductSupervisorV1({
+      const supervisorInput = {
         protocol: completionAuthority?.protocol ?? "legacy",
         stepId: step.step_id,
-        ...(nativeV3PlanAuthority ? { planAuthority: nativeV3PlanAuthority } : {}),
-      });
+      } as const;
+      const runLegacyProductSupervisor = context["product_semantics_version"] === "v2"
+        ? shouldRunLegacyProductSupervisorV2({
+            ...supervisorInput,
+            ...(nativeV3PlanAuthority
+              ? { planAuthority: nativeV3PlanAuthority as V3PlanOutputAuthorityV2 }
+              : {}),
+          })
+        : shouldRunLegacyProductSupervisorV1({
+            ...supervisorInput,
+            ...(nativeV3PlanAuthority
+              ? { planAuthority: nativeV3PlanAuthority as V3PlanOutputAuthorityV1 }
+              : {}),
+          });
       if (supervisorPhase && runLegacyProductSupervisor && (parsed["status"] || "").toLowerCase() === "done") {
         const { runProductSupervisorGate, updateSupervisorMemory } = await import("./product-supervisor.js");
         const supervisor = runProductSupervisorGate({
@@ -8085,11 +8723,11 @@ export async function completeStep(
           context["previous_failure"] = supervisor.reason;
           context["failure_category"] = supervisor.code;
           context["failure_suggestion"] = "Treat this as product-manager feedback: preserve the original task/PRD, remove untraceable modules, and re-output a coherent result before coding continues.";
-          await pgRun("UPDATE runs SET context = $1, updated_at = $2 WHERE id = $3", [JSON.stringify(context), now(), step.run_id]);
+          if (!atomicNativeV3PlanCompletion) await persistCompletionContext();
           await failStep(stepId, `GUARDRAIL [product-supervisor:${supervisorPhase}]: ${supervisor.reason}`, completionAuthority?.envelope);
           return { advanced: false, runCompleted: false };
         }
-        await pgRun("UPDATE runs SET context = $1, updated_at = $2 WHERE id = $3", [JSON.stringify(context), now(), step.run_id]);
+        if (!atomicNativeV3PlanCompletion) await persistCompletionContext();
       }
     }
   }
@@ -8127,7 +8765,7 @@ export async function completeStep(
         summary: "Required output fields missing",
         detail: missingFieldsMsg,
       });
-      if (prevContextJson) { await pgRun("UPDATE runs SET context = $1 WHERE id = $2", [prevContextJson.context, step.run_id]); }
+      await restoreCompletionContext();
       await failStep(stepId, missingFieldsMsg, completionAuthority?.envelope);
       return { advanced: false, runCompleted: false };
     }
@@ -8152,7 +8790,7 @@ export async function completeStep(
       const { classifyError: _ce1 } = await import("./error-taxonomy.js");
       const _cl1 = _ce1(testFailMsg);
       applyRetryFailureContext(context, `TEST GUARDRAIL: ${testFailMsg}`, _cl1.category, _cl1.suggestion);
-      await pgRun("UPDATE runs SET context = $1, updated_at = $2 WHERE id = $3", [JSON.stringify(context), now(), step.run_id]);
+      await persistCompletionContext();
       await failStep(stepId, testFailMsg, completionAuthority?.envelope);
       return { advanced: false, runCompleted: false };
     } else if (testFailMsg) {
@@ -8168,7 +8806,7 @@ export async function completeStep(
         summary: "Test guardrail exhausted retries",
         detail: testFailMsg,
       });
-      if (prevContextJson) { await pgRun("UPDATE runs SET context = $1 WHERE id = $2", [prevContextJson.context, step.run_id]); }
+      await restoreCompletionContext();
       await failStep(stepId, testFailMsg, completionAuthority?.envelope);
       return { advanced: false, runCompleted: false };
     }
@@ -8200,7 +8838,7 @@ export async function completeStep(
       const { classifyError: _ce2 } = await import("./error-taxonomy.js");
       const _cl2 = _ce2(qgMsg);
       applyRetryFailureContext(context, `QUALITY GATE: ${qgMsg}`, _cl2.category, _cl2.suggestion);
-      await pgRun("UPDATE runs SET context = $1, updated_at = $2 WHERE id = $3", [JSON.stringify(context), now(), step.run_id]);
+      await persistCompletionContext();
       await failStep(stepId, qgMsg, completionAuthority?.envelope);
       return { advanced: false, runCompleted: false };
     } else if (qgMsg) {
@@ -8216,7 +8854,7 @@ export async function completeStep(
         detail: qgMsg,
         metadata: { repoPath: qgPath },
       });
-      if (prevContextJson) { await pgRun("UPDATE runs SET context = $1 WHERE id = $2", [prevContextJson.context, step.run_id]); }
+      await restoreCompletionContext();
       await failStep(stepId, qgMsg, completionAuthority?.envelope);
       return { advanced: false, runCompleted: false };
     }
@@ -8420,10 +9058,13 @@ ${prd}`;
           logger.warn(`[setup-build-scope] src/App.tsx does NOT match setup scaffold baseline after setup-build (${lineCount} lines, preview: "${preview}..."). Implement will start from this modified baseline.`, { runId: step.run_id });
           // Record in context so verify/qa-test can see it downstream if needed
           context["setup_build_app_tsx_drift"] = `lines=${lineCount},hasSetupBaseline=false`;
-          await updateRunContext(step.run_id, context);
+          await persistCompletionContext();
         }
       }
     } catch (appTsxErr) {
+      if (appTsxErr instanceof Error && appTsxErr.message === "STEP_COMPLETION_RUN_CONTEXT_CAS_LOST") {
+        throw appTsxErr;
+      }
       logger.warn(`[setup-build-scope] App.tsx drift check skipped: ${String(appTsxErr).slice(0, 150)}`, { runId: step.run_id });
     }
   }
@@ -8433,7 +9074,7 @@ ${prd}`;
   // US-001 branches from an empty/stale main and every later PR collides.
   if (step.step_id === "setup-build" && parsed["status"]?.toLowerCase() === "done") {
     const setupBranch = normalizeRunBranchContext(context, step.run_id, context["repo"] || "");
-    await updateRunContext(step.run_id, context);
+    await persistCompletionContext();
     const baselinePublished = publishSetupBaselineToMain(context["repo"] || "", setupBranch, step.run_id);
     if (!baselinePublished) {
       const reason = "SETUP_BASELINE_MAIN_SYNC_FAILED: setup-build could not publish the baseline to main. pr-each implement cannot start safely until main contains the scaffold/build baseline.";
@@ -8513,7 +9154,7 @@ ${prd}`;
 
     if (deployErr) {
       logger.warn(`[deploy-guardrail] ${deployErr}`, { runId: step.run_id, stepId: step.step_id });
-      if (prevContextJson) { await pgRun("UPDATE runs SET context = $1 WHERE id = $2", [prevContextJson.context, step.run_id]); }
+      await restoreCompletionContext();
       await failStep(stepId, deployErr, completionAuthority?.envelope);
       return { advanced: false, runCompleted: false };
     }
@@ -8576,7 +9217,7 @@ ${prd}`;
         }
         if (deployErr) {
           logger.warn(`[deploy-guardrail] ${deployErr}`, { runId: step.run_id, stepId: step.step_id });
-          if (prevContextJson) { await pgRun("UPDATE runs SET context = $1 WHERE id = $2", [prevContextJson.context, step.run_id]); }
+          await restoreCompletionContext();
           await failStep(stepId, deployErr, completionAuthority?.envelope);
           return { advanced: false, runCompleted: false };
         }
@@ -8691,7 +9332,7 @@ ${prd}`;
     const fidelityErr = await processDesignFidelityCheck(context, step.run_id);
     if (fidelityErr) {
       logger.warn(`[design-fidelity-gate] Blocking: ${fidelityErr}`, { runId: step.run_id, stepId: step.step_id });
-      if (prevContextJson) { await pgRun("UPDATE runs SET context = $1 WHERE id = $2", [prevContextJson.context, step.run_id]); }
+      await restoreCompletionContext();
       await failStep(stepId, fidelityErr, completionAuthority?.envelope);
       return { advanced: false, runCompleted: false };
     }
@@ -8704,7 +9345,7 @@ ${prd}`;
       const importErr = checkImportConsistency(repoPath);
       if (importErr) {
         logger.warn(`[import-consistency-gate] Blocking: ${importErr}`, { runId: step.run_id, stepId: step.step_id });
-        if (prevContextJson) { await pgRun("UPDATE runs SET context = $1 WHERE id = $2", [prevContextJson.context, step.run_id]); }
+        await restoreCompletionContext();
         await failStep(stepId, importErr, completionAuthority?.envelope);
         return { advanced: false, runCompleted: false };
       }
@@ -8734,7 +9375,7 @@ ${prd}`;
         detail: context["smoke_test_result"],
         metadata: stackEvidenceMetadata(stackContract),
       });
-      await pgRun("UPDATE runs SET context = $1, updated_at = $2 WHERE id = $3", [JSON.stringify(context), now(), step.run_id]);
+      await persistCompletionContext();
     } else {
     let smokeFailure = "";
     if (repoPath && fs.existsSync(smokeScript)) {
@@ -8798,20 +9439,20 @@ ${prd}`;
       }
       if (isSmokeInfrastructureFailure(smokeFailure)) {
         logger.warn(`[final-test-smoke-gate] smoke infra failure; retrying final-test instead of creating QA-FIX: ${smokeFailure.slice(0, 200)}`, { runId: step.run_id });
-        if (prevContextJson) { await pgRun("UPDATE runs SET context = $1 WHERE id = $2", [prevContextJson.context, step.run_id]); }
+        await restoreCompletionContext();
         await failStep(stepId, `INFRA: final-test smoke browser infrastructure failed; retry final-test, do not modify app code.\n${smokeFailure}`, completionAuthority?.envelope);
         return { advanced: false, runCompleted: false };
       }
       if (await routeQualityFailureToImplement(step, `SYSTEM_SMOKE_FAILURE:\n${smokeFailure}`, context, completionAuthority?.envelope)) {
         return { advanced: false, runCompleted: false };
       }
-      if (prevContextJson) { await pgRun("UPDATE runs SET context = $1 WHERE id = $2", [prevContextJson.context, step.run_id]); }
+      await restoreCompletionContext();
       await failStep(stepId, `GUARDRAIL: final-test system smoke test failed. Fix runtime issues and retry.\n${smokeFailure}`, completionAuthority?.envelope);
       return { advanced: false, runCompleted: false };
     }
     if (!smokeResult) {
       logger.warn(`[final-test-guardrail] SMOKE_TEST_RESULT missing from final-test output — agent likely skipped smoke test. Retrying.`, { runId: step.run_id, stepId: step.step_id });
-      if (prevContextJson) { await pgRun("UPDATE runs SET context = $1 WHERE id = $2", [prevContextJson.context, step.run_id]); }
+      await restoreCompletionContext();
       await failStep(stepId, "GUARDRAIL: final-test completed without SMOKE_TEST_RESULT. You MUST run smoke-test.mjs and include SMOKE_TEST_RESULT in your output.", completionAuthority?.envelope);
       return { advanced: false, runCompleted: false };
     }
@@ -8907,7 +9548,7 @@ ${prd}`;
     }
   }
 
-  await pgRun("UPDATE runs SET context = $1, updated_at = $2 WHERE id = $3", [JSON.stringify(context), now(), step.run_id]);
+  await persistCompletionContext();
 
   // (parseAndInsertStories + 0-stories + scope_files + overlap + hallucinated-path
   //  + multi-owner guardrails moved to 03-stories/guards.ts onComplete — invoked
@@ -8915,7 +9556,9 @@ ${prd}`;
 
   // Auto-generate SCREEN_MAP if stories step did not produce one with story mappings (fallback)
   // v12.0: stories step should output SCREEN_MAP with stories field, but if it doesn't, auto-generate
-  if (step.step_id === "stories" && parsed["status"]?.toLowerCase() === "done") {
+  if (!atomicNativeV3StoriesCompletion
+    && step.step_id === "stories"
+    && parsed["status"]?.toLowerCase() === "done") {
     const screenMapRaw = context["screen_map"];
     let needsAutoGen = false;
     if (screenMapRaw) {
@@ -8958,7 +9601,7 @@ ${prd}`;
             });
           }
           context["screen_map"] = JSON.stringify(screenMap);
-          await pgRun("UPDATE runs SET context = $1, updated_at = $2 WHERE id = $3", [JSON.stringify(context), now(), step.run_id]);
+          await persistCompletionContext();
           logger.info(`[screen-map-guardrail] Auto-generated SCREEN_MAP with ${screenMap.length} screen(s) from ${autoStories.length} stories (stories step fallback)`, { runId: step.run_id });
         }
       }
@@ -8974,7 +9617,11 @@ ${prd}`;
     const intermediateSteps = await pgGet<{ cnt: number }>("SELECT COUNT(*) as cnt FROM steps WHERE run_id = $1 AND step_index > $2 AND step_index < $3 AND type != 'loop' AND status IN ('waiting', 'pending')", [step.run_id, step.step_index, nextLoopStep.step_index]);
     if ((intermediateSteps?.cnt ?? 0) === 0) {
       // No intermediate steps — this is the last step before the loop
-      const storyCount = { cnt: await countAllStories(step.run_id) };
+      const storyCount = {
+        cnt: atomicNativeV3StoriesCompletion
+          ? preparedV3StoriesCompletion?.storyCount ?? 0
+          : await countAllStories(step.run_id),
+      };
       if (storyCount.cnt === 0) {
         const noStoriesMsg = "Step completed but produced no STORIES_JSON — downstream loop would run with 0 stories";
         logger.warn(noStoriesMsg, { runId: step.run_id, stepId: step.step_id });
@@ -9089,7 +9736,7 @@ ${prd}`;
               // Phase gate failed — retry with fix instructions
               context["previous_failure"] = `PHASE GATE (${currentPhase}): ${gateResult}`;
               context["failure_category"] = "GUARDRAIL_FAIL";
-              await updateRunContext(step.run_id, context);
+              await persistCompletionContext();
               await failStep(stepId, gateResult, completionAuthority?.envelope);
               logger.info(`[phased-dev] Phase gate failed for ${currentPhase}, retrying`, { runId: step.run_id });
               return { advanced: false, runCompleted: false };
@@ -9100,6 +9747,9 @@ ${prd}`;
             context["implement_phase"] = nextPhase;
             context["previous_failure"] = "";
             if (completionAuthority?.envelope) {
+              if (completionOwnedContextJson === undefined) {
+                throw new Error("STEP_COMPLETION_PRIOR_RUN_CONTEXT_REQUIRED");
+              }
               const workdir = context["story_workdir"] || context["repo"] || "";
               const sourceAfter = completionAuthority.envelope.protocol !== "legacy"
                 ? await captureShadowSourceRevision(workdir)
@@ -9115,17 +9765,32 @@ ${prd}`;
                 stepStatus: "pending",
                 stepOutput: output,
                 runContextJson: JSON.stringify(context),
+                expectedRunContextJson: completionOwnedContextJson,
                 diagnostic: `Implement phase ${currentPhase} completed; next phase ${nextPhase}`,
               });
             } else {
               // Compatibility path for legacy workers that predate claim
               // envelopes. Close their claim before publishing retryable state.
+              if (completionOwnedContextJson === undefined) {
+                throw new Error("STEP_COMPLETION_PRIOR_RUN_CONTEXT_REQUIRED");
+              }
+              const expectedContextJson = completionOwnedContextJson;
+              const nextContextJson = JSON.stringify(context);
               await pgBegin(async (sql) => {
                 await sql`UPDATE claim_log SET outcome = 'completed', duration_ms = LEAST(CAST(EXTRACT(EPOCH FROM (NOW() - claimed_at::timestamptz)) * 1000 AS BIGINT), 2147483647)::INTEGER, diagnostic = ${`Implement phase ${currentPhase} completed`} WHERE run_id = ${step.run_id} AND step_id = ${step.step_id} AND story_id = ${storyRow?.story_id || ""} AND outcome IS NULL`;
-                await sql`UPDATE runs SET context = ${JSON.stringify(context)}, updated_at = ${now()} WHERE id = ${step.run_id}`;
+                const updatedContext = await sql.unsafe<Array<{ id: string }>>(
+                  `UPDATE runs
+                      SET context = $1, updated_at = $2
+                    WHERE id = $3
+                      AND context = $4
+                    RETURNING id`,
+                  [nextContextJson, now(), step.run_id, expectedContextJson],
+                );
+                if (updatedContext.length !== 1) throw new Error("STEP_COMPLETION_RUN_CONTEXT_CAS_LOST");
                 await sql`UPDATE stories SET status = 'pending', output = ${output}, claimed_by = NULL, claimed_at = NULL, updated_at = ${now()} WHERE id = ${step.current_story_id}`;
                 await sql`UPDATE steps SET status = 'pending', current_story_id = NULL, output = ${output}, updated_at = ${now()} WHERE id = ${step.id}`;
               });
+              completionOwnedContextJson = nextContextJson;
             }
 
             logger.info(`[phased-dev] Phase ${currentPhase} complete, advancing to ${nextPhase}`, { runId: step.run_id });
@@ -9134,6 +9799,10 @@ ${prd}`;
           // Final phase (ui) — fall through to normal completion
         }
       } catch (e) {
+        if (e instanceof Error && [
+          "STEP_COMPLETION_RUN_CONTEXT_CAS_LOST",
+          "STORY_COMPLETION_RUN_CONTEXT_CAS_LOST",
+        ].includes(e.message)) throw e;
         logger.warn(`[phased-dev] Skipped: ${String(e)}`, { runId: step.run_id });
       }
     }
@@ -9161,7 +9830,7 @@ ${prd}`;
         context["previous_failure"] = `DESIGN COMPLIANCE: ${designIssue}`;
         context["failure_category"] = _cl3.category;
         context["failure_suggestion"] = _cl3.suggestion;
-        await pgRun("UPDATE runs SET context = $1, updated_at = $2 WHERE id = $3", [JSON.stringify(context), now(), step.run_id]);
+        await persistCompletionContext();
         await failStep(stepId, designIssue, completionAuthority?.envelope);
         return { advanced: false, runCompleted: false };
       } else if (designIssue && step.retry_count < 2) {
@@ -9608,6 +10277,11 @@ ${prd}`;
             v3CandidateSource = await captureShadowSourceRevision(wd);
             if (candidateCommit.committed && candidateCommit.sha !== v3CandidateSource.sha) {
               throw new Error("V3_CANDIDATE_COMMIT_SOURCE_IDENTITY_MISMATCH");
+            }
+            if (v3CompletionContext.supervisorRetry
+              && v3CandidateSource.sha === v3CompletionContext.sourceBefore.sha
+              && v3CandidateSource.treeHash === v3CompletionContext.sourceBefore.treeHash) {
+              throw new Error("V3_SUPERVISOR_RETRY_SOURCE_DELTA_REQUIRED");
             }
             const { createAttemptRepository } = await import("../execution/attempt-repository.js");
             const candidateAttestation = await createAttemptRepository(getSql()).recordCandidateSource({
@@ -10372,13 +11046,9 @@ ${prd}`;
         targetStepDbId?: string;
         targetStepId?: string;
       } = { type: "story_loop_continue" };
-      if (exactCompletionEnvelope.protocol === "v3") {
-        continuation = { type: "story_direct_merge" };
-      } else if (storyIsQaFix && supportedStoryStatus === "done") {
+      if (storyIsQaFix && supportedStoryStatus === "done") {
         if (!sourceAfter) throw new Error("QA_FIX_EXACT_SOURCE_REVISION_REQUIRED");
         continuation = { type: "story_qa_fix_merge" };
-      } else if (completionLoopConfig?.mergeStrategy === "direct-merge") {
-        continuation = { type: "story_direct_merge" };
       } else if (completionLoopConfig?.superviseEach && completionLoopConfig.superviseStep) {
         const target = await pgGet<{ id: string }>(
           "SELECT id FROM steps WHERE run_id = $1 AND step_id = $2 LIMIT 1",
@@ -10401,6 +11071,9 @@ ${prd}`;
           targetStepDbId: target.id,
           targetStepId: completionLoopConfig.verifyStep,
         };
+      } else if (exactCompletionEnvelope.protocol === "v3"
+        || completionLoopConfig?.mergeStrategy === "direct-merge") {
+        continuation = { type: "story_direct_merge" };
       }
       const completionSubject: RuntimeCompletionSubjectV1 = {
         storyDbId: exactCompletionEnvelope.storyDbId!,
@@ -10714,6 +11387,22 @@ ${prd}`;
 
   if (loopStepRow?.loop_config) {
     const lc: LoopConfig = JSON.parse(loopStepRow.loop_config);
+    if (v3SuperviseBoundSubject?.kind === "final_product") {
+      return await handleSuperviseEachCompletion(
+        step,
+        loopStepRow.id,
+        lc.verifyStep || "verify",
+        output,
+        context,
+        completionAuthority?.envelope,
+        false,
+        undefined,
+        options.deferContinuationToEffectLedger ?? false,
+        true,
+        true,
+        v3SuperviseRuntimeSessionId,
+      );
+    }
     if (lc.superviseEach && (lc.superviseStep || "supervise") === step.step_id) {
       if (superviseEachConfigForStep) {
         return await handleSuperviseEachCompletion(
@@ -10724,8 +11413,16 @@ ${prd}`;
           context,
           completionAuthority?.envelope,
           false,
-          undefined,
+          v3SuperviseBoundSubject?.kind === "story_member"
+            ? {
+                storyDbId: v3SuperviseBoundSubject.storyDbId,
+                storyId: v3SuperviseBoundSubject.storyId,
+              }
+            : undefined,
           options.deferContinuationToEffectLedger ?? false,
+          false,
+          v3SuperviseBoundSubject !== undefined,
+          v3SuperviseRuntimeSessionId,
         );
       }
       logger.info(`[supervise-each] ${step.step_id} completion has no done story awaiting story supervision; treating it as final supervisor`, { runId: step.run_id });
@@ -10801,11 +11498,64 @@ ${prd}`;
   // while the agent was still finishing its work, so we should still accept the completion)
   let _updateChanges: number;
   if (completionAuthority?.envelope) {
+    const expectedAtomicContextJson = atomicNativeV3PlanCompletion || atomicNativeV3StoriesCompletion
+      ? prevContextJson?.context
+      : undefined;
+    if ((atomicNativeV3PlanCompletion || atomicNativeV3StoriesCompletion)
+      && expectedAtomicContextJson === undefined) {
+      throw new Error(atomicNativeV3PlanCompletion
+        ? "V3_PLAN_PRIOR_RUN_CONTEXT_REQUIRED"
+        : "V3_STORIES_PRIOR_RUN_CONTEXT_REQUIRED");
+    }
+    let compilerEnglishAdmissionReceipt: CompilerEnglishAdmissionReceiptV1 | undefined;
+    let compilerStoryEnglishAdmissionAuthority: CompilerStoryEnglishAdmissionAuthorityV1 | undefined;
+    let compilerStoryEnglishAdmissionReceipt: CompilerStoryEnglishAdmissionReceiptV1 | undefined;
+    if (atomicNativeV3PlanCompletion) {
+      if (!nativeV3PlanAuthority || nativeV3PlanAuthority.status !== "proposal") {
+        throw new Error("V3_PLAN_COMPILER_ENGLISH_ADMISSION_AUTHORITY_REQUIRED");
+      }
+      const englishAuthority = compileCompilerEnglishAdmissionV1({
+        claimId: completionAuthority.envelope.claimId,
+        runId: step.run_id,
+        stepDbId: step.id,
+        workflowStepId: "plan",
+        productSpec: nativeV3PlanAuthority.productSpec,
+        finalContext: context,
+      });
+      compilerEnglishAdmissionReceipt = compilerEnglishAdmissionReceiptV1(englishAuthority);
+      context["plan_english_authority_version"] = compilerEnglishAdmissionReceipt.authorityVersion;
+      context["plan_english_admission_receipt_hash"] = hashCanonicalJson(
+        compilerEnglishAdmissionReceipt,
+      );
+    }
+    if (atomicNativeV3StoriesCompletion) {
+      if (!preparedV3StoriesCompletion) {
+        throw new Error("V3_STORIES_COMPILER_ENGLISH_ADMISSION_PREPARATION_REQUIRED");
+      }
+      compilerStoryEnglishAdmissionAuthority = compileCompilerStoryEnglishAdmissionV1({
+        claimId: completionAuthority.envelope.claimId,
+        runId: step.run_id,
+        stepDbId: step.id,
+        workflowStepId: "stories",
+        planAuthority: preparedV3StoriesCompletion.planAuthority,
+        designAuthoritySubjectHash: preparedV3StoriesCompletion.designAuthoritySubjectHash,
+        rawOutput: output,
+        expectedOutput: preparedV3StoriesCompletion.expectedOutput,
+        finalContext: context,
+      });
+      compilerStoryEnglishAdmissionReceipt = compilerStoryEnglishAdmissionStateV1(
+        compilerStoryEnglishAdmissionAuthority,
+      ).receipt;
+      context["stories_english_authority_version"] = compilerStoryEnglishAdmissionReceipt.authorityVersion;
+      context["stories_english_admission_receipt_hash"] = compilerStoryEnglishAdmissionAuthority.receiptHash;
+    }
     const completionPlan = createSingleEffectCompletionPlanDescriptorV1({
       kind: "single_completion",
       continuation: { type: "single_pipeline_advance" },
       effectPayload: {
         stepId: step.step_id,
+        ...(compilerEnglishAdmissionReceipt ? { compilerEnglishAdmissionReceipt } : {}),
+        ...(compilerStoryEnglishAdmissionReceipt ? { compilerStoryEnglishAdmissionReceipt } : {}),
         ...(acceptedCandidateHash ? { acceptedCandidateHash } : {}),
         ...(v3DeployReceipt ? {
           acceptedCandidateHash: v3DeployReceipt.candidateHash,
@@ -10819,6 +11569,11 @@ ${prd}`;
       envelope: completionAuthority.envelope,
       stepStatus: "done" as const,
       stepOutput: output,
+      ...(atomicNativeV3PlanCompletion || atomicNativeV3StoriesCompletion ? {
+        runContextJson: JSON.stringify(context),
+        expectedRunContextJson: expectedAtomicContextJson!,
+        requireRuntimeCompletionOwner: true,
+      } : {}),
       completionPlan,
       diagnostic: `Step ${step.step_id} completed through exact claim authority`,
     };
@@ -10834,6 +11589,11 @@ ${prd}`;
         });
         return { advanced: false, runCompleted: false };
       }
+    } else if (compilerStoryEnglishAdmissionAuthority) {
+      await publishCompilerStoryEnglishAdmissionAndCompleteV1(getSql(), {
+        authority: compilerStoryEnglishAdmissionAuthority,
+        completion: completionInput,
+      });
     } else {
       await completeSingleStepClaimAndState(getSql(), completionInput);
     }
@@ -10846,6 +11606,17 @@ ${prd}`;
     // Already completed by another session — skip to prevent double pipeline advancement
     logger.info(`Step already completed, skipping duplicate`, { runId: step.run_id, stepId: step.step_id });
     return { advanced: false, runCompleted: false };
+  }
+  if (atomicNativeV3StoriesCompletion) {
+    try {
+      await recordStepOutputObservation(step, parsed, output, context);
+      await recordStackEvidencePlanObservation(step, context);
+    } catch (error) {
+      logger.warn(`[stories-authority] post-commit observation publication failed: ${String(error).slice(0, 300)}`, {
+        runId: step.run_id,
+        stepId: step.step_id,
+      });
+    }
   }
   if (completionAuthority?.envelope && options.deferContinuationToEffectLedger) {
     return { advanced: false, runCompleted: false };
@@ -10901,6 +11672,9 @@ ${prd}`;
 }
 
 export type RuntimeCompletionEffectsResumeInput = Readonly<{
+  protocol?: "legacy" | "shadow" | "v3";
+  claimId?: number;
+  runtimeSessionId?: string;
   runId: string;
   stepDbId: string;
   workflowStepId: string;
@@ -10909,6 +11683,27 @@ export type RuntimeCompletionEffectsResumeInput = Readonly<{
   storyId?: string;
   completionPlan?: RuntimeCompletionPlanV1;
 }>;
+
+async function authenticatedV3CompletionSubject(
+  input: RuntimeCompletionEffectsResumeInput,
+): Promise<V3StoryClaimRuntimeSubjectV1 | undefined> {
+  if (input.protocol !== "v3") return undefined;
+  if (input.workflowStepId !== "implement" && input.workflowStepId !== "supervise") return undefined;
+  const workflowStepId = input.workflowStepId;
+  if (input.claimId === undefined || !input.runtimeSessionId) {
+    throw new Error("V3_STORY_COMPLETION_EFFECT_BINDING_IDENTITY_REQUIRED");
+  }
+  return getSql().begin((transaction) => loadAndRevalidateV3StoryClaimRuntimeBindingV1(
+    transaction,
+    {
+      claimId: input.claimId!,
+      runtimeSessionId: input.runtimeSessionId!,
+      runId: input.runId,
+      stepDbId: input.stepDbId,
+      workflowStepId,
+    },
+  )) as Promise<V3StoryClaimRuntimeSubjectV1>;
+}
 
 function acceptedCandidateHashFromCompletionPlan(
   plan?: RuntimeCompletionPlanV1,
@@ -10922,6 +11717,73 @@ function acceptedCandidateHashFromCompletionPlan(
     throw new Error("V3_ACCEPTED_CANDIDATE_COMPLETION_EFFECT_INVALID");
   }
   return hashes[0]!;
+}
+
+async function authenticatedV3SupervisorRetryProjection(
+  input: RuntimeCompletionEffectsResumeInput,
+  subject: V3StoryClaimRuntimeSubjectV1 | undefined,
+): Promise<Readonly<{ status: string; directiveHash: string }> | undefined> {
+  if (input.workflowStepId !== "supervise"
+    || subject?.kind !== "story_member"
+    || input.claimId === undefined
+    || !input.runtimeSessionId) {
+    return undefined;
+  }
+  const story = await pgGet<{
+    status: string;
+    claim_generation: number;
+    output: string | null;
+  }>(
+    `SELECT status, claim_generation, output
+       FROM stories
+      WHERE id = $1 AND run_id = $2 AND story_id = $3`,
+    [subject.storyDbId, input.runId, subject.storyId],
+  );
+  if (!story || !["pending", "failed"].includes(story.status)) return undefined;
+  const directive = parseV3SupervisorRetryDirectiveStoryOutputV1(story.output);
+  if (story.status === "failed" && !directive) {
+    const terminalOwner = await pgGet<{ claim_id: string }>(
+      `SELECT binding.claim_id::text AS claim_id
+         FROM v3_story_claim_runtime_bindings_v1 binding
+         JOIN claim_log claim ON claim.id = binding.claim_id AND claim.run_id = binding.run_id
+         JOIN runtime_completion_requests completion
+           ON completion.claim_id = binding.claim_id
+          AND completion.runtime_session_id = binding.runtime_session_id
+          AND completion.run_id = binding.run_id
+        WHERE binding.claim_id = $1
+          AND binding.runtime_session_id = $2
+          AND binding.run_id = $3
+          AND binding.story_db_id = $4
+          AND binding.story_id = $5
+          AND binding.story_claim_generation = $6
+          AND claim.outcome IN ('failed', 'completed')
+          AND completion.output_hash = $7
+          AND completion.apply_phase = 'owner_committed'
+        LIMIT 1`,
+      [
+        input.claimId,
+        input.runtimeSessionId,
+        input.runId,
+        subject.storyDbId,
+        subject.storyId,
+        subject.storyClaimGeneration,
+        crypto.createHash("sha256").update(input.output, "utf8").digest("hex"),
+      ],
+    );
+    if (terminalOwner) return { status: story.status, directiveHash: "terminal-exhausted" };
+  }
+  if (!directive
+    || directive.runId !== input.runId
+    || directive.storyDbId !== subject.storyDbId
+    || directive.storyId !== subject.storyId
+    || directive.storyClaimGeneration !== subject.storyClaimGeneration
+    || directive.storyClaimGeneration !== story.claim_generation
+    || directive.supervisorClaimId !== input.claimId
+    || directive.runtimeSessionId !== input.runtimeSessionId
+    || directive.outputHash !== crypto.createHash("sha256").update(input.output, "utf8").digest("hex")) {
+    return undefined;
+  }
+  return { status: story.status, directiveHash: directive.directiveHash };
 }
 
 type V3RefusalCompletionEffect = Readonly<{
@@ -11064,6 +11926,38 @@ export async function reconcileRuntimeCompletionEffects(
 }> | undefined> {
   const plan = input.completionPlan;
   if (!plan) throw new Error("RUNTIME_COMPLETION_EFFECT_PLAN_REQUIRED");
+  const runProtocol = await pgGet<{ protocol: "legacy" | "shadow" | "v3" }>(
+    "SELECT protocol FROM runs WHERE id = $1",
+    [input.runId],
+  );
+  if (!runProtocol || (input.protocol !== undefined && input.protocol !== runProtocol.protocol)) {
+    throw new Error("RUNTIME_COMPLETION_EFFECT_PROTOCOL_MISMATCH");
+  }
+  const authenticatedSubject = await authenticatedV3CompletionSubject({
+    ...input,
+    protocol: runProtocol.protocol,
+  });
+  if (authenticatedSubject?.kind === "story_member"
+    && (input.storyDbId !== authenticatedSubject.storyDbId
+      || input.storyId !== authenticatedSubject.storyId)) {
+    throw new Error("V3_STORY_COMPLETION_EFFECT_SUBJECT_MISMATCH");
+  }
+  if (authenticatedSubject?.kind === "final_product" && (input.storyDbId || input.storyId || plan.subject)) {
+    throw new Error("V3_FINAL_PRODUCT_COMPLETION_EFFECT_SUBJECT_INVALID");
+  }
+  const supervisorRetry = await authenticatedV3SupervisorRetryProjection(input, authenticatedSubject);
+  if (supervisorRetry) {
+    return {
+      result: { advanced: false, runCompleted: false },
+      evidence: {
+        schema: "setfarm.runtime-completion-effect-reconcile.v1",
+        reason: "authenticated-supervisor-retry-already-published",
+        storyStatus: supervisorRetry.status,
+        directiveHash: supervisorRetry.directiveHash,
+        evidenceRefs: input.storyDbId ? [`setfarm://story/${input.storyDbId}`] : [],
+      },
+    };
+  }
   const run = await pgGet<{ status: string }>("SELECT status FROM runs WHERE id = $1", [input.runId]);
   if (!run) throw new Error("RUNTIME_COMPLETION_EFFECT_RUN_NOT_FOUND");
   const terminal = ["completed", "done", "failed", "cancelled"].includes(run.status);
@@ -11253,8 +12147,10 @@ export async function reconcileRuntimeCompletionEffects(
       [subject.storyDbId, input.runId, subject.storyId],
     );
     const parsed = parseOutputKeyValues(input.output);
-    const decision = firstOutputWord(parsed["decision"] || parsed["status"] || "");
-    const retryDecision = ["retry", "blocked", "failed", "fail"].includes(decision);
+    const decision = firstOutputWord(
+      parsed["supervisor_decision"] || parsed["decision"] || parsed["status"] || "",
+    );
+    const retryDecision = ["retry", "block", "blocked", "failed", "fail"].includes(decision);
     const applied = retryDecision
       ? Boolean(story && story.status !== "done")
       : Boolean(story && ["verified", "skipped"].includes(story.status));
@@ -11280,6 +12176,29 @@ export async function reconcileRuntimeCompletionEffects(
 export async function resumeRuntimeCompletionEffects(
   input: RuntimeCompletionEffectsResumeInput,
 ): Promise<{ advanced: boolean; runCompleted: boolean }> {
+  const runProtocol = await pgGet<{ protocol: "legacy" | "shadow" | "v3" }>(
+    "SELECT protocol FROM runs WHERE id = $1",
+    [input.runId],
+  );
+  if (!runProtocol || (input.protocol !== undefined && input.protocol !== runProtocol.protocol)) {
+    throw new Error("RUNTIME_COMPLETION_EFFECT_PROTOCOL_MISMATCH");
+  }
+  const authenticatedSubject = await authenticatedV3CompletionSubject({
+    ...input,
+    protocol: runProtocol.protocol,
+  });
+  if (authenticatedSubject?.kind === "story_member"
+    && (input.storyDbId !== authenticatedSubject.storyDbId
+      || input.storyId !== authenticatedSubject.storyId)) {
+    throw new Error("V3_STORY_COMPLETION_EFFECT_SUBJECT_MISMATCH");
+  }
+  if (authenticatedSubject?.kind === "final_product"
+    && (input.storyDbId || input.storyId || input.completionPlan?.subject)) {
+    throw new Error("V3_FINAL_PRODUCT_COMPLETION_EFFECT_SUBJECT_INVALID");
+  }
+  if (await authenticatedV3SupervisorRetryProjection(input, authenticatedSubject)) {
+    return { advanced: false, runCompleted: false };
+  }
   const run = await pgGet<{ status: string }>("SELECT status FROM runs WHERE id = $1", [input.runId]);
   if (!run) throw new Error("RUNTIME_COMPLETION_EFFECT_RUN_NOT_FOUND");
   if (![RUN_STATUS.RUNNING, "resuming"].includes(run.status as any)) {
@@ -11390,7 +12309,7 @@ export async function resumeRuntimeCompletionEffects(
     const loopConfig = parseLoopConfigSafe(step.loop_config, input.runId);
     if (
       input.completionPlan?.continuation.type === "story_direct_merge"
-      || loopConfig?.mergeStrategy === "direct-merge"
+      || (!input.completionPlan && loopConfig?.mergeStrategy === "direct-merge")
     ) {
       const activeCount = await pgGet<{ count: string }>(
         "SELECT COUNT(*) AS count FROM stories WHERE run_id = $1 AND status IN ('pending', 'running')",
@@ -11446,7 +12365,71 @@ export async function resumeRuntimeCompletionEffects(
       }
     }
 
+    const frozenRoute = input.completionPlan?.continuation;
+    if (frozenRoute?.type === "story_route_supervise"
+      || frozenRoute?.type === "story_route_verify") {
+      if (!frozenRoute.targetStepDbId || !frozenRoute.targetStepId) {
+        throw new Error("RUNTIME_COMPLETION_EFFECT_ROUTE_IDENTITY_MISSING");
+      }
+      const frozenTargetStepDbId = frozenRoute.targetStepDbId;
+      const frozenTargetStepId = frozenRoute.targetStepId;
+      const expectedWorkflowStepId = frozenRoute.type === "story_route_supervise"
+        ? "supervise"
+        : frozenTargetStepId;
+      if (frozenTargetStepId !== expectedWorkflowStepId) {
+        throw new Error("RUNTIME_COMPLETION_EFFECT_ROUTE_WORKFLOW_MISMATCH");
+      }
+      const target = await pgGet<{ id: string; step_id: string; type: string; status: string }>(
+        `SELECT id, step_id, type, status
+           FROM steps
+          WHERE id = $1 AND run_id = $2`,
+        [frozenTargetStepDbId, input.runId],
+      );
+      if (!target
+        || target.step_id !== frozenTargetStepId
+        || target.type !== "single") {
+        throw new Error("RUNTIME_COMPLETION_EFFECT_ROUTE_TARGET_DRIFT");
+      }
+      if (frozenRoute.type === "story_route_supervise") {
+        context["supervisor_scope"] = "story";
+        context["current_story_id"] = story.story_id;
+        context["current_story_title"] = story.title;
+        if (story.pr_url) context["pr_url"] = story.pr_url;
+        if (story.story_branch) context["story_branch"] = story.story_branch;
+        clearStorySupervised(context, story.story_id);
+      }
+      await pgBegin(async (sql) => {
+        const targetUpdated = await sql.unsafe<Array<{ id: string }>>(
+          `UPDATE steps
+              SET status = 'pending', current_story_id = $1, updated_at = clock_timestamp()
+            WHERE id = $2 AND run_id = $3 AND step_id = $4
+              AND status IN ('waiting', 'done', 'pending')
+            RETURNING id`,
+          [
+            frozenRoute.type === "story_route_supervise" ? story.id : null,
+            frozenTargetStepDbId,
+            input.runId,
+            frozenTargetStepId,
+          ],
+        );
+        if (targetUpdated.length !== 1) throw new Error("RUNTIME_COMPLETION_EFFECT_ROUTE_TARGET_CAS_LOST");
+        const loopUpdated = await sql.unsafe<Array<{ id: string }>>(
+          `UPDATE steps
+              SET status = 'running', started_at = COALESCE(started_at, clock_timestamp()),
+                  updated_at = clock_timestamp()
+            WHERE id = $1 AND run_id = $2
+            RETURNING id`,
+          [step.id, input.runId],
+        );
+        if (loopUpdated.length !== 1) throw new Error("RUNTIME_COMPLETION_EFFECT_ROUTE_LOOP_CAS_LOST");
+      });
+      await updateRunContext(input.runId, context);
+      return { advanced: false, runCompleted: false };
+    }
+
     if (
+      !input.completionPlan
+      &&
       loopConfig?.superviseEach
       && loopConfig.superviseStep
       && story.status === STORY_STATUS.DONE
@@ -11477,6 +12460,8 @@ export async function resumeRuntimeCompletionEffects(
     }
 
     if (
+      !input.completionPlan
+      &&
       loopConfig?.verifyEach
       && loopConfig.verifyStep
       && story.status !== STORY_STATUS.VERIFIED
@@ -11517,7 +12502,13 @@ export async function resumeRuntimeCompletionEffects(
         context,
         undefined,
         true,
-        input.completionPlan?.subject,
+        authenticatedSubject?.kind === "story_member"
+          ? { storyDbId: authenticatedSubject.storyDbId, storyId: authenticatedSubject.storyId }
+          : input.completionPlan?.subject,
+        false,
+        authenticatedSubject?.kind === "final_product",
+        authenticatedSubject !== undefined,
+        input.runtimeSessionId,
       );
     }
     if (loopConfig?.verifyEach && loopConfig.verifyStep === step.step_id) {
@@ -11552,6 +12543,158 @@ export async function resumeRuntimeCompletionEffects(
 /**
  * Handle supervise-each completion: manager gate between implement and verify.
  */
+async function publishAuthenticatedV3SupervisorPostOwnerRetry(input: Readonly<{
+  runId: string;
+  superviseStepDbId: string;
+  loopStepDbId: string;
+  verifyStepName: string;
+  runtimeSessionId: string;
+  output: string;
+  feedback: string;
+  boundSubject: RuntimeCompletionSubjectV1;
+  sourceRevision?: Readonly<{ sha: string; treeHash: string }>;
+}>): Promise<void> {
+  await pgBegin(async (transaction) => {
+    const runRows = await transaction.unsafe<Array<{ id: string }>>(
+      "SELECT id FROM runs WHERE id = $1 AND protocol = 'v3' AND status IN ('running', 'resuming') FOR UPDATE",
+      [input.runId],
+    );
+    if (runRows.length !== 1) throw new Error("V3_SUPERVISE_POST_OWNER_RUN_INVALID");
+    const bindingRows = await transaction.unsafe<Array<{ claim_id: string }>>(
+      `SELECT claim_id::text AS claim_id
+         FROM v3_story_claim_runtime_bindings_v1
+        WHERE runtime_session_id = $1 AND run_id = $2
+        LIMIT 2`,
+      [input.runtimeSessionId, input.runId],
+    );
+    if (bindingRows.length !== 1) throw new Error("V3_SUPERVISE_POST_OWNER_BINDING_IDENTITY_INVALID");
+    const claimId = Number(bindingRows[0]!.claim_id);
+    if (!Number.isSafeInteger(claimId) || claimId < 1) {
+      throw new Error("V3_SUPERVISE_POST_OWNER_CLAIM_ID_INVALID");
+    }
+    const authenticated = await loadAndRevalidateV3StoryClaimRuntimeBindingV1(transaction, {
+      claimId,
+      runtimeSessionId: input.runtimeSessionId,
+      runId: input.runId,
+      stepDbId: input.superviseStepDbId,
+      workflowStepId: "supervise",
+    });
+    if (authenticated.kind !== "story_member"
+      || authenticated.storyDbId !== input.boundSubject.storyDbId
+      || authenticated.storyId !== input.boundSubject.storyId) {
+      throw new Error("V3_SUPERVISE_POST_OWNER_BINDING_MISMATCH");
+    }
+    const stories = await transaction.unsafe<Array<{
+      status: string;
+      retry_count: number;
+      max_retries: number;
+      output: string | null;
+    }>>(
+      `SELECT status, retry_count, max_retries, output
+         FROM stories
+        WHERE id = $1 AND run_id = $2 AND story_id = $3 AND claim_generation = $4
+        FOR UPDATE`,
+      [authenticated.storyDbId, input.runId, authenticated.storyId, authenticated.storyClaimGeneration],
+    );
+    if (stories.length !== 1) throw new Error("V3_SUPERVISE_POST_OWNER_STORY_INVALID");
+    const story = stories[0]!;
+    const priorDirective = parseV3SupervisorRetryDirectiveStoryOutputV1(story.output);
+    if (story.status === "pending") {
+      const outputHash = crypto.createHash("sha256").update(input.output, "utf8").digest("hex");
+      if (!priorDirective
+        || priorDirective.runId !== input.runId
+        || priorDirective.storyDbId !== authenticated.storyDbId
+        || priorDirective.storyId !== authenticated.storyId
+        || priorDirective.storyClaimGeneration !== authenticated.storyClaimGeneration
+        || priorDirective.supervisorClaimId !== claimId
+        || priorDirective.runtimeSessionId !== input.runtimeSessionId
+        || priorDirective.outputHash !== outputHash
+        || !input.sourceRevision
+        || priorDirective.sourceRevision.sha !== input.sourceRevision.sha
+        || priorDirective.sourceRevision.treeHash !== input.sourceRevision.treeHash
+        || priorDirective.retryOrdinal !== story.retry_count
+        || priorDirective.maxRetries !== story.max_retries) {
+        throw new Error("V3_SUPERVISE_POST_OWNER_PRIOR_DIRECTIVE_IDENTITY_INVALID");
+      }
+      return;
+    }
+    if (story.status !== "done") {
+      throw new Error(`V3_SUPERVISE_POST_OWNER_STORY_STATE_INVALID:${story.status}`);
+    }
+    const retryOrdinal = story.retry_count + 1;
+    const exhausted = retryOrdinal > story.max_retries;
+    if (!exhausted && !input.sourceRevision) {
+      throw new Error("V3_SUPERVISE_POST_OWNER_SOURCE_REQUIRED");
+    }
+    const directive = exhausted ? undefined : createV3SupervisorRetryDirectiveV1({
+      runId: input.runId,
+      storyDbId: authenticated.storyDbId,
+      storyId: authenticated.storyId,
+      storyClaimGeneration: authenticated.storyClaimGeneration,
+      supervisorClaimId: claimId,
+      runtimeSessionId: input.runtimeSessionId,
+      outputHash: crypto.createHash("sha256").update(input.output, "utf8").digest("hex"),
+      sourceRevision: input.sourceRevision!,
+      decision: "retry",
+      feedback: input.feedback,
+      retryOrdinal,
+      maxRetries: story.max_retries,
+    });
+    const updated = await transaction.unsafe<Array<{ id: string }>>(
+      `UPDATE stories
+          SET status = $5, retry_count = LEAST(retry_count + 1, max_retries),
+              output = $6, claimed_by = NULL, claimed_at = NULL,
+              pr_url = NULL, merge_status = NULL, updated_at = clock_timestamp()
+        WHERE id = $1 AND run_id = $2 AND story_id = $3
+          AND claim_generation = $4 AND status = 'done'
+        RETURNING id`,
+      [
+        authenticated.storyDbId,
+        input.runId,
+        authenticated.storyId,
+        authenticated.storyClaimGeneration,
+        exhausted ? "failed" : "pending",
+        directive ? serializeV3SupervisorRetryDirectiveV1(directive) : input.feedback,
+      ],
+    );
+    if (updated.length !== 1) throw new Error("V3_SUPERVISE_POST_OWNER_STORY_CAS_LOST");
+    const steps = await transaction.unsafe<Array<{ id: string }>>(
+      `UPDATE steps
+          SET status = CASE
+                WHEN id = $2 THEN $5
+                WHEN id = $3 THEN $6
+                ELSE 'waiting'
+              END,
+              current_story_id = NULL, updated_at = clock_timestamp()
+        WHERE run_id = $1 AND (id = $2 OR id = $3 OR step_id = $4)
+        RETURNING id`,
+      [
+        input.runId,
+        input.loopStepDbId,
+        input.superviseStepDbId,
+        input.verifyStepName,
+        exhausted ? "failed" : "pending",
+        exhausted ? "failed" : "waiting",
+      ],
+    );
+    if (steps.length !== 3) throw new Error("V3_SUPERVISE_POST_OWNER_STEP_TOPOLOGY_INVALID");
+    if (exhausted) {
+      await requestRunTerminationInTransaction(transaction, {
+        runId: input.runId,
+        targetStatus: "failed",
+        requestedBy: "setfarm.v3-supervise-post-owner",
+        diagnostic: input.feedback,
+        evidence: {
+          source: "publishAuthenticatedV3SupervisorPostOwnerRetry",
+          storyDbId: authenticated.storyDbId,
+          storyId: authenticated.storyId,
+          storyClaimGeneration: authenticated.storyClaimGeneration,
+        },
+      });
+    }
+  });
+}
+
 async function handleSuperviseEachCompletion(
   superviseStep: { id: string; run_id: string; step_id: string; step_index: number; current_story_id?: string | null },
   loopStepId: string,
@@ -11562,6 +12705,9 @@ async function handleSuperviseEachCompletion(
   ownerAlreadyCommitted = false,
   boundSubject?: RuntimeCompletionSubjectV1,
   deferContinuationToEffectLedger = false,
+  boundFinalProduct = false,
+  authenticatedV3Binding = false,
+  authenticatedRuntimeSessionId?: string,
 ): Promise<{ advanced: boolean; runCompleted: boolean }> {
   const parsedOutput = parseOutputKeyValues(output);
   for (const key of PROTECTED_CONTEXT_KEYS) {
@@ -11571,6 +12717,311 @@ async function handleSuperviseEachCompletion(
     }
   }
 
+  const finalProductStatus = firstOutputWord(parsedOutput["status"]);
+  const finalProductDecision = firstOutputWord(parsedOutput["supervisor_decision"]);
+  const authenticatedV3Success = finalProductStatus === "done"
+    && ["pass", "fixed"].includes(finalProductDecision);
+  const authenticatedV3RetryIntent = finalProductStatus === "retry"
+    || ["block", "blocked"].includes(finalProductDecision);
+  if (boundFinalProduct && !authenticatedV3Success) {
+    if (ownerAlreadyCommitted) {
+      const committed = await pgGet<{ status: string }>(
+        "SELECT status FROM steps WHERE id = $1 AND run_id = $2",
+        [superviseStep.id, superviseStep.run_id],
+      );
+      if (!committed || !["pending", "failed", "skipped"].includes(committed.status)) {
+        throw new Error(`SUPERVISE_FINAL_PRODUCT_RETRY_RESUME_STATE_INVALID:${committed?.status ?? "missing"}`);
+      }
+      return { advanced: false, runCompleted: false };
+    }
+    if (!claimEnvelope) {
+      throw new Error("V3_SUPERVISE_NON_SUCCESS_CLAIM_AUTHORITY_REQUIRED");
+    }
+    const issues = (
+      parsedOutput["issues"]
+      || parsedOutput["supervisor_memory_append"]
+      || output
+    ).slice(0, 6_000);
+    context["previous_failure"] = `LLM_SUPERVISOR_BLOCKED final product:\n${issues}`;
+    context["failure_category"] = "LLM_SUPERVISOR_BLOCKED";
+    context["failure_suggestion"] = "Resolve the final-product supervisor blocker, then retry the exact final supervision step.";
+    context["supervisor_scope"] = "final-product";
+    await updateRunContext(superviseStep.run_id, context);
+    await failStep(
+      superviseStep.id,
+      `Authenticated supervisor rejected non-success output ${finalProductDecision || finalProductStatus || "unknown"}: ${issues}`,
+      claimEnvelope,
+    );
+    return { advanced: false, runCompleted: false };
+  }
+
+  if (boundSubject && authenticatedV3Binding && !authenticatedV3Success) {
+    const retryIntent = authenticatedV3RetryIntent;
+    if (!retryIntent) {
+      if (ownerAlreadyCommitted) {
+        const committed = await pgGet<{ status: string }>(
+          "SELECT status FROM steps WHERE id = $1 AND run_id = $2",
+          [superviseStep.id, superviseStep.run_id],
+        );
+        if (!committed || !["pending", "failed", "skipped"].includes(committed.status)) {
+          throw new Error(`V3_SUPERVISE_STORY_FAILURE_RESUME_STATE_INVALID:${committed?.status ?? "missing"}`);
+        }
+        return { advanced: false, runCompleted: false };
+      }
+      if (!claimEnvelope) throw new Error("V3_SUPERVISE_STORY_FAILURE_AUTHORITY_REQUIRED");
+      await failStep(
+        superviseStep.id,
+        `Authenticated story supervisor rejected non-success output ${finalProductDecision || finalProductStatus || "unknown"}: ${output.slice(0, 6_000)}`,
+        claimEnvelope,
+      );
+      return { advanced: false, runCompleted: false };
+    }
+    if (ownerAlreadyCommitted) {
+      const committed = await pgGet<{ status: string }>(
+        "SELECT status FROM steps WHERE id = $1 AND run_id = $2",
+        [superviseStep.id, superviseStep.run_id],
+      );
+      if (!committed || !["waiting", "failed"].includes(committed.status)) {
+        throw new Error(`V3_SUPERVISE_STORY_RETRY_RESUME_STATE_INVALID:${committed?.status ?? "missing"}`);
+      }
+      return { advanced: false, runCompleted: false };
+    }
+    if (!claimEnvelope || !authenticatedRuntimeSessionId) {
+      throw new Error("V3_SUPERVISE_STORY_RETRY_AUTHORITY_REQUIRED");
+    }
+    const issues = (
+      parsedOutput["issues"]
+      || parsedOutput["supervisor_memory_append"]
+      || output
+    ).slice(0, 6_000);
+    const retryBudgetRows = await pgQuery<{ retry_count: number; max_retries: number }>(
+      `SELECT retry_count, max_retries
+         FROM stories
+        WHERE id = $1 AND run_id = $2 AND story_id = $3 AND status = 'done'
+        LIMIT 2`,
+      [boundSubject.storyDbId, superviseStep.run_id, boundSubject.storyId],
+    );
+    if (retryBudgetRows.length !== 1) throw new Error("V3_SUPERVISE_STORY_RETRY_BUDGET_INVALID");
+    const retryWillExhaust = retryBudgetRows[0]!.retry_count + 1 > retryBudgetRows[0]!.max_retries;
+    let exactRejectedSource: Readonly<{ sha: string; treeHash: string }> | undefined;
+    if (!retryWillExhaust) {
+      const retryStoryWorktree = await authenticatedV3SupervisorStoryWorktree({
+        runId: superviseStep.run_id,
+        superviseStepDbId: superviseStep.id,
+        runtimeSessionId: authenticatedRuntimeSessionId,
+        boundSubject,
+      });
+      await revalidateAuthenticatedV3SupervisorStoryWorktree(retryStoryWorktree);
+      assertExactGitBranchWorktree(retryStoryWorktree.workdir, retryStoryWorktree.storyBranch);
+      const retryCommit = commitStoryWorktreeScopeIfNeeded(
+        retryStoryWorktree.workdir,
+        boundSubject.storyId,
+        retryStoryWorktree.storyTitle,
+        parseDeclaredScopeFiles(retryStoryWorktree.scopeFiles),
+        "fix",
+      );
+      if (retryCommit.error) {
+        throw new Error(`PLATFORM_SUPERVISOR_COMMIT_FAILED for ${boundSubject.storyId}: ${retryCommit.error}`);
+      }
+      await revalidateAuthenticatedV3SupervisorStoryWorktree(retryStoryWorktree);
+      assertExactGitBranchWorktree(retryStoryWorktree.workdir, retryStoryWorktree.storyBranch);
+      const retryPush = pushStoryBranch(retryStoryWorktree.workdir, retryStoryWorktree.storyBranch);
+      if (retryPush.error) {
+        throw new Error(`PLATFORM_SUPERVISOR_PUSH_FAILED for ${boundSubject.storyId}: ${retryPush.error}`);
+      }
+      exactRejectedSource = captureExactCleanBoundStoryRevision(
+        retryStoryWorktree.workdir,
+        retryStoryWorktree.storyBranch,
+      );
+    }
+    await pgBegin(async (transaction) => {
+      const runRows = await transaction.unsafe<Array<{ id: string }>>(
+        "SELECT id FROM runs WHERE id = $1 AND protocol = 'v3' AND status IN ('running', 'resuming') FOR UPDATE",
+        [superviseStep.run_id],
+      );
+      if (runRows.length !== 1) throw new Error("V3_SUPERVISE_STORY_RETRY_RUN_INVALID");
+      const authenticated = await loadAndRevalidateV3StoryClaimRuntimeBindingV1(
+        transaction,
+        {
+          claimId: claimEnvelope.claimId,
+          runtimeSessionId: authenticatedRuntimeSessionId,
+          runId: superviseStep.run_id,
+          stepDbId: superviseStep.id,
+          workflowStepId: "supervise",
+        },
+      );
+      if (authenticated.kind !== "story_member"
+        || authenticated.storyDbId !== boundSubject.storyDbId
+        || authenticated.storyId !== boundSubject.storyId) {
+        throw new Error("V3_SUPERVISE_STORY_RETRY_BINDING_MISMATCH");
+      }
+      const storyRows = await transaction.unsafe<Array<{
+        id: string;
+        retry_count: number;
+        max_retries: number;
+      }>>(
+        `SELECT id, retry_count, max_retries
+           FROM stories
+          WHERE id = $1 AND run_id = $2 AND story_id = $3
+            AND claim_generation = $4 AND status = 'done'
+          FOR UPDATE`,
+        [
+          authenticated.storyDbId,
+          superviseStep.run_id,
+          authenticated.storyId,
+          authenticated.storyClaimGeneration,
+        ],
+      );
+      if (storyRows.length !== 1) throw new Error("V3_SUPERVISE_STORY_RETRY_STATE_INVALID");
+      const stepRows = await transaction.unsafe<Array<{
+        id: string;
+        step_id: string;
+        type: string;
+        status: string;
+      }>>(
+        `SELECT id, step_id, type, status
+           FROM steps
+          WHERE run_id = $1
+            AND (id = $2 OR id = $3 OR step_id = $4)
+          ORDER BY id
+          LIMIT 4
+          FOR UPDATE`,
+        [superviseStep.run_id, loopStepId, superviseStep.id, verifyStepName],
+      );
+      const implementRows = stepRows.filter((row) => row.id === loopStepId
+        && row.step_id === "implement" && row.type === "loop");
+      const superviseRows = stepRows.filter((row) => row.id === superviseStep.id
+        && row.step_id === superviseStep.step_id && row.type === "single");
+      const verifyRows = stepRows.filter((row) => row.step_id === verifyStepName
+        && row.type === "single");
+      if (stepRows.length !== 3
+        || implementRows.length !== 1
+        || superviseRows.length !== 1
+        || verifyRows.length !== 1
+        || superviseRows[0]!.status !== "running"
+        || verifyRows[0]!.status !== "waiting") {
+        throw new Error("V3_SUPERVISE_STORY_RETRY_STEP_TOPOLOGY_INVALID");
+      }
+      const story = storyRows[0]!;
+      const exhausted = story.retry_count + 1 > story.max_retries;
+      if (exhausted !== retryWillExhaust) {
+        throw new Error("V3_SUPERVISE_STORY_RETRY_BUDGET_DRIFT");
+      }
+      const supervisorRetry = exhausted ? undefined : createV3SupervisorRetryDirectiveV1({
+        runId: superviseStep.run_id,
+        storyDbId: authenticated.storyDbId,
+        storyId: authenticated.storyId,
+        storyClaimGeneration: authenticated.storyClaimGeneration,
+        supervisorClaimId: claimEnvelope.claimId,
+        runtimeSessionId: authenticatedRuntimeSessionId,
+        outputHash: crypto.createHash("sha256").update(output, "utf8").digest("hex"),
+        sourceRevision: exactRejectedSource
+          ?? (() => { throw new Error("V3_SUPERVISE_STORY_RETRY_SOURCE_REQUIRED"); })(),
+        retryOrdinal: story.retry_count + 1,
+        maxRetries: story.max_retries,
+        decision: "retry",
+        feedback: issues,
+      });
+      const durableStoryOutput = supervisorRetry
+        ? serializeV3SupervisorRetryDirectiveV1(supervisorRetry)
+        : issues;
+      await closeExactSingleStepClaimInTransaction(transaction, {
+        envelope: claimEnvelope,
+        outcome: "failed",
+        diagnostic: issues,
+      });
+      const storyUpdated = await transaction.unsafe<Array<{ id: string }>>(
+        `UPDATE stories
+            SET status = $5, claimed_by = NULL, claimed_at = NULL,
+                retry_count = LEAST(retry_count + 1, max_retries), output = $6,
+                pr_url = NULL, merge_status = NULL, updated_at = clock_timestamp()
+          WHERE id = $1 AND run_id = $2 AND story_id = $3
+            AND claim_generation = $4 AND status = 'done'
+          RETURNING id`,
+        [
+          authenticated.storyDbId,
+          superviseStep.run_id,
+          authenticated.storyId,
+          authenticated.storyClaimGeneration,
+          exhausted ? "failed" : "pending",
+          durableStoryOutput,
+        ],
+      );
+      if (storyUpdated.length !== 1) throw new Error("V3_SUPERVISE_STORY_RETRY_CAS_LOST");
+      const implementUpdated = await transaction.unsafe<Array<{ id: string }>>(
+        `UPDATE steps
+            SET status = $3, current_story_id = NULL, updated_at = clock_timestamp()
+          WHERE id = $1 AND run_id = $2 AND status = $4
+          RETURNING id`,
+        [
+          loopStepId,
+          superviseStep.run_id,
+          exhausted ? "failed" : "pending",
+          implementRows[0]!.status,
+        ],
+      );
+      if (implementUpdated.length !== 1) throw new Error("V3_SUPERVISE_STORY_RETRY_IMPLEMENT_CAS_LOST");
+      const superviseUpdated = await transaction.unsafe<Array<{ id: string }>>(
+        `UPDATE steps
+            SET status = $3, current_story_id = NULL, output = $4,
+                updated_at = clock_timestamp()
+          WHERE id = $1 AND run_id = $2 AND status = 'running'
+          RETURNING id`,
+        [
+          superviseStep.id,
+          superviseStep.run_id,
+          exhausted ? "failed" : "waiting",
+          durableStoryOutput,
+        ],
+      );
+      if (superviseUpdated.length !== 1) throw new Error("V3_SUPERVISE_STORY_RETRY_SUPERVISE_CAS_LOST");
+      if (exhausted) {
+        await requestRunTerminationInTransaction(transaction, {
+          runId: superviseStep.run_id,
+          targetStatus: "failed",
+          requestedBy: "setfarm.v3-supervise-binding",
+          diagnostic: issues,
+          evidence: {
+            source: "handleSuperviseEachCompletion",
+            storyDbId: authenticated.storyDbId,
+            storyId: authenticated.storyId,
+            storyClaimGeneration: authenticated.storyClaimGeneration,
+          },
+        });
+      }
+      await markRuntimeCompletionOwnerCommittedInTransaction(transaction, {
+        claimId: claimEnvelope.claimId,
+        claimOutcome: "failed",
+        plan: createSingleEffectCompletionPlanDescriptorV1({
+          kind: "single_failure",
+          continuation: { type: "failure_finalize" },
+          effectPayload: {
+            stepStatus: exhausted ? "failed" : "waiting",
+            outcome: "failed",
+            subjectKind: "story_member",
+            storyDbId: authenticated.storyDbId,
+            storyId: authenticated.storyId,
+            storyClaimGeneration: authenticated.storyClaimGeneration,
+          },
+        }),
+      });
+    });
+    // Durable retry authority is the locked story/step state above. Mutable run
+    // context is deliberately not part of this owner transaction or eligibility.
+    return { advanced: false, runCompleted: false };
+  }
+
+  const authenticatedStoryWorktree = boundSubject
+    && authenticatedV3Binding && authenticatedV3Success
+    ? await authenticatedV3SupervisorStoryWorktree({
+        runId: superviseStep.run_id,
+        superviseStepDbId: superviseStep.id,
+        runtimeSessionId: authenticatedRuntimeSessionId
+          ?? (() => { throw new Error("V3_SUPERVISE_BOUND_RUNTIME_ID_REQUIRED"); })(),
+        boundSubject,
+      })
+    : undefined;
+
   let story = undefined as Awaited<ReturnType<typeof findUnsupervisedDoneStory>>;
   if (boundSubject) {
     story = await pgGet<any>(
@@ -11579,20 +13030,20 @@ async function handleSuperviseEachCompletion(
     );
     if (!story) throw new Error("SUPERVISE_EFFECT_BOUND_STORY_MISSING");
   }
-  if (!story && superviseStep.current_story_id) {
+  if (!story && !boundFinalProduct && superviseStep.current_story_id) {
     story = await pgGet<any>(
       "SELECT id, story_id, title, retry_count, max_retries, pr_url, story_branch, scope_files FROM stories WHERE run_id = $1 AND id = $2 AND status = 'done' LIMIT 1",
       [superviseStep.run_id, superviseStep.current_story_id],
     );
   }
   const reportedStoryId = parsedOutput["current_story_id"] || context["current_story_id"] || "";
-  if (!story && reportedStoryId) {
+  if (!story && !boundFinalProduct && reportedStoryId) {
     story = await pgGet<any>(
       "SELECT id, story_id, title, retry_count, max_retries, pr_url, story_branch, scope_files FROM stories WHERE run_id = $1 AND story_id = $2 AND status = 'done' LIMIT 1",
       [superviseStep.run_id, reportedStoryId],
     );
   }
-  if (!story) {
+  if (!story && !boundFinalProduct) {
     story = await findUnsupervisedDoneStory(superviseStep.run_id, context);
   }
 
@@ -11601,11 +13052,28 @@ async function handleSuperviseEachCompletion(
       "SELECT status FROM steps WHERE id = $1 AND run_id = $2",
       [superviseStep.id, superviseStep.run_id],
     );
-    if (committed?.status !== "waiting") {
+    const expectedStatus = boundFinalProduct ? "done" : "waiting";
+    if (committed?.status !== expectedStatus) {
       throw new Error(`SUPERVISE_EFFECT_RESUME_STATE_INVALID:${committed?.status ?? "missing"}`);
     }
   } else if (claimEnvelope) {
-    if (!story) throw new Error("SUPERVISE_COMPLETION_TARGET_STORY_MISSING");
+    if (boundFinalProduct) {
+      await completeSingleStepClaimAndState(getSql(), {
+        envelope: claimEnvelope,
+        stepStatus: "done",
+        stepOutput: output,
+        clearCurrentStory: true,
+        completionPlan: createSingleEffectCompletionPlanDescriptorV1({
+          kind: "single_completion",
+          continuation: { type: "single_pipeline_advance" },
+          effectPayload: { supervisorStepDbId: superviseStep.id, subjectKind: "final_product" },
+        }),
+        diagnostic: "Final-product supervisor claim completed through exact authority",
+      });
+      if (deferContinuationToEffectLedger) return { advanced: false, runCompleted: false };
+    } else if (!story) {
+      throw new Error("SUPERVISE_COMPLETION_TARGET_STORY_MISSING");
+    } else {
     const verifyTarget = await pgGet<{ id: string }>(
       "SELECT id FROM steps WHERE run_id = $1 AND step_id = $2 LIMIT 1",
       [superviseStep.run_id, verifyStepName],
@@ -11635,6 +13103,7 @@ async function handleSuperviseEachCompletion(
     if (deferContinuationToEffectLedger) {
       return { advanced: false, runCompleted: false };
     }
+    }
   } else {
     const changed = await pgRun(
       "UPDATE steps SET status = 'waiting', output = $1, current_story_id = NULL, updated_at = $2 WHERE id = $3 AND status IN ('running', 'pending')",
@@ -11642,7 +13111,14 @@ async function handleSuperviseEachCompletion(
     );
     if (changed.changes === 0) return { advanced: false, runCompleted: false };
   }
-  await recordStepTransition(superviseStep.id, superviseStep.run_id, "running", "waiting", undefined, "handleSuperviseEachCompletion");
+  await recordStepTransition(
+    superviseStep.id,
+    superviseStep.run_id,
+    "running",
+    boundFinalProduct ? "done" : "waiting",
+    undefined,
+    "handleSuperviseEachCompletion",
+  );
   if (!claimEnvelope && !ownerAlreadyCommitted) {
     try {
       await pgRun(
@@ -11653,6 +13129,19 @@ async function handleSuperviseEachCompletion(
   }
 
   if (!story) {
+    if (boundFinalProduct) {
+      delete context["previous_failure"];
+      delete context["failure_category"];
+      delete context["failure_suggestion"];
+      delete context["current_story_id"];
+      delete context["current_story_title"];
+      delete context["current_story"];
+      context["supervisor_scope"] = "final-product";
+      await updateRunContext(superviseStep.run_id, context);
+      await refreshRunContractSafe(superviseStep.run_id, `step.${superviseStep.step_id}.done`, context);
+      if (await findActiveLoop(superviseStep.run_id)) return { advanced: false, runCompleted: false };
+      return advancePipeline(superviseStep.run_id);
+    }
     const finalSupervise = await shouldAutoCompleteFinalSuperviseEachStep(superviseStep.run_id, context);
     if (finalSupervise.ok) {
       delete context["previous_failure"];
@@ -11716,7 +13205,10 @@ async function handleSuperviseEachCompletion(
     updateSupervisorMemory(context, `${summary}\n`);
   } catch (e) { logger.warn(`[handleSuperviseEach] Could not update supervisor memory: ${String(e).slice(0, 150)}`, { runId: superviseStep.run_id }); }
 
-  if (status === "retry" || decision === "block") {
+  if ((authenticatedV3Binding && !authenticatedV3Success)
+    || status === "retry"
+    || decision === "block"
+    || decision === "blocked") {
     const newRetry = (story.retry_count || 0) + 1;
     context["previous_failure"] = `LLM_SUPERVISOR_BLOCKED for ${story.story_id}:\n${issues}`;
     context["failure_category"] = "LLM_SUPERVISOR_BLOCKED";
@@ -11768,8 +13260,9 @@ async function handleSuperviseEachCompletion(
     return { advanced: false, runCompleted: false };
   }
 
-  let supervisorWorkdir = context["story_workdir"] || context["repo"] || "";
-  try {
+  let supervisorWorkdir = authenticatedStoryWorktree?.workdir
+    ?? (context["story_workdir"] || context["repo"] || "");
+  if (!authenticatedStoryWorktree) try {
     const { resolveStoryWorktree } = await import("./steps/06-implement/guards.js");
     const resolved = await resolveStoryWorktree(story.id, context["story_workdir"] || "");
     if (resolved) {
@@ -11789,6 +13282,43 @@ async function handleSuperviseEachCompletion(
   if (blockingSupervisorEvidence) {
     const newRetry = (story.retry_count || 0) + 1;
     const failure = blockingSupervisorEvidence.detail.slice(0, 6000);
+    if (authenticatedV3Binding && boundSubject) {
+      if (!authenticatedRuntimeSessionId) throw new Error("V3_SUPERVISE_POST_OWNER_RUNTIME_ID_REQUIRED");
+      const exhausted = newRetry > (story.max_retries || 0);
+      let exactRejectedSource: Readonly<{ sha: string; treeHash: string }> | undefined;
+      if (!exhausted) {
+        await revalidateAuthenticatedV3SupervisorStoryWorktree(authenticatedStoryWorktree!);
+        assertExactGitBranchWorktree(supervisorWorkdir, authenticatedStoryWorktree!.storyBranch);
+        const evidenceCommit = commitStoryWorktreeScopeIfNeeded(
+          supervisorWorkdir,
+          story.story_id,
+          story.title || "",
+          parseDeclaredScopeFiles(story.scope_files),
+          "fix",
+        );
+        if (evidenceCommit.error) throw new Error(`PLATFORM_SUPERVISOR_COMMIT_FAILED for ${story.story_id}: ${evidenceCommit.error}`);
+        await revalidateAuthenticatedV3SupervisorStoryWorktree(authenticatedStoryWorktree!);
+        assertExactGitBranchWorktree(supervisorWorkdir, authenticatedStoryWorktree!.storyBranch);
+        const evidencePush = pushStoryBranch(supervisorWorkdir, authenticatedStoryWorktree!.storyBranch);
+        if (evidencePush.error) throw new Error(`PLATFORM_SUPERVISOR_PUSH_FAILED for ${story.story_id}: ${evidencePush.error}`);
+        exactRejectedSource = captureExactCleanBoundStoryRevision(
+          supervisorWorkdir,
+          authenticatedStoryWorktree!.storyBranch,
+        );
+      }
+      await publishAuthenticatedV3SupervisorPostOwnerRetry({
+        runId: superviseStep.run_id,
+        superviseStepDbId: superviseStep.id,
+        loopStepDbId: loopStepId,
+        verifyStepName,
+        runtimeSessionId: authenticatedRuntimeSessionId,
+        output,
+        feedback: failure,
+        boundSubject,
+        ...(exactRejectedSource ? { sourceRevision: exactRejectedSource } : {}),
+      });
+      return { advanced: false, runCompleted: false };
+    }
     context["previous_failure"] = failure;
     context["failure_category"] = blockingSupervisorEvidence.category;
     context["failure_suggestion"] = "Return to the same story branch and fix the supervisor evidence blocker before verify can run. The LLM supervisor pass cannot override open visual/state evidence.";
@@ -11849,6 +13379,10 @@ async function handleSuperviseEachCompletion(
     return { advanced: false, runCompleted: false };
   }
 
+  if (authenticatedStoryWorktree) {
+    await revalidateAuthenticatedV3SupervisorStoryWorktree(authenticatedStoryWorktree);
+    assertExactGitBranchWorktree(supervisorWorkdir, authenticatedStoryWorktree.storyBranch);
+  }
   const supervisorCommit = commitStoryWorktreeScopeIfNeeded(
     supervisorWorkdir,
     story.story_id,
@@ -11859,6 +13393,10 @@ async function handleSuperviseEachCompletion(
   if (supervisorCommit.error) {
     const newRetry = (story.retry_count || 0) + 1;
     const failure = `PLATFORM_SUPERVISOR_COMMIT_FAILED for ${story.story_id}: ${supervisorCommit.error}`;
+    if (authenticatedStoryWorktree && /PLATFORM_STORY_COMMIT_SCOPE_BLOCKED/i.test(supervisorCommit.error)) {
+      await revalidateAuthenticatedV3SupervisorStoryWorktree(authenticatedStoryWorktree);
+      assertExactGitBranchWorktree(supervisorWorkdir, authenticatedStoryWorktree.storyBranch);
+    }
     const cleanedScopeBlockedFiles = /PLATFORM_STORY_COMMIT_SCOPE_BLOCKED/i.test(supervisorCommit.error)
       ? cleanupBlockedStoryCommitScope(
           supervisorWorkdir,
@@ -11867,6 +13405,7 @@ async function handleSuperviseEachCompletion(
           superviseStep.run_id,
         )
       : [];
+    if (authenticatedV3Binding && boundSubject) throw new Error(failure);
     context["previous_failure"] = failure;
     context["failure_category"] = "PLATFORM_SUPERVISOR_COMMIT_FAILED";
     context["failure_suggestion"] = cleanedScopeBlockedFiles.length > 0
@@ -11925,11 +13464,19 @@ async function handleSuperviseEachCompletion(
     logger.warn(`[supervise-each] Supervisor fixes for ${story.story_id} could not be platform-committed; returning to implement`, { runId: superviseStep.run_id });
     return { advanced: false, runCompleted: false };
   }
-  if (supervisorCommit.committed) {
-    const pushResult = pushStoryBranch(supervisorWorkdir, story.story_branch || context["story_branch"]);
+  if (supervisorCommit.committed || (authenticatedV3Binding && boundSubject)) {
+    if (authenticatedStoryWorktree) {
+      await revalidateAuthenticatedV3SupervisorStoryWorktree(authenticatedStoryWorktree);
+      assertExactGitBranchWorktree(supervisorWorkdir, authenticatedStoryWorktree.storyBranch);
+    }
+    const pushResult = pushStoryBranch(
+      supervisorWorkdir,
+      authenticatedStoryWorktree?.storyBranch ?? (story.story_branch || context["story_branch"]),
+    );
     if (pushResult.error) {
       const newRetry = (story.retry_count || 0) + 1;
       const failure = `PLATFORM_SUPERVISOR_PUSH_FAILED for ${story.story_id}: ${pushResult.error}`;
+      if (authenticatedV3Binding && boundSubject) throw new Error(failure);
       context["previous_failure"] = failure;
       context["failure_category"] = "PLATFORM_SUPERVISOR_PUSH_FAILED";
       context["failure_suggestion"] = "Supervisor fixes were committed locally but could not be pushed to the story branch. Fix platform git/remote state before verify.";
@@ -11971,8 +13518,10 @@ async function handleSuperviseEachCompletion(
       logger.warn(`[supervise-each] Supervisor fixes for ${story.story_id} could not be pushed; returning to implement`, { runId: superviseStep.run_id });
       return { advanced: false, runCompleted: false };
     }
-    context["platform_supervisor_commit"] = `${story.story_id}:${supervisorCommit.sha}:${supervisorCommit.stagedFiles.join(",")}`.slice(0, 1200);
-    logger.info(`[platform-supervisor-commit] ${story.story_id} committed ${supervisorCommit.stagedFiles.length} supervisor file(s) at ${supervisorCommit.sha}`, { runId: superviseStep.run_id });
+    if (supervisorCommit.committed) {
+      context["platform_supervisor_commit"] = `${story.story_id}:${supervisorCommit.sha}:${supervisorCommit.stagedFiles.join(",")}`.slice(0, 1200);
+      logger.info(`[platform-supervisor-commit] ${story.story_id} committed ${supervisorCommit.stagedFiles.length} supervisor file(s) at ${supervisorCommit.sha}`, { runId: superviseStep.run_id });
+    }
   }
 
   const acCoverage = parsedOutput["ac_coverage"] || "";
@@ -12547,7 +14096,7 @@ async function handleVerifyEachCompletion(
     if (nextUnverifiedStory.output) {
       const storyOut = parseOutputKeyValues(nextUnverifiedStory.output);
       for (const [key, value] of Object.entries(storyOut)) {
-        if (PROTECTED_CONTEXT_KEYS.has(key) && context[key]) continue;
+        if (isStepOutputContextKeyProtected(key, context)) continue;
         context[key] = value;
       }
     }

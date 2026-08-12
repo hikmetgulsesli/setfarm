@@ -455,6 +455,8 @@ describe("atomic claim-attempt terminal transition", () => {
         storyBranch: "story/us-002",
         stepStatus: "running",
         stepOutput: "STATUS: done",
+        runContextJson: JSON.stringify({ phase: "core" }),
+        expectedRunContextJson: "{}",
       });
       assert.deepEqual(result, {
         status: "completed",
@@ -469,17 +471,20 @@ describe("atomic claim-attempt terminal transition", () => {
         story_claimed_by: string | null;
         step_status: string;
         current_story_id: string | null;
+        run_context: string;
       }>>`
         SELECT cl.outcome AS claim_outcome,
                ea.disposition AS attempt_disposition,
                st.status AS story_status,
                st.claimed_by AS story_claimed_by,
                s.status AS step_status,
-               s.current_story_id
+               s.current_story_id,
+               r.context AS run_context
           FROM claim_log cl
           JOIN execution_attempts ea ON ea.run_id = cl.run_id AND ea.story_id = cl.story_id
           JOIN stories st ON st.run_id = cl.run_id AND st.story_id = cl.story_id
           JOIN steps s ON s.run_id = cl.run_id AND s.step_id = cl.step_id
+          JOIN runs r ON r.id = cl.run_id
          WHERE cl.id = ${claimId}
       `;
       assert.deepEqual({ ...state[0] }, {
@@ -489,6 +494,7 @@ describe("atomic claim-attempt terminal transition", () => {
         story_claimed_by: null,
         step_status: "running",
         current_story_id: null,
+        run_context: JSON.stringify({ phase: "core" }),
       });
     } finally {
       await database.cleanup();
@@ -573,6 +579,111 @@ describe("atomic claim-attempt terminal transition", () => {
       assert.equal(result.status, "completed");
       assert.equal(result.attemptId, reservation.attempt.attemptId);
       assert.equal((await repository.findById(reservation.attempt.attemptId))?.disposition, "verified");
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("rolls back story completion when the run context compare-and-set is lost", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const runId = "run-story-context-cas-lost";
+      const stepDbId = `${runId}-step`;
+      const storyDbId = `${runId}-story`;
+      await database.insertRun(runId);
+      await database.sql`
+        INSERT INTO steps
+          (id, run_id, step_id, agent_id, step_index, input_template, expects, status, current_story_id)
+        VALUES
+          (${stepDbId}, ${runId}, 'implement', 'feature-dev_developer', 1, '', '', 'running', ${storyDbId})
+      `;
+      await database.sql`
+        INSERT INTO stories
+          (id, run_id, story_index, story_id, title, status, claimed_by, claim_generation)
+        VALUES
+          (${storyDbId}, ${runId}, 1, 'US-002', 'Story', 'running', 'feature-dev_developer', 7)
+      `;
+      const claimId = await insertClaim(database, { runId });
+      const repository = createAttemptRepository(database.sql, {
+        attemptId: () => "ATT_story-context-cas-lost",
+        fenceToken: () => "6".repeat(64),
+      });
+      const reservation = await repository.reserve(exactProductReservation({
+        claimId,
+        runId,
+        agentId: "feature-dev_developer",
+        evidenceRefs: [`setfarm://claim-log/${claimId}`],
+      }));
+      await database.sql`
+        UPDATE runs SET context = ${JSON.stringify({ concurrent: "winner" })}
+         WHERE id = ${runId}
+      `;
+      await assert.rejects(
+        completeStoryClaimAndBoundAttempt(database.sql, {
+          envelope: {
+            schema: "setfarm.claim-envelope.v1",
+            protocol: "shadow",
+            issuedAt: new Date().toISOString(),
+            stepId: stepDbId,
+            workflowStepId: "implement",
+            runId,
+            storyId: "US-002",
+            storyDbId,
+            claimId,
+            claimAgentId: "feature-dev_developer",
+            runtimeAgentId: "prism",
+            claimGeneration: 7,
+            attempt: {
+              attemptId: reservation.attempt.attemptId,
+              generation: reservation.attempt.generation,
+              fenceToken: reservation.attempt.fenceToken,
+            },
+          },
+          sourceAfter: { sha: "2".repeat(40), treeHash: "4".repeat(40) },
+          storyStatus: "pending",
+          storyOutput: "phase complete",
+          stepStatus: "pending",
+          stepOutput: "phase complete",
+          runContextJson: JSON.stringify({ phase: "core" }),
+          expectedRunContextJson: "{}",
+        }),
+        /STORY_COMPLETION_RUN_CONTEXT_CAS_LOST/,
+      );
+      const state = await database.sql<Array<{
+        claim_outcome: string | null;
+        attempt_disposition: string;
+        story_status: string;
+        story_claimed_by: string | null;
+        step_status: string;
+        current_story_id: string | null;
+        run_context: string;
+      }>>`
+        SELECT claim.outcome AS claim_outcome,
+               attempt.disposition AS attempt_disposition,
+               story.status AS story_status,
+               story.claimed_by AS story_claimed_by,
+               step.status AS step_status,
+               step.current_story_id,
+               run.context AS run_context
+          FROM claim_log claim
+          JOIN execution_attempts attempt
+            ON attempt.run_id = claim.run_id AND attempt.story_id = claim.story_id
+          JOIN stories story
+            ON story.run_id = claim.run_id AND story.story_id = claim.story_id
+          JOIN steps step
+            ON step.run_id = claim.run_id AND step.step_id = claim.step_id
+          JOIN runs run ON run.id = claim.run_id
+         WHERE claim.id = ${claimId}
+      `;
+      assert.deepEqual({ ...state[0] }, {
+        claim_outcome: null,
+        attempt_disposition: "claimed",
+        story_status: "running",
+        story_claimed_by: "feature-dev_developer",
+        step_status: "running",
+        current_story_id: storyDbId,
+        run_context: JSON.stringify({ concurrent: "winner" }),
+      });
     } finally {
       await database.cleanup();
     }
@@ -777,6 +888,10 @@ describe("atomic claim-attempt terminal transition", () => {
         RETURNING id::integer AS id
       `;
       const claimId = claims[0]!.id;
+      const completedContext = JSON.stringify({
+        product_spec_version: "v2",
+        plan_english_authority_version: "compiler_review_v1",
+      });
       await completeSingleStepClaimAndState(database.sql, {
         envelope: {
           schema: "setfarm.claim-envelope.v1",
@@ -791,14 +906,160 @@ describe("atomic claim-attempt terminal transition", () => {
         },
         stepStatus: "waiting",
         stepOutput: "STATUS: done",
+        runContextJson: completedContext,
+        expectedRunContextJson: "{}",
       });
-      const state = await database.sql<Array<{ outcome: string; status: string; output: string }>>`
-        SELECT cl.outcome, s.status, s.output
+      const state = await database.sql<Array<{
+        outcome: string;
+        status: string;
+        output: string;
+        context: string;
+      }>>`
+        SELECT cl.outcome, s.status, s.output, r.context
           FROM claim_log cl
           JOIN steps s ON s.run_id = cl.run_id AND s.step_id = cl.step_id
+          JOIN runs r ON r.id = cl.run_id
          WHERE cl.id = ${claimId}
       `;
-      assert.deepEqual({ ...state[0] }, { outcome: "completed", status: "waiting", output: "STATUS: done" });
+      assert.deepEqual({ ...state[0] }, {
+        outcome: "completed",
+        status: "waiting",
+        output: "STATUS: done",
+        context: completedContext,
+      });
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("rolls back claim, context, and step when a required completion owner is absent", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const runId = "run-single-required-owner";
+      const stepDbId = `${runId}-step`;
+      await database.insertRun(runId);
+      await database.sql`
+        INSERT INTO steps
+          (id, run_id, step_id, agent_id, step_index, input_template, expects, status, output)
+        VALUES
+          (${stepDbId}, ${runId}, 'plan', 'feature-dev_planner', 1, '', '', 'running', 'before')
+      `;
+      const claims = await database.sql<Array<{ id: number }>>`
+        INSERT INTO claim_log (run_id, step_id, story_id, agent_id, claimed_at)
+        VALUES (${runId}, 'plan', NULL, 'feature-dev_planner', NOW())
+        RETURNING id::integer AS id
+      `;
+      const claimId = claims[0]!.id;
+
+      await assert.rejects(
+        completeSingleStepClaimAndState(database.sql, {
+          envelope: {
+            schema: "setfarm.claim-envelope.v1",
+            protocol: "shadow",
+            issuedAt: new Date().toISOString(),
+            stepId: stepDbId,
+            workflowStepId: "plan",
+            runId,
+            claimId,
+            claimAgentId: "feature-dev_planner",
+            runtimeAgentId: "atlas",
+          },
+          stepStatus: "done",
+          stepOutput: "STATUS: done",
+          runContextJson: JSON.stringify({ product_spec_version: "v2" }),
+          expectedRunContextJson: "{}",
+          requireRuntimeCompletionOwner: true,
+        }),
+        /SINGLE_STEP_COMPLETION_RUNTIME_OWNER_REQUIRED/,
+      );
+
+      const state = await database.sql<Array<{
+        outcome: string | null;
+        status: string;
+        output: string;
+        context: string;
+      }>>`
+        SELECT cl.outcome, s.status, s.output, r.context
+          FROM claim_log cl
+          JOIN steps s ON s.run_id = cl.run_id AND s.step_id = cl.step_id
+          JOIN runs r ON r.id = cl.run_id
+         WHERE cl.id = ${claimId}
+      `;
+      assert.deepEqual({ ...state[0] }, {
+        outcome: null,
+        status: "running",
+        output: "before",
+        context: "{}",
+      });
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("rolls back claim and step when the run context compare-and-set is lost", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const runId = "run-single-context-cas-lost";
+      const stepDbId = `${runId}-step`;
+      const concurrentContext = JSON.stringify({ concurrent_update: "preserved" });
+      await database.insertRun(runId);
+      await database.sql`
+        UPDATE runs
+           SET context = ${concurrentContext}
+         WHERE id = ${runId}
+      `;
+      await database.sql`
+        INSERT INTO steps
+          (id, run_id, step_id, agent_id, step_index, input_template, expects, status, output)
+        VALUES
+          (${stepDbId}, ${runId}, 'plan', 'feature-dev_planner', 1, '', '', 'running', 'before')
+      `;
+      const claims = await database.sql<Array<{ id: number }>>`
+        INSERT INTO claim_log (run_id, step_id, story_id, agent_id, claimed_at)
+        VALUES (${runId}, 'plan', NULL, 'feature-dev_planner', NOW())
+        RETURNING id::integer AS id
+      `;
+      const claimId = claims[0]!.id;
+
+      await assert.rejects(
+        completeSingleStepClaimAndState(database.sql, {
+          envelope: {
+            schema: "setfarm.claim-envelope.v1",
+            protocol: "shadow",
+            issuedAt: new Date().toISOString(),
+            stepId: stepDbId,
+            workflowStepId: "plan",
+            runId,
+            claimId,
+            claimAgentId: "feature-dev_planner",
+            runtimeAgentId: "atlas",
+          },
+          stepStatus: "done",
+          stepOutput: "STATUS: done",
+          runContextJson: JSON.stringify({ compiled_update: "candidate" }),
+          expectedRunContextJson: "{}",
+        }),
+        /SINGLE_STEP_COMPLETION_RUN_CONTEXT_CAS_LOST/,
+      );
+
+      const state = await database.sql<Array<{
+        outcome: string | null;
+        status: string;
+        output: string;
+        context: string;
+      }>>`
+        SELECT cl.outcome, s.status, s.output, r.context
+          FROM claim_log cl
+          JOIN steps s ON s.run_id = cl.run_id AND s.step_id = cl.step_id
+          JOIN runs r ON r.id = cl.run_id
+         WHERE cl.id = ${claimId}
+      `;
+      assert.deepEqual({ ...state[0] }, {
+        outcome: null,
+        status: "running",
+        output: "before",
+        context: concurrentContext,
+      });
     } finally {
       await database.cleanup();
     }

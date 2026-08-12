@@ -7,6 +7,7 @@ import path from "node:path";
 import { afterEach, describe, it } from "node:test";
 
 import {
+  createV3ImplementationAttemptHandoffV1,
   createV3ImplementationAttemptCompiler,
   captureDependencyFileSignatures,
   V3ImplementationAttemptError,
@@ -16,6 +17,7 @@ import {
   type ExecutionAttemptV1,
 } from "../../src/execution/schemas/execution-attempt-v1.js";
 import { createOperationalRetryDirectiveV1 } from "../../src/execution/operational-retry-directive.js";
+import { createV3SupervisorRetryDirectiveV1 } from "../../src/execution/v3-supervisor-retry-directive.js";
 import { parseOperationalRetryAwareAttemptReservation } from "../../src/execution/operational-retry-reservation.js";
 import { ContentAddressedArtifactStore } from "../../src/product-compiler/artifact-store.js";
 import { hashCanonicalJson } from "../../src/product-compiler/canonical-json.js";
@@ -85,6 +87,7 @@ describe("v3 implementation attempt compiler", () => {
   it("publishes an exact slice, reserves its packet-bound fence, and reloads identical context", async () => {
     const { worktree, packet } = await fixture();
     const source = { sha: "1".repeat(40), treeHash: "2".repeat(64) };
+    const supervisorRetrySource = { sha: "1".repeat(40), treeHash: "2".repeat(40) };
     const published = new Map<string, { artifactType: string; producer: unknown; payload: unknown }>();
     const runRefs: Array<{ runId: string; refKey: string; artifactHash: string }> = [];
     let reservedInput: ReturnType<typeof parseOperationalRetryAwareAttemptReservation> | undefined;
@@ -138,6 +141,7 @@ describe("v3 implementation attempt compiler", () => {
         return envelope;
       },
       captureSource: async () => source,
+      captureSupervisorRetrySource: async () => supervisorRetrySource,
       readDependencies: async (input) => {
         dependencyPacketHash = input.packetHash;
         return {};
@@ -256,6 +260,101 @@ describe("v3 implementation attempt compiler", () => {
     });
     assert.deepEqual(loadedRetry.operationalRetry, retry.operationalRetry);
     assert.deepEqual(loadedRetry.executionProfile, retry.executionProfile);
+
+    const supervisorRetry = createV3SupervisorRetryDirectiveV1({
+      runId: packet.runId,
+      storyDbId: "story-db-v3-attempt-us-001",
+      storyId: "US-001",
+      storyClaimGeneration: 1,
+      supervisorClaimId: 501,
+      runtimeSessionId: "RTS_v3-attempt-supervisor-501",
+      outputHash: "8".repeat(64),
+      sourceRevision: supervisorRetrySource,
+      decision: "retry",
+      feedback: "Restore the required interaction and preserve the exact state transition.",
+      retryOrdinal: 1,
+      maxRetries: 3,
+    });
+    const supervisorRetryResult = await compiler.reserve({
+      runId: packet.runId,
+      stepId: "implement",
+      storyId: "US-001",
+      claimId: 43,
+      role: "developer",
+      agentId: "feature-dev_developer",
+      branch: "story/us-001",
+      worktree,
+      supervisorRetry,
+    });
+    assert.equal(supervisorRetryResult.attempt.attemptClass, "product_implementation");
+    assert.deepEqual(supervisorRetryResult.executionProfile, result.executionProfile);
+    assert.equal(
+      supervisorRetryResult.supervisorRetry?.directive.directiveHash,
+      supervisorRetry.directiveHash,
+    );
+    assert.ok(supervisorRetryResult.attempt.evidenceRefs.includes(
+      `setfarm://supervisor-retry/${supervisorRetry.directiveHash}`,
+    ));
+    assert.ok(supervisorRetryResult.attempt.evidenceRefs.includes(
+      `setfarm://supervisor-retry-artifact/${supervisorRetryResult.supervisorRetry?.artifactHash}`,
+    ));
+    const driftedSupervisorRetry = createV3SupervisorRetryDirectiveV1({
+      runId: supervisorRetry.runId,
+      storyDbId: supervisorRetry.storyDbId,
+      storyId: supervisorRetry.storyId,
+      storyClaimGeneration: supervisorRetry.storyClaimGeneration,
+      supervisorClaimId: supervisorRetry.supervisorClaimId,
+      runtimeSessionId: supervisorRetry.runtimeSessionId,
+      outputHash: supervisorRetry.outputHash,
+      sourceRevision: { sha: "3".repeat(40), treeHash: "4".repeat(40) },
+      decision: "retry",
+      feedback: supervisorRetry.feedback,
+      retryOrdinal: supervisorRetry.retryOrdinal,
+      maxRetries: supervisorRetry.maxRetries,
+    });
+    await assert.rejects(
+      compiler.reserve({
+        runId: packet.runId,
+        stepId: "implement",
+        storyId: "US-001",
+        claimId: 44,
+        role: "developer",
+        agentId: "feature-dev_developer",
+        branch: "story/us-001",
+        worktree,
+        supervisorRetry: driftedSupervisorRetry,
+      }),
+      (error: unknown) => error instanceof V3ImplementationAttemptError
+        && error.code === "V3_SUPERVISOR_RETRY_IDENTITY_MISMATCH",
+    );
+    const supervisorRetryHandoff = createV3ImplementationAttemptHandoffV1({
+      stepDbId: "step-db-v3-attempt-implement",
+      storyDbId: supervisorRetry.storyDbId,
+      claimId: 43,
+      branch: "story/us-001",
+      workdir: worktree,
+      compiled: supervisorRetryResult,
+    });
+    assert.deepEqual(supervisorRetryHandoff.supervisorRetry, supervisorRetry);
+    assert.equal(
+      supervisorRetryHandoff.supervisorRetryArtifactHash,
+      supervisorRetryResult.supervisorRetry?.artifactHash,
+    );
+    assert.throws(() => createV3ImplementationAttemptHandoffV1({
+      stepDbId: "step-db-v3-attempt-implement",
+      storyDbId: "story-db-v3-attempt-wrong",
+      claimId: 43,
+      branch: "story/us-001",
+      workdir: worktree,
+      compiled: supervisorRetryResult,
+    }));
+    const loadedSupervisorRetry = await compiler.loadAttemptContext({
+      runId: packet.runId,
+      storyId: "US-001",
+      attemptId: supervisorRetryResult.attempt.attemptId,
+    });
+    assert.deepEqual(loadedSupervisorRetry.supervisorRetry, supervisorRetryResult.supervisorRetry);
+    assert.deepEqual(loadedSupervisorRetry.executionProfile, result.executionProfile);
   });
 
   it("rejects source drift before publishing a slice or reserving an attempt", async () => {

@@ -1,7 +1,8 @@
 import fs from "node:fs";
+import crypto from "node:crypto";
 import path from "node:path";
-import type { ClaimContext } from "../types.js";
-import { pgGet } from "../../../db-pg.js";
+import type { ClaimContext, PreClaimResult } from "../types.js";
+import { getSql, pgGet } from "../../../db-pg.js";
 import { logger } from "../../../lib/logger.js";
 import {
   collectUiBehaviorRequirements,
@@ -30,6 +31,11 @@ import {
   StitchTargetResponseBindingsV2Schema,
 } from "../../../product-compiler/schemas/stitch-target-candidate-selection-v1.js";
 import { StitchRenderedSemanticsV1Schema } from "../../../product-compiler/schemas/stitch-rendered-semantics-v1.js";
+import { buildProductSemanticsV2StoriesOutput } from "./runtime-v2.js";
+import {
+  inspectCompilerEnglishAdmissionLedgerAuthorityV1,
+  loadCompilerEnglishAdmissionLedgerAuthorityV1,
+} from "../../../execution/compiler-english-admission-ledger-v1.js";
 
 type PredictedScreen = ReturnType<typeof computePredictedScreenFiles>[number];
 type ProjectKind = "game" | "product";
@@ -787,14 +793,27 @@ function readCanonicalV3Json<T>(params: {
 export function buildV3AutoStoriesOutput(params: {
   repo: string;
   prd: string;
+  expectedProductSpecHash: string;
   maxStories?: number | null;
+  productSemanticsVersion?: string;
 }): string {
+  if (params.productSemanticsVersion === "v2") {
+    return buildProductSemanticsV2StoriesOutput({
+      repo: params.repo,
+      planText: params.prd,
+      expectedProductSpecHash: params.expectedProductSpecHash,
+      maxStories: params.maxStories,
+    });
+  }
   const plan = resolveCanonicalProductSpecFromPlan({
     text: params.prd,
     locator: "pipeline/plan.md",
   });
   if (plan.status !== "resolved") {
     throw new Error(`V3_STORY_PRODUCT_SPEC_REJECTED:${plan.rejectionCodes.join(",")}`);
+  }
+  if (hashCanonicalJson(plan.productSpec) !== params.expectedProductSpecHash) {
+    throw new Error("V3_STORY_ENGLISH_ADMISSION_PRODUCT_SPEC_MISMATCH");
   }
   const stitchDir = path.join(params.repo, "stitch");
   const generationTargets = readCanonicalV3Json({
@@ -848,49 +867,72 @@ export function buildV3AutoStoriesOutput(params: {
   ].join("\n");
 }
 
-export async function preClaim(ctx: ClaimContext): Promise<void> {
-  if (process.env.SETFARM_DISABLE_AUTO_STORIES === "1") return;
-
+export async function preClaim(ctx: ClaimContext): Promise<PreClaimResult> {
   const maxStories = extractExplicitMaxStories(`${ctx.task || ""}\n${ctx.context["task"] || ""}\n${ctx.context["prd"] || ""}`);
-
-  const existing = await pgGet<{ cnt: string }>("SELECT COUNT(*)::text as cnt FROM stories WHERE run_id = $1", [ctx.runId]);
-  const repo = ctx.context["repo"] || ctx.context["REPO"] || "";
-  if (!repo) return;
   const protocol = ctx.claimEnvelope?.protocol
     ?? (await pgGet<{ protocol: "legacy" | "shadow" | "v3" }>(
       "SELECT protocol FROM runs WHERE id = $1",
       [ctx.runId],
     ))?.protocol
     ?? "legacy";
+  let expectedProductSpecHash = ctx.context["product_spec_hash"] || "";
+  if (protocol === "v3") {
+    try {
+      const authority = await loadCompilerEnglishAdmissionLedgerAuthorityV1(
+        getSql(),
+        { runId: ctx.runId },
+      );
+      const receipt = inspectCompilerEnglishAdmissionLedgerAuthorityV1(authority);
+      const prd = ctx.context["prd"] || ctx.context["PRD"] || "";
+      if (receipt.runId !== ctx.runId
+        || receipt.prdHash !== crypto.createHash("sha256").update(prd, "utf8").digest("hex")
+        || receipt.productSpecSchema !== ctx.context["product_spec_schema"]
+        || receipt.sourceTaskHash !== ctx.context["product_spec_source_task_hash"]
+        || receipt.productSpecHash !== expectedProductSpecHash) {
+        throw new Error("STORIES_ENGLISH_ADMISSION_CONTEXT_BINDING_MISMATCH");
+      }
+      expectedProductSpecHash = receipt.productSpecHash;
+    } catch (error) {
+      throw new Error(
+        `STORIES_ENGLISH_ADMISSION_REQUIRED: ${String((error as Error)?.message || error).slice(0, 850)}`,
+        { cause: error },
+      );
+    }
+  }
+  if (protocol === "v3" && ctx.context["product_semantics_version"] !== "v2") {
+    throw new Error("STORIES_V2_PRODUCT_SEMANTICS_REQUIRED");
+  }
+  if (protocol !== "v3" && process.env.SETFARM_DISABLE_AUTO_STORIES === "1") return;
+  const existing = await pgGet<{ cnt: string }>("SELECT COUNT(*)::text as cnt FROM stories WHERE run_id = $1", [ctx.runId]);
+  const repo = ctx.context["repo"] || ctx.context["REPO"] || "";
+  if (!repo) {
+    if (protocol !== "v3") return;
+    throw new Error("STORIES_V2_REPOSITORY_REQUIRED");
+  }
   if (Number(existing?.cnt || 0) > 0 && protocol !== "v3") return;
   if (protocol === "v3") {
     const step = await pgGet<{ id: string }>("SELECT id FROM steps WHERE run_id = $1 AND step_id = $2 LIMIT 1", [ctx.runId, ctx.stepId]);
-    if (!step?.id) return;
+    if (!step?.id) throw new Error("STORIES_V2_STEP_ID_REQUIRED");
     let output: string;
     try {
       output = buildV3AutoStoriesOutput({
         repo,
         prd: ctx.context["prd"] || ctx.context["PRD"] || "",
+        expectedProductSpecHash,
         maxStories,
+        productSemanticsVersion: ctx.context["product_semantics_version"],
       });
     } catch (error) {
-      if (!ctx.claimEnvelope) throw error;
-      const { failStep } = await import("../../step-fail.js");
-      await failStep(
-        step.id,
-        `PLATFORM_PRECLAIM_TERMINAL [stories]: ${String((error as Error)?.message || error)}`,
-        ctx.claimEnvelope,
-        { singleStepMode: "terminal_platform_preclaim" },
+      throw new Error(
+        `STORIES_V2_COMPILER_COMPLETION_FAILED: ${String((error as Error)?.message || error).slice(0, 850)}`,
+        { cause: error },
       );
-      return;
     }
-    const { completeStep } = await import("../../step-ops.js");
-    await completeStep(step.id, output, ctx.claimEnvelope);
-    logger.info("[module:stories preclaim] AUTO-COMPLETED v3 compatibility stories from ProductSpec and exact Stitch bindings", {
+    logger.info("[module:stories preclaim] prepared compiler-owned v3 compatibility stories for runtime completion", {
       runId: ctx.runId,
       stepId: ctx.stepId,
     });
-    return;
+    return Object.freeze({ disposition: "compiler_completion" as const, output });
   }
   const predicted = computePredictedScreenFiles(repo);
   if (predicted.length === 0) return;

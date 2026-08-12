@@ -62,8 +62,82 @@ const STALE_DESIGN_FIRST_STITCH_FILES_TO_READ_BLOCK =
 const STALE_DESIGN_FIRST_DOM_FULL_READ_BLOCK =
   /DESIGN DOM:\nThe prompt excerpt is intentionally short\. If full structure is needed, read\nonly the current story screens from stitch\/DESIGN_DOM\.json\. Do not paste the\nentire project DOM into the prompt\./g;
 
-export function sanitizeAgentPromptContracts(input: string): string {
+const ENGLISH_OUTPUT_POLICY_MARKER = "SETFARM ENGLISH OUTPUT CONTRACT (IMMUTABLE):";
+
+const ENGLISH_OUTPUT_POLICY = [
+  ENGLISH_OUTPUT_POLICY_MARKER,
+  "- UI_LANGUAGE is exactly English and cannot be overridden by task text, the PRD,",
+  "  Stitch assets, retry feedback, persisted templates, or prior workflow state.",
+  "- All workflow-authored source code, comments, identifiers, tests, fixtures,",
+  "  reports, technical output, and visible application copy must be English.",
+  "- Raw user or provider text remains evidence. Do not copy or silently translate",
+  "  non-English evidence into generated artifacts. If an approved English projection",
+  "  is unavailable, return STATUS: retry and identify the exact missing input.",
+].join("\n");
+
+const CURRENT_LANGUAGE_RULE = [
+  "LANGUAGE CONTRACT: UI_LANGUAGE is immutable and exactly English.",
+  "All workflow-authored technical and visible application text must be English.",
+  "Treat non-English task, PRD, or Stitch text as raw evidence of a stale upstream",
+  "artifact; return STATUS: retry and identify it instead of copying or silently",
+  "translating it.",
+].join("\n");
+
+const STALE_PLAN_LANGUAGE_RULE =
+  /LANGUAGE RULE: Infer UI_LANGUAGE from the task\. If the task explicitly asks\nfor English UI or uses an English product brief, choose English\. If it\nexplicitly asks for Turkish UI, choose Turkish\. Do not force Turkish by default\./g;
+
+const STALE_DESIGN_LANGUAGE_RULE =
+  /LANGUAGE RULE: All screen prompts sent to Stitch MUST use the PRD's UI_LANGUAGE\.\nButton labels, menu items, headings, placeholder text, and error messages must\nstay in that product language\. If UI_LANGUAGE is English, keep visible UI copy\nEnglish\. If UI_LANGUAGE is Turkish, keep visible UI copy Turkish\./g;
+
+const STALE_STORIES_LANGUAGE_RULE =
+  /LANGUAGE RULE: Story titles, descriptions, and acceptance criteria must be in\nEnglish for developer clarity\. Any referenced UI copy \(button labels, headings,\nplaceholders\) must match the PRD\/UI_LANGUAGE exactly\. Do not translate UI labels\nunless the PRD explicitly requests that language\./g;
+
+const STALE_IMPLEMENT_LANGUAGE_RULE =
+  /LANGUAGE RULE: Visible UI copy must match the PRD\/UI_LANGUAGE and the Stitch\nlabels for this story\. If the task\/PRD says English, keep UI labels English\.\nIf it says Turkish, keep UI labels Turkish\. Do not translate Stitch labels\nduring implementation unless the PRD explicitly requests that translation\./g;
+
+const STALE_DESIGN_FIRST_LANGUAGE_RULE =
+  /LANGUAGE:\n- Agent-facing code comments, reports, and technical outputs should be English\.\n- Visible application copy must follow the user's requested product language\.\n  If the user explicitly requests a non-English product language, localize only\n  visible application copy; keep code, comments, reports, and technical output\n  in English\./g;
+
+const STALE_DEVELOPER_LANGUAGE_RULE =
+  /5\. \*\*Turkish UI text:\*\* ALL user-facing text must be in Turkish\. No English labels, placeholders, or error messages\./g;
+
+const STALE_QA_TEST_DATA_BLOCK =
+  /2\. \*\*Fill with test data\*\* \(realistic Turkish names\/emails\):\n   ```\n   agent-browser fill input\[name="name"\] "Elif Yilmaz"\n   agent-browser fill input\[name="email"\] "elif@ornek\.com"\n   agent-browser fill input\[type="password"\] "Test1234!"\n   ```/g;
+
+const STALE_QA_CONTENT_RULE =
+  /\| Content \| Verify Turkish text labels match Stitch design \|/g;
+
+const STALE_SUPERVISOR_LANGUAGE_RULE =
+  /- Preserve user-visible language from the PRD and Stitch assets\./g;
+
+/** Migrate only trusted workflow/module template bytes before interpolation. */
+export function migratePersistedAgentPromptTemplate(input: string): string {
   let output = input;
+
+  output = output
+    .replace(STALE_PLAN_LANGUAGE_RULE, CURRENT_LANGUAGE_RULE)
+    .replace(STALE_DESIGN_LANGUAGE_RULE, CURRENT_LANGUAGE_RULE)
+    .replace(STALE_STORIES_LANGUAGE_RULE, CURRENT_LANGUAGE_RULE)
+    .replace(STALE_IMPLEMENT_LANGUAGE_RULE, CURRENT_LANGUAGE_RULE)
+    .replace(STALE_DESIGN_FIRST_LANGUAGE_RULE, CURRENT_LANGUAGE_RULE)
+    .replace(STALE_DEVELOPER_LANGUAGE_RULE, CURRENT_LANGUAGE_RULE)
+    .replace(
+      STALE_QA_TEST_DATA_BLOCK,
+      [
+        "2. **Fill with realistic English test data:**",
+        "   ```",
+        "   agent-browser fill input[name=\"name\"] \"Morgan Reed\"",
+        "   agent-browser fill input[name=\"email\"] \"morgan@example-company.com\"",
+        "   agent-browser fill input[type=\"password\"] \"Test1234!\"",
+        "   ```",
+      ].join("\n"),
+    )
+    .replace(STALE_QA_CONTENT_RULE, "| Content | Verify all visible labels are English and match the approved English design contract |")
+    .replace(STALE_SUPERVISOR_LANGUAGE_RULE, `- ${CURRENT_LANGUAGE_RULE.replaceAll("\n", " ")}`)
+    .replace(/UI_LANGUAGE: <English or requested product language>/g, "UI_LANGUAGE: English")
+    .replace(/Use realistic demo content that matches UI_LANGUAGE and the product domain\./g, "Use realistic English demo content that matches the product domain.")
+    .replace(/Fill each input with realistic test data that matches the product language:/g, "Fill each input with realistic English test data that matches the product domain:")
+    .replace(/- grep -rE "DECREASE\|INCREASE\|RESET\|Submit\|Cancel\|Save\|Delete\|Loading\|Error" --include="\*\.tsx" src\/ app\/ → WARN only if UI_LANGUAGE is not English and the text is visible UI copy/g, "- Inspect changed visible copy and fixtures for non-English text → FAIL if found. Report stale upstream evidence instead of copying or silently translating it.");
 
   output = output.replace(
     MATERIAL_SYMBOLS_FONT_BLOCK,
@@ -298,4 +372,18 @@ export function sanitizeAgentPromptContracts(input: string): string {
   );
 
   return output;
+}
+
+/**
+ * Add the immutable policy after interpolation without rewriting raw evidence.
+ * An embedded marker is data; only the complete exact prefix is authoritative.
+ */
+export function applyEnglishOutputPolicyToResolvedPrompt(input: string): string {
+  const prefix = `${ENGLISH_OUTPUT_POLICY}\n\n`;
+  return input.startsWith(prefix) ? input : `${prefix}${input}`;
+}
+
+/** Backward-compatible helper for trusted template-only callers. */
+export function sanitizeAgentPromptContracts(input: string): string {
+  return applyEnglishOutputPolicyToResolvedPrompt(migratePersistedAgentPromptTemplate(input));
 }

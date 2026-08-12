@@ -1,14 +1,14 @@
 # File Inventory: Setfarm + Mission Control
 
-Bu dosya her kaynak dosyanın tam kodunu içermez. Amaç dış modele repo haritası vermek ve hangi dosyanın neye baktığını hızlı göstermek.
+This document does not contain the full code of every source file. Its purpose is to give an external model a repository map and quickly show what each file is responsible for.
 
 ## Root And Build
 
-- `package.json`: Node >=22, TypeScript ESM, Playwright/Postgres/YAML bağımlılıkları, build/test script'leri.
-- `tsconfig.json`: TypeScript compile ayarları.
-- `AGENTS.md`: contributor/agent guide; evidence gate ve self-certification kurallarını özetler.
-- `README.md`, `ARCHITECTURE.md`, `SECURITY.md`: ürün ve güvenlik dokümantasyonu.
-- `.env.example`: public configuration template. Secret içermemeli.
+- `package.json`: Node >=22, TypeScript ESM, Playwright/Postgres/YAML dependencies, and build/test scripts.
+- `tsconfig.json`: TypeScript compiler settings.
+- `AGENTS.md`: contributor/agent guide; summarizes evidence-gate and self-certification rules.
+- `README.md`, `ARCHITECTURE.md`, `SECURITY.md`: product and security documentation.
+- `.env.example`: public configuration template. It must not contain secrets.
 
 ## CLI And Runtime Entrypoints
 
@@ -151,4 +151,3 @@ Each directory under `src/installer/steps/NN-name` owns a pipeline phase:
 - `tests/*`: orchestration, guard, self-heal, evidence, supervisor, runtime tests.
 - `scripts/__tests__/*.test.js`: script-level tests.
 - `tests/platform-invariants/*`: immutable-style platform invariant tests.
-

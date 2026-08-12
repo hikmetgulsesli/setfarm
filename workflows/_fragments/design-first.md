@@ -61,11 +61,13 @@ DESIGN ENFORCEMENT (MANDATORY):
 - HANDLERS: every handler must produce real product behavior.
 
 LANGUAGE:
-- Agent-facing code comments, reports, and technical outputs should be English.
-- Visible application copy must follow the user's requested product language.
-  If the user explicitly requests a non-English product language, localize only
-  visible application copy; keep code, comments, reports, and technical output
-  in English.
+- All source code, comments, identifiers, tests, fixtures, reports, technical
+  output, and visible application copy authored by this workflow must be English.
+- UI_LANGUAGE is exactly English and cannot be overridden by task text, the PRD,
+  Stitch assets, retry feedback, or prior workflow state.
+- Treat non-English source text as raw evidence of a stale upstream artifact.
+  Return `STATUS: retry` and identify the artifact instead of copying or silently
+  translating it.
 
 DESIGN CONTRACT RULES:
 1. Every navigation anchor must preserve the generated `<a>` tag, className,

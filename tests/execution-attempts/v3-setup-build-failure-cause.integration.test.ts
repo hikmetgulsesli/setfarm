@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -8,27 +9,28 @@ import { test } from "node:test";
 import { OperationalFailureCauseError } from "../../src/execution/schemas/operational-failure-cause-v1.js";
 import type { ClaimEnvelopeV1 } from "../../src/execution/schemas/claim-envelope-v1.js";
 import type { ClaimContext } from "../../src/installer/steps/types.js";
+import { seedCanonicalSetupBuildCompilerStoryAdmissionFixture } from "./helpers/compiler-story-admission-fixture.js";
 import { createIsolatedTestDatabase } from "./test-database.js";
 
 test("v3 setup-build converter reads its machine result instead of classifying process prose", async () => {
   const previousPgUrl = process.env.SETFARM_PG_URL;
   const database = await createIsolatedTestDatabase();
   const repo = await mkdtemp(path.join(tmpdir(), "setfarm-v3-setup-cause-"));
+  let runtimeDb: typeof import("../../src/db-pg.js") | undefined;
   try {
+    runtimeDb = await import("../../src/db-pg.js");
+    runtimeDb.pgConfigureIsolatedTestDatabase(database.url);
     const runId = "run-v3-setup-build-converter-cause";
     const stepDbId = "step-v3-setup-build-converter-cause";
     const claimAgentId = "feature-dev_builder";
     const releaseSha = "c".repeat(40);
-    const releaseAdmissionHash = await database.seedV3ReleaseGoAdmission(releaseSha);
-    await database.sql`
-      INSERT INTO runs (
-        id, workflow_id, task, status, context, protocol,
-        compiler_release_sha, activation_preflight_hash, release_admission_hash
-      ) VALUES (
-        ${runId}, 'feature-dev', 'Compile malformed Stitch input', 'running',
-        ${JSON.stringify({ repo })}, 'v3', ${releaseSha}, ${"d".repeat(64)}, ${releaseAdmissionHash}
-      )
-    `;
+    const admission = await seedCanonicalSetupBuildCompilerStoryAdmissionFixture(database, {
+      runId,
+      repo,
+      setupBuildStepDbId: stepDbId,
+      setupBuildClaimAgentId: claimAgentId,
+      releaseSha,
+    });
     fs.mkdirSync(path.join(repo, "node_modules"), { recursive: true });
     fs.mkdirSync(path.join(repo, "stitch"), { recursive: true });
     fs.writeFileSync(path.join(repo, "package.json"), JSON.stringify({
@@ -46,15 +48,15 @@ test("v3 setup-build converter reads its machine result instead of classifying p
       stepId: stepDbId,
       workflowStepId: "setup-build",
       runId,
-      claimId: 1,
+      claimId: admission.claimId,
       claimAgentId,
       runtimeAgentId: claimAgentId,
     };
     const context: Record<string, string> = {
-      repo,
+      ...admission.context,
       stack_pack_id: "vite-react-web-app",
       tech_stack: "vite-react",
-      task: "Compile malformed Stitch input",
+      task: admission.task,
     };
     const claimContext: ClaimContext = {
       runId,
@@ -69,7 +71,7 @@ test("v3 setup-build converter reads its machine result instead of classifying p
     await assert.rejects(
       preClaim(claimContext),
       (error: unknown) => {
-        assert.ok(error instanceof OperationalFailureCauseError);
+        assert.ok(error instanceof OperationalFailureCauseError, String(error));
         assert.deepEqual(error.failureCause, {
           schema: "setfarm.operational-failure-cause.v1",
           workflowStepId: "setup-build",
@@ -84,6 +86,7 @@ test("v3 setup-build converter reads its machine result instead of classifying p
     assert.match(context.baseline_fail ?? "", /stitch-to-jsx failed/);
   } finally {
     await rm(repo, { recursive: true, force: true });
+    await runtimeDb?.pgClose().catch(() => {});
     await database.cleanup();
     if (previousPgUrl === undefined) delete process.env.SETFARM_PG_URL;
     else process.env.SETFARM_PG_URL = previousPgUrl;
@@ -116,5 +119,65 @@ test("v3 setup-build requires the exact converter passed artifact after exit zer
     assert.equal(stitchConverterSuccessContractFailure(repo), undefined);
   } finally {
     await rm(repo, { recursive: true, force: true });
+  }
+});
+
+test("setup-build executes and returns one exact private converter byte snapshot", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "setfarm-converter-attestation-"));
+  try {
+    const repo = path.join(root, "repo");
+    const scriptPath = path.join(root, "stitch-to-jsx.mjs");
+    fs.mkdirSync(repo, { recursive: true });
+    const sourceText = [
+      'import fs from "node:fs";',
+      'import path from "node:path";',
+      'const repo = process.argv[2];',
+      'fs.writeFileSync(path.join(repo, "converter-marker"), "executed");',
+      "",
+    ].join("\n");
+    fs.writeFileSync(scriptPath, sourceText);
+    const { executeAttestedStitchConverter } = await import(
+      "../../src/installer/steps/05-setup-build/preclaim.js"
+    );
+
+    const source = executeAttestedStitchConverter(scriptPath, repo);
+
+    assert.equal(fs.readFileSync(path.join(repo, "converter-marker"), "utf8"), "executed");
+    assert.deepEqual(source, {
+      source: {
+        schema: "setfarm.source-artifact-ref.v1",
+        hash: createHash("sha256").update(Buffer.from(sourceText, "utf8")).digest("hex"),
+        mediaType: "text/javascript",
+        locator: "scripts/stitch-to-jsx.mjs",
+        byteLength: Buffer.byteLength(sourceText),
+      },
+      text: sourceText,
+    });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("setup-build rejects converter release bytes changed during execution", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "setfarm-converter-drift-"));
+  try {
+    const repo = path.join(root, "repo");
+    const scriptPath = path.join(root, "stitch-to-jsx.mjs");
+    fs.mkdirSync(repo, { recursive: true });
+    fs.writeFileSync(scriptPath, [
+      'import fs from "node:fs";',
+      `fs.writeFileSync(${JSON.stringify(scriptPath)}, "changed-after-private-copy");`,
+      "",
+    ].join("\n"));
+    const { executeAttestedStitchConverter } = await import(
+      "../../src/installer/steps/05-setup-build/preclaim.js"
+    );
+
+    assert.throws(
+      () => executeAttestedStitchConverter(scriptPath, repo),
+      /Release converter source changed while the converter was executing/,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
   }
 });

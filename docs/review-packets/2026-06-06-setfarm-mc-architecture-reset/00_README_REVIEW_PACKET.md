@@ -1,19 +1,19 @@
 # Setfarm + Mission Control Architecture Reset Review Packet
 
-Bu paket Gemini, Sonnet veya başka bir kıdemli platform mimarı modeline verilmek üzere hazırlanmıştır. Amaç mevcut Setfarm + Mission Control yapısını savunmak değil; sistemi adversarial şekilde inceletip reaktif yama döngüsünden çıkaracak mimari reset kararını netleştirmektir.
+This packet is intended for Gemini, Sonnet, or another senior platform architecture model. Its purpose is not to defend the current Setfarm + Mission Control structure, but to subject the system to an adversarial review and clarify the architectural reset needed to break the reactive patch cycle.
 
-## Ana Soru
+## Main Question
 
-Setfarm şu anda çok sayıda guard, supervisor, QA-FIX, smoke, PR, runtime ve self-heal davranışıyla çalışıyor. Buna rağmen her yeni generated project run'ında yeni bir davranış hatası çıkıyor ve sistem sürekli yama eklemeye zorluyor.
+Setfarm currently operates with many guards, supervisors, QA-FIX flows, smoke checks, PR flows, runtime checks, and self-heal behaviors. Despite this, every new generated-project run reveals another behavioral defect and forces the system to keep adding patches.
 
-Bu sistem:
+Should this system:
 
-- mevcut haliyle sadeleştirilerek devam etmeli mi?
-- compiler/evidence factory olarak yeniden mi tasarlanmalı?
-- self-healing supervisor ile kendi kendini düzeltmeli mi?
-- yoksa agent yetkileri azaltılıp Setfarm orchestrator daha mekanik hale mi gelmeli?
+- continue in a simplified form based on the current design?
+- be redesigned as a compiler/evidence factory?
+- repair itself through a self-healing supervisor?
+- or reduce agent authority and make the Setfarm orchestrator more mechanical?
 
-## Okuma Sırası
+## Reading Order
 
 1. `01_SYSTEM_ARCHITECTURE_MAP.md`
 2. `02_FILE_INVENTORY_SETFARM_MC.md`
@@ -25,24 +25,23 @@ Bu sistem:
 8. `08_GEMINI_SONNET_QA_PROMPT.md`
 9. `09_SOURCE_ATTACHMENT_MANIFEST.md`
 
-## Kullanım
+## Usage
 
-Gemini/Sonnet'e önce bu klasördeki Markdown dosyalarını verin. Model daha fazla kanıt isterse `09_SOURCE_ATTACHMENT_MANIFEST.md` içindeki "öncelikli ekle" kaynak dosyalarını da ekleyin.
+First provide Gemini/Sonnet with the Markdown files in this directory. If the model requests more evidence, also attach the source files listed under "attach first" in `09_SOURCE_ATTACHMENT_MANIFEST.md`.
 
-## Güvenlik Notu
+## Security Note
 
-Bu pakete `.env`, API key, local transcript, generated project `node_modules`, token veya credential eklenmemelidir. Kod path'leri ve hata isimleri korunmuştur; secret değerler bilinçli olarak dahil edilmemiştir.
+Do not include `.env` files, API keys, local transcripts, generated-project `node_modules`, tokens, or credentials in this packet. Code paths and error names have been preserved; secret values have deliberately been omitted.
 
-## Beklenen Çıktı
+## Expected Output
 
-Dış modelden istenen çıktı:
+The external model should provide:
 
-- kök teşhis
-- gereksiz veya zararlı katmanlar
-- korunması gereken katmanlar
-- hedef mimari
-- self-heal kararı
-- Mission Control görünürlük modeli
-- implement edilebilir refactor planı
-- riskler ve test stratejisi
-
+- a root-cause diagnosis
+- unnecessary or harmful layers
+- layers that should be preserved
+- a target architecture
+- a self-heal decision
+- a Mission Control visibility model
+- an implementable refactoring plan
+- risks and a testing strategy

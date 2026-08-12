@@ -3,7 +3,7 @@ import test from "node:test";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { allocateRuntimePort, portBandRange, runtimeUrl, writeRunRuntimeArtifact } from "../dist/installer/runtime-ports.js";
+import { allocateRuntimePort, portBandRange, runtimeUrl, writeRunRuntimeArtifact } from "../src/installer/runtime-ports.js";
 import {
   allocateRuntimePort as allocateRuntimePortFromSource,
   isFetchSafeRuntimePort,

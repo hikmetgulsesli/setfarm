@@ -11,11 +11,16 @@ import {
 } from "../../src/evidence/evidence-bundle-v2.js";
 import { createPostgresConvergencePort } from "../../src/evals/convergence-runner.js";
 import { loadConvergenceSuite } from "../../src/evals/suite-schema.js";
+import { TaskIntentOracleV2Schema } from "../../src/evals/task-intent-oracle-v2.js";
 import { hashCanonicalJson } from "../../src/product-compiler/canonical-json.js";
 import { createArtifactIndex } from "../../src/product-compiler/artifact-index.js";
 import { ContentAddressedArtifactStore } from "../../src/product-compiler/artifact-store.js";
-import { bootstrapArtifactIndex } from "../../src/product-compiler/indexed-artifact-publisher.js";
-import { createRuntimePacketCompiler } from "../../src/product-compiler/runtime-packet-compiler.js";
+import { createArtifactInventoryStoreV1 } from "../../src/product-compiler/artifact-inventory-store.js";
+import {
+  bootstrapArtifactIndex,
+  IndexedArtifactPublisher,
+} from "../../src/product-compiler/indexed-artifact-publisher.js";
+import { compileProductBuildPacket } from "../../src/product-compiler/packet-compiler.js";
 import { extractTaskRequirementLedgerV1 } from "../../src/product-compiler/requirements/task-requirements-v1.js";
 import { buildTaskIntentOracleFixture } from "./fixtures/task-intent-oracle-fixture.js";
 import {
@@ -76,6 +81,37 @@ describe("convergence PostgreSQL port", () => {
     });
 
     assert.equal((await port.inspectPlatform()).artifactIndexReady, true);
+  });
+
+  it("verifies hybrid convergence readiness through the central inventory capability", async () => {
+    const isolated = await createIsolatedTestDatabase();
+    const root = await mkdtemp(path.join(tmpdir(), "setfarm-eval-hybrid-preflight-"));
+    const artifactRoot = path.join(root, "sha256");
+    try {
+      const adoption = createArtifactInventoryStoreV1({
+        sql: isolated.sql,
+        artifactRoot,
+        artifactLimits,
+        purpose: "inventory-adoption",
+        publicationAuthorityMode: "hybrid-required",
+      });
+      await bootstrapArtifactIndex({
+        index: createArtifactIndex(isolated.sql),
+        store: adoption.store,
+        quotaBytes: artifactLimits.rootQuotaBytes,
+        maxPayloadBytes: artifactLimits.maxPayloadBytes,
+      });
+      const port = createPostgresConvergencePort(isolated.sql, {
+        artifactRoot,
+        artifactLimits,
+        publicationAuthorityMode: "hybrid-required",
+      });
+
+      assert.equal((await port.inspectPlatform()).artifactIndexReady, true);
+    } finally {
+      await isolated.cleanup();
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it("accepts a compiler-owned typed rejection only with zero downstream product side effects", async () => {
@@ -196,6 +232,154 @@ describe("convergence PostgreSQL port", () => {
     assert.equal(polluted.scopedFailure, null);
   });
 
+  it("binds the #2047 two-code rejection to exact per-reason requirements in v2 canonical evidence", async () => {
+    const runId = "eval-postgres-2047-two-code";
+    const releaseSha = "f".repeat(40);
+    const releaseAdmissionHash = await database.seedV3ReleaseGoAdmission(releaseSha);
+    const task = "Build a polished experience but leave its users and workflow deliberately unspecified. Also require a native kernel driver that this product compiler does not support.";
+    const ledger = extractTaskRequirementLedgerV1(task);
+    const oracle = TaskIntentOracleV2Schema.parse({
+      schema: "setfarm.task-intent-oracle.v2",
+      oracleId: "issue-2047-two-code",
+      oracleVersion: 2,
+      locale: "en",
+      cohort: "negative",
+      variant: "unsupported",
+      expectedDecision: {
+        kind: "typed_rejection",
+        requiredReasonCodes: [
+          "PRODUCT_SPEC_SEMANTIC_UNSUPPORTED",
+          "PRODUCT_SPEC_TASK_AMBIGUOUS",
+        ],
+        allowedReasonCodes: [
+          "PRODUCT_SPEC_SEMANTIC_UNSUPPORTED",
+          "PRODUCT_SPEC_TASK_AMBIGUOUS",
+        ],
+        reasonRequirements: [
+          { reasonCode: "PRODUCT_SPEC_TASK_AMBIGUOUS", clauseRefs: ["ambiguous-product"] },
+          { reasonCode: "PRODUCT_SPEC_SEMANTIC_UNSUPPORTED", clauseRefs: ["unsupported-kernel"] },
+        ],
+      },
+      clauses: ledger.requirements.map((requirement, index) => ({
+        clauseId: index === 0 ? "ambiguous-product" : "unsupported-kernel",
+        source: {
+          startOffset: requirement.sources[0]!.span.startOffset,
+          endOffset: requirement.sources[0]!.span.endOffset,
+          normalizedClause: requirement.normalizedClause,
+        },
+        requiredSemanticKinds: [],
+      })),
+      expectations: [],
+    });
+    const rejection = {
+      schema: "setfarm.product-spec-rejection.v1",
+      sourceTaskHash: ledger.sourceHash,
+      reasons: [
+        {
+          code: "PRODUCT_SPEC_TASK_AMBIGUOUS",
+          requirementRefs: [ledger.requirements[0]!.id],
+          message: "The primary product semantics are deliberately ambiguous.",
+        },
+        {
+          code: "PRODUCT_SPEC_SEMANTIC_UNSUPPORTED",
+          requirementRefs: [ledger.requirements[1]!.id],
+          message: "A native kernel driver is outside the activated compiler semantics.",
+        },
+      ],
+    };
+    const rejectionHash = hashCanonicalJson(rejection);
+    const record = {
+      schema: "setfarm.v3-plan-clarification-record.v1",
+      disposition: "clarification_required",
+      owner: "compiler",
+      runId,
+      stepDbId: "step-eval-2047-plan",
+      claimId: 1,
+      sourceTaskHash: ledger.sourceHash,
+      rejectionHash,
+      rejection,
+      terminal: {
+        outcome: "blocked",
+        reasonCode: "product_spec_clarification_required",
+        modelRedispatchBudget: 0,
+      },
+    };
+    await database.sql.unsafe(
+      `INSERT INTO runs (
+         id, workflow_id, task, status, context, protocol, protocol_version,
+         compiler_release_sha, activation_preflight_hash, release_admission_hash
+       ) VALUES ($1, 'feature-dev', $2, 'failed', '{}', 'v3', 1, $3, $4, $5)`,
+      [runId, task, releaseSha, "2".repeat(64), releaseAdmissionHash],
+    );
+    const claims = await database.sql.unsafe<Array<Record<string, unknown>>>(
+      `INSERT INTO claim_log (run_id, step_id, story_id, agent_id, outcome, diagnostic)
+       VALUES ($1, 'plan', NULL, 'feature-dev_planner', 'completed', 'typed two-code clarification')
+       RETURNING id`,
+      [runId],
+    );
+    record.claimId = Number(claims[0]?.["id"]);
+    await database.sql.unsafe(
+      `INSERT INTO steps (
+         id, run_id, step_id, agent_id, step_index, input_template, expects,
+         status, output, retry_count, max_retries, type
+       ) VALUES ($1, $2, 'plan', 'feature-dev_planner', 1, '', '',
+                 'failed', $3, 0, 3, 'single')`,
+      [record.stepDbId, runId, JSON.stringify(record)],
+    );
+    await database.sql.unsafe(
+      `INSERT INTO run_termination_requests (
+         request_id, run_id, target_status, state, requested_by,
+         requested_at, drained_at, terminalized_at, diagnostic, evidence
+       ) VALUES ($1, $2, 'failed', 'terminalized',
+                 'setfarm.product-compiler.plan-refusal', NOW(), NOW(), NOW(),
+                 'typed two-code clarification', $3::text::jsonb)`,
+      [
+        "TERM_eval-postgres-2047-two-code",
+        runId,
+        JSON.stringify({
+          schema: "setfarm.v3-plan-clarification-termination.v1",
+          terminalFailure: true,
+          owner: "compiler",
+          rejectionHash,
+          sourceTaskHash: ledger.sourceHash,
+          reasonCodes: [
+            "PRODUCT_SPEC_SEMANTIC_UNSUPPORTED",
+            "PRODUCT_SPEC_TASK_AMBIGUOUS",
+          ],
+          requirementRefs: ledger.requirements.map((requirement) => requirement.id),
+          modelRedispatchBudget: 0,
+          operationalFailureCause: {
+            schema: "setfarm.operational-failure-cause.v1",
+            workflowStepId: "plan",
+            boundary: "product_compiler.plan_refusal",
+            failureClass: "contract_invalid",
+            failureCode: "V3_PLAN_CLARIFICATION_REQUIRED",
+          },
+        }),
+      ],
+    );
+
+    const collected = await createPostgresConvergencePort(database.sql).collectRun(runId, { task, oracle });
+    assert.equal(collected.canonical.oracle.schema, "setfarm.task-intent-oracle-evaluation.v2");
+    assert.deepEqual(collected.canonical.invariantCodes, []);
+    assert.equal(collected.canonical.oracle.contractComplete, true);
+    assert.equal(collected.canonical.oracle.decisionEvidenceVerified, true);
+    assert.deepEqual(collected.canonical.oracle.rejectionContract?.actualReasonCodes, [
+      "PRODUCT_SPEC_SEMANTIC_UNSUPPORTED",
+      "PRODUCT_SPEC_TASK_AMBIGUOUS",
+    ]);
+    assert.deepEqual(collected.canonical.oracle.rejectionContract?.actualReasonRequirements, [
+      {
+        reasonCode: "PRODUCT_SPEC_SEMANTIC_UNSUPPORTED",
+        requirementRefs: [ledger.requirements[1]!.id],
+      },
+      {
+        reasonCode: "PRODUCT_SPEC_TASK_AMBIGUOUS",
+        requirementRefs: [ledger.requirements[0]!.id],
+      },
+    ]);
+  });
+
   it("selects canonical evidence against each story attempt instead of the last global tree", async () => {
     const runId = "eval-postgres-multi-story";
     const releaseSha = "d".repeat(40);
@@ -220,22 +404,41 @@ describe("convergence PostgreSQL port", () => {
                  'v3', 1, $3, NULL, $4, $5)`,
       [runId, intent.task, releaseSha, "9".repeat(64), releaseAdmissionHash],
     );
-    const compilation = await createRuntimePacketCompiler({
-      sql: database.sql,
-      artifactRoot,
-      artifactLimits,
-      ownerInstanceId: "eval-postgres-test",
-    }).compile({
-      runId,
-      expectedMode: "v3",
-      ...intent.contracts,
-      compiler: { version: "3.0.0", codeSha: releaseSha },
-      producer: { pass: "eval-postgres-test", codeSha: releaseSha, toolVersions: {} },
+    const compiler = { version: "3.0.0", codeSha: releaseSha };
+    const producer = { pass: "eval-postgres-test", codeSha: releaseSha, toolVersions: {} };
+    const compilation = await compileProductBuildPacket({
+      productSpec: intent.contracts.productSpec,
+      designGraph: intent.contracts.designGraph,
+      buildTopology: intent.contracts.buildTopology,
+      storyPlan: intent.contracts.storyPlan,
+      designSource: intent.contracts.designSource,
+      compiler,
+      producer,
+      protocol: "v3",
+      artifactStore: new IndexedArtifactPublisher({
+        index: createArtifactIndex(database.sql),
+        store,
+        ownerInstanceId: "eval-postgres-test",
+      }),
     });
-    assert.equal(compilation.activation, "activated");
-    assert.equal(compilation.compilation.status, "sealed");
-    const packetHash = compilation.compilation.packetHash!;
-    const reportHash = compilation.compilation.reportHash;
+    assert.equal(compilation.status, "sealed");
+    assert.ok(compilation.packetHash);
+    await createArtifactIndex(database.sql).activateProductPacket({
+      runId,
+      packetHash: compilation.packetHash,
+      compiler,
+      artifactRefs: {
+        PRODUCT_SPEC: compilation.artifactHashes.productSpec!,
+        DESIGN_GRAPH: compilation.artifactHashes.designGraph!,
+        BUILD_TOPOLOGY: compilation.artifactHashes.buildTopology!,
+        STORY_PLAN: compilation.artifactHashes.storyPlan!,
+        DESIGN_SOURCE_CLOSURE: compilation.artifactHashes.designSourceClosure!,
+        PRODUCT_BUILD_PACKET: compilation.packetHash,
+        COMPILATION_REPORT: compilation.reportHash,
+      },
+    });
+    const packetHash = compilation.packetHash;
+    const reportHash = compilation.reportHash;
     await database.sql.unsafe("UPDATE runs SET status = 'completed' WHERE id = $1", [runId]);
 
     const stories = [

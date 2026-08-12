@@ -6,11 +6,11 @@ import assert from "node:assert/strict";
 // Since actual HTTP/CLI calls require a running gateway, we mock fetch.
 
 describe("gateway-api model parameter support", () => {
-  let createAgentCronJob: typeof import("../dist/installer/gateway-api.js").createAgentCronJob;
+  let createAgentCronJob: typeof import("../src/installer/gateway-api.js").createAgentCronJob;
 
   beforeEach(async () => {
     // Re-import to get fresh module
-    const mod = await import("../dist/installer/gateway-api.js");
+    const mod = await import("../src/installer/gateway-api.js");
     createAgentCronJob = mod.createAgentCronJob;
   });
 
@@ -153,7 +153,7 @@ describe("gateway-api model parameter support", () => {
     // Clean up: if the CLI fallback succeeded and created a real cron job,
     // delete it so we don't leave rogue jobs running (fetch is restored now)
     if (result!.ok && result!.id) {
-      const { deleteCronJob } = await import("../dist/installer/gateway-api.js");
+      const { deleteCronJob } = await import("../src/installer/gateway-api.js");
       await deleteCronJob(result!.id).catch(() => {});
     }
   });

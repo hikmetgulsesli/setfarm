@@ -189,6 +189,25 @@ describe("Product Build Packet compiler", () => {
     );
   });
 
+  it("rejects ASCII localized ProductSpec prose before publishing the child artifact", async () => {
+    const artifactStore = await store();
+    const input = compilerInput(artifactStore);
+    input.productSpec.product.name = String.fromCharCode(
+      71, 117, 97, 114, 100, 97, 114, 32, 99, 97, 109, 98, 105, 111, 115,
+    );
+
+    const result = await compileProductBuildPacket(input);
+    assert.equal(result.status, "rejected");
+    assert.equal(result.report.diagnostics.some((item) =>
+      item.code === "CONTRACT_PRODUCT_SPEC_SCHEMA_INVALID"), true);
+
+    const files = await readdir(artifactStore.root);
+    const artifactTypes = await Promise.all(files.map(async (file) =>
+      (await artifactStore.get(file.replace(/\.json$/, ""))).envelope.artifactType));
+    assert.equal(artifactTypes.includes("setfarm.product-spec.v1"), false);
+    assert.equal(artifactTypes.includes("setfarm.product-compilation-report.v1"), true);
+  });
+
   it("rejects producer/compiler revision disagreement", async () => {
     const artifactStore = await store();
     const input = compilerInput(artifactStore);

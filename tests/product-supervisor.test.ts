@@ -9,7 +9,7 @@ import {
   runProductSupervisorGate,
   supervisorMemoryPath,
   updateSupervisorMemory,
-} from "../dist/installer/product-supervisor.js";
+} from "../src/installer/product-supervisor.js";
 
 describe("product supervisor", () => {
   it("blocks legacy PRD screen tables before they become implementation stories", () => {

@@ -2,24 +2,24 @@
 
 ## Desired Product Metaphor
 
-Kullanıcı Setfarm + Mission Control'u bir şirket gibi izlemek istiyor:
+The user wants to observe Setfarm + Mission Control as if it were a company:
 
-- Patron/CEO en tepeden durumu görür.
-- Product manager ne yapılacağını ve kabul kriterlerini bilir.
-- Designer tasarımı üretir.
-- Developer kodlar.
-- Reviewer PR ve yorumları denetler.
-- QA ürünü kullanır gibi test eder.
-- Security güvenlik risklerini denetler.
-- Deployer yayınlar.
-- Supervisor kalite ve ürün bütünlüğünü takip eder.
-- Mission Control tüm bu işi canlı gösterir.
+- The executive/CEO sees the overall situation from the top.
+- The product manager knows what must be done and understands the acceptance criteria.
+- The designer produces the design.
+- The developer writes the code.
+- The reviewer examines PRs and comments.
+- QA tests the product as a user would.
+- Security checks security risks.
+- The deployer publishes the product.
+- The supervisor tracks quality and product integrity.
+- Mission Control displays all of this work live.
 
-Bu UI sadece "pipeline step done" göstermemeli; hangi agent hangi story'de, hangi dosyada, hangi PR comment'i, hangi gate, hangi runtime evidence üzerinde çalışıyor göstermeli.
+This UI should not merely show "pipeline step done." It should show which agent is working on which story, file, PR comment, gate, and runtime evidence.
 
 ## Existing Agents
 
-`workflows/feature-dev/workflow.yml` içinde roller:
+Roles in `workflows/feature-dev/workflow.yml`:
 
 - planner
 - designer
@@ -33,18 +33,18 @@ Bu UI sadece "pipeline step done" göstermemeli; hangi agent hangi story'de, han
 - tester/final-test
 - deployer
 
-Bu rol seti kağıt üzerinde yeterlidir. Sorun sadece agent sayısı değildir; yetki sınırları net değildir.
+This set of roles is sufficient on paper. The problem is not just the number of agents; their authority boundaries are unclear.
 
 ## Core Role Boundary Question
 
-Agent ne yapmalı?
+What should an agent do?
 
-- intent'i anlamalı
-- scoped kod değişikliği yapmalı
-- eksik gördüğü şeyi raporlamalı
-- verification request önermeli
+- understand intent
+- make scoped code changes
+- report anything it finds missing
+- propose a verification request
 
-Setfarm ne yapmalı?
+What should Setfarm do?
 
 - scope enforcement
 - build/test/smoke/evidence execution
@@ -53,34 +53,34 @@ Setfarm ne yapmalı?
 - completion decision
 - MC observations
 
-Supervisor ne yapmalı?
+What should the supervisor do?
 
-- product coherence ve policy denetimi
-- repeated failure pattern'lerini sınıflandırma
-- safe/bounded intervention önerme
+- check product coherence and policy
+- classify repeated failure patterns
+- propose safe, bounded interventions
 
-Supervisor ne yapmamalı?
+What should the supervisor not do?
 
-- rastgele platform kodu patch'lemek
-- kendi fix'ini kendi onaylamak
-- smoke test'i gevşetmek
-- developer/QA/PM rollerini tek başına yutmak
+- patch arbitrary platform code
+- approve its own fix
+- relax the smoke test
+- absorb the developer, QA, and PM roles by itself
 
 ## Do We Need More Agents?
 
-Muhtemel cevap daha fazla agent değil, daha net authority modelidir.
+The likely answer is not more agents, but a clearer authority model.
 
-Gerekebilecek yeni logical role'ler:
+Potential new logical roles:
 
-- Evidence Runner: agent değil, Setfarm-owned runtime executor.
-- Platform Architect Reviewer: self-heal patch planını insan/onay öncesi analiz eden rol.
-- MC Projection Owner: event/read-model doğruluğunu denetleyen sistem rolü.
+- Evidence Runner: not an agent, but a Setfarm-owned runtime executor.
+- Platform Architect Reviewer: a role that analyzes a self-heal patch plan before human review/approval.
+- MC Projection Owner: a system role that checks event/read-model correctness.
 
-Ama yeni LLM agent eklemek tek başına çözüm değildir. Fazla agent, daha fazla yorum ve daha fazla çelişkili claim üretebilir.
+Adding a new LLM agent is not a solution by itself. More agents can produce more commentary and more conflicting claims.
 
 ## Recommended Question For Gemini/Sonnet
 
-Mevcut roller korunmalı mı? Yoksa sistemi şu şekilde yeniden mi kurmalıyız:
+Should the existing roles be preserved? Or should we rebuild the system around:
 
 - fewer LLM agents
 - stronger deterministic orchestrator
@@ -88,5 +88,4 @@ Mevcut roller korunmalı mı? Yoksa sistemi şu şekilde yeniden mi kurmalıyız
 - explicit review FSM
 - MC as event-sourced operations board
 
-Hangi görevler kesinlikle LLM'e verilmemeli?
-
+Which tasks should never be delegated to an LLM?

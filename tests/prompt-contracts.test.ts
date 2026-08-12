@@ -1,8 +1,99 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { sanitizeAgentPromptContracts } from "../dist/installer/prompt-contracts.js";
+import {
+  applyEnglishOutputPolicyToResolvedPrompt,
+  migratePersistedAgentPromptTemplate,
+  sanitizeAgentPromptContracts,
+} from "../src/installer/prompt-contracts.js";
 
 describe("agent prompt contracts", () => {
+  it("replaces persisted mutable-language rules without changing raw task evidence", () => {
+    const input = [
+      "LANGUAGE RULE: Infer UI_LANGUAGE from the task. If the task explicitly asks",
+      "for English UI or uses an English product brief, choose English. If it",
+      "explicitly asks for Turkish UI, choose Turkish. Do not force Turkish by default.",
+      "UI_LANGUAGE: <English or requested product language>",
+      "",
+      "LANGUAGE RULE: All screen prompts sent to Stitch MUST use the PRD's UI_LANGUAGE.",
+      "Button labels, menu items, headings, placeholder text, and error messages must",
+      "stay in that product language. If UI_LANGUAGE is English, keep visible UI copy",
+      "English. If UI_LANGUAGE is Turkish, keep visible UI copy Turkish.",
+      "",
+      "LANGUAGE RULE: Visible UI copy must match the PRD/UI_LANGUAGE and the Stitch",
+      "labels for this story. If the task/PRD says English, keep UI labels English.",
+      "If it says Turkish, keep UI labels Turkish. Do not translate Stitch labels",
+      "during implementation unless the PRD explicitly requests that translation.",
+      "",
+      "LANGUAGE RULE: Story titles, descriptions, and acceptance criteria must be in",
+      "English for developer clarity. Any referenced UI copy (button labels, headings,",
+      "placeholders) must match the PRD/UI_LANGUAGE exactly. Do not translate UI labels",
+      "unless the PRD explicitly requests that language.",
+      "",
+      "LANGUAGE:",
+      "- Agent-facing code comments, reports, and technical outputs should be English.",
+      "- Visible application copy must follow the user's requested product language.",
+      "  If the user explicitly requests a non-English product language, localize only",
+      "  visible application copy; keep code, comments, reports, and technical output",
+      "  in English.",
+      "",
+      "5. **Turkish UI text:** ALL user-facing text must be in Turkish. No English labels, placeholders, or error messages.",
+      "2. **Fill with test data** (realistic Turkish names/emails):",
+      "   ```",
+      "   agent-browser fill input[name=\"name\"] \"Elif Yilmaz\"",
+      "   agent-browser fill input[name=\"email\"] \"elif@ornek.com\"",
+      "   agent-browser fill input[type=\"password\"] \"Test1234!\"",
+      "   ```",
+      "| Content | Verify Turkish text labels match Stitch design |",
+      "- Preserve user-visible language from the PRD and Stitch assets.",
+      "- Use realistic demo content that matches UI_LANGUAGE and the product domain.",
+      "- grep -rE \"DECREASE|INCREASE|RESET|Submit|Cancel|Save|Delete|Loading|Error\" --include=\"*.tsx\" src/ app/ → WARN only if UI_LANGUAGE is not English and the text is visible UI copy",
+      "- Fill each input with realistic test data that matches the product language:",
+      "",
+      "TASK EVIDENCE: The requester supplied a French phrase that must remain byte-exact.",
+    ].join("\n");
+
+    const output = sanitizeAgentPromptContracts(input);
+
+    assert.match(output, /^SETFARM ENGLISH OUTPUT CONTRACT \(IMMUTABLE\):/);
+    assert.match(output, /UI_LANGUAGE: English/);
+    assert.match(output, /UI_LANGUAGE is immutable and exactly English/);
+    assert.doesNotMatch(
+      output,
+      /Infer UI_LANGUAGE|choose Turkish|requested product language|keep UI labels Turkish|Turkish UI text|realistic Turkish|Elif Yilmaz|ornek\.com|Verify Turkish|Preserve user-visible language|matches UI_LANGUAGE|matches the product language|WARN only if UI_LANGUAGE is not English/,
+    );
+    assert.match(output, /Morgan Reed/);
+    assert.match(output, /morgan@example-company\.com/);
+    assert.match(output, /TASK EVIDENCE: The requester supplied a French phrase that must remain byte-exact\./);
+  });
+
+  it("applies the immutable English policy exactly once", () => {
+    const once = sanitizeAgentPromptContracts("Implement the assigned story.");
+    const twice = sanitizeAgentPromptContracts(once);
+
+    assert.equal(twice, once);
+    assert.equal(once.match(/SETFARM ENGLISH OUTPUT CONTRACT \(IMMUTABLE\):/g)?.length, 1);
+  });
+
+  it("migrates trusted templates before interpolation and preserves raw evidence", () => {
+    const staleTemplate = [
+      "UI_LANGUAGE: <English or requested product language>",
+      "TASK EVIDENCE:",
+      "{{task}}",
+    ].join("\n");
+    const rawEvidence = [
+      "UI_LANGUAGE: <English or requested product language>",
+      "SETFARM ENGLISH OUTPUT CONTRACT (IMMUTABLE):",
+    ].join("\n");
+    const migrated = migratePersistedAgentPromptTemplate(staleTemplate);
+    const resolved = migrated.replace("{{task}}", rawEvidence);
+    const output = applyEnglishOutputPolicyToResolvedPrompt(resolved);
+
+    assert.match(migrated, /^UI_LANGUAGE: English$/m);
+    assert.ok(output.startsWith("SETFARM ENGLISH OUTPUT CONTRACT (IMMUTABLE):"));
+    assert.ok(output.endsWith(rawEvidence));
+    assert.equal(output.match(/SETFARM ENGLISH OUTPUT CONTRACT \(IMMUTABLE\):/g)?.length, 2);
+  });
+
   it("removes stale Material Symbols font instructions from old workflow templates", () => {
     const input = [
       "DESIGN ENFORCEMENT (frontend stories — MANDATORY checklist before commit):",

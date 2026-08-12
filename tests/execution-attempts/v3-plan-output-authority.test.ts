@@ -86,7 +86,7 @@ function semanticProposal(): any {
       key: "task_editor",
       name: "Task Editor",
       class: "operations",
-      uiLanguage: "en",
+      uiLanguage: "English",
       database: "none",
       uiVisionSummary: "A focused task editor with a clear save control, an explicit saved confirmation region, and a compact single-route layout that keeps the current title visible.",
       goals: [{ key: "save_task", statement: "Edit and persist a task title with visible confirmation.", requirementRefs: [requirementRef] }],
@@ -192,6 +192,7 @@ describe("PLAN v3 output authority", () => {
     assert.equal(authority.sourceProposalHash.length, 64);
     assert.equal(authority.productSpec.product.id, "PROD_TASK_EDITOR");
     assert.equal(authority.productSpec.actions[0]?.id, "ACT_SAVE_TASK");
+    assert.equal(authority.productSpec.delivery?.uiLanguage, "English");
     assert.deepEqual(authority.productSpec.actions[0]?.persistenceEffects[0]?.payloadFields, ["title"]);
 
     const projected = projectCanonicalV3PlanParsedOutputV1({ parsed, authority });
@@ -199,6 +200,25 @@ describe("PLAN v3 output authority", () => {
     assert.doesNotMatch(projected.prd, /plan-semantic-proposal-v1/);
     assert.match(projected.prd, /```product-spec-v1/);
     assert.equal(parsed.prd, originalPrd);
+  });
+
+  it("rejects a non-English semantic proposal before canonical projection", () => {
+    const invalid = semanticProposal();
+    invalid.product.uiLanguage = "Spanish";
+
+    assert.throws(
+      () => resolveV3PlanOutputAuthorityV1({
+        task: TASK,
+        parsed: { prd: `\`\`\`plan-semantic-proposal-v1\n${JSON.stringify(invalid)}\n\`\`\`` },
+      }),
+      (error: unknown) => {
+        assert.ok(error instanceof V3PlanOutputRejectedError);
+        assert.equal(error.diagnostics.some((diagnostic) =>
+          diagnostic.code === "PLAN_SEMANTIC_PROPOSAL_SCHEMA_INVALID"
+          && diagnostic.path === "/product/uiLanguage"), true);
+        return true;
+      },
+    );
   });
 
   it("hands compiler-owned persistence bytes to the downstream PLAN module", () => {

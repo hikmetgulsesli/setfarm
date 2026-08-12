@@ -14,7 +14,7 @@ PROJECT_NAME: <product name>
 PROJECT_SLUG: <kebab-case product slug>
 PLATFORM: <web|mobile|desktop|api|cli|game>
 TECH_STACK: <vite-react|nextjs|static-html|browser-game|node-express|python-web|node-cli|python-cli|react-native-expo|android-native|ios-native|desktop-electron>
-UI_LANGUAGE: <English or requested product language>
+UI_LANGUAGE: English
 DB_REQUIRED: <none|postgres|sqlite|external>
 DESIGN_REQUIRED: <true|false>
 UI_VISION_SUMMARY: <3-4 UI-focused sentences for DESIGN; no runtime paths>
@@ -23,6 +23,9 @@ PRD:
 ```
 
 Every field is required. This is not JSON. Only `PRD` may be multi-line.
+The source task may use or request another language, but every planner-owned
+product name, semantic statement, visible label, message, UI copy, and
+technical field must be written in English.
 
 ## Runtime Ownership Boundary
 

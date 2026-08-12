@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
-import { renderRuntimeCommand, WebPreviewRuntimeDriver } from "../dist/installer/web-runtime-driver.js";
+import { renderRuntimeCommand, WebPreviewRuntimeDriver } from "../src/installer/web-runtime-driver.js";
 
 const root = path.resolve(import.meta.dirname, "..");
 

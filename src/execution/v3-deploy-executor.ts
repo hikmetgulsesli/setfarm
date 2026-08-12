@@ -692,15 +692,17 @@ function ensureSafeRuntimeLog(logRoot: string, projectId: string): string {
     0o600,
   );
   try {
-    const descriptorStats = fstatSync(descriptor);
-    const pathStats = lstatSync(filePath);
+    const descriptorStats = fstatSync(descriptor, { bigint: true });
+    const pathStats = lstatSync(filePath, { bigint: true });
     if (
       !descriptorStats.isFile()
       || !pathStats.isFile()
       || pathStats.isSymbolicLink()
+      || descriptorStats.isSymbolicLink()
       || descriptorStats.dev !== pathStats.dev
       || descriptorStats.ino !== pathStats.ino
-      || (pathStats.mode & 0o777) !== 0o600
+      || (descriptorStats.mode & 0o777n) !== 0o600n
+      || (pathStats.mode & 0o777n) !== 0o600n
     ) {
       throw new Error("V3_DEPLOY_ISOLATION_LOG_PATH_UNSAFE");
     }
@@ -1008,12 +1010,12 @@ type LeaseReadResult =
 function readLease(filePath: string): LeaseReadResult {
   if (!existsSync(filePath)) return { status: "absent" };
   try {
-    const stats = lstatSync(filePath);
+    const stats = lstatSync(filePath, { bigint: true });
     if (
       !stats.isFile()
       || stats.isSymbolicLink()
-      || (stats.mode & 0o777) !== 0o600
-      || (typeof process.getuid === "function" && stats.uid !== process.getuid())
+      || (stats.mode & 0o777n) !== 0o600n
+      || (typeof process.getuid === "function" && stats.uid !== BigInt(process.getuid()))
       || realpathSync(filePath) !== path.resolve(filePath)
     ) return { status: "invalid" };
     return {
@@ -1190,12 +1192,12 @@ function replaceExactLease(
 
 function readDeploymentState(filePath: string): V3LocalDeploymentStateV1 {
   try {
-    const stats = lstatSync(filePath);
+    const stats = lstatSync(filePath, { bigint: true });
     if (
       !stats.isFile()
       || stats.isSymbolicLink()
-      || (stats.mode & 0o777) !== 0o600
-      || (typeof process.getuid === "function" && stats.uid !== process.getuid())
+      || (stats.mode & 0o777n) !== 0o600n
+      || (typeof process.getuid === "function" && stats.uid !== BigInt(process.getuid()))
       || realpathSync(filePath) !== path.resolve(filePath)
     ) {
       throw new Error("mode_owner_type_or_path");
@@ -1208,12 +1210,12 @@ function readDeploymentState(filePath: string): V3LocalDeploymentStateV1 {
 
 function readIsolationControl(filePath: string): V3LocalRuntimeIsolationControlV1 {
   try {
-    const stats = lstatSync(filePath);
+    const stats = lstatSync(filePath, { bigint: true });
     if (
       !stats.isFile()
       || stats.isSymbolicLink()
-      || (stats.mode & 0o777) !== 0o600
-      || (typeof process.getuid === "function" && stats.uid !== process.getuid())
+      || (stats.mode & 0o777n) !== 0o600n
+      || (typeof process.getuid === "function" && stats.uid !== BigInt(process.getuid()))
       || realpathSync(filePath) !== path.resolve(filePath)
     ) {
       throw new Error("mode_or_type");
@@ -1255,12 +1257,12 @@ function unlinkExactPid(filePath: string, expectedPid: number): void {
 
 function readBuildArtifact(filePath: string): V3BuildArtifactV1 {
   try {
-    const stats = lstatSync(filePath);
+    const stats = lstatSync(filePath, { bigint: true });
     if (
       !stats.isFile()
       || stats.isSymbolicLink()
-      || (stats.mode & 0o777) !== 0o600
-      || (typeof process.getuid === "function" && stats.uid !== process.getuid())
+      || (stats.mode & 0o777n) !== 0o600n
+      || (typeof process.getuid === "function" && stats.uid !== BigInt(process.getuid()))
       || realpathSync(filePath) !== path.resolve(filePath)
     ) {
       throw new Error("mode_owner_type_or_path");

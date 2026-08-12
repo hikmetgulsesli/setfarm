@@ -59,6 +59,20 @@ export const GH_MERGE_TIMEOUT = 30_000;
  * These are seed values set at run creation time or canonical packet fields
  * established by their owning upstream stage.
  */
+export const COMPILER_OWNED_CONTEXT_KEYS = new Set([
+  "product_semantics_version",
+  "plan_source_transport",
+  "plan_source_proposal_hash",
+  "plan_semantic_proposal_hash",
+  "plan_output_authority_version",
+  "plan_product_build_authority",
+  "plan_product_build_authority_hash",
+  "product_runtime_behavior_proposal",
+  "product_runtime_behavior_proposal_hash",
+  "product_runtime_behavior_contract",
+  "product_runtime_behavior_contract_hash",
+]);
+
 export const PROTECTED_CONTEXT_KEYS = new Set([
   "repo",
   "task",
@@ -74,7 +88,21 @@ export const PROTECTED_CONTEXT_KEYS = new Set([
   "product_delivery_conversion_policy",
   "product_delivery_design_projection",
   "product_delivery_topology_hash",
+  "product_spec_schema",
+  "product_spec_hash",
+  "product_spec_source_task_hash",
+  "product_persistence_projection",
+  "product_persistence_projection_hash",
+  ...COMPILER_OWNED_CONTEXT_KEYS,
 ]);
+
+export function isStepOutputContextKeyProtected(
+  key: string,
+  context: Readonly<Record<string, string>>,
+): boolean {
+  return COMPILER_OWNED_CONTEXT_KEYS.has(key)
+    || (PROTECTED_CONTEXT_KEYS.has(key) && Boolean(context[key]));
+}
 
 // ── Optional Template Variables ─────────────────────────────────────
 

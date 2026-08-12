@@ -2,12 +2,14 @@ import { randomUUID } from "node:crypto";
 import {
   closeSync,
   existsSync,
+  fstatSync,
   fsyncSync,
   lstatSync,
   openSync,
   readFileSync,
   readdirSync,
   statfsSync,
+  type BigIntStats,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -47,8 +49,59 @@ const V3SealCapacityLockV1Schema = z.object({
 
 type V3SealCapacityLockV1 = z.infer<typeof V3SealCapacityLockV1Schema>;
 
+type V3SealCapacityLockIdentityV2 = Readonly<{
+  device: bigint;
+  inode: bigint;
+  ownerUid: bigint;
+  ownerGid: bigint;
+  objectKind: "ordinary_file";
+}>;
+
 function fail(code: string, detail: string): never {
   throw new Error(`${code}:${detail.slice(0, 500)}`);
+}
+
+function exactCapacityLockIdentityFromStat(
+  stat: BigIntStats,
+): V3SealCapacityLockIdentityV2 | undefined {
+  if (stat.isSymbolicLink() || !stat.isFile() || stat.nlink !== 1n) {
+    return undefined;
+  }
+  return Object.freeze({
+    device: stat.dev,
+    inode: stat.ino,
+    ownerUid: stat.uid,
+    ownerGid: stat.gid,
+    objectKind: "ordinary_file" as const,
+  });
+}
+
+function sameCapacityLockIdentity(
+  left: V3SealCapacityLockIdentityV2,
+  right: V3SealCapacityLockIdentityV2,
+): boolean {
+  return left.device === right.device
+    && left.inode === right.inode
+    && left.ownerUid === right.ownerUid
+    && left.ownerGid === right.ownerGid
+    && left.objectKind === right.objectKind;
+}
+
+function captureCapacityLockIdentity(filePath: string): V3SealCapacityLockIdentityV2 {
+  const stat = lstatSync(filePath, { bigint: true }) as BigIntStats;
+  const identity = exactCapacityLockIdentityFromStat(stat);
+  if (!identity) fail("V3_DEPLOY_SEAL_CAPACITY_LOCK_INVALID", filePath);
+  return identity;
+}
+
+function assertCapacityLockIdentityCurrent(
+  filePath: string,
+  expected: V3SealCapacityLockIdentityV2,
+): void {
+  const observed = captureCapacityLockIdentity(filePath);
+  if (!sameCapacityLockIdentity(observed, expected)) {
+    fail("V3_DEPLOY_SEAL_CAPACITY_LOCK_CHANGED", filePath);
+  }
 }
 
 function safeNonNegative(value: number, label: string): number {
@@ -82,12 +135,18 @@ function capacityLockBytes(lock: V3SealCapacityLockV1): string {
 function readCapacityLock(filePath: string): Readonly<{
   lock: V3SealCapacityLockV1;
   bytes: string;
+  identity: V3SealCapacityLockIdentityV2;
 }> {
   const stats = lstatSync(filePath);
   if (!stats.isFile() || stats.isSymbolicLink() || (stats.mode & 0o777) !== 0o600) {
     fail("V3_DEPLOY_SEAL_CAPACITY_LOCK_INVALID", filePath);
   }
+  const beforeExact = captureCapacityLockIdentity(filePath);
   const bytes = readFileSync(filePath, "utf8");
+  const afterExact = captureCapacityLockIdentity(filePath);
+  if (!sameCapacityLockIdentity(beforeExact, afterExact)) {
+    fail("V3_DEPLOY_SEAL_CAPACITY_LOCK_CHANGED", filePath);
+  }
   let lock: V3SealCapacityLockV1;
   try {
     lock = V3SealCapacityLockV1Schema.parse(JSON.parse(bytes));
@@ -95,19 +154,29 @@ function readCapacityLock(filePath: string): Readonly<{
     fail("V3_DEPLOY_SEAL_CAPACITY_LOCK_INVALID", String(error));
   }
   if (bytes !== capacityLockBytes(lock)) fail("V3_DEPLOY_SEAL_CAPACITY_LOCK_INVALID", filePath);
-  return { lock, bytes };
+  return { lock, bytes, identity: afterExact };
 }
 
-function writeCapacityLock(filePath: string, lock: V3SealCapacityLockV1): boolean {
+function writeCapacityLock(
+  filePath: string,
+  lock: V3SealCapacityLockV1,
+): V3SealCapacityLockIdentityV2 | false {
   let descriptor: number | undefined;
   try {
     descriptor = openSync(filePath, "wx", 0o600);
     writeFileSync(descriptor, capacityLockBytes(lock), "utf8");
     fsyncSync(descriptor);
+    const descriptorStat = fstatSync(descriptor, { bigint: true }) as BigIntStats;
+    const descriptorIdentity = exactCapacityLockIdentityFromStat(descriptorStat);
+    if (!descriptorIdentity) fail("V3_DEPLOY_SEAL_CAPACITY_LOCK_INVALID", filePath);
     closeSync(descriptor);
     descriptor = undefined;
     fsyncDirectory(path.dirname(filePath));
-    return true;
+    const pathIdentity = captureCapacityLockIdentity(filePath);
+    if (!sameCapacityLockIdentity(descriptorIdentity, pathIdentity)) {
+      fail("V3_DEPLOY_SEAL_CAPACITY_LOCK_CHANGED", filePath);
+    }
+    return descriptorIdentity;
   } catch (error) {
     if (descriptor !== undefined) closeSync(descriptor);
     if ((error as NodeJS.ErrnoException).code === "EEXIST") return false;
@@ -130,6 +199,7 @@ async function acquireCapacityLock(sealedRoot: string): Promise<Readonly<{
   filePath: string;
   value: V3SealCapacityLockV1;
   bytes: string;
+  identity: V3SealCapacityLockIdentityV2;
 }>> {
   const ownerIdentity = observeProcessIdentity(process.pid);
   if (!ownerIdentity) fail("V3_DEPLOY_SEAL_CAPACITY_LOCK_OWNER_UNAVAILABLE", String(process.pid));
@@ -142,17 +212,27 @@ async function acquireCapacityLock(sealedRoot: string): Promise<Readonly<{
   const filePath = path.join(sealedRoot, ".capacity.lock");
   const startedAt = Date.now();
   while (Date.now() - startedAt < 120_000) {
-    if (writeCapacityLock(filePath, value)) {
-      return { filePath, value, bytes: capacityLockBytes(value) };
+    const createdIdentity = writeCapacityLock(filePath, value);
+    if (createdIdentity) {
+      return {
+        filePath,
+        value,
+        bytes: capacityLockBytes(value),
+        identity: createdIdentity,
+      };
     }
     const observed = readCapacityLock(filePath);
     const status = ownerStatus(observed.lock);
     if (status === "unknown") fail("V3_DEPLOY_SEAL_CAPACITY_LOCK_OWNER_AMBIGUOUS", filePath);
     if (status === "dead") {
       const reread = readCapacityLock(filePath);
-      if (reread.bytes !== observed.bytes) {
+      if (
+        reread.bytes !== observed.bytes
+        || !sameCapacityLockIdentity(reread.identity, observed.identity)
+      ) {
         fail("V3_DEPLOY_SEAL_CAPACITY_LOCK_CHANGED", filePath);
       }
+      assertCapacityLockIdentityCurrent(filePath, observed.identity);
       unlinkSync(filePath);
       fsyncDirectory(sealedRoot);
       continue;
@@ -165,9 +245,16 @@ async function acquireCapacityLock(sealedRoot: string): Promise<Readonly<{
 function releaseCapacityLock(input: Readonly<{
   filePath: string;
   bytes: string;
+  identity: V3SealCapacityLockIdentityV2;
 }>): void {
   const observed = readCapacityLock(input.filePath);
-  if (observed.bytes !== input.bytes) fail("V3_DEPLOY_SEAL_CAPACITY_LOCK_OWNERSHIP_MISMATCH", input.filePath);
+  if (
+    observed.bytes !== input.bytes
+    || !sameCapacityLockIdentity(observed.identity, input.identity)
+  ) {
+    fail("V3_DEPLOY_SEAL_CAPACITY_LOCK_OWNERSHIP_MISMATCH", input.filePath);
+  }
+  assertCapacityLockIdentityCurrent(input.filePath, input.identity);
   unlinkSync(input.filePath);
   fsyncDirectory(path.dirname(input.filePath));
 }

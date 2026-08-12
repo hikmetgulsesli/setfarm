@@ -1,11 +1,13 @@
 import { lstat, readdir, stat, statfs } from "node:fs/promises";
 import path from "node:path";
+import { isProxy } from "node:util/types";
 
 export const DEFAULT_ARTIFACT_CAPACITY_LIMITS = Object.freeze({
   maxPayloadBytes: 4 * 1024 * 1024,
   rootQuotaBytes: 512 * 1024 * 1024,
   minFreeBytes: 1024 * 1024 * 1024,
 });
+export const ARTIFACT_BATCH_CAPACITY_MAX_ITEMS_V1 = 9;
 
 export type ArtifactCapacityLimits = Readonly<{
   maxPayloadBytes: number;
@@ -19,6 +21,7 @@ export type ArtifactCapacitySnapshot = Readonly<{
 }>;
 
 export type ArtifactCapacityErrorCode =
+  | "ARTIFACT_BATCH_CAPACITY_OVERFLOW"
   | "ARTIFACT_CAPACITY_LOCK_TIMEOUT"
   | "ARTIFACT_FREE_SPACE_LOW"
   | "ARTIFACT_PAYLOAD_TOO_LARGE"
@@ -84,6 +87,103 @@ export function assessArtifactCapacity(input: Readonly<{
   } else if (projectedRootBytes > limits.rootQuotaBytes) {
     code = "ARTIFACT_ROOT_QUOTA_EXCEEDED";
   } else if (projectedFreeBytes < limits.minFreeBytes) {
+    code = "ARTIFACT_FREE_SPACE_LOW";
+  }
+  return Object.freeze({
+    status: code === "ARTIFACT_CAPACITY_OK" ? "pass" : "fail",
+    code,
+    payloadBytes,
+    rootBytes,
+    projectedRootBytes,
+    freeBytes,
+    projectedFreeBytes,
+    limits,
+  });
+}
+
+function snapshotBatchPayloadByteLengths(value: unknown): readonly number[] {
+  if (
+    value === null
+    || typeof value !== "object"
+    || isProxy(value)
+    || !Array.isArray(value)
+    || Object.getPrototypeOf(value) !== Array.prototype
+  ) {
+    throw new TypeError("missingPayloadByteLengths must be a non-proxied ordinary array");
+  }
+  const lengthDescriptor = Object.getOwnPropertyDescriptor(value, "length");
+  const length = lengthDescriptor && "value" in lengthDescriptor
+    ? lengthDescriptor.value
+    : undefined;
+  if (
+    !Number.isSafeInteger(length)
+    || length < 0
+    || length > ARTIFACT_BATCH_CAPACITY_MAX_ITEMS_V1
+  ) {
+    throw new TypeError(
+      `missingPayloadByteLengths must contain at most ${ARTIFACT_BATCH_CAPACITY_MAX_ITEMS_V1} entries`,
+    );
+  }
+  const ownKeys = Reflect.ownKeys(value);
+  if (ownKeys.length !== length + 1 || !ownKeys.includes("length")) {
+    throw new TypeError("missingPayloadByteLengths must be dense and contain only entries");
+  }
+  const snapshot: number[] = [];
+  for (let index = 0; index < length; index += 1) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+    if (!descriptor || !("value" in descriptor) || !descriptor.enumerable) {
+      throw new TypeError(`missingPayloadByteLengths[${index}] must be a data property`);
+    }
+    snapshot.push(finiteNonNegative(
+      descriptor.value as number,
+      `missingPayloadByteLengths[${index}]`,
+    ));
+  }
+  return Object.freeze(snapshot);
+}
+
+function checkedBatchCapacityAddition(left: number, right: number, label: string): number {
+  if (left > Number.MAX_SAFE_INTEGER - right) {
+    throw new ArtifactCapacityError(
+      "ARTIFACT_BATCH_CAPACITY_OVERFLOW",
+      `ARTIFACT_BATCH_CAPACITY_OVERFLOW: ${label} exceeds safe-integer authority`,
+    );
+  }
+  return left + right;
+}
+
+export function assessArtifactBatchCapacity(input: Readonly<{
+  missingPayloadByteLengths: readonly number[];
+  rootBytes: number;
+  freeBytes: number;
+  limits: ArtifactCapacityLimits;
+}>): ArtifactCapacityAssessment {
+  const lengths = snapshotBatchPayloadByteLengths(input.missingPayloadByteLengths);
+  const rootBytes = finiteNonNegative(input.rootBytes, "rootBytes");
+  const freeBytes = finiteNonNegative(input.freeBytes, "freeBytes");
+  const limits = normalizeArtifactCapacityLimits(input.limits);
+  let payloadBytes = 0;
+  let hasOversizedItem = false;
+  for (const length of lengths) {
+    payloadBytes = checkedBatchCapacityAddition(
+      payloadBytes,
+      length,
+      "aggregate missing payload bytes",
+    );
+    if (length > limits.maxPayloadBytes) hasOversizedItem = true;
+  }
+  const projectedRootBytes = checkedBatchCapacityAddition(
+    rootBytes,
+    payloadBytes,
+    "projected artifact root bytes",
+  );
+  const projectedFreeBytes = payloadBytes >= freeBytes ? 0 : freeBytes - payloadBytes;
+  let code: ArtifactCapacityAssessment["code"] = "ARTIFACT_CAPACITY_OK";
+  if (hasOversizedItem) {
+    code = "ARTIFACT_PAYLOAD_TOO_LARGE";
+  } else if (payloadBytes > 0 && projectedRootBytes > limits.rootQuotaBytes) {
+    code = "ARTIFACT_ROOT_QUOTA_EXCEEDED";
+  } else if (payloadBytes > 0 && projectedFreeBytes < limits.minFreeBytes) {
     code = "ARTIFACT_FREE_SPACE_LOW";
   }
   return Object.freeze({

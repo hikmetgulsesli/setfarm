@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { produceRuntimeDataContractV1 } from "../../src/product-compiler/producers/runtime-data-contract.js";
+import { hashCanonicalJson } from "../../src/product-compiler/canonical-json.js";
+import {
+  produceRuntimeDataContractV1,
+  validateRuntimeDataContractClosureV1,
+} from "../../src/product-compiler/producers/runtime-data-contract.js";
 import { extractTaskRequirementLedgerV1 } from "../../src/product-compiler/requirements/task-requirements-v1.js";
 import {
   RuntimeDataContractV1Schema,
@@ -15,6 +19,7 @@ import {
   type ProductDeliveryV1,
 } from "../../src/product-compiler/schemas/product-spec-v1.js";
 import { buildMinimalValidContracts } from "./fixtures/minimal-valid-contract.js";
+import { buildContainedGameProductSpecV2 } from "./fixtures/product-semantics-v2.js";
 
 type RuntimeProfile = "browser" | "stateless" | "sqlite" | "postgres";
 
@@ -300,6 +305,20 @@ describe("Product Build Packet runtime-data contract", () => {
       durability: "session",
       persistenceRefs: ["PERSIST_TASK_LOCAL"],
     }]);
+  });
+
+  it("reproduces the exact runtime-data closure from native ProductSpecV2", () => {
+    const productSpec = buildContainedGameProductSpecV2();
+    const result = produceRuntimeDataContractV1({ productSpec, commands: commands() });
+    assert.equal(result.status, "produced", JSON.stringify(result));
+    if (result.status !== "produced") return;
+    assert.equal(result.contract.sourceProductSpecHash, hashCanonicalJson(productSpec));
+    assert.deepEqual(validateRuntimeDataContractClosureV1({
+      productSpec,
+      commands: commands(),
+      contract: result.contract,
+      contractHash: result.contractHash,
+    }), []);
   });
 
   it("preserves none and session durability as separate exact authorities", () => {

@@ -6,7 +6,7 @@ import {
   SemanticArtifactEnvelopeV1Schema,
   type ArtifactPutResult,
 } from "./artifact-store.js";
-import { hashCanonicalJson } from "./canonical-json.js";
+import { canonicalJsonStringify, hashCanonicalJson } from "./canonical-json.js";
 import {
   buildDesignSourceClosureV1,
   validateDesignSourceClosureInputV1,
@@ -28,6 +28,10 @@ import {
   type ProductCompilationReportV2,
 } from "./schemas/compilation-report-v2.js";
 import {
+  ProductCompilationReportV3Schema,
+  type ProductCompilationReportV3,
+} from "./schemas/compilation-report-v3.js";
+import {
   CompilerIdentityV1Schema,
   SemanticArtifactProducerV1Schema,
   Sha256Schema,
@@ -45,12 +49,32 @@ import {
   type ProductBuildPacketV2,
 } from "./schemas/product-build-packet-v2.js";
 import {
-  ProductSpecV1Schema,
+  ProductBuildPacketV3Schema,
+  type ProductBuildPacketV3,
+} from "./schemas/product-build-packet-v3.js";
+import {
+  ProductSpecV1EnglishWriteSchema,
   type ProductActionV1,
   type ProductSpecV1,
 } from "./schemas/product-spec-v1.js";
 import { StoryPlanV1Schema, type StoryPlanV1 } from "./schemas/story-plan-v1.js";
+import { DesignGenerationTargetsV2Schema } from "./schemas/design-generation-targets-v2.js";
+import { DesignInteractionGraphV2Schema } from "./schemas/design-interaction-graph-v2.js";
+import { DesignSourceClosureV2Schema } from "./schemas/design-source-closure-v2.js";
+import { ProductSpecV2EnglishWriteSchema } from "./schemas/product-spec-v2.js";
+import { StitchDirectResponseEvidenceV2Schema } from "./schemas/stitch-direct-response-evidence-v2.js";
+import { StitchRenderedSemanticsV2Schema } from "./schemas/stitch-rendered-semantics-v2.js";
+import {
+  StitchTargetCandidateSelectionV2Schema,
+  StitchTargetResponseBindingsV3Schema,
+} from "./schemas/stitch-target-candidate-selection-v2.js";
+import { StoryPlanV2Schema } from "./schemas/story-plan-v2.js";
 import { validateRuntimeDataContractClosureV1 } from "./producers/runtime-data-contract.js";
+import {
+  produceImplementationSourceMapV1,
+  type ImplementationSourceMapProducerInputV1,
+} from "./producers/implementation-source-map-v1.js";
+import { produceStoryPlanV2 } from "./producers/story-plan-v2.js";
 
 const VALIDATION_IDS = [
   "VALIDATE_ACTION_REACHABILITY",
@@ -67,6 +91,16 @@ const VALIDATION_IDS = [
 const VALIDATION_IDS_V2 = [
   ...VALIDATION_IDS,
   "VALIDATE_DESIGN_SOURCE_CLOSURE",
+] as const;
+
+const VALIDATION_IDS_V3 = [
+  "VALIDATE_V3_AUTHORITY_HASH_CHAIN",
+  "VALIDATE_V3_DESIGN_SOURCE_CLOSURE",
+  "VALIDATE_V3_IMPLEMENTATION_SOURCE_MAP_AUTHORITY",
+  "VALIDATE_V3_RELEASE_PIN",
+  "VALIDATE_V3_RUNTIME_CONTRACT_PAIR",
+  "VALIDATE_V3_SCHEMA_STRICT",
+  "VALIDATE_V3_STORY_PLAN_PROJECTION",
 ] as const;
 
 type ArtifactWriter = Readonly<{
@@ -92,6 +126,50 @@ export type ProductPacketCompilationResult = Readonly<{
   reportHash: string;
   artifactHashes: Readonly<Record<string, string>>;
   packet?: ProductBuildPacketV1 | ProductBuildPacketV2;
+  packetHash?: string;
+}>;
+
+export type ProductPacketCompilerInputV3 = Readonly<{
+  productSpecV2: unknown;
+  designGraphV2: unknown | null;
+  buildTopologyV1: unknown;
+  storyPlanV2: unknown;
+  designSourceClosureV2: unknown;
+  implementationSourceInputsV1: ImplementationSourceMapProducerInputV1;
+  designSourceArtifactsV2?: unknown;
+  compiler: unknown;
+  producer: unknown;
+  parentPacketHashes?: unknown;
+  artifactStore: ArtifactWriter;
+}>;
+
+export const ProductPacketDesignSourceArtifactsV2Schema = z
+  .object({
+    generationTargets: DesignGenerationTargetsV2Schema,
+    directResponseEvidence: StitchDirectResponseEvidenceV2Schema,
+    renderedSemantics: StitchRenderedSemanticsV2Schema,
+    candidateSelection: StitchTargetCandidateSelectionV2Schema,
+    responseBindings: StitchTargetResponseBindingsV3Schema,
+  })
+  .strict();
+
+export type ProductPacketDesignSourceArtifactsV2 = z.infer<
+  typeof ProductPacketDesignSourceArtifactsV2Schema
+>;
+
+export type ProductPacketCompilationResultV3 = Readonly<{
+  status: "sealed" | "rejected";
+  report: ProductCompilationReportV3;
+  reportHash: string;
+  artifactHashes: Readonly<{
+    productSpecV2?: string;
+    designGraphV2?: string | null;
+    buildTopologyV1?: string;
+    storyPlanV2?: string;
+    designSourceClosureV2?: string;
+    implementationSourceMapV1?: string;
+  }>;
+  packet?: ProductBuildPacketV3;
   packetHash?: string;
 }>;
 
@@ -841,7 +919,7 @@ export async function compileProductBuildPacket(
     }));
   }
 
-  const productResult = ProductSpecV1Schema.safeParse(input.productSpec);
+  const productResult = ProductSpecV1EnglishWriteSchema.safeParse(input.productSpec);
   const graphResult = DesignInteractionGraphV1Schema.safeParse(input.designGraph);
   const topologyResult = BuildTopologyV1Schema.safeParse(input.buildTopology);
   const storiesResult = StoryPlanV1Schema.safeParse(input.storyPlan);
@@ -1075,6 +1153,471 @@ export async function compileProductBuildPacket(
     report,
   );
 
+  return {
+    status: report.status,
+    report,
+    reportHash,
+    artifactHashes,
+    ...(packet ? { packet } : {}),
+    ...(packetHash ? { packetHash } : {}),
+  };
+}
+
+/**
+ * Native Product Semantics Authority v2 packet compiler.
+ *
+ * This entry point deliberately has no ProductSpecV1, DesignGraphV1,
+ * StoryPlanV1, or ProductBuildPacketV1/V2 adapter. Missing native inputs are
+ * reported as v3 compilation failures; historical artifacts remain readable
+ * through their historical compiler/reader branches only.
+ */
+export async function compileProductBuildPacketV3(
+  input: ProductPacketCompilerInputV3,
+): Promise<ProductPacketCompilationResultV3> {
+  if (!input.artifactStore || typeof input.artifactStore.put !== "function") {
+    throw new TypeError("Product packet compiler v3 requires an injected artifact writer");
+  }
+  const compiler = CompilerIdentityV1Schema.parse(input.compiler);
+  const producer = SemanticArtifactProducerV1Schema.parse(input.producer);
+  const parentPacketHashes = z.array(Sha256Schema).max(100).parse(input.parentPacketHashes ?? []);
+  const rawHashes = {
+    productSpecV2: safeInputHash(input.productSpecV2, "productSpecV2"),
+    designGraphV2: safeInputHash(input.designGraphV2, "designGraphV2"),
+    buildTopologyV1: safeInputHash(input.buildTopologyV1, "buildTopologyV1"),
+    storyPlanV2: safeInputHash(input.storyPlanV2, "storyPlanV2"),
+    designSourceClosureV2: safeInputHash(input.designSourceClosureV2, "designSourceClosureV2"),
+    implementationSourceInputsV1: safeInputHash(
+      input.implementationSourceInputsV1,
+      "implementationSourceInputsV1",
+    ),
+    ...(input.designSourceArtifactsV2 === undefined ? {} : {
+      designSourceArtifactsV2: safeInputHash(
+        input.designSourceArtifactsV2,
+        "designSourceArtifactsV2",
+      ),
+    }),
+  };
+  const diagnostics: CompilationDiagnosticV1[] = [];
+  if (compiler.codeSha !== producer.codeSha) {
+    diagnostics.push(diagnostic({
+      code: "CONTRACT_V3_COMPILER_PRODUCER_REVISION_MISMATCH",
+      message: `Compiler ${compiler.codeSha} and producer ${producer.codeSha} revisions disagree`,
+      reference: `${compiler.codeSha}->${producer.codeSha}`,
+    }));
+  }
+
+  const productResult = ProductSpecV2EnglishWriteSchema.safeParse(input.productSpecV2);
+  const graphResult = input.designGraphV2 === null
+    ? { success: true as const, data: null }
+    : DesignInteractionGraphV2Schema.safeParse(input.designGraphV2);
+  const topologyResult = BuildTopologyV1Schema.safeParse(input.buildTopologyV1);
+  const storiesResult = StoryPlanV2Schema.safeParse(input.storyPlanV2);
+  const closureResult = DesignSourceClosureV2Schema.safeParse(input.designSourceClosureV2);
+  const sourceMapResult = produceImplementationSourceMapV1(
+    input.implementationSourceInputsV1,
+  );
+  const designSourceArtifactsResult = input.designSourceArtifactsV2 === undefined
+    ? undefined
+    : ProductPacketDesignSourceArtifactsV2Schema.safeParse(input.designSourceArtifactsV2);
+  if (!productResult.success) {
+    diagnostics.push(...schemaDiagnostics(
+      "CONTRACT_V3_PRODUCT_SPEC_SCHEMA_INVALID",
+      rawHashes.productSpecV2,
+      productResult.error,
+    ));
+  }
+  if (!graphResult.success) {
+    diagnostics.push(...schemaDiagnostics(
+      "CONTRACT_V3_DESIGN_GRAPH_SCHEMA_INVALID",
+      rawHashes.designGraphV2,
+      graphResult.error,
+    ));
+  }
+  if (!topologyResult.success) {
+    diagnostics.push(...schemaDiagnostics(
+      "CONTRACT_V3_BUILD_TOPOLOGY_SCHEMA_INVALID",
+      rawHashes.buildTopologyV1,
+      topologyResult.error,
+    ));
+  }
+  if (!storiesResult.success) {
+    diagnostics.push(...schemaDiagnostics(
+      "CONTRACT_V3_STORY_PLAN_SCHEMA_INVALID",
+      rawHashes.storyPlanV2,
+      storiesResult.error,
+    ));
+  }
+  if (!closureResult.success) {
+    diagnostics.push(...schemaDiagnostics(
+      "CONTRACT_V3_DESIGN_SOURCE_CLOSURE_SCHEMA_INVALID",
+      rawHashes.designSourceClosureV2,
+      closureResult.error,
+    ));
+  } else if (closureResult.data.kind === "stitch") {
+    if (!designSourceArtifactsResult) {
+      diagnostics.push(diagnostic({
+        code: "CONTRACT_V3_DESIGN_SOURCE_ARTIFACTS_REQUIRED",
+        message: "A Stitch DesignSourceClosureV2 requires the exact five native design-source payloads",
+        reference: "designSourceArtifactsV2",
+      }));
+    } else if (!designSourceArtifactsResult.success) {
+      diagnostics.push(...schemaDiagnostics(
+        "CONTRACT_V3_DESIGN_SOURCE_ARTIFACTS_SCHEMA_INVALID",
+        rawHashes.designSourceArtifactsV2!,
+        designSourceArtifactsResult.error,
+      ));
+    }
+  } else if (input.designSourceArtifactsV2 !== undefined) {
+    diagnostics.push(diagnostic({
+      code: "CONTRACT_V3_DESIGN_SOURCE_ARTIFACTS_FORBIDDEN",
+      message: "A no-design DesignSourceClosureV2 must not carry Stitch design-source payloads",
+      reference: "designSourceArtifactsV2",
+    }));
+  }
+  if (sourceMapResult.status === "rejected") {
+    diagnostics.push(...sourceMapResult.diagnostics);
+  }
+
+  const artifactHashes: {
+    productSpecV2?: string;
+    designGraphV2?: string | null;
+    buildTopologyV1?: string;
+    storyPlanV2?: string;
+    designSourceClosureV2?: string;
+    implementationSourceMapV1?: string;
+  } = {};
+  if (productResult.success) {
+    artifactHashes.productSpecV2 = await storeChild(
+      input.artifactStore,
+      "setfarm.product-spec.v2",
+      producer,
+      productResult.data,
+    );
+  }
+  if (graphResult.success) {
+    artifactHashes.designGraphV2 = graphResult.data === null
+      ? null
+      : await storeChild(
+          input.artifactStore,
+          "setfarm.design-interaction-graph.v2",
+          producer,
+          graphResult.data,
+        );
+  }
+  if (topologyResult.success) {
+    artifactHashes.buildTopologyV1 = await storeChild(
+      input.artifactStore,
+      "setfarm.build-topology.v1",
+      producer,
+      topologyResult.data,
+    );
+  }
+  if (storiesResult.success) {
+    artifactHashes.storyPlanV2 = await storeChild(
+      input.artifactStore,
+      "setfarm.story-plan.v2",
+      producer,
+      storiesResult.data,
+    );
+  }
+  if (sourceMapResult.status === "produced") {
+    artifactHashes.implementationSourceMapV1 = await storeChild(
+      input.artifactStore,
+      "setfarm.implementation-source-map.v1",
+      producer,
+      sourceMapResult.sourceMap,
+    );
+  }
+  let designSourceArtifactsVerified = closureResult.success
+    && closureResult.data.kind === "none"
+    && input.designSourceArtifactsV2 === undefined;
+  if (
+    closureResult.success
+    && closureResult.data.kind === "stitch"
+    && designSourceArtifactsResult?.success
+  ) {
+    const nestedArtifacts = [
+      ["generationTargets", "setfarm.design-generation-targets.v2"],
+      ["directResponseEvidence", "setfarm.stitch-direct-response-evidence.v2"],
+      ["renderedSemantics", "setfarm.stitch-rendered-semantics.v2"],
+      ["candidateSelection", "setfarm.stitch-target-candidate-selection.v2"],
+      ["responseBindings", "setfarm.stitch-target-response-bindings.v3"],
+    ] as const;
+    let exactReferences = true;
+    for (const [field, artifactType] of nestedArtifacts) {
+      const payload = designSourceArtifactsResult.data[field];
+      const reference = closureResult.data[field];
+      const payloadHash = hashCanonicalJson(payload);
+      const envelopeHash = hashCanonicalJson(SemanticArtifactEnvelopeV1Schema.parse({
+        schema: "setfarm.semantic-artifact-envelope.v1",
+        artifactType,
+        producer,
+        payload,
+      }));
+      if (
+        reference.artifactType !== artifactType
+        || reference.payloadHash !== payloadHash
+        || reference.envelopeHash !== envelopeHash
+      ) {
+        exactReferences = false;
+        diagnostics.push(diagnostic({
+          code: "CONTRACT_V3_DESIGN_SOURCE_ARTIFACT_HASH_MISMATCH",
+          message: `DesignSourceClosureV2 ${field} does not bind the exact strict payload and producer envelope`,
+          artifactHash: envelopeHash,
+          reference: field,
+        }));
+      }
+    }
+    if (exactReferences) {
+      for (const [field, artifactType] of nestedArtifacts) {
+        const storedHash = await storeChild(
+          input.artifactStore,
+          artifactType,
+          producer,
+          designSourceArtifactsResult.data[field],
+        );
+        if (storedHash !== closureResult.data[field].envelopeHash) {
+          throw new TypeError(
+            `Artifact writer returned ${storedHash} for exact ${field} envelope ${closureResult.data[field].envelopeHash}`,
+          );
+        }
+      }
+      designSourceArtifactsVerified = true;
+    }
+  }
+  if (closureResult.success && designSourceArtifactsVerified) {
+    artifactHashes.designSourceClosureV2 = await storeChild(
+      input.artifactStore,
+      "setfarm.design-source-closure.v2",
+      producer,
+      closureResult.data,
+    );
+  }
+
+  if (
+    productResult.success
+    && graphResult.success
+    && topologyResult.success
+    && storiesResult.success
+    && closureResult.success
+    && sourceMapResult.status === "produced"
+  ) {
+    const productSpecHash = hashCanonicalJson(productResult.data);
+    const designGraphHash = graphResult.data === null ? null : hashCanonicalJson(graphResult.data);
+    const buildTopologyHash = hashCanonicalJson(topologyResult.data);
+    const storyPlanHash = hashCanonicalJson(storiesResult.data);
+    const designSourceClosureHash = hashCanonicalJson(closureResult.data);
+    const expectedDesignKind = productResult.data.delivery.designRequired ? "stitch" : "none";
+    if (
+      storiesResult.data.productSpecHash !== productSpecHash
+      || storiesResult.data.designGraphHash !== designGraphHash
+      || storiesResult.data.buildTopologyHash !== buildTopologyHash
+    ) {
+      diagnostics.push(diagnostic({
+        code: "CONTRACT_V3_STORY_PLAN_AUTHORITY_HASH_MISMATCH",
+        message: "StoryPlanV2 does not bind the exact ProductSpecV2, DesignInteractionGraphV2, and BuildTopologyV1 payload hashes",
+        reference: "storyPlanV2",
+      }));
+    }
+    if (
+      storiesResult.data.designSourceKind !== expectedDesignKind
+      || closureResult.data.kind !== expectedDesignKind
+      || (graphResult.data !== null) !== (expectedDesignKind === "stitch")
+    ) {
+      diagnostics.push(diagnostic({
+        code: "CONTRACT_V3_DESIGN_SOURCE_KIND_MISMATCH",
+        message: "ProductSpecV2 delivery, graph presence, StoryPlanV2, and DesignSourceClosureV2 must declare one exact design-source kind",
+        reference: "designSourceKind",
+      }));
+    }
+    if (
+      sourceMapResult.sourceMap.designSourceKind !== expectedDesignKind
+      || sourceMapResult.sourceMap.designSourceKind !== storiesResult.data.designSourceKind
+      || sourceMapResult.sourceMap.designSourceKind !== closureResult.data.kind
+      || sourceMapResult.sourceMap.productSpecV2PayloadHash !== productSpecHash
+      || sourceMapResult.sourceMap.designGraphV2PayloadHash !== designGraphHash
+      || sourceMapResult.sourceMap.buildTopologyV1PayloadHash !== buildTopologyHash
+      || sourceMapResult.sourceMap.storyPlanV2PayloadHash !== storyPlanHash
+      || sourceMapResult.sourceMap.designSourceClosureV2PayloadHash !== designSourceClosureHash
+    ) {
+      diagnostics.push(diagnostic({
+        code: "CONTRACT_V3_IMPLEMENTATION_SOURCE_MAP_AUTHORITY_MISMATCH",
+        message: "ImplementationSourceMapV1 does not bind the exact ProductSpecV2, DesignInteractionGraphV2, BuildTopologyV1, StoryPlanV2, DesignSourceClosureV2, and design-source kind authorities",
+        reference: "implementationSourceMapV1",
+      }));
+    }
+    if (
+      sourceMapResult.sourceMap.designSourceKind === "stitch"
+      && designSourceArtifactsResult?.success
+    ) {
+      const targetByRef = new Map(
+        designSourceArtifactsResult.data.generationTargets.targets.map((target) =>
+          [target.targetId, target] as const),
+      );
+      const responseByTarget = new Map(
+        designSourceArtifactsResult.data.responseBindings.bindings.map((binding) =>
+          [binding.targetRef, binding] as const),
+      );
+      let exactScreenAuthorities =
+        sourceMapResult.sourceMap.screens.length === targetByRef.size
+        && sourceMapResult.sourceMap.screens.length === responseByTarget.size;
+      for (const screen of sourceMapResult.sourceMap.screens) {
+        const target = targetByRef.get(screen.targetRef);
+        const response = responseByTarget.get(screen.targetRef);
+        if (
+          !target
+          || !response
+          || screen.responseScreenId !== response.responseScreenId
+          || screen.targetHash !== hashCanonicalJson(target)
+          || screen.targetHash !== response.targetHash
+          || screen.responseBindingHash !== hashCanonicalJson(response)
+        ) {
+          exactScreenAuthorities = false;
+        }
+      }
+      if (!exactScreenAuthorities) {
+        diagnostics.push(diagnostic({
+          code: "CONTRACT_V3_IMPLEMENTATION_SOURCE_MAP_SCREEN_AUTHORITY_MISMATCH",
+          message: "ImplementationSourceMapV1 must bind every and only exact DesignGenerationTargetV2 and StitchTargetResponseBindingV3 payload",
+          reference: "implementationSourceMapV1.screens",
+        }));
+      }
+    }
+    if (graphResult.data !== null) {
+      if (
+        graphResult.data.productSpecHash !== productSpecHash
+        || closureResult.data.kind !== "stitch"
+        || closureResult.data.designGraph.payloadHash !== designGraphHash
+        || closureResult.data.designGraph.envelopeHash !== artifactHashes.designGraphV2
+      ) {
+        diagnostics.push(diagnostic({
+          code: "CONTRACT_V3_DESIGN_GRAPH_AUTHORITY_MISMATCH",
+          message: "DesignInteractionGraphV2 and DesignSourceClosureV2 do not bind the exact ProductSpecV2 payload and graph CAS envelope",
+          reference: "designGraphV2",
+        }));
+      }
+    }
+
+    const reproducedStories = produceStoryPlanV2({
+      productSpec: productResult.data,
+      designGraph: graphResult.data,
+      buildTopology: topologyResult.data,
+    });
+    if (reproducedStories.status === "rejected") {
+      diagnostics.push(...reproducedStories.diagnostics);
+    } else if (
+      canonicalJsonStringify(reproducedStories.storyPlan)
+      !== canonicalJsonStringify(storiesResult.data)
+    ) {
+      diagnostics.push(diagnostic({
+        code: "CONTRACT_V3_STORY_PLAN_PROJECTION_MISMATCH",
+        message: "StoryPlanV2 is not the exact deterministic partition of the supplied product, design, and topology authorities",
+        reference: "storyPlanV2",
+      }));
+    }
+
+    const runtimeDataHash = topologyResult.data.runtimeDataContractHash;
+    const runtimeEvidenceHash = topologyResult.data.runtimeEvidenceContractHash;
+    if ((runtimeDataHash === undefined) !== (runtimeEvidenceHash === undefined)) {
+      diagnostics.push(diagnostic({
+        code: "CONTRACT_V3_RUNTIME_CONTRACT_PAIR_MISMATCH",
+        message: "BuildTopologyV1 must provide runtime-data and runtime-evidence contract hashes together",
+        reference: runtimeDataHash === undefined
+          ? "runtimeDataContractHash"
+          : "runtimeEvidenceContractHash",
+      }));
+    }
+  }
+
+  const sortedDiagnostics = sortCompilationDiagnostics(diagnostics);
+  const rejectionCodes = uniqueSorted(
+    sortedDiagnostics.filter((item) => item.severity === "error").map((item) => item.code),
+  );
+  const inputHashes = uniqueSorted(Object.values(rawHashes));
+  let packet: ProductBuildPacketV3 | undefined;
+  let packetHash: string | undefined;
+  if (
+    rejectionCodes.length === 0
+    && productResult.success
+    && graphResult.success
+    && topologyResult.success
+    && storiesResult.success
+    && closureResult.success
+    && sourceMapResult.status === "produced"
+  ) {
+    packet = ProductBuildPacketV3Schema.parse({
+      schema: "setfarm.product-build-packet.v3",
+      packetVersion: 3,
+      parentPacketHashes: uniqueSorted(parentPacketHashes),
+      designSourceKind: closureResult.data.kind,
+      productSpecV2Hash: artifactHashes.productSpecV2,
+      designGraphV2Hash: artifactHashes.designGraphV2,
+      buildTopologyV1Hash: artifactHashes.buildTopologyV1,
+      storyPlanV2Hash: artifactHashes.storyPlanV2,
+      ...(topologyResult.data.runtimeDataContractHash
+        ? { runtimeDataContractHash: topologyResult.data.runtimeDataContractHash }
+        : {}),
+      ...(topologyResult.data.runtimeEvidenceContractHash
+        ? { runtimeEvidenceContractHash: topologyResult.data.runtimeEvidenceContractHash }
+        : {}),
+      designSourceClosureV2Hash: artifactHashes.designSourceClosureV2,
+      implementationSourceMapV1Hash: artifactHashes.implementationSourceMapV1,
+      compiler,
+      validationIds: [...VALIDATION_IDS_V3],
+    });
+    packetHash = await storeChild(
+      input.artifactStore,
+      "setfarm.product-build-packet.v3",
+      producer,
+      packet,
+    );
+  }
+
+  const reportArtifactHashes = {
+    ...(artifactHashes.productSpecV2
+      ? { productSpecV2: artifactHashes.productSpecV2 }
+      : {}),
+    ...(artifactHashes.designGraphV2 !== undefined
+      ? { designGraphV2: artifactHashes.designGraphV2 }
+      : {}),
+    ...(artifactHashes.buildTopologyV1
+      ? { buildTopologyV1: artifactHashes.buildTopologyV1 }
+      : {}),
+    ...(artifactHashes.storyPlanV2
+      ? { storyPlanV2: artifactHashes.storyPlanV2 }
+      : {}),
+    ...(artifactHashes.designSourceClosureV2
+      ? { designSourceClosureV2: artifactHashes.designSourceClosureV2 }
+      : {}),
+    ...(artifactHashes.implementationSourceMapV1
+      ? { implementationSourceMapV1: artifactHashes.implementationSourceMapV1 }
+      : {}),
+  };
+  const report = ProductCompilationReportV3Schema.parse(rejectionCodes.length > 0 ? {
+    schema: "setfarm.product-compilation-report.v3",
+    status: "rejected",
+    compiler,
+    inputHashes,
+    artifactHashes: reportArtifactHashes,
+    diagnostics: sortedDiagnostics,
+    validationIds: [...VALIDATION_IDS_V3],
+    rejectionCodes,
+  } : {
+    schema: "setfarm.product-compilation-report.v3",
+    status: "sealed",
+    compiler,
+    inputHashes,
+    artifactHashes: reportArtifactHashes,
+    diagnostics: sortedDiagnostics,
+    validationIds: [...VALIDATION_IDS_V3],
+    packetHash,
+  });
+  const reportHash = await storeChild(
+    input.artifactStore,
+    "setfarm.product-compilation-report.v3",
+    producer,
+    report,
+  );
   return {
     status: report.status,
     report,

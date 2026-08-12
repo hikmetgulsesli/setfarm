@@ -47,6 +47,15 @@ describe("LLM product supervisor architecture", () => {
     assert.doesNotMatch(agent, /commit with `fix: supervisor audit`/);
   });
 
+  it("blocks stale non-English product artifacts instead of preserving their language", () => {
+    const rules = readFileSync(resolve(import.meta.dirname, "../src/installer/steps/12-supervise/rules.md"), "utf-8");
+
+    assert.match(rules, /Require English in all compiler-owned artifacts/);
+    assert.match(rules, /UI_LANGUAGE` is exactly English/);
+    assert.match(rules, /block with the exact artifact instead of preserving or silently translating it/);
+    assert.doesNotMatch(rules, /Preserve user-visible language from the PRD and Stitch assets/);
+  });
+
   it("keeps supervisor audits bounded so agents do not exhaust tool budgets", () => {
     const rules = readFileSync(resolve(import.meta.dirname, "../src/installer/steps/12-supervise/rules.md"), "utf-8");
     assert.match(prompt, /at most 12 shell\/tool calls/);

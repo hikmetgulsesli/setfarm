@@ -2,52 +2,52 @@
 
 ## Current Intent
 
-Setfarm'in hedefi bir "agent chat runner" olmak değil; LLM agent'ları bounded compiler pass gibi kullanan, kanıta dayalı bir software factory olmaktır. Mission Control ise bu fabrikanın canlı operasyon panosu olmalıdır: hangi agent ne yapıyor, hangi dosya değişti, hangi gate geçti, hangi PR yorumu çözüldü, hangi runtime evidence üretildi, hepsi görülebilmelidir.
+Setfarm is not intended to be an "agent chat runner." It is intended to be an evidence-driven software factory that uses LLM agents as bounded compiler passes. Mission Control should be the live operations board for this factory: it should show what each agent is doing, which file changed, which gate passed, which PR comment was resolved, and which runtime evidence was produced.
 
 ## Main Runtime Components
 
-- `src/cli/cli.ts`: CLI entrypoint. Workflow başlatma, status, daemon/spawner komutları buradan akar.
-- `src/db-pg.ts`: PostgreSQL schema ve migration benzeri startup DDL. Runs, steps, stories, claim log, observations gibi state tabloları burada.
-- `src/installer/run.ts`: workflow run oluşturma ve ilk step state hazırlığı.
-- `src/installer/step-ops.ts`: claim, preclaim, completion, story loop, PR, QA-FIX routing ve step lifecycle davranışlarının büyük kısmı. Kritik ama aşırı yoğun dosya.
-- `src/spawner.ts`: agent process manager. Claim alır, OpenClaw/gateway readiness bekler, agent process başlatır, runtime guard/watchdog uygular, stuck/self-loop/orphan claim temizler.
-- `src/spawner-prompt.ts`: agent claim özetini ve prompt context'ini üretir. Agent'ın ne bilip ne bilmeyeceği burada ciddi ölçüde şekillenir.
-- `workflows/feature-dev/workflow.yml`: ana pipeline tanımı ve role mapping. Plan -> design -> stories -> setup -> implement -> verify -> supervise -> quality -> deploy akışı burada tarif edilir.
+- `src/cli/cli.ts`: CLI entrypoint. Workflow start, status, and daemon/spawner commands flow through this file.
+- `src/db-pg.ts`: PostgreSQL schema and migration-like startup DDL. State tables such as runs, steps, stories, claim logs, and observations live here.
+- `src/installer/run.ts`: workflow-run creation and initial step-state preparation.
+- `src/installer/step-ops.ts`: most claim, preclaim, completion, story-loop, PR, QA-FIX routing, and step-lifecycle behavior. It is a critical but excessively dense file.
+- `src/spawner.ts`: agent process manager. It acquires claims, waits for OpenClaw/gateway readiness, starts agent processes, applies runtime guards and watchdogs, and cleans up stuck, self-looping, or orphaned claims.
+- `src/spawner-prompt.ts`: builds the agent claim summary and prompt context. This file substantially determines what an agent does and does not know.
+- `workflows/feature-dev/workflow.yml`: the main pipeline definition and role mapping. It defines the plan -> design -> stories -> setup -> implement -> verify -> supervise -> quality -> deploy flow.
 
 ## Pipeline Step Modules
 
-`src/installer/steps/*` altındaki her step teoride kendi contract'ını taşır:
+In theory, every step under `src/installer/steps/*` owns its own contract:
 
-- `preclaim.ts`: agent doğmadan önce Setfarm-owned mekanik iş.
-- `context.ts`: agent'a verilecek context.
+- `preclaim.ts`: Setfarm-owned mechanical work performed before an agent starts.
+- `context.ts`: context provided to the agent.
 - `prompt.md`: agent prompt template.
-- `rules.md`: step kuralları.
-- `guards.ts`: output ve completion guard'ları.
+- `rules.md`: step rules.
+- `guards.ts`: output and completion guards.
 - `module.ts`: `StepModule` export.
 
-Pratikte birçok kritik davranış hala `step-ops.ts` içinde merkezileşmiştir. Bu mimari borçtur: step contract'ları ile global lifecycle logic iç içe geçmiştir.
+In practice, many critical behaviors remain centralized in `step-ops.ts`. This is architectural debt: step contracts and global lifecycle logic are intertwined.
 
 ## Mission Control Components
 
 - `src/server/daemon.ts`: local MC server/daemon.
 - `src/server/dashboard.ts`: API endpoints, runs/projects/observations data provider.
-- `src/server/index.html`: current single-file UI. Projects, run detail, activity, evidence filmstrip gibi görünüm burada.
+- `src/server/index.html`: current single-file UI. Views such as projects, run details, activity, and the evidence filmstrip live here.
 - `src/server/spawnerctl.ts`: spawner control integration.
 - `src/server/supervisor-summary.ts`: supervisor state summary helpers.
 
-MC şu anda observation stream'i kullanmaya başlamış olsa da eski event yapılarıyla birlikte yaşar. Bu dual-truth riski yaratır: özellikle retry, QA-FIX, stale blocker ve "verified ama old blocked görünür" durumlarında kullanıcı yanlış algı alabilir.
+Although MC has started using the observation stream, it still coexists with legacy event structures. This creates a dual-truth risk: users can receive a misleading picture, especially around retries, QA-FIX, stale blockers, and cases that are verified but still appear blocked by an old observation.
 
 ## Evidence And Runtime Components
 
 - `src/installer/runtime-driver.ts`: stack-agnostic runtime driver interface.
 - `src/installer/web-runtime-driver.ts`: Vite/browser preview runtime start/interact/capture/stop.
 - `src/installer/runtime-ports.ts`: MC/Setfarm-owned deterministic runtime port allocation.
-- `src/installer/implement-evidence.ts`: intent/request/evidence artifact path ve validation.
+- `src/installer/implement-evidence.ts`: intent/request/evidence artifact paths and validation.
 - `src/installer/implement-evidence-runner.ts`: runtime build, preview, interaction, screenshot/DOM/state capture.
 - `src/installer/implement-evidence-writer.ts`: `IMPLEMENT_EVIDENCE.json` writer.
 - `src/installer/stack-evidence.ts`: stack capability/evidence metadata.
 
-Hedef doğru: agent test ettiğini iddia etmez; Setfarm runtime'ı çalıştırır ve evidence üretir. Mevcut uygulamada bu henüz parçalıdır; request artifact eksikse evidence çoğu zaman advisory kalabilir.
+The target is correct: an agent does not claim that it tested the product; Setfarm runs the runtime and produces evidence. The current implementation is still fragmented, and evidence can often remain advisory when the request artifact is missing.
 
 ## Supervisor And Self-Heal
 
@@ -55,7 +55,7 @@ Hedef doğru: agent test ettiğini iddia etmez; Setfarm runtime'ı çalıştır�
 - `src/installer/product-supervisor.ts`: supervisor memory and product-level checks.
 - `src/installer/platform-self-heal/*`: platform failure classifier, ownership map, patch plan, rollback, patch registry, strictness delta, write interceptor.
 
-Supervisor şu anda hem product correctness hem deterministic checklist hem runtime discipline sinyallerine yaklaşır. Bu rol sınırları bulanıklaşırsa "patron", "QA", "compiler", "developer" yetkileri karışır.
+The supervisor currently handles signals from product correctness, deterministic checklists, and runtime discipline. If these role boundaries blur, the authority of the "executive," "QA," "compiler," and "developer" roles becomes mixed.
 
 ## Script Layer
 
@@ -65,20 +65,19 @@ Supervisor şu anda hem product correctness hem deterministic checklist hem runt
 - `scripts/setup-repo.sh`: generated project scaffold/setup.
 - `scripts/check-*.mjs`: repo build contracts.
 
-Bu script'ler "mechanical compiler/gate" katmanıdır. LLM agent'lara bırakılmaması gereken doğrulamalar burada olmalıdır.
+These scripts form the "mechanical compiler/gate" layer. Validation that must not be delegated to LLM agents should live here.
 
 ## Observed System Shape
 
-Mevcut sistem doğru niyete sahip ama çok fazla yerde aynı soruya cevap vermeye çalışır:
+The current system has the right intent, but it tries to answer the same questions in too many places:
 
-- Stitch/design converter doğru mu?
-- generated screen app'e bağlandı mı?
-- action handler var mı?
-- runtime state gerçekten ekrana yansıyor mu?
-- PR merge oldu mu?
-- QA-FIX story açılmalı mı?
-- supervisor kendi kendine düzeltmeli mi?
-- MC stale blocker'ı nasıl göstermeli?
+- Is the Stitch/design converter correct?
+- Is the generated screen connected to the app?
+- Is there an action handler?
+- Is runtime state actually reflected in the UI?
+- Has the PR been merged?
+- Should a QA-FIX story be opened?
+- Should the supervisor repair the issue itself?
+- How should MC display a stale blocker?
 
-Bu soruların çoğu tek tek guard olarak eklendiği için sistem reaktif contract accumulation eğilimine girmiştir.
-
+Because most of these questions were added as individual guards, the system has developed a tendency toward reactive contract accumulation.

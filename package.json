@@ -21,9 +21,24 @@
     "test:evals": "node --import tsx --test tests/evals/*.test.ts",
     "eval:contracts": "node --import tsx src/evals/contract-replay.ts --fixtures evals/fixtures",
     "eval:convergence": "node --import tsx src/evals/convergence-runner.ts",
+    "rehearse:node-toolchain-bootstrap": "node --import tsx scripts/rehearse-node-toolchain-provisioner-bootstrap-v2.ts",
+    "rehearse:node-scaffold-environment": "node --import tsx scripts/rehearse-node-scaffold-execution-environment-v2.ts",
+    "rehearse:node-scaffold-dependencies": "node --import tsx scripts/rehearse-node-scaffold-dependencies-v2.ts",
     "db:contract-spine:plan": "node --import tsx scripts/contract-spine-migrate.ts plan",
     "db:contract-spine:apply": "node --import tsx scripts/contract-spine-migrate.ts apply",
     "db:contract-spine:verify": "node --import tsx scripts/contract-spine-migrate.ts verify",
+    "db:contract-spine:audit-current-authority-ledgers": "node --import tsx scripts/contract-spine-migrate.ts audit-current-authority-ledgers",
+    "db:contract-spine:audit-artifact-batches": "node --import tsx scripts/contract-spine-migrate.ts audit-artifact-publication-batches",
+    "db:contract-spine:audit-artifact-store-authority-ledger": "node --import tsx scripts/contract-spine-migrate.ts audit-artifact-store-authority-ledger",
+    "db:contract-spine:audit-platform-release-store-records": "node --import tsx scripts/contract-spine-migrate.ts audit-platform-release-store-records",
+    "db:contract-spine:rollback-29": "node --import tsx scripts/contract-spine-migrate.ts rollback-29-to-28",
+    "db:contract-spine:rollback-28": "node --import tsx scripts/contract-spine-migrate.ts rollback-28-to-27",
+    "db:contract-spine:rollback-27": "node --import tsx scripts/contract-spine-migrate.ts rollback-27-to-26",
+    "db:contract-spine:rollback-26": "node --import tsx scripts/contract-spine-migrate.ts rollback-26-to-25",
+    "db:contract-spine:rollback-25": "node --import tsx scripts/contract-spine-migrate.ts rollback-25-to-24",
+    "db:contract-spine:rollback-24": "node --import tsx scripts/contract-spine-migrate.ts rollback-24-to-23",
+    "db:contract-spine:rollback-23": "node --import tsx scripts/contract-spine-migrate.ts rollback-23-to-22",
+    "db:contract-spine:rollback-22": "node --import tsx scripts/contract-spine-migrate.ts rollback-22-to-21",
     "db:contract-spine:rollback-21": "node --import tsx scripts/contract-spine-migrate.ts rollback-21-to-20",
     "db:contract-spine:rollback-20": "node --import tsx scripts/contract-spine-migrate.ts rollback-20-to-19",
     "artifacts:index:plan": "node --import tsx scripts/product-artifact-index.ts plan",
@@ -39,7 +54,8 @@
     "check:english": "node scripts/check-english-contract.mjs",
     "check:paths": "node scripts/check-path-contract.mjs",
     "check:migration-digests": "node --import tsx scripts/check-contract-spine-migration-digests.ts --check",
-    "prebuild": "node scripts/check-version-contract.mjs && node scripts/check-english-contract.mjs && node scripts/check-path-contract.mjs && npm run check:migration-digests && npm run check:mission-control-contracts && node scripts/write-build-info.mjs"
+    "prebuild": "node scripts/write-build-info.mjs --prepare && node scripts/check-version-contract.mjs && node scripts/check-english-contract.mjs && node scripts/check-path-contract.mjs && npm run check:migration-digests && npm run check:mission-control-contracts",
+    "postbuild": "node scripts/write-build-info.mjs --finalize"
   },
   "dependencies": {
     "json5": "^2.2.3",
@@ -50,6 +66,7 @@
   },
   "devDependencies": {
     "@types/node": "^25.2.1",
+    "esbuild": "0.28.1",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3"
   }

@@ -404,9 +404,47 @@ async function rpc(method, params = {}) {
   }
 }
 
+// One transport attempt with no credential rotation or implicit replay. This
+// is the only RPC primitive used by ProductCompilationAttempt: once Setfarm
+// commits dispatch intent, an unobserved response is ambiguous and must not be
+// hidden behind another provider call.
+async function rpcOnce(method, params = {}) {
+  requestId++;
+  const body = {
+    jsonrpc: '2.0',
+    id: requestId,
+    method,
+    params,
+  };
+  const res = await fetch(MCP_ENDPOINT, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Goog-Api-Key': getApiKey(),
+    },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(rpcTimeoutMs()),
+  });
+  if (!res.ok) {
+    const responseText = await res.text();
+    throw new Error(`HTTP ${res.status}: ${responseText}`);
+  }
+  const json = await res.json();
+  if (json.error) throw new Error(`RPC error ${json.error.code}: ${json.error.message}`);
+  return json.result;
+}
+
 // Initialize MCP session
 async function initialize() {
   return rpc('initialize', {
+    protocolVersion: '2024-11-05',
+    capabilities: {},
+    clientInfo: { name: 'stitch-cli', version: '1.0.0' },
+  });
+}
+
+async function initializeOnce() {
+  return rpcOnce('initialize', {
     protocolVersion: '2024-11-05',
     capabilities: {},
     clientInfo: { name: 'stitch-cli', version: '1.0.0' },
@@ -442,6 +480,15 @@ async function generateScreenFromText(args) {
     }
     return { result, ...parsed };
   }
+}
+
+async function generateScreenFromTextOnce(args) {
+  const result = await rpcOnce('tools/call', {
+    name: 'generate_screen_from_text',
+    arguments: args,
+  });
+  assertToolResultOk(result, 'generate_screen_from_text');
+  return { result, ...parseScreens(result) };
 }
 
 function validDownloadedHtml(buffer) {
@@ -800,6 +847,84 @@ const commands = {
     writeFileSync(stitchFile, JSON.stringify(stitchData, null, 2));
 
     console.log(JSON.stringify({ projectId, source: 'created-or-found' }, null, 2));
+  },
+
+  async 'ensure-project-identity'(name, repoPath) {
+    if (!name || !repoPath) {
+      throw new Error('Usage: ensure-project-identity "Project Name" /path/to/repo');
+    }
+    const stitchFile = resolve(repoPath, '.stitch');
+    const validProjectId = (value) => /^[A-Za-z0-9][A-Za-z0-9._-]{0,499}$/.test(String(value || ''));
+    try {
+      const existing = JSON.parse(readFileSync(stitchFile, 'utf-8'));
+      if (validProjectId(existing.projectId)) {
+        console.log(JSON.stringify({
+          schema: 'setfarm.stitch-project-identity.v1',
+          projectId: existing.projectId,
+          name,
+          source: 'stitch-file',
+        }, null, 2));
+        return;
+      }
+    } catch { /* no sealed local identity */ }
+
+    // Project identity is established outside screen-generation attempts. It
+    // performs one list and, only when absent, one create. Exact-title lookup
+    // makes an ambiguous create response recoverable on the next invocation.
+    // No credential rotation, substring match, provider retry, or screen-state
+    // heuristic is allowed at this boundary.
+    await initializeOnce();
+    const listResult = await rpcOnce('tools/call', {
+      name: 'list_projects',
+      arguments: {},
+    });
+    assertToolResultOk(listResult, 'list_projects');
+    const projects = [];
+    for (const item of listResult?.content || []) {
+      if (item.type !== 'text') continue;
+      try {
+        const parsed = JSON.parse(item.text);
+        const values = Array.isArray(parsed) ? parsed : parsed.projects;
+        if (Array.isArray(values)) projects.push(...values);
+      } catch { /* typed failure below if no exact identity can be established */ }
+    }
+    const exactIds = [...new Set(projects
+      .filter((project) => String(project.title || project.displayName || project.name || '') === name)
+      .map((project) => String(project.name || '').replace(/^projects\//, '') || project.projectId || project.id)
+      .filter(validProjectId))];
+    if (exactIds.length > 1) throw new Error('STITCH_PROJECT_IDENTITY_AMBIGUOUS');
+
+    let projectId = exactIds[0] || '';
+    let source = 'exact-title';
+    if (!projectId) {
+      const createResult = await rpcOnce('tools/call', {
+        name: 'create_project',
+        arguments: { title: name },
+      });
+      assertToolResultOk(createResult, 'create_project');
+      for (const item of createResult?.content || []) {
+        if (item.type !== 'text') continue;
+        try {
+          const parsed = JSON.parse(item.text);
+          const raw = parsed.name || parsed.project?.name || parsed.projectId || parsed.project_id || '';
+          const candidate = String(raw).replace(/^projects\//, '');
+          if (validProjectId(candidate)) {
+            projectId = candidate;
+            break;
+          }
+        } catch { /* fail closed below */ }
+      }
+      source = 'created';
+    }
+    if (!validProjectId(projectId)) throw new Error('STITCH_PROJECT_IDENTITY_UNRESOLVED');
+    const identity = {
+      schema: 'setfarm.stitch-project-identity.v1',
+      projectId,
+      name,
+    };
+    mkdirSync(dirname(stitchFile), { recursive: true });
+    writeFileSync(stitchFile, JSON.stringify(identity, null, 2) + '\n');
+    console.log(JSON.stringify({ ...identity, source }, null, 2));
   },
 
   async 'generate-screen-safe'(projectId, prompt, screenTitle, deviceType = 'DESKTOP', modelId = 'GEMINI_3_1_PRO') {
@@ -1618,6 +1743,87 @@ const commands = {
       diagnostic: screens.length === 0 ? zeroScreenDiagnostic : undefined
     }, null, 2));
   },
+
+  'generate-all-screens-attempt': async function generateAllScreensAttempt(
+    projectId,
+    promptFile,
+    outputDir,
+    deviceType = "DESKTOP",
+    modelId = "GEMINI_3_1_PRO",
+  ) {
+    if (!projectId || !promptFile || !outputDir) {
+      throw new Error(
+        "Usage: generate-all-screens-attempt <projectId> <promptFile> <outputDir> [device] [model]",
+      );
+    }
+    let prompt;
+    try {
+      prompt = readFileSync(promptFile, "utf-8").trim();
+    } catch (error) {
+      throw new Error(`Cannot read prompt file: ${error.message}`);
+    }
+    if (!prompt) throw new Error("Prompt file is empty");
+    const resolvedOutput = resolve(outputDir);
+    mkdirSync(resolvedOutput, { recursive: true });
+
+    // Exactly one initialize and one generate operation. There is no key
+    // rotation, provider retry, fallback discovery, tracking-file merge, or
+    // canonical repo projection in this command.
+    await initializeOnce();
+    const generated = await generateScreenFromTextOnce({
+      projectId,
+      prompt,
+      deviceType,
+      modelId,
+    });
+    const directScreenEvidence = generated.evidence.map((item) => ({ ...item }));
+    const downloaded = [];
+    for (const screen of generated.screens) {
+      const evidence = directScreenEvidence.find((item) => item.screenId === screen.screenId);
+      if (!evidence) continue;
+      const receipt = { screenId: screen.screenId, title: screen.title || "" };
+      try {
+        if (screen.htmlUrl) {
+          const htmlPath = resolve(resolvedOutput, `${screen.screenId}.html`);
+          const html = await downloadFile(screen.htmlUrl, htmlPath);
+          if (html.sourceRefHash !== evidence.htmlSourceRefHash) {
+            rmSync(htmlPath, { force: true });
+            throw new Error("STITCH_HTML_SOURCE_RECEIPT_MISMATCH");
+          }
+          evidence.htmlDownloadedArtifactHash = html.artifactHash;
+          receipt.htmlFile = `${screen.screenId}.html`;
+        }
+        if (screen.screenshotUrl) {
+          const screenshotPath = resolve(resolvedOutput, `${screen.screenId}.png`);
+          const screenshot = await downloadFile(screen.screenshotUrl, screenshotPath);
+          if (screenshot.sourceRefHash !== evidence.screenshotSourceRefHash) {
+            rmSync(screenshotPath, { force: true });
+            throw new Error("STITCH_SCREENSHOT_SOURCE_RECEIPT_MISMATCH");
+          }
+          evidence.screenshotDownloadedArtifactHash = screenshot.artifactHash;
+          receipt.screenshotFile = `${screen.screenId}.png`;
+        }
+      } catch (error) {
+        receipt.downloadError = redactDiagnosticText(error?.message || error).slice(0, 700);
+      }
+      downloaded.push(receipt);
+    }
+    console.log(JSON.stringify({
+      schema: "setfarm.stitch-attempt-transport.v1",
+      total: generated.screens.length,
+      screens: generated.screens.map((screen) => ({
+        screenId: screen.screenId,
+        title: screen.title || "",
+      })),
+      screenSource: "direct",
+      directCandidateTotal: generated.candidates.length,
+      excludedDirectTotal: directScreenEvidence.filter((item) =>
+        item.disposition !== "admitted_renderable_screen").length,
+      directScreenEvidenceSchema: "setfarm.stitch-direct-screen-evidence.v2",
+      directScreenEvidence,
+      downloaded,
+    }, null, 2));
+  },
 };
 
 // Main
@@ -1631,6 +1837,7 @@ Commands:
   find-project "Name"                                                    Find project by name
   create-project "Title"                                                 Create a Stitch project
   ensure-project "Name" /path/to/repo                                    Find-or-create + persist .stitch
+  ensure-project-identity "Name" /path/to/repo                           Seal/reuse exact project identity once
   generate-screen <projectId> "<prompt>" [device] [model]                Generate a screen
   generate-screen-safe <projectId> "<prompt>" "<title>" [device] [model] Generate with dedup check
   get-design-md <projectId> [repoPath]                                   Extract DESIGN.md from project
@@ -1642,7 +1849,8 @@ Commands:
   download <url> <outputFile>                                            Download file from URL
   populate-cache <sourceDir> <destDir>                                   Copy PNGs+HTMLs from sourceDir to destDir
   download-all <projectId> <outputDir>                                   Download all screens + manifest + tokens
-  generate-all-screens <pId> <promptFile> [device] [model]                Single-call multi-screen generation`);
+  generate-all-screens <pId> <promptFile> [device] [model]                Single-call multi-screen generation
+  generate-all-screens-attempt <pId> <promptFile> <outputDir> [device] [model] Exact attempt-owned generation`);
   process.exit(1);
 }
 

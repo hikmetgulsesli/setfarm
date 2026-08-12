@@ -4,17 +4,30 @@ import { parseStackPrefix } from "../../stack-contract/prefix.js";
 import { getStackPack } from "../../stack-contract/packs.js";
 import type { StackPackId } from "../../stack-contract/types.js";
 import {
+  ProductSpecV1EnglishWriteSchema,
   ProductSpecV1Schema,
   ProductSpecV3ProposalSchema,
 } from "../../../product-compiler/schemas/product-spec-v1.js";
+import {
+  ProductSpecV2EnglishWriteSchema,
+  ProductSpecV2Schema,
+  type ProductSpecV2,
+} from "../../../product-compiler/schemas/product-spec-v2.js";
 import { canonicalJsonStringify, hashCanonicalJson } from "../../../product-compiler/canonical-json.js";
 import {
   ProductSpecRejectionV1Schema,
   canonicalizeProductSpecV3Proposal,
 } from "../../../product-compiler/producers/plan-product-spec-proposal.js";
 import { renderLegacyPrd } from "../../../product-compiler/renderers/legacy-prd.js";
+import { renderProductSpecV2Compatibility } from "../../../product-compiler/renderers/product-spec-v2-compatibility.js";
 import { recordObservation } from "../../observations.js";
 import { verifyProductDeliverySelectionV1 } from "../../../product-compiler/product-delivery-profile-catalog.js";
+import {
+  ENGLISH_TEXT_ARRAY_INDEX_V1,
+  englishTextViolationMessageV1,
+  inspectEnglishTextTreeV1,
+  type EnglishTextPathPatternV1,
+} from "../../../product-compiler/english-text-contract-v1.js";
 
 const VALID_TECH_STACKS = new Set([
   "vite-react",
@@ -33,15 +46,20 @@ const VALID_TECH_STACKS = new Set([
 
 const VALID_PLATFORMS = new Set(["web", "mobile", "desktop", "api", "cli", "game"]);
 const VALID_DB_REQUIRED = new Set(["none", "postgres", "sqlite", "external"]);
-const VALID_UI_LANGUAGES = new Set(["english", "turkish"]);
+const CANONICAL_UI_LANGUAGE = "English";
 const VALID_BOOLEAN = new Set(["true", "false"]);
 const PLAN_CONTRACT_SCHEMA_VERSION = "setfarm.plan.v2.2";
 const MIN_PRD_LENGTH = 2000;
 const PRODUCT_SPEC_BLOCK_RE = /```product-spec-v1\s*\n([\s\S]*?)\n```/g;
+const PRODUCT_SPEC_V2_BLOCK_RE = /```product-spec-v2\s*\n([\s\S]*?)\n```/g;
 const PRODUCT_SPEC_REJECTION_BLOCK_RE = /```product-spec-rejection-v1\s*\n([\s\S]*?)\n```/g;
 
 function productSpecBlocks(prd: string): RegExpMatchArray[] {
   return [...prd.matchAll(PRODUCT_SPEC_BLOCK_RE)];
+}
+
+function productSpecV2Blocks(prd: string): RegExpMatchArray[] {
+  return [...prd.matchAll(PRODUCT_SPEC_V2_BLOCK_RE)];
 }
 
 function productSpecRejectionBlocks(prd: string): RegExpMatchArray[] {
@@ -53,6 +71,16 @@ function parsedProductSpec(prd: string): ReturnType<typeof ProductSpecV1Schema.s
   if (blocks.length !== 1) return undefined;
   try {
     return ProductSpecV1Schema.safeParse(JSON.parse(blocks[0]![1]!));
+  } catch {
+    return undefined;
+  }
+}
+
+function parsedProductSpecV2(prd: string): ReturnType<typeof ProductSpecV2EnglishWriteSchema.safeParse> | undefined {
+  const blocks = productSpecV2Blocks(prd);
+  if (blocks.length !== 1) return undefined;
+  try {
+    return ProductSpecV2EnglishWriteSchema.safeParse(JSON.parse(blocks[0]![1]!));
   } catch {
     return undefined;
   }
@@ -120,8 +148,37 @@ const REQUIRED_PRD_SECTIONS = [
   "Out Of Scope",
 ];
 
+const PLAN_OUTPUT_ENGLISH_PROSE_PATHS = Object.freeze([
+  ["projectName"],
+  ["uiVisionSummary"],
+  ["prd"],
+  ["reasons", ENGLISH_TEXT_ARRAY_INDEX_V1, "message"],
+] satisfies readonly EnglishTextPathPatternV1[]);
+
+const PLAN_REJECTION_ENGLISH_PROSE_PATHS = Object.freeze([
+  ["reasons", ENGLISH_TEXT_ARRAY_INDEX_V1, "message"],
+] satisfies readonly EnglishTextPathPatternV1[]);
+
 function boolValue(value: string): boolean {
   return String(value || "").trim().toLowerCase() === "true";
+}
+
+function englishTextErrors(
+  value: unknown,
+  label: string,
+  lexicalPathPatterns: readonly EnglishTextPathPatternV1[] = PLAN_OUTPUT_ENGLISH_PROSE_PATHS,
+): string[] {
+  return inspectEnglishTextTreeV1(value, {
+    lexicalPathPatterns,
+  }).map((issue) =>
+    `PLAN_ENGLISH_TEXT_REQUIRED: ${label}: ${englishTextViolationMessageV1(issue)}`);
+}
+
+function plannerOwnedPrdProseV1(prd: string): string {
+  return prd
+    .replace(PRODUCT_SPEC_BLOCK_RE, "")
+    .replace(PRODUCT_SPEC_V2_BLOCK_RE, "")
+    .replace(PRODUCT_SPEC_REJECTION_BLOCK_RE, "");
 }
 
 function hasSection(prd: string, section: string): boolean {
@@ -182,8 +239,19 @@ export function normalize(parsed: ParsedOutput): void {
   if (parsed.design_required) parsed.design_required = parsed.design_required.toLowerCase().trim();
   const prd = String(parsed.prd || "");
   const proposalBlocks = productSpecBlocks(prd);
+  const proposalV2Blocks = productSpecV2Blocks(prd);
   const rejectionBlocks = productSpecRejectionBlocks(prd);
-  if (proposalBlocks.length === 1 && rejectionBlocks.length === 0) {
+  if (proposalV2Blocks.length === 1 && proposalBlocks.length === 0 && rejectionBlocks.length === 0) {
+    try {
+      const candidate = ProductSpecV2EnglishWriteSchema.parse(JSON.parse(proposalV2Blocks[0]![1]!));
+      parsed.prd = prd.replace(
+        proposalV2Blocks[0]![0],
+        `\`\`\`product-spec-v2\n${canonicalJsonStringify(candidate)}\n\`\`\``,
+      );
+    } catch {
+      // Validation reports the exact typed v2 projection error.
+    }
+  } else if (proposalBlocks.length === 1 && proposalV2Blocks.length === 0 && rejectionBlocks.length === 0) {
     try {
       const candidate = ProductSpecV1Schema.parse(JSON.parse(proposalBlocks[0]![1]!));
       parsed.prd = prd.replace(
@@ -193,7 +261,7 @@ export function normalize(parsed: ParsedOutput): void {
     } catch {
       // Validation reports the exact typed proposal error.
     }
-  } else if (rejectionBlocks.length === 1 && proposalBlocks.length === 0) {
+  } else if (rejectionBlocks.length === 1 && proposalBlocks.length === 0 && proposalV2Blocks.length === 0) {
     try {
       const rejection = ProductSpecRejectionV1Schema.parse(JSON.parse(rejectionBlocks[0]![1]!));
       parsed.prd = prd.replace(
@@ -209,23 +277,62 @@ export function normalize(parsed: ParsedOutput): void {
 export function validateOutput(parsed: ParsedOutput): ValidationResult {
   const errors: string[] = [];
   const prd = String(parsed.prd || "");
+  errors.push(...englishTextErrors({
+    projectName: String(parsed.project_name || ""),
+    uiVisionSummary: String(parsed.ui_vision_summary || ""),
+    prd: plannerOwnedPrdProseV1(prd),
+  }, "planner output"));
   const typedProductSpecBlocks = productSpecBlocks(prd);
+  const typedProductSpecV2Blocks = productSpecV2Blocks(prd);
   const typedRejectionBlocks = productSpecRejectionBlocks(prd);
-  if (typedProductSpecBlocks.length + typedRejectionBlocks.length > 1) {
+  const typedArtifactCount = typedProductSpecBlocks.length
+    + typedProductSpecV2Blocks.length
+    + typedRejectionBlocks.length;
+  if (typedArtifactCount > 1) {
     return {
       ok: false,
-      errors: [`PLAN must emit exactly one typed ProductSpec proposal or rejection block (got: ${typedProductSpecBlocks.length + typedRejectionBlocks.length})`],
+      errors: [`PLAN must emit exactly one typed ProductSpec proposal or rejection block (got: ${typedArtifactCount})`],
     };
   }
   if (typedRejectionBlocks.length === 1) {
     try {
-      ProductSpecRejectionV1Schema.parse(JSON.parse(typedRejectionBlocks[0]![1]!));
+      const rejection = ProductSpecRejectionV1Schema.parse(JSON.parse(typedRejectionBlocks[0]![1]!));
+      errors.push(...englishTextErrors(
+        rejection,
+        "typed rejection",
+        PLAN_REJECTION_ENGLISH_PROSE_PATHS,
+      ));
       errors.push("Typed ProductSpec rejection requires upstream specification clarification; Setfarm will not guess product semantics");
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       errors.push(`Typed PLAN ProductSpec rejection is invalid: ${message.slice(0, 1_000)}`);
     }
     return { ok: false, errors };
+  }
+  if (typedProductSpecV2Blocks.length === 1) {
+    try {
+      const candidate = JSON.parse(typedProductSpecV2Blocks[0]![1]!);
+      const result = ProductSpecV2EnglishWriteSchema.safeParse(candidate);
+      if (!result.success) {
+        errors.push(`Typed PLAN ProductSpec v2 proposal is invalid: ${result.error.issues[0]?.message || "schema mismatch"}`);
+      } else {
+        if (result.data.delivery.uiLanguage !== CANONICAL_UI_LANGUAGE) {
+          errors.push("Typed PLAN ProductSpec v2 UI language must be exactly English");
+        }
+        if (canonicalJsonStringify(result.data) !== typedProductSpecV2Blocks[0]![1]!.trim()) {
+          errors.push("Typed PLAN ProductSpec v2 proposal was not canonicalized by Setfarm");
+        }
+      }
+      if ((parsed.status || "").toLowerCase() !== "done") {
+        errors.push(`STATUS must be 'done' for a ProductSpec v2 proposal (got: '${parsed.status || ""}')`);
+      }
+      if (parsed.product_spec_schema && parsed.product_spec_schema !== "setfarm.product-spec.v2") {
+        errors.push(`PRODUCT_SPEC_SCHEMA must match the typed v2 proposal (got: '${parsed.product_spec_schema}')`);
+      }
+    } catch {
+      errors.push("Typed PLAN ProductSpec v2 projection must be valid canonical JSON");
+    }
+    return { ok: errors.length === 0, errors };
   }
   if (typedProductSpecBlocks.length === 1) {
     try {
@@ -296,9 +403,9 @@ export function validateOutput(parsed: ParsedOutput): ValidationResult {
     errors.push("UI_VISION_SUMMARY must be present and >=80 chars when DESIGN_REQUIRED=true");
   }
 
-  const uiLanguage = (parsed.ui_language || "").toLowerCase();
-  if (!VALID_UI_LANGUAGES.has(uiLanguage)) {
-    errors.push(`UI_LANGUAGE must be one of ${[...VALID_UI_LANGUAGES].join(", ")} (got: '${parsed.ui_language || ""}')`);
+  const uiLanguage = String(parsed.ui_language || "").trim();
+  if (uiLanguage !== CANONICAL_UI_LANGUAGE) {
+    errors.push(`UI_LANGUAGE must be exactly ${CANONICAL_UI_LANGUAGE} (got: '${parsed.ui_language || ""}')`);
   }
 
   if (prd.length < MIN_PRD_LENGTH) {
@@ -315,7 +422,7 @@ export function validateOutput(parsed: ParsedOutput): ValidationResult {
     } else {
       try {
         const candidate = JSON.parse(typedProductSpecBlocks[0]![1]!);
-        const result = ProductSpecV1Schema.safeParse(candidate);
+        const result = ProductSpecV1EnglishWriteSchema.safeParse(candidate);
         if (!result.success) {
           errors.push(`Typed PLAN ProductSpec is invalid: ${result.error.issues[0]?.message || "schema mismatch"}`);
         } else if (canonicalJsonStringify(result.data) !== typedProductSpecBlocks[0]![1]!.trim()) {
@@ -384,8 +491,64 @@ export function validateOutput(parsed: ParsedOutput): ValidationResult {
 export async function onComplete(ctx: CompleteContext): Promise<void> {
   const { parsed, context, runId } = ctx;
   normalize(parsed);
+  const typedV2 = parsedProductSpecV2(String(parsed.prd || ""));
   const typed = parsedProductSpec(String(parsed.prd || ""));
-  if (typed?.success && (typed.data.delivery || typed.data.requirements || typed.data.traceability)) {
+  if (typedV2?.success) {
+    const spec: ProductSpecV2 = typedV2.data;
+    const rendered = renderProductSpecV2Compatibility(spec);
+    const bodyMarker = "\nPRD:\n";
+    const bodyIndex = rendered.indexOf(bodyMarker);
+    if (bodyIndex < 0) throw new Error("PRODUCT_SPEC_V2_COMPATIBILITY_PROJECTION_INVALID");
+    const header = rendered.slice(0, bodyIndex);
+    const headerValue = (key: string): string => header.match(new RegExp(`^${key}:\\s*(.+)$`, "m"))?.[1]?.trim() || "";
+    parsed.contract_schema_version = PLAN_CONTRACT_SCHEMA_VERSION;
+    parsed.status = "done";
+    parsed.project_name = spec.product.name;
+    parsed.project_slug = headerValue("PROJECT_SLUG");
+    parsed.platform = spec.delivery.platform;
+    parsed.tech_stack = spec.delivery.techStack;
+    parsed.ui_language = spec.delivery.uiLanguage;
+    parsed.db_required = spec.delivery.database;
+    parsed.design_required = String(spec.delivery.designRequired);
+    parsed.ui_vision_summary = spec.delivery.uiVisionSummary;
+    parsed.product_spec_schema = spec.schema;
+    parsed.prd = rendered.slice(bodyIndex + bodyMarker.length);
+    context["product_semantics_version"] = "v2";
+    context["product_spec_hash"] = hashCanonicalJson(spec);
+    context["product_spec_source_task_hash"] = spec.traceability.sourceTaskHash;
+    if (context["plan_protocol"] !== "v3") await recordObservation({
+      runId,
+      stepId: ctx.stepId,
+      phase: "planning",
+      checkId: "product_compiler.product_spec_v2_canonicalized",
+      label: "Planner ProductSpec v2 canonicalized",
+      status: "pass",
+      summary: `Canonicalized ${spec.requirements.length} source requirements into ${spec.traceability.bindings.length} semantic bindings and ${spec.actions.flatMap((action) => action.controlPlacements).length} exact control slots.`,
+      evidence: {
+        schema: "setfarm.product-spec-proposal-evidence.v2",
+        productSpecHash: context["product_spec_hash"],
+        sourceTaskHash: spec.traceability.sourceTaskHash,
+        sourceTransport: context["plan_source_transport"] || "semantic_proposal_v2",
+        sourceProposalHash: context["plan_source_proposal_hash"] || null,
+        semanticProposalHash: context["plan_semantic_proposal_hash"] || null,
+        planProductBuildAuthorityHash: context["plan_product_build_authority_hash"] || null,
+        runtimeBehaviorProposalHash:
+          context["product_runtime_behavior_proposal_hash"] || null,
+        runtimeBehaviorContractHash: context["product_runtime_behavior_contract_hash"] || null,
+        deliveryProfileId: context["product_delivery_profile_id"] || null,
+        deliverySelectionHash: context["product_delivery_selection_hash"] || null,
+        deliveryCatalogHash: context["product_delivery_catalog_hash"] || null,
+        stackPackId: context["product_delivery_stack_pack_id"] || context["stack_pack_id"] || null,
+        conversionPolicy: context["product_delivery_conversion_policy"] || null,
+        designProjection: context["product_delivery_design_projection"] || null,
+        topologyDescriptorHash: context["product_delivery_topology_hash"] || null,
+        persistenceProjectionHash: context["product_persistence_projection_hash"] || null,
+        requirementRefs: spec.requirements.map((requirement) => requirement.id),
+        controlSlotRefs: spec.actions.flatMap((action) =>
+          action.controlPlacements.map((placement) => placement.id)),
+      },
+    });
+  } else if (typed?.success && (typed.data.delivery || typed.data.requirements || typed.data.traceability)) {
     const authoritativeDelivery = sealedDeliveryContext(context) ?? canonicalExplicitStackContext(context);
     const canonical = canonicalizeProductSpecV3Proposal({
       task: context["task"] || "",
@@ -419,7 +582,7 @@ export async function onComplete(ctx: CompleteContext): Promise<void> {
     parsed.prd = rendered.slice(bodyIndex + bodyMarker.length);
     context["product_spec_hash"] = hashCanonicalJson(spec);
     context["product_spec_source_task_hash"] = canonical.sourceTaskHash;
-    await recordObservation({
+    if (context["plan_protocol"] !== "v3") await recordObservation({
       runId,
       stepId: ctx.stepId,
       phase: "planning",
@@ -478,7 +641,7 @@ export async function onComplete(ctx: CompleteContext): Promise<void> {
   context["prd"] = parsed.prd || "";
   context["db_required"] = (parsed.db_required || "").toLowerCase();
   context["design_required"] = (parsed.design_required || "").toLowerCase();
-  context["ui_language"] = parsed.ui_language || "English";
+  context["ui_language"] = CANONICAL_UI_LANGUAGE;
   context["contract_schema_version"] = parsed.contract_schema_version || PLAN_CONTRACT_SCHEMA_VERSION;
   context["ui_vision_summary"] = parsed.ui_vision_summary || "";
 }

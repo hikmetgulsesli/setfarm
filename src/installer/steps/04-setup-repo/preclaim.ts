@@ -2,12 +2,45 @@ import path from "node:path";
 import fs from "node:fs";
 import { execFileSync } from "node:child_process";
 import type { ClaimContext } from "../types.js";
-import { pgGet } from "../../../db-pg.js";
+import { getSql, pgGet } from "../../../db-pg.js";
 import { logger } from "../../../lib/logger.js";
 import { processSetupCompletion, processSetupDesignContracts } from "../../step-guardrails.js";
 import { resolvePlatformScript } from "../../paths.js";
 import { getStackPack } from "../../stack-contract/packs.js";
 import type { StackPackId } from "../../stack-contract/types.js";
+import {
+  englishTextViolationMessageV1,
+  inspectEnglishTextV1,
+} from "../../../product-compiler/english-text-contract-v1.js";
+import { loadCompilerEnglishAdmissionLedgerAuthorityV1 } from "../../../execution/compiler-english-admission-ledger-v1.js";
+import { loadCompilerStoryEnglishAdmissionLedgerAuthorityV1 } from "../../../execution/compiler-story-english-admission-ledger-v1.js";
+
+export class SetupRepoEnglishTextRequiredError extends Error {
+  readonly code = "SETUP_REPO_ENGLISH_TEXT_REQUIRED";
+  readonly field: string;
+
+  constructor(field: string, detail: string) {
+    super(`SETUP_REPO_ENGLISH_TEXT_REQUIRED: ${field}: ${detail}`);
+    this.name = "SetupRepoEnglishTextRequiredError";
+    this.field = field;
+  }
+}
+
+function requireEnglishSetupText(value: string, field: string): void {
+  if (/[\t\r\n]/.test(value)) {
+    throw new SetupRepoEnglishTextRequiredError(
+      field,
+      "ENGLISH_TEXT_SINGLE_LINE_REQUIRED",
+    );
+  }
+  const issue = inspectEnglishTextV1(value);
+  if (issue) {
+    throw new SetupRepoEnglishTextRequiredError(
+      field,
+      englishTextViolationMessageV1(issue),
+    );
+  }
+}
 
 function resolveSetupTechStack(context: Record<string, string>): string {
   const packId = context["stack_pack_id"] || context["detected_stack"] || "";
@@ -36,9 +69,29 @@ function repoHasRequiredBaseline(repo: string, context: Record<string, string>):
 // 4. Design contracts from stitch HTML (processSetupDesignContracts)
 // Agent then only confirms + emits EXISTING_CODE.
 export async function preClaim(ctx: ClaimContext): Promise<void> {
+  const repo = ctx.context["repo"] || ctx.context["REPO"] || "";
+  const displayName = ctx.context["project_display_name"] || ctx.context["PROJECT_DISPLAY_NAME"] || ctx.context["project_name"] || "";
+  const scaffoldTextInputs = [
+    ["project_display_name", ctx.context["project_display_name"]],
+    ["PROJECT_DISPLAY_NAME", ctx.context["PROJECT_DISPLAY_NAME"]],
+    ["project_name", ctx.context["project_name"]],
+    ["app_title", ctx.context["app_title"]],
+  ] as const;
+  for (const [field, value] of scaffoldTextInputs) {
+    if (value !== undefined) requireEnglishSetupText(value, field);
+  }
+  requireEnglishSetupText(displayName, "displayName");
+
+  const runProtocol = await pgGet<{ protocol: string }>(
+    "SELECT protocol FROM runs WHERE id = $1",
+    [ctx.runId],
+  );
+  if (runProtocol?.protocol === "v3") {
+    await loadCompilerEnglishAdmissionLedgerAuthorityV1(getSql(), { runId: ctx.runId });
+    await loadCompilerStoryEnglishAdmissionLedgerAuthorityV1(getSql(), { runId: ctx.runId });
+  }
   if (process.env.SETFARM_DISABLE_AUTO_SETUP_REPO === "1") return;
 
-  const repo = ctx.context["repo"] || ctx.context["REPO"] || "";
   // Single run-branch architecture: every run owns one resolved runtime branch,
   // and each story commits onto that branch.
   const branch = ctx.context["branch"] || ctx.context["BRANCH"] || ctx.context["run_slug"] || ctx.runId;
@@ -57,11 +110,9 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
   const script = resolvePlatformScript("setup-repo.sh");
   const stitchProjectId = ctx.context["stitch_project_id"] || ctx.context["STITCH_PROJECT_ID"] || "";
   const screenMap = ctx.context["screen_map"] || ctx.context["SCREEN_MAP"] || "";
-  const displayName = ctx.context["project_display_name"] || ctx.context["PROJECT_DISPLAY_NAME"] || ctx.context["project_name"] || "";
-  const uiLanguage = ctx.context["ui_language"] || ctx.context["UI_LANGUAGE"] || "English";
   if (fs.existsSync(script)) {
     try {
-      execFileSync("bash", [script, repo, branch, String(stitchProjectId), String(screenMap), String(techStack), String(displayName), String(uiLanguage)], {
+      execFileSync("bash", [script, repo, branch, String(stitchProjectId), String(screenMap), String(techStack), String(displayName), "English"], {
         encoding: "utf-8",
         timeout: 180000,
         env: {
@@ -74,6 +125,12 @@ export async function preClaim(ctx: ClaimContext): Promise<void> {
       });
       logger.info(`[module:setup-repo preclaim] setup-repo.sh ran (stack=${techStack}, branch=${branch})`, { runId: ctx.runId });
     } catch (e) {
+      if ((e as NodeJS.ErrnoException & { status?: number }).status === 64) {
+        throw new SetupRepoEnglishTextRequiredError(
+          "setup-repo.sh",
+          "shell English admission failed before repository mutation",
+        );
+      }
       setupRepoFailed = true;
       logger.warn(`[module:setup-repo preclaim] setup-repo.sh failed: ${String(e).slice(0, 300)}`, { runId: ctx.runId });
     }

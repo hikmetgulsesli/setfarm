@@ -21,7 +21,7 @@ import {
   IndexedArtifactPublisher,
   bootstrapArtifactIndex,
 } from "../../src/product-compiler/indexed-artifact-publisher.js";
-import { createRuntimePacketCompiler } from "../../src/product-compiler/runtime-packet-compiler.js";
+import { compileProductBuildPacket } from "../../src/product-compiler/packet-compiler.js";
 import { ImplementationSliceV1Schema } from "../../src/product-compiler/schemas/implementation-slice-v1.js";
 import { createPostgresConvergencePort } from "../../src/evals/convergence-runner.js";
 import { transitionRunToTerminal } from "../../src/execution/run-terminal-transition.js";
@@ -53,18 +53,7 @@ describe("accepted candidate repository", () => {
     await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
   });
   beforeEach(async () => {
-    await database.sql.unsafe(
-      `TRUNCATE accepted_candidate_story_evidence, accepted_candidates,
-                evidence_bundles, findings, finding_sets, recovery_cases,
-                product_packets, run_artifact_refs, artifact_publication_reservations,
-                semantic_artifacts, execution_attempts, claim_log, runs CASCADE`,
-    );
-    await database.sql.unsafe(
-      `UPDATE artifact_capacity SET quota_bytes = 8388608, max_payload_bytes = 4194304,
-          total_bytes = 0, reserved_bytes = 0, state = 'bootstrap_required',
-          reconciled_at = NULL, diagnostic = NULL, updated_at = NOW()
-        WHERE capacity_key = 'semantic-artifacts'`,
-    );
+    await database.reset();
   });
 
   async function fixture(options: Readonly<{ forgedBundleHash?: boolean }> = {}) {
@@ -91,20 +80,40 @@ describe("accepted candidate repository", () => {
     );
     const contracts = intent.contracts;
     const producer = { pass: "accepted-candidate-test", codeSha: RELEASE_SHA, toolVersions: {} };
-    const compiled = await createRuntimePacketCompiler({
-      sql: database.sql,
-      artifactRoot,
-      artifactLimits: limits,
+    const compiler = { version: "3.0.0", codeSha: RELEASE_SHA };
+    const publisher = new IndexedArtifactPublisher({
+      index,
+      store,
       ownerInstanceId: "accepted-candidate-compiler",
-    }).compile({
-      runId,
-      expectedMode: "v3",
-      ...contracts,
-      compiler: { version: "3.0.0", codeSha: RELEASE_SHA },
-      producer,
     });
-    assert.equal(compiled.activation, "activated");
-    const packetHash = compiled.compilation.packetHash!;
+    const compiled = await compileProductBuildPacket({
+      productSpec: contracts.productSpec,
+      designGraph: contracts.designGraph,
+      buildTopology: contracts.buildTopology,
+      storyPlan: contracts.storyPlan,
+      designSource: contracts.designSource,
+      compiler,
+      producer,
+      protocol: "v3",
+      artifactStore: publisher,
+    });
+    assert.equal(compiled.status, "sealed");
+    assert.ok(compiled.packetHash);
+    await index.activateProductPacket({
+      runId,
+      packetHash: compiled.packetHash,
+      compiler,
+      artifactRefs: {
+        PRODUCT_SPEC: compiled.artifactHashes.productSpec!,
+        DESIGN_GRAPH: compiled.artifactHashes.designGraph!,
+        BUILD_TOPOLOGY: compiled.artifactHashes.buildTopology!,
+        STORY_PLAN: compiled.artifactHashes.storyPlan!,
+        DESIGN_SOURCE_CLOSURE: compiled.artifactHashes.designSourceClosure!,
+        PRODUCT_BUILD_PACKET: compiled.packetHash,
+        COMPILATION_REPORT: compiled.reportHash,
+      },
+    });
+    const packetHash = compiled.packetHash;
     await database.sql.unsafe(
       `INSERT INTO stories (id, run_id, story_index, story_id, title, status)
        VALUES ('story-accepted-candidate-us-001', $1, 0, 'US-001', 'Save task', 'done')`,
@@ -115,11 +124,6 @@ describe("accepted candidate repository", () => {
       ...contracts.implementationSlice,
       packetHash,
       sourceRevision: { baseSha: sourceRevision.sha, treeHash: sourceRevision.treeHash },
-    });
-    const publisher = new IndexedArtifactPublisher({
-      index,
-      store,
-      ownerInstanceId: "accepted-candidate-publisher",
     });
     const slicePublication = await publisher.put({
       schema: "setfarm.semantic-artifact-envelope.v1",
@@ -253,7 +257,7 @@ describe("accepted candidate repository", () => {
         runId,
         "6".repeat(64),
         packetHash,
-        compiled.compilation.reportHash,
+        compiled.reportHash,
         slicePublication.hash,
         sourceRevision.sha,
         sourceRevision.treeHash,

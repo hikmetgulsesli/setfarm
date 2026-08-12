@@ -19,7 +19,7 @@ const SlugSchema = z.string().min(1).max(160).regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/
 const ReasonCodeSchema = z.string().min(3).max(160).regex(/^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$/);
 const ProductClassSchema = z.enum(["utility", "operations", "game"]);
 const StackPackSchema = z.enum(["vite-react-web-app", "browser-game-canvas"]);
-const RejectionCodeSchema = z.enum([
+export const RejectionCodeSchema = z.enum([
   "PRODUCT_SPEC_TASK_AMBIGUOUS",
   "PRODUCT_SPEC_SEMANTIC_UNSUPPORTED",
   "PRODUCT_SPEC_REQUIREMENT_CONFLICT",
@@ -32,7 +32,7 @@ const RejectionCodeSchema = z.enum([
  * Exact task spans bind expectations to source without sharing producer IDs.
  */
 
-const OracleClauseV1Schema = z.object({
+export const OracleClauseV1Schema = z.object({
   clauseId: SlugSchema,
   source: z.object({
     startOffset: z.number().int().nonnegative(),
@@ -160,7 +160,7 @@ export const TaskIntentExpectationV1Schema = z.discriminatedUnion("kind", [
   ActionExpectationV1Schema,
 ]);
 
-const AcceptedDecisionV1Schema = z.object({
+export const AcceptedDecisionV1Schema = z.object({
   kind: z.literal("accepted_candidate"),
   productClass: ProductClassSchema,
   delivery: z.object({
@@ -182,9 +182,9 @@ export const TaskIntentOracleV1Schema = z.object({
   schema: z.literal("setfarm.task-intent-oracle.v1"),
   oracleId: SlugSchema,
   oracleVersion: z.literal(1),
-  locale: z.string().min(2).max(35).regex(/^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$/),
+  locale: z.literal("en"),
   cohort: z.enum(["baseline", "holdout", "negative"]),
-  variant: z.enum(["direct", "paraphrase", "multilingual", "ambiguous", "unsupported"]),
+  variant: z.enum(["direct", "paraphrase", "compositional", "ambiguous", "unsupported"]),
   expectedDecision: z.discriminatedUnion("kind", [AcceptedDecisionV1Schema, RejectionDecisionV1Schema]),
   clauses: z.array(OracleClauseV1Schema).min(1).max(1_000),
   expectations: z.array(TaskIntentExpectationV1Schema).max(2_000),

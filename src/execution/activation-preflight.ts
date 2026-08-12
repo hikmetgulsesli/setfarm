@@ -6,16 +6,32 @@ import {
   measureArtifactCapacity,
   type ArtifactCapacityLimits,
 } from "../product-compiler/artifact-capacity.js";
-import { ContentAddressedArtifactStore } from "../product-compiler/artifact-store.js";
-import { createArtifactIndex } from "../product-compiler/artifact-index.js";
+import {
+  ArtifactStoreError,
+  ContentAddressedArtifactStore,
+} from "../product-compiler/artifact-store.js";
+import { createArtifactInventoryStoreV1 } from "../product-compiler/artifact-inventory-store.js";
+import {
+  createHybridArtifactStoreCapacityLeaseProviderV1,
+  ArtifactStoreAuthorityError,
+} from "../product-compiler/artifact-store-authority.js";
+import {
+  ArtifactIndexError,
+  createArtifactIndex,
+} from "../product-compiler/artifact-index.js";
 import {
   IndexedArtifactPublisher,
-  scanArtifactInventory,
+  IndexedArtifactPublisherError,
+  verifyArtifactIndexInventory,
 } from "../product-compiler/indexed-artifact-publisher.js";
 import {
   readContractSpineMigrationAttestation,
   verifyContractSpineMigrations,
 } from "../db/contract-spine-migrations.js";
+import {
+  resolveArtifactStorePublicationAuthorityMode,
+  type ArtifactStorePublicationAuthorityMode,
+} from "../runtime-config.js";
 
 const PreflightCheckV1Schema = z.object({
   id: z.enum([
@@ -110,6 +126,19 @@ function nonNegativeMetrics(values: Record<string, number>): Record<string, numb
   ]));
 }
 
+function artifactCapacityFailureCode(error: unknown): string {
+  if (error instanceof IndexedArtifactPublisherError) return error.code;
+  if (error instanceof ArtifactIndexError) {
+    if (error.code === "ARTIFACT_BOOTSTRAP_MISMATCH") {
+      return "ARTIFACT_INDEX_FILESYSTEM_DRIFT";
+    }
+    return error.code;
+  }
+  if (error instanceof ArtifactStoreAuthorityError) return error.code;
+  if (error instanceof ArtifactStoreError) return error.code;
+  return "ARTIFACT_CAPACITY_UNAVAILABLE";
+}
+
 export async function runActivationPreflight(
   input: Readonly<{
     protocol: "shadow" | "v3";
@@ -188,8 +217,8 @@ export async function runActivationPreflight(
         artifactIndexReady: indexReady ? 1 : 0,
       }),
     ));
-  } catch {
-    checks.push(check("artifact_capacity", "fail", "ARTIFACT_CAPACITY_UNAVAILABLE"));
+  } catch (error) {
+    checks.push(check("artifact_capacity", "fail", artifactCapacityFailureCode(error)));
   }
 
   try {
@@ -269,15 +298,34 @@ export function createActivationPreflightDependencies(input: Readonly<{
   artifactRoot: string;
   artifactLimits: ArtifactCapacityLimits;
   compilerReleaseSha: string;
+  publicationAuthorityMode?: ArtifactStorePublicationAuthorityMode;
 }>): ActivationPreflightDependencies {
-  const store = new ContentAddressedArtifactStore(input.artifactRoot, {
+  const publicationAuthority = input.publicationAuthorityMode
+    ?? resolveArtifactStorePublicationAuthorityMode();
+  const reportProvider = publicationAuthority === "hybrid-required"
+    ? createHybridArtifactStoreCapacityLeaseProviderV1({
+        sql: input.sql,
+        artifactRoot: input.artifactRoot,
+        purpose: "existing-writer",
+      })
+    : undefined;
+  const inventoryStore = createArtifactInventoryStoreV1({
+    sql: input.sql,
+    artifactRoot: input.artifactRoot,
+    artifactLimits: input.artifactLimits,
+    purpose: "inventory-verify",
+    publicationAuthorityMode: publicationAuthority,
+  }).store;
+  const reportStore = new ContentAddressedArtifactStore(input.artifactRoot, {
     limits: input.artifactLimits,
+    ...(reportProvider ? { capacityLeaseProvider: reportProvider } : {}),
   });
   const index = createArtifactIndex(input.sql);
   const publisher = new IndexedArtifactPublisher({
     index,
-    store,
+    store: reportStore,
     ownerInstanceId: `activation-preflight:${process.pid}`,
+    publicationAuthority,
   });
   return Object.freeze({
     verifyMigrations: async () => {
@@ -296,19 +344,32 @@ export function createActivationPreflightDependencies(input: Readonly<{
       return { ok: rows[0]?.ok === 1 };
     },
     inspectArtifactCapacity: async () => {
-      const artifacts = await scanArtifactInventory(store);
-      const [snapshot, indexed] = await Promise.all([
-        measureArtifactCapacity(input.artifactRoot),
-        index.verifyInventory({ artifacts }),
-      ]);
+      const current = await index.getCapacity();
+      if (current.state !== "ready") {
+        const snapshot = await measureArtifactCapacity(input.artifactRoot);
+        return {
+          rootBytes: snapshot.rootBytes,
+          rootQuotaBytes: input.artifactLimits.rootQuotaBytes,
+          freeBytes: snapshot.freeBytes,
+          minFreeBytes: input.artifactLimits.minFreeBytes,
+          indexState: current.state,
+          indexedBytes: current.totalBytes,
+          reservedBytes: current.reservedBytes,
+        };
+      }
+      const verified = await verifyArtifactIndexInventory({
+        index,
+        store: inventoryStore,
+      });
+      const snapshot = await measureArtifactCapacity(input.artifactRoot);
       return {
-        rootBytes: snapshot.rootBytes,
+        rootBytes: verified.inventory.totalBytes,
         rootQuotaBytes: input.artifactLimits.rootQuotaBytes,
         freeBytes: snapshot.freeBytes,
         minFreeBytes: input.artifactLimits.minFreeBytes,
-        indexState: indexed.state,
-        indexedBytes: indexed.totalBytes,
-        reservedBytes: indexed.reservedBytes,
+        indexState: verified.capacity.state,
+        indexedBytes: verified.capacity.totalBytes,
+        reservedBytes: verified.capacity.reservedBytes,
       };
     },
     readActivity: async () => {
@@ -401,5 +462,6 @@ export async function runDefaultActivationPreflight(input: Readonly<{
     artifactRoot: root,
     artifactLimits: limits,
     compilerReleaseSha: input.compilerReleaseSha,
+    publicationAuthorityMode: config.resolveArtifactStorePublicationAuthorityMode(env),
   }));
 }

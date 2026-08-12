@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { lstat, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
@@ -11,9 +11,16 @@ import {
   type ActivationPreflightDependencies,
 } from "../../src/execution/activation-preflight.js";
 import { applyContractSpineMigrations } from "../../src/db/contract-spine-migrations.js";
-import { ContentAddressedArtifactStore } from "../../src/product-compiler/artifact-store.js";
+import {
+  ArtifactStoreError,
+  ContentAddressedArtifactStore,
+} from "../../src/product-compiler/artifact-store.js";
+import { createHybridArtifactStoreCapacityLeaseProviderV1 } from "../../src/product-compiler/artifact-store-authority.js";
 import { createArtifactIndex } from "../../src/product-compiler/artifact-index.js";
-import { bootstrapArtifactIndex } from "../../src/product-compiler/indexed-artifact-publisher.js";
+import {
+  IndexedArtifactPublisherError,
+  bootstrapArtifactIndex,
+} from "../../src/product-compiler/indexed-artifact-publisher.js";
 import { createIsolatedTestDatabase } from "./test-database.js";
 
 const RELEASE_SHA = "d".repeat(40);
@@ -45,6 +52,22 @@ function dependencies(
 }
 
 describe("Product Compiler activation preflight", () => {
+  it("constructs hybrid activation with separate inventory and existing-writer capabilities", () => {
+    const created = createActivationPreflightDependencies({
+      sql: {} as never,
+      artifactRoot: path.join(tmpdir(), "setfarm-e1-authority", "sha256"),
+      artifactLimits: {
+        maxPayloadBytes: 4 * 1024 * 1024,
+        rootQuotaBytes: 8 * 1024 * 1024,
+        minFreeBytes: 0,
+      },
+      compilerReleaseSha: RELEASE_SHA,
+      publicationAuthorityMode: "hybrid-required",
+    });
+    assert.equal(typeof created.inspectArtifactCapacity, "function");
+    assert.equal(typeof created.storeReport, "function");
+  });
+
   it("produces one stored canonical pass report for a clean v3 admission", async () => {
     const result = await runActivationPreflight({
       protocol: "v3",
@@ -127,6 +150,66 @@ describe("Product Compiler activation preflight", () => {
         error instanceof ActivationPreflightError
         && error.code === "ACTIVATION_PREFLIGHT_STORE_FAILED"
         && !error.message.includes("private store path"),
+    );
+  });
+
+  it("projects typed inventory failure codes instead of agent or filesystem prose", async () => {
+    const result = await runActivationPreflight({
+      protocol: "v3",
+      compilerReleaseSha: RELEASE_SHA,
+      v3ActivationEnabled: true,
+    }, dependencies({
+      inspectArtifactCapacity: async () => {
+        throw new IndexedArtifactPublisherError(
+          "ARTIFACT_INVENTORY_CLOSURE_REJECTED",
+          "private root detail must not become operational evidence",
+        );
+      },
+    }));
+    assert.equal(
+      result.report.checks.find((item) => item.id === "artifact_capacity")?.code,
+      "ARTIFACT_INVENTORY_CLOSURE_REJECTED",
+    );
+    assert.doesNotMatch(JSON.stringify(result.report), /private root detail/);
+
+    const bounded = await runActivationPreflight({
+      protocol: "v3",
+      compilerReleaseSha: RELEASE_SHA,
+      v3ActivationEnabled: true,
+    }, dependencies({
+      inspectArtifactCapacity: async () => {
+        throw new ArtifactStoreError(
+          "ARTIFACT_INVENTORY_LIMIT_EXCEEDED",
+          "private aggregate-byte detail must not become operational evidence",
+        );
+      },
+    }));
+    assert.equal(
+      bounded.report.checks.find((item) => item.id === "artifact_capacity")?.code,
+      "ARTIFACT_INVENTORY_LIMIT_EXCEEDED",
+    );
+    assert.doesNotMatch(JSON.stringify(bounded.report), /private aggregate-byte detail/);
+  });
+
+  it("projects non-ready index state without trying to initialize inventory authority", async () => {
+    const result = await runActivationPreflight({
+      protocol: "v3",
+      compilerReleaseSha: RELEASE_SHA,
+      v3ActivationEnabled: true,
+    }, dependencies({
+      inspectArtifactCapacity: async () => ({
+        rootBytes: 0,
+        rootQuotaBytes: 1_000,
+        freeBytes: 10_000,
+        minFreeBytes: 100,
+        indexState: "quarantined",
+        indexedBytes: 0,
+        reservedBytes: 0,
+      }),
+    }));
+    assert.equal(
+      result.report.checks.find((item) => item.id === "artifact_capacity")?.code,
+      "ARTIFACT_INDEX_QUARANTINED",
     );
   });
 
@@ -258,6 +341,84 @@ describe("Product Compiler activation preflight", () => {
         blocked.report.checks.find((item) => item.id === "activity")?.code,
         "ACTIVATION_ACTIVITY_CONFLICT",
       );
+    } finally {
+      await database.cleanup();
+      await rm(temp, { recursive: true, force: true });
+    }
+  });
+
+  it("verifies one held hybrid inventory generation and stores through existing-writer authority", async () => {
+    const database = await createIsolatedTestDatabase();
+    const temp = await mkdtemp(path.join(tmpdir(), "setfarm-preflight-hybrid-"));
+    const root = path.join(temp, "sha256");
+    const limits = {
+      maxPayloadBytes: 4 * 1024 * 1024,
+      rootQuotaBytes: 8 * 1024 * 1024,
+      minFreeBytes: 0,
+    };
+    try {
+      await applyContractSpineMigrations(database.sql, { releaseSha: RELEASE_SHA });
+      const adoptionStore = new ContentAddressedArtifactStore(root, {
+        limits,
+        capacityLeaseProvider: createHybridArtifactStoreCapacityLeaseProviderV1({
+          sql: database.sql,
+          artifactRoot: root,
+          purpose: "inventory-adoption",
+        }),
+      });
+      await bootstrapArtifactIndex({
+        index: createArtifactIndex(database.sql),
+        store: adoptionStore,
+        quotaBytes: limits.rootQuotaBytes,
+        maxPayloadBytes: limits.maxPayloadBytes,
+      });
+
+      const result = await runActivationPreflight({
+        protocol: "v3",
+        compilerReleaseSha: RELEASE_SHA,
+        v3ActivationEnabled: true,
+      }, createActivationPreflightDependencies({
+        sql: database.sql,
+        artifactRoot: root,
+        artifactLimits: limits,
+        compilerReleaseSha: RELEASE_SHA,
+        publicationAuthorityMode: "hybrid-required",
+      }));
+
+      assert.equal(result.status, "pass");
+      const stored = await adoptionStore.get(result.hash);
+      assert.deepEqual(stored.envelope.payload, result.report);
+      assert.equal((await createArtifactIndex(database.sql).getCapacity()).state, "ready");
+    } finally {
+      await database.cleanup();
+      await rm(temp, { recursive: true, force: true });
+    }
+  });
+
+  it("observes bootstrap-required hybrid state without creating root authority", async () => {
+    const database = await createIsolatedTestDatabase();
+    const temp = await mkdtemp(path.join(tmpdir(), "setfarm-preflight-hybrid-unready-"));
+    const root = path.join(temp, "sha256");
+    const limits = {
+      maxPayloadBytes: 4 * 1024 * 1024,
+      rootQuotaBytes: 8 * 1024 * 1024,
+      minFreeBytes: 0,
+    };
+    try {
+      const observed = await createActivationPreflightDependencies({
+        sql: database.sql,
+        artifactRoot: root,
+        artifactLimits: limits,
+        compilerReleaseSha: RELEASE_SHA,
+        publicationAuthorityMode: "hybrid-required",
+      }).inspectArtifactCapacity();
+
+      assert.equal(observed.indexState, "bootstrap_required");
+      assert.deepEqual(
+        Array.from(await database.sql.unsafe("SELECT * FROM artifact_store_authorities")),
+        [],
+      );
+      await assert.rejects(lstat(root), /ENOENT/);
     } finally {
       await database.cleanup();
       await rm(temp, { recursive: true, force: true });

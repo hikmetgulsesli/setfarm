@@ -5,9 +5,17 @@ import { BuildTopologyV1Schema } from "../../src/product-compiler/schemas/build-
 import { DesignInteractionGraphV1Schema } from "../../src/product-compiler/schemas/design-interaction-graph-v1.js";
 import { ImplementationSliceV1Schema } from "../../src/product-compiler/schemas/implementation-slice-v1.js";
 import { ProductBuildPacketV1Schema } from "../../src/product-compiler/schemas/product-build-packet-v1.js";
-import { ProductSpecV1Schema } from "../../src/product-compiler/schemas/product-spec-v1.js";
+import {
+  ProductDeliveryV1EnglishWriteSchema,
+  ProductDeliveryV1Schema,
+  ProductSpecV1EnglishWriteSchema,
+  ProductSpecV1Schema,
+} from "../../src/product-compiler/schemas/product-spec-v1.js";
 import { StoryPlanV1Schema } from "../../src/product-compiler/schemas/story-plan-v1.js";
-import { buildMinimalValidContracts } from "./fixtures/minimal-valid-contract.js";
+import {
+  buildMinimalValidContracts,
+  buildMinimalValidV3Contracts,
+} from "./fixtures/minimal-valid-contract.js";
 
 function clone<T>(value: T): T {
   return structuredClone(value);
@@ -25,6 +33,24 @@ describe("versioned Product Build Packet contract schemas", () => {
       ImplementationSliceV1Schema.parse(values.implementationSlice),
       values.implementationSlice,
     );
+  });
+
+  it("preserves historical delivery reads while restricting new English writes", () => {
+    const delivery = {
+      platform: "web",
+      techStack: "vite-react",
+      uiLanguage: "French",
+      database: "none",
+      designRequired: true,
+      uiVisionSummary: "A compact historical interface.",
+    };
+    assert.equal(ProductDeliveryV1Schema.safeParse(delivery).success, true);
+    assert.equal(ProductDeliveryV1EnglishWriteSchema.safeParse(delivery).success, false);
+
+    const historical = clone(buildMinimalValidV3Contracts().productSpec);
+    historical.delivery = delivery;
+    assert.equal(ProductSpecV1Schema.safeParse(historical).success, true);
+    assert.equal(ProductSpecV1EnglishWriteSchema.safeParse(historical).success, false);
   });
 
   it("rejects unknown fields at every artifact boundary", () => {
