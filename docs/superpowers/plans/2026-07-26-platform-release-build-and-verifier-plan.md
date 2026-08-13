@@ -4,6 +4,51 @@ Date: 2026-07-26
 Status: approved architecture implementation plan; all slices remain
 shadow-blocked until clean-main activation
 
+## Autonomous loop checkpoint — 2026-08-13
+
+The credential-free production-admission readiness slice now exposes the
+zero-input `setfarm platform-release preflight --json` diagnostic. Its strict
+receipt is bounded, canonical, mutation-free, and permanently states
+`productionAuthority:false` and `productionAdmission:"blocked"`. It reports
+the current host enforcement baseline separately from missing Developer ID
+Application/Installer identities in the active Security search list,
+unverifiable external notarization credential configuration, absent fixed
+installed Setfarm distribution/helper evidence, unconfigured production trust
+material, and unavailable prepared-store, fresh-verifier, and registry
+activation authorities.
+
+On 2026-08-13, the source CLI exited `2`, wrote one JSON line to stdout, and
+wrote no stderr. Its redacted typed receipt classified both Developer ID
+identity classes as `not_observed_in_active_search_list` with count `0`; it did
+not make a global keychain-absence claim. `notarytool` was `available`, known
+profile metadata was `not_observed_at_known_service_names`, credential
+readiness was `unverifiable_without_external_credential_configuration`, and
+ticket evidence was `not_observed_without_exact_distribution`. Gatekeeper,
+SIP, and authenticated root were `enabled`, and AMFI was `running`, but AMFI
+runtime admission remained `unavailable_requires_authenticated_running_helper`.
+The fixed expected distribution root and helper were both `absent`; the
+Installer package identifier was `unconfigured`, its receipt was
+`not_observed_configuration_unavailable`, exact payload binding was `absent`,
+production trust configuration was `unavailable`/`forbidden`, and build
+provenance remained `v1_build_provenance_only` with no platform-release
+authority. The receipt recorded 15 bounded command observations and no
+sensitive raw-output pattern was detected during the in-memory validation.
+
+This checkpoint does not sign, notarize, install, query an invented package
+identifier, execute a helper, restart a service, or open production authority.
+The next production-admission slice remains externally credentialed and must
+join an exact signed distribution, stapled ticket, Installer receipt/payload,
+authenticated running helper/AMFI observation, prepared store, fresh verifier,
+and registry activation authority under a separate approved design.
+
+The focused and adjacent matrix passed exactly **63/63** tests; the source CLI
+contract passed **4/4**, native package-member capture passed **4/4**, and the
+script matrix passed **53/53**. Static contracts passed: TypeScript no-emit;
+English **1,404 files**; paths **816 files**; source-suite imports **1/1**;
+migration digests current; and `git diff --check` clean. Independent
+adversarial source review returned `CLEAR` with no critical, high, or medium
+finding. These diagnostic and test results are not production admission.
+
 ## Autonomous loop checkpoint — 2026-08-06
 
 The resumed audit completed the credential-free B5D-3 network-negative pair
