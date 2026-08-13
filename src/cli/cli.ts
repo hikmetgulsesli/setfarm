@@ -305,6 +305,8 @@ function printUsage() {
       "setfarm logs [<lines>]               Show recent activity (from events)",
       "setfarm logs <run-id>                Show activity for a specific run",
       "",
+      "setfarm platform-release preflight --json  Read-only production readiness diagnostics (always non-authoritative)",
+      "",
       "setfarm version                      Show installed version",
       "setfarm update                       Pull latest, rebuild, and reinstall workflows",
     ].join("\n") + "\n",
@@ -312,8 +314,38 @@ function printUsage() {
 }
 
 async function main() {
-  assertRuntimeIntegrityOrExit();
   const args = process.argv.slice(2);
+  const isExactPlatformReleasePreflight =
+    args.length === 3 &&
+    args[0] === "platform-release" &&
+    args[1] === "preflight" &&
+    args[2] === "--json";
+
+  if (isExactPlatformReleasePreflight) {
+    try {
+      const [
+        { observePlatformReleaseProductionAdmissionReadinessV2 },
+        { canonicalPlatformReleaseProductionAdmissionReadinessV2 },
+      ] = await Promise.all([
+        import("../execution/platform-release-production-admission-readiness-v2.js"),
+        import("../execution/schemas/platform-release-production-admission-readiness-v2.js"),
+      ]);
+      const receipt = await observePlatformReleaseProductionAdmissionReadinessV2();
+      process.stdout.write(`${canonicalPlatformReleaseProductionAdmissionReadinessV2(receipt)}\n`);
+      process.exitCode = 2;
+    } catch {
+      process.stderr.write("PLATFORM_RELEASE_PREFLIGHT_OBSERVATION_FAILED\n");
+      process.exitCode = 1;
+    }
+    return;
+  }
+
+  assertRuntimeIntegrityOrExit();
+  if (args[0] === "platform-release" && args[1] === "preflight") {
+    process.stderr.write("PLATFORM_RELEASE_PREFLIGHT_USAGE_INVALID\n");
+    process.exitCode = 1;
+    return;
+  }
   const [group, action, target] = args;
 
   if (group === "version" || group === "--version" || group === "-v") {
