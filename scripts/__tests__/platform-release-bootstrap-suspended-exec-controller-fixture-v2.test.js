@@ -23,7 +23,7 @@ import {
 
 const repositoryRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const BUILD_TIMEOUT_MILLISECONDS_V2 = 120_000;
-const TEST_TIMEOUT_DURATION_SECONDS_V2 = "73.271828";
+const TEST_TIMEOUT_DURATION_SECONDS_V2 = "73.271830";
 const STAGE_PREFIX_V2 = ".setfarm-suspended-exec-build-";
 const STAGE_SOURCE_NAME_V2 =
   "platform-release-bootstrap-suspended-exec-controller-fixture-v2.c";
