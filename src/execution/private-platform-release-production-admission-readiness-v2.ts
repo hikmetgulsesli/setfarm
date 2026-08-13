@@ -906,6 +906,30 @@ type FixedAncestorIdentityV2 = Readonly<{
   kind: "directory" | "symbolic_link" | "special";
 }>;
 
+type FixedAncestorPolicyV2 =
+  | "root_owned_nonwritable"
+  | "stable_identity_only";
+
+function fixedAncestorIdentitySatisfiesPolicyV2(
+  identity: Pick<FixedAncestorIdentityV2, "kind" | "mode" | "ownerUid">,
+): boolean {
+  const mode = identity.mode & 0o7777n;
+  return identity.kind === "directory"
+    && identity.ownerUid === 0n
+    && (mode & 0o022n) === 0n;
+}
+
+/** @internal */
+export function fixedAncestorIdentitySatisfiesPolicyForInternalUseV2(
+  identity: Readonly<{
+    kind: "directory" | "symbolic_link" | "special";
+    mode: bigint;
+    ownerUid: bigint;
+  }>,
+): boolean {
+  return fixedAncestorIdentitySatisfiesPolicyV2(identity);
+}
+
 type FixedAncestorChainV2 =
   | Readonly<{
       state: "complete";
@@ -940,7 +964,10 @@ function fixedAncestorPathsV2(target: string): readonly string[] | undefined {
   return Object.freeze(ancestors);
 }
 
-function captureFixedAncestorChainV2(target: string): FixedAncestorChainV2 {
+function captureFixedAncestorChainV2(
+  target: string,
+  policy: FixedAncestorPolicyV2,
+): FixedAncestorChainV2 {
   const ancestors = fixedAncestorPathsV2(target);
   if (ancestors === undefined) return Object.freeze({ state: "observation_failed" });
   const entries: FixedAncestorIdentityV2[] = [];
@@ -962,15 +989,22 @@ function captureFixedAncestorChainV2(target: string): FixedAncestorChainV2 {
       : observed.isSymbolicLink()
         ? "symbolic_link"
         : "special";
-    entries.push(Object.freeze({
+    const identity = Object.freeze({
       device: observed.dev,
       inode: observed.ino,
       ownerUid: observed.uid,
       ownerGid: observed.gid,
       mode: observed.mode,
       kind,
-    }));
-    if (kind !== "directory") {
+    });
+    entries.push(identity);
+    if (
+      kind !== "directory"
+      || (
+        policy === "root_owned_nonwritable"
+        && !fixedAncestorIdentitySatisfiesPolicyV2(identity)
+      )
+    ) {
       return Object.freeze({
         state: "unproven",
         entries: Object.freeze(entries),
@@ -1018,8 +1052,9 @@ function sameFixedAncestorChainV2(
 function fixedAncestorChainStableAfterV2(
   target: string,
   before: FixedAncestorChainV2,
+  policy: FixedAncestorPolicyV2,
 ): boolean {
-  const after = captureFixedAncestorChainV2(target);
+  const after = captureFixedAncestorChainV2(target, policy);
   return sameFixedAncestorChainV2(before, after);
 }
 
@@ -1058,11 +1093,12 @@ function observeFixedPathStateV2(
     | "create_leaf_after_absence"
     | "replace_leaf"
     | undefined = undefined,
+  ancestorPolicy: FixedAncestorPolicyV2 = "root_owned_nonwritable",
 ): FixedPathStateV2 {
-  const ancestorBefore = captureFixedAncestorChainV2(target);
+  const ancestorBefore = captureFixedAncestorChainV2(target, ancestorPolicy);
   if (ancestorBefore.state === "observation_failed") return "observation_failed";
   if (ancestorBefore.state === "unproven") {
-    return fixedAncestorChainStableAfterV2(target, ancestorBefore)
+    return fixedAncestorChainStableAfterV2(target, ancestorBefore, ancestorPolicy)
       ? "unproven"
       : "observation_failed";
   }
@@ -1070,6 +1106,7 @@ function observeFixedPathStateV2(
     const ancestorStable = fixedAncestorChainStableAfterV2(
       target,
       ancestorBefore,
+      ancestorPolicy,
     );
     if (injectedFault === "create_leaf_after_absence") createFiniteMissingLeafV2(target);
     return ancestorStable && fixedLeafAbsentAfterV2(target)
@@ -1083,6 +1120,7 @@ function observeFixedPathStateV2(
     const ancestorStable = fixedAncestorChainStableAfterV2(
       target,
       ancestorBefore,
+      ancestorPolicy,
     );
     if (
       isErrnoV2(error, "ENOENT")
@@ -1102,13 +1140,13 @@ function observeFixedPathStateV2(
     } catch {
       return "observation_failed";
     }
-    return fixedAncestorChainStableAfterV2(target, ancestorBefore)
+    return fixedAncestorChainStableAfterV2(target, ancestorBefore, ancestorPolicy)
       && sameStableIdentityV2(before, after)
       ? "unproven"
       : "observation_failed";
   }
   if (before.isSymbolicLink()) {
-    return fixedAncestorChainStableAfterV2(target, ancestorBefore)
+    return fixedAncestorChainStableAfterV2(target, ancestorBefore, ancestorPolicy)
       ? "unproven"
       : "observation_failed";
   }
@@ -1122,7 +1160,7 @@ function observeFixedPathStateV2(
       && (mode & 0o111n) !== 0n
     ));
   if (!validPolicy) {
-    return fixedAncestorChainStableAfterV2(target, ancestorBefore)
+    return fixedAncestorChainStableAfterV2(target, ancestorBefore, ancestorPolicy)
       ? "unproven"
       : "observation_failed";
   }
@@ -1159,7 +1197,7 @@ function observeFixedPathStateV2(
       state = "observation_failed";
     }
   }
-  if (!fixedAncestorChainStableAfterV2(target, ancestorBefore)) {
+  if (!fixedAncestorChainStableAfterV2(target, ancestorBefore, ancestorPolicy)) {
     state = "observation_failed";
   }
   return state;
@@ -1176,6 +1214,7 @@ function observeFiniteLeafCreationAfterAbsenceV2(): FixedPathStateV2 {
       target,
       "directory",
       "create_leaf_after_absence",
+      "stable_identity_only",
     );
   } finally {
     rmSync(fixtureRoot, { force: true, recursive: true });
@@ -1221,6 +1260,7 @@ function observeFinitePathObjectV2(
       target,
       "executable_file",
       fault === "fixed_path_replacement" ? "replace_leaf" : undefined,
+      "stable_identity_only",
     );
   } finally {
     rmSync(fixtureRoot, { force: true, recursive: true });
@@ -1518,16 +1558,17 @@ function readStrictBoundedJsonV2(
   target: string,
   injectedFault: "replace_leaf" | undefined = undefined,
 ): StrictJsonReadV2 {
-  const ancestorBefore = captureFixedAncestorChainV2(target);
+  const ancestorPolicy: FixedAncestorPolicyV2 = "stable_identity_only";
+  const ancestorBefore = captureFixedAncestorChainV2(target, ancestorPolicy);
   if (ancestorBefore.state === "observation_failed") {
     return Object.freeze({ state: "observation_failed" });
   }
   if (ancestorBefore.state === "unproven") {
-    fixedAncestorChainStableAfterV2(target, ancestorBefore);
+    fixedAncestorChainStableAfterV2(target, ancestorBefore, ancestorPolicy);
     return Object.freeze({ state: "observation_failed" });
   }
   if (ancestorBefore.state === "missing") {
-    return fixedAncestorChainStableAfterV2(target, ancestorBefore)
+    return fixedAncestorChainStableAfterV2(target, ancestorBefore, ancestorPolicy)
       && fixedLeafAbsentAfterV2(target)
       ? Object.freeze({ state: "missing" })
       : Object.freeze({ state: "observation_failed" });
@@ -1537,17 +1578,17 @@ function readStrictBoundedJsonV2(
     before = lstatSync(target, { bigint: true });
   } catch (error) {
     const state = isErrnoV2(error, "ENOENT") ? "missing" : "observation_failed";
-    return fixedAncestorChainStableAfterV2(target, ancestorBefore)
+    return fixedAncestorChainStableAfterV2(target, ancestorBefore, ancestorPolicy)
       && (state !== "missing" || fixedLeafAbsentAfterV2(target))
       ? Object.freeze({ state })
       : Object.freeze({ state: "observation_failed" });
   }
   if (before.isSymbolicLink() || !before.isFile() || before.nlink !== 1n) {
-    fixedAncestorChainStableAfterV2(target, ancestorBefore);
+    fixedAncestorChainStableAfterV2(target, ancestorBefore, ancestorPolicy);
     return Object.freeze({ state: "observation_failed" });
   }
   if (before.size < 1n || before.size > BigInt(BUILD_DOCUMENT_MAX_BYTES_V2)) {
-    return fixedAncestorChainStableAfterV2(target, ancestorBefore)
+    return fixedAncestorChainStableAfterV2(target, ancestorBefore, ancestorPolicy)
       ? Object.freeze({ state: "invalid" })
       : Object.freeze({ state: "observation_failed" });
   }
@@ -1560,7 +1601,7 @@ function readStrictBoundedJsonV2(
         | (fsConstants.O_NONBLOCK ?? 0),
     );
   } catch {
-    fixedAncestorChainStableAfterV2(target, ancestorBefore);
+    fixedAncestorChainStableAfterV2(target, ancestorBefore, ancestorPolicy);
     return Object.freeze({ state: "observation_failed" });
   }
   let result: StrictJsonReadV2 = Object.freeze({ state: "observation_failed" });
@@ -1613,7 +1654,7 @@ function readStrictBoundedJsonV2(
       result = Object.freeze({ state: "observation_failed" });
     }
   }
-  if (!fixedAncestorChainStableAfterV2(target, ancestorBefore)) {
+  if (!fixedAncestorChainStableAfterV2(target, ancestorBefore, ancestorPolicy)) {
     return Object.freeze({ state: "observation_failed" });
   }
   return result;

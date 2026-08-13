@@ -21,6 +21,7 @@ import {
   observePlatformReleaseProductionAdmissionReadinessV2,
 } from "../../src/execution/platform-release-production-admission-readiness-v2.js";
 import {
+  fixedAncestorIdentitySatisfiesPolicyForTestV2,
   observePlatformReleaseProductionAdmissionReadinessForTestV2,
 } from "../../src/product-compiler/platform-release-production-admission-readiness-test-support-v2.js";
 import {
@@ -525,6 +526,26 @@ function finiteDarwinMode(
     faults: Object.freeze(faults),
   });
 }
+
+test("fixed paths require every ancestor to be root-owned and non-writable", () => {
+  assert.equal(fixedAncestorIdentitySatisfiesPolicyForTestV2({
+    kind: "directory",
+    mode: 0o40755n,
+    ownerUid: 0n,
+  }), true);
+  for (const identity of [
+    { kind: "directory" as const, mode: 0o40755n, ownerUid: 501n },
+    { kind: "directory" as const, mode: 0o40777n, ownerUid: 0n },
+    { kind: "directory" as const, mode: 0o40775n, ownerUid: 0n },
+    { kind: "symbolic_link" as const, mode: 0o120755n, ownerUid: 0n },
+  ]) {
+    assert.equal(
+      fixedAncestorIdentitySatisfiesPolicyForTestV2(identity),
+      false,
+      `${identity.kind}:${identity.ownerUid}:${identity.mode.toString(8)}`,
+    );
+  }
+});
 
 test("escaped writer settlement preserves timeout and releases every referenced handle", () => {
   const startedAt = Date.now();
