@@ -1,0 +1,496 @@
+# Setfarm and Mission Control Internal Production Closure Design
+
+Date: 2026-08-13
+Status: Proposed for written review
+Scope: Internal operational acceptance for Setfarm V3 and Mission Control on the canonical Mac mini host
+
+## Executive Decision
+
+Finish Setfarm and Mission Control as an internally reliable software factory before pursuing external distribution.
+
+This program does not include Developer ID enrollment, notarization submission, signed PKG production, installer receipt authority, authenticated helper installation, or external customer distribution. Those remain a separate follow-on program. The existing production-admission preflight must continue to report those missing external authorities honestly and must not be weakened to make internal acceptance pass.
+
+Internal completion requires evidence that current clean-main Setfarm code can create, implement, verify, transfer, and operate multiple representative products through V3, and that Mission Control renders the same canonical operational truth as PostgreSQL and Setfarm. A healthy HTTP endpoint or a green unit-test suite is necessary but not sufficient.
+
+## Current Baseline
+
+The design starts from the following live state observed on 2026-08-13:
+
+- Setfarm `main` equals `origin/main` at `865a7157ba5dacd24283af03c00400499aac6de7`.
+- Setfarm version `2.3.79` has a clean-main build whose `BUILD_INFO.json` binds that exact SHA and reports `dirty:false`.
+- Contract-spine migrations 1 through 29 are current in the live PostgreSQL database.
+- Setfarm dashboard, Mission Control, and OpenClaw health endpoints return HTTP 200.
+- The live database has zero active runs, zero open claims, and zero active runtime sessions.
+- The live database contains 32 V3 runs, all terminally failed, and no completed V3 run.
+- Those historical failures predate part or all of the current authority, recovery, and publication closure work and cannot prove or disprove the current build by themselves.
+- Mission Control is clean but has one local commit on `feat/product-build-authority-v2` that is one commit ahead of `origin/main` and has not been delivered through a reviewed PR.
+- Mission Control reports 112 projects as `active` while PostgreSQL reports zero active runs. The meaning and derivation of that mismatch must be resolved before Mission Control acceptance.
+- The platform-release preflight correctly remains non-authoritative and blocked because external signing, notarization, installation, trust, and activation evidence is absent.
+
+## Completion Claim
+
+The program may claim internal completion only when all of the following are true:
+
+1. Current clean-main Setfarm completes representative V3 products from a new run through the required terminal product state.
+2. The completed products actually run and satisfy product-specific behavioral assertions generated and executed by Setfarm-owned verifiers.
+3. Mission Control displays the same run, step, story, claim, runtime, failure-owner, retry, evidence, and terminal state as the canonical Setfarm operational model.
+4. Controlled crash, restart, retry, PR-review, and provider-failure scenarios settle without duplicate ownership, lost work, leaked processes, or invented success.
+5. A bounded multi-project fleet completes without an unresolved Setfarm-core or Mission Control systemic failure.
+6. Both repositories end on reviewed, clean, synchronized `main` branches with green builds and tests.
+7. The live host has a tested backup, restart, verification, and incident procedure.
+
+Internal completion does not mean external distribution authority exists. The CLI preflight must continue to emit `productionAuthority:false` and `productionAdmission:"blocked"` until the later external-distribution program supplies real authority.
+
+## Source-of-Truth Hierarchy
+
+Every acceptance decision uses this hierarchy:
+
+1. PostgreSQL rows, claim logs, completion requests/effects, migration journals, run observations, and exact GitHub PR state.
+2. Setfarm's canonical operational model, compiler artifacts, authority receipts, and runtime evidence.
+3. Mission Control API projections of that model.
+4. Mission Control rendering.
+5. Agent or supervisor prose.
+
+Lower levels may explain higher-level evidence but may never override it. A card that says `active`, an agent that says `tests passed`, or a generated project's own status file cannot prove acceptance when the database or Setfarm-owned evidence disagrees.
+
+## Program Decomposition
+
+This is a multi-system program and must be executed as five independently reviewable subprojects. Each subproject receives its own implementation plan after this design is approved.
+
+### Subproject A: Canonical Baseline and Mission Control Handoff
+
+Deliver the existing Mission Control Product Build Authority work through a reviewed PR, then establish one clean and synchronized baseline for both repositories.
+
+Required outcomes:
+
+- Review the exact six-file Mission Control diff against `origin/main`.
+- Run Mission Control tests, build, Setfarm contract compatibility, and rendering smoke checks.
+- Merge through a reviewed PR and rebuild Mission Control from clean `main`.
+- Record exact Setfarm and Mission Control SHAs, package versions, contract hashes, service PIDs, listening ports, and health responses.
+- Take a fresh PostgreSQL backup and prove it can be listed and inspected with matching PostgreSQL tooling.
+- Verify migration plan, migration verification, and current-authority audits before any canary run.
+- Reconcile Mission Control's `active` project classification with the zero-active-run database census. Historical runnable projects may remain visible, but they must not be labeled as active Setfarm execution unless the canonical operational model says they are active.
+- Verify there is exactly one intended daemon for each long-lived Setfarm/MC service and no stale test or agent process.
+
+No golden run starts until this subproject passes.
+
+### Subproject B: Golden-Run Harness and Evidence Packet
+
+Create a repeatable acceptance harness around existing Setfarm commands and authority surfaces. The harness coordinates runs and captures evidence; it must not introduce a second workflow engine or derive success from logs.
+
+For every canary, the harness records:
+
+- immutable case ID and prompt hash;
+- Setfarm SHA, Mission Control SHA, package versions, workflow ID/version, and protocol;
+- run ID and run number;
+- generated repository and GitHub PR identities;
+- start and terminal timestamps;
+- every step and story terminal state;
+- claim, runtime-session, runtime-completion, and effect settlement censuses;
+- compiler PLAN, DESIGN, STORIES, setup-build, attempt, candidate, deploy, release-admission, and project-transfer identities when applicable;
+- test/build/runtime command evidence;
+- HTTP, CLI, filesystem, state, and visual assertions required by the product profile;
+- Mission Control API snapshot hash and rendered-state assertions;
+- process, port, worktree, and owner leak censuses after settlement;
+- failure classification and canonical root-cause identity when the run does not pass.
+
+The harness writes a bounded, reviewable campaign report under `docs/review-packets/` after the run has settled. Runtime artifacts remain in their canonical stores and are referenced by identity; they are not copied into Git.
+
+The harness must support these terminal classifications:
+
+- `accepted`: all required product and platform evidence passed;
+- `generated_product_failure`: the product implementation failed while platform ownership and reporting remained correct;
+- `setfarm_core_failure`;
+- `mission_control_failure`;
+- `provider_or_quota_failure`;
+- `infrastructure_failure`;
+- `campaign_configuration_failure`.
+
+Only `accepted` counts toward the completion matrix. Every non-accepted result retains evidence and is reviewed before another case of the same class starts.
+
+### Subproject C: Ordered Golden Product Matrix
+
+Run one case at a time. Do not launch a wider fleet until the preceding profile has produced the required accepted result. Each case starts from a new run and, unless explicitly testing existing-repository behavior, a new generated repository.
+
+Profiles 1 through 5 use the V3 feature-development path. Profiles 6 and 7 use their dedicated canonical workflows and must report their actual protocol honestly; they may not be relabeled as V3 if those workflows have not acquired V3 authority.
+
+#### Profile 1: Node CLI
+
+Purpose: prove the no-design Product Semantics V2 path, exact invocation ABI, build, execution, output, and exit-status evidence.
+
+Required behavior:
+
+- at least two commands;
+- one validated argument and one invalid-input path;
+- deterministic stdout/stderr and exit codes;
+- one file-backed or otherwise durable state transition if supported by the canonical CLI product contract;
+- generated tests and Setfarm-owned execution evidence;
+- successful terminal transfer without browser or Stitch authority.
+
+#### Profile 2: Node Express API
+
+Purpose: prove HTTP route, parameter, JSON-body, persistence, error, process, port, and restart behavior.
+
+Required behavior:
+
+- health endpoint;
+- create, read, update, and validation-error paths;
+- exact JSON response assertions;
+- durable data survives one controlled application restart;
+- no externally reachable listener beyond the admitted loopback/runtime contract;
+- clean process and port release after test settlement.
+
+#### Profile 3: Vite/React Web Application
+
+Purpose: prove PLAN, Stitch/DESIGN, story partition, browser runtime, state, accessibility, visual evidence, story PR, verification, and final-product supervision.
+
+Required behavior:
+
+- at least three screens or meaningful UI states;
+- routing and one persistent state transition;
+- at least one form with validation;
+- keyboard-accessible primary flow;
+- Setfarm-owned browser interactions, DOM/state assertions, screenshots, and console-error checks;
+- exact story-scoped supervisor evidence for every required story;
+- final-product acceptance after the current generation has settled.
+
+#### Profile 4: Stateful Multi-Page Web Application
+
+Purpose: stress cross-story ownership, shared state, direct dependencies, and multi-page product behavior.
+
+Required behavior:
+
+- at least four canonical stories with an explicit dependency edge;
+- shared persistent entity used across two pages;
+- list, detail, edit, and failure/empty-state behavior;
+- story sequencing and retry fences preserve generation identity;
+- all merged source is verified from the final main revision.
+
+#### Profile 5: Interactive Browser or Game Product
+
+Purpose: prove deterministic interaction/state evidence for a timing- or canvas-sensitive product without trusting a screenshot alone.
+
+Required behavior:
+
+- explicit start, active, paused or terminal states;
+- deterministic input sequence;
+- state transition assertions through an admitted bridge or DOM surface;
+- screenshot evidence as supplemental proof;
+- no fixed-port collision and no background runtime leak.
+
+#### Profile 6: Existing-Repository Bug Fix
+
+Purpose: prove a bounded repair workflow against a controlled seeded defect.
+
+Required behavior:
+
+- reproducible failing test before the run;
+- scoped fix through the bug-fix workflow;
+- passing regression and adjacent tests;
+- no unrelated file mutation;
+- GitHub review feedback, when injected by the campaign, is routed through the canonical retry path.
+
+#### Profile 7: Existing-Repository Security Audit
+
+Purpose: prove typed security findings, repair, verification, and honest residual-risk reporting.
+
+Required behavior:
+
+- controlled vulnerable fixture with at least two distinct finding classes;
+- findings cite exact source evidence;
+- repair remains inside declared scope;
+- post-fix security checks pass;
+- intentionally unfixable or out-of-scope risk remains visible rather than being marked resolved.
+
+### Subproject D: Recovery and Mission Control Reconciliation
+
+Prove that accepted ownership survives the supported crash and restart boundaries, and prove that Mission Control renders the same canonical state before, during, and after those transitions.
+
+Required outcomes:
+
+- complete the recovery and restart matrix in this design;
+- reconcile PostgreSQL, Setfarm operational snapshots, Mission Control API responses, and rendered UI state for the same run IDs;
+- correct or precisely relabel the current Mission Control active-project mismatch;
+- prove failure owner, retryability, Product Build Authority, and operational evidence render without local re-derivation;
+- prove service restarts do not lose or invent run authority;
+- retain exact recovery evidence and finish with zero ownership or process leak.
+
+### Subproject E: Fleet and Operational Closure
+
+Run the bounded 10-project fleet only after the ordered golden matrix and recovery work pass, then finish the operator runbook and final acceptance packet.
+
+Required outcomes:
+
+- complete the controlled fleet within the concurrency and stop rules in this design;
+- classify every terminal case and repair every systemic platform defect through a reviewed PR;
+- rehearse backup, service restart, health verification, and incident-stop procedures;
+- run final full tests, clean-main builds, migration verification, authority audits, leak censuses, and independent review;
+- deliver the final internal-production acceptance packet and leave both repositories clean on synchronized `main`.
+
+## Per-Run Acceptance Gates
+
+Every accepted V3 product run must satisfy all applicable gates below.
+
+### Authority and Lifecycle
+
+- `runs.protocol = 'v3'` and the expected protocol version is recorded.
+- PLAN, DESIGN when required, and STORIES English admission receipts are exact and durable.
+- Every implementation and supervision claim/runtime pair has one exact Migration 29 binding.
+- Runtime-completion requests reach `accepted` with `apply_phase = 'effects_committed'`.
+- Claims have terminal outcomes consistent with completion evidence.
+- Runtime sessions are released or drained.
+- No mandatory effect remains pending, retryable, processing, or quarantined.
+- No open termination, recovery, preparation, or claim owner remains after terminal settlement.
+
+### Source and GitHub Delivery
+
+- Story and final source revisions are exact and current.
+- Required story PRs exist, match their recorded head branches, and have no unresolved actionable review thread.
+- Review retries use the canonical claim/runtime and generation path.
+- Final main contains the accepted changes.
+- Generated repository worktree is clean after terminal settlement unless a retained failure artifact is explicitly part of the evidence.
+
+### Product Behavior
+
+- Build and product-specific tests pass from the accepted source revision.
+- Runtime starts through the admitted driver and reaches bounded readiness.
+- The required CLI, HTTP, DOM, state, accessibility, and visual assertions pass.
+- No severe console error, uncaught exception, wrong-app response, or stale runtime is accepted.
+- Deployment or internal project transfer is either completed with exact evidence or explicitly excluded by the profile contract. It may not be silently skipped.
+
+### Cleanup
+
+- no active claim or runtime session remains for the run;
+- no owned child process or listener remains;
+- no orphaned story or runtime worktree remains;
+- no capacity, artifact, or preparation lease remains active;
+- Mission Control no longer presents the terminal run as actively executing.
+
+## Failure Triage and Repair Loop
+
+Every failed campaign case follows one bounded loop:
+
+1. Freeze new campaign starts.
+2. Capture canonical DB, observation, GitHub, process, port, and service evidence.
+3. Classify the owner before editing code.
+4. If the product alone is wrong and platform behavior is correct, allow the canonical bounded implementation or supervisor recovery path to act.
+5. If Setfarm or Mission Control is systemic, create one small PR branch in the owning repository.
+6. Add a regression that fails for the observed root cause.
+7. Apply the smallest root fix without weakening an invariant.
+8. Run focused and adjacent tests, reviewed PR delivery, and clean-main build.
+9. Start a new clean canary rather than reviving a run polluted by pre-fix platform behavior.
+
+The campaign stops and reports when the same canonical systemic cause is observed three times after attempted fixes. Provider quota, an upstream outage, or a deliberately injected infrastructure failure is not a Setfarm product regression unless fallback or classification behavior is itself wrong.
+
+## Recovery and Restart Matrix
+
+After Profiles 1 through 3 each pass once, execute the following controlled scenarios. Fault injection must use existing test or operational seams; do not kill arbitrary processes while an unrelated run is active.
+
+1. Restart the spawner after claim publication and before agent transfer.
+2. Restart the spawner after runtime completion owner commit and before effect settlement.
+3. Restart Mission Control during an active run and verify the same canonical snapshot after recovery.
+4. Restart the Setfarm dashboard without mutating run state.
+5. Inject one transient provider or quota failure and verify typed infrastructure classification plus bounded retry/fallback behavior.
+6. Inject one actionable GitHub review comment and verify exact retry, resolution evidence, and re-verification.
+7. Inject one runtime crash and verify process, port, and ownership cleanup.
+8. Exercise one supervisor block followed by a generation-safe implementation retry carrying the exact authenticated feedback.
+9. Exercise a post-owner completion recovery and prove effect mutation happens exactly once.
+10. Restart an accepted API product and prove its declared durable state remains available.
+
+Each scenario must end with either accepted continuation or a typed terminal outcome and zero leaked ownership.
+
+## Mission Control Acceptance
+
+Mission Control is accepted only when its API and UI are verified against the same live run fixtures used for Setfarm acceptance.
+
+### API Requirements
+
+- `/api/health` remains healthy when optional OpenClaw-dependent features degrade.
+- `/api/projects` exposes failed, cancelled, completed, and truly active projects without hiding terminal records.
+- Project `active` status is derived from canonical run/runtime evidence, not the mere existence of a runnable repository or stale process metadata.
+- Run-detail endpoints expose canonical protocol, step, story, claim/runtime ownership, Product Build Authority, operational evidence, retryability, failure owner, and terminal state.
+- Contract hashes and compatibility failures are explicit.
+- Mutation endpoints use Setfarm-owned action authority and do not directly rewrite canonical run state.
+
+### UI Requirements
+
+- Overview counts agree with the API and database census.
+- Active-run and run-detail pages update during the golden runs without requiring a browser reload.
+- Terminal failed and cancelled runs remain discoverable.
+- Step and story progress match Setfarm's operational snapshot.
+- Product Build Authority and operational evidence distinguish `pass`, `blocked`, `unavailable`, and `disabled` without promoting agent prose.
+- Retry and failure-owner labels match the canonical classifier.
+- Restarting Mission Control preserves the same visible state after reconnection.
+- Browser console remains free of uncaught application errors during the acceptance flows.
+- Essential pages remain usable at the supported desktop viewport and keyboard navigation covers primary operator controls.
+
+Mission Control acceptance includes automated API and render tests plus a Setfarm-owned or campaign-owned browser smoke against the live server.
+
+## Controlled Fleet
+
+Only after Profiles 1 through 3 pass twice and Profiles 4 through 7 pass once may the campaign start a broader fleet.
+
+Fleet rules:
+
+- exactly 10 new project prompts;
+- prompts span CLI, API, web, stateful web, interactive browser, bug-fix, and security-audit behavior;
+- concurrency starts at 1;
+- concurrency may increase to 2 only after the first five fleet cases settle without a Setfarm-core or Mission Control failure;
+- no more than two live V3 runs at any time;
+- every prompt, source identity, result, and classification is recorded;
+- a failed generated product may use its bounded canonical recovery path, but operators do not patch the generated repository manually;
+- a systemic failure freezes new starts until its reviewed fix is on clean main;
+- the same systemic cause observed three times stops the fleet and the program reports blocked.
+
+Fleet acceptance requires:
+
+- 10 terminal campaign records;
+- zero unresolved `setfarm_core_failure`;
+- zero unresolved `mission_control_failure`;
+- zero leaked run ownership, process, port, or worktree;
+- at least 8 accepted products;
+- any remaining two results are only `generated_product_failure`, `provider_or_quota_failure`, or `infrastructure_failure`, with platform classification and cleanup proven correct.
+
+This threshold measures factory reliability without pretending that every model-generated product must be correct on its first bounded campaign.
+
+## Operational Runbook and Host Acceptance
+
+The internal-production runbook must be executable by an operator who did not implement the program. It includes:
+
+- canonical repository locations and branch discipline;
+- environment and secret locations without secret values;
+- PostgreSQL backup, inspection, and restore rehearsal procedure;
+- clean build commands for Setfarm and Mission Control;
+- contract-spine plan, verify, and authority audit commands;
+- LaunchAgent status, restart, and log commands;
+- HTTP health and project/run smoke commands;
+- active run, claim, runtime-session, completion, and effect censuses;
+- safe rules for restarting services with or without active work;
+- process, port, and worktree leak diagnostics;
+- GitHub authentication and review-settlement checks;
+- provider/quota classification procedure;
+- incident stop conditions and evidence capture;
+- how to start one clean canary and how to stop the campaign.
+
+The runbook is accepted only after one cold operator rehearsal on the Mac mini: services are stopped or restarted in the documented safe order, rebuilt artifacts are loaded, endpoints recover, the database remains current, and no run authority is lost.
+
+## Repository and Delivery Discipline
+
+- Setfarm and Mission Control each use at most one active writing branch.
+- Cross-repository work is serialized at integration boundaries. A Mission Control consumer change may be prepared only after its Setfarm contract is committed and available for compatibility checking.
+- Every systemic fix uses a focused branch, tests, independent review, reviewed PR, and clean-main build.
+- No implementation agent bypasses runtime guards, dirty-build guards, migration verification, or evidence gates.
+- No secret, live DB dump, generated runtime artifact, screenshot cache, or local log is committed.
+- Historical failed runs remain visible; they are not deleted to improve metrics.
+- Campaign reports reference durable evidence identities and bounded summaries rather than copying sensitive runtime payloads.
+
+## Verification Layers
+
+Each subproject uses the cheapest valid progression and stops at the first failure:
+
+1. focused unit or integration test;
+2. adjacent package or subsystem tests;
+3. repository build and static contracts;
+4. repository full test suite when shared runtime behavior changes;
+5. reviewed PR;
+6. clean-main build;
+7. live service smoke;
+8. one ordered canary;
+9. recovery or fleet expansion only after the prior layer passes.
+
+Setfarm verification includes, as applicable:
+
+- TypeScript compilation;
+- English, path, migration-digest, and Mission Control contract checks;
+- focused execution-attempt, product-compiler, step, script, evidence, recovery, and eval suites;
+- full `npm test`;
+- clean-main guarded `npm run build`;
+- migration plan, verify, and current-authority audits.
+
+Mission Control verification includes:
+
+- focused service, route, API, and render tests;
+- Setfarm contract compatibility check;
+- full `npm test`;
+- clean `npm run build`;
+- render smoke;
+- live `/api/health`, `/api/projects`, run-detail, and browser checks.
+
+## Completion Evidence
+
+The final internal-production acceptance packet contains:
+
+- exact Setfarm and Mission Control merge SHAs;
+- build identities and contract hashes;
+- backup and restore-rehearsal evidence;
+- migration plan, verification, and authority-audit summaries;
+- golden profile campaign table with run IDs, repositories, PRs, states, and evidence refs;
+- recovery matrix table;
+- controlled fleet table and systemic-failure census;
+- Mission Control DB/API/UI reconciliation results;
+- service restart and health results;
+- process, port, worktree, claim, runtime, completion, and effect leak censuses;
+- independent final review findings and their resolution;
+- exact remaining external-distribution blockers from the production-admission preflight.
+
+## Internal Definition of Done
+
+Setfarm and Mission Control are internally complete when all conditions below hold simultaneously:
+
+1. Subprojects A through E are delivered through reviewed PRs.
+2. Node CLI, Node API, and Vite/React profiles each produce two accepted runs from clean starts on the final Setfarm build.
+3. Stateful web, interactive browser/game, bug-fix, and security-audit profiles each produce at least one accepted run.
+4. The complete recovery and restart matrix passes.
+5. The controlled 10-project fleet meets its acceptance threshold.
+6. Mission Control DB/API/UI reconciliation has zero unresolved mismatch.
+7. No active or leaked claim, runtime, completion effect, process, port, lease, or worktree remains after the campaign.
+8. Setfarm and Mission Control full tests and clean-main builds pass at their final SHAs.
+9. Contract-spine migrations remain current and all current-authority audits pass.
+10. The operator runbook passes one cold rehearsal.
+11. Both repositories are clean and synchronized with `origin/main`.
+12. Independent final review reports no unresolved Critical, High, or Medium finding.
+
+External distribution remains explicitly incomplete and must be reported as such. It becomes a separate design and implementation program after internal completion.
+
+## Out of Scope
+
+- Developer ID acquisition or keychain provisioning;
+- Apple notarization submission;
+- signed or stapled PKG production;
+- installer/helper installation or mutation;
+- public customer onboarding, licensing, billing, or support;
+- Linux or Windows host support;
+- arbitrary high-concurrency load testing;
+- rescue or manual patching of historical generated projects;
+- deleting failed history to improve completion metrics;
+- weakening any authority, runtime, migration, evidence, review, or dirty-build gate.
+
+## Risks and Controls
+
+### Model and provider variability
+
+Use exact prompts, record provider/model/quota observations, classify infrastructure separately, and require repeated profile acceptance instead of one lucky run.
+
+### Long campaign duration and cost
+
+Run profiles sequentially, stop at the first systemic failure, reuse focused deterministic fixtures for regression, and expand to the fleet only after the first three profiles are stable.
+
+### Historical-state confusion
+
+Never reuse old failed runs as current acceptance. Keep them visible but clearly separate the new campaign by campaign ID, Setfarm SHA, and start timestamp.
+
+### Mission Control inventing activity
+
+Reconcile every displayed active state to the canonical operational snapshot and database census. Treat the current 112-active versus zero-active-run observation as an explicit acceptance blocker until its semantics are corrected or precisely relabeled.
+
+### Cross-repository drift
+
+Pin contract artifacts and exact SHAs in every campaign record. Deliver Setfarm producer changes before Mission Control consumer changes.
+
+### Operational mutation during evidence collection
+
+Take read-only snapshots by default. Any restart or fault injection is an explicit campaign step with preconditions, zero unrelated active work, and post-settlement leak checks.
+
+## Follow-On Program
+
+After internal completion, create a separate external-distribution design covering Developer ID identities, public trust configuration, notarization credentials, signed native catalog, PKG composition, installer receipt and helper authority, AMFI join, upgrade/rollback/uninstall, clean-host acceptance, and public release operations. The current production-admission preflight provides the entry census for that future program.
