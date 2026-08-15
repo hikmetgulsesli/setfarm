@@ -59,6 +59,7 @@
   },
   "dependencies": {
     "json5": "^2.2.3",
+    "parse5": "^8.0.1",
     "playwright": "^1.60.0",
     "postgres": "^3.4.8",
     "yaml": "^2.4.5",
