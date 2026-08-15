@@ -107,10 +107,13 @@ function execStitchOnce(input: ExecOnceInput): Promise<string> {
 export async function ensureStitchProjectIdentityV2(input: Readonly<{
   repo: string;
   projectName: string;
-}>): Promise<string> {
-  const output = await execStitchOnce({
+}>, dependencies: Readonly<{
+  executeStitch?: (input: ExecOnceInput) => Promise<string>;
+}> = {}): Promise<string> {
+  const executeStitch = dependencies.executeStitch ?? execStitchOnce;
+  const output = await executeStitch({
     args: ["ensure-project-identity", input.projectName, input.repo],
-    cwd: input.repo,
+    cwd: path.dirname(resolvePlatformScript("stitch-api.mjs")),
     timeoutMs: 120_000,
   });
   return ProjectIdentitySchema.parse(JSON.parse(output)).projectId;
