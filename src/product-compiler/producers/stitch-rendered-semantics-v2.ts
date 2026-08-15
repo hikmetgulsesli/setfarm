@@ -7,6 +7,7 @@ import path from "node:path";
 import JSON5 from "json5";
 import {
   chromium,
+  type Browser,
   type BrowserContext,
   type Page,
   type Route,
@@ -360,32 +361,50 @@ async function prefetchDeclaredResources(html: string): Promise<Map<string, Reso
   return captures;
 }
 
+export async function openStitchRenderContextV2(
+  input: Readonly<{
+    profile: StitchRenderProfileV1;
+    phase?: "browser_launch" | "replay_render";
+  }>,
+  dependencies: Readonly<{
+    launchBrowser?: () => Promise<Browser>;
+  }> = {},
+): Promise<{ context: BrowserContext; version: string }> {
+  const phase = input.phase ?? "browser_launch";
+  const launchBrowser = dependencies.launchBrowser ?? (() => chromium.launch({ headless: true }));
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    let browser: Browser | undefined;
+    try {
+      browser = await launchBrowser();
+      const version = browser.version();
+      const context = await browser.newContext({
+        viewport: { width: input.profile.width, height: input.profile.height },
+        deviceScaleFactor: 1,
+        locale: input.profile.locale,
+        timezoneId: input.profile.timezoneId,
+        colorScheme: input.profile.colorScheme,
+        reducedMotion: input.profile.reducedMotion,
+        serviceWorkers: "block",
+        javaScriptEnabled: true,
+      });
+      context.on("page", (page) => {
+        page.on("popup", (popup) => { void popup.close(); });
+      });
+      return { context, version };
+    } catch (error) {
+      lastError = error;
+      await browser?.close().catch(() => undefined);
+    }
+  }
+  throw infrastructure("STITCH_RENDERER_V2_BROWSER_UNAVAILABLE", phase, lastError);
+}
+
 async function strictContext(
   profile: StitchRenderProfileV1,
   phase: "browser_launch" | "replay_render" = "browser_launch",
 ): Promise<{ context: BrowserContext; version: string }> {
-  let browser;
-  try {
-    browser = await chromium.launch({ headless: true });
-    const version = browser.version();
-    const context = await browser.newContext({
-      viewport: { width: profile.width, height: profile.height },
-      deviceScaleFactor: 1,
-      locale: profile.locale,
-      timezoneId: profile.timezoneId,
-      colorScheme: profile.colorScheme,
-      reducedMotion: profile.reducedMotion,
-      serviceWorkers: "block",
-      javaScriptEnabled: true,
-    });
-    context.on("page", (page) => {
-      page.on("popup", (popup) => { void popup.close(); });
-    });
-    return { context, version };
-  } catch (error) {
-    await browser?.close().catch(() => undefined);
-    throw infrastructure("STITCH_RENDERER_V2_BROWSER_UNAVAILABLE", phase, error);
-  }
+  return openStitchRenderContextV2({ profile, phase });
 }
 
 async function installOfflineResourceRoutes(
