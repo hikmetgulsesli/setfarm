@@ -9,6 +9,7 @@ import { produceDesignGenerationTargetsV2 } from "../../src/product-compiler/pro
 import { compilePlanSemanticProposalV2 } from "../../src/product-compiler/producers/plan-semantic-proposal-v2.js";
 import {
   captureStitchRenderedSemanticsV2,
+  openStitchRenderContextV2,
   StitchRenderedSemanticsInfrastructureErrorV2,
   verifyStitchRenderedSemanticsReplayV2,
   writeStitchRenderedSemanticsV2,
@@ -130,6 +131,80 @@ function fixture(options: Readonly<{
 }
 
 describe("Stitch rendered semantics v2", { concurrency: 1 }, () => {
+  it("retries one transient browser-context closure before rendering", async () => {
+    let launches = 0;
+    let closes = 0;
+    const context = { marker: "stable-context", on: () => undefined };
+    const opened = await openStitchRenderContextV2({
+      profile: {
+        id: "desktop-1280x800.v1",
+        deviceType: "DESKTOP",
+        width: 1280,
+        height: 800,
+        deviceScaleFactor: 1,
+        locale: "en-US",
+        timezoneId: "UTC",
+        colorScheme: "light",
+        reducedMotion: "reduce",
+      },
+      phase: "browser_launch",
+    }, {
+      launchBrowser: async () => {
+        launches += 1;
+        return {
+          version: () => "test-chromium",
+          newContext: async () => {
+            if (launches === 1) throw new Error("Target page, context or browser has been closed");
+            return context as never;
+          },
+          close: async () => { closes += 1; },
+        } as never;
+      },
+    });
+
+    assert.equal(launches, 2);
+    assert.equal(closes, 1);
+    assert.equal(opened.version, "test-chromium");
+    assert.equal(opened.context, context);
+  });
+
+  it("closes both failed browsers and preserves the typed error after retry exhaustion", async () => {
+    let launches = 0;
+    let closes = 0;
+    await assert.rejects(
+      openStitchRenderContextV2({
+        profile: {
+          id: "desktop-1280x800.v1",
+          deviceType: "DESKTOP",
+          width: 1280,
+          height: 800,
+          deviceScaleFactor: 1,
+          locale: "en-US",
+          timezoneId: "UTC",
+          colorScheme: "light",
+          reducedMotion: "reduce",
+        },
+        phase: "browser_launch",
+      }, {
+        launchBrowser: async () => {
+          launches += 1;
+          return {
+            version: () => "test-chromium",
+            newContext: async () => {
+              throw new Error("Target page, context or browser has been closed");
+            },
+            close: async () => { closes += 1; },
+          } as never;
+        },
+      }),
+      (error: unknown) => error instanceof StitchRenderedSemanticsInfrastructureErrorV2
+        && error.code === "STITCH_RENDERER_V2_BROWSER_UNAVAILABLE"
+        && error.phase === "browser_launch",
+    );
+    assert.equal(launches, 2);
+    assert.equal(closes, 2);
+  });
+
   it("binds implicit native-button and hidden after-only roles to exact browser receipts", async () => {
     const value = fixture({ hiddenStatus: true });
     const capture = await captureStitchRenderedSemanticsV2({
