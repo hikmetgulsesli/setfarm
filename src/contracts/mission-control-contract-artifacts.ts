@@ -20,6 +20,13 @@ import {
   type V3ProjectTransferAckV1,
 } from "../execution/schemas/v3-project-transfer-ack-v1.js";
 import {
+  createOperationalFailureIdentityV2,
+  DESIGN_CANDIDATE_AUTHORITY_EVIDENCE_SCHEMA_V2,
+  DESIGN_CANDIDATE_AUTHORITY_REQUESTER_V2,
+  STITCH_TARGET_CANDIDATE_SELECTION_FAILURE_ARTIFACT_TYPE_V2,
+  STITCH_TARGET_CANDIDATE_SELECTION_FAILURE_REF_KEY_V2,
+} from "../execution/schemas/operational-failure-identity-v2.js";
+import {
   createV3RuntimeIsolationAuthorityV1,
   createV3RuntimeIsolationChallengeV1,
   createV3RuntimeVolumeProvisioningV1,
@@ -36,6 +43,11 @@ import {
   RunOperationalSnapshotV2Schema,
   type RunOperationalSnapshotV2,
 } from "../server/schemas/run-operational-snapshot-v2.js";
+import {
+  computeRunOperationalSnapshotHashV3,
+  RunOperationalSnapshotV3Schema,
+  type RunOperationalSnapshotV3,
+} from "../server/schemas/run-operational-snapshot-v3.js";
 
 export const MISSION_CONTROL_CONTRACT_ARTIFACT_DIRECTORY =
   "contracts/generated/mission-control" as const;
@@ -46,6 +58,7 @@ export const MISSION_CONTROL_CONTRACT_ARTIFACT_SCHEMA =
 export type MissionControlContractName =
   | "setfarm.run-operational-snapshot.v1"
   | "setfarm.run-operational-snapshot.v2"
+  | "setfarm.run-operational-snapshot.v3"
   | "setfarm.v3-deployment-observation.v1"
   | "setfarm.v3-project-transfer-ack.v1";
 
@@ -614,6 +627,111 @@ function createRunOperationalSnapshotV2Fixture(input: Readonly<{
   });
 }
 
+function createRunOperationalSnapshotV3Fixture(
+  snapshotV2: RunOperationalSnapshotV2,
+): RunOperationalSnapshotV3 {
+  const { snapshotHash: _snapshotV2Hash, ...snapshotV2State } = snapshotV2;
+  const operationalCause = {
+    schema: "setfarm.operational-failure-cause.v1" as const,
+    workflowStepId: "design",
+    boundary: "product_compiler.design_candidate_authority",
+    failureClass: "generated_artifact_invalid" as const,
+    failureCode: "V3_DESIGN_CANDIDATE_AUTHORITY_UNRESOLVED",
+  };
+  const exactFailure = {
+    schema: "setfarm.operational-exact-failure-identity.v2" as const,
+    kind: "stitch_target_candidate_selection" as const,
+    refKey: STITCH_TARGET_CANDIDATE_SELECTION_FAILURE_REF_KEY_V2,
+    artifactType: STITCH_TARGET_CANDIDATE_SELECTION_FAILURE_ARTIFACT_TYPE_V2,
+    failureArtifactHash: "3".repeat(64),
+    failureFingerprint: "4".repeat(64),
+    candidateSelectionHash: "5".repeat(64),
+  };
+  const failureIdentity = createOperationalFailureIdentityV2({
+    requestedBy: DESIGN_CANDIDATE_AUTHORITY_REQUESTER_V2,
+    evidenceSchema: DESIGN_CANDIDATE_AUTHORITY_EVIDENCE_SCHEMA_V2,
+    operationalCause,
+    exactFailure,
+  });
+  const terminationRequestRef = "setfarm://run-termination/RTR_contract-design-0001";
+  const state = {
+    ...snapshotV2State,
+    schema: "setfarm.run-operational-snapshot.v3" as const,
+    source: {
+      ...snapshotV2State.source,
+      migrationVersions: [...snapshotV2State.source.migrationVersions, 22],
+      capabilities: {
+        ...snapshotV2State.source.capabilities,
+        operationalFailureAuthority: true,
+      },
+    },
+    run: {
+      ...snapshotV2State.run,
+      status: "failed",
+      terminal: true,
+    },
+    summary: {
+      ...snapshotV2State.summary,
+      lifecycleState: "terminal" as const,
+      health: "blocked" as const,
+      activeClaims: 0,
+      activeAttempts: 0,
+      activeRuntimes: 0,
+      openCompletions: 0,
+      mandatoryEffectsPending: 0,
+      unpublishedOutbox: 0,
+    },
+    claims: [],
+    attempts: [],
+    runtimeSessions: [],
+    completionRequests: [],
+    terminationRequests: [{
+      ref: terminationRequestRef,
+      requestId: "RTR_contract-design-0001",
+      runRef: `setfarm://run/${RUN_ID}`,
+      targetStatus: "failed" as const,
+      state: "terminalized" as const,
+      requestedBy: DESIGN_CANDIDATE_AUTHORITY_REQUESTER_V2,
+      diagnostic: "Typed design authority refused before packet sealing",
+      evidence: {
+        schema: DESIGN_CANDIDATE_AUTHORITY_EVIDENCE_SCHEMA_V2,
+        terminalFailure: true as const,
+        owner: "compiler" as const,
+        outcome: "candidate_authority_unresolved" as const,
+        failureRefKey: exactFailure.refKey,
+        failureArtifactType: exactFailure.artifactType,
+        failureArtifactHash: exactFailure.failureArtifactHash,
+        failureFingerprint: exactFailure.failureFingerprint,
+        candidateSelectionHash: exactFailure.candidateSelectionHash,
+        modelRedispatchBudget: 0 as const,
+        operationalFailureCause: operationalCause,
+      },
+      requestedAt: NOW,
+      drainedAt: NOW,
+      terminalizedAt: NOW,
+      createdAt: NOW,
+      updatedAt: NOW,
+    }],
+    outbox: [],
+    invariants: [],
+    findingSets: [],
+    evidenceBundles: [],
+    recoveryCases: [],
+    recoveryDispatches: [],
+    acceptedCandidate: null,
+    deploymentReceipt: null,
+    projectTransferAck: null,
+    operationalFailure: {
+      terminationRequestRef,
+      failureIdentity,
+    },
+  };
+  return RunOperationalSnapshotV3Schema.parse({
+    ...state,
+    snapshotHash: computeRunOperationalSnapshotHashV3(state),
+  });
+}
+
 function jsonSchemaFor(contract: MissionControlContractName, schema: z.ZodType): unknown {
   return {
     $id: `https://contracts.setfarm.dev/mission-control/${contract}.schema.json`,
@@ -662,9 +780,11 @@ export function createMissionControlContractArtifacts(): readonly MissionControl
     receipt: deployment.receipt,
     acknowledgement,
   });
+  const snapshotV3 = createRunOperationalSnapshotV3Fixture(snapshotV2);
 
   RunOperationalSnapshotV1Schema.parse(snapshotV1);
   RunOperationalSnapshotV2Schema.parse(snapshotV2);
+  RunOperationalSnapshotV3Schema.parse(snapshotV3);
   V3DeploymentObservationV1Schema.parse(deployment.observation);
   V3ProjectTransferAckV1Schema.parse(acknowledgement);
 
@@ -680,6 +800,12 @@ export function createMissionControlContractArtifacts(): readonly MissionControl
       stem: "run-operational-snapshot.v2",
       schema: RunOperationalSnapshotV2Schema,
       fixture: snapshotV2,
+    }),
+    ...artifactPair({
+      contract: "setfarm.run-operational-snapshot.v3",
+      stem: "run-operational-snapshot.v3",
+      schema: RunOperationalSnapshotV3Schema,
+      fixture: snapshotV3,
     }),
     ...artifactPair({
       contract: "setfarm.v3-deployment-observation.v1",
