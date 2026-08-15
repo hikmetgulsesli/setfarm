@@ -54,6 +54,7 @@ import {
   type CompilerEnglishAdmissionLedgerAuthorityV1,
 } from "../../../execution/compiler-english-admission-ledger-v1.js";
 import type { CompilerEnglishAdmissionReceiptV1 } from "../../../product-compiler/schemas/compiler-english-admission-receipt-v1.js";
+import type { OperationalFailureCauseV1 } from "../../../execution/schemas/operational-failure-cause-v1.js";
 
 const PRECLAIM_CANCELLED = "DESIGN_PRECLAIM_CANCELLED";
 const progressDedupe = new Map<string, { detail: string; emittedAt: number }>();
@@ -559,7 +560,10 @@ async function recordPreClaimProgress(ctx: ClaimContext, detail: string): Promis
   return true;
 }
 
-async function failDesignPreclaim(ctx: ClaimContext, error: string, options: { terminal?: boolean } = {}): Promise<void> {
+async function failDesignPreclaim(ctx: ClaimContext, error: string, options: Readonly<{
+  terminal?: boolean;
+  operationalFailureCause?: OperationalFailureCauseV1;
+}> = {}): Promise<void> {
   const safeError = error.replace(/\s+/g, " ").slice(0, 1000);
   ctx.context["design_asset_error"] = safeError;
   ctx.context["screens_generated"] = "0";
@@ -585,7 +589,12 @@ async function failDesignPreclaim(ctx: ClaimContext, error: string, options: { t
       ? `PLATFORM_PRECLAIM_TERMINAL [design]: ${safeError}`
       : safeError,
     ctx.claimEnvelope,
-    v3PlatformPreclaim ? { singleStepMode: "terminal_platform_preclaim" } : undefined,
+    v3PlatformPreclaim ? {
+      singleStepMode: "terminal_platform_preclaim",
+      ...(options.operationalFailureCause
+        ? { operationalFailureCause: options.operationalFailureCause }
+        : {}),
+    } : undefined,
   );
 }
 
@@ -2262,7 +2271,10 @@ export async function preClaim(ctx: ClaimContext): Promise<PreClaimResult> {
       if (result.status !== "accepted") {
         ctx.context["design_source_attempt_id"] = result.attemptId || "";
         ctx.context["design_source_failure_code"] = result.code;
-        await failDesignPreclaim(ctx, result.diagnostic, { terminal: true });
+        await failDesignPreclaim(ctx, result.diagnostic, {
+          terminal: true,
+          operationalFailureCause: result.operationalFailureCause,
+        });
         return;
       }
       Object.assign(ctx.context, result.context);

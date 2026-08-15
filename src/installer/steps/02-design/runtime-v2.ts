@@ -8,10 +8,12 @@ import { z } from "zod";
 
 import { canonicalJsonStringify, hashCanonicalJson } from "../../../product-compiler/canonical-json.js";
 import {
+  DESIGN_SOURCE_SEMANTIC_CLOSURE_OPERATIONAL_CAUSE_V1,
   runDesignSourceAuthorityV2,
   type DesignSourceAuthorityRuntimeDependenciesV2,
   type DesignSourceStageArtifactV2,
 } from "../../../product-compiler/design-source-runtime-v2.js";
+import type { OperationalFailureCauseV1 } from "../../../execution/schemas/operational-failure-cause-v1.js";
 import { ProductCompilationAttemptRepository } from "../../../product-compiler/product-compilation-attempt-repository.js";
 import type { DesignInteractionGraphV2 } from "../../../product-compiler/schemas/design-interaction-graph-v2.js";
 import type { StitchTargetResponseBindingsV3 } from "../../../product-compiler/schemas/stitch-target-candidate-selection-v2.js";
@@ -68,6 +70,7 @@ export type DesignPreclaimV2Result =
       code: string;
       diagnostic: string;
       attemptId?: string;
+      operationalFailureCause?: OperationalFailureCauseV1;
     }>;
 
 type ExecOnceInput = Readonly<{
@@ -219,6 +222,11 @@ function runnerFailure(result: Exclude<
       ...(result.status === "dispatch_ambiguous" ? {} : { stopReason: result.stopReason }),
     }),
     attemptId: result.attempt.attemptId,
+    ...(result.failure.operationalCauseHash === hashCanonicalJson(
+      DESIGN_SOURCE_SEMANTIC_CLOSURE_OPERATIONAL_CAUSE_V1,
+    ) ? {
+        operationalFailureCause: DESIGN_SOURCE_SEMANTIC_CLOSURE_OPERATIONAL_CAUSE_V1,
+      } : {}),
   };
 }
 
