@@ -146,6 +146,40 @@ function fixture(options: Readonly<{
   };
 }
 
+function expandCandidates(
+  value: ReturnType<typeof fixture>,
+  extraHtmlByCandidate: readonly string[],
+): ReturnType<typeof fixture> {
+  const baseCandidate = value.directResponseEvidence.batches[0]!.candidates[0]!;
+  const baseHtml = value.artifacts[0]!.htmlBytes.toString("utf8");
+  const screenshotBytes = value.artifacts[0]!.screenshotBytes;
+  const artifacts = extraHtmlByCandidate.map((extraHtml, index) => {
+    const screenId = `${baseCandidate.screenId}-${String(index).padStart(3, "0")}`;
+    const htmlBytes = Buffer.from(baseHtml.replace("</body>", `${extraHtml}</body>`), "utf8");
+    return { screenId, htmlBytes, screenshotBytes };
+  });
+  return {
+    ...value,
+    directResponseEvidence: {
+      ...value.directResponseEvidence,
+      batches: [{
+        ...value.directResponseEvidence.batches[0]!,
+        candidates: artifacts.map((artifact, index) => ({
+          ...baseCandidate,
+          screenId: artifact.screenId,
+          responsePaths: [`$result.screens[${index}]`],
+          ...stitchDownloadReceipts(
+            artifact.screenId,
+            artifact.htmlBytes,
+            artifact.screenshotBytes,
+          ),
+        })),
+      }],
+    },
+    artifacts,
+  };
+}
+
 describe("Stitch rendered semantics v2", { concurrency: 1 }, () => {
   it("retries one transient browser-context closure before rendering", async () => {
     let launches = 0;
@@ -219,6 +253,370 @@ describe("Stitch rendered semantics v2", { concurrency: 1 }, () => {
     );
     assert.equal(launches, 2);
     assert.equal(closes, 2);
+  });
+
+  it("follows one same-origin Tailwind redirect and seals the final runtime bytes", async () => {
+    const originalFetch = globalThis.fetch;
+    const requests: string[] = [];
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      const url = String(input instanceof Request ? input.url : input);
+      requests.push(url);
+      if (url === "https://cdn.tailwindcss.com/?plugins=forms,container-queries") {
+        return new Response(null, {
+          status: 302,
+          headers: { location: "/3.4.17?plugins=forms@0.5.10,container-queries@0.1.1" },
+        });
+      }
+      if (
+        url
+        === "https://cdn.tailwindcss.com/3.4.17?plugins=forms@0.5.10,container-queries@0.1.1"
+      ) {
+        return new Response("/* sealed Tailwind runtime */", {
+          status: 200,
+          headers: { "content-type": "application/javascript" },
+        });
+      }
+      throw new Error(`Unexpected fetch ${url}`);
+    }) as typeof fetch;
+    try {
+      const value = fixture({
+        scriptMarkup: '<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>',
+      });
+      const capture = await captureStitchRenderedSemanticsV2({
+        ...value,
+        deviceType: "DESKTOP",
+      });
+      assert.equal(capture.artifact.candidates[0]!.status, "rendered");
+      assert.deepEqual(requests, [
+        "https://cdn.tailwindcss.com/?plugins=forms,container-queries",
+        "https://cdn.tailwindcss.com/3.4.17?plugins=forms@0.5.10,container-queries@0.1.1",
+      ]);
+      assert.equal(capture.artifact.resources.length, 1);
+      assert.equal(capture.artifact.resources[0]!.resourceType, "script");
+      const resource = [...capture.sidecars.resources.values()][0]!;
+      assert.equal(resource.toString("utf8"), "/* sealed Tailwind runtime */");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("reuses one immutable resource capture across multiple rendered candidates", async () => {
+    const originalFetch = globalThis.fetch;
+    const scriptUrl = "https://cdn.tailwindcss.com/3.4.17";
+    let requests = 0;
+    globalThis.fetch = (async () => {
+      requests += 1;
+      return new Response(`/* response ${requests} */`, {
+        status: 200,
+        headers: { "content-type": "application/javascript" },
+      });
+    }) as typeof fetch;
+    try {
+      const value = expandCandidates(
+        fixture({ scriptMarkup: `<script src="${scriptUrl}"></script>` }),
+        ["", ""],
+      );
+      const capture = await captureStitchRenderedSemanticsV2({
+        ...value,
+        deviceType: "DESKTOP",
+      });
+      assert.equal(requests, 1);
+      assert.deepEqual(
+        capture.artifact.candidates.map((candidate) => candidate.status),
+        ["rendered", "rendered"],
+      );
+      assert.equal(capture.artifact.resources.length, 1);
+      assert.equal(
+        [...capture.sidecars.resources.values()][0]!.toString("utf8"),
+        "/* response 1 */",
+      );
+      assert.deepEqual(
+        capture.artifact.candidates.map((candidate) => candidate.resourceRefs),
+        [[capture.artifact.resources[0]!.urlHash], [capture.artifact.resources[0]!.urlHash]],
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("source-rejects 1,001 candidate resources before outbound work", async () => {
+    const originalFetch = globalThis.fetch;
+    let requests = 0;
+    globalThis.fetch = (async () => {
+      requests += 1;
+      return new Response(Buffer.alloc(0), {
+        status: 200,
+        headers: { "content-type": "image/jpeg" },
+      });
+    }) as typeof fetch;
+    try {
+      const images = Array.from({ length: 1_001 }, (_, index) =>
+        `<img alt="" src="https://lh3.googleusercontent.com/aida-public/candidate-${index}">`).join("");
+      const value = fixture({ extraHtml: images });
+      const capture = await captureStitchRenderedSemanticsV2({
+        ...value,
+        deviceType: "DESKTOP",
+      });
+      assert.equal(requests, 0);
+      assert.equal(capture.artifact.candidates[0]!.status, "source_rejected");
+      assert.deepEqual(
+        capture.artifact.candidates[0]!.failureCodes,
+        ["RESOURCE_CAPACITY_EXCEEDED"],
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("source-rejects 10,001 aggregate resources before outbound work", async () => {
+    const originalFetch = globalThis.fetch;
+    let requests = 0;
+    globalThis.fetch = (async () => {
+      requests += 1;
+      throw new Error("Aggregate capacity must reject before fetch");
+    }) as typeof fetch;
+    try {
+      const extras = Array.from({ length: 11 }, (_, candidateIndex) =>
+        Array.from({ length: 910 }, (_, resourceIndex) =>
+          `<img alt="" src="https://lh3.googleusercontent.com/aida-public/aggregate-${candidateIndex}-${resourceIndex}">`).join(""));
+      const value = expandCandidates(fixture(), extras);
+      const capture = await captureStitchRenderedSemanticsV2({
+        ...value,
+        deviceType: "DESKTOP",
+      });
+      assert.equal(requests, 0);
+      assert.equal(capture.artifact.resources.length, 0);
+      assert.deepEqual(
+        capture.artifact.candidates.map((candidate) => candidate.failureCodes),
+        Array.from({ length: 11 }, () => ["RESOURCE_CAPACITY_EXCEEDED"]),
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("charges failed chunked bodies to the capture-wide network budget", async () => {
+    const originalFetch = globalThis.fetch;
+    let requests = 0;
+    globalThis.fetch = (async () => {
+      requests += 1;
+      return new Response(new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new Uint8Array(1024 * 1024));
+          controller.enqueue(new Uint8Array(1024 * 1024));
+          controller.enqueue(new Uint8Array([requests]));
+          controller.close();
+        },
+      }), {
+        status: 200,
+        headers: { "content-type": "application/javascript" },
+      });
+    }) as typeof fetch;
+    try {
+      const extras = Array.from({ length: 10 }, (_, index) =>
+        `<script src="https://cdn.tailwindcss.com/oversized-${index}"></script>`);
+      const value = expandCandidates(fixture(), extras);
+      const capture = await captureStitchRenderedSemanticsV2({
+        ...value,
+        deviceType: "DESKTOP",
+      });
+      assert.equal(requests, 4);
+      assert.deepEqual(
+        capture.artifact.candidates.map((candidate) => candidate.failureCodes),
+        Array.from({ length: 10 }, () => ["RESOURCE_CAPACITY_EXCEEDED"]),
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("cancels a declared oversized body before reading it", async () => {
+    const originalFetch = globalThis.fetch;
+    let cancellations = 0;
+    globalThis.fetch = (async () => new Response(new ReadableStream<Uint8Array>({
+      pull() {
+        throw new Error("Oversized declared body must not be read");
+      },
+      cancel() {
+        cancellations += 1;
+      },
+    }), {
+      status: 200,
+      headers: {
+        "content-length": String(3 * 1024 * 1024),
+        "content-type": "application/javascript",
+      },
+    })) as typeof fetch;
+    try {
+      const value = fixture({
+        scriptMarkup: '<script src="https://cdn.tailwindcss.com/oversized"></script>',
+      });
+      const capture = await captureStitchRenderedSemanticsV2({
+        ...value,
+        deviceType: "DESKTOP",
+      });
+      assert.equal(cancellations, 1);
+      assert.deepEqual(
+        capture.artifact.candidates[0]!.failureCodes,
+        ["RESOURCE_CAPACITY_EXCEEDED"],
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("cancels a non-success response body before reporting infrastructure", async () => {
+    const originalFetch = globalThis.fetch;
+    let cancellations = 0;
+    globalThis.fetch = (async () => new Response(new ReadableStream<Uint8Array>({
+      pull() {
+        throw new Error("Non-success response body must not be read");
+      },
+      cancel() {
+        cancellations += 1;
+      },
+    }), {
+      status: 500,
+      headers: { "content-type": "text/plain" },
+    })) as typeof fetch;
+    try {
+      const value = fixture({
+        scriptMarkup: '<script src="https://cdn.tailwindcss.com/unavailable"></script>',
+      });
+      await assert.rejects(
+        captureStitchRenderedSemanticsV2({ ...value, deviceType: "DESKTOP" }),
+        (error: unknown) => error instanceof StitchRenderedSemanticsInfrastructureErrorV2
+          && error.code === "STITCH_RENDERER_V2_RESOURCE_PREFETCH_FAILED"
+          && error.phase === "resource_prefetch",
+      );
+      assert.equal(cancellations, 1);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("source-rejects a Tailwind redirect outside the exact resource origin", async () => {
+    const originalFetch = globalThis.fetch;
+    let requests = 0;
+    globalThis.fetch = (async () => {
+      requests += 1;
+      return new Response(null, {
+        status: 302,
+        headers: { location: "https://evil.example/runtime.js" },
+      });
+    }) as typeof fetch;
+    try {
+      const value = fixture({
+        scriptMarkup: '<script src="https://cdn.tailwindcss.com"></script>',
+      });
+      const capture = await captureStitchRenderedSemanticsV2({
+        ...value,
+        deviceType: "DESKTOP",
+      });
+      assert.equal(capture.artifact.candidates[0]!.status, "source_rejected");
+      assert.deepEqual(
+        capture.artifact.candidates[0]!.failureCodes,
+        ["UNSUPPORTED_EXECUTABLE_SCRIPT"],
+      );
+      assert.equal(requests, 1);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("seals approved Google font bytes inside the declared stylesheet", async () => {
+    const originalFetch = globalThis.fetch;
+    const requests: string[] = [];
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input instanceof Request ? input.url : input);
+      requests.push(url);
+      if (url === "https://fonts.googleapis.com/css2?family=Test&display=swap") {
+        assert.match(new Headers(init?.headers).get("user-agent") ?? "", /Chrome\//u);
+        return new Response(
+          '@font-face{font-family:"Test";src:url("https://fonts.gstatic.com/s/test/v1/test.woff2") format("woff2")}',
+          { status: 200, headers: { "content-type": "text/css; charset=utf-8" } },
+        );
+      }
+      if (url === "https://fonts.gstatic.com/s/test/v1/test.woff2") {
+        return new Response(Uint8Array.from([0, 1, 2]), {
+          status: 200,
+          headers: { "content-type": "font/woff2" },
+        });
+      }
+      throw new Error(`Unexpected fetch ${url}`);
+    }) as typeof fetch;
+    try {
+      const value = fixture({
+        extraHtml: [
+          '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Test&amp;display=swap">',
+          '<style>main{font-family:"Test"}</style>',
+        ].join(""),
+      });
+      const capture = await captureStitchRenderedSemanticsV2({
+        ...value,
+        deviceType: "DESKTOP",
+      });
+      assert.equal(capture.artifact.candidates[0]!.status, "rendered");
+      assert.deepEqual(requests, [
+        "https://fonts.googleapis.com/css2?family=Test&display=swap",
+        "https://fonts.gstatic.com/s/test/v1/test.woff2",
+      ]);
+      assert.equal(capture.artifact.resources.length, 1);
+      assert.equal(capture.artifact.resources[0]!.resourceType, "stylesheet");
+      const stylesheet = [...capture.sidecars.resources.values()][0]!.toString("utf8");
+      assert.match(stylesheet, /data:font\/woff2;base64,AAEC/u);
+      assert.doesNotMatch(stylesheet, /fonts\.gstatic\.com/u);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("seals approved Stitch image bytes as an identity-bound render resource", async () => {
+    const originalFetch = globalThis.fetch;
+    const imageUrl = "https://lh3.googleusercontent.com/aida-public/exact-image";
+    let requests = 0;
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      const url = String(input instanceof Request ? input.url : input);
+      assert.equal(url, imageUrl);
+      requests += 1;
+      return new Response(Uint8Array.from([0xff, 0xd8, 0xff, 0xd9]), {
+        status: 200,
+        headers: { "content-type": "image/jpeg" },
+      });
+    }) as typeof fetch;
+    try {
+      const value = fixture({
+        extraHtml: `<img alt="Decorative system avatar" src="${imageUrl}">`,
+      });
+      const capture = await captureStitchRenderedSemanticsV2({
+        ...value,
+        deviceType: "DESKTOP",
+      });
+      assert.equal(capture.artifact.candidates[0]!.status, "rendered");
+      assert.equal(requests, 1);
+      assert.equal(capture.artifact.resources.length, 1);
+      assert.equal(capture.artifact.resources[0]!.resourceType, "image");
+      assert.equal(capture.artifact.resources[0]!.contentType, "image/jpeg");
+      assert.deepEqual(
+        [...capture.sidecars.resources.values()][0],
+        Buffer.from([0xff, 0xd8, 0xff, 0xd9]),
+      );
+      assert.deepEqual(
+        capture.artifact.candidates[0]!.resourceRefs,
+        [capture.artifact.resources[0]!.urlHash],
+      );
+      const semanticDom = [...capture.sidecars.semanticDom.values()][0]!.toString("utf8");
+      assert.match(semanticDom, /lh3\.googleusercontent\.com\/aida-public\/exact-image/u);
+      const root = await mkdtemp(path.join(tmpdir(), "setfarm-rendered-image-v2-"));
+      roots.push(root);
+      await writeStitchRenderedSemanticsV2(root, capture);
+      assert.deepEqual(
+        await verifyStitchRenderedSemanticsReplayV2({ repo: root }),
+        capture.artifact,
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 
   it("binds implicit native-button and hidden after-only roles to exact browser receipts", async () => {
