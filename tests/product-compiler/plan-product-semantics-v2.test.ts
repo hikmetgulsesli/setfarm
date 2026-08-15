@@ -63,6 +63,28 @@ describe("PLAN product semantics v2 integration", () => {
     );
   });
 
+  it("prompts for occurrence-complete atomic proposal rules", () => {
+    const ledger = extractTaskRequirementLedgerV1(CONTAINED_GAME_TASK);
+    const prompt = buildPrompt({
+      runId: "run-plan-v2-occurrence-rules",
+      task: CONTAINED_GAME_TASK,
+      context: {
+        plan_protocol: "v3",
+        product_semantics_version: "v2",
+        task: CONTAINED_GAME_TASK,
+        v3_requirement_ledger: canonicalJsonStringify(ledger),
+      },
+    });
+
+    assert.match(prompt, /enumValues is valid only when valueType is exactly enum/i);
+    assert.match(prompt, /Every individual observable needs an after assertion/i);
+    assert.match(
+      prompt,
+      /entityFieldBindings contains every-and-only state delta occurrences whose valueFrom\.kind is entity_field/i,
+    );
+    assert.match(prompt, /literal and input state deltas do not appear in entityFieldBindings/i);
+  });
+
   it("accepts the atomic envelope and validates its compiler-owned projection", () => {
     const parsed = {
       status: "done",
