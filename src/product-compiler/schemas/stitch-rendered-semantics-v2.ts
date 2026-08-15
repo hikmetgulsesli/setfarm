@@ -256,7 +256,41 @@ export type StitchRenderedCandidateV2 = z.infer<typeof StitchRenderedCandidateV2
 
 const RendererIdentityV1Schema = StitchRenderedSemanticsV1Schema.shape.renderer;
 const StitchRenderProfileV1Schema = StitchRenderedSemanticsV1Schema.shape.profile;
-const RenderResourceV1Schema = StitchRenderedSemanticsV1Schema.shape.resources.element;
+const RenderResourceV2Schema = z.object({
+  urlHash: Sha256Schema,
+  resourceType: z.enum(["script", "stylesheet", "image"]),
+  contentType: z.enum([
+    "application/javascript",
+    "text/css",
+    "image/gif",
+    "image/jpeg",
+    "image/png",
+    "image/webp",
+  ]).optional(),
+  contentHash: Sha256Schema,
+  byteLength: z.number().int().nonnegative().max(8 * 1024 * 1024),
+  locator: NormalizedRelativeLocatorSchema,
+}).strict().superRefine((value, context) => {
+  if (value.locator !== `stitch/render-resources/${value.contentHash}.bin`) {
+    context.addIssue({
+      code: "custom",
+      path: ["locator"],
+      message: "Render resource locator must be content-addressed",
+    });
+  }
+  const contentTypeMatches = value.resourceType === "script"
+    ? value.contentType === undefined || value.contentType === "application/javascript"
+    : value.resourceType === "stylesheet"
+      ? value.contentType === undefined || value.contentType === "text/css"
+      : value.contentType?.startsWith("image/") === true;
+  if (!contentTypeMatches) {
+    context.addIssue({
+      code: "custom",
+      path: ["contentType"],
+      message: "Render resource content type must match its sealed resource type",
+    });
+  }
+});
 
 export const StitchRenderedSemanticsV2Schema = z.object({
   schema: z.literal("setfarm.stitch-rendered-semantics.v2"),
@@ -265,7 +299,7 @@ export const StitchRenderedSemanticsV2Schema = z.object({
   directResponseEvidenceHash: Sha256Schema,
   renderer: RendererIdentityV1Schema,
   profile: StitchRenderProfileV1Schema,
-  resources: z.array(RenderResourceV1Schema).max(10_000),
+  resources: z.array(RenderResourceV2Schema).max(10_000),
   candidates: z.array(StitchRenderedCandidateV2Schema).min(1).max(10_000),
 }).strict().superRefine((value, context) => {
   for (const [path, values] of [

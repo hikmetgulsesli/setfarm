@@ -52,6 +52,13 @@ const CHROMIUM_REVISION = String((JSON.parse(readFileSync(
 
 const MAX_RESOURCE_BYTES = 2 * 1024 * 1024;
 const MAX_TOTAL_RESOURCE_BYTES = 8 * 1024 * 1024;
+const MAX_CANDIDATE_RESOURCE_REFS = 1_000;
+const MAX_CAPTURE_RESOURCES = 10_000;
+const MAX_CAPTURE_RESOURCE_REQUESTS = 10_000;
+const MAX_RESOURCE_REDIRECTS = 3;
+const MAX_STYLESHEET_FONT_URLS = 128;
+const GOOGLE_FONTS_USER_AGENT =
+  "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 const MAX_HTML_BYTES = 2 * 1024 * 1024;
 const MAX_TOTAL_HTML_BYTES = 8 * 1024 * 1024;
 const MAX_HTML_ELEMENTS = 10_000;
@@ -77,10 +84,24 @@ type PlaywrightRole = Parameters<Page["getByRole"]>[0];
 type ResourceCapture = Readonly<{
   url: string;
   urlHash: string;
-  resourceType: "script" | "stylesheet";
+  resourceType: "script" | "stylesheet" | "image";
   contentHash: string;
   contentType: string;
   bytes: Buffer;
+}>;
+
+type ResourcePrefetchLedger = {
+  readonly signal: AbortSignal;
+  readonly captures: Map<string, ResourceCapture>;
+  readonly fonts: Map<string, Readonly<{ bytes: Buffer; contentType: string }>>;
+  networkBytes: number;
+  capturedBytes: number;
+  requestCount: number;
+};
+
+type ResourceDeclaration = Readonly<{
+  url: string;
+  resourceType: ResourceCapture["resourceType"];
 }>;
 
 export type StitchRenderedSemanticsSidecarsV2 = Readonly<{
@@ -398,16 +419,25 @@ function sanitizeExecutableSource(html: string): string {
   return applySourceEdits(html, edits);
 }
 
-function allowedResourceUrl(raw: string, resourceType: "script" | "stylesheet"): string {
+type ResourceFetchKind = ResourceCapture["resourceType"] | "font";
+
+function allowedResourceUrl(raw: string, resourceType: ResourceFetchKind): string {
   let parsed: URL;
   try {
     parsed = new URL(raw);
   } catch {
     throw new CandidateSourceError("RESOURCE_POLICY_VIOLATION", "Render resource URL is invalid");
   }
-  const allowed = resourceType === "script"
-    ? parsed.protocol === "https:" && parsed.hostname === "cdn.tailwindcss.com"
-    : parsed.protocol === "https:" && ["fonts.googleapis.com", "cdn.jsdelivr.net"].includes(parsed.hostname);
+  const allowed = parsed.protocol === "https:" && (
+    resourceType === "script"
+      ? parsed.hostname === "cdn.tailwindcss.com"
+      : resourceType === "stylesheet"
+        ? ["fonts.googleapis.com", "cdn.jsdelivr.net"].includes(parsed.hostname)
+        : resourceType === "font"
+          ? parsed.hostname === "fonts.gstatic.com"
+          : parsed.hostname === "lh3.googleusercontent.com"
+            && parsed.pathname.startsWith("/aida-public/")
+  );
   if (!allowed || parsed.port !== "" || parsed.username !== "" || parsed.password !== "") {
     throw new CandidateSourceError(
       resourceType === "script" ? "UNSUPPORTED_EXECUTABLE_SCRIPT" : "RESOURCE_POLICY_VIOLATION",
@@ -418,11 +448,265 @@ function allowedResourceUrl(raw: string, resourceType: "script" | "stylesheet"):
   return parsed.toString();
 }
 
-function declaredResources(html: string): Array<Readonly<{
+function redirectStatus(status: number): boolean {
+  return [301, 302, 303, 307, 308].includes(status);
+}
+
+async function cancelResourceBody(body: ReadableStream<Uint8Array> | null): Promise<void> {
+  try {
+    await body?.cancel();
+  } catch (error) {
+    throw infrastructure(
+      "STITCH_RENDERER_V2_RESOURCE_PREFETCH_FAILED",
+      "resource_prefetch",
+      error,
+    );
+  }
+}
+
+async function readBoundedResourceBytes(
+  response: Response,
+  maxBytes: number,
+  consumeBytes: (byteLength: number) => void,
+): Promise<Buffer> {
+  if (maxBytes < 0) {
+    throw new CandidateSourceError(
+      "RESOURCE_CAPACITY_EXCEEDED",
+      "Declared render resources exceed the sealed byte capacity",
+    );
+  }
+  const declaredLength = response.headers.get("content-length");
+  if (declaredLength && /^\d+$/u.test(declaredLength) && Number(declaredLength) > maxBytes) {
+    await cancelResourceBody(response.body);
+    throw new CandidateSourceError(
+      "RESOURCE_CAPACITY_EXCEEDED",
+      "Declared render resources exceed the sealed byte capacity",
+    );
+  }
+  if (!response.body) return Buffer.alloc(0);
+  const reader = response.body.getReader();
+  const chunks: Buffer[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const result = await reader.read();
+      if (result.done) break;
+      consumeBytes(result.value.byteLength);
+      total += result.value.byteLength;
+      if (total > maxBytes) {
+        try {
+          await reader.cancel();
+        } catch (error) {
+          throw infrastructure(
+            "STITCH_RENDERER_V2_RESOURCE_PREFETCH_FAILED",
+            "resource_prefetch",
+            error,
+          );
+        }
+        throw new CandidateSourceError(
+          "RESOURCE_CAPACITY_EXCEEDED",
+          "Declared render resources exceed the sealed byte capacity",
+        );
+      }
+      chunks.push(Buffer.from(result.value));
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  return Buffer.concat(chunks, total);
+}
+
+async function fetchAllowedResource(input: Readonly<{
   url: string;
-  resourceType: "script" | "stylesheet";
+  resourceType: ResourceFetchKind;
+  signal: AbortSignal;
+  maxBytes: number;
+  consumeRequest(): void;
+  consumeBytes(byteLength: number): void;
+}>): Promise<Readonly<{
+  bytes: Buffer;
+  contentType: string | null;
+  finalUrl: string;
 }>> {
-  const resources: Array<{ url: string; resourceType: "script" | "stylesheet" }> = [];
+  if (input.maxBytes < 0) {
+    throw new CandidateSourceError(
+      "RESOURCE_CAPACITY_EXCEEDED",
+      "Declared render resources exceed the sealed byte capacity",
+    );
+  }
+  const initialOrigin = new URL(input.url).origin;
+  let currentUrl = input.url;
+  for (let redirects = 0; redirects <= MAX_RESOURCE_REDIRECTS; redirects += 1) {
+    input.consumeRequest();
+    let response: Response;
+    try {
+      response = await fetch(currentUrl, {
+        redirect: "manual",
+        signal: input.signal,
+        ...(input.resourceType === "stylesheet"
+            && new URL(currentUrl).hostname === "fonts.googleapis.com"
+          ? {
+              headers: {
+                accept: "text/css,*/*;q=0.1",
+                "user-agent": GOOGLE_FONTS_USER_AGENT,
+              },
+            }
+          : {}),
+      });
+    } catch (error) {
+      throw infrastructure(
+        "STITCH_RENDERER_V2_RESOURCE_PREFETCH_FAILED",
+        "resource_prefetch",
+        error,
+      );
+    }
+    if (redirectStatus(response.status)) {
+      const location = response.headers.get("location");
+      await cancelResourceBody(response.body);
+      if (!location || redirects === MAX_RESOURCE_REDIRECTS) {
+        throw new StitchRenderedSemanticsInfrastructureErrorV2(
+          "STITCH_RENDERER_V2_RESOURCE_PREFETCH_FAILED",
+          "resource_prefetch",
+          `Redirect limit or location failure for ${input.url}`,
+        );
+      }
+      const nextUrl = allowedResourceUrl(
+        new URL(location, currentUrl).toString(),
+        input.resourceType,
+      );
+      if (new URL(nextUrl).origin !== initialOrigin) {
+        throw new CandidateSourceError(
+          input.resourceType === "script"
+            ? "UNSUPPORTED_EXECUTABLE_SCRIPT"
+            : "RESOURCE_POLICY_VIOLATION",
+          "Render resource redirect left its exact approved origin",
+        );
+      }
+      currentUrl = nextUrl;
+      continue;
+    }
+    if (!response.ok) {
+      await cancelResourceBody(response.body);
+      throw new StitchRenderedSemanticsInfrastructureErrorV2(
+        "STITCH_RENDERER_V2_RESOURCE_PREFETCH_FAILED",
+        "resource_prefetch",
+        `HTTP ${response.status} for ${currentUrl}`,
+      );
+    }
+    let bytes: Buffer;
+    try {
+      bytes = await readBoundedResourceBytes(response, input.maxBytes, input.consumeBytes);
+    } catch (error) {
+      if (error instanceof CandidateSourceError) throw error;
+      throw infrastructure(
+        "STITCH_RENDERER_V2_RESOURCE_PREFETCH_FAILED",
+        "resource_prefetch",
+        error,
+      );
+    }
+    return {
+      bytes,
+      contentType: response.headers.get("content-type"),
+      finalUrl: currentUrl,
+    };
+  }
+  throw new StitchRenderedSemanticsInfrastructureErrorV2(
+    "STITCH_RENDERER_V2_RESOURCE_PREFETCH_FAILED",
+    "resource_prefetch",
+    `Redirect resolution failed for ${input.url}`,
+  );
+}
+
+type CssUrlEdit = Readonly<{ start: number; end: number; replacement: string }>;
+
+async function inlineApprovedGoogleFontAssets(input: Readonly<{
+  bytes: Buffer;
+  stylesheetUrl: string;
+  fetchFont(url: string): Promise<Readonly<{ bytes: Buffer; contentType: string }>>;
+}>): Promise<Buffer> {
+  if (new URL(input.stylesheetUrl).hostname !== "fonts.googleapis.com") return input.bytes;
+  let css: string;
+  try {
+    css = new TextDecoder("utf-8", { fatal: true }).decode(input.bytes);
+  } catch {
+    throw new CandidateSourceError(
+      "RESOURCE_POLICY_VIOLATION",
+      "Approved Google stylesheet is not valid UTF-8",
+    );
+  }
+  const pattern = /url\(\s*(?:"([^"]*)"|'([^']*)'|([^'"()]*?))\s*\)/giu;
+  const matches = [...css.matchAll(pattern)];
+  if (matches.length > MAX_STYLESHEET_FONT_URLS) {
+    throw new CandidateSourceError(
+      "RESOURCE_CAPACITY_EXCEEDED",
+      "Approved Google stylesheet exceeds the font URL capacity",
+    );
+  }
+  const edits: CssUrlEdit[] = [];
+  for (const match of matches) {
+    const raw = String(match[1] ?? match[2] ?? match[3] ?? "").trim();
+    if (!raw || raw.toLowerCase().startsWith("data:")) continue;
+    let resolved: URL;
+    try {
+      resolved = new URL(raw, input.stylesheetUrl);
+    } catch {
+      continue;
+    }
+    if (resolved.hostname !== "fonts.gstatic.com") continue;
+    const fontUrl = allowedResourceUrl(resolved.toString(), "font");
+    const font = await input.fetchFont(fontUrl);
+    const start = match.index;
+    if (start === undefined) continue;
+    edits.push({
+      start,
+      end: start + match[0].length,
+      replacement: `url("data:${font.contentType};base64,${font.bytes.toString("base64")}")`,
+    });
+  }
+  let output = css;
+  for (const edit of edits.sort((left, right) => right.start - left.start)) {
+    output = `${output.slice(0, edit.start)}${edit.replacement}${output.slice(edit.end)}`;
+  }
+  return Buffer.from(output, "utf8");
+}
+
+function fontContentType(url: string): string {
+  const pathname = new URL(url).pathname.toLowerCase();
+  if (pathname.endsWith(".woff2")) return "font/woff2";
+  if (pathname.endsWith(".woff")) return "font/woff";
+  if (pathname.endsWith(".ttf")) return "font/ttf";
+  if (pathname.endsWith(".otf")) return "font/otf";
+  return "application/octet-stream";
+}
+
+function approvedStitchImageUrl(raw: string): string | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    return null;
+  }
+  if (
+    parsed.protocol !== "https:"
+    || parsed.hostname !== "lh3.googleusercontent.com"
+    || !parsed.pathname.startsWith("/aida-public/")
+  ) return null;
+  return allowedResourceUrl(parsed.toString(), "image");
+}
+
+function approvedImageContentType(value: string | null): string {
+  const contentType = String(value ?? "").split(";", 1)[0]!.trim().toLowerCase();
+  if (["image/gif", "image/jpeg", "image/png", "image/webp"].includes(contentType)) {
+    return contentType;
+  }
+  throw new CandidateSourceError(
+    "RESOURCE_POLICY_VIOLATION",
+    "Approved Stitch image returned an unsupported content type",
+  );
+}
+
+function declaredResources(html: string): ResourceDeclaration[] {
+  const resources: Array<{ url: string; resourceType: ResourceCapture["resourceType"] }> = [];
   for (const element of sourceElements(parseSourceDocument(html))) {
     if (element.tagName === "script") {
       const src = sourceAttribute(element, "src");
@@ -434,68 +718,147 @@ function declaredResources(html: string): Array<Readonly<{
       }
       continue;
     }
-    if (element.tagName !== "link") continue;
-    const rel = sourceAttribute(element, "rel")?.value.toLowerCase().split(/\s+/) ?? [];
-    const href = sourceAttribute(element, "href")?.value;
-    if (rel.includes("stylesheet") && href !== undefined) {
-      resources.push({ url: allowedResourceUrl(href, "stylesheet"), resourceType: "stylesheet" });
+    if (element.tagName === "link") {
+      const rel = sourceAttribute(element, "rel")?.value.toLowerCase().split(/\s+/) ?? [];
+      const href = sourceAttribute(element, "href")?.value;
+      if (rel.includes("stylesheet") && href !== undefined) {
+        resources.push({
+          url: allowedResourceUrl(href, "stylesheet"),
+          resourceType: "stylesheet",
+        });
+      }
+      continue;
+    }
+    if (element.tagName === "img") {
+      const src = sourceAttribute(element, "src")?.value;
+      const imageUrl = src === undefined ? null : approvedStitchImageUrl(src);
+      if (imageUrl) resources.push({ url: imageUrl, resourceType: "image" });
     }
   }
   const unique = new Map(resources.map((resource) => [resource.url, resource] as const));
+  if (unique.size > MAX_CANDIDATE_RESOURCE_REFS) {
+    throw new CandidateSourceError(
+      "RESOURCE_CAPACITY_EXCEEDED",
+      "Rendered candidate exceeds the sealed resource-reference capacity",
+    );
+  }
   return [...unique.values()].sort((left, right) => compareUtf16(left.url, right.url));
 }
 
-async function prefetchDeclaredResources(html: string): Promise<Map<string, ResourceCapture>> {
-  const captures = new Map<string, ResourceCapture>();
-  let total = 0;
-  for (const resource of declaredResources(html)) {
-    let response: Response;
-    try {
-      response = await fetch(resource.url, {
-        redirect: "error",
-        signal: AbortSignal.timeout(20_000),
+function createResourcePrefetchLedger(): ResourcePrefetchLedger {
+  return {
+    signal: AbortSignal.timeout(20_000),
+    captures: new Map(),
+    fonts: new Map(),
+    networkBytes: 0,
+    capturedBytes: 0,
+    requestCount: 0,
+  };
+}
+
+function consumeResourceRequest(ledger: ResourcePrefetchLedger): void {
+  if (ledger.requestCount >= MAX_CAPTURE_RESOURCE_REQUESTS) {
+    throw new CandidateSourceError(
+      "RESOURCE_CAPACITY_EXCEEDED",
+      "Rendered capture exceeds the outbound resource-request capacity",
+    );
+  }
+  ledger.requestCount += 1;
+}
+
+async function fetchResourceWithLedger(
+  ledger: ResourcePrefetchLedger,
+  url: string,
+  resourceType: ResourceFetchKind,
+): Promise<Readonly<{ bytes: Buffer; contentType: string | null; finalUrl: string }>> {
+  if (ledger.networkBytes >= MAX_TOTAL_RESOURCE_BYTES) {
+    throw new CandidateSourceError(
+      "RESOURCE_CAPACITY_EXCEEDED",
+      "Rendered capture exhausted the outbound resource byte capacity",
+    );
+  }
+  const fetched = await fetchAllowedResource({
+    url,
+    resourceType,
+    signal: ledger.signal,
+    maxBytes: Math.min(
+      MAX_RESOURCE_BYTES,
+      MAX_TOTAL_RESOURCE_BYTES - ledger.networkBytes,
+    ),
+    consumeRequest: () => consumeResourceRequest(ledger),
+    consumeBytes: (byteLength) => {
+      ledger.networkBytes += byteLength;
+    },
+  });
+  return fetched;
+}
+
+async function prefetchDeclaredResources(
+  resources: readonly ResourceDeclaration[],
+  ledger: ResourcePrefetchLedger,
+): Promise<Map<string, ResourceCapture>> {
+  const newResourceCount = resources.filter((resource) =>
+    !ledger.captures.has(resource.url)).length;
+  if (ledger.captures.size + newResourceCount > MAX_CAPTURE_RESOURCES) {
+    throw new CandidateSourceError(
+      "RESOURCE_CAPACITY_EXCEEDED",
+      "Rendered capture exceeds the sealed resource-identity capacity",
+    );
+  }
+  const candidateCaptures = new Map<string, ResourceCapture>();
+  for (const resource of resources) {
+    const existing = ledger.captures.get(resource.url);
+    if (existing) {
+      if (existing.resourceType !== resource.resourceType) {
+        throw new CandidateSourceError(
+          "RESOURCE_POLICY_VIOLATION",
+          "One render resource URL cannot change its sealed resource type",
+        );
+      }
+      candidateCaptures.set(resource.url, existing);
+      continue;
+    }
+    const fetched = await fetchResourceWithLedger(ledger, resource.url, resource.resourceType);
+    let bytes = fetched.bytes;
+    if (resource.resourceType === "stylesheet") {
+      bytes = await inlineApprovedGoogleFontAssets({
+        bytes,
+        stylesheetUrl: fetched.finalUrl,
+        fetchFont: async (url) => {
+          const cached = ledger.fonts.get(url);
+          if (cached) return cached;
+          const font = await fetchResourceWithLedger(ledger, url, "font");
+          const captured = { bytes: font.bytes, contentType: fontContentType(url) };
+          ledger.fonts.set(url, captured);
+          return captured;
+        },
       });
-    } catch (error) {
-      throw infrastructure(
-        "STITCH_RENDERER_V2_RESOURCE_PREFETCH_FAILED",
-        "resource_prefetch",
-        error,
-      );
     }
-    if (!response.ok) {
-      throw new StitchRenderedSemanticsInfrastructureErrorV2(
-        "STITCH_RENDERER_V2_RESOURCE_PREFETCH_FAILED",
-        "resource_prefetch",
-        `HTTP ${response.status} for ${resource.url}`,
-      );
-    }
-    let bytes: Buffer;
-    try {
-      bytes = Buffer.from(await response.arrayBuffer());
-    } catch (error) {
-      throw infrastructure(
-        "STITCH_RENDERER_V2_RESOURCE_PREFETCH_FAILED",
-        "resource_prefetch",
-        error,
-      );
-    }
-    if (bytes.byteLength > MAX_RESOURCE_BYTES || total + bytes.byteLength > MAX_TOTAL_RESOURCE_BYTES) {
+    if (
+      bytes.byteLength > MAX_RESOURCE_BYTES
+      || ledger.capturedBytes + bytes.byteLength > MAX_TOTAL_RESOURCE_BYTES
+    ) {
       throw new CandidateSourceError(
         "RESOURCE_CAPACITY_EXCEEDED",
         "Declared render resources exceed the sealed byte capacity",
       );
     }
-    total += bytes.byteLength;
-    captures.set(resource.url, {
+    ledger.capturedBytes += bytes.byteLength;
+    const capture: ResourceCapture = {
       ...resource,
       urlHash: sha256(resource.url),
       contentHash: sha256(bytes),
-      contentType: response.headers.get("content-type")
-        ?? (resource.resourceType === "script" ? "application/javascript" : "text/css"),
+      contentType: resource.resourceType === "script"
+        ? "application/javascript"
+        : resource.resourceType === "stylesheet"
+          ? "text/css"
+          : approvedImageContentType(fetched.contentType),
       bytes,
-    });
+    };
+    ledger.captures.set(resource.url, capture);
+    candidateCaptures.set(resource.url, capture);
   }
-  return captures;
+  return candidateCaptures;
 }
 
 export async function openStitchRenderContextV2(
@@ -828,17 +1191,25 @@ async function replayRoleReceipt(
   };
 }
 
-async function canonicalSemanticDom(page: Page): Promise<Buffer> {
-  const text = await page.evaluate(() => {
+async function canonicalSemanticDom(
+  page: Page,
+  sealedImageUrls: readonly string[],
+): Promise<Buffer> {
+  const text = await page.evaluate((sealedImages) => {
     const global = globalThis as any;
     const document = global.document;
+    const allowedImages = new Set(sealedImages);
     document.querySelectorAll("script,iframe,object,embed").forEach((element: any) => element.remove());
-    document.querySelectorAll("img,source,video,audio").forEach((element: any) => {
+    document.querySelectorAll("img").forEach((element: any) => {
+      if (!allowedImages.has(String(element.src))) element.removeAttribute("src");
+      element.removeAttribute("srcset");
+    });
+    document.querySelectorAll("source,video,audio").forEach((element: any) => {
       element.removeAttribute("src");
       element.removeAttribute("srcset");
     });
     return `<!doctype html>${document.documentElement.outerHTML}`;
-  });
+  }, sealedImageUrls);
   return Buffer.from(text, "utf8");
 }
 
@@ -923,6 +1294,49 @@ export async function captureStitchRenderedSemanticsV2(input: Readonly<{
     (total, artifact) => total + (artifact.htmlBytes?.byteLength ?? 0),
     0,
   );
+  const sourcePreflightByScreenId = new Map<string, Readonly<{
+    sanitizedHtml: string;
+    resources: ResourceDeclaration[];
+  }> | CandidateSourceError>();
+  const aggregateDeclaredResourceUrls = new Set<string>();
+  for (const candidate of directResponseEvidence.batches.flatMap((batch) => batch.candidates)) {
+    const batch = batchByScreenId.get(candidate.screenId)!;
+    const matchingTargets = batch.targetRefs
+      .map((targetRef) => targetById.get(targetRef)!)
+      .filter((target) => target.expectedScreenTitle === candidate.title);
+    const local = artifactById.get(candidate.screenId);
+    const htmlBytes = local?.htmlBytes;
+    const screenshotBytes = local?.screenshotBytes;
+    const htmlHash = htmlBytes?.byteLength ? sha256(htmlBytes) : null;
+    const screenshotHash = screenshotBytes?.byteLength ? sha256(screenshotBytes) : null;
+    if (
+      matchingTargets.length !== 1
+      || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,499}$/.test(candidate.screenId)
+      || !htmlBytes
+      || !isValidStitchHtmlBytes(htmlBytes)
+      || htmlBytes.byteLength > MAX_HTML_BYTES
+      || aggregateHtmlBytes > MAX_TOTAL_HTML_BYTES
+      || !screenshotBytes
+      || !isValidStitchScreenshotBytes(screenshotBytes)
+      || candidate.htmlDownloadedArtifactHash !== htmlHash
+      || candidate.screenshotDownloadedArtifactHash !== screenshotHash
+    ) continue;
+    try {
+      const sanitizedHtml = sanitizeExecutableSource(Buffer.from(htmlBytes).toString("utf8"));
+      const resources = declaredResources(sanitizedHtml);
+      sourcePreflightByScreenId.set(candidate.screenId, { sanitizedHtml, resources });
+      resources.forEach((resource) => aggregateDeclaredResourceUrls.add(resource.url));
+    } catch (error) {
+      if (error instanceof CandidateSourceError) {
+        sourcePreflightByScreenId.set(candidate.screenId, error);
+      } else {
+        throw infrastructure("STITCH_RENDERER_V2_UNEXPECTED", "source_validation", error);
+      }
+    }
+  }
+  const aggregateResourceCapacityExceeded =
+    aggregateDeclaredResourceUrls.size > MAX_CAPTURE_RESOURCES;
+  const resourcePrefetchLedger = createResourcePrefetchLedger();
   let chromiumVersion = "";
 
   for (const candidate of directResponseEvidence.batches.flatMap((batch) => batch.candidates)
@@ -980,11 +1394,28 @@ export async function captureStitchRenderedSemanticsV2(input: Readonly<{
     let context: BrowserContext | undefined;
     let phase: StitchRenderedSemanticsInfrastructurePhaseV2 = "source_validation";
     try {
-      const rawHtml = Buffer.from(htmlBytes).toString("utf8");
-      const sanitizedHtml = sanitizeExecutableSource(rawHtml);
+      const sourcePreflight = sourcePreflightByScreenId.get(candidate.screenId);
+      if (sourcePreflight instanceof CandidateSourceError) throw sourcePreflight;
+      if (!sourcePreflight) {
+        throw new StitchRenderedSemanticsInfrastructureErrorV2(
+          "STITCH_RENDERER_V2_UNEXPECTED",
+          "source_validation",
+          `Eligible candidate lacks source preflight: ${candidate.screenId}`,
+        );
+      }
+      if (aggregateResourceCapacityExceeded) {
+        throw new CandidateSourceError(
+          "RESOURCE_CAPACITY_EXCEEDED",
+          "Rendered capture exceeds the aggregate resource-identity capacity",
+        );
+      }
+      const { sanitizedHtml } = sourcePreflight;
 
       phase = "resource_prefetch";
-      const resources = await prefetchDeclaredResources(sanitizedHtml);
+      const resources = await prefetchDeclaredResources(
+        sourcePreflight.resources,
+        resourcePrefetchLedger,
+      );
 
       phase = "browser_launch";
       const launched = await strictContext(profile);
@@ -1043,7 +1474,12 @@ export async function captureStitchRenderedSemanticsV2(input: Readonly<{
       phase = "semantic_dom_serialization";
       let semanticDom: Buffer;
       try {
-        semanticDom = await canonicalSemanticDom(page);
+        semanticDom = await canonicalSemanticDom(
+          page,
+          [...resources.values()]
+            .filter((resource) => resource.resourceType === "image")
+            .map((resource) => resource.url),
+        );
       } catch (error) {
         throw infrastructure("STITCH_RENDERER_V2_OBSERVATION_FAILED", phase, error);
       }
@@ -1051,7 +1487,22 @@ export async function captureStitchRenderedSemanticsV2(input: Readonly<{
       semanticDomSidecars.set(locator, semanticDom);
       for (const resource of resources.values()) {
         resourceSidecars.set(resource.contentHash, resource.bytes);
-        resourcesByUrlHash.set(resource.urlHash, resource);
+        const existing = resourcesByUrlHash.get(resource.urlHash);
+        if (
+          existing
+          && (
+            existing.contentHash !== resource.contentHash
+            || existing.resourceType !== resource.resourceType
+            || existing.contentType !== resource.contentType
+          )
+        ) {
+          throw new StitchRenderedSemanticsInfrastructureErrorV2(
+            "STITCH_RENDERER_V2_ARTIFACT_INVALID",
+            "artifact_validation",
+            `Render resource identity changed within one capture: ${resource.urlHash}`,
+          );
+        }
+        resourcesByUrlHash.set(resource.urlHash, existing ?? resource);
       }
       const resourceRefs = [...resources.values()]
         .map((resource) => resource.urlHash)
@@ -1105,6 +1556,7 @@ export async function captureStitchRenderedSemanticsV2(input: Readonly<{
       resources: [...resourcesByUrlHash.values()].map((resource) => ({
         urlHash: resource.urlHash,
         resourceType: resource.resourceType,
+        ...(resource.resourceType === "image" ? { contentType: resource.contentType } : {}),
         contentHash: resource.contentHash,
         byteLength: resource.bytes.byteLength,
         locator: `stitch/render-resources/${resource.contentHash}.bin`,
@@ -1177,7 +1629,8 @@ function replayResourceCaptures(
       urlHash: resource.urlHash,
       resourceType: resource.resourceType,
       contentHash: resource.contentHash,
-      contentType: resource.resourceType === "script" ? "application/javascript" : "text/css",
+      contentType: resource.contentType
+        ?? (resource.resourceType === "script" ? "application/javascript" : "text/css"),
       bytes,
     });
   }
