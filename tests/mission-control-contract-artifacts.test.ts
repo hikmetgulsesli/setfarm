@@ -9,22 +9,25 @@ import { V3ProjectTransferAckV1Schema } from "../src/execution/schemas/v3-projec
 import { canonicalJsonStringify, hashCanonicalJson } from "../src/product-compiler/canonical-json.js";
 import { RunOperationalSnapshotV1Schema } from "../src/server/schemas/run-operational-snapshot-v1.js";
 import { RunOperationalSnapshotV2Schema } from "../src/server/schemas/run-operational-snapshot-v2.js";
+import { RunOperationalSnapshotV3Schema } from "../src/server/schemas/run-operational-snapshot-v3.js";
 
 const expectedPaths = [
   "contracts/generated/mission-control/run-operational-snapshot.v1.compatibility.json",
   "contracts/generated/mission-control/run-operational-snapshot.v1.schema.json",
   "contracts/generated/mission-control/run-operational-snapshot.v2.compatibility.json",
   "contracts/generated/mission-control/run-operational-snapshot.v2.schema.json",
+  "contracts/generated/mission-control/run-operational-snapshot.v3.compatibility.json",
+  "contracts/generated/mission-control/run-operational-snapshot.v3.schema.json",
   "contracts/generated/mission-control/deployment-observation.v1.compatibility.json",
   "contracts/generated/mission-control/deployment-observation.v1.schema.json",
   "contracts/generated/mission-control/project-transfer-ack.v1.compatibility.json",
   "contracts/generated/mission-control/project-transfer-ack.v1.schema.json",
 ];
 
-test("publishes eight deterministic Setfarm-owned Mission Control contract artifacts", async () => {
+test("publishes ten deterministic Setfarm-owned Mission Control contract artifacts", async () => {
   const artifacts = createMissionControlContractArtifacts();
   assert.deepEqual(artifacts.map((artifact) => artifact.relativePath), expectedPaths);
-  assert.equal(new Set(artifacts.map((artifact) => artifact.relativePath)).size, 8);
+  assert.equal(new Set(artifacts.map((artifact) => artifact.relativePath)).size, 10);
   for (const artifact of artifacts) {
     const expected = `${canonicalJsonStringify(artifact.value)}\n`;
     assert.equal(await readFile(path.resolve(artifact.relativePath), "utf8"), expected);
@@ -43,6 +46,10 @@ test("compatibility envelopes bind exact JSON schemas and schema-valid positive 
     {
       stem: "run-operational-snapshot.v2",
       parse: (value: unknown) => RunOperationalSnapshotV2Schema.parse(value),
+    },
+    {
+      stem: "run-operational-snapshot.v3",
+      parse: (value: unknown) => RunOperationalSnapshotV3Schema.parse(value),
     },
     {
       stem: "deployment-observation.v1",
@@ -78,4 +85,16 @@ test("compatibility envelopes bind exact JSON schemas and schema-valid positive 
   assert.equal(claim?.outcome, "completed");
   assert.equal(runtime?.state, "released");
   assert.equal(runtime?.claimRef, completion.claimRef);
+
+  const v3Compatibility = byPath.get(
+    "contracts/generated/mission-control/run-operational-snapshot.v3.compatibility.json",
+  ) as Record<string, unknown>;
+  const v3Fixture = RunOperationalSnapshotV3Schema.parse(v3Compatibility.fixture);
+  assert.equal(v3Fixture.source.capabilities.operationalFailureAuthority, true);
+  assert.equal(v3Fixture.source.migrationVersions.includes(22), true);
+  assert.equal(
+    v3Fixture.operationalFailure?.failureIdentity.exactFailure?.kind,
+    "stitch_target_candidate_selection",
+  );
+  assert.equal(v3Fixture.terminationRequests.length, 1);
 });
