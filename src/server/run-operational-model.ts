@@ -171,7 +171,11 @@ function latestFailureSource(steps: StepInfo[], stories: StoryRow[], observation
     return { stepId: null, storyId: failedStory.story_id, text: `${String(failedStory.output || "")}${retryText}` };
   }
 
-  const failedStep = [...steps].reverse().find((step) => String(step.status || "").toLowerCase() === "failed");
+  // Terminalization marks every downstream workflow step failed with the same
+  // root diagnostic. The ordered first failed step is therefore the producing
+  // boundary; choosing the last failed row misattributes every early failure
+  // to deploy.
+  const failedStep = steps.find((step) => String(step.status || "").toLowerCase() === "failed");
   if (failedStep) return { stepId: failedStep.step_id, storyId: (failedStep as any).current_story_id || null, text: String((failedStep as any).output || "") };
 
   const failedObservation = observations.find((row) => {
