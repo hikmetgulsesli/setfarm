@@ -104,9 +104,76 @@ function sanitizeDesignFontTokenValue(prop, value) {
 function redactDiagnosticText(text) {
   return String(text || "")
     .replace(/AQ\.[A-Za-z0-9_-]+/g, "AQ.[REDACTED]")
-    .replace(/(api[_-]?key|token|authorization|bearer)\s*[:=]\s*["']?[^"'\s,}]+/gi, "$1=[REDACTED]")
+    .replace(
+      /\bauthorization\s*[:=]\s*[\s\S]*/gi,
+      "Authorization=[REDACTED]",
+    )
+    .replace(
+      /\bbearer(?:\s*[:=]\s*|\s+)[\s\S]*/gi,
+      "Bearer=[REDACTED]",
+    )
+    .replace(/(api[_-]?key|token)\s*[:=]\s*["']?[^"'\s,}]+/gi, "$1=[REDACTED]")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+export class StitchExplicitProviderRejection extends Error {
+  constructor(tool, diagnostic) {
+    const redacted = redactDiagnosticText(diagnostic).slice(0, 700)
+      || 'Stitch MCP tool returned isError=true';
+    super(`${tool} rejected before an accepted result`);
+    this.name = 'StitchExplicitProviderRejection';
+    this.tool = tool;
+    this.diagnostic = redacted;
+  }
+}
+
+function canonicalJsonStringify(value) {
+  if (value === null || typeof value === 'boolean' || typeof value === 'string') {
+    return JSON.stringify(value);
+  }
+  if (typeof value === 'number' && Number.isFinite(value)) return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonicalJsonStringify).join(',')}]`;
+  if (typeof value === 'object') {
+    const keys = Object.keys(value).sort();
+    return `{${keys.map((key) => `${JSON.stringify(key)}:${canonicalJsonStringify(value[key])}`).join(',')}}`;
+  }
+  throw new TypeError('Unsupported canonical JSON value');
+}
+
+function explicitProviderRejectionEnvelope(error) {
+  const diagnosticHash = createHash('sha256').update(canonicalJsonStringify({
+    schema: 'setfarm.stitch-stage-provider-rejection-diagnostic.v1',
+    diagnostic: error.diagnostic,
+  })).digest('hex');
+  return {
+    schema: 'setfarm.stitch-stage-provider-rejection.v1',
+    classification: 'explicit_mcp_error_before_accepted_result',
+    tool: 'generate_screen_from_text',
+    isError: true,
+    acceptedResult: false,
+    acceptedScreenIds: [],
+    acceptedArtifactLocators: [],
+    diagnosticCode: 'STITCH_MCP_TOOL_ERROR',
+    diagnostic: error.diagnostic,
+    diagnosticHash,
+  };
+}
+
+export function stitchCliFailureOutput(error) {
+  if (
+    error instanceof StitchExplicitProviderRejection
+    && error.tool === 'generate_screen_from_text'
+  ) {
+    return {
+      typed: true,
+      stderr: `${canonicalJsonStringify(explicitProviderRejectionEnvelope(error))}\n`,
+    };
+  }
+  return {
+    typed: false,
+    stderr: `${JSON.stringify({ error: error instanceof Error ? error.message : String(error) }, null, 2)}\n`,
+  };
 }
 
 function toolResultTextSample(result, maxLength = 700) {
@@ -154,7 +221,31 @@ function toolResultError(result) {
   return null;
 }
 
-function assertToolResultOk(result, toolName) {
+function hasAcceptedToolResultEvidence(result) {
+  const content = Array.isArray(result?.content) ? result.content : [];
+  const payloads = [result?.structuredContent, result?.structured_content];
+  for (const item of content.slice(0, 100)) {
+    if (item?.type === 'text') payloads.push(...jsonPayloadsFromToolText(item.text).slice(0, 100));
+  }
+  const hasDirectArtifactLocator = payloads.some((payload) => Boolean(
+    payload && typeof payload === 'object' && (
+      htmlUrlOf(payload)
+      || screenshotUrlOf(payload)
+      || payload.downloadUrl
+      || payload.download_url
+      || payload.uri
+    )
+  ));
+  return collectScreenCandidatesFromResult(result).length > 0
+    || hasDirectArtifactLocator
+    || content.length > 100
+    || content.some((item) => item?.type !== 'text');
+}
+
+export function assertToolResultOk(result, toolName) {
+  if (result?.isError === true && !hasAcceptedToolResultEvidence(result)) {
+    throw new StitchExplicitProviderRejection(toolName, toolResultTextSample(result));
+  }
   const error = toolResultError(result);
   if (!error) return;
   const diagnostic = describeToolResultShape(result);
@@ -1826,11 +1917,11 @@ const commands = {
   },
 };
 
-// Main
-const [cmd, ...args] = process.argv.slice(2);
+export async function runStitchCli(argv = process.argv.slice(2)) {
+  const [cmd, ...args] = argv;
 
-if (!cmd || !commands[cmd]) {
-  console.error(`Usage: node stitch-api.mjs <command> [args...]
+  if (!cmd || !commands[cmd]) {
+    process.stderr.write(`Usage: node stitch-api.mjs <command> [args...]
 
 Commands:
   list-projects                                                          List all Stitch projects
@@ -1850,13 +1941,19 @@ Commands:
   populate-cache <sourceDir> <destDir>                                   Copy PNGs+HTMLs from sourceDir to destDir
   download-all <projectId> <outputDir>                                   Download all screens + manifest + tokens
   generate-all-screens <pId> <promptFile> [device] [model]                Single-call multi-screen generation
-  generate-all-screens-attempt <pId> <promptFile> <outputDir> [device] [model] Exact attempt-owned generation`);
-  process.exit(1);
+  generate-all-screens-attempt <pId> <promptFile> <outputDir> [device] [model] Exact attempt-owned generation\n`);
+    return 1;
+  }
+
+  try {
+    await commands[cmd](...args);
+    return 0;
+  } catch (error) {
+    process.stderr.write(stitchCliFailureOutput(error).stderr);
+    return 1;
+  }
 }
 
-try {
-  await commands[cmd](...args);
-} catch (err) {
-  console.error(JSON.stringify({ error: err.message }, null, 2));
-  process.exit(1);
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  process.exitCode = await runStitchCli();
 }

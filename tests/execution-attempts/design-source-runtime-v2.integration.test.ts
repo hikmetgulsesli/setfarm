@@ -6,12 +6,19 @@ import path from "node:path";
 import { describe, it } from "node:test";
 
 import {
+  DESIGN_SOURCE_SELECTED_HTML_ADMISSION_POLICY_V2,
   DESIGN_SOURCE_SEMANTIC_CLOSURE_OPERATIONAL_CAUSE_V1,
   readProjectedDesignSourceAuthorityV2,
   runDesignSourceAuthorityV2,
   serializeAttemptTransportV2,
 } from "../../src/product-compiler/design-source-runtime-v2.js";
 import { hashCanonicalJson } from "../../src/product-compiler/canonical-json.js";
+import {
+  DesignSourceGenerationRetryDeltaV1Schema,
+} from "../../src/product-compiler/design-source-compilation-attempt-runner.js";
+import {
+  DesignSourceSemanticRetryEvidenceV1Schema,
+} from "../../src/product-compiler/design-source-semantic-retry-evidence-v1.js";
 import { ProductCompilationAttemptRepository } from "../../src/product-compiler/product-compilation-attempt-repository.js";
 import { produceDesignGenerationTargetsV2 } from "../../src/product-compiler/producers/design-targets-v2.js";
 import { compilePlanSemanticProposalV2 } from "../../src/product-compiler/producers/plan-semantic-proposal-v2.js";
@@ -27,6 +34,22 @@ import {
 import { createIsolatedTestDatabase } from "./test-database.js";
 
 describe("design-source authority v2 runtime", { concurrency: 1 }, () => {
+  it("keeps the selected-HTML admission policy deeply immutable", () => {
+    assert.equal(Object.isFrozen(DESIGN_SOURCE_SELECTED_HTML_ADMISSION_POLICY_V2), true);
+    assert.equal(
+      Object.isFrozen(DESIGN_SOURCE_SELECTED_HTML_ADMISSION_POLICY_V2.neutralCodePoints),
+      true,
+    );
+    assert.throws(() => {
+      (DESIGN_SOURCE_SELECTED_HTML_ADMISSION_POLICY_V2.neutralCodePoints as unknown as string[])
+        .push("U+0000");
+    }, TypeError);
+    assert.deepEqual(
+      DESIGN_SOURCE_SELECTED_HTML_ADMISSION_POLICY_V2.neutralCodePoints,
+      ["U+00A9"],
+    );
+  });
+
   it("materializes one exact attempt, projects only selected authority, and replays without redispatch", async () => {
     const database = await createIsolatedTestDatabase();
     const repo = await mkdtemp(path.join(tmpdir(), "setfarm-design-source-runtime-v2-"));
@@ -75,6 +98,7 @@ describe("design-source authority v2 runtime", { concurrency: 1 }, () => {
         `<button data-action="${placement.actionRef}" data-control-slot="${placement.controlSlotRef}">Start Game</button>`,
         `<section data-surface-id="${canvasSurface}"><canvas aria-label="Game canvas"></canvas></section>`,
         `<section data-surface-id="${statusObservable.selector.surfaceRef}"><div hidden role="status" aria-label="Game status">Playing</div></section>`,
+        "<p>Copyright © 2026</p>",
         "</main>",
       ].join(""), "design-source-runtime-v2");
       const screenshotBytes = validStitchPng(229);
@@ -145,17 +169,56 @@ describe("design-source authority v2 runtime", { concurrency: 1 }, () => {
       if (first.runner.status !== "accepted") return;
       assert.equal(first.runner.replayed, false);
       assert.equal(dispatches, 1);
-      assert.equal(first.authority.promptContractHash, hashCanonicalJson({
+      const expectedPromptContract = {
         schema: "setfarm.design-source-prompt-contract.v2",
         builder: "buildV3BatchStitchPromptV2",
         generationTargetsSchema: targets.generationTargets.schema,
         projectId: "stitch-runtime-v2-project",
+        semanticRetryPolicy: {
+          schema: "setfarm.design-source-semantic-retry-evidence-policy.v1",
+          maximumStages: 200,
+          maximumTargetsPerStage: 100,
+          maximumRequirementsPerTarget: 200,
+          maximumObservationsPerRequirement: 8,
+          maximumCanonicalBytes: 512 * 1024,
+          maximumCorrectionRecordsPerStage: 400,
+          maximumCorrectionBytesPerStage: 64 * 1024,
+        },
         selectedHtmlAdmissionPolicy: {
           schema: "setfarm.design-source-selected-html-admission-policy.v2",
           maximumBytes: 800_000,
           encoding: "utf8_fatal",
           language: "English",
           contract: "setfarm.english-text-contract.v1",
+          neutralCodePoints: ["U+00A9"],
+        },
+        providerRejectionPolicy: {
+          schema: "setfarm.stitch-stage-provider-rejection-policy.v1",
+          maximumDiagnosticCodeUnits: 700,
+          maximumCanonicalEnvelopeBytes: 4 * 1024,
+          redactionPolicy: "aq-credential-token-redaction.v1",
+        },
+      } as const;
+      assert.equal(first.authority.promptContractHash, hashCanonicalJson(expectedPromptContract));
+      assert.notEqual(first.authority.promptContractHash, hashCanonicalJson({
+        ...expectedPromptContract,
+        semanticRetryPolicy: {
+          ...expectedPromptContract.semanticRetryPolicy,
+          maximumStages: 199,
+        },
+      }));
+      assert.notEqual(first.authority.promptContractHash, hashCanonicalJson({
+        ...expectedPromptContract,
+        selectedHtmlAdmissionPolicy: {
+          ...expectedPromptContract.selectedHtmlAdmissionPolicy,
+          neutralCodePoints: [],
+        },
+      }));
+      assert.notEqual(first.authority.promptContractHash, hashCanonicalJson({
+        ...expectedPromptContract,
+        providerRejectionPolicy: {
+          ...expectedPromptContract.providerRejectionPolicy,
+          maximumDiagnosticCodeUnits: 699,
         },
       }));
       assert.notEqual(first.authority.promptContractHash, hashCanonicalJson({
@@ -166,7 +229,25 @@ describe("design-source authority v2 runtime", { concurrency: 1 }, () => {
       }), "pre-policy accepted attempts must not match the English-admission authority");
       assert.equal(first.artifacts?.designGraph.controls.length, 1);
       assert.equal(first.artifacts?.designGraph.controls[0]?.identity.controlSlotRef, placement.controlSlotRef);
-      assert.equal(await readFile(path.join(repo, "stitch", `${screenId}.html`), "utf8"), htmlBytes.toString("utf8"));
+      const acceptedAttemptRoot = path.join(repo, first.runner.attempt.attemptLocator);
+      const acceptedScreenKey = createHash("sha256").update(screenId, "utf8").digest("hex");
+      assert.deepEqual(
+        await readFile(path.join(
+          acceptedAttemptRoot,
+          "download",
+          "stages",
+          "DSGS_001",
+          "screens",
+          `${acceptedScreenKey}.html`,
+        )),
+        htmlBytes,
+      );
+      const projectedHtmlBytes = await readFile(path.join(repo, "stitch", `${screenId}.html`));
+      assert.deepEqual(projectedHtmlBytes, htmlBytes);
+      assert.equal(
+        createHash("sha256").update(projectedHtmlBytes).digest("hex"),
+        createHash("sha256").update(htmlBytes).digest("hex"),
+      );
       assert.deepEqual(
         JSON.parse(await readFile(path.join(repo, "stitch", "DESIGN_INTERACTION_GRAPH_V2.json"), "utf8")),
         first.artifacts?.designGraph,
@@ -218,6 +299,13 @@ describe("design-source authority v2 runtime", { concurrency: 1 }, () => {
         "</main>",
       ].join(""), "design-source-runtime-v2-rejected");
       const rejectedScreenshot = validStitchPng(230);
+      const sourceRejectedScreenId = "screen-runtime-v2-source-rejected";
+      const sourceRejectedHtml = validStitchHtml([
+        `<main data-surface-id="${target.surfaceRef}">`,
+        "<script>window.__setfarm_forbidden_script__ = true;</script>",
+        "</main>",
+      ].join(""), "design-source-runtime-v2-source-rejected");
+      const sourceRejectedScreenshot = validStitchPng(231);
       const rejectedEvidence = [{
         screenId: rejectedScreenId,
         title: target.expectedScreenTitle,
@@ -228,13 +316,30 @@ describe("design-source authority v2 runtime", { concurrency: 1 }, () => {
         identityConflicts: [],
         disposition: "admitted_renderable_screen",
         missingEvidence: [],
+      }, {
+        screenId: sourceRejectedScreenId,
+        title: target.expectedScreenTitle,
+        responsePaths: ["$result.screens[1]"],
+        htmlAvailable: true,
+        screenshotAvailable: true,
+        ...stitchDownloadReceipts(
+          sourceRejectedScreenId,
+          sourceRejectedHtml,
+          sourceRejectedScreenshot,
+        ),
+        identityConflicts: [],
+        disposition: "admitted_renderable_screen",
+        missingEvidence: [],
       }];
       const rejectedTransport = {
         schema: "setfarm.stitch-attempt-transport.v1",
-        total: 1,
-        screens: [{ screenId: rejectedScreenId, title: target.expectedScreenTitle }],
+        total: 2,
+        screens: [
+          { screenId: rejectedScreenId, title: target.expectedScreenTitle },
+          { screenId: sourceRejectedScreenId, title: target.expectedScreenTitle },
+        ],
         screenSource: "direct",
-        directCandidateTotal: 1,
+        directCandidateTotal: 2,
         excludedDirectTotal: 0,
         directScreenEvidenceSchema: "setfarm.stitch-direct-screen-evidence.v2",
         directScreenEvidence: rejectedEvidence,
@@ -243,6 +348,11 @@ describe("design-source authority v2 runtime", { concurrency: 1 }, () => {
           title: target.expectedScreenTitle,
           htmlFile: `${rejectedScreenId}.html`,
           screenshotFile: `${rejectedScreenId}.png`,
+        }, {
+          screenId: sourceRejectedScreenId,
+          title: target.expectedScreenTitle,
+          htmlFile: `${sourceRejectedScreenId}.html`,
+          screenshotFile: `${sourceRejectedScreenId}.png`,
         }],
       };
       const retryPrompts: string[] = [];
@@ -265,6 +375,10 @@ describe("design-source authority v2 runtime", { concurrency: 1 }, () => {
               screenId: rejectedScreenId,
               htmlBytes: rejectedHtml,
               screenshotBytes: rejectedScreenshot,
+            }, {
+              screenId: sourceRejectedScreenId,
+              htmlBytes: sourceRejectedHtml,
+              screenshotBytes: sourceRejectedScreenshot,
             }],
           };
         },
@@ -282,11 +396,237 @@ describe("design-source authority v2 runtime", { concurrency: 1 }, () => {
       assert.match(retryPrompts[1]!, /SETFARM_PROVEN_RETRY_DELTA_V1/);
       assert.match(retryPrompts[1]!, /nested_reason_codes: CANDIDATE_[A-Z0-9_,]+/);
       assert.match(retryPrompts[1]!, /CANDIDATE_UNDECLARED_INTERACTIVE_CONTROL/);
-      assert.match(
-        retryPrompts[1]!,
-        /Do not add actionable navigation, sidebar, header, footer, breadcrumb, menu, icon-only, settings, privacy, terms, account, or utility controls/,
+      assert.match(retryPrompts[1]!, /Remove unsupported executable scripts while preserving the typed target contract\./);
+      assert.match(retryPrompts[1]!, /semantic_requirement: \{"expectedCount":1/);
+      assert.match(retryPrompts[1]!, /"semanticRef":"CSLOT_/);
+      assert.doesNotMatch(retryPrompts[1]!, /screen-runtime-v2-rejected|E[0-9]{6}|Settings/);
+      const rejectedFirstAttempt = rejected.runner.attempts[0]!;
+      const rejectedSecondAttempt = rejected.runner.attempts[1]!;
+      const rejectedFirstRoot = path.join(rejectedRepo, rejectedFirstAttempt.attemptLocator);
+      const rejectedSecondRoot = path.join(rejectedRepo, rejectedSecondAttempt.attemptLocator);
+      const semanticFailureArtifact = JSON.parse(
+        await readFile(path.join(rejectedFirstRoot, "raw", "failure.json"), "utf8"),
+      ) as {
+        evidence: {
+          candidateSelectionArtifact: unknown;
+          retrySemanticEvidence: unknown;
+        };
+      };
+      const retrySemanticEvidence = DesignSourceSemanticRetryEvidenceV1Schema.parse(
+        semanticFailureArtifact.evidence.retrySemanticEvidence,
       );
+      assert.equal(retrySemanticEvidence.stages[0]!.stageId, "DSGS_001");
+      assert.deepEqual(
+        retrySemanticEvidence.stages[0]!.targets[0]!.renderedFailureCodes,
+        ["UNSUPPORTED_EXECUTABLE_SCRIPT"],
+      );
+      assert.deepEqual(
+        retrySemanticEvidence.candidateSelectionArtifact,
+        semanticFailureArtifact.evidence.candidateSelectionArtifact,
+      );
+      const retryDelta = DesignSourceGenerationRetryDeltaV1Schema.parse(JSON.parse(
+        await readFile(path.join(rejectedSecondRoot, "request", "retry-delta.json"), "utf8"),
+      ));
+      assert.equal(retryDelta.schema, "setfarm.design-source-generation-retry-delta.v1");
+      assert.equal(
+        retryDelta.parentFailureArtifactHash,
+        rejectedFirstAttempt.failure?.failureArtifactHash,
+      );
+      assert.deepEqual(Object.keys(retryDelta.changes[0]!).sort(), [
+        "nextHash",
+        "previousHash",
+        "stageId",
+      ]);
       await assert.rejects(readFile(path.join(rejectedRepo, "stitch", "DESIGN_MANIFEST.json")));
+
+      const providerRetryRepo = await mkdtemp(path.join(
+        tmpdir(),
+        "setfarm-design-source-runtime-v2-provider-retry-",
+      ));
+      additionalRepos.push(providerRetryRepo);
+      const providerRetryRunId = "run-design-source-runtime-v2-provider-retry";
+      await database.sql`
+        INSERT INTO runs (
+          id, workflow_id, task, status, protocol, protocol_version,
+          compiler_release_sha, activation_preflight_hash, release_admission_hash
+        ) VALUES (
+          ${providerRetryRunId}, 'feature-dev', 'design source provider retry fixture',
+          'running', 'v3', 1, ${releaseSha}, ${"5".repeat(64)}, ${admissionHash}
+        )
+      `;
+      const providerRetryClaims = await database.sql<Array<{ id: string }>>`
+        INSERT INTO claim_log (run_id, step_id, story_id, agent_id)
+        VALUES (${providerRetryRunId}, 'design', NULL, 'setfarm-design-source-runtime-v2')
+        RETURNING id::text AS id
+      `;
+      const providerRetryClaimId = Number(providerRetryClaims[0]!.id);
+      const providerRetryPrompts: string[] = [];
+      let providerRetryDispatches = 0;
+      const providerFailure = (stageId: string) => {
+        const evidence = {
+          phase: "provider_dispatch",
+          failedStageIds: [stageId],
+          providerRejectionPolicyHash: "6".repeat(64),
+        };
+        return {
+          disposition: "infrastructure_failure" as const,
+          failure: {
+            failureFingerprint: hashCanonicalJson({
+              schema: "setfarm.design-source-provider-rejection-test-fingerprint.v1",
+              stageId,
+              evidence,
+            }),
+            operationalCauseHash: "7".repeat(64),
+            reasonCodes: ["DESIGN_SOURCE_PROVIDER_REJECTED_BEFORE_ACCEPTANCE"],
+            evidence,
+          },
+          rawEvidence: JSON.stringify(evidence),
+        };
+      };
+      const providerRetryInput = {
+        ...runtimeInput,
+        repo: providerRetryRepo,
+        runId: providerRetryRunId,
+        projectId: "stitch-runtime-v2-provider-retry-project",
+        originClaimId: providerRetryClaimId,
+        ownerClaimId: providerRetryClaimId,
+      };
+      const providerRetried = await runDesignSourceAuthorityV2(providerRetryInput, {
+        repository,
+        generateStage: async (stage) => {
+          providerRetryDispatches += 1;
+          providerRetryPrompts.push(stage.prompt);
+          if (providerRetryDispatches === 1) return providerFailure(stage.stageId);
+          return {
+            disposition: "accepted" as const,
+            response: transport,
+            rawEvidence: serializeAttemptTransportV2(transport),
+            artifacts: [{ screenId, htmlBytes, screenshotBytes }],
+          };
+        },
+      });
+      assert.equal(providerRetried.runner.status, "accepted", JSON.stringify(providerRetried.runner));
+      assert.equal(providerRetryDispatches, 2);
+      assert.equal(providerRetried.runner.attempts.length, 2);
+      assert.match(
+        providerRetryPrompts[1]!,
+        /Regenerate the unchanged typed stage because the previous provider call returned no accepted local result\./,
+      );
+      const providerReplay = await runDesignSourceAuthorityV2(providerRetryInput, {
+        repository,
+        generateStage: async () => {
+          throw new Error("provider retry authority must replay without another dispatch");
+        },
+      });
+      assert.equal(providerReplay.runner.status, "accepted", JSON.stringify(providerReplay.runner));
+      assert.equal(providerRetryDispatches, 2);
+
+      const createProviderRuntimeFixture = async (
+        fixtureId: string,
+        task: string,
+        activationHash: string,
+      ) => {
+        const fixtureRepo = await mkdtemp(path.join(
+          tmpdir(),
+          `setfarm-design-source-runtime-v2-${fixtureId}-`,
+        ));
+        additionalRepos.push(fixtureRepo);
+        const fixtureRunId = `run-design-source-runtime-v2-${fixtureId}`;
+        await database.sql`
+          INSERT INTO runs (
+            id, workflow_id, task, status, protocol, protocol_version,
+            compiler_release_sha, activation_preflight_hash, release_admission_hash
+          ) VALUES (
+            ${fixtureRunId}, 'feature-dev', ${task},
+            'running', 'v3', 1, ${releaseSha}, ${activationHash}, ${admissionHash}
+          )
+        `;
+        const fixtureClaims = await database.sql<Array<{ id: string }>>`
+          INSERT INTO claim_log (run_id, step_id, story_id, agent_id)
+          VALUES (${fixtureRunId}, 'design', NULL, 'setfarm-design-source-runtime-v2')
+          RETURNING id::text AS id
+        `;
+        return {
+          fixtureRepo,
+          fixtureRunId,
+          fixtureClaimId: Number(fixtureClaims[0]!.id),
+        };
+      };
+
+      const exhaustedProvider = await createProviderRuntimeFixture(
+        "provider-exhausted",
+        "design source provider exhaustion fixture",
+        "8".repeat(64),
+      );
+      let exhaustedProviderDispatches = 0;
+      const exhaustedProviderInput = {
+        ...runtimeInput,
+        repo: exhaustedProvider.fixtureRepo,
+        runId: exhaustedProvider.fixtureRunId,
+        projectId: "stitch-runtime-v2-provider-exhausted-project",
+        originClaimId: exhaustedProvider.fixtureClaimId,
+        ownerClaimId: exhaustedProvider.fixtureClaimId,
+      };
+      const exhausted = await runDesignSourceAuthorityV2(exhaustedProviderInput, {
+        repository,
+        generateStage: async (stage) => {
+          exhaustedProviderDispatches += 1;
+          return providerFailure(stage.stageId);
+        },
+      });
+      assert.equal(exhausted.runner.status, "infrastructure_failure", JSON.stringify(exhausted.runner));
+      if (exhausted.runner.status !== "infrastructure_failure") {
+        throw new Error("Repeated provider rejection did not terminate as infrastructure failure");
+      }
+      assert.equal(exhausted.runner.stopReason, "repeated_failure");
+      assert.equal(exhaustedProviderDispatches, 2);
+      assert.equal(exhausted.runner.attempts.length, 2);
+      for (const attempt of exhausted.runner.attempts) {
+        assert.equal(attempt.state, "sealed");
+        assert.equal(attempt.lease, null);
+      }
+      const exhaustedReplay = await runDesignSourceAuthorityV2(exhaustedProviderInput, {
+        repository,
+        generateStage: async () => {
+          exhaustedProviderDispatches += 1;
+          throw new Error("terminal provider rejection replay must not dispatch");
+        },
+      });
+      assert.equal(
+        exhaustedReplay.runner.status,
+        "infrastructure_failure",
+        JSON.stringify(exhaustedReplay.runner),
+      );
+      assert.equal(exhaustedProviderDispatches, 2);
+
+      const ambiguousProvider = await createProviderRuntimeFixture(
+        "provider-generic-ambiguous",
+        "design source generic provider ambiguity fixture",
+        "9".repeat(64),
+      );
+      let ambiguousProviderDispatches = 0;
+      const ambiguous = await runDesignSourceAuthorityV2({
+        ...runtimeInput,
+        repo: ambiguousProvider.fixtureRepo,
+        runId: ambiguousProvider.fixtureRunId,
+        projectId: "stitch-runtime-v2-provider-generic-ambiguous-project",
+        originClaimId: ambiguousProvider.fixtureClaimId,
+        ownerClaimId: ambiguousProvider.fixtureClaimId,
+      }, {
+        repository,
+        generateStage: async () => {
+          ambiguousProviderDispatches += 1;
+          throw Object.assign(new Error("provider request timed out"), { code: "ETIMEDOUT" });
+        },
+      });
+      assert.equal(ambiguous.runner.status, "dispatch_ambiguous", JSON.stringify(ambiguous.runner));
+      if (ambiguous.runner.status !== "dispatch_ambiguous") {
+        throw new Error("Generic provider failure did not quarantine as dispatch ambiguous");
+      }
+      assert.equal(ambiguousProviderDispatches, 1);
+      assert.equal(ambiguous.runner.attempts.length, 1);
+      assert.equal(ambiguous.runner.attempt.state, "quarantined");
+      assert.equal(ambiguous.runner.attempt.lease, null);
 
       const selectedHtmlCases = [
         {
@@ -301,6 +641,32 @@ describe("design-source authority v2 runtime", { concurrency: 1 }, () => {
             "</main>",
           ].join(""), "design-source-runtime-v2-non-English"),
           diagnostic: "ENGLISH_TEXT_NON_ASCII at / code unit 0x00E9",
+        },
+        {
+          id: "cyrillic",
+          activationHash: "3".repeat(64),
+          htmlBytes: validStitchHtml([
+            `<main data-surface-id="${target.surfaceRef}">`,
+            `<button data-action="${placement.actionRef}" data-control-slot="${placement.controlSlotRef}">Start Game</button>`,
+            `<section data-surface-id="${canvasSurface}"><canvas aria-label="Game canvas"></canvas></section>`,
+            `<section data-surface-id="${statusObservable.selector.surfaceRef}"><div hidden role="status" aria-label="Game status">Playing</div></section>`,
+            `<p>${String.fromCharCode(0x0416)}</p>`,
+            "</main>",
+          ].join(""), "design-source-runtime-v2-cyrillic"),
+          diagnostic: "ENGLISH_TEXT_NON_ASCII at / code unit 0x0416",
+        },
+        {
+          id: "zero-width-space",
+          activationHash: "4".repeat(64),
+          htmlBytes: validStitchHtml([
+            `<main data-surface-id="${target.surfaceRef}">`,
+            `<button data-action="${placement.actionRef}" data-control-slot="${placement.controlSlotRef}">Start Game</button>`,
+            `<section data-surface-id="${canvasSurface}"><canvas aria-label="Game canvas"></canvas></section>`,
+            `<section data-surface-id="${statusObservable.selector.surfaceRef}"><div hidden role="status" aria-label="Game status">Playing</div></section>`,
+            `<p>${String.fromCharCode(0x200b)}</p>`,
+            "</main>",
+          ].join(""), "design-source-runtime-v2-zero-width-space"),
+          diagnostic: "ENGLISH_TEXT_NON_ASCII at / code unit 0x200B",
         },
         {
           id: "invalid-utf8",

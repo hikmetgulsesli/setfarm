@@ -10,9 +10,155 @@ import {
   mergeScreenEntries,
   partitionDirectScreenCandidates,
 } from "../scripts/stitch-response-parser.mjs";
+import {
+  StitchExplicitProviderRejection,
+  assertToolResultOk,
+  stitchCliFailureOutput,
+} from "../scripts/stitch-api.mjs";
+import {
+  parseStitchStageProviderRejectionProcessEnvelopeV1,
+} from "../src/product-compiler/stitch-stage-provider-rejection-v1.js";
 import { validStitchPng } from "./product-compiler/fixtures/stitch-artifacts.js";
 
 describe("stitch-api partial list recovery", () => {
+  it("emits typed provider rejection only for top-level MCP isError", () => {
+    let explicit: unknown;
+    try {
+      assertToolResultOk({
+        isError: true,
+        content: [{
+          type: "text",
+          text: "Request rejected token=secret-value",
+        }],
+      }, "generate_screen_from_text");
+    } catch (error) {
+      explicit = error;
+    }
+    assert.ok(explicit instanceof StitchExplicitProviderRejection);
+    const typedOutput = stitchCliFailureOutput(explicit);
+    const parsed = parseStitchStageProviderRejectionProcessEnvelopeV1({
+      stdout: "",
+      stderr: typedOutput.stderr,
+    });
+    assert.equal(parsed.diagnostic, "Request rejected token=[REDACTED]");
+
+    let authorization: unknown;
+    try {
+      assertToolResultOk({
+        isError: true,
+        content: [{
+          type: "text",
+          text: "Authorization: Bearer FAKE_SECRET_123",
+        }],
+      }, "generate_screen_from_text");
+    } catch (error) {
+      authorization = error;
+    }
+    assert.ok(authorization instanceof StitchExplicitProviderRejection);
+    const authorizationEnvelope = parseStitchStageProviderRejectionProcessEnvelopeV1({
+      stdout: "",
+      stderr: stitchCliFailureOutput(authorization).stderr,
+    });
+    assert.equal(authorizationEnvelope.diagnostic, "Authorization=[REDACTED]");
+    assert.doesNotMatch(authorizationEnvelope.diagnostic, /Bearer|FAKE_SECRET_123/);
+
+    for (const authorizationDiagnostic of [
+      "Authorization: Digest username=alice, response=FAKE_SECRET_789",
+      "Authorization: Bearer FIRST,FAKE_SECRET_789",
+      "Authorization: Bearer FIRST_LINE\nFAKE_SECRET_CONTINUATION_999",
+    ]) {
+      let compoundAuthorization: unknown;
+      try {
+        assertToolResultOk({
+          isError: true,
+          content: [{ type: "text", text: authorizationDiagnostic }],
+        }, "generate_screen_from_text");
+      } catch (error) {
+        compoundAuthorization = error;
+      }
+      assert.ok(compoundAuthorization instanceof StitchExplicitProviderRejection);
+      const compoundEnvelope = parseStitchStageProviderRejectionProcessEnvelopeV1({
+        stdout: "",
+        stderr: stitchCliFailureOutput(compoundAuthorization).stderr,
+      });
+      assert.equal(compoundEnvelope.diagnostic, "Authorization=[REDACTED]");
+      assert.doesNotMatch(
+        compoundEnvelope.diagnostic,
+        /alice|FIRST|FAKE_SECRET_789|FAKE_SECRET_CONTINUATION_999/,
+      );
+    }
+
+    for (const bearerDiagnostic of [
+      "Bearer: FAKE_SECRET_456",
+      "bearer=FAKE_SECRET_456",
+      'Bearer: "FAKE\\\"_SECRET"',
+      "Bearer: FIRST,FAKE_SECRET_789",
+    ]) {
+      let bearer: unknown;
+      try {
+        assertToolResultOk({
+          isError: true,
+          content: [{ type: "text", text: bearerDiagnostic }],
+        }, "generate_screen_from_text");
+      } catch (error) {
+        bearer = error;
+      }
+      assert.ok(bearer instanceof StitchExplicitProviderRejection);
+      const bearerEnvelope = parseStitchStageProviderRejectionProcessEnvelopeV1({
+        stdout: "",
+        stderr: stitchCliFailureOutput(bearer).stderr,
+      });
+      assert.equal(bearerEnvelope.diagnostic, "Bearer=[REDACTED]");
+      assert.doesNotMatch(bearerEnvelope.diagnostic, /FIRST|FAKE|SECRET/);
+    }
+
+    for (const structuredContent of [
+      {
+        screens: [{
+          id: "partial-screen",
+          title: "Partial Screen",
+          htmlUrl: "https://example.invalid/partial.html",
+        }],
+      },
+      { htmlUrl: "https://example.invalid/orphan-partial.html" },
+    ]) {
+      let partial: unknown;
+      try {
+        assertToolResultOk({
+          isError: true,
+          structuredContent,
+          content: [{ type: "text", text: "provider reported a partial failure" }],
+        }, "generate_screen_from_text");
+      } catch (error) {
+        partial = error;
+      }
+      assert.ok(partial instanceof Error);
+      assert.equal(partial instanceof StitchExplicitProviderRejection, false);
+      assert.throws(() => parseStitchStageProviderRejectionProcessEnvelopeV1({
+        stdout: "",
+        stderr: stitchCliFailureOutput(partial).stderr,
+      }));
+    }
+
+    let lookalike: unknown;
+    try {
+      assertToolResultOk({
+        content: [{
+          type: "text",
+          text: JSON.stringify({ isError: true, message: "quota prose" }),
+        }],
+      }, "generate_screen_from_text");
+    } catch (error) {
+      lookalike = error;
+    }
+    assert.ok(lookalike instanceof Error);
+    assert.equal(lookalike instanceof StitchExplicitProviderRejection, false);
+    assert.throws(() => parseStitchStageProviderRejectionProcessEnvelopeV1({
+      stdout: "",
+      stderr: stitchCliFailureOutput(lookalike).stderr,
+    }));
+  });
+
   it("merges tracked screens into partial Stitch API lists", () => {
     const source = fs.readFileSync("scripts/stitch-api.mjs", "utf-8");
 
