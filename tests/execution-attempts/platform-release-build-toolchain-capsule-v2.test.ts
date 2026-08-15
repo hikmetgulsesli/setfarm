@@ -1153,7 +1153,9 @@ function errorCodesV2(
 }
 
 const CURRENT_PRODUCTION_PACKAGE_PATHS_V2 = Object.freeze([
+  "node_modules/entities",
   "node_modules/json5",
+  "node_modules/parse5",
   "node_modules/playwright",
   "node_modules/playwright-core",
   "node_modules/playwright/node_modules/fsevents",
@@ -4312,6 +4314,7 @@ describe("PlatformReleaseDependencyMaterializedPairV2", () => {
       first.productionClosure.rootDependencyLocators,
       [
         "node_modules/json5",
+        "node_modules/parse5",
         "node_modules/playwright",
         "node_modules/postgres",
         "node_modules/yaml",
@@ -4320,18 +4323,20 @@ describe("PlatformReleaseDependencyMaterializedPairV2", () => {
     );
     assert.equal(
       first.productionClosure.installedPackageCount,
-      7,
+      9,
     );
-    assert.equal(first.productionClosure.edgeCount, 7);
-    assert.equal(first.productionGraph.packageCount, 7);
+    assert.equal(first.productionClosure.edgeCount, 9);
+    assert.equal(first.productionGraph.packageCount, 9);
     assert.equal(
       first.productionGraph.dependencyEdges.length,
-      7,
+      9,
     );
     assert.deepEqual(
       readdirSync(firstProject.nodeModulesRoot).sort(),
       [
+        "entities",
         "json5",
+        "parse5",
         "playwright",
         "playwright-core",
         "postgres",

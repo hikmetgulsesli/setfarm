@@ -91,6 +91,16 @@ import {
   verifyV3StoryClaimRuntimeBindingV1,
 } from "./v3-story-claim-runtime-binding-v1-migration.js";
 import {
+  OPERATIONAL_FAILURE_CAUSE_AUTHORITY_V1_RESTORE_STATEMENTS,
+  OPERATIONAL_FAILURE_CAUSE_AUTHORITY_V2_STATEMENTS,
+  assertOperationalFailureCauseAuthorityV2ConstraintIdentity,
+  canonicalOperationalFailureCauseAuthorityV2ConstraintIdentity,
+  configureOperationalFailureCauseAuthorityV2MigrationErrorFactory,
+  detectOperationalFailureCauseAuthorityV2Constraint,
+  type OperationalFailureCauseAuthorityV2ConstraintIdentity,
+  verifyOperationalFailureCauseAuthorityV2Constraint,
+} from "./operational-failure-cause-authority-v2-migration.js";
+import {
   createCanonicalOperationalEventV1,
   operationalEventDeliveryId,
   type OperationalEventDeliveryConsumerV1,
@@ -187,6 +197,23 @@ configureV3StoryClaimRuntimeBindingMigrationErrorFactory(
   },
 );
 // SETFARM_SEMANTIC_MIGRATION_REGION:migration-v29-error-binding:END
+
+// SETFARM_SEMANTIC_MIGRATION_REGION:migration-v30-error-binding:BEGIN
+configureOperationalFailureCauseAuthorityV2MigrationErrorFactory(
+  (code, message, cause) => {
+    if (code === "OPERATIONAL_FAILURE_CAUSE_AUTHORITY_V2_SQL_FAILED") {
+      return cause instanceof Error
+        ? cause
+        : new Error(message, cause === undefined ? {} : { cause });
+    }
+    return new ContractSpineMigrationError(
+      "MIGRATION_ADOPTION_MISMATCH",
+      message,
+      cause === undefined ? {} : { cause },
+    );
+  },
+);
+// SETFARM_SEMANTIC_MIGRATION_REGION:migration-v30-error-binding:END
 
 assertContractSpineSemanticMigrationSourceIntegrityWhenAvailable();
 
@@ -391,6 +418,16 @@ export type V3StoryClaimRuntimeBindingRollbackResult = Readonly<{
   rollbackId: string;
   fromVersion: 29;
   targetVersion: 28;
+  targetReleaseSha: string;
+  rowsRewritten: 0;
+  appliedAt: string;
+}>;
+
+export type OperationalFailureCauseAuthorityV2RollbackResult = Readonly<{
+  schema: "setfarm.contract-spine-rollback.v1";
+  rollbackId: string;
+  fromVersion: 30;
+  targetVersion: 29;
   targetReleaseSha: string;
   rowsRewritten: 0;
   appliedAt: string;
@@ -8448,12 +8485,17 @@ async function verifyOperationalFailureCauseSeal(
   sql: Sql | TransactionSql,
 ): Promise<void> {
   const components = await operationalFailureCauseSealComponents(sql);
-  if (
-    !components.constraint?.validated
-    || !await operationalFailureCauseConstraintHasExactSemantics(
+  const v1Constraint = components.constraint?.validated
+    ? await operationalFailureCauseConstraintHasExactSemantics(
       sql,
       components.constraint.expression,
     )
+    : false;
+  const v2Constraint = components.constraint?.validated
+    && await detectOperationalFailureCauseAuthorityV2Constraint(sql) === "present";
+  if (
+    !components.constraint?.validated
+    || (!v1Constraint && !v2Constraint)
   ) {
     throw new ContractSpineMigrationError(
       "MIGRATION_ADOPTION_MISMATCH",
@@ -12472,6 +12514,16 @@ const migrations: readonly Migration[] = [
     verify: verifyV3StoryClaimRuntimeBindingV1,
   },
   // SETFARM_SEMANTIC_MIGRATION_REGION:migration-v29-registration:END
+  // SETFARM_SEMANTIC_MIGRATION_REGION:migration-v30-registration:BEGIN
+  {
+    version: 30,
+    name: "030_operational_failure_cause_authority_v2",
+    statements: OPERATIONAL_FAILURE_CAUSE_AUTHORITY_V2_STATEMENTS,
+    implementationDigest: CONTRACT_SPINE_SEMANTIC_MIGRATION_DIGESTS[30],
+    detect: detectOperationalFailureCauseAuthorityV2Constraint,
+    verify: verifyOperationalFailureCauseAuthorityV2Constraint,
+  },
+  // SETFARM_SEMANTIC_MIGRATION_REGION:migration-v30-registration:END
 ];
 
 function assertSemanticMigrationDefinitionsAreSourceBound(): void {
@@ -14116,6 +14168,479 @@ export async function auditCurrentV3StoryClaimRuntimeBindingAtV29Data(
 }
 // SETFARM_SEMANTIC_MIGRATION_REGION:migration-v29-current-authority-audit:END
 
+// SETFARM_SEMANTIC_MIGRATION_REGION:migration-v30-current-authority-audit:BEGIN
+type CurrentAuthorityAuditAtV30 = Readonly<{
+  headVersion: 30;
+  artifactPublicationAuthorityLedger:
+    CurrentArtifactPublicationAuthorityLedgerAuditV2;
+  platformReleaseStoreRecordLedger:
+    CurrentPlatformReleaseStoreRecordLedgerV3Audit;
+  v3StoryClaimRuntimeBinding: CurrentV3StoryClaimRuntimeBindingAuditV1;
+}>;
+
+export type CurrentContractSpineAuthorityLedgersAuditAtV30Options =
+  CurrentContractSpineAuthorityLedgersAuditOptions
+  & Readonly<{
+    afterV30FailureCauseVerificationForTest?: () => Promise<void>;
+    afterV30ReadOnlyBeginBeforeFailureCauseLockForTest?: () => Promise<void>;
+  }>;
+
+function assertCurrentAuthorityAuditAtV30Head(
+  rows: readonly Readonly<{ version: number; state: string }>[],
+): void {
+  const head = rows.filter((row) => row.version >= 26);
+  if (
+    JSON.stringify(head.map((row) => row.version))
+      !== JSON.stringify([26, 27, 28, 29, 30])
+    || head.find((row) => row.version === 30)?.state !== "applied"
+  ) {
+    const future = head.find((row) => row.version > 30);
+    if (future) {
+      throw new ContractSpineMigrationError(
+        "MIGRATION_UNKNOWN_VERSION",
+        `Migration ${future.version} is newer than the migration-30 current authority audit contract`,
+      );
+    }
+    throw new ContractSpineMigrationError(
+      "MIGRATION_INCOMPLETE",
+      "migration-30 current authority audit requires the exact 26, 27, 28, 29, 30 head",
+    );
+  }
+}
+
+async function auditCurrentAuthorityAtV30OnTransaction(
+  transaction: TransactionSql,
+  deadline: CurrentAuthorityAuditDeadline,
+  expectedFailureCauseConstraint:
+    OperationalFailureCauseAuthorityV2ConstraintIdentity,
+): Promise<CurrentAuthorityAuditAtV30> {
+  await runCurrentAuthorityAuditPhase(
+    transaction,
+    deadline,
+    "migration-30 search-path setup",
+    () => transaction.unsafe("SELECT set_config('search_path', 'public', true)"),
+  );
+  await runCurrentAuthorityAuditPhase(
+    transaction,
+    deadline,
+    "migration-30 journal lock",
+    () => transaction.unsafe(
+      "LOCK TABLE public.setfarm_schema_migrations IN ACCESS SHARE MODE",
+    ),
+    true,
+  );
+  await runCurrentAuthorityAuditPhase(
+    transaction,
+    deadline,
+    "migration-30 journal topology",
+    () => verifyExactContractSpineJournalAuthority(transaction),
+  );
+  const head = await runCurrentAuthorityAuditPhase(
+    transaction,
+    deadline,
+    "migration-30 journal census",
+    () => transaction.unsafe<Array<{ version: number; state: string }>>(
+      `SELECT version, state
+         FROM public.setfarm_schema_migrations
+        WHERE version >= 26
+        ORDER BY version`,
+    ),
+  );
+  assertCurrentAuthorityAuditAtV30Head(head);
+  await runCurrentAuthorityAuditPhase(
+    transaction,
+    deadline,
+    "migration-30 authority-ledger table lock",
+    () => transaction.unsafe(
+      `LOCK TABLE public.semantic_artifacts,
+                  public.artifact_capacity,
+                  public.artifact_publication_reservations,
+                  public.artifact_publication_batches,
+                  public.artifact_publication_batch_items,
+                  public.artifact_publication_batch_plans,
+                  public.artifact_publication_batch_plan_items,
+                  public.artifact_store_authorities,
+                  public.product_packets,
+                  public.claim_log,
+                  public.execution_attempts,
+                  public.v3_preparation_authorities_v2,
+                  public.v3_preparation_authority_claims_v2,
+                  public.v3_preparation_authority_attempts_v2,
+                  public.platform_release_store_records_v3,
+                  public.runtime_completion_requests,
+                  public.runtime_completion_effects,
+                  public.run_termination_requests,
+                  public.runs,
+                  public.steps,
+                  public.stories,
+                  public.runtime_sessions,
+                  public.${V3_STORY_CLAIM_RUNTIME_BINDING_V1_CUTOVER_TABLE},
+                  public.${V3_STORY_CLAIM_RUNTIME_BINDING_V1_TABLE}
+         IN ACCESS SHARE MODE`,
+    ),
+    true,
+  );
+  await runCurrentAuthorityAuditPhase(
+    transaction,
+    deadline,
+    "migration-30 object ownership",
+    () => verifyCurrentContractSpineObjectOwnershipAtV29Head(transaction),
+  );
+  await runCurrentAuthorityAuditPhase(
+    transaction,
+    deadline,
+    "migration-30 failure-cause authority",
+    () => assertOperationalFailureCauseAuthorityV2ConstraintIdentity(
+      transaction,
+      expectedFailureCauseConstraint,
+    ),
+  );
+  await runCurrentAuthorityAuditPhase(
+    transaction,
+    deadline,
+    "migration-30 source chain",
+    () => verifyExactContractSpineSourceChain(transaction, 30),
+  );
+  const binding = await runCurrentAuthorityAuditPhase(
+    transaction,
+    deadline,
+    "migration-30 binding census",
+    () => auditV3StoryClaimRuntimeBindingV1Data(transaction),
+  );
+  return Object.freeze({
+    headVersion: 30 as const,
+    artifactPublicationAuthorityLedger:
+      await auditArtifactPublicationAuthorityLedgerAtSupportedHead(
+        transaction,
+        deadline,
+      ),
+    platformReleaseStoreRecordLedger:
+      await auditPlatformReleaseStoreRecordLedgerAtV27Head(
+        transaction,
+        deadline,
+      ),
+    v3StoryClaimRuntimeBinding: Object.freeze({
+      schema: "setfarm.v3-story-claim-runtime-binding-current-audit.v1" as const,
+      scope: "database-binding-integrity-only" as const,
+      status: "integrity_verified" as const,
+      authorityState: "database_binding_integrity_audit_only" as const,
+      productionAuthority: false as const,
+      productionAdmission: "forbidden" as const,
+      mutationAuthority: false as const,
+      bindingCount: binding.bindingCount,
+      requiredOwnerCount: binding.requiredOwnerCount,
+    }),
+  });
+}
+
+function currentAuthorityAuditV30Failure(
+  error: unknown,
+  deadline: CurrentAuthorityAuditDeadline,
+): unknown {
+  if (error instanceof ContractSpineMigrationError) return error;
+  if (isV3StoryClaimRuntimeBindingRollbackTimeout(error)) {
+    return new ContractSpineMigrationError(
+      "MIGRATION_LOCK_TIMEOUT",
+      `Migration-30 current authority audit exceeded its bounded timeout (lock ${
+        deadline.lockTimeoutMs
+      }ms, total ${deadline.statementTimeoutMs}ms)`,
+      { cause: error },
+    );
+  }
+  return error;
+}
+
+function currentAuthorityAuditV30ReservedFacade(
+  reserved: ReservedSql,
+  deadline: CurrentAuthorityAuditDeadline,
+): Sql {
+  let queryOrdinal = 0;
+  return new Proxy(reserved, {
+    get(target, property, receiver) {
+      if (property === "begin") return undefined;
+      if (property !== "unsafe") return Reflect.get(target, property, receiver);
+      return async (query: string, parameters?: readonly unknown[]) => {
+        const ordinal = queryOrdinal;
+        queryOrdinal += 1;
+        const phase = `migration-30 pre-transaction query ${ordinal}`;
+        const remaining = remainingCurrentAuthorityAuditMilliseconds(
+          deadline,
+          `${phase} admission`,
+        );
+        await reserved.unsafe(
+          "SELECT set_config('statement_timeout', $1, false)",
+          [`${remaining}ms`],
+        );
+        remainingCurrentAuthorityAuditMilliseconds(
+          deadline,
+          `${phase} timeout configuration`,
+        );
+        deadline.onUnsafeQueryForTest?.(query);
+        const result = await reserved.unsafe(query, parameters as never);
+        remainingCurrentAuthorityAuditMilliseconds(
+          deadline,
+          `${phase} settlement`,
+        );
+        return boundedCurrentAuthorityAuditResult(result, deadline, phase);
+      };
+    },
+  }) as unknown as Sql;
+}
+
+async function runCurrentAuthorityAuditAtV30<T>(
+  sql: Sql,
+  options: CurrentContractSpineAuthorityLedgersAuditAtV30Options,
+  project: (audit: CurrentAuthorityAuditAtV30) => T,
+): Promise<T> {
+  const deadline = currentAuthorityAuditDeadline(options);
+  let reserved: ReservedSql | undefined;
+  let sessionTimeoutsConfigured = false;
+  let sessionLockHeld = false;
+  let connectionSafeToRelease = false;
+  let connectionPoisoned = false;
+  let transactionOpen = false;
+  let result: T | undefined;
+  let primaryFailed = false;
+  let primaryError: unknown;
+  let cleanupError: unknown;
+  try {
+    reserved = await sql.reserve();
+    const sessionSetupRemaining = remainingCurrentAuthorityAuditMilliseconds(
+      deadline,
+      "migration-30 reserved session timeout setup",
+    );
+    const sessionSetupQuery =
+      `SELECT set_config('lock_timeout', $1, false),
+              set_config('statement_timeout', $2, false)`;
+    deadline.onUnsafeQueryForTest?.(sessionSetupQuery);
+    await reserved.unsafe(sessionSetupQuery, [
+      `${Math.min(deadline.lockTimeoutMs, sessionSetupRemaining)}ms`,
+      `${sessionSetupRemaining}ms`,
+    ]);
+    sessionTimeoutsConfigured = true;
+    remainingCurrentAuthorityAuditMilliseconds(
+      deadline,
+      "migration-30 reserved session timeout setup settlement",
+    );
+
+    const sessionLockQuery = "SELECT pg_advisory_lock($1)";
+    remainingCurrentAuthorityAuditMilliseconds(
+      deadline,
+      "migration-30 session advisory lock admission",
+    );
+    deadline.onUnsafeQueryForTest?.(sessionLockQuery);
+    await reserved.unsafe(sessionLockQuery, [contractSpineMigrationLockKey]);
+    sessionLockHeld = true;
+    remainingCurrentAuthorityAuditMilliseconds(
+      deadline,
+      "migration-30 session advisory lock settlement",
+    );
+
+    const boundedSession = currentAuthorityAuditV30ReservedFacade(
+      reserved,
+      deadline,
+    );
+
+    const headPreflightQuery =
+      `SELECT version, state
+         FROM public.setfarm_schema_migrations
+        ORDER BY version`;
+    const headPreflight = await boundedSession.unsafe<
+      Array<{ version: number; state: string }>
+    >(headPreflightQuery);
+    assertCurrentAuthorityAuditAtV30Head(headPreflight);
+
+    await verifyOperationalFailureCauseAuthorityV2Constraint(
+      boundedSession,
+    );
+    const expectedFailureCauseConstraint =
+      await canonicalOperationalFailureCauseAuthorityV2ConstraintIdentity(
+        boundedSession,
+      );
+    remainingCurrentAuthorityAuditMilliseconds(
+      deadline,
+      "migration-30 failure-cause authority verification settlement",
+    );
+    await options.afterV30FailureCauseVerificationForTest?.();
+    remainingCurrentAuthorityAuditMilliseconds(
+      deadline,
+      "migration-30 failure-cause authority post-verification test fence",
+    );
+
+    await reserved.unsafe("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
+    transactionOpen = true;
+    const transaction = reserved as unknown as TransactionSql;
+    const transactionSetupRemaining = remainingCurrentAuthorityAuditMilliseconds(
+      deadline,
+      "migration-30 transaction setup",
+    );
+    await transaction.unsafe(
+      `SET LOCAL lock_timeout = '${
+        Math.min(deadline.lockTimeoutMs, transactionSetupRemaining)
+      }ms'`,
+    );
+    await transaction.unsafe(
+      `SET LOCAL statement_timeout = '${transactionSetupRemaining}ms'`,
+    );
+    remainingCurrentAuthorityAuditMilliseconds(
+      deadline,
+      "migration-30 transaction setup settlement",
+    );
+    await options.afterV30ReadOnlyBeginBeforeFailureCauseLockForTest?.();
+    remainingCurrentAuthorityAuditMilliseconds(
+      deadline,
+      "migration-30 read-only begin test fence",
+    );
+    const failureCauseLockQuery =
+      "LOCK TABLE public.run_termination_requests IN ACCESS SHARE MODE";
+    deadline.onUnsafeQueryForTest?.(failureCauseLockQuery);
+    await transaction.unsafe(failureCauseLockQuery);
+    remainingCurrentAuthorityAuditMilliseconds(
+      deadline,
+      "migration-30 failure-cause table lock settlement",
+    );
+    const boundedTransaction = currentAuthorityAuditTransactionFacade(
+      transaction,
+      deadline,
+    );
+    const alreadyLockedTransaction =
+      currentAuthorityAuditAlreadySessionLockedTransactionFacade(boundedTransaction);
+    const audit = await auditCurrentAuthorityAtV30OnTransaction(
+      alreadyLockedTransaction,
+      deadline,
+      expectedFailureCauseConstraint,
+    );
+    remainingCurrentAuthorityAuditMilliseconds(
+      deadline,
+      "migration-30 result projection",
+    );
+    result = project(audit);
+    await reserved.unsafe("COMMIT");
+    transactionOpen = false;
+  } catch (error) {
+    primaryFailed = true;
+    primaryError = error;
+  }
+
+  if (reserved && transactionOpen) {
+    try {
+      await reserved.unsafe("ROLLBACK");
+      transactionOpen = false;
+    } catch (error) {
+      cleanupError = error;
+      connectionPoisoned = true;
+      await terminateUnsafeCurrentAuthorityAuditSession(reserved);
+    }
+  }
+  if (reserved && !connectionPoisoned) {
+    try {
+      if (sessionLockHeld) {
+        const unlocked = await reserved.unsafe<Array<{ unlocked: boolean }>>(
+          "SELECT pg_advisory_unlock($1) AS unlocked",
+          [contractSpineMigrationLockKey],
+        );
+        if (unlocked.length !== 1 || unlocked[0]?.unlocked !== true) {
+          throw new ContractSpineMigrationError(
+            "MIGRATION_ADOPTION_MISMATCH",
+            "Migration-30 current authority audit did not release its session advisory lock",
+          );
+        }
+        sessionLockHeld = false;
+      }
+      if (sessionTimeoutsConfigured) {
+        await reserved.unsafe("RESET lock_timeout");
+        await reserved.unsafe("RESET statement_timeout");
+        sessionTimeoutsConfigured = false;
+      }
+      connectionSafeToRelease = true;
+    } catch (error) {
+      cleanupError ??= error;
+      connectionPoisoned = true;
+      await terminateUnsafeCurrentAuthorityAuditSession(reserved);
+    } finally {
+      if (connectionSafeToRelease) {
+        try {
+          reserved.release();
+        } catch (error) {
+          cleanupError ??= error;
+        }
+      }
+    }
+  }
+
+  if (primaryFailed) {
+    const classifiedPrimary = currentAuthorityAuditV30Failure(primaryError, deadline);
+    if (cleanupError !== undefined) {
+      throw new AggregateError(
+        [classifiedPrimary, currentAuthorityAuditV30Failure(cleanupError, deadline)],
+        "Migration-30 current authority audit primary failure was followed by session cleanup failure",
+        { cause: classifiedPrimary },
+      );
+    }
+    throw classifiedPrimary;
+  }
+  if (cleanupError !== undefined) {
+    throw currentAuthorityAuditV30Failure(cleanupError, deadline);
+  }
+  return result as T;
+}
+
+export async function auditCurrentContractSpineAuthorityLedgersAtV30Data(
+  sql: Sql,
+  options: CurrentContractSpineAuthorityLedgersAuditAtV30Options = {},
+): Promise<CurrentContractSpineAuthorityLedgersAuditV2> {
+  return runCurrentAuthorityAuditAtV30(sql, options, (audit) => Object.freeze({
+    schema: "setfarm.contract-spine-current-authority-ledgers-audit.v2" as const,
+    version: "2.0.0" as const,
+    scope: "database-current-authority-ledgers-only" as const,
+    status: "verified" as const,
+    authorityState: "database_integrity_audit_only" as const,
+    productionAuthority: false as const,
+    productionAdmission: "forbidden" as const,
+    mutationAuthority: false as const,
+    storeAuthority: false as const,
+    restartAuthority: false as const,
+    trustConclusion: "characterization_only" as const,
+    artifactPublicationAuthorityLedger: audit.artifactPublicationAuthorityLedger,
+    platformReleaseStoreRecordLedger: audit.platformReleaseStoreRecordLedger,
+    v3StoryClaimRuntimeBinding: audit.v3StoryClaimRuntimeBinding,
+  }));
+}
+
+export async function auditCurrentArtifactPublicationAuthorityLedgerAtV30Data(
+  sql: Sql,
+  options: CurrentContractSpineAuthorityLedgersAuditAtV30Options = {},
+): Promise<CurrentArtifactPublicationAuthorityLedgerAuditV2> {
+  return runCurrentAuthorityAuditAtV30(
+    sql,
+    options,
+    (audit) => audit.artifactPublicationAuthorityLedger,
+  );
+}
+
+export async function auditCurrentPlatformReleaseStoreRecordLedgerAtV30Data(
+  sql: Sql,
+  options: CurrentContractSpineAuthorityLedgersAuditAtV30Options = {},
+): Promise<CurrentPlatformReleaseStoreRecordLedgerV3Audit> {
+  return runCurrentAuthorityAuditAtV30(
+    sql,
+    options,
+    (audit) => audit.platformReleaseStoreRecordLedger,
+  );
+}
+
+export async function auditCurrentV3StoryClaimRuntimeBindingAtV30Data(
+  sql: Sql,
+  options: CurrentContractSpineAuthorityLedgersAuditAtV30Options = {},
+): Promise<CurrentV3StoryClaimRuntimeBindingAuditV1> {
+  return runCurrentAuthorityAuditAtV30(
+    sql,
+    options,
+    (audit) => audit.v3StoryClaimRuntimeBinding,
+  );
+}
+// SETFARM_SEMANTIC_MIGRATION_REGION:migration-v30-current-authority-audit:END
+
 // SETFARM_SEMANTIC_MIGRATION_REGION:migration-v25-current-artifact-store-audit:BEGIN
 export async function auditCurrentArtifactStoreAuthorityLedgerData(
   sql: Sql,
@@ -14974,6 +15499,204 @@ export async function rollbackPreparationAuthorityV2LedgerToV24(
   }
 }
 // SETFARM_SEMANTIC_MIGRATION_REGION:migration-v25-rollback:END
+
+/**
+ * Roll migration 30 back only while no v2-only DESIGN termination evidence
+ * exists. Once published, that semantic evidence must remain verifiable.
+ */
+// SETFARM_SEMANTIC_MIGRATION_REGION:migration-v30-rollback:BEGIN
+export async function rollbackOperationalFailureCauseAuthorityV2ToV29(
+  sql: Sql,
+  options: Readonly<{
+    targetReleaseSha: string;
+    lockTimeoutMs?: number;
+    statementTimeoutMs?: number;
+  }>,
+): Promise<OperationalFailureCauseAuthorityV2RollbackResult> {
+  if (!/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/.test(options.targetReleaseSha)) {
+    throw new ContractSpineMigrationError(
+      "MIGRATION_RELEASE_INVALID",
+      "Rollback target release SHA must be a full lowercase Git object hash",
+    );
+  }
+  const migration = migrations.find((candidate) => candidate.version === 30)!;
+  const expectedChecksum = checksum(migration);
+  const lockTimeoutMs = Math.max(1, Math.min(options.lockTimeoutMs ?? 5_000, 60_000));
+  const statementTimeoutMs = Math.max(
+    lockTimeoutMs,
+    Math.min(options.statementTimeoutMs ?? 30_000, 300_000),
+  );
+  try {
+    return await sql.begin(async (transaction) => {
+      await transaction.unsafe("SELECT set_config('lock_timeout', $1, true)", [
+        `${lockTimeoutMs}ms`,
+      ]);
+      await transaction.unsafe("SELECT set_config('statement_timeout', $1, true)", [
+        `${statementTimeoutMs}ms`,
+      ]);
+      await transaction.unsafe("SELECT set_config('search_path', 'public', true)");
+      await transaction.unsafe("SELECT pg_advisory_xact_lock($1)", [
+        contractSpineMigrationLockKey,
+      ]);
+      const future = await transaction.unsafe<Array<{ version: number }>>(
+        `SELECT version
+           FROM public.setfarm_schema_migrations
+          WHERE version > 30
+          ORDER BY version
+          LIMIT 1`,
+      );
+      if (future[0]) {
+        throw new ContractSpineMigrationError(
+          "MIGRATION_UNKNOWN_VERSION",
+          `Migration ${future[0].version} must be rolled back before migration 30`,
+        );
+      }
+      await verifyExactContractSpineJournalAuthority(transaction);
+      const journal = await transaction.unsafe<Array<{
+        name: string;
+        checksum: string;
+        state: string;
+        release_sha: string | null;
+        applied_at: Date | string;
+      }>>(
+        `SELECT name, checksum, state, release_sha, applied_at
+           FROM public.setfarm_schema_migrations
+          WHERE version = 30
+          FOR UPDATE`,
+      );
+      if (
+        journal[0]?.name !== migration.name
+        || journal[0]?.checksum !== expectedChecksum
+        || journal[0]?.state !== "applied"
+      ) {
+        throw new ContractSpineMigrationError(
+          "MIGRATION_CHECKSUM_MISMATCH",
+          "Migration 30 is absent or differs from the rollback source contract",
+        );
+      }
+      await verifyExactContractSpineSourceChain(transaction, 30);
+      if (await detectOperationalFailureCauseAuthorityV2Constraint(transaction) !== "present") {
+        throw new ContractSpineMigrationError(
+          "MIGRATION_ADOPTION_MISMATCH",
+          "Migration 30 journaled constraint is not fully present",
+        );
+      }
+      await transaction.unsafe(
+        "LOCK TABLE public.run_termination_requests IN ACCESS EXCLUSIVE MODE",
+      );
+      await verifyOperationalFailureCauseAuthorityV2Constraint(transaction);
+      const provenance = await transaction.unsafe<Array<{ count: string }>>(
+        `SELECT COUNT(*)::text AS count
+           FROM public.run_termination_requests
+          WHERE requested_by = 'setfarm.step-fail.single'
+            AND evidence->'operationalFailureCause' = $1::text::jsonb`,
+        [JSON.stringify({
+          schema: "setfarm.operational-failure-cause.v1",
+          workflowStepId: "design",
+          boundary: "product_compiler.design_source.semantic_closure",
+          failureClass: "contract_invalid",
+          failureCode: "DESIGN_SOURCE_SEMANTIC_CLOSURE_REJECTED",
+        })],
+      );
+      const count = Number(provenance[0]?.count);
+      if (!Number.isSafeInteger(count) || count !== 0) {
+        throw new ContractSpineMigrationError(
+          "MIGRATION_INCOMPLETE",
+          "Migration 30 rollback refuses to invalidate DESIGN semantic-closure termination evidence; roll forward instead",
+        );
+      }
+      for (const statement of OPERATIONAL_FAILURE_CAUSE_AUTHORITY_V1_RESTORE_STATEMENTS) {
+        await transaction.unsafe(statement);
+      }
+      await verifyOperationalFailureCauseSeal(transaction);
+      for (const retained of migrations.filter((candidate) => candidate.version <= 29)) {
+        if (await retained.detect(transaction) !== "present") {
+          throw new ContractSpineMigrationError(
+            "MIGRATION_ADOPTION_MISMATCH",
+            `Retained migration ${retained.version} is incomplete during migration 30 rollback`,
+          );
+        }
+        await retained.verify(transaction);
+      }
+      await verifyCurrentContractSpineObjectOwnershipAtV29Head(transaction);
+
+      await ensureExactContractSpineRollbackLedger(transaction);
+      await transaction.unsafe(
+        "LOCK TABLE public.setfarm_schema_migration_rollbacks IN SHARE ROW EXCLUSIVE MODE",
+      );
+      const appliedAtRows = await transaction.unsafe<Array<{ applied_at: Date | string }>>(
+        "SELECT clock_timestamp() AS applied_at",
+      );
+      const appliedAt = new Date(appliedAtRows[0]!.applied_at);
+      const rollbackId = `RBK_${hashCanonicalJson({
+        schema: "setfarm.contract-spine-rollback-identity.v1",
+        sourceMigration: {
+          version: 30,
+          name: journal[0]!.name,
+          checksum: journal[0]!.checksum,
+          releaseSha: journal[0]!.release_sha,
+          appliedAt: new Date(journal[0]!.applied_at).toISOString(),
+        },
+        targetVersion: 29,
+        targetReleaseSha: options.targetReleaseSha,
+      })}`;
+      const receipt = await transaction.unsafe<Array<{ rollback_id: string }>>(
+        `INSERT INTO public.setfarm_schema_migration_rollbacks (
+           rollback_id, from_version, target_version, target_release_sha,
+           rows_rewritten, applied_at
+         ) VALUES ($1, 30, 29, $2, 0, $3)
+         RETURNING rollback_id`,
+        [rollbackId, options.targetReleaseSha, appliedAt],
+      );
+      if (receipt.length !== 1 || receipt[0]?.rollback_id !== rollbackId) {
+        throw new ContractSpineMigrationError(
+          "MIGRATION_ADOPTION_MISMATCH",
+          "Migration 30 rollback receipt was not durably inserted",
+        );
+      }
+      const removed = await transaction.unsafe<Array<{ version: number }>>(
+        `DELETE FROM public.setfarm_schema_migrations
+          WHERE version = 30 AND name = $1 AND checksum = $2
+          RETURNING version`,
+        [migration.name, expectedChecksum],
+      );
+      if (removed.length !== 1) {
+        throw new ContractSpineMigrationError(
+          "MIGRATION_CHECKSUM_MISMATCH",
+          "Migration 30 journal ownership changed during rollback",
+        );
+      }
+      await transaction.unsafe(
+        `UPDATE public.setfarm_schema_migrations
+            SET verified_release_sha = $1, verified_at = $2
+          WHERE version <= 29`,
+        [options.targetReleaseSha, appliedAt],
+      );
+      await verifyExactContractSpineJournalAuthority(transaction);
+      await verifyExactContractSpineSourceChain(transaction, 29);
+      return Object.freeze({
+        schema: "setfarm.contract-spine-rollback.v1" as const,
+        rollbackId,
+        fromVersion: 30 as const,
+        targetVersion: 29 as const,
+        targetReleaseSha: options.targetReleaseSha,
+        rowsRewritten: 0 as const,
+        appliedAt: appliedAt.toISOString(),
+      });
+    }) as OperationalFailureCauseAuthorityV2RollbackResult;
+  } catch (error) {
+    if (error instanceof ContractSpineMigrationError) throw error;
+    if (isLockTimeout(error)) {
+      throw new ContractSpineMigrationError(
+        "MIGRATION_LOCK_TIMEOUT",
+        "Migration 30 rollback exceeded its bounded database timeout",
+        { cause: error },
+      );
+    }
+    throw error;
+  }
+}
+// SETFARM_SEMANTIC_MIGRATION_REGION:migration-v30-rollback:END
 
 /**
  * Roll migration 29 back only while no story claim/runtime binding provenance

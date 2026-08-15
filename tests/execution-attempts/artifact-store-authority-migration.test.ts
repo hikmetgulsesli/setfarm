@@ -14,6 +14,7 @@ import {
   rollbackArtifactPublicationBatchPlanLedgerToV25,
   rollbackPlatformReleaseStoreRecordLedgerV3ToV26,
   rollbackRuntimeCompletionManifestAuthorityToV27,
+  rollbackOperationalFailureCauseAuthorityV2ToV29,
   rollbackV3StoryClaimRuntimeBindingToV28,
   rollbackPreparationAuthorityV2LedgerToV24,
   verifyContractSpineMigrations,
@@ -26,6 +27,16 @@ const authorityId = "11111111-1111-4111-8111-111111111111";
 const rootLocatorHash = "c".repeat(64);
 
 async function rollbackRecordLedgerIfPresent(sql: postgres.Sql): Promise<void> {
+  const failureCauseRows = await sql.unsafe<Array<{ present: boolean }>>(
+    `SELECT EXISTS (
+       SELECT 1 FROM public.setfarm_schema_migrations WHERE version = 30
+     ) AS present`,
+  );
+  if (failureCauseRows[0]?.present) {
+    await rollbackOperationalFailureCauseAuthorityV2ToV29(sql, {
+      targetReleaseSha: "4".repeat(40),
+    });
+  }
   const bindingRows = await sql.unsafe<Array<{ present: boolean }>>(
     `SELECT EXISTS (
        SELECT 1 FROM public.setfarm_schema_migrations WHERE version = 29
@@ -1076,7 +1087,7 @@ describe("artifact store authority migration 24", () => {
              AS evil_checksum`,
       );
       assert.deepEqual(evidence[0], {
-        public_rows: 29,
+        public_rows: 30,
         evil_checksum: "0".repeat(64),
       });
     } finally {

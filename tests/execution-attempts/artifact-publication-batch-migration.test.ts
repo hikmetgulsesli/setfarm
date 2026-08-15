@@ -11,6 +11,7 @@ import {
   rollbackArtifactPublicationBatchPlanLedgerToV25,
   rollbackPlatformReleaseStoreRecordLedgerV3ToV26,
   rollbackRuntimeCompletionManifestAuthorityToV27,
+  rollbackOperationalFailureCauseAuthorityV2ToV29,
   rollbackV3StoryClaimRuntimeBindingToV28,
   rollbackArtifactStoreAuthorityLedgerToV23,
   rollbackPreparationAuthorityV2LedgerToV24,
@@ -36,6 +37,9 @@ const migrationProducer = Object.freeze({
 async function rollbackEmptyReleaseStoreRecordLedger(
   database: TestDatabase,
 ): Promise<void> {
+  await rollbackOperationalFailureCauseAuthorityV2ToV29(database.sql, {
+    targetReleaseSha: "9".repeat(40),
+  });
   await rollbackV3StoryClaimRuntimeBindingToV28(database.sql, {
     targetReleaseSha: "a".repeat(40),
   });
