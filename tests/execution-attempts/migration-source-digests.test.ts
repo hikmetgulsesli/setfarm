@@ -76,6 +76,10 @@ describe("contract-spine semantic migration source digests", () => {
       CONTRACT_SPINE_SEMANTIC_MIGRATION_DIGESTS[29],
       "b0a2cb9163bc87a6e9e45f8ba230c55821c85d14458697b72b2a6e17d7dcb305",
     );
+    assert.equal(
+      CONTRACT_SPINE_SEMANTIC_MIGRATION_DIGESTS[30],
+      "95c2f97df36fc274a03dd546a262436d003c822b2698ef4410d0da1933193c4c",
+    );
   });
 
   it("changes v8 journal identity when the semantic apply body changes", () => {
@@ -666,6 +670,51 @@ describe("contract-spine semantic migration source digests", () => {
       computeContractSpineMigrationChecksumV1({
         ...migration,
         implementationDigest: topologyMutation[29],
+      }),
+    );
+  });
+
+  it("binds v30 failure-cause authority without rewriting historical digests", () => {
+    const baseline = computeContractSpineSemanticMigrationDigests(
+      sourceReader,
+    ) as Readonly<Record<number, string>>;
+    const authorityMutation = computeContractSpineSemanticMigrationDigests(replacingReader(
+      "src/execution/operational-failure-cause-authority-v2.ts",
+      (source) => replaceExactlyOnce(
+        source,
+        "DESIGN_SOURCE_SEMANTIC_CLOSURE_REJECTED",
+        "DESIGN_SOURCE_SEMANTIC_CLOSURE_MUTATED",
+      ),
+    )) as Readonly<Record<number, string>>;
+    assert.notEqual(authorityMutation[30], baseline[30]);
+    for (const historical of [8, 11, 12, 23, 24, 25, 26, 27, 28, 29] as const) {
+      assert.equal(authorityMutation[historical], baseline[historical]);
+    }
+
+    const migrationMutation = computeContractSpineSemanticMigrationDigests(replacingReader(
+      "src/db/operational-failure-cause-authority-v2-migration.ts",
+      (source) => replaceExactlyOnce(
+        source,
+        "operational failure cause authority v2 constraint mismatch",
+        "operational failure cause authority v2 constraint mutated",
+      ),
+    )) as Readonly<Record<number, string>>;
+    assert.notEqual(migrationMutation[30], baseline[30]);
+    assert.equal(migrationMutation[29], baseline[29]);
+
+    const migration = {
+      version: 30,
+      name: "030_operational_failure_cause_authority_v2",
+      statements: ["SELECT 1"],
+    } as const;
+    assert.notEqual(
+      computeContractSpineMigrationChecksumV1({
+        ...migration,
+        implementationDigest: baseline[30],
+      }),
+      computeContractSpineMigrationChecksumV1({
+        ...migration,
+        implementationDigest: authorityMutation[30],
       }),
     );
   });

@@ -5,12 +5,13 @@ import postgres from "postgres";
 
 import {
   applyContractSpineMigrations,
-  auditCurrentArtifactPublicationAuthorityLedgerAtV29Data,
-  auditCurrentContractSpineAuthorityLedgersAtV29Data,
+  auditCurrentArtifactPublicationAuthorityLedgerAtV30Data,
+  auditCurrentContractSpineAuthorityLedgersAtV30Data,
   planContractSpineMigrations,
   readContractSpineMigrationAttestation,
   rollbackProductCompilationAttemptLedgerToV21,
   rollbackOperationalFailureCauseSealToV20,
+  rollbackOperationalFailureCauseAuthorityV2ToV29,
   rollbackArtifactPublicationBatchLedgerToV22,
   rollbackArtifactPublicationBatchPlanLedgerToV25,
   rollbackPlatformReleaseStoreRecordLedgerV3ToV26,
@@ -31,6 +32,7 @@ type Mode =
   | "audit-artifact-store-authority-ledger"
   | "audit-platform-release-store-records"
   | "audit-current-authority-ledgers"
+  | "rollback-30-to-29"
   | "rollback-29-to-28"
   | "rollback-28-to-27"
   | "rollback-27-to-26"
@@ -77,8 +79,8 @@ function parseArgs(argv: string[]): Readonly<{
   targetReleaseSha?: string;
 }> {
   const mode = argv[0];
-  if (!["plan", "apply", "verify", "audit-current-authority-ledgers", "audit-artifact-publication-batches", "audit-artifact-store-authority-ledger", "audit-platform-release-store-records", "rollback-29-to-28", "rollback-28-to-27", "rollback-27-to-26", "rollback-26-to-25", "rollback-25-to-24", "rollback-24-to-23", "rollback-23-to-22", "rollback-22-to-21", "rollback-21-to-20", "rollback-20-to-19"].includes(mode ?? "")) {
-    throw new Error("Usage: contract-spine-migrate.ts <plan|apply|verify|audit-current-authority-ledgers|audit-artifact-publication-batches|audit-artifact-store-authority-ledger|audit-platform-release-store-records|rollback-29-to-28|rollback-28-to-27|rollback-27-to-26|rollback-26-to-25|rollback-25-to-24|rollback-24-to-23|rollback-23-to-22|rollback-22-to-21|rollback-21-to-20|rollback-20-to-19> [--database <postgres-url>] [--target-release <git-sha>]");
+  if (!["plan", "apply", "verify", "audit-current-authority-ledgers", "audit-artifact-publication-batches", "audit-artifact-store-authority-ledger", "audit-platform-release-store-records", "rollback-30-to-29", "rollback-29-to-28", "rollback-28-to-27", "rollback-27-to-26", "rollback-26-to-25", "rollback-25-to-24", "rollback-24-to-23", "rollback-23-to-22", "rollback-22-to-21", "rollback-21-to-20", "rollback-20-to-19"].includes(mode ?? "")) {
+    throw new Error("Usage: contract-spine-migrate.ts <plan|apply|verify|audit-current-authority-ledgers|audit-artifact-publication-batches|audit-artifact-store-authority-ledger|audit-platform-release-store-records|rollback-30-to-29|rollback-29-to-28|rollback-28-to-27|rollback-27-to-26|rollback-26-to-25|rollback-25-to-24|rollback-24-to-23|rollback-23-to-22|rollback-22-to-21|rollback-21-to-20|rollback-20-to-19> [--database <postgres-url>] [--target-release <git-sha>]");
   }
   const databaseIndex = argv.indexOf("--database");
   if (databaseIndex >= 0 && !argv[databaseIndex + 1]) {
@@ -120,14 +122,14 @@ async function main(): Promise<void> {
     }
     if (mode === "audit-artifact-publication-batches") {
       process.stdout.write(`${JSON.stringify(
-        await auditCurrentArtifactPublicationAuthorityLedgerAtV29Data(sql),
+        await auditCurrentArtifactPublicationAuthorityLedgerAtV30Data(sql),
         null,
         2,
       )}\n`);
       return;
     }
     if (mode === "audit-platform-release-store-records") {
-      const audit = await auditCurrentContractSpineAuthorityLedgersAtV29Data(sql);
+      const audit = await auditCurrentContractSpineAuthorityLedgersAtV30Data(sql);
       process.stdout.write(`${JSON.stringify(
         audit.platformReleaseStoreRecordLedger,
         null,
@@ -137,7 +139,17 @@ async function main(): Promise<void> {
     }
     if (mode === "audit-current-authority-ledgers") {
       process.stdout.write(`${JSON.stringify(
-        await auditCurrentContractSpineAuthorityLedgersAtV29Data(sql),
+        await auditCurrentContractSpineAuthorityLedgersAtV30Data(sql),
+        null,
+        2,
+      )}\n`);
+      return;
+    }
+    if (mode === "rollback-30-to-29") {
+      process.stdout.write(`${JSON.stringify(
+        await rollbackOperationalFailureCauseAuthorityV2ToV29(sql, {
+          targetReleaseSha: targetReleaseSha!,
+        }),
         null,
         2,
       )}\n`);
@@ -185,7 +197,7 @@ async function main(): Promise<void> {
     }
     if (mode === "audit-artifact-store-authority-ledger") {
       process.stdout.write(`${JSON.stringify(
-        await auditCurrentArtifactPublicationAuthorityLedgerAtV29Data(sql),
+        await auditCurrentArtifactPublicationAuthorityLedgerAtV30Data(sql),
         null,
         2,
       )}\n`);

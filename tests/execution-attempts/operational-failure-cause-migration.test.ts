@@ -13,14 +13,21 @@ import {
   rollbackV3StoryClaimRuntimeBindingToV28,
   rollbackArtifactStoreAuthorityLedgerToV23,
   rollbackOperationalFailureCauseSealToV20,
+  rollbackOperationalFailureCauseAuthorityV2ToV29,
   rollbackPreparationAuthorityV2LedgerToV24,
   rollbackProductCompilationAttemptLedgerToV21,
   rollbackRecoveryTerminalLeaseIdentityToV19,
   verifyContractSpineMigrations,
 } from "../../src/db/contract-spine-migrations.js";
 import { createIsolatedTestDatabase, type TestDatabase } from "./test-database.js";
+import {
+  DESIGN_SOURCE_SEMANTIC_CLOSURE_OPERATIONAL_CAUSE_V1,
+} from "../../src/product-compiler/design-source-runtime-v2.js";
 
 async function rollbackCurrentToV21(database: TestDatabase): Promise<void> {
+  await rollbackOperationalFailureCauseAuthorityV2ToV29(database.sql, {
+    targetReleaseSha: "7".repeat(40),
+  });
   await rollbackV3StoryClaimRuntimeBindingToV28(database.sql, {
     targetReleaseSha: "8".repeat(40),
   });
@@ -56,6 +63,96 @@ const VALID_CAUSE = Object.freeze({
 });
 
 describe("operational failure cause migration", () => {
+  it("admits only the exact DESIGN tuple and preserves it against rollback", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const insert = async (input: Readonly<{
+        suffix: string;
+        requestedBy: string;
+        cause: Readonly<Record<string, unknown>>;
+      }>): Promise<void> => {
+        const runId = `run-design-cause-${input.suffix}`;
+        await database.insertRun(runId);
+        await database.sql.unsafe(
+          `INSERT INTO run_termination_requests (
+             request_id, run_id, target_status, state, requested_by,
+             requested_at, diagnostic, evidence
+           ) VALUES ($1, $2, 'failed', 'requested', $3,
+                     NOW(), 'DESIGN semantic closure fixture',
+                     jsonb_build_object('operationalFailureCause', $4::text::jsonb))`,
+          [
+            `RTR_design-cause-${input.suffix}`,
+            runId,
+            input.requestedBy,
+            JSON.stringify(input.cause),
+          ],
+        );
+      };
+
+      await insert({
+        suffix: "exact",
+        requestedBy: "setfarm.step-fail.single",
+        cause: DESIGN_SOURCE_SEMANTIC_CLOSURE_OPERATIONAL_CAUSE_V1,
+      });
+      for (const input of [
+        {
+          suffix: "requester",
+          requestedBy: "setfarm.step-fail.story",
+          cause: DESIGN_SOURCE_SEMANTIC_CLOSURE_OPERATIONAL_CAUSE_V1,
+        },
+        {
+          suffix: "step",
+          requestedBy: "setfarm.step-fail.single",
+          cause: {
+            ...DESIGN_SOURCE_SEMANTIC_CLOSURE_OPERATIONAL_CAUSE_V1,
+            workflowStepId: "setup-build",
+          },
+        },
+        {
+          suffix: "boundary",
+          requestedBy: "setfarm.step-fail.single",
+          cause: {
+            ...DESIGN_SOURCE_SEMANTIC_CLOSURE_OPERATIONAL_CAUSE_V1,
+            boundary: "product_compiler.design_source.semantic_closure_other",
+          },
+        },
+        {
+          suffix: "class",
+          requestedBy: "setfarm.step-fail.single",
+          cause: {
+            ...DESIGN_SOURCE_SEMANTIC_CLOSURE_OPERATIONAL_CAUSE_V1,
+            failureClass: "generated_artifact_invalid",
+          },
+        },
+        {
+          suffix: "code",
+          requestedBy: "setfarm.step-fail.single",
+          cause: {
+            ...DESIGN_SOURCE_SEMANTIC_CLOSURE_OPERATIONAL_CAUSE_V1,
+            failureCode: "DESIGN_SOURCE_SEMANTIC_CLOSURE_REJECTED_OTHER",
+          },
+        },
+      ]) {
+        await assert.rejects(
+          insert(input),
+          /run_termination_requests_operational_failure_cause_check/,
+        );
+      }
+
+      await assert.rejects(
+        rollbackOperationalFailureCauseAuthorityV2ToV29(database.sql, {
+          targetReleaseSha: "1".repeat(40),
+        }),
+        (error: unknown) =>
+          error instanceof ContractSpineMigrationError
+          && error.code === "MIGRATION_INCOMPLETE",
+      );
+      assert.equal((await verifyContractSpineMigrations(database.sql)).status, "verified");
+    } finally {
+      await database.cleanup();
+    }
+  });
+
   it("validates and seals optional typed causes, then rolls back without rewriting evidence", async () => {
     const database = await createIsolatedTestDatabase();
     try {
@@ -244,6 +341,7 @@ describe("operational failure cause migration", () => {
         "027_platform_release_store_record_ledger_v3",
         "028_runtime_completion_manifest_authority",
         "029_v3_story_claim_runtime_binding_v1",
+        "030_operational_failure_cause_authority_v2",
       ]);
       assert.equal((await verifyContractSpineMigrations(database.sql)).status, "verified");
 

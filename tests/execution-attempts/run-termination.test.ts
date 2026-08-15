@@ -15,6 +15,9 @@ import {
 } from "../../src/execution/schemas/operational-failure-cause-v1.js";
 import { transitionRunToTerminal } from "../../src/execution/run-terminal-transition.js";
 import { buildRunOperationalSnapshot } from "../../src/server/run-operational-snapshot.js";
+import {
+  DESIGN_SOURCE_SEMANTIC_CLOSURE_OPERATIONAL_CAUSE_V1,
+} from "../../src/product-compiler/design-source-runtime-v2.js";
 import { exactProductReservation } from "./fixtures.js";
 import { createIsolatedTestDatabase } from "./test-database.js";
 
@@ -105,6 +108,45 @@ async function seedOwnedRuntime(
 }
 
 describe("durable two-phase run termination", () => {
+  it("persists and projects the exact DESIGN semantic-closure cause", async () => {
+    const database = await createIsolatedTestDatabase();
+    try {
+      const runId = "run-design-semantic-closure-cause";
+      await database.insertRun(runId);
+      const requested = await requestRunTermination(database.sql, {
+        runId,
+        targetStatus: "failed",
+        requestedBy: "setfarm.step-fail.single",
+        diagnostic: "DESIGN semantic closure remained unresolved after bounded retry",
+        evidence: {
+          failureFingerprint: "f".repeat(64),
+          operationalCauseHash: operationalFailureCauseHashV1(
+            DESIGN_SOURCE_SEMANTIC_CLOSURE_OPERATIONAL_CAUSE_V1,
+          ),
+        },
+        failureCause: DESIGN_SOURCE_SEMANTIC_CLOSURE_OPERATIONAL_CAUSE_V1,
+        requestId: "RTR_design-semantic-closure-01",
+      });
+      assert.equal(requested.status, "requested");
+      if (requested.status !== "requested") throw new Error("test request missing");
+      assert.deepEqual(
+        requested.request.failureCause,
+        DESIGN_SOURCE_SEMANTIC_CLOSURE_OPERATIONAL_CAUSE_V1,
+      );
+
+      const snapshot = await buildRunOperationalSnapshot(database.sql, runId);
+      const projected = snapshot.terminationRequests.find(
+        (request) => request.requestId === requested.request.requestId,
+      );
+      assert.deepEqual(
+        projected?.evidence.operationalFailureCause,
+        DESIGN_SOURCE_SEMANTIC_CLOSURE_OPERATIONAL_CAUSE_V1,
+      );
+    } finally {
+      await database.cleanup();
+    }
+  });
+
   it("rejects a structurally valid cause without exact producer authority before mutation", async () => {
     const database = await createIsolatedTestDatabase();
     try {

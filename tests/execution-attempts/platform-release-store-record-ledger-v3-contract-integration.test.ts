@@ -11,16 +11,20 @@ import {
   applyContractSpineMigrations,
   auditCurrentArtifactPublicationAuthorityLedgerAtV28Data,
   auditCurrentContractSpineAuthorityLedgersAtV28Data,
-  auditCurrentContractSpineAuthorityLedgersAtV29Data,
+  auditCurrentContractSpineAuthorityLedgersAtV30Data,
   auditCurrentPlatformReleaseStoreRecordLedgerAtV28Data,
   contractSpineMigrationLockKey,
   planContractSpineMigrations,
   rollbackPlatformReleaseStoreRecordLedgerV3ToV26,
   rollbackRuntimeCompletionManifestAuthorityToV27,
+  rollbackOperationalFailureCauseAuthorityV2ToV29,
   rollbackV3StoryClaimRuntimeBindingToV28,
   throwPlatformReleaseStoreRecordLedgerV3RollbackFailureForTest,
   verifyContractSpineMigrations,
 } from "../../src/db/contract-spine-migrations.js";
+import {
+  OPERATIONAL_FAILURE_CAUSE_AUTHORITY_V2_STATEMENTS,
+} from "../../src/db/operational-failure-cause-authority-v2-migration.js";
 import {
   PLATFORM_RELEASE_STORE_RECORD_LEDGER_V3_STATEMENTS,
   applyPlatformReleaseStoreRecordLedgerV3,
@@ -523,7 +527,7 @@ describe("platform release-store record ledger v3 contract integration", () => {
     let monotonicMilliseconds = 0;
     const deadlineQueries: string[] = [];
     await assert.rejects(
-      auditCurrentContractSpineAuthorityLedgersAtV29Data(database.sql, {
+      auditCurrentContractSpineAuthorityLedgersAtV30Data(database.sql, {
         lockTimeoutMs: 1,
         statementTimeoutMs: 50,
         monotonicNowForTest: () => monotonicMilliseconds,
@@ -542,11 +546,11 @@ describe("platform release-store record ledger v3 contract integration", () => {
     assert.equal(deadlineQueries.length <= 32, true);
     assert.equal(
       deadlineQueries.some((query) => query.includes("FROM pg_class c")),
-      true,
+      false,
     );
     assert.equal(
       deadlineQueries.some((query) => query.includes("information_schema.columns")),
-      true,
+      false,
     );
     assert.equal(
       deadlineQueries.some((query) => query.includes("FROM pg_constraint")),
@@ -560,7 +564,7 @@ describe("platform release-store record ledger v3 contract integration", () => {
     let headResultClockReads = 0;
     const resultAccessQueries: string[] = [];
     await assert.rejects(
-      auditCurrentContractSpineAuthorityLedgersAtV29Data(database.sql, {
+      auditCurrentContractSpineAuthorityLedgersAtV30Data(database.sql, {
         lockTimeoutMs: 1,
         statementTimeoutMs: 50,
         monotonicNowForTest: () => {
@@ -586,6 +590,56 @@ describe("platform release-store record ledger v3 contract integration", () => {
         query.startsWith("LOCK TABLE public.semantic_artifacts")),
       false,
     );
+    assert.equal(
+      (await verifyContractSpineMigrations(database.sql)).status,
+      "verified",
+    );
+
+    const driftConnection = postgres(database.url, {
+      max: 1,
+      connect_timeout: 5,
+      idle_timeout: 1,
+      onnotice: () => {},
+    });
+    const replaceFailureCauseConstraintWithTrue = async () => {
+      await driftConnection.unsafe(
+        "ALTER TABLE public.run_termination_requests DROP CONSTRAINT run_termination_requests_operational_failure_cause_check",
+      );
+      await driftConnection.unsafe(
+        `ALTER TABLE public.run_termination_requests
+           ADD CONSTRAINT run_termination_requests_operational_failure_cause_check
+           CHECK (TRUE)`,
+      );
+    };
+    const restoreFailureCauseConstraint = async () => {
+      for (const statement of OPERATIONAL_FAILURE_CAUSE_AUTHORITY_V2_STATEMENTS) {
+        await driftConnection.unsafe(statement);
+      }
+    };
+    try {
+      await assert.rejects(
+        auditCurrentContractSpineAuthorityLedgersAtV30Data(database.sql, {
+          afterV30FailureCauseVerificationForTest:
+            replaceFailureCauseConstraintWithTrue,
+        }),
+        (error: unknown) => error instanceof ContractSpineMigrationError
+          && error.code === "MIGRATION_ADOPTION_MISMATCH"
+          && /changed during audit/u.test(error.message),
+      );
+      await restoreFailureCauseConstraint();
+      await assert.rejects(
+        auditCurrentContractSpineAuthorityLedgersAtV30Data(database.sql, {
+          afterV30ReadOnlyBeginBeforeFailureCauseLockForTest:
+            replaceFailureCauseConstraintWithTrue,
+        }),
+        (error: unknown) => error instanceof ContractSpineMigrationError
+          && error.code === "MIGRATION_ADOPTION_MISMATCH"
+          && /changed during audit/u.test(error.message),
+      );
+    } finally {
+      await restoreFailureCauseConstraint();
+      await driftConnection.end({ timeout: 2 });
+    }
     assert.equal(
       (await verifyContractSpineMigrations(database.sql)).status,
       "verified",
@@ -776,6 +830,9 @@ describe("platform release-store record ledger v3 contract integration", () => {
     await database.sql.unsafe(
       "REVOKE ALL ON FUNCTION public.setfarm_enforce_platform_release_store_record_v3() FROM PUBLIC",
     );
+    await rollbackOperationalFailureCauseAuthorityV2ToV29(database.sql, {
+      targetReleaseSha: TARGET_RELEASE_SHA,
+    });
     await rollbackV3StoryClaimRuntimeBindingToV28(database.sql, {
       targetReleaseSha: TARGET_RELEASE_SHA,
     });
