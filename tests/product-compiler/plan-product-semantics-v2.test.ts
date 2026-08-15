@@ -83,6 +83,27 @@ describe("PLAN product semantics v2 integration", () => {
       /entityFieldBindings contains every-and-only state delta occurrences whose valueFrom\.kind is entity_field/i,
     );
     assert.match(prompt, /literal and input state deltas do not appear in entityFieldBindings/i);
+    assert.match(
+      prompt,
+      /snapshot contains exactly stateKey, collectionPath, and selection/i,
+    );
+    assert.match(
+      prompt,
+      /singleton selection uses exactly \{ kind: "singleton" \}/i,
+    );
+    assert.match(
+      prompt,
+      /collectionPath must resolve in the declared state's initialValue to one plain object/i,
+    );
+    assert.match(
+      prompt,
+      /match_input selection uses exactly kind, matchFieldKey, and inputField/i,
+    );
+    assert.match(
+      prompt,
+      /collectionPath must resolve in initialValue to an array of plain objects/i,
+    );
+    assert.match(prompt, /Never emit valueField/i);
   });
 
   it("accepts the atomic envelope and validates its compiler-owned projection", () => {
