@@ -68,6 +68,15 @@ import {
   buildV3BatchStitchPromptV2,
   type V3DesignContractV2,
 } from "./v3-design-contract-v2.js";
+import type { OperationalFailureCauseV1 } from "../execution/schemas/operational-failure-cause-v1.js";
+
+export const DESIGN_SOURCE_SEMANTIC_CLOSURE_OPERATIONAL_CAUSE_V1 = Object.freeze({
+  schema: "setfarm.operational-failure-cause.v1",
+  workflowStepId: "design",
+  boundary: "product_compiler.design_source.semantic_closure",
+  failureClass: "contract_invalid",
+  failureCode: "DESIGN_SOURCE_SEMANTIC_CLOSURE_REJECTED",
+} satisfies OperationalFailureCauseV1);
 
 const AttemptTransportSchema = z.object({
   schema: z.literal("setfarm.stitch-attempt-transport.v1"),
@@ -252,13 +261,7 @@ function typedMaterializationFailure(input: Readonly<{
   evidence: unknown;
 }>): DesignSourceMaterializationFailureV2 {
   const reasonCodes = uniqueSorted(input.reasonCodes).slice(0, 100);
-  const cause = {
-    schema: "setfarm.operational-failure-cause.v1",
-    workflowStepId: "design",
-    boundary: "product_compiler.design_source.semantic_closure",
-    failureClass: "contract_invalid",
-    failureCode: "DESIGN_SOURCE_SEMANTIC_CLOSURE_REJECTED",
-  };
+  const cause = DESIGN_SOURCE_SEMANTIC_CLOSURE_OPERATIONAL_CAUSE_V1;
   const evidence = input.evidence && typeof input.evidence === "object" && !Array.isArray(input.evidence)
     ? input.evidence as Record<string, unknown>
     : { detail: input.evidence };
@@ -720,6 +723,38 @@ function retryStages(failureEvidence: unknown): string[] {
   return uniqueSorted(values.filter((value): value is string => typeof value === "string"));
 }
 
+const RETRY_REASON_CODE = /^[A-Z][A-Z0-9_]{2,199}$/;
+
+function retryReasonCodes(failureEvidence: unknown, stageId: string): string[] {
+  if (!failureEvidence || typeof failureEvidence !== "object" || Array.isArray(failureEvidence)) return [];
+  const unresolvedTargets = (failureEvidence as Record<string, unknown>)["unresolvedTargets"];
+  if (!Array.isArray(unresolvedTargets)) return [];
+  const codes: string[] = [];
+  for (const target of unresolvedTargets.slice(0, 100)) {
+    if (!target || typeof target !== "object" || Array.isArray(target)) continue;
+    const record = target as Record<string, unknown>;
+    if (record["stageId"] !== stageId || !Array.isArray(record["evaluations"])) continue;
+    for (const evaluation of record["evaluations"].slice(0, 100)) {
+      if (!evaluation || typeof evaluation !== "object" || Array.isArray(evaluation)) continue;
+      const rejectionCodes = (evaluation as Record<string, unknown>)["rejectionCodes"];
+      if (!Array.isArray(rejectionCodes)) continue;
+      for (const code of rejectionCodes.slice(0, 100)) {
+        if (typeof code === "string" && RETRY_REASON_CODE.test(code)) codes.push(code);
+      }
+    }
+  }
+  return uniqueSorted(codes).slice(0, 100);
+}
+
+function retryCorrectionLines(reasonCodes: readonly string[]): string[] {
+  if (!reasonCodes.includes("CANDIDATE_UNDECLARED_INTERACTIVE_CONTROL")) return [];
+  return [
+    "Render actionable elements only for exact physical_control_slots entries; each must carry its exact data-action and data-control-slot on the same element.",
+    "Do not add actionable navigation, sidebar, header, footer, breadcrumb, menu, icon-only, settings, privacy, terms, account, or utility controls unless each is an exact declared physical_control_slots entry.",
+    "Use non-actionable div, span, or p elements when decorative labels or layout chrome are visually useful.",
+  ];
+}
+
 export async function runDesignSourceAuthorityV2(
   input: DesignSourceAuthorityRuntimeInputV2,
   dependencies: DesignSourceAuthorityRuntimeDependenciesV2,
@@ -867,22 +902,28 @@ export async function runDesignSourceAuthorityV2(
       if (failedStageIds.length === 0) return null;
       const failed = new Set(failedStageIds);
       return {
-        stagePrompts: stagePrompts.map((stage) => failed.has(stage.stageId)
-          ? {
-              stageId: stage.stageId,
-              prompt: [
-                stage.prompt,
-                "",
-                "# SETFARM_PROVEN_RETRY_DELTA_V1",
-                `parent_failure_fingerprint: ${failure.failureFingerprint}`,
-                `parent_failure_artifact_hash: ${failure.failureArtifactHash}`,
-                `reason_codes: ${failure.reasonCodes.join(",")}`,
-                `failed_stage_id: ${stage.stageId}`,
-                "Regenerate only this stage from the unchanged typed contract above.",
-                "Correct every listed semantic violation. Do not reuse prior candidate source, invent controls, or change target identity.",
-              ].join("\n"),
-            }
-          : stage),
+        stagePrompts: stagePrompts.map((stage) => {
+          if (!failed.has(stage.stageId)) return stage;
+          const nestedReasonCodes = retryReasonCodes(failureEvidence, stage.stageId);
+          return {
+            stageId: stage.stageId,
+            prompt: [
+              stage.prompt,
+              "",
+              "# SETFARM_PROVEN_RETRY_DELTA_V1",
+              `parent_failure_fingerprint: ${failure.failureFingerprint}`,
+              `parent_failure_artifact_hash: ${failure.failureArtifactHash}`,
+              `reason_codes: ${failure.reasonCodes.join(",")}`,
+              ...(nestedReasonCodes.length > 0
+                ? [`nested_reason_codes: ${nestedReasonCodes.join(",")}`]
+                : []),
+              `failed_stage_id: ${stage.stageId}`,
+              "Regenerate only this stage from the unchanged typed contract above.",
+              "Correct every listed semantic violation. Do not reuse prior candidate source, invent controls, or change target identity.",
+              ...retryCorrectionLines(nestedReasonCodes),
+            ].join("\n"),
+          };
+        }),
       };
     },
   });

@@ -306,6 +306,12 @@ describe("02-design step module", () => {
     assert.match(guards, /product_semantics_version"] === "v2"\) return/);
     assert.match(source, /Promise<PreClaimResult>/);
     assert.match(source, /disposition: "compiler_completion" as const/);
+    assert.match(source, /operationalFailureCause: result\.operationalFailureCause/);
+    assert.match(source, /operationalFailureCause: options\.operationalFailureCause/);
+    assert.match(
+      runtime,
+      /operationalFailureCause: DESIGN_SOURCE_SEMANTIC_CLOSURE_OPERATIONAL_CAUSE_V1/,
+    );
     const v3AuthorityStart = source.indexOf('if (protocol === "v3" && ctx.context["product_semantics_version"] === "v2")');
     const legacyPreparationStart = source.indexOf("let v3Contract", v3AuthorityStart);
     assert.ok(v3AuthorityStart > 0 && legacyPreparationStart > v3AuthorityStart);

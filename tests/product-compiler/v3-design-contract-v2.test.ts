@@ -73,6 +73,10 @@ describe("v3 ProductSpec v2 DESIGN contract", () => {
     assert.match(prompt, /"phase":"after"/);
     assert.match(prompt, /"kind":"accessibility"/);
     assert.match(prompt, /native named elements are valid/);
+    assert.match(
+      prompt,
+      /Do not add actionable navigation, sidebar, header, footer, breadcrumb, menu, icon-only, settings, privacy, terms, account, or utility controls unless each one is an exact declared physical_control_slots entry/,
+    );
     assert.match(prompt, /required only after\/reload may be represented by a semantically present hidden placeholder/);
     assert.equal(
       (prompt.match(/exact_same_element_attributes: data-action="ACT_START_GAME"/g) || []).length,

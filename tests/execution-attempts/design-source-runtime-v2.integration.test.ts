@@ -6,6 +6,7 @@ import path from "node:path";
 import { describe, it } from "node:test";
 
 import {
+  DESIGN_SOURCE_SEMANTIC_CLOSURE_OPERATIONAL_CAUSE_V1,
   readProjectedDesignSourceAuthorityV2,
   runDesignSourceAuthorityV2,
   serializeAttemptTransportV2,
@@ -211,6 +212,7 @@ describe("design-source authority v2 runtime", { concurrency: 1 }, () => {
       const rejectedScreenId = "screen-runtime-v2-rejected";
       const rejectedHtml = validStitchHtml([
         `<main data-surface-id="${target.surfaceRef}">`,
+        `<a href="#">Settings</a>`,
         `<section data-surface-id="${canvasSurface}"><canvas aria-label="Game canvas"></canvas></section>`,
         `<section data-surface-id="${statusObservable.selector.surfaceRef}"><div hidden role="status" aria-label="Game status">Playing</div></section>`,
         "</main>",
@@ -271,9 +273,19 @@ describe("design-source authority v2 runtime", { concurrency: 1 }, () => {
       if (rejected.runner.status !== "rejected") return;
       assert.equal(rejected.runner.stopReason, "maximum_attempts");
       assert.equal(rejected.runner.attempts.length, 2);
+      assert.equal(
+        rejected.runner.failure.operationalCauseHash,
+        hashCanonicalJson(DESIGN_SOURCE_SEMANTIC_CLOSURE_OPERATIONAL_CAUSE_V1),
+      );
       assert.equal(retryPrompts.length, 2);
       assert.doesNotMatch(retryPrompts[0]!, /SETFARM_PROVEN_RETRY_DELTA_V1/);
       assert.match(retryPrompts[1]!, /SETFARM_PROVEN_RETRY_DELTA_V1/);
+      assert.match(retryPrompts[1]!, /nested_reason_codes: CANDIDATE_[A-Z0-9_,]+/);
+      assert.match(retryPrompts[1]!, /CANDIDATE_UNDECLARED_INTERACTIVE_CONTROL/);
+      assert.match(
+        retryPrompts[1]!,
+        /Do not add actionable navigation, sidebar, header, footer, breadcrumb, menu, icon-only, settings, privacy, terms, account, or utility controls/,
+      );
       await assert.rejects(readFile(path.join(rejectedRepo, "stitch", "DESIGN_MANIFEST.json")));
 
       const selectedHtmlCases = [
