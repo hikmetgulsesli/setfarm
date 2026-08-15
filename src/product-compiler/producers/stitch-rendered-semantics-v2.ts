@@ -172,22 +172,25 @@ function renderProfile(deviceTypeInput: string): StitchRenderProfileV1 {
   };
 }
 
+function neutralizeInlineEventAttributes(html: string): string {
+  return html.replace(
+    /<script\b[^>]*>[\s\S]*?<\/script\s*>|<style\b[^>]*>[\s\S]*?<\/style\s*>|<[^>]+>/gi,
+    (sourceElement) => {
+      if (/^<\s*(?:script|style)\b/i.test(sourceElement)) return sourceElement;
+      return sourceElement.replace(
+        /\s+on[a-z][a-z0-9_-]*\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'=<>`]+)/gi,
+        "",
+      );
+    },
+  );
+}
+
 function sanitizeExecutableSource(html: string): string {
   const inspectableHtml = html.replace(/<!--[\s\S]*?-->/g, "");
   if (/<\s*(?:iframe|object|embed)\b/i.test(inspectableHtml)) {
     throw new CandidateSourceError(
       "RESOURCE_POLICY_VIOLATION",
       "Embedded browsing/plugin contexts are forbidden",
-    );
-  }
-  if (
-    /<[^>]+\son[a-z][a-z0-9_-]*\s*=/i.test(inspectableHtml)
-    || /<[^>]+\b(?:href|src|action|formaction)\s*=\s*["']\s*javascript\s*:/i.test(inspectableHtml)
-    || /<[^>]+\bsrcdoc\s*=/i.test(inspectableHtml)
-  ) {
-    throw new CandidateSourceError(
-      "UNSUPPORTED_EXECUTABLE_SCRIPT",
-      "Inline browser event, javascript URL, and srcdoc execution are forbidden",
     );
   }
   if (/<meta\b[^>]*\bhttp-equiv\s*=\s*["']?refresh\b/i.test(inspectableHtml)) {
@@ -204,7 +207,19 @@ function sanitizeExecutableSource(html: string): string {
       "Every script source must have one complete compiler-inspectable element",
     );
   }
-  return html.replace(/<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi, (
+  const neutralizedHtml = neutralizeInlineEventAttributes(html);
+  const neutralizedInspectableHtml = neutralizedHtml.replace(/<!--[\s\S]*?-->/g, "");
+  if (
+    /<[^>]+\son[a-z][a-z0-9_-]*\s*=/i.test(neutralizedInspectableHtml)
+    || /<[^>]+\b(?:href|src|action|formaction)\s*=\s*["']\s*javascript\s*:/i.test(neutralizedInspectableHtml)
+    || /<[^>]+\bsrcdoc\s*=/i.test(neutralizedInspectableHtml)
+  ) {
+    throw new CandidateSourceError(
+      "UNSUPPORTED_EXECUTABLE_SCRIPT",
+      "Unneutralized inline browser execution is forbidden",
+    );
+  }
+  return neutralizedHtml.replace(/<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi, (
     _full,
     attributes: string,
     body: string,

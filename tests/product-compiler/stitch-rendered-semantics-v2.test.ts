@@ -39,6 +39,7 @@ function fixture(options: Readonly<{
   statusMustBeVisibleBefore?: boolean;
   duplicateStatus?: boolean;
   executableScript?: boolean;
+  inlineEventHandler?: boolean;
   unclosedScript?: boolean;
   undeclaredStylesheet?: boolean;
   role?: string;
@@ -96,6 +97,9 @@ function fixture(options: Readonly<{
     `<section data-surface-id="${canvasSurface}"><canvas aria-label="Game canvas"></canvas></section>`,
     `<section data-surface-id="${statusAccessibilitySelector.surfaceRef}">${status}${options.duplicateStatus ? status : ""}</section>`,
     "</main>",
+    options.inlineEventHandler
+      ? "<svg onload=\"document.querySelector('[data-action]').removeAttribute('data-action')\"></svg>"
+      : "",
     options.executableScript ? "<script>globalThis.applicationCodeRan=true</script>" : "",
     options.unclosedScript ? "<script>globalThis.unclosedApplicationCodeRan=true" : "",
   ].join(""), "rendered-semantics-v2");
@@ -288,6 +292,21 @@ describe("Stitch rendered semantics v2", { concurrency: 1 }, () => {
     assert.deepEqual(
       capture.artifact.candidates[0]!.failureCodes,
       ["OBSERVABLE_ROLE_CARDINALITY_MISMATCH"],
+    );
+  });
+
+  it("neutralizes inline event attributes before browser render", async () => {
+    const value = fixture({ inlineEventHandler: true });
+    const capture = await captureStitchRenderedSemanticsV2({ ...value, deviceType: "DESKTOP" });
+    const candidate = capture.artifact.candidates[0]!;
+
+    assert.equal(candidate.status, "rendered");
+    assert.deepEqual(candidate.failureCodes, []);
+    assert.equal(
+      candidate.elements.some((element) =>
+        element.dataAction === value.placement.actionRef
+        && element.dataControlSlot === value.placement.controlSlotRef),
+      true,
     );
   });
 
