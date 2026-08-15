@@ -1,12 +1,16 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdtemp, opendir, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
 import { z } from "zod";
 
 import { canonicalJsonStringify, hashCanonicalJson } from "../../../product-compiler/canonical-json.js";
+import {
+  STITCH_STAGE_PROVIDER_REJECTION_POLICY_V1,
+  parseStitchStageProviderRejectionProcessEnvelopeV1,
+} from "../../../product-compiler/stitch-stage-provider-rejection-v1.js";
 import {
   DESIGN_SOURCE_SEMANTIC_CLOSURE_OPERATIONAL_CAUSE_V1,
   runDesignSourceAuthorityV2,
@@ -80,10 +84,21 @@ type ExecOnceInput = Readonly<{
   signal?: AbortSignal;
 }>;
 
+type ExecOnceObservation = Readonly<{
+  termination: "exit" | "ambiguous";
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+}>;
+
+type ExecOnceExecutor = (input: ExecOnceInput) => Promise<ExecOnceObservation>;
+
 function safeDiagnostic(value: unknown): string {
   return String(value instanceof Error ? value.message : value)
     .replace(/AQ\.[A-Za-z0-9_-]+/g, "AQ.[REDACTED]")
-    .replace(/(api[_-]?key|token|authorization|bearer)\s*[:=]\s*["']?[^"'\s,}]+/gi, "$1=[REDACTED]")
+    .replace(/\bauthorization\s*[:=]\s*[\s\S]*/gi, "Authorization=[REDACTED]")
+    .replace(/\bbearer(?:\s*[:=]\s*|\s+)[\s\S]*/gi, "Bearer=[REDACTED]")
+    .replace(/(api[_-]?key|token)\s*[:=]\s*["']?[^"'\s,}]+/gi, "$1=[REDACTED]")
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, 2_000);
@@ -107,6 +122,29 @@ function execStitchOnce(input: ExecOnceInput): Promise<string> {
   });
 }
 
+function execStitchAttemptOnce(input: ExecOnceInput): Promise<ExecOnceObservation> {
+  return new Promise((resolve) => {
+    execFile("node", [resolvePlatformScript("stitch-api.mjs"), ...input.args], {
+      cwd: input.cwd,
+      encoding: "utf8",
+      maxBuffer: 20 * 1024 * 1024,
+      timeout: input.timeoutMs,
+      ...(input.signal ? { signal: input.signal } : {}),
+    }, (error, stdout, stderr) => {
+      resolve({
+        termination: error === null || (
+          typeof error.code === "number"
+          && error.killed !== true
+          && !error.signal
+        ) ? "exit" : "ambiguous",
+        exitCode: error ? (typeof error.code === "number" ? error.code : 1) : 0,
+        stdout: String(stdout || ""),
+        stderr: String(stderr || ""),
+      });
+    });
+  });
+}
+
 export async function ensureStitchProjectIdentityV2(input: Readonly<{
   repo: string;
   projectName: string;
@@ -122,7 +160,7 @@ export async function ensureStitchProjectIdentityV2(input: Readonly<{
   return ProjectIdentitySchema.parse(JSON.parse(output)).projectId;
 }
 
-export async function generateStitchStageOnceV2(input: Readonly<{
+type GenerateStitchStageOnceInputV2 = Readonly<{
   repo: string;
   projectId: string;
   stageId: string;
@@ -130,13 +168,40 @@ export async function generateStitchStageOnceV2(input: Readonly<{
   deviceType: "DESKTOP" | "TABLET" | "MOBILE";
   model: string;
   signal: AbortSignal;
-}>): Promise<Awaited<ReturnType<DesignSourceAuthorityRuntimeDependenciesV2["generateStage"]>>> {
+}>;
+
+async function requireNoProviderOutputV2(outputDir: string): Promise<void> {
+  let metadata;
+  try {
+    metadata = await lstat(outputDir);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw error;
+  }
+  if (metadata.isSymbolicLink() || !metadata.isDirectory()) {
+    throw new Error("DESIGN_SOURCE_PROVIDER_REJECTION_LOCAL_OUTPUT_PRESENT");
+  }
+  const directory = await opendir(outputDir);
+  try {
+    const first = await directory.read();
+    if (first !== null) {
+      throw new Error("DESIGN_SOURCE_PROVIDER_REJECTION_LOCAL_OUTPUT_PRESENT");
+    }
+  } finally {
+    await directory.close().catch(() => undefined);
+  }
+}
+
+async function generateStitchStageOnceCoreV2(
+  input: GenerateStitchStageOnceInputV2,
+  execute: ExecOnceExecutor,
+): Promise<Awaited<ReturnType<DesignSourceAuthorityRuntimeDependenciesV2["generateStage"]>>> {
   const workspace = await mkdtemp(path.join(os.tmpdir(), `setfarm-stitch-${input.stageId}-`));
   try {
     const promptPath = path.join(workspace, "prompt.md");
     const outputDir = path.join(workspace, "output");
     await writeFile(promptPath, `${input.prompt.trim()}\n`, "utf8");
-    const stdout = await execStitchOnce({
+    const observation = await execute({
       args: [
         "generate-all-screens-attempt",
         input.projectId,
@@ -149,6 +214,47 @@ export async function generateStitchStageOnceV2(input: Readonly<{
       timeoutMs: 15 * 60_000,
       signal: input.signal,
     });
+    if (observation.exitCode !== 0) {
+      if (observation.termination !== "exit") {
+        throw new Error("STITCH_CHILD_EXECUTION_AMBIGUOUS");
+      }
+      let providerRejection;
+      try {
+        providerRejection = parseStitchStageProviderRejectionProcessEnvelopeV1(observation);
+      } catch {
+        throw new Error("STITCH_CHILD_PROVIDER_REJECTION_ENVELOPE_INVALID");
+      }
+      await requireNoProviderOutputV2(outputDir);
+      const reasonCodes = ["DESIGN_SOURCE_PROVIDER_REJECTED_BEFORE_ACCEPTANCE"];
+      const evidence = {
+        phase: "provider_dispatch",
+        failedStageIds: [input.stageId],
+        providerRejectionPolicyHash: hashCanonicalJson(STITCH_STAGE_PROVIDER_REJECTION_POLICY_V1),
+        providerRejection,
+      };
+      return {
+        disposition: "infrastructure_failure",
+        failure: {
+          failureFingerprint: hashCanonicalJson({
+            schema: "setfarm.design-source-provider-rejection-fingerprint.v1",
+            stageId: input.stageId,
+            reasonCodes,
+            evidenceHash: hashCanonicalJson(evidence),
+          }),
+          operationalCauseHash: hashCanonicalJson({
+            schema: "setfarm.operational-failure-cause.v1",
+            workflowStepId: "design",
+            boundary: "product_compiler.design_source.provider_dispatch",
+            failureClass: "infrastructure_failure",
+            failureCode: "DESIGN_SOURCE_PROVIDER_REJECTED_BEFORE_ACCEPTANCE",
+          }),
+          reasonCodes,
+          evidence,
+        },
+        rawEvidence: observation.stderr,
+      };
+    }
+    const stdout = observation.stdout;
     const response = AttemptTransportOutputSchema.parse(JSON.parse(stdout));
     const artifacts: DesignSourceStageArtifactV2[] = [];
     for (const screen of response.screens) {
@@ -166,6 +272,19 @@ export async function generateStitchStageOnceV2(input: Readonly<{
   } finally {
     await rm(workspace, { recursive: true, force: true });
   }
+}
+
+export async function generateStitchStageOnceV2(
+  input: GenerateStitchStageOnceInputV2,
+): Promise<Awaited<ReturnType<DesignSourceAuthorityRuntimeDependenciesV2["generateStage"]>>> {
+  return generateStitchStageOnceCoreV2(input, execStitchAttemptOnce);
+}
+
+export async function generateStitchStageOnceWithExecutorForInternalTestV2(
+  input: GenerateStitchStageOnceInputV2,
+  executor: ExecOnceExecutor,
+): Promise<Awaited<ReturnType<DesignSourceAuthorityRuntimeDependenciesV2["generateStage"]>>> {
+  return generateStitchStageOnceCoreV2(input, executor);
 }
 
 function exactScreenMap(
