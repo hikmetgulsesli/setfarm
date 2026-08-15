@@ -6,6 +6,13 @@ import path from "node:path";
 
 import JSON5 from "json5";
 import {
+  defaultTreeAdapter,
+  parse,
+  type DefaultTreeAdapterMap,
+  type DefaultTreeAdapterTypes,
+  type TreeAdapter,
+} from "parse5";
+import {
   chromium,
   type Browser,
   type BrowserContext,
@@ -15,7 +22,6 @@ import {
 
 import { canonicalJsonStringify, hashCanonicalJson } from "../canonical-json.js";
 import { isValidStitchHtmlBytes, isValidStitchScreenshotBytes } from "../stitch-render-artifact.js";
-import { parseStitchSemanticDomV1 } from "../stitch-semantic-dom-v1.js";
 import {
   DesignGenerationTargetsV2Schema,
   type DesignGenerationTargetV2,
@@ -46,15 +52,11 @@ const CHROMIUM_REVISION = String((JSON.parse(readFileSync(
 
 const MAX_RESOURCE_BYTES = 2 * 1024 * 1024;
 const MAX_TOTAL_RESOURCE_BYTES = 8 * 1024 * 1024;
-const CONTRACT_ATTRIBUTES = new Set([
-  "data-action",
-  "data-action-input",
-  "data-control-slot",
-  "data-surface-id",
-  "role",
-  "aria-label",
-  "href",
-]);
+const MAX_HTML_BYTES = 2 * 1024 * 1024;
+const MAX_TOTAL_HTML_BYTES = 8 * 1024 * 1024;
+const MAX_HTML_ELEMENTS = 10_000;
+const MAX_HTML_NODES = 50_000;
+const MAX_HTML_DEPTH = 256;
 const PHASE_ORDER = ["before", "after", "reload"] as const;
 const ARIA_ROLES = new Set([
   "alert", "alertdialog", "application", "article", "banner", "blockquote", "button",
@@ -172,80 +174,228 @@ function renderProfile(deviceTypeInput: string): StitchRenderProfileV1 {
   };
 }
 
-function sanitizeExecutableSource(html: string): string {
-  const inspectableHtml = html.replace(/<!--[\s\S]*?-->/g, "");
-  if (/<\s*(?:iframe|object|embed)\b/i.test(inspectableHtml)) {
-    throw new CandidateSourceError(
-      "RESOURCE_POLICY_VIOLATION",
-      "Embedded browsing/plugin contexts are forbidden",
-    );
-  }
-  if (
-    /<[^>]+\son[a-z][a-z0-9_-]*\s*=/i.test(inspectableHtml)
-    || /<[^>]+\b(?:href|src|action|formaction)\s*=\s*["']\s*javascript\s*:/i.test(inspectableHtml)
-    || /<[^>]+\bsrcdoc\s*=/i.test(inspectableHtml)
-  ) {
-    throw new CandidateSourceError(
-      "UNSUPPORTED_EXECUTABLE_SCRIPT",
-      "Inline browser event, javascript URL, and srcdoc execution are forbidden",
-    );
-  }
-  if (/<meta\b[^>]*\bhttp-equiv\s*=\s*["']?refresh\b/i.test(inspectableHtml)) {
-    throw new CandidateSourceError(
-      "RESOURCE_POLICY_VIOLATION",
-      "Meta refresh navigation is forbidden during rendered-semantics capture",
-    );
-  }
-  const scriptStarts = inspectableHtml.match(/<script\b/gi)?.length ?? 0;
-  const completeScripts = inspectableHtml.match(/<script\b[^>]*>[\s\S]*?<\/script\s*>/gi)?.length ?? 0;
-  if (scriptStarts !== completeScripts) {
-    throw new CandidateSourceError(
-      "UNSUPPORTED_EXECUTABLE_SCRIPT",
-      "Every script source must have one complete compiler-inspectable element",
-    );
-  }
-  return html.replace(/<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi, (
-    _full,
-    attributes: string,
-    body: string,
-  ) => {
-    const type = attributes.match(/\btype\s*=\s*["']([^"']+)["']/i)?.[1]?.toLowerCase();
-    if (type && !["text/javascript", "application/javascript", "module"].includes(type)) return "";
-    const src = attributes.match(/\bsrc\s*=\s*["']([^"']+)["']/i)?.[1];
-    if (src) {
-      const parsed = allowedResourceUrl(decodeHtmlAttribute(src), "script");
-      return `<script src="${parsed.replace(/&/g, "&amp;")}"></script>`;
-    }
-    const match = body.match(/^\s*tailwind\.config\s*=\s*([\s\S]*?)\s*;?\s*$/);
-    if (!match) {
-      if (!body.trim()) return "";
+type SourceElement = DefaultTreeAdapterTypes.Element;
+type SourceNode = DefaultTreeAdapterTypes.Node;
+type SourceEdit = Readonly<{ startOffset: number; endOffset: number; replacement: string }>;
+
+function sourceElements(document: DefaultTreeAdapterTypes.Document): SourceElement[] {
+  const elements: SourceElement[] = [];
+  const pending: Array<{ node: SourceNode; depth: number }> = [{ node: document, depth: 0 }];
+  let nodeCount = 0;
+  while (pending.length > 0) {
+    const { node, depth } = pending.pop()!;
+    nodeCount += 1;
+    if (nodeCount > MAX_HTML_NODES || depth > MAX_HTML_DEPTH) {
       throw new CandidateSourceError(
-        "UNSUPPORTED_EXECUTABLE_SCRIPT",
-        "Inline executable source is outside the Tailwind data-only policy",
+        "RESOURCE_CAPACITY_EXCEEDED",
+        "HTML tree exceeds the bounded node or depth capacity",
       );
     }
-    let config: unknown;
-    try {
-      config = JSON5.parse(match[1]!);
-    } catch {
-      throw new CandidateSourceError(
-        "UNSUPPORTED_EXECUTABLE_SCRIPT",
-        "Tailwind configuration must be a data-only JSON5 value",
-      );
+    if ("tagName" in node) {
+      elements.push(node);
+      if (elements.length > MAX_HTML_ELEMENTS) {
+        throw new CandidateSourceError(
+          "RESOURCE_CAPACITY_EXCEEDED",
+          "HTML tree exceeds the bounded element capacity",
+        );
+      }
+      if (node.tagName === "template" && "content" in node) {
+        pending.push({ node: node.content, depth: depth + 1 });
+      }
     }
-    return `<script>tailwind.config=${JSON.stringify(config)};</script>`;
+    if ("childNodes" in node) {
+      for (let index = node.childNodes.length - 1; index >= 0; index -= 1) {
+        pending.push({ node: node.childNodes[index]!, depth: depth + 1 });
+      }
+    }
+  }
+  return elements;
+}
+
+function htmlTreeCapacityError(): CandidateSourceError {
+  return new CandidateSourceError(
+    "RESOURCE_CAPACITY_EXCEEDED",
+    "HTML tree exceeds the bounded element, node, or depth capacity",
+  );
+}
+
+function boundedSourceTreeAdapter(): TreeAdapter<DefaultTreeAdapterMap> {
+  let elementCount = 0;
+  let openElementDepth = 0;
+  return {
+    ...defaultTreeAdapter,
+    createElement: (tagName, namespaceURI, attrs) => {
+      elementCount += 1;
+      if (elementCount > MAX_HTML_ELEMENTS) throw htmlTreeCapacityError();
+      return defaultTreeAdapter.createElement(tagName, namespaceURI, attrs);
+    },
+    onItemPush: () => {
+      openElementDepth += 1;
+      if (openElementDepth > MAX_HTML_DEPTH) throw htmlTreeCapacityError();
+    },
+    onItemPop: () => {
+      openElementDepth = Math.max(0, openElementDepth - 1);
+    },
+  };
+}
+
+function parseSourceDocument(html: string): DefaultTreeAdapterTypes.Document {
+  return parse(html, {
+    sourceCodeLocationInfo: true,
+    treeAdapter: boundedSourceTreeAdapter(),
+    onParseError: (error) => {
+      throw new CandidateSourceError(
+        error.code === "duplicate-attribute"
+          ? "DUPLICATE_CONTRACT_ATTRIBUTE"
+          : "UNSUPPORTED_EXECUTABLE_SCRIPT",
+        `HTML tokenization failed closed: ${error.code}`,
+      );
+    },
   });
 }
 
-function assertNoDuplicateContractAttributes(html: string): void {
-  const duplicate = parseStitchSemanticDomV1(html).flatMap((element) =>
-    element.duplicateAttributes.filter((attribute) => CONTRACT_ATTRIBUTES.has(attribute)));
-  if (duplicate.length > 0) {
-    throw new CandidateSourceError(
-      "DUPLICATE_CONTRACT_ATTRIBUTE",
-      "Source repeats a machine-contract attribute",
-    );
+function qualifiedAttributeName(attribute: SourceElement["attrs"][number]): string {
+  return `${attribute.prefix ? `${attribute.prefix}:` : ""}${attribute.name}`.toLowerCase();
+}
+
+function sourceAttribute(
+  element: SourceElement,
+  name: string,
+): SourceElement["attrs"][number] | undefined {
+  const expected = name.toLowerCase();
+  return element.attrs.find((attribute) => qualifiedAttributeName(attribute) === expected);
+}
+
+function isExecutableUrl(value: string): boolean {
+  return value.replace(/[\u0000-\u0020\u007f]+/g, "").toLowerCase().startsWith("javascript:");
+}
+
+function applySourceEdits(html: string, edits: readonly SourceEdit[]): string {
+  const ordered = [...edits].sort((left, right) =>
+    right.startOffset - left.startOffset || right.endOffset - left.endOffset);
+  let cursor = html.length;
+  let output = html;
+  for (const edit of ordered) {
+    if (
+      !Number.isSafeInteger(edit.startOffset)
+      || !Number.isSafeInteger(edit.endOffset)
+      || edit.startOffset < 0
+      || edit.endOffset < edit.startOffset
+      || edit.endOffset > cursor
+    ) {
+      throw new CandidateSourceError(
+        "UNSUPPORTED_EXECUTABLE_SCRIPT",
+        "HTML source locations overlap or are outside the source",
+      );
+    }
+    output = `${output.slice(0, edit.startOffset)}${edit.replacement}${output.slice(edit.endOffset)}`;
+    cursor = edit.startOffset;
   }
+  return output;
+}
+
+function sanitizeExecutableSource(html: string): string {
+  const document = parseSourceDocument(html);
+  const edits: SourceEdit[] = [];
+  for (const element of sourceElements(document)) {
+    const tagName = element.tagName.toLowerCase();
+    if (["iframe", "object", "embed"].includes(tagName)) {
+      throw new CandidateSourceError(
+        "RESOURCE_POLICY_VIOLATION",
+        "Embedded browsing/plugin contexts are forbidden",
+      );
+    }
+    if (
+      tagName === "meta"
+      && sourceAttribute(element, "http-equiv")?.value.trim().toLowerCase() === "refresh"
+    ) {
+      throw new CandidateSourceError(
+        "RESOURCE_POLICY_VIOLATION",
+        "Meta refresh navigation is forbidden during rendered-semantics capture",
+      );
+    }
+    for (const attribute of element.attrs) {
+      const name = qualifiedAttributeName(attribute);
+      if (name === "srcdoc") {
+        throw new CandidateSourceError(
+          "UNSUPPORTED_EXECUTABLE_SCRIPT",
+          "Inline frame source documents are forbidden",
+        );
+      }
+      if (["href", "xlink:href", "src", "action", "formaction"].includes(name)
+        && isExecutableUrl(attribute.value)) {
+        throw new CandidateSourceError(
+          "UNSUPPORTED_EXECUTABLE_SCRIPT",
+          "Executable URL attributes are forbidden",
+        );
+      }
+    }
+
+    const location = element.sourceCodeLocation;
+    if (!location?.startTag) continue;
+    if (tagName === "script") {
+      if (!location.endTag) {
+        throw new CandidateSourceError(
+          "UNSUPPORTED_EXECUTABLE_SCRIPT",
+          "Every script source must have one complete compiler-inspectable element",
+        );
+      }
+      const type = sourceAttribute(element, "type")?.value.trim().toLowerCase();
+      let replacement = "";
+      if (!type || ["text/javascript", "application/javascript", "module"].includes(type)) {
+        const src = sourceAttribute(element, "src");
+        if (src) {
+          const parsed = allowedResourceUrl(src.value, "script");
+          replacement = `<script src="${parsed.replace(/&/g, "&amp;")}"></script>`;
+        } else {
+          const body = html.slice(location.startTag.endOffset, location.endTag.startOffset);
+          const match = body.match(/^\s*tailwind\.config\s*=\s*([\s\S]*?)\s*;?\s*$/);
+          if (!match) {
+            if (body.trim()) {
+              throw new CandidateSourceError(
+                "UNSUPPORTED_EXECUTABLE_SCRIPT",
+                "Inline executable source is outside the Tailwind data-only policy",
+              );
+            }
+          } else {
+            let config: unknown;
+            try {
+              config = JSON5.parse(match[1]!);
+            } catch {
+              throw new CandidateSourceError(
+                "UNSUPPORTED_EXECUTABLE_SCRIPT",
+                "Tailwind configuration must be a data-only JSON5 value",
+              );
+            }
+            replacement = `<script>tailwind.config=${JSON.stringify(config)};</script>`;
+          }
+        }
+      }
+      edits.push({
+        startOffset: location.startTag.startOffset,
+        endOffset: location.endTag.endOffset,
+        replacement,
+      });
+      continue;
+    }
+    for (const attribute of element.attrs) {
+      const name = qualifiedAttributeName(attribute);
+      if (!/^on[a-z][a-z0-9_-]*$/.test(name)) continue;
+      const attributeLocation = location.attrs?.[name];
+      if (!attributeLocation) {
+        throw new CandidateSourceError(
+          "UNSUPPORTED_EXECUTABLE_SCRIPT",
+          "Inline event attribute lacks an exact source location",
+        );
+      }
+      edits.push({
+        startOffset: attributeLocation.startOffset,
+        endOffset: attributeLocation.endOffset,
+        replacement: "",
+      });
+    }
+  }
+  return applySourceEdits(html, edits);
 }
 
 function allowedResourceUrl(raw: string, resourceType: "script" | "stylesheet"): string {
@@ -268,39 +418,26 @@ function allowedResourceUrl(raw: string, resourceType: "script" | "stylesheet"):
   return parsed.toString();
 }
 
-function decodeHtmlAttribute(value: string): string {
-  return value
-    .replace(/&#x([0-9a-f]+);?/gi, (_match, digits: string) =>
-      String.fromCodePoint(Number.parseInt(digits, 16)))
-    .replace(/&#([0-9]+);?/g, (_match, digits: string) =>
-      String.fromCodePoint(Number.parseInt(digits, 10)))
-    .replace(/&amp;/gi, "&")
-    .replace(/&quot;/gi, "\"")
-    .replace(/&apos;|&#39;/gi, "'");
-}
-
-function attributeValue(attributes: string, name: string): string | undefined {
-  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const value = attributes.match(new RegExp(`\\b${escaped}\\s*=\\s*["']([^"']+)["']`, "i"))?.[1];
-  return value === undefined ? undefined : decodeHtmlAttribute(value);
-}
-
 function declaredResources(html: string): Array<Readonly<{
   url: string;
   resourceType: "script" | "stylesheet";
 }>> {
   const resources: Array<{ url: string; resourceType: "script" | "stylesheet" }> = [];
-  for (const match of html.matchAll(/<(script|link)\b([^>]*)>/gi)) {
-    const tag = match[1]!.toLowerCase();
-    const attributes = match[2]!;
-    if (tag === "script") {
-      const src = attributeValue(attributes, "src");
-      if (src) resources.push({ url: allowedResourceUrl(src, "script"), resourceType: "script" });
+  for (const element of sourceElements(parseSourceDocument(html))) {
+    if (element.tagName === "script") {
+      const src = sourceAttribute(element, "src");
+      if (src) {
+        resources.push({
+          url: allowedResourceUrl(src.value, "script"),
+          resourceType: "script",
+        });
+      }
       continue;
     }
-    const rel = attributeValue(attributes, "rel")?.toLowerCase().split(/\s+/) ?? [];
-    const href = attributeValue(attributes, "href");
-    if (rel.includes("stylesheet") && href) {
+    if (element.tagName !== "link") continue;
+    const rel = sourceAttribute(element, "rel")?.value.toLowerCase().split(/\s+/) ?? [];
+    const href = sourceAttribute(element, "href")?.value;
+    if (rel.includes("stylesheet") && href !== undefined) {
       resources.push({ url: allowedResourceUrl(href, "stylesheet"), resourceType: "stylesheet" });
     }
   }
@@ -782,6 +919,10 @@ export async function captureStitchRenderedSemanticsV2(input: Readonly<{
   const resourceSidecars = new Map<string, Buffer>();
   const resourcesByUrlHash = new Map<string, ResourceCapture>();
   const candidates: StitchRenderedCandidateV2[] = [];
+  const aggregateHtmlBytes = input.artifacts.reduce(
+    (total, artifact) => total + (artifact.htmlBytes?.byteLength ?? 0),
+    0,
+  );
   let chromiumVersion = "";
 
   for (const candidate of directResponseEvidence.batches.flatMap((batch) => batch.candidates)
@@ -820,6 +961,10 @@ export async function captureStitchRenderedSemanticsV2(input: Readonly<{
       reject("HTML_INVALID");
       continue;
     }
+    if (htmlBytes.byteLength > MAX_HTML_BYTES || aggregateHtmlBytes > MAX_TOTAL_HTML_BYTES) {
+      reject("RESOURCE_CAPACITY_EXCEEDED");
+      continue;
+    }
     if (!screenshotBytes || !isValidStitchScreenshotBytes(screenshotBytes)) {
       reject("SCREENSHOT_INVALID");
       continue;
@@ -836,7 +981,6 @@ export async function captureStitchRenderedSemanticsV2(input: Readonly<{
     let phase: StitchRenderedSemanticsInfrastructurePhaseV2 = "source_validation";
     try {
       const rawHtml = Buffer.from(htmlBytes).toString("utf8");
-      assertNoDuplicateContractAttributes(rawHtml);
       const sanitizedHtml = sanitizeExecutableSource(rawHtml);
 
       phase = "resource_prefetch";

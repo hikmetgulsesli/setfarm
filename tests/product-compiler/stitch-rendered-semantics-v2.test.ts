@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -39,6 +40,12 @@ function fixture(options: Readonly<{
   statusMustBeVisibleBefore?: boolean;
   duplicateStatus?: boolean;
   executableScript?: boolean;
+  inlineEventHandler?: boolean;
+  inlineEventMarkup?: string;
+  dataActionValueSuffix?: string;
+  extraHtml?: string;
+  rawTextStyleProbe?: boolean;
+  scriptMarkup?: string;
   unclosedScript?: boolean;
   undeclaredStylesheet?: boolean;
   role?: string;
@@ -92,10 +99,19 @@ function fixture(options: Readonly<{
       ? '<style>@import url("https://cdn.jsdelivr.net/npm/normalize.css@8.0.1/normalize.css");</style>'
       : "",
     `<main data-surface-id="${target.surfaceRef}">`,
-    `<button data-action="${placement.actionRef}" data-control-slot="${placement.controlSlotRef}">Start Game</button>`,
+    `<button data-action="${placement.actionRef}${options.dataActionValueSuffix ?? ""}" data-control-slot="${placement.controlSlotRef}">Start Game</button>`,
     `<section data-surface-id="${canvasSurface}"><canvas aria-label="Game canvas"></canvas></section>`,
     `<section data-surface-id="${statusAccessibilitySelector.surfaceRef}">${status}${options.duplicateStatus ? status : ""}</section>`,
     "</main>",
+    options.inlineEventHandler
+      ? "<svg onload=\"document.querySelector('[data-action]').removeAttribute('data-action')\"></svg>"
+      : "",
+    options.inlineEventMarkup ?? "",
+    options.extraHtml ?? "",
+    options.rawTextStyleProbe
+      ? `<style>button[data-action="${placement.actionRef} onclick='literal-raw-text'"]{display:none}</style>`
+      : "",
+    options.scriptMarkup ?? "",
     options.executableScript ? "<script>globalThis.applicationCodeRan=true</script>" : "",
     options.unclosedScript ? "<script>globalThis.unclosedApplicationCodeRan=true" : "",
   ].join(""), "rendered-semantics-v2");
@@ -288,6 +304,162 @@ describe("Stitch rendered semantics v2", { concurrency: 1 }, () => {
     assert.deepEqual(
       capture.artifact.candidates[0]!.failureCodes,
       ["OBSERVABLE_ROLE_CARDINALITY_MISMATCH"],
+    );
+  });
+
+  it("neutralizes inline event attributes before browser render", async () => {
+    const value = fixture({ inlineEventHandler: true });
+    const capture = await captureStitchRenderedSemanticsV2({ ...value, deviceType: "DESKTOP" });
+    const candidate = capture.artifact.candidates[0]!;
+
+    assert.equal(candidate.status, "rendered");
+    assert.deepEqual(candidate.failureCodes, []);
+    assert.equal(
+      candidate.elements.some((element) =>
+        element.dataAction === value.placement.actionRef
+        && element.dataControlSlot === value.placement.controlSlotRef),
+      true,
+    );
+    assert.equal(candidate.htmlArtifactHash, createHash("sha256").update(value.artifacts[0]!.htmlBytes).digest("hex"));
+  });
+
+  it("neutralizes tokenizer edge-case handlers without changing neighboring attributes", async () => {
+    const safeToNeutralize = [
+      "<svg data-note=\">\" onload=\"document.querySelector('[data-action]').removeAttribute('data-action')\"></svg>",
+      "<style>@keyframes setfarm-handler-probe{from{opacity:.99}to{opacity:1}}</style><svg style=\"animation:setfarm-handler-probe 1ms\" onload=\"document.querySelector('[data-action]').removeAttribute('data-action')\" onanimationstart=\"document.querySelector('[data-control-slot]').removeAttribute('data-control-slot')\"></svg>",
+      "<style onload=\"document.querySelector('[data-action]').removeAttribute('data-action')\">.safe{display:block}</style>",
+      "<script onload=\"document.querySelector('[data-action]').removeAttribute('data-action')\">tailwind.config={theme:{}}</script>",
+    ];
+    for (const inlineEventMarkup of safeToNeutralize) {
+      const value = fixture({ inlineEventMarkup });
+      const capture = await captureStitchRenderedSemanticsV2({ ...value, deviceType: "DESKTOP" });
+      const candidate = capture.artifact.candidates[0]!;
+      assert.equal(candidate.status, "rendered", inlineEventMarkup);
+      assert.equal(
+        candidate.elements.some((element) =>
+          element.dataAction === value.placement.actionRef
+          && element.dataControlSlot === value.placement.controlSlotRef),
+        true,
+        inlineEventMarkup,
+      );
+    }
+
+    const malformedSolidus = fixture({
+      inlineEventMarkup:
+        "<svg/onload=\"document.querySelector('[data-action]').removeAttribute('data-action')\"></svg>",
+    });
+    const malformedCapture = await captureStitchRenderedSemanticsV2({
+      ...malformedSolidus,
+      deviceType: "DESKTOP",
+    });
+    assert.equal(malformedCapture.artifact.candidates[0]!.status, "source_rejected");
+    assert.deepEqual(
+      malformedCapture.artifact.candidates[0]!.failureCodes,
+      ["UNSUPPORTED_EXECUTABLE_SCRIPT"],
+    );
+
+    const embeddedText = fixture({ dataActionValueSuffix: " onclick='globalThis.forged=true'" });
+    const embeddedCapture = await captureStitchRenderedSemanticsV2({
+      ...embeddedText,
+      deviceType: "DESKTOP",
+    });
+    assert.equal(
+      embeddedCapture.artifact.candidates[0]!.elements.some((element) =>
+        element.dataAction === embeddedText.placement.actionRef),
+      false,
+    );
+
+    const rawText = fixture({ rawTextStyleProbe: true });
+    const rawTextCapture = await captureStitchRenderedSemanticsV2({
+      ...rawText,
+      deviceType: "DESKTOP",
+    });
+    const rawTextControl = rawTextCapture.artifact.candidates[0]!.elements.find((element) =>
+      element.dataAction === rawText.placement.actionRef);
+    assert.equal(rawTextControl?.renderState, "rendered");
+  });
+
+  it("source-rejects structurally parsed executable URLs and script sources", async () => {
+    const attacks = [
+      "<a href=javascript:document.body.dataset.pwned=1>unsafe</a>",
+      "<a href=\"java&#x73;cript:document.body.dataset.pwned=1\">unsafe</a>",
+      "<a href=\"java&#x0a;script:document.body.dataset.pwned=1\">unsafe</a>",
+      "<a xlink:href=\"javascript:document.body.dataset.pwned=1\">unsafe</a>",
+    ];
+    for (const extraHtml of attacks) {
+      const value = fixture({ extraHtml });
+      const capture = await captureStitchRenderedSemanticsV2({ ...value, deviceType: "DESKTOP" });
+      assert.equal(capture.artifact.candidates[0]!.status, "source_rejected", extraHtml);
+      assert.deepEqual(
+        capture.artifact.candidates[0]!.failureCodes,
+        ["UNSUPPORTED_EXECUTABLE_SCRIPT"],
+        extraHtml,
+      );
+    }
+
+    const script = fixture({ scriptMarkup: "<script src=https://evil.example/app.js></script>" });
+    const scriptCapture = await captureStitchRenderedSemanticsV2({
+      ...script,
+      deviceType: "DESKTOP",
+    });
+    assert.equal(scriptCapture.artifact.candidates[0]!.status, "source_rejected");
+    assert.deepEqual(
+      scriptCapture.artifact.candidates[0]!.failureCodes,
+      ["UNSUPPORTED_EXECUTABLE_SCRIPT"],
+    );
+
+    const rawText = fixture({ extraHtml: "<style>.unterminated{" });
+    const rawTextCapture = await captureStitchRenderedSemanticsV2({
+      ...rawText,
+      deviceType: "DESKTOP",
+    });
+    assert.equal(rawTextCapture.artifact.candidates[0]!.status, "source_rejected");
+    assert.deepEqual(
+      rawTextCapture.artifact.candidates[0]!.failureCodes,
+      ["UNSUPPORTED_EXECUTABLE_SCRIPT"],
+    );
+  });
+
+  it("fails closed on per-candidate and aggregate HTML capacity", async () => {
+    const oversized = fixture({ extraHtml: "x".repeat(2 * 1024 * 1024) });
+    const oversizedCapture = await captureStitchRenderedSemanticsV2({
+      ...oversized,
+      deviceType: "DESKTOP",
+    });
+    assert.deepEqual(
+      oversizedCapture.artifact.candidates[0]!.failureCodes,
+      ["RESOURCE_CAPACITY_EXCEEDED"],
+    );
+
+    const aggregate = fixture();
+    const aggregateCapture = await captureStitchRenderedSemanticsV2({
+      ...aggregate,
+      artifacts: [
+        ...aggregate.artifacts,
+        ...Array.from({ length: 4 }, (_, index) => ({
+          screenId: `unused-capacity-${index}`,
+          htmlBytes: Buffer.alloc(2 * 1024 * 1024, 0x20),
+          screenshotBytes: validStitchPng(150 + index),
+        })),
+      ],
+      deviceType: "DESKTOP",
+    });
+    assert.deepEqual(
+      aggregateCapture.artifact.candidates[0]!.failureCodes,
+      ["RESOURCE_CAPACITY_EXCEEDED"],
+    );
+
+    const nestingDepth = 5_000;
+    const deeplyNested = fixture({
+      extraHtml: `${"<div>".repeat(nestingDepth)}safe${"</div>".repeat(nestingDepth)}`,
+    });
+    const deeplyNestedCapture = await captureStitchRenderedSemanticsV2({
+      ...deeplyNested,
+      deviceType: "DESKTOP",
+    });
+    assert.deepEqual(
+      deeplyNestedCapture.artifact.candidates[0]!.failureCodes,
+      ["RESOURCE_CAPACITY_EXCEEDED"],
     );
   });
 
