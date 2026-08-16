@@ -514,12 +514,9 @@ function parseSingleRawPlutilValueV1(stdout: string): string {
   return value;
 }
 
-function parseCompactJsonLineV1(
-  stdout: string,
-  invalidCode:
-    | "PRODUCT_BUILD_AUTHORITY_V2_DELIVERY_EVIDENCE_PLUTIL_OUTPUT_INVALID"
-    | "PRODUCT_BUILD_AUTHORITY_V2_DELIVERY_EVIDENCE_SOURCE_CLI_OUTPUT_INVALID",
-): unknown {
+function parseCompactSourceCliJsonLineV1(stdout: string): unknown {
+  const invalidCode =
+    "PRODUCT_BUILD_AUTHORITY_V2_DELIVERY_EVIDENCE_SOURCE_CLI_OUTPUT_INVALID";
   if (!stdout.endsWith("\n")) failObservation(invalidCode);
   const compact = stdout.slice(0, -1);
   if (compact.length === 0 || /[\n\r]/u.test(compact)) failObservation(invalidCode);
@@ -527,6 +524,26 @@ function parseCompactJsonLineV1(
     const parsed: unknown = JSON.parse(compact);
     if (JSON.stringify(parsed) !== compact) failObservation(invalidCode);
     return parsed;
+  } catch (error) {
+    if (error instanceof ProductBuildAuthorityV2DeliveryEvidenceObservationError) throw error;
+    failObservation(invalidCode);
+  }
+}
+
+function parsePlutilProgramArgumentsV1(stdout: string): readonly [string, string] {
+  const invalidCode =
+    "PRODUCT_BUILD_AUTHORITY_V2_DELIVERY_EVIDENCE_PLUTIL_OUTPUT_INVALID";
+  if (stdout.length === 0 || /[\s\0]/u.test(stdout)) failObservation(invalidCode);
+  try {
+    const parsed: unknown = JSON.parse(stdout);
+    if (
+      !Array.isArray(parsed)
+      || parsed.length !== 2
+      || parsed.some((member) => typeof member !== "string")
+    ) {
+      failObservation(invalidCode);
+    }
+    return Object.freeze([parsed[0] as string, parsed[1] as string]);
   } catch (error) {
     if (error instanceof ProductBuildAuthorityV2DeliveryEvidenceObservationError) throw error;
     failObservation(invalidCode);
@@ -701,17 +718,13 @@ async function observeMissionControlSourceCliLocatorV1(): Promise<MissionControl
   const workingDirectory = parseSingleRawPlutilValueV1(
     plutilSelections[1]?.stdout ?? "",
   );
-  const programArguments = parseCompactJsonLineV1(
+  const programArguments = parsePlutilProgramArgumentsV1(
     plutilSelections[2]?.stdout ?? "",
-    "PRODUCT_BUILD_AUTHORITY_V2_DELIVERY_EVIDENCE_PLUTIL_OUTPUT_INVALID",
   );
   if (
     label !== MISSION_CONTROL_LAUNCHD_LABEL_V1
     || !isAbsolute(workingDirectory)
     || loaded.workingDirectory !== workingDirectory
-    || !Array.isArray(programArguments)
-    || programArguments.length !== 2
-    || programArguments.some((member) => typeof member !== "string")
   ) {
     failObservation("PRODUCT_BUILD_AUTHORITY_V2_DELIVERY_EVIDENCE_LOCATOR_INVALID");
   }
@@ -830,10 +843,7 @@ export async function observeCurrentProductBuildAuthorityV2DeliveryEvidenceV1():
   if (child.stderr !== "") {
     failObservation("PRODUCT_BUILD_AUTHORITY_V2_DELIVERY_EVIDENCE_SOURCE_CLI_OUTPUT_INVALID");
   }
-  const rawResponse = parseCompactJsonLineV1(
-    child.stdout,
-    "PRODUCT_BUILD_AUTHORITY_V2_DELIVERY_EVIDENCE_SOURCE_CLI_OUTPUT_INVALID",
-  );
+  const rawResponse = parseCompactSourceCliJsonLineV1(child.stdout);
   let response: ProductBuildAuthorityV2DeliveryEvidenceResponseV1;
   try {
     response = parseProductBuildAuthorityV2DeliveryEvidenceResponseV1(rawResponse);

@@ -27,6 +27,8 @@ const FOCUSED_TEST_HASH =
   "d279cd2e9b2c984bbc4e290b4d7e608fad7502e92bd9f4df06a012afa0e1e667";
 const FOCUSED_TEST_REF =
   `mission-control://internal-production/product-build-authority-v2-focused-test-receipt/sha256/${FOCUSED_TEST_HASH}`;
+const REAL_PLUTIL_PROGRAM_ARGUMENTS_JSON =
+  String.raw`["\/opt\/homebrew\/opt\/node\/bin\/node","\/Users\/setrox\/ai\/setrox\/mission-control\/dist-server\/index.js"]`;
 
 const VALID_RESPONSE = {
   schema: "mission-control.product-build-authority-v2-delivery-evidence-response.v1",
@@ -250,6 +252,9 @@ type ObserverHarnessScenario = Readonly<{
     | "wrong-label"
     | "wrong-cwd"
     | "malformed-argv"
+    | "non-string-argv"
+    | "real-argv-json"
+    | "whitespace-argv"
     | "wrong-argv";
   fileMode?:
     | "ok"
@@ -310,6 +315,7 @@ function runObserverHarness(
 
     const scenario = ${JSON.stringify(scenario)};
     const response = ${JSON.stringify(VALID_RESPONSE)};
+    const realPlutilProgramArgumentsJson = ${JSON.stringify(REAL_PLUTIL_PROGRAM_ARGUMENTS_JSON)};
     const calls = [];
     const launchctlPath = "/bin/launchctl";
     const plutilPath = "/usr/bin/plutil";
@@ -378,10 +384,17 @@ function runObserverHarness(
         return (scenario.plutilMode === "wrong-cwd" ? cwd + "-wrong" : cwd) + "\\n";
       }
       if (selected === "ProgramArguments") {
-        if (scenario.plutilMode === "malformed-argv") return "{not-json}\\n";
+        if (scenario.plutilMode === "malformed-argv") return "{not-json}";
+        if (scenario.plutilMode === "non-string-argv") {
+          return JSON.stringify([nodeAlias, 17]);
+        }
         const argv = scenario.plutilMode === "wrong-argv"
           ? [nodeAlias, entrypoint, "--extra"] : [nodeAlias, entrypoint];
-        return JSON.stringify(argv) + "\\n";
+        if (scenario.plutilMode === "real-argv-json") {
+          return realPlutilProgramArgumentsJson;
+        }
+        if (scenario.plutilMode === "whitespace-argv") return " " + JSON.stringify(argv);
+        return JSON.stringify(argv);
       }
       throw new Error("unexpected plutil selector");
     }
@@ -640,6 +653,16 @@ describe("Product Build Authority V2 delivery-evidence response v1", () => {
     );
   });
 
+  it("accepts real plutil ProgramArguments JSON without a final newline and with escaped slashes", () => {
+    const result = runObserverHarness({ plutilMode: "real-argv-json" });
+    assert.equal(result.ok, true);
+    assert.equal(result.calls.length, 9);
+    assert.deepEqual(result.pair, {
+      deliveryEvidenceRef: DELIVERY_EVIDENCE_REF,
+      deliveryEvidenceHash: DELIVERY_EVIDENCE_HASH,
+    });
+  });
+
   it("freshly reobserves for pair resolution and refuses mismatches", () => {
     const exact = runObserverHarness({ action: "resolve", pairKind: "valid" });
     assert.equal(exact.ok, true);
@@ -701,6 +724,8 @@ describe("Product Build Authority V2 delivery-evidence response v1", () => {
       { plutilMode: "wrong-label" },
       { plutilMode: "wrong-cwd" },
       { plutilMode: "malformed-argv" },
+      { plutilMode: "non-string-argv" },
+      { plutilMode: "whitespace-argv" },
       { plutilMode: "wrong-argv" },
       { fileMode: "plist-symlink" },
       { fileMode: "plist-nonregular" },
