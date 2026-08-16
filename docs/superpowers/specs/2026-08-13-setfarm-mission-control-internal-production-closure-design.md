@@ -1,7 +1,7 @@
 # Setfarm and Mission Control Internal Production Closure Design
 
 Date: 2026-08-13
-Status: Proposed for written review
+Status: Approved for implementation planning and execution
 Scope: Internal operational acceptance for Setfarm V3 and Mission Control on the canonical Mac mini host
 
 ## Executive Decision
@@ -39,7 +39,19 @@ The program may claim internal completion only when all of the following are tru
 6. Both repositories end on reviewed, clean, synchronized `main` branches with green builds and tests.
 7. The live host has a tested backup, restart, verification, and incident procedure.
 
-Internal completion does not mean external distribution authority exists. The CLI preflight must continue to emit `productionAuthority:false` and `productionAdmission:"blocked"` until the later external-distribution program supplies real authority.
+Internal completion does not mean external distribution authority exists. The existing `setfarm platform-release preflight --json` command remains the exact readiness-v2 contract and must continue to emit `productionAuthority:false` and `productionAdmission:"blocked"` until the later external-distribution program supplies real authority. E's separate code-owned recorder parses that exact readiness-v2 value, joins fixed host observations, and seals closure evidence; the public readiness CLI does not emit `ExternalDistributionPreflightEvidenceV1` directly.
+
+That closure evidence is strict, not a prose note or arbitrary hash. It contains one content-addressed `ExternalDistributionPreflightEvidenceV1` with its derived canonical ref/hash and an exact five-member authority-observation census in this fixed order: Developer ID identities, notarization authority, signed-and-stapled package, installer receipt/payload authority, and authenticated install-helper authority. Every observation remains present with status `blocked | unverifiable | satisfied`, bounded readiness reason codes, sorted details, fixed-family `CanonicalRef` evidence, and a recomputed observation hash. `blockers` is exactly the ordered projection of non-`satisfied` observations; no observation may be omitted or represented by an unrelated blocker. For this closure, external distribution is deferred, so all five observations are `blocked | unverifiable` and the blocker projection has exactly five entries. Caller refs, paths, URLs, logs, secrets, generic strings, cross-code evidence, and incomplete/reordered censuses are invalid. The cold receipt, independent pre-packet review, final input, tracked JSON and Markdown, and private post-handoff/final-acceptance receipt all bind the exact same readiness hash, census, blocker projection, ref, hash, and false/blocked literals. Each trust boundary fresh-resolves and rehashes the evidence and requires byte equality.
+
+### Operational Epoch and Documentation-Only Descendant
+
+Internal acceptance distinguishes two Setfarm identities and never conflates them. The accepted operational epoch is the exact `GoldenFinalReleaseEpochV1` pair `{operationalSetfarmSha, operationalMissionControlSha}` on which C's final matrix, D's recovery acceptance, E's fleet settlement, and the cold rehearsal ran. After those authorities are private and immutable, one later Setfarm documentation-only squash merge may create `documentationSetfarmSha`. That commit must have `operationalSetfarmSha` as its sole parent, Mission Control must remain at `operationalMissionControlSha`, and its complete Git delta must be exactly the six registered acceptance-packet files for one closure generation.
+
+The closure generation is derived before E renders either final-closure document or seals its later closure finalization. Its exact identity is `closureGenerationHash = hashCanonicalJson({epochHash: finalReleaseEpoch.epochHash, matrixFinalizationHash, recoveryFinalizationHash, fleetFinalizationHash})`; there is no schema member, operational SHA, full epoch, E closure-finalization hash, output content hash, path, or timestamp in that pre-render hash input. Its only combined directory is `docs/review-packets/internal-production/epoch-<full-epoch-sha256>-closure-<full-closure-generation-sha256>`, and its six fixed basenames are `golden-matrix-report.md`, `recovery-matrix.md`, `recovery-reconciliation.md`, `golden-fleet-report.md`, `final-closure.json`, and `final-closure.md`. The pre-render input and packet bind the same four-member generation input tuple, generation hash, directory suffix, ordered paths, and immutable owner identities needed to reopen C matrix, D recovery-matrix Markdown, D recovery-reconciliation Markdown, B fleet, and E renderer inputs; they do not claim either E output hash or the completed six-content-hash tuple. Only the later E finalization, docs-session completion, and post-handoff receipt bind the six actual content hashes after both E outputs exist, alongside that unchanged generation identity. The independent `closureFinalizationHash` is bound beside the generation and never feeds it. A new operational epoch derives six distinct initially absent targets; all prior generation files remain tracked and byte-identical. No new session overwrites, deletes, renames, or adopts a partial prefix from any generation.
+
+The documentation descendant is never a second accepted operational epoch. It is eligible for final clean-main acceptance only when a fresh, private, non-circular post-handoff receipt resolves the tracked pre-handoff packet and its pre-packet review/finalization, authenticates the docs PR/base/head/squash/sole-parent lineage, independent review history with zero unresolved Critical/High/Medium findings, the exact successful check set, six paths and content hashes, and proves executable/source/build semantic projection equality to `operationalSetfarmSha`. The receipt also rebinds the three services, authority audits, and complete zero-owner census. The final internal-production acceptance authority is the tracked packet plus that exact private post-handoff receipt; neither alone is sufficient. Its current/final resolver additionally requires clean synchronized Setfarm `main` with `HEAD === documentationSetfarmSha` and clean synchronized Mission Control `main` with `HEAD === operationalMissionControlSha`. A historical ancestry resolver is archival inspection only and can never establish current or final acceptance.
+
+When every relation above holds, the documentation SHA is a metadata-only descendant and C/D/E need not rerun. If docs-PR review finds a byte-affecting defect in any of the six generated files, the documentation owner abandons the entire isolated claim; it never edits those immutable materialized bytes in place. A packet/evidence-only correction creates a corrected pre-packet review, input, private finalization, fresh exact-operational-base six-entry session, and new docs claim. A source or generator correction instead creates a new operational epoch and reruns C through D through E before another docs claim. If the commit is not the sole-parent squash, its delta is not exactly the registered six files, any executable/build semantic projection differs, Mission Control moves, either current HEAD differs from its required SHA, or the receipt/review/check/service/audit/zero-owner chain cannot be freshly resolved, the documentation exception does not apply. The changed Setfarm SHA then requires a new operational epoch and a new C/D/E acceptance sequence.
 
 ## Source-of-Truth Hierarchy
 
@@ -225,7 +237,8 @@ Required outcomes:
 - classify every terminal case and repair every systemic platform defect through a reviewed PR;
 - rehearse backup, service restart, health verification, and incident-stop procedures;
 - run final full tests, clean-main builds, migration verification, authority audits, leak censuses, and independent review;
-- deliver the final internal-production acceptance packet and leave both repositories clean on synchronized `main`.
+- deliver the reviewed tracked pre-handoff packet, then record the private non-circular final post-handoff authority for its exact one-commit docs-only descendant;
+- leave Setfarm clean synchronized `main` at the authenticated documentation SHA and Mission Control clean synchronized `main` at the accepted operational Mission Control SHA, without relabeling the documentation SHA as the operational epoch.
 
 ## Per-Run Acceptance Gates
 
@@ -297,7 +310,7 @@ After Profiles 1 through 3 each pass once, execute the following controlled scen
 9. Exercise a post-owner completion recovery and prove effect mutation happens exactly once.
 10. Restart an accepted API product and prove its declared durable state remains available.
 
-Each scenario must end with either accepted continuation or a typed terminal outcome and zero leaked ownership.
+Scenarios 1–4 and 7–10 must end with `accepted_continuation`, their positive scenario-specific proof, and zero leaked ownership. Only scenario 5 (`provider_quota_failure`) and scenario 6 (`github_review_retry`) may instead end in one of their exact finite registry-backed `typed_terminal` outcomes. A restart refusal, runtime failure, source-product failure, missing positive proof, or typed-terminal claim for any other scenario is a nonselectable attempt failure and cannot satisfy the matrix.
 
 ## Mission Control Acceptance
 
@@ -334,13 +347,14 @@ Fleet rules:
 
 - exactly 10 new project prompts;
 - prompts span CLI, API, web, stateful web, interactive browser, bug-fix, and security-audit behavior;
-- concurrency starts at 1;
-- concurrency may increase to 2 only after the first five fleet cases settle without a Setfarm-core or Mission Control failure;
+- the fleet campaign's B-owned configured `maximumConcurrency` is exactly `2`, while standard/matrix campaigns remain `1`;
+- every scheduling decision consumes B's exact `GoldenCampaignExecutionCapacityV1`: `eligibleMaximum` starts at `1`, may become `2` only after B's first-five current-epoch effective-result/cleanup/systemic gate, and can never become `3`;
+- two distinct same-campaign/same-epoch cases may be coordinated/staged concurrently only when that B authority reports `2`; a third is refused before staging, and historical-epoch results never unlock capacity;
 - no more than two live V3 runs at any time;
 - every prompt, source identity, result, and classification is recorded;
 - a failed generated product may use its bounded canonical recovery path, but operators do not patch the generated repository manually;
 - a systemic failure freezes new starts until its reviewed fix is on clean main;
-- the same systemic cause observed three times stops the fleet and the program reports blocked.
+- the same systemic cause observed three times stops the fleet and the program reports blocked; for accepted-product runtime recovery, that cause is a code-normalized finite semantic tuple stable across attempts and epochs, while attempt-specific receipt/action/cleanup hashes remain evidence but never fragment the root identity.
 
 Fleet acceptance requires:
 
@@ -372,7 +386,7 @@ The internal-production runbook must be executable by an operator who did not im
 - incident stop conditions and evidence capture;
 - how to start one clean canary and how to stop the campaign.
 
-The runbook is accepted only after one cold operator rehearsal on the Mac mini: services are stopped or restarted in the documented safe order, rebuilt artifacts are loaded, endpoints recover, the database remains current, and no run authority is lost.
+The runbook is accepted only after one cold operator rehearsal on the Mac mini: services are stopped or restarted in the documented safe order, rebuilt artifacts are loaded, endpoints recover, the database remains current, and no run authority is lost. Every code-owned restart dispatch is fenced by an operation-specific helper that durably claims before spawning the one fixed launchctl child, owns its bounded output/exit/termination/reaping, and prevents recovery from re-kicking. Uncertain or dead-generation settlement cannot authorize a reviewed new attempt until exact helper, launchctl child, and service-process absence or termination authority resolves; a dead claimed marker may prove its PID/process absence without fabricating a live PID receipt.
 
 ## Repository and Delivery Discipline
 
@@ -418,9 +432,12 @@ Mission Control verification includes:
 
 ## Completion Evidence
 
-The final internal-production acceptance packet contains:
+Final internal-production completion evidence is the tracked pre-handoff packet plus the later private post-handoff authority. Across that composite it contains:
 
-- exact Setfarm and Mission Control merge SHAs;
+- the exact accepted operational Setfarm/Mission Control epoch SHAs and the distinct one-parent documentation-only Setfarm descendant SHA;
+- docs PR URL, base/head/squash merge/sole-parent SHAs, immutable independent-review history ref/hash with zero unresolved Critical/High/Medium findings, and the complete successful check-name/conclusion set hash;
+- the tracked packet's exact closure-generation input tuple/hash/suffix, six ordered paths, immutable pre-render owner identities, and pre-packet review ref/hash, without an E-output or completed six-content tuple;
+- the later private finalization/docs-session/post-handoff chain's exact six-file delta/content hashes and receipt refs/hashes, which become authoritative only after both E outputs exist and preserve every prior generation;
 - build identities and contract hashes;
 - backup and restore-rehearsal evidence;
 - migration plan, verification, and authority-audit summaries;
@@ -444,11 +461,12 @@ Setfarm and Mission Control are internally complete when all conditions below ho
 5. The controlled 10-project fleet meets its acceptance threshold.
 6. Mission Control DB/API/UI reconciliation has zero unresolved mismatch.
 7. No active or leaked claim, runtime, completion effect, process, port, lease, or worktree remains after the campaign.
-8. Setfarm and Mission Control full tests and clean-main builds pass at their final SHAs.
+8. Setfarm and Mission Control full tests and clean-main builds pass at the accepted operational SHA pair, and the later Setfarm docs-only SHA has an exact semantic-build-equality proof rather than being treated as a new operational build.
 9. Contract-spine migrations remain current and all current-authority audits pass.
 10. The operator runbook passes one cold rehearsal.
-11. Both repositories are clean and synchronized with `origin/main`.
-12. Independent final review reports no unresolved Critical, High, or Medium finding.
+11. Setfarm is clean and synchronized with `origin/main` and its current `HEAD` equals the authenticated docs-only descendant; Mission Control is clean and synchronized with `origin/main` and its current `HEAD` equals the accepted operational Mission Control SHA. The private current/final post-handoff resolver proves these exact current identities; historical ancestry resolution is not acceptance.
+12. Independent pre-packet and docs-PR review histories report no unresolved Critical, High, or Medium finding, all required checks conclude successfully, and the final private post-handoff receipt resolves byte-identically without any in-place edit to its six immutable materialized files.
+13. The strict external-distribution receipt fresh-resolves the exact five-member observation census and its exact five-member non-satisfied blocker projection through the cold, review, final JSON/Markdown, and post-handoff chain; every projection remains `productionAuthority:false` and `productionAdmission:"blocked"`.
 
 External distribution remains explicitly incomplete and must be reported as such. It becomes a separate design and implementation program after internal completion.
 
