@@ -154,15 +154,81 @@ describe("operational failure cause migration", () => {
       });
       assert.deepEqual(repeated.applied, []);
       assert.equal(repeated.alreadyApplied.at(-1), "031_operational_failure_cause_authority_v3");
-      await assert.rejects(
-        rollbackOperationalFailureCauseAuthorityV3ToV30(database.sql, {
-          targetReleaseSha: "4".repeat(40),
-        }),
-        (error: unknown) => error instanceof ContractSpineMigrationError
-          && error.code === "MIGRATION_INCOMPLETE",
-      );
     } finally {
       await database.cleanup();
+    }
+  });
+
+  it("independently preserves v31 and evidence when each v3-only code refuses rollback", async () => {
+    for (const [index, failureCode] of V3_ONLY_CODES.entries()) {
+      const database = await createIsolatedTestDatabase();
+      try {
+        const runId = `run-v3-rollback-refusal-${index}`;
+        const requestId = `RTR_v3-rollback-refusal-${index}`;
+        await database.insertRun(runId);
+        await database.sql.unsafe(
+          `INSERT INTO run_termination_requests (
+             request_id, run_id, target_status, state, requested_by,
+             requested_at, diagnostic, evidence
+           ) VALUES ($1, $2, 'failed', 'requested', 'setfarm.step-fail.single',
+                     NOW(), 'authority v3 rollback-refusal fixture',
+                     jsonb_build_object('operationalFailureCause', $3::text::jsonb))`,
+          [requestId, runId, JSON.stringify(v3Cause(failureCode))],
+        );
+        const evidenceBefore = await database.sql<Array<{
+          request_id: string;
+          state: string;
+          requested_by: string;
+          evidence: Record<string, unknown>;
+        }>>`
+          SELECT request_id, state, requested_by, evidence
+            FROM run_termination_requests
+           WHERE run_id = ${runId}
+           ORDER BY request_id
+        `;
+        const journalBefore = await database.sql<Array<{
+          version: number;
+          name: string;
+          checksum: string;
+          state: string;
+          release_sha: string | null;
+        }>>`
+          SELECT version, name, checksum, state, release_sha
+            FROM setfarm_schema_migrations
+           WHERE version = 31
+        `;
+        assert.equal(evidenceBefore.length, 1);
+        assert.deepEqual(evidenceBefore[0]?.evidence.operationalFailureCause,
+          v3Cause(failureCode));
+        assert.equal(journalBefore.length, 1);
+        assert.equal(journalBefore[0]?.name, "031_operational_failure_cause_authority_v3");
+        assert.equal(journalBefore[0]?.state, "applied");
+
+        await assert.rejects(
+          rollbackOperationalFailureCauseAuthorityV3ToV30(database.sql, {
+            targetReleaseSha: `${index + 6}`.repeat(40),
+          }),
+          (error: unknown) => error instanceof ContractSpineMigrationError
+            && error.code === "MIGRATION_INCOMPLETE",
+        );
+
+        const evidenceAfter = await database.sql<typeof evidenceBefore>`
+          SELECT request_id, state, requested_by, evidence
+            FROM run_termination_requests
+           WHERE run_id = ${runId}
+           ORDER BY request_id
+        `;
+        const journalAfter = await database.sql<typeof journalBefore>`
+          SELECT version, name, checksum, state, release_sha
+            FROM setfarm_schema_migrations
+           WHERE version = 31
+        `;
+        assert.deepEqual(evidenceAfter, evidenceBefore);
+        assert.deepEqual(journalAfter, journalBefore);
+        assert.equal(await detectOperationalFailureCauseAuthorityV3Constraint(database.sql), "present");
+      } finally {
+        await database.cleanup();
+      }
     }
   });
 

@@ -128,13 +128,30 @@ test("v3 platform preclaim failure terminalizes without model retry authority", 
       "v3-platform-preclaim-retry-forbidden",
     );
     assert.deepEqual(retry, { found: false });
-    const counts = await database.sql<Array<{ claim_count: number; source_unavailable_count: number }>>`
+    const counts = await database.sql<Array<{
+      claim_count: number;
+      source_unavailable_count: number;
+      termination_count: number;
+      requested_termination_count: number;
+    }>>`
       SELECT COUNT(*)::integer AS claim_count,
-             COUNT(*) FILTER (WHERE diagnostic LIKE 'V3_STAGE_RETRY_SOURCE_UNAVAILABLE%')::integer AS source_unavailable_count
+             COUNT(*) FILTER (WHERE diagnostic LIKE 'V3_STAGE_RETRY_SOURCE_UNAVAILABLE%')::integer AS source_unavailable_count,
+             (SELECT COUNT(*)::integer
+                FROM run_termination_requests
+               WHERE run_id = ${runId}) AS termination_count,
+             (SELECT COUNT(*)::integer
+                FROM run_termination_requests
+               WHERE run_id = ${runId}
+                 AND state = 'requested') AS requested_termination_count
         FROM claim_log
        WHERE run_id = ${runId}
     `;
-    assert.deepEqual({ ...counts[0] }, { claim_count: 1, source_unavailable_count: 0 });
+    assert.deepEqual({ ...counts[0] }, {
+      claim_count: 1,
+      source_unavailable_count: 0,
+      termination_count: 1,
+      requested_termination_count: 1,
+    });
   } finally {
     await database.cleanup();
     if (previousPgUrl === undefined) delete process.env.SETFARM_PG_URL;

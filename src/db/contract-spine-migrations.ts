@@ -16118,7 +16118,7 @@ export async function rollbackPreparationAuthorityV2LedgerToV24(
 // SETFARM_SEMANTIC_MIGRATION_REGION:migration-v25-rollback:END
 
 /**
- * Roll migration 30 back only while no v2-only DESIGN termination evidence
+ * Roll migration 31 back only while no v3-only setup-build termination evidence
  * exists. Once published, that semantic evidence must remain verifiable.
  */
 // SETFARM_SEMANTIC_MIGRATION_REGION:migration-v31-rollback:BEGIN
