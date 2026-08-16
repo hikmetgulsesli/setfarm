@@ -357,18 +357,18 @@ Expected: one root marker pair, both comparisons exit `0`, and one stable SHA-25
 Run:
 
 ```bash
-BLOCK_FILE="$(mktemp)"
-trap 'rm -f "$BLOCK_FILE"' EXIT
-extract_authorization_block "$ROOT_AGENTS" > "$BLOCK_FILE"
+BLOCK_TEXT="$(extract_authorization_block "$ROOT_AGENTS")"
 
-rg -n 'systemic root fix discovered from current evidence remains in scope' "$BLOCK_FILE"
-rg -n 'A stale stored$' "$BLOCK_FILE"
-rg -n '^`blocked` status is historical evidence' "$BLOCK_FILE"
-rg -n 'Do not ask the user to reconfirm each commit, push, PR update, merge' "$BLOCK_FILE"
-rg -n 'direct commit to `main`' "$BLOCK_FILE"
-rg -n 'destructive data or filesystem mutation' "$BLOCK_FILE"
-rg -n 'credential/secret or access-control changes' "$BLOCK_FILE"
-rg -n 'external signing, notarization, distribution, or public release' "$BLOCK_FILE"
+rg -n 'systemic root fix discovered from current evidence remains in scope' <<< "$BLOCK_TEXT"
+rg -n 'A stale stored$' <<< "$BLOCK_TEXT"
+rg -n '^`blocked` status is historical evidence' <<< "$BLOCK_TEXT"
+rg -n 'Do not ask the user to reconfirm each commit, push, PR update, merge' <<< "$BLOCK_TEXT"
+rg -n 'direct commit to `main`' <<< "$BLOCK_TEXT"
+rg -n 'destructive data or filesystem mutation' <<< "$BLOCK_TEXT"
+rg -n 'credential/secret or$' <<< "$BLOCK_TEXT"
+rg -n '^access-control changes' <<< "$BLOCK_TEXT"
+rg -n 'external signing, notarization,$' <<< "$BLOCK_TEXT"
+rg -n '^distribution, or public release' <<< "$BLOCK_TEXT"
 ```
 
 Expected: every required ordinary-action and fresh-approval boundary is present in the exact shared block.
