@@ -219,7 +219,7 @@ export const TASK_0_EXACT_SOURCE_PATHS_V1 = [
 
 **Interfaces:** `InternalProductionBaselinePostHandoffReceiptV1`, `InternalProductionBaselineBackupReceiptV1`, `InternalProductionBaselineZeroOwnerMutationGuardV1`; exact `InternalProductionLegacyPreManifestZeroOwnerObservationV1`; exact `InternalProductionPreSchemaSpawnerRebindAuthorizationV1`/pair/status/store/resolver, zero-input prepare and pair-only execute/recover internal ports; exact pre-dispatch `InternalProductionPreSchemaSpawnerStartupTokenV1`, post-dispatch `InternalProductionPreSchemaSpawnerSealedAdmissionV1`, and same-generation `InternalProductionTask0SpawnerAdmissionReadyV1`; exact `InternalProductionPreManifestMigration32AuthorizationV1`/pair/status/store/resolver and zero-input prepare internal port; exact `InternalProductionBaselineBootstrapHandoffMigrationReceiptV1`, pair-only internal `applyInternalProductionBaselineBootstrapHandoffMigrationV1({authorizationRef,authorizationHash})`, and receipt resolver; exact normal post-activation `InternalProductionBaselineServiceRestartAuthorizationV1`/pair/status/store/resolver, `prepareInternalProductionBaselineServiceRestartV1({service})`, and pair-only `restartInternalProductionBaselineServiceV1({authorizationRef,authorizationHash})`; exact B-purpose guard seam; exact physical restart epoch/retirement/readiness/activation/cutover APIs; exact runtime-source/restart-authority/startup-admission/bootstrap-restart/backup/post-handoff APIs listed below. Task 6A exposes only `prepare-current-entry|resume-current-entry|current-entry-status|verify-current-entry --json`; pre-schema restart and migration apply are controller-only ports with no public production argv. Existing normal `zero-owner|prepare-restart-service|restart-service|resume-restart-sequence|restart-sequence-status|runtime-source|backup|record|verify-current|resolve-historical --json` remains unavailable before A-manifest activation where applicable. B can bind/consume a generic guard only through A's exact named golden-launch migration seam; the P0 bootstrap path remains in-process only and uses its fenced target guard plus prepared operation pair. `runtime-source` remains diagnostic and `backup --json` remains fixed-path/idempotent.
 
-Task 0 also owns the Task 6A entry ABI: strict `InternalProductionCurrentEntryAuthorityV1`, `InternalProductionCurrentEntryAuthorityPairV1`, `InternalProductionCurrentEntryAuthorityStatusV1`, `InternalProductionCurrentEntryVerificationV1`, their pair-only resolvers/current verifier, the fixed `prepare-current-entry|resume-current-entry|current-entry-status|verify-current-entry --json` CLI, and strict read-only `InternalProductionServiceCensusV1` from `service-census --json`. `current-entry-status` has exactly one wire body: the twelve-state nested status union below, with no flattened lifecycle mirrors. `verify-current-entry` has exactly one wire body: the strict current verification object below, not a status or authority-body variant. `prepare-current-entry` is zero-input and must durably publish/reopen the fixed operation after the read-only PBA/v31/pending/source-build prerequisites but before the first service or database mutation. `resume-current-entry` is the only production coordinator allowed to invoke the internal pre-schema restart and guarded-apply ports; every retry reopens the same operation head and resumes its exact prefix. It additionally owns strict read-only `InternalProductionAuthorityV3Migration31AuditV1` with pair `{authorityV3Migration31AuditRef,authorityV3Migration31AuditHash}` and `InternalProductionPendingBootstrapHandoffMigrationProjectionV1` with pair `{pendingBootstrapHandoffMigrationRef,pendingBootstrapHandoffMigrationHash}`. The zero-input `audit-authority-v3-migration31 --json` proves migrations 1 through 31 are applied/current and binds the delivered Authority-V3 receipt, PR #86 ancestry, migration-31 source/tree/build/schema/current-authority identities; it deliberately ignores later registered-but-unapplied migrations. The zero-input `inspect-pending-bootstrap-handoff-successor --json` separately proves the registry/digest has exactly one pending entry, literal `contract-spine-bootstrap-main-claim-handoff-v1`, whose implementation blob, ordered statements, named digest entry/digest, schema projection, and `migrationSourceSha` are byte/hash-bound to Task 0's current controller source, with no other pending or drifted entry. Both pairs have fixed content-derived refs, pair-only resolvers, no store scan, and no mutation.
+Task 0 also owns the Task 6A entry ABI: strict `InternalProductionCurrentEntryAuthorityV1`, `InternalProductionCurrentEntryAuthorityPairV1`, `InternalProductionCurrentEntryAuthorityStatusV1`, `InternalProductionCurrentEntryFreshRuntimeAndOwnerObservationV1`, `InternalProductionCurrentEntryVerificationV1`, their no-replace stores/pair-only resolvers/current verifier, the fixed `prepare-current-entry|resume-current-entry|current-entry-status|verify-current-entry --json` CLI, and strict read-only `InternalProductionServiceCensusV1` from `service-census --json`. `current-entry-status` has exactly one wire body: the twelve-state nested status union below, with no flattened lifecycle mirrors. `verify-current-entry` has exactly one wire body: the strict current verification receipt below, not a status or authority-body variant. Its fresh runtime/owner evidence is a separately stored and resolved pair, never an orphan observation hash. `prepare-current-entry` is zero-input and must durably publish/reopen the fixed operation after the read-only PBA/v31/pending/source-build prerequisites but before the first service or database mutation. `resume-current-entry` is the only production coordinator allowed to invoke the internal pre-schema restart and guarded-apply ports; every retry reopens the same operation head and resumes its exact prefix. It additionally owns strict read-only `InternalProductionAuthorityV3Migration31AuditV1` with pair `{authorityV3Migration31AuditRef,authorityV3Migration31AuditHash}` and `InternalProductionPendingBootstrapHandoffMigrationProjectionV1` with pair `{pendingBootstrapHandoffMigrationRef,pendingBootstrapHandoffMigrationHash}`. The zero-input `audit-authority-v3-migration31 --json` proves migrations 1 through 31 are applied/current and binds the delivered Authority-V3 receipt, PR #86 ancestry, migration-31 source/tree/build/schema/current-authority identities; it deliberately ignores later registered-but-unapplied migrations. The zero-input `inspect-pending-bootstrap-handoff-successor --json` separately proves the registry/digest has exactly one pending entry, literal `contract-spine-bootstrap-main-claim-handoff-v1`, whose implementation blob, ordered statements, named digest entry/digest, schema projection, and `migrationSourceSha` are byte/hash-bound to Task 0's current controller source, with no other pending or drifted entry. Both pairs have fixed content-derived refs, pair-only resolvers, no store scan, and no mutation.
 
 Migration 32 is the sole `migrationClass:"guarded"` member of the ordered registry; ordinals 1–31 are `migrationClass:"automatic"`. The exact framework contract is:
 
@@ -236,7 +236,7 @@ The isolated lifecycle is exact. `createIsolatedTestDatabase()` and `reset()` fi
 
 The entry ABI separates `controllerSourceAuthority` from `loadedRuntimeServiceAuthority`. The controller authority binds the exact clean Task 0 descendant `controllerSourceSha`, `controllerTreeHash`, and `controllerBuildHash`. Before the canary, the already prepared Task 6A operation first performs one controlled pre-schema spawner-only rebind to that Task 0 source/build. The replacement starts in strict `pre-manifest-bootstrap-sealed` admission, publishes no run/claim/execution-attempt/runtime-session/completion-owner/mandatory-effect or any other owner-producer byte, opens no normal listener/loop, and waits fail-closed. After authentic old-spawner termination and while the replacement is already sealed, the controller obtains a new complete legacy/pre-manifest observation proving all 36 counters—including process, listener, worktree, dirty-worktree, and stale-child ownership—are zero; this post-termination pair is part of the sealed admission. A pre-dispatch snapshot alone is never migration authority. Only after reopening that pair and a later fresh equal reobservation may the controller apply migration 32, verify it current, activate A's manifest, and let that same spawner generation resolve both pairs and transition once to `normal-task0-admission-ready`; there is no second spawner restart. If any owner or child appears between initial observation, dispatch, predecessor termination, sealing, or migration authorization, the replacement remains sealed and migration is unavailable. The loaded-runtime authority binds source/tree/build plus process/generation identity for the Task 0 spawner, delivered Setfarm dashboard, and delivered Mission Control. OpenClaw is independently authenticated only by process, generation, listener, and owner-count identity; its source/tree/build fields are exactly null. Equality with the controller is required only for the spawner. Only the admission-ready spawner containing the Task 0 owner-reservation hooks may process the canary. Task 7 later rebuilds/rebinds the full spawner/dashboard/Mission-Control set and performs no schema mutation.
 
-Its canary path internally uses Task 0's dedicated `current-entry-canary-source-run-launch-v1` owner-admission fence with exact typed `source-run` and `run` target reservations, the compound target-close authority, and the fence-release authority. The sole strict service census wire body is exactly `{schema,spawner,dashboard,missionControl,openClaw,censusHash}`. Each named projection contains integer `pid`, authenticated process/service/generation identity, and exact `processOwnerCount`; dashboard, Mission Control, and OpenClaw additionally contain their loopback listener identity and exact `listenerOwnerCount`. Spawner/dashboard and Mission Control carry their authenticated source/tree/build, while OpenClaw carries exact null source/tree/build. There is no service array or alternate hash alias. The entry recorder accepts no caller root/SHA/run/failure code/test result/service identity/migration body/receipt body; it obtains every identity through fixed code-owned observers and stores the focused three-code test receipt separately from the one-code live-canary settlement.
+Its canary path internally uses Task 0's dedicated `current-entry-canary-source-run-launch-v1` owner-admission fence with exact typed `source-run` and `run` target reservations, the compound target-close authority, and the fence-release authority. The sole strict service census wire body is exactly `{schema,spawner,dashboard,missionControl,openClaw,censusHash}`. Each named projection contains integer `pid`, authenticated process/service/generation identity, and exact `processOwnerCount`; dashboard, Mission Control, and OpenClaw additionally contain their loopback listener identity and exact `listenerOwnerCount`. Spawner/dashboard and Mission Control carry their authenticated source/tree/build, while OpenClaw carries exact null source/tree/build. `censusHash` is exactly `hashCanonicalJson({schema,spawner,dashboard,missionControl,openClaw})` in that literal member order and excludes only `censusHash`; there is no service array, alternate hash alias, sortable projection, or caller-chosen ordering. The entry recorder accepts no caller root/SHA/run/failure code/test result/service identity/migration body/receipt body; it obtains every identity through fixed code-owned observers and stores the focused three-code test receipt separately from the one-code live-canary settlement.
 
 Task 0's `product-build-authority-v2-delivery-evidence-v1.ts` locally owns `PRODUCT_BUILD_AUTHORITY_V2_DELIVERY_EVIDENCE_RESPONSE_SCHEMA_V1`, `PRODUCT_BUILD_AUTHORITY_V2_DELIVERY_EVIDENCE_CURRENT_STATUS_V1`, strict `ProductBuildAuthorityV2DeliveryEvidenceResponseV1Schema`/`ProductBuildAuthorityV2DeliveryEvidenceResponseV1`, and `parseProductBuildAuthorityV2DeliveryEvidenceResponseV1(value:unknown)`. The accepted success envelope is exactly `{schema:"mission-control.product-build-authority-v2-delivery-evidence-response.v1",currentStatus:"current",deliveryEvidenceRef,deliveryEvidenceHash,evidence}`: the ref, hash, and strict evidence body are non-null together, their canonical hashes/fields must agree, and absent, half-null, mixed, extra-field, or null success members are rejected. Unavailable source, non-200 HTTP, non-clean-main CLI refusal, or parse failure returns no pair and cannot be represented as a partial `current` envelope. Canonical positive/negative fixtures and their expected canonical bytes/hashes are owned in the Task 0 Setfarm test; the production module and test contain no relative, absolute, package, dynamic, or type-only import of Mission Control source. A source-boundary test enumerates imports and fails on `mission-control`, sibling-root traversal, runtime source loading, or an injected parser/schema export. This local response contract is not registered in `mission-control-contract-artifacts.ts`, does not create generated/vendor files, and leaves the explicit inventory progression at ten, then twelve after the operational-active pair, then fourteen after the later run-operational-model-v2 pair.
 
@@ -450,6 +450,11 @@ export type InternalProductionLegacyPreManifestZeroOwnerObservationV1 = Readonly
   observationRef: CanonicalRef;
   observationHash: Sha256V1;
 }>;
+export type InternalProductionLegacyPreManifestZeroOwnerObservationPairV1 =
+  Readonly<{
+    observationRef: CanonicalRef;
+    observationHash: Sha256V1;
+  }>;
 
 export type InternalProductionPreSchemaSpawnerRebindAuthorizationPairV1 = Readonly<{
   authorizationRef: CanonicalRef;
@@ -663,6 +668,17 @@ export type InternalProductionServiceCensusV1 = Readonly<{
   openClaw: InternalProductionServiceCensusOpenClawV1;
   censusHash: Sha256V1;
 }>;
+export function deriveInternalProductionServiceCensusHashV1(
+  input: Omit<InternalProductionServiceCensusV1, "censusHash">,
+): Sha256V1 {
+  return hashCanonicalJson({
+    schema: input.schema,
+    spawner: input.spawner,
+    dashboard: input.dashboard,
+    missionControl: input.missionControl,
+    openClaw: input.openClaw,
+  });
+}
 export type InternalProductionPreMutationLoadedRuntimeSpawnerProjectionV1 =
   Readonly<{
     pid: number; processStartTimeEpochMs: number;
@@ -719,6 +735,20 @@ export type InternalProductionPreMutationLoadedRuntimeServiceAuthorityV1 = Reado
   preMutationLoadedRuntimeServiceAuthorityRef: CanonicalRef;
   preMutationLoadedRuntimeServiceAuthorityHash: Sha256V1;
 }>;
+export function deriveInternalProductionPreMutationServiceProjectionSetHashV1(
+  input: InternalProductionPreMutationLoadedRuntimeServiceAuthorityV1,
+): Sha256V1 {
+  return hashCanonicalJson({
+    schema: input.schema,
+    currentEntryOperationRef: input.currentEntryOperationRef,
+    currentEntryOperationHash: input.currentEntryOperationHash,
+    observedServiceCensusHash: input.observedServiceCensusHash,
+    spawner: input.spawner,
+    dashboard: input.dashboard,
+    missionControl: input.missionControl,
+    openClaw: input.openClaw,
+  });
+}
 export interface InternalProductionPreMutationLoadedRuntimeServiceAuthorityStoreV1 {
   publish(input: InternalProductionPreMutationLoadedRuntimeServiceAuthorityV1):
     Promise<InternalProductionPreMutationLoadedRuntimeServiceAuthorityPairV1>;
@@ -1050,6 +1080,188 @@ export interface InternalProductionCurrentEntryAuthorityStatusStoreV1 {
 export function resolveInternalProductionCurrentEntryAuthorityStatusV1(
   input: InternalProductionCurrentEntryAuthorityStatusPairV1,
 ): Promise<InternalProductionCurrentEntryAuthorityStatusV1>;
+export type InternalProductionCompleteZeroOwnerCensusObservationPairV1 =
+  Readonly<{
+    observationRef: CanonicalRef;
+    observationHash: Sha256V1;
+  }>;
+export type InternalProductionCurrentEntryResolvedAuthoritySetV1 = readonly [
+  Readonly<{ name: "productBuildAuthorityV2DeliveryEvidence";
+    pair: ProductBuildAuthorityV2DeliveryEvidencePairV1 }>,
+  Readonly<{ name: "authorityV3Migration31Audit";
+    pair: InternalProductionAuthorityV3Migration31AuditPairV1 }>,
+  Readonly<{ name: "pendingBootstrapHandoffMigration";
+    pair: InternalProductionPendingBootstrapHandoffMigrationProjectionPairV1 }>,
+  Readonly<{ name: "authorityV3FocusedTestReceipt"; pair: Readonly<{
+    focusedAuthorityV3TestReceiptRef: CanonicalRef;
+    focusedAuthorityV3TestReceiptHash: Sha256V1;
+  }> }>,
+  Readonly<{ name: "currentEntryOperation";
+    pair: InternalProductionCurrentEntryOperationPairV1 }>,
+  Readonly<{ name: "preMutationLoadedRuntimeServiceAuthority";
+    pair: InternalProductionPreMutationLoadedRuntimeServiceAuthorityPairV1 }>,
+  Readonly<{ name: "preSchemaSpawnerRebindAuthorization";
+    pair: InternalProductionPreSchemaSpawnerRebindAuthorizationPairV1 }>,
+  Readonly<{ name: "preSchemaSpawnerStartupToken";
+    pair: InternalProductionPreSchemaSpawnerStartupTokenPairV1 }>,
+  Readonly<{ name: "preSchemaSpawnerRestartAuthority";
+    pair: InternalProductionPreSchemaSpawnerRestartAuthorityPairV1 }>,
+  Readonly<{ name: "predecessorTerminationObservation";
+    pair: InternalProductionPreSchemaSpawnerPredecessorTerminationObservationPairV1 }>,
+  Readonly<{ name: "replacementProcessObservation";
+    pair: InternalProductionPreSchemaSpawnerReplacementProcessObservationPairV1 }>,
+  Readonly<{ name: "postPredecessorTerminationLegacyZeroOwnerObservation";
+    pair: InternalProductionLegacyPreManifestZeroOwnerObservationPairV1 }>,
+  Readonly<{ name: "preSchemaSpawnerSealedAdmission";
+    pair: InternalProductionPreSchemaSpawnerSealedAdmissionPairV1 }>,
+  Readonly<{ name: "freshLegacyZeroOwnerObservation";
+    pair: InternalProductionLegacyPreManifestZeroOwnerObservationPairV1 }>,
+  Readonly<{ name: "preManifestMigration32Authorization";
+    pair: InternalProductionPreManifestMigration32AuthorizationPairV1 }>,
+  Readonly<{ name: "preManifestMigration32AuthorizationConsumption";
+    pair: InternalProductionPreManifestMigration32AuthorizationConsumptionPairV1 }>,
+  Readonly<{ name: "bootstrapHandoffMigrationReceipt";
+    pair: InternalProductionBaselineBootstrapHandoffMigrationReceiptPairV1 }>,
+  Readonly<{ name: "bootstrapHandoffCurrentAudit"; pair: Readonly<{
+    bootstrapHandoffCurrentAuditRef: CanonicalRef;
+    bootstrapHandoffCurrentAuditHash: Sha256V1;
+  }> }>,
+  Readonly<{ name: "ownerProducerManifestActivation"; pair: Readonly<{
+    ownerProducerManifestActivationRef: CanonicalRef;
+    ownerProducerManifestActivationHash: Sha256V1;
+  }> }>,
+  Readonly<{ name: "ownerProducerManifestHead"; pair: Readonly<{
+    ownerProducerManifestHeadRef: CanonicalRef;
+    ownerProducerManifestHeadHash: Sha256V1;
+  }> }>,
+  Readonly<{ name: "task0SpawnerAdmissionReady";
+    pair: InternalProductionTask0SpawnerAdmissionReadyPairV1 }>,
+  Readonly<{ name: "preSchemaSpawnerRebindStatus";
+    pair: InternalProductionPreSchemaSpawnerRebindStatusPairV1 }>,
+  Readonly<{ name: "loadedRuntimeServiceAuthority"; pair: Readonly<{
+    loadedRuntimeServiceAuthorityRef: CanonicalRef;
+    loadedRuntimeServiceAuthorityHash: Sha256V1;
+  }> }>,
+  Readonly<{ name: "ownerAdmissionFence"; pair: Readonly<{
+    ownerAdmissionFenceRef: CanonicalRef;
+    ownerAdmissionFenceHash: Sha256V1;
+  }> }>,
+  Readonly<{ name: "sourceRunTargetReservation"; pair: Readonly<{
+    sourceRunTargetReservationRef: CanonicalRef;
+    sourceRunTargetReservationHash: Sha256V1;
+  }> }>,
+  Readonly<{ name: "runTargetReservation"; pair: Readonly<{
+    runTargetReservationRef: CanonicalRef;
+    runTargetReservationHash: Sha256V1;
+  }> }>,
+  Readonly<{ name: "terminalSettlement"; pair: Readonly<{
+    terminalSettlementRef: CanonicalRef;
+    terminalSettlementHash: Sha256V1;
+  }> }>,
+  Readonly<{ name: "targetClose"; pair: Readonly<{
+    targetCloseRef: CanonicalRef;
+    targetCloseHash: Sha256V1;
+  }> }>,
+  Readonly<{ name: "ownerAdmissionFenceRelease"; pair: Readonly<{
+    ownerAdmissionFenceReleaseRef: CanonicalRef;
+    ownerAdmissionFenceReleaseHash: Sha256V1;
+  }> }>,
+  Readonly<{ name: "currentEntryAuthority";
+    pair: InternalProductionCurrentEntryAuthorityPairV1 }>,
+  Readonly<{ name: "currentEntryStatus";
+    pair: InternalProductionCurrentEntryAuthorityStatusPairV1 }>,
+  Readonly<{ name: "completeZeroOwnerCensusObservation";
+    pair: InternalProductionCompleteZeroOwnerCensusObservationPairV1 }>,
+  Readonly<{ name: "freshRuntimeAndOwnerObservation";
+    pair: InternalProductionCurrentEntryFreshRuntimeAndOwnerObservationPairV1 }>,
+];
+export function deriveInternalProductionCurrentEntryResolvedAuthoritySetHashV1(
+  orderedPairs: InternalProductionCurrentEntryResolvedAuthoritySetV1,
+): Sha256V1 {
+  return hashCanonicalJson(orderedPairs);
+}
+export type InternalProductionCurrentEntryControllerRuntimeSourceRelationsV1 =
+  Readonly<{
+    controllerSourceAuthority:
+      InternalProductionCurrentEntryControllerSourceAuthorityV1;
+    loadedRuntimeServiceAuthority: Readonly<{
+      loadedRuntimeServiceAuthorityRef: CanonicalRef;
+      loadedRuntimeServiceAuthorityHash: Sha256V1;
+    }>;
+    spawner: Readonly<{
+      relation: "equals-controller-source-authority";
+      loadedSourceSha: GitObjectHashV1;
+      loadedTreeHash: GitObjectHashV1;
+      loadedBuildHash: Sha256V1;
+    }>;
+    dashboard: Readonly<{
+      relation: "authenticated-delivered-runtime";
+      loadedSourceSha: GitObjectHashV1;
+      loadedTreeHash: GitObjectHashV1;
+      loadedBuildHash: Sha256V1;
+    }>;
+    missionControl: Readonly<{
+      relation: "authenticated-delivered-runtime";
+      loadedSourceSha: GitObjectHashV1;
+      loadedTreeHash: GitObjectHashV1;
+      loadedBuildHash: Sha256V1;
+    }>;
+    openClaw: Readonly<{
+      relation: "authenticated-process-generation-listener-only";
+      loadedSourceSha: null;
+      loadedTreeHash: null;
+      loadedBuildHash: null;
+    }>;
+  }>;
+export type Rfc3339UtcTimestampMillisV1 = string & {
+  readonly __rfc3339UtcTimestampMillisV1: unique symbol;
+};
+export type InternalProductionCurrentEntryFreshRuntimeAndOwnerObservationPairV1 =
+  Readonly<{
+    freshRuntimeAndOwnerObservationRef: CanonicalRef;
+    freshRuntimeAndOwnerObservationHash: Sha256V1;
+  }>;
+export type InternalProductionCurrentEntryFreshRuntimeAndOwnerObservationV1 =
+  Readonly<{
+    schema: "setfarm.internal-production-current-entry-fresh-runtime-and-owner-observation.v1";
+    currentEntryStatus: InternalProductionCurrentEntryAuthorityStatusPairV1;
+    entryAuthority: InternalProductionCurrentEntryAuthorityPairV1;
+    serviceCensus: InternalProductionServiceCensusV1;
+    completeZeroOwnerCensusObservation:
+      InternalProductionCompleteZeroOwnerCensusObservationPairV1;
+    completeZeroOwnerCensusObservationBody:
+      InternalProductionCompleteZeroOwnerCensusObservationV1;
+    controllerRuntimeSourceRelations:
+      InternalProductionCurrentEntryControllerRuntimeSourceRelationsV1;
+    observedAt: Rfc3339UtcTimestampMillisV1;
+    freshRuntimeAndOwnerObservationRef: CanonicalRef;
+    freshRuntimeAndOwnerObservationHash: Sha256V1;
+  }>;
+export function deriveInternalProductionCurrentEntryFreshObservationHashV1(
+  input: InternalProductionCurrentEntryFreshRuntimeAndOwnerObservationV1,
+): Sha256V1 {
+  return hashCanonicalJson({
+    schema: input.schema,
+    currentEntryStatus: input.currentEntryStatus,
+    entryAuthority: input.entryAuthority,
+    serviceCensus: input.serviceCensus,
+    completeZeroOwnerCensusObservation:
+      input.completeZeroOwnerCensusObservation,
+    completeZeroOwnerCensusObservationBody:
+      input.completeZeroOwnerCensusObservationBody,
+    controllerRuntimeSourceRelations: input.controllerRuntimeSourceRelations,
+    observedAt: input.observedAt,
+  });
+}
+export interface InternalProductionCurrentEntryFreshRuntimeAndOwnerObservationStoreV1 {
+  publish(input: InternalProductionCurrentEntryFreshRuntimeAndOwnerObservationV1):
+    Promise<InternalProductionCurrentEntryFreshRuntimeAndOwnerObservationPairV1>;
+  resolve(input: InternalProductionCurrentEntryFreshRuntimeAndOwnerObservationPairV1):
+    Promise<InternalProductionCurrentEntryFreshRuntimeAndOwnerObservationV1>;
+}
+export function resolveInternalProductionCurrentEntryFreshRuntimeAndOwnerObservationV1(
+  input: InternalProductionCurrentEntryFreshRuntimeAndOwnerObservationPairV1,
+): Promise<InternalProductionCurrentEntryFreshRuntimeAndOwnerObservationV1>;
 export type InternalProductionCurrentEntryVerificationPairV1 = Readonly<{
   currentEntryVerificationRef: CanonicalRef;
   currentEntryVerificationHash: Sha256V1;
@@ -1060,10 +1272,23 @@ export type InternalProductionCurrentEntryVerificationV1 = Readonly<{
   currentEntryStatus: InternalProductionCurrentEntryAuthorityStatusPairV1;
   entryAuthority: InternalProductionCurrentEntryAuthorityPairV1;
   resolvedAuthoritySetHash: Sha256V1;
-  freshRuntimeAndOwnerObservationHash: Sha256V1;
+  freshRuntimeAndOwnerObservation:
+    InternalProductionCurrentEntryFreshRuntimeAndOwnerObservationPairV1;
   currentEntryVerificationRef: CanonicalRef;
   currentEntryVerificationHash: Sha256V1;
 }>;
+export function deriveInternalProductionCurrentEntryVerificationHashV1(
+  input: InternalProductionCurrentEntryVerificationV1,
+): Sha256V1 {
+  return hashCanonicalJson({
+    schema: input.schema,
+    currentStatus: input.currentStatus,
+    currentEntryStatus: input.currentEntryStatus,
+    entryAuthority: input.entryAuthority,
+    resolvedAuthoritySetHash: input.resolvedAuthoritySetHash,
+    freshRuntimeAndOwnerObservation: input.freshRuntimeAndOwnerObservation,
+  });
+}
 export interface InternalProductionCurrentEntryVerificationStoreV1 {
   publish(input: InternalProductionCurrentEntryVerificationV1):
     Promise<InternalProductionCurrentEntryVerificationPairV1>;
@@ -1720,17 +1945,27 @@ export const INTERNAL_PRODUCTION_OWNER_CATEGORY_CENSUS_MAP_V1 = {
 export type InternalProductionCompleteZeroOwnerCensusObservationV1 = Readonly<{
   schema: "setfarm.internal-production-complete-zero-owner-census-observation.v1";
   census: InternalProductionCompleteZeroOwnerCensusV1;
-  ownerCategoryRegistryHash: string;
-  ownerCategoryCensusMapHash: string;
+  ownerCategoryRegistryHash: Sha256V1;
+  ownerCategoryCensusMapHash: Sha256V1;
   activeProducerManifestSetActivationRef: CanonicalRef;
-  activeProducerManifestSetActivationHash: string;
-  activeProducerManifestSetHash: string;
-  reservationIdentitySetHash: string;
-  ownerIdentitySetHash: string;
-  observationHash: string;
+  activeProducerManifestSetActivationHash: Sha256V1;
+  activeProducerManifestSetHash: Sha256V1;
+  reservationIdentitySetHash: Sha256V1;
+  ownerIdentitySetHash: Sha256V1;
+  observationRef: CanonicalRef;
+  observationHash: Sha256V1;
 }>;
+export interface InternalProductionCompleteZeroOwnerCensusObservationStoreV1 {
+  publish(input: InternalProductionCompleteZeroOwnerCensusObservationV1):
+    Promise<InternalProductionCompleteZeroOwnerCensusObservationPairV1>;
+  resolve(input: InternalProductionCompleteZeroOwnerCensusObservationPairV1):
+    Promise<InternalProductionCompleteZeroOwnerCensusObservationV1>;
+}
 export function observeCompleteInternalProductionZeroOwnerCensusV1():
   Promise<InternalProductionCompleteZeroOwnerCensusObservationV1>;
+export function resolveInternalProductionCompleteZeroOwnerCensusObservationV1(
+  input: InternalProductionCompleteZeroOwnerCensusObservationPairV1,
+): Promise<InternalProductionCompleteZeroOwnerCensusObservationV1>;
 
 export type InternalProductionOwnerProducerRowV1 = Readonly<{
   plan: "A" | "B" | "C" | "D" | "E";
@@ -3566,7 +3801,7 @@ In `operational-active-run-status-v1.test.ts`, require the source tuple, Zod enu
 
 For backup recovery, use a temporary fixed-root test harness and an injected crash hook around every `dump-linked`, `list-linked`, and `checksum-linked` hard-link operation: immediately before the link, immediately after the link but before directory fsync, after fsync but before the immutable phase record is published, and immediately after that record is published. Every rerun must authenticate and adopt only the exact contiguous prefix, complete the remaining links, and return the byte-identical receipt. Add crashes before/after `artifacts-sealed`, `published`, every source-name unlink, and `sources-released`. For each of the seven journal phases, crash before/after unpredictable temporary-record creation, full write, file fsync, no-replace publication, journal-directory fsync, temporary-name unlink, and final `O_NOFOLLOW` reopen; every recovery either authenticates the same whole record and continues or sees no committed phase. Reject a partial/truncated record, a later record without its predecessor, a forged/reordered/hash-chain-broken record, an unknown fixed record, a symlink/hardlink/mode-drifted record, an unequal pre-existing phase target, a temporary-file poisoning attempt, any use of append/`O_APPEND` against journal authority, a gap such as dump plus checksum without list, a target with different device/inode while its sealed source exists, any artifact hash/size/mode/symlink/hardlink mismatch, a foreign pre-existing target without the durable attempt, or a second attempt. Prove the final three targets are regular non-symlink mode-`0600`, link-count-one files and that rerunning `backup --json` only reopens the same receipt.
 
-Round 4 extends that focused current-entry matrix without adding a top state. It enumerates all four migration-applying phases, all three spawner-admission phases, both canary-running phases, and both settled phases; crashes immediately before/after every durable member named by those discriminants and requires byte-identical adoption. Round 5 keeps that matrix and publishes/resolves `InternalProductionPreMutationLoadedRuntimeServiceAuthorityV1` against the sole named-field `InternalProductionServiceCensusV1`: tests compare the exact spawner/dashboard/Mission-Control/OpenClaw process, generation, owner-count, listener, and applicable source/tree/build fields one by one plus `observedServiceCensusHash === censusHash`, never an array or whole-object shortcut. OpenClaw source/tree/build remain null. Every later status/final entry preserves the pair; a structural clone or any applicable identity/count drift fails. Each branch test asserts all required prior pairs, every mandated null later member, the finite blocked reason, and refusal of an impossible combination. Wire fixtures reject any flattened lifecycle mirror and require `current-entry-status` and `verify-current-entry` to emit only their one strict canonical object each.
+Round 4 extends that focused current-entry matrix without adding a top state. It enumerates all four migration-applying phases, all three spawner-admission phases, both canary-running phases, and both settled phases; crashes immediately before/after every durable member named by those discriminants and requires byte-identical adoption. Round 5 keeps that matrix and publishes/resolves `InternalProductionPreMutationLoadedRuntimeServiceAuthorityV1` against the sole named-field `InternalProductionServiceCensusV1`: tests compare the exact spawner/dashboard/Mission-Control/OpenClaw process, generation, owner-count, listener, and applicable source/tree/build fields one by one plus `observedServiceCensusHash === censusHash`, never an array or whole-object shortcut. OpenClaw source/tree/build remain null. Every later status/final entry preserves the pair; a structural clone or any applicable identity/count drift fails. Each branch test asserts all required prior pairs, every mandated null later member, the finite blocked reason, and refusal of an impossible combination. Wire fixtures reject any flattened lifecycle mirror and require `current-entry-status` and `verify-current-entry` to emit only their one strict canonical object each. Round 6 additionally mutates every member, position, and excluded/derived field in the census, pre-mutation projection, ordered resolved-pair tuple, fresh runtime/owner observation, and verification-receipt hash inputs. It rejects a reordered tuple, reordered named JSON construction, omitted or extra pair, included derived ref/hash, excluded authority member, crossed status/entry/observation pair, stale service or owner body, mismatched nested body hash, non-current manifest activation, and a hash-only fresh observation. Positive fixtures publish and pair-resolve the observation before the verification receipt, then make the verification resolver freshly reobserve both runtime and complete owner evidence and require byte equality.
 
 - [ ] **Step 2: Implement the smallest fixed authority**
 
@@ -3600,7 +3835,7 @@ Implement `operational-active-run-status-v1.ts` as the sole runtime producer of 
 
 After the producer and failing artifact expectations are implemented, run the existing code-owned writer once: `node --import tsx scripts/mission-control-contract-artifacts.ts --write`. Only the two declared generated files may be new; every pre-existing generated artifact must remain byte-identical.
 
-Use existing Setfarm database/process/worktree observers; do not create a second run classifier or lifecycle controller. `observeCompleteInternalProductionZeroOwnerCensusV1()` is zero-input/read-only and returns the strict path-free `InternalProductionCompleteZeroOwnerCensusObservationV1`: exactly 35 ordered category registry entries, exactly 35 census-map keys, and complete coverage of exactly 36 scalar counters including `executionAttemptCount`. `artifact-publication` alone maps to both `publicationBatchCount` and `artifactPublicationCount`; every other category maps to exactly one scalar, and no scalar is unmapped or multiply owned. The observation also binds the freshly resolved current manifest-set activation ref/hash, active manifest-set hash, category-registry hash, census-map hash, reservation/owner identity-set hashes, and observation hash. Production accepts no injected observer, census, activation, root, store, or row; tests may use a private non-exported fake helper that cannot be imported by D/E. The receipt module owns the fixed backup path, durable attempt/journal, and no-follow/no-replace protocol. Source observers reject an injected root, connection string, command, service label, PID, or receipt body. The `runtime-source` CLI alone accepts exactly two comparison SHA arguments, validates them as Git object hashes, and passes them only as expected identities to the code-owned observer; neither value selects a root/build/process.
+Use existing Setfarm database/process/worktree observers; do not create a second run classifier or lifecycle controller. `observeCompleteInternalProductionZeroOwnerCensusV1()` is zero-input/read-only and returns the strict path-free `InternalProductionCompleteZeroOwnerCensusObservationV1`: exactly 35 ordered category registry entries, exactly 35 census-map keys, and complete coverage of exactly 36 scalar counters including `executionAttemptCount`. `artifact-publication` alone maps to both `publicationBatchCount` and `artifactPublicationCount`; every other category maps to exactly one scalar, and no scalar is unmapped or multiply owned. The observation also binds the freshly resolved current manifest-set activation ref/hash, active manifest-set hash, category-registry hash, census-map hash, reservation/owner identity-set hashes, and its derived ref/hash. Its no-replace store and pair-only resolver re-hash the strict body, reopen the named current manifest activation, and reject a structural body, latest scan, or crossed pair. Production accepts no injected observer, census, activation, root, store, or row; tests may use a private non-exported fake helper that cannot be imported by D/E. The receipt module owns the fixed backup path, durable attempt/journal, and no-follow/no-replace protocol. Source observers reject an injected root, connection string, command, service label, PID, or receipt body. The `runtime-source` CLI alone accepts exactly two comparison SHA arguments, validates them as Git object hashes, and passes them only as expected identities to the code-owned observer; neither value selects a root/build/process.
 
 A has one disjoint pre-schema spawner mutation owned only by the prepared current-entry controller; every other service mutation uses the normal finite authorization/consume surface. `prepareInternalProductionBaselineServiceRestartV1({service})` is unavailable until migration 32 is applied/current, A's manifest is active, and normal admission is ready. Thereafter it accepts only `setfarm-spawner | setfarm-dashboard | mission-control`, internally reopens the current applied migration receipt and manifest activation, observes a fresh manifest-backed complete-zero-owner census, mints and retains the one-use guard, binds the current runtime-source projection, publishes through the fixed `InternalProductionBaselineServiceRestartAuthorizationStoreV1`, and returns only `{authorizationRef,authorizationHash}`. Its exact CLI is `prepare-restart-service --service <closed-service> --json`. `restart-service --authorization-ref <CanonicalRef> --authorization-hash <64-hex> --json` accepts only that pair, pair-resolves the strict authorization, derives the service from it, and consumes it once. It has no `--service` flag. Neither normal command accepts a label, command, executable, argv, UID, domain, PID, path, root, environment, guard, migration pair, or receipt body. The strict status is `absent | prepared | consumed | blocked`; its pair/status/store resolver never scans newest authority, and a retry adopts only the byte-identical authorization/consumption. The private helper has no public argv. The pre-schema controller calls a separate operation/action namespace fixed to `setfarm-spawner`; it cannot present that authorization to this normal API. Both closed paths derive `uid` only from code-owned `process.getuid()` (and fail closed if unavailable/non-integer), then dispatch the matching fixed label through the same no-shell helper:
 
@@ -4673,7 +4908,7 @@ Expected: the merge and build gates are the first production call site allowed t
 
 **Interfaces:**
 
-- `InternalProductionPreMutationLoadedRuntimeServiceAuthorityV1` is a strict code-owned four-service observation created inside zero-input `prepare-current-entry` from the immediately preceding Step 1 `InternalProductionServiceCensusV1`. Its exact pair is published only after the fixed current-entry operation exists. Its body binds that operation, `observedServiceCensusHash`, and four exact named `spawner`, `dashboard`, `missionControl`, and `openClaw` projections including process/generation/owner counts and applicable listener identity. Spawner/dashboard and Mission Control bind authenticated loaded source/tree/build; OpenClaw binds process/generation/listener identity only and has exact null source/tree/build. Its hash is `hashCanonicalJson` over that strict body excluding only the two derived pair fields; its ref is `setfarm://internal-production/pre-mutation-loaded-runtime-service-authority/sha256/${preMutationLoadedRuntimeServiceAuthorityHash}`. Its no-replace store and pair-only resolver recompute both and accept no caller body, process field, census, path, PID, or newest scan. Tests require `observedServiceCensusHash === census.censusHash` and compare each shared named projection field; they never compare structurally unequal whole objects. The status ABI is the two direct scalar fields `.preMutationLoadedRuntimeServiceAuthorityRef`/`.preMutationLoadedRuntimeServiceAuthorityHash` plus the freshly pair-resolved `.preMutationLoadedRuntimeServiceAuthority` body, never a caller-supplied `preMutationLoadedRuntimeServiceAuthorityPair` wrapper. `operation_prepared`, every later nonblocked status, and final `InternalProductionCurrentEntryAuthorityV1` contain the byte-identical pair. The final current-entry body also embeds the freshly pair-resolved authority body; this pre-mutation observation remains distinct from the later mixed `loadedRuntimeServiceAuthority` produced after the spawner transition.
+- `InternalProductionPreMutationLoadedRuntimeServiceAuthorityV1` is a strict code-owned four-service observation created inside zero-input `prepare-current-entry` from the immediately preceding Step 1 `InternalProductionServiceCensusV1`. Its exact pair is published only after the fixed current-entry operation exists. Its body binds that operation, `observedServiceCensusHash`, and four exact named `spawner`, `dashboard`, `missionControl`, and `openClaw` projections including process/generation/owner counts and applicable listener identity. Spawner/dashboard and Mission Control bind authenticated loaded source/tree/build; OpenClaw binds process/generation/listener identity only and has exact null source/tree/build. `serviceProjectionSetHash` is exactly `hashCanonicalJson({schema,currentEntryOperationRef,currentEntryOperationHash,observedServiceCensusHash,spawner,dashboard,missionControl,openClaw})` in that member order; it excludes the authority ref/hash and itself. The authority hash is separately `hashCanonicalJson` over the complete strict authority body excluding only its two derived pair fields, and its ref is `setfarm://internal-production/pre-mutation-loaded-runtime-service-authority/sha256/${preMutationLoadedRuntimeServiceAuthorityHash}`. Its no-replace store and pair-only resolver recompute both and accept no caller body, process field, census, path, PID, or newest scan. Tests require `observedServiceCensusHash === census.censusHash` and compare each shared named projection field; they never compare structurally unequal whole objects. The status ABI is the two direct scalar fields `.preMutationLoadedRuntimeServiceAuthorityRef`/`.preMutationLoadedRuntimeServiceAuthorityHash` plus the freshly pair-resolved `.preMutationLoadedRuntimeServiceAuthority` body, never a caller-supplied `preMutationLoadedRuntimeServiceAuthorityPair` wrapper. `operation_prepared`, every later nonblocked status, and final `InternalProductionCurrentEntryAuthorityV1` contain the byte-identical pair. The final current-entry body also embeds the freshly pair-resolved authority body; this pre-mutation observation remains distinct from the later mixed `loadedRuntimeServiceAuthority` produced after the spawner transition.
 
 - Every non-absent current-entry phase repeats the exact current-entry operation pair and pre-mutation runtime-authority pair. Its strict pre-schema subchain is authorization → startup token → restart authority → predecessor-termination observation → replacement-process observation → sealed admission → admission ready; the migration subchain adds the exact authorization-consumption pair before its terminal receipt/current audit. Within `pre_schema_spawner_rebinding`, the nested rebind status may be only `prepared`, `startup_token_published`, or one of the ordered `dispatching` prefixes; `pre_manifest_bootstrap_sealed` requires the terminal sealed status and every predecessor pair. The four Round 4 nested discriminants represent the mandated receipt/current-audit, admission-ready/runtime-observed, canary-settlement, target-close, and fence-release crash boundaries without adding a thirteenth top state. Every later phase preserves those byte-identical pairs. Strict schemas require all earlier fields and exact null later fields and reject a crossed operation, hash-only termination, predicted generation, phase-impossible field, or blocked-prefix clone.
 
@@ -4681,7 +4916,13 @@ Expected: the merge and build gates are the first production call site allowed t
 - `InternalProductionCurrentEntryAuthorityPairV1` is exactly `{entryAuthorityRef,entryAuthorityHash}`. `InternalProductionCurrentEntryAuthorityStatusV1` is the sole `current-entry-status --json` wire body and keeps exactly twelve top states: `absent | operation_prepared | pre_schema_spawner_rebinding | pre_manifest_bootstrap_sealed | migration_applying | manifest_activating | spawner_admission_transitioning | prepared | canary_running | settled | ready | blocked`. `absent` has every authority, prerequisite, and phase null. The fixed prefix of `operation_prepared` and every later nonblocked state contains the byte-identical operation pair, `controllerSourceAuthority`, nested PBA-v2 pair, nested v31-audit pair, nested pending-32 projection pair, and `InternalProductionPreMutationLoadedRuntimeServiceAuthorityPairV1` plus its resolved body. No branch has a flattened lifecycle, canary, controller, runtime, migration, manifest, or entry mirror. `pre_schema_spawner_rebinding` and `pre_manifest_bootstrap_sealed` retain the exact Round 3 rebind status pair. `migration_applying` has strict nested `prepared | consumed | receipt_published | current_audited`: consumption is null only in `prepared`, receipt is null through `consumed`, and current audit is null through `receipt_published`. Only `current_audited` may advance to `manifest_activating`. `spawner_admission_transitioning` has strict nested `sealed | admission_ready | runtime_observed`: admission-ready is null in `sealed`, and post-rebind mixed runtime authority is null until `runtime_observed`. Only `runtime_observed` may advance to `prepared`. `canary_running` is nested `running | terminal_settlement_published`, with settlement null in `running` and target close null in both. `settled` is nested `target_closed | fence_released`, with release null in `target_closed` and final entry null in both. Only `ready` adds nested `.entryAuthority.entryAuthorityRef/Hash`. Every branch uses the fixed prior pairs and an exact strict schema; `blocked` preserves one exact last-valid status pair and one finite `InternalProductionCurrentEntryBlockedReasonCodeV1`. A missing/extra/crossed pair, wrong nested phase, impossible nullability, structural clone, skipped durable boundary, or undeclared top-level field fails parsing/resolution and cannot advance the head.
 - The focused-test receipt proves the exact mutually exclusive tuple `SETUP_PACKET_DESIGN_SOURCE_ATTEMPT_REJECTED`, `SETUP_PACKET_DESIGN_SOURCE_CLOSURE_REJECTED`, and `SETUP_PACKET_IMPLEMENTATION_SOURCE_MAP_REJECTED` across source mapping, migration 31, rollback refusal, and terminal-preclaim regressions. The single live canary proves only the one exact failure code it actually observed. It never claims that one run emitted all three mutually exclusive codes.
 - The canary settlement requires a new disposable run, one observed tuple member, exactly one terminal claim, exactly one termination request, zero redispatch after terminalization, zero open claim/runtime/completion/effect ownership, and no reuse or continuation of run 2075.
-- `prepare-current-entry --json` accepts no root/SHA/run/code/path/receipt override. After it internally reopens Task 6 Step 8's PBA pair plus clean source/build and the read-only v31/pending authorities, it creates or adopts the fixed operation before any service/database mutation and returns only its pair. `resume-current-entry --json` accepts no identity and is the sole production mutation controller: it resumes that fixed operation through pre-schema authorization/dispatch/old-spawner termination/startup seal/post-termination legacy zero, fresh legacy equality reobservation, pre-manifest migration authorization/apply/current audit, A-manifest activation, same-generation generic full verify/normal DB initialization/admission-ready, mixed runtime observation, canary fence/targets/start/settlement/close/release, and ready publication. It never invokes the public normal restart API and exposes no apply/restart/activation mutation argv. `current-entry-status --json` is read-only and emits only the strict status union. Zero-input `verify-current-entry --json` pair-resolves the ready status, entry, prerequisites, pre-schema chain, migration/current audit, manifest, runtime, canary/settlement/close/release, and final census; freshly reobserves runtime and owners; and emits only one strict `InternalProductionCurrentEntryVerificationV1` body. That body contains `currentStatus:"current"`, the ready status pair, entry pair, resolved-authority-set hash, fresh-runtime-and-owner-observation hash, and its derived verification pair. `currentEntryVerificationHash` is `hashCanonicalJson` of the strict body excluding only its derived pair, `currentEntryVerificationRef` is exactly `setfarm://internal-production/current-entry-verification/sha256/${currentEntryVerificationHash}`, and the no-replace store/pair-only resolver recomputes both. It never returns a status variant, flattened deep facts, or an authority body; any noncurrent or failed resolution exits nonzero with no success object. Task 7 calls it before its first restart and never applies schema.
+- `prepare-current-entry --json` accepts no root/SHA/run/code/path/receipt override. After it internally reopens Task 6 Step 8's PBA pair plus clean source/build and the read-only v31/pending authorities, it creates or adopts the fixed operation before any service/database mutation and returns only its pair. `resume-current-entry --json` accepts no identity and is the sole production mutation controller: it resumes that fixed operation through pre-schema authorization/dispatch/old-spawner termination/startup seal/post-termination legacy zero, fresh legacy equality reobservation, pre-manifest migration authorization/apply/current audit, A-manifest activation, same-generation generic full verify/normal DB initialization/admission-ready, mixed runtime observation, canary fence/targets/start/settlement/close/release, and ready publication. It never invokes the public normal restart API and exposes no apply/restart/activation mutation argv. `current-entry-status --json` is read-only and emits only the strict status union.
+
+- Zero-input `verify-current-entry --json` resolves the ready status and entry plus the first 31 predecessor pairs of `InternalProductionCurrentEntryResolvedAuthoritySetV1` in this exact lifecycle order: `productBuildAuthorityV2DeliveryEvidence`, `authorityV3Migration31Audit`, `pendingBootstrapHandoffMigration`, `authorityV3FocusedTestReceipt`, `currentEntryOperation`, `preMutationLoadedRuntimeServiceAuthority`, `preSchemaSpawnerRebindAuthorization`, `preSchemaSpawnerStartupToken`, `preSchemaSpawnerRestartAuthority`, `predecessorTerminationObservation`, `replacementProcessObservation`, `postPredecessorTerminationLegacyZeroOwnerObservation`, `preSchemaSpawnerSealedAdmission`, `freshLegacyZeroOwnerObservation`, `preManifestMigration32Authorization`, `preManifestMigration32AuthorizationConsumption`, `bootstrapHandoffMigrationReceipt`, `bootstrapHandoffCurrentAudit`, `ownerProducerManifestActivation`, `ownerProducerManifestHead`, `task0SpawnerAdmissionReady`, `preSchemaSpawnerRebindStatus`, `loadedRuntimeServiceAuthority`, `ownerAdmissionFence`, `sourceRunTargetReservation`, `runTargetReservation`, `terminalSettlement`, `targetClose`, `ownerAdmissionFenceRelease`, `currentEntryAuthority`, `currentEntryStatus`. After publishing the fresh evidence below, it appends `completeZeroOwnerCensusObservation` and `freshRuntimeAndOwnerObservation` as members 32 and 33. Every tuple member is exactly `{name,pair}`; `resolvedAuthoritySetHash` is `hashCanonicalJson` of that exact 33-member tuple with no sort, omission, duplicate, latest-store lookup, structural body, or additional member.
+
+- The verifier next freshly observes the canonical named service census and the post-manifest `InternalProductionCompleteZeroOwnerCensusObservationV1`, publishes both the complete-zero body and pair, and then publishes `InternalProductionCurrentEntryFreshRuntimeAndOwnerObservationV1`. That strict body is exactly `{schema,currentEntryStatus,entryAuthority,serviceCensus,completeZeroOwnerCensusObservation,completeZeroOwnerCensusObservationBody,controllerRuntimeSourceRelations,observedAt,freshRuntimeAndOwnerObservationRef,freshRuntimeAndOwnerObservationHash}`. It requires the nested owner pair to equal the nested body's derived `observationRef/Hash`; that owner body resolves the exact current manifest activation and all 35/35/36 zero-owner evidence. `controllerRuntimeSourceRelations` contains the controller authority and loaded-runtime pair, requires spawner source/tree/build equality to the controller, binds dashboard and Mission Control to their authenticated delivered runtime identities, and fixes OpenClaw to process/generation/listener-only with null source/tree/build. `observedAt` is strict UTC RFC 3339 with milliseconds. The observation hash is `hashCanonicalJson({schema,currentEntryStatus,entryAuthority,serviceCensus,completeZeroOwnerCensusObservation,completeZeroOwnerCensusObservationBody,controllerRuntimeSourceRelations,observedAt})` in that order, excluding only its derived ref/hash; its ref is `setfarm://internal-production/current-entry-fresh-runtime-and-owner-observation/sha256/${freshRuntimeAndOwnerObservationHash}`. Its no-replace store and pair-only resolver reject structural bodies, latest scans, crossed pairs, stale census, owner drift, or source-relation drift.
+
+- Only after resolving that observation does the verifier finish the 33-member tuple and publish the sole `InternalProductionCurrentEntryVerificationV1` success receipt. It is exactly `{schema,currentStatus,currentEntryStatus,entryAuthority,resolvedAuthoritySetHash,freshRuntimeAndOwnerObservation,currentEntryVerificationRef,currentEntryVerificationHash}`; `freshRuntimeAndOwnerObservation` is the exact nested ref/hash pair, never a hash-only assertion. `currentEntryVerificationHash` is exactly `hashCanonicalJson({schema,currentStatus,currentEntryStatus,entryAuthority,resolvedAuthoritySetHash,freshRuntimeAndOwnerObservation})` in that order and excludes only the receipt's derived ref/hash. Its ref is `setfarm://internal-production/current-entry-verification/sha256/${currentEntryVerificationHash}`. The receipt resolver reopens every one of the 33 ordered pairs, recomputes all projections, then performs a new code-owned runtime and complete-owner observation and requires equality with the stored evidence before returning current. Thus the order is acyclic: fresh observation first, verification receipt second. Any noncurrent relation or failed fresh equality exits nonzero with no success body. Task 7 calls the same zero-input verifier before its first restart and never applies schema.
 - Crash/race/replay tests interrupt before and after operation publication, first legacy observation, pre-schema authorization, helper/outbox/dispatch, old-spawner terminal observation, sealed-process startup, post-termination all-36-zero observation, fresh migration-time reobservation, migration authorization/transaction/receipt/current audit, manifest activation, generic full verify/normal DB initialization/admission-ready CAS, mixed runtime observation, PBA resolution, canary fence/targets/start/settlement/close/release, ready publication, and response. Retry adopts only the same operation/head prefix. Race an owner/child at every observation-to-dispatch/termination/seal/apply boundary and require the replacement to stay sealed with migration unavailable. Tests reject default startup success while 32 is pending, any env/argv/caller sealed mode, generic early apply, Task 7 apply, normal complete-zero/restart before activation, missing/second pending migration, causal-pair drift, manifest before schema, canary before admission-ready, dashboard/MC pre-canary rebind, old-spawner production after terminal restart, PBA tamper, fork, second run, unrelated owner, one-sided close, release-before-close, caller scalar, or structural clone.
 
 - Round 3 crash fixtures stop before/after authorization, startup-token publication, restart-authority publication, helper dispatch, strict predecessor-termination observation, strict replacement-process observation, sealed-admission publication, migration-authorization consumption, terminal migration receipt, and admission-ready publication. Each status prefix resolves its exact operation and record pairs; retries adopt that prefix, and impossible nullability, crossed pairs, predicted generations, structural bodies, or newest-store scans fail without advancing.
@@ -5159,7 +5400,7 @@ printf '%s\n' "$A_CURRENT_ENTRY_VERIFICATION_JSON" | jq -e \
   --arg entryRef "$A_CURRENT_ENTRY_AUTHORITY_REF" --arg entryHash "$A_CURRENT_ENTRY_AUTHORITY_HASH" '
   keys == ["currentEntryStatus","currentEntryVerificationHash",
     "currentEntryVerificationRef","currentStatus","entryAuthority",
-    "freshRuntimeAndOwnerObservationHash","resolvedAuthoritySetHash","schema"] and
+    "freshRuntimeAndOwnerObservation","resolvedAuthoritySetHash","schema"] and
   .schema == "setfarm.internal-production-current-entry-verification.v1" and
   .currentStatus == "current" and
   .currentEntryStatus.statusRef == $statusRef and
@@ -5167,7 +5408,13 @@ printf '%s\n' "$A_CURRENT_ENTRY_VERIFICATION_JSON" | jq -e \
   .entryAuthority.entryAuthorityRef == $entryRef and
   .entryAuthority.entryAuthorityHash == $entryHash and
   (.resolvedAuthoritySetHash | test("^[0-9a-f]{64}$")) and
-  (.freshRuntimeAndOwnerObservationHash | test("^[0-9a-f]{64}$")) and
+  (.freshRuntimeAndOwnerObservation | keys ==
+    ["freshRuntimeAndOwnerObservationHash",
+      "freshRuntimeAndOwnerObservationRef"]) and
+  (.freshRuntimeAndOwnerObservation.freshRuntimeAndOwnerObservationRef |
+    startswith("setfarm://internal-production/current-entry-fresh-runtime-and-owner-observation/sha256/")) and
+  (.freshRuntimeAndOwnerObservation.freshRuntimeAndOwnerObservationHash |
+    test("^[0-9a-f]{64}$")) and
   (.currentEntryVerificationRef |
     startswith("setfarm://internal-production/current-entry-verification/sha256/")) and
   (.currentEntryVerificationHash | test("^[0-9a-f]{64}$"))
@@ -5231,7 +5478,7 @@ A_TASK7_CURRENT_ENTRY_VERIFICATION_JSON="$(npm run --silent acceptance:baseline-
 printf '%s\n' "$A_TASK7_CURRENT_ENTRY_VERIFICATION_JSON" | jq -e '
   keys == ["currentEntryStatus","currentEntryVerificationHash",
     "currentEntryVerificationRef","currentStatus","entryAuthority",
-    "freshRuntimeAndOwnerObservationHash","resolvedAuthoritySetHash","schema"] and
+    "freshRuntimeAndOwnerObservation","resolvedAuthoritySetHash","schema"] and
   .schema == "setfarm.internal-production-current-entry-verification.v1" and
   .currentStatus == "current" and
   (.currentEntryStatus.statusRef | startswith("setfarm://internal-production/")) and
@@ -5239,7 +5486,13 @@ printf '%s\n' "$A_TASK7_CURRENT_ENTRY_VERIFICATION_JSON" | jq -e '
   (.entryAuthority.entryAuthorityRef | startswith("setfarm://internal-production/")) and
   (.entryAuthority.entryAuthorityHash | test("^[0-9a-f]{64}$")) and
   (.resolvedAuthoritySetHash | test("^[0-9a-f]{64}$")) and
-  (.freshRuntimeAndOwnerObservationHash | test("^[0-9a-f]{64}$")) and
+  (.freshRuntimeAndOwnerObservation | keys ==
+    ["freshRuntimeAndOwnerObservationHash",
+      "freshRuntimeAndOwnerObservationRef"]) and
+  (.freshRuntimeAndOwnerObservation.freshRuntimeAndOwnerObservationRef |
+    startswith("setfarm://internal-production/current-entry-fresh-runtime-and-owner-observation/sha256/")) and
+  (.freshRuntimeAndOwnerObservation.freshRuntimeAndOwnerObservationHash |
+    test("^[0-9a-f]{64}$")) and
   (.currentEntryVerificationRef |
     startswith("setfarm://internal-production/current-entry-verification/sha256/")) and
   (.currentEntryVerificationHash | test("^[0-9a-f]{64}$"))
@@ -5453,7 +5706,7 @@ printf '%s\n' "$A_PREDECESSOR_CURRENT_ENTRY_VERIFICATION_JSON" | jq -e \
   --arg entryRef "$A_PREDECESSOR_ENTRY_REF" --arg entryHash "$A_PREDECESSOR_ENTRY_HASH" '
   keys == ["currentEntryStatus","currentEntryVerificationHash",
     "currentEntryVerificationRef","currentStatus","entryAuthority",
-    "freshRuntimeAndOwnerObservationHash","resolvedAuthoritySetHash","schema"] and
+    "freshRuntimeAndOwnerObservation","resolvedAuthoritySetHash","schema"] and
   .schema == "setfarm.internal-production-current-entry-verification.v1" and
   .currentStatus == "current" and
   .currentEntryStatus.statusRef == $statusRef and
@@ -5461,7 +5714,13 @@ printf '%s\n' "$A_PREDECESSOR_CURRENT_ENTRY_VERIFICATION_JSON" | jq -e \
   .entryAuthority.entryAuthorityRef == $entryRef and
   .entryAuthority.entryAuthorityHash == $entryHash and
   (.resolvedAuthoritySetHash | test("^[0-9a-f]{64}$")) and
-  (.freshRuntimeAndOwnerObservationHash | test("^[0-9a-f]{64}$")) and
+  (.freshRuntimeAndOwnerObservation | keys ==
+    ["freshRuntimeAndOwnerObservationHash",
+      "freshRuntimeAndOwnerObservationRef"]) and
+  (.freshRuntimeAndOwnerObservation.freshRuntimeAndOwnerObservationRef |
+    startswith("setfarm://internal-production/current-entry-fresh-runtime-and-owner-observation/sha256/")) and
+  (.freshRuntimeAndOwnerObservation.freshRuntimeAndOwnerObservationHash |
+    test("^[0-9a-f]{64}$")) and
   (.currentEntryVerificationRef |
     startswith("setfarm://internal-production/current-entry-verification/sha256/")) and
   (.currentEntryVerificationHash | test("^[0-9a-f]{64}$"))
