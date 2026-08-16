@@ -47,6 +47,7 @@
     "artifacts:index:bootstrap": "node --import tsx scripts/product-artifact-index.ts bootstrap",
     "artifacts:index:verify": "node --import tsx scripts/product-artifact-index.ts verify",
     "artifacts:index:recover": "node --import tsx scripts/product-artifact-index.ts recover",
+    "contract:operational-active-run-status": "node --import tsx src/contracts/operational-active-run-status-v1-cli.ts",
     "contracts:mission-control:write": "node --import tsx scripts/mission-control-contract-artifacts.ts --write",
     "check:mission-control-contracts": "node --import tsx scripts/mission-control-contract-artifacts.ts --check",
     "test:steps": "node --import tsx scripts/run-isolated-postgres-tests.ts -- node --import tsx --test tests/steps/*.test.ts",

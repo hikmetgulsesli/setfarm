@@ -4,6 +4,12 @@ import path from "node:path";
 import test from "node:test";
 
 import { createMissionControlContractArtifacts } from "../src/contracts/mission-control-contract-artifacts.js";
+import {
+  isSetfarmOperationalActiveRunStatusV1,
+  SETFARM_OPERATIONAL_ACTIVE_RUN_STATUSES_V1,
+  SetfarmOperationalActiveRunStatusV1Schema,
+  type SetfarmOperationalActiveRunStatusV1,
+} from "../src/contracts/operational-active-run-status-v1.js";
 import { V3DeploymentObservationV1Schema } from "../src/execution/schemas/v3-deployment-observation-v1.js";
 import { V3ProjectTransferAckV1Schema } from "../src/execution/schemas/v3-project-transfer-ack-v1.js";
 import { canonicalJsonStringify, hashCanonicalJson } from "../src/product-compiler/canonical-json.js";
@@ -22,12 +28,14 @@ const expectedPaths = [
   "contracts/generated/mission-control/deployment-observation.v1.schema.json",
   "contracts/generated/mission-control/project-transfer-ack.v1.compatibility.json",
   "contracts/generated/mission-control/project-transfer-ack.v1.schema.json",
+  "contracts/generated/mission-control/operational-active-run-status.v1.compatibility.json",
+  "contracts/generated/mission-control/operational-active-run-status.v1.schema.json",
 ];
 
-test("publishes ten deterministic Setfarm-owned Mission Control contract artifacts", async () => {
+test("publishes twelve deterministic Setfarm-owned Mission Control contract artifacts", async () => {
   const artifacts = createMissionControlContractArtifacts();
   assert.deepEqual(artifacts.map((artifact) => artifact.relativePath), expectedPaths);
-  assert.equal(new Set(artifacts.map((artifact) => artifact.relativePath)).size, 10);
+  assert.equal(new Set(artifacts.map((artifact) => artifact.relativePath)).size, 12);
   for (const artifact of artifacts) {
     const expected = `${canonicalJsonStringify(artifact.value)}\n`;
     assert.equal(await readFile(path.resolve(artifact.relativePath), "utf8"), expected);
@@ -59,6 +67,10 @@ test("compatibility envelopes bind exact JSON schemas and schema-valid positive 
       stem: "project-transfer-ack.v1",
       parse: (value: unknown) => V3ProjectTransferAckV1Schema.parse(value),
     },
+    {
+      stem: "operational-active-run-status.v1",
+      parse: (value: unknown) => SetfarmOperationalActiveRunStatusV1Schema.parse(value),
+    },
   ];
   for (const contract of cases) {
     const compatibility = byPath.get(
@@ -70,6 +82,9 @@ test("compatibility envelopes bind exact JSON schemas and schema-valid positive 
     assert.equal(compatibility.schema, "setfarm.mission-control-contract-compatibility.v1");
     assert.equal(compatibility.jsonSchemaHash, hashCanonicalJson(jsonSchema));
     assert.equal(compatibility.fixtureHash, hashCanonicalJson(compatibility.fixture));
+    if (contract.stem !== "operational-active-run-status.v1") {
+      assert.equal(Object.hasOwn(compatibility, "producerExports"), false);
+    }
     contract.parse(compatibility.fixture);
   }
   const v2Compatibility = byPath.get(
@@ -97,4 +112,27 @@ test("compatibility envelopes bind exact JSON schemas and schema-valid positive 
     "stitch_target_candidate_selection",
   );
   assert.equal(v3Fixture.terminationRequests.length, 1);
+
+  const activeCompatibility = byPath.get(
+    "contracts/generated/mission-control/operational-active-run-status.v1.compatibility.json",
+  ) as Record<string, unknown>;
+  const activeJsonSchema = byPath.get(
+    "contracts/generated/mission-control/operational-active-run-status.v1.schema.json",
+  ) as Record<string, unknown>;
+  assert.deepEqual(activeJsonSchema.enum, SETFARM_OPERATIONAL_ACTIVE_RUN_STATUSES_V1);
+  const fixture: SetfarmOperationalActiveRunStatusV1 =
+    SetfarmOperationalActiveRunStatusV1Schema.parse(activeCompatibility.fixture);
+  assert.equal(fixture, SETFARM_OPERATIONAL_ACTIVE_RUN_STATUSES_V1[0]);
+  assert.equal(isSetfarmOperationalActiveRunStatusV1(fixture), true);
+  assert.deepEqual(activeCompatibility.producer, {
+    name: "setfarm",
+    contractVersion: 1,
+  });
+
+  const expectedProducerExports = {
+    statusesExport: "SETFARM_OPERATIONAL_ACTIVE_RUN_STATUSES_V1",
+    schemaExport: "SetfarmOperationalActiveRunStatusV1Schema",
+    predicateExport: "isSetfarmOperationalActiveRunStatusV1",
+  } as const;
+  assert.deepEqual(activeCompatibility.producerExports, expectedProducerExports);
 });
